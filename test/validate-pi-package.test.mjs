@@ -23,7 +23,7 @@ const companionEntries = [
 
 function baselinePackageJson(overrides = {}) {
 	return {
-		name: "@felipe3dfx/pi-workflow",
+		name: "@felipe.3dfx/pi-workflow",
 		version: "0.0.0-fixture",
 		type: "module",
 		keywords: ["pi-package"],

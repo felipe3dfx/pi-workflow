@@ -85,8 +85,8 @@ function assertNoNodeModulesPath(paths, manifestKey) {
 }
 
 check(
-	packageJson.name === "@felipe3dfx/pi-workflow",
-	"package name must be @felipe3dfx/pi-workflow",
+	packageJson.name === "@felipe.3dfx/pi-workflow",
+	"package name must be @felipe.3dfx/pi-workflow",
 );
 check(
 	packageJson.keywords?.includes("pi-package"),

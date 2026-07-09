@@ -32,7 +32,7 @@ Its Pi manifest is explicit:
 }
 ```
 
-For `@felipe3dfx/pi-workflow`, the useful pattern is the explicit `pi` manifest and `pi-package` keyword. The build-heavy extension pattern does not apply to this small meta-configuration helper.
+For `@felipe.3dfx/pi-workflow`, the useful pattern is the explicit `pi` manifest and `pi-package` keyword. The build-heavy extension pattern does not apply to this small meta-configuration helper.
 
 ## Build, test, and release hygiene
 
@@ -44,7 +44,7 @@ For `@felipe3dfx/pi-workflow`, the useful pattern is the explicit `pi` manifest 
 - CI runs install, typecheck, build, bundle, bundle invariant checks, and tests.
 - `.npmignore` and `files` are both used to keep source/test/dev artifacts out of npm distribution.
 
-For `@felipe3dfx/pi-workflow`, most of this is intentionally too heavy for v1. The transferable subset is:
+For `@felipe.3dfx/pi-workflow`, most of this is intentionally too heavy for v1. The transferable subset is:
 
 - use `files` in `package.json`;
 - include `README.md` and `LICENSE` in published files;
@@ -58,10 +58,10 @@ For `@felipe3dfx/pi-workflow`, most of this is intentionally too heavy for v1. T
 
 `CONTRIBUTING.md` captures local development, architecture overview, build/test commands, TDD expectations, and PR expectations.
 
-For `@felipe3dfx/pi-workflow`, the useful documentation pattern is much smaller:
+For `@felipe.3dfx/pi-workflow`, the useful documentation pattern is much smaller:
 
 1. State what the package is and is not.
-2. Show `pi install npm:@felipe3dfx/pi-workflow`.
+2. Show `pi install npm:@felipe.3dfx/pi-workflow`.
 3. List companion third-party packages and point to the metadata source of truth for exact supported versions.
 4. Explain that v1 exposes only its own helper extension and does not re-export dependency-provided resources.
 5. Document the companion update policy.
@@ -83,11 +83,11 @@ For `@felipe3dfx/pi-workflow`, the useful documentation pattern is much smaller:
 - Runtime hooks, MCP server bundles, CLI binaries, SQLite/session architecture: those belong to the upstream companion packages, not this helper package.
 - Vendoring upstream skill source into this repo: explicitly out of scope by project decision.
 
-## Recommendation for @felipe3dfx/pi-workflow
+## Recommendation for @felipe.3dfx/pi-workflow
 
 Use a minimal npm package with:
 
-- `package.json` named `@felipe3dfx/pi-workflow`.
+- `package.json` named `@felipe.3dfx/pi-workflow`.
 - `private: false` or no `private` field.
 - `keywords` including `pi-package`, `pi`, and workflow/distribution terms.
 - exact companion versions in local metadata, not runtime `dependencies`.

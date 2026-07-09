@@ -1,4 +1,4 @@
-# @felipe3dfx/pi-workflow
+# @felipe.3dfx/pi-workflow
 
 A public Pi meta-configuration package for the `pi-workflow` foundation setup.
 
@@ -15,7 +15,7 @@ This package exposes only its own Pi extension. Companion packages such as Engra
 Install the meta package:
 
 ```bash
-pi install npm:@felipe3dfx/pi-workflow
+pi install npm:@felipe.3dfx/pi-workflow
 ```
 
 Reload Pi so the local helper commands are available:
