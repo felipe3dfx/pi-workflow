@@ -33,9 +33,12 @@
   ],
   "scripts": {
     "pack:dry-run": "npm pack --dry-run",
+    "lint": "biome lint .",
+    "format": "biome format --write .",
+    "check:biome": "biome check --formatter-enabled=false .",
     "check:publish": "node scripts/validate-pi-package.mjs",
-    "check": "npm run check:publish && node --test test/*.test.mjs && npm run pack:dry-run",
-    "prepublishOnly": "npm run check:publish"
+    "check": "npm run check:biome && npm run check:publish && node --test test/*.test.mjs && npm run pack:dry-run",
+    "prepublishOnly": "npm run check"
   },
   "pi": {
     "extensions": [
@@ -44,5 +47,8 @@
   },
   "engines": {
     "node": ">=22"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.3"
   }
 }

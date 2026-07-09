@@ -11,9 +11,22 @@ import piWorkflowExtension, {
 	manualInstallInstructions,
 } from "../extensions/pi-workflow.ts";
 
-const companionMetadata = JSON.parse(
-	readFileSync(new URL("../assets/companions.json", import.meta.url), "utf8"),
-);
+function loadCompanionMetadata() {
+	try {
+		return JSON.parse(
+			readFileSync(
+				new URL("../assets/companions.json", import.meta.url),
+				"utf8",
+			),
+		);
+	} catch (error) {
+		throw new Error(
+			`Unable to load companion fixture metadata: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
+}
+
+const companionMetadata = loadCompanionMetadata();
 const companion = companionMetadata.companions.find(
 	({ package: packageName }) => packageName === "gentle-engram",
 );
@@ -38,13 +51,17 @@ test("registers expected pi-workflow commands", () => {
 });
 
 test("reports installed when exact companion version is installed", () => {
-	const state = getCompanionState(companion, () => ({ version: companion.version }));
+	const state = getCompanionState(companion, () => ({
+		version: companion.version,
+	}));
 	assert.equal(state.status, "installed");
 	assert.equal(state.installedVersion, companion.version);
 });
 
 test("reports version-mismatch when a different companion version is installed", () => {
-	const state = getCompanionState(companion, () => ({ version: mismatchedInstalledVersion }));
+	const state = getCompanionState(companion, () => ({
+		version: mismatchedInstalledVersion,
+	}));
 	assert.equal(state.status, "version-mismatch");
 	assert.equal(state.installedVersion, mismatchedInstalledVersion);
 });

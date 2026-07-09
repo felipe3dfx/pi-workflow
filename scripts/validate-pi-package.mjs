@@ -125,9 +125,20 @@ check(
 	"scripts.check:publish must run scripts/validate-pi-package.mjs",
 );
 check(Boolean(packageJson.scripts?.check), "scripts.check must be present");
+check(Boolean(packageJson.scripts?.lint), "scripts.lint must be present");
+check(Boolean(packageJson.scripts?.format), "scripts.format must be present");
 check(
-	packageJson.scripts?.prepublishOnly === "npm run check:publish",
-	"scripts.prepublishOnly must run check:publish",
+	packageJson.scripts?.["check:biome"] ===
+		"biome check --formatter-enabled=false .",
+	"scripts.check:biome must run biome check with formatter checks disabled",
+);
+check(
+	packageJson.scripts?.check?.includes("npm run check:biome"),
+	"scripts.check must include Biome checks",
+);
+check(
+	packageJson.scripts?.prepublishOnly === "npm run check",
+	"scripts.prepublishOnly must run the full check suite",
 );
 check(
 	!Object.hasOwn(packageJson, "bundledDependencies") &&
@@ -193,9 +204,7 @@ if (companions) {
 	const actualPackages = companionEntries
 		.filter(
 			(companion) =>
-				companion &&
-				typeof companion === "object" &&
-				!Array.isArray(companion),
+				companion && typeof companion === "object" && !Array.isArray(companion),
 		)
 		.map((companion) => companion.package);
 	for (const packageName of requiredCompanionPackages) {

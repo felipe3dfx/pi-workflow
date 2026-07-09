@@ -45,10 +45,12 @@ Companion package names and pinned versions are defined in [`assets/companions.j
 
 Configured companions:
 
-- `gentle-engram`
-- `pi-mcp-adapter`
-- `@tintinweb/pi-subagents`
-- `pi-web-access`
+| Package | Pinned version |
+| --- | --- |
+| `gentle-engram` | `0.1.10` |
+| `pi-mcp-adapter` | `2.11.0` |
+| `@tintinweb/pi-subagents` | `0.13.0` |
+| `pi-web-access` | `0.13.0` |
 
 ## Scope
 
