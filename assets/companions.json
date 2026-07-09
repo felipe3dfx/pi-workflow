@@ -20,6 +20,11 @@
       "package": "pi-web-access",
       "version": "0.13.0",
       "description": "Web access extension and skills for Pi."
+    },
+    {
+      "package": "@vndv/pi-codegraph",
+      "version": "0.1.10",
+      "description": "CodeGraph companion package for code intelligence and project index support."
     }
   ]
 }

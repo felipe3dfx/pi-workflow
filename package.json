@@ -36,8 +36,10 @@
     "lint": "biome lint .",
     "format": "biome format --write .",
     "check:biome": "biome check --formatter-enabled=false .",
+    "check:focused-tests": "node scripts/forbid-focused-tests.mjs",
     "check:publish": "node scripts/validate-pi-package.mjs",
-    "check": "npm run check:biome && npm run check:publish && node --test test/*.test.mjs && npm run pack:dry-run",
+    "check:typecheck": "tsc --noEmit",
+    "check": "npm run check:biome && npm run check:typecheck && npm run check:focused-tests && npm run check:publish && node --test test/*.test.mjs && npm run pack:dry-run",
     "prepublishOnly": "npm run check"
   },
   "pi": {
@@ -46,9 +48,11 @@
     ]
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.19"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.3"
+    "@biomejs/biome": "^2.5.3",
+    "@types/node": "^22.20.1",
+    "typescript": "^7.0.2"
   }
 }

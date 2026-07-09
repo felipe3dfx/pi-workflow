@@ -14,9 +14,10 @@ const companionEntries = [
 	"pi-mcp-adapter",
 	"@tintinweb/pi-subagents",
 	"pi-web-access",
+	"@vndv/pi-codegraph",
 ].map((packageName, index) => ({
 	package: packageName,
-	version: `1.0.${index}`,
+	version: packageName === "@vndv/pi-codegraph" ? "0.1.10" : `1.0.${index}`,
 	description: `${packageName} fixture`,
 }));
 
@@ -37,15 +38,20 @@ function baselinePackageJson(overrides = {}) {
 		],
 		scripts: {
 			"check:publish": "node scripts/validate-pi-package.mjs",
+			"check:typecheck": "tsc --noEmit",
+			"check:focused-tests": "node scripts/forbid-focused-tests.mjs",
 			lint: "biome lint .",
 			format: "biome format --write .",
 			"check:biome": "biome check --formatter-enabled=false .",
 			check:
-				"npm run check:biome && npm run check:publish && node --test test/*.test.mjs && npm run pack:dry-run",
+				"npm run check:biome && npm run check:typecheck && npm run check:focused-tests && npm run check:publish && node --test test/*.test.mjs && npm run pack:dry-run",
 			prepublishOnly: "npm run check",
 		},
 		pi: {
 			extensions: ["./extensions/pi-workflow.ts"],
+		},
+		engines: {
+			node: ">=22.19",
 		},
 		...overrides,
 	};
@@ -122,7 +128,7 @@ test("rejects companion metadata that omits a required companion package", async
 		companions: {
 			schemaVersion: 1,
 			companions: companionEntries.filter(
-				(companion) => companion.package !== "pi-web-access",
+				(companion) => companion.package !== "@vndv/pi-codegraph",
 			),
 		},
 	});
@@ -131,8 +137,23 @@ test("rejects companion metadata that omits a required companion package", async
 		assert.notEqual(result.code, 0);
 		assert.match(
 			result.stderr,
-			/companion metadata must include pi-web-access/,
+			/companion metadata must include @vndv\/pi-codegraph/,
 		);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("rejects package metadata below the supported Node baseline", async () => {
+	const root = await createFixture({
+		packageJson: baselinePackageJson({
+			engines: { node: ">=22" },
+		}),
+	});
+	try {
+		const result = await runValidator(root);
+		assert.notEqual(result.code, 0);
+		assert.match(result.stderr, /engines\.node must be >=22\.19/);
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
@@ -143,11 +164,13 @@ test("requires prepublishOnly to run the full check suite", async () => {
 		packageJson: baselinePackageJson({
 			scripts: {
 				"check:publish": "node scripts/validate-pi-package.mjs",
+				"check:typecheck": "tsc --noEmit",
+				"check:focused-tests": "node scripts/forbid-focused-tests.mjs",
 				lint: "biome lint .",
 				format: "biome format --write .",
 				"check:biome": "biome check --formatter-enabled=false .",
 				check:
-					"npm run check:biome && npm run check:publish && node --test test/*.test.mjs && npm run pack:dry-run",
+					"npm run check:biome && npm run check:typecheck && npm run check:focused-tests && npm run check:publish && node --test test/*.test.mjs && npm run pack:dry-run",
 				prepublishOnly: "npm run check:publish",
 			},
 		}),
@@ -158,6 +181,62 @@ test("requires prepublishOnly to run the full check suite", async () => {
 		assert.match(
 			result.stderr,
 			/scripts\.prepublishOnly must run the full check suite/,
+		);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("requires the full check suite to run TypeScript type checking", async () => {
+	const root = await createFixture({
+		packageJson: baselinePackageJson({
+			scripts: {
+				"check:publish": "node scripts/validate-pi-package.mjs",
+				"check:typecheck": "tsc --noEmit",
+				"check:focused-tests": "node scripts/forbid-focused-tests.mjs",
+				lint: "biome lint .",
+				format: "biome format --write .",
+				"check:biome": "biome check --formatter-enabled=false .",
+				check:
+					"npm run check:biome && npm run check:focused-tests && npm run check:publish && node --test test/*.test.mjs && npm run pack:dry-run",
+				prepublishOnly: "npm run check",
+			},
+		}),
+	});
+	try {
+		const result = await runValidator(root);
+		assert.notEqual(result.code, 0);
+		assert.match(
+			result.stderr,
+			/scripts\.check must include TypeScript type checking/,
+		);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("requires the full check suite to forbid focused tests", async () => {
+	const root = await createFixture({
+		packageJson: baselinePackageJson({
+			scripts: {
+				"check:publish": "node scripts/validate-pi-package.mjs",
+				"check:typecheck": "tsc --noEmit",
+				"check:focused-tests": "node scripts/forbid-focused-tests.mjs",
+				lint: "biome lint .",
+				format: "biome format --write .",
+				"check:biome": "biome check --formatter-enabled=false .",
+				check:
+					"npm run check:biome && npm run check:typecheck && npm run check:publish && node --test test/*.test.mjs && npm run pack:dry-run",
+				prepublishOnly: "npm run check",
+			},
+		}),
+	});
+	try {
+		const result = await runValidator(root);
+		assert.notEqual(result.code, 0);
+		assert.match(
+			result.stderr,
+			/scripts\.check must include focused test guard/,
 		);
 	} finally {
 		await rm(root, { recursive: true, force: true });

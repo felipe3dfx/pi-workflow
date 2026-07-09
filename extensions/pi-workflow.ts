@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -52,11 +52,36 @@ interface CompanionLoadResult {
 	error?: string;
 }
 
+type DiagnosticAdapters = {
+	exec: ExtensionAPI["exec"];
+	cwd: () => string;
+	directoryExists: (path: string) => Promise<boolean> | boolean;
+};
+
+type CodeGraphReadiness = {
+	companion: CompanionState | undefined;
+	cli: "available" | "missing";
+	index: "present" | "missing" | "unknown";
+	messages: string[];
+};
+
+type CompanionStatusOptions = {
+	companions?: CompanionPackage[];
+	metadataPath?: string;
+	loadError?: string;
+	resolveInstalledVersion?: (packageName: string) => {
+		version?: string;
+		error?: string;
+	};
+	diagnosticAdapters?: DiagnosticAdapters;
+};
+
 const requireFromPackage = createRequire(import.meta.url);
 const companionMetadataPath = resolve(
 	dirname(fileURLToPath(import.meta.url)),
 	"../assets/companions.json",
 );
+const codeGraphPackageName = "@vndv/pi-codegraph";
 
 function isCompanionPackage(value: unknown): value is CompanionPackage {
 	return (
@@ -220,13 +245,73 @@ function notificationLevel(
 	return "info";
 }
 
-function companionStatusLines(
+export async function getCodeGraphReadiness({
+	companion,
+	exec,
+	cwd,
+	directoryExists,
+}: DiagnosticAdapters & { companion?: CompanionState }): Promise<CodeGraphReadiness> {
+	let cli: CodeGraphReadiness["cli"] = "available";
+	let index: CodeGraphReadiness["index"] = "unknown";
+	const messages: string[] = [];
+
+	try {
+		const result = await exec("codegraph", ["--version"]);
+		cli = result.code === 0 ? "available" : "missing";
+	} catch {
+		cli = "missing";
+	}
+
+	try {
+		index = (await directoryExists(resolve(cwd(), ".codegraph")))
+			? "present"
+			: "missing";
+	} catch {
+		index = "unknown";
+	}
+
+	if (companion?.status !== "installed") {
+		messages.push("CodeGraph companion: missing or mismatched.");
+	}
+	if (cli === "missing") {
+		messages.push(
+			"CodeGraph CLI: missing. Install or expose the codegraph command on PATH.",
+		);
+	} else {
+		messages.push("CodeGraph CLI: available.");
+	}
+
+	if (index === "missing") {
+		messages.push(
+			"CodeGraph index: missing. Run codegraph init <project-root> explicitly before relying on CodeGraph.",
+		);
+	} else if (index === "unknown") {
+		messages.push("CodeGraph index: unknown; pi-workflow could not inspect .codegraph.");
+	} else {
+		messages.push("CodeGraph index: present.");
+	}
+
+	if (companion?.status === "installed" && cli === "available" && index === "present") {
+		messages.push("CodeGraph: ready.");
+	}
+
+	return { companion, cli, index, messages };
+}
+
+function isCodeGraphReadinessDegraded(readiness: CodeGraphReadiness): boolean {
+	return readiness.cli === "missing" || readiness.index !== "present";
+}
+
+export async function companionStatusLines(
 	heading: string,
 	diagnostic: boolean,
-): { lines: string[]; level: "info" | "warning" | "error" } {
-	const loaded = loadCompanions();
+	options: CompanionStatusOptions = {},
+): Promise<{ lines: string[]; level: "info" | "warning" | "error" }> {
+	const loaded = options.companions
+		? { companions: options.companions, error: options.loadError }
+		: loadCompanions();
 	const states = loaded.companions.map((companion) =>
-		getCompanionState(companion),
+		getCompanionState(companion, options.resolveInstalledVersion),
 	);
 	const actionable = states.filter(
 		(companion) => companion.status !== "installed",
@@ -234,10 +319,12 @@ function companionStatusLines(
 	const lines = [
 		heading,
 		"",
+		"Recommended companion packages:",
 		loaded.error
 			? `Companion metadata error: ${loaded.error}`
 			: formatCompanionStatus(states),
 	];
+	let diagnosticReadinessDegraded = false;
 
 	if (loaded.error) {
 		lines.push(
@@ -261,27 +348,48 @@ function companionStatusLines(
 	}
 
 	if (diagnostic) {
-		lines.push("", `Companion metadata: ${companionMetadataPath}`);
+		lines.push("", `Companion metadata: ${options.metadataPath ?? companionMetadataPath}`);
+		const codeGraphCompanion = states.find(
+			(companion) => companion.package === codeGraphPackageName,
+		);
+		if (codeGraphCompanion && options.diagnosticAdapters) {
+			const readiness = await getCodeGraphReadiness({
+				...options.diagnosticAdapters,
+				companion: codeGraphCompanion,
+			});
+			diagnosticReadinessDegraded = isCodeGraphReadinessDegraded(readiness);
+			lines.push("", "CodeGraph readiness:", ...readiness.messages);
+		}
 	}
 
 	return {
 		lines,
-		level: notificationLevel(Boolean(loaded.error), actionable.length),
+		level: notificationLevel(
+			Boolean(loaded.error),
+			actionable.length + (diagnosticReadinessDegraded ? 1 : 0),
+		),
 	};
 }
 
-function showCompanionStatus(ctx: CommandContext) {
-	const { lines, level } = companionStatusLines(
+async function showCompanionStatus(ctx: CommandContext) {
+	const { lines, level } = await companionStatusLines(
 		"pi-workflow companion status",
 		false,
 	);
 	notifyMultiline(ctx, lines.join("\n"), level);
 }
 
-function showCompanionDoctor(ctx: CommandContext) {
-	const { lines, level } = companionStatusLines(
+async function showCompanionDoctor(pi: ExtensionAPI, ctx: CommandContext) {
+	const { lines, level } = await companionStatusLines(
 		"pi-workflow companion doctor",
 		true,
+		{
+			diagnosticAdapters: {
+				exec: pi.exec,
+				cwd: () => process.cwd(),
+				directoryExists: (path) => statSync(path).isDirectory(),
+			},
+		},
 	);
 	notifyMultiline(ctx, lines.join("\n"), level);
 }
@@ -459,7 +567,7 @@ export default function piWorkflowExtension(pi: ExtensionAPI) {
 
 	pi.registerCommand("pi-workflow-doctor", {
 		description: "Show diagnostic pi-workflow companion package status",
-		handler: (_args, ctx) => showCompanionDoctor(ctx),
+		handler: (_args, ctx) => showCompanionDoctor(pi, ctx),
 	});
 
 	pi.registerCommand("pi-workflow-install-companions", {

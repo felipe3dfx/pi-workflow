@@ -2,7 +2,13 @@
 
 A public Pi meta-configuration package for the `pi-workflow` foundation setup.
 
-This package exposes only its own Pi extension. Companion packages such as Engram, MCP adapter, subagents, and web access are installed explicitly as independent Pi packages so their ownership, updates, and resources stay transparent.
+This package exposes only its own Pi extension. Companion packages such as Engram, MCP adapter, subagents, web access, and CodeGraph are installed explicitly as independent Pi packages so their ownership, updates, and resources stay transparent.
+
+## Requirements
+
+- Node.js `>=22.19`
+- Pi CLI available in the target environment
+- Optional CodeGraph readiness requires the `codegraph` CLI on `PATH` and a project `.codegraph/` index
 
 ## Install
 
@@ -39,6 +45,41 @@ Then reload Pi again so companion resources are loaded:
 
 In non-UI contexts, the install command prints the exact `pi install npm:<pkg>@<version>` commands instead of installing automatically.
 
+### CodeGraph setup
+
+CodeGraph support has three separate readiness checks:
+
+1. Install the recommended companion package through the normal companion flow:
+
+   ```text
+   /pi-workflow-install-companions
+   ```
+
+   Or install it manually when needed:
+
+   ```bash
+   pi install npm:@vndv/pi-codegraph@0.1.10
+   ```
+
+2. Make the `codegraph` CLI available on `PATH`. `pi-workflow` validates readiness by checking whether the `codegraph` command can be executed, not by checking for a globally installed npm package. This keeps the check package-manager agnostic for users who install CodeGraph with npm, pnpm, Homebrew, mise, a system package, or another tool.
+
+   The companion package and CLI readiness are reported separately; installing the companion does not imply the CLI is usable.
+
+3. Initialize the current project index explicitly from the project root:
+
+   ```bash
+   codegraph init <project-root>
+   ```
+
+Verify readiness after reloading Pi:
+
+```text
+/reload
+/pi-workflow-doctor
+```
+
+The doctor reports the CodeGraph companion package, CLI availability, and `.codegraph/` index state independently. `pi-workflow` never runs `codegraph init` automatically.
+
 ## Companion packages
 
 Companion package names and pinned versions are defined in [`assets/companions.json`](assets/companions.json), which is the single source of truth. Updating a companion version is a repository change and should be reviewed like any other supported workflow change.
@@ -51,6 +92,7 @@ Configured companions:
 | `pi-mcp-adapter` | `2.11.0` |
 | `@tintinweb/pi-subagents` | `0.13.0` |
 | `pi-web-access` | `0.13.0` |
+| `@vndv/pi-codegraph` | `0.1.10` |
 
 ## Scope
 
@@ -58,6 +100,7 @@ In scope:
 
 - one local `pi-workflow` helper extension;
 - status and doctor commands for configured companions;
+- CodeGraph companion, CLI, and project-index readiness diagnostics;
 - explicit companion installation after user confirmation;
 - exact companion versions controlled by this repository;
 - install and update documentation.
@@ -67,6 +110,7 @@ Out of scope:
 - bundling third-party Pi package source;
 - re-exporting third-party extensions or skills through this package manifest;
 - silently installing companion packages;
+- automatically initializing CodeGraph indexes;
 - proprietary company workflow behavior;
 - automatic companion upgrades.
 
@@ -101,6 +145,7 @@ The release guard validates that:
 - no Pi manifest paths point into `node_modules`;
 - no `bundledDependencies` or `bundleDependencies` field exists;
 - companion metadata includes the expected packages and versions;
+- package metadata declares Node.js `>=22.19`;
 - package scripts and release basics remain present;
 - `npm pack --dry-run` succeeds.
 

@@ -1,0 +1,43 @@
+schema: spec-driven
+
+context: |
+  Project: pi-workflow
+  Tech stack: Node.js 22+, npm, TypeScript extension entrypoint, ESM modules
+  Architecture: public Pi meta-configuration package with one local extension; companion packages are installed explicitly and validated against assets/companions.json
+  Testing: node:test for package/extension behavior; Biome for linting and formatting; TypeScript `tsc --noEmit` for type checking; focused-test guard for test.only/describe.only/suite.only; npm pack --dry-run for publish validation
+  Style: Biome recommended rules, tabs for source formatting, double quotes and semicolons in JavaScript/TypeScript, markdown line length lint disabled
+  CI/publish: repository docs describe CI on pushes/PRs and publish-on-GitHub-release with npm provenance, but no .github/workflows files are present in this snapshot
+
+testing:
+  strict_tdd: true
+  runner: node:test
+  test_layers:
+    - unit
+    - package-validation
+  linter: biome
+  formatter: biome
+  type_checker: tsc --noEmit
+  focused_test_guard: node scripts/forbid-focused-tests.mjs
+  pack_check: npm pack --dry-run
+  publish_guard: npm run check
+
+rules:
+  proposal:
+    - Include rollback notes for package metadata or publish changes
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Document the boundary between the local extension and explicitly installed companion packages
+    - Call out pack and publish impacts when package metadata changes
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+  apply:
+    - Follow existing code patterns
+    tdd: true
+    test_command: npm run check
+  verify:
+    test_command: npm run check
+    build_command: npm pack --dry-run
+    coverage_threshold: 0

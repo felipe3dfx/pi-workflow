@@ -16,6 +16,7 @@ const requiredCompanionPackages = [
 	"pi-mcp-adapter",
 	"@tintinweb/pi-subagents",
 	"pi-web-access",
+	"@vndv/pi-codegraph",
 ];
 
 try {
@@ -133,8 +134,25 @@ check(
 	"scripts.check:biome must run biome check with formatter checks disabled",
 );
 check(
+	packageJson.scripts?.["check:typecheck"] === "tsc --noEmit",
+	"scripts.check:typecheck must run tsc --noEmit",
+);
+check(
+	packageJson.scripts?.["check:focused-tests"] ===
+		"node scripts/forbid-focused-tests.mjs",
+	"scripts.check:focused-tests must run scripts/forbid-focused-tests.mjs",
+);
+check(
 	packageJson.scripts?.check?.includes("npm run check:biome"),
 	"scripts.check must include Biome checks",
+);
+check(
+	packageJson.scripts?.check?.includes("npm run check:typecheck"),
+	"scripts.check must include TypeScript type checking",
+);
+check(
+	packageJson.scripts?.check?.includes("npm run check:focused-tests"),
+	"scripts.check must include focused test guard",
 );
 check(
 	packageJson.scripts?.prepublishOnly === "npm run check",
@@ -144,6 +162,10 @@ check(
 	!Object.hasOwn(packageJson, "bundledDependencies") &&
 		!Object.hasOwn(packageJson, "bundleDependencies"),
 	"package must not define bundledDependencies or bundleDependencies",
+);
+check(
+	packageJson.engines?.node === ">=22.19",
+	"engines.node must be >=22.19",
 );
 
 const extensionPaths = packageJson.pi?.extensions ?? [];
