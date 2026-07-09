@@ -1,4 +1,11 @@
-import { readFileSync, statSync } from "node:fs";
+import {
+	mkdirSync,
+	readFileSync,
+	renameSync,
+	statSync,
+	unlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
@@ -53,6 +60,39 @@ interface CompanionLoadResult {
 	error?: string;
 }
 
+type McpServerDefinition = Record<string, unknown>;
+
+type McpServerCatalog = {
+	schemaVersion: number;
+	mcpServers: Record<string, McpServerDefinition>;
+};
+
+type McpServerCatalogLoadResult = {
+	catalog?: McpServerCatalog;
+	error?: string;
+};
+
+type McpConfigurationTarget = {
+	name: string;
+	current: unknown;
+	existed: boolean;
+	expected: McpServerDefinition;
+};
+
+type McpConfigurationPlan = {
+	changed: boolean;
+	path: string;
+	mergedConfig: Record<string, unknown>;
+	additions: string[];
+	replacements: Array<{
+		name: string;
+		current: unknown;
+		expected: McpServerDefinition;
+	}>;
+	targets: McpConfigurationTarget[];
+	error?: string;
+};
+
 type DiagnosticAdapters = {
 	exec: ExtensionAPI["exec"];
 	cwd: () => string;
@@ -77,11 +117,16 @@ type CompanionStatusOptions = {
 	diagnosticAdapters?: DiagnosticAdapters;
 };
 
+interface CompanionInstallPlan {
+	installable: CompanionState[];
+	errored: CompanionState[];
+	manualInstructions: string;
+}
+
 const requireFromPackage = createRequire(import.meta.url);
-const companionMetadataPath = resolve(
-	dirname(fileURLToPath(import.meta.url)),
-	"../assets/companions.json",
-);
+const packageDirectory = dirname(fileURLToPath(import.meta.url));
+const companionMetadataPath = resolve(packageDirectory, "../assets/companions.json");
+const mcpServerCatalogPath = resolve(packageDirectory, "../assets/mcp-servers.json");
 const codeGraphPackageName = "@vndv/pi-codegraph";
 
 function isCompanionPackage(value: unknown): value is CompanionPackage {
@@ -93,6 +138,14 @@ function isCompanionPackage(value: unknown): value is CompanionPackage {
 		typeof (value as CompanionPackage).version === "string" &&
 		(value as CompanionPackage).version.length > 0
 	);
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isMcpServerDefinition(value: unknown): value is McpServerDefinition {
+	return isPlainRecord(value);
 }
 
 export function loadCompanionsFromPath(
@@ -127,6 +180,48 @@ function loadCompanions(): CompanionLoadResult {
 	return loadCompanionsFromPath(companionMetadataPath);
 }
 
+function loadMcpServerCatalogFromPath(
+	catalogPath: string,
+): McpServerCatalogLoadResult {
+	try {
+		const parsed = JSON.parse(readFileSync(catalogPath, "utf8")) as {
+			schemaVersion?: unknown;
+			mcpServers?: unknown;
+		};
+		if (parsed.schemaVersion !== 1) {
+			return {
+				error: `MCP server catalog at ${catalogPath} must define schemaVersion 1.`,
+			};
+		}
+		if (!isPlainRecord(parsed.mcpServers)) {
+			return {
+				error: `MCP server catalog at ${catalogPath} must define mcpServers as an object.`,
+			};
+		}
+		for (const [name, definition] of Object.entries(parsed.mcpServers)) {
+			if (!isMcpServerDefinition(definition)) {
+				return {
+					error: `MCP server catalog entry ${name} must be an object.`,
+				};
+			}
+		}
+		return {
+			catalog: {
+				schemaVersion: 1,
+				mcpServers: parsed.mcpServers as Record<string, McpServerDefinition>,
+			},
+		};
+	} catch (error) {
+		return {
+			error: `Unable to load MCP server catalog at ${catalogPath}: ${error instanceof Error ? error.message : String(error)}`,
+		};
+	}
+}
+
+function loadMcpServerCatalog(): McpServerCatalogLoadResult {
+	return loadMcpServerCatalogFromPath(mcpServerCatalogPath);
+}
+
 function readInstalledPackageVersion(packageJsonPath: string): {
 	version?: string;
 	error?: string;
@@ -143,16 +238,25 @@ function readInstalledPackageVersion(packageJsonPath: string): {
 	return { version: packageJson.version };
 }
 
+function piAgentHome(): string {
+	return process.env.PI_AGENT_HOME
+		? resolve(process.env.PI_AGENT_HOME)
+		: resolve(process.env.HOME ?? homedir(), ".pi", "agent");
+}
+
+function activePiAgentDirectory(): string {
+	return process.env.PI_CODING_AGENT_DIR
+		? resolve(process.env.PI_CODING_AGENT_DIR)
+		: piAgentHome();
+}
+
 function piCompanionNodeModulesPaths(): string[] {
 	const paths = [];
 	if (process.env.PI_WORKFLOW_COMPANION_NODE_MODULES) {
 		paths.push(resolve(process.env.PI_WORKFLOW_COMPANION_NODE_MODULES));
 	}
 
-	const piAgentHome = process.env.PI_AGENT_HOME
-		? resolve(process.env.PI_AGENT_HOME)
-		: resolve(process.env.HOME ?? homedir(), ".pi", "agent");
-	paths.push(resolve(piAgentHome, "npm", "node_modules"));
+	paths.push(resolve(piAgentHome(), "npm", "node_modules"));
 
 	return paths;
 }
@@ -276,12 +380,6 @@ export function manualInstallInstructions(
 		),
 		"Then run /reload.",
 	].join("\n");
-}
-
-interface CompanionInstallPlan {
-	installable: CompanionState[];
-	errored: CompanionState[];
-	manualInstructions: string;
 }
 
 function notificationLevel(
@@ -491,26 +589,230 @@ function notifyCompanionInspectionErrors(
 	);
 }
 
-function confirmCompanionInstall(
+function notifyMcpCatalogError(ctx: CommandContext, error: string) {
+	notifyMultiline(
+		ctx,
+		[
+			`MCP server catalog error: ${error}`,
+			"Cannot determine MCP server configuration automatically. Check assets/mcp-servers.json and retry.",
+		].join("\n"),
+		"error",
+	);
+}
+
+function canonicalJson(value: unknown): string {
+	if (Array.isArray(value)) {
+		return `[${value.map((entry) => canonicalJson(entry)).join(",")}]`;
+	}
+	if (isPlainRecord(value)) {
+		return `{${Object.keys(value)
+			.sort()
+			.map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+			.join(",")}}`;
+	}
+	return JSON.stringify(value);
+}
+
+function definitionsEqual(left: unknown, right: unknown): boolean {
+	return canonicalJson(left) === canonicalJson(right);
+}
+
+function mcpConfigPath(): string {
+	return resolve(activePiAgentDirectory(), "mcp.json");
+}
+
+function readExistingMcpConfiguration(path: string): {
+	root?: Record<string, unknown>;
+	error?: string;
+} {
+	try {
+		const raw = readFileSync(path, "utf8");
+		const parsed = JSON.parse(raw) as unknown;
+		if (!isPlainRecord(parsed)) {
+			return {
+				error: `Refusing to overwrite malformed JSON at ${path}: top-level value must be an object.`,
+			};
+		}
+		const currentServersValue = parsed.mcpServers;
+		if (currentServersValue !== undefined && !isPlainRecord(currentServersValue)) {
+			return {
+				error: `Refusing to overwrite malformed JSON at ${path}: mcpServers must be an object when present.`,
+			};
+		}
+		return { root: parsed };
+	} catch (error) {
+		const code =
+			typeof error === "object" && error !== null
+				? (error as { code?: unknown }).code
+				: undefined;
+		if (code === "ENOENT") return { root: {} };
+		return {
+			error: `Refusing to overwrite malformed JSON at ${path}: ${error instanceof Error ? error.message : String(error)}`,
+		};
+	}
+}
+
+function createMcpConfigurationPlan(
+	catalog: McpServerCatalog,
+): McpConfigurationPlan {
+	const path = mcpConfigPath();
+	const loaded = readExistingMcpConfiguration(path);
+	if (loaded.error || !loaded.root) {
+		return {
+			changed: false,
+			path,
+			mergedConfig: {},
+			additions: [],
+			replacements: [],
+			targets: [],
+			error: loaded.error ?? `Unable to read MCP configuration at ${path}.`,
+		};
+	}
+
+	const existingRoot = loaded.root;
+	const currentServersValue = existingRoot.mcpServers;
+	const currentServers = isPlainRecord(currentServersValue)
+		? currentServersValue
+		: {};
+	const targets = Object.entries(catalog.mcpServers).map(
+		([name, expected]): McpConfigurationTarget => ({
+			name,
+			current: currentServers[name],
+			existed: Object.hasOwn(currentServers, name),
+			expected,
+		}),
+	);
+	const additions = targets
+		.filter((target) => !target.existed)
+		.map((target) => target.name);
+	const replacements = targets
+		.filter(
+			(target) =>
+				target.existed && !definitionsEqual(target.current, target.expected),
+		)
+		.map((target) => ({
+			name: target.name,
+			current: target.current,
+			expected: target.expected,
+		}));
+
+	return {
+		changed: additions.length > 0 || replacements.length > 0,
+		path,
+		mergedConfig: {
+			...existingRoot,
+			mcpServers: {
+				...currentServers,
+				...catalog.mcpServers,
+			},
+		},
+		additions,
+		replacements,
+		targets,
+	};
+}
+
+function formatJsonBlock(value: unknown): string {
+	return JSON.stringify(value, null, 2);
+}
+
+function formatMcpServerList(names: string[], catalog: McpServerCatalog): string[] {
+	return names.flatMap((name) => [
+		`- ${name}`,
+		formatJsonBlock(catalog.mcpServers[name]),
+	]);
+}
+
+function manualMcpConfigurationInstructions(
+	plan: McpConfigurationPlan,
+	catalog: McpServerCatalog,
+): string {
+	const replacementLines = plan.replacements.flatMap((replacement) => [
+		`- ${replacement.name}`,
+		"Current:",
+		formatJsonBlock(replacement.current),
+		"Expected:",
+		formatJsonBlock(replacement.expected),
+	]);
+
+	return [
+		"pi-workflow cannot mutate Pi configuration automatically in this context.",
+		`Edit ${plan.path} manually and merge these MCP server definitions under top-level "mcpServers":`,
+		formatJsonBlock(catalog.mcpServers),
+		"Preserve unrelated top-level fields and unrelated MCP servers.",
+		plan.replacements.length > 0
+			? "Same-name conflicts must be replaced only after reviewing the current vs expected definitions below:"
+			: "",
+		...replacementLines,
+		"Then run /reload and authenticate Sentry/Linear as needed.",
+	]
+		.filter((line) => line.length > 0)
+		.join("\n");
+}
+
+function confirmHarnessInstall(
 	ctx: CommandContext,
-	installable: CompanionState[],
+	companionPlan: CompanionInstallPlan,
+	mcpPlan: McpConfigurationPlan,
+	catalog: McpServerCatalog,
 ): Promise<boolean> {
 	if (!ctx.hasUI || !ctx.ui.confirm) {
 		return Promise.resolve(false);
 	}
 
-	return ctx.ui.confirm(
-		"Install pi-workflow companions?",
-		[
-			"This will run pi install for missing or mismatched companion packages:",
+	const messageLines = [
+		companionPlan.installable.length > 0
+			? "This explicit pi-workflow install will mutate only confirmed harness resources:"
+			: "This explicit pi-workflow install will configure only confirmed harness resources:",
+	];
+
+	if (companionPlan.installable.length > 0) {
+		messageLines.push(
 			"",
-			...installable.map(
-				(companion) => `pi install ${companionInstallSpec(companion)}`,
+			"Companion packages to install or update:",
+			...companionPlan.installable.map(
+				(companion) => `- pi install ${companionInstallSpec(companion)}`,
 			),
+		);
+	}
+
+	if (mcpPlan.changed) {
+		messageLines.push(
 			"",
-			"Continue?",
-		].join("\n"),
+			`MCP configuration target: ${mcpPlan.path}`,
+			"Unrelated top-level fields and unrelated MCP servers will be preserved.",
+		);
+		if (mcpPlan.additions.length > 0) {
+			messageLines.push(
+				"",
+				"Add MCP server definitions:",
+				...formatMcpServerList(mcpPlan.additions, catalog),
+			);
+		}
+		if (mcpPlan.replacements.length > 0) {
+			messageLines.push("", "Replace MCP server definitions:");
+			for (const replacement of mcpPlan.replacements) {
+				messageLines.push(
+					`- ${replacement.name}`,
+					"Current:",
+					formatJsonBlock(replacement.current),
+					"Expected:",
+					formatJsonBlock(replacement.expected),
+				);
+			}
+		}
+	}
+
+	messageLines.push(
+		"",
+		"Continue?",
 	);
+
+	const title =
+		companionPlan.installable.length > 0
+			? "Install pi-workflow companions and configure MCP servers?"
+			: "Configure MCP servers for pi-workflow?";
+	return ctx.ui.confirm(title, messageLines.join("\n"));
 }
 
 async function installCompanionPackages(
@@ -540,70 +842,284 @@ async function installCompanionPackages(
 	return failures;
 }
 
-function notifyCompanionInstallOutcome(
+function writeJsonAtomically(path: string, value: Record<string, unknown>) {
+	const directory = dirname(path);
+	mkdirSync(directory, { recursive: true });
+	const temporaryPath = `${path}.${process.pid}.${Date.now()}.tmp`;
+	try {
+		writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+		renameSync(temporaryPath, path);
+	} catch (error) {
+		try {
+			unlinkSync(temporaryPath);
+		} catch {
+			// ignore cleanup failures
+		}
+		throw error;
+	}
+}
+
+function notifyHarnessAlreadyConfigured(ctx: CommandContext) {
+	notifyMultiline(
+		ctx,
+		"pi-workflow companions are installed and MCP servers are already configured.",
+		"info",
+	);
+}
+
+function notifyHarnessManualGuidance(
+	ctx: CommandContext,
+	companionPlan: CompanionInstallPlan,
+	mcpPlan: McpConfigurationPlan,
+	catalog: McpServerCatalog,
+) {
+	const lines: string[] = [];
+	if (companionPlan.installable.length > 0 || companionPlan.errored.length > 0) {
+		lines.push(companionPlan.manualInstructions, "");
+	}
+	lines.push(manualMcpConfigurationInstructions(mcpPlan, catalog));
+	notifyMultiline(ctx, lines.join("\n"), "warning");
+}
+
+function companionOutcomeLines(
+	failures: string[],
+	companionPlan: CompanionInstallPlan,
+): string[] {
+	if (failures.length > 0) {
+		return [
+			"Some companion installs failed:",
+			...failures,
+			"",
+			companionPlan.manualInstructions,
+			"",
+		];
+	}
+	if (companionPlan.installable.length > 0) {
+		return ["Installed or updated pi-workflow companions.", ""];
+	}
+	return ["Companion packages were already installed.", ""];
+}
+
+function changedMcpTargets(
+	previewPlan: McpConfigurationPlan,
+	latestPlan: McpConfigurationPlan,
+): string[] {
+	const latestTargets = new Map(
+		latestPlan.targets.map((target) => [target.name, target]),
+	);
+	return previewPlan.targets
+		.filter((previewTarget) => {
+			const latestTarget = latestTargets.get(previewTarget.name);
+			if (!latestTarget) return true;
+			if (previewTarget.existed !== latestTarget.existed) return true;
+			if (!previewTarget.existed) return false;
+			return !definitionsEqual(previewTarget.current, latestTarget.current);
+		})
+		.map((target) => target.name);
+}
+
+function notifyMcpConfigurationPreviewConflict(
 	ctx: CommandContext,
 	failures: string[],
-	manualInstructions: string,
+	companionPlan: CompanionInstallPlan,
+	previewPlan: McpConfigurationPlan,
+	latestPlan: McpConfigurationPlan,
+	catalog: McpServerCatalog,
 ) {
+	notifyMultiline(
+		ctx,
+		[
+			...companionOutcomeLines(failures, companionPlan),
+			`MCP configuration at ${previewPlan.path} changed after preview. No MCP configuration changes were written.`,
+			"Affected MCP server names:",
+			...changedMcpTargets(previewPlan, latestPlan).map((name) => `- ${name}`),
+			"",
+			`Review ${previewPlan.path} and run /pi-workflow-install-companions again to confirm against the latest configuration.`,
+			"",
+			manualMcpConfigurationInstructions(latestPlan, catalog),
+		].join("\n"),
+		"error",
+	);
+}
+
+function notifyMcpConfigurationRefreshError(
+	ctx: CommandContext,
+	failures: string[],
+	companionPlan: CompanionInstallPlan,
+	previewPlan: McpConfigurationPlan,
+	catalog: McpServerCatalog,
+	error: string,
+) {
+	notifyMultiline(
+		ctx,
+		[
+			...companionOutcomeLines(failures, companionPlan),
+			`MCP configuration at ${previewPlan.path} could not be re-read after confirmation: ${error}`,
+			"No MCP configuration changes were written.",
+			"",
+			manualMcpConfigurationInstructions(previewPlan, catalog),
+		].join("\n"),
+		"error",
+	);
+}
+
+function notifyMcpConfigurationWriteError(
+	ctx: CommandContext,
+	failures: string[],
+	companionPlan: CompanionInstallPlan,
+	mcpPlan: McpConfigurationPlan,
+	catalog: McpServerCatalog,
+	error: unknown,
+) {
+	notifyMultiline(
+		ctx,
+		[
+			...companionOutcomeLines(failures, companionPlan),
+			`Could not write pi-workflow MCP servers to ${mcpPlan.path}: ${error instanceof Error ? error.message : String(error)}`,
+			"No MCP configuration changes were written automatically.",
+			"",
+			manualMcpConfigurationInstructions(mcpPlan, catalog),
+		].join("\n"),
+		"error",
+	);
+}
+
+function notifyHarnessCanceled(ctx: CommandContext) {
+	notifyMultiline(ctx, "Canceled. No companion packages or MCP configuration were changed.", "info");
+}
+
+function notifyHarnessInstallOutcome(
+	ctx: CommandContext,
+	failures: string[],
+	companionPlan: CompanionInstallPlan,
+	mcpPlan: McpConfigurationPlan,
+) {
+	const configuredMcp = mcpPlan.changed
+		? `Configured pi-workflow MCP servers at ${mcpPlan.path}.`
+		: "MCP servers were already configured.";
+
 	if (failures.length > 0) {
 		notifyMultiline(
 			ctx,
 			[
+				configuredMcp,
 				"Some companion installs failed:",
 				...failures,
 				"",
-				manualInstructions,
+				companionPlan.manualInstructions,
+				"",
+				"Run /reload after the companion installs are fixed. Authenticate Sentry/Linear as needed.",
 			].join("\n"),
 			"error",
 		);
 		return;
 	}
 
+	const actionSummary =
+		companionPlan.installable.length > 0
+			? `${configuredMcp} Installed or updated pi-workflow companions.`
+			: configuredMcp;
 	notifyMultiline(
 		ctx,
-		"Installed or updated pi-workflow companions. Run /reload to load their resources.",
+		`${actionSummary} Run /reload. Authenticate Sentry/Linear as needed. pi-workflow does not connect or authenticate MCP servers during installation.`,
 		"info",
 	);
 }
 
 async function installMissingCompanions(pi: ExtensionAPI, ctx: CommandContext) {
-	const loaded = loadCompanions();
-	if (loaded.error) {
-		notifyCompanionMetadataError(ctx, loaded.error);
+	const loadedCompanions = loadCompanions();
+	if (loadedCompanions.error) {
+		notifyCompanionMetadataError(ctx, loadedCompanions.error);
 		return;
 	}
 
-	const plan = createCompanionInstallPlan(loaded.companions);
-	if (plan.installable.length === 0 && plan.errored.length === 0) {
-		notifyMultiline(
+	const loadedMcpCatalog = loadMcpServerCatalog();
+	if (loadedMcpCatalog.error || !loadedMcpCatalog.catalog) {
+		notifyMcpCatalogError(
 			ctx,
-			"All configured pi-workflow companions are installed at the expected versions.",
-			"info",
+			loadedMcpCatalog.error ?? "Unknown MCP server catalog error.",
 		);
 		return;
 	}
 
-	notifyCompanionInspectionErrors(ctx, plan);
+	const companionPlan = createCompanionInstallPlan(loadedCompanions.companions);
+	const mcpPlan = createMcpConfigurationPlan(loadedMcpCatalog.catalog);
+	if (mcpPlan.error) {
+		notifyMultiline(ctx, mcpPlan.error, "error");
+		return;
+	}
 
-	if (plan.installable.length === 0) return;
+	if (
+		companionPlan.installable.length === 0 &&
+		companionPlan.errored.length === 0 &&
+		!mcpPlan.changed
+	) {
+		notifyHarnessAlreadyConfigured(ctx);
+		return;
+	}
+
+	notifyCompanionInspectionErrors(ctx, companionPlan);
 
 	if (!ctx.hasUI || !ctx.ui.confirm) {
-		notifyMultiline(ctx, plan.manualInstructions, "warning");
+		notifyHarnessManualGuidance(ctx, companionPlan, mcpPlan, loadedMcpCatalog.catalog);
 		return;
 	}
 
-	const confirmed = await confirmCompanionInstall(ctx, plan.installable);
+	const confirmed = await confirmHarnessInstall(
+		ctx,
+		companionPlan,
+		mcpPlan,
+		loadedMcpCatalog.catalog,
+	);
 	if (!confirmed) {
-		notifyMultiline(
-			ctx,
-			"Canceled. No companion packages were installed.",
-			"info",
-		);
+		notifyHarnessCanceled(ctx);
 		return;
 	}
 
-	const failures = await installCompanionPackages(pi, ctx, plan.installable);
-	notifyCompanionInstallOutcome(ctx, failures, plan.manualInstructions);
+	const failures = await installCompanionPackages(pi, ctx, companionPlan.installable);
+	let appliedMcpPlan = mcpPlan;
+	if (mcpPlan.changed) {
+		const latestMcpPlan = createMcpConfigurationPlan(loadedMcpCatalog.catalog);
+		if (latestMcpPlan.error) {
+			notifyMcpConfigurationRefreshError(
+				ctx,
+				failures,
+				companionPlan,
+				mcpPlan,
+				loadedMcpCatalog.catalog,
+				latestMcpPlan.error,
+			);
+			return;
+		}
+		if (changedMcpTargets(mcpPlan, latestMcpPlan).length > 0) {
+			notifyMcpConfigurationPreviewConflict(
+				ctx,
+				failures,
+				companionPlan,
+				mcpPlan,
+				latestMcpPlan,
+				loadedMcpCatalog.catalog,
+			);
+			return;
+		}
+		appliedMcpPlan = latestMcpPlan;
+		if (appliedMcpPlan.changed) {
+			try {
+				writeJsonAtomically(appliedMcpPlan.path, appliedMcpPlan.mergedConfig);
+			} catch (error) {
+				notifyMcpConfigurationWriteError(
+					ctx,
+					failures,
+					companionPlan,
+					appliedMcpPlan,
+					loadedMcpCatalog.catalog,
+					error,
+				);
+				return;
+			}
+		}
+	}
+	notifyHarnessInstallOutcome(ctx, failures, companionPlan, appliedMcpPlan);
 }
 
 export default function piWorkflowExtension(pi: ExtensionAPI) {

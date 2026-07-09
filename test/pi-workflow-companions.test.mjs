@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -13,22 +13,18 @@ import piWorkflowExtension, {
 	manualInstallInstructions,
 } from "../extensions/pi-workflow.ts";
 
-function loadCompanionMetadata() {
+function loadJsonFixture(relativePath) {
 	try {
-		return JSON.parse(
-			readFileSync(
-				new URL("../assets/companions.json", import.meta.url),
-				"utf8",
-			),
-		);
+		return JSON.parse(readFileSync(new URL(relativePath, import.meta.url), "utf8"));
 	} catch (error) {
 		throw new Error(
-			`Unable to load companion fixture metadata: ${error instanceof Error ? error.message : String(error)}`,
+			`Unable to load fixture metadata at ${relativePath}: ${error instanceof Error ? error.message : String(error)}`,
 		);
 	}
 }
 
-const companionMetadata = loadCompanionMetadata();
+const companionMetadata = loadJsonFixture("../assets/companions.json");
+const mcpServerCatalog = loadJsonFixture("../assets/mcp-servers.json");
 const companion = companionMetadata.companions.find(
 	({ package: packageName }) => packageName === "gentle-engram",
 );
@@ -57,6 +53,32 @@ async function writePackageFixture(nodeModulesPath, packageName, packageJson) {
 		JSON.stringify({ name: packageName, ...packageJson }),
 		"utf8",
 	);
+}
+
+async function writeInstalledCompanionFixtures(nodeModulesPath) {
+	for (const configuredCompanion of companionMetadata.companions) {
+		await writePackageFixture(nodeModulesPath, configuredCompanion.package, {
+			version: configuredCompanion.version,
+		});
+	}
+}
+
+function createExtensionHarness(execImpl = async () => ({ code: 0 })) {
+	const commands = new Map();
+	const execCalls = [];
+	const pi = {
+		exec: async (command, args = []) => {
+			execCalls.push({ command, args });
+			return execImpl(command, args);
+		},
+		registerCommand: (name, definition) => {
+			commands.set(name, definition);
+		},
+	};
+
+	piWorkflowExtension(pi);
+
+	return { commands, execCalls };
 }
 
 test("registers expected pi-workflow commands", () => {
@@ -104,11 +126,13 @@ test("reports companions installed from Pi's npm package directory", async () =>
 	const envSnapshot = {
 		HOME: process.env.HOME,
 		PI_AGENT_HOME: process.env.PI_AGENT_HOME,
+		PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
 		PI_WORKFLOW_COMPANION_NODE_MODULES:
 			process.env.PI_WORKFLOW_COMPANION_NODE_MODULES,
 	};
 	try {
 		delete process.env.PI_AGENT_HOME;
+		delete process.env.PI_CODING_AGENT_DIR;
 		delete process.env.PI_WORKFLOW_COMPANION_NODE_MODULES;
 		await writePackageFixture(
 			join(dir, ".pi", "agent", "npm", "node_modules"),
@@ -318,4 +342,596 @@ test("doctor notification warns when CodeGraph index readiness is missing", asyn
 
 	assert.equal(level, "warning");
 	assert.match(lines.join("\n"), /CodeGraph index: missing/);
+});
+
+test("install command configures the exact MCP catalog after confirmation", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-mcp-install-"));
+	const nodeModulesPath = join(dir, "companions", "node_modules");
+	const envSnapshot = {
+		HOME: process.env.HOME,
+		PI_AGENT_HOME: process.env.PI_AGENT_HOME,
+		PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
+		PI_WORKFLOW_COMPANION_NODE_MODULES:
+			process.env.PI_WORKFLOW_COMPANION_NODE_MODULES,
+	};
+	try {
+		await writeInstalledCompanionFixtures(nodeModulesPath);
+		process.env.HOME = dir;
+		delete process.env.PI_AGENT_HOME;
+		delete process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_WORKFLOW_COMPANION_NODE_MODULES = nodeModulesPath;
+
+		const { commands, execCalls } = createExtensionHarness();
+		const confirmations = [];
+		const notifications = [];
+		await commands.get("pi-workflow-install-companions").handler("", {
+			hasUI: true,
+			ui: {
+				confirm: async (title, message) => {
+					confirmations.push({ title, message });
+					return true;
+				},
+				notify: (message, level) => notifications.push({ message, level }),
+			},
+		});
+
+		assert.equal(execCalls.length, 0);
+		assert.equal(confirmations.length, 1);
+		assert.match(confirmations[0].title, /configure mcp servers/i);
+		assert.match(confirmations[0].message, /context7/);
+		assert.match(confirmations[0].message, /linear/);
+		assert.match(confirmations[0].message, /sentry/);
+
+		const config = JSON.parse(
+			await readFile(join(dir, ".pi", "agent", "mcp.json"), "utf8"),
+		);
+		assert.deepEqual(config, { mcpServers: mcpServerCatalog.mcpServers });
+		assert.equal(notifications.length, 1);
+		assert.match(notifications[0].message, /Configured pi-workflow MCP servers/);
+		assert.match(notifications[0].message, /\/reload/);
+		assert.match(notifications[0].message, /Authenticate Sentry\/Linear/);
+	} finally {
+		restoreEnv(envSnapshot);
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("install command preserves unrelated top-level fields and unrelated MCP servers", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-mcp-preserve-"));
+	const nodeModulesPath = join(dir, "companions", "node_modules");
+	const configPath = join(dir, ".pi", "agent", "mcp.json");
+	const envSnapshot = {
+		HOME: process.env.HOME,
+		PI_AGENT_HOME: process.env.PI_AGENT_HOME,
+		PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
+		PI_WORKFLOW_COMPANION_NODE_MODULES:
+			process.env.PI_WORKFLOW_COMPANION_NODE_MODULES,
+	};
+	try {
+		await writeInstalledCompanionFixtures(nodeModulesPath);
+		process.env.HOME = dir;
+		delete process.env.PI_AGENT_HOME;
+		delete process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_WORKFLOW_COMPANION_NODE_MODULES = nodeModulesPath;
+		mkdirSync(join(dir, ".pi", "agent"), { recursive: true });
+		await writeFile(
+			configPath,
+			`${JSON.stringify(
+				{
+					telemetry: { enabled: true },
+					mcpServers: {
+						custom: { url: "https://example.test/mcp" },
+						context7: mcpServerCatalog.mcpServers.context7,
+					},
+				},
+				null,
+				2,
+			)}\n`,
+			"utf8",
+		);
+
+		const { commands } = createExtensionHarness();
+		await commands.get("pi-workflow-install-companions").handler("", {
+			hasUI: true,
+			ui: {
+				confirm: async () => true,
+				notify: () => {},
+			},
+		});
+
+		const config = JSON.parse(await readFile(configPath, "utf8"));
+		assert.deepEqual(config, {
+			telemetry: { enabled: true },
+			mcpServers: {
+				custom: { url: "https://example.test/mcp" },
+				...mcpServerCatalog.mcpServers,
+			},
+		});
+	} finally {
+		restoreEnv(envSnapshot);
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("install command re-reads MCP config after confirmation and preserves concurrent unrelated changes", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-mcp-reread-"));
+	const nodeModulesPath = join(dir, "companions", "node_modules");
+	const configPath = join(dir, ".pi", "agent", "mcp.json");
+	const envSnapshot = {
+		HOME: process.env.HOME,
+		PI_AGENT_HOME: process.env.PI_AGENT_HOME,
+		PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
+		PI_WORKFLOW_COMPANION_NODE_MODULES:
+			process.env.PI_WORKFLOW_COMPANION_NODE_MODULES,
+	};
+	try {
+		await writeInstalledCompanionFixtures(nodeModulesPath);
+		process.env.HOME = dir;
+		delete process.env.PI_AGENT_HOME;
+		delete process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_WORKFLOW_COMPANION_NODE_MODULES = nodeModulesPath;
+		mkdirSync(join(dir, ".pi", "agent"), { recursive: true });
+		await writeFile(
+			configPath,
+			`${JSON.stringify(
+				{
+					telemetry: { enabled: true },
+					mcpServers: {
+						custom: { url: "https://example.test/original" },
+					},
+				},
+				null,
+				2,
+			)}\n`,
+			"utf8",
+		);
+
+		const { commands } = createExtensionHarness();
+		await commands.get("pi-workflow-install-companions").handler("", {
+			hasUI: true,
+			ui: {
+				confirm: async () => {
+					await writeFile(
+						configPath,
+						`${JSON.stringify(
+							{
+								telemetry: { enabled: true },
+								diagnostics: { verbose: true },
+								mcpServers: {
+									custom: { url: "https://example.test/original" },
+									customAfterPreview: { url: "https://example.test/new" },
+								},
+							},
+							null,
+							2,
+						)}\n`,
+						"utf8",
+					);
+					return true;
+				},
+				notify: () => {},
+			},
+		});
+
+		const config = JSON.parse(await readFile(configPath, "utf8"));
+		assert.deepEqual(config, {
+			telemetry: { enabled: true },
+			diagnostics: { verbose: true },
+			mcpServers: {
+				custom: { url: "https://example.test/original" },
+				customAfterPreview: { url: "https://example.test/new" },
+				...mcpServerCatalog.mcpServers,
+			},
+		});
+	} finally {
+		restoreEnv(envSnapshot);
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("install command is a no-op when the exact MCP catalog is already configured", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-mcp-noop-"));
+	const nodeModulesPath = join(dir, "companions", "node_modules");
+	const configPath = join(dir, ".pi", "agent", "mcp.json");
+	const envSnapshot = {
+		HOME: process.env.HOME,
+		PI_AGENT_HOME: process.env.PI_AGENT_HOME,
+		PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
+		PI_WORKFLOW_COMPANION_NODE_MODULES:
+			process.env.PI_WORKFLOW_COMPANION_NODE_MODULES,
+	};
+	try {
+		await writeInstalledCompanionFixtures(nodeModulesPath);
+		process.env.HOME = dir;
+		delete process.env.PI_AGENT_HOME;
+		delete process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_WORKFLOW_COMPANION_NODE_MODULES = nodeModulesPath;
+		mkdirSync(join(dir, ".pi", "agent"), { recursive: true });
+		const existingConfig = `{
+  "mcpServers": {
+    "custom": { "url": "https://example.test/mcp" },
+    "context7": ${JSON.stringify(mcpServerCatalog.mcpServers.context7)},
+    "sentry": ${JSON.stringify(mcpServerCatalog.mcpServers.sentry)},
+    "linear": ${JSON.stringify(mcpServerCatalog.mcpServers.linear)}
+  },
+  "telemetry": { "enabled": true }
+}\n`;
+		await writeFile(configPath, existingConfig, "utf8");
+
+		const { commands, execCalls } = createExtensionHarness();
+		const confirmations = [];
+		const notifications = [];
+		await commands.get("pi-workflow-install-companions").handler("", {
+			hasUI: true,
+			ui: {
+				confirm: async (title, message) => {
+					confirmations.push({ title, message });
+					return true;
+				},
+				notify: (message, level) => notifications.push({ message, level }),
+			},
+		});
+
+		assert.equal(execCalls.length, 0);
+		assert.equal(confirmations.length, 0);
+		assert.equal(await readFile(configPath, "utf8"), existingConfig);
+		assert.equal(notifications.length, 1);
+		assert.match(notifications[0].message, /already configured/i);
+	} finally {
+		restoreEnv(envSnapshot);
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("install command previews conflicting MCP definitions before replacement", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-mcp-conflict-"));
+	const nodeModulesPath = join(dir, "companions", "node_modules");
+	const configPath = join(dir, ".pi", "agent", "mcp.json");
+	const envSnapshot = {
+		HOME: process.env.HOME,
+		PI_AGENT_HOME: process.env.PI_AGENT_HOME,
+		PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
+		PI_WORKFLOW_COMPANION_NODE_MODULES:
+			process.env.PI_WORKFLOW_COMPANION_NODE_MODULES,
+	};
+	try {
+		await writeInstalledCompanionFixtures(nodeModulesPath);
+		process.env.HOME = dir;
+		delete process.env.PI_AGENT_HOME;
+		delete process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_WORKFLOW_COMPANION_NODE_MODULES = nodeModulesPath;
+		mkdirSync(join(dir, ".pi", "agent"), { recursive: true });
+		const existingConfig = {
+			mcpServers: {
+				linear: { url: "https://example.test/linear" },
+			},
+		};
+		await writeFile(configPath, `${JSON.stringify(existingConfig, null, 2)}\n`, "utf8");
+
+		const { commands } = createExtensionHarness();
+		const confirmations = [];
+		await commands.get("pi-workflow-install-companions").handler("", {
+			hasUI: true,
+			ui: {
+				confirm: async (title, message) => {
+					confirmations.push({ title, message });
+					return false;
+				},
+				notify: () => {},
+			},
+		});
+
+		assert.equal(confirmations.length, 1);
+		assert.match(confirmations[0].message, /replace MCP server definitions/i);
+		assert.match(confirmations[0].message, /linear/);
+		assert.match(confirmations[0].message, /https:\/\/example\.test\/linear/);
+		assert.match(
+			confirmations[0].message,
+			/https:\/\/mcp\.linear\.app\/mcp/,
+		);
+		assert.equal(
+			await readFile(configPath, "utf8"),
+			`${JSON.stringify(existingConfig, null, 2)}\n`,
+		);
+	} finally {
+		restoreEnv(envSnapshot);
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("install command refuses to overwrite targeted MCP servers changed after preview", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-mcp-preview-conflict-"));
+	const nodeModulesPath = join(dir, "companions", "node_modules");
+	const configPath = join(dir, ".pi", "agent", "mcp.json");
+	const envSnapshot = {
+		HOME: process.env.HOME,
+		PI_AGENT_HOME: process.env.PI_AGENT_HOME,
+		PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
+		PI_WORKFLOW_COMPANION_NODE_MODULES:
+			process.env.PI_WORKFLOW_COMPANION_NODE_MODULES,
+	};
+	try {
+		await writeInstalledCompanionFixtures(nodeModulesPath);
+		process.env.HOME = dir;
+		delete process.env.PI_AGENT_HOME;
+		delete process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_WORKFLOW_COMPANION_NODE_MODULES = nodeModulesPath;
+		mkdirSync(join(dir, ".pi", "agent"), { recursive: true });
+		await writeFile(
+			configPath,
+			`${JSON.stringify(
+				{
+					mcpServers: {
+						custom: { url: "https://example.test/custom" },
+					},
+				},
+				null,
+				2,
+			)}\n`,
+			"utf8",
+		);
+
+		const { commands } = createExtensionHarness();
+		const notifications = [];
+		await commands.get("pi-workflow-install-companions").handler("", {
+			hasUI: true,
+			ui: {
+				confirm: async () => {
+					await writeFile(
+						configPath,
+						`${JSON.stringify(
+							{
+								mcpServers: {
+									custom: { url: "https://example.test/custom" },
+									linear: { url: "https://example.test/changed-after-preview" },
+								},
+							},
+							null,
+							2,
+						)}\n`,
+						"utf8",
+					);
+					return true;
+				},
+				notify: (message, level) => notifications.push({ message, level }),
+			},
+		});
+
+		assert.equal(
+			await readFile(configPath, "utf8"),
+			`${JSON.stringify(
+				{
+					mcpServers: {
+						custom: { url: "https://example.test/custom" },
+						linear: { url: "https://example.test/changed-after-preview" },
+					},
+				},
+				null,
+				2,
+			)}\n`,
+		);
+		assert.equal(notifications.length, 1);
+		assert.equal(notifications[0].level, "error");
+		assert.match(notifications[0].message, /changed after preview/i);
+		assert.match(notifications[0].message, /linear/);
+		assert.ok(notifications[0].message.includes(configPath));
+		assert.match(notifications[0].message, /run .*again/i);
+		assert.doesNotMatch(notifications[0].message, /Configured pi-workflow MCP servers/);
+	} finally {
+		restoreEnv(envSnapshot);
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("install command refuses to overwrite malformed MCP JSON", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-mcp-malformed-"));
+	const nodeModulesPath = join(dir, "companions", "node_modules");
+	const configPath = join(dir, ".pi", "agent", "mcp.json");
+	const envSnapshot = {
+		HOME: process.env.HOME,
+		PI_AGENT_HOME: process.env.PI_AGENT_HOME,
+		PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
+		PI_WORKFLOW_COMPANION_NODE_MODULES:
+			process.env.PI_WORKFLOW_COMPANION_NODE_MODULES,
+	};
+	try {
+		await writeInstalledCompanionFixtures(nodeModulesPath);
+		process.env.HOME = dir;
+		delete process.env.PI_AGENT_HOME;
+		delete process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_WORKFLOW_COMPANION_NODE_MODULES = nodeModulesPath;
+		mkdirSync(join(dir, ".pi", "agent"), { recursive: true });
+		await writeFile(configPath, "{ not valid json", "utf8");
+
+		const { commands, execCalls } = createExtensionHarness();
+		const confirmations = [];
+		const notifications = [];
+		await commands.get("pi-workflow-install-companions").handler("", {
+			hasUI: true,
+			ui: {
+				confirm: async (title, message) => {
+					confirmations.push({ title, message });
+					return true;
+				},
+				notify: (message, level) => notifications.push({ message, level }),
+			},
+		});
+
+		assert.equal(execCalls.length, 0);
+		assert.equal(confirmations.length, 0);
+		assert.equal(await readFile(configPath, "utf8"), "{ not valid json");
+		assert.equal(notifications.length, 1);
+		assert.match(notifications[0].message, /refusing to overwrite malformed json/i);
+		assert.match(notifications[0].message, /mcp\.json/);
+	} finally {
+		restoreEnv(envSnapshot);
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("install command reports MCP config write failures after confirmation", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-mcp-write-error-"));
+	const nodeModulesPath = join(dir, "companions", "node_modules");
+	const configPath = join(dir, ".pi", "agent", "mcp.json");
+	const envSnapshot = {
+		HOME: process.env.HOME,
+		PI_AGENT_HOME: process.env.PI_AGENT_HOME,
+		PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
+		PI_WORKFLOW_COMPANION_NODE_MODULES:
+			process.env.PI_WORKFLOW_COMPANION_NODE_MODULES,
+	};
+	try {
+		await writeInstalledCompanionFixtures(nodeModulesPath);
+		process.env.HOME = dir;
+		delete process.env.PI_AGENT_HOME;
+		delete process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_WORKFLOW_COMPANION_NODE_MODULES = nodeModulesPath;
+		mkdirSync(join(dir, ".pi", "agent"), { recursive: true });
+		await writeFile(
+			configPath,
+			`${JSON.stringify({ telemetry: { enabled: true } }, null, 2)}\n`,
+			"utf8",
+		);
+
+		const { commands } = createExtensionHarness();
+		const notifications = [];
+		await assert.doesNotReject(
+			commands.get("pi-workflow-install-companions").handler("", {
+				hasUI: true,
+				ui: {
+					confirm: async () => {
+						await rm(configPath, { recursive: true, force: true });
+						mkdirSync(configPath, { recursive: true });
+						return true;
+					},
+					notify: (message, level) => notifications.push({ message, level }),
+				},
+			}),
+		);
+
+		assert.equal(notifications.length, 1);
+		assert.equal(notifications[0].level, "error");
+		assert.ok(notifications[0].message.includes(configPath));
+		assert.match(notifications[0].message, /edit .* manually/i);
+		assert.match(notifications[0].message, /context7/);
+		assert.doesNotMatch(notifications[0].message, /Configured pi-workflow MCP servers/);
+	} finally {
+		restoreEnv(envSnapshot);
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("install command prints manual MCP guidance and does not mutate in non-UI contexts", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-mcp-manual-"));
+	const nodeModulesPath = join(dir, "companions", "node_modules");
+	const envSnapshot = {
+		HOME: process.env.HOME,
+		PI_AGENT_HOME: process.env.PI_AGENT_HOME,
+		PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
+		PI_WORKFLOW_COMPANION_NODE_MODULES:
+			process.env.PI_WORKFLOW_COMPANION_NODE_MODULES,
+	};
+	try {
+		await writeInstalledCompanionFixtures(nodeModulesPath);
+		process.env.HOME = dir;
+		delete process.env.PI_AGENT_HOME;
+		delete process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_WORKFLOW_COMPANION_NODE_MODULES = nodeModulesPath;
+
+		const { commands, execCalls } = createExtensionHarness();
+		const notifications = [];
+		await commands.get("pi-workflow-install-companions").handler("", {
+			hasUI: false,
+			ui: {
+				notify: (message, level) => notifications.push({ message, level }),
+			},
+		});
+
+		assert.equal(execCalls.length, 0);
+		assert.equal(notifications.length, 1);
+		assert.match(notifications[0].message, /cannot mutate Pi configuration automatically/i);
+		assert.match(notifications[0].message, /mcp\.json/);
+		assert.match(notifications[0].message, /context7/);
+		assert.match(notifications[0].message, /sentry/);
+		assert.match(notifications[0].message, /linear/);
+		await assert.rejects(readFile(join(dir, ".pi", "agent", "mcp.json"), "utf8"));
+	} finally {
+		restoreEnv(envSnapshot);
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("install command uses PI_AGENT_HOME for MCP configuration when PI_CODING_AGENT_DIR is unset", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-mcp-agent-home-"));
+	const nodeModulesPath = join(dir, "companions", "node_modules");
+	const piAgentHome = join(dir, "active-pi-agent");
+	const envSnapshot = {
+		HOME: process.env.HOME,
+		PI_AGENT_HOME: process.env.PI_AGENT_HOME,
+		PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
+		PI_WORKFLOW_COMPANION_NODE_MODULES:
+			process.env.PI_WORKFLOW_COMPANION_NODE_MODULES,
+	};
+	try {
+		await writeInstalledCompanionFixtures(nodeModulesPath);
+		process.env.HOME = join(dir, "ignored-home");
+		process.env.PI_AGENT_HOME = piAgentHome;
+		delete process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_WORKFLOW_COMPANION_NODE_MODULES = nodeModulesPath;
+
+		const { commands } = createExtensionHarness();
+		await commands.get("pi-workflow-install-companions").handler("", {
+			hasUI: true,
+			ui: {
+				confirm: async () => true,
+				notify: () => {},
+			},
+		});
+
+		const config = JSON.parse(await readFile(join(piAgentHome, "mcp.json"), "utf8"));
+		assert.deepEqual(config, { mcpServers: mcpServerCatalog.mcpServers });
+		await assert.rejects(readFile(join(dir, "ignored-home", ".pi", "agent", "mcp.json"), "utf8"));
+	} finally {
+		restoreEnv(envSnapshot);
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("install command prefers PI_CODING_AGENT_DIR over PI_AGENT_HOME for MCP configuration", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-mcp-custom-dir-"));
+	const nodeModulesPath = join(dir, "companions", "node_modules");
+	const customPiAgentDir = join(dir, "custom-pi-agent");
+	const envSnapshot = {
+		HOME: process.env.HOME,
+		PI_AGENT_HOME: process.env.PI_AGENT_HOME,
+		PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
+		PI_WORKFLOW_COMPANION_NODE_MODULES:
+			process.env.PI_WORKFLOW_COMPANION_NODE_MODULES,
+	};
+	try {
+		await writeInstalledCompanionFixtures(nodeModulesPath);
+		process.env.HOME = join(dir, "ignored-home");
+		process.env.PI_AGENT_HOME = join(dir, "ignored-pi-agent-home");
+		process.env.PI_CODING_AGENT_DIR = customPiAgentDir;
+		process.env.PI_WORKFLOW_COMPANION_NODE_MODULES = nodeModulesPath;
+
+		const { commands } = createExtensionHarness();
+		await commands.get("pi-workflow-install-companions").handler("", {
+			hasUI: true,
+			ui: {
+				confirm: async () => true,
+				notify: () => {},
+			},
+		});
+
+		const config = JSON.parse(
+			await readFile(join(customPiAgentDir, "mcp.json"), "utf8"),
+		);
+		assert.deepEqual(config, { mcpServers: mcpServerCatalog.mcpServers });
+		await assert.rejects(readFile(join(dir, "ignored-pi-agent-home", "mcp.json"), "utf8"));
+		await assert.rejects(readFile(join(dir, "ignored-home", ".pi", "agent", "mcp.json"), "utf8"));
+	} finally {
+		restoreEnv(envSnapshot);
+		await rm(dir, { recursive: true, force: true });
+	}
 });

@@ -7,9 +7,11 @@ import process from "node:process";
 const root = process.cwd();
 const packageJsonPath = path.join(root, "package.json");
 const companionsPath = path.join(root, "assets", "companions.json");
+const mcpServersPath = path.join(root, "assets", "mcp-servers.json");
 const errors = [];
 let packageJson;
 let companions;
+let mcpServers;
 
 const requiredCompanionPackages = [
 	"gentle-engram",
@@ -18,6 +20,29 @@ const requiredCompanionPackages = [
 	"pi-web-access",
 	"@vndv/pi-codegraph",
 ];
+
+const requiredMcpServerCatalog = {
+	schemaVersion: 1,
+	mcpServers: {
+		context7: {
+			command: "npx",
+			args: [
+				"-y",
+				"--package=@upstash/context7-mcp@2.2.5",
+				"--",
+				"context7-mcp",
+			],
+			directTools: true,
+		},
+		sentry: {
+			url: "https://mcp.sentry.dev/mcp",
+		},
+		linear: {
+			url: "https://mcp.linear.app/mcp",
+			directTools: true,
+		},
+	},
+};
 
 try {
 	packageJson = JSON.parse(await readFile(packageJsonPath, "utf8"));
@@ -33,6 +58,14 @@ try {
 } catch (error) {
 	errors.push(
 		`failed to read or parse companion metadata at assets/companions.json: ${error instanceof Error ? error.message : String(error)}`,
+	);
+}
+
+try {
+	mcpServers = JSON.parse(await readFile(mcpServersPath, "utf8"));
+} catch (error) {
+	errors.push(
+		`failed to read or parse MCP server catalog at assets/mcp-servers.json: ${error instanceof Error ? error.message : String(error)}`,
 	);
 }
 
@@ -82,6 +115,23 @@ function assertNoNodeModulesPath(paths, manifestKey) {
 			`pi.${manifestKey} path must not point into node_modules: ${manifestPath}`,
 		);
 	}
+}
+
+function isPlainRecord(value) {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function canonicalJson(value) {
+	if (Array.isArray(value)) {
+		return `[${value.map((entry) => canonicalJson(entry)).join(",")}]`;
+	}
+	if (isPlainRecord(value)) {
+		return `{${Object.keys(value)
+			.sort()
+			.map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+			.join(",")}}`;
+	}
+	return JSON.stringify(value);
 }
 
 check(
@@ -239,6 +289,57 @@ if (companions) {
 		actualPackages.length === requiredCompanionPackages.length,
 		`companion metadata must include exactly ${requiredCompanionPackages.length} companion packages`,
 	);
+}
+
+if (mcpServers !== undefined) {
+	check(
+		isPlainRecord(mcpServers),
+		"MCP server catalog top-level value must be an object",
+	);
+	const actualCatalog = isPlainRecord(mcpServers) ? mcpServers : {};
+	const actualCatalogKeys = Object.keys(actualCatalog).sort();
+	const expectedCatalogKeys = ["mcpServers", "schemaVersion"];
+	check(
+		canonicalJson(actualCatalogKeys) === canonicalJson(expectedCatalogKeys),
+		`assets/mcp-servers.json must only define schemaVersion and mcpServers; found ${actualCatalogKeys.join(", ") || "none"}`,
+	);
+	check(
+		actualCatalog.schemaVersion === 1,
+		"MCP server catalog schemaVersion must be 1",
+	);
+	check(
+		isPlainRecord(actualCatalog.mcpServers),
+		"MCP server catalog must define mcpServers as an object",
+	);
+	const actualMcpServers = isPlainRecord(actualCatalog.mcpServers)
+		? actualCatalog.mcpServers
+		: {};
+	const actualMcpServerNames = Object.keys(actualMcpServers).sort();
+	const expectedMcpServerNames = Object.keys(
+		requiredMcpServerCatalog.mcpServers,
+	).sort();
+	check(
+		canonicalJson(actualMcpServerNames) ===
+			canonicalJson(expectedMcpServerNames),
+		`assets/mcp-servers.json must define exactly context7, sentry, and linear; found ${actualMcpServerNames.join(", ") || "none"}`,
+	);
+	for (const [name, expectedDefinition] of Object.entries(
+		requiredMcpServerCatalog.mcpServers,
+	)) {
+		check(
+			Object.hasOwn(actualMcpServers, name),
+			`assets/mcp-servers.json must include ${name}`,
+		);
+		const actualDefinition = actualMcpServers[name];
+		check(
+			isPlainRecord(actualDefinition),
+			`assets/mcp-servers.json entry ${name} must be an object`,
+		);
+		check(
+			canonicalJson(actualDefinition) === canonicalJson(expectedDefinition),
+			`assets/mcp-servers.json entry ${name} must exactly match the supported definition. Actual: ${JSON.stringify(actualDefinition)}. Expected: ${JSON.stringify(expectedDefinition)}`,
+		);
+	}
 }
 
 for (const obsoleteShimPath of [

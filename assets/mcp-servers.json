@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "mcpServers": {
+    "context7": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "--package=@upstash/context7-mcp@2.2.5",
+        "--",
+        "context7-mcp"
+      ],
+      "directTools": true
+    },
+    "sentry": {
+      "url": "https://mcp.sentry.dev/mcp"
+    },
+    "linear": {
+      "url": "https://mcp.linear.app/mcp",
+      "directTools": true
+    }
+  }
+}
