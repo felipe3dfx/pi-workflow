@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "companions": [
+    {
+      "package": "gentle-engram",
+      "version": "0.1.10",
+      "description": "Persistent memory tools and Engram integration for Pi."
+    },
+    {
+      "package": "pi-mcp-adapter",
+      "version": "2.11.0",
+      "description": "MCP adapter resources for Pi."
+    },
+    {
+      "package": "@tintinweb/pi-subagents",
+      "version": "0.13.0",
+      "description": "Subagent orchestration resources for Pi."
+    },
+    {
+      "package": "pi-web-access",
+      "version": "0.13.0",
+      "description": "Web access extension and skills for Pi."
+    }
+  ]
+}

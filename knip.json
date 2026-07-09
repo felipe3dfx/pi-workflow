@@ -1,0 +1,12 @@
+{
+  "$schema": "https://unpkg.com/knip@latest/schema.json",
+  "ignore": [
+    "extensions/*.ts"
+  ],
+  "ignoreDependencies": [
+    "@tintinweb/pi-subagents",
+    "gentle-engram",
+    "pi-mcp-adapter",
+    "pi-web-access"
+  ]
+}

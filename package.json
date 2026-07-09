@@ -1,0 +1,48 @@
+{
+  "name": "@felipe3dfx/pi-workflow",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Pi workflow meta-configuration package for explicit companion package setup.",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "workflow",
+    "skills",
+    "extensions"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/felipe3dfx/pi-workflow.git"
+  },
+  "bugs": {
+    "url": "https://github.com/felipe3dfx/pi-workflow/issues"
+  },
+  "homepage": "https://github.com/felipe3dfx/pi-workflow#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "README.md",
+    "docs/**/*.md",
+    "scripts/**/*.mjs",
+    "package.json",
+    "LICENSE",
+    "extensions/",
+    "assets/"
+  ],
+  "scripts": {
+    "pack:dry-run": "npm pack --dry-run",
+    "check:publish": "node scripts/validate-pi-package.mjs",
+    "check": "npm run check:publish && node --test test/*.test.mjs && npm run pack:dry-run",
+    "prepublishOnly": "npm run check:publish"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/pi-workflow.ts"
+    ]
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
