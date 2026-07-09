@@ -1,5 +1,6 @@
 import { readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
+import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -126,30 +127,77 @@ function loadCompanions(): CompanionLoadResult {
 	return loadCompanionsFromPath(companionMetadataPath);
 }
 
+function readInstalledPackageVersion(packageJsonPath: string): {
+	version?: string;
+	error?: string;
+} {
+	const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
+		version?: unknown;
+	};
+	if (
+		typeof packageJson.version !== "string" ||
+		packageJson.version.length === 0
+	) {
+		return { error: "installed package.json does not define a version" };
+	}
+	return { version: packageJson.version };
+}
+
+function piCompanionNodeModulesPaths(): string[] {
+	const paths = [];
+	if (process.env.PI_WORKFLOW_COMPANION_NODE_MODULES) {
+		paths.push(resolve(process.env.PI_WORKFLOW_COMPANION_NODE_MODULES));
+	}
+
+	const piAgentHome = process.env.PI_AGENT_HOME
+		? resolve(process.env.PI_AGENT_HOME)
+		: resolve(process.env.HOME ?? homedir(), ".pi", "agent");
+	paths.push(resolve(piAgentHome, "npm", "node_modules"));
+
+	return paths;
+}
+
+function readPiCompanionPackageVersion(packageName: string): {
+	version?: string;
+	error?: string;
+} {
+	for (const nodeModulesPath of piCompanionNodeModulesPaths()) {
+		try {
+			return readInstalledPackageVersion(
+				resolve(nodeModulesPath, packageName, "package.json"),
+			);
+		} catch (error) {
+			const code =
+				typeof error === "object" && error !== null
+					? (error as { code?: unknown }).code
+					: undefined;
+			if (code === "ENOENT") continue;
+			return { error: error instanceof Error ? error.message : String(error) };
+		}
+	}
+	return {};
+}
+
 function getInstalledCompanionVersion(packageName: string): {
 	version?: string;
 	error?: string;
 } {
+	const piInstalled = readPiCompanionPackageVersion(packageName);
+	if (piInstalled.version || piInstalled.error) return piInstalled;
+
 	try {
 		const packageJsonPath = requireFromPackage.resolve(
 			`${packageName}/package.json`,
 		);
-		const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
-			version?: unknown;
-		};
-		if (
-			typeof packageJson.version !== "string" ||
-			packageJson.version.length === 0
-		) {
-			return { error: "installed package.json does not define a version" };
-		}
-		return { version: packageJson.version };
+		return readInstalledPackageVersion(packageJsonPath);
 	} catch (error) {
 		const code =
 			typeof error === "object" && error !== null
 				? (error as { code?: unknown }).code
 				: undefined;
-		if (code === "MODULE_NOT_FOUND") return {};
+		if (code === "MODULE_NOT_FOUND" || code === "ERR_PACKAGE_PATH_NOT_EXPORTED") {
+			return {};
+		}
 		return { error: error instanceof Error ? error.message : String(error) };
 	}
 }

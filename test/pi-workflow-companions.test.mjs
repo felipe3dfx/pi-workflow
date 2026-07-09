@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -38,6 +38,26 @@ const codeGraphCompanion = {
 	description: "CodeGraph companion fixture",
 };
 const mismatchedInstalledVersion = "999.999.999-fixture";
+
+function restoreEnv(snapshot) {
+	for (const [name, value] of Object.entries(snapshot)) {
+		if (value === undefined) {
+			delete process.env[name];
+		} else {
+			process.env[name] = value;
+		}
+	}
+}
+
+async function writePackageFixture(nodeModulesPath, packageName, packageJson) {
+	const packageDir = join(nodeModulesPath, packageName);
+	mkdirSync(packageDir, { recursive: true });
+	await writeFile(
+		join(packageDir, "package.json"),
+		JSON.stringify({ name: packageName, ...packageJson }),
+		"utf8",
+	);
+}
 
 test("registers expected pi-workflow commands", () => {
 	const registeredCommands = [];
@@ -77,6 +97,71 @@ test("reports missing when companion package cannot be resolved", () => {
 	const state = getCompanionState(companion, () => ({}));
 	assert.equal(state.status, "missing");
 	assert.equal(state.installedVersion, undefined);
+});
+
+test("reports companions installed from Pi's npm package directory", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-home-"));
+	const envSnapshot = {
+		HOME: process.env.HOME,
+		PI_AGENT_HOME: process.env.PI_AGENT_HOME,
+		PI_WORKFLOW_COMPANION_NODE_MODULES:
+			process.env.PI_WORKFLOW_COMPANION_NODE_MODULES,
+	};
+	try {
+		delete process.env.PI_AGENT_HOME;
+		delete process.env.PI_WORKFLOW_COMPANION_NODE_MODULES;
+		await writePackageFixture(
+			join(dir, ".pi", "agent", "npm", "node_modules"),
+			companion.package,
+			{ version: companion.version },
+		);
+		process.env.HOME = dir;
+
+		const { lines, level } = await companionStatusLines(
+			"pi-workflow companion status",
+			false,
+			{ companions: [companion] },
+		);
+		const message = lines.join("\n");
+
+		assert.equal(level, "info");
+		assert.match(message, /gentle-engram@0\.1\.10/);
+		assert.match(message, /installed/);
+		assert.doesNotMatch(message, /missing/);
+	} finally {
+		restoreEnv(envSnapshot);
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("reports scoped companions installed from an explicit Pi node_modules path", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-node-modules-"));
+	const envSnapshot = {
+		PI_WORKFLOW_COMPANION_NODE_MODULES:
+			process.env.PI_WORKFLOW_COMPANION_NODE_MODULES,
+	};
+	try {
+		await writePackageFixture(dir, codeGraphCompanion.package, {
+			version: codeGraphCompanion.version,
+			exports: { "./extensions/codegraph": "./extensions/codegraph.ts" },
+		});
+		process.env.PI_WORKFLOW_COMPANION_NODE_MODULES = dir;
+
+		const { lines, level } = await companionStatusLines(
+			"pi-workflow companion status",
+			false,
+			{ companions: [codeGraphCompanion] },
+		);
+		const message = lines.join("\n");
+
+		assert.equal(level, "info");
+		assert.match(message, /@vndv\/pi-codegraph@0\.1\.10/);
+		assert.match(message, /installed/);
+		assert.doesNotMatch(message, /missing/);
+	} finally {
+		restoreEnv(envSnapshot);
+		await rm(dir, { recursive: true, force: true });
+	}
 });
 
 test("reports metadata load errors instead of treating corrupt metadata as healthy", async () => {
