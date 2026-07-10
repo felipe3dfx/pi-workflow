@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -294,6 +294,170 @@ test("installMissing preserves unrelated MCP configuration while merging the cat
 					...mcpServerCatalog.mcpServers,
 				},
 			});
+		},
+	);
+});
+
+test("installMissing reports refused-concurrent-change when the MCP config changes after preview", async () => {
+	await withMetadataFile(
+		[{ package: "alpha", version: "1.0.0" }],
+		async ({ dir, metadataPath }) => {
+			const agentDirectory = join(dir, "agent");
+			mkdirSync(agentDirectory, { recursive: true });
+			const mcpPath = join(agentDirectory, "mcp.json");
+			await writeFile(
+				mcpPath,
+				`${JSON.stringify({ mcpServers: {} }, null, 2)}\n`,
+				"utf8",
+			);
+			const { notifications, notify } = createNotifications();
+			const workflow = createCompanionWorkflow({
+				catalog: {
+					metadataPath,
+					resolveInstalledVersion: () => ({ version: "1.0.0" }),
+				},
+				interaction: {
+					notify,
+					confirm: async () => {
+						// Simulate a concurrent write between the preview plan
+						// (taken before this confirm prompt) and the apply step
+						// that runs right after this callback returns.
+						const firstServerName = Object.keys(
+							mcpServerCatalog.mcpServers,
+						)[0];
+						await writeFile(
+							mcpPath,
+							`${JSON.stringify(
+								{
+									mcpServers: {
+										[firstServerName]: {
+											url: "https://example.test/changed-after-preview",
+										},
+									},
+								},
+								null,
+								2,
+							)}\n`,
+							"utf8",
+						);
+						return true;
+					},
+				},
+				mcp: { agentDirectory },
+			});
+
+			const result = await workflow.installMissing();
+
+			assert.equal(result.outcome, "failed");
+			assert.match(
+				result.message ?? "",
+				new RegExp(
+					`MCP configuration at .*mcp\\.json changed after preview\\. No MCP configuration changes were written\\.`,
+				),
+			);
+			assert.ok(result.manualInstructions && result.manualInstructions.length > 0);
+			assert.deepEqual(
+				notifications.map((entry) => entry.level),
+				["error"],
+			);
+
+			const stillOnDisk = JSON.parse(await readFile(mcpPath, "utf8"));
+			assert.equal(
+				stillOnDisk.mcpServers[Object.keys(mcpServerCatalog.mcpServers)[0]]
+					.url,
+				"https://example.test/changed-after-preview",
+			);
+		},
+	);
+});
+
+test("installMissing reports reread-failed with the restored message when the config is corrupted after confirmation", async () => {
+	await withMetadataFile(
+		[{ package: "alpha", version: "1.0.0" }],
+		async ({ dir, metadataPath }) => {
+			const agentDirectory = join(dir, "agent");
+			mkdirSync(agentDirectory, { recursive: true });
+			const mcpPath = join(agentDirectory, "mcp.json");
+			const { notifications, notify } = createNotifications();
+			const workflow = createCompanionWorkflow({
+				catalog: {
+					metadataPath,
+					resolveInstalledVersion: () => ({ version: "1.0.0" }),
+				},
+				interaction: {
+					notify,
+					confirm: async () => {
+						await writeFile(mcpPath, "{ not valid json", "utf8");
+						return true;
+					},
+				},
+				mcp: { agentDirectory },
+			});
+
+			const result = await workflow.installMissing();
+
+			assert.equal(result.outcome, "failed");
+			assert.match(
+				result.message ?? "",
+				new RegExp(
+					`MCP configuration at .*mcp\\.json could not be re-read after confirmation: Refusing to overwrite malformed JSON`,
+				),
+			);
+			assert.match(result.message ?? "", /No MCP configuration changes were written\./);
+			assert.ok(!/written automatically/.test(result.message ?? ""));
+			assert.deepEqual(
+				notifications.map((entry) => entry.level),
+				["error"],
+			);
+
+			assert.equal(await readFile(mcpPath, "utf8"), "{ not valid json");
+		},
+	);
+});
+
+test("installMissing reports write-failed when the MCP config cannot be written to disk", async () => {
+	await withMetadataFile(
+		[{ package: "alpha", version: "1.0.0" }],
+		async ({ dir, metadataPath }) => {
+			const agentDirectory = join(dir, "agent");
+			mkdirSync(agentDirectory, { recursive: true });
+			const { notifications, notify } = createNotifications();
+			const workflow = createCompanionWorkflow({
+				catalog: {
+					metadataPath,
+					resolveInstalledVersion: () => ({ version: "1.0.0" }),
+				},
+				interaction: {
+					notify,
+					confirm: async () => {
+						chmodSync(agentDirectory, 0o500);
+						return true;
+					},
+				},
+				mcp: { agentDirectory },
+			});
+
+			try {
+				const result = await workflow.installMissing();
+
+				assert.equal(result.outcome, "failed");
+				assert.match(
+					result.message ?? "",
+					new RegExp(
+						`Could not write pi-workflow MCP servers to .*mcp\\.json: `,
+					),
+				);
+				assert.match(
+					result.message ?? "",
+					/No MCP configuration changes were written automatically\./,
+				);
+				assert.deepEqual(
+					notifications.map((entry) => entry.level),
+					["error"],
+				);
+			} finally {
+				chmodSync(agentDirectory, 0o700);
+			}
 		},
 	);
 });

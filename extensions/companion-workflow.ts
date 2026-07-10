@@ -1,14 +1,21 @@
-import {
-	mkdirSync,
-	readFileSync,
-	renameSync,
-	unlinkSync,
-	writeFileSync,
-} from "node:fs";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import {
+	applyMcpConfiguration,
+	defaultMcpServerCatalogPath,
+	loadMcpServerCatalog,
+	manualMcpConfigurationInstructions,
+	mcpConfigPath,
+	planMcpConfiguration,
+	emptyMcpConfigurationPlan,
+	type CompanionMcpAdapters,
+	type McpConfigurationPlan,
+	type McpServerCatalog,
+} from "./mcp-config.ts";
 
 export interface CompanionPackage {
 	package: string;
@@ -36,39 +43,6 @@ interface CompanionLoadResult {
 	companions: CompanionPackage[];
 	error?: string;
 }
-
-type McpServerDefinition = Record<string, unknown>;
-
-type McpServerCatalog = {
-	schemaVersion: number;
-	mcpServers: Record<string, McpServerDefinition>;
-};
-
-type McpServerCatalogLoadResult = {
-	catalog?: McpServerCatalog;
-	error?: string;
-};
-
-type McpConfigurationTarget = {
-	name: string;
-	current: unknown;
-	existed: boolean;
-	expected: McpServerDefinition;
-};
-
-type McpConfigurationPlan = {
-	changed: boolean;
-	path: string;
-	mergedConfig: Record<string, unknown>;
-	additions: string[];
-	replacements: Array<{
-		name: string;
-		current: unknown;
-		expected: McpServerDefinition;
-	}>;
-	targets: McpConfigurationTarget[];
-	error?: string;
-};
 
 export type NotificationLevel = "info" | "warning" | "error";
 
@@ -105,25 +79,12 @@ export interface CompanionDiagnosticAdapters {
 	directoryExists: (path: string) => Promise<boolean> | boolean;
 }
 
-export interface CompanionMcpAdapters {
-	catalogPath?: string;
-	agentDirectory?: string;
-}
-
 export interface CodeGraphReadiness {
 	companion: CompanionState | undefined;
 	cli: "available" | "missing";
 	index: "present" | "missing" | "unknown";
 	messages: string[];
 }
-
-export type CompanionStatusOptions = {
-	companions?: CompanionPackage[];
-	metadataPath?: string;
-	loadError?: string;
-	resolveInstalledVersion?: ResolveInstalledVersion;
-	diagnosticAdapters?: CompanionDiagnosticAdapters;
-};
 
 export interface CompanionWorkflowOptions {
 	catalog?: CompanionCatalogAdapters;
@@ -180,7 +141,6 @@ interface CompanionInstallPlan {
 const requireFromPackage = createRequire(import.meta.url);
 const packageDirectory = dirname(fileURLToPath(import.meta.url));
 const companionMetadataPath = resolve(packageDirectory, "../assets/companions.json");
-const mcpServerCatalogPath = resolve(packageDirectory, "../assets/mcp-servers.json");
 const codeGraphPackageName = "@vndv/pi-codegraph";
 
 function isCompanionPackage(value: unknown): value is CompanionPackage {
@@ -192,14 +152,6 @@ function isCompanionPackage(value: unknown): value is CompanionPackage {
 		typeof (value as CompanionPackage).version === "string" &&
 		(value as CompanionPackage).version.length > 0
 	);
-}
-
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isMcpServerDefinition(value: unknown): value is McpServerDefinition {
-	return isPlainRecord(value);
 }
 
 export function loadCompanionsFromPath(
@@ -230,52 +182,6 @@ export function loadCompanionsFromPath(
 	}
 }
 
-function loadMcpServerCatalogFromPath(
-	catalogPath: string,
-): McpServerCatalogLoadResult {
-	try {
-		const parsed = JSON.parse(readFileSync(catalogPath, "utf8")) as {
-			schemaVersion?: unknown;
-			mcpServers?: unknown;
-		};
-		if (parsed.schemaVersion !== 1) {
-			return {
-				error: `MCP server catalog at ${catalogPath} must define schemaVersion 1.`,
-			};
-		}
-		if (!isPlainRecord(parsed.mcpServers)) {
-			return {
-				error: `MCP server catalog at ${catalogPath} must define mcpServers as an object.`,
-			};
-		}
-		for (const [name, definition] of Object.entries(parsed.mcpServers)) {
-			if (!isMcpServerDefinition(definition)) {
-				return {
-					error: `MCP server catalog entry ${name} must be an object.`,
-				};
-			}
-		}
-		return {
-			catalog: {
-				schemaVersion: 1,
-				mcpServers: parsed.mcpServers as Record<string, McpServerDefinition>,
-			},
-		};
-	} catch (error) {
-		return {
-			error: `Unable to load MCP server catalog at ${catalogPath}: ${error instanceof Error ? error.message : String(error)}`,
-		};
-	}
-}
-
-function loadMcpServerCatalog(
-	mcpOptions: CompanionMcpAdapters = {},
-): McpServerCatalogLoadResult {
-	return loadMcpServerCatalogFromPath(
-		mcpOptions.catalogPath ?? mcpServerCatalogPath,
-	);
-}
-
 function readInstalledPackageVersion(packageJsonPath: string): {
 	version?: string;
 	error?: string;
@@ -296,17 +202,6 @@ function piAgentHome(): string {
 	return process.env.PI_AGENT_HOME
 		? resolve(process.env.PI_AGENT_HOME)
 		: resolve(process.env.HOME ?? homedir(), ".pi", "agent");
-}
-
-function activePiAgentDirectory(
-	mcpOptions: CompanionMcpAdapters = {},
-): string {
-	if (mcpOptions.agentDirectory) {
-		return resolve(mcpOptions.agentDirectory);
-	}
-	return process.env.PI_CODING_AGENT_DIR
-		? resolve(process.env.PI_CODING_AGENT_DIR)
-		: piAgentHome();
 }
 
 function piCompanionNodeModulesPaths(): string[] {
@@ -526,40 +421,33 @@ export async function getCodeGraphReadiness({
 	return { companion, cli, index, messages };
 }
 
-export async function companionStatusLines(
-	heading: string,
-	diagnostic: boolean,
-	options: CompanionStatusOptions = {},
-): Promise<{ lines: string[]; level: NotificationLevel }> {
-	const loaded = options.companions
-		? { companions: options.companions, error: options.loadError }
-		: loadCompanionsFromPath(options.metadataPath ?? companionMetadataPath);
-	const states = loaded.companions.map((companion) =>
-		getCompanionState(companion, options.resolveInstalledVersion),
-	);
-	const actionable = states.filter(
-		(companion) => companion.status !== "installed",
-	);
+function renderCompanionCatalogStatus(
+	catalog: ResolvedCompanionCatalog,
+	options: {
+		heading: string;
+		metadataPath?: string;
+		readiness?: CodeGraphReadiness;
+	},
+): { lines: string[]; level: NotificationLevel } {
 	const lines = [
-		heading,
+		options.heading,
 		"",
 		"Recommended companion packages:",
-		loaded.error
-			? `Companion metadata error: ${loaded.error}`
-			: formatCompanionStatus(states),
+		catalog.loadError
+			? `Companion metadata error: ${catalog.loadError}`
+			: formatCompanionStatus(catalog.states),
 	];
-	let diagnosticReadinessDegraded = false;
 
-	if (loaded.error) {
+	if (catalog.loadError) {
 		lines.push(
 			"",
 			"Companion status is degraded; pi-workflow cannot confirm configured companion state.",
 		);
-	} else if (actionable.length > 0) {
+	} else if (catalog.actionable.length > 0) {
 		lines.push(
 			"",
 			"Missing, mismatched, or unreadable companions are installed independently. Run /pi-workflow-install-companions or install manually:",
-			...actionable.map(
+			...catalog.actionable.map(
 				(companion) => `pi install ${companionInstallSpec(companion)}`,
 			),
 			"Then run /reload.",
@@ -571,26 +459,22 @@ export async function companionStatusLines(
 		);
 	}
 
-	if (diagnostic) {
-		lines.push("", `Companion metadata: ${options.metadataPath ?? companionMetadataPath}`);
-		const codeGraphCompanion = states.find(
-			(companion) => companion.package === codeGraphPackageName,
-		);
-		if (codeGraphCompanion && options.diagnosticAdapters) {
-			const readiness = await getCodeGraphReadiness({
-				...options.diagnosticAdapters,
-				companion: codeGraphCompanion,
-			});
-			diagnosticReadinessDegraded = isCodeGraphReadinessDegraded(readiness);
-			lines.push("", "CodeGraph readiness:", ...readiness.messages);
-		}
+	if (options.metadataPath) {
+		lines.push("", `Companion metadata: ${options.metadataPath}`);
+	}
+
+	const readinessDegraded = options.readiness
+		? isCodeGraphReadinessDegraded(options.readiness)
+		: false;
+	if (options.readiness) {
+		lines.push("", "CodeGraph readiness:", ...options.readiness.messages);
 	}
 
 	return {
 		lines,
 		level: notificationLevel(
-			Boolean(loaded.error),
-			actionable.length + (diagnosticReadinessDegraded ? 1 : 0),
+			Boolean(catalog.loadError),
+			catalog.actionable.length + (readinessDegraded ? 1 : 0),
 		),
 	};
 }
@@ -623,119 +507,6 @@ function formatJsonBlock(value: unknown): string {
 	return JSON.stringify(value, null, 2);
 }
 
-function canonicalJson(value: unknown): string {
-	if (Array.isArray(value)) {
-		return `[${value.map((entry) => canonicalJson(entry)).join(",")}]`;
-	}
-	if (isPlainRecord(value)) {
-		return `{${Object.keys(value)
-			.sort()
-			.map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
-			.join(",")}}`;
-	}
-	return JSON.stringify(value);
-}
-
-function definitionsEqual(left: unknown, right: unknown): boolean {
-	return canonicalJson(left) === canonicalJson(right);
-}
-
-function mcpConfigPath(mcpOptions: CompanionMcpAdapters = {}): string {
-	return resolve(activePiAgentDirectory(mcpOptions), "mcp.json");
-}
-
-function readExistingMcpConfiguration(path: string): {
-	root?: Record<string, unknown>;
-	error?: string;
-} {
-	try {
-		const raw = readFileSync(path, "utf8");
-		const parsed = JSON.parse(raw) as unknown;
-		if (!isPlainRecord(parsed)) {
-			return {
-				error: `Refusing to overwrite malformed JSON at ${path}: top-level value must be an object.`,
-			};
-		}
-		const currentServersValue = parsed.mcpServers;
-		if (currentServersValue !== undefined && !isPlainRecord(currentServersValue)) {
-			return {
-				error: `Refusing to overwrite malformed JSON at ${path}: mcpServers must be an object when present.`,
-			};
-		}
-		return { root: parsed };
-	} catch (error) {
-		const code =
-			typeof error === "object" && error !== null
-				? (error as { code?: unknown }).code
-				: undefined;
-		if (code === "ENOENT") return { root: {} };
-		return {
-			error: `Refusing to overwrite malformed JSON at ${path}: ${error instanceof Error ? error.message : String(error)}`,
-		};
-	}
-}
-
-function createMcpConfigurationPlan(
-	catalog: McpServerCatalog,
-	mcpOptions: CompanionMcpAdapters = {},
-): McpConfigurationPlan {
-	const path = mcpConfigPath(mcpOptions);
-	const loaded = readExistingMcpConfiguration(path);
-	if (loaded.error || !loaded.root) {
-		return {
-			changed: false,
-			path,
-			mergedConfig: {},
-			additions: [],
-			replacements: [],
-			targets: [],
-			error: loaded.error ?? `Unable to read MCP configuration at ${path}.`,
-		};
-	}
-
-	const existingRoot = loaded.root;
-	const currentServersValue = existingRoot.mcpServers;
-	const currentServers = isPlainRecord(currentServersValue)
-		? currentServersValue
-		: {};
-	const targets = Object.entries(catalog.mcpServers).map(
-		([name, expected]): McpConfigurationTarget => ({
-			name,
-			current: currentServers[name],
-			existed: Object.hasOwn(currentServers, name),
-			expected,
-		}),
-	);
-	const additions = targets
-		.filter((target) => !target.existed)
-		.map((target) => target.name);
-	const replacements = targets
-		.filter(
-			(target) =>
-				target.existed && !definitionsEqual(target.current, target.expected),
-		)
-		.map((target) => ({
-			name: target.name,
-			current: target.current,
-			expected: target.expected,
-		}));
-
-	return {
-		changed: additions.length > 0 || replacements.length > 0,
-		path,
-		mergedConfig: {
-			...existingRoot,
-			mcpServers: {
-				...currentServers,
-				...catalog.mcpServers,
-			},
-		},
-		additions,
-		replacements,
-		targets,
-	};
-}
-
 function formatMcpServerList(
 	names: string[],
 	catalog: McpServerCatalog,
@@ -744,33 +515,6 @@ function formatMcpServerList(
 		`- ${name}`,
 		formatJsonBlock(catalog.mcpServers[name]),
 	]);
-}
-
-function manualMcpConfigurationInstructions(
-	plan: McpConfigurationPlan,
-	catalog: McpServerCatalog,
-): string {
-	const replacementLines = plan.replacements.flatMap((replacement) => [
-		`- ${replacement.name}`,
-		"Current:",
-		formatJsonBlock(replacement.current),
-		"Expected:",
-		formatJsonBlock(replacement.expected),
-	]);
-
-	return [
-		"pi-workflow cannot mutate Pi configuration automatically in this context.",
-		`Edit ${plan.path} manually and merge these MCP server definitions under top-level "mcpServers":`,
-		formatJsonBlock(catalog.mcpServers),
-		"Preserve unrelated top-level fields and unrelated MCP servers.",
-		plan.replacements.length > 0
-			? "Same-name conflicts must be replaced only after reviewing the current vs expected definitions below:"
-			: "",
-		...replacementLines,
-		"Then run /reload and authenticate Sentry/Linear as needed.",
-	]
-		.filter((line) => line.length > 0)
-		.join("\n");
 }
 
 function installConfirmationMessage(
@@ -852,41 +596,6 @@ function companionOutcomeLines(
 	return ["Companion packages were already installed.", ""];
 }
 
-function changedMcpTargets(
-	previewPlan: McpConfigurationPlan,
-	latestPlan: McpConfigurationPlan,
-): string[] {
-	const latestTargets = new Map(
-		latestPlan.targets.map((target) => [target.name, target]),
-	);
-	return previewPlan.targets
-		.filter((previewTarget) => {
-			const latestTarget = latestTargets.get(previewTarget.name);
-			if (!latestTarget) return true;
-			if (previewTarget.existed !== latestTarget.existed) return true;
-			if (!previewTarget.existed) return false;
-			return !definitionsEqual(previewTarget.current, latestTarget.current);
-		})
-		.map((target) => target.name);
-}
-
-function writeJsonAtomically(path: string, value: Record<string, unknown>) {
-	const directory = dirname(path);
-	mkdirSync(directory, { recursive: true });
-	const temporaryPath = `${path}.${process.pid}.${Date.now()}.tmp`;
-	try {
-		writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-		renameSync(temporaryPath, path);
-	} catch (error) {
-		try {
-			unlinkSync(temporaryPath);
-		} catch {
-			// ignore cleanup failures
-		}
-		throw error;
-	}
-}
-
 function combineManualInstructions(...sections: string[]): string {
 	return sections
 		.map((section) => section.trim())
@@ -895,23 +604,10 @@ function combineManualInstructions(...sections: string[]): string {
 		.trim();
 }
 
-function emptyMcpConfigurationPlan(
-	mcpOptions: CompanionMcpAdapters = {},
-): McpConfigurationPlan {
-	return {
-		changed: false,
-		path: mcpConfigPath(mcpOptions),
-		mergedConfig: {},
-		additions: [],
-		replacements: [],
-		targets: [],
-	};
-}
-
 function manualMcpCatalogInstructions(
 	mcpOptions: CompanionMcpAdapters = {},
 ): string {
-	const catalogPath = mcpOptions.catalogPath ?? mcpServerCatalogPath;
+	const catalogPath = mcpOptions.catalogPath ?? defaultMcpServerCatalogPath;
 	return [
 		`Repair ${catalogPath} so it is valid JSON with schemaVersion 1 and an object top-level "mcpServers" map.`,
 		"Then run /pi-workflow-install-companions again, /reload, and authenticate Sentry/Linear as needed.",
@@ -970,14 +666,10 @@ export function createCompanionWorkflow(
 	return {
 		async inspect(): Promise<InspectResult> {
 			const resolvedCatalog = resolveCompanionCatalog(catalog);
-			const level = notificationLevel(
-				Boolean(resolvedCatalog.loadError),
-				resolvedCatalog.actionable.length,
-			);
-			const message = buildInspectionLines(
-				"pi-workflow companion status",
-				resolvedCatalog,
-			).join("\n");
+			const { lines, level } = renderCompanionCatalogStatus(resolvedCatalog, {
+				heading: "pi-workflow companion status",
+			});
+			const message = lines.join("\n");
 			notify(interaction, message, level);
 			return {
 				message,
@@ -991,31 +683,22 @@ export function createCompanionWorkflow(
 
 		async diagnose(): Promise<DiagnoseResult> {
 			const resolvedCatalog = resolveCompanionCatalog(catalog);
-			const lines = buildInspectionLines(
-				"pi-workflow companion doctor",
-				resolvedCatalog,
-			);
-			lines.push("", `Companion metadata: ${resolvedCatalog.metadataPath}`);
-
-			let readiness: CodeGraphReadiness | undefined;
-			let diagnosticReadinessDegraded = false;
 			const codeGraphCompanion = resolvedCatalog.states.find(
 				(companion) => companion.package === codeGraphPackageName,
 			);
-			if (codeGraphCompanion && diagnostics) {
-				readiness = await getCodeGraphReadiness({
-					...diagnostics,
-					companion: codeGraphCompanion,
-				});
-				diagnosticReadinessDegraded = isCodeGraphReadinessDegraded(readiness);
-				lines.push("", "CodeGraph readiness:", ...readiness.messages);
-			}
+			const readiness =
+				codeGraphCompanion && diagnostics
+					? await getCodeGraphReadiness({
+							...diagnostics,
+							companion: codeGraphCompanion,
+						})
+					: undefined;
 
-			const level = notificationLevel(
-				Boolean(resolvedCatalog.loadError),
-				resolvedCatalog.actionable.length +
-					(diagnosticReadinessDegraded ? 1 : 0),
-			);
+			const { lines, level } = renderCompanionCatalogStatus(resolvedCatalog, {
+				heading: "pi-workflow companion doctor",
+				metadataPath: resolvedCatalog.metadataPath,
+				readiness,
+			});
 			const message = lines.join("\n");
 			notify(interaction, message, level);
 			return {
@@ -1154,7 +837,7 @@ export function createCompanionWorkflow(
 				};
 			}
 
-			const mcpPlan = createMcpConfigurationPlan(loadedMcpCatalog.catalog, mcp);
+			const mcpPlan = planMcpConfiguration(loadedMcpCatalog.catalog, mcp);
 			const mcpConfigBlocked = Boolean(mcpPlan.error);
 			const confirmationPlan = mcpConfigBlocked
 				? emptyMcpConfigurationPlan(mcp)
@@ -1308,16 +991,19 @@ export function createCompanionWorkflow(
 				};
 			}
 
-			let appliedMcpPlan = mcpPlan;
+			let finalMcpPath = mcpPlan.path;
+			let wroteMcp = false;
 			if (mcpPlan.changed) {
-				const latestMcpPlan = createMcpConfigurationPlan(
+				const applyOutcome = applyMcpConfiguration(
+					mcpPlan,
 					loadedMcpCatalog.catalog,
 					mcp,
 				);
-				if (latestMcpPlan.error) {
+
+				if (applyOutcome.status === "reread-failed") {
 					const message = [
 						...companionOutcomeLines(failures, companionPlan),
-						`MCP configuration at ${mcpPlan.path} could not be re-read after confirmation: ${latestMcpPlan.error}`,
+						`MCP configuration at ${mcpPlan.path} could not be re-read after confirmation: ${applyOutcome.error}`,
 						"No MCP configuration changes were written.",
 						"",
 						manualMcpConfigurationInstructions(
@@ -1340,13 +1026,42 @@ export function createCompanionWorkflow(
 						mcpPath: mcpPlan.path,
 					};
 				}
-				const changedTargets = changedMcpTargets(mcpPlan, latestMcpPlan);
-				if (changedTargets.length > 0) {
+
+				if (applyOutcome.status === "write-failed") {
+					const latestMcpPlan = applyOutcome.latestPlan;
+					const message = [
+						...companionOutcomeLines(failures, companionPlan),
+						`Could not write pi-workflow MCP servers to ${latestMcpPlan.path}: ${applyOutcome.error}`,
+						"No MCP configuration changes were written automatically.",
+						"",
+						manualMcpConfigurationInstructions(
+							latestMcpPlan,
+							loadedMcpCatalog.catalog,
+						),
+					].join("\n");
+					notify(interaction, message, "error");
+					return {
+						outcome: "failed",
+						message,
+						manualInstructions: manualHarnessInstructions(
+							companionPlan,
+							latestMcpPlan,
+							loadedMcpCatalog.catalog,
+						),
+						installable: companionPlan.installable,
+						errored: companionPlan.errored,
+						failures,
+						mcpPath: latestMcpPlan.path,
+					};
+				}
+
+				if (applyOutcome.status === "refused-concurrent-change") {
+					const latestMcpPlan = applyOutcome.latestPlan;
 					const message = [
 						...companionOutcomeLines(failures, companionPlan),
 						`MCP configuration at ${mcpPlan.path} changed after preview. No MCP configuration changes were written.`,
 						"Affected MCP server names:",
-						...changedTargets.map((name) => `- ${name}`),
+						...applyOutcome.changedTargets.map((name) => `- ${name}`),
 						"",
 						`Review ${mcpPlan.path} and run /pi-workflow-install-companions again to confirm against the latest configuration.`,
 						"",
@@ -1370,44 +1085,13 @@ export function createCompanionWorkflow(
 						mcpPath: mcpPlan.path,
 					};
 				}
-				appliedMcpPlan = latestMcpPlan;
-				if (appliedMcpPlan.changed) {
-					try {
-						writeJsonAtomically(
-							appliedMcpPlan.path,
-							appliedMcpPlan.mergedConfig,
-						);
-					} catch (error) {
-						const message = [
-							...companionOutcomeLines(failures, companionPlan),
-							`Could not write pi-workflow MCP servers to ${appliedMcpPlan.path}: ${error instanceof Error ? error.message : String(error)}`,
-							"No MCP configuration changes were written automatically.",
-							"",
-							manualMcpConfigurationInstructions(
-								appliedMcpPlan,
-								loadedMcpCatalog.catalog,
-							),
-						].join("\n");
-						notify(interaction, message, "error");
-						return {
-							outcome: "failed",
-							message,
-							manualInstructions: manualHarnessInstructions(
-								companionPlan,
-								appliedMcpPlan,
-								loadedMcpCatalog.catalog,
-							),
-							installable: companionPlan.installable,
-							errored: companionPlan.errored,
-							failures,
-							mcpPath: appliedMcpPlan.path,
-						};
-					}
-				}
+
+				finalMcpPath = applyOutcome.path;
+				wroteMcp = applyOutcome.wrote;
 			}
 
-			const configuredMcp = appliedMcpPlan.changed
-				? `Configured pi-workflow MCP servers at ${appliedMcpPlan.path}.`
+			const configuredMcp = wroteMcp
+				? `Configured pi-workflow MCP servers at ${finalMcpPath}.`
 				: "MCP servers were already configured.";
 			if (failures.length > 0) {
 				const message = [
@@ -1427,7 +1111,7 @@ export function createCompanionWorkflow(
 					installable: companionPlan.installable,
 					errored: companionPlan.errored,
 					failures,
-					mcpPath: appliedMcpPlan.path,
+					mcpPath: finalMcpPath,
 				};
 			}
 			if (companionPlan.errored.length > 0) {
@@ -1455,7 +1139,7 @@ export function createCompanionWorkflow(
 					installable: companionPlan.installable,
 					errored: companionPlan.errored,
 					failures: [],
-					mcpPath: appliedMcpPlan.path,
+					mcpPath: finalMcpPath,
 				};
 			}
 
@@ -1473,45 +1157,8 @@ export function createCompanionWorkflow(
 				installable: companionPlan.installable,
 				errored: companionPlan.errored,
 				failures: [],
-				mcpPath: appliedMcpPlan.path,
+				mcpPath: finalMcpPath,
 			};
 		},
 	};
-}
-
-function buildInspectionLines(
-	heading: string,
-	catalog: ResolvedCompanionCatalog,
-): string[] {
-	const lines = [
-		heading,
-		"",
-		"Recommended companion packages:",
-		catalog.loadError
-			? `Companion metadata error: ${catalog.loadError}`
-			: formatCompanionStatus(catalog.states),
-	];
-
-	if (catalog.loadError) {
-		lines.push(
-			"",
-			"Companion status is degraded; pi-workflow cannot confirm configured companion state.",
-		);
-	} else if (catalog.actionable.length > 0) {
-		lines.push(
-			"",
-			"Missing, mismatched, or unreadable companions are installed independently. Run /pi-workflow-install-companions or install manually:",
-			...catalog.actionable.map(
-				(companion) => `pi install ${companionInstallSpec(companion)}`,
-			),
-			"Then run /reload.",
-		);
-	} else {
-		lines.push(
-			"",
-			"All configured companions are installed at the expected versions.",
-		);
-	}
-
-	return lines;
 }
