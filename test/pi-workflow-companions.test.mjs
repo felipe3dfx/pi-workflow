@@ -5,13 +5,14 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import piWorkflowExtension, {
+import {
 	companionStatusLines,
 	getCodeGraphReadiness,
 	getCompanionState,
 	loadCompanionsFromPath,
 	manualInstallInstructions,
-} from "../extensions/pi-workflow.ts";
+} from "../extensions/companion-workflow.ts";
+import piWorkflowExtension from "../extensions/pi-workflow.ts";
 
 function loadJsonFixture(relativePath) {
 	try {
@@ -33,6 +34,10 @@ const codeGraphCompanion = {
 	version: "0.1.10",
 	description: "CodeGraph companion fixture",
 };
+const fixtureCompanions = [
+	{ package: "gentle-engram", version: "0.1.10" },
+	{ package: "@vndv/pi-codegraph", version: "0.1.10" },
+];
 const mismatchedInstalledVersion = "999.999.999-fixture";
 
 function restoreEnv(snapshot) {
@@ -43,6 +48,31 @@ function restoreEnv(snapshot) {
 			process.env[name] = value;
 		}
 	}
+}
+
+async function withMetadataFile(companions, run) {
+	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-companions-"));
+	try {
+		const metadataPath = join(dir, "companions.json");
+		await writeFile(
+			metadataPath,
+			JSON.stringify({ schemaVersion: 1, companions }),
+			"utf8",
+		);
+		return await run({ dir, metadataPath });
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+}
+
+function createInstalledVersionResolver(installedVersions = {}, errors = {}) {
+	return (packageName) => {
+		if (errors[packageName]) return { error: errors[packageName] };
+		if (installedVersions[packageName]) {
+			return { version: installedVersions[packageName] };
+		}
+		return {};
+	};
 }
 
 async function writePackageFixture(nodeModulesPath, packageName, packageJson) {
@@ -81,6 +111,23 @@ function createExtensionHarness(execImpl = async () => ({ code: 0 })) {
 	return { commands, execCalls };
 }
 
+function registerCommands(
+	workflowOptions = {},
+	exec = async () => ({ code: 0 }),
+) {
+	const commands = new Map();
+	const pi = {
+		exec,
+		registerCommand: (name, definition) => {
+			commands.set(name, definition);
+		},
+	};
+
+	piWorkflowExtension(pi, workflowOptions);
+
+	return commands;
+}
+
 test("registers expected pi-workflow commands", () => {
 	const registeredCommands = [];
 	const pi = {
@@ -97,6 +144,76 @@ test("registers expected pi-workflow commands", () => {
 		"pi-workflow-doctor",
 		"pi-workflow-install-companions",
 	]);
+});
+
+test("status command reports companion state through the public command handler", async () => {
+	await withMetadataFile(fixtureCompanions, async ({ metadataPath }) => {
+		const notifications = [];
+		const commands = registerCommands({
+			catalog: {
+				metadataPath,
+				resolveInstalledVersion: createInstalledVersionResolver({
+					"gentle-engram": "0.1.10",
+				}),
+			},
+		});
+
+		await commands.get("pi-workflow-status").handler("", {
+			ui: {
+				notify: (message, level) => notifications.push({ message, level }),
+			},
+		});
+
+		assert.equal(notifications.length, 1);
+		assert.equal(notifications[0].level, "warning");
+		assert.match(notifications[0].message, /pi-workflow companion status/);
+		assert.match(
+			notifications[0].message,
+			/gentle-engram@0\.1\.10 — installed/,
+		);
+		assert.match(
+			notifications[0].message,
+			/@vndv\/pi-codegraph@0\.1\.10 — missing/,
+		);
+		assert.match(
+			notifications[0].message,
+			/pi install npm:@vndv\/pi-codegraph@0\.1\.10/,
+		);
+	});
+});
+
+test("doctor command reports a missing CodeGraph index from a cwd without .codegraph", async () => {
+	await withMetadataFile(fixtureCompanions, async ({ dir, metadataPath }) => {
+		const notifications = [];
+		const commands = registerCommands({
+			catalog: {
+				metadataPath,
+				resolveInstalledVersion: createInstalledVersionResolver({
+					"gentle-engram": "0.1.10",
+					"@vndv/pi-codegraph": "0.1.10",
+				}),
+			},
+			diagnostics: {
+				exec: async () => ({ code: 0, stdout: "codegraph 0.1.0" }),
+				cwd: () => dir,
+			},
+		});
+
+		await commands.get("pi-workflow-doctor").handler("", {
+			ui: {
+				notify: (message, level) => notifications.push({ message, level }),
+			},
+		});
+
+		assert.equal(notifications.length, 1);
+		assert.equal(notifications[0].level, "warning");
+		assert.match(notifications[0].message, /CodeGraph index: missing/);
+		assert.match(
+			notifications[0].message,
+			/codegraph init <project-root>|codegraph init .*explicitly/,
+		);
+		assert.doesNotMatch(notifications[0].message, /CodeGraph index: unknown/);
+	});
 });
 
 test("reports installed when exact companion version is installed", () => {
