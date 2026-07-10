@@ -45,6 +45,17 @@ Then reload Pi again so companion resources are loaded:
 
 In non-UI contexts, the install command prints the exact `pi install npm:<pkg>@<version>` commands instead of installing automatically.
 
+### MCP setup
+
+The companion install flow also manages the Pi MCP catalog from [`assets/mcp-servers.json`](assets/mcp-servers.json).
+
+- It writes only `${PI_CODING_AGENT_DIR:-${PI_AGENT_HOME:-~/.pi/agent}}/mcp.json`.
+- It preserves unrelated top-level fields and unrelated MCP servers.
+- After confirmation it re-reads the latest config before writing; if a targeted `context7`, `sentry`, or `linear` entry changed after preview, the command stops and asks you to rerun against the latest file.
+- Exact `context7`, `sentry`, and `linear` entries are previewed before confirmation; malformed JSON or write failures are reported with the target path and manual recovery guidance.
+- The flow never performs MCP authentication. After a successful install, run `/reload` and follow any Sentry or Linear OAuth prompts in Pi if those servers need them.
+- Exact catalog contents are validated by `npm run check:publish`.
+
 ### CodeGraph setup
 
 CodeGraph support has three separate readiness checks:

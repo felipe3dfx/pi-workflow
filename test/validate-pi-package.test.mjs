@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
@@ -9,6 +10,11 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const validatorPath = resolve("scripts/validate-pi-package.mjs");
 
+function loadJsonFixture(relativePath) {
+	return JSON.parse(readFileSync(new URL(relativePath, import.meta.url), "utf8"));
+}
+
+const mcpServerCatalog = loadJsonFixture("../assets/mcp-servers.json");
 const companionEntries = [
 	"gentle-engram",
 	"pi-mcp-adapter",
@@ -60,6 +66,7 @@ function baselinePackageJson(overrides = {}) {
 async function createFixture({
 	packageJson = baselinePackageJson(),
 	companions = { schemaVersion: 1, companions: companionEntries },
+	mcpServers = mcpServerCatalog,
 } = {}) {
 	const root = await mkdtemp(join(tmpdir(), "pi-workflow-validator-"));
 	await mkdir(join(root, "assets"), { recursive: true });
@@ -71,6 +78,10 @@ async function createFixture({
 	await writeFile(
 		join(root, "assets", "companions.json"),
 		`${JSON.stringify(companions, null, 2)}\n`,
+	);
+	await writeFile(
+		join(root, "assets", "mcp-servers.json"),
+		`${JSON.stringify(mcpServers, null, 2)}\n`,
 	);
 	await writeFile(
 		join(root, "extensions", "pi-workflow.ts"),
@@ -139,6 +150,61 @@ test("rejects companion metadata that omits a required companion package", async
 			result.stderr,
 			/companion metadata must include @vndv\/pi-codegraph/,
 		);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("rejects MCP catalog entries that drift from the exact supported definitions", async () => {
+	const root = await createFixture({
+		mcpServers: {
+			schemaVersion: 1,
+			mcpServers: {
+				context7: mcpServerCatalog.mcpServers.context7,
+				sentry: mcpServerCatalog.mcpServers.sentry,
+				linear: { url: "https://example.test/mcp" },
+			},
+		},
+	});
+	try {
+		const result = await runValidator(root);
+		assert.notEqual(result.code, 0);
+		assert.match(result.stderr, /assets\/mcp-servers\.json/);
+		assert.match(result.stderr, /linear/);
+		assert.match(result.stderr, /mcp\.linear\.app/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("rejects MCP catalog definitions that add unsupported servers", async () => {
+	const root = await createFixture({
+		mcpServers: {
+			schemaVersion: 1,
+			mcpServers: {
+				...mcpServerCatalog.mcpServers,
+				unexpected: { url: "https://example.test/mcp" },
+			},
+		},
+	});
+	try {
+		const result = await runValidator(root);
+		assert.notEqual(result.code, 0);
+		assert.match(result.stderr, /assets\/mcp-servers\.json/);
+		assert.match(result.stderr, /unexpected/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("rejects falsey but valid MCP catalog JSON values", async () => {
+	const root = await createFixture({
+		mcpServers: false,
+	});
+	try {
+		const result = await runValidator(root);
+		assert.notEqual(result.code, 0);
+		assert.match(result.stderr, /assets\/mcp-servers\.json|MCP server catalog/i);
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}

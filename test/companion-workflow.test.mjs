@@ -1,10 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdirSync, readFileSync } from "node:fs";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { createCompanionWorkflow } from "../extensions/companion-workflow.ts";
+
+const mcpServerCatalog = JSON.parse(
+	readFileSync(new URL("../assets/mcp-servers.json", import.meta.url), "utf8"),
+);
 
 async function withMetadataFile(companions, run) {
 	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-companion-workflow-"));
@@ -15,7 +20,7 @@ async function withMetadataFile(companions, run) {
 			JSON.stringify({ schemaVersion: 1, companions }),
 			"utf8",
 		);
-		return await run(metadataPath);
+		return await run({ dir, metadataPath });
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -37,7 +42,7 @@ test("inspect reports companion state and status output through the workflow sea
 			{ package: "alpha", version: "1.0.0" },
 			{ package: "beta", version: "2.0.0" },
 		],
-		async (metadataPath) => {
+		async ({ metadataPath }) => {
 			const { notifications, notify } = createNotifications();
 			const workflow = createCompanionWorkflow({
 				catalog: {
@@ -80,7 +85,7 @@ test("diagnose reports CodeGraph readiness through an explicit diagnostic operat
 			{ package: "alpha", version: "1.0.0" },
 			{ package: "@vndv/pi-codegraph", version: "0.1.10" },
 		],
-		async (metadataPath) => {
+		async ({ metadataPath }) => {
 			const { notifications, notify } = createNotifications();
 			const workflow = createCompanionWorkflow({
 				catalog: {
@@ -112,10 +117,17 @@ test("diagnose reports CodeGraph readiness through an explicit diagnostic operat
 	);
 });
 
-test("installMissing is a no-op when every configured companion is already installed", async () => {
+test("installMissing is a no-op when companions are installed and MCP servers already match the catalog", async () => {
 	await withMetadataFile(
 		[{ package: "alpha", version: "1.0.0" }],
-		async (metadataPath) => {
+		async ({ dir, metadataPath }) => {
+			const agentDirectory = join(dir, "agent");
+			mkdirSync(agentDirectory, { recursive: true });
+			await writeFile(
+				join(agentDirectory, "mcp.json"),
+				`${JSON.stringify({ mcpServers: mcpServerCatalog.mcpServers }, null, 2)}\n`,
+				"utf8",
+			);
 			const { notifications, notify } = createNotifications();
 			let confirmCalls = 0;
 			const installCalls = [];
@@ -135,6 +147,7 @@ test("installMissing is a no-op when every configured companion is already insta
 						return { code: 0 };
 					},
 				},
+				mcp: { agentDirectory },
 			});
 
 			const result = await workflow.installMissing();
@@ -145,7 +158,7 @@ test("installMissing is a no-op when every configured companion is already insta
 			assert.deepEqual(notifications, [
 				{
 					message:
-						"All configured pi-workflow companions are installed at the expected versions.",
+						"pi-workflow companions are installed and MCP servers are already configured.",
 					level: "info",
 				},
 			]);
@@ -153,14 +166,14 @@ test("installMissing is a no-op when every configured companion is already insta
 	);
 });
 
-test("installMissing installs exactly the missing or mismatched companions after confirmation", async () => {
+test("installMissing installs missing companions and configures MCP servers after confirmation", async () => {
 	await withMetadataFile(
 		[
 			{ package: "alpha", version: "1.0.0" },
 			{ package: "beta", version: "2.0.0" },
-			{ package: "gamma", version: "3.0.0" },
 		],
-		async (metadataPath) => {
+		async ({ dir, metadataPath }) => {
+			const agentDirectory = join(dir, "agent");
 			const { notify } = createNotifications();
 			const confirmPrompts = [];
 			const installCalls = [];
@@ -169,8 +182,7 @@ test("installMissing installs exactly the missing or mismatched companions after
 					metadataPath,
 					resolveInstalledVersion: (packageName) => {
 						if (packageName === "alpha") return { version: "1.0.0" };
-						if (packageName === "beta") return {};
-						return { version: "9.9.9" };
+						return {};
 					},
 				},
 				interaction: {
@@ -184,23 +196,309 @@ test("installMissing installs exactly the missing or mismatched companions after
 						return { code: 0 };
 					},
 				},
+				mcp: { agentDirectory },
 			});
 
 			const result = await workflow.installMissing();
 
 			assert.equal(result.outcome, "installed");
 			assert.equal(confirmPrompts.length, 1);
+			assert.match(confirmPrompts[0].title, /install pi-workflow companions and configure mcp servers/i);
 			assert.match(confirmPrompts[0].message, /pi install npm:beta@2\.0\.0/);
-			assert.match(confirmPrompts[0].message, /pi install npm:gamma@3\.0\.0/);
-			assert.deepEqual(installCalls, ["npm:beta@2.0.0", "npm:gamma@3.0.0"]);
+			assert.match(confirmPrompts[0].message, /context7/);
+			assert.deepEqual(installCalls, ["npm:beta@2.0.0"]);
+			const config = JSON.parse(
+				await readFile(join(agentDirectory, "mcp.json"), "utf8"),
+			);
+			assert.deepEqual(config, { mcpServers: mcpServerCatalog.mcpServers });
+			assert.match(result.message ?? "", /Configured pi-workflow MCP servers/);
 		},
 	);
 });
 
-test("installMissing does not invoke pi install when confirmation is declined", async () => {
+test("installMissing prints combined manual guidance without mutating when confirmation is unavailable", async () => {
+	await withMetadataFile(
+		[
+			{ package: "alpha", version: "1.0.0" },
+			{ package: "beta", version: "2.0.0" },
+		],
+		async ({ dir, metadataPath }) => {
+			const agentDirectory = join(dir, "agent");
+			const { notifications, notify } = createNotifications();
+			const workflow = createCompanionWorkflow({
+				catalog: {
+					metadataPath,
+					resolveInstalledVersion: (packageName) => {
+						if (packageName === "alpha") return { version: "1.0.0" };
+						return {};
+					},
+				},
+				interaction: { notify },
+				mcp: { agentDirectory },
+			});
+
+			const result = await workflow.installMissing();
+
+			assert.equal(result.outcome, "manual");
+			assert.equal(notifications.length, 1);
+			assert.match(notifications[0].message, /pi install npm:beta@2\.0\.0/);
+			assert.match(notifications[0].message, /cannot mutate Pi configuration automatically/i);
+			assert.match(notifications[0].message, /mcp\.json/);
+			await assert.rejects(readFile(join(agentDirectory, "mcp.json"), "utf8"));
+		},
+	);
+});
+
+test("installMissing preserves unrelated MCP configuration while merging the catalog", async () => {
+	await withMetadataFile(
+		[{ package: "alpha", version: "1.0.0" }],
+		async ({ dir, metadataPath }) => {
+			const agentDirectory = join(dir, "agent");
+			mkdirSync(agentDirectory, { recursive: true });
+			await writeFile(
+				join(agentDirectory, "mcp.json"),
+				`${JSON.stringify(
+					{
+						telemetry: { enabled: true },
+						mcpServers: {
+							custom: { url: "https://example.test/custom" },
+						},
+					},
+					null,
+					2,
+				)}\n`,
+				"utf8",
+			);
+			const workflow = createCompanionWorkflow({
+				catalog: {
+					metadataPath,
+					resolveInstalledVersion: () => ({ version: "1.0.0" }),
+				},
+				interaction: {
+					notify: () => {},
+					confirm: async () => true,
+				},
+				mcp: { agentDirectory },
+			});
+
+			const result = await workflow.installMissing();
+
+			assert.equal(result.outcome, "installed");
+			const config = JSON.parse(
+				await readFile(join(agentDirectory, "mcp.json"), "utf8"),
+			);
+			assert.deepEqual(config, {
+				telemetry: { enabled: true },
+				mcpServers: {
+					custom: { url: "https://example.test/custom" },
+					...mcpServerCatalog.mcpServers,
+				},
+			});
+		},
+	);
+});
+
+test("installMissing returns canceled and leaves packages and MCP untouched when the user declines", async () => {
+	await withMetadataFile(
+		[
+			{ package: "alpha", version: "1.0.0" },
+			{ package: "beta", version: "2.0.0" },
+		],
+		async ({ dir, metadataPath }) => {
+			const agentDirectory = join(dir, "agent");
+			const confirmPrompts = [];
+			const installCalls = [];
+			const workflow = createCompanionWorkflow({
+				catalog: {
+					metadataPath,
+					resolveInstalledVersion: (packageName) => {
+						if (packageName === "alpha") return { version: "1.0.0" };
+						return {};
+					},
+				},
+				interaction: {
+					notify: () => {},
+					confirm: async (title, message) => {
+						confirmPrompts.push({ title, message });
+						return false;
+					},
+					installPackage: async (spec) => {
+						installCalls.push(spec);
+						return { code: 0 };
+					},
+				},
+				mcp: { agentDirectory },
+			});
+
+			const result = await workflow.installMissing();
+
+			assert.equal(result.outcome, "canceled");
+			assert.equal(confirmPrompts.length, 1);
+			assert.match(
+				result.message ?? "",
+				/Canceled\. No companion packages or MCP configuration were changed\./,
+			);
+			assert.deepEqual(installCalls, []);
+			await assert.rejects(readFile(join(agentDirectory, "mcp.json"), "utf8"));
+		},
+	);
+});
+
+test("installMissing reports partial failure when a companion install exits non-zero during combined companion and MCP work", async () => {
+	await withMetadataFile(
+		[
+			{ package: "alpha", version: "1.0.0" },
+			{ package: "beta", version: "2.0.0" },
+		],
+		async ({ dir, metadataPath }) => {
+			const agentDirectory = join(dir, "agent");
+			const installCalls = [];
+			const workflow = createCompanionWorkflow({
+				catalog: {
+					metadataPath,
+					resolveInstalledVersion: (packageName) => {
+						if (packageName === "alpha") return { version: "1.0.0" };
+						return {};
+					},
+				},
+				interaction: {
+					notify: () => {},
+					confirm: async () => true,
+					installPackage: async (spec) => {
+						installCalls.push(spec);
+						return { code: 23, stderr: "permission denied" };
+					},
+				},
+				mcp: { agentDirectory },
+			});
+
+			const result = await workflow.installMissing();
+
+			assert.equal(result.outcome, "failed");
+			assert.deepEqual(installCalls, ["npm:beta@2.0.0"]);
+			assert.match(
+				result.message ?? "",
+				/Configured pi-workflow MCP servers at .*mcp\.json\./,
+			);
+			assert.match(result.message ?? "", /Some companion installs failed:/);
+			assert.match(
+				result.message ?? "",
+				/npm:beta@2\.0\.0: permission denied/,
+			);
+			assert.doesNotMatch(
+				result.message ?? "",
+				/Installed or updated pi-workflow companions\./,
+			);
+			const config = JSON.parse(
+				await readFile(join(agentDirectory, "mcp.json"), "utf8"),
+			);
+			assert.deepEqual(config, { mcpServers: mcpServerCatalog.mcpServers });
+		},
+	);
+});
+
+test("installMissing reports partial failure when a companion install throws during combined companion and MCP work", async () => {
+	await withMetadataFile(
+		[
+			{ package: "alpha", version: "1.0.0" },
+			{ package: "beta", version: "2.0.0" },
+		],
+		async ({ dir, metadataPath }) => {
+			const agentDirectory = join(dir, "agent");
+			const installCalls = [];
+			const workflow = createCompanionWorkflow({
+				catalog: {
+					metadataPath,
+					resolveInstalledVersion: (packageName) => {
+						if (packageName === "alpha") return { version: "1.0.0" };
+						return {};
+					},
+				},
+				interaction: {
+					notify: () => {},
+					confirm: async () => true,
+					installPackage: async (spec) => {
+						installCalls.push(spec);
+						throw new Error("network down");
+					},
+				},
+				mcp: { agentDirectory },
+			});
+
+			const result = await workflow.installMissing();
+
+			assert.equal(result.outcome, "failed");
+			assert.deepEqual(installCalls, ["npm:beta@2.0.0"]);
+			assert.match(result.message ?? "", /Some companion installs failed:/);
+			assert.match(result.message ?? "", /npm:beta@2\.0\.0: network down/);
+			assert.doesNotMatch(
+				result.message ?? "",
+				/pi-workflow does not connect or authenticate MCP servers during installation/,
+			);
+			const config = JSON.parse(
+				await readFile(join(agentDirectory, "mcp.json"), "utf8"),
+			);
+			assert.deepEqual(config, { mcpServers: mcpServerCatalog.mcpServers });
+		},
+	);
+});
+
+test("installMissing still installs safe companion packages when the existing MCP config is malformed", async () => {
 	await withMetadataFile(
 		[{ package: "beta", version: "2.0.0" }],
-		async (metadataPath) => {
+		async ({ dir, metadataPath }) => {
+			const agentDirectory = join(dir, "agent");
+			mkdirSync(agentDirectory, { recursive: true });
+			const mcpPath = join(agentDirectory, "mcp.json");
+			await writeFile(mcpPath, "{\n  invalid json\n", "utf8");
+			const confirmPrompts = [];
+			const installCalls = [];
+			const workflow = createCompanionWorkflow({
+				catalog: {
+					metadataPath,
+					resolveInstalledVersion: () => ({}),
+				},
+				interaction: {
+					notify: () => {},
+					confirm: async (title, message) => {
+						confirmPrompts.push({ title, message });
+						return true;
+					},
+					installPackage: async (spec) => {
+						installCalls.push(spec);
+						return { code: 0 };
+					},
+				},
+				mcp: { agentDirectory },
+			});
+
+			const result = await workflow.installMissing();
+
+			assert.equal(result.outcome, "failed");
+			assert.equal(confirmPrompts.length, 1);
+			assert.deepEqual(installCalls, ["npm:beta@2.0.0"]);
+			assert.match(
+				result.message ?? "",
+				/Refusing to overwrite malformed JSON at .*mcp\.json/,
+			);
+			assert.match(
+				result.message ?? "",
+				/Edit .*mcp\.json manually and merge these MCP server definitions under top-level "mcpServers":/,
+			);
+			assert.match(
+				result.message ?? "",
+				/Preserve unrelated top-level fields and unrelated MCP servers\./,
+			);
+			assert.equal(await readFile(mcpPath, "utf8"), "{\n  invalid json\n");
+		},
+	);
+});
+
+test("installMissing falls back to manual instructions when confirmation rejects", async () => {
+	await withMetadataFile(
+		[{ package: "beta", version: "2.0.0" }],
+		async ({ dir, metadataPath }) => {
+			const agentDirectory = join(dir, "agent");
 			const { notifications, notify } = createNotifications();
 			const installCalls = [];
 			const workflow = createCompanionWorkflow({
@@ -210,60 +508,89 @@ test("installMissing does not invoke pi install when confirmation is declined", 
 				},
 				interaction: {
 					notify,
-					confirm: async () => false,
+					confirm: async () => {
+						throw new Error("confirmation adapter offline");
+					},
 					installPackage: async (spec) => {
 						installCalls.push(spec);
 						return { code: 0 };
 					},
 				},
+				mcp: { agentDirectory },
 			});
 
 			const result = await workflow.installMissing();
 
-			assert.equal(result.outcome, "canceled");
+			assert.equal(result.outcome, "manual");
 			assert.deepEqual(installCalls, []);
-			assert.deepEqual(notifications.at(-1), {
-				message: "Canceled. No companion packages were installed.",
-				level: "info",
-			});
+			assert.equal(notifications.length, 1);
+			assert.match(
+				notifications[0].message,
+				/confirmation adapter offline/,
+			);
+			assert.match(notifications[0].message, /pi install npm:beta@2\.0\.0/);
+			assert.match(notifications[0].message, /mcp\.json/);
+			await assert.rejects(readFile(join(agentDirectory, "mcp.json"), "utf8"));
 		},
 	);
 });
 
-test("installMissing reports install failures with the existing manual recovery guidance", async () => {
+test("installMissing does not report global success when another companion could not be inspected", async () => {
 	await withMetadataFile(
-		[{ package: "beta", version: "2.0.0" }],
-		async (metadataPath) => {
-			const { notifications, notify } = createNotifications();
+		[
+			{ package: "alpha", version: "1.0.0" },
+			{ package: "beta", version: "2.0.0" },
+		],
+		async ({ dir, metadataPath }) => {
+			const agentDirectory = join(dir, "agent");
+			mkdirSync(agentDirectory, { recursive: true });
+			await writeFile(
+				join(agentDirectory, "mcp.json"),
+				`${JSON.stringify({ mcpServers: mcpServerCatalog.mcpServers }, null, 2)}\n`,
+				"utf8",
+			);
+			const installCalls = [];
 			const workflow = createCompanionWorkflow({
 				catalog: {
 					metadataPath,
-					resolveInstalledVersion: () => ({}),
+					resolveInstalledVersion: (packageName) => {
+						if (packageName === "alpha") {
+							return { error: "package.json unreadable" };
+						}
+						return {};
+					},
 				},
 				interaction: {
-					notify,
+					notify: () => {},
 					confirm: async () => true,
-					installPackage: async () => ({
-						code: 1,
-						stderr: "permission denied",
-					}),
+					installPackage: async (spec) => {
+						installCalls.push(spec);
+						return { code: 0 };
+					},
 				},
+				mcp: { agentDirectory },
 			});
 
 			const result = await workflow.installMissing();
 
 			assert.equal(result.outcome, "failed");
-			assert.deepEqual(notifications.at(-1), {
-				message: [
-					"Some companion installs failed:",
-					"npm:beta@2.0.0: permission denied",
-					"",
-					"Install or update pi-workflow companions manually:",
-					"pi install npm:beta@2.0.0",
-					"Then run /reload.",
-				].join("\n"),
-				level: "error",
-			});
+			assert.deepEqual(installCalls, ["npm:beta@2.0.0"]);
+			assert.match(
+				result.message ?? "",
+				/Some companion versions could not be inspected:/,
+			);
+			assert.match(
+				result.message ?? "",
+				/alpha: package\.json unreadable/,
+			);
+			assert.match(
+				result.message ?? "",
+				/Install or update pi-workflow companions manually:/,
+			);
+			assert.doesNotMatch(
+				result.message ?? "",
+				/pi-workflow does not connect or authenticate MCP servers during installation/,
+			);
 		},
 	);
 });

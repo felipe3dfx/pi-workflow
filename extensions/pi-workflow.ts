@@ -68,6 +68,7 @@ function createWorkflow(
 			directoryExists,
 			...workflowOptions.diagnostics,
 		},
+		mcp: workflowOptions.mcp,
 	});
 }
 
