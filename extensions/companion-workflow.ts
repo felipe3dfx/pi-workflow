@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
@@ -61,6 +61,11 @@ export interface CompanionCatalogAdapters {
 	resolveInstalledVersion?: ResolveInstalledVersion;
 }
 
+type ExecCapability = (
+	command: string,
+	args?: string[],
+) => Promise<{ code: number; stdout?: string; stderr?: string }>;
+
 export interface CompanionInteractionAdapters {
 	notify?: (message: string, level?: NotificationLevel) => void;
 	confirm?: (
@@ -68,16 +73,14 @@ export interface CompanionInteractionAdapters {
 		message: string,
 		options?: unknown,
 	) => Promise<boolean>;
+	exec?: ExecCapability;
 	installPackage?: InstallPackage;
 }
 
 export interface CompanionDiagnosticAdapters {
-	exec: (
-		command: string,
-		args?: string[],
-	) => Promise<{ code: number; stdout?: string; stderr?: string }>;
+	exec: ExecCapability;
 	cwd: () => string;
-	directoryExists: (path: string) => Promise<boolean> | boolean;
+	directoryExists?: (path: string) => Promise<boolean> | boolean;
 }
 
 export interface CodeGraphReadiness {
@@ -317,6 +320,28 @@ function companionInstallSpec(companion: CompanionPackage): string {
 	return `npm:${companion.package}@${companion.version}`;
 }
 
+function defaultDirectoryExists(path: string): boolean {
+	try {
+		return statSync(path).isDirectory();
+	} catch (error) {
+		const code =
+			typeof error === "object" && error !== null
+				? (error as { code?: unknown }).code
+				: undefined;
+		if (code === "ENOENT" || code === "ENOTDIR") return false;
+		throw error;
+	}
+}
+
+function resolveInstallPackage(
+	interaction: CompanionInteractionAdapters,
+): InstallPackage | undefined {
+	if (interaction.installPackage) return interaction.installPackage;
+	if (!interaction.exec) return undefined;
+	const exec = interaction.exec;
+	return (spec) => exec("pi", ["install", spec]);
+}
+
 function statusIcon(status: CompanionStatus): string {
 	if (status === "installed") return "✓";
 	if (status === "version-mismatch") return "!";
@@ -365,7 +390,7 @@ export async function getCodeGraphReadiness({
 	companion,
 	exec,
 	cwd,
-	directoryExists,
+	directoryExists = defaultDirectoryExists,
 }: CompanionDiagnosticAdapters & {
 	companion?: CompanionState;
 }): Promise<CodeGraphReadiness> {
@@ -628,6 +653,7 @@ function manualHarnessInstructions(
 
 async function installCompanionPackages(
 	interaction: CompanionInteractionAdapters,
+	installPackage: InstallPackage | undefined,
 	installable: CompanionState[],
 ): Promise<string[]> {
 	const failures: string[] = [];
@@ -636,7 +662,7 @@ async function installCompanionPackages(
 		const spec = companionInstallSpec(companion);
 		notify(interaction, `Installing ${spec}...`, "info");
 		try {
-			const result = await interaction.installPackage?.(spec);
+			const result = await installPackage?.(spec);
 			if (result?.code !== 0) {
 				failures.push(
 					`${spec}: ${result?.stderr?.trim() || result?.stdout?.trim() || `exit code ${result?.code ?? "unknown"}`}`,
@@ -659,6 +685,7 @@ export function createCompanionWorkflow(
 	const interaction = options.interaction ?? {};
 	const diagnostics = options.diagnostics;
 	const mcp = options.mcp ?? {};
+	const installPackage = resolveInstallPackage(interaction);
 
 	return {
 		async inspect(): Promise<InspectResult> {
@@ -786,7 +813,7 @@ export function createCompanionWorkflow(
 					});
 				}
 
-				if (!interaction.confirm || !interaction.installPackage) {
+				if (!interaction.confirm || !installPackage) {
 					return finish({
 						level: "warning",
 						outcome: "manual",
@@ -835,6 +862,7 @@ export function createCompanionWorkflow(
 
 				const failures = await installCompanionPackages(
 					interaction,
+					installPackage,
 					companionPlan.installable,
 				);
 				const postInstallMessage = [
@@ -920,7 +948,7 @@ export function createCompanionWorkflow(
 			}
 
 			const needsInstallPackage = companionPlan.installable.length > 0;
-			if (!interaction.confirm || (needsInstallPackage && !interaction.installPackage)) {
+			if (!interaction.confirm || (needsInstallPackage && !installPackage)) {
 				return finish({
 					level: "warning",
 					outcome: "manual",
@@ -969,6 +997,7 @@ export function createCompanionWorkflow(
 
 			const failures = await installCompanionPackages(
 				interaction,
+				installPackage,
 				companionPlan.installable,
 			);
 			if (mcpConfigBlocked) {

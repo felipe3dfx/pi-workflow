@@ -1,5 +1,3 @@
-import { statSync } from "node:fs";
-
 import {
 	createCompanionWorkflow,
 	type CompanionWorkflowOptions,
@@ -31,19 +29,6 @@ interface ExtensionAPI {
 	) => void;
 }
 
-function directoryExists(path: string): boolean {
-	try {
-		return statSync(path).isDirectory();
-	} catch (error) {
-		const code =
-			typeof error === "object" && error !== null
-				? (error as { code?: unknown }).code
-				: undefined;
-		if (code === "ENOENT" || code === "ENOTDIR") return false;
-		throw error;
-	}
-}
-
 function createWorkflow(
 	pi: ExtensionAPI,
 	ctx: CommandContext,
@@ -52,6 +37,10 @@ function createWorkflow(
 	return createCompanionWorkflow({
 		catalog: workflowOptions.catalog,
 		interaction: {
+			// exec comes first so tests can override it via workflowOptions.interaction
+			// (the spread below); notify/confirm are intentionally locked after the
+			// spread so callers cannot swap out the real UI adapters.
+			exec: pi.exec,
 			...workflowOptions.interaction,
 			notify: (message, level) => ctx.ui.notify(message, level),
 			confirm:
@@ -60,12 +49,10 @@ function createWorkflow(
 							ctx.ui.confirm?.(title, message, options) ??
 							Promise.resolve(false)
 					: undefined,
-			installPackage: (spec) => pi.exec("pi", ["install", spec]),
 		},
 		diagnostics: {
 			exec: pi.exec,
 			cwd: () => process.cwd(),
-			directoryExists,
 			...workflowOptions.diagnostics,
 		},
 		mcp: workflowOptions.mcp,
