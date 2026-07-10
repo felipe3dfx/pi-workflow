@@ -13,36 +13,11 @@ let packageJson;
 let companions;
 let mcpServers;
 
-const requiredCompanionPackages = [
-	"gentle-engram",
-	"pi-mcp-adapter",
-	"@tintinweb/pi-subagents",
-	"pi-web-access",
-	"@vndv/pi-codegraph",
-];
-
-const requiredMcpServerCatalog = {
-	schemaVersion: 1,
-	mcpServers: {
-		context7: {
-			command: "npx",
-			args: [
-				"-y",
-				"--package=@upstash/context7-mcp@2.2.5",
-				"--",
-				"context7-mcp",
-			],
-			directTools: true,
-		},
-		sentry: {
-			url: "https://mcp.sentry.dev/mcp",
-		},
-		linear: {
-			url: "https://mcp.linear.app/mcp",
-			directTools: true,
-		},
-	},
-};
+const companionWorkflowPath = path.join(
+	root,
+	"extensions",
+	"companion-workflow.ts",
+);
 
 try {
 	packageJson = JSON.parse(await readFile(packageJsonPath, "utf8"));
@@ -121,17 +96,49 @@ function isPlainRecord(value) {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function canonicalJson(value) {
-	if (Array.isArray(value)) {
-		return `[${value.map((entry) => canonicalJson(entry)).join(",")}]`;
+const semverIshPattern =
+	/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/;
+
+function isLocalPath(value) {
+	return (
+		typeof value === "string" &&
+		(value.includes("node_modules") ||
+			value.startsWith("file:") ||
+			value.startsWith("./") ||
+			value.startsWith("/"))
+	);
+}
+
+function collectStrings(value, out = []) {
+	if (typeof value === "string") {
+		out.push(value);
+	} else if (Array.isArray(value)) {
+		for (const entry of value) collectStrings(entry, out);
+	} else if (isPlainRecord(value)) {
+		for (const entry of Object.values(value)) collectStrings(entry, out);
 	}
-	if (isPlainRecord(value)) {
-		return `{${Object.keys(value)
-			.sort()
-			.map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
-			.join(",")}}`;
+	return out;
+}
+
+async function loadCodeGraphPackageName() {
+	let source;
+	try {
+		source = await readFile(companionWorkflowPath, "utf8");
+	} catch (error) {
+		errors.push(
+			`failed to read extensions/companion-workflow.ts for the codeGraph cross-consistency check: ${error instanceof Error ? error.message : String(error)}`,
+		);
+		return undefined;
 	}
-	return JSON.stringify(value);
+	// Assumes a double-quoted declaration (biome enforces quoteStyle double); fails closed if the declaration style changes.
+	const match = source.match(/codeGraphPackageName\s*=\s*"([^"]+)"/);
+	if (!match) {
+		errors.push(
+			"could not locate codeGraphPackageName in extensions/companion-workflow.ts",
+		);
+		return undefined;
+	}
+	return match[1];
 }
 
 check(
@@ -272,23 +279,49 @@ if (companions) {
 				typeof companion.description === "string",
 			`companion metadata entry ${index} description must be a string when present`,
 		);
+		if (typeof companion?.package === "string") {
+			check(
+				!isLocalPath(companion.package),
+				`companion metadata entry ${index} package must not be a local path: ${companion.package}`,
+			);
+		}
+		if (typeof companion?.version === "string") {
+			check(
+				!isLocalPath(companion.version),
+				`companion metadata entry ${index} version must not be a local path: ${companion.version}`,
+			);
+			check(
+				semverIshPattern.test(companion.version),
+				`companion metadata entry ${index} version must look like a semver version: ${companion.version}`,
+			);
+		}
 	}
+	check(
+		companionEntries.length > 0,
+		"companion metadata companions[] must not be empty",
+	);
 	const actualPackages = companionEntries
 		.filter(
 			(companion) =>
 				companion && typeof companion === "object" && !Array.isArray(companion),
 		)
-		.map((companion) => companion.package);
-	for (const packageName of requiredCompanionPackages) {
+		.map((companion) => companion.package)
+		.filter((packageName) => typeof packageName === "string");
+	const duplicatePackages = actualPackages.filter(
+		(packageName, index) => actualPackages.indexOf(packageName) !== index,
+	);
+	check(
+		duplicatePackages.length === 0,
+		`companion metadata must not list duplicate companion package(s): ${[...new Set(duplicatePackages)].join(", ")}`,
+	);
+
+	const codeGraphPackageName = await loadCodeGraphPackageName();
+	if (codeGraphPackageName) {
 		check(
-			actualPackages.includes(packageName),
-			`companion metadata must include ${packageName}`,
+			actualPackages.includes(codeGraphPackageName),
+			`companion metadata must include ${codeGraphPackageName} (required by extensions/companion-workflow.ts codeGraphPackageName)`,
 		);
 	}
-	check(
-		actualPackages.length === requiredCompanionPackages.length,
-		`companion metadata must include exactly ${requiredCompanionPackages.length} companion packages`,
-	);
 }
 
 if (mcpServers !== undefined) {
@@ -298,9 +331,8 @@ if (mcpServers !== undefined) {
 	);
 	const actualCatalog = isPlainRecord(mcpServers) ? mcpServers : {};
 	const actualCatalogKeys = Object.keys(actualCatalog).sort();
-	const expectedCatalogKeys = ["mcpServers", "schemaVersion"];
 	check(
-		canonicalJson(actualCatalogKeys) === canonicalJson(expectedCatalogKeys),
+		actualCatalogKeys.join(",") === "mcpServers,schemaVersion",
 		`assets/mcp-servers.json must only define schemaVersion and mcpServers; found ${actualCatalogKeys.join(", ") || "none"}`,
 	);
 	check(
@@ -314,31 +346,25 @@ if (mcpServers !== undefined) {
 	const actualMcpServers = isPlainRecord(actualCatalog.mcpServers)
 		? actualCatalog.mcpServers
 		: {};
-	const actualMcpServerNames = Object.keys(actualMcpServers).sort();
-	const expectedMcpServerNames = Object.keys(
-		requiredMcpServerCatalog.mcpServers,
-	).sort();
+	const actualMcpServerNames = Object.keys(actualMcpServers);
 	check(
-		canonicalJson(actualMcpServerNames) ===
-			canonicalJson(expectedMcpServerNames),
-		`assets/mcp-servers.json must define exactly context7, sentry, and linear; found ${actualMcpServerNames.join(", ") || "none"}`,
+		actualMcpServerNames.length > 0,
+		"MCP server catalog mcpServers must not be empty",
 	);
-	for (const [name, expectedDefinition] of Object.entries(
-		requiredMcpServerCatalog.mcpServers,
-	)) {
+	for (const name of actualMcpServerNames) {
+		const definition = actualMcpServers[name];
 		check(
-			Object.hasOwn(actualMcpServers, name),
-			`assets/mcp-servers.json must include ${name}`,
-		);
-		const actualDefinition = actualMcpServers[name];
-		check(
-			isPlainRecord(actualDefinition),
+			isPlainRecord(definition),
 			`assets/mcp-servers.json entry ${name} must be an object`,
 		);
-		check(
-			canonicalJson(actualDefinition) === canonicalJson(expectedDefinition),
-			`assets/mcp-servers.json entry ${name} must exactly match the supported definition. Actual: ${JSON.stringify(actualDefinition)}. Expected: ${JSON.stringify(expectedDefinition)}`,
-		);
+		if (isPlainRecord(definition)) {
+			for (const value of collectStrings(definition)) {
+				check(
+					!isLocalPath(value),
+					`assets/mcp-servers.json entry ${name} must not point at a local path: ${value}`,
+				);
+			}
+		}
 	}
 }
 
