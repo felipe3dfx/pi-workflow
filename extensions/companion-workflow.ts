@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import {
 	applyMcpConfiguration,
 	defaultMcpServerCatalogPath,
+	formatJsonBlock,
 	loadMcpServerCatalog,
 	manualMcpConfigurationInstructions,
 	mcpConfigPath,
@@ -110,13 +111,13 @@ export interface InstallMissingResult {
 	outcome:
 		| "metadata-error"
 		| "mcp-catalog-error"
+		| "manual"
+		| "canceled"
+		| "failed"
 		| "config-error"
 		| "noop"
-		| "manual"
 		| "manual-only"
-		| "canceled"
-		| "installed"
-		| "failed";
+		| "installed";
 	message?: string;
 	manualInstructions?: string;
 	installable: CompanionState[];
@@ -503,10 +504,6 @@ function notify(
 	interaction.notify?.(message, level);
 }
 
-function formatJsonBlock(value: unknown): string {
-	return JSON.stringify(value, null, 2);
-}
-
 function formatMcpServerList(
 	names: string[],
 	catalog: McpServerCatalog,
@@ -730,6 +727,40 @@ export function createCompanionWorkflow(
 			}
 
 			const companionPlan = createCompanionInstallPlan(resolvedCatalog.states);
+			// finish() is defined here (not at the top of installMissing) so its
+			// installable/errored defaults can read companionPlan directly; the
+			// metadata-error return above precedes the plan and stays inline.
+			const finish = (options: {
+				level: NotificationLevel;
+				outcome: InstallMissingResult["outcome"];
+				message: string;
+				installable?: InstallMissingResult["installable"];
+				errored?: InstallMissingResult["errored"];
+				failures?: InstallMissingResult["failures"];
+				manualInstructions?: InstallMissingResult["manualInstructions"];
+				mcpPath?: InstallMissingResult["mcpPath"];
+			}): InstallMissingResult => {
+				const {
+					level,
+					outcome,
+					message,
+					installable = companionPlan.installable,
+					errored = companionPlan.errored,
+					failures = [],
+					manualInstructions,
+					mcpPath,
+				} = options;
+				notify(interaction, message, level);
+				return {
+					outcome,
+					message,
+					installable,
+					errored,
+					failures,
+					manualInstructions,
+					mcpPath,
+				};
+			};
 			const loadedMcpCatalog = loadMcpServerCatalog(mcp);
 			if (loadedMcpCatalog.error || !loadedMcpCatalog.catalog) {
 				const manualInstructions = combineManualInstructions(
@@ -746,29 +777,23 @@ export function createCompanionWorkflow(
 				].join("\n");
 
 				if (companionPlan.installable.length === 0) {
-					notify(interaction, message, "error");
-					return {
+					return finish({
+						level: "error",
 						outcome: "mcp-catalog-error",
 						message,
 						manualInstructions,
-						installable: companionPlan.installable,
-						errored: companionPlan.errored,
-						failures: [],
 						mcpPath: mcpConfigPath(mcp),
-					};
+					});
 				}
 
 				if (!interaction.confirm || !interaction.installPackage) {
-					notify(interaction, message, "warning");
-					return {
+					return finish({
+						level: "warning",
 						outcome: "manual",
 						message,
 						manualInstructions,
-						installable: companionPlan.installable,
-						errored: companionPlan.errored,
-						failures: [],
 						mcpPath: mcpConfigPath(mcp),
-					};
+					});
 				}
 
 				const confirmation = installConfirmationMessage(
@@ -788,30 +813,24 @@ export function createCompanionWorkflow(
 						"",
 						manualInstructions,
 					].join("\n");
-					notify(interaction, confirmationMessage, "warning");
-					return {
+					return finish({
+						level: "warning",
 						outcome: "manual",
 						message: confirmationMessage,
 						manualInstructions,
-						installable: companionPlan.installable,
-						errored: companionPlan.errored,
-						failures: [],
 						mcpPath: mcpConfigPath(mcp),
-					};
+					});
 				}
 				if (!confirmed) {
 					const canceledMessage =
 						"Canceled. No companion packages or MCP configuration were changed.";
-					notify(interaction, canceledMessage, "info");
-					return {
+					return finish({
+						level: "info",
 						outcome: "canceled",
 						message: canceledMessage,
 						manualInstructions,
-						installable: companionPlan.installable,
-						errored: companionPlan.errored,
-						failures: [],
 						mcpPath: mcpConfigPath(mcp),
-					};
+					});
 				}
 
 				const failures = await installCompanionPackages(
@@ -825,16 +844,14 @@ export function createCompanionWorkflow(
 					"",
 					manualMcpCatalogInstructions(mcp),
 				].join("\n");
-				notify(interaction, postInstallMessage, "error");
-				return {
+				return finish({
+					level: "error",
 					outcome: "failed",
 					message: postInstallMessage,
-					manualInstructions,
-					installable: companionPlan.installable,
-					errored: companionPlan.errored,
 					failures,
+					manualInstructions,
 					mcpPath: mcpConfigPath(mcp),
-				};
+				});
 			}
 
 			const mcpPlan = planMcpConfiguration(loadedMcpCatalog.catalog, mcp);
@@ -849,16 +866,13 @@ export function createCompanionWorkflow(
 			);
 			if (mcpPlan.error && companionPlan.installable.length === 0) {
 				const message = [mcpPlan.error, "", manualInstructions].join("\n");
-				notify(interaction, message, "error");
-				return {
+				return finish({
+					level: "error",
 					outcome: "config-error",
 					message,
 					manualInstructions,
-					installable: companionPlan.installable,
-					errored: companionPlan.errored,
-					failures: [],
 					mcpPath: mcpPlan.path,
-				};
+				});
 			}
 
 			if (
@@ -868,15 +882,12 @@ export function createCompanionWorkflow(
 			) {
 				const message =
 					"pi-workflow companions are installed and MCP servers are already configured.";
-				notify(interaction, message, "info");
-				return {
+				return finish({
+					level: "info",
 					outcome: "noop",
 					message,
-					installable: [],
-					errored: [],
-					failures: [],
 					mcpPath: mcpPlan.path,
-				};
+				});
 			}
 
 			if (companionPlan.errored.length > 0) {
@@ -896,6 +907,8 @@ export function createCompanionWorkflow(
 			}
 
 			if (companionPlan.installable.length === 0 && !mcpPlan.changed) {
+				// Deliberately not finish(): manual-only emits no notification and
+				// carries no user-facing message, so there is nothing for finish() to do.
 				return {
 					outcome: "manual-only",
 					manualInstructions: companionPlan.manualInstructions,
@@ -908,16 +921,13 @@ export function createCompanionWorkflow(
 
 			const needsInstallPackage = companionPlan.installable.length > 0;
 			if (!interaction.confirm || (needsInstallPackage && !interaction.installPackage)) {
-				notify(interaction, manualInstructions, "warning");
-				return {
+				return finish({
+					level: "warning",
 					outcome: "manual",
 					message: manualInstructions,
 					manualInstructions,
-					installable: companionPlan.installable,
-					errored: companionPlan.errored,
-					failures: [],
 					mcpPath: mcpPlan.path,
-				};
+				});
 			}
 
 			const confirmation = installConfirmationMessage(
@@ -937,30 +947,24 @@ export function createCompanionWorkflow(
 					"",
 					manualInstructions,
 				].join("\n");
-				notify(interaction, message, "warning");
-				return {
+				return finish({
+					level: "warning",
 					outcome: "manual",
 					message,
 					manualInstructions,
-					installable: companionPlan.installable,
-					errored: companionPlan.errored,
-					failures: [],
 					mcpPath: mcpPlan.path,
-				};
+				});
 			}
 			if (!confirmed) {
 				const message =
 					"Canceled. No companion packages or MCP configuration were changed.";
-				notify(interaction, message, "info");
-				return {
+				return finish({
+					level: "info",
 					outcome: "canceled",
 					message,
 					manualInstructions,
-					installable: companionPlan.installable,
-					errored: companionPlan.errored,
-					failures: [],
 					mcpPath: mcpPlan.path,
-				};
+				});
 			}
 
 			const failures = await installCompanionPackages(
@@ -979,16 +983,14 @@ export function createCompanionWorkflow(
 						loadedMcpCatalog.catalog,
 					),
 				].join("\n");
-				notify(interaction, message, "error");
-				return {
+				return finish({
+					level: "error",
 					outcome: "failed",
 					message,
-					manualInstructions,
-					installable: companionPlan.installable,
-					errored: companionPlan.errored,
 					failures,
+					manualInstructions,
 					mcpPath: mcpPlan.path,
-				};
+				});
 			}
 
 			let finalMcpPath = mcpPlan.path;
@@ -1011,20 +1013,18 @@ export function createCompanionWorkflow(
 							loadedMcpCatalog.catalog,
 						),
 					].join("\n");
-					notify(interaction, message, "error");
-					return {
+					return finish({
+						level: "error",
 						outcome: "failed",
 						message,
+						failures,
 						manualInstructions: manualHarnessInstructions(
 							companionPlan,
 							mcpPlan,
 							loadedMcpCatalog.catalog,
 						),
-						installable: companionPlan.installable,
-						errored: companionPlan.errored,
-						failures,
 						mcpPath: mcpPlan.path,
-					};
+					});
 				}
 
 				if (applyOutcome.status === "write-failed") {
@@ -1039,20 +1039,18 @@ export function createCompanionWorkflow(
 							loadedMcpCatalog.catalog,
 						),
 					].join("\n");
-					notify(interaction, message, "error");
-					return {
+					return finish({
+						level: "error",
 						outcome: "failed",
 						message,
+						failures,
 						manualInstructions: manualHarnessInstructions(
 							companionPlan,
 							latestMcpPlan,
 							loadedMcpCatalog.catalog,
 						),
-						installable: companionPlan.installable,
-						errored: companionPlan.errored,
-						failures,
 						mcpPath: latestMcpPlan.path,
-					};
+					});
 				}
 
 				if (applyOutcome.status === "refused-concurrent-change") {
@@ -1070,20 +1068,18 @@ export function createCompanionWorkflow(
 							loadedMcpCatalog.catalog,
 						),
 					].join("\n");
-					notify(interaction, message, "error");
-					return {
+					return finish({
+						level: "error",
 						outcome: "failed",
 						message,
+						failures,
 						manualInstructions: manualHarnessInstructions(
 							companionPlan,
 							latestMcpPlan,
 							loadedMcpCatalog.catalog,
 						),
-						installable: companionPlan.installable,
-						errored: companionPlan.errored,
-						failures,
 						mcpPath: mcpPlan.path,
-					};
+					});
 				}
 
 				finalMcpPath = applyOutcome.path;
@@ -1103,16 +1099,14 @@ export function createCompanionWorkflow(
 					"",
 					"Run /reload after the companion installs are fixed. Authenticate Sentry/Linear as needed.",
 				].join("\n");
-				notify(interaction, message, "error");
-				return {
+				return finish({
+					level: "error",
 					outcome: "failed",
 					message,
-					manualInstructions: companionPlan.manualInstructions,
-					installable: companionPlan.installable,
-					errored: companionPlan.errored,
 					failures,
+					manualInstructions: companionPlan.manualInstructions,
 					mcpPath: finalMcpPath,
-				};
+				});
 			}
 			if (companionPlan.errored.length > 0) {
 				const unresolvedInstructions = manualInstallInstructions(
@@ -1131,16 +1125,13 @@ export function createCompanionWorkflow(
 					"",
 					"Run /reload after the unresolved companions are fixed. Authenticate Sentry/Linear as needed.",
 				].join("\n");
-				notify(interaction, message, "error");
-				return {
+				return finish({
+					level: "error",
 					outcome: "failed",
 					message,
 					manualInstructions: unresolvedInstructions,
-					installable: companionPlan.installable,
-					errored: companionPlan.errored,
-					failures: [],
 					mcpPath: finalMcpPath,
-				};
+				});
 			}
 
 			const actionSummary =
@@ -1149,16 +1140,13 @@ export function createCompanionWorkflow(
 					: configuredMcp;
 			const message =
 				`${actionSummary} Run /reload. Authenticate Sentry/Linear as needed. pi-workflow does not connect or authenticate MCP servers during installation.`;
-			notify(interaction, message, "info");
-			return {
+			return finish({
+				level: "info",
 				outcome: "installed",
 				message,
 				manualInstructions,
-				installable: companionPlan.installable,
-				errored: companionPlan.errored,
-				failures: [],
 				mcpPath: finalMcpPath,
-			};
+			});
 		},
 	};
 }
