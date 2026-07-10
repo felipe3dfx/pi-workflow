@@ -311,6 +311,163 @@ test("reports scoped companions installed from an explicit Pi node_modules path"
 	}
 });
 
+test("PI_WORKFLOW_COMPANION_NODE_MODULES takes precedence over the fake HOME copy when both define the package", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-precedence-"));
+	const envSnapshot = {
+		HOME: process.env.HOME,
+		PI_AGENT_HOME: process.env.PI_AGENT_HOME,
+		PI_WORKFLOW_COMPANION_NODE_MODULES:
+			process.env.PI_WORKFLOW_COMPANION_NODE_MODULES,
+	};
+	try {
+		delete process.env.PI_AGENT_HOME;
+		const envNodeModules = join(dir, "env-node-modules");
+		await writePackageFixture(envNodeModules, "precedence-fixture-pkg", {
+			version: "3.0.0",
+		});
+		await writePackageFixture(
+			join(dir, ".pi", "agent", "npm", "node_modules"),
+			"precedence-fixture-pkg",
+			{ version: "2.0.0" },
+		);
+		process.env.HOME = dir;
+		process.env.PI_WORKFLOW_COMPANION_NODE_MODULES = envNodeModules;
+
+		const metadataPath = join(dir, "companions.json");
+		await writeFile(
+			metadataPath,
+			JSON.stringify({
+				companions: [{ package: "precedence-fixture-pkg", version: "3.0.0" }],
+			}),
+			"utf8",
+		);
+
+		const workflow = createCompanionWorkflow({ catalog: { metadataPath } });
+		const { message } = await workflow.inspect();
+
+		assert.match(message, /precedence-fixture-pkg@3\.0\.0 — installed 3\.0\.0, installed/);
+		assert.doesNotMatch(message, /installed 2\.0\.0/);
+	} finally {
+		restoreEnv(envSnapshot);
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("PI_AGENT_HOME overrides HOME for the agent-home node_modules path", async () => {
+	const ignoredHome = await mkdtemp(join(tmpdir(), "pi-workflow-agent-home-ignored-"));
+	const agentHomeDir = await mkdtemp(join(tmpdir(), "pi-workflow-agent-home-active-"));
+	const envSnapshot = {
+		HOME: process.env.HOME,
+		PI_AGENT_HOME: process.env.PI_AGENT_HOME,
+		PI_WORKFLOW_COMPANION_NODE_MODULES:
+			process.env.PI_WORKFLOW_COMPANION_NODE_MODULES,
+	};
+	try {
+		delete process.env.PI_WORKFLOW_COMPANION_NODE_MODULES;
+		await writePackageFixture(
+			join(ignoredHome, ".pi", "agent", "npm", "node_modules"),
+			"agent-home-fixture-pkg",
+			{ version: "1.2.3" },
+		);
+		await writePackageFixture(
+			join(agentHomeDir, "npm", "node_modules"),
+			"agent-home-fixture-pkg",
+			{ version: "4.5.6" },
+		);
+		process.env.HOME = ignoredHome;
+		process.env.PI_AGENT_HOME = agentHomeDir;
+
+		const metadataPath = join(agentHomeDir, "companions.json");
+		await writeFile(
+			metadataPath,
+			JSON.stringify({
+				companions: [{ package: "agent-home-fixture-pkg", version: "4.5.6" }],
+			}),
+			"utf8",
+		);
+
+		const workflow = createCompanionWorkflow({ catalog: { metadataPath } });
+		const { message } = await workflow.inspect();
+
+		assert.match(message, /agent-home-fixture-pkg@4\.5\.6 — installed 4\.5\.6, installed/);
+		assert.doesNotMatch(message, /installed 1\.2\.3/);
+	} finally {
+		restoreEnv(envSnapshot);
+		await rm(ignoredHome, { recursive: true, force: true });
+		await rm(agentHomeDir, { recursive: true, force: true });
+	}
+});
+
+test("reports error status when the installed package.json does not define a version", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-no-version-"));
+	const envSnapshot = {
+		PI_WORKFLOW_COMPANION_NODE_MODULES:
+			process.env.PI_WORKFLOW_COMPANION_NODE_MODULES,
+	};
+	try {
+		const nodeModulesPath = join(dir, "node_modules");
+		await writePackageFixture(nodeModulesPath, "no-version-fixture-pkg", {});
+		process.env.PI_WORKFLOW_COMPANION_NODE_MODULES = nodeModulesPath;
+
+		const metadataPath = join(dir, "companions.json");
+		await writeFile(
+			metadataPath,
+			JSON.stringify({
+				companions: [{ package: "no-version-fixture-pkg", version: "1.0.0" }],
+			}),
+			"utf8",
+		);
+
+		const workflow = createCompanionWorkflow({ catalog: { metadataPath } });
+		const { message } = await workflow.inspect();
+
+		assert.match(message, /no-version-fixture-pkg@1\.0\.0 — error/);
+		assert.match(message, /does not define a version/);
+	} finally {
+		restoreEnv(envSnapshot);
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("reports error status with the underlying error when the installed package.json is unreadable", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-unreadable-"));
+	const envSnapshot = {
+		PI_WORKFLOW_COMPANION_NODE_MODULES:
+			process.env.PI_WORKFLOW_COMPANION_NODE_MODULES,
+	};
+	try {
+		const nodeModulesPath = join(dir, "node_modules");
+		const packageJsonAsDirectory = join(
+			nodeModulesPath,
+			"unreadable-fixture-pkg",
+			"package.json",
+		);
+		// ponytail: a directory named package.json is a portable way to force an
+		// unreadable/non-JSON read failure without relying on chmod, which is
+		// unreliable across CI file systems (e.g. when running as root).
+		mkdirSync(packageJsonAsDirectory, { recursive: true });
+		process.env.PI_WORKFLOW_COMPANION_NODE_MODULES = nodeModulesPath;
+
+		const metadataPath = join(dir, "companions.json");
+		await writeFile(
+			metadataPath,
+			JSON.stringify({
+				companions: [{ package: "unreadable-fixture-pkg", version: "1.0.0" }],
+			}),
+			"utf8",
+		);
+
+		const workflow = createCompanionWorkflow({ catalog: { metadataPath } });
+		const { message } = await workflow.inspect();
+
+		assert.match(message, /unreadable-fixture-pkg@1\.0\.0 — error/);
+		assert.doesNotMatch(message, /unreadable-fixture-pkg@1\.0\.0 — .*missing/);
+	} finally {
+		restoreEnv(envSnapshot);
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
 test("reports metadata load errors instead of treating corrupt metadata as healthy", async () => {
 	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-companions-"));
 	try {
@@ -511,6 +668,55 @@ test("install command configures the exact MCP catalog after confirmation", asyn
 		assert.match(notifications[0].message, /Configured pi-workflow MCP servers/);
 		assert.match(notifications[0].message, /\/reload/);
 		assert.match(notifications[0].message, /Authenticate Sentry\/Linear/);
+	} finally {
+		restoreEnv(envSnapshot);
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
+test("install command drives the real pi.exec adapter for a version-mismatched companion", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-mismatch-install-"));
+	const nodeModulesPath = join(dir, "companions", "node_modules");
+	const envSnapshot = {
+		HOME: process.env.HOME,
+		PI_AGENT_HOME: process.env.PI_AGENT_HOME,
+		PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR,
+		PI_WORKFLOW_COMPANION_NODE_MODULES:
+			process.env.PI_WORKFLOW_COMPANION_NODE_MODULES,
+	};
+	try {
+		for (const configuredCompanion of companionMetadata.companions) {
+			const installedVersion =
+				configuredCompanion.package === codeGraphCompanion.package
+					? "0.0.1"
+					: configuredCompanion.version;
+			await writePackageFixture(nodeModulesPath, configuredCompanion.package, {
+				version: installedVersion,
+			});
+		}
+		process.env.HOME = dir;
+		delete process.env.PI_AGENT_HOME;
+		delete process.env.PI_CODING_AGENT_DIR;
+		process.env.PI_WORKFLOW_COMPANION_NODE_MODULES = nodeModulesPath;
+		mkdirSync(join(dir, ".pi", "agent"), { recursive: true });
+		await writeFile(
+			join(dir, ".pi", "agent", "mcp.json"),
+			`${JSON.stringify({ mcpServers: mcpServerCatalog.mcpServers }, null, 2)}\n`,
+			"utf8",
+		);
+
+		const { commands, execCalls } = createExtensionHarness();
+		await commands.get("pi-workflow-install-companions").handler("", {
+			hasUI: true,
+			ui: {
+				confirm: async () => true,
+				notify: () => {},
+			},
+		});
+
+		assert.deepEqual(execCalls, [
+			{ command: "pi", args: ["install", "npm:@vndv/pi-codegraph@0.1.10"] },
+		]);
 	} finally {
 		restoreEnv(envSnapshot);
 		await rm(dir, { recursive: true, force: true });

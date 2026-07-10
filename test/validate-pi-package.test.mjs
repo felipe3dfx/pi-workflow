@@ -63,10 +63,19 @@ function baselinePackageJson(overrides = {}) {
 	};
 }
 
+const codeGraphPackageName = "@vndv/pi-codegraph";
+
+function companionWorkflowSource(packageName = codeGraphPackageName) {
+	return `const codeGraphPackageName = "${packageName}";\nexport { codeGraphPackageName };\n`;
+}
+
 async function createFixture({
 	packageJson = baselinePackageJson(),
 	companions = { schemaVersion: 1, companions: companionEntries },
 	mcpServers = mcpServerCatalog,
+	companionsRaw,
+	mcpServersRaw,
+	companionWorkflow = companionWorkflowSource(),
 } = {}) {
 	const root = await mkdtemp(join(tmpdir(), "pi-workflow-validator-"));
 	await mkdir(join(root, "assets"), { recursive: true });
@@ -77,16 +86,22 @@ async function createFixture({
 	);
 	await writeFile(
 		join(root, "assets", "companions.json"),
-		`${JSON.stringify(companions, null, 2)}\n`,
+		companionsRaw ?? `${JSON.stringify(companions, null, 2)}\n`,
 	);
 	await writeFile(
 		join(root, "assets", "mcp-servers.json"),
-		`${JSON.stringify(mcpServers, null, 2)}\n`,
+		mcpServersRaw ?? `${JSON.stringify(mcpServers, null, 2)}\n`,
 	);
 	await writeFile(
 		join(root, "extensions", "pi-workflow.ts"),
 		"export default function piWorkflowExtension() {}\n",
 	);
+	if (companionWorkflow !== null) {
+		await writeFile(
+			join(root, "extensions", "companion-workflow.ts"),
+			companionWorkflow,
+		);
+	}
 	return root;
 }
 
@@ -134,12 +149,12 @@ test("rejects pi manifest paths that point into node_modules", async () => {
 	}
 });
 
-test("rejects companion metadata that omits a required companion package", async () => {
+test("rejects companion metadata missing the codeGraph companion required by extensions/companion-workflow.ts", async () => {
 	const root = await createFixture({
 		companions: {
 			schemaVersion: 1,
 			companions: companionEntries.filter(
-				(companion) => companion.package !== "@vndv/pi-codegraph",
+				(companion) => companion.package !== codeGraphPackageName,
 			),
 		},
 	});
@@ -155,43 +170,129 @@ test("rejects companion metadata that omits a required companion package", async
 	}
 });
 
-test("rejects MCP catalog entries that drift from the exact supported definitions", async () => {
+test("fails loudly when codeGraphPackageName cannot be located in extensions/companion-workflow.ts", async () => {
 	const root = await createFixture({
-		mcpServers: {
-			schemaVersion: 1,
-			mcpServers: {
-				context7: mcpServerCatalog.mcpServers.context7,
-				sentry: mcpServerCatalog.mcpServers.sentry,
-				linear: { url: "https://example.test/mcp" },
-			},
-		},
+		companionWorkflow: "export default function noop() {}\n",
 	});
 	try {
 		const result = await runValidator(root);
 		assert.notEqual(result.code, 0);
-		assert.match(result.stderr, /assets\/mcp-servers\.json/);
-		assert.match(result.stderr, /linear/);
-		assert.match(result.stderr, /mcp\.linear\.app/);
+		assert.match(result.stderr, /could not locate codeGraphPackageName/);
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
 });
 
-test("rejects MCP catalog definitions that add unsupported servers", async () => {
+test("rejects an empty companion list", async () => {
+	const root = await createFixture({
+		companions: { schemaVersion: 1, companions: [] },
+	});
+	try {
+		const result = await runValidator(root);
+		assert.notEqual(result.code, 0);
+		assert.match(result.stderr, /companions\[\] must not be empty/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("rejects duplicate companion package names", async () => {
+	const root = await createFixture({
+		companions: {
+			schemaVersion: 1,
+			companions: [...companionEntries, companionEntries[0]],
+		},
+	});
+	try {
+		const result = await runValidator(root);
+		assert.notEqual(result.code, 0);
+		assert.match(result.stderr, /duplicate companion package/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("rejects companion entries pointing at local paths", async () => {
+	const root = await createFixture({
+		companions: {
+			schemaVersion: 1,
+			companions: [
+				...companionEntries.filter((c) => c.package !== "pi-web-access"),
+				{ package: "pi-web-access", version: "file:../pi-web-access" },
+			],
+		},
+	});
+	try {
+		const result = await runValidator(root);
+		assert.notEqual(result.code, 0);
+		assert.match(result.stderr, /must not be a local path/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("rejects malformed JSON in assets/companions.json", async () => {
+	const root = await createFixture({ companionsRaw: "{ not json" });
+	try {
+		const result = await runValidator(root);
+		assert.notEqual(result.code, 0);
+		assert.match(result.stderr, /failed to read or parse companion metadata/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("rejects malformed JSON in assets/mcp-servers.json", async () => {
+	const root = await createFixture({ mcpServersRaw: "{ not json" });
+	try {
+		const result = await runValidator(root);
+		assert.notEqual(result.code, 0);
+		assert.match(result.stderr, /failed to read or parse MCP server catalog/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("rejects an MCP catalog missing schemaVersion", async () => {
+	const root = await createFixture({
+		mcpServers: { mcpServers: mcpServerCatalog.mcpServers },
+	});
+	try {
+		const result = await runValidator(root);
+		assert.notEqual(result.code, 0);
+		assert.match(result.stderr, /schemaVersion must be 1/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("rejects an empty MCP server catalog", async () => {
+	const root = await createFixture({
+		mcpServers: { schemaVersion: 1, mcpServers: {} },
+	});
+	try {
+		const result = await runValidator(root);
+		assert.notEqual(result.code, 0);
+		assert.match(result.stderr, /mcpServers must not be empty/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("rejects MCP server definitions containing local file paths", async () => {
 	const root = await createFixture({
 		mcpServers: {
 			schemaVersion: 1,
 			mcpServers: {
 				...mcpServerCatalog.mcpServers,
-				unexpected: { url: "https://example.test/mcp" },
+				local: { command: "./scripts/run-mcp.sh" },
 			},
 		},
 	});
 	try {
 		const result = await runValidator(root);
 		assert.notEqual(result.code, 0);
-		assert.match(result.stderr, /assets\/mcp-servers\.json/);
-		assert.match(result.stderr, /unexpected/);
+		assert.match(result.stderr, /must not point at a local path/);
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}

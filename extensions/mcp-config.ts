@@ -247,7 +247,7 @@ export function planMcpConfiguration(
 	};
 }
 
-function formatJsonBlock(value: unknown): string {
+export function formatJsonBlock(value: unknown): string {
 	return JSON.stringify(value, null, 2);
 }
 

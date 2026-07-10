@@ -216,6 +216,45 @@ test("installMissing installs missing companions and configures MCP servers afte
 	);
 });
 
+test("installMissing builds the pi install command from a generic exec capability, the way production wires it", async () => {
+	await withMetadataFile(
+		[{ package: "alpha", version: "1.0.0" }],
+		async ({ dir, metadataPath }) => {
+			const agentDirectory = join(dir, "agent");
+			mkdirSync(agentDirectory, { recursive: true });
+			await writeFile(
+				join(agentDirectory, "mcp.json"),
+				`${JSON.stringify({ mcpServers: mcpServerCatalog.mcpServers }, null, 2)}\n`,
+				"utf8",
+			);
+			const { notify } = createNotifications();
+			const execCalls = [];
+			const workflow = createCompanionWorkflow({
+				catalog: {
+					metadataPath,
+					resolveInstalledVersion: () => ({}),
+				},
+				interaction: {
+					notify,
+					confirm: async () => true,
+					exec: async (command, args) => {
+						execCalls.push({ command, args });
+						return { code: 0 };
+					},
+				},
+				mcp: { agentDirectory },
+			});
+
+			const result = await workflow.installMissing();
+
+			assert.equal(result.outcome, "installed");
+			assert.deepEqual(execCalls, [
+				{ command: "pi", args: ["install", "npm:alpha@1.0.0"] },
+			]);
+		},
+	);
+});
+
 test("installMissing prints combined manual guidance without mutating when confirmation is unavailable", async () => {
 	await withMetadataFile(
 		[
@@ -243,6 +282,50 @@ test("installMissing prints combined manual guidance without mutating when confi
 			assert.equal(notifications.length, 1);
 			assert.match(notifications[0].message, /pi install npm:beta@2\.0\.0/);
 			assert.match(notifications[0].message, /cannot mutate Pi configuration automatically/i);
+			assert.match(notifications[0].message, /mcp\.json/);
+			await assert.rejects(readFile(join(agentDirectory, "mcp.json"), "utf8"));
+		},
+	);
+});
+
+test("installMissing falls back to manual instructions when confirm exists but no install adapter is provided", async () => {
+	await withMetadataFile(
+		[
+			{ package: "alpha", version: "1.0.0" },
+			{ package: "beta", version: "2.0.0" },
+		],
+		async ({ dir, metadataPath }) => {
+			const agentDirectory = join(dir, "agent");
+			const { notifications, notify } = createNotifications();
+			let confirmCalls = 0;
+			const workflow = createCompanionWorkflow({
+				catalog: {
+					metadataPath,
+					resolveInstalledVersion: (packageName) => {
+						if (packageName === "alpha") return { version: "1.0.0" };
+						return {};
+					},
+				},
+				interaction: {
+					notify,
+					confirm: async () => {
+						confirmCalls += 1;
+						return true;
+					},
+				},
+				mcp: { agentDirectory },
+			});
+
+			const result = await workflow.installMissing();
+
+			assert.equal(result.outcome, "manual");
+			assert.equal(confirmCalls, 0);
+			assert.equal(notifications.length, 1);
+			assert.match(notifications[0].message, /pi install npm:beta@2\.0\.0/);
+			assert.match(
+				notifications[0].message,
+				/cannot mutate Pi configuration automatically/i,
+			);
 			assert.match(notifications[0].message, /mcp\.json/);
 			await assert.rejects(readFile(join(agentDirectory, "mcp.json"), "utf8"));
 		},
