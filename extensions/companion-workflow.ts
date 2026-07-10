@@ -28,7 +28,7 @@ interface CompanionMetadata {
 	companions: CompanionPackage[];
 }
 
-export type CompanionStatus =
+type CompanionStatus =
 	| "missing"
 	| "version-mismatch"
 	| "installed"
