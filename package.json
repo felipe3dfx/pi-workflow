@@ -1,6 +1,6 @@
 {
   "name": "@felipe.3dfx/pi-workflow",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Pi workflow meta-configuration package for explicit companion package setup.",
   "license": "MIT",
