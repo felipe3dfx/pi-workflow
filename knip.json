@@ -1,7 +1,7 @@
 {
   "$schema": "https://unpkg.com/knip@latest/schema.json",
-  "ignore": [
-    "extensions/*.ts"
+  "entry": [
+    "extensions/pi-workflow.ts"
   ],
   "ignoreDependencies": [
     "@tintinweb/pi-subagents",

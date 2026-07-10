@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import {
-	companionStatusLines,
+	createCompanionWorkflow,
 	getCodeGraphReadiness,
 	getCompanionState,
 	loadCompanionsFromPath,
@@ -258,12 +258,15 @@ test("reports companions installed from Pi's npm package directory", async () =>
 		);
 		process.env.HOME = dir;
 
-		const { lines, level } = await companionStatusLines(
-			"pi-workflow companion status",
-			false,
-			{ companions: [companion] },
+		const metadataPath = join(dir, "companions.json");
+		await writeFile(
+			metadataPath,
+			JSON.stringify({ companions: [companion] }),
+			"utf8",
 		);
-		const message = lines.join("\n");
+
+		const workflow = createCompanionWorkflow({ catalog: { metadataPath } });
+		const { message, level } = await workflow.inspect();
 
 		assert.equal(level, "info");
 		assert.match(message, /gentle-engram@0\.1\.10/);
@@ -288,12 +291,15 @@ test("reports scoped companions installed from an explicit Pi node_modules path"
 		});
 		process.env.PI_WORKFLOW_COMPANION_NODE_MODULES = dir;
 
-		const { lines, level } = await companionStatusLines(
-			"pi-workflow companion status",
-			false,
-			{ companions: [codeGraphCompanion] },
+		const metadataPath = join(dir, "companions.json");
+		await writeFile(
+			metadataPath,
+			JSON.stringify({ companions: [codeGraphCompanion] }),
+			"utf8",
 		);
-		const message = lines.join("\n");
+
+		const workflow = createCompanionWorkflow({ catalog: { metadataPath } });
+		const { message, level } = await workflow.inspect();
 
 		assert.equal(level, "info");
 		assert.match(message, /@vndv\/pi-codegraph@0\.1\.10/);
@@ -331,39 +337,36 @@ test("formats manual install fallback instructions for failed automatic installs
 });
 
 test("reports CodeGraph as recommended and missing without implying auto-installation", async () => {
-	const { lines, level } = await companionStatusLines(
-		"pi-workflow companion status",
-		false,
-		{
-			companions: [codeGraphCompanion],
-			resolveInstalledVersion: () => ({}),
-		},
-	);
-	const message = lines.join("\n");
+	await withMetadataFile([codeGraphCompanion], async ({ metadataPath }) => {
+		const workflow = createCompanionWorkflow({
+			catalog: { metadataPath, resolveInstalledVersion: () => ({}) },
+		});
+		const { message, level } = await workflow.inspect();
 
-	assert.equal(level, "warning");
-	assert.match(message, /@vndv\/pi-codegraph@0\.1\.10/);
-	assert.match(message, /recommended/i);
-	assert.match(message, /missing/);
-	assert.match(message, /pi install npm:@vndv\/pi-codegraph@0\.1\.10/);
-	assert.doesNotMatch(message, /auto-installed|automatically installed/i);
+		assert.equal(level, "warning");
+		assert.match(message, /@vndv\/pi-codegraph@0\.1\.10/);
+		assert.match(message, /recommended/i);
+		assert.match(message, /missing/);
+		assert.match(message, /pi install npm:@vndv\/pi-codegraph@0\.1\.10/);
+		assert.doesNotMatch(message, /auto-installed|automatically installed/i);
+	});
 });
 
 test("reports CodeGraph as installed when the companion is available", async () => {
-	const { lines, level } = await companionStatusLines(
-		"pi-workflow companion status",
-		false,
-		{
-			companions: [codeGraphCompanion],
-			resolveInstalledVersion: () => ({ version: "0.1.10" }),
-		},
-	);
-	const message = lines.join("\n");
+	await withMetadataFile([codeGraphCompanion], async ({ metadataPath }) => {
+		const workflow = createCompanionWorkflow({
+			catalog: {
+				metadataPath,
+				resolveInstalledVersion: () => ({ version: "0.1.10" }),
+			},
+		});
+		const { message, level } = await workflow.inspect();
 
-	assert.equal(level, "info");
-	assert.match(message, /@vndv\/pi-codegraph@0\.1\.10/);
-	assert.match(message, /installed/);
-	assert.doesNotMatch(message, /missing/);
+		assert.equal(level, "info");
+		assert.match(message, /@vndv\/pi-codegraph@0\.1\.10/);
+		assert.match(message, /installed/);
+		assert.doesNotMatch(message, /missing/);
+	});
 });
 
 test("reports CodeGraph CLI readiness when the CLI is missing", async () => {
@@ -443,22 +446,23 @@ test("doctor notification warns when CodeGraph CLI readiness is missing", async 
 });
 
 test("doctor notification warns when CodeGraph index readiness is missing", async () => {
-	const { lines, level } = await companionStatusLines(
-		"pi-workflow companion doctor",
-		true,
-		{
-			companions: [codeGraphCompanion],
-			resolveInstalledVersion: () => ({ version: "0.1.10" }),
-			diagnosticAdapters: {
+	await withMetadataFile([codeGraphCompanion], async ({ metadataPath }) => {
+		const workflow = createCompanionWorkflow({
+			catalog: {
+				metadataPath,
+				resolveInstalledVersion: () => ({ version: "0.1.10" }),
+			},
+			diagnostics: {
 				exec: async () => ({ code: 0, stdout: "codegraph 0.1.0" }),
 				cwd: () => "/tmp/project",
 				directoryExists: async () => false,
 			},
-		},
-	);
+		});
+		const { message, level } = await workflow.diagnose();
 
-	assert.equal(level, "warning");
-	assert.match(lines.join("\n"), /CodeGraph index: missing/);
+		assert.equal(level, "warning");
+		assert.match(message, /CodeGraph index: missing/);
+	});
 });
 
 test("install command configures the exact MCP catalog after confirmation", async () => {

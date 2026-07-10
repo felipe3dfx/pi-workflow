@@ -18,6 +18,18 @@ The curated and versioned selection of companion packages required for the compl
 
 _Avoid_: companion configuration, workflow profile, package bundle
 
+### MCP server catalog
+
+The curated and versioned selection of MCP servers that the complete pi-workflow harness expects to be configured. It is the source of truth for expected MCP server definitions, parallel to the companion catalog: it owns which servers and definitions are expected, not how the user's environment is mutated.
+
+_Avoid_: MCP config, mcp-servers file
+
+### MCP configuration
+
+The harness flow that aligns the user's MCP setup with the MCP server catalog. It plans the required changes, applies them only during an explicit companion install, and refuses to write when the user's MCP setup changed concurrently since planning.
+
+_Avoid_: MCP setup, mcp.json editing
+
 ### Degraded harness
 
 A pi-workflow harness state where one or more required companion packages are missing, mismatched, or unreadable. The harness may still run, and mismatches may be intentional user choices, but status and doctor flows must still make the gap explicit and guide the user back to the expected companion catalog.
