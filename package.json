@@ -39,7 +39,8 @@
     "check:focused-tests": "node scripts/forbid-focused-tests.mjs",
     "check:publish": "node scripts/validate-pi-package.mjs",
     "check:typecheck": "tsc --noEmit",
-    "check": "npm run check:biome && npm run check:typecheck && npm run check:focused-tests && npm run check:publish && node --test test/*.test.mjs && npm run pack:dry-run",
+    "check:knip": "knip",
+    "check": "npm run check:biome && npm run check:typecheck && npm run check:knip && npm run check:focused-tests && npm run check:publish && node --test test/*.test.mjs && npm run pack:dry-run",
     "prepublishOnly": "npm run check"
   },
   "pi": {
@@ -53,6 +54,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.3",
     "@types/node": "^22.20.1",
+    "knip": "^6.25.0",
     "typescript": "^7.0.2"
   }
 }
