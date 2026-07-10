@@ -434,9 +434,7 @@ test("installMissing reports refused-concurrent-change when the MCP config chang
 			assert.equal(result.outcome, "failed");
 			assert.match(
 				result.message ?? "",
-				new RegExp(
-					`MCP configuration at .*mcp\\.json changed after preview\\. No MCP configuration changes were written\\.`,
-				),
+				/MCP configuration at .*mcp\.json changed after preview\. No MCP configuration changes were written\./,
 			);
 			assert.ok(result.manualInstructions && result.manualInstructions.length > 0);
 			assert.deepEqual(
@@ -482,9 +480,7 @@ test("installMissing reports reread-failed with the restored message when the co
 			assert.equal(result.outcome, "failed");
 			assert.match(
 				result.message ?? "",
-				new RegExp(
-					`MCP configuration at .*mcp\\.json could not be re-read after confirmation: Refusing to overwrite malformed JSON`,
-				),
+				/MCP configuration at .*mcp\.json could not be re-read after confirmation: Refusing to overwrite malformed JSON/,
 			);
 			assert.match(result.message ?? "", /No MCP configuration changes were written\./);
 			assert.ok(!/written automatically/.test(result.message ?? ""));
@@ -526,9 +522,7 @@ test("installMissing reports write-failed when the MCP config cannot be written 
 				assert.equal(result.outcome, "failed");
 				assert.match(
 					result.message ?? "",
-					new RegExp(
-						`Could not write pi-workflow MCP servers to .*mcp\\.json: `,
-					),
+					/Could not write pi-workflow MCP servers to .*mcp\.json: /,
 				);
 				assert.match(
 					result.message ?? "",
