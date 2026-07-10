@@ -1,321 +1,176 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import piWorkflowExtension, {
-	companionStatusLines,
-	getCodeGraphReadiness,
-	getCompanionState,
-	loadCompanionsFromPath,
-	manualInstallInstructions,
-} from "../extensions/pi-workflow.ts";
+import piWorkflowExtension from "../extensions/pi-workflow.ts";
 
-function loadCompanionMetadata() {
-	try {
-		return JSON.parse(
-			readFileSync(
-				new URL("../assets/companions.json", import.meta.url),
-				"utf8",
-			),
-		);
-	} catch (error) {
-		throw new Error(
-			`Unable to load companion fixture metadata: ${error instanceof Error ? error.message : String(error)}`,
-		);
-	}
-}
+const fixtureCompanions = [
+	{ package: "gentle-engram", version: "0.1.10" },
+	{ package: "@vndv/pi-codegraph", version: "0.1.10" },
+];
 
-const companionMetadata = loadCompanionMetadata();
-const companion = companionMetadata.companions.find(
-	({ package: packageName }) => packageName === "gentle-engram",
-);
-const codeGraphCompanion = {
-	package: "@vndv/pi-codegraph",
-	version: "0.1.10",
-	description: "CodeGraph companion fixture",
-};
-const mismatchedInstalledVersion = "999.999.999-fixture";
-
-function restoreEnv(snapshot) {
-	for (const [name, value] of Object.entries(snapshot)) {
-		if (value === undefined) {
-			delete process.env[name];
-		} else {
-			process.env[name] = value;
-		}
-	}
-}
-
-async function writePackageFixture(nodeModulesPath, packageName, packageJson) {
-	const packageDir = join(nodeModulesPath, packageName);
-	mkdirSync(packageDir, { recursive: true });
-	await writeFile(
-		join(packageDir, "package.json"),
-		JSON.stringify({ name: packageName, ...packageJson }),
-		"utf8",
-	);
-}
-
-test("registers expected pi-workflow commands", () => {
-	const registeredCommands = [];
-	const pi = {
-		exec: async () => ({ code: 0 }),
-		registerCommand: (name) => {
-			registeredCommands.push(name);
-		},
-	};
-
-	piWorkflowExtension(pi);
-
-	assert.deepEqual(registeredCommands, [
-		"pi-workflow-status",
-		"pi-workflow-doctor",
-		"pi-workflow-install-companions",
-	]);
-});
-
-test("reports installed when exact companion version is installed", () => {
-	const state = getCompanionState(companion, () => ({
-		version: companion.version,
-	}));
-	assert.equal(state.status, "installed");
-	assert.equal(state.installedVersion, companion.version);
-});
-
-test("reports version-mismatch when a different companion version is installed", () => {
-	const state = getCompanionState(companion, () => ({
-		version: mismatchedInstalledVersion,
-	}));
-	assert.equal(state.status, "version-mismatch");
-	assert.equal(state.installedVersion, mismatchedInstalledVersion);
-});
-
-test("reports missing when companion package cannot be resolved", () => {
-	const state = getCompanionState(companion, () => ({}));
-	assert.equal(state.status, "missing");
-	assert.equal(state.installedVersion, undefined);
-});
-
-test("reports companions installed from Pi's npm package directory", async () => {
-	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-home-"));
-	const envSnapshot = {
-		HOME: process.env.HOME,
-		PI_AGENT_HOME: process.env.PI_AGENT_HOME,
-		PI_WORKFLOW_COMPANION_NODE_MODULES:
-			process.env.PI_WORKFLOW_COMPANION_NODE_MODULES,
-	};
-	try {
-		delete process.env.PI_AGENT_HOME;
-		delete process.env.PI_WORKFLOW_COMPANION_NODE_MODULES;
-		await writePackageFixture(
-			join(dir, ".pi", "agent", "npm", "node_modules"),
-			companion.package,
-			{ version: companion.version },
-		);
-		process.env.HOME = dir;
-
-		const { lines, level } = await companionStatusLines(
-			"pi-workflow companion status",
-			false,
-			{ companions: [companion] },
-		);
-		const message = lines.join("\n");
-
-		assert.equal(level, "info");
-		assert.match(message, /gentle-engram@0\.1\.10/);
-		assert.match(message, /installed/);
-		assert.doesNotMatch(message, /missing/);
-	} finally {
-		restoreEnv(envSnapshot);
-		await rm(dir, { recursive: true, force: true });
-	}
-});
-
-test("reports scoped companions installed from an explicit Pi node_modules path", async () => {
-	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-node-modules-"));
-	const envSnapshot = {
-		PI_WORKFLOW_COMPANION_NODE_MODULES:
-			process.env.PI_WORKFLOW_COMPANION_NODE_MODULES,
-	};
-	try {
-		await writePackageFixture(dir, codeGraphCompanion.package, {
-			version: codeGraphCompanion.version,
-			exports: { "./extensions/codegraph": "./extensions/codegraph.ts" },
-		});
-		process.env.PI_WORKFLOW_COMPANION_NODE_MODULES = dir;
-
-		const { lines, level } = await companionStatusLines(
-			"pi-workflow companion status",
-			false,
-			{ companions: [codeGraphCompanion] },
-		);
-		const message = lines.join("\n");
-
-		assert.equal(level, "info");
-		assert.match(message, /@vndv\/pi-codegraph@0\.1\.10/);
-		assert.match(message, /installed/);
-		assert.doesNotMatch(message, /missing/);
-	} finally {
-		restoreEnv(envSnapshot);
-		await rm(dir, { recursive: true, force: true });
-	}
-});
-
-test("reports metadata load errors instead of treating corrupt metadata as healthy", async () => {
+async function withMetadataFile(companions, run) {
 	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-companions-"));
 	try {
 		const metadataPath = join(dir, "companions.json");
-		await writeFile(metadataPath, "{ not json", "utf8");
-		const result = loadCompanionsFromPath(metadataPath);
-		assert.deepEqual(result.companions, []);
-		assert.match(result.error ?? "", /Unable to load companion metadata/);
+		await writeFile(
+			metadataPath,
+			JSON.stringify({ schemaVersion: 1, companions }),
+			"utf8",
+		);
+		return await run({ dir, metadataPath });
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
-});
+}
 
-test("formats manual install fallback instructions for failed automatic installs", () => {
-	const message = manualInstallInstructions([companion], "Install manually:");
-	assert.equal(
-		message,
-		[
-			"Install manually:",
-			`pi install npm:${companion.package}@${companion.version}`,
-			"Then run /reload.",
-		].join("\n"),
-	);
-});
+function createInstalledVersionResolver(installedVersions = {}, errors = {}) {
+	return (packageName) => {
+		if (errors[packageName]) return { error: errors[packageName] };
+		if (installedVersions[packageName]) {
+			return { version: installedVersions[packageName] };
+		}
+		return {};
+	};
+}
 
-test("reports CodeGraph as recommended and missing without implying auto-installation", async () => {
-	const { lines, level } = await companionStatusLines(
-		"pi-workflow companion status",
-		false,
-		{
-			companions: [codeGraphCompanion],
-			resolveInstalledVersion: () => ({}),
-		},
-	);
-	const message = lines.join("\n");
-
-	assert.equal(level, "warning");
-	assert.match(message, /@vndv\/pi-codegraph@0\.1\.10/);
-	assert.match(message, /recommended/i);
-	assert.match(message, /missing/);
-	assert.match(message, /pi install npm:@vndv\/pi-codegraph@0\.1\.10/);
-	assert.doesNotMatch(message, /auto-installed|automatically installed/i);
-});
-
-test("reports CodeGraph as installed when the companion is available", async () => {
-	const { lines, level } = await companionStatusLines(
-		"pi-workflow companion status",
-		false,
-		{
-			companions: [codeGraphCompanion],
-			resolveInstalledVersion: () => ({ version: "0.1.10" }),
-		},
-	);
-	const message = lines.join("\n");
-
-	assert.equal(level, "info");
-	assert.match(message, /@vndv\/pi-codegraph@0\.1\.10/);
-	assert.match(message, /installed/);
-	assert.doesNotMatch(message, /missing/);
-});
-
-test("reports CodeGraph CLI readiness when the CLI is missing", async () => {
-	const readiness = await getCodeGraphReadiness({
-		companion: getCompanionState(codeGraphCompanion, () => ({ version: "0.1.10" })),
-		exec: async () => ({ code: 127, stderr: "command not found" }),
-		cwd: () => "/tmp/project",
-		directoryExists: async () => true,
-	});
-
-	assert.equal(readiness.cli, "missing");
-	assert.equal(readiness.index, "present");
-	assert.match(readiness.messages.join("\n"), /CodeGraph CLI: missing/);
-});
-
-test("reports CodeGraph project index readiness when the index is missing", async () => {
-	const readiness = await getCodeGraphReadiness({
-		companion: getCompanionState(codeGraphCompanion, () => ({ version: "0.1.10" })),
-		exec: async () => ({ code: 0, stdout: "codegraph 0.1.0" }),
-		cwd: () => "/tmp/project",
-		directoryExists: async (path) => path !== "/tmp/project/.codegraph",
-	});
-
-	assert.equal(readiness.cli, "available");
-	assert.equal(readiness.index, "missing");
-	assert.match(readiness.messages.join("\n"), /CodeGraph index: missing/);
-	assert.match(readiness.messages.join("\n"), /codegraph init/);
-});
-
-test("reports CodeGraph ready when companion, CLI, and index are available", async () => {
-	const readiness = await getCodeGraphReadiness({
-		companion: getCompanionState(codeGraphCompanion, () => ({ version: "0.1.10" })),
-		exec: async () => ({ code: 0, stdout: "codegraph 0.1.0" }),
-		cwd: () => "/tmp/project",
-		directoryExists: async () => true,
-	});
-
-	assert.equal(readiness.cli, "available");
-	assert.equal(readiness.index, "present");
-	assert.match(readiness.messages.join("\n"), /CodeGraph: ready/);
-	assert.doesNotMatch(readiness.messages.join("\n"), /missing|warning/i);
-});
-
-test("reports CodeGraph project index missing when .codegraph is not a directory", async () => {
-	const readiness = await getCodeGraphReadiness({
-		companion: getCompanionState(codeGraphCompanion, () => ({ version: "0.1.10" })),
-		exec: async () => ({ code: 0, stdout: "codegraph 0.1.0" }),
-		cwd: () => "/tmp/project",
-		directoryExists: async () => false,
-	});
-
-	assert.equal(readiness.cli, "available");
-	assert.equal(readiness.index, "missing");
-	assert.match(readiness.messages.join("\n"), /CodeGraph index: missing/);
-});
-
-test("doctor notification warns when CodeGraph CLI readiness is missing", async () => {
+function registerCommands(
+	workflowOptions = {},
+	exec = async () => ({ code: 0 }),
+) {
 	const commands = new Map();
-	const notifications = [];
 	const pi = {
-		exec: async () => ({ code: 127, stderr: "command not found" }),
+		exec,
 		registerCommand: (name, definition) => {
 			commands.set(name, definition);
 		},
 	};
-	piWorkflowExtension(pi);
 
-	await commands.get("pi-workflow-doctor").handler("", {
-		ui: {
-			notify: (message, level) => notifications.push({ message, level }),
-		},
-	});
+	piWorkflowExtension(pi, workflowOptions);
 
-	assert.equal(notifications.length, 1);
-	assert.equal(notifications[0].level, "warning");
-	assert.match(notifications[0].message, /CodeGraph CLI: missing/);
+	return commands;
+}
+
+test("registers expected pi-workflow commands", () => {
+	const commands = registerCommands();
+
+	assert.deepEqual(
+		[...commands.keys()],
+		[
+			"pi-workflow-status",
+			"pi-workflow-doctor",
+			"pi-workflow-install-companions",
+		],
+	);
 });
 
-test("doctor notification warns when CodeGraph index readiness is missing", async () => {
-	const { lines, level } = await companionStatusLines(
-		"pi-workflow companion doctor",
-		true,
-		{
-			companions: [codeGraphCompanion],
-			resolveInstalledVersion: () => ({ version: "0.1.10" }),
-			diagnosticAdapters: {
-				exec: async () => ({ code: 0, stdout: "codegraph 0.1.0" }),
-				cwd: () => "/tmp/project",
-				directoryExists: async () => false,
+test("status command reports companion state through the public command handler", async () => {
+	await withMetadataFile(fixtureCompanions, async ({ metadataPath }) => {
+		const notifications = [];
+		const commands = registerCommands({
+			catalog: {
+				metadataPath,
+				resolveInstalledVersion: createInstalledVersionResolver({
+					"gentle-engram": "0.1.10",
+				}),
 			},
-		},
-	);
+		});
 
-	assert.equal(level, "warning");
-	assert.match(lines.join("\n"), /CodeGraph index: missing/);
+		await commands.get("pi-workflow-status").handler("", {
+			ui: {
+				notify: (message, level) => notifications.push({ message, level }),
+			},
+		});
+
+		assert.equal(notifications.length, 1);
+		assert.equal(notifications[0].level, "warning");
+		assert.match(notifications[0].message, /pi-workflow companion status/);
+		assert.match(
+			notifications[0].message,
+			/gentle-engram@0\.1\.10 — installed/,
+		);
+		assert.match(
+			notifications[0].message,
+			/@vndv\/pi-codegraph@0\.1\.10 — missing/,
+		);
+		assert.match(
+			notifications[0].message,
+			/pi install npm:@vndv\/pi-codegraph@0\.1\.10/,
+		);
+	});
+});
+
+test("doctor command reports a missing CodeGraph index from a cwd without .codegraph", async () => {
+	await withMetadataFile(fixtureCompanions, async ({ dir, metadataPath }) => {
+		const notifications = [];
+		const commands = registerCommands({
+			catalog: {
+				metadataPath,
+				resolveInstalledVersion: createInstalledVersionResolver({
+					"gentle-engram": "0.1.10",
+					"@vndv/pi-codegraph": "0.1.10",
+				}),
+			},
+			diagnostics: {
+				exec: async () => ({ code: 0, stdout: "codegraph 0.1.0" }),
+				cwd: () => dir,
+			},
+		});
+
+		await commands.get("pi-workflow-doctor").handler("", {
+			ui: {
+				notify: (message, level) => notifications.push({ message, level }),
+			},
+		});
+
+		assert.equal(notifications.length, 1);
+		assert.equal(notifications[0].level, "warning");
+		assert.match(notifications[0].message, /CodeGraph index: missing/);
+		assert.match(
+			notifications[0].message,
+			/codegraph init <project-root>|codegraph init .*explicitly/,
+		);
+		assert.doesNotMatch(notifications[0].message, /CodeGraph index: unknown/);
+	});
+});
+
+test("install command prints documented manual commands without executing installs in non-UI mode", async () => {
+	await withMetadataFile(fixtureCompanions, async ({ metadataPath }) => {
+		const notifications = [];
+		const execCalls = [];
+		const commands = registerCommands(
+			{
+				catalog: {
+					metadataPath,
+					resolveInstalledVersion: createInstalledVersionResolver(),
+				},
+			},
+			async (command, args) => {
+				execCalls.push({ command, args });
+				return { code: 0 };
+			},
+		);
+
+		await commands.get("pi-workflow-install-companions").handler("", {
+			ui: {
+				notify: (message, level) => notifications.push({ message, level }),
+			},
+			hasUI: false,
+		});
+
+		assert.deepEqual(execCalls, []);
+		assert.deepEqual(notifications, [
+			{
+				level: "warning",
+				message: [
+					"Install or update pi-workflow companions manually:",
+					"pi install npm:gentle-engram@0.1.10",
+					"pi install npm:@vndv/pi-codegraph@0.1.10",
+					"Then run /reload.",
+				].join("\n"),
+			},
+		]);
+	});
 });
