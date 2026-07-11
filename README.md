@@ -51,6 +51,23 @@ Then reload Pi again so companion resources are loaded:
 
 In non-UI contexts, the install command prints the exact `pi install npm:<pkg>@<version>` commands instead of installing automatically.
 
+### Agent asset inspection and planning
+
+The packaged CLI previews the agent assets managed by `pi-workflow`:
+
+```bash
+pi-workflow-sync inspect
+pi-workflow-sync plan
+```
+
+Both commands are strictly read-only and return JSON with `mutation: "none"`; they never create, replace, migrate, or delete files. `inspect` reports ownership and drift. `plan` translates that snapshot into proposed `create`, `replace`, or `migrate` actions. A `refusal` means planning detected managed drift, an unmanaged collision, or a newer installed version and will not propose an unsafe mutation. Follow the returned diagnostic/remediation—normally back up or move the named file, repair/remove a malformed manifest, fix permissions, reinstall a damaged package, or upgrade `pi-workflow`—then rerun the command.
+
+Inspection digests bind the exact catalog, manifest identity/content, packaged sources, and observed existence/content digest of every target. Plan digests include that inspection digest, so a changed managed predecessor produces a different preview and must be replanned. Canonical ordering keeps unchanged snapshots deterministic.
+
+Interrupting either command cancels the preview, returns no usable assets/actions, performs zero writes, and exits with status `130`. Blocked/refused previews exit `1`; successful read-only previews exit `0`; invalid CLI usage exits `2`.
+
+Applying a plan is intentionally out of scope for T03 and is not implemented by this CLI.
+
 ### MCP setup
 
 The companion install flow also manages the Pi MCP catalog from [`assets/mcp-servers.json`](assets/mcp-servers.json).
@@ -131,7 +148,8 @@ Out of scope:
 - silently installing companion packages;
 - automatically initializing CodeGraph indexes;
 - proprietary company workflow behavior;
-- automatic companion upgrades.
+- automatic companion upgrades;
+- applying `pi-workflow-sync` plans (T03 remains read-only inspect/plan only).
 
 ## Package design
 

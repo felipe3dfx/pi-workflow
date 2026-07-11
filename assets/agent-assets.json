@@ -1,0 +1,215 @@
+{
+  "schemaVersion": 1,
+  "assets": [
+    {
+      "kind": "agent",
+      "name": "Explore",
+      "version": 1,
+      "source": "assets/agents/Explore.md",
+      "digest": "ba7d30985bc3430bad7e7d801edff86dddf531f3daec23043809921cb25ca719"
+    },
+    {
+      "kind": "agent",
+      "name": "Plan",
+      "version": 1,
+      "source": "assets/agents/Plan.md",
+      "digest": "e29a1503eb815acc34fe32b116b893001934047e30ce7f3fc16e3eb2766ca276"
+    },
+    {
+      "kind": "agent",
+      "name": "general-purpose",
+      "version": 1,
+      "source": "assets/agents/general-purpose.md",
+      "digest": "cf8e1ac9014351f08d1826dc5de58f8dbdb0fd1c2d03375a07026f72dd0f0ba2"
+    },
+    {
+      "kind": "agent",
+      "name": "jd-fix-agent",
+      "version": 1,
+      "source": "assets/agents/jd-fix-agent.md",
+      "digest": "000867abe1f03aac95c36d8d5a6f447e06daa358c25bcfbe84cc13f08dd3584d"
+    },
+    {
+      "kind": "agent",
+      "name": "jd-judge-a",
+      "version": 1,
+      "source": "assets/agents/jd-judge-a.md",
+      "digest": "90ad4e9fa58234b7b0c00561b4473f65316aef855f384acc02adccc68b5c0278"
+    },
+    {
+      "kind": "agent",
+      "name": "jd-judge-b",
+      "version": 1,
+      "source": "assets/agents/jd-judge-b.md",
+      "digest": "07d48bf353e7a62af9a83b9aeb162f88ced6335e93bb85767ff5bdd1298dc9eb"
+    },
+    {
+      "kind": "agent",
+      "name": "orchestrator",
+      "version": 1,
+      "source": "assets/agents/orchestrator.md",
+      "digest": "d9894585e3317773ec91f4856f10977b0f7d031e4c8aa0f4607ef87aa9e9ab4a"
+    },
+    {
+      "kind": "agent",
+      "name": "prepare-commit",
+      "version": 1,
+      "source": "assets/agents/prepare-commit.md",
+      "digest": "94ed1e993552c956ce5eae95afa3313021b8b69b8f10b3978c300b7dfba84814"
+    },
+    {
+      "kind": "agent",
+      "name": "product-review",
+      "version": 1,
+      "source": "assets/agents/product-review.md",
+      "digest": "577140895dc3e6e8756bbdd9c7b0f3ffd0c5d3cbbf1eee48272c9b2f237766b2"
+    },
+    {
+      "kind": "agent",
+      "name": "prototype",
+      "version": 1,
+      "source": "assets/agents/prototype.md",
+      "digest": "672241c920e4bdb482d09e9d9776cdaf8803e0843d7e122399f531390315413e"
+    },
+    {
+      "kind": "agent",
+      "name": "research",
+      "version": 1,
+      "source": "assets/agents/research.md",
+      "digest": "e2c3374e0a91b6fc04e54720453c52d7e03f9ff8bfeb5c00ee262690f5725a08"
+    },
+    {
+      "kind": "agent",
+      "name": "review-readability",
+      "version": 1,
+      "source": "assets/agents/review-readability.md",
+      "digest": "a73931c468c3042760325fe3bc0bd11e89fa9da0a307b75107a05c2ee2a519cf"
+    },
+    {
+      "kind": "agent",
+      "name": "review-reliability",
+      "version": 1,
+      "source": "assets/agents/review-reliability.md",
+      "digest": "b0ca9d752e2790b9bf6e2598b45286a5edf185b7cf77cd6b82ad3b63504ede64"
+    },
+    {
+      "kind": "agent",
+      "name": "review-resilience",
+      "version": 1,
+      "source": "assets/agents/review-resilience.md",
+      "digest": "f001dfd18fa69e112ad9ca7c17c27facf9d01957734fb69e7bae9fea5d96be10"
+    },
+    {
+      "kind": "agent",
+      "name": "review-risk",
+      "version": 1,
+      "source": "assets/agents/review-risk.md",
+      "digest": "2bbc386b03ccac49fb2f78daaa1e46523fab4f5c87671fecc6c3c0e3cbe3f190"
+    },
+    {
+      "kind": "agent",
+      "name": "sdd-apply",
+      "version": 1,
+      "source": "assets/agents/sdd-apply.md",
+      "digest": "2150e26e4241ddba054e478c768fc3858706a78da3dbcd074a019ce0048f7bdf"
+    },
+    {
+      "kind": "agent",
+      "name": "sdd-archive",
+      "version": 1,
+      "source": "assets/agents/sdd-archive.md",
+      "digest": "a1586f9ba07294f91f04b49dafdc1c36b7aa7e818d0fb44c0ae7171d455a6375"
+    },
+    {
+      "kind": "agent",
+      "name": "sdd-design",
+      "version": 1,
+      "source": "assets/agents/sdd-design.md",
+      "digest": "ca0f4e3b36730ba3ca4ae777d734c19d2a209a1091b9fbf66fca6fb6d7a4051e"
+    },
+    {
+      "kind": "agent",
+      "name": "sdd-explore",
+      "version": 1,
+      "source": "assets/agents/sdd-explore.md",
+      "digest": "1316d7524183bc7eeaae4341d28eb095e1ec7217df19fa7060fb4e338ecbaebb"
+    },
+    {
+      "kind": "agent",
+      "name": "sdd-init",
+      "version": 1,
+      "source": "assets/agents/sdd-init.md",
+      "digest": "9564061c3568f9333944dd7500aaff5bd7d27ac318d000608189012adb8b636e"
+    },
+    {
+      "kind": "agent",
+      "name": "sdd-onboard",
+      "version": 1,
+      "source": "assets/agents/sdd-onboard.md",
+      "digest": "5887b9836866813e5412c706aaca108988ef0499f05fa4212f512d8bfab00e9c"
+    },
+    {
+      "kind": "agent",
+      "name": "sdd-proposal",
+      "version": 1,
+      "source": "assets/agents/sdd-proposal.md",
+      "digest": "12a53844abebdd1013ef1a3e60a666fc362a6ac960972e04eb6991496ece0d8a"
+    },
+    {
+      "kind": "agent",
+      "name": "sdd-spec",
+      "version": 1,
+      "source": "assets/agents/sdd-spec.md",
+      "digest": "ebf664d006d46c63268eafaf257023db76556f9e98c74288903e3febb0cfbe59"
+    },
+    {
+      "kind": "agent",
+      "name": "sdd-status",
+      "version": 1,
+      "source": "assets/agents/sdd-status.md",
+      "digest": "db598b3ac711b6021bfec3dfa79260bb12e6404f227815e3562f4d61bcdea6e6"
+    },
+    {
+      "kind": "agent",
+      "name": "sdd-sync",
+      "version": 1,
+      "source": "assets/agents/sdd-sync.md",
+      "digest": "218e1a7185aabf2e833b8fd9e6d4c16054f95a729b5282c8d6803a66790dfd1a"
+    },
+    {
+      "kind": "agent",
+      "name": "sdd-tasks",
+      "version": 1,
+      "source": "assets/agents/sdd-tasks.md",
+      "digest": "b61de793e2070009091a0afdc77ece70ee0b4da385fd064451f1e1f3b47458e9"
+    },
+    {
+      "kind": "agent",
+      "name": "sdd-verify",
+      "version": 1,
+      "source": "assets/agents/sdd-verify.md",
+      "digest": "dd5970a08a806b83a572f64040a4311acda5000ddbf3b1a945907d37d46605b1"
+    },
+    {
+      "kind": "agent",
+      "name": "simplify",
+      "version": 1,
+      "source": "assets/agents/simplify.md",
+      "digest": "e6134fdbca6b4e644b136ba82f14449ff24726da8b662a5595c83238305840d6"
+    },
+    {
+      "kind": "agent",
+      "name": "to-spec",
+      "version": 1,
+      "source": "assets/agents/to-spec.md",
+      "digest": "ec47ff7c44df12967ce753f2bace19b15dd70c33fe0dfea26860c696595cb73c"
+    },
+    {
+      "kind": "agent",
+      "name": "to-tickets",
+      "version": 1,
+      "source": "assets/agents/to-tickets.md",
+      "digest": "ba988be24c8d65bf9cd561b50d5f71e4800621a8e31f318c1b6083e254192bad"
+    }
+  ]
+}
