@@ -13,6 +13,8 @@ interface AgentAssetSyncCommandApi {
 		plan: AgentAssetPlan,
 		options: AgentAssetApplyOptions,
 	): Promise<AgentAssetApplyResult>;
+	resume(operationId: string): Promise<AgentAssetApplyResult>;
+	rollback(operationId: string): Promise<AgentAssetApplyResult>;
 }
 
 export interface SyncCommandAdapters {
@@ -27,8 +29,19 @@ export async function runSyncCommand(
 	adapters: SyncCommandAdapters,
 ): Promise<number> {
 	const command = args[0];
-	if (command !== "inspect" && command !== "plan" && command !== "apply") {
-		adapters.write("Usage: pi-workflow-sync <inspect|plan|apply>");
+	const operationId = args[1];
+	const usage =
+		"Usage: pi-workflow-sync <inspect|plan|apply|resume <operationId>|rollback <operationId>>";
+	const isPreview =
+		(command === "inspect" || command === "plan" || command === "apply") &&
+		args.length === 1;
+	const isRecovery =
+		(command === "resume" || command === "rollback") &&
+		args.length === 2 &&
+		typeof operationId === "string" &&
+		/^[a-f0-9]{64}$/.test(operationId);
+	if (!isPreview && !isRecovery) {
+		adapters.write(usage);
 		return 2;
 	}
 
@@ -38,11 +51,13 @@ export async function runSyncCommand(
 				? await adapters.sync.apply(
 						await adapters.sync.plan({ signal: adapters.signal }),
 						{
-							signal: adapters.signal,
-							confirm: adapters.confirm ?? (async () => false),
-						},
-					)
-				: await adapters.sync[command]({ signal: adapters.signal });
+						signal: adapters.signal,
+						confirm: adapters.confirm ?? (async () => false),
+					},
+				)
+				: command === "resume" || command === "rollback"
+					? await adapters.sync[command](operationId as string)
+					: await adapters.sync[command]({ signal: adapters.signal });
 		adapters.write(JSON.stringify(result, null, 2));
 		if (result.status === "canceled") return 130;
 		return result.status === "blocked" ? 1 : 0;
