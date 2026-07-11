@@ -29,7 +29,9 @@
     "package.json",
     "LICENSE",
     "extensions/",
-    "assets/"
+    "assets/",
+    "skills/",
+    "prompts/"
   ],
   "scripts": {
     "pack:dry-run": "npm pack --dry-run",
@@ -37,15 +39,23 @@
     "format": "biome format --write .",
     "check:biome": "biome check --formatter-enabled=false .",
     "check:focused-tests": "node scripts/forbid-focused-tests.mjs",
+    "generate:public-workflows": "node scripts/generate-public-workflows.mjs --write",
+    "check:generated": "node scripts/generate-public-workflows.mjs --check",
     "check:publish": "node scripts/validate-pi-package.mjs",
     "check:typecheck": "tsc --noEmit",
     "check:knip": "knip",
-    "check": "npm run check:biome && npm run check:typecheck && npm run check:knip && npm run check:focused-tests && npm run check:publish && node --test test/*.test.mjs && npm run pack:dry-run",
+    "check": "npm run check:biome && npm run check:typecheck && npm run check:knip && npm run check:focused-tests && npm run check:generated && npm run check:publish && node --test test/*.test.mjs && npm run pack:dry-run",
     "prepublishOnly": "npm run check"
   },
   "pi": {
     "extensions": [
       "./extensions/pi-workflow.ts"
+    ],
+    "skills": [
+      "./skills"
+    ],
+    "prompts": [
+      "./prompts"
     ]
   },
   "engines": {
@@ -53,8 +63,10 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.3",
+    "@earendil-works/pi-coding-agent": "0.80.6",
     "@types/node": "^22.20.1",
     "knip": "^6.25.0",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "yaml": "2.9.0"
   }
 }

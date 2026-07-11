@@ -101,6 +101,7 @@ function createExtensionHarness(execImpl = async () => ({ code: 0 })) {
 			execCalls.push({ command, args });
 			return execImpl(command, args);
 		},
+		on: () => {},
 		registerCommand: (name, definition) => {
 			commands.set(name, definition);
 		},
@@ -118,6 +119,7 @@ function registerCommands(
 	const commands = new Map();
 	const pi = {
 		exec,
+		on: () => {},
 		registerCommand: (name, definition) => {
 			commands.set(name, definition);
 		},
@@ -132,6 +134,7 @@ test("registers expected pi-workflow commands", () => {
 	const registeredCommands = [];
 	const pi = {
 		exec: async () => ({ code: 0 }),
+		on: () => {},
 		registerCommand: (name) => {
 			registeredCommands.push(name);
 		},
@@ -585,6 +588,7 @@ test("doctor notification warns when CodeGraph CLI readiness is missing", async 
 	const notifications = [];
 	const pi = {
 		exec: async () => ({ code: 127, stderr: "command not found" }),
+		on: () => {},
 		registerCommand: (name, definition) => {
 			commands.set(name, definition);
 		},
