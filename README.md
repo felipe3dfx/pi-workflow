@@ -2,7 +2,13 @@
 
 A public Pi meta-configuration package for the `pi-workflow` foundation setup.
 
-This package exposes only its own Pi extension. Companion packages such as Engram, MCP adapter, subagents, web access, and CodeGraph are installed explicitly as independent Pi packages so their ownership, updates, and resources stay transparent.
+This package exposes its own Pi extension plus four native workflow skills and four homonymous prompt templates. Companion packages such as Engram, MCP adapter, subagents, web access, and CodeGraph are installed explicitly as independent Pi packages so their ownership, updates, and resources stay transparent.
+
+## Public workflow boundary
+
+`/define-product`, `/deliver-ticket`, `/qa-handoff`, `/product-review`, and their matching `/skill:<name>` forms are admitted only from idle interactive Pi input. RPC, extension, steering, follow-up, and reentrant invocations are blocked before prompt or skill expansion. While an admitted public-entry turn is pending, the extension blocks every tool call; later workflow modules must enforce authority before any mutation.
+
+This is not human authentication. The approved workflow defines Owner and Developer as Pi users, while QA and PS operate only in Linear, but it defines no role credential or runtime configuration. Human role membership therefore remains an organizational access boundary: this package cannot authenticate an interactive person as Owner rather than QA or PS.
 
 ## Requirements
 
@@ -110,10 +116,12 @@ Configured companions:
 In scope:
 
 - one local `pi-workflow` helper extension;
+- four public workflow skills and four thin homonymous prompt templates;
 - status and doctor commands for configured companions;
 - CodeGraph companion, CLI, and project-index readiness diagnostics;
 - explicit companion installation after user confirmation;
 - exact companion versions controlled by this repository;
+- deterministic generation of public skills and prompts from `scripts/public-workflow-catalog.mjs`;
 - install and update documentation.
 
 Out of scope:
@@ -127,12 +135,14 @@ Out of scope:
 
 ## Package design
 
-Pi packages declare resources in `package.json` using the `pi` manifest. This package keeps that manifest intentionally small:
+Pi packages declare resources in `package.json` using the `pi` manifest. This package keeps one thin extension entrypoint and exposes only package-owned public resources:
 
 ```json
 {
   "pi": {
-    "extensions": ["./extensions/pi-workflow.ts"]
+    "extensions": ["./extensions/pi-workflow.ts"],
+    "skills": ["./skills"],
+    "prompts": ["./prompts"]
   }
 }
 ```
@@ -148,11 +158,16 @@ npm install --package-lock-only --ignore-scripts
 npm run check
 ```
 
+Public workflow assets are human-readable generated files. Edit `scripts/public-workflow-catalog.mjs`, then run `npm run generate:public-workflows`; `npm run check` fails if generated resources are stale.
+
 The release guard validates that:
 
 - the package name and public publish config are correct;
 - `pi-package` is present in keywords;
 - only the local `pi-workflow` extension is exposed;
+- exactly four homonymous workflow skills and prompt templates are exposed;
+- prompt templates contain only exact skill loading and argument forwarding;
+- public workflow resources exactly match the authoritative catalog;
 - no Pi manifest paths point into `node_modules`;
 - no `bundledDependencies` or `bundleDependencies` field exists;
 - companion metadata includes the expected packages and versions;

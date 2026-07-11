@@ -1,14 +1,20 @@
 #!/usr/bin/env node
 
-import { access, readFile, stat } from "node:fs/promises";
+import { access, readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import { loadSkillsFromDir } from "@earendil-works/pi-coding-agent";
+import { parse as parseYaml } from "yaml";
+import { publicWorkflowCatalog } from "./public-workflow-catalog.mjs";
 
 const root = process.cwd();
 const packageJsonPath = path.join(root, "package.json");
 const companionsPath = path.join(root, "assets", "companions.json");
 const mcpServersPath = path.join(root, "assets", "mcp-servers.json");
 const errors = [];
+const publicEntryNames = publicWorkflowCatalog
+	.map((workflow) => workflow.name)
+	.sort();
 let packageJson;
 let companions;
 let mcpServers;
@@ -72,15 +78,35 @@ async function assertPathExists(relativePath, kind) {
 				`pi.extensions path must point at a local extension: ${relativePath}`,
 			);
 		}
-		if (kind === "skills") {
+		if (kind === "skills" || kind === "prompts") {
 			check(
 				info.isDirectory(),
-				`pi.skills path must be a directory: ${relativePath}`,
+				`pi.${kind} path must be a directory: ${relativePath}`,
 			);
 		}
 	} catch {
 		errors.push(`missing pi.${kind} path: ${relativePath}`);
 	}
+}
+
+function parseFrontmatterDocument(source) {
+	const normalized = source.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+	if (!normalized.startsWith("---\n")) {
+		throw new Error("frontmatter must start with ---");
+	}
+	const closingMatch = /^---$/m.exec(normalized.slice(4));
+	if (!closingMatch) {
+		throw new Error("frontmatter must end with a delimiter-only --- line");
+	}
+	const endIndex = 4 + closingMatch.index;
+	const parsed = parseYaml(normalized.slice(4, endIndex));
+	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+		throw new Error("frontmatter must be a YAML mapping");
+	}
+	return {
+		frontmatter: parsed,
+		body: normalized.slice(endIndex + 4),
+	};
 }
 
 function assertNoNodeModulesPath(paths, manifestKey) {
@@ -166,6 +192,14 @@ check(
 	"package files must include assets/",
 );
 check(
+	packageJson.files?.includes("skills/"),
+	"package files must include skills/",
+);
+check(
+	packageJson.files?.includes("prompts/"),
+	"package files must include prompts/",
+);
+check(
 	packageJson.files?.includes("scripts/**/*.mjs"),
 	"package files must include scripts/**/*.mjs",
 );
@@ -200,6 +234,11 @@ check(
 	"scripts.check:focused-tests must run scripts/forbid-focused-tests.mjs",
 );
 check(
+	packageJson.scripts?.["check:generated"] ===
+		"node scripts/generate-public-workflows.mjs --check",
+	"scripts.check:generated must check generated public workflow resources",
+);
+check(
 	packageJson.scripts?.check?.includes("npm run check:biome"),
 	"scripts.check must include Biome checks",
 );
@@ -210,6 +249,10 @@ check(
 check(
 	packageJson.scripts?.check?.includes("npm run check:focused-tests"),
 	"scripts.check must include focused test guard",
+);
+check(
+	packageJson.scripts?.check?.includes("npm run check:generated"),
+	"scripts.check must verify generated public workflow resources",
 );
 check(
 	packageJson.scripts?.prepublishOnly === "npm run check",
@@ -236,9 +279,18 @@ check(
 );
 assertNoNodeModulesPath(extensionPaths, "extensions");
 assertNoNodeModulesPath(packageJson.pi?.skills ?? [], "skills");
+assertNoNodeModulesPath(packageJson.pi?.prompts ?? [], "prompts");
 check(
-	!packageJson.pi?.skills || packageJson.pi.skills.length === 0,
-	"pi.skills must be omitted or empty until this package owns skills",
+	Array.isArray(packageJson.pi?.skills) &&
+		packageJson.pi.skills.length === 1 &&
+		packageJson.pi.skills[0] === "./skills",
+	'pi.skills must be ["./skills"]',
+);
+check(
+	Array.isArray(packageJson.pi?.prompts) &&
+		packageJson.pi.prompts.length === 1 &&
+		packageJson.pi.prompts[0] === "./prompts",
+	'pi.prompts must be ["./prompts"]',
 );
 
 for (const extensionPath of extensionPaths) {
@@ -247,6 +299,108 @@ for (const extensionPath of extensionPaths) {
 
 for (const skillsPath of packageJson.pi?.skills ?? []) {
 	await assertPathExists(skillsPath, "skills");
+}
+
+for (const promptsPath of packageJson.pi?.prompts ?? []) {
+	await assertPathExists(promptsPath, "prompts");
+}
+
+try {
+	const skillNames = (await readdir(path.join(root, "skills"), { withFileTypes: true }))
+		.filter((entry) => entry.isDirectory())
+		.map((entry) => entry.name)
+		.sort();
+	check(
+		skillNames.join(",") === publicEntryNames.join(","),
+		`public skills must be exactly ${publicEntryNames.join(", ")}; found ${skillNames.join(", ") || "none"}`,
+	);
+	for (const name of publicEntryNames) {
+		const relativeSkillPath = `./skills/${name}/SKILL.md`;
+		const skillExists = await pathExists(relativeSkillPath);
+		check(skillExists, `missing public skill file: ${name}/SKILL.md`);
+		if (!skillExists) continue;
+		try {
+			const { frontmatter } = parseFrontmatterDocument(
+				await readFile(path.join(root, relativeSkillPath), "utf8"),
+			);
+			check(
+				typeof frontmatter.name === "string" && frontmatter.name.trim() !== "",
+				`${name} frontmatter must define name`,
+			);
+			check(
+				typeof frontmatter.name !== "string" || frontmatter.name === name,
+				`${name} frontmatter name must match its directory`,
+			);
+			check(
+				typeof frontmatter.description === "string" &&
+					frontmatter.description.trim() !== "",
+				`${name} frontmatter must define description`,
+			);
+		} catch (error) {
+			errors.push(
+				`invalid public skill ${name} frontmatter: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+	}
+	const loadedSkills = loadSkillsFromDir({
+		dir: path.join(root, "skills"),
+		source: "package-validation",
+	});
+	for (const diagnostic of loadedSkills.diagnostics) {
+		errors.push(
+			`Pi rejected public skill ${path.relative(root, diagnostic.path ?? "skills")}: ${diagnostic.message}`,
+		);
+	}
+	check(
+		loadedSkills.skills.length === publicEntryNames.length,
+		`Pi must discover exactly ${publicEntryNames.length} public skills; found ${loadedSkills.skills.length}`,
+	);
+} catch (error) {
+	errors.push(
+		`failed to inspect public skills: ${error instanceof Error ? error.message : String(error)}`,
+	);
+}
+
+try {
+	const promptNames = (await readdir(path.join(root, "prompts"), { withFileTypes: true }))
+		.filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
+		.map((entry) => entry.name.replace(/\.md$/, ""))
+		.sort();
+	check(
+		promptNames.join(",") === publicEntryNames.join(","),
+		`public prompts must be exactly ${publicEntryNames.join(", ")}; found ${promptNames.join(", ") || "none"}`,
+	);
+	for (const name of publicEntryNames) {
+		try {
+			const { frontmatter, body } = parseFrontmatterDocument(
+				await readFile(path.join(root, "prompts", `${name}.md`), "utf8"),
+			);
+			check(
+				typeof frontmatter.description === "string" &&
+					frontmatter.description.trim() !== "",
+				`${name} prompt frontmatter description must be a non-empty string`,
+			);
+			check(
+				frontmatter["argument-hint"] === undefined ||
+					(typeof frontmatter["argument-hint"] === "string" &&
+						frontmatter["argument-hint"].trim() !== ""),
+				`${name} prompt frontmatter argument-hint must be a non-empty string when present`,
+			);
+			check(
+				body ===
+					`Load and follow the \`${name}\` skill.\n\nArguments: $ARGUMENTS\n`,
+				`public prompt ${name} must contain only its exact skill invocation and argument forwarding`,
+			);
+		} catch (error) {
+			errors.push(
+				`invalid public prompt ${name} frontmatter: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+	}
+} catch (error) {
+	errors.push(
+		`failed to inspect public prompts: ${error instanceof Error ? error.message : String(error)}`,
+	);
 }
 
 if (companions) {

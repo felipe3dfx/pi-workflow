@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { execFile } from "node:child_process";
@@ -15,6 +15,12 @@ function loadJsonFixture(relativePath) {
 }
 
 const mcpServerCatalog = loadJsonFixture("../assets/mcp-servers.json");
+const publicEntryNames = [
+	"define-product",
+	"deliver-ticket",
+	"product-review",
+	"qa-handoff",
+];
 const companionEntries = [
 	"gentle-engram",
 	"pi-mcp-adapter",
@@ -41,20 +47,25 @@ function baselinePackageJson(overrides = {}) {
 			"LICENSE",
 			"extensions/",
 			"assets/",
+			"skills/",
+			"prompts/",
 		],
 		scripts: {
 			"check:publish": "node scripts/validate-pi-package.mjs",
 			"check:typecheck": "tsc --noEmit",
 			"check:focused-tests": "node scripts/forbid-focused-tests.mjs",
+			"check:generated": "node scripts/generate-public-workflows.mjs --check",
 			lint: "biome lint .",
 			format: "biome format --write .",
 			"check:biome": "biome check --formatter-enabled=false .",
 			check:
-				"npm run check:biome && npm run check:typecheck && npm run check:focused-tests && npm run check:publish && node --test test/*.test.mjs && npm run pack:dry-run",
+				"npm run check:biome && npm run check:typecheck && npm run check:focused-tests && npm run check:generated && npm run check:publish && node --test test/*.test.mjs && npm run pack:dry-run",
 			prepublishOnly: "npm run check",
 		},
 		pi: {
 			extensions: ["./extensions/pi-workflow.ts"],
+			skills: ["./skills"],
+			prompts: ["./prompts"],
 		},
 		engines: {
 			node: ">=22.19",
@@ -76,10 +87,23 @@ async function createFixture({
 	companionsRaw,
 	mcpServersRaw,
 	companionWorkflow = companionWorkflowSource(),
+	publicWorkflows = publicEntryNames,
 } = {}) {
 	const root = await mkdtemp(join(tmpdir(), "pi-workflow-validator-"));
 	await mkdir(join(root, "assets"), { recursive: true });
 	await mkdir(join(root, "extensions"), { recursive: true });
+	for (const name of publicWorkflows) {
+		await mkdir(join(root, "skills", name), { recursive: true });
+		await writeFile(
+			join(root, "skills", name, "SKILL.md"),
+			`---\nname: ${name}\ndescription: ${name} fixture\n---\n\n# ${name}\n`,
+		);
+		await mkdir(join(root, "prompts"), { recursive: true });
+		await writeFile(
+			join(root, "prompts", `${name}.md`),
+			`---\ndescription: ${name} fixture\n---\nLoad and follow the \`${name}\` skill.\n\nArguments: $ARGUMENTS\n`,
+		);
+	}
 	await writeFile(
 		join(root, "package.json"),
 		`${JSON.stringify(packageJson, null, 2)}\n`,
@@ -105,9 +129,9 @@ async function createFixture({
 	return root;
 }
 
-async function runValidator(root) {
+async function runValidator(root, scriptPath = validatorPath) {
 	try {
-		const result = await execFileAsync(process.execPath, [validatorPath], {
+		const result = await execFileAsync(process.execPath, [scriptPath], {
 			cwd: root,
 		});
 		return { code: 0, stdout: result.stdout, stderr: result.stderr };
@@ -126,6 +150,237 @@ test("validates a baseline package fixture", async () => {
 		const result = await runValidator(root);
 		assert.equal(result.code, 0, result.stderr);
 		assert.match(result.stdout, /validation passed/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("rejects a public skill directory without SKILL.md", async () => {
+	const root = await createFixture();
+	try {
+		await rm(join(root, "skills", "define-product", "SKILL.md"));
+		const result = await runValidator(root);
+		assert.notEqual(result.code, 0);
+		assert.match(result.stderr, /missing public skill file: define-product\/SKILL\.md/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("rejects public skill frontmatter missing a name", async () => {
+	const root = await createFixture();
+	try {
+		await writeFile(
+			join(root, "skills", "define-product", "SKILL.md"),
+			"---\ndescription: Define product fixture\n---\n\n# Define product\n",
+		);
+		const result = await runValidator(root);
+		assert.notEqual(result.code, 0);
+		assert.match(result.stderr, /define-product frontmatter must define name/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("rejects public skill frontmatter missing a description", async () => {
+	const root = await createFixture();
+	try {
+		await writeFile(
+			join(root, "skills", "define-product", "SKILL.md"),
+			"---\nname: define-product\n---\n\n# Define product\n",
+		);
+		const result = await runValidator(root);
+		assert.notEqual(result.code, 0);
+		assert.match(result.stderr, /define-product frontmatter must define description/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("rejects a frontmatter closing delimiter with trailing text", async () => {
+	const root = await createFixture();
+	try {
+		await writeFile(
+			join(root, "skills", "define-product", "SKILL.md"),
+			"---\nname: define-product\ndescription: Define product fixture\n---oops\n",
+		);
+		const result = await runValidator(root);
+		assert.notEqual(result.code, 0);
+		assert.match(result.stderr, /frontmatter must end with a delimiter-only --- line/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("rejects malformed public skill frontmatter", async () => {
+	const root = await createFixture();
+	try {
+		await writeFile(
+			join(root, "skills", "define-product", "SKILL.md"),
+			"---\nname: [define-product\ndescription: malformed fixture\n---\n",
+		);
+		const result = await runValidator(root);
+		assert.notEqual(result.code, 0);
+		assert.match(result.stderr, /invalid public skill define-product frontmatter/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("rejects public skill frontmatter whose name mismatches its directory", async () => {
+	const root = await createFixture();
+	try {
+		await writeFile(
+			join(root, "skills", "define-product", "SKILL.md"),
+			"---\nname: deliver-ticket\ndescription: Define product fixture\n---\n",
+		);
+		const result = await runValidator(root);
+		assert.notEqual(result.code, 0);
+		assert.match(
+			result.stderr,
+			/define-product frontmatter name must match its directory/,
+		);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("validator follows the production catalog and still rejects unauthorized resources", async () => {
+	const scriptRoot = await mkdtemp(resolve(".validator-catalog-test-"));
+	const catalogNames = [...publicEntryNames, "catalog-fixture"];
+	const root = await createFixture({ publicWorkflows: catalogNames });
+	try {
+		const scriptPath = join(scriptRoot, "validate-pi-package.mjs");
+		await copyFile(validatorPath, scriptPath);
+		await writeFile(
+			join(scriptRoot, "public-workflow-catalog.mjs"),
+			`export const publicWorkflowCatalog = ${JSON.stringify(catalogNames.map((name) => ({ name })))};\n`,
+		);
+
+		const catalogResult = await runValidator(root, scriptPath);
+		assert.equal(catalogResult.code, 0, catalogResult.stderr);
+
+		await mkdir(join(root, "skills", "unauthorized-workflow"), {
+			recursive: true,
+		});
+		await writeFile(
+			join(root, "skills", "unauthorized-workflow", "SKILL.md"),
+			"---\nname: unauthorized-workflow\ndescription: Must not be public\n---\n",
+		);
+		const unauthorizedResult = await runValidator(root, scriptPath);
+		assert.notEqual(unauthorizedResult.code, 0);
+		assert.match(unauthorizedResult.stderr, /public skills must be exactly/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+		await rm(scriptRoot, { recursive: true, force: true });
+	}
+});
+
+test("rejects an unexpected public skill entry", async () => {
+	const root = await createFixture();
+	try {
+		await mkdir(join(root, "skills", "unexpected-workflow"), {
+			recursive: true,
+		});
+		await writeFile(
+			join(root, "skills", "unexpected-workflow", "SKILL.md"),
+			"---\nname: unexpected-workflow\ndescription: Must not be public\n---\n",
+		);
+		const result = await runValidator(root);
+		assert.notEqual(result.code, 0);
+		assert.match(result.stderr, /public skills must be exactly/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("rejects malformed YAML in public prompt frontmatter", async () => {
+	const root = await createFixture();
+	try {
+		await writeFile(
+			join(root, "prompts", "define-product.md"),
+			"---\ndescription: [broken\n---\nLoad and follow the `define-product` skill.\n\nArguments: $ARGUMENTS\n",
+		);
+		const result = await runValidator(root);
+		assert.notEqual(result.code, 0);
+		assert.match(result.stderr, /invalid public prompt define-product frontmatter/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("schema-checks public prompt YAML frontmatter", async (t) => {
+	for (const [label, frontmatter, diagnostic] of [
+		["non-object", "- description", /frontmatter must be a YAML mapping/],
+		["invalid description", "description: 42", /description must be a non-empty string/],
+		[
+			"invalid argument hint",
+			"description: fixture\nargument-hint: []",
+			/argument-hint must be a non-empty string/,
+		],
+	]) {
+		await t.test(label, async () => {
+			const root = await createFixture();
+			try {
+				await writeFile(
+					join(root, "prompts", "define-product.md"),
+					`---\n${frontmatter}\n---\nLoad and follow the \`define-product\` skill.\n\nArguments: $ARGUMENTS\n`,
+				);
+				const result = await runValidator(root);
+				assert.notEqual(result.code, 0);
+				assert.match(result.stderr, diagnostic);
+			} finally {
+				await rm(root, { recursive: true, force: true });
+			}
+		});
+	}
+});
+
+test("prompt manifest diagnostics identify prompts rather than skills", async () => {
+	const root = await createFixture({
+		packageJson: baselinePackageJson({
+			pi: {
+				extensions: ["./extensions/pi-workflow.ts"],
+				skills: ["./skills"],
+				prompts: ["./missing-prompts"],
+			},
+		}),
+	});
+	try {
+		const result = await runValidator(root);
+		assert.notEqual(result.code, 0);
+		assert.match(result.stderr, /missing pi\.prompts path: \.\/missing-prompts/);
+		assert.doesNotMatch(result.stderr, /missing pi\.skills path: \.\/missing-prompts/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("rejects workflow prose duplicated in a public template", async () => {
+	const root = await createFixture();
+	try {
+		await writeFile(
+			join(root, "prompts", "define-product.md"),
+			"---\ndescription: fixture\n---\nLoad and follow the `define-product` skill.\n\nArguments: $ARGUMENTS\n\nThen publish the workflow.\n",
+		);
+		const result = await runValidator(root);
+		assert.notEqual(result.code, 0);
+		assert.match(result.stderr, /must contain only its exact skill invocation/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("rejects an unexpected public prompt entry", async () => {
+	const root = await createFixture();
+	try {
+		await writeFile(
+			join(root, "prompts", "unexpected-workflow.md"),
+			"This workflow must not be public.\n",
+		);
+		const result = await runValidator(root);
+		assert.notEqual(result.code, 0);
+		assert.match(result.stderr, /public prompts must be exactly/);
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
