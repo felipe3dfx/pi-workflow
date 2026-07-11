@@ -1,4 +1,6 @@
 import type {
+	AgentAssetApplyOptions,
+	AgentAssetApplyResult,
 	AgentAssetInspection,
 	AgentAssetPlan,
 	AgentAssetPreviewOptions,
@@ -7,11 +9,16 @@ import type {
 interface AgentAssetSyncCommandApi {
 	inspect(options?: AgentAssetPreviewOptions): Promise<AgentAssetInspection>;
 	plan(options?: AgentAssetPreviewOptions): Promise<AgentAssetPlan>;
+	apply(
+		plan: AgentAssetPlan,
+		options: AgentAssetApplyOptions,
+	): Promise<AgentAssetApplyResult>;
 }
 
 export interface SyncCommandAdapters {
 	sync: AgentAssetSyncCommandApi;
 	write: (text: string) => void;
+	confirm?: (plan: AgentAssetPlan) => Promise<boolean>;
 	signal?: AbortSignal;
 }
 
@@ -20,13 +27,22 @@ export async function runSyncCommand(
 	adapters: SyncCommandAdapters,
 ): Promise<number> {
 	const command = args[0];
-	if (command !== "inspect" && command !== "plan") {
-		adapters.write("Usage: pi-workflow-sync <inspect|plan>");
+	if (command !== "inspect" && command !== "plan" && command !== "apply") {
+		adapters.write("Usage: pi-workflow-sync <inspect|plan|apply>");
 		return 2;
 	}
 
 	try {
-		const result = await adapters.sync[command]({ signal: adapters.signal });
+		const result =
+			command === "apply"
+				? await adapters.sync.apply(
+						await adapters.sync.plan({ signal: adapters.signal }),
+						{
+							signal: adapters.signal,
+							confirm: adapters.confirm ?? (async () => false),
+						},
+					)
+				: await adapters.sync[command]({ signal: adapters.signal });
 		adapters.write(JSON.stringify(result, null, 2));
 		if (result.status === "canceled") return 130;
 		return result.status === "blocked" ? 1 : 0;
