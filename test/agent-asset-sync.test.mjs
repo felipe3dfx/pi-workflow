@@ -15,12 +15,20 @@ function createFakeFilesystem(files = {}) {
 	return {
 		reads,
 		writes,
+		set(path, content) {
+			entries.set(path, content);
+		},
 		async readFile(path) {
 			reads.push(path);
 			return entries.get(path);
 		},
-		async writeFile(path, content) {
+		async writeFileAtomic(path, content, expectedDigest) {
+			const current = entries.get(path);
+			const currentDigest = current === undefined ? null : digest(current);
+			if (expectedDigest !== undefined && currentDigest !== expectedDigest)
+				throw new Error(`Concurrent change detected at ${path}`);
 			writes.push({ path, content });
+			entries.set(path, content);
 		},
 	};
 }
@@ -73,6 +81,308 @@ const packageCatalog = {
 		},
 	],
 };
+
+test("apply confirms, atomically creates an agent, and verifies its manifest by read-back", async () => {
+	const filesystem = createFakeFilesystem();
+	const sync = createAgentAssetSync({
+		catalog: packageCatalog,
+		filesystem,
+		agentDirectory: "/agent/agents",
+		manifestPath: "/agent/.pi-workflow/agent-assets.json",
+	});
+	const plan = await sync.plan();
+	let confirmedPlan;
+
+	const result = await sync.apply(plan, {
+		confirm: async (candidate) => {
+			confirmedPlan = candidate;
+			return true;
+		},
+	});
+
+	assert.equal(confirmedPlan.digest, plan.digest);
+	assert.equal(result.status, "applied");
+	assert.equal(result.mutation, "applied");
+	assert.equal(result.readiness, "ready");
+	assert.deepEqual(result.assets, [
+		{
+			name: "orchestrator",
+			targetPath: "/agent/agents/orchestrator.md",
+			version: 1,
+			digest: digest("---\nname: orchestrator\n---\n"),
+			verified: true,
+		},
+	]);
+	assert.equal(filesystem.writes[0].path, "/agent/agents/orchestrator.md");
+	assert.deepEqual(JSON.parse(filesystem.writes[1].content), {
+		schemaVersion: 1,
+		assets: {
+			orchestrator: {
+				ownership: "package",
+				version: 1,
+				digest: digest("---\nname: orchestrator\n---\n"),
+			},
+		},
+	});
+});
+
+test("apply cancellation leaves the approved plan untouched", async () => {
+	const filesystem = createFakeFilesystem();
+	const sync = createAgentAssetSync({
+		catalog: packageCatalog,
+		filesystem,
+		agentDirectory: "/agent/agents",
+		manifestPath: "/agent/.pi-workflow/agent-assets.json",
+	});
+	const plan = await sync.plan();
+
+	const result = await sync.apply(plan, { confirm: async () => false });
+
+	assert.equal(result.status, "canceled");
+	assert.equal(result.mutation, "none");
+	assert.deepEqual(filesystem.writes, []);
+});
+
+test("apply refuses a concurrent target change after confirmation", async () => {
+	const filesystem = createFakeFilesystem();
+	const sync = createAgentAssetSync({
+		catalog: packageCatalog,
+		filesystem,
+		agentDirectory: "/agent/agents",
+		manifestPath: "/agent/.pi-workflow/agent-assets.json",
+	});
+	const plan = await sync.plan();
+
+	const result = await sync.apply(plan, {
+		confirm: async () => {
+			filesystem.set("/agent/agents/orchestrator.md", "concurrent content");
+			return true;
+		},
+	});
+
+	assert.equal(result.status, "blocked");
+	assert.equal(result.mutation, "none");
+	assert.match(result.diagnostics[0], /changed after planning/i);
+	assert.deepEqual(filesystem.writes, []);
+});
+
+test("apply resumes an interrupted approved create idempotently", async () => {
+	const filesystem = createFakeFilesystem();
+	let manifestAttempts = 0;
+	const originalWrite = filesystem.writeFileAtomic;
+	filesystem.writeFileAtomic = async (path, content) => {
+		if (path.endsWith("agent-assets.json") && manifestAttempts++ === 0)
+			throw new Error("interrupted");
+		await originalWrite(path, content);
+	};
+	const sync = createAgentAssetSync({
+		catalog: packageCatalog,
+		filesystem,
+		agentDirectory: "/agent/agents",
+		manifestPath: "/agent/.pi-workflow/agent-assets.json",
+	});
+	const plan = await sync.plan();
+
+	const interrupted = await sync.apply(plan, { confirm: async () => true });
+	const resumed = await sync.apply(plan, { confirm: async () => true });
+
+	assert.equal(interrupted.status, "blocked");
+	assert.equal(interrupted.mutation, "applied");
+	assert.equal(resumed.status, "applied");
+	assert.equal(resumed.readiness, "ready");
+	assert.equal(
+		filesystem.writes.filter(
+			(write) => write.path === "/agent/agents/orchestrator.md",
+		).length,
+		1,
+	);
+});
+
+test("apply resumes only unfinished assets after a partial multi-asset interruption", async () => {
+	const filesystem = createFakeFilesystem();
+	let interrupted = false;
+	const originalWrite = filesystem.writeFileAtomic;
+	filesystem.writeFileAtomic = async (path, content) => {
+		if (path.endsWith("second.md") && !interrupted) {
+			interrupted = true;
+			throw new Error("interrupted between assets");
+		}
+		await originalWrite(path, content);
+	};
+	const sync = createAgentAssetSync({
+		catalog: {
+			schemaVersion: 1,
+			assets: [
+				{ kind: "agent", name: "first", version: 1, content: "first" },
+				{ kind: "agent", name: "second", version: 1, content: "second" },
+			],
+		},
+		filesystem,
+		agentDirectory: "/agent/agents",
+		manifestPath: "/agent/.pi-workflow/agent-assets.json",
+	});
+	const plan = await sync.plan();
+
+	const firstAttempt = await sync.apply(plan, { confirm: async () => true });
+	const resumed = await sync.apply(plan, { confirm: async () => true });
+
+	assert.equal(firstAttempt.status, "blocked");
+	assert.equal(resumed.status, "applied");
+	assert.deepEqual(
+		filesystem.writes
+			.filter((write) => write.path.endsWith(".md"))
+			.map((write) => write.path),
+		["/agent/agents/first.md", "/agent/agents/second.md"],
+	);
+});
+
+test("apply cancellation between assets reports canceled and remains resumable", async () => {
+	const controller = new AbortController();
+	const filesystem = createFakeFilesystem();
+	const originalWrite = filesystem.writeFileAtomic;
+	filesystem.writeFileAtomic = async (path, content, expectedDigest) => {
+		await originalWrite(path, content, expectedDigest);
+		if (path.endsWith("first.md")) controller.abort();
+	};
+	const sync = createAgentAssetSync({
+		catalog: {
+			schemaVersion: 1,
+			assets: [
+				{ kind: "agent", name: "first", version: 1, content: "first" },
+				{ kind: "agent", name: "second", version: 1, content: "second" },
+			],
+		},
+		filesystem,
+		agentDirectory: "/agent/agents",
+		manifestPath: "/agent/.pi-workflow/agent-assets.json",
+	});
+	const plan = await sync.plan();
+
+	const canceled = await sync.apply(plan, {
+		confirm: async () => true,
+		signal: controller.signal,
+	});
+	const resumed = await sync.apply(plan, { confirm: async () => true });
+
+	assert.equal(canceled.status, "canceled");
+	assert.equal(canceled.mutation, "applied");
+	assert.equal(resumed.status, "applied");
+});
+
+test("pi-workflow-sync apply confirms and emits verified readiness through the command boundary", async () => {
+	const filesystem = createFakeFilesystem();
+	const output = [];
+	const sync = createAgentAssetSync({
+		catalog: packageCatalog,
+		filesystem,
+		agentDirectory: "/agent/agents",
+		manifestPath: "/agent/.pi-workflow/agent-assets.json",
+	});
+
+	const exitCode = await runSyncCommand(["apply"], {
+		sync,
+		confirm: async (plan) => plan.actions.length === 1,
+		write: (text) => output.push(text),
+	});
+
+	assert.equal(exitCode, 0);
+	const result = JSON.parse(output[0]);
+	assert.equal(result.status, "applied");
+	assert.equal(result.readiness, "ready");
+});
+
+test("apply replaces a clean managed asset and preserves unrelated manifest ownership", async () => {
+	const oldContent = "old managed agent";
+	const manifestPath = "/agent/.pi-workflow/agent-assets.json";
+	const filesystem = createFakeFilesystem({
+		"/agent/agents/orchestrator.md": oldContent,
+		[manifestPath]: JSON.stringify({
+			schemaVersion: 1,
+			assets: {
+				orchestrator: {
+					ownership: "package",
+					version: 1,
+					digest: digest(oldContent),
+				},
+				legacy: {
+					ownership: "package",
+					version: 1,
+					digest: digest("legacy"),
+				},
+			},
+		}),
+	});
+	const sync = createAgentAssetSync({
+		catalog: packageCatalog,
+		filesystem,
+		agentDirectory: "/agent/agents",
+		manifestPath,
+	});
+	const plan = await sync.plan();
+
+	const result = await sync.apply(plan, { confirm: async () => true });
+
+	assert.equal(plan.actions[0].kind, "replace");
+	assert.equal(result.status, "applied");
+	const manifest = JSON.parse(
+		filesystem.writes.find((write) => write.path === manifestPath).content,
+	);
+	assert.equal(manifest.assets.legacy.digest, digest("legacy"));
+	assert.equal(manifest.assets.orchestrator.ownership, "package");
+	assert.equal(
+		manifest.assets.orchestrator.digest,
+		digest("---\nname: orchestrator\n---\n"),
+	);
+});
+
+test("apply rejects a modified plan digest before confirmation or writes", async () => {
+	const filesystem = createFakeFilesystem();
+	const sync = createAgentAssetSync({
+		catalog: packageCatalog,
+		filesystem,
+		agentDirectory: "/agent/agents",
+		manifestPath: "/agent/.pi-workflow/agent-assets.json",
+	});
+	const plan = await sync.plan();
+	let confirmations = 0;
+	plan.actions[0].content = "tampered";
+
+	const result = await sync.apply(plan, {
+		confirm: async () => {
+			confirmations += 1;
+			return true;
+		},
+	});
+
+	assert.equal(result.status, "blocked");
+	assert.equal(confirmations, 0);
+	assert.deepEqual(filesystem.writes, []);
+});
+
+test("apply blocks readiness when manifest read-back differs from the atomic write", async () => {
+	const filesystem = createFakeFilesystem();
+	const originalWrite = filesystem.writeFileAtomic;
+	filesystem.writeFileAtomic = async (path, content) => {
+		await originalWrite(path, content);
+		if (path.endsWith("agent-assets.json")) {
+			filesystem.set(path, JSON.stringify({ schemaVersion: 1, assets: {} }));
+		}
+	};
+	const sync = createAgentAssetSync({
+		catalog: packageCatalog,
+		filesystem,
+		agentDirectory: "/agent/agents",
+		manifestPath: "/agent/.pi-workflow/agent-assets.json",
+	});
+	const plan = await sync.plan();
+
+	const result = await sync.apply(plan, { confirm: async () => true });
+
+	assert.equal(result.status, "blocked");
+	assert.equal(result.mutation, "applied");
+	assert.equal(result.readiness, "blocked");
+	assert.match(result.diagnostics[0], /read-back verification failed/i);
+});
 
 test("packaged plan creates the exact approved agent inventory from verified source assets", async () => {
 	const catalog = JSON.parse(
@@ -276,6 +586,7 @@ test("inspect previews a missing package-owned agent without filesystem side eff
 			ownership: "package",
 			packageVersion: 1,
 			installedVersion: null,
+			installedDigest: null,
 			drift: "missing",
 			collision: false,
 			sourcePath: null,
@@ -357,6 +668,7 @@ test("inspection and plan digests bind the observed managed predecessor bytes", 
 		schemaVersion: 1,
 		assets: {
 			orchestrator: {
+				ownership: "package",
 				version: 1,
 				digest: digest("expected clean predecessor"),
 			},
@@ -574,10 +886,26 @@ test("plan distinguishes create, replace, migrate, and refusal while excluding n
 	const manifest = {
 		schemaVersion: 1,
 		assets: {
-			replace: { version: 2, digest: digest("replace-v1") },
-			migrate: { version: 1, digest: digest("migrate-v1") },
-			modified: { version: 2, digest: digest("modified-clean") },
-			future: { version: 3, digest: digest("future-v3") },
+			replace: {
+				ownership: "package",
+				version: 2,
+				digest: digest("replace-v1"),
+			},
+			migrate: {
+				ownership: "package",
+				version: 1,
+				digest: digest("migrate-v1"),
+			},
+			modified: {
+				ownership: "package",
+				version: 2,
+				digest: digest("modified-clean"),
+			},
+			future: {
+				ownership: "package",
+				version: 3,
+				digest: digest("future-v3"),
+			},
 		},
 	};
 	const filesystem = createFakeFilesystem({

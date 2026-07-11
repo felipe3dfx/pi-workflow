@@ -27,6 +27,11 @@ interface AgentAssetCatalog {
 
 interface AgentAssetFilesystem {
 	readFile(path: string): Promise<string | undefined>;
+	writeFileAtomic(
+		path: string,
+		content: string,
+		expectedDigest: string | null,
+	): Promise<void>;
 }
 
 export interface AgentAssetSyncOptions {
@@ -40,12 +45,10 @@ export interface AgentAssetSyncOptions {
 export interface AgentAssetPreviewOptions {
 	signal?: AbortSignal;
 }
-type AgentAssetDrift =
-	| "missing"
-	| "none"
-	| "modified"
-	| "outdated"
-	| "future";
+export interface AgentAssetApplyOptions extends AgentAssetPreviewOptions {
+	confirm(plan: AgentAssetPlan): Promise<boolean>;
+}
+type AgentAssetDrift = "missing" | "none" | "modified" | "outdated" | "future";
 
 interface InspectedAgentAsset {
 	name: string;
@@ -53,6 +56,7 @@ interface InspectedAgentAsset {
 	ownership: "package" | "unmanaged";
 	packageVersion: number;
 	installedVersion: number | null;
+	installedDigest: string | null;
 	drift: AgentAssetDrift;
 	collision: boolean;
 	sourcePath: string | null;
@@ -65,6 +69,7 @@ export interface AgentAssetInspection {
 	mutation: "none";
 	assets: InspectedAgentAsset[];
 	diagnostics: string[];
+	manifestDigest: string | null;
 	digest: string;
 }
 
@@ -76,6 +81,7 @@ interface AgentAssetPlanAction {
 	fromVersion: number | null;
 	toVersion: number;
 	sourceDigest: string;
+	previousDigest: string | null;
 	content: string;
 	reason?: "managed-drift" | "unmanaged-collision" | "future-version";
 	remediation?: string;
@@ -88,16 +94,35 @@ export interface AgentAssetPlan {
 	inspectionDigest: string;
 	actions: AgentAssetPlanAction[];
 	diagnostics: string[];
+	manifestDigest: string | null;
 	digest: string;
 }
 
 interface ManagedAssetRecord {
+	ownership: "package";
 	version: number;
 	digest: string;
 }
 interface AgentAssetManifest {
 	schemaVersion: typeof AGENT_ASSET_MANIFEST_SCHEMA_VERSION;
 	assets: Record<string, ManagedAssetRecord>;
+}
+
+interface AppliedAgentAsset {
+	name: string;
+	targetPath: string;
+	version: number;
+	digest: string;
+	verified: boolean;
+}
+
+export interface AgentAssetApplyResult {
+	status: "applied" | "blocked" | "canceled";
+	mutation: "applied" | "none";
+	readiness: "ready" | "blocked";
+	assets: AppliedAgentAsset[];
+	diagnostics: string[];
+	digest: string;
 }
 
 type Validation<T> = { ok: true; value: T } | { ok: false; diagnostic: string };
@@ -305,6 +330,7 @@ function parseManifest(
 		if (
 			!validName(name) ||
 			!isRecord(raw) ||
+			(raw.ownership !== undefined && raw.ownership !== "package") ||
 			typeof raw.version !== "number" ||
 			!Number.isInteger(raw.version) ||
 			raw.version <= 0 ||
@@ -313,10 +339,14 @@ function parseManifest(
 		) {
 			return {
 				ok: false,
-				diagnostic: `Manifest asset record ${name || "<empty>"} must have a valid agent name, positive integer version, and lowercase SHA-256 digest. Repair or remove the record before planning; no files were changed.`,
+				diagnostic: `Manifest asset record ${name || "<empty>"} must have package ownership when specified, a valid agent name, positive integer version, and lowercase SHA-256 digest. Repair or remove the record before planning; no files were changed.`,
 			};
 		}
-		assets[name] = { version: raw.version, digest: raw.digest };
+		assets[name] = {
+			ownership: "package",
+			version: raw.version,
+			digest: raw.digest,
+		};
 	}
 	return {
 		ok: true,
@@ -405,6 +435,7 @@ function classifyAsset(
 		packageVersion: asset.version,
 		sourcePath: source.sourcePath,
 		sourceDigest: source.sourceDigest,
+		installedDigest: managed?.digest ?? null,
 	};
 	if (!managed && content !== undefined)
 		return {
@@ -458,7 +489,7 @@ function emptyInspection(
 	diagnostics: string[],
 ): AgentAssetInspection {
 	const value = { status, mutation: "none" as const, assets: [], diagnostics };
-	return { ...value, digest: digestValue(value) };
+	return { ...value, manifestDigest: null, digest: digestValue(value) };
 }
 function canceledInspection(): AgentAssetInspection {
 	return emptyInspection("canceled", []);
@@ -471,6 +502,7 @@ function canceledPlan(inspectionDigest: string): AgentAssetPlan {
 		inspectionDigest,
 		actions: [],
 		diagnostics: [],
+		manifestDigest: null,
 	};
 	return { ...value, digest: digestValue(value) };
 }
@@ -570,6 +602,10 @@ export function createAgentAssetSync(options: AgentAssetSyncOptions) {
 			mutation: "none",
 			assets,
 			diagnostics,
+			manifestDigest:
+				manifestRead.content === undefined
+					? null
+					: sha256(manifestRead.content),
 			digest: digestValue(snapshot),
 		};
 	}
@@ -589,6 +625,7 @@ export function createAgentAssetSync(options: AgentAssetSyncOptions) {
 				inspectionDigest: inspection.digest,
 				actions: [],
 				diagnostics: [catalogResult.diagnostic],
+				manifestDigest: inspection.manifestDigest,
 			};
 			return { ...value, digest: digestValue(value) };
 		}
@@ -609,6 +646,7 @@ export function createAgentAssetSync(options: AgentAssetSyncOptions) {
 					inspectionDigest: inspection.digest,
 					actions: [],
 					diagnostics: [diagnostic],
+					manifestDigest: inspection.manifestDigest,
 				};
 				return { ...value, digest: digestValue(value) };
 			}
@@ -632,6 +670,7 @@ export function createAgentAssetSync(options: AgentAssetSyncOptions) {
 					inspectionDigest: inspection.digest,
 					actions: [],
 					diagnostics: [diagnostic],
+					manifestDigest: inspection.manifestDigest,
 				};
 				return { ...value, digest: digestValue(value) };
 			}
@@ -657,6 +696,7 @@ export function createAgentAssetSync(options: AgentAssetSyncOptions) {
 				fromVersion: asset.installedVersion,
 				toVersion: asset.packageVersion,
 				sourceDigest: sourceResult.value.sourceDigest,
+				previousDigest: asset.installedDigest,
 				content: sourceResult.value.content,
 				reason,
 				remediation: asset.remediation,
@@ -676,9 +716,218 @@ export function createAgentAssetSync(options: AgentAssetSyncOptions) {
 			inspectionDigest: inspection.digest,
 			actions,
 			diagnostics: inspection.diagnostics,
+			manifestDigest: inspection.manifestDigest,
 		};
 		if (preview.signal?.aborted) return canceledPlan(inspection.digest);
 		return { ...value, digest: digestValue(value) };
 	}
-	return { inspect, plan };
+
+	async function apply(
+		approvedPlan: AgentAssetPlan,
+		applyOptions: AgentAssetApplyOptions,
+	): Promise<AgentAssetApplyResult> {
+		const result = (
+			status: AgentAssetApplyResult["status"],
+			mutation: AgentAssetApplyResult["mutation"],
+			assets: AppliedAgentAsset[],
+			diagnostics: string[],
+		): AgentAssetApplyResult => {
+			const value = {
+				status,
+				mutation,
+				readiness:
+					status === "applied" ? ("ready" as const) : ("blocked" as const),
+				assets,
+				diagnostics,
+			};
+			return { ...value, digest: digestValue(value) };
+		};
+		if (applyOptions.signal?.aborted) return result("canceled", "none", [], []);
+		const { digest: suppliedDigest, ...planValue } = approvedPlan;
+		if (
+			suppliedDigest !== digestValue(planValue) ||
+			approvedPlan.status !== "ready" ||
+			approvedPlan.actions.some((action) => action.kind === "refusal")
+		)
+			return result(
+				"blocked",
+				"none",
+				[],
+				[
+					"The approved agent asset plan is invalid or blocked. Generate and review a new plan; no files were changed.",
+				],
+			);
+		if (!(await applyOptions.confirm(approvedPlan)))
+			return result("canceled", "none", [], []);
+		if (applyOptions.signal?.aborted) return result("canceled", "none", [], []);
+		const latestPlan = await plan({ signal: applyOptions.signal });
+		if (latestPlan.status === "canceled")
+			return result("canceled", "none", [], []);
+		let recovering = false;
+		let currentManifestContent: string | undefined;
+		if (latestPlan.digest !== approvedPlan.digest) {
+			const currentManifest = await safeRead(
+				options.manifestPath,
+				options,
+				applyOptions.signal,
+			);
+			if (currentManifest.status !== "ok")
+				return result(
+					"blocked",
+					"none",
+					[],
+					[
+						"Agent assets changed after planning. Review and confirm a new plan; no files were changed.",
+					],
+				);
+			const manifestDigest =
+				currentManifest.content === undefined
+					? null
+					: sha256(currentManifest.content);
+			const targetReads = await Promise.all(
+				approvedPlan.actions.map((action) =>
+					safeRead(action.targetPath, options, applyOptions.signal),
+				),
+			);
+			recovering =
+				manifestDigest === approvedPlan.manifestDigest &&
+				targetReads.every((read, index) => {
+					if (read.status !== "ok") return false;
+					const action = approvedPlan.actions[index];
+					if (!action) return false;
+					const digest =
+						read.content === undefined ? null : sha256(read.content);
+					return (
+						digest === action.previousDigest || digest === action.sourceDigest
+					);
+				});
+			if (!recovering)
+				return result(
+					"blocked",
+					"none",
+					[],
+					[
+						"Agent assets changed after planning. Review and confirm a new plan; no files were changed.",
+					],
+				);
+			currentManifestContent = currentManifest.content;
+		}
+		let wrote = false;
+		let canceled = false;
+		try {
+			if (!recovering) {
+				const manifestRead = await safeRead(
+					options.manifestPath,
+					options,
+					applyOptions.signal,
+				);
+				if (manifestRead.status !== "ok")
+					throw new Error("unable to re-read the approved manifest");
+				const manifestDigest =
+					manifestRead.content === undefined
+						? null
+						: sha256(manifestRead.content);
+				if (manifestDigest !== approvedPlan.manifestDigest)
+					throw new Error("the manifest changed after confirmation");
+				currentManifestContent = manifestRead.content;
+			}
+			for (const action of approvedPlan.actions) {
+				if (applyOptions.signal?.aborted) {
+					canceled = true;
+					throw new Error("apply was canceled during atomic writes");
+				}
+				const targetRead = await safeRead(
+					action.targetPath,
+					options,
+					applyOptions.signal,
+				);
+				if (targetRead.status !== "ok")
+					throw new Error(`unable to re-read ${action.targetPath}`);
+				const targetDigest =
+					targetRead.content === undefined ? null : sha256(targetRead.content);
+				if (targetDigest === action.sourceDigest) continue;
+				if (targetDigest !== action.previousDigest)
+					throw new Error(
+						`the target changed after confirmation: ${action.name}`,
+					);
+				await options.filesystem.writeFileAtomic(
+					action.targetPath,
+					action.content,
+					action.previousDigest,
+				);
+				wrote = true;
+			}
+			const manifestBeforeWrite = await safeRead(
+				options.manifestPath,
+				options,
+				applyOptions.signal,
+			);
+			if (
+				manifestBeforeWrite.status !== "ok" ||
+				manifestBeforeWrite.content !== currentManifestContent
+			)
+				throw new Error("the manifest changed during asset writes");
+			const previousManifest = parseManifest(currentManifestContent);
+			if (!previousManifest.ok) throw new Error(previousManifest.diagnostic);
+			const manifest: AgentAssetManifest = {
+				schemaVersion: AGENT_ASSET_MANIFEST_SCHEMA_VERSION,
+				assets: {
+					...previousManifest.value.assets,
+					...Object.fromEntries(
+						approvedPlan.actions.map((action) => [
+							action.name,
+							{
+								ownership: "package" as const,
+								version: action.toVersion,
+								digest: action.sourceDigest,
+							},
+						]),
+					),
+				},
+			};
+			const manifestContent = `${JSON.stringify(manifest, null, 2)}\n`;
+			await options.filesystem.writeFileAtomic(
+				options.manifestPath,
+				manifestContent,
+				approvedPlan.manifestDigest,
+			);
+			wrote = true;
+			const assets: AppliedAgentAsset[] = [];
+			for (const action of approvedPlan.actions) {
+				const content = await options.filesystem.readFile(action.targetPath);
+				assets.push({
+					name: action.name,
+					targetPath: action.targetPath,
+					version: action.toVersion,
+					digest: action.sourceDigest,
+					verified:
+						content !== undefined && sha256(content) === action.sourceDigest,
+				});
+			}
+			const manifestRead = await options.filesystem.readFile(
+				options.manifestPath,
+			);
+			if (
+				assets.some((asset) => !asset.verified) ||
+				manifestRead !== manifestContent ||
+				!parseManifest(manifestRead).ok
+			)
+				return result("blocked", "applied", assets, [
+					"Agent asset read-back verification failed. Run inspect before retrying.",
+				]);
+			return result("applied", wrote ? "applied" : "none", assets, []);
+		} catch (error) {
+			if (canceled)
+				return result("canceled", wrote ? "applied" : "none", [], []);
+			return result(
+				"blocked",
+				wrote ? "applied" : "none",
+				[],
+				[
+					`Unable to apply agent assets: ${error instanceof Error ? error.message : String(error)}. Run inspect and retry the approved plan; completed atomic writes remain recoverable.`,
+				],
+			);
+		}
+	}
+	return { inspect, plan, apply };
 }

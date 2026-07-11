@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 
-import { readFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 
 import { createAgentAssetSync } from "../extensions/agent-asset-sync.ts";
@@ -23,6 +25,29 @@ const filesystem = {
 				return undefined;
 			}
 			throw error;
+		}
+	},
+	async writeFileAtomic(path, content, expectedDigest) {
+		await mkdir(dirname(path), { recursive: true });
+		const temporaryPath = `${path}.${randomUUID()}.tmp`;
+		try {
+			await writeFile(temporaryPath, content, { encoding: "utf8", flag: "wx" });
+			let current;
+			try {
+				current = await readFile(path, "utf8");
+			} catch (error) {
+				if (!error || typeof error !== "object" || error.code !== "ENOENT")
+					throw error;
+			}
+			const currentDigest =
+				current === undefined
+					? null
+					: createHash("sha256").update(current).digest("hex");
+			if (currentDigest !== expectedDigest)
+				throw new Error(`Concurrent change detected at ${path}`);
+			await rename(temporaryPath, path);
+		} finally {
+			await rm(temporaryPath, { force: true });
 		}
 	},
 };
@@ -70,6 +95,21 @@ try {
 				manifestPath: resolve(agentHome, ".pi-workflow", "agent-assets.json"),
 			}),
 			write: (text) => process.stdout.write(`${text}\n`),
+			confirm: async (plan) => {
+				if (!process.stdin.isTTY || !process.stdout.isTTY) return false;
+				const prompt = createInterface({
+					input: process.stdin,
+					output: process.stdout,
+				});
+				try {
+					const answer = await prompt.question(
+						`Apply ${plan.actions.length} package-owned agent asset change(s) from plan ${plan.digest}? [y/N] `,
+					);
+					return answer.trim().toLowerCase() === "y";
+				} finally {
+					prompt.close();
+				}
+			},
 			signal: controller.signal,
 		});
 } catch (error) {
