@@ -8,6 +8,7 @@ export const publicWorkflowCatalog = [
 		anchorRules: "After trimming, any non-empty product idea or problem is exactly one valid domain anchor. Whitespace-only input is missing.",
 		inputCondition: "missing",
 		anchorQuestion: "What product idea or problem should define the domain scope?",
+		capability: "implemented",
 	},
 	{
 		name: "deliver-ticket",
@@ -18,6 +19,7 @@ export const publicWorkflowCatalog = [
 		anchorRules: "After trimming, valid input is exactly one uppercase Linear identifier matching `[A-Z][A-Z0-9]*-[1-9][0-9]*` and nothing else. Whitespace-only input is missing. Malformed input or input containing multiple identifiers is invalid.",
 		inputCondition: "missing or invalid",
 		anchorQuestion: "What Linear Delivery ticket ID anchors this delivery?",
+		capability: "pending",
 	},
 	{
 		name: "product-review",
@@ -28,6 +30,7 @@ export const publicWorkflowCatalog = [
 		anchorRules: "After trimming, valid input is exactly one uppercase Linear identifier matching `[A-Z][A-Z0-9]*-[1-9][0-9]*` and nothing else. Whitespace-only input is missing. Malformed input or input containing multiple identifiers is invalid.",
 		inputCondition: "missing or invalid",
 		anchorQuestion: "What single Linear issue ID anchors this product review?",
+		capability: "pending",
 	},
 	{
 		name: "qa-handoff",
@@ -38,5 +41,6 @@ export const publicWorkflowCatalog = [
 		anchorRules: "After trimming, valid input is exactly one uppercase Linear identifier matching `[A-Z][A-Z0-9]*-[1-9][0-9]*` and nothing else. Whitespace-only input is missing. Malformed input or input containing multiple identifiers is invalid.",
 		inputCondition: "missing or invalid",
 		anchorQuestion: "What single Linear issue ID anchors this QA handoff?",
+		capability: "pending",
 	},
 ];

@@ -25,8 +25,10 @@ const entryGoldens = {
 			"After trimming, any non-empty product idea or problem is exactly one valid domain anchor. Whitespace-only input is missing.",
 		inputCondition: "missing",
 		anchorQuestion: "What product idea or problem should define the domain scope?",
+		capability: "implemented",
 	},
 	"deliver-ticket": {
+		capability: "pending",
 		title: "Deliver Ticket",
 		description:
 			"Deliver an assigned Linear ticket from a domain anchor under Developer authority.",
@@ -38,6 +40,7 @@ const entryGoldens = {
 		anchorQuestion: "What Linear Delivery ticket ID anchors this delivery?",
 	},
 	"product-review": {
+		capability: "pending",
 		title: "Product Review",
 		description:
 			"Review one Linear issue from a domain anchor under Owner authority.",
@@ -49,6 +52,7 @@ const entryGoldens = {
 		anchorQuestion: "What single Linear issue ID anchors this product review?",
 	},
 	"qa-handoff": {
+		capability: "pending",
 		title: "QA Handoff",
 		description:
 			"Prepare a QA handoff for one Linear issue from a domain anchor under Developer authority.",
@@ -126,6 +130,41 @@ test.after(async () => {
 	}
 });
 
+function expectedCapabilitySection(name, golden) {
+	if (golden.capability === "implemented") {
+		return `## Route recommendation
+
+After receiving an allowed invocation with a valid domain anchor:
+
+- Assess the idea explicitly on two axes: clarity (\`clear\` or \`unclear\`) and breadth (\`narrow\` or \`broad\`).
+- Recommend \`wayfinder\` when clarity is \`unclear\` or breadth is \`broad\`; otherwise recommend \`grilling\`.
+- Explain the reasons briefly and ask the Owner to confirm the exact recommended route, provide the research question, and return the one-time confirmation token from that recommendation response.
+- Stop after that recommendation turn. Do not start research in the same turn.
+
+## Confirmation and result
+
+After the Owner explicitly confirms the exact recommended route, provides the research question, and returns the one-time confirmation token from the active recommendation response:
+
+- Execute the workflow-owned define-product implementation.
+- If it returns a blocker, report the blocker exactly and stop.
+- If it completes, return the verified artifact reference and the next recommended step.
+
+Do not expose agent names, provider or model choices, effort, runtime IDs, artifact topics, private tool names, or retry internals.`;
+	}
+	return `## Pending capability
+
+After receiving an allowed invocation with a valid domain anchor, return exactly:
+
+\`\`\`text
+status: blocked
+code: PI_WORKFLOW_CAPABILITY_PENDING
+capability: ${name}
+mutation: none
+\`\`\`
+
+Do not invoke tools or perform mutations while this capability is pending. Runtime code blocks every tool call for the active public-entry turn.`;
+}
+
 function expectedSkillSource(name, golden) {
 	return `---
 name: ${name}
@@ -156,18 +195,7 @@ ${golden.anchorQuestion}
 
 Ask no other question. Stop immediately after the question. Do not invoke tools or perform mutations.
 
-## Pending capability
-
-After receiving an allowed invocation with a valid domain anchor, return exactly:
-
-\`\`\`text
-status: blocked
-code: PI_WORKFLOW_CAPABILITY_PENDING
-capability: ${name}
-mutation: none
-\`\`\`
-
-Do not invoke tools or perform mutations while this capability is pending. Runtime code blocks every tool call for the active public-entry turn.
+${expectedCapabilitySection(name, golden)}
 `;
 }
 

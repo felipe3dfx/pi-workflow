@@ -1,11 +1,17 @@
+import crypto from "node:crypto";
+
 import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
+	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import {
 	createCompanionWorkflow,
 	type CompanionWorkflowOptions,
 } from "./companion-workflow.ts";
+import { createDefaultDefineProductWorkflow, type DefaultDefineProductRuntimeOptions } from "./default-define-product.ts";
+import type { createDefineProductWorkflow } from "./define-product-workflow.ts";
+import { createDefineProductRuntime } from "./define-product-runtime.ts";
 import { registerPublicEntryGuard } from "./public-entry-guard.ts";
 
 function createWorkflow(
@@ -37,11 +43,55 @@ function createWorkflow(
 	});
 }
 
+export interface PiWorkflowExtensionOptions extends CompanionWorkflowOptions {
+	defineProduct?: {
+		workflow?: ReturnType<typeof createDefineProductWorkflow>;
+		createDefinitionId?: () => string;
+		runtime?: DefaultDefineProductRuntimeOptions;
+	};
+}
+
 export default function piWorkflowExtension(
 	pi: ExtensionAPI,
-	workflowOptions: CompanionWorkflowOptions = {},
+	workflowOptions: PiWorkflowExtensionOptions = {},
 ) {
-	registerPublicEntryGuard(pi);
+	let currentCtx: ExtensionContext | undefined;
+	pi.on("session_start", async (_event, ctx) => {
+		currentCtx = ctx;
+	});
+	pi.on("tool_execution_start", async (_event, ctx) => {
+		currentCtx = ctx;
+	});
+	pi.on("session_shutdown", async () => {
+		currentCtx = undefined;
+	});
+
+	const defineProductWorkflow =
+		workflowOptions.defineProduct?.workflow ??
+		createDefaultDefineProductWorkflow(
+			pi,
+			() => currentCtx,
+			workflowOptions.defineProduct?.runtime,
+		);
+	const defineProductRuntime = createDefineProductRuntime({
+		workflow: defineProductWorkflow,
+		createDefinitionId:
+			workflowOptions.defineProduct?.createDefinitionId ??
+			(() => crypto.randomUUID()),
+	});
+	defineProductRuntime.register(pi);
+	registerPublicEntryGuard(pi, {
+		"define-product": {
+			status: "implemented",
+			allowedTools: [defineProductRuntime.toolName],
+			continueIf: (event) => defineProductRuntime.shouldContinue(event),
+			hasActiveAuthorization: () => defineProductRuntime.hasActiveTurn(),
+			onAdmittedInput: (event) => defineProductRuntime.handlePublicEntry(event),
+		},
+		"deliver-ticket": { status: "pending" },
+		"qa-handoff": { status: "pending" },
+		"product-review": { status: "pending" },
+	});
 
 	pi.registerCommand("pi-workflow-status", {
 		description:
