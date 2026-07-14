@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { fileURLToPath } from "node:url";
 
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 import { createRuntimeEngramArtifactStore } from "../extensions/runtime-engram-store.ts";
@@ -209,6 +210,15 @@ test("default define-product keeps token, research, and artifact identity bound 
 	const launches = [];
 	const { handlers, tool } = loadExtension({
 		artifactStore: createArtifactStore(),
+		skillEntries: [
+			{
+				name: "research",
+				path: fileURLToPath(
+					new URL("./fixtures/private-skills/research/SKILL.md", import.meta.url),
+				),
+				scope: "core",
+			},
+		],
 		researchExecutor: async (input) => {
 			launches.push(input);
 			await input.writeArtifact({

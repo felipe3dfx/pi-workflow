@@ -133,6 +133,11 @@ export interface DefaultDefineProductRuntimeOptions {
 	artifactStore?: WorkflowArtifactStore;
 	researchExecutor?: ResearchExecutor | ResearchExecutor["execute"];
 	webExtensionPath?: string;
+	skillEntries?: readonly {
+		name: string;
+		path: string;
+		scope: "core" | "project" | "public";
+	}[];
 }
 
 function findProjectRoot(cwd: string): string {
@@ -409,10 +414,14 @@ function createDefaultResearchExecutor(): ResearchExecutor {
 	};
 }
 
-function createRuntimeResourceLoader(projectRoot: string) {
+function createRuntimeResourceLoader(
+	projectRoot: string,
+	skillEntries?: DefaultDefineProductRuntimeOptions["skillEntries"],
+) {
 	return {
 		skillResolver: createSkillResolver({
 			list: async () => {
+				if (skillEntries) return [...skillEntries];
 				const registryEntries = listSkillRegistryEntries(projectRoot);
 				return registryEntries.length > 0
 					? registryEntries
@@ -457,7 +466,10 @@ export function createDefaultDefineProductWorkflow(
 	options: DefaultDefineProductRuntimeOptions = {},
 ) {
 	const baseProject = resolveProjectRef(process.cwd());
-	const resources = createRuntimeResourceLoader(baseProject.root);
+	const resources = createRuntimeResourceLoader(
+		baseProject.root,
+		options.skillEntries,
+	);
 	const artifactStore =
 		options.artifactStore ??
 		createRuntimeEngramArtifactStore({
