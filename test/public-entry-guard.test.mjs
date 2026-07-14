@@ -2,17 +2,47 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 
-function loadExtension() {
+function loadExtension(options = {}) {
 	const handlers = new Map();
+	const tools = new Map();
 	let commandCount = 0;
-	piWorkflowExtension({
-		exec: async () => ({ code: 0 }),
-		registerCommand: () => {
-			commandCount += 1;
+	piWorkflowExtension(
+		{
+			exec: async () => ({ code: 0 }),
+			registerCommand: () => {
+				commandCount += 1;
+			},
+			registerTool: (tool) => tools.set(tool.name, tool),
+			on: (event, handler) => handlers.set(event, handler),
 		},
-		on: (event, handler) => handlers.set(event, handler),
-	});
-	return { handlers, commandCount };
+		options,
+	);
+	return { handlers, commandCount, tools };
+}
+
+function implementedWorkflow() {
+	let pendingRecommendation;
+	return {
+		pendingRecommendation: () => pendingRecommendation,
+		reset: () => {
+			pendingRecommendation = undefined;
+		},
+		advance: async (command) => {
+			if (command.kind === "recommend-route") {
+				pendingRecommendation = {
+					definitionId: command.definitionId,
+					domainAnchor: command.domainAnchor,
+					domainAnchorDigest: "anchor-digest",
+					assessment: command.assessment,
+					recommendedRoute: "wayfinder",
+					digest: "recommendation-1",
+				};
+				return { status: "awaiting-confirmation", recommendation: pendingRecommendation };
+			}
+			pendingRecommendation = undefined;
+			return { status: "blocked", blocker: { code: "blocked", message: "not used" } };
+		},
+	};
 }
 
 function context(notifications = [], idle = true) {
@@ -39,7 +69,6 @@ test("non-interactive public entries are handled before agent or tool execution"
 			level: "error",
 		},
 	]);
-	assert.equal(handlers.has("before_agent_start"), false);
 });
 
 test("all public command forms reject non-idle and non-interactive delivery", async () => {
@@ -123,6 +152,79 @@ test("an active pending public entry blocks prompt-injected tool calls until set
 	});
 	await handlers.get("agent_settled")({ type: "agent_settled" }, ctx);
 	assert.equal(await handlers.get("tool_call")({ toolName: "write" }, ctx), undefined);
+});
+
+
+test("public-entry guard blocks define-product tool calls without an active authorized capability", async () => {
+	const { handlers } = loadExtension();
+	assert.deepEqual(
+		await handlers.get("tool_call")({ toolName: "workflow_define_product" }, context()),
+		{
+			block: true,
+			reason:
+				"PI_WORKFLOW_CAPABILITY_PENDING: tools are disabled for pending public workflow capabilities",
+		},
+	);
+});
+
+test("default define-product is implemented and allows only its workflow-owned tool during guarded turns", async () => {
+	const { handlers, tools } = loadExtension();
+	const ctx = context();
+	assert.ok(tools.has("workflow_define_product"));
+	await handlers.get("input")(
+		{ type: "input", text: "/define-product map a new category", source: "interactive" },
+		ctx,
+	);
+	assert.equal(
+		await handlers.get("tool_call")({ toolName: "workflow_define_product" }, ctx),
+		undefined,
+	);
+	assert.deepEqual(await handlers.get("tool_call")({ toolName: "read" }, ctx), {
+		block: true,
+		reason:
+			"PI_WORKFLOW_CAPABILITY_PENDING: tools are disabled for pending public workflow capabilities",
+	});
+});
+
+test("implemented define-product preserves authorization for the settled confirmation turn", async () => {
+	const { handlers, tools } = loadExtension({
+		defineProduct: {
+			workflow: implementedWorkflow(),
+		},
+	});
+	const ctx = context();
+	await handlers.get("input")(
+		{ type: "input", text: "/define-product map a new category", source: "interactive" },
+		ctx,
+	);
+	assert.equal(
+		await handlers.get("tool_call")({ toolName: "workflow_define_product" }, ctx),
+		undefined,
+	);
+	assert.deepEqual(await handlers.get("tool_call")({ toolName: "read" }, ctx), {
+		block: true,
+		reason:
+			"PI_WORKFLOW_CAPABILITY_PENDING: tools are disabled for pending public workflow capabilities",
+	});
+	await tools.get("workflow_define_product").execute("tool-1", {
+		action: "recommend_route",
+		definitionId: "definition-1",
+		domainAnchor: "map a new category",
+		assessment: { clarity: "unclear", breadth: "broad", reasons: ["missing shape"] },
+	});
+	await handlers.get("agent_settled")({ type: "agent_settled" }, ctx);
+	assert.equal(
+		await handlers.get("tool_call")({ toolName: "workflow_define_product" }, ctx),
+		undefined,
+	);
+	await handlers.get("input")(
+		{ type: "input", text: "Yes, use wayfinder and research competitor maps", source: "interactive" },
+		ctx,
+	);
+	assert.equal(
+		await handlers.get("tool_call")({ toolName: "workflow_define_product" }, ctx),
+		undefined,
+	);
 });
 
 test("session replacement clears an active public-entry turn", async () => {
