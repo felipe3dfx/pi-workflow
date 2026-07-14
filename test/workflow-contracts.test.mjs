@@ -7,7 +7,25 @@ import {
 	createRouteRecommendation,
 	digestCanonicalValue,
 	sha256Hex,
+	uniqueVerifiedArtifactRefs,
 } from "../extensions/workflow-contracts.ts";
+
+test("verified artifact deduplication uses the complete canonical reference", () => {
+	const base = {
+		kind: "engram",
+		project: "project-a",
+		topic: "topic-a",
+		revision: "shared-revision",
+		schema: "workflow-progress",
+		schemaVersion: 1,
+		digest: "digest-a",
+	};
+	assert.deepEqual(uniqueVerifiedArtifactRefs([
+		base,
+		{ ...base },
+		{ ...base, project: "project-b", topic: "topic-b", digest: "digest-b" },
+	]), [base, { ...base, project: "project-b", topic: "topic-b", digest: "digest-b" }]);
+});
 
 test("route recommendation uses explicit clarity and breadth semantics", () => {
 	const wayfinder = createRouteRecommendation({

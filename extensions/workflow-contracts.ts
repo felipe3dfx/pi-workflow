@@ -3,8 +3,11 @@ import { createHash, randomBytes } from "node:crypto";
 export type Route = "wayfinder" | "grilling";
 type Clarity = "clear" | "unclear";
 type Breadth = "narrow" | "broad";
-type ArtifactSchema = "research-evidence";
-type ArtifactStrategy = "snapshot";
+type ArtifactSchema =
+	| "research-evidence"
+	| "design-exploration"
+	| "workflow-progress";
+type ArtifactStrategy = "snapshot" | "merge-progress";
 export type WorkflowBlockerCode =
 	| "PI_WORKFLOW_ROUTE_CONFIRMATION_REQUIRED"
 	| "PI_WORKFLOW_ROUTE_CONFIRMATION_MISMATCH"
@@ -20,8 +23,19 @@ export type WorkflowBlockerCode =
 	| "PI_WORKFLOW_RESEARCH_ARTIFACT_INVALID"
 	| "PI_WORKFLOW_ARTIFACT_WRITE_FAILED"
 	| "PI_WORKFLOW_ARTIFACT_READBACK_MISMATCH"
+	| "PI_WORKFLOW_ARTIFACT_REVISION_CONFLICT"
+	| "PI_WORKFLOW_ENGRAM_CONDITIONAL_WRITE_UNSUPPORTED"
+	| "PI_WORKFLOW_ARTIFACT_ALIAS_DENIED"
+	| "PI_WORKFLOW_PROGRESS_BATCH_CONFLICT"
+	| "PI_WORKFLOW_PROGRESS_SUPERSEDES_INVALID"
 	| "PI_WORKFLOW_INTENT_UNSUPPORTED"
-	| "PI_WORKFLOW_INTERVENTION_UNSUPPORTED";
+	| "PI_WORKFLOW_INTERVENTION_UNSUPPORTED"
+	| "PI_WORKFLOW_INTERVENTION_INVALID"
+	| "PI_WORKFLOW_DELEGATION_INTERRUPTED"
+	| "PI_WORKFLOW_DELEGATION_CANCELLED"
+	| "PI_WORKFLOW_RECOVERY_FAILED"
+	| "PI_WORKFLOW_DISCOVERED_PATH_INVALID"
+	| "PI_WORKFLOW_RETRY_EXHAUSTED";
 
 export interface WorkflowBlocker {
 	code: WorkflowBlockerCode;
@@ -63,11 +77,15 @@ export interface RouteRecommendation {
 
 export interface ArtifactGrant {
 	project: ProjectRef;
+	/** The only writable topic in this capability grant. */
 	topic: string;
 	schema: ArtifactSchema;
 	schemaVersion: 1;
 	strategy: ArtifactStrategy;
-	aliases: readonly [];
+	aliases: readonly {
+		alias: string;
+		ref: VerifiedArtifactRef;
+	}[];
 }
 
 export interface StoredArtifactRead {
@@ -85,7 +103,36 @@ export interface VerifiedArtifactRef {
 	digest: string;
 }
 
-export interface ResearchArtifactBinding {
+export function uniqueVerifiedArtifactRefs(
+	artifacts: readonly VerifiedArtifactRef[],
+): readonly VerifiedArtifactRef[] {
+	const unique = new Map<string, VerifiedArtifactRef>();
+	for (const artifact of artifacts) unique.set(canonicalJson(artifact), artifact);
+	return [...unique.values()];
+}
+
+export interface ProgressBatch {
+	batchKey: string;
+	payload: unknown;
+	digest?: string;
+	supersedes?: string;
+}
+
+export interface StoredProgressBatch {
+	batchKey: string;
+	payload: unknown;
+	digest: string;
+	supersedes?: string;
+}
+
+export interface WorkflowProgressEnvelope {
+	schema: "workflow-progress";
+	schemaVersion: 1;
+	payload: { batches: readonly StoredProgressBatch[] };
+	digest: string;
+}
+
+interface ResearchArtifactBinding {
 	assignmentId: string;
 	definitionId: string;
 	recommendationDigest: string;
@@ -95,10 +142,10 @@ export interface ResearchArtifactBinding {
 }
 
 export interface ExactLaunchProvenance {
-	agentName: "research";
+	agentName: "research" | "prototype";
 	assetVersion: number;
 	assetDigest: string;
-	capabilityProfile: "research-reader";
+	capabilityProfile: "research-reader" | "isolated-prototype";
 	provider: "openai-codex";
 	model: "gpt-5.6-terra";
 	effort: "medium";
@@ -139,28 +186,75 @@ export interface ResearchEvidenceV1 {
 }
 
 export interface ResearchEvidenceEnvelope {
-	schema: ArtifactSchema;
+	schema: "research-evidence";
 	schemaVersion: 1;
 	payload: ResearchEvidenceV1;
 	digest: string;
 }
 
+export interface DesignExplorationBinding {
+	kind: "design-exploration";
+	assignmentId: string;
+	definitionId: string;
+	intent: "prototype" | "design-alternative";
+	focus: string;
+	domainAnchorDigest: string;
+	sourceArtifacts: readonly VerifiedArtifactRef[];
+	skillRefs: readonly DigestedRef[];
+	standardRefs: readonly DigestedRef[];
+	launchProvenance: ExactLaunchProvenance;
+}
+
+export interface DesignExplorationSnapshot {
+	summary: string;
+	comparison: readonly {
+		criterion: string;
+		assessment: string;
+	}[];
+	changedPaths: readonly string[];
+	limitations: readonly string[];
+}
+
+export interface DesignExplorationEnvelope {
+	schema: "design-exploration";
+	schemaVersion: 1;
+	payload: Omit<DesignExplorationBinding, "kind"> &
+		DesignExplorationSnapshot & {
+			progressBatches: readonly StoredProgressBatch[];
+		};
+	digest: string;
+}
+
+export type ArtifactBinding = ResearchArtifactBinding | DesignExplorationBinding;
+
 interface ArtifactSessionCapability {
+	read(alias: string): Promise<StoredArtifactRead>;
 	readCurrent(): Promise<StoredArtifactRead | undefined>;
 	writeSnapshot(
 		envelope: ResearchEvidenceEnvelope,
+		expectedRevision?: string,
 	): Promise<VerifiedArtifactRef>;
+	writeExplorationSnapshot(
+		snapshot: DesignExplorationSnapshot,
+		expectedRevision?: string,
+	): Promise<VerifiedArtifactRef>;
+	mergeProgress(batch: ProgressBatch): Promise<VerifiedArtifactRef>;
+	verifyDiscoveredPaths(
+		paths: readonly string[],
+		artifacts: readonly VerifiedArtifactRef[],
+	): Promise<readonly string[]>;
 	hasVerifiedArtifact(artifact: VerifiedArtifactRef): boolean;
 }
 
 export interface PreparedLaunch {
-	intent: ResearchIntent;
+	intent: WorkflowIntent;
 	prompt: string;
 	skillRefs: readonly DigestedRef[];
 	standardRefs: readonly DigestedRef[];
 	artifactGrant: ArtifactGrant;
 	artifactSession: ArtifactSessionCapability;
 	launchProvenance: ExactLaunchProvenance;
+	fingerprint: string;
 }
 
 interface WorkflowRisk {
@@ -175,10 +269,15 @@ interface CompletedSubagentResult {
 	status: "completed";
 	executiveSummary: string;
 	artifacts: readonly VerifiedArtifactRef[];
-	nextRecommended: {
-		kind: "confirmed-route";
-		route: Route;
-	};
+	nextRecommended:
+		| {
+				kind: "confirmed-route";
+				route: Route;
+		  }
+		| {
+				kind: "compare-exploration";
+				intent: "prototype" | "design-alternative";
+		  };
 	risks: readonly WorkflowRisk[];
 	launchProvenance: ExactLaunchProvenance;
 }
@@ -197,13 +296,11 @@ interface BlockedSubagentResult {
 
 export type SubagentResult = CompletedSubagentResult | BlockedSubagentResult;
 
-export interface ResearchIntent {
-	kind: "research";
+interface BaseWorkflowIntent {
 	requestId: string;
 	definitionId: string;
 	recommendationDigest: string;
 	route: Route;
-	question: string;
 	domainAnchorDigest: string;
 	project: ProjectRef;
 	targetTopic: string;
@@ -211,7 +308,42 @@ export interface ResearchIntent {
 	affectedPaths: readonly string[];
 }
 
-export type WorkflowIntent = ResearchIntent;
+interface ResearchIntent extends BaseWorkflowIntent {
+	kind: "research";
+	question: string;
+}
+
+interface ExplorationIntent extends BaseWorkflowIntent {
+	kind: "prototype" | "design-alternative";
+	focus: string;
+	readableArtifacts: readonly {
+		alias: string;
+		ref: VerifiedArtifactRef;
+	}[];
+}
+
+export type WorkflowIntent = ResearchIntent | ExplorationIntent;
+
+export type Intervention =
+	| { kind: "steer"; guidance: string }
+	| { kind: "cancel"; reason: string };
+
+export interface DelegationCheckpoint {
+	identity: string;
+	intentFingerprint: string;
+	launchFingerprint: string;
+	sessionId?: string;
+	attempt: 1 | 2;
+	interventions: readonly Intervention[];
+	state:
+		| "running"
+		| "interrupted"
+		| "completed"
+		| "blocked"
+		| "cancelled";
+	verifiedArtifacts: readonly VerifiedArtifactRef[];
+	updatedAt: number;
+}
 
 export interface PrepareLaunchValidation {
 	assetVersion: number;

@@ -1,6 +1,13 @@
-import { existsSync, readFileSync } from "node:fs";
-import { readdirSync, realpathSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import {
+	existsSync,
+	lstatSync,
+	readFileSync,
+	readdirSync,
+	realpathSync,
+} from "node:fs";
+import { cp, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -9,24 +16,41 @@ import {
 	createAgentSession,
 	getAgentDir,
 	parseFrontmatter,
+	type AgentSession,
 	type ExtensionAPI,
 	type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 
 import { createAgentValidator } from "./agent-validator.ts";
-import { createDefineProductWorkflow } from "./define-product-workflow.ts";
+import {
+	createDurableDelegationCheckpointStore,
+	type DelegationCheckpointStore,
+} from "./delegation-checkpoints.ts";
+import {
+	createDefineProductWorkflow,
+	type ExplorationRecoveryStore,
+} from "./define-product-workflow.ts";
 import { createProjectStandardsResolver } from "./project-standards-resolver.ts";
 import { createSkillResolver } from "./skill-resolver.ts";
-import { createSubagentLauncher } from "./subagent-launcher.ts";
+import {
+	createSubagentLauncher,
+	type LaunchOptions,
+} from "./subagent-launcher.ts";
 import { createRuntimeEngramArtifactStore } from "./runtime-engram-store.ts";
+import { createRuntimePrivateStatePersistence } from "./runtime-private-state.ts";
+import { createDurableExplorationRecoveryStore } from "./exploration-recovery.ts";
 import {
 	createResearchEvidenceEnvelope,
 	createBlocker,
+	uniqueVerifiedArtifactRefs,
+	type DesignExplorationSnapshot,
 	type DigestedRef,
+	type ExactLaunchProvenance,
+	type Intervention,
+	type PreparedLaunch,
 	type ProjectRef,
 	type ResearchFinding,
 	type VerifiedArtifactRef,
-	type PreparedLaunch,
 } from "./workflow-contracts.ts";
 import {
 	createWorkflowArtifactInterface,
@@ -37,6 +61,7 @@ import { createWorkflowDelegate } from "./workflow-delegate.ts";
 const packageDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const assetCatalogPath = join(packageDirectory, "assets", "agent-assets.json");
 const researchAssetPath = join(packageDirectory, "assets", "agents", "research.md");
+const prototypeAssetPath = join(packageDirectory, "assets", "agents", "prototype.md");
 const publicSkillNames = new Set([
 	"define-product",
 	"deliver-ticket",
@@ -52,6 +77,16 @@ const allowedResearchTools = [
 	"web_search",
 	"fetch_content",
 	"get_search_content",
+	workflowArtifactToolName,
+];
+const allowedExplorationTools = [
+	"read",
+	"grep",
+	"find",
+	"ls",
+	"edit",
+	"write",
+	"bash",
 	workflowArtifactToolName,
 ];
 
@@ -94,7 +129,40 @@ const artifactToolParameters = {
 	required: ["action", "findings", "limitations"],
 } as const;
 
-interface ResearchAssetMetadata {
+const explorationArtifactToolParameters = {
+	type: "object",
+	additionalProperties: false,
+	properties: {
+		action: {
+			type: "string",
+			enum: ["read_alias", "merge_progress", "write_snapshot"],
+		},
+		alias: { type: "string" },
+		batchKey: { type: "string" },
+		payload: {},
+		digest: { type: "string" },
+		supersedes: { type: "string" },
+		summary: { type: "string" },
+		comparison: {
+			type: "array",
+			items: {
+				type: "object",
+				additionalProperties: false,
+				properties: {
+					criterion: { type: "string" },
+					assessment: { type: "string" },
+				},
+				required: ["criterion", "assessment"],
+			},
+		},
+		changedPaths: { type: "array", items: { type: "string" } },
+		discoveredPaths: { type: "array", items: { type: "string" } },
+		limitations: { type: "array", items: { type: "string" } },
+	},
+	required: ["action"],
+} as const;
+
+interface AgentAssetMetadata {
 	name: string;
 	version: number;
 	digest: string;
@@ -113,6 +181,7 @@ interface ResearchAssetMetadata {
 
 interface ResearchExecutorInput {
 	cwd: string;
+	launchOptions: LaunchOptions;
 	model: NonNullable<ExtensionContext["model"]>;
 	thinkingLevel: "medium";
 	prompt: string;
@@ -129,10 +198,39 @@ interface ResearchExecutor {
 	execute(input: ResearchExecutorInput): Promise<{ assistantText: string }>;
 }
 
+interface ExplorationExecutorInput {
+	cwd: string;
+	launchOptions: LaunchOptions;
+	model: NonNullable<ExtensionContext["model"]>;
+	thinkingLevel: "medium";
+	intent: "prototype" | "design-alternative";
+	prompt: string;
+	systemPrompt: string;
+	allowedTools: readonly string[];
+	launchProvenance: ExactLaunchProvenance;
+	readArtifact(alias: string): Promise<string>;
+	mergeProgress(
+		batch: Parameters<PreparedLaunch["artifactSession"]["mergeProgress"]>[0],
+	): Promise<VerifiedArtifactRef>;
+	writeArtifact(input: DesignExplorationSnapshot): Promise<VerifiedArtifactRef>;
+}
+
+interface ExplorationExecutor {
+	execute(input: ExplorationExecutorInput): Promise<{
+		assistantText: string;
+		discoveredPaths?: readonly string[];
+	}>;
+	intervene?(sessionId: string, intervention: Intervention): Promise<void>;
+}
+
 export interface DefaultDefineProductRuntimeOptions {
 	artifactStore?: WorkflowArtifactStore;
+	checkpointStore?: DelegationCheckpointStore;
+	explorationRecoveryStore?: ExplorationRecoveryStore;
 	researchExecutor?: ResearchExecutor | ResearchExecutor["execute"];
+	explorationExecutor?: ExplorationExecutor | ExplorationExecutor["execute"];
 	webExtensionPath?: string;
+	createRequestId?: () => string;
 	skillEntries?: readonly {
 		name: string;
 		path: string;
@@ -169,23 +267,46 @@ function lastAssistantText(messages: readonly { role?: string; content?: unknown
 	return "";
 }
 
+interface InterruptedRuntimeError extends Error {
+	code: "PI_WORKFLOW_DELEGATION_INTERRUPTED";
+	interrupted: true;
+	sessionId?: string;
+	verifiedArtifacts: readonly VerifiedArtifactRef[];
+}
+
+function isInterruptedRuntimeError(
+	error: unknown,
+): error is InterruptedRuntimeError {
+	if (!(error instanceof Error)) return false;
+	const candidate = error as Partial<InterruptedRuntimeError>;
+	return (
+		candidate.code === "PI_WORKFLOW_DELEGATION_INTERRUPTED" &&
+		candidate.interrupted === true &&
+		Array.isArray(candidate.verifiedArtifacts)
+	);
+}
+
 function readFileIfPresent(path: string): string | undefined {
 	if (!existsSync(path)) return undefined;
 	return readFileSync(path, "utf8");
 }
 
-function readResearchAssetMetadata(): ResearchAssetMetadata {
+function readAgentAssetMetadata(
+	name: "research" | "prototype",
+	path: string,
+	allowedTools: readonly string[],
+): AgentAssetMetadata {
 	const catalog = JSON.parse(readFileSync(assetCatalogPath, "utf8")) as {
 		assets?: Array<{ kind?: string; name?: string; version?: number; digest?: string }>;
 	};
 	const catalogEntry = catalog.assets?.find(
-		(entry) => entry.kind === "agent" && entry.name === "research",
+		(entry) => entry.kind === "agent" && entry.name === name,
 	);
 	if (!catalogEntry?.digest || typeof catalogEntry.version !== "number") {
-		throw new Error("The packaged research asset catalog entry is missing or invalid.");
+		throw new Error(`The packaged ${name} asset catalog entry is missing or invalid.`);
 	}
 	const parsed = parseFrontmatter<Record<string, unknown>>(
-		readFileSync(researchAssetPath, "utf8"),
+		readFileSync(path, "utf8"),
 	);
 	const modelReference = String(parsed.frontmatter.model ?? "").trim();
 	const [provider, model] = modelReference.split("/");
@@ -193,7 +314,7 @@ function readResearchAssetMetadata(): ResearchAssetMetadata {
 		throw new Error("The packaged research asset model reference is invalid.");
 	}
 	return {
-		name: "research",
+		name,
 		version: catalogEntry.version,
 		digest: catalogEntry.digest,
 		capabilityProfile: String(parsed.frontmatter.capability_profile ?? ""),
@@ -202,7 +323,7 @@ function readResearchAssetMetadata(): ResearchAssetMetadata {
 		effort: String(parsed.frontmatter.thinking ?? ""),
 		inheritContext: parsed.frontmatter.inherit_context === true,
 		promptMode: String(parsed.frontmatter.prompt_mode ?? ""),
-		allowedTools: allowedResearchTools,
+		allowedTools,
 		extensions: Array.isArray(parsed.frontmatter.extensions)
 			? parsed.frontmatter.extensions.map((entry) => String(entry))
 			: [],
@@ -212,6 +333,22 @@ function readResearchAssetMetadata(): ResearchAssetMetadata {
 		supportsScopedArtifacts: true,
 		systemPrompt: parsed.body.trim(),
 	};
+}
+
+function readResearchAssetMetadata(): AgentAssetMetadata {
+	return readAgentAssetMetadata(
+		"research",
+		researchAssetPath,
+		allowedResearchTools,
+	);
+}
+
+function readExplorationAssetMetadata(): AgentAssetMetadata {
+	return readAgentAssetMetadata(
+		"prototype",
+		prototypeAssetPath,
+		allowedExplorationTools,
+	);
 }
 
 function listSkillRegistryEntries(projectRoot: string) {
@@ -288,7 +425,7 @@ function resolveWebExtensionPath(projectRoot: string, override?: string): string
 }
 
 function buildResearchSystemPrompt(input: {
-	asset: ResearchAssetMetadata;
+	asset: AgentAssetMetadata;
 	preparedLaunch: PreparedLaunch;
 	skillRefs: readonly DigestedRef[];
 	standardRefs: readonly DigestedRef[];
@@ -312,6 +449,36 @@ function buildResearchSystemPrompt(input: {
 		"Do not invoke public skills, Linear capabilities, bash, editing, writing, or recursive agent launches.",
 		`Call ${workflowArtifactToolName} exactly once with action="write_snapshot" after collecting evidence.`,
 		"After the tool returns, provide a concise executive summary and one next recommended step for the Owner.",
+		...skillBlocks,
+		...standardBlocks,
+	].join("\n\n");
+}
+
+function buildExplorationSystemPrompt(input: {
+	asset: AgentAssetMetadata;
+	preparedLaunch: PreparedLaunch;
+	skillRefs: readonly DigestedRef[];
+	standardRefs: readonly DigestedRef[];
+}) {
+	const skillBlocks = input.skillRefs.map((ref) => {
+		const content = readFileSync(ref.path, "utf8");
+		return `## Skill\nName: ${ref.name}\nPath: ${ref.path}\nDigest: ${ref.digest}\n\n${content}`;
+	});
+	const standardBlocks = input.standardRefs.map((ref) => {
+		const content = readFileSync(ref.path, "utf8");
+		return `## Standard\nName: ${ref.name}\nPath: ${ref.path}\nDigest: ${ref.digest}\n\n${content}`;
+	});
+	return [
+		input.asset.systemPrompt,
+		`You are executing the package-owned ${input.preparedLaunch.intent.kind} workflow in a disposable project copy.`,
+		`Capability profile: ${input.preparedLaunch.launchProvenance.capabilityProfile}.`,
+		`Provider/model/effort: ${input.preparedLaunch.launchProvenance.provider}/${input.preparedLaunch.launchProvenance.model} / ${input.preparedLaunch.launchProvenance.effort}.`,
+		"Read only explicitly granted aliases through workflow_artifact_session action=read_alias.",
+		"Never inspect or expose delegation checkpoints, private workflow state, raw history, Linear, or agent launch capabilities.",
+		"Repository writes and bounded shell commands are allowed only inside this disposable copy.",
+		"Persist durable intermediate batches with workflow_artifact_session action=merge_progress when recovery would otherwise lose verified work.",
+		"Report newly discovered project paths that require standards or skill re-resolution separately from files changed in the disposable copy.",
+		`Call ${workflowArtifactToolName} exactly once with action=write_snapshot and a comparable summary, comparison criteria, changed paths, and limitations.`,
 		...skillBlocks,
 		...standardBlocks,
 	].join("\n\n");
@@ -414,6 +581,180 @@ function createDefaultResearchExecutor(): ResearchExecutor {
 	};
 }
 
+export async function createRecoverableSessionManager(
+	cwd: string,
+	sessionDirectory: string,
+	launchOptions: LaunchOptions,
+): Promise<SessionManager> {
+	if (launchOptions.resumeSessionId) {
+		const sessions = await SessionManager.listAll(sessionDirectory);
+		const exact = sessions.find(
+			(session) => session.id === launchOptions.resumeSessionId,
+		);
+		if (!exact) {
+			throw new Error(
+				`The exact recoverable Pi session is unavailable: ${launchOptions.resumeSessionId}.`,
+			);
+		}
+		return SessionManager.open(exact.path, sessionDirectory, cwd);
+	}
+	const manager = SessionManager.create(cwd, sessionDirectory, {
+		id: launchOptions.sessionId,
+	});
+	manager.appendSessionInfo(launchOptions.sessionId);
+	return manager;
+}
+
+export function createDefaultExplorationExecutor(
+	sessionDirectory: string,
+	createSession: typeof createAgentSession = createAgentSession,
+): ExplorationExecutor {
+	const activeSessions = new Map<string, AgentSession>();
+	return {
+		async execute(input) {
+			let discoveredPaths: readonly string[] | undefined;
+			const resourceLoader = new DefaultResourceLoader({
+				cwd: input.cwd,
+				agentDir: getAgentDir(),
+				noSkills: true,
+				noPromptTemplates: true,
+				noThemes: true,
+				noContextFiles: true,
+				systemPrompt: input.systemPrompt,
+				extensionsOverride: (base) => ({ ...base, extensions: [] }),
+			});
+			await resourceLoader.reload();
+			const customTools = [
+				{
+					name: workflowArtifactToolName,
+					label: "Workflow Artifact Session",
+					description:
+						"Read granted aliases, merge immutable progress, and persist one request-bound design exploration snapshot.",
+					parameters: explorationArtifactToolParameters as never,
+					async execute(
+						_toolCallId: string,
+						params: {
+							action: "read_alias" | "merge_progress" | "write_snapshot";
+							alias?: string;
+							batchKey?: string;
+							payload?: unknown;
+							digest?: string;
+							supersedes?: string;
+							summary?: string;
+							comparison?: DesignExplorationSnapshot["comparison"];
+							changedPaths?: readonly string[];
+							discoveredPaths?: readonly string[];
+							limitations?: readonly string[];
+						},
+					) {
+						if (params.action === "read_alias") {
+							if (!params.alias) throw new Error("A granted artifact alias is required.");
+							const content = await input.readArtifact(params.alias);
+							return {
+								content: [{ type: "text" as const, text: content }],
+								details: { alias: params.alias },
+							};
+						}
+						if (params.action === "merge_progress") {
+							if (!params.batchKey?.trim()) {
+								throw new Error("A non-empty progress batch key is required.");
+							}
+							const artifact = await input.mergeProgress({
+								batchKey: params.batchKey,
+								payload: params.payload,
+								...(params.digest === undefined ? {} : { digest: params.digest }),
+								...(params.supersedes === undefined
+									? {}
+									: { supersedes: params.supersedes }),
+							});
+							return {
+								content: [{ type: "text" as const, text: JSON.stringify(artifact, null, 2) }],
+								details: artifact,
+							};
+						}
+						discoveredPaths = params.discoveredPaths
+							?.map((path) => path.trim())
+							.filter(Boolean);
+						const artifact = await input.writeArtifact({
+							summary: params.summary ?? "",
+							comparison: params.comparison ?? [],
+							changedPaths: params.changedPaths ?? [],
+							limitations: params.limitations ?? [],
+						});
+						return {
+							content: [{ type: "text" as const, text: JSON.stringify(artifact, null, 2) }],
+							details: artifact,
+						};
+					},
+				},
+			];
+			const sessionManager = await createRecoverableSessionManager(
+				input.cwd,
+				sessionDirectory,
+				input.launchOptions,
+			);
+			const { session } = await createSession({
+				cwd: input.cwd,
+				agentDir: getAgentDir(),
+				model: input.model,
+				thinkingLevel: input.thinkingLevel,
+				resourceLoader,
+				tools: [...input.allowedTools],
+				customTools,
+				sessionManager,
+			});
+			activeSessions.set(session.sessionId, session);
+			try {
+				const result = await executeResearchSession(session, input.prompt);
+				return {
+					...result,
+					...(discoveredPaths?.length ? { discoveredPaths } : {}),
+				};
+			} finally {
+				if (activeSessions.get(session.sessionId) === session) {
+					activeSessions.delete(session.sessionId);
+				}
+				session.dispose();
+			}
+		},
+		async intervene(sessionId, intervention) {
+			const session = activeSessions.get(sessionId);
+			if (!session) {
+				throw new Error(`The exact active Pi session is unavailable: ${sessionId}.`);
+			}
+			if (intervention.kind === "steer") {
+				await session.steer(intervention.guidance);
+				return;
+			}
+			await session.abort();
+		},
+	};
+}
+
+async function withDisposableProjectCopy<T>(
+	projectRoot: string,
+	run: (cwd: string) => Promise<T>,
+): Promise<T> {
+	const isolationRoot = await mkdtemp(join(tmpdir(), "pi-workflow-prototype-"));
+	const cwd = join(isolationRoot, "workspace");
+	try {
+		await cp(projectRoot, cwd, {
+			recursive: true,
+			filter: (source) => {
+				const relative = source.slice(projectRoot.length).replace(/^[/\\]/, "");
+				const [top] = relative.split(sep);
+				if ([".git", "node_modules", ".pi-workflow", ".codegraph"].includes(top ?? "")) {
+					return false;
+				}
+				return !lstatSync(source).isSocket();
+			},
+		});
+		return await run(cwd);
+	} finally {
+		await rm(isolationRoot, { recursive: true, force: true });
+	}
+}
+
 function createRuntimeResourceLoader(
 	projectRoot: string,
 	skillEntries?: DefaultDefineProductRuntimeOptions["skillEntries"],
@@ -480,13 +821,47 @@ export function createDefaultDefineProductWorkflow(
 		typeof options.researchExecutor === "function"
 			? { execute: options.researchExecutor }
 			: options.researchExecutor ?? createDefaultResearchExecutor();
+	const explorationExecutor =
+		typeof options.explorationExecutor === "function"
+			? { execute: options.explorationExecutor }
+			: options.explorationExecutor ??
+				createDefaultExplorationExecutor(
+					join(
+						getAgentDir(),
+						".pi-workflow",
+						"exploration-sessions",
+						baseProject.name,
+					),
+				);
 	const webExtensionPath = resolveWebExtensionPath(
 		baseProject.root,
 		options.webExtensionPath,
 	);
 
+	const privateStateDirectory = join(
+		getAgentDir(),
+		".pi-workflow",
+		"delegation-checkpoints",
+		baseProject.name,
+	);
+	const privateStatePersistence =
+		createRuntimePrivateStatePersistence(privateStateDirectory);
+	const checkpointStore =
+		options.checkpointStore ??
+		createDurableDelegationCheckpointStore({
+			directory: privateStateDirectory,
+			persistence: privateStatePersistence,
+		});
+	const explorationRecoveryStore =
+		options.explorationRecoveryStore ??
+		createDurableExplorationRecoveryStore({
+			path: join(privateStateDirectory, "exploration-recovery.json"),
+			persistence: privateStatePersistence,
+		});
+
 	const agentValidator = createAgentValidator({
 		readResearchAsset: () => readResearchAssetMetadata(),
+		readExplorationAsset: () => readExplorationAssetMetadata(),
 		readModelAvailability: async (provider, model, effort) => {
 			const ctx = getCurrentContext();
 			if (!ctx) {
@@ -512,11 +887,16 @@ export function createDefaultDefineProductWorkflow(
 
 	const workflowDelegate = createWorkflowDelegate({
 		skillResolver: resources.skillResolver,
+		checkpointStore,
 		standardsResolver: resources.standardsResolver,
 		agentValidator,
 		artifactInterface: createWorkflowArtifactInterface(artifactStore),
 		subagentLauncher: createSubagentLauncher({
-			launch: async (preparedLaunch) => {
+			intervene: async (sessionId, intervention) => {
+				await explorationExecutor.intervene?.(sessionId, intervention);
+			},
+			launch: async (preparedLaunch, launchOptions) => {
+				const intent = preparedLaunch.intent;
 				const ctx = getCurrentContext();
 				if (!ctx) {
 					return {
@@ -533,7 +913,7 @@ export function createDefaultDefineProductWorkflow(
 						launchProvenance: preparedLaunch.launchProvenance,
 					};
 				}
-				if (!existsSync(webExtensionPath)) {
+				if (intent.kind === "research" && !existsSync(webExtensionPath)) {
 					return {
 						status: "blocked",
 						executiveSummary:
@@ -569,11 +949,121 @@ export function createDefaultDefineProductWorkflow(
 						launchProvenance: preparedLaunch.launchProvenance,
 					};
 				}
-				let writtenArtifact: VerifiedArtifactRef | undefined;
+				if (!launchOptions) {
+					throw new Error("A recoverable launch requires explicit launch options.");
+				}
 				const projectRef = resolveProjectRef(ctx.cwd);
+				if (intent.kind !== "research") {
+					let writtenExploration: VerifiedArtifactRef | undefined;
+					const verifiedProgress: VerifiedArtifactRef[] = [];
+					try {
+						const execution = await withDisposableProjectCopy(
+							projectRef.root,
+							(cwd) =>
+								explorationExecutor.execute({
+									cwd,
+									launchOptions,
+									model,
+									thinkingLevel: "medium",
+									intent: intent.kind,
+									prompt: preparedLaunch.prompt,
+									systemPrompt: buildExplorationSystemPrompt({
+										asset: readExplorationAssetMetadata(),
+										preparedLaunch,
+										skillRefs: preparedLaunch.skillRefs,
+										standardRefs: preparedLaunch.standardRefs,
+									}),
+									allowedTools: preparedLaunch.launchProvenance.allowedTools,
+									launchProvenance: preparedLaunch.launchProvenance,
+									readArtifact: async (alias) =>
+										(await preparedLaunch.artifactSession.read(alias)).content,
+									mergeProgress: async (batch) => {
+										const artifact =
+											await preparedLaunch.artifactSession.mergeProgress(batch);
+										verifiedProgress.push(artifact);
+										return artifact;
+									},
+									writeArtifact: async (snapshot) => {
+										if (writtenExploration) {
+											throw new Error(
+												`${workflowArtifactToolName} may write only one verified artifact per request.`,
+											);
+										}
+										writtenExploration =
+											await preparedLaunch.artifactSession.writeExplorationSnapshot(
+												snapshot,
+											);
+										return writtenExploration;
+									},
+								}),
+						);
+						if (!writtenExploration) {
+							return {
+								status: "blocked",
+								executiveSummary:
+									"The exploration launch completed without writing a verified design artifact.",
+								artifacts: [],
+								nextRecommended: { kind: "owner-action" },
+								risks: [],
+								blocker: createBlocker(
+									"PI_WORKFLOW_ARTIFACT_READBACK_MISMATCH",
+									"The exploration launch completed without writing a verified design artifact.",
+								),
+								launchProvenance: preparedLaunch.launchProvenance,
+							};
+						}
+						return {
+							result: {
+								status: "completed",
+								executiveSummary:
+									execution.assistantText.trim() ||
+									`${intent.kind} complete. The verified artifact is ready for comparison.`,
+								artifacts: [writtenExploration],
+								nextRecommended: {
+									kind: "compare-exploration",
+									intent: intent.kind,
+								},
+								risks: [],
+								launchProvenance: preparedLaunch.launchProvenance,
+							},
+							sessionId: launchOptions.sessionId,
+							...(execution.discoveredPaths
+								? { discoveredPaths: [...execution.discoveredPaths] }
+								: {}),
+						};
+					} catch (error) {
+						if (isInterruptedRuntimeError(error)) {
+							throw Object.assign(error, {
+								sessionId: error.sessionId || launchOptions.sessionId,
+								verifiedArtifacts: uniqueVerifiedArtifactRefs([
+									...launchOptions.verifiedArtifacts,
+									...verifiedProgress,
+									...error.verifiedArtifacts,
+								]),
+							});
+						}
+						const message = error instanceof Error ? error.message : String(error);
+						return {
+							status: "blocked",
+							executiveSummary: message,
+							artifacts: [],
+							nextRecommended: { kind: "owner-action" },
+							risks: [],
+							blocker: createBlocker(
+								writtenExploration
+									? "PI_WORKFLOW_ARTIFACT_READBACK_MISMATCH"
+									: "PI_WORKFLOW_AGENT_ASSET_NOT_READY",
+								message,
+							),
+							launchProvenance: preparedLaunch.launchProvenance,
+						};
+					}
+				}
+				let writtenArtifact: VerifiedArtifactRef | undefined;
 				try {
 					const execution = await researchExecutor.execute({
 						cwd: projectRef.root,
+						launchOptions,
 						model,
 						thinkingLevel: "medium",
 						prompt: preparedLaunch.prompt,
@@ -592,12 +1082,12 @@ export function createDefaultDefineProductWorkflow(
 								);
 							}
 							const envelope = createResearchEvidenceEnvelope({
-								assignmentId: preparedLaunch.intent.requestId,
-								definitionId: preparedLaunch.intent.definitionId,
-								recommendationDigest: preparedLaunch.intent.recommendationDigest,
-								route: preparedLaunch.intent.route,
-								question: preparedLaunch.intent.question,
-								domainAnchorDigest: preparedLaunch.intent.domainAnchorDigest,
+								assignmentId: intent.requestId,
+								definitionId: intent.definitionId,
+								recommendationDigest: intent.recommendationDigest,
+								route: intent.route,
+								question: intent.question,
+								domainAnchorDigest: intent.domainAnchorDigest,
 								findings: input.findings,
 								limitations: input.limitations,
 								skillRefs: preparedLaunch.skillRefs,
@@ -632,7 +1122,7 @@ export function createDefaultDefineProductWorkflow(
 						artifacts: [writtenArtifact],
 						nextRecommended: {
 							kind: "confirmed-route",
-							route: preparedLaunch.intent.route,
+							route: intent.route,
 						},
 						risks: [],
 						launchProvenance: preparedLaunch.launchProvenance,
@@ -660,7 +1150,9 @@ export function createDefaultDefineProductWorkflow(
 
 	return createDefineProductWorkflow({
 		delegate: workflowDelegate,
-		createRequestId: () => `request-${Date.now()}`,
+		explorationRecoveryStore,
+		createRequestId:
+			options.createRequestId ?? (() => `request-${Date.now()}`),
 		project: baseProject,
 	});
 }

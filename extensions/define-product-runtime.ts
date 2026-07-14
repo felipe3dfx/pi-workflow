@@ -18,7 +18,10 @@ const defineProductParameters = {
 	type: "object",
 	additionalProperties: false,
 	properties: {
-		action: { type: "string", enum: ["recommend_route", "confirm_route"] },
+		action: {
+			type: "string",
+			enum: ["recommend_route", "confirm_route", "request_exploration"],
+		},
 		definitionId: { type: "string" },
 		domainAnchor: { type: "string" },
 		assessment: {
@@ -35,12 +38,17 @@ const defineProductParameters = {
 		confirmationToken: { type: "string", minLength: 43, maxLength: 43 },
 		confirmedRoute: { type: "string", enum: ["wayfinder", "grilling"] },
 		researchQuestion: { type: "string" },
+		intent: {
+			type: "string",
+			enum: ["prototype", "design-alternative"],
+		},
+		focus: { type: "string" },
 	},
 	required: ["action"],
 } as const;
 
 interface DefineProductToolParams {
-	action: "recommend_route" | "confirm_route";
+	action: "recommend_route" | "confirm_route" | "request_exploration";
 	definitionId?: string;
 	domainAnchor?: string;
 	assessment?: Assessment;
@@ -48,6 +56,8 @@ interface DefineProductToolParams {
 	confirmationToken?: string;
 	confirmedRoute?: Route;
 	researchQuestion?: string;
+	intent?: "prototype" | "design-alternative";
+	focus?: string;
 }
 
 export interface DefineProductRuntimeDependencies {
@@ -55,6 +65,7 @@ export interface DefineProductRuntimeDependencies {
 		advance(command: DefineProductCommand): Promise<DefineProductOutcome>;
 		pendingRecommendation(): RouteRecommendation | undefined;
 		reset(): void;
+		restoreRecovery?(): Promise<string | undefined>;
 	};
 	createDefinitionId(): string;
 }
@@ -65,6 +76,7 @@ export function createDefineProductRuntime(
 	let activeDefinitionId: string | undefined;
 	let activeWorkflowStateId: string | undefined;
 	let awaitingConfirmation = false;
+	let explorationAvailable = false;
 
 	function handlePublicEntry(event: InputEvent): void {
 		if (!event.text.match(/^\/(?:skill:)?define-product(?:\s|$)/)) return;
@@ -77,16 +89,21 @@ export function createDefineProductRuntime(
 		activeDefinitionId = undefined;
 		activeWorkflowStateId = undefined;
 		awaitingConfirmation = false;
+		explorationAvailable = false;
 		dependencies.workflow.reset();
 	}
 
 	function hasActiveTurn(): boolean {
-		return activeDefinitionId !== undefined || awaitingConfirmation;
+		return (
+			activeDefinitionId !== undefined ||
+			awaitingConfirmation ||
+			explorationAvailable
+		);
 	}
 
 	function shouldContinue(event: InputEvent): boolean {
 		return (
-			awaitingConfirmation &&
+			(awaitingConfirmation || explorationAvailable) &&
 			event.source === "interactive" &&
 			event.streamingBehavior === undefined
 		);
@@ -94,6 +111,13 @@ export function createDefineProductRuntime(
 
 	function systemPrompt(): string {
 		const pending = dependencies.workflow.pendingRecommendation();
+		if (explorationAvailable) {
+			return [
+				"Verified research is available for the active define-product session.",
+				`Call ${toolName} with action="request_exploration" only when the Owner requests either a prototype or a design alternative and provides a focused comparison question.`,
+				"Do not request or reveal internal runtime IDs, artifact topics, or raw workflow history.",
+			].join(" ");
+		}
 		if (!pending || !awaitingConfirmation) {
 			return [
 				"You are executing the implemented define-product workflow.",
@@ -117,7 +141,15 @@ export function createDefineProductRuntime(
 			if (!hasActiveTurn()) return undefined;
 			return { systemPrompt: systemPrompt() };
 		});
-		pi.on("session_start", clearActiveTurn);
+		pi.on("session_start", async () => {
+			clearActiveTurn();
+			const recoveredDefinitionId =
+				await dependencies.workflow.restoreRecovery?.();
+			if (recoveredDefinitionId) {
+				activeDefinitionId = recoveredDefinitionId;
+				explorationAvailable = true;
+			}
+		});
 		pi.on("session_shutdown", clearActiveTurn);
 		const registerTool = (pi as { registerTool?: (tool: unknown) => void })
 			.registerTool;
@@ -125,7 +157,7 @@ export function createDefineProductRuntime(
 			name: toolName,
 			label: "Define Product Workflow",
 			description:
-				"Execute the package-owned define-product workflow recommendation or confirmation step.",
+				"Execute the package-owned define-product recommendation, confirmation, or Owner-requested exploration step.",
 			parameters: defineProductParameters as never,
 			async execute(_toolCallId: string, params: DefineProductToolParams) {
 				if (
@@ -154,6 +186,19 @@ export function createDefineProductRuntime(
 						blocker: createBlocker(
 							"PI_WORKFLOW_DEFINITION_ID_MISMATCH",
 							"The supplied definition ID does not match the active define-product session.",
+						),
+					};
+					return {
+						content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }],
+						details: outcome,
+					};
+				}
+				if (params.action === "request_exploration" && !explorationAvailable) {
+					const outcome: DefineProductOutcome = {
+						status: "blocked",
+						blocker: createBlocker(
+							"PI_WORKFLOW_ROUTE_CONFIRMATION_REQUIRED",
+							"Exploration requires verified research from the active define-product session.",
 						),
 					};
 					return {
@@ -197,7 +242,7 @@ export function createDefineProductRuntime(
 						assessment: params.assessment as Assessment,
 						workflowStateId: activeWorkflowStateId ?? "",
 					};
-				} else {
+				} else if (params.action === "confirm_route") {
 					command = {
 						kind: "confirm-route",
 						recommendationRef: params.recommendationRef ?? "",
@@ -206,11 +251,25 @@ export function createDefineProductRuntime(
 						researchQuestion: params.researchQuestion ?? "",
 						workflowStateId: activeWorkflowStateId ?? "",
 					};
+				} else {
+					command = {
+						kind: "request-exploration",
+						definitionId: activeDefinitionId ?? "",
+						intent: params.intent ?? "prototype",
+						focus: params.focus ?? "",
+					};
 				}
 				const outcome = await dependencies.workflow.advance(command);
 				if (outcome.status === "awaiting-confirmation") {
 					awaitingConfirmation = true;
-				} else {
+				} else if (
+					command.kind === "confirm-route" &&
+					outcome.status === "completed" &&
+					outcome.result.status === "completed"
+				) {
+					awaitingConfirmation = false;
+					explorationAvailable = true;
+				} else if (command.kind !== "request-exploration") {
 					clearActiveTurn();
 				}
 				return {

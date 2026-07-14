@@ -278,6 +278,177 @@ test("define-product clears its authoritative recommendation after terminal conf
 	}
 });
 
+test("define-product lets the Owner request comparable prototype and design-alternative artifacts without exposing history", async () => {
+	const intents = [];
+	const researchArtifact = {
+		kind: "engram",
+		project: "pi-workflow",
+		topic: "workflow/research",
+		revision: "research-r1",
+		schema: "research-evidence",
+		schemaVersion: 1,
+		digest: "research-digest",
+	};
+	const workflow = createDefineProductWorkflow({
+		delegate: {
+			delegate: async (intent) => {
+				intents.push(intent);
+				if (intent.kind === "research") {
+					return {
+						status: "completed",
+						executiveSummary: "Research ready.",
+						artifacts: [researchArtifact],
+						nextRecommended: { kind: "confirmed-route", route: "wayfinder" },
+						risks: [],
+						launchProvenance: {
+							agentName: "research",
+							assetVersion: 1,
+							assetDigest: "research-asset",
+							capabilityProfile: "research-reader",
+							provider: "openai-codex",
+							model: "gpt-5.6-terra",
+							effort: "medium",
+							inheritContext: false,
+							promptMode: "replace",
+							skillRefs: [],
+							standardRefs: [],
+							allowedTools: ["read"],
+							deniedCapabilities: ["write"],
+							artifactTopic: intent.targetTopic,
+						},
+					};
+				}
+				return {
+					status: "completed",
+					executiveSummary: "Comparable artifact ready.",
+					artifacts: [{
+						kind: "engram",
+						project: "pi-workflow",
+						topic: intent.targetTopic,
+						revision: `${intent.kind}-r1`,
+						schema: "design-exploration",
+						schemaVersion: 1,
+						digest: `${intent.kind}-digest`,
+					}],
+					nextRecommended: { kind: "compare-exploration", intent: intent.kind },
+					risks: [],
+					launchProvenance: {
+						agentName: "prototype",
+						assetVersion: 1,
+						assetDigest: "prototype-asset",
+						capabilityProfile: "isolated-prototype",
+						provider: "openai-codex",
+						model: "gpt-5.6-terra",
+						effort: "medium",
+						inheritContext: false,
+						promptMode: "replace",
+						skillRefs: [],
+						standardRefs: [],
+						allowedTools: ["read", "write"],
+						deniedCapabilities: ["linear"],
+						artifactTopic: intent.targetTopic,
+					},
+				};
+			},
+		},
+		createRequestId: (() => {
+			let id = 0;
+			return () => `request-${++id}`;
+		})(),
+		project: { name: "pi-workflow", root: "/repo" },
+	});
+	const recommendation = await workflow.advance({
+		kind: "recommend-route",
+		definitionId: "definition-1",
+		domainAnchor: "Explore onboarding",
+		assessment: { clarity: "unclear", breadth: "broad", reasons: ["unknown"] },
+		workflowStateId: "state-1",
+	});
+	await workflow.advance({
+		kind: "confirm-route",
+		recommendationRef: recommendation.recommendation.digest,
+		confirmationToken: recommendation.recommendation.confirmationToken,
+		confirmedRoute: "wayfinder",
+		researchQuestion: "Which onboarding patterns matter?",
+		workflowStateId: "state-1",
+	});
+	for (const explorationIntent of ["prototype", "design-alternative"]) {
+		const outcome = await workflow.advance({
+			kind: "request-exploration",
+			definitionId: "definition-1",
+			intent: explorationIntent,
+			focus: "Compare onboarding direction",
+		});
+		assert.equal(outcome.status, "completed");
+		assert.equal(outcome.result.artifacts[0].schema, "design-exploration");
+	}
+	assert.deepEqual(
+		intents.slice(1).map(({ kind, readableArtifacts }) => ({ kind, readableArtifacts })),
+		[
+			{ kind: "prototype", readableArtifacts: [{ alias: "research", ref: researchArtifact }] },
+			{ kind: "design-alternative", readableArtifacts: [{ alias: "research", ref: researchArtifact }] },
+		],
+	);
+	assert.equal("history" in intents[1], false);
+});
+
+test("define-product restores only fingerprint-bound private exploration identity after session replacement", async () => {
+	let durableState;
+	const recoveryStore = {
+		load: async () => durableState,
+		save: async (state) => { durableState = structuredClone(state); },
+		clear: async () => { durableState = undefined; },
+	};
+	const intents = [];
+	const makeWorkflow = () => createDefineProductWorkflow({
+		delegate: {
+			delegate: async (intent) => {
+				intents.push(intent);
+				if (intent.kind === "research") {
+					return {
+						status: "completed",
+						artifacts: [{ kind: "engram", project: "pi-workflow", topic: intent.targetTopic, revision: "r1", schema: "research-evidence", schemaVersion: 1, digest: "digest" }],
+					};
+				}
+				return { status: "blocked", blocker: { code: "PI_WORKFLOW_DELEGATION_INTERRUPTED", message: "interrupted" }, artifacts: [] };
+			},
+		},
+		createRequestId: () => `request-${intents.length + 1}`,
+		project: { name: "pi-workflow", root: "/repo" },
+		explorationRecoveryStore: recoveryStore,
+	});
+	const first = makeWorkflow();
+	const recommendation = await first.advance({
+		kind: "recommend-route",
+		definitionId: "definition-recovery",
+		domainAnchor: "Recovery",
+		assessment: { clarity: "unclear", breadth: "broad", reasons: ["unknown"] },
+		workflowStateId: "state-recovery",
+	});
+	await first.advance({
+		kind: "confirm-route",
+		recommendationRef: recommendation.recommendation.digest,
+		confirmationToken: recommendation.recommendation.confirmationToken,
+		confirmedRoute: "wayfinder",
+		researchQuestion: "What should recover?",
+		workflowStateId: "state-recovery",
+	});
+	const command = { kind: "request-exploration", definitionId: "definition-recovery", intent: "prototype", focus: "Compare recovery" };
+	await first.advance(command);
+	const originalRequestId = durableState.requestId;
+
+	const replacement = makeWorkflow();
+	assert.equal(await replacement.restoreRecovery(), "definition-recovery");
+	await replacement.advance(command);
+	assert.equal(intents.at(-1).requestId, originalRequestId);
+	assert.equal("confirmationToken" in durableState.workflowIntent, false);
+
+	durableState.intentFingerprint = "tampered";
+	const incompatible = makeWorkflow();
+	assert.equal(await incompatible.restoreRecovery(), undefined);
+	assert.equal(durableState, undefined);
+});
+
 test("define-product resets its authoritative recommendation and preserves successful settled confirmation", async () => {
 	const { workflow, intents } = createWorkflow();
 	const stale = await workflow.advance({
