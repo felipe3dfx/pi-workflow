@@ -8,7 +8,11 @@ This package exposes its own Pi extension plus four native workflow skills and f
 
 `/define-product`, `/deliver-ticket`, `/qa-handoff`, `/product-review`, and their matching `/skill:<name>` forms are admitted only from idle interactive Pi input. RPC, extension, steering, follow-up, and reentrant invocations are blocked before prompt or skill expansion. While an admitted public-entry turn is pending, the extension blocks every tool call; later workflow modules must enforce authority before any mutation.
 
-This is not human authentication. The approved workflow defines Owner and Developer as Pi users, while QA and PS operate only in Linear, but it defines no role credential or runtime configuration. Human role membership therefore remains an organizational access boundary: this package cannot authenticate an interactive person as Owner rather than QA or PS.
+Owner approval uses launch-host configuration, not model/tool arguments. Start Pi with exact non-empty `PI_WORKFLOW_OWNER_ACTOR_ID` and `PI_WORKFLOW_OWNER_AUTHORITY_REVISION` environment values; the packaged extension snapshots them as the current `Owner` authority when it initializes. The role is fixed by the extension and cannot be supplied by the caller. Missing values, surrounding whitespace, or incomplete configuration fail closed and cannot approve a Spec. Rotate the authority revision whenever the host's Owner authorization changes.
+
+This seam trusts the process launcher to authenticate and configure the Owner; it does not infer a human role from conversational text. QA and PS remain organizational/Linear roles outside this runtime authority seam.
+
+The `to-spec` agent brief requires every Linear-facing field and the final body to use neutral professional Spanish while preserving stable identifiers exactly. The runtime records the exact `language: "es"` contract but deliberately does not use NLP, dictionaries, or regionalism heuristics to judge prose style. Publication instead requires trusted Owner approval bound to the exact Spec digest; translation or any other body change after approval requires a new digest and approval.
 
 ## Requirements
 

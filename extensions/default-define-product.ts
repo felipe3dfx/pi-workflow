@@ -29,6 +29,7 @@ import {
 import {
 	createDefineProductWorkflow,
 	type ExplorationRecoveryStore,
+	type SpecApprovalRecoveryStore,
 } from "./define-product-workflow.ts";
 import { createProjectStandardsResolver } from "./project-standards-resolver.ts";
 import { createSkillResolver } from "./skill-resolver.ts";
@@ -39,10 +40,12 @@ import {
 import { createRuntimeEngramArtifactStore } from "./runtime-engram-store.ts";
 import { createRuntimePrivateStatePersistence } from "./runtime-private-state.ts";
 import { createDurableExplorationRecoveryStore } from "./exploration-recovery.ts";
+import { createDurableSpecApprovalRecoveryStore } from "./spec-approval-recovery.ts";
 import {
 	createResearchEvidenceEnvelope,
 	createBlocker,
 	uniqueVerifiedArtifactRefs,
+	type AuthenticatedAuthority,
 	type DesignExplorationSnapshot,
 	type DigestedRef,
 	type ExactLaunchProvenance,
@@ -227,6 +230,10 @@ export interface DefaultDefineProductRuntimeOptions {
 	artifactStore?: WorkflowArtifactStore;
 	checkpointStore?: DelegationCheckpointStore;
 	explorationRecoveryStore?: ExplorationRecoveryStore;
+	specApprovalRecoveryStore?: SpecApprovalRecoveryStore;
+	authenticatedAuthority?: {
+		current(): Promise<AuthenticatedAuthority>;
+	};
 	researchExecutor?: ResearchExecutor | ResearchExecutor["execute"];
 	explorationExecutor?: ExplorationExecutor | ExplorationExecutor["execute"];
 	webExtensionPath?: string;
@@ -236,6 +243,28 @@ export interface DefaultDefineProductRuntimeOptions {
 		path: string;
 		scope: "core" | "project" | "public";
 	}[];
+}
+
+function configuredOwnerAuthority(
+	environment: NodeJS.ProcessEnv,
+): DefaultDefineProductRuntimeOptions["authenticatedAuthority"] {
+	const actorId = environment.PI_WORKFLOW_OWNER_ACTOR_ID;
+	const authorityRevision =
+		environment.PI_WORKFLOW_OWNER_AUTHORITY_REVISION;
+	if (
+		!actorId ||
+		actorId !== actorId.trim() ||
+		!authorityRevision ||
+		authorityRevision !== authorityRevision.trim()
+	) {
+		return undefined;
+	}
+	const authority = Object.freeze({
+		actorId,
+		role: "Owner" as const,
+		authorityRevision,
+	});
+	return { current: async () => authority };
 }
 
 function findProjectRoot(cwd: string): string {
@@ -858,6 +887,12 @@ export function createDefaultDefineProductWorkflow(
 			path: join(privateStateDirectory, "exploration-recovery.json"),
 			persistence: privateStatePersistence,
 		});
+	const specApprovalRecoveryStore =
+		options.specApprovalRecoveryStore ??
+		createDurableSpecApprovalRecoveryStore({
+			path: join(privateStateDirectory, "spec-approval-recovery.json"),
+			persistence: privateStatePersistence,
+		});
 
 	const agentValidator = createAgentValidator({
 		readResearchAsset: () => readResearchAssetMetadata(),
@@ -1151,6 +1186,9 @@ export function createDefaultDefineProductWorkflow(
 	return createDefineProductWorkflow({
 		delegate: workflowDelegate,
 		explorationRecoveryStore,
+		specApprovalRecoveryStore,
+		authenticatedAuthority:
+			options.authenticatedAuthority ?? configuredOwnerAuthority(process.env),
 		createRequestId:
 			options.createRequestId ?? (() => `request-${Date.now()}`),
 		project: baseProject,

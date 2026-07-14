@@ -125,6 +125,147 @@ function executionContext() {
 	};
 }
 
+function productionSpecRequest(overrides = {}) {
+	return {
+		action: "to_spec",
+		target: {
+			kind: "linear-parent-description",
+			teamId: "team-grupo-ilao",
+			title: "Incorporar aprobaciones exactas del Spec",
+		},
+		revision: "spec-r1",
+		problem:
+			"El equipo necesita gestionar clientes y permisos correctamente.",
+		solution:
+			"El flujo genera un Spec español exacto y exige aprobación vinculada a su identidad completa.",
+		userStories: [
+			"Como Owner, quiero revisar el cuerpo exacto, para conservar autoridad sobre la definición publicada.",
+		],
+		decisions: [
+			{
+				id: "exact-approval",
+				status: "resolved",
+				pertinent: true,
+				text: "La aprobación se vincula al resumen criptográfico exacto antes de publicar.",
+			},
+		],
+		tests: ["Verificar la aprobación exacta antes de publicar."],
+		outOfScope: [
+			"La publicación de la descripción del Delivery parent en Linear queda fuera del alcance.",
+		],
+		supportArtifactAliases: ["research"],
+		...overrides,
+	};
+}
+
+function productionSpecRuntimeOptions(overrides = {}) {
+	let pendingSpec;
+	return {
+		artifactStore: createArtifactStore(),
+		checkpointStore: createInMemoryDelegationCheckpointStore(),
+		specApprovalRecoveryStore: {
+			load: async () => structuredClone(pendingSpec),
+			save: async (state) => {
+				pendingSpec = structuredClone(state);
+			},
+			clear: async () => {
+				pendingSpec = undefined;
+			},
+		},
+		webExtensionPath: fileURLToPath(
+			new URL("./fixtures/pi-web-access/index.ts", import.meta.url),
+		),
+		skillEntries: [
+			{
+				name: "research",
+				path: fileURLToPath(
+					new URL(
+						"./fixtures/private-skills/research/SKILL.md",
+						import.meta.url,
+					),
+				),
+				scope: "core",
+			},
+		],
+		researchExecutor: async (input) => {
+			await input.writeArtifact({
+				findings: [
+					{
+						claim: "La aprobación exacta requiere una identidad autenticada.",
+						evidence: [
+							{
+								uri: "https://example.com/authority",
+								title: "Authority source",
+								retrievedAt: "2026-07-14T00:00:00.000Z",
+							},
+						],
+					},
+				],
+				limitations: [],
+			});
+			return { assistantText: "Research ready." };
+		},
+		...overrides,
+	};
+}
+
+async function prepareProductionSpec(runtimeOptions = {}) {
+	const { handlers, tool } = loadExtension(
+		productionSpecRuntimeOptions(runtimeOptions),
+	);
+	const ctx = executionContext();
+	await handlers.get("tool_execution_start")(
+		{ type: "tool_execution_start", toolName: "workflow_define_product" },
+		ctx,
+	);
+	await handlers.get("input")(
+		{
+			type: "input",
+			text: "/define-product redactar el Spec aprobado",
+			source: "interactive",
+		},
+		ctx,
+	);
+	const recommendation = await tool.execute(
+		"recommend",
+		{
+			action: "recommend_route",
+			domainAnchor: "Definir aprobaciones exactas",
+			assessment: {
+				clarity: "unclear",
+				breadth: "broad",
+				reasons: ["research"],
+			},
+		},
+		undefined,
+		undefined,
+		ctx,
+	);
+	await tool.execute(
+		"research",
+		{
+			action: "confirm_route",
+			recommendationRef: recommendation.details.recommendation.digest,
+			confirmationToken:
+				recommendation.details.recommendation.confirmationToken,
+			confirmedRoute: "wayfinder",
+			researchQuestion: "¿Cómo debe funcionar la aprobación?",
+		},
+		undefined,
+		undefined,
+		ctx,
+	);
+	const ready = await tool.execute(
+		"spec",
+		productionSpecRequest(),
+		undefined,
+		undefined,
+		ctx,
+	);
+	assert.equal(ready.details.status, "spec-ready");
+	return { ctx, handlers, ready, tool };
+}
+
 test("production session manager creates named persistent sessions and resumes the exact identity", async () => {
 	const root = await mkdtemp(join(tmpdir(), "pi-workflow-session-test-"));
 	try {
@@ -655,6 +796,153 @@ test("default runtime resumes compatible exploration, persists progress, and per
 			{ batchKey: "comparison-3", supersedes: "comparison-2" },
 		],
 	);
+});
+
+test("default packaged entry approves with configured Owner authority and ignores attacker identity arguments", async () => {
+	const previousActorId = process.env.PI_WORKFLOW_OWNER_ACTOR_ID;
+	const previousRevision = process.env.PI_WORKFLOW_OWNER_AUTHORITY_REVISION;
+	process.env.PI_WORKFLOW_OWNER_ACTOR_ID = "owner-felipe";
+	process.env.PI_WORKFLOW_OWNER_AUTHORITY_REVISION = "owner-policy-r3";
+	try {
+		const { ctx, ready, tool } = await prepareProductionSpec();
+		assert.equal("actor" in tool.parameters.properties, false);
+		assert.equal("actorId" in tool.parameters.properties, false);
+		assert.equal("authorityRevision" in tool.parameters.properties, false);
+
+		const approved = await tool.execute(
+			"approval",
+			{
+				action: "approve_spec",
+				actor: {
+					actorId: "attacker",
+					role: "Owner",
+					authorityRevision: "attacker-r9",
+				},
+				actorId: "attacker",
+				role: "Owner",
+				authorityRevision: "attacker-r9",
+				target: ready.details.spec.payload.target,
+				revision: ready.details.spec.payload.revision,
+				digest: ready.details.spec.digest,
+			},
+			undefined,
+			undefined,
+			ctx,
+		);
+
+		assert.equal(approved.details.status, "spec-approved");
+		assert.deepEqual(approved.details.approval.payload.actor, {
+			actorId: "owner-felipe",
+			role: "Owner",
+			authorityRevision: "owner-policy-r3",
+		});
+	} finally {
+		if (previousActorId === undefined) {
+			delete process.env.PI_WORKFLOW_OWNER_ACTOR_ID;
+		} else {
+			process.env.PI_WORKFLOW_OWNER_ACTOR_ID = previousActorId;
+		}
+		if (previousRevision === undefined) {
+			delete process.env.PI_WORKFLOW_OWNER_AUTHORITY_REVISION;
+		} else {
+			process.env.PI_WORKFLOW_OWNER_AUTHORITY_REVISION = previousRevision;
+		}
+	}
+});
+
+test("default packaged entry fails closed when configured Owner authority is incomplete", async () => {
+	const previousActorId = process.env.PI_WORKFLOW_OWNER_ACTOR_ID;
+	const previousRevision = process.env.PI_WORKFLOW_OWNER_AUTHORITY_REVISION;
+	process.env.PI_WORKFLOW_OWNER_ACTOR_ID = "owner-felipe";
+	process.env.PI_WORKFLOW_OWNER_AUTHORITY_REVISION = "   ";
+	try {
+		const { ctx, ready, tool } = await prepareProductionSpec();
+		const outcome = await tool.execute(
+			"approval-with-invalid-config",
+			{
+				action: "approve_spec",
+				target: ready.details.spec.payload.target,
+				revision: ready.details.spec.payload.revision,
+				digest: ready.details.spec.digest,
+			},
+			undefined,
+			undefined,
+			ctx,
+		);
+		assert.equal(outcome.details.status, "blocked");
+		assert.equal(
+			outcome.details.blocker.code,
+			"PI_WORKFLOW_SPEC_ARTIFACT_INVALID",
+		);
+	} finally {
+		if (previousActorId === undefined) {
+			delete process.env.PI_WORKFLOW_OWNER_ACTOR_ID;
+		} else {
+			process.env.PI_WORKFLOW_OWNER_ACTOR_ID = previousActorId;
+		}
+		if (previousRevision === undefined) {
+			delete process.env.PI_WORKFLOW_OWNER_AUTHORITY_REVISION;
+		} else {
+			process.env.PI_WORKFLOW_OWNER_AUTHORITY_REVISION = previousRevision;
+		}
+	}
+});
+
+test("production runtime preserves pending Spec, active turn, and authority after blocked to-spec retries", async () => {
+	const ownerAuthority = {
+		actorId: "owner-felipe",
+		role: "Owner",
+		authorityRevision: "owner-policy-r3",
+	};
+	const { ctx, handlers, ready, tool } = await prepareProductionSpec({
+		authenticatedAuthority: { current: async () => ownerAuthority },
+	});
+
+	const malformed = await tool.execute(
+		"malformed-retry",
+		productionSpecRequest({ target: undefined }),
+		undefined,
+		undefined,
+		ctx,
+	);
+	assert.equal(malformed.details.status, "blocked");
+	assert.equal(
+		malformed.details.blocker.code,
+		"PI_WORKFLOW_SPEC_ARTIFACT_INVALID",
+	);
+
+	const blocked = await tool.execute(
+		"blocked-retry",
+		productionSpecRequest({
+			problem:
+				"El equipo puede revisar <?xml version=\"1.0\"?> antes de publicar.",
+		}),
+		undefined,
+		undefined,
+		ctx,
+	);
+	assert.equal(blocked.details.status, "blocked");
+	assert.equal(blocked.details.blocker.code, "PI_WORKFLOW_SPEC_ARTIFACT_INVALID");
+	const prompt = await handlers.get("before_agent_start")({
+		systemPrompt: "base",
+	});
+	assert.match(prompt.systemPrompt, /approve_spec/);
+
+	const approved = await tool.execute(
+		"approval-after-retries",
+		{
+			action: "approve_spec",
+			target: ready.details.spec.payload.target,
+			revision: ready.details.spec.payload.revision,
+			digest: ready.details.spec.digest,
+		},
+		undefined,
+		undefined,
+		ctx,
+	);
+	assert.equal(approved.details.status, "spec-approved");
+	assert.equal(approved.details.spec.digest, ready.details.spec.digest);
+	assert.deepEqual(approved.details.approval.payload.actor, ownerAuthority);
 });
 
 test("default define-product keeps token, research, and artifact identity bound to the session definition", async () => {

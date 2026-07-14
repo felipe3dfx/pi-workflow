@@ -15,6 +15,11 @@ const errors = [];
 const publicEntryNames = publicWorkflowCatalog
 	.map((workflow) => workflow.name)
 	.sort();
+const forbiddenLanguageResourcePaths = [
+	"assets/language",
+	"extensions/language-resources.ts",
+	"scripts/generate-language-resources.mjs",
+];
 let packageJson;
 let companions;
 let mcpServers;
@@ -259,10 +264,26 @@ check(
 	"scripts.prepublishOnly must run the full check suite",
 );
 check(
-	!Object.hasOwn(packageJson, "bundledDependencies") &&
-		!Object.hasOwn(packageJson, "bundleDependencies"),
-	"package must not define bundledDependencies or bundleDependencies",
+	packageJson.dependencies === undefined ||
+		(isPlainRecord(packageJson.dependencies) &&
+			Object.keys(packageJson.dependencies).length === 0),
+	"package must not define runtime dependencies",
 );
+check(
+	(packageJson.bundledDependencies === undefined ||
+		(Array.isArray(packageJson.bundledDependencies) &&
+			packageJson.bundledDependencies.length === 0)) &&
+		(packageJson.bundleDependencies === undefined ||
+			(Array.isArray(packageJson.bundleDependencies) &&
+				packageJson.bundleDependencies.length === 0)),
+	"package must not bundle runtime dependencies",
+);
+for (const forbiddenPath of forbiddenLanguageResourcePaths) {
+	check(
+		!(await pathExists(forbiddenPath)),
+		`removed language resource path must not exist: ${forbiddenPath}`,
+	);
+}
 check(
 	packageJson.engines?.node === ">=22.19",
 	"engines.node must be >=22.19",

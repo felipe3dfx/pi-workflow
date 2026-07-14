@@ -15,6 +15,92 @@ const publicEntryNames = [
 	"product-review",
 	"qa-handoff",
 ];
+const expectedPackedFiles = `LICENSE
+README.md
+assets/agent-assets.json
+assets/agents/Explore.md
+assets/agents/Plan.md
+assets/agents/general-purpose.md
+assets/agents/jd-fix-agent.md
+assets/agents/jd-judge-a.md
+assets/agents/jd-judge-b.md
+assets/agents/orchestrator.md
+assets/agents/prepare-commit.md
+assets/agents/product-review.md
+assets/agents/prototype.md
+assets/agents/research.md
+assets/agents/review-readability.md
+assets/agents/review-reliability.md
+assets/agents/review-resilience.md
+assets/agents/review-risk.md
+assets/agents/sdd-apply.md
+assets/agents/sdd-archive.md
+assets/agents/sdd-design.md
+assets/agents/sdd-explore.md
+assets/agents/sdd-init.md
+assets/agents/sdd-onboard.md
+assets/agents/sdd-proposal.md
+assets/agents/sdd-spec.md
+assets/agents/sdd-status.md
+assets/agents/sdd-sync.md
+assets/agents/sdd-tasks.md
+assets/agents/sdd-verify.md
+assets/agents/simplify.md
+assets/agents/to-spec.md
+assets/agents/to-tickets.md
+assets/companions.json
+assets/mcp-servers.json
+docs/adr/0001-explicit-companion-install.md
+docs/adr/0002-harness-release-guard.md
+docs/adr/0003-workflow-helper-extension-as-adapter.md
+docs/adr/0004-no-companion-installer-module.md
+docs/research/context-mode-package-patterns.md
+docs/research/gentle-ai-review-coordination-portability.md
+docs/research/gentle-pi-subagent-skill-routing.md
+docs/research/gpt-5.6-sol-context-window-opencode-pi.md
+docs/research/linear-workflow-model.md
+docs/research/matt-wayfinder-spec-tickets.md
+docs/research/pi-engram-release-cicd.md
+extensions/agent-asset-filesystem.ts
+extensions/agent-asset-migrations.ts
+extensions/agent-asset-operation.ts
+extensions/agent-asset-sync.ts
+extensions/agent-validator.ts
+extensions/companion-workflow.ts
+extensions/default-define-product.ts
+extensions/define-product-runtime.ts
+extensions/define-product-workflow.ts
+extensions/delegation-checkpoints.ts
+extensions/exploration-recovery.ts
+extensions/mcp-config.ts
+extensions/pi-workflow-sync.ts
+extensions/pi-workflow.ts
+extensions/product-spec.ts
+extensions/project-standards-resolver.ts
+extensions/public-entry-guard.ts
+extensions/runtime-engram-store.ts
+extensions/runtime-private-state.ts
+extensions/skill-resolver.ts
+extensions/spec-approval-recovery.ts
+extensions/subagent-launcher.ts
+extensions/workflow-artifacts.ts
+extensions/workflow-contracts.ts
+extensions/workflow-delegate.ts
+package.json
+prompts/define-product.md
+prompts/deliver-ticket.md
+prompts/product-review.md
+prompts/qa-handoff.md
+scripts/check-agent-assets.mjs
+scripts/forbid-focused-tests.mjs
+scripts/generate-public-workflows.mjs
+scripts/pi-workflow-sync.mjs
+scripts/public-workflow-catalog.mjs
+scripts/validate-pi-package.mjs
+skills/define-product/SKILL.md
+skills/deliver-ticket/SKILL.md
+skills/product-review/SKILL.md
+skills/qa-handoff/SKILL.md`.split("\n");
 const entryGoldens = {
 	"define-product": {
 		title: "Define Product",
@@ -68,6 +154,7 @@ const entryGoldens = {
 let fixtureRoot;
 let installedRoot;
 let manifest;
+let packedFilePaths;
 let loadedSkills;
 let loadedPrompts;
 
@@ -78,7 +165,8 @@ test.before(async () => {
 		["pack", "--json", "--ignore-scripts", "--pack-destination", fixtureRoot],
 		{ cwd: packageRoot, timeout: 60_000 },
 	);
-	const [{ filename }] = JSON.parse(packResult.stdout);
+	const [{ filename, files }] = JSON.parse(packResult.stdout);
+	packedFilePaths = files.map(({ path }) => path).sort();
 	await writeFile(
 		join(fixtureRoot, "package.json"),
 		'{"name":"pi-workflow-installed-fixture","private":true}\n',
@@ -94,7 +182,14 @@ test.before(async () => {
 			"--offline",
 			join(fixtureRoot, filename),
 		],
-		{ cwd: fixtureRoot, timeout: 60_000 },
+		{
+			cwd: fixtureRoot,
+			timeout: 60_000,
+			env: {
+				...process.env,
+				npm_config_cache: join(fixtureRoot, "empty-npm-cache"),
+			},
+		},
 	);
 	installedRoot = join(
 		fixtureRoot,
@@ -202,6 +297,17 @@ ${expectedCapabilitySection(name, golden)}
 function substituteDocumentedArguments(content, argumentsText) {
 	return content.replaceAll("$ARGUMENTS", argumentsText);
 }
+
+test("packed package installs offline from an empty cache with the exact dependency-free catalog", () => {
+	assert.deepEqual(manifest.dependencies ?? {}, {});
+	assert.deepEqual(manifest.bundledDependencies ?? [], []);
+	assert.deepEqual(manifest.bundleDependencies ?? [], []);
+	assert.deepEqual(packedFilePaths, expectedPackedFiles);
+	assert.equal(
+		packedFilePaths.some((filePath) => filePath.startsWith("assets/language/")),
+		false,
+	);
+});
 
 test("Pi's public loaders discover exactly the packed workflow resources", () => {
 	assert.deepEqual(manifest.pi, {
