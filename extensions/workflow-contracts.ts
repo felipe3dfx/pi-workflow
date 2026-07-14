@@ -6,6 +6,7 @@ type Breadth = "narrow" | "broad";
 type ArtifactSchema =
 	| "research-evidence"
 	| "design-exploration"
+	| "product-spec"
 	| "workflow-progress";
 type ArtifactStrategy = "snapshot" | "merge-progress";
 export type WorkflowBlockerCode =
@@ -35,7 +36,10 @@ export type WorkflowBlockerCode =
 	| "PI_WORKFLOW_DELEGATION_CANCELLED"
 	| "PI_WORKFLOW_RECOVERY_FAILED"
 	| "PI_WORKFLOW_DISCOVERED_PATH_INVALID"
-	| "PI_WORKFLOW_RETRY_EXHAUSTED";
+	| "PI_WORKFLOW_RETRY_EXHAUSTED"
+	| "PI_WORKFLOW_SPEC_ARTIFACT_INVALID"
+	| "PI_WORKFLOW_SPEC_APPROVAL_REQUIRED"
+	| "PI_WORKFLOW_SPEC_APPROVAL_MISMATCH";
 
 export interface WorkflowBlocker {
 	code: WorkflowBlockerCode;
@@ -189,6 +193,67 @@ export interface ResearchEvidenceEnvelope {
 	schema: "research-evidence";
 	schemaVersion: 1;
 	payload: ResearchEvidenceV1;
+	digest: string;
+}
+
+export interface ProductSpecTarget {
+	kind: "linear-parent-description";
+	teamId: string;
+	title: string;
+}
+
+export interface ProductSpecInput {
+	definitionId: string;
+	target: ProductSpecTarget;
+	revision: string;
+	problem: string;
+	solution: string;
+	userStories: readonly string[];
+	decisions: readonly {
+		id: string;
+		status: "open" | "resolved";
+		pertinent: boolean;
+		text: string;
+	}[];
+	tests: readonly string[];
+	outOfScope: readonly string[];
+	supportArtifacts: readonly VerifiedArtifactRef[];
+}
+
+export interface ProductSpecEnvelope {
+	schema: "product-spec";
+	schemaVersion: 1;
+	payload: {
+		definitionId: string;
+		target: ProductSpecTarget;
+		revision: string;
+		language: "es";
+		body: string;
+		decisions: readonly { id: string; text: string }[];
+		supportArtifacts: readonly VerifiedArtifactRef[];
+	};
+	digest: string;
+}
+
+export interface AuthenticatedAuthority {
+	actorId: string;
+	role: "Owner" | "Developer";
+	authorityRevision: string;
+}
+
+export interface OwnerAuthority extends AuthenticatedAuthority {
+	role: "Owner";
+}
+
+export interface ProductSpecApprovalEnvelope {
+	schema: "product-spec-approval";
+	schemaVersion: 1;
+	payload: {
+		actor: OwnerAuthority;
+		target: ProductSpecTarget;
+		revision: string;
+		specDigest: string;
+	};
 	digest: string;
 }
 

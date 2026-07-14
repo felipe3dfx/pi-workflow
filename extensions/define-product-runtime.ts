@@ -4,12 +4,14 @@ import type { InputEvent } from "@earendil-works/pi-coding-agent";
 import {
 	createBlocker,
 	type Assessment,
+	type ProductSpecInput,
 	type Route,
 	type RouteRecommendation,
 } from "./workflow-contracts.ts";
 import type {
 	DefineProductCommand,
 	DefineProductOutcome,
+	DefineProductRecovery,
 } from "./define-product-workflow.ts";
 
 const toolName = "workflow_define_product";
@@ -20,7 +22,13 @@ const defineProductParameters = {
 	properties: {
 		action: {
 			type: "string",
-			enum: ["recommend_route", "confirm_route", "request_exploration"],
+			enum: [
+				"recommend_route",
+				"confirm_route",
+				"request_exploration",
+				"to_spec",
+				"approve_spec",
+			],
 		},
 		definitionId: { type: "string" },
 		domainAnchor: { type: "string" },
@@ -43,12 +51,52 @@ const defineProductParameters = {
 			enum: ["prototype", "design-alternative"],
 		},
 		focus: { type: "string" },
+		target: {
+			type: "object",
+			additionalProperties: false,
+			properties: {
+				kind: { type: "string", enum: ["linear-parent-description"] },
+				teamId: { type: "string" },
+				title: { type: "string" },
+			},
+			required: ["kind", "teamId", "title"],
+		},
+		revision: { type: "string" },
+		problem: { type: "string" },
+		solution: { type: "string" },
+		userStories: { type: "array", items: { type: "string" } },
+		decisions: {
+			type: "array",
+			items: {
+				type: "object",
+				additionalProperties: false,
+				properties: {
+					id: { type: "string" },
+					status: { type: "string", enum: ["open", "resolved"] },
+					pertinent: { type: "boolean" },
+					text: { type: "string" },
+				},
+				required: ["id", "status", "pertinent", "text"],
+			},
+		},
+		tests: { type: "array", items: { type: "string" } },
+		outOfScope: { type: "array", items: { type: "string" } },
+		supportArtifactAliases: {
+			type: "array",
+			items: { type: "string" },
+		},
+		digest: { type: "string" },
 	},
 	required: ["action"],
 } as const;
 
 interface DefineProductToolParams {
-	action: "recommend_route" | "confirm_route" | "request_exploration";
+	action:
+		| "recommend_route"
+		| "confirm_route"
+		| "request_exploration"
+		| "to_spec"
+		| "approve_spec";
 	definitionId?: string;
 	domainAnchor?: string;
 	assessment?: Assessment;
@@ -58,6 +106,116 @@ interface DefineProductToolParams {
 	researchQuestion?: string;
 	intent?: "prototype" | "design-alternative";
 	focus?: string;
+	target?: ProductSpecInput["target"];
+	revision?: string;
+	problem?: string;
+	solution?: string;
+	userStories?: ProductSpecInput["userStories"];
+	decisions?: ProductSpecInput["decisions"];
+	tests?: ProductSpecInput["tests"];
+	outOfScope?: ProductSpecInput["outOfScope"];
+	supportArtifactAliases?: readonly string[];
+	digest?: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function stringArray(value: unknown): readonly string[] | undefined {
+	return Array.isArray(value) && value.every((item) => typeof item === "string")
+		? value
+		: undefined;
+}
+
+function parseToSpecCommand(
+	params: DefineProductToolParams,
+	definitionId: string,
+): DefineProductCommand | undefined {
+	if (!isRecord(params.target)) return undefined;
+	const target = params.target;
+	const userStories = stringArray(params.userStories);
+	const tests = stringArray(params.tests);
+	const outOfScope = stringArray(params.outOfScope);
+	const supportArtifactAliases = stringArray(params.supportArtifactAliases);
+	if (
+		target.kind !== "linear-parent-description" ||
+		typeof target.teamId !== "string" ||
+		typeof target.title !== "string" ||
+		typeof params.revision !== "string" ||
+		typeof params.problem !== "string" ||
+		typeof params.solution !== "string" ||
+		!userStories ||
+		!tests ||
+		!outOfScope ||
+		!supportArtifactAliases ||
+		!Array.isArray(params.decisions)
+	) {
+		return undefined;
+	}
+	const decisions: ProductSpecInput["decisions"][number][] =
+		params.decisions.flatMap((decision) => {
+			if (
+				!isRecord(decision) ||
+				typeof decision.id !== "string" ||
+				(decision.status !== "open" && decision.status !== "resolved") ||
+				typeof decision.pertinent !== "boolean" ||
+				typeof decision.text !== "string"
+			) {
+				return [];
+			}
+			return [
+				{
+					id: decision.id,
+					status: decision.status === "open" ? "open" : "resolved",
+					pertinent: decision.pertinent,
+					text: decision.text,
+				},
+			];
+		});
+	if (decisions.length !== params.decisions.length) return undefined;
+	return {
+		kind: "to-spec",
+		definitionId,
+		target: {
+			kind: "linear-parent-description",
+			teamId: target.teamId,
+			title: target.title,
+		},
+		revision: params.revision,
+		problem: params.problem,
+		solution: params.solution,
+		userStories,
+		decisions,
+		tests,
+		outOfScope,
+		supportArtifactAliases,
+	};
+}
+
+function parseApproveSpecCommand(
+	params: DefineProductToolParams,
+): DefineProductCommand | undefined {
+	if (
+		!isRecord(params.target) ||
+		params.target.kind !== "linear-parent-description" ||
+		typeof params.target.teamId !== "string" ||
+		typeof params.target.title !== "string" ||
+		typeof params.revision !== "string" ||
+		typeof params.digest !== "string"
+	) {
+		return undefined;
+	}
+	return {
+		kind: "approve-spec",
+		target: {
+			kind: "linear-parent-description",
+			teamId: params.target.teamId,
+			title: params.target.title,
+		},
+		revision: params.revision,
+		digest: params.digest,
+	};
 }
 
 export interface DefineProductRuntimeDependencies {
@@ -65,7 +223,7 @@ export interface DefineProductRuntimeDependencies {
 		advance(command: DefineProductCommand): Promise<DefineProductOutcome>;
 		pendingRecommendation(): RouteRecommendation | undefined;
 		reset(): void;
-		restoreRecovery?(): Promise<string | undefined>;
+		restoreRecovery?(): Promise<DefineProductRecovery | undefined>;
 	};
 	createDefinitionId(): string;
 }
@@ -77,6 +235,7 @@ export function createDefineProductRuntime(
 	let activeWorkflowStateId: string | undefined;
 	let awaitingConfirmation = false;
 	let explorationAvailable = false;
+	let awaitingSpecApproval = false;
 
 	function handlePublicEntry(event: InputEvent): void {
 		if (!event.text.match(/^\/(?:skill:)?define-product(?:\s|$)/)) return;
@@ -90,6 +249,7 @@ export function createDefineProductRuntime(
 		activeWorkflowStateId = undefined;
 		awaitingConfirmation = false;
 		explorationAvailable = false;
+		awaitingSpecApproval = false;
 		dependencies.workflow.reset();
 	}
 
@@ -97,13 +257,14 @@ export function createDefineProductRuntime(
 		return (
 			activeDefinitionId !== undefined ||
 			awaitingConfirmation ||
-			explorationAvailable
+			explorationAvailable ||
+			awaitingSpecApproval
 		);
 	}
 
 	function shouldContinue(event: InputEvent): boolean {
 		return (
-			(awaitingConfirmation || explorationAvailable) &&
+			(awaitingConfirmation || explorationAvailable || awaitingSpecApproval) &&
 			event.source === "interactive" &&
 			event.streamingBehavior === undefined
 		);
@@ -111,10 +272,17 @@ export function createDefineProductRuntime(
 
 	function systemPrompt(): string {
 		const pending = dependencies.workflow.pendingRecommendation();
+		if (awaitingSpecApproval) {
+			return [
+				"An exact Spanish product Spec is ready for Owner approval.",
+				`Call ${toolName} with action="approve_spec" only after the Owner approves the exact target, revision, and digest returned by the current Spec.`,
+				"Do not publish or mutate Linear; publication belongs to the later publication workflow.",
+			].join(" ");
+		}
 		if (explorationAvailable) {
 			return [
 				"Verified research is available for the active define-product session.",
-				`Call ${toolName} with action="request_exploration" only when the Owner requests either a prototype or a design alternative and provides a focused comparison question.`,
+				`Call ${toolName} with action="request_exploration" only when the Owner requests either a prototype or a design alternative and provides a focused comparison question; call action="to_spec" when the settled inputs are ready for the exact Spanish Spec.`,
 				"Do not request or reveal internal runtime IDs, artifact topics, or raw workflow history.",
 			].join(" ");
 		}
@@ -143,11 +311,11 @@ export function createDefineProductRuntime(
 		});
 		pi.on("session_start", async () => {
 			clearActiveTurn();
-			const recoveredDefinitionId =
-				await dependencies.workflow.restoreRecovery?.();
-			if (recoveredDefinitionId) {
-				activeDefinitionId = recoveredDefinitionId;
-				explorationAvailable = true;
+			const recovery = await dependencies.workflow.restoreRecovery?.();
+			if (recovery) {
+				activeDefinitionId = recovery.definitionId;
+				explorationAvailable = recovery.phase === "exploration";
+				awaitingSpecApproval = recovery.phase === "spec-approval";
 			}
 		});
 		pi.on("session_shutdown", clearActiveTurn);
@@ -157,7 +325,7 @@ export function createDefineProductRuntime(
 			name: toolName,
 			label: "Define Product Workflow",
 			description:
-				"Execute the package-owned define-product recommendation, confirmation, or Owner-requested exploration step.",
+				"Execute package-owned define-product routing, exploration, exact Spanish Spec generation, or Owner approval.",
 			parameters: defineProductParameters as never,
 			async execute(_toolCallId: string, params: DefineProductToolParams) {
 				if (
@@ -186,6 +354,35 @@ export function createDefineProductRuntime(
 						blocker: createBlocker(
 							"PI_WORKFLOW_DEFINITION_ID_MISMATCH",
 							"The supplied definition ID does not match the active define-product session.",
+						),
+					};
+					return {
+						content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }],
+						details: outcome,
+					};
+				}
+				if (
+					params.action === "to_spec" &&
+					activeDefinitionId === undefined
+				) {
+					const outcome: DefineProductOutcome = {
+						status: "blocked",
+						blocker: createBlocker(
+							"PI_WORKFLOW_SPEC_ARTIFACT_INVALID",
+							"Spec generation requires an active define-product session.",
+						),
+					};
+					return {
+						content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }],
+						details: outcome,
+					};
+				}
+				if (params.action === "approve_spec" && !awaitingSpecApproval) {
+					const outcome: DefineProductOutcome = {
+						status: "blocked",
+						blocker: createBlocker(
+							"PI_WORKFLOW_SPEC_APPROVAL_REQUIRED",
+							"Spec approval requires the active exact Spec generated in this session.",
 						),
 					};
 					return {
@@ -251,13 +448,52 @@ export function createDefineProductRuntime(
 						researchQuestion: params.researchQuestion ?? "",
 						workflowStateId: activeWorkflowStateId ?? "",
 					};
-				} else {
+				} else if (params.action === "request_exploration") {
 					command = {
 						kind: "request-exploration",
 						definitionId: activeDefinitionId ?? "",
 						intent: params.intent ?? "prototype",
 						focus: params.focus ?? "",
 					};
+				} else if (params.action === "to_spec") {
+					const parsed = parseToSpecCommand(
+						params,
+						activeDefinitionId ?? "",
+					);
+					if (!parsed) {
+						const outcome: DefineProductOutcome = {
+							status: "blocked",
+							blocker: createBlocker(
+								"PI_WORKFLOW_SPEC_ARTIFACT_INVALID",
+								"The Spec generation input shape is invalid.",
+							),
+						};
+						return {
+							content: [
+								{ type: "text", text: JSON.stringify(outcome, null, 2) },
+							],
+							details: outcome,
+						};
+					}
+					command = parsed;
+				} else {
+					const parsed = parseApproveSpecCommand(params);
+					if (!parsed) {
+						const outcome: DefineProductOutcome = {
+							status: "blocked",
+							blocker: createBlocker(
+								"PI_WORKFLOW_SPEC_ARTIFACT_INVALID",
+								"The Spec approval input shape is invalid.",
+							),
+						};
+						return {
+							content: [
+								{ type: "text", text: JSON.stringify(outcome, null, 2) },
+							],
+							details: outcome,
+						};
+					}
+					command = parsed;
 				}
 				const outcome = await dependencies.workflow.advance(command);
 				if (outcome.status === "awaiting-confirmation") {
@@ -269,7 +505,21 @@ export function createDefineProductRuntime(
 				) {
 					awaitingConfirmation = false;
 					explorationAvailable = true;
-				} else if (command.kind !== "request-exploration") {
+				} else if (
+					command.kind === "to-spec" &&
+					outcome.status === "spec-ready"
+				) {
+					awaitingSpecApproval = true;
+				} else if (
+					command.kind === "approve-spec" &&
+					outcome.status === "spec-approved"
+				) {
+					clearActiveTurn();
+				} else if (
+					command.kind !== "request-exploration" &&
+					command.kind !== "to-spec" &&
+					command.kind !== "approve-spec"
+				) {
 					clearActiveTurn();
 				}
 				return {

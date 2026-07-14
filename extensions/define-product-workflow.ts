@@ -1,12 +1,24 @@
 import {
+	ProductSpecContractError,
+	createProductSpecApprovalEnvelope,
+	createProductSpecEnvelope,
+	isValidProductSpecSnapshot,
+} from "./product-spec.ts";
+import {
+	canonicalJson,
 	createBlocker,
 	createRouteRecommendation,
+	digestCanonicalValue,
 	type Assessment,
+	type AuthenticatedAuthority,
+	type OwnerAuthority,
+	type ProductSpecApprovalEnvelope,
+	type ProductSpecEnvelope,
+	type ProductSpecInput,
 	type Route,
 	type RouteRecommendation,
 	type SubagentResult,
 	type WorkflowIntent,
-	digestCanonicalValue,
 } from "./workflow-contracts.ts";
 
 /** Interactive confirmation tokens expire after five minutes. */
@@ -33,6 +45,16 @@ export type DefineProductCommand =
 			definitionId: string;
 			intent: "prototype" | "design-alternative";
 			focus: string;
+	  }
+	| ({
+			kind: "to-spec";
+			supportArtifactAliases: readonly string[];
+	  } & Omit<ProductSpecInput, "supportArtifacts">)
+	| {
+			kind: "approve-spec";
+			target: ProductSpecInput["target"];
+			revision: string;
+			digest: string;
 	  };
 
 export type DefineProductOutcome =
@@ -47,6 +69,15 @@ export type DefineProductOutcome =
 	| {
 			status: "blocked";
 			blocker: { code: string; message: string };
+	  }
+	| {
+			status: "spec-ready";
+			spec: ProductSpecEnvelope;
+	  }
+	| {
+			status: "spec-approved";
+			spec: ProductSpecEnvelope;
+			approval: ProductSpecApprovalEnvelope;
 	  };
 
 export interface ExplorationRecoveryState {
@@ -64,6 +95,21 @@ export interface ExplorationRecoveryStore {
 	clear(): Promise<void>;
 }
 
+export interface SpecApprovalRecoveryState {
+	definitionId: string;
+	spec: ProductSpecEnvelope;
+}
+
+export interface SpecApprovalRecoveryStore {
+	load(): Promise<SpecApprovalRecoveryState | undefined>;
+	save(state: SpecApprovalRecoveryState): Promise<void>;
+	clear(): Promise<void>;
+}
+
+export type DefineProductRecovery =
+	| { definitionId: string; phase: "exploration" }
+	| { definitionId: string; phase: "spec-approval" };
+
 export interface DefineProductWorkflowDependencies {
 	delegate: {
 		delegate(intent: WorkflowIntent): Promise<SubagentResult>;
@@ -74,10 +120,46 @@ export interface DefineProductWorkflowDependencies {
 	affectedPaths?: readonly string[];
 	now?: () => number;
 	explorationRecoveryStore?: ExplorationRecoveryStore;
+	specApprovalRecoveryStore?: SpecApprovalRecoveryStore;
+	authenticatedAuthority?: {
+		current(): Promise<AuthenticatedAuthority>;
+	};
 }
 
 function isConfirmationToken(value: string): boolean {
 	return /^[A-Za-z0-9_-]{43}$/.test(value);
+}
+
+function immutableSnapshot<T>(value: T): T {
+	const snapshot = structuredClone(value);
+	const freeze = (candidate: unknown): void => {
+		if (!candidate || typeof candidate !== "object" || Object.isFrozen(candidate)) {
+			return;
+		}
+		for (const nested of Object.values(candidate)) freeze(nested);
+		Object.freeze(candidate);
+	};
+	freeze(snapshot);
+	return snapshot;
+}
+
+function cloneSnapshot<T>(value: T): T {
+	return structuredClone(value);
+}
+
+function belongsToDefinition(input: {
+	artifact: SubagentResult["artifacts"][number];
+	definitionId: string;
+	project: string;
+	schema: "research-evidence" | "design-exploration";
+}): boolean {
+	return (
+		input.artifact.project === input.project &&
+		input.artifact.schema === input.schema &&
+		input.artifact.topic.startsWith(
+			`workflow/define-product/${input.definitionId}/`,
+		)
+	);
 }
 
 export function createDefineProductWorkflow(
@@ -85,6 +167,7 @@ export function createDefineProductWorkflow(
 ) {
 	let activeRecommendation: RouteRecommendation | undefined;
 	let activeWorkflowStateId: string | undefined;
+	let activeSpec: ProductSpecEnvelope | undefined;
 	let recoverableExploration:
 		| {
 				definitionId: string;
@@ -100,7 +183,10 @@ export function createDefineProductWorkflow(
 		| {
 				definitionId: string;
 				recommendation: RouteRecommendation;
-				artifacts: SubagentResult["artifacts"];
+				artifacts: readonly {
+					alias: string;
+					ref: SubagentResult["artifacts"][number];
+				}[];
 		  }
 		| undefined;
 
@@ -111,12 +197,33 @@ export function createDefineProductWorkflow(
 
 	function reset(): void {
 		clearRecommendation();
+		activeSpec = undefined;
 		explorationContext = undefined;
 		recoverableExploration = undefined;
 	}
 
-	async function restoreRecovery(): Promise<string | undefined> {
+	async function restoreRecovery(): Promise<DefineProductRecovery | undefined> {
 		reset();
+		try {
+			const pendingSpec = await dependencies.specApprovalRecoveryStore?.load();
+			if (pendingSpec) {
+				if (
+					pendingSpec.definitionId !== pendingSpec.spec.payload.definitionId ||
+					!isValidProductSpecSnapshot(pendingSpec.spec)
+				) {
+					await dependencies.specApprovalRecoveryStore?.clear();
+					return undefined;
+				}
+				activeSpec = immutableSnapshot(pendingSpec.spec);
+				return {
+					definitionId: pendingSpec.definitionId,
+					phase: "spec-approval",
+				};
+			}
+		} catch {
+			await dependencies.specApprovalRecoveryStore?.clear();
+			return undefined;
+		}
 		const stored = await dependencies.explorationRecoveryStore?.load();
 		if (
 			!stored ||
@@ -135,14 +242,162 @@ export function createDefineProductWorkflow(
 			focus: stored.focus,
 			workflowIntent: stored.workflowIntent,
 		};
-		return stored.definitionId;
+		return { definitionId: stored.definitionId, phase: "exploration" };
 	}
 
 	async function advance(
 		command: DefineProductCommand,
 	): Promise<DefineProductOutcome> {
+		if (command.kind === "approve-spec") {
+			const actor = await dependencies.authenticatedAuthority?.current();
+			if (
+				!actor ||
+				typeof actor !== "object" ||
+				typeof actor.actorId !== "string" ||
+				typeof actor.role !== "string" ||
+				typeof actor.authorityRevision !== "string" ||
+				!command.target ||
+				typeof command.target !== "object" ||
+				command.target.kind !== "linear-parent-description" ||
+				typeof command.target.teamId !== "string" ||
+				typeof command.target.title !== "string" ||
+				typeof command.revision !== "string" ||
+				typeof command.digest !== "string"
+			) {
+				return {
+					status: "blocked",
+					blocker: createBlocker(
+						"PI_WORKFLOW_SPEC_ARTIFACT_INVALID",
+						"The Spec approval input shape is invalid.",
+					),
+				};
+			}
+			if (
+				!actor.actorId ||
+				actor.actorId !== actor.actorId.trim() ||
+				actor.role !== "Owner" ||
+				!actor.authorityRevision ||
+				actor.authorityRevision !== actor.authorityRevision.trim()
+			) {
+				return {
+					status: "blocked",
+					blocker: createBlocker(
+						"PI_WORKFLOW_SPEC_APPROVAL_REQUIRED",
+						"Spec approval requires an exact actor with current Owner authority.",
+					),
+				};
+			}
+			if (activeSpec) {
+				const unsigned = {
+					schema: activeSpec.schema,
+					schemaVersion: activeSpec.schemaVersion,
+					payload: activeSpec.payload,
+				};
+				if (activeSpec.digest !== digestCanonicalValue(unsigned)) {
+					return {
+						status: "blocked",
+						blocker: createBlocker(
+							"PI_WORKFLOW_SPEC_ARTIFACT_INVALID",
+							"The active product Spec snapshot no longer matches its exact digest.",
+						),
+					};
+				}
+			}
+			if (
+				!activeSpec ||
+				command.digest !== activeSpec.digest ||
+				command.revision !== activeSpec.payload.revision ||
+				canonicalJson(command.target) !== canonicalJson(activeSpec.payload.target)
+			) {
+				return {
+					status: "blocked",
+					blocker: createBlocker(
+						"PI_WORKFLOW_SPEC_APPROVAL_MISMATCH",
+						"Spec approval must match the active target, revision, and exact digest.",
+					),
+				};
+			}
+			const ownerActor: OwnerAuthority = {
+				actorId: actor.actorId,
+				role: "Owner",
+				authorityRevision: actor.authorityRevision,
+			};
+			const approval = immutableSnapshot(
+				createProductSpecApprovalEnvelope({ spec: activeSpec, actor: ownerActor }),
+			);
+			await dependencies.specApprovalRecoveryStore?.clear();
+			return {
+				status: "spec-approved",
+				spec: cloneSnapshot(activeSpec),
+				approval: cloneSnapshot(approval),
+			};
+		}
+		if (command.kind === "to-spec") {
+			if (
+				!explorationContext ||
+				explorationContext.definitionId !== command.definitionId ||
+				!explorationContext.artifacts.some(
+					({ ref }) => ref.schema === "research-evidence",
+				)
+			) {
+				return {
+					status: "blocked",
+					blocker: createBlocker(
+						"PI_WORKFLOW_SPEC_ARTIFACT_INVALID",
+						"Spec generation requires completed verified research from this definition session.",
+					),
+				};
+			}
+			const verifiedArtifacts = explorationContext.artifacts;
+			const selectedArtifacts = command.supportArtifactAliases.map((alias) =>
+				verifiedArtifacts.find((artifact) => artifact.alias === alias),
+			);
+			if (
+				command.supportArtifactAliases.length === 0 ||
+				selectedArtifacts.some((artifact) => artifact === undefined)
+			) {
+				return {
+					status: "blocked",
+					blocker: createBlocker(
+						"PI_WORKFLOW_SPEC_ARTIFACT_INVALID",
+						"Spec support selections must use verified artifact aliases from this definition session.",
+					),
+				};
+			}
+			const { kind: _kind, supportArtifactAliases: _aliases, ...input } = command;
+			try {
+				const generated = createProductSpecEnvelope({
+					...input,
+					supportArtifacts: selectedArtifacts.flatMap((artifact) =>
+						artifact ? [artifact.ref] : [],
+					),
+				});
+				await dependencies.specApprovalRecoveryStore?.save({
+					definitionId: generated.payload.definitionId,
+					spec: generated,
+				});
+				await dependencies.explorationRecoveryStore?.clear();
+				activeSpec = immutableSnapshot(generated);
+				return { status: "spec-ready", spec: cloneSnapshot(activeSpec) };
+			} catch (error) {
+				if (error instanceof ProductSpecContractError) {
+					return {
+						status: "blocked",
+						blocker: createBlocker(error.code, error.message),
+					};
+				}
+				return {
+					status: "blocked",
+					blocker: createBlocker(
+						"PI_WORKFLOW_RECOVERY_FAILED",
+						"The exact pending Spec could not be persisted for recovery.",
+					),
+				};
+			}
+		}
 		if (command.kind === "recommend-route") {
 			await dependencies.explorationRecoveryStore?.clear();
+			await dependencies.specApprovalRecoveryStore?.clear();
 			explorationContext = undefined;
 			activeWorkflowStateId = command.workflowStateId;
 			activeRecommendation = createRouteRecommendation({
@@ -215,11 +470,7 @@ export function createDefineProductWorkflow(
 							"skills/define-product/SKILL.md",
 						],
 						readableArtifacts: (explorationContext?.artifacts ?? []).map(
-							(ref, index) => ({
-								alias:
-									index === 0 ? "research" : `supporting-${index + 1}`,
-								ref,
-							}),
+							({ alias, ref }) => ({ alias, ref }),
 						),
 					};
 			const result = await dependencies.delegate.delegate(workflowIntent);
@@ -244,6 +495,36 @@ export function createDefineProductWorkflow(
 			} else {
 				recoverableExploration = undefined;
 				await dependencies.explorationRecoveryStore?.clear();
+				if (
+					result.status === "completed" &&
+					explorationContext?.definitionId === command.definitionId
+				) {
+					const retained = explorationContext.artifacts.filter(
+						(artifact) => artifact.alias !== command.intent,
+					);
+					const verifiedExplorationArtifacts = result.artifacts.filter(
+						(artifact) =>
+							belongsToDefinition({
+								artifact,
+								definitionId: command.definitionId,
+								project: dependencies.project.name,
+								schema: "design-exploration",
+							}),
+					);
+					explorationContext = {
+						...explorationContext,
+						artifacts: [
+							...retained,
+							...verifiedExplorationArtifacts.map((ref, index) => ({
+								alias:
+									index === 0
+										? command.intent
+										: `${command.intent}-${index + 1}`,
+								ref,
+							})),
+						],
+					};
+				}
 			}
 			return { status: "completed", result };
 		}
@@ -325,10 +606,21 @@ export function createDefineProductWorkflow(
 			],
 		});
 		if (result.status === "completed") {
+			const verifiedResearchArtifacts = result.artifacts.filter((artifact) =>
+				belongsToDefinition({
+					artifact,
+					definitionId: recommendation.definitionId,
+					project: dependencies.project.name,
+					schema: "research-evidence",
+				}),
+			);
 			explorationContext = {
 				definitionId: recommendation.definitionId,
 				recommendation,
-				artifacts: result.artifacts,
+				artifacts: verifiedResearchArtifacts.map((ref, index) => ({
+					alias: index === 0 ? "research" : `research-${index + 1}`,
+					ref,
+				})),
 			};
 		}
 		return { status: "completed", result };

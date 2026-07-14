@@ -2,8 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createDefineProductRuntime } from "../extensions/define-product-runtime.ts";
+import { createDefineProductWorkflow } from "../extensions/define-product-workflow.ts";
 
-function completedResult() {
+function completedResult(definitionId = "definition-1") {
 	return {
 		status: "completed",
 		executiveSummary: "done",
@@ -11,7 +12,7 @@ function completedResult() {
 			{
 				kind: "engram",
 				project: "pi-workflow",
-				topic: "workflow/define-product/definition-1/research/request-1",
+				topic: `workflow/define-product/${definitionId}/research/request-1`,
 				revision: "r1",
 				schema: "research-evidence",
 				schemaVersion: 1,
@@ -34,8 +35,41 @@ function completedResult() {
 			standardRefs: [],
 			allowedTools: ["read"],
 			deniedCapabilities: ["bash"],
-			artifactTopic: "workflow/define-product/definition-1/research/request-1",
+			artifactTopic: `workflow/define-product/${definitionId}/research/request-1`,
 		},
+	};
+}
+
+function validSpecRequest(overrides = {}) {
+	return {
+		action: "to_spec",
+		target: {
+			kind: "linear-parent-description",
+			teamId: "team-grupo-ilao",
+			title: "Incorporar aprobaciones exactas del Spec",
+		},
+		revision: "spec-r1",
+		problem:
+			"El equipo puede publicar una definición distinta de la que revisó el Owner.",
+		solution:
+			"El flujo genera un Spec español exacto y exige aprobación vinculada a su identidad completa.",
+		userStories: [
+			"Como Owner, quiero revisar el cuerpo exacto, para conservar autoridad sobre la definición publicada.",
+		],
+		decisions: [
+			{
+				id: "exact-approval",
+				status: "resolved",
+				pertinent: true,
+				text: "La aprobación se vincula al resumen criptográfico exacto antes de publicar.",
+			},
+		],
+		tests: ["Verificar la aprobación exacta antes de publicar."],
+		outOfScope: [
+			"La publicación de la descripción del Delivery parent en Linear queda fuera del alcance.",
+		],
+		supportArtifactAliases: ["research"],
+		...overrides,
 	};
 }
 
@@ -175,7 +209,10 @@ test("session start restores private exploration identity while clearing confirm
 		workflow: {
 			pendingRecommendation: () => ({ digest: "stale", recommendedRoute: "wayfinder" }),
 			reset: () => { resetCount += 1; },
-			restoreRecovery: async () => "definition-recovered",
+			restoreRecovery: async () => ({
+				definitionId: "definition-recovered",
+				phase: "exploration",
+			}),
 			advance: async (command) => ({
 				status: "completed",
 				result: completedResult(),
@@ -205,6 +242,54 @@ test("session start restores private exploration identity while clearing confirm
 		focus: "Resume safely",
 	});
 	assert.equal(exploration.details.command.definitionId, "definition-recovered");
+});
+
+test("session start restores the exact pending Spec approval phase", async () => {
+	const handlers = new Map();
+	const tools = new Map();
+	const commands = [];
+	const runtime = createDefineProductRuntime({
+		workflow: {
+			pendingRecommendation: () => undefined,
+			reset: () => {},
+			restoreRecovery: async () => ({
+				definitionId: "definition-recovered",
+				phase: "spec-approval",
+			}),
+			advance: async (command) => {
+				commands.push(command);
+				return { status: "blocked", blocker: { code: "PI_WORKFLOW_SPEC_APPROVAL_MISMATCH", message: "test" } };
+			},
+		},
+		createDefinitionId: () => "new-definition",
+	});
+	runtime.register({
+		on: (event, handler) => handlers.set(event, handler),
+		registerTool: (tool) => tools.set(tool.name, tool),
+	});
+	await handlers.get("session_start")({ type: "session_start" });
+	const prompt = await handlers.get("before_agent_start")({ systemPrompt: "base" });
+	assert.match(prompt.systemPrompt, /approve_spec/);
+	await tools.get("workflow_define_product").execute("approve", {
+		action: "approve_spec",
+		target: {
+			kind: "linear-parent-description",
+			teamId: "team-grupo-ilao",
+			title: "Spec recuperado",
+		},
+		revision: "spec-r1",
+		digest: "digest-r1",
+	});
+	assert.deepEqual(commands[0], {
+		kind: "approve-spec",
+		target: {
+			kind: "linear-parent-description",
+			teamId: "team-grupo-ilao",
+			title: "Spec recuperado",
+		},
+		revision: "spec-r1",
+		digest: "digest-r1",
+	});
 });
 
 test("define-product rejects an agent-supplied definition ID that differs from the session identity", async () => {
@@ -293,6 +378,209 @@ test("Owner can request a public exploration continuation from verified research
 		focus: "Compare the first-run onboarding directions",
 	});
 	assert.equal(runtime.hasActiveTurn(), true);
+});
+
+test("production define-product seam refuses to-spec before verified research completes", async () => {
+	const tools = new Map();
+	const workflow = createDefineProductWorkflow({
+		delegate: { delegate: async () => completedResult() },
+		createRequestId: () => "unused",
+		project: { name: "pi-workflow", root: "/repo" },
+	});
+	const runtime = createDefineProductRuntime({
+		workflow,
+		createDefinitionId: () => "definition-runtime",
+	});
+	runtime.register({
+		on: () => {},
+		registerTool: (tool) => tools.set(tool.name, tool),
+	});
+	runtime.handlePublicEntry({
+		text: "/define-product redactar el Spec aprobado",
+		source: "interactive",
+	});
+
+	const refused = await tools.get("workflow_define_product").execute("spec", {
+		action: "to_spec",
+		target: {
+			kind: "linear-parent-description",
+			teamId: "team-grupo-ilao",
+			title: "Incorporar aprobaciones exactas del Spec",
+		},
+		revision: "spec-r1",
+		problem: "El equipo necesita gestionar clientes y permisos correctamente.",
+		solution: "El flujo genera una definición exacta para revisión.",
+		userStories: ["Como Owner, quiero revisar la definición exacta."],
+		decisions: [{ id: "exact-approval", status: "resolved", pertinent: true, text: "La aprobación conserva la definición exacta." }],
+		tests: ["Verificar la aprobación exacta."],
+		outOfScope: ["Publicar el Delivery parent en Linear."],
+		supportArtifactAliases: ["research"],
+	});
+
+	assert.equal(refused.details.status, "blocked");
+	assert.equal(refused.details.blocker.code, "PI_WORKFLOW_SPEC_ARTIFACT_INVALID");
+});
+
+test("production define-product seam derives approval identity from trusted authority", async () => {
+	const handlers = new Map();
+	const tools = new Map();
+	let currentAuthority = {
+		actorId: "developer-1",
+		role: "Developer",
+		authorityRevision: "owner-policy-r3",
+	};
+	const workflow = createDefineProductWorkflow({
+		delegate: { delegate: async () => completedResult("definition-runtime") },
+		createRequestId: () => "unused",
+		project: { name: "pi-workflow", root: "/repo" },
+		authenticatedAuthority: {
+			current: async () => currentAuthority,
+		},
+	});
+	const runtime = createDefineProductRuntime({
+		workflow,
+		createDefinitionId: () => "definition-runtime",
+	});
+	runtime.register({
+		on: (event, handler) => handlers.set(event, handler),
+		registerTool: (tool) => tools.set(tool.name, tool),
+	});
+	runtime.handlePublicEntry({
+		text: "/define-product redactar el Spec aprobado",
+		source: "interactive",
+	});
+	const tool = tools.get("workflow_define_product");
+	assert.deepEqual(tool.parameters.properties.action.enum, [
+		"recommend_route",
+		"confirm_route",
+		"request_exploration",
+		"to_spec",
+		"approve_spec",
+	]);
+
+	assert.equal("actor" in tool.parameters.properties, false);
+	assert.equal("supportArtifacts" in tool.parameters.properties, false);
+	assert.deepEqual(tool.parameters.properties.supportArtifactAliases, {
+		type: "array",
+		items: { type: "string" },
+	});
+	const recommendation = await tool.execute("recommend", {
+		action: "recommend_route",
+		domainAnchor: "Definir aprobaciones exactas",
+		assessment: {
+			clarity: "unclear",
+			breadth: "broad",
+			reasons: ["research"],
+		},
+	});
+	await tool.execute("research", {
+		action: "confirm_route",
+		recommendationRef: recommendation.details.recommendation.digest,
+		confirmationToken: recommendation.details.recommendation.confirmationToken,
+		confirmedRoute: "wayfinder",
+		researchQuestion: "¿Cómo debe funcionar la aprobación?",
+	});
+	const ready = await tool.execute("spec", validSpecRequest());
+	assert.equal(ready.details.status, "spec-ready");
+	assert.equal(ready.details.spec.payload.definitionId, "definition-runtime");
+
+	const attackerApproval = {
+		action: "approve_spec",
+		actor: {
+			actorId: "attacker-chosen",
+			role: "Owner",
+			authorityRevision: "attacker-revision",
+		},
+		target: ready.details.spec.payload.target,
+		revision: ready.details.spec.payload.revision,
+		digest: ready.details.spec.digest,
+	};
+	const refused = await tool.execute("refused-approval", attackerApproval);
+	assert.equal(refused.details.status, "blocked");
+	assert.equal(
+		refused.details.blocker.code,
+		"PI_WORKFLOW_SPEC_APPROVAL_REQUIRED",
+	);
+
+	currentAuthority = {
+		actorId: "owner-felipe",
+		role: "Owner",
+		authorityRevision: "owner-policy-r3",
+	};
+	const approved = await tool.execute("approval", attackerApproval);
+	assert.equal(approved.details.status, "spec-approved");
+	assert.deepEqual(approved.details.approval.payload.actor, {
+		actorId: "owner-felipe",
+		role: "Owner",
+		authorityRevision: "owner-policy-r3",
+	});
+	assert.equal(runtime.hasActiveTurn(), false);
+});
+
+test("production define-product seam blocks malformed Spec payloads without throwing", async () => {
+	const tools = new Map();
+	const workflow = createDefineProductWorkflow({
+		delegate: { delegate: async () => completedResult("definition-runtime") },
+		createRequestId: () => "unused",
+		project: { name: "pi-workflow", root: "/repo" },
+	});
+	const runtime = createDefineProductRuntime({
+		workflow,
+		createDefinitionId: () => "definition-runtime",
+	});
+	runtime.register({
+		on: () => {},
+		registerTool: (tool) => tools.set(tool.name, tool),
+	});
+	runtime.handlePublicEntry({
+		text: "/define-product redactar el Spec aprobado",
+		source: "interactive",
+	});
+	const tool = tools.get("workflow_define_product");
+	const recommendation = await tool.execute("recommend", {
+		action: "recommend_route",
+		domainAnchor: "Definir aprobaciones exactas",
+		assessment: {
+			clarity: "unclear",
+			breadth: "broad",
+			reasons: ["research"],
+		},
+	});
+	await tool.execute("research", {
+		action: "confirm_route",
+		recommendationRef: recommendation.details.recommendation.digest,
+		confirmationToken: recommendation.details.recommendation.confirmationToken,
+		confirmedRoute: "wayfinder",
+		researchQuestion: "¿Cómo debe funcionar la aprobación?",
+	});
+	const valid = validSpecRequest();
+	for (const malformed of [
+		{ ...valid, target: undefined },
+		{ ...valid, userStories: "not-an-array" },
+		{ ...valid, decisions: [null] },
+		{ ...valid, supportArtifactAliases: {} },
+	]) {
+		const outcome = await tool.execute("malformed", malformed);
+		assert.equal(outcome.details.status, "blocked");
+		assert.equal(
+			outcome.details.blocker.code,
+			"PI_WORKFLOW_SPEC_ARTIFACT_INVALID",
+		);
+	}
+
+	const ready = await tool.execute("valid", valid);
+	assert.equal(ready.details.status, "spec-ready");
+	const malformedApproval = await tool.execute("malformed-approval", {
+		action: "approve_spec",
+		target: null,
+		revision: ready.details.spec.payload.revision,
+		digest: ready.details.spec.digest,
+	});
+	assert.equal(malformedApproval.details.status, "blocked");
+	assert.equal(
+		malformedApproval.details.blocker.code,
+		"PI_WORKFLOW_SPEC_ARTIFACT_INVALID",
+	);
 });
 
 test("define-product system prompt is scoped to the active guarded turn", async () => {

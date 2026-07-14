@@ -70,6 +70,9 @@ function baselinePackageJson(overrides = {}) {
 		engines: {
 			node: ">=22.19",
 		},
+		devDependencies: {
+			tooling: "^1.0.0",
+		},
 		...overrides,
 	};
 }
@@ -563,6 +566,82 @@ test("rejects falsey but valid MCP catalog JSON values", async () => {
 		assert.match(result.stderr, /assets\/mcp-servers\.json|MCP server catalog/i);
 	} finally {
 		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("rejects an eld runtime dependency", async () => {
+	const root = await createFixture({
+		packageJson: baselinePackageJson({
+			dependencies: { eld: "2.0.3" },
+		}),
+	});
+	try {
+		const result = await runValidator(root);
+		assert.notEqual(result.code, 0);
+		assert.match(result.stderr, /must not define runtime dependencies/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("rejects bundled runtime dependencies", async (t) => {
+	for (const key of ["bundledDependencies", "bundleDependencies"]) {
+		await t.test(key, async () => {
+			const root = await createFixture({
+				packageJson: baselinePackageJson({ [key]: ["eld"] }),
+			});
+			try {
+				const result = await runValidator(root);
+				assert.notEqual(result.code, 0);
+				assert.match(result.stderr, /must not bundle runtime dependencies/);
+			} finally {
+				await rm(root, { recursive: true, force: true });
+			}
+		});
+	}
+});
+
+test("rejects an extra assets/language file", async () => {
+	const root = await createFixture();
+	try {
+		await mkdir(join(root, "assets", "language"), { recursive: true });
+		await writeFile(
+			join(root, "assets", "language", "eld-extrasmall-profile.json"),
+			"{}\n",
+		);
+		const result = await runValidator(root);
+		assert.notEqual(result.code, 0);
+		assert.match(
+			result.stderr,
+			/removed language resource path must not exist: assets\/language/,
+		);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("rejects removed language resource modules and generators", async (t) => {
+	for (const relativePath of [
+		"extensions/language-resources.ts",
+		"scripts/generate-language-resources.mjs",
+	]) {
+		await t.test(relativePath, async () => {
+			const root = await createFixture();
+			try {
+				await mkdir(join(root, relativePath, ".."), { recursive: true });
+				await writeFile(join(root, relativePath), "export {};\n");
+				const result = await runValidator(root);
+				assert.notEqual(result.code, 0);
+				assert.match(
+					result.stderr,
+					new RegExp(
+						`removed language resource path must not exist: ${relativePath.replaceAll(".", "\\.")}`,
+					),
+				);
+			} finally {
+				await rm(root, { recursive: true, force: true });
+			}
+		});
 	}
 });
 

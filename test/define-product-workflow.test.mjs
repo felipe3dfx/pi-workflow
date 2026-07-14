@@ -283,7 +283,7 @@ test("define-product lets the Owner request comparable prototype and design-alte
 	const researchArtifact = {
 		kind: "engram",
 		project: "pi-workflow",
-		topic: "workflow/research",
+		topic: "workflow/define-product/definition-1/research/request-1",
 		revision: "research-r1",
 		schema: "research-evidence",
 		schemaVersion: 1,
@@ -386,7 +386,25 @@ test("define-product lets the Owner request comparable prototype and design-alte
 		intents.slice(1).map(({ kind, readableArtifacts }) => ({ kind, readableArtifacts })),
 		[
 			{ kind: "prototype", readableArtifacts: [{ alias: "research", ref: researchArtifact }] },
-			{ kind: "design-alternative", readableArtifacts: [{ alias: "research", ref: researchArtifact }] },
+			{
+				kind: "design-alternative",
+				readableArtifacts: [
+					{ alias: "research", ref: researchArtifact },
+					{
+						alias: "prototype",
+						ref: {
+							kind: "engram",
+							project: "pi-workflow",
+							topic:
+								"workflow/define-product/definition-1/prototype/request-2",
+							revision: "prototype-r1",
+							schema: "design-exploration",
+							schemaVersion: 1,
+							digest: "prototype-digest",
+						},
+					},
+				],
+			},
 		],
 	);
 	assert.equal("history" in intents[1], false);
@@ -438,7 +456,10 @@ test("define-product restores only fingerprint-bound private exploration identit
 	const originalRequestId = durableState.requestId;
 
 	const replacement = makeWorkflow();
-	assert.equal(await replacement.restoreRecovery(), "definition-recovery");
+	assert.deepEqual(await replacement.restoreRecovery(), {
+		definitionId: "definition-recovery",
+		phase: "exploration",
+	});
 	await replacement.advance(command);
 	assert.equal(intents.at(-1).requestId, originalRequestId);
 	assert.equal("confirmationToken" in durableState.workflowIntent, false);
