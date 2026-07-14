@@ -167,6 +167,46 @@ test("define-product runtime clears prompt and confirmation eligibility after se
 	}
 });
 
+test("session start restores private exploration identity while clearing confirmation authorization", async () => {
+	const handlers = new Map();
+	const tools = new Map();
+	let resetCount = 0;
+	const runtime = createDefineProductRuntime({
+		workflow: {
+			pendingRecommendation: () => ({ digest: "stale", recommendedRoute: "wayfinder" }),
+			reset: () => { resetCount += 1; },
+			restoreRecovery: async () => "definition-recovered",
+			advance: async (command) => ({
+				status: "completed",
+				result: completedResult(),
+				command,
+			}),
+		},
+		createDefinitionId: () => "new-definition",
+	});
+	runtime.register({
+		on: (event, handler) => handlers.set(event, handler),
+		registerTool: (tool) => tools.set(tool.name, tool),
+	});
+	await handlers.get("session_start")({ type: "session_start" });
+	assert.equal(resetCount >= 1, true);
+	assert.equal(runtime.shouldContinue({ text: "continue", source: "interactive" }), true);
+	const confirmation = await tools.get("workflow_define_product").execute("confirm", {
+		action: "confirm_route",
+		recommendationRef: "stale",
+		confirmationToken: "0123456789012345678901234567890123456789012",
+		confirmedRoute: "wayfinder",
+		researchQuestion: "stale",
+	});
+	assert.equal(confirmation.details.status, "blocked");
+	const exploration = await tools.get("workflow_define_product").execute("explore", {
+		action: "request_exploration",
+		intent: "prototype",
+		focus: "Resume safely",
+	});
+	assert.equal(exploration.details.command.definitionId, "definition-recovered");
+});
+
 test("define-product rejects an agent-supplied definition ID that differs from the session identity", async () => {
 	const { runtime, tool, commands } = registerRuntime();
 	runtime.handlePublicEntry({
@@ -203,6 +243,56 @@ test("define-product rejects an agent-supplied definition ID that differs from t
 		},
 	});
 	assert.equal(recommendation.details.recommendation.definitionId, "definition-1");
+});
+
+test("Owner can request a public exploration continuation from verified research without runtime IDs", async () => {
+	const { handlers, runtime, tool, commands } = registerRuntime();
+	runtime.handlePublicEntry({
+		text: "/define-product map a new category",
+		source: "interactive",
+	});
+	await tool.execute("tool-1", {
+		action: "recommend_route",
+		domainAnchor: "map a new category",
+		assessment: {
+			clarity: "unclear",
+			breadth: "broad",
+			reasons: ["missing shape"],
+		},
+	});
+	await tool.execute("tool-2", {
+		action: "confirm_route",
+		recommendationRef: "recommendation-1",
+		confirmationToken: "0123456789012345678901234567890123456789012",
+		confirmedRoute: "wayfinder",
+		researchQuestion: "What should we research?",
+	});
+
+	assert.equal(runtime.hasActiveTurn(), true);
+	const continuationPrompt = await handlers.get("before_agent_start")({
+		systemPrompt: "base",
+	});
+	assert.match(continuationPrompt.systemPrompt, /request_exploration/);
+	assert.deepEqual(tool.parameters.properties.intent, {
+		type: "string",
+		enum: ["prototype", "design-alternative"],
+	});
+	assert.equal("sessionId" in tool.parameters.properties, false);
+	assert.equal("targetTopic" in tool.parameters.properties, false);
+
+	const exploration = await tool.execute("tool-3", {
+		action: "request_exploration",
+		intent: "prototype",
+		focus: "Compare the first-run onboarding directions",
+	});
+	assert.equal(exploration.details.status, "completed");
+	assert.deepEqual(commands.at(-1), {
+		kind: "request-exploration",
+		definitionId: "definition-1",
+		intent: "prototype",
+		focus: "Compare the first-run onboarding directions",
+	});
+	assert.equal(runtime.hasActiveTurn(), true);
 });
 
 test("define-product system prompt is scoped to the active guarded turn", async () => {
@@ -254,8 +344,8 @@ test("define-product system prompt is scoped to the active guarded turn", async 
 		confirmedRoute: "wayfinder",
 		researchQuestion: "What should we research?",
 	});
-	assert.equal(
-		await handlers.get("before_agent_start")({ systemPrompt: "base" }),
-		undefined,
-	);
+	const explorationPrompt = await handlers.get("before_agent_start")({
+		systemPrompt: "base",
+	});
+	assert.match(explorationPrompt.systemPrompt, /request_exploration/);
 });

@@ -59,6 +59,94 @@ test("agent validator accepts exact read-only research launch inputs", async () 
 	]);
 });
 
+test("agent validator accepts the exact isolated prototype profile for both exploration intents", async () => {
+	for (const intent of ["prototype", "design-alternative"]) {
+		const validator = createAgentValidator({
+			readResearchAsset: () => validAsset(),
+			readExplorationAsset: () =>
+				validAsset({
+					name: "prototype",
+					capabilityProfile: "isolated-prototype",
+					allowedTools: [
+						"read",
+						"grep",
+						"find",
+						"ls",
+						"edit",
+						"write",
+						"bash",
+						"workflow_artifact_session",
+					],
+				}),
+			readModelAvailability: () => ({
+				authenticated: true,
+				supportsToolCalling: true,
+				exact: true,
+			}),
+		});
+		const result = await validator.validateExplorationLaunch({
+			intent,
+			skillRefs: [],
+			standardRefs: [],
+			artifactTopic: `workflow/${intent}`,
+		});
+		assert.equal(result.ok, true);
+		assert.equal(result.value.assetDigest, "asset-digest");
+		assert.deepEqual(result.value.allowedTools, [
+			"read",
+			"grep",
+			"find",
+			"ls",
+			"edit",
+			"write",
+			"bash",
+			"workflow_artifact_session",
+		]);
+		assert.deepEqual(result.value.deniedCapabilities, [
+			"linear",
+			"public-skill",
+			"fan-out",
+			"private-namespace",
+			"agent-launch",
+		]);
+	}
+});
+
+test("agent validator blocks exploration profile drift before launch", async () => {
+	const validator = createAgentValidator({
+		readResearchAsset: () => validAsset(),
+		readExplorationAsset: () =>
+			validAsset({
+				name: "prototype",
+				capabilityProfile: "isolated-prototype",
+				allowedTools: [
+					"read",
+					"grep",
+					"find",
+					"ls",
+					"edit",
+					"write",
+					"bash",
+					"workflow_artifact_session",
+					"linear",
+				],
+			}),
+		readModelAvailability: () => ({
+			authenticated: true,
+			supportsToolCalling: true,
+			exact: true,
+		}),
+	});
+	const result = await validator.validateExplorationLaunch({
+		intent: "prototype",
+		skillRefs: [],
+		standardRefs: [],
+		artifactTopic: "workflow/prototype",
+	});
+	assert.equal(result.ok, false);
+	assert.equal(result.blocker.code, "PI_WORKFLOW_CAPABILITY_PROFILE_MISMATCH");
+});
+
 test("agent validator blocks forbidden capabilities, extra tools, and exact-model drift", async () => {
 	const forbidden = await createAgentValidator({
 		readResearchAsset: () => validAsset({ allowedTools: [...validAsset().allowedTools, "bash"] }),

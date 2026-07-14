@@ -5,7 +5,7 @@ import {
 	type WorkflowBlocker,
 } from "./workflow-contracts.ts";
 
-interface AppliedResearchAsset {
+interface AppliedAgentAsset {
 	name: string;
 	version: number;
 	digest: string;
@@ -28,7 +28,8 @@ interface ModelAvailability {
 }
 
 export interface AgentValidatorDependencies {
-	readResearchAsset(): Promise<AppliedResearchAsset> | AppliedResearchAsset;
+	readResearchAsset(): Promise<AppliedAgentAsset> | AppliedAgentAsset;
+	readExplorationAsset?(): Promise<AppliedAgentAsset> | AppliedAgentAsset;
 	readModelAvailability(
 		provider: string,
 		model: string,
@@ -62,6 +63,71 @@ const forbiddenCapabilities = [
 	"agent-launch",
 ];
 
+const requiredExplorationTools = [
+	"read",
+	"grep",
+	"find",
+	"ls",
+	"edit",
+	"write",
+	"bash",
+	"workflow_artifact_session",
+];
+
+const forbiddenExplorationCapabilities = [
+	"linear",
+	"public-skill",
+	"fan-out",
+	"private-namespace",
+	"agent-launch",
+];
+
+async function validateExactLaunch(input: {
+	asset: AppliedAgentAsset;
+	profileMatches: boolean;
+	profileError: string;
+	availabilityError: string;
+	deniedCapabilities: readonly string[];
+	readModelAvailability: AgentValidatorDependencies["readModelAvailability"];
+}): Promise<AgentValidation> {
+	if (!input.profileMatches) {
+		return {
+			ok: false,
+			blocker: createBlocker(
+				"PI_WORKFLOW_CAPABILITY_PROFILE_MISMATCH",
+				input.profileError,
+			),
+		};
+	}
+	const availability = await input.readModelAvailability(
+		input.asset.provider,
+		input.asset.model,
+		input.asset.effort,
+	);
+	if (
+		availability.authenticated !== true ||
+		availability.supportsToolCalling !== true ||
+		availability.exact !== true
+	) {
+		return {
+			ok: false,
+			blocker: createBlocker(
+				"PI_WORKFLOW_EXACT_MODEL_UNAVAILABLE",
+				input.availabilityError,
+			),
+		};
+	}
+	return {
+		ok: true,
+		value: {
+			assetVersion: input.asset.version,
+			assetDigest: input.asset.digest,
+			allowedTools: [...input.asset.allowedTools],
+			deniedCapabilities: [...input.deniedCapabilities],
+		},
+	};
+}
+
 export function createAgentValidator(
 	dependencies: AgentValidatorDependencies,
 ) {
@@ -80,14 +146,14 @@ export function createAgentValidator(
 				),
 			};
 		}
-		if (
-			asset.capabilityProfile !== "research-reader" ||
-			asset.provider !== "openai-codex" ||
-			asset.model !== "gpt-5.6-terra" ||
-			asset.effort !== "medium" ||
-			asset.inheritContext !== false ||
-			asset.promptMode !== "replace"
-		) {
+		const profileMatches =
+			asset.capabilityProfile === "research-reader" &&
+			asset.provider === "openai-codex" &&
+			asset.model === "gpt-5.6-terra" &&
+			asset.effort === "medium" &&
+			asset.inheritContext === false &&
+			asset.promptMode === "replace";
+		if (!profileMatches) {
 			return {
 				ok: false,
 				blocker: createBlocker(
@@ -135,34 +201,72 @@ export function createAgentValidator(
 				),
 			};
 		}
-		const availability = await dependencies.readModelAvailability(
-			asset.provider,
-			asset.model,
-			asset.effort,
-		);
-		if (
-			availability.authenticated !== true ||
-			availability.supportsToolCalling !== true ||
-			availability.exact !== true
-		) {
+		return validateExactLaunch({
+			asset,
+			profileMatches,
+			profileError:
+				"The research agent asset no longer matches the approved exact launch profile.",
+			availabilityError:
+				"The exact provider, model, or effort is unavailable for the research launch.",
+			deniedCapabilities: forbiddenCapabilities,
+			readModelAvailability: dependencies.readModelAvailability,
+		});
+	}
+
+	async function validateExplorationLaunch(_input: {
+		intent: "prototype" | "design-alternative";
+		skillRefs: readonly DigestedRef[];
+		standardRefs: readonly DigestedRef[];
+		artifactTopic: string;
+	}): Promise<AgentValidation> {
+		if (!dependencies.readExplorationAsset) {
 			return {
 				ok: false,
 				blocker: createBlocker(
-					"PI_WORKFLOW_EXACT_MODEL_UNAVAILABLE",
-					"The exact provider, model, or effort is unavailable for the research launch.",
+					"PI_WORKFLOW_AGENT_ASSET_NOT_READY",
+					"The applied prototype agent asset is unavailable for exact launch validation.",
 				),
 			};
 		}
-		return {
-			ok: true,
-			value: {
-				assetVersion: asset.version,
-				assetDigest: asset.digest,
-				allowedTools: [...asset.allowedTools],
-				deniedCapabilities: [...forbiddenCapabilities],
-			},
-		};
+		const asset = await dependencies.readExplorationAsset();
+		if (asset.name !== "prototype" || asset.version < 1 || !asset.digest) {
+			return {
+				ok: false,
+				blocker: createBlocker(
+					"PI_WORKFLOW_AGENT_ASSET_NOT_READY",
+					"The applied prototype agent asset is not ready for exact launch validation.",
+				),
+			};
+		}
+		const profileMatches = !(
+			asset.capabilityProfile !== "isolated-prototype" ||
+			asset.provider !== "openai-codex" ||
+			asset.model !== "gpt-5.6-terra" ||
+			asset.effort !== "medium" ||
+			asset.inheritContext !== false ||
+			asset.promptMode !== "replace" ||
+			asset.extensions.length > 0 ||
+			asset.skills.length > 0 ||
+			!asset.supportsScopedArtifacts ||
+			asset.allowedTools.length !== requiredExplorationTools.length ||
+			requiredExplorationTools.some(
+				(tool, index) => asset.allowedTools[index] !== tool,
+			) ||
+			forbiddenExplorationCapabilities.some((capability) =>
+				asset.allowedTools.includes(capability),
+			)
+		);
+		return validateExactLaunch({
+			asset,
+			profileMatches,
+			profileError:
+				"The prototype agent asset no longer matches the approved exact isolated launch profile.",
+			availabilityError:
+				"The exact provider, model, or effort is unavailable for the prototype launch.",
+			deniedCapabilities: forbiddenExplorationCapabilities,
+			readModelAvailability: dependencies.readModelAvailability,
+		});
 	}
 
-	return { validateResearchLaunch };
+	return { validateResearchLaunch, validateExplorationLaunch };
 }

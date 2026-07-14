@@ -1,5 +1,3 @@
-import { randomUUID } from "node:crypto";
-
 import type { StoredArtifactRead } from "./workflow-contracts.ts";
 import type { WorkflowArtifactStore } from "./workflow-artifacts.ts";
 
@@ -93,48 +91,43 @@ export function createRuntimeEngramArtifactStore(
 	options: RuntimeEngramArtifactStoreOptions = {},
 ): WorkflowArtifactStore {
 	const url = options.url ?? defaultEngramUrl;
-	const fallbackSessionId = `workflow-${randomUUID()}`;
-	const knownSessions = new Set<string>();
-
-	async function ensureSession(project: string): Promise<string> {
-		const sessionId = options.sessionId?.() || fallbackSessionId;
-		const key = `${project}:${sessionId}`;
-		if (knownSessions.has(key)) return sessionId;
-		await engramFetch(url, "/sessions", {
-			method: "POST",
-			body: {
-				id: sessionId,
-				project,
-				directory: options.directory?.() ?? process.cwd(),
-			},
+	async function readCurrent(
+		project: string,
+		topic: string,
+	): Promise<StoredArtifactRead | undefined> {
+		const query = new URLSearchParams({
+			project,
+			topic_key: topic,
+			limit: "1",
+			order: "desc",
 		});
-		knownSessions.add(key);
-		return sessionId;
+		const payload = await engramFetch(url, `/observations?${query}`);
+		const candidates = Array.isArray(payload)
+			? payload
+			: payload && typeof payload === "object" && Array.isArray((payload as { observations?: unknown }).observations)
+				? (payload as { observations: unknown[] }).observations
+				: [];
+		const current = candidates.find((candidate) => {
+			if (!candidate || typeof candidate !== "object") return false;
+			const observation = candidate as { project?: unknown; topic_key?: unknown };
+			return observation.project === project && observation.topic_key === topic;
+		});
+		const revision = extractRevision(current);
+		const content = extractObservationContent(current);
+		if (!revision || content === undefined) return undefined;
+		return { revision, content };
 	}
 
 	return {
-		async readCurrent(_project: string, _topic: string): Promise<StoredArtifactRead | undefined> {
-			return undefined;
-		},
-		async write(project: string, topic: string, content: string) {
-			const sessionId = await ensureSession(project);
-			const payload = await engramFetch(url, "/observations", {
-				method: "POST",
-				body: {
-					session_id: sessionId,
-					title: topic,
-					content,
-					type: "workflow_artifact",
-					project,
-					scope: "project",
-					topic_key: topic,
-				},
-			});
-			const revision = extractRevision(payload);
-			if (!revision) {
-				throw new Error("Engram observation write did not return a revision reference.");
-			}
-			return { revision };
+		capabilities: { atomicCompareAndSwap: false },
+		readCurrent,
+		async write() {
+			const error = new Error(
+				"Atomic conditional writes are unsupported by the configured Engram HTTP adapter.",
+			);
+			(error as Error & { code?: string }).code =
+				"PI_WORKFLOW_ENGRAM_CONDITIONAL_WRITE_UNSUPPORTED";
+			throw error;
 		},
 		async readRevision(_project: string, _topic: string, revision: string) {
 			const payload = await engramFetch(

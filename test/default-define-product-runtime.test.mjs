@@ -1,10 +1,20 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 import { createRuntimeEngramArtifactStore } from "../extensions/runtime-engram-store.ts";
-import { executeResearchSession } from "../extensions/default-define-product.ts";
+import { createInMemoryDelegationCheckpointStore } from "../extensions/delegation-checkpoints.ts";
+import * as defaultDefineProductModule from "../extensions/default-define-product.ts";
+
+const {
+	createDefaultDefineProductWorkflow,
+	createDefaultExplorationExecutor,
+	executeResearchSession,
+} = defaultDefineProductModule;
 
 function createArtifactStore() {
 	const revisions = new Map();
@@ -18,6 +28,34 @@ function createArtifactStore() {
 			counter += 1;
 			revisions.set(`${key}:r${counter}`, content);
 			return { revision: `r${counter}` };
+		},
+		async readRevision(project, topic, revision) {
+			return revisions.get(`${project}:${topic}:${revision}`);
+		},
+	};
+}
+
+function createAtomicArtifactStore() {
+	const topics = new Map();
+	const revisions = new Map();
+	let counter = 0;
+	return {
+		async readCurrent(project, topic) {
+			return topics.get(`${project}:${topic}`);
+		},
+		async write(project, topic, content, expectedRevision) {
+			const key = `${project}:${topic}`;
+			const current = topics.get(key);
+			if (current?.revision !== expectedRevision) {
+				throw Object.assign(new Error("compare-and-swap conflict"), {
+					code: "revision-conflict",
+				});
+			}
+			counter += 1;
+			const stored = { revision: `atomic-r${counter}`, content };
+			topics.set(key, stored);
+			revisions.set(`${key}:${stored.revision}`, content);
+			return { revision: stored.revision };
 		},
 		async readRevision(project, topic, revision) {
 			return revisions.get(`${project}:${topic}:${revision}`);
@@ -44,7 +82,10 @@ function loadExtension(runtime = {}) {
 		{
 			defineProduct: {
 				createDefinitionId: () => "definition-1",
-				runtime,
+				runtime: {
+					checkpointStore: createInMemoryDelegationCheckpointStore(),
+					...runtime,
+				},
 			},
 		},
 	);
@@ -83,6 +124,192 @@ function executionContext() {
 		getSystemPrompt: () => "base",
 	};
 }
+
+test("production session manager creates named persistent sessions and resumes the exact identity", async () => {
+	const root = await mkdtemp(join(tmpdir(), "pi-workflow-session-test-"));
+	try {
+		const sessionDirectory = join(root, "sessions");
+		assert.equal(
+			typeof defaultDefineProductModule.createRecoverableSessionManager,
+			"function",
+		);
+		const first = await defaultDefineProductModule.createRecoverableSessionManager(
+			root,
+			sessionDirectory,
+			{
+				attempt: 1,
+				sessionId: "production-session-1",
+				verifiedArtifacts: [],
+			},
+		);
+		first.appendMessage({
+			role: "assistant",
+			content: [{ type: "text", text: "verified progress" }],
+			api: "openai-responses",
+			provider: "openai-codex",
+			model: "gpt-5.6-terra",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: Date.now(),
+		});
+		const resumed = await defaultDefineProductModule.createRecoverableSessionManager(
+			join(root, "different-disposable-copy"),
+			sessionDirectory,
+			{
+				attempt: 1,
+				sessionId: "new-request-id",
+				resumeSessionId: "production-session-1",
+				verifiedArtifacts: [],
+			},
+		);
+		assert.equal(resumed.getSessionId(), "production-session-1");
+		assert.equal(resumed.getSessionName(), "production-session-1");
+		assert.match(resumed.getSessionFile(), /production-session-1/);
+		assert.equal(
+			resumed.getEntries().some(
+				(entry) => entry.type === "message" && entry.message.role === "assistant",
+			),
+			true,
+		);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("production exploration tool merges scoped progress and intervenes only in the exact active Pi session", async () => {
+	const root = await mkdtemp(join(tmpdir(), "pi-workflow-executor-test-"));
+	try {
+		const calls = { progress: [], steer: [], abort: 0 };
+		let sessionOptions;
+		let releasePrompt;
+		let sessionCreated;
+		const created = new Promise((resolve) => {
+			sessionCreated = resolve;
+		});
+		const promptPending = new Promise((resolve) => {
+			releasePrompt = resolve;
+		});
+		const fakeSession = {
+			sessionId: "active-production-session",
+			messages: [{
+				role: "assistant",
+				content: [{ type: "text", text: "cancelled cleanly" }],
+			}],
+			async bindExtensions() {},
+			subscribe() {
+				return () => {};
+			},
+			async prompt() {
+				await promptPending;
+			},
+			async steer(guidance) {
+				calls.steer.push(guidance);
+			},
+			async abort() {
+				calls.abort += 1;
+				releasePrompt();
+			},
+			dispose() {},
+		};
+		const executor = createDefaultExplorationExecutor(
+			join(root, "sessions"),
+			async (options) => {
+				sessionOptions = options;
+				sessionCreated();
+				return { session: fakeSession };
+			},
+		);
+		const artifact = {
+			kind: "engram",
+			project: "pi-workflow",
+			topic: "workflow/exploration",
+			revision: "progress-r1",
+			schema: "workflow-progress",
+			schemaVersion: 1,
+			digest: "progress-digest",
+		};
+		const running = executor.execute({
+			cwd: root,
+			launchOptions: {
+				attempt: 1,
+				sessionId: "active-production-session",
+				verifiedArtifacts: [],
+			},
+			model: executionContext().model,
+			thinkingLevel: "medium",
+			intent: "prototype",
+			prompt: "Explore",
+			systemPrompt: "Explore in isolation",
+			allowedTools: ["workflow_artifact_session"],
+			launchProvenance: {},
+			readArtifact: async () => "research",
+			mergeProgress: async (batch) => {
+				calls.progress.push(batch);
+				return artifact;
+			},
+			writeArtifact: async () => {
+				throw new Error("terminal write is not expected after cancellation");
+			},
+		});
+		await created;
+		await new Promise((resolve) => setImmediate(resolve));
+		assert.equal(sessionOptions.sessionManager.isPersisted(), true);
+		assert.equal(
+			sessionOptions.sessionManager.getSessionId(),
+			"active-production-session",
+		);
+		const tool = sessionOptions.customTools.find(
+			(candidate) => candidate.name === "workflow_artifact_session",
+		);
+		assert.deepEqual(tool.parameters.properties.action.enum, [
+			"read_alias",
+			"merge_progress",
+			"write_snapshot",
+		]);
+		assert.equal("topic" in tool.parameters.properties, false);
+		assert.deepEqual(tool.parameters.properties.discoveredPaths, {
+			type: "array",
+			items: { type: "string" },
+		});
+		const merged = await tool.execute("tool-progress", {
+			action: "merge_progress",
+			batchKey: "comparison-1",
+			payload: { completed: 1 },
+		});
+		assert.deepEqual(merged.details, artifact);
+		assert.deepEqual(calls.progress, [{
+			batchKey: "comparison-1",
+			payload: { completed: 1 },
+		}]);
+		await executor.intervene("active-production-session", {
+			kind: "steer",
+			guidance: "Narrow to first-run onboarding.",
+		});
+		await assert.rejects(
+			() => executor.intervene("different-session", {
+				kind: "cancel",
+				reason: "must not affect the active session",
+			}),
+			/exact active Pi session is unavailable/,
+		);
+		await executor.intervene("active-production-session", {
+			kind: "cancel",
+			reason: "Owner cancelled",
+		});
+		assert.deepEqual(calls.steer, ["Narrow to first-run onboarding."]);
+		assert.equal(calls.abort, 1);
+		await running;
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
 
 test("research session binds extensions before prompting", async () => {
 	const calls = [];
@@ -140,19 +367,29 @@ test("research session aborts and fails closed after twenty turns", async () => 
 	assert.equal(unsubscribed, true);
 });
 
-test("runtime Engram store creates a session then reads back its written observation", async () => {
+test("runtime Engram store exposes unsupported atomic CAS and refuses every write before I/O", async () => {
 	const requests = [];
+	let observation;
 	const originalFetch = globalThis.fetch;
 	globalThis.fetch = async (input, init = {}) => {
 		const url = String(input);
 		const body = init.body ? JSON.parse(String(init.body)) : undefined;
 		requests.push({ url, method: init.method ?? "GET", body });
+		if (url.includes("/observations?")) {
+			return Response.json(observation ? [observation] : []);
+		}
 		if (url.endsWith("/sessions")) return new Response("{}", { status: 200 });
 		if (url.endsWith("/observations")) {
+			observation = {
+				id: 42,
+				project: body.project,
+				topic_key: body.topic_key,
+				content: body.content,
+			};
 			return Response.json({ id: 42 });
 		}
 		if (url.endsWith("/observations/42")) {
-			return Response.json({ id: 42, content: "verified snapshot" });
+			return Response.json(observation);
 		}
 		throw new Error(`Unexpected request: ${url}`);
 	};
@@ -162,48 +399,262 @@ test("runtime Engram store creates a session then reads back its written observa
 			sessionId: () => "pi-session-1",
 			directory: () => "/workspace/project",
 		});
-		assert.deepEqual(
-			await store.write("pi-workflow", "workflow/topic", "snapshot"),
-			{
-				revision: "42",
+		assert.equal(store.capabilities.atomicCompareAndSwap, false);
+		await assert.rejects(
+			() => store.write("pi-workflow", "workflow/topic", "snapshot", undefined),
+			(error) => {
+				assert.equal(
+					error.code,
+					"PI_WORKFLOW_ENGRAM_CONDITIONAL_WRITE_UNSUPPORTED",
+				);
+				assert.match(error.message, /atomic conditional writes are unsupported/i);
+				assert.doesNotMatch(error.message, /compare-and-swap conflict/i);
+				return true;
 			},
 		);
-		assert.equal(
-			await store.readRevision("pi-workflow", "workflow/topic", "42"),
-			"verified snapshot",
-		);
-		assert.deepEqual(requests, [
-			{
-				url: "http://engram.test/sessions",
-				method: "POST",
-				body: {
-					id: "pi-session-1",
-					project: "pi-workflow",
-					directory: "/workspace/project",
-				},
-			},
-			{
-				url: "http://engram.test/observations",
-				method: "POST",
-				body: {
-					session_id: "pi-session-1",
-					title: "workflow/topic",
-					content: "snapshot",
-					type: "workflow_artifact",
-					project: "pi-workflow",
-					scope: "project",
-					topic_key: "workflow/topic",
-				},
-			},
-			{
-				url: "http://engram.test/observations/42",
-				method: "GET",
-				body: undefined,
-			},
-		]);
+		assert.equal(requests.length, 0);
 	} finally {
 		globalThis.fetch = originalFetch;
 	}
+});
+
+test("default workflow executes prototype and design-alternative in disposable isolation with exact provenance", async () => {
+	const explorations = [];
+	const skillPath = fileURLToPath(
+		new URL("./fixtures/private-skills/research/SKILL.md", import.meta.url),
+	);
+	const ctx = executionContext();
+	const workflow = createDefaultDefineProductWorkflow(
+		{},
+		() => ctx,
+		{
+			artifactStore: createArtifactStore(),
+			checkpointStore: createInMemoryDelegationCheckpointStore(),
+			webExtensionPath: fileURLToPath(
+				new URL("./fixtures/pi-web-access/index.ts", import.meta.url),
+			),
+			skillEntries: [
+				{ name: "research", path: skillPath, scope: "core" },
+				{ name: "prototype", path: skillPath, scope: "core" },
+				{ name: "codebase-design", path: skillPath, scope: "core" },
+			],
+			researchExecutor: async (input) => {
+				await input.writeArtifact({
+					findings: [
+						{
+							claim: "A verified research input is available.",
+							evidence: [
+								{
+									uri: "https://example.com/source",
+									title: "Source",
+									retrievedAt: "2026-07-14T00:00:00.000Z",
+								},
+							],
+						},
+					],
+					limitations: [],
+				});
+				return { assistantText: "Research ready." };
+			},
+			explorationExecutor: async (input) => {
+				explorations.push(input);
+				assert.notEqual(input.cwd, process.cwd());
+				assert.equal(input.launchProvenance.agentName, "prototype");
+				assert.equal(
+					input.launchProvenance.capabilityProfile,
+					"isolated-prototype",
+				);
+				assert.deepEqual(input.allowedTools, [
+					"read",
+					"grep",
+					"find",
+					"ls",
+					"edit",
+					"write",
+					"bash",
+					"workflow_artifact_session",
+				]);
+				assert.equal("checkpointStore" in input, false);
+				await input.writeArtifact({
+					summary: `${input.intent} result`,
+					comparison: [
+						{
+							criterion: "Owner comparability",
+							assessment: `${input.intent} can be compared from the same schema.`,
+						},
+					],
+					changedPaths:
+						input.intent === "prototype" ? ["prototype/index.html"] : [],
+					limitations: [],
+				});
+				return { assistantText: `${input.intent} ready.` };
+			},
+		},
+	);
+	const recommendation = await workflow.advance({
+		kind: "recommend-route",
+		definitionId: "definition-runtime",
+		domainAnchor: "Compare onboarding directions",
+		assessment: {
+			clarity: "unclear",
+			breadth: "broad",
+			reasons: ["Multiple viable directions"],
+		},
+		workflowStateId: "runtime-state",
+	});
+	const research = await workflow.advance({
+		kind: "confirm-route",
+		recommendationRef: recommendation.recommendation.digest,
+		confirmationToken: recommendation.recommendation.confirmationToken,
+		confirmedRoute: "wayfinder",
+		researchQuestion: "Which direction should be explored?",
+		workflowStateId: "runtime-state",
+	});
+	assert.equal(research.result.status, "completed");
+	for (const intent of ["prototype", "design-alternative"]) {
+		const result = await workflow.advance({
+			kind: "request-exploration",
+			definitionId: "definition-runtime",
+			intent,
+			focus: "Compare onboarding directions",
+		});
+		assert.equal(result.result.status, "completed");
+		assert.equal(result.result.artifacts[0].schema, "design-exploration");
+		assert.equal(result.result.launchProvenance.agentName, "prototype");
+	}
+	assert.deepEqual(
+		explorations.map(({ intent }) => intent),
+		["prototype", "design-alternative"],
+	);
+});
+
+test("default runtime resumes compatible exploration, persists progress, and performs one discovered-path retry", async () => {
+	const calls = [];
+	let recoveryState;
+	const explorationRecoveryStore = {
+		load: async () => recoveryState,
+		save: async (state) => { recoveryState = structuredClone(state); },
+		clear: async () => { recoveryState = undefined; },
+	};
+	const artifactStore = createAtomicArtifactStore();
+	const skillPath = fileURLToPath(
+		new URL("./fixtures/private-skills/research/SKILL.md", import.meta.url),
+	);
+	const workflow = createDefaultDefineProductWorkflow(
+		{},
+		() => executionContext(),
+		{
+			artifactStore,
+			checkpointStore: createInMemoryDelegationCheckpointStore(),
+			explorationRecoveryStore,
+			createRequestId: () => "request-recoverable",
+			webExtensionPath: fileURLToPath(
+				new URL("./fixtures/pi-web-access/index.ts", import.meta.url),
+			),
+			skillEntries: [
+				{ name: "research", path: skillPath, scope: "core" },
+				{ name: "prototype", path: skillPath, scope: "core" },
+			],
+			researchExecutor: async (input) => {
+				await input.writeArtifact({
+					findings: [{
+						claim: "Verified research",
+						evidence: [{
+							uri: "https://example.com/research",
+							title: "Research",
+							retrievedAt: "2026-07-14T00:00:00.000Z",
+						}],
+					}],
+					limitations: [],
+				});
+				return { assistantText: "Research ready." };
+			},
+			explorationExecutor: async (input) => {
+				calls.push(input);
+				const call = calls.length;
+				const progress = await input.mergeProgress({
+					batchKey: `comparison-${call}`,
+					...(call === 1 ? {} : { supersedes: `comparison-${call - 1}` }),
+					payload: { completed: call },
+				});
+				if (call === 1) {
+					throw Object.assign(new Error("transport interrupted"), {
+						code: "PI_WORKFLOW_DELEGATION_INTERRUPTED",
+						interrupted: true,
+						sessionId: input.launchOptions.sessionId,
+						verifiedArtifacts: [progress],
+						partialOutput: "discard this",
+					});
+				}
+				await input.writeArtifact({
+					summary: "Comparable result",
+					comparison: [{ criterion: "Recovery", assessment: "Bounded." }],
+					changedPaths: ["extensions/workflow-contracts.ts"],
+					limitations: [],
+				});
+				return {
+					assistantText: "Exploration ready.",
+					...(call === 2
+						? { discoveredPaths: ["extensions/workflow-contracts.ts"] }
+						: {}),
+				};
+			},
+		},
+	);
+	const recommendation = await workflow.advance({
+		kind: "recommend-route",
+		definitionId: "definition-recovery",
+		domainAnchor: "Compare recovery",
+		assessment: { clarity: "unclear", breadth: "broad", reasons: ["unknown"] },
+		workflowStateId: "state-recovery",
+	});
+	await workflow.advance({
+		kind: "confirm-route",
+		recommendationRef: recommendation.recommendation.digest,
+		confirmationToken: recommendation.recommendation.confirmationToken,
+		confirmedRoute: "wayfinder",
+		researchQuestion: "What recovery should we compare?",
+		workflowStateId: "state-recovery",
+	});
+	const command = {
+		kind: "request-exploration",
+		definitionId: "definition-recovery",
+		intent: "prototype",
+		focus: "Compare recovery behavior",
+	};
+	const interrupted = await workflow.advance(command);
+	assert.equal(
+		interrupted.result.blocker.code,
+		"PI_WORKFLOW_DELEGATION_INTERRUPTED",
+	);
+	const recovered = await workflow.advance(command);
+	assert.equal(recovered.result.status, "completed");
+	assert.equal(calls.length, 3);
+	assert.equal(calls[1].launchOptions.resumeSessionId, calls[0].launchOptions.sessionId);
+	assert.deepEqual(
+		calls[1].launchOptions.verifiedArtifacts.map(({ schema }) => schema),
+		["workflow-progress"],
+	);
+	assert.equal(calls[2].launchOptions.attempt, 2);
+	assert.equal(calls[2].launchOptions.resumeSessionId, undefined);
+	assert.equal("partialOutput" in calls[1].launchOptions, false);
+	const terminal = JSON.parse(
+		(await artifactStore.readCurrent(
+			"pi-workflow",
+			recovered.result.artifacts[0].topic,
+		)).content,
+	);
+	assert.deepEqual(
+		terminal.payload.progressBatches.map(({ batchKey, supersedes }) => ({
+			batchKey,
+			supersedes,
+		})),
+		[
+			{ batchKey: "comparison-1", supersedes: undefined },
+			{ batchKey: "comparison-2", supersedes: "comparison-1" },
+			{ batchKey: "comparison-3", supersedes: "comparison-2" },
+		],
+	);
 });
 
 test("default define-product keeps token, research, and artifact identity bound to the session definition", async () => {

@@ -5,6 +5,8 @@ import {
 	type Route,
 	type RouteRecommendation,
 	type SubagentResult,
+	type WorkflowIntent,
+	digestCanonicalValue,
 } from "./workflow-contracts.ts";
 
 /** Interactive confirmation tokens expire after five minutes. */
@@ -25,6 +27,12 @@ export type DefineProductCommand =
 			researchQuestion: string;
 			confirmationToken: string;
 			workflowStateId: string;
+	  }
+	| {
+			kind: "request-exploration";
+			definitionId: string;
+			intent: "prototype" | "design-alternative";
+			focus: string;
 	  };
 
 export type DefineProductOutcome =
@@ -41,27 +49,31 @@ export type DefineProductOutcome =
 			blocker: { code: string; message: string };
 	  };
 
+export interface ExplorationRecoveryState {
+	definitionId: string;
+	intent: "prototype" | "design-alternative";
+	focus: string;
+	requestId: string;
+	intentFingerprint: string;
+	workflowIntent: Extract<WorkflowIntent, { kind: "prototype" | "design-alternative" }>;
+}
+
+export interface ExplorationRecoveryStore {
+	load(): Promise<ExplorationRecoveryState | undefined>;
+	save(state: ExplorationRecoveryState): Promise<void>;
+	clear(): Promise<void>;
+}
+
 export interface DefineProductWorkflowDependencies {
 	delegate: {
-		delegate(intent: {
-			kind: "research";
-			requestId: string;
-			definitionId: string;
-			recommendationDigest: string;
-			route: Route;
-			question: string;
-			domainAnchorDigest: string;
-			project: { name: string; root: string };
-			targetTopic: string;
-			requiredSkills: readonly { name: string }[];
-			affectedPaths: readonly string[];
-		}): Promise<SubagentResult>;
+		delegate(intent: WorkflowIntent): Promise<SubagentResult>;
 	};
 	createRequestId(): string;
 	project: { name: string; root: string };
 	requiredSkills?: readonly { name: string }[];
 	affectedPaths?: readonly string[];
 	now?: () => number;
+	explorationRecoveryStore?: ExplorationRecoveryStore;
 }
 
 function isConfirmationToken(value: string): boolean {
@@ -73,16 +85,65 @@ export function createDefineProductWorkflow(
 ) {
 	let activeRecommendation: RouteRecommendation | undefined;
 	let activeWorkflowStateId: string | undefined;
+	let recoverableExploration:
+		| {
+				definitionId: string;
+				intent: "prototype" | "design-alternative";
+				focus: string;
+				workflowIntent: Extract<
+					WorkflowIntent,
+					{ kind: "prototype" | "design-alternative" }
+				>;
+		  }
+		| undefined;
+	let explorationContext:
+		| {
+				definitionId: string;
+				recommendation: RouteRecommendation;
+				artifacts: SubagentResult["artifacts"];
+		  }
+		| undefined;
 
-	function reset(): void {
+	function clearRecommendation(): void {
 		activeRecommendation = undefined;
 		activeWorkflowStateId = undefined;
+	}
+
+	function reset(): void {
+		clearRecommendation();
+		explorationContext = undefined;
+		recoverableExploration = undefined;
+	}
+
+	async function restoreRecovery(): Promise<string | undefined> {
+		reset();
+		const stored = await dependencies.explorationRecoveryStore?.load();
+		if (
+			!stored ||
+			stored.requestId !== stored.workflowIntent.requestId ||
+			stored.definitionId !== stored.workflowIntent.definitionId ||
+			stored.intent !== stored.workflowIntent.kind ||
+			stored.focus !== stored.workflowIntent.focus ||
+			stored.intentFingerprint !== digestCanonicalValue(stored.workflowIntent)
+		) {
+			if (stored) await dependencies.explorationRecoveryStore?.clear();
+			return undefined;
+		}
+		recoverableExploration = {
+			definitionId: stored.definitionId,
+			intent: stored.intent,
+			focus: stored.focus,
+			workflowIntent: stored.workflowIntent,
+		};
+		return stored.definitionId;
 	}
 
 	async function advance(
 		command: DefineProductCommand,
 	): Promise<DefineProductOutcome> {
 		if (command.kind === "recommend-route") {
+			await dependencies.explorationRecoveryStore?.clear();
+			explorationContext = undefined;
 			activeWorkflowStateId = command.workflowStateId;
 			activeRecommendation = createRouteRecommendation({
 				definitionId: command.definitionId,
@@ -94,6 +155,97 @@ export function createDefineProductWorkflow(
 				status: "awaiting-confirmation",
 				recommendation: activeRecommendation,
 			};
+		}
+		if (command.kind === "request-exploration") {
+			const focus = command.focus.trim();
+			const compatibleRecovery =
+				recoverableExploration?.definitionId === command.definitionId &&
+				recoverableExploration.intent === command.intent &&
+				recoverableExploration.focus === focus;
+			if (
+				(!explorationContext ||
+					explorationContext.definitionId !== command.definitionId) &&
+				!compatibleRecovery
+			) {
+				return {
+					status: "blocked",
+					blocker: createBlocker(
+						"PI_WORKFLOW_DEFINITION_ID_MISMATCH",
+						"Exploration requires compatible verified research from this definition session.",
+					),
+				};
+			}
+			if (!focus) {
+				return {
+					status: "blocked",
+					blocker: createBlocker(
+						"PI_WORKFLOW_ROUTE_CONFIRMATION_REQUIRED",
+						"The Owner must provide a non-empty exploration focus.",
+					),
+				};
+			}
+			const recoveredIntent = compatibleRecovery
+				? recoverableExploration?.workflowIntent
+				: undefined;
+			const requestId =
+				recoveredIntent?.requestId ?? dependencies.createRequestId();
+			const workflowIntent: Extract<
+				WorkflowIntent,
+				{ kind: "prototype" | "design-alternative" }
+			> = recoveredIntent ?? {
+						kind: command.intent,
+						requestId,
+						definitionId: explorationContext?.definitionId ?? command.definitionId,
+						recommendationDigest: explorationContext?.recommendation.digest ?? "",
+						route: explorationContext?.recommendation.recommendedRoute ?? "wayfinder",
+						focus,
+						domainAnchorDigest:
+							explorationContext?.recommendation.domainAnchorDigest ?? "",
+						project: dependencies.project,
+						targetTopic: `workflow/define-product/${explorationContext?.definitionId ?? command.definitionId}/${command.intent}/${requestId}`,
+						requiredSkills: [
+							{
+								name:
+									command.intent === "prototype"
+										? "prototype"
+										: "codebase-design",
+							},
+						],
+						affectedPaths: dependencies.affectedPaths ?? [
+							"skills/define-product/SKILL.md",
+						],
+						readableArtifacts: (explorationContext?.artifacts ?? []).map(
+							(ref, index) => ({
+								alias:
+									index === 0 ? "research" : `supporting-${index + 1}`,
+								ref,
+							}),
+						),
+					};
+			const result = await dependencies.delegate.delegate(workflowIntent);
+			if (
+				result.status === "blocked" &&
+				result.blocker.code === "PI_WORKFLOW_DELEGATION_INTERRUPTED"
+			) {
+				recoverableExploration = {
+					definitionId: command.definitionId,
+					intent: command.intent,
+					focus,
+					workflowIntent,
+				};
+				await dependencies.explorationRecoveryStore?.save({
+					definitionId: command.definitionId,
+					intent: command.intent,
+					focus,
+					requestId: workflowIntent.requestId,
+					intentFingerprint: digestCanonicalValue(workflowIntent),
+					workflowIntent,
+				});
+			} else {
+				recoverableExploration = undefined;
+				await dependencies.explorationRecoveryStore?.clear();
+			}
+			return { status: "completed", result };
 		}
 		if (!activeRecommendation) {
 			return {
@@ -156,7 +308,7 @@ export function createDefineProductWorkflow(
 			};
 		}
 		const recommendation = activeRecommendation;
-		reset();
+		clearRecommendation();
 		const result = await dependencies.delegate.delegate({
 			kind: "research",
 			requestId: dependencies.createRequestId(),
@@ -172,6 +324,13 @@ export function createDefineProductWorkflow(
 				"skills/define-product/SKILL.md",
 			],
 		});
+		if (result.status === "completed") {
+			explorationContext = {
+				definitionId: recommendation.definitionId,
+				recommendation,
+				artifacts: result.artifacts,
+			};
+		}
 		return { status: "completed", result };
 	}
 
@@ -179,5 +338,5 @@ export function createDefineProductWorkflow(
 		return activeRecommendation;
 	}
 
-	return { advance, pendingRecommendation, reset };
+	return { advance, pendingRecommendation, reset, restoreRecovery };
 }
