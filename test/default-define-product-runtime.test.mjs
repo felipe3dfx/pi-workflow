@@ -210,6 +210,9 @@ test("default define-product keeps token, research, and artifact identity bound 
 	const launches = [];
 	const { handlers, tool } = loadExtension({
 		artifactStore: createArtifactStore(),
+		webExtensionPath: fileURLToPath(
+			new URL("./fixtures/pi-web-access/index.ts", import.meta.url),
+		),
 		skillEntries: [
 			{
 				name: "research",
