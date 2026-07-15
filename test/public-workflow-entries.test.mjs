@@ -79,6 +79,7 @@ extensions/delivery-ticket-graph.ts
 extensions/engram-approved-spec-reader.ts
 extensions/exploration-recovery.ts
 extensions/linear-delivery-parent-gateway.ts
+extensions/linear-delivery-ticket-gateway.ts
 extensions/mcp-config.ts
 extensions/pi-workflow-sync.ts
 extensions/pi-workflow.ts
@@ -95,6 +96,7 @@ extensions/spec-approval-recovery.ts
 extensions/subagent-launcher.ts
 extensions/ticket-approval-recovery.ts
 extensions/ticket-graph-recovery.ts
+extensions/ticket-publication-manifest.ts
 extensions/workflow-artifacts.ts
 extensions/workflow-contracts.ts
 extensions/workflow-delegate.ts
