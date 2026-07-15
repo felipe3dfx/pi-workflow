@@ -1021,7 +1021,7 @@ export function createDefaultDefineProductWorkflow(
 					throw new Error("A recoverable launch requires explicit launch options.");
 				}
 				const projectRef = resolveProjectRef(ctx.cwd);
-				if (intent.kind !== "research") {
+				if (intent.kind === "prototype" || intent.kind === "design-alternative") {
 					let writtenExploration: VerifiedArtifactRef | undefined;
 					const verifiedProgress: VerifiedArtifactRef[] = [];
 					try {
@@ -1126,6 +1126,20 @@ export function createDefaultDefineProductWorkflow(
 							launchProvenance: preparedLaunch.launchProvenance,
 						};
 					}
+				}
+				if (intent.kind === "to-tickets") {
+					return {
+						status: "blocked",
+						executiveSummary: "The to-tickets Owner workflow is not available in Phase 2.",
+						artifacts: [],
+						nextRecommended: { kind: "owner-action" },
+						risks: [],
+						blocker: createBlocker("PI_WORKFLOW_AGENT_ASSET_NOT_READY", "The to-tickets Owner workflow is not available in Phase 2."),
+						launchProvenance: preparedLaunch.launchProvenance,
+					};
+				}
+				if (intent.kind !== "research") {
+					throw new Error("Only research remains after exploration dispatch.");
 				}
 				let writtenArtifact: VerifiedArtifactRef | undefined;
 				try {

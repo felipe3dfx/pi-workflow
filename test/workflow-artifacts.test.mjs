@@ -130,6 +130,30 @@ test("workflow artifact session writes and verifies Engram read-back", async () 
 	});
 });
 
+test("workflow artifact sessions refuse writes when CAS capability metadata is absent", async () => {
+	const store = createStore();
+	delete store.capabilities;
+	const session = createWorkflowArtifactInterface(store).openSession(
+		{
+			project: { name: "pi-workflow", root: "/repo" },
+			topic: "workflow/define-product/definition-1/research/request-1",
+			schema: "research-evidence",
+			schemaVersion: 1,
+			strategy: "snapshot",
+			aliases: [],
+		},
+		{
+			assignmentId: "request-1",
+			definitionId: "definition-1",
+			recommendationDigest: "recommendation-1",
+			route: "grilling",
+			question: "What should we research?",
+			domainAnchorDigest: "anchor-digest",
+		},
+	);
+	await assert.rejects(() => session.writeSnapshot(validEnvelope()), /compare-and-swap/i);
+});
+
 test("workflow artifact session rejects invalid artifact content", async () => {
 	const session = createWorkflowArtifactInterface(createStore()).openSession(
 		{
@@ -221,6 +245,7 @@ test("workflow artifact grants expose only named readable aliases and one writab
 		"read",
 		"readCurrent",
 		"verifyDiscoveredPaths",
+		"writeDeliveryTicketGraph",
 		"writeExplorationSnapshot",
 		"writeSnapshot",
 	]);

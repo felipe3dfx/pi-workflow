@@ -6,6 +6,8 @@ type Breadth = "narrow" | "broad";
 type ArtifactSchema =
 	| "research-evidence"
 	| "design-exploration"
+	| "delivery-ticket-graph"
+	| "delivery-parent"
 	| "product-spec"
 	| "workflow-progress";
 type ArtifactStrategy = "snapshot" | "merge-progress";
@@ -39,7 +41,8 @@ export type WorkflowBlockerCode =
 	| "PI_WORKFLOW_RETRY_EXHAUSTED"
 	| "PI_WORKFLOW_SPEC_ARTIFACT_INVALID"
 	| "PI_WORKFLOW_SPEC_APPROVAL_REQUIRED"
-	| "PI_WORKFLOW_SPEC_APPROVAL_MISMATCH";
+	| "PI_WORKFLOW_SPEC_APPROVAL_MISMATCH"
+	| "PI_WORKFLOW_TICKET_ARTIFACT_INVALID";
 
 export interface WorkflowBlocker {
 	code: WorkflowBlockerCode;
@@ -146,10 +149,10 @@ interface ResearchArtifactBinding {
 }
 
 export interface ExactLaunchProvenance {
-	agentName: "research" | "prototype";
+	agentName: "research" | "prototype" | "to-tickets";
 	assetVersion: number;
 	assetDigest: string;
-	capabilityProfile: "research-reader" | "isolated-prototype";
+	capabilityProfile: "research-reader" | "isolated-prototype" | "artifact-reader";
 	provider: "openai-codex";
 	model: "gpt-5.6-terra";
 	effort: "medium";
@@ -257,6 +260,23 @@ export interface ProductSpecApprovalEnvelope {
 	digest: string;
 }
 
+export interface ApprovedProductSpecSnapshot {
+	spec: ProductSpecEnvelope;
+	approval: ProductSpecApprovalEnvelope;
+}
+
+export interface DeliveryParentSnapshot {
+	schema: "delivery-parent";
+	schemaVersion: 1;
+	payload: {
+		id: string;
+		teamId: string;
+		revision: string;
+		specDigest: string;
+	};
+	digest: string;
+}
+
 export interface DesignExplorationBinding {
 	kind: "design-exploration";
 	assignmentId: string;
@@ -295,6 +315,10 @@ export type ArtifactBinding = ResearchArtifactBinding | DesignExplorationBinding
 interface ArtifactSessionCapability {
 	read(alias: string): Promise<StoredArtifactRead>;
 	readCurrent(): Promise<StoredArtifactRead | undefined>;
+	writeDeliveryTicketGraph(
+		graph: import("./delivery-ticket-graph.ts").DeliveryTicketGraph,
+		expectedRevision?: string,
+	): Promise<VerifiedArtifactRef>;
 	writeSnapshot(
 		envelope: ResearchEvidenceEnvelope,
 		expectedRevision?: string,
@@ -387,7 +411,13 @@ interface ExplorationIntent extends BaseWorkflowIntent {
 	}[];
 }
 
-export type WorkflowIntent = ResearchIntent | ExplorationIntent;
+interface TicketGraphIntent extends BaseWorkflowIntent {
+	kind: "to-tickets";
+	approvedSpec: VerifiedArtifactRef;
+	deliveryParent: VerifiedArtifactRef;
+}
+
+export type WorkflowIntent = ResearchIntent | ExplorationIntent | TicketGraphIntent;
 
 export type Intervention =
 	| { kind: "steer"; guidance: string }
