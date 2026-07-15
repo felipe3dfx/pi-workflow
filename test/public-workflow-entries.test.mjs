@@ -73,6 +73,7 @@ extensions/define-product-workflow.ts
 extensions/delegation-checkpoints.ts
 extensions/engram-approved-spec-reader.ts
 extensions/exploration-recovery.ts
+extensions/linear-delivery-parent-gateway.ts
 extensions/mcp-config.ts
 extensions/pi-workflow-sync.ts
 extensions/pi-workflow.ts
@@ -81,6 +82,7 @@ extensions/project-standards-resolver.ts
 extensions/public-entry-guard.ts
 extensions/publication-manifest.ts
 extensions/runtime-engram-store.ts
+extensions/runtime-linear-delivery-parent.ts
 extensions/runtime-private-state.ts
 extensions/skill-resolver.ts
 extensions/spec-approval-recovery.ts
