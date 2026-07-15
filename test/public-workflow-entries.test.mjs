@@ -78,6 +78,7 @@ extensions/pi-workflow.ts
 extensions/product-spec.ts
 extensions/project-standards-resolver.ts
 extensions/public-entry-guard.ts
+extensions/publication-manifest.ts
 extensions/runtime-engram-store.ts
 extensions/runtime-private-state.ts
 extensions/skill-resolver.ts
