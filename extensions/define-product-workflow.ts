@@ -31,6 +31,7 @@ import {
 	type DeliveryTicketGraph,
 	type TicketGraphApproval,
 } from "./delivery-ticket-graph.ts";
+import type { ApprovedTicketPublication } from "./approved-ticket-publication.ts";
 
 /** Interactive confirmation tokens expire after five minutes. */
 const routeConfirmationTokenTtlMs = 5 * 60 * 1_000;
@@ -83,7 +84,8 @@ export type DefineProductCommand =
 			parentRef: VerifiedArtifactRef;
 			graphRef: VerifiedArtifactRef;
 			digest: string;
-	  };
+		  }
+	| { kind: "publish-tickets"; definitionId: string };
 
 export type DefineProductOutcome =
 	| {
@@ -113,7 +115,8 @@ export type DefineProductOutcome =
 			parentRef: VerifiedArtifactRef;
 	  }
 	| { status: "tickets-ready"; graph: DeliveryTicketGraph; graphRef: VerifiedArtifactRef }
-	| { status: "tickets-approved"; graph: DeliveryTicketGraph; graphRef: VerifiedArtifactRef; approval: TicketGraphApproval };
+	| { status: "tickets-approved"; graph: DeliveryTicketGraph; graphRef: VerifiedArtifactRef; approval: TicketGraphApproval }
+	| { status: "tickets-published"; definitionId: string };
 
 export interface ExplorationRecoveryState {
 	definitionId: string;
@@ -184,6 +187,13 @@ export interface DefineProductWorkflowDependencies {
 	approvedTicketGraphs?: {
 		save(definitionId: string, graph: DeliveryTicketGraph): Promise<VerifiedArtifactRef>;
 	};
+	approvedTicketPublication?: {
+		save(publication: ApprovedTicketPublication): Promise<VerifiedArtifactRef>;
+		read(definitionId: string): Promise<ApprovedTicketPublication | undefined>;
+	};
+	ticketPublication?: {
+		publish(definitionId: string): Promise<Extract<DefineProductOutcome, { status: "tickets-published" | "blocked" }>>;
+	};
 }
 
 function isConfirmationToken(value: string): boolean {
@@ -205,6 +215,25 @@ function immutableSnapshot<T>(value: T): T {
 
 function cloneSnapshot<T>(value: T): T {
 	return structuredClone(value);
+}
+
+function isExpectedApprovedTicketPublicationRef(
+	value: unknown,
+	publication: ApprovedTicketPublication,
+	project: string,
+): value is VerifiedArtifactRef {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+	const ref = value as Record<string, unknown>;
+	return (
+		ref.kind === "engram" &&
+		ref.project === project &&
+		ref.topic === `workflow/define-product/${publication.definitionId}/approved-ticket-publication/${publication.definitionId}` &&
+		typeof ref.revision === "string" &&
+		ref.revision.trim().length > 0 &&
+		ref.schema === "approved-ticket-publication" &&
+		ref.schemaVersion === 1 &&
+		ref.digest === digestCanonicalValue({ schema: "approved-ticket-publication", schemaVersion: 1, payload: publication })
+	);
 }
 
 function belongsToDefinition(input: {
@@ -356,6 +385,20 @@ export function createDefineProductWorkflow(
 	async function advance(
 		command: DefineProductCommand,
 	): Promise<DefineProductOutcome> {
+		if (command.kind === "publish-tickets") {
+			try {
+				const publication = await dependencies.approvedTicketPublication?.read(command.definitionId);
+				if (!publication || publication.definitionId !== command.definitionId) {
+					return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_TICKET_APPROVAL_MISMATCH", "Ticket publication requires an exact durable Owner-approved graph.") };
+				}
+				if (!dependencies.ticketPublication) {
+					return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_RECOVERY_FAILED", "Native ticket publication is not configured.") };
+				}
+				return dependencies.ticketPublication.publish(command.definitionId);
+			} catch (error) {
+				return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_RECOVERY_FAILED", error instanceof Error ? error.message : "Ticket publication could not be recovered safely.") };
+			}
+		}
 		if (command.kind === "publish-spec") {
 			if (!dependencies.publication) {
 				return {
@@ -418,9 +461,20 @@ export function createDefineProductWorkflow(
 			if (!pending || pending.definitionId !== command.definitionId || canonicalJson(pending.parentRef) !== canonicalJson(command.parentRef) || canonicalJson(pending.graphRef) !== canonicalJson(command.graphRef) || pending.digest !== command.digest) return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_TICKET_APPROVAL_MISMATCH", "Ticket approval must match the exact verified parent and graph.") };
 			try {
 				const [actor, approved, parent, graph] = await Promise.all([dependencies.authenticatedAuthority?.current(), dependencies.approvedSpecStore?.read(command.definitionId), dependencies.readPublishedParent?.(command.parentRef), dependencies.recoverTicketGraph?.(command.graphRef)]);
-				if (!actor || canonicalJson(actor) !== canonicalJson(pending.authority) || approved?.sourceRevision !== pending.approvedSpecRef.revision || approved.spec.digest !== pending.approvedSpecRef.digest || !parent || parent.specDigest !== approved.spec.digest || !graph || graph.digest !== command.digest || canonicalJson(graph.payload.parent) !== canonicalJson(parent)) return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_TICKET_APPROVAL_MISMATCH", "Ticket approval requires the current Owner and exact verified graph.") };
-				const approval = createTicketGraphApproval({ graph, actor: { actorId: actor.actorId, role: "Owner", authorityRevision: actor.authorityRevision } });
-				await dependencies.ticketApprovalRecoveryStore?.clear();
+					if (!actor || canonicalJson(actor) !== canonicalJson(pending.authority) || approved?.sourceRevision !== pending.approvedSpecRef.revision || approved.spec.digest !== pending.approvedSpecRef.digest || !parent || parent.specDigest !== approved.spec.digest || !graph || graph.digest !== command.digest || canonicalJson(graph.payload.parent) !== canonicalJson(parent)) return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_TICKET_APPROVAL_MISMATCH", "Ticket approval requires the current Owner and exact verified graph.") };
+					const approval = createTicketGraphApproval({ graph, actor: { actorId: actor.actorId, role: "Owner", authorityRevision: actor.authorityRevision } });
+					if (!dependencies.approvedTicketPublication) return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_RECOVERY_FAILED", "Approved ticket publication persistence is not configured.") };
+					const publication: ApprovedTicketPublication = {
+						definitionId: command.definitionId,
+						approvedSpecRef: pending.approvedSpecRef,
+						parentRef: command.parentRef,
+						graphRef: command.graphRef,
+						graphParent: graph.payload.parent,
+						approval,
+					};
+					const persisted = await dependencies.approvedTicketPublication.save(publication);
+					if (!isExpectedApprovedTicketPublicationRef(persisted, publication, dependencies.project.name)) return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_ARTIFACT_READBACK_MISMATCH", "The approved ticket publication could not be persisted with its exact durable identity.") };
+					await dependencies.ticketApprovalRecoveryStore?.clear();
 				pendingTicketApproval = undefined;
 				return { status: "tickets-approved", graph: cloneSnapshot(graph), graphRef: command.graphRef, approval: cloneSnapshot(approval) };
 			} catch {

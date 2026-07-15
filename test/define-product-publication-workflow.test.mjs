@@ -9,6 +9,7 @@ import {
 import {
 	createDeliveryTicketGraph,
 	createSpecCoverageIndex,
+	createTicketGraphApproval,
 } from "../extensions/delivery-ticket-graph.ts";
 import { digestCanonicalValue } from "../extensions/workflow-contracts.ts";
 
@@ -58,6 +59,45 @@ function workflow(overrides = {}) {
 		...overrides,
 	});
 }
+
+async function approveTicketsWithSaveResult(save) {
+	const approved = approvedSpec();
+	const parent = { id: "parent-1", teamId: "team-1", revision: "parent-r1", specDigest: approved.spec.digest };
+	const approvedSpecRef = { kind: "engram", project: "pi-workflow", topic: "approved-spec", revision: "spec-r1", schema: "approved-spec", schemaVersion: 1, digest: approved.spec.digest };
+	const parentRef = { kind: "engram", project: "pi-workflow", topic: "parent", revision: "parent-r1", schema: "delivery-parent", schemaVersion: 1, digest: "parent-digest" };
+	const graph = createDeliveryTicketGraph({ parent, coverage: createSpecCoverageIndex({ stories: [{ id: "story-1", contextId: "context-1", acceptanceCriteria: ["ac-1"] }], decisions: ["decision-1"], tests: ["test-1"] }), language: "es", tickets: [{ stableKey: "TICKET-1", title: "Entregar resultado", outcome: "Resultado verificable", acceptanceCriteria: ["Criterio uno", "Criterio dos", "Criterio tres", "Criterio cuatro"], estimate: { points: 1, rationale: "Trabajo acotado" }, blockers: [], refs: [{ kind: "story", id: "story-1" }, { kind: "decision", id: "decision-1" }, { kind: "test", id: "test-1" }], deliveryBindings: [{ storyId: "story-1", acceptanceCriterionId: "ac-1", contextId: "context-1" }] }] });
+	const graphRef = { kind: "engram", project: "pi-workflow", topic: "graph", revision: "graph-r1", schema: "delivery-ticket-graph", schemaVersion: 1, digest: graph.digest };
+	let pending;
+	let clears = 0;
+	const subject = workflow({
+		delegate: { delegate: async () => ({ status: "completed", executiveSummary: "ready", artifacts: [graphRef], nextRecommended: { kind: "confirmed-route", route: "wayfinder" }, risks: [], launchProvenance: {} }) },
+		approvedSpecStore: { read: async () => ({ ...approved, sourceRevision: approvedSpecRef.revision }) },
+		readPublishedParent: async () => parent,
+		recoverTicketGraph: async () => graph,
+		approvedTicketGraphs: { save: async () => graphRef },
+		approvedTicketPublication: { save, read: async () => undefined },
+		ticketApprovalRecoveryStore: { load: async () => pending, save: async (value) => { pending = structuredClone(value); }, clear: async () => { clears += 1; pending = undefined; } },
+		authenticatedAuthority: { current: async () => approved.approval.payload.actor },
+	});
+	assert.equal((await subject.advance({ kind: "to-tickets", definitionId: "definition-1", approvedSpecRef, parentRef })).status, "tickets-ready");
+	return { outcome: await subject.advance({ kind: "approve-tickets", definitionId: "definition-1", parentRef, graphRef, digest: graph.digest }), cleared: clears, pending };
+}
+
+test("ticket approval retains recovery when durable approval persistence returns no artifact reference", async () => {
+	const result = await approveTicketsWithSaveResult(async () => undefined);
+	assert.equal(result.outcome.status, "blocked");
+	assert.equal(result.outcome.blocker.code, "PI_WORKFLOW_ARTIFACT_READBACK_MISMATCH");
+	assert.equal(result.cleared, 0);
+	assert.equal(result.pending.definitionId, "definition-1");
+});
+
+test("ticket approval retains recovery when durable approval persistence returns a mismatched artifact reference", async () => {
+	const result = await approveTicketsWithSaveResult(async () => ({ kind: "engram", project: "pi-workflow", topic: "wrong-publication", revision: "publication-r1", schema: "approved-ticket-publication", schemaVersion: 1, digest: "wrong-digest" }));
+	assert.equal(result.outcome.status, "blocked");
+	assert.equal(result.outcome.blocker.code, "PI_WORKFLOW_ARTIFACT_READBACK_MISMATCH");
+	assert.equal(result.cleared, 0);
+	assert.equal(result.pending.definitionId, "definition-1");
+});
 
 test("approval is persisted and remains recoverable for publication after restart", async () => {
 	const approved = approvedSpec();
@@ -186,6 +226,7 @@ test("to-tickets and approval bind only exact verified references and recover co
 		readPublishedParent: async (ref) => ref === parentRef ? parent : undefined,
 		recoverTicketGraph: async (ref) => ref === graphRef ? graph : undefined,
 		approvedTicketGraphs: { save: async (_definitionId, value) => { saved.push(value); return graphRef; } },
+		approvedTicketPublication: { save: async (value) => ({ kind: "engram", project: "pi-workflow", topic: "workflow/define-product/definition-1/approved-ticket-publication/definition-1", revision: "publication-r1", schema: "approved-ticket-publication", schemaVersion: 1, digest: digestCanonicalValue({ schema: "approved-ticket-publication", schemaVersion: 1, payload: value }) }), read: async () => undefined },
 		ticketApprovalRecoveryStore: state,
 		authenticatedAuthority: { current: async () => approved.approval.payload.actor },
 	});
@@ -229,6 +270,7 @@ test("ticket approval fails closed for stale inputs, delegation and recovery dri
 		readPublishedParent: async (ref) => ref.revision === parentRef.revision ? parent : undefined,
 		recoverTicketGraph: async (ref) => ref.digest === graph.digest ? graph : undefined,
 		approvedTicketGraphs: { save: async () => graphRef },
+		approvedTicketPublication: { save: async (value) => ({ kind: "engram", project: "pi-workflow", topic: "workflow/define-product/definition-1/approved-ticket-publication/definition-1", revision: "publication-r1", schema: "approved-ticket-publication", schemaVersion: 1, digest: digestCanonicalValue({ schema: "approved-ticket-publication", schemaVersion: 1, payload: value }) }), read: async () => undefined },
 		ticketApprovalRecoveryStore: { load: async () => structuredClone(recovered), save: async (value) => { recovered = structuredClone(value); }, clear: async () => { clears += 1; recovered = undefined; } },
 		authenticatedAuthority: { current: async () => actor },
 	});
@@ -322,4 +364,46 @@ test("to-tickets recovers an exact persisted graph after approval recovery persi
 	assert.equal(retry.status, "tickets-ready", retry.blocker?.message);
 	assert.deepEqual(retry.graphRef, graphRef);
 	assert.equal(persisted.digest, graph.digest);
+});
+
+test("publish-tickets reads the exact durable Owner-approved graph after restart without delegating publication", async () => {
+	const approved = approvedSpec();
+	const parent = { id: "parent-1", teamId: "team-1", revision: "parent-r1", specDigest: approved.spec.digest };
+	const approvedSpecRef = { kind: "engram", project: "pi-workflow", topic: "approved-spec", revision: "spec-r1", schema: "approved-spec", schemaVersion: 1, digest: approved.spec.digest };
+	const parentRef = { kind: "engram", project: "pi-workflow", topic: "parent", revision: "parent-r1", schema: "delivery-parent", schemaVersion: 1, digest: "parent-digest" };
+	const graph = createDeliveryTicketGraph({ parent, coverage: createSpecCoverageIndex({ stories: [{ id: "story-1", contextId: "context-1", acceptanceCriteria: ["ac-1"] }], decisions: ["decision-1"], tests: ["test-1"] }), language: "es", tickets: [{ stableKey: "TICKET-1", title: "Entregar resultado", outcome: "Resultado verificable", acceptanceCriteria: ["Criterio uno", "Criterio dos", "Criterio tres", "Criterio cuatro"], estimate: { points: 1, rationale: "Trabajo acotado" }, blockers: [], refs: [{ kind: "story", id: "story-1" }, { kind: "decision", id: "decision-1" }, { kind: "test", id: "test-1" }], deliveryBindings: [{ storyId: "story-1", acceptanceCriterionId: "ac-1", contextId: "context-1" }] }] });
+	const graphRef = { kind: "engram", project: "pi-workflow", topic: "graph", revision: "graph-r1", schema: "delivery-ticket-graph", schemaVersion: 1, digest: graph.digest };
+	const approval = createTicketGraphApproval({ graph, actor: approved.approval.payload.actor });
+	let publication;
+	let delegateCalls = 0;
+	const dependencies = {
+		delegate: { delegate: async () => {
+			delegateCalls += 1;
+			return { status: "completed", executiveSummary: "ready", artifacts: [graphRef], nextRecommended: { kind: "confirmed-route", route: "wayfinder" }, risks: [], launchProvenance: {} };
+		} },
+		approvedSpecStore: { read: async () => ({ ...approved, sourceRevision: approvedSpecRef.revision }) },
+		readPublishedParent: async () => parent,
+		recoverTicketGraph: async () => graph,
+		ticketApprovalRecoveryStore: { load: async () => undefined, save: async () => {}, clear: async () => {} },
+		authenticatedAuthority: { current: async () => approved.approval.payload.actor },
+		approvedTicketPublication: {
+			save: async (value) => {
+				publication = structuredClone(value);
+				return { kind: "engram", project: "pi-workflow", topic: "workflow/define-product/definition-1/approved-ticket-publication/definition-1", revision: "publication-r1", schema: "approved-ticket-publication", schemaVersion: 1, digest: digestCanonicalValue({ schema: "approved-ticket-publication", schemaVersion: 1, payload: value }) };
+			},
+			read: async () => structuredClone(publication),
+		},
+		ticketPublication: { publish: async (definitionId) => ({ status: "tickets-published", definitionId }) },
+	};
+	const pending = workflow({
+		...dependencies,
+		approvedTicketGraphs: { save: async () => graphRef },
+	});
+	assert.equal((await pending.advance({ kind: "to-tickets", definitionId: "definition-1", approvedSpecRef, parentRef })).status, "tickets-ready");
+	assert.equal((await pending.advance({ kind: "approve-tickets", definitionId: "definition-1", parentRef, graphRef, digest: graph.digest })).status, "tickets-approved");
+	assert.deepEqual(publication.approval, approval);
+
+	const restarted = workflow(dependencies);
+	assert.deepEqual(await restarted.advance({ kind: "publish-tickets", definitionId: "definition-1" }), { status: "tickets-published", definitionId: "definition-1" });
+	assert.equal(delegateCalls, 1);
 });
