@@ -71,6 +71,7 @@ extensions/default-define-product.ts
 extensions/define-product-runtime.ts
 extensions/define-product-workflow.ts
 extensions/delegation-checkpoints.ts
+extensions/delivery-parent-publication.ts
 extensions/engram-approved-spec-reader.ts
 extensions/exploration-recovery.ts
 extensions/linear-delivery-parent-gateway.ts
@@ -115,7 +116,8 @@ const entryGoldens = {
 		anchorRules:
 			"After trimming, any non-empty product idea or problem is exactly one valid domain anchor. Whitespace-only input is missing.",
 		inputCondition: "missing",
-		anchorQuestion: "What product idea or problem should define the domain scope?",
+		anchorQuestion:
+			"What product idea or problem should define the domain scope?",
 		capability: "implemented",
 	},
 	"deliver-ticket": {
@@ -147,7 +149,8 @@ const entryGoldens = {
 		title: "QA Handoff",
 		description:
 			"Prepare a QA handoff for one Linear issue from a domain anchor under Developer authority.",
-		promptDescription: "Prepare a QA handoff for one Linear issue from a domain anchor",
+		promptDescription:
+			"Prepare a QA handoff for one Linear issue from a domain anchor",
 		role: "Developer",
 		anchorRules:
 			"After trimming, valid input is exactly one uppercase Linear identifier matching `[A-Z][A-Z0-9]*-[1-9][0-9]*` and nothing else. Whitespace-only input is missing. Malformed input or input containing multiple identifiers is invalid.",

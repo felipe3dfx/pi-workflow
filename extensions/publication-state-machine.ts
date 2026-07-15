@@ -200,9 +200,32 @@ export function createPublicationStateMachine(options: {
 		}
 	}
 
+	async function recoverCreated(
+		definitionId: string,
+		parentId: string,
+	): Promise<PublicationState> {
+		try {
+			const stored = await options.store.load(definitionId);
+			if (stored?.value.stage !== "creating")
+				return blocked(
+					Object.assign(new Error("Publication recovery state changed."), {
+						code: "PI_WORKFLOW_PUBLICATION_CONFLICT",
+					}),
+				);
+			await options.store.save(
+				next(options.store, stored.value, "created", { parentId }),
+				stored.revision,
+			);
+			return { status: "recovery-required", stage: "created", parentId };
+		} catch (error) {
+			return blocked(error);
+		}
+	}
+
 	return {
 		prepare,
 		claim,
+		recoverCreated,
 		releasePreCreateClaim: (claim: PublicationClaim) =>
 			transitionClaim(claim, "prepared"),
 		recordCreated: (claim: PublicationClaim, parentId: string) =>
