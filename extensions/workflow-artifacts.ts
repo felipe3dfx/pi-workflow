@@ -5,11 +5,13 @@ import {
 	canonicalJson,
 	createBlocker,
 	digestCanonicalValue,
+	type ApprovedProductSpecSnapshot,
 	type ArtifactBinding,
 	type ArtifactGrant,
 	type DesignExplorationBinding,
 	type DesignExplorationEnvelope,
 	type DesignExplorationSnapshot,
+	type DeliveryParentSnapshot,
 	type ProgressBatch,
 	type ResearchEvidenceEnvelope,
 	type ResearchFinding,
@@ -19,6 +21,14 @@ import {
 	type WorkflowBlocker,
 	type WorkflowProgressEnvelope,
 } from "./workflow-contracts.ts";
+import {
+	isValidProductSpecSnapshot,
+	validateProductSpecApproval,
+} from "./product-spec.ts";
+import {
+	parseApprovedTicketGraph,
+} from "./approved-ticket-graph-store.ts";
+import type { DeliveryTicketGraph } from "./delivery-ticket-graph.ts";
 
 export interface WorkflowArtifactStore {
 	readonly capabilities?: { readonly atomicCompareAndSwap: boolean };
@@ -233,16 +243,14 @@ function parseStoredProgress(content: string): readonly StoredProgressBatch[] {
 	return parsed.payload.progressBatches;
 }
 
-function validateAuthorizedArtifactRead(
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function validateSignedArtifact(
 	ref: VerifiedArtifactRef,
-	content: string,
+	parsed: Record<string, unknown>,
 ): void {
-	let parsed: ResearchEvidenceEnvelope | DesignExplorationEnvelope | WorkflowProgressEnvelope;
-	try {
-		parsed = JSON.parse(content) as typeof parsed;
-	} catch {
-		throw new Error("The authorized artifact contains invalid JSON.");
-	}
 	if (
 		parsed.schema !== ref.schema ||
 		parsed.schemaVersion !== ref.schemaVersion ||
@@ -256,32 +264,126 @@ function validateAuthorizedArtifactRead(
 	) {
 		throw new Error("The authorized artifact schema, version, or digest is invalid.");
 	}
-	if (parsed.schema === "research-evidence") {
-		const validation = validateResearchEvidenceEnvelope(parsed, {
-			assignmentId: parsed.payload.assignmentId,
-			definitionId: parsed.payload.definitionId,
-			recommendationDigest: parsed.payload.recommendationDigest,
-			route: parsed.payload.route,
-			question: parsed.payload.question,
-			domainAnchorDigest: parsed.payload.domainAnchorDigest,
+}
+
+function validateApprovedProductSpecRead(
+	ref: VerifiedArtifactRef,
+	parsed: unknown,
+): void {
+	if (!isRecord(parsed) || !isRecord(parsed.spec) || !isRecord(parsed.approval)) {
+		throw new Error("The approved product Spec envelope is invalid.");
+	}
+	const snapshot = parsed as unknown as ApprovedProductSpecSnapshot;
+	if (
+		!ref.revision.trim() ||
+		!isValidProductSpecSnapshot(snapshot.spec) ||
+		ref.digest !== snapshot.spec.digest ||
+		!validateProductSpecApproval({
+			spec: snapshot.spec,
+			approval: snapshot.approval,
+			actor: snapshot.approval.payload.actor,
+			target: snapshot.spec.payload.target,
+			revision: snapshot.spec.payload.revision,
+		}).ok
+	) {
+		throw new Error("The approved product Spec identity or digest is invalid.");
+	}
+}
+
+function validateDeliveryParentRead(
+	ref: VerifiedArtifactRef,
+	parsed: unknown,
+): void {
+	if (!isRecord(parsed) || !isRecord(parsed.payload)) {
+		throw new Error("The Delivery parent snapshot is invalid.");
+	}
+	const snapshot = parsed as unknown as DeliveryParentSnapshot;
+	const payload = snapshot.payload;
+	if (
+		!ref.revision.trim() ||
+		snapshot.schema !== "delivery-parent" ||
+		snapshot.schemaVersion !== 1 ||
+		snapshot.digest !== ref.digest ||
+		snapshot.digest !==
+			digestCanonicalValue({
+				schema: snapshot.schema,
+				schemaVersion: snapshot.schemaVersion,
+				payload,
+			}) ||
+		![payload.id, payload.teamId, payload.revision, payload.specDigest].every(
+			(value) => typeof value === "string" && value.trim().length > 0,
+		) ||
+		payload.revision !== ref.revision
+	) {
+		throw new Error("The Delivery parent identity, revision, or digest is invalid.");
+	}
+}
+
+function validateAuthorizedRefSchema(
+	ref: VerifiedArtifactRef,
+	expectedSchema: "product-spec" | "delivery-parent",
+): void {
+	if (ref.schema !== expectedSchema || ref.schemaVersion !== 1) {
+		throw new Error("The authorized artifact schema, version, or digest is invalid.");
+	}
+}
+
+function validateAuthorizedArtifactRead(ref: VerifiedArtifactRef, content: string): void {
+	if (ref.schema === "product-spec") {
+		validateAuthorizedRefSchema(ref, "product-spec");
+	} else if (ref.schema === "delivery-parent") {
+		validateAuthorizedRefSchema(ref, "delivery-parent");
+	}
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(content);
+	} catch {
+		throw new Error("The authorized artifact contains invalid JSON.");
+	}
+	if (ref.schema === "product-spec") {
+		validateApprovedProductSpecRead(ref, parsed);
+		return;
+	}
+	if (ref.schema === "delivery-parent") {
+		validateDeliveryParentRead(ref, parsed);
+		return;
+	}
+	if (!isRecord(parsed)) {
+		throw new Error("The authorized artifact envelope is invalid.");
+	}
+	validateSignedArtifact(ref, parsed);
+	if (ref.schema === "research-evidence") {
+		const envelope = parsed as unknown as ResearchEvidenceEnvelope;
+		const validation = validateResearchEvidenceEnvelope(envelope, {
+			assignmentId: envelope.payload.assignmentId,
+			definitionId: envelope.payload.definitionId,
+			recommendationDigest: envelope.payload.recommendationDigest,
+			route: envelope.payload.route,
+			question: envelope.payload.question,
+			domainAnchorDigest: envelope.payload.domainAnchorDigest,
 			artifactTopic: ref.topic,
 		});
 		if (!validation.ok) throw new Error(validation.blocker.message);
 		return;
 	}
-	if (parsed.schema === "design-exploration") {
+	if (ref.schema === "design-exploration") {
+		const envelope = parsed as unknown as DesignExplorationEnvelope;
 		if (
-			parsed.payload.launchProvenance?.artifactTopic !== ref.topic ||
-			!parsed.payload.assignmentId ||
-			!parsed.payload.definitionId ||
-			!Array.isArray(parsed.payload.changedPaths) ||
-			!Array.isArray(parsed.payload.progressBatches)
+			envelope.payload.launchProvenance?.artifactTopic !== ref.topic ||
+			!envelope.payload.assignmentId ||
+			!envelope.payload.definitionId ||
+			!Array.isArray(envelope.payload.changedPaths) ||
+			!Array.isArray(envelope.payload.progressBatches)
 		) {
 			throw new Error("The authorized design exploration binding is invalid.");
 		}
 		return;
 	}
-	parseProgress(content);
+	if (ref.schema === "workflow-progress") {
+		parseProgress(content);
+		return;
+	}
+	throw new Error(`The authorized artifact schema is unsupported: ${ref.schema}.`);
 }
 
 function collectArtifactPathClaims(value: unknown, claims: Set<string>): void {
@@ -331,7 +433,7 @@ export function createWorkflowArtifactInterface(store: WorkflowArtifactStore) {
 			digest: string,
 			expectedRevision: string | undefined,
 		): Promise<VerifiedArtifactRef> {
-			if (store.capabilities?.atomicCompareAndSwap === false) {
+			if (store.capabilities?.atomicCompareAndSwap !== true) {
 				throw new Error(
 					"The workflow artifact store does not support atomic compare-and-swap writes.",
 				);
@@ -381,8 +483,30 @@ export function createWorkflowArtifactInterface(store: WorkflowArtifactStore) {
 				validateAuthorizedArtifactRead(ref, content);
 				return { revision: ref.revision, content };
 			},
-			readCurrent: () => store.readCurrent(grant.project.name, grant.topic),
-			async writeSnapshot(
+				readCurrent: () => store.readCurrent(grant.project.name, grant.topic),
+				async writeDeliveryTicketGraph(
+					graph: DeliveryTicketGraph,
+					expectedRevision?: string,
+				): Promise<VerifiedArtifactRef> {
+					if (
+						grant.strategy !== "snapshot" ||
+						grant.schema !== "delivery-ticket-graph"
+					) {
+						throw new Error("Artifact grant does not allow delivery ticket graph writes.");
+					}
+					const canonical = parseApprovedTicketGraph(canonicalJson(graph));
+					const current = await store.readCurrent(grant.project.name, grant.topic);
+					if (current) {
+						parseApprovedTicketGraph(current.content);
+						throw new Error("Approved ticket graph is immutable and already recorded.");
+					}
+					return persist(
+						`${canonicalJson(canonical)}\n`,
+						canonical.digest,
+						expectedRevision,
+					);
+				},
+				async writeSnapshot(
 				envelope: ResearchEvidenceEnvelope,
 				expectedRevision?: string,
 			): Promise<VerifiedArtifactRef> {

@@ -22,6 +22,7 @@ function createArtifactStore() {
 	const revisions = new Map();
 	let counter = 0;
 	return {
+		capabilities: { atomicCompareAndSwap: true },
 		async readCurrent() {
 			return undefined;
 		},
@@ -42,6 +43,7 @@ function createAtomicArtifactStore() {
 	const revisions = new Map();
 	let counter = 0;
 	return {
+		capabilities: { atomicCompareAndSwap: true },
 		async readCurrent(project, topic) {
 			return topics.get(`${project}:${topic}`);
 		},

@@ -8,6 +8,7 @@ tools:
   - grep
   - find
   - ls
+  - workflow_artifact_session
 extensions: []
 skills: []
 prompt_mode: replace
@@ -15,4 +16,4 @@ inherit_context: false
 max_turns: 20
 ---
 
-Execute only the workflow assignment validated for to-tickets and its declared capability profile. Return structured results to the Orchestrator. Never invoke public skills, publish to Linear, launch agents, or create recursive reviews. Treat frontmatter as a declared default; workflow-owned validation and launch provenance are authoritative.
+Execute exactly one validated read-only to-tickets assignment. Generate one delivery-ticket-graph artifact with exact top-level `language: "es"`. Redact titles, outcomes, acceptance criteria, estimates, rationale, and blockers in español profesional neutro. Preserve identificadores estables, hashes, schema names, code symbols, branch names, Linear IDs, and exact technical terms when translation would break identity. Return the exact canonical graph for Owner approval. Never invoke public skills, publish to Linear, launch agents, mutate files, or create recursive reviews. Treat frontmatter as a declared default; workflow-owned validation and launch provenance are authoritative.

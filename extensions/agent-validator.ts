@@ -29,6 +29,7 @@ interface ModelAvailability {
 
 export interface AgentValidatorDependencies {
 	readResearchAsset(): Promise<AppliedAgentAsset> | AppliedAgentAsset;
+	readTicketGraphAsset?(): Promise<AppliedAgentAsset> | AppliedAgentAsset;
 	readExplorationAsset?(): Promise<AppliedAgentAsset> | AppliedAgentAsset;
 	readModelAvailability(
 		provider: string,
@@ -61,6 +62,14 @@ const forbiddenCapabilities = [
 	"fan-out",
 	"private-namespace",
 	"agent-launch",
+];
+
+const requiredTicketGraphTools = [
+	"read",
+	"grep",
+	"find",
+	"ls",
+	"workflow_artifact_session",
 ];
 
 const requiredExplorationTools = [
@@ -268,5 +277,32 @@ export function createAgentValidator(
 		});
 	}
 
-	return { validateResearchLaunch, validateExplorationLaunch };
+	async function validateTicketGraphLaunch(_input: {
+		skillRefs: readonly DigestedRef[];
+		standardRefs: readonly DigestedRef[];
+		artifactTopic: string;
+	}): Promise<AgentValidation> {
+		if (!dependencies.readTicketGraphAsset) {
+			return { ok: false, blocker: createBlocker("PI_WORKFLOW_AGENT_ASSET_NOT_READY", "The applied to-tickets agent asset is unavailable.") };
+		}
+		const asset = await dependencies.readTicketGraphAsset();
+		const profileMatches = asset.name === "to-tickets" && asset.version >= 1 && !!asset.digest &&
+			asset.capabilityProfile === "artifact-reader" && asset.provider === "openai-codex" &&
+			asset.model === "gpt-5.6-terra" && asset.effort === "medium" &&
+			asset.inheritContext === false && asset.promptMode === "replace" &&
+			asset.extensions.length === 0 && asset.skills.length === 0 && asset.supportsScopedArtifacts &&
+			asset.allowedTools.length === requiredTicketGraphTools.length &&
+			requiredTicketGraphTools.every((tool, index) => asset.allowedTools[index] === tool) &&
+			!forbiddenCapabilities.some((capability) => asset.allowedTools.includes(capability));
+		return validateExactLaunch({
+			asset,
+			profileMatches,
+			profileError: "The to-tickets agent asset must use the exact read-only artifact-reader profile.",
+			availabilityError: "The exact provider, model, or effort is unavailable for the to-tickets launch.",
+			deniedCapabilities: forbiddenCapabilities,
+			readModelAvailability: dependencies.readModelAvailability,
+		});
+	}
+
+	return { validateResearchLaunch, validateExplorationLaunch, validateTicketGraphLaunch };
 }

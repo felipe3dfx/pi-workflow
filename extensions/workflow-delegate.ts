@@ -47,6 +47,11 @@ export interface WorkflowDelegateDependencies {
 			standardRefs: readonly DigestedRef[];
 			artifactTopic: string;
 		}): Promise<AgentValidation>;
+		validateTicketGraphLaunch?(input: {
+			skillRefs: readonly DigestedRef[];
+			standardRefs: readonly DigestedRef[];
+			artifactTopic: string;
+		}): Promise<AgentValidation>;
 	};
 	artifactInterface: {
 		writeCapabilityBlocker?(): ReturnType<typeof createBlocker> | undefined;
@@ -78,6 +83,19 @@ function buildArtifactGrant(intent: WorkflowIntent): ArtifactGrant {
 			aliases: [],
 		};
 	}
+	if (intent.kind === "to-tickets") {
+		return {
+			project: intent.project,
+			topic: intent.targetTopic,
+			schema: "delivery-ticket-graph",
+			schemaVersion: 1,
+			strategy: "snapshot",
+			aliases: [
+				{ alias: "approved-spec", ref: intent.approvedSpec },
+				{ alias: "delivery-parent", ref: intent.deliveryParent },
+			],
+		};
+	}
 	return {
 		project: intent.project,
 		topic: intent.targetTopic,
@@ -103,6 +121,9 @@ function buildArtifactBinding(
 			question: intent.question,
 			domainAnchorDigest: intent.domainAnchorDigest,
 		};
+	}
+	if (intent.kind === "to-tickets") {
+		return { assignmentId: intent.requestId, definitionId: intent.definitionId, recommendationDigest: intent.recommendationDigest, route: intent.route, question: "to-tickets", domainAnchorDigest: intent.domainAnchorDigest };
 	}
 	return {
 		kind: "design-exploration",
@@ -225,12 +246,11 @@ export function createWorkflowDelegate(
 			standardRefs: standards.value.standardRefs,
 			artifactTopic: artifactGrant.topic,
 		};
-		const agentValidation =
-			intent.kind === "research"
-				? await dependencies.agentValidator.validateResearchLaunch?.(
-						validationInput,
-					)
-				: await dependencies.agentValidator.validateExplorationLaunch?.({
+			const agentValidation = intent.kind === "research"
+				? await dependencies.agentValidator.validateResearchLaunch?.(validationInput)
+				: intent.kind === "to-tickets"
+					? await dependencies.agentValidator.validateTicketGraphLaunch?.(validationInput)
+					: await dependencies.agentValidator.validateExplorationLaunch?.({
 						...validationInput,
 						intent: intent.kind,
 					});
@@ -246,11 +266,11 @@ export function createWorkflowDelegate(
 			};
 		}
 		const launchProvenance: ExactLaunchProvenance = {
-			agentName: intent.kind === "research" ? "research" : "prototype",
+				agentName: intent.kind === "research" ? "research" : intent.kind === "to-tickets" ? "to-tickets" : "prototype",
 			assetVersion: agentValidation.value.assetVersion,
 			assetDigest: agentValidation.value.assetDigest,
 			capabilityProfile:
-				intent.kind === "research" ? "research-reader" : "isolated-prototype",
+					intent.kind === "research" ? "research-reader" : intent.kind === "to-tickets" ? "artifact-reader" : "isolated-prototype",
 			provider: "openai-codex",
 			model: "gpt-5.6-terra",
 			effort: "medium",
@@ -294,7 +314,7 @@ export function createWorkflowDelegate(
 		if (
 			intent.kind !== "research" &&
 			intent.kind !== "prototype" &&
-			intent.kind !== "design-alternative"
+				intent.kind !== "design-alternative" && intent.kind !== "to-tickets"
 		) {
 			return blocked(
 				"PI_WORKFLOW_INTENT_UNSUPPORTED",
@@ -537,8 +557,8 @@ function validateTerminalResult(
 		!preparedLaunch.artifactSession.hasVerifiedArtifact(artifact)
 	) {
 		return blocked(
-			preparedLaunch.intent.kind === "research"
-				? "PI_WORKFLOW_RESEARCH_ARTIFACT_INVALID"
+				preparedLaunch.intent.kind === "research"
+					? "PI_WORKFLOW_RESEARCH_ARTIFACT_INVALID"
 				: "PI_WORKFLOW_ARTIFACT_READBACK_MISMATCH",
 			"The result did not include one verified Engram artifact for the granted topic.",
 			preparedLaunch.launchProvenance,
@@ -555,6 +575,9 @@ function buildPrompt(intent: WorkflowIntent): string {
 			`Research question: ${intent.question}`,
 			"Use only the validated read-only tools and write exactly one verified research artifact.",
 		].join(" ");
+	}
+	if (intent.kind === "to-tickets") {
+		return "Execute exactly one read-only to-tickets assignment. Produce one verified delivery-ticket-graph artifact with exact language: es. Never mutate Linear, files, branches, or workflow state.";
 	}
 	return [
 		`Execute exactly one ${intent.kind} assignment.`,

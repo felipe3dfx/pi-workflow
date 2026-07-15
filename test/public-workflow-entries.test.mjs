@@ -66,6 +66,7 @@ extensions/agent-asset-migrations.ts
 extensions/agent-asset-operation.ts
 extensions/agent-asset-sync.ts
 extensions/agent-validator.ts
+extensions/approved-ticket-graph-store.ts
 extensions/companion-workflow.ts
 extensions/default-define-product.ts
 extensions/define-product-runtime.ts
@@ -90,6 +91,7 @@ extensions/runtime-private-state.ts
 extensions/skill-resolver.ts
 extensions/spec-approval-recovery.ts
 extensions/subagent-launcher.ts
+extensions/ticket-graph-recovery.ts
 extensions/workflow-artifacts.ts
 extensions/workflow-contracts.ts
 extensions/workflow-delegate.ts
