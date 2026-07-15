@@ -292,6 +292,40 @@ test("session start restores the exact pending Spec approval phase", async () =>
 	});
 });
 
+test("session start restores publication eligibility without accepting LLM Spec content", async () => {
+	const handlers = new Map();
+	const tools = new Map();
+	const commands = [];
+	const runtime = createDefineProductRuntime({
+		workflow: {
+			pendingRecommendation: () => undefined,
+			reset() {},
+			restoreRecovery: async () => ({ definitionId: "definition-restart", phase: "publication" }),
+			advance: async (command) => {
+				commands.push(command);
+				return { status: "spec-published", parent: { id: "parent-1" } };
+			},
+		},
+		createDefinitionId: () => "unused",
+	});
+	runtime.register({
+		on: (event, handler) => handlers.set(event, handler),
+		registerTool: (tool) => tools.set(tool.name, tool),
+	});
+	await handlers.get("session_start")({ type: "session_start" });
+	const prompt = await handlers.get("before_agent_start")({ systemPrompt: "base" });
+	assert.match(prompt.systemPrompt, /publish_spec/);
+	const tool = tools.get("workflow_define_product");
+	assert.equal(tool.parameters.properties.action.enum.at(-1), "publish_spec");
+
+	const outcome = await tool.execute("publish", {
+		action: "publish_spec",
+		description: "agent-controlled content",
+	});
+	assert.equal(outcome.details.status, "spec-published");
+	assert.deepEqual(commands, [{ kind: "publish-spec", definitionId: "definition-restart" }]);
+});
+
 test("define-product rejects an agent-supplied definition ID that differs from the session identity", async () => {
 	const { runtime, tool, commands } = registerRuntime();
 	runtime.handlePublicEntry({
@@ -456,6 +490,7 @@ test("production define-product seam derives approval identity from trusted auth
 		"request_exploration",
 		"to_spec",
 		"approve_spec",
+		"publish_spec",
 	]);
 
 	assert.equal("actor" in tool.parameters.properties, false);
@@ -514,7 +549,7 @@ test("production define-product seam derives approval identity from trusted auth
 		role: "Owner",
 		authorityRevision: "owner-policy-r3",
 	});
-	assert.equal(runtime.hasActiveTurn(), false);
+	assert.equal(runtime.hasActiveTurn(), true);
 });
 
 test("production define-product seam blocks malformed Spec payloads without throwing", async () => {

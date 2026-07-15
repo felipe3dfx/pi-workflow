@@ -37,10 +37,16 @@ import {
 	createSubagentLauncher,
 	type LaunchOptions,
 } from "./subagent-launcher.ts";
-import { createRuntimeEngramArtifactStore } from "./runtime-engram-store.ts";
+import { createRuntimeEngramApprovedSpecStore, createRuntimeEngramArtifactStore } from "./runtime-engram-store.ts";
 import { createRuntimePrivateStatePersistence } from "./runtime-private-state.ts";
 import { createDurableExplorationRecoveryStore } from "./exploration-recovery.ts";
 import { createDurableSpecApprovalRecoveryStore } from "./spec-approval-recovery.ts";
+import { createDurablePublicationManifest } from "./publication-manifest.ts";
+import type { DeliveryParentPublicationDependencies } from "./delivery-parent-publication.ts";
+import { createEngramApprovedSpecReader } from "./engram-approved-spec-reader.ts";
+import { createLinearDeliveryParentGateway } from "./linear-delivery-parent-gateway.ts";
+import { createRuntimeLinearDeliveryParentTransport } from "./runtime-linear-delivery-parent.ts";
+import { createPublicationStateMachine } from "./publication-state-machine.ts";
 import {
 	createResearchEvidenceEnvelope,
 	createBlocker,
@@ -234,6 +240,9 @@ export interface DefaultDefineProductRuntimeOptions {
 	authenticatedAuthority?: {
 		current(): Promise<AuthenticatedAuthority>;
 	};
+	approvedSpecReader?: DeliveryParentPublicationDependencies["approvedSpecReader"];
+	linearDeliveryParents?: DeliveryParentPublicationDependencies["linear"];
+	publicationManifest?: Parameters<typeof createPublicationStateMachine>[0]["store"];
 	researchExecutor?: ResearchExecutor | ResearchExecutor["execute"];
 	explorationExecutor?: ExplorationExecutor | ExplorationExecutor["execute"];
 	webExtensionPath?: string;
@@ -265,6 +274,17 @@ function configuredOwnerAuthority(
 		authorityRevision,
 	});
 	return { current: async () => authority };
+}
+
+function configuredLinearDeliveryParents(
+	environment: NodeJS.ProcessEnv,
+): DeliveryParentPublicationDependencies["linear"] | undefined {
+	const apiKey = environment.LINEAR_API_KEY?.trim();
+	if (!apiKey) return undefined;
+	return createLinearDeliveryParentGateway(createRuntimeLinearDeliveryParentTransport({
+		apiKey,
+		url: environment.LINEAR_API_URL?.trim() || undefined,
+	}));
 }
 
 function findProjectRoot(cwd: string): string {
@@ -893,6 +913,19 @@ export function createDefaultDefineProductWorkflow(
 			path: join(privateStateDirectory, "spec-approval-recovery.json"),
 			persistence: privateStatePersistence,
 		});
+	const approvedSpecReader = options.approvedSpecReader ?? createEngramApprovedSpecReader({
+		project: baseProject.name,
+		store: createRuntimeEngramApprovedSpecStore({
+			sessionId: () => getCurrentContext()?.sessionManager.getSessionId(),
+			directory: () => getCurrentContext()?.cwd ?? process.cwd(),
+		}),
+	});
+	const publicationManifest = options.publicationManifest ?? createDurablePublicationManifest({
+		directory: join(privateStateDirectory, "delivery-parent-publications"),
+		persistence: privateStatePersistence,
+	});
+	const linearDeliveryParents = options.linearDeliveryParents ?? configuredLinearDeliveryParents(process.env);
+	const authenticatedAuthority = options.authenticatedAuthority ?? configuredOwnerAuthority(process.env);
 
 	const agentValidator = createAgentValidator({
 		readResearchAsset: () => readResearchAssetMetadata(),
@@ -1187,8 +1220,17 @@ export function createDefaultDefineProductWorkflow(
 		delegate: workflowDelegate,
 		explorationRecoveryStore,
 		specApprovalRecoveryStore,
-		authenticatedAuthority:
-			options.authenticatedAuthority ?? configuredOwnerAuthority(process.env),
+		approvedSpecStore: approvedSpecReader,
+		publication: linearDeliveryParents && authenticatedAuthority ? {
+			approvedSpecReader,
+			linear: linearDeliveryParents,
+			state: createPublicationStateMachine({
+				store: publicationManifest,
+				createReservationId: () => `publication-${Date.now()}`,
+			}),
+			authenticatedAuthority,
+		} : undefined,
+		authenticatedAuthority,
 		createRequestId:
 			options.createRequestId ?? (() => `request-${Date.now()}`),
 		project: baseProject,
