@@ -81,6 +81,7 @@ extensions/product-spec.ts
 extensions/project-standards-resolver.ts
 extensions/public-entry-guard.ts
 extensions/publication-manifest.ts
+extensions/publication-state-machine.ts
 extensions/runtime-engram-store.ts
 extensions/runtime-linear-delivery-parent.ts
 extensions/runtime-private-state.ts
