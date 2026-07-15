@@ -72,6 +72,7 @@ extensions/define-product-runtime.ts
 extensions/define-product-workflow.ts
 extensions/delegation-checkpoints.ts
 extensions/delivery-parent-publication.ts
+extensions/delivery-ticket-graph.ts
 extensions/engram-approved-spec-reader.ts
 extensions/exploration-recovery.ts
 extensions/linear-delivery-parent-gateway.ts
