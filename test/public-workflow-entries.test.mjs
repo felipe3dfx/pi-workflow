@@ -71,6 +71,7 @@ extensions/default-define-product.ts
 extensions/define-product-runtime.ts
 extensions/define-product-workflow.ts
 extensions/delegation-checkpoints.ts
+extensions/engram-approved-spec-reader.ts
 extensions/exploration-recovery.ts
 extensions/mcp-config.ts
 extensions/pi-workflow-sync.ts
