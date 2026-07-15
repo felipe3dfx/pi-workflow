@@ -7,8 +7,10 @@ import { fileURLToPath } from "node:url";
 
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 import { createRuntimeEngramArtifactStore } from "../extensions/runtime-engram-store.ts";
+import { createEngramApprovedSpecReader } from "../extensions/engram-approved-spec-reader.ts";
 import { createInMemoryDelegationCheckpointStore } from "../extensions/delegation-checkpoints.ts";
 import * as defaultDefineProductModule from "../extensions/default-define-product.ts";
+import { digestCanonicalValue } from "../extensions/workflow-contracts.ts";
 
 const {
 	createDefaultDefineProductWorkflow,
@@ -160,6 +162,8 @@ function productionSpecRequest(overrides = {}) {
 
 function productionSpecRuntimeOptions(overrides = {}) {
 	let pendingSpec;
+	const approvedTopics = new Map();
+	let approvedRevision = 0;
 	return {
 		artifactStore: createArtifactStore(),
 		checkpointStore: createInMemoryDelegationCheckpointStore(),
@@ -172,6 +176,22 @@ function productionSpecRuntimeOptions(overrides = {}) {
 				pendingSpec = undefined;
 			},
 		},
+		approvedSpecReader: createEngramApprovedSpecReader({
+			project: "pi-workflow",
+			store: {
+				readCurrent: async (project, topic) => approvedTopics.get(`${project}:${topic}`),
+				write: async (project, topic, content) => {
+					approvedRevision += 1;
+					const stored = { revision: `approved-r${approvedRevision}`, content };
+					approvedTopics.set(`${project}:${topic}`, stored);
+					return { revision: stored.revision };
+				},
+				readRevision: async (project, topic, revision) => {
+					const stored = approvedTopics.get(`${project}:${topic}`);
+					return stored?.revision === revision ? stored.content : undefined;
+				},
+			},
+		}),
 		webExtensionPath: fileURLToPath(
 			new URL("./fixtures/pi-web-access/index.ts", import.meta.url),
 		),
@@ -847,6 +867,101 @@ test("default packaged entry approves with configured Owner authority and ignore
 		} else {
 			process.env.PI_WORKFLOW_OWNER_AUTHORITY_REVISION = previousRevision;
 		}
+	}
+});
+
+test("default runtime publishes the Engram-approved body through configured Linear", async () => {
+	const originalFetch = globalThis.fetch;
+	const previousLinearKey = process.env.LINEAR_API_KEY;
+	const previousLinearUrl = process.env.LINEAR_API_URL;
+	process.env.LINEAR_API_KEY = "linear-key";
+	process.env.LINEAR_API_URL = "https://linear.test/graphql";
+	const observations = new Map();
+	let observationId = 0;
+	let manifest;
+	let manifestRevision = 0;
+	let parent;
+	globalThis.fetch = async (input, init = {}) => {
+		const url = new URL(String(input));
+		if (url.hostname === "linear.test") {
+			assert.equal(init.headers.Authorization, "linear-key");
+			const request = JSON.parse(String(init.body));
+			if (request.operationName === "DeliveryParentPreflight") {
+				return Response.json({ data: {
+					viewer: { id: "owner-felipe" },
+					team: {
+						id: "team-grupo-ilao",
+						cyclesEnabled: true,
+						states: { nodes: [{ id: "backlog-1", type: "backlog", updatedAt: "2026-07-14T00:00:00.000Z" }] },
+					},
+				} });
+			}
+			if (request.operationName === "DeliveryParentCreate") {
+				parent = {
+					id: "linear-parent-1",
+					team: { id: request.variables.input.teamId },
+					title: request.variables.input.title,
+					description: request.variables.input.description,
+					state: { id: "backlog-1", type: "backlog" },
+					cycle: null,
+					assignee: null,
+				};
+				return Response.json({ data: { issueCreate: { success: true, issue: parent } } });
+			}
+			return Response.json({ data: { issue: parent } });
+		}
+		if (url.pathname === "/observations" && (init.method ?? "GET") === "GET") {
+			const key = `${url.searchParams.get("project")}:${url.searchParams.get("topic_key")}`;
+			const current = observations.get(key);
+			return Response.json(current ? [current] : []);
+		}
+		if (url.pathname === "/observations" && init.method === "POST") {
+			const body = JSON.parse(String(init.body));
+			observationId += 1;
+			const stored = { id: observationId, ...body };
+			observations.set(`${body.project}:${body.topic_key}`, stored);
+			observations.set(String(observationId), stored);
+			return Response.json({ id: observationId });
+		}
+		if (url.pathname.startsWith("/observations/")) {
+			return Response.json(observations.get(url.pathname.split("/").at(-1)));
+		}
+		throw new Error(`Unexpected Engram request: ${url}`);
+	};
+	try {
+		const { ctx, ready, tool } = await prepareProductionSpec({
+			approvedSpecReader: undefined,
+			authenticatedAuthority: {
+				current: async () => ({ actorId: "owner-felipe", role: "Owner", authorityRevision: "owner-policy-r3" }),
+			},
+			publicationManifest: {
+				create: (value) => ({ ...value, digest: digestCanonicalValue(value) }),
+				load: async () => manifest && { revision: String(manifestRevision), value: structuredClone(manifest) },
+				save: async (value, expectedRevision) => {
+					assert.equal(expectedRevision, manifest ? String(manifestRevision) : undefined);
+					manifest = structuredClone(value);
+					manifestRevision += 1;
+					return String(manifestRevision);
+				},
+			},
+		});
+		const approved = await tool.execute("approval", {
+			action: "approve_spec",
+			target: ready.details.spec.payload.target,
+			revision: ready.details.spec.payload.revision,
+			digest: ready.details.spec.digest,
+		}, undefined, undefined, ctx);
+		assert.equal(approved.details.status, "spec-approved");
+		const published = await tool.execute("publication", { action: "publish_spec" }, undefined, undefined, ctx);
+		assert.equal(published.details.status, "spec-published", JSON.stringify(published.details));
+		assert.equal(parent.description, ready.details.spec.payload.body);
+		assert.equal(manifest.stage, "verified");
+	} finally {
+		globalThis.fetch = originalFetch;
+		if (previousLinearKey === undefined) delete process.env.LINEAR_API_KEY;
+		else process.env.LINEAR_API_KEY = previousLinearKey;
+		if (previousLinearUrl === undefined) delete process.env.LINEAR_API_URL;
+		else process.env.LINEAR_API_URL = previousLinearUrl;
 	}
 });
 

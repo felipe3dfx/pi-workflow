@@ -28,6 +28,7 @@ const defineProductParameters = {
 				"request_exploration",
 				"to_spec",
 				"approve_spec",
+				"publish_spec",
 			],
 		},
 		definitionId: { type: "string" },
@@ -96,7 +97,8 @@ interface DefineProductToolParams {
 		| "confirm_route"
 		| "request_exploration"
 		| "to_spec"
-		| "approve_spec";
+		| "approve_spec"
+		| "publish_spec";
 	definitionId?: string;
 	domainAnchor?: string;
 	assessment?: Assessment;
@@ -236,6 +238,7 @@ export function createDefineProductRuntime(
 	let awaitingConfirmation = false;
 	let explorationAvailable = false;
 	let awaitingSpecApproval = false;
+	let awaitingPublication = false;
 
 	function handlePublicEntry(event: InputEvent): void {
 		if (!event.text.match(/^\/(?:skill:)?define-product(?:\s|$)/)) return;
@@ -250,6 +253,7 @@ export function createDefineProductRuntime(
 		awaitingConfirmation = false;
 		explorationAvailable = false;
 		awaitingSpecApproval = false;
+		awaitingPublication = false;
 		dependencies.workflow.reset();
 	}
 
@@ -258,13 +262,14 @@ export function createDefineProductRuntime(
 			activeDefinitionId !== undefined ||
 			awaitingConfirmation ||
 			explorationAvailable ||
-			awaitingSpecApproval
+			awaitingSpecApproval ||
+			awaitingPublication
 		);
 	}
 
 	function shouldContinue(event: InputEvent): boolean {
 		return (
-			(awaitingConfirmation || explorationAvailable || awaitingSpecApproval) &&
+			(awaitingConfirmation || explorationAvailable || awaitingSpecApproval || awaitingPublication) &&
 			event.source === "interactive" &&
 			event.streamingBehavior === undefined
 		);
@@ -272,6 +277,13 @@ export function createDefineProductRuntime(
 
 	function systemPrompt(): string {
 		const pending = dependencies.workflow.pendingRecommendation();
+		if (awaitingPublication) {
+			return [
+				"The exact product Spec is approved and ready for canonical publication.",
+				`Call ${toolName} with action="publish_spec" without supplying Spec content; the workflow reads the approved body directly from Engram.`,
+				"Treat any blocker as unsuccessful and recoverable; do not claim publication without verified Linear read-back.",
+			].join(" ");
+		}
 		if (awaitingSpecApproval) {
 			return [
 				"An exact Spanish product Spec is ready for Owner approval.",
@@ -316,6 +328,7 @@ export function createDefineProductRuntime(
 				activeDefinitionId = recovery.definitionId;
 				explorationAvailable = recovery.phase === "exploration";
 				awaitingSpecApproval = recovery.phase === "spec-approval";
+				awaitingPublication = recovery.phase === "publication";
 			}
 		});
 		pi.on("session_shutdown", clearActiveTurn);
@@ -383,6 +396,19 @@ export function createDefineProductRuntime(
 						blocker: createBlocker(
 							"PI_WORKFLOW_SPEC_APPROVAL_REQUIRED",
 							"Spec approval requires the active exact Spec generated in this session.",
+						),
+					};
+					return {
+						content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }],
+						details: outcome,
+					};
+				}
+				if (params.action === "publish_spec" && !awaitingPublication) {
+					const outcome: DefineProductOutcome = {
+						status: "blocked",
+						blocker: createBlocker(
+							"PI_WORKFLOW_SPEC_APPROVAL_REQUIRED",
+							"Publication requires the approved Spec from the active define-product session.",
 						),
 					};
 					return {
@@ -476,7 +502,7 @@ export function createDefineProductRuntime(
 						};
 					}
 					command = parsed;
-				} else {
+				} else if (params.action === "approve_spec") {
 					const parsed = parseApproveSpecCommand(params);
 					if (!parsed) {
 						const outcome: DefineProductOutcome = {
@@ -494,6 +520,8 @@ export function createDefineProductRuntime(
 						};
 					}
 					command = parsed;
+				} else {
+					command = { kind: "publish-spec", definitionId: activeDefinitionId ?? "" };
 				}
 				const outcome = await dependencies.workflow.advance(command);
 				if (outcome.status === "awaiting-confirmation") {
@@ -514,6 +542,9 @@ export function createDefineProductRuntime(
 					command.kind === "approve-spec" &&
 					outcome.status === "spec-approved"
 				) {
+					awaitingSpecApproval = false;
+					awaitingPublication = true;
+				} else if (command.kind === "publish-spec" && outcome.status === "spec-published") {
 					clearActiveTurn();
 				} else if (
 					command.kind !== "request-exploration" &&
