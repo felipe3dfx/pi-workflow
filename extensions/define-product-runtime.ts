@@ -7,6 +7,7 @@ import {
 	type ProductSpecInput,
 	type Route,
 	type RouteRecommendation,
+	type VerifiedArtifactRef,
 } from "./workflow-contracts.ts";
 import type {
 	DefineProductCommand,
@@ -16,9 +17,76 @@ import type {
 
 const toolName = "workflow_define_product";
 
-const defineProductParameters = {
+const artifactRefParameters = {
 	type: "object",
 	additionalProperties: false,
+	properties: {
+		kind: { type: "string", enum: ["engram"] },
+		project: { type: "string" },
+		topic: { type: "string" },
+		revision: { type: "string" },
+		schema: { type: "string", enum: ["approved-spec", "delivery-parent", "delivery-ticket-graph"] },
+		schemaVersion: { type: "number", enum: [1] },
+		digest: { type: "string" },
+	},
+	required: ["kind", "project", "topic", "revision", "schema", "schemaVersion", "digest"],
+} as const;
+
+const sharedActionProperties = {
+	definitionId: { type: "string" },
+	domainAnchor: { type: "string" },
+	assessment: {
+		type: "object",
+		additionalProperties: false,
+		properties: {
+			clarity: { type: "string", enum: ["clear", "unclear"] },
+			breadth: { type: "string", enum: ["narrow", "broad"] },
+			reasons: { type: "array", items: { type: "string" } },
+		},
+		required: ["clarity", "breadth", "reasons"],
+	},
+	recommendationRef: { type: "string" },
+	confirmationToken: { type: "string", minLength: 43, maxLength: 43 },
+	confirmedRoute: { type: "string", enum: ["wayfinder", "grilling"] },
+	researchQuestion: { type: "string" },
+	intent: { type: "string", enum: ["prototype", "design-alternative"] },
+	focus: { type: "string" },
+	target: {
+		type: "object",
+		additionalProperties: false,
+		properties: {
+			kind: { type: "string", enum: ["linear-parent-description"] },
+			teamId: { type: "string" },
+			title: { type: "string" },
+		},
+		required: ["kind", "teamId", "title"],
+	},
+	revision: { type: "string" },
+	problem: { type: "string" },
+	solution: { type: "string" },
+	userStories: { type: "array", items: { type: "string" } },
+	decisions: {
+		type: "array",
+		items: {
+			type: "object",
+			additionalProperties: false,
+			properties: {
+				id: { type: "string" },
+				status: { type: "string", enum: ["open", "resolved"] },
+				pertinent: { type: "boolean" },
+				text: { type: "string" },
+			},
+			required: ["id", "status", "pertinent", "text"],
+		},
+	},
+	tests: { type: "array", items: { type: "string" } },
+	outOfScope: { type: "array", items: { type: "string" } },
+	supportArtifactAliases: { type: "array", items: { type: "string" } },
+	digest: { type: "string" },
+} as const;
+
+const defineProductParameters = {
+	type: "object",
 	properties: {
 		action: {
 			type: "string",
@@ -29,66 +97,39 @@ const defineProductParameters = {
 				"to_spec",
 				"approve_spec",
 				"publish_spec",
+				"to_tickets",
+				"approve_tickets",
 			],
 		},
-		definitionId: { type: "string" },
-		domainAnchor: { type: "string" },
-		assessment: {
-			type: "object",
-			additionalProperties: false,
-			properties: {
-				clarity: { type: "string", enum: ["clear", "unclear"] },
-				breadth: { type: "string", enum: ["narrow", "broad"] },
-				reasons: { type: "array", items: { type: "string" } },
-			},
-			required: ["clarity", "breadth", "reasons"],
-		},
-		recommendationRef: { type: "string" },
-		confirmationToken: { type: "string", minLength: 43, maxLength: 43 },
-		confirmedRoute: { type: "string", enum: ["wayfinder", "grilling"] },
-		researchQuestion: { type: "string" },
-		intent: {
-			type: "string",
-			enum: ["prototype", "design-alternative"],
-		},
-		focus: { type: "string" },
-		target: {
-			type: "object",
-			additionalProperties: false,
-			properties: {
-				kind: { type: "string", enum: ["linear-parent-description"] },
-				teamId: { type: "string" },
-				title: { type: "string" },
-			},
-			required: ["kind", "teamId", "title"],
-		},
-		revision: { type: "string" },
-		problem: { type: "string" },
-		solution: { type: "string" },
-		userStories: { type: "array", items: { type: "string" } },
-		decisions: {
-			type: "array",
-			items: {
-				type: "object",
-				additionalProperties: false,
-				properties: {
-					id: { type: "string" },
-					status: { type: "string", enum: ["open", "resolved"] },
-					pertinent: { type: "boolean" },
-					text: { type: "string" },
-				},
-				required: ["id", "status", "pertinent", "text"],
-			},
-		},
-		tests: { type: "array", items: { type: "string" } },
-		outOfScope: { type: "array", items: { type: "string" } },
-		supportArtifactAliases: {
-			type: "array",
-			items: { type: "string" },
-		},
-		digest: { type: "string" },
+		...sharedActionProperties,
+		approvedSpecRef: artifactRefParameters,
+		parentRef: artifactRefParameters,
+		graphRef: artifactRefParameters,
 	},
 	required: ["action"],
+	oneOf: [
+		{
+			type: "object",
+			additionalProperties: false,
+			properties: {
+				action: { type: "string", enum: ["recommend_route", "confirm_route", "request_exploration", "to_spec", "approve_spec", "publish_spec"] },
+				...sharedActionProperties,
+			},
+			required: ["action"],
+		},
+		{
+			type: "object",
+			additionalProperties: false,
+			properties: { action: { const: "to_tickets" }, approvedSpecRef: artifactRefParameters, parentRef: artifactRefParameters },
+			required: ["action", "approvedSpecRef", "parentRef"],
+		},
+		{
+			type: "object",
+			additionalProperties: false,
+			properties: { action: { const: "approve_tickets" }, parentRef: artifactRefParameters, graphRef: artifactRefParameters, digest: { type: "string" } },
+			required: ["action", "parentRef", "graphRef", "digest"],
+		},
+	],
 } as const;
 
 interface DefineProductToolParams {
@@ -98,7 +139,9 @@ interface DefineProductToolParams {
 		| "request_exploration"
 		| "to_spec"
 		| "approve_spec"
-		| "publish_spec";
+		| "publish_spec"
+		| "to_tickets"
+		| "approve_tickets";
 	definitionId?: string;
 	domainAnchor?: string;
 	assessment?: Assessment;
@@ -118,10 +161,21 @@ interface DefineProductToolParams {
 	outOfScope?: ProductSpecInput["outOfScope"];
 	supportArtifactAliases?: readonly string[];
 	digest?: string;
+	approvedSpecRef?: unknown;
+	parentRef?: unknown;
+	graphRef?: unknown;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function hasExactKeys(value: unknown, keys: readonly string[]): boolean {
+	return (
+		isRecord(value) &&
+		Object.keys(value).length === keys.length &&
+		keys.every((key) => key in value)
+	);
 }
 
 function stringArray(value: unknown): readonly string[] | undefined {
@@ -220,6 +274,41 @@ function parseApproveSpecCommand(
 	};
 }
 
+function parseArtifactRef(value: unknown, schema: VerifiedArtifactRef["schema"]): VerifiedArtifactRef | undefined {
+	const keys = ["kind", "project", "topic", "revision", "schema", "schemaVersion", "digest"];
+	if (
+		!isRecord(value) ||
+		Object.keys(value).length !== keys.length ||
+		!keys.every((key) => key in value) ||
+		value.kind !== "engram" ||
+		value.schema !== schema ||
+		value.schemaVersion !== 1 ||
+		typeof value.project !== "string" ||
+		typeof value.topic !== "string" ||
+		typeof value.revision !== "string" ||
+		typeof value.digest !== "string"
+	) return undefined;
+	return value as unknown as VerifiedArtifactRef;
+}
+
+function parseToTicketsCommand(params: DefineProductToolParams, definitionId: string): DefineProductCommand | undefined {
+	if (!hasExactKeys(params, ["action", "approvedSpecRef", "parentRef"])) return undefined;
+	const approvedSpecRef = parseArtifactRef(params.approvedSpecRef, "approved-spec");
+	const parentRef = parseArtifactRef(params.parentRef, "delivery-parent");
+	return approvedSpecRef && parentRef
+		? { kind: "to-tickets", definitionId, approvedSpecRef, parentRef }
+		: undefined;
+}
+
+function parseApproveTicketsCommand(params: DefineProductToolParams, definitionId: string): DefineProductCommand | undefined {
+	if (!hasExactKeys(params, ["action", "parentRef", "graphRef", "digest"])) return undefined;
+	const parentRef = parseArtifactRef(params.parentRef, "delivery-parent");
+	const graphRef = parseArtifactRef(params.graphRef, "delivery-ticket-graph");
+	return parentRef && graphRef && typeof params.digest === "string"
+		? { kind: "approve-tickets", definitionId, parentRef, graphRef, digest: params.digest }
+		: undefined;
+}
+
 export interface DefineProductRuntimeDependencies {
 	workflow: {
 		advance(command: DefineProductCommand): Promise<DefineProductOutcome>;
@@ -239,6 +328,8 @@ export function createDefineProductRuntime(
 	let explorationAvailable = false;
 	let awaitingSpecApproval = false;
 	let awaitingPublication = false;
+	let awaitingTicketGeneration = false;
+	let awaitingTicketApproval = false;
 
 	function handlePublicEntry(event: InputEvent): void {
 		if (!event.text.match(/^\/(?:skill:)?define-product(?:\s|$)/)) return;
@@ -254,6 +345,8 @@ export function createDefineProductRuntime(
 		explorationAvailable = false;
 		awaitingSpecApproval = false;
 		awaitingPublication = false;
+		awaitingTicketGeneration = false;
+		awaitingTicketApproval = false;
 		dependencies.workflow.reset();
 	}
 
@@ -263,13 +356,15 @@ export function createDefineProductRuntime(
 			awaitingConfirmation ||
 			explorationAvailable ||
 			awaitingSpecApproval ||
-			awaitingPublication
+			awaitingPublication ||
+			awaitingTicketGeneration ||
+			awaitingTicketApproval
 		);
 	}
 
 	function shouldContinue(event: InputEvent): boolean {
 		return (
-			(awaitingConfirmation || explorationAvailable || awaitingSpecApproval || awaitingPublication) &&
+			(awaitingConfirmation || explorationAvailable || awaitingSpecApproval || awaitingPublication || awaitingTicketGeneration || awaitingTicketApproval) &&
 			event.source === "interactive" &&
 			event.streamingBehavior === undefined
 		);
@@ -277,6 +372,20 @@ export function createDefineProductRuntime(
 
 	function systemPrompt(): string {
 		const pending = dependencies.workflow.pendingRecommendation();
+		if (awaitingTicketApproval) {
+			return [
+				"The exact verified ticket graph is ready for Owner approval.",
+				`Call ${toolName} with action="approve_tickets" only with the exact parentRef, graphRef, and digest returned by the current graph.`,
+				"Do not publish tickets or reconstruct artifact references.",
+			].join(" ");
+		}
+		if (awaitingTicketGeneration) {
+			return [
+				"The exact published Delivery parent is ready for ticket-graph generation.",
+				`Call ${toolName} with action="to_tickets" only with the exact approvedSpecRef and parentRef returned by the workflow.`,
+				"Do not reconstruct references or publish tickets.",
+			].join(" ");
+		}
 		if (awaitingPublication) {
 			return [
 				"The exact product Spec is approved and ready for canonical publication.",
@@ -329,6 +438,7 @@ export function createDefineProductRuntime(
 				explorationAvailable = recovery.phase === "exploration";
 				awaitingSpecApproval = recovery.phase === "spec-approval";
 				awaitingPublication = recovery.phase === "publication";
+				awaitingTicketApproval = recovery.phase === "ticket-approval";
 			}
 		});
 		pi.on("session_shutdown", clearActiveTurn);
@@ -415,6 +525,14 @@ export function createDefineProductRuntime(
 						content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }],
 						details: outcome,
 					};
+				}
+				if (params.action === "to_tickets" && !awaitingTicketGeneration) {
+					const outcome: DefineProductOutcome = { status: "blocked", blocker: createBlocker("PI_WORKFLOW_TICKET_PARENT_STALE", "Ticket generation requires the current published Delivery parent.") };
+					return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
+				}
+				if (params.action === "approve_tickets" && !awaitingTicketApproval) {
+					const outcome: DefineProductOutcome = { status: "blocked", blocker: createBlocker("PI_WORKFLOW_TICKET_APPROVAL_MISMATCH", "Ticket approval requires the active exact verified ticket graph.") };
+					return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
 				}
 				if (params.action === "request_exploration" && !explorationAvailable) {
 					const outcome: DefineProductOutcome = {
@@ -520,7 +638,21 @@ export function createDefineProductRuntime(
 						};
 					}
 					command = parsed;
-				} else {
+					} else if (params.action === "to_tickets") {
+						const parsed = parseToTicketsCommand(params, activeDefinitionId ?? "");
+						if (!parsed) {
+							const outcome: DefineProductOutcome = { status: "blocked", blocker: createBlocker("PI_WORKFLOW_SPEC_ARTIFACT_INVALID", "Ticket generation requires exact approved-Spec and Delivery-parent references.") };
+							return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
+						}
+						command = parsed;
+					} else if (params.action === "approve_tickets") {
+						const parsed = parseApproveTicketsCommand(params, activeDefinitionId ?? "");
+						if (!parsed) {
+							const outcome: DefineProductOutcome = { status: "blocked", blocker: createBlocker("PI_WORKFLOW_TICKET_APPROVAL_MISMATCH", "Ticket approval requires exact parent and graph references.") };
+							return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
+						}
+						command = parsed;
+					} else {
 					command = { kind: "publish-spec", definitionId: activeDefinitionId ?? "" };
 				}
 				const outcome = await dependencies.workflow.advance(command);
@@ -544,12 +676,20 @@ export function createDefineProductRuntime(
 				) {
 					awaitingSpecApproval = false;
 					awaitingPublication = true;
-				} else if (command.kind === "publish-spec" && outcome.status === "spec-published") {
-					clearActiveTurn();
+					} else if (command.kind === "publish-spec" && outcome.status === "spec-published") {
+						awaitingPublication = false;
+						awaitingTicketGeneration = true;
+					} else if (command.kind === "to-tickets" && outcome.status === "tickets-ready") {
+						awaitingTicketGeneration = false;
+						awaitingTicketApproval = true;
+					} else if (command.kind === "approve-tickets" && outcome.status === "tickets-approved") {
+						clearActiveTurn();
 				} else if (
 					command.kind !== "request-exploration" &&
 					command.kind !== "to-spec" &&
-					command.kind !== "approve-spec"
+					command.kind !== "approve-spec" &&
+					command.kind !== "to-tickets" &&
+					command.kind !== "approve-tickets"
 				) {
 					clearActiveTurn();
 				}

@@ -316,7 +316,7 @@ test("session start restores publication eligibility without accepting LLM Spec 
 	const prompt = await handlers.get("before_agent_start")({ systemPrompt: "base" });
 	assert.match(prompt.systemPrompt, /publish_spec/);
 	const tool = tools.get("workflow_define_product");
-	assert.equal(tool.parameters.properties.action.enum.at(-1), "publish_spec");
+	assert.equal(tool.parameters.properties.action.enum.includes("publish_spec"), true);
 
 	const outcome = await tool.execute("publish", {
 		action: "publish_spec",
@@ -491,6 +491,8 @@ test("production define-product seam derives approval identity from trusted auth
 		"to_spec",
 		"approve_spec",
 		"publish_spec",
+		"to_tickets",
+		"approve_tickets",
 	]);
 
 	assert.equal("actor" in tool.parameters.properties, false);
@@ -671,4 +673,141 @@ test("define-product system prompt is scoped to the active guarded turn", async 
 		systemPrompt: "base",
 	});
 	assert.match(explorationPrompt.systemPrompt, /request_exploration/);
+});
+
+function ticketRef(schema, digest) {
+	return {
+		kind: "engram",
+		project: "pi-workflow",
+		topic: `workflow/define-product/definition-1/${schema}`,
+		revision: `${schema}-r1`,
+		schema,
+		schemaVersion: 1,
+		digest,
+	};
+}
+
+function registerTicketRuntime(recovery) {
+	const handlers = new Map();
+	const tools = new Map();
+	const commands = [];
+	const runtime = createDefineProductRuntime({
+		workflow: {
+			pendingRecommendation: () => undefined,
+			reset() {},
+			restoreRecovery: async () => recovery,
+			advance: async (command) => {
+				commands.push(command);
+				return command.kind === "publish-spec"
+					? { status: "spec-published", parent: { id: "parent-1" }, parentRef: ticketRef("delivery-parent", "parent-digest") }
+					: command.kind === "to-tickets"
+					? { status: "tickets-ready", graph: { digest: "graph-digest" }, graphRef: ticketRef("delivery-ticket-graph", "graph-digest") }
+					: { status: "tickets-approved", graph: { digest: command.digest }, graphRef: command.graphRef, approval: { digest: "approval-digest" } };
+			},
+		},
+		createDefinitionId: () => "definition-1",
+	});
+	runtime.register({
+		on: (event, handler) => handlers.set(event, handler),
+		registerTool: (tool) => tools.set(tool.name, tool),
+	});
+	return { handlers, tool: tools.get("workflow_define_product"), commands, runtime };
+}
+
+test("define-product exposes exact ticket actions and translates only exact artifact refs", async () => {
+	const { tool } = registerTicketRuntime();
+	const approvedSpecRef = ticketRef("approved-spec", "spec-digest");
+	const parentRef = ticketRef("delivery-parent", "parent-digest");
+	const graphRef = ticketRef("delivery-ticket-graph", "graph-digest");
+	const toTicketsSchema = tool.parameters.oneOf.find(
+		(schema) => schema.properties.action.const === "to_tickets",
+	);
+	const approveTicketsSchema = tool.parameters.oneOf.find(
+		(schema) => schema.properties.action.const === "approve_tickets",
+	);
+	assert.deepEqual(Object.keys(toTicketsSchema.properties).sort(), [
+		"action", "approvedSpecRef", "parentRef",
+	]);
+	assert.deepEqual(Object.keys(approveTicketsSchema.properties).sort(), [
+		"action", "digest", "graphRef", "parentRef",
+	]);
+	assert.equal(toTicketsSchema.additionalProperties, false);
+	assert.equal(approveTicketsSchema.additionalProperties, false);
+
+	const inactive = await tool.execute("inactive", {
+		action: "to_tickets", approvedSpecRef, parentRef,
+	});
+	assert.equal(inactive.details.blocker.code, "PI_WORKFLOW_TICKET_PARENT_STALE");
+
+	const recovered = registerTicketRuntime({ definitionId: "definition-1", phase: "publication" });
+	await recovered.handlers.get("session_start")({ type: "session_start" });
+	await recovered.tool.execute("publish", { action: "publish_spec" });
+	const graphGenerationPrompt = await recovered.handlers.get("before_agent_start")({ systemPrompt: "base" });
+	assert.match(graphGenerationPrompt.systemPrompt, /action="to_tickets"/);
+	assert.equal(recovered.tool.parameters.oneOf.some((schema) => schema.properties.action.const === "to_tickets"), true);
+	assert.equal(recovered.runtime.shouldContinue({ text: "generate tickets", source: "interactive" }), true);
+	const malformed = await recovered.tool.execute("malformed", {
+		action: "to_tickets", approvedSpecRef: { ...approvedSpecRef, schema: "delivery-parent" }, parentRef,
+	});
+	assert.equal(malformed.details.blocker.code, "PI_WORKFLOW_SPEC_ARTIFACT_INVALID");
+	const expanded = await recovered.tool.execute("expanded", {
+		action: "to_tickets", approvedSpecRef: { ...approvedSpecRef, actor: "attacker" }, parentRef,
+	});
+	assert.equal(expanded.details.blocker.code, "PI_WORKFLOW_SPEC_ARTIFACT_INVALID");
+	const unrelated = await recovered.tool.execute("unrelated", {
+		action: "to_tickets", approvedSpecRef, parentRef, graphRef,
+	});
+	assert.equal(unrelated.details.blocker.code, "PI_WORKFLOW_SPEC_ARTIFACT_INVALID");
+	const unknown = await recovered.tool.execute("unknown", {
+		action: "to_tickets", approvedSpecRef, parentRef, extra: "attacker",
+	});
+	assert.equal(unknown.details.blocker.code, "PI_WORKFLOW_SPEC_ARTIFACT_INVALID");
+	assert.equal(recovered.commands.length, 1);
+
+	const ready = await recovered.tool.execute("tickets", {
+		action: "to_tickets", approvedSpecRef, parentRef,
+	});
+	assert.equal(ready.details.status, "tickets-ready");
+	assert.deepEqual(recovered.commands[1], {
+		kind: "to-tickets", definitionId: "definition-1", approvedSpecRef, parentRef,
+	});
+	const approved = await recovered.tool.execute("approve", {
+		action: "approve_tickets", parentRef, graphRef, digest: "graph-digest",
+	});
+	assert.equal(approved.details.status, "tickets-approved");
+	assert.deepEqual(recovered.commands[2], {
+		kind: "approve-tickets", definitionId: "definition-1", parentRef, graphRef, digest: "graph-digest",
+	});
+});
+
+test("session start resumes ticket approval and clears terminal state", async () => {
+	const recovered = registerTicketRuntime({ definitionId: "definition-1", phase: "ticket-approval" });
+	const parentRef = ticketRef("delivery-parent", "parent-digest");
+	const graphRef = ticketRef("delivery-ticket-graph", "graph-digest");
+	await recovered.handlers.get("session_start")({ type: "session_start" });
+	const prompt = await recovered.handlers.get("before_agent_start")({ systemPrompt: "base" });
+	assert.match(prompt.systemPrompt, /approve_tickets/);
+	assert.equal(recovered.runtime.shouldContinue({ text: "approve", source: "interactive" }), true);
+	const unrelated = await recovered.tool.execute("unrelated", {
+		action: "approve_tickets", parentRef, graphRef, digest: "graph-digest", approvedSpecRef: ticketRef("approved-spec", "spec-digest"),
+	});
+	assert.equal(unrelated.details.blocker.code, "PI_WORKFLOW_TICKET_APPROVAL_MISMATCH");
+	const unknown = await recovered.tool.execute("unknown", {
+		action: "approve_tickets", parentRef, graphRef, digest: "graph-digest", extra: "attacker",
+	});
+	assert.equal(unknown.details.blocker.code, "PI_WORKFLOW_TICKET_APPROVAL_MISMATCH");
+	assert.deepEqual(recovered.commands, []);
+
+	const approved = await recovered.tool.execute("approve", {
+		action: "approve_tickets", parentRef, graphRef, digest: "graph-digest",
+	});
+	assert.equal(approved.details.status, "tickets-approved");
+	assert.deepEqual(recovered.commands, [{
+		kind: "approve-tickets", definitionId: "definition-1", parentRef, graphRef, digest: "graph-digest",
+	}]);
+	assert.equal(recovered.runtime.shouldContinue({ text: "approve", source: "interactive" }), false);
+	assert.equal(
+		await recovered.handlers.get("before_agent_start")({ systemPrompt: "base" }),
+		undefined,
+	);
 });
