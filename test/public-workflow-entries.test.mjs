@@ -73,6 +73,7 @@ extensions/define-product-runtime.ts
 extensions/define-product-workflow.ts
 extensions/delegation-checkpoints.ts
 extensions/delivery-parent-publication.ts
+extensions/delivery-parent-snapshot-store.ts
 extensions/delivery-ticket-graph.ts
 extensions/engram-approved-spec-reader.ts
 extensions/exploration-recovery.ts
@@ -91,6 +92,7 @@ extensions/runtime-private-state.ts
 extensions/skill-resolver.ts
 extensions/spec-approval-recovery.ts
 extensions/subagent-launcher.ts
+extensions/ticket-approval-recovery.ts
 extensions/ticket-graph-recovery.ts
 extensions/workflow-artifacts.ts
 extensions/workflow-contracts.ts

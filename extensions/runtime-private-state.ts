@@ -71,6 +71,7 @@ export function createRuntimePrivateStatePersistence(
 	});
 
 	return {
+		capabilities: { atomicCompareAndSwap: true },
 		async readFile(path) {
 			try {
 				return await readFile(path, "utf8");

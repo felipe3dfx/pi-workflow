@@ -113,13 +113,17 @@ function validateTicket(value: unknown, coverage: SpecCoverageIndex): Ticket {
 	}
 	if (!candidate.deliveryBindings.length) fail("PI_WORKFLOW_TICKET_NOT_VERTICAL");
 	const contexts = new Set<string>();
+	const bindings = new Set<string>();
 	for (const binding of candidate.deliveryBindings) {
 		if (!record(binding) || !text(binding.storyId) || !text(binding.acceptanceCriterionId) || !text(binding.contextId)) fail("PI_WORKFLOW_TICKET_REFERENCE_INVALID");
 		const story = coverage.stories.get(binding.storyId);
-		if (!story || story.contextId !== binding.contextId || !story.acceptanceCriteria.has(binding.acceptanceCriterionId)) fail("PI_WORKFLOW_TICKET_REFERENCE_INVALID");
+		const key = `${binding.storyId}:${binding.acceptanceCriterionId}`;
+		if (!story || story.contextId !== binding.contextId || !story.acceptanceCriteria.has(binding.acceptanceCriterionId) || bindings.has(key)) fail("PI_WORKFLOW_TICKET_REFERENCE_INVALID");
+		bindings.add(key);
 		contexts.add(binding.contextId);
 	}
 	if (contexts.size !== 1) fail("PI_WORKFLOW_TICKET_CONTEXT_SPAN");
+	if (candidate.deliveryBindings.some((binding) => !refs.some((ref) => ref.kind === "story" && ref.id === binding.storyId))) fail("PI_WORKFLOW_TICKET_REFERENCE_INVALID");
 	return { stableKey: candidate.stableKey, title: candidate.title, outcome: candidate.outcome, acceptanceCriteria: [...candidate.acceptanceCriteria], estimate: { points: candidate.estimate.points, rationale: candidate.estimate.rationale }, blockers: [...candidate.blockers].sort(), refs: refs.sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right))), deliveryBindings: candidate.deliveryBindings.map((binding) => ({ storyId: binding.storyId, acceptanceCriterionId: binding.acceptanceCriterionId, contextId: binding.contextId })).sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right))) };
 }
 
@@ -134,6 +138,12 @@ function validateGraph(tickets: Ticket[], coverage: SpecCoverageIndex): void {
 	for (const key of keys) walk(key);
 	const refs = new Set(tickets.flatMap((ticket) => ticket.refs.map((ref) => `${ref.kind}:${ref.id}`)));
 	if ([...coverage.stories.keys()].some((id) => !refs.has(`story:${id}`)) || [...coverage.decisions].some((id) => !refs.has(`decision:${id}`)) || [...coverage.tests].some((id) => !refs.has(`test:${id}`))) fail("PI_WORKFLOW_TICKET_REFERENCE_INVALID");
+	for (const [storyId, story] of coverage.stories) {
+		if (!refs.has(`story:${storyId}`)) continue;
+		const bindings = tickets.flatMap((ticket) => ticket.deliveryBindings.filter((binding) => binding.storyId === storyId));
+		const criteria = bindings.map((binding) => binding.acceptanceCriterionId);
+		if (criteria.length !== story.acceptanceCriteria.size || new Set(criteria).size !== criteria.length || criteria.some((criterion) => !story.acceptanceCriteria.has(criterion))) fail("PI_WORKFLOW_TICKET_REFERENCE_INVALID");
+	}
 }
 
 export function createDeliveryTicketGraph(input: { parent: unknown; coverage: SpecCoverageIndex; language: unknown; tickets: unknown[] }): DeliveryTicketGraph {

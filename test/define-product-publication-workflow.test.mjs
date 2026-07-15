@@ -6,6 +6,10 @@ import {
 	createProductSpecApprovalEnvelope,
 	createProductSpecEnvelope,
 } from "../extensions/product-spec.ts";
+import {
+	createDeliveryTicketGraph,
+	createSpecCoverageIndex,
+} from "../extensions/delivery-ticket-graph.ts";
 import { digestCanonicalValue } from "../extensions/workflow-contracts.ts";
 
 function approvedSpec() {
@@ -135,6 +139,11 @@ test("publication clears pending approval only after verified success", async ()
 		},
 		publication: {
 			approvedSpecReader: { read: async () => structuredClone(approved) },
+			parentSnapshots: {
+				persist: async () => ({
+					kind: "engram", project: "pi-workflow", topic: "workflow/define-product/definition-1/published-parent", revision: "artifact-r1", schema: "delivery-parent", schemaVersion: 1, digest: "parent-digest",
+				}),
+			},
 			authenticatedAuthority: {
 				current: async () => approved.approval.payload.actor,
 			},
@@ -153,4 +162,164 @@ test("publication clears pending approval only after verified success", async ()
 	});
 	assert.equal(outcome.status, "spec-published");
 	assert.equal(clears, 1);
+});
+
+test("to-tickets and approval bind only exact verified references and recover compatible state", async () => {
+	const approved = approvedSpec();
+	const parent = { id: "parent-1", teamId: "team-1", revision: "parent-r1", specDigest: approved.spec.digest };
+	const approvedSpecRef = { kind: "engram", project: "pi-workflow", topic: "workflow/define-product/definition-1/approved-spec", revision: "engram-r1", schema: "approved-spec", schemaVersion: 1, digest: approved.spec.digest };
+	const parentRef = { kind: "engram", project: "pi-workflow", topic: "workflow/define-product/definition-1/published-parent", revision: "parent-artifact-r1", schema: "delivery-parent", schemaVersion: 1, digest: "parent-snapshot-digest" };
+	const graph = createDeliveryTicketGraph({
+		parent,
+		coverage: createSpecCoverageIndex({ stories: [{ id: "story-1", contextId: "context-1", acceptanceCriteria: ["ac-1"] }], decisions: ["decision-1"], tests: ["test-1"] }),
+		language: "es",
+		tickets: [{ stableKey: "TICKET-1", title: "Entregar resultado", outcome: "Resultado verificable", acceptanceCriteria: ["Criterio uno", "Criterio dos", "Criterio tres", "Criterio cuatro"], estimate: { points: 1, rationale: "Trabajo acotado" }, blockers: [], refs: [{ kind: "story", id: "story-1" }, { kind: "decision", id: "decision-1" }, { kind: "test", id: "test-1" }], deliveryBindings: [{ storyId: "story-1", acceptanceCriterionId: "ac-1", contextId: "context-1" }] }],
+	});
+	const graphRef = { kind: "engram", project: "pi-workflow", topic: "workflow/define-product/definition-1/to-tickets/request-1", revision: "graph-r1", schema: "delivery-ticket-graph", schemaVersion: 1, digest: graph.digest };
+	let calls = 0;
+	let recovered;
+	const saved = [];
+	const state = { load: async () => recovered, save: async (value) => { recovered = structuredClone(value); }, clear: async () => { recovered = undefined; } };
+	const subject = workflow({
+		delegate: { delegate: async () => { calls += 1; return { status: "completed", executiveSummary: "ready", artifacts: [graphRef], nextRecommended: { kind: "confirmed-route", route: "wayfinder" }, risks: [], launchProvenance: {} }; } },
+		approvedSpecStore: { read: async () => ({ ...approved, sourceRevision: approvedSpecRef.revision }) },
+		readPublishedParent: async (ref) => ref === parentRef ? parent : undefined,
+		recoverTicketGraph: async (ref) => ref === graphRef ? graph : undefined,
+		approvedTicketGraphs: { save: async (_definitionId, value) => { saved.push(value); return graphRef; } },
+		ticketApprovalRecoveryStore: state,
+		authenticatedAuthority: { current: async () => approved.approval.payload.actor },
+	});
+	for (const command of [
+		{ kind: "to-tickets", definitionId: "definition-1", approvedSpecRef: { ...approvedSpecRef, digest: "stale" }, parentRef },
+		{ kind: "to-tickets", definitionId: "definition-1", approvedSpecRef, parentRef: { ...parentRef, revision: "stale" } },
+	]) assert.equal((await subject.advance(command)).status, "blocked");
+	const ready = await subject.advance({ kind: "to-tickets", definitionId: "definition-1", approvedSpecRef, parentRef });
+	assert.equal(ready.status, "tickets-ready", ready.blocker?.message);
+	assert.equal(calls, 1);
+	assert.equal(saved[0].digest, graph.digest);
+	const approvedOutcome = await subject.advance({ kind: "approve-tickets", definitionId: "definition-1", parentRef, graphRef, digest: graph.digest });
+	assert.equal(approvedOutcome.status, "tickets-approved");
+	assert.equal(approvedOutcome.approval.payload.graphDigest, graph.digest);
+	assert.equal(recovered, undefined);
+});
+
+test("ticket approval fails closed for stale inputs, delegation and recovery drift", async () => {
+	const approved = approvedSpec();
+	const parent = { id: "parent-1", teamId: "team-1", revision: "parent-r1", specDigest: approved.spec.digest };
+	const approvedSpecRef = { kind: "engram", project: "pi-workflow", topic: "workflow/define-product/definition-1/approved-spec", revision: "engram-r1", schema: "approved-spec", schemaVersion: 1, digest: approved.spec.digest };
+	const parentRef = { kind: "engram", project: "pi-workflow", topic: "workflow/define-product/definition-1/published-parent", revision: "parent-r1", schema: "delivery-parent", schemaVersion: 1, digest: "parent-digest" };
+	const graph = createDeliveryTicketGraph({
+		parent,
+		coverage: createSpecCoverageIndex({ stories: [{ id: "story-1", contextId: "context-1", acceptanceCriteria: ["ac-1"] }], decisions: ["decision-1"], tests: ["test-1"] }),
+		language: "es",
+		tickets: [{ stableKey: "TICKET-1", title: "Entregar resultado", outcome: "Resultado verificable", acceptanceCriteria: ["Criterio uno", "Criterio dos", "Criterio tres", "Criterio cuatro"], estimate: { points: 1, rationale: "Trabajo acotado" }, blockers: [], refs: [{ kind: "story", id: "story-1" }, { kind: "decision", id: "decision-1" }, { kind: "test", id: "test-1" }], deliveryBindings: [{ storyId: "story-1", acceptanceCriterionId: "ac-1", contextId: "context-1" }] }],
+	});
+	const graphRef = { kind: "engram", project: "pi-workflow", topic: "workflow/define-product/definition-1/approved-ticket-graph", revision: "graph-r1", schema: "delivery-ticket-graph", schemaVersion: 1, digest: graph.digest };
+	const recoveryState = {
+		definitionId: "definition-1", approvedSpecRef, parentRef, graphRef, digest: graph.digest,
+		authority: { actorId: "owner-1", role: "Owner", authorityRevision: "authority-r1" },
+	};
+	let recovered = structuredClone(recoveryState);
+	let clears = 0;
+	let actor = recoveryState.authority;
+	let sourceRevision = approvedSpecRef.revision;
+	const subject = workflow({
+		delegate: { delegate: async () => ({ status: "blocked", blocker: { code: "PI_WORKFLOW_DELEGATION_INTERRUPTED", message: "interrupted" }, artifacts: [], nextRecommended: { kind: "owner-action" }, risks: [] }) },
+		approvedSpecStore: { read: async () => ({ ...approved, sourceRevision }) },
+		readPublishedParent: async (ref) => ref.revision === parentRef.revision ? parent : undefined,
+		recoverTicketGraph: async (ref) => ref.digest === graph.digest ? graph : undefined,
+		approvedTicketGraphs: { save: async () => graphRef },
+		ticketApprovalRecoveryStore: { load: async () => structuredClone(recovered), save: async (value) => { recovered = structuredClone(value); }, clear: async () => { clears += 1; recovered = undefined; } },
+		authenticatedAuthority: { current: async () => actor },
+	});
+
+	for (const command of [
+		{ kind: "to-tickets", definitionId: "definition-1", approvedSpecRef: { ...approvedSpecRef, revision: "missing" }, parentRef },
+		{ kind: "to-tickets", definitionId: "definition-1", approvedSpecRef, parentRef: { ...parentRef, digest: "stale" } },
+		{ kind: "to-tickets", definitionId: "definition-1", approvedSpecRef: { ...approvedSpecRef, project: "other" }, parentRef },
+	]) {
+		const outcome = await subject.advance(command);
+		assert.equal(outcome.status, "blocked");
+	}
+	assert.equal((await subject.advance({ kind: "to-tickets", definitionId: "definition-1", approvedSpecRef, parentRef })).blocker.code, "PI_WORKFLOW_DELEGATION_INTERRUPTED");
+	const persistenceMismatch = workflow({
+		delegate: { delegate: async () => ({ status: "completed", executiveSummary: "ready", artifacts: [graphRef], nextRecommended: { kind: "confirmed-route", route: "wayfinder" }, risks: [], launchProvenance: {} }) },
+		approvedSpecStore: { read: async () => ({ ...approved, sourceRevision: approvedSpecRef.revision }) },
+		readPublishedParent: async () => parent,
+		recoverTicketGraph: async () => graph,
+		approvedTicketGraphs: { save: async () => ({ ...graphRef, digest: "wrong-digest" }) },
+		authenticatedAuthority: { current: async () => recoveryState.authority },
+	});
+	const persistenceOutcome = await persistenceMismatch.advance({ kind: "to-tickets", definitionId: "definition-1", approvedSpecRef, parentRef });
+	assert.equal(persistenceOutcome.status, "blocked");
+	assert.equal(persistenceOutcome.blocker.code, "PI_WORKFLOW_ARTIFACT_READBACK_MISMATCH");
+
+	assert.deepEqual(await subject.restoreRecovery(), { definitionId: "definition-1", phase: "ticket-approval" });
+	for (const mismatch of [
+		{ graphRef: { ...graphRef, digest: "changed" } },
+		{ parentRef: { ...parentRef, revision: "changed" } },
+		{ digest: "changed" },
+	]) {
+		const outcome = await subject.advance({ kind: "approve-tickets", definitionId: "definition-1", parentRef, graphRef, digest: graph.digest, ...mismatch });
+		assert.equal(outcome.status, "blocked");
+	}
+	actor = { actorId: "developer-1", role: "Developer", authorityRevision: "authority-r1" };
+	assert.equal((await subject.advance({ kind: "approve-tickets", definitionId: "definition-1", parentRef, graphRef, digest: graph.digest })).status, "blocked");
+	actor = { ...recoveryState.authority, authorityRevision: "authority-r2" };
+	assert.equal((await subject.advance({ kind: "approve-tickets", definitionId: "definition-1", parentRef, graphRef, digest: graph.digest })).status, "blocked");
+	sourceRevision = "stale-spec";
+	assert.equal((await subject.advance({ kind: "approve-tickets", definitionId: "definition-1", parentRef, graphRef, digest: graph.digest })).status, "blocked");
+	sourceRevision = approvedSpecRef.revision;
+
+	recovered = { ...recoveryState, parentRef: { ...parentRef, project: "other" } };
+	assert.equal(await subject.restoreRecovery(), undefined);
+	assert.equal(clears, 0);
+
+	recovered = structuredClone(recoveryState);
+	actor = recoveryState.authority;
+	assert.deepEqual(await subject.restoreRecovery(), { definitionId: "definition-1", phase: "ticket-approval" });
+	const approvedOutcome = await subject.advance({ kind: "approve-tickets", definitionId: "definition-1", parentRef, graphRef, digest: graph.digest });
+	assert.equal(approvedOutcome.status, "tickets-approved");
+	assert.equal(clears, 1);
+});
+
+test("to-tickets recovers an exact persisted graph after approval recovery persistence fails", async () => {
+	const approved = approvedSpec();
+	const parent = { id: "parent-1", teamId: "team-1", revision: "parent-r1", specDigest: approved.spec.digest };
+	const approvedSpecRef = { kind: "engram", project: "pi-workflow", topic: "workflow/define-product/definition-1/approved-spec", revision: "engram-r1", schema: "approved-spec", schemaVersion: 1, digest: approved.spec.digest };
+	const parentRef = { kind: "engram", project: "pi-workflow", topic: "workflow/define-product/definition-1/published-parent", revision: "parent-r1", schema: "delivery-parent", schemaVersion: 1, digest: "parent-digest" };
+	const graph = createDeliveryTicketGraph({
+		parent,
+		coverage: createSpecCoverageIndex({ stories: [{ id: "story-1", contextId: "context-1", acceptanceCriteria: ["ac-1"] }], decisions: ["decision-1"], tests: ["test-1"] }),
+		language: "es",
+		tickets: [{ stableKey: "TICKET-1", title: "Entregar resultado", outcome: "Resultado verificable", acceptanceCriteria: ["Criterio uno", "Criterio dos", "Criterio tres", "Criterio cuatro"], estimate: { points: 1, rationale: "Trabajo acotado" }, blockers: [], refs: [{ kind: "story", id: "story-1" }, { kind: "decision", id: "decision-1" }, { kind: "test", id: "test-1" }], deliveryBindings: [{ storyId: "story-1", acceptanceCriterionId: "ac-1", contextId: "context-1" }] }],
+	});
+	const graphRef = { kind: "engram", project: "pi-workflow", topic: `workflow/define-product/definition-1/approved-ticket-graph/${graph.digest}`, revision: "graph-r1", schema: "delivery-ticket-graph", schemaVersion: 1, digest: graph.digest };
+	let recoverySaves = 0;
+	let persisted;
+	const subject = workflow({
+		delegate: { delegate: async () => ({ status: "completed", executiveSummary: "ready", artifacts: [graphRef], nextRecommended: { kind: "confirmed-route", route: "wayfinder" }, risks: [], launchProvenance: {} }) },
+		approvedSpecStore: { read: async () => ({ ...approved, sourceRevision: approvedSpecRef.revision }) },
+		readPublishedParent: async () => parent,
+		recoverTicketGraph: async (ref) => ref.digest === graph.digest ? graph : undefined,
+		approvedTicketGraphs: { save: async () => graphRef },
+		ticketApprovalRecoveryStore: {
+			load: async () => persisted,
+			save: async (state) => {
+				recoverySaves += 1;
+				if (recoverySaves === 1) throw new Error("interrupted after graph persistence");
+				persisted = structuredClone(state);
+			},
+			clear: async () => { persisted = undefined; },
+		},
+		authenticatedAuthority: { current: async () => approved.approval.payload.actor },
+	});
+
+	const first = await subject.advance({ kind: "to-tickets", definitionId: "definition-1", approvedSpecRef, parentRef });
+	assert.equal(first.status, "blocked");
+	assert.equal(first.blocker.code, "PI_WORKFLOW_RECOVERY_FAILED");
+	const retry = await subject.advance({ kind: "to-tickets", definitionId: "definition-1", approvedSpecRef, parentRef });
+	assert.equal(retry.status, "tickets-ready", retry.blocker?.message);
+	assert.deepEqual(retry.graphRef, graphRef);
+	assert.equal(persisted.digest, graph.digest);
 });

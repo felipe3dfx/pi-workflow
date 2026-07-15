@@ -55,7 +55,7 @@ test("approved ticket graphs are immutable, CAS-protected, and recover only afte
 	const first = await approved.save(graph());
 	assert.equal(first.schema, "delivery-ticket-graph");
 	assert.equal((await recoverApprovedTicketGraph(backend, first)).digest, graph().digest);
-	await assert.rejects(() => approved.save(graph()), /immutable/i);
+	assert.deepEqual(await approved.save(graph()), first);
 	await assert.rejects(
 		() => createApprovedTicketGraphStore({ store: store(), project: "pi-workflow", topic: "workflow/conflict" }).save(graph(), "r0"),
 		/compare-and-swap conflict/i,
@@ -93,4 +93,24 @@ test("approved ticket graph persistence and recovery fail closed for corrupt byt
 		() => recoverApprovedTicketGraph(missingRecoveryCapabilities, { kind: "engram", project: "pi-workflow", topic: "workflow/missing-capabilities", revision: "r1", schema: "delivery-ticket-graph", schemaVersion: 1, digest: graph().digest }),
 		/atomic compare-and-swap/i,
 	);
+});
+
+test("approved ticket graphs use immutable digest-keyed snapshots and recover an identical save", async () => {
+	const backend = store();
+	const approved = createApprovedTicketGraphStore({ store: backend, project: "pi-workflow", topic: "workflow/tickets" });
+	const original = graph();
+	const first = await approved.save(original);
+	const repeated = await approved.save(original);
+	assert.deepEqual(repeated, first);
+	assert.equal(first.topic, `workflow/tickets/${original.digest}`);
+
+	const changed = createDeliveryTicketGraph({
+		parent: { ...original.payload.parent, revision: "r2" },
+		coverage: createSpecCoverageIndex(original.payload.coverage),
+		language: "es",
+		tickets: original.payload.tickets,
+	});
+	const renewed = await approved.save(changed);
+	assert.notEqual(renewed.topic, first.topic);
+	assert.equal(renewed.topic, `workflow/tickets/${changed.digest}`);
 });

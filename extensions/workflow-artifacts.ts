@@ -312,16 +312,44 @@ function validateDeliveryParentRead(
 			}) ||
 		![payload.id, payload.teamId, payload.revision, payload.specDigest].every(
 			(value) => typeof value === "string" && value.trim().length > 0,
-		) ||
-		payload.revision !== ref.revision
+		)
 	) {
 		throw new Error("The Delivery parent identity, revision, or digest is invalid.");
 	}
 }
 
+function parseDeliveryParentSnapshot(content: string): DeliveryParentSnapshot {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(content);
+	} catch {
+		throw new Error("The Delivery parent snapshot contains invalid JSON.");
+	}
+	if (!isRecord(parsed) || !isRecord(parsed.payload)) {
+		throw new Error("The Delivery parent snapshot is invalid.");
+	}
+	const snapshot = parsed as unknown as DeliveryParentSnapshot;
+	const payload = snapshot.payload;
+	if (
+		snapshot.schema !== "delivery-parent" ||
+		snapshot.schemaVersion !== 1 ||
+		snapshot.digest !== digestCanonicalValue({
+			schema: snapshot.schema,
+			schemaVersion: snapshot.schemaVersion,
+			payload,
+		}) ||
+		![payload.id, payload.teamId, payload.revision, payload.specDigest].every(
+			(value) => typeof value === "string" && value.trim().length > 0,
+		)
+	) {
+		throw new Error("The Delivery parent identity, revision, or digest is invalid.");
+	}
+	return snapshot;
+}
+
 function validateAuthorizedRefSchema(
 	ref: VerifiedArtifactRef,
-	expectedSchema: "product-spec" | "delivery-parent",
+	expectedSchema: "approved-spec" | "product-spec" | "delivery-parent",
 ): void {
 	if (ref.schema !== expectedSchema || ref.schemaVersion !== 1) {
 		throw new Error("The authorized artifact schema, version, or digest is invalid.");
@@ -329,8 +357,8 @@ function validateAuthorizedRefSchema(
 }
 
 function validateAuthorizedArtifactRead(ref: VerifiedArtifactRef, content: string): void {
-	if (ref.schema === "product-spec") {
-		validateAuthorizedRefSchema(ref, "product-spec");
+	if (ref.schema === "approved-spec" || ref.schema === "product-spec") {
+		validateAuthorizedRefSchema(ref, ref.schema);
 	} else if (ref.schema === "delivery-parent") {
 		validateAuthorizedRefSchema(ref, "delivery-parent");
 	}
@@ -340,7 +368,7 @@ function validateAuthorizedArtifactRead(ref: VerifiedArtifactRef, content: strin
 	} catch {
 		throw new Error("The authorized artifact contains invalid JSON.");
 	}
-	if (ref.schema === "product-spec") {
+	if (ref.schema === "approved-spec" || ref.schema === "product-spec") {
 		validateApprovedProductSpecRead(ref, parsed);
 		return;
 	}
@@ -505,6 +533,27 @@ export function createWorkflowArtifactInterface(store: WorkflowArtifactStore) {
 						canonical.digest,
 						expectedRevision,
 					);
+				},
+				async writeDeliveryParentSnapshot(
+					snapshot: DeliveryParentSnapshot,
+					expectedRevision?: string,
+				): Promise<VerifiedArtifactRef> {
+					if (grant.strategy !== "snapshot" || grant.schema !== "delivery-parent") {
+						throw new Error("Artifact grant does not allow Delivery parent snapshot writes.");
+					}
+					const canonical = parseDeliveryParentSnapshot(canonicalJson(snapshot));
+					const content = `${canonicalJson(canonical)}\n`;
+					const current = await store.readCurrent(grant.project.name, grant.topic);
+					if (current) {
+						const recorded = parseDeliveryParentSnapshot(current.content);
+						if (canonicalJson(recorded) !== canonicalJson(canonical)) {
+							throw new Error("Delivery parent snapshot is immutable and already recorded.");
+						}
+						const ref = artifactRef(grant, current.revision, recorded.digest);
+						verifiedArtifacts.add(canonicalJson(ref));
+						return ref;
+					}
+					return persist(content, canonical.digest, expectedRevision);
 				},
 				async writeSnapshot(
 				envelope: ResearchEvidenceEnvelope,

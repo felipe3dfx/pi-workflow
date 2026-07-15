@@ -327,7 +327,6 @@ export function createWorkflowDelegate(
 		const compatibleIntent =
 			stored?.checkpoint.intentFingerprint === currentIntentFingerprint &&
 			stored.checkpoint.state === "interrupted";
-		const carriedVerifiedArtifacts = stored?.checkpoint.verifiedArtifacts ?? [];
 		let affectedPaths = [...intent.affectedPaths];
 		let attempt: 1 | 2 = 1;
 		let expectedCheckpointRevision = stored?.revision;
@@ -337,12 +336,14 @@ export function createWorkflowDelegate(
 			const prepared = await prepare(intent, affectedPaths);
 			if (!prepared.ok) return prepared.result;
 			lastPreparedLaunch = prepared.value;
-			resumeSessionId =
-				attempt === 1 &&
+			const compatibleLaunch =
 				compatibleIntent &&
-				stored.checkpoint.launchFingerprint === prepared.value.fingerprint
-					? stored.checkpoint.sessionId
-					: undefined;
+				stored.checkpoint.launchFingerprint === prepared.value.fingerprint;
+			const carriedVerifiedArtifacts = compatibleLaunch
+				? stored?.checkpoint.verifiedArtifacts ?? []
+				: [];
+			resumeSessionId =
+				attempt === 1 && compatibleLaunch ? stored.checkpoint.sessionId : undefined;
 			const sessionId =
 				resumeSessionId ??
 				dependencies.createSessionId?.() ??

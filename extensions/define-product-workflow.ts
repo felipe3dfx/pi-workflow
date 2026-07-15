@@ -18,6 +18,7 @@ import {
 	type Route,
 	type RouteRecommendation,
 	type SubagentResult,
+	type VerifiedArtifactRef,
 	type WorkflowIntent,
 } from "./workflow-contracts.ts";
 import {
@@ -25,6 +26,11 @@ import {
 	type DeliveryParentPublicationDependencies,
 } from "./delivery-parent-publication.ts";
 import type { LinearDeliveryParent } from "./linear-delivery-parent-gateway.ts";
+import {
+	createTicketGraphApproval,
+	type DeliveryTicketGraph,
+	type TicketGraphApproval,
+} from "./delivery-ticket-graph.ts";
 
 /** Interactive confirmation tokens expire after five minutes. */
 const routeConfirmationTokenTtlMs = 5 * 60 * 1_000;
@@ -64,6 +70,19 @@ export type DefineProductCommand =
 	| {
 			kind: "publish-spec";
 			definitionId: string;
+	  }
+	| {
+			kind: "to-tickets";
+			definitionId: string;
+			approvedSpecRef: VerifiedArtifactRef;
+			parentRef: VerifiedArtifactRef;
+	  }
+	| {
+			kind: "approve-tickets";
+			definitionId: string;
+			parentRef: VerifiedArtifactRef;
+			graphRef: VerifiedArtifactRef;
+			digest: string;
 	  };
 
 export type DefineProductOutcome =
@@ -91,7 +110,10 @@ export type DefineProductOutcome =
 	| {
 			status: "spec-published";
 			parent: LinearDeliveryParent;
-	  };
+			parentRef: VerifiedArtifactRef;
+	  }
+	| { status: "tickets-ready"; graph: DeliveryTicketGraph; graphRef: VerifiedArtifactRef }
+	| { status: "tickets-approved"; graph: DeliveryTicketGraph; graphRef: VerifiedArtifactRef; approval: TicketGraphApproval };
 
 export interface ExplorationRecoveryState {
 	definitionId: string;
@@ -119,9 +141,24 @@ export interface SpecApprovalRecoveryStore {
 	clear(): Promise<void>;
 }
 
+export interface TicketApprovalRecoveryState {
+	definitionId: string;
+	approvedSpecRef: VerifiedArtifactRef;
+	parentRef: VerifiedArtifactRef;
+	graphRef: VerifiedArtifactRef;
+	digest: string;
+	authority: OwnerAuthority;
+}
+
+export interface TicketApprovalRecoveryStore {
+	load(): Promise<TicketApprovalRecoveryState | undefined>;
+	save(state: TicketApprovalRecoveryState): Promise<void>;
+	clear(): Promise<void>;
+}
+
 export type DefineProductRecovery =
 	| { definitionId: string; phase: "exploration" }
-	| { definitionId: string; phase: "spec-approval" | "publication" };
+	| { definitionId: string; phase: "spec-approval" | "publication" | "ticket-approval" };
 
 export interface DefineProductWorkflowDependencies {
 	delegate: {
@@ -134,11 +171,19 @@ export interface DefineProductWorkflowDependencies {
 	now?: () => number;
 	explorationRecoveryStore?: ExplorationRecoveryStore;
 	specApprovalRecoveryStore?: SpecApprovalRecoveryStore;
+	ticketApprovalRecoveryStore?: TicketApprovalRecoveryStore;
 	authenticatedAuthority?: {
 		current(): Promise<AuthenticatedAuthority>;
 	};
 	approvedSpecStore?: DeliveryParentPublicationDependencies["approvedSpecReader"];
 	publication?: DeliveryParentPublicationDependencies;
+	readPublishedParent?(ref: VerifiedArtifactRef): Promise<
+		{ id: string; teamId: string; revision: string; specDigest: string } | undefined
+	>;
+	recoverTicketGraph?(ref: VerifiedArtifactRef): Promise<DeliveryTicketGraph | undefined>;
+	approvedTicketGraphs?: {
+		save(definitionId: string, graph: DeliveryTicketGraph): Promise<VerifiedArtifactRef>;
+	};
 }
 
 function isConfirmationToken(value: string): boolean {
@@ -203,7 +248,8 @@ export function createDefineProductWorkflow(
 					ref: SubagentResult["artifacts"][number];
 				}[];
 		  }
-		| undefined;
+			| undefined;
+	let pendingTicketApproval: TicketApprovalRecoveryState | undefined;
 
 	function clearRecommendation(): void {
 		activeRecommendation = undefined;
@@ -214,7 +260,8 @@ export function createDefineProductWorkflow(
 		clearRecommendation();
 		activeSpec = undefined;
 		explorationContext = undefined;
-		recoverableExploration = undefined;
+			recoverableExploration = undefined;
+			pendingTicketApproval = undefined;
 	}
 
 	async function restoreRecovery(): Promise<DefineProductRecovery | undefined> {
@@ -246,8 +293,43 @@ export function createDefineProductWorkflow(
 					phase: "spec-approval",
 				};
 			}
+			const pendingTickets = await dependencies.ticketApprovalRecoveryStore?.load();
+			if (
+				pendingTickets?.definitionId &&
+				pendingTickets.approvedSpecRef.schema === "approved-spec" &&
+				pendingTickets.approvedSpecRef.schemaVersion === 1 &&
+				pendingTickets.approvedSpecRef.project === dependencies.project.name &&
+				pendingTickets.parentRef.schema === "delivery-parent" &&
+				pendingTickets.parentRef.schemaVersion === 1 &&
+				pendingTickets.parentRef.project === dependencies.project.name &&
+				pendingTickets.graphRef.schema === "delivery-ticket-graph" &&
+				pendingTickets.graphRef.schemaVersion === 1 &&
+				pendingTickets.graphRef.project === dependencies.project.name &&
+				pendingTickets.graphRef.digest === pendingTickets.digest &&
+				pendingTickets.authority.role === "Owner" &&
+				pendingTickets.authority.actorId.trim() === pendingTickets.authority.actorId &&
+				pendingTickets.authority.authorityRevision.trim() === pendingTickets.authority.authorityRevision
+			) {
+				const [approved, parent, graph, actor] = await Promise.all([
+					dependencies.approvedSpecStore?.read(pendingTickets.definitionId),
+					dependencies.readPublishedParent?.(pendingTickets.parentRef),
+					dependencies.recoverTicketGraph?.(pendingTickets.graphRef),
+					dependencies.authenticatedAuthority?.current(),
+				]);
+				if (
+					approved?.sourceRevision === pendingTickets.approvedSpecRef.revision &&
+					approved.spec.digest === pendingTickets.approvedSpecRef.digest &&
+					parent?.specDigest === approved.spec.digest &&
+					graph?.digest === pendingTickets.digest &&
+					canonicalJson(graph.payload.parent) === canonicalJson(parent) &&
+					canonicalJson(actor) === canonicalJson(pendingTickets.authority)
+				) {
+					pendingTicketApproval = immutableSnapshot(pendingTickets);
+					return { definitionId: pendingTickets.definitionId, phase: "ticket-approval" };
+				}
+				return undefined;
+			}
 		} catch {
-			await dependencies.specApprovalRecoveryStore?.clear();
 			return undefined;
 		}
 		const stored = await dependencies.explorationRecoveryStore?.load();
@@ -293,6 +375,57 @@ export function createDefineProductWorkflow(
 				activeSpec = undefined;
 			}
 			return outcome;
+		}
+		if (command.kind === "to-tickets") {
+			const refInvalid =
+				command.approvedSpecRef.schema !== "approved-spec" ||
+				command.approvedSpecRef.schemaVersion !== 1 ||
+				command.parentRef.schema !== "delivery-parent" ||
+				command.parentRef.schemaVersion !== 1 ||
+				command.approvedSpecRef.project !== dependencies.project.name ||
+				command.parentRef.project !== dependencies.project.name;
+			if (refInvalid) return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_SPEC_ARTIFACT_INVALID", "Ticket generation requires exact approved-Spec and Delivery-parent references.") };
+			try {
+				const approved = await dependencies.approvedSpecStore?.read(command.definitionId);
+				const parent = await dependencies.readPublishedParent?.(command.parentRef);
+				if (!approved || !parent || approved.sourceRevision !== command.approvedSpecRef.revision || approved.spec.digest !== command.approvedSpecRef.digest || parent.specDigest !== approved.spec.digest) {
+					return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_TICKET_PARENT_STALE", "Ticket generation requires the current approved Spec and verified Delivery parent.") };
+				}
+				const result = await dependencies.delegate.delegate({ kind: "to-tickets", requestId: dependencies.createRequestId(), definitionId: command.definitionId, recommendationDigest: approved.spec.digest, route: "wayfinder", domainAnchorDigest: approved.spec.digest, project: dependencies.project, targetTopic: `workflow/define-product/${command.definitionId}/to-tickets`, requiredSkills: [{ name: "to-tickets" }], affectedPaths: dependencies.affectedPaths ?? ["skills/define-product/SKILL.md"], approvedSpec: command.approvedSpecRef, deliveryParent: command.parentRef });
+				if (result.status === "blocked") return { status: "blocked", blocker: result.blocker };
+				const delegatedRef = result.artifacts.find((artifact) => artifact.schema === "delivery-ticket-graph");
+				const graph = delegatedRef && await dependencies.recoverTicketGraph?.(delegatedRef);
+				if (!graph || graph.digest !== delegatedRef.digest || canonicalJson(graph.payload.parent) !== canonicalJson(parent)) return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_ARTIFACT_READBACK_MISMATCH", "The delegated ticket graph could not be verified against its exact parent.") };
+				const graphRef = await dependencies.approvedTicketGraphs?.save(command.definitionId, graph);
+				if (graphRef?.schema !== "delivery-ticket-graph" || graphRef.digest !== graph.digest) return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_ARTIFACT_READBACK_MISMATCH", "The verified ticket graph could not be persisted and read back.") };
+				const actor = await dependencies.authenticatedAuthority?.current();
+				if (
+					actor?.role !== "Owner" ||
+					!actor.actorId.trim() ||
+					actor.actorId !== actor.actorId.trim() ||
+					!actor.authorityRevision.trim() ||
+					actor.authorityRevision !== actor.authorityRevision.trim()
+				) return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_TICKET_APPROVAL_MISMATCH", "Ticket approval requires current exact Owner authority.") };
+				pendingTicketApproval = { definitionId: command.definitionId, approvedSpecRef: command.approvedSpecRef, parentRef: command.parentRef, graphRef, digest: graph.digest, authority: { actorId: actor.actorId, role: "Owner", authorityRevision: actor.authorityRevision } };
+				await dependencies.ticketApprovalRecoveryStore?.save(pendingTicketApproval);
+				return { status: "tickets-ready", graph: cloneSnapshot(graph), graphRef };
+			} catch (error) {
+				return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_RECOVERY_FAILED", error instanceof Error ? error.message : "Ticket graph generation could not be recovered safely.") };
+			}
+		}
+		if (command.kind === "approve-tickets") {
+			const pending = pendingTicketApproval;
+			if (!pending || pending.definitionId !== command.definitionId || canonicalJson(pending.parentRef) !== canonicalJson(command.parentRef) || canonicalJson(pending.graphRef) !== canonicalJson(command.graphRef) || pending.digest !== command.digest) return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_TICKET_APPROVAL_MISMATCH", "Ticket approval must match the exact verified parent and graph.") };
+			try {
+				const [actor, approved, parent, graph] = await Promise.all([dependencies.authenticatedAuthority?.current(), dependencies.approvedSpecStore?.read(command.definitionId), dependencies.readPublishedParent?.(command.parentRef), dependencies.recoverTicketGraph?.(command.graphRef)]);
+				if (!actor || canonicalJson(actor) !== canonicalJson(pending.authority) || approved?.sourceRevision !== pending.approvedSpecRef.revision || approved.spec.digest !== pending.approvedSpecRef.digest || !parent || parent.specDigest !== approved.spec.digest || !graph || graph.digest !== command.digest || canonicalJson(graph.payload.parent) !== canonicalJson(parent)) return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_TICKET_APPROVAL_MISMATCH", "Ticket approval requires the current Owner and exact verified graph.") };
+				const approval = createTicketGraphApproval({ graph, actor: { actorId: actor.actorId, role: "Owner", authorityRevision: actor.authorityRevision } });
+				await dependencies.ticketApprovalRecoveryStore?.clear();
+				pendingTicketApproval = undefined;
+				return { status: "tickets-approved", graph: cloneSnapshot(graph), graphRef: command.graphRef, approval: cloneSnapshot(approval) };
+			} catch {
+				return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_RECOVERY_FAILED", "Ticket approval recovery is incompatible.") };
+			}
 		}
 		if (command.kind === "approve-spec") {
 			const actor = await dependencies.authenticatedAuthority?.current();

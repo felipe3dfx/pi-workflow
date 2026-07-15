@@ -20,6 +20,7 @@ export interface DelegationCheckpointStore {
 }
 
 export interface DelegationCheckpointPersistence {
+	capabilities?: { atomicCompareAndSwap?: boolean };
 	readFile(path: string): Promise<string | undefined>;
 	withMutation<T>(operationId: string, run: () => Promise<T>): Promise<T>;
 	writeFileAtomic(
