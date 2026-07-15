@@ -351,7 +351,7 @@ test("pending Spec approval restores exactly and corrupt recovery fails closed",
 		digest: ready.spec.digest,
 	});
 	assert.equal(approved.status, "spec-approved");
-	assert.equal(durableState, undefined);
+	assert.equal(durableState.spec.digest, ready.spec.digest);
 
 	const corruptions = [
 		(spec) => {

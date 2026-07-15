@@ -19,8 +19,14 @@ type Outcome =
 	| { status: "spec-published"; parent: LinearDeliveryParent }
 	| { status: "blocked"; blocker: { code: string; message: string } };
 
-interface Dependencies {
-	approvedSpecReader: { read(id: string): Promise<ApprovedProductSpecRead> };
+export interface DeliveryParentPublicationDependencies {
+	approvedSpecReader: {
+		read(id: string): Promise<ApprovedProductSpecRead>;
+		save?(
+			id: string,
+			artifact: Omit<ApprovedProductSpecRead, "sourceRevision">,
+		): Promise<ApprovedProductSpecRead>;
+	};
 	authenticatedAuthority: { current(): Promise<AuthenticatedAuthority> };
 	state: ReturnType<typeof createPublicationStateMachine>;
 	linear: {
@@ -96,7 +102,7 @@ function approval(
 }
 
 export async function publishApprovedSpec(
-	dependencies: Dependencies,
+	dependencies: DeliveryParentPublicationDependencies,
 	definitionId: string,
 ): Promise<Outcome> {
 	let claim: PublicationClaim | undefined;
