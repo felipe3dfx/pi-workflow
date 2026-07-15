@@ -138,3 +138,72 @@ export function createRuntimeEngramArtifactStore(
 		},
 	};
 }
+
+export function createRuntimeEngramApprovedSpecStore(
+	options: RuntimeEngramArtifactStoreOptions = {},
+) {
+	const url = options.url ?? defaultEngramUrl;
+	return {
+		async readCurrent(project: string, topic: string) {
+			const query = new URLSearchParams({
+				project,
+				topic_key: topic,
+				limit: "1",
+				order: "desc",
+			});
+			const payload = await engramFetch(url, `/observations?${query}`);
+			const candidates = Array.isArray(payload)
+				? payload
+				: payload &&
+						typeof payload === "object" &&
+						Array.isArray((payload as { observations?: unknown }).observations)
+					? (payload as { observations: unknown[] }).observations
+					: [];
+			const current = candidates.find((candidate) => {
+				if (!candidate || typeof candidate !== "object") return false;
+				const observation = candidate as {
+					project?: unknown;
+					topic_key?: unknown;
+				};
+				return observation.project === project && observation.topic_key === topic;
+			});
+			const revision = extractRevision(current);
+			const content = extractObservationContent(current);
+			return revision && content !== undefined ? { revision, content } : undefined;
+		},
+		async write(
+			project: string,
+			topic: string,
+			content: string,
+			expectedRevision?: string,
+		) {
+			if (expectedRevision !== undefined) {
+				throw Object.assign(
+					new Error("Approved Spec observations are immutable create-only artifacts."),
+					{ code: "PI_WORKFLOW_ENGRAM_CONDITIONAL_WRITE_UNSUPPORTED" },
+				);
+			}
+			const payload = await engramFetch(url, "/observations", {
+				method: "POST",
+				body: {
+					project,
+					topic_key: topic,
+					content,
+					type: "architecture",
+					session_id: options.sessionId?.(),
+					directory: options.directory?.(),
+				},
+			});
+			const revision = extractRevision(payload);
+			if (!revision) throw new Error("Engram did not return the approved Spec revision.");
+			return { revision };
+		},
+		async readRevision(_project: string, _topic: string, revision: string) {
+			const payload = await engramFetch(
+				url,
+				`/observations/${encodeURIComponent(revision)}`,
+			);
+			return extractObservationContent(payload);
+		},
+	};
+}
