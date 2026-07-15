@@ -1,0 +1,59 @@
+{
+  "graphDigest": "54def7be746e5e66e48eabb15e438ec184f6f54e574fa39811a52ffd9faad71c",
+  "approvalDigest": "bff68be374d2236d320e25ad0cae025afb9018f8620c04823adc77eb06f791e1",
+  "parent": {
+    "id": "ILA-2296",
+    "teamId": "team-ilao",
+    "revision": "parent-revision-7",
+    "specDigest": "spec-digest-7"
+  },
+  "language": "es",
+  "tickets": [
+    {
+      "stableKey": "TICKET-2",
+      "title": "Validar la aprobación del grafo",
+      "outcome": "El Owner puede aprobar un grafo exacto antes de publicar.",
+      "acceptanceCriteria": [
+        "La aprobación conserva el digest exacto del grafo.",
+        "Un cambio del parent invalida la aprobación.",
+        "La autoridad del Owner coincide con la revisión vigente.",
+        "La validación rechaza contenido no seguro."
+      ],
+      "estimate": { "points": 3, "rationale": "La validación reutiliza contratos existentes." },
+      "blockers": ["TICKET-1"],
+      "refs": [
+        { "kind": "story", "id": "US-2" },
+        { "kind": "decision", "id": "D-1" },
+        { "kind": "test", "id": "TEST-1" }
+      ],
+      "deliveryBindings": [
+        { "storyId": "US-2", "acceptanceCriterionId": "US-2-AC-1", "contextId": "delivery-context" }
+      ]
+    },
+    {
+      "stableKey": "TICKET-1",
+      "title": "Generar el grafo de tickets",
+      "outcome": "El Owner recibe tickets verticales listos para revisar.",
+      "acceptanceCriteria": [
+        "Cada ticket tiene una clave estable.",
+        "Cada ticket declara criterios verificables.",
+        "Cada ticket conserva sus referencias del Spec.",
+        "El grafo mantiene un solo contexto de entrega."
+      ],
+      "estimate": { "points": 5, "rationale": "El contrato exige validación determinista." },
+      "blockers": [],
+      "refs": [{ "kind": "story", "id": "US-1" }],
+      "deliveryBindings": [
+        { "storyId": "US-1", "acceptanceCriterionId": "US-1-AC-1", "contextId": "delivery-context" }
+      ]
+    }
+  ],
+  "coverage": {
+    "stories": [
+      { "id": "US-1", "contextId": "delivery-context", "acceptanceCriteria": ["US-1-AC-1"] },
+      { "id": "US-2", "contextId": "delivery-context", "acceptanceCriteria": ["US-2-AC-1"] }
+    ],
+    "decisions": ["D-1"],
+    "tests": ["TEST-1"]
+  }
+}
