@@ -95,6 +95,17 @@ function harness(overrides = {}) {
 	const dependencies = {
 		approvedSpecReader: { read: async () => structuredClone(approved) },
 		authenticatedAuthority: { current: async () => structuredClone(actor) },
+		parentSnapshots: {
+			persist: async () => ({
+				kind: "engram",
+				project: "pi-workflow",
+				topic: "workflow/define-product/definition-1/published-parent",
+				revision: "artifact-r1",
+				schema: "delivery-parent",
+				schemaVersion: 1,
+				digest: "parent-digest",
+			}),
+		},
 		state: createPublicationStateMachine({
 			store,
 			createReservationId: () => crypto.randomUUID(),
@@ -121,6 +132,37 @@ test("publishes once with exact Backlog identity and verifies read-back", async 
 	assert.equal(first.status, "spec-published");
 	assert.deepEqual(retry, first);
 	assert.equal(h.creates, 1);
+});
+
+test("persists and returns the verified immutable Delivery-parent ref after publication", async () => {
+	const persisted = [];
+	const parentRef = {
+		kind: "engram",
+		project: "pi-workflow",
+		topic: "workflow/define-product/definition-1/published-parent",
+		revision: "artifact-r1",
+		schema: "delivery-parent",
+		schemaVersion: 1,
+		digest: "parent-digest",
+	};
+	const h = harness({
+		dependencies: {
+			parentSnapshots: {
+				persist: async (input) => {
+					persisted.push(input);
+					return parentRef;
+				},
+			},
+		},
+	});
+	const outcome = await publishApprovedSpec(h.dependencies, "definition-1");
+	assert.equal(outcome.status, "spec-published");
+	assert.deepEqual(outcome.parentRef, parentRef);
+	assert.deepEqual(persisted, [{
+		definitionId: "definition-1",
+		parent: h.issue(),
+		specDigest: (await h.dependencies.approvedSpecReader.read("definition-1")).spec.digest,
+	}]);
 });
 
 test("revalidates approved Spec after awaited preflight and search before create", async () => {

@@ -11,6 +11,9 @@ import { createEngramApprovedSpecReader } from "../extensions/engram-approved-sp
 import { createInMemoryDelegationCheckpointStore } from "../extensions/delegation-checkpoints.ts";
 import * as defaultDefineProductModule from "../extensions/default-define-product.ts";
 import { digestCanonicalValue } from "../extensions/workflow-contracts.ts";
+import { createDeliveryTicketGraph, createSpecCoverageIndex } from "../extensions/delivery-ticket-graph.ts";
+import { createProductSpecApprovalEnvelope, createProductSpecEnvelope } from "../extensions/product-spec.ts";
+import { createWorkflowArtifactInterface } from "../extensions/workflow-artifacts.ts";
 
 const {
 	createDefaultDefineProductWorkflow,
@@ -870,6 +873,58 @@ test("default packaged entry approves with configured Owner authority and ignore
 			process.env.PI_WORKFLOW_OWNER_AUTHORITY_REVISION = previousRevision;
 		}
 	}
+});
+
+test("default define-product to-tickets delegates exact refs, persists the graph, and returns tickets-ready", async () => {
+	const artifactStore = createAtomicArtifactStore();
+	const spec = createProductSpecEnvelope({
+		definitionId: "definition-1",
+		target: { kind: "linear-parent-description", teamId: "team-1", title: "Canonical delivery" },
+		revision: "spec-r1",
+		problem: "El equipo puede publicar una definición distinta de la que revisó el Owner.",
+		solution: "El flujo conserva y publica el Spec español exacto aprobado por el Owner.",
+		userStories: ["Como Owner, quiero aprobar el cuerpo exacto antes de publicarlo.", "Como Developer, quiero recibir una definición estable y verificable."],
+		decisions: [{ id: "decision-1", status: "resolved", pertinent: true, text: "La descripción del Delivery parent conserva el Spec canónico." }],
+		tests: ["Verificar que la descripción publicada coincide con el Spec aprobado."], outOfScope: ["Crear los Delivery tickets derivados."], supportArtifacts: [],
+	});
+	const approvedSnapshot = { spec, approval: createProductSpecApprovalEnvelope({ spec, actor: { actorId: "owner-1", role: "Owner", authorityRevision: "authority-r1" } }) };
+	const approvedTopic = "workflow/define-product/definition-1/approved-spec";
+	const { revision: approvedRevision } = await artifactStore.write(
+		"pi-workflow", approvedTopic, `${JSON.stringify(approvedSnapshot)}\n`, undefined,
+	);
+	const approved = { ...approvedSnapshot, sourceRevision: approvedRevision };
+	const parent = { id: "parent-1", teamId: "team-1", revision: "spec-r1", specDigest: spec.digest };
+	const parentUnsigned = { schema: "delivery-parent", schemaVersion: 1, payload: parent };
+	const parentRef = await createWorkflowArtifactInterface(artifactStore).openSession({
+		project: { name: "pi-workflow", root: process.cwd() }, topic: "workflow/define-product/definition-1/published-parent", schema: "delivery-parent", schemaVersion: 1, strategy: "snapshot", aliases: [],
+	}).writeDeliveryParentSnapshot({ ...parentUnsigned, digest: digestCanonicalValue(parentUnsigned) });
+	const approvedSpecRef = { kind: "engram", project: "pi-workflow", topic: approvedTopic, revision: approvedRevision, schema: "approved-spec", schemaVersion: 1, digest: spec.digest };
+	const launches = [];
+	const workflow = createDefaultDefineProductWorkflow({}, () => executionContext(), {
+		artifactStore,
+		checkpointStore: createInMemoryDelegationCheckpointStore(),
+		approvedSpecReader: { read: async () => structuredClone(approved) },
+		authenticatedAuthority: { current: async () => approved.approval.payload.actor },
+		ticketGraphExecutor: async (input) => {
+			launches.push(input);
+			assert.match(await input.readArtifact("approved-spec"), /product-spec/);
+			assert.match(await input.readArtifact("delivery-parent"), /parent-1/);
+			const graph = createDeliveryTicketGraph({
+				parent, language: "es",
+				coverage: createSpecCoverageIndex({ stories: [{ id: "story-1", contextId: "context-1", acceptanceCriteria: ["ac-1"] }], decisions: ["decision-1"], tests: ["test-1"] }),
+				tickets: [{ stableKey: "TICKET-1", title: "Entregar alcance", outcome: "Resultado verificable", acceptanceCriteria: ["Criterio uno", "Criterio dos", "Criterio tres", "Criterio cuatro"], estimate: { points: 1, rationale: "Trabajo acotado" }, blockers: [], refs: [{ kind: "story", id: "story-1" }, { kind: "decision", id: "decision-1" }, { kind: "test", id: "test-1" }], deliveryBindings: [{ storyId: "story-1", acceptanceCriterionId: "ac-1", contextId: "context-1" }] }],
+			});
+			await input.writeArtifact(graph);
+			return { assistantText: "Ticket graph ready." };
+		},
+	});
+	const outcome = await workflow.advance({ kind: "to-tickets", definitionId: "definition-1", approvedSpecRef, parentRef });
+	assert.equal(outcome.status, "tickets-ready", outcome.blocker?.message);
+	assert.equal(launches.length, 1);
+	assert.equal(launches[0].allowedTools.at(-1), "workflow_artifact_session");
+	assert.deepEqual(outcome.graph.payload.parent, parent);
+	const persisted = await artifactStore.readRevision("pi-workflow", outcome.graphRef.topic, outcome.graphRef.revision);
+	assert.equal(JSON.parse(persisted).digest, outcome.graph.digest);
 });
 
 test("default runtime publishes the Engram-approved body through configured Linear", async () => {

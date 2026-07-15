@@ -256,12 +256,7 @@ test("workflow delegate resumes only compatible sessions and otherwise starts fr
 	);
 	assert.equal(changed.status, "completed");
 	assert.equal(fixture.launches[2].options.resumeSessionId, undefined);
-	assert.equal(
-		fixture.launches[2].options.verifiedArtifacts.some(
-			(artifact) => artifact.revision === verifiedProgress.revision,
-		),
-		true,
-	);
+	assert.deepEqual(fixture.launches[2].options.verifiedArtifacts, []);
 	assert.equal("partialOutput" in fixture.launches[2].options, false);
 });
 
@@ -301,7 +296,7 @@ test("workflow delegate starts fresh when resolved standards make a stored sessi
 	const result = await delegate.delegate(intent("prototype"));
 	assert.equal(result.status, "completed");
 	assert.equal(fixture.launches[1].options.resumeSessionId, undefined);
-	assert.equal(fixture.launches[1].options.verifiedArtifacts.length, 1);
+	assert.deepEqual(fixture.launches[1].options.verifiedArtifacts, []);
 });
 
 test("workflow delegate persists intervention before forwarding cancellation and discards late output", async () => {

@@ -30,6 +30,7 @@ import {
 	createDefineProductWorkflow,
 	type ExplorationRecoveryStore,
 	type SpecApprovalRecoveryStore,
+	type TicketApprovalRecoveryStore,
 } from "./define-product-workflow.ts";
 import { createProjectStandardsResolver } from "./project-standards-resolver.ts";
 import { createSkillResolver } from "./skill-resolver.ts";
@@ -41,12 +42,17 @@ import { createRuntimeEngramApprovedSpecStore, createRuntimeEngramArtifactStore 
 import { createRuntimePrivateStatePersistence } from "./runtime-private-state.ts";
 import { createDurableExplorationRecoveryStore } from "./exploration-recovery.ts";
 import { createDurableSpecApprovalRecoveryStore } from "./spec-approval-recovery.ts";
+import { createDurableTicketApprovalRecoveryStore } from "./ticket-approval-recovery.ts";
 import { createDurablePublicationManifest } from "./publication-manifest.ts";
 import type { DeliveryParentPublicationDependencies } from "./delivery-parent-publication.ts";
 import { createEngramApprovedSpecReader } from "./engram-approved-spec-reader.ts";
 import { createLinearDeliveryParentGateway } from "./linear-delivery-parent-gateway.ts";
 import { createRuntimeLinearDeliveryParentTransport } from "./runtime-linear-delivery-parent.ts";
 import { createPublicationStateMachine } from "./publication-state-machine.ts";
+import { createDeliveryParentSnapshotStore, readDeliveryParentSnapshot } from "./delivery-parent-snapshot-store.ts";
+import { createApprovedTicketGraphStore } from "./approved-ticket-graph-store.ts";
+import { recoverApprovedTicketGraph } from "./ticket-graph-recovery.ts";
+import type { DeliveryTicketGraph } from "./delivery-ticket-graph.ts";
 import {
 	createResearchEvidenceEnvelope,
 	createBlocker,
@@ -71,6 +77,7 @@ const packageDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const assetCatalogPath = join(packageDirectory, "assets", "agent-assets.json");
 const researchAssetPath = join(packageDirectory, "assets", "agents", "research.md");
 const prototypeAssetPath = join(packageDirectory, "assets", "agents", "prototype.md");
+const ticketGraphAssetPath = join(packageDirectory, "assets", "agents", "to-tickets.md");
 const publicSkillNames = new Set([
 	"define-product",
 	"deliver-ticket",
@@ -98,6 +105,7 @@ const allowedExplorationTools = [
 	"bash",
 	workflowArtifactToolName,
 ];
+const allowedTicketGraphTools = ["read", "grep", "find", "ls", workflowArtifactToolName];
 
 const artifactToolParameters = {
 	type: "object",
@@ -171,6 +179,17 @@ const explorationArtifactToolParameters = {
 	required: ["action"],
 } as const;
 
+const ticketGraphArtifactToolParameters = {
+	type: "object",
+	additionalProperties: false,
+	properties: {
+		action: { type: "string", enum: ["read_alias", "write_graph"] },
+		alias: { type: "string" },
+		graph: {},
+	},
+	required: ["action"],
+} as const;
+
 interface AgentAssetMetadata {
 	name: string;
 	version: number;
@@ -232,11 +251,28 @@ interface ExplorationExecutor {
 	intervene?(sessionId: string, intervention: Intervention): Promise<void>;
 }
 
+interface TicketGraphExecutorInput {
+	cwd: string;
+	launchOptions: LaunchOptions;
+	model: NonNullable<ExtensionContext["model"]>;
+	thinkingLevel: "medium";
+	prompt: string;
+	systemPrompt: string;
+	allowedTools: readonly string[];
+	readArtifact(alias: string): Promise<string>;
+	writeArtifact(graph: DeliveryTicketGraph): Promise<VerifiedArtifactRef>;
+}
+
+interface TicketGraphExecutor {
+	execute(input: TicketGraphExecutorInput): Promise<{ assistantText: string }>;
+}
+
 export interface DefaultDefineProductRuntimeOptions {
 	artifactStore?: WorkflowArtifactStore;
 	checkpointStore?: DelegationCheckpointStore;
 	explorationRecoveryStore?: ExplorationRecoveryStore;
 	specApprovalRecoveryStore?: SpecApprovalRecoveryStore;
+	ticketApprovalRecoveryStore?: TicketApprovalRecoveryStore;
 	authenticatedAuthority?: {
 		current(): Promise<AuthenticatedAuthority>;
 	};
@@ -245,6 +281,7 @@ export interface DefaultDefineProductRuntimeOptions {
 	publicationManifest?: Parameters<typeof createPublicationStateMachine>[0]["store"];
 	researchExecutor?: ResearchExecutor | ResearchExecutor["execute"];
 	explorationExecutor?: ExplorationExecutor | ExplorationExecutor["execute"];
+	ticketGraphExecutor?: TicketGraphExecutor | TicketGraphExecutor["execute"];
 	webExtensionPath?: string;
 	createRequestId?: () => string;
 	skillEntries?: readonly {
@@ -341,7 +378,7 @@ function readFileIfPresent(path: string): string | undefined {
 }
 
 function readAgentAssetMetadata(
-	name: "research" | "prototype",
+	name: "research" | "prototype" | "to-tickets",
 	path: string,
 	allowedTools: readonly string[],
 ): AgentAssetMetadata {
@@ -398,6 +435,10 @@ function readExplorationAssetMetadata(): AgentAssetMetadata {
 		prototypeAssetPath,
 		allowedExplorationTools,
 	);
+}
+
+function readTicketGraphAssetMetadata(): AgentAssetMetadata {
+	return readAgentAssetMetadata("to-tickets", ticketGraphAssetPath, allowedTicketGraphTools);
 }
 
 function listSkillRegistryEntries(projectRoot: string) {
@@ -533,6 +574,16 @@ function buildExplorationSystemPrompt(input: {
 	].join("\n\n");
 }
 
+function buildTicketGraphSystemPrompt(input: { asset: AgentAssetMetadata; preparedLaunch: PreparedLaunch }) {
+	return [
+		input.asset.systemPrompt,
+		"You are executing the package-owned to-tickets workflow.",
+		`Artifact topic: ${input.preparedLaunch.launchProvenance.artifactTopic}.`,
+		"Read only the granted approved-spec and delivery-parent aliases through workflow_artifact_session.",
+		"Call workflow_artifact_session exactly once with action=write_graph and the complete canonical graph.",
+	].join("\n\n");
+}
+
 const researchMaxTurns = 20;
 
 export async function executeResearchSession(
@@ -626,6 +677,40 @@ function createDefaultResearchExecutor(): ResearchExecutor {
 			} finally {
 				session.dispose();
 			}
+		},
+	};
+}
+
+function createDefaultTicketGraphExecutor(): TicketGraphExecutor {
+	return {
+		async execute(input) {
+			const resourceLoader = new DefaultResourceLoader({
+				cwd: input.cwd, agentDir: getAgentDir(), noSkills: true, noPromptTemplates: true,
+				noThemes: true, noContextFiles: true, systemPrompt: input.systemPrompt,
+				extensionsOverride: (base) => ({ ...base, extensions: [] }),
+			});
+			await resourceLoader.reload();
+			const { session } = await createAgentSession({
+				cwd: input.cwd, agentDir: getAgentDir(), model: input.model,
+				thinkingLevel: input.thinkingLevel, resourceLoader, tools: [...input.allowedTools],
+				customTools: [{
+					name: workflowArtifactToolName, label: "Workflow Artifact Session",
+					description: "Read granted inputs and persist one verified delivery ticket graph.",
+					parameters: ticketGraphArtifactToolParameters as never,
+					async execute(_toolCallId: string, params: { action: "read_alias" | "write_graph"; alias?: string; graph?: DeliveryTicketGraph }) {
+						if (params.action === "read_alias") {
+							if (!params.alias) throw new Error("A granted artifact alias is required.");
+							return { content: [{ type: "text" as const, text: await input.readArtifact(params.alias) }], details: { alias: params.alias } };
+						}
+						if (!params.graph) throw new Error("A delivery ticket graph is required.");
+						const artifact = await input.writeArtifact(params.graph);
+						return { content: [{ type: "text" as const, text: JSON.stringify(artifact, null, 2) }], details: artifact };
+					},
+				}],
+				sessionManager: SessionManager.inMemory(input.cwd),
+			});
+			try { return await executeResearchSession(session, input.prompt); }
+			finally { session.dispose(); }
 		},
 	};
 }
@@ -882,6 +967,10 @@ export function createDefaultDefineProductWorkflow(
 						baseProject.name,
 					),
 				);
+	const ticketGraphExecutor =
+		typeof options.ticketGraphExecutor === "function"
+			? { execute: options.ticketGraphExecutor }
+			: options.ticketGraphExecutor ?? createDefaultTicketGraphExecutor();
 	const webExtensionPath = resolveWebExtensionPath(
 		baseProject.root,
 		options.webExtensionPath,
@@ -913,6 +1002,12 @@ export function createDefaultDefineProductWorkflow(
 			path: join(privateStateDirectory, "spec-approval-recovery.json"),
 			persistence: privateStatePersistence,
 		});
+	const ticketApprovalRecoveryStore =
+		options.ticketApprovalRecoveryStore ??
+		createDurableTicketApprovalRecoveryStore({
+			path: join(privateStateDirectory, "ticket-approval-recovery.json"),
+			persistence: privateStatePersistence,
+		});
 	const approvedSpecReader = options.approvedSpecReader ?? createEngramApprovedSpecReader({
 		project: baseProject.name,
 		store: createRuntimeEngramApprovedSpecStore({
@@ -929,6 +1024,7 @@ export function createDefaultDefineProductWorkflow(
 
 	const agentValidator = createAgentValidator({
 		readResearchAsset: () => readResearchAssetMetadata(),
+		readTicketGraphAsset: () => readTicketGraphAssetMetadata(),
 		readExplorationAsset: () => readExplorationAssetMetadata(),
 		readModelAvailability: async (provider, model, effort) => {
 			const ctx = getCurrentContext();
@@ -1128,15 +1224,31 @@ export function createDefaultDefineProductWorkflow(
 					}
 				}
 				if (intent.kind === "to-tickets") {
-					return {
-						status: "blocked",
-						executiveSummary: "The to-tickets Owner workflow is not available in Phase 2.",
-						artifacts: [],
-						nextRecommended: { kind: "owner-action" },
-						risks: [],
-						blocker: createBlocker("PI_WORKFLOW_AGENT_ASSET_NOT_READY", "The to-tickets Owner workflow is not available in Phase 2."),
-						launchProvenance: preparedLaunch.launchProvenance,
-					};
+					let writtenGraph: VerifiedArtifactRef | undefined;
+					try {
+						const execution = await ticketGraphExecutor.execute({
+							cwd: projectRef.root, launchOptions, model, thinkingLevel: "medium",
+							prompt: preparedLaunch.prompt,
+							systemPrompt: buildTicketGraphSystemPrompt({ asset: readTicketGraphAssetMetadata(), preparedLaunch }),
+							allowedTools: preparedLaunch.launchProvenance.allowedTools,
+							readArtifact: async (alias) => (await preparedLaunch.artifactSession.read(alias)).content,
+							writeArtifact: async (graph) => {
+								if (writtenGraph) throw new Error(`${workflowArtifactToolName} may write only one verified artifact per request.`);
+								writtenGraph = await preparedLaunch.artifactSession.writeDeliveryTicketGraph(graph);
+								return writtenGraph;
+							},
+						});
+						if (!writtenGraph) return {
+							status: "blocked", executiveSummary: "The to-tickets launch completed without a verified ticket graph.", artifacts: [],
+							nextRecommended: { kind: "owner-action" }, risks: [],
+							blocker: createBlocker("PI_WORKFLOW_ARTIFACT_READBACK_MISMATCH", "The to-tickets launch completed without a verified ticket graph."),
+							launchProvenance: preparedLaunch.launchProvenance,
+						};
+						return { status: "completed", executiveSummary: execution.assistantText.trim() || "Ticket graph ready for Owner approval.", artifacts: [writtenGraph], nextRecommended: { kind: "confirmed-route", route: intent.route }, risks: [], launchProvenance: preparedLaunch.launchProvenance };
+					} catch (error) {
+						const message = error instanceof Error ? error.message : String(error);
+						return { status: "blocked", executiveSummary: message, artifacts: [], nextRecommended: { kind: "owner-action" }, risks: [], blocker: createBlocker(writtenGraph ? "PI_WORKFLOW_ARTIFACT_READBACK_MISMATCH" : "PI_WORKFLOW_AGENT_ASSET_NOT_READY", message), launchProvenance: preparedLaunch.launchProvenance };
+					}
 				}
 				if (intent.kind !== "research") {
 					throw new Error("Only research remains after exploration dispatch.");
@@ -1234,7 +1346,17 @@ export function createDefaultDefineProductWorkflow(
 		delegate: workflowDelegate,
 		explorationRecoveryStore,
 		specApprovalRecoveryStore,
+		ticketApprovalRecoveryStore,
 		approvedSpecStore: approvedSpecReader,
+		readPublishedParent: (ref) => readDeliveryParentSnapshot({ store: artifactStore, ref }),
+		recoverTicketGraph: (ref) => recoverApprovedTicketGraph(artifactStore, ref).catch(() => undefined),
+		approvedTicketGraphs: {
+			save: (definitionId, graph) => createApprovedTicketGraphStore({
+				store: artifactStore,
+				project: baseProject.name,
+				topic: `workflow/define-product/${definitionId}/approved-ticket-graph`,
+			}).save(graph),
+		},
 		publication: linearDeliveryParents && authenticatedAuthority ? {
 			approvedSpecReader,
 			linear: linearDeliveryParents,
@@ -1243,6 +1365,10 @@ export function createDefaultDefineProductWorkflow(
 				createReservationId: () => `publication-${Date.now()}`,
 			}),
 			authenticatedAuthority,
+			parentSnapshots: createDeliveryParentSnapshotStore({
+				project: baseProject,
+				artifactStore,
+			}),
 		} : undefined,
 		authenticatedAuthority,
 		createRequestId:

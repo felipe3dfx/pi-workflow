@@ -8,7 +8,10 @@ import {
 	createWorkflowArtifactInterface,
 	validateResearchEvidenceEnvelope,
 } from "../extensions/workflow-artifacts.ts";
-import { createResearchEvidenceEnvelope } from "../extensions/workflow-contracts.ts";
+import {
+	createResearchEvidenceEnvelope,
+	digestCanonicalValue,
+} from "../extensions/workflow-contracts.ts";
 
 function createStore() {
 	const revisions = new Map();
@@ -245,6 +248,7 @@ test("workflow artifact grants expose only named readable aliases and one writab
 		"read",
 		"readCurrent",
 		"verifyDiscoveredPaths",
+		"writeDeliveryParentSnapshot",
 		"writeDeliveryTicketGraph",
 		"writeExplorationSnapshot",
 		"writeSnapshot",
@@ -435,6 +439,54 @@ test("workflow artifact snapshots require compare-and-swap against the current r
 	await assert.rejects(
 		() => artifactInterface.openSession(grant, binding).writeSnapshot(validEnvelope()),
 		/compare-and-swap conflict/i,
+	);
+});
+
+test("Delivery-parent snapshots are immutable, verified, and recover their exact artifact ref", async () => {
+	const store = createStore();
+	const grant = {
+		project: { name: "pi-workflow", root: "/repo" },
+		topic: "workflow/define-product/definition-1/published-parent",
+		schema: "delivery-parent",
+		schemaVersion: 1,
+		strategy: "snapshot",
+		aliases: [],
+	};
+	const unsigned = {
+		schema: "delivery-parent",
+		schemaVersion: 1,
+		payload: {
+			id: "parent-1",
+			teamId: "team-1",
+			revision: "spec-r1",
+			specDigest: "spec-digest",
+		},
+	};
+	const snapshot = { ...unsigned, digest: digestCanonicalValue(unsigned) };
+	const artifactInterface = createWorkflowArtifactInterface(store);
+	const first = await artifactInterface.openSession(grant).writeDeliveryParentSnapshot(snapshot);
+	const recovered = await artifactInterface.openSession(grant).writeDeliveryParentSnapshot(snapshot);
+	assert.deepEqual(recovered, first);
+	assert.equal(first.revision, "r1");
+	assert.equal(
+		(await artifactInterface.openSession({
+			...grant,
+			topic: "workflow/define-product/definition-1/tickets/request-1",
+			schema: "delivery-ticket-graph",
+			aliases: [{ alias: "delivery-parent", ref: first }],
+		}).read("delivery-parent")).revision,
+		first.revision,
+	);
+	const changedUnsigned = {
+		...unsigned,
+		payload: { ...unsigned.payload, revision: "spec-r2" },
+	};
+	await assert.rejects(
+		() => artifactInterface.openSession(grant).writeDeliveryParentSnapshot({
+			...changedUnsigned,
+			digest: digestCanonicalValue(changedUnsigned),
+		}),
+		/immutable/i,
 	);
 });
 

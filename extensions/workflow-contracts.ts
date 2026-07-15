@@ -8,6 +8,7 @@ type ArtifactSchema =
 	| "design-exploration"
 	| "delivery-ticket-graph"
 	| "delivery-parent"
+	| "approved-spec"
 	| "product-spec"
 	| "workflow-progress";
 type ArtifactStrategy = "snapshot" | "merge-progress";
@@ -42,7 +43,9 @@ export type WorkflowBlockerCode =
 	| "PI_WORKFLOW_SPEC_ARTIFACT_INVALID"
 	| "PI_WORKFLOW_SPEC_APPROVAL_REQUIRED"
 	| "PI_WORKFLOW_SPEC_APPROVAL_MISMATCH"
-	| "PI_WORKFLOW_TICKET_ARTIFACT_INVALID";
+	| "PI_WORKFLOW_TICKET_ARTIFACT_INVALID"
+	| "PI_WORKFLOW_TICKET_PARENT_STALE"
+	| "PI_WORKFLOW_TICKET_APPROVAL_MISMATCH";
 
 export interface WorkflowBlocker {
 	code: WorkflowBlockerCode;

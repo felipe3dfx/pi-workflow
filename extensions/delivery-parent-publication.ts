@@ -5,18 +5,20 @@ import type {
 	LinearPublicationPreflight,
 } from "./linear-delivery-parent-gateway.ts";
 import { validateProductSpecApproval } from "./product-spec.ts";
-import {
+import type {
 	createPublicationStateMachine,
-	type PublicationClaim,
+	PublicationClaim,
 } from "./publication-state-machine.ts";
 import {
 	canonicalJson,
 	digestCanonicalValue,
 	type AuthenticatedAuthority,
+	type VerifiedArtifactRef,
 } from "./workflow-contracts.ts";
+import type { DeliveryParentSnapshotStore } from "./delivery-parent-snapshot-store.ts";
 
 type Outcome =
-	| { status: "spec-published"; parent: LinearDeliveryParent }
+	| { status: "spec-published"; parent: LinearDeliveryParent; parentRef: VerifiedArtifactRef }
 	| { status: "blocked"; blocker: { code: string; message: string } };
 
 export interface DeliveryParentPublicationDependencies {
@@ -43,6 +45,7 @@ export interface DeliveryParentPublicationDependencies {
 			key: string,
 		): Promise<LinearDeliveryParent | undefined>;
 	};
+	parentSnapshots: DeliveryParentSnapshotStore;
 }
 
 function blocked(code: string, message: string): Outcome {
@@ -153,8 +156,14 @@ export async function publishApprovedSpec(
 					"PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH",
 					"Delivery parent read-back mismatch.",
 				);
-			if (state.status === "verified")
-				return { status: "spec-published", parent };
+			if (state.status === "verified") {
+				const parentRef = await dependencies.parentSnapshots.persist({
+					definitionId,
+					parent,
+					specDigest: approved.spec.digest,
+				});
+				return { status: "spec-published", parent, parentRef };
+			}
 		} else {
 			if (state.status === "prepared")
 				state = await dependencies.state.claim(identity);
@@ -242,8 +251,14 @@ export async function publishApprovedSpec(
 			definitionId,
 			parent.id,
 		);
-		if (verified.status === "verified")
-			return { status: "spec-published", parent: readBack };
+		if (verified.status === "verified") {
+			const parentRef = await dependencies.parentSnapshots.persist({
+				definitionId,
+				parent: readBack,
+				specDigest: approved.spec.digest,
+			});
+			return { status: "spec-published", parent: readBack, parentRef };
+		}
 		return verified.status === "blocked"
 			? verified
 			: blocked(
