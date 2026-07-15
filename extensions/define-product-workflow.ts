@@ -20,6 +20,11 @@ import {
 	type SubagentResult,
 	type WorkflowIntent,
 } from "./workflow-contracts.ts";
+import {
+	publishApprovedSpec,
+	type DeliveryParentPublicationDependencies,
+} from "./delivery-parent-publication.ts";
+import type { LinearDeliveryParent } from "./linear-delivery-parent-gateway.ts";
 
 /** Interactive confirmation tokens expire after five minutes. */
 const routeConfirmationTokenTtlMs = 5 * 60 * 1_000;
@@ -55,6 +60,10 @@ export type DefineProductCommand =
 			target: ProductSpecInput["target"];
 			revision: string;
 			digest: string;
+	  }
+	| {
+			kind: "publish-spec";
+			definitionId: string;
 	  };
 
 export type DefineProductOutcome =
@@ -78,6 +87,10 @@ export type DefineProductOutcome =
 			status: "spec-approved";
 			spec: ProductSpecEnvelope;
 			approval: ProductSpecApprovalEnvelope;
+	  }
+	| {
+			status: "spec-published";
+			parent: LinearDeliveryParent;
 	  };
 
 export interface ExplorationRecoveryState {
@@ -108,7 +121,7 @@ export interface SpecApprovalRecoveryStore {
 
 export type DefineProductRecovery =
 	| { definitionId: string; phase: "exploration" }
-	| { definitionId: string; phase: "spec-approval" };
+	| { definitionId: string; phase: "spec-approval" | "publication" };
 
 export interface DefineProductWorkflowDependencies {
 	delegate: {
@@ -124,6 +137,8 @@ export interface DefineProductWorkflowDependencies {
 	authenticatedAuthority?: {
 		current(): Promise<AuthenticatedAuthority>;
 	};
+	approvedSpecStore?: DeliveryParentPublicationDependencies["approvedSpecReader"];
+	publication?: DeliveryParentPublicationDependencies;
 }
 
 function isConfirmationToken(value: string): boolean {
@@ -215,6 +230,17 @@ export function createDefineProductWorkflow(
 					return undefined;
 				}
 				activeSpec = immutableSnapshot(pendingSpec.spec);
+				try {
+					const approved = await dependencies.approvedSpecStore?.read(
+						pendingSpec.definitionId,
+					);
+					if (
+						approved?.spec.digest === pendingSpec.spec.digest &&
+						approved.spec.payload.revision === pendingSpec.spec.payload.revision
+					) {
+						return { definitionId: pendingSpec.definitionId, phase: "publication" };
+					}
+				} catch {}
 				return {
 					definitionId: pendingSpec.definitionId,
 					phase: "spec-approval",
@@ -248,6 +274,26 @@ export function createDefineProductWorkflow(
 	async function advance(
 		command: DefineProductCommand,
 	): Promise<DefineProductOutcome> {
+		if (command.kind === "publish-spec") {
+			if (!dependencies.publication) {
+				return {
+					status: "blocked",
+					blocker: createBlocker(
+						"PI_WORKFLOW_RECOVERY_FAILED",
+						"Delivery parent publication is not configured.",
+					),
+				};
+			}
+			const outcome = await publishApprovedSpec(
+				dependencies.publication,
+				command.definitionId,
+			);
+			if (outcome.status === "spec-published") {
+				await dependencies.specApprovalRecoveryStore?.clear();
+				activeSpec = undefined;
+			}
+			return outcome;
+		}
 		if (command.kind === "approve-spec") {
 			const actor = await dependencies.authenticatedAuthority?.current();
 			if (
@@ -325,7 +371,22 @@ export function createDefineProductWorkflow(
 			const approval = immutableSnapshot(
 				createProductSpecApprovalEnvelope({ spec: activeSpec, actor: ownerActor }),
 			);
-			await dependencies.specApprovalRecoveryStore?.clear();
+			try {
+				await dependencies.approvedSpecStore?.save?.(
+					activeSpec.payload.definitionId,
+					{ spec: activeSpec, approval },
+				);
+			} catch (error) {
+				return {
+					status: "blocked",
+					blocker: createBlocker(
+						"PI_WORKFLOW_RECOVERY_FAILED",
+						error instanceof Error
+							? error.message
+							: "The approved Spec could not be persisted.",
+					),
+				};
+			}
 			return {
 				status: "spec-approved",
 				spec: cloneSnapshot(activeSpec),
