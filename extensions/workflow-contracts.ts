@@ -9,6 +9,7 @@ type ArtifactSchema =
 	| "delivery-ticket-graph"
 	| "delivery-parent"
 	| "approved-spec"
+	| "approved-ticket-publication"
 	| "product-spec"
 	| "workflow-progress";
 type ArtifactStrategy = "snapshot" | "merge-progress";

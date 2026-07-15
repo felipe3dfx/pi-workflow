@@ -67,6 +67,7 @@ extensions/agent-asset-operation.ts
 extensions/agent-asset-sync.ts
 extensions/agent-validator.ts
 extensions/approved-ticket-graph-store.ts
+extensions/approved-ticket-publication.ts
 extensions/companion-workflow.ts
 extensions/default-define-product.ts
 extensions/define-product-runtime.ts
