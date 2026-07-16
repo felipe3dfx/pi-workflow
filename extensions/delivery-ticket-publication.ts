@@ -1,12 +1,13 @@
 import type { DeliveryTicketGraph } from "./delivery-ticket-graph.ts";
 import type { LinearDeliveryTicketGateway } from "./linear-delivery-ticket-gateway.ts";
+import type { TicketPublicationAuthorityGuard } from "./ticket-publication-authority-guard.ts";
 import type { createTicketPublicationManifestStore } from "./ticket-publication-manifest.ts";
 
 type Dependencies = {
 	definitionId: string;
 	graph: Pick<DeliveryTicketGraph, "digest" | "payload">;
 	manifest: ReturnType<typeof createTicketPublicationManifestStore>;
-	guard: { revalidate(input: { definitionId: string; graphDigest: string; parent: DeliveryTicketGraph["payload"]["parent"]; stage: string }): Promise<void> };
+	guard: TicketPublicationAuthorityGuard;
 	gateway: LinearDeliveryTicketGateway;
 };
 
@@ -56,7 +57,11 @@ export async function publishApprovedTickets(dependencies: Dependencies) {
 		for (const ticket of manifest.stage === "creating" ? ordered.filter((ticket) => !children.some((child) => child.stableKey === ticket.stableKey)) : []) {
 			const matches = await dependencies.gateway.findChildren({ operationId: manifest.operationId, parent, stableKey: ticket.stableKey });
 			if (matches.length > 1 || matches.length === 1 && matches[0].stableKey !== ticket.stableKey) throw Object.assign(new Error("Publication marker is ambiguous."), { code: "PI_WORKFLOW_PUBLICATION_IDEMPOTENCY_CONFLICT" });
-			const child = matches[0] ?? await dependencies.gateway.createChild({ operationId: manifest.operationId, parent, child: { stableKey: ticket.stableKey, title: ticket.title, body: body(ticket), estimate: ticket.estimate.points, workflow: { state: "Triage", assignee: null, cycle: null, labels: [], project: null } } });
+			let child = matches[0];
+			if (!child) {
+				await revalidate(`child:${ticket.stableKey}`);
+				child = await dependencies.gateway.createChild({ operationId: manifest.operationId, parent, child: { stableKey: ticket.stableKey, title: ticket.title, body: body(ticket), estimate: ticket.estimate.points, workflow: { state: "Triage", assignee: null, cycle: null, labels: [], project: null } } });
+			}
 			children.push(child);
 			manifest = await dependencies.manifest.record(manifest.operationId, "creating", { children, relations: [] });
 		}
@@ -69,7 +74,10 @@ export async function publishApprovedTickets(dependencies: Dependencies) {
 		for (const relation of manifest.stage === "relations" ? relations.filter((relation) => !recordedRelations.some((recorded) => exact(recorded, relation))) : []) {
 			const matches = await dependencies.gateway.findBlockers({ operationId: manifest.operationId, parent, ...relation });
 			if (matches.length > 1 || matches[0] && !exact(matches[0], relation)) throw Object.assign(new Error("Publication marker is ambiguous."), { code: "PI_WORKFLOW_PUBLICATION_IDEMPOTENCY_CONFLICT" });
-			if (!matches.length) await dependencies.gateway.createBlocker({ operationId: manifest.operationId, parent, ...relation });
+			if (!matches.length) {
+				await revalidate(`blocker:${relation.blockedStableKey}:${relation.blockingStableKey}`);
+				await dependencies.gateway.createBlocker({ operationId: manifest.operationId, parent, ...relation });
+			}
 			recordedRelations.push(relation);
 			manifest = await dependencies.manifest.record(manifest.operationId, "relations", { children, relations: recordedRelations });
 		}

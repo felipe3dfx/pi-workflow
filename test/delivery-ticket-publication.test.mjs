@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { publishApprovedTickets } from "../extensions/delivery-ticket-publication.ts";
+import { createTicketPublicationAuthorityGuard } from "../extensions/ticket-publication-authority-guard.ts";
 import { createTicketPublicationManifestStore } from "../extensions/ticket-publication-manifest.ts";
 
 const parent = { id: "ILA-2296", teamId: "team-ilao", revision: "parent-r1" };
@@ -14,6 +15,17 @@ const graph = {
 };
 const guard = { revalidate: async () => {} };
 const recoveryLookups = { findChildren: async () => [], findBlockers: async () => [] };
+const authoritySnapshot = (overrides = {}) => ({
+	definitionId: "definition-authority",
+	artifact: { approvedDigest: "approved-digest", graphDigest: "a".repeat(64) },
+	approval: { ownerId: "owner-1", role: "Owner", digest: "approval-digest" },
+	authorityRevision: "owner-r1",
+	requiredCapabilities: ["findChildren", "findBlockers"],
+	mutationPermission: true,
+	parent: { id: parent.id, teamId: parent.teamId, revision: parent.revision, specDigest: "spec-digest" },
+	state: { parent: "compatible", team: "compatible" },
+	...overrides,
+});
 
 function memory() {
 	let current;
@@ -521,4 +533,81 @@ test("fails closed for ambiguous recovery markers before duplicate mutations", a
 		const actual = await conflict({ blockerMatches: [{ blockedStableKey: "TICKET-1", blockingStableKey: "TICKET-2" }] });
 		assert.deepEqual(actual, { result: expected, childMutations: 2, blockerMutations: 0, stage: "relations" });
 	});
+});
+
+test("blocks each real authority snapshot drift before child and blocker mutations", async (t) => {
+	const drifts = [
+		["definition", { definitionId: "other-definition" }, "PI_WORKFLOW_PUBLICATION_ARTIFACT_DRIFT", "Approved artifact or graph changed before mutation."],
+		["artifact", { artifact: { approvedDigest: "changed", graphDigest: "a".repeat(64) } }, "PI_WORKFLOW_PUBLICATION_ARTIFACT_DRIFT", "Approved artifact or graph changed before mutation."],
+		["approval", { approval: { ownerId: "owner-2", role: "Owner", digest: "approval-digest" } }, "PI_WORKFLOW_PUBLICATION_APPROVAL_DRIFT", "Owner approval binding changed before mutation."],
+		["authority", { authorityRevision: "owner-r2" }, "PI_WORKFLOW_PUBLICATION_AUTHORITY_DRIFT", "Owner authority revision changed before mutation."],
+		["capability", { requiredCapabilities: ["findChildren"] }, "PI_WORKFLOW_PUBLICATION_CAPABILITY_DRIFT", "Required capabilities changed before mutation."],
+		["permission", { mutationPermission: false }, "PI_WORKFLOW_PUBLICATION_PERMISSION_DENIED", "Mutation permission changed before mutation."],
+		["parent", { parent: { ...parent, revision: "parent-r2", specDigest: "spec-digest" } }, "PI_WORKFLOW_PUBLICATION_PARENT_DRIFT", "Delivery parent binding changed before mutation."],
+		["state", { state: { parent: "unknown", team: "compatible" } }, "PI_WORKFLOW_PUBLICATION_STATE_UNKNOWN", "Parent or team state is not known compatible before mutation."],
+	];
+	for (const [dimension, changed, code, message] of drifts) for (const target of ["child", "blocker"]) await t.test(`${dimension} ${target}`, async () => {
+		const childMutations = [];
+		const blockerMutations = [];
+		const dependencyGraph = { digest: "a".repeat(64), payload: { parent: { ...parent, specDigest: "spec-digest" }, tickets: [
+			{ ...graph.payload.tickets[0], stableKey: "TICKET-1", blockers: [] },
+			{ ...graph.payload.tickets[0], stableKey: "TICKET-2", blockers: ["TICKET-1"] },
+		] } };
+		const snapshot = authoritySnapshot({ definitionId: `definition-${target}-${dimension}` });
+		const guard = createTicketPublicationAuthorityGuard({ expected: snapshot, current: async ({ stage }) => stage === (target === "child" ? "child:TICKET-2" : "blocker:TICKET-2:TICKET-1") ? authoritySnapshot({ ...snapshot, ...changed }) : snapshot });
+		const result = await publishApprovedTickets({ definitionId: snapshot.definitionId, graph: dependencyGraph, manifest: createTicketPublicationManifestStore({ persistence: memory() }), guard, gateway: {
+			...recoveryLookups,
+			createChild: async ({ child }) => { childMutations.push(child.stableKey); return { stableKey: child.stableKey, linearId: `child-${childMutations.length}` }; },
+			createBlocker: async ({ blockedStableKey, blockingStableKey }) => { blockerMutations.push(`${blockedStableKey}:${blockingStableKey}`); },
+			readBack: async () => ({ parent, children: [] }),
+		} });
+
+		assert.equal(result.status, "blocked");
+		assert.equal(result.blocker.code, code);
+		assert.equal(result.blocker.message, message);
+		assert.deepEqual(childMutations, target === "child" ? ["TICKET-1"] : ["TICKET-1", "TICKET-2"]);
+		assert.deepEqual(blockerMutations, []);
+	});
+});
+
+test("rechecks a verified manifest with a fresh complete read-back on every retry", async () => {
+	const persistence = memory();
+	const children = [];
+	let reads = 0;
+	let drifted = false;
+	const dependencies = {
+		definitionId: "definition-verified-retry",
+		graph,
+		manifest: createTicketPublicationManifestStore({ persistence }),
+		guard,
+		gateway: {
+			...recoveryLookups,
+			createChild: async ({ child }) => {
+				const created = { ...child, linearId: "child-1" };
+				children.push(created);
+				return { stableKey: created.stableKey, linearId: created.linearId };
+			},
+			createBlocker: async () => {},
+			readBack: async () => {
+				reads += 1;
+				return {
+					parent,
+					children: children.map((child) => ({
+						...child,
+						workflow: drifted ? { ...child.workflow, labels: ["ready-for-agent"] } : child.workflow,
+						blockedBy: [],
+						blocks: [],
+					})),
+				};
+			},
+		},
+	};
+
+	assert.deepEqual(await publishApprovedTickets(dependencies), { status: "tickets-published" });
+	drifted = true;
+	assert.deepEqual(await publishApprovedTickets(dependencies), {
+		status: "blocked",
+		blocker: { code: "PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH", message: "Ticket publication read-back mismatch." },
+	});
+	assert.deepEqual({ reads, created: children.length, stage: persistence.value().stage }, { reads: 2, created: 1, stage: "verified" });
 });

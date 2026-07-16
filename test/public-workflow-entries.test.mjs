@@ -97,6 +97,7 @@ extensions/spec-approval-recovery.ts
 extensions/subagent-launcher.ts
 extensions/ticket-approval-recovery.ts
 extensions/ticket-graph-recovery.ts
+extensions/ticket-publication-authority-guard.ts
 extensions/ticket-publication-manifest.ts
 extensions/workflow-artifacts.ts
 extensions/workflow-contracts.ts
