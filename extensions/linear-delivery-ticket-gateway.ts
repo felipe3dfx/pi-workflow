@@ -13,6 +13,8 @@ interface LinearDeliveryChild {
 }
 
 export interface LinearDeliveryTicketGateway {
+	findChildren(input: { operationId: string; parent: LinearDeliveryParent; stableKey: string }): Promise<readonly { stableKey: string; linearId: string }[]>;
+	findBlockers(input: { operationId: string; parent: LinearDeliveryParent; blockedStableKey: string; blockingStableKey: string }): Promise<readonly { blockedStableKey: string; blockingStableKey: string }[]>;
 	createChild(input: { operationId: string; parent: LinearDeliveryParent; child: LinearDeliveryChild }): Promise<{ stableKey: string; linearId: string }>;
 	createBlocker(input: { operationId: string; parent: LinearDeliveryParent; blockedStableKey: string; blockingStableKey: string }): Promise<void>;
 	readBack(input: { operationId: string; parent: LinearDeliveryParent }): Promise<{ parent: LinearDeliveryParent; children: readonly (LinearDeliveryChild & { linearId: string; blockedBy: readonly string[]; blocks: readonly string[] })[] }>;
@@ -30,6 +32,14 @@ export function createFakeLinearDeliveryTicketGateway({ parent }: { parent: Line
 		if (!sameParent(parent, candidate)) throw new Error("stale parent");
 	}
 	return {
+		async findChildren({ operationId, parent: candidate, stableKey }) {
+			assertInput(operationId, candidate);
+			return children.filter((child) => child.stableKey === stableKey).map(({ stableKey, linearId }) => ({ stableKey, linearId }));
+		},
+		async findBlockers({ operationId, parent: candidate, blockedStableKey, blockingStableKey }) {
+			assertInput(operationId, candidate);
+			return blockers.filter((blocker) => blocker.blockedStableKey === blockedStableKey && blocker.blockingStableKey === blockingStableKey);
+		},
 		async createChild({ operationId, parent: candidate, child }) {
 			assertInput(operationId, candidate);
 			if (!validChild(child)) throw new Error("children must be created in Triage with no assignee, cycle, labels, or project");

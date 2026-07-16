@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export type TicketPublicationStage = "prepared" | "children" | "relations" | "verifying" | "verified";
+export type TicketPublicationStage = "prepared" | "creating" | "children" | "relations" | "verifying" | "verified";
 
 export interface TicketPublicationIdentity {
 	definitionId: string;
@@ -23,7 +23,7 @@ export interface TicketPublicationManifestPersistence {
 	compareAndSwap(revision: string, value: TicketPublicationManifest): Promise<{ revision: string; value: TicketPublicationManifest }>;
 }
 
-const stages: TicketPublicationStage[] = ["prepared", "children", "relations", "verifying", "verified"];
+const stages: TicketPublicationStage[] = ["prepared", "creating", "children", "relations", "verifying", "verified"];
 const canonicalJson = (value: unknown): string => {
 	if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
 	if (value && typeof value === "object") {
@@ -55,6 +55,7 @@ function validShape(value: TicketPublicationManifest): string | undefined {
 	)
 		return "manifest identity is invalid";
 	if (value.stage === "prepared" && (value.children.length || value.relations.length || value.verification)) return "prepared stage must be empty";
+	if (value.stage === "creating" && (value.relations.length || value.verification)) return "creating stage shape is invalid";
 	if (value.stage === "children" && (!value.children.length || value.relations.length || value.verification)) return "children stage requires published children";
 	if (["relations", "verifying"].includes(value.stage) && (!value.children.length || value.verification)) return `${value.stage} stage shape is invalid`;
 	if (value.stage === "verified" && (!value.children.length || !value.verification || value.verification.graphDigest !== value.graphDigest || value.verification.parentId !== value.parent.id)) return "verified stage requires matching read-back";
@@ -83,7 +84,7 @@ export function createTicketPublicationManifestStore({ persistence }: { persiste
 	async function advance(operationId: string, expected: TicketPublicationStage, next: TicketPublicationStage, changes: Pick<Partial<TicketPublicationManifest>, "children" | "relations" | "verification">): Promise<TicketPublicationManifest> {
 		const current = await persistence.read(operationId);
 		if (!current || current.value.stage !== expected) throw new Error("manifest compare-and-swap conflict");
-		if (stages.indexOf(next) !== stages.indexOf(expected) + 1) throw new Error("illegal manifest transition");
+		if (!(expected === "prepared" && next === "children") && stages.indexOf(next) !== stages.indexOf(expected) + 1) throw new Error("illegal manifest transition");
 		if (
 			(expected !== "prepared" && "children" in changes) ||
 			(["relations", "verifying", "verified"].includes(expected) && "relations" in changes)
@@ -96,5 +97,15 @@ export function createTicketPublicationManifestStore({ persistence }: { persiste
 		if (JSON.stringify(saved.value) !== JSON.stringify(value)) throw new Error("manifest transition read-back mismatch");
 		return saved.value;
 	}
-	return { read, prepare, advance };
+	async function record(operationId: string, stage: "creating" | "relations", changes: Pick<TicketPublicationManifest, "children" | "relations">) {
+		const current = await persistence.read(operationId);
+		if (!current || current.value.stage !== stage) throw new Error("manifest compare-and-swap conflict");
+		const value = { ...current.value, ...changes };
+		const invalid = validShape(value);
+		if (invalid) throw new Error(invalid);
+		const saved = await persistence.compareAndSwap(current.revision, value);
+		if (JSON.stringify(saved.value) !== JSON.stringify(value)) throw new Error("manifest record read-back mismatch");
+		return saved.value;
+	}
+	return { read, prepare, advance, record };
 }
