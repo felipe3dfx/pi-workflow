@@ -118,6 +118,35 @@ test("manifest keeps children and relations immutable after their owning stages"
 	assert.deepEqual(await store.read(relations.operationId), relations);
 });
 
+test("manifest record rejects an altered CAS read-back", async () => {
+	let current;
+	const store = createTicketPublicationManifestStore({
+		persistence: {
+			read: async () => current,
+			create: async (value) => (current = { revision: "r1", value }),
+			compareAndSwap: async (_revision, value) => {
+				current = { revision: "r2", value };
+				return {
+					revision: "r2",
+					value: value.stage === "creating" && value.children.length
+					? { ...value, children: [{ stableKey: "WRONG", linearId: "child-1" }] }
+					: value,
+				};
+			},
+		},
+	});
+	const prepared = await store.prepare(identity);
+	const creating = await store.advance(prepared.operationId, "prepared", "creating", {});
+
+	await assert.rejects(
+		() => store.record(creating.operationId, "creating", {
+			children: [{ stableKey: "T1", linearId: "child-1" }],
+			relations: [],
+		}),
+		/manifest record read-back mismatch/,
+	);
+});
+
 test("manifest rejects malformed identities before creating durable state", async () => {
 	let creates = 0;
 	const store = createTicketPublicationManifestStore({
