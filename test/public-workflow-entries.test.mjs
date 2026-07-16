@@ -76,6 +76,7 @@ extensions/delegation-checkpoints.ts
 extensions/delivery-parent-publication.ts
 extensions/delivery-parent-snapshot-store.ts
 extensions/delivery-ticket-graph.ts
+extensions/delivery-ticket-publication.ts
 extensions/engram-approved-spec-reader.ts
 extensions/exploration-recovery.ts
 extensions/linear-delivery-parent-gateway.ts
