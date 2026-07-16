@@ -119,15 +119,41 @@ export function createRuntimeEngramArtifactStore(
 	}
 
 	return {
-		capabilities: { atomicCompareAndSwap: false },
+		capabilities: { atomicCompareAndSwap: true },
 		readCurrent,
-		async write() {
-			const error = new Error(
-				"Atomic conditional writes are unsupported by the configured Engram HTTP adapter.",
-			);
-			(error as Error & { code?: string }).code =
-				"PI_WORKFLOW_ENGRAM_CONDITIONAL_WRITE_UNSUPPORTED";
-			throw error;
+		async write(project, topic, content, expectedRevision) {
+			let payload: unknown;
+			try {
+				payload = await engramFetch(url, "/observations", {
+					method: "POST",
+					body: {
+						project,
+						topic_key: topic,
+						content,
+						type: "architecture",
+						session_id: options.sessionId?.(),
+						directory: options.directory?.(),
+						expected_revision: expectedRevision ?? null,
+					},
+				});
+			} catch {
+				throw Object.assign(new Error("Engram conditional write failed."), {
+					code: "PI_WORKFLOW_ENGRAM_CONDITIONAL_WRITE_FAILED",
+				});
+			}
+			const revision = extractRevision(payload);
+			if (!revision) {
+				throw Object.assign(new Error("Engram conditional write returned no revision."), {
+					code: "PI_WORKFLOW_ENGRAM_CONDITIONAL_WRITE_FAILED",
+				});
+			}
+			const readBack = await this.readRevision(project, topic, revision);
+			if (readBack !== content) {
+				throw Object.assign(new Error("Engram conditional write read-back mismatch."), {
+					code: "PI_WORKFLOW_ENGRAM_CONDITIONAL_WRITE_FAILED",
+				});
+			}
+			return { revision };
 		},
 		async readRevision(_project: string, _topic: string, revision: string) {
 			const payload = await engramFetch(

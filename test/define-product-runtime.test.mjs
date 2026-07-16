@@ -493,6 +493,7 @@ test("production define-product seam derives approval identity from trusted auth
 		"publish_spec",
 		"to_tickets",
 		"approve_tickets",
+		"publish_tickets",
 	]);
 
 	assert.equal("actor" in tool.parameters.properties, false);
@@ -805,9 +806,62 @@ test("session start resumes ticket approval and clears terminal state", async ()
 	assert.deepEqual(recovered.commands, [{
 		kind: "approve-tickets", definitionId: "definition-1", parentRef, graphRef, digest: "graph-digest",
 	}]);
-	assert.equal(recovered.runtime.shouldContinue({ text: "approve", source: "interactive" }), false);
-	assert.equal(
-		await recovered.handlers.get("before_agent_start")({ systemPrompt: "base" }),
-		undefined,
+	assert.equal(recovered.runtime.shouldContinue({ text: "approve", source: "interactive" }), true);
+	assert.match(
+		(await recovered.handlers.get("before_agent_start")({ systemPrompt: "base" })).systemPrompt,
+		/publish_tickets/,
 	);
+});
+
+test("define-product publishes tickets from only the recovered definition and clears its terminal authorization", async () => {
+	const handlers = new Map();
+	const tools = new Map();
+	const commands = [];
+	const runtime = createDefineProductRuntime({
+		workflow: {
+			pendingRecommendation: () => undefined,
+			reset() {},
+			restoreRecovery: async () => ({
+				definitionId: "definition-published",
+				phase: "ticket-publication",
+			}),
+			advance: async (command) => {
+				commands.push(command);
+				return { status: "tickets-published", definitionId: command.definitionId };
+			},
+		},
+		createDefinitionId: () => "unused",
+	});
+	runtime.register({
+		on: (event, handler) => handlers.set(event, handler),
+		registerTool: (tool) => tools.set(tool.name, tool),
+	});
+
+	await handlers.get("session_start")({ type: "session_start" });
+	const tool = tools.get("workflow_define_product");
+	const publishSchema = tool.parameters.oneOf.find(
+		(schema) => schema.properties.action.const === "publish_tickets",
+	);
+	assert.deepEqual(Object.keys(publishSchema.properties), ["action", "definitionId"]);
+	assert.equal(publishSchema.additionalProperties, false);
+
+	const rejected = await tool.execute("rejected", {
+		action: "publish_tickets",
+		definitionId: "definition-published",
+		approved: true,
+	});
+	assert.equal(rejected.details.blocker.code, "PI_WORKFLOW_TICKET_APPROVAL_MISMATCH");
+	assert.deepEqual(commands, []);
+
+	const published = await tool.execute("published", {
+		action: "publish_tickets",
+		definitionId: "definition-published",
+	});
+	assert.deepEqual(published.details, {
+		status: "tickets-published",
+		definitionId: "definition-published",
+	});
+	assert.deepEqual(commands, [{ kind: "publish-tickets", definitionId: "definition-published" }]);
+	assert.equal(runtime.hasActiveTurn(), false);
+	assert.equal(await handlers.get("before_agent_start")({ systemPrompt: "base" }), undefined);
 });

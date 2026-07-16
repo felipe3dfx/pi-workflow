@@ -96,9 +96,10 @@ const defineProductParameters = {
 				"request_exploration",
 				"to_spec",
 				"approve_spec",
-				"publish_spec",
-				"to_tickets",
-				"approve_tickets",
+					"publish_spec",
+					"to_tickets",
+					"approve_tickets",
+					"publish_tickets",
 			],
 		},
 		...sharedActionProperties,
@@ -123,12 +124,18 @@ const defineProductParameters = {
 			properties: { action: { const: "to_tickets" }, approvedSpecRef: artifactRefParameters, parentRef: artifactRefParameters },
 			required: ["action", "approvedSpecRef", "parentRef"],
 		},
-		{
-			type: "object",
-			additionalProperties: false,
-			properties: { action: { const: "approve_tickets" }, parentRef: artifactRefParameters, graphRef: artifactRefParameters, digest: { type: "string" } },
-			required: ["action", "parentRef", "graphRef", "digest"],
-		},
+			{
+				type: "object",
+				additionalProperties: false,
+				properties: { action: { const: "approve_tickets" }, parentRef: artifactRefParameters, graphRef: artifactRefParameters, digest: { type: "string" } },
+				required: ["action", "parentRef", "graphRef", "digest"],
+			},
+			{
+				type: "object",
+				additionalProperties: false,
+				properties: { action: { const: "publish_tickets" }, definitionId: { type: "string" } },
+				required: ["action", "definitionId"],
+			},
 	],
 } as const;
 
@@ -141,7 +148,8 @@ interface DefineProductToolParams {
 		| "approve_spec"
 		| "publish_spec"
 		| "to_tickets"
-		| "approve_tickets";
+		| "approve_tickets"
+		| "publish_tickets";
 	definitionId?: string;
 	domainAnchor?: string;
 	assessment?: Assessment;
@@ -330,6 +338,7 @@ export function createDefineProductRuntime(
 	let awaitingPublication = false;
 	let awaitingTicketGeneration = false;
 	let awaitingTicketApproval = false;
+	let awaitingTicketPublication = false;
 
 	function handlePublicEntry(event: InputEvent): void {
 		if (!event.text.match(/^\/(?:skill:)?define-product(?:\s|$)/)) return;
@@ -347,6 +356,7 @@ export function createDefineProductRuntime(
 		awaitingPublication = false;
 		awaitingTicketGeneration = false;
 		awaitingTicketApproval = false;
+		awaitingTicketPublication = false;
 		dependencies.workflow.reset();
 	}
 
@@ -359,12 +369,13 @@ export function createDefineProductRuntime(
 			awaitingPublication ||
 			awaitingTicketGeneration ||
 			awaitingTicketApproval
+			|| awaitingTicketPublication
 		);
 	}
 
 	function shouldContinue(event: InputEvent): boolean {
 		return (
-			(awaitingConfirmation || explorationAvailable || awaitingSpecApproval || awaitingPublication || awaitingTicketGeneration || awaitingTicketApproval) &&
+			(awaitingConfirmation || explorationAvailable || awaitingSpecApproval || awaitingPublication || awaitingTicketGeneration || awaitingTicketApproval || awaitingTicketPublication) &&
 			event.source === "interactive" &&
 			event.streamingBehavior === undefined
 		);
@@ -372,6 +383,13 @@ export function createDefineProductRuntime(
 
 	function systemPrompt(): string {
 		const pending = dependencies.workflow.pendingRecommendation();
+		if (awaitingTicketPublication) {
+			return [
+				"The exact durable Owner-approved ticket graph is ready for native publication.",
+				`Call ${toolName} with action="publish_tickets" and only the recovered definitionId.`,
+				"Do not supply ticket content, approval, authority, permissions, or digests.",
+			].join(" ");
+		}
 		if (awaitingTicketApproval) {
 			return [
 				"The exact verified ticket graph is ready for Owner approval.",
@@ -438,7 +456,8 @@ export function createDefineProductRuntime(
 				explorationAvailable = recovery.phase === "exploration";
 				awaitingSpecApproval = recovery.phase === "spec-approval";
 				awaitingPublication = recovery.phase === "publication";
-				awaitingTicketApproval = recovery.phase === "ticket-approval";
+					awaitingTicketApproval = recovery.phase === "ticket-approval";
+					awaitingTicketPublication = recovery.phase === "ticket-publication";
 			}
 		});
 		pi.on("session_shutdown", clearActiveTurn);
@@ -532,6 +551,10 @@ export function createDefineProductRuntime(
 				}
 				if (params.action === "approve_tickets" && !awaitingTicketApproval) {
 					const outcome: DefineProductOutcome = { status: "blocked", blocker: createBlocker("PI_WORKFLOW_TICKET_APPROVAL_MISMATCH", "Ticket approval requires the active exact verified ticket graph.") };
+					return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
+				}
+				if (params.action === "publish_tickets" && !awaitingTicketPublication) {
+					const outcome: DefineProductOutcome = { status: "blocked", blocker: createBlocker("PI_WORKFLOW_TICKET_APPROVAL_MISMATCH", "Ticket publication requires the current durable Owner-approved graph.") };
 					return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
 				}
 				if (params.action === "request_exploration" && !explorationAvailable) {
@@ -652,6 +675,12 @@ export function createDefineProductRuntime(
 							return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
 						}
 						command = parsed;
+					} else if (params.action === "publish_tickets") {
+						if (!hasExactKeys(params, ["action", "definitionId"]) || params.definitionId !== activeDefinitionId) {
+							const outcome: DefineProductOutcome = { status: "blocked", blocker: createBlocker("PI_WORKFLOW_TICKET_APPROVAL_MISMATCH", "Ticket publication requires only the active recovered definition ID.") };
+							return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
+						}
+						command = { kind: "publish-tickets", definitionId: activeDefinitionId as string };
 					} else {
 					command = { kind: "publish-spec", definitionId: activeDefinitionId ?? "" };
 				}
@@ -683,6 +712,9 @@ export function createDefineProductRuntime(
 						awaitingTicketGeneration = false;
 						awaitingTicketApproval = true;
 					} else if (command.kind === "approve-tickets" && outcome.status === "tickets-approved") {
+						awaitingTicketApproval = false;
+						awaitingTicketPublication = true;
+					} else if (command.kind === "publish-tickets" && outcome.status === "tickets-published") {
 						clearActiveTurn();
 				} else if (
 					command.kind !== "request-exploration" &&
@@ -690,6 +722,7 @@ export function createDefineProductRuntime(
 					command.kind !== "approve-spec" &&
 					command.kind !== "to-tickets" &&
 					command.kind !== "approve-tickets"
+					&& command.kind !== "publish-tickets"
 				) {
 					clearActiveTurn();
 				}

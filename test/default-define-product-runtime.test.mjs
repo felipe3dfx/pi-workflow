@@ -10,8 +10,8 @@ import { createRuntimeEngramArtifactStore } from "../extensions/runtime-engram-s
 import { createEngramApprovedSpecReader } from "../extensions/engram-approved-spec-reader.ts";
 import { createInMemoryDelegationCheckpointStore } from "../extensions/delegation-checkpoints.ts";
 import * as defaultDefineProductModule from "../extensions/default-define-product.ts";
-import { digestCanonicalValue } from "../extensions/workflow-contracts.ts";
-import { createDeliveryTicketGraph, createSpecCoverageIndex } from "../extensions/delivery-ticket-graph.ts";
+import { canonicalJson, digestCanonicalValue } from "../extensions/workflow-contracts.ts";
+import { createDeliveryTicketGraph, createSpecCoverageIndex, createTicketGraphApproval } from "../extensions/delivery-ticket-graph.ts";
 import { createProductSpecApprovalEnvelope, createProductSpecEnvelope } from "../extensions/product-spec.ts";
 import { createWorkflowArtifactInterface } from "../extensions/workflow-artifacts.ts";
 
@@ -533,7 +533,7 @@ test("research session aborts and fails closed after twenty turns", async () => 
 	assert.equal(unsubscribed, true);
 });
 
-test("runtime Engram store exposes unsupported atomic CAS and refuses every write before I/O", async () => {
+test("runtime Engram store performs conditional writes with exact read-back", async () => {
 	const requests = [];
 	let observation;
 	const originalFetch = globalThis.fetch;
@@ -565,20 +565,23 @@ test("runtime Engram store exposes unsupported atomic CAS and refuses every writ
 			sessionId: () => "pi-session-1",
 			directory: () => "/workspace/project",
 		});
-		assert.equal(store.capabilities.atomicCompareAndSwap, false);
-		await assert.rejects(
-			() => store.write("pi-workflow", "workflow/topic", "snapshot", undefined),
-			(error) => {
-				assert.equal(
-					error.code,
-					"PI_WORKFLOW_ENGRAM_CONDITIONAL_WRITE_UNSUPPORTED",
-				);
-				assert.match(error.message, /atomic conditional writes are unsupported/i);
-				assert.doesNotMatch(error.message, /compare-and-swap conflict/i);
-				return true;
-			},
-		);
-		assert.equal(requests.length, 0);
+		assert.equal(store.capabilities.atomicCompareAndSwap, true);
+		const created = await store.write("pi-workflow", "workflow/topic", "snapshot", undefined);
+		assert.equal(created.revision, "42");
+		assert.deepEqual(await store.readCurrent("pi-workflow", "workflow/topic"), {
+			revision: "42",
+			content: "snapshot",
+		});
+		assert.equal(await store.readRevision("pi-workflow", "workflow/topic", "42"), "snapshot");
+		assert.deepEqual(requests.filter((request) => request.method === "POST").map((request) => request.body), [{
+			project: "pi-workflow",
+			topic_key: "workflow/topic",
+			content: "snapshot",
+			type: "architecture",
+			session_id: "pi-session-1",
+			directory: "/workspace/project",
+			expected_revision: null,
+		}]);
 	} finally {
 		globalThis.fetch = originalFetch;
 	}
@@ -1024,6 +1027,63 @@ test("default runtime publishes the Engram-approved body through configured Line
 		if (previousLinearUrl === undefined) delete process.env.LINEAR_API_URL;
 		else process.env.LINEAR_API_URL = previousLinearUrl;
 	}
+});
+
+test("default public publish_tickets uses canonical Engram re-reads before mutations", async () => {
+	const originalFetch = globalThis.fetch;
+	const observations = new Map();
+	let revision = 0;
+	const definitionId = "definition-tickets";
+	const parent = { id: "parent-1", teamId: "team-1", revision: "parent-r1", specDigest: "spec-digest" };
+	const spec = createProductSpecEnvelope({
+		definitionId, target: { kind: "linear-parent-description", teamId: "team-1", title: "Delivery" }, revision: "parent-r1", problem: "Problema exacto", solution: "Solución exacta", userStories: ["Como Owner, quiero publicar tickets exactos."], decisions: [{ id: "decision-1", status: "resolved", pertinent: true, text: "El grafo aprobado es canónico." }], tests: ["Verificar publicación exacta."], outOfScope: ["Delegación."], supportArtifacts: [],
+	});
+	parent.specDigest = spec.digest;
+	const graph = createDeliveryTicketGraph({ parent, language: "es", coverage: createSpecCoverageIndex({ stories: [{ id: "story-1", contextId: "delivery", acceptanceCriteria: ["ac-1", "ac-2"] }], decisions: ["decision-1"], tests: ["test-1"] }), tickets: [
+		{ stableKey: "T-1", title: "Primero", outcome: "Primer resultado", acceptanceCriteria: ["Uno", "Dos", "Tres", "Cuatro"], estimate: { points: 1, rationale: "Pequeño" }, blockers: [], refs: [{ kind: "story", id: "story-1" }, { kind: "decision", id: "decision-1" }, { kind: "test", id: "test-1" }], deliveryBindings: [{ storyId: "story-1", acceptanceCriterionId: "ac-1", contextId: "delivery" }] },
+		{ stableKey: "T-2", title: "Segundo", outcome: "Segundo resultado", acceptanceCriteria: ["Uno", "Dos", "Tres", "Cuatro"], estimate: { points: 2, rationale: "Pequeño" }, blockers: ["T-1"], refs: [{ kind: "story", id: "story-1" }, { kind: "decision", id: "decision-1" }, { kind: "test", id: "test-1" }], deliveryBindings: [{ storyId: "story-1", acceptanceCriterionId: "ac-2", contextId: "delivery" }] },
+	] });
+	const owner = { actorId: "owner-1", role: "Owner", authorityRevision: "authority-r1" };
+	const approval = createTicketGraphApproval({ graph, actor: owner });
+	const put = (topic, content) => { const stored = { id: ++revision, project: "pi-workflow", topic_key: topic, content }; observations.set(`pi-workflow:${topic}`, stored); observations.set(String(stored.id), stored); return String(stored.id); };
+	const specTopic = `workflow/define-product/${definitionId}/approved-spec`;
+	const graphTopic = `workflow/define-product/${definitionId}/approved-ticket-graph/${graph.digest}`;
+	const specRevision = put(specTopic, JSON.stringify({ spec, approval: createProductSpecApprovalEnvelope({ spec, actor: owner }) }));
+	const parentTopic = `workflow/define-product/${definitionId}/published-parent`;
+	const parentUnsigned = { schema: "delivery-parent", schemaVersion: 1, payload: parent };
+	const parentRevision = put(parentTopic, `${canonicalJson({ ...parentUnsigned, digest: digestCanonicalValue(parentUnsigned) })}\n`);
+	const graphRevision = put(graphTopic, `${canonicalJson(graph)}\n`);
+	const publication = { definitionId, approvedSpecRef: { kind: "engram", project: "pi-workflow", topic: specTopic, revision: specRevision, schema: "approved-spec", schemaVersion: 1, digest: spec.digest }, parentRef: { kind: "engram", project: "pi-workflow", topic: parentTopic, revision: parentRevision, schema: "delivery-parent", schemaVersion: 1, digest: digestCanonicalValue(parentUnsigned) }, graphRef: { kind: "engram", project: "pi-workflow", topic: graphTopic, revision: graphRevision, schema: "delivery-ticket-graph", schemaVersion: 1, digest: graph.digest }, graphParent: parent, approval };
+	const unsigned = { schema: "approved-ticket-publication", schemaVersion: 1, payload: publication };
+	put(`workflow/define-product/${definitionId}`, `${canonicalJson({ ...unsigned, digest: digestCanonicalValue(unsigned) })}\n`);
+	let stale = false;
+	let recovery = { definitionId, approvedSpecRef: publication.approvedSpecRef, parentRef: publication.parentRef, graphRef: publication.graphRef, digest: graph.digest, authority: owner };
+	const mutations = [];
+	const linearDeliveryTickets = {
+		readAuthoritySnapshot: async (input) => ({ ...input, authorityRevision: input.authorityRevision, requiredCapabilities: ["sub-issues", "native-blockers", "estimates", "triage-state"], mutationPermission: true, state: { parent: "compatible", team: "compatible" } }),
+		findChildren: async () => [], findBlockers: async () => [], createChild: async ({ child }) => { mutations.push(`child:${child.stableKey}`); return { stableKey: child.stableKey, linearId: child.stableKey }; }, createBlocker: async ({ blockedStableKey }) => { mutations.push(`edge:${blockedStableKey}`); }, readBack: async () => ({ parent: { id: parent.id, teamId: parent.teamId, revision: parent.revision }, children: graph.payload.tickets.map((ticket) => ({ stableKey: ticket.stableKey, title: ticket.title, body: `Resultado\n\n${ticket.outcome}\n\nCriterios de aceptación\n\n${ticket.acceptanceCriteria.map((criterion) => `- ${criterion}`).join("\n")}`, estimate: ticket.estimate.points, workflow: { state: "Triage", assignee: null, cycle: null, labels: [], project: null }, linearId: ticket.stableKey, blockedBy: ticket.blockers, blocks: ticket.stableKey === "T-1" ? ["T-2"] : [] })) }),
+	};
+	globalThis.fetch = async (input, init = {}) => {
+		const url = new URL(String(input));
+		if (url.pathname === "/observations" && (init.method ?? "GET") === "GET") return Response.json(observations.get(`${url.searchParams.get("project")}:${url.searchParams.get("topic_key")}`) ? [observations.get(`${url.searchParams.get("project")}:${url.searchParams.get("topic_key")}`)] : []);
+		if (url.pathname === "/observations" && init.method === "POST") { const body = JSON.parse(String(init.body)); const current = observations.get(`${body.project}:${body.topic_key}`); if ((current?.id && String(current.id)) !== (body.expected_revision ?? undefined)) return new Response("conflict", { status: 409 }); const stored = { id: ++revision, ...body }; observations.set(`${body.project}:${body.topic_key}`, stored); observations.set(String(stored.id), stored); return Response.json({ id: stored.id }); }
+		return Response.json(observations.get(url.pathname.split("/").at(-1)));
+	};
+	try {
+		const { handlers, tool } = loadExtension({ ticketApprovalRecoveryStore: { load: async () => recovery, save: async (value) => { recovery = value; }, clear: async () => { recovery = undefined; } }, authenticatedAuthority: { current: async () => stale ? { ...owner, authorityRevision: "authority-r2" } : owner }, linearDeliveryTickets });
+		await handlers.get("session_start")({}, executionContext());
+		stale = true;
+		const injected = await tool.execute("injected", { action: "publish_tickets", definitionId, authority: { actorId: "attacker" } }, undefined, undefined, executionContext());
+		assert.equal(injected.details.blocker.code, "PI_WORKFLOW_TICKET_APPROVAL_MISMATCH");
+		const blocked = await tool.execute("stale", { action: "publish_tickets", definitionId }, undefined, undefined, executionContext());
+		assert.equal(blocked.details.blocker.code, "PI_WORKFLOW_PUBLICATION_AUTHORITY_DRIFT");
+		assert.deepEqual(mutations, []);
+		stale = false;
+		const published = await tool.execute("published", { action: "publish_tickets", definitionId }, undefined, undefined, executionContext());
+		assert.equal(published.details.status, "tickets-published", JSON.stringify(published.details));
+		assert.deepEqual(mutations, ["child:T-1", "child:T-2", "edge:T-2"]);
+		assert.equal(recovery, undefined);
+	} finally { globalThis.fetch = originalFetch; }
 });
 
 test("default packaged entry fails closed when configured Owner authority is incomplete", async () => {
