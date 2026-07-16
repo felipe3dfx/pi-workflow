@@ -91,6 +91,7 @@ extensions/publication-manifest.ts
 extensions/publication-state-machine.ts
 extensions/runtime-engram-store.ts
 extensions/runtime-linear-delivery-parent.ts
+extensions/runtime-linear-delivery-ticket.ts
 extensions/runtime-private-state.ts
 extensions/skill-resolver.ts
 extensions/spec-approval-recovery.ts
