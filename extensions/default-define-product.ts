@@ -51,7 +51,12 @@ import { createRuntimeLinearDeliveryParentTransport } from "./runtime-linear-del
 import { createPublicationStateMachine } from "./publication-state-machine.ts";
 import { createDeliveryParentSnapshotStore, readDeliveryParentSnapshot } from "./delivery-parent-snapshot-store.ts";
 import { createApprovedTicketGraphStore } from "./approved-ticket-graph-store.ts";
+import { createApprovedTicketPublicationStore } from "./approved-ticket-publication.ts";
+import { publishApprovedTickets } from "./delivery-ticket-publication.ts";
 import { recoverApprovedTicketGraph } from "./ticket-graph-recovery.ts";
+import { createTicketPublicationAuthorityGuard } from "./ticket-publication-authority-guard.ts";
+import { createTicketPublicationManifestStore } from "./ticket-publication-manifest.ts";
+import { createRuntimeLinearDeliveryTicketGateway } from "./runtime-linear-delivery-ticket.ts";
 import type { DeliveryTicketGraph } from "./delivery-ticket-graph.ts";
 import {
 	createResearchEvidenceEnvelope,
@@ -278,6 +283,7 @@ export interface DefaultDefineProductRuntimeOptions {
 	};
 	approvedSpecReader?: DeliveryParentPublicationDependencies["approvedSpecReader"];
 	linearDeliveryParents?: DeliveryParentPublicationDependencies["linear"];
+	linearDeliveryTickets?: ReturnType<typeof createRuntimeLinearDeliveryTicketGateway>;
 	publicationManifest?: Parameters<typeof createPublicationStateMachine>[0]["store"];
 	researchExecutor?: ResearchExecutor | ResearchExecutor["execute"];
 	explorationExecutor?: ExplorationExecutor | ExplorationExecutor["execute"];
@@ -322,6 +328,18 @@ function configuredLinearDeliveryParents(
 		apiKey,
 		url: environment.LINEAR_API_URL?.trim() || undefined,
 	}));
+}
+
+function configuredLinearDeliveryTickets(
+	environment: NodeJS.ProcessEnv,
+): DefaultDefineProductRuntimeOptions["linearDeliveryTickets"] {
+	const apiKey = environment.LINEAR_API_KEY?.trim();
+	return apiKey
+		? createRuntimeLinearDeliveryTicketGateway({
+			apiKey,
+			url: environment.LINEAR_API_URL?.trim() || undefined,
+		})
+		: undefined;
 }
 
 function findProjectRoot(cwd: string): string {
@@ -1020,7 +1038,29 @@ export function createDefaultDefineProductWorkflow(
 		persistence: privateStatePersistence,
 	});
 	const linearDeliveryParents = options.linearDeliveryParents ?? configuredLinearDeliveryParents(process.env);
+	const linearDeliveryTickets = options.linearDeliveryTickets ?? configuredLinearDeliveryTickets(process.env);
 	const authenticatedAuthority = options.authenticatedAuthority ?? configuredOwnerAuthority(process.env);
+	const approvedTicketPublication = createApprovedTicketPublicationStore({
+		store: artifactStore,
+		project: baseProject.name,
+		topic: "workflow/define-product",
+	});
+	const ticketPublicationManifest = createTicketPublicationManifestStore({
+		persistence: {
+			async read(operationId) {
+				const stored = await artifactStore.readCurrent(baseProject.name, `workflow/define-product/ticket-publication/${operationId}`);
+				return stored ? { revision: stored.revision, value: JSON.parse(stored.content) } : undefined;
+			},
+			async create(value) {
+				const stored = await artifactStore.write(baseProject.name, `workflow/define-product/ticket-publication/${value.operationId}`, JSON.stringify(value), undefined);
+				return { revision: stored.revision, value };
+			},
+			async compareAndSwap(revision, value) {
+				const stored = await artifactStore.write(baseProject.name, `workflow/define-product/ticket-publication/${value.operationId}`, JSON.stringify(value), revision);
+				return { revision: stored.revision, value };
+			},
+		},
+	});
 
 	const agentValidator = createAgentValidator({
 		readResearchAsset: () => readResearchAssetMetadata(),
@@ -1357,6 +1397,57 @@ export function createDefaultDefineProductWorkflow(
 				topic: `workflow/define-product/${definitionId}/approved-ticket-graph`,
 			}).save(graph),
 		},
+		approvedTicketPublication,
+		ticketPublication: linearDeliveryTickets ? {
+			async publish(definitionId) {
+				const publication = await approvedTicketPublication.read(definitionId);
+				const graph = publication && await recoverApprovedTicketGraph(artifactStore, publication.graphRef);
+				const approved = publication && await approvedSpecReader.read(definitionId);
+				if (!publication || !graph || !approved) {
+					return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_RECOVERY_FAILED", "Ticket publication requires the exact durable approved graph.") };
+				}
+				const expected = {
+					definitionId,
+					artifact: { approvedDigest: publication.approvedSpecRef.digest, graphDigest: publication.graphRef.digest },
+					approval: { ownerId: publication.approval.payload.actor.actorId, role: "Owner" as const, digest: publication.approval.digest },
+					authorityRevision: publication.approval.payload.actor.authorityRevision,
+					requiredCapabilities: ["sub-issues", "native-blockers", "estimates", "triage-state"],
+					mutationPermission: true,
+					parent: publication.graphParent,
+					state: { parent: "compatible" as const, team: "compatible" as const },
+				};
+				const current = async () => {
+					const [currentPublication, authority] = await Promise.all([
+						approvedTicketPublication.read(definitionId),
+						authenticatedAuthority?.current(),
+					]);
+					const currentGraph = currentPublication && await recoverApprovedTicketGraph(artifactStore, currentPublication.graphRef);
+					const currentApproved = currentPublication && await approvedSpecReader.read(definitionId);
+					if (!currentPublication || !currentGraph || !currentApproved || currentGraph.digest !== currentPublication.graphRef.digest || currentApproved.spec.digest !== currentPublication.approvedSpecRef.digest || authority?.role !== "Owner") throw Object.assign(new Error("Canonical ticket publication authority is unavailable."), { code: "PI_WORKFLOW_PUBLICATION_ARTIFACT_DRIFT" });
+					return linearDeliveryTickets.readAuthoritySnapshot({
+						definitionId,
+						artifact: { approvedDigest: currentPublication.approvedSpecRef.digest, graphDigest: currentPublication.graphRef.digest },
+						approval: { ownerId: currentPublication.approval.payload.actor.actorId, role: "Owner", digest: currentPublication.approval.digest },
+						authorityRevision: authority.authorityRevision,
+						parent: currentPublication.graphParent,
+						expectedParentDescription: currentApproved.spec.payload.body,
+					});
+				};
+				const outcome = await publishApprovedTickets({
+					definitionId,
+					graph,
+					manifest: ticketPublicationManifest,
+					guard: createTicketPublicationAuthorityGuard({
+						expected,
+						current,
+					}),
+					gateway: linearDeliveryTickets,
+				});
+				return outcome.status === "tickets-published"
+					? { status: "tickets-published", definitionId }
+					: outcome;
+			},
+		} : undefined,
 		publication: linearDeliveryParents && authenticatedAuthority ? {
 			approvedSpecReader,
 			linear: linearDeliveryParents,

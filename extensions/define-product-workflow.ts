@@ -161,7 +161,7 @@ export interface TicketApprovalRecoveryStore {
 
 export type DefineProductRecovery =
 	| { definitionId: string; phase: "exploration" }
-	| { definitionId: string; phase: "spec-approval" | "publication" | "ticket-approval" };
+	| { definitionId: string; phase: "spec-approval" | "publication" | "ticket-approval" | "ticket-publication" };
 
 export interface DefineProductWorkflowDependencies {
 	delegate: {
@@ -353,15 +353,19 @@ export function createDefineProductWorkflow(
 					canonicalJson(graph.payload.parent) === canonicalJson(parent) &&
 					canonicalJson(actor) === canonicalJson(pendingTickets.authority)
 				) {
-					pendingTicketApproval = immutableSnapshot(pendingTickets);
-					return { definitionId: pendingTickets.definitionId, phase: "ticket-approval" };
+						const durable = await dependencies.approvedTicketPublication?.read(pendingTickets.definitionId);
+						pendingTicketApproval = immutableSnapshot(pendingTickets);
+						return {
+							definitionId: pendingTickets.definitionId,
+							phase: durable?.graphRef.digest === pendingTickets.digest ? "ticket-publication" : "ticket-approval",
+						};
 				}
 				return undefined;
 			}
 		} catch {
 			return undefined;
-		}
-		const stored = await dependencies.explorationRecoveryStore?.load();
+			}
+			const stored = await dependencies.explorationRecoveryStore?.load();
 		if (
 			!stored ||
 			stored.requestId !== stored.workflowIntent.requestId ||
@@ -394,7 +398,9 @@ export function createDefineProductWorkflow(
 				if (!dependencies.ticketPublication) {
 					return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_RECOVERY_FAILED", "Native ticket publication is not configured.") };
 				}
-				return dependencies.ticketPublication.publish(command.definitionId);
+					const outcome = await dependencies.ticketPublication.publish(command.definitionId);
+					if (outcome.status === "tickets-published") await dependencies.ticketApprovalRecoveryStore?.clear();
+					return outcome;
 			} catch (error) {
 				return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_RECOVERY_FAILED", error instanceof Error ? error.message : "Ticket publication could not be recovered safely.") };
 			}
@@ -474,7 +480,6 @@ export function createDefineProductWorkflow(
 					};
 					const persisted = await dependencies.approvedTicketPublication.save(publication);
 					if (!isExpectedApprovedTicketPublicationRef(persisted, publication, dependencies.project.name)) return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_ARTIFACT_READBACK_MISMATCH", "The approved ticket publication could not be persisted with its exact durable identity.") };
-					await dependencies.ticketApprovalRecoveryStore?.clear();
 				pendingTicketApproval = undefined;
 				return { status: "tickets-approved", graph: cloneSnapshot(graph), graphRef: command.graphRef, approval: cloneSnapshot(approval) };
 			} catch {

@@ -241,7 +241,7 @@ test("to-tickets and approval bind only exact verified references and recover co
 	const approvedOutcome = await subject.advance({ kind: "approve-tickets", definitionId: "definition-1", parentRef, graphRef, digest: graph.digest });
 	assert.equal(approvedOutcome.status, "tickets-approved");
 	assert.equal(approvedOutcome.approval.payload.graphDigest, graph.digest);
-	assert.equal(recovered, undefined);
+	assert.equal(recovered.definitionId, "definition-1");
 });
 
 test("ticket approval fails closed for stale inputs, delegation and recovery drift", async () => {
@@ -322,7 +322,7 @@ test("ticket approval fails closed for stale inputs, delegation and recovery dri
 	assert.deepEqual(await subject.restoreRecovery(), { definitionId: "definition-1", phase: "ticket-approval" });
 	const approvedOutcome = await subject.advance({ kind: "approve-tickets", definitionId: "definition-1", parentRef, graphRef, digest: graph.digest });
 	assert.equal(approvedOutcome.status, "tickets-approved");
-	assert.equal(clears, 1);
+	assert.equal(clears, 0);
 });
 
 test("to-tickets recovers an exact persisted graph after approval recovery persistence fails", async () => {
