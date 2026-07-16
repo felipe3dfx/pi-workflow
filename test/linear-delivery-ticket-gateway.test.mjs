@@ -30,25 +30,52 @@ test("domain gateway fake creates children with the required immutable publicati
 	assert.deepEqual(created, { stableKey: "T1", linearId: "child-1" });
 	assert.deepEqual(await gateway.readBack({ operationId, parent }), {
 		parent,
-		children: [{ ...child, linearId: "child-1" }],
-		blockers: [],
+		children: [{ ...child, linearId: "child-1", blockedBy: [], blocks: [] }],
 	});
 });
 
 test("domain gateway fake exposes only closed child and blocker commands and rejects stale or non-Triage inputs", async () => {
 	const gateway = createFakeLinearDeliveryTicketGateway({ parent });
 	await assert.rejects(
-		() => gateway.createChild({ operationId, parent: { ...parent, revision: "stale" }, child }),
+		() =>
+			gateway.createChild({
+				operationId,
+				parent: { ...parent, revision: "stale" },
+				child,
+			}),
 		/stale parent/,
 	);
 	await assert.rejects(
-		() => gateway.createChild({ operationId, parent, child: { ...child, workflow: { ...child.workflow, assignee: "user-1" } } }),
+		() =>
+			gateway.createChild({
+				operationId,
+				parent,
+				child: {
+					...child,
+					workflow: { ...child.workflow, assignee: "user-1" },
+				},
+			}),
 		/Triage with no assignee, cycle, labels, or project/,
 	);
 	await gateway.createChild({ operationId, parent, child });
-	await gateway.createChild({ operationId, parent, child: { ...child, stableKey: "T2", title: "Dependiente" } });
-	await gateway.createBlocker({ operationId, parent, blockedStableKey: "T2", blockingStableKey: "T1" });
-	assert.deepEqual((await gateway.readBack({ operationId, parent })).blockers, [
-		{ blockedStableKey: "T2", blockingStableKey: "T1" },
-	]);
+	await gateway.createChild({
+		operationId,
+		parent,
+		child: { ...child, stableKey: "T2", title: "Dependiente" },
+	});
+	await gateway.createBlocker({
+		operationId,
+		parent,
+		blockedStableKey: "T2",
+		blockingStableKey: "T1",
+	});
+	assert.deepEqual(
+		(await gateway.readBack({ operationId, parent })).children.map(
+			({ stableKey, blockedBy, blocks }) => ({ stableKey, blockedBy, blocks }),
+		),
+		[
+			{ stableKey: "T1", blockedBy: [], blocks: ["T2"] },
+			{ stableKey: "T2", blockedBy: ["T1"], blocks: [] },
+		],
+	);
 });

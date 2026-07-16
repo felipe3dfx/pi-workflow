@@ -15,7 +15,7 @@ interface LinearDeliveryChild {
 export interface LinearDeliveryTicketGateway {
 	createChild(input: { operationId: string; parent: LinearDeliveryParent; child: LinearDeliveryChild }): Promise<{ stableKey: string; linearId: string }>;
 	createBlocker(input: { operationId: string; parent: LinearDeliveryParent; blockedStableKey: string; blockingStableKey: string }): Promise<void>;
-	readBack(input: { operationId: string; parent: LinearDeliveryParent }): Promise<{ parent: LinearDeliveryParent; children: readonly (LinearDeliveryChild & { linearId: string })[]; blockers: readonly { blockedStableKey: string; blockingStableKey: string }[] }>;
+	readBack(input: { operationId: string; parent: LinearDeliveryParent }): Promise<{ parent: LinearDeliveryParent; children: readonly (LinearDeliveryChild & { linearId: string; blockedBy: readonly string[]; blocks: readonly string[] })[] }>;
 }
 
 const sameParent = (left: LinearDeliveryParent, right: LinearDeliveryParent) => left.id === right.id && left.teamId === right.teamId && left.revision === right.revision;
@@ -46,7 +46,7 @@ export function createFakeLinearDeliveryTicketGateway({ parent }: { parent: Line
 		},
 		async readBack({ operationId, parent: candidate }) {
 			assertInput(operationId, candidate);
-			return { parent: { ...parent }, children: children.map((child) => ({ ...child, workflow: { ...child.workflow, labels: [] } })), blockers: blockers.map((blocker) => ({ ...blocker })) };
+			return { parent: { ...parent }, children: children.map((child) => ({ ...child, workflow: { ...child.workflow, labels: [] }, blockedBy: blockers.filter((blocker) => blocker.blockedStableKey === child.stableKey).map((blocker) => blocker.blockingStableKey), blocks: blockers.filter((blocker) => blocker.blockingStableKey === child.stableKey).map((blocker) => blocker.blockedStableKey) })) };
 		},
 	};
 }
