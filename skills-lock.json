@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "skills": {
+    "typescript-best-practices": {
+      "source": "jwynia/agent-skills",
+      "ref": "main",
+      "sourceType": "github",
+      "skillPath": "skills/tech/development/tooling/typescript-best-practices/SKILL.md",
+      "computedHash": "db4675b9948beee1b029809ac861474048ac334c80f6dea60435a96afc122d38"
+    }
+  }
+}

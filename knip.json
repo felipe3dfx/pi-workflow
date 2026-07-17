@@ -3,6 +3,9 @@
   "entry": [
     "extensions/pi-workflow.ts"
   ],
+  "ignore": [
+    ".agents/**"
+  ],
   "ignoreDependencies": [
     "@tintinweb/pi-subagents",
     "gentle-engram",
