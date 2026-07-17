@@ -100,6 +100,7 @@ const defineProductParameters = {
 					"to_tickets",
 					"approve_tickets",
 					"publish_tickets",
+					"publish_approved_revision",
 			],
 		},
 		...sharedActionProperties,
@@ -136,6 +137,12 @@ const defineProductParameters = {
 				properties: { action: { const: "publish_tickets" }, definitionId: { type: "string" } },
 				required: ["action", "definitionId"],
 			},
+			{
+				type: "object",
+				additionalProperties: false,
+				properties: { action: { const: "publish_approved_revision" }, definitionId: { type: "string" }, digest: { type: "string" } },
+				required: ["action", "definitionId", "digest"],
+			},
 	],
 } as const;
 
@@ -149,7 +156,8 @@ interface DefineProductToolParams {
 		| "publish_spec"
 		| "to_tickets"
 		| "approve_tickets"
-		| "publish_tickets";
+		| "publish_tickets"
+		| "publish_approved_revision";
 	definitionId?: string;
 	domainAnchor?: string;
 	assessment?: Assessment;
@@ -681,6 +689,12 @@ export function createDefineProductRuntime(
 							return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
 						}
 						command = { kind: "publish-tickets", definitionId: activeDefinitionId as string };
+					} else if (params.action === "publish_approved_revision") {
+						if (!hasExactKeys(params, ["action", "definitionId", "digest"]) || typeof params.digest !== "string" || params.definitionId !== activeDefinitionId) {
+							const outcome: DefineProductOutcome = { status: "blocked", blocker: createBlocker("PI_WORKFLOW_SPEC_ARTIFACT_INVALID", "Approved revision publication requires only the active definition ID and exact digest.") };
+							return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
+						}
+						command = { kind: "publish-approved-revision", definitionId: activeDefinitionId as string, digest: params.digest };
 					} else {
 					command = { kind: "publish-spec", definitionId: activeDefinitionId ?? "" };
 				}
@@ -716,6 +730,8 @@ export function createDefineProductRuntime(
 						awaitingTicketPublication = true;
 					} else if (command.kind === "publish-tickets" && outcome.status === "tickets-published") {
 						clearActiveTurn();
+				} else if (command.kind === "publish-approved-revision" && outcome.status === "revision-published") {
+						clearActiveTurn();
 				} else if (
 					command.kind !== "request-exploration" &&
 					command.kind !== "to-spec" &&
@@ -723,6 +739,7 @@ export function createDefineProductRuntime(
 					command.kind !== "to-tickets" &&
 					command.kind !== "approve-tickets"
 					&& command.kind !== "publish-tickets"
+					&& command.kind !== "publish-approved-revision"
 				) {
 					clearActiveTurn();
 				}

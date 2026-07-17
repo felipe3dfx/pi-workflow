@@ -494,6 +494,7 @@ test("production define-product seam derives approval identity from trusted auth
 		"to_tickets",
 		"approve_tickets",
 		"publish_tickets",
+		"publish_approved_revision",
 	]);
 
 	assert.equal("actor" in tool.parameters.properties, false);

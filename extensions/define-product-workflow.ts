@@ -32,6 +32,7 @@ import {
 	type TicketGraphApproval,
 } from "./delivery-ticket-graph.ts";
 import type { ApprovedTicketPublication } from "./approved-ticket-publication.ts";
+import type { publishApprovedRevision } from "./approved-revision-publication.ts";
 
 /** Interactive confirmation tokens expire after five minutes. */
 const routeConfirmationTokenTtlMs = 5 * 60 * 1_000;
@@ -85,7 +86,8 @@ export type DefineProductCommand =
 			graphRef: VerifiedArtifactRef;
 			digest: string;
 		  }
-	| { kind: "publish-tickets"; definitionId: string };
+	| { kind: "publish-tickets"; definitionId: string }
+	| { kind: "publish-approved-revision"; definitionId: string; digest: string };
 
 export type DefineProductOutcome =
 	| {
@@ -116,7 +118,8 @@ export type DefineProductOutcome =
 	  }
 	| { status: "tickets-ready"; graph: DeliveryTicketGraph; graphRef: VerifiedArtifactRef }
 	| { status: "tickets-approved"; graph: DeliveryTicketGraph; graphRef: VerifiedArtifactRef; approval: TicketGraphApproval }
-	| { status: "tickets-published"; definitionId: string };
+	| { status: "tickets-published"; definitionId: string }
+	| { status: "revision-published"; definitionId: string; digest: string };
 
 export interface ExplorationRecoveryState {
 	definitionId: string;
@@ -193,6 +196,9 @@ export interface DefineProductWorkflowDependencies {
 	};
 	ticketPublication?: {
 		publish(definitionId: string): Promise<Extract<DefineProductOutcome, { status: "tickets-published" | "blocked" }>>;
+	};
+	approvedRevisionPublication?: {
+		publish(definitionId: string, digest: string): ReturnType<typeof publishApprovedRevision>;
 	};
 }
 
@@ -389,6 +395,12 @@ export function createDefineProductWorkflow(
 	async function advance(
 		command: DefineProductCommand,
 	): Promise<DefineProductOutcome> {
+		if (command.kind === "publish-approved-revision") {
+			if (!dependencies.approvedRevisionPublication) {
+				return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_RECOVERY_FAILED", "Approved revision publication is not configured.") };
+			}
+			return dependencies.approvedRevisionPublication.publish(command.definitionId, command.digest);
+		}
 		if (command.kind === "publish-tickets") {
 			try {
 				const publication = await dependencies.approvedTicketPublication?.read(command.definitionId);

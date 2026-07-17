@@ -66,6 +66,8 @@ extensions/agent-asset-migrations.ts
 extensions/agent-asset-operation.ts
 extensions/agent-asset-sync.ts
 extensions/agent-validator.ts
+extensions/approved-revision-publication-manifest.ts
+extensions/approved-revision-publication.ts
 extensions/approved-ticket-graph-store.ts
 extensions/approved-ticket-publication.ts
 extensions/companion-workflow.ts
@@ -90,6 +92,7 @@ extensions/public-entry-guard.ts
 extensions/publication-manifest.ts
 extensions/publication-state-machine.ts
 extensions/runtime-engram-store.ts
+extensions/runtime-linear-approved-revision.ts
 extensions/runtime-linear-delivery-parent.ts
 extensions/runtime-linear-delivery-ticket.ts
 extensions/runtime-private-state.ts
