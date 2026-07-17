@@ -25,6 +25,20 @@ const provenance = {
 		effort: "medium",
 		capabilityProfile: "code-writer",
 	},
+	"sdd-verify": {
+		agent: "sdd-verify",
+		provider: "openai-codex",
+		model: "gpt-5.6-sol",
+		effort: "medium",
+		capabilityProfile: "verifier",
+	},
+	"prepare-commit": {
+		agent: "prepare-commit",
+		provider: "openai-codex",
+		model: "gpt-5.6-terra",
+		effort: "medium",
+		capabilityProfile: "verifier",
+	},
 };
 
 const context = {
@@ -93,6 +107,20 @@ function setup(overrides = {}) {
 			],
 		},
 	];
+	const requiredEvidence = overrides.requiredEvidence ?? [
+		{ id: "focused", command: "node --test test/delivery-apply-workflow.test.mjs" },
+		{ id: "typecheck", command: "npm run check:typecheck" },
+	];
+	const evidence = overrides.evidence ?? {
+		repositoryBefore: { ...repository, treeDigest: "tree-2" },
+		repositoryAfter: { ...repository, treeDigest: "tree-2" },
+		results: requiredEvidence.map(({ id, command }) => ({
+			id,
+			command,
+			exitCode: 0,
+			outputDigest: `${id}-digest`,
+		})),
+	};
 	let workflow;
 	workflow = createDeliveryWorkflow({
 		context: {
@@ -114,6 +142,12 @@ function setup(overrides = {}) {
 			async acceptSnapshot(snapshot) {
 				repo = structuredClone(snapshot);
 			},
+			async requiredEvidence() {
+				return structuredClone(requiredEvidence);
+			},
+			async executeEvidence() {
+				return structuredClone(evidence);
+			},
 		},
 		artifacts: {
 			async write(topic, envelope) {
@@ -134,22 +168,44 @@ function setup(overrides = {}) {
 		},
 		agents: {
 			async launch(launch) {
-				launches.push(structuredClone(launch));
+				const { executeEvidence, ...recordedLaunch } = launch;
+				launches.push(structuredClone(recordedLaunch));
 				const p = provenance[launch.agent];
 				if (launch.agent === "sdd-design")
 					return {
 						provenance: overrides.designProvenance ?? p,
 						payload: { summary: "design", affectedPaths: ["extensions/"] },
+						standards: [{ path: "/repo/AGENTS.md", digest: "standard-1", result: "passed" }],
 					};
 				if (launch.agent === "sdd-tasks")
 					return {
 						provenance: overrides.tasksProvenance ?? p,
 						payload: { tasks: [{ id: "task-1", behaviorIds: ["behavior-1"] }] },
+						standards: [{ path: "/repo/AGENTS.md", digest: "standard-1", result: "passed" }],
+					};
+				if (launch.agent === "sdd-verify")
+					return {
+						provenance: overrides.verifyProvenance ?? p,
+						verified: overrides.verifyPassed ?? true,
+						findings: structuredClone(overrides.verifyFindings ?? []),
+						standards: [{ path: "/repo/AGENTS.md", digest: "standard-1", result: "passed" }],
+						evidence: await executeEvidence(),
+					};
+				if (launch.agent === "prepare-commit")
+					return {
+						provenance: overrides.prepareProvenance ?? p,
+						status: overrides.prepareStatus ?? "passed",
+						code: "passed",
+						architecture: "passed",
+						tests: "passed",
+						standards: [{ path: "/repo/AGENTS.md", digest: "standard-1", result: "passed" }],
+						reasons: structuredClone(overrides.prepareReasons ?? []),
 					};
 				if (overrides.onApplyLaunch)
 					await overrides.onApplyLaunch({ workflow, launch });
 				return {
 					provenance: overrides.applyProvenance ?? p,
+					standards: [{ path: "/repo/AGENTS.md", digest: "standard-1", result: "passed" }],
 					batches: structuredClone(batches),
 					completed: overrides.completed ?? true,
 				};
@@ -190,6 +246,8 @@ test("plans from complete context and produces compatible read-back verified des
 	assert.equal(launches[0].context.ticket.comments[0], "ticket context");
 	assert.equal(launches[0].context.parent.comments[0], "parent context");
 	assert.equal(launches[1].standardRefs[0].digest, "standard-1");
+	assert.deepEqual(result.standards, context.standards);
+	assert.equal(result.design.binding.standardsDigest, result.tasks.binding.standardsDigest);
 });
 
 test("planning fails closed for incomplete context and provenance mismatch", async () => {
@@ -430,16 +488,157 @@ test("completed output requires full behavior coverage and cancellation discards
 	);
 });
 
+test("prepare stops after an sdd-verify failure and persists auditable verification", async () => {
+	const pair = setup({ verifyPassed: false, verifyFindings: ["Focused tests failed."] });
+	const planned = await pair.workflow.plan({ ticketId: "ILA-2316", repository });
+	const applied = await pair.workflow.apply({
+		ticketId: "ILA-2316",
+		planning: planned,
+		repository,
+	});
+	const result = await pair.workflow.prepare({
+		ticketId: "ILA-2316",
+		planning: planned,
+		applied,
+	});
+	assert.equal(result.status, "verification-failed");
+	assert.deepEqual(
+		pair.launches.slice(-1).map((launch) => launch.agent),
+		["sdd-verify"],
+	);
+	const verifyLaunch = pair.launches.at(-1);
+	assert.equal(verifyLaunch.tools.includes("bash"), false);
+	assert.equal(verifyLaunch.tools.includes("edit"), false);
+	assert.equal(verifyLaunch.tools.includes("write"), false);
+	assert.deepEqual(verifyLaunch.extensions, []);
+	assert.equal(verifyLaunch.deniedCapabilities.includes("linear"), true);
+	assert.equal(verifyLaunch.deniedCapabilities.includes("fan-out"), true);
+	assert.equal(
+		[...pair.records.values()].some((artifact) => artifact.schema === "sdd-verify"),
+		true,
+	);
+});
+
+test("prepare rejects evidence with mismatched IDs, commands, snapshot, exits, digests, or extras", async () => {
+	const mismatches = [
+		{ results: [{ id: "wrong", command: "npm run check:typecheck", exitCode: 0, outputDigest: "digest" }] },
+		{ results: [{ id: "focused", command: "wrong", exitCode: 0, outputDigest: "digest" }] },
+		{ repositoryAfter: { ...repository, treeDigest: "changed" } },
+		{ results: [{ id: "focused", command: "node --test test/delivery-apply-workflow.test.mjs", exitCode: 1, outputDigest: "digest" }] },
+		{ results: [{ id: "focused", command: "node --test test/delivery-apply-workflow.test.mjs", exitCode: 0, outputDigest: "" }] },
+		{ results: [{ id: "focused", command: "node --test test/delivery-apply-workflow.test.mjs", exitCode: 0, outputDigest: "digest" }, { id: "extra", command: "npm test", exitCode: 0, outputDigest: "extra" }] },
+	];
+	for (const mismatch of mismatches) {
+		const requiredEvidence = [{ id: "focused", command: "node --test test/delivery-apply-workflow.test.mjs" }];
+		const appliedRepository = { ...repository, treeDigest: "tree-2" };
+		const pair = setup({
+			requiredEvidence,
+			evidence: {
+				repositoryBefore: appliedRepository,
+				repositoryAfter: appliedRepository,
+				results: [{ ...requiredEvidence[0], exitCode: 0, outputDigest: "digest" }],
+				...mismatch,
+			},
+		});
+		const planned = await pair.workflow.plan({ ticketId: "ILA-2316", repository });
+		const applied = await pair.workflow.apply({ ticketId: "ILA-2316", planning: planned, repository });
+		await assert.rejects(
+			() => pair.workflow.prepare({ ticketId: "ILA-2316", planning: planned, applied }),
+			(error) => error.code === "PI_WORKFLOW_DELIVERY_EVIDENCE_INVALID",
+		);
+		assert.equal(pair.launches.at(-1).agent, "sdd-verify");
+	}
+});
+
+test("prepare-commit launches only after verified evidence and persists an auditable refusal", async () => {
+	const pair = setup({ prepareStatus: "refused", prepareReasons: ["Architecture boundary is unclear."] });
+	const planned = await pair.workflow.plan({ ticketId: "ILA-2316", repository });
+	const applied = await pair.workflow.apply({ ticketId: "ILA-2316", planning: planned, repository });
+	const result = await pair.workflow.prepare({ ticketId: "ILA-2316", planning: planned, applied });
+	assert.equal(result.status, "prepare-refused");
+	assert.deepEqual(pair.launches.slice(-2).map((launch) => launch.agent), ["sdd-verify", "prepare-commit"]);
+	assert.equal(
+		[...pair.records.values()].some((artifact) => artifact.schema === "prepare-commit" && artifact.payload.result.status === "refused"),
+		true,
+	);
+});
+
+test("simplify is offered only on Developer request or a concrete validated clarity finding and is never launched", async () => {
+	for (const scenario of [
+		{ expected: false },
+		{ developerRequestedSimplify: true, expected: true },
+		{ verifyFindings: [{ kind: "clarity", validated: true, detail: "Duplicate branch obscures intent." }], expected: true },
+		{ verifyFindings: [{ kind: "clarity", validated: false, detail: "Maybe simplify." }], expected: false },
+	]) {
+		const pair = setup({ verifyFindings: scenario.verifyFindings });
+		const planned = await pair.workflow.plan({ ticketId: "ILA-2316", repository });
+		const applied = await pair.workflow.apply({ ticketId: "ILA-2316", planning: planned, repository });
+		const result = await pair.workflow.prepare({
+			ticketId: "ILA-2316",
+			planning: planned,
+			applied,
+			developerRequestedSimplify: scenario.developerRequestedSimplify,
+		});
+		assert.equal(result.status, "commit-ready");
+		assert.equal(result.simplifyOffered, scenario.expected);
+		assert.equal(pair.launches.some((launch) => launch.agent === "simplify"), false);
+	}
+});
+
+test("prepare recovers from completed apply, retries failures/refusals, and returns commit-ready idempotently", async () => {
+	const pair = setup();
+	const planned = await pair.workflow.plan({ ticketId: "ILA-2316", repository });
+	await pair.workflow.apply({ ticketId: "ILA-2316", planning: planned, repository });
+	const recovered = await pair.workflow.prepare({ ticketId: "ILA-2316", planning: planned });
+	assert.equal(recovered.status, "commit-ready");
+	const launchesAfterReady = pair.launches.length;
+	const repeated = await pair.workflow.prepare({ ticketId: "ILA-2316", planning: planned });
+	assert.deepEqual(repeated, recovered);
+	assert.equal(pair.launches.length, launchesAfterReady);
+	await assert.rejects(
+		() => pair.workflow.prepare({
+			ticketId: "ILA-2316",
+			planning: { ...planned, standards: [{ path: "/repo/AGENTS.md", digest: "changed" }] },
+		}),
+		(error) => error.code === "PI_WORKFLOW_DELIVERY_ARTIFACT_MISMATCH",
+	);
+
+	for (const overrides of [
+		{ verifyPassed: false },
+		{ prepareStatus: "refused", prepareReasons: ["Retry after refusal."] },
+	]) {
+		const retry = setup(overrides);
+		const retryPlan = await retry.workflow.plan({ ticketId: "ILA-2316", repository });
+		const applied = await retry.workflow.apply({ ticketId: "ILA-2316", planning: retryPlan, repository });
+		const first = await retry.workflow.prepare({ ticketId: "ILA-2316", planning: retryPlan, applied });
+		assert.notEqual(first.status, "commit-ready");
+		if (overrides.verifyPassed === false) overrides.verifyPassed = true;
+		if (overrides.prepareStatus === "refused") overrides.prepareStatus = "passed";
+		const second = await retry.workflow.prepare({ ticketId: "ILA-2316", planning: retryPlan });
+		assert.equal(second.status, "commit-ready");
+	}
+});
+
 test("thin runtime delegates plan/apply and rejects invented planning references", async () => {
 	const { workflow } = setup();
 	const registrations = [];
-	const runtime = createDeliveryRuntime({ workflow });
+	const runtime = createDeliveryRuntime({
+		workflow,
+		developerRequestedSimplify: (ticketId) => ticketId === "ILA-2316",
+	});
 	runtime.register({
 		registerTool(tool) {
 			registrations.push(tool);
 		},
 	});
 	assert.equal(registrations[0].name, runtime.toolName);
+	assert.deepEqual(registrations[0].parameters.required, ["action", "ticketId"]);
+	assert.deepEqual(registrations[0].parameters.properties.action.enum, [
+		"plan",
+		"apply",
+		"prepare",
+		"cancel",
+	]);
 	await runtime.execute({ action: "plan", ticketId: "ILA-2316", repository });
 	const applied = await runtime.execute({
 		action: "apply",
@@ -447,6 +646,16 @@ test("thin runtime delegates plan/apply and rejects invented planning references
 		repository,
 	});
 	assert.equal(applied.status, "completed");
+	const prepared = await runtime.execute({
+		action: "prepare",
+		ticketId: "ILA-2316",
+	});
+	assert.equal(prepared.status, "commit-ready");
+	assert.equal(prepared.simplifyOffered, true);
+	assert.equal(
+		registrations[0].parameters.properties.developerRequestedSimplify,
+		undefined,
+	);
 	const other = createDeliveryRuntime({ workflow: setup().workflow });
 	await assert.rejects(
 		() => other.execute({ action: "apply", ticketId: "ILA-2316", repository }),
