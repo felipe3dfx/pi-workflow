@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createDeliveryReviewWorkflow } from "../extensions/delivery-review-workflow.ts";
 import { createDeliveryWorkflow } from "../extensions/delivery-workflow.ts";
 import { createDeliveryRuntime } from "../extensions/delivery-runtime.ts";
+import { createReviewSnapshot } from "../extensions/review-router.ts";
+import { digestCanonicalValue } from "../extensions/workflow-contracts.ts";
 
 const provenance = {
 	"sdd-design": {
@@ -222,6 +225,7 @@ function setup(overrides = {}) {
 				checkpoints.push(structuredClone(value));
 			},
 		},
+		review: overrides.review,
 	});
 	return {
 		workflow,
@@ -233,6 +237,76 @@ function setup(overrides = {}) {
 		},
 	};
 }
+
+test("delivery runtime reaches only explicitly authorized extraordinary review", async () => {
+	const capability = {};
+	const proof = "delivery-review-proof";
+	const reviewLaunches = [];
+	const authority = {
+		capability,
+		authorize(proposal) {
+			const unsigned = {
+				schema: "review-authorization",
+				schemaVersion: 1,
+				mode: proposal.mode,
+				actorId: proposal.actorId,
+				role: proposal.role,
+				requestId: proposal.requestId,
+				subjectDigest: proposal.subjectDigest,
+				snapshotDigest: proposal.snapshotDigest,
+				planDigest: proposal.planDigest,
+				authorityProof: proof,
+			};
+			return { ...unsigned, digest: digestCanonicalValue(unsigned) };
+		},
+		verify(authorization) {
+			return authorization.authorityProof === proof;
+		},
+		adapter: { judge: async () => undefined, fix: async () => undefined, rereview: async () => undefined },
+	};
+	const review = createDeliveryReviewWorkflow({
+		orchestrator: authority,
+		launch: async (request) => {
+			reviewLaunches.push(request);
+			const unsigned = {
+				schema: "review-receipt",
+				schemaVersion: 1,
+				status: "completed",
+				planRef: request.reviewPlanRef,
+				lens: request.lens,
+			};
+			return { ...unsigned, digest: digestCanonicalValue(unsigned) };
+		},
+	});
+	const delivery = setup({ review });
+	const runtime = createDeliveryRuntime({ workflow: delivery.workflow });
+	await runtime.execute({ action: "plan", ticketId: "ILA-2316", repository });
+	assert.equal(reviewLaunches.length, 0, "normal delivery must not fan out reviews");
+	const snapshot = createReviewSnapshot({
+		subject: { kind: "delivery-ticket", id: "ILA-2316", digest: "ticket-digest" },
+		manifest: [{ kind: "engram", project: "pi-workflow", topic: "delivery/review", revision: "r1", schema: "review-evidence", schemaVersion: 1, digest: "evidence" }],
+		risks: [],
+	});
+	const proposal = review.proposeFull4R({ capability, actorId: "developer-1", role: "Developer", requestId: "explicit-review", snapshot });
+	const input = {
+		capability,
+		actorId: "developer-1",
+		role: "Developer",
+		requestId: "explicit-review",
+		snapshot,
+		proposal,
+		authorization: review.authorize(capability, proposal),
+		receipts: [],
+	};
+	const result = await runtime.runExtraordinaryReview({ mode: "full-4r", input });
+	assert.equal(result.status, "completed");
+	assert.equal(reviewLaunches.length, 4);
+	await assert.rejects(
+		runtime.runExtraordinaryReview({ mode: "full-4r", input: { ...input, capability: {} } }),
+		(error) => error.code === "PI_WORKFLOW_ORCHESTRATOR_AUTHORITY_REQUIRED",
+	);
+	assert.equal(reviewLaunches.length, 4, "unauthorized review must not fan out");
+});
 
 test("plans from complete context and produces compatible read-back verified design/tasks", async () => {
 	const { workflow, launches } = setup();

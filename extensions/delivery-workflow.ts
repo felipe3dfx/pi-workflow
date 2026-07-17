@@ -1,3 +1,8 @@
+import type {
+	Full4RExecutionInput,
+	JudgmentDayExecutionInput,
+	createDeliveryReviewWorkflow,
+} from "./delivery-review-workflow.ts";
 import { canonicalJson, digestCanonicalValue } from "./workflow-contracts.ts";
 
 export interface DeliveryRepositorySnapshot {
@@ -169,7 +174,15 @@ interface Dependencies {
 		load(ticketId: string): Promise<Checkpoint | undefined>;
 		save(checkpoint: Checkpoint): Promise<void>;
 	};
+	review?: Pick<
+		ReturnType<typeof createDeliveryReviewWorkflow>,
+		"runFull4R" | "runJudgmentDay"
+	>;
 }
+
+export type DeliveryExtraordinaryReviewRequest =
+	| { mode: "full-4r"; input: Full4RExecutionInput }
+	| { mode: "judgment-day"; input: JudgmentDayExecutionInput };
 
 const expectedProvenance: Record<DeliveryAgent, DeliveryLaunchProvenance> = {
 	"sdd-design": {
@@ -985,6 +998,20 @@ export function createDeliveryWorkflow(dependencies: Dependencies) {
 		return commitReady;
 	}
 
+	async function runExtraordinaryReview(
+		request: DeliveryExtraordinaryReviewRequest,
+	) {
+		if (!dependencies.review) {
+			fail(
+				"PI_WORKFLOW_DELIVERY_REVIEW_UNAVAILABLE",
+				"Extraordinary review is not configured for this delivery runtime.",
+			);
+		}
+		return request.mode === "full-4r"
+			? dependencies.review.runFull4R(request.input)
+			: dependencies.review.runJudgmentDay(request.input);
+	}
+
 	async function cancel(input: { ticketId: string; reason: string }) {
 		const checkpoint = await dependencies.checkpoints.load(input.ticketId);
 		if (!checkpoint)
@@ -1006,5 +1033,5 @@ export function createDeliveryWorkflow(dependencies: Dependencies) {
 		};
 	}
 
-	return { plan, apply, prepare, cancel };
+	return { plan, apply, prepare, runExtraordinaryReview, cancel };
 }

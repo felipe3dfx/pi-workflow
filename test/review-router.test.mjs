@@ -30,6 +30,33 @@ function reviewRisk(id, severity, lens, overrides = {}) {
 	};
 }
 
+function authorityFixture() {
+	const capability = {};
+	const proof = "opaque-authority-proof";
+	const authority = {
+		capability,
+		authorize(proposal) {
+			const unsigned = {
+				schema: "review-authorization",
+				schemaVersion: 1,
+				mode: proposal.mode,
+				actorId: proposal.actorId,
+				role: proposal.role,
+				requestId: proposal.requestId,
+				subjectDigest: proposal.subjectDigest,
+				snapshotDigest: proposal.snapshotDigest,
+				planDigest: proposal.planDigest,
+				authorityProof: proof,
+			};
+			return { ...unsigned, digest: digestCanonicalValue(unsigned) };
+		},
+		verify(authorization) {
+			return authorization.authorityProof === proof;
+		},
+	};
+	return { authority, capability };
+}
+
 function context(risks, overrides = {}) {
 	const snapshot = createReviewSnapshot({
 		subject: {
@@ -197,6 +224,103 @@ test("terminal receipts and digest budget prevent reruns while invalid receipts 
 				}),
 			),
 		(error) => error.code === "PI_WORKFLOW_REVIEW_RECEIPT_INVALID",
+	);
+});
+
+test("authority-gated full 4R authorization deducts exact-plan receipts", () => {
+	const { authority, capability } = authorityFixture();
+	const router = createReviewRouter(authority);
+	const base = context([]);
+	const proposal = router.proposeFull4R({
+		capability,
+		actorId: "owner-1",
+		role: "Owner",
+		requestId: base.requestId,
+		snapshot: base.snapshot,
+	});
+	const authorization = router.authorize(capability, proposal);
+	const initial = router.plan({
+		...base,
+		full4R: { capability, proposal, authorization },
+	});
+	assert.equal(initial.mode, "full-4r");
+	assert.deepEqual(
+		initial.launches.map(({ lens }) => lens),
+		["risk", "resilience", "reliability", "readability"],
+	);
+	const receipt = {
+		schema: "review-receipt",
+		schemaVersion: 1,
+		status: "completed",
+		planRef: initial.ref,
+		lens: "risk",
+	};
+	const signed = { ...receipt, digest: digestCanonicalValue(receipt) };
+	const partial = router.plan({
+		...base,
+		receipts: [signed],
+		full4R: { capability, proposal, authorization },
+	});
+	assert.deepEqual(
+		partial.launches.map(({ lens }) => lens),
+		["resilience", "reliability", "readability"],
+	);
+	for (const changed of [
+		{ requestId: "request-2" },
+		{
+			snapshot: createReviewSnapshot({
+				...base.snapshot.payload,
+				subject: { ...base.snapshot.payload.subject, digest: "changed" },
+			}),
+		},
+		{
+			full4R: {
+				capability,
+				proposal: { ...proposal, actorId: "owner-2" },
+				authorization,
+			},
+		},
+		{
+			full4R: {
+				capability,
+				proposal,
+				authorization: { ...authorization, role: "Developer" },
+			},
+		},
+	])
+		assert.throws(
+			() =>
+				router.plan({
+					...base,
+					full4R: { capability, proposal, authorization },
+					...changed,
+				}),
+			(error) => error.code === "PI_WORKFLOW_REVIEW_AUTHORIZATION_MISMATCH",
+		);
+	assert.throws(
+		() =>
+			router.proposeFull4R({
+				capability: {},
+				actorId: "owner-1",
+				role: "Owner",
+				requestId: base.requestId,
+				snapshot: base.snapshot,
+			}),
+		(error) => error.code === "PI_WORKFLOW_ORCHESTRATOR_AUTHORITY_REQUIRED",
+	);
+	const forgedUnsigned = { ...authorization, authorityProof: "caller-forged" };
+	delete forgedUnsigned.digest;
+	const forged = {
+		...forgedUnsigned,
+		digest: digestCanonicalValue(forgedUnsigned),
+	};
+	assert.throws(
+		() =>
+			router.plan({
+				...base,
+				full4R: { capability, proposal, authorization: forged },
+			}),
+		(error) => error.code === "PI_WORKFLOW_REVIEW_AUTHORIZATION_FORGED",
 	);
 });
 
