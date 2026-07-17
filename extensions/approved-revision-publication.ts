@@ -1,6 +1,7 @@
 import type { OwnerAuthority } from "./workflow-contracts.ts";
-import { canonicalJson, digestCanonicalValue } from "./workflow-contracts.ts";
+import { canonicalJson, type VerifiedArtifactRef } from "./workflow-contracts.ts";
 import type { createApprovedRevisionPublicationManifestStore } from "./approved-revision-publication-manifest.ts";
+import { digestApprovedRevision, digestApprovedRevisionDraft, type ApprovedRevisionDraftArtifact, type ApprovedRevisionStore } from "./approved-revision-store.ts";
 
 interface ApprovedRevisionIssueChange {
 	id: string;
@@ -43,6 +44,20 @@ export interface LinearApprovedRevisionGateway {
 	saveIssue(input: { id: string; description: string }): Promise<LinearApprovedRevisionIssueSnapshot>;
 }
 
+interface ApprovedRevisionProposal {
+	id: string;
+	nextDescription: string;
+}
+
+export interface DraftApprovedRevisionInput {
+	definitionId: string;
+	revisionKind: string;
+	affectedIssues: readonly ApprovedRevisionProposal[];
+	sourceCommentKind: string;
+	sourceCommentBody: string;
+	decisionGap?: { issueId: string; body: string };
+}
+
 type Dependencies = {
 	definitionId: string;
 	digest: string;
@@ -52,6 +67,14 @@ type Dependencies = {
 	gateway: LinearApprovedRevisionGateway;
 };
 
+type DraftOutcome =
+	| { status: "revision-ready"; revision: ApprovedRevisionDraftArtifact; revisionRef: VerifiedArtifactRef }
+	| { status: "blocked"; blocker: { code: string; message: string } };
+
+type ApprovalOutcome =
+	| { status: "revision-approved"; revision: ApprovedRevisionPublicationArtifact; revisionRef: VerifiedArtifactRef }
+	| { status: "blocked"; blocker: { code: string; message: string } };
+
 type Outcome =
 	| { status: "revision-published"; definitionId: string; digest: string }
 	| { status: "blocked"; blocker: { code: string; message: string } };
@@ -60,19 +83,6 @@ const blocked = (code: string, message: string): Outcome => ({ status: "blocked"
 const text = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0;
 const exact = (left: unknown, right: unknown) => canonicalJson(left) === canonicalJson(right);
 const reference = (kind: string, digest: string) => `Referencia de flujo: ${kind}:${digest}`;
-
-function digestApprovedRevision(value: ApprovedRevisionPublicationArtifact): string {
-	const { digest: approvedDigest, ...payload } = value;
-	return digestCanonicalValue({
-		schema: "approved-revision",
-		schemaVersion: 1,
-		payload: {
-			...payload,
-			sourceComment: { ...payload.sourceComment, body: payload.sourceComment.body.replaceAll(approvedDigest, "placeholder") },
-			...(payload.decisionGap ? { decisionGap: { ...payload.decisionGap, body: payload.decisionGap.body.replaceAll(approvedDigest, "placeholder") } } : {}),
-		},
-	});
-}
 
 function validateArtifact(value: ApprovedRevisionPublicationArtifact | undefined, definitionId: string, digest: string): string | undefined {
 	if (!value || value.definitionId !== definitionId || value.digest !== digest || digestApprovedRevision(value) !== digest) return "Approved revision artifact is missing, mismatched, or has an invalid canonical digest.";
@@ -98,6 +108,89 @@ async function validateComments(gateway: LinearApprovedRevisionGateway, issueId:
 	return matching.some((comment) => comment.body === expected.body) ? "present" : "missing";
 }
 
+function withDigest(value: string, digest: string): string {
+	return value.replaceAll("{{digest}}", digest).replaceAll("DIGEST", digest);
+}
+
+function validateDraftInput(input: DraftApprovedRevisionInput): string | undefined {
+	if (!text(input.definitionId) || !text(input.revisionKind) || !text(input.sourceCommentKind) || !text(input.sourceCommentBody)) return "Approved revision draft input is invalid.";
+	if (!Array.isArray(input.affectedIssues) || input.affectedIssues.length === 0) return "Approved revision requires affected issues.";
+	const ids = new Set<string>();
+	for (const issue of input.affectedIssues) {
+		if (!text(issue.id) || ids.has(issue.id) || !text(issue.nextDescription)) return "Approved revision affected issues are invalid.";
+		ids.add(issue.id);
+	}
+	if (input.decisionGap && (!ids.has(input.decisionGap.issueId) || !text(input.decisionGap.body))) return "Approved revision decision-gap is invalid.";
+}
+
+export async function draftApprovedRevision(dependencies: { input: DraftApprovedRevisionInput; gateway: LinearApprovedRevisionGateway; store: Pick<ApprovedRevisionStore, "saveDraft"> }): Promise<DraftOutcome> {
+	try {
+		const invalid = validateDraftInput(dependencies.input);
+		if (invalid) return blocked("PI_WORKFLOW_REVISION_ARTIFACT_INVALID", invalid) as DraftOutcome;
+		const affectedIssues = [];
+		for (const proposal of dependencies.input.affectedIssues) {
+			const snapshot = await dependencies.gateway.getIssue({ id: proposal.id });
+			if (!snapshot || snapshot.id !== proposal.id) return blocked("PI_WORKFLOW_REVISION_STALE", `Issue ${proposal.id} could not be read before drafting.`) as DraftOutcome;
+			affectedIssues.push({ id: proposal.id, previousDescription: snapshot.description, previousRevision: snapshot.updatedAt, nextDescription: proposal.nextDescription });
+		}
+		const unsigned = {
+			definitionId: dependencies.input.definitionId,
+			kind: dependencies.input.revisionKind,
+			affectedIssues,
+			sourceComment: { kind: dependencies.input.sourceCommentKind, body: dependencies.input.sourceCommentBody },
+			...(dependencies.input.decisionGap ? { decisionGap: dependencies.input.decisionGap } : {}),
+		};
+		const placeholderDigest = digestApprovedRevisionDraft({ ...unsigned, digest: "placeholder" });
+		const revision: ApprovedRevisionDraftArtifact = {
+			...unsigned,
+			digest: placeholderDigest,
+			sourceComment: { ...unsigned.sourceComment, body: withDigest(unsigned.sourceComment.body, placeholderDigest) },
+			...(unsigned.decisionGap ? { decisionGap: { ...unsigned.decisionGap, body: withDigest(unsigned.decisionGap.body, placeholderDigest) } } : {}),
+		};
+		const digest = digestApprovedRevisionDraft(revision);
+		const normalized: ApprovedRevisionDraftArtifact = digest === revision.digest ? revision : { ...revision, digest, sourceComment: { ...revision.sourceComment, body: withDigest(unsigned.sourceComment.body, digest) }, ...(unsigned.decisionGap ? { decisionGap: { ...unsigned.decisionGap, body: withDigest(unsigned.decisionGap.body, digest) } } : {}) };
+		const revisionRef = await dependencies.store.saveDraft(normalized);
+		if (revisionRef.digest !== normalized.digest || revisionRef.schema !== "approved-revision-draft") return blocked("PI_WORKFLOW_ARTIFACT_READBACK_MISMATCH", "Approved revision draft could not be persisted with its exact identity.") as DraftOutcome;
+		return { status: "revision-ready", revision: structuredClone(normalized), revisionRef };
+	} catch (error) {
+		return blocked(error && typeof error === "object" && "code" in error ? String(error.code) : "PI_WORKFLOW_PUBLICATION_FAILED", error instanceof Error ? error.message : "Approved revision draft failed.") as DraftOutcome;
+	}
+}
+
+export async function approveDraftedRevision(dependencies: { definitionId: string; digest: string; currentActor(): Promise<OwnerAuthority | undefined>; gateway: LinearApprovedRevisionGateway; store: Pick<ApprovedRevisionStore, "readDraft" | "saveApproved"> }): Promise<ApprovalOutcome> {
+	try {
+		const draft = await dependencies.store.readDraft(dependencies.definitionId, dependencies.digest);
+		if (!draft || draft.digest !== dependencies.digest || draft.definitionId !== dependencies.definitionId || digestApprovedRevisionDraft(draft) !== dependencies.digest) return blocked("PI_WORKFLOW_REVISION_ARTIFACT_INVALID", "Approved revision draft is missing or invalid.") as ApprovalOutcome;
+		const actor = await dependencies.currentActor();
+		if (actor?.role !== "Owner") return blocked("PI_WORKFLOW_REVISION_APPROVAL_MISMATCH", "Approved revision approval requires current Owner authority.") as ApprovalOutcome;
+		for (const issue of draft.affectedIssues) {
+			const snapshot = await dependencies.gateway.getIssue({ id: issue.id });
+			if (!snapshot || snapshot.description !== issue.previousDescription || snapshot.updatedAt !== issue.previousRevision) return blocked("PI_WORKFLOW_REVISION_STALE", `Issue ${issue.id} changed before approved revision approval.`) as ApprovalOutcome;
+		}
+		const authority = { actorId: actor.actorId, role: "Owner" as const, authorityRevision: actor.authorityRevision };
+		const provisional: ApprovedRevisionPublicationArtifact = {
+			...draft,
+			digest: "placeholder",
+			authority,
+			sourceComment: { ...draft.sourceComment, body: draft.sourceComment.body.replaceAll(draft.digest, "placeholder") },
+			...(draft.decisionGap ? { decisionGap: { ...draft.decisionGap, body: draft.decisionGap.body.replaceAll(draft.digest, "placeholder") } } : {}),
+		};
+		const approvedDigest = digestApprovedRevision(provisional);
+		const revision: ApprovedRevisionPublicationArtifact = {
+			...provisional,
+			digest: approvedDigest,
+			sourceComment: { ...draft.sourceComment, body: withDigest(draft.sourceComment.body.replaceAll(draft.digest, "{{digest}}"), approvedDigest) },
+			...(draft.decisionGap ? { decisionGap: { ...draft.decisionGap, body: withDigest(draft.decisionGap.body.replaceAll(draft.digest, "{{digest}}"), approvedDigest) } } : {}),
+		};
+		if (digestApprovedRevision(revision) !== approvedDigest) return blocked("PI_WORKFLOW_REVISION_ARTIFACT_INVALID", "Approved revision digest changed during approval.") as ApprovalOutcome;
+		const revisionRef = await dependencies.store.saveApproved(revision);
+		if (revisionRef.digest !== revision.digest || revisionRef.schema !== "approved-revision") return blocked("PI_WORKFLOW_ARTIFACT_READBACK_MISMATCH", "Approved revision could not be persisted with its exact identity.") as ApprovalOutcome;
+		return { status: "revision-approved", revision: structuredClone(revision), revisionRef };
+	} catch (error) {
+		return blocked(error && typeof error === "object" && "code" in error ? String(error.code) : "PI_WORKFLOW_PUBLICATION_FAILED", error instanceof Error ? error.message : "Approved revision approval failed.") as ApprovalOutcome;
+	}
+}
+
 export async function publishApprovedRevision(dependencies: Dependencies): Promise<Outcome> {
 	try {
 		const revision = await dependencies.readApprovedRevision(dependencies.definitionId, dependencies.digest);
@@ -113,9 +206,9 @@ export async function publishApprovedRevision(dependencies: Dependencies): Promi
 		for (const issue of revision.affectedIssues) {
 			const snapshot = await dependencies.gateway.getIssue({ id: issue.id });
 			if (!snapshot || snapshot.id !== issue.id) return blocked("PI_WORKFLOW_REVISION_STALE", `Issue ${issue.id} could not be read before publication.`);
-			const recoverableDescriptionStage = manifest.stage === "describing";
+			const claim = manifest.descriptionClaims.find((entry) => entry.issueId === issue.id);
 			const recordedAsUpdated = manifest.descriptions.includes(issue.id);
-			const alreadyUpdated = (recordedAsUpdated || recoverableDescriptionStage) && snapshot.description === issue.nextDescription;
+			const alreadyUpdated = (recordedAsUpdated || claim?.previousRevision === issue.previousRevision) && snapshot.description === issue.nextDescription;
 			if (snapshot.description !== issue.previousDescription && !alreadyUpdated) return blocked("PI_WORKFLOW_REVISION_STALE", `Issue ${issue.id} description changed before approved revision publication.`);
 			if (!alreadyUpdated && snapshot.updatedAt !== issue.previousRevision) return blocked("PI_WORKFLOW_REVISION_STALE", `Issue ${issue.id} revision changed before approved revision publication.`);
 			snapshots.set(issue.id, snapshot);
@@ -138,7 +231,10 @@ export async function publishApprovedRevision(dependencies: Dependencies): Promi
 			for (const plan of commentPlans) {
 				const key = `${plan.issueId}:${plan.kind}`;
 				if (!recorded.some((entry) => `${entry.issueId}:${entry.kind}` === key)) {
-					if (commentStates.get(key) !== "present") await dependencies.gateway.saveComment({ issueId: plan.issueId, body: plan.body });
+					if (commentStates.get(key) !== "present") {
+						await dependencies.gateway.saveComment({ issueId: plan.issueId, body: plan.body });
+						if (await validateComments(dependencies.gateway, plan.issueId, { kind: plan.kind, body: plan.body, digest: revision.digest }) !== "present") return blocked("PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH", `Issue ${plan.issueId} did not read back the approved flow reference comment.`);
+					}
 					recorded = [...recorded, { issueId: plan.issueId, kind: plan.kind }];
 					manifest = await dependencies.manifest.record(manifest.operationId, "commenting", { comments: recorded });
 				}
@@ -148,13 +244,22 @@ export async function publishApprovedRevision(dependencies: Dependencies): Promi
 
 		if (manifest.stage === "describing") {
 			let descriptions = [...manifest.descriptions];
+			let descriptionClaims = [...manifest.descriptionClaims];
 			for (const issue of revision.affectedIssues) {
 				if (descriptions.includes(issue.id)) continue;
+				let claim = descriptionClaims.find((entry) => entry.issueId === issue.id);
 				const current = snapshots.get(issue.id)?.description === issue.nextDescription ? snapshots.get(issue.id) : await dependencies.gateway.getIssue({ id: issue.id });
-				if (!current || (current.description !== issue.previousDescription && current.description !== issue.nextDescription)) return blocked("PI_WORKFLOW_REVISION_STALE", `Issue ${issue.id} changed during approved revision recovery.`);
+				if (!current || (current.description !== issue.previousDescription && !(claim && current.description === issue.nextDescription))) return blocked("PI_WORKFLOW_REVISION_STALE", `Issue ${issue.id} changed during approved revision recovery.`);
+				if (!claim) {
+					claim = { issueId: issue.id, previousRevision: issue.previousRevision };
+					descriptionClaims = [...descriptionClaims, claim];
+					manifest = await dependencies.manifest.record(manifest.operationId, "describing", { descriptionClaims });
+				}
 				if (current.description !== issue.nextDescription) {
 					const updated = await dependencies.gateway.saveIssue({ id: issue.id, description: issue.nextDescription });
-					if (updated.description !== issue.nextDescription) return blocked("PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH", `Issue ${issue.id} did not read back the approved description.`);
+					if (updated.description !== issue.nextDescription) return blocked("PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH", `Issue ${issue.id} did not return the approved description.`);
+					const readBack = await dependencies.gateway.getIssue({ id: issue.id });
+					if (readBack?.description !== issue.nextDescription) return blocked("PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH", `Issue ${issue.id} did not read back the approved description.`);
 				}
 				descriptions = [...descriptions, issue.id];
 				manifest = await dependencies.manifest.record(manifest.operationId, "describing", { descriptions });

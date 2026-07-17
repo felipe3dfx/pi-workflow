@@ -68,6 +68,7 @@ extensions/agent-asset-sync.ts
 extensions/agent-validator.ts
 extensions/approved-revision-publication-manifest.ts
 extensions/approved-revision-publication.ts
+extensions/approved-revision-store.ts
 extensions/approved-ticket-graph-store.ts
 extensions/approved-ticket-publication.ts
 extensions/companion-workflow.ts

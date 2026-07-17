@@ -53,7 +53,10 @@ export function createRuntimeLinearApprovedRevisionGateway(options: { apiKey: st
 	return {
 		async getIssue({ id }) {
 			const data = await graphql("ApprovedRevisionIssueRead", `query ApprovedRevisionIssueRead($id:String!){issue(id:$id){${fields}}}`, { id });
-			return issue(data.issue);
+			if (data.issue === null || data.issue === undefined) return undefined;
+			const snapshot = issue(data.issue);
+			if (!snapshot) fail("PI_WORKFLOW_LINEAR_MALFORMED_RESPONSE");
+			return snapshot;
 		},
 		async listComments({ issueId }) {
 			const data = await graphql("ApprovedRevisionComments", "query ApprovedRevisionComments($id:String!){issue(id:$id){comments{nodes{id body}}}}", { id: issueId });

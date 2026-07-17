@@ -100,6 +100,8 @@ const defineProductParameters = {
 					"to_tickets",
 					"approve_tickets",
 					"publish_tickets",
+					"to_approved_revision",
+					"approve_approved_revision",
 					"publish_approved_revision",
 			],
 		},
@@ -138,6 +140,18 @@ const defineProductParameters = {
 				required: ["action", "definitionId"],
 			},
 			{
+			type: "object",
+			additionalProperties: false,
+			properties: { action: { const: "to_approved_revision" }, definitionId: { type: "string" }, revisionKind: { type: "string" }, affectedIssues: { type: "array", items: { type: "object", additionalProperties: false, properties: { id: { type: "string" }, nextDescription: { type: "string" } }, required: ["id", "nextDescription"] } }, sourceCommentKind: { type: "string" }, sourceCommentBody: { type: "string" }, decisionGap: { type: "object", additionalProperties: false, properties: { issueId: { type: "string" }, body: { type: "string" } }, required: ["issueId", "body"] } },
+			required: ["action", "definitionId", "revisionKind", "affectedIssues", "sourceCommentKind", "sourceCommentBody"],
+		},
+		{
+			type: "object",
+			additionalProperties: false,
+			properties: { action: { const: "approve_approved_revision" }, definitionId: { type: "string" }, digest: { type: "string" } },
+			required: ["action", "definitionId", "digest"],
+		},
+		{
 				type: "object",
 				additionalProperties: false,
 				properties: { action: { const: "publish_approved_revision" }, definitionId: { type: "string" }, digest: { type: "string" } },
@@ -157,6 +171,8 @@ interface DefineProductToolParams {
 		| "to_tickets"
 		| "approve_tickets"
 		| "publish_tickets"
+		| "to_approved_revision"
+		| "approve_approved_revision"
 		| "publish_approved_revision";
 	definitionId?: string;
 	domainAnchor?: string;
@@ -180,6 +196,11 @@ interface DefineProductToolParams {
 	approvedSpecRef?: unknown;
 	parentRef?: unknown;
 	graphRef?: unknown;
+	revisionKind?: string;
+	affectedIssues?: unknown;
+	sourceCommentKind?: string;
+	sourceCommentBody?: string;
+	decisionGap?: unknown;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -323,6 +344,21 @@ function parseApproveTicketsCommand(params: DefineProductToolParams, definitionI
 	return parentRef && graphRef && typeof params.digest === "string"
 		? { kind: "approve-tickets", definitionId, parentRef, graphRef, digest: params.digest }
 		: undefined;
+}
+
+function parseApprovedRevisionDraftCommand(params: DefineProductToolParams, definitionId: string): DefineProductCommand | undefined {
+	if (typeof params.revisionKind !== "string" || typeof params.sourceCommentKind !== "string" || typeof params.sourceCommentBody !== "string" || !Array.isArray(params.affectedIssues)) return undefined;
+	const affectedIssues = params.affectedIssues.flatMap((issue) => {
+		if (!isRecord(issue) || typeof issue.id !== "string" || typeof issue.nextDescription !== "string") return [];
+		return [{ id: issue.id, nextDescription: issue.nextDescription }];
+	});
+	if (affectedIssues.length !== params.affectedIssues.length) return undefined;
+	let decisionGap: { issueId: string; body: string } | undefined;
+	if (params.decisionGap !== undefined) {
+		if (!isRecord(params.decisionGap) || typeof params.decisionGap.issueId !== "string" || typeof params.decisionGap.body !== "string") return undefined;
+		decisionGap = { issueId: params.decisionGap.issueId, body: params.decisionGap.body };
+	}
+	return { kind: "to-approved-revision", definitionId, revisionKind: params.revisionKind, affectedIssues, sourceCommentKind: params.sourceCommentKind, sourceCommentBody: params.sourceCommentBody, ...(decisionGap ? { decisionGap } : {}) };
 }
 
 export interface DefineProductRuntimeDependencies {
@@ -689,6 +725,23 @@ export function createDefineProductRuntime(
 							return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
 						}
 						command = { kind: "publish-tickets", definitionId: activeDefinitionId as string };
+					} else if (params.action === "to_approved_revision") {
+						if (params.definitionId !== activeDefinitionId) {
+							const outcome: DefineProductOutcome = { status: "blocked", blocker: createBlocker("PI_WORKFLOW_SPEC_ARTIFACT_INVALID", "Approved revision drafting requires the active definition ID.") };
+							return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
+						}
+						const parsed = parseApprovedRevisionDraftCommand(params, activeDefinitionId ?? "");
+						if (!parsed) {
+							const outcome: DefineProductOutcome = { status: "blocked", blocker: createBlocker("PI_WORKFLOW_SPEC_ARTIFACT_INVALID", "Approved revision draft input is invalid.") };
+							return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
+						}
+						command = parsed;
+					} else if (params.action === "approve_approved_revision") {
+						if (!hasExactKeys(params, ["action", "definitionId", "digest"]) || typeof params.digest !== "string" || params.definitionId !== activeDefinitionId) {
+							const outcome: DefineProductOutcome = { status: "blocked", blocker: createBlocker("PI_WORKFLOW_SPEC_ARTIFACT_INVALID", "Approved revision approval requires only the active definition ID and exact digest.") };
+							return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
+						}
+						command = { kind: "approve-approved-revision", definitionId: activeDefinitionId as string, digest: params.digest };
 					} else if (params.action === "publish_approved_revision") {
 						if (!hasExactKeys(params, ["action", "definitionId", "digest"]) || typeof params.digest !== "string" || params.definitionId !== activeDefinitionId) {
 							const outcome: DefineProductOutcome = { status: "blocked", blocker: createBlocker("PI_WORKFLOW_SPEC_ARTIFACT_INVALID", "Approved revision publication requires only the active definition ID and exact digest.") };
@@ -738,6 +791,8 @@ export function createDefineProductRuntime(
 					command.kind !== "approve-spec" &&
 					command.kind !== "to-tickets" &&
 					command.kind !== "approve-tickets"
+					&& command.kind !== "to-approved-revision"
+					&& command.kind !== "approve-approved-revision"
 					&& command.kind !== "publish-tickets"
 					&& command.kind !== "publish-approved-revision"
 				) {

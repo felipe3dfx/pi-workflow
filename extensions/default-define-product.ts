@@ -53,8 +53,9 @@ import { createDeliveryParentSnapshotStore, readDeliveryParentSnapshot } from ".
 import { createApprovedTicketGraphStore } from "./approved-ticket-graph-store.ts";
 import { createApprovedTicketPublicationStore } from "./approved-ticket-publication.ts";
 import { publishApprovedTickets } from "./delivery-ticket-publication.ts";
-import { publishApprovedRevision, type ApprovedRevisionPublicationArtifact } from "./approved-revision-publication.ts";
+import { approveDraftedRevision, draftApprovedRevision, publishApprovedRevision } from "./approved-revision-publication.ts";
 import { createApprovedRevisionPublicationManifestStore } from "./approved-revision-publication-manifest.ts";
+import { createApprovedRevisionStore } from "./approved-revision-store.ts";
 import { createRuntimeLinearApprovedRevisionGateway } from "./runtime-linear-approved-revision.ts";
 import { recoverApprovedTicketGraph } from "./ticket-graph-recovery.ts";
 import { createTicketPublicationAuthorityGuard } from "./ticket-publication-authority-guard.ts";
@@ -1079,6 +1080,7 @@ export function createDefaultDefineProductWorkflow(
 			},
 		},
 	});
+	const approvedRevisionStore = createApprovedRevisionStore({ store: artifactStore, project: baseProject.name, topic: "workflow/define-product" });
 	const approvedRevisionPublicationManifest = createApprovedRevisionPublicationManifestStore({
 		persistence: {
 			async read(operationId) {
@@ -1483,6 +1485,17 @@ export function createDefaultDefineProductWorkflow(
 			},
 		} : undefined,
 		approvedRevisionPublication: linearApprovedRevision && authenticatedAuthority ? {
+			draft: (input) => draftApprovedRevision({ input, gateway: linearApprovedRevision, store: approvedRevisionStore }),
+			approve: (definitionId, digest) => approveDraftedRevision({
+				definitionId,
+				digest,
+				gateway: linearApprovedRevision,
+				store: approvedRevisionStore,
+				currentActor: async () => {
+					const authority = await authenticatedAuthority.current();
+					return authority.role === "Owner" ? authority as OwnerAuthority : undefined;
+				},
+			}),
 			async publish(definitionId, digest) {
 				return publishApprovedRevision({
 					definitionId,
@@ -1493,14 +1506,7 @@ export function createDefaultDefineProductWorkflow(
 					},
 					manifest: approvedRevisionPublicationManifest,
 					gateway: linearApprovedRevision,
-					async readApprovedRevision(targetDefinitionId, targetDigest) {
-						const topic = `workflow/define-product/${targetDefinitionId}/approved-revision/${targetDigest}`;
-						const current = await artifactStore.readCurrent(baseProject.name, topic);
-						if (!current) return undefined;
-						const parsed = JSON.parse(current.content) as { schema?: string; schemaVersion?: number; payload?: ApprovedRevisionPublicationArtifact; digest?: string };
-						if (parsed.schema !== "approved-revision" || parsed.schemaVersion !== 1 || parsed.digest !== targetDigest || parsed.payload?.digest !== targetDigest) return undefined;
-						return parsed.payload;
-					},
+					readApprovedRevision: approvedRevisionStore.readApproved,
 				});
 			},
 		} : undefined,

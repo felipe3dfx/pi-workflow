@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { publishApprovedRevision } from "../extensions/approved-revision-publication.ts";
+import { approveDraftedRevision, draftApprovedRevision, publishApprovedRevision } from "../extensions/approved-revision-publication.ts";
+import { createApprovedRevisionStore } from "../extensions/approved-revision-store.ts";
 import { createApprovedRevisionPublicationManifestStore } from "../extensions/approved-revision-publication-manifest.ts";
 import { digestCanonicalValue } from "../extensions/workflow-contracts.ts";
 
@@ -103,6 +104,25 @@ function deps({ revision = approvedRevision(), persistence = memory(), linearFak
 	};
 }
 
+function artifactMemory() {
+	let revision = 0;
+	const bytes = new Map();
+	return {
+		capabilities: { atomicCompareAndSwap: true },
+		bytes,
+		readCurrent: async (_project, topic) => bytes.get(topic)?.at(-1),
+		write: async (_project, topic, content, expectedRevision) => {
+			const versions = bytes.get(topic) ?? [];
+			if (versions.at(-1)?.revision !== expectedRevision) throw new Error("compare-and-swap conflict");
+			revision += 1;
+			versions.push({ revision: `artifact-r${revision}`, content });
+			bytes.set(topic, versions);
+			return { revision: `artifact-r${revision}` };
+		},
+		readRevision: async (_project, topic, target) => bytes.get(topic)?.find((entry) => entry.revision === target)?.content,
+	};
+}
+
 test("publishes an approved Spanish multi-issue revision after validating every previous description", async () => {
 	const subject = deps();
 	const result = await publishApprovedRevision(subject);
@@ -180,6 +200,103 @@ test("does not treat an externally matching next description as recorded recover
 	const linearFake = linear();
 	linearFake.issues.set("ILA-2296", { ...linearFake.issues.get("ILA-2296"), description: "Spec vigente revisado", updatedAt: "unapproved-revision" });
 	const subject = deps({ linearFake });
+
+	const result = await publishApprovedRevision(subject);
+
+	assert.equal(result.status, "blocked");
+	assert.equal(result.blocker.code, "PI_WORKFLOW_REVISION_STALE");
+	assert.deepEqual(linearFake.calls, []);
+});
+
+test("drafts an approved revision by reading current Linear descriptions before persisting Engram draft", async () => {
+	const linearFake = linear();
+	const store = createApprovedRevisionStore({ store: artifactMemory(), project: "pi-workflow", topic: "workflow/define-product" });
+
+	const result = await draftApprovedRevision({
+		gateway: linearFake.gateway,
+		store,
+		input: {
+			definitionId: "definition-1",
+			revisionKind: "product-revision",
+			affectedIssues: [
+				{ id: "ILA-2296", nextDescription: "Spec vigente revisado" },
+				{ id: "ILA-2317", nextDescription: "Ticket vigente revisado" },
+			],
+			sourceCommentKind: "product-revision",
+			sourceCommentBody: "Revisión aprobada para el flujo.\n\nReferencia de flujo: product-revision:{{digest}}",
+			decisionGap: { issueId: "ILA-2317", body: "Brecha de decisión documentada.\n\nReferencia de flujo: decision-gap:{{digest}}" },
+		},
+	});
+
+	assert.equal(result.status, "revision-ready");
+	assert.equal(result.revisionRef.schema, "approved-revision-draft");
+	assert.deepEqual(result.revision.affectedIssues.map(({ id, previousDescription, previousRevision, nextDescription }) => ({ id, previousDescription, previousRevision, nextDescription })), [
+		{ id: "ILA-2296", previousDescription: "Spec anterior", previousRevision: "rev-parent-1", nextDescription: "Spec vigente revisado" },
+		{ id: "ILA-2317", previousDescription: "Ticket anterior", previousRevision: "rev-ticket-1", nextDescription: "Ticket vigente revisado" },
+	]);
+	assert.match(result.revision.sourceComment.body, new RegExp(`Referencia de flujo: product-revision:${result.revision.digest}`));
+	assert.equal(linearFake.calls.length, 0);
+});
+
+test("approves a drafted revision with the current Owner and rejects stale draft snapshots", async () => {
+	const linearFake = linear();
+	const store = createApprovedRevisionStore({ store: artifactMemory(), project: "pi-workflow", topic: "workflow/define-product" });
+	const ready = await draftApprovedRevision({
+		gateway: linearFake.gateway,
+		store,
+		input: { definitionId: "definition-1", revisionKind: "product-revision", affectedIssues: [{ id: "ILA-2296", nextDescription: "Spec vigente revisado" }], sourceCommentKind: "product-revision", sourceCommentBody: "Revisión aprobada.\n\nReferencia de flujo: product-revision:{{digest}}" },
+	});
+	assert.equal(ready.status, "revision-ready");
+
+	const approved = await approveDraftedRevision({ definitionId: "definition-1", digest: ready.revision.digest, currentActor: async () => actor, gateway: linearFake.gateway, store });
+	assert.equal(approved.status, "revision-approved", JSON.stringify(approved));
+	assert.equal(approved.revisionRef.schema, "approved-revision");
+	assert.deepEqual(approved.revision.authority, actor);
+	assert.equal((await store.readApproved("definition-1", approved.revision.digest)).authority.actorId, "owner-1");
+
+	const staleStore = createApprovedRevisionStore({ store: artifactMemory(), project: "pi-workflow", topic: "workflow/define-product" });
+	const staleReady = await draftApprovedRevision({ gateway: linearFake.gateway, store: staleStore, input: { definitionId: "definition-1", revisionKind: "product-revision", affectedIssues: [{ id: "ILA-2296", nextDescription: "Spec vigente revisado" }], sourceCommentKind: "product-revision", sourceCommentBody: "Revisión aprobada.\n\nReferencia de flujo: product-revision:{{digest}}" } });
+	assert.equal(staleReady.status, "revision-ready");
+	linearFake.issues.get("ILA-2296").description = "Cambio humano";
+	const stale = await approveDraftedRevision({ definitionId: "definition-1", digest: staleReady.revision.digest, currentActor: async () => actor, gateway: linearFake.gateway, store: staleStore });
+	assert.equal(stale.status, "blocked");
+	assert.equal(stale.blocker.code, "PI_WORKFLOW_REVISION_STALE");
+});
+
+test("recovers an issue update only after durable per-issue intent is recorded", async () => {
+	const persistence = memory();
+	let failedCompletionRecord = false;
+	const guardedPersistence = {
+		...persistence,
+		compareAndSwap: async (revision, value) => {
+			if (value.stage === "describing" && value.descriptions.includes("ILA-2296") && !failedCompletionRecord) {
+				failedCompletionRecord = true;
+				throw new Error("record interrupted after issue update");
+			}
+			return persistence.compareAndSwap(revision, value);
+		},
+	};
+	const linearFake = linear();
+	const subject = deps({ persistence: guardedPersistence, linearFake });
+	assert.equal((await publishApprovedRevision(subject)).status, "blocked");
+	assert.equal(linearFake.issues.get("ILA-2296").description, "Spec vigente revisado");
+	assert.equal(persistence.value().descriptionClaims.some((claim) => claim.issueId === "ILA-2296"), true);
+	assert.equal(persistence.value().descriptions.includes("ILA-2296"), false);
+
+	const retry = deps({ persistence: guardedPersistence, linearFake, revision: await subject.readApprovedRevision(subject.definitionId, subject.digest) });
+	assert.equal((await publishApprovedRevision(retry)).status, "revision-published");
+	assert.equal(linearFake.calls.filter((call) => call.op === "saveIssue" && call.id === "ILA-2296").length, 1);
+});
+
+test("blocks an external identical edit for an unclaimed issue during staged recovery", async () => {
+	const persistence = memory();
+	const linearFake = linear();
+	const subject = deps({ persistence, linearFake });
+	let manifest = await subject.manifest.prepare({ definitionId: subject.definitionId, digest: subject.digest, affectedIssueIds: ["ILA-2296", "ILA-2317"] });
+	manifest = await subject.manifest.advance(manifest.operationId, "prepared", "commenting");
+	manifest = await subject.manifest.advance(manifest.operationId, "commenting", "describing");
+	await subject.manifest.record(manifest.operationId, "describing", { descriptionClaims: [{ issueId: "ILA-2296", previousRevision: "rev-parent-1" }] });
+	linearFake.issues.set("ILA-2317", { ...linearFake.issues.get("ILA-2317"), description: "Ticket vigente revisado", updatedAt: "external-edit" });
 
 	const result = await publishApprovedRevision(subject);
 

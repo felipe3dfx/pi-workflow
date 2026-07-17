@@ -494,6 +494,8 @@ test("production define-product seam derives approval identity from trusted auth
 		"to_tickets",
 		"approve_tickets",
 		"publish_tickets",
+		"to_approved_revision",
+		"approve_approved_revision",
 		"publish_approved_revision",
 	]);
 

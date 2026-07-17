@@ -9,6 +9,8 @@ type ArtifactSchema =
 	| "delivery-ticket-graph"
 	| "delivery-parent"
 	| "approved-spec"
+	| "approved-revision-draft"
+	| "approved-revision"
 	| "approved-ticket-publication"
 	| "product-spec"
 	| "workflow-progress";

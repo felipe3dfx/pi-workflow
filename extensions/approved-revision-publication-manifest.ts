@@ -13,6 +13,7 @@ export interface ApprovedRevisionPublicationManifest extends ApprovedRevisionPub
 	operationId: string;
 	stage: ApprovedRevisionPublicationStage;
 	comments: readonly { issueId: string; kind: string }[];
+	descriptionClaims: readonly { issueId: string; previousRevision: string }[];
 	descriptions: readonly string[];
 	verification?: { digest: string; issueIds: readonly string[] };
 }
@@ -38,9 +39,10 @@ function validShape(value: ApprovedRevisionPublicationManifest): string | undefi
 	if (!value.definitionId || !/^[a-f0-9]{64}$/.test(value.digest) || !/^[a-f0-9]{64}$/.test(value.operationId)) return "approved revision manifest identity is invalid";
 	if (!Array.isArray(value.affectedIssueIds) || value.affectedIssueIds.length === 0 || value.affectedIssueIds.some((id) => typeof id !== "string" || !id.trim())) return "approved revision manifest issue list is invalid";
 	if (!Array.isArray(value.comments) || value.comments.some((entry) => !entry.issueId?.trim() || !entry.kind?.trim())) return "approved revision manifest comments are invalid";
+	if (!Array.isArray(value.descriptionClaims) || value.descriptionClaims.some((entry) => !entry.issueId?.trim() || !entry.previousRevision?.trim())) return "approved revision manifest description claims are invalid";
 	if (!Array.isArray(value.descriptions) || value.descriptions.some((id) => typeof id !== "string" || !id.trim())) return "approved revision manifest descriptions are invalid";
-	if (value.stage === "prepared" && (value.comments.length || value.descriptions.length || value.verification)) return "prepared approved revision manifest must be empty";
-	if (value.stage === "commenting" && (value.descriptions.length || value.verification)) return "commenting approved revision manifest shape is invalid";
+	if (value.stage === "prepared" && (value.comments.length || value.descriptionClaims.length || value.descriptions.length || value.verification)) return "prepared approved revision manifest must be empty";
+	if (value.stage === "commenting" && (value.descriptionClaims.length || value.descriptions.length || value.verification)) return "commenting approved revision manifest shape is invalid";
 	if (value.stage === "describing" && value.verification) return "describing approved revision manifest shape is invalid";
 	if (value.stage === "verifying" && value.verification) return "verifying approved revision manifest shape is invalid";
 	if (value.stage === "verified" && (!value.verification || value.verification.digest !== value.digest || JSON.stringify([...value.verification.issueIds].sort()) !== JSON.stringify([...value.affectedIssueIds].sort()))) return "verified approved revision manifest requires matching read-back";
@@ -60,7 +62,7 @@ export function createApprovedRevisionPublicationManifestStore({ persistence }: 
 			if (!sameIdentity(existing, identity)) throw new Error("approved revision manifest conflicts with publication identity");
 			return existing;
 		}
-		const value: ApprovedRevisionPublicationManifest = { ...identity, affectedIssueIds: [...identity.affectedIssueIds].sort(), schemaVersion: 1, operationId, stage: "prepared", comments: [], descriptions: [], verification: undefined };
+		const value: ApprovedRevisionPublicationManifest = { ...identity, affectedIssueIds: [...identity.affectedIssueIds].sort(), schemaVersion: 1, operationId, stage: "prepared", comments: [], descriptionClaims: [], descriptions: [], verification: undefined };
 		const invalid = validShape(value);
 		if (invalid) throw new Error(invalid);
 		const created = await persistence.create(value);
@@ -85,7 +87,7 @@ export function createApprovedRevisionPublicationManifestStore({ persistence }: 
 		return save({ ...current.value, ...changes, stage: next });
 	}
 
-	async function record(operationId: string, stage: "commenting" | "describing", changes: Pick<Partial<ApprovedRevisionPublicationManifest>, "comments" | "descriptions">): Promise<ApprovedRevisionPublicationManifest> {
+	async function record(operationId: string, stage: "commenting" | "describing", changes: Pick<Partial<ApprovedRevisionPublicationManifest>, "comments" | "descriptionClaims" | "descriptions">): Promise<ApprovedRevisionPublicationManifest> {
 		const current = await persistence.read(operationId);
 		if (!current || current.value.stage !== stage) throw new Error("approved revision manifest compare-and-swap conflict");
 		return save({ ...current.value, ...changes });
