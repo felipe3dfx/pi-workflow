@@ -128,7 +128,7 @@ Configured companions:
 | --- | --- |
 | `gentle-engram` | `0.1.10` |
 | `pi-mcp-adapter` | `2.11.0` |
-| `@tintinweb/pi-subagents` | `0.13.0` |
+| `@tintinweb/pi-subagents` | `0.14.1` |
 | `pi-web-access` | `0.13.0` |
 | `@vndv/pi-codegraph` | `0.1.10` |
 
