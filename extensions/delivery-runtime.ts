@@ -1,5 +1,6 @@
 import type {
 	createDeliveryWorkflow,
+	DeliveryExtraordinaryReviewRequest,
 	DeliveryPlanningResult,
 	DeliveryRepositorySnapshot,
 } from "./delivery-workflow.ts";
@@ -99,6 +100,10 @@ export function createDeliveryRuntime(dependencies: {
 		return result;
 	}
 
+	function runExtraordinaryReview(request: DeliveryExtraordinaryReviewRequest) {
+		return dependencies.workflow.runExtraordinaryReview(request);
+	}
+
 	function register(pi: { registerTool(tool: Record<string, unknown>): void }) {
 		pi.registerTool({
 			name: toolName,
@@ -133,5 +138,5 @@ export function createDeliveryRuntime(dependencies: {
 		});
 	}
 
-	return { toolName, execute, register };
+	return { toolName, execute, runExtraordinaryReview, register };
 }
