@@ -53,6 +53,10 @@ import { createDeliveryParentSnapshotStore, readDeliveryParentSnapshot } from ".
 import { createApprovedTicketGraphStore } from "./approved-ticket-graph-store.ts";
 import { createApprovedTicketPublicationStore } from "./approved-ticket-publication.ts";
 import { publishApprovedTickets } from "./delivery-ticket-publication.ts";
+import { approveDraftedRevision, draftApprovedRevision, publishApprovedRevision } from "./approved-revision-publication.ts";
+import { createApprovedRevisionPublicationManifestStore } from "./approved-revision-publication-manifest.ts";
+import { createApprovedRevisionStore } from "./approved-revision-store.ts";
+import { createRuntimeLinearApprovedRevisionGateway } from "./runtime-linear-approved-revision.ts";
 import { recoverApprovedTicketGraph } from "./ticket-graph-recovery.ts";
 import { createTicketPublicationAuthorityGuard } from "./ticket-publication-authority-guard.ts";
 import { createTicketPublicationManifestStore } from "./ticket-publication-manifest.ts";
@@ -63,6 +67,7 @@ import {
 	createBlocker,
 	uniqueVerifiedArtifactRefs,
 	type AuthenticatedAuthority,
+	type OwnerAuthority,
 	type DesignExplorationSnapshot,
 	type DigestedRef,
 	type ExactLaunchProvenance,
@@ -284,6 +289,7 @@ export interface DefaultDefineProductRuntimeOptions {
 	approvedSpecReader?: DeliveryParentPublicationDependencies["approvedSpecReader"];
 	linearDeliveryParents?: DeliveryParentPublicationDependencies["linear"];
 	linearDeliveryTickets?: ReturnType<typeof createRuntimeLinearDeliveryTicketGateway>;
+	linearApprovedRevision?: ReturnType<typeof createRuntimeLinearApprovedRevisionGateway>;
 	publicationManifest?: Parameters<typeof createPublicationStateMachine>[0]["store"];
 	researchExecutor?: ResearchExecutor | ResearchExecutor["execute"];
 	explorationExecutor?: ExplorationExecutor | ExplorationExecutor["execute"];
@@ -336,6 +342,18 @@ function configuredLinearDeliveryTickets(
 	const apiKey = environment.LINEAR_API_KEY?.trim();
 	return apiKey
 		? createRuntimeLinearDeliveryTicketGateway({
+			apiKey,
+			url: environment.LINEAR_API_URL?.trim() || undefined,
+		})
+		: undefined;
+}
+
+function configuredLinearApprovedRevision(
+	environment: NodeJS.ProcessEnv,
+): DefaultDefineProductRuntimeOptions["linearApprovedRevision"] {
+	const apiKey = environment.LINEAR_API_KEY?.trim();
+	return apiKey
+		? createRuntimeLinearApprovedRevisionGateway({
 			apiKey,
 			url: environment.LINEAR_API_URL?.trim() || undefined,
 		})
@@ -1039,6 +1057,7 @@ export function createDefaultDefineProductWorkflow(
 	});
 	const linearDeliveryParents = options.linearDeliveryParents ?? configuredLinearDeliveryParents(process.env);
 	const linearDeliveryTickets = options.linearDeliveryTickets ?? configuredLinearDeliveryTickets(process.env);
+	const linearApprovedRevision = options.linearApprovedRevision ?? configuredLinearApprovedRevision(process.env);
 	const authenticatedAuthority = options.authenticatedAuthority ?? configuredOwnerAuthority(process.env);
 	const approvedTicketPublication = createApprovedTicketPublicationStore({
 		store: artifactStore,
@@ -1057,6 +1076,38 @@ export function createDefaultDefineProductWorkflow(
 			},
 			async compareAndSwap(revision, value) {
 				const stored = await artifactStore.write(baseProject.name, `workflow/define-product/ticket-publication/${value.operationId}`, JSON.stringify(value), revision);
+				return { revision: stored.revision, value };
+			},
+		},
+	});
+	const approvedRevisionStore = createApprovedRevisionStore({ store: artifactStore, project: baseProject.name, topic: "workflow/define-product" });
+	const approvedRevisionRecoveryTopic = "workflow/define-product/approved-revision-recovery";
+	async function saveApprovedRevisionRecovery(value: { definitionId: string; digest: string; phase: "approval" | "publication" | "completed" }): Promise<void> {
+		const current = await artifactStore.readCurrent(baseProject.name, approvedRevisionRecoveryTopic);
+		await artifactStore.write(baseProject.name, approvedRevisionRecoveryTopic, JSON.stringify(value), current?.revision);
+	}
+	async function loadApprovedRevisionRecovery(): Promise<{ definitionId: string; digest: string; phase: "approval" | "publication" } | undefined> {
+		const current = await artifactStore.readCurrent(baseProject.name, approvedRevisionRecoveryTopic);
+		if (!current) return undefined;
+		const value = JSON.parse(current.content) as { definitionId?: unknown; digest?: unknown; phase?: unknown };
+		if (typeof value.definitionId !== "string" || typeof value.digest !== "string" || (value.phase !== "approval" && value.phase !== "publication")) return undefined;
+		const artifact = value.phase === "approval"
+			? await approvedRevisionStore.readDraft(value.definitionId, value.digest)
+			: await approvedRevisionStore.readApproved(value.definitionId, value.digest);
+		return artifact ? { definitionId: value.definitionId, digest: value.digest, phase: value.phase } : undefined;
+	}
+	const approvedRevisionPublicationManifest = createApprovedRevisionPublicationManifestStore({
+		persistence: {
+			async read(operationId) {
+				const stored = await artifactStore.readCurrent(baseProject.name, `workflow/define-product/approved-revision-publication/${operationId}`);
+				return stored ? { revision: stored.revision, value: JSON.parse(stored.content) } : undefined;
+			},
+			async create(value) {
+				const stored = await artifactStore.write(baseProject.name, `workflow/define-product/approved-revision-publication/${value.operationId}`, JSON.stringify(value), undefined);
+				return { revision: stored.revision, value };
+			},
+			async compareAndSwap(revision, value) {
+				const stored = await artifactStore.write(baseProject.name, `workflow/define-product/approved-revision-publication/${value.operationId}`, JSON.stringify(value), revision);
 				return { revision: stored.revision, value };
 			},
 		},
@@ -1446,6 +1497,43 @@ export function createDefaultDefineProductWorkflow(
 				return outcome.status === "tickets-published"
 					? { status: "tickets-published", definitionId }
 					: outcome;
+			},
+		} : undefined,
+		approvedRevisionPublication: linearApprovedRevision && authenticatedAuthority ? {
+			async draft(input) {
+				const outcome = await draftApprovedRevision({ input, gateway: linearApprovedRevision, store: approvedRevisionStore });
+				if (outcome.status === "revision-ready") await saveApprovedRevisionRecovery({ definitionId: input.definitionId, digest: outcome.revision.digest, phase: "approval" });
+				return outcome;
+			},
+			async approve(definitionId, digest) {
+				const outcome = await approveDraftedRevision({
+					definitionId,
+					digest,
+					gateway: linearApprovedRevision,
+					store: approvedRevisionStore,
+					currentActor: async () => {
+						const authority = await authenticatedAuthority.current();
+						return authority.role === "Owner" ? authority as OwnerAuthority : undefined;
+					},
+				});
+				if (outcome.status === "revision-approved") await saveApprovedRevisionRecovery({ definitionId, digest: outcome.revision.digest, phase: "publication" });
+				return outcome;
+			},
+			recover: loadApprovedRevisionRecovery,
+			async publish(definitionId, digest) {
+				const outcome = await publishApprovedRevision({
+					definitionId,
+					digest,
+					currentActor: async () => {
+						const authority = await authenticatedAuthority.current();
+						return authority.role === "Owner" ? authority as OwnerAuthority : undefined;
+					},
+					manifest: approvedRevisionPublicationManifest,
+					gateway: linearApprovedRevision,
+					readApprovedRevision: approvedRevisionStore.readApproved,
+				});
+				if (outcome.status === "revision-published") await saveApprovedRevisionRecovery({ definitionId, digest, phase: "completed" });
+				return outcome;
 			},
 		} : undefined,
 		publication: linearDeliveryParents && authenticatedAuthority ? {

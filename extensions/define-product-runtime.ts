@@ -100,6 +100,9 @@ const defineProductParameters = {
 					"to_tickets",
 					"approve_tickets",
 					"publish_tickets",
+					"to_approved_revision",
+					"approve_approved_revision",
+					"publish_approved_revision",
 			],
 		},
 		...sharedActionProperties,
@@ -136,6 +139,24 @@ const defineProductParameters = {
 				properties: { action: { const: "publish_tickets" }, definitionId: { type: "string" } },
 				required: ["action", "definitionId"],
 			},
+			{
+			type: "object",
+			additionalProperties: false,
+			properties: { action: { const: "to_approved_revision" }, definitionId: { type: "string" }, revisionKind: { type: "string" }, affectedIssues: { type: "array", items: { type: "object", additionalProperties: false, properties: { id: { type: "string" }, nextDescription: { type: "string" } }, required: ["id", "nextDescription"] } }, sourceCommentKind: { type: "string" }, sourceCommentBody: { type: "string" }, decisionGap: { type: "object", additionalProperties: false, properties: { issueId: { type: "string" }, body: { type: "string" } }, required: ["issueId", "body"] } },
+			required: ["action", "definitionId", "revisionKind", "affectedIssues", "sourceCommentKind", "sourceCommentBody"],
+		},
+		{
+			type: "object",
+			additionalProperties: false,
+			properties: { action: { const: "approve_approved_revision" }, definitionId: { type: "string" }, digest: { type: "string" } },
+			required: ["action", "definitionId", "digest"],
+		},
+		{
+				type: "object",
+				additionalProperties: false,
+				properties: { action: { const: "publish_approved_revision" }, definitionId: { type: "string" }, digest: { type: "string" } },
+				required: ["action", "definitionId", "digest"],
+			},
 	],
 } as const;
 
@@ -149,7 +170,10 @@ interface DefineProductToolParams {
 		| "publish_spec"
 		| "to_tickets"
 		| "approve_tickets"
-		| "publish_tickets";
+		| "publish_tickets"
+		| "to_approved_revision"
+		| "approve_approved_revision"
+		| "publish_approved_revision";
 	definitionId?: string;
 	domainAnchor?: string;
 	assessment?: Assessment;
@@ -172,6 +196,11 @@ interface DefineProductToolParams {
 	approvedSpecRef?: unknown;
 	parentRef?: unknown;
 	graphRef?: unknown;
+	revisionKind?: string;
+	affectedIssues?: unknown;
+	sourceCommentKind?: string;
+	sourceCommentBody?: string;
+	decisionGap?: unknown;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -317,6 +346,21 @@ function parseApproveTicketsCommand(params: DefineProductToolParams, definitionI
 		: undefined;
 }
 
+function parseApprovedRevisionDraftCommand(params: DefineProductToolParams, definitionId: string): DefineProductCommand | undefined {
+	if (typeof params.revisionKind !== "string" || typeof params.sourceCommentKind !== "string" || typeof params.sourceCommentBody !== "string" || !Array.isArray(params.affectedIssues)) return undefined;
+	const affectedIssues = params.affectedIssues.flatMap((issue) => {
+		if (!isRecord(issue) || typeof issue.id !== "string" || typeof issue.nextDescription !== "string") return [];
+		return [{ id: issue.id, nextDescription: issue.nextDescription }];
+	});
+	if (affectedIssues.length !== params.affectedIssues.length) return undefined;
+	let decisionGap: { issueId: string; body: string } | undefined;
+	if (params.decisionGap !== undefined) {
+		if (!isRecord(params.decisionGap) || typeof params.decisionGap.issueId !== "string" || typeof params.decisionGap.body !== "string") return undefined;
+		decisionGap = { issueId: params.decisionGap.issueId, body: params.decisionGap.body };
+	}
+	return { kind: "to-approved-revision", definitionId, revisionKind: params.revisionKind, affectedIssues, sourceCommentKind: params.sourceCommentKind, sourceCommentBody: params.sourceCommentBody, ...(decisionGap ? { decisionGap } : {}) };
+}
+
 export interface DefineProductRuntimeDependencies {
 	workflow: {
 		advance(command: DefineProductCommand): Promise<DefineProductOutcome>;
@@ -339,6 +383,9 @@ export function createDefineProductRuntime(
 	let awaitingTicketGeneration = false;
 	let awaitingTicketApproval = false;
 	let awaitingTicketPublication = false;
+	let awaitingApprovedRevisionApproval = false;
+	let awaitingApprovedRevisionPublication = false;
+	let recoveredApprovedRevisionDigest: string | undefined;
 
 	function handlePublicEntry(event: InputEvent): void {
 		if (!event.text.match(/^\/(?:skill:)?define-product(?:\s|$)/)) return;
@@ -357,6 +404,9 @@ export function createDefineProductRuntime(
 		awaitingTicketGeneration = false;
 		awaitingTicketApproval = false;
 		awaitingTicketPublication = false;
+		awaitingApprovedRevisionApproval = false;
+		awaitingApprovedRevisionPublication = false;
+		recoveredApprovedRevisionDigest = undefined;
 		dependencies.workflow.reset();
 	}
 
@@ -370,12 +420,14 @@ export function createDefineProductRuntime(
 			awaitingTicketGeneration ||
 			awaitingTicketApproval
 			|| awaitingTicketPublication
+			|| awaitingApprovedRevisionApproval
+			|| awaitingApprovedRevisionPublication
 		);
 	}
 
 	function shouldContinue(event: InputEvent): boolean {
 		return (
-			(awaitingConfirmation || explorationAvailable || awaitingSpecApproval || awaitingPublication || awaitingTicketGeneration || awaitingTicketApproval || awaitingTicketPublication) &&
+			(awaitingConfirmation || explorationAvailable || awaitingSpecApproval || awaitingPublication || awaitingTicketGeneration || awaitingTicketApproval || awaitingTicketPublication || awaitingApprovedRevisionApproval || awaitingApprovedRevisionPublication) &&
 			event.source === "interactive" &&
 			event.streamingBehavior === undefined
 		);
@@ -383,6 +435,8 @@ export function createDefineProductRuntime(
 
 	function systemPrompt(): string {
 		const pending = dependencies.workflow.pendingRecommendation();
+		if (awaitingApprovedRevisionPublication) return `The durable Owner-approved revision is ready. Call ${toolName} with action="publish_approved_revision", definitionId="${activeDefinitionId}", and digest="${recoveredApprovedRevisionDigest}" exactly.`;
+		if (awaitingApprovedRevisionApproval) return `The durable approved-revision draft is ready for Owner approval. Call ${toolName} with action="approve_approved_revision", definitionId="${activeDefinitionId}", and digest="${recoveredApprovedRevisionDigest}" exactly.`;
 		if (awaitingTicketPublication) {
 			return [
 				"The exact durable Owner-approved ticket graph is ready for native publication.",
@@ -458,6 +512,9 @@ export function createDefineProductRuntime(
 				awaitingPublication = recovery.phase === "publication";
 					awaitingTicketApproval = recovery.phase === "ticket-approval";
 					awaitingTicketPublication = recovery.phase === "ticket-publication";
+					awaitingApprovedRevisionApproval = recovery.phase === "approved-revision-approval";
+					awaitingApprovedRevisionPublication = recovery.phase === "approved-revision-publication";
+					recoveredApprovedRevisionDigest = recovery.phase === "approved-revision-approval" || recovery.phase === "approved-revision-publication" ? recovery.digest : undefined;
 			}
 		});
 		pi.on("session_shutdown", clearActiveTurn);
@@ -555,6 +612,14 @@ export function createDefineProductRuntime(
 				}
 				if (params.action === "publish_tickets" && !awaitingTicketPublication) {
 					const outcome: DefineProductOutcome = { status: "blocked", blocker: createBlocker("PI_WORKFLOW_TICKET_APPROVAL_MISMATCH", "Ticket publication requires the current durable Owner-approved graph.") };
+					return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
+				}
+				if (params.action === "approve_approved_revision" && !awaitingApprovedRevisionApproval) {
+					const outcome: DefineProductOutcome = { status: "blocked", blocker: createBlocker("PI_WORKFLOW_SPEC_APPROVAL_REQUIRED", "Approved revision approval requires the active durable draft.") };
+					return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
+				}
+				if (params.action === "publish_approved_revision" && !awaitingApprovedRevisionPublication) {
+					const outcome: DefineProductOutcome = { status: "blocked", blocker: createBlocker("PI_WORKFLOW_SPEC_APPROVAL_REQUIRED", "Approved revision publication requires the active durable approval.") };
 					return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
 				}
 				if (params.action === "request_exploration" && !explorationAvailable) {
@@ -681,6 +746,29 @@ export function createDefineProductRuntime(
 							return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
 						}
 						command = { kind: "publish-tickets", definitionId: activeDefinitionId as string };
+					} else if (params.action === "to_approved_revision") {
+						if (params.definitionId !== activeDefinitionId) {
+							const outcome: DefineProductOutcome = { status: "blocked", blocker: createBlocker("PI_WORKFLOW_SPEC_ARTIFACT_INVALID", "Approved revision drafting requires the active definition ID.") };
+							return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
+						}
+						const parsed = parseApprovedRevisionDraftCommand(params, activeDefinitionId ?? "");
+						if (!parsed) {
+							const outcome: DefineProductOutcome = { status: "blocked", blocker: createBlocker("PI_WORKFLOW_SPEC_ARTIFACT_INVALID", "Approved revision draft input is invalid.") };
+							return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
+						}
+						command = parsed;
+					} else if (params.action === "approve_approved_revision") {
+						if (!hasExactKeys(params, ["action", "definitionId", "digest"]) || typeof params.digest !== "string" || params.definitionId !== activeDefinitionId || (recoveredApprovedRevisionDigest !== undefined && params.digest !== recoveredApprovedRevisionDigest)) {
+							const outcome: DefineProductOutcome = { status: "blocked", blocker: createBlocker("PI_WORKFLOW_SPEC_ARTIFACT_INVALID", "Approved revision approval requires only the active definition ID and exact digest.") };
+							return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
+						}
+						command = { kind: "approve-approved-revision", definitionId: activeDefinitionId as string, digest: params.digest };
+					} else if (params.action === "publish_approved_revision") {
+						if (!hasExactKeys(params, ["action", "definitionId", "digest"]) || typeof params.digest !== "string" || params.definitionId !== activeDefinitionId || (recoveredApprovedRevisionDigest !== undefined && params.digest !== recoveredApprovedRevisionDigest)) {
+							const outcome: DefineProductOutcome = { status: "blocked", blocker: createBlocker("PI_WORKFLOW_SPEC_ARTIFACT_INVALID", "Approved revision publication requires only the active definition ID and exact digest.") };
+							return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
+						}
+						command = { kind: "publish-approved-revision", definitionId: activeDefinitionId as string, digest: params.digest };
 					} else {
 					command = { kind: "publish-spec", definitionId: activeDefinitionId ?? "" };
 				}
@@ -716,13 +804,23 @@ export function createDefineProductRuntime(
 						awaitingTicketPublication = true;
 					} else if (command.kind === "publish-tickets" && outcome.status === "tickets-published") {
 						clearActiveTurn();
+					} else if (command.kind === "to-approved-revision" && outcome.status === "revision-ready") {
+						awaitingApprovedRevisionApproval = true;
+					} else if (command.kind === "approve-approved-revision" && outcome.status === "revision-approved") {
+						awaitingApprovedRevisionApproval = false;
+						awaitingApprovedRevisionPublication = true;
+				} else if (command.kind === "publish-approved-revision" && outcome.status === "revision-published") {
+						clearActiveTurn();
 				} else if (
 					command.kind !== "request-exploration" &&
 					command.kind !== "to-spec" &&
 					command.kind !== "approve-spec" &&
 					command.kind !== "to-tickets" &&
 					command.kind !== "approve-tickets"
+					&& command.kind !== "to-approved-revision"
+					&& command.kind !== "approve-approved-revision"
 					&& command.kind !== "publish-tickets"
+					&& command.kind !== "publish-approved-revision"
 				) {
 					clearActiveTurn();
 				}
