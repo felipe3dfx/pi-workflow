@@ -3,7 +3,7 @@ import { createHash, randomBytes } from "node:crypto";
 export type Route = "wayfinder" | "grilling";
 type Clarity = "clear" | "unclear";
 type Breadth = "narrow" | "broad";
-type ArtifactSchema =
+export type ArtifactSchema =
 	| "research-evidence"
 	| "design-exploration"
 	| "delivery-ticket-graph"
@@ -13,7 +13,10 @@ type ArtifactSchema =
 	| "approved-revision"
 	| "approved-ticket-publication"
 	| "product-spec"
-	| "workflow-progress";
+	| "workflow-progress"
+	| "review-snapshot"
+	| "review-receipt"
+	| "review-evidence";
 type ArtifactStrategy = "snapshot" | "merge-progress";
 export type WorkflowBlockerCode =
 	| "PI_WORKFLOW_ROUTE_CONFIRMATION_REQUIRED"
@@ -120,7 +123,8 @@ export function uniqueVerifiedArtifactRefs(
 	artifacts: readonly VerifiedArtifactRef[],
 ): readonly VerifiedArtifactRef[] {
 	const unique = new Map<string, VerifiedArtifactRef>();
-	for (const artifact of artifacts) unique.set(canonicalJson(artifact), artifact);
+	for (const artifact of artifacts)
+		unique.set(canonicalJson(artifact), artifact);
 	return [...unique.values()];
 }
 
@@ -158,7 +162,10 @@ export interface ExactLaunchProvenance {
 	agentName: "research" | "prototype" | "to-tickets";
 	assetVersion: number;
 	assetDigest: string;
-	capabilityProfile: "research-reader" | "isolated-prototype" | "artifact-reader";
+	capabilityProfile:
+		| "research-reader"
+		| "isolated-prototype"
+		| "artifact-reader";
 	provider: "openai-codex";
 	model: "gpt-5.6-terra";
 	effort: "medium";
@@ -316,7 +323,9 @@ export interface DesignExplorationEnvelope {
 	digest: string;
 }
 
-export type ArtifactBinding = ResearchArtifactBinding | DesignExplorationBinding;
+export type ArtifactBinding =
+	| ResearchArtifactBinding
+	| DesignExplorationBinding;
 
 interface ArtifactSessionCapability {
 	read(alias: string): Promise<StoredArtifactRead>;
@@ -352,13 +361,24 @@ export interface PreparedLaunch {
 	fingerprint: string;
 }
 
-interface WorkflowRisk {
-	kind: "workflow";
-	id: string;
-	severity: "warning" | "critical";
-	summary: string;
-	evidence?: VerifiedArtifactRef;
-}
+export type ReviewLens = "risk" | "resilience" | "reliability" | "readability";
+
+export type WorkflowRisk =
+	| {
+			kind: "workflow";
+			id: string;
+			severity: "warning" | "critical";
+			summary: string;
+			evidence?: VerifiedArtifactRef;
+	  }
+	| {
+			kind: "review";
+			id: string;
+			severity: "warning" | "critical";
+			summary: string;
+			lens: ReviewLens;
+			evidence: VerifiedArtifactRef;
+	  };
 
 interface CompletedSubagentResult {
 	status: "completed";
@@ -423,7 +443,10 @@ interface TicketGraphIntent extends BaseWorkflowIntent {
 	deliveryParent: VerifiedArtifactRef;
 }
 
-export type WorkflowIntent = ResearchIntent | ExplorationIntent | TicketGraphIntent;
+export type WorkflowIntent =
+	| ResearchIntent
+	| ExplorationIntent
+	| TicketGraphIntent;
 
 export type Intervention =
 	| { kind: "steer"; guidance: string }
@@ -436,12 +459,7 @@ export interface DelegationCheckpoint {
 	sessionId?: string;
 	attempt: 1 | 2;
 	interventions: readonly Intervention[];
-	state:
-		| "running"
-		| "interrupted"
-		| "completed"
-		| "blocked"
-		| "cancelled";
+	state: "running" | "interrupted" | "completed" | "blocked" | "cancelled";
 	verifiedArtifacts: readonly VerifiedArtifactRef[];
 	updatedAt: number;
 }
