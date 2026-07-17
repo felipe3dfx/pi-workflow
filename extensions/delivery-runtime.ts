@@ -5,7 +5,7 @@ import type {
 } from "./delivery-workflow.ts";
 
 interface RuntimeInput {
-	action: "plan" | "apply" | "cancel";
+	action: "plan" | "apply" | "prepare" | "cancel";
 	ticketId: string;
 	repository?: DeliveryRepositorySnapshot;
 	reason?: string;
@@ -17,6 +17,7 @@ function fail(code: string, message: string): never {
 
 export function createDeliveryRuntime(dependencies: {
 	workflow: ReturnType<typeof createDeliveryWorkflow>;
+	developerRequestedSimplify?: (ticketId: string) => boolean;
 }) {
 	const plans = new Map<string, DeliveryPlanningResult>();
 	const toolName = "workflow_deliver_ticket";
@@ -30,7 +31,7 @@ export function createDeliveryRuntime(dependencies: {
 		const input = value as Partial<RuntimeInput>;
 		if (
 			!input.action ||
-			!["plan", "apply", "cancel"].includes(input.action) ||
+			!["plan", "apply", "prepare", "cancel"].includes(input.action) ||
 			!input.ticketId?.trim()
 		) {
 			fail(
@@ -73,9 +74,22 @@ export function createDeliveryRuntime(dependencies: {
 				planning,
 				repository: input.repository,
 			});
-			if (result.status === "completed" || result.status === "cancelled")
-				plans.delete(input.ticketId);
+			if (result.status === "cancelled") plans.delete(input.ticketId);
 			return result;
+		}
+		if (input.action === "prepare") {
+			const planning = plans.get(input.ticketId);
+			if (!planning)
+				fail(
+					"PI_WORKFLOW_DELIVERY_PLAN_REQUIRED",
+					"Prepare requires the exact planning result held by this delivery runtime.",
+				);
+			return dependencies.workflow.prepare({
+				ticketId: input.ticketId,
+				planning,
+				developerRequestedSimplify:
+					dependencies.developerRequestedSimplify?.(input.ticketId) === true,
+			});
 		}
 		const result = await dependencies.workflow.cancel({
 			ticketId: input.ticketId,
@@ -90,8 +104,28 @@ export function createDeliveryRuntime(dependencies: {
 			name: toolName,
 			label: "Delivery workflow",
 			description:
-				"Run the private plan, apply, or cancel phase for the active Delivery ticket.",
-			parameters: { type: "object", additionalProperties: false },
+				"Run the private plan, apply, prepare, or cancel phase for the active Delivery ticket.",
+			parameters: {
+				type: "object",
+				additionalProperties: false,
+				required: ["action", "ticketId"],
+				properties: {
+					action: { enum: ["plan", "apply", "prepare", "cancel"] },
+					ticketId: { type: "string", minLength: 1 },
+					repository: {
+						type: "object",
+						additionalProperties: false,
+						required: ["branch", "headCommit", "treeDigest", "clean"],
+						properties: {
+							branch: { type: "string" },
+							headCommit: { type: "string" },
+							treeDigest: { type: "string" },
+							clean: { type: "boolean" },
+						},
+					},
+					reason: { type: "string" },
+				},
+			},
 			execute: async (_toolCallId: string, input: RuntimeInput) => ({
 				content: [{ type: "text", text: JSON.stringify(await execute(input)) }],
 				details: {},
