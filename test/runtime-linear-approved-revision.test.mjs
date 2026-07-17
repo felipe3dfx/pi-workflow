@@ -30,7 +30,7 @@ function scripted(payloads) {
 test("maps separate Linear issue/comment operations and sends only approved mutation fields", async () => {
 	const transport = scripted([
 		response({ data: { issue: issue() } }),
-		response({ data: { issue: { comments: { nodes: [{ id: "comment-1", body: "Historial" }] } } } }),
+		response({ data: { issue: { comments: { nodes: [{ id: "comment-1", body: "Historial" }], pageInfo: { hasNextPage: false, endCursor: null } } } } }),
 		response({ data: { commentCreate: { success: true, comment: { id: "comment-2", body: "Referencia de flujo: revision:digest" } } } }),
 		response({ data: { issueUpdate: { success: true, issue: issue("Vigente", "revision-2") } } }),
 	]);
@@ -47,6 +47,23 @@ test("maps separate Linear issue/comment operations and sends only approved muta
 	assert.equal(transport.calls[1].operationName, "ApprovedRevisionComments");
 	assert.deepEqual(transport.calls[2].variables, { input: { issueId: "ILA-1", body: "Referencia de flujo: revision:digest" } });
 	assert.deepEqual(transport.calls[3].variables, { id: "ILA-1", input: { description: "Vigente" } });
+});
+
+test("paginates Linear comments so later-page marker conflicts are visible", async () => {
+	const transport = scripted([
+		response({ data: { issue: { comments: { nodes: [{ id: "comment-1", body: "Historial" }], pageInfo: { hasNextPage: true, endCursor: "cursor-1" } } } } }),
+		response({ data: { issue: { comments: { nodes: [{ id: "comment-2", body: "Referencia de flujo: revision:digest" }], pageInfo: { hasNextPage: false, endCursor: null } } } } }),
+	]);
+	const gateway = createRuntimeLinearApprovedRevisionGateway({ apiKey: "secret", fetch: transport.fetch });
+
+	assert.deepEqual(await gateway.listComments({ issueId: "ILA-1" }), [
+		{ id: "comment-1", body: "Historial" },
+		{ id: "comment-2", body: "Referencia de flujo: revision:digest" },
+	]);
+	assert.deepEqual(transport.calls.map((call) => call.variables), [
+		{ id: "ILA-1", after: null },
+		{ id: "ILA-1", after: "cursor-1" },
+	]);
 });
 
 test("fails closed for malformed successful responses", async () => {

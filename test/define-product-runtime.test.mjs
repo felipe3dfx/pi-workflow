@@ -816,6 +816,42 @@ test("session start resumes ticket approval and clears terminal state", async ()
 	);
 });
 
+test("define-product restores durable approved-revision approval and publication phases", async () => {
+	for (const [phase, action, status, commandKind] of [
+		["approved-revision-approval", "approve_approved_revision", "revision-approved", "approve-approved-revision"],
+		["approved-revision-publication", "publish_approved_revision", "revision-published", "publish-approved-revision"],
+	]) {
+		const handlers = new Map();
+		const tools = new Map();
+		const commands = [];
+		const runtime = createDefineProductRuntime({
+			workflow: {
+				pendingRecommendation: () => undefined,
+				reset() {},
+				restoreRecovery: async () => ({ definitionId: "definition-revision", phase, digest: "digest-durable" }),
+				advance: async (command) => {
+					commands.push(command);
+					return status === "revision-approved"
+						? { status, revision: {}, revisionRef: {} }
+						: { status, definitionId: command.definitionId, digest: command.digest };
+				},
+			},
+			createDefinitionId: () => "unused",
+		});
+		runtime.register({ on: (event, handler) => handlers.set(event, handler), registerTool: (tool) => tools.set(tool.name, tool) });
+		await handlers.get("session_start")({ type: "session_start" });
+		const prompt = (await handlers.get("before_agent_start")({ systemPrompt: "base" })).systemPrompt;
+		assert.match(prompt, new RegExp(action));
+		assert.match(prompt, /digest-durable/);
+		const rejected = await tools.get("workflow_define_product").execute("wrong revision", { action, definitionId: "definition-revision", digest: "digest-wrong" });
+		assert.equal(rejected.details.status, "blocked");
+		assert.deepEqual(commands, []);
+		const result = await tools.get("workflow_define_product").execute("revision", { action, definitionId: "definition-revision", digest: "digest-durable" });
+		assert.equal(result.details.status, status);
+		assert.deepEqual(commands, [{ kind: commandKind, definitionId: "definition-revision", digest: "digest-durable" }]);
+	}
+});
+
 test("define-product publishes tickets from only the recovered definition and clears its terminal authorization", async () => {
 	const handlers = new Map();
 	const tools = new Map();

@@ -878,6 +878,72 @@ test("default packaged entry approves with configured Owner authority and ignore
 	}
 });
 
+test("default define-product persists and restores exact approved-revision recovery through terminal publication", async () => {
+	const artifactStore = createAtomicArtifactStore();
+	const owner = { actorId: "owner-1", role: "Owner", authorityRevision: "authority-r1" };
+	const issues = new Map([
+		["ILA-2317", { id: "ILA-2317", description: "Descripción anterior", updatedAt: "issue-r1", workflow: { state: "In Progress", assignee: "owner-1", cycle: "cycle-1", labels: ["workflow"], project: "pi-workflow" } }],
+	]);
+	const comments = new Map();
+	const linearApprovedRevision = {
+		getIssue: async ({ id }) => structuredClone(issues.get(id)),
+		listComments: async ({ issueId }) => structuredClone(comments.get(issueId) ?? []),
+		async saveComment({ issueId, body }) {
+			const comment = { id: `comment-${(comments.get(issueId) ?? []).length + 1}`, body };
+			comments.set(issueId, [...(comments.get(issueId) ?? []), comment]);
+			return structuredClone(comment);
+		},
+		async saveIssue({ id, description }) {
+			const current = issues.get(id);
+			const updated = { ...current, description, updatedAt: `${current.updatedAt}:updated` };
+			issues.set(id, updated);
+			return structuredClone(updated);
+		},
+	};
+	const options = {
+		artifactStore,
+		checkpointStore: createInMemoryDelegationCheckpointStore(),
+		linearApprovedRevision,
+		authenticatedAuthority: { current: async () => owner },
+	};
+	const initial = createDefaultDefineProductWorkflow({}, () => executionContext(), options);
+	const ready = await initial.advance({
+		kind: "to-approved-revision",
+		definitionId: "definition-1",
+		revisionKind: "product-revision",
+		affectedIssues: [{ id: "ILA-2317", nextDescription: "Descripción aprobada" }],
+		sourceCommentKind: "product-revision",
+		sourceCommentBody: "Revisión aprobada.\n\nReferencia de flujo: product-revision:{{digest}}",
+	});
+	assert.equal(ready.status, "revision-ready", JSON.stringify(ready));
+	const digest = ready.revision.digest;
+
+	const approvalRuntime = loadExtension(options);
+	await approvalRuntime.handlers.get("session_start")({}, executionContext());
+	const approvalPrompt = (await approvalRuntime.handlers.get("before_agent_start")({ systemPrompt: "base" })).systemPrompt;
+	assert.match(approvalPrompt, new RegExp(digest));
+	const wrongApproval = await approvalRuntime.tool.execute("wrong", { action: "approve_approved_revision", definitionId: "definition-1", digest: "0".repeat(64) });
+	assert.equal(wrongApproval.details.status, "blocked");
+	const approved = await approvalRuntime.tool.execute("approve", { action: "approve_approved_revision", definitionId: "definition-1", digest });
+	assert.equal(approved.details.status, "revision-approved", JSON.stringify(approved.details));
+	const approvedDigest = approved.details.revision.digest;
+
+	const publicationRuntime = loadExtension(options);
+	await publicationRuntime.handlers.get("session_start")({}, executionContext());
+	const publicationPrompt = (await publicationRuntime.handlers.get("before_agent_start")({ systemPrompt: "base" })).systemPrompt;
+	assert.match(publicationPrompt, new RegExp(approvedDigest));
+	const wrongPublication = await publicationRuntime.tool.execute("wrong", { action: "publish_approved_revision", definitionId: "definition-1", digest: "f".repeat(64) });
+	assert.equal(wrongPublication.details.status, "blocked");
+	const published = await publicationRuntime.tool.execute("publish", { action: "publish_approved_revision", definitionId: "definition-1", digest: approvedDigest });
+	assert.equal(published.details.status, "revision-published", JSON.stringify(published.details));
+	assert.equal(issues.get("ILA-2317").description, "Descripción aprobada");
+
+	const terminal = createDefaultDefineProductWorkflow({}, () => executionContext(), options);
+	assert.equal(await terminal.restoreRecovery(), undefined);
+	const marker = await artifactStore.readCurrent("pi-workflow", "workflow/define-product/approved-revision-recovery");
+	assert.deepEqual(JSON.parse(marker.content), { definitionId: "definition-1", digest: approvedDigest, phase: "completed" });
+});
+
 test("default define-product to-tickets delegates exact refs, persists the graph, and returns tickets-ready", async () => {
 	const artifactStore = createAtomicArtifactStore();
 	const ticketSkillPath = fileURLToPath(

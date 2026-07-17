@@ -73,6 +73,7 @@ function linear(overrides = {}) {
 				}
 				const entry = { id: `comment-${(comments.get(input.issueId) ?? []).length + 1}`, body: input.body };
 				comments.set(input.issueId, [...(comments.get(input.issueId) ?? []), entry]);
+				if (overrides.mutateWorkflowOn === "comment") issues.get(input.issueId).workflow.state = "Done";
 				return structuredClone(entry);
 			},
 			saveIssue: async (input) => {
@@ -83,8 +84,13 @@ function linear(overrides = {}) {
 					throw new Error("interrupted issue");
 				}
 				const current = issues.get(input.id);
-				const updated = { ...current, description: input.description, updatedAt: `${current.updatedAt}:updated` };
+				const updated = { ...current, description: input.description, updatedAt: `${current.updatedAt}:updated`, workflow: structuredClone(current.workflow) };
+				if (overrides.mutateWorkflowOn === "issue" || (overrides.mutateAndInterruptIssueOnce && !overrides.interruptedIssue)) updated.workflow.cycle = "cycle-2";
 				issues.set(input.id, updated);
+				if (overrides.mutateAndInterruptIssueOnce && !overrides.interruptedIssue) {
+					overrides.interruptedIssue = true;
+					throw new Error("interrupted after issue mutation");
+				}
 				return structuredClone(updated);
 			},
 		},
@@ -123,6 +129,22 @@ function artifactMemory() {
 	};
 }
 
+test("normalizes legacy schema-v1 manifests that predate description claims", async () => {
+	const revision = approvedRevision();
+	const identity = { definitionId: revision.definitionId, digest: revision.digest, affectedIssueIds: revision.affectedIssues.map(({ id }) => id).sort() };
+	const operationId = digestCanonicalValue(identity);
+	let current = { revision: "r1", value: { ...identity, schemaVersion: 1, operationId, stage: "commenting", comments: [], descriptions: [] } };
+	const store = createApprovedRevisionPublicationManifestStore({ persistence: {
+		read: async () => structuredClone(current),
+		create: async () => { throw new Error("unexpected create"); },
+		compareAndSwap: async (_revision, value) => (current = { revision: "r2", value: structuredClone(value) }),
+	} });
+
+	const recovered = await store.prepare(identity);
+	assert.deepEqual(recovered.descriptionClaims, []);
+	assert.deepEqual((await store.read(operationId)).descriptionClaims, []);
+});
+
 test("publishes an approved Spanish multi-issue revision after validating every previous description", async () => {
 	const subject = deps();
 	const result = await publishApprovedRevision(subject);
@@ -132,6 +154,52 @@ test("publishes an approved Spanish multi-issue revision after validating every 
 	assert.equal(subject.linearFake.issues.get("ILA-2296").description, "Spec vigente revisado");
 	assert.equal(subject.linearFake.issues.get("ILA-2317").description, "Ticket vigente revisado");
 	assert.equal(subject.persistence.value().stage, "verified");
+});
+
+test("blocks when comment or description writes mutate workflow fields", async () => {
+	for (const mutation of ["comment", "issue"]) {
+		const subject = deps({ linearFake: linear({ mutateWorkflowOn: mutation }) });
+		const result = await publishApprovedRevision(subject);
+		assert.equal(result.status, "blocked", mutation);
+		assert.equal(result.blocker.code, "PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH", mutation);
+		assert.notEqual(subject.persistence.value().stage, "verified", mutation);
+	}
+});
+
+test("recovery compares workflow to the durable pre-write claim after mutation and interruption", async () => {
+	const subject = deps({ linearFake: linear({ mutateAndInterruptIssueOnce: true }) });
+	assert.equal((await publishApprovedRevision(subject)).status, "blocked");
+	const claim = subject.persistence.value().descriptionClaims[0];
+	assert.equal(claim.workflowDigest, digestCanonicalValue({ state: "In Progress", assignee: "owner-1", cycle: "cycle-1", labels: ["Felipe Gonzalez"], project: "Pi Workflow harness" }));
+
+	const recovered = await publishApprovedRevision(subject);
+	assert.equal(recovered.status, "blocked");
+	assert.equal(recovered.blocker.code, "PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH");
+	assert.notEqual(subject.persistence.value().stage, "verified");
+});
+
+test("upgrades a legacy description claim with a workflow digest before retrying its write", async () => {
+	const subject = deps({ linearFake: linear({ failIssueOnce: true }) });
+	assert.equal((await publishApprovedRevision(subject)).status, "blocked");
+	delete subject.persistence.value().descriptionClaims[0].workflowDigest;
+
+	const recovered = await publishApprovedRevision(subject);
+	assert.equal(recovered.status, "revision-published", JSON.stringify(recovered));
+	assert.match(subject.persistence.value().descriptionClaims[0].workflowDigest, /^[a-f0-9]{64}$/);
+	assert.equal(subject.linearFake.issues.get("ILA-2296").description, "Spec vigente revisado");
+});
+
+test("fails closed for a legacy description claim when the description already changed", async () => {
+	const subject = deps({ linearFake: linear({ failIssueOnce: true }) });
+	assert.equal((await publishApprovedRevision(subject)).status, "blocked");
+	delete subject.persistence.value().descriptionClaims[0].workflowDigest;
+	const current = subject.linearFake.issues.get("ILA-2296");
+	subject.linearFake.issues.set("ILA-2296", { ...current, description: "Spec vigente revisado", updatedAt: `${current.updatedAt}:external` });
+
+	const recovered = await publishApprovedRevision(subject);
+	assert.equal(recovered.status, "blocked");
+	assert.equal(recovered.blocker.code, "PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH");
+	assert.equal(subject.persistence.value().descriptionClaims[0].workflowDigest, undefined);
 });
 
 test("blocks stale revisions before comments or description mutations", async () => {

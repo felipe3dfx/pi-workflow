@@ -59,14 +59,23 @@ export function createRuntimeLinearApprovedRevisionGateway(options: { apiKey: st
 			return snapshot;
 		},
 		async listComments({ issueId }) {
-			const data = await graphql("ApprovedRevisionComments", "query ApprovedRevisionComments($id:String!){issue(id:$id){comments{nodes{id body}}}}", { id: issueId });
-			const nodes: unknown = (data.issue as { comments?: { nodes?: unknown } } | undefined)?.comments?.nodes;
-			if (!Array.isArray(nodes)) fail("PI_WORKFLOW_LINEAR_MALFORMED_RESPONSE");
 			const comments: { id: string; body: string }[] = [];
-			for (const node of nodes as unknown[]) {
-				if (!node || typeof node !== "object" || !text((node as { id?: unknown }).id) || !text((node as { body?: unknown }).body)) fail("PI_WORKFLOW_LINEAR_MALFORMED_RESPONSE");
-				comments.push({ id: (node as { id: string }).id, body: (node as { body: string }).body });
-			}
+			let after: string | null = null;
+			do {
+				const data = await graphql("ApprovedRevisionComments", "query ApprovedRevisionComments($id:String!,$after:String){issue(id:$id){comments(after:$after){nodes{id body} pageInfo{hasNextPage endCursor}}}}", { id: issueId, after });
+				const candidate = (data.issue as { comments?: { nodes?: unknown; pageInfo?: unknown } } | undefined)?.comments;
+				if (!Array.isArray(candidate?.nodes) || !candidate.pageInfo || typeof candidate.pageInfo !== "object") fail("PI_WORKFLOW_LINEAR_MALFORMED_RESPONSE");
+				const connection = candidate as { nodes: unknown[]; pageInfo: object };
+				for (const node of connection.nodes) {
+					if (!node || typeof node !== "object" || !text((node as { id?: unknown }).id) || !text((node as { body?: unknown }).body)) fail("PI_WORKFLOW_LINEAR_MALFORMED_RESPONSE");
+					comments.push({ id: (node as { id: string }).id, body: (node as { body: string }).body });
+				}
+				const pageInfo = connection.pageInfo as { hasNextPage?: unknown; endCursor?: unknown };
+				if (typeof pageInfo.hasNextPage !== "boolean" || !(pageInfo.endCursor === null || text(pageInfo.endCursor))) fail("PI_WORKFLOW_LINEAR_MALFORMED_RESPONSE");
+				after = pageInfo.hasNextPage ? pageInfo.endCursor as string : null;
+				if (pageInfo.hasNextPage && !after) fail("PI_WORKFLOW_LINEAR_MALFORMED_RESPONSE");
+				if (!pageInfo.hasNextPage) return comments;
+			} while (after);
 			return comments;
 		},
 		async saveComment(input) {

@@ -1081,6 +1081,21 @@ export function createDefaultDefineProductWorkflow(
 		},
 	});
 	const approvedRevisionStore = createApprovedRevisionStore({ store: artifactStore, project: baseProject.name, topic: "workflow/define-product" });
+	const approvedRevisionRecoveryTopic = "workflow/define-product/approved-revision-recovery";
+	async function saveApprovedRevisionRecovery(value: { definitionId: string; digest: string; phase: "approval" | "publication" | "completed" }): Promise<void> {
+		const current = await artifactStore.readCurrent(baseProject.name, approvedRevisionRecoveryTopic);
+		await artifactStore.write(baseProject.name, approvedRevisionRecoveryTopic, JSON.stringify(value), current?.revision);
+	}
+	async function loadApprovedRevisionRecovery(): Promise<{ definitionId: string; digest: string; phase: "approval" | "publication" } | undefined> {
+		const current = await artifactStore.readCurrent(baseProject.name, approvedRevisionRecoveryTopic);
+		if (!current) return undefined;
+		const value = JSON.parse(current.content) as { definitionId?: unknown; digest?: unknown; phase?: unknown };
+		if (typeof value.definitionId !== "string" || typeof value.digest !== "string" || (value.phase !== "approval" && value.phase !== "publication")) return undefined;
+		const artifact = value.phase === "approval"
+			? await approvedRevisionStore.readDraft(value.definitionId, value.digest)
+			: await approvedRevisionStore.readApproved(value.definitionId, value.digest);
+		return artifact ? { definitionId: value.definitionId, digest: value.digest, phase: value.phase } : undefined;
+	}
 	const approvedRevisionPublicationManifest = createApprovedRevisionPublicationManifestStore({
 		persistence: {
 			async read(operationId) {
@@ -1485,19 +1500,28 @@ export function createDefaultDefineProductWorkflow(
 			},
 		} : undefined,
 		approvedRevisionPublication: linearApprovedRevision && authenticatedAuthority ? {
-			draft: (input) => draftApprovedRevision({ input, gateway: linearApprovedRevision, store: approvedRevisionStore }),
-			approve: (definitionId, digest) => approveDraftedRevision({
-				definitionId,
-				digest,
-				gateway: linearApprovedRevision,
-				store: approvedRevisionStore,
-				currentActor: async () => {
-					const authority = await authenticatedAuthority.current();
-					return authority.role === "Owner" ? authority as OwnerAuthority : undefined;
-				},
-			}),
+			async draft(input) {
+				const outcome = await draftApprovedRevision({ input, gateway: linearApprovedRevision, store: approvedRevisionStore });
+				if (outcome.status === "revision-ready") await saveApprovedRevisionRecovery({ definitionId: input.definitionId, digest: outcome.revision.digest, phase: "approval" });
+				return outcome;
+			},
+			async approve(definitionId, digest) {
+				const outcome = await approveDraftedRevision({
+					definitionId,
+					digest,
+					gateway: linearApprovedRevision,
+					store: approvedRevisionStore,
+					currentActor: async () => {
+						const authority = await authenticatedAuthority.current();
+						return authority.role === "Owner" ? authority as OwnerAuthority : undefined;
+					},
+				});
+				if (outcome.status === "revision-approved") await saveApprovedRevisionRecovery({ definitionId, digest: outcome.revision.digest, phase: "publication" });
+				return outcome;
+			},
+			recover: loadApprovedRevisionRecovery,
 			async publish(definitionId, digest) {
-				return publishApprovedRevision({
+				const outcome = await publishApprovedRevision({
 					definitionId,
 					digest,
 					currentActor: async () => {
@@ -1508,6 +1532,8 @@ export function createDefaultDefineProductWorkflow(
 					gateway: linearApprovedRevision,
 					readApprovedRevision: approvedRevisionStore.readApproved,
 				});
+				if (outcome.status === "revision-published") await saveApprovedRevisionRecovery({ definitionId, digest, phase: "completed" });
+				return outcome;
 			},
 		} : undefined,
 		publication: linearDeliveryParents && authenticatedAuthority ? {

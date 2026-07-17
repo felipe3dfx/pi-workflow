@@ -168,7 +168,8 @@ export interface TicketApprovalRecoveryStore {
 
 export type DefineProductRecovery =
 	| { definitionId: string; phase: "exploration" }
-	| { definitionId: string; phase: "spec-approval" | "publication" | "ticket-approval" | "ticket-publication" };
+	| { definitionId: string; phase: "spec-approval" | "publication" | "ticket-approval" | "ticket-publication" }
+	| { definitionId: string; digest: string; phase: "approved-revision-approval" | "approved-revision-publication" };
 
 export interface DefineProductWorkflowDependencies {
 	delegate: {
@@ -205,6 +206,7 @@ export interface DefineProductWorkflowDependencies {
 		draft(input: DraftApprovedRevisionInput): ReturnType<typeof draftApprovedRevision>;
 		approve(definitionId: string, digest: string): ReturnType<typeof approveDraftedRevision>;
 		publish(definitionId: string, digest: string): ReturnType<typeof publishApprovedRevision>;
+		recover?(): Promise<{ definitionId: string; digest: string; phase: "approval" | "publication" } | undefined>;
 	};
 }
 
@@ -308,6 +310,12 @@ export function createDefineProductWorkflow(
 	async function restoreRecovery(): Promise<DefineProductRecovery | undefined> {
 		reset();
 		try {
+			const pendingRevision = await dependencies.approvedRevisionPublication?.recover?.();
+			if (pendingRevision) return {
+				definitionId: pendingRevision.definitionId,
+				digest: pendingRevision.digest,
+				phase: pendingRevision.phase === "approval" ? "approved-revision-approval" : "approved-revision-publication",
+			};
 			const pendingSpec = await dependencies.specApprovalRecoveryStore?.load();
 			if (pendingSpec) {
 				if (

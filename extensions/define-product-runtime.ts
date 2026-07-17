@@ -383,6 +383,9 @@ export function createDefineProductRuntime(
 	let awaitingTicketGeneration = false;
 	let awaitingTicketApproval = false;
 	let awaitingTicketPublication = false;
+	let awaitingApprovedRevisionApproval = false;
+	let awaitingApprovedRevisionPublication = false;
+	let recoveredApprovedRevisionDigest: string | undefined;
 
 	function handlePublicEntry(event: InputEvent): void {
 		if (!event.text.match(/^\/(?:skill:)?define-product(?:\s|$)/)) return;
@@ -401,6 +404,9 @@ export function createDefineProductRuntime(
 		awaitingTicketGeneration = false;
 		awaitingTicketApproval = false;
 		awaitingTicketPublication = false;
+		awaitingApprovedRevisionApproval = false;
+		awaitingApprovedRevisionPublication = false;
+		recoveredApprovedRevisionDigest = undefined;
 		dependencies.workflow.reset();
 	}
 
@@ -414,12 +420,14 @@ export function createDefineProductRuntime(
 			awaitingTicketGeneration ||
 			awaitingTicketApproval
 			|| awaitingTicketPublication
+			|| awaitingApprovedRevisionApproval
+			|| awaitingApprovedRevisionPublication
 		);
 	}
 
 	function shouldContinue(event: InputEvent): boolean {
 		return (
-			(awaitingConfirmation || explorationAvailable || awaitingSpecApproval || awaitingPublication || awaitingTicketGeneration || awaitingTicketApproval || awaitingTicketPublication) &&
+			(awaitingConfirmation || explorationAvailable || awaitingSpecApproval || awaitingPublication || awaitingTicketGeneration || awaitingTicketApproval || awaitingTicketPublication || awaitingApprovedRevisionApproval || awaitingApprovedRevisionPublication) &&
 			event.source === "interactive" &&
 			event.streamingBehavior === undefined
 		);
@@ -427,6 +435,8 @@ export function createDefineProductRuntime(
 
 	function systemPrompt(): string {
 		const pending = dependencies.workflow.pendingRecommendation();
+		if (awaitingApprovedRevisionPublication) return `The durable Owner-approved revision is ready. Call ${toolName} with action="publish_approved_revision", definitionId="${activeDefinitionId}", and digest="${recoveredApprovedRevisionDigest}" exactly.`;
+		if (awaitingApprovedRevisionApproval) return `The durable approved-revision draft is ready for Owner approval. Call ${toolName} with action="approve_approved_revision", definitionId="${activeDefinitionId}", and digest="${recoveredApprovedRevisionDigest}" exactly.`;
 		if (awaitingTicketPublication) {
 			return [
 				"The exact durable Owner-approved ticket graph is ready for native publication.",
@@ -502,6 +512,9 @@ export function createDefineProductRuntime(
 				awaitingPublication = recovery.phase === "publication";
 					awaitingTicketApproval = recovery.phase === "ticket-approval";
 					awaitingTicketPublication = recovery.phase === "ticket-publication";
+					awaitingApprovedRevisionApproval = recovery.phase === "approved-revision-approval";
+					awaitingApprovedRevisionPublication = recovery.phase === "approved-revision-publication";
+					recoveredApprovedRevisionDigest = recovery.phase === "approved-revision-approval" || recovery.phase === "approved-revision-publication" ? recovery.digest : undefined;
 			}
 		});
 		pi.on("session_shutdown", clearActiveTurn);
@@ -599,6 +612,14 @@ export function createDefineProductRuntime(
 				}
 				if (params.action === "publish_tickets" && !awaitingTicketPublication) {
 					const outcome: DefineProductOutcome = { status: "blocked", blocker: createBlocker("PI_WORKFLOW_TICKET_APPROVAL_MISMATCH", "Ticket publication requires the current durable Owner-approved graph.") };
+					return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
+				}
+				if (params.action === "approve_approved_revision" && !awaitingApprovedRevisionApproval) {
+					const outcome: DefineProductOutcome = { status: "blocked", blocker: createBlocker("PI_WORKFLOW_SPEC_APPROVAL_REQUIRED", "Approved revision approval requires the active durable draft.") };
+					return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
+				}
+				if (params.action === "publish_approved_revision" && !awaitingApprovedRevisionPublication) {
+					const outcome: DefineProductOutcome = { status: "blocked", blocker: createBlocker("PI_WORKFLOW_SPEC_APPROVAL_REQUIRED", "Approved revision publication requires the active durable approval.") };
 					return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
 				}
 				if (params.action === "request_exploration" && !explorationAvailable) {
@@ -737,13 +758,13 @@ export function createDefineProductRuntime(
 						}
 						command = parsed;
 					} else if (params.action === "approve_approved_revision") {
-						if (!hasExactKeys(params, ["action", "definitionId", "digest"]) || typeof params.digest !== "string" || params.definitionId !== activeDefinitionId) {
+						if (!hasExactKeys(params, ["action", "definitionId", "digest"]) || typeof params.digest !== "string" || params.definitionId !== activeDefinitionId || (recoveredApprovedRevisionDigest !== undefined && params.digest !== recoveredApprovedRevisionDigest)) {
 							const outcome: DefineProductOutcome = { status: "blocked", blocker: createBlocker("PI_WORKFLOW_SPEC_ARTIFACT_INVALID", "Approved revision approval requires only the active definition ID and exact digest.") };
 							return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
 						}
 						command = { kind: "approve-approved-revision", definitionId: activeDefinitionId as string, digest: params.digest };
 					} else if (params.action === "publish_approved_revision") {
-						if (!hasExactKeys(params, ["action", "definitionId", "digest"]) || typeof params.digest !== "string" || params.definitionId !== activeDefinitionId) {
+						if (!hasExactKeys(params, ["action", "definitionId", "digest"]) || typeof params.digest !== "string" || params.definitionId !== activeDefinitionId || (recoveredApprovedRevisionDigest !== undefined && params.digest !== recoveredApprovedRevisionDigest)) {
 							const outcome: DefineProductOutcome = { status: "blocked", blocker: createBlocker("PI_WORKFLOW_SPEC_ARTIFACT_INVALID", "Approved revision publication requires only the active definition ID and exact digest.") };
 							return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
 						}
@@ -783,6 +804,11 @@ export function createDefineProductRuntime(
 						awaitingTicketPublication = true;
 					} else if (command.kind === "publish-tickets" && outcome.status === "tickets-published") {
 						clearActiveTurn();
+					} else if (command.kind === "to-approved-revision" && outcome.status === "revision-ready") {
+						awaitingApprovedRevisionApproval = true;
+					} else if (command.kind === "approve-approved-revision" && outcome.status === "revision-approved") {
+						awaitingApprovedRevisionApproval = false;
+						awaitingApprovedRevisionPublication = true;
 				} else if (command.kind === "publish-approved-revision" && outcome.status === "revision-published") {
 						clearActiveTurn();
 				} else if (

@@ -1,5 +1,5 @@
 import type { OwnerAuthority } from "./workflow-contracts.ts";
-import { canonicalJson, type VerifiedArtifactRef } from "./workflow-contracts.ts";
+import { canonicalJson, digestCanonicalValue, type VerifiedArtifactRef } from "./workflow-contracts.ts";
 import type { createApprovedRevisionPublicationManifestStore } from "./approved-revision-publication-manifest.ts";
 import { digestApprovedRevision, digestApprovedRevisionDraft, type ApprovedRevisionDraftArtifact, type ApprovedRevisionStore } from "./approved-revision-store.ts";
 
@@ -30,11 +30,19 @@ export interface ApprovedRevisionPublicationArtifact {
 	decisionGap?: ApprovedRevisionDecisionGap;
 }
 
+interface LinearApprovedRevisionWorkflowSnapshot {
+	state: unknown;
+	assignee: unknown;
+	cycle: unknown;
+	labels: unknown;
+	project: unknown;
+}
+
 export interface LinearApprovedRevisionIssueSnapshot {
 	id: string;
 	description: string;
 	updatedAt: string;
-	workflow?: unknown;
+	workflow: LinearApprovedRevisionWorkflowSnapshot;
 }
 
 export interface LinearApprovedRevisionGateway {
@@ -106,6 +114,18 @@ async function validateComments(gateway: LinearApprovedRevisionGateway, issueId:
 	const matching = comments.filter((comment) => comment.body.includes(marker));
 	if (matching.some((comment) => comment.body !== expected.body)) return "conflict";
 	return matching.some((comment) => comment.body === expected.body) ? "present" : "missing";
+}
+
+function workflowDigest(issue: LinearApprovedRevisionIssueSnapshot): string {
+	return digestCanonicalValue(issue.workflow);
+}
+
+function sameWorkflow(left: LinearApprovedRevisionIssueSnapshot, right: LinearApprovedRevisionIssueSnapshot): boolean {
+	return workflowDigest(left) === workflowDigest(right);
+}
+
+function unchangedAfterComment(before: LinearApprovedRevisionIssueSnapshot, after: LinearApprovedRevisionIssueSnapshot | undefined): boolean {
+	return !!after && after.id === before.id && after.description === before.description && after.updatedAt === before.updatedAt && sameWorkflow(before, after);
 }
 
 function withDigest(value: string, digest: string): string {
@@ -211,6 +231,7 @@ export async function publishApprovedRevision(dependencies: Dependencies): Promi
 			const alreadyUpdated = (recordedAsUpdated || claim?.previousRevision === issue.previousRevision) && snapshot.description === issue.nextDescription;
 			if (snapshot.description !== issue.previousDescription && !alreadyUpdated) return blocked("PI_WORKFLOW_REVISION_STALE", `Issue ${issue.id} description changed before approved revision publication.`);
 			if (!alreadyUpdated && snapshot.updatedAt !== issue.previousRevision) return blocked("PI_WORKFLOW_REVISION_STALE", `Issue ${issue.id} revision changed before approved revision publication.`);
+			if (alreadyUpdated && (!claim?.workflowDigest || claim.workflowDigest !== workflowDigest(snapshot))) return blocked("PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH", `Issue ${issue.id} workflow differs from its durable pre-write baseline.`);
 			snapshots.set(issue.id, snapshot);
 		}
 
@@ -233,6 +254,9 @@ export async function publishApprovedRevision(dependencies: Dependencies): Promi
 				if (!recorded.some((entry) => `${entry.issueId}:${entry.kind}` === key)) {
 					if (commentStates.get(key) !== "present") {
 						await dependencies.gateway.saveComment({ issueId: plan.issueId, body: plan.body });
+						const afterComment = await dependencies.gateway.getIssue({ id: plan.issueId });
+						const beforeComment = snapshots.get(plan.issueId);
+						if (!beforeComment || !unchangedAfterComment(beforeComment, afterComment)) return blocked("PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH", `Issue ${plan.issueId} workflow changed while writing an approved comment.`);
 						if (await validateComments(dependencies.gateway, plan.issueId, { kind: plan.kind, body: plan.body, digest: revision.digest }) !== "present") return blocked("PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH", `Issue ${plan.issueId} did not read back the approved flow reference comment.`);
 					}
 					recorded = [...recorded, { issueId: plan.issueId, kind: plan.kind }];
@@ -251,15 +275,21 @@ export async function publishApprovedRevision(dependencies: Dependencies): Promi
 				const current = snapshots.get(issue.id)?.description === issue.nextDescription ? snapshots.get(issue.id) : await dependencies.gateway.getIssue({ id: issue.id });
 				if (!current || (current.description !== issue.previousDescription && !(claim && current.description === issue.nextDescription))) return blocked("PI_WORKFLOW_REVISION_STALE", `Issue ${issue.id} changed during approved revision recovery.`);
 				if (!claim) {
-					claim = { issueId: issue.id, previousRevision: issue.previousRevision };
+					claim = { issueId: issue.id, previousRevision: issue.previousRevision, workflowDigest: workflowDigest(current) };
 					descriptionClaims = [...descriptionClaims, claim];
+					manifest = await dependencies.manifest.record(manifest.operationId, "describing", { descriptionClaims });
+				} else if (!claim.workflowDigest) {
+					if (current.description === issue.nextDescription) return blocked("PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH", `Issue ${issue.id} has a legacy claim without a durable workflow baseline.`);
+					claim = { ...claim, workflowDigest: workflowDigest(current) };
+					descriptionClaims = descriptionClaims.map((entry) => entry.issueId === issue.id ? claim as typeof entry : entry);
 					manifest = await dependencies.manifest.record(manifest.operationId, "describing", { descriptionClaims });
 				}
 				if (current.description !== issue.nextDescription) {
+					const baseline = snapshots.get(issue.id);
 					const updated = await dependencies.gateway.saveIssue({ id: issue.id, description: issue.nextDescription });
-					if (updated.description !== issue.nextDescription) return blocked("PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH", `Issue ${issue.id} did not return the approved description.`);
+					if (!baseline || updated.id !== issue.id || updated.description !== issue.nextDescription || !sameWorkflow(baseline, updated)) return blocked("PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH", `Issue ${issue.id} did not return the approved description without workflow mutation.`);
 					const readBack = await dependencies.gateway.getIssue({ id: issue.id });
-					if (readBack?.description !== issue.nextDescription) return blocked("PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH", `Issue ${issue.id} did not read back the approved description.`);
+					if (!readBack || readBack.description !== issue.nextDescription || !sameWorkflow(baseline, readBack)) return blocked("PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH", `Issue ${issue.id} did not read back the approved description without workflow mutation.`);
 				}
 				descriptions = [...descriptions, issue.id];
 				manifest = await dependencies.manifest.record(manifest.operationId, "describing", { descriptions });
@@ -269,7 +299,8 @@ export async function publishApprovedRevision(dependencies: Dependencies): Promi
 
 		for (const issue of revision.affectedIssues) {
 			const current = await dependencies.gateway.getIssue({ id: issue.id });
-			if (current?.description !== issue.nextDescription) return blocked("PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH", `Issue ${issue.id} does not match the approved revision.`);
+			const baseline = snapshots.get(issue.id);
+			if (!current || current.description !== issue.nextDescription || !baseline || !sameWorkflow(baseline, current)) return blocked("PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH", `Issue ${issue.id} does not match the approved revision without workflow mutation.`);
 		}
 		for (const plan of commentPlans) {
 			if (await validateComments(dependencies.gateway, plan.issueId, { kind: plan.kind, body: plan.body, digest: revision.digest }) !== "present") return blocked("PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH", `Issue ${plan.issueId} does not contain the approved flow reference comment.`);
