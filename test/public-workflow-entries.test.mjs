@@ -78,6 +78,7 @@ extensions/define-product-workflow.ts
 extensions/delegation-checkpoints.ts
 extensions/delivery-parent-publication.ts
 extensions/delivery-parent-snapshot-store.ts
+extensions/delivery-pull-request-workflow.ts
 extensions/delivery-review-workflow.ts
 extensions/delivery-runtime.ts
 extensions/delivery-start-workflow.ts
