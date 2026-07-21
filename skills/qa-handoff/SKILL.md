@@ -27,15 +27,13 @@ What single Linear issue ID anchors this QA handoff?
 
 Ask no other question. Stop immediately after the question. Do not invoke tools or perform mutations.
 
-## Pending capability
+## Publication
 
-After receiving an allowed invocation with a valid domain anchor, return exactly:
+After receiving an allowed invocation with a valid Linear ID:
 
-```text
-status: blocked
-code: PI_WORKFLOW_CAPABILITY_PENDING
-capability: qa-handoff
-mutation: none
-```
+- The Developer's explicit invocation authorizes only the canonical `qa-handoff/v1` artifact that the runtime binds internally to that issue, its revision, and the exact Linear-facing body in professional neutral Spanish.
+- Execute the QA handoff workflow for that same Linear ID. Do not provide a body, digest, authority, revision, or additional fields.
+- If the workflow returns a blocker, report the exact blocker and stop.
+- If it publishes the comment or retrieves it idempotently, report the verified result.
 
-Do not invoke tools or perform mutations while this capability is pending. Runtime code blocks every tool call for the active public-entry turn.
+Never change status, assignee, Cycle, labels, estimate, blockers, relations, or description. Those actions remain manual.

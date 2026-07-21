@@ -58,11 +58,25 @@ After the Owner explicitly confirms the exact recommended route, provides the re
 Do not expose agent names, provider or model choices, effort, runtime IDs, artifact topics, private tool names, or retry internals.`;
 }
 
+function implementedQaHandoffSection() {
+	return `## Publication
+
+After receiving an allowed invocation with a valid Linear ID:
+
+- The Developer's explicit invocation authorizes only the canonical \`qa-handoff/v1\` artifact that the runtime binds internally to that issue, its revision, and the exact Linear-facing body in professional neutral Spanish.
+- Execute the QA handoff workflow for that same Linear ID. Do not provide a body, digest, authority, revision, or additional fields.
+- If the workflow returns a blocker, report the exact blocker and stop.
+- If it publishes the comment or retrieves it idempotently, report the verified result.
+
+Never change status, assignee, Cycle, labels, estimate, blockers, relations, or description. Those actions remain manual.`;
+}
+
 function skillSource(entry) {
-	const capabilitySection =
-		entry.capability === "implemented"
-			? implementedDefineProductSection(entry)
-			: pendingCapabilitySection(entry);
+	const capabilitySection = entry.capability !== "implemented"
+		? pendingCapabilitySection(entry)
+		: entry.name === "qa-handoff"
+			? implementedQaHandoffSection()
+			: implementedDefineProductSection(entry);
 	return `---
 name: ${entry.name}
 description: ${entry.description}
