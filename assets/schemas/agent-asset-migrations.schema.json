@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/felipe3dfx/pi-workflow/schemas/agent-asset-migrations.schema.json",
+  "title": "pi-workflow supported agent asset migrations",
+  "type": "object",
+  "required": ["schemaVersion", "migrations"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "migrations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "subject",
+          "fromVersion",
+          "toVersion",
+          "fromDigest",
+          "toDigest"
+        ],
+        "properties": {
+          "subject": { "type": "string", "minLength": 1 },
+          "fromVersion": { "type": "integer", "minimum": 1 },
+          "toVersion": { "type": "integer", "minimum": 2 },
+          "fromDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "toDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

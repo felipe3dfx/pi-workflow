@@ -27,7 +27,6 @@
   },
   "files": [
     "README.md",
-    "docs/**/*.md",
     "scripts/**/*.mjs",
     "package.json",
     "LICENSE",
@@ -46,9 +45,10 @@
     "check:generated": "node scripts/generate-public-workflows.mjs --check",
     "check:agent-assets": "node scripts/check-agent-assets.mjs --check",
     "check:publish": "node scripts/validate-pi-package.mjs",
+    "check:distribution": "node scripts/validate-packed-distribution.mjs",
     "check:typecheck": "tsc --noEmit",
     "check:knip": "knip",
-    "check": "npm run check:biome && npm run check:typecheck && npm run check:knip && npm run check:focused-tests && npm run check:generated && npm run check:agent-assets && npm run check:publish && node --test test/*.test.mjs && npm run pack:dry-run",
+    "check": "npm run check:biome && npm run check:typecheck && npm run check:knip && npm run check:focused-tests && npm run check:generated && npm run check:agent-assets && npm run check:publish && node --test test/*.test.mjs && npm run check:distribution",
     "prepublishOnly": "npm run check"
   },
   "pi": {

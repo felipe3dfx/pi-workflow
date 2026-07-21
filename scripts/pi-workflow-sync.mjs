@@ -40,8 +40,10 @@ const durableFilesystem = createAgentAssetFilesystem({
 				close: () => handle.close(),
 			};
 		},
-		rename: (from, to) => import("node:fs/promises").then(({ rename }) => rename(from, to)),
-		unlink: (path) => import("node:fs/promises").then(({ unlink }) => unlink(path)),
+		rename: (from, to) =>
+			import("node:fs/promises").then(({ rename }) => rename(from, to)),
+		unlink: (path) =>
+			import("node:fs/promises").then(({ unlink }) => unlink(path)),
 		remove: (path) => rm(path, { force: true }),
 		async syncDirectory(path) {
 			const handle = await open(path, "r");
@@ -57,7 +59,11 @@ const durableFilesystem = createAgentAssetFilesystem({
 				? null
 				: createHash("sha256").update(content).digest("hex"),
 		randomToken: randomUUID,
-		owner: () => ({ pid: process.pid, hostname: hostname(), startedAt: new Date().toISOString() }),
+		owner: () => ({
+			pid: process.pid,
+			hostname: hostname(),
+			startedAt: new Date().toISOString(),
+		}),
 	},
 });
 function refuseReceipt(path, receipt) {
@@ -97,7 +103,10 @@ const filesystem = {
 			if (operationError && typeof operationError === "object")
 				operationError.releaseDiagnostic = `Cooperative lock release failed: ${releaseError instanceof Error ? releaseError.message : String(releaseError)}`;
 			else {
-				const error = releaseError instanceof Error ? releaseError : new Error(String(releaseError));
+				const error =
+					releaseError instanceof Error
+						? releaseError
+						: new Error(String(releaseError));
 				error.operationResult = operationResult;
 				error.mutation = operationResult?.mutation ?? "none";
 				error.durability = "uncertain";
@@ -108,14 +117,25 @@ const filesystem = {
 		return operationResult;
 	},
 	async writeFileAtomic(path, content, expectedDigest) {
-		if (!activeLock) throw new Error("Cooperative mutation boundary is not held");
+		if (!activeLock)
+			throw new Error("Cooperative mutation boundary is not held");
 		await mkdir(dirname(path), { recursive: true });
-		const receipt = await durableFilesystem.writeFileDurableConditional(activeLock, path, content, expectedDigest);
+		const receipt = await durableFilesystem.writeFileDurableConditional(
+			activeLock,
+			path,
+			content,
+			expectedDigest,
+		);
 		if (receipt.status === "blocked") refuseReceipt(path, receipt);
 	},
 	async removeFileAtomic(path, expectedDigest) {
-		if (!activeLock) throw new Error("Cooperative mutation boundary is not held");
-		const receipt = await durableFilesystem.removeFileDurableConditional(activeLock, path, expectedDigest);
+		if (!activeLock)
+			throw new Error("Cooperative mutation boundary is not held");
+		const receipt = await durableFilesystem.removeFileDurableConditional(
+			activeLock,
+			path,
+			expectedDigest,
+		);
 		if (receipt.status === "blocked") refuseReceipt(path, receipt);
 	},
 };
@@ -131,6 +151,7 @@ function writeCanceled() {
 
 try {
 	let catalog;
+	let migrations;
 	try {
 		if (controller.signal.aborted) {
 			writeCanceled();
@@ -140,7 +161,14 @@ try {
 				"utf8",
 			);
 			if (controller.signal.aborted) writeCanceled();
-			else catalog = JSON.parse(catalogContent);
+			else {
+				catalog = JSON.parse(catalogContent);
+				const migrationsContent = await readFile(
+					new URL("../assets/agent-asset-migrations.json", import.meta.url),
+					"utf8",
+				);
+				migrations = JSON.parse(migrationsContent).migrations;
+			}
 		}
 	} catch (error) {
 		const result = {
@@ -157,13 +185,18 @@ try {
 		process.exitCode = await runSyncCommand(process.argv.slice(2), {
 			sync: createAgentAssetSync({
 				catalog,
+				migrations,
 				filesystem,
-			packageDirectory,
-			agentDirectory: resolve(agentHome, "agents"),
-			manifestPath: resolve(agentHome, ".pi-workflow", "agent-assets.json"),
-			operationDirectory: resolve(agentHome, ".pi-workflow", "sync-operations"),
-			nonce: () => randomUUID(),
-		}),
+				packageDirectory,
+				agentDirectory: resolve(agentHome, "agents"),
+				manifestPath: resolve(agentHome, ".pi-workflow", "agent-assets.json"),
+				operationDirectory: resolve(
+					agentHome,
+					".pi-workflow",
+					"sync-operations",
+				),
+				nonce: () => randomUUID(),
+			}),
 			write: (text) => process.stdout.write(`${text}\n`),
 			confirm: async (plan) => {
 				if (!process.stdin.isTTY || !process.stdout.isTTY) return false;

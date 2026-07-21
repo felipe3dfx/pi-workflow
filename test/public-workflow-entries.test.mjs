@@ -17,6 +17,7 @@ const publicEntryNames = [
 ];
 const expectedPackedFiles = `LICENSE
 README.md
+assets/agent-asset-migrations.json
 assets/agent-assets.json
 assets/agents/Explore.md
 assets/agents/Plan.md
@@ -50,17 +51,8 @@ assets/agents/to-spec.md
 assets/agents/to-tickets.md
 assets/companions.json
 assets/mcp-servers.json
-docs/adr/0001-explicit-companion-install.md
-docs/adr/0002-harness-release-guard.md
-docs/adr/0003-workflow-helper-extension-as-adapter.md
-docs/adr/0004-no-companion-installer-module.md
-docs/research/context-mode-package-patterns.md
-docs/research/gentle-ai-review-coordination-portability.md
-docs/research/gentle-pi-subagent-skill-routing.md
-docs/research/gpt-5.6-sol-context-window-opencode-pi.md
-docs/research/linear-workflow-model.md
-docs/research/matt-wayfinder-spec-tickets.md
-docs/research/pi-engram-release-cicd.md
+assets/schemas/agent-asset-migrations.schema.json
+assets/schemas/agent-assets.schema.json
 extensions/agent-asset-filesystem.ts
 extensions/agent-asset-migrations.ts
 extensions/agent-asset-operation.ts
@@ -136,6 +128,7 @@ scripts/forbid-focused-tests.mjs
 scripts/generate-public-workflows.mjs
 scripts/pi-workflow-sync.mjs
 scripts/public-workflow-catalog.mjs
+scripts/validate-packed-distribution.mjs
 scripts/validate-pi-package.mjs
 skills/define-product/SKILL.md
 skills/deliver-ticket/SKILL.md
