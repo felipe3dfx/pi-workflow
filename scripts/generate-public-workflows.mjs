@@ -71,12 +71,30 @@ After receiving an allowed invocation with a valid Linear ID:
 Never change status, assignee, Cycle, labels, estimate, blockers, relations, or description. Those actions remain manual.`;
 }
 
+function implementedProductReviewSection() {
+	return `## Evaluation and approval
+
+After receiving an allowed invocation with a valid Linear ID:
+
+- Evaluate scope, user stories and acceptance criteria, evidence, findings, required changes, and parent/sibling impact through the structured \`product-review/v1\` draft.
+- Present the agent recommendation and the exact digests for \`Aceptado\` and \`Cambios requeridos\`.
+- Ask the Owner to explicitly choose one result and confirm the corresponding issue and digest. Do not publish before that approval.
+- After explicit selection, call the tool with only \`issueId\`, \`result\`, and \`digest\`. Do not provide body, authority, revision, or additional fields.
+- Report the verified result or blocker exactly.
+- Communicate conversationally in the language used by the user. This does not change the professional-neutral Spanish contract for content published to Linear.
+
+Never change status, assignee, Cycle, labels, estimate, relations, or description. Done, Stop, reassignment, and parent auto-close remain manual or native Linear actions.`;
+}
+
 function skillSource(entry) {
-	const capabilitySection = entry.capability !== "implemented"
-		? pendingCapabilitySection(entry)
-		: entry.name === "qa-handoff"
-			? implementedQaHandoffSection()
-			: implementedDefineProductSection(entry);
+	const capabilitySection =
+		entry.capability !== "implemented"
+			? pendingCapabilitySection(entry)
+			: entry.name === "qa-handoff"
+				? implementedQaHandoffSection()
+				: entry.name === "product-review"
+					? implementedProductReviewSection()
+					: implementedDefineProductSection(entry);
 	return `---
 name: ${entry.name}
 description: ${entry.description}

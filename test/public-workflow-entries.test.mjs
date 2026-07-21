@@ -73,6 +73,7 @@ extensions/approved-ticket-graph-store.ts
 extensions/approved-ticket-publication.ts
 extensions/companion-workflow.ts
 extensions/default-define-product.ts
+extensions/default-product-review.ts
 extensions/default-qa-handoff.ts
 extensions/define-product-runtime.ts
 extensions/define-product-workflow.ts
@@ -95,6 +96,10 @@ extensions/linear-qa-handoff-gateway.ts
 extensions/mcp-config.ts
 extensions/pi-workflow-sync.ts
 extensions/pi-workflow.ts
+extensions/product-review-artifact-store.ts
+extensions/product-review-draft-store.ts
+extensions/product-review-runtime.ts
+extensions/product-review-workflow.ts
 extensions/product-spec.ts
 extensions/project-standards-resolver.ts
 extensions/public-entry-guard.ts
@@ -161,7 +166,7 @@ const entryGoldens = {
 		anchorQuestion: "What Linear Delivery ticket ID anchors this delivery?",
 	},
 	"product-review": {
-		capability: "pending",
+		capability: "implemented",
 		title: "Product Review",
 		description:
 			"Review one Linear issue from a domain anchor under Owner authority.",
@@ -262,6 +267,20 @@ test.after(async () => {
 });
 
 function expectedCapabilitySection(name, golden) {
+	if (name === "product-review" && golden.capability === "implemented") {
+		return `## Evaluation and approval
+
+After receiving an allowed invocation with a valid Linear ID:
+
+- Evaluate scope, user stories and acceptance criteria, evidence, findings, required changes, and parent/sibling impact through the structured \`product-review/v1\` draft.
+- Present the agent recommendation and the exact digests for \`Aceptado\` and \`Cambios requeridos\`.
+- Ask the Owner to explicitly choose one result and confirm the corresponding issue and digest. Do not publish before that approval.
+- After explicit selection, call the tool with only \`issueId\`, \`result\`, and \`digest\`. Do not provide body, authority, revision, or additional fields.
+- Report the verified result or blocker exactly.
+- Communicate conversationally in the language used by the user. This does not change the professional-neutral Spanish contract for content published to Linear.
+
+Never change status, assignee, Cycle, labels, estimate, relations, or description. Done, Stop, reassignment, and parent auto-close remain manual or native Linear actions.`;
+	}
 	if (name === "qa-handoff" && golden.capability === "implemented") {
 		return `## Publication
 

@@ -27,15 +27,15 @@ What single Linear issue ID anchors this product review?
 
 Ask no other question. Stop immediately after the question. Do not invoke tools or perform mutations.
 
-## Pending capability
+## Evaluation and approval
 
-After receiving an allowed invocation with a valid domain anchor, return exactly:
+After receiving an allowed invocation with a valid Linear ID:
 
-```text
-status: blocked
-code: PI_WORKFLOW_CAPABILITY_PENDING
-capability: product-review
-mutation: none
-```
+- Evaluate scope, user stories and acceptance criteria, evidence, findings, required changes, and parent/sibling impact through the structured `product-review/v1` draft.
+- Present the agent recommendation and the exact digests for `Aceptado` and `Cambios requeridos`.
+- Ask the Owner to explicitly choose one result and confirm the corresponding issue and digest. Do not publish before that approval.
+- After explicit selection, call the tool with only `issueId`, `result`, and `digest`. Do not provide body, authority, revision, or additional fields.
+- Report the verified result or blocker exactly.
+- Communicate conversationally in the language used by the user. This does not change the professional-neutral Spanish contract for content published to Linear.
 
-Do not invoke tools or perform mutations while this capability is pending. Runtime code blocks every tool call for the active public-entry turn.
+Never change status, assignee, Cycle, labels, estimate, relations, or description. Done, Stop, reassignment, and parent auto-close remain manual or native Linear actions.

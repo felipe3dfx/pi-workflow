@@ -9,12 +9,24 @@ import {
 	createCompanionWorkflow,
 	type CompanionWorkflowOptions,
 } from "./companion-workflow.ts";
-import { createDefaultDefineProductWorkflow, type DefaultDefineProductRuntimeOptions } from "./default-define-product.ts";
-import { createDefaultQaHandoffWorkflow, type DefaultQaHandoffRuntimeOptions } from "./default-qa-handoff.ts";
+import {
+	createDefaultDefineProductWorkflow,
+	type DefaultDefineProductRuntimeOptions,
+} from "./default-define-product.ts";
+import {
+	createDefaultQaHandoffWorkflow,
+	type DefaultQaHandoffRuntimeOptions,
+} from "./default-qa-handoff.ts";
+import {
+	createDefaultProductReviewWorkflow,
+	type DefaultProductReviewRuntimeOptions,
+} from "./default-product-review.ts";
 import type { createDefineProductWorkflow } from "./define-product-workflow.ts";
 import { createDefineProductRuntime } from "./define-product-runtime.ts";
 import type { createQaHandoffWorkflow } from "./qa-handoff-workflow.ts";
 import { createQaHandoffRuntime } from "./qa-handoff-runtime.ts";
+import type { createProductReviewWorkflow } from "./product-review-workflow.ts";
+import { createProductReviewRuntime } from "./product-review-runtime.ts";
 import { registerPublicEntryGuard } from "./public-entry-guard.ts";
 
 function createWorkflow(
@@ -56,6 +68,10 @@ export interface PiWorkflowExtensionOptions extends CompanionWorkflowOptions {
 		workflow?: ReturnType<typeof createQaHandoffWorkflow>;
 		runtime?: DefaultQaHandoffRuntimeOptions;
 	};
+	productReview?: {
+		workflow?: ReturnType<typeof createProductReviewWorkflow>;
+		runtime?: DefaultProductReviewRuntimeOptions;
+	};
 }
 
 export default function piWorkflowExtension(
@@ -89,6 +105,15 @@ export default function piWorkflowExtension(
 			),
 	});
 	qaHandoffRuntime.register(pi);
+	const productReviewRuntime = createProductReviewRuntime({
+		workflow:
+			workflowOptions.productReview?.workflow ??
+			createDefaultProductReviewWorkflow(
+				() => currentCtx,
+				workflowOptions.productReview?.runtime,
+			),
+	});
+	productReviewRuntime.register(pi);
 	const defineProductRuntime = createDefineProductRuntime({
 		workflow: defineProductWorkflow,
 		createDefinitionId:
@@ -114,7 +139,14 @@ export default function piWorkflowExtension(
 			onAdmittedInput: (event) => qaHandoffRuntime.handlePublicEntry(event),
 			onSettled: () => qaHandoffRuntime.handleSettled(),
 		},
-		"product-review": { status: "pending" },
+		"product-review": {
+			status: "implemented",
+			allowedTools: [productReviewRuntime.toolName],
+			continueIf: (event) => productReviewRuntime.shouldContinue(event),
+			hasActiveAuthorization: () => productReviewRuntime.hasActiveTurn(),
+			retainAfterSettled: true,
+			onAdmittedInput: (event) => productReviewRuntime.handlePublicEntry(event),
+		},
 	});
 
 	pi.registerCommand("pi-workflow-status", {
