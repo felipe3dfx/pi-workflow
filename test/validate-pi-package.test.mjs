@@ -44,7 +44,6 @@ function baselinePackageJson(overrides = {}) {
 		publishConfig: { access: "public" },
 		files: [
 			"README.md",
-			"RELEASE_NOTES.md",
 			"scripts/**/*.mjs",
 			"package.json",
 			"LICENSE",

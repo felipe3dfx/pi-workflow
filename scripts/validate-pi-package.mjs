@@ -212,10 +212,6 @@ check(
 	"package files must include README.md",
 );
 check(
-	packageJson.files?.includes("RELEASE_NOTES.md"),
-	"package files must include RELEASE_NOTES.md",
-);
-check(
 	packageJson.files?.includes("LICENSE"),
 	"package files must include LICENSE",
 );

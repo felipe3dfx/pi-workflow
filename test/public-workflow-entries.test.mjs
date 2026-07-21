@@ -17,7 +17,6 @@ const publicEntryNames = [
 ];
 const expectedPackedFiles = `LICENSE
 README.md
-RELEASE_NOTES.md
 assets/acceptance/product-review.golden.md
 assets/acceptance/qa-handoff.golden.md
 assets/agent-asset-migrations.json

@@ -31,15 +31,14 @@ The evidence validator fails closed unless every required scenario has a termina
 
 `npm run check` runs repository formatting-independent lint checks, TypeScript checking, dependency analysis, focused-test protection, generated/resource guards, package and release validation, all tests, packed distribution validation, and packed acceptance. `prepublishOnly` delegates to this complete gate.
 
-The packed distribution validator requires the acceptance runner, evidence validator, public acceptance command, Spanish golden files, release validator, and `RELEASE_NOTES.md` to be present in the tarball.
+The packed distribution validator requires the acceptance runner, evidence validator, public acceptance command, Spanish golden files, and release validator to be present in the tarball.
 
 ## Release contract
 
 1. Update `package.json` to the intended version.
-2. Update `RELEASE_NOTES.md` in professional-neutral Spanish. Preserve the exact ordered, non-empty sections `Migraciones`, `Sync requerido`, `Cambios de capacidades`, and `Rollback`.
-3. Run `npm run check`.
-4. Create a GitHub Release whose tag is exactly `v<package.json version>`.
-5. Use the exact `RELEASE_NOTES.md` content as the GitHub Release body.
-6. Publish the GitHub Release.
+2. Run `npm run check`.
+3. Create a GitHub Release whose tag is exactly `v<package.json version>`.
+4. Write the release body in English for that specific release, using the exact ordered, non-empty sections `Implemented`, `Migrations`, `Required sync`, `Capability changes`, and `Rollback`.
+5. Publish the GitHub Release.
 
 The publish workflow validates the event tag and body again, then runs `npm publish --provenance --access public`. Publication occurs only in that workflow; acceptance produces evidence but never publishes.

@@ -15,8 +15,6 @@ import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 
-import { validateRelease } from "./validate-release.mjs";
-
 const execFileAsync = promisify(execFile);
 const workflows = [
 	"define-product",
@@ -37,16 +35,10 @@ const allowedRoots = [
 	"scripts/",
 	"skills/",
 ];
-const allowedFiles = new Set([
-	"LICENSE",
-	"README.md",
-	"RELEASE_NOTES.md",
-	"package.json",
-]);
+const allowedFiles = new Set(["LICENSE", "README.md", "package.json"]);
 const required = [
 	"package.json",
 	"README.md",
-	"RELEASE_NOTES.md",
 	"scripts/pi-workflow-sync.mjs",
 	"scripts/acceptance-evidence.mjs",
 	"scripts/check-acceptance.mjs",
@@ -121,16 +113,6 @@ async function validateExtracted(packageRoot) {
 		);
 	}
 	if (manifest) {
-		try {
-			validateRelease({
-				manifest,
-				notes: await readFile(join(packageRoot, "RELEASE_NOTES.md"), "utf8"),
-			});
-		} catch (error) {
-			errors.push(
-				`invalid packed release contract: ${error instanceof Error ? error.message : String(error)}`,
-			);
-		}
 		check(
 			manifest.engines?.node === ">=22.19",
 			"packed engines.node must be >=22.19",

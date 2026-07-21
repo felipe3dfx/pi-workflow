@@ -220,7 +220,7 @@ Public workflow assets are human-readable generated files. Edit `scripts/public-
 
 The release guard validates that:
 
-- `RELEASE_NOTES.md` contains non-empty `Migraciones`, `Sync requerido`, `Cambios de capacidades`, and `Rollback` sections;
+- GitHub Release bodies are validated as English Markdown with non-empty `Implemented`, `Migrations`, `Required sync`, `Capability changes`, and `Rollback` sections;
 - packed acceptance executes real extracted-package modules with deterministic fakes and digest-bound evidence;
 - the package name and public publish config are correct;
 - `pi-package` is present in keywords;
@@ -244,15 +244,14 @@ To update a companion:
 3. Run `npm run check`.
 4. Review the upstream package changelog/source for new resources or behavior.
 5. Update this README's companion table.
-6. Update `RELEASE_NOTES.md` and use its exact contents as the GitHub Release body.
-7. Publish a GitHub Release tagged exactly `v<package.json version>`.
-8. Let `.github/workflows/publish.yml` validate the tag/body and publish to npm with provenance.
+6. Publish a GitHub Release tagged exactly `v<package.json version>` with an English body describing that release under `Implemented`, `Migrations`, `Required sync`, `Capability changes`, and `Rollback`.
+7. Let `.github/workflows/publish.yml` validate the tag/body and publish to npm with provenance.
 
 ## Release CI/CD
 
 CI runs `npm run check` on pushes and pull requests to `main` via `.github/workflows/ci.yml`. The check includes the packed acceptance command, which creates one tarball, validates its distribution, extracts it, imports workflow modules only from that extraction, and emits complete digest-bound evidence. Acceptance never invokes `npm publish`.
 
-Publishing runs only when a GitHub Release is published via `.github/workflows/publish.yml`. The workflow requires the release tag to equal `v<package.json version>` and the release body to equal `RELEASE_NOTES.md`, then publishes with npm provenance. It uses the GitHub environment named `npm`; configure that environment with the npm trusted-publishing or token settings required by the repository.
+Publishing runs only when a GitHub Release is published via `.github/workflows/publish.yml`. The workflow requires the release tag to equal `v<package.json version>` and validates the per-release English body, then publishes with npm provenance. It uses the GitHub environment named `npm`; configure that environment with the npm trusted-publishing or token settings required by the repository.
 
 See [`docs/acceptance-and-release.md`](docs/acceptance-and-release.md) for the scenario matrix, evidence contract, and release procedure.
 

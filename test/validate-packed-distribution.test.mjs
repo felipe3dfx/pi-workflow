@@ -21,7 +21,6 @@ async function fixtureTarball({ omit, extra = {}, catalogVersion = 1 } = {}) {
 	const packageRoot = join(root, "package");
 	const files = {
 		"README.md": "# Fixture\n",
-		"RELEASE_NOTES.md": "# Notas de release — v0.0.0-fixture\n\n## Migraciones\n\nNinguna.\n\n## Sync requerido\n\nRevisar el plan.\n\n## Cambios de capacidades\n\nSin cambios.\n\n## Rollback\n\nRestaurar el predecesor.\n",
 		"package.json": JSON.stringify({
 			name: "@felipe.3dfx/pi-workflow",
 			version: "0.0.0-fixture",
@@ -189,19 +188,6 @@ test("rejects duplicated prompt prose and future migration registries", async (t
 			await rm(fixture.root, { recursive: true, force: true });
 		}
 	});
-});
-
-test("rejects packed release notes without the operational contract", async () => {
-	const fixture = await fixtureTarball({
-		extra: { "RELEASE_NOTES.md": "# Notas incompletas\n" },
-	});
-	try {
-		const result = await validate(fixture.tarball);
-		assert.notEqual(result.code, 0);
-		assert.match(result.stderr, /invalid packed release contract/);
-	} finally {
-		await rm(fixture.root, { recursive: true, force: true });
-	}
 });
 
 test("rejects future agent catalog versions", async () => {
