@@ -17,6 +17,9 @@ const publicEntryNames = [
 ];
 const expectedPackedFiles = `LICENSE
 README.md
+RELEASE_NOTES.md
+assets/acceptance/product-review.golden.md
+assets/acceptance/qa-handoff.golden.md
 assets/agent-asset-migrations.json
 assets/agent-assets.json
 assets/agents/Explore.md
@@ -123,13 +126,17 @@ prompts/define-product.md
 prompts/deliver-ticket.md
 prompts/product-review.md
 prompts/qa-handoff.md
+scripts/acceptance-evidence.mjs
+scripts/check-acceptance.mjs
 scripts/check-agent-assets.mjs
 scripts/forbid-focused-tests.mjs
 scripts/generate-public-workflows.mjs
 scripts/pi-workflow-sync.mjs
 scripts/public-workflow-catalog.mjs
+scripts/run-packed-acceptance.mjs
 scripts/validate-packed-distribution.mjs
 scripts/validate-pi-package.mjs
+scripts/validate-release.mjs
 skills/define-product/SKILL.md
 skills/deliver-ticket/SKILL.md
 skills/product-review/SKILL.md

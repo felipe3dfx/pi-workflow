@@ -11,7 +11,9 @@ const execFileAsync = promisify(execFile);
 const validatorPath = resolve("scripts/validate-pi-package.mjs");
 
 function loadJsonFixture(relativePath) {
-	return JSON.parse(readFileSync(new URL(relativePath, import.meta.url), "utf8"));
+	return JSON.parse(
+		readFileSync(new URL(relativePath, import.meta.url), "utf8"),
+	);
 }
 
 const mcpServerCatalog = loadJsonFixture("../assets/mcp-servers.json");
@@ -42,6 +44,7 @@ function baselinePackageJson(overrides = {}) {
 		publishConfig: { access: "public" },
 		files: [
 			"README.md",
+			"RELEASE_NOTES.md",
 			"scripts/**/*.mjs",
 			"package.json",
 			"LICENSE",
@@ -52,6 +55,8 @@ function baselinePackageJson(overrides = {}) {
 		],
 		scripts: {
 			"check:publish": "node scripts/validate-pi-package.mjs",
+			"check:release": "node scripts/validate-release.mjs",
+			"check:acceptance": "node scripts/check-acceptance.mjs",
 			"check:typecheck": "tsc --noEmit",
 			"check:focused-tests": "node scripts/forbid-focused-tests.mjs",
 			"check:generated": "node scripts/generate-public-workflows.mjs --check",
@@ -59,7 +64,7 @@ function baselinePackageJson(overrides = {}) {
 			format: "biome format --write .",
 			"check:biome": "biome check --formatter-enabled=false .",
 			check:
-				"npm run check:biome && npm run check:typecheck && npm run check:focused-tests && npm run check:generated && npm run check:publish && node --test test/*.test.mjs && npm run pack:dry-run",
+				"npm run check:biome && npm run check:typecheck && npm run check:focused-tests && npm run check:generated && npm run check:publish && npm run check:release && node --test test/*.test.mjs && npm run pack:dry-run && npm run check:acceptance",
 			prepublishOnly: "npm run check",
 		},
 		pi: {
@@ -164,7 +169,10 @@ test("rejects a public skill directory without SKILL.md", async () => {
 		await rm(join(root, "skills", "define-product", "SKILL.md"));
 		const result = await runValidator(root);
 		assert.notEqual(result.code, 0);
-		assert.match(result.stderr, /missing public skill file: define-product\/SKILL\.md/);
+		assert.match(
+			result.stderr,
+			/missing public skill file: define-product\/SKILL\.md/,
+		);
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
@@ -194,7 +202,10 @@ test("rejects public skill frontmatter missing a description", async () => {
 		);
 		const result = await runValidator(root);
 		assert.notEqual(result.code, 0);
-		assert.match(result.stderr, /define-product frontmatter must define description/);
+		assert.match(
+			result.stderr,
+			/define-product frontmatter must define description/,
+		);
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
@@ -209,7 +220,10 @@ test("rejects a frontmatter closing delimiter with trailing text", async () => {
 		);
 		const result = await runValidator(root);
 		assert.notEqual(result.code, 0);
-		assert.match(result.stderr, /frontmatter must end with a delimiter-only --- line/);
+		assert.match(
+			result.stderr,
+			/frontmatter must end with a delimiter-only --- line/,
+		);
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
@@ -224,7 +238,10 @@ test("rejects malformed public skill frontmatter", async () => {
 		);
 		const result = await runValidator(root);
 		assert.notEqual(result.code, 0);
-		assert.match(result.stderr, /invalid public skill define-product frontmatter/);
+		assert.match(
+			result.stderr,
+			/invalid public skill define-product frontmatter/,
+		);
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
@@ -306,7 +323,10 @@ test("rejects malformed YAML in public prompt frontmatter", async () => {
 		);
 		const result = await runValidator(root);
 		assert.notEqual(result.code, 0);
-		assert.match(result.stderr, /invalid public prompt define-product frontmatter/);
+		assert.match(
+			result.stderr,
+			/invalid public prompt define-product frontmatter/,
+		);
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
@@ -315,7 +335,11 @@ test("rejects malformed YAML in public prompt frontmatter", async () => {
 test("schema-checks public prompt YAML frontmatter", async (t) => {
 	for (const [label, frontmatter, diagnostic] of [
 		["non-object", "- description", /frontmatter must be a YAML mapping/],
-		["invalid description", "description: 42", /description must be a non-empty string/],
+		[
+			"invalid description",
+			"description: 42",
+			/description must be a non-empty string/,
+		],
 		[
 			"invalid argument hint",
 			"description: fixture\nargument-hint: []",
@@ -352,8 +376,14 @@ test("prompt manifest diagnostics identify prompts rather than skills", async ()
 	try {
 		const result = await runValidator(root);
 		assert.notEqual(result.code, 0);
-		assert.match(result.stderr, /missing pi\.prompts path: \.\/missing-prompts/);
-		assert.doesNotMatch(result.stderr, /missing pi\.skills path: \.\/missing-prompts/);
+		assert.match(
+			result.stderr,
+			/missing pi\.prompts path: \.\/missing-prompts/,
+		);
+		assert.doesNotMatch(
+			result.stderr,
+			/missing pi\.skills path: \.\/missing-prompts/,
+		);
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
@@ -563,7 +593,10 @@ test("rejects falsey but valid MCP catalog JSON values", async () => {
 	try {
 		const result = await runValidator(root);
 		assert.notEqual(result.code, 0);
-		assert.match(result.stderr, /assets\/mcp-servers\.json|MCP server catalog/i);
+		assert.match(
+			result.stderr,
+			/assets\/mcp-servers\.json|MCP server catalog/i,
+		);
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}

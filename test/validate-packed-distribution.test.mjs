@@ -20,6 +20,8 @@ async function fixtureTarball({ omit, extra = {}, catalogVersion = 1 } = {}) {
 	const root = await mkdtemp(join(tmpdir(), "pi-workflow-packed-fixture-"));
 	const packageRoot = join(root, "package");
 	const files = {
+		"README.md": "# Fixture\n",
+		"RELEASE_NOTES.md": "# Notas de release — v0.0.0-fixture\n\n## Migraciones\n\nNinguna.\n\n## Sync requerido\n\nRevisar el plan.\n\n## Cambios de capacidades\n\nSin cambios.\n\n## Rollback\n\nRestaurar el predecesor.\n",
 		"package.json": JSON.stringify({
 			name: "@felipe.3dfx/pi-workflow",
 			version: "0.0.0-fixture",
@@ -32,10 +34,16 @@ async function fixtureTarball({ omit, extra = {}, catalogVersion = 1 } = {}) {
 			},
 		}),
 		"scripts/pi-workflow-sync.mjs": "#!/usr/bin/env node\n",
+		"scripts/acceptance-evidence.mjs": "export {};\n",
+		"scripts/check-acceptance.mjs": "#!/usr/bin/env node\n",
+		"scripts/run-packed-acceptance.mjs": "#!/usr/bin/env node\n",
+		"scripts/validate-release.mjs": "#!/usr/bin/env node\n",
 		"extensions/pi-workflow.ts": "export default function extension() {}\n",
 		"extensions/agent-asset-migrations.ts": "export {};\n",
 		"extensions/agent-validator.ts": "export {};\n",
 		"assets/agents/Explore.md": "# Explore\n",
+		"assets/acceptance/qa-handoff.golden.md": "# Entrega para QA\n",
+		"assets/acceptance/product-review.golden.md": "# Revisión de producto\n",
 		"assets/agent-asset-migrations.json": JSON.stringify({
 			schemaVersion: 1,
 			migrations: [],
@@ -181,6 +189,19 @@ test("rejects duplicated prompt prose and future migration registries", async (t
 			await rm(fixture.root, { recursive: true, force: true });
 		}
 	});
+});
+
+test("rejects packed release notes without the operational contract", async () => {
+	const fixture = await fixtureTarball({
+		extra: { "RELEASE_NOTES.md": "# Notas incompletas\n" },
+	});
+	try {
+		const result = await validate(fixture.tarball);
+		assert.notEqual(result.code, 0);
+		assert.match(result.stderr, /invalid packed release contract/);
+	} finally {
+		await rm(fixture.root, { recursive: true, force: true });
+	}
 });
 
 test("rejects future agent catalog versions", async () => {

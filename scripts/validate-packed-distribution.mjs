@@ -15,6 +15,8 @@ import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 
+import { validateRelease } from "./validate-release.mjs";
+
 const execFileAsync = promisify(execFile);
 const workflows = [
 	"define-product",
@@ -35,10 +37,21 @@ const allowedRoots = [
 	"scripts/",
 	"skills/",
 ];
-const allowedFiles = new Set(["LICENSE", "README.md", "package.json"]);
+const allowedFiles = new Set([
+	"LICENSE",
+	"README.md",
+	"RELEASE_NOTES.md",
+	"package.json",
+]);
 const required = [
 	"package.json",
+	"README.md",
+	"RELEASE_NOTES.md",
 	"scripts/pi-workflow-sync.mjs",
+	"scripts/acceptance-evidence.mjs",
+	"scripts/check-acceptance.mjs",
+	"scripts/run-packed-acceptance.mjs",
+	"scripts/validate-release.mjs",
 	"extensions/pi-workflow.ts",
 	"extensions/agent-asset-migrations.ts",
 	"extensions/agent-validator.ts",
@@ -46,6 +59,8 @@ const required = [
 	"assets/agent-asset-migrations.json",
 	"assets/schemas/agent-assets.schema.json",
 	"assets/schemas/agent-asset-migrations.schema.json",
+	"assets/acceptance/qa-handoff.golden.md",
+	"assets/acceptance/product-review.golden.md",
 	...workflows.flatMap((name) => [
 		`skills/${name}/SKILL.md`,
 		`prompts/${name}.md`,
@@ -106,6 +121,16 @@ async function validateExtracted(packageRoot) {
 		);
 	}
 	if (manifest) {
+		try {
+			validateRelease({
+				manifest,
+				notes: await readFile(join(packageRoot, "RELEASE_NOTES.md"), "utf8"),
+			});
+		} catch (error) {
+			errors.push(
+				`invalid packed release contract: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
 		check(
 			manifest.engines?.node === ">=22.19",
 			"packed engines.node must be >=22.19",

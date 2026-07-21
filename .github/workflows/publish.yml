@@ -24,4 +24,6 @@ jobs:
       - run: npm --version
       - run: npm ci
       - run: npm run check
+      - name: Validate GitHub Release tag and body
+        run: node scripts/validate-release.mjs --event "$GITHUB_EVENT_PATH"
       - run: npm publish --provenance --access public
