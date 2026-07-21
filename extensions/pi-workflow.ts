@@ -28,6 +28,11 @@ import { createQaHandoffRuntime } from "./qa-handoff-runtime.ts";
 import type { createProductReviewWorkflow } from "./product-review-workflow.ts";
 import { createProductReviewRuntime } from "./product-review-runtime.ts";
 import { registerPublicEntryGuard } from "./public-entry-guard.ts";
+import type {
+	DiagnosticScope,
+	WorkflowDiagnosticsAdapter,
+} from "./workflow-diagnostics.ts";
+import { createWorkflowDiagnostics } from "./workflow-diagnostics.ts";
 
 function createWorkflow(
 	pi: ExtensionAPI,
@@ -58,7 +63,28 @@ function createWorkflow(
 	});
 }
 
+const diagnosticUsage =
+	"Usage: /pi-workflow-<status|doctor> <installation|product <teamId>|delivery <issueId>|qa-handoff <issueId>|product-review <issueId>>";
+
+export function parseDiagnosticScope(args: string): DiagnosticScope | undefined {
+	const parts = args.trim().split(/\s+/).filter(Boolean);
+	if (parts.length === 1 && parts[0] === "installation") return { kind: "installation" };
+	if (parts.length !== 2 || !parts[1]) return undefined;
+	if (parts[0] === "product") return { kind: "product", teamId: parts[1] };
+	if (parts[0] === "delivery" && /^[A-Z][A-Z0-9]*-[1-9][0-9]*$/.test(parts[1]))
+		return { kind: "delivery", issueId: parts[1] };
+	if (parts[0] === "qa-handoff" && /^[A-Z][A-Z0-9]*-[1-9][0-9]*$/.test(parts[1]))
+		return { kind: "qa-handoff", issueId: parts[1] };
+	if (parts[0] === "product-review" && /^[A-Z][A-Z0-9]*-[1-9][0-9]*$/.test(parts[1]))
+		return { kind: "product-review", issueId: parts[1] };
+	return undefined;
+}
+
 export interface PiWorkflowExtensionOptions extends CompanionWorkflowOptions {
+	diagnosticsWorkflow?: {
+		adapter: WorkflowDiagnosticsAdapter;
+		strictCompatibility?: boolean;
+	};
 	defineProduct?: {
 		workflow?: ReturnType<typeof createDefineProductWorkflow>;
 		createDefinitionId?: () => string;
@@ -149,19 +175,50 @@ export default function piWorkflowExtension(
 		},
 	});
 
+	const diagnostics = workflowOptions.diagnosticsWorkflow
+		? createWorkflowDiagnostics({
+				adapter: workflowOptions.diagnosticsWorkflow.adapter,
+				strictCompatibility:
+					workflowOptions.diagnosticsWorkflow.strictCompatibility ?? true,
+			})
+		: undefined;
+	async function runDiagnosticsCommand(
+		mode: "status" | "doctor",
+		args: string,
+		ctx: ExtensionCommandContext,
+	): Promise<void> {
+		const scope = parseDiagnosticScope(args);
+		if (!diagnostics || !scope) {
+			if (args.trim()) {
+				ctx.ui.notify(diagnosticUsage, "error");
+				return;
+			}
+			await createWorkflow(pi, ctx, workflowOptions)[
+				mode === "status" ? "inspect" : "diagnose"
+			]();
+			return;
+		}
+		const report = await diagnostics[
+			mode === "status" ? "inspect" : "diagnose"
+		](scope);
+		ctx.ui.notify(
+			JSON.stringify(report, null, 2),
+			report.readiness === "ready"
+				? "info"
+				: report.readiness === "degraded"
+					? "warning"
+					: "error",
+		);
+	}
+
 	pi.registerCommand("pi-workflow-status", {
-		description:
-			"Show configured pi-workflow companion packages and install state",
-		handler: async (_args, ctx) => {
-			await createWorkflow(pi, ctx, workflowOptions).inspect();
-		},
+		description: "Summarize readiness for a pi-workflow operation scope",
+		handler: (args, ctx) => runDiagnosticsCommand("status", args, ctx),
 	});
 
 	pi.registerCommand("pi-workflow-doctor", {
-		description: "Show diagnostic pi-workflow companion package status",
-		handler: async (_args, ctx) => {
-			await createWorkflow(pi, ctx, workflowOptions).diagnose();
-		},
+		description: "Show safe diagnostic evidence and remediation for a scope",
+		handler: (args, ctx) => runDiagnosticsCommand("doctor", args, ctx),
 	});
 
 	pi.registerCommand("pi-workflow-install-companions", {
