@@ -227,6 +227,177 @@ test("implemented define-product preserves authorization for the settled confirm
 	);
 });
 
+test("implemented qa-handoff allows only its workflow tool for the exact admitted issue", async () => {
+	const calls = [];
+	const { handlers, tools } = loadExtension({
+		qaHandoff: {
+			workflow: {
+				authorizeInvocation: async (issueId) => {
+					calls.push({ operation: "authorize", issueId });
+					return { status: "authorized", artifact: { digest: "digest-1" } };
+				},
+				publish: async (input) => {
+					calls.push({ operation: "publish", input });
+					return {
+						status: "published",
+						artifact: { digest: "digest-1" },
+						comment: { id: "opaque-comment", body: "body" },
+					};
+				},
+			},
+		},
+	});
+	const ctx = context();
+	assert.ok(tools.has("workflow_qa_handoff"));
+	await handlers.get("input")(
+		{ type: "input", text: "/qa-handoff ILA-2321", source: "interactive" },
+		ctx,
+	);
+	assert.equal(
+		await handlers.get("tool_call")({ toolName: "workflow_qa_handoff" }, ctx),
+		undefined,
+	);
+	assert.deepEqual(await handlers.get("tool_call")({ toolName: "linear_save_issue" }, ctx), {
+		block: true,
+		reason:
+			"PI_WORKFLOW_CAPABILITY_PENDING: tools are disabled for pending public workflow capabilities",
+	});
+	await tools.get("workflow_qa_handoff").execute("tool-1", { issueId: "ILA-2321" });
+	assert.deepEqual(
+		await handlers.get("tool_call")({ toolName: "workflow_qa_handoff" }, ctx),
+		{
+			block: true,
+			reason:
+				"PI_WORKFLOW_CAPABILITY_PENDING: tools are disabled for pending public workflow capabilities",
+		},
+	);
+	assert.equal(
+		await handlers.get("before_agent_start")({ type: "before_agent_start" }, ctx),
+		undefined,
+	);
+	assert.deepEqual(calls, [
+		{ operation: "authorize", issueId: "ILA-2321" },
+		{ operation: "publish", input: { issueId: "ILA-2321" } },
+	]);
+});
+
+test("qa-handoff admits one plain valid ID after the invalid-anchor corrective turn", async () => {
+	const calls = [];
+	const { handlers, tools } = loadExtension({
+		qaHandoff: {
+			workflow: {
+				authorizeInvocation: async (issueId) => {
+					calls.push({ operation: "authorize", issueId });
+					return { status: "authorized" };
+				},
+				publish: async (input) => {
+					calls.push({ operation: "publish", input });
+					return { status: "published", comment: { id: "comment-1" } };
+				},
+			},
+		},
+	});
+	const ctx = context();
+	assert.deepEqual(
+		await handlers.get("input")(
+			{ type: "input", text: "/qa-handoff not-an-id", source: "interactive" },
+			ctx,
+		),
+		{ action: "continue" },
+	);
+	await handlers.get("agent_settled")({ type: "agent_settled" }, ctx);
+
+	assert.deepEqual(
+		await handlers.get("input")(
+			{ type: "input", text: "ILA-2321", source: "interactive" },
+			ctx,
+		),
+		{ action: "continue" },
+	);
+	assert.equal(
+		await handlers.get("tool_call")({ toolName: "workflow_qa_handoff" }, ctx),
+		undefined,
+	);
+	const result = await tools.get("workflow_qa_handoff").execute("tool-1", {
+		issueId: "ILA-2321",
+	});
+	assert.equal(JSON.parse(result.content[0].text).status, "published");
+	assert.deepEqual(
+		await handlers.get("tool_call")({ toolName: "workflow_qa_handoff" }, ctx),
+		{
+			block: true,
+			reason:
+				"PI_WORKFLOW_CAPABILITY_PENDING: tools are disabled for pending public workflow capabilities",
+		},
+	);
+	assert.deepEqual(calls, [
+		{ operation: "authorize", issueId: "ILA-2321" },
+		{ operation: "publish", input: { issueId: "ILA-2321" } },
+	]);
+});
+
+test("unrelated plain input remains outside qa-handoff continuation", async () => {
+	const calls = [];
+	const { handlers } = loadExtension({
+		qaHandoff: {
+			workflow: {
+				authorizeInvocation: async (issueId) => {
+					calls.push(issueId);
+					return { status: "authorized" };
+				},
+				publish: async () => ({ status: "published" }),
+			},
+		},
+	});
+	const ctx = context();
+	await handlers.get("input")(
+		{ type: "input", text: "/qa-handoff", source: "interactive" },
+		ctx,
+	);
+	await handlers.get("agent_settled")({ type: "agent_settled" }, ctx);
+
+	assert.deepEqual(
+		await handlers.get("input")(
+			{ type: "input", text: "summarize the current work", source: "interactive" },
+			ctx,
+		),
+		{ action: "continue" },
+	);
+	assert.equal(await handlers.get("tool_call")({ toolName: "read" }, ctx), undefined);
+	assert.deepEqual(calls, []);
+});
+
+test("settled qa-handoff cannot reuse authorization through public tool fallback", async () => {
+	const { handlers } = loadExtension({
+		qaHandoff: {
+			workflow: {
+				authorizeInvocation: async () => ({ status: "authorized" }),
+				publish: async () => ({ status: "published" }),
+			},
+		},
+	});
+	const ctx = context();
+	await handlers.get("input")(
+		{ type: "input", text: "/qa-handoff ILA-2321", source: "interactive" },
+		ctx,
+	);
+
+	await handlers.get("agent_settled")({ type: "agent_settled" }, ctx);
+
+	assert.deepEqual(
+		await handlers.get("tool_call")({ toolName: "workflow_qa_handoff" }, ctx),
+		{
+			block: true,
+			reason:
+				"PI_WORKFLOW_CAPABILITY_PENDING: tools are disabled for pending public workflow capabilities",
+		},
+	);
+	assert.equal(
+		await handlers.get("before_agent_start")({ type: "before_agent_start" }, ctx),
+		undefined,
+	);
+});
+
 test("session replacement clears an active public-entry turn", async () => {
 	const { handlers } = loadExtension();
 	const ctx = context();

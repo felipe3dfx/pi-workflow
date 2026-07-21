@@ -12,6 +12,8 @@ export type ArtifactSchema =
 	| "approved-revision-draft"
 	| "approved-revision"
 	| "approved-ticket-publication"
+	| "qa-handoff"
+	| "qa-handoff-draft"
 	| "product-spec"
 	| "workflow-progress"
 	| "review-snapshot"

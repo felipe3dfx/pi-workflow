@@ -12,6 +12,39 @@ Owner approval uses launch-host configuration, not model/tool arguments. Start P
 
 This seam trusts the process launcher to authenticate and configure the Owner; it does not infer a human role from conversational text. QA and PS remain organizational/Linear roles outside this runtime authority seam.
 
+`qa-handoff` is an implemented single-issue capability. Its public invocation accepts only one Linear ID, and its workflow-owned tool accepts that same ID without body, digest, authority, revision, or mutation fields. Publication requires host-provided trusted Developer authority, an exact structured handoff draft, durable artifact storage, and the narrow Linear QA handoff adapter. Missing or mismatched configuration fails closed. The only external side effect is a root issue comment; status, assignee, Cycle, labels, estimate, blockers, relations, and description remain manual and unchanged.
+
+The default packaged QA handoff composition reads `PI_WORKFLOW_DEVELOPER_ACTOR_ID` and `PI_WORKFLOW_DEVELOPER_AUTHORITY_REVISION` as exact non-empty launch-host values, fixes the role to `Developer`, and uses `LINEAR_API_KEY` with optional `LINEAR_API_URL`. It reads only validated `qa-handoff-draft/v1` artifacts from the current repository project's Engram topic `workflow/qa-handoff-draft/<LINEAR-ID>`, stores the immutable canonical publication artifact under `workflow/qa-handoff/<LINEAR-ID>`, and uses `ENGRAM_URL` when set (otherwise Engram's local default). The public tool still accepts only the issue ID, and its result does not expose the canonical body, digest, or authority.
+
+### QA handoff draft producer contract
+
+Delivery evidence producers must persist the internal, derivable draft through the exported `createQaHandoffDraftStore` create-only boundary before invoking `/qa-handoff`. The topic is `workflow/qa-handoff-draft/<LINEAR-ID>`, and the canonical schema is:
+
+```json
+{
+  "schema": "qa-handoff-draft",
+  "schemaVersion": 1,
+  "payload": {
+    "issue": { "id": "ILA-2321" },
+    "draft": {
+      "outcome": { "status": "ready-for-qa", "summary": "..." },
+      "pullRequest": { "ref": "...", "label": "...", "url": "..." },
+      "build": { "ref": "...", "label": "...", "url": "..." },
+      "qaEnvironment": { "name": "...", "url": "...", "revision": "..." },
+      "acceptanceCriteria": [
+        { "id": "AC-1", "description": "...", "evidence": [{ "ref": "...", "label": "..." }] }
+      ],
+      "testGuidance": ["..."],
+      "risksAndConstraints": ["..."],
+      "outOfScope": ["..."]
+    }
+  },
+  "digest": "<sha256-of-canonical-unsigned-envelope>"
+}
+```
+
+The digest is exactly `digestCanonicalValue({ schema, schemaVersion, payload })`; the `digest` field itself is excluded from the digest input. The stored bytes are `canonicalJson(envelope)` plus one newline. Reads and create-only recovery require the exact digest, canonical bytes, and payload issue ID matching the topic suffix and invocation ID. Missing, malformed, noncanonical, extra-field, digest-mismatched, or issue-mismatched artifacts fail closed. The draft contains structured evidence only; it does not contain the publication body, authority, or caller-selected publication data. The workflow derives the exact Spanish Linear comment and its digest internally, without another confirmation step.
+
 The `to-spec` agent brief requires every Linear-facing field and the final body to use neutral professional Spanish while preserving stable identifiers exactly. The runtime records the exact `language: "es"` contract but deliberately does not use NLP, dictionaries, or regionalism heuristics to judge prose style. Publication instead requires trusted Owner approval bound to the exact Spec digest; translation or any other body change after approval requires a new digest and approval.
 
 ## Requirements

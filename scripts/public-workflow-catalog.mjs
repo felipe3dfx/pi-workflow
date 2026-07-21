@@ -41,6 +41,6 @@ export const publicWorkflowCatalog = [
 		anchorRules: "After trimming, valid input is exactly one uppercase Linear identifier matching `[A-Z][A-Z0-9]*-[1-9][0-9]*` and nothing else. Whitespace-only input is missing. Malformed input or input containing multiple identifiers is invalid.",
 		inputCondition: "missing or invalid",
 		anchorQuestion: "What single Linear issue ID anchors this QA handoff?",
-		capability: "pending",
+		capability: "implemented",
 	},
 ];

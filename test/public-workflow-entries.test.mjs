@@ -73,6 +73,7 @@ extensions/approved-ticket-graph-store.ts
 extensions/approved-ticket-publication.ts
 extensions/companion-workflow.ts
 extensions/default-define-product.ts
+extensions/default-qa-handoff.ts
 extensions/define-product-runtime.ts
 extensions/define-product-workflow.ts
 extensions/delegation-checkpoints.ts
@@ -90,6 +91,7 @@ extensions/engram-approved-spec-reader.ts
 extensions/exploration-recovery.ts
 extensions/linear-delivery-parent-gateway.ts
 extensions/linear-delivery-ticket-gateway.ts
+extensions/linear-qa-handoff-gateway.ts
 extensions/mcp-config.ts
 extensions/pi-workflow-sync.ts
 extensions/pi-workflow.ts
@@ -98,6 +100,10 @@ extensions/project-standards-resolver.ts
 extensions/public-entry-guard.ts
 extensions/publication-manifest.ts
 extensions/publication-state-machine.ts
+extensions/qa-handoff-artifact-store.ts
+extensions/qa-handoff-draft-store.ts
+extensions/qa-handoff-runtime.ts
+extensions/qa-handoff-workflow.ts
 extensions/review-router.ts
 extensions/runtime-engram-store.ts
 extensions/runtime-linear-approved-revision.ts
@@ -167,7 +173,7 @@ const entryGoldens = {
 		anchorQuestion: "What single Linear issue ID anchors this product review?",
 	},
 	"qa-handoff": {
-		capability: "pending",
+		capability: "implemented",
 		title: "QA Handoff",
 		description:
 			"Prepare a QA handoff for one Linear issue from a domain anchor under Developer authority.",
@@ -256,6 +262,18 @@ test.after(async () => {
 });
 
 function expectedCapabilitySection(name, golden) {
+	if (name === "qa-handoff" && golden.capability === "implemented") {
+		return `## Publication
+
+After receiving an allowed invocation with a valid Linear ID:
+
+- The Developer's explicit invocation authorizes only the canonical \`qa-handoff/v1\` artifact that the runtime binds internally to that issue, its revision, and the exact Linear-facing body in professional neutral Spanish.
+- Execute the QA handoff workflow for that same Linear ID. Do not provide a body, digest, authority, revision, or additional fields.
+- If the workflow returns a blocker, report the exact blocker and stop.
+- If it publishes the comment or retrieves it idempotently, report the verified result.
+
+Never change status, assignee, Cycle, labels, estimate, blockers, relations, or description. Those actions remain manual.`;
+	}
 	if (golden.capability === "implemented") {
 		return `## Route recommendation
 

@@ -15,7 +15,9 @@ export interface PublicEntryCapability {
 	allowedTools?: readonly string[];
 	continueIf?: (event: InputEvent) => boolean;
 	hasActiveAuthorization?: () => boolean;
+	retainAfterSettled?: boolean;
 	onAdmittedInput?: (event: InputEvent) => void;
+	onSettled?: () => void;
 }
 
 function publicEntryName(text: string): string | undefined {
@@ -57,6 +59,7 @@ export function registerPublicEntryGuard(
 			if (descriptor?.status !== "implemented") continue;
 			if (!descriptor.continueIf?.(event)) continue;
 			activeCapability = name;
+			descriptor.onAdmittedInput?.(event);
 			return { action: "continue" };
 		}
 		return { action: "continue" };
@@ -80,7 +83,11 @@ export function registerPublicEntryGuard(
 		return { block: true, reason: PENDING_TOOL_REASON };
 	});
 	pi.on("agent_settled", () => {
-		if (!activeCapability || !capabilities[activeCapability]?.hasActiveAuthorization?.())
+		const descriptor = activeCapability
+			? capabilities[activeCapability]
+			: undefined;
+		descriptor?.onSettled?.();
+		if (!descriptor?.hasActiveAuthorization?.() || descriptor.retainAfterSettled !== true)
 			clear();
 	});
 	pi.on("session_start", clear);
