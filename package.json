@@ -50,7 +50,8 @@
     "check:acceptance": "node scripts/check-acceptance.mjs",
     "check:typecheck": "tsc --noEmit",
     "check:knip": "knip",
-    "check": "npm run check:biome && npm run check:typecheck && npm run check:knip && npm run check:focused-tests && npm run check:generated && npm run check:agent-assets && npm run check:publish && npm run check:release && node --test test/*.test.mjs && npm run check:distribution && npm run check:acceptance",
+    "check:coverage": "node --test --experimental-test-coverage --test-coverage-include='extensions/runtime-linear-delivery-ticket.ts' --test-coverage-lines=97 --test-coverage-branches=80 --test-coverage-functions=95 test/linear-delivery-ticket.test.mjs",
+    "check": "npm run check:biome && npm run check:typecheck && npm run check:knip && npm run check:focused-tests && npm run check:generated && npm run check:agent-assets && npm run check:publish && npm run check:release && npm run check:coverage && node --test test/*.test.mjs && npm run check:distribution && npm run check:acceptance",
     "prepublishOnly": "npm run check"
   },
   "pi": {
