@@ -86,10 +86,10 @@ export function createProductReviewRuntime(options: { readonly workflow: Workflo
 		pi.on("before_agent_start", async () => {
 			if (!issueId || !preparation) return undefined;
 			const prepared = await preparation;
-			if (status(prepared) !== "prepared") return { systemPrompt: `Reporta exactamente este blocker: ${JSON.stringify(prepared)}` };
+			if (status(prepared) !== "prepared") return { systemPrompt: `Report this blocker exactly: ${JSON.stringify(prepared)} Communicate in the language used by the user.` };
 			const accepted = preparedChoice(prepared, "Aceptado"), rejected = preparedChoice(prepared, "Cambios requeridos"), suggested = recommendation(prepared);
-			if (!accepted || !rejected || !suggested) return { systemPrompt: "Reporta exactamente que la preparación de revisión de producto es inválida." };
-			return { systemPrompt: `Recomendación del agente: ${suggested}. Solicita al Owner que confirme exactamente issue, resultado y digest con uno de estos formatos: ${issueId} Aceptado ${accepted}; ${issueId} Cambios requeridos ${rejected}. No llames la herramienta hasta recibir esa selección explícita.` };
+			if (!accepted || !rejected || !suggested) return { systemPrompt: "Report exactly that Product Review preparation is invalid. Communicate in the language used by the user." };
+			return { systemPrompt: `Agent recommendation: ${suggested}. Ask the Owner to confirm the exact issue, result, and digest using one of these formats: ${issueId} Aceptado ${accepted}; ${issueId} Cambios requeridos ${rejected}. Do not call the tool until that explicit selection is received. Communicate in the language used by the user. Linear-facing publication content remains professional-neutral Spanish.` };
 		});
 		pi.on("agent_settled", () => { if (!awaitingSelection) clear(); });
 		pi.on("session_start", clear); pi.on("session_shutdown", clear);

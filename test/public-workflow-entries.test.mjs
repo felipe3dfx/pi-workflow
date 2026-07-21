@@ -268,17 +268,18 @@ test.after(async () => {
 
 function expectedCapabilitySection(name, golden) {
 	if (name === "product-review" && golden.capability === "implemented") {
-		return `## Evaluación y aprobación
+		return `## Evaluation and approval
 
-Después de recibir una invocación permitida con un ID válido:
+After receiving an allowed invocation with a valid Linear ID:
 
-- Evalúa alcance, historias y criterios de aceptación, evidencia, hallazgos, cambios requeridos e impacto en el parent y los issues siblings mediante el borrador estructurado \`product-review/v1\`.
-- Presenta la recomendación del agente y los digests exactos para \`Aceptado\` y \`Cambios requeridos\`.
-- Solicita al Owner que elija explícitamente uno de esos dos resultados y confirme el issue y el digest correspondiente. No publiques antes de esa aprobación.
-- Tras la selección explícita, ejecuta la herramienta únicamente con \`issueId\`, \`result\` y \`digest\`. No proporciones body, authority, revisión ni campos adicionales.
-- Informa exactamente el resultado verificado o el blocker.
+- Evaluate scope, user stories and acceptance criteria, evidence, findings, required changes, and parent/sibling impact through the structured \`product-review/v1\` draft.
+- Present the agent recommendation and the exact digests for \`Aceptado\` and \`Cambios requeridos\`.
+- Ask the Owner to explicitly choose one result and confirm the corresponding issue and digest. Do not publish before that approval.
+- After explicit selection, call the tool with only \`issueId\`, \`result\`, and \`digest\`. Do not provide body, authority, revision, or additional fields.
+- Report the verified result or blocker exactly.
+- Communicate conversationally in the language used by the user. This does not change the professional-neutral Spanish contract for content published to Linear.
 
-Nunca cambies estado, assignee, Cycle, labels, estimate, relaciones ni descripción. Done, Stop, reasignación y cierre automático del parent permanecen manuales o nativos de Linear.`;
+Never change status, assignee, Cycle, labels, estimate, relations, or description. Done, Stop, reassignment, and parent auto-close remain manual or native Linear actions.`;
 	}
 	if (name === "qa-handoff" && golden.capability === "implemented") {
 		return `## Publication

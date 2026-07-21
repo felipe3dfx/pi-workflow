@@ -39,7 +39,8 @@ test("binds explicit Owner result and digest selection to the active product-rev
 		source: "interactive",
 	});
 	const first = await handlers.get("before_agent_start")({});
-	assert.match(first.systemPrompt, /recomendación.*Aceptado/i);
+	assert.match(first.systemPrompt, /recommendation.*Aceptado/i);
+	assert.match(first.systemPrompt, /language used by the user/i);
 	const selection = {
 		type: "input",
 		text: `ILA-2324 Aceptado ${"a".repeat(64)}`,
