@@ -38,7 +38,12 @@ const allowedRoots = [
 const allowedFiles = new Set(["LICENSE", "README.md", "package.json"]);
 const required = [
 	"package.json",
+	"README.md",
 	"scripts/pi-workflow-sync.mjs",
+	"scripts/acceptance-evidence.mjs",
+	"scripts/check-acceptance.mjs",
+	"scripts/run-packed-acceptance.mjs",
+	"scripts/validate-release.mjs",
 	"extensions/pi-workflow.ts",
 	"extensions/agent-asset-migrations.ts",
 	"extensions/agent-validator.ts",
@@ -46,6 +51,8 @@ const required = [
 	"assets/agent-asset-migrations.json",
 	"assets/schemas/agent-assets.schema.json",
 	"assets/schemas/agent-asset-migrations.schema.json",
+	"assets/acceptance/qa-handoff.golden.md",
+	"assets/acceptance/product-review.golden.md",
 	...workflows.flatMap((name) => [
 		`skills/${name}/SKILL.md`,
 		`prompts/${name}.md`,

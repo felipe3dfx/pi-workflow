@@ -88,22 +88,25 @@ Then reload Pi again so companion resources are loaded:
 
 In non-UI contexts, the install command prints the exact `pi install npm:<pkg>@<version>` commands instead of installing automatically.
 
-### Agent asset inspection and planning
+### Agent asset sync and recovery
 
-The packaged CLI previews the agent assets managed by `pi-workflow`:
+The packaged CLI inspects, plans, applies, resumes, and rolls back package-managed agent assets:
 
 ```bash
 pi-workflow-sync inspect
 pi-workflow-sync plan
+pi-workflow-sync apply
+pi-workflow-sync resume <operationId>
+pi-workflow-sync rollback <operationId>
 ```
 
-Both commands are strictly read-only and return JSON with `mutation: "none"`; they never create, replace, migrate, or delete files. `inspect` reports ownership and drift. `plan` translates that snapshot into proposed `create`, `replace`, or `migrate` actions. A `refusal` means planning detected managed drift, an unmanaged collision, or a newer installed version and will not propose an unsafe mutation. Follow the returned diagnostic/remediation—normally back up or move the named file, repair/remove a malformed manifest, fix permissions, reinstall a damaged package, or upgrade `pi-workflow`—then rerun the command.
+`inspect` and `plan` are strictly read-only and return `mutation: "none"`. `inspect` reports ownership and drift; `plan` derives deterministic `create`, `replace`, or `migrate` actions. A `refusal` blocks unmanaged collisions, managed drift, unsupported migration chains, and newer installed versions before mutation.
 
-Inspection digests bind the exact catalog, manifest identity/content, packaged sources, and observed existence/content digest of every target. Plan digests include that inspection digest, so a changed managed predecessor produces a different preview and must be replanned. Canonical ordering keeps unchanged snapshots deterministic.
+`apply` replans after explicit confirmation and accepts only the exact approved plan digest. Every target and manifest write uses compare-and-swap against its approved predecessor, runs under a cooperative mutation lock, and is verified by read-back. Before replacing package-owned state, the command persists digest-bound backups, successors, and an operation manifest. The returned `operationId` identifies that recovery evidence.
 
-Interrupting either command cancels the preview, returns no usable assets/actions, performs zero writes, and exits with status `130`. Blocked/refused previews exit `1`; successful read-only previews exit `0`; invalid CLI usage exits `2`.
+Use `resume <operationId>` to complete a verified interrupted operation or `rollback <operationId>` to restore verified predecessors and remove targets that were originally absent. Recovery refuses malformed evidence, unsupported paths, or an unrecognized current state. It preserves unrelated manifest ownership and project-level overrides.
 
-Applying a plan is intentionally out of scope for T03 and is not implemented by this CLI.
+Interrupting a read-only preview performs zero writes. Cancellation during apply reports whether a partial mutation occurred and remains recoverable from durable evidence. Canceled commands exit `130`, blocked/refused commands exit `1`, successful commands exit `0`, and invalid usage exits `2`.
 
 ### MCP setup
 
@@ -186,7 +189,7 @@ Out of scope:
 - automatically initializing CodeGraph indexes;
 - proprietary company workflow behavior;
 - automatic companion upgrades;
-- applying `pi-workflow-sync` plans (T03 remains read-only inspect/plan only).
+- mutating unmanaged files or silently resolving sync refusals.
 
 ## Package design
 
@@ -217,6 +220,8 @@ Public workflow assets are human-readable generated files. Edit `scripts/public-
 
 The release guard validates that:
 
+- GitHub Release bodies are validated as English Markdown with non-empty `Implemented`, `Migrations`, `Required sync`, `Capability changes`, and `Rollback` sections;
+- packed acceptance executes real extracted-package modules with deterministic fakes and digest-bound evidence;
 - the package name and public publish config are correct;
 - `pi-package` is present in keywords;
 - only the local `pi-workflow` extension is exposed;
@@ -239,16 +244,16 @@ To update a companion:
 3. Run `npm run check`.
 4. Review the upstream package changelog/source for new resources or behavior.
 5. Update this README's companion table.
-6. Open a GitHub release for the new version.
-7. Let `.github/workflows/publish.yml` publish to npm with provenance.
+6. Publish a GitHub Release tagged exactly `v<package.json version>` with an English body describing that release under `Implemented`, `Migrations`, `Required sync`, `Capability changes`, and `Rollback`.
+7. Let `.github/workflows/publish.yml` validate the tag/body and publish to npm with provenance.
 
 ## Release CI/CD
 
-CI runs on pushes and pull requests to `main` via `.github/workflows/ci.yml`.
-Publishing runs only when a GitHub release is published via `.github/workflows/publish.yml`.
+CI runs `npm run check` on pushes and pull requests to `main` via `.github/workflows/ci.yml`. The check includes the packed acceptance command, which creates one tarball, validates its distribution, extracts it, imports workflow modules only from that extraction, and emits complete digest-bound evidence. Acceptance never invokes `npm publish`.
 
-The publish workflow uses npm provenance and requires the GitHub environment named `npm`.
-Configure that environment with the npm publishing token/secrets required by the repository before the first release.
+Publishing runs only when a GitHub Release is published via `.github/workflows/publish.yml`. The workflow requires the release tag to equal `v<package.json version>` and validates the per-release English body, then publishes with npm provenance. It uses the GitHub environment named `npm`; configure that environment with the npm trusted-publishing or token settings required by the repository.
+
+See [`docs/acceptance-and-release.md`](docs/acceptance-and-release.md) for the scenario matrix, evidence contract, and release procedure.
 
 ## Research notes
 

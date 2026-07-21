@@ -54,7 +54,16 @@ export function registerPublicEntryGuard(
 			capabilities[capability]?.onAdmittedInput?.(event);
 			return { action: "continue" };
 		}
-		if (activeCapability !== undefined) return { action: "continue" };
+		if (activeCapability !== undefined) {
+			const descriptor = capabilities[activeCapability];
+			if (
+				descriptor?.status === "implemented" &&
+				descriptor.continueIf?.(event)
+			) {
+				descriptor.onAdmittedInput?.(event);
+			}
+			return { action: "continue" };
+		}
 		for (const [name, descriptor] of Object.entries(capabilities)) {
 			if (descriptor?.status !== "implemented") continue;
 			if (!descriptor.continueIf?.(event)) continue;

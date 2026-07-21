@@ -127,8 +127,7 @@ function isPlainRecord(value) {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-const semverIshPattern =
-	/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/;
+const semverIshPattern = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/;
 
 function isLocalPath(value) {
 	return (
@@ -221,6 +220,16 @@ check(
 		"node scripts/validate-pi-package.mjs",
 	"scripts.check:publish must run scripts/validate-pi-package.mjs",
 );
+check(
+	packageJson.scripts?.["check:release"] ===
+		"node scripts/validate-release.mjs",
+	"scripts.check:release must run scripts/validate-release.mjs",
+);
+check(
+	packageJson.scripts?.["check:acceptance"] ===
+		"node scripts/check-acceptance.mjs",
+	"scripts.check:acceptance must run scripts/check-acceptance.mjs",
+);
 check(Boolean(packageJson.scripts?.check), "scripts.check must be present");
 check(Boolean(packageJson.scripts?.lint), "scripts.lint must be present");
 check(Boolean(packageJson.scripts?.format), "scripts.format must be present");
@@ -260,6 +269,14 @@ check(
 	"scripts.check must verify generated public workflow resources",
 );
 check(
+	packageJson.scripts?.check?.includes("npm run check:release"),
+	"scripts.check must validate release notes",
+);
+check(
+	packageJson.scripts?.check?.includes("npm run check:acceptance"),
+	"scripts.check must run packed acceptance",
+);
+check(
 	packageJson.scripts?.prepublishOnly === "npm run check",
 	"scripts.prepublishOnly must run the full check suite",
 );
@@ -284,10 +301,7 @@ for (const forbiddenPath of forbiddenLanguageResourcePaths) {
 		`removed language resource path must not exist: ${forbiddenPath}`,
 	);
 }
-check(
-	packageJson.engines?.node === ">=22.19",
-	"engines.node must be >=22.19",
-);
+check(packageJson.engines?.node === ">=22.19", "engines.node must be >=22.19");
 
 const extensionPaths = packageJson.pi?.extensions ?? [];
 check(
@@ -327,7 +341,9 @@ for (const promptsPath of packageJson.pi?.prompts ?? []) {
 }
 
 try {
-	const skillNames = (await readdir(path.join(root, "skills"), { withFileTypes: true }))
+	const skillNames = (
+		await readdir(path.join(root, "skills"), { withFileTypes: true })
+	)
 		.filter((entry) => entry.isDirectory())
 		.map((entry) => entry.name)
 		.sort();
@@ -383,7 +399,9 @@ try {
 }
 
 try {
-	const promptNames = (await readdir(path.join(root, "prompts"), { withFileTypes: true }))
+	const promptNames = (
+		await readdir(path.join(root, "prompts"), { withFileTypes: true })
+	)
 		.filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
 		.map((entry) => entry.name.replace(/\.md$/, ""))
 		.sort();

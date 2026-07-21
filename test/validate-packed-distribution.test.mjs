@@ -20,6 +20,7 @@ async function fixtureTarball({ omit, extra = {}, catalogVersion = 1 } = {}) {
 	const root = await mkdtemp(join(tmpdir(), "pi-workflow-packed-fixture-"));
 	const packageRoot = join(root, "package");
 	const files = {
+		"README.md": "# Fixture\n",
 		"package.json": JSON.stringify({
 			name: "@felipe.3dfx/pi-workflow",
 			version: "0.0.0-fixture",
@@ -32,10 +33,16 @@ async function fixtureTarball({ omit, extra = {}, catalogVersion = 1 } = {}) {
 			},
 		}),
 		"scripts/pi-workflow-sync.mjs": "#!/usr/bin/env node\n",
+		"scripts/acceptance-evidence.mjs": "export {};\n",
+		"scripts/check-acceptance.mjs": "#!/usr/bin/env node\n",
+		"scripts/run-packed-acceptance.mjs": "#!/usr/bin/env node\n",
+		"scripts/validate-release.mjs": "#!/usr/bin/env node\n",
 		"extensions/pi-workflow.ts": "export default function extension() {}\n",
 		"extensions/agent-asset-migrations.ts": "export {};\n",
 		"extensions/agent-validator.ts": "export {};\n",
 		"assets/agents/Explore.md": "# Explore\n",
+		"assets/acceptance/qa-handoff.golden.md": "# Entrega para QA\n",
+		"assets/acceptance/product-review.golden.md": "# Revisión de producto\n",
 		"assets/agent-asset-migrations.json": JSON.stringify({
 			schemaVersion: 1,
 			migrations: [],
