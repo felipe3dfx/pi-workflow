@@ -27,15 +27,14 @@ What single Linear issue ID anchors this product review?
 
 Ask no other question. Stop immediately after the question. Do not invoke tools or perform mutations.
 
-## Pending capability
+## Evaluación y aprobación
 
-After receiving an allowed invocation with a valid domain anchor, return exactly:
+Después de recibir una invocación permitida con un ID válido:
 
-```text
-status: blocked
-code: PI_WORKFLOW_CAPABILITY_PENDING
-capability: product-review
-mutation: none
-```
+- Evalúa alcance, historias y criterios de aceptación, evidencia, hallazgos, cambios requeridos e impacto en el parent y los issues siblings mediante el borrador estructurado `product-review/v1`.
+- Presenta la recomendación del agente y los digests exactos para `Aceptado` y `Cambios requeridos`.
+- Solicita al Owner que elija explícitamente uno de esos dos resultados y confirme el issue y el digest correspondiente. No publiques antes de esa aprobación.
+- Tras la selección explícita, ejecuta la herramienta únicamente con `issueId`, `result` y `digest`. No proporciones body, authority, revisión ni campos adicionales.
+- Informa exactamente el resultado verificado o el blocker.
 
-Do not invoke tools or perform mutations while this capability is pending. Runtime code blocks every tool call for the active public-entry turn.
+Nunca cambies estado, assignee, Cycle, labels, estimate, relaciones ni descripción. Done, Stop, reasignación y cierre automático del parent permanecen manuales o nativos de Linear.

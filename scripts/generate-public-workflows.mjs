@@ -71,12 +71,29 @@ After receiving an allowed invocation with a valid Linear ID:
 Never change status, assignee, Cycle, labels, estimate, blockers, relations, or description. Those actions remain manual.`;
 }
 
+function implementedProductReviewSection() {
+	return `## Evaluación y aprobación
+
+Después de recibir una invocación permitida con un ID válido:
+
+- Evalúa alcance, historias y criterios de aceptación, evidencia, hallazgos, cambios requeridos e impacto en el parent y los issues siblings mediante el borrador estructurado \`product-review/v1\`.
+- Presenta la recomendación del agente y los digests exactos para \`Aceptado\` y \`Cambios requeridos\`.
+- Solicita al Owner que elija explícitamente uno de esos dos resultados y confirme el issue y el digest correspondiente. No publiques antes de esa aprobación.
+- Tras la selección explícita, ejecuta la herramienta únicamente con \`issueId\`, \`result\` y \`digest\`. No proporciones body, authority, revisión ni campos adicionales.
+- Informa exactamente el resultado verificado o el blocker.
+
+Nunca cambies estado, assignee, Cycle, labels, estimate, relaciones ni descripción. Done, Stop, reasignación y cierre automático del parent permanecen manuales o nativos de Linear.`;
+}
+
 function skillSource(entry) {
-	const capabilitySection = entry.capability !== "implemented"
-		? pendingCapabilitySection(entry)
-		: entry.name === "qa-handoff"
-			? implementedQaHandoffSection()
-			: implementedDefineProductSection(entry);
+	const capabilitySection =
+		entry.capability !== "implemented"
+			? pendingCapabilitySection(entry)
+			: entry.name === "qa-handoff"
+				? implementedQaHandoffSection()
+				: entry.name === "product-review"
+					? implementedProductReviewSection()
+					: implementedDefineProductSection(entry);
 	return `---
 name: ${entry.name}
 description: ${entry.description}

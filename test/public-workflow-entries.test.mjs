@@ -73,6 +73,7 @@ extensions/approved-ticket-graph-store.ts
 extensions/approved-ticket-publication.ts
 extensions/companion-workflow.ts
 extensions/default-define-product.ts
+extensions/default-product-review.ts
 extensions/default-qa-handoff.ts
 extensions/define-product-runtime.ts
 extensions/define-product-workflow.ts
@@ -95,6 +96,10 @@ extensions/linear-qa-handoff-gateway.ts
 extensions/mcp-config.ts
 extensions/pi-workflow-sync.ts
 extensions/pi-workflow.ts
+extensions/product-review-artifact-store.ts
+extensions/product-review-draft-store.ts
+extensions/product-review-runtime.ts
+extensions/product-review-workflow.ts
 extensions/product-spec.ts
 extensions/project-standards-resolver.ts
 extensions/public-entry-guard.ts
@@ -161,7 +166,7 @@ const entryGoldens = {
 		anchorQuestion: "What Linear Delivery ticket ID anchors this delivery?",
 	},
 	"product-review": {
-		capability: "pending",
+		capability: "implemented",
 		title: "Product Review",
 		description:
 			"Review one Linear issue from a domain anchor under Owner authority.",
@@ -262,6 +267,19 @@ test.after(async () => {
 });
 
 function expectedCapabilitySection(name, golden) {
+	if (name === "product-review" && golden.capability === "implemented") {
+		return `## Evaluación y aprobación
+
+Después de recibir una invocación permitida con un ID válido:
+
+- Evalúa alcance, historias y criterios de aceptación, evidencia, hallazgos, cambios requeridos e impacto en el parent y los issues siblings mediante el borrador estructurado \`product-review/v1\`.
+- Presenta la recomendación del agente y los digests exactos para \`Aceptado\` y \`Cambios requeridos\`.
+- Solicita al Owner que elija explícitamente uno de esos dos resultados y confirme el issue y el digest correspondiente. No publiques antes de esa aprobación.
+- Tras la selección explícita, ejecuta la herramienta únicamente con \`issueId\`, \`result\` y \`digest\`. No proporciones body, authority, revisión ni campos adicionales.
+- Informa exactamente el resultado verificado o el blocker.
+
+Nunca cambies estado, assignee, Cycle, labels, estimate, relaciones ni descripción. Done, Stop, reasignación y cierre automático del parent permanecen manuales o nativos de Linear.`;
+	}
 	if (name === "qa-handoff" && golden.capability === "implemented") {
 		return `## Publication
 
