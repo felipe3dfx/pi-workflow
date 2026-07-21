@@ -125,6 +125,7 @@ extensions/ticket-publication-manifest.ts
 extensions/workflow-artifacts.ts
 extensions/workflow-contracts.ts
 extensions/workflow-delegate.ts
+extensions/workflow-diagnostics.ts
 package.json
 prompts/define-product.md
 prompts/deliver-ticket.md
