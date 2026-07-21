@@ -1,16 +1,5 @@
 {
   "$schema": "https://unpkg.com/knip@latest/schema.json",
-  "entry": [
-    "extensions/pi-workflow.ts",
-    "scripts/run-packed-acceptance.mjs"
-  ],
-  "ignore": [
-    ".agents/**"
-  ],
-  "ignoreDependencies": [
-    "@tintinweb/pi-subagents",
-    "gentle-engram",
-    "pi-mcp-adapter",
-    "pi-web-access"
-  ]
+  "entry": ["extensions/pi-workflow.ts", "scripts/run-packed-acceptance.mjs"],
+  "ignore": [".agents/**"]
 }
