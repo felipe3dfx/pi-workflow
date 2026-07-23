@@ -1,4 +1,5 @@
 import type { ExtensionAPI, InputEvent } from "@earendil-works/pi-coding-agent";
+import { fileURLToPath } from "node:url";
 
 const PUBLIC_ENTRIES = new Set([
 	"define-product",
@@ -29,13 +30,27 @@ function forbiddenBlocker(capability: string): string {
 	return `status: blocked\ncode: PI_WORKFLOW_PUBLIC_ENTRY_FORBIDDEN\ncapability: ${capability}\nmutation: none`;
 }
 
+function isExactSkillBootstrap(input: unknown, capability: string): boolean {
+	if (!input || typeof input !== "object" || Array.isArray(input)) return false;
+	const values = input as Record<string, unknown>;
+	const keys = Object.keys(values);
+	return (
+		keys.length === 1 &&
+		Object.hasOwn(values, "path") &&
+		values.path ===
+			fileURLToPath(new URL(`../skills/${capability}/SKILL.md`, import.meta.url))
+	);
+}
+
 export function registerPublicEntryGuard(
 	pi: ExtensionAPI,
 	capabilities: Partial<Record<string, PublicEntryCapability>> = {},
 ): void {
 	let activeCapability: string | undefined;
+	let skillBootstrapAvailable = false;
 	const clear = () => {
 		activeCapability = undefined;
+		skillBootstrapAvailable = false;
 	};
 
 	pi.on("input", (event, ctx) => {
@@ -51,6 +66,7 @@ export function registerPublicEntryGuard(
 				return { action: "handled" };
 			}
 			activeCapability = capability;
+			skillBootstrapAvailable = true;
 			capabilities[capability]?.onAdmittedInput?.(event);
 			return { action: "continue" };
 		}
@@ -78,11 +94,24 @@ export function registerPublicEntryGuard(
 		const descriptor = activeCapability
 			? capabilities[activeCapability]
 			: Object.values(capabilities).find(
-				(candidate) =>
-					candidate?.status === "implemented" &&
-					candidate.allowedTools?.includes(event.toolName),
-			);
-		if (!descriptor) return activeCapability ? { block: true, reason: PENDING_TOOL_REASON } : undefined;
+					(candidate) =>
+						candidate?.status === "implemented" &&
+						candidate.allowedTools?.includes(event.toolName),
+				);
+		if (
+			activeCapability &&
+			skillBootstrapAvailable &&
+			descriptor?.status === "implemented" &&
+			event.toolName === "read" &&
+			isExactSkillBootstrap(event.input, activeCapability)
+		) {
+			skillBootstrapAvailable = false;
+			return undefined;
+		}
+		if (!descriptor)
+			return activeCapability
+				? { block: true, reason: PENDING_TOOL_REASON }
+				: undefined;
 		if (
 			descriptor.status === "implemented" &&
 			descriptor.allowedTools?.includes(event.toolName) &&
@@ -92,11 +121,15 @@ export function registerPublicEntryGuard(
 		return { block: true, reason: PENDING_TOOL_REASON };
 	});
 	pi.on("agent_settled", () => {
+		skillBootstrapAvailable = false;
 		const descriptor = activeCapability
 			? capabilities[activeCapability]
 			: undefined;
 		descriptor?.onSettled?.();
-		if (!descriptor?.hasActiveAuthorization?.() || descriptor.retainAfterSettled !== true)
+		if (
+			!descriptor?.hasActiveAuthorization?.() ||
+			descriptor.retainAfterSettled !== true
+		)
 			clear();
 	});
 	pi.on("session_start", clear);

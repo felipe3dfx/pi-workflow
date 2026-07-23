@@ -1,6 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
+
+function skillBootstrapInput(name) {
+	return {
+		path: fileURLToPath(
+			new URL(`../skills/${name}/SKILL.md`, import.meta.url),
+		),
+	};
+}
 
 function loadExtension(options = {}) {
 	const handlers = new Map();
@@ -37,10 +47,16 @@ function implementedWorkflow() {
 					recommendedRoute: "wayfinder",
 					digest: "recommendation-1",
 				};
-				return { status: "awaiting-confirmation", recommendation: pendingRecommendation };
+				return {
+					status: "awaiting-confirmation",
+					recommendation: pendingRecommendation,
+				};
 			}
 			pendingRecommendation = undefined;
-			return { status: "blocked", blocker: { code: "blocked", message: "not used" } };
+			return {
+				status: "blocked",
+				blocker: { code: "blocked", message: "not used" },
+			};
 		},
 	};
 }
@@ -75,8 +91,16 @@ test("all public command forms reject non-idle and non-interactive delivery", as
 	for (const [text, event, idle] of [
 		["/define-product idea", { source: "extension" }, true],
 		["/skill:deliver-ticket ILA-2304", { source: "rpc" }, true],
-		["/qa-handoff ILA-2304", { source: "interactive", streamingBehavior: "steer" }, true],
-		["/skill:product-review ILA-2304", { source: "interactive", streamingBehavior: "followUp" }, true],
+		[
+			"/qa-handoff ILA-2304",
+			{ source: "interactive", streamingBehavior: "steer" },
+			true,
+		],
+		[
+			"/skill:product-review ILA-2304",
+			{ source: "interactive", streamingBehavior: "followUp" },
+			true,
+		],
 		["/define-product idea", { source: "interactive" }, false],
 	]) {
 		const { handlers } = loadExtension();
@@ -151,14 +175,101 @@ test("an active pending public entry blocks prompt-injected tool calls until set
 			"PI_WORKFLOW_CAPABILITY_PENDING: tools are disabled for pending public workflow capabilities",
 	});
 	await handlers.get("agent_settled")({ type: "agent_settled" }, ctx);
-	assert.equal(await handlers.get("tool_call")({ toolName: "write" }, ctx), undefined);
+	assert.equal(
+		await handlers.get("tool_call")({ toolName: "write" }, ctx),
+		undefined,
+	);
 });
 
+test("qa-handoff prompt may bootstrap only its exact public skill before asking for a missing issue ID", async () => {
+	const prompt = await readFile(
+		new URL("../prompts/qa-handoff.md", import.meta.url),
+		"utf8",
+	);
+	const requestedSkill = prompt.match(
+		/Load and follow the `([^`]+)` skill\./,
+	)?.[1];
+	assert.equal(requestedSkill, "qa-handoff");
+
+	const { handlers } = loadExtension();
+	const ctx = context();
+	await handlers.get("input")(
+		{ type: "input", text: "/qa-handoff", source: "interactive" },
+		ctx,
+	);
+	assert.equal(
+		await handlers.get("tool_call")(
+			{
+				type: "tool_call",
+				toolCallId: "skill-1",
+				toolName: "read",
+				input: skillBootstrapInput(requestedSkill),
+			},
+			ctx,
+		),
+		undefined,
+	);
+	const skill = await readFile(
+		new URL("../skills/qa-handoff/SKILL.md", import.meta.url),
+		"utf8",
+	);
+	assert.match(skill, /What single Linear issue ID anchors this QA handoff\?/);
+});
+
+test("skill bootstrap is one-time, homonymous, and unavailable to pending capabilities", async () => {
+	for (const capability of ["define-product", "product-review"]) {
+		const { handlers } = loadExtension();
+		const ctx = context();
+		await handlers.get("input")(
+			{ type: "input", text: `/${capability}`, source: "interactive" },
+			ctx,
+		);
+		const toolCall = (name) =>
+			handlers.get("tool_call")(
+				{
+					type: "tool_call",
+					toolCallId: `skill-${name}`,
+					toolName: "read",
+					input: skillBootstrapInput(name),
+				},
+				ctx,
+			);
+		assert.match(
+			(await toolCall("qa-handoff")).reason,
+			/PI_WORKFLOW_CAPABILITY_PENDING/,
+		);
+		assert.equal(await toolCall(capability), undefined);
+		assert.match(
+			(await toolCall(capability)).reason,
+			/PI_WORKFLOW_CAPABILITY_PENDING/,
+		);
+	}
+
+	const pending = loadExtension();
+	const ctx = context();
+	await pending.handlers.get("input")(
+		{ type: "input", text: "/deliver-ticket ILA-2368", source: "interactive" },
+		ctx,
+	);
+	const blocked = await pending.handlers.get("tool_call")(
+		{
+			type: "tool_call",
+			toolCallId: "skill-delivery",
+			toolName: "read",
+			input: skillBootstrapInput("deliver-ticket"),
+		},
+		ctx,
+	);
+	assert.match(blocked.reason, /PI_WORKFLOW_CAPABILITY_PENDING/);
+});
 
 test("public-entry guard blocks define-product tool calls without an active authorized capability", async () => {
 	const { handlers } = loadExtension();
 	assert.deepEqual(
-		await handlers.get("tool_call")({ toolName: "workflow_define_product" }, context()),
+		await handlers.get("tool_call")(
+			{ toolName: "workflow_define_product" },
+			context(),
+		),
 		{
 			block: true,
 			reason:
@@ -172,11 +283,18 @@ test("default define-product is implemented and allows only its workflow-owned t
 	const ctx = context();
 	assert.ok(tools.has("workflow_define_product"));
 	await handlers.get("input")(
-		{ type: "input", text: "/define-product map a new category", source: "interactive" },
+		{
+			type: "input",
+			text: "/define-product map a new category",
+			source: "interactive",
+		},
 		ctx,
 	);
 	assert.equal(
-		await handlers.get("tool_call")({ toolName: "workflow_define_product" }, ctx),
+		await handlers.get("tool_call")(
+			{ toolName: "workflow_define_product" },
+			ctx,
+		),
 		undefined,
 	);
 	assert.deepEqual(await handlers.get("tool_call")({ toolName: "read" }, ctx), {
@@ -194,11 +312,18 @@ test("implemented define-product preserves authorization for the settled confirm
 	});
 	const ctx = context();
 	await handlers.get("input")(
-		{ type: "input", text: "/define-product map a new category", source: "interactive" },
+		{
+			type: "input",
+			text: "/define-product map a new category",
+			source: "interactive",
+		},
 		ctx,
 	);
 	assert.equal(
-		await handlers.get("tool_call")({ toolName: "workflow_define_product" }, ctx),
+		await handlers.get("tool_call")(
+			{ toolName: "workflow_define_product" },
+			ctx,
+		),
 		undefined,
 	);
 	assert.deepEqual(await handlers.get("tool_call")({ toolName: "read" }, ctx), {
@@ -210,19 +335,33 @@ test("implemented define-product preserves authorization for the settled confirm
 		action: "recommend_route",
 		definitionId: "definition-1",
 		domainAnchor: "map a new category",
-		assessment: { clarity: "unclear", breadth: "broad", reasons: ["missing shape"] },
+		assessment: {
+			clarity: "unclear",
+			breadth: "broad",
+			reasons: ["missing shape"],
+		},
 	});
 	await handlers.get("agent_settled")({ type: "agent_settled" }, ctx);
 	assert.equal(
-		await handlers.get("tool_call")({ toolName: "workflow_define_product" }, ctx),
+		await handlers.get("tool_call")(
+			{ toolName: "workflow_define_product" },
+			ctx,
+		),
 		undefined,
 	);
 	await handlers.get("input")(
-		{ type: "input", text: "Yes, use wayfinder and research competitor maps", source: "interactive" },
+		{
+			type: "input",
+			text: "Yes, use wayfinder and research competitor maps",
+			source: "interactive",
+		},
 		ctx,
 	);
 	assert.equal(
-		await handlers.get("tool_call")({ toolName: "workflow_define_product" }, ctx),
+		await handlers.get("tool_call")(
+			{ toolName: "workflow_define_product" },
+			ctx,
+		),
 		undefined,
 	);
 });
@@ -257,12 +396,17 @@ test("implemented qa-handoff allows only its workflow tool for the exact admitte
 		await handlers.get("tool_call")({ toolName: "workflow_qa_handoff" }, ctx),
 		undefined,
 	);
-	assert.deepEqual(await handlers.get("tool_call")({ toolName: "linear_save_issue" }, ctx), {
-		block: true,
-		reason:
-			"PI_WORKFLOW_CAPABILITY_PENDING: tools are disabled for pending public workflow capabilities",
-	});
-	await tools.get("workflow_qa_handoff").execute("tool-1", { issueId: "ILA-2321" });
+	assert.deepEqual(
+		await handlers.get("tool_call")({ toolName: "linear_save_issue" }, ctx),
+		{
+			block: true,
+			reason:
+				"PI_WORKFLOW_CAPABILITY_PENDING: tools are disabled for pending public workflow capabilities",
+		},
+	);
+	await tools
+		.get("workflow_qa_handoff")
+		.execute("tool-1", { issueId: "ILA-2321" });
 	assert.deepEqual(
 		await handlers.get("tool_call")({ toolName: "workflow_qa_handoff" }, ctx),
 		{
@@ -272,7 +416,10 @@ test("implemented qa-handoff allows only its workflow tool for the exact admitte
 		},
 	);
 	assert.equal(
-		await handlers.get("before_agent_start")({ type: "before_agent_start" }, ctx),
+		await handlers.get("before_agent_start")(
+			{ type: "before_agent_start" },
+			ctx,
+		),
 		undefined,
 	);
 	assert.deepEqual(calls, [
@@ -358,12 +505,19 @@ test("unrelated plain input remains outside qa-handoff continuation", async () =
 
 	assert.deepEqual(
 		await handlers.get("input")(
-			{ type: "input", text: "summarize the current work", source: "interactive" },
+			{
+				type: "input",
+				text: "summarize the current work",
+				source: "interactive",
+			},
 			ctx,
 		),
 		{ action: "continue" },
 	);
-	assert.equal(await handlers.get("tool_call")({ toolName: "read" }, ctx), undefined);
+	assert.equal(
+		await handlers.get("tool_call")({ toolName: "read" }, ctx),
+		undefined,
+	);
 	assert.deepEqual(calls, []);
 });
 
@@ -393,7 +547,10 @@ test("settled qa-handoff cannot reuse authorization through public tool fallback
 		},
 	);
 	assert.equal(
-		await handlers.get("before_agent_start")({ type: "before_agent_start" }, ctx),
+		await handlers.get("before_agent_start")(
+			{ type: "before_agent_start" },
+			ctx,
+		),
 		undefined,
 	);
 });
@@ -409,5 +566,8 @@ test("session replacement clears an active public-entry turn", async () => {
 		{ type: "session_shutdown", reason: "resume" },
 		ctx,
 	);
-	assert.equal(await handlers.get("tool_call")({ toolName: "bash" }, ctx), undefined);
+	assert.equal(
+		await handlers.get("tool_call")({ toolName: "bash" }, ctx),
+		undefined,
+	);
 });
