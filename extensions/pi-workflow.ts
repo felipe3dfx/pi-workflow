@@ -14,15 +14,12 @@ import {
 	type DefaultDefineProductRuntimeOptions,
 } from "./default-define-product.ts";
 import {
-	createDefaultQaHandoffWorkflow,
-	type DefaultQaHandoffRuntimeOptions,
-} from "./default-qa-handoff.ts";
-import {
 	createDefaultProductReviewWorkflow,
 	type DefaultProductReviewRuntimeOptions,
 } from "./default-product-review.ts";
 import type { createDefineProductWorkflow } from "./define-product-workflow.ts";
 import { createDefineProductRuntime } from "./define-product-runtime.ts";
+import { createQaHandoffMcpPreflight } from "./qa-handoff-mcp-preflight.ts";
 import type { createQaHandoffWorkflow } from "./qa-handoff-workflow.ts";
 import { createQaHandoffRuntime } from "./qa-handoff-runtime.ts";
 import type { createProductReviewWorkflow } from "./product-review-workflow.ts";
@@ -92,7 +89,6 @@ export interface PiWorkflowExtensionOptions extends CompanionWorkflowOptions {
 	};
 	qaHandoff?: {
 		workflow?: ReturnType<typeof createQaHandoffWorkflow>;
-		runtime?: DefaultQaHandoffRuntimeOptions;
 	};
 	productReview?: {
 		workflow?: ReturnType<typeof createProductReviewWorkflow>;
@@ -122,14 +118,12 @@ export default function piWorkflowExtension(
 			() => currentCtx,
 			workflowOptions.defineProduct?.runtime,
 		);
-	const qaHandoffRuntime = createQaHandoffRuntime({
-		workflow:
-			workflowOptions.qaHandoff?.workflow ??
-			createDefaultQaHandoffWorkflow(
-				() => currentCtx,
-				workflowOptions.qaHandoff?.runtime,
-			),
-	});
+	const configuredQaHandoffWorkflow = workflowOptions.qaHandoff?.workflow;
+	const qaHandoffRuntime = createQaHandoffRuntime(
+		configuredQaHandoffWorkflow
+			? { workflow: configuredQaHandoffWorkflow }
+			: { mcpPreflight: createQaHandoffMcpPreflight() },
+	);
 	qaHandoffRuntime.register(pi);
 	const productReviewRuntime = createProductReviewRuntime({
 		workflow:
@@ -159,7 +153,7 @@ export default function piWorkflowExtension(
 		"deliver-ticket": { status: "pending" },
 		"qa-handoff": {
 			status: "implemented",
-			allowedTools: [qaHandoffRuntime.toolName],
+			allowedTools: qaHandoffRuntime.allowedTools,
 			continueIf: (event) => qaHandoffRuntime.shouldContinue(event),
 			hasActiveAuthorization: () => qaHandoffRuntime.hasActiveTurn(),
 			onAdmittedInput: (event) => qaHandoffRuntime.handlePublicEntry(event),
