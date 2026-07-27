@@ -56,7 +56,8 @@ const acceptanceEvidenceUrl = continuousDeliveryUrl;
 const evidenceResourceIdentity = (value: string): string | undefined => {
 	const url = parsedHttpsUrl(value);
 	if (!url) return undefined;
-	return `${url.origin}${url.pathname.replace(/\/$/, "")}`;
+	const pathname = url.pathname.replace(/\/$/, "");
+	return `${url.origin}${url.hostname === "github.com" ? pathname.toLowerCase() : pathname}`;
 };
 const exactKeys = (value: object, required: readonly string[]): boolean => {
 	const keys = Object.keys(value);

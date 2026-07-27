@@ -113,6 +113,7 @@ test("keeps acceptance evidence separate from PR, build, and QA roles", () => {
 		{ name: "reused PR URL", description, attachments: attachments.map((item) => item.id === "test-1" ? { ...item, url: primary["pr-1"] } : item) },
 		{ name: "reused build URL", description, attachments: attachments.map((item) => item.id === "test-1" ? { ...item, url: primary["build-1"] } : item) },
 		{ name: "equivalent build URL", description, attachments: attachments.map((item) => item.id === "test-1" ? { ...item, url: `${primary["build-1"]}/?view=tests#result` } : item) },
+		{ name: "GitHub repository case alias", description, attachments: attachments.map((item) => item.id === "test-1" ? { ...item, url: "https://github.com/EXAMPLE/REPO/actions/runs/184" } : item) },
 		{ name: "reused QA URL", description, attachments: attachments.map((item) => item.id === "test-1" ? { ...item, url: primary["qa-1"] } : item) },
 	]) {
 		const result = produceQaHandoffDraft({
