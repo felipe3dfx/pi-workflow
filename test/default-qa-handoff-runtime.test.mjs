@@ -123,9 +123,9 @@ function validIssue(overrides = {}) {
 		description: "```qa-handoff-evidence\n{\"schema\":\"qa-handoff-evidence\",\"schemaVersion\":1,\"pullRequestAttachmentId\":\"pr\",\"buildAttachmentId\":\"build\",\"qaEnvironmentAttachmentId\":\"qa\",\"acceptanceCriteria\":[{\"id\":\"AC-1\",\"description\":\"Cumple el criterio acordado.\",\"evidenceAttachmentIds\":[\"test\"]}]}\n```",
 		attachments: [
 			{ id: "pr", title: "PR #47", url: "https://github.com/example/repo/pull/47" },
-			{ id: "build", title: "Build 47", url: "https://ci.example.test/build/47" },
-			{ id: "qa", title: "Entorno QA", url: "https://qa.example.test" },
-			{ id: "test", title: "Prueba integrada", url: "https://ci.example.test/test/47" },
+			{ id: "build", title: "Build 47", url: "https://github.com/example/repo/actions/runs/47" },
+			{ id: "qa", title: "Entorno QA", url: "https://pi-workflow-qa.vercel.app" },
+			{ id: "test", title: "Prueba integrada", url: "https://github.com/example/repo/actions/runs/48" },
 		],
 		...overrides,
 	};
