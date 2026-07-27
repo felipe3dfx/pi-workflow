@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
+import { createQaHandoffDraftStore } from "../extensions/qa-handoff-draft-store.ts";
 
 const MCP_TOOL_NAMES = [
 	"linear_get_user",
@@ -9,9 +10,10 @@ const MCP_TOOL_NAMES = [
 	"workflow_qa_handoff",
 ];
 
-function extensionHarness(toolNames = MCP_TOOL_NAMES) {
+function extensionHarness(toolNames = MCP_TOOL_NAMES, injectedDrafts) {
 	const handlers = new Map();
 	const tools = new Map();
+	const persistedDrafts = new Map();
 	piWorkflowExtension({
 		exec: async () => ({ code: 0 }),
 		getAllTools: () => toolNames.map((name) => ({ name })),
@@ -21,6 +23,19 @@ function extensionHarness(toolNames = MCP_TOOL_NAMES) {
 			const registered = handlers.get(event) ?? [];
 			registered.push(handler);
 			handlers.set(event, registered);
+		},
+	}, {
+		qaHandoff: {
+			drafts: injectedDrafts ?? {
+				read: async (issueId) => structuredClone(persistedDrafts.get(issueId)?.payload.draft),
+				save: async ({ issueId, draft }) => {
+					const artifact = { payload: { issue: { id: issueId }, draft }, digest: "a".repeat(64) };
+					const existing = persistedDrafts.get(issueId);
+					if (existing && JSON.stringify(existing) !== JSON.stringify(artifact)) throw Object.assign(new Error("conflict"), { code: "PI_WORKFLOW_QA_HANDOFF_ARTIFACT_CONFLICT" });
+					persistedDrafts.set(issueId, structuredClone(artifact));
+					return structuredClone(artifact);
+				},
+			},
 		},
 	});
 	return {
@@ -92,6 +107,13 @@ function validIssue(overrides = {}) {
 		updatedAt: "2026-07-27T19:21:01.958Z",
 		assignee: { id: "developer-1", name: "Developer" },
 		labels: [{ id: "assign-developer", name: "Assign To / Developer" }],
+		description: "```qa-handoff-evidence\n{\"schema\":\"qa-handoff-evidence\",\"schemaVersion\":1,\"pullRequestAttachmentId\":\"pr\",\"buildAttachmentId\":\"build\",\"qaEnvironmentAttachmentId\":\"qa\",\"acceptanceCriteria\":[{\"id\":\"AC-1\",\"description\":\"Cumple el criterio acordado.\",\"evidenceAttachmentIds\":[\"test\"]}]}\n```",
+		attachments: [
+			{ id: "pr", title: "PR #47", url: "https://github.com/example/repo/pull/47" },
+			{ id: "build", title: "Build 47", url: "https://ci.example.test/build/47" },
+			{ id: "qa", title: "Entorno QA", url: "https://qa.example.test" },
+			{ id: "test", title: "Prueba integrada", url: "https://ci.example.test/test/47" },
+		],
 		...overrides,
 	};
 }
@@ -155,13 +177,15 @@ test("default public qa-handoff completes an exact read-only Linear MCP prefligh
 			"workflow-call",
 			{ issueId: "ILA-2410" },
 		);
-		assert.deepEqual(JSON.parse(result.content[0].text), {
+		const outcome = JSON.parse(result.content[0].text);
+		assert.deepEqual(outcome, {
 			status: "authorized",
 			issueId: "ILA-2410",
 			actorId: "developer-1",
 			issueRevision: "2026-07-27T19:21:01.958Z",
+			draftDigest: "a".repeat(64),
 		});
-		assert.equal("LINEAR_API_KEY" in JSON.parse(result.content[0].text), false);
+		assert.equal("LINEAR_API_KEY" in outcome, false);
 	} finally {
 		globalThis.fetch = originalFetch;
 		if (previousKey === undefined) delete process.env.LINEAR_API_KEY;
@@ -426,6 +450,46 @@ test("qa-handoff classifies partial actor evidence as malformed", async () => {
 		isActive: true,
 	}), context);
 	assert.equal(await terminalBlocker(harness), "PI_WORKFLOW_QA_HANDOFF_MCP_MALFORMED_RESPONSE");
+});
+
+test("public qa-handoff persists a canonical draft without mutating Linear", async () => {
+	const values = new Map();
+	let writes = 0;
+	const drafts = createQaHandoffDraftStore({
+		project: "pi-workflow",
+		store: {
+			capabilities: { atomicCompareAndSwap: true },
+			readCurrent: async (_project, topic) => values.get(topic),
+			write: async (_project, topic, content, expectedRevision) => {
+				assert.equal(expectedRevision, undefined);
+				writes += 1;
+				const stored = { revision: `draft-${writes}`, content };
+				values.set(topic, stored);
+				return { revision: stored.revision };
+			},
+			readRevision: async (_project, topic, revision) => {
+				const stored = values.get(topic);
+				return stored?.revision === revision ? stored.content : undefined;
+			},
+		},
+	});
+	const harness = extensionHarness(MCP_TOOL_NAMES, drafts);
+	await advanceToIssue(harness);
+	await harness.emit("tool_call", {
+		toolName: "linear_get_issue",
+		toolCallId: "issue-call",
+		input: { id: "ILA-2410" },
+	}, context);
+	await harness.emit("tool_result", mcpResult("linear_get_issue", "issue-call", validIssue()), context);
+	const outcome = await terminalOutcome(harness);
+
+	assert.equal(outcome.status, "authorized", JSON.stringify(outcome));
+	assert.match(outcome.draftDigest, /^[a-f0-9]{64}$/);
+	assert.equal(writes, 1);
+	const stored = values.get("workflow/qa-handoff-draft/ILA-2410").content;
+	assert.equal(stored.endsWith("\n"), true);
+	assert.equal(JSON.parse(stored).digest, outcome.draftDigest);
+	assert.equal([...harness.tools.keys()].some((name) => name.includes("comment")), false);
 });
 
 test("qa-handoff fails closed on malformed MCP evidence", async () => {

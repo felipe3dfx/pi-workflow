@@ -1,3 +1,7 @@
+import { produceQaHandoffDraft } from "./qa-handoff-draft-producer.ts";
+import type { QaHandoffDraftStore } from "./qa-handoff-draft-store.ts";
+import { canonicalJson } from "./workflow-contracts.ts";
+
 interface Blocker {
 	readonly status: "blocked";
 	readonly blocker: { readonly code: string; readonly message: string };
@@ -23,6 +27,8 @@ interface LinearIssueEvidence {
 	readonly updatedAt: string;
 	readonly assignee: { readonly id: string };
 	readonly labels: readonly string[];
+	readonly description: string;
+	readonly attachments: readonly { readonly id: string; readonly title: string; readonly url: string }[];
 }
 
 type Stage = "idle" | "current-user" | "current-user-result" | "issue" | "issue-result" | "ready" | "blocked";
@@ -84,7 +90,8 @@ function issueEvidence(value: unknown): LinearIssueEvidence | undefined {
 	if (!record(value) || !nonEmpty(value.id) ||
 		(value.identifier !== undefined && !nonEmpty(value.identifier)) ||
 		!linearRevision(value.updatedAt) || !record(value.assignee) ||
-		!nonEmpty(value.assignee.id) || !Array.isArray(value.labels)) return undefined;
+		!nonEmpty(value.assignee.id) || !Array.isArray(value.labels) ||
+		!nonEmpty(value.description) || !Array.isArray(value.attachments)) return undefined;
 	const labels: string[] = [];
 	for (const label of value.labels) {
 		if (typeof label === "string" && nonEmpty(label)) {
@@ -94,21 +101,30 @@ function issueEvidence(value: unknown): LinearIssueEvidence | undefined {
 		if (!record(label) || !nonEmpty(label.name)) return undefined;
 		labels.push(label.name);
 	}
+	const attachments: { id: string; title: string; url: string }[] = [];
+	for (const attachment of value.attachments) {
+		if (!record(attachment) || !nonEmpty(attachment.id) ||
+			!nonEmpty(attachment.title) || !nonEmpty(attachment.url)) return undefined;
+		attachments.push({ id: attachment.id, title: attachment.title, url: attachment.url });
+	}
 	return {
 		id: value.id,
 		...(value.identifier === undefined ? {} : { identifier: value.identifier }),
 		updatedAt: value.updatedAt,
 		assignee: { id: value.assignee.id },
 		labels,
+		description: value.description,
+		attachments,
 	};
 }
 
-export function createQaHandoffMcpPreflight() {
+export function createQaHandoffMcpPreflight(options: { readonly drafts: QaHandoffDraftStore }) {
 	let stage: Stage = "idle";
 	let issueId: string | undefined;
 	let actorId: string | undefined;
 	let actorName: string | undefined;
 	let issueRevision: string | undefined;
+	let verifiedIssue: LinearIssueEvidence | undefined;
 	let pendingToolCallId: string | undefined;
 	let terminalBlocker: Blocker | undefined;
 	let mcpAvailable: boolean | undefined;
@@ -132,6 +148,7 @@ export function createQaHandoffMcpPreflight() {
 		actorId = undefined;
 		actorName = undefined;
 		issueRevision = undefined;
+		verifiedIssue = undefined;
 		pendingToolCallId = undefined;
 		terminalBlocker = undefined;
 		stage = "current-user";
@@ -146,6 +163,7 @@ export function createQaHandoffMcpPreflight() {
 		actorId = undefined;
 		actorName = undefined;
 		issueRevision = undefined;
+		verifiedIssue = undefined;
 		pendingToolCallId = undefined;
 		terminalBlocker = undefined;
 	}
@@ -241,17 +259,42 @@ export function createQaHandoffMcpPreflight() {
 			return;
 		}
 		issueRevision = issue.updatedAt;
+		verifiedIssue = issue;
 		stage = "ready";
 	}
 
-	function complete(input: unknown): AuthorizedPreflight | Blocker {
+	async function complete(input: unknown): Promise<(AuthorizedPreflight & { readonly draftDigest: string }) | Blocker> {
 		if (terminalBlocker) return terminalBlocker;
-		if (stage !== "ready" || !issueId || !actorId || !issueRevision || !exactInput(input, { issueId })) {
+		if (stage !== "ready" || !issueId || !actorId || !issueRevision ||
+			!verifiedIssue || !exactInput(input, { issueId })) {
 			return fail("PI_WORKFLOW_QA_HANDOFF_MCP_PROTOCOL_INVALID", "QA handoff preflight is incomplete or does not match the active issue.");
 		}
-		const result: AuthorizedPreflight = { status: "authorized", issueId, actorId, issueRevision };
-		clear();
-		return result;
+		const authorized = { issueId, actorId, issueRevision, issue: verifiedIssue };
+		const produced = produceQaHandoffDraft(authorized.issue);
+		if (produced.status === "blocked") return fail(produced.blocker.code, produced.blocker.message);
+		try {
+			const artifact = await options.drafts.save({ issueId: authorized.issueId, draft: produced.draft });
+			const readBack = await options.drafts.read(authorized.issueId);
+			if (!readBack || canonicalJson(readBack) !== canonicalJson(produced.draft))
+				return fail("PI_WORKFLOW_ARTIFACT_READBACK_MISMATCH", "The persisted QA handoff draft read-back did not match.");
+			const result = {
+				status: "authorized" as const,
+				issueId: authorized.issueId,
+				actorId: authorized.actorId,
+				issueRevision: authorized.issueRevision,
+				draftDigest: artifact.digest,
+			};
+			clear();
+			return result;
+		} catch (error) {
+			const code = record(error) && nonEmpty(error.code)
+				? error.code
+				: "PI_WORKFLOW_QA_HANDOFF_PREPARATION_FAILED";
+			return fail(
+				code,
+				error instanceof Error ? error.message : "QA handoff draft persistence failed.",
+			);
+		}
 	}
 
 	return {

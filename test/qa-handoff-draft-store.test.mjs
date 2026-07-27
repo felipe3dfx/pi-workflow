@@ -113,7 +113,7 @@ test("rejects conflicting create-only QA handoff draft content", async () => {
 				testGuidance: ["Una guía diferente."],
 			},
 		}),
-		(error) => error.code === "PI_WORKFLOW_QA_HANDOFF_ARTIFACT_INVALID",
+		(error) => error.code === "PI_WORKFLOW_QA_HANDOFF_ARTIFACT_CONFLICT",
 	);
 	assert.equal(persistence.writes, 1);
 });
@@ -136,7 +136,7 @@ test("rejects a valid recomputed digest when recovery content conflicts with the
 	assert.deepEqual(await store.read(issueId), divergentDraft);
 	await assert.rejects(
 		store.save({ issueId, draft }),
-		(error) => error.code === "PI_WORKFLOW_QA_HANDOFF_ARTIFACT_INVALID" &&
+		(error) => error.code === "PI_WORKFLOW_QA_HANDOFF_ARTIFACT_CONFLICT" &&
 			/conflicts with its create-only artifact/.test(error.message),
 	);
 	assert.equal(persistence.writes, 0);

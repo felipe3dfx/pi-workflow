@@ -141,6 +141,12 @@ function invalid(message: string): Error {
 	});
 }
 
+function conflict(message: string): Error {
+	return Object.assign(new Error(message), {
+		code: "PI_WORKFLOW_QA_HANDOFF_ARTIFACT_CONFLICT",
+	});
+}
+
 function parse(content: string, issueId: string): QaHandoffDraftArtifact {
 	let value: unknown;
 	try {
@@ -206,7 +212,7 @@ export function createQaHandoffDraftStore(options: {
 			if (current) {
 				parse(current.content, issueId);
 				if (current.content !== content)
-					throw invalid("The QA handoff draft conflicts with its create-only artifact.");
+					throw conflict("The QA handoff draft conflicts with its create-only artifact.");
 				const readBack = await options.store.readRevision(
 					options.project,
 					topic,
@@ -216,18 +222,28 @@ export function createQaHandoffDraftStore(options: {
 					throw invalid("The QA handoff draft read-back did not match.");
 				return structuredClone(artifact);
 			}
-			const { revision } = await options.store.write(
-				options.project,
-				topic,
-				content,
-				undefined,
-			);
-			const readBack = await options.store.readRevision(
-				options.project,
-				topic,
-				revision,
-			);
-			if (readBack !== content)
+			let revision: string;
+			try {
+				({ revision } = await options.store.write(
+					options.project,
+					topic,
+					content,
+					undefined,
+				));
+			} catch (error) {
+				const winner = await options.store.readCurrent(options.project, topic);
+				if (!winner) throw error;
+				parse(winner.content, issueId);
+				if (winner.content !== content)
+					throw conflict("The QA handoff draft conflicts with its create-only artifact.");
+				revision = winner.revision;
+			}
+			const [currentReadBack, revisionReadBack] = await Promise.all([
+				options.store.readCurrent(options.project, topic),
+				options.store.readRevision(options.project, topic, revision),
+			]);
+			if (currentReadBack?.revision !== revision || currentReadBack.content !== content ||
+				revisionReadBack !== content)
 				throw invalid("The QA handoff draft read-back did not match.");
 			return structuredClone(parse(content, issueId));
 		},
