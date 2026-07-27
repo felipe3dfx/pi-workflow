@@ -53,13 +53,14 @@ test("returns a specific blocker without a partial draft for each missing eviden
 
 test("accepts every supported evidence-provider contract", () => {
 	for (const variant of [
-		{ name: "GitLab", pr: "https://gitlab.com/group/project/-/merge_requests/47", run: "https://gitlab.com/group/project/-/pipelines/184", qa: "https://pi-workflow-qa.netlify.app" },
-		{ name: "Bitbucket and CircleCI", pr: "https://bitbucket.org/group/project/pull-requests/47", run: "https://app.circleci.com/pipelines/github/group/project/184", qa: "https://pi-workflow-qa.onrender.com" },
-		{ name: "Buildkite and Fly", pr: "https://github.com/group/project/pull/47", run: "https://buildkite.com/group/project/builds/184", qa: "https://pi-workflow-qa.fly.dev" },
+		{ name: "GitLab", pr: "https://gitlab.com/group/project/-/merge_requests/47", run: "https://gitlab.com/group/project/-/pipelines/184", testRun: "https://gitlab.com/group/project/-/jobs/185", qa: "https://pi-workflow-qa.netlify.app" },
+		{ name: "Bitbucket and CircleCI", pr: "https://bitbucket.org/group/project/pull-requests/47", run: "https://app.circleci.com/pipelines/github/group/project/184", testRun: "https://app.circleci.com/pipelines/github/group/project/185", qa: "https://pi-workflow-qa.onrender.com" },
+		{ name: "Buildkite and Fly", pr: "https://github.com/group/project/pull/47", run: "https://buildkite.com/group/project/builds/184", testRun: "https://buildkite.com/group/project/builds/185", qa: "https://pi-workflow-qa.fly.dev" },
 	]) {
 		const providerAttachments = attachments.map((item) => {
 			if (item.id === "pr-1") return { ...item, url: variant.pr };
-			if (item.id === "build-1" || item.id === "test-1") return { ...item, url: variant.run };
+			if (item.id === "build-1") return { ...item, url: variant.run };
+			if (item.id === "test-1") return { ...item, url: variant.testRun };
 			if (item.id === "qa-1") return { ...item, url: variant.qa };
 			return item;
 		});
@@ -100,6 +101,28 @@ test("rejects malformed URLs and attachments that do not verify their evidence r
 						? "PI_WORKFLOW_QA_HANDOFF_PR_EVIDENCE_MISSING"
 						: "PI_WORKFLOW_QA_HANDOFF_EVIDENCE_INVALID";
 		assert.equal(result.blocker.code, expectedCode, variant.name);
+	}
+});
+
+test("keeps acceptance evidence separate from PR, build, and QA roles", () => {
+	const primary = Object.fromEntries(attachments.map((item) => [item.id, item.url]));
+	for (const variant of [
+		{ name: "reused PR ID", description: description.replace('"test-1"', '"pr-1"'), attachments },
+		{ name: "reused build ID", description: description.replace('"test-1"', '"build-1"'), attachments },
+		{ name: "reused QA ID", description: description.replace('"test-1"', '"qa-1"'), attachments },
+		{ name: "reused PR URL", description, attachments: attachments.map((item) => item.id === "test-1" ? { ...item, url: primary["pr-1"] } : item) },
+		{ name: "reused build URL", description, attachments: attachments.map((item) => item.id === "test-1" ? { ...item, url: primary["build-1"] } : item) },
+		{ name: "equivalent build URL", description, attachments: attachments.map((item) => item.id === "test-1" ? { ...item, url: `${primary["build-1"]}/?view=tests#result` } : item) },
+		{ name: "reused QA URL", description, attachments: attachments.map((item) => item.id === "test-1" ? { ...item, url: primary["qa-1"] } : item) },
+	]) {
+		const result = produceQaHandoffDraft({
+			description: variant.description,
+			attachments: variant.attachments,
+		});
+		assert.equal(result.status, "blocked", variant.name);
+		assert.equal(result.blocker.code, "PI_WORKFLOW_QA_HANDOFF_ACCEPTANCE_EVIDENCE_MISSING", variant.name);
+		assert.match(result.blocker.message, /distinct from PR, build, and QA environment evidence/, variant.name);
+		assert.equal("draft" in result, false, variant.name);
 	}
 });
 

@@ -53,6 +53,11 @@ const qaEnvironmentUrl = (value: string): boolean => {
 		.some((suffix) => url.hostname.endsWith(suffix) && url.hostname.length > suffix.length);
 };
 const acceptanceEvidenceUrl = continuousDeliveryUrl;
+const evidenceResourceIdentity = (value: string): string | undefined => {
+	const url = parsedHttpsUrl(value);
+	if (!url) return undefined;
+	return `${url.origin}${url.pathname.replace(/\/$/, "")}`;
+};
 const exactKeys = (value: object, required: readonly string[]): boolean => {
 	const keys = Object.keys(value);
 	return keys.length === required.length && required.every((key) => keys.includes(key));
@@ -132,6 +137,10 @@ export function produceQaHandoffDraft(evidence: ProducerEvidence): ProducerOutco
 		return blocked("PI_WORKFLOW_QA_HANDOFF_QA_ENVIRONMENT_MISSING", "Reference an HTTPS QA deployment on Vercel, Netlify, Render, or Fly.io.");
 
 	const ids = new Set<string>();
+	const primaryEvidenceIds = new Set([pullRequest.id, build.id, environment.id]);
+	const primaryEvidenceUrls = new Set(
+		[pullRequest.url, build.url, environment.url].map(evidenceResourceIdentity),
+	);
 	const acceptanceCriteria: QaHandoffDraft["acceptanceCriteria"][number][] = [];
 	for (const value of manifest.acceptanceCriteria) {
 		if (!record(value) || !exactKeys(value, ["id", "description", "evidenceAttachmentIds"]) ||
@@ -144,6 +153,10 @@ export function produceQaHandoffDraft(evidence: ProducerEvidence): ProducerOutco
 		}
 		ids.add(value.id);
 		const references = value.evidenceAttachmentIds.map((id) => byId.get(id));
+		if (value.evidenceAttachmentIds.some((id) => primaryEvidenceIds.has(id)) ||
+			references.some((item) => item !== undefined &&
+				primaryEvidenceUrls.has(evidenceResourceIdentity(item.url))))
+			return blocked("PI_WORKFLOW_QA_HANDOFF_ACCEPTANCE_EVIDENCE_MISSING", `${value.id} must reference evidence distinct from PR, build, and QA environment evidence.`);
 		if (references.some((item) => item === undefined || !acceptanceEvidenceUrl(item.url)))
 			return blocked("PI_WORKFLOW_QA_HANDOFF_ACCEPTANCE_EVIDENCE_MISSING", `Attach recognized test or report evidence referenced by ${value.id}.`);
 		acceptanceCriteria.push({
