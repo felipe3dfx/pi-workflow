@@ -79,6 +79,8 @@ test("rejects malformed URLs and attachments that do not verify their evidence r
 		{ name: "deceptive QA host", attachments: attachments.map((item) => item.id === "qa-1" ? { ...item, url: "https://qa.attacker.example" } : item) },
 		{ name: "non-PR reference", attachments: attachments.map((item) => item.id === "pr-1" ? { ...item, url: "https://example.test/document/47" } : item) },
 		{ name: "incomplete GitHub path", attachments: attachments.map((item) => item.id === "pr-1" ? { ...item, url: "https://github.com/pull/47" } : item) },
+		{ name: "encoded GitHub PR path", attachments: attachments.map((item) => item.id === "pr-1" ? { ...item, url: "https://github.com/%65xample/repo/pull/47" } : item) },
+		{ name: "encoded GitHub build path", attachments: attachments.map((item) => item.id === "build-1" ? { ...item, url: "https://github.com/%65xample/repo/actions/runs/184" } : item) },
 		{ name: "unrelated build", attachments: attachments.map((item) => item.id === "build-1" ? { ...item, url: "https://docs.example.test/guide/184" } : item) },
 		{ name: "unrelated QA", attachments: attachments.map((item) => item.id === "qa-1" ? { ...item, url: "https://www.example.test/home" } : item) },
 		{ name: "unrelated criterion", attachments: attachments.map((item) => item.id === "test-1" ? { ...item, url: "https://docs.example.test/guide/184" } : item) },
