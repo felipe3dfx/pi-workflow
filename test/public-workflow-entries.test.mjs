@@ -100,6 +100,7 @@ extensions/public-entry-guard.ts
 extensions/publication-manifest.ts
 extensions/publication-state-machine.ts
 extensions/qa-handoff-artifact-store.ts
+extensions/qa-handoff-draft-producer.ts
 extensions/qa-handoff-draft-store.ts
 extensions/qa-handoff-mcp-preflight.ts
 extensions/qa-handoff-runtime.ts
