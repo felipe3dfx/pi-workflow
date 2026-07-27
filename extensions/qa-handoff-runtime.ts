@@ -1,4 +1,5 @@
 import type { ExtensionAPI, InputEvent } from "@earendil-works/pi-coding-agent";
+import type { createQaHandoffMcpPreflight } from "./qa-handoff-mcp-preflight.ts";
 
 interface QaHandoffRuntimeWorkflow {
 	authorizeInvocation(issueId: string): Promise<unknown>;
@@ -37,10 +38,12 @@ export function createUnavailableQaHandoffWorkflow(): QaHandoffRuntimeWorkflow {
 	};
 }
 
-export function createQaHandoffRuntime(options: {
-	readonly workflow: QaHandoffRuntimeWorkflow;
-}) {
+export function createQaHandoffRuntime(options:
+	| { readonly workflow: QaHandoffRuntimeWorkflow }
+	| { readonly mcpPreflight: ReturnType<typeof createQaHandoffMcpPreflight> }) {
 	const toolName = "workflow_qa_handoff";
+	const workflow = "workflow" in options ? options.workflow : undefined;
+	const mcpPreflight = "mcpPreflight" in options ? options.mcpPreflight : undefined;
 	let activeIssueId: string | undefined;
 	let authorization: Promise<unknown> | undefined;
 	let awaitingAnchor = false;
@@ -52,13 +55,19 @@ export function createQaHandoffRuntime(options: {
 
 	function clearActiveTurn(): void {
 		clearAuthorization();
+		mcpPreflight?.clear();
 		awaitingAnchor = false;
 	}
 
 	function authorize(issueId: string): void {
 		awaitingAnchor = false;
 		activeIssueId = issueId;
-		authorization = options.workflow.authorizeInvocation(issueId);
+		if (mcpPreflight) {
+			mcpPreflight.start(issueId);
+			authorization = Promise.resolve({ status: "mcp-preflight" });
+			return;
+		}
+		authorization = workflow?.authorizeInvocation(issueId);
 	}
 
 	function handlePublicEntry(event: InputEvent): void {
@@ -99,6 +108,11 @@ export function createQaHandoffRuntime(options: {
 	}
 
 	async function execute(value: unknown): Promise<unknown> {
+		if (mcpPreflight) {
+			const outcome = mcpPreflight.complete(value);
+			clearAuthorization();
+			return outcome;
+		}
 		const issueId = activeIssueId;
 		const pendingAuthorization = authorization;
 		clearActiveTurn();
@@ -123,7 +137,7 @@ export function createQaHandoffRuntime(options: {
 			(authorized as { status?: unknown }).status !== "authorized") return authorized;
 		let publication: unknown;
 		try {
-			publication = await options.workflow.publish({ issueId });
+			publication = await workflow?.publish({ issueId });
 		} catch (error) {
 			return blocked(
 				errorCode(error, "PI_WORKFLOW_QA_HANDOFF_PUBLICATION_FAILED"),
@@ -143,15 +157,34 @@ export function createQaHandoffRuntime(options: {
 	function register(pi: ExtensionAPI): void {
 		pi.on("before_agent_start", () => {
 			if (!hasActiveTurn()) return undefined;
+			const getAllTools = (pi as { getAllTools?: () => readonly { name: string }[] }).getAllTools;
+			if (mcpPreflight) {
+				const available = new Set(getAllTools?.call(pi).map((tool) => tool.name) ?? []);
+				mcpPreflight.setMcpAvailable(
+					mcpPreflight.allowedTools
+						.filter((name) => name !== toolName)
+						.every((name) => available.has(name)),
+				);
+			}
+			const expected = mcpPreflight?.expectedCall();
 			return {
-				systemPrompt: [
-					"You are executing the implemented QA handoff workflow for an explicitly admitted Developer turn.",
-					`Call ${toolName} exactly once with issueId="${activeIssueId}".`,
-					"Do not provide a body, digest, authority, revision, workflow mutation, or any other field.",
-					"Report the returned publication or blocker exactly.",
-				].join(" "),
+				systemPrompt: expected
+					? [
+						"You are executing the read-only Linear MCP preflight for an explicitly admitted Developer turn.",
+						`Call ${expected.toolName} exactly once with ${JSON.stringify(expected.input)}.`,
+						"Do not call tools in parallel or provide additional fields. Follow only the next exact call exposed after each result.",
+						"Report the returned authorization or blocker exactly.",
+					].join(" ")
+					: [
+						"You are executing the implemented QA handoff workflow for an explicitly admitted Developer turn.",
+						`Call ${toolName} exactly once with issueId="${activeIssueId}".`,
+						"Do not provide a body, digest, authority, revision, workflow mutation, or any other field.",
+						"Report the returned publication or blocker exactly.",
+					].join(" "),
 			};
 		});
+		pi.on("tool_call", (event) => mcpPreflight?.handleToolCall(event));
+		pi.on("tool_result", (event) => mcpPreflight?.handleToolResult(event));
 		pi.on("agent_settled", handleSettled);
 		pi.on("session_start", clearActiveTurn);
 		pi.on("session_shutdown", clearActiveTurn);
@@ -184,6 +217,7 @@ export function createQaHandoffRuntime(options: {
 
 	return {
 		toolName,
+		allowedTools: mcpPreflight?.allowedTools ?? [toolName],
 		clearActiveTurn,
 		handlePublicEntry,
 		handleSettled,
