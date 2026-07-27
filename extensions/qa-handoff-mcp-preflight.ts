@@ -26,6 +26,7 @@ interface LinearIssueEvidence {
 }
 
 type Stage = "idle" | "current-user" | "current-user-result" | "issue" | "issue-result" | "ready" | "blocked";
+type McpErrorClassification = "unauthenticated" | "incompatible";
 
 const CURRENT_USER_TOOL = "linear_get_user";
 const ISSUE_TOOL = "linear_get_issue";
@@ -58,6 +59,14 @@ function toolPayload(event: unknown): unknown {
 	} catch {
 		return undefined;
 	}
+}
+
+function classifyMcpError(event: unknown): McpErrorClassification {
+	const payload = toolPayload(event);
+	return record(payload) && Object.keys(payload).length === 1 &&
+		payload.code === "UNAUTHENTICATED"
+		? "unauthenticated"
+		: "incompatible";
 }
 
 function actorEvidence(value: unknown): value is AuthenticatedLinearActor {
@@ -176,13 +185,29 @@ export function createQaHandoffMcpPreflight() {
 	function handleToolResult(event: { readonly toolName: string; readonly toolCallId?: string; readonly content?: unknown; readonly isError?: boolean }): void {
 		if (!hasActiveTurn() || (event.toolName !== CURRENT_USER_TOOL && event.toolName !== ISSUE_TOOL)) return;
 		const expectedStage = event.toolName === CURRENT_USER_TOOL ? "current-user-result" : "issue-result";
-		if (stage !== expectedStage || event.toolCallId !== pendingToolCallId || event.isError === true) {
+		if (stage !== expectedStage || event.toolCallId !== pendingToolCallId) {
 			fail("PI_WORKFLOW_QA_HANDOFF_MCP_INCOMPATIBLE", "Linear MCP returned an out-of-order, failed, or incompatible result.");
+			return;
+		}
+		if (event.isError === true) {
+			const classification = classifyMcpError(event);
+			fail(
+				classification === "unauthenticated"
+					? "PI_WORKFLOW_QA_HANDOFF_MCP_UNAUTHENTICATED"
+					: "PI_WORKFLOW_QA_HANDOFF_MCP_INCOMPATIBLE",
+				classification === "unauthenticated"
+					? "Linear MCP is present but not authenticated."
+					: "Linear MCP returned an out-of-order, failed, or incompatible result.",
+			);
 			return;
 		}
 		const payload = toolPayload(event);
 		if (!record(payload)) {
 			fail("PI_WORKFLOW_QA_HANDOFF_MCP_MALFORMED_RESPONSE", "Linear MCP returned a partial or malformed response.");
+			return;
+		}
+		if (classifyMcpError(event) === "unauthenticated") {
+			fail("PI_WORKFLOW_QA_HANDOFF_MCP_INCOMPATIBLE", "Linear MCP returned an incomplete or ambiguous authentication signal.");
 			return;
 		}
 		pendingToolCallId = undefined;

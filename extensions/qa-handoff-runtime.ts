@@ -101,6 +101,7 @@ export function createQaHandoffRuntime(options:
 
 	function handleSettled(): void {
 		clearAuthorization();
+		mcpPreflight?.clear();
 	}
 
 	function hasActiveTurn(): boolean {

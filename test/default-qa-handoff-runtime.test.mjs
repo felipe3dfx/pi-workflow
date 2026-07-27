@@ -203,6 +203,22 @@ test("qa-handoff blocks non-protocol reads before execution", async () => {
 	);
 });
 
+test("settled default qa-handoff releases unrelated tools", async () => {
+	const harness = extensionHarness();
+	await startPreflight(harness);
+
+	await harness.emit("agent_settled", { type: "agent_settled" }, context);
+
+	assert.equal(
+		await harness.emit("tool_call", {
+			toolName: "write",
+			toolCallId: "unrelated-call",
+			input: { path: "/tmp/unrelated", content: "unrelated" },
+		}, context),
+		undefined,
+	);
+});
+
 test("qa-handoff fails closed when Linear MCP tools are unavailable", async () => {
 	const harness = extensionHarness(["workflow_qa_handoff"]);
 	await harness.emit("input", {
@@ -213,6 +229,75 @@ test("qa-handoff fails closed when Linear MCP tools are unavailable", async () =
 	await harness.emit("before_agent_start", { type: "before_agent_start" }, context);
 	const result = await harness.tools.get("workflow_qa_handoff").execute("workflow-call", { issueId: "ILA-2410" });
 	assert.equal(JSON.parse(result.content[0].text).blocker.code, "PI_WORKFLOW_QA_HANDOFF_MCP_UNAVAILABLE");
+});
+
+test("qa-handoff classifies an explicit MCP unauthenticated error", async () => {
+	const harness = extensionHarness();
+	await startPreflight(harness);
+	await harness.emit("tool_call", {
+		toolName: "linear_get_user",
+		toolCallId: "user-call",
+		input: { query: "me" },
+	}, context);
+	await harness.emit("tool_result", {
+		toolName: "linear_get_user",
+		toolCallId: "user-call",
+		content: [{ type: "text", text: JSON.stringify({ code: "UNAUTHENTICATED" }) }],
+		isError: true,
+	}, context);
+
+	assert.equal(
+		await terminalBlocker(harness),
+		"PI_WORKFLOW_QA_HANDOFF_MCP_UNAUTHENTICATED",
+	);
+});
+
+test("qa-handoff keeps an unauthenticated marker without a true error signal incompatible", async () => {
+	for (const variant of [
+		{ name: "missing isError", isError: undefined },
+		{ name: "false isError", isError: false },
+	]) {
+		const harness = extensionHarness();
+		await startPreflight(harness);
+		await harness.emit("tool_call", {
+			toolName: "linear_get_user",
+			toolCallId: "user-call",
+			input: { query: "me" },
+		}, context);
+		await harness.emit("tool_result", {
+			toolName: "linear_get_user",
+			toolCallId: "user-call",
+			content: [{ type: "text", text: '{"code":"UNAUTHENTICATED"}' }],
+			...(variant.isError === undefined ? {} : { isError: variant.isError }),
+		}, context);
+
+		assert.equal(
+			await terminalBlocker(harness),
+			"PI_WORKFLOW_QA_HANDOFF_MCP_INCOMPATIBLE",
+			variant.name,
+		);
+	}
+});
+
+test("qa-handoff keeps ambiguous MCP errors incompatible", async () => {
+	const harness = extensionHarness();
+	await startPreflight(harness);
+	await harness.emit("tool_call", {
+		toolName: "linear_get_user",
+		toolCallId: "user-call",
+		input: { query: "me" },
+	}, context);
+	await harness.emit("tool_result", {
+		toolName: "linear_get_user",
+		toolCallId: "user-call",
+		content: [{ type: "text", text: JSON.stringify({ code: "UNAUTHENTICATED", message: "login required" }) }],
+		isError: true,
+	}, context);
+
+	assert.equal(
+		await terminalBlocker(harness),
+		"PI_WORKFLOW_QA_HANDOFF_MCP_INCOMPATIBLE",
+	);
 });
 
 test("qa-handoff blocks wrong tools and out-of-order stages before execution", async () => {
