@@ -24,20 +24,35 @@ const text = (value: unknown): value is string =>
 	typeof value === "string" && value.length > 0 && value === value.trim();
 const record = (value: unknown): value is Record<string, unknown> =>
 	!!value && typeof value === "object" && !Array.isArray(value);
-const httpsUrl = (value: string): boolean => {
+const parsedHttpsUrl = (value: string): URL | undefined => {
 	try {
-		return new URL(value).protocol === "https:";
+		const url = new URL(value);
+		return url.protocol === "https:" ? url : undefined;
 	} catch {
-		return false;
+		return undefined;
 	}
 };
 const pullRequestUrl = (value: string): boolean => {
-	if (!httpsUrl(value)) return false;
-	const { hostname, pathname } = new URL(value);
-	return (hostname === "github.com" && /^\/[^/]+\/[^/]+\/pull\/[1-9][0-9]*\/?$/.test(pathname)) ||
-		(hostname === "gitlab.com" && /^\/(?:[^/]+\/)+[^/]+\/-\/merge_requests\/[1-9][0-9]*\/?$/.test(pathname)) ||
-		(hostname === "bitbucket.org" && /^\/[^/]+\/[^/]+\/pull-requests\/[1-9][0-9]*\/?$/.test(pathname));
+	const url = parsedHttpsUrl(value);
+	if (!url) return false;
+	return (url.hostname === "github.com" && /^\/[^/]+\/[^/]+\/pull\/[1-9][0-9]*\/?$/.test(url.pathname)) ||
+		(url.hostname === "gitlab.com" && /^\/(?:[^/]+\/)+[^/]+\/-\/merge_requests\/[1-9][0-9]*\/?$/.test(url.pathname)) ||
+		(url.hostname === "bitbucket.org" && /^\/[^/]+\/[^/]+\/pull-requests\/[1-9][0-9]*\/?$/.test(url.pathname));
 };
+const continuousDeliveryUrl = (value: string): boolean => {
+	const url = parsedHttpsUrl(value);
+	if (!url) return false;
+	return (url.hostname === "github.com" && /^\/[^/]+\/[^/]+\/actions\/runs\/[1-9][0-9]*\/?$/.test(url.pathname)) ||
+		(url.hostname === "gitlab.com" && /^\/(?:[^/]+\/)+[^/]+\/-\/(?:pipelines|jobs)\/[1-9][0-9]*\/?$/.test(url.pathname)) ||
+		(url.hostname === "app.circleci.com" && /^\/pipelines\/[^/]+\/[^/]+\/[^/]+\/[1-9][0-9]*\/?$/.test(url.pathname)) ||
+		(url.hostname === "buildkite.com" && /^\/[^/]+\/[^/]+\/builds\/[1-9][0-9]*\/?$/.test(url.pathname));
+};
+const qaEnvironmentUrl = (value: string): boolean => {
+	const url = parsedHttpsUrl(value);
+	return !!url && [".vercel.app", ".netlify.app", ".onrender.com", ".fly.dev"]
+		.some((suffix) => url.hostname.endsWith(suffix) && url.hostname.length > suffix.length);
+};
+const acceptanceEvidenceUrl = continuousDeliveryUrl;
 const exactKeys = (value: object, required: readonly string[]): boolean => {
 	const keys = Object.keys(value);
 	return keys.length === required.length && required.every((key) => keys.includes(key));
@@ -70,7 +85,7 @@ export function produceQaHandoffDraft(evidence: ProducerEvidence): ProducerOutco
 	if (!text(evidence.description) || !Array.isArray(evidence.attachments) ||
 		evidence.attachments.some((item) => !record(item) ||
 			!exactKeys(item, ["id", "title", "url"]) ||
-			!text(item.id) || !text(item.title) || !text(item.url) || !httpsUrl(item.url))) {
+			!text(item.id) || !text(item.title) || !text(item.url) || !parsedHttpsUrl(item.url))) {
 		return blocked("PI_WORKFLOW_QA_HANDOFF_EVIDENCE_INVALID", "Linear returned malformed QA handoff evidence.");
 	}
 	const manifest = parseManifest(evidence.description);
@@ -110,11 +125,11 @@ export function produceQaHandoffDraft(evidence: ProducerEvidence): ProducerOutco
 	if (!pullRequest || !pullRequestUrl(pullRequest.url))
 		return blocked("PI_WORKFLOW_QA_HANDOFF_PR_EVIDENCE_MISSING", "Attach a recognized GitHub, GitLab, or Bitbucket pull request to the Linear issue.");
 	const build = byId.get(manifest.buildAttachmentId);
-	if (!build)
-		return blocked("PI_WORKFLOW_QA_HANDOFF_BUILD_EVIDENCE_MISSING", "Attach the referenced verified build to the Linear issue.");
+	if (!build || !continuousDeliveryUrl(build.url))
+		return blocked("PI_WORKFLOW_QA_HANDOFF_BUILD_EVIDENCE_MISSING", "Reference a supported GitHub Actions, GitLab CI, CircleCI, or Buildkite run attachment.");
 	const environment = byId.get(manifest.qaEnvironmentAttachmentId);
-	if (!environment)
-		return blocked("PI_WORKFLOW_QA_HANDOFF_QA_ENVIRONMENT_MISSING", "Attach the referenced QA environment to the Linear issue.");
+	if (!environment || !qaEnvironmentUrl(environment.url))
+		return blocked("PI_WORKFLOW_QA_HANDOFF_QA_ENVIRONMENT_MISSING", "Reference an HTTPS QA deployment on Vercel, Netlify, Render, or Fly.io.");
 
 	const ids = new Set<string>();
 	const acceptanceCriteria: QaHandoffDraft["acceptanceCriteria"][number][] = [];
@@ -129,8 +144,8 @@ export function produceQaHandoffDraft(evidence: ProducerEvidence): ProducerOutco
 		}
 		ids.add(value.id);
 		const references = value.evidenceAttachmentIds.map((id) => byId.get(id));
-		if (references.some((item) => item === undefined))
-			return blocked("PI_WORKFLOW_QA_HANDOFF_ACCEPTANCE_EVIDENCE_MISSING", `Attach all evidence referenced by ${value.id}.`);
+		if (references.some((item) => item === undefined || !acceptanceEvidenceUrl(item.url)))
+			return blocked("PI_WORKFLOW_QA_HANDOFF_ACCEPTANCE_EVIDENCE_MISSING", `Attach recognized test or report evidence referenced by ${value.id}.`);
 		acceptanceCriteria.push({
 			id: value.id,
 			description: value.description,
