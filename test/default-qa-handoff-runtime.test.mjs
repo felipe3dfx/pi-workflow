@@ -88,6 +88,19 @@ async function advanceToIssue(harness) {
 	}), context);
 }
 
+async function verifyIssue(harness, issue = validIssue()) {
+	await harness.emit("tool_call", {
+		toolName: "linear_get_issue",
+		toolCallId: "issue-verify-call",
+		input: { id: "ILA-2410" },
+	}, context);
+	await harness.emit("tool_result", mcpResult(
+		"linear_get_issue",
+		"issue-verify-call",
+		issue,
+	), context);
+}
+
 async function terminalOutcome(harness) {
 	const result = await harness.tools.get("workflow_qa_handoff").execute(
 		"workflow-call",
@@ -159,11 +172,13 @@ test("default public qa-handoff completes an exact read-only Linear MCP prefligh
 			}, context),
 			undefined,
 		);
+		const issue = validIssue({ title: "Validar preflight" });
 		await harness.emit("tool_result", mcpResult(
 			"linear_get_issue",
 			"issue-call",
-			validIssue({ title: "Validar preflight" }),
+			issue,
 		), context);
+		await verifyIssue(harness, issue);
 
 		assert.equal(
 			await harness.emit("tool_call", {
@@ -433,7 +448,46 @@ test("qa-handoff accepts the MCP issue contract when id is the identifier", asyn
 	const issue = validIssue({ id: "ILA-2410" });
 	delete issue.identifier;
 	await harness.emit("tool_result", mcpResult("linear_get_issue", "issue-call", issue), context);
+	await verifyIssue(harness, issue);
 	assert.equal((await terminalOutcome(harness)).status, "authorized");
+});
+
+test("qa-handoff treats reordered Linear evidence as the same current snapshot", async () => {
+	const harness = extensionHarness();
+	await advanceToIssue(harness);
+	const issue = validIssue({
+		labels: [
+			{ id: "assign-developer", name: "Assign To / Developer" },
+			{ id: "qa", name: "QA" },
+		],
+	});
+	await harness.emit("tool_call", {
+		toolName: "linear_get_issue",
+		toolCallId: "issue-call",
+		input: { id: "ILA-2410" },
+	}, context);
+	await harness.emit("tool_result", mcpResult("linear_get_issue", "issue-call", issue), context);
+	await verifyIssue(harness, {
+		...issue,
+		labels: [...issue.labels].reverse(),
+		attachments: [...issue.attachments].reverse(),
+	});
+
+	assert.equal((await terminalOutcome(harness)).status, "authorized");
+});
+
+test("qa-handoff blocks issue evidence drift before draft persistence", async () => {
+	const harness = extensionHarness();
+	await advanceToIssue(harness);
+	await harness.emit("tool_call", {
+		toolName: "linear_get_issue",
+		toolCallId: "issue-call",
+		input: { id: "ILA-2410" },
+	}, context);
+	await harness.emit("tool_result", mcpResult("linear_get_issue", "issue-call", validIssue()), context);
+	await verifyIssue(harness, validIssue({ updatedAt: "2026-07-27T19:22:01.958Z" }));
+
+	assert.equal(await terminalBlocker(harness), "PI_WORKFLOW_QA_HANDOFF_REVISION_MISMATCH");
 });
 
 test("qa-handoff classifies partial actor evidence as malformed", async () => {
@@ -480,7 +534,9 @@ test("public qa-handoff persists a canonical draft without mutating Linear", asy
 		toolCallId: "issue-call",
 		input: { id: "ILA-2410" },
 	}, context);
-	await harness.emit("tool_result", mcpResult("linear_get_issue", "issue-call", validIssue()), context);
+	const issue = validIssue();
+	await harness.emit("tool_result", mcpResult("linear_get_issue", "issue-call", issue), context);
+	await verifyIssue(harness, issue);
 	const outcome = await terminalOutcome(harness);
 
 	assert.equal(outcome.status, "authorized", JSON.stringify(outcome));

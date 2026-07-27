@@ -51,6 +51,21 @@ test("returns a specific blocker without a partial draft for each missing eviden
 	}
 });
 
+test("rejects malformed URLs and attachments that do not verify their evidence role", () => {
+	for (const variant of [
+		{ name: "unsafe URL", attachments: attachments.map((item) => item.id === "build-1" ? { ...item, url: "javascript:alert(1)" } : item) },
+		{ name: "non-PR reference", attachments: attachments.map((item) => item.id === "pr-1" ? { ...item, url: "https://example.test/document/47" } : item) },
+		{ name: "incomplete GitHub path", attachments: attachments.map((item) => item.id === "pr-1" ? { ...item, url: "https://github.com/pull/47" } : item) },
+		{ name: "duplicate role", description: description.replace('"build-1"', '"pr-1"'), attachments },
+	]) {
+		const result = produceQaHandoffDraft({
+			description: variant.description ?? description,
+			attachments: variant.attachments,
+		});
+		assert.equal(result.status, "blocked", variant.name);
+	}
+});
+
 test("rejects free-form, duplicate, unknown, or noncanonical producer authority", () => {
 	for (const candidate of [
 		"Sin bloque estructurado.",

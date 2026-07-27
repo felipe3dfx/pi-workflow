@@ -134,14 +134,19 @@ export default function piWorkflowExtension(
 			workflowOptions.defineProduct?.runtime,
 		);
 	const configuredQaHandoffWorkflow = workflowOptions.qaHandoff?.workflow;
-	const qaHandoffDrafts = workflowOptions.qaHandoff?.drafts ??
-		createQaHandoffDraftStore({
-			store: createRuntimeEngramArtifactStore({
-				sessionId: () => currentCtx?.sessionManager.getSessionId(),
-				directory: () => currentCtx?.cwd ?? process.cwd(),
-			}),
-			project: projectName(currentCtx?.cwd ?? process.cwd()),
-		});
+	const qaHandoffArtifactStore = createRuntimeEngramArtifactStore({
+		sessionId: () => currentCtx?.sessionManager.getSessionId(),
+		directory: () => currentCtx?.cwd ?? process.cwd(),
+	});
+	const currentQaHandoffDraftStore = () => createQaHandoffDraftStore({
+		store: qaHandoffArtifactStore,
+		project: projectName(currentCtx?.cwd ?? process.cwd()),
+	});
+	const qaHandoffDrafts = workflowOptions.qaHandoff?.drafts ?? {
+		read: (issueId: string) => currentQaHandoffDraftStore().read(issueId),
+		save: (input: Parameters<QaHandoffDraftStore["save"]>[0]) =>
+			currentQaHandoffDraftStore().save(input),
+	};
 	const qaHandoffRuntime = createQaHandoffRuntime(
 		configuredQaHandoffWorkflow
 			? { workflow: configuredQaHandoffWorkflow }

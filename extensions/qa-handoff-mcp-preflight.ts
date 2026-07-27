@@ -31,7 +31,7 @@ interface LinearIssueEvidence {
 	readonly attachments: readonly { readonly id: string; readonly title: string; readonly url: string }[];
 }
 
-type Stage = "idle" | "current-user" | "current-user-result" | "issue" | "issue-result" | "ready" | "blocked";
+type Stage = "idle" | "current-user" | "current-user-result" | "issue" | "issue-result" | "issue-verify" | "issue-verify-result" | "ready" | "blocked";
 type McpErrorClassification = "unauthenticated" | "incompatible";
 
 const CURRENT_USER_TOOL = "linear_get_user";
@@ -112,9 +112,9 @@ function issueEvidence(value: unknown): LinearIssueEvidence | undefined {
 		...(value.identifier === undefined ? {} : { identifier: value.identifier }),
 		updatedAt: value.updatedAt,
 		assignee: { id: value.assignee.id },
-		labels,
+		labels: labels.sort(),
 		description: value.description,
-		attachments,
+		attachments: attachments.sort((left, right) => left.id.localeCompare(right.id)),
 	};
 }
 
@@ -125,6 +125,7 @@ export function createQaHandoffMcpPreflight(options: { readonly drafts: QaHandof
 	let actorName: string | undefined;
 	let issueRevision: string | undefined;
 	let verifiedIssue: LinearIssueEvidence | undefined;
+	let preparedAuthorization: (AuthorizedPreflight & { readonly draftDigest: string }) | undefined;
 	let pendingToolCallId: string | undefined;
 	let terminalBlocker: Blocker | undefined;
 	let mcpAvailable: boolean | undefined;
@@ -149,6 +150,7 @@ export function createQaHandoffMcpPreflight(options: { readonly drafts: QaHandof
 		actorName = undefined;
 		issueRevision = undefined;
 		verifiedIssue = undefined;
+		preparedAuthorization = undefined;
 		pendingToolCallId = undefined;
 		terminalBlocker = undefined;
 		stage = "current-user";
@@ -164,6 +166,7 @@ export function createQaHandoffMcpPreflight(options: { readonly drafts: QaHandof
 		actorName = undefined;
 		issueRevision = undefined;
 		verifiedIssue = undefined;
+		preparedAuthorization = undefined;
 		pendingToolCallId = undefined;
 		terminalBlocker = undefined;
 	}
@@ -174,7 +177,8 @@ export function createQaHandoffMcpPreflight(options: { readonly drafts: QaHandof
 
 	function expectedCall(): { readonly toolName: string; readonly input: Record<string, string> } | undefined {
 		if (stage === "current-user") return { toolName: CURRENT_USER_TOOL, input: { query: "me" } };
-		if (stage === "issue" && issueId) return { toolName: ISSUE_TOOL, input: { id: issueId } };
+		if ((stage === "issue" || stage === "issue-verify") && issueId)
+			return { toolName: ISSUE_TOOL, input: { id: issueId } };
 		if (stage === "ready" && issueId) return { toolName: "workflow_qa_handoff", input: { issueId } };
 		return undefined;
 	}
@@ -195,15 +199,21 @@ export function createQaHandoffMcpPreflight(options: { readonly drafts: QaHandof
 				return { block: true, reason: terminalBlocker?.blocker.code ?? "PI_WORKFLOW_QA_HANDOFF_MCP_INCOMPATIBLE" };
 			}
 			pendingToolCallId = event.toolCallId;
-			stage = event.toolName === CURRENT_USER_TOOL ? "current-user-result" : "issue-result";
+			stage = event.toolName === CURRENT_USER_TOOL
+				? "current-user-result"
+				: stage === "issue-verify"
+					? "issue-verify-result"
+					: "issue-result";
 		}
 		return undefined;
 	}
 
-	function handleToolResult(event: { readonly toolName: string; readonly toolCallId?: string; readonly content?: unknown; readonly isError?: boolean }): void {
+	async function handleToolResult(event: { readonly toolName: string; readonly toolCallId?: string; readonly content?: unknown; readonly isError?: boolean }): Promise<void> {
 		if (!hasActiveTurn() || (event.toolName !== CURRENT_USER_TOOL && event.toolName !== ISSUE_TOOL)) return;
-		const expectedStage = event.toolName === CURRENT_USER_TOOL ? "current-user-result" : "issue-result";
-		if (stage !== expectedStage || event.toolCallId !== pendingToolCallId) {
+		const validResultStage = event.toolName === CURRENT_USER_TOOL
+			? stage === "current-user-result"
+			: stage === "issue-result" || stage === "issue-verify-result";
+		if (!validResultStage || event.toolCallId !== pendingToolCallId) {
 			fail("PI_WORKFLOW_QA_HANDOFF_MCP_INCOMPATIBLE", "Linear MCP returned an out-of-order, failed, or incompatible result.");
 			return;
 		}
@@ -243,6 +253,7 @@ export function createQaHandoffMcpPreflight(options: { readonly drafts: QaHandof
 			stage = "issue";
 			return;
 		}
+		const verifying = stage === "issue-verify-result";
 		const issue = issueEvidence(payload);
 		if (!issue) {
 			fail("PI_WORKFLOW_QA_HANDOFF_MCP_MALFORMED_RESPONSE", "Linear MCP returned partial or malformed issue evidence.");
@@ -258,43 +269,47 @@ export function createQaHandoffMcpPreflight(options: { readonly drafts: QaHandof
 			fail("PI_WORKFLOW_QA_HANDOFF_AUTHORITY_MISMATCH", "The authenticated actor is not both the assigned and labeled Developer for the issue.");
 			return;
 		}
+		if (verifying) {
+			if (!verifiedIssue || canonicalJson(issue) !== canonicalJson(verifiedIssue) ||
+				!issueId || !actorId || !issueRevision) {
+				fail("PI_WORKFLOW_QA_HANDOFF_REVISION_MISMATCH", "Linear issue evidence changed before QA handoff draft persistence.");
+				return;
+			}
+			const produced = produceQaHandoffDraft(issue);
+			if (produced.status === "blocked") {
+				fail(produced.blocker.code, produced.blocker.message);
+				return;
+			}
+			try {
+				const artifact = await options.drafts.save({ issueId, draft: produced.draft });
+				const readBack = await options.drafts.read(issueId);
+				if (!readBack || canonicalJson(readBack) !== canonicalJson(produced.draft)) {
+					fail("PI_WORKFLOW_ARTIFACT_READBACK_MISMATCH", "The persisted QA handoff draft read-back did not match.");
+					return;
+				}
+				preparedAuthorization = { status: "authorized", issueId, actorId, issueRevision, draftDigest: artifact.digest };
+				stage = "ready";
+			} catch (error) {
+				const code = record(error) && nonEmpty(error.code)
+					? error.code
+					: "PI_WORKFLOW_QA_HANDOFF_PREPARATION_FAILED";
+				fail(code, error instanceof Error ? error.message : "QA handoff draft persistence failed.");
+			}
+			return;
+		}
 		issueRevision = issue.updatedAt;
 		verifiedIssue = issue;
-		stage = "ready";
+		stage = "issue-verify";
 	}
 
 	async function complete(input: unknown): Promise<(AuthorizedPreflight & { readonly draftDigest: string }) | Blocker> {
 		if (terminalBlocker) return terminalBlocker;
-		if (stage !== "ready" || !issueId || !actorId || !issueRevision ||
-			!verifiedIssue || !exactInput(input, { issueId })) {
+		if (stage !== "ready" || !issueId || !preparedAuthorization || !exactInput(input, { issueId })) {
 			return fail("PI_WORKFLOW_QA_HANDOFF_MCP_PROTOCOL_INVALID", "QA handoff preflight is incomplete or does not match the active issue.");
 		}
-		const authorized = { issueId, actorId, issueRevision, issue: verifiedIssue };
-		const produced = produceQaHandoffDraft(authorized.issue);
-		if (produced.status === "blocked") return fail(produced.blocker.code, produced.blocker.message);
-		try {
-			const artifact = await options.drafts.save({ issueId: authorized.issueId, draft: produced.draft });
-			const readBack = await options.drafts.read(authorized.issueId);
-			if (!readBack || canonicalJson(readBack) !== canonicalJson(produced.draft))
-				return fail("PI_WORKFLOW_ARTIFACT_READBACK_MISMATCH", "The persisted QA handoff draft read-back did not match.");
-			const result = {
-				status: "authorized" as const,
-				issueId: authorized.issueId,
-				actorId: authorized.actorId,
-				issueRevision: authorized.issueRevision,
-				draftDigest: artifact.digest,
-			};
-			clear();
-			return result;
-		} catch (error) {
-			const code = record(error) && nonEmpty(error.code)
-				? error.code
-				: "PI_WORKFLOW_QA_HANDOFF_PREPARATION_FAILED";
-			return fail(
-				code,
-				error instanceof Error ? error.message : "QA handoff draft persistence failed.",
-			);
-		}
+		const result = preparedAuthorization;
+		clear();
+		return result;
 	}
 
 	return {

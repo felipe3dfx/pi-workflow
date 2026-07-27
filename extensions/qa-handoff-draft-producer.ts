@@ -24,6 +24,20 @@ const text = (value: unknown): value is string =>
 	typeof value === "string" && value.length > 0 && value === value.trim();
 const record = (value: unknown): value is Record<string, unknown> =>
 	!!value && typeof value === "object" && !Array.isArray(value);
+const httpsUrl = (value: string): boolean => {
+	try {
+		return new URL(value).protocol === "https:";
+	} catch {
+		return false;
+	}
+};
+const pullRequestUrl = (value: string): boolean => {
+	if (!httpsUrl(value)) return false;
+	const { hostname, pathname } = new URL(value);
+	return (hostname === "github.com" && /^\/[^/]+\/[^/]+\/pull\/[1-9][0-9]*\/?$/.test(pathname)) ||
+		(hostname === "gitlab.com" && /^\/(?:[^/]+\/)+[^/]+\/-\/merge_requests\/[1-9][0-9]*\/?$/.test(pathname)) ||
+		(hostname === "bitbucket.org" && /^\/[^/]+\/[^/]+\/pull-requests\/[1-9][0-9]*\/?$/.test(pathname));
+};
 const exactKeys = (value: object, required: readonly string[]): boolean => {
 	const keys = Object.keys(value);
 	return keys.length === required.length && required.every((key) => keys.includes(key));
@@ -56,7 +70,7 @@ export function produceQaHandoffDraft(evidence: ProducerEvidence): ProducerOutco
 	if (!text(evidence.description) || !Array.isArray(evidence.attachments) ||
 		evidence.attachments.some((item) => !record(item) ||
 			!exactKeys(item, ["id", "title", "url"]) ||
-			!text(item.id) || !text(item.title) || !text(item.url))) {
+			!text(item.id) || !text(item.title) || !text(item.url) || !httpsUrl(item.url))) {
 		return blocked("PI_WORKFLOW_QA_HANDOFF_EVIDENCE_INVALID", "Linear returned malformed QA handoff evidence.");
 	}
 	const manifest = parseManifest(evidence.description);
@@ -86,9 +100,15 @@ export function produceQaHandoffDraft(evidence: ProducerEvidence): ProducerOutco
 			return blocked("PI_WORKFLOW_QA_HANDOFF_EVIDENCE_INVALID", "Linear returned duplicate attachment evidence.");
 		byId.set(attachment.id, attachment);
 	}
+	if (new Set([
+		manifest.pullRequestAttachmentId,
+		manifest.buildAttachmentId,
+		manifest.qaEnvironmentAttachmentId,
+	]).size !== 3)
+		return blocked("PI_WORKFLOW_QA_HANDOFF_EVIDENCE_INVALID", "PR, build, and QA environment must use distinct Linear attachments.");
 	const pullRequest = byId.get(manifest.pullRequestAttachmentId);
-	if (!pullRequest)
-		return blocked("PI_WORKFLOW_QA_HANDOFF_PR_EVIDENCE_MISSING", "Attach the referenced pull request to the Linear issue.");
+	if (!pullRequest || !pullRequestUrl(pullRequest.url))
+		return blocked("PI_WORKFLOW_QA_HANDOFF_PR_EVIDENCE_MISSING", "Attach a recognized GitHub, GitLab, or Bitbucket pull request to the Linear issue.");
 	const build = byId.get(manifest.buildAttachmentId);
 	if (!build)
 		return blocked("PI_WORKFLOW_QA_HANDOFF_BUILD_EVIDENCE_MISSING", "Attach the referenced verified build to the Linear issue.");
