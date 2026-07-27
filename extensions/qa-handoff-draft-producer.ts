@@ -32,19 +32,20 @@ const parsedHttpsUrl = (value: string): URL | undefined => {
 		return undefined;
 	}
 };
+const matchesGithubPath = (url: URL, pattern: RegExp): boolean =>
+	url.hostname === "github.com" && !url.pathname.includes("%") &&
+	pattern.test(url.pathname);
 const pullRequestUrl = (value: string): boolean => {
 	const url = parsedHttpsUrl(value);
 	if (!url) return false;
-	return (url.hostname === "github.com" && !url.pathname.includes("%") &&
-		/^\/[^/]+\/[^/]+\/pull\/[1-9][0-9]*\/?$/.test(url.pathname)) ||
+	return matchesGithubPath(url, /^\/[^/]+\/[^/]+\/pull\/[1-9][0-9]*\/?$/) ||
 		(url.hostname === "gitlab.com" && /^\/(?:[^/]+\/)+[^/]+\/-\/merge_requests\/[1-9][0-9]*\/?$/.test(url.pathname)) ||
 		(url.hostname === "bitbucket.org" && /^\/[^/]+\/[^/]+\/pull-requests\/[1-9][0-9]*\/?$/.test(url.pathname));
 };
 const continuousDeliveryUrl = (value: string): boolean => {
 	const url = parsedHttpsUrl(value);
 	if (!url) return false;
-	return (url.hostname === "github.com" && !url.pathname.includes("%") &&
-		/^\/[^/]+\/[^/]+\/actions\/runs\/[1-9][0-9]*\/?$/.test(url.pathname)) ||
+	return matchesGithubPath(url, /^\/[^/]+\/[^/]+\/actions\/runs\/[1-9][0-9]*\/?$/) ||
 		(url.hostname === "gitlab.com" && /^\/(?:[^/]+\/)+[^/]+\/-\/(?:pipelines|jobs)\/[1-9][0-9]*\/?$/.test(url.pathname)) ||
 		(url.hostname === "app.circleci.com" && /^\/pipelines\/[^/]+\/[^/]+\/[^/]+\/[1-9][0-9]*\/?$/.test(url.pathname)) ||
 		(url.hostname === "buildkite.com" && /^\/[^/]+\/[^/]+\/builds\/[1-9][0-9]*\/?$/.test(url.pathname));
