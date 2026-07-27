@@ -10,6 +10,21 @@ interface AuthorizedPreflight {
 	readonly issueRevision: string;
 }
 
+interface AuthenticatedLinearActor {
+	readonly id: string;
+	readonly name: string;
+	readonly isActive: boolean;
+	readonly isGuest: boolean;
+}
+
+interface LinearIssueEvidence {
+	readonly id: string;
+	readonly identifier?: string;
+	readonly updatedAt: string;
+	readonly assignee: { readonly id: string };
+	readonly labels: readonly string[];
+}
+
 type Stage = "idle" | "current-user" | "current-user-result" | "issue" | "issue-result" | "ready" | "blocked";
 
 const CURRENT_USER_TOOL = "linear_get_user";
@@ -34,14 +49,49 @@ function nonEmpty(value: unknown): value is string {
 }
 
 function toolPayload(event: unknown): unknown {
-	if (!record(event) || !Array.isArray(event.content)) return undefined;
-	const texts = event.content.filter(record).filter((item) => item.type === "text").map((item) => item.text);
-	if (texts.length !== 1 || !nonEmpty(texts[0])) return undefined;
+	if (!record(event) || !Array.isArray(event.content) || event.content.length !== 1) return undefined;
+	const [content] = event.content;
+	if (!record(content) || Object.keys(content).length !== 2 ||
+		content.type !== "text" || !nonEmpty(content.text)) return undefined;
 	try {
-		return JSON.parse(texts[0]);
+		return JSON.parse(content.text);
 	} catch {
 		return undefined;
 	}
+}
+
+function actorEvidence(value: unknown): value is AuthenticatedLinearActor {
+	return record(value) && nonEmpty(value.id) && nonEmpty(value.name) &&
+		typeof value.isActive === "boolean" && typeof value.isGuest === "boolean";
+}
+
+function linearRevision(value: unknown): value is string {
+	return nonEmpty(value) &&
+		/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(value) &&
+		!Number.isNaN(Date.parse(value));
+}
+
+function issueEvidence(value: unknown): LinearIssueEvidence | undefined {
+	if (!record(value) || !nonEmpty(value.id) ||
+		(value.identifier !== undefined && !nonEmpty(value.identifier)) ||
+		!linearRevision(value.updatedAt) || !record(value.assignee) ||
+		!nonEmpty(value.assignee.id) || !Array.isArray(value.labels)) return undefined;
+	const labels: string[] = [];
+	for (const label of value.labels) {
+		if (typeof label === "string" && nonEmpty(label)) {
+			labels.push(label);
+			continue;
+		}
+		if (!record(label) || !nonEmpty(label.name)) return undefined;
+		labels.push(label.name);
+	}
+	return {
+		id: value.id,
+		...(value.identifier === undefined ? {} : { identifier: value.identifier }),
+		updatedAt: value.updatedAt,
+		assignee: { id: value.assignee.id },
+		labels,
+	};
 }
 
 export function createQaHandoffMcpPreflight() {
@@ -137,7 +187,11 @@ export function createQaHandoffMcpPreflight() {
 		}
 		pendingToolCallId = undefined;
 		if (event.toolName === CURRENT_USER_TOOL) {
-			if (!nonEmpty(payload.id) || !nonEmpty(payload.name) || payload.isActive !== true || payload.isGuest !== false) {
+			if (!actorEvidence(payload)) {
+				fail("PI_WORKFLOW_QA_HANDOFF_MCP_MALFORMED_RESPONSE", "Linear MCP returned partial or malformed actor evidence.");
+				return;
+			}
+			if (payload.isActive !== true || payload.isGuest !== false) {
 				fail("PI_WORKFLOW_QA_HANDOFF_AUTHORITY_MISMATCH", "The authenticated Linear actor does not have verifiable Developer authority.");
 				return;
 			}
@@ -146,20 +200,22 @@ export function createQaHandoffMcpPreflight() {
 			stage = "issue";
 			return;
 		}
-		const assignee = payload.assignee;
-		const labels = Array.isArray(payload.labels)
-			? payload.labels.map((label) => typeof label === "string" ? label : record(label) ? label.name : undefined)
-			: [];
-		if ((payload.id !== issueId && payload.identifier !== issueId) || !nonEmpty(payload.updatedAt)) {
-			fail("PI_WORKFLOW_QA_HANDOFF_ISSUE_MISMATCH", "Linear MCP returned a different or unrevisioned issue.");
+		const issue = issueEvidence(payload);
+		if (!issue) {
+			fail("PI_WORKFLOW_QA_HANDOFF_MCP_MALFORMED_RESPONSE", "Linear MCP returned partial or malformed issue evidence.");
 			return;
 		}
-		if (!record(assignee) || assignee.id !== actorId || !actorName ||
-			!labels.includes(`Assign To / ${actorName}`)) {
+		const exactIdentifier = issue.identifier ?? issue.id;
+		if (exactIdentifier !== issueId) {
+			fail("PI_WORKFLOW_QA_HANDOFF_ISSUE_MISMATCH", "Linear MCP returned a different issue identifier.");
+			return;
+		}
+		if (issue.assignee.id !== actorId || !actorName ||
+			!issue.labels.includes(`Assign To / ${actorName}`)) {
 			fail("PI_WORKFLOW_QA_HANDOFF_AUTHORITY_MISMATCH", "The authenticated actor is not both the assigned and labeled Developer for the issue.");
 			return;
 		}
-		issueRevision = payload.updatedAt;
+		issueRevision = issue.updatedAt;
 		stage = "ready";
 	}
 

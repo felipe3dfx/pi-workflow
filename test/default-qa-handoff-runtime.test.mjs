@@ -3,16 +3,18 @@ import test from "node:test";
 
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 
-function extensionHarness() {
+const MCP_TOOL_NAMES = [
+	"linear_get_user",
+	"linear_get_issue",
+	"workflow_qa_handoff",
+];
+
+function extensionHarness(toolNames = MCP_TOOL_NAMES) {
 	const handlers = new Map();
 	const tools = new Map();
 	piWorkflowExtension({
 		exec: async () => ({ code: 0 }),
-		getAllTools: () => [
-			{ name: "linear_get_user" },
-			{ name: "linear_get_issue" },
-			{ name: "workflow_qa_handoff" },
-		],
+		getAllTools: () => toolNames.map((name) => ({ name })),
 		registerCommand: () => {},
 		registerTool: (tool) => tools.set(tool.name, tool),
 		on: (event, handler) => {
@@ -45,6 +47,52 @@ function mcpResult(toolName, toolCallId, payload) {
 		toolCallId,
 		content: [{ type: "text", text: JSON.stringify(payload) }],
 		isError: false,
+	};
+}
+
+async function startPreflight(harness) {
+	await harness.emit("input", {
+		type: "input",
+		text: "/qa-handoff ILA-2410",
+		source: "interactive",
+	}, context);
+}
+
+async function advanceToIssue(harness) {
+	await startPreflight(harness);
+	await harness.emit("tool_call", {
+		toolName: "linear_get_user",
+		toolCallId: "user-call",
+		input: { query: "me" },
+	}, context);
+	await harness.emit("tool_result", mcpResult("linear_get_user", "user-call", {
+		id: "developer-1",
+		name: "Developer",
+		isActive: true,
+		isGuest: false,
+	}), context);
+}
+
+async function terminalOutcome(harness) {
+	const result = await harness.tools.get("workflow_qa_handoff").execute(
+		"workflow-call",
+		{ issueId: "ILA-2410" },
+	);
+	return JSON.parse(result.content[0].text);
+}
+
+async function terminalBlocker(harness) {
+	return (await terminalOutcome(harness)).blocker.code;
+}
+
+function validIssue(overrides = {}) {
+	return {
+		id: "linear-uuid-2410",
+		identifier: "ILA-2410",
+		updatedAt: "2026-07-27T19:21:01.958Z",
+		assignee: { id: "developer-1", name: "Developer" },
+		labels: [{ id: "assign-developer", name: "Assign To / Developer" }],
+		...overrides,
 	};
 }
 
@@ -89,13 +137,11 @@ test("default public qa-handoff completes an exact read-only Linear MCP prefligh
 			}, context),
 			undefined,
 		);
-		await harness.emit("tool_result", mcpResult("linear_get_issue", "issue-call", {
-			id: "ILA-2410",
-			title: "Validar preflight",
-			updatedAt: "2026-07-27T19:21:01.958Z",
-			assignee: { id: "developer-1", name: "Developer" },
-			labels: [{ id: "assign-developer", name: "Assign To / Developer" }],
-		}), context);
+		await harness.emit("tool_result", mcpResult(
+			"linear_get_issue",
+			"issue-call",
+			validIssue({ title: "Validar preflight" }),
+		), context);
 
 		assert.equal(
 			await harness.emit("tool_call", {
@@ -158,27 +204,143 @@ test("qa-handoff blocks non-protocol reads before execution", async () => {
 });
 
 test("qa-handoff fails closed when Linear MCP tools are unavailable", async () => {
-	const handlers = new Map();
-	const tools = new Map();
-	piWorkflowExtension({
-		exec: async () => ({ code: 0 }),
-		getAllTools: () => [{ name: "workflow_qa_handoff" }],
-		registerCommand: () => {},
-		registerTool: (tool) => tools.set(tool.name, tool),
-		on: (event, handler) => {
-			const registered = handlers.get(event) ?? [];
-			registered.push(handler);
-			handlers.set(event, registered);
-		},
-	});
-	for (const handler of handlers.get("input") ?? []) {
-		await handler({ type: "input", text: "/qa-handoff ILA-2410", source: "interactive" }, context);
-	}
-	for (const handler of handlers.get("before_agent_start") ?? []) {
-		await handler({ type: "before_agent_start" }, context);
-	}
-	const result = await tools.get("workflow_qa_handoff").execute("workflow-call", { issueId: "ILA-2410" });
+	const harness = extensionHarness(["workflow_qa_handoff"]);
+	await harness.emit("input", {
+		type: "input",
+		text: "/qa-handoff ILA-2410",
+		source: "interactive",
+	}, context);
+	await harness.emit("before_agent_start", { type: "before_agent_start" }, context);
+	const result = await harness.tools.get("workflow_qa_handoff").execute("workflow-call", { issueId: "ILA-2410" });
 	assert.equal(JSON.parse(result.content[0].text).blocker.code, "PI_WORKFLOW_QA_HANDOFF_MCP_UNAVAILABLE");
+});
+
+test("qa-handoff blocks wrong tools and out-of-order stages before execution", async () => {
+	for (const variant of [
+		{
+			call: { toolName: "linear_get_issue", toolCallId: "early", input: { id: "ILA-2410" } },
+			reason: "PI_WORKFLOW_QA_HANDOFF_MCP_PROTOCOL_INVALID",
+		},
+		{
+			call: { toolName: "linear_list_comments", toolCallId: "wrong", input: { issueId: "ILA-2410" } },
+			reason: "PI_WORKFLOW_CAPABILITY_PENDING: tools are disabled for pending public workflow capabilities",
+		},
+	]) {
+		const harness = extensionHarness();
+		await startPreflight(harness);
+		assert.deepEqual(
+			await harness.emit("tool_call", variant.call, context),
+			{ block: true, reason: variant.reason },
+		);
+		assert.equal(
+			await terminalBlocker(harness),
+			"PI_WORKFLOW_QA_HANDOFF_MCP_PROTOCOL_INVALID",
+		);
+	}
+});
+
+test("qa-handoff rejects another issue, actor, malformed revision, and conflicting identifier", async () => {
+	const cases = [
+		{
+			name: "another issue",
+			issue: validIssue({ id: "linear-uuid-9999", identifier: "ILA-9999" }),
+			code: "PI_WORKFLOW_QA_HANDOFF_ISSUE_MISMATCH",
+		},
+		{
+			name: "another actor",
+			issue: validIssue({ assignee: { id: "developer-2" } }),
+			code: "PI_WORKFLOW_QA_HANDOFF_AUTHORITY_MISMATCH",
+		},
+		{
+			name: "malformed revision",
+			issue: validIssue({ updatedAt: "unknown" }),
+			code: "PI_WORKFLOW_QA_HANDOFF_MCP_MALFORMED_RESPONSE",
+		},
+		{
+			name: "conflicting identifier",
+			issue: validIssue({ identifier: "ILA-9999" }),
+			code: "PI_WORKFLOW_QA_HANDOFF_ISSUE_MISMATCH",
+		},
+	];
+	for (const variant of cases) {
+		const harness = extensionHarness();
+		await advanceToIssue(harness);
+		await harness.emit("tool_call", {
+			toolName: "linear_get_issue",
+			toolCallId: "issue-call",
+			input: { id: "ILA-2410" },
+		}, context);
+		await harness.emit("tool_result", mcpResult("linear_get_issue", "issue-call", variant.issue), context);
+		assert.equal(await terminalBlocker(harness), variant.code, variant.name);
+	}
+});
+
+test("qa-handoff rejects mismatched call identities and mixed MCP content", async () => {
+	const wrongIdentity = extensionHarness();
+	await startPreflight(wrongIdentity);
+	await wrongIdentity.emit("tool_call", {
+		toolName: "linear_get_user",
+		toolCallId: "user-call",
+		input: { query: "me" },
+	}, context);
+	await wrongIdentity.emit("tool_result", mcpResult("linear_get_user", "other-call", {
+		id: "developer-1",
+		name: "Developer",
+		isActive: true,
+		isGuest: false,
+	}), context);
+	assert.equal(await terminalBlocker(wrongIdentity), "PI_WORKFLOW_QA_HANDOFF_MCP_INCOMPATIBLE");
+
+	const mixedContent = extensionHarness();
+	await startPreflight(mixedContent);
+	await mixedContent.emit("tool_call", {
+		toolName: "linear_get_user",
+		toolCallId: "user-call",
+		input: { query: "me" },
+	}, context);
+	await mixedContent.emit("tool_result", {
+		...mcpResult("linear_get_user", "user-call", {
+			id: "developer-1",
+			name: "Developer",
+			isActive: true,
+			isGuest: false,
+		}),
+		content: [
+			{ type: "text", text: JSON.stringify({ id: "developer-1", name: "Developer", isActive: true, isGuest: false }) },
+			{ type: "image", data: "unexpected" },
+		],
+	}, context);
+	assert.equal(await terminalBlocker(mixedContent), "PI_WORKFLOW_QA_HANDOFF_MCP_MALFORMED_RESPONSE");
+});
+
+test("qa-handoff accepts the MCP issue contract when id is the identifier", async () => {
+	const harness = extensionHarness();
+	await advanceToIssue(harness);
+	await harness.emit("tool_call", {
+		toolName: "linear_get_issue",
+		toolCallId: "issue-call",
+		input: { id: "ILA-2410" },
+	}, context);
+	const issue = validIssue({ id: "ILA-2410" });
+	delete issue.identifier;
+	await harness.emit("tool_result", mcpResult("linear_get_issue", "issue-call", issue), context);
+	assert.equal((await terminalOutcome(harness)).status, "authorized");
+});
+
+test("qa-handoff classifies partial actor evidence as malformed", async () => {
+	const harness = extensionHarness();
+	await startPreflight(harness);
+	await harness.emit("tool_call", {
+		toolName: "linear_get_user",
+		toolCallId: "user-call",
+		input: { query: "me" },
+	}, context);
+	await harness.emit("tool_result", mcpResult("linear_get_user", "user-call", {
+		id: "developer-1",
+		name: "Developer",
+		isActive: true,
+	}), context);
+	assert.equal(await terminalBlocker(harness), "PI_WORKFLOW_QA_HANDOFF_MCP_MALFORMED_RESPONSE");
 });
 
 test("qa-handoff fails closed on malformed MCP evidence", async () => {

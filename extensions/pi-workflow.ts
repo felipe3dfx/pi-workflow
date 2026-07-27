@@ -13,7 +13,6 @@ import {
 	createDefaultDefineProductWorkflow,
 	type DefaultDefineProductRuntimeOptions,
 } from "./default-define-product.ts";
-import type { DefaultQaHandoffRuntimeOptions } from "./default-qa-handoff.ts";
 import {
 	createDefaultProductReviewWorkflow,
 	type DefaultProductReviewRuntimeOptions,
@@ -90,7 +89,6 @@ export interface PiWorkflowExtensionOptions extends CompanionWorkflowOptions {
 	};
 	qaHandoff?: {
 		workflow?: ReturnType<typeof createQaHandoffWorkflow>;
-		runtime?: DefaultQaHandoffRuntimeOptions;
 	};
 	productReview?: {
 		workflow?: ReturnType<typeof createProductReviewWorkflow>;
