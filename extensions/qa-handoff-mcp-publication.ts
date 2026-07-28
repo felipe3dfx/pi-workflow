@@ -1,4 +1,7 @@
+import { randomUUID } from "node:crypto";
+
 import { produceQaHandoffDraft } from "./qa-handoff-draft-producer.ts";
+import type { QaHandoffPublicationRecoveryStore } from "./qa-handoff-publication-recovery.ts";
 import type { QaHandoffDraftStore } from "./qa-handoff-draft-store.ts";
 import {
 	createQaHandoffArtifact,
@@ -9,15 +12,35 @@ import {
 } from "./qa-handoff-workflow.ts";
 import { canonicalJson, digestCanonicalValue } from "./workflow-contracts.ts";
 
-interface Blocker {
-	readonly status: "blocked";
-	readonly blocker: { readonly code: string; readonly message: string };
-}
+export namespace QaHandoffMcpPublication {
+	export interface Blocker {
+		readonly status: "blocked";
+		readonly blocker: { readonly code: string; readonly message: string };
+	}
 
-interface PublishedHandoff {
-	readonly status: "published";
-	readonly issueId: string;
-	readonly commentId: string;
+	export interface PublishedHandoff {
+		readonly status: "published";
+		readonly issueId: string;
+		readonly commentId: string;
+	}
+
+	export interface ExpectedCall {
+		readonly toolName: string;
+		readonly input: Readonly<Record<string, unknown>>;
+	}
+
+	export interface ToolCallEvent {
+		readonly toolName: string;
+		readonly toolCallId?: string;
+		input?: unknown;
+	}
+
+	export interface ToolResultEvent {
+		readonly toolName: string;
+		readonly toolCallId?: string;
+		readonly content?: unknown;
+		readonly isError?: boolean;
+	}
 }
 
 interface AuthenticatedLinearActor {
@@ -76,6 +99,7 @@ interface SnapshottedContext extends AuthenticatedContext {
 
 interface PreparedContext extends SnapshottedContext {
 	readonly preparedArtifact: QaHandoffArtifact;
+	readonly recoveryStage?: "uncertain" | "verified";
 }
 
 interface SelectedContext extends PreparedContext {
@@ -83,7 +107,7 @@ interface SelectedContext extends PreparedContext {
 }
 
 interface CompletedContext extends SelectedContext {
-	readonly publication: PublishedHandoff;
+	readonly publication: QaHandoffMcpPublication.PublishedHandoff;
 }
 
 interface CommentRead {
@@ -182,22 +206,22 @@ type PublicationState =
 	| { readonly phase: "ready"; readonly context: CompletedContext }
 	| BlockerState;
 
-interface BlockerState extends Blocker {
+interface BlockerState extends QaHandoffMcpPublication.Blocker {
 	readonly phase: "blocked";
 }
 
-type McpErrorClassification = "unauthenticated" | "incompatible";
-type ExpectedCall = {
-	readonly toolName: string;
-	readonly input: Readonly<Record<string, unknown>>;
-};
-
+type McpErrorClassification =
+	| "unauthenticated"
+	| "permission-denied"
+	| "rate-limited"
+	| "transport-failed"
+	| "incompatible";
 type PublicationPhaseDispatch =
 	| { readonly kind: "inactive" }
 	| {
 			readonly kind: "tool-call";
-			readonly expectedCall: ExpectedCall;
-			readonly expectedModelCall: ExpectedCall;
+			readonly expectedCall: QaHandoffMcpPublication.ExpectedCall;
+			readonly expectedModelCall: QaHandoffMcpPublication.ExpectedCall;
 			readonly transition: (toolCallId: string) => PublicationState;
 			readonly replacementBody?: string;
 	  }
@@ -211,27 +235,45 @@ type PublicationPhaseDispatch =
 	  }
 	| {
 			readonly kind: "completion";
-			readonly expectedCall: ExpectedCall;
+			readonly expectedCall: QaHandoffMcpPublication.ExpectedCall;
 			readonly transition: () => PublicationState;
 	  };
 
-type ToolCallEvent = {
-	readonly toolName: string;
-	readonly toolCallId?: string;
-	input?: unknown;
-};
-
-interface QaHandoffPublicationDependencies {
+export interface QaHandoffMcpPublicationDependencies {
 	readonly drafts: QaHandoffDraftStore;
 	readonly artifacts: QaHandoffArtifactStore;
+	readonly recovery: QaHandoffPublicationRecoveryStore;
+	/** Optional stricter fail-closed cap; it cannot exceed the runtime maximum. */
+	readonly toolIdentityReservationCapacity?: number;
 }
 
-type ToolResultEvent = {
-	readonly toolName: string;
-	readonly toolCallId?: string;
-	readonly content?: unknown;
-	readonly isError?: boolean;
-};
+export interface QaHandoffMcpPublication {
+	readonly allowedTools: readonly [
+		"linear_get_user",
+		"linear_get_issue",
+		"linear_list_comments",
+		"linear_save_comment",
+		"workflow_qa_handoff",
+	];
+	start(issueId: string): void;
+	setMcpAvailable(available: boolean): void;
+	clear(): void;
+	hasActiveTurn(): boolean;
+	expectedCall(): QaHandoffMcpPublication.ExpectedCall | undefined;
+	expectedModelCall(): QaHandoffMcpPublication.ExpectedCall | undefined;
+	nextCallInstruction(): string | undefined;
+	handleToolCall(
+		event: QaHandoffMcpPublication.ToolCallEvent,
+	): Promise<{ readonly block: true; readonly reason: string } | undefined>;
+	handleToolResult(
+		event: QaHandoffMcpPublication.ToolResultEvent,
+	): Promise<boolean>;
+	complete(
+		input: unknown,
+	): Promise<
+		QaHandoffMcpPublication.PublishedHandoff | QaHandoffMcpPublication.Blocker
+	>;
+}
 
 const CURRENT_USER_TOOL = "linear_get_user";
 const ISSUE_TOOL = "linear_get_issue";
@@ -246,7 +288,10 @@ const MCP_TOOLS = new Set([
 	SAVE_COMMENT_TOOL,
 ]);
 
-const blocked = (code: string, message: string): Blocker => ({
+const blocked = (
+	code: string,
+	message: string,
+): QaHandoffMcpPublication.Blocker => ({
 	status: "blocked",
 	blocker: { code, message },
 });
@@ -255,6 +300,14 @@ const failed = (code: string, message: string): BlockerState => ({
 	phase: "blocked",
 	...blocked(code, message),
 });
+
+const CANCELLED_GENERATION = Symbol("cancelled QA handoff generation");
+const MAX_RUNTIME_RESERVED_TOOL_IDENTITIES = 16_384;
+type GenerationGuard = () => boolean;
+
+function ensureGenerationActive(isActive: GenerationGuard): void {
+	if (!isActive()) throw CANCELLED_GENERATION;
+}
 
 function assertNever(value: never): never {
 	throw new Error(
@@ -309,11 +362,23 @@ function toolPayload(event: unknown): unknown {
 
 function classifyMcpError(event: unknown): McpErrorClassification {
 	const payload = toolPayload(event);
-	return record(payload) &&
-		Object.keys(payload).length === 1 &&
-		payload.code === "UNAUTHENTICATED"
-		? "unauthenticated"
-		: "incompatible";
+	if (!record(payload)) return "incompatible";
+	const keys = Object.keys(payload);
+	const validOperationalEnvelope =
+		keys.every((key) => key === "code" || key === "message") &&
+		(payload.message === undefined || nonEmpty(payload.message));
+	switch (payload.code) {
+		case "UNAUTHENTICATED":
+			return keys.length === 1 ? "unauthenticated" : "incompatible";
+		case "PERMISSION_DENIED":
+			return validOperationalEnvelope ? "permission-denied" : "incompatible";
+		case "RATE_LIMITED":
+			return validOperationalEnvelope ? "rate-limited" : "incompatible";
+		case "TRANSPORT_ERROR":
+			return validOperationalEnvelope ? "transport-failed" : "incompatible";
+		default:
+			return "incompatible";
+	}
 }
 
 function actorEvidence(value: unknown): value is AuthenticatedLinearActor {
@@ -519,14 +584,17 @@ function emptyCommentRead(): CommentRead {
 	return { comments: [], seenCursors: new Set() };
 }
 
-function issueCall(issueId: string): ExpectedCall {
+function issueCall(issueId: string): QaHandoffMcpPublication.ExpectedCall {
 	return {
 		toolName: ISSUE_TOOL,
 		input: { id: issueId, includeRelations: true },
 	};
 }
 
-function commentsCall(issueId: string, cursor?: string): ExpectedCall {
+function commentsCall(
+	issueId: string,
+	cursor?: string,
+): QaHandoffMcpPublication.ExpectedCall {
 	return {
 		toolName: LIST_COMMENTS_TOOL,
 		input: { issueId, ...(cursor ? { cursor } : {}) },
@@ -534,8 +602,9 @@ function commentsCall(issueId: string, cursor?: string): ExpectedCall {
 }
 
 function dispatchForPhase(
-	options: QaHandoffPublicationDependencies,
+	options: QaHandoffMcpPublicationDependencies,
 	state: PublicationState,
+	isActive: GenerationGuard = () => true,
 ): PublicationPhaseDispatch {
 	switch (state.phase) {
 		case "idle":
@@ -612,7 +681,7 @@ function dispatchForPhase(
 				toolCallId: state.toolCallId,
 				transition: (payload) =>
 					issueResultState(state.context, payload, (issue) =>
-						verifiedIssueResultState(options, state, issue),
+						verifiedIssueResultState(options, state, issue, isActive),
 					),
 			};
 		case "comments-before": {
@@ -642,8 +711,7 @@ function dispatchForPhase(
 							context: state.context,
 							read,
 						}),
-						(comments) =>
-							commentsBeforeCompleteState(state.context, comments),
+						(comments) => commentsBeforeCompleteState(state.context, comments),
 					),
 			};
 		case "current-user-before-mutation": {
@@ -667,8 +735,7 @@ function dispatchForPhase(
 				transition: (payload) =>
 					actorResultState(payload, (currentActor) => {
 						if (
-							canonicalJson(currentActor) !==
-							canonicalJson(state.context.actor)
+							canonicalJson(currentActor) !== canonicalJson(state.context.actor)
 						)
 							return failed(
 								"PI_WORKFLOW_QA_HANDOFF_AUTHORITY_MISMATCH",
@@ -821,7 +888,7 @@ function dispatchForPhase(
 
 function expectedCall(
 	dispatch: PublicationPhaseDispatch,
-): ExpectedCall | undefined {
+): QaHandoffMcpPublication.ExpectedCall | undefined {
 	return dispatch.kind === "tool-call" || dispatch.kind === "completion"
 		? dispatch.expectedCall
 		: undefined;
@@ -829,14 +896,14 @@ function expectedCall(
 
 function expectedModelCall(
 	dispatch: PublicationPhaseDispatch,
-): ExpectedCall | undefined {
+): QaHandoffMcpPublication.ExpectedCall | undefined {
 	if (dispatch.kind === "tool-call") return dispatch.expectedModelCall;
 	return dispatch.kind === "completion" ? dispatch.expectedCall : undefined;
 }
 
 function transitionToolCall(
 	dispatch: PublicationPhaseDispatch,
-	event: ToolCallEvent,
+	event: QaHandoffMcpPublication.ToolCallEvent,
 ): {
 	readonly state: PublicationState;
 	readonly block?: { readonly block: true; readonly reason: string };
@@ -922,9 +989,10 @@ function matchesVerifiedSnapshot(
 }
 
 async function persistFinalArtifact(
-	options: QaHandoffPublicationDependencies,
+	options: QaHandoffMcpPublicationDependencies,
 	context: SnapshottedContext,
 	draft: Parameters<QaHandoffDraftStore["save"]>[0]["draft"],
+	isActive: GenerationGuard,
 ): Promise<QaHandoffArtifact | BlockerState> {
 	const authority = {
 		actorId: context.actor.id,
@@ -937,6 +1005,7 @@ async function persistFinalArtifact(
 		draft,
 	);
 	const existing = await options.artifacts.read(context.issueId);
+	ensureGenerationActive(isActive);
 	if (
 		existing &&
 		(!isQaHandoffArtifact(existing, context.issueId) ||
@@ -946,8 +1015,14 @@ async function persistFinalArtifact(
 			"PI_WORKFLOW_QA_HANDOFF_ARTIFACT_CONFLICT",
 			"The issue already has a different QA handoff artifact.",
 		);
-	const saved = existing ?? (await options.artifacts.save(candidate));
+	let saved = existing;
+	if (!saved) {
+		ensureGenerationActive(isActive);
+		saved = await options.artifacts.save(candidate);
+		ensureGenerationActive(isActive);
+	}
 	const readBack = await options.artifacts.read(context.issueId);
+	ensureGenerationActive(isActive);
 	if (
 		!readBack ||
 		!isQaHandoffArtifact(readBack, context.issueId) ||
@@ -962,9 +1037,10 @@ async function persistFinalArtifact(
 }
 
 async function verifiedIssueResultState(
-	options: QaHandoffPublicationDependencies,
+	options: QaHandoffMcpPublicationDependencies,
 	state: Extract<PublicationState, { phase: "issue-verify-result" }>,
 	issue: LinearIssueEvidence,
+	isActive: GenerationGuard,
 ): Promise<PublicationState> {
 	if (!matchesVerifiedSnapshot(state.context, issue))
 		return failed(
@@ -975,31 +1051,74 @@ async function verifiedIssueResultState(
 	if (produced.status === "blocked")
 		return failed(produced.blocker.code, produced.blocker.message);
 	try {
-		await options.drafts.save({
-			issueId: state.context.issueId,
-			draft: produced.draft,
-		});
-		const draftReadBack = await options.drafts.read(state.context.issueId);
+		ensureGenerationActive(isActive);
+		let draftReadBack = await options.drafts.read(state.context.issueId);
+		ensureGenerationActive(isActive);
 		if (
-			!draftReadBack ||
+			draftReadBack &&
 			canonicalJson(draftReadBack) !== canonicalJson(produced.draft)
 		)
 			return failed(
-				"PI_WORKFLOW_ARTIFACT_READBACK_MISMATCH",
-				"The persisted QA handoff draft read-back did not match.",
+				"PI_WORKFLOW_QA_HANDOFF_DRAFT_STALE",
+				"The persisted QA handoff draft does not match the freshly verified Linear evidence; replace the stale draft before publishing.",
 			);
+		if (!draftReadBack) {
+			ensureGenerationActive(isActive);
+			await options.drafts.save({
+				issueId: state.context.issueId,
+				draft: produced.draft,
+			});
+			ensureGenerationActive(isActive);
+			draftReadBack = await options.drafts.read(state.context.issueId);
+			ensureGenerationActive(isActive);
+			if (
+				!draftReadBack ||
+				canonicalJson(draftReadBack) !== canonicalJson(produced.draft)
+			)
+				return failed(
+					"PI_WORKFLOW_ARTIFACT_READBACK_MISMATCH",
+					"The persisted QA handoff draft read-back did not match freshly verified Linear evidence.",
+				);
+		}
 		const artifact = await persistFinalArtifact(
 			options,
 			state.context,
 			draftReadBack,
+			isActive,
 		);
 		if ("phase" in artifact) return artifact;
+		let recovery: Awaited<
+			ReturnType<QaHandoffPublicationRecoveryStore["read"]>
+		>;
+		try {
+			recovery = await options.recovery.read(state.context.issueId);
+			ensureGenerationActive(isActive);
+		} catch (error) {
+			if (error === CANCELLED_GENERATION) throw error;
+			return failed(
+				"PI_WORKFLOW_QA_HANDOFF_RECOVERY_PERSISTENCE_FAILED",
+				error instanceof Error
+					? error.message
+					: "QA handoff recovery persistence could not be read.",
+			);
+		}
+		if (recovery && recovery.digest !== artifact.digest)
+			return failed(
+				"PI_WORKFLOW_QA_HANDOFF_DIGEST_MISMATCH",
+				"The pending QA handoff recovery digest changed.",
+			);
 		return {
 			phase: "comments-before",
-			context: { ...state.context, preparedArtifact: artifact },
+			context: {
+				...state.context,
+				preparedArtifact: artifact,
+				recoveryStage:
+					recovery?.digest === artifact.digest ? recovery.stage : undefined,
+			},
 			read: emptyCommentRead(),
 		};
 	} catch (error) {
+		if (error === CANCELLED_GENERATION) throw error;
 		const code =
 			record(error) && nonEmpty(error.code)
 				? error.code
@@ -1094,6 +1213,15 @@ function commentsBeforeCompleteState(
 			context: { ...context, createdComment: inspection.comments[0] },
 			read: emptyCommentRead(),
 		};
+	if (context.recoveryStage)
+		return failed(
+			context.recoveryStage === "verified"
+				? "PI_WORKFLOW_QA_HANDOFF_ALREADY_VERIFIED"
+				: "PI_WORKFLOW_QA_HANDOFF_RECOVERY_PENDING",
+			context.recoveryStage === "verified"
+				? "The verified QA handoff comment is no longer visible; refusing a duplicate mutation."
+				: "A prior comment creation is uncertain; retry lookup later without repeating the mutation.",
+		);
 	return {
 		phase: "current-user-before-mutation",
 		context,
@@ -1165,7 +1293,7 @@ function commentCreationResultState(
 
 async function transitionToolResult(
 	dispatch: PublicationPhaseDispatch,
-	event: ToolResultEvent,
+	event: QaHandoffMcpPublication.ToolResultEvent,
 ): Promise<PublicationState> {
 	if (
 		dispatch.kind !== "tool-result" ||
@@ -1178,14 +1306,37 @@ async function transitionToolResult(
 		);
 	if (event.isError === true) {
 		const classification = classifyMcpError(event);
-		return failed(
-			classification === "unauthenticated"
-				? "PI_WORKFLOW_QA_HANDOFF_MCP_UNAUTHENTICATED"
-				: "PI_WORKFLOW_QA_HANDOFF_MCP_INCOMPATIBLE",
-			classification === "unauthenticated"
-				? "Linear MCP is present but not authenticated."
-				: "Linear MCP returned an out-of-order, failed, or incompatible result.",
-		);
+		const failures: Record<
+			McpErrorClassification,
+			{ readonly code: string; readonly message: string }
+		> = {
+			unauthenticated: {
+				code: "PI_WORKFLOW_QA_HANDOFF_MCP_UNAUTHENTICATED",
+				message: "Linear MCP is present but not authenticated.",
+			},
+			"permission-denied": {
+				code: "PI_WORKFLOW_QA_HANDOFF_MCP_PERMISSION_DENIED",
+				message:
+					"Linear MCP denied permission for the planned QA handoff operation.",
+			},
+			"rate-limited": {
+				code: "PI_WORKFLOW_QA_HANDOFF_MCP_RATE_LIMITED",
+				message:
+					"Linear MCP rate-limited the planned QA handoff operation; retry later.",
+			},
+			"transport-failed": {
+				code: "PI_WORKFLOW_QA_HANDOFF_MCP_TRANSPORT_FAILED",
+				message:
+					"Linear MCP transport failed before a verifiable result was returned.",
+			},
+			incompatible: {
+				code: "PI_WORKFLOW_QA_HANDOFF_MCP_INCOMPATIBLE",
+				message:
+					"Linear MCP returned an out-of-order, failed, or incompatible result.",
+			},
+		};
+		const failure = failures[classification];
+		return failed(failure.code, failure.message);
 	}
 	const payload = toolPayload(event);
 	if (!record(payload))
@@ -1202,12 +1353,73 @@ async function transitionToolResult(
 }
 
 export function createQaHandoffMcpPublication(
-	options: QaHandoffPublicationDependencies,
-) {
+	options: QaHandoffMcpPublicationDependencies,
+): QaHandoffMcpPublication {
+	const toolIdentityReservationCapacity =
+		options.toolIdentityReservationCapacity ??
+		MAX_RUNTIME_RESERVED_TOOL_IDENTITIES;
+	if (
+		!Number.isSafeInteger(toolIdentityReservationCapacity) ||
+		toolIdentityReservationCapacity < 1 ||
+		toolIdentityReservationCapacity > MAX_RUNTIME_RESERVED_TOOL_IDENTITIES
+	)
+		throw new Error(
+			`QA handoff tool identity reservation capacity must be an integer from 1 through ${MAX_RUNTIME_RESERVED_TOOL_IDENTITIES}.`,
+		);
 	let state: PublicationState = { phase: "idle" };
+	let turnGeneration = 0;
+	let recoveryOwnerId = randomUUID();
 	let mcpAvailable: boolean | undefined;
+	// Accepted tool-call identities are reserved for this extension/runtime instance,
+	// across every Pi session it serves. They are never evicted, reassigned, or reset
+	// by session_start: a late result from any earlier session could otherwise satisfy
+	// a replacement call. The fixed fail-closed cap bounds runtime memory; exhausting
+	// it requires an extension reload rather than unsafe identity reuse.
+	const reservedToolIdentities = new Map<
+		string,
+		Readonly<{ generation: number }>
+	>();
+	const processedResults = new Map<number, Map<string, string>>();
+
+	function currentGenerationResults(): Map<string, string> {
+		let results = processedResults.get(turnGeneration);
+		if (!results) {
+			results = new Map();
+			processedResults.set(turnGeneration, results);
+		}
+		while (processedResults.size > 4) {
+			const oldest = processedResults.keys().next().value;
+			if (oldest === undefined) break;
+			processedResults.delete(oldest);
+		}
+		return results;
+	}
+
+	function toolCallIdentity(toolName: string, toolCallId: string): string {
+		return `${toolName}\u0000${toolCallId}`;
+	}
+
+	function resultIdentity(
+		event: QaHandoffMcpPublication.ToolResultEvent,
+	): string {
+		return toolCallIdentity(event.toolName, event.toolCallId ?? "");
+	}
+
+	function resultFingerprint(
+		event: QaHandoffMcpPublication.ToolResultEvent,
+	): string {
+		return digestCanonicalValue({
+			toolName: event.toolName,
+			toolCallId: event.toolCallId ?? null,
+			isError: event.isError === true,
+			content: event.content ?? null,
+		});
+	}
 
 	function start(issueId: string): void {
+		turnGeneration += 1;
+		recoveryOwnerId = randomUUID();
+		currentGenerationResults();
 		state = {
 			phase: "current-user",
 			context: { issueId },
@@ -1229,7 +1441,27 @@ export function createQaHandoffMcpPublication(
 	}
 
 	function clear(): void {
+		turnGeneration += 1;
+		recoveryOwnerId = randomUUID();
+		currentGenerationResults();
 		state = { phase: "idle" };
+	}
+
+	function isCurrentTurn(
+		generation: number,
+		expectedState: PublicationState,
+	): boolean {
+		return turnGeneration === generation && state === expectedState;
+	}
+
+	function staleToolCallBlock(): {
+		readonly block: true;
+		readonly reason: string;
+	} {
+		return {
+			block: true,
+			reason: "PI_WORKFLOW_QA_HANDOFF_MCP_PROTOCOL_INVALID",
+		};
 	}
 
 	function hasActiveTurn(): boolean {
@@ -1243,35 +1475,309 @@ export function createQaHandoffMcpPublication(
 			: undefined;
 	}
 
-	function handleToolCall(
-		event: ToolCallEvent,
-	): { block: true; reason: string } | undefined {
-		if (!hasActiveTurn()) return undefined;
+	async function handleToolCallSerial(
+		event: QaHandoffMcpPublication.ToolCallEvent,
+		generation: number,
+		generationOwnerId: string,
+		activeState: PublicationState,
+	): Promise<{ block: true; reason: string } | undefined> {
+		if (!isCurrentTurn(generation, activeState) || activeState.phase === "idle")
+			return staleToolCallBlock();
 		if (
 			event.toolName === "read" &&
-			state.phase === "current-user" &&
+			activeState.phase === "current-user" &&
 			record(event.input) &&
 			Object.keys(event.input).length === 1 &&
 			nonEmpty(event.input.path) &&
 			event.input.path.endsWith("/skills/qa-handoff/SKILL.md")
 		)
 			return undefined;
-		const transition = transitionToolCall(
-			dispatchForPhase(options, state),
-			event,
-		);
+		const dispatch = dispatchForPhase(options, activeState);
+		const acceptedIdentity =
+			dispatch.kind === "tool-call" &&
+			event.toolName === dispatch.expectedModelCall.toolName &&
+			nonEmpty(event.toolCallId) &&
+			exactInput(event.input, dispatch.expectedModelCall.input)
+				? toolCallIdentity(event.toolName, event.toolCallId)
+				: undefined;
+		const priorReservation = acceptedIdentity
+			? reservedToolIdentities.get(acceptedIdentity)
+			: undefined;
+		if (priorReservation) return staleToolCallBlock();
+		if (
+			acceptedIdentity &&
+			reservedToolIdentities.size >= toolIdentityReservationCapacity
+		) {
+			state = failed(
+				"PI_WORKFLOW_QA_HANDOFF_MCP_PROTOCOL_INVALID",
+				`The QA handoff extension runtime exhausted its bounded ${toolIdentityReservationCapacity} tool identity reservation capacity; reload the extension before starting another handoff.`,
+			);
+			return { block: true, reason: state.blocker.code };
+		}
+		if (
+			dispatch.kind === "tool-call" &&
+			dispatch.expectedCall.toolName === SAVE_COMMENT_TOOL &&
+			event.toolName === SAVE_COMMENT_TOOL &&
+			nonEmpty(event.toolCallId) &&
+			exactInput(event.input, dispatch.expectedModelCall.input) &&
+			activeState.phase === "comment-create"
+		) {
+			try {
+				ensureGenerationActive(() => isCurrentTurn(generation, activeState));
+				// This durable claim is the last local step before authorizing the external
+				// Linear mutation. Once tool authorization returns, a process crash cannot
+				// be atomically coordinated with external execution, so the outcome is
+				// intentionally uncertain. Recovery must remain lookup-only and fail closed;
+				// do not add leases or mutation retries without definitive non-execution proof.
+				await options.recovery.claim(
+					activeState.context.preparedArtifact,
+					generationOwnerId,
+				);
+				if (!isCurrentTurn(generation, activeState)) {
+					try {
+						await options.recovery.release(
+							activeState.context.preparedArtifact,
+							generationOwnerId,
+						);
+					} catch {
+						// Replacement state cannot be mutated by a stale turn; a failed
+						// durable release remains fail-closed for a later recovery lookup.
+					}
+					return staleToolCallBlock();
+				}
+			} catch (error) {
+				if (!isCurrentTurn(generation, activeState))
+					return staleToolCallBlock();
+				state = failed(
+					"PI_WORKFLOW_QA_HANDOFF_RECOVERY_PERSISTENCE_FAILED",
+					error instanceof Error
+						? error.message
+						: "QA handoff recovery claim persistence failed.",
+				);
+				return { block: true, reason: state.blocker.code };
+			}
+		}
+		if (!isCurrentTurn(generation, activeState)) return staleToolCallBlock();
+		const transition = transitionToolCall(dispatch, event);
 		state = transition.state;
+		if (!transition.block && acceptedIdentity)
+			reservedToolIdentities.set(
+				acceptedIdentity,
+				Object.freeze({ generation }),
+			);
 		if (transition.replacementBody && record(event.input))
 			event.input.body = transition.replacementBody;
 		return transition.block;
 	}
 
-	async function handleToolResult(event: ToolResultEvent): Promise<void> {
-		if (!hasActiveTurn() || !MCP_TOOLS.has(event.toolName)) return;
-		state = await transitionToolResult(dispatchForPhase(options, state), event);
+	let toolCallQueueGeneration = turnGeneration;
+	let toolCallQueue: Promise<void> = Promise.resolve();
+	async function handleToolCall(
+		event: QaHandoffMcpPublication.ToolCallEvent,
+	): Promise<{ block: true; reason: string } | undefined> {
+		if (!hasActiveTurn()) return undefined;
+		const queuedGeneration = turnGeneration;
+		const queuedOwnerId = recoveryOwnerId;
+		const queuedState = state;
+		if (toolCallQueueGeneration !== queuedGeneration) {
+			toolCallQueueGeneration = queuedGeneration;
+			toolCallQueue = Promise.resolve();
+		}
+		const preceding = toolCallQueue;
+		let releaseQueue: () => void = () => {};
+		toolCallQueue = new Promise<void>((resolve) => {
+			releaseQueue = resolve;
+		});
+		await preceding;
+		try {
+			if (!isCurrentTurn(queuedGeneration, queuedState))
+				return staleToolCallBlock();
+			return await handleToolCallSerial(
+				event,
+				queuedGeneration,
+				queuedOwnerId,
+				queuedState,
+			);
+		} finally {
+			releaseQueue();
+		}
 	}
 
-	async function complete(input: unknown): Promise<PublishedHandoff | Blocker> {
+	let preparationQueueGeneration = turnGeneration;
+	let preparationQueue: Promise<void> = Promise.resolve();
+	async function transitionResultWithPreparationLock(
+		event: QaHandoffMcpPublication.ToolResultEvent,
+		generation: number,
+		activeState: PublicationState,
+	): Promise<PublicationState> {
+		const transition = () =>
+			transitionToolResult(
+				dispatchForPhase(options, activeState, () =>
+					isCurrentTurn(generation, activeState),
+				),
+				event,
+			);
+		if (activeState.phase !== "issue-verify-result") return transition();
+		if (preparationQueueGeneration !== generation) {
+			preparationQueueGeneration = generation;
+			preparationQueue = Promise.resolve();
+		}
+		const preceding = preparationQueue;
+		let releaseQueue: () => void = () => {};
+		preparationQueue = new Promise<void>((resolve) => {
+			releaseQueue = resolve;
+		});
+		await preceding;
+		try {
+			ensureGenerationActive(() => isCurrentTurn(generation, activeState));
+			return await transition();
+		} finally {
+			releaseQueue();
+		}
+	}
+
+	async function handleToolResultSerial(
+		event: QaHandoffMcpPublication.ToolResultEvent,
+		generation: number,
+		generationOwnerId: string,
+		activeState: PublicationState,
+	): Promise<boolean> {
+		if (
+			!isCurrentTurn(generation, activeState) ||
+			activeState.phase === "idle" ||
+			!MCP_TOOLS.has(event.toolName)
+		)
+			return false;
+		// Linear's PERMISSION_DENIED contract rejects authorization before mutation;
+		// unlike transport and rate-limit failures, it is definitive non-mutation evidence.
+		if (
+			activeState.phase === "comment-create-result" &&
+			event.toolName === SAVE_COMMENT_TOOL &&
+			event.toolCallId === activeState.toolCallId &&
+			event.isError === true &&
+			classifyMcpError(event) === "permission-denied"
+		) {
+			try {
+				ensureGenerationActive(() => isCurrentTurn(generation, activeState));
+				await options.recovery.release(
+					activeState.context.preparedArtifact,
+					generationOwnerId,
+				);
+				if (!isCurrentTurn(generation, activeState)) return false;
+			} catch (error) {
+				if (!isCurrentTurn(generation, activeState)) return false;
+				state = failed(
+					"PI_WORKFLOW_QA_HANDOFF_RECOVERY_PERSISTENCE_FAILED",
+					error instanceof Error
+						? error.message
+						: "QA handoff recovery release persistence failed.",
+				);
+				return true;
+			}
+		}
+		let transitioned: PublicationState;
+		try {
+			transitioned = await transitionResultWithPreparationLock(
+				event,
+				generation,
+				activeState,
+			);
+		} catch (error) {
+			if (error === CANCELLED_GENERATION) return false;
+			throw error;
+		}
+		if (!isCurrentTurn(generation, activeState)) return false;
+		if (
+			activeState.phase === "issue-final-result" &&
+			transitioned.phase === "ready"
+		) {
+			try {
+				ensureGenerationActive(() => isCurrentTurn(generation, activeState));
+				await options.recovery.finalizeVerified(
+					activeState.context.preparedArtifact,
+				);
+				if (!isCurrentTurn(generation, activeState)) return false;
+			} catch (error) {
+				if (!isCurrentTurn(generation, activeState)) return false;
+				state = failed(
+					"PI_WORKFLOW_QA_HANDOFF_RECOVERY_PERSISTENCE_FAILED",
+					error instanceof Error
+						? error.message
+						: "QA handoff verified recovery persistence failed.",
+				);
+				return true;
+			}
+		}
+		state = transitioned;
+		return true;
+	}
+
+	let toolResultQueueGeneration = turnGeneration;
+	let toolResultQueue: Promise<void> = Promise.resolve();
+	async function handleToolResult(
+		event: QaHandoffMcpPublication.ToolResultEvent,
+	): Promise<boolean> {
+		if (!hasActiveTurn() || !MCP_TOOLS.has(event.toolName)) return false;
+		const queuedGeneration = turnGeneration;
+		const queuedOwnerId = recoveryOwnerId;
+		const queuedState = state;
+		if (toolResultQueueGeneration !== queuedGeneration) {
+			toolResultQueueGeneration = queuedGeneration;
+			toolResultQueue = Promise.resolve();
+		}
+		const preceding = toolResultQueue;
+		let releaseQueue: () => void = () => {};
+		toolResultQueue = new Promise<void>((resolve) => {
+			releaseQueue = resolve;
+		});
+		await preceding;
+		try {
+			const identity = resultIdentity(event);
+			const reservation = reservedToolIdentities.get(identity);
+			if (reservation && reservation.generation !== queuedGeneration)
+				return false;
+			if (!reservation) {
+				if (isCurrentTurn(queuedGeneration, queuedState)) {
+					state = failed(
+						"PI_WORKFLOW_QA_HANDOFF_MCP_INCOMPATIBLE",
+						"Linear MCP returned a result without a current issued tool identity.",
+					);
+					return true;
+				}
+				return false;
+			}
+			const fingerprint = resultFingerprint(event);
+			const generationResults = processedResults.get(queuedGeneration);
+			const settledFingerprint = generationResults?.get(identity);
+			if (settledFingerprint !== undefined) {
+				if (settledFingerprint === fingerprint) return false;
+				if (turnGeneration === queuedGeneration && hasActiveTurn()) {
+					state = failed(
+						"PI_WORKFLOW_QA_HANDOFF_MCP_INCOMPATIBLE",
+						"Linear MCP returned conflicting payloads for the same tool call identity.",
+					);
+					return true;
+				}
+				return false;
+			}
+			if (!isCurrentTurn(queuedGeneration, queuedState)) return false;
+			currentGenerationResults().set(identity, fingerprint);
+			return await handleToolResultSerial(
+				event,
+				queuedGeneration,
+				queuedOwnerId,
+				queuedState,
+			);
+		} finally {
+			releaseQueue();
+		}
+	}
+
+	async function complete(
+		input: unknown,
+	): Promise<
+		QaHandoffMcpPublication.PublishedHandoff | QaHandoffMcpPublication.Blocker
+	> {
 		if (state.phase === "blocked") {
 			return { status: state.status, blocker: state.blocker };
 		}

@@ -1,14 +1,40 @@
 import type { ExtensionAPI, InputEvent } from "@earendil-works/pi-coding-agent";
-import type { createQaHandoffMcpPublication } from "./qa-handoff-mcp-publication.ts";
+import type { QaHandoffMcpPublication } from "./qa-handoff-mcp-publication.ts";
+import type {
+	QaHandoffAuthorizationOutcome,
+	QaHandoffPublicationOutcome,
+} from "./qa-handoff-workflow.ts";
 
-interface QaHandoffRuntimeWorkflow {
-	authorizeInvocation(issueId: string): Promise<unknown>;
-	publish(input: unknown): Promise<unknown>;
+export interface QaHandoffRuntimeWorkflow {
+	authorizeInvocation(issueId: string): Promise<QaHandoffAuthorizationOutcome>;
+	publish(input: unknown): Promise<QaHandoffPublicationOutcome>;
 }
 
-interface RuntimeOutcome {
-	readonly status: string;
-	readonly blocker?: { readonly code: string; readonly message: string };
+type QaHandoffRuntimeOutcome =
+	| QaHandoffMcpPublication.PublishedHandoff
+	| QaHandoffMcpPublication.Blocker;
+
+export type QaHandoffRuntimeOptions =
+	| {
+			readonly workflow: QaHandoffRuntimeWorkflow;
+			readonly mcpPublication?: never;
+	  }
+	| {
+			readonly workflow?: never;
+			readonly mcpPublication: QaHandoffMcpPublication;
+	  };
+
+export interface QaHandoffRuntime {
+	readonly toolName: "workflow_qa_handoff";
+	readonly allowedTools: readonly string[];
+	clearActiveTurn(): void;
+	handlePublicEntry(event: InputEvent): void;
+	handleSettled(): void;
+	hasActiveTurn(): boolean;
+	hasPendingAnchorContinuation(): boolean;
+	shouldContinue(event: InputEvent): boolean;
+	execute(value: unknown): Promise<QaHandoffRuntimeOutcome>;
+	register(pi: ExtensionAPI): void;
 }
 
 const publicEntryPattern = /^\/(?:skill:)?qa-handoff(?:\s|$)/;
@@ -16,36 +42,49 @@ const inputPattern =
 	/^\/(?:skill:)?qa-handoff\s+([A-Z][A-Z0-9]*-[1-9][0-9]*)\s*$/;
 const continuationPattern = /^\s*([A-Z][A-Z0-9]*-[1-9][0-9]*)\s*$/;
 
-const blocked = (code: string, message: string): RuntimeOutcome => ({
+const blocked = (
+	code: string,
+	message: string,
+): QaHandoffMcpPublication.Blocker => ({
 	status: "blocked",
 	blocker: { code, message },
 });
 
 function errorCode(error: unknown, fallback: string): string {
-	if (!error || typeof error !== "object" || !("code" in error) ||
-		typeof error.code !== "string" || error.code.length === 0) return fallback;
+	if (
+		!error ||
+		typeof error !== "object" ||
+		!("code" in error) ||
+		typeof error.code !== "string" ||
+		error.code.length === 0
+	)
+		return fallback;
 	return error.code;
 }
 
 export function createUnavailableQaHandoffWorkflow(): QaHandoffRuntimeWorkflow {
-	const unavailable = () => Promise.resolve(blocked(
-		"PI_WORKFLOW_QA_HANDOFF_CONFIGURATION_REQUIRED",
-		"The QA handoff artifact, Developer authority, and Linear adapters are not configured.",
-	));
+	const unavailable = () =>
+		Promise.resolve(
+			blocked(
+				"PI_WORKFLOW_QA_HANDOFF_CONFIGURATION_REQUIRED",
+				"The QA handoff artifact, Developer authority, and Linear adapters are not configured.",
+			),
+		);
 	return {
 		authorizeInvocation: unavailable,
 		publish: unavailable,
 	};
 }
 
-export function createQaHandoffRuntime(options:
-	| { readonly workflow: QaHandoffRuntimeWorkflow }
-	| { readonly mcpPublication: ReturnType<typeof createQaHandoffMcpPublication> }) {
-	const toolName = "workflow_qa_handoff";
+export function createQaHandoffRuntime(
+	options: QaHandoffRuntimeOptions,
+): QaHandoffRuntime {
+	const toolName = "workflow_qa_handoff" as const;
 	const workflow = "workflow" in options ? options.workflow : undefined;
-	const mcpPublication = "mcpPublication" in options ? options.mcpPublication : undefined;
+	const mcpPublication =
+		"mcpPublication" in options ? options.mcpPublication : undefined;
 	let activeIssueId: string | undefined;
-	let authorization: Promise<unknown> | undefined;
+	let authorization: Promise<QaHandoffAuthorizationOutcome> | undefined;
 	let awaitingAnchor = false;
 
 	function clearAuthorization(): void {
@@ -64,7 +103,6 @@ export function createQaHandoffRuntime(options:
 		activeIssueId = issueId;
 		if (mcpPublication) {
 			mcpPublication.start(issueId);
-			authorization = Promise.resolve({ status: "mcp-publication" });
 			return;
 		}
 		authorization = workflow?.authorizeInvocation(issueId);
@@ -79,19 +117,28 @@ export function createQaHandoffRuntime(options:
 			else awaitingAnchor = true;
 			return;
 		}
-		if (!awaitingAnchor || event.source !== "interactive" ||
-			event.streamingBehavior !== undefined) return;
+		if (
+			!awaitingAnchor ||
+			event.source !== "interactive" ||
+			event.streamingBehavior !== undefined
+		)
+			return;
 		const continuation = event.text.match(continuationPattern);
 		if (continuation?.[1]) authorize(continuation[1]);
 	}
 
 	function shouldContinue(event: InputEvent): boolean {
 		if (!awaitingAnchor) return false;
-		const accepted = event.source === "interactive" &&
+		const accepted =
+			event.source === "interactive" &&
 			event.streamingBehavior === undefined &&
 			continuationPattern.test(event.text);
-		if (!accepted && event.source === "interactive" &&
-			event.streamingBehavior === undefined) awaitingAnchor = false;
+		if (
+			!accepted &&
+			event.source === "interactive" &&
+			event.streamingBehavior === undefined
+		)
+			awaitingAnchor = false;
 		return accepted;
 	}
 
@@ -105,10 +152,13 @@ export function createQaHandoffRuntime(options:
 	}
 
 	function hasActiveTurn(): boolean {
-		return activeIssueId !== undefined && authorization !== undefined;
+		return (
+			activeIssueId !== undefined &&
+			(mcpPublication !== undefined || authorization !== undefined)
+		);
 	}
 
-	async function execute(value: unknown): Promise<unknown> {
+	async function execute(value: unknown): Promise<QaHandoffRuntimeOutcome> {
 		if (mcpPublication) {
 			const outcome = mcpPublication.complete(value);
 			clearAuthorization();
@@ -117,50 +167,66 @@ export function createQaHandoffRuntime(options:
 		const issueId = activeIssueId;
 		const pendingAuthorization = authorization;
 		clearActiveTurn();
-		if (!value || typeof value !== "object" || Array.isArray(value) ||
-			Object.keys(value).length !== 1 || !("issueId" in value) ||
-			typeof value.issueId !== "string" || value.issueId !== issueId ||
-			!pendingAuthorization)
+		if (
+			!value ||
+			typeof value !== "object" ||
+			Array.isArray(value) ||
+			Object.keys(value).length !== 1 ||
+			!("issueId" in value) ||
+			typeof value.issueId !== "string" ||
+			value.issueId !== issueId ||
+			!pendingAuthorization
+		)
 			return blocked(
 				"PI_WORKFLOW_QA_HANDOFF_INPUT_INVALID",
 				"QA handoff accepts only the Linear issue ID bound to the active public turn.",
 			);
-		let authorized: unknown;
+		let authorized: QaHandoffAuthorizationOutcome;
 		try {
 			authorized = await pendingAuthorization;
 		} catch (error) {
 			return blocked(
 				errorCode(error, "PI_WORKFLOW_QA_HANDOFF_PREPARATION_FAILED"),
-				error instanceof Error ? error.message : "QA handoff preparation failed.",
+				error instanceof Error
+					? error.message
+					: "QA handoff preparation failed.",
 			);
 		}
-		if (!authorized || typeof authorized !== "object" ||
-			(authorized as { status?: unknown }).status !== "authorized") return authorized;
-		let publication: unknown;
+		if (authorized.status !== "authorized") return authorized;
+		if (!workflow)
+			return blocked(
+				"PI_WORKFLOW_QA_HANDOFF_CONFIGURATION_REQUIRED",
+				"The QA handoff workflow is not configured.",
+			);
+		let publication: QaHandoffPublicationOutcome;
 		try {
-			publication = await workflow?.publish({ issueId });
+			publication = await workflow.publish({ issueId });
 		} catch (error) {
 			return blocked(
 				errorCode(error, "PI_WORKFLOW_QA_HANDOFF_PUBLICATION_FAILED"),
-				error instanceof Error ? error.message : "QA handoff publication failed.",
+				error instanceof Error
+					? error.message
+					: "QA handoff publication failed.",
 			);
 		}
-		if (!publication || typeof publication !== "object" ||
-			(publication as { status?: unknown }).status !== "published") return publication;
-		const commentId = (publication as { comment?: { id?: unknown } }).comment?.id;
+		if (publication.status !== "published") return publication;
 		return {
 			status: "published",
 			issueId,
-			...(typeof commentId === "string" ? { commentId } : {}),
+			commentId: publication.comment.id,
 		};
 	}
 
 	function register(pi: ExtensionAPI): void {
 		pi.on("before_agent_start", () => {
 			if (!hasActiveTurn()) return undefined;
-			const getAllTools = (pi as { getAllTools?: () => readonly { name: string }[] }).getAllTools;
+			const getAllTools = (
+				pi as { getAllTools?: () => readonly { name: string }[] }
+			).getAllTools;
 			if (mcpPublication) {
-				const available = new Set(getAllTools?.call(pi).map((tool) => tool.name) ?? []);
+				const available = new Set(
+					getAllTools?.call(pi).map((tool) => tool.name) ?? [],
+				);
 				mcpPublication.setMcpAvailable(
 					mcpPublication.allowedTools
 						.filter((name) => name !== toolName)
@@ -171,23 +237,24 @@ export function createQaHandoffRuntime(options:
 			return {
 				systemPrompt: expected
 					? [
-						"You are executing the artifact-backed Linear MCP QA handoff for an explicitly admitted Developer turn.",
-						`Call ${expected.toolName} exactly once with ${JSON.stringify(expected.input)}.`,
-						"Do not call tools in parallel or provide additional fields. Follow only the next exact call exposed after each result.",
-						"The exact root comment body is owned by the persisted artifact; do not alter it. Report the returned publication or blocker exactly.",
-					].join(" ")
+							"You are executing the artifact-backed Linear MCP QA handoff for an explicitly admitted Developer turn.",
+							`Call ${expected.toolName} exactly once with ${JSON.stringify(expected.input)}.`,
+							"Do not call tools in parallel or provide additional fields. Follow only the next exact call exposed after each result.",
+							"The exact root comment body is owned by the persisted artifact; do not alter it. Report the returned publication or blocker exactly.",
+						].join(" ")
 					: [
-						"You are executing the implemented QA handoff workflow for an explicitly admitted Developer turn.",
-						`Call ${toolName} exactly once with issueId="${activeIssueId}".`,
-						"Do not provide a body, digest, authority, revision, workflow mutation, or any other field.",
-						"Report the returned publication or blocker exactly.",
-					].join(" "),
+							"You are executing the implemented QA handoff workflow for an explicitly admitted Developer turn.",
+							`Call ${toolName} exactly once with issueId="${activeIssueId}".`,
+							"Do not provide a body, digest, authority, revision, workflow mutation, or any other field.",
+							"Report the returned publication or blocker exactly.",
+						].join(" "),
 			};
 		});
 		pi.on("tool_call", (event) => mcpPublication?.handleToolCall(event));
 		pi.on("tool_result", async (event) => {
 			if (!mcpPublication) return undefined;
-			await mcpPublication.handleToolResult(event);
+			const processed = await mcpPublication.handleToolResult(event);
+			if (!processed) return undefined;
 			const instruction = mcpPublication.nextCallInstruction();
 			if (!instruction) return undefined;
 			return {
@@ -220,7 +287,9 @@ export function createQaHandoffRuntime(options:
 			},
 			async execute(_toolCallId: string, input: unknown) {
 				return {
-					content: [{ type: "text", text: JSON.stringify(await execute(input)) }],
+					content: [
+						{ type: "text", text: JSON.stringify(await execute(input)) },
+					],
 					details: {},
 				};
 			},

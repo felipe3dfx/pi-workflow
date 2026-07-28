@@ -103,6 +103,7 @@ extensions/qa-handoff-artifact-store.ts
 extensions/qa-handoff-draft-producer.ts
 extensions/qa-handoff-draft-store.ts
 extensions/qa-handoff-mcp-publication.ts
+extensions/qa-handoff-publication-recovery.ts
 extensions/qa-handoff-runtime.ts
 extensions/qa-handoff-workflow.ts
 extensions/review-router.ts

@@ -24,6 +24,10 @@ import { createDefineProductRuntime } from "./define-product-runtime.ts";
 import { createQaHandoffArtifactStore } from "./qa-handoff-artifact-store.ts";
 import { createQaHandoffMcpPublication } from "./qa-handoff-mcp-publication.ts";
 import {
+	createQaHandoffPublicationRecoveryStore,
+	type QaHandoffPublicationRecoveryStore,
+} from "./qa-handoff-publication-recovery.ts";
+import {
 	createQaHandoffDraftStore,
 	type QaHandoffDraftStore,
 } from "./qa-handoff-draft-store.ts";
@@ -102,6 +106,10 @@ export interface PiWorkflowExtensionOptions extends CompanionWorkflowOptions {
 		workflow?: ReturnType<typeof createQaHandoffWorkflow>;
 		drafts?: QaHandoffDraftStore;
 		artifacts?: QaHandoffArtifactStore;
+		/** Infrastructure-only recovery adapter; public commands and tools are unchanged. */
+		recovery?: QaHandoffPublicationRecoveryStore;
+		/** Optional stricter runtime cap; the production maximum remains 16,384. */
+		toolIdentityReservationCapacity?: number;
 	};
 	productReview?: {
 		workflow?: ReturnType<typeof createProductReviewWorkflow>;
@@ -166,6 +174,15 @@ export default function piWorkflowExtension(
 		save: (artifact: Parameters<QaHandoffArtifactStore["save"]>[0]) =>
 			currentQaHandoffArtifactStore().save(artifact),
 	};
+	// Current Linear MCP evidence has no trusted workspace identity, so recovery
+	// deliberately shares the same project-aware namespace as QA artifacts. Do not
+	// replace it with a collision-prone pseudo-global key.
+	const qaHandoffRecovery: QaHandoffPublicationRecoveryStore =
+		workflowOptions.qaHandoff?.recovery ??
+		createQaHandoffPublicationRecoveryStore({
+			store: qaHandoffWorkflowArtifactStore,
+			project: () => projectName(currentCtx?.cwd ?? process.cwd()),
+		});
 	const qaHandoffRuntime = createQaHandoffRuntime(
 		configuredQaHandoffWorkflow
 			? { workflow: configuredQaHandoffWorkflow }
@@ -173,6 +190,9 @@ export default function piWorkflowExtension(
 					mcpPublication: createQaHandoffMcpPublication({
 						drafts: qaHandoffDrafts,
 						artifacts: qaHandoffArtifacts,
+						recovery: qaHandoffRecovery,
+						toolIdentityReservationCapacity:
+							workflowOptions.qaHandoff?.toolIdentityReservationCapacity,
 					}),
 				},
 	);
