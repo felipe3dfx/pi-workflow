@@ -167,14 +167,14 @@ export function createQaHandoffRuntime(options:
 						.every((name) => available.has(name)),
 				);
 			}
-			const expected = mcpPreflight?.expectedCall();
+			const expected = mcpPreflight?.expectedModelCall();
 			return {
 				systemPrompt: expected
 					? [
-						"You are executing the read-only Linear MCP preflight for an explicitly admitted Developer turn.",
+						"You are executing the artifact-backed Linear MCP QA handoff for an explicitly admitted Developer turn.",
 						`Call ${expected.toolName} exactly once with ${JSON.stringify(expected.input)}.`,
 						"Do not call tools in parallel or provide additional fields. Follow only the next exact call exposed after each result.",
-						"Report the returned authorization or blocker exactly.",
+						"The exact root comment body is owned by the persisted artifact; do not alter it. Report the returned publication or blocker exactly.",
 					].join(" ")
 					: [
 						"You are executing the implemented QA handoff workflow for an explicitly admitted Developer turn.",
@@ -185,7 +185,18 @@ export function createQaHandoffRuntime(options:
 			};
 		});
 		pi.on("tool_call", (event) => mcpPreflight?.handleToolCall(event));
-		pi.on("tool_result", (event) => mcpPreflight?.handleToolResult(event));
+		pi.on("tool_result", async (event) => {
+			if (!mcpPreflight) return undefined;
+			await mcpPreflight.handleToolResult(event);
+			const instruction = mcpPreflight.nextCallInstruction();
+			if (!instruction) return undefined;
+			return {
+				content: [
+					...event.content,
+					{ type: "text" as const, text: instruction },
+				],
+			};
+		});
 		pi.on("agent_settled", handleSettled);
 		pi.on("session_start", clearActiveTurn);
 		pi.on("session_shutdown", clearActiveTurn);

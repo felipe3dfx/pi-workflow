@@ -190,8 +190,8 @@ function developer(
 		"authorityRevision" in value && text(value.authorityRevision);
 }
 
-function createArtifact(
-	issue: LinearQaHandoffIssueSnapshot,
+export function createQaHandoffArtifact(
+	issue: Pick<LinearQaHandoffIssueSnapshot, "id" | "updatedAt">,
 	authority: AuthenticatedAuthority & { role: "Developer" },
 	draft: QaHandoffDraft,
 ): QaHandoffArtifact {
@@ -327,7 +327,7 @@ export function createQaHandoffWorkflow(dependencies: Dependencies) {
 				return blocked("PI_WORKFLOW_QA_HANDOFF_AUTHORITY_MISMATCH", "Exact Developer authority is required.");
 			if (!isQaHandoffDraft(draft))
 				return blocked("PI_WORKFLOW_QA_HANDOFF_ARTIFACT_INVALID", "Complete structured QA handoff evidence is required.");
-			const candidate = createArtifact(issue, authority, draft);
+			const candidate = createQaHandoffArtifact(issue, authority, draft);
 			const existing = await dependencies.artifacts.read(issueId);
 			if (existing && (!isQaHandoffArtifact(existing, issueId) || existing.digest !== candidate.digest))
 				return blocked("PI_WORKFLOW_QA_HANDOFF_ARTIFACT_CONFLICT", "The issue already has a different QA handoff artifact.");
