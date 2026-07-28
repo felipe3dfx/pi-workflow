@@ -192,6 +192,29 @@ type ExpectedCall = {
 	readonly input: Readonly<Record<string, unknown>>;
 };
 
+type PublicationPhaseDispatch =
+	| { readonly kind: "inactive" }
+	| {
+			readonly kind: "tool-call";
+			readonly expectedCall: ExpectedCall;
+			readonly expectedModelCall: ExpectedCall;
+			readonly transition: (toolCallId: string) => PublicationState;
+			readonly replacementBody?: string;
+	  }
+	| {
+			readonly kind: "tool-result";
+			readonly expectedTool: string;
+			readonly toolCallId: string;
+			readonly transition: (
+				payload: Record<string, unknown>,
+			) => PublicationState | Promise<PublicationState>;
+	  }
+	| {
+			readonly kind: "completion";
+			readonly expectedCall: ExpectedCall;
+			readonly transition: () => PublicationState;
+	  };
+
 type ToolCallEvent = {
 	readonly toolName: string;
 	readonly toolCallId?: string;
@@ -496,169 +519,332 @@ function emptyCommentRead(): CommentRead {
 	return { comments: [], seenCursors: new Set() };
 }
 
-function expectedCall(state: PublicationState): ExpectedCall | undefined {
+function issueCall(issueId: string): ExpectedCall {
+	return {
+		toolName: ISSUE_TOOL,
+		input: { id: issueId, includeRelations: true },
+	};
+}
+
+function commentsCall(issueId: string, cursor?: string): ExpectedCall {
+	return {
+		toolName: LIST_COMMENTS_TOOL,
+		input: { issueId, ...(cursor ? { cursor } : {}) },
+	};
+}
+
+function publicationPhase(
+	options: QaHandoffPublicationDependencies,
+	state: PublicationState,
+): PublicationPhaseDispatch {
 	switch (state.phase) {
-		case "current-user":
-		case "current-user-before-mutation":
-			return { toolName: CURRENT_USER_TOOL, input: { query: "me" } };
-		case "issue":
-		case "issue-verify":
-		case "issue-before-mutation":
-		case "issue-final":
+		case "idle":
+			return { kind: "inactive" };
+		case "current-user": {
+			const call = { toolName: CURRENT_USER_TOOL, input: { query: "me" } };
 			return {
-				toolName: ISSUE_TOOL,
-				input: { id: state.context.issueId, includeRelations: true },
+				kind: "tool-call",
+				expectedCall: call,
+				expectedModelCall: call,
+				transition: (toolCallId) => ({
+					...state,
+					phase: "current-user-result",
+					toolCallId,
+				}),
 			};
-		case "comments-before":
-		case "comments-readback":
+		}
+		case "current-user-result":
 			return {
-				toolName: LIST_COMMENTS_TOOL,
-				input: {
-					issueId: state.context.issueId,
-					...(state.read.cursor ? { cursor: state.read.cursor } : {}),
-				},
+				kind: "tool-result",
+				expectedTool: CURRENT_USER_TOOL,
+				toolCallId: state.toolCallId,
+				transition: (payload) =>
+					actorResultState(payload, (currentActor) => ({
+						phase: "issue",
+						context: { ...state.context, actor: currentActor },
+					})),
 			};
-		case "comment-create":
+		case "issue": {
+			const call = issueCall(state.context.issueId);
 			return {
+				kind: "tool-call",
+				expectedCall: call,
+				expectedModelCall: call,
+				transition: (toolCallId) => ({
+					...state,
+					phase: "issue-result",
+					toolCallId,
+				}),
+			};
+		}
+		case "issue-result":
+			return {
+				kind: "tool-result",
+				expectedTool: ISSUE_TOOL,
+				toolCallId: state.toolCallId,
+				transition: (payload) =>
+					issueResultState(state.context, payload, (issue) => ({
+						phase: "issue-verify",
+						context: {
+							...state.context,
+							issueRevision: issue.updatedAt,
+							verifiedIssue: issue,
+						},
+					})),
+			};
+		case "issue-verify": {
+			const call = issueCall(state.context.issueId);
+			return {
+				kind: "tool-call",
+				expectedCall: call,
+				expectedModelCall: call,
+				transition: (toolCallId) => ({
+					...state,
+					phase: "issue-verify-result",
+					toolCallId,
+				}),
+			};
+		}
+		case "issue-verify-result":
+			return {
+				kind: "tool-result",
+				expectedTool: ISSUE_TOOL,
+				toolCallId: state.toolCallId,
+				transition: (payload) =>
+					issueResultState(state.context, payload, (issue) =>
+						verifiedIssueResultState(options, state, issue),
+					),
+			};
+		case "comments-before": {
+			const call = commentsCall(state.context.issueId, state.read.cursor);
+			return {
+				kind: "tool-call",
+				expectedCall: call,
+				expectedModelCall: call,
+				transition: (toolCallId) => ({
+					...state,
+					phase: "comments-before-result",
+					toolCallId,
+				}),
+			};
+		}
+		case "comments-before-result":
+			return {
+				kind: "tool-result",
+				expectedTool: LIST_COMMENTS_TOOL,
+				toolCallId: state.toolCallId,
+				transition: (payload) =>
+					commentsResultState(
+						state.read,
+						payload,
+						(read) => ({
+							phase: "comments-before",
+							context: state.context,
+							read,
+						}),
+						(comments) =>
+							commentsBeforeCompleteState(state.context, comments),
+					),
+			};
+		case "current-user-before-mutation": {
+			const call = { toolName: CURRENT_USER_TOOL, input: { query: "me" } };
+			return {
+				kind: "tool-call",
+				expectedCall: call,
+				expectedModelCall: call,
+				transition: (toolCallId) => ({
+					...state,
+					phase: "current-user-before-mutation-result",
+					toolCallId,
+				}),
+			};
+		}
+		case "current-user-before-mutation-result":
+			return {
+				kind: "tool-result",
+				expectedTool: CURRENT_USER_TOOL,
+				toolCallId: state.toolCallId,
+				transition: (payload) =>
+					actorResultState(payload, (currentActor) => {
+						if (
+							canonicalJson(currentActor) !==
+							canonicalJson(state.context.actor)
+						)
+							return failed(
+								"PI_WORKFLOW_QA_HANDOFF_AUTHORITY_MISMATCH",
+								"The authenticated Developer actor changed before QA handoff publication.",
+							);
+						return {
+							phase: "issue-before-mutation",
+							context: state.context,
+						};
+					}),
+			};
+		case "issue-before-mutation": {
+			const call = issueCall(state.context.issueId);
+			return {
+				kind: "tool-call",
+				expectedCall: call,
+				expectedModelCall: call,
+				transition: (toolCallId) => ({
+					...state,
+					phase: "issue-before-mutation-result",
+					toolCallId,
+				}),
+			};
+		}
+		case "issue-before-mutation-result":
+			return {
+				kind: "tool-result",
+				expectedTool: ISSUE_TOOL,
+				toolCallId: state.toolCallId,
+				transition: (payload) =>
+					issueResultState(state.context, payload, (issue) =>
+						matchesVerifiedSnapshot(state.context, issue)
+							? {
+									phase: "comment-create",
+									context: state.context,
+								}
+							: failed(
+									"PI_WORKFLOW_QA_HANDOFF_REVISION_MISMATCH",
+									"The complete Linear issue snapshot changed before QA handoff mutation.",
+								),
+					),
+			};
+		case "comment-create": {
+			const expectedCall = {
 				toolName: SAVE_COMMENT_TOOL,
 				input: {
 					issueId: state.context.issueId,
 					body: state.context.preparedArtifact.body,
 				},
 			};
+			return {
+				kind: "tool-call",
+				expectedCall,
+				expectedModelCall: {
+					toolName: SAVE_COMMENT_TOOL,
+					input: {
+						issueId: state.context.issueId,
+						body: CANONICAL_BODY_PLACEHOLDER,
+					},
+				},
+				transition: (toolCallId) => ({
+					...state,
+					phase: "comment-create-result",
+					toolCallId,
+				}),
+				replacementBody: state.context.preparedArtifact.body,
+			};
+		}
+		case "comment-create-result":
+			return {
+				kind: "tool-result",
+				expectedTool: SAVE_COMMENT_TOOL,
+				toolCallId: state.toolCallId,
+				transition: (payload) => commentCreationResultState(state, payload),
+			};
+		case "comments-readback": {
+			const call = commentsCall(state.context.issueId, state.read.cursor);
+			return {
+				kind: "tool-call",
+				expectedCall: call,
+				expectedModelCall: call,
+				transition: (toolCallId) => ({
+					...state,
+					phase: "comments-readback-result",
+					toolCallId,
+				}),
+			};
+		}
+		case "comments-readback-result":
+			return {
+				kind: "tool-result",
+				expectedTool: LIST_COMMENTS_TOOL,
+				toolCallId: state.toolCallId,
+				transition: (payload) =>
+					commentsResultState(
+						state.read,
+						payload,
+						(read) => ({
+							phase: "comments-readback",
+							context: state.context,
+							read,
+						}),
+						(comments) =>
+							commentsReadbackCompleteState(state.context, comments),
+					),
+			};
+		case "issue-final": {
+			const call = issueCall(state.context.issueId);
+			return {
+				kind: "tool-call",
+				expectedCall: call,
+				expectedModelCall: call,
+				transition: (toolCallId) => ({
+					...state,
+					phase: "issue-final-result",
+					toolCallId,
+				}),
+			};
+		}
+		case "issue-final-result":
+			return {
+				kind: "tool-result",
+				expectedTool: ISSUE_TOOL,
+				toolCallId: state.toolCallId,
+				transition: (payload) =>
+					issueResultState(state.context, payload, (issue) =>
+						matchesVerifiedSnapshot(state.context, issue)
+							? { phase: "ready", context: state.context }
+							: failed(
+									"PI_WORKFLOW_QA_HANDOFF_REVISION_MISMATCH",
+									"The complete Linear issue snapshot changed during QA handoff publication.",
+								),
+					),
+			};
 		case "ready":
 			return {
-				toolName: WORKFLOW_TOOL,
-				input: { issueId: state.context.issueId },
+				kind: "completion",
+				expectedCall: {
+					toolName: WORKFLOW_TOOL,
+					input: { issueId: state.context.issueId },
+				},
+				transition: () => state,
 			};
-		case "idle":
-		case "current-user-result":
-		case "issue-result":
-		case "issue-verify-result":
-		case "comments-before-result":
-		case "current-user-before-mutation-result":
-		case "issue-before-mutation-result":
-		case "comment-create-result":
-		case "comments-readback-result":
-		case "issue-final-result":
 		case "blocked":
-			return undefined;
+			return { kind: "inactive" };
 		default:
 			return assertNever(state);
 	}
 }
 
-function expectedModelCall(state: PublicationState): ExpectedCall | undefined {
-	const expected = expectedCall(state);
-	if (
-		expected?.toolName !== SAVE_COMMENT_TOOL ||
-		state.phase !== "comment-create"
-	)
-		return expected;
-	return {
-		toolName: SAVE_COMMENT_TOOL,
-		input: {
-			issueId: state.context.issueId,
-			body: CANONICAL_BODY_PLACEHOLDER,
-		},
-	};
+function expectedCall(
+	dispatch: PublicationPhaseDispatch,
+): ExpectedCall | undefined {
+	return dispatch.kind === "tool-call" || dispatch.kind === "completion"
+		? dispatch.expectedCall
+		: undefined;
 }
 
-function resultState(
-	state: PublicationState,
-	toolCallId: string,
-): PublicationState {
-	switch (state.phase) {
-		case "current-user":
-			return { ...state, phase: "current-user-result", toolCallId };
-		case "issue":
-			return { ...state, phase: "issue-result", toolCallId };
-		case "issue-verify":
-			return { ...state, phase: "issue-verify-result", toolCallId };
-		case "comments-before":
-			return { ...state, phase: "comments-before-result", toolCallId };
-		case "current-user-before-mutation":
-			return {
-				...state,
-				phase: "current-user-before-mutation-result",
-				toolCallId,
-			};
-		case "issue-before-mutation":
-			return {
-				...state,
-				phase: "issue-before-mutation-result",
-				toolCallId,
-			};
-		case "comment-create":
-			return { ...state, phase: "comment-create-result", toolCallId };
-		case "comments-readback":
-			return { ...state, phase: "comments-readback-result", toolCallId };
-		case "issue-final":
-			return { ...state, phase: "issue-final-result", toolCallId };
-		case "idle":
-		case "current-user-result":
-		case "issue-result":
-		case "issue-verify-result":
-		case "comments-before-result":
-		case "current-user-before-mutation-result":
-		case "issue-before-mutation-result":
-		case "comment-create-result":
-		case "comments-readback-result":
-		case "issue-final-result":
-		case "ready":
-		case "blocked":
-			return failed(
-				"PI_WORKFLOW_QA_HANDOFF_MCP_PROTOCOL_INVALID",
-				"QA handoff MCP tool, input, issue, body, or stage did not match the active publication plan.",
-			);
-		default:
-			return assertNever(state);
-	}
-}
-
-function expectedResultTool(state: PublicationState): string | undefined {
-	switch (state.phase) {
-		case "current-user-result":
-		case "current-user-before-mutation-result":
-			return CURRENT_USER_TOOL;
-		case "issue-result":
-		case "issue-verify-result":
-		case "issue-before-mutation-result":
-		case "issue-final-result":
-			return ISSUE_TOOL;
-		case "comments-before-result":
-		case "comments-readback-result":
-			return LIST_COMMENTS_TOOL;
-		case "comment-create-result":
-			return SAVE_COMMENT_TOOL;
-		case "idle":
-		case "current-user":
-		case "issue":
-		case "issue-verify":
-		case "comments-before":
-		case "current-user-before-mutation":
-		case "issue-before-mutation":
-		case "comment-create":
-		case "comments-readback":
-		case "issue-final":
-		case "ready":
-		case "blocked":
-			return undefined;
-		default:
-			return assertNever(state);
-	}
+function expectedModelCall(
+	dispatch: PublicationPhaseDispatch,
+): ExpectedCall | undefined {
+	if (dispatch.kind === "tool-call") return dispatch.expectedModelCall;
+	return dispatch.kind === "completion" ? dispatch.expectedCall : undefined;
 }
 
 function transitionToolCall(
-	state: PublicationState,
+	dispatch: PublicationPhaseDispatch,
 	event: ToolCallEvent,
 ): {
 	readonly state: PublicationState;
 	readonly block?: { readonly block: true; readonly reason: string };
 	readonly replacementBody?: string;
 } {
-	const expected = expectedModelCall(state);
+	const expected = expectedModelCall(dispatch);
 	if (
+		(dispatch.kind !== "tool-call" && dispatch.kind !== "completion") ||
 		!expected ||
 		event.toolName !== expected.toolName ||
 		!exactInput(event.input, expected.input)
@@ -672,11 +858,10 @@ function transitionToolCall(
 			block: { block: true, reason: next.blocker.code },
 		};
 	}
-	if (event.toolName === WORKFLOW_TOOL) return { state };
-	const replacement =
-		state.phase === "comment-create"
-			? { replacementBody: state.context.preparedArtifact.body }
-			: {};
+	if (dispatch.kind === "completion") return { state: dispatch.transition() };
+	const replacement = dispatch.replacementBody
+		? { replacementBody: dispatch.replacementBody }
+		: {};
 	if (!nonEmpty(event.toolCallId)) {
 		const next = failed(
 			"PI_WORKFLOW_QA_HANDOFF_MCP_INCOMPATIBLE",
@@ -689,19 +874,14 @@ function transitionToolCall(
 		};
 	}
 	return {
-		state: resultState(state, event.toolCallId),
+		state: dispatch.transition(event.toolCallId),
 		...replacement,
 	};
 }
 
 function actorResultState(
-	state:
-		| Extract<PublicationState, { phase: "current-user-result" }>
-		| Extract<
-				PublicationState,
-				{ phase: "current-user-before-mutation-result" }
-		  >,
 	payload: Record<string, unknown>,
+	transition: (actor: AuthenticatedLinearActor) => PublicationState,
 ): PublicationState {
 	if (!actorEvidence(payload))
 		return failed(
@@ -713,27 +893,12 @@ function actorResultState(
 			"PI_WORKFLOW_QA_HANDOFF_AUTHORITY_MISMATCH",
 			"The authenticated Linear actor does not have verifiable Developer authority.",
 		);
-	const currentActor = {
+	return transition({
 		id: payload.id,
 		name: payload.name,
 		isActive: payload.isActive,
 		isGuest: payload.isGuest,
-	};
-	if (state.phase === "current-user-before-mutation-result") {
-		if (canonicalJson(currentActor) !== canonicalJson(state.context.actor))
-			return failed(
-				"PI_WORKFLOW_QA_HANDOFF_AUTHORITY_MISMATCH",
-				"The authenticated Developer actor changed before QA handoff publication.",
-			);
-		return {
-			phase: "issue-before-mutation",
-			context: state.context,
-		};
-	}
-	return {
-		phase: "issue",
-		context: { ...state.context, actor: currentActor },
-	};
+	});
 }
 
 function validatesIssueAuthority(
@@ -848,63 +1013,30 @@ async function verifiedIssueResultState(
 	}
 }
 
-async function issueResultState(
-	options: QaHandoffPublicationDependencies,
-	state:
-		| Extract<PublicationState, { phase: "issue-result" }>
-		| Extract<PublicationState, { phase: "issue-verify-result" }>
-		| Extract<PublicationState, { phase: "issue-before-mutation-result" }>
-		| Extract<PublicationState, { phase: "issue-final-result" }>,
+function issueResultState(
+	context: AuthenticatedContext,
 	payload: Record<string, unknown>,
-): Promise<PublicationState> {
+	transition: (
+		issue: LinearIssueEvidence,
+	) => PublicationState | Promise<PublicationState>,
+): PublicationState | Promise<PublicationState> {
 	const issue = issueEvidence(payload);
 	if (!issue)
 		return failed(
 			"PI_WORKFLOW_QA_HANDOFF_MCP_MALFORMED_RESPONSE",
 			"Linear MCP returned partial or malformed issue evidence.",
 		);
-	if ((issue.identifier ?? issue.id) !== state.context.issueId)
+	if ((issue.identifier ?? issue.id) !== context.issueId)
 		return failed(
 			"PI_WORKFLOW_QA_HANDOFF_ISSUE_MISMATCH",
 			"Linear MCP returned a different issue identifier.",
 		);
-	if (!validatesIssueAuthority(state.context, issue))
+	if (!validatesIssueAuthority(context, issue))
 		return failed(
 			"PI_WORKFLOW_QA_HANDOFF_AUTHORITY_MISMATCH",
 			"The authenticated actor is not both the assigned and labeled Developer for the issue.",
 		);
-	switch (state.phase) {
-		case "issue-result":
-			return {
-				phase: "issue-verify",
-				context: {
-					...state.context,
-					issueRevision: issue.updatedAt,
-					verifiedIssue: issue,
-				},
-			};
-		case "issue-verify-result":
-			return verifiedIssueResultState(options, state, issue);
-		case "issue-before-mutation-result":
-			return matchesVerifiedSnapshot(state.context, issue)
-				? {
-						phase: "comment-create",
-						context: state.context,
-					}
-				: failed(
-						"PI_WORKFLOW_QA_HANDOFF_REVISION_MISMATCH",
-						"The complete Linear issue snapshot changed before QA handoff mutation.",
-					);
-		case "issue-final-result":
-			return matchesVerifiedSnapshot(state.context, issue)
-				? { phase: "ready", context: state.context }
-				: failed(
-						"PI_WORKFLOW_QA_HANDOFF_REVISION_MISMATCH",
-						"The complete Linear issue snapshot changed during QA handoff publication.",
-					);
-		default:
-			return assertNever(state);
-	}
+	return transition(issue);
 }
 
 function advanceCommentRead(
@@ -969,10 +1101,10 @@ function commentsBeforeCompleteState(
 }
 
 function commentsResultState(
-	state:
-		| Extract<PublicationState, { phase: "comments-before-result" }>
-		| Extract<PublicationState, { phase: "comments-readback-result" }>,
+	read: CommentRead,
 	payload: Record<string, unknown>,
+	continueReading: (read: CommentRead) => PublicationState,
+	completeReading: (comments: readonly LinearComment[]) => PublicationState,
 ): PublicationState {
 	const page = commentPage(payload);
 	if (!page)
@@ -980,27 +1112,21 @@ function commentsResultState(
 			"PI_WORKFLOW_QA_HANDOFF_MCP_MALFORMED_RESPONSE",
 			"Linear MCP returned a malformed comment page.",
 		);
-	const advanced = advanceCommentRead(state.read, page);
+	const advanced = advanceCommentRead(read, page);
 	if (advanced.status === "blocked") return advanced.state;
-	if (advanced.status === "more")
-		return state.phase === "comments-before-result"
-			? {
-					phase: "comments-before",
-					context: state.context,
-					read: advanced.read,
-				}
-			: {
-					phase: "comments-readback",
-					context: state.context,
-					read: advanced.read,
-				};
-	if (state.phase === "comments-before-result")
-		return commentsBeforeCompleteState(state.context, advanced.read.comments);
-	const readBack = advanced.read.comments.filter(
+	if (advanced.status === "more") return continueReading(advanced.read);
+	return completeReading(advanced.read.comments);
+}
+
+function commentsReadbackCompleteState(
+	context: SelectedContext,
+	comments: readonly LinearComment[],
+): PublicationState {
+	const readBack = comments.filter(
 		(comment) =>
 			comment.isRoot &&
-			comment.id === state.context.createdComment.id &&
-			comment.body === state.context.preparedArtifact.body,
+			comment.id === context.createdComment.id &&
+			comment.body === context.preparedArtifact.body,
 	);
 	if (readBack.length !== 1)
 		return failed(
@@ -1010,10 +1136,10 @@ function commentsResultState(
 	return {
 		phase: "issue-final",
 		context: {
-			...state.context,
+			...context,
 			publication: {
 				status: "published",
-				issueId: state.context.issueId,
+				issueId: context.issueId,
 				commentId: readBack[0].id,
 			},
 		},
@@ -1038,16 +1164,13 @@ function commentCreationResultState(
 }
 
 async function transitionToolResult(
-	options: QaHandoffPublicationDependencies,
-	state: PublicationState,
+	dispatch: PublicationPhaseDispatch,
 	event: ToolResultEvent,
 ): Promise<PublicationState> {
-	const expectedTool = expectedResultTool(state);
 	if (
-		!expectedTool ||
-		event.toolName !== expectedTool ||
-		!("toolCallId" in state) ||
-		event.toolCallId !== state.toolCallId
+		dispatch.kind !== "tool-result" ||
+		event.toolName !== dispatch.expectedTool ||
+		event.toolCallId !== dispatch.toolCallId
 	)
 		return failed(
 			"PI_WORKFLOW_QA_HANDOFF_MCP_INCOMPATIBLE",
@@ -1075,23 +1198,7 @@ async function transitionToolResult(
 			"PI_WORKFLOW_QA_HANDOFF_MCP_INCOMPATIBLE",
 			"Linear MCP returned an incomplete or ambiguous authentication signal.",
 		);
-	switch (state.phase) {
-		case "current-user-result":
-		case "current-user-before-mutation-result":
-			return actorResultState(state, payload);
-		case "issue-result":
-		case "issue-verify-result":
-		case "issue-before-mutation-result":
-		case "issue-final-result":
-			return issueResultState(options, state, payload);
-		case "comments-before-result":
-		case "comments-readback-result":
-			return commentsResultState(state, payload);
-		case "comment-create-result":
-			return commentCreationResultState(state, payload);
-		default:
-			return assertNever(state);
-	}
+	return dispatch.transition(payload);
 }
 
 export function createQaHandoffMcpPublication(
@@ -1130,7 +1237,7 @@ export function createQaHandoffMcpPublication(
 	}
 
 	function nextCallInstruction(): string | undefined {
-		const expected = expectedModelCall(state);
+		const expected = expectedModelCall(publicationPhase(options, state));
 		return expected
 			? `QA handoff protocol: call ${expected.toolName} exactly once with ${JSON.stringify(expected.input)}. Do not add fields or call tools in parallel.`
 			: undefined;
@@ -1149,7 +1256,10 @@ export function createQaHandoffMcpPublication(
 			event.input.path.endsWith("/skills/qa-handoff/SKILL.md")
 		)
 			return undefined;
-		const transition = transitionToolCall(state, event);
+		const transition = transitionToolCall(
+			publicationPhase(options, state),
+			event,
+		);
 		state = transition.state;
 		if (transition.replacementBody && record(event.input))
 			event.input.body = transition.replacementBody;
@@ -1158,7 +1268,7 @@ export function createQaHandoffMcpPublication(
 
 	async function handleToolResult(event: ToolResultEvent): Promise<void> {
 		if (!hasActiveTurn() || !MCP_TOOLS.has(event.toolName)) return;
-		state = await transitionToolResult(options, state, event);
+		state = await transitionToolResult(publicationPhase(options, state), event);
 	}
 
 	async function complete(input: unknown): Promise<PublishedHandoff | Blocker> {
@@ -1192,8 +1302,9 @@ export function createQaHandoffMcpPublication(
 		setMcpAvailable,
 		clear,
 		hasActiveTurn,
-		expectedCall: () => expectedCall(state),
-		expectedModelCall: () => expectedModelCall(state),
+		expectedCall: () => expectedCall(publicationPhase(options, state)),
+		expectedModelCall: () =>
+			expectedModelCall(publicationPhase(options, state)),
 		nextCallInstruction,
 		handleToolCall,
 		handleToolResult,
