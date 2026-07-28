@@ -106,8 +106,6 @@ export interface PiWorkflowExtensionOptions extends CompanionWorkflowOptions {
 		workflow?: ReturnType<typeof createQaHandoffWorkflow>;
 		drafts?: QaHandoffDraftStore;
 		artifacts?: QaHandoffArtifactStore;
-		/** Infrastructure adapter for durable uncertain-mutation recovery. */
-		recovery?: QaHandoffPublicationRecoveryStore;
 	};
 	productReview?: {
 		workflow?: ReturnType<typeof createProductReviewWorkflow>;
@@ -125,10 +123,17 @@ function projectName(cwd: string): string {
 	}
 }
 
+type InternalPiWorkflowExtensionOptions = PiWorkflowExtensionOptions & {
+	qaHandoff?: PiWorkflowExtensionOptions["qaHandoff"] & {
+		recovery?: QaHandoffPublicationRecoveryStore;
+	};
+};
+
 export default function piWorkflowExtension(
 	pi: ExtensionAPI,
 	workflowOptions: PiWorkflowExtensionOptions = {},
 ) {
+	const internalOptions = workflowOptions as InternalPiWorkflowExtensionOptions;
 	let currentCtx: ExtensionContext | undefined;
 	pi.on("session_start", async (_event, ctx) => {
 		currentCtx = ctx;
@@ -173,7 +178,7 @@ export default function piWorkflowExtension(
 			currentQaHandoffArtifactStore().save(artifact),
 	};
 	const qaHandoffRecovery: QaHandoffPublicationRecoveryStore =
-		workflowOptions.qaHandoff?.recovery ??
+		internalOptions.qaHandoff?.recovery ??
 		createQaHandoffPublicationRecoveryStore({
 			store: qaHandoffWorkflowArtifactStore,
 			project: () => projectName(currentCtx?.cwd ?? process.cwd()),

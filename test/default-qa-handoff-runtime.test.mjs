@@ -32,15 +32,20 @@ function extensionHarness({
 				? { digest: stored.digest, stage: stored.stage }
 				: undefined;
 		},
-		claim: async (artifact) => {
+		claim: async (artifact, ownerId) => {
 			const issueId = artifact.payload.issue.id;
-			const claim = { digest: artifact.digest, stage: "uncertain" };
+			const claim = { digest: artifact.digest, stage: "uncertain", ownerId };
 			const existing = publicationRecoveries.get(issueId);
 			if (existing && existing.digest !== claim.digest)
 				throw new Error("recovery conflict");
+			if (existing?.stage === "uncertain" && existing.ownerId !== ownerId)
+				throw new Error("recovery claim is already owned");
 			publicationRecoveries.set(issueId, structuredClone(claim));
 		},
-		release: async (artifact) => {
+		release: async (artifact, ownerId) => {
+			const existing = publicationRecoveries.get(artifact.payload.issue.id);
+			if (existing?.stage === "uncertain" && existing.ownerId !== ownerId)
+				throw new Error("recovery claim is already owned");
 			publicationRecoveries.set(artifact.payload.issue.id, {
 				digest: artifact.digest,
 				stage: "released",
@@ -876,6 +881,118 @@ test("qa-handoff permits only one exact root comment creation input", async () =
 	}
 });
 
+test("qa-handoff finds an exact existing comment on a later page", async () => {
+	const harness = extensionHarness();
+	const artifact = await advanceToComments(harness);
+	await harness.emit("tool_call", {
+		toolName: "linear_list_comments",
+		toolCallId: "comments-page-1",
+		input: { issueId: "ILA-2410" },
+	}, context);
+	await harness.emit("tool_result", mcpResult("linear_list_comments", "comments-page-1", {
+		comments: [],
+		hasNextPage: true,
+		cursor: "cursor-2",
+	}), context);
+	await harness.emit("tool_call", {
+		toolName: "linear_list_comments",
+		toolCallId: "comments-page-2",
+		input: { issueId: "ILA-2410", cursor: "cursor-2" },
+	}, context);
+	const existing = { id: "existing-page-2", body: artifact.body };
+	await harness.emit("tool_result", mcpResult("linear_list_comments", "comments-page-2", {
+		comments: [existing],
+		hasNextPage: false,
+	}), context);
+	await harness.emit("tool_call", {
+		toolName: "linear_list_comments",
+		toolCallId: "comments-readback-call",
+		input: { issueId: "ILA-2410" },
+	}, context);
+	await harness.emit("tool_result", mcpResult("linear_list_comments", "comments-readback-call", {
+		comments: [existing],
+		hasNextPage: false,
+	}), context);
+	await harness.emit("tool_call", {
+		toolName: "linear_get_issue",
+		toolCallId: "issue-final-call",
+		input: { id: "ILA-2410", includeRelations: true },
+	}, context);
+	await harness.emit("tool_result", mcpResult(
+		"linear_get_issue",
+		"issue-final-call",
+		validIssue(),
+	), context);
+	assert.equal((await terminalOutcome(harness)).status, "published");
+	assert.equal(
+		harness.toolCalls.some(({ toolName }) => toolName === "linear_save_comment"),
+		false,
+	);
+});
+
+test("qa-handoff rejects blank and repeated pagination cursors", async () => {
+	const blank = extensionHarness();
+	await advanceToComments(blank);
+	await blank.emit("tool_call", {
+		toolName: "linear_list_comments",
+		toolCallId: "blank-page",
+		input: { issueId: "ILA-2410" },
+	}, context);
+	await blank.emit("tool_result", mcpResult("linear_list_comments", "blank-page", {
+		comments: [],
+		hasNextPage: true,
+		cursor: "",
+	}), context);
+	assert.equal(
+		await terminalBlocker(blank),
+		"PI_WORKFLOW_QA_HANDOFF_MCP_MALFORMED_RESPONSE",
+	);
+
+	const nonString = extensionHarness();
+	await advanceToComments(nonString);
+	await nonString.emit("tool_call", {
+		toolName: "linear_list_comments",
+		toolCallId: "non-string-page",
+		input: { issueId: "ILA-2410" },
+	}, context);
+	await nonString.emit("tool_result", mcpResult(
+		"linear_list_comments",
+		"non-string-page",
+		{ comments: [], hasNextPage: true, cursor: 42 },
+	), context);
+	assert.equal(
+		await terminalBlocker(nonString),
+		"PI_WORKFLOW_QA_HANDOFF_MCP_MALFORMED_RESPONSE",
+	);
+
+	const repeated = extensionHarness();
+	await advanceToComments(repeated);
+	await repeated.emit("tool_call", {
+		toolName: "linear_list_comments",
+		toolCallId: "repeat-page-1",
+		input: { issueId: "ILA-2410" },
+	}, context);
+	await repeated.emit("tool_result", mcpResult("linear_list_comments", "repeat-page-1", {
+		comments: [],
+		hasNextPage: true,
+		cursor: "same-cursor",
+	}), context);
+	await repeated.emit("tool_call", {
+		toolName: "linear_list_comments",
+		toolCallId: "repeat-page-2",
+		input: { issueId: "ILA-2410", cursor: "same-cursor" },
+	}, context);
+	await repeated.emit("tool_result", mcpResult("linear_list_comments", "repeat-page-2", {
+		comments: [],
+		hasNextPage: true,
+		cursor: "same-cursor",
+	}), context);
+	assert.equal(
+		await terminalBlocker(repeated),
+		"PI_WORKFLOW_QA_HANDOFF_MCP_MALFORMED_RESPONSE",
+	);
+});
+
 test("qa-handoff detects only the exact visible artifact reference before mutation", async () => {
 	const conflict = extensionHarness();
 	const artifact = await advanceToComments(conflict);
@@ -1016,6 +1133,32 @@ test("qa-handoff recovers an uncertain creation through lookup without duplicati
 	assert.equal(
 		harness.toolCalls.filter(({ toolName }) => toolName === "linear_save_comment").length,
 		1,
+	);
+});
+
+test("qa-handoff grants only one concurrent owner permission to mutate", async () => {
+	const recovery = productionRecoveryStore();
+	const first = extensionHarness({ recovery });
+	const second = extensionHarness({ recovery });
+	for (const harness of [first, second]) {
+		await advanceToComments(harness);
+		await readCommentsBefore(harness);
+		await revalidateActorBeforeMutation(harness);
+		await verifyIssueBeforeMutation(harness);
+	}
+	const mutation = {
+		toolName: "linear_save_comment",
+		toolCallId: "concurrent-create",
+		input: {
+			issueId: "ILA-2410",
+			body: "PI_WORKFLOW_CANONICAL_QA_HANDOFF_BODY",
+		},
+	};
+	assert.equal(await first.emit("tool_call", structuredClone(mutation), context), undefined);
+	assert.equal((await second.emit("tool_call", structuredClone(mutation), context))?.block, true);
+	assert.equal(
+		await terminalBlocker(second),
+		"PI_WORKFLOW_QA_HANDOFF_RECOVERY_PERSISTENCE_FAILED",
 	);
 });
 

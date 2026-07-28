@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import { produceQaHandoffDraft } from "./qa-handoff-draft-producer.ts";
 import type { QaHandoffPublicationRecoveryStore } from "./qa-handoff-publication-recovery.ts";
 import type { QaHandoffDraftStore } from "./qa-handoff-draft-store.ts";
@@ -1275,6 +1277,7 @@ export function createQaHandoffMcpPublication(
 ) {
 	let state: PublicationState = { phase: "idle" };
 	let mcpAvailable: boolean | undefined;
+	const recoveryOwnerId = randomUUID();
 
 	function start(issueId: string): void {
 		state = {
@@ -1335,7 +1338,10 @@ export function createQaHandoffMcpPublication(
 			state.phase === "comment-create"
 		) {
 			try {
-				await options.recovery.claim(state.context.preparedArtifact);
+				await options.recovery.claim(
+				state.context.preparedArtifact,
+				recoveryOwnerId,
+			);
 			} catch (error) {
 				state = failed(
 					"PI_WORKFLOW_QA_HANDOFF_RECOVERY_PERSISTENCE_FAILED",
@@ -1364,7 +1370,10 @@ export function createQaHandoffMcpPublication(
 			classifyMcpError(event) === "permission-denied"
 		) {
 			try {
-				await options.recovery.release(activeState.context.preparedArtifact);
+				await options.recovery.release(
+					activeState.context.preparedArtifact,
+					recoveryOwnerId,
+				);
 			} catch (error) {
 				state = failed(
 					"PI_WORKFLOW_QA_HANDOFF_RECOVERY_PERSISTENCE_FAILED",
