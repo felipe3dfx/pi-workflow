@@ -12,18 +12,40 @@ const MCP_TOOL_NAMES = [
 	"workflow_qa_handoff",
 ];
 
-function extensionHarness(
+function extensionHarness({
 	toolNames = MCP_TOOL_NAMES,
-	injectedDrafts,
-	injectedArtifacts,
-	injectedRecovery,
-) {
+	drafts: injectedDrafts,
+	artifacts: injectedArtifacts,
+	recovery: injectedRecovery,
+} = {}) {
 	const handlers = new Map();
 	const tools = new Map();
 	const toolCalls = [];
 	const persistedDrafts = new Map();
 	const persistedArtifacts = new Map();
 	const publicationRecoveries = new Map();
+	const recovery = injectedRecovery ?? {
+		read: async (issueId) => {
+			const stored = publicationRecoveries.get(issueId);
+			return stored?.stage === "uncertain"
+				? { digest: stored.digest }
+				: undefined;
+		},
+		claim: async (artifact) => {
+			const issueId = artifact.payload.issue.id;
+			const claim = { digest: artifact.digest, stage: "uncertain" };
+			const existing = publicationRecoveries.get(issueId);
+			if (existing && existing.digest !== claim.digest)
+				throw new Error("recovery conflict");
+			publicationRecoveries.set(issueId, structuredClone(claim));
+		},
+		release: async (artifact) => {
+			publicationRecoveries.set(artifact.payload.issue.id, {
+				digest: artifact.digest,
+				stage: "released",
+			});
+		},
+	};
 	piWorkflowExtension({
 		exec: async () => ({ code: 0 }),
 		getAllTools: () => toolNames.map((name) => ({ name })),
@@ -36,28 +58,7 @@ function extensionHarness(
 		},
 	}, {
 		qaHandoff: {
-			recovery: injectedRecovery ?? {
-				read: async (issueId) => {
-					const recovery = publicationRecoveries.get(issueId);
-					return recovery?.stage === "uncertain"
-						? { digest: recovery.digest }
-						: undefined;
-				},
-				claim: async (artifact) => {
-					const issueId = artifact.payload.issue.id;
-					const claim = { digest: artifact.digest, stage: "uncertain" };
-					const existing = publicationRecoveries.get(issueId);
-					if (existing && JSON.stringify(existing) !== JSON.stringify(claim))
-						throw new Error("recovery conflict");
-					publicationRecoveries.set(issueId, structuredClone(claim));
-				},
-				release: async (artifact) => {
-					publicationRecoveries.set(artifact.payload.issue.id, {
-						digest: artifact.digest,
-						stage: "released",
-					});
-				},
-			},
+			recovery,
 			drafts: injectedDrafts ?? {
 				read: async (issueId) => structuredClone(persistedDrafts.get(issueId)?.payload.draft),
 				save: async ({ issueId, draft }) => {
@@ -521,7 +522,7 @@ test("settled default qa-handoff releases unrelated tools", async () => {
 });
 
 test("qa-handoff fails closed when Linear MCP tools are unavailable", async () => {
-	const harness = extensionHarness(["workflow_qa_handoff"]);
+	const harness = extensionHarness({ toolNames: ["workflow_qa_handoff"] });
 	await harness.emit("input", {
 		type: "input",
 		text: "/qa-handoff ILA-2410",
@@ -984,18 +985,15 @@ test("qa-handoff recovers an uncertain creation through lookup without duplicati
 });
 
 test("qa-handoff blocks mutation when its durable recovery claim cannot be verified", async () => {
-	const harness = extensionHarness(
-		MCP_TOOL_NAMES,
-		undefined,
-		undefined,
-		{
+	const harness = extensionHarness({
+		recovery: {
 			read: async () => undefined,
 			claim: async () => {
 				throw new Error("recovery read-back mismatch");
 			},
 			release: async () => {},
 		},
-	);
+	});
 	await advanceToComments(harness);
 	await readCommentsBefore(harness);
 	await revalidateActorBeforeMutation(harness);
@@ -1018,6 +1016,42 @@ test("qa-handoff blocks mutation when its durable recovery claim cannot be verif
 	assert.equal(
 		await terminalBlocker(harness),
 		"PI_WORKFLOW_QA_HANDOFF_RECOVERY_PERSISTENCE_FAILED",
+	);
+});
+
+test("qa-handoff safely retries after permission denial proves no comment mutation", async () => {
+	const harness = extensionHarness();
+	await advanceToComments(harness);
+	await readCommentsBefore(harness);
+	await revalidateActorBeforeMutation(harness);
+	await verifyIssueBeforeMutation(harness);
+	await harness.emit("tool_call", {
+		toolName: "linear_save_comment",
+		toolCallId: "permission-denied-create",
+		input: {
+			issueId: "ILA-2410",
+			body: "PI_WORKFLOW_CANONICAL_QA_HANDOFF_BODY",
+		},
+	}, context);
+	await harness.emit("tool_result", {
+		toolName: "linear_save_comment",
+		toolCallId: "permission-denied-create",
+		content: [{ type: "text", text: JSON.stringify({ code: "PERMISSION_DENIED" }) }],
+		isError: true,
+	}, context);
+	assert.equal(
+		await terminalBlocker(harness),
+		"PI_WORKFLOW_QA_HANDOFF_MCP_PERMISSION_DENIED",
+	);
+
+	await harness.emit("session_shutdown", { type: "session_shutdown" }, context);
+	await harness.emit("session_start", { type: "session_start" }, context);
+	await advanceToComments(harness);
+	const retried = await publishFromPersistedArtifact(harness);
+	assert.equal(retried.outcome.status, "published");
+	assert.equal(
+		harness.toolCalls.filter(({ toolName }) => toolName === "linear_save_comment").length,
+		2,
 	);
 });
 
@@ -1274,7 +1308,7 @@ test("public qa-handoff persists a canonical draft without mutating Linear", asy
 			},
 		},
 	});
-	const harness = extensionHarness(MCP_TOOL_NAMES, drafts);
+	const harness = extensionHarness({ drafts });
 	await advanceToIssue(harness);
 	await harness.emit("tool_call", {
 		toolName: "linear_get_issue",
