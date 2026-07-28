@@ -38,9 +38,31 @@ test("durable QA recovery transitions released claims back to uncertain", async 
 	});
 
 	await store.claim(artifact);
-	assert.deepEqual(await store.read("ILA-2410"), { digest: artifact.digest });
+	assert.deepEqual(await store.read("ILA-2410"), {
+		digest: artifact.digest,
+		stage: "uncertain",
+	});
 	await store.release(artifact);
 	assert.equal(await store.read("ILA-2410"), undefined);
 	await store.claim(artifact);
-	assert.deepEqual(await store.read("ILA-2410"), { digest: artifact.digest });
+	assert.deepEqual(await store.read("ILA-2410"), {
+		digest: artifact.digest,
+		stage: "uncertain",
+	});
+	await store.markVerified(artifact);
+	assert.deepEqual(await store.read("ILA-2410"), {
+		digest: artifact.digest,
+		stage: "verified",
+	});
+	await assert.rejects(store.claim(artifact), /already verified/);
+	await assert.rejects(store.release(artifact), /conflicts/);
+	const evolved = {
+		...artifact,
+		digest: "b".repeat(64),
+	};
+	await store.claim(evolved);
+	assert.deepEqual(await store.read("ILA-2410"), {
+		digest: evolved.digest,
+		stage: "uncertain",
+	});
 });

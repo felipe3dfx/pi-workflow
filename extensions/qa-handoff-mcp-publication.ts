@@ -77,7 +77,7 @@ interface SnapshottedContext extends AuthenticatedContext {
 
 interface PreparedContext extends SnapshottedContext {
 	readonly preparedArtifact: QaHandoffArtifact;
-	readonly recoveryRequired: boolean;
+	readonly recoveryStage?: "uncertain" | "verified";
 }
 
 interface SelectedContext extends PreparedContext {
@@ -1015,7 +1015,10 @@ async function verifiedIssueResultState(
 		);
 		if ("phase" in artifact) return artifact;
 		const recovery = await options.recovery.read(state.context.issueId);
-		if (recovery && recovery.digest !== artifact.digest)
+		if (
+			recovery?.stage === "uncertain" &&
+			recovery.digest !== artifact.digest
+		)
 			return failed(
 				"PI_WORKFLOW_QA_HANDOFF_DIGEST_MISMATCH",
 				"The pending QA handoff recovery digest changed.",
@@ -1025,7 +1028,8 @@ async function verifiedIssueResultState(
 			context: {
 				...state.context,
 				preparedArtifact: artifact,
-				recoveryRequired: recovery !== undefined,
+				recoveryStage:
+					recovery?.digest === artifact.digest ? recovery.stage : undefined,
 			},
 			read: emptyCommentRead(),
 		};
@@ -1124,10 +1128,14 @@ function commentsBeforeCompleteState(
 			context: { ...context, createdComment: inspection.comments[0] },
 			read: emptyCommentRead(),
 		};
-	if (context.recoveryRequired)
+	if (context.recoveryStage)
 		return failed(
-			"PI_WORKFLOW_QA_HANDOFF_RECOVERY_PENDING",
-			"A prior comment creation is uncertain; retry lookup later without repeating the mutation.",
+			context.recoveryStage === "verified"
+				? "PI_WORKFLOW_QA_HANDOFF_ALREADY_VERIFIED"
+				: "PI_WORKFLOW_QA_HANDOFF_RECOVERY_PENDING",
+			context.recoveryStage === "verified"
+				? "The verified QA handoff comment is no longer visible; refusing a duplicate mutation."
+				: "A prior comment creation is uncertain; retry lookup later without repeating the mutation.",
 		);
 	return {
 		phase: "current-user-before-mutation",
@@ -1343,6 +1351,8 @@ export function createQaHandoffMcpPublication(
 		const activeState = state;
 		if (
 			activeState.phase === "comment-create-result" &&
+			event.toolName === SAVE_COMMENT_TOOL &&
+			event.toolCallId === activeState.toolCallId &&
 			event.isError === true &&
 			classifyMcpError(event) === "permission-denied"
 		) {
@@ -1359,6 +1369,30 @@ export function createQaHandoffMcpPublication(
 			}
 		}
 		state = await transitionToolResult(dispatchForPhase(options, state), event);
+		if (
+			activeState.phase === "issue-final-result" &&
+			state.phase === "ready"
+		) {
+			try {
+				const recovery = await options.recovery.read(
+					activeState.context.issueId,
+				);
+				if (
+					recovery?.stage === "uncertain" &&
+					recovery.digest === activeState.context.preparedArtifact.digest
+				)
+					await options.recovery.markVerified(
+						activeState.context.preparedArtifact,
+					);
+			} catch (error) {
+				state = failed(
+					"PI_WORKFLOW_QA_HANDOFF_RECOVERY_PERSISTENCE_FAILED",
+					error instanceof Error
+						? error.message
+						: "QA handoff verified recovery persistence failed.",
+				);
+			}
+		}
 	}
 
 	async function complete(input: unknown): Promise<PublishedHandoff | Blocker> {

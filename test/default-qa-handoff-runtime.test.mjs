@@ -28,8 +28,8 @@ function extensionHarness({
 	const recovery = injectedRecovery ?? {
 		read: async (issueId) => {
 			const stored = publicationRecoveries.get(issueId);
-			return stored?.stage === "uncertain"
-				? { digest: stored.digest }
+			return stored?.stage === "uncertain" || stored?.stage === "verified"
+				? { digest: stored.digest, stage: stored.stage }
 				: undefined;
 		},
 		claim: async (artifact) => {
@@ -44,6 +44,12 @@ function extensionHarness({
 			publicationRecoveries.set(artifact.payload.issue.id, {
 				digest: artifact.digest,
 				stage: "released",
+			});
+		},
+		markVerified: async (artifact) => {
+			publicationRecoveries.set(artifact.payload.issue.id, {
+				digest: artifact.digest,
+				stage: "verified",
 			});
 		},
 	};
@@ -467,6 +473,10 @@ test("default public qa-handoff publishes the canonical artifact through the exa
 			status: "published",
 			issueId: "ILA-2410",
 			commentId: "comment-2410",
+		});
+		assert.deepEqual(harness.publicationRecoveries.get("ILA-2410"), {
+			digest: artifact.digest,
+			stage: "verified",
 		});
 		assert.deepEqual(harness.toolCalls, [
 			{ toolName: "linear_get_user", toolCallId: "user-call", input: { query: "me" } },
@@ -1017,6 +1027,7 @@ test("qa-handoff blocks mutation when its durable recovery claim cannot be verif
 				throw new Error("recovery read-back mismatch");
 			},
 			release: async () => {},
+			markVerified: async () => {},
 		},
 	});
 	await advanceToComments(harness);
@@ -1101,6 +1112,39 @@ test("qa-handoff keeps a rate-limited comment mutation lookup-only", async () =>
 		isError: true,
 	}, context);
 	assert.equal(await terminalBlocker(harness), "PI_WORKFLOW_QA_HANDOFF_MCP_RATE_LIMITED");
+
+	await harness.emit("session_shutdown", { type: "session_shutdown" }, context);
+	await harness.emit("session_start", { type: "session_start" }, context);
+	await advanceToComments(harness);
+	await readCommentsBefore(harness);
+	assert.equal(await terminalBlocker(harness), "PI_WORKFLOW_QA_HANDOFF_RECOVERY_PENDING");
+	assert.equal(
+		harness.toolCalls.filter(({ toolName }) => toolName === "linear_save_comment").length,
+		1,
+	);
+});
+
+test("qa-handoff never releases uncertainty for mismatched permission results", async () => {
+	const harness = extensionHarness();
+	await advanceToComments(harness);
+	await readCommentsBefore(harness);
+	await revalidateActorBeforeMutation(harness);
+	await verifyIssueBeforeMutation(harness);
+	await harness.emit("tool_call", {
+		toolName: "linear_save_comment",
+		toolCallId: "uncertain-create",
+		input: {
+			issueId: "ILA-2410",
+			body: "PI_WORKFLOW_CANONICAL_QA_HANDOFF_BODY",
+		},
+	}, context);
+	await harness.emit("tool_result", {
+		toolName: "linear_save_comment",
+		toolCallId: "stale-create",
+		content: [{ type: "text", text: JSON.stringify({ code: "PERMISSION_DENIED" }) }],
+		isError: true,
+	}, context);
+	assert.equal(await terminalBlocker(harness), "PI_WORKFLOW_QA_HANDOFF_MCP_INCOMPATIBLE");
 
 	await harness.emit("session_shutdown", { type: "session_shutdown" }, context);
 	await harness.emit("session_start", { type: "session_start" }, context);
