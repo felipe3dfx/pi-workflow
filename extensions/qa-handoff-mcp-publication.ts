@@ -533,7 +533,7 @@ function commentsCall(issueId: string, cursor?: string): ExpectedCall {
 	};
 }
 
-function publicationPhase(
+function dispatchForPhase(
 	options: QaHandoffPublicationDependencies,
 	state: PublicationState,
 ): PublicationPhaseDispatch {
@@ -1237,7 +1237,7 @@ export function createQaHandoffMcpPublication(
 	}
 
 	function nextCallInstruction(): string | undefined {
-		const expected = expectedModelCall(publicationPhase(options, state));
+		const expected = expectedModelCall(dispatchForPhase(options, state));
 		return expected
 			? `QA handoff protocol: call ${expected.toolName} exactly once with ${JSON.stringify(expected.input)}. Do not add fields or call tools in parallel.`
 			: undefined;
@@ -1257,7 +1257,7 @@ export function createQaHandoffMcpPublication(
 		)
 			return undefined;
 		const transition = transitionToolCall(
-			publicationPhase(options, state),
+			dispatchForPhase(options, state),
 			event,
 		);
 		state = transition.state;
@@ -1268,7 +1268,7 @@ export function createQaHandoffMcpPublication(
 
 	async function handleToolResult(event: ToolResultEvent): Promise<void> {
 		if (!hasActiveTurn() || !MCP_TOOLS.has(event.toolName)) return;
-		state = await transitionToolResult(publicationPhase(options, state), event);
+		state = await transitionToolResult(dispatchForPhase(options, state), event);
 	}
 
 	async function complete(input: unknown): Promise<PublishedHandoff | Blocker> {
@@ -1302,9 +1302,9 @@ export function createQaHandoffMcpPublication(
 		setMcpAvailable,
 		clear,
 		hasActiveTurn,
-		expectedCall: () => expectedCall(publicationPhase(options, state)),
+		expectedCall: () => expectedCall(dispatchForPhase(options, state)),
 		expectedModelCall: () =>
-			expectedModelCall(publicationPhase(options, state)),
+			expectedModelCall(dispatchForPhase(options, state)),
 		nextCallInstruction,
 		handleToolCall,
 		handleToolResult,
