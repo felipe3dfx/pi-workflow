@@ -24,6 +24,10 @@ import { createDefineProductRuntime } from "./define-product-runtime.ts";
 import { createQaHandoffArtifactStore } from "./qa-handoff-artifact-store.ts";
 import { createQaHandoffMcpPublication } from "./qa-handoff-mcp-publication.ts";
 import {
+	createQaHandoffPublicationRecoveryStore,
+	type QaHandoffPublicationRecoveryStore,
+} from "./qa-handoff-publication-recovery.ts";
+import {
 	createQaHandoffDraftStore,
 	type QaHandoffDraftStore,
 } from "./qa-handoff-draft-store.ts";
@@ -102,6 +106,7 @@ export interface PiWorkflowExtensionOptions extends CompanionWorkflowOptions {
 		workflow?: ReturnType<typeof createQaHandoffWorkflow>;
 		drafts?: QaHandoffDraftStore;
 		artifacts?: QaHandoffArtifactStore;
+		recovery?: QaHandoffPublicationRecoveryStore;
 	};
 	productReview?: {
 		workflow?: ReturnType<typeof createProductReviewWorkflow>;
@@ -166,6 +171,12 @@ export default function piWorkflowExtension(
 		save: (artifact: Parameters<QaHandoffArtifactStore["save"]>[0]) =>
 			currentQaHandoffArtifactStore().save(artifact),
 	};
+	const qaHandoffRecovery =
+		workflowOptions.qaHandoff?.recovery ??
+		createQaHandoffPublicationRecoveryStore({
+			store: qaHandoffWorkflowArtifactStore,
+			project: projectName(currentCtx?.cwd ?? process.cwd()),
+		});
 	const qaHandoffRuntime = createQaHandoffRuntime(
 		configuredQaHandoffWorkflow
 			? { workflow: configuredQaHandoffWorkflow }
@@ -173,6 +184,7 @@ export default function piWorkflowExtension(
 					mcpPublication: createQaHandoffMcpPublication({
 						drafts: qaHandoffDrafts,
 						artifacts: qaHandoffArtifacts,
+						recovery: qaHandoffRecovery,
 					}),
 				},
 	);

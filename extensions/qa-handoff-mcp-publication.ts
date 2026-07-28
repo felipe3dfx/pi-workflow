@@ -1,4 +1,5 @@
 import { produceQaHandoffDraft } from "./qa-handoff-draft-producer.ts";
+import type { QaHandoffPublicationRecoveryStore } from "./qa-handoff-publication-recovery.ts";
 import type { QaHandoffDraftStore } from "./qa-handoff-draft-store.ts";
 import {
 	createQaHandoffArtifact,
@@ -76,6 +77,7 @@ interface SnapshottedContext extends AuthenticatedContext {
 
 interface PreparedContext extends SnapshottedContext {
 	readonly preparedArtifact: QaHandoffArtifact;
+	readonly recoveryRequired: boolean;
 }
 
 interface SelectedContext extends PreparedContext {
@@ -229,6 +231,7 @@ type ToolCallEvent = {
 interface QaHandoffPublicationDependencies {
 	readonly drafts: QaHandoffDraftStore;
 	readonly artifacts: QaHandoffArtifactStore;
+	readonly recovery: QaHandoffPublicationRecoveryStore;
 }
 
 type ToolResultEvent = {
@@ -315,17 +318,19 @@ function toolPayload(event: unknown): unknown {
 function classifyMcpError(event: unknown): McpErrorClassification {
 	const payload = toolPayload(event);
 	if (!record(payload)) return "incompatible";
+	const keys = Object.keys(payload);
+	const validOperationalEnvelope =
+		keys.every((key) => key === "code" || key === "message") &&
+		(payload.message === undefined || nonEmpty(payload.message));
 	switch (payload.code) {
 		case "UNAUTHENTICATED":
-			return Object.keys(payload).length === 1
-				? "unauthenticated"
-				: "incompatible";
+			return keys.length === 1 ? "unauthenticated" : "incompatible";
 		case "PERMISSION_DENIED":
-			return "permission-denied";
+			return validOperationalEnvelope ? "permission-denied" : "incompatible";
 		case "RATE_LIMITED":
-			return "rate-limited";
+			return validOperationalEnvelope ? "rate-limited" : "incompatible";
 		case "TRANSPORT_ERROR":
-			return "transport-failed";
+			return validOperationalEnvelope ? "transport-failed" : "incompatible";
 		default:
 			return "incompatible";
 	}
@@ -1009,9 +1014,19 @@ async function verifiedIssueResultState(
 			draftReadBack,
 		);
 		if ("phase" in artifact) return artifact;
+		const recovery = await options.recovery.read(state.context.issueId);
+		if (recovery && recovery.digest !== artifact.digest)
+			return failed(
+				"PI_WORKFLOW_QA_HANDOFF_DIGEST_MISMATCH",
+				"The pending QA handoff recovery digest changed.",
+			);
 		return {
 			phase: "comments-before",
-			context: { ...state.context, preparedArtifact: artifact },
+			context: {
+				...state.context,
+				preparedArtifact: artifact,
+				recoveryRequired: recovery !== undefined,
+			},
 			read: emptyCommentRead(),
 		};
 	} catch (error) {
@@ -1109,6 +1124,11 @@ function commentsBeforeCompleteState(
 			context: { ...context, createdComment: inspection.comments[0] },
 			read: emptyCommentRead(),
 		};
+	if (context.recoveryRequired)
+		return failed(
+			"PI_WORKFLOW_QA_HANDOFF_RECOVERY_PENDING",
+			"A prior comment creation is uncertain; retry lookup later without repeating the mutation.",
+		);
 	return {
 		phase: "current-user-before-mutation",
 		context,
@@ -1277,9 +1297,9 @@ export function createQaHandoffMcpPublication(
 			: undefined;
 	}
 
-	function handleToolCall(
+	async function handleToolCall(
 		event: ToolCallEvent,
-	): { block: true; reason: string } | undefined {
+	): Promise<{ block: true; reason: string } | undefined> {
 		if (!hasActiveTurn()) return undefined;
 		if (
 			event.toolName === "read" &&
@@ -1290,10 +1310,28 @@ export function createQaHandoffMcpPublication(
 			event.input.path.endsWith("/skills/qa-handoff/SKILL.md")
 		)
 			return undefined;
-		const transition = transitionToolCall(
-			dispatchForPhase(options, state),
-			event,
-		);
+		const dispatch = dispatchForPhase(options, state);
+		if (
+			dispatch.kind === "tool-call" &&
+			dispatch.expectedCall.toolName === SAVE_COMMENT_TOOL &&
+			event.toolName === SAVE_COMMENT_TOOL &&
+			nonEmpty(event.toolCallId) &&
+			exactInput(event.input, dispatch.expectedModelCall.input) &&
+			state.phase === "comment-create"
+		) {
+			try {
+				await options.recovery.claim(state.context.preparedArtifact);
+			} catch (error) {
+				state = failed(
+					"PI_WORKFLOW_QA_HANDOFF_RECOVERY_PERSISTENCE_FAILED",
+					error instanceof Error
+						? error.message
+						: "QA handoff recovery claim persistence failed.",
+				);
+				return { block: true, reason: state.blocker.code };
+			}
+		}
+		const transition = transitionToolCall(dispatch, event);
 		state = transition.state;
 		if (transition.replacementBody && record(event.input))
 			event.input.body = transition.replacementBody;
@@ -1302,6 +1340,26 @@ export function createQaHandoffMcpPublication(
 
 	async function handleToolResult(event: ToolResultEvent): Promise<void> {
 		if (!hasActiveTurn() || !MCP_TOOLS.has(event.toolName)) return;
+		const activeState = state;
+		if (
+			activeState.phase === "comment-create-result" &&
+			event.isError === true &&
+			["permission-denied", "rate-limited"].includes(
+				classifyMcpError(event),
+			)
+		) {
+			try {
+				await options.recovery.release(activeState.context.preparedArtifact);
+			} catch (error) {
+				state = failed(
+					"PI_WORKFLOW_QA_HANDOFF_RECOVERY_PERSISTENCE_FAILED",
+					error instanceof Error
+						? error.message
+						: "QA handoff recovery release persistence failed.",
+				);
+				return;
+			}
+		}
 		state = await transitionToolResult(dispatchForPhase(options, state), event);
 	}
 

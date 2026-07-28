@@ -18,6 +18,7 @@ function extensionHarness(toolNames = MCP_TOOL_NAMES, injectedDrafts, injectedAr
 	const toolCalls = [];
 	const persistedDrafts = new Map();
 	const persistedArtifacts = new Map();
+	const publicationRecoveries = new Map();
 	piWorkflowExtension({
 		exec: async () => ({ code: 0 }),
 		getAllTools: () => toolNames.map((name) => ({ name })),
@@ -30,6 +31,28 @@ function extensionHarness(toolNames = MCP_TOOL_NAMES, injectedDrafts, injectedAr
 		},
 	}, {
 		qaHandoff: {
+			recovery: {
+				read: async (issueId) => {
+					const recovery = publicationRecoveries.get(issueId);
+					return recovery?.stage === "uncertain"
+						? { digest: recovery.digest }
+						: undefined;
+				},
+				claim: async (artifact) => {
+					const issueId = artifact.payload.issue.id;
+					const claim = { digest: artifact.digest, stage: "uncertain" };
+					const existing = publicationRecoveries.get(issueId);
+					if (existing && JSON.stringify(existing) !== JSON.stringify(claim))
+						throw new Error("recovery conflict");
+					publicationRecoveries.set(issueId, structuredClone(claim));
+				},
+				release: async (artifact) => {
+					publicationRecoveries.set(artifact.payload.issue.id, {
+						digest: artifact.digest,
+						stage: "released",
+					});
+				},
+			},
 			drafts: injectedDrafts ?? {
 				read: async (issueId) => structuredClone(persistedDrafts.get(issueId)?.payload.draft),
 				save: async ({ issueId, draft }) => {
@@ -56,6 +79,7 @@ function extensionHarness(toolNames = MCP_TOOL_NAMES, injectedDrafts, injectedAr
 		tools,
 		toolCalls,
 		persistedArtifacts,
+		publicationRecoveries,
 		async emit(event, value, context) {
 			let result;
 			for (const handler of handlers.get(event) ?? []) {
@@ -602,6 +626,31 @@ test("qa-handoff preserves actionable MCP failure classifications", async () => 
 	}
 });
 
+test("qa-handoff rejects malformed actionable MCP error envelopes", async () => {
+	const harness = extensionHarness();
+	await startPreflight(harness);
+	await harness.emit("tool_call", {
+		toolName: "linear_get_user",
+		toolCallId: "user-call",
+		input: { query: "me" },
+	}, context);
+	await harness.emit("tool_result", {
+		toolName: "linear_get_user",
+		toolCallId: "user-call",
+		content: [{
+			type: "text",
+			text: JSON.stringify({
+				code: "RATE_LIMITED",
+				message: 429,
+				partialResult: { id: "developer-1" },
+			}),
+		}],
+		isError: true,
+	}, context);
+
+	assert.equal(await terminalBlocker(harness), "PI_WORKFLOW_QA_HANDOFF_MCP_INCOMPATIBLE");
+});
+
 test("qa-handoff blocks wrong tools and out-of-order stages before execution", async () => {
 	for (const variant of [
 		{
@@ -905,6 +954,12 @@ test("qa-handoff recovers an uncertain creation through lookup without duplicati
 			body: "PI_WORKFLOW_CANONICAL_QA_HANDOFF_BODY",
 		},
 	}, context);
+
+	await harness.emit("session_shutdown", { type: "session_shutdown" }, context);
+	await harness.emit("session_start", { type: "session_start" }, context);
+	await advanceToComments(harness);
+	await readCommentsBefore(harness);
+	assert.equal(await terminalBlocker(harness), "PI_WORKFLOW_QA_HANDOFF_RECOVERY_PENDING");
 
 	await harness.emit("session_shutdown", { type: "session_shutdown" }, context);
 	await harness.emit("session_start", { type: "session_start" }, context);
