@@ -108,6 +108,8 @@ export interface PiWorkflowExtensionOptions extends CompanionWorkflowOptions {
 		artifacts?: QaHandoffArtifactStore;
 		/** Infrastructure-only recovery adapter; public commands and tools are unchanged. */
 		recovery?: QaHandoffPublicationRecoveryStore;
+		/** Optional stricter runtime cap; the production maximum remains 16,384. */
+		toolIdentityReservationCapacity?: number;
 	};
 	productReview?: {
 		workflow?: ReturnType<typeof createProductReviewWorkflow>;
@@ -172,6 +174,9 @@ export default function piWorkflowExtension(
 		save: (artifact: Parameters<QaHandoffArtifactStore["save"]>[0]) =>
 			currentQaHandoffArtifactStore().save(artifact),
 	};
+	// Current Linear MCP evidence has no trusted workspace identity, so recovery
+	// deliberately shares the same project-aware namespace as QA artifacts. Do not
+	// replace it with a collision-prone pseudo-global key.
 	const qaHandoffRecovery: QaHandoffPublicationRecoveryStore =
 		workflowOptions.qaHandoff?.recovery ??
 		createQaHandoffPublicationRecoveryStore({
@@ -186,6 +191,8 @@ export default function piWorkflowExtension(
 						drafts: qaHandoffDrafts,
 						artifacts: qaHandoffArtifacts,
 						recovery: qaHandoffRecovery,
+						toolIdentityReservationCapacity:
+							workflowOptions.qaHandoff?.toolIdentityReservationCapacity,
 					}),
 				},
 	);

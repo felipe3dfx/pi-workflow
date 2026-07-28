@@ -51,7 +51,10 @@ export interface LinearQaHandoffGateway {
 		readonly issueId: string;
 		readonly cursor?: string;
 	}): Promise<{
-		readonly comments: readonly { readonly id: string; readonly body: string }[];
+		readonly comments: readonly {
+			readonly id: string;
+			readonly body: string;
+		}[];
 		readonly nextCursor?: string;
 	}>;
 	createComment(input: {
@@ -72,24 +75,27 @@ interface Dependencies {
 	readonly currentDeveloper: () => Promise<AuthenticatedAuthority | undefined>;
 }
 
-interface Blocker {
+export interface QaHandoffBlocker {
 	readonly code: string;
 	readonly message: string;
 }
 
-type AuthorizationOutcome =
+export type QaHandoffAuthorizationOutcome =
 	| { readonly status: "authorized"; readonly artifact: QaHandoffArtifact }
-	| { readonly status: "blocked"; readonly blocker: Blocker };
+	| { readonly status: "blocked"; readonly blocker: QaHandoffBlocker };
 
-type PublicationOutcome =
+export type QaHandoffPublicationOutcome =
 	| {
 			readonly status: "published";
 			readonly artifact: QaHandoffArtifact;
 			readonly comment: { readonly id: string; readonly body: string };
 	  }
-	| { readonly status: "blocked"; readonly blocker: Blocker };
+	| { readonly status: "blocked"; readonly blocker: QaHandoffBlocker };
 
-const blocked = (code: string, message: string): { status: "blocked"; blocker: Blocker } => ({
+const blocked = (
+	code: string,
+	message: string,
+): { status: "blocked"; blocker: QaHandoffBlocker } => ({
 	status: "blocked",
 	blocker: { code, message },
 });
@@ -105,14 +111,21 @@ function hasExactKeys(
 	optional: readonly string[] = [],
 ): boolean {
 	const keys = Object.keys(value);
-	return required.every((key) => keys.includes(key)) &&
-		keys.every((key) => required.includes(key) || optional.includes(key));
+	return (
+		required.every((key) => keys.includes(key)) &&
+		keys.every((key) => required.includes(key) || optional.includes(key))
+	);
 }
 
 function immutableSnapshot<T>(value: T): T {
 	const snapshot = structuredClone(value);
 	const freeze = (candidate: unknown): void => {
-		if (!candidate || typeof candidate !== "object" || Object.isFrozen(candidate)) return;
+		if (
+			!candidate ||
+			typeof candidate !== "object" ||
+			Object.isFrozen(candidate)
+		)
+			return;
 		for (const child of Object.values(candidate)) freeze(child);
 		Object.freeze(candidate);
 	};
@@ -121,7 +134,9 @@ function immutableSnapshot<T>(value: T): T {
 }
 
 function evidence(reference: QaHandoffEvidenceReference): string {
-	const label = reference.url ? `[${reference.label}](${reference.url})` : reference.label;
+	const label = reference.url
+		? `[${reference.label}](${reference.url})`
+		: reference.label;
 	return `${label} (\`${reference.ref}\`)`;
 }
 
@@ -131,16 +146,16 @@ function renderQaHandoffBody(
 ): string {
 	const sections = [
 		`# Entrega para QA — ${payload.issue.id}`,
-		[
-			"## Resultado",
-			"**Estado:** Listo para QA",
-			payload.outcome.summary,
-		].join("\n\n"),
+		["## Resultado", "**Estado:** Listo para QA", payload.outcome.summary].join(
+			"\n\n",
+		),
 		[
 			"## Evidencia de PR y build",
 			`- **PR:** ${evidence(payload.pullRequest)}`,
 			`- **Build:** ${evidence(payload.build)}`,
-		].join("\n\n").replace("\n\n- **Build", "\n- **Build"),
+		]
+			.join("\n\n")
+			.replace("\n\n- **Build", "\n- **Build"),
 		[
 			"## Entorno de QA",
 			[
@@ -153,14 +168,18 @@ function renderQaHandoffBody(
 		].join("\n\n"),
 		[
 			"## Criterios de aceptación",
-			payload.acceptanceCriteria.flatMap((criterion) => [
-				`- [ ] **${criterion.id}:** ${criterion.description}`,
-				`  - Evidencia: ${criterion.evidence.map(evidence).join("; ")}`,
-			]).join("\n"),
+			payload.acceptanceCriteria
+				.flatMap((criterion) => [
+					`- [ ] **${criterion.id}:** ${criterion.description}`,
+					`  - Evidencia: ${criterion.evidence.map(evidence).join("; ")}`,
+				])
+				.join("\n"),
 		].join("\n\n"),
 		[
 			"## Guía de pruebas",
-			payload.testGuidance.map((guidance, index) => `${index + 1}. ${guidance}`).join("\n"),
+			payload.testGuidance
+				.map((guidance, index) => `${index + 1}. ${guidance}`)
+				.join("\n"),
 		].join("\n\n"),
 		[
 			"## Riesgos y restricciones",
@@ -184,10 +203,17 @@ function renderQaHandoffBody(
 function developer(
 	value: unknown,
 ): value is AuthenticatedAuthority & { role: "Developer" } {
-	return !!value && typeof value === "object" && !Array.isArray(value) &&
-		"role" in value && value.role === "Developer" &&
-		"actorId" in value && text(value.actorId) &&
-		"authorityRevision" in value && text(value.authorityRevision);
+	return (
+		!!value &&
+		typeof value === "object" &&
+		!Array.isArray(value) &&
+		"role" in value &&
+		value.role === "Developer" &&
+		"actorId" in value &&
+		text(value.actorId) &&
+		"authorityRevision" in value &&
+		text(value.authorityRevision)
+	);
 }
 
 export function createQaHandoffArtifact(
@@ -226,38 +252,69 @@ export function isQaHandoffArtifact(
 	value: unknown,
 	issueId: string,
 ): value is QaHandoffArtifact {
-	if (!linearIssueId(issueId) || !value || typeof value !== "object" ||
+	if (
+		!linearIssueId(issueId) ||
+		!value ||
+		typeof value !== "object" ||
 		Array.isArray(value) ||
-		!hasExactKeys(value, ["schema", "schemaVersion", "language", "payload", "digest", "body"]) ||
-		!("schema" in value) || value.schema !== "qa-handoff" ||
-		!("schemaVersion" in value) || value.schemaVersion !== 1 ||
-		!("language" in value) || value.language !== "es" ||
-		!("payload" in value) || !value.payload || typeof value.payload !== "object" ||
-		Array.isArray(value.payload)) return false;
+		!hasExactKeys(value, [
+			"schema",
+			"schemaVersion",
+			"language",
+			"payload",
+			"digest",
+			"body",
+		]) ||
+		!("schema" in value) ||
+		value.schema !== "qa-handoff" ||
+		!("schemaVersion" in value) ||
+		value.schemaVersion !== 1 ||
+		!("language" in value) ||
+		value.language !== "es" ||
+		!("payload" in value) ||
+		!value.payload ||
+		typeof value.payload !== "object" ||
+		Array.isArray(value.payload)
+	)
+		return false;
 	const payload = value.payload;
-	if (!hasExactKeys(
-		payload,
-		[
-			"outcome",
-			"pullRequest",
-			"build",
-			"qaEnvironment",
-			"acceptanceCriteria",
-			"testGuidance",
-			"risksAndConstraints",
-			"issue",
-			"authority",
-		],
-		["outOfScope"],
-	) || !("issue" in payload) || !payload.issue ||
-		typeof payload.issue !== "object" || Array.isArray(payload.issue) ||
+	if (
+		!hasExactKeys(
+			payload,
+			[
+				"outcome",
+				"pullRequest",
+				"build",
+				"qaEnvironment",
+				"acceptanceCriteria",
+				"testGuidance",
+				"risksAndConstraints",
+				"issue",
+				"authority",
+			],
+			["outOfScope"],
+		) ||
+		!("issue" in payload) ||
+		!payload.issue ||
+		typeof payload.issue !== "object" ||
+		Array.isArray(payload.issue) ||
 		!hasExactKeys(payload.issue, ["id", "revision"]) ||
-		!("id" in payload.issue) || payload.issue.id !== issueId ||
-		!("revision" in payload.issue) || !text(payload.issue.revision) ||
-		!("authority" in payload) || !payload.authority ||
-		typeof payload.authority !== "object" || Array.isArray(payload.authority) ||
-		!hasExactKeys(payload.authority, ["actorId", "role", "authorityRevision"]) ||
-		!developer(payload.authority)) return false;
+		!("id" in payload.issue) ||
+		payload.issue.id !== issueId ||
+		!("revision" in payload.issue) ||
+		!text(payload.issue.revision) ||
+		!("authority" in payload) ||
+		!payload.authority ||
+		typeof payload.authority !== "object" ||
+		Array.isArray(payload.authority) ||
+		!hasExactKeys(payload.authority, [
+			"actorId",
+			"role",
+			"authorityRevision",
+		]) ||
+		!developer(payload.authority)
+	)
+		return false;
 	const { issue: _issue, authority: _authority, ...draft } = payload;
 	if (!isQaHandoffDraft(draft)) return false;
 	const typedPayload: QaHandoffArtifact["payload"] = {
@@ -271,31 +328,42 @@ export function isQaHandoffArtifact(
 		language: value.language,
 		payload,
 	});
-	return "digest" in value && value.digest === digest &&
-		"body" in value && value.body === renderQaHandoffBody(typedPayload, digest);
+	return (
+		"digest" in value &&
+		value.digest === digest &&
+		"body" in value &&
+		value.body === renderQaHandoffBody(typedPayload, digest)
+	);
 }
 
 export type QaHandoffReferenceInspection<T> =
 	| { readonly status: "none" }
 	| { readonly status: "exact"; readonly comments: readonly [T, ...T[]] }
-	| { readonly status: "conflict"; readonly blocker: Blocker };
+	| { readonly status: "conflict"; readonly blocker: QaHandoffBlocker };
 
 export function inspectQaHandoffReferences<
-	T extends { readonly id: string; readonly body: string; readonly isRoot?: boolean },
+	T extends {
+		readonly id: string;
+		readonly body: string;
+		readonly isRoot?: boolean;
+	},
 >(
 	artifact: Pick<QaHandoffArtifact, "digest" | "body">,
 	comments: readonly T[],
 ): QaHandoffReferenceInspection<T> {
 	const marker = `Referencia de flujo: qa-handoff:${artifact.digest}`;
-	const matching = comments.filter((comment) =>
-		comment.isRoot !== false &&
-		comment.body.split(/\r\n|\n|\r/).some((line) => line === marker));
+	const matching = comments.filter(
+		(comment) =>
+			comment.isRoot !== false &&
+			comment.body.split(/\r\n|\n|\r/).some((line) => line === marker),
+	);
 	if (matching.some((comment) => comment.body !== artifact.body))
 		return {
 			status: "conflict",
 			blocker: {
 				code: "PI_WORKFLOW_COMMENT_IDEMPOTENCY_CONFLICT",
-				message: "The QA handoff reference already exists with a different body.",
+				message:
+					"The QA handoff reference already exists with a different body.",
 			},
 		};
 	const exact = matching.filter((comment) => comment.body === artifact.body);
@@ -311,15 +379,21 @@ async function allComments(gateway: LinearQaHandoffGateway, issueId: string) {
 		const page = await gateway.listComments({ issueId, cursor });
 		for (const comment of page.comments) {
 			if (!text(comment.id) || typeof comment.body !== "string")
-				throw Object.assign(new Error("Linear returned a malformed comment page."), {
-					code: "PI_WORKFLOW_LINEAR_MALFORMED_RESPONSE",
-				});
+				throw Object.assign(
+					new Error("Linear returned a malformed comment page."),
+					{
+						code: "PI_WORKFLOW_LINEAR_MALFORMED_RESPONSE",
+					},
+				);
 			comments.push({ id: comment.id, body: comment.body });
 		}
 		if (page.nextCursor !== undefined && !text(page.nextCursor))
-			throw Object.assign(new Error("Linear returned a malformed comment cursor."), {
-				code: "PI_WORKFLOW_LINEAR_MALFORMED_RESPONSE",
-			});
+			throw Object.assign(
+				new Error("Linear returned a malformed comment cursor."),
+				{
+					code: "PI_WORKFLOW_LINEAR_MALFORMED_RESPONSE",
+				},
+			);
 		cursor = page.nextCursor;
 		if (cursor && seen.has(cursor))
 			throw Object.assign(new Error("Linear repeated a comment cursor."), {
@@ -332,33 +406,66 @@ async function allComments(gateway: LinearQaHandoffGateway, issueId: string) {
 
 export function createQaHandoffWorkflow(dependencies: Dependencies) {
 	let activeAuthorization:
-		| { issueId: string; issueRevision: string; digest: string; authorityRevision: string }
+		| {
+				issueId: string;
+				issueRevision: string;
+				digest: string;
+				authorityRevision: string;
+		  }
 		| undefined;
 
-	async function authorizeInvocation(issueId: string): Promise<AuthorizationOutcome> {
+	async function authorizeInvocation(
+		issueId: string,
+	): Promise<QaHandoffAuthorizationOutcome> {
 		activeAuthorization = undefined;
 		try {
 			if (!linearIssueId(issueId))
-				return blocked("PI_WORKFLOW_QA_HANDOFF_ISSUE_MISMATCH", "A single Linear issue ID is required.");
+				return blocked(
+					"PI_WORKFLOW_QA_HANDOFF_ISSUE_MISMATCH",
+					"A single Linear issue ID is required.",
+				);
 			const [issue, draft, authority] = await Promise.all([
 				dependencies.gateway.getIssue({ id: issueId }),
 				dependencies.drafts.read(issueId),
 				dependencies.currentDeveloper(),
 			]);
 			if (!issue || issue.id !== issueId || !text(issue.updatedAt))
-				return blocked("PI_WORKFLOW_QA_HANDOFF_ISSUE_MISMATCH", "The QA handoff issue is unavailable or mismatched.");
+				return blocked(
+					"PI_WORKFLOW_QA_HANDOFF_ISSUE_MISMATCH",
+					"The QA handoff issue is unavailable or mismatched.",
+				);
 			if (!developer(authority))
-				return blocked("PI_WORKFLOW_QA_HANDOFF_AUTHORITY_MISMATCH", "Exact Developer authority is required.");
+				return blocked(
+					"PI_WORKFLOW_QA_HANDOFF_AUTHORITY_MISMATCH",
+					"Exact Developer authority is required.",
+				);
 			if (!isQaHandoffDraft(draft))
-				return blocked("PI_WORKFLOW_QA_HANDOFF_ARTIFACT_INVALID", "Complete structured QA handoff evidence is required.");
+				return blocked(
+					"PI_WORKFLOW_QA_HANDOFF_ARTIFACT_INVALID",
+					"Complete structured QA handoff evidence is required.",
+				);
 			const candidate = createQaHandoffArtifact(issue, authority, draft);
 			const existing = await dependencies.artifacts.read(issueId);
-			if (existing && (!isQaHandoffArtifact(existing, issueId) || existing.digest !== candidate.digest))
-				return blocked("PI_WORKFLOW_QA_HANDOFF_ARTIFACT_CONFLICT", "The issue already has a different QA handoff artifact.");
-			const saved = existing ?? await dependencies.artifacts.save(candidate);
+			if (
+				existing &&
+				(!isQaHandoffArtifact(existing, issueId) ||
+					existing.digest !== candidate.digest)
+			)
+				return blocked(
+					"PI_WORKFLOW_QA_HANDOFF_ARTIFACT_CONFLICT",
+					"The issue already has a different QA handoff artifact.",
+				);
+			const saved = existing ?? (await dependencies.artifacts.save(candidate));
 			const readBack = await dependencies.artifacts.read(issueId);
-			if (!readBack || canonicalJson(readBack) !== canonicalJson(saved) || !isQaHandoffArtifact(readBack, issueId))
-				return blocked("PI_WORKFLOW_ARTIFACT_READBACK_MISMATCH", "The QA handoff artifact read-back did not match.");
+			if (
+				!readBack ||
+				canonicalJson(readBack) !== canonicalJson(saved) ||
+				!isQaHandoffArtifact(readBack, issueId)
+			)
+				return blocked(
+					"PI_WORKFLOW_ARTIFACT_READBACK_MISMATCH",
+					"The QA handoff artifact read-back did not match.",
+				);
 			activeAuthorization = {
 				issueId,
 				issueRevision: readBack.payload.issue.revision,
@@ -368,59 +475,109 @@ export function createQaHandoffWorkflow(dependencies: Dependencies) {
 			return { status: "authorized", artifact: immutableSnapshot(readBack) };
 		} catch (error) {
 			return blocked(
-				(error as { code?: string }).code ?? "PI_WORKFLOW_QA_HANDOFF_PREPARATION_FAILED",
-				error instanceof Error ? error.message : "QA handoff preparation failed.",
+				(error as { code?: string }).code ??
+					"PI_WORKFLOW_QA_HANDOFF_PREPARATION_FAILED",
+				error instanceof Error
+					? error.message
+					: "QA handoff preparation failed.",
 			);
 		}
 	}
 
-	async function publish(input: unknown): Promise<PublicationOutcome> {
+	async function publish(input: unknown): Promise<QaHandoffPublicationOutcome> {
 		try {
-			if (!input || typeof input !== "object" || Array.isArray(input) ||
-				Object.keys(input).length !== 1 || !("issueId" in input) ||
-				!linearIssueId((input as { issueId?: unknown }).issueId))
-				return blocked("PI_WORKFLOW_QA_HANDOFF_INPUT_INVALID", "Publication accepts exactly one Linear issue ID.");
+			if (
+				!input ||
+				typeof input !== "object" ||
+				Array.isArray(input) ||
+				Object.keys(input).length !== 1 ||
+				!("issueId" in input) ||
+				!linearIssueId((input as { issueId?: unknown }).issueId)
+			)
+				return blocked(
+					"PI_WORKFLOW_QA_HANDOFF_INPUT_INVALID",
+					"Publication accepts exactly one Linear issue ID.",
+				);
 			const publication = input as { issueId: string };
 			const authorization = activeAuthorization;
 			if (!authorization || publication.issueId !== authorization.issueId)
-				return blocked("PI_WORKFLOW_QA_HANDOFF_ISSUE_MISMATCH", "Publication must match the explicitly authorized issue.");
+				return blocked(
+					"PI_WORKFLOW_QA_HANDOFF_ISSUE_MISMATCH",
+					"Publication must match the explicitly authorized issue.",
+				);
 			const [artifact, issueBefore, authority] = await Promise.all([
 				dependencies.artifacts.read(publication.issueId),
 				dependencies.gateway.getIssue({ id: publication.issueId }),
 				dependencies.currentDeveloper(),
 			]);
-			if (!artifact || !isQaHandoffArtifact(artifact, publication.issueId) || artifact.digest !== authorization.digest)
-				return blocked("PI_WORKFLOW_QA_HANDOFF_DIGEST_MISMATCH", "The authorized QA handoff digest changed before publication.");
-			if (!issueBefore || issueBefore.id !== artifact.payload.issue.id ||
+			if (
+				!artifact ||
+				!isQaHandoffArtifact(artifact, publication.issueId) ||
+				artifact.digest !== authorization.digest
+			)
+				return blocked(
+					"PI_WORKFLOW_QA_HANDOFF_DIGEST_MISMATCH",
+					"The authorized QA handoff digest changed before publication.",
+				);
+			if (
+				!issueBefore ||
+				issueBefore.id !== artifact.payload.issue.id ||
 				issueBefore.updatedAt !== artifact.payload.issue.revision ||
-				issueBefore.updatedAt !== authorization.issueRevision)
-				return blocked("PI_WORKFLOW_QA_HANDOFF_REVISION_MISMATCH", "The Linear issue revision changed before publication.");
-			if (!developer(authority) || canonicalJson(authority) !== canonicalJson(artifact.payload.authority) ||
-				authority.authorityRevision !== authorization.authorityRevision)
-				return blocked("PI_WORKFLOW_QA_HANDOFF_AUTHORITY_MISMATCH", "Developer authority changed before publication.");
+				issueBefore.updatedAt !== authorization.issueRevision
+			)
+				return blocked(
+					"PI_WORKFLOW_QA_HANDOFF_REVISION_MISMATCH",
+					"The Linear issue revision changed before publication.",
+				);
+			if (
+				!developer(authority) ||
+				canonicalJson(authority) !==
+					canonicalJson(artifact.payload.authority) ||
+				authority.authorityRevision !== authorization.authorityRevision
+			)
+				return blocked(
+					"PI_WORKFLOW_QA_HANDOFF_AUTHORITY_MISMATCH",
+					"Developer authority changed before publication.",
+				);
 
-			const beforeComments = await allComments(dependencies.gateway, publication.issueId);
+			const beforeComments = await allComments(
+				dependencies.gateway,
+				publication.issueId,
+			);
 			const inspection = inspectQaHandoffReferences(artifact, beforeComments);
 			if (inspection.status === "conflict")
 				return { status: "blocked", blocker: inspection.blocker };
-			let comment = inspection.status === "exact" ? inspection.comments[0] : undefined;
+			let comment =
+				inspection.status === "exact" ? inspection.comments[0] : undefined;
 			if (!comment) {
 				const created = await dependencies.gateway.createComment({
 					issueId: publication.issueId,
 					body: artifact.body,
 				});
 				if (!text(created.id) || created.body !== artifact.body)
-					return blocked("PI_WORKFLOW_LINEAR_MALFORMED_RESPONSE", "Linear returned a malformed comment creation response.");
+					return blocked(
+						"PI_WORKFLOW_LINEAR_MALFORMED_RESPONSE",
+						"Linear returned a malformed comment creation response.",
+					);
 				comment = created;
 			}
 			const [commentsAfter, issueAfter] = await Promise.all([
 				allComments(dependencies.gateway, publication.issueId),
 				dependencies.gateway.getIssue({ id: publication.issueId }),
 			]);
-			const readBack = commentsAfter.find((candidate) =>
-				candidate.id === comment?.id && candidate.body === artifact.body);
-			if (!readBack || !issueAfter || canonicalJson(issueAfter) !== canonicalJson(issueBefore))
-				return blocked("PI_WORKFLOW_QA_HANDOFF_READBACK_MISMATCH", "The QA handoff comment or full issue snapshot changed during read-back.");
+			const readBack = commentsAfter.find(
+				(candidate) =>
+					candidate.id === comment?.id && candidate.body === artifact.body,
+			);
+			if (
+				!readBack ||
+				!issueAfter ||
+				canonicalJson(issueAfter) !== canonicalJson(issueBefore)
+			)
+				return blocked(
+					"PI_WORKFLOW_QA_HANDOFF_READBACK_MISMATCH",
+					"The QA handoff comment or full issue snapshot changed during read-back.",
+				);
 			return {
 				status: "published",
 				artifact: immutableSnapshot(artifact),
@@ -428,8 +585,11 @@ export function createQaHandoffWorkflow(dependencies: Dependencies) {
 			};
 		} catch (error) {
 			return blocked(
-				(error as { code?: string }).code ?? "PI_WORKFLOW_QA_HANDOFF_PUBLICATION_FAILED",
-				error instanceof Error ? error.message : "QA handoff publication failed.",
+				(error as { code?: string }).code ??
+					"PI_WORKFLOW_QA_HANDOFF_PUBLICATION_FAILED",
+				error instanceof Error
+					? error.message
+					: "QA handoff publication failed.",
 			);
 		}
 	}

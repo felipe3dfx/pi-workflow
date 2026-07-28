@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { createQaHandoffArtifactStore } from "../extensions/qa-handoff-artifact-store.ts";
 import {
+	createQaHandoffArtifact,
 	createQaHandoffWorkflow,
 	isQaHandoffArtifact,
 } from "../extensions/qa-handoff-workflow.ts";
@@ -66,6 +67,15 @@ async function artifactFixture() {
 	return result.artifact;
 }
 
+function conflictingArtifact(artifact) {
+	const { issue: _issue, authority, ...draft } = artifact.payload;
+	return createQaHandoffArtifact(
+		{ id: artifact.payload.issue.id, updatedAt: "issue-r2" },
+		authority,
+		draft,
+	);
+}
+
 function backend() {
 	const values = new Map();
 	let writes = 0;
@@ -99,7 +109,10 @@ test("narrows unknown values only when the complete QA handoff artifact is valid
 	assert.equal(isQaHandoffArtifact(parsed, "ILA-2321"), true);
 	assert.equal(isQaHandoffArtifact(null, "ILA-2321"), false);
 	assert.equal(isQaHandoffArtifact([], "ILA-2321"), false);
-	assert.equal(isQaHandoffArtifact({ ...parsed, unexpected: true }, "ILA-2321"), false);
+	assert.equal(
+		isQaHandoffArtifact({ ...parsed, unexpected: true }, "ILA-2321"),
+		false,
+	);
 	assert.equal(isQaHandoffArtifact(parsed, "ILA-9999"), false);
 });
 
@@ -115,10 +128,118 @@ test("persists qa-handoff/v1 as a create-only artifact and reads back the exact 
 	assert.deepEqual(await store.read("ILA-2321"), artifact);
 	assert.deepEqual(await store.save(artifact), artifact);
 	assert.equal(persistence.writes, 1);
-	assert.equal(
-		persistence.values.has("workflow/qa-handoff/ILA-2321"),
-		true,
+	assert.equal(persistence.values.has("workflow/qa-handoff/ILA-2321"), true);
+});
+
+test("adopts an exact concurrent winner after a create-only CAS race", async () => {
+	const artifact = await artifactFixture();
+	const topic = "workflow/qa-handoff/ILA-2321";
+	const content = `${canonicalJson(artifact)}\n`;
+	let current;
+	const store = createQaHandoffArtifactStore({
+		project: "pi-workflow",
+		store: {
+			capabilities: { atomicCompareAndSwap: true },
+			readCurrent: async () => current,
+			write: async () => {
+				current = { revision: "concurrent-r1", content };
+				throw new Error("compare-and-swap conflict");
+			},
+			readRevision: async (_project, readTopic, revision) =>
+				readTopic === topic && current?.revision === revision
+					? current.content
+					: undefined,
+		},
+	});
+
+	assert.deepEqual(await store.save(artifact), artifact);
+});
+
+test("fails closed when a create-only CAS race has a conflicting winner", async () => {
+	const artifact = await artifactFixture();
+	const conflicting = conflictingArtifact(artifact);
+	const winner = {
+		revision: "concurrent-rival",
+		content: `${canonicalJson(conflicting)}\n`,
+	};
+	let current;
+	const store = createQaHandoffArtifactStore({
+		project: "pi-workflow",
+		store: {
+			capabilities: { atomicCompareAndSwap: true },
+			readCurrent: async () => current,
+			write: async () => {
+				current = winner;
+				throw new Error("compare-and-swap conflict");
+			},
+			readRevision: async (_project, _topic, revision) =>
+				current?.revision === revision ? current.content : undefined,
+		},
+	});
+
+	await assert.rejects(
+		store.save(artifact),
+		/conflicts with its create-only snapshot/,
 	);
+});
+
+test("fails closed when a conflicting revision becomes current after a successful write", async () => {
+	const artifact = await artifactFixture();
+	const topic = "workflow/qa-handoff/ILA-2321";
+	const content = `${canonicalJson(artifact)}\n`;
+	const rivalContent = `${canonicalJson(conflictingArtifact(artifact))}\n`;
+	const revisions = new Map();
+	let current;
+	const store = createQaHandoffArtifactStore({
+		project: "pi-workflow",
+		store: {
+			capabilities: { atomicCompareAndSwap: true },
+			readCurrent: async () => current,
+			write: async () => {
+				const saved = { revision: "saved-r1", content };
+				revisions.set(saved.revision, saved.content);
+				current = saved;
+				return { revision: saved.revision };
+			},
+			readRevision: async (_project, readTopic, revision) => {
+				assert.equal(readTopic, topic);
+				const readBack = revisions.get(revision);
+				current = { revision: "rival-r2", content: rivalContent };
+				revisions.set(current.revision, current.content);
+				return readBack;
+			},
+		},
+	});
+
+	await assert.rejects(store.save(artifact), /current revision did not match/);
+});
+
+test("fails closed when an exact adopted winner is superseded before success", async () => {
+	const artifact = await artifactFixture();
+	const content = `${canonicalJson(artifact)}\n`;
+	const rivalContent = `${canonicalJson(conflictingArtifact(artifact))}\n`;
+	const revisions = new Map();
+	let current;
+	const store = createQaHandoffArtifactStore({
+		project: "pi-workflow",
+		store: {
+			capabilities: { atomicCompareAndSwap: true },
+			readCurrent: async () => current,
+			write: async () => {
+				current = { revision: "winner-r1", content };
+				revisions.set(current.revision, current.content);
+				throw new Error("compare-and-swap conflict");
+			},
+			readRevision: async (_project, _topic, revision) => {
+				const readBack = revisions.get(revision);
+				current = { revision: "rival-r2", content: rivalContent };
+				revisions.set(current.revision, current.content);
+				return readBack;
+			},
+		},
+	});
+
+	await assert.rejects(store.save(artifact), /current revision did not match/);
 });
 
 test("rejects conflicting or malformed durable QA handoff artifacts", async () => {
@@ -169,8 +290,16 @@ test("rejects parse-valid persisted bytes that are not the exact canonical artif
 			project: "pi-workflow",
 		});
 
-		await assert.rejects(store.read("ILA-2321"), /canonical|invalid or corrupt/, variant.name);
-		await assert.rejects(store.save(artifact), /canonical|invalid or corrupt/, variant.name);
+		await assert.rejects(
+			store.read("ILA-2321"),
+			/canonical|invalid or corrupt/,
+			variant.name,
+		);
+		await assert.rejects(
+			store.save(artifact),
+			/canonical|invalid or corrupt/,
+			variant.name,
+		);
 		assert.equal(persistence.writes, 0, variant.name);
 	}
 });

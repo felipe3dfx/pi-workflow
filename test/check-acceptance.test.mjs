@@ -88,6 +88,11 @@ test("public acceptance command packs once and validates the extracted release c
 		"caller-fields-and-stale-authority-refused",
 		"public-extension-input-and-tool-dispatch",
 		"packed-mcp-only-publication-tools",
+		"packed-default-mcp-publication-wiring",
+		"packed-mcp-fresh-draft-artifact-equality",
+		"packed-mcp-production-schema-digest-and-spanish-body",
+		"packed-exact-mcp-tool-inputs",
+		"packed-durable-uncertain-restart-recovery",
 	]);
 	assert.deepEqual(report.scenarios["product-review"].assertions, [
 		"owner-choice-bound-to-spanish-golden",
@@ -203,7 +208,10 @@ test("public acceptance command rejects a tarball before scenario execution", as
 				timeout: 120_000,
 			}),
 			(error) => {
-				assert.match(error.stderr, /packed distribution validation failed|tar:/i);
+				assert.match(
+					error.stderr,
+					/packed distribution validation failed|tar:/i,
+				);
 				return true;
 			},
 		);

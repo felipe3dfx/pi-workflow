@@ -51,6 +51,75 @@ function fakeArtifactStore() {
 	};
 }
 
+function fakeEngramServer() {
+	const current = new Map();
+	const revisions = new Map();
+	let sequence = 0;
+	const key = (project, topic) => `${project}:${topic}`;
+	const json = (value, status = 200) =>
+		new Response(JSON.stringify(value), {
+			status,
+			headers: { "content-type": "application/json" },
+		});
+	function save(project, topic, content, expectedRevision) {
+		const destination = key(project, topic);
+		const existing = current.get(destination);
+		invariant(
+			existing?.id === expectedRevision,
+			`packed Engram CAS mismatch at ${topic}`,
+		);
+		sequence += 1;
+		const observation = {
+			id: `packed-engram-${sequence}`,
+			project,
+			topic_key: topic,
+			content,
+		};
+		current.set(destination, observation);
+		revisions.set(observation.id, observation);
+		return observation;
+	}
+	return {
+		seed(project, topic, content) {
+			return save(project, topic, content, undefined);
+		},
+		read(project, topic) {
+			return structuredClone(current.get(key(project, topic)));
+		},
+		async fetch(input, init = {}) {
+			const url = new URL(typeof input === "string" ? input : input.url);
+			if (url.origin !== "http://127.0.0.1:7437")
+				return json({ error: "unexpected host" }, 500);
+			if (
+				url.pathname === "/observations" &&
+				(init.method ?? "GET") === "GET"
+			) {
+				const project = url.searchParams.get("project");
+				const topic = url.searchParams.get("topic_key");
+				const observation = current.get(key(project, topic));
+				return json({ observations: observation ? [observation] : [] });
+			}
+			if (url.pathname === "/observations" && init.method === "POST") {
+				const body = JSON.parse(init.body);
+				const observation = save(
+					body.project,
+					body.topic_key,
+					body.content,
+					body.expected_revision ?? undefined,
+				);
+				return json(observation);
+			}
+			const revision = decodeURIComponent(
+				url.pathname.replace("/observations/", ""),
+			);
+			const observation = revisions.get(revision);
+			return observation
+				? json(observation)
+				: json({ error: "not found" }, 404);
+		},
+	};
+}
+
 function fakeSyncFilesystem(initial = {}) {
 	const entries = new Map(Object.entries(initial));
 	const writes = [];
@@ -116,9 +185,17 @@ async function publicExtensionHarness(overrides = {}) {
 		approve: async () => ({ status: "blocked" }),
 		publish: async () => ({ status: "blocked" }),
 	};
+	const qaHandoffOptions = overrides.defaultQaHandoffRuntime
+		? {}
+		: {
+				qaHandoff: overrides.qaHandoffRuntime ?? {
+					workflow: overrides.qaHandoff ?? defaultQaHandoff,
+				},
+			};
 	piWorkflowExtension(
 		{
 			exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+			getAllTools: () => (overrides.toolNames ?? []).map((name) => ({ name })),
 			on(event, handler) {
 				const registered = handlers.get(event) ?? [];
 				registered.push(handler);
@@ -132,7 +209,7 @@ async function publicExtensionHarness(overrides = {}) {
 				workflow: overrides.defineProduct ?? defaultDefineProduct,
 				createDefinitionId: () => "packed-public-definition",
 			},
-			qaHandoff: { workflow: overrides.qaHandoff ?? defaultQaHandoff },
+			...qaHandoffOptions,
 			productReview: {
 				workflow: overrides.productReview ?? defaultProductReview,
 			},
@@ -200,7 +277,10 @@ async function traverseDefineProductPublicSeam() {
 		},
 		context,
 	);
-	invariant(admitted?.action === "continue", "define-product public entry failed");
+	invariant(
+		admitted?.action === "continue",
+		"define-product public entry failed",
+	);
 	invariant(
 		(await harness.emit(
 			"tool_call",
@@ -209,9 +289,9 @@ async function traverseDefineProductPublicSeam() {
 		)) === undefined,
 		"define-product public tool was not authorized",
 	);
-	const result = await harness.tools.get("workflow_define_product")?.execute(
-		"packed-public-define-product",
-		{
+	const result = await harness.tools
+		.get("workflow_define_product")
+		?.execute("packed-public-define-product", {
 			action: "recommend_route",
 			domainAnchor: "Preparar una release verificable",
 			assessment: {
@@ -219,8 +299,7 @@ async function traverseDefineProductPublicSeam() {
 				breadth: "broad",
 				reasons: ["Requiere evidencia."],
 			},
-		},
-	);
+		});
 	invariant(
 		result?.details?.status === "awaiting-confirmation" &&
 			calls.length === 1 &&
@@ -255,53 +334,6 @@ async function traverseDeliverTicketPublicSeam() {
 				"PI_WORKFLOW_CAPABILITY_PENDING: tools are disabled for pending public workflow capabilities" &&
 			notifications.length === 0,
 		"deliver-ticket public pending boundary failed",
-	);
-}
-
-async function traverseQaHandoffPublicSeam() {
-	const calls = [];
-	const harness = await publicExtensionHarness({
-		qaHandoff: {
-			async authorizeInvocation(issueId) {
-				calls.push({ operation: "authorizeInvocation", issueId });
-				return { status: "authorized" };
-			},
-			async publish(input) {
-				calls.push({ operation: "publish", input: structuredClone(input) });
-				return { status: "published", comment: { id: "public-qa-comment" } };
-			},
-		},
-	});
-	const context = publicInputContext();
-	const admitted = await harness.emit(
-		"input",
-		{
-			type: "input",
-			text: "/qa-handoff ILA-2321",
-			source: "interactive",
-		},
-		context,
-	);
-	invariant(admitted?.action === "continue", "QA handoff public entry failed");
-	invariant(
-		(await harness.emit(
-			"tool_call",
-			{ toolName: "workflow_qa_handoff" },
-			context,
-		)) === undefined,
-		"QA handoff public tool was not authorized",
-	);
-	const result = await harness.tools.get("workflow_qa_handoff")?.execute(
-		"packed-public-qa",
-		{ issueId: "ILA-2321" },
-	);
-	invariant(
-		JSON.parse(result?.content?.[0]?.text ?? "null").status === "published" &&
-			isDeepStrictEqual(calls, [
-				{ operation: "authorizeInvocation", issueId: "ILA-2321" },
-				{ operation: "publish", input: { issueId: "ILA-2321" } },
-			]),
-		"QA handoff registered tool did not dispatch to its workflow",
 	);
 }
 
@@ -344,7 +376,10 @@ async function traverseProductReviewPublicSeam() {
 		},
 		context,
 	);
-	invariant(admitted?.action === "continue", "Product review public entry failed");
+	invariant(
+		admitted?.action === "continue",
+		"Product review public entry failed",
+	);
 	await harness.emit("agent_settled", { type: "agent_settled" }, context);
 	const selection = await harness.emit(
 		"input",
@@ -364,10 +399,13 @@ async function traverseProductReviewPublicSeam() {
 			)) === undefined,
 		"Product review Owner selection was not authorized",
 	);
-	const result = await harness.tools.get("workflow_product_review")?.execute(
-		"packed-public-product-review",
-		{ issueId: "ILA-2324", result: "Aceptado", digest: acceptedDigest },
-	);
+	const result = await harness.tools
+		.get("workflow_product_review")
+		?.execute("packed-public-product-review", {
+			issueId: "ILA-2324",
+			result: "Aceptado",
+			digest: acceptedDigest,
+		});
 	invariant(
 		JSON.parse(result?.content?.[0]?.text ?? "null").status === "published" &&
 			isDeepStrictEqual(calls, [
@@ -838,38 +876,421 @@ const qaIssue = {
 	},
 	parent: { id: "ILA-2296" },
 };
+const qaMcpIssue = {
+	id: "linear-uuid-2321",
+	identifier: "ILA-2321",
+	title: "Publicar QA handoff determinista",
+	description:
+		'Descripción autoritativa.\n\n```qa-handoff-evidence\n{"schema":"qa-handoff-evidence","schemaVersion":1,"pullRequestAttachmentId":"pr","buildAttachmentId":"build","qaEnvironmentAttachmentId":"qa","acceptanceCriteria":[{"id":"AC-1","description":"Publica un comentario localizado sin modificar el issue.","evidenceAttachmentIds":["test"]}]}\n```',
+	updatedAt: "2026-07-27T19:21:01.958Z",
+	status: "In Code Review",
+	statusType: "started",
+	assignee: "Developer",
+	assigneeId: "developer-7",
+	cycleId: "cycle-5",
+	labels: ["Assign To / Developer", "QA"],
+	estimate: 5,
+	relations: {
+		blockedBy: [{ id: "ILA-2300" }],
+		blocks: [{ id: "ILA-2400" }],
+		relatedTo: [{ id: "ILA-2200" }],
+		duplicateOf: null,
+	},
+	parentId: "ILA-2296",
+	attachments: [
+		{
+			id: "pr",
+			title: "PR #42",
+			url: "https://github.com/example/pi-workflow/pull/42",
+		},
+		{
+			id: "build",
+			title: "Build 184",
+			url: "https://github.com/example/pi-workflow/actions/runs/184",
+		},
+		{
+			id: "qa",
+			title: "QA",
+			url: "https://pi-workflow-qa.vercel.app",
+		},
+		{
+			id: "test",
+			title: "Prueba de publicación",
+			url: "https://github.com/example/pi-workflow/actions/runs/185",
+		},
+	],
+};
 
 async function runQaHandoffScenario() {
-	const { createQaHandoffWorkflow } = await packedModule(
+	const { createQaHandoffWorkflow, isQaHandoffArtifact } = await packedModule(
 		"extensions/qa-handoff-workflow.ts",
 	);
-	const { createQaHandoffMcpPublication } = await packedModule(
-		"extensions/qa-handoff-mcp-publication.ts",
+	const { produceQaHandoffDraft } = await packedModule(
+		"extensions/qa-handoff-draft-producer.ts",
 	);
-	const packedMcpPublication = createQaHandoffMcpPublication({
-		drafts: { read: async () => undefined, save: async () => undefined },
-		artifacts: { read: async () => undefined, save: async (artifact) => artifact },
-		recovery: {
-			read: async () => undefined,
-			claim: async () => {},
-			release: async () => {},
-			finalizeVerified: async () => {},
-		},
-	});
-	invariant(
-		isDeepStrictEqual(packedMcpPublication.allowedTools, [
-			"linear_get_user",
-			"linear_get_issue",
-			"linear_list_comments",
-			"linear_save_comment",
-			"workflow_qa_handoff",
-		]),
-		"packed QA handoff did not expose the exact MCP-only tool set",
+	const { canonicalJson, digestCanonicalValue } = await packedModule(
+		"extensions/workflow-contracts.ts",
 	);
-	const expectedBody = await readFile(
+	const legacyGoldenBody = await readFile(
 		join(packageRoot, "assets", "acceptance", "qa-handoff.golden.md"),
 		"utf8",
 	);
+	const producedDraft = produceQaHandoffDraft(qaMcpIssue);
+	invariant(
+		producedDraft.status === "produced",
+		"packed MCP issue evidence did not produce a fresh qa-handoff draft",
+	);
+	const engram = fakeEngramServer();
+	const engramProject = packageRoot.split("/").at(-1);
+	const draftUnsigned = {
+		schema: "qa-handoff-draft",
+		schemaVersion: 1,
+		payload: {
+			issue: { id: qaMcpIssue.identifier },
+			draft: structuredClone(producedDraft.draft),
+		},
+	};
+	const draftArtifact = {
+		...draftUnsigned,
+		digest: digestCanonicalValue(draftUnsigned),
+	};
+	engram.seed(
+		engramProject,
+		`workflow/qa-handoff-draft/${qaMcpIssue.identifier}`,
+		`${canonicalJson(draftArtifact)}\n`,
+	);
+	const originalFetch = globalThis.fetch;
+	globalThis.fetch = engram.fetch;
+	const packedMcpCalls = [];
+	const packedMcpComments = [];
+	const packedMcpToolNames = [
+		"linear_get_user",
+		"linear_get_issue",
+		"linear_list_comments",
+		"linear_save_comment",
+	];
+	const packedContext = {
+		...publicInputContext(),
+		cwd: packageRoot,
+		sessionManager: { getSessionId: () => "packed-qa-session" },
+	};
+	let packedSequence = 0;
+	async function startPackedMcpRuntime() {
+		const harness = await publicExtensionHarness({
+			defaultQaHandoffRuntime: true,
+			toolNames: packedMcpToolNames,
+		});
+		await harness.emit(
+			"session_start",
+			{ type: "session_start" },
+			packedContext,
+		);
+		const admitted = await harness.emit(
+			"input",
+			{
+				type: "input",
+				text: `/qa-handoff ${qaMcpIssue.identifier}`,
+				source: "interactive",
+			},
+			packedContext,
+		);
+		invariant(
+			admitted?.action === "continue",
+			"packed default MCP entry failed",
+		);
+		const launch = await harness.emit(
+			"before_agent_start",
+			{ type: "before_agent_start" },
+			packedContext,
+		);
+		invariant(
+			launch?.systemPrompt?.includes("artifact-backed Linear MCP QA handoff"),
+			"packed extension did not select its default MCP publication wiring",
+		);
+		return harness;
+	}
+	async function packedMcpCall(harness, toolName, input, payload) {
+		packedSequence += 1;
+		const toolCallId = `packed-mcp-${packedSequence}`;
+		const event = { toolName, toolCallId, input: structuredClone(input) };
+		const blockedCall = await harness.emit("tool_call", event, packedContext);
+		invariant(!blockedCall, `packed MCP blocked ${toolName}`);
+		packedMcpCalls.push({ toolName, input: structuredClone(event.input) });
+		if (payload === undefined) return event;
+		await harness.emit(
+			"tool_result",
+			{
+				toolName,
+				toolCallId,
+				content: [{ type: "text", text: JSON.stringify(payload) }],
+				isError: false,
+			},
+			packedContext,
+		);
+		return event;
+	}
+	const actorEvidence = {
+		id: qaDeveloper.actorId,
+		name: "Developer",
+		isActive: true,
+		isGuest: false,
+	};
+	const expectedPackedMcpPayload = {
+		issue: {
+			id: qaMcpIssue.identifier,
+			revision: qaMcpIssue.updatedAt,
+		},
+		authority: {
+			actorId: actorEvidence.id,
+			role: "Developer",
+			authorityRevision: digestCanonicalValue(actorEvidence),
+		},
+		...structuredClone(producedDraft.draft),
+	};
+	const issueCallInput = { id: qaMcpIssue.identifier, includeRelations: true };
+	const commentsCallInput = { issueId: qaMcpIssue.identifier };
+
+	const interruptedHarness = await startPackedMcpRuntime();
+	await packedMcpCall(
+		interruptedHarness,
+		"linear_get_user",
+		{ query: "me" },
+		actorEvidence,
+	);
+	await packedMcpCall(
+		interruptedHarness,
+		"linear_get_issue",
+		issueCallInput,
+		qaMcpIssue,
+	);
+	await packedMcpCall(
+		interruptedHarness,
+		"linear_get_issue",
+		issueCallInput,
+		qaMcpIssue,
+	);
+	await packedMcpCall(
+		interruptedHarness,
+		"linear_list_comments",
+		commentsCallInput,
+		{
+			comments: [],
+			hasNextPage: false,
+		},
+	);
+	await packedMcpCall(
+		interruptedHarness,
+		"linear_get_user",
+		{ query: "me" },
+		actorEvidence,
+	);
+	await packedMcpCall(
+		interruptedHarness,
+		"linear_get_issue",
+		issueCallInput,
+		qaMcpIssue,
+	);
+	const interruptedMutation = await packedMcpCall(
+		interruptedHarness,
+		"linear_save_comment",
+		{
+			issueId: qaMcpIssue.identifier,
+			body: "PI_WORKFLOW_CANONICAL_QA_HANDOFF_BODY",
+		},
+		undefined,
+	);
+	const packedComment = {
+		id: "packed-mcp-comment",
+		body: interruptedMutation.input.body,
+	};
+	packedMcpComments.push(structuredClone(packedComment));
+	await interruptedHarness.emit(
+		"session_shutdown",
+		{ type: "session_shutdown" },
+		packedContext,
+	);
+	const persistedDraftArtifact = JSON.parse(
+		engram.read(
+			engramProject,
+			`workflow/qa-handoff-draft/${qaMcpIssue.identifier}`,
+		).content,
+	);
+	const packedMcpArtifact = JSON.parse(
+		engram.read(engramProject, `workflow/qa-handoff/${qaMcpIssue.identifier}`)
+			.content,
+	);
+	const expectedPackedMcpDigest = digestCanonicalValue({
+		schema: "qa-handoff",
+		schemaVersion: 1,
+		language: "es",
+		payload: expectedPackedMcpPayload,
+	});
+	const {
+		issue: _packedIssue,
+		authority: _packedAuthority,
+		...packedArtifactDraft
+	} = packedMcpArtifact.payload;
+	invariant(
+		isDeepStrictEqual(persistedDraftArtifact, draftArtifact) &&
+			isDeepStrictEqual(
+				persistedDraftArtifact.payload.draft,
+				producedDraft.draft,
+			) &&
+			isDeepStrictEqual(packedArtifactDraft, producedDraft.draft) &&
+			isDeepStrictEqual(packedMcpArtifact.payload, expectedPackedMcpPayload),
+		"packed default MCP wiring did not bind the exact fresh draft to its production artifact",
+	);
+	invariant(
+		packedMcpArtifact.schema === "qa-handoff" &&
+			packedMcpArtifact.schemaVersion === 1 &&
+			packedMcpArtifact.language === "es" &&
+			packedMcpArtifact.digest === expectedPackedMcpDigest &&
+			isQaHandoffArtifact(packedMcpArtifact, qaMcpIssue.identifier),
+		"packed default MCP wiring did not persist the production artifact schema and recomputed digest contract",
+	);
+	const packedSpanishBodyInvariants = [
+		`# Entrega para QA — ${qaMcpIssue.identifier}`,
+		"## Resultado\n\n**Estado:** Listo para QA",
+		producedDraft.draft.outcome.summary,
+		"## Evidencia de PR y build",
+		"## Entorno de QA",
+		"## Criterios de aceptación",
+		"## Guía de pruebas",
+		"## Riesgos y restricciones\n\nNinguno conocido.",
+	];
+	invariant(
+		packedSpanishBodyInvariants.every((text) =>
+			packedMcpArtifact.body.includes(text),
+		) &&
+			packedMcpArtifact.body.endsWith(
+				`Referencia de flujo: qa-handoff:${packedMcpArtifact.digest}\n`,
+			) &&
+			packedMcpArtifact.body === interruptedMutation.input.body,
+		"packed default MCP wiring did not satisfy its deterministic professional-Spanish body contract",
+	);
+	const uncertainRecovery = JSON.parse(
+		engram.read(
+			engramProject,
+			`workflow/qa-handoff-publication-recovery/${qaMcpIssue.identifier}`,
+		).content,
+	);
+	invariant(
+		isDeepStrictEqual(
+			{
+				digest: uncertainRecovery.digest,
+				stage: uncertainRecovery.stage,
+			},
+			{ digest: packedMcpArtifact.digest, stage: "uncertain" },
+		),
+		"packed MCP interruption did not preserve uncertain publication recovery",
+	);
+
+	const recoveredHarness = await startPackedMcpRuntime();
+	await packedMcpCall(
+		recoveredHarness,
+		"linear_get_user",
+		{ query: "me" },
+		actorEvidence,
+	);
+	await packedMcpCall(
+		recoveredHarness,
+		"linear_get_issue",
+		issueCallInput,
+		qaMcpIssue,
+	);
+	await packedMcpCall(
+		recoveredHarness,
+		"linear_get_issue",
+		issueCallInput,
+		qaMcpIssue,
+	);
+	await packedMcpCall(
+		recoveredHarness,
+		"linear_list_comments",
+		commentsCallInput,
+		{
+			comments: packedMcpComments,
+			hasNextPage: false,
+		},
+	);
+	await packedMcpCall(
+		recoveredHarness,
+		"linear_list_comments",
+		commentsCallInput,
+		{
+			comments: packedMcpComments,
+			hasNextPage: false,
+		},
+	);
+	await packedMcpCall(
+		recoveredHarness,
+		"linear_get_issue",
+		issueCallInput,
+		qaMcpIssue,
+	);
+	await packedMcpCall(
+		recoveredHarness,
+		"workflow_qa_handoff",
+		{ issueId: qaMcpIssue.identifier },
+		undefined,
+	);
+	const packedMcpResult = await recoveredHarness.tools
+		.get("workflow_qa_handoff")
+		?.execute("packed-mcp-completion", { issueId: qaMcpIssue.identifier });
+	const packedMcpOutcome = JSON.parse(
+		packedMcpResult?.content?.[0]?.text ?? "null",
+	);
+	invariant(
+		packedMcpOutcome.status === "published" &&
+			packedMcpOutcome.commentId === packedComment.id &&
+			packedMcpComments[0]?.body === packedMcpArtifact.body,
+		"packed default MCP QA handoff did not recover its deterministic production artifact",
+	);
+	invariant(
+		isDeepStrictEqual(packedMcpCalls, [
+			{ toolName: "linear_get_user", input: { query: "me" } },
+			{ toolName: "linear_get_issue", input: issueCallInput },
+			{ toolName: "linear_get_issue", input: issueCallInput },
+			{ toolName: "linear_list_comments", input: commentsCallInput },
+			{ toolName: "linear_get_user", input: { query: "me" } },
+			{ toolName: "linear_get_issue", input: issueCallInput },
+			{
+				toolName: "linear_save_comment",
+				input: {
+					issueId: qaMcpIssue.identifier,
+					body: packedMcpArtifact.body,
+				},
+			},
+			{ toolName: "linear_get_user", input: { query: "me" } },
+			{ toolName: "linear_get_issue", input: issueCallInput },
+			{ toolName: "linear_get_issue", input: issueCallInput },
+			{ toolName: "linear_list_comments", input: commentsCallInput },
+			{ toolName: "linear_list_comments", input: commentsCallInput },
+			{ toolName: "linear_get_issue", input: issueCallInput },
+			{
+				toolName: "workflow_qa_handoff",
+				input: { issueId: qaMcpIssue.identifier },
+			},
+		]),
+		"packed default MCP QA handoff exact inputs or recovery sequence drifted",
+	);
+	const restartedRecovery = JSON.parse(
+		engram.read(
+			engramProject,
+			`workflow/qa-handoff-publication-recovery/${qaMcpIssue.identifier}`,
+		).content,
+	);
+	invariant(
+		isDeepStrictEqual(
+			{
+				digest: restartedRecovery.digest,
+				stage: restartedRecovery.stage,
+			},
+			{ digest: packedMcpArtifact.digest, stage: "verified" },
+		),
+		"packed MCP QA handoff did not finalize recreated uncertain recovery",
+	);
+	globalThis.fetch = originalFetch;
 	const artifacts = fakeArtifactStore();
 	const comments = [];
 	const calls = [];
@@ -909,11 +1330,12 @@ async function runQaHandoffScenario() {
 	const first = await workflow.publish({ issueId: qaIssue.id });
 	invariant(first.status === "published", "QA handoff publication failed");
 	invariant(
-		first.artifact.language === "es" && first.artifact.body === expectedBody,
-		"QA handoff did not publish the packed Spanish golden",
+		first.artifact.language === "es" &&
+			first.artifact.body === legacyGoldenBody,
+		"legacy QA handoff did not publish the exact original Spanish golden",
 	);
 	invariant(
-		first.comment.body === expectedBody &&
+		first.comment.body === legacyGoldenBody &&
 			isDeepStrictEqual(currentIssue, issueBefore),
 		"QA handoff read-back changed the issue snapshot",
 	);
@@ -943,7 +1365,6 @@ async function runQaHandoffScenario() {
 				1,
 		"QA handoff stale authority was not refused before mutation",
 	);
-	await traverseQaHandoffPublicSeam();
 	return {
 		status: "passed",
 		assertions: [
@@ -953,6 +1374,11 @@ async function runQaHandoffScenario() {
 			"caller-fields-and-stale-authority-refused",
 			"public-extension-input-and-tool-dispatch",
 			"packed-mcp-only-publication-tools",
+			"packed-default-mcp-publication-wiring",
+			"packed-mcp-fresh-draft-artifact-equality",
+			"packed-mcp-production-schema-digest-and-spanish-body",
+			"packed-exact-mcp-tool-inputs",
+			"packed-durable-uncertain-restart-recovery",
 		],
 	};
 }
