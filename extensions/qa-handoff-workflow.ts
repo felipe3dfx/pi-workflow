@@ -275,8 +275,32 @@ export function isQaHandoffArtifact(
 		"body" in value && value.body === renderQaHandoffBody(typedPayload, digest);
 }
 
-function hasExactVisibleReferenceLine(body: string, reference: string): boolean {
-	return body.split(/\r\n|\n|\r/).some((line) => line === reference);
+export type QaHandoffReferenceInspection<T> =
+	| { readonly status: "none" }
+	| { readonly status: "exact"; readonly comments: readonly [T, ...T[]] }
+	| { readonly status: "conflict"; readonly blocker: Blocker };
+
+export function inspectQaHandoffReferences<
+	T extends { readonly id: string; readonly body: string; readonly isRoot?: boolean },
+>(
+	artifact: Pick<QaHandoffArtifact, "digest" | "body">,
+	comments: readonly T[],
+): QaHandoffReferenceInspection<T> {
+	const marker = `Referencia de flujo: qa-handoff:${artifact.digest}`;
+	const matching = comments.filter((comment) =>
+		comment.isRoot !== false &&
+		comment.body.split(/\r\n|\n|\r/).some((line) => line === marker));
+	if (matching.some((comment) => comment.body !== artifact.body))
+		return {
+			status: "conflict",
+			blocker: {
+				code: "PI_WORKFLOW_COMMENT_IDEMPOTENCY_CONFLICT",
+				message: "The QA handoff reference already exists with a different body.",
+			},
+		};
+	const exact = matching.filter((comment) => comment.body === artifact.body);
+	if (exact.length === 0) return { status: "none" };
+	return { status: "exact", comments: [exact[0], ...exact.slice(1)] };
 }
 
 async function allComments(gateway: LinearQaHandoffGateway, issueId: string) {
@@ -375,13 +399,11 @@ export function createQaHandoffWorkflow(dependencies: Dependencies) {
 				authority.authorityRevision !== authorization.authorityRevision)
 				return blocked("PI_WORKFLOW_QA_HANDOFF_AUTHORITY_MISMATCH", "Developer authority changed before publication.");
 
-			const marker = `Referencia de flujo: qa-handoff:${artifact.digest}`;
 			const beforeComments = await allComments(dependencies.gateway, publication.issueId);
-			const matching = beforeComments.filter((comment) =>
-				hasExactVisibleReferenceLine(comment.body, marker));
-			if (matching.some((comment) => comment.body !== artifact.body))
-				return blocked("PI_WORKFLOW_COMMENT_IDEMPOTENCY_CONFLICT", "The QA handoff reference already exists with a different body.");
-			let comment = matching.find((candidate) => candidate.body === artifact.body);
+			const inspection = inspectQaHandoffReferences(artifact, beforeComments);
+			if (inspection.status === "conflict")
+				return { status: "blocked", blocker: inspection.blocker };
+			let comment = inspection.status === "exact" ? inspection.comments[0] : undefined;
 			if (!comment) {
 				const created = await dependencies.gateway.createComment({
 					issueId: publication.issueId,

@@ -448,6 +448,14 @@ test("qa-handoff blocks extra MCP input before execution", async () => {
 		}, context),
 		{ block: true, reason: "PI_WORKFLOW_QA_HANDOFF_MCP_PROTOCOL_INVALID" },
 	);
+	assert.deepEqual(await terminalOutcome(harness), {
+		status: "blocked",
+		blocker: {
+			code: "PI_WORKFLOW_QA_HANDOFF_MCP_PROTOCOL_INVALID",
+			message:
+				"QA handoff MCP tool, input, issue, body, or stage did not match the active publication plan.",
+		},
+	});
 });
 
 test("qa-handoff blocks non-protocol reads before execution", async () => {

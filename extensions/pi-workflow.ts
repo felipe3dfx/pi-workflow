@@ -22,7 +22,7 @@ import {
 import type { createDefineProductWorkflow } from "./define-product-workflow.ts";
 import { createDefineProductRuntime } from "./define-product-runtime.ts";
 import { createQaHandoffArtifactStore } from "./qa-handoff-artifact-store.ts";
-import { createQaHandoffMcpPreflight } from "./qa-handoff-mcp-preflight.ts";
+import { createQaHandoffMcpPublication } from "./qa-handoff-mcp-publication.ts";
 import {
 	createQaHandoffDraftStore,
 	type QaHandoffDraftStore,
@@ -170,7 +170,7 @@ export default function piWorkflowExtension(
 		configuredQaHandoffWorkflow
 			? { workflow: configuredQaHandoffWorkflow }
 			: {
-					mcpPreflight: createQaHandoffMcpPreflight({
+					mcpPublication: createQaHandoffMcpPublication({
 						drafts: qaHandoffDrafts,
 						artifacts: qaHandoffArtifacts,
 					}),

@@ -1,5 +1,5 @@
 import type { ExtensionAPI, InputEvent } from "@earendil-works/pi-coding-agent";
-import type { createQaHandoffMcpPreflight } from "./qa-handoff-mcp-preflight.ts";
+import type { createQaHandoffMcpPublication } from "./qa-handoff-mcp-publication.ts";
 
 interface QaHandoffRuntimeWorkflow {
 	authorizeInvocation(issueId: string): Promise<unknown>;
@@ -40,10 +40,10 @@ export function createUnavailableQaHandoffWorkflow(): QaHandoffRuntimeWorkflow {
 
 export function createQaHandoffRuntime(options:
 	| { readonly workflow: QaHandoffRuntimeWorkflow }
-	| { readonly mcpPreflight: ReturnType<typeof createQaHandoffMcpPreflight> }) {
+	| { readonly mcpPublication: ReturnType<typeof createQaHandoffMcpPublication> }) {
 	const toolName = "workflow_qa_handoff";
 	const workflow = "workflow" in options ? options.workflow : undefined;
-	const mcpPreflight = "mcpPreflight" in options ? options.mcpPreflight : undefined;
+	const mcpPublication = "mcpPublication" in options ? options.mcpPublication : undefined;
 	let activeIssueId: string | undefined;
 	let authorization: Promise<unknown> | undefined;
 	let awaitingAnchor = false;
@@ -55,16 +55,16 @@ export function createQaHandoffRuntime(options:
 
 	function clearActiveTurn(): void {
 		clearAuthorization();
-		mcpPreflight?.clear();
+		mcpPublication?.clear();
 		awaitingAnchor = false;
 	}
 
 	function authorize(issueId: string): void {
 		awaitingAnchor = false;
 		activeIssueId = issueId;
-		if (mcpPreflight) {
-			mcpPreflight.start(issueId);
-			authorization = Promise.resolve({ status: "mcp-preflight" });
+		if (mcpPublication) {
+			mcpPublication.start(issueId);
+			authorization = Promise.resolve({ status: "mcp-publication" });
 			return;
 		}
 		authorization = workflow?.authorizeInvocation(issueId);
@@ -101,7 +101,7 @@ export function createQaHandoffRuntime(options:
 
 	function handleSettled(): void {
 		clearAuthorization();
-		mcpPreflight?.clear();
+		mcpPublication?.clear();
 	}
 
 	function hasActiveTurn(): boolean {
@@ -109,8 +109,8 @@ export function createQaHandoffRuntime(options:
 	}
 
 	async function execute(value: unknown): Promise<unknown> {
-		if (mcpPreflight) {
-			const outcome = mcpPreflight.complete(value);
+		if (mcpPublication) {
+			const outcome = mcpPublication.complete(value);
 			clearAuthorization();
 			return outcome;
 		}
@@ -159,15 +159,15 @@ export function createQaHandoffRuntime(options:
 		pi.on("before_agent_start", () => {
 			if (!hasActiveTurn()) return undefined;
 			const getAllTools = (pi as { getAllTools?: () => readonly { name: string }[] }).getAllTools;
-			if (mcpPreflight) {
+			if (mcpPublication) {
 				const available = new Set(getAllTools?.call(pi).map((tool) => tool.name) ?? []);
-				mcpPreflight.setMcpAvailable(
-					mcpPreflight.allowedTools
+				mcpPublication.setMcpAvailable(
+					mcpPublication.allowedTools
 						.filter((name) => name !== toolName)
 						.every((name) => available.has(name)),
 				);
 			}
-			const expected = mcpPreflight?.expectedModelCall();
+			const expected = mcpPublication?.expectedModelCall();
 			return {
 				systemPrompt: expected
 					? [
@@ -184,11 +184,11 @@ export function createQaHandoffRuntime(options:
 					].join(" "),
 			};
 		});
-		pi.on("tool_call", (event) => mcpPreflight?.handleToolCall(event));
+		pi.on("tool_call", (event) => mcpPublication?.handleToolCall(event));
 		pi.on("tool_result", async (event) => {
-			if (!mcpPreflight) return undefined;
-			await mcpPreflight.handleToolResult(event);
-			const instruction = mcpPreflight.nextCallInstruction();
+			if (!mcpPublication) return undefined;
+			await mcpPublication.handleToolResult(event);
+			const instruction = mcpPublication.nextCallInstruction();
 			if (!instruction) return undefined;
 			return {
 				content: [
@@ -229,7 +229,7 @@ export function createQaHandoffRuntime(options:
 
 	return {
 		toolName,
-		allowedTools: mcpPreflight?.allowedTools ?? [toolName],
+		allowedTools: mcpPublication?.allowedTools ?? [toolName],
 		clearActiveTurn,
 		handlePublicEntry,
 		handleSettled,
