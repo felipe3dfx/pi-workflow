@@ -1124,6 +1124,95 @@ test("qa-handoff keeps a rate-limited comment mutation lookup-only", async () =>
 	);
 });
 
+test("qa-handoff keeps post-create transport and malformed results lookup-only", async () => {
+	for (const variant of [
+		{
+			name: "transport",
+			result: {
+				content: [{ type: "text", text: JSON.stringify({ code: "TRANSPORT_ERROR" }) }],
+				isError: true,
+			},
+			expected: "PI_WORKFLOW_QA_HANDOFF_MCP_TRANSPORT_FAILED",
+		},
+		{
+			name: "partial success",
+			result: mcpResult("linear_save_comment", "uncertain-create", {}),
+			expected: "PI_WORKFLOW_QA_HANDOFF_MCP_MALFORMED_RESPONSE",
+		},
+	]) {
+		const harness = extensionHarness();
+		await advanceToComments(harness);
+		await readCommentsBefore(harness);
+		await revalidateActorBeforeMutation(harness);
+		await verifyIssueBeforeMutation(harness);
+		await harness.emit("tool_call", {
+			toolName: "linear_save_comment",
+			toolCallId: "uncertain-create",
+			input: {
+				issueId: "ILA-2410",
+				body: "PI_WORKFLOW_CANONICAL_QA_HANDOFF_BODY",
+			},
+		}, context);
+		await harness.emit("tool_result", {
+			toolName: "linear_save_comment",
+			toolCallId: "uncertain-create",
+			...variant.result,
+		}, context);
+		assert.equal(await terminalBlocker(harness), variant.expected, variant.name);
+
+		await harness.emit("session_shutdown", { type: "session_shutdown" }, context);
+		await harness.emit("session_start", { type: "session_start" }, context);
+		await advanceToComments(harness);
+		await readCommentsBefore(harness);
+		assert.equal(
+			await terminalBlocker(harness),
+			"PI_WORKFLOW_QA_HANDOFF_RECOVERY_PENDING",
+			variant.name,
+		);
+		assert.equal(
+			harness.toolCalls.filter(({ toolName }) => toolName === "linear_save_comment").length,
+			1,
+			variant.name,
+		);
+	}
+});
+
+test("qa-handoff fails closed on unreadable durable recovery", async () => {
+	const recovery = {
+		read: async () => { throw new Error("corrupt recovery"); },
+		claim: async () => {},
+		release: async () => {},
+		markVerified: async () => {},
+	};
+	const harness = extensionHarness({ recovery });
+	await advanceToComments(harness);
+	assert.equal(
+		await terminalBlocker(harness),
+		"PI_WORKFLOW_QA_HANDOFF_RECOVERY_PERSISTENCE_FAILED",
+	);
+});
+
+test("qa-handoff preserves verified recovery across public-seam digest drift", async () => {
+	const verified = { digest: "b".repeat(64), stage: "verified" };
+	const recovery = {
+		read: async () => structuredClone(verified),
+		claim: async () => { throw new Error("must not claim drifted recovery"); },
+		release: async () => { throw new Error("must not release drifted recovery"); },
+		markVerified: async () => { throw new Error("must not replace verified recovery"); },
+	};
+	const harness = extensionHarness({ recovery });
+	await advanceToComments(harness);
+	assert.equal(
+		await terminalBlocker(harness),
+		"PI_WORKFLOW_QA_HANDOFF_DIGEST_MISMATCH",
+	);
+	assert.deepEqual(await recovery.read(), verified);
+	assert.equal(
+		harness.toolCalls.some(({ toolName }) => toolName === "linear_save_comment"),
+		false,
+	);
+});
+
 test("qa-handoff never releases uncertainty for mismatched permission results", async () => {
 	const harness = extensionHarness();
 	await advanceToComments(harness);
@@ -1151,6 +1240,25 @@ test("qa-handoff never releases uncertainty for mismatched permission results", 
 	await advanceToComments(harness);
 	await readCommentsBefore(harness);
 	assert.equal(await terminalBlocker(harness), "PI_WORKFLOW_QA_HANDOFF_RECOVERY_PENDING");
+	assert.equal(
+		harness.toolCalls.filter(({ toolName }) => toolName === "linear_save_comment").length,
+		1,
+	);
+});
+
+test("qa-handoff preserves verified recovery when the comment disappears", async () => {
+	const harness = extensionHarness();
+	await advanceToComments(harness);
+	assert.equal((await publishFromPersistedArtifact(harness)).outcome.status, "published");
+
+	await harness.emit("session_shutdown", { type: "session_shutdown" }, context);
+	await harness.emit("session_start", { type: "session_start" }, context);
+	await advanceToComments(harness);
+	await readCommentsBefore(harness);
+	assert.equal(
+		await terminalBlocker(harness),
+		"PI_WORKFLOW_QA_HANDOFF_ALREADY_VERIFIED",
+	);
 	assert.equal(
 		harness.toolCalls.filter(({ toolName }) => toolName === "linear_save_comment").length,
 		1,

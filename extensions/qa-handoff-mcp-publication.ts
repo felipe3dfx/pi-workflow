@@ -1014,11 +1014,18 @@ async function verifiedIssueResultState(
 			draftReadBack,
 		);
 		if ("phase" in artifact) return artifact;
-		const recovery = await options.recovery.read(state.context.issueId);
-		if (
-			recovery?.stage === "uncertain" &&
-			recovery.digest !== artifact.digest
-		)
+		let recovery: Awaited<ReturnType<QaHandoffPublicationRecoveryStore["read"]>>;
+		try {
+			recovery = await options.recovery.read(state.context.issueId);
+		} catch (error) {
+			return failed(
+				"PI_WORKFLOW_QA_HANDOFF_RECOVERY_PERSISTENCE_FAILED",
+				error instanceof Error
+					? error.message
+					: "QA handoff recovery persistence could not be read.",
+			);
+		}
+		if (recovery && recovery.digest !== artifact.digest)
 			return failed(
 				"PI_WORKFLOW_QA_HANDOFF_DIGEST_MISMATCH",
 				"The pending QA handoff recovery digest changed.",

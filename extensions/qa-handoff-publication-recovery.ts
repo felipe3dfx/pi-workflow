@@ -115,7 +115,7 @@ export function createQaHandoffPublicationRecoveryStore(options: {
 				if (state.stage === "uncertain" && state.digest !== artifact.digest)
 					throw new Error("QA handoff publication recovery state conflicts.");
 				if (state.stage === "uncertain") return;
-				if (state.stage === "verified" && state.digest === artifact.digest)
+				if (state.stage === "verified")
 					throw new Error("QA handoff publication is already verified.");
 			}
 			await writeAndVerify(artifact, "uncertain", current?.revision);
