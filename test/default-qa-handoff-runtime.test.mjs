@@ -46,7 +46,7 @@ function extensionHarness({
 				stage: "released",
 			});
 		},
-		markVerified: async (artifact) => {
+		finalizeVerified: async (artifact) => {
 			publicationRecoveries.set(artifact.payload.issue.id, {
 				digest: artifact.digest,
 				stage: "verified",
@@ -1027,7 +1027,7 @@ test("qa-handoff blocks mutation when its durable recovery claim cannot be verif
 				throw new Error("recovery read-back mismatch");
 			},
 			release: async () => {},
-			markVerified: async () => {},
+			finalizeVerified: async () => {},
 		},
 	});
 	await advanceToComments(harness);
@@ -1182,7 +1182,7 @@ test("qa-handoff fails closed on unreadable durable recovery", async () => {
 		read: async () => { throw new Error("corrupt recovery"); },
 		claim: async () => {},
 		release: async () => {},
-		markVerified: async () => {},
+		finalizeVerified: async () => {},
 	};
 	const harness = extensionHarness({ recovery });
 	await advanceToComments(harness);
@@ -1198,7 +1198,7 @@ test("qa-handoff preserves verified recovery across public-seam digest drift", a
 		read: async () => structuredClone(verified),
 		claim: async () => { throw new Error("must not claim drifted recovery"); },
 		release: async () => { throw new Error("must not release drifted recovery"); },
-		markVerified: async () => { throw new Error("must not replace verified recovery"); },
+		finalizeVerified: async () => { throw new Error("must not replace verified recovery"); },
 	};
 	const harness = extensionHarness({ recovery });
 	await advanceToComments(harness);
@@ -1243,6 +1243,35 @@ test("qa-handoff never releases uncertainty for mismatched permission results", 
 	assert.equal(
 		harness.toolCalls.filter(({ toolName }) => toolName === "linear_save_comment").length,
 		1,
+	);
+});
+
+test("qa-handoff durably adopts an existing exact comment", async () => {
+	const harness = extensionHarness();
+	const artifact = await advanceToComments(harness);
+	assert.equal(
+		(await publishFromPersistedArtifact(harness, [{
+			id: "existing-2410",
+			body: artifact.body,
+		}])).outcome.status,
+		"published",
+	);
+	assert.deepEqual(harness.publicationRecoveries.get("ILA-2410"), {
+		digest: artifact.digest,
+		stage: "verified",
+	});
+
+	await harness.emit("session_shutdown", { type: "session_shutdown" }, context);
+	await harness.emit("session_start", { type: "session_start" }, context);
+	await advanceToComments(harness);
+	await readCommentsBefore(harness);
+	assert.equal(
+		await terminalBlocker(harness),
+		"PI_WORKFLOW_QA_HANDOFF_ALREADY_VERIFIED",
+	);
+	assert.equal(
+		harness.toolCalls.some(({ toolName }) => toolName === "linear_save_comment"),
+		false,
 	);
 });
 

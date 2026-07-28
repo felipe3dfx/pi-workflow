@@ -15,7 +15,7 @@ export interface QaHandoffPublicationRecoveryStore {
 	>;
 	claim(artifact: QaHandoffArtifact): Promise<void>;
 	release(artifact: QaHandoffArtifact): Promise<void>;
-	markVerified(artifact: QaHandoffArtifact): Promise<void>;
+	finalizeVerified(artifact: QaHandoffArtifact): Promise<void>;
 }
 
 function parseRecoveryState(content: string, issueId: string): RecoveryState {
@@ -46,7 +46,7 @@ function parseRecoveryState(content: string, issueId: string): RecoveryState {
 
 export function createQaHandoffPublicationRecoveryStore(options: {
 	readonly store: WorkflowArtifactStore;
-	readonly project: string;
+	readonly project: string | (() => string);
 	readonly topic?: string;
 }): QaHandoffPublicationRecoveryStore {
 	const prefix = options.topic ?? "workflow/qa-handoff-publication-recovery";
@@ -61,7 +61,11 @@ export function createQaHandoffPublicationRecoveryStore(options: {
 			stage,
 		})}\n`;
 
+	const currentProject = () =>
+		typeof options.project === "function" ? options.project() : options.project;
+
 	async function writeAndVerify(
+		project: string,
 		artifact: QaHandoffArtifact,
 		stage: RecoveryState["stage"],
 		expectedRevision: string | undefined,
@@ -69,13 +73,13 @@ export function createQaHandoffPublicationRecoveryStore(options: {
 		const topic = destination(artifact.payload.issue.id);
 		const content = contentFor(artifact, stage);
 		const saved = await options.store.write(
-			options.project,
+			project,
 			topic,
 			content,
 			expectedRevision,
 		);
 		const readBack = await options.store.readRevision(
-			options.project,
+			project,
 			topic,
 			saved.revision,
 		);
@@ -85,13 +89,14 @@ export function createQaHandoffPublicationRecoveryStore(options: {
 
 	return {
 		async read(issueId) {
+			const project = currentProject();
 			const current = await options.store.readCurrent(
-				options.project,
+				project,
 				destination(issueId),
 			);
 			if (!current) return undefined;
 			const readBack = await options.store.readRevision(
-				options.project,
+				project,
 				destination(issueId),
 				current.revision,
 			);
@@ -103,11 +108,12 @@ export function createQaHandoffPublicationRecoveryStore(options: {
 				: undefined;
 		},
 		async claim(artifact) {
+			const project = currentProject();
 			if (options.store.capabilities?.atomicCompareAndSwap !== true)
 				throw new Error("Atomic compare-and-swap is required for QA handoff recovery.");
 			const issueId = artifact.payload.issue.id;
 			const current = await options.store.readCurrent(
-				options.project,
+				project,
 				destination(issueId),
 			);
 			if (current) {
@@ -118,12 +124,13 @@ export function createQaHandoffPublicationRecoveryStore(options: {
 				if (state.stage === "verified")
 					throw new Error("QA handoff publication is already verified.");
 			}
-			await writeAndVerify(artifact, "uncertain", current?.revision);
+			await writeAndVerify(project, artifact, "uncertain", current?.revision);
 		},
 		async release(artifact) {
+			const project = currentProject();
 			const issueId = artifact.payload.issue.id;
 			const current = await options.store.readCurrent(
-				options.project,
+				project,
 				destination(issueId),
 			);
 			if (!current) return;
@@ -131,20 +138,51 @@ export function createQaHandoffPublicationRecoveryStore(options: {
 			if (state.digest !== artifact.digest || state.stage === "verified")
 				throw new Error("QA handoff publication recovery state conflicts.");
 			if (state.stage === "released") return;
-			await writeAndVerify(artifact, "released", current.revision);
+			await writeAndVerify(project, artifact, "released", current.revision);
 		},
-		async markVerified(artifact) {
+		async finalizeVerified(artifact) {
+			if (options.store.capabilities?.atomicCompareAndSwap !== true)
+				throw new Error("Atomic compare-and-swap is required for QA handoff recovery.");
+			const project = currentProject();
 			const issueId = artifact.payload.issue.id;
-			const current = await options.store.readCurrent(
-				options.project,
-				destination(issueId),
-			);
-			if (!current)
-				throw new Error("QA handoff publication recovery state is missing.");
-			const state = parseRecoveryState(current.content, issueId);
-			if (state.stage !== "uncertain" || state.digest !== artifact.digest)
-				throw new Error("QA handoff publication recovery state conflicts.");
-			await writeAndVerify(artifact, "verified", current.revision);
+			const topic = destination(issueId);
+			const content = contentFor(artifact, "verified");
+			for (let attempt = 0; attempt < 3; attempt += 1) {
+				const current = await options.store.readCurrent(project, topic);
+				if (current) {
+					const state = parseRecoveryState(current.content, issueId);
+					if (state.digest !== artifact.digest)
+						throw new Error("QA handoff publication recovery state conflicts.");
+					if (state.stage === "verified") return;
+				}
+				let saved: { readonly revision: string };
+				try {
+					saved = await options.store.write(
+						project,
+						topic,
+						content,
+						current?.revision,
+					);
+				} catch (error) {
+					const latest = await options.store.readCurrent(project, topic);
+					if (latest) {
+						const state = parseRecoveryState(latest.content, issueId);
+						if (state.digest !== artifact.digest)
+							throw new Error("QA handoff publication recovery state conflicts.");
+						if (state.stage === "verified") return;
+					}
+					if (attempt < 2) continue;
+					throw error;
+				}
+				const readBack = await options.store.readRevision(
+					project,
+					topic,
+					saved.revision,
+				);
+				if (readBack !== content)
+					throw new Error("QA handoff publication recovery read-back mismatch.");
+				return;
+			}
 		},
 	};
 }

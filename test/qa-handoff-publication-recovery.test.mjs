@@ -8,19 +8,20 @@ function persistence() {
 	let revision = 0;
 	return {
 		capabilities: { atomicCompareAndSwap: true },
-		async readCurrent(_project, topic) {
-			return values.get(topic);
+		async readCurrent(project, topic) {
+			return values.get(`${project}:${topic}`);
 		},
-		async readRevision(_project, topic, expectedRevision) {
-			const current = values.get(topic);
+		async readRevision(project, topic, expectedRevision) {
+			const current = values.get(`${project}:${topic}`);
 			return current?.revision === expectedRevision ? current.content : undefined;
 		},
-		async write(_project, topic, content, expectedRevision) {
-			const current = values.get(topic);
+		async write(project, topic, content, expectedRevision) {
+			const key = `${project}:${topic}`;
+			const current = values.get(key);
 			assert.equal(current?.revision, expectedRevision);
 			revision += 1;
 			const saved = { revision: `recovery-${revision}`, content };
-			values.set(topic, saved);
+			values.set(key, saved);
 			return { revision: saved.revision };
 		},
 	};
@@ -30,6 +31,35 @@ const artifact = {
 	digest: "a".repeat(64),
 	payload: { issue: { id: "ILA-2410" } },
 };
+
+test("durable QA recovery resolves its active project lazily", async () => {
+	let project = "project-a";
+	const store = createQaHandoffPublicationRecoveryStore({
+		store: persistence(),
+		project: () => project,
+	});
+	await store.claim(artifact);
+	project = "project-b";
+	assert.equal(await store.read("ILA-2410"), undefined);
+	project = "project-a";
+	assert.deepEqual(await store.read("ILA-2410"), {
+		digest: artifact.digest,
+		stage: "uncertain",
+	});
+});
+
+test("durable QA recovery adopts pre-existing verified publication", async () => {
+	const store = createQaHandoffPublicationRecoveryStore({
+		store: persistence(),
+		project: "pi-workflow",
+	});
+	await store.finalizeVerified(artifact);
+	assert.deepEqual(await store.read("ILA-2410"), {
+		digest: artifact.digest,
+		stage: "verified",
+	});
+	await store.finalizeVerified(artifact);
+});
 
 test("durable QA recovery transitions released claims back to uncertain", async () => {
 	const store = createQaHandoffPublicationRecoveryStore({
@@ -49,7 +79,7 @@ test("durable QA recovery transitions released claims back to uncertain", async 
 		digest: artifact.digest,
 		stage: "uncertain",
 	});
-	await store.markVerified(artifact);
+	await store.finalizeVerified(artifact);
 	assert.deepEqual(await store.read("ILA-2410"), {
 		digest: artifact.digest,
 		stage: "verified",

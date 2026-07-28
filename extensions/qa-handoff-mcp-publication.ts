@@ -1381,16 +1381,9 @@ export function createQaHandoffMcpPublication(
 			state.phase === "ready"
 		) {
 			try {
-				const recovery = await options.recovery.read(
-					activeState.context.issueId,
+				await options.recovery.finalizeVerified(
+					activeState.context.preparedArtifact,
 				);
-				if (
-					recovery?.stage === "uncertain" &&
-					recovery.digest === activeState.context.preparedArtifact.digest
-				)
-					await options.recovery.markVerified(
-						activeState.context.preparedArtifact,
-					);
 			} catch (error) {
 				state = failed(
 					"PI_WORKFLOW_QA_HANDOFF_RECOVERY_PERSISTENCE_FAILED",

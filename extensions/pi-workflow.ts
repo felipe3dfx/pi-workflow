@@ -172,11 +172,11 @@ export default function piWorkflowExtension(
 		save: (artifact: Parameters<QaHandoffArtifactStore["save"]>[0]) =>
 			currentQaHandoffArtifactStore().save(artifact),
 	};
-	const qaHandoffRecovery =
+	const qaHandoffRecovery: QaHandoffPublicationRecoveryStore =
 		workflowOptions.qaHandoff?.recovery ??
 		createQaHandoffPublicationRecoveryStore({
 			store: qaHandoffWorkflowArtifactStore,
-			project: projectName(currentCtx?.cwd ?? process.cwd()),
+			project: () => projectName(currentCtx?.cwd ?? process.cwd()),
 		});
 	const qaHandoffRuntime = createQaHandoffRuntime(
 		configuredQaHandoffWorkflow
