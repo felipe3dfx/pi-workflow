@@ -843,6 +843,29 @@ async function runQaHandoffScenario() {
 	const { createQaHandoffWorkflow } = await packedModule(
 		"extensions/qa-handoff-workflow.ts",
 	);
+	const { createQaHandoffMcpPublication } = await packedModule(
+		"extensions/qa-handoff-mcp-publication.ts",
+	);
+	const packedMcpPublication = createQaHandoffMcpPublication({
+		drafts: { read: async () => undefined, save: async () => undefined },
+		artifacts: { read: async () => undefined, save: async (artifact) => artifact },
+		recovery: {
+			read: async () => undefined,
+			claim: async () => {},
+			release: async () => {},
+			finalizeVerified: async () => {},
+		},
+	});
+	invariant(
+		isDeepStrictEqual(packedMcpPublication.allowedTools, [
+			"linear_get_user",
+			"linear_get_issue",
+			"linear_list_comments",
+			"linear_save_comment",
+			"workflow_qa_handoff",
+		]),
+		"packed QA handoff did not expose the exact MCP-only tool set",
+	);
 	const expectedBody = await readFile(
 		join(packageRoot, "assets", "acceptance", "qa-handoff.golden.md"),
 		"utf8",
@@ -929,6 +952,7 @@ async function runQaHandoffScenario() {
 			"exact-repeat-idempotent",
 			"caller-fields-and-stale-authority-refused",
 			"public-extension-input-and-tool-dispatch",
+			"packed-mcp-only-publication-tools",
 		],
 	};
 }

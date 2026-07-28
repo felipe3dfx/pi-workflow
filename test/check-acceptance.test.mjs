@@ -87,6 +87,7 @@ test("public acceptance command packs once and validates the extracted release c
 		"exact-repeat-idempotent",
 		"caller-fields-and-stale-authority-refused",
 		"public-extension-input-and-tool-dispatch",
+		"packed-mcp-only-publication-tools",
 	]);
 	assert.deepEqual(report.scenarios["product-review"].assertions, [
 		"owner-choice-bound-to-spanish-golden",

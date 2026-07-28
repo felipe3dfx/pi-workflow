@@ -1098,6 +1098,24 @@ test("qa-handoff never treats an inline description comment as the canonical roo
 	assert.equal(createCall.input.body, artifact.body);
 });
 
+test("qa-handoff retries safely when interrupted before comment authorization", async () => {
+	const harness = extensionHarness();
+	await advanceToComments(harness);
+	await readCommentsBefore(harness);
+	await revalidateActorBeforeMutation(harness);
+	await verifyIssueBeforeMutation(harness);
+
+	await harness.emit("session_shutdown", { type: "session_shutdown" }, context);
+	await harness.emit("session_start", { type: "session_start" }, context);
+	await advanceToComments(harness);
+	const retried = await publishFromPersistedArtifact(harness);
+	assert.equal(retried.outcome.status, "published");
+	assert.equal(
+		harness.toolCalls.filter(({ toolName }) => toolName === "linear_save_comment").length,
+		1,
+	);
+});
+
 test("qa-handoff recovers an uncertain creation through lookup without duplicating the mutation", async () => {
 	const harness = extensionHarness();
 	const artifact = await advanceToComments(harness);

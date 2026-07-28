@@ -106,6 +106,8 @@ export interface PiWorkflowExtensionOptions extends CompanionWorkflowOptions {
 		workflow?: ReturnType<typeof createQaHandoffWorkflow>;
 		drafts?: QaHandoffDraftStore;
 		artifacts?: QaHandoffArtifactStore;
+		/** Infrastructure-only recovery adapter; public commands and tools are unchanged. */
+		recovery?: QaHandoffPublicationRecoveryStore;
 	};
 	productReview?: {
 		workflow?: ReturnType<typeof createProductReviewWorkflow>;
@@ -121,27 +123,6 @@ function projectName(cwd: string): string {
 		if (parent === current) return basename(resolve(cwd));
 		current = parent;
 	}
-}
-
-function internalQaHandoffRecovery(
-	options: PiWorkflowExtensionOptions,
-): QaHandoffPublicationRecoveryStore | undefined {
-	const qaHandoff: unknown = options.qaHandoff;
-	if (!qaHandoff || typeof qaHandoff !== "object" || !("recovery" in qaHandoff))
-		return undefined;
-	const recovery: unknown = qaHandoff.recovery;
-	return recovery &&
-		typeof recovery === "object" &&
-		"read" in recovery &&
-		typeof recovery.read === "function" &&
-		"claim" in recovery &&
-		typeof recovery.claim === "function" &&
-		"release" in recovery &&
-		typeof recovery.release === "function" &&
-		"finalizeVerified" in recovery &&
-		typeof recovery.finalizeVerified === "function"
-		? (recovery as QaHandoffPublicationRecoveryStore)
-		: undefined;
 }
 
 export default function piWorkflowExtension(
@@ -192,7 +173,7 @@ export default function piWorkflowExtension(
 			currentQaHandoffArtifactStore().save(artifact),
 	};
 	const qaHandoffRecovery: QaHandoffPublicationRecoveryStore =
-		internalQaHandoffRecovery(workflowOptions) ??
+		workflowOptions.qaHandoff?.recovery ??
 		createQaHandoffPublicationRecoveryStore({
 			store: qaHandoffWorkflowArtifactStore,
 			project: () => projectName(currentCtx?.cwd ?? process.cwd()),
