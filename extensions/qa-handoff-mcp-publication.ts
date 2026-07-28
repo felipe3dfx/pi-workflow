@@ -1344,9 +1344,7 @@ export function createQaHandoffMcpPublication(
 		if (
 			activeState.phase === "comment-create-result" &&
 			event.isError === true &&
-			["permission-denied", "rate-limited"].includes(
-				classifyMcpError(event),
-			)
+			classifyMcpError(event) === "permission-denied"
 		) {
 			try {
 				await options.recovery.release(activeState.context.preparedArtifact);

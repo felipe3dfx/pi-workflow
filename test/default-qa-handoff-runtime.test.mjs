@@ -12,7 +12,12 @@ const MCP_TOOL_NAMES = [
 	"workflow_qa_handoff",
 ];
 
-function extensionHarness(toolNames = MCP_TOOL_NAMES, injectedDrafts, injectedArtifacts) {
+function extensionHarness(
+	toolNames = MCP_TOOL_NAMES,
+	injectedDrafts,
+	injectedArtifacts,
+	injectedRecovery,
+) {
 	const handlers = new Map();
 	const tools = new Map();
 	const toolCalls = [];
@@ -31,7 +36,7 @@ function extensionHarness(toolNames = MCP_TOOL_NAMES, injectedDrafts, injectedAr
 		},
 	}, {
 		qaHandoff: {
-			recovery: {
+			recovery: injectedRecovery ?? {
 				read: async (issueId) => {
 					const recovery = publicationRecoveries.get(issueId);
 					return recovery?.stage === "uncertain"
@@ -972,6 +977,77 @@ test("qa-handoff recovers an uncertain creation through lookup without duplicati
 		issueId: "ILA-2410",
 		commentId: existing.id,
 	});
+	assert.equal(
+		harness.toolCalls.filter(({ toolName }) => toolName === "linear_save_comment").length,
+		1,
+	);
+});
+
+test("qa-handoff blocks mutation when its durable recovery claim cannot be verified", async () => {
+	const harness = extensionHarness(
+		MCP_TOOL_NAMES,
+		undefined,
+		undefined,
+		{
+			read: async () => undefined,
+			claim: async () => {
+				throw new Error("recovery read-back mismatch");
+			},
+			release: async () => {},
+		},
+	);
+	await advanceToComments(harness);
+	await readCommentsBefore(harness);
+	await revalidateActorBeforeMutation(harness);
+	await verifyIssueBeforeMutation(harness);
+
+	assert.deepEqual(
+		await harness.emit("tool_call", {
+			toolName: "linear_save_comment",
+			toolCallId: "comment-create-call",
+			input: {
+				issueId: "ILA-2410",
+				body: "PI_WORKFLOW_CANONICAL_QA_HANDOFF_BODY",
+			},
+		}, context),
+		{
+			block: true,
+			reason: "PI_WORKFLOW_QA_HANDOFF_RECOVERY_PERSISTENCE_FAILED",
+		},
+	);
+	assert.equal(
+		await terminalBlocker(harness),
+		"PI_WORKFLOW_QA_HANDOFF_RECOVERY_PERSISTENCE_FAILED",
+	);
+});
+
+test("qa-handoff keeps a rate-limited comment mutation lookup-only", async () => {
+	const harness = extensionHarness();
+	await advanceToComments(harness);
+	await readCommentsBefore(harness);
+	await revalidateActorBeforeMutation(harness);
+	await verifyIssueBeforeMutation(harness);
+	await harness.emit("tool_call", {
+		toolName: "linear_save_comment",
+		toolCallId: "rate-limited-create",
+		input: {
+			issueId: "ILA-2410",
+			body: "PI_WORKFLOW_CANONICAL_QA_HANDOFF_BODY",
+		},
+	}, context);
+	await harness.emit("tool_result", {
+		toolName: "linear_save_comment",
+		toolCallId: "rate-limited-create",
+		content: [{ type: "text", text: JSON.stringify({ code: "RATE_LIMITED" }) }],
+		isError: true,
+	}, context);
+	assert.equal(await terminalBlocker(harness), "PI_WORKFLOW_QA_HANDOFF_MCP_RATE_LIMITED");
+
+	await harness.emit("session_shutdown", { type: "session_shutdown" }, context);
+	await harness.emit("session_start", { type: "session_start" }, context);
+	await advanceToComments(harness);
+	await readCommentsBefore(harness);
+	assert.equal(await terminalBlocker(harness), "PI_WORKFLOW_QA_HANDOFF_RECOVERY_PENDING");
 	assert.equal(
 		harness.toolCalls.filter(({ toolName }) => toolName === "linear_save_comment").length,
 		1,

@@ -106,6 +106,7 @@ export interface PiWorkflowExtensionOptions extends CompanionWorkflowOptions {
 		workflow?: ReturnType<typeof createQaHandoffWorkflow>;
 		drafts?: QaHandoffDraftStore;
 		artifacts?: QaHandoffArtifactStore;
+		/** Infrastructure adapter for durable uncertain-mutation recovery. */
 		recovery?: QaHandoffPublicationRecoveryStore;
 	};
 	productReview?: {
