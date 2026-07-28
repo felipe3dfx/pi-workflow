@@ -109,7 +109,7 @@ async function verifyIssue(harness, issue = validIssue()) {
 	await harness.emit("tool_call", {
 		toolName: "linear_get_issue",
 		toolCallId: "issue-verify-call",
-		input: { id: "ILA-2410" },
+		input: { id: "ILA-2410", includeRelations: true },
 	}, context);
 	await harness.emit("tool_result", mcpResult(
 		"linear_get_issue",
@@ -123,7 +123,7 @@ async function advanceToComments(harness, issue = validIssue()) {
 	await harness.emit("tool_call", {
 		toolName: "linear_get_issue",
 		toolCallId: "issue-call",
-		input: { id: "ILA-2410" },
+		input: { id: "ILA-2410", includeRelations: true },
 	}, context);
 	await harness.emit("tool_result", mcpResult(
 		"linear_get_issue",
@@ -146,9 +146,7 @@ async function terminalBlocker(harness) {
 	return (await terminalOutcome(harness)).blocker.code;
 }
 
-async function publishFromPersistedArtifact(harness, existingComments = []) {
-	const artifact = harness.persistedArtifacts.get("ILA-2410");
-	assert.ok(artifact);
+async function readCommentsBefore(harness, existingComments = []) {
 	await harness.emit("tool_call", {
 		toolName: "linear_list_comments",
 		toolCallId: "comments-before-call",
@@ -158,8 +156,51 @@ async function publishFromPersistedArtifact(harness, existingComments = []) {
 		comments: existingComments,
 		hasNextPage: false,
 	}), context);
+}
+
+async function revalidateActorBeforeMutation(harness, actor = {
+	id: "developer-1",
+	name: "Developer",
+	isActive: true,
+	isGuest: false,
+}) {
+	await harness.emit("tool_call", {
+		toolName: "linear_get_user",
+		toolCallId: "user-before-mutation-call",
+		input: { query: "me" },
+	}, context);
+	await harness.emit("tool_result", mcpResult(
+		"linear_get_user",
+		"user-before-mutation-call",
+		actor,
+	), context);
+}
+
+async function verifyIssueBeforeMutation(harness, issue = validIssue()) {
+	await harness.emit("tool_call", {
+		toolName: "linear_get_issue",
+		toolCallId: "issue-before-mutation-call",
+		input: { id: "ILA-2410", includeRelations: true },
+	}, context);
+	await harness.emit("tool_result", mcpResult(
+		"linear_get_issue",
+		"issue-before-mutation-call",
+		issue,
+	), context);
+}
+
+async function publishFromPersistedArtifact(
+	harness,
+	existingComments = [],
+	issue = validIssue(),
+) {
+	const artifact = harness.persistedArtifacts.get("ILA-2410");
+	assert.ok(artifact);
+	await readCommentsBefore(harness, existingComments);
 	let comment = existingComments.find(({ body }) => body === artifact.body);
 	if (!comment) {
+		await revalidateActorBeforeMutation(harness);
+		await verifyIssueBeforeMutation(harness, issue);
 		await harness.emit("tool_call", {
 			toolName: "linear_save_comment",
 			toolCallId: "comment-create-call",
@@ -184,6 +225,16 @@ async function publishFromPersistedArtifact(harness, existingComments = []) {
 		comments: [comment],
 		hasNextPage: false,
 	}), context);
+	await harness.emit("tool_call", {
+		toolName: "linear_get_issue",
+		toolCallId: "issue-final-call",
+		input: { id: "ILA-2410", includeRelations: true },
+	}, context);
+	await harness.emit("tool_result", mcpResult(
+		"linear_get_issue",
+		"issue-final-call",
+		issue,
+	), context);
 	return { artifact, comment, outcome: await terminalOutcome(harness) };
 }
 
@@ -191,10 +242,22 @@ function validIssue(overrides = {}) {
 	return {
 		id: "linear-uuid-2410",
 		identifier: "ILA-2410",
-		updatedAt: "2026-07-27T19:21:01.958Z",
-		assignee: { id: "developer-1", name: "Developer" },
-		labels: [{ id: "assign-developer", name: "Assign To / Developer" }],
+		title: "Validate preflight",
 		description: "```qa-handoff-evidence\n{\"schema\":\"qa-handoff-evidence\",\"schemaVersion\":1,\"pullRequestAttachmentId\":\"pr\",\"buildAttachmentId\":\"build\",\"qaEnvironmentAttachmentId\":\"qa\",\"acceptanceCriteria\":[{\"id\":\"AC-1\",\"description\":\"Cumple el criterio acordado.\",\"evidenceAttachmentIds\":[\"test\"]}]}\n```",
+		updatedAt: "2026-07-27T19:21:01.958Z",
+		status: "In Code Review",
+		statusType: "started",
+		assignee: "Developer",
+		assigneeId: "developer-1",
+		cycleId: "cycle-24",
+		labels: ["Assign To / Developer", "QA"],
+		parentId: "ILA-2400",
+		relations: {
+			blockedBy: [{ id: "ILA-2401", title: "Prepare QA environment" }],
+			blocks: [{ id: "ILA-2411", title: "Run QA" }],
+			relatedTo: [{ id: "ILA-2399", title: "Delivery plan" }],
+			duplicateOf: null,
+		},
 		attachments: [
 			{ id: "pr", title: "PR #47", url: "https://github.com/example/repo/pull/47" },
 			{ id: "build", title: "Build 47", url: "https://github.com/example/repo/actions/runs/47" },
@@ -242,7 +305,7 @@ test("default public qa-handoff publishes the canonical artifact through the exa
 			await harness.emit("tool_call", {
 				toolName: "linear_get_issue",
 				toolCallId: "issue-call",
-				input: { id: "ILA-2410" },
+				input: { id: "ILA-2410", includeRelations: true },
 			}, context),
 			undefined,
 		);
@@ -280,8 +343,10 @@ test("default public qa-handoff publishes the canonical artifact through the exa
 		), context);
 		assert.match(
 			commentsInstruction.content.at(-1).text,
-			/linear_save_comment.*PI_WORKFLOW_CANONICAL_QA_HANDOFF_BODY/s,
+			/linear_get_user.*me/s,
 		);
+		await revalidateActorBeforeMutation(harness);
+		await verifyIssueBeforeMutation(harness, issue);
 
 		const createCall = {
 			toolName: "linear_save_comment",
@@ -319,6 +384,16 @@ test("default public qa-handoff publishes the canonical artifact through the exa
 			"comments-readback-call",
 			{ comments: [comment], hasNextPage: false },
 		), context);
+		await harness.emit("tool_call", {
+			toolName: "linear_get_issue",
+			toolCallId: "issue-final-call",
+			input: { id: "ILA-2410", includeRelations: true },
+		}, context);
+		await harness.emit("tool_result", mcpResult(
+			"linear_get_issue",
+			"issue-final-call",
+			issue,
+		), context);
 
 		assert.equal(
 			await harness.emit("tool_call", {
@@ -338,18 +413,18 @@ test("default public qa-handoff publishes the canonical artifact through the exa
 			issueId: "ILA-2410",
 			commentId: "comment-2410",
 		});
-		assert.deepEqual(
-			harness.toolCalls.map(({ toolName, input }) => ({ toolName, input })),
-			[
-				{ toolName: "linear_get_user", input: { query: "me" } },
-				{ toolName: "linear_get_issue", input: { id: "ILA-2410" } },
-				{ toolName: "linear_get_issue", input: { id: "ILA-2410" } },
-				{ toolName: "linear_list_comments", input: { issueId: "ILA-2410" } },
-				{ toolName: "linear_save_comment", input: { issueId: "ILA-2410", body: artifact.body } },
-				{ toolName: "linear_list_comments", input: { issueId: "ILA-2410" } },
-				{ toolName: "workflow_qa_handoff", input: { issueId: "ILA-2410" } },
-			],
-		);
+		assert.deepEqual(harness.toolCalls, [
+			{ toolName: "linear_get_user", toolCallId: "user-call", input: { query: "me" } },
+			{ toolName: "linear_get_issue", toolCallId: "issue-call", input: { id: "ILA-2410", includeRelations: true } },
+			{ toolName: "linear_get_issue", toolCallId: "issue-verify-call", input: { id: "ILA-2410", includeRelations: true } },
+			{ toolName: "linear_list_comments", toolCallId: "comments-before-call", input: { issueId: "ILA-2410" } },
+			{ toolName: "linear_get_user", toolCallId: "user-before-mutation-call", input: { query: "me" } },
+			{ toolName: "linear_get_issue", toolCallId: "issue-before-mutation-call", input: { id: "ILA-2410", includeRelations: true } },
+			{ toolName: "linear_save_comment", toolCallId: "comment-create-call", input: { issueId: "ILA-2410", body: artifact.body } },
+			{ toolName: "linear_list_comments", toolCallId: "comments-readback-call", input: { issueId: "ILA-2410" } },
+			{ toolName: "linear_get_issue", toolCallId: "issue-final-call", input: { id: "ILA-2410", includeRelations: true } },
+			{ toolName: "workflow_qa_handoff", toolCallId: "workflow-call", input: { issueId: "ILA-2410" } },
+		]);
 		assert.equal("LINEAR_API_KEY" in outcome, false);
 	} finally {
 		globalThis.fetch = originalFetch;
@@ -532,6 +607,112 @@ test("qa-handoff blocks wrong comment-list issues and fields", async () => {
 	}
 });
 
+test("qa-handoff blocks authenticated Developer actor drift immediately before mutation", async () => {
+	const harness = extensionHarness();
+	await advanceToComments(harness);
+	await readCommentsBefore(harness);
+
+	assert.equal(
+		await harness.emit("tool_call", {
+			toolName: "linear_get_user",
+			toolCallId: "user-before-mutation-call",
+			input: { query: "me" },
+		}, context),
+		undefined,
+	);
+	await harness.emit("tool_result", mcpResult(
+		"linear_get_user",
+		"user-before-mutation-call",
+		{
+			id: "developer-2",
+			name: "Another Developer",
+			isActive: true,
+			isGuest: false,
+		},
+	), context);
+
+	assert.equal(await terminalBlocker(harness), "PI_WORKFLOW_QA_HANDOFF_AUTHORITY_MISMATCH");
+	assert.equal(
+		harness.toolCalls.some(({ toolName }) => toolName === "linear_save_comment"),
+		false,
+	);
+});
+
+test("qa-handoff blocks complete issue snapshot drift immediately before mutation", async () => {
+	const harness = extensionHarness();
+	await advanceToComments(harness);
+	await readCommentsBefore(harness);
+	await revalidateActorBeforeMutation(harness);
+
+	assert.equal(
+		await harness.emit("tool_call", {
+			toolName: "linear_get_issue",
+			toolCallId: "issue-before-mutation-call",
+			input: { id: "ILA-2410", includeRelations: true },
+		}, context),
+		undefined,
+	);
+	await harness.emit("tool_result", mcpResult(
+		"linear_get_issue",
+		"issue-before-mutation-call",
+		validIssue({ estimate: 8 }),
+	), context);
+
+	assert.equal(await terminalBlocker(harness), "PI_WORKFLOW_QA_HANDOFF_REVISION_MISMATCH");
+	assert.equal(
+		harness.toolCalls.some(({ toolName }) => toolName === "linear_save_comment"),
+		false,
+	);
+});
+
+test("qa-handoff blocks protected issue mutation after comment creation and exact readback", async () => {
+	const harness = extensionHarness();
+	const artifact = await advanceToComments(harness);
+	await readCommentsBefore(harness);
+	await revalidateActorBeforeMutation(harness);
+	await verifyIssueBeforeMutation(harness);
+	const created = { id: "comment-2410", body: artifact.body };
+	await harness.emit("tool_call", {
+		toolName: "linear_save_comment",
+		toolCallId: "comment-create-call",
+		input: {
+			issueId: "ILA-2410",
+			body: "PI_WORKFLOW_CANONICAL_QA_HANDOFF_BODY",
+		},
+	}, context);
+	await harness.emit("tool_result", mcpResult(
+		"linear_save_comment",
+		"comment-create-call",
+		created,
+	), context);
+	await harness.emit("tool_call", {
+		toolName: "linear_list_comments",
+		toolCallId: "comments-readback-call",
+		input: { issueId: "ILA-2410" },
+	}, context);
+	await harness.emit("tool_result", mcpResult(
+		"linear_list_comments",
+		"comments-readback-call",
+		{ comments: [created], hasNextPage: false },
+	), context);
+
+	assert.equal(
+		await harness.emit("tool_call", {
+			toolName: "linear_get_issue",
+			toolCallId: "issue-final-call",
+			input: { id: "ILA-2410", includeRelations: true },
+		}, context),
+		undefined,
+	);
+	await harness.emit("tool_result", mcpResult(
+		"linear_get_issue",
+		"issue-final-call",
+		validIssue({ status: "Ready for QA" }),
+	), context);
+
+	assert.equal(await terminalBlocker(harness), "PI_WORKFLOW_QA_HANDOFF_REVISION_MISMATCH");
+});
+
 test("qa-handoff permits only one exact root comment creation input", async () => {
 	for (const mutate of [
 		(input) => ({ ...input, issueId: "ILA-9999" }),
@@ -604,6 +785,39 @@ test("qa-handoff detects only the exact visible artifact reference before mutati
 	);
 });
 
+test("qa-handoff verifies the final issue snapshot on the existing-idempotent path", async () => {
+	const harness = extensionHarness();
+	const artifact = await advanceToComments(harness);
+	const existing = { id: "comment-existing", body: artifact.body };
+	await readCommentsBefore(harness, [existing]);
+	await harness.emit("tool_call", {
+		toolName: "linear_list_comments",
+		toolCallId: "comments-readback-call",
+		input: { issueId: "ILA-2410" },
+	}, context);
+	await harness.emit("tool_result", mcpResult(
+		"linear_list_comments",
+		"comments-readback-call",
+		{ comments: [existing], hasNextPage: false },
+	), context);
+	await harness.emit("tool_call", {
+		toolName: "linear_get_issue",
+		toolCallId: "issue-final-call",
+		input: { id: "ILA-2410", includeRelations: true },
+	}, context);
+	await harness.emit("tool_result", mcpResult(
+		"linear_get_issue",
+		"issue-final-call",
+		validIssue({ cycleId: "cycle-25" }),
+	), context);
+
+	assert.equal(await terminalBlocker(harness), "PI_WORKFLOW_QA_HANDOFF_REVISION_MISMATCH");
+	assert.equal(
+		harness.toolCalls.some(({ toolName }) => toolName === "linear_save_comment"),
+		false,
+	);
+});
+
 test("qa-handoff never treats an inline description comment as the canonical root comment", async () => {
 	const harness = extensionHarness();
 	const artifact = await advanceToComments(harness);
@@ -624,6 +838,8 @@ test("qa-handoff never treats an inline description comment as the canonical roo
 			hasNextPage: false,
 		},
 	), context);
+	await revalidateActorBeforeMutation(harness);
+	await verifyIssueBeforeMutation(harness);
 	const createCall = {
 		toolName: "linear_save_comment",
 		toolCallId: "comment-create-call",
@@ -654,6 +870,8 @@ test("qa-handoff remains blocked until comment read-back confirms exact ID and b
 			"comments-before-call",
 			{ comments: [], hasNextPage: false },
 		), context);
+		await revalidateActorBeforeMutation(harness);
+		await verifyIssueBeforeMutation(harness);
 		const created = { id: "comment-2410", body: artifact.body };
 		await harness.emit("tool_call", {
 			toolName: "linear_save_comment",
@@ -697,7 +915,7 @@ test("qa-handoff rejects another issue, actor, malformed revision, and conflicti
 		},
 		{
 			name: "another actor",
-			issue: validIssue({ assignee: { id: "developer-2" } }),
+			issue: validIssue({ assignee: "Another Developer", assigneeId: "developer-2" }),
 			code: "PI_WORKFLOW_QA_HANDOFF_AUTHORITY_MISMATCH",
 		},
 		{
@@ -717,7 +935,7 @@ test("qa-handoff rejects another issue, actor, malformed revision, and conflicti
 		await harness.emit("tool_call", {
 			toolName: "linear_get_issue",
 			toolCallId: "issue-call",
-			input: { id: "ILA-2410" },
+			input: { id: "ILA-2410", includeRelations: true },
 		}, context);
 		await harness.emit("tool_result", mcpResult("linear_get_issue", "issue-call", variant.issue), context);
 		assert.equal(await terminalBlocker(harness), variant.code, variant.name);
@@ -768,37 +986,40 @@ test("qa-handoff accepts the MCP issue contract when id is the identifier", asyn
 	await harness.emit("tool_call", {
 		toolName: "linear_get_issue",
 		toolCallId: "issue-call",
-		input: { id: "ILA-2410" },
+		input: { id: "ILA-2410", includeRelations: true },
 	}, context);
 	const issue = validIssue({ id: "ILA-2410" });
 	delete issue.identifier;
+	delete issue.parentId;
+	delete issue.relations.duplicateOf;
 	await harness.emit("tool_result", mcpResult("linear_get_issue", "issue-call", issue), context);
 	await verifyIssue(harness, issue);
-	assert.equal((await publishFromPersistedArtifact(harness)).outcome.status, "published");
+	assert.equal((await publishFromPersistedArtifact(harness, [], issue)).outcome.status, "published");
 });
 
 test("qa-handoff treats reordered Linear evidence as the same current snapshot", async () => {
 	const harness = extensionHarness();
 	await advanceToIssue(harness);
-	const issue = validIssue({
-		labels: [
-			{ id: "assign-developer", name: "Assign To / Developer" },
-			{ id: "qa", name: "QA" },
-		],
-	});
+	const issue = validIssue();
 	await harness.emit("tool_call", {
 		toolName: "linear_get_issue",
 		toolCallId: "issue-call",
-		input: { id: "ILA-2410" },
+		input: { id: "ILA-2410", includeRelations: true },
 	}, context);
 	await harness.emit("tool_result", mcpResult("linear_get_issue", "issue-call", issue), context);
 	await verifyIssue(harness, {
 		...issue,
 		labels: [...issue.labels].reverse(),
 		attachments: [...issue.attachments].reverse(),
+		relations: {
+			...issue.relations,
+			blockedBy: [...issue.relations.blockedBy].reverse(),
+			blocks: [...issue.relations.blocks].reverse(),
+			relatedTo: [...issue.relations.relatedTo].reverse(),
+		},
 	});
 
-	assert.equal((await publishFromPersistedArtifact(harness)).outcome.status, "published");
+	assert.equal((await publishFromPersistedArtifact(harness, [], issue)).outcome.status, "published");
 });
 
 test("qa-handoff blocks issue evidence drift before draft persistence", async () => {
@@ -807,7 +1028,7 @@ test("qa-handoff blocks issue evidence drift before draft persistence", async ()
 	await harness.emit("tool_call", {
 		toolName: "linear_get_issue",
 		toolCallId: "issue-call",
-		input: { id: "ILA-2410" },
+		input: { id: "ILA-2410", includeRelations: true },
 	}, context);
 	await harness.emit("tool_result", mcpResult("linear_get_issue", "issue-call", validIssue()), context);
 	await verifyIssue(harness, validIssue({ updatedAt: "2026-07-27T19:22:01.958Z" }));
@@ -857,12 +1078,12 @@ test("public qa-handoff persists a canonical draft without mutating Linear", asy
 	await harness.emit("tool_call", {
 		toolName: "linear_get_issue",
 		toolCallId: "issue-call",
-		input: { id: "ILA-2410" },
+		input: { id: "ILA-2410", includeRelations: true },
 	}, context);
 	const issue = validIssue();
 	await harness.emit("tool_result", mcpResult("linear_get_issue", "issue-call", issue), context);
 	await verifyIssue(harness, issue);
-	const outcome = (await publishFromPersistedArtifact(harness)).outcome;
+	const outcome = (await publishFromPersistedArtifact(harness, [], issue)).outcome;
 
 	assert.equal(outcome.status, "published", JSON.stringify(outcome));
 	assert.equal(writes, 1);

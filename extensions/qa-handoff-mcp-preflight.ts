@@ -29,10 +29,24 @@ interface AuthenticatedLinearActor {
 interface LinearIssueEvidence {
 	readonly id: string;
 	readonly identifier?: string;
-	readonly updatedAt: string;
-	readonly assignee: { readonly id: string };
-	readonly labels: readonly string[];
+	readonly title: string;
 	readonly description: string;
+	readonly updatedAt: string;
+	readonly status: {
+		readonly name: string;
+		readonly type: string;
+	};
+	readonly assignee: { readonly id: string; readonly name: string };
+	readonly cycle: { readonly id: string } | null;
+	readonly labels: readonly string[];
+	readonly estimate: unknown;
+	readonly relations: {
+		readonly blockedBy: readonly Readonly<Record<string, unknown>>[];
+		readonly blocks: readonly Readonly<Record<string, unknown>>[];
+		readonly relatedTo: readonly Readonly<Record<string, unknown>>[];
+		readonly duplicateOf: Readonly<Record<string, unknown>> | null;
+	};
+	readonly parent: { readonly id: string } | null;
 	readonly attachments: readonly {
 		readonly id: string;
 		readonly title: string;
@@ -50,7 +64,13 @@ type Stage =
 	| "idle"
 	| "current-user"
 	| "current-user-result"
+	| "current-user-before-mutation"
+	| "current-user-before-mutation-result"
 	| "issue"
+	| "issue-before-mutation"
+	| "issue-before-mutation-result"
+	| "issue-final"
+	| "issue-final-result"
 	| "issue-result"
 	| "issue-verify"
 	| "issue-verify-result"
@@ -82,7 +102,7 @@ function record(value: unknown): value is Record<string, unknown> {
 
 function exactInput(
 	value: unknown,
-	expected: Readonly<Record<string, string>>,
+	expected: Readonly<Record<string, unknown>>,
 ): boolean {
 	return record(value) &&
 		Object.keys(value).length === Object.keys(expected).length &&
@@ -140,28 +160,65 @@ function linearRevision(value: unknown): value is string {
 	);
 }
 
+function jsonCompatible(value: unknown): boolean {
+	if (
+		value === null ||
+		typeof value === "string" ||
+		typeof value === "boolean"
+	)
+		return true;
+	if (typeof value === "number") return Number.isFinite(value);
+	if (Array.isArray(value)) return value.every(jsonCompatible);
+	return record(value) && Object.values(value).every(jsonCompatible);
+}
+
+function relationList(value: unknown): Readonly<Record<string, unknown>>[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const relations: Readonly<Record<string, unknown>>[] = [];
+	for (const relation of value) {
+		if (!record(relation) || !nonEmpty(relation.id) || !jsonCompatible(relation))
+			return undefined;
+		relations.push(structuredClone(relation));
+	}
+	return relations.sort((left, right) =>
+		canonicalJson(left).localeCompare(canonicalJson(right))
+	);
+}
+
 function issueEvidence(value: unknown): LinearIssueEvidence | undefined {
 	if (
 		!record(value) ||
 		!nonEmpty(value.id) ||
 		(value.identifier !== undefined && !nonEmpty(value.identifier)) ||
-		!linearRevision(value.updatedAt) ||
-		!record(value.assignee) ||
-		!nonEmpty(value.assignee.id) ||
-		!Array.isArray(value.labels) ||
+		!nonEmpty(value.title) ||
 		!nonEmpty(value.description) ||
+		!linearRevision(value.updatedAt) ||
+		!nonEmpty(value.status) ||
+		!nonEmpty(value.statusType) ||
+		!nonEmpty(value.assignee) ||
+		!nonEmpty(value.assigneeId) ||
+		!(value.cycleId === undefined || value.cycleId === null || nonEmpty(value.cycleId)) ||
+		!Array.isArray(value.labels) ||
+		value.labels.some((label) => !nonEmpty(label)) ||
+		!jsonCompatible(value.estimate ?? null) ||
+		!record(value.relations) ||
+		!(value.parentId === undefined || value.parentId === null || nonEmpty(value.parentId)) ||
 		!Array.isArray(value.attachments)
 	)
 		return undefined;
-	const labels: string[] = [];
-	for (const label of value.labels) {
-		if (typeof label === "string" && nonEmpty(label)) {
-			labels.push(label);
-			continue;
-		}
-		if (!record(label) || !nonEmpty(label.name)) return undefined;
-		labels.push(label.name);
-	}
+	const blockedBy = relationList(value.relations.blockedBy);
+	const blocks = relationList(value.relations.blocks);
+	const relatedTo = relationList(value.relations.relatedTo);
+	const duplicateOf = value.relations.duplicateOf;
+	if (
+		!blockedBy ||
+		!blocks ||
+		!relatedTo ||
+		!(duplicateOf === undefined ||
+			duplicateOf === null ||
+			(record(duplicateOf) && nonEmpty(duplicateOf.id) && jsonCompatible(duplicateOf)))
+	)
+		return undefined;
 	const attachments: {
 		id: string;
 		title: string;
@@ -184,10 +241,27 @@ function issueEvidence(value: unknown): LinearIssueEvidence | undefined {
 	return {
 		id: value.id,
 		...(value.identifier === undefined ? {} : { identifier: value.identifier }),
-		updatedAt: value.updatedAt,
-		assignee: { id: value.assignee.id },
-		labels: labels.sort(),
+		title: value.title,
 		description: value.description,
+		updatedAt: value.updatedAt,
+		status: { name: value.status, type: value.statusType },
+		assignee: { id: value.assigneeId, name: value.assignee },
+		cycle: value.cycleId === undefined || value.cycleId === null
+			? null
+			: { id: value.cycleId },
+		labels: [...value.labels].sort(),
+		estimate: structuredClone(value.estimate ?? null),
+		relations: {
+			blockedBy,
+			blocks,
+			relatedTo,
+			duplicateOf: duplicateOf === undefined || duplicateOf === null
+				? null
+				: structuredClone(duplicateOf),
+		},
+		parent: value.parentId === undefined || value.parentId === null
+			? null
+			: { id: value.parentId },
 		attachments: attachments.sort((left, right) => left.id.localeCompare(right.id)),
 	};
 }
@@ -331,12 +405,18 @@ export function createQaHandoffMcpPreflight(options: {
 	}
 
 	function expectedCall():
-		| { readonly toolName: string; readonly input: Readonly<Record<string, string>> }
+		| { readonly toolName: string; readonly input: Readonly<Record<string, unknown>> }
 		| undefined {
-		if (stage === "current-user")
+		if (stage === "current-user" || stage === "current-user-before-mutation")
 			return { toolName: CURRENT_USER_TOOL, input: { query: "me" } };
-		if ((stage === "issue" || stage === "issue-verify") && issueId)
-			return { toolName: ISSUE_TOOL, input: { id: issueId } };
+		if (
+			(stage === "issue" ||
+				stage === "issue-verify" ||
+				stage === "issue-before-mutation" ||
+				stage === "issue-final") &&
+			issueId
+		)
+			return { toolName: ISSUE_TOOL, input: { id: issueId, includeRelations: true } };
 		if (
 			(stage === "comments-before" || stage === "comments-readback") &&
 			issueId
@@ -361,7 +441,7 @@ export function createQaHandoffMcpPreflight(options: {
 	}
 
 	function expectedModelCall():
-		| { readonly toolName: string; readonly input: Readonly<Record<string, string>> }
+		| { readonly toolName: string; readonly input: Readonly<Record<string, unknown>> }
 		| undefined {
 		const expected = expectedCall();
 		if (expected?.toolName !== SAVE_COMMENT_TOOL || !issueId) return expected;
@@ -381,7 +461,7 @@ export function createQaHandoffMcpPreflight(options: {
 	function handleToolCall(event: {
 		readonly toolName: string;
 		readonly toolCallId?: string;
-		readonly input?: unknown;
+		input?: unknown;
 	}): { block: true; reason: string } | undefined {
 		if (!hasActiveTurn()) return undefined;
 		if (
@@ -431,9 +511,18 @@ export function createQaHandoffMcpPreflight(options: {
 			};
 		}
 		pendingToolCallId = event.toolCallId;
-		if (event.toolName === CURRENT_USER_TOOL) stage = "current-user-result";
-		else if (event.toolName === ISSUE_TOOL) {
-			stage = stage === "issue-verify" ? "issue-verify-result" : "issue-result";
+		if (event.toolName === CURRENT_USER_TOOL) {
+			stage = stage === "current-user-before-mutation"
+				? "current-user-before-mutation-result"
+				: "current-user-result";
+		} else if (event.toolName === ISSUE_TOOL) {
+			stage = stage === "issue-verify"
+				? "issue-verify-result"
+				: stage === "issue-before-mutation"
+					? "issue-before-mutation-result"
+					: stage === "issue-final"
+						? "issue-final-result"
+						: "issue-result";
 		} else if (event.toolName === LIST_COMMENTS_TOOL) {
 			stage = stage === "comments-readback"
 				? "comments-readback-result"
@@ -540,7 +629,7 @@ export function createQaHandoffMcpPreflight(options: {
 			stage = "comments-readback";
 			return;
 		}
-		stage = "comment-create";
+		stage = "current-user-before-mutation";
 	}
 
 	async function handleToolResult(event: {
@@ -557,9 +646,14 @@ export function createQaHandoffMcpPreflight(options: {
 		]);
 		if (!hasActiveTurn() || !mcpTools.has(event.toolName)) return;
 		const expectedResultStage =
-			(event.toolName === CURRENT_USER_TOOL && stage === "current-user-result") ||
+			(event.toolName === CURRENT_USER_TOOL &&
+				(stage === "current-user-result" ||
+					stage === "current-user-before-mutation-result")) ||
 			(event.toolName === ISSUE_TOOL &&
-				(stage === "issue-result" || stage === "issue-verify-result")) ||
+				(stage === "issue-result" ||
+					stage === "issue-verify-result" ||
+					stage === "issue-before-mutation-result" ||
+					stage === "issue-final-result")) ||
 			(event.toolName === LIST_COMMENTS_TOOL &&
 				(stage === "comments-before-result" ||
 					stage === "comments-readback-result")) ||
@@ -600,6 +694,7 @@ export function createQaHandoffMcpPreflight(options: {
 		}
 		pendingToolCallId = undefined;
 		if (event.toolName === CURRENT_USER_TOOL) {
+			const revalidating = stage === "current-user-before-mutation-result";
 			if (!actorEvidence(payload)) {
 				fail(
 					"PI_WORKFLOW_QA_HANDOFF_MCP_MALFORMED_RESPONSE",
@@ -614,17 +709,27 @@ export function createQaHandoffMcpPreflight(options: {
 				);
 				return;
 			}
-			actor = {
+			const currentActor = {
 				id: payload.id,
 				name: payload.name,
 				isActive: payload.isActive,
 				isGuest: payload.isGuest,
 			};
-			stage = "issue";
+			if (revalidating && canonicalJson(currentActor) !== canonicalJson(actor)) {
+				fail(
+					"PI_WORKFLOW_QA_HANDOFF_AUTHORITY_MISMATCH",
+					"The authenticated Developer actor changed before QA handoff publication.",
+				);
+				return;
+			}
+			actor = currentActor;
+			stage = revalidating ? "issue-before-mutation" : "issue";
 			return;
 		}
 		if (event.toolName === ISSUE_TOOL) {
 			const verifying = stage === "issue-verify-result";
+			const beforeMutation = stage === "issue-before-mutation-result";
+			const finalVerification = stage === "issue-final-result";
 			const issue = issueEvidence(payload);
 			if (!issue) {
 				fail(
@@ -650,6 +755,32 @@ export function createQaHandoffMcpPreflight(options: {
 					"PI_WORKFLOW_QA_HANDOFF_AUTHORITY_MISMATCH",
 					"The authenticated actor is not both the assigned and labeled Developer for the issue.",
 				);
+				return;
+			}
+			const matchesVerifiedSnapshot = verifiedIssue !== undefined &&
+				issueRevision !== undefined &&
+				issue.updatedAt === issueRevision &&
+				canonicalJson(issue) === canonicalJson(verifiedIssue);
+			if (finalVerification) {
+				if (!matchesVerifiedSnapshot) {
+					fail(
+						"PI_WORKFLOW_QA_HANDOFF_REVISION_MISMATCH",
+						"The complete Linear issue snapshot changed during QA handoff publication.",
+					);
+					return;
+				}
+				stage = "ready";
+				return;
+			}
+			if (beforeMutation) {
+				if (!matchesVerifiedSnapshot) {
+					fail(
+						"PI_WORKFLOW_QA_HANDOFF_REVISION_MISMATCH",
+						"The complete Linear issue snapshot changed before QA handoff mutation.",
+					);
+					return;
+				}
+				stage = "comment-create";
 				return;
 			}
 			if (verifying) {
@@ -750,7 +881,7 @@ export function createQaHandoffMcpPreflight(options: {
 				issueId,
 				commentId: readBack[0].id,
 			};
-			stage = "ready";
+			stage = "issue-final";
 			return;
 		}
 		const created = commentResult(payload);
