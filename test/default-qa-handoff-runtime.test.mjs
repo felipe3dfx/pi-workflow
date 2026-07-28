@@ -3,6 +3,7 @@ import test from "node:test";
 
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 import { createQaHandoffDraftStore } from "../extensions/qa-handoff-draft-store.ts";
+import { createQaHandoffPublicationRecoveryStore } from "../extensions/qa-handoff-publication-recovery.ts";
 
 const MCP_TOOL_NAMES = [
 	"linear_get_user",
@@ -102,6 +103,30 @@ const context = {
 	isIdle: () => true,
 	ui: { notify: () => {} },
 };
+
+function productionRecoveryStore() {
+	const values = new Map();
+	let revision = 0;
+	return createQaHandoffPublicationRecoveryStore({
+		project: "pi-workflow",
+		store: {
+			capabilities: { atomicCompareAndSwap: true },
+			readCurrent: async (_project, topic) => values.get(topic),
+			readRevision: async (_project, topic, expectedRevision) => {
+				const current = values.get(topic);
+				return current?.revision === expectedRevision ? current.content : undefined;
+			},
+			write: async (_project, topic, content, expectedRevision) => {
+				const current = values.get(topic);
+				assert.equal(current?.revision, expectedRevision);
+				revision += 1;
+				const saved = { revision: `recovery-${revision}`, content };
+				values.set(topic, saved);
+				return { revision: saved.revision };
+			},
+		},
+	});
+}
 
 function mcpResult(toolName, toolCallId, payload) {
 	return {
@@ -1019,8 +1044,8 @@ test("qa-handoff blocks mutation when its durable recovery claim cannot be verif
 	);
 });
 
-test("qa-handoff safely retries after permission denial proves no comment mutation", async () => {
-	const harness = extensionHarness();
+test("qa-handoff safely retries through production recovery after permission denial", async () => {
+	const harness = extensionHarness({ recovery: productionRecoveryStore() });
 	await advanceToComments(harness);
 	await readCommentsBefore(harness);
 	await revalidateActorBeforeMutation(harness);
