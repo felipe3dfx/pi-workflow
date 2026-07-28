@@ -21,9 +21,16 @@ import {
 } from "./default-product-review.ts";
 import type { createDefineProductWorkflow } from "./define-product-workflow.ts";
 import { createDefineProductRuntime } from "./define-product-runtime.ts";
-import { createQaHandoffMcpPreflight } from "./qa-handoff-mcp-preflight.ts";
-import { createQaHandoffDraftStore, type QaHandoffDraftStore } from "./qa-handoff-draft-store.ts";
-import type { createQaHandoffWorkflow } from "./qa-handoff-workflow.ts";
+import { createQaHandoffArtifactStore } from "./qa-handoff-artifact-store.ts";
+import { createQaHandoffMcpPublication } from "./qa-handoff-mcp-publication.ts";
+import {
+	createQaHandoffDraftStore,
+	type QaHandoffDraftStore,
+} from "./qa-handoff-draft-store.ts";
+import type {
+	createQaHandoffWorkflow,
+	QaHandoffArtifactStore,
+} from "./qa-handoff-workflow.ts";
 import { createQaHandoffRuntime } from "./qa-handoff-runtime.ts";
 import type { createProductReviewWorkflow } from "./product-review-workflow.ts";
 import { createProductReviewRuntime } from "./product-review-runtime.ts";
@@ -94,6 +101,7 @@ export interface PiWorkflowExtensionOptions extends CompanionWorkflowOptions {
 	qaHandoff?: {
 		workflow?: ReturnType<typeof createQaHandoffWorkflow>;
 		drafts?: QaHandoffDraftStore;
+		artifacts?: QaHandoffArtifactStore;
 	};
 	productReview?: {
 		workflow?: ReturnType<typeof createProductReviewWorkflow>;
@@ -134,23 +142,39 @@ export default function piWorkflowExtension(
 			workflowOptions.defineProduct?.runtime,
 		);
 	const configuredQaHandoffWorkflow = workflowOptions.qaHandoff?.workflow;
-	const qaHandoffArtifactStore = createRuntimeEngramArtifactStore({
+	const qaHandoffWorkflowArtifactStore = createRuntimeEngramArtifactStore({
 		sessionId: () => currentCtx?.sessionManager.getSessionId(),
 		directory: () => currentCtx?.cwd ?? process.cwd(),
 	});
-	const currentQaHandoffDraftStore = () => createQaHandoffDraftStore({
-		store: qaHandoffArtifactStore,
-		project: projectName(currentCtx?.cwd ?? process.cwd()),
-	});
+	const currentQaHandoffDraftStore = () =>
+		createQaHandoffDraftStore({
+			store: qaHandoffWorkflowArtifactStore,
+			project: projectName(currentCtx?.cwd ?? process.cwd()),
+		});
+	const currentQaHandoffArtifactStore = () =>
+		createQaHandoffArtifactStore({
+			store: qaHandoffWorkflowArtifactStore,
+			project: projectName(currentCtx?.cwd ?? process.cwd()),
+		});
 	const qaHandoffDrafts = workflowOptions.qaHandoff?.drafts ?? {
 		read: (issueId: string) => currentQaHandoffDraftStore().read(issueId),
 		save: (input: Parameters<QaHandoffDraftStore["save"]>[0]) =>
 			currentQaHandoffDraftStore().save(input),
 	};
+	const qaHandoffArtifacts = workflowOptions.qaHandoff?.artifacts ?? {
+		read: (issueId: string) => currentQaHandoffArtifactStore().read(issueId),
+		save: (artifact: Parameters<QaHandoffArtifactStore["save"]>[0]) =>
+			currentQaHandoffArtifactStore().save(artifact),
+	};
 	const qaHandoffRuntime = createQaHandoffRuntime(
 		configuredQaHandoffWorkflow
 			? { workflow: configuredQaHandoffWorkflow }
-			: { mcpPreflight: createQaHandoffMcpPreflight({ drafts: qaHandoffDrafts }) },
+			: {
+					mcpPublication: createQaHandoffMcpPublication({
+						drafts: qaHandoffDrafts,
+						artifacts: qaHandoffArtifacts,
+					}),
+				},
 	);
 	qaHandoffRuntime.register(pi);
 	const productReviewRuntime = createProductReviewRuntime({

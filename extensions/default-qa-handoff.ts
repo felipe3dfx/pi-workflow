@@ -2,10 +2,6 @@ import { existsSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import {
-	createLinearQaHandoffGateway,
-	createRuntimeLinearQaHandoffTransport,
-} from "./linear-qa-handoff-gateway.ts";
 import { createQaHandoffArtifactStore } from "./qa-handoff-artifact-store.ts";
 import {
 	createQaHandoffDraftStore,
@@ -65,19 +61,6 @@ function configuredDeveloperAuthority(
 	return { current: async () => authority };
 }
 
-function configuredLinearGateway(
-	environment: NodeJS.ProcessEnv,
-): LinearQaHandoffGateway | undefined {
-	const apiKey = environment.LINEAR_API_KEY?.trim();
-	if (!apiKey) return undefined;
-	return createLinearQaHandoffGateway(
-		createRuntimeLinearQaHandoffTransport({
-			apiKey,
-			url: environment.LINEAR_API_URL?.trim() || undefined,
-		}),
-	);
-}
-
 export function createDefaultQaHandoffWorkflow(
 	getCurrentContext: () => ExtensionContext | undefined,
 	options: DefaultQaHandoffRuntimeOptions = {},
@@ -91,7 +74,7 @@ export function createDefaultQaHandoffWorkflow(
 			sessionId: () => getCurrentContext()?.sessionManager.getSessionId(),
 			directory: () => getCurrentContext()?.cwd ?? process.cwd(),
 		});
-	const gateway = options.gateway ?? configuredLinearGateway(environment);
+	const gateway = options.gateway;
 	const authority =
 		options.authenticatedAuthority ?? configuredDeveloperAuthority(environment);
 	if (!gateway || !authority) return createUnavailableQaHandoffWorkflow();
