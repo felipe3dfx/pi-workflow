@@ -186,7 +186,12 @@ interface BlockerState extends Blocker {
 	readonly phase: "blocked";
 }
 
-type McpErrorClassification = "unauthenticated" | "incompatible";
+type McpErrorClassification =
+	| "unauthenticated"
+	| "permission-denied"
+	| "rate-limited"
+	| "transport-failed"
+	| "incompatible";
 type ExpectedCall = {
 	readonly toolName: string;
 	readonly input: Readonly<Record<string, unknown>>;
@@ -309,11 +314,21 @@ function toolPayload(event: unknown): unknown {
 
 function classifyMcpError(event: unknown): McpErrorClassification {
 	const payload = toolPayload(event);
-	return record(payload) &&
-		Object.keys(payload).length === 1 &&
-		payload.code === "UNAUTHENTICATED"
-		? "unauthenticated"
-		: "incompatible";
+	if (!record(payload)) return "incompatible";
+	switch (payload.code) {
+		case "UNAUTHENTICATED":
+			return Object.keys(payload).length === 1
+				? "unauthenticated"
+				: "incompatible";
+		case "PERMISSION_DENIED":
+			return "permission-denied";
+		case "RATE_LIMITED":
+			return "rate-limited";
+		case "TRANSPORT_ERROR":
+			return "transport-failed";
+		default:
+			return "incompatible";
+	}
 }
 
 function actorEvidence(value: unknown): value is AuthenticatedLinearActor {
@@ -1178,14 +1193,33 @@ async function transitionToolResult(
 		);
 	if (event.isError === true) {
 		const classification = classifyMcpError(event);
-		return failed(
-			classification === "unauthenticated"
-				? "PI_WORKFLOW_QA_HANDOFF_MCP_UNAUTHENTICATED"
-				: "PI_WORKFLOW_QA_HANDOFF_MCP_INCOMPATIBLE",
-			classification === "unauthenticated"
-				? "Linear MCP is present but not authenticated."
-				: "Linear MCP returned an out-of-order, failed, or incompatible result.",
-		);
+		const failures: Record<
+			McpErrorClassification,
+			{ readonly code: string; readonly message: string }
+		> = {
+			unauthenticated: {
+				code: "PI_WORKFLOW_QA_HANDOFF_MCP_UNAUTHENTICATED",
+				message: "Linear MCP is present but not authenticated.",
+			},
+			"permission-denied": {
+				code: "PI_WORKFLOW_QA_HANDOFF_MCP_PERMISSION_DENIED",
+				message: "Linear MCP denied permission for the planned QA handoff operation.",
+			},
+			"rate-limited": {
+				code: "PI_WORKFLOW_QA_HANDOFF_MCP_RATE_LIMITED",
+				message: "Linear MCP rate-limited the planned QA handoff operation; retry later.",
+			},
+			"transport-failed": {
+				code: "PI_WORKFLOW_QA_HANDOFF_MCP_TRANSPORT_FAILED",
+				message: "Linear MCP transport failed before a verifiable result was returned.",
+			},
+			incompatible: {
+				code: "PI_WORKFLOW_QA_HANDOFF_MCP_INCOMPATIBLE",
+				message: "Linear MCP returned an out-of-order, failed, or incompatible result.",
+			},
+		};
+		const failure = failures[classification];
+		return failed(failure.code, failure.message);
 	}
 	const payload = toolPayload(event);
 	if (!record(payload))

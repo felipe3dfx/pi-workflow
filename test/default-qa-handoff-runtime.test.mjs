@@ -572,6 +572,36 @@ test("qa-handoff keeps ambiguous MCP errors incompatible", async () => {
 	);
 });
 
+test("qa-handoff preserves actionable MCP failure classifications", async () => {
+	for (const variant of [
+		{ upstream: "PERMISSION_DENIED", expected: "PI_WORKFLOW_QA_HANDOFF_MCP_PERMISSION_DENIED" },
+		{ upstream: "RATE_LIMITED", expected: "PI_WORKFLOW_QA_HANDOFF_MCP_RATE_LIMITED" },
+		{ upstream: "TRANSPORT_ERROR", expected: "PI_WORKFLOW_QA_HANDOFF_MCP_TRANSPORT_FAILED" },
+	]) {
+		const harness = extensionHarness();
+		await startPreflight(harness);
+		await harness.emit("tool_call", {
+			toolName: "linear_get_user",
+			toolCallId: "user-call",
+			input: { query: "me" },
+		}, context);
+		await harness.emit("tool_result", {
+			toolName: "linear_get_user",
+			toolCallId: "user-call",
+			content: [{
+				type: "text",
+				text: JSON.stringify({
+					code: variant.upstream,
+					message: "Actionable upstream failure.",
+				}),
+			}],
+			isError: true,
+		}, context);
+
+		assert.equal(await terminalBlocker(harness), variant.expected, variant.upstream);
+	}
+});
+
 test("qa-handoff blocks wrong tools and out-of-order stages before execution", async () => {
 	for (const variant of [
 		{
@@ -859,6 +889,38 @@ test("qa-handoff never treats an inline description comment as the canonical roo
 
 	assert.equal(await harness.emit("tool_call", createCall, context), undefined);
 	assert.equal(createCall.input.body, artifact.body);
+});
+
+test("qa-handoff recovers an uncertain creation through lookup without duplicating the mutation", async () => {
+	const harness = extensionHarness();
+	const artifact = await advanceToComments(harness);
+	await readCommentsBefore(harness);
+	await revalidateActorBeforeMutation(harness);
+	await verifyIssueBeforeMutation(harness);
+	await harness.emit("tool_call", {
+		toolName: "linear_save_comment",
+		toolCallId: "uncertain-comment-create",
+		input: {
+			issueId: "ILA-2410",
+			body: "PI_WORKFLOW_CANONICAL_QA_HANDOFF_BODY",
+		},
+	}, context);
+
+	await harness.emit("session_shutdown", { type: "session_shutdown" }, context);
+	await harness.emit("session_start", { type: "session_start" }, context);
+	await advanceToComments(harness);
+	const existing = { id: "comment-created-before-interruption", body: artifact.body };
+	const recovered = await publishFromPersistedArtifact(harness, [existing]);
+
+	assert.deepEqual(recovered.outcome, {
+		status: "published",
+		issueId: "ILA-2410",
+		commentId: existing.id,
+	});
+	assert.equal(
+		harness.toolCalls.filter(({ toolName }) => toolName === "linear_save_comment").length,
+		1,
+	);
 });
 
 test("qa-handoff remains blocked until comment read-back confirms exact ID and body", async () => {
