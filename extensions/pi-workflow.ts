@@ -123,17 +123,31 @@ function projectName(cwd: string): string {
 	}
 }
 
-type InternalPiWorkflowExtensionOptions = PiWorkflowExtensionOptions & {
-	qaHandoff?: PiWorkflowExtensionOptions["qaHandoff"] & {
-		recovery?: QaHandoffPublicationRecoveryStore;
-	};
-};
+function internalQaHandoffRecovery(
+	options: PiWorkflowExtensionOptions,
+): QaHandoffPublicationRecoveryStore | undefined {
+	const qaHandoff: unknown = options.qaHandoff;
+	if (!qaHandoff || typeof qaHandoff !== "object" || !("recovery" in qaHandoff))
+		return undefined;
+	const recovery: unknown = qaHandoff.recovery;
+	return recovery &&
+		typeof recovery === "object" &&
+		"read" in recovery &&
+		typeof recovery.read === "function" &&
+		"claim" in recovery &&
+		typeof recovery.claim === "function" &&
+		"release" in recovery &&
+		typeof recovery.release === "function" &&
+		"finalizeVerified" in recovery &&
+		typeof recovery.finalizeVerified === "function"
+		? (recovery as QaHandoffPublicationRecoveryStore)
+		: undefined;
+}
 
 export default function piWorkflowExtension(
 	pi: ExtensionAPI,
 	workflowOptions: PiWorkflowExtensionOptions = {},
 ) {
-	const internalOptions = workflowOptions as InternalPiWorkflowExtensionOptions;
 	let currentCtx: ExtensionContext | undefined;
 	pi.on("session_start", async (_event, ctx) => {
 		currentCtx = ctx;
@@ -178,7 +192,7 @@ export default function piWorkflowExtension(
 			currentQaHandoffArtifactStore().save(artifact),
 	};
 	const qaHandoffRecovery: QaHandoffPublicationRecoveryStore =
-		internalOptions.qaHandoff?.recovery ??
+		internalQaHandoffRecovery(workflowOptions) ??
 		createQaHandoffPublicationRecoveryStore({
 			store: qaHandoffWorkflowArtifactStore,
 			project: () => projectName(currentCtx?.cwd ?? process.cwd()),

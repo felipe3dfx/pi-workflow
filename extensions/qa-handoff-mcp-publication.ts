@@ -1315,7 +1315,7 @@ export function createQaHandoffMcpPublication(
 			: undefined;
 	}
 
-	async function handleToolCall(
+	async function handleToolCallSerial(
 		event: ToolCallEvent,
 	): Promise<{ block: true; reason: string } | undefined> {
 		if (!hasActiveTurn()) return undefined;
@@ -1359,9 +1359,34 @@ export function createQaHandoffMcpPublication(
 		return transition.block;
 	}
 
+	let toolCallQueue: Promise<void> = Promise.resolve();
+	async function handleToolCall(
+		event: ToolCallEvent,
+	): Promise<{ block: true; reason: string } | undefined> {
+		const queuedState = state;
+		const preceding = toolCallQueue;
+		let releaseQueue: () => void = () => {};
+		toolCallQueue = new Promise<void>((resolve) => {
+			releaseQueue = resolve;
+		});
+		await preceding;
+		try {
+			if (state !== queuedState)
+				return {
+					block: true,
+					reason: "PI_WORKFLOW_QA_HANDOFF_MCP_PROTOCOL_INVALID",
+				};
+			return await handleToolCallSerial(event);
+		} finally {
+			releaseQueue();
+		}
+	}
+
 	async function handleToolResult(event: ToolResultEvent): Promise<void> {
 		if (!hasActiveTurn() || !MCP_TOOLS.has(event.toolName)) return;
 		const activeState = state;
+		// Linear's PERMISSION_DENIED contract rejects authorization before mutation;
+		// unlike transport and rate-limit failures, it is definitive non-mutation evidence.
 		if (
 			activeState.phase === "comment-create-result" &&
 			event.toolName === SAVE_COMMENT_TOOL &&

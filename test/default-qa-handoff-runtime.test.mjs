@@ -1162,6 +1162,43 @@ test("qa-handoff grants only one concurrent owner permission to mutate", async (
 	);
 });
 
+test("qa-handoff serializes concurrent mutation calls within one runtime", async () => {
+	const harness = extensionHarness({ recovery: productionRecoveryStore() });
+	await advanceToComments(harness);
+	await readCommentsBefore(harness);
+	await revalidateActorBeforeMutation(harness);
+	await verifyIssueBeforeMutation(harness);
+	const input = {
+		issueId: "ILA-2410",
+		body: "PI_WORKFLOW_CANONICAL_QA_HANDOFF_BODY",
+	};
+	const [first, second] = await Promise.all([
+		harness.emit("tool_call", {
+			toolName: "linear_save_comment",
+			toolCallId: "concurrent-create-1",
+			input: structuredClone(input),
+		}, context),
+		harness.emit("tool_call", {
+			toolName: "linear_save_comment",
+			toolCallId: "concurrent-create-2",
+			input: structuredClone(input),
+		}, context),
+	]);
+	assert.equal(first, undefined);
+	assert.equal(second?.block, true);
+	assert.equal(second?.reason, "PI_WORKFLOW_QA_HANDOFF_MCP_PROTOCOL_INVALID");
+	await harness.emit("tool_result", {
+		toolName: "linear_save_comment",
+		toolCallId: "concurrent-create-1",
+		content: [{ type: "text", text: JSON.stringify({ code: "PERMISSION_DENIED" }) }],
+		isError: true,
+	}, context);
+	assert.equal(
+		await terminalBlocker(harness),
+		"PI_WORKFLOW_QA_HANDOFF_MCP_PERMISSION_DENIED",
+	);
+});
+
 test("qa-handoff blocks mutation when its durable recovery claim cannot be verified", async () => {
 	const harness = extensionHarness({
 		recovery: {
