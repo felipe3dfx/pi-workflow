@@ -542,15 +542,30 @@ test("runtime Engram store performs conditional writes with exact read-back", as
 		const body = init.body ? JSON.parse(String(init.body)) : undefined;
 		requests.push({ url, method: init.method ?? "GET", body });
 		if (url.includes("/observations?")) {
-			return Response.json(observation ? [observation] : []);
+			return Response.json(
+				observation
+					? [{ ...observation, topic_key: "workflow/unrelated" }]
+					: [],
+			);
+		}
+		if (url.includes("/search?")) {
+			return Response.json(
+				observation
+					? [
+							{ ...observation, id: 41, content: '{"value":0}' },
+							observation,
+						]
+					: [],
+			);
 		}
 		if (url.endsWith("/sessions")) return new Response("{}", { status: 200 });
 		if (url.endsWith("/observations")) {
 			observation = {
 				id: 42,
 				project: body.project,
-				topic_key: body.topic_key,
-				content: body.content,
+				topic_key: body.topic_key.toLowerCase(),
+				title: body.title,
+				content: body.content.trimEnd(),
 			};
 			return Response.json({ id: 42 });
 		}
@@ -566,22 +581,31 @@ test("runtime Engram store performs conditional writes with exact read-back", as
 			directory: () => "/workspace/project",
 		});
 		assert.equal(store.capabilities.atomicCompareAndSwap, true);
-		const created = await store.write("pi-workflow", "workflow/topic", "snapshot", undefined);
+		const content = '{"value":1}\n';
+		const created = await store.write("pi-workflow", "workflow/TOPIC", content, undefined);
 		assert.equal(created.revision, "42");
-		assert.deepEqual(await store.readCurrent("pi-workflow", "workflow/topic"), {
+		assert.deepEqual(await store.readCurrent("pi-workflow", "workflow/TOPIC"), {
 			revision: "42",
-			content: "snapshot",
+			content,
 		});
-		assert.equal(await store.readRevision("pi-workflow", "workflow/topic", "42"), "snapshot");
-		assert.deepEqual(requests.filter((request) => request.method === "POST").map((request) => request.body), [{
-			project: "pi-workflow",
-			topic_key: "workflow/topic",
-			content: "snapshot",
-			type: "architecture",
-			session_id: "pi-session-1",
-			directory: "/workspace/project",
-			expected_revision: null,
-		}]);
+		assert.equal(await store.readRevision("pi-workflow", "workflow/TOPIC", "42"), content);
+		assert.deepEqual(requests.filter((request) => request.method === "POST").map((request) => request.body), [
+			{
+				id: "pi-session-1",
+				project: "pi-workflow",
+				directory: "/workspace/project",
+			},
+			{
+				project: "pi-workflow",
+				topic_key: "workflow/TOPIC",
+				title: "pi-workflow artifact+lf: workflow/TOPIC",
+				content: '{"value":1}\n',
+				type: "architecture",
+				scope: "project",
+				session_id: "pi-session-1",
+				expected_revision: null,
+			},
+		]);
 	} finally {
 		globalThis.fetch = originalFetch;
 	}
@@ -1040,9 +1064,17 @@ test("default runtime publishes the Engram-approved body through configured Line
 			}
 			return Response.json({ data: { issue: parent } });
 		}
+		if (url.pathname === "/sessions" && init.method === "POST")
+			return Response.json({});
 		if (url.pathname === "/observations" && (init.method ?? "GET") === "GET") {
 			const key = `${url.searchParams.get("project")}:${url.searchParams.get("topic_key")}`;
 			const current = observations.get(key);
+			return Response.json(current ? [current] : []);
+		}
+		if (url.pathname === "/search") {
+			const current = observations.get(
+				`${url.searchParams.get("project")}:${url.searchParams.get("q")}`,
+			);
 			return Response.json(current ? [current] : []);
 		}
 		if (url.pathname === "/observations" && init.method === "POST") {
@@ -1131,8 +1163,15 @@ test("default public publish_tickets uses canonical Engram re-reads before mutat
 	};
 	globalThis.fetch = async (input, init = {}) => {
 		const url = new URL(String(input));
+		if (url.pathname === "/sessions" && init.method === "POST") return Response.json({});
 		if (url.pathname === "/observations" && (init.method ?? "GET") === "GET") return Response.json(observations.get(`${url.searchParams.get("project")}:${url.searchParams.get("topic_key")}`) ? [observations.get(`${url.searchParams.get("project")}:${url.searchParams.get("topic_key")}`)] : []);
 		if (url.pathname === "/observations" && init.method === "POST") { const body = JSON.parse(String(init.body)); const current = observations.get(`${body.project}:${body.topic_key}`); if ((current?.id && String(current.id)) !== (body.expected_revision ?? undefined)) return new Response("conflict", { status: 409 }); const stored = { id: ++revision, ...body }; observations.set(`${body.project}:${body.topic_key}`, stored); observations.set(String(stored.id), stored); return Response.json({ id: stored.id }); }
+		if (url.pathname === "/search") {
+			const topic = url.searchParams.get("q")?.toLowerCase();
+			const project = url.searchParams.get("project");
+			const unique = new Map([...observations.values()].map((item) => [item.id, item]));
+			return Response.json([...unique.values()].filter((item) => item.project === project && item.topic_key.toLowerCase() === topic));
+		}
 		return Response.json(observations.get(url.pathname.split("/").at(-1)));
 	};
 	try {

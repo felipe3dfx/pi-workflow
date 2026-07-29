@@ -130,15 +130,32 @@ test("approved-Spec adapter rejects changed content and failed read-back", async
 test("runtime Engram store creates and reads immutable approved observations", async () => {
 	const originalFetch = globalThis.fetch;
 	const requests = [];
+	let observation;
 	globalThis.fetch = async (url, init = {}) => {
 		requests.push({ url: String(url), init });
-		if (init.method === "POST") {
+		const parsed = new URL(String(url));
+		if (parsed.pathname === "/sessions" && init.method === "POST")
+			return Response.json({});
+		if (parsed.pathname === "/observations" && init.method === "POST") {
+			const body = JSON.parse(String(init.body));
+			observation = {
+				id: 42,
+				project: body.project,
+				topic_key: body.topic_key.toLowerCase(),
+				title: body.title,
+				content: body.content.trimEnd(),
+			};
 			return Response.json({ observation: { id: 42 } });
 		}
-		if (String(url).endsWith("/observations/42")) {
-			return Response.json({ content: "approved" });
-		}
-		return Response.json({ observations: [] });
+		if (parsed.pathname === "/observations/42")
+			return Response.json(observation);
+		if (parsed.pathname === "/search")
+			return Response.json(observation ? [observation] : []);
+		return Response.json({
+			observations: observation
+				? [{ ...observation, topic_key: "approved/unrelated" }]
+				: [],
+		});
 	};
 	try {
 		const store = createRuntimeEngramApprovedSpecStore({
@@ -147,22 +164,36 @@ test("runtime Engram store creates and reads immutable approved observations", a
 			directory: () => "/repo",
 		});
 		assert.equal(await store.readCurrent("pi-workflow", "approved/topic"), undefined);
+		const content = '{"approved":true}\n';
 		assert.deepEqual(
-			await store.write("pi-workflow", "approved/topic", "approved"),
+			await store.write("pi-workflow", "approved/TOPIC", content),
 			{ revision: "42" },
 		);
-		assert.equal(
-			await store.readRevision("pi-workflow", "approved/topic", "42"),
-			"approved",
+		assert.deepEqual(
+			await store.readCurrent("pi-workflow", "approved/TOPIC"),
+			{ revision: "42", content },
 		);
-		assert.deepEqual(JSON.parse(requests[1].init.body), {
-			project: "pi-workflow",
-			topic_key: "approved/topic",
-			content: "approved",
-			type: "architecture",
-			session_id: "session-1",
-			directory: "/repo",
-		});
+		assert.equal(
+			await store.readRevision("pi-workflow", "approved/TOPIC", "42"),
+			content,
+		);
+		assert.deepEqual(
+			requests
+				.filter(({ init }) => init.method === "POST")
+				.map(({ init }) => JSON.parse(String(init.body))),
+			[
+				{ id: "session-1", project: "pi-workflow", directory: "/repo" },
+				{
+					project: "pi-workflow",
+					topic_key: "approved/TOPIC",
+					title: "pi-workflow artifact+lf: approved/TOPIC",
+					content,
+					type: "architecture",
+					scope: "project",
+					session_id: "session-1",
+				},
+			],
+		);
 	} finally {
 		globalThis.fetch = originalFetch;
 	}

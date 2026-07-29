@@ -90,6 +90,8 @@ function fakeEngramServer() {
 			const url = new URL(typeof input === "string" ? input : input.url);
 			if (url.origin !== "http://127.0.0.1:7437")
 				return json({ error: "unexpected host" }, 500);
+			if (url.pathname === "/sessions" && init.method === "POST")
+				return json({});
 			if (
 				url.pathname === "/observations" &&
 				(init.method ?? "GET") === "GET"
@@ -108,6 +110,12 @@ function fakeEngramServer() {
 					body.expected_revision ?? undefined,
 				);
 				return json(observation);
+			}
+			if (url.pathname === "/search") {
+				const observation = current.get(
+					key(url.searchParams.get("project"), url.searchParams.get("q")),
+				);
+				return json(observation ? [observation] : []);
 			}
 			const revision = decodeURIComponent(
 				url.pathname.replace("/observations/", ""),
@@ -888,7 +896,7 @@ const qaMcpIssue = {
 	assignee: "Developer",
 	assigneeId: "developer-7",
 	cycleId: "cycle-5",
-	labels: ["Assign To / Developer", "QA"],
+	labels: ["Developer", "QA"],
 	estimate: 5,
 	relations: {
 		blockedBy: [{ id: "ILA-2300" }],

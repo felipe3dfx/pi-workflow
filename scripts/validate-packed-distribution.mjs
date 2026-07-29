@@ -35,7 +35,12 @@ const allowedRoots = [
 	"scripts/",
 	"skills/",
 ];
-const allowedFiles = new Set(["LICENSE", "README.md", "package.json"]);
+const allowedFiles = new Set([
+	"LICENSE",
+	"README.md",
+	"package.json",
+	"tools/pi-sandbox.mjs",
+]);
 const required = [
 	"package.json",
 	"README.md",
