@@ -58,6 +58,24 @@ function extractObservationContent(payload: unknown): string | undefined {
 	return undefined;
 }
 
+function restoreArtifactContent(payload: unknown, content: string): string {
+	if (content.endsWith("\n") || !payload || typeof payload !== "object")
+		return content;
+	const candidate = payload as {
+		title?: unknown;
+		observation?: { title?: unknown };
+	};
+	const title =
+		typeof candidate.title === "string"
+			? candidate.title
+			: candidate.observation && typeof candidate.observation.title === "string"
+				? candidate.observation.title
+				: undefined;
+	return title?.startsWith("pi-workflow artifact+lf: ")
+		? `${content}\n`
+		: content;
+}
+
 function extractRevision(payload: unknown): string | undefined {
 	if (!payload || typeof payload !== "object") return undefined;
 	const candidate = payload as {
@@ -87,36 +105,143 @@ function extractRevision(payload: unknown): string | undefined {
 	return undefined;
 }
 
+function observationCandidates(payload: unknown): unknown[] {
+	return Array.isArray(payload)
+		? payload
+		: payload &&
+				typeof payload === "object" &&
+				Array.isArray((payload as { observations?: unknown }).observations)
+			? (payload as { observations: unknown[] }).observations
+			: [];
+}
+
+function observationTimestamp(candidate: unknown): number {
+	if (!candidate || typeof candidate !== "object") return Number.NEGATIVE_INFINITY;
+	const observation = candidate as {
+		updated_at?: unknown;
+		updatedAt?: unknown;
+		created_at?: unknown;
+		createdAt?: unknown;
+	};
+	for (const value of [
+		observation.updated_at,
+		observation.updatedAt,
+		observation.created_at,
+		observation.createdAt,
+	]) {
+		if (typeof value !== "string") continue;
+		const parsed = Date.parse(value);
+		if (!Number.isNaN(parsed)) return parsed;
+	}
+	return Number.NEGATIVE_INFINITY;
+}
+
+function exactTopicObservation(
+	candidates: readonly unknown[],
+	project: string,
+	topic: string,
+): unknown {
+	return candidates
+		.filter((candidate) => {
+			if (!candidate || typeof candidate !== "object") return false;
+			const observation = candidate as {
+				project?: unknown;
+				topic_key?: unknown;
+			};
+			return (
+				observation.project === project &&
+				typeof observation.topic_key === "string" &&
+				observation.topic_key.toLowerCase() === topic.toLowerCase()
+			);
+		})
+		.sort((left, right) => {
+			const leftTimestamp = observationTimestamp(left);
+			const rightTimestamp = observationTimestamp(right);
+			const timestampDifference = rightTimestamp - leftTimestamp;
+			if (
+				(Number.isFinite(leftTimestamp) ||
+					Number.isFinite(rightTimestamp)) &&
+				timestampDifference !== 0
+			)
+				return timestampDifference;
+			const leftRevision = Number(extractRevision(left));
+			const rightRevision = Number(extractRevision(right));
+			return Number.isFinite(leftRevision) && Number.isFinite(rightRevision)
+				? rightRevision - leftRevision
+				: 0;
+		})[0];
+}
+
+function createSessionRegistrar(
+	url: string,
+	options: RuntimeEngramArtifactStoreOptions,
+): (project: string) => Promise<string> {
+	const registrations = new Map<string, Promise<void>>();
+	return async (project) => {
+		const sessionId =
+			options.sessionId?.() ?? `pi-workflow-runtime-${project}`;
+		const key = `${project}:${sessionId}`;
+		let registration = registrations.get(key);
+		if (!registration) {
+			registration = engramFetch(url, "/sessions", {
+				method: "POST",
+				body: {
+					id: sessionId,
+					project,
+					directory: options.directory?.() ?? process.cwd(),
+				},
+			}).then(() => undefined);
+			registrations.set(key, registration);
+			registration.catch(() => registrations.delete(key));
+		}
+		await registration;
+		return sessionId;
+	};
+}
+
+async function readExactCurrent(
+	url: string,
+	project: string,
+	topic: string,
+): Promise<StoredArtifactRead | undefined> {
+	const query = new URLSearchParams({
+		project,
+		topic_key: topic,
+		limit: "1",
+		order: "desc",
+	});
+	const payload = await engramFetch(url, `/observations?${query}`);
+	let current = exactTopicObservation(
+		observationCandidates(payload),
+		project,
+		topic,
+	);
+	if (!current) {
+		const search = new URLSearchParams({
+			q: topic,
+			project,
+			limit: "20",
+			match_mode: "all",
+		});
+		current = exactTopicObservation(
+			observationCandidates(await engramFetch(url, `/search?${search}`)),
+			project,
+			topic,
+		);
+	}
+	const revision = extractRevision(current);
+	const content = extractObservationContent(current);
+	if (!revision || content === undefined) return undefined;
+	return { revision, content: restoreArtifactContent(current, content) };
+}
+
 export function createRuntimeEngramArtifactStore(
 	options: RuntimeEngramArtifactStoreOptions = {},
 ): WorkflowArtifactStore {
 	const url = options.url ?? defaultEngramUrl;
-	async function readCurrent(
-		project: string,
-		topic: string,
-	): Promise<StoredArtifactRead | undefined> {
-		const query = new URLSearchParams({
-			project,
-			topic_key: topic,
-			limit: "1",
-			order: "desc",
-		});
-		const payload = await engramFetch(url, `/observations?${query}`);
-		const candidates = Array.isArray(payload)
-			? payload
-			: payload && typeof payload === "object" && Array.isArray((payload as { observations?: unknown }).observations)
-				? (payload as { observations: unknown[] }).observations
-				: [];
-		const current = candidates.find((candidate) => {
-			if (!candidate || typeof candidate !== "object") return false;
-			const observation = candidate as { project?: unknown; topic_key?: unknown };
-			return observation.project === project && observation.topic_key === topic;
-		});
-		const revision = extractRevision(current);
-		const content = extractObservationContent(current);
-		if (!revision || content === undefined) return undefined;
-		return { revision, content };
-	}
+	const ensureSession = createSessionRegistrar(url, options);
+	const readCurrent = (project: string, topic: string) =>
+		readExactCurrent(url, project, topic);
 
 	return {
 		capabilities: { atomicCompareAndSwap: true },
@@ -124,15 +249,17 @@ export function createRuntimeEngramArtifactStore(
 		async write(project, topic, content, expectedRevision) {
 			let payload: unknown;
 			try {
+				const sessionId = await ensureSession(project);
 				payload = await engramFetch(url, "/observations", {
 					method: "POST",
 					body: {
 						project,
 						topic_key: topic,
+						title: `pi-workflow artifact${content.endsWith("\n") ? "+lf" : ""}: ${topic}`,
 						content,
 						type: "architecture",
-						session_id: options.sessionId?.(),
-						directory: options.directory?.(),
+						scope: "project",
+						session_id: sessionId,
 						expected_revision: expectedRevision ?? null,
 					},
 				});
@@ -160,7 +287,10 @@ export function createRuntimeEngramArtifactStore(
 				url,
 				`/observations/${encodeURIComponent(revision)}`,
 			);
-			return extractObservationContent(payload);
+			const content = extractObservationContent(payload);
+			return content === undefined
+				? undefined
+				: restoreArtifactContent(payload, content);
 		},
 	};
 }
@@ -169,34 +299,10 @@ export function createRuntimeEngramApprovedSpecStore(
 	options: RuntimeEngramArtifactStoreOptions = {},
 ) {
 	const url = options.url ?? defaultEngramUrl;
+	const ensureSession = createSessionRegistrar(url, options);
 	return {
-		async readCurrent(project: string, topic: string) {
-			const query = new URLSearchParams({
-				project,
-				topic_key: topic,
-				limit: "1",
-				order: "desc",
-			});
-			const payload = await engramFetch(url, `/observations?${query}`);
-			const candidates = Array.isArray(payload)
-				? payload
-				: payload &&
-						typeof payload === "object" &&
-						Array.isArray((payload as { observations?: unknown }).observations)
-					? (payload as { observations: unknown[] }).observations
-					: [];
-			const current = candidates.find((candidate) => {
-				if (!candidate || typeof candidate !== "object") return false;
-				const observation = candidate as {
-					project?: unknown;
-					topic_key?: unknown;
-				};
-				return observation.project === project && observation.topic_key === topic;
-			});
-			const revision = extractRevision(current);
-			const content = extractObservationContent(current);
-			return revision && content !== undefined ? { revision, content } : undefined;
-		},
+		readCurrent: (project: string, topic: string) =>
+			readExactCurrent(url, project, topic),
 		async write(
 			project: string,
 			topic: string,
@@ -209,15 +315,17 @@ export function createRuntimeEngramApprovedSpecStore(
 					{ code: "PI_WORKFLOW_ENGRAM_CONDITIONAL_WRITE_UNSUPPORTED" },
 				);
 			}
+			const sessionId = await ensureSession(project);
 			const payload = await engramFetch(url, "/observations", {
 				method: "POST",
 				body: {
 					project,
 					topic_key: topic,
+					title: `pi-workflow artifact${content.endsWith("\n") ? "+lf" : ""}: ${topic}`,
 					content,
 					type: "architecture",
-					session_id: options.sessionId?.(),
-					directory: options.directory?.(),
+					scope: "project",
+					session_id: sessionId,
 				},
 			});
 			const revision = extractRevision(payload);
@@ -229,7 +337,10 @@ export function createRuntimeEngramApprovedSpecStore(
 				url,
 				`/observations/${encodeURIComponent(revision)}`,
 			);
-			return extractObservationContent(payload);
+			const content = extractObservationContent(payload);
+			return content === undefined
+				? undefined
+				: restoreArtifactContent(payload, content);
 		},
 	};
 }

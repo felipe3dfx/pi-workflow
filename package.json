@@ -28,6 +28,7 @@
   "files": [
     "README.md",
     "scripts/**/*.mjs",
+    "tools/pi-sandbox.mjs",
     "package.json",
     "LICENSE",
     "extensions/",
@@ -42,6 +43,7 @@
     "check:biome": "biome check --formatter-enabled=false .",
     "check:focused-tests": "node scripts/forbid-focused-tests.mjs",
     "generate:public-workflows": "node scripts/generate-public-workflows.mjs --write",
+    "pi:sandbox": "node tools/pi-sandbox.mjs",
     "check:generated": "node scripts/generate-public-workflows.mjs --check",
     "check:agent-assets": "node scripts/check-agent-assets.mjs --check",
     "check:publish": "node scripts/validate-pi-package.mjs",

@@ -60,7 +60,7 @@ interface LinearIssueEvidence {
 		readonly name: string;
 		readonly type: string;
 	};
-	readonly assignee: { readonly id: string; readonly name: string };
+	readonly assignee: { readonly id: string; readonly name: string } | null;
 	readonly cycle: { readonly id: string } | null;
 	readonly labels: readonly string[];
 	readonly estimate: unknown;
@@ -436,8 +436,9 @@ function issueEvidence(value: unknown): LinearIssueEvidence | undefined {
 		!linearRevision(value.updatedAt) ||
 		!nonEmpty(value.status) ||
 		!nonEmpty(value.statusType) ||
-		!nonEmpty(value.assignee) ||
-		!nonEmpty(value.assigneeId) ||
+		(!((value.assignee === undefined || value.assignee === null) &&
+			(value.assigneeId === undefined || value.assigneeId === null)) &&
+			!(nonEmpty(value.assignee) && nonEmpty(value.assigneeId))) ||
 		!(
 			value.cycleId === undefined ||
 			value.cycleId === null ||
@@ -494,7 +495,10 @@ function issueEvidence(value: unknown): LinearIssueEvidence | undefined {
 		description: value.description,
 		updatedAt: value.updatedAt,
 		status: { name: value.status, type: value.statusType },
-		assignee: { id: value.assigneeId, name: value.assignee },
+		assignee:
+			value.assignee === undefined || value.assignee === null
+				? null
+				: { id: value.assigneeId as string, name: value.assignee },
 		cycle:
 			value.cycleId === undefined || value.cycleId === null
 				? null
@@ -862,7 +866,7 @@ function dispatchForPhase(
 				toolCallId: state.toolCallId,
 				transition: (payload) =>
 					issueResultState(state.context, payload, (issue) =>
-						matchesVerifiedSnapshot(state.context, issue)
+						matchesPostCommentSnapshot(state.context, issue)
 							? { phase: "ready", context: state.context }
 							: failed(
 									"PI_WORKFLOW_QA_HANDOFF_REVISION_MISMATCH",
@@ -973,8 +977,8 @@ function validatesIssueAuthority(
 	issue: LinearIssueEvidence,
 ): boolean {
 	return (
-		issue.assignee.id === context.actor.id &&
-		issue.labels.includes(`Assign To / ${context.actor.name}`)
+		issue.assignee?.id === context.actor.id &&
+		issue.labels.includes(context.actor.name)
 	);
 }
 
@@ -985,6 +989,19 @@ function matchesVerifiedSnapshot(
 	return (
 		issue.updatedAt === context.issueRevision &&
 		canonicalJson(issue) === canonicalJson(context.verifiedIssue)
+	);
+}
+
+function matchesPostCommentSnapshot(
+	context: SnapshottedContext,
+	issue: LinearIssueEvidence,
+): boolean {
+	const { updatedAt: _currentRevision, ...currentProtected } = issue;
+	const { updatedAt: _verifiedRevision, ...verifiedProtected } =
+		context.verifiedIssue;
+	return (
+		Date.parse(issue.updatedAt) >= Date.parse(context.issueRevision) &&
+		canonicalJson(currentProtected) === canonicalJson(verifiedProtected)
 	);
 }
 
@@ -1006,15 +1023,24 @@ async function persistFinalArtifact(
 	);
 	const existing = await options.artifacts.read(context.issueId);
 	ensureGenerationActive(isActive);
-	if (
-		existing &&
-		(!isQaHandoffArtifact(existing, context.issueId) ||
-			existing.digest !== candidate.digest)
-	)
-		return failed(
-			"PI_WORKFLOW_QA_HANDOFF_ARTIFACT_CONFLICT",
-			"The issue already has a different QA handoff artifact.",
+	let expectedArtifact = candidate;
+	if (existing) {
+		if (!isQaHandoffArtifact(existing, context.issueId))
+			return failed(
+				"PI_WORKFLOW_QA_HANDOFF_ARTIFACT_CONFLICT",
+				"The issue already has a malformed QA handoff artifact.",
+			);
+		expectedArtifact = createQaHandoffArtifact(
+			{ id: context.issueId, updatedAt: existing.payload.issue.revision },
+			authority,
+			draft,
 		);
+		if (canonicalJson(existing) !== canonicalJson(expectedArtifact))
+			return failed(
+				"PI_WORKFLOW_QA_HANDOFF_ARTIFACT_CONFLICT",
+				"The issue already has a different QA handoff artifact.",
+			);
+	}
 	let saved = existing;
 	if (!saved) {
 		ensureGenerationActive(isActive);
@@ -1027,7 +1053,7 @@ async function persistFinalArtifact(
 		!readBack ||
 		!isQaHandoffArtifact(readBack, context.issueId) ||
 		canonicalJson(readBack) !== canonicalJson(saved) ||
-		canonicalJson(readBack) !== canonicalJson(candidate)
+		canonicalJson(readBack) !== canonicalJson(expectedArtifact)
 	)
 		return failed(
 			"PI_WORKFLOW_ARTIFACT_READBACK_MISMATCH",
@@ -1213,6 +1239,11 @@ function commentsBeforeCompleteState(
 			context: { ...context, createdComment: inspection.comments[0] },
 			read: emptyCommentRead(),
 		};
+	if (context.preparedArtifact.payload.issue.revision !== context.issueRevision)
+		return failed(
+			"PI_WORKFLOW_QA_HANDOFF_REVISION_MISMATCH",
+			"The issue revision advanced after artifact preparation without the exact QA handoff comment; refusing a new mutation.",
+		);
 	if (context.recoveryStage)
 		return failed(
 			context.recoveryStage === "verified"
@@ -1470,9 +1501,34 @@ export function createQaHandoffMcpPublication(
 
 	function nextCallInstruction(): string | undefined {
 		const expected = expectedModelCall(dispatchForPhase(options, state));
-		return expected
-			? `QA handoff protocol: call ${expected.toolName} exactly once with ${JSON.stringify(expected.input)}. Do not add fields or call tools in parallel.`
-			: undefined;
+		if (!expected) return undefined;
+		const purpose = (() => {
+			switch (state.phase) {
+				case "current-user":
+					return "authenticate the current Linear actor";
+				case "issue":
+					return "read the initial authoritative issue snapshot";
+				case "issue-verify":
+					return "perform the required additional freshness read";
+				case "comments-before":
+					return "inspect existing root comments before publication";
+				case "current-user-before-mutation":
+					return "revalidate the authenticated actor immediately before mutation";
+				case "issue-before-mutation":
+					return "revalidate the complete issue snapshot immediately before mutation";
+				case "comment-create":
+					return "create the one authorized canonical root comment";
+				case "comments-readback":
+					return "read back the exact created or adopted root comment";
+				case "issue-final":
+					return "perform the final no-mutation issue read-back";
+				case "ready":
+					return "retrieve the verified terminal workflow result";
+				default:
+					return "perform the required next protocol stage";
+			}
+		})();
+		return `QA handoff protocol — ${purpose}: call ${expected.toolName} exactly once now with ${JSON.stringify(expected.input)}. This is the only permitted next action; do not treat an earlier call to the same tool as satisfying this stage, do not add fields, and do not call tools in parallel.`;
 	}
 
 	async function handleToolCallSerial(
@@ -1490,6 +1546,14 @@ export function createQaHandoffMcpPublication(
 			Object.keys(event.input).length === 1 &&
 			nonEmpty(event.input.path) &&
 			event.input.path.endsWith("/skills/qa-handoff/SKILL.md")
+		)
+			return undefined;
+		if (
+			activeState.phase === "blocked" &&
+			event.toolName === WORKFLOW_TOOL &&
+			record(event.input) &&
+			Object.keys(event.input).length === 1 &&
+			nonEmpty(event.input.issueId)
 		)
 			return undefined;
 		const dispatch = dispatchForPhase(options, activeState);

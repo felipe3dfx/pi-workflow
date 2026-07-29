@@ -16,6 +16,10 @@ This seam trusts the process launcher to authenticate and configure the Owner; i
 
 The default packaged QA handoff composition uses only authenticated Linear MCP tools; it never reads `LINEAR_API_KEY` or calls Linear's API directly. It persists validated `qa-handoff-draft/v1` artifacts under the current repository project's Engram topic `workflow/qa-handoff-draft/<LINEAR-ID>`, stores the immutable canonical publication artifact under `workflow/qa-handoff/<LINEAR-ID>`, and uses `ENGRAM_URL` when set (otherwise Engram's local default). Before returning `published`, it checks existing comments for the exact workflow reference, creates only the canonical root comment when absent, and verifies the exact comment ID and body with a later MCP read.
 
+Accepted Linear MCP tool-call identities remain reserved for the lifetime of the loaded QA handoff extension/runtime, including across Pi `session_start` events, so a late result from an earlier session cannot be reused by a later handoff. The reservation is fail-closed and bounded at 16,384 identities; it is never evicted or reset per session. If the runtime reaches that boundary, reload the extension before starting another QA handoff.
+
+Publication recovery is currently scoped to the repository's Engram project namespace. The available authenticated Linear MCP user and issue evidence does not expose a trusted, stable Linear workspace identity, and a constant pseudo-global key would collide when separate Linear workspaces use the same issue identifier. Consequently, two different repository project namespaces can independently claim the same Linear issue; operators must not publish one workspace issue from multiple repository projects. This limitation remains fail-closed within each project and should change only when trusted workspace-global identity evidence is available.
+
 ### QA handoff draft producer contract
 
 Delivery evidence producers must persist the internal, derivable draft through the exported `createQaHandoffDraftStore` create-only boundary before invoking `/qa-handoff`. The topic is `workflow/qa-handoff-draft/<LINEAR-ID>`, and the canonical schema is:
@@ -87,6 +91,29 @@ Then reload Pi again so companion resources are loaded:
 ```
 
 In non-UI contexts, the install command prints the exact `pi install npm:<pkg>@<version>` commands instead of installing automatically.
+
+### Disposable Pi test launcher
+
+Launch the repository-pinned Pi CLI with an isolated home, configuration, packages, and session directory:
+
+```bash
+npm run pi:sandbox
+```
+
+The launcher loads this checkout with `-e`, prevents Pi from automatically discovering or writing the current `~/.pi` and `~/.agents` installation, disables startup update checks and telemetry, and removes its temporary sandbox when Pi exits. It is configuration isolation rather than a filesystem security sandbox: Pi tools can still access paths that you explicitly request. Authentication is isolated as well: export a provider API key before launch, or preserve the sandbox while using `/login`:
+
+```bash
+npm run pi:sandbox -- --keep
+```
+
+Forward Pi CLI arguments after a second `--`; inspect the exact launch plan without starting Pi with `--dry-run`:
+
+```bash
+npm run pi:sandbox -- --dry-run -- --version
+npm run pi:sandbox -- -- --mode rpc --no-session
+```
+
+The launcher rejects explicit resource paths, session imports/exports, session-directory overrides, and trust flags that could cross its isolation boundary. It also discards inherited `PI_PACKAGE_DIR` values and forwards terminal signals to Pi before cleanup. A preserved sandbox path is printed on exit and must be removed manually when testing is complete.
 
 ### Agent asset sync and recovery
 

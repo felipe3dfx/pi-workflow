@@ -142,7 +142,8 @@ scripts/validate-release.mjs
 skills/define-product/SKILL.md
 skills/deliver-ticket/SKILL.md
 skills/product-review/SKILL.md
-skills/qa-handoff/SKILL.md`.split("\n");
+skills/qa-handoff/SKILL.md
+tools/pi-sandbox.mjs`.split("\n");
 const entryGoldens = {
 	"define-product": {
 		title: "Define Product",

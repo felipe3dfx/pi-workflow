@@ -342,6 +342,7 @@ async function publishFromPersistedArtifact(
 	harness,
 	existingComments = [],
 	issue = validIssue(),
+	finalIssue = issue,
 ) {
 	const artifact = harness.persistedArtifacts.get("ILA-2410");
 	assert.ok(artifact);
@@ -403,7 +404,7 @@ async function publishFromPersistedArtifact(
 	);
 	await harness.emit(
 		"tool_result",
-		mcpResult("linear_get_issue", issueFinalCallId, issue),
+		mcpResult("linear_get_issue", issueFinalCallId, finalIssue),
 		context,
 	);
 	return { artifact, comment, outcome: await terminalOutcome(harness) };
@@ -422,7 +423,7 @@ function validIssue(overrides = {}) {
 		assignee: "Developer",
 		assigneeId: "developer-1",
 		cycleId: "cycle-24",
-		labels: ["Assign To / Developer", "QA"],
+		labels: ["Developer", "QA"],
 		parentId: "ILA-2400",
 		relations: {
 			blockedBy: [{ id: "ILA-2401", title: "Prepare QA environment" }],
@@ -1501,6 +1502,39 @@ test("qa-handoff detects only the exact visible artifact reference before mutati
 	assert.equal(result.outcome.status, "published");
 	assert.equal(
 		nearMarker.toolCalls.filter(
+			({ toolName }) => toolName === "linear_save_comment",
+		).length,
+		1,
+	);
+});
+
+test("qa-handoff adopts its exact comment after Linear advances issue updatedAt", async () => {
+	const harness = extensionHarness();
+	await advanceToComments(harness);
+	const updatedIssue = validIssue({ updatedAt: "2026-07-27T19:22:01.958Z" });
+	const first = await publishFromPersistedArtifact(
+		harness,
+		[],
+		validIssue(),
+		updatedIssue,
+	);
+	assert.deepEqual(first.outcome, {
+		status: "published",
+		issueId: "ILA-2410",
+		commentId: first.comment.id,
+	});
+
+	await harness.emit("session_shutdown", { type: "session_shutdown" }, context);
+	await harness.emit("session_start", { type: "session_start" }, context);
+	await advanceToComments(harness, updatedIssue);
+	const retried = await publishFromPersistedArtifact(
+		harness,
+		[first.comment],
+		updatedIssue,
+	);
+	assert.deepEqual(retried.outcome, first.outcome);
+	assert.equal(
+		harness.toolCalls.filter(
 			({ toolName }) => toolName === "linear_save_comment",
 		).length,
 		1,
@@ -3429,6 +3463,43 @@ test("qa-handoff remains blocked until comment read-back confirms exact ID and b
 	}
 });
 
+test("qa-handoff accepts Linear MCP's flattened grouped Developer label", async () => {
+	const harness = extensionHarness();
+	await advanceToIssue(harness);
+	const issue = validIssue({ labels: ["Developer"] });
+	await harness.emit(
+		"tool_call",
+		{
+			toolName: "linear_get_issue",
+			toolCallId: "issue-call",
+			input: { id: "ILA-2410", includeRelations: true },
+		},
+		context,
+	);
+	const freshnessInstruction = await harness.emit(
+		"tool_result",
+		mcpResult("linear_get_issue", "issue-call", issue),
+		context,
+	);
+	assert.match(
+		freshnessInstruction.content.at(-1).text,
+		/additional freshness read.*linear_get_issue/s,
+	);
+
+	assert.equal(
+		await harness.emit(
+			"tool_call",
+			{
+				toolName: "linear_get_issue",
+				toolCallId: "issue-freshness-call",
+				input: { id: "ILA-2410", includeRelations: true },
+			},
+			context,
+		),
+		undefined,
+	);
+});
+
 test("qa-handoff rejects another issue, actor, malformed revision, and conflicting identifier", async () => {
 	const cases = [
 		{
@@ -3474,6 +3545,45 @@ test("qa-handoff rejects another issue, actor, malformed revision, and conflicti
 		);
 		assert.equal(await terminalBlocker(harness), variant.code, variant.name);
 	}
+});
+
+test("qa-handoff preserves a terminal MCP blocker through the real workflow tool call", async () => {
+	const harness = extensionHarness();
+	await advanceToIssue(harness);
+	const issue = validIssue();
+	delete issue.assignee;
+	delete issue.assigneeId;
+	await harness.emit(
+		"tool_call",
+		{
+			toolName: "linear_get_issue",
+			toolCallId: "issue-call",
+			input: { id: "ILA-2410", includeRelations: true },
+		},
+		context,
+	);
+	await harness.emit(
+		"tool_result",
+		mcpResult("linear_get_issue", "issue-call", issue),
+		context,
+	);
+
+	assert.equal(
+		await harness.emit(
+			"tool_call",
+			{
+				toolName: "workflow_qa_handoff",
+				toolCallId: "workflow-call",
+				input: { issueId: "ILA-2410" },
+			},
+			context,
+		),
+		undefined,
+	);
+	assert.equal(
+		await terminalBlocker(harness),
+		"PI_WORKFLOW_QA_HANDOFF_AUTHORITY_MISMATCH",
+	);
 });
 
 test("qa-handoff rejects mismatched call identities and mixed MCP content", async () => {
