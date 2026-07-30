@@ -26,4 +26,4 @@ Revisar la publicación del resultado de producto.
 
 Sin impacto adverso en el parent.
 
-Referencia de flujo: product-review:2e0a5706882f70390fe47e46a7caed3922fa4b59ca161cdf4496b981d5609909
+Referencia de flujo: product-review:b0e6dcf770534d30e6aca19cc64bc038106a989b18880777a09e9c31ab515f49

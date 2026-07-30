@@ -92,6 +92,8 @@ extensions/pi-workflow-sync.ts
 extensions/pi-workflow.ts
 extensions/product-review-artifact-store.ts
 extensions/product-review-draft-store.ts
+extensions/product-review-mcp-publication.ts
+extensions/product-review-publication-recovery.ts
 extensions/product-review-runtime.ts
 extensions/product-review-workflow.ts
 extensions/product-spec.ts

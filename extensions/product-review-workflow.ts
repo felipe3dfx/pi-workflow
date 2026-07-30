@@ -2,9 +2,24 @@ import { canonicalJson, digestCanonicalValue, type AuthenticatedAuthority } from
 import { isProductReviewDraft, type ProductReviewDraft, type ProductReviewDraftReader, type ProductReviewResult } from "./product-review-draft-store.ts";
 
 export interface LinearProductReviewIssueSnapshot {
-	readonly id: string; readonly identifier: string; readonly title: string; readonly description: string;
-	readonly updatedAt: string; readonly state: unknown; readonly assignee: unknown; readonly cycle: unknown;
-	readonly labels: unknown; readonly estimate: unknown; readonly relations: unknown; readonly parent?: unknown;
+	/** Stable public Linear identifier used by the workflow and publication marker. */
+	readonly id: string;
+	readonly identifier: string;
+	/** Stable opaque Linear issue identity, when exposed by authenticated MCP evidence. */
+	readonly linearId?: string;
+	readonly title: string;
+	readonly description: string;
+	readonly updatedAt: string;
+	readonly state: unknown;
+	readonly assignee: unknown;
+	readonly cycle: unknown;
+	readonly labels: unknown;
+	readonly estimate: unknown;
+	readonly relations: unknown;
+	readonly parent?: unknown;
+	readonly attachments?: unknown;
+	/** Full normalized top-level MCP evidence, excluding updatedAt. Direct workflows omit it. */
+	readonly mcpEvidence?: unknown;
 }
 export interface LinearProductReviewGateway {
 	getIssue(input: { readonly id: string }): Promise<LinearProductReviewIssueSnapshot | undefined>;
@@ -14,11 +29,18 @@ export interface LinearProductReviewGateway {
 export interface ProductReviewArtifact {
 	readonly schema: "product-review"; readonly schemaVersion: 1; readonly language: "es";
 	readonly payload: ProductReviewDraft & {
-		readonly issue: { readonly id: string; readonly revision: string; readonly body: string };
+		readonly issue: { readonly id: string; readonly revision: string; readonly body: string; readonly protectedDigest?: string };
 		readonly authority: { readonly actorId: string; readonly role: "Owner"; readonly authorityRevision: string };
 		readonly result: ProductReviewResult;
 	};
 	readonly digest: string; readonly body: string;
+}
+export interface ProtectedProductReviewArtifact extends ProductReviewArtifact {
+	readonly payload: ProductReviewArtifact["payload"] & {
+		readonly issue: ProductReviewArtifact["payload"]["issue"] & {
+			readonly protectedDigest: string;
+		};
+	};
 }
 export interface ProductReviewArtifactStore {
 	read(issueId: string): Promise<ProductReviewArtifact | undefined>;
@@ -49,6 +71,13 @@ function immutable<T>(value: T): T {
 	freeze(clone);
 	return clone;
 }
+export function productReviewProtectedIssueDigest(
+	issue: LinearProductReviewIssueSnapshot,
+): string {
+	const { updatedAt: _updatedAt, ...protectedIssue } = issue;
+	return digestCanonicalValue(protectedIssue);
+}
+
 function render(payload: ProductReviewArtifact["payload"], digest: string): string {
 	const sections = [
 		`# Revisión de producto — ${payload.issue.id}`,
@@ -64,14 +93,19 @@ function render(payload: ProductReviewArtifact["payload"], digest: string): stri
 	sections.push(`Referencia de flujo: product-review:${digest}`);
 	return `${sections.join("\n\n")}\n`;
 }
-function createArtifact(issue: LinearProductReviewIssueSnapshot, authority: OwnerAuthority, source: ProductReviewDraft, result: ProductReviewResult): ProductReviewArtifact {
+export function createProductReviewArtifact(issue: LinearProductReviewIssueSnapshot, authority: OwnerAuthority, source: ProductReviewDraft, result: ProductReviewResult): ProtectedProductReviewArtifact {
 	const draft = structuredClone(source);
 	const { parentImpact, siblingImpact, ...required } = draft;
-	const payload: ProductReviewArtifact["payload"] = {
+	const payload: ProtectedProductReviewArtifact["payload"] = {
 		...required,
 		...(parentImpact ? { parentImpact } : {}),
 		...(siblingImpact?.length ? { siblingImpact } : {}),
-		issue: { id: issue.id, revision: issue.updatedAt, body: issue.description },
+		issue: {
+			id: issue.id,
+			revision: issue.updatedAt,
+			body: issue.description,
+			protectedDigest: productReviewProtectedIssueDigest(issue),
+		},
 		authority: { actorId: authority.actorId, role: "Owner", authorityRevision: authority.authorityRevision },
 		result,
 	};
@@ -83,12 +117,23 @@ export function isProductReviewArtifact(value: unknown, expectedIssueId: string)
 	if (!linearIssueId(expectedIssueId) || !record(value) || !exact(value, ["schema", "schemaVersion", "language", "payload", "digest", "body"]) ||
 		value.schema !== "product-review" || value.schemaVersion !== 1 || value.language !== "es" || !record(value.payload) ||
 		!exact(value.payload, ["scope", "stories", "evidence", "findings", "requiredChanges", "recommendation", "issue", "authority", "result"], ["parentImpact", "siblingImpact"]) ||
-		!record(value.payload.issue) || !exact(value.payload.issue, ["id", "revision", "body"]) ||
+		!record(value.payload.issue) || !exact(value.payload.issue, ["id", "revision", "body"], ["protectedDigest"]) ||
 		typeof value.payload.issue.id !== "string" || value.payload.issue.id !== expectedIssueId ||
 		typeof value.payload.issue.revision !== "string" || !text(value.payload.issue.revision) ||
-		typeof value.payload.issue.body !== "string" || !owner(value.payload.authority) ||
+		typeof value.payload.issue.body !== "string" ||
+		(value.payload.issue.protectedDigest !== undefined &&
+			(typeof value.payload.issue.protectedDigest !== "string" ||
+				!/^([a-f0-9]{64})$/.test(value.payload.issue.protectedDigest))) ||
+		!owner(value.payload.authority) ||
 		(value.payload.result !== "Aceptado" && value.payload.result !== "Cambios requeridos")) return false;
-	const issue = { id: value.payload.issue.id, revision: value.payload.issue.revision, body: value.payload.issue.body };
+	const issue = {
+		id: value.payload.issue.id,
+		revision: value.payload.issue.revision,
+		body: value.payload.issue.body,
+		...(value.payload.issue.protectedDigest === undefined
+			? {}
+			: { protectedDigest: value.payload.issue.protectedDigest }),
+	};
 	const authority = value.payload.authority;
 	const result = value.payload.result;
 	const { issue: _issue, authority: _authority, result: _result, ...draft } = value.payload;
@@ -96,6 +141,14 @@ export function isProductReviewArtifact(value: unknown, expectedIssueId: string)
 	const payload: ProductReviewArtifact["payload"] = { ...draft, issue, authority, result };
 	const digest = digestCanonicalValue({ schema: value.schema, schemaVersion: value.schemaVersion, language: value.language, payload });
 	return typeof value.digest === "string" && value.digest === digest && typeof value.body === "string" && value.body === render(payload, digest);
+}
+export function hasProductReviewProtectedDigest(
+	artifact: ProductReviewArtifact,
+): artifact is ProtectedProductReviewArtifact {
+	return (
+		typeof artifact.payload.issue.protectedDigest === "string" &&
+		/^([a-f0-9]{64})$/.test(artifact.payload.issue.protectedDigest)
+	);
 }
 function errorCode(error: unknown, fallback: string): string {
 	return record(error) && typeof error.code === "string" && error.code.length > 0 ? error.code : fallback;
@@ -142,7 +195,7 @@ export function createProductReviewWorkflow(deps: {
 				if (!issue || issue.id !== id || !text(issue.updatedAt) || typeof issue.description !== "string") return blocked("PI_WORKFLOW_PRODUCT_REVIEW_ISSUE_MISMATCH", "Issue unavailable or mismatched.");
 				if (!owner(authority)) return blocked("PI_WORKFLOW_PRODUCT_REVIEW_AUTHORITY_MISMATCH", "Exact Owner authority is required.");
 				if (!isProductReviewDraft(draft)) return blocked("PI_WORKFLOW_PRODUCT_REVIEW_ARTIFACT_INVALID", "A valid review draft is required.");
-				const choices = { Aceptado: createArtifact(issue, authority, draft, "Aceptado"), "Cambios requeridos": createArtifact(issue, authority, draft, "Cambios requeridos") };
+				const choices = { Aceptado: createProductReviewArtifact(issue, authority, draft, "Aceptado"), "Cambios requeridos": createProductReviewArtifact(issue, authority, draft, "Cambios requeridos") };
 				prepared = { issue: structuredClone(issue), authority: structuredClone(authority), choices };
 				return { status: "prepared" as const, recommendation: draft.recommendation, choices: { Aceptado: { digest: choices.Aceptado.digest }, "Cambios requeridos": { digest: choices["Cambios requeridos"].digest } } };
 			} catch (error) { return blocked(errorCode(error, "PI_WORKFLOW_PRODUCT_REVIEW_PREPARATION_FAILED"), error instanceof Error ? error.message : "Preparation failed."); }
@@ -176,7 +229,7 @@ export function createProductReviewWorkflow(deps: {
 				const [artifact, issueBefore, authority] = await Promise.all([deps.artifacts.read(input.issueId), deps.gateway.getIssue({ id: input.issueId }), deps.currentOwner()]);
 				if (!artifact || !isProductReviewArtifact(artifact, input.issueId) || artifact.digest !== authorization.digest || artifact.payload.result !== authorization.result) return blocked("PI_WORKFLOW_PRODUCT_REVIEW_DIGEST_MISMATCH", "Approved digest or result changed.");
 				if (!issueBefore || !prepared || canonicalJson(issueBefore) !== canonicalJson(prepared.issue)) return blocked("PI_WORKFLOW_PRODUCT_REVIEW_REVISION_MISMATCH", "Full issue state, body, or relations changed.");
-				if (issueBefore.id !== artifact.payload.issue.id || issueBefore.updatedAt !== artifact.payload.issue.revision || issueBefore.description !== artifact.payload.issue.body) return blocked("PI_WORKFLOW_PRODUCT_REVIEW_REVISION_MISMATCH", "Issue binding changed.");
+				if (issueBefore.id !== artifact.payload.issue.id || issueBefore.updatedAt !== artifact.payload.issue.revision || issueBefore.description !== artifact.payload.issue.body || productReviewProtectedIssueDigest(issueBefore) !== artifact.payload.issue.protectedDigest) return blocked("PI_WORKFLOW_PRODUCT_REVIEW_REVISION_MISMATCH", "Issue binding changed.");
 				if (!owner(authority) || canonicalJson(authority) !== canonicalJson(artifact.payload.authority) || canonicalJson(authority) !== canonicalJson(prepared.authority)) return blocked("PI_WORKFLOW_PRODUCT_REVIEW_AUTHORITY_MISMATCH", "Owner authority changed.");
 				const marker = `Referencia de flujo: product-review:${artifact.digest}`;
 				const before = await allComments(deps.gateway, input.issueId);

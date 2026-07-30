@@ -1,6 +1,7 @@
 import { canonicalJson } from "./workflow-contracts.ts";
 import type { WorkflowArtifactStore } from "./workflow-artifacts.ts";
 import {
+	hasProductReviewProtectedDigest,
 	isProductReviewArtifact,
 	type ProductReviewArtifact,
 	type ProductReviewArtifactStore,
@@ -52,7 +53,8 @@ export function createProductReviewArtifactStore(options: {
 		async save(artifact) {
 			if (
 				options.store.capabilities?.atomicCompareAndSwap !== true ||
-				!isProductReviewArtifact(artifact, artifact.payload.issue.id)
+				!isProductReviewArtifact(artifact, artifact.payload.issue.id) ||
+				!hasProductReviewProtectedDigest(artifact)
 			)
 				throw invalid(
 					"Atomic CAS and a valid product review artifact are required.",

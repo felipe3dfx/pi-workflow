@@ -16,7 +16,7 @@ import {
 	type DefaultDefineProductRuntimeOptions,
 } from "./default-define-product.ts";
 import {
-	createDefaultProductReviewWorkflow,
+	createDefaultProductReviewMcpPublication,
 	type DefaultProductReviewRuntimeOptions,
 } from "./default-product-review.ts";
 import type { createDefineProductWorkflow } from "./define-product-workflow.ts";
@@ -197,14 +197,16 @@ export default function piWorkflowExtension(
 				},
 	);
 	qaHandoffRuntime.register(pi);
-	const productReviewRuntime = createProductReviewRuntime({
-		workflow:
-			workflowOptions.productReview?.workflow ??
-			createDefaultProductReviewWorkflow(
-				() => currentCtx,
-				workflowOptions.productReview?.runtime,
-			),
-	});
+	const productReviewRuntime = createProductReviewRuntime(
+		workflowOptions.productReview?.workflow
+			? { workflow: workflowOptions.productReview.workflow }
+			: {
+					mcpPublication: createDefaultProductReviewMcpPublication(
+						() => currentCtx,
+						workflowOptions.productReview?.runtime,
+					),
+				},
+	);
 	productReviewRuntime.register(pi);
 	const defineProductRuntime = createDefineProductRuntime({
 		workflow: defineProductWorkflow,
@@ -233,7 +235,7 @@ export default function piWorkflowExtension(
 		},
 		"product-review": {
 			status: "implemented",
-			allowedTools: [productReviewRuntime.toolName],
+			allowedTools: productReviewRuntime.allowedTools,
 			continueIf: (event) => productReviewRuntime.shouldContinue(event),
 			hasActiveAuthorization: () => productReviewRuntime.hasActiveTurn(),
 			retainAfterSettled: true,

@@ -5,8 +5,14 @@ import {
 	createProductReviewDraftStore,
 	isProductReviewDraftArtifact,
 } from "../extensions/product-review-draft-store.ts";
-import { createProductReviewWorkflow } from "../extensions/product-review-workflow.ts";
-import { canonicalJson } from "../extensions/workflow-contracts.ts";
+import {
+	createProductReviewWorkflow,
+	isProductReviewArtifact,
+} from "../extensions/product-review-workflow.ts";
+import {
+	canonicalJson,
+	digestCanonicalValue,
+} from "../extensions/workflow-contracts.ts";
 
 const issueId = "ILA-2324";
 const draft = {
@@ -97,6 +103,60 @@ test("artifact store enforces canonical bytes, conflicts, CAS, and read-back", a
 	const topic = `workflow/product-review/${issueId}`;
 	persistence.values.get(topic).content = `${JSON.stringify(artifact, null, 2)}\n`;
 	await assert.rejects(store.read(issueId), /read-back|noncanonical/);
+});
+
+test("artifact store reads canonical legacy v1 direct-workflow artifacts without weakening or overwriting them", async () => {
+	const currentArtifact = await artifactFixture();
+	const { protectedDigest: _protectedDigest, ...legacyIssue } =
+		currentArtifact.payload.issue;
+	const legacyPayload = {
+		...currentArtifact.payload,
+		issue: legacyIssue,
+	};
+	const legacyUnsigned = {
+		schema: "product-review",
+		schemaVersion: 1,
+		language: "es",
+		payload: legacyPayload,
+	};
+	const legacyDigest = digestCanonicalValue(legacyUnsigned);
+	const legacyArtifact = {
+		...legacyUnsigned,
+		digest: legacyDigest,
+		body: currentArtifact.body.replace(
+			`product-review:${currentArtifact.digest}`,
+			`product-review:${legacyDigest}`,
+		),
+	};
+	assert.equal(isProductReviewArtifact(legacyArtifact, issueId), true);
+
+	const persistence = backend();
+	const topic = `workflow/product-review/${issueId}`;
+	persistence.values.set(topic, {
+		revision: "legacy-r1",
+		content: `${canonicalJson(legacyArtifact)}\n`,
+	});
+	const store = createProductReviewArtifactStore({
+		store: persistence.store,
+		project: "pi-workflow",
+	});
+	assert.deepEqual(await store.read(issueId), legacyArtifact);
+	await assert.rejects(store.save(currentArtifact), /conflicts/);
+	assert.equal(persistence.writes, 0);
+	assert.equal(
+		persistence.values.get(topic).content,
+		`${canonicalJson(legacyArtifact)}\n`,
+	);
+
+	const empty = backend();
+	await assert.rejects(
+		createProductReviewArtifactStore({
+			store: empty.store,
+			project: "pi-workflow",
+		}).save(legacyArtifact),
+		/valid product review artifact/,
+	);
+	assert.equal(empty.writes, 0);
 });
 
 test("both stores reject operation without atomic compare-and-swap", async () => {
