@@ -200,9 +200,21 @@ async function publicExtensionHarness(overrides = {}) {
 					workflow: overrides.qaHandoff ?? defaultQaHandoff,
 				},
 			};
+	const productReviewOptions = overrides.defaultProductReviewRuntime
+		? {
+				productReview: {
+					runtime: overrides.productReviewRuntime,
+				},
+			}
+		: {
+				productReview: {
+					workflow: overrides.productReview ?? defaultProductReview,
+				},
+			};
 	piWorkflowExtension(
 		{
 			exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+			getActiveTools: () => [...(overrides.toolNames ?? [])],
 			getAllTools: () => (overrides.toolNames ?? []).map((name) => ({ name })),
 			on(event, handler) {
 				const registered = handlers.get(event) ?? [];
@@ -218,9 +230,7 @@ async function publicExtensionHarness(overrides = {}) {
 				createDefinitionId: () => "packed-public-definition",
 			},
 			...qaHandoffOptions,
-			productReview: {
-				workflow: overrides.productReview ?? defaultProductReview,
-			},
+			...productReviewOptions,
 			...(overrides.diagnosticsWorkflow
 				? { diagnosticsWorkflow: overrides.diagnosticsWorkflow }
 				: {}),
@@ -347,89 +357,207 @@ async function traverseDeliverTicketPublicSeam() {
 
 async function traverseProductReviewPublicSeam() {
 	const calls = [];
-	const acceptedDigest = "a".repeat(64);
-	const harness = await publicExtensionHarness({
-		productReview: {
-			async prepare(issueId) {
-				calls.push({ operation: "prepare", issueId });
-				return {
-					status: "prepared",
-					recommendation: "Aceptado",
-					choices: {
-						Aceptado: { digest: acceptedDigest },
-						"Cambios requeridos": { digest: "b".repeat(64) },
-					},
-				};
-			},
-			async approve(input) {
-				calls.push({ operation: "approve", input: structuredClone(input) });
-				return { status: "approved" };
-			},
-			async publish(input) {
-				calls.push({ operation: "publish", input: structuredClone(input) });
-				return {
-					status: "published",
-					comment: { id: "public-product-comment" },
-				};
-			},
-		},
-	});
-	const context = publicInputContext();
-	const admitted = await harness.emit(
-		"input",
-		{
-			type: "input",
-			text: "/product-review ILA-2324",
-			source: "interactive",
-		},
-		context,
-	);
-	invariant(
-		admitted?.action === "continue",
-		"Product review public entry failed",
-	);
-	await harness.emit("agent_settled", { type: "agent_settled" }, context);
-	const selection = await harness.emit(
-		"input",
-		{
-			type: "input",
-			text: `ILA-2324 Aceptado ${acceptedDigest}`,
-			source: "interactive",
-		},
-		context,
-	);
-	invariant(
-		selection?.action === "continue" &&
-			(await harness.emit(
-				"tool_call",
-				{ toolName: "workflow_product_review" },
-				context,
-			)) === undefined,
-		"Product review Owner selection was not authorized",
-	);
-	const result = await harness.tools
-		.get("workflow_product_review")
-		?.execute("packed-public-product-review", {
-			issueId: "ILA-2324",
-			result: "Aceptado",
-			digest: acceptedDigest,
-		});
-	invariant(
-		JSON.parse(result?.content?.[0]?.text ?? "null").status === "published" &&
-			isDeepStrictEqual(calls, [
-				{ operation: "prepare", issueId: "ILA-2324" },
-				{
-					operation: "approve",
-					input: {
-						issueId: "ILA-2324",
-						result: "Aceptado",
-						digest: acceptedDigest,
-					},
+	const actor = { id: "owner-1", name: "Owner", isActive: true, isGuest: false };
+	const baseIssue = {
+		id: "linear-uuid-2324",
+		identifier: "ILA-2324",
+		title: "Product review",
+		description: "Autoritativa",
+		updatedAt: "2026-07-27T19:21:01.958Z",
+		status: "Ready for PO",
+		statusType: "started",
+		assignee: "Owner",
+		assigneeId: "owner-1",
+		cycleId: "cycle-24",
+		labels: ["Product"],
+		estimate: 5,
+		parentId: "ILA-2296",
+		relations: { blockedBy: [], blocks: [], relatedTo: [], duplicateOf: null },
+		attachments: [],
+	};
+	function createPersistence() {
+		let artifact;
+		const recoveries = new Map();
+		return {
+			artifacts: {
+				read: async () => structuredClone(artifact),
+				save: async (value) => {
+					if (artifact && !isDeepStrictEqual(artifact, value))
+						throw new Error("packed product-review artifact conflict");
+					artifact = structuredClone(value);
+					return structuredClone(value);
 				},
-				{ operation: "publish", input: { issueId: "ILA-2324" } },
-			]),
-		"Product review registered tool did not dispatch to its workflow",
+			},
+			recovery: {
+				read: async (issueId) => {
+					const value = recoveries.get(issueId);
+					return value?.stage === "uncertain" || value?.stage === "verified"
+						? { digest: value.digest, stage: value.stage }
+						: undefined;
+				},
+				claim: async (value, ownerId) => {
+					const existing = recoveries.get(value.payload.issue.id);
+					if (existing?.stage === "uncertain" && existing.ownerId !== ownerId)
+						throw new Error("packed product-review recovery already owned");
+					recoveries.set(value.payload.issue.id, { digest: value.digest, stage: "uncertain", ownerId });
+				},
+				release: async (value, ownerId) => {
+					recoveries.set(value.payload.issue.id, { digest: value.digest, stage: "released", ownerId });
+				},
+				finalizeVerified: async (value) => {
+					recoveries.set(value.payload.issue.id, { digest: value.digest, stage: "verified" });
+				},
+			},
+		};
+	}
+	const persistence = createPersistence();
+	const packedContext = {
+		...publicInputContext(),
+		cwd: packageRoot,
+		sessionManager: { getSessionId: () => "packed-product-review-session" },
+	};
+	let sequence = 0;
+	async function start(issue, activePersistence = persistence) {
+		const harness = await publicExtensionHarness({
+			defaultProductReviewRuntime: true,
+			toolNames: ["linear_get_user", "linear_get_issue", "linear_list_comments", "linear_save_comment"],
+			productReviewRuntime: {
+				environment: {
+					PI_WORKFLOW_OWNER_ACTOR_ID: actor.id,
+					PI_WORKFLOW_OWNER_AUTHORITY_REVISION: "owner-r1",
+				},
+				drafts: { read: async () => structuredClone(productDraft) },
+				artifacts: activePersistence.artifacts,
+				recovery: activePersistence.recovery,
+			},
+		});
+		await harness.emit("session_start", { type: "session_start" }, packedContext);
+		const admitted = await harness.emit("input", { type: "input", text: `/product-review ${issue.identifier}`, source: "interactive" }, packedContext);
+		invariant(admitted?.action === "continue", "packed product-review public entry failed");
+		const launch = await harness.emit("before_agent_start", { type: "before_agent_start" }, packedContext);
+		invariant(launch?.systemPrompt?.includes("artifact-backed Linear MCP product review"), "packed product-review did not use default MCP wiring");
+		return harness;
+	}
+	async function call(harness, toolName, input, payload) {
+		sequence += 1;
+		const toolCallId = `packed-product-review-${sequence}`;
+		const event = { toolName, toolCallId, input: structuredClone(input) };
+		const blocked = await harness.emit("tool_call", event, packedContext);
+		invariant(!blocked, `packed product-review blocked ${toolName}`);
+		calls.push({ toolName, input: structuredClone(event.input) });
+		if (payload === undefined) return { event };
+		const result = await harness.emit("tool_result", { toolName, toolCallId, content: [{ type: "text", text: JSON.stringify(payload) }], isError: false }, packedContext);
+		return { event, result };
+	}
+	async function prepareAndSelect(harness, issue, prefix) {
+		await call(harness, "linear_get_user", { query: "me" }, actor);
+		await call(harness, "linear_get_issue", { id: issue.identifier, includeRelations: true }, issue);
+		const prepared = await call(harness, "linear_get_issue", { id: issue.identifier, includeRelations: true }, issue);
+		const digest = prepared.result.content.at(-1).text.match(/ILA-2324 Aceptado ([a-f0-9]{64})/)[1];
+		await harness.emit("agent_settled", { type: "agent_settled" }, packedContext);
+		const selection = await harness.emit("input", { type: "input", text: `${issue.identifier} Aceptado ${digest}`, source: "interactive" }, packedContext);
+		invariant(selection?.action === "continue", `${prefix} exact Owner digest selection failed`);
+		const continuationInput = {
+			issueId: issue.identifier,
+			result: "Aceptado",
+			digest,
+		};
+		const continuationPrompt = await harness.emit("before_agent_start", { type: "before_agent_start" }, packedContext);
+		invariant(
+			continuationPrompt?.systemPrompt?.includes("workflow_product_review") &&
+				continuationPrompt.systemPrompt.includes(JSON.stringify(continuationInput)) &&
+				!continuationPrompt.systemPrompt.includes("linear_get_user"),
+			`${prefix} did not advertise the exact public continuation handshake`,
+		);
+		sequence += 1;
+		const toolCallId = `packed-product-review-${sequence}`;
+		const continuationCall = {
+			toolName: "workflow_product_review",
+			toolCallId,
+			input: continuationInput,
+		};
+		invariant(
+			!(await harness.emit("tool_call", continuationCall, packedContext)),
+			`${prefix} blocked the exact public continuation handshake`,
+		);
+		calls.push({
+			toolName: continuationCall.toolName,
+			input: structuredClone(continuationCall.input),
+		});
+		const continuationResult = await harness.tools
+			.get("workflow_product_review")
+			?.execute(toolCallId, continuationInput);
+		invariant(
+			JSON.parse(continuationResult?.content?.[0]?.text ?? "null").status ===
+				"continuing",
+			`${prefix} public continuation handshake did not continue`,
+		);
+		const continued = await harness.emit(
+			"tool_result",
+			{
+				toolName: continuationCall.toolName,
+				toolCallId,
+				content: continuationResult.content,
+				isError: false,
+			},
+			packedContext,
+		);
+		invariant(
+			continued?.content?.at(-1)?.text?.includes("linear_get_user"),
+			`${prefix} continuation did not advertise Owner reauthentication`,
+		);
+		return digest;
+	}
+	async function advanceAfterSelection(harness, issue) {
+		await call(harness, "linear_get_user", { query: "me" }, actor);
+		await call(harness, "linear_get_issue", { id: issue.identifier, includeRelations: true }, issue);
+	}
+
+	const interrupted = await start(baseIssue);
+	const digest = await prepareAndSelect(interrupted, baseIssue, "initial");
+	await advanceAfterSelection(interrupted, baseIssue);
+	await call(interrupted, "linear_list_comments", { issueId: baseIssue.identifier }, { comments: [], hasNextPage: false });
+	await call(interrupted, "linear_get_user", { query: "me" }, actor);
+	await call(interrupted, "linear_get_issue", { id: baseIssue.identifier, includeRelations: true }, baseIssue);
+	const save = await call(interrupted, "linear_save_comment", { issueId: baseIssue.identifier, body: "PI_WORKFLOW_CANONICAL_PRODUCT_REVIEW_BODY" }, undefined);
+	const expectedBody = (await readFile(join(packageRoot, "assets", "acceptance", "product-review.golden.md"), "utf8")).replace(/product-review:[a-f0-9]{64}/, `product-review:${digest}`);
+	invariant(save.event.input.body === expectedBody, "packed product-review did not substitute the exact canonical Spanish body");
+	const comment = { id: "packed-product-review-comment", body: save.event.input.body, quotedText: null, parentId: null };
+	await interrupted.emit("session_shutdown", { type: "session_shutdown" }, packedContext);
+
+	const advancedIssue = { ...baseIssue, updatedAt: "2026-07-27T19:21:02.958Z" };
+	const recovered = await start(advancedIssue);
+	invariant((await prepareAndSelect(recovered, advancedIssue, "recovery")) === digest, "packed product-review retry changed the approved digest");
+	await advanceAfterSelection(recovered, advancedIssue);
+	await call(recovered, "linear_list_comments", { issueId: baseIssue.identifier }, { comments: [], hasNextPage: true, cursor: "packed-adoption-page-2" });
+	await call(recovered, "linear_list_comments", { issueId: baseIssue.identifier, cursor: "packed-adoption-page-2" }, { comments: [comment], hasNextPage: false });
+	await call(recovered, "linear_list_comments", { issueId: baseIssue.identifier }, { comments: [], hasNextPage: true, cursor: "packed-readback-page-2" });
+	await call(recovered, "linear_list_comments", { issueId: baseIssue.identifier, cursor: "packed-readback-page-2" }, { comments: [comment], hasNextPage: false });
+	await call(recovered, "linear_get_issue", { id: baseIssue.identifier, includeRelations: true }, advancedIssue);
+	await call(recovered, "workflow_product_review", { issueId: baseIssue.identifier, result: "Aceptado", digest }, undefined);
+	const result = await recovered.tools.get("workflow_product_review")?.execute("packed-product-review-terminal", { issueId: baseIssue.identifier, result: "Aceptado", digest });
+	const outcome = JSON.parse(result?.content?.[0]?.text ?? "null");
+	invariant(outcome.status === "published" && outcome.commentId === comment.id, "packed product-review did not recover through its public terminal tool");
+	invariant(calls.filter(({ toolName }) => toolName === "linear_save_comment").length === 1, "packed product-review authorized a duplicate comment mutation");
+
+	const driftPersistence = createPersistence();
+	const drifted = await start(baseIssue, driftPersistence);
+	const driftDigest = await prepareAndSelect(drifted, baseIssue, "protected-drift");
+	await advanceAfterSelection(drifted, baseIssue);
+	await call(drifted, "linear_list_comments", { issueId: baseIssue.identifier }, { comments: [], hasNextPage: false });
+	await call(drifted, "linear_get_user", { query: "me" }, actor);
+	const mutationsBeforeDrift = calls.filter(({ toolName }) => toolName === "linear_save_comment").length;
+	await call(drifted, "linear_get_issue", { id: baseIssue.identifier, includeRelations: true }, { ...baseIssue, labels: ["Protected drift"] });
+	await call(drifted, "workflow_product_review", { issueId: baseIssue.identifier, result: "Aceptado", digest: driftDigest }, undefined);
+	const driftResult = await drifted.tools.get("workflow_product_review")?.execute("packed-product-review-drift-terminal", { issueId: baseIssue.identifier, result: "Aceptado", digest: driftDigest });
+	const driftOutcome = JSON.parse(driftResult?.content?.[0]?.text ?? "null");
+	invariant(
+		driftOutcome.status === "blocked" &&
+			driftOutcome.blocker?.code === "PI_WORKFLOW_PRODUCT_REVIEW_REVISION_MISMATCH" &&
+			calls.filter(({ toolName }) => toolName === "linear_save_comment").length === mutationsBeforeDrift,
+		"packed product-review did not refuse protected-field drift before mutation",
 	);
+	invariant(calls.every(({ toolName }) => ["linear_get_user", "linear_get_issue", "linear_list_comments", "linear_save_comment", "workflow_product_review"].includes(toolName)), "packed product-review escaped its exact MCP tool allowlist");
 }
 
 async function traverseDiagnosticCommandSeams() {
@@ -1544,6 +1672,10 @@ async function runProductReviewScenario() {
 			"exact-repeat-idempotent",
 			"digest-and-stale-authority-refused",
 			"public-extension-selection-and-tool-dispatch",
+			"packed-default-authenticated-mcp-publication",
+			"packed-cursor-pagination-and-exact-comment-adoption",
+			"packed-protected-field-drift-refused-before-mutation",
+			"packed-durable-uncertain-process-recovery",
 		],
 	};
 }

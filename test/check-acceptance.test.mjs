@@ -100,6 +100,10 @@ test("public acceptance command packs once and validates the extracted release c
 		"exact-repeat-idempotent",
 		"digest-and-stale-authority-refused",
 		"public-extension-selection-and-tool-dispatch",
+		"packed-default-authenticated-mcp-publication",
+		"packed-cursor-pagination-and-exact-comment-adoption",
+		"packed-protected-field-drift-refused-before-mutation",
+		"packed-durable-uncertain-process-recovery",
 	]);
 	assert.deepEqual(report.scenarios.sync.assertions, [
 		"conditional-writes-use-approved-predecessors",

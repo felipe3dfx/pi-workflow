@@ -21,7 +21,7 @@ The evidence validator fails closed unless every required scenario has a termina
 | `define-product` | Exact Owner approval, mismatch refusal before persistence, and Engram create-only CAS/read-back. |
 | `deliver-ticket` | Intentional `PI_WORKFLOW_CAPABILITY_PENDING` refusal and blocked tools. |
 | `qa-handoff` | Spanish body, Linear comment read-back, unchanged issue snapshot, exact-repeat idempotency, and caller/authority refusals. |
-| `product-review` | Owner-selected Spanish body, Linear comment read-back, unchanged issue snapshot, exact-repeat idempotency, and digest/authority refusals. |
+| `product-review` | Real public-extension two-turn Owner selection, authenticated Linear MCP-only publication, exact Spanish body substitution, complete protected snapshot checks, paginated root-comment adoption, and durable uncertain recovery without duplicate mutation. |
 | `sync` | Conditional writes, settled idempotency, rollback/resume recovery, and unmanaged-collision refusal. |
 | `status` | Read-only checks and summary-only output. |
 | `doctor` | Read-only checks and secret redaction. |
