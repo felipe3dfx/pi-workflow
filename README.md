@@ -90,7 +90,7 @@ Then reload Pi again so companion resources are loaded:
 /reload
 ```
 
-In non-UI contexts, the install command prints the exact `pi install npm:<pkg>@<version>` commands instead of installing automatically.
+In non-UI contexts, the install command prints the exact unversioned `pi install npm:<pkg>` commands instead of installing automatically. Once installed, run `pi update --extensions` (packages only) or `pi update --all` (Pi and packages) to receive upstream companion updates.
 
 ### Disposable Pi test launcher
 
@@ -159,7 +159,7 @@ CodeGraph support has three separate readiness checks:
    Or install it manually when needed:
 
    ```bash
-   pi install npm:@vndv/pi-codegraph@0.1.10
+   pi install npm:@vndv/pi-codegraph
    ```
 
 2. Make the `codegraph` CLI available on `PATH`. `pi-workflow` validates readiness by checking whether the `codegraph` command can be executed, not by checking for a globally installed npm package. This keeps the check package-manager agnostic for users who install CodeGraph with npm, pnpm, Homebrew, mise, a system package, or another tool.
@@ -183,17 +183,15 @@ The doctor reports the CodeGraph companion package, CLI availability, and `.code
 
 ## Companion packages
 
-Companion package names and pinned versions are defined in [`assets/companions.json`](assets/companions.json), which is the single source of truth. Updating a companion version is a repository change and should be reviewed like any other supported workflow change.
+Companion package names are defined in [`assets/companions.json`](assets/companions.json), which is the single source of truth. They are installed as unversioned npm sources so Pi can update them through its normal package-management commands.
 
 Configured companions:
 
-| Package | Pinned version |
-| --- | --- |
-| `gentle-engram` | `0.1.10` |
-| `pi-mcp-adapter` | `2.11.0` |
-| `@tintinweb/pi-subagents` | `0.14.1` |
-| `pi-web-access` | `0.13.0` |
-| `@vndv/pi-codegraph` | `0.1.10` |
+- `gentle-engram`
+- `pi-mcp-adapter`
+- `@tintinweb/pi-subagents`
+- `pi-web-access`
+- `@vndv/pi-codegraph`
 
 ## Scope
 
@@ -204,7 +202,7 @@ In scope:
 - status and doctor commands for configured companions;
 - CodeGraph companion, CLI, and project-index readiness diagnostics;
 - explicit companion installation after user confirmation;
-- exact companion versions controlled by this repository;
+- unversioned companion sources updated explicitly through Pi;
 - deterministic generation of public skills and prompts from `scripts/public-workflow-catalog.mjs`;
 - install and update documentation.
 
@@ -215,7 +213,7 @@ Out of scope:
 - silently installing companion packages;
 - automatically initializing CodeGraph indexes;
 - proprietary company workflow behavior;
-- automatic companion upgrades;
+- updating companions automatically at startup;
 - mutating unmanaged files or silently resolving sync refusals.
 
 ## Package design
@@ -232,7 +230,7 @@ Pi packages declare resources in `package.json` using the `pi` manifest. This pa
 }
 ```
 
-Third-party packages are not runtime `dependencies` of this package because Pi installs them independently with `pi install`. The source of truth for companion names and versions is `assets/companions.json`.
+Third-party packages are not runtime `dependencies` of this package because Pi installs them independently with `pi install`. The source of truth for companion package names is `assets/companions.json`; installed versions are managed by Pi.
 
 ## Validation
 
@@ -257,22 +255,21 @@ The release guard validates that:
 - public workflow resources exactly match the authoritative catalog;
 - no Pi manifest paths point into `node_modules`;
 - no `bundledDependencies` or `bundleDependencies` field exists;
-- companion metadata includes the expected packages and versions;
+- companion metadata includes the expected unversioned package names;
 - package metadata declares Node.js `>=22.19`;
 - package scripts and release basics remain present;
 - `npm pack --dry-run` succeeds.
 
 ## Companion update policy
 
-To update a companion:
+Companions are registered with Pi without versions. Pi therefore resolves the current npm release during installation and can update existing installations explicitly:
 
-1. Change the version in `assets/companions.json`.
-2. Run `npm install --package-lock-only --ignore-scripts` if package metadata changed.
-3. Run `npm run check`.
-4. Review the upstream package changelog/source for new resources or behavior.
-5. Update this README's companion table.
-6. Publish a GitHub Release tagged exactly `v<package.json version>` with an English body describing that release under `Implemented`, `Migrations`, `Required sync`, `Capability changes`, and `Rollback`.
-7. Let `.github/workflows/publish.yml` validate the tag/body and publish to npm with provenance.
+```bash
+pi update --extensions # update installed Pi packages
+pi update --all        # update Pi and installed packages
+```
+
+The workflow does not update packages during startup and does not enforce compatibility with a particular companion version. Review upstream changelogs before updating when stability is important. Changes to the companion package set in `assets/companions.json` remain reviewed repository changes.
 
 ## Release CI/CD
 

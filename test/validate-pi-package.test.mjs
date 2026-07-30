@@ -29,9 +29,8 @@ const companionEntries = [
 	"@tintinweb/pi-subagents",
 	"pi-web-access",
 	"@vndv/pi-codegraph",
-].map((packageName, index) => ({
+].map((packageName) => ({
 	package: packageName,
-	version: packageName === "@vndv/pi-codegraph" ? "0.1.10" : `1.0.${index}`,
 	description: `${packageName} fixture`,
 }));
 
@@ -505,7 +504,7 @@ test("rejects companion entries pointing at local paths", async () => {
 			schemaVersion: 1,
 			companions: [
 				...companionEntries.filter((c) => c.package !== "pi-web-access"),
-				{ package: "pi-web-access", version: "file:../pi-web-access" },
+				{ package: "file:../pi-web-access" },
 			],
 		},
 	});
