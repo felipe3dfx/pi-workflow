@@ -20,7 +20,6 @@ import {
 
 export interface CompanionPackage {
 	package: string;
-	version: string;
 	description?: string;
 }
 
@@ -28,11 +27,7 @@ interface CompanionMetadata {
 	companions: CompanionPackage[];
 }
 
-type CompanionStatus =
-	| "missing"
-	| "version-mismatch"
-	| "installed"
-	| "error";
+type CompanionStatus = "missing" | "installed" | "error";
 
 export interface CompanionState extends CompanionPackage {
 	installedVersion?: string;
@@ -152,9 +147,7 @@ function isCompanionPackage(value: unknown): value is CompanionPackage {
 		typeof value === "object" &&
 		value !== null &&
 		typeof (value as CompanionPackage).package === "string" &&
-		(value as CompanionPackage).package.length > 0 &&
-		typeof (value as CompanionPackage).version === "string" &&
-		(value as CompanionPackage).version.length > 0
+		(value as CompanionPackage).package.length > 0
 	);
 }
 
@@ -280,13 +273,6 @@ export function getCompanionState(
 	if (!installed.version) {
 		return { ...companion, status: "missing" };
 	}
-	if (installed.version !== companion.version) {
-		return {
-			...companion,
-			installedVersion: installed.version,
-			status: "version-mismatch",
-		};
-	}
 	return {
 		...companion,
 		installedVersion: installed.version,
@@ -317,7 +303,7 @@ function resolveCompanionCatalog(
 }
 
 function companionInstallSpec(companion: CompanionPackage): string {
-	return `npm:${companion.package}@${companion.version}`;
+	return `npm:${companion.package}`;
 }
 
 function defaultDirectoryExists(path: string): boolean {
@@ -344,7 +330,6 @@ function resolveInstallPackage(
 
 function statusIcon(status: CompanionStatus): string {
 	if (status === "installed") return "✓";
-	if (status === "version-mismatch") return "!";
 	return "✗";
 }
 
@@ -355,7 +340,7 @@ function formatCompanionStatus(states: CompanionState[]): string {
 				? ` installed ${companion.installedVersion},`
 				: "";
 			const error = companion.error ? ` (${companion.error})` : "";
-			return `${statusIcon(companion.status)} ${companion.package}@${companion.version} —${installedVersion} ${companion.status}${error}`;
+			return `${statusIcon(companion.status)} ${companion.package} —${installedVersion} ${companion.status}${error}`;
 		})
 		.join("\n");
 }
@@ -414,7 +399,7 @@ export async function getCodeGraphReadiness({
 	}
 
 	if (companion?.status !== "installed") {
-		messages.push("CodeGraph companion: missing or mismatched.");
+		messages.push("CodeGraph companion: missing or unreadable.");
 	}
 	if (cli === "missing") {
 		messages.push(
@@ -472,7 +457,7 @@ function renderCompanionCatalogStatus(
 	} else if (catalog.actionable.length > 0) {
 		lines.push(
 			"",
-			"Missing, mismatched, or unreadable companions are installed independently. Run /pi-workflow-install-companions or install manually:",
+			"Missing or unreadable companions are installed independently. Run /pi-workflow-install-companions or install manually:",
 			...catalog.actionable.map(
 				(companion) => `pi install ${companionInstallSpec(companion)}`,
 			),
@@ -481,7 +466,7 @@ function renderCompanionCatalogStatus(
 	} else {
 		lines.push(
 			"",
-			"All configured companions are installed at the expected versions.",
+			"All configured companions are installed.",
 		);
 	}
 
@@ -509,8 +494,7 @@ function createCompanionInstallPlan(
 	states: CompanionState[],
 ): CompanionInstallPlan {
 	const installable = states.filter(
-		(companion) =>
-			companion.status === "missing" || companion.status === "version-mismatch",
+		(companion) => companion.status === "missing",
 	);
 	const errored = states.filter((companion) => companion.status === "error");
 	const manualInstructions = manualInstallInstructions(
@@ -922,7 +906,7 @@ export function createCompanionWorkflow(
 				notify(
 					interaction,
 					[
-						"Some companion versions could not be inspected:",
+						"Some companions could not be inspected:",
 						...companionPlan.errored.map(
 							(companion) =>
 								`${companion.package}: ${companion.error ?? "unknown error"}`,
@@ -1144,7 +1128,7 @@ export function createCompanionWorkflow(
 				);
 				const message = [
 					configuredMcp,
-					"Some companion versions could not be inspected:",
+					"Some companions could not be inspected:",
 					...companionPlan.errored.map(
 						(companion) =>
 							`${companion.package}: ${companion.error ?? "unknown error"}`,

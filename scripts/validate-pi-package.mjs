@@ -12,6 +12,13 @@ const packageJsonPath = path.join(root, "package.json");
 const companionsPath = path.join(root, "assets", "companions.json");
 const mcpServersPath = path.join(root, "assets", "mcp-servers.json");
 const errors = [];
+const expectedCompanionPackages = [
+	"@tintinweb/pi-subagents",
+	"@vndv/pi-codegraph",
+	"gentle-engram",
+	"pi-mcp-adapter",
+	"pi-web-access",
+];
 const publicEntryNames = publicWorkflowCatalog
 	.map((workflow) => workflow.name)
 	.sort();
@@ -126,8 +133,6 @@ function assertNoNodeModulesPath(paths, manifestKey) {
 function isPlainRecord(value) {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-
-const semverIshPattern = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/;
 
 function isLocalPath(value) {
 	return (
@@ -464,8 +469,8 @@ if (companions) {
 			`companion metadata entry ${index} must define package`,
 		);
 		check(
-			typeof companion?.version === "string" && companion.version.length > 0,
-			`companion metadata entry ${index} must define version`,
+			companion?.version === undefined,
+			`companion metadata entry ${index} must not pin a version`,
 		);
 		check(
 			companion.description === undefined ||
@@ -476,16 +481,6 @@ if (companions) {
 			check(
 				!isLocalPath(companion.package),
 				`companion metadata entry ${index} package must not be a local path: ${companion.package}`,
-			);
-		}
-		if (typeof companion?.version === "string") {
-			check(
-				!isLocalPath(companion.version),
-				`companion metadata entry ${index} version must not be a local path: ${companion.version}`,
-			);
-			check(
-				semverIshPattern.test(companion.version),
-				`companion metadata entry ${index} version must look like a semver version: ${companion.version}`,
 			);
 		}
 	}
@@ -506,6 +501,10 @@ if (companions) {
 	check(
 		duplicatePackages.length === 0,
 		`companion metadata must not list duplicate companion package(s): ${[...new Set(duplicatePackages)].join(", ")}`,
+	);
+	check(
+		[...actualPackages].sort().join(",") === expectedCompanionPackages.join(","),
+		`companion metadata must define exactly the supported unversioned packages: ${expectedCompanionPackages.join(", ")}`,
 	);
 
 	const codeGraphPackageName = await loadCodeGraphPackageName();

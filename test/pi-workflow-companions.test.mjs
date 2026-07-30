@@ -31,14 +31,13 @@ const companion = companionMetadata.companions.find(
 );
 const codeGraphCompanion = {
 	package: "@vndv/pi-codegraph",
-	version: "0.1.10",
 	description: "CodeGraph companion fixture",
 };
 const fixtureCompanions = [
-	{ package: "gentle-engram", version: "0.1.10" },
-	{ package: "@vndv/pi-codegraph", version: "0.1.10" },
+	{ package: "gentle-engram" },
+	{ package: "@vndv/pi-codegraph" },
 ];
-const mismatchedInstalledVersion = "999.999.999-fixture";
+const alternateInstalledVersion = "999.999.999-fixture";
 
 function restoreEnv(snapshot) {
 	for (const [name, value] of Object.entries(snapshot)) {
@@ -88,7 +87,7 @@ async function writePackageFixture(nodeModulesPath, packageName, packageJson) {
 async function writeInstalledCompanionFixtures(nodeModulesPath) {
 	for (const configuredCompanion of companionMetadata.companions) {
 		await writePackageFixture(nodeModulesPath, configuredCompanion.package, {
-			version: configuredCompanion.version,
+			version: "1.0.0-fixture",
 		});
 	}
 }
@@ -172,15 +171,15 @@ test("status command reports companion state through the public command handler"
 		assert.match(notifications[0].message, /pi-workflow companion status/);
 		assert.match(
 			notifications[0].message,
-			/gentle-engram@0\.1\.10 — installed/,
+			/gentle-engram — installed/,
 		);
 		assert.match(
 			notifications[0].message,
-			/@vndv\/pi-codegraph@0\.1\.10 — missing/,
+			/@vndv\/pi-codegraph — missing/,
 		);
 		assert.match(
 			notifications[0].message,
-			/pi install npm:@vndv\/pi-codegraph@0\.1\.10/,
+			/pi install npm:@vndv\/pi-codegraph/,
 		);
 	});
 });
@@ -219,20 +218,20 @@ test("doctor command reports a missing CodeGraph index from a cwd without .codeg
 	});
 });
 
-test("reports installed when exact companion version is installed", () => {
+test("reports an installed companion", () => {
 	const state = getCompanionState(companion, () => ({
-		version: companion.version,
+		version: "1.0.0-fixture",
 	}));
 	assert.equal(state.status, "installed");
-	assert.equal(state.installedVersion, companion.version);
+	assert.equal(state.installedVersion, "1.0.0-fixture");
 });
 
-test("reports version-mismatch when a different companion version is installed", () => {
+test("accepts any installed companion version", () => {
 	const state = getCompanionState(companion, () => ({
-		version: mismatchedInstalledVersion,
+		version: alternateInstalledVersion,
 	}));
-	assert.equal(state.status, "version-mismatch");
-	assert.equal(state.installedVersion, mismatchedInstalledVersion);
+	assert.equal(state.status, "installed");
+	assert.equal(state.installedVersion, alternateInstalledVersion);
 });
 
 test("reports missing when companion package cannot be resolved", () => {
@@ -257,7 +256,7 @@ test("reports companions installed from Pi's npm package directory", async () =>
 		await writePackageFixture(
 			join(dir, ".pi", "agent", "npm", "node_modules"),
 			companion.package,
-			{ version: companion.version },
+			{ version: "1.0.0-fixture" },
 		);
 		process.env.HOME = dir;
 
@@ -272,7 +271,7 @@ test("reports companions installed from Pi's npm package directory", async () =>
 		const { message, level } = await workflow.inspect();
 
 		assert.equal(level, "info");
-		assert.match(message, /gentle-engram@0\.1\.10/);
+		assert.match(message, /gentle-engram/);
 		assert.match(message, /installed/);
 		assert.doesNotMatch(message, /missing/);
 	} finally {
@@ -289,7 +288,7 @@ test("reports scoped companions installed from an explicit Pi node_modules path"
 	};
 	try {
 		await writePackageFixture(dir, codeGraphCompanion.package, {
-			version: codeGraphCompanion.version,
+			version: "1.0.0-fixture",
 			exports: { "./extensions/codegraph": "./extensions/codegraph.ts" },
 		});
 		process.env.PI_WORKFLOW_COMPANION_NODE_MODULES = dir;
@@ -305,7 +304,7 @@ test("reports scoped companions installed from an explicit Pi node_modules path"
 		const { message, level } = await workflow.inspect();
 
 		assert.equal(level, "info");
-		assert.match(message, /@vndv\/pi-codegraph@0\.1\.10/);
+		assert.match(message, /@vndv\/pi-codegraph/);
 		assert.match(message, /installed/);
 		assert.doesNotMatch(message, /missing/);
 	} finally {
@@ -340,7 +339,7 @@ test("PI_WORKFLOW_COMPANION_NODE_MODULES takes precedence over the fake HOME cop
 		await writeFile(
 			metadataPath,
 			JSON.stringify({
-				companions: [{ package: "precedence-fixture-pkg", version: "3.0.0" }],
+				companions: [{ package: "precedence-fixture-pkg" }],
 			}),
 			"utf8",
 		);
@@ -348,7 +347,7 @@ test("PI_WORKFLOW_COMPANION_NODE_MODULES takes precedence over the fake HOME cop
 		const workflow = createCompanionWorkflow({ catalog: { metadataPath } });
 		const { message } = await workflow.inspect();
 
-		assert.match(message, /precedence-fixture-pkg@3\.0\.0 — installed 3\.0\.0, installed/);
+		assert.match(message, /precedence-fixture-pkg — installed 3\.0\.0, installed/);
 		assert.doesNotMatch(message, /installed 2\.0\.0/);
 	} finally {
 		restoreEnv(envSnapshot);
@@ -384,7 +383,7 @@ test("PI_AGENT_HOME overrides HOME for the agent-home node_modules path", async 
 		await writeFile(
 			metadataPath,
 			JSON.stringify({
-				companions: [{ package: "agent-home-fixture-pkg", version: "4.5.6" }],
+				companions: [{ package: "agent-home-fixture-pkg" }],
 			}),
 			"utf8",
 		);
@@ -392,7 +391,7 @@ test("PI_AGENT_HOME overrides HOME for the agent-home node_modules path", async 
 		const workflow = createCompanionWorkflow({ catalog: { metadataPath } });
 		const { message } = await workflow.inspect();
 
-		assert.match(message, /agent-home-fixture-pkg@4\.5\.6 — installed 4\.5\.6, installed/);
+		assert.match(message, /agent-home-fixture-pkg — installed 4\.5\.6, installed/);
 		assert.doesNotMatch(message, /installed 1\.2\.3/);
 	} finally {
 		restoreEnv(envSnapshot);
@@ -416,7 +415,7 @@ test("reports error status when the installed package.json does not define a ver
 		await writeFile(
 			metadataPath,
 			JSON.stringify({
-				companions: [{ package: "no-version-fixture-pkg", version: "1.0.0" }],
+				companions: [{ package: "no-version-fixture-pkg" }],
 			}),
 			"utf8",
 		);
@@ -424,7 +423,7 @@ test("reports error status when the installed package.json does not define a ver
 		const workflow = createCompanionWorkflow({ catalog: { metadataPath } });
 		const { message } = await workflow.inspect();
 
-		assert.match(message, /no-version-fixture-pkg@1\.0\.0 — error/);
+		assert.match(message, /no-version-fixture-pkg — error/);
 		assert.match(message, /does not define a version/);
 	} finally {
 		restoreEnv(envSnapshot);
@@ -455,7 +454,7 @@ test("reports error status with the underlying error when the installed package.
 		await writeFile(
 			metadataPath,
 			JSON.stringify({
-				companions: [{ package: "unreadable-fixture-pkg", version: "1.0.0" }],
+				companions: [{ package: "unreadable-fixture-pkg" }],
 			}),
 			"utf8",
 		);
@@ -463,8 +462,8 @@ test("reports error status with the underlying error when the installed package.
 		const workflow = createCompanionWorkflow({ catalog: { metadataPath } });
 		const { message } = await workflow.inspect();
 
-		assert.match(message, /unreadable-fixture-pkg@1\.0\.0 — error/);
-		assert.doesNotMatch(message, /unreadable-fixture-pkg@1\.0\.0 — .*missing/);
+		assert.match(message, /unreadable-fixture-pkg — error/);
+		assert.doesNotMatch(message, /unreadable-fixture-pkg — .*missing/);
 	} finally {
 		restoreEnv(envSnapshot);
 		await rm(dir, { recursive: true, force: true });
@@ -490,7 +489,7 @@ test("formats manual install fallback instructions for failed automatic installs
 		message,
 		[
 			"Install manually:",
-			`pi install npm:${companion.package}@${companion.version}`,
+			`pi install npm:${companion.package}`,
 			"Then run /reload.",
 		].join("\n"),
 	);
@@ -504,10 +503,10 @@ test("reports CodeGraph as recommended and missing without implying auto-install
 		const { message, level } = await workflow.inspect();
 
 		assert.equal(level, "warning");
-		assert.match(message, /@vndv\/pi-codegraph@0\.1\.10/);
+		assert.match(message, /@vndv\/pi-codegraph/);
 		assert.match(message, /recommended/i);
 		assert.match(message, /missing/);
-		assert.match(message, /pi install npm:@vndv\/pi-codegraph@0\.1\.10/);
+		assert.match(message, /pi install npm:@vndv\/pi-codegraph/);
 		assert.doesNotMatch(message, /auto-installed|automatically installed/i);
 	});
 });
@@ -523,7 +522,7 @@ test("reports CodeGraph as installed when the companion is available", async () 
 		const { message, level } = await workflow.inspect();
 
 		assert.equal(level, "info");
-		assert.match(message, /@vndv\/pi-codegraph@0\.1\.10/);
+		assert.match(message, /@vndv\/pi-codegraph/);
 		assert.match(message, /installed/);
 		assert.doesNotMatch(message, /missing/);
 	});
@@ -678,8 +677,8 @@ test("install command configures the exact MCP catalog after confirmation", asyn
 	}
 });
 
-test("install command drives the real pi.exec adapter for a version-mismatched companion", async () => {
-	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-mismatch-install-"));
+test("install command drives the real pi.exec adapter for a missing companion", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-missing-install-"));
 	const nodeModulesPath = join(dir, "companions", "node_modules");
 	const envSnapshot = {
 		HOME: process.env.HOME,
@@ -690,12 +689,9 @@ test("install command drives the real pi.exec adapter for a version-mismatched c
 	};
 	try {
 		for (const configuredCompanion of companionMetadata.companions) {
-			const installedVersion =
-				configuredCompanion.package === codeGraphCompanion.package
-					? "0.0.1"
-					: configuredCompanion.version;
+			if (configuredCompanion.package === codeGraphCompanion.package) continue;
 			await writePackageFixture(nodeModulesPath, configuredCompanion.package, {
-				version: installedVersion,
+				version: "1.0.0-fixture",
 			});
 		}
 		process.env.HOME = dir;
@@ -719,7 +715,7 @@ test("install command drives the real pi.exec adapter for a version-mismatched c
 		});
 
 		assert.deepEqual(execCalls, [
-			{ command: "pi", args: ["install", "npm:@vndv/pi-codegraph@0.1.10"] },
+			{ command: "pi", args: ["install", "npm:@vndv/pi-codegraph"] },
 		]);
 	} finally {
 		restoreEnv(envSnapshot);

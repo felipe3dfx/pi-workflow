@@ -3,7 +3,7 @@ schema: spec-driven
 context: |
   Project: pi-workflow
   Tech stack: Node.js 22+, npm, TypeScript extension entrypoint, ESM modules
-  Architecture: public Pi meta-configuration package with one local extension; companion packages are installed explicitly and validated against assets/companions.json
+  Architecture: public Pi meta-configuration package with one local extension; companion packages are installed explicitly from unversioned npm sources listed in assets/companions.json and updated through Pi
   Testing: node:test for package/extension behavior; Biome for linting and formatting; TypeScript `tsc --noEmit` for type checking; focused-test guard for test.only/describe.only/suite.only; npm pack --dry-run for publish validation
   Style: Biome recommended rules, tabs for source formatting, double quotes and semicolons in JavaScript/TypeScript, markdown line length lint disabled
   CI/publish: repository docs describe CI on pushes/PRs and publish-on-GitHub-release with npm provenance, but no .github/workflows files are present in this snapshot
