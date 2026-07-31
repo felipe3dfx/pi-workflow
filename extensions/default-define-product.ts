@@ -350,7 +350,13 @@ interface TicketGraphExecutorInput {
 }
 
 interface TicketGraphExecutor {
-	execute(input: TicketGraphExecutorInput): Promise<{ assistantText: string }>;
+	execute(input: TicketGraphExecutorInput): Promise<{
+		assistantText: string;
+		diagnostics?: {
+			readonly writeAttempts: number;
+			readonly lastWriteError?: string;
+		};
+	}>;
 }
 
 export interface DefaultDefineProductRuntimeOptions {
@@ -786,6 +792,8 @@ function createDefaultTicketGraphExecutor(): TicketGraphExecutor {
 			});
 			await resourceLoader.reload();
 			let wroteGraph = false;
+			let writeAttempts = 0;
+			let lastWriteError: string | undefined;
 			const { session } = await createAgentSession({
 				cwd: input.cwd, agentDir: getAgentDir(), model: input.model,
 				thinkingLevel: input.thinkingLevel, resourceLoader, tools: [...input.allowedTools],
@@ -798,21 +806,34 @@ function createDefaultTicketGraphExecutor(): TicketGraphExecutor {
 							if (!params.alias) throw new Error("A granted artifact alias is required.");
 							return { content: [{ type: "text" as const, text: await input.readArtifact(params.alias) }], details: { alias: params.alias } };
 						}
-						if (!params.graph) throw new Error("A delivery ticket graph is required.");
-						const graph = canonicalizeDelegatedDeliveryTicketGraph(params.graph);
-						const artifact = await input.writeArtifact(graph);
-						wroteGraph = true;
-						return { content: [{ type: "text" as const, text: JSON.stringify(artifact, null, 2) }], details: artifact };
+						writeAttempts += 1;
+						try {
+							if (!params.graph) throw new Error("A delivery ticket graph is required.");
+							const graph = canonicalizeDelegatedDeliveryTicketGraph(params.graph);
+							const artifact = await input.writeArtifact(graph);
+							wroteGraph = true;
+							return { content: [{ type: "text" as const, text: JSON.stringify(artifact, null, 2) }], details: artifact };
+						} catch (error) {
+							lastWriteError = error instanceof Error ? error.message : String(error);
+							throw error;
+						}
 					},
 				}],
 				sessionManager: SessionManager.inMemory(input.cwd),
 			});
 			try {
-				return executeRequiredTicketGraphTurn({
+				const execution = await executeRequiredTicketGraphTurn({
 					prompt: input.prompt,
 					execute: (prompt) => executeResearchSession(session, prompt),
 					hasWrittenGraph: () => wroteGraph,
 				});
+				return {
+					...execution,
+					diagnostics: {
+						writeAttempts,
+						...(lastWriteError ? { lastWriteError } : {}),
+					},
+				};
 			} finally { session.dispose(); }
 		},
 	};
@@ -1430,12 +1451,17 @@ export function createDefaultDefineProductWorkflow(
 								return writtenGraph;
 							},
 						});
-						if (!writtenGraph) return {
-							status: "blocked", executiveSummary: "The to-tickets launch completed without a verified ticket graph.", artifacts: [],
-							nextRecommended: { kind: "owner-action" }, risks: [],
-							blocker: createBlocker("PI_WORKFLOW_ARTIFACT_READBACK_MISMATCH", "The to-tickets launch completed without a verified ticket graph."),
-							launchProvenance: preparedLaunch.launchProvenance,
-						};
+						if (!writtenGraph) {
+							const message = execution.diagnostics?.lastWriteError
+								? `The delegated ticket graph write was rejected: ${execution.diagnostics.lastWriteError}`
+								: `The to-tickets launch completed without calling the required graph write after its corrective turn (write attempts: ${execution.diagnostics?.writeAttempts ?? 0}).`;
+							return {
+								status: "blocked", executiveSummary: message, artifacts: [],
+								nextRecommended: { kind: "owner-action" }, risks: [],
+								blocker: createBlocker("PI_WORKFLOW_ARTIFACT_READBACK_MISMATCH", message),
+								launchProvenance: preparedLaunch.launchProvenance,
+							};
+						}
 						return { status: "completed", executiveSummary: execution.assistantText.trim() || "Ticket graph ready for Owner approval.", artifacts: [writtenGraph], nextRecommended: { kind: "confirmed-route", route: intent.route }, risks: [], launchProvenance: preparedLaunch.launchProvenance };
 					} catch (error) {
 						const message = error instanceof Error ? error.message : String(error);
