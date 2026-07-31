@@ -19,6 +19,37 @@ import { createDeliveryTicketGraph, createSpecCoverageIndex, createTicketGraphAp
 import { createProductSpecApprovalEnvelope, createProductSpecEnvelope } from "../extensions/product-spec.ts";
 import { createWorkflowArtifactInterface } from "../extensions/workflow-artifacts.ts";
 
+test("to-tickets gives one corrective turn when the first turn omits the required graph write", async () => {
+	const prompts = [];
+	let wroteGraph = false;
+	const result = await defaultDefineProductModule.executeRequiredTicketGraphTurn({
+		prompt: "generate",
+		execute: async (prompt) => {
+			prompts.push(prompt);
+			if (prompts.length === 2) wroteGraph = true;
+			return `turn-${prompts.length}`;
+		},
+		hasWrittenGraph: () => wroteGraph,
+	});
+	assert.equal(result, "turn-2");
+	assert.equal(prompts[0], "generate");
+	assert.match(prompts[1], /action=write_graph/);
+});
+
+test("to-tickets does not spend a corrective turn after a successful graph write", async () => {
+	let calls = 0;
+	const result = await defaultDefineProductModule.executeRequiredTicketGraphTurn({
+		prompt: "generate",
+		execute: async () => {
+			calls += 1;
+			return "written";
+		},
+		hasWrittenGraph: () => true,
+	});
+	assert.equal(result, "written");
+	assert.equal(calls, 1);
+});
+
 const {
 	createDefaultDefineProductWorkflow,
 	createDefaultExplorationExecutor,

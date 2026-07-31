@@ -762,6 +762,20 @@ function createDefaultResearchExecutor(): ResearchExecutor {
 	};
 }
 
+export async function executeRequiredTicketGraphTurn<Result>(input: {
+	readonly prompt: string;
+	readonly execute: (prompt: string) => Promise<Result>;
+	readonly hasWrittenGraph: () => boolean;
+}): Promise<Result> {
+	let execution = await input.execute(input.prompt);
+	if (!input.hasWrittenGraph()) {
+		execution = await input.execute(
+			`Your previous turn did not persist the required artifact. Call ${workflowArtifactToolName} now with action=write_graph and the complete graph. Do not return prose before that successful tool result.`,
+		);
+	}
+	return execution;
+}
+
 function createDefaultTicketGraphExecutor(): TicketGraphExecutor {
 	return {
 		async execute(input) {
@@ -771,6 +785,7 @@ function createDefaultTicketGraphExecutor(): TicketGraphExecutor {
 				extensionsOverride: (base) => ({ ...base, extensions: [] }),
 			});
 			await resourceLoader.reload();
+			let wroteGraph = false;
 			const { session } = await createAgentSession({
 				cwd: input.cwd, agentDir: getAgentDir(), model: input.model,
 				thinkingLevel: input.thinkingLevel, resourceLoader, tools: [...input.allowedTools],
@@ -786,13 +801,19 @@ function createDefaultTicketGraphExecutor(): TicketGraphExecutor {
 						if (!params.graph) throw new Error("A delivery ticket graph is required.");
 						const graph = canonicalizeDelegatedDeliveryTicketGraph(params.graph);
 						const artifact = await input.writeArtifact(graph);
+						wroteGraph = true;
 						return { content: [{ type: "text" as const, text: JSON.stringify(artifact, null, 2) }], details: artifact };
 					},
 				}],
 				sessionManager: SessionManager.inMemory(input.cwd),
 			});
-			try { return await executeResearchSession(session, input.prompt); }
-			finally { session.dispose(); }
+			try {
+				return executeRequiredTicketGraphTurn({
+					prompt: input.prompt,
+					execute: (prompt) => executeResearchSession(session, prompt),
+					hasWrittenGraph: () => wroteGraph,
+				});
+			} finally { session.dispose(); }
 		},
 	};
 }
