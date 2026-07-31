@@ -305,6 +305,20 @@ test("accepts Linear padding of single-digit markers in a ten-item ordered list"
 	assert.equal(outcome.status, "spec-published");
 });
 
+test("uses direct read-back as authority when final Linear search omits the created parent", async () => {
+	const h = harness();
+	await h.begin();
+	await advanceToSave(h);
+	const issue = issueFor(h.approved);
+	await h.call(issue);
+	const { team: _team, status: _status, ...readback } = issue;
+	await h.call({ ...readback, status: "Backlog", statusType: "backlog" });
+	await h.call({ issues: [], hasNextPage: false });
+	const outcome = await h.controller.complete({ action: "publish_spec" });
+	assert.equal(outcome.status, "spec-published");
+	assert.equal(outcome.parent.id, issue.id);
+});
+
 test("default single-user publication preserves historical approval authority as provenance", async () => {
 	const h = harness({ ownerAuthority: null });
 	assert.deepEqual(await h.begin(), { status: "continuing" });

@@ -1294,16 +1294,17 @@ export function createDefineProductMcpPublication(
 				return true;
 			}
 			if (active.phase === "candidates-final-result") {
+				const expectedIssue = active.expectedIssue;
 				const [issue] = advanced.read.exact;
-				if (!issue || issue.id !== active.expectedIssue?.id) {
+				if (!expectedIssue || (issue && issue.id !== expectedIssue.id)) {
 					fail(
 						"PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH",
-						"The exact created Delivery parent was not the unique lookup candidate.",
+						"The final lookup found a different exact Delivery parent.",
 					);
 					return true;
 				}
 				try {
-					await finalize(active, issue);
+					await finalize(active, expectedIssue);
 				} catch (error) {
 					fail(
 						"PI_WORKFLOW_DEFINE_PRODUCT_RECOVERY_PERSISTENCE_FAILED",
