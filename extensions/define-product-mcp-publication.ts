@@ -479,10 +479,33 @@ function issuePage(value: unknown):
 	};
 }
 
+function linearOrderedListPadding(markdown: string): string {
+	const lines = markdown.split("\n");
+	for (let index = 0; index < lines.length; ) {
+		if (!/^\d+\. /.test(lines[index])) {
+			index += 1;
+			continue;
+		}
+		const start = index;
+		while (index < lines.length && /^\d+\. /.test(lines[index])) index += 1;
+		const markers = lines.slice(start, index).map((line) => Number.parseInt(line, 10));
+		if (markers.some((marker) => marker >= 10)) {
+			for (let item = start; item < index; item += 1)
+				lines[item] = lines[item].replace(/^([1-9])\. /, " $1. ");
+		}
+	}
+	return lines.join("\n");
+}
+
 function exactLinearMarkdown(expected: string, actual: string): boolean {
+	const withoutLegacyNewline = expected.endsWith("\n")
+		? expected.slice(0, -1)
+		: expected;
 	return (
 		actual === expected ||
-		(expected.endsWith("\n") && actual === expected.slice(0, -1))
+		actual === withoutLegacyNewline ||
+		actual === linearOrderedListPadding(expected) ||
+		actual === linearOrderedListPadding(withoutLegacyNewline)
 	);
 }
 

@@ -44,6 +44,26 @@ function approvedArtifact(overrides = {}) {
 	};
 }
 
+function linearPaddedOrderedListArtifact() {
+	const current = approvedArtifact();
+	const body = current.spec.payload.body.replace(
+		"1. Leer exactamente.",
+		Array.from({ length: 10 }, (_, index) => `${index + 1}. Prueba ${index + 1}.`).join("\n"),
+	);
+	assert.notEqual(body, current.spec.payload.body);
+	const unsigned = {
+		schema: current.spec.schema,
+		schemaVersion: current.spec.schemaVersion,
+		payload: { ...current.spec.payload, body },
+	};
+	const spec = { ...unsigned, digest: digestCanonicalValue(unsigned) };
+	return {
+		spec,
+		approval: createProductSpecApprovalEnvelope({ spec, actor: owner }),
+		sourceRevision: "approved-ordered-list-r1",
+	};
+}
+
 function legacyTrailingNewlineArtifact() {
 	const current = approvedArtifact();
 	const unsigned = {
@@ -264,6 +284,25 @@ test("publishes one exact Backlog Delivery parent through authenticated paginate
 		h.calls.filter(({ toolName }) => toolName === "linear_get_user").length,
 		1,
 	);
+});
+
+test("accepts Linear padding of single-digit markers in a ten-item ordered list", async () => {
+	const approved = linearPaddedOrderedListArtifact();
+	const h = harness({ approved });
+	await h.begin();
+	await advanceToSave(h);
+	const issue = issueFor(approved);
+	await h.call(issue);
+	const paddedDescription = issue.description.replace(/^([1-9])\. Prueba/gm, " $1. Prueba");
+	assert.notEqual(paddedDescription, issue.description);
+	const { team: _team, status: _status, ...readback } = issue;
+	const outcome = await finishReadback(h, issue, {
+		...readback,
+		description: paddedDescription,
+		status: "Backlog",
+		statusType: "backlog",
+	});
+	assert.equal(outcome.status, "spec-published");
 });
 
 test("default single-user publication preserves historical approval authority as provenance", async () => {
