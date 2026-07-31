@@ -2167,7 +2167,8 @@ test("default public publish_tickets uses canonical Engram re-reads before mutat
 		const published = await tool.execute("published", { action: "publish_tickets" }, undefined, undefined, executionContext());
 		assert.equal(published.details.status, "tickets-published", JSON.stringify(published.details));
 		assert.deepEqual(mutations, ["child:T-1", "child:T-2", "edge:T-2"]);
-		assert.equal(recovery, undefined);
+		assert.equal(recovery.definitionId, definitionId);
+		assert.equal(recovery.digest, graph.digest);
 	} finally { globalThis.fetch = originalFetch; }
 });
 

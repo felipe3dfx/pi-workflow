@@ -502,9 +502,7 @@ export function createDefineProductWorkflow(
 				if (!dependencies.ticketPublication) {
 					return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_RECOVERY_FAILED", "Native ticket publication is not configured.") };
 				}
-					const outcome = await dependencies.ticketPublication.publish(command.definitionId);
-					if (outcome.status === "tickets-published") await dependencies.ticketApprovalRecoveryStore?.clear();
-					return outcome;
+					return dependencies.ticketPublication.publish(command.definitionId);
 			} catch (error) {
 				return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_RECOVERY_FAILED", error instanceof Error ? error.message : "Ticket publication could not be recovered safely.") };
 			}
@@ -772,6 +770,8 @@ export function createDefineProductWorkflow(
 		if (command.kind === "recommend-route") {
 			await dependencies.explorationRecoveryStore?.clear();
 			await dependencies.specApprovalRecoveryStore?.clear();
+			await dependencies.ticketApprovalRecoveryStore?.clear();
+			pendingTicketApproval = undefined;
 			explorationContext = undefined;
 			activeWorkflowStateId = command.workflowStateId;
 			activeRecommendation = createRouteRecommendation({
