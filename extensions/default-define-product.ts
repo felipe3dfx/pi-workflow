@@ -95,6 +95,13 @@ const assetCatalogPath = join(packageDirectory, "assets", "agent-assets.json");
 const researchAssetPath = join(packageDirectory, "assets", "agents", "research.md");
 const prototypeAssetPath = join(packageDirectory, "assets", "agents", "prototype.md");
 const ticketGraphAssetPath = join(packageDirectory, "assets", "agents", "to-tickets.md");
+const ticketGraphSkillPath = join(
+	packageDirectory,
+	"assets",
+	"skills",
+	"to-tickets",
+	"SKILL.md",
+);
 const publicSkillNames = new Set([
 	"define-product",
 	"deliver-ticket",
@@ -905,11 +912,22 @@ function createRuntimeResourceLoader(
 	return {
 		skillResolver: createSkillResolver({
 			list: async () => {
-				if (skillEntries) return [...skillEntries];
-				const registryEntries = listSkillRegistryEntries(projectRoot);
-				return registryEntries.length > 0
-					? registryEntries
-					: fallbackSkillEntries(projectRoot);
+				const discovered = skillEntries
+					? [...skillEntries]
+					: (() => {
+							const registryEntries = listSkillRegistryEntries(projectRoot);
+							return registryEntries.length > 0
+								? registryEntries
+								: fallbackSkillEntries(projectRoot);
+						})();
+				return [
+					...discovered.filter((entry) => entry.name !== "to-tickets"),
+					{
+						name: "to-tickets",
+						path: ticketGraphSkillPath,
+						scope: "core" as const,
+					},
+				];
 			},
 			readFile: async (path) => readFileSync(path, "utf8"),
 			canonicalPath: (path) => realpathSync(path),

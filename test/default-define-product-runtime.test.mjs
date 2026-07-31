@@ -1126,9 +1126,6 @@ test("default define-product persists and restores exact approved-revision recov
 
 test("default define-product to-tickets delegates exact refs, persists the graph, and returns tickets-ready", async () => {
 	const artifactStore = createAtomicArtifactStore();
-	const ticketSkillPath = fileURLToPath(
-		new URL("./fixtures/private-skills/to-tickets/SKILL.md", import.meta.url),
-	);
 	const spec = createProductSpecEnvelope({
 		definitionId: "definition-1",
 		target: { kind: "linear-parent-description", teamId: "team-1", title: "Canonical delivery" },
@@ -1157,7 +1154,6 @@ test("default define-product to-tickets delegates exact refs, persists the graph
 		checkpointStore: createInMemoryDelegationCheckpointStore(),
 		approvedSpecReader: { read: async () => structuredClone(approved) },
 		authenticatedAuthority: { current: async () => approved.approval.payload.actor },
-		skillEntries: [{ name: "to-tickets", path: ticketSkillPath, scope: "core" }],
 		ticketGraphExecutor: async (input) => {
 			launches.push(input);
 			assert.match(await input.readArtifact("approved-spec"), /product-spec/);

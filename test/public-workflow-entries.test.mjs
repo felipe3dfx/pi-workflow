@@ -55,6 +55,7 @@ assets/companions.json
 assets/mcp-servers.json
 assets/schemas/agent-asset-migrations.schema.json
 assets/schemas/agent-assets.schema.json
+assets/skills/to-tickets/SKILL.md
 extensions/agent-asset-filesystem.ts
 extensions/agent-asset-migrations.ts
 extensions/agent-asset-operation.ts
