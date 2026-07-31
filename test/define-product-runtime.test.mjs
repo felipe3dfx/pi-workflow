@@ -976,7 +976,9 @@ test("define-product privately binds the live Spec publication and ticket approv
 		"publish_approved_revision",
 	]) assert.equal(actionOnlySchema.properties.action.enum.includes(action), true);
 
-	const published = await recovered.tool.execute("publish", { action: "publish_spec" });
+	const published = await recovered.tool.execute("ticket intent revalidates parent", {
+		action: "to_tickets",
+	});
 	assert.deepEqual(recovered.commands[0], {
 		kind: "publish-spec",
 		definitionId: "definition-1",

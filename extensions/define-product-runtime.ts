@@ -982,6 +982,13 @@ export function createDefineProductRuntime(
 			parameters: defineProductParameters as never,
 			async execute(toolCallId: string, params: DefineProductToolParams) {
 				if (
+					params.action === "to_tickets" &&
+					awaitingPublication &&
+					activeDefinitionId !== undefined
+				) {
+					params = { action: "publish_spec" };
+				}
+				if (
 					params.action === "recommend_route" &&
 					activeDefinitionId === undefined
 				) {
