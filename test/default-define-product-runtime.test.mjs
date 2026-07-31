@@ -1994,7 +1994,7 @@ test("default define-product restores approved ticket publication across sandbox
 			parentIssue,
 		);
 		await mcp("linear_list_issue_statuses", { team: parent.teamId }, [
-			{ id: "triage-1", name: "Triage", type: "triage" },
+			{ id: "backlog-1", name: "Backlog", type: "backlog" },
 		]);
 		await mcp(
 			"linear_list_issues",
@@ -2020,7 +2020,7 @@ test("default define-product restores approved ticket publication across sandbox
 			title: "PI_WORKFLOW_CANONICAL_DELIVERY_TICKET_TITLE",
 			description: "PI_WORKFLOW_CANONICAL_DELIVERY_TICKET_BODY",
 			estimate: 1,
-			state: "triage-1",
+			state: "backlog-1",
 			assignee: null,
 			cycle: null,
 			labels: [],
@@ -2033,7 +2033,7 @@ test("default define-product restores approved ticket publication across sandbox
 			title: save.input.title,
 			description: save.input.description,
 			estimate: 1,
-			status: { id: "triage-1", name: "Triage", type: "triage" },
+			status: { id: "backlog-1", name: "Backlog", type: "backlog" },
 			assigneeId: null,
 			cycleId: null,
 			labels: [],

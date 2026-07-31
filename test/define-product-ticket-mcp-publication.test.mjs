@@ -100,7 +100,7 @@ function fixture({
 	};
 	const responseFor = (expected) => {
 		if (expected.toolName === "linear_get_user") return { id: actorId, name: "Owner", isActive: true, isGuest: false };
-		if (expected.toolName === "linear_list_issue_statuses") return [{ id: "triage-1", name: "Triage", type: "triage" }];
+		if (expected.toolName === "linear_list_issue_statuses") return [{ id: "backlog-1", name: "Backlog", type: "backlog" }];
 		if (expected.toolName === "linear_list_issues") {
 			return {
 				issues: [...issues.values()]
@@ -183,8 +183,8 @@ async function drive(
 					title: event.input.title,
 					description: event.input.description.replace(/^- /gm, "* "),
 					estimate: { value: event.input.estimate, name: `${event.input.estimate} Points` },
-					status: "Triage",
-					statusType: "triage",
+					status: "Backlog",
+					statusType: "backlog",
 					labels: [],
 				};
 				state.issues.set(created.id, created);
@@ -215,14 +215,14 @@ test("publishes the exact two-ticket graph and native blocker through rewritten 
 			title: "Primero",
 			description: "Resultado\n\nResultado de T-1.\n\nCriterios de aceptación\n\n- Criterio de T-1.",
 			estimate: 1,
-			status: "triage-1",
+			status: "backlog-1",
 			workflow: { team: "team-1", parentId: "parent-1", assignee: null, cycle: null, labels: [], project: null },
 		},
 		{
 			title: "Segundo",
 			description: "Resultado\n\nResultado de T-2.\n\nCriterios de aceptación\n\n- Criterio de T-2.",
 			estimate: 2,
-			status: "triage-1",
+			status: "backlog-1",
 			workflow: { team: "team-1", parentId: "parent-1", assignee: null, cycle: null, labels: [], project: null },
 		},
 	]);
@@ -304,7 +304,7 @@ test("restart resolves a durable child mutation receipt without duplicate creati
 	state.issues.set("child-1", {
 		id: "child-1", teamId: "team-1", parentId: "parent-1", title: event.input.title,
 		description: event.input.description, estimate: event.input.estimate,
-		status: { id: "triage-1", name: "Triage", type: "triage" }, assigneeId: null, cycleId: null, labels: [], projectId: null,
+		status: { id: "backlog-1", name: "Backlog", type: "backlog" }, assigneeId: null, cycleId: null, labels: [], projectId: null,
 	});
 	assert.equal(state.persistence.value().pendingMutation.kind, "child");
 
@@ -365,7 +365,7 @@ test("keeps child mutation pending until exact direct readback", async () => {
 		title: event.input.title,
 		description: event.input.description,
 		estimate: event.input.estimate,
-		status: { id: event.input.state, name: "Triage", type: "triage" },
+		status: { id: event.input.state, name: "Backlog", type: "backlog" },
 		assigneeId: null,
 		cycleId: null,
 		labels: [],
@@ -539,8 +539,8 @@ test("enforces explicit compatibility authority and rejects malformed mixed stat
 		state.responseFor = (expected) =>
 			expected.toolName === "linear_list_issue_statuses"
 				? [
-						{ id: "triage-1", name: "Triage", type: "triage" },
-						{ name: "Backlog", type: "backlog" },
+						{ id: "backlog-1", name: "Backlog", type: "backlog" },
+						{ name: "Triage", type: "triage" },
 					]
 				: original(expected);
 		const controller = createDefineProductTicketMcpPublication(state.dependencies);
@@ -551,7 +551,7 @@ test("enforces explicit compatibility authority and rejects malformed mixed stat
 	});
 });
 
-test("refuses invalid users, malformed Triage evidence, and conflicting child discovery before mutation", async (t) => {
+test("refuses invalid users, malformed parent-state evidence, and conflicting child discovery before mutation", async (t) => {
 	for (const [name, actorPayload] of [
 		["compatibility actor mismatch", { id: "other-owner", name: "Owner", isActive: true, isGuest: false }],
 		["inactive user", { id: owner.actorId, name: "Owner", isActive: false, isGuest: false }],
@@ -579,7 +579,7 @@ test("refuses invalid users, malformed Triage evidence, and conflicting child di
 	await t.test("malformed", async () => {
 		const state = fixture();
 		const original = state.responseFor;
-		state.responseFor = (expected) => expected.toolName === "linear_list_issue_statuses" ? [{ id: "triage-1", name: "Triage", type: "backlog" }] : original(expected);
+		state.responseFor = (expected) => expected.toolName === "linear_list_issue_statuses" ? [{ id: "backlog-1", name: "Backlog", type: "triage" }] : original(expected);
 		const controller = createDefineProductTicketMcpPublication(state.dependencies);
 		await start(controller);
 		const outcome = await drive(controller, state);

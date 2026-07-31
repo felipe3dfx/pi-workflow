@@ -191,7 +191,9 @@ interface Context {
 	readonly relations: readonly Relation[];
 	manifest: Awaited<ReturnType<ReturnType<typeof createTicketPublicationManifestStore>["prepare"]>>;
 	actor?: Actor;
-	triageId?: string;
+	parentStateId?: string;
+	parentStateName?: string;
+	parentStateType?: string;
 	mutation?: Mutation;
 	mutationLinearId?: string;
 	discovery?: Discovery;
@@ -425,7 +427,9 @@ function exactParent(context: Context, value: unknown): boolean {
 		value.title === context.approved.spec.payload.target.title &&
 		typeof value.description === "string" &&
 		exactMarkdown(context.approved.spec.payload.body, value.description) &&
-		status?.type === "backlog" &&
+		status !== undefined &&
+		(context.parentStateName === undefined || status.name === context.parentStateName) &&
+		(context.parentStateType === undefined || status.type === context.parentStateType) &&
 		directOrObjectId(value, "assigneeId", "assignee") === null &&
 		directOrObjectId(value, "cycleId", "cycle") === null
 	);
@@ -449,9 +453,9 @@ function exactChild(
 		exactTicketMarkdown(renderDeliveryTicketBody(ticket), value.description) &&
 		estimatePoints(value.estimate) === ticket.estimate.points &&
 		status !== undefined &&
-		(status.id === undefined || status.id === context.triageId) &&
-		status.name === "Triage" &&
-		status.type === "triage" &&
+		(status.id === undefined || status.id === context.parentStateId) &&
+		status.name === context.parentStateName &&
+		status.type === context.parentStateType &&
 		directOrObjectId(value, "assigneeId", "assignee") === null &&
 		directOrObjectId(value, "cycleId", "cycle") === null &&
 		Array.isArray(labels) &&
@@ -683,7 +687,7 @@ export function createDefineProductTicketMcpPublication(
 			return { toolName: LIST_ISSUES_TOOL, input: childFindInput(context, phase === "verify-children") };
 		if (phase === "child-save") {
 			const mutation = context.mutation;
-			if (mutation?.kind !== "child" || !context.triageId) return undefined;
+			if (mutation?.kind !== "child" || !context.parentStateId) return undefined;
 			return {
 				toolName: SAVE_ISSUE_TOOL,
 				input: {
@@ -692,7 +696,7 @@ export function createDefineProductTicketMcpPublication(
 					title: TITLE_PLACEHOLDER,
 					description: BODY_PLACEHOLDER,
 					estimate: mutation.ticket.estimate.points,
-					state: context.triageId,
+					state: context.parentStateId,
 					assignee: null,
 					cycle: null,
 					labels: [],
@@ -1257,7 +1261,16 @@ export function createDefineProductTicketMcpPublication(
 						? "PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH"
 						: "PI_WORKFLOW_PUBLICATION_PARENT_DRIFT",
 				});
-			if (issuedCall.phase === "parent") phase = "statuses";
+			if (issuedCall.phase === "parent") {
+				const status = record(payload) ? statusEvidence(payload) : undefined;
+				if (!status)
+					throw Object.assign(new Error("The canonical Delivery parent state was malformed."), {
+						code: "PI_WORKFLOW_PUBLICATION_PARENT_DRIFT",
+					});
+				active.parentStateName = status.name;
+				active.parentStateType = status.type;
+				phase = "statuses";
+			}
 			else if (issuedCall.phase === "mutation-parent")
 				phase = active.mutation?.kind === "child" ? "child-save" : "relation-save";
 			else {
@@ -1274,14 +1287,16 @@ export function createDefineProductTicketMcpPublication(
 					{ code: "PI_WORKFLOW_LINEAR_MALFORMED_RESPONSE" },
 				);
 			const matches = statuses.filter(
-				(status) => status.name === "Triage" && status.type === "triage",
+				(status) =>
+					status.name === active.parentStateName &&
+					status.type === active.parentStateType,
 			);
 			if (matches.length !== 1)
 				throw Object.assign(
-					new Error("Linear MCP did not resolve exactly one Triage state."),
+					new Error("Linear MCP did not resolve exactly one parent workflow state."),
 					{ code: "PI_WORKFLOW_PUBLICATION_STATE_UNKNOWN" },
 				);
-			active.triageId = matches[0].id;
+			active.parentStateId = matches[0].id;
 			await routeNext(active, queuedGeneration);
 			return;
 		}
