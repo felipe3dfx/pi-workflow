@@ -102,7 +102,15 @@ function fixture({
 		if (expected.toolName === "linear_get_user") return { id: actorId, name: "Owner", isActive: true, isGuest: false };
 		if (expected.toolName === "linear_list_issue_statuses") return [{ id: "triage-1", name: "Triage", type: "triage" }];
 		if (expected.toolName === "linear_list_issues") {
-			return { issues: [...issues.values()].filter((issue) => !expected.input.query || issue.title.includes(expected.input.query)), hasNextPage: false };
+			return {
+				issues: [...issues.values()]
+					.filter((issue) => !expected.input.query || issue.title.includes(expected.input.query))
+					.map((issue) => ({
+						...issue,
+						description: `${issue.description.slice(0, 80)}… (truncated, use get_issue for full description)`,
+					})),
+				hasNextPage: false,
+			};
 		}
 		if (expected.toolName === "linear_get_issue") {
 			if (expected.input.id === parent.id) return parentIssue;
@@ -586,11 +594,13 @@ test("refuses invalid users, malformed Triage evidence, and conflicting child di
 					issues: [{ id: "wrong", title: expected.input.query }],
 					hasNextPage: false,
 				}
-			: original(expected);
+			: expected.toolName === "linear_get_issue" && expected.input.id === "wrong"
+				? { id: "wrong", title: "conflicting title-only candidate" }
+				: original(expected);
 		const controller = createDefineProductTicketMcpPublication(state.dependencies);
 		await start(controller);
 		const outcome = await drive(controller, state);
-		assert.equal(outcome.blocker.code, "PI_WORKFLOW_PUBLICATION_IDEMPOTENCY_CONFLICT");
+		assert.equal(outcome.blocker.code, "PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH");
 		assert.deepEqual(state.saveInputs, []);
 	});
 });

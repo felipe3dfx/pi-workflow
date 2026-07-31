@@ -1301,7 +1301,7 @@ export function createDefineProductTicketMcpPublication(
 					continue;
 				}
 				if (candidate.title !== title(mutation.ticket)) continue;
-				if (!exactChild(active, mutation.ticket, candidate, false)) {
+				if (!text(candidate.id)) {
 					conflicts += 1;
 					continue;
 				}
@@ -1327,7 +1327,8 @@ export function createDefineProductTicketMcpPublication(
 					{ code: "PI_WORKFLOW_PUBLICATION_IDEMPOTENCY_CONFLICT" },
 				);
 			if (ids.length === 1) {
-				await recordChild(active, mutation.ticket, ids[0], queuedGeneration);
+				active.mutationLinearId = ids[0];
+				phase = "child-readback";
 				return;
 			}
 			if (active.manifest.pendingMutation)
@@ -1347,12 +1348,12 @@ export function createDefineProductTicketMcpPublication(
 			const ids = [...discovery.ids];
 			let conflicts = discovery.conflicts;
 			for (const candidate of page.issues) {
-				if (!record(candidate)) {
+				if (!record(candidate) || !text(candidate.id) || !text(candidate.title)) {
 					conflicts += 1;
 					continue;
 				}
-				const matches = active.ordered.filter((ticket) =>
-					exactChild(active, ticket, candidate, false),
+				const matches = active.ordered.filter(
+					(ticket) => title(ticket) === candidate.title,
 				);
 				const receipt = matches.length === 1
 					? active.manifest.children.find(
