@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { createDefineProductMcpPublication } from "../extensions/define-product-mcp-publication.ts";
 import { createProductSpecApprovalEnvelope, createProductSpecEnvelope } from "../extensions/product-spec.ts";
+import { digestCanonicalValue } from "../extensions/workflow-contracts.ts";
 
 const owner = {
 	actorId: "owner-1",
@@ -40,6 +41,24 @@ function approvedArtifact(overrides = {}) {
 		approval: createProductSpecApprovalEnvelope({ spec, actor: owner }),
 		sourceRevision: "approved-r1",
 		...overrides,
+	};
+}
+
+function legacyTrailingNewlineArtifact() {
+	const current = approvedArtifact();
+	const unsigned = {
+		schema: current.spec.schema,
+		schemaVersion: current.spec.schemaVersion,
+		payload: {
+			...current.spec.payload,
+			body: `${current.spec.payload.body}\n`,
+		},
+	};
+	const spec = { ...unsigned, digest: digestCanonicalValue(unsigned) };
+	return {
+		spec,
+		approval: createProductSpecApprovalEnvelope({ spec, actor: owner }),
+		sourceRevision: "approved-legacy-r1",
 	};
 }
 
@@ -233,6 +252,20 @@ test("publishes one exact Backlog Delivery parent through authenticated paginate
 	assert.equal(h.snapshots.length, 1);
 	assert.equal(h.cleared, 1);
 	assert.equal(h.recovery.get().stage, "verified");
+});
+
+test("accepts Linear's single trailing-newline normalization for legacy approved Specs", async () => {
+	const approved = legacyTrailingNewlineArtifact();
+	const h = harness({ approved });
+	assert.deepEqual(await h.begin(), { status: "continuing" });
+	await advanceToSave(h);
+	const created = issueFor(approved, {
+		description: approved.spec.payload.body.slice(0, -1),
+	});
+	await h.call(created);
+	const outcome = await finishReadback(h, created);
+	assert.equal(outcome.status, "spec-published");
+	assert.equal(outcome.parent.description, approved.spec.payload.body);
 });
 
 test("durable uncertain restart performs lookup only and never duplicates", async () => {

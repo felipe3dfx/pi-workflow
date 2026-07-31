@@ -358,7 +358,6 @@ export function createProductSpecEnvelope(
 		productSpecSectionHeadings[5],
 		"",
 		numbered(outOfScope),
-		"",
 	].join("\n");
 	const unsigned = {
 		schema: "product-spec" as const,

@@ -487,6 +487,13 @@ function issuePage(value: unknown):
 	};
 }
 
+function exactLinearMarkdown(expected: string, actual: string): boolean {
+	return (
+		actual === expected ||
+		(expected.endsWith("\n") && actual === expected.slice(0, -1))
+	);
+}
+
 function exactIssue(
 	issue: LinearIssue,
 	context: PublicationContext & { readonly team: LinearTeam; readonly backlog: LinearStatus },
@@ -494,7 +501,10 @@ function exactIssue(
 	return (
 		(issue.teamId === undefined || issue.teamId === context.team.id) &&
 		issue.title === context.approved.spec.payload.target.title &&
-		issue.description === context.approved.spec.payload.body &&
+		exactLinearMarkdown(
+			context.approved.spec.payload.body,
+			issue.description,
+		) &&
 		(issue.statusId === undefined || issue.statusId === context.backlog.id) &&
 		issue.statusName === "Backlog" &&
 		issue.statusType === "backlog" &&

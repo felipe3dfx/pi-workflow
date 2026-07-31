@@ -183,6 +183,7 @@ test("to-spec exports only resolved pertinent decisions and support artifacts in
 	assert.equal(outcome.spec.payload.revision, "spec-r1");
 	assert.deepEqual(outcome.spec.payload.target, target);
 	assert.equal(outcome.spec.payload.body, golden);
+	assert.equal(outcome.spec.payload.body.endsWith("\n"), false);
 	assert.deepEqual(
 		outcome.spec.payload.decisions.map(({ id }) => id),
 		["canonical-parent", "exact-approval"],
