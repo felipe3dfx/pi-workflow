@@ -47,7 +47,7 @@ function parseRecoveryState(content: string, definitionId: string): RecoveryStat
 		"stage" in value &&
 		value.stage === "created" &&
 		"definitionId" in value &&
-		value.definitionId === definitionId &&
+		nonEmpty(value.definitionId) &&
 		"publicationDigest" in value &&
 		typeof value.publicationDigest === "string" &&
 		/^[a-f0-9]{64}$/.test(value.publicationDigest) &&
@@ -56,6 +56,9 @@ function parseRecoveryState(content: string, definitionId: string): RecoveryStat
 		"issueId" in value &&
 		nonEmpty(value.issueId)
 	) {
+		// The exact SHA-256-derived topic already binds this migration record to
+		// definitionId. Projecting the caller-owned identity also repairs stale
+		// embedded metadata introduced by out-of-band memory migration.
 		return {
 			definitionId,
 			publicationDigest: value.publicationDigest,

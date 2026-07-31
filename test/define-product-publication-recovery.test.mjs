@@ -75,7 +75,7 @@ test("durably claims, releases, and verifies define-product publication uncertai
 test("reads a migrated created checkpoint whose trailing LF was normalized by Engram", async () => {
 	const content = `${JSON.stringify(
 		{
-			definitionId: identity.definitionId,
+			definitionId: "stale-migrated-definition",
 			issueId: "ILA-2436",
 			ownerId: "owner-1",
 			publicationDigest: identity.publicationDigest,
