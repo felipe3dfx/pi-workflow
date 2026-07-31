@@ -94,8 +94,26 @@ function parseRecoveryState(content: string, definitionId: string): RecoveryStat
 			),
 		) ||
 		(value.stage !== "created" && content !== `${canonicalJson(value)}\n`)
-	)
-		throw new Error("Define-product publication recovery state is invalid.");
+	) {
+		const reason =
+			!value || typeof value !== "object" || Array.isArray(value)
+				? "shape"
+				: !("definitionId" in value) || value.definitionId !== definitionId
+					? "definition"
+					: !("stage" in value) ||
+							!(["uncertain", "created", "released", "verified"] as const).includes(
+								value.stage as never,
+							)
+						? "stage"
+						: !("publicationDigest" in value) ||
+								typeof value.publicationDigest !== "string" ||
+								!/^[a-f0-9]{64}$/.test(value.publicationDigest)
+							? "digest"
+							: "contract";
+		throw new Error(
+			`Define-product publication recovery state is invalid (${reason}).`,
+		);
+	}
 	return value as RecoveryState;
 }
 
