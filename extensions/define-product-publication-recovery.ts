@@ -41,6 +41,30 @@ function nonEmpty(value: unknown): value is string {
 function parseRecoveryState(content: string, definitionId: string): RecoveryState {
 	const value: unknown = JSON.parse(content);
 	if (
+		value &&
+		typeof value === "object" &&
+		!Array.isArray(value) &&
+		"stage" in value &&
+		value.stage === "created" &&
+		"definitionId" in value &&
+		value.definitionId === definitionId &&
+		"publicationDigest" in value &&
+		typeof value.publicationDigest === "string" &&
+		/^[a-f0-9]{64}$/.test(value.publicationDigest) &&
+		"ownerId" in value &&
+		nonEmpty(value.ownerId) &&
+		"issueId" in value &&
+		nonEmpty(value.issueId)
+	) {
+		return {
+			definitionId,
+			publicationDigest: value.publicationDigest,
+			stage: "created",
+			ownerId: value.ownerId,
+			issueId: value.issueId,
+		};
+	}
+	if (
 		!value ||
 		typeof value !== "object" ||
 		Array.isArray(value) ||

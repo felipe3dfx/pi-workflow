@@ -80,6 +80,7 @@ test("reads a migrated created checkpoint whose trailing LF was normalized by En
 			ownerId: "owner-1",
 			publicationDigest: identity.publicationDigest,
 			stage: "created",
+			migrationMetadata: { source: "memory-api" },
 		},
 		null,
 		2,
