@@ -9,7 +9,7 @@ description: Review one Linear issue from a domain anchor under Owner authority.
 
 Evaluate this invocation guard before inspecting or handling inputs.
 
-The runtime extension admits only idle interactive invocations and blocks all tools while the capability is pending. Human role membership is an organizational access boundary: this package has no Owner/Developer credential and does not authenticate a person as Owner rather than QA or PS. Later workflow modules must enforce role authority before mutations.
+The runtime extension admits only idle interactive invocations and blocks all tools while the capability is pending. For each relevant execution, the implemented runtime authenticates one active, non-guest Linear user exactly once with `linear_get_user` and caches a stable `single-user/v1` authority projection; never repeat that lookup before later actions or mutations. Human Owner/Developer role membership remains an organizational access boundary: this package does not infer role membership from the Linear user response.
 
 For a forbidden runtime caller, the extension returns the PI_WORKFLOW_PUBLIC_ENTRY_FORBIDDEN blocker before the LLM runs.
 
@@ -31,6 +31,7 @@ Ask no other question. Stop immediately after the question. Do not invoke tools 
 
 After receiving an allowed invocation with a valid Linear ID:
 
+- Authenticate one active, non-guest Linear user when the runtime requests it; reuse that cached identity and never call `linear_get_user` again after selection or before publication.
 - Evaluate scope, user stories and acceptance criteria, evidence, findings, required changes, and parent/sibling impact through the structured `product-review/v1` draft.
 - Present the agent recommendation and the two available results, `Aceptado` and `Cambios requeridos`, without exposing digests or workflow metadata.
 - Ask the Owner to decide naturally. Interpret the Owner's response yourself; runtime code must not classify natural-language phrases. If the response is ambiguous, ask a follow-up and do not call tools.

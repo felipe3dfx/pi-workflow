@@ -9,7 +9,7 @@ description: Define a product from a domain anchor under Owner authority.
 
 Evaluate this invocation guard before inspecting or handling inputs.
 
-The runtime extension admits only idle interactive invocations and blocks all tools while the capability is pending. Human role membership is an organizational access boundary: this package has no Owner/Developer credential and does not authenticate a person as Owner rather than QA or PS. Later workflow modules must enforce role authority before mutations.
+The runtime extension admits only idle interactive invocations and blocks all tools while the capability is pending. For each relevant execution, the implemented runtime authenticates one active, non-guest Linear user exactly once with `linear_get_user` and caches a stable `single-user/v1` authority projection; never repeat that lookup before later actions or mutations. Human Owner/Developer role membership remains an organizational access boundary: this package does not infer role membership from the Linear user response.
 
 For a forbidden runtime caller, the extension returns the PI_WORKFLOW_PUBLIC_ENTRY_FORBIDDEN blocker before the LLM runs.
 
@@ -33,7 +33,7 @@ This continuation rule takes precedence over treating the request as a new domai
 
 - Call `workflow_define_product` with exactly `{"action":"publish_tickets"}`. Never add `domainAnchor`, a Delivery parent ID, `definitionId`, a digest, an artifact reference, or any other field, even when the request names the parent.
 - Do not invoke `/define-product`, start research, recommend a route, create a new definition, or fall through to another or pending capability.
-- If `session_start` restored the durable continuation, let the runtime route this action-only call to authenticated Linear MCP publication.
+- If `session_start` restored the durable continuation, let the runtime route this action-only call to authenticated Linear MCP publication. Authenticate the active non-guest Linear user once when requested, then reuse that cached identity for the complete publication.
 - If durable recovery is absent or invalid, report exactly the workflow blocker and stop:
 
 ```text

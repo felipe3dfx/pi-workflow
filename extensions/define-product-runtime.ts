@@ -17,8 +17,10 @@ import type {
 import type { DefineProductMcpPublication } from "./define-product-mcp-publication.ts";
 import type { DefineProductTicketMcpPublication } from "./define-product-ticket-mcp-publication.ts";
 import { isReadOnlyEngramCall } from "./public-entry-guard.ts";
+import type { SingleUserAuthoritySession } from "./single-user-authority.ts";
 
 const toolName = "workflow_define_product";
+const MAX_AUTHORITY_TOOL_IDENTITIES = 16_384;
 
 const assessmentProperty = {
 	type: "object",
@@ -589,6 +591,7 @@ export interface DefineProductRuntimeDependencies {
 	createDefinitionId(): string;
 	mcpPublication?: DefineProductMcpPublication;
 	ticketMcpPublication?: DefineProductTicketMcpPublication;
+	authoritySession?: SingleUserAuthoritySession;
 }
 
 export function createDefineProductRuntime(
@@ -633,8 +636,23 @@ export function createDefineProductRuntime(
 	const readOnlyEngramToolCallIds = new Set<string>();
 	let teamListToolCallId: string | undefined;
 	let availableTeams: ReadonlyMap<string, string> | undefined;
+	let authorityGeneration = 0;
+	let authorityReservation:
+		| {
+				readonly generation: number;
+				readonly identity: string;
+				readonly toolCallId: string;
+		  }
+		| undefined;
+	const authorityReservations = new Map<string, number>();
+	let authorityAuthenticationFailed = false;
+	let authorityExecutionActive = false;
+
+	const authorityIdentity = (toolCallId: string) =>
+		`linear_get_user\u0000${toolCallId}`;
 
 	function beginDefinition(domainAnchor: string): void {
+		authorityExecutionActive = true;
 		activeDefinitionId = dependencies.createDefinitionId();
 		activeWorkflowStateId = randomBytes(32).toString("base64url");
 		activeDomainAnchor = domainAnchor;
@@ -659,6 +677,7 @@ export function createDefineProductRuntime(
 			event.text.trim().length > 0 &&
 			!event.text.trim().startsWith("/");
 		if (freshInteractiveResponse && awaitingConfirmation) {
+			authorityExecutionActive = true;
 			routeConfirmationAuthorized = true;
 			return;
 		}
@@ -668,6 +687,7 @@ export function createDefineProductRuntime(
 				awaitingTicketApproval ||
 				awaitingApprovedRevisionApproval)
 		) {
+			authorityExecutionActive = true;
 			approvalConfirmation = awaitingSpecApproval
 				? "spec"
 				: awaitingTicketApproval
@@ -726,6 +746,11 @@ export function createDefineProductRuntime(
 		readOnlyEngramToolCallIds.clear();
 		teamListToolCallId = undefined;
 		availableTeams = undefined;
+		authorityGeneration += 1;
+		authorityReservation = undefined;
+		authorityAuthenticationFailed = false;
+		authorityExecutionActive = false;
+		dependencies.authoritySession?.clear();
 		dependencies.mcpPublication?.clear();
 		dependencies.ticketMcpPublication?.clear();
 		dependencies.workflow.reset();
@@ -761,6 +786,17 @@ export function createDefineProductRuntime(
 	}
 
 	function systemPrompt(): string {
+		if (
+			authorityExecutionActive &&
+			dependencies.authoritySession &&
+			!dependencies.authoritySession.user()
+		) {
+			if (authorityAuthenticationFailed)
+				return "The single-user harness could not authenticate one active non-guest Linear user. Stop without approving or mutating anything.";
+			return authorityReservation
+				? "Wait for the one pending linear_get_user result; do not call another tool."
+				: 'Authenticate this define-product execution exactly once: call linear_get_user with only {"query":"me"}. Do not call workflow or mutation tools first.';
+		}
 		if (awaitingDomainAnchor)
 			return "Ask exactly: What product idea or problem should define the domain scope? Do not call tools.";
 		const pending = dependencies.workflow.pendingRecommendation();
@@ -900,6 +936,46 @@ export function createDefineProductRuntime(
 			return { systemPrompt: systemPrompt() };
 		});
 		pi.on("tool_call", (event) => {
+			if (authorityExecutionActive && dependencies.authoritySession) {
+				const authenticated = dependencies.authoritySession.user();
+				if (!authenticated) {
+					if (
+						authorityAuthenticationFailed ||
+						event.toolName !== "linear_get_user" ||
+						authorityReservation !== undefined ||
+						typeof event.toolCallId !== "string" ||
+						!hasExactKeys(event.input, ["query"]) ||
+						!isRecord(event.input) ||
+						event.input.query !== "me"
+					) {
+						return {
+							block: true as const,
+							reason: "PI_WORKFLOW_DEFINE_PRODUCT_AUTHORITY_MISMATCH",
+						};
+					}
+					const identity = authorityIdentity(event.toolCallId);
+					if (
+						authorityReservations.has(identity) ||
+						authorityReservations.size >= MAX_AUTHORITY_TOOL_IDENTITIES
+					)
+						return {
+							block: true as const,
+							reason: "PI_WORKFLOW_DEFINE_PRODUCT_AUTHORITY_MISMATCH",
+						};
+					authorityReservations.set(identity, authorityGeneration);
+					authorityReservation = {
+						generation: authorityGeneration,
+						identity,
+						toolCallId: event.toolCallId,
+					};
+					return undefined;
+				}
+				if (event.toolName === "linear_get_user")
+					return {
+						block: true as const,
+						reason: "PI_WORKFLOW_DEFINE_PRODUCT_MCP_PROTOCOL_INVALID",
+					};
+			}
 			if (
 				awaitingSpecInput &&
 				activeSpecTeamId === undefined &&
@@ -924,6 +1000,38 @@ export function createDefineProductRuntime(
 			return publication?.handleToolCall(event);
 		});
 		pi.on("tool_result", async (event) => {
+			const reservation = authorityReservation;
+			if (
+				authorityExecutionActive &&
+				dependencies.authoritySession &&
+				event.toolName === "linear_get_user" &&
+				typeof event.toolCallId === "string" &&
+				reservation !== undefined &&
+				reservation.generation === authorityGeneration &&
+				reservation.toolCallId === event.toolCallId &&
+				reservation.identity === authorityIdentity(event.toolCallId) &&
+				authorityReservations.get(reservation.identity) ===
+					authorityGeneration
+			) {
+				authorityReservation = undefined;
+				const authenticated =
+					event.isError !== true &&
+					dependencies.authoritySession.authenticate(
+						toolResultPayload(event),
+					).ok;
+				if (!authenticated) authorityAuthenticationFailed = true;
+				return {
+					content: [
+						...(Array.isArray(event.content) ? event.content : []),
+						{
+							type: "text" as const,
+							text: authenticated
+								? "Single-user Linear identity authenticated for this define-product execution. Continue the active workflow without calling linear_get_user again."
+								: "The single-user harness requires one active non-guest Linear user; stop without approving or mutating anything.",
+						},
+					],
+				};
+			}
 			if (
 				event.toolName === "linear_list_teams" &&
 				typeof event.toolCallId === "string" &&

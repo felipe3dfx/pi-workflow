@@ -16,6 +16,7 @@ import {
 	type ProtectedProductReviewArtifact,
 	type ProductReviewArtifactStore,
 } from "./product-review-workflow.ts";
+import { createSingleUserAuthoritySession } from "./single-user-authority.ts";
 import { canonicalJson } from "./workflow-contracts.ts";
 
 export namespace ProductReviewMcpPublication {
@@ -57,7 +58,8 @@ export interface ProductReviewMcpPublicationDependencies {
 	readonly drafts: ProductReviewDraftReader;
 	readonly artifacts: ProductReviewArtifactStore;
 	readonly recovery: ProductReviewPublicationRecoveryStore;
-	readonly owner: {
+	/** Explicit compatibility policy. Default single-user execution derives authority from Linear. */
+	readonly owner?: {
 		readonly actorId: string;
 		readonly authorityRevision: string;
 	};
@@ -636,14 +638,10 @@ type State =
 	| { readonly phase: "prepared"; readonly context: PreparedContext }
 	| { readonly phase: "public-selection"; readonly context: ApprovedContext }
 	| { readonly phase: "public-selection-result"; readonly context: ApprovedContext; readonly toolCallId: string }
-	| { readonly phase: "current-user-after-approval"; readonly context: ApprovedContext }
-	| { readonly phase: "current-user-after-approval-result"; readonly context: ApprovedContext; readonly toolCallId: string }
 	| { readonly phase: "issue-after-approval"; readonly context: ApprovedContext }
 	| { readonly phase: "issue-after-approval-result"; readonly context: ApprovedContext; readonly toolCallId: string }
 	| { readonly phase: "comments-before"; readonly context: PublicationContext; readonly read: CommentRead }
 	| { readonly phase: "comments-before-result"; readonly context: PublicationContext; readonly read: CommentRead; readonly toolCallId: string }
-	| { readonly phase: "current-user-before-mutation"; readonly context: PublicationContext }
-	| { readonly phase: "current-user-before-mutation-result"; readonly context: PublicationContext; readonly toolCallId: string }
 	| { readonly phase: "issue-before-mutation"; readonly context: PublicationContext }
 	| { readonly phase: "issue-before-mutation-result"; readonly context: PublicationContext; readonly toolCallId: string }
 	| { readonly phase: "comment-create"; readonly context: PublicationContext }
@@ -658,51 +656,15 @@ type State =
 			readonly blocker: ProductReviewMcpPublication.Blocker["blocker"];
 	  };
 
-export function createUnavailableProductReviewMcpPublication(): ProductReviewMcpPublication {
-	const unavailable = blocked(
-		"PI_WORKFLOW_PRODUCT_REVIEW_CONFIGURATION_REQUIRED",
-		"Product review stores and exact host-controlled Owner authority are not configured.",
-	);
-	const inactive = () =>
-		blocked(
-			"PI_WORKFLOW_PRODUCT_REVIEW_MCP_PROTOCOL_INVALID",
-			"Product review publication requires an explicitly admitted /product-review turn.",
-		);
-	let active = false;
-	return {
-		allowedTools,
-		start: () => {
-			active = true;
-		},
-		setMcpAvailable: () => {},
-		clear: () => {
-			active = false;
-		},
-		hasActiveTurn: () => active,
-		hasPendingOwnerSelection: () => false,
-		select: () => (active ? unavailable : inactive()),
-		expectedModelCall: () => undefined,
-		nextCallInstruction: () => undefined,
-		handleToolCall: async (event) =>
-			active && event.toolName !== WORKFLOW_TOOL
-				? {
-						block: true,
-						reason: "PI_WORKFLOW_PRODUCT_REVIEW_CONFIGURATION_REQUIRED",
-					}
-				: undefined,
-		handleToolResult: async () => false,
-		complete: async () => {
-			if (!active) return inactive();
-			active = false;
-			return unavailable;
-		},
-	};
-}
-
 export function createProductReviewMcpPublication(
 	options: ProductReviewMcpPublicationDependencies,
 ): ProductReviewMcpPublication {
 	let state: State = { phase: "idle" };
+	const authoritySession = createSingleUserAuthoritySession({
+		...(options.owner
+			? { authority: { ...options.owner, role: "Owner" as const } }
+			: {}),
+	});
 	let mcpAvailable: boolean | undefined;
 	let turnGeneration = 0;
 	let recoveryOwnerId = randomUUID();
@@ -730,6 +692,7 @@ export function createProductReviewMcpPublication(
 	function start(issueId: string): void {
 		turnGeneration += 1;
 		recoveryOwnerId = randomUUID();
+		authoritySession.clear();
 		state = { phase: "current-user", issueId };
 		if (mcpAvailable === false)
 			fail(
@@ -758,10 +721,7 @@ export function createProductReviewMcpPublication(
 		| undefined {
 		if (state.phase === "public-selection")
 			return { toolName: WORKFLOW_TOOL, input: {} };
-		if (
-			state.phase === "current-user" ||
-			state.phase === "current-user-after-approval"
-		)
+		if (state.phase === "current-user")
 			return { toolName: CURRENT_USER_TOOL, input: { query: "me" } };
 		if (state.phase === "issue" || state.phase === "issue-verify")
 			return {
@@ -788,8 +748,6 @@ export function createProductReviewMcpPublication(
 					...(state.read.cursor ? { cursor: state.read.cursor } : {}),
 				},
 			};
-		if (state.phase === "current-user-before-mutation")
-			return { toolName: CURRENT_USER_TOOL, input: { query: "me" } };
 		if (state.phase === "comment-create")
 			return {
 				toolName: SAVE_COMMENT_TOOL,
@@ -905,13 +863,6 @@ export function createProductReviewMcpPublication(
 					toolCallId: event.toolCallId,
 				};
 				break;
-			case "current-user-after-approval":
-				state = {
-					phase: "current-user-after-approval-result",
-					context: active.context,
-					toolCallId: event.toolCallId,
-				};
-				break;
 			case "issue":
 				state = {
 					phase: "issue-result",
@@ -941,13 +892,6 @@ export function createProductReviewMcpPublication(
 					phase: "comments-before-result",
 					context: active.context,
 					read: active.read,
-					toolCallId: event.toolCallId,
-				};
-				break;
-			case "current-user-before-mutation":
-				state = {
-					phase: "current-user-before-mutation-result",
-					context: active.context,
 					toolCallId: event.toolCallId,
 				};
 				break;
@@ -997,9 +941,9 @@ export function createProductReviewMcpPublication(
 	function validOwnerActor(payload: unknown): payload is AuthenticatedLinearActor {
 		return (
 			actorEvidence(payload) &&
-			payload.id === options.owner.actorId &&
 			payload.isActive === true &&
-			payload.isGuest === false
+			payload.isGuest === false &&
+			(options.owner === undefined || payload.id === options.owner.actorId)
 		);
 	}
 
@@ -1106,10 +1050,8 @@ export function createProductReviewMcpPublication(
 			"public-selection-result",
 			"issue-result",
 			"issue-verify-result",
-			"current-user-after-approval-result",
 			"issue-after-approval-result",
 			"comments-before-result",
-			"current-user-before-mutation-result",
 			"issue-before-mutation-result",
 			"comment-create-result",
 			"comments-readback-result",
@@ -1125,9 +1067,7 @@ export function createProductReviewMcpPublication(
 		const expectedTool =
 			active.phase === "public-selection-result"
 				? WORKFLOW_TOOL
-				: active.phase === "current-user-result" ||
-						active.phase === "current-user-after-approval-result" ||
-						active.phase === "current-user-before-mutation-result"
+				: active.phase === "current-user-result"
 					? CURRENT_USER_TOOL
 				: active.phase === "comments-before-result" ||
 					active.phase === "comments-readback-result"
@@ -1180,7 +1120,7 @@ export function createProductReviewMcpPublication(
 				);
 			else
 				state = {
-					phase: "current-user-after-approval",
+					phase: "issue-after-approval",
 					context: active.context,
 				};
 			return true;
@@ -1188,8 +1128,8 @@ export function createProductReviewMcpPublication(
 		if (active.phase === "current-user-result") {
 			if (!actorEvidence(payload))
 				fail("PI_WORKFLOW_PRODUCT_REVIEW_MCP_MALFORMED_RESPONSE", "Linear MCP returned partial or malformed actor evidence.");
-			else if (!validOwnerActor(payload))
-				fail("PI_WORKFLOW_PRODUCT_REVIEW_AUTHORITY_MISMATCH", "The authenticated Linear actor does not match the exact configured Owner actor.");
+			else if (!validOwnerActor(payload) || !authoritySession.authenticate(payload).ok)
+				fail("PI_WORKFLOW_PRODUCT_REVIEW_AUTHORITY_MISMATCH", "An active non-guest authenticated Linear user is required.");
 			else
 				state = { phase: "issue", issueId: active.issueId, actor: structuredClone(payload) };
 			return true;
@@ -1218,7 +1158,16 @@ export function createProductReviewMcpPublication(
 					fail("PI_WORKFLOW_PRODUCT_REVIEW_ARTIFACT_INVALID", "A valid canonical product review draft is required.");
 					return true;
 				}
-				const authority = { actorId: options.owner.actorId, role: "Owner" as const, authorityRevision: options.owner.authorityRevision };
+				const authority = authoritySession.current("Owner");
+				if (authority?.role !== "Owner") {
+					fail("PI_WORKFLOW_PRODUCT_REVIEW_AUTHORITY_MISMATCH", "Authenticated single-user Owner authority is unavailable.");
+					return true;
+				}
+				const ownerAuthority = {
+					actorId: authority.actorId,
+					role: "Owner" as const,
+					authorityRevision: authority.authorityRevision,
+				};
 				let snapshot = productIssueSnapshot(issue);
 				const existing = await options.artifacts.read(active.issueId);
 				if (!isCurrent(generation, active)) return false;
@@ -1237,12 +1186,21 @@ export function createProductReviewMcpPublication(
 					snapshot = { ...snapshot, updatedAt: existing.payload.issue.revision };
 				}
 				const choices = {
-					Aceptado: createProductReviewArtifact(snapshot, authority, draft, "Aceptado"),
-					"Cambios requeridos": createProductReviewArtifact(snapshot, authority, draft, "Cambios requeridos"),
+					Aceptado: createProductReviewArtifact(snapshot, ownerAuthority, draft, "Aceptado"),
+					"Cambios requeridos": createProductReviewArtifact(snapshot, ownerAuthority, draft, "Cambios requeridos"),
 				};
-				if (existing && canonicalJson(existing) !== canonicalJson(choices[existing.payload.result])) {
-					fail("PI_WORKFLOW_PRODUCT_REVIEW_ARTIFACT_CONFLICT", "The create-only product review artifact does not match the canonical draft and Owner authority.");
-					return true;
+				if (existing) {
+					const historical = createProductReviewArtifact(
+						snapshot,
+						existing.payload.authority,
+						draft,
+						existing.payload.result,
+					);
+					if (canonicalJson(existing) !== canonicalJson(historical)) {
+						fail("PI_WORKFLOW_PRODUCT_REVIEW_ARTIFACT_CONFLICT", "The create-only product review artifact does not match the canonical approved content.");
+						return true;
+					}
+					choices[existing.payload.result] = existing as ProtectedProductReviewArtifact;
 				}
 				state = {
 					phase: "prepared",
@@ -1252,15 +1210,6 @@ export function createProductReviewMcpPublication(
 				if (!isCurrent(generation, active)) return false;
 				fail(record(error) && nonEmpty(error.code) ? error.code : "PI_WORKFLOW_PRODUCT_REVIEW_PREPARATION_FAILED", error instanceof Error ? error.message : "Product review preparation failed.");
 			}
-			return true;
-		}
-		if (active.phase === "current-user-after-approval-result" || active.phase === "current-user-before-mutation-result") {
-			if (!validOwnerActor(payload) || canonicalJson(payload) !== canonicalJson(active.context.actor))
-				fail("PI_WORKFLOW_PRODUCT_REVIEW_AUTHORITY_MISMATCH", "The authenticated Owner actor changed after approval.");
-			else
-				state = active.phase === "current-user-after-approval-result"
-					? { phase: "issue-after-approval", context: active.context }
-					: { phase: "issue-before-mutation", context: active.context };
 			return true;
 		}
 		if (active.phase === "issue-after-approval-result") {
@@ -1325,7 +1274,7 @@ export function createProductReviewMcpPublication(
 				fail("PI_WORKFLOW_PRODUCT_REVIEW_REVISION_MISMATCH", "The Linear issue revision advanced without the exact approved product review comment; refusing a new mutation.");
 				return true;
 			}
-			state = { phase: "current-user-before-mutation", context: active.context };
+			state = { phase: "issue-before-mutation", context: active.context };
 			return true;
 		}
 		if (active.phase === "issue-before-mutation-result") {

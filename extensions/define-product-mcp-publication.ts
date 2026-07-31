@@ -9,6 +9,10 @@ import type { ApprovedProductSpecRead } from "./engram-approved-spec-reader.ts";
 import type { LinearDeliveryParent } from "./linear-delivery-parent-gateway.ts";
 import { validateProductSpecApproval } from "./product-spec.ts";
 import {
+	createSingleUserAuthoritySession,
+	type SingleUserAuthoritySession,
+} from "./single-user-authority.ts";
+import {
 	canonicalJson,
 	digestCanonicalValue,
 	type AuthenticatedAuthority,
@@ -54,7 +58,12 @@ export interface DefineProductMcpPublicationDependencies {
 	readonly approvedSpecReader: {
 		read(definitionId: string): Promise<ApprovedProductSpecRead>;
 	};
-	readonly owner: AuthenticatedAuthority;
+	/** Explicit compatibility policy; omitted by the default single-user harness. */
+	readonly owner?: AuthenticatedAuthority;
+	readonly authenticatedAuthorityPolicy?: {
+		current(): Promise<AuthenticatedAuthority | undefined>;
+	};
+	readonly authoritySession?: SingleUserAuthoritySession;
 	readonly recovery: DefineProductPublicationRecoveryStore;
 	readonly parentSnapshots: DeliveryParentSnapshotStore;
 	readonly toolIdentityReservationCapacity?: number;
@@ -163,6 +172,7 @@ interface PublicationContext {
 	readonly definitionId: string;
 	readonly approved: ApprovedProductSpecRead;
 	readonly identity: DefineProductPublicationIdentity;
+	readonly compatibilityAuthority?: AuthenticatedAuthority;
 	readonly recovery?: {
 		readonly publicationDigest: string;
 		readonly stage: "uncertain" | "created" | "verified";
@@ -252,23 +262,6 @@ type State =
 			};
 			readonly read: IssueRead;
 			readonly expectedIssue?: LinearIssue;
-			readonly toolCallId: string;
-	  }
-	| {
-			readonly phase: "current-user-before-mutation";
-			readonly context: PublicationContext & {
-				readonly actor: LinearActor;
-				readonly team: LinearTeam;
-				readonly backlog: LinearStatus;
-			};
-	  }
-	| {
-			readonly phase: "current-user-before-mutation-result";
-			readonly context: PublicationContext & {
-				readonly actor: LinearActor;
-				readonly team: LinearTeam;
-				readonly backlog: LinearStatus;
-			};
 			readonly toolCallId: string;
 	  }
 	| {
@@ -524,11 +517,26 @@ function publicationIdentity(approved: ApprovedProductSpecRead): DefineProductPu
 	};
 }
 
+function validCompatibilityAuthority(
+	value: unknown,
+): value is AuthenticatedAuthority & { readonly role: "Owner" } {
+	return (
+		value !== undefined &&
+		value !== null &&
+		typeof value === "object" &&
+		!Array.isArray(value) &&
+		nonEmpty((value as Record<string, unknown>).actorId) &&
+		(value as Record<string, unknown>).role === "Owner" &&
+		nonEmpty((value as Record<string, unknown>).authorityRevision)
+	);
+}
+
 function approvedArtifact(
 	value: ApprovedProductSpecRead,
 	definitionId: string,
-	owner: AuthenticatedAuthority,
+	owner?: AuthenticatedAuthority,
 ): boolean {
+	const historicalActor = value.approval.payload.actor;
 	return (
 		value.spec.payload.definitionId === definitionId &&
 		value.spec.payload.target.kind === "linear-parent-description" &&
@@ -539,10 +547,11 @@ function approvedArtifact(
 		validateProductSpecApproval({
 			spec: value.spec,
 			approval: value.approval,
-			actor: owner,
+			actor: historicalActor,
 			target: value.spec.payload.target,
 			revision: value.spec.payload.revision,
-		}).ok
+		}).ok &&
+		(owner === undefined || canonicalJson(owner) === canonicalJson(historicalActor))
 	);
 }
 
@@ -587,44 +596,15 @@ function emptyIssueRead(): IssueRead {
 	return { exact: [], conflicts: 0, seenCursors: new Set() };
 }
 
-export function createUnavailableDefineProductMcpPublication(): DefineProductMcpPublication {
-	let active = false;
-	const unavailable = blocked(
-		"PI_WORKFLOW_DEFINE_PRODUCT_CONFIGURATION_REQUIRED",
-		"Exact host-controlled Owner authority and durable publication stores are required.",
-	);
-	return {
-		allowedTools,
-		setMcpAvailable: () => {},
-		clear: () => {
-			active = false;
-		},
-		hasActiveTurn: () => active,
-		begin: async () => {
-			active = true;
-			return unavailable;
-		},
-		expectedModelCall: () => undefined,
-		nextCallInstruction: () => undefined,
-		handleToolCall: async (event) =>
-			active && event.toolName !== WORKFLOW_TOOL
-				? {
-						block: true,
-						reason: "PI_WORKFLOW_DEFINE_PRODUCT_CONFIGURATION_REQUIRED",
-					}
-				: undefined,
-		handleToolResult: async () => false,
-		complete: async () => {
-			active = false;
-			return unavailable;
-		},
-	};
-}
-
 export function createDefineProductMcpPublication(
 	options: DefineProductMcpPublicationDependencies,
 ): DefineProductMcpPublication {
 	let state: State = { phase: "idle" };
+	const authoritySession =
+		options.authoritySession ??
+		createSingleUserAuthoritySession({
+			...(options.owner ? { authority: options.owner } : {}),
+		});
 	let mcpAvailable: boolean | undefined;
 	let generation = 0;
 	let beginning = false;
@@ -694,10 +674,7 @@ export function createDefineProductMcpPublication(
 			state.phase === "blocked"
 		)
 			return { toolName: WORKFLOW_TOOL, input: { action: "publish_spec" } };
-		if (
-			state.phase === "current-user" ||
-			state.phase === "current-user-before-mutation"
-		)
+		if (state.phase === "current-user")
 			return { toolName: CURRENT_USER_TOOL, input: { query: "me" } };
 		if (state.phase === "teams")
 			return {
@@ -763,16 +740,47 @@ export function createDefineProductMcpPublication(
 			);
 		beginning = true;
 		generation += 1;
+		if (!options.authoritySession) authoritySession.clear();
 		const beginGeneration = generation;
 		recoveryOwnerId = randomUUID();
 		try {
+			const injectedAuthority =
+				await options.authenticatedAuthorityPolicy?.current();
+			if (
+				options.authenticatedAuthorityPolicy &&
+				!validCompatibilityAuthority(injectedAuthority)
+			)
+				return blocked(
+					"PI_WORKFLOW_DEFINE_PRODUCT_AUTHORITY_MISMATCH",
+					"The injected authenticated authority policy is unavailable or invalid.",
+				);
+			if (
+				options.owner &&
+				injectedAuthority &&
+				canonicalJson(options.owner) !== canonicalJson(injectedAuthority)
+			)
+				return blocked(
+					"PI_WORKFLOW_DEFINE_PRODUCT_AUTHORITY_MISMATCH",
+					"Injected authenticated authority policies conflict.",
+				);
+			const compatibilityAuthority = options.owner ?? injectedAuthority;
+			const authenticated = authoritySession.user();
+			if (
+				compatibilityAuthority &&
+				authenticated &&
+				authenticated.id !== compatibilityAuthority.actorId
+			)
+				return blocked(
+					"PI_WORKFLOW_DEFINE_PRODUCT_AUTHORITY_MISMATCH",
+					"The authenticated Linear user does not satisfy the injected compatibility policy.",
+				);
 			const approved = await options.approvedSpecReader.read(definitionId);
 			if (generation !== beginGeneration || state.phase !== "idle")
 				return blocked(
 					"PI_WORKFLOW_DEFINE_PRODUCT_MCP_PROTOCOL_INVALID",
 					"Delivery-parent publication start was replaced before preparation completed.",
 				);
-			if (!approvedArtifact(approved, definitionId, options.owner))
+			if (!approvedArtifact(approved, definitionId, compatibilityAuthority))
 				return blocked(
 					"PI_WORKFLOW_PUBLICATION_ARTIFACT_DRIFT",
 					"The approved Spec or Owner authority is invalid for publication.",
@@ -801,7 +809,19 @@ export function createDefineProductMcpPublication(
 			reservations.set(toolIdentity, generation);
 			state = {
 				phase: "start-result",
-				context: { definitionId, approved, identity, ...(recovery ? { recovery } : {}) },
+				context: {
+					definitionId,
+					approved,
+					identity,
+					...(compatibilityAuthority
+						? {
+								compatibilityAuthority: structuredClone(
+									compatibilityAuthority,
+								),
+							}
+						: {}),
+					...(recovery ? { recovery } : {}),
+				},
 				toolCallId,
 			};
 			return { status: "continuing" };
@@ -820,7 +840,11 @@ export function createDefineProductMcpPublication(
 	async function revalidateArtifact(context: PublicationContext): Promise<boolean> {
 		const current = await options.approvedSpecReader.read(context.definitionId);
 		return (
-			approvedArtifact(current, context.definitionId, options.owner) &&
+			approvedArtifact(
+				current,
+				context.definitionId,
+				context.compatibilityAuthority,
+			) &&
 			canonicalJson(current) === canonicalJson(context.approved)
 		);
 	}
@@ -903,13 +927,6 @@ export function createDefineProductMcpPublication(
 			case "candidates-before":
 				state = { ...active, phase: "candidates-before-result", toolCallId };
 				break;
-			case "current-user-before-mutation":
-				state = {
-					phase: "current-user-before-mutation-result",
-					context: active.context,
-					toolCallId,
-				};
-				break;
 			case "save":
 				state = { phase: "save-result", context: active.context, toolCallId };
 				break;
@@ -958,12 +975,16 @@ export function createDefineProductMcpPublication(
 		}
 	}
 
-	function validOwnerActor(payload: unknown): payload is LinearActor {
+	function validOwnerActor(
+		payload: unknown,
+		compatibilityAuthority?: AuthenticatedAuthority,
+	): payload is LinearActor {
 		return (
 			actorEvidence(payload) &&
-			payload.id === options.owner.actorId &&
 			payload.isActive &&
-			!payload.isGuest
+			!payload.isGuest &&
+			(compatibilityAuthority === undefined ||
+				payload.id === compatibilityAuthority.actorId)
 		);
 	}
 
@@ -1073,8 +1094,7 @@ export function createDefineProductMcpPublication(
 		const expectedTool =
 			active.phase === "start-result"
 				? WORKFLOW_TOOL
-				: active.phase === "current-user-result" ||
-						active.phase === "current-user-before-mutation-result"
+				: active.phase === "current-user-result"
 					? CURRENT_USER_TOOL
 					: active.phase === "teams-result"
 						? LIST_TEAMS_TOOL
@@ -1122,14 +1142,26 @@ export function createDefineProductMcpPublication(
 					"PI_WORKFLOW_DEFINE_PRODUCT_MCP_INCOMPATIBLE",
 					"The publication continuation result was incompatible.",
 				);
-			else state = { phase: "current-user", context: active.context };
+			else {
+				const authenticated = authoritySession.user();
+				state = authenticated
+					? {
+							phase: "teams",
+							context: { ...active.context, actor: authenticated },
+							read: emptyTeamRead(),
+						}
+					: { phase: "current-user", context: active.context };
+			}
 			return true;
 		}
 		if (active.phase === "current-user-result") {
-			if (!validOwnerActor(payload))
+			if (
+				!validOwnerActor(payload, active.context.compatibilityAuthority) ||
+				!authoritySession.authenticate(payload).ok
+			)
 				fail(
 					"PI_WORKFLOW_DEFINE_PRODUCT_AUTHORITY_MISMATCH",
-					"The authenticated Linear actor does not match the configured Owner.",
+					"An active non-guest authenticated Linear user is required.",
 				);
 			else
 				state = {
@@ -1296,22 +1328,7 @@ export function createDefineProductMcpPublication(
 				);
 				return true;
 			}
-			state = {
-				phase: "current-user-before-mutation",
-				context: active.context,
-			};
-			return true;
-		}
-		if (active.phase === "current-user-before-mutation-result") {
-			if (
-				!validOwnerActor(payload) ||
-				canonicalJson(payload) !== canonicalJson(active.context.actor)
-			)
-				fail(
-					"PI_WORKFLOW_DEFINE_PRODUCT_AUTHORITY_MISMATCH",
-					"The authenticated Owner changed immediately before mutation.",
-				);
-			else state = { phase: "save", context: active.context };
+			state = { phase: "save", context: active.context };
 			return true;
 		}
 		if (active.phase === "save-result") {

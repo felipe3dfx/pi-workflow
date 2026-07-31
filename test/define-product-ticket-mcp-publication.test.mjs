@@ -78,10 +78,11 @@ function fixture({
 	ownerValue = owner,
 } = {}) {
 	const persistence = memory();
-	const ownerAuthority = structuredClone(ownerValue);
+	const ownerAuthority = ownerValue && structuredClone(ownerValue);
 	const issues = new Map();
 	const blockedBy = new Map();
 	const saveInputs = [];
+	const toolCalls = [];
 	const parentIssue = {
 		id: parent.id,
 		teamId: parent.teamId,
@@ -97,7 +98,7 @@ function fixture({
 		approvedSpecReader: { read: async () => structuredClone(approved) },
 		recoverGraph: async () => structuredClone(graphValue),
 		manifest: createTicketPublicationManifestStore({ persistence }),
-		owner: ownerAuthority,
+		...(ownerAuthority ? { owner: ownerAuthority } : {}),
 	};
 	const responseFor = (expected) => {
 		if (expected.toolName === "linear_get_user") return { id: actorId, name: "Owner", isActive: true, isGuest: false };
@@ -125,14 +126,16 @@ function fixture({
 		issues,
 		blockedBy,
 		saveInputs,
+		toolCalls,
 		parentIssue,
 		ownerAuthority,
 		responseFor,
 	};
 }
 
-async function issue(controller, expected, payload, sequence) {
+async function issue(controller, expected, payload, sequence, calls) {
 	const event = { toolName: expected.toolName, toolCallId: `call-${sequence}`, input: structuredClone(expected.input) };
+	calls?.push(structuredClone(event));
 	assert.equal(await controller.handleToolCall(event), undefined);
 	await controller.handleToolResult({
 		toolName: expected.toolName,
@@ -163,6 +166,7 @@ async function drive(
 			return { expected, sequence };
 		if (expected.toolName === "linear_save_issue") {
 			const event = { toolName: expected.toolName, toolCallId: `call-${sequence++}`, input: structuredClone(expected.input) };
+			state.toolCalls.push(structuredClone(event));
 			assert.equal(await controller.handleToolCall(event), undefined);
 			state.saveInputs.push(structuredClone(event.input));
 			if (Object.hasOwn(event.input, "parentId")) {
@@ -187,7 +191,7 @@ async function drive(
 			}
 			continue;
 		}
-		await issue(controller, expected, state.responseFor(expected), sequence++);
+		await issue(controller, expected, state.responseFor(expected), sequence++, state.toolCalls);
 	}
 }
 
@@ -227,6 +231,23 @@ test("publishes the exact two-ticket graph and native blocker through rewritten 
 		assert.equal(input.title, input.title === "Primero" ? "Primero" : "Segundo");
 	}
 	assert.equal(state.persistence.value().stage, "verified");
+	assert.equal(
+		state.toolCalls.filter(({ toolName }) => toolName === "linear_get_user").length,
+		1,
+	);
+});
+
+test("default single-user ticket publication keeps historical approval authority as provenance", async () => {
+	const state = fixture({ actorId: "current-single-user", ownerValue: null });
+	const controller = createDefineProductTicketMcpPublication(state.dependencies);
+	await start(controller);
+	const outcome = await drive(controller, state);
+	assert.equal(outcome.status, "tickets-published");
+	assert.equal(publication.approval.payload.actor.authorityRevision, "owner-r1");
+	assert.equal(
+		state.toolCalls.filter(({ toolName }) => toolName === "linear_get_user").length,
+		1,
+	);
 });
 
 test("restart resolves a durable child mutation receipt without duplicate creation", async () => {
@@ -449,8 +470,8 @@ test("serializes concurrent calls and results and ignores late generations", asy
 	});
 });
 
-test("refuses stale Owner authorityRevision and any malformed mixed status entry", async (t) => {
-	await t.test("stale authorityRevision before mutation", async () => {
+test("enforces explicit compatibility authority and rejects malformed mixed status entries", async (t) => {
+	await t.test("compatibility authorityRevision drift before mutation", async () => {
 		const state = fixture();
 		const controller = createDefineProductTicketMcpPublication(state.dependencies);
 		await start(controller);
@@ -487,15 +508,31 @@ test("refuses stale Owner authorityRevision and any malformed mixed status entry
 	});
 });
 
-test("refuses authority mismatch, malformed Triage evidence, and conflicting child discovery before mutation", async (t) => {
-	await t.test("authority", async () => {
-		const state = fixture({ actorId: "other-owner" });
-		const controller = createDefineProductTicketMcpPublication(state.dependencies);
-		await start(controller);
-		const outcome = await drive(controller, state);
-		assert.equal(outcome.blocker.code, "PI_WORKFLOW_PUBLICATION_AUTHORITY_DRIFT");
-		assert.deepEqual(state.saveInputs, []);
-	});
+test("refuses invalid users, malformed Triage evidence, and conflicting child discovery before mutation", async (t) => {
+	for (const [name, actorPayload] of [
+		["compatibility actor mismatch", { id: "other-owner", name: "Owner", isActive: true, isGuest: false }],
+		["inactive user", { id: owner.actorId, name: "Owner", isActive: false, isGuest: false }],
+		["guest user", { id: owner.actorId, name: "Owner", isActive: true, isGuest: true }],
+		["malformed user", { id: owner.actorId, isActive: true, isGuest: false }],
+	]) {
+		await t.test(name, async () => {
+			const state = fixture();
+			const original = state.responseFor;
+			state.responseFor = (expected) =>
+				expected.toolName === "linear_get_user"
+					? actorPayload
+					: original(expected);
+			const controller = createDefineProductTicketMcpPublication(state.dependencies);
+			await start(controller);
+			const outcome = await drive(controller, state);
+			assert.equal(outcome.blocker.code, "PI_WORKFLOW_PUBLICATION_AUTHORITY_DRIFT");
+			assert.deepEqual(state.saveInputs, []);
+			assert.equal(
+				state.toolCalls.filter(({ toolName }) => toolName === "linear_get_user").length,
+				1,
+			);
+		});
+	}
 	await t.test("malformed", async () => {
 		const state = fixture();
 		const original = state.responseFor;

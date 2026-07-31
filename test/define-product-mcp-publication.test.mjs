@@ -115,13 +115,20 @@ function persistence(initial) {
 	};
 }
 
-function harness({ approved = approvedArtifact(), recovery = persistence(), reader, active = true } = {}) {
+function harness({
+	approved = approvedArtifact(),
+	recovery = persistence(),
+	reader,
+	active = true,
+	ownerAuthority = owner,
+} = {}) {
 	const snapshots = [];
+	const calls = [];
 	const controller = createDefineProductMcpPublication({
 		approvedSpecReader: {
 			read: reader ?? (async () => structuredClone(approved)),
 		},
-		owner,
+		...(ownerAuthority ? { owner: ownerAuthority } : {}),
 		recovery: recovery.store,
 		parentSnapshots: {
 			persist: async (input) => {
@@ -159,6 +166,7 @@ function harness({ approved = approvedArtifact(), recovery = persistence(), read
 	async function call(payload, options = {}) {
 		const expected = controller.expectedModelCall();
 		assert.ok(expected, "expected a model call");
+		calls.push(structuredClone(expected));
 		sequence += 1;
 		const event = {
 			toolName: expected.toolName,
@@ -178,6 +186,7 @@ function harness({ approved = approvedArtifact(), recovery = persistence(), read
 	}
 	return {
 		approved,
+		calls,
 		controller,
 		recovery,
 		snapshots,
@@ -205,7 +214,6 @@ async function advanceToSave(h) {
 	await advanceToCandidates(h);
 	await h.call({ issues: [], hasNextPage: true, cursor: "issues-2" });
 	await h.call({ issues: [], hasNextPage: false });
-	await h.call(actor);
 }
 
 async function finishReadback(h, issue, readback = issue, lookupIssue = issue) {
@@ -252,6 +260,38 @@ test("publishes one exact Backlog Delivery parent through authenticated paginate
 	assert.equal(outcome.parent.cycleId, null);
 	assert.equal(h.snapshots.length, 1);
 	assert.equal(h.recovery.get().stage, "verified");
+	assert.equal(
+		h.calls.filter(({ toolName }) => toolName === "linear_get_user").length,
+		1,
+	);
+});
+
+test("default single-user publication preserves historical approval authority as provenance", async () => {
+	const h = harness({ ownerAuthority: null });
+	assert.deepEqual(await h.begin(), { status: "continuing" });
+	await h.call({
+		id: "current-single-user",
+		name: "Current user",
+		isActive: true,
+		isGuest: false,
+	});
+	await h.call({
+		teams: [{ id: "team-1", name: "Grupo ilao" }],
+		hasNextPage: false,
+	});
+	await h.call([
+		{ id: "backlog-1", name: "Backlog", type: "backlog" },
+	]);
+	await h.call({ issues: [], hasNextPage: false });
+	const issue = issueFor(h.approved);
+	await h.call(issue);
+	const outcome = await finishReadback(h, issue);
+	assert.equal(outcome.status, "spec-published");
+	assert.equal(h.approved.approval.payload.actor.authorityRevision, "owner-r1");
+	assert.equal(
+		h.calls.filter(({ toolName }) => toolName === "linear_get_user").length,
+		1,
+	);
 });
 
 test("accepts Linear's single trailing-newline normalization for legacy approved Specs", async () => {
@@ -326,15 +366,26 @@ test("durable uncertain restart performs lookup only and never duplicates", asyn
 });
 
 test("fails closed on auth, team, Backlog, duplicate, and conflicting candidates", async (t) => {
-	await t.test("actor mismatch", async () => {
-		const h = harness();
-		await h.begin();
-		await h.call({ ...actor, id: "attacker" });
-		assert.equal(
-			(await h.controller.complete({ action: "publish_spec" })).blocker.code,
-			"PI_WORKFLOW_DEFINE_PRODUCT_AUTHORITY_MISMATCH",
-		);
-	});
+	for (const [name, invalidActor] of [
+		["compatibility actor mismatch", { ...actor, id: "attacker" }],
+		["inactive actor", { ...actor, isActive: false }],
+		["guest actor", { ...actor, isGuest: true }],
+		["malformed actor", { id: actor.id, isActive: true, isGuest: false }],
+	]) {
+		await t.test(name, async () => {
+			const h = harness();
+			await h.begin();
+			await h.call(invalidActor);
+			assert.equal(
+				(await h.controller.complete({ action: "publish_spec" })).blocker.code,
+				"PI_WORKFLOW_DEFINE_PRODUCT_AUTHORITY_MISMATCH",
+			);
+			assert.equal(
+				h.calls.filter(({ toolName }) => toolName === "linear_get_user").length,
+				1,
+			);
+		});
+	}
 	await t.test("team ambiguity", async () => {
 		const h = harness();
 		await h.begin();
@@ -379,7 +430,7 @@ test("fails closed on auth, team, Backlog, duplicate, and conflicting candidates
 	}
 });
 
-test("reauthenticates and rereads the exact approved artifact immediately before mutation", async () => {
+test("reuses the cached identity and rereads the exact approved artifact immediately before mutation", async () => {
 	const original = approvedArtifact();
 	let current = original;
 	const h = harness({
@@ -399,6 +450,10 @@ test("reauthenticates and rereads the exact approved artifact immediately before
 	assert.equal(blockedCall.block, true);
 	assert.equal(blockedCall.reason, "PI_WORKFLOW_PUBLICATION_ARTIFACT_DRIFT");
 	assert.equal(h.recovery.get(), undefined);
+	assert.equal(
+		h.calls.filter(({ toolName }) => toolName === "linear_get_user").length,
+		1,
+	);
 });
 
 test("blocks missing tools, malformed results, lateral mutation, and parallel calls", async (t) => {

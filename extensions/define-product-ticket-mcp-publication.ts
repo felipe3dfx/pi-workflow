@@ -5,6 +5,10 @@ import {
 	renderDeliveryTicketBody,
 } from "./delivery-ticket-publication.ts";
 import type { ApprovedProductSpecRead } from "./engram-approved-spec-reader.ts";
+import {
+	createSingleUserAuthoritySession,
+	type SingleUserAuthoritySession,
+} from "./single-user-authority.ts";
 import type { createTicketPublicationManifestStore } from "./ticket-publication-manifest.ts";
 import {
 	canonicalJson,
@@ -56,7 +60,12 @@ export interface DefineProductTicketMcpPublicationDependencies {
 		publication: ApprovedTicketPublication,
 	) => Promise<DeliveryTicketGraph | undefined>;
 	readonly manifest: ReturnType<typeof createTicketPublicationManifestStore>;
-	readonly owner: AuthenticatedAuthority;
+	/** Explicit compatibility policy; omitted by the default single-user harness. */
+	readonly owner?: AuthenticatedAuthority;
+	readonly authenticatedAuthorityPolicy?: {
+		current(): Promise<AuthenticatedAuthority | undefined>;
+	};
+	readonly authoritySession?: SingleUserAuthoritySession;
 	readonly toolIdentityReservationCapacity?: number;
 }
 
@@ -153,7 +162,6 @@ type Phase =
 	| "parent"
 	| "statuses"
 	| "child-find"
-	| "mutation-actor"
 	| "mutation-parent"
 	| "child-save"
 	| "child-readback"
@@ -178,6 +186,7 @@ interface Context {
 	readonly publication: ApprovedTicketPublication;
 	readonly graph: DeliveryTicketGraph;
 	readonly approved: ApprovedProductSpecRead;
+	readonly compatibilityAuthority?: AuthenticatedAuthority;
 	readonly ordered: readonly Ticket[];
 	readonly relations: readonly Relation[];
 	manifest: Awaited<ReturnType<ReturnType<typeof createTicketPublicationManifestStore>["prepare"]>>;
@@ -201,6 +210,17 @@ function record(value: unknown): value is Record<string, unknown> {
 
 function text(value: unknown): value is string {
 	return typeof value === "string" && value.length > 0 && value === value.trim();
+}
+
+function validCompatibilityAuthority(
+	value: unknown,
+): value is AuthenticatedAuthority & { readonly role: "Owner" } {
+	return (
+		record(value) &&
+		text(value.actorId) &&
+		value.role === "Owner" &&
+		text(value.authorityRevision)
+	);
 }
 
 function exactInput(
@@ -436,7 +456,7 @@ function publicationMatches(
 	publication: ApprovedTicketPublication,
 	graph: DeliveryTicketGraph,
 	approved: ApprovedProductSpecRead,
-	owner: AuthenticatedAuthority,
+	owner?: AuthenticatedAuthority,
 ): boolean {
 	return (
 		publication.definitionId === definitionId &&
@@ -446,8 +466,9 @@ function publicationMatches(
 		canonicalJson(graph.payload.parent) === canonicalJson(publication.graphParent) &&
 		canonicalJson(publication.approval.payload.parent) === canonicalJson(publication.graphParent) &&
 		publication.approval.payload.graphDigest === graph.digest &&
-		owner.role === "Owner" &&
-		canonicalJson(publication.approval.payload.actor) === canonicalJson(owner)
+		publication.approval.payload.actor.role === "Owner" &&
+		(owner === undefined ||
+			canonicalJson(publication.approval.payload.actor) === canonicalJson(owner))
 	);
 }
 
@@ -481,6 +502,11 @@ export function createDefineProductTicketMcpPublication(
 	options: DefineProductTicketMcpPublicationDependencies,
 ): DefineProductTicketMcpPublication {
 	let phase: Phase = "idle";
+	const authoritySession =
+		options.authoritySession ??
+		createSingleUserAuthoritySession({
+			...(options.owner ? { authority: options.owner } : {}),
+		});
 	let context: Context | undefined;
 	let issued: IssuedCall | undefined;
 	let mcpAvailable: boolean | undefined;
@@ -578,7 +604,7 @@ export function createDefineProductTicketMcpPublication(
 		if (phase === "ready" || phase === "blocked")
 			return { toolName: WORKFLOW_TOOL, input: { action: "publish_tickets" } };
 		if (!context) return undefined;
-		if (phase === "actor" || phase === "mutation-actor")
+		if (phase === "actor")
 			return { toolName: CURRENT_USER_TOOL, input: { query: "me" } };
 		if (phase === "parent" || phase === "mutation-parent" || phase === "verify-parent")
 			return {
@@ -652,7 +678,10 @@ export function createDefineProductTicketMcpPublication(
 		return undefined;
 	}
 
-	async function loadCanonical(definitionId: string): Promise<{
+	async function loadCanonical(
+		definitionId: string,
+		compatibilityAuthority = options.owner,
+	): Promise<{
 		publication: ApprovedTicketPublication;
 		graph: DeliveryTicketGraph;
 		approved: ApprovedProductSpecRead;
@@ -668,13 +697,14 @@ export function createDefineProductTicketMcpPublication(
 			options.approvedSpecReader.read(definitionId),
 		]);
 		if (
-			options.owner.role !== "Owner" ||
-			canonicalJson(publication.approval.payload.actor) !==
-				canonicalJson(options.owner)
+			compatibilityAuthority &&
+			(compatibilityAuthority.role !== "Owner" ||
+				canonicalJson(publication.approval.payload.actor) !==
+					canonicalJson(compatibilityAuthority))
 		)
 			throw Object.assign(
 				new Error(
-					"The ticket approval actor no longer matches the configured Owner authority.",
+					"The ticket approval actor does not match the injected compatibility policy.",
 				),
 				{ code: "PI_WORKFLOW_PUBLICATION_AUTHORITY_DRIFT" },
 			);
@@ -685,7 +715,7 @@ export function createDefineProductTicketMcpPublication(
 				publication,
 				graph,
 				approved,
-				options.owner,
+				compatibilityAuthority,
 			)
 		)
 			throw Object.assign(
@@ -696,7 +726,10 @@ export function createDefineProductTicketMcpPublication(
 	}
 
 	async function revalidate(active: Context): Promise<void> {
-		const current = await loadCanonical(active.definitionId);
+		const current = await loadCanonical(
+			active.definitionId,
+			options.owner ?? active.compatibilityAuthority,
+		);
 		if (
 			canonicalJson(current.publication) !== canonicalJson(active.publication) ||
 			canonicalJson(current.graph) !== canonicalJson(active.graph) ||
@@ -734,9 +767,43 @@ export function createDefineProductTicketMcpPublication(
 			);
 		beginning = true;
 		generation += 1;
+		if (!options.authoritySession) authoritySession.clear();
 		const beginGeneration = generation;
 		try {
-			const canonical = await loadCanonical(definitionId);
+			const injectedAuthority =
+				await options.authenticatedAuthorityPolicy?.current();
+			if (
+				options.authenticatedAuthorityPolicy &&
+				!validCompatibilityAuthority(injectedAuthority)
+			)
+				return blocked(
+					"PI_WORKFLOW_PUBLICATION_AUTHORITY_DRIFT",
+					"The injected authenticated authority policy is unavailable or invalid.",
+				);
+			if (
+				options.owner &&
+				injectedAuthority &&
+				canonicalJson(options.owner) !== canonicalJson(injectedAuthority)
+			)
+				return blocked(
+					"PI_WORKFLOW_PUBLICATION_AUTHORITY_DRIFT",
+					"Injected authenticated authority policies conflict.",
+				);
+			const compatibilityAuthority = options.owner ?? injectedAuthority;
+			const authenticated = authoritySession.user();
+			if (
+				compatibilityAuthority &&
+				authenticated &&
+				authenticated.id !== compatibilityAuthority.actorId
+			)
+				return blocked(
+					"PI_WORKFLOW_PUBLICATION_AUTHORITY_DRIFT",
+					"The authenticated Linear user does not satisfy the injected compatibility policy.",
+				);
+			const canonical = await loadCanonical(
+				definitionId,
+				compatibilityAuthority,
+			);
 			if (generation !== beginGeneration || phase !== "idle")
 				return blocked(
 					"PI_WORKFLOW_TICKET_MCP_PROTOCOL_INVALID",
@@ -777,6 +844,13 @@ export function createDefineProductTicketMcpPublication(
 			context = {
 				definitionId,
 				...canonical,
+				...(compatibilityAuthority
+					? {
+							compatibilityAuthority: structuredClone(
+								compatibilityAuthority,
+							),
+						}
+					: {}),
 				ordered,
 				relations,
 				manifest,
@@ -1084,26 +1158,27 @@ export function createDefineProductTicketMcpPublication(
 				throw Object.assign(new Error("Ticket publication continuation result was incompatible."), {
 					code: "PI_WORKFLOW_TICKET_MCP_INCOMPATIBLE",
 				});
-			phase = "actor";
+			const authenticated = authoritySession.user();
+			if (authenticated) {
+				active.actor = authenticated;
+				phase = "parent";
+			} else phase = "actor";
 			return;
 		}
-		if (issuedCall.phase === "actor" || issuedCall.phase === "mutation-actor") {
+		if (issuedCall.phase === "actor") {
 			const actor = actorEvidence(payload);
-			const ownerId = active.publication.approval.payload.actor.actorId;
-			if (!actor || actor.id !== ownerId || !actor.isActive || actor.isGuest)
-				throw Object.assign(new Error("The authenticated Linear actor does not match the approving Owner."), {
+			if (
+				!actor?.isActive ||
+				actor.isGuest ||
+				(active.compatibilityAuthority !== undefined &&
+					actor.id !== active.compatibilityAuthority.actorId) ||
+				!authoritySession.authenticate(actor).ok
+			)
+				throw Object.assign(new Error("An active non-guest authenticated Linear user is required."), {
 					code: "PI_WORKFLOW_PUBLICATION_AUTHORITY_DRIFT",
 				});
-			if (issuedCall.phase === "mutation-actor") {
-				if (!active.actor || canonicalJson(actor) !== canonicalJson(active.actor))
-					throw Object.assign(new Error("The authenticated Owner changed immediately before mutation."), {
-						code: "PI_WORKFLOW_PUBLICATION_AUTHORITY_DRIFT",
-					});
-				phase = "mutation-parent";
-			} else {
-				active.actor = actor;
-				phase = "parent";
-			}
+			active.actor = actor;
+			phase = "parent";
 			return;
 		}
 		if (issuedCall.phase === "parent" || issuedCall.phase === "mutation-parent" || issuedCall.phase === "verify-parent") {
@@ -1190,7 +1265,7 @@ export function createDefineProductTicketMcpPublication(
 				throw Object.assign(new Error("A prior child mutation is uncertain and cannot be repeated."), {
 					code: "PI_WORKFLOW_PUBLICATION_RECOVERY_PENDING",
 				});
-			phase = "mutation-actor";
+			phase = "mutation-parent";
 			return;
 		}
 		if (issuedCall.phase === "verify-children") {
@@ -1297,7 +1372,7 @@ export function createDefineProductTicketMcpPublication(
 				throw Object.assign(new Error("A prior blocker mutation is uncertain and cannot be repeated."), {
 					code: "PI_WORKFLOW_PUBLICATION_RECOVERY_PENDING",
 				});
-			phase = "mutation-actor";
+			phase = "mutation-parent";
 			return;
 		}
 		if (issuedCall.phase === "relation-save") {

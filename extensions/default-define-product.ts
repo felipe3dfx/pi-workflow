@@ -47,7 +47,6 @@ import { createDurablePublicationManifest } from "./publication-manifest.ts";
 import type { DeliveryParentPublicationDependencies } from "./delivery-parent-publication.ts";
 import {
 	createDefineProductMcpPublication,
-	createUnavailableDefineProductMcpPublication,
 	type DefineProductMcpPublication,
 } from "./define-product-mcp-publication.ts";
 import {
@@ -69,6 +68,10 @@ import { createApprovedRevisionPublicationManifestStore } from "./approved-revis
 import { createApprovedRevisionStore } from "./approved-revision-store.ts";
 import type { createRuntimeLinearApprovedRevisionGateway } from "./runtime-linear-approved-revision.ts";
 import { recoverApprovedTicketGraph } from "./ticket-graph-recovery.ts";
+import {
+	createSingleUserAuthoritySession,
+	type SingleUserAuthoritySession,
+} from "./single-user-authority.ts";
 import { createTicketPublicationAuthorityGuard } from "./ticket-publication-authority-guard.ts";
 import {
 	createTicketPublicationManifestStore,
@@ -357,8 +360,10 @@ export interface DefaultDefineProductRuntimeOptions {
 	specApprovalRecoveryStore?: SpecApprovalRecoveryStore;
 	ticketApprovalRecoveryStore?: TicketApprovalRecoveryStore;
 	authenticatedAuthority?: {
-		current(): Promise<AuthenticatedAuthority>;
+		current(): Promise<AuthenticatedAuthority | undefined>;
 	};
+	/** Internal/session injection seam; defaults to one authority cache per workflow runtime. */
+	authoritySession?: SingleUserAuthoritySession;
 	approvedSpecReader?: DeliveryParentPublicationDependencies["approvedSpecReader"];
 	/** Explicit legacy gateway retained only for tests and compatibility embeddings. */
 	linearDeliveryParents?: DeliveryParentPublicationDependencies["linear"];
@@ -380,24 +385,19 @@ export interface DefaultDefineProductRuntimeOptions {
 	}[];
 }
 
-function configuredOwnerAuthority(environment: NodeJS.ProcessEnv) {
-	const actorId = environment.PI_WORKFLOW_OWNER_ACTOR_ID;
-	const authorityRevision =
-		environment.PI_WORKFLOW_OWNER_AUTHORITY_REVISION;
-	if (
-		!actorId ||
-		actorId !== actorId.trim() ||
-		!authorityRevision ||
-		authorityRevision !== authorityRevision.trim()
-	) {
-		return undefined;
-	}
-	const authority = Object.freeze({
-		actorId,
-		role: "Owner" as const,
-		authorityRevision,
-	});
-	return { authority, current: async () => authority };
+function exactOwnerAuthority(
+	value: AuthenticatedAuthority | undefined,
+): value is OwnerAuthority {
+	return (
+		value !== undefined &&
+		typeof value.actorId === "string" &&
+		value.actorId.length > 0 &&
+		value.actorId === value.actorId.trim() &&
+		value.role === "Owner" &&
+		typeof value.authorityRevision === "string" &&
+		value.authorityRevision.length > 0 &&
+		value.authorityRevision === value.authorityRevision.trim()
+	);
 }
 
 function findProjectRoot(cwd: string): string {
@@ -1117,8 +1117,28 @@ export function createDefaultDefineProductWorkflow(
 	const linearDeliveryParents = options.linearDeliveryParents;
 	const linearDeliveryTickets = options.linearDeliveryTickets;
 	const linearApprovedRevision = options.linearApprovedRevision;
-	const configuredOwner = configuredOwnerAuthority(process.env);
-	const authenticatedAuthority = options.authenticatedAuthority ?? configuredOwner;
+	const authoritySession =
+		options.authoritySession ?? createSingleUserAuthoritySession();
+	const explicitAuthenticatedAuthority = options.authenticatedAuthority;
+	const authenticatedAuthority = explicitAuthenticatedAuthority
+		? {
+				async current(): Promise<OwnerAuthority | undefined> {
+					let authority: AuthenticatedAuthority | undefined;
+					try {
+						authority = await explicitAuthenticatedAuthority.current();
+					} catch {
+						return undefined;
+					}
+					if (!exactOwnerAuthority(authority)) return undefined;
+					const authenticatedUser = authoritySession.user();
+					return !authenticatedUser || authenticatedUser.id === authority.actorId
+						? authority
+						: undefined;
+				},
+			}
+		: {
+				current: async () => authoritySession.current("Owner"),
+			};
 	const approvedTicketPublication = createApprovedTicketPublicationStore({
 		store: artifactStore,
 		project: baseProject.name,
@@ -1588,7 +1608,7 @@ export function createDefaultDefineProductWorkflow(
 					store: approvedRevisionStore,
 					currentActor: async () => {
 						const authority = await authenticatedAuthority.current();
-						return authority.role === "Owner" ? authority as OwnerAuthority : undefined;
+						return authority?.role === "Owner" ? authority as OwnerAuthority : undefined;
 					},
 				});
 				if (outcome.status === "revision-approved") await saveApprovedRevisionRecovery({ definitionId, digest: outcome.revision.digest, phase: "publication" });
@@ -1601,7 +1621,7 @@ export function createDefaultDefineProductWorkflow(
 					digest,
 					currentActor: async () => {
 						const authority = await authenticatedAuthority.current();
-						return authority.role === "Owner" ? authority as OwnerAuthority : undefined;
+						return authority?.role === "Owner" ? authority as OwnerAuthority : undefined;
 					},
 					manifest: approvedRevisionPublicationManifest,
 					gateway: linearApprovedRevision,
@@ -1618,7 +1638,14 @@ export function createDefaultDefineProductWorkflow(
 				store: publicationManifest,
 				createReservationId: () => `publication-${Date.now()}`,
 			}),
-			authenticatedAuthority,
+			authenticatedAuthority: {
+				current: async () => {
+					const authority = await authenticatedAuthority.current();
+					if (!authority)
+						throw new Error("Authenticated single-user authority is unavailable.");
+					return authority;
+				},
+			},
 			parentSnapshots,
 		} : undefined,
 		authenticatedAuthority,
@@ -1629,34 +1656,46 @@ export function createDefaultDefineProductWorkflow(
 	const mcpPublication = linearDeliveryParents
 		? undefined
 		: options.deliveryParentMcpPublication ??
-			(configuredOwner
-				? createDefineProductMcpPublication({
-						approvedSpecReader,
-						owner: configuredOwner.authority,
-						recovery:
-							options.deliveryParentPublicationRecovery ??
-							createDefineProductPublicationRecoveryStore({
-								store: artifactStore,
-								project: baseProject.name,
-							}),
-						parentSnapshots,
-					})
-				: createUnavailableDefineProductMcpPublication());
+			createDefineProductMcpPublication({
+				approvedSpecReader,
+				...(options.authenticatedAuthority
+					? {
+							authenticatedAuthorityPolicy:
+								options.authenticatedAuthority,
+						}
+					: {}),
+				authoritySession,
+				recovery:
+					options.deliveryParentPublicationRecovery ??
+					createDefineProductPublicationRecoveryStore({
+						store: artifactStore,
+						project: baseProject.name,
+					}),
+				parentSnapshots,
+			});
 	const ticketMcpPublication = linearDeliveryTickets
 		? undefined
 		: options.ticketMcpPublication ??
-			(configuredOwner
-				? createDefineProductTicketMcpPublication({
-						approvedPublications: approvedTicketPublication,
-						approvedSpecReader,
-						recoverGraph: (publication) =>
-							recoverApprovedTicketGraph(
-								artifactStore,
-								publication.graphRef,
-							).catch(() => undefined),
-						manifest: ticketPublicationManifest,
-						owner: configuredOwner.authority,
-					})
-				: undefined);
-	return Object.assign(workflow, { mcpPublication, ticketMcpPublication });
+			createDefineProductTicketMcpPublication({
+				approvedPublications: approvedTicketPublication,
+				...(options.authenticatedAuthority
+					? {
+							authenticatedAuthorityPolicy:
+								options.authenticatedAuthority,
+						}
+					: {}),
+				approvedSpecReader,
+				recoverGraph: (publication) =>
+					recoverApprovedTicketGraph(
+						artifactStore,
+						publication.graphRef,
+					).catch(() => undefined),
+				manifest: ticketPublicationManifest,
+				authoritySession,
+			});
+	return Object.assign(workflow, {
+		mcpPublication,
+		ticketMcpPublication,
+		authoritySession,
+	});
 }

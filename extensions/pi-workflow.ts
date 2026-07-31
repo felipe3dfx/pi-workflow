@@ -41,6 +41,7 @@ import { createQaHandoffRuntime } from "./qa-handoff-runtime.ts";
 import type { createProductReviewWorkflow } from "./product-review-workflow.ts";
 import { createProductReviewRuntime } from "./product-review-runtime.ts";
 import { createRuntimeEngramArtifactStore } from "./runtime-engram-store.ts";
+import type { SingleUserAuthoritySession } from "./single-user-authority.ts";
 import { registerPublicEntryGuard } from "./public-entry-guard.ts";
 import type {
 	DiagnosticScope,
@@ -222,6 +223,12 @@ export default function piWorkflowExtension(
 					| DefineProductTicketMcpPublication
 					| undefined)
 			: undefined;
+	const defaultDefineProductAuthoritySession =
+		"authoritySession" in defineProductWorkflow
+			? (defineProductWorkflow.authoritySession as
+					| SingleUserAuthoritySession
+					| undefined)
+			: undefined;
 	const defineProductRuntime = createDefineProductRuntime({
 		workflow: defineProductWorkflow,
 		createDefinitionId:
@@ -232,6 +239,9 @@ export default function piWorkflowExtension(
 			: {}),
 		...(defaultDefineProductTicketMcpPublication
 			? { ticketMcpPublication: defaultDefineProductTicketMcpPublication }
+			: {}),
+		...(defaultDefineProductAuthoritySession
+			? { authoritySession: defaultDefineProductAuthoritySession }
 			: {}),
 	});
 	defineProductRuntime.register(pi);

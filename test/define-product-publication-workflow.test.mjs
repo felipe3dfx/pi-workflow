@@ -253,7 +253,7 @@ test("to-tickets and approval bind only exact verified references and recover co
 	assert.equal(recovered.definitionId, "definition-1");
 });
 
-test("ticket approval fails closed for stale inputs, delegation and recovery drift", async () => {
+test("ticket approval fails closed for content drift but tolerates sandbox authority revision drift", async () => {
 	const approved = approvedSpec();
 	const parent = { id: "parent-1", teamId: "team-1", revision: "parent-r1", specDigest: approved.spec.digest };
 	const approvedSpecRef = { kind: "engram", project: "pi-workflow", topic: "workflow/define-product/definition-1/approved-spec", revision: "engram-r1", schema: "approved-spec", schemaVersion: 1, digest: approved.spec.digest };
@@ -327,7 +327,7 @@ test("ticket approval fails closed for stale inputs, delegation and recovery dri
 	actor = { actorId: "developer-1", role: "Developer", authorityRevision: "authority-r1" };
 	assert.equal((await subject.advance({ kind: "approve-tickets", definitionId: "definition-1", parentRef, graphRef, digest: graph.digest })).status, "blocked");
 	actor = { ...recoveryState.authority, authorityRevision: "authority-r2" };
-	assert.equal((await subject.advance({ kind: "approve-tickets", definitionId: "definition-1", parentRef, graphRef, digest: graph.digest })).status, "blocked");
+	assert.equal((await subject.advance({ kind: "approve-tickets", definitionId: "definition-1", parentRef, graphRef, digest: graph.digest })).status, "tickets-approved");
 	sourceRevision = "stale-spec";
 	assert.equal((await subject.advance({ kind: "approve-tickets", definitionId: "definition-1", parentRef, graphRef, digest: graph.digest })).status, "blocked");
 	sourceRevision = approvedSpecRef.revision;
