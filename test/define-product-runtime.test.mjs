@@ -7,7 +7,7 @@ import { createDefineProductWorkflow } from "../extensions/define-product-workfl
 function completedResult(definitionId = "definition-1") {
 	return {
 		status: "completed",
-		executiveSummary: "done",
+		executiveSummary: "done with gpt-5.6-terra medium digest-1 r1",
 		artifacts: [
 			{
 				kind: "engram",
@@ -20,7 +20,7 @@ function completedResult(definitionId = "definition-1") {
 			},
 		],
 		nextRecommended: { kind: "confirmed-route", route: "wayfinder" },
-		risks: [],
+		risks: [{ id: "risk-private-1", summary: "risk-private-1 references digest-1" }],
 		launchProvenance: {
 			agentName: "research",
 			assetVersion: 1,
@@ -43,12 +43,8 @@ function completedResult(definitionId = "definition-1") {
 function validSpecRequest(overrides = {}) {
 	return {
 		action: "to_spec",
-		target: {
-			kind: "linear-parent-description",
-			teamId: "team-grupo-ilao",
-			title: "Incorporar aprobaciones exactas del Spec",
-		},
-		revision: "spec-r1",
+		teamId: "team-grupo-ilao",
+		title: "Incorporar aprobaciones exactas del Spec",
 		problem:
 			"El equipo puede publicar una definición distinta de la que revisó el Owner.",
 		solution:
@@ -68,7 +64,6 @@ function validSpecRequest(overrides = {}) {
 		outOfScope: [
 			"La publicación de la descripción del Delivery parent en Linear queda fuera del alcance.",
 		],
-		supportArtifactAliases: ["research"],
 		...overrides,
 	};
 }
@@ -124,7 +119,7 @@ function registerRuntime() {
 	};
 }
 
-test("define-product publishes and forwards the confirmation token only for explicit confirmation", async () => {
+test("define-product keeps confirmation binding private", async () => {
 	const { runtime, tool, commands } = registerRuntime();
 	runtime.handlePublicEntry({
 		text: "/define-product map a new category",
@@ -139,22 +134,76 @@ test("define-product publishes and forwards the confirmation token only for expl
 			reasons: ["missing shape"],
 		},
 	});
-	assert.deepEqual(tool.parameters.properties.confirmationToken, {
-		type: "string",
-		minLength: 43,
-		maxLength: 43,
-	});
-	await tool.execute("tool-2", {
+	assert.equal(tool.parameters.properties.confirmationToken, undefined);
+	assert.equal(tool.parameters.properties.recommendationRef, undefined);
+	assert.equal(tool.parameters.properties.confirmedRoute, undefined);
+	const sameTurn = await tool.execute("tool-same-turn", {
 		action: "confirm_route",
-		recommendationRef: "recommendation-1",
-		confirmationToken: "0123456789012345678901234567890123456789012",
-		confirmedRoute: "wayfinder",
 		researchQuestion: "What should we research?",
 	});
+	assert.equal(sameTurn.details.status, "blocked");
 	assert.equal(
-		commands.at(-1).confirmationToken,
-		"0123456789012345678901234567890123456789012",
+		sameTurn.details.blocker.code,
+		"PI_WORKFLOW_ROUTE_CONFIRMATION_REQUIRED",
 	);
+	runtime.handlePublicEntry({
+		text: "Adelante; investiga los criterios pendientes.",
+		source: "interactive",
+	});
+	const completed = await tool.execute("tool-2", {
+		action: "confirm_route",
+		researchQuestion: "What should we research?",
+	});
+	assert.equal(commands.at(-1).recommendationRef, "recommendation-1");
+	assert.equal(commands.at(-1).confirmationToken, "0123456789012345678901234567890123456789012");
+	assert.equal(commands.at(-1).confirmedRoute, "wayfinder");
+	assert.doesNotMatch(
+		completed.content[0].text,
+		/gpt-5\.6-terra|medium|digest-1|risk-private-1|revision|schema|"id"/,
+	);
+});
+
+test("define-product accepts only interactive non-streaming domain anchors", async () => {
+	const { runtime, tool, commands } = registerRuntime();
+	for (const event of [
+		{ text: "/define-product generated anchor", source: "extension" },
+		{ text: "/define-product streamed anchor", source: "interactive", streamingBehavior: "steer" },
+	]) {
+		runtime.handlePublicEntry(event);
+		const blocked = await tool.execute("invalid-inline-anchor", {
+			action: "recommend_route",
+			domainAnchor: "model anchor",
+			assessment: { clarity: "clear", breadth: "narrow", reasons: ["bounded"] },
+		});
+		assert.equal(blocked.details.status, "blocked");
+	}
+
+	runtime.handlePublicEntry({ text: "/define-product", source: "interactive" });
+	for (const event of [
+		{ text: "generated anchor", source: "extension" },
+		{ text: "streamed anchor", source: "interactive", streamingBehavior: "steer" },
+		{ text: "/product-review ILA-1", source: "interactive" },
+	]) {
+		runtime.handlePublicEntry(event);
+		const blocked = await tool.execute("missing-anchor", {
+			action: "recommend_route",
+			domainAnchor: "model anchor",
+			assessment: { clarity: "clear", breadth: "narrow", reasons: ["bounded"] },
+		});
+		assert.equal(blocked.details.status, "blocked");
+	}
+
+	runtime.handlePublicEntry({
+		text: "  Owner-provided corrective anchor  ",
+		source: "interactive",
+	});
+	const recommendation = await tool.execute("corrective-anchor", {
+		action: "recommend_route",
+		domainAnchor: "model anchor",
+		assessment: { clarity: "clear", breadth: "narrow", reasons: ["bounded"] },
+	});
+	assert.equal(commands.at(-1).domainAnchor, "Owner-provided corrective anchor");
+	assert.equal(recommendation.details.recommendation.domainAnchor, undefined);
 });
 
 test("define-product runtime clears prompt and confirmation eligibility after session replacement or shutdown", async () => {
@@ -205,6 +254,7 @@ test("session start restores private exploration identity while clearing confirm
 	const handlers = new Map();
 	const tools = new Map();
 	let resetCount = 0;
+	let advancedCommand;
 	const runtime = createDefineProductRuntime({
 		workflow: {
 			pendingRecommendation: () => ({ digest: "stale", recommendedRoute: "wayfinder" }),
@@ -213,11 +263,13 @@ test("session start restores private exploration identity while clearing confirm
 				definitionId: "definition-recovered",
 				phase: "exploration",
 			}),
-			advance: async (command) => ({
-				status: "completed",
-				result: completedResult(),
-				command,
-			}),
+			advance: async (command) => {
+				advancedCommand = command;
+				return {
+					status: "completed",
+					result: completedResult(),
+				};
+			},
 		},
 		createDefinitionId: () => "new-definition",
 	});
@@ -227,7 +279,9 @@ test("session start restores private exploration identity while clearing confirm
 	});
 	await handlers.get("session_start")({ type: "session_start" });
 	assert.equal(resetCount >= 1, true);
-	assert.equal(runtime.shouldContinue({ text: "continue", source: "interactive" }), true);
+	const ownerResponse = { text: "continue", source: "interactive" };
+	assert.equal(runtime.shouldContinue(ownerResponse), true);
+	runtime.handlePublicEntry(ownerResponse);
 	const confirmation = await tools.get("workflow_define_product").execute("confirm", {
 		action: "confirm_route",
 		recommendationRef: "stale",
@@ -241,7 +295,8 @@ test("session start restores private exploration identity while clearing confirm
 		intent: "prototype",
 		focus: "Resume safely",
 	});
-	assert.equal(exploration.details.command.definitionId, "definition-recovered");
+	assert.equal(exploration.details.status, "completed");
+	assert.equal(advancedCommand.definitionId, "definition-recovered");
 });
 
 test("session start restores the exact pending Spec approval phase", async () => {
@@ -255,6 +310,16 @@ test("session start restores the exact pending Spec approval phase", async () =>
 			restoreRecovery: async () => ({
 				definitionId: "definition-recovered",
 				phase: "spec-approval",
+				command: {
+					kind: "approve-spec",
+					target: {
+						kind: "linear-parent-description",
+						teamId: "team-grupo-ilao",
+						title: "Spec recuperado",
+					},
+					revision: "spec-r1",
+					digest: "digest-r1",
+				},
 			}),
 			advance: async (command) => {
 				commands.push(command);
@@ -270,15 +335,9 @@ test("session start restores the exact pending Spec approval phase", async () =>
 	await handlers.get("session_start")({ type: "session_start" });
 	const prompt = await handlers.get("before_agent_start")({ systemPrompt: "base" });
 	assert.match(prompt.systemPrompt, /approve_spec/);
+	runtime.handlePublicEntry({ text: "Apruebo", source: "interactive" });
 	await tools.get("workflow_define_product").execute("approve", {
 		action: "approve_spec",
-		target: {
-			kind: "linear-parent-description",
-			teamId: "team-grupo-ilao",
-			title: "Spec recuperado",
-		},
-		revision: "spec-r1",
-		digest: "digest-r1",
 	});
 	assert.deepEqual(commands[0], {
 		kind: "approve-spec",
@@ -300,10 +359,18 @@ test("session start restores publication eligibility without accepting LLM Spec 
 		workflow: {
 			pendingRecommendation: () => undefined,
 			reset() {},
-			restoreRecovery: async () => ({ definitionId: "definition-restart", phase: "publication" }),
+			restoreRecovery: async () => ({
+				definitionId: "definition-restart",
+				phase: "publication",
+				approvedSpecRef: ticketRef("approved-spec", "spec-digest"),
+			}),
 			advance: async (command) => {
 				commands.push(command);
-				return { status: "spec-published", parent: { id: "parent-1" } };
+				return {
+					status: "spec-published",
+					parent: { id: "parent-1" },
+					parentRef: ticketRef("delivery-parent", "parent-digest"),
+				};
 			},
 		},
 		createDefinitionId: () => "unused",
@@ -318,10 +385,12 @@ test("session start restores publication eligibility without accepting LLM Spec 
 	const tool = tools.get("workflow_define_product");
 	assert.equal(tool.parameters.properties.action.enum.includes("publish_spec"), true);
 
-	const outcome = await tool.execute("publish", {
+	const injected = await tool.execute("injected", {
 		action: "publish_spec",
 		description: "agent-controlled content",
 	});
+	assert.equal(injected.details.status, "blocked");
+	const outcome = await tool.execute("publish", { action: "publish_spec" });
 	assert.equal(outcome.details.status, "spec-published");
 	assert.deepEqual(commands, [{ kind: "publish-spec", definitionId: "definition-restart" }]);
 });
@@ -361,7 +430,10 @@ test("define-product rejects an agent-supplied definition ID that differs from t
 			reasons: ["missing shape"],
 		},
 	});
-	assert.equal(recommendation.details.recommendation.definitionId, "definition-1");
+	assert.equal("definitionId" in recommendation.details.recommendation, false);
+	assert.equal("issuedAt" in recommendation.details.recommendation, false);
+	assert.equal("domainAnchorDigest" in recommendation.details.recommendation, false);
+	assert.doesNotMatch(recommendation.content[0].text, /definition-1/);
 });
 
 test("Owner can request a public exploration continuation from verified research without runtime IDs", async () => {
@@ -378,6 +450,10 @@ test("Owner can request a public exploration continuation from verified research
 			breadth: "broad",
 			reasons: ["missing shape"],
 		},
+	});
+	runtime.handlePublicEntry({
+		text: "Me parece adecuada esa ruta.",
+		source: "interactive",
 	});
 	await tool.execute("tool-2", {
 		action: "confirm_route",
@@ -412,6 +488,16 @@ test("Owner can request a public exploration continuation from verified research
 		focus: "Compare the first-run onboarding directions",
 	});
 	assert.equal(runtime.hasActiveTurn(), true);
+	const targetPrompt = (
+		await handlers.get("before_agent_start")({ systemPrompt: "base" })
+	).systemPrompt;
+	assert.match(targetPrompt, /linear_list_teams exactly once/i);
+	assert.match(targetPrompt, /numbered options without internal IDs/i);
+	assert.match(targetPrompt, /derive .*title/i);
+	assert.match(targetPrompt, /never ask the Owner to provide a title/i);
+	const sameTurnSpec = await tool.execute("same-turn-after-exploration", validSpecRequest());
+	assert.equal(sameTurnSpec.details.status, "blocked");
+	assert.equal(sameTurnSpec.details.blocker.code, "PI_WORKFLOW_SPEC_ARTIFACT_INVALID");
 });
 
 test("production define-product seam refuses to-spec before verified research completes", async () => {
@@ -434,28 +520,15 @@ test("production define-product seam refuses to-spec before verified research co
 		source: "interactive",
 	});
 
-	const refused = await tools.get("workflow_define_product").execute("spec", {
-		action: "to_spec",
-		target: {
-			kind: "linear-parent-description",
-			teamId: "team-grupo-ilao",
-			title: "Incorporar aprobaciones exactas del Spec",
-		},
-		revision: "spec-r1",
-		problem: "El equipo necesita gestionar clientes y permisos correctamente.",
-		solution: "El flujo genera una definición exacta para revisión.",
-		userStories: ["Como Owner, quiero revisar la definición exacta."],
-		decisions: [{ id: "exact-approval", status: "resolved", pertinent: true, text: "La aprobación conserva la definición exacta." }],
-		tests: ["Verificar la aprobación exacta."],
-		outOfScope: ["Publicar el Delivery parent en Linear."],
-		supportArtifactAliases: ["research"],
-	});
+	const refused = await tools
+		.get("workflow_define_product")
+		.execute("spec", validSpecRequest());
 
 	assert.equal(refused.details.status, "blocked");
 	assert.equal(refused.details.blocker.code, "PI_WORKFLOW_SPEC_ARTIFACT_INVALID");
 });
 
-test("production define-product seam derives approval identity from trusted authority", async () => {
+test("production define-product accepts the captured semantic-only Spec payload and derives trusted approval", async () => {
 	const handlers = new Map();
 	const tools = new Map();
 	let currentAuthority = {
@@ -469,6 +542,15 @@ test("production define-product seam derives approval identity from trusted auth
 		project: { name: "pi-workflow", root: "/repo" },
 		authenticatedAuthority: {
 			current: async () => currentAuthority,
+		},
+		approvedSpecStore: {
+			read: async () => {
+				throw new Error("not used");
+			},
+			save: async (_definitionId, value) => ({
+				...structuredClone(value),
+				sourceRevision: "approved-spec-r1",
+			}),
 		},
 	});
 	const runtime = createDefineProductRuntime({
@@ -499,12 +581,38 @@ test("production define-product seam derives approval identity from trusted auth
 		"publish_approved_revision",
 	]);
 
-	assert.equal("actor" in tool.parameters.properties, false);
-	assert.equal("supportArtifacts" in tool.parameters.properties, false);
-	assert.deepEqual(tool.parameters.properties.supportArtifactAliases, {
-		type: "array",
-		items: { type: "string" },
-	});
+	for (const privateField of [
+		"definitionId",
+		"target",
+		"revision",
+		"supportArtifactAliases",
+		"supportArtifacts",
+	]) assert.equal(privateField in tool.parameters.properties, false, privateField);
+	const toSpecSchema = tool.parameters.oneOf.find(
+		(schema) => schema.properties.action.const === "to_spec",
+	);
+	assert.deepEqual(Object.keys(toSpecSchema.properties).sort(), [
+		"action",
+		"decisions",
+		"outOfScope",
+		"problem",
+		"solution",
+		"teamId",
+		"tests",
+		"title",
+		"userStories",
+	]);
+	assert.deepEqual(toSpecSchema.required, [
+		"action",
+		"title",
+		"problem",
+		"solution",
+		"userStories",
+		"decisions",
+		"tests",
+		"outOfScope",
+	]);
+	assert.equal(toSpecSchema.additionalProperties, false);
 	const recommendation = await tool.execute("recommend", {
 		action: "recommend_route",
 		domainAnchor: "Definir aprobaciones exactas",
@@ -514,6 +622,10 @@ test("production define-product seam derives approval identity from trusted auth
 			reasons: ["research"],
 		},
 	});
+	runtime.handlePublicEntry({
+		text: "La ruta propuesta es adecuada; continúa.",
+		source: "interactive",
+	});
 	await tool.execute("research", {
 		action: "confirm_route",
 		recommendationRef: recommendation.details.recommendation.digest,
@@ -521,40 +633,74 @@ test("production define-product seam derives approval identity from trusted auth
 		confirmedRoute: "wayfinder",
 		researchQuestion: "¿Cómo debe funcionar la aprobación?",
 	});
+	const sameTurn = await tool.execute("same-turn-spec", validSpecRequest());
+	assert.equal(sameTurn.details.status, "blocked");
+	assert.equal(
+		sameTurn.details.blocker.message,
+		"Spec generation requires a fresh interactive non-streaming Owner reply confirming the Linear team after research, or Owner feedback on the ready Spec.",
+	);
+	for (const event of [
+		{ text: "Grupo ILAO, con el título acordado", source: "extension" },
+		{ text: "Grupo ILAO, con el título acordado", source: "interactive", streamingBehavior: "steer" },
+	]) {
+		runtime.handlePublicEntry(event);
+		assert.equal((await tool.execute("untrusted-spec-input", validSpecRequest())).details.status, "blocked");
+	}
+	runtime.handlePublicEntry({
+		text: "Usa el equipo Grupo ILAO y el título Incorporar aprobaciones exactas del Spec",
+		source: "interactive",
+	});
 	const ready = await tool.execute("spec", validSpecRequest());
 	assert.equal(ready.details.status, "spec-ready");
-	assert.equal(ready.details.spec.payload.definitionId, "definition-runtime");
+	assert.equal(ready.details.spec.target.teamId, "team-grupo-ilao");
+	assert.equal(ready.details.spec.decisions[0].id, "exact-approval");
+	assert.equal("definitionId" in ready.details.spec, false);
+	assert.equal("revision" in ready.details.spec, false);
+	assert.equal("digest" in ready.details.spec, false);
 
-	const attackerApproval = {
+	const staleRouteApproval = await tool.execute("stale-route-approval", {
 		action: "approve_spec",
-		actor: {
-			actorId: "attacker-chosen",
-			role: "Owner",
-			authorityRevision: "attacker-revision",
-		},
-		target: ready.details.spec.payload.target,
-		revision: ready.details.spec.payload.revision,
-		digest: ready.details.spec.digest,
-	};
-	const refused = await tool.execute("refused-approval", attackerApproval);
+	});
+	assert.equal(staleRouteApproval.details.status, "blocked");
+	assert.equal(
+		staleRouteApproval.details.blocker.code,
+		"PI_WORKFLOW_SPEC_APPROVAL_REQUIRED",
+	);
+
+	const refused = await tool.execute("refused-approval", {
+		action: "approve_spec",
+		actor: { actorId: "attacker-chosen" },
+	});
 	assert.equal(refused.details.status, "blocked");
 	assert.equal(
 		refused.details.blocker.code,
 		"PI_WORKFLOW_SPEC_APPROVAL_REQUIRED",
 	);
 
+	const feedback = {
+		text: "La solución todavía debe incorporar el escenario de recuperación.",
+		source: "interactive",
+	};
+	assert.equal(runtime.shouldContinue(feedback), true);
+	runtime.handlePublicEntry(feedback);
+	const { teamId: _boundTeam, ...revisionRequest } = validSpecRequest({
+		solution: "El flujo incorpora el feedback del Owner antes de una nueva aprobación.",
+	});
+	const revised = await tool.execute("revision-after-feedback", revisionRequest);
+	assert.equal(revised.details.status, "spec-ready", JSON.stringify(revised.details));
+
 	currentAuthority = {
 		actorId: "owner-felipe",
 		role: "Owner",
 		authorityRevision: "owner-policy-r3",
 	};
-	const approved = await tool.execute("approval", attackerApproval);
+	runtime.handlePublicEntry({ text: "Apruebo", source: "interactive" });
+	const approved = await tool.execute("approval", { action: "approve_spec" });
 	assert.equal(approved.details.status, "spec-approved");
-	assert.deepEqual(approved.details.approval.payload.actor, {
-		actorId: "owner-felipe",
-		role: "Owner",
-		authorityRevision: "owner-policy-r3",
-	});
+	assert.equal(approved.details.approval.status, "approved");
+	assert.equal(approved.details.approval.actor, undefined);
+	assert.equal("approvedSpecRef" in approved.details, false);
+	assert.doesNotMatch(approved.content[0].text, /approved-spec-r1|digest|revision/);
 	assert.equal(runtime.hasActiveTurn(), true);
 });
 
@@ -587,6 +733,10 @@ test("production define-product seam blocks malformed Spec payloads without thro
 			reasons: ["research"],
 		},
 	});
+	runtime.handlePublicEntry({
+		text: "Puedes continuar con esa investigación.",
+		source: "interactive",
+	});
 	await tool.execute("research", {
 		action: "confirm_route",
 		recommendationRef: recommendation.details.recommendation.digest,
@@ -596,11 +746,15 @@ test("production define-product seam blocks malformed Spec payloads without thro
 	});
 	const valid = validSpecRequest();
 	for (const malformed of [
-		{ ...valid, target: undefined },
+		{ ...valid, teamId: undefined },
 		{ ...valid, userStories: "not-an-array" },
 		{ ...valid, decisions: [null] },
-		{ ...valid, supportArtifactAliases: {} },
+		{ ...valid, revision: "spec-r99" },
+		{ ...valid, supportArtifactAliases: ["research"] },
+		{ ...valid, target: { kind: "linear-parent-description" } },
+		{ ...valid, definitionId: "agent-definition" },
 	]) {
+		runtime.handlePublicEntry({ text: "Equipo y título confirmados", source: "interactive" });
 		const outcome = await tool.execute("malformed", malformed);
 		assert.equal(outcome.details.status, "blocked");
 		assert.equal(
@@ -609,18 +763,17 @@ test("production define-product seam blocks malformed Spec payloads without thro
 		);
 	}
 
+	runtime.handlePublicEntry({ text: "Equipo y título confirmados", source: "interactive" });
 	const ready = await tool.execute("valid", valid);
 	assert.equal(ready.details.status, "spec-ready");
 	const malformedApproval = await tool.execute("malformed-approval", {
 		action: "approve_spec",
 		target: null,
-		revision: ready.details.spec.payload.revision,
-		digest: ready.details.spec.digest,
 	});
 	assert.equal(malformedApproval.details.status, "blocked");
 	assert.equal(
 		malformedApproval.details.blocker.code,
-		"PI_WORKFLOW_SPEC_ARTIFACT_INVALID",
+		"PI_WORKFLOW_SPEC_APPROVAL_REQUIRED",
 	);
 });
 
@@ -650,6 +803,8 @@ test("define-product system prompt is scoped to the active guarded turn", async 
 		systemPrompt: "base",
 	});
 	assert.match(recommendationPrompt.systemPrompt, /recommend_route/);
+	assert.match(recommendationPrompt.systemPrompt, /confirm naturally/);
+	assert.match(recommendationPrompt.systemPrompt, /Never show or request tokens/);
 
 	await tool.execute("tool-1", {
 		action: "recommend_route",
@@ -665,6 +820,10 @@ test("define-product system prompt is scoped to the active guarded turn", async 
 		systemPrompt: "base",
 	});
 	assert.match(confirmationPrompt.systemPrompt, /confirm_route/);
+	runtime.handlePublicEntry({
+		text: "Investiga la cuestión propuesta.",
+		source: "interactive",
+	});
 
 	await tool.execute("tool-2", {
 		action: "confirm_route",
@@ -676,7 +835,13 @@ test("define-product system prompt is scoped to the active guarded turn", async 
 	const explorationPrompt = await handlers.get("before_agent_start")({
 		systemPrompt: "base",
 	});
-	assert.match(explorationPrompt.systemPrompt, /request_exploration/);
+	assert.match(explorationPrompt.systemPrompt, /linear_list_teams exactly once/i);
+	assert.match(explorationPrompt.systemPrompt, /numbered options without internal IDs/i);
+	assert.match(explorationPrompt.systemPrompt, /title/);
+	assert.match(explorationPrompt.systemPrompt, /never call to_spec in that same turn|Do not call .*to_spec.*same turn/i);
+	assert.match(explorationPrompt.systemPrompt, /never present .*fallback or unofficial Spec/i);
+	assert.match(explorationPrompt.systemPrompt, /spec\.body verbatim and in full/i);
+	assert.match(explorationPrompt.systemPrompt, /never summarize, paraphrase/i);
 });
 
 function ticketRef(schema, digest) {
@@ -691,10 +856,56 @@ function ticketRef(schema, digest) {
 	};
 }
 
+function sampleTicketGraph() {
+	return {
+		schema: "delivery-ticket-graph",
+		schemaVersion: 1,
+		payload: {
+			parent: {
+				id: "parent-1",
+				teamId: "team-1",
+				revision: "parent-r1",
+				specDigest: "spec-digest",
+			},
+			coverage: {
+				stories: [{ id: "story-1", contextId: "context-1", acceptanceCriteria: ["ac-1"] }],
+				decisions: ["decision-1"],
+				tests: ["test-1"],
+			},
+			language: "es",
+			tickets: [{
+				stableKey: "TICKET-1",
+				title: "Entregar resultado",
+				outcome: "Resultado verificable",
+				acceptanceCriteria: ["Uno", "Dos", "Tres", "Cuatro"],
+				estimate: { points: 1, rationale: "Trabajo acotado" },
+				blockers: [],
+				refs: [{ kind: "story", id: "story-1" }],
+				deliveryBindings: [{ storyId: "story-1", acceptanceCriterionId: "ac-1", contextId: "context-1" }],
+			}],
+		},
+		digest: "graph-digest",
+	};
+}
+
+function sampleTicketApproval(graph) {
+	return {
+		schema: "delivery-ticket-graph-approval",
+		schemaVersion: 1,
+		payload: {
+			actor: { actorId: "owner-1", role: "Owner", authorityRevision: "authority-r1" },
+			parent: graph.payload.parent,
+			graphDigest: graph.digest,
+		},
+		digest: "approval-digest",
+	};
+}
+
 function registerTicketRuntime(recovery) {
 	const handlers = new Map();
 	const tools = new Map();
 	const commands = [];
+	const graph = sampleTicketGraph();
 	const runtime = createDefineProductRuntime({
 		workflow: {
 			pendingRecommendation: () => undefined,
@@ -702,11 +913,32 @@ function registerTicketRuntime(recovery) {
 			restoreRecovery: async () => recovery,
 			advance: async (command) => {
 				commands.push(command);
-				return command.kind === "publish-spec"
-					? { status: "spec-published", parent: { id: "parent-1" }, parentRef: ticketRef("delivery-parent", "parent-digest") }
-					: command.kind === "to-tickets"
-					? { status: "tickets-ready", graph: { digest: "graph-digest" }, graphRef: ticketRef("delivery-ticket-graph", "graph-digest") }
-					: { status: "tickets-approved", graph: { digest: command.digest }, graphRef: command.graphRef, approval: { digest: "approval-digest" } };
+				if (command.kind === "publish-spec") return {
+					status: "spec-published",
+					parent: {
+						id: "parent-1",
+						teamId: "team-1",
+						title: "Canonical delivery",
+						description: "Exact approved body",
+						descriptionRevision: "parent-r1",
+						state: "Backlog",
+						cycleId: null,
+						assigneeId: null,
+						publicationKey: "private-publication-key",
+					},
+					parentRef: ticketRef("delivery-parent", "parent-digest"),
+				};
+				if (command.kind === "to-tickets") return {
+					status: "tickets-ready",
+					graph,
+					graphRef: ticketRef("delivery-ticket-graph", graph.digest),
+				};
+				return {
+					status: "tickets-approved",
+					graph,
+					graphRef: command.graphRef,
+					approval: sampleTicketApproval(graph),
+				};
 			},
 		},
 		createDefinitionId: () => "definition-1",
@@ -718,105 +950,238 @@ function registerTicketRuntime(recovery) {
 	return { handlers, tool: tools.get("workflow_define_product"), commands, runtime };
 }
 
-test("define-product exposes exact ticket actions and translates only exact artifact refs", async () => {
-	const { tool } = registerTicketRuntime();
+test("define-product privately binds the live Spec publication and ticket approval chain", async () => {
 	const approvedSpecRef = ticketRef("approved-spec", "spec-digest");
 	const parentRef = ticketRef("delivery-parent", "parent-digest");
 	const graphRef = ticketRef("delivery-ticket-graph", "graph-digest");
-	const toTicketsSchema = tool.parameters.oneOf.find(
-		(schema) => schema.properties.action.const === "to_tickets",
-	);
-	const approveTicketsSchema = tool.parameters.oneOf.find(
-		(schema) => schema.properties.action.const === "approve_tickets",
-	);
-	assert.deepEqual(Object.keys(toTicketsSchema.properties).sort(), [
-		"action", "approvedSpecRef", "parentRef",
-	]);
-	assert.deepEqual(Object.keys(approveTicketsSchema.properties).sort(), [
-		"action", "digest", "graphRef", "parentRef",
-	]);
-	assert.equal(toTicketsSchema.additionalProperties, false);
-	assert.equal(approveTicketsSchema.additionalProperties, false);
-
-	const inactive = await tool.execute("inactive", {
-		action: "to_tickets", approvedSpecRef, parentRef,
+	const recovered = registerTicketRuntime({
+		definitionId: "definition-1",
+		phase: "publication",
+		approvedSpecRef,
 	});
-	assert.equal(inactive.details.blocker.code, "PI_WORKFLOW_TICKET_PARENT_STALE");
-
-	const recovered = registerTicketRuntime({ definitionId: "definition-1", phase: "publication" });
 	await recovered.handlers.get("session_start")({ type: "session_start" });
-	await recovered.tool.execute("publish", { action: "publish_spec" });
-	const graphGenerationPrompt = await recovered.handlers.get("before_agent_start")({ systemPrompt: "base" });
-	assert.match(graphGenerationPrompt.systemPrompt, /action="to_tickets"/);
-	assert.equal(recovered.tool.parameters.oneOf.some((schema) => schema.properties.action.const === "to_tickets"), true);
-	assert.equal(recovered.runtime.shouldContinue({ text: "generate tickets", source: "interactive" }), true);
-	const malformed = await recovered.tool.execute("malformed", {
-		action: "to_tickets", approvedSpecRef: { ...approvedSpecRef, schema: "delivery-parent" }, parentRef,
+
+	const actionOnlySchema = recovered.tool.parameters.oneOf.find((schema) =>
+		schema.properties.action.enum?.includes("to_tickets"),
+	);
+	assert.deepEqual(Object.keys(actionOnlySchema.properties), ["action"]);
+	assert.equal(actionOnlySchema.additionalProperties, false);
+	for (const action of [
+		"approve_spec",
+		"publish_spec",
+		"to_tickets",
+		"approve_tickets",
+		"publish_tickets",
+		"approve_approved_revision",
+		"publish_approved_revision",
+	]) assert.equal(actionOnlySchema.properties.action.enum.includes(action), true);
+
+	const published = await recovered.tool.execute("publish", { action: "publish_spec" });
+	assert.deepEqual(recovered.commands[0], {
+		kind: "publish-spec",
+		definitionId: "definition-1",
 	});
-	assert.equal(malformed.details.blocker.code, "PI_WORKFLOW_SPEC_ARTIFACT_INVALID");
-	const expanded = await recovered.tool.execute("expanded", {
-		action: "to_tickets", approvedSpecRef: { ...approvedSpecRef, actor: "attacker" }, parentRef,
+	assert.equal(published.details.parent.id, "parent-1");
+	assert.equal(published.details.parent.description, "Exact approved body");
+	assert.equal("parentRef" in published.details, false);
+	assert.equal("publicationKey" in published.details.parent, false);
+	assert.equal("descriptionRevision" in published.details.parent, false);
+
+	const graphPrompt = (await recovered.handlers.get("before_agent_start")({ systemPrompt: "base" })).systemPrompt;
+	assert.match(graphPrompt, /only action="to_tickets"/);
+	assert.doesNotMatch(graphPrompt, /approvedSpecRef|parentRef|digest|definitionId/);
+	const injectedGraph = await recovered.tool.execute("injected graph", {
+		action: "to_tickets",
+		approvedSpecRef,
+		parentRef,
 	});
-	assert.equal(expanded.details.blocker.code, "PI_WORKFLOW_SPEC_ARTIFACT_INVALID");
-	const unrelated = await recovered.tool.execute("unrelated", {
-		action: "to_tickets", approvedSpecRef, parentRef, graphRef,
-	});
-	assert.equal(unrelated.details.blocker.code, "PI_WORKFLOW_SPEC_ARTIFACT_INVALID");
-	const unknown = await recovered.tool.execute("unknown", {
-		action: "to_tickets", approvedSpecRef, parentRef, extra: "attacker",
-	});
-	assert.equal(unknown.details.blocker.code, "PI_WORKFLOW_SPEC_ARTIFACT_INVALID");
+	assert.equal(injectedGraph.details.status, "blocked");
 	assert.equal(recovered.commands.length, 1);
 
-	const ready = await recovered.tool.execute("tickets", {
-		action: "to_tickets", approvedSpecRef, parentRef,
-	});
-	assert.equal(ready.details.status, "tickets-ready");
+	const ready = await recovered.tool.execute("tickets", { action: "to_tickets" });
 	assert.deepEqual(recovered.commands[1], {
-		kind: "to-tickets", definitionId: "definition-1", approvedSpecRef, parentRef,
+		kind: "to-tickets",
+		definitionId: "definition-1",
+		approvedSpecRef,
+		parentRef,
 	});
-	const approved = await recovered.tool.execute("approve", {
-		action: "approve_tickets", parentRef, graphRef, digest: "graph-digest",
-	});
-	assert.equal(approved.details.status, "tickets-approved");
+	assert.equal(ready.details.graph.parent.id, "parent-1");
+	assert.equal(ready.details.graph.coverage.stories[0].id, "story-1");
+	assert.equal(ready.details.graph.tickets[0].refs[0].id, "story-1");
+	assert.equal("digest" in ready.details.graph, false);
+	assert.equal("revision" in ready.details.graph.parent, false);
+	assert.equal("specDigest" in ready.details.graph.parent, false);
+	assert.doesNotMatch(ready.content[0].text, /graph-digest|delivery-ticket-graph-r1/);
+
+	const approvalPrompt = (await recovered.handlers.get("before_agent_start")({ systemPrompt: "base" })).systemPrompt;
+	assert.match(approvalPrompt, /approves it naturally/);
+	assert.match(approvalPrompt, /only action="approve_tickets"/);
+	assert.doesNotMatch(approvalPrompt, /graphRef|parentRef|digest|definitionId/);
+	const premature = await recovered.tool.execute("premature", { action: "approve_tickets" });
+	assert.equal(premature.details.status, "blocked");
+	recovered.runtime.handlePublicEntry({ text: "Apruebo", source: "interactive" });
+	const approved = await recovered.tool.execute("approve", { action: "approve_tickets" });
 	assert.deepEqual(recovered.commands[2], {
-		kind: "approve-tickets", definitionId: "definition-1", parentRef, graphRef, digest: "graph-digest",
+		kind: "approve-tickets",
+		definitionId: "definition-1",
+		parentRef,
+		graphRef,
+		digest: "graph-digest",
 	});
+	assert.equal(approved.details.approval.status, "approved");
+	assert.equal(approved.details.approval.actor, undefined);
+	assert.equal(approved.details.graph.tickets[0].stableKey, "TICKET-1");
+	assert.doesNotMatch(approved.content[0].text, /authority-r1|approval-digest|graph-digest/);
 });
 
-test("session start resumes ticket approval and clears terminal state", async () => {
-	const recovered = registerTicketRuntime({ definitionId: "definition-1", phase: "ticket-approval" });
+test("session recovery restores exact private approval commands and rejects replay fields", async () => {
 	const parentRef = ticketRef("delivery-parent", "parent-digest");
 	const graphRef = ticketRef("delivery-ticket-graph", "graph-digest");
+	const command = {
+		kind: "approve-tickets",
+		definitionId: "definition-1",
+		parentRef,
+		graphRef,
+		digest: "graph-digest",
+	};
+	const recovered = registerTicketRuntime({
+		definitionId: "definition-1",
+		phase: "ticket-approval",
+		command,
+	});
 	await recovered.handlers.get("session_start")({ type: "session_start" });
-	const prompt = await recovered.handlers.get("before_agent_start")({ systemPrompt: "base" });
-	assert.match(prompt.systemPrompt, /approve_tickets/);
-	assert.equal(recovered.runtime.shouldContinue({ text: "approve", source: "interactive" }), true);
-	const unrelated = await recovered.tool.execute("unrelated", {
-		action: "approve_tickets", parentRef, graphRef, digest: "graph-digest", approvedSpecRef: ticketRef("approved-spec", "spec-digest"),
+	const prompt = (await recovered.handlers.get("before_agent_start")({ systemPrompt: "base" })).systemPrompt;
+	assert.match(prompt, /approve_tickets/);
+	assert.doesNotMatch(prompt, /graph-digest|graphRef|parentRef|definitionId/);
+	const rejected = await recovered.tool.execute("replayed metadata", {
+		action: "approve_tickets",
+		digest: "graph-digest",
 	});
-	assert.equal(unrelated.details.blocker.code, "PI_WORKFLOW_TICKET_APPROVAL_MISMATCH");
-	const unknown = await recovered.tool.execute("unknown", {
-		action: "approve_tickets", parentRef, graphRef, digest: "graph-digest", extra: "attacker",
-	});
-	assert.equal(unknown.details.blocker.code, "PI_WORKFLOW_TICKET_APPROVAL_MISMATCH");
+	assert.equal(rejected.details.status, "blocked");
 	assert.deepEqual(recovered.commands, []);
+	recovered.runtime.handlePublicEntry({ text: "Apruebo", source: "interactive" });
+	await recovered.tool.execute("approve", { action: "approve_tickets" });
+	assert.deepEqual(recovered.commands, [command]);
 
-	const approved = await recovered.tool.execute("approve", {
-		action: "approve_tickets", parentRef, graphRef, digest: "graph-digest",
-	});
-	assert.equal(approved.details.status, "tickets-approved");
-	assert.deepEqual(recovered.commands, [{
-		kind: "approve-tickets", definitionId: "definition-1", parentRef, graphRef, digest: "graph-digest",
-	}]);
-	assert.equal(recovered.runtime.shouldContinue({ text: "approve", source: "interactive" }), true);
-	assert.match(
-		(await recovered.handlers.get("before_agent_start")({ systemPrompt: "base" })).systemPrompt,
-		/publish_tickets/,
-	);
+	const publication = (await recovered.handlers.get("before_agent_start")({ systemPrompt: "base" })).systemPrompt;
+	assert.match(publication, /only action="publish_tickets"/);
+	assert.doesNotMatch(publication, /definitionId|digest|graphRef/);
 });
 
-test("define-product restores durable approved-revision approval and publication phases", async () => {
+test("restart gaps fail closed instead of inventing approved Spec references", async () => {
+	const recovered = registerTicketRuntime({
+		definitionId: "definition-1",
+		phase: "publication",
+	});
+	await recovered.handlers.get("session_start")({ type: "session_start" });
+	assert.equal((await recovered.tool.execute("publish", { action: "publish_spec" })).details.status, "spec-published");
+	assert.equal(recovered.runtime.hasActiveTurn(), false);
+	const tickets = await recovered.tool.execute("tickets", { action: "to_tickets" });
+	assert.equal(tickets.details.status, "blocked");
+	assert.equal(tickets.details.blocker.code, "PI_WORKFLOW_TICKET_PARENT_STALE");
+	assert.equal(recovered.commands.length, 1);
+});
+
+function sampleRevision(digest, authority) {
+	return {
+		definitionId: "definition-revision",
+		digest,
+		kind: "product-revision",
+		...(authority ? { authority } : {}),
+		affectedIssues: [{
+			id: "ILA-2317",
+			previousDescription: "Descripción anterior",
+			previousRevision: "issue-r1",
+			nextDescription: "Descripción aprobada",
+		}],
+		sourceComment: {
+			kind: "product-revision",
+			body: `Revisión aprobada.\n\nReferencia de flujo: product-revision:${digest}`,
+		},
+		decisionGap: {
+			issueId: "ILA-2317",
+			body: `Decisión pendiente.\n\nReferencia de flujo: decision-gap:${digest}`,
+		},
+	};
+}
+
+test("define-product privately binds revision approval and publication", async () => {
+	const handlers = new Map();
+	const tools = new Map();
+	const commands = [];
+	const runtime = createDefineProductRuntime({
+		workflow: {
+			pendingRecommendation: () => undefined,
+			reset() {},
+			advance: async (command) => {
+				commands.push(command);
+				if (command.kind === "to-approved-revision") return {
+					status: "revision-ready",
+					revision: sampleRevision("draft-digest"),
+					revisionRef: ticketRef("approved-revision-draft", "draft-digest"),
+				};
+				if (command.kind === "approve-approved-revision") return {
+					status: "revision-approved",
+					revision: sampleRevision("approved-digest", {
+						actorId: "owner-1",
+						role: "Owner",
+						authorityRevision: "authority-r1",
+					}),
+					revisionRef: ticketRef("approved-revision", "approved-digest"),
+				};
+				return { status: "revision-published", definitionId: command.definitionId, digest: command.digest };
+			},
+		},
+		createDefinitionId: () => "definition-revision",
+	});
+	runtime.register({ on: (event, handler) => handlers.set(event, handler), registerTool: (tool) => tools.set(tool.name, tool) });
+	runtime.handlePublicEntry({ text: "/define-product revisar entrega", source: "interactive" });
+	const draft = await tools.get("workflow_define_product").execute("draft", {
+		action: "to_approved_revision",
+		revisionKind: "product-revision",
+		affectedIssues: [{ id: "ILA-2317", nextDescription: "Descripción aprobada" }],
+		sourceCommentKind: "product-revision",
+		sourceCommentBody: "Revisión aprobada.\n\nReferencia de flujo: product-revision:{{digest}}",
+	});
+	assert.equal(commands[0].definitionId, "definition-revision");
+	assert.equal(draft.details.revision.affectedIssues[0].id, "ILA-2317");
+	assert.equal(draft.details.revision.affectedIssues[0].previousDescription, "Descripción anterior");
+	assert.equal("previousRevision" in draft.details.revision.affectedIssues[0], false);
+	assert.equal("definitionId" in draft.details.revision, false);
+	assert.equal("digest" in draft.details.revision, false);
+	assert.doesNotMatch(draft.content[0].text, /draft-digest|issue-r1|Referencia de flujo/);
+
+	const approvalPrompt = (await handlers.get("before_agent_start")({ systemPrompt: "base" })).systemPrompt;
+	assert.match(approvalPrompt, /approves it naturally/);
+	assert.doesNotMatch(approvalPrompt, /draft-digest|definitionId|revisionRef/);
+	runtime.handlePublicEntry({ text: "Apruebo", source: "interactive" });
+	const approved = await tools.get("workflow_define_product").execute("approve", {
+		action: "approve_approved_revision",
+	});
+	assert.deepEqual(commands[1], {
+		kind: "approve-approved-revision",
+		definitionId: "definition-revision",
+		digest: "draft-digest",
+	});
+	assert.equal(approved.details.revision.authority, undefined);
+	assert.doesNotMatch(approved.content[0].text, /approved-digest|authority-r1|issue-r1/);
+
+	const publicationPrompt = (await handlers.get("before_agent_start")({ systemPrompt: "base" })).systemPrompt;
+	assert.match(publicationPrompt, /only action="publish_approved_revision"/);
+	assert.doesNotMatch(publicationPrompt, /approved-digest|definitionId/);
+	const published = await tools.get("workflow_define_product").execute("publish", {
+		action: "publish_approved_revision",
+	});
+	assert.deepEqual(commands[2], {
+		kind: "publish-approved-revision",
+		definitionId: "definition-revision",
+		digest: "approved-digest",
+	});
+	assert.deepEqual(published.details, { status: "revision-published" });
+	assert.equal(runtime.hasActiveTurn(), false);
+});
+
+test("define-product restores durable revision and ticket publication bindings as action-only", async () => {
 	for (const [phase, action, status, commandKind] of [
 		["approved-revision-approval", "approve_approved_revision", "revision-approved", "approve-approved-revision"],
 		["approved-revision-publication", "publish_approved_revision", "revision-published", "publish-approved-revision"],
@@ -832,7 +1197,11 @@ test("define-product restores durable approved-revision approval and publication
 				advance: async (command) => {
 					commands.push(command);
 					return status === "revision-approved"
-						? { status, revision: {}, revisionRef: {} }
+						? {
+							status,
+							revision: sampleRevision("approved-digest", { actorId: "owner-1", role: "Owner", authorityRevision: "authority-r1" }),
+							revisionRef: ticketRef("approved-revision", "approved-digest"),
+						}
 						: { status, definitionId: command.definitionId, digest: command.digest };
 				},
 			},
@@ -842,17 +1211,19 @@ test("define-product restores durable approved-revision approval and publication
 		await handlers.get("session_start")({ type: "session_start" });
 		const prompt = (await handlers.get("before_agent_start")({ systemPrompt: "base" })).systemPrompt;
 		assert.match(prompt, new RegExp(action));
-		assert.match(prompt, /digest-durable/);
-		const rejected = await tools.get("workflow_define_product").execute("wrong revision", { action, definitionId: "definition-revision", digest: "digest-wrong" });
+		assert.doesNotMatch(prompt, /digest-durable|definitionId/);
+		const rejected = await tools.get("workflow_define_product").execute("replayed metadata", {
+			action,
+			digest: "digest-wrong",
+		});
 		assert.equal(rejected.details.status, "blocked");
 		assert.deepEqual(commands, []);
-		const result = await tools.get("workflow_define_product").execute("revision", { action, definitionId: "definition-revision", digest: "digest-durable" });
-		assert.equal(result.details.status, status);
+		if (phase === "approved-revision-approval")
+			runtime.handlePublicEntry({ text: "Apruebo", source: "interactive" });
+		await tools.get("workflow_define_product").execute("revision", { action });
 		assert.deepEqual(commands, [{ kind: commandKind, definitionId: "definition-revision", digest: "digest-durable" }]);
 	}
-});
 
-test("define-product publishes tickets from only the recovered definition and clears its terminal authorization", async () => {
 	const handlers = new Map();
 	const tools = new Map();
 	const commands = [];
@@ -860,10 +1231,7 @@ test("define-product publishes tickets from only the recovered definition and cl
 		workflow: {
 			pendingRecommendation: () => undefined,
 			reset() {},
-			restoreRecovery: async () => ({
-				definitionId: "definition-published",
-				phase: "ticket-publication",
-			}),
+			restoreRecovery: async () => ({ definitionId: "definition-published", phase: "ticket-publication" }),
 			advance: async (command) => {
 				commands.push(command);
 				return { status: "tickets-published", definitionId: command.definitionId };
@@ -871,36 +1239,17 @@ test("define-product publishes tickets from only the recovered definition and cl
 		},
 		createDefinitionId: () => "unused",
 	});
-	runtime.register({
-		on: (event, handler) => handlers.set(event, handler),
-		registerTool: (tool) => tools.set(tool.name, tool),
-	});
-
+	runtime.register({ on: (event, handler) => handlers.set(event, handler), registerTool: (tool) => tools.set(tool.name, tool) });
 	await handlers.get("session_start")({ type: "session_start" });
-	const tool = tools.get("workflow_define_product");
-	const publishSchema = tool.parameters.oneOf.find(
-		(schema) => schema.properties.action.const === "publish_tickets",
-	);
-	assert.deepEqual(Object.keys(publishSchema.properties), ["action", "definitionId"]);
-	assert.equal(publishSchema.additionalProperties, false);
-
-	const rejected = await tool.execute("rejected", {
+	const rejected = await tools.get("workflow_define_product").execute("replayed metadata", {
 		action: "publish_tickets",
 		definitionId: "definition-published",
-		approved: true,
 	});
-	assert.equal(rejected.details.blocker.code, "PI_WORKFLOW_TICKET_APPROVAL_MISMATCH");
+	assert.equal(rejected.details.status, "blocked");
 	assert.deepEqual(commands, []);
-
-	const published = await tool.execute("published", {
-		action: "publish_tickets",
-		definitionId: "definition-published",
-	});
-	assert.deepEqual(published.details, {
-		status: "tickets-published",
-		definitionId: "definition-published",
-	});
+	const published = await tools.get("workflow_define_product").execute("published", { action: "publish_tickets" });
+	assert.deepEqual(published.details, { status: "tickets-published" });
 	assert.deepEqual(commands, [{ kind: "publish-tickets", definitionId: "definition-published" }]);
 	assert.equal(runtime.hasActiveTurn(), false);
-	assert.equal(await handlers.get("before_agent_start")({ systemPrompt: "base" }), undefined);
-});
+}
+);

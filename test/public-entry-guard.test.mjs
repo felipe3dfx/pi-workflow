@@ -349,6 +349,27 @@ test("implemented define-product preserves authorization for the settled confirm
 		),
 		undefined,
 	);
+	assert.equal(
+		await handlers.get("tool_call")(
+			{ toolName: "mem_context", input: { project: "pi-workflow" } },
+			ctx,
+		),
+		undefined,
+	);
+	assert.deepEqual(
+		await handlers.get("tool_call")(
+			{
+				toolName: "mem_save",
+				input: { title: "forbidden", content: "mutation" },
+			},
+			ctx,
+		),
+		{
+			block: true,
+			reason:
+				"PI_WORKFLOW_CAPABILITY_PENDING: tools are disabled for pending public workflow capabilities",
+		},
+	);
 	await handlers.get("input")(
 		{
 			type: "input",

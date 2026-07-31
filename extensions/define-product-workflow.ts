@@ -61,8 +61,18 @@ export type DefineProductCommand =
 	  }
 	| ({
 			kind: "to-spec";
-			supportArtifactAliases: readonly string[];
-	  } & Omit<ProductSpecInput, "supportArtifacts">)
+			definitionId: string;
+			teamId: string;
+			title: string;
+	  } & Pick<
+			ProductSpecInput,
+			| "problem"
+			| "solution"
+			| "userStories"
+			| "decisions"
+			| "tests"
+			| "outOfScope"
+	  >)
 	| {
 			kind: "approve-spec";
 			target: ProductSpecInput["target"];
@@ -112,6 +122,7 @@ export type DefineProductOutcome =
 			status: "spec-approved";
 			spec: ProductSpecEnvelope;
 			approval: ProductSpecApprovalEnvelope;
+			approvedSpecRef: VerifiedArtifactRef;
 	  }
 	| {
 			status: "spec-published";
@@ -168,8 +179,27 @@ export interface TicketApprovalRecoveryStore {
 
 export type DefineProductRecovery =
 	| { definitionId: string; phase: "exploration" }
-	| { definitionId: string; phase: "spec-approval" | "publication" | "ticket-approval" | "ticket-publication" }
-	| { definitionId: string; digest: string; phase: "approved-revision-approval" | "approved-revision-publication" };
+	| {
+			definitionId: string;
+			phase: "spec-approval";
+			command: Extract<DefineProductCommand, { kind: "approve-spec" }>;
+	  }
+	| {
+			definitionId: string;
+			phase: "publication";
+			approvedSpecRef: VerifiedArtifactRef;
+	  }
+	| {
+			definitionId: string;
+			phase: "ticket-approval";
+			command: Extract<DefineProductCommand, { kind: "approve-tickets" }>;
+	  }
+	| { definitionId: string; phase: "ticket-publication" }
+	| {
+			definitionId: string;
+			digest: string;
+			phase: "approved-revision-approval" | "approved-revision-publication";
+	  };
 
 export interface DefineProductWorkflowDependencies {
 	delegate: {
@@ -307,6 +337,21 @@ export function createDefineProductWorkflow(
 			pendingTicketApproval = undefined;
 	}
 
+	function approvedSpecRef(
+		definitionId: string,
+		approved: { sourceRevision: string; spec: ProductSpecEnvelope },
+	): VerifiedArtifactRef {
+		return {
+			kind: "engram",
+			project: dependencies.project.name,
+			topic: `workflow/define-product/${definitionId}/approved-spec`,
+			revision: approved.sourceRevision,
+			schema: "approved-spec",
+			schemaVersion: 1,
+			digest: approved.spec.digest,
+		};
+	}
+
 	async function restoreRecovery(): Promise<DefineProductRecovery | undefined> {
 		reset();
 		try {
@@ -334,12 +379,22 @@ export function createDefineProductWorkflow(
 						approved?.spec.digest === pendingSpec.spec.digest &&
 						approved.spec.payload.revision === pendingSpec.spec.payload.revision
 					) {
-						return { definitionId: pendingSpec.definitionId, phase: "publication" };
+						return {
+							definitionId: pendingSpec.definitionId,
+							phase: "publication",
+							approvedSpecRef: approvedSpecRef(pendingSpec.definitionId, approved),
+						};
 					}
 				} catch {}
 				return {
 					definitionId: pendingSpec.definitionId,
 					phase: "spec-approval",
+					command: {
+						kind: "approve-spec",
+						target: cloneSnapshot(pendingSpec.spec.payload.target),
+						revision: pendingSpec.spec.payload.revision,
+						digest: pendingSpec.spec.digest,
+					},
 				};
 			}
 			const pendingTickets = await dependencies.ticketApprovalRecoveryStore?.load();
@@ -375,10 +430,22 @@ export function createDefineProductWorkflow(
 				) {
 						const durable = await dependencies.approvedTicketPublication?.read(pendingTickets.definitionId);
 						pendingTicketApproval = immutableSnapshot(pendingTickets);
-						return {
-							definitionId: pendingTickets.definitionId,
-							phase: durable?.graphRef.digest === pendingTickets.digest ? "ticket-publication" : "ticket-approval",
-						};
+						return durable?.graphRef.digest === pendingTickets.digest
+							? {
+									definitionId: pendingTickets.definitionId,
+									phase: "ticket-publication",
+							  }
+							: {
+									definitionId: pendingTickets.definitionId,
+									phase: "ticket-approval",
+									command: {
+										kind: "approve-tickets",
+										definitionId: pendingTickets.definitionId,
+										parentRef: cloneSnapshot(pendingTickets.parentRef),
+										graphRef: cloneSnapshot(pendingTickets.graphRef),
+										digest: pendingTickets.digest,
+									},
+							  };
 				}
 				return undefined;
 			}
@@ -526,13 +593,7 @@ export function createDefineProductWorkflow(
 			}
 		}
 		if (command.kind === "approve-spec") {
-			const actor = await dependencies.authenticatedAuthority?.current();
 			if (
-				!actor ||
-				typeof actor !== "object" ||
-				typeof actor.actorId !== "string" ||
-				typeof actor.role !== "string" ||
-				typeof actor.authorityRevision !== "string" ||
 				!command.target ||
 				typeof command.target !== "object" ||
 				command.target.kind !== "linear-parent-description" ||
@@ -546,6 +607,22 @@ export function createDefineProductWorkflow(
 					blocker: createBlocker(
 						"PI_WORKFLOW_SPEC_ARTIFACT_INVALID",
 						"The Spec approval input shape is invalid.",
+					),
+				};
+			}
+			const actor = await dependencies.authenticatedAuthority?.current();
+			if (
+				!actor ||
+				typeof actor !== "object" ||
+				typeof actor.actorId !== "string" ||
+				typeof actor.role !== "string" ||
+				typeof actor.authorityRevision !== "string"
+			) {
+				return {
+					status: "blocked",
+					blocker: createBlocker(
+						"PI_WORKFLOW_SPEC_APPROVAL_REQUIRED",
+						"Spec approval requires configured launch-host Owner authority.",
 					),
 				};
 			}
@@ -603,10 +680,25 @@ export function createDefineProductWorkflow(
 				createProductSpecApprovalEnvelope({ spec: activeSpec, actor: ownerActor }),
 			);
 			try {
-				await dependencies.approvedSpecStore?.save?.(
+				const approved = await dependencies.approvedSpecStore?.save?.(
 					activeSpec.payload.definitionId,
 					{ spec: activeSpec, approval },
 				);
+				if (!approved) {
+					return {
+						status: "blocked",
+						blocker: createBlocker(
+							"PI_WORKFLOW_RECOVERY_FAILED",
+							"The approved Spec could not be durably bound for publication.",
+						),
+					};
+				}
+				return {
+					status: "spec-approved",
+					spec: cloneSnapshot(activeSpec),
+					approval: cloneSnapshot(approval),
+					approvedSpecRef: approvedSpecRef(activeSpec.payload.definitionId, approved),
+				};
 			} catch (error) {
 				return {
 					status: "blocked",
@@ -618,20 +710,26 @@ export function createDefineProductWorkflow(
 					),
 				};
 			}
-			return {
-				status: "spec-approved",
-				spec: cloneSnapshot(activeSpec),
-				approval: cloneSnapshot(approval),
-			};
 		}
 		if (command.kind === "to-spec") {
-			if (
-				!explorationContext ||
-				explorationContext.definitionId !== command.definitionId ||
-				!explorationContext.artifacts.some(
+			const explorationArtifacts =
+				explorationContext?.definitionId === command.definitionId &&
+				explorationContext.artifacts.some(
 					({ ref }) => ref.schema === "research-evidence",
 				)
-			) {
+					? explorationContext.artifacts.map(({ ref }) => ref)
+					: undefined;
+			const recoveredArtifacts =
+				activeSpec?.payload.definitionId === command.definitionId &&
+				activeSpec.payload.target.teamId === command.teamId &&
+				isValidProductSpecSnapshot(activeSpec) &&
+				activeSpec.payload.supportArtifacts.some(
+					(ref) => ref.schema === "research-evidence",
+				)
+					? activeSpec.payload.supportArtifacts
+					: undefined;
+			const supportArtifacts = explorationArtifacts ?? recoveredArtifacts;
+			if (!supportArtifacts) {
 				return {
 					status: "blocked",
 					blocker: createBlocker(
@@ -640,29 +738,17 @@ export function createDefineProductWorkflow(
 					),
 				};
 			}
-			const verifiedArtifacts = explorationContext.artifacts;
-			const selectedArtifacts = command.supportArtifactAliases.map((alias) =>
-				verifiedArtifacts.find((artifact) => artifact.alias === alias),
-			);
-			if (
-				command.supportArtifactAliases.length === 0 ||
-				selectedArtifacts.some((artifact) => artifact === undefined)
-			) {
-				return {
-					status: "blocked",
-					blocker: createBlocker(
-						"PI_WORKFLOW_SPEC_ARTIFACT_INVALID",
-						"Spec support selections must use verified artifact aliases from this definition session.",
-					),
-				};
-			}
-			const { kind: _kind, supportArtifactAliases: _aliases, ...input } = command;
+			const { kind: _kind, teamId, title, ...semanticInput } = command;
 			try {
 				const generated = createProductSpecEnvelope({
-					...input,
-					supportArtifacts: selectedArtifacts.flatMap((artifact) =>
-						artifact ? [artifact.ref] : [],
-					),
+					...semanticInput,
+					target: {
+						kind: "linear-parent-description",
+						teamId,
+						title,
+					},
+					revision: "spec-r1",
+					supportArtifacts,
 				});
 				await dependencies.specApprovalRecoveryStore?.save({
 					definitionId: generated.payload.definitionId,
@@ -892,7 +978,7 @@ export function createDefineProductWorkflow(
 			domainAnchorDigest: recommendation.domainAnchorDigest,
 			project: dependencies.project,
 			targetTopic: `workflow/define-product/${recommendation.definitionId}/research/${recommendation.digest}`,
-			requiredSkills: dependencies.requiredSkills ?? [{ name: "research" }],
+			requiredSkills: dependencies.requiredSkills ?? [],
 			affectedPaths: dependencies.affectedPaths ?? [
 				"skills/define-product/SKILL.md",
 			],

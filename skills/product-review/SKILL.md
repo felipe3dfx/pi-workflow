@@ -32,9 +32,9 @@ Ask no other question. Stop immediately after the question. Do not invoke tools 
 After receiving an allowed invocation with a valid Linear ID:
 
 - Evaluate scope, user stories and acceptance criteria, evidence, findings, required changes, and parent/sibling impact through the structured `product-review/v1` draft.
-- Present the agent recommendation and the exact digests for `Aceptado` and `Cambios requeridos`.
-- Ask the Owner to explicitly choose one result and confirm the corresponding issue and digest. Do not publish before that approval.
-- After explicit selection, call the tool with only `issueId`, `result`, and `digest`. Do not provide body, authority, revision, or additional fields.
+- Present the agent recommendation and the two available results, `Aceptado` and `Cambios requeridos`, without exposing digests or workflow metadata.
+- Ask the Owner to decide naturally. Interpret the Owner's response yourself; runtime code must not classify natural-language phrases. If the response is ambiguous, ask a follow-up and do not call tools.
+- After the Agent interprets an explicit selection, call the workflow tool with exactly `action: "select_result"` and the selected structured `result`. The runtime privately binds the issue and digest.
 - Report the verified result or blocker exactly.
 - Communicate conversationally in the language used by the user. This does not change the professional-neutral Spanish contract for content published to Linear.
 

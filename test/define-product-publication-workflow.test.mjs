@@ -138,6 +138,15 @@ test("approval is persisted and remains recoverable for publication after restar
 	assert.deepEqual(await replacement.restoreRecovery(), {
 		definitionId: "definition-1",
 		phase: "publication",
+		approvedSpecRef: {
+			kind: "engram",
+			project: "pi-workflow",
+			topic: "workflow/define-product/definition-1/approved-spec",
+			revision: "engram-r1",
+			schema: "approved-spec",
+			schemaVersion: 1,
+			digest: approved.spec.digest,
+		},
 	});
 });
 
@@ -296,7 +305,17 @@ test("ticket approval fails closed for stale inputs, delegation and recovery dri
 	assert.equal(persistenceOutcome.status, "blocked");
 	assert.equal(persistenceOutcome.blocker.code, "PI_WORKFLOW_ARTIFACT_READBACK_MISMATCH");
 
-	assert.deepEqual(await subject.restoreRecovery(), { definitionId: "definition-1", phase: "ticket-approval" });
+	assert.deepEqual(await subject.restoreRecovery(), {
+		definitionId: "definition-1",
+		phase: "ticket-approval",
+		command: {
+			kind: "approve-tickets",
+			definitionId: "definition-1",
+			parentRef,
+			graphRef,
+			digest: graph.digest,
+		},
+	});
 	for (const mismatch of [
 		{ graphRef: { ...graphRef, digest: "changed" } },
 		{ parentRef: { ...parentRef, revision: "changed" } },
@@ -319,7 +338,17 @@ test("ticket approval fails closed for stale inputs, delegation and recovery dri
 
 	recovered = structuredClone(recoveryState);
 	actor = recoveryState.authority;
-	assert.deepEqual(await subject.restoreRecovery(), { definitionId: "definition-1", phase: "ticket-approval" });
+	assert.deepEqual(await subject.restoreRecovery(), {
+		definitionId: "definition-1",
+		phase: "ticket-approval",
+		command: {
+			kind: "approve-tickets",
+			definitionId: "definition-1",
+			parentRef,
+			graphRef,
+			digest: graph.digest,
+		},
+	});
 	const approvedOutcome = await subject.advance({ kind: "approve-tickets", definitionId: "definition-1", parentRef, graphRef, digest: graph.digest });
 	assert.equal(approvedOutcome.status, "tickets-approved");
 	assert.equal(clears, 0);

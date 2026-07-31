@@ -32,9 +32,6 @@ export namespace ProductReviewMcpPublication {
 
 	export interface ContinuingReview {
 		readonly status: "continuing";
-		readonly issueId: string;
-		readonly result: ProductReviewResult;
-		readonly digest: string;
 	}
 
 	export interface ExpectedCall {
@@ -142,6 +139,19 @@ function exactInput(
 			([key, expectedValue]) => value[key] === expectedValue,
 		)
 	);
+}
+
+function selectedResult(value: unknown): ProductReviewResult | undefined {
+	if (
+		!record(value) ||
+		!exactInput(value, {
+			action: "select_result",
+			result: value.result,
+		}) ||
+		(value.result !== "Aceptado" && value.result !== "Cambios requeridos")
+	)
+		return undefined;
+	return value.result;
 }
 
 function nonEmpty(value: unknown): value is string {
@@ -747,14 +757,7 @@ export function createProductReviewMcpPublication(
 		| ProductReviewMcpPublication.ExpectedCall
 		| undefined {
 		if (state.phase === "public-selection")
-			return {
-				toolName: WORKFLOW_TOOL,
-				input: {
-					issueId: state.context.issueId,
-					result: state.context.result,
-					digest: state.context.artifact.digest,
-				},
-			};
+			return { toolName: WORKFLOW_TOOL, input: {} };
 		if (
 			state.phase === "current-user" ||
 			state.phase === "current-user-after-approval"
@@ -796,14 +799,7 @@ export function createProductReviewMcpPublication(
 				},
 			};
 		if (state.phase === "ready")
-			return {
-				toolName: WORKFLOW_TOOL,
-				input: {
-					issueId: state.context.issueId,
-					result: state.context.result,
-					digest: state.context.artifact.digest,
-				},
-			};
+			return { toolName: WORKFLOW_TOOL, input: {} };
 		return undefined;
 	}
 
@@ -812,15 +808,20 @@ export function createProductReviewMcpPublication(
 	): Promise<{ readonly block: true; readonly reason: string } | undefined> {
 		if (state.phase === "idle") return undefined;
 		const active = state;
+		const typedSelection =
+			active.phase === "prepared" && event.toolName === WORKFLOW_TOOL
+				? selectedResult(event.input)
+				: undefined;
 		const expected = expectedModelCall();
 		const generation = turnGeneration;
 		const ownerId = recoveryOwnerId;
 		if (active.phase === "blocked" && event.toolName === WORKFLOW_TOOL)
 			return undefined;
 		if (
-			!expected ||
-			event.toolName !== expected.toolName ||
-			!exactInput(event.input, expected.input)
+			!typedSelection &&
+			(!expected ||
+				event.toolName !== expected.toolName ||
+				!exactInput(event.input, expected.input))
 		) {
 			const code = "PI_WORKFLOW_PRODUCT_REVIEW_MCP_PROTOCOL_INVALID";
 			fail(
@@ -876,6 +877,20 @@ export function createProductReviewMcpPublication(
 			}
 		}
 		switch (active.phase) {
+			case "prepared": {
+				if (!typedSelection) return staleCallBlock();
+				const artifact = active.context.choices[typedSelection];
+				state = {
+					phase: "public-selection-result",
+					context: {
+						...active.context,
+						result: typedSelection,
+						artifact,
+					},
+					toolCallId: event.toolCallId,
+				};
+				break;
+			}
 			case "current-user":
 				state = {
 					phase: "current-user-result",
@@ -1158,14 +1173,7 @@ export function createProductReviewMcpPublication(
 		}
 		const payload = toolPayload(event);
 		if (active.phase === "public-selection-result") {
-			if (
-				!exactInput(payload, {
-					status: "continuing",
-					issueId: active.context.issueId,
-					result: active.context.result,
-					digest: active.context.artifact.digest,
-				})
-			)
+			if (!exactInput(payload, { status: "continuing" }))
 				fail(
 					"PI_WORKFLOW_PRODUCT_REVIEW_MCP_INCOMPATIBLE",
 					"The public product review continuation result did not match the exact Owner selection.",
@@ -1443,34 +1451,21 @@ export function createProductReviewMcpPublication(
 	): ProductReviewMcpPublication.Blocker | undefined {
 		if (
 			state.phase !== "prepared" ||
-			!record(input) ||
-			Object.keys(input).length !== 3 ||
-			input.issueId !== state.context.issueId ||
-			(input.result !== "Aceptado" &&
-				input.result !== "Cambios requeridos") ||
-			!nonEmpty(input.digest)
+			(input !== "Aceptado" && input !== "Cambios requeridos")
 		) {
 			const result = blocked(
 				"PI_WORKFLOW_PRODUCT_REVIEW_INPUT_INVALID",
-				"Approval requires the exact prepared issue, result, and digest.",
+				"Approval requires an active prepared result.",
 			);
 			state = { phase: "blocked", blocker: result.blocker };
 			return result;
 		}
-		const artifact = state.context.choices[input.result];
-		if (artifact.digest !== input.digest) {
-			const result = blocked(
-				"PI_WORKFLOW_PRODUCT_REVIEW_DIGEST_MISMATCH",
-				"The chosen digest does not match the prepared result.",
-			);
-			state = { phase: "blocked", blocker: result.blocker };
-			return result;
-		}
+		const artifact = state.context.choices[input];
 		state = {
 			phase: "public-selection",
 			context: {
 				...state.context,
-				result: input.result,
+				result: input,
 				artifact,
 			},
 		};
@@ -1489,25 +1484,12 @@ export function createProductReviewMcpPublication(
 		if (
 			state.phase === "public-selection-result" &&
 			exactInput(input, {
-				issueId: state.context.issueId,
+				action: "select_result",
 				result: state.context.result,
-				digest: state.context.artifact.digest,
 			})
 		)
-			return {
-				status: "continuing",
-				issueId: state.context.issueId,
-				result: state.context.result,
-				digest: state.context.artifact.digest,
-			};
-		if (
-			state.phase !== "ready" ||
-			!exactInput(input, {
-				issueId: state.context.issueId,
-				result: state.context.result,
-				digest: state.context.artifact.digest,
-			})
-		)
+			return { status: "continuing" };
+		if (state.phase !== "ready" || !exactInput(input, {}))
 			return blocked(
 				"PI_WORKFLOW_PRODUCT_REVIEW_MCP_PROTOCOL_INVALID",
 				"Product review publication is incomplete or does not match the approved issue, result, and digest.",
@@ -1522,11 +1504,9 @@ export function createProductReviewMcpPublication(
 		if (expected)
 			return `Product review protocol: call ${expected.toolName} exactly once now with ${JSON.stringify(expected.input)}. This is the only permitted next action; do not add fields or call tools in parallel.`;
 		if (state.phase === "prepared") {
-			const accepted = state.context.choices.Aceptado.digest;
-			const rejected = state.context.choices["Cambios requeridos"].digest;
 			const recommendation =
 				state.context.choices.Aceptado.payload.recommendation;
-			return `Agent recommendation: ${recommendation}. Ask the Owner to confirm the exact issue, result, and digest using one of these formats: ${state.context.issueId} Aceptado ${accepted}; ${state.context.issueId} Cambios requeridos ${rejected}. Do not publish before that explicit selection. Communicate in the language used by the user. Linear-facing publication content remains professional-neutral Spanish.`;
+			return `Agent recommendation: ${recommendation}. Present the prepared review choices and ask the Owner to decide naturally. Interpret the Owner's language yourself; this runtime does not classify phrases. If the Owner selects a result, call ${WORKFLOW_TOOL} with exactly {"action":"select_result","result":"Aceptado"} or {"action":"select_result","result":"Cambios requeridos"}. If ambiguous, ask a follow-up and do not call tools. Do not display or request hashes or workflow metadata. Communicate in the language used by the user. Linear-facing publication content remains professional-neutral Spanish.`;
 		}
 		return undefined;
 	}

@@ -79,6 +79,7 @@ test("public acceptance command packs once and validates the extracted release c
 		"owner-approval-bound-to-exact-spec",
 		"approval-mismatch-refused-before-persistence",
 		"engram-create-only-cas-and-readback",
+		"packed-authenticated-mcp-delivery-parent-publication",
 		"public-extension-input-and-tool-dispatch",
 	]);
 	assert.deepEqual(report.scenarios["qa-handoff"].assertions, [

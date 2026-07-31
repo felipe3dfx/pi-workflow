@@ -19,6 +19,7 @@ import {
 	createDefaultProductReviewMcpPublication,
 	type DefaultProductReviewRuntimeOptions,
 } from "./default-product-review.ts";
+import type { DefineProductMcpPublication } from "./define-product-mcp-publication.ts";
 import type { createDefineProductWorkflow } from "./define-product-workflow.ts";
 import { createDefineProductRuntime } from "./define-product-runtime.ts";
 import { createQaHandoffArtifactStore } from "./qa-handoff-artifact-store.ts";
@@ -208,17 +209,26 @@ export default function piWorkflowExtension(
 				},
 	);
 	productReviewRuntime.register(pi);
+	const defaultDefineProductMcpPublication =
+		"mcpPublication" in defineProductWorkflow
+			? (defineProductWorkflow.mcpPublication as
+					| DefineProductMcpPublication
+					| undefined)
+			: undefined;
 	const defineProductRuntime = createDefineProductRuntime({
 		workflow: defineProductWorkflow,
 		createDefinitionId:
 			workflowOptions.defineProduct?.createDefinitionId ??
 			(() => crypto.randomUUID()),
+		...(defaultDefineProductMcpPublication
+			? { mcpPublication: defaultDefineProductMcpPublication }
+			: {}),
 	});
 	defineProductRuntime.register(pi);
 	registerPublicEntryGuard(pi, {
 		"define-product": {
 			status: "implemented",
-			allowedTools: [defineProductRuntime.toolName],
+			allowedTools: defineProductRuntime.allowedTools,
 			continueIf: (event) => defineProductRuntime.shouldContinue(event),
 			hasActiveAuthorization: () => defineProductRuntime.hasActiveTurn(),
 			retainAfterSettled: true,

@@ -83,6 +83,15 @@ async function createWorkflow(
 					authorityRevision: "owner-policy-r3",
 				},
 		},
+		approvedSpecStore: options.approvedSpecStore ?? {
+			read: async () => {
+				throw new Error("not used");
+			},
+			save: async (_definitionId, value) => ({
+				...structuredClone(value),
+				sourceRevision: "approved-spec-r1",
+			}),
+		},
 	});
 	if (options.prepare === false) return workflow;
 	const recommendation = await workflow.advance({
@@ -113,8 +122,8 @@ function toSpecCommand(overrides = {}) {
 	return {
 		kind: "to-spec",
 		definitionId: "definition-1",
-		target,
-		revision: "spec-r1",
+		teamId: target.teamId,
+		title: target.title,
 		problem:
 			"El equipo puede publicar una definición distinta de la que revisó el Owner.",
 		solution:
@@ -156,7 +165,6 @@ function toSpecCommand(overrides = {}) {
 		outOfScope: [
 			"La publicación de la descripción del Delivery parent en Linear queda fuera del alcance.",
 		],
-		supportArtifactAliases: ["research", "prototype"],
 		conversation: "raw private conversation",
 		history: [{ role: "owner", text: "raw private history" }],
 		...overrides,
@@ -172,6 +180,8 @@ test("to-spec exports only resolved pertinent decisions and support artifacts in
 
 	assert.equal(outcome.status, "spec-ready");
 	assert.equal(outcome.spec.payload.language, "es");
+	assert.equal(outcome.spec.payload.revision, "spec-r1");
+	assert.deepEqual(outcome.spec.payload.target, target);
 	assert.equal(outcome.spec.payload.body, golden);
 	assert.deepEqual(
 		outcome.spec.payload.decisions.map(({ id }) => id),
@@ -208,7 +218,7 @@ test("to-spec system brief requires neutral professional Spanish and exact-body 
 	);
 });
 
-test("to-spec resolves only verified aliases from the same definition", async () => {
+test("to-spec internally binds every verified support artifact from the same definition", async () => {
 	const workflow = await createWorkflow();
 	const verified = await workflow.advance(toSpecCommand());
 	assert.equal(verified.status, "spec-ready");
@@ -216,18 +226,6 @@ test("to-spec resolves only verified aliases from the same definition", async ()
 		researchRef,
 		prototypeRef,
 	]);
-
-	for (const alias of ["invented", "private-history", "definition-other:research"]) {
-		const refused = await workflow.advance(
-			toSpecCommand({ supportArtifactAliases: [alias] }),
-		);
-		assert.equal(refused.status, "blocked", alias);
-		assert.equal(
-			refused.blocker.code,
-			"PI_WORKFLOW_SPEC_ARTIFACT_INVALID",
-			alias,
-		);
-	}
 
 	const crossDefinition = await createWorkflow({
 		research: {
@@ -343,6 +341,12 @@ test("pending Spec approval restores exactly and corrupt recovery fails closed",
 	assert.deepEqual(await replacement.restoreRecovery(), {
 		definitionId: "definition-1",
 		phase: "spec-approval",
+		command: {
+			kind: "approve-spec",
+			target: ready.spec.payload.target,
+			revision: ready.spec.payload.revision,
+			digest: ready.spec.digest,
+		},
 	});
 	const approved = await replacement.advance({
 		kind: "approve-spec",

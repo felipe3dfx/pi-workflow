@@ -1,6 +1,7 @@
 import type { ExtensionAPI, InputEvent } from "@earendil-works/pi-coding-agent";
 import type { ProductReviewResult } from "./product-review-draft-store.ts";
 import type { ProductReviewMcpPublication } from "./product-review-mcp-publication.ts";
+import { isReadOnlyEngramCall } from "./public-entry-guard.ts";
 
 interface Workflow {
 	prepare(issueId: string): Promise<unknown>;
@@ -10,7 +11,6 @@ interface Workflow {
 interface RuntimeOutcome { readonly status: string; readonly blocker?: { readonly code: string; readonly message: string } }
 const publicEntry = /^\/(?:skill:)?product-review(?:\s|$)/;
 const command = /^\/(?:skill:)?product-review\s+([A-Z][A-Z0-9]*-[1-9][0-9]*)\s*$/;
-const selection = /^([A-Z][A-Z0-9]*-[1-9][0-9]*)\s+(Aceptado|Cambios requeridos)\s+([a-f0-9]{64})$/;
 const blocked = (code: string, message: string): RuntimeOutcome => ({ status: "blocked", blocker: { code, message } });
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 function exact(value: object, keys: readonly string[]): boolean {
@@ -45,13 +45,15 @@ export function createProductReviewRuntime(options: ProductReviewRuntimeOptions)
 		"mcpPublication" in options ? options.mcpPublication : undefined;
 	let issueId: string | undefined;
 	let preparation: Promise<unknown> | undefined;
-	let choice: { readonly result: ProductReviewResult; readonly digest: string } | undefined;
 	let awaitingSelection = false;
+	let freshOwnerResponse = false;
+	const readOnlyEngramToolCallIds = new Set<string>();
 	const clear = (): void => {
 		issueId = undefined;
 		preparation = undefined;
-		choice = undefined;
 		awaitingSelection = false;
+		freshOwnerResponse = false;
+		readOnlyEngramToolCallIds.clear();
 		mcpPublication?.clear();
 	};
 	function handlePublicEntry(event: InputEvent): void {
@@ -68,46 +70,68 @@ export function createProductReviewRuntime(options: ProductReviewRuntimeOptions)
 			}
 			return;
 		}
-		if (!awaitingSelection || !issueId || event.source !== "interactive" || event.streamingBehavior !== undefined) return;
-		const match = event.text.trim().match(selection);
-		if (match?.[1] === issueId && match[2] && match[3]) {
-			choice = {
-				result: match[2] === "Aceptado" ? "Aceptado" : "Cambios requeridos",
-				digest: match[3],
-			};
-			if (mcpPublication)
-				mcpPublication.select({
-					issueId,
-					result: choice.result,
-					digest: choice.digest,
-				});
-			else if (!preparation) return;
-			awaitingSelection = false;
-		}
+		if (
+			!awaitingSelection ||
+			!issueId ||
+			event.source !== "interactive" ||
+			event.streamingBehavior !== undefined ||
+			!event.text.trim() ||
+			event.text.trim().startsWith("/")
+		)
+			return;
+		freshOwnerResponse = true;
 	}
 	function shouldContinue(event: InputEvent): boolean {
-		if (!awaitingSelection) return false;
-		const match = event.text.trim().match(selection);
-		const accepted = event.source === "interactive" && event.streamingBehavior === undefined && match?.[1] === issueId;
-		if (!accepted && event.source === "interactive" && event.streamingBehavior === undefined) awaitingSelection = false;
-		return accepted;
+		return (
+			awaitingSelection &&
+			event.source === "interactive" &&
+			event.streamingBehavior === undefined &&
+			event.text.trim().length > 0 &&
+			!event.text.trim().startsWith("/")
+		);
 	}
 	async function execute(input: unknown): Promise<unknown> {
 		if (mcpPublication) {
+			if (
+				mcpPublication.hasPendingOwnerSelection() &&
+				(!freshOwnerResponse ||
+					!record(input) ||
+					!exact(input, ["action", "result"]) ||
+					input.action !== "select_result" ||
+					(input.result !== "Aceptado" && input.result !== "Cambios requeridos"))
+			)
+				return blocked(
+					"PI_WORKFLOW_PRODUCT_REVIEW_INPUT_INVALID",
+					"Selection requires one typed Agent decision bound to a fresh interactive Owner response.",
+				);
+			freshOwnerResponse = false;
 			const outcome = await mcpPublication.complete(input);
 			if (status(outcome) !== "continuing") issueId = undefined;
 			return outcome;
 		}
-		const id = issueId, pending = preparation, chosen = choice; clear();
-		if (!workflow || !id || !pending || !chosen || !record(input) || !exact(input, ["issueId", "result", "digest"]) ||
-			input.issueId !== id || input.result !== chosen.result || input.digest !== chosen.digest)
-			return blocked("PI_WORKFLOW_PRODUCT_REVIEW_INPUT_INVALID", "Publication requires the exact Owner selection bound to the active turn.");
+		const id = issueId;
+		const pending = preparation;
+		const hasFreshOwnerResponse = freshOwnerResponse;
+		clear();
+		if (
+			!workflow ||
+			!id ||
+			!pending ||
+			!hasFreshOwnerResponse ||
+			!record(input) ||
+			!exact(input, ["action", "result"]) ||
+			input.action !== "select_result" ||
+			(input.result !== "Aceptado" && input.result !== "Cambios requeridos")
+		)
+			return blocked("PI_WORKFLOW_PRODUCT_REVIEW_INPUT_INVALID", "Publication requires one typed Agent selection bound to a fresh interactive Owner response in the active turn.");
+		const chosen = { result: input.result as ProductReviewResult };
 		let prepared: unknown;
 		try { prepared = await pending; } catch (error) { return blocked(errorCode(error, "PI_WORKFLOW_PRODUCT_REVIEW_PREPARATION_FAILED"), error instanceof Error ? error.message : "Preparation failed."); }
 		if (status(prepared) !== "prepared") return prepared;
-		if (preparedChoice(prepared, chosen.result) !== chosen.digest) return blocked("PI_WORKFLOW_PRODUCT_REVIEW_DIGEST_MISMATCH", "Owner selection does not match a prepared digest.");
+		const digest = preparedChoice(prepared, chosen.result);
+		if (!digest) return blocked("PI_WORKFLOW_PRODUCT_REVIEW_DIGEST_MISMATCH", "Owner selection does not match a prepared result.");
 		let approval: unknown;
-		try { approval = await workflow.approve({ issueId: id, result: chosen.result, digest: chosen.digest }); } catch (error) { return blocked(errorCode(error, "PI_WORKFLOW_PRODUCT_REVIEW_APPROVAL_FAILED"), error instanceof Error ? error.message : "Approval failed."); }
+		try { approval = await workflow.approve({ issueId: id, result: chosen.result, digest }); } catch (error) { return blocked(errorCode(error, "PI_WORKFLOW_PRODUCT_REVIEW_APPROVAL_FAILED"), error instanceof Error ? error.message : "Approval failed."); }
 		if (status(approval) !== "approved") return approval;
 		let publication: unknown;
 		try { publication = await workflow.publish({ issueId: id }); } catch (error) { return blocked(errorCode(error, "PI_WORKFLOW_PRODUCT_REVIEW_PUBLICATION_FAILED"), error instanceof Error ? error.message : "Publication failed."); }
@@ -132,7 +156,9 @@ export function createProductReviewRuntime(options: ProductReviewRuntimeOptions)
 				return {
 					systemPrompt: expected
 						? `You are executing the artifact-backed Linear MCP product review for an explicitly admitted Owner turn. Call ${expected.toolName} exactly once with ${JSON.stringify(expected.input)}. Do not call tools in parallel or provide additional fields. Follow only the next exact call exposed after each result.`
-						: "Report the active product-review blocker exactly. Communicate in the language used by the user.",
+						: mcpPublication.hasPendingOwnerSelection()
+							? `Present the prepared product-review choices and ask the Owner to decide naturally. Interpret the response yourself. If the Owner selects a result, call ${toolName} with exactly action="select_result" and result="Aceptado" or result="Cambios requeridos". If ambiguous, ask a follow-up without calling tools. Do not expose workflow metadata.`
+							: "Report the active product-review blocker exactly. Communicate in the language used by the user.",
 				};
 			}
 			if (!preparation) return undefined;
@@ -140,10 +166,31 @@ export function createProductReviewRuntime(options: ProductReviewRuntimeOptions)
 			if (status(prepared) !== "prepared") return { systemPrompt: `Report this blocker exactly: ${JSON.stringify(prepared)} Communicate in the language used by the user.` };
 			const accepted = preparedChoice(prepared, "Aceptado"), rejected = preparedChoice(prepared, "Cambios requeridos"), suggested = recommendation(prepared);
 			if (!accepted || !rejected || !suggested) return { systemPrompt: "Report exactly that Product Review preparation is invalid. Communicate in the language used by the user." };
-			return { systemPrompt: `Agent recommendation: ${suggested}. Ask the Owner to confirm the exact issue, result, and digest using one of these formats: ${issueId} Aceptado ${accepted}; ${issueId} Cambios requeridos ${rejected}. Do not call the tool until that explicit selection is received. Communicate in the language used by the user. Linear-facing publication content remains professional-neutral Spanish.` };
+			return { systemPrompt: `Agent recommendation: ${suggested}. Present the prepared review choices and ask the Owner to decide naturally. Interpret the Owner's response yourself. If the Owner selects a result, call ${toolName} with exactly action="select_result" and result="Aceptado" or result="Cambios requeridos". If the response is ambiguous, ask a follow-up and do not call the tool. Do not display or request hashes or workflow metadata. Communicate in the language used by the user. Linear-facing publication content remains professional-neutral Spanish.` };
 		});
-		pi.on("tool_call", (event) => mcpPublication?.handleToolCall(event));
+		pi.on("tool_call", (event) => {
+			if (isReadOnlyEngramCall(event)) {
+				if (typeof event.toolCallId === "string")
+					readOnlyEngramToolCallIds.add(event.toolCallId);
+				return undefined;
+			}
+			if (
+				event.toolName === toolName &&
+				mcpPublication?.hasPendingOwnerSelection() &&
+				!freshOwnerResponse
+			)
+				return {
+					block: true as const,
+					reason: "PI_WORKFLOW_PRODUCT_REVIEW_INPUT_INVALID",
+				};
+			return mcpPublication?.handleToolCall(event);
+		});
 		pi.on("tool_result", async (event) => {
+			if (
+				typeof event.toolCallId === "string" &&
+				readOnlyEngramToolCallIds.delete(event.toolCallId)
+			)
+				return undefined;
 			if (!mcpPublication) return undefined;
 			const processed = await mcpPublication.handleToolResult(event);
 			if (!processed) return undefined;
@@ -166,9 +213,15 @@ export function createProductReviewRuntime(options: ProductReviewRuntimeOptions)
 		pi.on("session_start", clear); pi.on("session_shutdown", clear);
 		pi.registerTool?.({
 			name: toolName, label: "Product Review Workflow", description: "Publish an Owner-approved product review bound to the active turn.",
-			parameters: { type: "object", additionalProperties: false, required: ["issueId", "result", "digest"], properties: {
-				issueId: { type: "string", pattern: "^[A-Z][A-Z0-9]*-[1-9][0-9]*$" }, result: { type: "string", enum: ["Aceptado", "Cambios requeridos"] }, digest: { type: "string", pattern: "^[a-f0-9]{64}$" },
-			} },
+			parameters: {
+				type: "object",
+				additionalProperties: false,
+				required: ["action", "result"],
+				properties: {
+					action: { type: "string", enum: ["select_result"] },
+					result: { type: "string", enum: ["Aceptado", "Cambios requeridos"] },
+				},
+			},
 			async execute(_toolCallId: string, input: unknown) { return { content: [{ type: "text" as const, text: JSON.stringify(await execute(input)) }], details: {} }; },
 		});
 	}

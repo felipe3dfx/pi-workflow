@@ -13,6 +13,14 @@ const LINEAR_TOOLS = [
 	"workflow_product_review",
 ];
 
+const PUBLIC_DIGEST = /\b[a-f0-9]{64}\b/i;
+const ISSUE_RESULT_PROTOCOL = /\b[A-Z][A-Z0-9]*-[1-9][0-9]*\s+(?:Aceptado|Cambios requeridos)\b/;
+
+function assertPrivateSelectionSurface(text) {
+	assert.doesNotMatch(text, PUBLIC_DIGEST);
+	assert.doesNotMatch(text, ISSUE_RESULT_PROTOCOL);
+}
+
 const productDraft = {
 	scope: "Revisar la publicación del resultado de producto.",
 	stories: [
@@ -185,6 +193,7 @@ function extensionHarness({
 	);
 	return {
 		tools,
+		getArtifact: persistence.getArtifact,
 		async emit(event, value, context = {}) {
 			let result;
 			for (const handler of handlers.get(event) ?? []) {
@@ -230,21 +239,18 @@ async function callMcp(harness, toolName, toolCallId, input, payload) {
 	return { event, callOutcome, resultOutcome };
 }
 
-async function continueOwnerSelection(
-	harness,
-	prefix,
-	digest,
-	{ issueId = "ILA-2324", result = "Aceptado" } = {},
-) {
-	const input = { issueId, result, digest };
+async function continueOwnerSelection(harness, prefix, result = "Aceptado") {
+	const input = { action: "select_result", result };
 	const prompt = await harness.emit(
 		"before_agent_start",
 		{ type: "before_agent_start" },
 		context,
 	);
 	assert.match(prompt.systemPrompt, /workflow_product_review/);
-	assert.ok(prompt.systemPrompt.includes(JSON.stringify(input)));
+	assert.match(prompt.systemPrompt, /select_result/);
+	assert.match(prompt.systemPrompt, new RegExp(result));
 	assert.doesNotMatch(prompt.systemPrompt, /linear_get_user/);
+	assertPrivateSelectionSurface(prompt.systemPrompt);
 	const call = {
 		toolName: "workflow_product_review",
 		toolCallId: `${prefix}-public-selection`,
@@ -256,8 +262,8 @@ async function continueOwnerSelection(
 		.execute(call.toolCallId, call.input);
 	assert.deepEqual(JSON.parse(resultValue.content[0].text), {
 		status: "continuing",
-		...input,
 	});
+	assertPrivateSelectionSurface(resultValue.content[0].text);
 	const continued = await harness.emit(
 		"tool_result",
 		{
@@ -269,6 +275,7 @@ async function continueOwnerSelection(
 		context,
 	);
 	assert.match(continued.content.at(-1).text, /linear_get_user/);
+	assertPrivateSelectionSurface(continued.content.at(-1).text);
 	return { call, result: resultValue, continued };
 }
 
@@ -312,17 +319,14 @@ async function prepareAndSelect(
 		{ id: "ILA-2324", includeRelations: true },
 		issue,
 	);
-	const escapedResult = result.replace(" ", "\\s+");
-	const digest = verified.resultOutcome.content
-		.at(-1)
-		.text.match(new RegExp(`ILA-2324 ${escapedResult} ([a-f0-9]{64})`))[1];
+	assertPrivateSelectionSurface(verified.resultOutcome.content.at(-1).text);
 	await harness.emit("agent_settled", { type: "agent_settled" }, context);
 	assert.deepEqual(
 		await harness.emit(
 			"input",
 			{
 				type: "input",
-				text: `ILA-2324 ${result} ${digest}`,
+				text: result,
 				source: "interactive",
 			},
 			context,
@@ -330,8 +334,7 @@ async function prepareAndSelect(
 		{ action: "continue" },
 	);
 	if (continueHandshake)
-		await continueOwnerSelection(harness, prefix, digest, { result });
-	return digest;
+		await continueOwnerSelection(harness, prefix, result);
 }
 
 async function advanceApprovedToComments(
@@ -355,30 +358,28 @@ async function advanceApprovedToComments(
 	);
 }
 
-async function terminalOutcome(harness, prefix, digest) {
+async function terminalOutcome(harness, prefix) {
+	const input = {};
 	await harness.emit(
 		"tool_call",
 		{
 			toolName: "workflow_product_review",
 			toolCallId: `${prefix}-terminal`,
-			input: { issueId: "ILA-2324", result: "Aceptado", digest },
+			input,
 		},
 		context,
 	);
 	const result = await harness.tools.get("workflow_product_review").execute(
 		`${prefix}-terminal`,
-		{ issueId: "ILA-2324", result: "Aceptado", digest },
+		input,
 	);
+	assertPrivateSelectionSurface(result.content[0].text);
 	return JSON.parse(result.content[0].text);
 }
 
 test("public guard admits unavailable product-review only for an active /product-review turn", async () => {
 	const harness = extensionHarness({ runtimeEnvironment: {} });
-	const input = {
-		issueId: "ILA-2324",
-		result: "Aceptado",
-		digest: "a".repeat(64),
-	};
+	const input = {};
 	const outside = await harness.emit(
 		"tool_call",
 		{
@@ -485,11 +486,7 @@ test("default product-review blocks when configured Linear MCP tools are inactiv
 	);
 	assert.doesNotMatch(prompt.systemPrompt, /linear_get_user/);
 	assert.match(prompt.systemPrompt, /blocker/i);
-	const input = {
-		issueId: "ILA-2324",
-		result: "Aceptado",
-		digest: "a".repeat(64),
-	};
+	const input = {};
 	assert.equal(
 		await harness.emit(
 			"tool_call",
@@ -630,28 +627,21 @@ test("default product-review accepts real Pi's public ILA-2428 selection call af
 		mcpResult("linear_get_issue", "real-pi-issue-verified", realPiIssue),
 		context,
 	);
-	const digest = prepared.content
-		.at(-1)
-		.text.match(/ILA-2428 Aceptado ([a-f0-9]{64})/)[1];
+	assertPrivateSelectionSurface(prepared.content.at(-1).text);
 	await harness.emit("agent_settled", { type: "agent_settled" }, context);
 	assert.deepEqual(
 		await harness.emit(
 			"input",
 			{
 				type: "input",
-				text: `ILA-2428 Aceptado ${digest}`,
+				text: "Aceptado",
 				source: "interactive",
 			},
 			context,
 		),
 		{ action: "continue" },
 	);
-	const { continued } = await continueOwnerSelection(
-		harness,
-		"real-pi",
-		digest,
-		{ issueId: "ILA-2428" },
-	);
+	const { continued } = await continueOwnerSelection(harness, "real-pi");
 	assert.equal(persistence.getArtifact(), undefined);
 	assert.equal(
 		continued.content.at(-1).text,
@@ -659,7 +649,7 @@ test("default product-review accepts real Pi's public ILA-2428 selection call af
 	);
 });
 
-test("default product-review prepares exact Owner choices from authenticated protected issue evidence and the canonical draft", async () => {
+test("default product-review presents natural Owner choices from authenticated protected issue evidence and the canonical draft", async () => {
 	const harness = extensionHarness();
 	await harness.emit(
 		"input",
@@ -708,13 +698,36 @@ test("default product-review prepares exact Owner choices from authenticated pro
 		if (toolCallId === "product-issue-initial")
 			assert.match(evidence.content.at(-1).text, /linear_get_issue/);
 		else {
-			assert.match(evidence.content.at(-1).text, /ILA-2324 Aceptado [a-f0-9]{64}/);
-			assert.match(
-				evidence.content.at(-1).text,
-				/ILA-2324 Cambios requeridos [a-f0-9]{64}/,
-			);
+			assert.match(evidence.content.at(-1).text, /decide naturally/i);
+			assert.match(evidence.content.at(-1).text, /select_result/i);
+			assert.match(evidence.content.at(-1).text, /Aceptado/);
+			assert.match(evidence.content.at(-1).text, /Cambios requeridos/);
+			assertPrivateSelectionSurface(evidence.content.at(-1).text);
 		}
 	}
+	const memoryCall = {
+		toolName: "mem_context",
+		toolCallId: "read-memory-during-review",
+		input: { project: "pi-workflow" },
+	};
+	assert.equal(
+		await harness.emit("tool_call", memoryCall, context),
+		undefined,
+	);
+	assert.equal(
+		await harness.emit(
+			"tool_result",
+			mcpResult("mem_context", memoryCall.toolCallId, { observations: [] }),
+			context,
+		),
+		undefined,
+	);
+	const afterMemory = await harness.emit(
+		"before_agent_start",
+		{ type: "before_agent_start" },
+		context,
+	);
+	assert.match(afterMemory.systemPrompt, /select_result/);
 });
 
 test("default product-review settles preparation, accepts the exact Owner choice, and reauthenticates before publication", async () => {
@@ -765,16 +778,14 @@ test("default product-review settles preparation, accepts the exact Owner choice
 		);
 		preparedInstruction = result?.content.at(-1).text;
 	}
-	const acceptedDigest = preparedInstruction.match(
-		/ILA-2324 Aceptado ([a-f0-9]{64})/,
-	)[1];
+	assertPrivateSelectionSurface(preparedInstruction);
 	await harness.emit("agent_settled", { type: "agent_settled" }, context);
 	assert.deepEqual(
 		await harness.emit(
 			"input",
 			{
 				type: "input",
-				text: `ILA-2324 Aceptado ${acceptedDigest}`,
+				text: "Aceptado",
 				source: "interactive",
 			},
 			context,
@@ -787,16 +798,13 @@ test("default product-review settles preparation, accepts the exact Owner choice
 		context,
 	);
 	assert.match(resumed.systemPrompt, /workflow_product_review/);
-	assert.match(resumed.systemPrompt, new RegExp(acceptedDigest));
+	assert.match(resumed.systemPrompt, /select_result/);
 	assert.doesNotMatch(resumed.systemPrompt, /linear_get_user/);
+	assertPrivateSelectionSurface(resumed.systemPrompt);
 	const selectionCall = {
 		toolName: "workflow_product_review",
 		toolCallId: "owner-gate-selection",
-		input: {
-			issueId: "ILA-2324",
-			result: "Aceptado",
-			digest: acceptedDigest,
-		},
+		input: { action: "select_result", result: "Aceptado" },
 	};
 	assert.equal(await harness.emit("tool_call", selectionCall, context), undefined);
 	const selectionResult = await harness.tools
@@ -804,10 +812,8 @@ test("default product-review settles preparation, accepts the exact Owner choice
 		.execute(selectionCall.toolCallId, selectionCall.input);
 	assert.deepEqual(JSON.parse(selectionResult.content[0].text), {
 		status: "continuing",
-		issueId: "ILA-2324",
-		result: "Aceptado",
-		digest: acceptedDigest,
 	});
+	assertPrivateSelectionSurface(selectionResult.content[0].text);
 	const continued = await harness.emit(
 		"tool_result",
 		{
@@ -819,6 +825,7 @@ test("default product-review settles preparation, accepts the exact Owner choice
 		context,
 	);
 	assert.match(continued.content.at(-1).text, /linear_get_user/);
+	assertPrivateSelectionSurface(continued.content.at(-1).text);
 });
 
 test("default product-review accepts real Pi's public selection call before the exact authenticated MCP publication sequence", async () => {
@@ -859,18 +866,14 @@ test("default product-review accepts real Pi's public selection call before the 
 		);
 		preparedInstruction = result?.content.at(-1).text;
 	}
-	const digest = preparedInstruction.match(/ILA-2324 Aceptado ([a-f0-9]{64})/)[1];
+	assertPrivateSelectionSurface(preparedInstruction);
 	await harness.emit("agent_settled", { type: "agent_settled" }, context);
 	await harness.emit(
 		"input",
-		{ type: "input", text: `ILA-2324 Aceptado ${digest}`, source: "interactive" },
+		{ type: "input", text: "Aceptado", source: "interactive" },
 		context,
 	);
-	const { continued } = await continueOwnerSelection(
-		harness,
-		"publish",
-		digest,
-	);
+	const { continued } = await continueOwnerSelection(harness, "publish");
 	assert.equal(persistence.getArtifact(), undefined);
 	assert.equal(
 		continued.content.at(-1).text,
@@ -899,6 +902,7 @@ test("default product-review accepts real Pi's public selection call before the 
 		mcpResult("linear_get_issue", "publish-issue-approved", validIssue()),
 		context,
 	);
+	const digest = persistence.getArtifact().digest;
 	await harness.emit(
 		"tool_call",
 		{ toolName: "linear_list_comments", toolCallId: "publish-comments-1", input: { issueId: "ILA-2324" } },
@@ -988,14 +992,15 @@ test("default product-review accepts real Pi's public selection call before the 
 	assert.equal(
 		await harness.emit(
 			"tool_call",
-			{ toolName: "workflow_product_review", toolCallId: "publish-terminal", input: { issueId: "ILA-2324", result: "Aceptado", digest } },
+			{ toolName: "workflow_product_review", toolCallId: "publish-terminal", input: {} },
 			context,
 		),
 		undefined,
 	);
 	const result = await harness.tools
 		.get("workflow_product_review")
-		.execute("publish-terminal", { issueId: "ILA-2324", result: "Aceptado", digest });
+		.execute("publish-terminal", {});
+	assertPrivateSelectionSurface(result.content[0].text);
 	assert.deepEqual(JSON.parse(result.content[0].text), {
 		status: "published",
 		issueId: "ILA-2324",
@@ -1005,17 +1010,9 @@ test("default product-review accepts real Pi's public selection call before the 
 
 test("public product-review selection calls fail closed without authorizing mutation", async (t) => {
 	const invalidCalls = [
+		["extra field", () => ({ extra: true })],
 		[
-			"wrong shape",
-			(digest) => ({
-				issueId: "ILA-2324",
-				result: "Aceptado",
-				digest,
-				extra: true,
-			}),
-		],
-		[
-			"mismatched selection",
+			"legacy public protocol",
 			() => ({
 				issueId: "ILA-2324",
 				result: "Aceptado",
@@ -1027,7 +1024,7 @@ test("public product-review selection calls fail closed without authorizing muta
 		await t.test(name, async () => {
 			const persistence = publicationPersistence();
 			const harness = extensionHarness({ persistence });
-			const digest = await prepareAndSelect(
+			await prepareAndSelect(
 				harness,
 				`public-${name}`,
 				validIssue(),
@@ -1039,7 +1036,7 @@ test("public product-review selection calls fail closed without authorizing muta
 				{
 					toolName: "workflow_product_review",
 					toolCallId: `public-${name}`,
-					input: inputFor(digest),
+					input: inputFor(),
 				},
 				context,
 			);
@@ -1070,14 +1067,14 @@ test("public product-review selection calls fail closed without authorizing muta
 	await t.test("extra exact call", async () => {
 		const persistence = publicationPersistence();
 		const harness = extensionHarness({ persistence });
-		const digest = await prepareAndSelect(
+		await prepareAndSelect(
 			harness,
 			"public-extra",
 			validIssue(),
 			"Aceptado",
 			false,
 		);
-		const input = { issueId: "ILA-2324", result: "Aceptado", digest };
+		const input = { action: "select_result", result: "Aceptado" };
 		assert.equal(
 			await harness.emit(
 				"tool_call",
@@ -1159,11 +1156,8 @@ test("default product-review requires the authenticated Linear user to match the
 	);
 	const outcome = await harness.tools
 		.get("workflow_product_review")
-		.execute("terminal-owner-mismatch", {
-			issueId: "ILA-2324",
-			result: "Aceptado",
-			digest: "a".repeat(64),
-		});
+		.execute("terminal-owner-mismatch", {});
+	assertPrivateSelectionSurface(outcome.content[0].text);
 	assert.equal(
 		JSON.parse(outcome.content[0].text).blocker.code,
 		"PI_WORKFLOW_PRODUCT_REVIEW_AUTHORITY_MISMATCH",
@@ -1200,11 +1194,8 @@ test("public product-review preserves the first terminal blocker after unrelated
 	);
 	const outcome = await harness.tools
 		.get("workflow_product_review")
-		.execute("first-blocker-terminal", {
-			issueId: "ILA-2324",
-			result: "Aceptado",
-			digest: "a".repeat(64),
-		});
+		.execute("first-blocker-terminal", {});
+	assertPrivateSelectionSurface(outcome.content[0].text);
 	assert.equal(
 		JSON.parse(outcome.content[0].text).blocker.code,
 		"PI_WORKFLOW_PRODUCT_REVIEW_AUTHORITY_MISMATCH",
@@ -1254,7 +1245,6 @@ test("public MCP product-review refuses a valid legacy v1 direct-workflow artifa
 			await terminalOutcome(
 				harness,
 				"legacy-terminal",
-				legacyArtifact.digest,
 			)
 		).blocker.code,
 		"PI_WORKFLOW_PRODUCT_REVIEW_ARTIFACT_CONFLICT",
@@ -1264,8 +1254,9 @@ test("public MCP product-review refuses a valid legacy v1 direct-workflow artifa
 test("public product-review adopts the exact canonical root comment across paginated idempotent retries", async () => {
 	const persistence = publicationPersistence();
 	const first = extensionHarness({ persistence });
-	const digest = await prepareAndSelect(first, "adopt-first");
+	await prepareAndSelect(first, "adopt-first");
 	await advanceApprovedToComments(first, "adopt-first");
+	const digest = persistence.getArtifact().digest;
 	await callMcp(first, "linear_list_comments", "adopt-first-comments", { issueId: "ILA-2324" }, { comments: [], hasNextPage: false });
 	await callMcp(first, "linear_get_user", "adopt-first-auth-mutation", { query: "me" }, ownerActor);
 	await callMcp(first, "linear_get_issue", "adopt-first-issue-mutation", { id: "ILA-2324", includeRelations: true }, validIssue());
@@ -1281,16 +1272,17 @@ test("public product-review adopts the exact canonical root comment across pagin
 	await callMcp(first, "linear_list_comments", "adopt-first-readback", { issueId: "ILA-2324" }, { comments: [comment], hasNextPage: false });
 	const advancedIssue = validIssue({ updatedAt: "2026-07-27T19:21:02.958Z" });
 	await callMcp(first, "linear_get_issue", "adopt-first-final", { id: "ILA-2324", includeRelations: true }, advancedIssue);
-	assert.deepEqual(await terminalOutcome(first, "adopt-first", digest), {
+	assert.deepEqual(await terminalOutcome(first, "adopt-first"), {
 		status: "published",
 		issueId: "ILA-2324",
 		commentId: comment.id,
 	});
 
 	const retry = extensionHarness({ persistence });
-	const retryDigest = await prepareAndSelect(retry, "adopt-retry", advancedIssue);
-	assert.equal(retryDigest, digest);
+	await prepareAndSelect(retry, "adopt-retry", advancedIssue);
 	await advanceApprovedToComments(retry, "adopt-retry", advancedIssue);
+	const retryDigest = persistence.getArtifact().digest;
+	assert.equal(retryDigest, digest);
 	await callMcp(
 		retry,
 		"linear_list_comments",
@@ -1310,7 +1302,7 @@ test("public product-review adopts the exact canonical root comment across pagin
 	await callMcp(retry, "linear_list_comments", "adopt-retry-readback-1", { issueId: "ILA-2324" }, { comments: [], hasNextPage: true, cursor: "readback-page-2" });
 	await callMcp(retry, "linear_list_comments", "adopt-retry-readback-2", { issueId: "ILA-2324", cursor: "readback-page-2" }, { comments: [comment], hasNextPage: false });
 	await callMcp(retry, "linear_get_issue", "adopt-retry-final", { id: "ILA-2324", includeRelations: true }, advancedIssue);
-	assert.deepEqual(await terminalOutcome(retry, "adopt-retry", digest), {
+	assert.deepEqual(await terminalOutcome(retry, "adopt-retry"), {
 		status: "published",
 		issueId: "ILA-2324",
 		commentId: comment.id,
@@ -1320,8 +1312,9 @@ test("public product-review adopts the exact canonical root comment across pagin
 test("public product-review recovers an uncertain save across runtime instances without authorizing a duplicate mutation", async () => {
 	const persistence = publicationPersistence();
 	const interrupted = extensionHarness({ persistence });
-	const digest = await prepareAndSelect(interrupted, "uncertain-first");
+	await prepareAndSelect(interrupted, "uncertain-first");
 	await advanceApprovedToComments(interrupted, "uncertain-first");
+	const digest = persistence.getArtifact().digest;
 	await callMcp(interrupted, "linear_list_comments", "uncertain-first-comments", { issueId: "ILA-2324" }, { comments: [], hasNextPage: false });
 	await callMcp(interrupted, "linear_get_user", "uncertain-first-auth-mutation", { query: "me" }, ownerActor);
 	await callMcp(interrupted, "linear_get_issue", "uncertain-first-issue-mutation", { id: "ILA-2324", includeRelations: true }, validIssue());
@@ -1337,15 +1330,16 @@ test("public product-review recovers an uncertain save across runtime instances 
 
 	const recovered = extensionHarness({ persistence });
 	const currentIssue = validIssue({ updatedAt: "2026-07-27T19:21:03.958Z" });
-	assert.equal(await prepareAndSelect(recovered, "uncertain-retry", currentIssue), digest);
+	await prepareAndSelect(recovered, "uncertain-retry", currentIssue);
 	await advanceApprovedToComments(recovered, "uncertain-retry", currentIssue);
+	assert.equal(persistence.getArtifact().digest, digest);
 	const comment = { id: "uncertain-created-comment", body: uncertainSave.event.input.body, quotedText: null, parentId: null };
 	const lookup = await callMcp(recovered, "linear_list_comments", "uncertain-retry-comments", { issueId: "ILA-2324" }, { comments: [comment], hasNextPage: false });
 	assert.match(lookup.resultOutcome.content.at(-1).text, /linear_list_comments/);
 	assert.doesNotMatch(lookup.resultOutcome.content.at(-1).text, /linear_save_comment/);
 	await callMcp(recovered, "linear_list_comments", "uncertain-retry-readback", { issueId: "ILA-2324" }, { comments: [comment], hasNextPage: false });
 	await callMcp(recovered, "linear_get_issue", "uncertain-retry-final", { id: "ILA-2324", includeRelations: true }, currentIssue);
-	assert.deepEqual(await terminalOutcome(recovered, "uncertain-retry", digest), {
+	assert.deepEqual(await terminalOutcome(recovered, "uncertain-retry"), {
 		status: "published",
 		issueId: "ILA-2324",
 		commentId: comment.id,
@@ -1353,20 +1347,22 @@ test("public product-review recovers an uncertain save across runtime instances 
 
 	const absentPersistence = publicationPersistence();
 	const absent = extensionHarness({ persistence: absentPersistence });
-	const absentDigest = await prepareAndSelect(absent, "uncertain-absent");
+	await prepareAndSelect(absent, "uncertain-absent");
 	await advanceApprovedToComments(absent, "uncertain-absent");
+	const absentDigest = absentPersistence.getArtifact().digest;
 	await callMcp(absent, "linear_list_comments", "uncertain-absent-comments", { issueId: "ILA-2324" }, { comments: [], hasNextPage: false });
 	await callMcp(absent, "linear_get_user", "uncertain-absent-auth", { query: "me" }, ownerActor);
 	await callMcp(absent, "linear_get_issue", "uncertain-absent-issue", { id: "ILA-2324", includeRelations: true }, validIssue());
 	await callMcp(absent, "linear_save_comment", "uncertain-absent-save", { issueId: "ILA-2324", body: "PI_WORKFLOW_CANONICAL_PRODUCT_REVIEW_BODY" }, undefined);
 	await absent.emit("session_shutdown", { type: "session_shutdown" }, context);
 	const absentRetry = extensionHarness({ persistence: absentPersistence });
-	assert.equal(await prepareAndSelect(absentRetry, "uncertain-absent-retry"), absentDigest);
+	await prepareAndSelect(absentRetry, "uncertain-absent-retry");
 	await advanceApprovedToComments(absentRetry, "uncertain-absent-retry");
+	assert.equal(absentPersistence.getArtifact().digest, absentDigest);
 	const missing = await callMcp(absentRetry, "linear_list_comments", "uncertain-absent-retry-comments", { issueId: "ILA-2324" }, { comments: [], hasNextPage: false });
 	assert.equal(missing.resultOutcome, undefined);
 	assert.equal(
-		(await terminalOutcome(absentRetry, "uncertain-absent-retry", absentDigest)).blocker.code,
+		(await terminalOutcome(absentRetry, "uncertain-absent-retry")).blocker.code,
 		"PI_WORKFLOW_PRODUCT_REVIEW_RECOVERY_PENDING",
 	);
 });
@@ -1386,8 +1382,9 @@ test("public product-review serializes concurrent save authorization without rel
 		await claimGate;
 	};
 	const harness = extensionHarness({ persistence });
-	const digest = await prepareAndSelect(harness, "concurrent-save");
+	await prepareAndSelect(harness, "concurrent-save");
 	await advanceApprovedToComments(harness, "concurrent-save");
+	const digest = persistence.getArtifact().digest;
 	await callMcp(harness, "linear_list_comments", "concurrent-save-comments", { issueId: "ILA-2324" }, { comments: [], hasNextPage: false });
 	await callMcp(harness, "linear_get_user", "concurrent-save-auth", { query: "me" }, ownerActor);
 	await callMcp(harness, "linear_get_issue", "concurrent-save-issue", { id: "ILA-2324", includeRelations: true }, validIssue());
@@ -1402,11 +1399,12 @@ test("public product-review serializes concurrent save authorization without rel
 	await harness.emit("session_shutdown", { type: "session_shutdown" }, context);
 
 	const retry = extensionHarness({ persistence });
-	assert.equal(await prepareAndSelect(retry, "concurrent-save-retry"), digest);
+	await prepareAndSelect(retry, "concurrent-save-retry");
 	await advanceApprovedToComments(retry, "concurrent-save-retry");
+	assert.equal(persistence.getArtifact().digest, digest);
 	await callMcp(retry, "linear_list_comments", "concurrent-save-retry-comments", { issueId: "ILA-2324" }, { comments: [], hasNextPage: false });
 	assert.equal(
-		(await terminalOutcome(retry, "concurrent-save-retry", digest)).blocker.code,
+		(await terminalOutcome(retry, "concurrent-save-retry")).blocker.code,
 		"PI_WORKFLOW_PRODUCT_REVIEW_RECOVERY_PENDING",
 	);
 });
@@ -1417,7 +1415,7 @@ test("public product-review fails closed on malformed, out-of-order, mismatched,
 		await harness.emit("input", { type: "input", text: "/product-review ILA-2324", source: "interactive" }, context);
 		await harness.emit("tool_result", mcpResult("linear_get_user", "never-issued", ownerActor), context);
 		assert.equal(
-			(await terminalOutcome(harness, "out-of-order", "a".repeat(64))).blocker.code,
+			(await terminalOutcome(harness, "out-of-order")).blocker.code,
 			"PI_WORKFLOW_PRODUCT_REVIEW_MCP_INCOMPATIBLE",
 		);
 	});
@@ -1432,7 +1430,7 @@ test("public product-review fails closed on malformed, out-of-order, mismatched,
 		);
 		assert.equal(blocked.block, true);
 		assert.equal(
-			(await terminalOutcome(harness, "lateral", "a".repeat(64))).blocker.code,
+			(await terminalOutcome(harness, "lateral")).blocker.code,
 			"PI_WORKFLOW_PRODUCT_REVIEW_MCP_PROTOCOL_INVALID",
 		);
 	});
@@ -1443,7 +1441,7 @@ test("public product-review fails closed on malformed, out-of-order, mismatched,
 		await harness.emit("tool_call", { toolName: "linear_get_user", toolCallId: "expected-owner", input: { query: "me" } }, context);
 		await harness.emit("tool_result", mcpResult("linear_get_user", "different-owner", ownerActor), context);
 		assert.equal(
-			(await terminalOutcome(harness, "mismatched-result", "a".repeat(64))).blocker.code,
+			(await terminalOutcome(harness, "mismatched-result")).blocker.code,
 			"PI_WORKFLOW_PRODUCT_REVIEW_MCP_INCOMPATIBLE",
 		);
 	});
@@ -1461,7 +1459,7 @@ test("public product-review fails closed on malformed, out-of-order, mismatched,
 				validIssue({ id: "ILA-9999", identifier: undefined }),
 			);
 			assert.equal(
-				(await terminalOutcome(harness, "mismatched-issue", "a".repeat(64))).blocker.code,
+				(await terminalOutcome(harness, "mismatched-issue")).blocker.code,
 				"PI_WORKFLOW_PRODUCT_REVIEW_ISSUE_MISMATCH",
 			);
 		});
@@ -1478,7 +1476,7 @@ test("public product-review fails closed on malformed, out-of-order, mismatched,
 				validIssue({ id: "ILA-9999" }),
 			);
 			assert.equal(
-				(await terminalOutcome(harness, "conflicting-issue", "a".repeat(64))).blocker.code,
+				(await terminalOutcome(harness, "conflicting-issue")).blocker.code,
 				"PI_WORKFLOW_PRODUCT_REVIEW_MCP_MALFORMED_RESPONSE",
 			);
 		});
@@ -1494,7 +1492,7 @@ test("public product-review fails closed on malformed, out-of-order, mismatched,
 			context,
 		);
 		assert.equal(
-			(await terminalOutcome(harness, "malformed", "a".repeat(64))).blocker.code,
+			(await terminalOutcome(harness, "malformed")).blocker.code,
 			"PI_WORKFLOW_PRODUCT_REVIEW_MCP_MALFORMED_RESPONSE",
 		);
 	});
@@ -1522,7 +1520,7 @@ test("public product-review protects every issue snapshot field before mutation"
 	];
 	for (const [name, mutate] of drifts) {
 		const harness = extensionHarness();
-		const digest = await prepareAndSelect(harness, `drift-${name.replaceAll(" ", "-")}`);
+		await prepareAndSelect(harness, `drift-${name.replaceAll(" ", "-")}`);
 		await callMcp(harness, "linear_get_user", `drift-${name}-auth`, { query: "me" }, ownerActor);
 		const drifted = validIssue();
 		mutate(drifted);
@@ -1534,7 +1532,7 @@ test("public product-review protects every issue snapshot field before mutation"
 			drifted,
 		);
 		assert.equal(
-			(await terminalOutcome(harness, `drift-${name}`, digest)).blocker.code,
+			(await terminalOutcome(harness, `drift-${name}`)).blocker.code,
 			"PI_WORKFLOW_PRODUCT_REVIEW_REVISION_MISMATCH",
 			name,
 		);
@@ -1543,8 +1541,9 @@ test("public product-review protects every issue snapshot field before mutation"
 
 test("public product-review rejects duplicate canonical roots across comment pages", async () => {
 	const harness = extensionHarness();
-	const digest = await prepareAndSelect(harness, "duplicate-root");
+	await prepareAndSelect(harness, "duplicate-root");
 	await advanceApprovedToComments(harness, "duplicate-root");
+	const digest = harness.getArtifact().digest;
 	const golden = await readFile(new URL("./fixtures/product-review.accepted.golden.md", import.meta.url), "utf8");
 	const body = golden.replace(/product-review:[a-f0-9]{64}/, `product-review:${digest}`);
 	await callMcp(
@@ -1562,7 +1561,7 @@ test("public product-review rejects duplicate canonical roots across comment pag
 		{ comments: [{ id: "root-2", body, quotedText: null, parentId: null }], hasNextPage: false },
 	);
 	assert.equal(
-		(await terminalOutcome(harness, "duplicate-root", digest)).blocker.code,
+		(await terminalOutcome(harness, "duplicate-root")).blocker.code,
 		"PI_WORKFLOW_COMMENT_IDEMPOTENCY_CONFLICT",
 	);
 });
@@ -1570,7 +1569,7 @@ test("public product-review rejects duplicate canonical roots across comment pag
 test("public product-review allows only monotonic comment-induced updatedAt drift after exact read-back", async () => {
 	async function reachFinalIssueCheck(prefix) {
 		const harness = extensionHarness();
-		const digest = await prepareAndSelect(harness, prefix);
+		await prepareAndSelect(harness, prefix);
 		await advanceApprovedToComments(harness, prefix);
 		await callMcp(harness, "linear_list_comments", `${prefix}-comments`, { issueId: "ILA-2324" }, { comments: [], hasNextPage: false });
 		await callMcp(harness, "linear_get_user", `${prefix}-auth-mutation`, { query: "me" }, ownerActor);
@@ -1585,7 +1584,7 @@ test("public product-review allows only monotonic comment-induced updatedAt drif
 		const comment = { id: `${prefix}-comment`, body: save.event.input.body, quotedText: null, parentId: null };
 		await harness.emit("tool_result", mcpResult("linear_save_comment", `${prefix}-save`, comment), context);
 		await callMcp(harness, "linear_list_comments", `${prefix}-readback`, { issueId: "ILA-2324" }, { comments: [comment], hasNextPage: false });
-		return { harness, digest };
+		return { harness };
 	}
 
 	const regressed = await reachFinalIssueCheck("final-regressed");
@@ -1597,7 +1596,7 @@ test("public product-review allows only monotonic comment-induced updatedAt drif
 		validIssue({ updatedAt: "2026-07-27T19:21:00.958Z" }),
 	);
 	assert.equal(
-		(await terminalOutcome(regressed.harness, "final-regressed", regressed.digest)).blocker.code,
+		(await terminalOutcome(regressed.harness, "final-regressed")).blocker.code,
 		"PI_WORKFLOW_PRODUCT_REVIEW_REVISION_MISMATCH",
 	);
 
@@ -1610,7 +1609,7 @@ test("public product-review allows only monotonic comment-induced updatedAt drif
 		validIssue({ updatedAt: "2026-07-27T19:21:02.958Z", labels: ["Changed"] }),
 	);
 	assert.equal(
-		(await terminalOutcome(protectedDrift.harness, "final-protected-drift", protectedDrift.digest)).blocker.code,
+		(await terminalOutcome(protectedDrift.harness, "final-protected-drift")).blocker.code,
 		"PI_WORKFLOW_PRODUCT_REVIEW_REVISION_MISMATCH",
 	);
 });

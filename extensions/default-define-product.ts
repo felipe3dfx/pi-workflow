@@ -45,9 +45,16 @@ import { createDurableSpecApprovalRecoveryStore } from "./spec-approval-recovery
 import { createDurableTicketApprovalRecoveryStore } from "./ticket-approval-recovery.ts";
 import { createDurablePublicationManifest } from "./publication-manifest.ts";
 import type { DeliveryParentPublicationDependencies } from "./delivery-parent-publication.ts";
+import {
+	createDefineProductMcpPublication,
+	createUnavailableDefineProductMcpPublication,
+	type DefineProductMcpPublication,
+} from "./define-product-mcp-publication.ts";
+import {
+	createDefineProductPublicationRecoveryStore,
+	type DefineProductPublicationRecoveryStore,
+} from "./define-product-publication-recovery.ts";
 import { createEngramApprovedSpecReader } from "./engram-approved-spec-reader.ts";
-import { createLinearDeliveryParentGateway } from "./linear-delivery-parent-gateway.ts";
-import { createRuntimeLinearDeliveryParentTransport } from "./runtime-linear-delivery-parent.ts";
 import { createPublicationStateMachine } from "./publication-state-machine.ts";
 import { createDeliveryParentSnapshotStore, readDeliveryParentSnapshot } from "./delivery-parent-snapshot-store.ts";
 import { createApprovedTicketGraphStore } from "./approved-ticket-graph-store.ts";
@@ -56,11 +63,11 @@ import { publishApprovedTickets } from "./delivery-ticket-publication.ts";
 import { approveDraftedRevision, draftApprovedRevision, publishApprovedRevision } from "./approved-revision-publication.ts";
 import { createApprovedRevisionPublicationManifestStore } from "./approved-revision-publication-manifest.ts";
 import { createApprovedRevisionStore } from "./approved-revision-store.ts";
-import { createRuntimeLinearApprovedRevisionGateway } from "./runtime-linear-approved-revision.ts";
+import type { createRuntimeLinearApprovedRevisionGateway } from "./runtime-linear-approved-revision.ts";
 import { recoverApprovedTicketGraph } from "./ticket-graph-recovery.ts";
 import { createTicketPublicationAuthorityGuard } from "./ticket-publication-authority-guard.ts";
 import { createTicketPublicationManifestStore } from "./ticket-publication-manifest.ts";
-import { createRuntimeLinearDeliveryTicketGateway } from "./runtime-linear-delivery-ticket.ts";
+import type { createRuntimeLinearDeliveryTicketGateway } from "./runtime-linear-delivery-ticket.ts";
 import type { DeliveryTicketGraph } from "./delivery-ticket-graph.ts";
 import {
 	createResearchEvidenceEnvelope,
@@ -287,7 +294,10 @@ export interface DefaultDefineProductRuntimeOptions {
 		current(): Promise<AuthenticatedAuthority>;
 	};
 	approvedSpecReader?: DeliveryParentPublicationDependencies["approvedSpecReader"];
+	/** Explicit legacy gateway retained only for tests and compatibility embeddings. */
 	linearDeliveryParents?: DeliveryParentPublicationDependencies["linear"];
+	deliveryParentMcpPublication?: DefineProductMcpPublication;
+	deliveryParentPublicationRecovery?: DefineProductPublicationRecoveryStore;
 	linearDeliveryTickets?: ReturnType<typeof createRuntimeLinearDeliveryTicketGateway>;
 	linearApprovedRevision?: ReturnType<typeof createRuntimeLinearApprovedRevisionGateway>;
 	publicationManifest?: Parameters<typeof createPublicationStateMachine>[0]["store"];
@@ -303,9 +313,7 @@ export interface DefaultDefineProductRuntimeOptions {
 	}[];
 }
 
-function configuredOwnerAuthority(
-	environment: NodeJS.ProcessEnv,
-): DefaultDefineProductRuntimeOptions["authenticatedAuthority"] {
+function configuredOwnerAuthority(environment: NodeJS.ProcessEnv) {
 	const actorId = environment.PI_WORKFLOW_OWNER_ACTOR_ID;
 	const authorityRevision =
 		environment.PI_WORKFLOW_OWNER_AUTHORITY_REVISION;
@@ -322,42 +330,7 @@ function configuredOwnerAuthority(
 		role: "Owner" as const,
 		authorityRevision,
 	});
-	return { current: async () => authority };
-}
-
-function configuredLinearDeliveryParents(
-	environment: NodeJS.ProcessEnv,
-): DeliveryParentPublicationDependencies["linear"] | undefined {
-	const apiKey = environment.LINEAR_API_KEY?.trim();
-	if (!apiKey) return undefined;
-	return createLinearDeliveryParentGateway(createRuntimeLinearDeliveryParentTransport({
-		apiKey,
-		url: environment.LINEAR_API_URL?.trim() || undefined,
-	}));
-}
-
-function configuredLinearDeliveryTickets(
-	environment: NodeJS.ProcessEnv,
-): DefaultDefineProductRuntimeOptions["linearDeliveryTickets"] {
-	const apiKey = environment.LINEAR_API_KEY?.trim();
-	return apiKey
-		? createRuntimeLinearDeliveryTicketGateway({
-			apiKey,
-			url: environment.LINEAR_API_URL?.trim() || undefined,
-		})
-		: undefined;
-}
-
-function configuredLinearApprovedRevision(
-	environment: NodeJS.ProcessEnv,
-): DefaultDefineProductRuntimeOptions["linearApprovedRevision"] {
-	const apiKey = environment.LINEAR_API_KEY?.trim();
-	return apiKey
-		? createRuntimeLinearApprovedRevisionGateway({
-			apiKey,
-			url: environment.LINEAR_API_URL?.trim() || undefined,
-		})
-		: undefined;
+	return { authority, current: async () => authority };
 }
 
 function findProjectRoot(cwd: string): string {
@@ -1055,10 +1028,13 @@ export function createDefaultDefineProductWorkflow(
 		directory: join(privateStateDirectory, "delivery-parent-publications"),
 		persistence: privateStatePersistence,
 	});
-	const linearDeliveryParents = options.linearDeliveryParents ?? configuredLinearDeliveryParents(process.env);
-	const linearDeliveryTickets = options.linearDeliveryTickets ?? configuredLinearDeliveryTickets(process.env);
-	const linearApprovedRevision = options.linearApprovedRevision ?? configuredLinearApprovedRevision(process.env);
-	const authenticatedAuthority = options.authenticatedAuthority ?? configuredOwnerAuthority(process.env);
+	// The default Delivery-parent publisher uses authenticated Linear MCP. A direct
+	// gateway is accepted only when explicitly injected for tests/compatibility.
+	const linearDeliveryParents = options.linearDeliveryParents;
+	const linearDeliveryTickets = options.linearDeliveryTickets;
+	const linearApprovedRevision = options.linearApprovedRevision;
+	const configuredOwner = configuredOwnerAuthority(process.env);
+	const authenticatedAuthority = options.authenticatedAuthority ?? configuredOwner;
 	const approvedTicketPublication = createApprovedTicketPublicationStore({
 		store: artifactStore,
 		project: baseProject.name,
@@ -1433,7 +1409,11 @@ export function createDefaultDefineProductWorkflow(
 		}),
 	});
 
-	return createDefineProductWorkflow({
+	const parentSnapshots = createDeliveryParentSnapshotStore({
+		project: baseProject,
+		artifactStore,
+	});
+	const workflow = createDefineProductWorkflow({
 		delegate: workflowDelegate,
 		explorationRecoveryStore,
 		specApprovalRecoveryStore,
@@ -1544,14 +1524,30 @@ export function createDefaultDefineProductWorkflow(
 				createReservationId: () => `publication-${Date.now()}`,
 			}),
 			authenticatedAuthority,
-			parentSnapshots: createDeliveryParentSnapshotStore({
-				project: baseProject,
-				artifactStore,
-			}),
+			parentSnapshots,
 		} : undefined,
 		authenticatedAuthority,
 		createRequestId:
 			options.createRequestId ?? (() => `request-${Date.now()}`),
 		project: baseProject,
 	});
+	const mcpPublication = linearDeliveryParents
+		? undefined
+		: options.deliveryParentMcpPublication ??
+			(configuredOwner
+				? createDefineProductMcpPublication({
+						approvedSpecReader,
+						owner: configuredOwner.authority,
+						recovery:
+							options.deliveryParentPublicationRecovery ??
+							createDefineProductPublicationRecoveryStore({
+								store: artifactStore,
+								project: baseProject.name,
+							}),
+						parentSnapshots,
+						clearSpecApprovalRecovery: () =>
+							specApprovalRecoveryStore.clear(),
+					})
+				: createUnavailableDefineProductMcpPublication());
+	return Object.assign(workflow, { mcpPublication });
 }

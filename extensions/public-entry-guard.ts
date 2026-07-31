@@ -30,6 +30,62 @@ function forbiddenBlocker(capability: string): string {
 	return `status: blocked\ncode: PI_WORKFLOW_PUBLIC_ENTRY_FORBIDDEN\ncapability: ${capability}\nmutation: none`;
 }
 
+function exactKeys(
+	value: Record<string, unknown>,
+	allowed: readonly string[],
+	required: readonly string[] = [],
+): boolean {
+	return (
+		Object.keys(value).every((key) => allowed.includes(key)) &&
+		required.every((key) => Object.hasOwn(value, key))
+	);
+}
+
+export function isReadOnlyEngramCall(event: {
+	toolName?: string;
+	input?: unknown;
+}): boolean {
+	if (!event.input || typeof event.input !== "object" || Array.isArray(event.input))
+		return false;
+	const input = event.input as Record<string, unknown>;
+	switch (event.toolName) {
+		case "mem_context":
+			return exactKeys(input, ["project", "scope"]);
+		case "mem_search":
+			return (
+				exactKeys(
+					input,
+					[
+						"query",
+						"type",
+						"project",
+						"scope",
+						"limit",
+						"all_projects",
+						"match_mode",
+					],
+					["query"],
+				) && typeof input.query === "string"
+			);
+		case "mem_get_observation":
+			return exactKeys(input, ["id"], ["id"]) && Number.isInteger(input.id);
+		case "mem_timeline":
+			return (
+				exactKeys(
+					input,
+					["observation_id", "before", "after", "project"],
+					["observation_id"],
+				) && Number.isInteger(input.observation_id)
+			);
+		case "mem_stats":
+			return exactKeys(input, ["project"]);
+		case "mem_current_project":
+			return exactKeys(input, ["cwd"]);
+		default:
+			return false;
+	}
+}
+
 function isExactSkillBootstrap(input: unknown, capability: string): boolean {
 	if (!input || typeof input !== "object" || Array.isArray(input)) return false;
 	const values = input as Record<string, unknown>;
@@ -114,8 +170,9 @@ export function registerPublicEntryGuard(
 				: undefined;
 		if (
 			descriptor.status === "implemented" &&
-			descriptor.allowedTools?.includes(event.toolName) &&
-			descriptor.hasActiveAuthorization?.()
+			descriptor.hasActiveAuthorization?.() &&
+			(descriptor.allowedTools?.includes(event.toolName) ||
+				isReadOnlyEngramCall(event))
 		)
 			return undefined;
 		return { block: true, reason: PENDING_TOOL_REASON };

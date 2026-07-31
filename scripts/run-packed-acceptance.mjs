@@ -453,19 +453,15 @@ async function traverseProductReviewPublicSeam() {
 		await call(harness, "linear_get_user", { query: "me" }, actor);
 		await call(harness, "linear_get_issue", { id: issue.identifier, includeRelations: true }, issue);
 		const prepared = await call(harness, "linear_get_issue", { id: issue.identifier, includeRelations: true }, issue);
-		const digest = prepared.result.content.at(-1).text.match(/ILA-2324 Aceptado ([a-f0-9]{64})/)[1];
+		invariant(!/[a-f0-9]{64}/.test(prepared.result.content.at(-1).text), `${prefix} exposed a private digest`);
 		await harness.emit("agent_settled", { type: "agent_settled" }, packedContext);
-		const selection = await harness.emit("input", { type: "input", text: `${issue.identifier} Aceptado ${digest}`, source: "interactive" }, packedContext);
-		invariant(selection?.action === "continue", `${prefix} exact Owner digest selection failed`);
-		const continuationInput = {
-			issueId: issue.identifier,
-			result: "Aceptado",
-			digest,
-		};
+		const selection = await harness.emit("input", { type: "input", text: "La revisión está lista; puedes continuar.", source: "interactive" }, packedContext);
+		invariant(selection?.action === "continue", `${prefix} natural Owner selection failed`);
+		const continuationInput = { action: "select_result", result: "Aceptado" };
 		const continuationPrompt = await harness.emit("before_agent_start", { type: "before_agent_start" }, packedContext);
 		invariant(
 			continuationPrompt?.systemPrompt?.includes("workflow_product_review") &&
-				continuationPrompt.systemPrompt.includes(JSON.stringify(continuationInput)) &&
+				continuationPrompt.systemPrompt.includes("select_result") &&
 				!continuationPrompt.systemPrompt.includes("linear_get_user"),
 			`${prefix} did not advertise the exact public continuation handshake`,
 		);
@@ -506,7 +502,6 @@ async function traverseProductReviewPublicSeam() {
 			continued?.content?.at(-1)?.text?.includes("linear_get_user"),
 			`${prefix} continuation did not advertise Owner reauthentication`,
 		);
-		return digest;
 	}
 	async function advanceAfterSelection(harness, issue) {
 		await call(harness, "linear_get_user", { query: "me" }, actor);
@@ -514,12 +509,13 @@ async function traverseProductReviewPublicSeam() {
 	}
 
 	const interrupted = await start(baseIssue);
-	const digest = await prepareAndSelect(interrupted, baseIssue, "initial");
+	await prepareAndSelect(interrupted, baseIssue, "initial");
 	await advanceAfterSelection(interrupted, baseIssue);
 	await call(interrupted, "linear_list_comments", { issueId: baseIssue.identifier }, { comments: [], hasNextPage: false });
 	await call(interrupted, "linear_get_user", { query: "me" }, actor);
 	await call(interrupted, "linear_get_issue", { id: baseIssue.identifier, includeRelations: true }, baseIssue);
 	const save = await call(interrupted, "linear_save_comment", { issueId: baseIssue.identifier, body: "PI_WORKFLOW_CANONICAL_PRODUCT_REVIEW_BODY" }, undefined);
+	const digest = save.event.input.body.match(/product-review:([a-f0-9]{64})/)[1];
 	const expectedBody = (await readFile(join(packageRoot, "assets", "acceptance", "product-review.golden.md"), "utf8")).replace(/product-review:[a-f0-9]{64}/, `product-review:${digest}`);
 	invariant(save.event.input.body === expectedBody, "packed product-review did not substitute the exact canonical Spanish body");
 	const comment = { id: "packed-product-review-comment", body: save.event.input.body, quotedText: null, parentId: null };
@@ -527,29 +523,29 @@ async function traverseProductReviewPublicSeam() {
 
 	const advancedIssue = { ...baseIssue, updatedAt: "2026-07-27T19:21:02.958Z" };
 	const recovered = await start(advancedIssue);
-	invariant((await prepareAndSelect(recovered, advancedIssue, "recovery")) === digest, "packed product-review retry changed the approved digest");
+	await prepareAndSelect(recovered, advancedIssue, "recovery");
 	await advanceAfterSelection(recovered, advancedIssue);
 	await call(recovered, "linear_list_comments", { issueId: baseIssue.identifier }, { comments: [], hasNextPage: true, cursor: "packed-adoption-page-2" });
 	await call(recovered, "linear_list_comments", { issueId: baseIssue.identifier, cursor: "packed-adoption-page-2" }, { comments: [comment], hasNextPage: false });
 	await call(recovered, "linear_list_comments", { issueId: baseIssue.identifier }, { comments: [], hasNextPage: true, cursor: "packed-readback-page-2" });
 	await call(recovered, "linear_list_comments", { issueId: baseIssue.identifier, cursor: "packed-readback-page-2" }, { comments: [comment], hasNextPage: false });
 	await call(recovered, "linear_get_issue", { id: baseIssue.identifier, includeRelations: true }, advancedIssue);
-	await call(recovered, "workflow_product_review", { issueId: baseIssue.identifier, result: "Aceptado", digest }, undefined);
-	const result = await recovered.tools.get("workflow_product_review")?.execute("packed-product-review-terminal", { issueId: baseIssue.identifier, result: "Aceptado", digest });
+	await call(recovered, "workflow_product_review", {}, undefined);
+	const result = await recovered.tools.get("workflow_product_review")?.execute("packed-product-review-terminal", {});
 	const outcome = JSON.parse(result?.content?.[0]?.text ?? "null");
 	invariant(outcome.status === "published" && outcome.commentId === comment.id, "packed product-review did not recover through its public terminal tool");
 	invariant(calls.filter(({ toolName }) => toolName === "linear_save_comment").length === 1, "packed product-review authorized a duplicate comment mutation");
 
 	const driftPersistence = createPersistence();
 	const drifted = await start(baseIssue, driftPersistence);
-	const driftDigest = await prepareAndSelect(drifted, baseIssue, "protected-drift");
+	await prepareAndSelect(drifted, baseIssue, "protected-drift");
 	await advanceAfterSelection(drifted, baseIssue);
 	await call(drifted, "linear_list_comments", { issueId: baseIssue.identifier }, { comments: [], hasNextPage: false });
 	await call(drifted, "linear_get_user", { query: "me" }, actor);
 	const mutationsBeforeDrift = calls.filter(({ toolName }) => toolName === "linear_save_comment").length;
 	await call(drifted, "linear_get_issue", { id: baseIssue.identifier, includeRelations: true }, { ...baseIssue, labels: ["Protected drift"] });
-	await call(drifted, "workflow_product_review", { issueId: baseIssue.identifier, result: "Aceptado", digest: driftDigest }, undefined);
-	const driftResult = await drifted.tools.get("workflow_product_review")?.execute("packed-product-review-drift-terminal", { issueId: baseIssue.identifier, result: "Aceptado", digest: driftDigest });
+	await call(drifted, "workflow_product_review", {}, undefined);
+	const driftResult = await drifted.tools.get("workflow_product_review")?.execute("packed-product-review-drift-terminal", {});
 	const driftOutcome = JSON.parse(driftResult?.content?.[0]?.text ?? "null");
 	invariant(
 		driftOutcome.status === "blocked" &&
@@ -649,11 +645,15 @@ async function runPackedSkillScenario() {
 }
 
 async function runDefineProductScenario() {
-	const [{ createDefineProductWorkflow }, { createEngramApprovedSpecReader }] =
-		await Promise.all([
-			packedModule("extensions/define-product-workflow.ts"),
-			packedModule("extensions/engram-approved-spec-reader.ts"),
-		]);
+	const [
+		{ createDefineProductWorkflow },
+		{ createEngramApprovedSpecReader },
+		{ createDefineProductMcpPublication },
+	] = await Promise.all([
+		packedModule("extensions/define-product-workflow.ts"),
+		packedModule("extensions/engram-approved-spec-reader.ts"),
+		packedModule("extensions/define-product-mcp-publication.ts"),
+	]);
 	const owner = {
 		actorId: "owner-acceptance",
 		role: "Owner",
@@ -792,8 +792,8 @@ async function runDefineProductScenario() {
 	const ready = await workflow.advance({
 		kind: "to-spec",
 		definitionId: "acceptance",
-		target,
-		revision: "spec-r1",
+		teamId: target.teamId,
+		title: target.title,
 		problem: "La release puede publicarse sin evidencia exacta del tarball.",
 		solution:
 			"El flujo valida escenarios deterministas sobre el paquete extraído.",
@@ -810,7 +810,6 @@ async function runDefineProductScenario() {
 		],
 		tests: ["Bloquear cualquier aprobación con digest o revisión divergente."],
 		outOfScope: ["Publicar el paquete desde la aceptación."],
-		supportArtifactAliases: ["research", "prototype"],
 	});
 	invariant(
 		ready.status === "spec-ready",
@@ -880,6 +879,130 @@ async function runDefineProductScenario() {
 			writes.length === 1,
 		"Engram create-only approval conflict was not refused",
 	);
+
+	let publicationRecovery;
+	const publicationCalls = [];
+	const publication = createDefineProductMcpPublication({
+		approvedSpecReader: approvedSpecStore,
+		owner,
+		recovery: {
+			read: async () =>
+				publicationRecovery?.stage === "uncertain" ||
+				publicationRecovery?.stage === "verified"
+					? {
+							publicationDigest: publicationRecovery.publicationDigest,
+							stage: publicationRecovery.stage,
+							...(publicationRecovery.issueId
+								? { issueId: publicationRecovery.issueId }
+								: {}),
+						}
+					: undefined,
+			claim: async (identity, ownerId) => {
+				publicationRecovery = { ...identity, stage: "uncertain", ownerId };
+			},
+			release: async (identity, ownerId) => {
+				publicationRecovery = { ...identity, stage: "released", ownerId };
+			},
+			finalizeVerified: async (identity, issueId) => {
+				publicationRecovery = { ...identity, stage: "verified", issueId };
+			},
+		},
+		parentSnapshots: {
+			persist: async () => ({
+				kind: "engram",
+				project: "pi-workflow",
+				topic: "workflow/define-product/acceptance/published-parent",
+				revision: "parent-r1",
+				schema: "delivery-parent",
+				schemaVersion: 1,
+				digest: "parent-digest",
+			}),
+		},
+		clearSpecApprovalRecovery: async () => {},
+	});
+	publication.setMcpAvailable(true);
+	const starting = await publication.begin(
+		"acceptance",
+		"packed-define-publication-start",
+		{ action: "publish_spec" },
+	);
+	invariant(starting.status === "continuing", "packed MCP publication did not start");
+	await publication.handleToolResult({
+		toolName: "workflow_define_product",
+		toolCallId: "packed-define-publication-start",
+		content: [{ type: "text", text: JSON.stringify(starting) }],
+		isError: false,
+	});
+	let publicationSequence = 0;
+	async function callPublication(payload) {
+		const expected = publication.expectedModelCall();
+		invariant(expected, "packed MCP publication did not expose its next call");
+		publicationSequence += 1;
+		const event = {
+			toolName: expected.toolName,
+			toolCallId: `packed-define-publication-${publicationSequence}`,
+			input: structuredClone(expected.input),
+		};
+		const refusal = await publication.handleToolCall(event);
+		invariant(!refusal, `packed MCP publication blocked ${expected.toolName}`);
+		publicationCalls.push({
+			toolName: expected.toolName,
+			input: structuredClone(event.input),
+		});
+		await publication.handleToolResult({
+			toolName: expected.toolName,
+			toolCallId: event.toolCallId,
+			content: [{ type: "text", text: JSON.stringify(payload) }],
+			isError: false,
+		});
+	}
+	const linearActor = {
+		id: owner.actorId,
+		name: "Owner",
+		isActive: true,
+		isGuest: false,
+	};
+	const linearIssue = {
+		id: "packed-parent-1",
+		identifier: "PACK-1",
+		team: { id: target.teamId, name: "Equipo de aceptación" },
+		title: target.title,
+		description: approved.spec.payload.body,
+		status: { id: "packed-backlog-1", name: "Backlog", type: "backlog" },
+		assignee: null,
+		assigneeId: null,
+		cycle: null,
+		cycleId: null,
+	};
+	await callPublication(linearActor);
+	await callPublication({
+		teams: [{ id: target.teamId, name: "Equipo de aceptación" }],
+		hasNextPage: false,
+	});
+	await callPublication({
+		statuses: [{ id: "packed-backlog-1", name: "Backlog", type: "backlog" }],
+	});
+	await callPublication({ issues: [], hasNextPage: false });
+	await callPublication(linearActor);
+	await callPublication(linearIssue);
+	await callPublication(linearIssue);
+	await callPublication({ issues: [linearIssue], hasNextPage: false });
+	const publicationResult = await publication.complete({ action: "publish_spec" });
+	const saveCalls = publicationCalls.filter(
+		(call) => call.toolName === "linear_save_issue",
+	);
+	invariant(
+		publicationResult.status === "spec-published" &&
+			saveCalls.length === 1 &&
+			isDeepStrictEqual(saveCalls[0].input, {
+				team: target.teamId,
+				title: target.title,
+				description: approved.spec.payload.body,
+				state: "packed-backlog-1",
+			}) &&
+			publicationRecovery?.stage === "verified",
+		"packed authenticated MCP Delivery-parent publication drifted",
+	);
 	await traverseDefineProductPublicSeam();
 	return {
 		status: "passed",
@@ -887,6 +1010,7 @@ async function runDefineProductScenario() {
 			"owner-approval-bound-to-exact-spec",
 			"approval-mismatch-refused-before-persistence",
 			"engram-create-only-cas-and-readback",
+			"packed-authenticated-mcp-delivery-parent-publication",
 			"public-extension-input-and-tool-dispatch",
 		],
 	};
