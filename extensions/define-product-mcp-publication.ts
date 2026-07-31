@@ -166,7 +166,7 @@ interface PublicationContext {
 	readonly identity: DefineProductPublicationIdentity;
 	readonly recovery?: {
 		readonly publicationDigest: string;
-		readonly stage: "uncertain" | "verified";
+		readonly stage: "uncertain" | "created" | "verified";
 		readonly issueId?: string;
 	};
 	readonly actor?: LinearActor;
@@ -1186,11 +1186,19 @@ export function createDefineProductMcpPublication(
 				);
 				return true;
 			}
-			state = {
-				phase: "candidates-before",
-				context: { ...active.context, backlog },
-				read: emptyIssueRead(),
-			};
+			const context = { ...active.context, backlog };
+			state =
+				active.context.recovery?.issueId
+					? {
+							phase: "issue-readback",
+							context,
+							issueId: active.context.recovery.issueId,
+						}
+					: {
+							phase: "candidates-before",
+							context,
+							read: emptyIssueRead(),
+						};
 			return true;
 		}
 		if (
@@ -1300,17 +1308,34 @@ export function createDefineProductMcpPublication(
 			return true;
 		}
 		if (active.phase === "save-result") {
-			if (!record(payload) || !nonEmpty(payload.id))
+			if (!record(payload) || !nonEmpty(payload.id)) {
 				fail(
 					"PI_WORKFLOW_DEFINE_PRODUCT_MCP_MALFORMED_RESPONSE",
 					"Linear MCP returned a malformed issue creation identity.",
 				);
-			else
-				state = {
-					phase: "issue-readback",
-					context: active.context,
-					issueId: payload.id,
-				};
+				return true;
+			}
+			try {
+				await options.recovery.recordCreated(
+					active.context.identity,
+					ownerId,
+					payload.id,
+				);
+				if (!isCurrent(queuedGeneration, active)) return false;
+			} catch (error) {
+				fail(
+					"PI_WORKFLOW_DEFINE_PRODUCT_RECOVERY_PERSISTENCE_FAILED",
+					error instanceof Error
+						? error.message
+						: "Created Delivery-parent identity could not be persisted.",
+				);
+				return true;
+			}
+			state = {
+				phase: "issue-readback",
+				context: active.context,
+				issueId: payload.id,
+			};
 			return true;
 		}
 		if (active.phase === "issue-readback-result") {

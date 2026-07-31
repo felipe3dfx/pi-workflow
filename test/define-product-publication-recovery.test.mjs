@@ -47,6 +47,18 @@ test("durably claims, releases, and verifies define-product publication uncertai
 	await recovery.release(identity, "owner-1");
 	assert.equal(await recovery.read(identity.definitionId), undefined);
 	await recovery.claim(identity, "owner-2");
+	await recovery.recordCreated(identity, "owner-2", "linear-uuid-1");
+	assert.deepEqual(await recovery.read(identity.definitionId), {
+		publicationDigest: identity.publicationDigest,
+		stage: "created",
+		issueId: "linear-uuid-1",
+	});
+	await recovery.recordCreated(identity, "owner-2", "linear-uuid-1");
+	await assert.rejects(
+		recovery.recordCreated(identity, "owner-2", "linear-uuid-2"),
+		/identity conflicts/,
+	);
+	await assert.rejects(recovery.release(identity, "owner-2"), /state conflicts/);
 	await recovery.finalizeVerified(identity, "linear-uuid-1");
 	assert.deepEqual(await recovery.read(identity.definitionId), {
 		publicationDigest: identity.publicationDigest,

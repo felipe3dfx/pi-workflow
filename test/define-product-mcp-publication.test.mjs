@@ -92,9 +92,17 @@ function persistence(initial) {
 				};
 			},
 			claim: async (identity, ownerId) => {
-				if (state?.stage === "uncertain" && state.ownerId !== ownerId)
+				if (
+					(state?.stage === "uncertain" || state?.stage === "created") &&
+					state.ownerId !== ownerId
+				)
 					throw new Error("claim already owned");
-				state = { ...identity, stage: "uncertain", ownerId };
+				if (state?.stage !== "created")
+					state = { ...identity, stage: "uncertain", ownerId };
+			},
+			recordCreated: async (identity, ownerId, issueId) => {
+				assert.equal(state.ownerId, ownerId);
+				state = { ...identity, stage: "created", ownerId, issueId };
 			},
 			release: async (identity, ownerId) => {
 				assert.equal(state.ownerId, ownerId);
@@ -266,6 +274,27 @@ test("accepts Linear's single trailing-newline normalization for legacy approved
 	const outcome = await finishReadback(h, created);
 	assert.equal(outcome.status, "spec-published");
 	assert.equal(outcome.parent.description, approved.spec.payload.body);
+});
+
+test("durable created restart reads the recorded issue before final uniqueness verification", async () => {
+	const recovery = persistence();
+	const interrupted = harness({ recovery });
+	await interrupted.begin();
+	await advanceToSave(interrupted);
+	const issue = issueFor(interrupted.approved);
+	await interrupted.call(issue);
+	assert.equal(recovery.get().stage, "created");
+	assert.equal(recovery.get().issueId, issue.id);
+
+	const restarted = harness({ recovery });
+	await restarted.begin();
+	await restarted.call(actor);
+	await restarted.call({ teams: [{ id: "team-1", name: "Grupo ilao" }], hasNextPage: false });
+	await restarted.call([{ id: "backlog-1", name: "Backlog", type: "backlog" }]);
+	assert.equal(restarted.controller.expectedModelCall().toolName, "linear_get_issue");
+	assert.deepEqual(restarted.controller.expectedModelCall().input, { id: issue.id, includeRelations: true });
+	const outcome = await finishReadback(restarted, issue);
+	assert.equal(outcome.status, "spec-published");
 });
 
 test("durable uncertain restart performs lookup only and never duplicates", async () => {

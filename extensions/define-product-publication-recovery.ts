@@ -7,7 +7,7 @@ export interface DefineProductPublicationIdentity {
 }
 
 interface RecoveryState extends DefineProductPublicationIdentity {
-	readonly stage: "uncertain" | "released" | "verified";
+	readonly stage: "uncertain" | "created" | "released" | "verified";
 	readonly ownerId?: string;
 	readonly issueId?: string;
 }
@@ -16,12 +16,17 @@ export interface DefineProductPublicationRecoveryStore {
 	read(definitionId: string): Promise<
 		| {
 				readonly publicationDigest: string;
-				readonly stage: "uncertain" | "verified";
+				readonly stage: "uncertain" | "created" | "verified";
 				readonly issueId?: string;
 		  }
 		| undefined
 	>;
 	claim(identity: DefineProductPublicationIdentity, ownerId: string): Promise<void>;
+	recordCreated(
+		identity: DefineProductPublicationIdentity,
+		ownerId: string,
+		issueId: string,
+	): Promise<void>;
 	release(identity: DefineProductPublicationIdentity, ownerId: string): Promise<void>;
 	finalizeVerified(
 		identity: DefineProductPublicationIdentity,
@@ -46,12 +51,15 @@ function parseRecoveryState(content: string, definitionId: string): RecoveryStat
 		!/^[a-f0-9]{64}$/.test(value.publicationDigest) ||
 		!("stage" in value) ||
 		(value.stage !== "uncertain" &&
+			value.stage !== "created" &&
 			value.stage !== "released" &&
 			value.stage !== "verified") ||
 		("ownerId" in value && !nonEmpty(value.ownerId)) ||
 		("issueId" in value && !nonEmpty(value.issueId)) ||
 		(value.stage === "uncertain" &&
 			(!("ownerId" in value) || "issueId" in value)) ||
+		(value.stage === "created" &&
+			(!("ownerId" in value) || !("issueId" in value))) ||
 		(value.stage === "released" &&
 			(!("ownerId" in value) || "issueId" in value)) ||
 		(value.stage === "verified" &&
@@ -144,7 +152,9 @@ export function createDefineProductPublicationRecoveryStore(options: {
 			if (!current) return undefined;
 			await verify(project, topic, current.revision, current.content);
 			const state = parseRecoveryState(current.content, definitionId);
-			return state.stage === "uncertain" || state.stage === "verified"
+			return state.stage === "uncertain" ||
+				state.stage === "created" ||
+				state.stage === "verified"
 				? {
 						publicationDigest: state.publicationDigest,
 						stage: state.stage,
@@ -165,7 +175,7 @@ export function createDefineProductPublicationRecoveryStore(options: {
 				assertIdentity(state, identity);
 				if (state.stage === "verified")
 					throw new Error("Define-product publication is already verified.");
-				if (state.stage === "uncertain") {
+				if (state.stage === "uncertain" || state.stage === "created") {
 					if (state.ownerId !== ownerId)
 						throw new Error(
 							"Define-product publication recovery claim is already owned.",
@@ -182,6 +192,39 @@ export function createDefineProductPublicationRecoveryStore(options: {
 				ownerId,
 			);
 		},
+		async recordCreated(identity, ownerId, issueId) {
+			if (options.store.capabilities?.atomicCompareAndSwap !== true)
+				throw new Error(
+					"Atomic compare-and-swap is required for define-product publication recovery.",
+				);
+			const project = currentProject();
+			const topic = destination(identity.definitionId);
+			const current = await options.store.readCurrent(project, topic);
+			if (!current)
+				throw new Error("Define-product publication recovery state conflicts.");
+			const state = parseRecoveryState(current.content, identity.definitionId);
+			assertIdentity(state, identity);
+			if (state.ownerId !== ownerId)
+				throw new Error("Define-product publication recovery state conflicts.");
+			if (state.stage === "created") {
+				if (state.issueId !== issueId)
+					throw new Error(
+						"Define-product created publication identity conflicts.",
+					);
+				await verify(project, topic, current.revision, current.content);
+				return;
+			}
+			if (state.stage !== "uncertain")
+				throw new Error("Define-product publication recovery state conflicts.");
+			await write(
+				project,
+				identity,
+				"created",
+				current.revision,
+				ownerId,
+				issueId,
+			);
+		},
 		async release(identity, ownerId) {
 			if (options.store.capabilities?.atomicCompareAndSwap !== true)
 				throw new Error(
@@ -193,7 +236,11 @@ export function createDefineProductPublicationRecoveryStore(options: {
 			if (!current) return;
 			const state = parseRecoveryState(current.content, identity.definitionId);
 			assertIdentity(state, identity);
-			if (state.stage === "verified" || state.ownerId !== ownerId)
+			if (
+				state.stage === "verified" ||
+				state.stage === "created" ||
+				state.ownerId !== ownerId
+			)
 				throw new Error("Define-product publication recovery state conflicts.");
 			if (state.stage === "released") {
 				await verify(project, topic, current.revision, current.content);
@@ -228,9 +275,13 @@ export function createDefineProductPublicationRecoveryStore(options: {
 						await verify(project, topic, current.revision, current.content);
 						return;
 					}
-					if (state.stage !== "uncertain")
+					if (state.stage !== "uncertain" && state.stage !== "created")
 						throw new Error(
-							"Define-product publication recovery is not uncertain.",
+							"Define-product publication recovery is not pending verification.",
+						);
+					if (state.stage === "created" && state.issueId !== issueId)
+						throw new Error(
+							"Define-product created publication identity conflicts.",
 						);
 				}
 				try {

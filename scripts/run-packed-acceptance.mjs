@@ -888,6 +888,7 @@ async function runDefineProductScenario() {
 		recovery: {
 			read: async () =>
 				publicationRecovery?.stage === "uncertain" ||
+				publicationRecovery?.stage === "created" ||
 				publicationRecovery?.stage === "verified"
 					? {
 							publicationDigest: publicationRecovery.publicationDigest,
@@ -899,6 +900,9 @@ async function runDefineProductScenario() {
 					: undefined,
 			claim: async (identity, ownerId) => {
 				publicationRecovery = { ...identity, stage: "uncertain", ownerId };
+			},
+			recordCreated: async (identity, ownerId, issueId) => {
+				publicationRecovery = { ...identity, stage: "created", ownerId, issueId };
 			},
 			release: async (identity, ownerId) => {
 				publicationRecovery = { ...identity, stage: "released", ownerId };
