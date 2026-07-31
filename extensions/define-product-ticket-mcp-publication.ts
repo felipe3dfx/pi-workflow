@@ -231,13 +231,14 @@ function exactInput(
 	const supplied = Object.fromEntries(
 		Object.entries(value).filter(([, entry]) => entry !== undefined),
 	);
-	return (
-		Object.keys(supplied).length === Object.keys(expected).length &&
-		Object.entries(expected).every(
-			([key, expectedValue]) =>
-				canonicalJson(supplied[key]) === canonicalJson(expectedValue),
-		)
-	);
+	if (Object.keys(supplied).some((key) => !Object.hasOwn(expected, key))) return false;
+	return Object.entries(expected).every(([key, expectedValue]) => {
+		if (expectedValue === null && !Object.hasOwn(supplied, key)) return true;
+		return (
+			Object.hasOwn(supplied, key) &&
+			canonicalJson(supplied[key]) === canonicalJson(expectedValue)
+		);
+	});
 }
 
 function blocked(

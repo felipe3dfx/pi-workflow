@@ -240,10 +240,14 @@ test("accepts Pi-injected undefined optional fields on canonical save calls", as
 	const controller = createDefineProductTicketMcpPublication(state.dependencies);
 	await start(controller);
 	const stopped = await drive(controller, state, { stopBeforeSave: true });
+	const input = { ...structuredClone(stopped.expected.input), id: undefined, dueDate: undefined };
+	delete input.assignee;
+	delete input.cycle;
+	delete input.project;
 	const event = {
 		toolName: stopped.expected.toolName,
 		toolCallId: "pi-coerced-save",
-		input: { ...structuredClone(stopped.expected.input), id: undefined, dueDate: undefined },
+		input,
 	};
 	assert.equal(await controller.handleToolCall(event), undefined);
 	assert.equal(event.input.title, "Primero");
