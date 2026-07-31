@@ -39,6 +39,13 @@ test("delegated graph rejection identifies the exact invalid contract class", ()
 		() => canonicalizeDelegatedDeliveryTicketGraph(delegated),
 		/single-line plain Markdown without links, HTML, or code spans/,
 	);
+
+	const { digest: _otherDigest, ...invalidReference } = graph();
+	invalidReference.payload.tickets[0].refs[0].id = "identificador-inventado";
+	assert.throws(
+		() => canonicalizeDelegatedDeliveryTicketGraph(invalidReference),
+		/every ticket ref id must exist in the matching graph\.payload\.coverage collection/,
+	);
 });
 
 const canonicallyRedigestedInvalidGraph = (mutate) => {

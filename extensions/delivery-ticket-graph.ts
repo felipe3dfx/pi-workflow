@@ -71,17 +71,17 @@ export class SpecCoverageIndex {
 	readonly tests = new Set<string>();
 
 	constructor(input: unknown) {
-		if (!record(input) || !Array.isArray(input.stories) || !Array.isArray(input.decisions) || !Array.isArray(input.tests)) fail("PI_WORKFLOW_TICKET_REFERENCE_INVALID");
+		if (!record(input) || !Array.isArray(input.stories) || !Array.isArray(input.decisions) || !Array.isArray(input.tests)) fail("PI_WORKFLOW_TICKET_REFERENCE_INVALID", "coverage requires stories, decisions, and tests arrays");
 		const source = input as { stories: unknown[]; decisions: unknown[]; tests: unknown[] };
 		for (const story of source.stories) {
-			if (!record(story)) fail("PI_WORKFLOW_TICKET_REFERENCE_INVALID");
+			if (!record(story)) fail("PI_WORKFLOW_TICKET_REFERENCE_INVALID", "each coverage story must be an object");
 			const item = story as { id: string; contextId: string; acceptanceCriteria: string[] };
-			if (!text(item.id) || !text(item.contextId) || !Array.isArray(item.acceptanceCriteria) || item.acceptanceCriteria.some((id) => !text(id)) || this.stories.has(item.id)) fail("PI_WORKFLOW_TICKET_REFERENCE_INVALID");
+			if (!text(item.id) || !text(item.contextId) || !Array.isArray(item.acceptanceCriteria) || item.acceptanceCriteria.some((id) => !text(id)) || this.stories.has(item.id)) fail("PI_WORKFLOW_TICKET_REFERENCE_INVALID", "coverage story id and contextId must be unique non-empty strings and acceptanceCriteria must be a string array");
 			this.stories.set(item.id, { contextId: item.contextId, acceptanceCriteria: new Set(item.acceptanceCriteria) });
 		}
 		for (const [values, target] of [[source.decisions, this.decisions], [source.tests, this.tests]] as const) {
 			for (const id of values) {
-				if (!text(id) || target.has(id)) fail("PI_WORKFLOW_TICKET_REFERENCE_INVALID");
+				if (!text(id) || target.has(id)) fail("PI_WORKFLOW_TICKET_REFERENCE_INVALID", "coverage decision and test identifiers must be unique non-empty strings");
 				target.add(id as string);
 			}
 		}
@@ -107,23 +107,23 @@ function validateTicket(value: unknown, coverage: SpecCoverageIndex): Ticket {
 	if (!text(candidate.stableKey) || candidate.acceptanceCriteria.length < 4 || candidate.acceptanceCriteria.length > 7 || !Number.isInteger(candidate.estimate.points) || candidate.estimate.points < 1 || candidate.estimate.points > 8 || !Array.isArray(candidate.blockers) || candidate.blockers.some((key) => !text(key)) || !Array.isArray(candidate.refs) || !Array.isArray(candidate.deliveryBindings)) fail("PI_WORKFLOW_TICKET_GRAPH_INVALID", "ticket stableKey is required, acceptanceCriteria must contain 4-7 items, estimate points must be an integer from 1-8, and blockers, refs, and deliveryBindings must be arrays");
 	const refs: Ref[] = [];
 	for (const ref of candidate.refs) {
-		if (!record(ref) || !text(ref.id) || !["story", "decision", "test"].includes(ref.kind as string)) fail("PI_WORKFLOW_TICKET_REFERENCE_INVALID");
-		if ((ref.kind === "story" && !coverage.stories.has(ref.id)) || (ref.kind === "decision" && !coverage.decisions.has(ref.id)) || (ref.kind === "test" && !coverage.tests.has(ref.id))) fail("PI_WORKFLOW_TICKET_REFERENCE_INVALID");
+		if (!record(ref) || !text(ref.id) || !["story", "decision", "test"].includes(ref.kind as string)) fail("PI_WORKFLOW_TICKET_REFERENCE_INVALID", "each ticket ref requires kind story, decision, or test and a non-empty id");
+		if ((ref.kind === "story" && !coverage.stories.has(ref.id)) || (ref.kind === "decision" && !coverage.decisions.has(ref.id)) || (ref.kind === "test" && !coverage.tests.has(ref.id))) fail("PI_WORKFLOW_TICKET_REFERENCE_INVALID", "every ticket ref id must exist in the matching graph.payload.coverage collection");
 		refs.push({ kind: ref.kind as RefKind, id: ref.id });
 	}
 	if (!candidate.deliveryBindings.length) fail("PI_WORKFLOW_TICKET_NOT_VERTICAL");
 	const contexts = new Set<string>();
 	const bindings = new Set<string>();
 	for (const binding of candidate.deliveryBindings) {
-		if (!record(binding) || !text(binding.storyId) || !text(binding.acceptanceCriterionId) || !text(binding.contextId)) fail("PI_WORKFLOW_TICKET_REFERENCE_INVALID");
+		if (!record(binding) || !text(binding.storyId) || !text(binding.acceptanceCriterionId) || !text(binding.contextId)) fail("PI_WORKFLOW_TICKET_REFERENCE_INVALID", "each deliveryBinding requires non-empty storyId, acceptanceCriterionId, and contextId");
 		const story = coverage.stories.get(binding.storyId);
 		const key = `${binding.storyId}:${binding.acceptanceCriterionId}`;
-		if (!story || story.contextId !== binding.contextId || !story.acceptanceCriteria.has(binding.acceptanceCriterionId) || bindings.has(key)) fail("PI_WORKFLOW_TICKET_REFERENCE_INVALID");
+		if (!story || story.contextId !== binding.contextId || !story.acceptanceCriteria.has(binding.acceptanceCriterionId) || bindings.has(key)) fail("PI_WORKFLOW_TICKET_REFERENCE_INVALID", "each deliveryBinding must uniquely match the exact story, context, and acceptance criterion declared in coverage");
 		bindings.add(key);
 		contexts.add(binding.contextId);
 	}
 	if (contexts.size !== 1) fail("PI_WORKFLOW_TICKET_CONTEXT_SPAN");
-	if (candidate.deliveryBindings.some((binding) => !refs.some((ref) => ref.kind === "story" && ref.id === binding.storyId))) fail("PI_WORKFLOW_TICKET_REFERENCE_INVALID");
+	if (candidate.deliveryBindings.some((binding) => !refs.some((ref) => ref.kind === "story" && ref.id === binding.storyId))) fail("PI_WORKFLOW_TICKET_REFERENCE_INVALID", "every deliveryBinding storyId requires a matching story ref on the same ticket");
 	return { stableKey: candidate.stableKey, title: candidate.title, outcome: candidate.outcome, acceptanceCriteria: [...candidate.acceptanceCriteria], estimate: { points: candidate.estimate.points, rationale: candidate.estimate.rationale }, blockers: [...candidate.blockers].sort(), refs: refs.sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right))), deliveryBindings: candidate.deliveryBindings.map((binding) => ({ storyId: binding.storyId, acceptanceCriterionId: binding.acceptanceCriterionId, contextId: binding.contextId })).sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right))) };
 }
 
@@ -137,12 +137,12 @@ function validateGraph(tickets: Ticket[], coverage: SpecCoverageIndex): void {
 	const walk = (key: string): void => { if (visiting.has(key)) fail("PI_WORKFLOW_TICKET_GRAPH_INVALID", "ticket blockers must form an acyclic graph"); if (visited.has(key)) return; visiting.add(key); for (const blocker of byKey.get(key)?.blockers ?? []) walk(blocker); visiting.delete(key); visited.add(key); };
 	for (const key of keys) walk(key);
 	const refs = new Set(tickets.flatMap((ticket) => ticket.refs.map((ref) => `${ref.kind}:${ref.id}`)));
-	if ([...coverage.stories.keys()].some((id) => !refs.has(`story:${id}`)) || [...coverage.decisions].some((id) => !refs.has(`decision:${id}`)) || [...coverage.tests].some((id) => !refs.has(`test:${id}`))) fail("PI_WORKFLOW_TICKET_REFERENCE_INVALID");
+	if ([...coverage.stories.keys()].some((id) => !refs.has(`story:${id}`)) || [...coverage.decisions].some((id) => !refs.has(`decision:${id}`)) || [...coverage.tests].some((id) => !refs.has(`test:${id}`))) fail("PI_WORKFLOW_TICKET_REFERENCE_INVALID", "tickets must collectively reference every story, decision, and test declared in coverage");
 	for (const [storyId, story] of coverage.stories) {
 		if (!refs.has(`story:${storyId}`)) continue;
 		const bindings = tickets.flatMap((ticket) => ticket.deliveryBindings.filter((binding) => binding.storyId === storyId));
 		const criteria = bindings.map((binding) => binding.acceptanceCriterionId);
-		if (criteria.length !== story.acceptanceCriteria.size || new Set(criteria).size !== criteria.length || criteria.some((criterion) => !story.acceptanceCriteria.has(criterion))) fail("PI_WORKFLOW_TICKET_REFERENCE_INVALID");
+		if (criteria.length !== story.acceptanceCriteria.size || new Set(criteria).size !== criteria.length || criteria.some((criterion) => !story.acceptanceCriteria.has(criterion))) fail("PI_WORKFLOW_TICKET_REFERENCE_INVALID", "deliveryBindings must cover every acceptance criterion exactly once for each referenced story");
 	}
 }
 
