@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
+	canonicalizeDelegatedDeliveryTicketGraph,
 	createDeliveryTicketGraph,
 	createSpecCoverageIndex,
 	createTicketGraphApproval,
@@ -25,6 +26,11 @@ const graph = () =>
 		language: fixture.language,
 		tickets: fixture.tickets,
 	});
+
+test("runtime owns the digest of a delegated ticket graph", () => {
+	const { digest: _modelCannotAuthorizeDigest, ...delegated } = graph();
+	assert.deepEqual(canonicalizeDelegatedDeliveryTicketGraph(delegated), graph());
+});
 
 const canonicallyRedigestedInvalidGraph = (mutate) => {
 	const value = structuredClone(graph());

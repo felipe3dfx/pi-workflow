@@ -162,15 +162,29 @@ export function createTicketGraphApproval(input: { graph: DeliveryTicketGraph; a
 	return { ...unsigned, digest: digestCanonicalValue(unsigned) };
 }
 
+export function canonicalizeDelegatedDeliveryTicketGraph(
+	value: unknown,
+): DeliveryTicketGraph {
+	if (
+		!record(value) ||
+		value.schema !== "delivery-ticket-graph" ||
+		value.schemaVersion !== 1 ||
+		!record(value.payload)
+	)
+		fail("PI_WORKFLOW_TICKET_GRAPH_INVALID");
+	const delegated = value as { payload: Record<string, unknown> };
+	return createDeliveryTicketGraph({
+		parent: delegated.payload.parent,
+		coverage: createSpecCoverageIndex(delegated.payload.coverage),
+		language: delegated.payload.language,
+		tickets: delegated.payload.tickets as unknown[],
+	});
+}
+
 function validGraph(value: unknown): value is DeliveryTicketGraph {
-	if (!record(value) || value.schema !== "delivery-ticket-graph" || value.schemaVersion !== 1 || !record(value.payload) || !text(value.digest)) return false;
+	if (!record(value) || !text(value.digest)) return false;
 	try {
-		const graph = createDeliveryTicketGraph({
-			parent: value.payload.parent,
-			coverage: createSpecCoverageIndex(value.payload.coverage),
-			language: value.payload.language,
-			tickets: value.payload.tickets as unknown[],
-		});
+		const graph = canonicalizeDelegatedDeliveryTicketGraph(value);
 		return same(graph, value);
 	} catch {
 		return false;

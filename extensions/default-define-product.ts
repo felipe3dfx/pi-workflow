@@ -68,7 +68,10 @@ import { recoverApprovedTicketGraph } from "./ticket-graph-recovery.ts";
 import { createTicketPublicationAuthorityGuard } from "./ticket-publication-authority-guard.ts";
 import { createTicketPublicationManifestStore } from "./ticket-publication-manifest.ts";
 import type { createRuntimeLinearDeliveryTicketGateway } from "./runtime-linear-delivery-ticket.ts";
-import type { DeliveryTicketGraph } from "./delivery-ticket-graph.ts";
+import {
+	canonicalizeDelegatedDeliveryTicketGraph,
+	type DeliveryTicketGraph,
+} from "./delivery-ticket-graph.ts";
 import {
 	createResearchEvidenceEnvelope,
 	createBlocker,
@@ -591,12 +594,17 @@ function buildExplorationSystemPrompt(input: {
 }
 
 function buildTicketGraphSystemPrompt(input: { asset: AgentAssetMetadata; preparedLaunch: PreparedLaunch }) {
+	const skillBlocks = input.preparedLaunch.skillRefs.map((ref) => {
+		const content = readFileSync(ref.path, "utf8");
+		return `## Skill\nName: ${ref.name}\nPath: ${ref.path}\nDigest: ${ref.digest}\n\n${content}`;
+	});
 	return [
 		input.asset.systemPrompt,
 		"You are executing the package-owned to-tickets workflow.",
 		`Artifact topic: ${input.preparedLaunch.launchProvenance.artifactTopic}.`,
 		"Read only the granted approved-spec and delivery-parent aliases through workflow_artifact_session.",
-		"Call workflow_artifact_session exactly once with action=write_graph and the complete canonical graph.",
+		"Call workflow_artifact_session exactly once with action=write_graph and the complete graph payload. The runtime, not the model, computes and authorizes the canonical digest.",
+		...skillBlocks,
 	].join("\n\n");
 }
 
@@ -719,7 +727,8 @@ function createDefaultTicketGraphExecutor(): TicketGraphExecutor {
 							return { content: [{ type: "text" as const, text: await input.readArtifact(params.alias) }], details: { alias: params.alias } };
 						}
 						if (!params.graph) throw new Error("A delivery ticket graph is required.");
-						const artifact = await input.writeArtifact(params.graph);
+						const graph = canonicalizeDelegatedDeliveryTicketGraph(params.graph);
+						const artifact = await input.writeArtifact(graph);
 						return { content: [{ type: "text" as const, text: JSON.stringify(artifact, null, 2) }], details: artifact };
 					},
 				}],
