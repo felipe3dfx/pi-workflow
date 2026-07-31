@@ -1183,6 +1183,50 @@ test("define-product privately binds revision approval and publication", async (
 	assert.equal(runtime.hasActiveTurn(), false);
 });
 
+test("ticket publication recovery routes action-only calls through the ticket MCP controller without a native gateway", async () => {
+	const handlers = new Map();
+	const tools = new Map();
+	const commands = [];
+	const calls = [];
+	let active = false;
+	const ticketMcpPublication = {
+		allowedTools: ["linear_get_user", "linear_get_issue", "linear_list_issue_statuses", "linear_list_issues", "linear_save_issue", "workflow_define_product"],
+		setMcpAvailable() {},
+		clear() { active = false; },
+		hasActiveTurn: () => active,
+		begin: async (definitionId, toolCallId, input) => {
+			calls.push({ kind: "begin", definitionId, toolCallId, input });
+			active = true;
+			return { status: "continuing" };
+		},
+		complete: async () => ({ status: "blocked", blocker: { code: "unused", message: "unused" } }),
+		expectedModelCall: () => active ? { toolName: "linear_get_user", input: { query: "me" } } : undefined,
+		nextCallInstruction: () => "continue-ticket-mcp",
+		handleToolCall: async (event) => { calls.push({ kind: "tool", event }); },
+		handleToolResult: async (event) => { calls.push({ kind: "result", event }); return true; },
+	};
+	const runtime = createDefineProductRuntime({
+		workflow: {
+			pendingRecommendation: () => undefined,
+			reset() {},
+			restoreRecovery: async () => ({ definitionId: "definition-ticket-mcp", phase: "ticket-publication" }),
+			advance: async (command) => { commands.push(command); return { status: "tickets-published", definitionId: command.definitionId }; },
+		},
+		createDefinitionId: () => "unused",
+		ticketMcpPublication,
+	});
+	runtime.register({ on: (event, handler) => handlers.set(event, handler), registerTool: (tool) => tools.set(tool.name, tool) });
+	await handlers.get("session_start")({ type: "session_start" });
+	const started = await tools.get("workflow_define_product").execute("publish-mcp", { action: "publish_tickets" });
+	assert.deepEqual(started.details, { status: "continuing" });
+	assert.deepEqual(commands, []);
+	assert.deepEqual(calls[0], { kind: "begin", definitionId: "definition-ticket-mcp", toolCallId: "publish-mcp", input: { action: "publish_tickets" } });
+	assert.equal(runtime.allowedTools.includes("linear_save_issue"), true);
+	assert.match((await handlers.get("before_agent_start")({ systemPrompt: "base" })).systemPrompt, /linear_get_user/);
+	await handlers.get("tool_call")({ toolName: "linear_get_user", toolCallId: "owner", input: { query: "me" } });
+	assert.equal(calls.at(-1).kind, "tool");
+});
+
 test("define-product restores durable revision and ticket publication bindings as action-only", async () => {
 	for (const [phase, action, status, commandKind] of [
 		["approved-revision-approval", "approve_approved_revision", "revision-approved", "approve-approved-revision"],

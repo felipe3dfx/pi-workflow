@@ -8,12 +8,21 @@ export interface TicketPublicationIdentity {
 	parent: { id: string; revision: string };
 }
 
+export type TicketPublicationPendingMutation =
+	| { readonly kind: "child"; readonly stableKey: string }
+	| {
+			readonly kind: "relation";
+			readonly blockedStableKey: string;
+			readonly blockingStableKey: string;
+	  };
+
 export interface TicketPublicationManifest extends TicketPublicationIdentity {
 	schemaVersion: 1;
 	operationId: string;
 	stage: TicketPublicationStage;
 	children: readonly { stableKey: string; linearId: string }[];
 	relations: readonly { blockedStableKey: string; blockingStableKey: string }[];
+	pendingMutation?: TicketPublicationPendingMutation;
 	verification?: { graphDigest: string; parentId: string };
 }
 
@@ -43,6 +52,19 @@ export function createTicketPublicationOperationId(identity: TicketPublicationId
 function validShape(value: TicketPublicationManifest): string | undefined {
 	if (value.schemaVersion !== 1 || !stages.includes(value.stage) || !Array.isArray(value.children) || !Array.isArray(value.relations)) return "manifest shape is invalid";
 	if (!value.children.every((entry) => typeof entry?.stableKey === "string" && !!entry.stableKey && typeof entry.linearId === "string" && !!entry.linearId) || !value.relations.every((entry) => typeof entry?.blockedStableKey === "string" && !!entry.blockedStableKey && typeof entry.blockingStableKey === "string" && !!entry.blockingStableKey)) return "manifest shape is invalid";
+	if (new Set(value.children.map((entry) => entry.stableKey)).size !== value.children.length || new Set(value.children.map((entry) => entry.linearId)).size !== value.children.length || new Set(value.relations.map((entry) => `${entry.blockedStableKey}\u0000${entry.blockingStableKey}`)).size !== value.relations.length) return "manifest receipts must be unique";
+	if (value.pendingMutation !== undefined) {
+		const pending = value.pendingMutation;
+		if (
+			!pending ||
+			typeof pending !== "object" ||
+			(pending.kind === "child"
+				? value.stage !== "creating" || typeof pending.stableKey !== "string" || !pending.stableKey
+				: pending.kind === "relation"
+					? value.stage !== "relations" || typeof pending.blockedStableKey !== "string" || !pending.blockedStableKey || typeof pending.blockingStableKey !== "string" || !pending.blockingStableKey
+					: true)
+		) return "manifest pending mutation is invalid";
+	}
 	if (
 		typeof value.definitionId !== "string" ||
 		!value.definitionId ||
@@ -63,7 +85,12 @@ function validShape(value: TicketPublicationManifest): string | undefined {
 
 export function createTicketPublicationManifestStore({ persistence }: { persistence: TicketPublicationManifestPersistence }) {
 	async function read(operationId: string): Promise<TicketPublicationManifest | undefined> {
-		return (await persistence.read(operationId))?.value;
+		const stored = await persistence.read(operationId);
+		if (!stored) return undefined;
+		const invalid = validShape(stored.value);
+		if (invalid) throw new Error(invalid);
+		if (stored.value.operationId !== operationId || createTicketPublicationOperationId(stored.value) !== operationId) throw new Error("manifest operation identity conflicts");
+		return stored.value;
 	}
 	async function prepare(identity: TicketPublicationIdentity): Promise<TicketPublicationManifest> {
 		const operationId = createTicketPublicationOperationId(identity);
@@ -83,7 +110,7 @@ export function createTicketPublicationManifestStore({ persistence }: { persiste
 	}
 	async function advance(operationId: string, expected: TicketPublicationStage, next: TicketPublicationStage, changes: Pick<Partial<TicketPublicationManifest>, "children" | "relations" | "verification">): Promise<TicketPublicationManifest> {
 		const current = await persistence.read(operationId);
-		if (!current || current.value.stage !== expected) throw new Error("manifest compare-and-swap conflict");
+		if (!current || current.value.stage !== expected || current.value.pendingMutation) throw new Error("manifest compare-and-swap conflict");
 		if (!(expected === "prepared" && next === "children") && stages.indexOf(next) !== stages.indexOf(expected) + 1) throw new Error("illegal manifest transition");
 		if (
 			(expected !== "prepared" && "children" in changes) ||
@@ -97,15 +124,30 @@ export function createTicketPublicationManifestStore({ persistence }: { persiste
 		if (JSON.stringify(saved.value) !== JSON.stringify(value)) throw new Error("manifest transition read-back mismatch");
 		return saved.value;
 	}
+	async function beginMutation(operationId: string, stage: "creating" | "relations", pendingMutation: TicketPublicationPendingMutation) {
+		const current = await persistence.read(operationId);
+		if (!current || current.value.stage !== stage || current.value.pendingMutation) throw new Error("manifest compare-and-swap conflict");
+		const value = { ...current.value, pendingMutation };
+		const invalid = validShape(value);
+		if (invalid) throw new Error(invalid);
+		const saved = await persistence.compareAndSwap(current.revision, value);
+		if (JSON.stringify(saved.value) !== JSON.stringify(value)) throw new Error("manifest mutation receipt read-back mismatch");
+		return saved.value;
+	}
 	async function record(operationId: string, stage: "creating" | "relations", changes: Pick<TicketPublicationManifest, "children" | "relations">) {
 		const current = await persistence.read(operationId);
 		if (!current || current.value.stage !== stage) throw new Error("manifest compare-and-swap conflict");
-		const value = { ...current.value, ...changes };
+		if (canonicalJson(changes.children.slice(0, current.value.children.length)) !== canonicalJson(current.value.children) || canonicalJson(changes.relations.slice(0, current.value.relations.length)) !== canonicalJson(current.value.relations)) throw new Error("manifest receipts are append-only");
+		const pending = current.value.pendingMutation;
+		if (pending?.kind === "child" && (stage !== "creating" || changes.children.length !== current.value.children.length + 1 || changes.children.at(-1)?.stableKey !== pending.stableKey || canonicalJson(changes.relations) !== canonicalJson(current.value.relations))) throw new Error("manifest child receipt does not match pending mutation");
+		if (pending?.kind === "relation" && (stage !== "relations" || changes.relations.length !== current.value.relations.length + 1 || changes.relations.at(-1)?.blockedStableKey !== pending.blockedStableKey || changes.relations.at(-1)?.blockingStableKey !== pending.blockingStableKey || canonicalJson(changes.children) !== canonicalJson(current.value.children))) throw new Error("manifest relation receipt does not match pending mutation");
+		const { pendingMutation: _pendingMutation, ...withoutPending } = current.value;
+		const value = { ...withoutPending, ...changes } as TicketPublicationManifest;
 		const invalid = validShape(value);
 		if (invalid) throw new Error(invalid);
 		const saved = await persistence.compareAndSwap(current.revision, value);
 		if (JSON.stringify(saved.value) !== JSON.stringify(value)) throw new Error("manifest record read-back mismatch");
 		return saved.value;
 	}
-	return { read, prepare, advance, record };
+	return { read, prepare, advance, beginMutation, record };
 }

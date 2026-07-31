@@ -73,6 +73,7 @@ extensions/default-qa-handoff.ts
 extensions/define-product-mcp-publication.ts
 extensions/define-product-publication-recovery.ts
 extensions/define-product-runtime.ts
+extensions/define-product-ticket-mcp-publication.ts
 extensions/define-product-workflow.ts
 extensions/delegation-checkpoints.ts
 extensions/delivery-parent-publication.ts

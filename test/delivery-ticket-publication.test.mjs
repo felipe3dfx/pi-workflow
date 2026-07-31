@@ -277,7 +277,7 @@ test("blocks deterministically when nominal read-back changes an approved field"
 	assert.equal(persistence.value().stage, "verifying");
 });
 
-test("resumes a partially created graph without repeating a recorded child mutation", async () => {
+test("keeps an uncertain child receipt blocked when lookup cannot prove the mutation", async () => {
 	const persistence = memory();
 	const created = new Map();
 	const calls = [];
@@ -307,9 +307,13 @@ test("resumes a partially created graph without repeating a recorded child mutat
 	const dependencies = { definitionId: "definition-recovery", graph: dependencyGraph, manifest: createTicketPublicationManifestStore({ persistence }), guard, gateway };
 
 	assert.equal((await publishApprovedTickets(dependencies)).status, "blocked");
-	assert.deepEqual(await publishApprovedTickets(dependencies), { status: "tickets-published" });
-	assert.deepEqual(calls, ["TICKET-1", "TICKET-2", "TICKET-2"]);
-	assert.equal(persistence.value().stage, "verified");
+	assert.deepEqual(await publishApprovedTickets(dependencies), {
+		status: "blocked",
+		blocker: { code: "PI_WORKFLOW_PUBLICATION_RECOVERY_PENDING", message: "A prior child mutation is uncertain and cannot be repeated." },
+	});
+	assert.deepEqual(calls, ["TICKET-1", "TICKET-2"]);
+	assert.equal(persistence.value().stage, "creating");
+	assert.deepEqual(persistence.value().pendingMutation, { kind: "child", stableKey: "TICKET-2" });
 });
 
 test("blocks a non-exact child marker before a duplicate mutation", async () => {
@@ -370,7 +374,7 @@ test("refuses cycles and missing references before durable or Linear mutation", 
 	}
 });
 
-test("resumes a partially recorded blocker stage without repeating an edge mutation", async () => {
+test("keeps an uncertain blocker receipt blocked when lookup cannot prove the mutation", async () => {
 	const persistence = memory();
 	const children = new Map();
 	const blockers = [];
@@ -399,8 +403,12 @@ test("resumes a partially recorded blocker stage without repeating an edge mutat
 	const dependencies = { definitionId: "definition-relation-recovery", graph: dependencyGraph, manifest: createTicketPublicationManifestStore({ persistence }), guard, gateway };
 
 	assert.equal((await publishApprovedTickets(dependencies)).status, "blocked");
-	assert.deepEqual(await publishApprovedTickets(dependencies), { status: "tickets-published" });
-	assert.deepEqual(blockers, ["TICKET-2:TICKET-1", "TICKET-3:TICKET-1", "TICKET-3:TICKET-1"]);
+	assert.deepEqual(await publishApprovedTickets(dependencies), {
+		status: "blocked",
+		blocker: { code: "PI_WORKFLOW_PUBLICATION_RECOVERY_PENDING", message: "A prior blocker mutation is uncertain and cannot be repeated." },
+	});
+	assert.deepEqual(blockers, ["TICKET-2:TICKET-1", "TICKET-3:TICKET-1"]);
+	assert.deepEqual(persistence.value().pendingMutation, { kind: "relation", blockedStableKey: "TICKET-3", blockingStableKey: "TICKET-1" });
 });
 
 test("requires each recovery lookup capability before mutation", async (t) => {

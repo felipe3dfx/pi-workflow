@@ -20,6 +20,7 @@ import {
 	type DefaultProductReviewRuntimeOptions,
 } from "./default-product-review.ts";
 import type { DefineProductMcpPublication } from "./define-product-mcp-publication.ts";
+import type { DefineProductTicketMcpPublication } from "./define-product-ticket-mcp-publication.ts";
 import type { createDefineProductWorkflow } from "./define-product-workflow.ts";
 import { createDefineProductRuntime } from "./define-product-runtime.ts";
 import { createQaHandoffArtifactStore } from "./qa-handoff-artifact-store.ts";
@@ -215,6 +216,12 @@ export default function piWorkflowExtension(
 					| DefineProductMcpPublication
 					| undefined)
 			: undefined;
+	const defaultDefineProductTicketMcpPublication =
+		"ticketMcpPublication" in defineProductWorkflow
+			? (defineProductWorkflow.ticketMcpPublication as
+					| DefineProductTicketMcpPublication
+					| undefined)
+			: undefined;
 	const defineProductRuntime = createDefineProductRuntime({
 		workflow: defineProductWorkflow,
 		createDefinitionId:
@@ -222,6 +229,9 @@ export default function piWorkflowExtension(
 			(() => crypto.randomUUID()),
 		...(defaultDefineProductMcpPublication
 			? { mcpPublication: defaultDefineProductMcpPublication }
+			: {}),
+		...(defaultDefineProductTicketMcpPublication
+			? { ticketMcpPublication: defaultDefineProductTicketMcpPublication }
 			: {}),
 	});
 	defineProductRuntime.register(pi);

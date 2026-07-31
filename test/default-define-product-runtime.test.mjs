@@ -1469,6 +1469,59 @@ test("default define-product ignores LINEAR_API_KEY and publishes through authen
 	}
 });
 
+test("default packaged define-product routes publish_tickets to MCP when no native ticket gateway is injected", async () => {
+	let active = false;
+	const calls = [];
+	const ticketMcpPublication = {
+		allowedTools: ["linear_get_user", "linear_get_issue", "linear_list_issue_statuses", "linear_list_issues", "linear_save_issue", "workflow_define_product"],
+		setMcpAvailable() {},
+		clear() { active = false; },
+		hasActiveTurn: () => active,
+		begin: async (definitionId, toolCallId, input) => {
+			active = true;
+			calls.push({ definitionId, toolCallId, input });
+			return { status: "continuing" };
+		},
+		complete: async () => ({ status: "blocked", blocker: { code: "unused", message: "unused" } }),
+		expectedModelCall: () => active ? { toolName: "linear_get_user", input: { query: "me" } } : undefined,
+		nextCallInstruction: () => undefined,
+		handleToolCall: async () => undefined,
+		handleToolResult: async () => false,
+	};
+	const workflow = createDefaultDefineProductWorkflow(
+		{},
+		() => undefined,
+		{
+			artifactStore: createAtomicArtifactStore(),
+			checkpointStore: createInMemoryDelegationCheckpointStore(),
+			ticketMcpPublication,
+		},
+	);
+	assert.equal(workflow.ticketMcpPublication, ticketMcpPublication);
+	assert.equal("linearDeliveryTickets" in workflow, false);
+
+	const nativeGateway = {
+		readAuthoritySnapshot: async () => ({}),
+		findChildren: async () => [],
+		findBlockers: async () => [],
+		createChild: async () => ({}),
+		createBlocker: async () => {},
+		readBack: async () => ({}),
+	};
+	const compatible = createDefaultDefineProductWorkflow(
+		{},
+		() => undefined,
+		{
+			artifactStore: createAtomicArtifactStore(),
+			checkpointStore: createInMemoryDelegationCheckpointStore(),
+			linearDeliveryTickets: nativeGateway,
+			ticketMcpPublication,
+		},
+	);
+	assert.equal(compatible.ticketMcpPublication, undefined);
+	assert.deepEqual(calls, []);
+});
+
 test("default public publish_tickets uses canonical Engram re-reads before mutations", async () => {
 	const originalFetch = globalThis.fetch;
 	const observations = new Map();

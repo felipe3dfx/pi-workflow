@@ -51,6 +51,10 @@ import {
 	type DefineProductMcpPublication,
 } from "./define-product-mcp-publication.ts";
 import {
+	createDefineProductTicketMcpPublication,
+	type DefineProductTicketMcpPublication,
+} from "./define-product-ticket-mcp-publication.ts";
+import {
 	createDefineProductPublicationRecoveryStore,
 	type DefineProductPublicationRecoveryStore,
 } from "./define-product-publication-recovery.ts";
@@ -66,7 +70,10 @@ import { createApprovedRevisionStore } from "./approved-revision-store.ts";
 import type { createRuntimeLinearApprovedRevisionGateway } from "./runtime-linear-approved-revision.ts";
 import { recoverApprovedTicketGraph } from "./ticket-graph-recovery.ts";
 import { createTicketPublicationAuthorityGuard } from "./ticket-publication-authority-guard.ts";
-import { createTicketPublicationManifestStore } from "./ticket-publication-manifest.ts";
+import {
+	createTicketPublicationManifestStore,
+	createTicketPublicationOperationId,
+} from "./ticket-publication-manifest.ts";
 import type { createRuntimeLinearDeliveryTicketGateway } from "./runtime-linear-delivery-ticket.ts";
 import {
 	canonicalizeDelegatedDeliveryTicketGraph,
@@ -356,6 +363,7 @@ export interface DefaultDefineProductRuntimeOptions {
 	/** Explicit legacy gateway retained only for tests and compatibility embeddings. */
 	linearDeliveryParents?: DeliveryParentPublicationDependencies["linear"];
 	deliveryParentMcpPublication?: DefineProductMcpPublication;
+	ticketMcpPublication?: DefineProductTicketMcpPublication;
 	deliveryParentPublicationRecovery?: DefineProductPublicationRecoveryStore;
 	linearDeliveryTickets?: ReturnType<typeof createRuntimeLinearDeliveryTicketGateway>;
 	linearApprovedRevision?: ReturnType<typeof createRuntimeLinearApprovedRevisionGateway>;
@@ -1544,17 +1552,28 @@ export function createDefaultDefineProductWorkflow(
 					definitionId,
 					graph,
 					manifest: ticketPublicationManifest,
-					guard: createTicketPublicationAuthorityGuard({
-						expected,
-						current,
-					}),
+					guard: createTicketPublicationAuthorityGuard({ expected, current }),
 					gateway: linearDeliveryTickets,
 				});
 				return outcome.status === "tickets-published"
 					? { status: "tickets-published", definitionId }
 					: outcome;
 			},
-		} : undefined,
+		} : {
+			async publish(definitionId) {
+				const publication = await approvedTicketPublication.read(definitionId);
+				if (!publication) return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_TICKET_APPROVAL_MISMATCH", "Ticket publication requires an exact durable Owner-approved graph.") };
+				const operationId = createTicketPublicationOperationId({
+					definitionId,
+					graphDigest: publication.graphRef.digest,
+					parent: { id: publication.graphParent.id, revision: publication.graphParent.revision },
+				});
+				const manifest = await ticketPublicationManifest.read(operationId);
+				return manifest?.stage === "verified" && manifest.graphDigest === publication.graphRef.digest && manifest.parent.id === publication.graphParent.id
+					? { status: "tickets-published", definitionId }
+					: { status: "blocked", blocker: createBlocker("PI_WORKFLOW_RECOVERY_FAILED", "Ticket publication is not durably verified.") };
+			},
+		},
 		approvedRevisionPublication: linearApprovedRevision && authenticatedAuthority ? {
 			async draft(input) {
 				const outcome = await draftApprovedRevision({ input, gateway: linearApprovedRevision, store: approvedRevisionStore });
@@ -1623,5 +1642,21 @@ export function createDefaultDefineProductWorkflow(
 						parentSnapshots,
 					})
 				: createUnavailableDefineProductMcpPublication());
-	return Object.assign(workflow, { mcpPublication });
+	const ticketMcpPublication = linearDeliveryTickets
+		? undefined
+		: options.ticketMcpPublication ??
+			(configuredOwner
+				? createDefineProductTicketMcpPublication({
+						approvedPublications: approvedTicketPublication,
+						approvedSpecReader,
+						recoverGraph: (publication) =>
+							recoverApprovedTicketGraph(
+								artifactStore,
+								publication.graphRef,
+							).catch(() => undefined),
+						manifest: ticketPublicationManifest,
+						owner: configuredOwner.authority,
+					})
+				: undefined);
+	return Object.assign(workflow, { mcpPublication, ticketMcpPublication });
 }

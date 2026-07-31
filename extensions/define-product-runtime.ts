@@ -15,6 +15,7 @@ import type {
 	DefineProductRecovery,
 } from "./define-product-workflow.ts";
 import type { DefineProductMcpPublication } from "./define-product-mcp-publication.ts";
+import type { DefineProductTicketMcpPublication } from "./define-product-ticket-mcp-publication.ts";
 import { isReadOnlyEngramCall } from "./public-entry-guard.ts";
 
 const toolName = "workflow_define_product";
@@ -587,6 +588,7 @@ export interface DefineProductRuntimeDependencies {
 	};
 	createDefinitionId(): string;
 	mcpPublication?: DefineProductMcpPublication;
+	ticketMcpPublication?: DefineProductTicketMcpPublication;
 }
 
 export function createDefineProductRuntime(
@@ -725,6 +727,7 @@ export function createDefineProductRuntime(
 		teamListToolCallId = undefined;
 		availableTeams = undefined;
 		dependencies.mcpPublication?.clear();
+		dependencies.ticketMcpPublication?.clear();
 		dependencies.workflow.reset();
 	}
 
@@ -743,6 +746,7 @@ export function createDefineProductRuntime(
 			|| awaitingApprovedRevisionApproval
 			|| awaitingApprovedRevisionPublication
 			|| dependencies.mcpPublication?.hasActiveTurn() === true
+			|| dependencies.ticketMcpPublication?.hasActiveTurn() === true
 		);
 	}
 
@@ -771,6 +775,13 @@ export function createDefineProductRuntime(
 				`After the Owner approves it naturally, call ${toolName} with only action="approve_approved_revision".`,
 			].join(" ");
 		if (awaitingTicketPublication) {
+			const expected = dependencies.ticketMcpPublication?.expectedModelCall();
+			if (expected)
+				return [
+					"Continue the exact authenticated Linear MCP ticket publication.",
+					`Call ${expected.toolName} exactly once with ${JSON.stringify(expected.input)}.`,
+					"Do not add fields, reuse earlier calls, call tools in parallel, or expose protocol metadata.",
+				].join(" ");
 			return [
 				"The exact durable Owner-approved ticket graph is ready for native publication.",
 				`Call ${toolName} with only action="publish_tickets".`,
@@ -870,16 +881,18 @@ export function createDefineProductRuntime(
 	function register(pi: ExtensionAPI): void {
 		pi.on("before_agent_start", () => {
 			if (!hasActiveTurn()) return undefined;
-			if (
-				(awaitingSpecApproval || awaitingPublication) &&
-				dependencies.mcpPublication
-			) {
+			const publication = awaitingTicketPublication
+				? dependencies.ticketMcpPublication
+				: (awaitingSpecApproval || awaitingPublication)
+					? dependencies.mcpPublication
+					: undefined;
+			if (publication) {
 				const getActiveTools = (
 					pi as { getActiveTools?: () => readonly string[] }
 				).getActiveTools;
 				const available = new Set(getActiveTools?.call(pi) ?? []);
-				dependencies.mcpPublication.setMcpAvailable(
-					dependencies.mcpPublication.allowedTools
+				publication.setMcpAvailable(
+					publication.allowedTools
 						.filter((name) => name !== toolName)
 						.every((name) => available.has(name)),
 				);
@@ -905,7 +918,10 @@ export function createDefineProductRuntime(
 					readOnlyEngramToolCallIds.add(event.toolCallId);
 				return undefined;
 			}
-			return dependencies.mcpPublication?.handleToolCall(event);
+			const publication = awaitingTicketPublication
+				? dependencies.ticketMcpPublication
+				: dependencies.mcpPublication;
+			return publication?.handleToolCall(event);
 		});
 		pi.on("tool_result", async (event) => {
 			if (
@@ -922,7 +938,9 @@ export function createDefineProductRuntime(
 				readOnlyEngramToolCallIds.delete(event.toolCallId)
 			)
 				return undefined;
-			const publication = dependencies.mcpPublication;
+			const publication = awaitingTicketPublication
+				? dependencies.ticketMcpPublication
+				: dependencies.mcpPublication;
 			if (!publication) return undefined;
 			const processed = await publication.handleToolResult(event);
 			if (!processed) return undefined;
@@ -1355,6 +1373,28 @@ export function createDefineProductRuntime(
 							details: outcome,
 						};
 					}
+					if (dependencies.ticketMcpPublication) {
+						const publicationOutcome = dependencies.ticketMcpPublication.hasActiveTurn()
+							? await dependencies.ticketMcpPublication.complete(params)
+							: await dependencies.ticketMcpPublication.begin(
+									activeDefinitionId,
+									toolCallId,
+									params,
+								);
+						let outcome: DefineProductOutcome = publicationOutcome as DefineProductOutcome;
+						if (publicationOutcome.status === "tickets-published") {
+							outcome = await dependencies.workflow.advance({
+								kind: "publish-tickets",
+								definitionId: activeDefinitionId,
+							});
+							if (outcome.status === "tickets-published") clearActiveTurn();
+						}
+						const exposedOutcome = publicOutcome(outcome);
+						return {
+							content: [{ type: "text", text: JSON.stringify(exposedOutcome, null, 2) }],
+							details: exposedOutcome,
+						};
+					}
 					command = { kind: "publish-tickets", definitionId: activeDefinitionId };
 				} else if (params.action === "to_approved_revision") {
 					const parsed = activeDefinitionId
@@ -1557,7 +1597,11 @@ export function createDefineProductRuntime(
 
 	return {
 		toolName,
-		allowedTools: dependencies.mcpPublication?.allowedTools ?? [toolName],
+		allowedTools: [...new Set([
+			...(dependencies.mcpPublication?.allowedTools ?? []),
+			...(dependencies.ticketMcpPublication?.allowedTools ?? []),
+			toolName,
+		])],
 		handlePublicEntry,
 		register,
 		shouldContinue,
