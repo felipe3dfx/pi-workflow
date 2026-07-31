@@ -235,6 +235,21 @@ test("publishes the exact two-ticket graph and native blocker through rewritten 
 	);
 });
 
+test("accepts Pi-injected undefined optional fields on canonical save calls", async () => {
+	const state = fixture();
+	const controller = createDefineProductTicketMcpPublication(state.dependencies);
+	await start(controller);
+	const stopped = await drive(controller, state, { stopBeforeSave: true });
+	const event = {
+		toolName: stopped.expected.toolName,
+		toolCallId: "pi-coerced-save",
+		input: { ...structuredClone(stopped.expected.input), id: undefined, dueDate: undefined },
+	};
+	assert.equal(await controller.handleToolCall(event), undefined);
+	assert.equal(event.input.title, "Primero");
+	assert.notEqual(event.input.description, "PI_WORKFLOW_CANONICAL_DELIVERY_TICKET_BODY");
+});
+
 test("default single-user ticket publication keeps historical approval authority as provenance", async () => {
 	const state = fixture({ actorId: "current-single-user", ownerValue: null });
 	const controller = createDefineProductTicketMcpPublication(state.dependencies);

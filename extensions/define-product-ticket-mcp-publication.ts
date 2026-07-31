@@ -227,12 +227,15 @@ function exactInput(
 	value: unknown,
 	expected: Readonly<Record<string, unknown>>,
 ): boolean {
+	if (!record(value)) return false;
+	const supplied = Object.fromEntries(
+		Object.entries(value).filter(([, entry]) => entry !== undefined),
+	);
 	return (
-		record(value) &&
-		Object.keys(value).length === Object.keys(expected).length &&
+		Object.keys(supplied).length === Object.keys(expected).length &&
 		Object.entries(expected).every(
 			([key, expectedValue]) =>
-				canonicalJson(value[key]) === canonicalJson(expectedValue),
+				canonicalJson(supplied[key]) === canonicalJson(expectedValue),
 		)
 	);
 }
