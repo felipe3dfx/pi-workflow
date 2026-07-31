@@ -150,6 +150,14 @@ test("rejects unsafe, non-vertical, and multi-context tickets", () => {
 			createDeliveryTicketGraph({ parent: value.parent, coverage: createSpecCoverageIndex(value.coverage), language: value.language, tickets: value.tickets });
 		}, { code }, name);
 	}
+	const value = structuredClone(fixture);
+	value.coverage.stories[0].contextId = "other-context";
+	value.tickets[1].deliveryBindings[0].contextId = "other-context";
+	value.tickets[0].deliveryBindings.push({ storyId: "US-1", acceptanceCriterionId: "US-1-AC-1", contextId: "other-context" });
+	assert.throws(
+		() => createDeliveryTicketGraph({ parent: value.parent, coverage: createSpecCoverageIndex(value.coverage), language: value.language, tickets: value.tickets }),
+		/observed 2 distinct contextIds/,
+	);
 });
 
 test("rejects stale parent and every approval binding mismatch", () => {

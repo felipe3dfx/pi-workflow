@@ -122,7 +122,7 @@ function validateTicket(value: unknown, coverage: SpecCoverageIndex): Ticket {
 		bindings.add(key);
 		contexts.add(binding.contextId);
 	}
-	if (contexts.size !== 1) fail("PI_WORKFLOW_TICKET_CONTEXT_SPAN");
+	if (contexts.size !== 1) fail("PI_WORKFLOW_TICKET_CONTEXT_SPAN", `each ticket must bind exactly one contextId; observed ${contexts.size} distinct contextIds`);
 	if (candidate.deliveryBindings.some((binding) => !refs.some((ref) => ref.kind === "story" && ref.id === binding.storyId))) fail("PI_WORKFLOW_TICKET_REFERENCE_INVALID", "every deliveryBinding storyId requires a matching story ref on the same ticket");
 	return { stableKey: candidate.stableKey, title: candidate.title, outcome: candidate.outcome, acceptanceCriteria: [...candidate.acceptanceCriteria], estimate: { points: candidate.estimate.points, rationale: candidate.estimate.rationale }, blockers: [...candidate.blockers].sort(), refs: refs.sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right))), deliveryBindings: candidate.deliveryBindings.map((binding) => ({ storyId: binding.storyId, acceptanceCriterionId: binding.acceptanceCriterionId, contextId: binding.contextId })).sort((left, right) => canonicalJson(left).localeCompare(canonicalJson(right))) };
 }
