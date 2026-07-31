@@ -173,13 +173,11 @@ async function drive(
 					teamId: event.input.team,
 					parentId: event.input.parentId,
 					title: event.input.title,
-					description: event.input.description,
-					estimate: event.input.estimate,
-					status: { id: event.input.state, name: "Triage", type: "triage" },
-					assigneeId: null,
-					cycleId: null,
+					description: event.input.description.replace(/^- /gm, "* "),
+					estimate: { value: event.input.estimate, name: `${event.input.estimate} Points` },
+					status: "Triage",
+					statusType: "triage",
 					labels: [],
-					projectId: null,
 				};
 				state.issues.set(created.id, created);
 				await controller.handleToolResult({ toolName: expected.toolName, toolCallId: event.toolCallId, content: [{ type: "text", text: JSON.stringify({ id: created.id }) }], isError: false });

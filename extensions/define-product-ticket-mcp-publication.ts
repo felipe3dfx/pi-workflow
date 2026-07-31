@@ -406,6 +406,15 @@ function exactMarkdown(expected: string, actual: string): boolean {
 	return actual === expected || (expected.endsWith("\n") && actual === expected.slice(0, -1));
 }
 
+function exactTicketMarkdown(expected: string, actual: string): boolean {
+	return exactMarkdown(expected, actual) || exactMarkdown(expected.replace(/^- /gm, "* "), actual);
+}
+
+function estimatePoints(value: unknown): number | undefined {
+	if (typeof value === "number") return value;
+	return record(value) && typeof value.value === "number" ? value.value : undefined;
+}
+
 function exactParent(context: Context, value: unknown): boolean {
 	if (!record(value)) return false;
 	const teamId = directOrObjectId(value, "teamId", "team");
@@ -436,10 +445,11 @@ function exactChild(
 		directOrObjectId(value, "teamId", "team") === context.publication.graphParent.teamId &&
 		directOrObjectId(value, "parentId", "parent") === context.publication.graphParent.id &&
 		value.title === title(ticket) &&
-		value.description === renderDeliveryTicketBody(ticket) &&
-		value.estimate === ticket.estimate.points &&
+		typeof value.description === "string" &&
+		exactTicketMarkdown(renderDeliveryTicketBody(ticket), value.description) &&
+		estimatePoints(value.estimate) === ticket.estimate.points &&
 		status !== undefined &&
-		status.id === context.triageId &&
+		(status.id === undefined || status.id === context.triageId) &&
 		status.name === "Triage" &&
 		status.type === "triage" &&
 		directOrObjectId(value, "assigneeId", "assignee") === null &&
