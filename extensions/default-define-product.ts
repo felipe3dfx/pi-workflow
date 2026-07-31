@@ -42,7 +42,7 @@ import { createRuntimeEngramApprovedSpecStore, createRuntimeEngramArtifactStore 
 import { createRuntimePrivateStatePersistence } from "./runtime-private-state.ts";
 import { createDurableExplorationRecoveryStore } from "./exploration-recovery.ts";
 import { createDurableSpecApprovalRecoveryStore } from "./spec-approval-recovery.ts";
-import { createDurableTicketApprovalRecoveryStore } from "./ticket-approval-recovery.ts";
+import { createEngramTicketApprovalRecoveryStore } from "./ticket-approval-recovery.ts";
 import { createDurablePublicationManifest } from "./publication-manifest.ts";
 import type { DeliveryParentPublicationDependencies } from "./delivery-parent-publication.ts";
 import {
@@ -1097,9 +1097,9 @@ export function createDefaultDefineProductWorkflow(
 		});
 	const ticketApprovalRecoveryStore =
 		options.ticketApprovalRecoveryStore ??
-		createDurableTicketApprovalRecoveryStore({
-			path: join(privateStateDirectory, "ticket-approval-recovery.json"),
-			persistence: privateStatePersistence,
+		createEngramTicketApprovalRecoveryStore({
+			store: artifactStore,
+			project: baseProject.name,
 		});
 	const approvedSpecReader = options.approvedSpecReader ?? createEngramApprovedSpecReader({
 		project: baseProject.name,

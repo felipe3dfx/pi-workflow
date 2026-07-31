@@ -1522,6 +1522,214 @@ test("default packaged define-product routes publish_tickets to MCP when no nati
 	assert.deepEqual(calls, []);
 });
 
+test("default define-product restores approved ticket publication across sandbox roots and routes action-only publication to MCP", async () => {
+	const previousCodingAgentDir = process.env.PI_CODING_AGENT_DIR;
+	const previousAgentHome = process.env.PI_AGENT_HOME;
+	const sandboxOne = await mkdtemp(join(tmpdir(), "pi-workflow-ticket-recovery-one-"));
+	const sandboxTwo = await mkdtemp(join(tmpdir(), "pi-workflow-ticket-recovery-two-"));
+	const artifactStore = createAtomicArtifactStore();
+	const definitionId = "definition-1";
+	const actor = {
+		actorId: "owner-1",
+		role: "Owner",
+		authorityRevision: "authority-r1",
+	};
+	const spec = createProductSpecEnvelope({
+		definitionId,
+		target: {
+			kind: "linear-parent-description",
+			teamId: "team-1",
+			title: "Publicación recuperable",
+		},
+		revision: "spec-r1",
+		problem: "La aprobación no sobrevive al reemplazo del sandbox.",
+		solution: "La continuación aprobada se conserva en Engram.",
+		userStories: ["Como Owner, quiero publicar los tickets ya aprobados."],
+		decisions: [
+			{
+				id: "decision-1",
+				status: "resolved",
+				pertinent: true,
+				text: "La publicación se reanuda sin identidad suministrada por el agente.",
+			},
+		],
+		tests: ["Verificar la recuperación entre sandboxes."],
+		outOfScope: ["Buscar otras definiciones pendientes."],
+		supportArtifacts: [],
+	});
+	const approval = createProductSpecApprovalEnvelope({ spec, actor });
+	const approved = { spec, approval, sourceRevision: "approved-r1" };
+	const approvedSpecRef = {
+		kind: "engram",
+		project: "pi-workflow",
+		topic: `workflow/define-product/${definitionId}/approved-spec`,
+		revision: approved.sourceRevision,
+		schema: "approved-spec",
+		schemaVersion: 1,
+		digest: spec.digest,
+	};
+	const parent = {
+		id: "ILA-2436",
+		teamId: "team-1",
+		revision: "parent-r1",
+		specDigest: spec.digest,
+	};
+	const parentUnsigned = {
+		schema: "delivery-parent",
+		schemaVersion: 1,
+		payload: parent,
+	};
+	const parentRef = await createWorkflowArtifactInterface(artifactStore)
+		.openSession({
+			project: { name: "pi-workflow", root: process.cwd() },
+			topic: `workflow/define-product/${definitionId}/published-parent`,
+			schema: "delivery-parent",
+			schemaVersion: 1,
+			strategy: "snapshot",
+			aliases: [],
+		})
+		.writeDeliveryParentSnapshot({
+			...parentUnsigned,
+			digest: digestCanonicalValue(parentUnsigned),
+		});
+	const graph = createDeliveryTicketGraph({
+		parent,
+		language: "es",
+		coverage: createSpecCoverageIndex({
+			stories: [
+				{
+					id: "story-1",
+					contextId: "delivery",
+					acceptanceCriteria: ["ac-1"],
+				},
+			],
+			decisions: ["decision-1"],
+			tests: ["test-1"],
+		}),
+		tickets: [
+			{
+				stableKey: "T-1",
+				title: "Restaurar publicación",
+				outcome: "La publicación aprobada se restaura.",
+				acceptanceCriteria: ["Uno", "Dos", "Tres", "Cuatro"],
+				estimate: { points: 1, rationale: "Cambio acotado" },
+				blockers: [],
+				refs: [
+					{ kind: "story", id: "story-1" },
+					{ kind: "decision", id: "decision-1" },
+					{ kind: "test", id: "test-1" },
+				],
+				deliveryBindings: [
+					{
+						storyId: "story-1",
+						acceptanceCriterionId: "ac-1",
+						contextId: "delivery",
+					},
+				],
+			},
+		],
+	});
+	let mcpActive = false;
+	const mcpBegins = [];
+	const ticketMcpPublication = {
+		allowedTools: DEFINE_PRODUCT_MCP_TOOLS,
+		setMcpAvailable() {},
+		clear() {
+			mcpActive = false;
+		},
+		hasActiveTurn: () => mcpActive,
+		async begin(recoveredDefinitionId, toolCallId, input) {
+			mcpActive = true;
+			mcpBegins.push({ recoveredDefinitionId, toolCallId, input });
+			return { status: "continuing" };
+		},
+		async complete() {
+			return {
+				status: "blocked",
+				blocker: { code: "unused", message: "unused" },
+			};
+		},
+		expectedModelCall: () => undefined,
+		nextCallInstruction: () => undefined,
+		handleToolCall: async () => undefined,
+		handleToolResult: async () => false,
+	};
+
+	try {
+		process.env.PI_CODING_AGENT_DIR = sandboxOne;
+		delete process.env.PI_AGENT_HOME;
+		const first = createDefaultDefineProductWorkflow(
+			{},
+			() => executionContext(),
+			{
+				artifactStore,
+				checkpointStore: createInMemoryDelegationCheckpointStore(),
+				approvedSpecReader: { read: async () => structuredClone(approved) },
+				authenticatedAuthority: { current: async () => actor },
+				ticketGraphExecutor: async (input) => {
+					await input.writeArtifact(graph);
+					return { assistantText: "Ticket graph ready." };
+				},
+			},
+		);
+		const ready = await first.advance({
+			kind: "to-tickets",
+			definitionId,
+			approvedSpecRef,
+			parentRef,
+		});
+		assert.equal(ready.status, "tickets-ready", ready.blocker?.message);
+		const approvedTickets = await first.advance({
+			kind: "approve-tickets",
+			definitionId,
+			parentRef,
+			graphRef: ready.graphRef,
+			digest: ready.graph.digest,
+		});
+		assert.equal(
+			approvedTickets.status,
+			"tickets-approved",
+			approvedTickets.blocker?.message,
+		);
+
+		process.env.PI_CODING_AGENT_DIR = sandboxTwo;
+		const second = loadExtension({
+			artifactStore,
+			approvedSpecReader: { read: async () => structuredClone(approved) },
+			authenticatedAuthority: { current: async () => actor },
+			ticketMcpPublication,
+		});
+		await second.handlers.get("session_start")({}, executionContext());
+		const publication = await second.tool.execute(
+			"cross-sandbox-publication",
+			{ action: "publish_tickets" },
+			undefined,
+			undefined,
+			executionContext(),
+		);
+		assert.deepEqual(publication.details, { status: "continuing" });
+		assert.deepEqual(mcpBegins, [
+			{
+				recoveredDefinitionId: definitionId,
+				toolCallId: "cross-sandbox-publication",
+				input: { action: "publish_tickets" },
+			},
+		]);
+	} finally {
+		if (previousCodingAgentDir === undefined) {
+			delete process.env.PI_CODING_AGENT_DIR;
+		} else {
+			process.env.PI_CODING_AGENT_DIR = previousCodingAgentDir;
+		}
+		if (previousAgentHome === undefined) delete process.env.PI_AGENT_HOME;
+		else process.env.PI_AGENT_HOME = previousAgentHome;
+		await Promise.all([
+			rm(sandboxOne, { recursive: true, force: true }),
+			rm(sandboxTwo, { recursive: true, force: true }),
+		]);
+	}
+});
+
 test("default public publish_tickets uses canonical Engram re-reads before mutations", async () => {
 	const originalFetch = globalThis.fetch;
 	const observations = new Map();

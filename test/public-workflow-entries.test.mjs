@@ -304,7 +304,21 @@ After receiving an allowed invocation with a valid Linear ID:
 Never change status, assignee, Cycle, labels, estimate, blockers, relations, or description. Those actions remain manual.`;
 	}
 	if (golden.capability === "implemented") {
-		return `## Route recommendation
+		return `## Approved Delivery ticket publication
+
+This continuation rule takes precedence over treating the request as a new domain anchor. When the Owner directly asks in natural language to publish Delivery tickets that were already approved:
+
+- Call \`workflow_define_product\` with exactly \`{"action":"publish_tickets"}\`. Never add \`domainAnchor\`, a Delivery parent ID, \`definitionId\`, a digest, an artifact reference, or any other field, even when the request names the parent.
+- Do not invoke \`/define-product\`, start research, recommend a route, create a new definition, or fall through to another or pending capability.
+- If \`session_start\` restored the durable continuation, let the runtime route this action-only call to authenticated Linear MCP publication.
+- If durable recovery is absent or invalid, report exactly the workflow blocker and stop:
+
+\`\`\`text
+code: PI_WORKFLOW_TICKET_APPROVAL_MISMATCH
+message: Ticket publication requires the current durable Owner-approved graph.
+\`\`\`
+
+## Route recommendation
 
 After receiving an allowed invocation with a valid domain anchor:
 
