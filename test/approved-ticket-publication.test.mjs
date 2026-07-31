@@ -60,7 +60,7 @@ function reDigestApproval(approval, payload) {
 
 function saveDurablePublication(bytes, input) {
 	const unsigned = { schema: "approved-ticket-publication", schemaVersion: 1, payload: input };
-	bytes.set("workflow/tickets/definition-1", [{
+	bytes.set("workflow/tickets/definition-1/approved-ticket-publication", [{
 		revision: "r1",
 		content: `${canonicalJson({ ...unsigned, digest: digestCanonicalValue(unsigned) })}\n`,
 	}]);
@@ -86,6 +86,7 @@ test("approved ticket publication persists and reads back the exact graph refere
 	const restarted = createApprovedTicketPublicationStore({ store: backend, project: "pi-workflow", topic: "workflow/tickets" });
 
 	assert.equal(ref.schema, "approved-ticket-publication");
+	assert.equal(ref.topic, "workflow/tickets/definition-1/approved-ticket-publication");
 	assert.deepEqual(await restarted.read("definition-1"), input);
 	assert.deepEqual(await restarted.save(input), ref);
 });

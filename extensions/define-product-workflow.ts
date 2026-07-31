@@ -271,7 +271,7 @@ function isExpectedApprovedTicketPublicationRef(
 	return (
 		ref.kind === "engram" &&
 		ref.project === project &&
-		ref.topic === `workflow/define-product/${publication.definitionId}/approved-ticket-publication/${publication.definitionId}` &&
+		ref.topic === `workflow/define-product/${publication.definitionId}/approved-ticket-publication` &&
 		typeof ref.revision === "string" &&
 		ref.revision.trim().length > 0 &&
 		ref.schema === "approved-ticket-publication" &&

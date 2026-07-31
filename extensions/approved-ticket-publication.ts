@@ -57,7 +57,7 @@ function parse(content: string, project: string): PublicationEnvelope {
 
 export function createApprovedTicketPublicationStore({ store, project, topic }: { store: WorkflowArtifactStore; project: string; topic: string }) {
 	function snapshotTopic(definitionId: string): string {
-		return `${topic}/${definitionId}`;
+		return `${topic}/${definitionId}/approved-ticket-publication`;
 	}
 
 	async function read(definitionId: string): Promise<ApprovedTicketPublication | undefined> {

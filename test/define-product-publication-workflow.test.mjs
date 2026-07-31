@@ -235,7 +235,7 @@ test("to-tickets and approval bind only exact verified references and recover co
 		readPublishedParent: async (ref) => ref === parentRef ? parent : undefined,
 		recoverTicketGraph: async (ref) => ref === graphRef ? graph : undefined,
 		approvedTicketGraphs: { save: async (_definitionId, value) => { saved.push(value); return graphRef; } },
-		approvedTicketPublication: { save: async (value) => ({ kind: "engram", project: "pi-workflow", topic: "workflow/define-product/definition-1/approved-ticket-publication/definition-1", revision: "publication-r1", schema: "approved-ticket-publication", schemaVersion: 1, digest: digestCanonicalValue({ schema: "approved-ticket-publication", schemaVersion: 1, payload: value }) }), read: async () => undefined },
+		approvedTicketPublication: { save: async (value) => ({ kind: "engram", project: "pi-workflow", topic: "workflow/define-product/definition-1/approved-ticket-publication", revision: "publication-r1", schema: "approved-ticket-publication", schemaVersion: 1, digest: digestCanonicalValue({ schema: "approved-ticket-publication", schemaVersion: 1, payload: value }) }), read: async () => undefined },
 		ticketApprovalRecoveryStore: state,
 		authenticatedAuthority: { current: async () => approved.approval.payload.actor },
 	});
@@ -279,7 +279,7 @@ test("ticket approval fails closed for stale inputs, delegation and recovery dri
 		readPublishedParent: async (ref) => ref.revision === parentRef.revision ? parent : undefined,
 		recoverTicketGraph: async (ref) => ref.digest === graph.digest ? graph : undefined,
 		approvedTicketGraphs: { save: async () => graphRef },
-		approvedTicketPublication: { save: async (value) => ({ kind: "engram", project: "pi-workflow", topic: "workflow/define-product/definition-1/approved-ticket-publication/definition-1", revision: "publication-r1", schema: "approved-ticket-publication", schemaVersion: 1, digest: digestCanonicalValue({ schema: "approved-ticket-publication", schemaVersion: 1, payload: value }) }), read: async () => undefined },
+		approvedTicketPublication: { save: async (value) => ({ kind: "engram", project: "pi-workflow", topic: "workflow/define-product/definition-1/approved-ticket-publication", revision: "publication-r1", schema: "approved-ticket-publication", schemaVersion: 1, digest: digestCanonicalValue({ schema: "approved-ticket-publication", schemaVersion: 1, payload: value }) }), read: async () => undefined },
 		ticketApprovalRecoveryStore: { load: async () => structuredClone(recovered), save: async (value) => { recovered = structuredClone(value); }, clear: async () => { clears += 1; recovered = undefined; } },
 		authenticatedAuthority: { current: async () => actor },
 	});
@@ -418,7 +418,7 @@ test("publish-tickets reads the exact durable Owner-approved graph after restart
 		approvedTicketPublication: {
 			save: async (value) => {
 				publication = structuredClone(value);
-				return { kind: "engram", project: "pi-workflow", topic: "workflow/define-product/definition-1/approved-ticket-publication/definition-1", revision: "publication-r1", schema: "approved-ticket-publication", schemaVersion: 1, digest: digestCanonicalValue({ schema: "approved-ticket-publication", schemaVersion: 1, payload: value }) };
+				return { kind: "engram", project: "pi-workflow", topic: "workflow/define-product/definition-1/approved-ticket-publication", revision: "publication-r1", schema: "approved-ticket-publication", schemaVersion: 1, digest: digestCanonicalValue({ schema: "approved-ticket-publication", schemaVersion: 1, payload: value }) };
 			},
 			read: async () => structuredClone(publication),
 		},

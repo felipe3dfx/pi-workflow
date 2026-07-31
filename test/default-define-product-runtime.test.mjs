@@ -1495,7 +1495,7 @@ test("default public publish_tickets uses canonical Engram re-reads before mutat
 	const graphRevision = put(graphTopic, `${canonicalJson(graph)}\n`);
 	const publication = { definitionId, approvedSpecRef: { kind: "engram", project: "pi-workflow", topic: specTopic, revision: specRevision, schema: "approved-spec", schemaVersion: 1, digest: spec.digest }, parentRef: { kind: "engram", project: "pi-workflow", topic: parentTopic, revision: parentRevision, schema: "delivery-parent", schemaVersion: 1, digest: digestCanonicalValue(parentUnsigned) }, graphRef: { kind: "engram", project: "pi-workflow", topic: graphTopic, revision: graphRevision, schema: "delivery-ticket-graph", schemaVersion: 1, digest: graph.digest }, graphParent: parent, approval };
 	const unsigned = { schema: "approved-ticket-publication", schemaVersion: 1, payload: publication };
-	put(`workflow/define-product/${definitionId}`, `${canonicalJson({ ...unsigned, digest: digestCanonicalValue(unsigned) })}\n`);
+	put(`workflow/define-product/${definitionId}/approved-ticket-publication`, `${canonicalJson({ ...unsigned, digest: digestCanonicalValue(unsigned) })}\n`);
 	let stale = false;
 	let recovery = { definitionId, approvedSpecRef: publication.approvedSpecRef, parentRef: publication.parentRef, graphRef: publication.graphRef, digest: graph.digest, authority: owner };
 	const mutations = [];
