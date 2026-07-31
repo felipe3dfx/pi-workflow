@@ -237,7 +237,10 @@ function exactInput(
 			if (expectedValue === null) return true;
 			if (Array.isArray(expectedValue) && expectedValue.length === 0) return true;
 		}
-		if (expectedValue === null && supplied[key] === "null") return true;
+		if (
+			expectedValue === null &&
+			(supplied[key] === "null" || supplied[key] === "")
+		) return true;
 		return (
 			Object.hasOwn(supplied, key) &&
 			canonicalJson(supplied[key]) === canonicalJson(expectedValue)
@@ -251,7 +254,10 @@ function normalizePiNullableInput(
 ): void {
 	if (!record(value)) return;
 	for (const [key, expectedValue] of Object.entries(expected)) {
-		if (expectedValue === null && value[key] === "null") value[key] = null;
+		if (
+			expectedValue === null &&
+			(value[key] === "null" || value[key] === "")
+		) value[key] = null;
 	}
 }
 

@@ -241,9 +241,9 @@ test("accepts Pi-injected undefined optional fields on canonical save calls", as
 	await start(controller);
 	const stopped = await drive(controller, state, { stopBeforeSave: true });
 	const input = { ...structuredClone(stopped.expected.input), id: undefined, dueDate: undefined };
-	input.assignee = "null";
-	input.cycle = "null";
-	input.project = "null";
+	input.assignee = "";
+	input.cycle = "";
+	input.project = "";
 	delete input.labels;
 	const event = {
 		toolName: stopped.expected.toolName,
