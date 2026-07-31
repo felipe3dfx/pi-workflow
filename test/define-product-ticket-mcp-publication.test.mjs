@@ -76,6 +76,7 @@ function fixture({
 	publicationValue = publication,
 	graphValue = graph,
 	ownerValue = owner,
+	approvedValue = approved,
 } = {}) {
 	const persistence = memory();
 	const ownerAuthority = ownerValue && structuredClone(ownerValue);
@@ -86,14 +87,14 @@ function fixture({
 	const parentIssue = {
 		id: parent.id,
 		teamId: parent.teamId,
-		title: approved.spec.payload.target.title,
-		description: approved.spec.payload.body,
+		title: approvedValue.spec.payload.target.title,
+		description: approvedValue.spec.payload.body,
 		updatedAt: "2026-07-31T03:06:06.158Z",
 		status: { id: "backlog-1", name: "Backlog", type: "backlog" },
 	};
 	const dependencies = {
 		approvedPublications: { read: async () => structuredClone(publicationValue) },
-		approvedSpecReader: { read: async () => structuredClone(approved) },
+		approvedSpecReader: { read: async () => structuredClone(approvedValue) },
 		recoverGraph: async () => structuredClone(graphValue),
 		manifest: createTicketPublicationManifestStore({ persistence }),
 		...(ownerAuthority ? { owner: ownerAuthority } : {}),
@@ -203,6 +204,19 @@ async function start(controller) {
 	assert.deepEqual(await controller.begin(definitionId, "workflow-start", { action: "publish_tickets" }), { status: "continuing" });
 	await controller.handleToolResult({ toolName: "workflow_define_product", toolCallId: "workflow-start", content: [{ type: "text", text: JSON.stringify({ status: "continuing" }) }], isError: false });
 }
+
+test("accepts Linear ordered-list padding when validating the canonical parent before ticket publication", async () => {
+	const body = `# Spec\n\n## Pruebas\n\n${Array.from({ length: 10 }, (_, index) => `${index + 1}. Prueba ${index + 1}.`).join("\n")}`;
+	const approvedValue = {
+		...approved,
+		spec: { ...approved.spec, payload: { ...approved.spec.payload, body } },
+	};
+	const state = fixture({ approvedValue });
+	state.parentIssue.description = body.replace(/^([1-9])\. Prueba/gm, " $1. Prueba");
+	const controller = createDefineProductTicketMcpPublication(state.dependencies);
+	await start(controller);
+	assert.deepEqual(await drive(controller, state), { status: "tickets-published", definitionId });
+});
 
 test("publishes the exact two-ticket graph and native blocker through rewritten Linear MCP inputs", async () => {
 	const state = fixture();

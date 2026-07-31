@@ -404,8 +404,26 @@ function issueRelations(value: Record<string, unknown>): {
 	return blockedBy && blocks ? { blockedBy, blocks } : undefined;
 }
 
+function linearOrderedListPadding(markdown: string): string {
+	const lines = markdown.split("\n");
+	for (let index = 0; index < lines.length; ) {
+		if (!/^\d+\. /.test(lines[index])) {
+			index += 1;
+			continue;
+		}
+		const start = index;
+		while (index < lines.length && /^\d+\. /.test(lines[index])) index += 1;
+		if (lines.slice(start, index).some((line) => Number.parseInt(line, 10) >= 10)) {
+			for (let item = start; item < index; item += 1)
+				lines[item] = lines[item].replace(/^([1-9])\. /, " $1. ");
+		}
+	}
+	return lines.join("\n");
+}
+
 function exactMarkdown(expected: string, actual: string): boolean {
-	return actual === expected || (expected.endsWith("\n") && actual === expected.slice(0, -1));
+	const withoutLegacyNewline = expected.endsWith("\n") ? expected.slice(0, -1) : expected;
+	return actual === expected || actual === withoutLegacyNewline || actual === linearOrderedListPadding(expected) || actual === linearOrderedListPadding(withoutLegacyNewline);
 }
 
 function exactTicketMarkdown(expected: string, actual: string): boolean {

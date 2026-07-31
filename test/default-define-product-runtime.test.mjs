@@ -2425,7 +2425,14 @@ test("exact Owner approval recovers a durable pending Spec after in-memory phase
 });
 
 test("default define-product host-binds the corrective reply after a missing domain anchor", async () => {
-	const { handlers, tool } = loadExtension();
+	let ticketRecovery;
+	const { handlers, tool } = loadExtension({
+		ticketApprovalRecoveryStore: {
+			load: async () => ticketRecovery,
+			save: async (value) => { ticketRecovery = structuredClone(value); },
+			clear: async () => { ticketRecovery = undefined; },
+		},
+	});
 	const ctx = executionContext();
 	await handlers.get("tool_execution_start")(
 		{ type: "tool_execution_start", toolName: "workflow_define_product" },
