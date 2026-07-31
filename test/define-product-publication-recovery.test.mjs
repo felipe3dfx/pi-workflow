@@ -73,13 +73,17 @@ test("durably claims, releases, and verifies define-product publication uncertai
 });
 
 test("reads a migrated created checkpoint whose trailing LF was normalized by Engram", async () => {
-	const content = JSON.stringify({
-		definitionId: identity.definitionId,
-		issueId: "ILA-2436",
-		ownerId: "owner-1",
-		publicationDigest: identity.publicationDigest,
-		stage: "created",
-	});
+	const content = `${JSON.stringify(
+		{
+			definitionId: identity.definitionId,
+			issueId: "ILA-2436",
+			ownerId: "owner-1",
+			publicationDigest: identity.publicationDigest,
+			stage: "created",
+		},
+		null,
+		2,
+	)}\r\n`;
 	const current = { revision: "r1", content };
 	const recovery = createDefineProductPublicationRecoveryStore({
 		store: {
