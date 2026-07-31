@@ -362,7 +362,6 @@ function exactParent(context: Context, value: unknown): boolean {
 		value.title === context.approved.spec.payload.target.title &&
 		typeof value.description === "string" &&
 		exactMarkdown(context.approved.spec.payload.body, value.description) &&
-		value.updatedAt === context.publication.graphParent.revision &&
 		status?.type === "backlog" &&
 		directOrObjectId(value, "assigneeId", "assignee") === null &&
 		directOrObjectId(value, "cycleId", "cycle") === null

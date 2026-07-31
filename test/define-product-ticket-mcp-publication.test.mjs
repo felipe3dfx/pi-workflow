@@ -88,7 +88,7 @@ function fixture({
 		teamId: parent.teamId,
 		title: approved.spec.payload.target.title,
 		description: approved.spec.payload.body,
-		updatedAt: parent.revision,
+		updatedAt: "2026-07-31T03:06:06.158Z",
 		status: { id: "backlog-1", name: "Backlog", type: "backlog" },
 		assigneeId: null,
 		cycleId: null,
