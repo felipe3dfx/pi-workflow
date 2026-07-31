@@ -42,14 +42,17 @@ import { createRuntimeEngramApprovedSpecStore, createRuntimeEngramArtifactStore 
 import { createRuntimePrivateStatePersistence } from "./runtime-private-state.ts";
 import { createDurableExplorationRecoveryStore } from "./exploration-recovery.ts";
 import { createDurableSpecApprovalRecoveryStore } from "./spec-approval-recovery.ts";
-import { createDurableTicketApprovalRecoveryStore } from "./ticket-approval-recovery.ts";
+import { createEngramTicketApprovalRecoveryStore } from "./ticket-approval-recovery.ts";
 import { createDurablePublicationManifest } from "./publication-manifest.ts";
 import type { DeliveryParentPublicationDependencies } from "./delivery-parent-publication.ts";
 import {
 	createDefineProductMcpPublication,
-	createUnavailableDefineProductMcpPublication,
 	type DefineProductMcpPublication,
 } from "./define-product-mcp-publication.ts";
+import {
+	createDefineProductTicketMcpPublication,
+	type DefineProductTicketMcpPublication,
+} from "./define-product-ticket-mcp-publication.ts";
 import {
 	createDefineProductPublicationRecoveryStore,
 	type DefineProductPublicationRecoveryStore,
@@ -65,8 +68,15 @@ import { createApprovedRevisionPublicationManifestStore } from "./approved-revis
 import { createApprovedRevisionStore } from "./approved-revision-store.ts";
 import type { createRuntimeLinearApprovedRevisionGateway } from "./runtime-linear-approved-revision.ts";
 import { recoverApprovedTicketGraph } from "./ticket-graph-recovery.ts";
+import {
+	createSingleUserAuthoritySession,
+	type SingleUserAuthoritySession,
+} from "./single-user-authority.ts";
 import { createTicketPublicationAuthorityGuard } from "./ticket-publication-authority-guard.ts";
-import { createTicketPublicationManifestStore } from "./ticket-publication-manifest.ts";
+import {
+	createTicketPublicationManifestStore,
+	createTicketPublicationOperationId,
+} from "./ticket-publication-manifest.ts";
 import type { createRuntimeLinearDeliveryTicketGateway } from "./runtime-linear-delivery-ticket.ts";
 import {
 	canonicalizeDelegatedDeliveryTicketGraph,
@@ -340,7 +350,13 @@ interface TicketGraphExecutorInput {
 }
 
 interface TicketGraphExecutor {
-	execute(input: TicketGraphExecutorInput): Promise<{ assistantText: string }>;
+	execute(input: TicketGraphExecutorInput): Promise<{
+		assistantText: string;
+		diagnostics?: {
+			readonly writeAttempts: number;
+			readonly lastWriteError?: string;
+		};
+	}>;
 }
 
 export interface DefaultDefineProductRuntimeOptions {
@@ -350,12 +366,15 @@ export interface DefaultDefineProductRuntimeOptions {
 	specApprovalRecoveryStore?: SpecApprovalRecoveryStore;
 	ticketApprovalRecoveryStore?: TicketApprovalRecoveryStore;
 	authenticatedAuthority?: {
-		current(): Promise<AuthenticatedAuthority>;
+		current(): Promise<AuthenticatedAuthority | undefined>;
 	};
+	/** Internal/session injection seam; defaults to one authority cache per workflow runtime. */
+	authoritySession?: SingleUserAuthoritySession;
 	approvedSpecReader?: DeliveryParentPublicationDependencies["approvedSpecReader"];
 	/** Explicit legacy gateway retained only for tests and compatibility embeddings. */
 	linearDeliveryParents?: DeliveryParentPublicationDependencies["linear"];
 	deliveryParentMcpPublication?: DefineProductMcpPublication;
+	ticketMcpPublication?: DefineProductTicketMcpPublication;
 	deliveryParentPublicationRecovery?: DefineProductPublicationRecoveryStore;
 	linearDeliveryTickets?: ReturnType<typeof createRuntimeLinearDeliveryTicketGateway>;
 	linearApprovedRevision?: ReturnType<typeof createRuntimeLinearApprovedRevisionGateway>;
@@ -372,24 +391,19 @@ export interface DefaultDefineProductRuntimeOptions {
 	}[];
 }
 
-function configuredOwnerAuthority(environment: NodeJS.ProcessEnv) {
-	const actorId = environment.PI_WORKFLOW_OWNER_ACTOR_ID;
-	const authorityRevision =
-		environment.PI_WORKFLOW_OWNER_AUTHORITY_REVISION;
-	if (
-		!actorId ||
-		actorId !== actorId.trim() ||
-		!authorityRevision ||
-		authorityRevision !== authorityRevision.trim()
-	) {
-		return undefined;
-	}
-	const authority = Object.freeze({
-		actorId,
-		role: "Owner" as const,
-		authorityRevision,
-	});
-	return { authority, current: async () => authority };
+function exactOwnerAuthority(
+	value: AuthenticatedAuthority | undefined,
+): value is OwnerAuthority {
+	return (
+		value !== undefined &&
+		typeof value.actorId === "string" &&
+		value.actorId.length > 0 &&
+		value.actorId === value.actorId.trim() &&
+		value.role === "Owner" &&
+		typeof value.authorityRevision === "string" &&
+		value.authorityRevision.length > 0 &&
+		value.authorityRevision === value.authorityRevision.trim()
+	);
 }
 
 function findProjectRoot(cwd: string): string {
@@ -754,6 +768,20 @@ function createDefaultResearchExecutor(): ResearchExecutor {
 	};
 }
 
+export async function executeRequiredTicketGraphTurn<Result>(input: {
+	readonly prompt: string;
+	readonly execute: (prompt: string) => Promise<Result>;
+	readonly hasWrittenGraph: () => boolean;
+}): Promise<Result> {
+	let execution = await input.execute(input.prompt);
+	if (!input.hasWrittenGraph()) {
+		execution = await input.execute(
+			`Your previous turn did not persist the required artifact. Before retrying, reconcile every ticket refs id and every deliveryBinding storyId, acceptanceCriterionId, and contextId against the exact identifiers in graph.payload.coverage; cover every declared story, decision, test, and story criterion without inventing alternate human-visible identifiers. Then call ${workflowArtifactToolName} with action=write_graph and the complete graph. Do not return prose before that successful tool result.`,
+		);
+	}
+	return execution;
+}
+
 function createDefaultTicketGraphExecutor(): TicketGraphExecutor {
 	return {
 		async execute(input) {
@@ -763,6 +791,9 @@ function createDefaultTicketGraphExecutor(): TicketGraphExecutor {
 				extensionsOverride: (base) => ({ ...base, extensions: [] }),
 			});
 			await resourceLoader.reload();
+			let wroteGraph = false;
+			let writeAttempts = 0;
+			let lastWriteError: string | undefined;
 			const { session } = await createAgentSession({
 				cwd: input.cwd, agentDir: getAgentDir(), model: input.model,
 				thinkingLevel: input.thinkingLevel, resourceLoader, tools: [...input.allowedTools],
@@ -775,16 +806,35 @@ function createDefaultTicketGraphExecutor(): TicketGraphExecutor {
 							if (!params.alias) throw new Error("A granted artifact alias is required.");
 							return { content: [{ type: "text" as const, text: await input.readArtifact(params.alias) }], details: { alias: params.alias } };
 						}
-						if (!params.graph) throw new Error("A delivery ticket graph is required.");
-						const graph = canonicalizeDelegatedDeliveryTicketGraph(params.graph);
-						const artifact = await input.writeArtifact(graph);
-						return { content: [{ type: "text" as const, text: JSON.stringify(artifact, null, 2) }], details: artifact };
+						writeAttempts += 1;
+						try {
+							if (!params.graph) throw new Error("A delivery ticket graph is required.");
+							const graph = canonicalizeDelegatedDeliveryTicketGraph(params.graph);
+							const artifact = await input.writeArtifact(graph);
+							wroteGraph = true;
+							return { content: [{ type: "text" as const, text: JSON.stringify(artifact, null, 2) }], details: artifact };
+						} catch (error) {
+							lastWriteError = error instanceof Error ? error.message : String(error);
+							throw error;
+						}
 					},
 				}],
 				sessionManager: SessionManager.inMemory(input.cwd),
 			});
-			try { return await executeResearchSession(session, input.prompt); }
-			finally { session.dispose(); }
+			try {
+				const execution = await executeRequiredTicketGraphTurn({
+					prompt: input.prompt,
+					execute: (prompt) => executeResearchSession(session, prompt),
+					hasWrittenGraph: () => wroteGraph,
+				});
+				return {
+					...execution,
+					diagnostics: {
+						writeAttempts,
+						...(lastWriteError ? { lastWriteError } : {}),
+					},
+				};
+			} finally { session.dispose(); }
 		},
 	};
 }
@@ -1089,9 +1139,9 @@ export function createDefaultDefineProductWorkflow(
 		});
 	const ticketApprovalRecoveryStore =
 		options.ticketApprovalRecoveryStore ??
-		createDurableTicketApprovalRecoveryStore({
-			path: join(privateStateDirectory, "ticket-approval-recovery.json"),
-			persistence: privateStatePersistence,
+		createEngramTicketApprovalRecoveryStore({
+			store: artifactStore,
+			project: baseProject.name,
 		});
 	const approvedSpecReader = options.approvedSpecReader ?? createEngramApprovedSpecReader({
 		project: baseProject.name,
@@ -1109,8 +1159,28 @@ export function createDefaultDefineProductWorkflow(
 	const linearDeliveryParents = options.linearDeliveryParents;
 	const linearDeliveryTickets = options.linearDeliveryTickets;
 	const linearApprovedRevision = options.linearApprovedRevision;
-	const configuredOwner = configuredOwnerAuthority(process.env);
-	const authenticatedAuthority = options.authenticatedAuthority ?? configuredOwner;
+	const authoritySession =
+		options.authoritySession ?? createSingleUserAuthoritySession();
+	const explicitAuthenticatedAuthority = options.authenticatedAuthority;
+	const authenticatedAuthority = explicitAuthenticatedAuthority
+		? {
+				async current(): Promise<OwnerAuthority | undefined> {
+					let authority: AuthenticatedAuthority | undefined;
+					try {
+						authority = await explicitAuthenticatedAuthority.current();
+					} catch {
+						return undefined;
+					}
+					if (!exactOwnerAuthority(authority)) return undefined;
+					const authenticatedUser = authoritySession.user();
+					return !authenticatedUser || authenticatedUser.id === authority.actorId
+						? authority
+						: undefined;
+				},
+			}
+		: {
+				current: async () => authoritySession.current("Owner"),
+			};
 	const approvedTicketPublication = createApprovedTicketPublicationStore({
 		store: artifactStore,
 		project: baseProject.name,
@@ -1381,12 +1451,17 @@ export function createDefaultDefineProductWorkflow(
 								return writtenGraph;
 							},
 						});
-						if (!writtenGraph) return {
-							status: "blocked", executiveSummary: "The to-tickets launch completed without a verified ticket graph.", artifacts: [],
-							nextRecommended: { kind: "owner-action" }, risks: [],
-							blocker: createBlocker("PI_WORKFLOW_ARTIFACT_READBACK_MISMATCH", "The to-tickets launch completed without a verified ticket graph."),
-							launchProvenance: preparedLaunch.launchProvenance,
-						};
+						if (!writtenGraph) {
+							const message = execution.diagnostics?.lastWriteError
+								? `The delegated ticket graph write was rejected: ${execution.diagnostics.lastWriteError}`
+								: `The to-tickets launch completed without calling the required graph write after its corrective turn (write attempts: ${execution.diagnostics?.writeAttempts ?? 0}).`;
+							return {
+								status: "blocked", executiveSummary: message, artifacts: [],
+								nextRecommended: { kind: "owner-action" }, risks: [],
+								blocker: createBlocker("PI_WORKFLOW_ARTIFACT_READBACK_MISMATCH", message),
+								launchProvenance: preparedLaunch.launchProvenance,
+							};
+						}
 						return { status: "completed", executiveSummary: execution.assistantText.trim() || "Ticket graph ready for Owner approval.", artifacts: [writtenGraph], nextRecommended: { kind: "confirmed-route", route: intent.route }, risks: [], launchProvenance: preparedLaunch.launchProvenance };
 					} catch (error) {
 						const message = error instanceof Error ? error.message : String(error);
@@ -1544,17 +1619,28 @@ export function createDefaultDefineProductWorkflow(
 					definitionId,
 					graph,
 					manifest: ticketPublicationManifest,
-					guard: createTicketPublicationAuthorityGuard({
-						expected,
-						current,
-					}),
+					guard: createTicketPublicationAuthorityGuard({ expected, current }),
 					gateway: linearDeliveryTickets,
 				});
 				return outcome.status === "tickets-published"
 					? { status: "tickets-published", definitionId }
 					: outcome;
 			},
-		} : undefined,
+		} : {
+			async publish(definitionId) {
+				const publication = await approvedTicketPublication.read(definitionId);
+				if (!publication) return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_TICKET_APPROVAL_MISMATCH", "Ticket publication requires an exact durable Owner-approved graph.") };
+				const operationId = createTicketPublicationOperationId({
+					definitionId,
+					graphDigest: publication.graphRef.digest,
+					parent: { id: publication.graphParent.id, revision: publication.graphParent.revision },
+				});
+				const manifest = await ticketPublicationManifest.read(operationId);
+				return manifest?.stage === "verified" && manifest.graphDigest === publication.graphRef.digest && manifest.parent.id === publication.graphParent.id
+					? { status: "tickets-published", definitionId }
+					: { status: "blocked", blocker: createBlocker("PI_WORKFLOW_RECOVERY_FAILED", "Ticket publication is not durably verified.") };
+			},
+		},
 		approvedRevisionPublication: linearApprovedRevision && authenticatedAuthority ? {
 			async draft(input) {
 				const outcome = await draftApprovedRevision({ input, gateway: linearApprovedRevision, store: approvedRevisionStore });
@@ -1569,7 +1655,7 @@ export function createDefaultDefineProductWorkflow(
 					store: approvedRevisionStore,
 					currentActor: async () => {
 						const authority = await authenticatedAuthority.current();
-						return authority.role === "Owner" ? authority as OwnerAuthority : undefined;
+						return authority?.role === "Owner" ? authority as OwnerAuthority : undefined;
 					},
 				});
 				if (outcome.status === "revision-approved") await saveApprovedRevisionRecovery({ definitionId, digest: outcome.revision.digest, phase: "publication" });
@@ -1582,7 +1668,7 @@ export function createDefaultDefineProductWorkflow(
 					digest,
 					currentActor: async () => {
 						const authority = await authenticatedAuthority.current();
-						return authority.role === "Owner" ? authority as OwnerAuthority : undefined;
+						return authority?.role === "Owner" ? authority as OwnerAuthority : undefined;
 					},
 					manifest: approvedRevisionPublicationManifest,
 					gateway: linearApprovedRevision,
@@ -1599,7 +1685,14 @@ export function createDefaultDefineProductWorkflow(
 				store: publicationManifest,
 				createReservationId: () => `publication-${Date.now()}`,
 			}),
-			authenticatedAuthority,
+			authenticatedAuthority: {
+				current: async () => {
+					const authority = await authenticatedAuthority.current();
+					if (!authority)
+						throw new Error("Authenticated single-user authority is unavailable.");
+					return authority;
+				},
+			},
 			parentSnapshots,
 		} : undefined,
 		authenticatedAuthority,
@@ -1610,18 +1703,46 @@ export function createDefaultDefineProductWorkflow(
 	const mcpPublication = linearDeliveryParents
 		? undefined
 		: options.deliveryParentMcpPublication ??
-			(configuredOwner
-				? createDefineProductMcpPublication({
-						approvedSpecReader,
-						owner: configuredOwner.authority,
-						recovery:
-							options.deliveryParentPublicationRecovery ??
-							createDefineProductPublicationRecoveryStore({
-								store: artifactStore,
-								project: baseProject.name,
-							}),
-						parentSnapshots,
-					})
-				: createUnavailableDefineProductMcpPublication());
-	return Object.assign(workflow, { mcpPublication });
+			createDefineProductMcpPublication({
+				approvedSpecReader,
+				...(options.authenticatedAuthority
+					? {
+							authenticatedAuthorityPolicy:
+								options.authenticatedAuthority,
+						}
+					: {}),
+				authoritySession,
+				recovery:
+					options.deliveryParentPublicationRecovery ??
+					createDefineProductPublicationRecoveryStore({
+						store: artifactStore,
+						project: baseProject.name,
+					}),
+				parentSnapshots,
+			});
+	const ticketMcpPublication = linearDeliveryTickets
+		? undefined
+		: options.ticketMcpPublication ??
+			createDefineProductTicketMcpPublication({
+				approvedPublications: approvedTicketPublication,
+				...(options.authenticatedAuthority
+					? {
+							authenticatedAuthorityPolicy:
+								options.authenticatedAuthority,
+						}
+					: {}),
+				approvedSpecReader,
+				recoverGraph: (publication) =>
+					recoverApprovedTicketGraph(
+						artifactStore,
+						publication.graphRef,
+					).catch(() => undefined),
+				manifest: ticketPublicationManifest,
+				authoritySession,
+			});
+	return Object.assign(workflow, {
+		mcpPublication,
+		ticketMcpPublication,
+		authoritySession,
+	});
 }

@@ -9,7 +9,7 @@ description: Prepare a QA handoff for one Linear issue from a domain anchor unde
 
 Evaluate this invocation guard before inspecting or handling inputs.
 
-The runtime extension admits only idle interactive invocations and blocks all tools while the capability is pending. Human role membership is an organizational access boundary: this package has no Owner/Developer credential and does not authenticate a person as Owner rather than QA or PS. Later workflow modules must enforce role authority before mutations.
+The runtime extension admits only idle interactive invocations and blocks all tools while the capability is pending. For each relevant execution, the implemented runtime authenticates one active, non-guest Linear user exactly once with `linear_get_user` and caches a stable `single-user/v1` authority projection; never repeat that lookup before later actions or mutations. Human Owner/Developer role membership remains an organizational access boundary: this package does not infer role membership from the Linear user response.
 
 For a forbidden runtime caller, the extension returns the PI_WORKFLOW_PUBLIC_ENTRY_FORBIDDEN blocker before the LLM runs.
 
@@ -32,6 +32,7 @@ Ask no other question. Stop immediately after the question. Do not invoke tools 
 After receiving an allowed invocation with a valid Linear ID:
 
 - The Developer's explicit invocation authorizes only the canonical `qa-handoff/v1` artifact that the runtime binds internally to that issue, its revision, and the exact Linear-facing body in professional neutral Spanish.
+- Authenticate one active, non-guest Linear user when the runtime requests it; reuse that cached identity and never call `linear_get_user` again before publication.
 - Execute the QA handoff workflow for that same Linear ID. Do not provide a body, digest, authority, revision, or additional fields.
 - If the workflow returns a blocker, report the exact blocker and stop.
 - If it publishes the comment or retrieves it idempotently, report the verified result.

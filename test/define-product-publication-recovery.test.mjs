@@ -72,6 +72,38 @@ test("durably claims, releases, and verifies define-product publication uncertai
 	);
 });
 
+test("failed claim read-back rolls ownership back so a restart can reclaim safely", async () => {
+	const store = artifactStore();
+	const originalReadRevision = store.readRevision;
+	let failClaimReadBack = true;
+	store.readRevision = async (...args) => {
+		if (failClaimReadBack) {
+			failClaimReadBack = false;
+			throw new Error("simulated claim read-back failure");
+		}
+		return originalReadRevision(...args);
+	};
+	const first = createDefineProductPublicationRecoveryStore({
+		store,
+		project: "pi-workflow",
+	});
+	await assert.rejects(
+		first.claim(identity, "failed-owner"),
+		/simulated claim read-back failure/,
+	);
+
+	const restarted = createDefineProductPublicationRecoveryStore({
+		store,
+		project: "pi-workflow",
+	});
+	assert.equal(await restarted.read(identity.definitionId), undefined);
+	await restarted.claim(identity, "restart-owner");
+	assert.deepEqual(await restarted.read(identity.definitionId), {
+		publicationDigest: identity.publicationDigest,
+		stage: "uncertain",
+	});
+});
+
 test("reads a migrated created checkpoint whose trailing LF was normalized by Engram", async () => {
 	const content = `${JSON.stringify(
 		{

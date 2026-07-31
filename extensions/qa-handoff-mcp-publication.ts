@@ -10,6 +10,7 @@ import {
 	type QaHandoffArtifact,
 	type QaHandoffArtifactStore,
 } from "./qa-handoff-workflow.ts";
+import { SINGLE_USER_AUTHORITY_REVISION } from "./single-user-authority.ts";
 import { canonicalJson, digestCanonicalValue } from "./workflow-contracts.ts";
 
 export namespace QaHandoffMcpPublication {
@@ -154,15 +155,6 @@ type PublicationState =
 			readonly phase: "comments-before-result";
 			readonly context: PreparedContext;
 			readonly read: CommentRead;
-			readonly toolCallId: string;
-	  }
-	| {
-			readonly phase: "current-user-before-mutation";
-			readonly context: PreparedContext;
-	  }
-	| {
-			readonly phase: "current-user-before-mutation-result";
-			readonly context: PreparedContext;
 			readonly toolCallId: string;
 	  }
 	| {
@@ -718,39 +710,6 @@ function dispatchForPhase(
 						(comments) => commentsBeforeCompleteState(state.context, comments),
 					),
 			};
-		case "current-user-before-mutation": {
-			const call = { toolName: CURRENT_USER_TOOL, input: { query: "me" } };
-			return {
-				kind: "tool-call",
-				expectedCall: call,
-				expectedModelCall: call,
-				transition: (toolCallId) => ({
-					...state,
-					phase: "current-user-before-mutation-result",
-					toolCallId,
-				}),
-			};
-		}
-		case "current-user-before-mutation-result":
-			return {
-				kind: "tool-result",
-				expectedTool: CURRENT_USER_TOOL,
-				toolCallId: state.toolCallId,
-				transition: (payload) =>
-					actorResultState(payload, (currentActor) => {
-						if (
-							canonicalJson(currentActor) !== canonicalJson(state.context.actor)
-						)
-							return failed(
-								"PI_WORKFLOW_QA_HANDOFF_AUTHORITY_MISMATCH",
-								"The authenticated Developer actor changed before QA handoff publication.",
-							);
-						return {
-							phase: "issue-before-mutation",
-							context: state.context,
-						};
-					}),
-			};
 		case "issue-before-mutation": {
 			const call = issueCall(state.context.issueId);
 			return {
@@ -1014,7 +973,7 @@ async function persistFinalArtifact(
 	const authority = {
 		actorId: context.actor.id,
 		role: "Developer" as const,
-		authorityRevision: digestCanonicalValue(context.actor),
+		authorityRevision: SINGLE_USER_AUTHORITY_REVISION,
 	};
 	const candidate = createQaHandoffArtifact(
 		{ id: context.issueId, updatedAt: context.issueRevision },
@@ -1032,7 +991,7 @@ async function persistFinalArtifact(
 			);
 		expectedArtifact = createQaHandoffArtifact(
 			{ id: context.issueId, updatedAt: existing.payload.issue.revision },
-			authority,
+			existing.payload.authority,
 			draft,
 		);
 		if (canonicalJson(existing) !== canonicalJson(expectedArtifact))
@@ -1254,7 +1213,7 @@ function commentsBeforeCompleteState(
 				: "A prior comment creation is uncertain; retry lookup later without repeating the mutation.",
 		);
 	return {
-		phase: "current-user-before-mutation",
+		phase: "issue-before-mutation",
 		context,
 	};
 }
@@ -1512,8 +1471,6 @@ export function createQaHandoffMcpPublication(
 					return "perform the required additional freshness read";
 				case "comments-before":
 					return "inspect existing root comments before publication";
-				case "current-user-before-mutation":
-					return "revalidate the authenticated actor immediately before mutation";
 				case "issue-before-mutation":
 					return "revalidate the complete issue snapshot immediately before mutation";
 				case "comment-create":

@@ -214,7 +214,7 @@ export interface DefineProductWorkflowDependencies {
 	specApprovalRecoveryStore?: SpecApprovalRecoveryStore;
 	ticketApprovalRecoveryStore?: TicketApprovalRecoveryStore;
 	authenticatedAuthority?: {
-		current(): Promise<AuthenticatedAuthority>;
+		current(): Promise<AuthenticatedAuthority | undefined>;
 	};
 	approvedSpecStore?: DeliveryParentPublicationDependencies["approvedSpecReader"];
 	publication?: DeliveryParentPublicationDependencies;
@@ -414,19 +414,17 @@ export function createDefineProductWorkflow(
 				pendingTickets.authority.actorId.trim() === pendingTickets.authority.actorId &&
 				pendingTickets.authority.authorityRevision.trim() === pendingTickets.authority.authorityRevision
 			) {
-				const [approved, parent, graph, actor] = await Promise.all([
+				const [approved, parent, graph] = await Promise.all([
 					dependencies.approvedSpecStore?.read(pendingTickets.definitionId),
 					dependencies.readPublishedParent?.(pendingTickets.parentRef),
 					dependencies.recoverTicketGraph?.(pendingTickets.graphRef),
-					dependencies.authenticatedAuthority?.current(),
 				]);
 				if (
 					approved?.sourceRevision === pendingTickets.approvedSpecRef.revision &&
 					approved.spec.digest === pendingTickets.approvedSpecRef.digest &&
 					parent?.specDigest === approved.spec.digest &&
 					graph?.digest === pendingTickets.digest &&
-					canonicalJson(graph.payload.parent) === canonicalJson(parent) &&
-					canonicalJson(actor) === canonicalJson(pendingTickets.authority)
+					canonicalJson(graph.payload.parent) === canonicalJson(parent)
 				) {
 						const durable = await dependencies.approvedTicketPublication?.read(pendingTickets.definitionId);
 						pendingTicketApproval = immutableSnapshot(pendingTickets);
@@ -504,9 +502,7 @@ export function createDefineProductWorkflow(
 				if (!dependencies.ticketPublication) {
 					return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_RECOVERY_FAILED", "Native ticket publication is not configured.") };
 				}
-					const outcome = await dependencies.ticketPublication.publish(command.definitionId);
-					if (outcome.status === "tickets-published") await dependencies.ticketApprovalRecoveryStore?.clear();
-					return outcome;
+					return dependencies.ticketPublication.publish(command.definitionId);
 			} catch (error) {
 				return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_RECOVERY_FAILED", error instanceof Error ? error.message : "Ticket publication could not be recovered safely.") };
 			}
@@ -571,7 +567,7 @@ export function createDefineProductWorkflow(
 			if (!pending || pending.definitionId !== command.definitionId || canonicalJson(pending.parentRef) !== canonicalJson(command.parentRef) || canonicalJson(pending.graphRef) !== canonicalJson(command.graphRef) || pending.digest !== command.digest) return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_TICKET_APPROVAL_MISMATCH", "Ticket approval must match the exact verified parent and graph.") };
 			try {
 				const [actor, approved, parent, graph] = await Promise.all([dependencies.authenticatedAuthority?.current(), dependencies.approvedSpecStore?.read(command.definitionId), dependencies.readPublishedParent?.(command.parentRef), dependencies.recoverTicketGraph?.(command.graphRef)]);
-					if (!actor || canonicalJson(actor) !== canonicalJson(pending.authority) || approved?.sourceRevision !== pending.approvedSpecRef.revision || approved.spec.digest !== pending.approvedSpecRef.digest || !parent || parent.specDigest !== approved.spec.digest || !graph || graph.digest !== command.digest || canonicalJson(graph.payload.parent) !== canonicalJson(parent)) return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_TICKET_APPROVAL_MISMATCH", "Ticket approval requires the current Owner and exact verified graph.") };
+					if (actor?.role !== "Owner" || !actor.actorId.trim() || !actor.authorityRevision.trim() || approved?.sourceRevision !== pending.approvedSpecRef.revision || approved.spec.digest !== pending.approvedSpecRef.digest || !parent || parent.specDigest !== approved.spec.digest || !graph || graph.digest !== command.digest || canonicalJson(graph.payload.parent) !== canonicalJson(parent)) return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_TICKET_APPROVAL_MISMATCH", "Ticket approval requires the authenticated Owner and exact verified graph.") };
 					const approval = createTicketGraphApproval({ graph, actor: { actorId: actor.actorId, role: "Owner", authorityRevision: actor.authorityRevision } });
 					if (!dependencies.approvedTicketPublication) return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_RECOVERY_FAILED", "Approved ticket publication persistence is not configured.") };
 					const publication: ApprovedTicketPublication = {
@@ -774,6 +770,8 @@ export function createDefineProductWorkflow(
 		if (command.kind === "recommend-route") {
 			await dependencies.explorationRecoveryStore?.clear();
 			await dependencies.specApprovalRecoveryStore?.clear();
+			await dependencies.ticketApprovalRecoveryStore?.clear();
+			pendingTicketApproval = undefined;
 			explorationContext = undefined;
 			activeWorkflowStateId = command.workflowStateId;
 			activeRecommendation = createRouteRecommendation({

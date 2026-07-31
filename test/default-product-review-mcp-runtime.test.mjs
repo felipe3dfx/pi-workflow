@@ -160,13 +160,12 @@ function extensionHarness({
 	persistence = publicationPersistence(),
 	activeTools = LINEAR_TOOLS,
 	allTools = LINEAR_TOOLS,
-	runtimeEnvironment = {
-		PI_WORKFLOW_OWNER_ACTOR_ID: "owner-1",
-		PI_WORKFLOW_OWNER_AUTHORITY_REVISION: "owner-r1",
-	},
+	runtimeEnvironment = {},
+	authenticatedAuthority,
 } = {}) {
 	const handlers = new Map();
 	const tools = new Map();
+	const toolCalls = [];
 	piWorkflowExtension(
 		{
 			exec: async () => ({ code: 0 }),
@@ -184,6 +183,7 @@ function extensionHarness({
 			productReview: {
 				runtime: {
 					environment: runtimeEnvironment,
+					...(authenticatedAuthority ? { authenticatedAuthority } : {}),
 					drafts: { read: async () => structuredClone(draft) },
 					artifacts: persistence.artifacts,
 					recovery: persistence.recovery,
@@ -193,8 +193,10 @@ function extensionHarness({
 	);
 	return {
 		tools,
+		toolCalls,
 		getArtifact: persistence.getArtifact,
 		async emit(event, value, context = {}) {
+			if (event === "tool_call") toolCalls.push(structuredClone(value));
 			let result;
 			for (const handler of handlers.get(event) ?? []) {
 				const candidate = await handler(value, context);
@@ -274,7 +276,7 @@ async function continueOwnerSelection(harness, prefix, result = "Aceptado") {
 		},
 		context,
 	);
-	assert.match(continued.content.at(-1).text, /linear_get_user/);
+	assert.match(continued.content.at(-1).text, /linear_get_issue/);
 	assertPrivateSelectionSurface(continued.content.at(-1).text);
 	return { call, result: resultValue, continued };
 }
@@ -342,13 +344,6 @@ async function advanceApprovedToComments(
 	prefix,
 	issue = validIssue(),
 ) {
-	await callMcp(
-		harness,
-		"linear_get_user",
-		`${prefix}-auth-approved`,
-		{ query: "me" },
-		ownerActor,
-	);
 	return callMcp(
 		harness,
 		"linear_get_issue",
@@ -377,20 +372,8 @@ async function terminalOutcome(harness, prefix) {
 	return JSON.parse(result.content[0].text);
 }
 
-test("public guard admits unavailable product-review only for an active /product-review turn", async () => {
+test("default product-review requires no host authority environment", async () => {
 	const harness = extensionHarness({ runtimeEnvironment: {} });
-	const input = {};
-	const outside = await harness.emit(
-		"tool_call",
-		{
-			toolName: "workflow_product_review",
-			toolCallId: "unconfigured-outside",
-			input,
-		},
-		context,
-	);
-	assert.equal(outside.block, true);
-
 	assert.deepEqual(
 		await harness.emit(
 			"input",
@@ -403,30 +386,13 @@ test("public guard admits unavailable product-review only for an active /product
 		),
 		{ action: "continue" },
 	);
-	const admittedCall = {
-		toolName: "workflow_product_review",
-		toolCallId: "unconfigured-admitted",
-		input,
-	};
-	assert.equal(await harness.emit("tool_call", admittedCall, context), undefined);
-	const result = await harness.tools
-		.get("workflow_product_review")
-		.execute(admittedCall.toolCallId, admittedCall.input);
-	assert.equal(
-		JSON.parse(result.content[0].text).blocker.code,
-		"PI_WORKFLOW_PRODUCT_REVIEW_CONFIGURATION_REQUIRED",
-	);
-	await harness.emit("agent_settled", { type: "agent_settled" }, context);
-	const after = await harness.emit(
-		"tool_call",
-		{
-			toolName: "workflow_product_review",
-			toolCallId: "unconfigured-after",
-			input,
-		},
+	const prompt = await harness.emit(
+		"before_agent_start",
+		{ type: "before_agent_start" },
 		context,
 	);
-	assert.equal(after.block, true);
+	assert.match(prompt.systemPrompt, /linear_get_user/);
+	assert.doesNotMatch(prompt.systemPrompt, /PI_WORKFLOW_OWNER_/);
 });
 
 test("public product-review leaves unrelated tool calls untouched until its turn starts", async () => {
@@ -643,10 +609,7 @@ test("default product-review accepts real Pi's public ILA-2428 selection call af
 	);
 	const { continued } = await continueOwnerSelection(harness, "real-pi");
 	assert.equal(persistence.getArtifact(), undefined);
-	assert.equal(
-		continued.content.at(-1).text,
-		'Product review protocol: call linear_get_user exactly once now with {"query":"me"}. This is the only permitted next action; do not add fields or call tools in parallel.',
-	);
+	assert.match(continued.content.at(-1).text, /linear_get_issue/);
 });
 
 test("default product-review presents natural Owner choices from authenticated protected issue evidence and the canonical draft", async () => {
@@ -730,7 +693,7 @@ test("default product-review presents natural Owner choices from authenticated p
 	assert.match(afterMemory.systemPrompt, /select_result/);
 });
 
-test("default product-review settles preparation, accepts the exact Owner choice, and reauthenticates before publication", async () => {
+test("default product-review authenticates exactly once across preparation, approval, and publication", async () => {
 	const harness = extensionHarness();
 	await harness.emit(
 		"input",
@@ -824,8 +787,12 @@ test("default product-review settles preparation, accepts the exact Owner choice
 		},
 		context,
 	);
-	assert.match(continued.content.at(-1).text, /linear_get_user/);
+	assert.match(continued.content.at(-1).text, /linear_get_issue/);
 	assertPrivateSelectionSurface(continued.content.at(-1).text);
+	assert.equal(
+		harness.toolCalls.filter(({ toolName }) => toolName === "linear_get_user").length,
+		1,
+	);
 });
 
 test("default product-review accepts real Pi's public selection call before the exact authenticated MCP publication sequence", async () => {
@@ -875,23 +842,7 @@ test("default product-review accepts real Pi's public selection call before the 
 	);
 	const { continued } = await continueOwnerSelection(harness, "publish");
 	assert.equal(persistence.getArtifact(), undefined);
-	assert.equal(
-		continued.content.at(-1).text,
-		'Product review protocol: call linear_get_user exactly once now with {"query":"me"}. This is the only permitted next action; do not add fields or call tools in parallel.',
-	);
-	assert.equal(
-		await harness.emit(
-			"tool_call",
-			{ toolName: "linear_get_user", toolCallId: "publish-auth-2", input: { query: "me" } },
-			context,
-		),
-		undefined,
-	);
-	await harness.emit(
-		"tool_result",
-		mcpResult("linear_get_user", "publish-auth-2", actor),
-		context,
-	);
+	assert.match(continued.content.at(-1).text, /linear_get_issue/);
 	await harness.emit(
 		"tool_call",
 		{ toolName: "linear_get_issue", toolCallId: "publish-issue-approved", input: { id: "ILA-2324", includeRelations: true } },
@@ -929,16 +880,7 @@ test("default product-review accepts real Pi's public selection call before the 
 		mcpResult("linear_list_comments", "publish-comments-2", { comments: [], hasNextPage: false }),
 		context,
 	);
-	await harness.emit(
-		"tool_call",
-		{ toolName: "linear_get_user", toolCallId: "publish-auth-3", input: { query: "me" } },
-		context,
-	);
-	await harness.emit(
-		"tool_result",
-		mcpResult("linear_get_user", "publish-auth-3", actor),
-		context,
-	);
+
 	await harness.emit(
 		"tool_call",
 		{ toolName: "linear_get_issue", toolCallId: "publish-issue-before", input: { id: "ILA-2324", includeRelations: true } },
@@ -1124,8 +1066,76 @@ test("public product-review selection calls fail closed without authorizing muta
 	});
 });
 
-test("default product-review requires the authenticated Linear user to match the configured Owner actor exactly", async () => {
-	const harness = extensionHarness();
+test("default product-review blocks inactive, guest, and malformed users after one lookup", async (t) => {
+	for (const [name, user] of [
+		["inactive", { ...ownerActor, isActive: false }],
+		["guest", { ...ownerActor, isGuest: true }],
+		["malformed", { id: ownerActor.id, isActive: true, isGuest: false }],
+	]) {
+		await t.test(name, async () => {
+			const harness = extensionHarness();
+			await harness.emit(
+				"input",
+				{
+					type: "input",
+					text: "/product-review ILA-2324",
+					source: "interactive",
+				},
+				context,
+			);
+			await callMcp(
+				harness,
+				"linear_get_user",
+				`invalid-${name}`,
+				{ query: "me" },
+				user,
+			);
+			const outcome = await harness.tools
+				.get("workflow_product_review")
+				.execute(`invalid-${name}-terminal`, {});
+			assert.equal(
+				JSON.parse(outcome.content[0].text).blocker.code,
+				name === "malformed"
+					? "PI_WORKFLOW_PRODUCT_REVIEW_MCP_MALFORMED_RESPONSE"
+					: "PI_WORKFLOW_PRODUCT_REVIEW_AUTHORITY_MISMATCH",
+			);
+			assert.equal(
+				harness.toolCalls.filter(({ toolName }) =>
+					toolName === "linear_get_user").length,
+				1,
+			);
+		});
+	}
+});
+
+test("explicit invalid product-review compatibility policies fail closed", () => {
+	for (const authenticatedAuthority of [
+		{
+			actorId: "developer-1",
+			role: "Developer",
+			authorityRevision: "host-policy-r1",
+		},
+		{
+			actorId: "owner-1",
+			role: "Owner",
+			authorityRevision: "   ",
+		},
+	]) {
+		assert.throws(
+			() => extensionHarness({ authenticatedAuthority }),
+			/invalid Owner authority policy/i,
+		);
+	}
+});
+
+test("explicit product-review compatibility policy constrains the authenticated Linear user", async () => {
+	const harness = extensionHarness({
+		authenticatedAuthority: {
+			actorId: "owner-1",
+			role: "Owner",
+			authorityRevision: "host-policy-r1",
+		},
+	});
 	await harness.emit(
 		"input",
 		{
@@ -1176,7 +1186,7 @@ test("public product-review preserves the first terminal blocker after unrelated
 		"linear_get_user",
 		"first-blocker-owner",
 		{ query: "me" },
-		{ ...ownerActor, id: "another-owner" },
+		{ ...ownerActor, isActive: false },
 	);
 	assert.equal(
 		(
@@ -1258,7 +1268,6 @@ test("public product-review adopts the exact canonical root comment across pagin
 	await advanceApprovedToComments(first, "adopt-first");
 	const digest = persistence.getArtifact().digest;
 	await callMcp(first, "linear_list_comments", "adopt-first-comments", { issueId: "ILA-2324" }, { comments: [], hasNextPage: false });
-	await callMcp(first, "linear_get_user", "adopt-first-auth-mutation", { query: "me" }, ownerActor);
 	await callMcp(first, "linear_get_issue", "adopt-first-issue-mutation", { id: "ILA-2324", includeRelations: true }, validIssue());
 	const save = await callMcp(
 		first,
@@ -1316,7 +1325,6 @@ test("public product-review recovers an uncertain save across runtime instances 
 	await advanceApprovedToComments(interrupted, "uncertain-first");
 	const digest = persistence.getArtifact().digest;
 	await callMcp(interrupted, "linear_list_comments", "uncertain-first-comments", { issueId: "ILA-2324" }, { comments: [], hasNextPage: false });
-	await callMcp(interrupted, "linear_get_user", "uncertain-first-auth-mutation", { query: "me" }, ownerActor);
 	await callMcp(interrupted, "linear_get_issue", "uncertain-first-issue-mutation", { id: "ILA-2324", includeRelations: true }, validIssue());
 	const uncertainSave = await callMcp(
 		interrupted,
@@ -1351,7 +1359,6 @@ test("public product-review recovers an uncertain save across runtime instances 
 	await advanceApprovedToComments(absent, "uncertain-absent");
 	const absentDigest = absentPersistence.getArtifact().digest;
 	await callMcp(absent, "linear_list_comments", "uncertain-absent-comments", { issueId: "ILA-2324" }, { comments: [], hasNextPage: false });
-	await callMcp(absent, "linear_get_user", "uncertain-absent-auth", { query: "me" }, ownerActor);
 	await callMcp(absent, "linear_get_issue", "uncertain-absent-issue", { id: "ILA-2324", includeRelations: true }, validIssue());
 	await callMcp(absent, "linear_save_comment", "uncertain-absent-save", { issueId: "ILA-2324", body: "PI_WORKFLOW_CANONICAL_PRODUCT_REVIEW_BODY" }, undefined);
 	await absent.emit("session_shutdown", { type: "session_shutdown" }, context);
@@ -1386,7 +1393,6 @@ test("public product-review serializes concurrent save authorization without rel
 	await advanceApprovedToComments(harness, "concurrent-save");
 	const digest = persistence.getArtifact().digest;
 	await callMcp(harness, "linear_list_comments", "concurrent-save-comments", { issueId: "ILA-2324" }, { comments: [], hasNextPage: false });
-	await callMcp(harness, "linear_get_user", "concurrent-save-auth", { query: "me" }, ownerActor);
 	await callMcp(harness, "linear_get_issue", "concurrent-save-issue", { id: "ILA-2324", includeRelations: true }, validIssue());
 	const input = { issueId: "ILA-2324", body: "PI_WORKFLOW_CANONICAL_PRODUCT_REVIEW_BODY" };
 	const first = harness.emit("tool_call", { toolName: "linear_save_comment", toolCallId: "concurrent-save-1", input: structuredClone(input) }, context);
@@ -1521,7 +1527,6 @@ test("public product-review protects every issue snapshot field before mutation"
 	for (const [name, mutate] of drifts) {
 		const harness = extensionHarness();
 		await prepareAndSelect(harness, `drift-${name.replaceAll(" ", "-")}`);
-		await callMcp(harness, "linear_get_user", `drift-${name}-auth`, { query: "me" }, ownerActor);
 		const drifted = validIssue();
 		mutate(drifted);
 		await callMcp(
@@ -1572,8 +1577,7 @@ test("public product-review allows only monotonic comment-induced updatedAt drif
 		await prepareAndSelect(harness, prefix);
 		await advanceApprovedToComments(harness, prefix);
 		await callMcp(harness, "linear_list_comments", `${prefix}-comments`, { issueId: "ILA-2324" }, { comments: [], hasNextPage: false });
-		await callMcp(harness, "linear_get_user", `${prefix}-auth-mutation`, { query: "me" }, ownerActor);
-		await callMcp(harness, "linear_get_issue", `${prefix}-issue-mutation`, { id: "ILA-2324", includeRelations: true }, validIssue());
+			await callMcp(harness, "linear_get_issue", `${prefix}-issue-mutation`, { id: "ILA-2324", includeRelations: true }, validIssue());
 		const save = await callMcp(
 			harness,
 			"linear_save_comment",

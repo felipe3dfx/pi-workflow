@@ -20,6 +20,7 @@ import {
 	type DefaultProductReviewRuntimeOptions,
 } from "./default-product-review.ts";
 import type { DefineProductMcpPublication } from "./define-product-mcp-publication.ts";
+import type { DefineProductTicketMcpPublication } from "./define-product-ticket-mcp-publication.ts";
 import type { createDefineProductWorkflow } from "./define-product-workflow.ts";
 import { createDefineProductRuntime } from "./define-product-runtime.ts";
 import { createQaHandoffArtifactStore } from "./qa-handoff-artifact-store.ts";
@@ -40,6 +41,7 @@ import { createQaHandoffRuntime } from "./qa-handoff-runtime.ts";
 import type { createProductReviewWorkflow } from "./product-review-workflow.ts";
 import { createProductReviewRuntime } from "./product-review-runtime.ts";
 import { createRuntimeEngramArtifactStore } from "./runtime-engram-store.ts";
+import type { SingleUserAuthoritySession } from "./single-user-authority.ts";
 import { registerPublicEntryGuard } from "./public-entry-guard.ts";
 import type {
 	DiagnosticScope,
@@ -215,6 +217,18 @@ export default function piWorkflowExtension(
 					| DefineProductMcpPublication
 					| undefined)
 			: undefined;
+	const defaultDefineProductTicketMcpPublication =
+		"ticketMcpPublication" in defineProductWorkflow
+			? (defineProductWorkflow.ticketMcpPublication as
+					| DefineProductTicketMcpPublication
+					| undefined)
+			: undefined;
+	const defaultDefineProductAuthoritySession =
+		"authoritySession" in defineProductWorkflow
+			? (defineProductWorkflow.authoritySession as
+					| SingleUserAuthoritySession
+					| undefined)
+			: undefined;
 	const defineProductRuntime = createDefineProductRuntime({
 		workflow: defineProductWorkflow,
 		createDefinitionId:
@@ -222,6 +236,12 @@ export default function piWorkflowExtension(
 			(() => crypto.randomUUID()),
 		...(defaultDefineProductMcpPublication
 			? { mcpPublication: defaultDefineProductMcpPublication }
+			: {}),
+		...(defaultDefineProductTicketMcpPublication
+			? { ticketMcpPublication: defaultDefineProductTicketMcpPublication }
+			: {}),
+		...(defaultDefineProductAuthoritySession
+			? { authoritySession: defaultDefineProductAuthoritySession }
 			: {}),
 	});
 	defineProductRuntime.register(pi);

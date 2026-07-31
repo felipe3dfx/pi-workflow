@@ -11,10 +11,10 @@ type Dependencies = {
 	gateway: LinearDeliveryTicketGateway;
 };
 
-const body = (ticket: DeliveryTicketGraph["payload"]["tickets"][number]) =>
+export const renderDeliveryTicketBody = (ticket: DeliveryTicketGraph["payload"]["tickets"][number]) =>
 	`Resultado\n\n${ticket.outcome}\n\nCriterios de aceptación\n\n${ticket.acceptanceCriteria.map((criterion) => `- ${criterion}`).join("\n")}`;
 
-const topological = (tickets: DeliveryTicketGraph["payload"]["tickets"]) => {
+export const orderDeliveryTickets = (tickets: DeliveryTicketGraph["payload"]["tickets"]) => {
 	const byKey = new Map(tickets.map((ticket) => [ticket.stableKey, ticket]));
 	const visited = new Set<string>();
 	const visiting = new Set<string>();
@@ -46,23 +46,26 @@ export async function publishApprovedTickets(dependencies: Dependencies) {
 		const parent = dependencies.graph.payload.parent;
 		const revalidate = (stage: string) => dependencies.guard.revalidate({ definitionId: dependencies.definitionId, graphDigest: dependencies.graph.digest, parent, stage });
 		await revalidate("prepare");
-		const ordered = topological(dependencies.graph.payload.tickets);
+		const ordered = orderDeliveryTickets(dependencies.graph.payload.tickets);
 		let manifest = await dependencies.manifest.prepare({
 			definitionId: dependencies.definitionId,
 			graphDigest: dependencies.graph.digest,
 			parent: { id: parent.id, revision: parent.revision },
 		});
 		if (manifest.stage === "prepared") manifest = await dependencies.manifest.advance(manifest.operationId, "prepared", "creating", {});
-		const children = [...manifest.children];
+		let children = [...manifest.children];
 		for (const ticket of manifest.stage === "creating" ? ordered.filter((ticket) => !children.some((child) => child.stableKey === ticket.stableKey)) : []) {
+			if (manifest.pendingMutation && (manifest.pendingMutation.kind !== "child" || manifest.pendingMutation.stableKey !== ticket.stableKey)) throw Object.assign(new Error("Durable mutation receipt conflicts with the next child."), { code: "PI_WORKFLOW_PUBLICATION_IDEMPOTENCY_CONFLICT" });
 			const matches = await dependencies.gateway.findChildren({ operationId: manifest.operationId, parent, stableKey: ticket.stableKey });
 			if (matches.length > 1 || matches.length === 1 && matches[0].stableKey !== ticket.stableKey) throw Object.assign(new Error("Publication marker is ambiguous."), { code: "PI_WORKFLOW_PUBLICATION_IDEMPOTENCY_CONFLICT" });
 			let child = matches[0];
 			if (!child) {
+				if (manifest.pendingMutation) throw Object.assign(new Error("A prior child mutation is uncertain and cannot be repeated."), { code: "PI_WORKFLOW_PUBLICATION_RECOVERY_PENDING" });
 				await revalidate(`child:${ticket.stableKey}`);
-				child = await dependencies.gateway.createChild({ operationId: manifest.operationId, parent, child: { stableKey: ticket.stableKey, title: ticket.title, body: body(ticket), estimate: ticket.estimate.points, workflow: { state: "Triage", assignee: null, cycle: null, labels: [], project: null } } });
+				manifest = await dependencies.manifest.beginMutation(manifest.operationId, "creating", { kind: "child", stableKey: ticket.stableKey });
+				child = await dependencies.gateway.createChild({ operationId: manifest.operationId, parent, child: { stableKey: ticket.stableKey, title: ticket.title, body: renderDeliveryTicketBody(ticket), estimate: ticket.estimate.points, workflow: { state: "Triage", assignee: null, cycle: null, labels: [], project: null } } });
 			}
-			children.push(child);
+			children = [...children, child];
 			manifest = await dependencies.manifest.record(manifest.operationId, "creating", { children, relations: [] });
 		}
 		if (manifest.stage === "creating") manifest = await dependencies.manifest.advance(manifest.operationId, "creating", "children", {});
@@ -70,22 +73,25 @@ export async function publishApprovedTickets(dependencies: Dependencies) {
 			ticket.blockers.map((blockingStableKey) => ({ blockedStableKey: ticket.stableKey, blockingStableKey })),
 		).sort((left, right) => `${left.blockedStableKey}:${left.blockingStableKey}`.localeCompare(`${right.blockedStableKey}:${right.blockingStableKey}`));
 		if (manifest.stage === "children") manifest = await dependencies.manifest.advance(manifest.operationId, "children", "relations", {});
-		const recordedRelations = [...manifest.relations];
+		let recordedRelations = [...manifest.relations];
 		for (const relation of manifest.stage === "relations" ? relations.filter((relation) => !recordedRelations.some((recorded) => exact(recorded, relation))) : []) {
+			if (manifest.pendingMutation && (manifest.pendingMutation.kind !== "relation" || !exact(manifest.pendingMutation, { kind: "relation", ...relation }))) throw Object.assign(new Error("Durable mutation receipt conflicts with the next blocker."), { code: "PI_WORKFLOW_PUBLICATION_IDEMPOTENCY_CONFLICT" });
 			const matches = await dependencies.gateway.findBlockers({ operationId: manifest.operationId, parent, ...relation });
 			if (matches.length > 1 || matches[0] && !exact(matches[0], relation)) throw Object.assign(new Error("Publication marker is ambiguous."), { code: "PI_WORKFLOW_PUBLICATION_IDEMPOTENCY_CONFLICT" });
 			if (!matches.length) {
+				if (manifest.pendingMutation) throw Object.assign(new Error("A prior blocker mutation is uncertain and cannot be repeated."), { code: "PI_WORKFLOW_PUBLICATION_RECOVERY_PENDING" });
 				await revalidate(`blocker:${relation.blockedStableKey}:${relation.blockingStableKey}`);
+				manifest = await dependencies.manifest.beginMutation(manifest.operationId, "relations", { kind: "relation", ...relation });
 				await dependencies.gateway.createBlocker({ operationId: manifest.operationId, parent, ...relation });
 			}
-			recordedRelations.push(relation);
+			recordedRelations = [...recordedRelations, relation];
 			manifest = await dependencies.manifest.record(manifest.operationId, "relations", { children, relations: recordedRelations });
 		}
 		if (manifest.stage === "relations") manifest = await dependencies.manifest.advance(manifest.operationId, "relations", "verifying", {});
 		const expectedChildren = ordered.map((ticket, index) => ({
 			stableKey: ticket.stableKey,
 			title: ticket.title,
-			body: body(ticket),
+			body: renderDeliveryTicketBody(ticket),
 			estimate: ticket.estimate.points,
 			workflow: { state: "Triage" as const, assignee: null, cycle: null, labels: [], project: null },
 			linearId: children[index].linearId,

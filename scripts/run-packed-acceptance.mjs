@@ -422,10 +422,7 @@ async function traverseProductReviewPublicSeam() {
 			defaultProductReviewRuntime: true,
 			toolNames: ["linear_get_user", "linear_get_issue", "linear_list_comments", "linear_save_comment"],
 			productReviewRuntime: {
-				environment: {
-					PI_WORKFLOW_OWNER_ACTOR_ID: actor.id,
-					PI_WORKFLOW_OWNER_AUTHORITY_REVISION: "owner-r1",
-				},
+				environment: {},
 				drafts: { read: async () => structuredClone(productDraft) },
 				artifacts: activePersistence.artifacts,
 				recovery: activePersistence.recovery,
@@ -499,12 +496,12 @@ async function traverseProductReviewPublicSeam() {
 			packedContext,
 		);
 		invariant(
-			continued?.content?.at(-1)?.text?.includes("linear_get_user"),
-			`${prefix} continuation did not advertise Owner reauthentication`,
+			continued?.content?.at(-1)?.text?.includes("linear_get_issue") &&
+				!continued.content.at(-1).text.includes("linear_get_user"),
+			`${prefix} did not reuse the cached single-user identity`,
 		);
 	}
 	async function advanceAfterSelection(harness, issue) {
-		await call(harness, "linear_get_user", { query: "me" }, actor);
 		await call(harness, "linear_get_issue", { id: issue.identifier, includeRelations: true }, issue);
 	}
 
@@ -512,7 +509,6 @@ async function traverseProductReviewPublicSeam() {
 	await prepareAndSelect(interrupted, baseIssue, "initial");
 	await advanceAfterSelection(interrupted, baseIssue);
 	await call(interrupted, "linear_list_comments", { issueId: baseIssue.identifier }, { comments: [], hasNextPage: false });
-	await call(interrupted, "linear_get_user", { query: "me" }, actor);
 	await call(interrupted, "linear_get_issue", { id: baseIssue.identifier, includeRelations: true }, baseIssue);
 	const save = await call(interrupted, "linear_save_comment", { issueId: baseIssue.identifier, body: "PI_WORKFLOW_CANONICAL_PRODUCT_REVIEW_BODY" }, undefined);
 	const digest = save.event.input.body.match(/product-review:([a-f0-9]{64})/)[1];
@@ -520,6 +516,10 @@ async function traverseProductReviewPublicSeam() {
 	invariant(save.event.input.body === expectedBody, "packed product-review did not substitute the exact canonical Spanish body");
 	const comment = { id: "packed-product-review-comment", body: save.event.input.body, quotedText: null, parentId: null };
 	await interrupted.emit("session_shutdown", { type: "session_shutdown" }, packedContext);
+	invariant(
+		calls.filter(({ toolName }) => toolName === "linear_get_user").length === 1,
+		"packed product-review repeated identity lookup in one execution",
+	);
 
 	const advancedIssue = { ...baseIssue, updatedAt: "2026-07-27T19:21:02.958Z" };
 	const recovered = await start(advancedIssue);
@@ -535,13 +535,16 @@ async function traverseProductReviewPublicSeam() {
 	const outcome = JSON.parse(result?.content?.[0]?.text ?? "null");
 	invariant(outcome.status === "published" && outcome.commentId === comment.id, "packed product-review did not recover through its public terminal tool");
 	invariant(calls.filter(({ toolName }) => toolName === "linear_save_comment").length === 1, "packed product-review authorized a duplicate comment mutation");
+	invariant(
+		calls.filter(({ toolName }) => toolName === "linear_get_user").length === 2,
+		"packed product-review recovery did not use exactly one identity lookup",
+	);
 
 	const driftPersistence = createPersistence();
 	const drifted = await start(baseIssue, driftPersistence);
 	await prepareAndSelect(drifted, baseIssue, "protected-drift");
 	await advanceAfterSelection(drifted, baseIssue);
 	await call(drifted, "linear_list_comments", { issueId: baseIssue.identifier }, { comments: [], hasNextPage: false });
-	await call(drifted, "linear_get_user", { query: "me" }, actor);
 	const mutationsBeforeDrift = calls.filter(({ toolName }) => toolName === "linear_save_comment").length;
 	await call(drifted, "linear_get_issue", { id: baseIssue.identifier, includeRelations: true }, { ...baseIssue, labels: ["Protected drift"] });
 	await call(drifted, "workflow_product_review", {}, undefined);
@@ -552,6 +555,10 @@ async function traverseProductReviewPublicSeam() {
 			driftOutcome.blocker?.code === "PI_WORKFLOW_PRODUCT_REVIEW_REVISION_MISMATCH" &&
 			calls.filter(({ toolName }) => toolName === "linear_save_comment").length === mutationsBeforeDrift,
 		"packed product-review did not refuse protected-field drift before mutation",
+	);
+	invariant(
+		calls.filter(({ toolName }) => toolName === "linear_get_user").length === 3,
+		"packed product-review drift execution did not use exactly one identity lookup",
 	);
 	invariant(calls.every(({ toolName }) => ["linear_get_user", "linear_get_issue", "linear_list_comments", "linear_save_comment", "workflow_product_review"].includes(toolName)), "packed product-review escaped its exact MCP tool allowlist");
 }
@@ -986,7 +993,6 @@ async function runDefineProductScenario() {
 		statuses: [{ id: "packed-backlog-1", name: "Backlog", type: "backlog" }],
 	});
 	await callPublication({ issues: [], hasNextPage: false });
-	await callPublication(linearActor);
 	await callPublication(linearIssue);
 	await callPublication(linearIssue);
 	await callPublication({ issues: [linearIssue], hasNextPage: false });
@@ -1003,7 +1009,10 @@ async function runDefineProductScenario() {
 				description: approved.spec.payload.body,
 				state: "packed-backlog-1",
 			}) &&
-			publicationRecovery?.stage === "verified",
+			publicationRecovery?.stage === "verified" &&
+			publicationCalls.filter(
+				(call) => call.toolName === "linear_get_user",
+			).length === 1,
 		"packed authenticated MCP Delivery-parent publication drifted",
 	);
 	await traverseDefineProductPublicSeam();
@@ -1306,7 +1315,7 @@ async function runQaHandoffScenario() {
 		authority: {
 			actorId: actorEvidence.id,
 			role: "Developer",
-			authorityRevision: digestCanonicalValue(actorEvidence),
+			authorityRevision: "single-user/v1",
 		},
 		...structuredClone(producedDraft.draft),
 	};
@@ -1340,12 +1349,6 @@ async function runQaHandoffScenario() {
 			comments: [],
 			hasNextPage: false,
 		},
-	);
-	await packedMcpCall(
-		interruptedHarness,
-		"linear_get_user",
-		{ query: "me" },
-		actorEvidence,
 	);
 	await packedMcpCall(
 		interruptedHarness,
@@ -1515,7 +1518,6 @@ async function runQaHandoffScenario() {
 			{ toolName: "linear_get_issue", input: issueCallInput },
 			{ toolName: "linear_get_issue", input: issueCallInput },
 			{ toolName: "linear_list_comments", input: commentsCallInput },
-			{ toolName: "linear_get_user", input: { query: "me" } },
 			{ toolName: "linear_get_issue", input: issueCallInput },
 			{
 				toolName: "linear_save_comment",
@@ -1536,6 +1538,11 @@ async function runQaHandoffScenario() {
 			},
 		]),
 		"packed default MCP QA handoff exact inputs or recovery sequence drifted",
+	);
+	invariant(
+		packedMcpCalls.filter(({ toolName }) => toolName === "linear_get_user")
+			.length === 2,
+		"packed QA handoff did not use exactly one identity lookup per execution",
 	);
 	const restartedRecovery = JSON.parse(
 		engram.read(

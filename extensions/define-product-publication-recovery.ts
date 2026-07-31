@@ -169,6 +169,7 @@ export function createDefineProductPublicationRecoveryStore(options: {
 		expectedRevision: string | undefined,
 		ownerId?: string,
 		issueId?: string,
+		rollbackClaimOnReadBackFailure = false,
 	): Promise<void> {
 		const topic = destination(identity.definitionId);
 		const content = contentFor(identity, stage, ownerId, issueId);
@@ -178,7 +179,21 @@ export function createDefineProductPublicationRecoveryStore(options: {
 			content,
 			expectedRevision,
 		);
-		await verify(project, topic, saved.revision, content);
+		try {
+			await verify(project, topic, saved.revision, content);
+		} catch (error) {
+			if (rollbackClaimOnReadBackFailure && ownerId) {
+				try {
+					await options.store.write(
+						project,
+						topic,
+						contentFor(identity, "released", ownerId),
+						saved.revision,
+					);
+				} catch {}
+			}
+			throw error;
+		}
 	}
 
 	function assertIdentity(
@@ -235,6 +250,8 @@ export function createDefineProductPublicationRecoveryStore(options: {
 				"uncertain",
 				current?.revision,
 				ownerId,
+				undefined,
+				true,
 			);
 		},
 		async recordCreated(identity, ownerId, issueId) {

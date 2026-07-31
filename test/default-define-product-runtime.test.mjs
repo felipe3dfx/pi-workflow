@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
+import { createDefineProductRuntime } from "../extensions/define-product-runtime.ts";
+import { createSingleUserAuthoritySession } from "../extensions/single-user-authority.ts";
 import { createRuntimeEngramArtifactStore } from "../extensions/runtime-engram-store.ts";
 import { createEngramApprovedSpecReader } from "../extensions/engram-approved-spec-reader.ts";
 import { createInMemoryDelegationCheckpointStore } from "../extensions/delegation-checkpoints.ts";
@@ -16,6 +18,38 @@ import { canonicalJson, digestCanonicalValue } from "../extensions/workflow-cont
 import { createDeliveryTicketGraph, createSpecCoverageIndex, createTicketGraphApproval } from "../extensions/delivery-ticket-graph.ts";
 import { createProductSpecApprovalEnvelope, createProductSpecEnvelope } from "../extensions/product-spec.ts";
 import { createWorkflowArtifactInterface } from "../extensions/workflow-artifacts.ts";
+
+test("to-tickets gives one corrective turn when the first turn omits the required graph write", async () => {
+	const prompts = [];
+	let wroteGraph = false;
+	const result = await defaultDefineProductModule.executeRequiredTicketGraphTurn({
+		prompt: "generate",
+		execute: async (prompt) => {
+			prompts.push(prompt);
+			if (prompts.length === 2) wroteGraph = true;
+			return `turn-${prompts.length}`;
+		},
+		hasWrittenGraph: () => wroteGraph,
+	});
+	assert.equal(result, "turn-2");
+	assert.equal(prompts[0], "generate");
+	assert.match(prompts[1], /action=write_graph/);
+	assert.match(prompts[1], /graph\.payload\.coverage/);
+});
+
+test("to-tickets does not spend a corrective turn after a successful graph write", async () => {
+	let calls = 0;
+	const result = await defaultDefineProductModule.executeRequiredTicketGraphTurn({
+		prompt: "generate",
+		execute: async () => {
+			calls += 1;
+			return "written";
+		},
+		hasWrittenGraph: () => true,
+	});
+	assert.equal(result, "written");
+	assert.equal(calls, 1);
+});
 
 const {
 	createDefaultDefineProductWorkflow,
@@ -117,6 +151,25 @@ function loadExtension(runtime = {}) {
 		handlers,
 		tool: tools.get("workflow_define_product"),
 	};
+}
+
+function loadAuthorityRuntime() {
+	const handlers = new Map();
+	const authoritySession = createSingleUserAuthoritySession();
+	const runtime = createDefineProductRuntime({
+		workflow: {
+			advance: async () => ({ status: "blocked", blocker: { code: "unused", message: "unused" } }),
+			pendingRecommendation: () => undefined,
+			reset() {},
+		},
+		createDefinitionId: () => "definition-authority",
+		authoritySession,
+	});
+	runtime.register({
+		on: (event, handler) => handlers.set(event, handler),
+		registerTool() {},
+	});
+	return { handlers, runtime };
 }
 
 function executionContext() {
@@ -254,6 +307,7 @@ async function prepareProductionSpec(runtimeOptions = {}, specOverrides = {}) {
 		productionSpecRuntimeOptions(runtimeOptions),
 	);
 	const ctx = executionContext();
+	let authorityLookupCount = 0;
 	await handlers.get("tool_execution_start")(
 		{ type: "tool_execution_start", toolName: "workflow_define_product" },
 		ctx,
@@ -264,6 +318,34 @@ async function prepareProductionSpec(runtimeOptions = {}, specOverrides = {}) {
 			text: "/define-product redactar el Spec aprobado",
 			source: "interactive",
 		},
+		ctx,
+	);
+	authorityLookupCount += 1;
+	await handlers.get("tool_call")(
+			{
+				toolName: "linear_get_user",
+				toolCallId: "define-execution-user",
+				input: { query: "me" },
+			},
+			ctx,
+		);
+		await handlers.get("tool_result")(
+			{
+				toolName: "linear_get_user",
+				toolCallId: "define-execution-user",
+				content: [
+					{
+						type: "text",
+						text: JSON.stringify({
+							id: "owner-felipe",
+							name: "Owner",
+							isActive: true,
+							isGuest: false,
+						}),
+					},
+				],
+				isError: false,
+			},
 		ctx,
 	);
 	const recommendation = await tool.execute(
@@ -359,7 +441,14 @@ async function prepareProductionSpec(runtimeOptions = {}, specOverrides = {}) {
 		ctx,
 	);
 	assert.equal(ready.details.status, "spec-ready");
-	return { ctx, handlerCounts, handlers, ready, tool };
+	return {
+		authorityLookupCount,
+		ctx,
+		handlerCounts,
+		handlers,
+		ready,
+		tool,
+	};
 }
 
 test("production session manager creates named persistent sessions and resumes the exact identity", async () => {
@@ -921,11 +1010,11 @@ test("default runtime resumes compatible exploration, persists progress, and per
 	);
 });
 
-test("default packaged entry privately binds configured Owner authority", async () => {
+test("default packaged entry ignores legacy Owner environment and privately binds the authenticated user", async () => {
 	const previousActorId = process.env.PI_WORKFLOW_OWNER_ACTOR_ID;
 	const previousRevision = process.env.PI_WORKFLOW_OWNER_AUTHORITY_REVISION;
-	process.env.PI_WORKFLOW_OWNER_ACTOR_ID = "owner-felipe";
-	process.env.PI_WORKFLOW_OWNER_AUTHORITY_REVISION = "owner-policy-r3";
+	process.env.PI_WORKFLOW_OWNER_ACTOR_ID = "legacy-environment-must-be-ignored";
+	process.env.PI_WORKFLOW_OWNER_AUTHORITY_REVISION = "legacy-environment-r3";
 	try {
 		const { ctx, handlerCounts, handlers, tool } =
 			await prepareProductionSpec();
@@ -1006,14 +1095,20 @@ test("default packaged entry privately binds configured Owner authority", async 
 	}
 });
 
-test("default packaged approval reports missing launch-host Owner authority after the real settled continuation lifecycle", async () => {
+test("default packaged approval requires no launch-host Owner authority", async () => {
 	const previousActorId = process.env.PI_WORKFLOW_OWNER_ACTOR_ID;
 	const previousRevision = process.env.PI_WORKFLOW_OWNER_AUTHORITY_REVISION;
 	delete process.env.PI_WORKFLOW_OWNER_ACTOR_ID;
 	delete process.env.PI_WORKFLOW_OWNER_AUTHORITY_REVISION;
 	try {
-		const { ctx, handlerCounts, handlers, tool } =
-			await prepareProductionSpec();
+		const {
+			authorityLookupCount,
+			ctx,
+			handlerCounts,
+			handlers,
+			tool,
+		} = await prepareProductionSpec();
+		assert.equal(authorityLookupCount, 1);
 		assert.ok((handlerCounts.get("agent_settled") ?? 0) >= 3);
 		await handlers.get("agent_settled")(
 			{ type: "agent_settled" },
@@ -1030,15 +1125,8 @@ test("default packaged approval reports missing launch-host Owner authority afte
 			undefined,
 			ctx,
 		);
-		assert.equal(outcome.details.status, "blocked");
-		assert.equal(
-			outcome.details.blocker.code,
-			"PI_WORKFLOW_SPEC_APPROVAL_REQUIRED",
-		);
-		assert.equal(
-			outcome.details.blocker.message,
-			"Spec approval requires configured launch-host Owner authority.",
-		);
+		assert.equal(outcome.details.status, "spec-approved");
+		assert.equal(outcome.details.approval.status, "approved");
 	} finally {
 		if (previousActorId === undefined)
 			delete process.env.PI_WORKFLOW_OWNER_ACTOR_ID;
@@ -1046,6 +1134,135 @@ test("default packaged approval reports missing launch-host Owner authority afte
 		if (previousRevision === undefined)
 			delete process.env.PI_WORKFLOW_OWNER_AUTHORITY_REVISION;
 		else process.env.PI_WORKFLOW_OWNER_AUTHORITY_REVISION = previousRevision;
+	}
+});
+
+test("runtime authentication reservations reject reset, replacement, late duplicate, and concurrent result reuse", async (t) => {
+	const user = {
+		id: "owner-felipe",
+		name: "Owner",
+		isActive: true,
+		isGuest: false,
+	};
+	const result = (toolCallId, value = user) => ({
+		toolName: "linear_get_user",
+		toolCallId,
+		content: [{ type: "text", text: JSON.stringify(value) }],
+		isError: false,
+	});
+	const call = (toolCallId) => ({
+		toolName: "linear_get_user",
+		toolCallId,
+		input: { query: "me" },
+	});
+
+	await t.test("session reset", async () => {
+		const { handlers } = loadExtension(productionSpecRuntimeOptions());
+		const ctx = executionContext();
+		await handlers.get("input")({ text: "/define-product first", source: "interactive" }, ctx);
+		assert.equal(await handlers.get("tool_call")(call("reused-reset"), ctx), undefined);
+		await handlers.get("session_start")({}, ctx);
+		await handlers.get("input")({ text: "/define-product after reset", source: "interactive" }, ctx);
+		await handlers.get("tool_call")(call("reused-reset"), ctx);
+		await handlers.get("tool_result")(result("reused-reset"), ctx);
+		const prompt = await handlers.get("before_agent_start")({ systemPrompt: "base" }, ctx);
+		assert.match(prompt.systemPrompt, /call linear_get_user with only/i);
+	});
+
+	await t.test("active replacement and late duplicate", async () => {
+		const { handlers, runtime } = loadAuthorityRuntime();
+		runtime.handlePublicEntry({ text: "/define-product first", source: "interactive" });
+		assert.equal(await handlers.get("tool_call")(call("old-call")), undefined);
+		runtime.handlePublicEntry({ text: "/define-product replacement", source: "interactive" });
+		assert.deepEqual(await handlers.get("tool_call")(call("old-call")), {
+			block: true,
+			reason: "PI_WORKFLOW_DEFINE_PRODUCT_AUTHORITY_MISMATCH",
+		});
+		assert.equal(await handlers.get("tool_call")(call("new-call")), undefined);
+		await handlers.get("tool_result")(result("old-call"));
+		const pending = await handlers.get("before_agent_start")({ systemPrompt: "base" });
+		assert.match(pending.systemPrompt, /one pending linear_get_user result/i);
+		await handlers.get("tool_result")(result("new-call"));
+		await handlers.get("tool_result")(result("old-call", { ...user, id: "late-duplicate" }));
+		const authenticated = await handlers.get("before_agent_start")({ systemPrompt: "base" });
+		assert.doesNotMatch(authenticated.systemPrompt, /linear_get_user/);
+		assert.doesNotMatch(authenticated.systemPrompt, /stop without approving or mutating/i);
+	});
+
+	await t.test("concurrent duplicate results", async () => {
+		const { handlers } = loadExtension(productionSpecRuntimeOptions());
+		const ctx = executionContext();
+		await handlers.get("input")({ text: "/define-product concurrent", source: "interactive" }, ctx);
+		assert.equal(await handlers.get("tool_call")(call("concurrent-call"), ctx), undefined);
+		await Promise.all([
+			handlers.get("tool_result")(result("concurrent-call"), ctx),
+			handlers.get("tool_result")(result("concurrent-call", { ...user, id: "duplicate-user" }), ctx),
+		]);
+		const prompt = await handlers.get("before_agent_start")({ systemPrompt: "base" }, ctx);
+		assert.doesNotMatch(prompt.systemPrompt, /linear_get_user/);
+		assert.doesNotMatch(prompt.systemPrompt, /stop without approving or mutating/i);
+	});
+});
+
+test("default define-product blocks inactive, guest, and malformed users after one lookup", async (t) => {
+	for (const [name, user] of [
+		[
+			"inactive",
+			{ id: "owner-felipe", name: "Owner", isActive: false, isGuest: false },
+		],
+		[
+			"guest",
+			{ id: "owner-felipe", name: "Owner", isActive: true, isGuest: true },
+		],
+		[
+			"malformed",
+			{ id: "owner-felipe", isActive: true, isGuest: false },
+		],
+	]) {
+		await t.test(name, async () => {
+			const { handlers } = loadExtension(productionSpecRuntimeOptions());
+			const ctx = executionContext();
+			await handlers.get("input")(
+				{
+					type: "input",
+					text: "/define-product validar autoridad",
+					source: "interactive",
+				},
+				ctx,
+			);
+			const prompt = await handlers.get("before_agent_start")({
+				systemPrompt: "base",
+			});
+			assert.match(prompt.systemPrompt, /linear_get_user/);
+			assert.equal(
+				await handlers.get("tool_call")(
+					{
+						toolName: "linear_get_user",
+						toolCallId: `define-invalid-${name}`,
+						input: { query: "me" },
+					},
+					ctx,
+				),
+				undefined,
+			);
+			await handlers.get("tool_result")(
+				{
+					toolName: "linear_get_user",
+					toolCallId: `define-invalid-${name}`,
+					content: [{ type: "text", text: JSON.stringify(user) }],
+					isError: false,
+				},
+				ctx,
+			);
+			const stopped = await handlers.get("before_agent_start")({
+				systemPrompt: "base",
+			});
+			assert.match(stopped.systemPrompt, /stop without approving or mutating/i);
+			assert.doesNotMatch(
+				stopped.systemPrompt,
+				/call linear_get_user with only/i,
+			);
+		});
 	}
 });
 
@@ -1284,25 +1501,61 @@ test("explicit legacy gateway compatibility publishes the Engram-approved body",
 	}
 });
 
-test("default define-product ignores LINEAR_API_KEY and publishes through authenticated Linear MCP", async () => {
+test("injected authenticated authority blocks mismatched Spec approval after one user lookup", async () => {
+	const policy = {
+		actorId: "compatibility-owner",
+		role: "Owner",
+		authorityRevision: "compatibility-r1",
+	};
+	let persistedApprovals = 0;
+	const { authorityLookupCount, ctx, handlers, tool } = await prepareProductionSpec({
+		authenticatedAuthority: { current: async () => policy },
+		approvedSpecReader: {
+			read: async () => {
+				throw new Error("No approved Spec should exist.");
+			},
+			save: async () => {
+				persistedApprovals += 1;
+				throw new Error("A mismatched approval must not be persisted.");
+			},
+		},
+	});
+	await handlers.get("input")(
+		{ type: "input", text: "Apruebo", source: "interactive" },
+		ctx,
+	);
+	const outcome = await tool.execute(
+		"policy-approval",
+		{ action: "approve_spec" },
+		undefined,
+		undefined,
+		ctx,
+	);
+	assert.equal(outcome.details.status, "blocked");
+	assert.equal(
+		outcome.details.blocker.code,
+		"PI_WORKFLOW_SPEC_APPROVAL_REQUIRED",
+	);
+	assert.equal(persistedApprovals, 0);
+	assert.equal(authorityLookupCount, 1);
+});
+
+test("default define-product uses one user lookup and ignores LINEAR_API_KEY and legacy Owner environment", async () => {
 	const previousActorId = process.env.PI_WORKFLOW_OWNER_ACTOR_ID;
 	const previousRevision = process.env.PI_WORKFLOW_OWNER_AUTHORITY_REVISION;
 	const previousLinearKey = process.env.LINEAR_API_KEY;
-	process.env.PI_WORKFLOW_OWNER_ACTOR_ID = "owner-1";
-	process.env.PI_WORKFLOW_OWNER_AUTHORITY_REVISION = "owner-r1";
+	delete process.env.PI_WORKFLOW_OWNER_ACTOR_ID;
+	delete process.env.PI_WORKFLOW_OWNER_AUTHORITY_REVISION;
 	process.env.LINEAR_API_KEY = "must-not-be-read";
 	try {
-		const { ctx, handlers, ready, tool } = await prepareProductionSpec(
-			{
-				artifactStore: createAtomicArtifactStore(),
-				authenticatedAuthority: {
-					current: async () => ({
-						actorId: "owner-1",
-						role: "Owner",
-						authorityRevision: "owner-r1",
-					}),
-				},
-			},
+		const {
+			authorityLookupCount,
+			ctx,
+			handlers,
+			ready,
+			tool,
+		} = await prepareProductionSpec(
+			{ artifactStore: createAtomicArtifactStore() },
 			{ teamId: "team-1" },
 		);
 		await handlers.get("before_agent_start")({ systemPrompt: "base" }, ctx);
@@ -1361,10 +1614,8 @@ test("default define-product ignores LINEAR_API_KEY and publishes through authen
 			initialEvent.toolCallId,
 			continuing.details,
 		);
-		assert.match(continuation.content.at(-1).text, /linear_get_user/);
+		assert.match(continuation.content.at(-1).text, /linear_list_teams/);
 
-		const actor = { id: "owner-1", name: "Owner", isActive: true, isGuest: false };
-		await mcp("linear_get_user", { query: "me" }, actor);
 		await mcp(
 			"linear_list_teams",
 			{ limit: 250, orderBy: "updatedAt", includeArchived: false },
@@ -1390,7 +1641,6 @@ test("default define-product ignores LINEAR_API_KEY and publishes through authen
 			issues: [],
 			hasNextPage: false,
 		});
-		await mcp("linear_get_user", { query: "me" }, actor);
 		const issue = {
 			id: "linear-parent-1",
 			identifier: "ILA-3000",
@@ -1449,6 +1699,11 @@ test("default define-product ignores LINEAR_API_KEY and publishes through authen
 			},
 		});
 		assert.doesNotMatch(published.content[0].text, /digest|revision|publicationKey|parentRef/);
+		assert.equal(authorityLookupCount, 1);
+		assert.equal(
+			mcpCalls.filter(({ toolName }) => toolName === "linear_get_user").length,
+			0,
+		);
 		assert.equal(mcpCalls.filter(({ toolName }) => toolName === "linear_save_issue").length, 1);
 		assert.deepEqual(
 			mcpCalls.find(({ toolName }) => toolName === "linear_save_issue").input,
@@ -1466,6 +1721,421 @@ test("default define-product ignores LINEAR_API_KEY and publishes through authen
 		else process.env.PI_WORKFLOW_OWNER_AUTHORITY_REVISION = previousRevision;
 		if (previousLinearKey === undefined) delete process.env.LINEAR_API_KEY;
 		else process.env.LINEAR_API_KEY = previousLinearKey;
+	}
+});
+
+test("default packaged define-product routes publish_tickets to MCP when no native ticket gateway is injected", async () => {
+	let active = false;
+	const calls = [];
+	const ticketMcpPublication = {
+		allowedTools: ["linear_get_user", "linear_get_issue", "linear_list_issue_statuses", "linear_list_issues", "linear_save_issue", "workflow_define_product"],
+		setMcpAvailable() {},
+		clear() { active = false; },
+		hasActiveTurn: () => active,
+		begin: async (definitionId, toolCallId, input) => {
+			active = true;
+			calls.push({ definitionId, toolCallId, input });
+			return { status: "continuing" };
+		},
+		complete: async () => ({ status: "blocked", blocker: { code: "unused", message: "unused" } }),
+		expectedModelCall: () => active ? { toolName: "linear_get_user", input: { query: "me" } } : undefined,
+		nextCallInstruction: () => undefined,
+		handleToolCall: async () => undefined,
+		handleToolResult: async () => false,
+	};
+	const workflow = createDefaultDefineProductWorkflow(
+		{},
+		() => undefined,
+		{
+			artifactStore: createAtomicArtifactStore(),
+			checkpointStore: createInMemoryDelegationCheckpointStore(),
+			ticketMcpPublication,
+		},
+	);
+	assert.equal(workflow.ticketMcpPublication, ticketMcpPublication);
+	assert.equal("linearDeliveryTickets" in workflow, false);
+
+	const nativeGateway = {
+		readAuthoritySnapshot: async () => ({}),
+		findChildren: async () => [],
+		findBlockers: async () => [],
+		createChild: async () => ({}),
+		createBlocker: async () => {},
+		readBack: async () => ({}),
+	};
+	const compatible = createDefaultDefineProductWorkflow(
+		{},
+		() => undefined,
+		{
+			artifactStore: createAtomicArtifactStore(),
+			checkpointStore: createInMemoryDelegationCheckpointStore(),
+			linearDeliveryTickets: nativeGateway,
+			ticketMcpPublication,
+		},
+	);
+	assert.equal(compatible.ticketMcpPublication, undefined);
+	assert.deepEqual(calls, []);
+});
+
+test("default define-product restores approved ticket publication across sandbox roots and routes action-only publication to MCP", async () => {
+	const previousCodingAgentDir = process.env.PI_CODING_AGENT_DIR;
+	const previousAgentHome = process.env.PI_AGENT_HOME;
+	const sandboxOne = await mkdtemp(join(tmpdir(), "pi-workflow-ticket-recovery-one-"));
+	const sandboxTwo = await mkdtemp(join(tmpdir(), "pi-workflow-ticket-recovery-two-"));
+	const artifactStore = createAtomicArtifactStore();
+	const definitionId = "definition-1";
+	const actor = {
+		actorId: "owner-1",
+		role: "Owner",
+		authorityRevision: "authority-r1",
+	};
+	const spec = createProductSpecEnvelope({
+		definitionId,
+		target: {
+			kind: "linear-parent-description",
+			teamId: "team-1",
+			title: "Publicación recuperable",
+		},
+		revision: "spec-r1",
+		problem: "La aprobación no sobrevive al reemplazo del sandbox.",
+		solution: "La continuación aprobada se conserva en Engram.",
+		userStories: ["Como Owner, quiero publicar los tickets ya aprobados."],
+		decisions: [
+			{
+				id: "decision-1",
+				status: "resolved",
+				pertinent: true,
+				text: "La publicación se reanuda sin identidad suministrada por el agente.",
+			},
+		],
+		tests: ["Verificar la recuperación entre sandboxes."],
+		outOfScope: ["Buscar otras definiciones pendientes."],
+		supportArtifacts: [],
+	});
+	const approval = createProductSpecApprovalEnvelope({ spec, actor });
+	const approved = { spec, approval, sourceRevision: "approved-r1" };
+	const approvedSpecRef = {
+		kind: "engram",
+		project: "pi-workflow",
+		topic: `workflow/define-product/${definitionId}/approved-spec`,
+		revision: approved.sourceRevision,
+		schema: "approved-spec",
+		schemaVersion: 1,
+		digest: spec.digest,
+	};
+	const parent = {
+		id: "ILA-2436",
+		teamId: "team-1",
+		revision: "parent-r1",
+		specDigest: spec.digest,
+	};
+	const parentUnsigned = {
+		schema: "delivery-parent",
+		schemaVersion: 1,
+		payload: parent,
+	};
+	const parentRef = await createWorkflowArtifactInterface(artifactStore)
+		.openSession({
+			project: { name: "pi-workflow", root: process.cwd() },
+			topic: `workflow/define-product/${definitionId}/published-parent`,
+			schema: "delivery-parent",
+			schemaVersion: 1,
+			strategy: "snapshot",
+			aliases: [],
+		})
+		.writeDeliveryParentSnapshot({
+			...parentUnsigned,
+			digest: digestCanonicalValue(parentUnsigned),
+		});
+	const graph = createDeliveryTicketGraph({
+		parent,
+		language: "es",
+		coverage: createSpecCoverageIndex({
+			stories: [
+				{
+					id: "story-1",
+					contextId: "delivery",
+					acceptanceCriteria: ["ac-1"],
+				},
+			],
+			decisions: ["decision-1"],
+			tests: ["test-1"],
+		}),
+		tickets: [
+			{
+				stableKey: "T-1",
+				title: "Restaurar publicación",
+				outcome: "La publicación aprobada se restaura.",
+				acceptanceCriteria: ["Uno", "Dos", "Tres", "Cuatro"],
+				estimate: { points: 1, rationale: "Cambio acotado" },
+				blockers: [],
+				refs: [
+					{ kind: "story", id: "story-1" },
+					{ kind: "decision", id: "decision-1" },
+					{ kind: "test", id: "test-1" },
+				],
+				deliveryBindings: [
+					{
+						storyId: "story-1",
+						acceptanceCriterionId: "ac-1",
+						contextId: "delivery",
+					},
+				],
+			},
+		],
+	});
+	try {
+		process.env.PI_CODING_AGENT_DIR = sandboxOne;
+		delete process.env.PI_AGENT_HOME;
+		const first = createDefaultDefineProductWorkflow(
+			{},
+			() => executionContext(),
+			{
+				artifactStore,
+				checkpointStore: createInMemoryDelegationCheckpointStore(),
+				approvedSpecReader: { read: async () => structuredClone(approved) },
+				authenticatedAuthority: { current: async () => actor },
+				ticketGraphExecutor: async (input) => {
+					await input.writeArtifact(graph);
+					return { assistantText: "Ticket graph ready." };
+				},
+			},
+		);
+		const ready = await first.advance({
+			kind: "to-tickets",
+			definitionId,
+			approvedSpecRef,
+			parentRef,
+		});
+		assert.equal(ready.status, "tickets-ready", ready.blocker?.message);
+		const approvedTickets = await first.advance({
+			kind: "approve-tickets",
+			definitionId,
+			parentRef,
+			graphRef: ready.graphRef,
+			digest: ready.graph.digest,
+		});
+		assert.equal(
+			approvedTickets.status,
+			"tickets-approved",
+			approvedTickets.blocker?.message,
+		);
+
+		process.env.PI_CODING_AGENT_DIR = sandboxTwo;
+		const second = loadExtension({
+			artifactStore,
+			approvedSpecReader: { read: async () => structuredClone(approved) },
+		});
+		const secondContext = executionContext();
+		await second.handlers.get("session_start")({}, secondContext);
+		const startEvent = {
+			toolName: "workflow_define_product",
+			toolCallId: "cross-sandbox-publication",
+			input: { action: "publish_tickets" },
+		};
+		assert.equal(
+			await second.handlers.get("tool_call")(startEvent, secondContext),
+			undefined,
+		);
+		const publication = await second.tool.execute(
+			startEvent.toolCallId,
+			startEvent.input,
+			undefined,
+			undefined,
+			secondContext,
+		);
+		assert.deepEqual(publication.details, { status: "continuing" });
+		const continuation = await second.handlers.get("tool_result")(
+			{
+				...startEvent,
+				content: [
+					{ type: "text", text: JSON.stringify(publication.details) },
+				],
+				isError: false,
+			},
+			secondContext,
+		);
+		assert.match(continuation.content.at(-1).text, /linear_get_user/);
+
+		let sequence = 0;
+		const mcpCalls = [];
+		async function call(toolName, input) {
+			sequence += 1;
+			const event = {
+				toolName,
+				toolCallId: `cross-sandbox-${sequence}`,
+				input: structuredClone(input),
+			};
+			assert.equal(
+				await second.handlers.get("tool_call")(event, secondContext),
+				undefined,
+			);
+			mcpCalls.push({ toolName, input: structuredClone(event.input) });
+			return event;
+		}
+		async function result(event, payload) {
+			await second.handlers.get("tool_result")(
+				{
+					toolName: event.toolName,
+					toolCallId: event.toolCallId,
+					content: [{ type: "text", text: JSON.stringify(payload) }],
+					isError: false,
+				},
+				secondContext,
+			);
+		}
+		async function mcp(toolName, input, payload) {
+			const event = await call(toolName, input);
+			await result(event, payload);
+			return event;
+		}
+
+		const issueFields = [
+			"id",
+			"title",
+			"description",
+			"estimate",
+			"status",
+			"statusType",
+			"assigneeId",
+			"cycleId",
+			"labels",
+			"projectId",
+			"parentId",
+			"teamId",
+		];
+		const parentIssue = {
+			id: parent.id,
+			teamId: parent.teamId,
+			title: spec.payload.target.title,
+			description: spec.payload.body,
+			updatedAt: parent.revision,
+			status: { id: "backlog-1", name: "Backlog", type: "backlog" },
+			assigneeId: null,
+			cycleId: null,
+		};
+		await mcp("linear_get_user", { query: "me" }, {
+			id: "owner-1",
+			name: "Owner",
+			isActive: true,
+			isGuest: false,
+		});
+		await mcp(
+			"linear_get_issue",
+			{ id: parent.id, includeRelations: true },
+			parentIssue,
+		);
+		await mcp("linear_list_issue_statuses", { team: parent.teamId }, [
+			{ id: "backlog-1", name: "Backlog", type: "backlog" },
+		]);
+		await mcp(
+			"linear_list_issues",
+			{
+				team: parent.teamId,
+				parentId: parent.id,
+				query: "Restaurar publicación",
+				limit: 250,
+				orderBy: "updatedAt",
+				includeArchived: false,
+				fields: issueFields,
+			},
+			{ issues: [], hasNextPage: false },
+		);
+		await mcp(
+			"linear_get_issue",
+			{ id: parent.id, includeRelations: true },
+			parentIssue,
+		);
+		const save = await call("linear_save_issue", {
+			team: parent.teamId,
+			parentId: parent.id,
+			title: "PI_WORKFLOW_CANONICAL_DELIVERY_TICKET_TITLE",
+			description: "PI_WORKFLOW_CANONICAL_DELIVERY_TICKET_BODY",
+			estimate: 1,
+			state: "backlog-1",
+			assignee: null,
+			cycle: null,
+			labels: [],
+			project: null,
+		});
+		const child = {
+			id: "ILA-2437",
+			teamId: parent.teamId,
+			parentId: parent.id,
+			title: save.input.title,
+			description: save.input.description,
+			estimate: 1,
+			status: { id: "backlog-1", name: "Backlog", type: "backlog" },
+			assigneeId: null,
+			cycleId: null,
+			labels: [],
+			projectId: null,
+		};
+		await result(save, child);
+		await mcp(
+			"linear_get_issue",
+			{ id: child.id, includeRelations: true },
+			child,
+		);
+		await mcp(
+			"linear_get_issue",
+			{ id: parent.id, includeRelations: true },
+			parentIssue,
+		);
+		await mcp(
+			"linear_list_issues",
+			{
+				team: parent.teamId,
+				parentId: parent.id,
+				limit: 250,
+				orderBy: "updatedAt",
+				includeArchived: false,
+				fields: issueFields,
+			},
+			{ issues: [child], hasNextPage: false },
+		);
+		await mcp(
+			"linear_get_issue",
+			{ id: child.id, includeRelations: true },
+			{ ...child, relations: { blockedBy: [], blocks: [] } },
+		);
+		const terminalEvent = {
+			toolName: "workflow_define_product",
+			toolCallId: "cross-sandbox-terminal",
+			input: { action: "publish_tickets" },
+		};
+		assert.equal(
+			await second.handlers.get("tool_call")(terminalEvent, secondContext),
+			undefined,
+		);
+		const terminal = await second.tool.execute(
+			terminalEvent.toolCallId,
+			terminalEvent.input,
+			undefined,
+			undefined,
+			secondContext,
+		);
+		assert.deepEqual(terminal.details, { status: "tickets-published" });
+		assert.equal(
+			mcpCalls.filter(({ toolName }) => toolName === "linear_get_user").length,
+			1,
+		);
+		assert.equal(
+			mcpCalls.filter(({ toolName }) => toolName === "linear_save_issue").length,
+			1,
+		);
+	} finally {
+		if (previousCodingAgentDir === undefined) {
+			delete process.env.PI_CODING_AGENT_DIR;
+		} else {
+			process.env.PI_CODING_AGENT_DIR = previousCodingAgentDir;
+		}
+		if (previousAgentHome === undefined) delete process.env.PI_AGENT_HOME;
+		else process.env.PI_AGENT_HOME = previousAgentHome;
+		await Promise.all([
+			rm(sandboxOne, { recursive: true, force: true }),
+			rm(sandboxTwo, { recursive: true, force: true }),
+		]);
 	}
 });
 
@@ -1529,11 +2199,12 @@ test("default public publish_tickets uses canonical Engram re-reads before mutat
 		const published = await tool.execute("published", { action: "publish_tickets" }, undefined, undefined, executionContext());
 		assert.equal(published.details.status, "tickets-published", JSON.stringify(published.details));
 		assert.deepEqual(mutations, ["child:T-1", "child:T-2", "edge:T-2"]);
-		assert.equal(recovery, undefined);
+		assert.equal(recovery.definitionId, definitionId);
+		assert.equal(recovery.digest, graph.digest);
 	} finally { globalThis.fetch = originalFetch; }
 });
 
-test("default packaged entry fails closed when configured Owner authority is incomplete", async () => {
+test("default packaged entry ignores incomplete legacy Owner environment", async () => {
 	const previousActorId = process.env.PI_WORKFLOW_OWNER_ACTOR_ID;
 	const previousRevision = process.env.PI_WORKFLOW_OWNER_AUTHORITY_REVISION;
 	process.env.PI_WORKFLOW_OWNER_ACTOR_ID = "owner-felipe";
@@ -1551,15 +2222,7 @@ test("default packaged entry fails closed when configured Owner authority is inc
 			undefined,
 			ctx,
 		);
-		assert.equal(outcome.details.status, "blocked");
-		assert.equal(
-			outcome.details.blocker.code,
-			"PI_WORKFLOW_SPEC_APPROVAL_REQUIRED",
-		);
-		assert.equal(
-			outcome.details.blocker.message,
-			"Spec approval requires configured launch-host Owner authority.",
-		);
+		assert.equal(outcome.details.status, "spec-approved");
 	} finally {
 		if (previousActorId === undefined) {
 			delete process.env.PI_WORKFLOW_OWNER_ACTOR_ID;
@@ -1762,7 +2425,14 @@ test("exact Owner approval recovers a durable pending Spec after in-memory phase
 });
 
 test("default define-product host-binds the corrective reply after a missing domain anchor", async () => {
-	const { handlers, tool } = loadExtension();
+	let ticketRecovery;
+	const { handlers, tool } = loadExtension({
+		ticketApprovalRecoveryStore: {
+			load: async () => ticketRecovery,
+			save: async (value) => { ticketRecovery = structuredClone(value); },
+			clear: async () => { ticketRecovery = undefined; },
+		},
+	});
 	const ctx = executionContext();
 	await handlers.get("tool_execution_start")(
 		{ type: "tool_execution_start", toolName: "workflow_define_product" },

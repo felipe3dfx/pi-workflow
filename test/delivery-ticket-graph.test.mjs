@@ -32,6 +32,22 @@ test("runtime owns the digest of a delegated ticket graph", () => {
 	assert.deepEqual(canonicalizeDelegatedDeliveryTicketGraph(delegated), graph());
 });
 
+test("delegated graph rejection identifies the exact invalid contract class", () => {
+	const { digest: _digest, ...delegated } = graph();
+	delegated.payload.tickets[0].title = "`título no permitido`";
+	assert.throws(
+		() => canonicalizeDelegatedDeliveryTicketGraph(delegated),
+		/single-line plain Markdown without links, HTML, or code spans/,
+	);
+
+	const { digest: _otherDigest, ...invalidReference } = graph();
+	invalidReference.payload.tickets[0].refs[0].id = "identificador-inventado";
+	assert.throws(
+		() => canonicalizeDelegatedDeliveryTicketGraph(invalidReference),
+		/every ticket ref id must exist in the matching graph\.payload\.coverage collection/,
+	);
+});
+
 const canonicallyRedigestedInvalidGraph = (mutate) => {
 	const value = structuredClone(graph());
 	mutate(value.payload);
@@ -134,6 +150,14 @@ test("rejects unsafe, non-vertical, and multi-context tickets", () => {
 			createDeliveryTicketGraph({ parent: value.parent, coverage: createSpecCoverageIndex(value.coverage), language: value.language, tickets: value.tickets });
 		}, { code }, name);
 	}
+	const value = structuredClone(fixture);
+	value.coverage.stories[0].contextId = "other-context";
+	value.tickets[1].deliveryBindings[0].contextId = "other-context";
+	value.tickets[0].deliveryBindings.push({ storyId: "US-1", acceptanceCriterionId: "US-1-AC-1", contextId: "other-context" });
+	assert.throws(
+		() => createDeliveryTicketGraph({ parent: value.parent, coverage: createSpecCoverageIndex(value.coverage), language: value.language, tickets: value.tickets }),
+		/observed 2 distinct contextIds/,
+	);
 });
 
 test("rejects stale parent and every approval binding mismatch", () => {

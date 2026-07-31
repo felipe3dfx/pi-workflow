@@ -5,6 +5,7 @@ import piWorkflowExtension from "../extensions/pi-workflow.ts";
 import { produceQaHandoffDraft } from "../extensions/qa-handoff-draft-producer.ts";
 import { createQaHandoffDraftStore } from "../extensions/qa-handoff-draft-store.ts";
 import { createQaHandoffPublicationRecoveryStore } from "../extensions/qa-handoff-publication-recovery.ts";
+import { createQaHandoffArtifact } from "../extensions/qa-handoff-workflow.ts";
 import { digestCanonicalValue } from "../extensions/workflow-contracts.ts";
 
 const MCP_TOOL_NAMES = [
@@ -294,30 +295,8 @@ async function readCommentsBefore(harness, existingComments = []) {
 	);
 }
 
-async function revalidateActorBeforeMutation(
-	harness,
-	actor = {
-		id: "developer-1",
-		name: "Developer",
-		isActive: true,
-		isGuest: false,
-	},
-) {
-	const toolCallId = nextHelperCallId(harness, "user-before-mutation-call");
-	await harness.emit(
-		"tool_call",
-		{
-			toolName: "linear_get_user",
-			toolCallId,
-			input: { query: "me" },
-		},
-		context,
-	);
-	await harness.emit(
-		"tool_result",
-		mcpResult("linear_get_user", toolCallId, actor),
-		context,
-	);
+async function revalidateActorBeforeMutation() {
+	// The active non-guest Linear identity is frozen from the execution's one lookup.
 }
 
 async function verifyIssueBeforeMutation(harness, issue = validIssue()) {
@@ -536,9 +515,9 @@ test("default public qa-handoff publishes its deterministic production artifact 
 			role: "Developer",
 			authorityRevision: artifact.payload.authority.authorityRevision,
 		});
-		assert.match(
+		assert.equal(
 			artifact.payload.authority.authorityRevision,
-			/^[a-f0-9]{64}$/,
+			"single-user/v1",
 		);
 		assert.equal(
 			artifact.digest,
@@ -588,7 +567,7 @@ test("default public qa-handoff publishes its deterministic production artifact 
 		);
 		assert.match(
 			commentsInstruction.content.at(-1).text,
-			/linear_get_user.*me/s,
+			/linear_get_issue.*ILA-2410/s,
 		);
 		await revalidateActorBeforeMutation(harness);
 		await verifyIssueBeforeMutation(harness, issue);
@@ -698,11 +677,6 @@ test("default public qa-handoff publishes its deterministic production artifact 
 				input: { issueId: "ILA-2410" },
 			},
 			{
-				toolName: "linear_get_user",
-				toolCallId: "user-before-mutation-call",
-				input: { query: "me" },
-			},
-			{
 				toolName: "linear_get_issue",
 				toolCallId: "issue-before-mutation-call",
 				input: { id: "ILA-2410", includeRelations: true },
@@ -734,6 +708,38 @@ test("default public qa-handoff publishes its deterministic production artifact 
 		if (previousKey === undefined) delete process.env.LINEAR_API_KEY;
 		else process.env.LINEAR_API_KEY = previousKey;
 	}
+});
+
+test("qa-handoff preserves legacy authority provenance when approved content is unchanged", async () => {
+	const issue = validIssue();
+	const produced = produceQaHandoffDraft(issue);
+	assert.equal(produced.status, "produced");
+	const historicalActor = {
+		id: "developer-1",
+		name: "Developer",
+		isActive: true,
+		isGuest: false,
+	};
+	const legacy = createQaHandoffArtifact(
+		{ id: "ILA-2410", updatedAt: issue.updatedAt },
+		{
+			actorId: historicalActor.id,
+			role: "Developer",
+			authorityRevision: digestCanonicalValue(historicalActor),
+		},
+		produced.draft,
+	);
+	const harness = extensionHarness();
+	harness.persistedArtifacts.set("ILA-2410", structuredClone(legacy));
+	const artifact = await advanceToComments(harness, issue);
+	assert.deepEqual(artifact, legacy);
+	const { outcome } = await publishFromPersistedArtifact(harness, [], issue);
+	assert.equal(outcome.status, "published");
+	assert.deepEqual(harness.persistedArtifacts.get("ILA-2410"), legacy);
+	assert.equal(
+		harness.toolCalls.filter(({ toolName }) => toolName === "linear_get_user").length,
+		1,
+	);
 });
 
 test("qa-handoff blocks extra MCP input before execution", async () => {
@@ -1087,12 +1093,12 @@ test("qa-handoff blocks wrong comment-list issues and fields", async () => {
 	}
 });
 
-test("qa-handoff blocks authenticated Developer actor drift immediately before mutation", async () => {
+test("qa-handoff rejects a repeated identity lookup before mutation", async () => {
 	const harness = extensionHarness();
 	await advanceToComments(harness);
 	await readCommentsBefore(harness);
 
-	assert.equal(
+	assert.deepEqual(
 		await harness.emit(
 			"tool_call",
 			{
@@ -1102,22 +1108,11 @@ test("qa-handoff blocks authenticated Developer actor drift immediately before m
 			},
 			context,
 		),
-		undefined,
+		{ block: true, reason: "PI_WORKFLOW_QA_HANDOFF_MCP_PROTOCOL_INVALID" },
 	);
-	await harness.emit(
-		"tool_result",
-		mcpResult("linear_get_user", "user-before-mutation-call", {
-			id: "developer-2",
-			name: "Another Developer",
-			isActive: true,
-			isGuest: false,
-		}),
-		context,
-	);
-
 	assert.equal(
-		await terminalBlocker(harness),
-		"PI_WORKFLOW_QA_HANDOFF_AUTHORITY_MISMATCH",
+		harness.toolCalls.filter(({ toolName }) => toolName === "linear_get_user").length,
+		2,
 	);
 	assert.equal(
 		harness.toolCalls.some(
@@ -1245,7 +1240,7 @@ test("qa-handoff permits only one exact root comment creation input", async () =
 		(input) => ({ ...input, id: "existing-comment" }),
 	]) {
 		const harness = extensionHarness();
-		const artifact = await advanceToComments(harness);
+		await advanceToComments(harness);
 		await harness.emit(
 			"tool_call",
 			{
@@ -3812,31 +3807,49 @@ test("public qa-handoff rejects an issue-keyed draft stale against freshly verif
 	);
 });
 
-test("qa-handoff classifies partial actor evidence as malformed", async () => {
-	const harness = extensionHarness();
-	await startPreflight(harness);
-	await harness.emit(
-		"tool_call",
-		{
-			toolName: "linear_get_user",
-			toolCallId: "user-call",
-			input: { query: "me" },
-		},
-		context,
-	);
-	await harness.emit(
-		"tool_result",
-		mcpResult("linear_get_user", "user-call", {
-			id: "developer-1",
-			name: "Developer",
-			isActive: true,
-		}),
-		context,
-	);
-	assert.equal(
-		await terminalBlocker(harness),
-		"PI_WORKFLOW_QA_HANDOFF_MCP_MALFORMED_RESPONSE",
-	);
+test("qa-handoff blocks inactive, guest, and malformed users after one lookup", async (t) => {
+	for (const [name, user, code] of [
+		[
+			"inactive",
+			{ id: "developer-1", name: "Developer", isActive: false, isGuest: false },
+			"PI_WORKFLOW_QA_HANDOFF_AUTHORITY_MISMATCH",
+		],
+		[
+			"guest",
+			{ id: "developer-1", name: "Developer", isActive: true, isGuest: true },
+			"PI_WORKFLOW_QA_HANDOFF_AUTHORITY_MISMATCH",
+		],
+		[
+			"malformed",
+			{ id: "developer-1", name: "Developer", isActive: true },
+			"PI_WORKFLOW_QA_HANDOFF_MCP_MALFORMED_RESPONSE",
+		],
+	]) {
+		await t.test(name, async () => {
+			const harness = extensionHarness();
+			await startPreflight(harness);
+			await harness.emit(
+				"tool_call",
+				{
+					toolName: "linear_get_user",
+					toolCallId: `user-${name}`,
+					input: { query: "me" },
+				},
+				context,
+			);
+			await harness.emit(
+				"tool_result",
+				mcpResult("linear_get_user", `user-${name}`, user),
+				context,
+			);
+			assert.equal(await terminalBlocker(harness), code);
+			assert.equal(
+				harness.toolCalls.filter(({ toolName }) =>
+					toolName === "linear_get_user").length,
+				1,
+			);
+		});
+	}
 });
 
 test("public qa-handoff persists a canonical draft without mutating Linear", async () => {

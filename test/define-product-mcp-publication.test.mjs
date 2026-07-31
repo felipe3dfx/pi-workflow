@@ -44,6 +44,26 @@ function approvedArtifact(overrides = {}) {
 	};
 }
 
+function linearPaddedOrderedListArtifact() {
+	const current = approvedArtifact();
+	const body = current.spec.payload.body.replace(
+		"1. Leer exactamente.",
+		Array.from({ length: 10 }, (_, index) => `${index + 1}. Prueba ${index + 1}.`).join("\n"),
+	);
+	assert.notEqual(body, current.spec.payload.body);
+	const unsigned = {
+		schema: current.spec.schema,
+		schemaVersion: current.spec.schemaVersion,
+		payload: { ...current.spec.payload, body },
+	};
+	const spec = { ...unsigned, digest: digestCanonicalValue(unsigned) };
+	return {
+		spec,
+		approval: createProductSpecApprovalEnvelope({ spec, actor: owner }),
+		sourceRevision: "approved-ordered-list-r1",
+	};
+}
+
 function legacyTrailingNewlineArtifact() {
 	const current = approvedArtifact();
 	const unsigned = {
@@ -115,13 +135,20 @@ function persistence(initial) {
 	};
 }
 
-function harness({ approved = approvedArtifact(), recovery = persistence(), reader, active = true } = {}) {
+function harness({
+	approved = approvedArtifact(),
+	recovery = persistence(),
+	reader,
+	active = true,
+	ownerAuthority = owner,
+} = {}) {
 	const snapshots = [];
+	const calls = [];
 	const controller = createDefineProductMcpPublication({
 		approvedSpecReader: {
 			read: reader ?? (async () => structuredClone(approved)),
 		},
-		owner,
+		...(ownerAuthority ? { owner: ownerAuthority } : {}),
 		recovery: recovery.store,
 		parentSnapshots: {
 			persist: async (input) => {
@@ -159,6 +186,7 @@ function harness({ approved = approvedArtifact(), recovery = persistence(), read
 	async function call(payload, options = {}) {
 		const expected = controller.expectedModelCall();
 		assert.ok(expected, "expected a model call");
+		calls.push(structuredClone(expected));
 		sequence += 1;
 		const event = {
 			toolName: expected.toolName,
@@ -178,6 +206,7 @@ function harness({ approved = approvedArtifact(), recovery = persistence(), read
 	}
 	return {
 		approved,
+		calls,
 		controller,
 		recovery,
 		snapshots,
@@ -205,7 +234,6 @@ async function advanceToSave(h) {
 	await advanceToCandidates(h);
 	await h.call({ issues: [], hasNextPage: true, cursor: "issues-2" });
 	await h.call({ issues: [], hasNextPage: false });
-	await h.call(actor);
 }
 
 async function finishReadback(h, issue, readback = issue, lookupIssue = issue) {
@@ -252,6 +280,71 @@ test("publishes one exact Backlog Delivery parent through authenticated paginate
 	assert.equal(outcome.parent.cycleId, null);
 	assert.equal(h.snapshots.length, 1);
 	assert.equal(h.recovery.get().stage, "verified");
+	assert.equal(
+		h.calls.filter(({ toolName }) => toolName === "linear_get_user").length,
+		1,
+	);
+});
+
+test("accepts Linear padding of single-digit markers in a ten-item ordered list", async () => {
+	const approved = linearPaddedOrderedListArtifact();
+	const h = harness({ approved });
+	await h.begin();
+	await advanceToSave(h);
+	const issue = issueFor(approved);
+	await h.call(issue);
+	const paddedDescription = issue.description.replace(/^([1-9])\. Prueba/gm, " $1. Prueba");
+	assert.notEqual(paddedDescription, issue.description);
+	const { team: _team, status: _status, ...readback } = issue;
+	const outcome = await finishReadback(h, issue, {
+		...readback,
+		description: paddedDescription,
+		status: "Backlog",
+		statusType: "backlog",
+	});
+	assert.equal(outcome.status, "spec-published");
+});
+
+test("uses direct read-back as authority when final Linear search omits the created parent", async () => {
+	const h = harness();
+	await h.begin();
+	await advanceToSave(h);
+	const issue = issueFor(h.approved);
+	await h.call(issue);
+	const { team: _team, status: _status, ...readback } = issue;
+	await h.call({ ...readback, status: "Backlog", statusType: "backlog" });
+	await h.call({ issues: [], hasNextPage: false });
+	const outcome = await h.controller.complete({ action: "publish_spec" });
+	assert.equal(outcome.status, "spec-published");
+	assert.equal(outcome.parent.id, issue.id);
+});
+
+test("default single-user publication preserves historical approval authority as provenance", async () => {
+	const h = harness({ ownerAuthority: null });
+	assert.deepEqual(await h.begin(), { status: "continuing" });
+	await h.call({
+		id: "current-single-user",
+		name: "Current user",
+		isActive: true,
+		isGuest: false,
+	});
+	await h.call({
+		teams: [{ id: "team-1", name: "Grupo ilao" }],
+		hasNextPage: false,
+	});
+	await h.call([
+		{ id: "backlog-1", name: "Backlog", type: "backlog" },
+	]);
+	await h.call({ issues: [], hasNextPage: false });
+	const issue = issueFor(h.approved);
+	await h.call(issue);
+	const outcome = await finishReadback(h, issue);
+	assert.equal(outcome.status, "spec-published");
+	assert.equal(h.approved.approval.payload.actor.authorityRevision, "owner-r1");
+	assert.equal(
+		h.calls.filter(({ toolName }) => toolName === "linear_get_user").length,
+		1,
+	);
 });
 
 test("accepts Linear's single trailing-newline normalization for legacy approved Specs", async () => {
@@ -326,15 +419,26 @@ test("durable uncertain restart performs lookup only and never duplicates", asyn
 });
 
 test("fails closed on auth, team, Backlog, duplicate, and conflicting candidates", async (t) => {
-	await t.test("actor mismatch", async () => {
-		const h = harness();
-		await h.begin();
-		await h.call({ ...actor, id: "attacker" });
-		assert.equal(
-			(await h.controller.complete({ action: "publish_spec" })).blocker.code,
-			"PI_WORKFLOW_DEFINE_PRODUCT_AUTHORITY_MISMATCH",
-		);
-	});
+	for (const [name, invalidActor] of [
+		["compatibility actor mismatch", { ...actor, id: "attacker" }],
+		["inactive actor", { ...actor, isActive: false }],
+		["guest actor", { ...actor, isGuest: true }],
+		["malformed actor", { id: actor.id, isActive: true, isGuest: false }],
+	]) {
+		await t.test(name, async () => {
+			const h = harness();
+			await h.begin();
+			await h.call(invalidActor);
+			assert.equal(
+				(await h.controller.complete({ action: "publish_spec" })).blocker.code,
+				"PI_WORKFLOW_DEFINE_PRODUCT_AUTHORITY_MISMATCH",
+			);
+			assert.equal(
+				h.calls.filter(({ toolName }) => toolName === "linear_get_user").length,
+				1,
+			);
+		});
+	}
 	await t.test("team ambiguity", async () => {
 		const h = harness();
 		await h.begin();
@@ -379,7 +483,7 @@ test("fails closed on auth, team, Backlog, duplicate, and conflicting candidates
 	}
 });
 
-test("reauthenticates and rereads the exact approved artifact immediately before mutation", async () => {
+test("reuses the cached identity and rereads the exact approved artifact immediately before mutation", async () => {
 	const original = approvedArtifact();
 	let current = original;
 	const h = harness({
@@ -399,6 +503,10 @@ test("reauthenticates and rereads the exact approved artifact immediately before
 	assert.equal(blockedCall.block, true);
 	assert.equal(blockedCall.reason, "PI_WORKFLOW_PUBLICATION_ARTIFACT_DRIFT");
 	assert.equal(h.recovery.get(), undefined);
+	assert.equal(
+		h.calls.filter(({ toolName }) => toolName === "linear_get_user").length,
+		1,
+	);
 });
 
 test("blocks missing tools, malformed results, lateral mutation, and parallel calls", async (t) => {
