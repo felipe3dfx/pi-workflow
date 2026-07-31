@@ -49,8 +49,8 @@ class TicketGraphContractError extends Error {
 	}
 }
 
-const fail = (code: string): never => {
-	throw new TicketGraphContractError(code);
+const fail = (code: string, reason?: string): never => {
+	throw new TicketGraphContractError(code, reason ? `${code}: ${reason}` : code);
 };
 const record = (value: unknown): value is Record<string, unknown> =>
 	!!value && typeof value === "object" && !Array.isArray(value);
@@ -101,10 +101,10 @@ function canonicalCoverage(coverage: SpecCoverageIndex): Coverage {
 }
 
 function validateTicket(value: unknown, coverage: SpecCoverageIndex): Ticket {
-	if (!record(value)) fail("PI_WORKFLOW_TICKET_GRAPH_INVALID");
+	if (!record(value)) fail("PI_WORKFLOW_TICKET_GRAPH_INVALID", "each ticket must be an object");
 	const candidate = value as Ticket;
-	if (!safeMarkdown(candidate.title) || !safeMarkdown(candidate.outcome) || !Array.isArray(candidate.acceptanceCriteria) || candidate.acceptanceCriteria.some((item) => !safeMarkdown(item)) || !record(candidate.estimate) || !safeMarkdown(candidate.estimate.rationale)) fail("PI_WORKFLOW_TICKET_GRAPH_INVALID");
-	if (!text(candidate.stableKey) || candidate.acceptanceCriteria.length < 4 || candidate.acceptanceCriteria.length > 7 || !Number.isInteger(candidate.estimate.points) || candidate.estimate.points < 1 || candidate.estimate.points > 8 || !Array.isArray(candidate.blockers) || candidate.blockers.some((key) => !text(key)) || !Array.isArray(candidate.refs) || !Array.isArray(candidate.deliveryBindings)) fail("PI_WORKFLOW_TICKET_GRAPH_INVALID");
+	if (!safeMarkdown(candidate.title) || !safeMarkdown(candidate.outcome) || !Array.isArray(candidate.acceptanceCriteria) || candidate.acceptanceCriteria.some((item) => !safeMarkdown(item)) || !record(candidate.estimate) || !safeMarkdown(candidate.estimate.rationale)) fail("PI_WORKFLOW_TICKET_GRAPH_INVALID", "ticket title, outcome, acceptance criteria, and estimate rationale must be non-empty single-line plain Markdown without links, HTML, or code spans");
+	if (!text(candidate.stableKey) || candidate.acceptanceCriteria.length < 4 || candidate.acceptanceCriteria.length > 7 || !Number.isInteger(candidate.estimate.points) || candidate.estimate.points < 1 || candidate.estimate.points > 8 || !Array.isArray(candidate.blockers) || candidate.blockers.some((key) => !text(key)) || !Array.isArray(candidate.refs) || !Array.isArray(candidate.deliveryBindings)) fail("PI_WORKFLOW_TICKET_GRAPH_INVALID", "ticket stableKey is required, acceptanceCriteria must contain 4-7 items, estimate points must be an integer from 1-8, and blockers, refs, and deliveryBindings must be arrays");
 	const refs: Ref[] = [];
 	for (const ref of candidate.refs) {
 		if (!record(ref) || !text(ref.id) || !["story", "decision", "test"].includes(ref.kind as string)) fail("PI_WORKFLOW_TICKET_REFERENCE_INVALID");
@@ -129,12 +129,12 @@ function validateTicket(value: unknown, coverage: SpecCoverageIndex): Ticket {
 
 function validateGraph(tickets: Ticket[], coverage: SpecCoverageIndex): void {
 	const keys = new Set(tickets.map((ticket) => ticket.stableKey));
-	if (!tickets.length || keys.size !== tickets.length) fail("PI_WORKFLOW_TICKET_GRAPH_INVALID");
-	for (const ticket of tickets) if (ticket.blockers.some((blocker) => blocker === ticket.stableKey || !keys.has(blocker))) fail("PI_WORKFLOW_TICKET_GRAPH_INVALID");
+	if (!tickets.length || keys.size !== tickets.length) fail("PI_WORKFLOW_TICKET_GRAPH_INVALID", "tickets must be non-empty and stableKey values must be unique");
+	for (const ticket of tickets) if (ticket.blockers.some((blocker) => blocker === ticket.stableKey || !keys.has(blocker))) fail("PI_WORKFLOW_TICKET_GRAPH_INVALID", "every blocker must reference a different ticket stableKey in the same graph");
 	const visited = new Set<string>();
 	const visiting = new Set<string>();
 	const byKey = new Map(tickets.map((ticket) => [ticket.stableKey, ticket]));
-	const walk = (key: string): void => { if (visiting.has(key)) fail("PI_WORKFLOW_TICKET_GRAPH_INVALID"); if (visited.has(key)) return; visiting.add(key); for (const blocker of byKey.get(key)?.blockers ?? []) walk(blocker); visiting.delete(key); visited.add(key); };
+	const walk = (key: string): void => { if (visiting.has(key)) fail("PI_WORKFLOW_TICKET_GRAPH_INVALID", "ticket blockers must form an acyclic graph"); if (visited.has(key)) return; visiting.add(key); for (const blocker of byKey.get(key)?.blockers ?? []) walk(blocker); visiting.delete(key); visited.add(key); };
 	for (const key of keys) walk(key);
 	const refs = new Set(tickets.flatMap((ticket) => ticket.refs.map((ref) => `${ref.kind}:${ref.id}`)));
 	if ([...coverage.stories.keys()].some((id) => !refs.has(`story:${id}`)) || [...coverage.decisions].some((id) => !refs.has(`decision:${id}`)) || [...coverage.tests].some((id) => !refs.has(`test:${id}`))) fail("PI_WORKFLOW_TICKET_REFERENCE_INVALID");
@@ -148,7 +148,7 @@ function validateGraph(tickets: Ticket[], coverage: SpecCoverageIndex): void {
 
 export function createDeliveryTicketGraph(input: { parent: unknown; coverage: SpecCoverageIndex; language: unknown; tickets: unknown[] }): DeliveryTicketGraph {
 	if (input.language !== "es") fail("PI_WORKFLOW_TICKET_LANGUAGE_INVALID");
-	if (!parent(input.parent) || !(input.coverage instanceof SpecCoverageIndex) || !Array.isArray(input.tickets)) fail("PI_WORKFLOW_TICKET_GRAPH_INVALID");
+	if (!parent(input.parent) || !(input.coverage instanceof SpecCoverageIndex) || !Array.isArray(input.tickets)) fail("PI_WORKFLOW_TICKET_GRAPH_INVALID", "payload requires an exact parent, valid coverage, and tickets array");
 	const graphParent = input.parent as Parent;
 	const tickets = input.tickets.map((ticket) => validateTicket(ticket, input.coverage)).sort((left, right) => left.stableKey.localeCompare(right.stableKey));
 	validateGraph(tickets, input.coverage);
@@ -171,7 +171,7 @@ export function canonicalizeDelegatedDeliveryTicketGraph(
 		value.schemaVersion !== 1 ||
 		!record(value.payload)
 	)
-		fail("PI_WORKFLOW_TICKET_GRAPH_INVALID");
+		fail("PI_WORKFLOW_TICKET_GRAPH_INVALID", "graph requires schema delivery-ticket-graph, schemaVersion 1, and an object payload");
 	const delegated = value as { payload: Record<string, unknown> };
 	return createDeliveryTicketGraph({
 		parent: delegated.payload.parent,

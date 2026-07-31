@@ -32,6 +32,15 @@ test("runtime owns the digest of a delegated ticket graph", () => {
 	assert.deepEqual(canonicalizeDelegatedDeliveryTicketGraph(delegated), graph());
 });
 
+test("delegated graph rejection identifies the exact invalid contract class", () => {
+	const { digest: _digest, ...delegated } = graph();
+	delegated.payload.tickets[0].title = "`título no permitido`";
+	assert.throws(
+		() => canonicalizeDelegatedDeliveryTicketGraph(delegated),
+		/single-line plain Markdown without links, HTML, or code spans/,
+	);
+});
+
 const canonicallyRedigestedInvalidGraph = (mutate) => {
 	const value = structuredClone(graph());
 	mutate(value.payload);
