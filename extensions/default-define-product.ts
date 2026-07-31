@@ -212,7 +212,56 @@ const ticketGraphArtifactToolParameters = {
 	properties: {
 		action: { type: "string", enum: ["read_alias", "write_graph"] },
 		alias: { type: "string" },
-		graph: {},
+		graph: {
+			type: "object",
+			additionalProperties: false,
+			properties: {
+				schema: { type: "string", enum: ["delivery-ticket-graph"] },
+				schemaVersion: { type: "number", enum: [1] },
+				payload: {
+					type: "object",
+					additionalProperties: false,
+					properties: {
+						parent: {
+							type: "object",
+							additionalProperties: false,
+							properties: {
+								id: { type: "string" }, teamId: { type: "string" },
+								revision: { type: "string" }, specDigest: { type: "string" },
+							},
+							required: ["id", "teamId", "revision", "specDigest"],
+						},
+						coverage: {
+							type: "object", additionalProperties: false,
+							properties: {
+								stories: { type: "array", items: { type: "object", additionalProperties: false, properties: { id: { type: "string" }, contextId: { type: "string" }, acceptanceCriteria: { type: "array", items: { type: "string" } } }, required: ["id", "contextId", "acceptanceCriteria"] } },
+								decisions: { type: "array", items: { type: "string" } },
+								tests: { type: "array", items: { type: "string" } },
+							},
+							required: ["stories", "decisions", "tests"],
+						},
+						language: { type: "string", enum: ["es"] },
+						tickets: {
+							type: "array",
+							items: {
+								type: "object", additionalProperties: false,
+								properties: {
+									stableKey: { type: "string" }, title: { type: "string" }, outcome: { type: "string" },
+									acceptanceCriteria: { type: "array", items: { type: "string" } },
+									estimate: { type: "object", additionalProperties: false, properties: { points: { type: "number" }, rationale: { type: "string" } }, required: ["points", "rationale"] },
+									blockers: { type: "array", items: { type: "string" } },
+									refs: { type: "array", items: { type: "object", additionalProperties: false, properties: { kind: { type: "string", enum: ["story", "decision", "test"] }, id: { type: "string" } }, required: ["kind", "id"] } },
+									deliveryBindings: { type: "array", items: { type: "object", additionalProperties: false, properties: { storyId: { type: "string" }, acceptanceCriterionId: { type: "string" }, contextId: { type: "string" } }, required: ["storyId", "acceptanceCriterionId", "contextId"] } },
+								},
+								required: ["stableKey", "title", "outcome", "acceptanceCriteria", "estimate", "blockers", "refs", "deliveryBindings"],
+							},
+						},
+					},
+					required: ["parent", "coverage", "language", "tickets"],
+				},
+			},
+			required: ["schema", "schemaVersion", "payload"],
+		},
 	},
 	required: ["action"],
 } as const;
@@ -603,7 +652,7 @@ function buildTicketGraphSystemPrompt(input: { asset: AgentAssetMetadata; prepar
 		"You are executing the package-owned to-tickets workflow.",
 		`Artifact topic: ${input.preparedLaunch.launchProvenance.artifactTopic}.`,
 		"Read only the granted approved-spec and delivery-parent aliases through workflow_artifact_session.",
-		"Call workflow_artifact_session exactly once with action=write_graph and the complete graph payload. The runtime, not the model, computes and authorizes the canonical digest.",
+		"Call workflow_artifact_session exactly once with action=write_graph and the complete graph object matching the tool schema. Omit digest: the runtime, not the model, computes and authorizes the canonical digest.",
 		...skillBlocks,
 	].join("\n\n");
 }
