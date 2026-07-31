@@ -922,7 +922,6 @@ async function runDefineProductScenario() {
 				digest: "parent-digest",
 			}),
 		},
-		clearSpecApprovalRecovery: async () => {},
 	});
 	publication.setMcpAvailable(true);
 	const starting = await publication.begin(

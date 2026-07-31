@@ -117,7 +117,6 @@ function persistence(initial) {
 
 function harness({ approved = approvedArtifact(), recovery = persistence(), reader, active = true } = {}) {
 	const snapshots = [];
-	let cleared = 0;
 	const controller = createDefineProductMcpPublication({
 		approvedSpecReader: {
 			read: reader ?? (async () => structuredClone(approved)),
@@ -137,9 +136,6 @@ function harness({ approved = approvedArtifact(), recovery = persistence(), read
 					digest: "parent-digest",
 				};
 			},
-		},
-		clearSpecApprovalRecovery: async () => {
-			cleared += 1;
 		},
 	});
 	controller.setMcpAvailable(active);
@@ -185,9 +181,6 @@ function harness({ approved = approvedArtifact(), recovery = persistence(), read
 		controller,
 		recovery,
 		snapshots,
-		get cleared() {
-			return cleared;
-		},
 		begin,
 		call,
 	};
@@ -258,7 +251,6 @@ test("publishes one exact Backlog Delivery parent through authenticated paginate
 	assert.equal(outcome.parent.assigneeId, null);
 	assert.equal(outcome.parent.cycleId, null);
 	assert.equal(h.snapshots.length, 1);
-	assert.equal(h.cleared, 1);
 	assert.equal(h.recovery.get().stage, "verified");
 });
 

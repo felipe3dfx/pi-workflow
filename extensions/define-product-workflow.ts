@@ -525,10 +525,7 @@ export function createDefineProductWorkflow(
 				dependencies.publication,
 				command.definitionId,
 			);
-			if (outcome.status === "spec-published") {
-				await dependencies.specApprovalRecoveryStore?.clear();
-				activeSpec = undefined;
-			}
+			if (outcome.status === "spec-published") activeSpec = undefined;
 			return outcome;
 		}
 		if (command.kind === "to-tickets") {
@@ -563,6 +560,7 @@ export function createDefineProductWorkflow(
 				) return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_TICKET_APPROVAL_MISMATCH", "Ticket approval requires current exact Owner authority.") };
 				pendingTicketApproval = { definitionId: command.definitionId, approvedSpecRef: command.approvedSpecRef, parentRef: command.parentRef, graphRef, digest: graph.digest, authority: { actorId: actor.actorId, role: "Owner", authorityRevision: actor.authorityRevision } };
 				await dependencies.ticketApprovalRecoveryStore?.save(pendingTicketApproval);
+				await dependencies.specApprovalRecoveryStore?.clear();
 				return { status: "tickets-ready", graph: cloneSnapshot(graph), graphRef };
 			} catch (error) {
 				return { status: "blocked", blocker: createBlocker("PI_WORKFLOW_RECOVERY_FAILED", error instanceof Error ? error.message : "Ticket graph generation could not be recovered safely.") };

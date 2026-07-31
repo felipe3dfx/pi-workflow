@@ -57,7 +57,6 @@ export interface DefineProductMcpPublicationDependencies {
 	readonly owner: AuthenticatedAuthority;
 	readonly recovery: DefineProductPublicationRecoveryStore;
 	readonly parentSnapshots: DeliveryParentSnapshotStore;
-	clearSpecApprovalRecovery(): Promise<void>;
 	readonly toolIdentityReservationCapacity?: number;
 }
 
@@ -1450,18 +1449,6 @@ export function createDefineProductMcpPublication(
 				"Delivery-parent publication is not ready for completion.",
 			);
 		const result = state.context.publication;
-		try {
-			await options.clearSpecApprovalRecovery();
-		} catch (error) {
-			const failure = blocked(
-				"PI_WORKFLOW_DEFINE_PRODUCT_RECOVERY_PERSISTENCE_FAILED",
-				error instanceof Error
-					? error.message
-					: "The verified Spec publication recovery pointer could not be cleared.",
-			);
-			clear();
-			return failure;
-		}
 		clear();
 		return result;
 	}

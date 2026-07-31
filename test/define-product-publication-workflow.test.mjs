@@ -150,7 +150,7 @@ test("approval is persisted and remains recoverable for publication after restar
 	});
 });
 
-test("publication clears pending approval only after verified success", async () => {
+test("publication retains approved Spec recovery until ticket generation is durable", async () => {
 	let clears = 0;
 	const recovery = {
 		load: async () => undefined,
@@ -210,7 +210,7 @@ test("publication clears pending approval only after verified success", async ()
 		definitionId: "definition-1",
 	});
 	assert.equal(outcome.status, "spec-published");
-	assert.equal(clears, 1);
+	assert.equal(clears, 0);
 });
 
 test("to-tickets and approval bind only exact verified references and recover compatible state", async () => {

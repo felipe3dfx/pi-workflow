@@ -1563,8 +1563,6 @@ export function createDefaultDefineProductWorkflow(
 								project: baseProject.name,
 							}),
 						parentSnapshots,
-						clearSpecApprovalRecovery: () =>
-							specApprovalRecoveryStore.clear(),
 					})
 				: createUnavailableDefineProductMcpPublication());
 	return Object.assign(workflow, { mcpPublication });
