@@ -294,6 +294,7 @@ function directOrObjectId(
 	direct: string,
 	object: string,
 ): string | null | undefined {
+	if (!Object.hasOwn(value, direct) && !Object.hasOwn(value, object)) return null;
 	if (value[direct] === null) return null;
 	if (text(value[direct])) return value[direct];
 	return objectId(value[object]);
