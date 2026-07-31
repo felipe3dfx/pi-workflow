@@ -72,6 +72,31 @@ test("durably claims, releases, and verifies define-product publication uncertai
 	);
 });
 
+test("reads a migrated created checkpoint whose trailing LF was normalized by Engram", async () => {
+	const content = JSON.stringify({
+		definitionId: identity.definitionId,
+		issueId: "ILA-2436",
+		ownerId: "owner-1",
+		publicationDigest: identity.publicationDigest,
+		stage: "created",
+	});
+	const current = { revision: "r1", content };
+	const recovery = createDefineProductPublicationRecoveryStore({
+		store: {
+			capabilities: { atomicCompareAndSwap: true },
+			readCurrent: async () => current,
+			readRevision: async () => content,
+			write: async () => ({ revision: "r2" }),
+		},
+		project: "pi-workflow",
+	});
+	assert.deepEqual(await recovery.read(identity.definitionId), {
+		publicationDigest: identity.publicationDigest,
+		stage: "created",
+		issueId: "ILA-2436",
+	});
+});
+
 test("rejects competing owners, digest drift, and non-atomic stores", async () => {
 	const recovery = createDefineProductPublicationRecoveryStore({
 		store: artifactStore(),

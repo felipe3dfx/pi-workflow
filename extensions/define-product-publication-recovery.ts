@@ -69,7 +69,8 @@ function parseRecoveryState(content: string, definitionId: string): RecoveryStat
 				key,
 			),
 		) ||
-		content !== `${canonicalJson(value)}\n`
+		(content !== `${canonicalJson(value)}\n` &&
+			!(value.stage === "created" && content === canonicalJson(value)))
 	)
 		throw new Error("Define-product publication recovery state is invalid.");
 	return value as RecoveryState;
