@@ -776,7 +776,7 @@ export async function executeRequiredTicketGraphTurn<Result>(input: {
 	let execution = await input.execute(input.prompt);
 	if (!input.hasWrittenGraph()) {
 		execution = await input.execute(
-			`Your previous turn did not persist the required artifact. Call ${workflowArtifactToolName} now with action=write_graph and the complete graph. Do not return prose before that successful tool result.`,
+			`Your previous turn did not persist the required artifact. Before retrying, reconcile every ticket refs id and every deliveryBinding storyId, acceptanceCriterionId, and contextId against the exact identifiers in graph.payload.coverage; cover every declared story, decision, test, and story criterion without inventing alternate human-visible identifiers. Then call ${workflowArtifactToolName} with action=write_graph and the complete graph. Do not return prose before that successful tool result.`,
 		);
 	}
 	return execution;

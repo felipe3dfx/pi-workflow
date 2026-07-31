@@ -34,6 +34,7 @@ test("to-tickets gives one corrective turn when the first turn omits the require
 	assert.equal(result, "turn-2");
 	assert.equal(prompts[0], "generate");
 	assert.match(prompts[1], /action=write_graph/);
+	assert.match(prompts[1], /graph\.payload\.coverage/);
 });
 
 test("to-tickets does not spend a corrective turn after a successful graph write", async () => {
