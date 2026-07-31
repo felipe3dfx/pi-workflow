@@ -255,6 +255,22 @@ test("accepts Pi-injected undefined optional fields on canonical save calls", as
 	assert.notEqual(event.input.description, "PI_WORKFLOW_CANONICAL_DELIVERY_TICKET_BODY");
 });
 
+test("reports only safe post-coercion mismatch keys for protocol diagnosis", async () => {
+	const state = fixture();
+	const controller = createDefineProductTicketMcpPublication(state.dependencies);
+	await start(controller);
+	const stopped = await drive(controller, state, { stopBeforeSave: true });
+	const event = {
+		toolName: stopped.expected.toolName,
+		toolCallId: "mismatched-save",
+		input: { ...structuredClone(stopped.expected.input), estimate: 8 },
+	};
+	assert.deepEqual(await controller.handleToolCall(event), {
+		block: true,
+		reason: "PI_WORKFLOW_TICKET_MCP_PROTOCOL_INVALID: changed=estimate",
+	});
+});
+
 test("default single-user ticket publication keeps historical approval authority as provenance", async () => {
 	const state = fixture({ actorId: "current-single-user", ownerValue: null });
 	const controller = createDefineProductTicketMcpPublication(state.dependencies);

@@ -244,6 +244,35 @@ function exactInput(
 	});
 }
 
+function inputMismatch(
+	value: unknown,
+	expected: Readonly<Record<string, unknown>>,
+): string {
+	if (!record(value)) return "input was not an object";
+	const supplied = Object.fromEntries(
+		Object.entries(value).filter(([, entry]) => entry !== undefined),
+	);
+	const unexpected = Object.keys(supplied).filter((key) => !Object.hasOwn(expected, key));
+	const missing = Object.entries(expected).flatMap(([key, expectedValue]) =>
+		!Object.hasOwn(supplied, key) &&
+		expectedValue !== null &&
+		!(Array.isArray(expectedValue) && expectedValue.length === 0)
+			? [key]
+			: [],
+	);
+	const changed = Object.entries(expected).flatMap(([key, expectedValue]) =>
+		Object.hasOwn(supplied, key) &&
+		canonicalJson(supplied[key]) !== canonicalJson(expectedValue)
+			? [key]
+			: [],
+	);
+	return [
+		unexpected.length ? `unexpected=${unexpected.sort().join(",")}` : "",
+		missing.length ? `missing=${missing.sort().join(",")}` : "",
+		changed.length ? `changed=${changed.sort().join(",")}` : "",
+	].filter(Boolean).join("; ") || "stage or tool identity mismatch";
+}
+
 function blocked(
 	code: string,
 	message: string,
@@ -1011,11 +1040,16 @@ export function createDefineProductTicketMcpPublication(
 			!exactInput(event.input, expected.input)
 		) {
 			const code = "PI_WORKFLOW_TICKET_MCP_PROTOCOL_INVALID";
+			const detail = expected
+				? event.toolName !== expected.toolName
+					? "tool mismatch"
+					: inputMismatch(event.input, expected.input)
+				: "no active expected call";
 			fail(
 				code,
-				"Ticket MCP tool, input, order, or stage did not match the active publication plan.",
+				`Ticket MCP tool, input, order, or stage did not match the active publication plan (${detail}).`,
 			);
-			return { block: true, reason: code };
+			return { block: true, reason: `${code}: ${detail}` };
 		}
 		const identity = identityFor(event.toolName, event.toolCallId);
 		if (reservations.has(identity)) return staleBlock();
