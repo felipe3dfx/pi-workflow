@@ -215,10 +215,10 @@ async function advanceToSave(h) {
 	await h.call(actor);
 }
 
-async function finishReadback(h, issue, readback = issue) {
+async function finishReadback(h, issue, readback = issue, lookupIssue = issue) {
 	await h.call(readback);
 	await h.call({ issues: [], hasNextPage: true, cursor: "readback-2" });
-	await h.call({ issues: [issue], hasNextPage: false });
+	await h.call({ issues: [lookupIssue], hasNextPage: false });
 	assert.deepEqual(h.controller.expectedModelCall(), {
 		toolName: "workflow_define_product",
 		input: { action: "publish_spec" },
@@ -293,7 +293,10 @@ test("durable created restart reads the recorded issue before final uniqueness v
 	await restarted.call([{ id: "backlog-1", name: "Backlog", type: "backlog" }]);
 	assert.equal(restarted.controller.expectedModelCall().toolName, "linear_get_issue");
 	assert.deepEqual(restarted.controller.expectedModelCall().input, { id: issue.id, includeRelations: true });
-	const outcome = await finishReadback(restarted, issue);
+	const outcome = await finishReadback(restarted, issue, issue, {
+		...issue,
+		description: `${issue.description.slice(0, 80)}… (truncated, use get_issue for full description)`,
+	});
 	assert.equal(outcome.status, "spec-published");
 });
 

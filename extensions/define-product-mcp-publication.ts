@@ -242,7 +242,7 @@ type State =
 				readonly backlog: LinearStatus;
 			};
 			readonly read: IssueRead;
-			readonly expectedIssueId?: string;
+			readonly expectedIssue?: LinearIssue;
 	  }
 	| {
 			readonly phase: "candidates-before-result" | "candidates-final-result";
@@ -252,7 +252,7 @@ type State =
 				readonly backlog: LinearStatus;
 			};
 			readonly read: IssueRead;
-			readonly expectedIssueId?: string;
+			readonly expectedIssue?: LinearIssue;
 			readonly toolCallId: string;
 	  }
 	| {
@@ -975,6 +975,7 @@ export function createDefineProductMcpPublication(
 				readonly backlog: LinearStatus;
 			};
 			readonly read: IssueRead;
+			readonly expectedIssue?: LinearIssue;
 		},
 		payload: unknown,
 	):
@@ -990,6 +991,13 @@ export function createDefineProductMcpPublication(
 		for (const candidate of page.issues) {
 			if (!record(candidate) || candidate.title !== active.context.approved.spec.payload.target.title)
 				continue;
+			if (
+				active.expectedIssue &&
+				candidate.id === active.expectedIssue.id
+			) {
+				exact.push(active.expectedIssue);
+				continue;
+			}
 			const issue = issueEvidence(candidate);
 			if (!issue || issue.teamId === undefined || !exactIssue(issue, active.context))
 				conflicts += 1;
@@ -1233,7 +1241,7 @@ export function createDefineProductMcpPublication(
 			}
 			if (active.phase === "candidates-final-result") {
 				const [issue] = advanced.read.exact;
-				if (!issue || issue.id !== active.expectedIssueId) {
+				if (!issue || issue.id !== active.expectedIssue?.id) {
 					fail(
 						"PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH",
 						"The exact created Delivery parent was not the unique lookup candidate.",
@@ -1354,7 +1362,7 @@ export function createDefineProductMcpPublication(
 					phase: "candidates-final",
 					context: active.context,
 					read: emptyIssueRead(),
-					expectedIssueId: issue.id,
+					expectedIssue: issue,
 				};
 			return true;
 		}
