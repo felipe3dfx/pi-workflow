@@ -233,7 +233,10 @@ function exactInput(
 	);
 	if (Object.keys(supplied).some((key) => !Object.hasOwn(expected, key))) return false;
 	return Object.entries(expected).every(([key, expectedValue]) => {
-		if (expectedValue === null && !Object.hasOwn(supplied, key)) return true;
+		if (!Object.hasOwn(supplied, key)) {
+			if (expectedValue === null) return true;
+			if (Array.isArray(expectedValue) && expectedValue.length === 0) return true;
+		}
 		return (
 			Object.hasOwn(supplied, key) &&
 			canonicalJson(supplied[key]) === canonicalJson(expectedValue)

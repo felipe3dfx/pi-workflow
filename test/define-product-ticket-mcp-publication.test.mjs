@@ -244,6 +244,7 @@ test("accepts Pi-injected undefined optional fields on canonical save calls", as
 	delete input.assignee;
 	delete input.cycle;
 	delete input.project;
+	delete input.labels;
 	const event = {
 		toolName: stopped.expected.toolName,
 		toolCallId: "pi-coerced-save",
