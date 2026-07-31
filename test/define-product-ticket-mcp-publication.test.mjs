@@ -241,9 +241,9 @@ test("accepts Pi-injected undefined optional fields on canonical save calls", as
 	await start(controller);
 	const stopped = await drive(controller, state, { stopBeforeSave: true });
 	const input = { ...structuredClone(stopped.expected.input), id: undefined, dueDate: undefined };
-	delete input.assignee;
-	delete input.cycle;
-	delete input.project;
+	input.assignee = "null";
+	input.cycle = "null";
+	input.project = "null";
 	delete input.labels;
 	const event = {
 		toolName: stopped.expected.toolName,
@@ -253,6 +253,9 @@ test("accepts Pi-injected undefined optional fields on canonical save calls", as
 	assert.equal(await controller.handleToolCall(event), undefined);
 	assert.equal(event.input.title, "Primero");
 	assert.notEqual(event.input.description, "PI_WORKFLOW_CANONICAL_DELIVERY_TICKET_BODY");
+	assert.equal(event.input.assignee, null);
+	assert.equal(event.input.cycle, null);
+	assert.equal(event.input.project, null);
 });
 
 test("reports only safe post-coercion mismatch keys for protocol diagnosis", async () => {

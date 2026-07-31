@@ -237,11 +237,22 @@ function exactInput(
 			if (expectedValue === null) return true;
 			if (Array.isArray(expectedValue) && expectedValue.length === 0) return true;
 		}
+		if (expectedValue === null && supplied[key] === "null") return true;
 		return (
 			Object.hasOwn(supplied, key) &&
 			canonicalJson(supplied[key]) === canonicalJson(expectedValue)
 		);
 	});
+}
+
+function normalizePiNullableInput(
+	value: unknown,
+	expected: Readonly<Record<string, unknown>>,
+): void {
+	if (!record(value)) return;
+	for (const [key, expectedValue] of Object.entries(expected)) {
+		if (expectedValue === null && value[key] === "null") value[key] = null;
+	}
 }
 
 function inputMismatch(
@@ -1051,6 +1062,7 @@ export function createDefineProductTicketMcpPublication(
 			);
 			return { block: true, reason: `${code}: ${detail}` };
 		}
+		normalizePiNullableInput(event.input, expected.input);
 		const identity = identityFor(event.toolName, event.toolCallId);
 		if (reservations.has(identity)) return staleBlock();
 		if (reservations.size >= capacity) {
