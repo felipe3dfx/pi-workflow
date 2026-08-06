@@ -101,6 +101,11 @@ test("prepare returns a closed presentation and persists an idempotent decision"
 		first.choices.filter((choice) => choice.mode === "cancel").length,
 		1,
 	);
+	assert.deepEqual(
+		first.choices.map((choice) => choice.actionId),
+		["spec.approve", "decision.cancel"],
+	);
+	assert.equal(JSON.stringify(first).includes("r1"), false);
 	assert.equal(JSON.stringify(first).includes("a".repeat(64)), false);
 });
 
@@ -117,6 +122,19 @@ test("prepare binds semantic inputs but excludes human wording from identity", a
 		}),
 	);
 	assert.notEqual(changed.decisionId, base.decisionId);
+});
+
+test("concurrent identical preparation adopts one durable decision", async () => {
+	const decisions = service();
+	const [left, right] = await Promise.all([
+		decisions.prepare(request()),
+		decisions.prepare(request()),
+	]);
+	assert.deepEqual(left, right);
+	assert.deepEqual(await decisions.recover(scope, actor), {
+		kind: "prepared",
+		decisionId: left.decisionId,
+	});
 });
 
 test("prepare persists only operation identity and action bindings", async () => {
@@ -213,6 +231,14 @@ test("authorize consumes one fresh matching action and issues one fenced lease",
 			executionId: "execution-1",
 			generation: 1,
 		},
+		receipt: {
+			state: "leased",
+			decisionId: prepared.decisionId,
+			actionId: approve.id,
+			actorId: actor.actorId,
+			executionId: "execution-1",
+			generation: 1,
+		},
 	});
 	assert.equal(
 		(await decisions.authorize(prepared.decisionId, approve, actor)).blocker
@@ -243,14 +269,21 @@ test("authorize fails closed for missing claims, mismatched actions, and cancell
 
 	const decisions = service();
 	const cancellable = await decisions.prepare(request());
-	assert.deepEqual(
-		await decisions.authorize(cancellable.decisionId, cancel, actor),
-		{ kind: "cancelled", decisionId: cancellable.decisionId },
-	);
-	assert.deepEqual(await decisions.recover(scope, actor), {
+	const cancelled = {
 		kind: "cancelled",
 		decisionId: cancellable.decisionId,
-	});
+		receipt: {
+			state: "cancelled",
+			decisionId: cancellable.decisionId,
+			actionId: "decision.cancel",
+			actorId: actor.actorId,
+		},
+	};
+	assert.deepEqual(
+		await decisions.authorize(cancellable.decisionId, cancel, actor),
+		cancelled,
+	);
+	assert.deepEqual(await decisions.recover(scope, actor), cancelled);
 });
 
 test("parallel authorization yields exactly one execution lease", async () => {
@@ -390,6 +423,36 @@ test("prepare supersedes only an unconsumed decision", async () => {
 	);
 });
 
+test("recover exposes a superseded receipt after replacement crashes", async () => {
+	const backing = createInMemoryDecisionStore();
+	let writes = 0;
+	const store = {
+		read: (key) => backing.read(key),
+		readRevision: (key, revision) => backing.readRevision(key, revision),
+		async compareAndSwap(key, revision, content) {
+			writes += 1;
+			if (writes === 3) throw new Error("simulated crash before replacement");
+			return backing.compareAndSwap(key, revision, content);
+		},
+	};
+	const decisions = service({ store });
+	const first = await decisions.prepare(request());
+	await assert.rejects(
+		() =>
+			decisions.prepare(
+				request({
+					operation: { ...request().operation, phase: "spec.changed" },
+				}),
+			),
+		/simulated crash/,
+	);
+	assert.deepEqual(await decisions.recover(scope, actor), {
+		kind: "superseded",
+		decisionId: first.decisionId,
+		receipt: { state: "superseded", decisionId: first.decisionId },
+	});
+});
+
 test("prepare rejects persistence read-back drift", async () => {
 	const backing = createInMemoryDecisionStore();
 	const drifting = {
@@ -429,6 +492,58 @@ test("recover rejects future schemas and noncanonical durable bytes", async () =
 			/schema is unsupported|canonical bytes are invalid/,
 		);
 	}
+});
+
+test("recover rejects re-signed extra and state-incompatible durable fields", async () => {
+	for (const mutate of [
+		(value) => {
+			value.extra = true;
+		},
+		(value) => {
+			value.scope.extra = true;
+		},
+		(value) => {
+			value.current.extra = true;
+		},
+		(value) => {
+			value.current.actions[0].extra = true;
+		},
+		(value) => {
+			value.current.actions[0].action.extra = true;
+		},
+		(value) => {
+			value.current.actor = actor;
+		},
+	]) {
+		const backing = createInMemoryDecisionStore();
+		const decisions = service({ store: backing });
+		const prepared = await decisions.prepare(request());
+		const key = prepared.decisionId.split(":")[0];
+		const current = await backing.read(key);
+		const parsed = JSON.parse(current.content);
+		mutate(parsed);
+		await backing.compareAndSwap(key, current.revision, signedEnvelope(parsed));
+		await assert.rejects(
+			() => decisions.recover(scope, actor),
+			/state shape is invalid|scope binding is invalid/,
+		);
+	}
+});
+
+test("recover rejects a re-signed cancelled action mismatch", async () => {
+	const backing = createInMemoryDecisionStore();
+	const decisions = service({ store: backing });
+	const prepared = await decisions.prepare(request());
+	await decisions.authorize(prepared.decisionId, cancel, actor);
+	const key = prepared.decisionId.split(":")[0];
+	const current = await backing.read(key);
+	const parsed = JSON.parse(current.content);
+	parsed.current.action.input = "tampered";
+	await backing.compareAndSwap(key, current.revision, signedEnvelope(parsed));
+	await assert.rejects(
+		() => decisions.recover(scope, actor),
+		/state shape is invalid/,
+	);
 });
 
 test("recover rejects a canonically signed malformed manifest binding", async () => {

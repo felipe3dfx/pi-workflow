@@ -60,7 +60,13 @@ export interface DecisionPresentation {
 	readonly details: readonly string[];
 	readonly consequences: readonly string[];
 	readonly risks: readonly string[];
-	readonly choices: readonly DecisionChoice[];
+	readonly choices: readonly {
+		readonly id: string;
+		readonly mode: DecisionChoice["mode"];
+		readonly actionId: string;
+		readonly label: string;
+		readonly description: string;
+	}[];
 }
 
 interface ExecutionBinding {
@@ -92,9 +98,43 @@ export interface DecisionBlocker {
 	readonly message: string;
 }
 
+type DecisionErrorCode =
+	| DecisionBlocker["code"]
+	| "PI_WORKFLOW_DECISION_REQUEST_INVALID"
+	| "PI_WORKFLOW_DECISION_CANCEL_REQUIRED"
+	| "PI_WORKFLOW_DECISION_STATE_CORRUPT"
+	| "PI_WORKFLOW_DECISION_SCHEMA_UNSUPPORTED"
+	| "PI_WORKFLOW_DECISION_STORE_UNAVAILABLE"
+	| "PI_WORKFLOW_DECISION_READBACK_MISMATCH";
+
+export type DecisionReceipt =
+	| {
+			readonly state: "leased";
+			readonly decisionId: string;
+			readonly actionId: string;
+			readonly actorId: string;
+			readonly executionId: string;
+			readonly generation: number;
+	  }
+	| {
+			readonly state: "cancelled";
+			readonly decisionId: string;
+			readonly actionId: "decision.cancel";
+			readonly actorId: string;
+	  }
+	| { readonly state: "superseded"; readonly decisionId: string };
+
 export type AuthorizationOutcome =
-	| { readonly kind: "authorized"; readonly lease: ExecutionLease }
-	| { readonly kind: "cancelled"; readonly decisionId: string }
+	| {
+			readonly kind: "authorized";
+			readonly lease: ExecutionLease;
+			readonly receipt: Extract<DecisionReceipt, { state: "leased" }>;
+	  }
+	| {
+			readonly kind: "cancelled";
+			readonly decisionId: string;
+			readonly receipt: Extract<DecisionReceipt, { state: "cancelled" }>;
+	  }
 	| { readonly kind: "blocked"; readonly blocker: DecisionBlocker };
 
 export type RecoveryOutcome =
@@ -103,10 +143,19 @@ export type RecoveryOutcome =
 	| {
 			readonly kind: "authorized";
 			readonly lease: ExecutionLease;
+			readonly receipt: Extract<DecisionReceipt, { state: "leased" }>;
 			readonly manifest?: ExecutionManifestBinding;
 	  }
-	| { readonly kind: "cancelled"; readonly decisionId: string }
-	| { readonly kind: "superseded"; readonly decisionId: string }
+	| {
+			readonly kind: "cancelled";
+			readonly decisionId: string;
+			readonly receipt: Extract<DecisionReceipt, { state: "cancelled" }>;
+	  }
+	| {
+			readonly kind: "superseded";
+			readonly decisionId: string;
+			readonly receipt: Extract<DecisionReceipt, { state: "superseded" }>;
+	  }
 	| { readonly kind: "blocked"; readonly blocker: DecisionBlocker };
 
 interface DecisionStoreRead {
@@ -143,15 +192,24 @@ type DecisionState =
 	| "cancelled"
 	| "superseded";
 
+interface DurableActionBinding {
+	id: string;
+	mode: DecisionChoice["mode"];
+	action: TypedDecisionAction;
+}
+
+interface DurableReplacement {
+	decisionId: string;
+	operationDigest: string;
+	actions: readonly DurableActionBinding[];
+}
+
 interface DurableDecision {
 	decisionId: string;
 	operationDigest: string;
-	actions: readonly {
-		id: string;
-		mode: DecisionChoice["mode"];
-		action: TypedDecisionAction;
-	}[];
+	actions: readonly DurableActionBinding[];
 	state: DecisionState;
+	replacement?: DurableReplacement;
 	actor?: AuthenticatedDecisionActor;
 	action?: TypedDecisionAction;
 	executionId?: string;
@@ -236,8 +294,18 @@ const clone = <T>(value: T): T => structuredClone(value);
 const exact = (left: unknown, right: unknown): boolean =>
 	canonicalJson(left) === canonicalJson(right);
 
-function decisionError(code: string, message: string): Error {
+function decisionError(code: DecisionErrorCode, message: string): Error {
 	return Object.assign(new Error(message), { code });
+}
+
+function errorCode(error: unknown): string | undefined {
+	if (!error || typeof error !== "object" || !("code" in error))
+		return undefined;
+	return typeof error.code === "string" ? error.code : undefined;
+}
+
+function isDecisionCasConflict(error: unknown): boolean {
+	return errorCode(error) === "PI_WORKFLOW_DECISION_CAS_CONFLICT";
 }
 
 function blocker(
@@ -402,7 +470,45 @@ function parseEnvelope(
 	const actions = Array.isArray(current?.actions) ? current.actions : [];
 	const actionIds = new Set(actions.map((entry) => entry.action?.id));
 	const choiceIds = new Set(actions.map((entry) => entry.id));
+	const baseCurrentKeys = ["decisionId", "operationDigest", "actions", "state"];
+	const stateCurrentKeys: Partial<Record<DecisionState, readonly string[]>> = {
+		prepared: baseCurrentKeys,
+		superseded: [...baseCurrentKeys, "replacement"],
+		cancelled: [...baseCurrentKeys, "actor", "action"],
+		approved: [
+			...baseCurrentKeys,
+			"actor",
+			"action",
+			"executionId",
+			"generation",
+		],
+		leased: [
+			...baseCurrentKeys,
+			"actor",
+			"action",
+			"executionId",
+			"generation",
+			...(current?.manifest === undefined ? [] : ["manifest"]),
+		],
+	};
+	const currentKeys = current && stateCurrentKeys[current.state];
 	if (
+		!exactKeys(value as unknown as Record<string, unknown>, [
+			"schema",
+			"schemaVersion",
+			"scope",
+			"generation",
+			"current",
+			"history",
+			"digest",
+		]) ||
+		!exactKeys(value.scope as unknown as Record<string, unknown>, [
+			"project",
+			"workflow",
+			"subject",
+		]) ||
+		!currentKeys ||
+		!exactKeys(current as unknown as Record<string, unknown>, currentKeys) ||
 		value.schema !== "interactive-decision" ||
 		!exact(value.scope, expectedScope) ||
 		!Number.isSafeInteger(value.generation) ||
@@ -410,6 +516,10 @@ function parseEnvelope(
 		!Array.isArray(value.history) ||
 		!value.history.every(
 			(entry) =>
+				exactKeys(entry as unknown as Record<string, unknown>, [
+					"decisionId",
+					"state",
+				]) &&
 				!!parseDecisionId(entry?.decisionId) &&
 				["cancelled", "superseded"].includes(entry.state),
 		) ||
@@ -422,6 +532,15 @@ function parseEnvelope(
 		!Array.isArray(current.actions) ||
 		!current.actions.every(
 			(entry) =>
+				exactKeys(entry as unknown as Record<string, unknown>, [
+					"id",
+					"mode",
+					"action",
+				]) &&
+				exactKeys(entry.action as unknown as Record<string, unknown>, [
+					"id",
+					"input",
+				]) &&
 				semanticId(entry.id) &&
 				["execute", "cancel"].includes(entry.mode) &&
 				semanticId(entry.action?.id),
@@ -429,7 +548,57 @@ function parseEnvelope(
 		actionIds.size !== current.actions.length ||
 		choiceIds.size !== current.actions.length ||
 		current.actions.filter((entry) => entry.mode === "cancel").length !== 1 ||
+		current.actions.find((entry) => entry.mode === "cancel")?.action.id !==
+			"decision.cancel" ||
 		!current.actions.some((entry) => entry.mode === "execute") ||
+		(current.actor !== undefined &&
+			(!exactKeys(current.actor as unknown as Record<string, unknown>, [
+				"actorId",
+				"authorityRevision",
+			]) ||
+				!validActor(current.actor))) ||
+		(current.action !== undefined &&
+			!exactKeys(current.action as unknown as Record<string, unknown>, [
+				"id",
+				"input",
+			])) ||
+		(current.state === "cancelled" &&
+			(!validActor(current.actor) ||
+				!current.action ||
+				!exact(
+					current.action,
+					current.actions.find((entry) => entry.mode === "cancel")?.action,
+				))) ||
+		(current.state === "superseded" &&
+			(!exactKeys(current.replacement, [
+				"decisionId",
+				"operationDigest",
+				"actions",
+			]) ||
+				!parseDecisionId(current.replacement?.decisionId) ||
+				current.replacement?.decisionId !==
+					`${scopeKey(value.scope)}:${current.replacement?.operationDigest}` ||
+				!/^[a-f0-9]{64}$/.test(current.replacement?.operationDigest ?? "") ||
+				!Array.isArray(current.replacement?.actions) ||
+				current.replacement.actions.filter((entry) => entry.mode === "cancel")
+					.length !== 1 ||
+				current.replacement.actions.find((entry) => entry.mode === "cancel")
+					?.action.id !== "decision.cancel" ||
+				!current.replacement.actions.some(
+					(entry) => entry.mode === "execute",
+				) ||
+				new Set(current.replacement.actions.map((entry) => entry.id)).size !==
+					current.replacement.actions.length ||
+				new Set(current.replacement.actions.map((entry) => entry.action?.id))
+					.size !== current.replacement.actions.length ||
+				!current.replacement.actions.every(
+					(entry) =>
+						exactKeys(entry, ["id", "mode", "action"]) &&
+						exactKeys(entry.action, ["id", "input"]) &&
+						semanticId(entry.id) &&
+						semanticId(entry.action?.id) &&
+						["execute", "cancel"].includes(entry.mode),
+				))) ||
 		(["approved", "leased"].includes(current.state) &&
 			(!validActor(current.actor) ||
 				!current.action ||
@@ -479,10 +648,8 @@ function parseDecisionId(
 	return match ? { key: match[1], operationDigest: match[2] } : undefined;
 }
 
-function exactKeys(
-	value: Record<string, unknown>,
-	expected: readonly string[],
-): boolean {
+function exactKeys(value: unknown, expected: readonly string[]): boolean {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return false;
 	const actual = Object.keys(value).sort();
 	const wanted = [...expected].sort();
 	return (
@@ -521,6 +688,34 @@ function validManifest(
 			},
 		)
 	);
+}
+
+function receipt(current: DurableDecision): DecisionReceipt {
+	if (current.state === "superseded") {
+		return { state: "superseded", decisionId: current.decisionId };
+	}
+	if (current.state === "cancelled") {
+		if (!current.actor || current.action?.id !== "decision.cancel")
+			throw decisionError(
+				"PI_WORKFLOW_DECISION_STATE_CORRUPT",
+				"Cancelled decision receipt is incomplete.",
+			);
+		return {
+			state: "cancelled",
+			decisionId: current.decisionId,
+			actionId: "decision.cancel",
+			actorId: current.actor.actorId,
+		};
+	}
+	const currentLease = lease(current);
+	return {
+		state: "leased",
+		decisionId: currentLease.decisionId,
+		actionId: currentLease.action.id,
+		actorId: currentLease.actorId,
+		executionId: currentLease.executionId,
+		generation: currentLease.generation,
+	};
 }
 
 function lease(current: DurableDecision): ExecutionLease {
@@ -594,12 +789,21 @@ export function createEngramDecisionStore(options: {
 			return options.store.readRevision(project(), topic(key), revision);
 		},
 		async compareAndSwap(key, expectedRevision, content) {
-			return options.store.write(
-				project(),
-				topic(key),
-				content,
-				expectedRevision ?? undefined,
-			);
+			try {
+				return await options.store.write(
+					project(),
+					topic(key),
+					content,
+					expectedRevision ?? undefined,
+				);
+			} catch (error) {
+				if (errorCode(error) === "PI_WORKFLOW_ENGRAM_CONDITIONAL_WRITE_FAILED")
+					throw decisionError(
+						"PI_WORKFLOW_DECISION_CAS_CONFLICT",
+						"Decision store compare-and-swap conflict.",
+					);
+				throw error;
+			}
 		},
 	};
 }
@@ -658,13 +862,7 @@ export function createInteractiveDecisions(options: {
 				content,
 			);
 		} catch (error) {
-			if (
-				(error as { code?: string }).code ===
-					"PI_WORKFLOW_DECISION_CAS_CONFLICT" ||
-				/compare-and-swap|revision|conflict/i.test(
-					error instanceof Error ? error.message : "",
-				)
-			)
+			if (isDecisionCasConflict(error))
 				throw decisionError(
 					"PI_WORKFLOW_DECISION_CAS_CONFLICT",
 					"Decision store compare-and-swap conflict.",
@@ -691,6 +889,11 @@ export function createInteractiveDecisions(options: {
 		const projection = operationProjection(request);
 		const operationDigest = digestValue(projection);
 		const decisionId = `${scopeKey(request.scope)}:${operationDigest}`;
+		const replacement: DurableReplacement = {
+			decisionId,
+			operationDigest,
+			actions: clone(projection.actions),
+		};
 		let current = await load(request.scope);
 		if (!current || current.value.current.decisionId !== decisionId) {
 			if (
@@ -701,32 +904,69 @@ export function createInteractiveDecisions(options: {
 					"PI_WORKFLOW_DECISION_REPLAY",
 					"An authorized decision must be recovered or cancelled before replacement.",
 				);
-			const previousState =
-				current?.value.current.state === "cancelled"
-					? ("cancelled" as const)
-					: ("superseded" as const);
-			const history = current
-				? [
-						...current.value.history,
-						{
-							decisionId: current.value.current.decisionId,
-							state: previousState,
+			if (current?.value.current.state === "prepared") {
+				try {
+					current = await save(request.scope, current.revision, {
+						...unsignedEnvelope(current.value),
+						current: {
+							...current.value.current,
+							state: "superseded",
+							replacement,
 						},
-					]
-				: [];
-			current = await save(request.scope, current?.revision ?? null, {
-				schema: "interactive-decision",
-				schemaVersion: 1,
-				scope: clone(request.scope),
-				generation: current?.value.generation ?? 0,
-				current: {
-					decisionId,
-					operationDigest,
-					actions: clone(projection.actions),
-					state: "prepared",
-				},
-				history,
-			});
+					});
+				} catch (error) {
+					if (!isDecisionCasConflict(error)) throw error;
+					current = await load(request.scope);
+				}
+			}
+			if (
+				current?.value.current.state === "superseded" &&
+				!exact(current.value.current.replacement, replacement)
+			)
+				throw decisionError(
+					"PI_WORKFLOW_DECISION_CAS_CONFLICT",
+					"A different replacement already owns this decision scope.",
+				);
+			if (
+				current?.value.current.decisionId === decisionId &&
+				current.value.current.state === "prepared"
+			) {
+				// Adopt the exact concurrent winner.
+			} else {
+				const previousState =
+					current?.value.current.state === "cancelled"
+						? ("cancelled" as const)
+						: ("superseded" as const);
+				const history = current
+					? [
+							...current.value.history,
+							{
+								decisionId: current.value.current.decisionId,
+								state: previousState,
+							},
+						]
+					: [];
+				try {
+					current = await save(request.scope, current?.revision ?? null, {
+						schema: "interactive-decision",
+						schemaVersion: 1,
+						scope: clone(request.scope),
+						generation: current?.value.generation ?? 0,
+						current: { ...replacement, state: "prepared" },
+						history,
+					});
+				} catch (error) {
+					if (!isDecisionCasConflict(error)) throw error;
+					const winner = await load(request.scope);
+					if (
+						!winner ||
+						winner.value.current.decisionId !== decisionId ||
+						winner.value.current.state !== "prepared"
+					)
+						throw error;
+					current = winner;
+				}
+			}
 		} else if (current.value.current.state !== "prepared") {
 			throw decisionError(
 				"PI_WORKFLOW_DECISION_REPLAY",
@@ -739,7 +979,15 @@ export function createInteractiveDecisions(options: {
 			details: request.presentation.details,
 			consequences: request.presentation.consequences,
 			risks: request.presentation.risks,
-			choices: request.presentation.choices,
+			choices: request.presentation.choices.map(
+				({ id, mode, action, label, description }) => ({
+					id,
+					mode,
+					actionId: action.id,
+					label,
+					description,
+				}),
+			),
 		});
 	}
 
@@ -796,12 +1044,22 @@ export function createInteractiveDecisions(options: {
 					},
 					history: stored.value.history,
 				});
-				return { kind: "cancelled", decisionId };
+				const cancelled = {
+					...current,
+					state: "cancelled" as const,
+					actor: clone(actor),
+					action: clone(action),
+				};
+				return {
+					kind: "cancelled",
+					decisionId,
+					receipt: receipt(cancelled) as Extract<
+						DecisionReceipt,
+						{ state: "cancelled" }
+					>,
+				};
 			} catch (error) {
-				if (
-					(error as { code?: string }).code ===
-					"PI_WORKFLOW_DECISION_CAS_CONFLICT"
-				)
+				if (isDecisionCasConflict(error))
 					return blocker(
 						"PI_WORKFLOW_DECISION_CAS_CONFLICT",
 						"Another action consumed this decision.",
@@ -828,12 +1086,16 @@ export function createInteractiveDecisions(options: {
 				...unsignedEnvelope(stored.value),
 				current: { ...stored.value.current, state: "leased" },
 			});
-			return { kind: "authorized", lease: lease(stored.value.current) };
+			return {
+				kind: "authorized",
+				lease: lease(stored.value.current),
+				receipt: receipt(stored.value.current) as Extract<
+					DecisionReceipt,
+					{ state: "leased" }
+				>,
+			};
 		} catch (error) {
-			if (
-				(error as { code?: string }).code ===
-				"PI_WORKFLOW_DECISION_CAS_CONFLICT"
-			)
+			if (isDecisionCasConflict(error))
 				return blocker(
 					"PI_WORKFLOW_DECISION_CAS_CONFLICT",
 					"Another action consumed this decision.",
@@ -857,9 +1119,23 @@ export function createInteractiveDecisions(options: {
 		if (current.state === "prepared")
 			return { kind: "prepared", decisionId: current.decisionId };
 		if (current.state === "cancelled")
-			return { kind: "cancelled", decisionId: current.decisionId };
+			return {
+				kind: "cancelled",
+				decisionId: current.decisionId,
+				receipt: receipt(current) as Extract<
+					DecisionReceipt,
+					{ state: "cancelled" }
+				>,
+			};
 		if (current.state === "superseded")
-			return { kind: "superseded", decisionId: current.decisionId };
+			return {
+				kind: "superseded",
+				decisionId: current.decisionId,
+				receipt: receipt(current) as Extract<
+					DecisionReceipt,
+					{ state: "superseded" }
+				>,
+			};
 		if (
 			!current.actor ||
 			current.actor.actorId !== actor.actorId ||
@@ -876,10 +1152,7 @@ export function createInteractiveDecisions(options: {
 					current: { ...current, state: "leased" },
 				});
 			} catch (error) {
-				if (
-					(error as { code?: string }).code ===
-					"PI_WORKFLOW_DECISION_CAS_CONFLICT"
-				)
+				if (isDecisionCasConflict(error))
 					return blocker(
 						"PI_WORKFLOW_DECISION_CAS_CONFLICT",
 						"Decision recovery lost its fencing race.",
@@ -909,6 +1182,10 @@ export function createInteractiveDecisions(options: {
 			return {
 				kind: "authorized",
 				lease: currentLease,
+				receipt: receipt(stored.value.current) as Extract<
+					DecisionReceipt,
+					{ state: "leased" }
+				>,
 				manifest: clone(stored.value.current.manifest),
 			};
 		}
@@ -927,10 +1204,7 @@ export function createInteractiveDecisions(options: {
 					current: { ...stored.value.current, manifest: clone(manifests[0]) },
 				});
 			} catch (error) {
-				if (
-					(error as { code?: string }).code ===
-					"PI_WORKFLOW_DECISION_CAS_CONFLICT"
-				)
+				if (isDecisionCasConflict(error))
 					return blocker(
 						"PI_WORKFLOW_DECISION_CAS_CONFLICT",
 						"Manifest binding lost its fencing race.",
@@ -940,10 +1214,21 @@ export function createInteractiveDecisions(options: {
 			return {
 				kind: "authorized",
 				lease: currentLease,
+				receipt: receipt(stored.value.current) as Extract<
+					DecisionReceipt,
+					{ state: "leased" }
+				>,
 				manifest: clone(manifests[0]),
 			};
 		}
-		return { kind: "authorized", lease: currentLease };
+		return {
+			kind: "authorized",
+			lease: currentLease,
+			receipt: receipt(stored.value.current) as Extract<
+				DecisionReceipt,
+				{ state: "leased" }
+			>,
+		};
 	}
 
 	return { prepare, authorize, recover };
