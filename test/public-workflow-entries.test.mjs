@@ -88,6 +88,7 @@ extensions/delivery-ticket-publication.ts
 extensions/delivery-workflow.ts
 extensions/engram-approved-spec-reader.ts
 extensions/exploration-recovery.ts
+extensions/interactive-decisions.ts
 extensions/linear-delivery-parent-gateway.ts
 extensions/linear-delivery-ticket-gateway.ts
 extensions/linear-qa-handoff-gateway.ts
