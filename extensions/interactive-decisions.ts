@@ -173,7 +173,8 @@ export interface DecisionStore {
 	): Promise<{ readonly revision: string }>;
 }
 
-interface ClaimSource {
+export interface DecisionClaimSource {
+	/** Transport-neutral by design; adapters must clear private claims at their session boundary. */
 	consume(
 		decisionId: string,
 		action: TypedDecisionAction,
@@ -810,7 +811,7 @@ export function createEngramDecisionStore(options: {
 
 export function createInteractiveDecisions(options: {
 	readonly store: DecisionStore;
-	readonly claimSource?: ClaimSource;
+	readonly claimSource?: DecisionClaimSource;
 	readonly manifestLookup?: ManifestLookup;
 	readonly createExecutionId?: () => string;
 }) {

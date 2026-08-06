@@ -93,6 +93,7 @@ extensions/linear-delivery-parent-gateway.ts
 extensions/linear-delivery-ticket-gateway.ts
 extensions/linear-qa-handoff-gateway.ts
 extensions/mcp-config.ts
+extensions/pi-decision-adapter.ts
 extensions/pi-workflow-sync.ts
 extensions/pi-workflow.ts
 extensions/product-review-artifact-store.ts
