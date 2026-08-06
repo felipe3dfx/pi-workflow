@@ -42,6 +42,16 @@ import type { createProductReviewWorkflow } from "./product-review-workflow.ts";
 import { createProductReviewRuntime } from "./product-review-runtime.ts";
 import { createRuntimeEngramArtifactStore } from "./runtime-engram-store.ts";
 import type { SingleUserAuthoritySession } from "./single-user-authority.ts";
+import {
+	createPiDecisionAdapter,
+	type PiDecisionAdapter,
+	registerPiDecisionAdapter,
+} from "./pi-decision-adapter.ts";
+import {
+	createEngramDecisionStore,
+	createInteractiveDecisions,
+	type DecisionStore,
+} from "./interactive-decisions.ts";
 import { registerPublicEntryGuard } from "./public-entry-guard.ts";
 import type {
 	DiagnosticScope,
@@ -118,6 +128,11 @@ export interface PiWorkflowExtensionOptions extends CompanionWorkflowOptions {
 		workflow?: ReturnType<typeof createProductReviewWorkflow>;
 		runtime?: DefaultProductReviewRuntimeOptions;
 	};
+	interactiveDecisions?: {
+		adapter?: PiDecisionAdapter;
+		store?: DecisionStore;
+		createExecutionId?: () => string;
+	};
 }
 
 function projectName(cwd: string): string {
@@ -144,6 +159,28 @@ export default function piWorkflowExtension(
 	pi.on("session_shutdown", async () => {
 		currentCtx = undefined;
 	});
+	const interactiveDecisionArtifactStore = createRuntimeEngramArtifactStore({
+		sessionId: () => currentCtx?.sessionManager?.getSessionId?.(),
+		directory: () => currentCtx?.cwd ?? process.cwd(),
+	});
+	const decisionAdapter =
+		workflowOptions.interactiveDecisions?.adapter ?? createPiDecisionAdapter();
+	const interactiveDecisions = registerPiDecisionAdapter(
+		pi,
+		decisionAdapter,
+		createInteractiveDecisions({
+			store:
+				workflowOptions.interactiveDecisions?.store ??
+				createEngramDecisionStore({
+					store: interactiveDecisionArtifactStore,
+					project: () => projectName(currentCtx?.cwd ?? process.cwd()),
+				}),
+			claimSource: decisionAdapter.claimSource,
+			createExecutionId:
+				workflowOptions.interactiveDecisions?.createExecutionId,
+		}),
+		() => currentCtx,
+	);
 
 	const defineProductWorkflow =
 		workflowOptions.defineProduct?.workflow ??
@@ -326,4 +363,5 @@ export default function piWorkflowExtension(
 			await createWorkflow(pi, ctx, workflowOptions).installMissing();
 		},
 	});
+	return { interactiveDecisions };
 }
