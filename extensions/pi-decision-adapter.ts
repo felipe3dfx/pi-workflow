@@ -11,6 +11,7 @@ import type {
 	DecisionPresentation,
 	DecisionRequest,
 	DecisionScope,
+	RecoveryDirective,
 	RecoveryOutcome,
 	TypedDecisionAction,
 } from "./interactive-decisions.ts";
@@ -83,6 +84,7 @@ interface InteractiveDecisionService {
 	recover(
 		scope: DecisionScope,
 		actor: AuthenticatedDecisionActor,
+		directive?: RecoveryDirective,
 	): Promise<RecoveryOutcome>;
 }
 
@@ -99,6 +101,7 @@ export interface PiInteractiveDecisions {
 	recover(
 		scope: DecisionScope,
 		actor: AuthenticatedDecisionActor,
+		directive?: RecoveryDirective,
 	): Promise<RecoveryOutcome>;
 }
 
@@ -556,6 +559,15 @@ export function registerPiDecisionAdapter(
 		sequences.delete(session);
 		adapter.resetSession(session);
 	}
+	function queuePresentation(
+		presentation: DecisionPresentation,
+		actor: AuthenticatedDecisionActor,
+	): void {
+		const session = sessionId(getContext());
+		if (!session) return;
+		activeSession ??= session;
+		pending.set(session, { presentation, actor });
+	}
 	pi.on("session_start", (_event, ctx) => {
 		const session = sessionId(ctx);
 		if (activeSession && activeSession !== session) clearSession(activeSession);
@@ -626,15 +638,16 @@ export function registerPiDecisionAdapter(
 	return {
 		async prepare(request, actor) {
 			const presentation = await decisions.prepare(request);
-			const session = sessionId(getContext());
-			if (session) {
-				activeSession ??= session;
-				pending.set(session, { presentation, actor });
-			}
+			queuePresentation(presentation, actor);
 			return presentation;
 		},
 		authorize: (decisionId, action, actor) =>
 			decisions.authorize(decisionId, action, actor),
-		recover: (scope, actor) => decisions.recover(scope, actor),
+		async recover(scope, actor, directive) {
+			const outcome = await decisions.recover(scope, actor, directive);
+			if (outcome.kind === "reapproval" || outcome.kind === "drift")
+				queuePresentation(outcome.presentation, actor);
+			return outcome;
+		},
 	};
 }

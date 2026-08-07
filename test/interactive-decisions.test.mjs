@@ -12,7 +12,21 @@ const scope = {
 	workflow: "define-product",
 	subject: "definition-1",
 };
-const actor = { actorId: "actor-1", authorityRevision: "authority-1" };
+const actorAuthority = {
+	actorId: "actor-1",
+	authorityRevision: "authority-1",
+};
+const actor = {
+	...actorAuthority,
+	active: true,
+	guest: false,
+};
+const otherActor = {
+	actorId: "actor-2",
+	authorityRevision: "authority-2",
+	active: true,
+	guest: false,
+};
 const approve = { id: "spec.approve", input: { revision: "r1" } };
 const cancel = { id: "decision.cancel", input: null };
 
@@ -340,6 +354,49 @@ test("a late authorization result cannot overwrite the winning lease", async () 
 	assert.deepEqual(await decisions.recover(scope, actor), winner);
 });
 
+test("authorize freezes one injected actor identity before asynchronous claim consumption", async () => {
+	let releaseClaim;
+	let claimEntered;
+	const entered = new Promise((resolve) => {
+		claimEntered = resolve;
+	});
+	const released = new Promise((resolve) => {
+		releaseClaim = resolve;
+	});
+	let consumedActor;
+	const decisions = service({
+		claimSource: {
+			async consume(_decisionId, _action, frozenActor) {
+				consumedActor = frozenActor;
+				claimEntered();
+				await released;
+				return true;
+			},
+		},
+	});
+	const mutableActor = {
+		actorId: "actor-frozen",
+		authorityRevision: "authority-frozen",
+		active: true,
+		guest: false,
+	};
+	const prepared = await decisions.prepare(request());
+	const pending = decisions.authorize(prepared.decisionId, approve, mutableActor);
+	await entered;
+	mutableActor.actorId = "actor-mutated";
+	mutableActor.authorityRevision = "authority-mutated";
+	releaseClaim();
+	const authorized = await pending;
+	assert.deepEqual(consumedActor, {
+		actorId: "actor-frozen",
+		authorityRevision: "authority-frozen",
+		active: true,
+		guest: false,
+	});
+	assert.equal(authorized.lease.actorId, "actor-frozen");
+	assert.equal(authorized.lease.authorityRevision, "authority-frozen");
+});
+
 test("recover completes an approved lease after a crash without allocating another execution", async () => {
 	const backing = createInMemoryDecisionStore();
 	let writes = 0;
@@ -546,6 +603,34 @@ test("recover rejects a re-signed cancelled action mismatch", async () => {
 	);
 });
 
+test("recover rejects re-signed impossible durable state combinations", async () => {
+	for (const mutate of [
+		(value) => {
+			value.current.state = "terminal";
+		},
+		(value) => {
+			value.current.state = "cancelled";
+		},
+		(value) => {
+			value.current.state = "revoked";
+		},
+	]) {
+		const backing = createInMemoryDecisionStore();
+		const decisions = service({ store: backing });
+		const prepared = await decisions.prepare(request());
+		await decisions.authorize(prepared.decisionId, approve, actor);
+		const key = prepared.decisionId.split(":")[0];
+		const current = await backing.read(key);
+		const parsed = JSON.parse(current.content);
+		mutate(parsed);
+		await backing.compareAndSwap(key, current.revision, signedEnvelope(parsed));
+		await assert.rejects(
+			() => decisions.recover(scope, actor),
+			/state shape is invalid/,
+		);
+	}
+});
+
 test("recover rejects a canonically signed malformed manifest binding", async () => {
 	const backing = createInMemoryDecisionStore();
 	let manifests = [];
@@ -583,16 +668,440 @@ test("recover rejects a canonically signed malformed manifest binding", async ()
 	);
 });
 
-test("recover rejects an actor change and corrupt durable bytes without mutation", async () => {
+test("an approved durable state cannot carry lease manifest evidence", async () => {
+	const backing = createInMemoryDecisionStore();
+	let writes = 0;
+	const decisions = service({
+		store: {
+			read: (key) => backing.read(key),
+			readRevision: (key, revision) => backing.readRevision(key, revision),
+			async compareAndSwap(key, revision, content) {
+				writes += 1;
+				if (writes === 3) throw new Error("stop before lease");
+				return backing.compareAndSwap(key, revision, content);
+			},
+		},
+	});
+	const prepared = await decisions.prepare(request());
+	await assert.rejects(
+		() => decisions.authorize(prepared.decisionId, approve, actor),
+		/stop before lease/,
+	);
+	const key = prepared.decisionId.split(":")[0];
+	const current = await backing.read(key);
+	const parsed = JSON.parse(current.content);
+	assert.equal(parsed.current.state, "approved");
+	parsed.current.manifest = {
+		ref: "engram://not-yet-leased",
+		decisionId: parsed.current.decisionId,
+		operationDigest: parsed.current.operationDigest,
+		executionId: parsed.current.executionId,
+		generation: parsed.current.generation,
+	};
+	await backing.compareAndSwap(key, current.revision, signedEnvelope(parsed));
+	await assert.rejects(
+		() => decisions.recover(scope, actor),
+		/state shape is invalid/,
+	);
+});
+
+test("recover gives another active member read-only access without reusing the lease", async () => {
+	const backing = createInMemoryDecisionStore();
+	const decisions = service({ store: backing });
+	const prepared = await decisions.prepare(request());
+	const authorized = await decisions.authorize(prepared.decisionId, approve, actor);
+	assert.equal(authorized.kind, "authorized");
+	assert.deepEqual(await decisions.recover(scope, otherActor), {
+		kind: "active",
+		decisionId: prepared.decisionId,
+		executionId: "execution-1",
+		generation: 1,
+		currentApprover: actorAuthority,
+		reapprovalRequired: true,
+		actions: ["resume", "replace", "cancel"],
+	});
+	assert.deepEqual(await decisions.recover(scope, actor), authorized);
+});
+
+test("same authority explicitly resumes the same fenced execution after restart", async () => {
+	const backing = createInMemoryDecisionStore();
+	const firstService = service({ store: backing });
+	const prepared = await firstService.prepare(request());
+	const authorized = await firstService.authorize(
+		prepared.decisionId,
+		approve,
+		actor,
+	);
+	const manifest = {
+		ref: "engram://restart-manifest",
+		decisionId: authorized.lease.decisionId,
+		operationDigest: authorized.lease.operationDigest,
+		executionId: authorized.lease.executionId,
+		generation: authorized.lease.generation,
+	};
+	const restarted = service({
+		store: backing,
+		createExecutionId: () => "must-not-be-allocated",
+		manifestLookup: { find: async () => [manifest] },
+	});
+	assert.deepEqual(await restarted.recover(scope, actor, { kind: "resume" }), {
+		...authorized,
+		manifest,
+	});
+});
+
+test("changed authority gets a fresh reapproval decision after restart", async () => {
+	const backing = createInMemoryDecisionStore();
+	const firstService = service({ store: backing });
+	const prepared = await firstService.prepare(request());
+	const firstAuthorization = await firstService.authorize(
+		prepared.decisionId,
+		approve,
+		actor,
+	);
+	assert.equal(firstAuthorization.kind, "authorized");
+
+	const restarted = service({
+		store: backing,
+		createExecutionId: () => "execution-2",
+	});
+	assert.equal(
+		(await restarted.recover(scope, otherActor, { kind: "resume" })).blocker
+			.code,
+		"PI_WORKFLOW_DECISION_ACTION_MISMATCH",
+	);
+	const reapproval = await restarted.recover(scope, otherActor, {
+		kind: "resume",
+		request: request(),
+	});
+	assert.equal(reapproval.kind, "reapproval");
+	assert.equal(reapproval.previousDecisionId, prepared.decisionId);
+	assert.notEqual(reapproval.presentation.decisionId, prepared.decisionId);
+	const reauthorized = await restarted.authorize(
+		reapproval.presentation.decisionId,
+		approve,
+		otherActor,
+	);
+	assert.equal(reauthorized.kind, "authorized");
+	assert.equal(reauthorized.lease.actorId, otherActor.actorId);
+
+	const afterSecondRestart = service({ store: backing });
+	assert.deepEqual(
+		await afterSecondRestart.recover(scope, otherActor, { kind: "resume" }),
+		reauthorized,
+	);
+	const stored = await backing.read(
+		reapproval.presentation.decisionId.split(":")[0],
+	);
+	const durable = JSON.parse(stored.content);
+	assert.deepEqual(durable.firstApprover, actorAuthority);
+	assert.deepEqual(durable.authorityHistory, [actorAuthority]);
+	assert.deepEqual(durable.current.actor, {
+		actorId: otherActor.actorId,
+		authorityRevision: otherActor.authorityRevision,
+	});
+});
+
+test("authorization and recovery reject unproven Linear membership", async () => {
+	const decisions = service();
+	const prepared = await decisions.prepare(request());
+	for (const invalidActor of [
+		{
+			actorId: otherActor.actorId,
+			authorityRevision: otherActor.authorityRevision,
+			guest: false,
+		},
+		{
+			actorId: otherActor.actorId,
+			authorityRevision: otherActor.authorityRevision,
+			active: true,
+		},
+		{ ...otherActor, active: false },
+		{ ...otherActor, guest: true },
+		{ ...otherActor, active: "yes" },
+		{ ...otherActor, guest: "no" },
+	]) {
+		assert.equal(
+			(await decisions.recover(scope, invalidActor)).blocker.code,
+			"PI_WORKFLOW_DECISION_ACTOR_MISMATCH",
+		);
+		assert.equal(
+			(
+				await decisions.authorize(
+					prepared.decisionId,
+					approve,
+					invalidActor,
+				)
+			).blocker.code,
+			"PI_WORKFLOW_DECISION_ACTOR_MISMATCH",
+		);
+	}
+});
+
+test("another active member can cancel an active execution without inheriting authority", async () => {
+	const decisions = service();
+	const prepared = await decisions.prepare(request());
+	await decisions.authorize(prepared.decisionId, approve, actor);
+	const cancelled = await decisions.recover(scope, otherActor, { kind: "cancel" });
+	assert.equal(cancelled.kind, "cancelled");
+	assert.equal(cancelled.receipt.actorId, otherActor.actorId);
+	assert.equal(
+		(await decisions.recover(scope, actor)).kind,
+		"cancelled",
+	);
+});
+
+test("replacement persists cancellation then revocation before preparing the successor", async () => {
+	const backing = createInMemoryDecisionStore();
+	const writes = [];
+	const recordingStore = {
+		read: (key) => backing.read(key),
+		readRevision: (key, revision) => backing.readRevision(key, revision),
+		async compareAndSwap(key, revision, content) {
+			writes.push(JSON.parse(content));
+			return backing.compareAndSwap(key, revision, content);
+		},
+	};
+	const decisions = service({ store: recordingStore });
+	const first = await decisions.prepare(request());
+	await decisions.authorize(first.decisionId, approve, actor);
+	const replacementRequest = request({
+		operation: { ...request().operation, phase: "spec.replacement" },
+	});
+	const replaced = await decisions.recover(scope, otherActor, {
+		kind: "replace",
+		request: replacementRequest,
+	});
+	assert.equal(replaced.kind, "prepared");
+	assert.notEqual(replaced.decisionId, first.decisionId);
+	const cancellationIndex = writes.findIndex(
+		(value) =>
+			value.current.decisionId === first.decisionId &&
+			value.current.state === "cancellation-tombstone",
+	);
+	const revocationIndex = writes.findIndex(
+		(value) =>
+			value.current.decisionId === first.decisionId &&
+			value.current.state === "revoked",
+	);
+	const replacementIndex = writes.findIndex(
+		(value) =>
+			value.current.decisionId === replaced.decisionId &&
+			value.current.state === "prepared",
+	);
+	assert.ok(cancellationIndex >= 0);
+	assert.ok(revocationIndex > cancellationIndex);
+	assert.ok(replacementIndex > revocationIndex);
+
+	const reapproved = await decisions.authorize(
+		replaced.decisionId,
+		approve,
+		otherActor,
+	);
+	assert.equal(reapproved.kind, "authorized");
+	const stored = await backing.read(replaced.decisionId.split(":")[0]);
+	const durable = JSON.parse(stored.content);
+	assert.deepEqual(durable.firstApprover, actorAuthority);
+	assert.deepEqual(durable.current.actor, {
+		actorId: otherActor.actorId,
+		authorityRevision: otherActor.authorityRevision,
+	});
+	assert.deepEqual(durable.authorityHistory, [actorAuthority]);
+	assert.deepEqual(durable.history.slice(-2), [
+		{ decisionId: first.decisionId, state: "cancelled" },
+		{ decisionId: first.decisionId, state: "revoked" },
+	]);
+});
+
+test("replacement cannot escape the recovered decision scope", async () => {
+	const decisions = service();
+	const prepared = await decisions.prepare(request());
+	await decisions.authorize(prepared.decisionId, approve, actor);
+	const outcome = await decisions.recover(scope, actor, {
+		kind: "replace",
+		request: request({
+			scope: { ...scope, subject: "another-definition" },
+			operation: { ...request().operation, phase: "spec.replacement" },
+		}),
+	});
+	assert.equal(outcome.blocker.code, "PI_WORKFLOW_DECISION_ACTION_MISMATCH");
+	assert.equal((await decisions.recover(scope, actor)).kind, "authorized");
+});
+
+test("terminalization persists once and subsequent recovery is read-only", async () => {
+	const decisions = service();
+	const prepared = await decisions.prepare(request());
+	await decisions.authorize(prepared.decisionId, approve, actor);
+	const terminal = await decisions.recover(scope, otherActor, {
+		kind: "terminal",
+		state: "completed",
+	});
+	assert.deepEqual(terminal, {
+		kind: "terminal",
+		decisionId: prepared.decisionId,
+		state: "completed",
+		currentApprover: actorAuthority,
+	});
+	assert.deepEqual(await decisions.recover(scope, actor), terminal);
+});
+
+test("workflow-reported drift revokes the lease and prepares a human diff decision", async () => {
 	const backing = createInMemoryDecisionStore();
 	const decisions = service({ store: backing });
 	const prepared = await decisions.prepare(request());
 	await decisions.authorize(prepared.decisionId, approve, actor);
+	const driftRequest = request({
+		operation: { ...request().operation, phase: "spec.drifted" },
+	});
+	const humanDiff = {
+		summary: "Linear changed after approval",
+		details: ["Title changed from A to B"],
+	};
+	const drifted = await decisions.recover(scope, actor, {
+		kind: "drift",
+		request: driftRequest,
+		diff: humanDiff,
+	});
+	assert.equal(drifted.kind, "drift");
+	assert.notEqual(drifted.presentation.decisionId, prepared.decisionId);
+	assert.deepEqual(drifted.diff, humanDiff);
+	const stored = await backing.read(prepared.decisionId.split(":")[0]);
+	assert.equal(stored.content.includes(humanDiff.summary), false);
+	assert.equal(stored.content.includes(humanDiff.details[0]), false);
 	assert.equal(
-		(await decisions.recover(scope, { ...actor, actorId: "actor-2" })).blocker
-			.code,
-		"PI_WORKFLOW_DECISION_ACTOR_MISMATCH",
+		(await decisions.authorize(prepared.decisionId, approve, actor)).blocker.code,
+		"PI_WORKFLOW_DECISION_NOT_FOUND",
 	);
+});
+
+test("parallel replacement adopts one cancellation, revocation, and successor", async () => {
+	const backing = createInMemoryDecisionStore();
+	const writes = [];
+	const decisions = service({
+		store: {
+			read: (key) => backing.read(key),
+			readRevision: (key, revision) => backing.readRevision(key, revision),
+			async compareAndSwap(key, revision, content) {
+				const saved = await backing.compareAndSwap(key, revision, content);
+				writes.push(JSON.parse(content));
+				return saved;
+			},
+		},
+	});
+	const prepared = await decisions.prepare(request());
+	await decisions.authorize(prepared.decisionId, approve, actor);
+	const replacementRequest = request({
+		operation: { ...request().operation, phase: "spec.concurrent-replacement" },
+	});
+	const outcomes = await Promise.all([
+		decisions.recover(scope, actor, {
+			kind: "replace",
+			request: replacementRequest,
+		}),
+		decisions.recover(scope, actor, {
+			kind: "replace",
+			request: replacementRequest,
+		}),
+	]);
+	assert.equal(outcomes.filter((outcome) => outcome.kind === "prepared").length, 2);
+	assert.equal(
+		writes.filter(
+			(value) => value.current.state === "cancellation-tombstone",
+		).length,
+		1,
+	);
+	assert.equal(
+		writes.filter((value) => value.current.state === "revoked").length,
+		1,
+	);
+	assert.equal(
+		writes.filter(
+			(value) =>
+				value.current.state === "prepared" &&
+				value.current.decisionId !== prepared.decisionId,
+		).length,
+		1,
+	);
+	assert.equal(outcomes[0].decisionId, outcomes[1].decisionId);
+});
+
+test("replacement CAS loss returns a concurrent terminal state without overwriting it", async () => {
+	const backing = createInMemoryDecisionStore();
+	const terminalDecisions = service({ store: backing });
+	let publishTerminal = false;
+	let terminalWinner;
+	const replacingDecisions = service({
+		store: {
+			read: (key) => backing.read(key),
+			readRevision: (key, revision) => backing.readRevision(key, revision),
+			async compareAndSwap(key, revision, content) {
+				const attempted = JSON.parse(content);
+				if (
+					publishTerminal &&
+					attempted.current.state === "cancellation-tombstone"
+				) {
+					publishTerminal = false;
+					terminalWinner = await terminalDecisions.recover(scope, otherActor, {
+						kind: "terminal",
+						state: "completed",
+					});
+				}
+				return backing.compareAndSwap(key, revision, content);
+			},
+		},
+	});
+	const prepared = await replacingDecisions.prepare(request());
+	await replacingDecisions.authorize(prepared.decisionId, approve, actor);
+	publishTerminal = true;
+	const outcome = await replacingDecisions.recover(scope, otherActor, {
+		kind: "replace",
+		request: request({
+			operation: { ...request().operation, phase: "spec.terminal-race" },
+		}),
+	});
+	assert.equal(terminalWinner.kind, "terminal");
+	assert.deepEqual(outcome, terminalWinner);
+	assert.deepEqual(await replacingDecisions.recover(scope, actor), terminalWinner);
+});
+
+test("a late resume result cannot return a lease after replacement wins", async () => {
+	let releaseLookup;
+	let lookupEntered;
+	const entered = new Promise((resolve) => {
+		lookupEntered = resolve;
+	});
+	const released = new Promise((resolve) => {
+		releaseLookup = resolve;
+	});
+	const decisions = service({
+		manifestLookup: {
+			async find() {
+				lookupEntered();
+				await released;
+				return [];
+			},
+		},
+	});
+	const prepared = await decisions.prepare(request());
+	await decisions.authorize(prepared.decisionId, approve, actor);
+	const lateResume = decisions.recover(scope, actor);
+	await entered;
+	const replaced = await decisions.recover(scope, otherActor, {
+		kind: "replace",
+		request: request({
+			operation: { ...request().operation, phase: "spec.late-replacement" },
+		}),
+	});
+	releaseLookup();
+	assert.equal(replaced.kind, "prepared");
+	assert.equal((await lateResume).blocker.code, "PI_WORKFLOW_DECISION_CAS_CONFLICT");
+});
+
+test("recover rejects corrupt durable bytes without mutation", async () => {
+	const backing = createInMemoryDecisionStore();
+	const decisions = service({ store: backing });
+	const prepared = await decisions.prepare(request());
+	await decisions.authorize(prepared.decisionId, approve, actor);
 
 	const key = prepared.decisionId.split(":")[0];
 	const current = await backing.read(key);
