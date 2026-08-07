@@ -11,7 +11,18 @@ import {
 } from "../extensions/pi-decision-adapter.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 
-const actor = { actorId: "actor-1", authorityRevision: "single-user/v1" };
+const actor = {
+	actorId: "actor-1",
+	authorityRevision: "single-user/v1",
+	active: true,
+	guest: false,
+};
+const otherActor = {
+	actorId: "actor-2",
+	authorityRevision: "linear/member-2",
+	active: true,
+	guest: false,
+};
 const scope = {
 	project: "pi-workflow",
 	workflow: "define-product",
@@ -215,6 +226,209 @@ test("piWorkflowExtension prepares, emits, correlates, and authorizes one panel 
 				presentation.decisionId,
 				approve,
 				actor,
+			)
+		).kind,
+		"authorized",
+	);
+});
+
+test("piWorkflowExtension forwards shared-authority recovery directives", async () => {
+	const harness = workflowExtensionHarness();
+	const ctx = hostContext();
+	await harness.emit("session_start", { type: "session_start" }, ctx);
+	const presentation = await harness.extension.interactiveDecisions.prepare(
+		request(),
+		actor,
+	);
+	const adapter = harness.extension.interactiveDecisions;
+	const pending = harness.emit(
+		"before_agent_start",
+		{ type: "before_agent_start" },
+		ctx,
+	);
+	const instruction = await pending;
+	const panelInput = JSON.parse(
+		instruction.systemPrompt.slice(
+			instruction.systemPrompt.indexOf("{"),
+			instruction.systemPrompt.lastIndexOf("}") + 1,
+		),
+	);
+	await harness.emit(
+		"tool_call",
+		{
+			type: "tool_call",
+			toolName: "ask_user_question",
+			toolCallId: "recovery-call",
+			input: panelInput,
+		},
+		ctx,
+	);
+	await harness.emit(
+		"tool_result",
+		{
+			type: "tool_result",
+			toolName: "ask_user_question",
+			toolCallId: "recovery-call",
+			input: panelInput,
+			content: [],
+			isError: false,
+			details: {
+				answers: [
+					{
+						questionIndex: 0,
+						question: panelInput.questions[0].question,
+						kind: "option",
+						answer: "Publicar",
+					},
+				],
+				cancelled: false,
+			},
+		},
+		ctx,
+	);
+	await adapter.authorize(presentation.decisionId, approve, actor);
+	const terminal = await adapter.recover(
+		scope,
+		{
+			actorId: "actor-2",
+			authorityRevision: "linear/member-2",
+			active: true,
+			guest: false,
+		},
+		{ kind: "terminal", state: "completed" },
+	);
+	assert.equal(terminal.kind, "terminal");
+	assert.equal(terminal.currentApprover.actorId, actor.actorId);
+});
+
+test("changed-actor recovery queues a fresh presentation and claim", async () => {
+	const harness = workflowExtensionHarness();
+	const ctx = hostContext();
+	await harness.emit("session_start", { type: "session_start" }, ctx);
+	let call = 0;
+	async function claimPendingDecision() {
+		const instruction = await harness.emit(
+			"before_agent_start",
+			{ type: "before_agent_start" },
+			ctx,
+		);
+		assert.match(instruction?.systemPrompt ?? "", /ask_user_question/);
+		const panelInput = JSON.parse(
+			instruction.systemPrompt.slice(
+				instruction.systemPrompt.indexOf("{"),
+				instruction.systemPrompt.lastIndexOf("}") + 1,
+			),
+		);
+		call += 1;
+		const toolCallId = `reapproval-call-${call}`;
+		await harness.emit(
+			"tool_call",
+			{
+				type: "tool_call",
+				toolName: "ask_user_question",
+				toolCallId,
+				input: panelInput,
+			},
+			ctx,
+		);
+		await harness.emit(
+			"tool_result",
+			{
+				type: "tool_result",
+				toolName: "ask_user_question",
+				toolCallId,
+				input: panelInput,
+				content: [],
+				isError: false,
+				details: {
+					answers: [
+						{
+							questionIndex: 0,
+							question: panelInput.questions[0].question,
+							kind: "option",
+							answer: "Publicar",
+						},
+					],
+					cancelled: false,
+				},
+			},
+			ctx,
+		);
+		return { panelInput, toolCallId };
+	}
+
+	const initial = await harness.extension.interactiveDecisions.prepare(
+		request(),
+		actor,
+	);
+	const staleInteraction = await claimPendingDecision();
+	assert.equal(
+		(
+			await harness.extension.interactiveDecisions.authorize(
+				initial.decisionId,
+				approve,
+				actor,
+			)
+		).kind,
+		"authorized",
+	);
+
+	const recovered = await harness.extension.interactiveDecisions.recover(
+		scope,
+		otherActor,
+		{ kind: "resume", request: request() },
+	);
+	assert.equal(recovered.kind, "reapproval");
+	assert.equal(
+		(
+			await harness.extension.interactiveDecisions.authorize(
+				recovered.presentation.decisionId,
+				approve,
+				otherActor,
+			)
+		).blocker.code,
+		"PI_WORKFLOW_DECISION_CLAIM_MISSING",
+	);
+	await harness.emit(
+		"tool_result",
+		{
+			type: "tool_result",
+			toolName: "ask_user_question",
+			toolCallId: staleInteraction.toolCallId,
+			input: staleInteraction.panelInput,
+			content: [],
+			isError: false,
+			details: {
+				answers: [
+					{
+						questionIndex: 0,
+						question: staleInteraction.panelInput.questions[0].question,
+						kind: "option",
+						answer: "Publicar",
+					},
+				],
+				cancelled: false,
+			},
+		},
+		ctx,
+	);
+	assert.equal(
+		(
+			await harness.extension.interactiveDecisions.authorize(
+				recovered.presentation.decisionId,
+				approve,
+				otherActor,
+			)
+		).blocker.code,
+		"PI_WORKFLOW_DECISION_CLAIM_MISSING",
+	);
+	await claimPendingDecision();
+	assert.equal(
+		(
+			await harness.extension.interactiveDecisions.authorize(
+				recovered.presentation.decisionId,
+				approve,
+				otherActor,
 			)
 		).kind,
 		"authorized",
