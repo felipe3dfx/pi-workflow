@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createProductReviewArtifactStore } from "../extensions/product-review-artifact-store.ts";
+import { createProductReviewPublicationRecoveryStore } from "../extensions/product-review-publication-recovery.ts";
 import {
 	createProductReviewDraftStore,
 	isProductReviewDraftArtifact,
@@ -52,6 +53,33 @@ function backend() {
 				const stored = values.get(topic);
 				return stored?.revision === revision ? stored.content : undefined;
 			},
+		},
+	};
+}
+
+function atomicBackend() {
+	const values = new Map();
+	const revisions = new Map();
+	let writes = 0;
+	return {
+		values,
+		store: {
+			capabilities: { atomicCompareAndSwap: true },
+			readCurrent: async (_project, topic) => values.get(topic),
+			write: async (_project, topic, content, expectedRevision) => {
+				const current = values.get(topic);
+				if (current?.revision !== expectedRevision)
+					throw Object.assign(new Error("compare-and-swap conflict"), {
+						code: "revision-conflict",
+					});
+				writes += 1;
+				const stored = { revision: `r${writes}`, content };
+				values.set(topic, stored);
+				revisions.set(`${topic}:${stored.revision}`, content);
+				return { revision: stored.revision };
+			},
+			readRevision: async (_project, topic, revision) =>
+				revisions.get(`${topic}:${revision}`),
 		},
 	};
 }
@@ -169,5 +197,55 @@ test("both stores reject operation without atomic compare-and-swap", async () =>
 	await assert.rejects(
 		createProductReviewArtifactStore({ store: persistence.store, project: "pi-workflow" }).save(await artifactFixture()),
 		/Atomic CAS/,
+	);
+});
+
+test("publication recovery preserves and fences the shared execution binding", async () => {
+	const artifact = await artifactFixture();
+	const persistence = atomicBackend();
+	const recovery = createProductReviewPublicationRecoveryStore({
+		store: persistence.store,
+		project: "pi-workflow",
+	});
+	const lease = {
+		decisionId: "decision.product-review",
+		operationDigest: "operation-digest",
+		executionId: "execution-1",
+		generation: 1,
+		actorId: "owner-1",
+		authorityRevision: "owner-r1",
+		action: {
+			id: "product-review.publish.accepted",
+			input: { issueId, result: "Aceptado", digest: artifact.digest },
+		},
+	};
+	const manifest = await recovery.bindExecution(artifact, lease);
+	assert.deepEqual(manifest, {
+		decisionId: lease.decisionId,
+		operationDigest: lease.operationDigest,
+		executionId: lease.executionId,
+		generation: lease.generation,
+		ref: `workflow://product-review/${issueId}/publication/${artifact.digest}`,
+	});
+	await recovery.claim(artifact, "runtime-1");
+	assert.deepEqual(await recovery.read(issueId), {
+		digest: artifact.digest,
+		stage: "uncertain",
+		executionBinding: {
+			decisionId: lease.decisionId,
+			operationDigest: lease.operationDigest,
+			executionId: lease.executionId,
+			generation: lease.generation,
+		},
+	});
+	await assert.rejects(
+		recovery.bindExecution(artifact, { ...lease, executionId: "execution-2" }),
+		/execution binding conflicts/,
+	);
+	await recovery.finalizeVerified(artifact);
+	assert.equal((await recovery.read(issueId)).stage, "verified");
+	assert.equal(
+		(await recovery.read(issueId)).executionBinding.executionId,
+		"execution-1",
 	);
 });

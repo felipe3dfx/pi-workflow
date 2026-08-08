@@ -6,6 +6,7 @@ import { produceQaHandoffDraft } from "../extensions/qa-handoff-draft-producer.t
 import { createQaHandoffDraftStore } from "../extensions/qa-handoff-draft-store.ts";
 import { createQaHandoffPublicationRecoveryStore } from "../extensions/qa-handoff-publication-recovery.ts";
 import { createQaHandoffArtifact } from "../extensions/qa-handoff-workflow.ts";
+import { createInMemoryDecisionStore } from "../extensions/interactive-decisions.ts";
 import { digestCanonicalValue } from "../extensions/workflow-contracts.ts";
 
 const MCP_TOOL_NAMES = [
@@ -22,23 +23,79 @@ function extensionHarness({
 	artifacts: injectedArtifacts,
 	recovery: injectedRecovery,
 	toolIdentityReservationCapacity,
+	interactiveDecisionStore = createInMemoryDecisionStore(),
+	publicationState,
 } = {}) {
 	const handlers = new Map();
 	const tools = new Map();
 	const toolCalls = [];
-	const persistedDrafts = new Map();
-	const persistedArtifacts = new Map();
-	const publicationRecoveries = new Map();
-	const recovery = injectedRecovery ?? {
+	const persistedDrafts = publicationState?.persistedDrafts ?? new Map();
+	const persistedArtifacts = publicationState?.persistedArtifacts ?? new Map();
+	const publicationRecoveries =
+		publicationState?.publicationRecoveries ?? new Map();
+	const defineProductValues = new Map();
+	let defineProductRevision = 0;
+	const defineProductArtifactStore = {
+		capabilities: { atomicCompareAndSwap: true },
+		readCurrent: async (project, topic) =>
+			defineProductValues.get(`${project}:${topic}`),
+		readRevision: async (project, topic, revision) => {
+			const current = defineProductValues.get(`${project}:${topic}`);
+			return current?.revision === revision ? current.content : undefined;
+		},
+		write: async (project, topic, content, expectedRevision) => {
+			const key = `${project}:${topic}`;
+			const current = defineProductValues.get(key);
+			assert.equal(current?.revision, expectedRevision);
+			defineProductRevision += 1;
+			const saved = {
+				revision: `define-product-${defineProductRevision}`,
+				content,
+			};
+			defineProductValues.set(key, saved);
+			return { revision: saved.revision };
+		},
+	};
+	const recoveryBase = {
 		read: async (issueId) => {
 			const stored = publicationRecoveries.get(issueId);
 			return stored?.stage === "uncertain" || stored?.stage === "verified"
 				? { digest: stored.digest, stage: stored.stage }
 				: undefined;
 		},
+		bindExecution: async (artifact, lease) => {
+			const executionBinding = {
+				decisionId: lease.decisionId,
+				operationDigest: lease.operationDigest,
+				executionId: lease.executionId,
+				generation: lease.generation,
+			};
+			const issueId = artifact.payload.issue.id;
+			const existing = publicationRecoveries.get(issueId);
+			publicationRecoveries.set(issueId, {
+				digest: artifact.digest,
+				stage: existing?.stage ?? "released",
+				...(existing?.ownerId ? { ownerId: existing.ownerId } : {}),
+				executionBinding,
+			});
+			return {
+				...executionBinding,
+				ref: `workflow://qa-handoff/${artifact.payload.issue.id}/publication/${artifact.digest}`,
+			};
+		},
 		claim: async (artifact, ownerId) => {
 			const issueId = artifact.payload.issue.id;
-			const claim = { digest: artifact.digest, stage: "uncertain", ownerId };
+			const claim = {
+				digest: artifact.digest,
+				stage: "uncertain",
+				ownerId,
+				...(publicationRecoveries.get(issueId)?.executionBinding
+					? {
+							executionBinding:
+								publicationRecoveries.get(issueId).executionBinding,
+						}
+					: {}),
+			};
 			const existing = publicationRecoveries.get(issueId);
 			if (existing && existing.digest !== claim.digest)
 				throw new Error("recovery conflict");
@@ -53,18 +110,34 @@ function extensionHarness({
 			publicationRecoveries.set(artifact.payload.issue.id, {
 				digest: artifact.digest,
 				stage: "released",
+				...(existing?.executionBinding
+					? { executionBinding: existing.executionBinding }
+					: {}),
 			});
 		},
 		finalizeVerified: async (artifact) => {
+			const existing = publicationRecoveries.get(artifact.payload.issue.id);
 			publicationRecoveries.set(artifact.payload.issue.id, {
 				digest: artifact.digest,
 				stage: "verified",
+				...(existing?.executionBinding
+					? { executionBinding: existing.executionBinding }
+					: {}),
 			});
 		},
 	};
+	const recovery = injectedRecovery
+		? {
+				...recoveryBase,
+				...injectedRecovery,
+				bindExecution:
+					injectedRecovery.bindExecution ?? recoveryBase.bindExecution,
+			}
+		: recoveryBase;
 	piWorkflowExtension(
 		{
 			exec: async () => ({ code: 0 }),
+			getActiveTools: () => [...toolNames],
 			getAllTools: () => toolNames.map((name) => ({ name })),
 			registerCommand: () => {},
 			registerTool: (tool) => tools.set(tool.name, tool),
@@ -75,6 +148,8 @@ function extensionHarness({
 			},
 		},
 		{
+			interactiveDecisions: { store: interactiveDecisionStore },
+			defineProduct: { runtime: { artifactStore: defineProductArtifactStore } },
 			qaHandoff: {
 				recovery,
 				toolIdentityReservationCapacity,
@@ -118,9 +193,12 @@ function extensionHarness({
 			},
 		},
 	);
+	for (const handler of handlers.get("session_start") ?? [])
+		void handler({ type: "session_start" }, context);
 	return {
 		tools,
 		toolCalls,
+		persistedDrafts,
 		persistedArtifacts,
 		publicationRecoveries,
 		async emit(event, value, context) {
@@ -137,6 +215,8 @@ function extensionHarness({
 
 const context = {
 	isIdle: () => true,
+	cwd: process.cwd(),
+	sessionManager: { getSessionId: () => "qa-handoff-test-session" },
 	ui: { notify: () => {} },
 };
 
@@ -200,7 +280,15 @@ async function startPreflight(harness) {
 	);
 }
 
-async function advanceToIssue(harness) {
+async function advanceToIssue(
+	harness,
+	actor = {
+		id: "developer-1",
+		name: "Developer",
+		isActive: true,
+		isGuest: false,
+	},
+) {
 	await startPreflight(harness);
 	const toolCallId = nextHelperCallId(harness, "user-call");
 	await harness.emit(
@@ -214,12 +302,7 @@ async function advanceToIssue(harness) {
 	);
 	await harness.emit(
 		"tool_result",
-		mcpResult("linear_get_user", toolCallId, {
-			id: "developer-1",
-			name: "Developer",
-			isActive: true,
-			isGuest: false,
-		}),
+		mcpResult("linear_get_user", toolCallId, actor),
 		context,
 	);
 }
@@ -242,8 +325,8 @@ async function verifyIssue(harness, issue = validIssue()) {
 	);
 }
 
-async function advanceToComments(harness, issue = validIssue()) {
-	await advanceToIssue(harness);
+async function advanceToDecision(harness, issue = validIssue(), actor) {
+	await advanceToIssue(harness, actor);
 	const toolCallId = nextHelperCallId(harness, "issue-call");
 	await harness.emit(
 		"tool_call",
@@ -260,13 +343,109 @@ async function advanceToComments(harness, issue = validIssue()) {
 		context,
 	);
 	await verifyIssue(harness, issue);
+}
+
+async function advanceToComments(harness, issue = validIssue()) {
+	await advanceToDecision(harness, issue);
+	await approvePublication(harness, issue);
 	return harness.persistedArtifacts.get("ILA-2410");
+}
+
+async function approvePublication(harness, issue = validIssue()) {
+	const descriptor = await harness.emit(
+		"before_agent_start",
+		{ type: "before_agent_start" },
+		context,
+	);
+	if (/publicar la entrega a QA/i.test(descriptor?.systemPrompt ?? "")) {
+		await harness.emit(
+			"input",
+			{ type: "input", text: "1", source: "interactive" },
+			context,
+		);
+		const call = {
+			toolName: "workflow_qa_handoff",
+			toolCallId: nextHelperCallId(harness, "decision-call"),
+			input: { action: "publish_handoff" },
+		};
+		assert.equal(await harness.emit("tool_call", call, context), undefined);
+		const result = await harness.tools
+			.get("workflow_qa_handoff")
+			.execute(call.toolCallId, call.input);
+		assert.deepEqual(JSON.parse(result.content[0].text), {
+			status: "continuing",
+		});
+		await harness.emit(
+			"tool_result",
+			{
+				toolName: call.toolName,
+				toolCallId: call.toolCallId,
+				content: result.content,
+				isError: false,
+			},
+			context,
+		);
+	}
+	const approvalIssueCallId = nextHelperCallId(
+		harness,
+		"issue-after-approval-call",
+	);
+	await harness.emit(
+		"tool_call",
+		{
+			toolName: "linear_get_issue",
+			toolCallId: approvalIssueCallId,
+			input: { id: "ILA-2410", includeRelations: true },
+		},
+		context,
+	);
+	await harness.emit(
+		"tool_result",
+		mcpResult("linear_get_issue", approvalIssueCallId, issue),
+		context,
+	);
+}
+
+async function selectPreparedPublication(harness) {
+	const descriptor = await harness.emit(
+		"before_agent_start",
+		{ type: "before_agent_start" },
+		context,
+	);
+	assert.match(descriptor.systemPrompt, /Publicar entrega a QA/);
+	await harness.emit(
+		"input",
+		{ type: "input", text: "1", source: "interactive" },
+		context,
+	);
+	const call = {
+		toolName: "workflow_qa_handoff",
+		toolCallId: nextHelperCallId(harness, "released-decision-call"),
+		input: { action: "publish_handoff" },
+	};
+	assert.equal(await harness.emit("tool_call", call, context), undefined);
+	const result = await harness.tools
+		.get("workflow_qa_handoff")
+		.execute(call.toolCallId, call.input);
+	assert.deepEqual(JSON.parse(result.content[0].text), {
+		status: "continuing",
+	});
+	await harness.emit(
+		"tool_result",
+		{
+			toolName: call.toolName,
+			toolCallId: call.toolCallId,
+			content: result.content,
+			isError: false,
+		},
+		context,
+	);
 }
 
 async function terminalOutcome(harness) {
 	const result = await harness.tools
 		.get("workflow_qa_handoff")
-		.execute("workflow-call", { issueId: "ILA-2410" });
+		.execute("workflow-call", {});
 	return JSON.parse(result.content[0].text);
 }
 
@@ -496,6 +675,10 @@ test("default public qa-handoff publishes its deterministic production artifact 
 			context,
 		);
 		await verifyIssue(harness, issue);
+		assert.equal(harness.persistedDrafts.size, 0);
+		assert.equal(harness.persistedArtifacts.size, 0);
+		assert.equal(harness.publicationRecoveries.size, 0);
+		await approvePublication(harness, issue);
 
 		const artifact = harness.persistedArtifacts.get("ILA-2410");
 		const producedDraft = produceQaHandoffDraft(issue);
@@ -636,7 +819,7 @@ test("default public qa-handoff publishes its deterministic production artifact 
 				{
 					toolName: "workflow_qa_handoff",
 					toolCallId: "workflow-call",
-					input: { issueId: "ILA-2410" },
+					input: {},
 				},
 				context,
 			),
@@ -644,17 +827,19 @@ test("default public qa-handoff publishes its deterministic production artifact 
 		);
 		const result = await harness.tools
 			.get("workflow_qa_handoff")
-			.execute("workflow-call", { issueId: "ILA-2410" });
+			.execute("workflow-call", {});
 		const outcome = JSON.parse(result.content[0].text);
 		assert.deepEqual(outcome, {
 			status: "published",
 			issueId: "ILA-2410",
 			commentId: "comment-2410",
 		});
-		assert.deepEqual(harness.publicationRecoveries.get("ILA-2410"), {
-			digest: artifact.digest,
-			stage: "verified",
-		});
+		const verifiedRecovery = harness.publicationRecoveries.get("ILA-2410");
+		assert.equal(verifiedRecovery.digest, artifact.digest);
+		assert.equal(verifiedRecovery.stage, "verified");
+		assert.equal(verifiedRecovery.executionBinding.generation, 1);
+		assert.equal(verifiedRecovery.executionBinding.operationDigest.length, 64);
+		assert.ok(verifiedRecovery.executionBinding.executionId);
 		assert.deepEqual(harness.toolCalls, [
 			{
 				toolName: "linear_get_user",
@@ -669,6 +854,16 @@ test("default public qa-handoff publishes its deterministic production artifact 
 			{
 				toolName: "linear_get_issue",
 				toolCallId: "issue-verify-call",
+				input: { id: "ILA-2410", includeRelations: true },
+			},
+			{
+				toolName: "workflow_qa_handoff",
+				toolCallId: "decision-call",
+				input: { action: "publish_handoff" },
+			},
+			{
+				toolName: "linear_get_issue",
+				toolCallId: "issue-after-approval-call",
 				input: { id: "ILA-2410", includeRelations: true },
 			},
 			{
@@ -699,7 +894,7 @@ test("default public qa-handoff publishes its deterministic production artifact 
 			{
 				toolName: "workflow_qa_handoff",
 				toolCallId: "workflow-call",
-				input: { issueId: "ILA-2410" },
+				input: {},
 			},
 		]);
 		assert.equal("LINEAR_API_KEY" in outcome, false);
@@ -708,6 +903,130 @@ test("default public qa-handoff publishes its deterministic production artifact 
 		if (previousKey === undefined) delete process.env.LINEAR_API_KEY;
 		else process.env.LINEAR_API_KEY = previousKey;
 	}
+});
+
+test("public qa-handoff cancellation consumes the shared claim without effects", async () => {
+	const harness = extensionHarness();
+	await advanceToDecision(harness);
+	const descriptor = await harness.emit(
+		"before_agent_start",
+		{ type: "before_agent_start" },
+		context,
+	);
+	assert.match(descriptor.systemPrompt, /2\. Cancelar/);
+	await harness.emit(
+		"input",
+		{ type: "input", text: "2", source: "interactive" },
+		context,
+	);
+	const call = {
+		toolName: "workflow_qa_handoff",
+		toolCallId: "cancel-decision-call",
+		input: { action: "cancel_decision" },
+	};
+	assert.equal(await harness.emit("tool_call", call, context), undefined);
+	const result = await harness.tools
+		.get("workflow_qa_handoff")
+		.execute(call.toolCallId, call.input);
+	assert.deepEqual(JSON.parse(result.content[0].text), {
+		status: "cancelled",
+		issueId: "ILA-2410",
+	});
+	assert.equal(harness.persistedDrafts.size, 0);
+	assert.equal(harness.persistedArtifacts.size, 0);
+	assert.equal(harness.publicationRecoveries.size, 0);
+	assert.equal(
+		harness.toolCalls.some(
+			({ toolName }) => toolName === "linear_save_comment",
+		),
+		false,
+	);
+});
+
+test("public qa-handoff replaces a released lease after evidence drift", async () => {
+	const publicationState = {
+		persistedDrafts: new Map(),
+		persistedArtifacts: new Map(),
+		publicationRecoveries: new Map(),
+	};
+	const interactiveDecisionStore = createInMemoryDecisionStore();
+	const first = extensionHarness({
+		publicationState,
+		interactiveDecisionStore,
+	});
+	await advanceToDecision(first);
+	await selectPreparedPublication(first);
+	const firstBinding = structuredClone(
+		publicationState.publicationRecoveries.get("ILA-2410").executionBinding,
+	);
+	await first.emit("session_shutdown", { type: "session_shutdown" }, context);
+
+	const changedIssue = validIssue({
+		title: "Validar entrega actualizada",
+		updatedAt: "2026-07-27T19:22:01.958Z",
+	});
+	const replacement = extensionHarness({
+		publicationState,
+		interactiveDecisionStore,
+	});
+	await advanceToDecision(replacement, changedIssue);
+	await selectPreparedPublication(replacement);
+	const replacementBinding =
+		publicationState.publicationRecoveries.get("ILA-2410").executionBinding;
+	assert.notEqual(replacementBinding.executionId, firstBinding.executionId);
+	assert.equal(replacementBinding.generation > firstBinding.generation, true);
+	await approvePublication(replacement, changedIssue);
+	assert.equal(
+		publicationState.persistedArtifacts.get("ILA-2410").payload.issue.revision,
+		changedIssue.updatedAt,
+	);
+});
+
+test("public qa-handoff requires changed-actor reapproval", async () => {
+	const publicationState = {
+		persistedDrafts: new Map(),
+		persistedArtifacts: new Map(),
+		publicationRecoveries: new Map(),
+	};
+	const interactiveDecisionStore = createInMemoryDecisionStore();
+	const first = extensionHarness({
+		publicationState,
+		interactiveDecisionStore,
+	});
+	await advanceToDecision(first);
+	await selectPreparedPublication(first);
+	const firstExecutionId =
+		publicationState.publicationRecoveries.get("ILA-2410").executionBinding
+			.executionId;
+	await first.emit("session_shutdown", { type: "session_shutdown" }, context);
+
+	const changedActor = {
+		id: "developer-2",
+		name: "Second Developer",
+		isActive: true,
+		isGuest: false,
+	};
+	const changedIssue = validIssue({
+		assignee: changedActor.name,
+		assigneeId: changedActor.id,
+		labels: [changedActor.name],
+	});
+	const replacement = extensionHarness({
+		publicationState,
+		interactiveDecisionStore,
+	});
+	await advanceToDecision(replacement, changedIssue, changedActor);
+	await selectPreparedPublication(replacement);
+	const replacementExecutionId =
+		publicationState.publicationRecoveries.get("ILA-2410").executionBinding
+			.executionId;
+	assert.notEqual(replacementExecutionId, firstExecutionId);
+	await approvePublication(replacement, changedIssue);
+	assert.equal(
+		publicationState.persistedArtifacts.get("ILA-2410").payload.authority
+			.actorId,
+		changedActor.id,
+	);
 });
 
 test("qa-handoff preserves legacy authority provenance when approved content is unchanged", async () => {
@@ -737,7 +1056,8 @@ test("qa-handoff preserves legacy authority provenance when approved content is 
 	assert.equal(outcome.status, "published");
 	assert.deepEqual(harness.persistedArtifacts.get("ILA-2410"), legacy);
 	assert.equal(
-		harness.toolCalls.filter(({ toolName }) => toolName === "linear_get_user").length,
+		harness.toolCalls.filter(({ toolName }) => toolName === "linear_get_user")
+			.length,
 		1,
 	);
 });
@@ -796,13 +1116,13 @@ test("qa-handoff blocks non-protocol reads before execution", async () => {
 	);
 });
 
-test("settled default qa-handoff releases unrelated tools", async () => {
+test("settled default qa-handoff keeps unrelated tools blocked while the protocol is active", async () => {
 	const harness = extensionHarness();
 	await startPreflight(harness);
 
 	await harness.emit("agent_settled", { type: "agent_settled" }, context);
 
-	assert.equal(
+	assert.deepEqual(
 		await harness.emit(
 			"tool_call",
 			{
@@ -812,7 +1132,10 @@ test("settled default qa-handoff releases unrelated tools", async () => {
 			},
 			context,
 		),
-		undefined,
+		{
+			block: true,
+			reason: "PI_WORKFLOW_QA_HANDOFF_MCP_PROTOCOL_INVALID",
+		},
 	);
 });
 
@@ -1111,7 +1434,8 @@ test("qa-handoff rejects a repeated identity lookup before mutation", async () =
 		{ block: true, reason: "PI_WORKFLOW_QA_HANDOFF_MCP_PROTOCOL_INVALID" },
 	);
 	assert.equal(
-		harness.toolCalls.filter(({ toolName }) => toolName === "linear_get_user").length,
+		harness.toolCalls.filter(({ toolName }) => toolName === "linear_get_user")
+			.length,
 		2,
 	);
 	assert.equal(
@@ -1503,7 +1827,7 @@ test("qa-handoff detects only the exact visible artifact reference before mutati
 	);
 });
 
-test("qa-handoff adopts its exact comment after Linear advances issue updatedAt", async () => {
+test("qa-handoff blocks terminal replay after Linear advances issue updatedAt", async () => {
 	const harness = extensionHarness();
 	await advanceToComments(harness);
 	const updatedIssue = validIssue({ updatedAt: "2026-07-27T19:22:01.958Z" });
@@ -1521,13 +1845,8 @@ test("qa-handoff adopts its exact comment after Linear advances issue updatedAt"
 
 	await harness.emit("session_shutdown", { type: "session_shutdown" }, context);
 	await harness.emit("session_start", { type: "session_start" }, context);
-	await advanceToComments(harness, updatedIssue);
-	const retried = await publishFromPersistedArtifact(
-		harness,
-		[first.comment],
-		updatedIssue,
-	);
-	assert.deepEqual(retried.outcome, first.outcome);
+	await advanceToDecision(harness, updatedIssue);
+	assert.equal(await terminalBlocker(harness), "PI_WORKFLOW_DECISION_REPLAY");
 	assert.equal(
 		harness.toolCalls.filter(
 			({ toolName }) => toolName === "linear_save_comment",
@@ -2119,7 +2438,7 @@ test("qa-handoff replacement bypasses canceled never-settling preparation", asyn
 	void abandonedPreparation;
 });
 
-test("qa-handoff reconciles an already-started artifact write before replacement persistence", async () => {
+test("qa-handoff reconciles an approved artifact write before replacement persistence", async () => {
 	const persistedDrafts = new Map();
 	const persistedArtifacts = new Map();
 	let resumeArtifactSave;
@@ -2160,40 +2479,13 @@ test("qa-handoff reconciles an already-started artifact write before replacement
 			},
 		},
 	});
-	await advanceToIssue(harness);
-	await harness.emit(
-		"tool_call",
-		{
-			toolName: "linear_get_issue",
-			toolCallId: "paused-artifact-issue",
-			input: { id: "ILA-2410", includeRelations: true },
-		},
-		context,
-	);
-	await harness.emit(
-		"tool_result",
-		mcpResult("linear_get_issue", "paused-artifact-issue", validIssue()),
-		context,
-	);
-	await harness.emit(
-		"tool_call",
-		{
-			toolName: "linear_get_issue",
-			toolCallId: "paused-artifact-verify",
-			input: { id: "ILA-2410", includeRelations: true },
-		},
-		context,
-	);
-	const pendingVerification = harness.emit(
-		"tool_result",
-		mcpResult("linear_get_issue", "paused-artifact-verify", validIssue()),
-		context,
-	);
+	await advanceToDecision(harness);
+	const pendingApproval = approvePublication(harness);
 	await artifactSaveStarted;
 	await harness.emit("session_start", { type: "session_start" }, context);
 	await startPreflight(harness);
 	resumeArtifactSave();
-	await pendingVerification;
+	await pendingApproval;
 	assert.equal(artifactSaves, 1);
 
 	await advanceToComments(harness);
@@ -3340,19 +3632,15 @@ test("qa-handoff durably adopts an existing exact comment", async () => {
 		).outcome.status,
 		"published",
 	);
-	assert.deepEqual(harness.publicationRecoveries.get("ILA-2410"), {
-		digest: artifact.digest,
-		stage: "verified",
-	});
+	const verifiedRecovery = harness.publicationRecoveries.get("ILA-2410");
+	assert.equal(verifiedRecovery.digest, artifact.digest);
+	assert.equal(verifiedRecovery.stage, "verified");
+	assert.equal(verifiedRecovery.executionBinding.generation, 1);
 
 	await harness.emit("session_shutdown", { type: "session_shutdown" }, context);
 	await harness.emit("session_start", { type: "session_start" }, context);
-	await advanceToComments(harness);
-	await readCommentsBefore(harness);
-	assert.equal(
-		await terminalBlocker(harness),
-		"PI_WORKFLOW_QA_HANDOFF_ALREADY_VERIFIED",
-	);
+	await advanceToDecision(harness);
+	assert.equal(await terminalBlocker(harness), "PI_WORKFLOW_DECISION_REPLAY");
 	assert.equal(
 		harness.toolCalls.some(
 			({ toolName }) => toolName === "linear_save_comment",
@@ -3371,12 +3659,8 @@ test("qa-handoff preserves verified recovery when the comment disappears", async
 
 	await harness.emit("session_shutdown", { type: "session_shutdown" }, context);
 	await harness.emit("session_start", { type: "session_start" }, context);
-	await advanceToComments(harness);
-	await readCommentsBefore(harness);
-	assert.equal(
-		await terminalBlocker(harness),
-		"PI_WORKFLOW_QA_HANDOFF_ALREADY_VERIFIED",
-	);
+	await advanceToDecision(harness);
+	assert.equal(await terminalBlocker(harness), "PI_WORKFLOW_DECISION_REPLAY");
 	assert.equal(
 		harness.toolCalls.filter(
 			({ toolName }) => toolName === "linear_save_comment",
@@ -3671,6 +3955,7 @@ test("qa-handoff accepts the MCP issue contract when id is the identifier", asyn
 		context,
 	);
 	await verifyIssue(harness, issue);
+	await approvePublication(harness, issue);
 	assert.equal(
 		(await publishFromPersistedArtifact(harness, [], issue)).outcome.status,
 		"published",
@@ -3695,7 +3980,7 @@ test("qa-handoff treats reordered Linear evidence as the same current snapshot",
 		mcpResult("linear_get_issue", "issue-call", issue),
 		context,
 	);
-	await verifyIssue(harness, {
+	const reorderedIssue = {
 		...issue,
 		labels: [...issue.labels].reverse(),
 		attachments: [...issue.attachments].reverse(),
@@ -3705,7 +3990,9 @@ test("qa-handoff treats reordered Linear evidence as the same current snapshot",
 			blocks: [...issue.relations.blocks].reverse(),
 			relatedTo: [...issue.relations.relatedTo].reverse(),
 		},
-	});
+	};
+	await verifyIssue(harness, reorderedIssue);
+	await approvePublication(harness, reorderedIssue);
 
 	assert.equal(
 		(await publishFromPersistedArtifact(harness, [], issue)).outcome.status,
@@ -3844,15 +4131,16 @@ test("qa-handoff blocks inactive, guest, and malformed users after one lookup", 
 			);
 			assert.equal(await terminalBlocker(harness), code);
 			assert.equal(
-				harness.toolCalls.filter(({ toolName }) =>
-					toolName === "linear_get_user").length,
+				harness.toolCalls.filter(
+					({ toolName }) => toolName === "linear_get_user",
+				).length,
 				1,
 			);
 		});
 	}
 });
 
-test("public qa-handoff persists a canonical draft without mutating Linear", async () => {
+test("public qa-handoff persists a canonical draft only after shared approval", async () => {
 	const values = new Map();
 	let writes = 0;
 	const drafts = createQaHandoffDraftStore({
@@ -3891,6 +4179,8 @@ test("public qa-handoff persists a canonical draft without mutating Linear", asy
 		context,
 	);
 	await verifyIssue(harness, issue);
+	assert.equal(writes, 0);
+	await approvePublication(harness, issue);
 	const outcome = (await publishFromPersistedArtifact(harness, [], issue))
 		.outcome;
 

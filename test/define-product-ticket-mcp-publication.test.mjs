@@ -5,14 +5,27 @@ import { createDefineProductTicketMcpPublication } from "../extensions/define-pr
 import { createTicketPublicationManifestStore } from "../extensions/ticket-publication-manifest.ts";
 
 const definitionId = "definition-tickets";
-const owner = { actorId: "owner-1", role: "Owner", authorityRevision: "owner-r1" };
-const parent = { id: "parent-1", teamId: "team-1", revision: "parent-r1", specDigest: "s".repeat(64) };
+const owner = {
+	actorId: "owner-1",
+	role: "Owner",
+	authorityRevision: "owner-r1",
+};
+const parent = {
+	id: "parent-1",
+	teamId: "team-1",
+	revision: "parent-r1",
+	specDigest: "s".repeat(64),
+};
 const approved = {
 	spec: {
 		digest: parent.specDigest,
 		payload: {
 			definitionId,
-			target: { kind: "linear-parent-description", teamId: parent.teamId, title: "Entrega canónica" },
+			target: {
+				kind: "linear-parent-description",
+				teamId: parent.teamId,
+				title: "Entrega canónica",
+			},
 			body: "Descripción canónica aprobada.",
 		},
 	},
@@ -22,7 +35,10 @@ const ticket = (stableKey, title, blockers = []) => ({
 	title,
 	outcome: `Resultado de ${stableKey}.`,
 	acceptanceCriteria: [`Criterio de ${stableKey}.`],
-	estimate: { points: stableKey === "T-1" ? 1 : 2, rationale: "Estimación aprobada." },
+	estimate: {
+		points: stableKey === "T-1" ? 1 : 2,
+		rationale: "Estimación aprobada.",
+	},
 	blockers,
 	refs: [],
 	deliveryBindings: [],
@@ -40,9 +56,33 @@ const graph = {
 };
 const publication = {
 	definitionId,
-	approvedSpecRef: { kind: "engram", project: "pi-workflow", topic: "spec", revision: "1", schema: "approved-spec", schemaVersion: 1, digest: approved.spec.digest },
-	parentRef: { kind: "engram", project: "pi-workflow", topic: "parent", revision: "2", schema: "delivery-parent", schemaVersion: 1, digest: "p".repeat(64) },
-	graphRef: { kind: "engram", project: "pi-workflow", topic: "graph", revision: "3", schema: "delivery-ticket-graph", schemaVersion: 1, digest: graph.digest },
+	approvedSpecRef: {
+		kind: "engram",
+		project: "pi-workflow",
+		topic: "spec",
+		revision: "1",
+		schema: "approved-spec",
+		schemaVersion: 1,
+		digest: approved.spec.digest,
+	},
+	parentRef: {
+		kind: "engram",
+		project: "pi-workflow",
+		topic: "parent",
+		revision: "2",
+		schema: "delivery-parent",
+		schemaVersion: 1,
+		digest: "p".repeat(64),
+	},
+	graphRef: {
+		kind: "engram",
+		project: "pi-workflow",
+		topic: "graph",
+		revision: "3",
+		schema: "delivery-ticket-graph",
+		schemaVersion: 1,
+		digest: graph.digest,
+	},
 	graphParent: parent,
 	approval: {
 		schema: "delivery-ticket-graph-approval",
@@ -50,6 +90,18 @@ const publication = {
 		digest: "a".repeat(64),
 		payload: { actor: owner, parent, graphDigest: graph.digest },
 	},
+};
+const ticketLease = {
+	decisionId: `${"d".repeat(64)}:${"e".repeat(64)}`,
+	operationDigest: "e".repeat(64),
+	actorId: owner.actorId,
+	authorityRevision: owner.authorityRevision,
+	action: {
+		id: "define-product.tickets.publish",
+		input: { definitionId, graphDigest: graph.digest },
+	},
+	executionId: "execution-tickets-1",
+	generation: 1,
 };
 
 function memory() {
@@ -64,7 +116,8 @@ function memory() {
 			return structuredClone(current);
 		},
 		compareAndSwap: async (expected, value) => {
-			if (!current || current.revision !== expected) throw new Error("compare-and-swap conflict");
+			if (!current || current.revision !== expected)
+				throw new Error("compare-and-swap conflict");
 			current = { revision: `r${++revision}`, value: structuredClone(value) };
 			return structuredClone(current);
 		},
@@ -77,6 +130,7 @@ function fixture({
 	graphValue = graph,
 	ownerValue = owner,
 	approvedValue = approved,
+	interactiveDecisions,
 } = {}) {
 	const persistence = memory();
 	const ownerAuthority = ownerValue && structuredClone(ownerValue);
@@ -93,19 +147,28 @@ function fixture({
 		status: { id: "backlog-1", name: "Backlog", type: "backlog" },
 	};
 	const dependencies = {
-		approvedPublications: { read: async () => structuredClone(publicationValue) },
+		approvedPublications: {
+			read: async () => structuredClone(publicationValue),
+		},
 		approvedSpecReader: { read: async () => structuredClone(approvedValue) },
 		recoverGraph: async () => structuredClone(graphValue),
 		manifest: createTicketPublicationManifestStore({ persistence }),
 		...(ownerAuthority ? { owner: ownerAuthority } : {}),
+		...(interactiveDecisions ? { interactiveDecisions } : {}),
 	};
 	const responseFor = (expected) => {
-		if (expected.toolName === "linear_get_user") return { id: actorId, name: "Owner", isActive: true, isGuest: false };
-		if (expected.toolName === "linear_list_issue_statuses") return [{ id: "backlog-1", name: "Backlog", type: "backlog" }];
+		if (expected.toolName === "linear_get_user")
+			return { id: actorId, name: "Owner", isActive: true, isGuest: false };
+		if (expected.toolName === "linear_list_issue_statuses")
+			return [{ id: "backlog-1", name: "Backlog", type: "backlog" }];
 		if (expected.toolName === "linear_list_issues") {
 			return {
 				issues: [...issues.values()]
-					.filter((issue) => !expected.input.query || issue.title.includes(expected.input.query))
+					.filter(
+						(issue) =>
+							!expected.input.query ||
+							issue.title.includes(expected.input.query),
+					)
 					.map((issue) => ({
 						...issue,
 						description: `${issue.description.slice(0, 80)}… (truncated, use get_issue for full description)`,
@@ -116,7 +179,9 @@ function fixture({
 		if (expected.toolName === "linear_get_issue") {
 			if (expected.input.id === parent.id) return parentIssue;
 			const issue = issues.get(expected.input.id);
-			const reverse = [...blockedBy.entries()].filter(([, ids]) => ids.includes(issue.id)).map(([id]) => id);
+			const reverse = [...blockedBy.entries()]
+				.filter(([, ids]) => ids.includes(issue.id))
+				.map(([id]) => id);
 			return {
 				...issue,
 				relations: {
@@ -141,7 +206,11 @@ function fixture({
 }
 
 async function issue(controller, expected, payload, sequence, calls) {
-	const event = { toolName: expected.toolName, toolCallId: `call-${sequence}`, input: structuredClone(expected.input) };
+	const event = {
+		toolName: expected.toolName,
+		toolCallId: `call-${sequence}`,
+		input: structuredClone(expected.input),
+	};
 	calls?.push(structuredClone(event));
 	assert.equal(await controller.handleToolCall(event), undefined);
 	await controller.handleToolResult({
@@ -162,7 +231,8 @@ async function drive(
 	for (;;) {
 		const expected = controller.expectedModelCall();
 		assert.ok(expected, "publication must expose its next exact call");
-		if (expected.toolName === "workflow_define_product") return controller.complete({ action: "publish_tickets" });
+		if (expected.toolName === "workflow_define_product")
+			return controller.complete({ action: "publish_tickets" });
 		if (stopBeforeSave && expected.toolName === "linear_save_issue")
 			return { expected, sequence };
 		if (
@@ -172,7 +242,11 @@ async function drive(
 		)
 			return { expected, sequence };
 		if (expected.toolName === "linear_save_issue") {
-			const event = { toolName: expected.toolName, toolCallId: `call-${sequence++}`, input: structuredClone(expected.input) };
+			const event = {
+				toolName: expected.toolName,
+				toolCallId: `call-${sequence++}`,
+				input: structuredClone(expected.input),
+			};
 			state.toolCalls.push(structuredClone(event));
 			assert.equal(await controller.handleToolCall(event), undefined);
 			state.saveInputs.push(structuredClone(event.input));
@@ -183,26 +257,60 @@ async function drive(
 					parentId: event.input.parentId,
 					title: event.input.title,
 					description: event.input.description.replace(/^- /gm, "* "),
-					estimate: { value: event.input.estimate, name: `${event.input.estimate} Points` },
+					estimate: {
+						value: event.input.estimate,
+						name: `${event.input.estimate} Points`,
+					},
 					status: "Backlog",
 					statusType: "backlog",
 					labels: [],
 				};
 				state.issues.set(created.id, created);
-				await controller.handleToolResult({ toolName: expected.toolName, toolCallId: event.toolCallId, content: [{ type: "text", text: JSON.stringify({ id: created.id }) }], isError: false });
+				await controller.handleToolResult({
+					toolName: expected.toolName,
+					toolCallId: event.toolCallId,
+					content: [{ type: "text", text: JSON.stringify({ id: created.id }) }],
+					isError: false,
+				});
 			} else {
-				state.blockedBy.set(event.input.id, [...(state.blockedBy.get(event.input.id) ?? []), ...event.input.blockedBy]);
-				await controller.handleToolResult({ toolName: expected.toolName, toolCallId: event.toolCallId, content: [{ type: "text", text: JSON.stringify({ id: event.input.id }) }], isError: false });
+				state.blockedBy.set(event.input.id, [
+					...(state.blockedBy.get(event.input.id) ?? []),
+					...event.input.blockedBy,
+				]);
+				await controller.handleToolResult({
+					toolName: expected.toolName,
+					toolCallId: event.toolCallId,
+					content: [
+						{ type: "text", text: JSON.stringify({ id: event.input.id }) },
+					],
+					isError: false,
+				});
 			}
 			continue;
 		}
-		await issue(controller, expected, state.responseFor(expected), sequence++, state.toolCalls);
+		await issue(
+			controller,
+			expected,
+			state.responseFor(expected),
+			sequence++,
+			state.toolCalls,
+		);
 	}
 }
 
 async function start(controller) {
-	assert.deepEqual(await controller.begin(definitionId, "workflow-start", { action: "publish_tickets" }), { status: "continuing" });
-	await controller.handleToolResult({ toolName: "workflow_define_product", toolCallId: "workflow-start", content: [{ type: "text", text: JSON.stringify({ status: "continuing" }) }], isError: false });
+	assert.deepEqual(
+		await controller.begin(definitionId, "workflow-start", {
+			action: "publish_tickets",
+		}),
+		{ status: "continuing" },
+	);
+	await controller.handleToolResult({
+		toolName: "workflow_define_product",
+		toolCallId: "workflow-start",
+		content: [{ type: "text", text: JSON.stringify({ status: "continuing" }) }],
+		isError: false,
+	});
 }
 
 test("accepts Linear ordered-list padding when validating the canonical parent before ticket publication", async () => {
@@ -212,55 +320,108 @@ test("accepts Linear ordered-list padding when validating the canonical parent b
 		spec: { ...approved.spec, payload: { ...approved.spec.payload, body } },
 	};
 	const state = fixture({ approvedValue });
-	state.parentIssue.description = body.replace(/^([1-9])\. Prueba/gm, " $1. Prueba");
-	const controller = createDefineProductTicketMcpPublication(state.dependencies);
+	state.parentIssue.description = body.replace(
+		/^([1-9])\. Prueba/gm,
+		" $1. Prueba",
+	);
+	const controller = createDefineProductTicketMcpPublication(
+		state.dependencies,
+	);
 	await start(controller);
-	assert.deepEqual(await drive(controller, state), { status: "tickets-published", definitionId });
+	assert.deepEqual(await drive(controller, state), {
+		status: "tickets-published",
+		definitionId,
+	});
 });
 
 test("publishes the exact two-ticket graph and native blocker through rewritten Linear MCP inputs", async () => {
 	const state = fixture();
-	const controller = createDefineProductTicketMcpPublication(state.dependencies);
+	const controller = createDefineProductTicketMcpPublication(
+		state.dependencies,
+	);
 	await start(controller);
-	assert.deepEqual(await drive(controller, state), { status: "tickets-published", definitionId });
+	assert.deepEqual(await drive(controller, state), {
+		status: "tickets-published",
+		definitionId,
+	});
 	assert.equal(state.saveInputs.length, 3);
-	assert.deepEqual(state.saveInputs.slice(0, 2).map(({ title, description, estimate, state: status, ...workflow }) => ({ title, description, estimate, status, workflow })), [
-		{
-			title: "Primero",
-			description: "Resultado\n\nResultado de T-1.\n\nCriterios de aceptación\n\n- Criterio de T-1.",
-			estimate: 1,
-			status: "backlog-1",
-			workflow: { team: "team-1", parentId: "parent-1", assignee: null, cycle: null, labels: [], project: null },
-		},
-		{
-			title: "Segundo",
-			description: "Resultado\n\nResultado de T-2.\n\nCriterios de aceptación\n\n- Criterio de T-2.",
-			estimate: 2,
-			status: "backlog-1",
-			workflow: { team: "team-1", parentId: "parent-1", assignee: null, cycle: null, labels: [], project: null },
-		},
-	]);
+	assert.deepEqual(
+		state.saveInputs
+			.slice(0, 2)
+			.map(({ title, description, estimate, state: status, ...workflow }) => ({
+				title,
+				description,
+				estimate,
+				status,
+				workflow,
+			})),
+		[
+			{
+				title: "Primero",
+				description:
+					"Resultado\n\nResultado de T-1.\n\nCriterios de aceptación\n\n- Criterio de T-1.",
+				estimate: 1,
+				status: "backlog-1",
+				workflow: {
+					team: "team-1",
+					parentId: "parent-1",
+					assignee: null,
+					cycle: null,
+					labels: [],
+					project: null,
+				},
+			},
+			{
+				title: "Segundo",
+				description:
+					"Resultado\n\nResultado de T-2.\n\nCriterios de aceptación\n\n- Criterio de T-2.",
+				estimate: 2,
+				status: "backlog-1",
+				workflow: {
+					team: "team-1",
+					parentId: "parent-1",
+					assignee: null,
+					cycle: null,
+					labels: [],
+					project: null,
+				},
+			},
+		],
+	);
 	assert.deepEqual(state.saveInputs[2], {
 		id: "child-2",
 		blockedBy: ["child-1"],
 	});
 	for (const input of state.saveInputs.slice(0, 2)) {
-		assert.doesNotMatch(input.title, /pi-workflow|operationId|stableKey|T-[12]/i);
-		assert.equal(input.title, input.title === "Primero" ? "Primero" : "Segundo");
+		assert.doesNotMatch(
+			input.title,
+			/pi-workflow|operationId|stableKey|T-[12]/i,
+		);
+		assert.equal(
+			input.title,
+			input.title === "Primero" ? "Primero" : "Segundo",
+		);
 	}
 	assert.equal(state.persistence.value().stage, "verified");
 	assert.equal(
-		state.toolCalls.filter(({ toolName }) => toolName === "linear_get_user").length,
+		state.toolCalls.filter(({ toolName }) => toolName === "linear_get_user")
+			.length,
 		1,
 	);
 });
 
 test("accepts Pi-injected undefined optional fields on canonical save calls", async () => {
 	const state = fixture();
-	const controller = createDefineProductTicketMcpPublication(state.dependencies);
+	const controller = createDefineProductTicketMcpPublication(
+		state.dependencies,
+	);
 	await start(controller);
 	const stopped = await drive(controller, state, { stopBeforeSave: true });
-	const input = { ...structuredClone(stopped.expected.input), id: undefined, dueDate: undefined };
+	const input = {
+		...structuredClone(stopped.expected.input),
+		id: undefined,
+		dueDate: undefined,
+	};
 	input.assignee = "";
 	input.cycle = "";
 	input.project = "";
@@ -272,7 +433,10 @@ test("accepts Pi-injected undefined optional fields on canonical save calls", as
 	};
 	assert.equal(await controller.handleToolCall(event), undefined);
 	assert.equal(event.input.title, "Primero");
-	assert.notEqual(event.input.description, "PI_WORKFLOW_CANONICAL_DELIVERY_TICKET_BODY");
+	assert.notEqual(
+		event.input.description,
+		"PI_WORKFLOW_CANONICAL_DELIVERY_TICKET_BODY",
+	);
 	assert.equal(event.input.assignee, null);
 	assert.equal(event.input.cycle, null);
 	assert.equal(event.input.project, null);
@@ -280,7 +444,9 @@ test("accepts Pi-injected undefined optional fields on canonical save calls", as
 
 test("reports only safe post-coercion mismatch keys for protocol diagnosis", async () => {
 	const state = fixture();
-	const controller = createDefineProductTicketMcpPublication(state.dependencies);
+	const controller = createDefineProductTicketMcpPublication(
+		state.dependencies,
+	);
 	await start(controller);
 	const stopped = await drive(controller, state, { stopBeforeSave: true });
 	const event = {
@@ -296,13 +462,19 @@ test("reports only safe post-coercion mismatch keys for protocol diagnosis", asy
 
 test("default single-user ticket publication keeps historical approval authority as provenance", async () => {
 	const state = fixture({ actorId: "current-single-user", ownerValue: null });
-	const controller = createDefineProductTicketMcpPublication(state.dependencies);
+	const controller = createDefineProductTicketMcpPublication(
+		state.dependencies,
+	);
 	await start(controller);
 	const outcome = await drive(controller, state);
 	assert.equal(outcome.status, "tickets-published");
-	assert.equal(publication.approval.payload.actor.authorityRevision, "owner-r1");
 	assert.equal(
-		state.toolCalls.filter(({ toolName }) => toolName === "linear_get_user").length,
+		publication.approval.payload.actor.authorityRevision,
+		"owner-r1",
+	);
+	assert.equal(
+		state.toolCalls.filter(({ toolName }) => toolName === "linear_get_user")
+			.length,
 		1,
 	);
 });
@@ -312,19 +484,34 @@ test("restart resolves a durable child mutation receipt without duplicate creati
 	const first = createDefineProductTicketMcpPublication(state.dependencies);
 	await start(first);
 	const stopped = await drive(first, state, { stopBeforeSave: true });
-	const event = { toolName: stopped.expected.toolName, toolCallId: "interrupted-child", input: structuredClone(stopped.expected.input) };
+	const event = {
+		toolName: stopped.expected.toolName,
+		toolCallId: "interrupted-child",
+		input: structuredClone(stopped.expected.input),
+	};
 	assert.equal(await first.handleToolCall(event), undefined);
 	state.saveInputs.push(structuredClone(event.input));
 	state.issues.set("child-1", {
-		id: "child-1", teamId: "team-1", parentId: "parent-1", title: event.input.title,
-		description: event.input.description, estimate: event.input.estimate,
-		status: { id: "backlog-1", name: "Backlog", type: "backlog" }, assigneeId: null, cycleId: null, labels: [], projectId: null,
+		id: "child-1",
+		teamId: "team-1",
+		parentId: "parent-1",
+		title: event.input.title,
+		description: event.input.description,
+		estimate: event.input.estimate,
+		status: { id: "backlog-1", name: "Backlog", type: "backlog" },
+		assigneeId: null,
+		cycleId: null,
+		labels: [],
+		projectId: null,
 	});
 	assert.equal(state.persistence.value().pendingMutation.kind, "child");
 
 	const restarted = createDefineProductTicketMcpPublication(state.dependencies);
 	await start(restarted);
-	assert.deepEqual(await drive(restarted, state), { status: "tickets-published", definitionId });
+	assert.deepEqual(await drive(restarted, state), {
+		status: "tickets-published",
+		definitionId,
+	});
 	assert.equal(
 		state.saveInputs.filter(
 			(input) => Object.hasOwn(input, "parentId") && input.title === "Primero",
@@ -356,14 +543,17 @@ test("restart proves an interrupted relation by readback without duplicate mutat
 		definitionId,
 	});
 	assert.equal(
-		state.saveInputs.filter((input) => Object.hasOwn(input, "blockedBy")).length,
+		state.saveInputs.filter((input) => Object.hasOwn(input, "blockedBy"))
+			.length,
 		1,
 	);
 });
 
 test("keeps child mutation pending until exact direct readback", async () => {
 	const state = fixture();
-	const controller = createDefineProductTicketMcpPublication(state.dependencies);
+	const controller = createDefineProductTicketMcpPublication(
+		state.dependencies,
+	);
 	await start(controller);
 	const stopped = await drive(controller, state, { stopBeforeSave: true });
 	const event = {
@@ -405,7 +595,9 @@ test("keeps child mutation pending until exact direct readback", async () => {
 test("serializes concurrent calls and results and ignores late generations", async (t) => {
 	await t.test("concurrent mutation calls", async () => {
 		const state = fixture();
-		const controller = createDefineProductTicketMcpPublication(state.dependencies);
+		const controller = createDefineProductTicketMcpPublication(
+			state.dependencies,
+		);
 		await start(controller);
 		const stopped = await drive(controller, state, { stopBeforeSave: true });
 		const originalRead = state.dependencies.approvedPublications.read;
@@ -451,7 +643,9 @@ test("serializes concurrent calls and results and ignores late generations", asy
 
 	await t.test("concurrent duplicate results", async () => {
 		const state = fixture();
-		const controller = createDefineProductTicketMcpPublication(state.dependencies);
+		const controller = createDefineProductTicketMcpPublication(
+			state.dependencies,
+		);
 		assert.deepEqual(
 			await controller.begin(definitionId, "concurrent-result-start", {
 				action: "publish_tickets",
@@ -461,7 +655,9 @@ test("serializes concurrent calls and results and ignores late generations", asy
 		const result = {
 			toolName: "workflow_define_product",
 			toolCallId: "concurrent-result-start",
-			content: [{ type: "text", text: JSON.stringify({ status: "continuing" }) }],
+			content: [
+				{ type: "text", text: JSON.stringify({ status: "continuing" }) },
+			],
 			isError: false,
 		};
 		assert.deepEqual(
@@ -476,7 +672,9 @@ test("serializes concurrent calls and results and ignores late generations", asy
 
 	await t.test("late result after clear and new begin", async () => {
 		const state = fixture();
-		const controller = createDefineProductTicketMcpPublication(state.dependencies);
+		const controller = createDefineProductTicketMcpPublication(
+			state.dependencies,
+		);
 		await start(controller);
 		const expected = controller.expectedModelCall();
 		const oldCall = {
@@ -528,24 +726,29 @@ test("serializes concurrent calls and results and ignores late generations", asy
 });
 
 test("enforces explicit compatibility authority and rejects malformed mixed status entries", async (t) => {
-	await t.test("compatibility authorityRevision drift before mutation", async () => {
-		const state = fixture();
-		const controller = createDefineProductTicketMcpPublication(state.dependencies);
-		await start(controller);
-		const stopped = await drive(controller, state, { stopBeforeSave: true });
-		state.ownerAuthority.authorityRevision = "owner-r2";
-		const event = {
-			toolName: stopped.expected.toolName,
-			toolCallId: "stale-owner-save",
-			input: structuredClone(stopped.expected.input),
-		};
-		assert.deepEqual(await controller.handleToolCall(event), {
-			block: true,
-			reason: "PI_WORKFLOW_PUBLICATION_AUTHORITY_DRIFT",
-		});
-		assert.equal(state.persistence.value().pendingMutation, undefined);
-		assert.deepEqual(state.saveInputs, []);
-	});
+	await t.test(
+		"compatibility authorityRevision drift before mutation",
+		async () => {
+			const state = fixture();
+			const controller = createDefineProductTicketMcpPublication(
+				state.dependencies,
+			);
+			await start(controller);
+			const stopped = await drive(controller, state, { stopBeforeSave: true });
+			state.ownerAuthority.authorityRevision = "owner-r2";
+			const event = {
+				toolName: stopped.expected.toolName,
+				toolCallId: "stale-owner-save",
+				input: structuredClone(stopped.expected.input),
+			};
+			assert.deepEqual(await controller.handleToolCall(event), {
+				block: true,
+				reason: "PI_WORKFLOW_PUBLICATION_AUTHORITY_DRIFT",
+			});
+			assert.equal(state.persistence.value().pendingMutation, undefined);
+			assert.deepEqual(state.saveInputs, []);
+		},
+	);
 
 	await t.test("mixed malformed statuses", async () => {
 		const state = fixture();
@@ -557,7 +760,9 @@ test("enforces explicit compatibility authority and rejects malformed mixed stat
 						{ name: "Triage", type: "triage" },
 					]
 				: original(expected);
-		const controller = createDefineProductTicketMcpPublication(state.dependencies);
+		const controller = createDefineProductTicketMcpPublication(
+			state.dependencies,
+		);
 		await start(controller);
 		const outcome = await drive(controller, state);
 		assert.equal(outcome.blocker.code, "PI_WORKFLOW_LINEAR_MALFORMED_RESPONSE");
@@ -567,9 +772,18 @@ test("enforces explicit compatibility authority and rejects malformed mixed stat
 
 test("refuses invalid users, malformed parent-state evidence, and conflicting child discovery before mutation", async (t) => {
 	for (const [name, actorPayload] of [
-		["compatibility actor mismatch", { id: "other-owner", name: "Owner", isActive: true, isGuest: false }],
-		["inactive user", { id: owner.actorId, name: "Owner", isActive: false, isGuest: false }],
-		["guest user", { id: owner.actorId, name: "Owner", isActive: true, isGuest: true }],
+		[
+			"compatibility actor mismatch",
+			{ id: "other-owner", name: "Owner", isActive: true, isGuest: false },
+		],
+		[
+			"inactive user",
+			{ id: owner.actorId, name: "Owner", isActive: false, isGuest: false },
+		],
+		[
+			"guest user",
+			{ id: owner.actorId, name: "Owner", isActive: true, isGuest: true },
+		],
 		["malformed user", { id: owner.actorId, isActive: true, isGuest: false }],
 	]) {
 		await t.test(name, async () => {
@@ -579,13 +793,19 @@ test("refuses invalid users, malformed parent-state evidence, and conflicting ch
 				expected.toolName === "linear_get_user"
 					? actorPayload
 					: original(expected);
-			const controller = createDefineProductTicketMcpPublication(state.dependencies);
+			const controller = createDefineProductTicketMcpPublication(
+				state.dependencies,
+			);
 			await start(controller);
 			const outcome = await drive(controller, state);
-			assert.equal(outcome.blocker.code, "PI_WORKFLOW_PUBLICATION_AUTHORITY_DRIFT");
+			assert.equal(
+				outcome.blocker.code,
+				"PI_WORKFLOW_PUBLICATION_AUTHORITY_DRIFT",
+			);
 			assert.deepEqual(state.saveInputs, []);
 			assert.equal(
-				state.toolCalls.filter(({ toolName }) => toolName === "linear_get_user").length,
+				state.toolCalls.filter(({ toolName }) => toolName === "linear_get_user")
+					.length,
 				1,
 			);
 		});
@@ -593,8 +813,13 @@ test("refuses invalid users, malformed parent-state evidence, and conflicting ch
 	await t.test("malformed", async () => {
 		const state = fixture();
 		const original = state.responseFor;
-		state.responseFor = (expected) => expected.toolName === "linear_list_issue_statuses" ? [{ id: "backlog-1", name: "Backlog", type: "triage" }] : original(expected);
-		const controller = createDefineProductTicketMcpPublication(state.dependencies);
+		state.responseFor = (expected) =>
+			expected.toolName === "linear_list_issue_statuses"
+				? [{ id: "backlog-1", name: "Backlog", type: "triage" }]
+				: original(expected);
+		const controller = createDefineProductTicketMcpPublication(
+			state.dependencies,
+		);
 		await start(controller);
 		const outcome = await drive(controller, state);
 		assert.equal(outcome.blocker.code, "PI_WORKFLOW_PUBLICATION_STATE_UNKNOWN");
@@ -603,18 +828,82 @@ test("refuses invalid users, malformed parent-state evidence, and conflicting ch
 	await t.test("conflict", async () => {
 		const state = fixture();
 		const original = state.responseFor;
-		state.responseFor = (expected) => expected.toolName === "linear_list_issues"
-			? {
-					issues: [{ id: "wrong", title: expected.input.query }],
-					hasNextPage: false,
-				}
-			: expected.toolName === "linear_get_issue" && expected.input.id === "wrong"
-				? { id: "wrong", title: "conflicting title-only candidate" }
-				: original(expected);
-		const controller = createDefineProductTicketMcpPublication(state.dependencies);
+		state.responseFor = (expected) =>
+			expected.toolName === "linear_list_issues"
+				? {
+						issues: [{ id: "wrong", title: expected.input.query }],
+						hasNextPage: false,
+					}
+				: expected.toolName === "linear_get_issue" &&
+						expected.input.id === "wrong"
+					? { id: "wrong", title: "conflicting title-only candidate" }
+					: original(expected);
+		const controller = createDefineProductTicketMcpPublication(
+			state.dependencies,
+		);
 		await start(controller);
 		const outcome = await drive(controller, state);
-		assert.equal(outcome.blocker.code, "PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH");
+		assert.equal(
+			outcome.blocker.code,
+			"PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH",
+		);
 		assert.deepEqual(state.saveInputs, []);
+	});
+});
+
+test("carries one shared ticket lease through every child and relation mutation", async () => {
+	const effects = [];
+	const state = fixture({
+		interactiveDecisions: {
+			async authorizeEffect(lease) {
+				effects.push(structuredClone(lease));
+				return {
+					kind: "authorized",
+					lease,
+					manifest: {
+						ref: `workflow://define-product/${definitionId}/ticket-publication/${graph.digest}`,
+					},
+				};
+			},
+		},
+	});
+	const missing = createDefineProductTicketMcpPublication(state.dependencies);
+	assert.equal(
+		(
+			await missing.begin(definitionId, "missing", {
+				action: "publish_tickets",
+			})
+		).blocker.code,
+		"PI_WORKFLOW_DECISION_CLAIM_MISSING",
+	);
+
+	const controller = createDefineProductTicketMcpPublication(
+		state.dependencies,
+	);
+	assert.deepEqual(
+		await controller.begin(
+			definitionId,
+			"start",
+			{ action: "publish_tickets" },
+			ticketLease,
+		),
+		{ status: "continuing" },
+	);
+	await controller.handleToolResult({
+		toolName: "workflow_define_product",
+		toolCallId: "start",
+		content: [{ type: "text", text: JSON.stringify({ status: "continuing" }) }],
+		isError: false,
+	});
+	assert.equal((await drive(controller, state)).status, "tickets-published");
+	assert.equal(effects.length, 4);
+	assert.ok(
+		effects.every((lease) => lease.executionId === ticketLease.executionId),
+	);
+	assert.deepEqual(state.persistence.value().executionBinding, {
+		decisionId: ticketLease.decisionId,
+		operationDigest: ticketLease.operationDigest,
+		executionId: ticketLease.executionId,
+		generation: ticketLease.generation,
 	});
 });

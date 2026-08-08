@@ -16,6 +16,7 @@ import type { ProductReviewArtifactStore } from "./product-review-workflow.ts";
 import { createRuntimeEngramArtifactStore } from "./runtime-engram-store.ts";
 import type { AuthenticatedAuthority } from "./workflow-contracts.ts";
 import type { WorkflowArtifactStore } from "./workflow-artifacts.ts";
+import type { PiInteractiveDecisions } from "./pi-decision-adapter.ts";
 
 function findProjectRoot(cwd: string): string {
 	let current = resolve(cwd);
@@ -67,6 +68,7 @@ function ownerCompatibilityPolicy(
 
 export function createDefaultProductReviewMcpPublication(
 	getContext: () => ExtensionContext | undefined,
+	interactiveDecisions: PiInteractiveDecisions,
 	options: DefaultProductReviewRuntimeOptions = {},
 ) {
 	const environment = options.environment ?? process.env;
@@ -88,5 +90,7 @@ export function createDefaultProductReviewMcpPublication(
 		recovery:
 			options.recovery ??
 			createProductReviewPublicationRecoveryStore({ store, project }),
+		project,
+		interactiveDecisions,
 	});
 }

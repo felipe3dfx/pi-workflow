@@ -68,7 +68,65 @@ function validSpecRequest(overrides = {}) {
 	};
 }
 
-function registerRuntime() {
+function sharedRuntimeDependencies() {
+	let sequence = 0;
+	const prepared = new Map();
+	return {
+		interactiveDecisions: {
+			async prepare(request) {
+				sequence += 1;
+				const decisionId = `${"a".repeat(64)}:${String(sequence).padStart(64, "0")}`;
+				prepared.set(decisionId, request.presentation.choices);
+				return { decisionId, choices: request.presentation.choices };
+			},
+			async authorize(decisionId, action) {
+				const choice = prepared
+					.get(decisionId)
+					?.find((candidate) => candidate.action.id === action.id);
+				if (!choice)
+					return {
+						kind: "blocked",
+						blocker: { code: "PI_WORKFLOW_DECISION_CLAIM_MISSING", message: "missing" },
+					};
+				if (choice.mode === "cancel")
+					return { kind: "cancelled", decisionId, receipt: { state: "cancelled" } };
+				return {
+					kind: "authorized",
+					lease: {
+						decisionId,
+						operationDigest: decisionId.slice(-64),
+						executionId: `execution-${sequence}`,
+						generation: sequence,
+						actorId: "owner-1",
+						authorityRevision: "single-user/v1",
+						action,
+					},
+				};
+			},
+			async bindExecutionManifest(lease, manifest) {
+				return { kind: "authorized", lease, manifest };
+			},
+			async authorizeEffect(lease) {
+				return { kind: "authorized", lease, manifest: { ref: "bound" } };
+			},
+			async recover() {
+				return { kind: "none" };
+			},
+		},
+		authoritySession: {
+			current: () => ({
+				actorId: "owner-1",
+				role: "Owner",
+				authorityRevision: "single-user/v1",
+			}),
+			user: () => ({ id: "owner-1", name: "Owner", isActive: true, isGuest: false }),
+			authenticate: () => ({ ok: false, reason: "already-authenticated" }),
+			clear() {},
+		},
+	};
+}
+
+function registerRuntime({ sharedAuthority = true } = {}) {
 	let pendingRecommendation;
 	const commands = [];
 	const handlers = new Map();
@@ -105,6 +163,7 @@ function registerRuntime() {
 			},
 		},
 		createDefinitionId: () => "definition-1",
+		...(sharedAuthority ? sharedRuntimeDependencies() : { interactiveDecisions: undefined }),
 	});
 	runtime.register({
 		on: (event, handler) => handlers.set(event, handler),
@@ -119,8 +178,8 @@ function registerRuntime() {
 	};
 }
 
-test("define-product keeps confirmation binding private", async () => {
-	const { runtime, tool, commands } = registerRuntime();
+test("define-product without shared authority cannot authorize route confirmation from prose", async () => {
+	const { runtime, tool, commands } = registerRuntime({ sharedAuthority: false });
 	runtime.handlePublicEntry({
 		text: "/define-product map a new category",
 		source: "interactive",
@@ -142,25 +201,287 @@ test("define-product keeps confirmation binding private", async () => {
 		researchQuestion: "What should we research?",
 	});
 	assert.equal(sameTurn.details.status, "blocked");
-	assert.equal(
-		sameTurn.details.blocker.code,
-		"PI_WORKFLOW_ROUTE_CONFIRMATION_REQUIRED",
-	);
+	assert.equal(sameTurn.details.blocker.code, "PI_WORKFLOW_DECISION_CLAIM_MISSING");
 	runtime.handlePublicEntry({
 		text: "Adelante; investiga los criterios pendientes.",
 		source: "interactive",
 	});
-	const completed = await tool.execute("tool-2", {
+	const blocked = await tool.execute("tool-2", {
 		action: "confirm_route",
 		researchQuestion: "What should we research?",
 	});
-	assert.equal(commands.at(-1).recommendationRef, "recommendation-1");
-	assert.equal(commands.at(-1).confirmationToken, "0123456789012345678901234567890123456789012");
-	assert.equal(commands.at(-1).confirmedRoute, "wayfinder");
-	assert.doesNotMatch(
-		completed.content[0].text,
-		/gpt-5\.6-terra|medium|digest-1|risk-private-1|revision|schema|"id"/,
-	);
+	assert.equal(blocked.details.blocker.code, "PI_WORKFLOW_DECISION_CLAIM_MISSING");
+	assert.equal(commands.length, 1);
+});
+
+test("define-product without shared authority cannot authorize recovered Spec, ticket, or revision decisions from prose", async () => {
+	const cases = [
+		{
+			name: "Spec",
+			action: "approve_spec",
+			recovery: {
+				definitionId: "definition-spec",
+				phase: "spec-approval",
+				command: {
+					kind: "approve-spec",
+					target: {
+						kind: "linear-parent-description",
+						teamId: "team-1",
+						title: "Exact Spec",
+					},
+					revision: "spec-r1",
+					digest: "a".repeat(64),
+				},
+			},
+		},
+		{
+			name: "ticket",
+			action: "approve_tickets",
+			recovery: {
+				definitionId: "definition-ticket",
+				phase: "ticket-approval",
+				command: {
+					kind: "approve-tickets",
+					definitionId: "definition-ticket",
+					parentRef: ticketRef("delivery-parent", "b".repeat(64)),
+					graphRef: ticketRef("delivery-ticket-graph", "c".repeat(64)),
+					digest: "c".repeat(64),
+				},
+			},
+		},
+		{
+			name: "revision",
+			action: "approve_approved_revision",
+			recovery: {
+				definitionId: "definition-revision",
+				phase: "approved-revision-approval",
+				digest: "d".repeat(64),
+				draftDigest: "e".repeat(64),
+			},
+		},
+	];
+	for (const { name, action, recovery } of cases) {
+		const handlers = new Map();
+		const tools = new Map();
+		const commands = [];
+		const runtime = createDefineProductRuntime({
+			workflow: {
+				pendingRecommendation: () => undefined,
+				reset() {},
+				restoreRecovery: async () => recovery,
+				advance: async (command) => {
+					commands.push(command);
+					return { status: "blocked", blocker: { code: "unexpected", message: "unexpected" } };
+				},
+			},
+			createDefinitionId: () => "unused",
+			interactiveDecisions: undefined,
+		});
+		runtime.register({
+			on: (event, handler) => handlers.set(event, handler),
+			registerTool: (tool) => tools.set(tool.name, tool),
+		});
+		await handlers.get("session_start")({ type: "session_start" });
+		runtime.handlePublicEntry({ text: "I approve this exact operation", source: "interactive" });
+		const outcome = await tools.get("workflow_define_product").execute(name, { action });
+		assert.equal(outcome.details.blocker.code, "PI_WORKFLOW_DECISION_CLAIM_MISSING", name);
+		assert.deepEqual(commands, [], name);
+	}
+});
+
+test("define-product binds shared route authority before research execution", async () => {
+	const calls = [];
+	let pendingRecommendation;
+	let routeDecision;
+	let claimAvailable = false;
+	const lease = {
+		decisionId: `${"a".repeat(64)}:${"b".repeat(64)}`,
+		operationDigest: "b".repeat(64),
+		actorId: "owner-1",
+		authorityRevision: "single-user/v1",
+		action: {
+			id: "define-product.route.confirm",
+			input: {
+				definitionId: "definition-1",
+				recommendationDigest: "recommendation-1",
+				route: "wayfinder",
+			},
+		},
+		executionId: "execution-route-1",
+		generation: 1,
+	};
+	const decisions = {
+		async prepare(request) {
+			calls.push("prepare");
+			assert.equal(request.scope.workflow, "define-product");
+			assert.equal(request.operation.kind, "define-product.route");
+			assert.equal(request.operation.phase, "route.confirmation");
+			assert.deepEqual(request.operation.input, lease.action.input);
+			routeDecision = {
+				decisionId: lease.decisionId,
+				choices: request.presentation.choices,
+			};
+			return routeDecision;
+		},
+		async authorize(decisionId, action, actor) {
+			calls.push("authorize");
+			assert.equal(decisionId, lease.decisionId);
+			assert.deepEqual(action, lease.action);
+			assert.deepEqual(actor, {
+				actorId: "owner-1",
+				authorityRevision: "single-user/v1",
+				active: true,
+				guest: false,
+			});
+			return claimAvailable
+				? { kind: "authorized", lease }
+				: {
+					kind: "blocked",
+					blocker: {
+						code: "PI_WORKFLOW_DECISION_CLAIM_MISSING",
+						message: "No fresh presentation claim authorizes this action.",
+					},
+				};
+		},
+		async bindExecutionManifest(candidate, manifest) {
+			calls.push("bind");
+			assert.deepEqual(candidate, lease);
+			assert.equal(manifest.executionId, lease.executionId);
+			assert.match(manifest.ref, /define-product\/definition-1\/route\/recommendation-1$/);
+			return { kind: "authorized", lease, manifest };
+		},
+		async authorizeEffect(candidate) {
+			calls.push("effect");
+			assert.deepEqual(candidate, lease);
+			return {
+				kind: "authorized",
+				lease,
+				manifest: { ref: "bound" },
+			};
+		},
+	};
+	const runtime = createDefineProductRuntime({
+		workflow: {
+			pendingRecommendation: () => pendingRecommendation,
+			reset() {},
+			async advance(command) {
+				calls.push("advance");
+				if (command.kind === "recommend-route") {
+					pendingRecommendation = {
+						definitionId: command.definitionId,
+						domainAnchor: command.domainAnchor,
+						domainAnchorDigest: "anchor-digest",
+						assessment: command.assessment,
+						recommendedRoute: "wayfinder",
+						digest: "recommendation-1",
+						confirmationToken: "0123456789012345678901234567890123456789012",
+						issuedAt: 0,
+					};
+					return { status: "awaiting-confirmation", recommendation: pendingRecommendation };
+				}
+				return { status: "completed", result: completedResult() };
+			},
+		},
+		createDefinitionId: () => "definition-1",
+		project: "pi-workflow",
+		interactiveDecisions: decisions,
+		authoritySession: {
+			current: () => ({ actorId: "owner-1", role: "Owner", authorityRevision: "single-user/v1" }),
+			user: () => ({ id: "owner-1", name: "Owner", isActive: true, isGuest: false }),
+			authenticate: () => ({ ok: false, reason: "already-authenticated" }),
+			clear() {},
+		},
+	});
+	const tools = new Map();
+	runtime.register({ on() {}, registerTool: (tool) => tools.set(tool.name, tool) });
+	runtime.handlePublicEntry({ text: "/define-product map a new category", source: "interactive" });
+	const tool = tools.get("workflow_define_product");
+	await tool.execute("recommend", {
+		action: "recommend_route",
+		assessment: { clarity: "unclear", breadth: "broad", reasons: ["missing shape"] },
+	});
+	assert.ok(routeDecision);
+
+	runtime.handlePublicEntry({ text: "Continue", source: "interactive" });
+	const unclaimed = await tool.execute("unclaimed", {
+		action: "confirm_route",
+		researchQuestion: "What should we research?",
+	});
+	assert.equal(unclaimed.details.blocker.code, "PI_WORKFLOW_DECISION_CLAIM_MISSING");
+	assert.deepEqual(calls, ["advance", "prepare", "authorize"]);
+
+	claimAvailable = true;
+	const completed = await tool.execute("claimed", {
+		action: "confirm_route",
+		researchQuestion: "What should we research?",
+	});
+	assert.equal(completed.details.status, "completed");
+	assert.deepEqual(calls, [
+		"advance",
+		"prepare",
+		"authorize",
+		"authorize",
+		"bind",
+		"effect",
+		"advance",
+	]);
+});
+
+test("define-product cancellation consumes the shared cancel choice without an effect", async () => {
+	const tools = new Map();
+	const commands = [];
+	const decisionId = `${"a".repeat(64)}:${"b".repeat(64)}`;
+	let pendingRecommendation;
+	const runtime = createDefineProductRuntime({
+		workflow: {
+			pendingRecommendation: () => pendingRecommendation,
+			reset() { pendingRecommendation = undefined; },
+			async advance(command) {
+				commands.push(command);
+				pendingRecommendation = {
+					definitionId: command.definitionId,
+					domainAnchor: command.domainAnchor,
+					domainAnchorDigest: "anchor-digest",
+					assessment: command.assessment,
+					recommendedRoute: "wayfinder",
+					digest: "recommendation-1",
+					confirmationToken: "0123456789012345678901234567890123456789012",
+					issuedAt: 0,
+				};
+				return { status: "awaiting-confirmation", recommendation: pendingRecommendation };
+			},
+		},
+		createDefinitionId: () => "definition-1",
+		interactiveDecisions: {
+			prepare: async () => ({ decisionId, choices: [] }),
+			authorize: async (actualDecisionId, action) => {
+				assert.equal(actualDecisionId, decisionId);
+				assert.deepEqual(action, { id: "decision.cancel", input: null });
+				return {
+					kind: "cancelled",
+					decisionId,
+					receipt: { state: "cancelled", decisionId, actionId: "decision.cancel", actorId: "owner-1" },
+				};
+			},
+		},
+		authoritySession: {
+			current: () => ({ actorId: "owner-1", role: "Owner", authorityRevision: "single-user/v1" }),
+			user: () => ({ id: "owner-1", name: "Owner", isActive: true, isGuest: false }),
+			authenticate: () => ({ ok: false, reason: "already-authenticated" }),
+			clear() {},
+		},
+	});
+	runtime.register({ on() {}, registerTool: (tool) => tools.set(tool.name, tool) });
+	runtime.handlePublicEntry({ text: "/define-product cancel me", source: "interactive" });
+	const tool = tools.get("workflow_define_product");
+	await tool.execute("recommend", {
+		action: "recommend_route",
+		assessment: { clarity: "unclear", breadth: "broad", reasons: ["research"] },
+	});
+	const cancelled = await tool.execute("cancel", { action: "cancel_decision" });
+	assert.deepEqual(cancelled.details, { status: "cancelled" });
+	assert.equal(commands.length, 1);
+	assert.equal(runtime.hasActiveTurn(), false);
 });
 
 test("define-product accepts only interactive non-streaming domain anchors", async () => {
@@ -327,6 +648,7 @@ test("session start restores the exact pending Spec approval phase", async () =>
 			},
 		},
 		createDefinitionId: () => "new-definition",
+		...sharedRuntimeDependencies(),
 	});
 	runtime.register({
 		on: (event, handler) => handlers.set(event, handler),
@@ -349,6 +671,128 @@ test("session start restores the exact pending Spec approval phase", async () =>
 		revision: "spec-r1",
 		digest: "digest-r1",
 	});
+});
+
+test("one shared Spec approval lease authorizes approval and parent publication", async () => {
+	const handlers = new Map();
+	const tools = new Map();
+	const calls = [];
+	const approveCommand = {
+		kind: "approve-spec",
+		target: {
+			kind: "linear-parent-description",
+			teamId: "team-1",
+			title: "Spec exacto",
+		},
+		revision: "spec-r1",
+		digest: "d".repeat(64),
+	};
+	const lease = {
+		decisionId: `${"a".repeat(64)}:${"b".repeat(64)}`,
+		operationDigest: "b".repeat(64),
+		actorId: "owner-1",
+		authorityRevision: "single-user/v1",
+		action: {
+			id: "define-product.spec.publish",
+			input: {
+				definitionId: "definition-1",
+				digest: approveCommand.digest,
+				revision: approveCommand.revision,
+				target: approveCommand.target,
+			},
+		},
+		executionId: "execution-spec-1",
+		generation: 1,
+	};
+	let activePublication = false;
+	const runtime = createDefineProductRuntime({
+		workflow: {
+			pendingRecommendation: () => undefined,
+			reset() {},
+			restoreRecovery: async () => ({
+				definitionId: "definition-1",
+				phase: "spec-approval",
+				command: approveCommand,
+			}),
+			advance: async (command) => {
+				calls.push(["advance", command]);
+				return {
+					status: "spec-approved",
+					spec: { payload: { target: approveCommand.target } },
+					approval: { payload: { target: approveCommand.target } },
+					approvedSpecRef: ticketRef("approved-spec", approveCommand.digest),
+				};
+			},
+		},
+		createDefinitionId: () => "unused",
+		project: "pi-workflow",
+		interactiveDecisions: {
+			async prepare(request) {
+				calls.push(["prepare", request]);
+				assert.equal(request.operation.kind, "define-product.spec-publication");
+				return { decisionId: lease.decisionId, choices: [] };
+			},
+			async authorize(decisionId, action) {
+				calls.push(["authorize", decisionId, action]);
+				return { kind: "authorized", lease };
+			},
+			async bindExecutionManifest(candidate, manifest) {
+				calls.push(["bind", candidate, manifest]);
+				assert.match(manifest.ref, new RegExp(`${approveCommand.digest}$`));
+				return { kind: "authorized", lease, manifest };
+			},
+			async authorizeEffect(candidate) {
+				calls.push(["effect", candidate]);
+				return { kind: "authorized", lease: candidate, manifest: { ref: "bound" } };
+			},
+		},
+		authoritySession: {
+			current: () => ({ actorId: "owner-1", role: "Owner", authorityRevision: "single-user/v1" }),
+			user: () => ({ id: "owner-1", name: "Owner", isActive: true, isGuest: false }),
+			authenticate: () => ({ ok: false, reason: "already-authenticated" }),
+			clear() {},
+		},
+		mcpPublication: {
+			allowedTools: ["workflow_define_product"],
+			setMcpAvailable() {},
+			clear() { activePublication = false; },
+			hasActiveTurn: () => activePublication,
+			async begin(definitionId, toolCallId, input, executionLease) {
+				calls.push(["publish", definitionId, toolCallId, input, executionLease]);
+				activePublication = true;
+				return { status: "continuing" };
+			},
+			async complete() { return { status: "blocked", blocker: { code: "unused", message: "unused" } }; },
+			expectedModelCall: () => undefined,
+			nextCallInstruction: () => undefined,
+			handleToolCall: async () => undefined,
+			handleToolResult: async () => false,
+		},
+	});
+	runtime.register({
+		on: (event, handler) => handlers.set(event, handler),
+		registerTool: (tool) => tools.set(tool.name, tool),
+	});
+	await handlers.get("session_start")({ type: "session_start" });
+	assert.equal(calls[0][0], "prepare");
+	runtime.handlePublicEntry({ text: "Approve and publish", source: "interactive" });
+	const approved = await tools.get("workflow_define_product").execute("approve", {
+		action: "approve_spec",
+	});
+	assert.equal(approved.details.status, "spec-approved");
+	assert.deepEqual(calls.slice(1).map(([kind]) => kind), ["authorize", "bind", "effect", "advance"]);
+
+	const publication = await tools.get("workflow_define_product").execute("publish", {
+		action: "publish_spec",
+	});
+	assert.equal(publication.details.status, "continuing");
+	assert.deepEqual(calls.at(-1), [
+		"publish",
+		"definition-1",
+		"publish",
+		{ action: "publish_spec" },
+		lease,
+	]);
 });
 
 test("session start restores publication eligibility without accepting LLM Spec content", async () => {
@@ -556,6 +1000,7 @@ test("production define-product accepts the captured semantic-only Spec payload 
 	const runtime = createDefineProductRuntime({
 		workflow,
 		createDefinitionId: () => "definition-runtime",
+		...sharedRuntimeDependencies(),
 	});
 	runtime.register({
 		on: (event, handler) => handlers.set(event, handler),
@@ -579,6 +1024,7 @@ test("production define-product accepts the captured semantic-only Spec payload 
 		"to_approved_revision",
 		"approve_approved_revision",
 		"publish_approved_revision",
+		"cancel_decision",
 	]);
 
 	for (const privateField of [
@@ -637,15 +1083,26 @@ test("production define-product accepts the captured semantic-only Spec payload 
 	assert.equal(sameTurn.details.status, "blocked");
 	assert.equal(
 		sameTurn.details.blocker.message,
-		"Spec generation requires a fresh interactive non-streaming Owner reply confirming the Linear team after research, or Owner feedback on the ready Spec.",
+		"Spec generation requires a claimed shared team decision after research, or Owner feedback on the ready Spec.",
 	);
-	for (const event of [
-		{ text: "Grupo ILAO, con el título acordado", source: "extension" },
-		{ text: "Grupo ILAO, con el título acordado", source: "interactive", streamingBehavior: "steer" },
-	]) {
-		runtime.handlePublicEntry(event);
-		assert.equal((await tool.execute("untrusted-spec-input", validSpecRequest())).details.status, "blocked");
-	}
+	await handlers.get("tool_call")({
+		toolName: "linear_list_teams",
+		toolCallId: "teams",
+		input: { limit: 50, orderBy: "updatedAt" },
+	});
+	await handlers.get("tool_result")({
+		toolName: "linear_list_teams",
+		toolCallId: "teams",
+		content: [
+			{
+				type: "text",
+				text: JSON.stringify({
+					teams: [{ id: "team-grupo-ilao", name: "Grupo ILAO" }],
+					hasNextPage: false,
+				}),
+			},
+		],
+	});
 	runtime.handlePublicEntry({
 		text: "Usa el equipo Grupo ILAO y el título Incorporar aprobaciones exactas del Spec",
 		source: "interactive",
@@ -714,6 +1171,7 @@ test("production define-product seam blocks malformed Spec payloads without thro
 	const runtime = createDefineProductRuntime({
 		workflow,
 		createDefinitionId: () => "definition-runtime",
+		...sharedRuntimeDependencies(),
 	});
 	runtime.register({
 		on: () => {},
@@ -763,18 +1221,6 @@ test("production define-product seam blocks malformed Spec payloads without thro
 		);
 	}
 
-	runtime.handlePublicEntry({ text: "Equipo y título confirmados", source: "interactive" });
-	const ready = await tool.execute("valid", valid);
-	assert.equal(ready.details.status, "spec-ready");
-	const malformedApproval = await tool.execute("malformed-approval", {
-		action: "approve_spec",
-		target: null,
-	});
-	assert.equal(malformedApproval.details.status, "blocked");
-	assert.equal(
-		malformedApproval.details.blocker.code,
-		"PI_WORKFLOW_SPEC_APPROVAL_REQUIRED",
-	);
 });
 
 test("define-product system prompt is scoped to the active guarded turn", async () => {
@@ -942,6 +1388,7 @@ function registerTicketRuntime(recovery) {
 			},
 		},
 		createDefinitionId: () => "definition-1",
+		...sharedRuntimeDependencies(),
 	});
 	runtime.register({
 		on: (event, handler) => handlers.set(event, handler),
@@ -974,6 +1421,7 @@ test("define-product privately binds the live Spec publication and ticket approv
 		"publish_tickets",
 		"approve_approved_revision",
 		"publish_approved_revision",
+		"cancel_decision",
 	]) assert.equal(actionOnlySchema.properties.action.enum.includes(action), true);
 
 	const published = await recovered.tool.execute("ticket intent revalidates parent", {
@@ -1016,12 +1464,9 @@ test("define-product privately binds the live Spec publication and ticket approv
 	assert.doesNotMatch(ready.content[0].text, /graph-digest|delivery-ticket-graph-r1/);
 
 	const approvalPrompt = (await recovered.handlers.get("before_agent_start")({ systemPrompt: "base" })).systemPrompt;
-	assert.match(approvalPrompt, /approves it naturally/);
+	assert.match(approvalPrompt, /shared ticket decision records its publish action/);
 	assert.match(approvalPrompt, /only action="approve_tickets"/);
 	assert.doesNotMatch(approvalPrompt, /graphRef|parentRef|digest|definitionId/);
-	const premature = await recovered.tool.execute("premature", { action: "approve_tickets" });
-	assert.equal(premature.details.status, "blocked");
-	recovered.runtime.handlePublicEntry({ text: "Apruebo", source: "interactive" });
 	const approved = await recovered.tool.execute("approve", { action: "approve_tickets" });
 	assert.deepEqual(recovered.commands[2], {
 		kind: "approve-tickets",
@@ -1135,6 +1580,7 @@ test("define-product privately binds revision approval and publication", async (
 			},
 		},
 		createDefinitionId: () => "definition-revision",
+		...sharedRuntimeDependencies(),
 	});
 	runtime.register({ on: (event, handler) => handlers.set(event, handler), registerTool: (tool) => tools.set(tool.name, tool) });
 	runtime.handlePublicEntry({ text: "/define-product revisar entrega", source: "interactive" });
@@ -1154,17 +1600,19 @@ test("define-product privately binds revision approval and publication", async (
 	assert.doesNotMatch(draft.content[0].text, /draft-digest|issue-r1|Referencia de flujo/);
 
 	const approvalPrompt = (await handlers.get("before_agent_start")({ systemPrompt: "base" })).systemPrompt;
-	assert.match(approvalPrompt, /approves it naturally/);
+	assert.match(approvalPrompt, /shared revision decision records its publish action/);
 	assert.doesNotMatch(approvalPrompt, /draft-digest|definitionId|revisionRef/);
 	runtime.handlePublicEntry({ text: "Apruebo", source: "interactive" });
 	const approved = await tools.get("workflow_define_product").execute("approve", {
 		action: "approve_approved_revision",
 	});
-	assert.deepEqual(commands[1], {
+	const { executionLease: approvalLease, ...approvalCommand } = commands[1];
+	assert.deepEqual(approvalCommand, {
 		kind: "approve-approved-revision",
 		definitionId: "definition-revision",
 		digest: "draft-digest",
 	});
+	assert.equal(approvalLease.executionId, "execution-1");
 	assert.equal(approved.details.revision.authority, undefined);
 	assert.doesNotMatch(approved.content[0].text, /approved-digest|authority-r1|issue-r1/);
 
@@ -1174,11 +1622,13 @@ test("define-product privately binds revision approval and publication", async (
 	const published = await tools.get("workflow_define_product").execute("publish", {
 		action: "publish_approved_revision",
 	});
-	assert.deepEqual(commands[2], {
+	const { executionLease: publicationLease, ...publicationCommand } = commands[2];
+	assert.deepEqual(publicationCommand, {
 		kind: "publish-approved-revision",
 		definitionId: "definition-revision",
 		digest: "approved-digest",
 	});
+	assert.equal(publicationLease.executionId, "execution-1");
 	assert.deepEqual(published.details, { status: "revision-published" });
 	assert.equal(runtime.hasActiveTurn(), false);
 });
@@ -1214,6 +1664,7 @@ test("ticket publication recovery routes action-only calls through the ticket MC
 		},
 		createDefinitionId: () => "unused",
 		ticketMcpPublication,
+		...sharedRuntimeDependencies(),
 	});
 	runtime.register({ on: (event, handler) => handlers.set(event, handler), registerTool: (tool) => tools.set(tool.name, tool) });
 	await handlers.get("session_start")({ type: "session_start" });
@@ -1252,6 +1703,7 @@ test("define-product restores durable revision and ticket publication bindings a
 				},
 			},
 			createDefinitionId: () => "unused",
+			...sharedRuntimeDependencies(),
 		});
 		runtime.register({ on: (event, handler) => handlers.set(event, handler), registerTool: (tool) => tools.set(tool.name, tool) });
 		await handlers.get("session_start")({ type: "session_start" });
@@ -1267,7 +1719,10 @@ test("define-product restores durable revision and ticket publication bindings a
 		if (phase === "approved-revision-approval")
 			runtime.handlePublicEntry({ text: "Apruebo", source: "interactive" });
 		await tools.get("workflow_define_product").execute("revision", { action });
-		assert.deepEqual(commands, [{ kind: commandKind, definitionId: "definition-revision", digest: "digest-durable" }]);
+		assert.deepEqual(
+			commands.map(({ executionLease: _lease, ...command }) => command),
+			[{ kind: commandKind, definitionId: "definition-revision", digest: "digest-durable" }],
+		);
 	}
 
 	const handlers = new Map();
@@ -1284,6 +1739,7 @@ test("define-product restores durable revision and ticket publication bindings a
 			},
 		},
 		createDefinitionId: () => "unused",
+		...sharedRuntimeDependencies(),
 	});
 	runtime.register({ on: (event, handler) => handlers.set(event, handler), registerTool: (tool) => tools.set(tool.name, tool) });
 	await handlers.get("session_start")({ type: "session_start" });

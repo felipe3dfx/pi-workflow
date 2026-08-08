@@ -8,6 +8,8 @@ import type {
 import type { ApprovedProductSpecRead } from "./engram-approved-spec-reader.ts";
 import type { LinearDeliveryParent } from "./linear-delivery-parent-gateway.ts";
 import { validateProductSpecApproval } from "./product-spec.ts";
+import type { PiInteractiveDecisions } from "./pi-decision-adapter.ts";
+import type { ExecutionLease } from "./interactive-decisions.ts";
 import {
 	createSingleUserAuthoritySession,
 	type SingleUserAuthoritySession,
@@ -66,6 +68,7 @@ export interface DefineProductMcpPublicationDependencies {
 	readonly authoritySession?: SingleUserAuthoritySession;
 	readonly recovery: DefineProductPublicationRecoveryStore;
 	readonly parentSnapshots: DeliveryParentSnapshotStore;
+	readonly interactiveDecisions?: PiInteractiveDecisions;
 	readonly toolIdentityReservationCapacity?: number;
 }
 
@@ -86,6 +89,7 @@ export interface DefineProductMcpPublication {
 		definitionId: string,
 		toolCallId: string,
 		input: unknown,
+		executionLease?: ExecutionLease,
 	): Promise<
 		| DefineProductMcpPublication.Continuing
 		| DefineProductMcpPublication.Blocker
@@ -181,6 +185,7 @@ interface PublicationContext {
 	readonly actor?: LinearActor;
 	readonly team?: LinearTeam;
 	readonly backlog?: LinearStatus;
+	readonly executionLease?: ExecutionLease;
 }
 
 interface TeamRead {
@@ -741,6 +746,7 @@ export function createDefineProductMcpPublication(
 		definitionId: string,
 		toolCallId: string,
 		input: unknown,
+		executionLease?: ExecutionLease,
 	): Promise<
 		| DefineProductMcpPublication.Continuing
 		| DefineProductMcpPublication.Blocker
@@ -808,6 +814,37 @@ export function createDefineProductMcpPublication(
 					"PI_WORKFLOW_PUBLICATION_ARTIFACT_DRIFT",
 					"The approved Spec or Owner authority is invalid for publication.",
 				);
+			if (options.interactiveDecisions) {
+				if (!executionLease)
+					return blocked(
+						"PI_WORKFLOW_DECISION_CLAIM_MISSING",
+						"Delivery-parent publication requires the shared Spec approval lease.",
+					);
+				if (
+					executionLease.action.id !== "define-product.spec.publish" ||
+					canonicalJson(executionLease.action.input) !==
+						canonicalJson({
+							definitionId,
+							digest: approved.spec.digest,
+							revision: approved.spec.payload.revision,
+							target: approved.spec.payload.target,
+						})
+				)
+					return blocked(
+						"PI_WORKFLOW_DECISION_ACTION_MISMATCH",
+						"Delivery-parent publication lease does not match the approved Spec.",
+					);
+				const effect = await options.interactiveDecisions.authorizeEffect(executionLease);
+				if (effect.kind === "blocked") return blocked(effect.blocker.code, effect.blocker.message);
+				if (
+					effect.manifest.ref !==
+					`workflow://define-product/${definitionId}/spec-publication/${approved.spec.digest}`
+				)
+					return blocked(
+						"PI_WORKFLOW_DECISION_MANIFEST_CONFLICT",
+						"Delivery-parent publication manifest does not match the approved Spec.",
+					);
+			}
 			const identity = publicationIdentity(approved);
 			const recovery = await options.recovery.read(definitionId);
 			if (generation !== beginGeneration || state.phase !== "idle")
@@ -844,6 +881,7 @@ export function createDefineProductMcpPublication(
 							}
 						: {}),
 					...(recovery ? { recovery } : {}),
+					...(executionLease ? { executionLease: structuredClone(executionLease) } : {}),
 				},
 				toolCallId,
 			};
@@ -909,6 +947,15 @@ export function createDefineProductMcpPublication(
 		}
 		if (active.phase === "save") {
 			try {
+				if (options.interactiveDecisions && active.context.executionLease) {
+					const effect = await options.interactiveDecisions.authorizeEffect(
+						active.context.executionLease,
+					);
+					if (effect.kind === "blocked") {
+						fail(effect.blocker.code, effect.blocker.message);
+						return { block: true, reason: effect.blocker.code };
+					}
+				}
 				if (!(await revalidateArtifact(active.context))) {
 					fail(
 						"PI_WORKFLOW_PUBLICATION_ARTIFACT_DRIFT",

@@ -195,7 +195,7 @@ test("to-spec exports only resolved pertinent decisions and support artifacts in
 	assert.doesNotMatch(JSON.stringify(outcome.spec), /raw private|private-history/i);
 });
 
-test("to-spec system brief requires neutral professional Spanish and exact-body approval", async () => {
+test("to-spec system brief returns a canonical Spanish body to shared approval authority", async () => {
 	const brief = await readFile(
 		new URL("../assets/agents/to-spec.md", import.meta.url),
 		"utf8",
@@ -211,11 +211,15 @@ test("to-spec system brief requires neutral professional Spanish and exact-body 
 	);
 	assert.match(
 		brief,
-		/Require the Owner to approve the digest of the exact final body before publication\./u,
+		/Return the exact canonical body and digest to the workflow without asking for or interpreting approval\./u,
 	);
 	assert.match(
 		brief,
-		/Never translate or rewrite the body after approval/u,
+		/The workflow's shared decision authority owns approval and publication\./u,
+	);
+	assert.match(
+		brief,
+		/Never translate or rewrite an approved body; any content change requires a new digest and a new shared decision\./u,
 	);
 });
 

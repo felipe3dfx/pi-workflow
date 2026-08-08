@@ -12,6 +12,15 @@ import {
 } from "./qa-handoff-workflow.ts";
 import { SINGLE_USER_AUTHORITY_REVISION } from "./single-user-authority.ts";
 import { canonicalJson, digestCanonicalValue } from "./workflow-contracts.ts";
+import type {
+	AuthenticatedDecisionActor,
+	DecisionBlocker,
+	DecisionRequest,
+	ExecutionLease,
+	ExecutionManifestBinding,
+	TypedDecisionAction,
+} from "./interactive-decisions.ts";
+import type { PiInteractiveDecisions } from "./pi-decision-adapter.ts";
 
 export namespace QaHandoffMcpPublication {
 	export interface Blocker {
@@ -23,6 +32,15 @@ export namespace QaHandoffMcpPublication {
 		readonly status: "published";
 		readonly issueId: string;
 		readonly commentId: string;
+	}
+
+	export interface ContinuingHandoff {
+		readonly status: "continuing";
+	}
+
+	export interface CancelledHandoff {
+		readonly status: "cancelled";
+		readonly issueId: string;
 	}
 
 	export interface ExpectedCall {
@@ -98,8 +116,18 @@ interface SnapshottedContext extends AuthenticatedContext {
 	readonly verifiedIssue: LinearIssueEvidence;
 }
 
-interface PreparedContext extends SnapshottedContext {
+interface DecisionPreparedContext extends SnapshottedContext {
+	readonly draft: Parameters<QaHandoffDraftStore["save"]>[0]["draft"];
+	readonly candidateArtifact: QaHandoffArtifact;
+	readonly decision: {
+		readonly decisionId: string;
+		readonly action: TypedDecisionAction;
+	};
+}
+
+interface PreparedContext extends DecisionPreparedContext {
 	readonly preparedArtifact: QaHandoffArtifact;
+	readonly executionLease: ExecutionLease;
 	readonly recoveryStage?: "uncertain" | "verified";
 }
 
@@ -144,6 +172,29 @@ type PublicationState =
 	| {
 			readonly phase: "issue-verify-result";
 			readonly context: SnapshottedContext;
+			readonly toolCallId: string;
+	  }
+	| {
+			readonly phase: "decision-prepared";
+			readonly context: DecisionPreparedContext;
+	  }
+	| {
+			readonly phase: "public-selection-result";
+			readonly context: Omit<PreparedContext, "recoveryStage">;
+			readonly toolCallId: string;
+	  }
+	| {
+			readonly phase: "cancelled";
+			readonly issueId: string;
+			readonly toolCallId: string;
+	  }
+	| {
+			readonly phase: "issue-after-approval";
+			readonly context: Omit<PreparedContext, "recoveryStage">;
+	  }
+	| {
+			readonly phase: "issue-after-approval-result";
+			readonly context: Omit<PreparedContext, "recoveryStage">;
 			readonly toolCallId: string;
 	  }
 	| {
@@ -235,6 +286,8 @@ export interface QaHandoffMcpPublicationDependencies {
 	readonly drafts: QaHandoffDraftStore;
 	readonly artifacts: QaHandoffArtifactStore;
 	readonly recovery: QaHandoffPublicationRecoveryStore;
+	readonly project: string;
+	readonly interactiveDecisions: PiInteractiveDecisions;
 	/** Optional stricter fail-closed cap; it cannot exceed the runtime maximum. */
 	readonly toolIdentityReservationCapacity?: number;
 }
@@ -251,6 +304,7 @@ export interface QaHandoffMcpPublication {
 	setMcpAvailable(available: boolean): void;
 	clear(): void;
 	hasActiveTurn(): boolean;
+	hasPendingDeveloperSelection(): boolean;
 	expectedCall(): QaHandoffMcpPublication.ExpectedCall | undefined;
 	expectedModelCall(): QaHandoffMcpPublication.ExpectedCall | undefined;
 	nextCallInstruction(): string | undefined;
@@ -263,7 +317,10 @@ export interface QaHandoffMcpPublication {
 	complete(
 		input: unknown,
 	): Promise<
-		QaHandoffMcpPublication.PublishedHandoff | QaHandoffMcpPublication.Blocker
+		| QaHandoffMcpPublication.PublishedHandoff
+		| QaHandoffMcpPublication.ContinuingHandoff
+		| QaHandoffMcpPublication.CancelledHandoff
+		| QaHandoffMcpPublication.Blocker
 	>;
 }
 
@@ -278,6 +335,7 @@ const MCP_TOOLS = new Set([
 	ISSUE_TOOL,
 	LIST_COMMENTS_TOOL,
 	SAVE_COMMENT_TOOL,
+	WORKFLOW_TOOL,
 ]);
 
 const blocked = (
@@ -428,8 +486,10 @@ function issueEvidence(value: unknown): LinearIssueEvidence | undefined {
 		!linearRevision(value.updatedAt) ||
 		!nonEmpty(value.status) ||
 		!nonEmpty(value.statusType) ||
-		(!((value.assignee === undefined || value.assignee === null) &&
-			(value.assigneeId === undefined || value.assigneeId === null)) &&
+		(!(
+			(value.assignee === undefined || value.assignee === null) &&
+			(value.assigneeId === undefined || value.assigneeId === null)
+		) &&
 			!(nonEmpty(value.assignee) && nonEmpty(value.assigneeId))) ||
 		!(
 			value.cycleId === undefined ||
@@ -597,6 +657,96 @@ function commentsCall(
 	};
 }
 
+function qaHandoffDecisionActor(
+	actorId: string,
+	authorityRevision: string,
+): AuthenticatedDecisionActor {
+	return {
+		actorId,
+		authorityRevision,
+		active: true,
+		guest: false,
+	};
+}
+
+export function qaHandoffDecisionRequest(
+	project: string,
+	context: SnapshottedContext,
+	artifact: QaHandoffArtifact,
+): { readonly request: DecisionRequest; readonly action: TypedDecisionAction } {
+	const action = {
+		id: "qa-handoff.publish",
+		input: {
+			issueId: context.issueId,
+			issueRevision: context.issueRevision,
+			digest: artifact.digest,
+		},
+	} satisfies TypedDecisionAction;
+	return {
+		action,
+		request: {
+			scope: { project, workflow: "qa-handoff", subject: context.issueId },
+			operation: {
+				kind: "qa-handoff.publication",
+				phase: "publication-approval",
+				input: {
+					issueId: context.issueId,
+					issueRevision: context.issueRevision,
+				},
+				artifacts: [{ kind: "qa-handoff", digest: artifact.digest }],
+				targets: [
+					{ kind: "qa-handoff-draft", issueId: context.issueId },
+					{ kind: "qa-handoff-artifact", issueId: context.issueId },
+					{ kind: "linear-root-comment", issueId: context.issueId },
+				],
+				evidence: [],
+			},
+			presentation: {
+				locale: "es",
+				summary: `¿Desea publicar la entrega a QA para ${context.issueId}?`,
+				details: [],
+				consequences: [
+					"Se guardarán los artefactos canónicos y se publicará un comentario raíz en Linear.",
+				],
+				risks: [
+					"La publicación se detendrá si cambian el issue, la autoridad o la evidencia verificada.",
+				],
+				choices: [
+					{
+						id: "qa-handoff.publish",
+						mode: "execute",
+						action,
+						label: "Publicar entrega a QA",
+						description:
+							"Guardar los artefactos canónicos y publicar la entrega en Linear.",
+					},
+					{
+						id: "qa-handoff.cancel",
+						mode: "cancel",
+						action: { id: "decision.cancel", input: null },
+						label: "Cancelar",
+						description: "Cerrar esta decisión sin publicar en Linear.",
+					},
+				],
+			},
+		},
+	};
+}
+
+function decisionFailure(
+	blocker: DecisionBlocker,
+): QaHandoffMcpPublication.Blocker {
+	return blocked(blocker.code, blocker.message);
+}
+
+function publicationSelected(value: unknown): boolean {
+	return exactInput(value, { action: "publish_handoff" });
+}
+
+function cancellationSelected(value: unknown): boolean {
+	return exactInput(value, { action: "cancel_decision" });
+}
+
 function dispatchForPhase(
 	options: QaHandoffMcpPublicationDependencies,
 	state: PublicationState,
@@ -678,6 +828,48 @@ function dispatchForPhase(
 				transition: (payload) =>
 					issueResultState(state.context, payload, (issue) =>
 						verifiedIssueResultState(options, state, issue, isActive),
+					),
+			};
+		case "decision-prepared":
+		case "cancelled":
+			return { kind: "inactive" };
+		case "public-selection-result":
+			return {
+				kind: "tool-result",
+				expectedTool: WORKFLOW_TOOL,
+				toolCallId: state.toolCallId,
+				transition: (payload) =>
+					exactInput(payload, { status: "continuing" })
+						? {
+								phase: "issue-after-approval",
+								context: state.context,
+							}
+						: failed(
+								"PI_WORKFLOW_QA_HANDOFF_MCP_INCOMPATIBLE",
+								"The public QA handoff continuation result did not match the authorized publication.",
+							),
+			};
+		case "issue-after-approval": {
+			const call = issueCall(state.context.issueId);
+			return {
+				kind: "tool-call",
+				expectedCall: call,
+				expectedModelCall: call,
+				transition: (toolCallId) => ({
+					...state,
+					phase: "issue-after-approval-result",
+					toolCallId,
+				}),
+			};
+		}
+		case "issue-after-approval-result":
+			return {
+				kind: "tool-result",
+				expectedTool: ISSUE_TOOL,
+				toolCallId: state.toolCallId,
+				transition: (payload) =>
+					issueResultState(state.context, payload, (issue) =>
+						persistApprovedPreparation(options, state.context, issue, isActive),
 					),
 			};
 		case "comments-before": {
@@ -838,7 +1030,7 @@ function dispatchForPhase(
 				kind: "completion",
 				expectedCall: {
 					toolName: WORKFLOW_TOOL,
-					input: { issueId: state.context.issueId },
+					input: {},
 				},
 				transition: () => state,
 			};
@@ -964,22 +1156,24 @@ function matchesPostCommentSnapshot(
 	);
 }
 
+async function authorizePublicationEffect(
+	options: QaHandoffMcpPublicationDependencies,
+	context: { readonly executionLease: ExecutionLease },
+): Promise<QaHandoffMcpPublication.Blocker | undefined> {
+	const outcome = await options.interactiveDecisions.authorizeEffect(
+		context.executionLease,
+	);
+	return outcome.kind === "blocked"
+		? decisionFailure(outcome.blocker)
+		: undefined;
+}
+
 async function persistFinalArtifact(
 	options: QaHandoffMcpPublicationDependencies,
-	context: SnapshottedContext,
-	draft: Parameters<QaHandoffDraftStore["save"]>[0]["draft"],
+	context: Omit<PreparedContext, "recoveryStage">,
 	isActive: GenerationGuard,
 ): Promise<QaHandoffArtifact | BlockerState> {
-	const authority = {
-		actorId: context.actor.id,
-		role: "Developer" as const,
-		authorityRevision: SINGLE_USER_AUTHORITY_REVISION,
-	};
-	const candidate = createQaHandoffArtifact(
-		{ id: context.issueId, updatedAt: context.issueRevision },
-		authority,
-		draft,
-	);
+	const candidate = context.candidateArtifact;
 	const existing = await options.artifacts.read(context.issueId);
 	ensureGenerationActive(isActive);
 	let expectedArtifact = candidate;
@@ -992,7 +1186,7 @@ async function persistFinalArtifact(
 		expectedArtifact = createQaHandoffArtifact(
 			{ id: context.issueId, updatedAt: existing.payload.issue.revision },
 			existing.payload.authority,
-			draft,
+			context.draft,
 		);
 		if (canonicalJson(existing) !== canonicalJson(expectedArtifact))
 			return failed(
@@ -1003,6 +1197,9 @@ async function persistFinalArtifact(
 	let saved = existing;
 	if (!saved) {
 		ensureGenerationActive(isActive);
+		const effectFailure = await authorizePublicationEffect(options, context);
+		if (effectFailure)
+			return failed(effectFailure.blocker.code, effectFailure.blocker.message);
 		saved = await options.artifacts.save(candidate);
 		ensureGenerationActive(isActive);
 	}
@@ -1021,62 +1218,60 @@ async function persistFinalArtifact(
 	return readBack;
 }
 
-async function verifiedIssueResultState(
+async function persistApprovedPreparation(
 	options: QaHandoffMcpPublicationDependencies,
-	state: Extract<PublicationState, { phase: "issue-verify-result" }>,
+	context: Omit<PreparedContext, "recoveryStage">,
 	issue: LinearIssueEvidence,
 	isActive: GenerationGuard,
 ): Promise<PublicationState> {
-	if (!matchesVerifiedSnapshot(state.context, issue))
+	if (!matchesVerifiedSnapshot(context, issue))
 		return failed(
 			"PI_WORKFLOW_QA_HANDOFF_REVISION_MISMATCH",
-			"Linear issue evidence changed before QA handoff artifact persistence.",
+			"The complete Linear issue snapshot changed after QA handoff approval.",
 		);
-	const produced = produceQaHandoffDraft(issue);
-	if (produced.status === "blocked")
-		return failed(produced.blocker.code, produced.blocker.message);
 	try {
 		ensureGenerationActive(isActive);
-		let draftReadBack = await options.drafts.read(state.context.issueId);
+		let draftReadBack = await options.drafts.read(context.issueId);
 		ensureGenerationActive(isActive);
 		if (
 			draftReadBack &&
-			canonicalJson(draftReadBack) !== canonicalJson(produced.draft)
+			canonicalJson(draftReadBack) !== canonicalJson(context.draft)
 		)
 			return failed(
 				"PI_WORKFLOW_QA_HANDOFF_DRAFT_STALE",
-				"The persisted QA handoff draft does not match the freshly verified Linear evidence; replace the stale draft before publishing.",
+				"The persisted QA handoff draft does not match the approved Linear evidence.",
 			);
 		if (!draftReadBack) {
+			const effectFailure = await authorizePublicationEffect(options, context);
+			if (effectFailure)
+				return failed(
+					effectFailure.blocker.code,
+					effectFailure.blocker.message,
+				);
 			ensureGenerationActive(isActive);
 			await options.drafts.save({
-				issueId: state.context.issueId,
-				draft: produced.draft,
+				issueId: context.issueId,
+				draft: context.draft,
 			});
 			ensureGenerationActive(isActive);
-			draftReadBack = await options.drafts.read(state.context.issueId);
+			draftReadBack = await options.drafts.read(context.issueId);
 			ensureGenerationActive(isActive);
-			if (
-				!draftReadBack ||
-				canonicalJson(draftReadBack) !== canonicalJson(produced.draft)
-			)
-				return failed(
-					"PI_WORKFLOW_ARTIFACT_READBACK_MISMATCH",
-					"The persisted QA handoff draft read-back did not match freshly verified Linear evidence.",
-				);
 		}
-		const artifact = await persistFinalArtifact(
-			options,
-			state.context,
-			draftReadBack,
-			isActive,
-		);
+		if (
+			!draftReadBack ||
+			canonicalJson(draftReadBack) !== canonicalJson(context.draft)
+		)
+			return failed(
+				"PI_WORKFLOW_ARTIFACT_READBACK_MISMATCH",
+				"The persisted QA handoff draft read-back did not match the approved evidence.",
+			);
+		const artifact = await persistFinalArtifact(options, context, isActive);
 		if ("phase" in artifact) return artifact;
 		let recovery: Awaited<
 			ReturnType<QaHandoffPublicationRecoveryStore["read"]>
 		>;
 		try {
-			recovery = await options.recovery.read(state.context.issueId);
+			recovery = await options.recovery.read(context.issueId);
 			ensureGenerationActive(isActive);
 		} catch (error) {
 			if (error === CANCELLED_GENERATION) throw error;
@@ -1095,13 +1290,233 @@ async function verifiedIssueResultState(
 		return {
 			phase: "comments-before",
 			context: {
-				...state.context,
+				...context,
 				preparedArtifact: artifact,
-				recoveryStage:
-					recovery?.digest === artifact.digest ? recovery.stage : undefined,
+				...(recovery ? { recoveryStage: recovery.stage } : {}),
 			},
 			read: emptyCommentRead(),
 		};
+	} catch (error) {
+		if (error === CANCELLED_GENERATION) throw error;
+		return failed(
+			"PI_WORKFLOW_QA_HANDOFF_PREPARATION_FAILED",
+			error instanceof Error
+				? error.message
+				: "QA handoff artifact persistence failed.",
+		);
+	}
+}
+
+async function bindPublicationExecution(
+	options: QaHandoffMcpPublicationDependencies,
+	context: DecisionPreparedContext,
+	lease: ExecutionLease,
+	boundManifest?: ExecutionManifestBinding,
+): Promise<
+	Omit<PreparedContext, "recoveryStage"> | QaHandoffMcpPublication.Blocker
+> {
+	try {
+		const manifest = await options.recovery.bindExecution(
+			context.candidateArtifact,
+			lease,
+		);
+		if (
+			boundManifest &&
+			canonicalJson(boundManifest) !== canonicalJson(manifest)
+		)
+			return blocked(
+				"PI_WORKFLOW_DECISION_MANIFEST_CONFLICT",
+				"Recovered QA handoff decision manifest does not match durable publication recovery.",
+			);
+		if (!boundManifest) {
+			const bound = await options.interactiveDecisions.bindExecutionManifest(
+				lease,
+				manifest,
+			);
+			if (bound.kind === "blocked") return decisionFailure(bound.blocker);
+		}
+		const prepared = {
+			...context,
+			preparedArtifact: context.candidateArtifact,
+			executionLease: lease,
+		};
+		const effectFailure = await authorizePublicationEffect(options, prepared);
+		return effectFailure ?? prepared;
+	} catch (error) {
+		return blocked(
+			"PI_WORKFLOW_QA_HANDOFF_RECOVERY_PERSISTENCE_FAILED",
+			error instanceof Error
+				? error.message
+				: "QA handoff execution binding failed.",
+		);
+	}
+}
+
+async function restoreOrPrepareDecision(
+	options: QaHandoffMcpPublicationDependencies,
+	input: Omit<DecisionPreparedContext, "decision">,
+): Promise<PublicationState> {
+	const decision = qaHandoffDecisionRequest(
+		options.project,
+		input,
+		input.candidateArtifact,
+	);
+	const actor = qaHandoffDecisionActor(
+		input.actor.id,
+		SINGLE_USER_AUTHORITY_REVISION,
+	);
+	let recovery = await options.interactiveDecisions.recover(
+		decision.request.scope,
+		actor,
+	);
+	if (recovery.kind === "active")
+		recovery = await options.interactiveDecisions.recover(
+			decision.request.scope,
+			actor,
+			{ kind: "resume", request: decision.request },
+		);
+	if (recovery.kind === "authorized") {
+		if (canonicalJson(recovery.lease.action) !== canonicalJson(decision.action))
+			recovery = await options.interactiveDecisions.recover(
+				decision.request.scope,
+				actor,
+				{
+					kind: "drift",
+					request: decision.request,
+					diff: {
+						summary: "La evidencia de la entrega a QA cambió.",
+						details: [
+							"La revisión del issue o el artefacto canónico ya no coincide con la autorización anterior.",
+						],
+					},
+				},
+			);
+		else {
+			const prepared = await bindPublicationExecution(
+				options,
+				{
+					...input,
+					decision: {
+						decisionId: recovery.lease.decisionId,
+						action: decision.action,
+					},
+				},
+				recovery.lease,
+				recovery.manifest,
+			);
+			return "status" in prepared
+				? failed(prepared.blocker.code, prepared.blocker.message)
+				: { phase: "issue-after-approval", context: prepared };
+		}
+	}
+	if (recovery.kind === "none") {
+		const presentation = await options.interactiveDecisions.prepare(
+			decision.request,
+			actor,
+		);
+		return {
+			phase: "decision-prepared",
+			context: {
+				...input,
+				decision: {
+					decisionId: presentation.decisionId,
+					action: decision.action,
+				},
+			},
+		};
+	}
+	if (
+		recovery.kind === "prepared" ||
+		recovery.kind === "reapproval" ||
+		recovery.kind === "drift"
+	) {
+		return {
+			phase: "decision-prepared",
+			context: {
+				...input,
+				decision: {
+					decisionId:
+						recovery.kind === "prepared"
+							? recovery.decisionId
+							: recovery.presentation.decisionId,
+					action: decision.action,
+				},
+			},
+		};
+	}
+	if (recovery.kind === "blocked")
+		return failed(recovery.blocker.code, recovery.blocker.message);
+	return failed(
+		"PI_WORKFLOW_DECISION_REPLAY",
+		`QA handoff decision is already ${recovery.kind}.`,
+	);
+}
+
+async function verifiedIssueResultState(
+	options: QaHandoffMcpPublicationDependencies,
+	state: Extract<PublicationState, { phase: "issue-verify-result" }>,
+	issue: LinearIssueEvidence,
+	isActive: GenerationGuard,
+): Promise<PublicationState> {
+	if (!matchesVerifiedSnapshot(state.context, issue))
+		return failed(
+			"PI_WORKFLOW_QA_HANDOFF_REVISION_MISMATCH",
+			"Linear issue evidence changed before QA handoff artifact persistence.",
+		);
+	const produced = produceQaHandoffDraft(issue);
+	if (produced.status === "blocked")
+		return failed(produced.blocker.code, produced.blocker.message);
+	try {
+		ensureGenerationActive(isActive);
+		const draftReadBack = await options.drafts.read(state.context.issueId);
+		ensureGenerationActive(isActive);
+		if (
+			draftReadBack &&
+			canonicalJson(draftReadBack) !== canonicalJson(produced.draft)
+		)
+			return failed(
+				"PI_WORKFLOW_QA_HANDOFF_DRAFT_STALE",
+				"The persisted QA handoff draft does not match the freshly verified Linear evidence; replace the stale draft before publishing.",
+			);
+		const draft = draftReadBack ?? produced.draft;
+		const authority = {
+			actorId: state.context.actor.id,
+			role: "Developer" as const,
+			authorityRevision: SINGLE_USER_AUTHORITY_REVISION,
+		};
+		let candidateArtifact = createQaHandoffArtifact(
+			{ id: state.context.issueId, updatedAt: state.context.issueRevision },
+			authority,
+			draft,
+		);
+		const existing = await options.artifacts.read(state.context.issueId);
+		ensureGenerationActive(isActive);
+		if (existing) {
+			if (!isQaHandoffArtifact(existing, state.context.issueId))
+				return failed(
+					"PI_WORKFLOW_QA_HANDOFF_ARTIFACT_CONFLICT",
+					"The issue already has a malformed QA handoff artifact.",
+				);
+			const historical = createQaHandoffArtifact(
+				{
+					id: state.context.issueId,
+					updatedAt: existing.payload.issue.revision,
+				},
+				existing.payload.authority,
+				draft,
+			);
+			if (canonicalJson(existing) !== canonicalJson(historical))
+				return failed(
+					"PI_WORKFLOW_QA_HANDOFF_ARTIFACT_CONFLICT",
+					"The issue already has a different QA handoff artifact.",
+				);
+			candidateArtifact = existing;
+		}
+		return restoreOrPrepareDecision(options, {
+			...state.context,
+			draft,
+			candidateArtifact,
+		});
 	} catch (error) {
 		if (error === CANCELLED_GENERATION) throw error;
 		const code =
@@ -1112,7 +1527,7 @@ async function verifiedIssueResultState(
 			code,
 			error instanceof Error
 				? error.message
-				: "QA handoff artifact persistence failed.",
+				: "QA handoff decision preparation failed.",
 		);
 	}
 }
@@ -1459,6 +1874,8 @@ export function createQaHandoffMcpPublication(
 	}
 
 	function nextCallInstruction(): string | undefined {
+		if (state.phase === "decision-prepared")
+			return `The shared QA handoff decision descriptor is the only authorization surface. After it records a choice, call ${WORKFLOW_TOOL} with exactly {"action":"publish_handoff"} or {"action":"cancel_decision"} to match that claim. Never infer approval from prose. Do not display or request hashes or workflow metadata.`;
 		const expected = expectedModelCall(dispatchForPhase(options, state));
 		if (!expected) return undefined;
 		const purpose = (() => {
@@ -1469,6 +1886,8 @@ export function createQaHandoffMcpPublication(
 					return "read the initial authoritative issue snapshot";
 				case "issue-verify":
 					return "perform the required additional freshness read";
+				case "issue-after-approval":
+					return "revalidate the complete issue snapshot after approval and before artifact persistence";
 				case "comments-before":
 					return "inspect existing root comments before publication";
 				case "issue-before-mutation":
@@ -1505,20 +1924,24 @@ export function createQaHandoffMcpPublication(
 			event.input.path.endsWith("/skills/qa-handoff/SKILL.md")
 		)
 			return undefined;
-		if (
-			activeState.phase === "blocked" &&
-			event.toolName === WORKFLOW_TOOL &&
-			record(event.input) &&
-			Object.keys(event.input).length === 1 &&
-			nonEmpty(event.input.issueId)
-		)
+		if (activeState.phase === "blocked" && event.toolName === WORKFLOW_TOOL)
 			return undefined;
 		const dispatch = dispatchForPhase(options, activeState);
+		const typedPublication =
+			activeState.phase === "decision-prepared" &&
+			event.toolName === WORKFLOW_TOOL &&
+			publicationSelected(event.input);
+		const typedCancellation =
+			activeState.phase === "decision-prepared" &&
+			event.toolName === WORKFLOW_TOOL &&
+			cancellationSelected(event.input);
 		const acceptedIdentity =
-			dispatch.kind === "tool-call" &&
-			event.toolName === dispatch.expectedModelCall.toolName &&
 			nonEmpty(event.toolCallId) &&
-			exactInput(event.input, dispatch.expectedModelCall.input)
+			((dispatch.kind === "tool-call" &&
+				event.toolName === dispatch.expectedModelCall.toolName &&
+				exactInput(event.input, dispatch.expectedModelCall.input)) ||
+				typedPublication ||
+				typedCancellation)
 				? toolCallIdentity(event.toolName, event.toolCallId)
 				: undefined;
 		const priorReservation = acceptedIdentity
@@ -1536,6 +1959,82 @@ export function createQaHandoffMcpPublication(
 			return { block: true, reason: state.blocker.code };
 		}
 		if (
+			activeState.phase === "decision-prepared" &&
+			(typedPublication || typedCancellation)
+		) {
+			if (!nonEmpty(event.toolCallId) || !acceptedIdentity) {
+				state = failed(
+					"PI_WORKFLOW_QA_HANDOFF_MCP_INCOMPATIBLE",
+					"The public QA handoff decision call did not provide a stable identity.",
+				);
+				return { block: true, reason: state.blocker.code };
+			}
+			const actor = qaHandoffDecisionActor(
+				activeState.context.actor.id,
+				SINGLE_USER_AUTHORITY_REVISION,
+			);
+			const action = typedCancellation
+				? { id: "decision.cancel", input: null }
+				: activeState.context.decision.action;
+			const authorization = await options.interactiveDecisions.authorize(
+				activeState.context.decision.decisionId,
+				action,
+				actor,
+			);
+			if (authorization.kind === "blocked") {
+				state = failed(
+					authorization.blocker.code,
+					authorization.blocker.message,
+				);
+				return { block: true, reason: state.blocker.code };
+			}
+			if (typedCancellation) {
+				if (authorization.kind !== "cancelled") {
+					state = failed(
+						"PI_WORKFLOW_DECISION_ACTION_MISMATCH",
+						"The shared QA handoff decision did not authorize cancellation.",
+					);
+					return { block: true, reason: state.blocker.code };
+				}
+				state = {
+					phase: "cancelled",
+					issueId: activeState.context.issueId,
+					toolCallId: event.toolCallId,
+				};
+				reservedToolIdentities.set(
+					acceptedIdentity,
+					Object.freeze({ generation }),
+				);
+				return undefined;
+			}
+			if (authorization.kind !== "authorized") {
+				state = failed(
+					"PI_WORKFLOW_DECISION_ACTION_MISMATCH",
+					"The shared QA handoff decision did not authorize publication.",
+				);
+				return { block: true, reason: state.blocker.code };
+			}
+			const prepared = await bindPublicationExecution(
+				options,
+				activeState.context,
+				authorization.lease,
+			);
+			if ("status" in prepared) {
+				state = failed(prepared.blocker.code, prepared.blocker.message);
+				return { block: true, reason: state.blocker.code };
+			}
+			state = {
+				phase: "public-selection-result",
+				context: prepared,
+				toolCallId: event.toolCallId,
+			};
+			reservedToolIdentities.set(
+				acceptedIdentity,
+				Object.freeze({ generation }),
+			);
+			return undefined;
+		}
+		if (
 			dispatch.kind === "tool-call" &&
 			dispatch.expectedCall.toolName === SAVE_COMMENT_TOOL &&
 			event.toolName === SAVE_COMMENT_TOOL &&
@@ -1545,6 +2044,17 @@ export function createQaHandoffMcpPublication(
 		) {
 			try {
 				ensureGenerationActive(() => isCurrentTurn(generation, activeState));
+				const effectFailure = await authorizePublicationEffect(
+					options,
+					activeState.context,
+				);
+				if (effectFailure) {
+					state = failed(
+						effectFailure.blocker.code,
+						effectFailure.blocker.message,
+					);
+					return { block: true, reason: state.blocker.code };
+				}
 				// This durable claim is the last local step before authorizing the external
 				// Linear mutation. Once tool authorization returns, a process crash cannot
 				// be atomically coordinated with external execution, so the outcome is
@@ -1556,6 +2066,11 @@ export function createQaHandoffMcpPublication(
 				);
 				if (!isCurrentTurn(generation, activeState)) {
 					try {
+						const releaseAuthorization = await authorizePublicationEffect(
+							options,
+							activeState.context,
+						);
+						if (releaseAuthorization) return staleToolCallBlock();
 						await options.recovery.release(
 							activeState.context.preparedArtifact,
 							generationOwnerId,
@@ -1680,6 +2195,17 @@ export function createQaHandoffMcpPublication(
 		) {
 			try {
 				ensureGenerationActive(() => isCurrentTurn(generation, activeState));
+				const effectFailure = await authorizePublicationEffect(
+					options,
+					activeState.context,
+				);
+				if (effectFailure) {
+					state = failed(
+						effectFailure.blocker.code,
+						effectFailure.blocker.message,
+					);
+					return true;
+				}
 				await options.recovery.release(
 					activeState.context.preparedArtifact,
 					generationOwnerId,
@@ -1714,9 +2240,56 @@ export function createQaHandoffMcpPublication(
 		) {
 			try {
 				ensureGenerationActive(() => isCurrentTurn(generation, activeState));
+				const effectFailure = await authorizePublicationEffect(
+					options,
+					activeState.context,
+				);
+				if (effectFailure) {
+					state = failed(
+						effectFailure.blocker.code,
+						effectFailure.blocker.message,
+					);
+					return true;
+				}
 				await options.recovery.finalizeVerified(
 					activeState.context.preparedArtifact,
 				);
+				if (!isCurrentTurn(generation, activeState)) return false;
+				const terminalEffectFailure = await authorizePublicationEffect(
+					options,
+					activeState.context,
+				);
+				if (terminalEffectFailure) {
+					state = failed(
+						terminalEffectFailure.blocker.code,
+						terminalEffectFailure.blocker.message,
+					);
+					return true;
+				}
+				const terminal = await options.interactiveDecisions.recover(
+					{
+						project: options.project,
+						workflow: "qa-handoff",
+						subject: activeState.context.issueId,
+					},
+					qaHandoffDecisionActor(
+						activeState.context.actor.id,
+						SINGLE_USER_AUTHORITY_REVISION,
+					),
+					{ kind: "terminal", state: "published" },
+				);
+				if (terminal.kind !== "terminal") {
+					const blocker =
+						terminal.kind === "blocked"
+							? terminal.blocker
+							: {
+									code: "PI_WORKFLOW_DECISION_MANIFEST_CONFLICT",
+									message:
+										"QA handoff publication could not persist terminal decision state.",
+								};
+					state = failed(blocker.code, blocker.message);
+					return true;
+				}
 				if (!isCurrentTurn(generation, activeState)) return false;
 			} catch (error) {
 				if (!isCurrentTurn(generation, activeState)) return false;
@@ -1797,20 +2370,32 @@ export function createQaHandoffMcpPublication(
 	async function complete(
 		input: unknown,
 	): Promise<
-		QaHandoffMcpPublication.PublishedHandoff | QaHandoffMcpPublication.Blocker
+		| QaHandoffMcpPublication.PublishedHandoff
+		| QaHandoffMcpPublication.ContinuingHandoff
+		| QaHandoffMcpPublication.CancelledHandoff
+		| QaHandoffMcpPublication.Blocker
 	> {
 		if (state.phase === "blocked") {
 			return { status: state.status, blocker: state.blocker };
 		}
 		if (
-			state.phase !== "ready" ||
-			!exactInput(input, { issueId: state.context.issueId })
+			state.phase === "cancelled" &&
+			exactInput(input, { action: "cancel_decision" })
 		) {
-			state = failed(
+			const issueId = state.issueId;
+			clear();
+			return { status: "cancelled", issueId };
+		}
+		if (
+			state.phase === "public-selection-result" &&
+			exactInput(input, { action: "publish_handoff" })
+		)
+			return { status: "continuing" };
+		if (state.phase !== "ready" || !exactInput(input, {})) {
+			return blocked(
 				"PI_WORKFLOW_QA_HANDOFF_MCP_PROTOCOL_INVALID",
-				"QA handoff publication is incomplete or does not match the active issue.",
+				"QA handoff publication is incomplete or does not match the authorized issue and artifact.",
 			);
-			return { status: state.status, blocker: state.blocker };
 		}
 		const result = state.context.publication;
 		clear();
@@ -1829,6 +2414,7 @@ export function createQaHandoffMcpPublication(
 		setMcpAvailable,
 		clear,
 		hasActiveTurn,
+		hasPendingDeveloperSelection: () => state.phase === "decision-prepared",
 		expectedCall: () => expectedCall(dispatchForPhase(options, state)),
 		expectedModelCall: () =>
 			expectedModelCall(dispatchForPhase(options, state)),

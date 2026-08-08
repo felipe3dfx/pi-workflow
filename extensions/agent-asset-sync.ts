@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { isAbsolute, relative, resolve } from "node:path";
 import {
 	composeMigrationChain,
@@ -6,11 +6,23 @@ import {
 	type AgentAssetMigrationStep,
 } from "./agent-asset-migrations.ts";
 import {
-	createVerifiedOperation,
+	createOperationManifest,
+	materializeOperationEvidence,
 	persistVerifiedOperation,
 	verifyOperationBackups,
 	verifyOperationSuccessors,
 } from "./agent-asset-operation.ts";
+import type {
+	AuthenticatedDecisionActor,
+	DecisionRequest,
+	EffectAuthorizationOutcome,
+	ExecutionLease,
+	ExecutionManifestBinding,
+	RecoveryDirective,
+	RecoveryOutcome,
+	TypedDecisionAction,
+} from "./interactive-decisions.ts";
+import { canonicalJson } from "./workflow-contracts.ts";
 
 const AGENT_ASSET_CATALOG_SCHEMA_VERSION = 1 as const;
 const AGENT_ASSET_MANIFEST_SCHEMA_VERSION = 1 as const;
@@ -55,14 +67,31 @@ export interface AgentAssetSyncOptions {
 	agentDirectory: string;
 	manifestPath: string;
 	operationDirectory?: string;
-	nonce?: () => string;
+	project?: string;
+	interactiveDecisions?: {
+		bindExecutionManifest(
+			lease: ExecutionLease,
+			manifest: ExecutionManifestBinding,
+		): Promise<EffectAuthorizationOutcome>;
+		authorizeEffect(lease: ExecutionLease): Promise<EffectAuthorizationOutcome>;
+		recover(
+			scope: DecisionRequest["scope"],
+			actor: AuthenticatedDecisionActor,
+			directive?: RecoveryDirective,
+		): Promise<RecoveryOutcome>;
+	};
 }
 
 export interface AgentAssetPreviewOptions {
 	signal?: AbortSignal;
 }
 export interface AgentAssetApplyOptions extends AgentAssetPreviewOptions {
-	confirm(plan: AgentAssetPlan): Promise<boolean>;
+	lease: ExecutionLease;
+	manifest?: ExecutionManifestBinding;
+}
+export interface AgentAssetRecoveryOptions {
+	lease: ExecutionLease;
+	manifest?: ExecutionManifestBinding;
 }
 type AgentAssetDrift = "missing" | "none" | "modified" | "outdated" | "future";
 
@@ -144,6 +173,128 @@ export interface AgentAssetApplyResult {
 	digest: string;
 }
 
+export interface AgentAssetDecisionDescriptor {
+	request: DecisionRequest;
+	action: TypedDecisionAction;
+}
+
+export function agentAssetApplyDecision(
+	project: string,
+	plan: AgentAssetPlan,
+): AgentAssetDecisionDescriptor {
+	const action: TypedDecisionAction = {
+		id: "sync.apply.execute",
+		input: { planDigest: plan.digest },
+	};
+	return {
+		action,
+		request: {
+			scope: { project, workflow: "sync", subject: `apply:${plan.digest}` },
+			operation: {
+				kind: "apply-agent-assets",
+				phase: "plan-ready",
+				input: {
+					planDigest: plan.digest,
+					manifestDigest: plan.manifestDigest,
+					actionCount: plan.actions.length,
+				},
+				artifacts: [{ planDigest: plan.digest }],
+				targets: plan.actions.map((entry) => ({
+					path: entry.targetPath,
+					fromVersion: entry.fromVersion,
+					toVersion: entry.toVersion,
+					sourceDigest: entry.sourceDigest,
+				})),
+				evidence: [{ inspectionDigest: plan.inspectionDigest }],
+			},
+			presentation: {
+				locale: "en",
+				summary: `Apply ${plan.actions.length} package-owned agent asset change(s)?`,
+				details: [`Plan digest: ${plan.digest}`],
+				consequences: [
+					"Writes package-owned global agent assets and their ownership manifest.",
+				],
+				risks: [
+					"Detected drift stops the operation before the affected mutation.",
+				],
+				choices: [
+					{
+						id: action.id,
+						mode: "execute",
+						action,
+						label: "Apply plan",
+						description: "Apply this exact reviewed plan.",
+					},
+					{
+						id: "decision.cancel",
+						mode: "cancel",
+						action: { id: "decision.cancel", input: null },
+						label: "Cancel",
+						description: "Leave all agent assets unchanged.",
+					},
+				],
+			},
+		},
+	};
+}
+
+export function agentAssetRecoveryDecision(
+	project: string,
+	operationId: string,
+	mode: "resume" | "rollback",
+): AgentAssetDecisionDescriptor {
+	const action: TypedDecisionAction = {
+		id: `sync.${mode}.execute`,
+		input: { operationId },
+	};
+	return {
+		action,
+		request: {
+			scope: { project, workflow: "sync", subject: `${mode}:${operationId}` },
+			operation: {
+				kind: `${mode}-agent-assets`,
+				phase: "operation-recovery",
+				input: { operationId, mode },
+				artifacts: [{ operationId }],
+				targets: [],
+				evidence: [],
+			},
+			presentation: {
+				locale: "en",
+				summary: `${mode === "resume" ? "Resume" : "Roll back"} agent asset operation ${operationId}?`,
+				details: [
+					"Recovery uses the immutable operation evidence and conditional writes.",
+				],
+				consequences: [
+					mode === "resume"
+						? "Restores the verified successor state."
+						: "Restores the verified predecessor state.",
+				],
+				risks: [
+					"Unrecognized target or manifest drift stops recovery before mutation.",
+				],
+				choices: [
+					{
+						id: action.id,
+						mode: "execute",
+						action,
+						label:
+							mode === "resume" ? "Resume operation" : "Roll back operation",
+						description: `Execute the verified ${mode} mutations.`,
+					},
+					{
+						id: "decision.cancel",
+						mode: "cancel",
+						action: { id: "decision.cancel", input: null },
+						label: "Cancel",
+						description: "Leave the current filesystem state unchanged.",
+					},
+				],
+			},
+		},
+	};
+}
+
 type Validation<T> = { ok: true; value: T } | { ok: false; diagnostic: string };
 type ReadResult =
 	| { status: "ok"; content: string | undefined }
@@ -163,14 +314,18 @@ function mutationReceipt(error: unknown): {
 	return { mutation: "none", durability: "durable" };
 }
 
-function releasedOperationResult(error: unknown): AgentAssetApplyResult | undefined {
+function releasedOperationResult(
+	error: unknown,
+): AgentAssetApplyResult | undefined {
 	if (!isRecord(error) || !isRecord(error.operationResult)) return undefined;
 	const result = error.operationResult;
 	if (
-		(result.status !== "applied" && result.status !== "blocked" && result.status !== "canceled") ||
+		(result.status !== "applied" &&
+			result.status !== "blocked" &&
+			result.status !== "canceled") ||
 		(result.mutation !== "applied" && result.mutation !== "none") ||
 		!Array.isArray(result.assets) ||
-		typeof result.operationId !== "string" && result.operationId !== null
+		(typeof result.operationId !== "string" && result.operationId !== null)
 	)
 		return undefined;
 	return result as unknown as AgentAssetApplyResult;
@@ -556,6 +711,74 @@ export function createAgentAssetSync(options: AgentAssetSyncOptions) {
 	const operationDirectory =
 		options.operationDirectory ??
 		resolve(options.agentDirectory, "..", ".pi-workflow/sync-operations");
+	const project = options.project ?? "pi-workflow";
+	const exact = (left: unknown, right: unknown) =>
+		canonicalJson(left) === canonicalJson(right);
+	const decisionActor = (
+		lease: ExecutionLease,
+	): AuthenticatedDecisionActor => ({
+		actorId: lease.actorId,
+		authorityRevision: lease.authorityRevision,
+		active: true,
+		guest: false,
+	});
+	const executionManifest = (
+		lease: ExecutionLease,
+		ref: string,
+	): ExecutionManifestBinding => ({
+		ref,
+		decisionId: lease.decisionId,
+		operationDigest: lease.operationDigest,
+		executionId: lease.executionId,
+		generation: lease.generation,
+	});
+	async function bindExecution(
+		lease: ExecutionLease,
+		manifest: ExecutionManifestBinding,
+		recovered?: ExecutionManifestBinding,
+	): Promise<void> {
+		if (!options.interactiveDecisions)
+			throw new Error("shared interactive decision authority is unavailable");
+		if (recovered) {
+			if (!exact(recovered, manifest))
+				throw new Error(
+					"recovered execution manifest does not match operation evidence",
+				);
+			const authorized =
+				await options.interactiveDecisions.authorizeEffect(lease);
+			if (authorized.kind === "blocked")
+				throw new Error(authorized.blocker.message);
+			return;
+		}
+		const bound = await options.interactiveDecisions.bindExecutionManifest(
+			lease,
+			manifest,
+		);
+		if (bound.kind === "blocked") throw new Error(bound.blocker.message);
+	}
+	async function authorizeMutation(lease: ExecutionLease): Promise<void> {
+		if (!options.interactiveDecisions)
+			throw new Error("shared interactive decision authority is unavailable");
+		const authorized =
+			await options.interactiveDecisions.authorizeEffect(lease);
+		if (authorized.kind === "blocked")
+			throw new Error(authorized.blocker.message);
+	}
+	async function completeExecution(
+		descriptor: AgentAssetDecisionDescriptor,
+		lease: ExecutionLease,
+		state: string,
+	): Promise<void> {
+		if (!options.interactiveDecisions)
+			throw new Error("shared interactive decision authority is unavailable");
+		const completed = await options.interactiveDecisions.recover(
+			descriptor.request.scope,
+			decisionActor(lease),
+			{ kind: "terminal", state },
+		);
+		if (completed.kind !== "terminal" || completed.state !== state)
+			throw new Error("shared decision could not be finalized");
+	}
 	const recoveryResult = (
 		status: AgentAssetApplyResult["status"],
 		mutation: AgentAssetApplyResult["mutation"],
@@ -567,7 +790,8 @@ export function createAgentAssetSync(options: AgentAssetSyncOptions) {
 			status,
 			mutation,
 			durability,
-			readiness: status === "applied" ? ("ready" as const) : ("blocked" as const),
+			readiness:
+				status === "applied" ? ("ready" as const) : ("blocked" as const),
 			assets: [],
 			diagnostics,
 			operationId,
@@ -578,142 +802,328 @@ export function createAgentAssetSync(options: AgentAssetSyncOptions) {
 	async function recover(
 		operationId: string,
 		mode: "resume" | "rollback",
+		recoveryOptions: AgentAssetRecoveryOptions,
 	): Promise<AgentAssetApplyResult> {
 		if (!DIGEST_PATTERN.test(operationId))
-			return recoveryResult("blocked", "none", ["Operation ID is invalid; no files were changed."], null);
+			return recoveryResult(
+				"blocked",
+				"none",
+				["Operation ID is invalid; no files were changed."],
+				null,
+			);
 		try {
 			return await options.filesystem.withMutation(operationId, async () => {
-		const operationPath = `${operationDirectory}/${operationId}/operation.json`;
-		let rawOperation: string | undefined;
-		try {
-			rawOperation = await options.filesystem.readFile(operationPath);
-			if (rawOperation === undefined)
-				return recoveryResult("blocked", "none", ["Operation evidence is missing; no files were changed."], operationId);
-		} catch (error) {
-			return recoveryResult("blocked", "none", [`Unable to read operation evidence: ${error instanceof Error ? error.message : String(error)}. No files were changed.`], operationId);
-		}
-		let operationValue: unknown;
-		try {
-			operationValue = JSON.parse(rawOperation);
-		} catch {
-			return recoveryResult("blocked", "none", ["Operation evidence is malformed; no files were changed."], operationId);
-		}
-		const operation = await verifyOperationBackups(operationValue, options.filesystem);
-		if (!operation.ok)
-			return recoveryResult("blocked", "none", [operation.diagnostic], operationId);
-		const manifest = operation.value;
-		if (
-			manifest.operationId !== operationId ||
-			manifest.operationDirectory !== operationDirectory ||
-			manifest.manifestPath !== options.manifestPath ||
-			manifest.targets.some(
-				(target) =>
-					!isContained(options.agentDirectory, target.targetPath) ||
-					resolve(options.agentDirectory, `${target.targetPath.split("/").at(-1)}`) !==
-						target.targetPath,
-			)
-		)
-			return recoveryResult("blocked", "none", ["Operation evidence targets an unsupported path; no files were changed."], operationId);
-
-		const desiredContents = new Map<string, string>();
-		if (mode === "resume") {
-			const successors = await verifyOperationSuccessors(operationValue, options.filesystem);
-			if (!successors.ok) return recoveryResult("blocked", "none", [successors.diagnostic], operationId);
-			for (const target of manifest.targets)
-				desiredContents.set(target.targetPath, (await options.filesystem.readFile(target.successorPath)) as string);
-		}
-		const manifestBeforeContent = manifest.manifestOriginallyMissing
-			? undefined
-			: await options.filesystem.readFile(manifest.manifestBackupPath as string);
-		const manifestBefore = parseManifest(manifestBeforeContent);
-		if (!manifestBefore.ok)
-			return recoveryResult("blocked", "none", ["Operation manifest backup is invalid; no files were changed."], operationId);
-		const resumeManifestContent = `${JSON.stringify(
-			{
-				schemaVersion: AGENT_ASSET_MANIFEST_SCHEMA_VERSION,
-				assets: {
-					...manifestBefore.value.assets,
-					...Object.fromEntries(
-						manifest.targets.map((target) => [
-							target.targetPath.split("/").at(-1)?.replace(/\.md$/, ""),
-							{
-								ownership: "package" as const,
-								version: target.toVersion,
-								digest: target.sourceDigest,
-							},
-						]),
-					),
-				},
-			},
-			null,
-			2,
-		)}\n`;
-		if (sha256(resumeManifestContent) !== manifest.manifestAfterDigest)
-			return recoveryResult("blocked", "none", ["Operation manifest evidence does not reproduce the approved state; no files were changed."], operationId);
-
-		const currentTargets = await Promise.all(
-			manifest.targets.map(async (target) => ({
-				target,
-				content: await options.filesystem.readFile(target.targetPath),
-			})),
-		);
-		const currentManifest = await options.filesystem.readFile(options.manifestPath);
-		const digestOf = (content: string | undefined) =>
-			content === undefined ? null : sha256(content);
-		if (
-			currentTargets.some(({ target, content }) => {
-				const current = digestOf(content);
-				return current !== target.previousDigest && current !== target.sourceDigest;
-			}) ||
-			![manifest.manifestBeforeDigest, manifest.manifestAfterDigest].includes(
-				digestOf(currentManifest),
-			)
-		)
-			return recoveryResult("blocked", "none", ["Operation recovery found an unrecognized current state; no files were changed."], operationId);
-
-		let wrote = false;
-		try {
-			for (const { target, content } of currentTargets) {
-				const expectedDigest = digestOf(content);
-				if (mode === "resume") {
-					if (expectedDigest !== target.sourceDigest)
-						await options.filesystem.writeFileAtomic(target.targetPath, desiredContents.get(target.targetPath) as string, expectedDigest);
-						wrote = true;
-				} else if (target.originallyMissing) {
-					if (content !== undefined)
-						await options.filesystem.removeFileAtomic(target.targetPath, expectedDigest as string);
-						wrote = true;
-				} else if (expectedDigest !== target.previousDigest) {
-					const backup = await options.filesystem.readFile(target.backupPath as string);
-					if (backup === undefined) throw new Error(`missing backup for ${target.targetPath}`);
-					await options.filesystem.writeFileAtomic(target.targetPath, backup, expectedDigest);
-					wrote = true;
+				const operationPath = `${operationDirectory}/${operationId}/operation.json`;
+				let rawOperation: string | undefined;
+				try {
+					rawOperation = await options.filesystem.readFile(operationPath);
+					if (rawOperation === undefined)
+						return recoveryResult(
+							"blocked",
+							"none",
+							["Operation evidence is missing; no files were changed."],
+							operationId,
+						);
+				} catch (error) {
+					return recoveryResult(
+						"blocked",
+						"none",
+						[
+							`Unable to read operation evidence: ${error instanceof Error ? error.message : String(error)}. No files were changed.`,
+						],
+						operationId,
+					);
 				}
-			}
-			const currentManifestDigest = digestOf(currentManifest);
-			if (mode === "resume" && currentManifestDigest !== manifest.manifestAfterDigest)
-				await options.filesystem.writeFileAtomic(
-					options.manifestPath,
-					resumeManifestContent,
-					currentManifestDigest,
+				let operationValue: unknown;
+				try {
+					operationValue = JSON.parse(rawOperation);
+				} catch {
+					return recoveryResult(
+						"blocked",
+						"none",
+						["Operation evidence is malformed; no files were changed."],
+						operationId,
+					);
+				}
+				const operation = await verifyOperationBackups(
+					operationValue,
+					options.filesystem,
 				);
-				wrote = true;
-			if (mode === "rollback" && manifest.manifestOriginallyMissing) {
-				if (currentManifest !== undefined)
-					await options.filesystem.removeFileAtomic(options.manifestPath, currentManifestDigest as string);
-					wrote = true;
-			} else if (mode === "rollback" && currentManifestDigest !== manifest.manifestBeforeDigest) {
-				const backup = await options.filesystem.readFile(manifest.manifestBackupPath as string);
-				if (backup === undefined) throw new Error("missing manifest backup");
-				await options.filesystem.writeFileAtomic(options.manifestPath, backup, currentManifestDigest);
-				wrote = true;
-			}
-			return recoveryResult("applied", "applied", [], operationId);
-		} catch (error) {
-			const receipt = mutationReceipt(error);
-			const applied = wrote || receipt.mutation === "applied";
-			return recoveryResult("blocked", applied ? "applied" : "none", [`Unable to ${mode} operation: ${error instanceof Error ? error.message : String(error)}. ${applied ? "Partial mutation was applied; completed atomic writes remain recoverable." : "No files were changed."}`], operationId, receipt.durability);
-		}
+				if (!operation.ok)
+					return recoveryResult(
+						"blocked",
+						"none",
+						[operation.diagnostic],
+						operationId,
+					);
+				const manifest = operation.value;
+				const descriptor = agentAssetRecoveryDecision(
+					project,
+					operationId,
+					mode,
+				);
+				if (!exact(recoveryOptions.lease?.action, descriptor.action))
+					return recoveryResult(
+						"blocked",
+						"none",
+						[
+							"Recovery execution lease does not authorize this operation; no files were changed.",
+						],
+						operationId,
+					);
+				if (
+					manifest.operationId !== operationId ||
+					manifest.operationDirectory !== operationDirectory ||
+					manifest.manifestPath !== options.manifestPath ||
+					manifest.targets.some(
+						(target) =>
+							!isContained(options.agentDirectory, target.targetPath) ||
+							resolve(
+								options.agentDirectory,
+								`${target.targetPath.split("/").at(-1)}`,
+							) !== target.targetPath,
+					)
+				)
+					return recoveryResult(
+						"blocked",
+						"none",
+						[
+							"Operation evidence targets an unsupported path; no files were changed.",
+						],
+						operationId,
+					);
+				try {
+					await bindExecution(
+						recoveryOptions.lease,
+						executionManifest(
+							recoveryOptions.lease,
+							`${operationPath}#${manifest.digest}:${mode}`,
+						),
+						recoveryOptions.manifest,
+					);
+				} catch (error) {
+					return recoveryResult(
+						"blocked",
+						"none",
+						[
+							`Recovery authorization failed: ${error instanceof Error ? error.message : String(error)}. No files were changed.`,
+						],
+						operationId,
+					);
+				}
+
+				const desiredContents = new Map<string, string>();
+				if (mode === "resume") {
+					const successors = await verifyOperationSuccessors(
+						operationValue,
+						options.filesystem,
+					);
+					if (!successors.ok)
+						return recoveryResult(
+							"blocked",
+							"none",
+							[successors.diagnostic],
+							operationId,
+						);
+					for (const target of manifest.targets)
+						desiredContents.set(
+							target.targetPath,
+							(await options.filesystem.readFile(
+								target.successorPath,
+							)) as string,
+						);
+				}
+				const manifestBeforeContent = manifest.manifestOriginallyMissing
+					? undefined
+					: await options.filesystem.readFile(
+							manifest.manifestBackupPath as string,
+						);
+				const manifestBefore = parseManifest(manifestBeforeContent);
+				if (!manifestBefore.ok)
+					return recoveryResult(
+						"blocked",
+						"none",
+						["Operation manifest backup is invalid; no files were changed."],
+						operationId,
+					);
+				const resumeManifestContent = `${JSON.stringify(
+					{
+						schemaVersion: AGENT_ASSET_MANIFEST_SCHEMA_VERSION,
+						assets: {
+							...manifestBefore.value.assets,
+							...Object.fromEntries(
+								manifest.targets.map((target) => [
+									target.targetPath.split("/").at(-1)?.replace(/\.md$/, ""),
+									{
+										ownership: "package" as const,
+										version: target.toVersion,
+										digest: target.sourceDigest,
+									},
+								]),
+							),
+						},
+					},
+					null,
+					2,
+				)}\n`;
+				if (sha256(resumeManifestContent) !== manifest.manifestAfterDigest)
+					return recoveryResult(
+						"blocked",
+						"none",
+						[
+							"Operation manifest evidence does not reproduce the approved state; no files were changed.",
+						],
+						operationId,
+					);
+
+				const currentTargets = await Promise.all(
+					manifest.targets.map(async (target) => ({
+						target,
+						content: await options.filesystem.readFile(target.targetPath),
+					})),
+				);
+				const currentManifest = await options.filesystem.readFile(
+					options.manifestPath,
+				);
+				const digestOf = (content: string | undefined) =>
+					content === undefined ? null : sha256(content);
+				if (
+					currentTargets.some(({ target, content }) => {
+						const current = digestOf(content);
+						return (
+							current !== target.previousDigest &&
+							current !== target.sourceDigest
+						);
+					}) ||
+					![
+						manifest.manifestBeforeDigest,
+						manifest.manifestAfterDigest,
+					].includes(digestOf(currentManifest))
+				)
+					return recoveryResult(
+						"blocked",
+						"none",
+						[
+							"Operation recovery found an unrecognized current state; no files were changed.",
+						],
+						operationId,
+					);
+
+				let wrote = false;
+				try {
+					for (const { target } of currentTargets) {
+						const content = await options.filesystem.readFile(
+							target.targetPath,
+						);
+						const expectedDigest = digestOf(content);
+						if (
+							expectedDigest !== target.previousDigest &&
+							expectedDigest !== target.sourceDigest
+						)
+							throw new Error(`target drift detected for ${target.targetPath}`);
+						if (mode === "resume") {
+							if (expectedDigest !== target.sourceDigest) {
+								await authorizeMutation(recoveryOptions.lease);
+								await options.filesystem.writeFileAtomic(
+									target.targetPath,
+									desiredContents.get(target.targetPath) as string,
+									expectedDigest,
+								);
+								wrote = true;
+							}
+						} else if (target.originallyMissing) {
+							if (content !== undefined) {
+								await authorizeMutation(recoveryOptions.lease);
+								await options.filesystem.removeFileAtomic(
+									target.targetPath,
+									expectedDigest as string,
+								);
+								wrote = true;
+							}
+						} else if (expectedDigest !== target.previousDigest) {
+							const backup = await options.filesystem.readFile(
+								target.backupPath as string,
+							);
+							if (backup === undefined)
+								throw new Error(`missing backup for ${target.targetPath}`);
+							await authorizeMutation(recoveryOptions.lease);
+							await options.filesystem.writeFileAtomic(
+								target.targetPath,
+								backup,
+								expectedDigest,
+							);
+							wrote = true;
+						}
+					}
+					const latestManifest = await options.filesystem.readFile(
+						options.manifestPath,
+					);
+					const currentManifestDigest = digestOf(latestManifest);
+					if (
+						![
+							manifest.manifestBeforeDigest,
+							manifest.manifestAfterDigest,
+						].includes(currentManifestDigest)
+					)
+						throw new Error("agent asset manifest drift detected");
+					if (
+						mode === "resume" &&
+						currentManifestDigest !== manifest.manifestAfterDigest
+					) {
+						await authorizeMutation(recoveryOptions.lease);
+						await options.filesystem.writeFileAtomic(
+							options.manifestPath,
+							resumeManifestContent,
+							currentManifestDigest,
+						);
+						wrote = true;
+					}
+					if (mode === "rollback" && manifest.manifestOriginallyMissing) {
+						if (latestManifest !== undefined) {
+							await authorizeMutation(recoveryOptions.lease);
+							await options.filesystem.removeFileAtomic(
+								options.manifestPath,
+								currentManifestDigest as string,
+							);
+							wrote = true;
+						}
+					} else if (
+						mode === "rollback" &&
+						currentManifestDigest !== manifest.manifestBeforeDigest
+					) {
+						const backup = await options.filesystem.readFile(
+							manifest.manifestBackupPath as string,
+						);
+						if (backup === undefined)
+							throw new Error("missing manifest backup");
+						await authorizeMutation(recoveryOptions.lease);
+						await options.filesystem.writeFileAtomic(
+							options.manifestPath,
+							backup,
+							currentManifestDigest,
+						);
+						wrote = true;
+					}
+					await completeExecution(descriptor, recoveryOptions.lease, mode);
+					return recoveryResult(
+						"applied",
+						wrote ? "applied" : "none",
+						[],
+						operationId,
+					);
+				} catch (error) {
+					const receipt = mutationReceipt(error);
+					const applied = wrote || receipt.mutation === "applied";
+					return recoveryResult(
+						"blocked",
+						applied ? "applied" : "none",
+						[
+							`Unable to ${mode} operation: ${error instanceof Error ? error.message : String(error)}. ${applied ? "Partial mutation was applied; completed atomic writes remain recoverable." : "No files were changed."}`,
+						],
+						operationId,
+						receipt.durability,
+					);
+				}
 			});
 		} catch (error) {
 			const prior = releasedOperationResult(error);
@@ -721,12 +1131,23 @@ export function createAgentAssetSync(options: AgentAssetSyncOptions) {
 				return recoveryResult(
 					"blocked",
 					prior.mutation,
-					[...prior.diagnostics, `Cooperative lock release failed: ${error instanceof Error ? error.message : String(error)}.`],
+					[
+						...prior.diagnostics,
+						`Cooperative lock release failed: ${error instanceof Error ? error.message : String(error)}.`,
+					],
 					prior.operationId,
 					"uncertain",
 				);
 			const receipt = mutationReceipt(error);
-			return recoveryResult("blocked", receipt.mutation, [`Unable to acquire cooperative mutation boundary: ${error instanceof Error ? error.message : String(error)}. ${receipt.mutation === "applied" ? "Lock cleanup is uncertain." : "No files were changed."}`], operationId, receipt.durability);
+			return recoveryResult(
+				"blocked",
+				receipt.mutation,
+				[
+					`Unable to acquire cooperative mutation boundary: ${error instanceof Error ? error.message : String(error)}. ${receipt.mutation === "applied" ? "Lock cleanup is uncertain." : "No files were changed."}`,
+				],
+				operationId,
+				receipt.durability,
+			);
 		}
 	}
 
@@ -1020,226 +1441,318 @@ export function createAgentAssetSync(options: AgentAssetSyncOptions) {
 					"The approved agent asset plan is invalid or blocked. Generate and review a new plan; no files were changed.",
 				],
 			);
-		if (!(await applyOptions.confirm(approvedPlan)))
-			return result("canceled", "none", [], []);
+		const descriptor = agentAssetApplyDecision(project, approvedPlan);
+		if (!exact(applyOptions.lease?.action, descriptor.action))
+			return result(
+				"blocked",
+				"none",
+				[],
+				[
+					"Apply requires a shared execution lease for this exact plan; no files were changed.",
+				],
+			);
 		if (applyOptions.signal?.aborted) return result("canceled", "none", [], []);
 		try {
-			return await options.filesystem.withMutation(approvedPlan.digest, async () => {
-		const latestPlan = await plan({ signal: applyOptions.signal });
-		if (latestPlan.status === "canceled")
-			return result("canceled", "none", [], []);
-		let recovering = false;
-		let currentManifestContent: string | undefined;
-		if (latestPlan.digest !== approvedPlan.digest) {
-			const currentManifest = await safeRead(
-				options.manifestPath,
-				options,
-				applyOptions.signal,
-			);
-			if (currentManifest.status !== "ok")
-				return result(
-					"blocked",
-					"none",
-					[],
-					[
-						"Agent assets changed after planning. Review and confirm a new plan; no files were changed.",
-					],
-				);
-			const manifestDigest =
-				currentManifest.content === undefined
-					? null
-					: sha256(currentManifest.content);
-			const targetReads = await Promise.all(
-				approvedPlan.actions.map((action) =>
-					safeRead(action.targetPath, options, applyOptions.signal),
-				),
-			);
-			recovering =
-				manifestDigest === approvedPlan.manifestDigest &&
-				targetReads.every((read, index) => {
-					if (read.status !== "ok") return false;
-					const action = approvedPlan.actions[index];
-					if (!action) return false;
-					const digest =
-						read.content === undefined ? null : sha256(read.content);
-					return (
-						digest === action.previousDigest || digest === action.sourceDigest
-					);
-				});
-			if (!recovering)
-				return result(
-					"blocked",
-					"none",
-					[],
-					[
-						"Agent assets changed after planning. Review and confirm a new plan; no files were changed.",
-					],
-				);
-			currentManifestContent = currentManifest.content;
-		}
-		let wrote = false;
-		let canceled = false;
-		let operationId: string | null = null;
-		try {
-			if (!recovering) {
-				const manifestRead = await safeRead(
-					options.manifestPath,
-					options,
-					applyOptions.signal,
-				);
-				if (manifestRead.status !== "ok")
-					throw new Error("unable to re-read the approved manifest");
-				const manifestDigest =
-					manifestRead.content === undefined
-						? null
-						: sha256(manifestRead.content);
-				if (manifestDigest !== approvedPlan.manifestDigest)
-					throw new Error("the manifest changed after confirmation");
-				currentManifestContent = manifestRead.content;
-			}
-			const previousManifest = parseManifest(currentManifestContent);
-			if (!previousManifest.ok) throw new Error(previousManifest.diagnostic);
-			const nextManifest: AgentAssetManifest = {
-				schemaVersion: AGENT_ASSET_MANIFEST_SCHEMA_VERSION,
-				assets: {
-					...previousManifest.value.assets,
-					...Object.fromEntries(
-						approvedPlan.actions.map((action) => [
-							action.name,
-							{
-								ownership: "package" as const,
-								version: action.toVersion,
-								digest: action.sourceDigest,
-							},
-						]),
-					),
-				},
-			};
-			const manifestContent = `${JSON.stringify(nextManifest, null, 2)}\n`;
-			if (!recovering) {
-				const targets = await Promise.all(
-					approvedPlan.actions.map(async (action) => {
-						const target = await safeRead(
-							action.targetPath,
+			return await options.filesystem.withMutation(
+				approvedPlan.digest,
+				async () => {
+					const latestPlan = await plan({ signal: applyOptions.signal });
+					if (latestPlan.status === "canceled")
+						return result("canceled", "none", [], []);
+					const recovering = applyOptions.manifest !== undefined;
+					let currentManifestContent: string | undefined;
+					if (latestPlan.digest !== approvedPlan.digest) {
+						const currentManifest = await safeRead(
+							options.manifestPath,
 							options,
 							applyOptions.signal,
 						);
-						if (target.status !== "ok")
-							throw new Error(`unable to re-read ${action.targetPath}`);
-						return { action, previousContent: target.content };
-					}),
-				);
-				const operation = await createVerifiedOperation(
-					{
-						operationDirectory,
-							nonce: (options.nonce ?? randomUUID)(),
-						manifestPath: options.manifestPath,
-						planDigest: approvedPlan.digest,
-						manifestBeforeDigest: approvedPlan.manifestDigest,
-						manifestAfterDigest: sha256(manifestContent),
-						manifestBeforeContent: currentManifestContent,
-						targets: targets.map(({ action, previousContent }) => ({
-							targetPath: action.targetPath,
-							fromVersion: action.fromVersion,
-							toVersion: action.toVersion,
-							previousContent,
-						sourceDigest: action.sourceDigest,
-						sourceContent: action.content,
-						})),
-					},
-					options.filesystem,
-				);
-				if (!operation.ok) throw new Error(operation.diagnostic);
-				const persisted = await persistVerifiedOperation(
-					operation.value,
-					options.filesystem,
-				);
-				if (!persisted.ok) throw new Error(persisted.diagnostic);
-				operationId = persisted.value.operationId;
-			}
-			for (const action of approvedPlan.actions) {
-				if (applyOptions.signal?.aborted) {
-					canceled = true;
-					throw new Error("apply was canceled during atomic writes");
-				}
-				const targetRead = await safeRead(
-					action.targetPath,
-					options,
-					applyOptions.signal,
-				);
-				if (targetRead.status !== "ok")
-					throw new Error(`unable to re-read ${action.targetPath}`);
-				const targetDigest =
-					targetRead.content === undefined ? null : sha256(targetRead.content);
-				if (targetDigest === action.sourceDigest) continue;
-				if (targetDigest !== action.previousDigest)
-					throw new Error(
-						`the target changed after confirmation: ${action.name}`,
-					);
-				await options.filesystem.writeFileAtomic(
-					action.targetPath,
-					action.content,
-					action.previousDigest,
-				);
-				wrote = true;
-			}
-			const manifestBeforeWrite = await safeRead(
-				options.manifestPath,
-				options,
-				applyOptions.signal,
+						if (currentManifest.status !== "ok")
+							return result(
+								"blocked",
+								"none",
+								[],
+								[
+									"Agent assets changed after planning. Review and authorize a new plan; no files were changed.",
+								],
+							);
+						const manifestDigest =
+							currentManifest.content === undefined
+								? null
+								: sha256(currentManifest.content);
+						const targetReads = await Promise.all(
+							approvedPlan.actions.map((action) =>
+								safeRead(action.targetPath, options, applyOptions.signal),
+							),
+						);
+						const recognizedRecoveryState =
+							manifestDigest === approvedPlan.manifestDigest &&
+							targetReads.every((read, index) => {
+								if (read.status !== "ok") return false;
+								const action = approvedPlan.actions[index];
+								if (!action) return false;
+								const digest =
+									read.content === undefined ? null : sha256(read.content);
+								return (
+									digest === action.previousDigest ||
+									digest === action.sourceDigest
+								);
+							});
+						if (!recovering || !recognizedRecoveryState)
+							return result(
+								"blocked",
+								"none",
+								[],
+								[
+									"Agent assets changed after planning. Review and authorize a new plan; no files were changed.",
+								],
+							);
+						currentManifestContent = currentManifest.content;
+					}
+					let wrote = false;
+					let canceled = false;
+					let operationId: string | null = null;
+					try {
+						const approvedManifestRead = await safeRead(
+							options.manifestPath,
+							options,
+							applyOptions.signal,
+						);
+						if (approvedManifestRead.status !== "ok")
+							throw new Error("unable to re-read the approved manifest");
+						const manifestDigest =
+							approvedManifestRead.content === undefined
+								? null
+								: sha256(approvedManifestRead.content);
+						if (manifestDigest !== approvedPlan.manifestDigest)
+							throw new Error("the manifest changed after authorization");
+						currentManifestContent = approvedManifestRead.content;
+						const previousManifest = parseManifest(currentManifestContent);
+						if (!previousManifest.ok)
+							throw new Error(previousManifest.diagnostic);
+						const nextManifest: AgentAssetManifest = {
+							schemaVersion: AGENT_ASSET_MANIFEST_SCHEMA_VERSION,
+							assets: {
+								...previousManifest.value.assets,
+								...Object.fromEntries(
+									approvedPlan.actions.map((action) => [
+										action.name,
+										{
+											ownership: "package" as const,
+											version: action.toVersion,
+											digest: action.sourceDigest,
+										},
+									]),
+								),
+							},
+						};
+						const manifestContent = `${JSON.stringify(nextManifest, null, 2)}\n`;
+						if (!recovering) {
+							const targets = await Promise.all(
+								approvedPlan.actions.map(async (action) => {
+									const target = await safeRead(
+										action.targetPath,
+										options,
+										applyOptions.signal,
+									);
+									if (target.status !== "ok")
+										throw new Error(`unable to re-read ${action.targetPath}`);
+									return { action, previousContent: target.content };
+								}),
+							);
+							const operationInput = {
+								operationDirectory,
+								nonce: applyOptions.lease.executionId,
+								manifestPath: options.manifestPath,
+								planDigest: approvedPlan.digest,
+								manifestBeforeDigest: approvedPlan.manifestDigest,
+								manifestAfterDigest: sha256(manifestContent),
+								manifestBeforeContent: currentManifestContent,
+								targets: targets.map(({ action, previousContent }) => ({
+									targetPath: action.targetPath,
+									fromVersion: action.fromVersion,
+									toVersion: action.toVersion,
+									previousContent,
+									sourceDigest: action.sourceDigest,
+									sourceContent: action.content,
+								})),
+								executionLease: applyOptions.lease,
+							};
+							const operation = createOperationManifest(operationInput);
+							if (!operation.ok) throw new Error(operation.diagnostic);
+							const operationPath = `${operationDirectory}/${operation.value.operationId}/operation.json`;
+							await bindExecution(
+								applyOptions.lease,
+								executionManifest(
+									applyOptions.lease,
+									`${operationPath}#${operation.value.digest}`,
+								),
+							);
+							const persisted = await persistVerifiedOperation(
+								operation.value,
+								options.filesystem,
+								() => authorizeMutation(applyOptions.lease),
+							);
+							if (!persisted.ok) throw new Error(persisted.diagnostic);
+							const evidence = await materializeOperationEvidence(
+								operationInput,
+								persisted.value,
+								options.filesystem,
+								() => authorizeMutation(applyOptions.lease),
+							);
+							if (!evidence.ok) throw new Error(evidence.diagnostic);
+							operationId = persisted.value.operationId;
+						} else {
+							const manifestBinding =
+								applyOptions.manifest as ExecutionManifestBinding;
+							const [operationPath, operationDigest] =
+								manifestBinding.ref.split("#");
+							if (!operationPath || !operationDigest)
+								throw new Error(
+									"recovered operation manifest reference is malformed",
+								);
+							const operationValue =
+								await options.filesystem.readFile(operationPath);
+							if (operationValue === undefined)
+								throw new Error("recovered operation evidence is missing");
+							const operation = await verifyOperationBackups(
+								JSON.parse(operationValue),
+								options.filesystem,
+							);
+							if (
+								!operation.ok ||
+								operation.value.digest !== operationDigest ||
+								operation.value.planDigest !== approvedPlan.digest ||
+								operation.value.operationDirectory !== operationDirectory ||
+								operation.value.manifestPath !== options.manifestPath ||
+								operationPath !==
+									`${operationDirectory}/${operation.value.operationId}/operation.json` ||
+								operation.value.executionBinding.executionId !==
+									applyOptions.lease.executionId
+							)
+								throw new Error(
+									"recovered operation evidence does not match the approved plan",
+								);
+							const successors = await verifyOperationSuccessors(
+								operation.value,
+								options.filesystem,
+							);
+							if (!successors.ok) throw new Error(successors.diagnostic);
+							await bindExecution(
+								applyOptions.lease,
+								executionManifest(
+									applyOptions.lease,
+									`${operationPath}#${operation.value.digest}`,
+								),
+								manifestBinding,
+							);
+							operationId = operation.value.operationId;
+						}
+						for (const action of approvedPlan.actions) {
+							if (applyOptions.signal?.aborted) {
+								canceled = true;
+								throw new Error("apply was canceled during atomic writes");
+							}
+							const targetRead = await safeRead(
+								action.targetPath,
+								options,
+								applyOptions.signal,
+							);
+							if (targetRead.status !== "ok")
+								throw new Error(`unable to re-read ${action.targetPath}`);
+							const targetDigest =
+								targetRead.content === undefined
+									? null
+									: sha256(targetRead.content);
+							if (targetDigest === action.sourceDigest) continue;
+							if (targetDigest !== action.previousDigest)
+								throw new Error(
+									`the target changed after authorization: ${action.name}`,
+								);
+							await authorizeMutation(applyOptions.lease);
+							await options.filesystem.writeFileAtomic(
+								action.targetPath,
+								action.content,
+								action.previousDigest,
+							);
+							wrote = true;
+						}
+						const manifestBeforeWrite = await safeRead(
+							options.manifestPath,
+							options,
+							applyOptions.signal,
+						);
+						if (
+							manifestBeforeWrite.status !== "ok" ||
+							manifestBeforeWrite.content !== currentManifestContent
+						)
+							throw new Error("the manifest changed during asset writes");
+						await authorizeMutation(applyOptions.lease);
+						await options.filesystem.writeFileAtomic(
+							options.manifestPath,
+							manifestContent,
+							approvedPlan.manifestDigest,
+						);
+						wrote = true;
+						const assets: AppliedAgentAsset[] = [];
+						for (const action of approvedPlan.actions) {
+							const content = await options.filesystem.readFile(
+								action.targetPath,
+							);
+							assets.push({
+								name: action.name,
+								targetPath: action.targetPath,
+								version: action.toVersion,
+								digest: action.sourceDigest,
+								verified:
+									content !== undefined &&
+									sha256(content) === action.sourceDigest,
+							});
+						}
+						const manifestRead = await options.filesystem.readFile(
+							options.manifestPath,
+						);
+						if (
+							assets.some((asset) => !asset.verified) ||
+							manifestRead !== manifestContent ||
+							!parseManifest(manifestRead).ok
+						)
+							return result("blocked", "applied", assets, [
+								"Agent asset read-back verification failed. Run inspect before retrying.",
+							]);
+						await completeExecution(descriptor, applyOptions.lease, "applied");
+						return result(
+							"applied",
+							wrote ? "applied" : "none",
+							assets,
+							[],
+							operationId,
+						);
+					} catch (error) {
+						const receipt = mutationReceipt(error);
+						const applied = wrote || receipt.mutation === "applied";
+						if (canceled)
+							return result(
+								"canceled",
+								applied ? "applied" : "none",
+								[],
+								[],
+								operationId,
+								receipt.durability,
+							);
+						return result(
+							"blocked",
+							applied ? "applied" : "none",
+							[],
+							[
+								`Unable to apply agent assets: ${error instanceof Error ? error.message : String(error)}. Run inspect and retry the approved plan; completed atomic writes remain recoverable.`,
+							],
+							operationId,
+							receipt.durability,
+						);
+					}
+				},
 			);
-			if (
-				manifestBeforeWrite.status !== "ok" ||
-				manifestBeforeWrite.content !== currentManifestContent
-			)
-				throw new Error("the manifest changed during asset writes");
-			await options.filesystem.writeFileAtomic(
-				options.manifestPath,
-				manifestContent,
-				approvedPlan.manifestDigest,
-			);
-			wrote = true;
-			const assets: AppliedAgentAsset[] = [];
-			for (const action of approvedPlan.actions) {
-				const content = await options.filesystem.readFile(action.targetPath);
-				assets.push({
-					name: action.name,
-					targetPath: action.targetPath,
-					version: action.toVersion,
-					digest: action.sourceDigest,
-					verified:
-						content !== undefined && sha256(content) === action.sourceDigest,
-				});
-			}
-			const manifestRead = await options.filesystem.readFile(
-				options.manifestPath,
-			);
-			if (
-				assets.some((asset) => !asset.verified) ||
-				manifestRead !== manifestContent ||
-				!parseManifest(manifestRead).ok
-			)
-				return result("blocked", "applied", assets, [
-					"Agent asset read-back verification failed. Run inspect before retrying.",
-				]);
-			return result("applied", wrote ? "applied" : "none", assets, [], operationId);
-		} catch (error) {
-			const receipt = mutationReceipt(error);
-			const applied = wrote || receipt.mutation === "applied";
-			if (canceled)
-				return result("canceled", applied ? "applied" : "none", [], [], operationId, receipt.durability);
-			return result(
-				"blocked",
-				applied ? "applied" : "none",
-				[],
-				[
-					`Unable to apply agent assets: ${error instanceof Error ? error.message : String(error)}. Run inspect and retry the approved plan; completed atomic writes remain recoverable.`,
-				],
-				operationId,
-				receipt.durability,
-			);
-		}
-			});
 		} catch (error) {
 			const prior = releasedOperationResult(error);
 			if (prior)
@@ -1247,21 +1760,35 @@ export function createAgentAssetSync(options: AgentAssetSyncOptions) {
 					"blocked",
 					prior.mutation,
 					prior.assets,
-					[...prior.diagnostics, `Cooperative lock release failed: ${error instanceof Error ? error.message : String(error)}.`],
+					[
+						...prior.diagnostics,
+						`Cooperative lock release failed: ${error instanceof Error ? error.message : String(error)}.`,
+					],
 					prior.operationId,
 					"uncertain",
 				);
 			const receipt = mutationReceipt(error);
-			return result("blocked", receipt.mutation, [], [
-				`Unable to acquire cooperative mutation boundary: ${error instanceof Error ? error.message : String(error)}. ${receipt.mutation === "applied" ? "Lock cleanup is uncertain." : "No files were changed."}`,
-			], undefined, receipt.durability);
+			return result(
+				"blocked",
+				receipt.mutation,
+				[],
+				[
+					`Unable to acquire cooperative mutation boundary: ${error instanceof Error ? error.message : String(error)}. ${receipt.mutation === "applied" ? "Lock cleanup is uncertain." : "No files were changed."}`,
+				],
+				undefined,
+				receipt.durability,
+			);
 		}
 	}
 	return {
 		inspect,
 		plan,
 		apply,
-		resume: (operationId: string) => recover(operationId, "resume"),
-		rollback: (operationId: string) => recover(operationId, "rollback"),
+		resume: (operationId: string, recoveryOptions: AgentAssetRecoveryOptions) =>
+			recover(operationId, "resume", recoveryOptions),
+		rollback: (
+			operationId: string,
+			recoveryOptions: AgentAssetRecoveryOptions,
+		) => recover(operationId, "rollback", recoveryOptions),
 	};
 }

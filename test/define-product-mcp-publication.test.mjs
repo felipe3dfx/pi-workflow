@@ -141,6 +141,7 @@ function harness({
 	reader,
 	active = true,
 	ownerAuthority = owner,
+	interactiveDecisions,
 } = {}) {
 	const snapshots = [];
 	const calls = [];
@@ -164,14 +165,16 @@ function harness({
 				};
 			},
 		},
+		...(interactiveDecisions ? { interactiveDecisions } : {}),
 	});
 	controller.setMcpAvailable(active);
 	let sequence = 0;
-	async function begin() {
+	async function begin(executionLease) {
 		const result = await controller.begin(
 			"definition-1",
 			"publish-start",
 			{ action: "publish_spec" },
+			executionLease,
 		);
 		if (result.status === "continuing") {
 			await controller.handleToolResult({
@@ -284,6 +287,66 @@ test("publishes one exact Backlog Delivery parent through authenticated paginate
 		h.calls.filter(({ toolName }) => toolName === "linear_get_user").length,
 		1,
 	);
+});
+
+test("shared Spec authority is revalidated before publication starts and immediately before mutation", async () => {
+	const effects = [];
+	const approved = approvedArtifact();
+	const lease = {
+		decisionId: `${"a".repeat(64)}:${"b".repeat(64)}`,
+		operationDigest: "b".repeat(64),
+		actorId: owner.actorId,
+		authorityRevision: owner.authorityRevision,
+		action: {
+			id: "define-product.spec.publish",
+			input: {
+				definitionId: "definition-1",
+				digest: approved.spec.digest,
+				revision: approved.spec.payload.revision,
+				target: approved.spec.payload.target,
+			},
+		},
+		executionId: "execution-spec-1",
+		generation: 1,
+	};
+	const h = harness({
+		approved,
+		interactiveDecisions: {
+			async authorizeEffect(candidate) {
+				effects.push(structuredClone(candidate));
+				return {
+					kind: "authorized",
+					lease: candidate,
+					manifest: {
+						ref: `workflow://define-product/definition-1/spec-publication/${approved.spec.digest}`,
+					},
+				};
+			},
+		},
+	});
+	const missing = await h.begin();
+	assert.equal(missing.blocker.code, "PI_WORKFLOW_DECISION_CLAIM_MISSING");
+
+	const authorized = harness({
+		approved,
+		interactiveDecisions: {
+			async authorizeEffect(candidate) {
+				effects.push(structuredClone(candidate));
+				return {
+					kind: "authorized",
+					lease: candidate,
+					manifest: {
+						ref: `workflow://define-product/definition-1/spec-publication/${approved.spec.digest}`,
+					},
+				};
+			},
+		},
+	});
+	assert.deepEqual(await authorized.begin(lease), { status: "continuing" });
+	await advanceToSave(authorized);
+	const issue = issueFor(authorized.approved);
+	await authorized.call(issue, { noResult: true });
+	assert.deepEqual(effects, [lease, lease]);
 });
 
 test("accepts Linear padding of single-digit markers in a ten-item ordered list", async () => {

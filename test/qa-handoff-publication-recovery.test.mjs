@@ -244,3 +244,50 @@ test("durable QA recovery transitions released claims back to uncertain", async 
 		stage: "verified",
 	});
 });
+
+test("durable QA recovery preserves and fences the shared execution binding", async () => {
+	const store = createQaHandoffPublicationRecoveryStore({
+		store: persistence(),
+		project: "pi-workflow",
+	});
+	const lease = {
+		decisionId: "decision.qa-handoff",
+		operationDigest: "operation-digest",
+		executionId: "execution-1",
+		generation: 1,
+		actorId: "owner-a",
+		authorityRevision: "owner-r1",
+		action: {
+			id: "qa-handoff.publish",
+			input: { issueId: "ILA-2410", digest: artifact.digest },
+		},
+	};
+
+	assert.deepEqual(await store.bindExecution(artifact, lease), {
+		decisionId: lease.decisionId,
+		operationDigest: lease.operationDigest,
+		executionId: lease.executionId,
+		generation: lease.generation,
+		ref: `workflow://qa-handoff/ILA-2410/publication/${artifact.digest}`,
+	});
+	await store.claim(artifact, "runtime-1");
+	assert.deepEqual(await store.read("ILA-2410"), {
+		digest: artifact.digest,
+		stage: "uncertain",
+		executionBinding: {
+			decisionId: lease.decisionId,
+			operationDigest: lease.operationDigest,
+			executionId: lease.executionId,
+			generation: lease.generation,
+		},
+	});
+	await assert.rejects(
+		store.bindExecution(artifact, { ...lease, executionId: "execution-2" }),
+		/execution binding conflicts/,
+	);
+	await store.finalizeVerified(artifact);
+	assert.equal(
+		(await store.read("ILA-2410")).executionBinding.executionId,
+		"execution-1",
+	);
+});

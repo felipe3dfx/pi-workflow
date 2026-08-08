@@ -13,6 +13,8 @@ import {
 	manualInstallInstructions,
 } from "../extensions/companion-workflow.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
+import { createInMemoryDecisionStore } from "../extensions/interactive-decisions.ts";
+import { createInMemoryCompanionInstallManifestStore } from "../extensions/companion-install-manifest.ts";
 
 function loadJsonFixture(relativePath) {
 	try {
@@ -95,18 +97,94 @@ async function writeInstalledCompanionFixtures(nodeModulesPath) {
 function createExtensionHarness(execImpl = async () => ({ code: 0 })) {
 	const commands = new Map();
 	const execCalls = [];
+	const handlers = new Map();
+	const sentMessages = [];
+	const emit = async (event, value, ctx) => {
+		const results = [];
+		for (const handler of handlers.get(event) ?? [])
+			results.push(await handler(value, ctx));
+		return results;
+	};
 	const pi = {
 		exec: async (command, args = []) => {
 			execCalls.push({ command, args });
 			return execImpl(command, args);
 		},
-		on: () => {},
+		on: (event, handler) => {
+			const registered = handlers.get(event) ?? [];
+			registered.push(handler);
+			handlers.set(event, registered);
+		},
+		getActiveTools: () => ["ask_user_question"],
+		sendUserMessage: (message) => sentMessages.push(message),
 		registerCommand: (name, definition) => {
-			commands.set(name, definition);
+			commands.set(name, {
+				...definition,
+				async handler(args, ctx) {
+					const commandCtx = {
+						cwd: process.cwd(),
+						sessionManager: { getSessionId: () => "companion-session" },
+						...ctx,
+					};
+					const messageCount = sentMessages.length;
+					await definition.handler(args, commandCtx);
+					if (sentMessages.length === messageCount) return;
+					const starts = await emit("before_agent_start", {}, commandCtx);
+					const instruction = starts.find((entry) => entry?.systemPrompt);
+					const match = instruction?.systemPrompt.match(
+						/ask_user_question exactly once with (\{.*\})\. Wait/,
+					);
+					if (!match) return;
+					const input = JSON.parse(match[1]);
+					const question = input.questions[0];
+					const accepted = await commandCtx.ui.confirm?.(
+						question.question.split("\n")[0],
+						question.question,
+					);
+					const answer = accepted
+						? question.options[0].label
+						: question.options.at(-1).label;
+					await emit(
+						"tool_call",
+						{
+							toolName: "ask_user_question",
+							toolCallId: "companion-panel-1",
+							input,
+						},
+						commandCtx,
+					);
+					await emit(
+						"tool_result",
+						{
+							toolName: "ask_user_question",
+							toolCallId: "companion-panel-1",
+							isError: false,
+							details: {
+								answers: [
+									{
+										questionIndex: 0,
+										question: question.question,
+										kind: "option",
+										answer,
+									},
+								],
+								cancelled: false,
+							},
+						},
+						commandCtx,
+					);
+				},
+			});
 		},
 	};
 
-	piWorkflowExtension(pi);
+	piWorkflowExtension(pi, {
+		interactiveDecisions: {
+			store: createInMemoryDecisionStore(),
+			createExecutionId: () => "companion-execution",
+			companionManifests: createInMemoryCompanionInstallManifestStore(),
+		},
+	});
 
 	return { commands, execCalls };
 }
@@ -667,10 +745,10 @@ test("install command configures the exact MCP catalog after confirmation", asyn
 			await readFile(join(dir, ".pi", "agent", "mcp.json"), "utf8"),
 		);
 		assert.deepEqual(config, { mcpServers: mcpServerCatalog.mcpServers });
-		assert.equal(notifications.length, 1);
-		assert.match(notifications[0].message, /Configured pi-workflow MCP servers/);
-		assert.match(notifications[0].message, /\/reload/);
-		assert.match(notifications[0].message, /Authenticate Sentry\/Linear/);
+		assert.equal(notifications.length, 2);
+		assert.match(notifications.at(-1).message, /configured the reviewed MCP plan/i);
+		assert.match(notifications.at(-1).message, /\/reload/);
+		assert.match(notifications.at(-1).message, /authenticate Sentry\/Linear/i);
 	} finally {
 		restoreEnv(envSnapshot);
 		await rm(dir, { recursive: true, force: true });
@@ -1037,13 +1115,9 @@ test("install command refuses to overwrite targeted MCP servers changed after pr
 				2,
 			)}\n`,
 		);
-		assert.equal(notifications.length, 1);
-		assert.equal(notifications[0].level, "error");
-		assert.match(notifications[0].message, /changed after preview/i);
-		assert.match(notifications[0].message, /linear/);
-		assert.ok(notifications[0].message.includes(configPath));
-		assert.match(notifications[0].message, /run .*again/i);
-		assert.doesNotMatch(notifications[0].message, /Configured pi-workflow MCP servers/);
+		assert.equal(notifications.length, 2);
+		assert.match(notifications.at(-1).message, /decision prepared/i);
+		assert.doesNotMatch(notifications.at(-1).message, /configured the reviewed MCP plan/i);
 	} finally {
 		restoreEnv(envSnapshot);
 		await rm(dir, { recursive: true, force: true });
@@ -1096,7 +1170,7 @@ test("install command refuses to overwrite malformed MCP JSON", async () => {
 	}
 });
 
-test("install command reports MCP config write failures after confirmation", async () => {
+test("install command fails closed when MCP target becomes unreadable after approval", async () => {
 	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-mcp-write-error-"));
 	const nodeModulesPath = join(dir, "companions", "node_modules");
 	const configPath = join(dir, ".pi", "agent", "mcp.json");
@@ -1136,12 +1210,11 @@ test("install command reports MCP config write failures after confirmation", asy
 			}),
 		);
 
-		assert.equal(notifications.length, 1);
-		assert.equal(notifications[0].level, "error");
-		assert.ok(notifications[0].message.includes(configPath));
-		assert.match(notifications[0].message, /edit .* manually/i);
-		assert.match(notifications[0].message, /context7/);
-		assert.doesNotMatch(notifications[0].message, /Configured pi-workflow MCP servers/);
+		assert.equal(notifications.length, 2);
+		assert.equal(notifications.at(-1).level, "error");
+		assert.match(notifications.at(-1).message, /Refusing to overwrite malformed JSON/i);
+		assert.match(notifications.at(-1).message, /closed before any new effect/i);
+		assert.doesNotMatch(notifications.at(-1).message, /configured the reviewed MCP plan/i);
 	} finally {
 		restoreEnv(envSnapshot);
 		await rm(dir, { recursive: true, force: true });
@@ -1176,11 +1249,8 @@ test("install command prints manual MCP guidance and does not mutate in non-UI c
 
 		assert.equal(execCalls.length, 0);
 		assert.equal(notifications.length, 1);
-		assert.match(notifications[0].message, /cannot mutate Pi configuration automatically/i);
-		assert.match(notifications[0].message, /mcp\.json/);
-		assert.match(notifications[0].message, /context7/);
-		assert.match(notifications[0].message, /sentry/);
-		assert.match(notifications[0].message, /linear/);
+		assert.match(notifications[0].message, /shared interactive decision authority/i);
+		assert.match(notifications[0].message, /no package or MCP effects were authorized/i);
 		await assert.rejects(readFile(join(dir, ".pi", "agent", "mcp.json"), "utf8"));
 	} finally {
 		restoreEnv(envSnapshot);

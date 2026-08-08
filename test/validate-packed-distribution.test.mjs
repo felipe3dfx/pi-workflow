@@ -21,6 +21,8 @@ async function fixtureTarball({ omit, extra = {}, catalogVersion = 1 } = {}) {
 	const packageRoot = join(root, "package");
 	const files = {
 		"README.md": "# Fixture\n",
+		"docs/design/interactive-decision-inventory.md":
+			"# Interactive decision migration inventory\n\nActive unmigrated closed decisions: 0\n\n| `deliver-ticket` | pending | PI_WORKFLOW_CAPABILITY_PENDING |\n",
 		"package.json": JSON.stringify({
 			name: "@felipe.3dfx/pi-workflow",
 			version: "0.0.0-fixture",
@@ -40,6 +42,20 @@ async function fixtureTarball({ omit, extra = {}, catalogVersion = 1 } = {}) {
 		"extensions/pi-workflow.ts": "export default function extension() {}\n",
 		"extensions/agent-asset-migrations.ts": "export {};\n",
 		"extensions/agent-validator.ts": "export {};\n",
+			...Object.fromEntries(
+			[
+				"extensions/agent-asset-operation.ts",
+				"extensions/approved-revision-publication-manifest.ts",
+				"extensions/ticket-publication-manifest.ts",
+				"extensions/product-review-publication-recovery.ts",
+				"extensions/qa-handoff-publication-recovery.ts",
+				"extensions/companion-install-manifest.ts",
+				"extensions/delivery-pull-request-workflow.ts",
+			].map((relativePath) => [
+				relativePath,
+				"const executionId = 'fixture'; const generation = 1;\n",
+			]),
+			),
 		"assets/agents/Explore.md": "# Explore\n",
 		"assets/acceptance/qa-handoff.golden.md": "# Entrega para QA\n",
 		"assets/acceptance/product-review.golden.md": "# Revisión de producto\n",
@@ -69,7 +85,7 @@ async function fixtureTarball({ omit, extra = {}, catalogVersion = 1 } = {}) {
 			workflows.flatMap((name) => [
 				[
 					`skills/${name}/SKILL.md`,
-					`---\nname: ${name}\ndescription: fixture\n---\n`,
+					`---\nname: ${name}\ndescription: fixture\n---\n${name === "deliver-ticket" ? "PI_WORKFLOW_CAPABILITY_PENDING" : "Every closed human choice uses the shared `interactive-decisions` descriptor and a semantic action. Never require an exact phrase."}\n`,
 				],
 				[
 					`prompts/${name}.md`,
@@ -130,6 +146,42 @@ test("rejects missing required packed resources", async () => {
 	} finally {
 		await rm(fixture.root, { recursive: true, force: true });
 	}
+});
+
+test("rejects stale decision inventory and incomplete execution bindings", async (t) => {
+	await t.test("stale inventory", async () => {
+		const fixture = await fixtureTarball({
+			extra: {
+				"docs/design/interactive-decision-inventory.md":
+					"Active unmigrated closed decisions: 1\nactive-unmigrated\n",
+			},
+		});
+		try {
+			const result = await validate(fixture.tarball);
+			assert.notEqual(result.code, 0);
+			assert.match(result.stderr, /decision inventory is stale or incomplete/);
+		} finally {
+			await rm(fixture.root, { recursive: true, force: true });
+		}
+	});
+	await t.test("missing executionId", async () => {
+		const fixture = await fixtureTarball({
+			extra: {
+				"extensions/companion-install-manifest.ts":
+					"const generation = 1;\n",
+			},
+		});
+		try {
+			const result = await validate(fixture.tarball);
+			assert.notEqual(result.code, 0);
+			assert.match(
+				result.stderr,
+				/packed execution manifest validator is incomplete/,
+			);
+		} finally {
+			await rm(fixture.root, { recursive: true, force: true });
+		}
+	});
 });
 
 test("rejects forbidden and unsupported packed resources", async () => {

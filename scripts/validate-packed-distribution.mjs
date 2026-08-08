@@ -38,12 +38,14 @@ const allowedRoots = [
 const allowedFiles = new Set([
 	"LICENSE",
 	"README.md",
+	"docs/design/interactive-decision-inventory.md",
 	"package.json",
 	"tools/pi-sandbox.mjs",
 ]);
 const required = [
 	"package.json",
 	"README.md",
+	"docs/design/interactive-decision-inventory.md",
 	"scripts/pi-workflow-sync.mjs",
 	"scripts/acceptance-evidence.mjs",
 	"scripts/check-acceptance.mjs",
@@ -173,6 +175,57 @@ async function validateExtracted(packageRoot) {
 					`Load and follow the \`${name}\` skill.\n\nArguments: $ARGUMENTS\n`,
 			`public prompt ${name} contains duplicated workflow prose`,
 			errors,
+		);
+	}
+
+	try {
+		const inventory = await readFile(
+			join(packageRoot, "docs/design/interactive-decision-inventory.md"),
+			"utf8",
+		);
+		check(
+			inventory.includes("Active unmigrated closed decisions: 0") &&
+				!inventory.includes("active-unmigrated"),
+			"packed interactive decision inventory is stale or incomplete",
+			errors,
+		);
+		check(
+			inventory.includes("`deliver-ticket` | pending") &&
+				inventory.includes("PI_WORKFLOW_CAPABILITY_PENDING"),
+			"packed inventory must preserve pending deliver-ticket",
+			errors,
+		);
+		for (const relativePath of [
+			"extensions/agent-asset-operation.ts",
+			"extensions/approved-revision-publication-manifest.ts",
+			"extensions/ticket-publication-manifest.ts",
+			"extensions/product-review-publication-recovery.ts",
+			"extensions/qa-handoff-publication-recovery.ts",
+			"extensions/companion-install-manifest.ts",
+			"extensions/delivery-pull-request-workflow.ts",
+		]) {
+			const source = await readFile(join(packageRoot, relativePath), "utf8");
+			check(
+				source.includes("executionId") && source.includes("generation"),
+				`packed execution manifest validator is incomplete: ${relativePath}`,
+				errors,
+			);
+		}
+		for (const name of ["define-product", "product-review", "qa-handoff"]) {
+			const skill = await readFile(
+				join(packageRoot, "skills", name, "SKILL.md"),
+				"utf8",
+			);
+			check(
+				skill.includes("shared `interactive-decisions` descriptor") &&
+					skill.includes("require an exact phrase"),
+				`packed ${name} skill does not enforce semantic shared decisions`,
+				errors,
+			);
+		}
+	} catch (error) {
+		errors.push(
+			`invalid packed interactive decision contract: ${error instanceof Error ? error.message : String(error)}`,
 		);
 	}
 

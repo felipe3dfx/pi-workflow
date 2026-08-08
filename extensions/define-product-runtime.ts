@@ -18,6 +18,14 @@ import type { DefineProductMcpPublication } from "./define-product-mcp-publicati
 import type { DefineProductTicketMcpPublication } from "./define-product-ticket-mcp-publication.ts";
 import { isReadOnlyEngramCall } from "./public-entry-guard.ts";
 import type { SingleUserAuthoritySession } from "./single-user-authority.ts";
+import type { PiInteractiveDecisions } from "./pi-decision-adapter.ts";
+import type {
+	AuthenticatedDecisionActor,
+	DecisionBlocker,
+	DecisionRequest,
+	ExecutionLease,
+	TypedDecisionAction,
+} from "./interactive-decisions.ts";
 
 const toolName = "workflow_define_product";
 const MAX_AUTHORITY_TOOL_IDENTITIES = 16_384;
@@ -93,6 +101,7 @@ const defineProductActions = [
 	"to_approved_revision",
 	"approve_approved_revision",
 	"publish_approved_revision",
+	"cancel_decision",
 ] as const;
 
 const defineProductParameters = {
@@ -157,14 +166,15 @@ const defineProductParameters = {
 				action: {
 					type: "string",
 					enum: [
-					"approve_spec",
-					"publish_spec",
-					"to_tickets",
-					"approve_tickets",
-					"publish_tickets",
-					"approve_approved_revision",
-					"publish_approved_revision",
-				],
+						"approve_spec",
+						"publish_spec",
+						"to_tickets",
+						"approve_tickets",
+						"publish_tickets",
+						"approve_approved_revision",
+						"publish_approved_revision",
+						"cancel_decision",
+					],
 				},
 			},
 			required: ["action"],
@@ -201,7 +211,8 @@ function collectPrivateStrings(value: unknown, target: Set<string>): void {
 		return;
 	}
 	if (isRecord(value))
-		for (const entry of Object.values(value)) collectPrivateStrings(entry, target);
+		for (const entry of Object.values(value))
+			collectPrivateStrings(entry, target);
 }
 
 function redactPrivateStrings(
@@ -211,7 +222,8 @@ function redactPrivateStrings(
 	let redacted = value;
 	for (const privateValue of [...privateStrings].sort(
 		(left, right) => right.length - left.length,
-	)) redacted = redacted.replaceAll(privateValue, "[detalle interno]");
+	))
+		redacted = redacted.replaceAll(privateValue, "[detalle interno]");
 	return redacted;
 }
 
@@ -280,7 +292,10 @@ function stripFlowReference(body: string): string {
 function publicRevision(
 	revision:
 		| Extract<DefineProductOutcome, { status: "revision-ready" }>["revision"]
-		| Extract<DefineProductOutcome, { status: "revision-approved" }>["revision"],
+		| Extract<
+				DefineProductOutcome,
+				{ status: "revision-approved" }
+		  >["revision"],
 ) {
 	return {
 		kind: revision.kind,
@@ -374,10 +389,17 @@ function publicOutcome(outcome: DefineProductOutcome): unknown {
 		};
 	if (outcome.status === "tickets-published") return { status: outcome.status };
 	if (outcome.status === "revision-ready")
-		return { status: outcome.status, revision: publicRevision(outcome.revision) };
+		return {
+			status: outcome.status,
+			revision: publicRevision(outcome.revision),
+		};
 	if (outcome.status === "revision-approved")
-		return { status: outcome.status, revision: publicRevision(outcome.revision) };
-	if (outcome.status === "revision-published") return { status: outcome.status };
+		return {
+			status: outcome.status,
+			revision: publicRevision(outcome.revision),
+		};
+	if (outcome.status === "revision-published")
+		return { status: outcome.status };
 	return outcome;
 }
 
@@ -394,7 +416,8 @@ interface DefineProductToolParams {
 		| "publish_tickets"
 		| "to_approved_revision"
 		| "approve_approved_revision"
-		| "publish_approved_revision";
+		| "publish_approved_revision"
+		| "cancel_decision";
 	domainAnchor?: string;
 	assessment?: Assessment;
 	researchQuestion?: string;
@@ -420,7 +443,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function toolResultPayload(event: { content?: unknown }): unknown {
-	if (!Array.isArray(event.content) || event.content.length !== 1) return undefined;
+	if (!Array.isArray(event.content) || event.content.length !== 1)
+		return undefined;
 	const [item] = event.content;
 	if (!isRecord(item) || item.type !== "text" || typeof item.text !== "string")
 		return undefined;
@@ -506,7 +530,9 @@ function parseToSpecCommand(
 	if (
 		!hasExactKeys(params, expectedKeys) ||
 		typeof teamId !== "string" ||
-		(boundTeamId !== undefined && params.teamId !== undefined && params.teamId !== boundTeamId) ||
+		(boundTeamId !== undefined &&
+			params.teamId !== undefined &&
+			params.teamId !== boundTeamId) ||
 		typeof params.title !== "string" ||
 		typeof params.problem !== "string" ||
 		typeof params.solution !== "string" ||
@@ -552,7 +578,10 @@ function parseToSpecCommand(
 	};
 }
 
-function parseApprovedRevisionDraftCommand(params: DefineProductToolParams, definitionId: string): DefineProductCommand | undefined {
+function parseApprovedRevisionDraftCommand(
+	params: DefineProductToolParams,
+	definitionId: string,
+): DefineProductCommand | undefined {
 	const expectedKeys = [
 		"action",
 		"revisionKind",
@@ -567,18 +596,274 @@ function parseApprovedRevisionDraftCommand(params: DefineProductToolParams, defi
 		typeof params.sourceCommentKind !== "string" ||
 		typeof params.sourceCommentBody !== "string" ||
 		!Array.isArray(params.affectedIssues)
-	) return undefined;
+	)
+		return undefined;
 	const affectedIssues = params.affectedIssues.flatMap((issue) => {
-		if (!isRecord(issue) || typeof issue.id !== "string" || typeof issue.nextDescription !== "string") return [];
+		if (
+			!isRecord(issue) ||
+			typeof issue.id !== "string" ||
+			typeof issue.nextDescription !== "string"
+		)
+			return [];
 		return [{ id: issue.id, nextDescription: issue.nextDescription }];
 	});
 	if (affectedIssues.length !== params.affectedIssues.length) return undefined;
 	let decisionGap: { issueId: string; body: string } | undefined;
 	if (params.decisionGap !== undefined) {
-		if (!isRecord(params.decisionGap) || typeof params.decisionGap.issueId !== "string" || typeof params.decisionGap.body !== "string") return undefined;
-		decisionGap = { issueId: params.decisionGap.issueId, body: params.decisionGap.body };
+		if (
+			!isRecord(params.decisionGap) ||
+			typeof params.decisionGap.issueId !== "string" ||
+			typeof params.decisionGap.body !== "string"
+		)
+			return undefined;
+		decisionGap = {
+			issueId: params.decisionGap.issueId,
+			body: params.decisionGap.body,
+		};
 	}
-	return { kind: "to-approved-revision", definitionId, revisionKind: params.revisionKind, affectedIssues, sourceCommentKind: params.sourceCommentKind, sourceCommentBody: params.sourceCommentBody, ...(decisionGap ? { decisionGap } : {}) };
+	return {
+		kind: "to-approved-revision",
+		definitionId,
+		revisionKind: params.revisionKind,
+		affectedIssues,
+		sourceCommentKind: params.sourceCommentKind,
+		sourceCommentBody: params.sourceCommentBody,
+		...(decisionGap ? { decisionGap } : {}),
+	};
+}
+
+export function defineProductRouteDecision(
+	project: string,
+	recommendation: RouteRecommendation,
+): { readonly request: DecisionRequest; readonly action: TypedDecisionAction } {
+	const action: TypedDecisionAction = {
+		id: "define-product.route.confirm",
+		input: {
+			definitionId: recommendation.definitionId,
+			recommendationDigest: recommendation.digest,
+			route: recommendation.recommendedRoute,
+		},
+	};
+	return {
+		action,
+		request: {
+			scope: { project, workflow: "define-product", subject: recommendation.definitionId },
+			operation: {
+				kind: "define-product.route",
+				phase: "route.confirmation",
+				input: action.input,
+				artifacts: [{ recommendationDigest: recommendation.digest }],
+				targets: [{ route: recommendation.recommendedRoute }],
+				evidence: [
+					{
+						clarity: recommendation.assessment.clarity,
+						breadth: recommendation.assessment.breadth,
+						reasons: [...recommendation.assessment.reasons],
+					},
+				],
+			},
+			presentation: {
+				locale: "en",
+				summary: `Use the recommended ${recommendation.recommendedRoute} route?`,
+				details: recommendation.assessment.reasons,
+				consequences: [
+					"The selected route will start the bounded research operation.",
+				],
+				risks: [],
+				choices: [
+					{
+						id: "define-product.route.confirm",
+						mode: "execute",
+						action,
+						label: "Continue",
+						description: `Start research using ${recommendation.recommendedRoute}.`,
+					},
+					{
+						id: "define-product.route.cancel",
+						mode: "cancel",
+						action: { id: "decision.cancel", input: null },
+						label: "Cancel",
+						description: "Stop this define-product operation without starting research.",
+					},
+				],
+			},
+		},
+	};
+}
+
+export function defineProductTeamDecision(
+	project: string,
+	definitionId: string,
+	teams: ReadonlyMap<string, string>,
+) {
+	const actions = new Map<string, TypedDecisionAction>(
+		[...teams.keys()].map((teamId) => [
+			teamId,
+			{ id: `define-product.team.select.${teamId}`, input: { definitionId, teamId } },
+		]),
+	);
+	return {
+		actions,
+		request: {
+			scope: { project, workflow: "define-product", subject: `${definitionId}:team` },
+			operation: {
+				kind: "define-product.team",
+				phase: "spec.target-selection",
+				input: { definitionId },
+				artifacts: [],
+				targets: [...teams.keys()].map((teamId) => ({ teamId })),
+				evidence: [],
+			},
+			presentation: {
+				locale: "en",
+				summary: "Which Linear team should own the Delivery parent?",
+				details: [],
+				consequences: ["The selected immutable team ID will be bound to the product Spec."],
+				risks: [],
+				choices: [
+					...[...teams].map(([teamId, name]) => ({
+						id: `define-product.team.${teamId}`,
+						mode: "execute" as const,
+						action: actions.get(teamId) as TypedDecisionAction,
+						label: name,
+						description: "Use this team for the Delivery parent.",
+					})),
+					{
+						id: "define-product.team.cancel",
+						mode: "cancel" as const,
+						action: { id: "decision.cancel", input: null },
+						label: "Cancel",
+						description: "Stop before generating the product Spec.",
+					},
+				],
+			},
+		} satisfies DecisionRequest,
+	};
+}
+
+export function defineProductSpecDecision(
+	project: string,
+	definitionId: string,
+	command: Extract<DefineProductCommand, { kind: "approve-spec" }>,
+) {
+	const target = { ...command.target };
+	const action: TypedDecisionAction = {
+		id: "define-product.spec.publish",
+		input: { definitionId, digest: command.digest, revision: command.revision, target },
+	};
+	return {
+		action,
+		request: defineProductBoundDecision({
+			project,
+			subject: `${definitionId}:spec-publication`,
+			kind: "define-product.spec-publication",
+			phase: "spec.approval",
+			action,
+			artifacts: [{ digest: command.digest, revision: command.revision }],
+			targets: [target],
+			summary: `Approve and publish ${command.target.title}?`,
+			consequence: "One approval authorizes the durable Spec approval and its Linear parent publication.",
+			details: ["The exact reviewed Spec body will become the Delivery parent description."],
+		}),
+	};
+}
+
+function defineProductBoundDecision(input: {
+	readonly project: string;
+	readonly subject: string;
+	readonly kind: string;
+	readonly phase: string;
+	readonly action: TypedDecisionAction;
+	readonly artifacts: readonly Record<string, string>[];
+	readonly targets: readonly Record<string, string>[];
+	readonly summary: string;
+	readonly consequence: string;
+	readonly details?: readonly string[];
+}): DecisionRequest {
+	return {
+		scope: { project: input.project, workflow: "define-product", subject: input.subject },
+		operation: {
+			kind: input.kind,
+			phase: input.phase,
+			input: input.action.input,
+			artifacts: input.artifacts,
+			targets: input.targets,
+			evidence: [],
+		},
+		presentation: {
+			locale: "en",
+			summary: input.summary,
+			details: input.details ?? [],
+			consequences: [input.consequence],
+			risks: [],
+			choices: [
+				{
+					id: input.action.id,
+					mode: "execute",
+					action: input.action,
+					label: "Approve and publish",
+					description: input.consequence,
+				},
+				{
+					id: `${input.kind}.cancel`,
+					mode: "cancel",
+					action: { id: "decision.cancel", input: null },
+					label: "Cancel",
+					description: "Stop this operation without further mutation.",
+				},
+			],
+		},
+	};
+}
+
+export function defineProductTicketDecision(
+	project: string,
+	definitionId: string,
+	graphDigest: string,
+): { readonly request: DecisionRequest; readonly action: TypedDecisionAction } {
+	const action: TypedDecisionAction = {
+		id: "define-product.tickets.publish",
+		input: { definitionId, graphDigest },
+	};
+	return {
+		action,
+		request: defineProductBoundDecision({
+			project,
+			subject: `${definitionId}:ticket-publication`,
+			kind: "define-product.ticket-publication",
+			phase: "ticket-graph.approval",
+			action,
+			artifacts: [{ graphDigest }],
+			targets: [],
+			summary: "Approve and publish this Delivery ticket graph?",
+			consequence: "Publish every child and blocker under one fenced operation.",
+		}),
+	};
+}
+
+export function defineProductRevisionDecision(
+	project: string,
+	definitionId: string,
+	draftDigest: string,
+): { readonly request: DecisionRequest; readonly action: TypedDecisionAction } {
+	const action: TypedDecisionAction = {
+		id: "define-product.revision.publish",
+		input: { definitionId, draftDigest },
+	};
+	return {
+		action,
+		request: defineProductBoundDecision({
+			project,
+			subject: `${definitionId}:approved-revision-publication`,
+			kind: "define-product.approved-revision-publication",
+			phase: "approved-revision.approval",
+			action,
+			artifacts: [{ draftDigest }],
+			targets: [],
+			summary: "Approve and publish this multi-issue revision?",
+			consequence: "Publish the exact durable revision under one fenced operation.",
+		}),
+	};
 }
 
 export interface DefineProductRuntimeDependencies {
@@ -592,6 +877,9 @@ export interface DefineProductRuntimeDependencies {
 	mcpPublication?: DefineProductMcpPublication;
 	ticketMcpPublication?: DefineProductTicketMcpPublication;
 	authoritySession?: SingleUserAuthoritySession;
+	project?: string;
+	/** Required by production composition; explicit undefined is a fail-closed compatibility seam. */
+	interactiveDecisions: PiInteractiveDecisions | undefined;
 }
 
 export function createDefineProductRuntime(
@@ -621,7 +909,33 @@ export function createDefineProductRuntime(
 	let approvedRevisionCommand: ApprovedRevisionCommand | undefined;
 	let awaitingDomainAnchor = false;
 	let awaitingConfirmation = false;
-	let routeConfirmationAuthorized = false;
+	let routeDecision:
+		| {
+				readonly decisionId: string;
+				readonly action: TypedDecisionAction;
+		  }
+		| undefined;
+	let teamDecision:
+		| {
+				readonly decisionId: string;
+				readonly actions: ReadonlyMap<string, TypedDecisionAction>;
+		  }
+		| undefined;
+	let specDecision:
+		| {
+				readonly decisionId: string;
+				readonly action: TypedDecisionAction;
+		  }
+		| undefined;
+	let specExecutionLease: ExecutionLease | undefined;
+	let ticketDecision:
+		| { readonly decisionId: string; readonly action: TypedDecisionAction }
+		| undefined;
+	let ticketExecutionLease: ExecutionLease | undefined;
+	let revisionDecision:
+		| { readonly decisionId: string; readonly action: TypedDecisionAction }
+		| undefined;
+	let revisionExecutionLease: ExecutionLease | undefined;
 	let explorationAvailable = false;
 	let awaitingSpecInput = false;
 	let specInputAuthorized = false;
@@ -632,7 +946,6 @@ export function createDefineProductRuntime(
 	let awaitingTicketPublication = false;
 	let awaitingApprovedRevisionApproval = false;
 	let awaitingApprovedRevisionPublication = false;
-	let approvalConfirmation: "spec" | "tickets" | "revision" | undefined;
 	const readOnlyEngramToolCallIds = new Set<string>();
 	let teamListToolCallId: string | undefined;
 	let availableTeams: ReadonlyMap<string, string> | undefined;
@@ -647,19 +960,508 @@ export function createDefineProductRuntime(
 	const authorityReservations = new Map<string, number>();
 	let authorityAuthenticationFailed = false;
 	let authorityExecutionActive = false;
+	let authorityPromptIssued = false;
 
 	const authorityIdentity = (toolCallId: string) =>
 		`linear_get_user\u0000${toolCallId}`;
 
 	function beginDefinition(domainAnchor: string): void {
 		authorityExecutionActive = true;
+		authorityPromptIssued = true;
 		activeDefinitionId = dependencies.createDefinitionId();
 		activeWorkflowStateId = randomBytes(32).toString("base64url");
 		activeDomainAnchor = domainAnchor;
 		awaitingDomainAnchor = false;
 	}
 
+	function decisionActor(): AuthenticatedDecisionActor | undefined {
+		const authority = dependencies.authoritySession?.current("Owner");
+		return authority
+			? {
+					actorId: authority.actorId,
+					authorityRevision: authority.authorityRevision,
+					active: true,
+					guest: false,
+				}
+			: undefined;
+	}
+
+	function decisionBlocked(blocker: DecisionBlocker): DefineProductOutcome {
+		return {
+			status: "blocked",
+			blocker: { code: blocker.code, message: blocker.message },
+		};
+	}
+
+	async function prepareRouteDecision(
+		recommendation: RouteRecommendation,
+	): Promise<DefineProductOutcome | undefined> {
+		if (!dependencies.interactiveDecisions) return undefined;
+		const actor = decisionActor();
+		if (!actor) return undefined;
+		const descriptor = defineProductRouteDecision(
+			dependencies.project ?? "unknown-project",
+			recommendation,
+		);
+		const presentation = await dependencies.interactiveDecisions.prepare(
+			descriptor.request,
+			actor,
+		);
+		routeDecision = { decisionId: presentation.decisionId, action: descriptor.action };
+		return undefined;
+	}
+
+	async function authorizeRouteEffect(
+		recommendation: RouteRecommendation,
+	): Promise<DefineProductOutcome | undefined> {
+		if (!dependencies.interactiveDecisions)
+			return {
+				status: "blocked",
+				blocker: {
+					code: "PI_WORKFLOW_DECISION_CLAIM_MISSING",
+					message: "Route confirmation requires shared decision authority.",
+				},
+			};
+		const actor = decisionActor();
+		if (!actor || !routeDecision)
+			return {
+				status: "blocked",
+				blocker: {
+					code: "PI_WORKFLOW_DECISION_CLAIM_MISSING",
+					message: "Route confirmation requires the active shared decision.",
+				},
+			};
+		const authorization = await dependencies.interactiveDecisions.authorize(
+			routeDecision.decisionId,
+			routeDecision.action,
+			actor,
+		);
+		if (authorization.kind !== "authorized")
+			return authorization.kind === "blocked"
+				? decisionBlocked(authorization.blocker)
+				: {
+						status: "blocked",
+						blocker: {
+							code: "PI_WORKFLOW_DECISION_ACTION_MISMATCH",
+							message: "The route decision was cancelled.",
+						},
+					};
+		const manifest = {
+			ref: `workflow://define-product/${recommendation.definitionId}/route/${recommendation.digest}`,
+			decisionId: authorization.lease.decisionId,
+			operationDigest: authorization.lease.operationDigest,
+			executionId: authorization.lease.executionId,
+			generation: authorization.lease.generation,
+		};
+		const bound = await dependencies.interactiveDecisions.bindExecutionManifest(
+			authorization.lease,
+			manifest,
+		);
+		if (bound.kind === "blocked") return decisionBlocked(bound.blocker);
+		const effect = await dependencies.interactiveDecisions.authorizeEffect(
+			authorization.lease,
+		);
+		if (effect.kind === "blocked") return decisionBlocked(effect.blocker);
+		return undefined;
+	}
+
+	async function prepareTeamDecision(
+		teams: ReadonlyMap<string, string>,
+	): Promise<void> {
+		if (!dependencies.interactiveDecisions || !activeDefinitionId) return;
+		const actor = decisionActor();
+		if (!actor) return;
+		const descriptor = defineProductTeamDecision(
+			dependencies.project ?? "unknown-project",
+			activeDefinitionId,
+			teams,
+		);
+		const presentation = await dependencies.interactiveDecisions.prepare(
+			descriptor.request,
+			actor,
+		);
+		teamDecision = { decisionId: presentation.decisionId, actions: descriptor.actions };
+	}
+
+	async function authorizeTeamEffect(
+		teamId: string,
+	): Promise<DefineProductOutcome | undefined> {
+		if (!dependencies.interactiveDecisions)
+			return {
+				status: "blocked",
+				blocker: {
+					code: "PI_WORKFLOW_DECISION_CLAIM_MISSING",
+					message: "Spec generation requires shared decision authority.",
+				},
+			};
+		const actor = decisionActor();
+		const action = teamDecision?.actions.get(teamId);
+		if (!actor || !action || !teamDecision)
+			return {
+				status: "blocked",
+				blocker: {
+					code: "PI_WORKFLOW_DECISION_CLAIM_MISSING",
+					message: "Spec generation requires the active shared team decision.",
+				},
+			};
+		const authorization = await dependencies.interactiveDecisions.authorize(
+			teamDecision.decisionId,
+			action,
+			actor,
+		);
+		if (authorization.kind !== "authorized")
+			return authorization.kind === "blocked"
+				? decisionBlocked(authorization.blocker)
+				: {
+						status: "blocked",
+						blocker: {
+							code: "PI_WORKFLOW_DECISION_ACTION_MISMATCH",
+							message: "The team decision was cancelled.",
+						},
+					};
+		const manifest = {
+			ref: `workflow://define-product/${activeDefinitionId}/spec-draft/${teamId}`,
+			decisionId: authorization.lease.decisionId,
+			operationDigest: authorization.lease.operationDigest,
+			executionId: authorization.lease.executionId,
+			generation: authorization.lease.generation,
+		};
+		const bound = await dependencies.interactiveDecisions.bindExecutionManifest(
+			authorization.lease,
+			manifest,
+		);
+		if (bound.kind === "blocked") return decisionBlocked(bound.blocker);
+		const effect = await dependencies.interactiveDecisions.authorizeEffect(
+			authorization.lease,
+		);
+		return effect.kind === "blocked"
+			? decisionBlocked(effect.blocker)
+			: undefined;
+	}
+
+	async function prepareSpecDecision(
+		command: ApproveSpecCommand,
+	): Promise<void> {
+		if (!dependencies.interactiveDecisions || !activeDefinitionId) return;
+		const actor = decisionActor();
+		if (!actor) return;
+		const descriptor = defineProductSpecDecision(
+			dependencies.project ?? "unknown-project",
+			activeDefinitionId,
+			command,
+		);
+		const presentation = await dependencies.interactiveDecisions.prepare(
+			descriptor.request,
+			actor,
+		);
+		specDecision = { decisionId: presentation.decisionId, action: descriptor.action };
+	}
+
+	async function authorizeSpecEffect(): Promise<
+		DefineProductOutcome | undefined
+	> {
+		if (!dependencies.interactiveDecisions)
+			return {
+				status: "blocked",
+				blocker: {
+					code: "PI_WORKFLOW_DECISION_CLAIM_MISSING",
+					message: "Spec approval requires shared decision authority.",
+				},
+			};
+		const actor = decisionActor();
+		if (!actor || !specDecision || !approveSpecCommand)
+			return {
+				status: "blocked",
+				blocker: {
+					code: "PI_WORKFLOW_DECISION_CLAIM_MISSING",
+					message: "Spec approval requires the active shared decision.",
+				},
+			};
+		const authorization = await dependencies.interactiveDecisions.authorize(
+			specDecision.decisionId,
+			specDecision.action,
+			actor,
+		);
+		if (authorization.kind !== "authorized")
+			return authorization.kind === "blocked"
+				? decisionBlocked(authorization.blocker)
+				: {
+						status: "blocked",
+						blocker: {
+							code: "PI_WORKFLOW_DECISION_ACTION_MISMATCH",
+							message: "The Spec publication decision was cancelled.",
+						},
+					};
+		const manifest = {
+			ref: `workflow://define-product/${activeDefinitionId}/spec-publication/${approveSpecCommand.digest}`,
+			decisionId: authorization.lease.decisionId,
+			operationDigest: authorization.lease.operationDigest,
+			executionId: authorization.lease.executionId,
+			generation: authorization.lease.generation,
+		};
+		const bound = await dependencies.interactiveDecisions.bindExecutionManifest(
+			authorization.lease,
+			manifest,
+		);
+		if (bound.kind === "blocked") return decisionBlocked(bound.blocker);
+		const effect = await dependencies.interactiveDecisions.authorizeEffect(
+			authorization.lease,
+		);
+		if (effect.kind === "blocked") return decisionBlocked(effect.blocker);
+		specExecutionLease = authorization.lease;
+		return undefined;
+	}
+
+	async function prepareBoundDecision(input: {
+		readonly subject: string;
+		readonly kind: string;
+		readonly phase: string;
+		readonly action: TypedDecisionAction;
+		readonly artifacts: readonly Record<string, string>[];
+		readonly targets: readonly Record<string, string>[];
+		readonly summary: string;
+		readonly consequence: string;
+	}): Promise<
+		| { readonly decisionId: string; readonly action: TypedDecisionAction }
+		| undefined
+	> {
+		if (!dependencies.interactiveDecisions) return undefined;
+		const actor = decisionActor();
+		if (!actor) return undefined;
+		const actionInput = isRecord(input.action.input) ? input.action.input : {};
+		const request =
+			input.action.id === "define-product.tickets.publish" &&
+			typeof actionInput.definitionId === "string" &&
+			typeof actionInput.graphDigest === "string"
+				? defineProductTicketDecision(
+						dependencies.project ?? "unknown-project",
+						actionInput.definitionId,
+						actionInput.graphDigest,
+					).request
+				: input.action.id === "define-product.revision.publish" &&
+						typeof actionInput.definitionId === "string" &&
+						typeof actionInput.draftDigest === "string"
+					? defineProductRevisionDecision(
+							dependencies.project ?? "unknown-project",
+							actionInput.definitionId,
+							actionInput.draftDigest,
+						).request
+					: defineProductBoundDecision({
+							project: dependencies.project ?? "unknown-project",
+							...input,
+						});
+		const presentation = await dependencies.interactiveDecisions.prepare(
+			request,
+			actor,
+		);
+		return { decisionId: presentation.decisionId, action: input.action };
+	}
+
+	async function authorizeBoundDecision(
+		decision:
+			| { readonly decisionId: string; readonly action: TypedDecisionAction }
+			| undefined,
+		manifestRef: string,
+	): Promise<ExecutionLease | DefineProductOutcome> {
+		const actor = decisionActor();
+		if (!dependencies.interactiveDecisions || !actor || !decision)
+			return {
+				status: "blocked",
+				blocker: {
+					code: "PI_WORKFLOW_DECISION_CLAIM_MISSING",
+					message: "The active shared decision is required.",
+				},
+			};
+		const authorization = await dependencies.interactiveDecisions.authorize(
+			decision.decisionId,
+			decision.action,
+			actor,
+		);
+		if (authorization.kind !== "authorized")
+			return authorization.kind === "blocked"
+				? decisionBlocked(authorization.blocker)
+				: {
+						status: "blocked",
+						blocker: {
+							code: "PI_WORKFLOW_DECISION_ACTION_MISMATCH",
+							message: "The shared decision was cancelled.",
+						},
+					};
+		const manifest = {
+			ref: manifestRef,
+			decisionId: authorization.lease.decisionId,
+			operationDigest: authorization.lease.operationDigest,
+			executionId: authorization.lease.executionId,
+			generation: authorization.lease.generation,
+		};
+		const bound = await dependencies.interactiveDecisions.bindExecutionManifest(
+			authorization.lease,
+			manifest,
+		);
+		if (bound.kind === "blocked") return decisionBlocked(bound.blocker);
+		const effect = await dependencies.interactiveDecisions.authorizeEffect(
+			authorization.lease,
+		);
+		return effect.kind === "blocked"
+			? decisionBlocked(effect.blocker)
+			: authorization.lease;
+	}
+
+	async function recoverBoundDecision(
+		subject: string,
+		action: TypedDecisionAction,
+	): Promise<{
+		readonly decision?: {
+			readonly decisionId: string;
+			readonly action: TypedDecisionAction;
+		};
+		readonly lease?: ExecutionLease;
+	}> {
+		const actor = decisionActor();
+		if (!dependencies.interactiveDecisions || !actor) return {};
+		const scope = {
+			project: dependencies.project ?? "unknown-project",
+			workflow: "define-product",
+			subject,
+		};
+		let outcome = await dependencies.interactiveDecisions.recover(scope, actor);
+		if (outcome.kind === "active")
+			outcome = await dependencies.interactiveDecisions.recover(scope, actor, {
+				kind: "resume",
+			});
+		if (outcome.kind === "authorized")
+			return {
+				decision: { decisionId: outcome.lease.decisionId, action },
+				lease: outcome.lease,
+			};
+		if (outcome.kind === "prepared")
+			return { decision: { decisionId: outcome.decisionId, action } };
+		if (outcome.kind === "reapproval" || outcome.kind === "drift")
+			return {
+				decision: { decisionId: outcome.presentation.decisionId, action },
+			};
+		return {};
+	}
+
+	async function restoreSharedAuthority(
+		recovery: DefineProductRecovery,
+	): Promise<void> {
+		if (
+			recovery.phase === "ticket-approval" ||
+			recovery.phase === "ticket-publication"
+		) {
+			const graphDigest =
+				recovery.phase === "ticket-approval"
+					? recovery.command.digest
+					: recovery.digest;
+			const action: TypedDecisionAction = {
+				id: "define-product.tickets.publish",
+				input: { definitionId: recovery.definitionId, graphDigest },
+			};
+			const recovered = await recoverBoundDecision(
+				`${recovery.definitionId}:ticket-publication`,
+				action,
+			);
+			ticketDecision =
+				recovered.decision ??
+				(await prepareBoundDecision({
+					subject: `${recovery.definitionId}:ticket-publication`,
+					kind: "define-product.ticket-publication",
+					phase:
+						recovery.phase === "ticket-approval"
+							? "ticket-graph.approval"
+							: "ticket-graph.recovery",
+					action,
+					artifacts: [{ graphDigest }],
+					targets: [],
+					summary: "Approve and publish this recovered Delivery ticket graph?",
+					consequence:
+						"Resume the exact durable graph publication under one fenced operation.",
+				}));
+			ticketExecutionLease = recovered.lease;
+		}
+		if (
+			recovery.phase === "approved-revision-approval" ||
+			recovery.phase === "approved-revision-publication"
+		) {
+			const action: TypedDecisionAction = {
+				id: "define-product.revision.publish",
+				input: {
+					definitionId: recovery.definitionId,
+					draftDigest: recovery.draftDigest,
+				},
+			};
+			const recovered = await recoverBoundDecision(
+				`${recovery.definitionId}:approved-revision-publication`,
+				action,
+			);
+			revisionDecision =
+				recovered.decision ??
+				(await prepareBoundDecision({
+					subject: `${recovery.definitionId}:approved-revision-publication`,
+					kind: "define-product.approved-revision-publication",
+					phase:
+						recovery.phase === "approved-revision-approval"
+							? "approved-revision.approval"
+							: "approved-revision.recovery",
+					action,
+					artifacts: [{ draftDigest: recovery.draftDigest }],
+					targets: [],
+					summary: "Approve and publish this recovered multi-issue revision?",
+					consequence:
+						"Resume the exact durable revision under one fenced operation.",
+				}));
+			revisionExecutionLease = recovered.lease;
+		}
+	}
+
+	async function cancelSharedDecision(): Promise<
+		{ readonly status: "cancelled" } | DefineProductOutcome
+	> {
+		const actor = decisionActor();
+		const active =
+			revisionDecision ??
+			ticketDecision ??
+			specDecision ??
+			teamDecision ??
+			routeDecision;
+		if (!dependencies.interactiveDecisions || !actor || !active)
+			return {
+				status: "blocked",
+				blocker: {
+					code: "PI_WORKFLOW_DECISION_CLAIM_MISSING",
+					message: "Cancellation requires the active shared decision.",
+				},
+			};
+		const outcome = await dependencies.interactiveDecisions.authorize(
+			active.decisionId,
+			{ id: "decision.cancel", input: null },
+			actor,
+		);
+		if (outcome.kind === "blocked") return decisionBlocked(outcome.blocker);
+		if (outcome.kind !== "cancelled")
+			return {
+				status: "blocked",
+				blocker: {
+					code: "PI_WORKFLOW_DECISION_ACTION_MISMATCH",
+					message: "The active decision did not authorize cancellation.",
+				},
+			};
+		clearActiveTurn();
+		return { status: "cancelled" };
+	}
+
 	function handlePublicEntry(event: InputEvent): void {
+		if (
+			activeDefinitionId !== undefined &&
+			event.source === "interactive" &&
+			event.streamingBehavior === undefined &&
+			event.text.trim().startsWith("/") &&
+			!/^\/(?:skill:)?define-product(?:\s|$)/s.test(event.text.trim())
+		) {
+			clearActiveTurn();
+			return;
+		}
 		if (awaitingDomainAnchor) {
 			const domainAnchor = event.text.trim();
 			if (
@@ -678,22 +1480,11 @@ export function createDefineProductRuntime(
 			!event.text.trim().startsWith("/");
 		if (freshInteractiveResponse && awaitingConfirmation) {
 			authorityExecutionActive = true;
-			routeConfirmationAuthorized = true;
 			return;
 		}
-		if (
-			freshInteractiveResponse &&
-			(awaitingSpecApproval ||
-				awaitingTicketApproval ||
-				awaitingApprovedRevisionApproval)
-		) {
+		if (freshInteractiveResponse && awaitingSpecApproval) {
 			authorityExecutionActive = true;
-			approvalConfirmation = awaitingSpecApproval
-				? "spec"
-				: awaitingTicketApproval
-					? "tickets"
-					: "revision";
-			if (awaitingSpecApproval) specInputAuthorized = true;
+			specInputAuthorized = true;
 			return;
 		}
 		if (
@@ -703,16 +1494,24 @@ export function createDefineProductRuntime(
 			event.text.trim() &&
 			!event.text.trim().startsWith("/")
 		) {
-			specInputAuthorized = true;
 			return;
 		}
-		const match = event.text.match(/^\/(?:skill:)?define-product(?:\s+(.*))?$/s);
+		const match = event.text.match(
+			/^\/(?:skill:)?define-product(?:\s+(.*))?$/s,
+		);
 		if (
 			!match ||
 			event.source !== "interactive" ||
 			event.streamingBehavior !== undefined
-		)
+		) {
+			if (
+				event.source === "interactive" &&
+				event.streamingBehavior === undefined &&
+				event.text.trim().startsWith("/")
+			)
+				clearActiveTurn();
 			return;
+		}
 		clearActiveTurn();
 		const domainAnchor = match[1]?.trim();
 		if (domainAnchor) beginDefinition(domainAnchor);
@@ -731,7 +1530,14 @@ export function createDefineProductRuntime(
 		approvedRevisionCommand = undefined;
 		awaitingDomainAnchor = false;
 		awaitingConfirmation = false;
-		routeConfirmationAuthorized = false;
+		routeDecision = undefined;
+		teamDecision = undefined;
+		specDecision = undefined;
+		specExecutionLease = undefined;
+		ticketDecision = undefined;
+		ticketExecutionLease = undefined;
+		revisionDecision = undefined;
+		revisionExecutionLease = undefined;
 		explorationAvailable = false;
 		awaitingSpecInput = false;
 		specInputAuthorized = false;
@@ -742,7 +1548,6 @@ export function createDefineProductRuntime(
 		awaitingTicketPublication = false;
 		awaitingApprovedRevisionApproval = false;
 		awaitingApprovedRevisionPublication = false;
-		approvalConfirmation = undefined;
 		readOnlyEngramToolCallIds.clear();
 		teamListToolCallId = undefined;
 		availableTeams = undefined;
@@ -750,6 +1555,7 @@ export function createDefineProductRuntime(
 		authorityReservation = undefined;
 		authorityAuthenticationFailed = false;
 		authorityExecutionActive = false;
+		authorityPromptIssued = false;
 		dependencies.authoritySession?.clear();
 		dependencies.mcpPublication?.clear();
 		dependencies.ticketMcpPublication?.clear();
@@ -766,12 +1572,12 @@ export function createDefineProductRuntime(
 			awaitingSpecApproval ||
 			awaitingPublication ||
 			awaitingTicketGeneration ||
-			awaitingTicketApproval
-			|| awaitingTicketPublication
-			|| awaitingApprovedRevisionApproval
-			|| awaitingApprovedRevisionPublication
-			|| dependencies.mcpPublication?.hasActiveTurn() === true
-			|| dependencies.ticketMcpPublication?.hasActiveTurn() === true
+			awaitingTicketApproval ||
+			awaitingTicketPublication ||
+			awaitingApprovedRevisionApproval ||
+			awaitingApprovedRevisionPublication ||
+			dependencies.mcpPublication?.hasActiveTurn() === true ||
+			dependencies.ticketMcpPublication?.hasActiveTurn() === true
 		);
 	}
 
@@ -782,17 +1588,28 @@ export function createDefineProductRuntime(
 			return event.text.trim().length > 0 && !event.text.trim().startsWith("/");
 		if (awaitingTicketApproval || awaitingApprovedRevisionApproval)
 			return event.text.trim().length > 0 && !event.text.trim().startsWith("/");
-		return awaitingDomainAnchor || awaitingConfirmation || explorationAvailable || awaitingSpecInput || awaitingPublication || awaitingTicketGeneration || awaitingTicketPublication || awaitingApprovedRevisionPublication;
+		return (
+			awaitingDomainAnchor ||
+			awaitingConfirmation ||
+			explorationAvailable ||
+			awaitingSpecInput ||
+			awaitingPublication ||
+			awaitingTicketGeneration ||
+			awaitingTicketPublication ||
+			awaitingApprovedRevisionPublication
+		);
 	}
 
 	function systemPrompt(): string {
 		if (
 			authorityExecutionActive &&
+			activeDefinitionId !== undefined &&
 			dependencies.authoritySession &&
 			!dependencies.authoritySession.user()
 		) {
 			if (authorityAuthenticationFailed)
 				return "The single-user harness could not authenticate one active non-guest Linear user. Stop without approving or mutating anything.";
+			authorityPromptIssued = true;
 			return authorityReservation
 				? "Wait for the one pending linear_get_user result; do not call another tool."
 				: 'Authenticate this define-product execution exactly once: call linear_get_user with only {"query":"me"}. Do not call workflow or mutation tools first.';
@@ -808,7 +1625,7 @@ export function createDefineProductRuntime(
 		if (awaitingApprovedRevisionApproval)
 			return [
 				"An exact approved-revision draft is ready for Owner review.",
-				`After the Owner approves it naturally, call ${toolName} with only action="approve_approved_revision".`,
+				`After the shared revision decision records its publish action, call ${toolName} with only action="approve_approved_revision".`,
 			].join(" ");
 		if (awaitingTicketPublication) {
 			const expected = dependencies.ticketMcpPublication?.expectedModelCall();
@@ -826,7 +1643,7 @@ export function createDefineProductRuntime(
 		if (awaitingTicketApproval) {
 			return [
 				"The exact verified ticket graph is ready for Owner review.",
-				`After the Owner approves it naturally, call ${toolName} with only action="approve_tickets".`,
+				`After the shared ticket decision records its publish action, call ${toolName} with only action="approve_tickets".`,
 				"Do not publish tickets yet.",
 			].join(" ");
 		}
@@ -854,8 +1671,7 @@ export function createDefineProductRuntime(
 			return [
 				"An exact Spanish product Spec is ready for Owner review.",
 				"Present the returned spec.body verbatim and in full before asking for approval; never summarize, paraphrase, or replace it with only the title.",
-				"Interpret the Owner's natural-language response yourself; the runtime does not classify its wording.",
-				`If the Owner approves, call ${toolName} with only action="approve_spec".`,
+				`After the shared Spec decision records its publish action, call ${toolName} with only action="approve_spec".`,
 				`Treat an Agent-interpreted change request as feedback on the ready Spec: call ${toolName} with action="to_spec" and the revised semantic Spec fields, preserving unaffected content; reuse the exact privately retained Linear team, derive the title from the product task, and omit teamId.`,
 				"Use professional neutral Spanish. If the response is ambiguous, ask a follow-up and do not call the workflow tool.",
 				`If approve_spec returns status="spec-approved", immediately call ${toolName} once more with only action="publish_spec" in the same turn; do not ask for another human confirmation.`,
@@ -919,7 +1735,7 @@ export function createDefineProductRuntime(
 			if (!hasActiveTurn()) return undefined;
 			const publication = awaitingTicketPublication
 				? dependencies.ticketMcpPublication
-				: (awaitingSpecApproval || awaitingPublication)
+				: awaitingSpecApproval || awaitingPublication
 					? dependencies.mcpPublication
 					: undefined;
 			if (publication) {
@@ -936,7 +1752,12 @@ export function createDefineProductRuntime(
 			return { systemPrompt: systemPrompt() };
 		});
 		pi.on("tool_call", (event) => {
-			if (authorityExecutionActive && dependencies.authoritySession) {
+			if (
+				authorityExecutionActive &&
+				activeDefinitionId !== undefined &&
+				authorityPromptIssued &&
+				dependencies.authoritySession
+			) {
 				const authenticated = dependencies.authoritySession.user();
 				if (!authenticated) {
 					if (
@@ -1003,6 +1824,8 @@ export function createDefineProductRuntime(
 			const reservation = authorityReservation;
 			if (
 				authorityExecutionActive &&
+				activeDefinitionId !== undefined &&
+				authorityPromptIssued &&
 				dependencies.authoritySession &&
 				event.toolName === "linear_get_user" &&
 				typeof event.toolCallId === "string" &&
@@ -1010,16 +1833,37 @@ export function createDefineProductRuntime(
 				reservation.generation === authorityGeneration &&
 				reservation.toolCallId === event.toolCallId &&
 				reservation.identity === authorityIdentity(event.toolCallId) &&
-				authorityReservations.get(reservation.identity) ===
-					authorityGeneration
+				authorityReservations.get(reservation.identity) === authorityGeneration
 			) {
 				authorityReservation = undefined;
+				authorityPromptIssued = false;
 				const authenticated =
 					event.isError !== true &&
-					dependencies.authoritySession.authenticate(
-						toolResultPayload(event),
-					).ok;
+					dependencies.authoritySession.authenticate(toolResultPayload(event))
+						.ok;
 				if (!authenticated) authorityAuthenticationFailed = true;
+				if (authenticated && awaitingConfirmation && !routeDecision) {
+					const pending = dependencies.workflow.pendingRecommendation();
+					if (pending) await prepareRouteDecision(pending);
+				}
+				if (
+					authenticated &&
+					awaitingSpecApproval &&
+					!specDecision &&
+					approveSpecCommand
+				)
+					await prepareSpecDecision(approveSpecCommand);
+				if (
+					authenticated &&
+					(((awaitingTicketApproval || awaitingTicketPublication) &&
+						!ticketDecision) ||
+						((awaitingApprovedRevisionApproval ||
+							awaitingApprovedRevisionPublication) &&
+							!revisionDecision))
+				) {
+					const recovery = await dependencies.workflow.restoreRecovery?.();
+					if (recovery) await restoreSharedAuthority(recovery);
+				}
 				return {
 					content: [
 						...(Array.isArray(event.content) ? event.content : []),
@@ -1039,6 +1883,7 @@ export function createDefineProductRuntime(
 			) {
 				teamListToolCallId = undefined;
 				availableTeams = linearTeamOptions(toolResultPayload(event));
+				if (availableTeams) await prepareTeamDecision(availableTeams);
 				return undefined;
 			}
 			if (
@@ -1065,6 +1910,7 @@ export function createDefineProductRuntime(
 			clearActiveTurn();
 			const recovery = await dependencies.workflow.restoreRecovery?.();
 			if (!recovery) return;
+			authorityExecutionActive = recovery.phase !== "publication";
 			activeDefinitionId = recovery.definitionId;
 			explorationAvailable = recovery.phase === "exploration";
 			awaitingSpecApproval = recovery.phase === "spec-approval";
@@ -1078,6 +1924,7 @@ export function createDefineProductRuntime(
 			if (recovery.phase === "spec-approval") {
 				approveSpecCommand = structuredClone(recovery.command);
 				activeSpecTeamId = recovery.command.target.teamId;
+				await prepareSpecDecision(approveSpecCommand);
 			}
 			if (recovery.phase === "publication")
 				approvedSpecRef = structuredClone(recovery.approvedSpecRef);
@@ -1096,6 +1943,7 @@ export function createDefineProductRuntime(
 					digest: recovery.digest,
 				};
 			}
+			await restoreSharedAuthority(recovery);
 		});
 		pi.on("session_shutdown", clearActiveTurn);
 		const registerTool = (pi as { registerTool?: (tool: unknown) => void })
@@ -1107,6 +1955,13 @@ export function createDefineProductRuntime(
 				"Execute package-owned define-product routing, exploration, exact Spanish Spec generation, or Owner approval.",
 			parameters: defineProductParameters as never,
 			async execute(toolCallId: string, params: DefineProductToolParams) {
+				if (params.action === "cancel_decision") {
+					const outcome = await cancelSharedDecision();
+					return {
+						content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }],
+						details: outcome,
+					};
+				}
 				if (
 					params.action === "to_tickets" &&
 					awaitingPublication &&
@@ -1150,10 +2005,7 @@ export function createDefineProductRuntime(
 						details: outcome,
 					};
 				}
-				if (
-					params.action === "to_spec" &&
-					activeDefinitionId === undefined
-				) {
+				if (params.action === "to_spec" && activeDefinitionId === undefined) {
 					const outcome: DefineProductOutcome = {
 						status: "blocked",
 						blocker: createBlocker(
@@ -1170,37 +2022,19 @@ export function createDefineProductRuntime(
 					params.action === "to_spec" &&
 					((!explorationAvailable && activeSpecTeamId === undefined) ||
 						(!awaitingSpecInput && !awaitingSpecApproval) ||
-						!specInputAuthorized)
+				(activeSpecTeamId === undefined ? !teamDecision : !specInputAuthorized))
 				) {
 					const outcome: DefineProductOutcome = {
 						status: "blocked",
 						blocker: createBlocker(
 							"PI_WORKFLOW_SPEC_ARTIFACT_INVALID",
-							"Spec generation requires a fresh interactive non-streaming Owner reply confirming the Linear team after research, or Owner feedback on the ready Spec.",
+							"Spec generation requires a claimed shared team decision after research, or Owner feedback on the ready Spec.",
 						),
 					};
 					return {
 						content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }],
 						details: outcome,
 					};
-				}
-				if (
-					params.action === "approve_spec" &&
-					!awaitingSpecApproval &&
-					approvalConfirmation === "spec" &&
-					activeDefinitionId !== undefined
-				) {
-					const recovery = await dependencies.workflow.restoreRecovery?.();
-					if (
-						recovery?.phase === "spec-approval" &&
-						recovery.definitionId === activeDefinitionId
-					) {
-						approveSpecCommand = structuredClone(recovery.command);
-						activeSpecTeamId = recovery.command.target.teamId;
-						awaitingSpecInput = false;
-						specInputAuthorized = false;
-						awaitingSpecApproval = true;
-					}
 				}
 				if (params.action === "approve_spec" && !awaitingSpecApproval) {
 					const outcome: DefineProductOutcome = {
@@ -1229,24 +2063,75 @@ export function createDefineProductRuntime(
 					};
 				}
 				if (params.action === "to_tickets" && !awaitingTicketGeneration) {
-					const outcome: DefineProductOutcome = { status: "blocked", blocker: createBlocker("PI_WORKFLOW_TICKET_PARENT_STALE", "Ticket generation requires the current published Delivery parent.") };
-					return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
+					const outcome: DefineProductOutcome = {
+						status: "blocked",
+						blocker: createBlocker(
+							"PI_WORKFLOW_TICKET_PARENT_STALE",
+							"Ticket generation requires the current published Delivery parent.",
+						),
+					};
+					return {
+						content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }],
+						details: outcome,
+					};
 				}
 				if (params.action === "approve_tickets" && !awaitingTicketApproval) {
-					const outcome: DefineProductOutcome = { status: "blocked", blocker: createBlocker("PI_WORKFLOW_TICKET_APPROVAL_MISMATCH", "Ticket approval requires the active exact verified ticket graph.") };
-					return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
+					const outcome: DefineProductOutcome = {
+						status: "blocked",
+						blocker: createBlocker(
+							"PI_WORKFLOW_TICKET_APPROVAL_MISMATCH",
+							"Ticket approval requires the active exact verified ticket graph.",
+						),
+					};
+					return {
+						content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }],
+						details: outcome,
+					};
 				}
 				if (params.action === "publish_tickets" && !awaitingTicketPublication) {
-					const outcome: DefineProductOutcome = { status: "blocked", blocker: createBlocker("PI_WORKFLOW_TICKET_APPROVAL_MISMATCH", "Ticket publication requires the current durable Owner-approved graph.") };
-					return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
+					const outcome: DefineProductOutcome = {
+						status: "blocked",
+						blocker: createBlocker(
+							"PI_WORKFLOW_TICKET_APPROVAL_MISMATCH",
+							"Ticket publication requires the current durable Owner-approved graph.",
+						),
+					};
+					return {
+						content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }],
+						details: outcome,
+					};
 				}
-				if (params.action === "approve_approved_revision" && !awaitingApprovedRevisionApproval) {
-					const outcome: DefineProductOutcome = { status: "blocked", blocker: createBlocker("PI_WORKFLOW_SPEC_APPROVAL_REQUIRED", "Approved revision approval requires the active durable draft.") };
-					return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
+				if (
+					params.action === "approve_approved_revision" &&
+					!awaitingApprovedRevisionApproval
+				) {
+					const outcome: DefineProductOutcome = {
+						status: "blocked",
+						blocker: createBlocker(
+							"PI_WORKFLOW_SPEC_APPROVAL_REQUIRED",
+							"Approved revision approval requires the active durable draft.",
+						),
+					};
+					return {
+						content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }],
+						details: outcome,
+					};
 				}
-				if (params.action === "publish_approved_revision" && !awaitingApprovedRevisionPublication) {
-					const outcome: DefineProductOutcome = { status: "blocked", blocker: createBlocker("PI_WORKFLOW_SPEC_APPROVAL_REQUIRED", "Approved revision publication requires the active durable approval.") };
-					return { content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }], details: outcome };
+				if (
+					params.action === "publish_approved_revision" &&
+					!awaitingApprovedRevisionPublication
+				) {
+					const outcome: DefineProductOutcome = {
+						status: "blocked",
+						blocker: createBlocker(
+							"PI_WORKFLOW_SPEC_APPROVAL_REQUIRED",
+							"Approved revision publication requires the active durable approval.",
+						),
+					};
+					return {
+						content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }],
+						details: outcome,
+					};
 				}
 				if (params.action === "request_exploration" && !explorationAvailable) {
 					const outcome: DefineProductOutcome = {
@@ -1263,7 +2148,7 @@ export function createDefineProductRuntime(
 				}
 				if (
 					params.action === "confirm_route" &&
-					(!awaitingConfirmation || !routeConfirmationAuthorized)
+					!awaitingConfirmation
 				) {
 					const outcome: DefineProductOutcome = {
 						status: "blocked",
@@ -1301,13 +2186,36 @@ export function createDefineProductRuntime(
 						workflowStateId: activeWorkflowStateId ?? "",
 					};
 				} else if (params.action === "confirm_route") {
-					routeConfirmationAuthorized = false;
 					const pending = dependencies.workflow.pendingRecommendation();
+					if (!pending) {
+						const outcome: DefineProductOutcome = {
+							status: "blocked",
+							blocker: createBlocker(
+								"PI_WORKFLOW_ROUTE_CONFIRMATION_REQUIRED",
+								"Route confirmation requires the active recommendation.",
+							),
+						};
+						return {
+							content: [
+								{ type: "text", text: JSON.stringify(outcome, null, 2) },
+							],
+							details: outcome,
+						};
+					}
+					const blocked = await authorizeRouteEffect(pending);
+					if (blocked) {
+						return {
+							content: [
+								{ type: "text", text: JSON.stringify(blocked, null, 2) },
+							],
+							details: blocked,
+						};
+					}
 					command = {
 						kind: "confirm-route",
-						recommendationRef: pending?.digest ?? "",
-						confirmationToken: pending?.confirmationToken ?? "",
-						confirmedRoute: pending?.recommendedRoute as Route,
+						recommendationRef: pending.digest,
+						confirmationToken: pending.confirmationToken,
+						confirmedRoute: pending.recommendedRoute as Route,
 						researchQuestion: params.researchQuestion ?? "",
 						workflowStateId: activeWorkflowStateId ?? "",
 					};
@@ -1321,7 +2229,6 @@ export function createDefineProductRuntime(
 					};
 				} else if (params.action === "to_spec") {
 					specInputAuthorized = false;
-					approvalConfirmation = undefined;
 					if (
 						dependencies.mcpPublication &&
 						activeSpecTeamId === undefined &&
@@ -1341,6 +2248,19 @@ export function createDefineProductRuntime(
 							],
 							details: outcome,
 						};
+					}
+					if (
+						activeSpecTeamId === undefined &&
+						typeof params.teamId === "string"
+					) {
+						const blocked = await authorizeTeamEffect(params.teamId);
+						if (blocked)
+							return {
+								content: [
+									{ type: "text", text: JSON.stringify(blocked, null, 2) },
+								],
+								details: blocked,
+							};
 					}
 					const parsed = parseToSpecCommand(
 						params,
@@ -1364,12 +2284,9 @@ export function createDefineProductRuntime(
 					}
 					command = parsed;
 				} else if (params.action === "approve_spec") {
-					const confirmation = approvalConfirmation;
-					approvalConfirmation = undefined;
 					if (
 						!hasExactKeys(params, ["action"]) ||
-						!approveSpecCommand ||
-						confirmation !== "spec"
+						!approveSpecCommand
 					) {
 						const outcome: DefineProductOutcome = {
 							status: "blocked",
@@ -1379,10 +2296,20 @@ export function createDefineProductRuntime(
 							),
 						};
 						return {
-							content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }],
+							content: [
+								{ type: "text", text: JSON.stringify(outcome, null, 2) },
+							],
 							details: outcome,
 						};
 					}
+					const blocked = await authorizeSpecEffect();
+					if (blocked)
+						return {
+							content: [
+								{ type: "text", text: JSON.stringify(blocked, null, 2) },
+							],
+							details: blocked,
+						};
 					command = structuredClone(approveSpecCommand);
 				} else if (params.action === "publish_spec") {
 					if (!hasExactKeys(params, ["action"]) || !activeDefinitionId) {
@@ -1394,7 +2321,9 @@ export function createDefineProductRuntime(
 							),
 						};
 						return {
-							content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }],
+							content: [
+								{ type: "text", text: JSON.stringify(outcome, null, 2) },
+							],
 							details: outcome,
 						};
 					}
@@ -1405,6 +2334,7 @@ export function createDefineProductRuntime(
 									activeDefinitionId,
 									toolCallId,
 									params,
+									specExecutionLease,
 								);
 						if (outcome.status === "spec-published") {
 							awaitingPublication = false;
@@ -1412,7 +2342,9 @@ export function createDefineProductRuntime(
 							if (approvedSpecRef) awaitingTicketGeneration = true;
 							else clearActiveTurn();
 						}
-						const exposedOutcome = publicOutcome(outcome as DefineProductOutcome);
+						const exposedOutcome = publicOutcome(
+							outcome as DefineProductOutcome,
+						);
 						return {
 							content: [
 								{ type: "text", text: JSON.stringify(exposedOutcome, null, 2) },
@@ -1436,7 +2368,9 @@ export function createDefineProductRuntime(
 							),
 						};
 						return {
-							content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }],
+							content: [
+								{ type: "text", text: JSON.stringify(outcome, null, 2) },
+							],
 							details: outcome,
 						};
 					}
@@ -1447,12 +2381,9 @@ export function createDefineProductRuntime(
 						parentRef: structuredClone(publishedParentRef),
 					};
 				} else if (params.action === "approve_tickets") {
-					const confirmation = approvalConfirmation;
-					approvalConfirmation = undefined;
 					if (
 						!hasExactKeys(params, ["action"]) ||
-						!approveTicketsCommand ||
-						confirmation !== "tickets"
+						!approveTicketsCommand
 					) {
 						const outcome: DefineProductOutcome = {
 							status: "blocked",
@@ -1462,9 +2393,25 @@ export function createDefineProductRuntime(
 							),
 						};
 						return {
-							content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }],
+							content: [
+								{ type: "text", text: JSON.stringify(outcome, null, 2) },
+							],
 							details: outcome,
 						};
+					}
+					{
+						const authority = await authorizeBoundDecision(
+							ticketDecision,
+							`workflow://define-product/${activeDefinitionId}/ticket-publication/${approveTicketsCommand.digest}`,
+						);
+						if (!("executionId" in authority))
+							return {
+								content: [
+									{ type: "text", text: JSON.stringify(authority, null, 2) },
+								],
+								details: authority,
+							};
+						ticketExecutionLease = authority;
 					}
 					command = structuredClone(approveTicketsCommand);
 				} else if (params.action === "publish_tickets") {
@@ -1477,19 +2424,38 @@ export function createDefineProductRuntime(
 							),
 						};
 						return {
-							content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }],
+							content: [
+								{ type: "text", text: JSON.stringify(outcome, null, 2) },
+							],
 							details: outcome,
 						};
 					}
 					if (dependencies.ticketMcpPublication) {
-						const publicationOutcome = dependencies.ticketMcpPublication.hasActiveTurn()
-							? await dependencies.ticketMcpPublication.complete(params)
-							: await dependencies.ticketMcpPublication.begin(
-									activeDefinitionId,
-									toolCallId,
-									params,
-								);
-						let outcome: DefineProductOutcome = publicationOutcome as DefineProductOutcome;
+						if (!ticketExecutionLease) {
+							const authority = await authorizeBoundDecision(
+								ticketDecision,
+								`workflow://define-product/${activeDefinitionId}/ticket-publication/${isRecord(ticketDecision?.action.input) && typeof ticketDecision.action.input.graphDigest === "string" ? ticketDecision.action.input.graphDigest : "missing"}`,
+							);
+							if (!("executionId" in authority))
+								return {
+									content: [
+										{ type: "text", text: JSON.stringify(authority, null, 2) },
+									],
+									details: authority,
+								};
+							ticketExecutionLease = authority;
+						}
+						const publicationOutcome =
+							dependencies.ticketMcpPublication.hasActiveTurn()
+								? await dependencies.ticketMcpPublication.complete(params)
+								: await dependencies.ticketMcpPublication.begin(
+										activeDefinitionId,
+										toolCallId,
+										params,
+										ticketExecutionLease,
+									);
+						let outcome: DefineProductOutcome =
+							publicationOutcome as DefineProductOutcome;
 						if (publicationOutcome.status === "tickets-published") {
 							outcome = await dependencies.workflow.advance({
 								kind: "publish-tickets",
@@ -1499,11 +2465,16 @@ export function createDefineProductRuntime(
 						}
 						const exposedOutcome = publicOutcome(outcome);
 						return {
-							content: [{ type: "text", text: JSON.stringify(exposedOutcome, null, 2) }],
+							content: [
+								{ type: "text", text: JSON.stringify(exposedOutcome, null, 2) },
+							],
 							details: exposedOutcome,
 						};
 					}
-					command = { kind: "publish-tickets", definitionId: activeDefinitionId };
+					command = {
+						kind: "publish-tickets",
+						definitionId: activeDefinitionId,
+					};
 				} else if (params.action === "to_approved_revision") {
 					const parsed = activeDefinitionId
 						? parseApprovedRevisionDraftCommand(params, activeDefinitionId)
@@ -1517,18 +2488,17 @@ export function createDefineProductRuntime(
 							),
 						};
 						return {
-							content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }],
+							content: [
+								{ type: "text", text: JSON.stringify(outcome, null, 2) },
+							],
 							details: outcome,
 						};
 					}
 					command = parsed;
 				} else if (params.action === "approve_approved_revision") {
-					const confirmation = approvalConfirmation;
-					approvalConfirmation = undefined;
 					if (
 						!hasExactKeys(params, ["action"]) ||
-						approvedRevisionCommand?.kind !== "approve-approved-revision" ||
-						confirmation !== "revision"
+						approvedRevisionCommand?.kind !== "approve-approved-revision"
 					) {
 						const outcome: DefineProductOutcome = {
 							status: "blocked",
@@ -1538,11 +2508,32 @@ export function createDefineProductRuntime(
 							),
 						};
 						return {
-							content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }],
+							content: [
+								{ type: "text", text: JSON.stringify(outcome, null, 2) },
+							],
 							details: outcome,
 						};
 					}
-					command = structuredClone(approvedRevisionCommand);
+					{
+						const authority = await authorizeBoundDecision(
+							revisionDecision,
+							`workflow://define-product/${activeDefinitionId}/approved-revision-publication/${approvedRevisionCommand.digest}`,
+						);
+						if (!("executionId" in authority))
+							return {
+								content: [
+									{ type: "text", text: JSON.stringify(authority, null, 2) },
+								],
+								details: authority,
+							};
+						revisionExecutionLease = authority;
+					}
+					command = {
+						...structuredClone(approvedRevisionCommand),
+						...(revisionExecutionLease
+							? { executionLease: revisionExecutionLease }
+							: {}),
+					};
 				} else {
 					if (
 						!hasExactKeys(params, ["action"]) ||
@@ -1556,23 +2547,55 @@ export function createDefineProductRuntime(
 							),
 						};
 						return {
-							content: [{ type: "text", text: JSON.stringify(outcome, null, 2) }],
+							content: [
+								{ type: "text", text: JSON.stringify(outcome, null, 2) },
+							],
 							details: outcome,
 						};
 					}
-					command = structuredClone(approvedRevisionCommand);
+					if (!revisionExecutionLease) {
+						const draftDigest = isRecord(revisionDecision?.action.input)
+							? revisionDecision.action.input.draftDigest
+							: undefined;
+						const authority = await authorizeBoundDecision(
+							revisionDecision,
+							`workflow://define-product/${activeDefinitionId}/approved-revision-publication/${typeof draftDigest === "string" ? draftDigest : "missing"}`,
+						);
+						if (!("executionId" in authority))
+							return {
+								content: [
+									{ type: "text", text: JSON.stringify(authority, null, 2) },
+								],
+								details: authority,
+							};
+						revisionExecutionLease = authority;
+					}
+					command = {
+						...structuredClone(approvedRevisionCommand),
+						...(revisionExecutionLease
+							? { executionLease: revisionExecutionLease }
+							: {}),
+					};
 				}
 				const outcome = await dependencies.workflow.advance(command);
 				if (outcome.status === "awaiting-confirmation") {
 					awaitingConfirmation = true;
-					routeConfirmationAuthorized = false;
+					const blocked = await prepareRouteDecision(outcome.recommendation);
+					if (blocked) {
+						const exposedOutcome = publicOutcome(blocked);
+						return {
+							content: [
+								{ type: "text", text: JSON.stringify(exposedOutcome, null, 2) },
+							],
+							details: exposedOutcome,
+						};
+					}
 				} else if (
 					command.kind === "confirm-route" &&
 					outcome.status === "completed" &&
 					outcome.result.status === "completed"
 				) {
 					awaitingConfirmation = false;
-					routeConfirmationAuthorized = false;
 					explorationAvailable = true;
 					awaitingSpecInput = true;
 					specInputAuthorized = false;
@@ -1595,10 +2618,10 @@ export function createDefineProductRuntime(
 						revision: outcome.spec.payload.revision,
 						digest: outcome.spec.digest,
 					};
+					await prepareSpecDecision(approveSpecCommand);
 					explorationAvailable = false;
 					awaitingSpecInput = false;
 					specInputAuthorized = false;
-					approvalConfirmation = undefined;
 					awaitingSpecApproval = true;
 				} else if (
 					command.kind === "approve-spec" &&
@@ -1627,6 +2650,23 @@ export function createDefineProductRuntime(
 						graphRef: structuredClone(outcome.graphRef),
 						digest: outcome.graph.digest,
 					};
+					ticketDecision = await prepareBoundDecision({
+						subject: `${command.definitionId}:ticket-publication`,
+						kind: "define-product.ticket-publication",
+						phase: "ticket-graph.approval",
+						action: {
+							id: "define-product.tickets.publish",
+							input: {
+								definitionId: command.definitionId,
+								graphDigest: outcome.graph.digest,
+							},
+						},
+						artifacts: [{ graphDigest: outcome.graph.digest }],
+						targets: [{ parentId: outcome.graph.payload.parent.id }],
+						summary: "Approve and publish this Delivery ticket graph?",
+						consequence:
+							"Create every approved child and native blocker relation using one fenced operation.",
+					});
 					awaitingTicketGeneration = false;
 					awaitingTicketApproval = true;
 				} else if (
@@ -1648,13 +2688,33 @@ export function createDefineProductRuntime(
 					if (
 						outcome.revision.definitionId !== command.definitionId ||
 						!outcome.revision.digest
-					) clearActiveTurn();
+					)
+						clearActiveTurn();
 					else {
 						approvedRevisionCommand = {
 							kind: "approve-approved-revision",
 							definitionId: outcome.revision.definitionId,
 							digest: outcome.revision.digest,
 						};
+						revisionDecision = await prepareBoundDecision({
+							subject: `${command.definitionId}:approved-revision-publication`,
+							kind: "define-product.approved-revision-publication",
+							phase: "approved-revision.approval",
+							action: {
+								id: "define-product.revision.publish",
+								input: {
+									definitionId: command.definitionId,
+									draftDigest: outcome.revision.digest,
+								},
+							},
+							artifacts: [{ draftDigest: outcome.revision.digest }],
+							targets: outcome.revision.affectedIssues.map(({ id }) => ({
+								issueId: id,
+							})),
+							summary: "Approve and publish this multi-issue revision?",
+							consequence:
+								"Publish all approved comments and descriptions as one fenced operation.",
+						});
 						explorationAvailable = false;
 						awaitingApprovedRevisionApproval = true;
 					}
@@ -1665,7 +2725,8 @@ export function createDefineProductRuntime(
 					if (
 						outcome.revision.definitionId !== command.definitionId ||
 						!outcome.revision.digest
-					) clearActiveTurn();
+					)
+						clearActiveTurn();
 					else {
 						approvedRevisionCommand = {
 							kind: "publish-approved-revision",
@@ -1696,7 +2757,9 @@ export function createDefineProductRuntime(
 				}
 				const exposedOutcome = publicOutcome(outcome);
 				return {
-					content: [{ type: "text", text: JSON.stringify(exposedOutcome, null, 2) }],
+					content: [
+						{ type: "text", text: JSON.stringify(exposedOutcome, null, 2) },
+					],
 					details: exposedOutcome,
 				};
 			},
@@ -1705,11 +2768,13 @@ export function createDefineProductRuntime(
 
 	return {
 		toolName,
-		allowedTools: [...new Set([
-			...(dependencies.mcpPublication?.allowedTools ?? []),
-			...(dependencies.ticketMcpPublication?.allowedTools ?? []),
-			toolName,
-		])],
+		allowedTools: [
+			...new Set([
+				...(dependencies.mcpPublication?.allowedTools ?? []),
+				...(dependencies.ticketMcpPublication?.allowedTools ?? []),
+				toolName,
+			]),
+		],
 		handlePublicEntry,
 		register,
 		shouldContinue,

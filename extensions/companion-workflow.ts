@@ -4,12 +4,24 @@ import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import type {
+	CompanionInstallFailure,
+	CompanionInstallIdentity,
+	CompanionInstallManifestStore,
+	StoredCompanionInstallManifest,
+} from "./companion-install-manifest.ts";
+import { companionInstallOperationId } from "./companion-install-manifest.ts";
+import type {
+	AuthenticatedDecisionActor,
+	AuthorizationOutcome,
+	DecisionRequest,
+	ExecutionLease,
+	TypedDecisionAction,
+} from "./interactive-decisions.ts";
 import {
 	applyMcpConfiguration,
 	defaultMcpServerCatalogPath,
-	formatJsonBlock,
 	loadMcpServerCatalog,
-	manualMcpConfigurationInstructions,
 	mcpConfigPath,
 	planMcpConfiguration,
 	emptyMcpConfigurationPlan,
@@ -17,6 +29,8 @@ import {
 	type McpConfigurationPlan,
 	type McpServerCatalog,
 } from "./mcp-config.ts";
+import type { PiInteractiveDecisions } from "./pi-decision-adapter.ts";
+import { canonicalJson, digestCanonicalValue } from "./workflow-contracts.ts";
 
 export interface CompanionPackage {
 	package: string;
@@ -63,13 +77,17 @@ type ExecCapability = (
 
 export interface CompanionInteractionAdapters {
 	notify?: (message: string, level?: NotificationLevel) => void;
-	confirm?: (
-		title: string,
-		message: string,
-		options?: unknown,
-	) => Promise<boolean>;
 	exec?: ExecCapability;
 	installPackage?: InstallPackage;
+}
+
+interface CompanionDecisionAuthority {
+	readonly project: string | (() => string);
+	readonly actor: () => AuthenticatedDecisionActor | undefined;
+	readonly hasUI: () => boolean;
+	readonly decisions: PiInteractiveDecisions;
+	readonly manifests: CompanionInstallManifestStore;
+	readonly requestTurn?: () => void;
 }
 
 export interface CompanionDiagnosticAdapters {
@@ -90,6 +108,7 @@ export interface CompanionWorkflowOptions {
 	interaction?: CompanionInteractionAdapters;
 	diagnostics?: CompanionDiagnosticAdapters;
 	mcp?: CompanionMcpAdapters;
+	authority?: CompanionDecisionAuthority;
 }
 
 export interface InspectResult {
@@ -114,8 +133,11 @@ export interface InstallMissingResult {
 		| "failed"
 		| "config-error"
 		| "noop"
-		| "manual-only"
-		| "installed";
+			| "manual-only"
+			| "awaiting-decision"
+			| "waiting"
+			| "blocked"
+			| "installed";
 	message?: string;
 	manualInstructions?: string;
 	installable: CompanionState[];
@@ -135,6 +157,40 @@ interface CompanionInstallPlan {
 	installable: CompanionState[];
 	errored: CompanionState[];
 	manualInstructions: string;
+}
+
+export interface CompanionDecisionDescriptor {
+	readonly request: DecisionRequest;
+	readonly actions: readonly TypedDecisionAction[];
+}
+
+function withoutPackageFailure(
+	failures: readonly CompanionInstallFailure[],
+	packageName: string,
+): CompanionInstallFailure[] {
+	return failures.filter(
+		(failure) => failure.kind !== "package" || failure.package !== packageName,
+	);
+}
+
+function withoutMcpFailure(
+	failures: readonly CompanionInstallFailure[],
+): CompanionInstallFailure[] {
+	return failures.filter((failure) => failure.kind !== "mcp");
+}
+
+interface PreparedCompanionOperation {
+	readonly kind: "install" | "recovery";
+	readonly descriptor: CompanionDecisionDescriptor;
+	readonly decisionId: string;
+	readonly identity: CompanionInstallIdentity;
+	readonly planDigest: string;
+	readonly mcpPlanDigest: string;
+	readonly attempt: number;
+	readonly companionPlan: CompanionInstallPlan;
+	readonly mcpPlan: McpConfigurationPlan;
+	readonly mcpCatalog: McpServerCatalog;
+	readonly manifest?: StoredCompanionInstallManifest;
 }
 
 const requireFromPackage = createRequire(import.meta.url);
@@ -513,153 +569,191 @@ function notify(
 	interaction.notify?.(message, level);
 }
 
-function formatMcpServerList(
-	names: string[],
-	catalog: McpServerCatalog,
-): string[] {
-	return names.flatMap((name) => [
-		`- ${name}`,
-		formatJsonBlock(catalog.mcpServers[name]),
-	]);
+function mcpPlanEvidence(plan: McpConfigurationPlan) {
+	return {
+		path: plan.path,
+		changed: plan.changed,
+		targets: plan.targets.map((target) => ({
+			name: target.name,
+			existed: target.existed,
+			current: target.existed ? target.current : null,
+			expected: target.expected,
+		})),
+		error: plan.error ?? null,
+	};
 }
 
-function installConfirmationMessage(
+function operationEvidence(
 	companionPlan: CompanionInstallPlan,
 	mcpPlan: McpConfigurationPlan,
 	catalog: McpServerCatalog,
-): { title: string; message: string } {
-	const messageLines = [
-		companionPlan.installable.length > 0
-			? "This explicit pi-workflow install will mutate only confirmed harness resources:"
-			: "This explicit pi-workflow install will configure only confirmed harness resources:",
-	];
-
-	if (companionPlan.installable.length > 0) {
-		messageLines.push(
-			"",
-			"Companion packages to install or update:",
-			...companionPlan.installable.map(
-				(companion) => `- pi install ${companionInstallSpec(companion)}`,
-			),
-		);
-	}
-
-	if (mcpPlan.changed) {
-		messageLines.push(
-			"",
-			`MCP configuration target: ${mcpPlan.path}`,
-			"Unrelated top-level fields and unrelated MCP servers will be preserved.",
-		);
-		if (mcpPlan.additions.length > 0) {
-			messageLines.push(
-				"",
-				"Add MCP server definitions:",
-				...formatMcpServerList(mcpPlan.additions, catalog),
-			);
-		}
-		if (mcpPlan.replacements.length > 0) {
-			messageLines.push("", "Replace MCP server definitions:");
-			for (const replacement of mcpPlan.replacements) {
-				messageLines.push(
-					`- ${replacement.name}`,
-					"Current:",
-					formatJsonBlock(replacement.current),
-					"Expected:",
-					formatJsonBlock(replacement.expected),
-				);
-			}
-		}
-	}
-
-	messageLines.push("", "Continue?");
-
-	let title = "Install pi-workflow companions?";
-	if (companionPlan.installable.length > 0 && mcpPlan.changed) {
-		title = "Install pi-workflow companions and configure MCP servers?";
-	} else if (mcpPlan.changed) {
-		title = "Configure MCP servers for pi-workflow?";
-	}
-
-	return { title, message: messageLines.join("\n") };
+) {
+	const identity: CompanionInstallIdentity = {
+		packages: companionPlan.installable.map((companion) => ({
+			package: companion.package,
+			spec: companionInstallSpec(companion),
+		})),
+		mcp: {
+			path: mcpPlan.path,
+			catalogDigest: digestCanonicalValue(catalog),
+		},
+	};
+	const mcpPlanDigest = digestCanonicalValue(mcpPlanEvidence(mcpPlan));
+	return {
+		identity,
+		mcpPlanDigest,
+		planDigest: digestCanonicalValue({ identity, mcpPlanDigest }),
+	};
 }
 
-function companionOutcomeLines(
-	failures: string[],
-	companionPlan: CompanionInstallPlan,
-): string[] {
-	if (failures.length > 0) {
-		return [
-			"Some companion installs failed:",
-			...failures,
-			"",
-			companionPlan.manualInstructions,
-			"",
-		];
-	}
-	if (companionPlan.installable.length > 0) {
-		return ["Installed or updated pi-workflow companions.", ""];
-	}
-	return ["Companion packages were already installed.", ""];
-}
-
-function combineManualInstructions(...sections: string[]): string {
-	return sections
-		.map((section) => section.trim())
-		.filter((section) => section.length > 0)
-		.join("\n\n")
-		.trim();
-}
-
-function manualMcpCatalogInstructions(
-	mcpOptions: CompanionMcpAdapters = {},
-): string {
-	const catalogPath = mcpOptions.catalogPath ?? defaultMcpServerCatalogPath;
-	return [
-		`Repair ${catalogPath} so it is valid JSON with schemaVersion 1 and an object top-level "mcpServers" map.`,
-		"Then run /pi-workflow-install-companions again, /reload, and authenticate Sentry/Linear as needed.",
-	].join("\n");
-}
-
-function manualHarnessInstructions(
-	companionPlan: CompanionInstallPlan,
+export function companionInstallDecision(
+	project: string,
+	identity: CompanionInstallIdentity,
+	planDigest: string,
 	mcpPlan: McpConfigurationPlan,
-	catalog: McpServerCatalog,
-): string {
-	return combineManualInstructions(
-		companionPlan.installable.length > 0 || companionPlan.errored.length > 0
-			? companionPlan.manualInstructions
-			: "",
-		mcpPlan.changed || mcpPlan.error
-			? manualMcpConfigurationInstructions(mcpPlan, catalog)
-			: "",
-	);
+): CompanionDecisionDescriptor {
+	const operationId = companionInstallOperationId(identity);
+	const action: TypedDecisionAction = {
+		id: "companions.install",
+		input: { operationId, planDigest },
+	};
+	return {
+		actions: [action, { id: "decision.cancel", input: null }],
+		request: {
+			scope: { project, workflow: "companion-install", subject: operationId },
+			operation: {
+				kind: "install-companions",
+				phase: "plan-ready",
+				input: { operationId, planDigest },
+				artifacts: [{ catalogDigest: identity.mcp.catalogDigest }],
+				targets: [
+					...identity.packages.map((entry) => ({
+						package: entry.package,
+						spec: entry.spec,
+					})),
+					...(mcpPlan.changed ? [{ path: mcpPlan.path }] : []),
+				],
+				evidence: [{ mcpPlanDigest: digestCanonicalValue(mcpPlanEvidence(mcpPlan)) }],
+			},
+			presentation: {
+				locale: "en",
+				summary:
+					identity.packages.length > 0 && mcpPlan.changed
+						? "Install pi-workflow companions and configure MCP servers?"
+						: identity.packages.length > 0
+							? "Install pi-workflow companions?"
+							: "Configure MCP servers for pi-workflow?",
+				details: [
+					...identity.packages.map((entry) => `pi install ${entry.spec}`),
+					...(mcpPlan.changed ? [`MCP configuration: ${mcpPlan.path}`] : []),
+					...(mcpPlan.additions.length > 0
+						? [`Add MCP servers: ${mcpPlan.additions.join(", ")}`]
+						: []),
+					...(mcpPlan.replacements.length > 0
+						? [
+								"Replace MCP server definitions:",
+								...mcpPlan.replacements.flatMap((entry) => [
+									entry.name,
+									`Current: ${JSON.stringify(entry.current)}`,
+									`Expected: ${JSON.stringify(entry.expected)}`,
+								]),
+							]
+						: []),
+				],
+				consequences: [
+					"One execution lease covers the reviewed package and MCP effects.",
+				],
+				risks: [
+					"Package or targeted MCP drift stops the affected mutation and requires reconciliation.",
+				],
+				choices: [
+					{
+						id: action.id,
+						mode: "execute",
+						action,
+						label: "Install and configure",
+						description: "Execute this exact package and MCP plan.",
+					},
+					{
+						id: "decision.cancel",
+						mode: "cancel",
+						action: { id: "decision.cancel", input: null },
+						label: "Cancel",
+						description: "Leave packages and MCP configuration unchanged.",
+					},
+				],
+			},
+		},
+	};
 }
 
-async function installCompanionPackages(
-	interaction: CompanionInteractionAdapters,
-	installPackage: InstallPackage | undefined,
-	installable: CompanionState[],
-): Promise<string[]> {
-	const failures: string[] = [];
-
-	for (const companion of installable) {
-		const spec = companionInstallSpec(companion);
-		notify(interaction, `Installing ${spec}...`, "info");
-		try {
-			const result = await installPackage?.(spec);
-			if (result?.code !== 0) {
-				failures.push(
-					`${spec}: ${result?.stderr?.trim() || result?.stdout?.trim() || `exit code ${result?.code ?? "unknown"}`}`,
-				);
-			}
-		} catch (error) {
-			failures.push(
-				`${spec}: ${error instanceof Error ? error.message : String(error)}`,
-			);
-		}
-	}
-
-	return failures;
+export function companionRecoveryDecision(
+	project: string,
+	operationId: string,
+	attempt: number,
+	planDigest: string,
+	details: readonly string[],
+): CompanionDecisionDescriptor {
+	const reconcile: TypedDecisionAction = {
+		id: "companions.reconcile",
+		input: { operationId, attempt, planDigest },
+	};
+	const wait: TypedDecisionAction = {
+		id: "companions.wait",
+		input: { operationId, attempt },
+	};
+	return {
+		actions: [reconcile, wait, { id: "decision.cancel", input: null }],
+		request: {
+			scope: {
+				project,
+				workflow: "companion-install",
+				subject: `${operationId}:recovery:${attempt}`,
+			},
+			operation: {
+				kind: "reconcile-companion-install",
+				phase: "partial-or-drifted",
+				input: { operationId, attempt, planDigest },
+				artifacts: [{ operationId }],
+				targets: [],
+				evidence: details.map((detail) => ({ detail })),
+			},
+			presentation: {
+				locale: "en",
+				summary: "Reconcile the interrupted companion installation?",
+				details,
+				consequences: [
+					"Reconcile revalidates current package and MCP state under a new lease.",
+				],
+				risks: [
+					"Wait preserves durable progress but authorizes no additional effects.",
+				],
+				choices: [
+					{
+						id: reconcile.id,
+						mode: "execute",
+						action: reconcile,
+						label: "Reconcile now",
+						description: "Replan and continue only the remaining verified effects.",
+					},
+					{
+						id: wait.id,
+						mode: "execute",
+						action: wait,
+						label: "Wait",
+						description: "Keep the durable partial state without running effects.",
+					},
+					{
+						id: "decision.cancel",
+						mode: "cancel",
+						action: { id: "decision.cancel", input: null },
+						label: "Cancel",
+						description: "Close this recovery attempt without running effects.",
+					},
+				],
+			},
+		},
+	};
 }
 
 export function createCompanionWorkflow(
@@ -669,7 +763,614 @@ export function createCompanionWorkflow(
 	const interaction = options.interaction ?? {};
 	const diagnostics = options.diagnostics;
 	const mcp = options.mcp ?? {};
+	const authority = options.authority;
 	const installPackage = resolveInstallPackage(interaction);
+	let pending: PreparedCompanionOperation | undefined;
+
+	type PlanSnapshot = {
+		readonly companionPlan: CompanionInstallPlan;
+		readonly mcpPlan: McpConfigurationPlan;
+		readonly mcpCatalog: McpServerCatalog;
+		readonly identity: CompanionInstallIdentity;
+		readonly planDigest: string;
+		readonly mcpPlanDigest: string;
+	};
+
+	const authorityProject = () =>
+		typeof authority?.project === "function"
+			? authority.project()
+			: (authority?.project ?? "pi-workflow");
+
+	function result(
+		outcome: InstallMissingResult["outcome"],
+		message: string,
+		level: NotificationLevel,
+		plan?: Pick<PlanSnapshot, "companionPlan" | "mcpPlan">,
+		failures: string[] = [],
+	): InstallMissingResult {
+		notify(interaction, message, level);
+		return {
+			outcome,
+			message,
+			installable: plan?.companionPlan.installable ?? [],
+			errored: plan?.companionPlan.errored ?? [],
+			failures,
+			mcpPath: plan?.mcpPlan.path,
+		};
+	}
+
+	function snapshot():
+		| { readonly ok: true; readonly value: PlanSnapshot }
+		| {
+				readonly ok: false;
+				readonly outcome: InstallMissingResult["outcome"];
+				readonly message: string;
+				readonly companionPlan?: CompanionInstallPlan;
+				readonly mcpPath?: string;
+		  } {
+		const resolvedCatalog = resolveCompanionCatalog(catalog);
+		if (resolvedCatalog.loadError)
+			return {
+				ok: false,
+				outcome: "metadata-error",
+				message: `Companion metadata error: ${resolvedCatalog.loadError}\nNo package or MCP effects were authorized.`,
+			};
+		const companionPlan = createCompanionInstallPlan(resolvedCatalog.states);
+		if (companionPlan.errored.length > 0)
+			return {
+				ok: false,
+				outcome: "blocked",
+				message: [
+					"Companion inspection is incomplete; no package or MCP effects were authorized.",
+					...companionPlan.errored.map(
+						(entry) => `${entry.package}: ${entry.error ?? "unknown error"}`,
+					),
+				].join("\n"),
+				companionPlan,
+			};
+		const loaded = loadMcpServerCatalog(mcp);
+		if (loaded.error || !loaded.catalog)
+			return {
+				ok: false,
+				outcome: "mcp-catalog-error",
+				message: [
+					`MCP server catalog error: ${loaded.error ?? "Unknown MCP server catalog error."}`,
+					"No package or MCP effects were authorized.",
+					`Repair ${mcp.catalogPath ?? defaultMcpServerCatalogPath} before preparing a new installation decision.`,
+				].join("\n"),
+				companionPlan,
+				mcpPath: mcpConfigPath(mcp),
+			};
+		const mcpPlan = planMcpConfiguration(loaded.catalog, mcp);
+		if (mcpPlan.error)
+			return {
+				ok: false,
+				outcome: "config-error",
+				message: `${mcpPlan.error}\nNo package or MCP effects were authorized.`,
+				companionPlan,
+				mcpPath: mcpPlan.path,
+			};
+		const evidence = operationEvidence(companionPlan, mcpPlan, loaded.catalog);
+		return {
+			ok: true,
+			value: {
+				companionPlan,
+				mcpPlan,
+				mcpCatalog: loaded.catalog,
+				...evidence,
+			},
+		};
+	}
+
+	async function prepare(
+		plan: PlanSnapshot,
+		kind: PreparedCompanionOperation["kind"],
+		attempt: number,
+		manifest?: StoredCompanionInstallManifest,
+		details: readonly string[] = [],
+	): Promise<InstallMissingResult> {
+		if (!authority?.hasUI())
+			return result(
+				"blocked",
+				"Shared interactive decision authority with an active UI is required; no package or MCP effects were authorized.",
+				"error",
+				plan,
+			);
+		const actor = authority.actor();
+		if (!actor)
+			return result(
+				"blocked",
+				"Authenticated local operator authority is unavailable; no package or MCP effects were authorized.",
+				"error",
+				plan,
+			);
+		const operationId = companionInstallOperationId(plan.identity);
+		const descriptor =
+			kind === "install"
+				? companionInstallDecision(
+						authorityProject(),
+						plan.identity,
+						plan.planDigest,
+						plan.mcpPlan,
+					)
+				: companionRecoveryDecision(
+						authorityProject(),
+						operationId,
+						attempt,
+						plan.planDigest,
+						details,
+					);
+		try {
+			const presentation = await authority.decisions.prepare(
+				descriptor.request,
+				actor,
+			);
+			pending = {
+				kind,
+				descriptor,
+				decisionId: presentation.decisionId,
+				identity: plan.identity,
+				planDigest: plan.planDigest,
+				mcpPlanDigest: plan.mcpPlanDigest,
+				attempt,
+				companionPlan: plan.companionPlan,
+				mcpPlan: plan.mcpPlan,
+				mcpCatalog: plan.mcpCatalog,
+				manifest,
+			};
+			authority.requestTurn?.();
+			return result(
+				"awaiting-decision",
+				"Companion installation decision prepared. No effects run until the shared decision is claimed.",
+				"info",
+				plan,
+			);
+		} catch (error) {
+			return result(
+				"blocked",
+				`Companion installation decision could not be prepared: ${error instanceof Error ? error.message : String(error)}`,
+				"error",
+				plan,
+			);
+		}
+	}
+
+	async function terminalize(
+		active: PreparedCompanionOperation,
+		lease: ExecutionLease,
+		state: string,
+	): Promise<void> {
+		if (!authority) throw new Error("Shared decision authority is unavailable.");
+		const outcome = await authority.decisions.recover(
+			active.descriptor.request.scope,
+			{
+				actorId: lease.actorId,
+				authorityRevision: lease.authorityRevision,
+				active: true,
+				guest: false,
+			},
+			{ kind: "terminal", state },
+		);
+		if (outcome.kind !== "terminal" || outcome.state !== state)
+			throw new Error(`Shared decision could not be finalized as ${state}.`);
+	}
+
+	async function authorizeEffect(lease: ExecutionLease): Promise<void> {
+		if (!authority) throw new Error("Shared decision authority is unavailable.");
+		const outcome = await authority.decisions.authorizeEffect(lease);
+		if (outcome.kind === "blocked") throw new Error(outcome.blocker.message);
+	}
+
+	async function bindManifest(
+		active: PreparedCompanionOperation,
+		lease: ExecutionLease,
+	): Promise<StoredCompanionInstallManifest> {
+		if (!authority) throw new Error("Shared decision authority is unavailable.");
+		const manifest = await authority.manifests.open(
+			active.identity,
+			active.planDigest,
+			lease,
+			active.attempt,
+		);
+		const binding = {
+			ref: `workflow://companion-install/${manifest.value.operationId}/${manifest.revision}`,
+			decisionId: lease.decisionId,
+			operationDigest: lease.operationDigest,
+			executionId: lease.executionId,
+			generation: lease.generation,
+		};
+		const bound = await authority.decisions.bindExecutionManifest(lease, binding);
+		if (bound.kind === "blocked") throw new Error(bound.blocker.message);
+		return manifest;
+	}
+
+	async function prepareRecovery(
+		active: PreparedCompanionOperation,
+		lease: ExecutionLease,
+		manifest: StoredCompanionInstallManifest,
+		plan: PlanSnapshot,
+		details: readonly string[],
+	): Promise<InstallMissingResult> {
+		if (!authority) throw new Error("Shared decision authority is unavailable.");
+		let partial = manifest;
+		if (manifest.value.stage !== "partial")
+			partial = await authority.manifests.update(manifest, {
+				stage: "partial",
+				pendingEffect: undefined,
+			});
+		await terminalize(active, lease, "partial");
+		pending = undefined;
+		return prepare(plan, "recovery", active.attempt + 1, partial, details);
+	}
+
+	async function execute(
+		active: PreparedCompanionOperation,
+		lease: ExecutionLease,
+	): Promise<InstallMissingResult> {
+		if (!authority) throw new Error("Shared decision authority is unavailable.");
+		const latest = snapshot();
+		if (!latest.ok) {
+			await terminalize(active, lease, "drifted");
+			pending = undefined;
+			return result(
+				"blocked",
+				`${latest.message}\nThe approved operation was closed before any new effect.`,
+				"error",
+				latest.companionPlan && latest.mcpPath
+					? {
+							companionPlan: latest.companionPlan,
+							mcpPlan: { ...emptyMcpConfigurationPlan(mcp), path: latest.mcpPath },
+						}
+					: undefined,
+			);
+		}
+		if (
+			latest.value.planDigest !== active.planDigest ||
+			canonicalJson(latest.value.identity) !== canonicalJson(active.identity)
+		) {
+			await terminalize(active, lease, "drifted");
+			pending = undefined;
+			return prepare(
+				latest.value,
+				"recovery",
+				active.attempt + 1,
+				active.manifest,
+				["Package or targeted MCP evidence changed after approval."],
+			);
+		}
+
+		let manifest: StoredCompanionInstallManifest;
+		try {
+			manifest = await bindManifest(active, lease);
+		} catch (error) {
+			pending = undefined;
+			return result(
+				"blocked",
+				`Companion execution binding failed: ${error instanceof Error ? error.message : String(error)}`,
+				"error",
+				latest.value,
+			);
+		}
+
+		let failures: CompanionInstallFailure[] = [...manifest.value.failures];
+		const completedPackages = new Set(manifest.value.completedPackages);
+		for (const entry of active.identity.packages) {
+			if (completedPackages.has(entry.package)) continue;
+			const current = getCompanionState(
+				{ package: entry.package },
+				catalog.resolveInstalledVersion ?? getInstalledCompanionVersion,
+			);
+			if (current.status === "installed") {
+				completedPackages.add(entry.package);
+				failures = withoutPackageFailure(failures, entry.package);
+				manifest = await authority.manifests.update(manifest, {
+					completedPackages: [...completedPackages],
+					failures,
+				});
+				continue;
+			}
+			if (current.status !== "missing") {
+				const detail = `${entry.spec}: ${current.error ?? "package state is unavailable"}`;
+				failures = withoutPackageFailure(failures, entry.package);
+				failures.push({ kind: "package", package: entry.package, message: detail });
+				manifest = await authority.manifests.update(manifest, {
+					failures,
+					stage: "partial",
+				});
+				return prepareRecovery(active, lease, manifest, latest.value, [detail]);
+			}
+			manifest = await authority.manifests.update(manifest, {
+				pendingEffect: { kind: "package", package: entry.package },
+			});
+			try {
+				await authorizeEffect(lease);
+				notify(interaction, `Installing ${entry.spec}...`, "info");
+				const installed = await installPackage?.(entry.spec);
+				if (installed?.code !== 0) {
+					const message =
+						installed?.stderr?.trim() ||
+						installed?.stdout?.trim() ||
+						`exit code ${installed?.code ?? "unknown"}`;
+					failures = withoutPackageFailure(failures, entry.package);
+					failures.push({
+						kind: "package",
+						package: entry.package,
+						message: `${entry.spec}: ${message}`,
+					});
+				} else {
+					completedPackages.add(entry.package);
+					failures = withoutPackageFailure(failures, entry.package);
+				}
+			} catch (error) {
+				failures = withoutPackageFailure(failures, entry.package);
+				failures.push({
+					kind: "package",
+					package: entry.package,
+					message: `${entry.spec}: ${error instanceof Error ? error.message : String(error)}`,
+				});
+			}
+			manifest = await authority.manifests.update(manifest, {
+				completedPackages: [...completedPackages],
+				failures,
+				pendingEffect: undefined,
+			});
+		}
+
+		if (!active.mcpPlan.changed) {
+			failures = withoutMcpFailure(failures);
+			manifest = await authority.manifests.update(manifest, {
+				mcpConfigured: true,
+				failures,
+			});
+		} else if (!manifest.value.mcpConfigured) {
+			const latestMcpPlan = planMcpConfiguration(active.mcpCatalog, mcp);
+			const latestMcpDigest = digestCanonicalValue(mcpPlanEvidence(latestMcpPlan));
+			if (latestMcpPlan.error || latestMcpDigest !== active.mcpPlanDigest) {
+				const detail = latestMcpPlan.error
+					? `MCP configuration could not be re-read: ${latestMcpPlan.error}`
+					: `MCP configuration at ${active.mcpPlan.path} changed after approval.`;
+				failures = withoutMcpFailure(failures);
+				failures.push({ kind: "mcp", path: active.mcpPlan.path, message: detail });
+				manifest = await authority.manifests.update(manifest, {
+					failures,
+					stage: "partial",
+				});
+				const replanned = snapshot();
+				return prepareRecovery(
+					active,
+					lease,
+					manifest,
+					replanned.ok ? replanned.value : latest.value,
+					[detail],
+				);
+			}
+			manifest = await authority.manifests.update(manifest, {
+				pendingEffect: { kind: "mcp", path: active.mcpPlan.path },
+			});
+			try {
+				await authorizeEffect(lease);
+				const applied = applyMcpConfiguration(
+					active.mcpPlan,
+					active.mcpCatalog,
+					mcp,
+				);
+				if (applied.status !== "applied") {
+					const detail =
+						applied.status === "refused-concurrent-change"
+							? `MCP targets changed after fencing: ${applied.changedTargets.join(", ")}`
+							: `MCP configuration failed: ${applied.error}`;
+					failures = withoutMcpFailure(failures);
+					failures.push({ kind: "mcp", path: active.mcpPlan.path, message: detail });
+					manifest = await authority.manifests.update(manifest, {
+						failures,
+						stage: "partial",
+						pendingEffect: undefined,
+					});
+					const replanned = snapshot();
+					return prepareRecovery(
+						active,
+						lease,
+						manifest,
+						replanned.ok ? replanned.value : latest.value,
+						[detail],
+					);
+				}
+				failures = withoutMcpFailure(failures);
+				manifest = await authority.manifests.update(manifest, {
+					mcpConfigured: true,
+					failures,
+					pendingEffect: undefined,
+				});
+			} catch (error) {
+				const detail = `MCP effect authorization failed: ${error instanceof Error ? error.message : String(error)}`;
+				failures = withoutMcpFailure(failures);
+				failures.push({ kind: "mcp", path: active.mcpPlan.path, message: detail });
+				manifest = await authority.manifests.update(manifest, {
+					failures,
+					stage: "partial",
+				});
+				return prepareRecovery(active, lease, manifest, latest.value, [detail]);
+			}
+		}
+
+		if (failures.length > 0) {
+			manifest = await authority.manifests.update(manifest, {
+				stage: "partial",
+				failures,
+			});
+			const replanned = snapshot();
+			return prepareRecovery(
+				active,
+				lease,
+				manifest,
+				replanned.ok ? replanned.value : latest.value,
+				failures.map((failure) => failure.message),
+			);
+		}
+
+		await authority.manifests.update(manifest, {
+			stage: "completed",
+			pendingEffect: undefined,
+		});
+		await terminalize(active, lease, "completed");
+		pending = undefined;
+		const message =
+			"Installed or updated pi-workflow companions and configured the reviewed MCP plan. Run /reload; authenticate Sentry/Linear as needed.";
+		return result("installed", message, "info", latest.value);
+	}
+
+	async function startInstall(): Promise<InstallMissingResult> {
+		const planned = snapshot();
+		if (!planned.ok)
+			return result(
+				planned.outcome,
+				planned.message,
+				"error",
+				planned.companionPlan && planned.mcpPath
+					? {
+							companionPlan: planned.companionPlan,
+							mcpPlan: { ...emptyMcpConfigurationPlan(mcp), path: planned.mcpPath },
+						}
+					: undefined,
+			);
+		const plan = planned.value;
+		if (
+			plan.companionPlan.installable.length === 0 &&
+			!plan.mcpPlan.changed
+		)
+			return result(
+				"noop",
+				"pi-workflow companions are installed and MCP servers are already configured.",
+				"info",
+				plan,
+			);
+		if (plan.companionPlan.installable.length > 0 && !installPackage)
+			return result(
+				"blocked",
+				"The package execution capability is unavailable; no package or MCP effects were authorized.",
+				"error",
+				plan,
+			);
+		if (!authority)
+			return result(
+				"blocked",
+				"Shared interactive decision authority is unavailable; no package or MCP effects were authorized.",
+				"error",
+				plan,
+			);
+		try {
+			const operationId = companionInstallOperationId(plan.identity);
+			let manifest = await authority.manifests.read(operationId);
+			if (manifest?.value.stage === "executing")
+				manifest = await authority.manifests.update(manifest, { stage: "partial" });
+			if (
+				manifest?.value.stage === "completed" ||
+				manifest?.value.stage === "cancelled"
+			)
+				return result(
+					"blocked",
+					`Companion operation ${operationId} is already ${manifest.value.stage}; terminal evidence cannot be replayed.`,
+					"error",
+					plan,
+				);
+			if (manifest)
+				return prepare(
+					plan,
+					"recovery",
+					manifest.value.attempt + 1,
+					manifest,
+					[
+						manifest.value.pendingEffect
+							? `Interrupted ${manifest.value.pendingEffect.kind} effect requires reconciliation.`
+							: `Durable operation is ${manifest.value.stage}.`,
+					],
+				);
+			return prepare(plan, "install", 1);
+		} catch (error) {
+			return result(
+				"blocked",
+				`Companion recovery evidence could not be loaded: ${error instanceof Error ? error.message : String(error)}`,
+				"error",
+				plan,
+			);
+		}
+	}
+
+	async function continuePending(): Promise<InstallMissingResult | undefined> {
+		const active = pending;
+		if (!active || !authority) return undefined;
+		const actor = authority.actor();
+		if (!actor)
+			return result(
+				"blocked",
+				"Authenticated local operator authority disappeared before execution; no effects were run.",
+				"error",
+				active,
+			);
+		for (const action of active.descriptor.actions) {
+			let authorization: AuthorizationOutcome;
+			try {
+				authorization = await authority.decisions.authorize(
+					active.decisionId,
+					action,
+					actor,
+				);
+			} catch (error) {
+				pending = undefined;
+				return result(
+					"blocked",
+					`Shared companion decision failed closed: ${error instanceof Error ? error.message : String(error)}`,
+					"error",
+					active,
+				);
+			}
+			if (authorization.kind === "blocked") {
+				if (
+					authorization.blocker.code === "PI_WORKFLOW_DECISION_CLAIM_MISSING" ||
+					authorization.blocker.code === "PI_WORKFLOW_DECISION_ACTION_MISMATCH"
+				)
+					continue;
+				pending = undefined;
+				return result(
+					"blocked",
+					authorization.blocker.message,
+					"error",
+					active,
+				);
+			}
+			if (authorization.kind === "cancelled") {
+				if (active.manifest)
+					await authority.manifests.update(active.manifest, {
+						stage: "cancelled",
+						pendingEffect: undefined,
+					});
+				pending = undefined;
+				return result(
+					"canceled",
+					"Canceled through the shared decision. No additional package or MCP effects were run.",
+					"info",
+					active,
+				);
+			}
+			if (action.id === "companions.wait") {
+				const manifest = await bindManifest(active, authorization.lease);
+				await authority.manifests.update(manifest, {
+					stage: "waiting",
+					pendingEffect: undefined,
+				});
+				await terminalize(active, authorization.lease, "waiting");
+				pending = undefined;
+				return result(
+					"waiting",
+					"Companion reconciliation is waiting. Durable progress was preserved and no additional effects were run.",
+					"info",
+					active,
+				);
+			}
+			return execute(active, authorization.lease);
+		}
+		return undefined;
+	}
 
 	return {
 		async inspect(): Promise<InspectResult> {
@@ -720,446 +1421,11 @@ export function createCompanionWorkflow(
 			};
 		},
 
+		continuePending,
+
 		async installMissing(): Promise<InstallMissingResult> {
-			const resolvedCatalog = resolveCompanionCatalog(catalog);
-			if (resolvedCatalog.loadError) {
-				const message = [
-					`Companion metadata error: ${resolvedCatalog.loadError}`,
-					"Cannot determine companion install commands automatically. Check assets/companions.json and retry.",
-				].join("\n");
-				notify(interaction, message, "error");
-				return {
-					outcome: "metadata-error",
-					message,
-					installable: [],
-					errored: [],
-					failures: [],
-				};
-			}
+			return startInstall();
 
-			const companionPlan = createCompanionInstallPlan(resolvedCatalog.states);
-			// finish() is defined here (not at the top of installMissing) so its
-			// installable/errored defaults can read companionPlan directly; the
-			// metadata-error return above precedes the plan and stays inline.
-			const finish = (options: {
-				level: NotificationLevel;
-				outcome: InstallMissingResult["outcome"];
-				message: string;
-				installable?: InstallMissingResult["installable"];
-				errored?: InstallMissingResult["errored"];
-				failures?: InstallMissingResult["failures"];
-				manualInstructions?: InstallMissingResult["manualInstructions"];
-				mcpPath?: InstallMissingResult["mcpPath"];
-			}): InstallMissingResult => {
-				const {
-					level,
-					outcome,
-					message,
-					installable = companionPlan.installable,
-					errored = companionPlan.errored,
-					failures = [],
-					manualInstructions,
-					mcpPath,
-				} = options;
-				notify(interaction, message, level);
-				return {
-					outcome,
-					message,
-					installable,
-					errored,
-					failures,
-					manualInstructions,
-					mcpPath,
-				};
-			};
-			const loadedMcpCatalog = loadMcpServerCatalog(mcp);
-			if (loadedMcpCatalog.error || !loadedMcpCatalog.catalog) {
-				const manualInstructions = combineManualInstructions(
-					companionPlan.installable.length > 0 || companionPlan.errored.length > 0
-						? companionPlan.manualInstructions
-						: "",
-					manualMcpCatalogInstructions(mcp),
-				);
-				const message = [
-					`MCP server catalog error: ${loadedMcpCatalog.error ?? "Unknown MCP server catalog error."}`,
-					"Cannot determine MCP server configuration automatically.",
-					"",
-					manualInstructions,
-				].join("\n");
-
-				if (companionPlan.installable.length === 0) {
-					return finish({
-						level: "error",
-						outcome: "mcp-catalog-error",
-						message,
-						manualInstructions,
-						mcpPath: mcpConfigPath(mcp),
-					});
-				}
-
-				if (!interaction.confirm || !installPackage) {
-					return finish({
-						level: "warning",
-						outcome: "manual",
-						message,
-						manualInstructions,
-						mcpPath: mcpConfigPath(mcp),
-					});
-				}
-
-				const confirmation = installConfirmationMessage(
-					companionPlan,
-					emptyMcpConfigurationPlan(mcp),
-					{ schemaVersion: 1, mcpServers: {} },
-				);
-				let confirmed: boolean;
-				try {
-					confirmed = await interaction.confirm(
-						confirmation.title,
-						confirmation.message,
-					);
-				} catch (error) {
-					const confirmationMessage = [
-						`Could not confirm pi-workflow companion install automatically: ${error instanceof Error ? error.message : String(error)}`,
-						"",
-						manualInstructions,
-					].join("\n");
-					return finish({
-						level: "warning",
-						outcome: "manual",
-						message: confirmationMessage,
-						manualInstructions,
-						mcpPath: mcpConfigPath(mcp),
-					});
-				}
-				if (!confirmed) {
-					const canceledMessage =
-						"Canceled. No companion packages or MCP configuration were changed.";
-					return finish({
-						level: "info",
-						outcome: "canceled",
-						message: canceledMessage,
-						manualInstructions,
-						mcpPath: mcpConfigPath(mcp),
-					});
-				}
-
-				const failures = await installCompanionPackages(
-					interaction,
-					installPackage,
-					companionPlan.installable,
-				);
-				const postInstallMessage = [
-					...companionOutcomeLines(failures, companionPlan),
-					`MCP server catalog error: ${loadedMcpCatalog.error ?? "Unknown MCP server catalog error."}`,
-					"No MCP configuration changes were written automatically.",
-					"",
-					manualMcpCatalogInstructions(mcp),
-				].join("\n");
-				return finish({
-					level: "error",
-					outcome: "failed",
-					message: postInstallMessage,
-					failures,
-					manualInstructions,
-					mcpPath: mcpConfigPath(mcp),
-				});
-			}
-
-			const mcpPlan = planMcpConfiguration(loadedMcpCatalog.catalog, mcp);
-			const mcpConfigBlocked = Boolean(mcpPlan.error);
-			const confirmationPlan = mcpConfigBlocked
-				? emptyMcpConfigurationPlan(mcp)
-				: mcpPlan;
-			const manualInstructions = manualHarnessInstructions(
-				companionPlan,
-				mcpPlan,
-				loadedMcpCatalog.catalog,
-			);
-			if (mcpPlan.error && companionPlan.installable.length === 0) {
-				const message = [mcpPlan.error, "", manualInstructions].join("\n");
-				return finish({
-					level: "error",
-					outcome: "config-error",
-					message,
-					manualInstructions,
-					mcpPath: mcpPlan.path,
-				});
-			}
-
-			if (
-				companionPlan.installable.length === 0 &&
-				companionPlan.errored.length === 0 &&
-				!mcpPlan.changed
-			) {
-				const message =
-					"pi-workflow companions are installed and MCP servers are already configured.";
-				return finish({
-					level: "info",
-					outcome: "noop",
-					message,
-					mcpPath: mcpPlan.path,
-				});
-			}
-
-			if (companionPlan.errored.length > 0) {
-				notify(
-					interaction,
-					[
-						"Some companions could not be inspected:",
-						...companionPlan.errored.map(
-							(companion) =>
-								`${companion.package}: ${companion.error ?? "unknown error"}`,
-						),
-						"",
-						companionPlan.manualInstructions,
-					].join("\n"),
-					"warning",
-				);
-			}
-
-			if (companionPlan.installable.length === 0 && !mcpPlan.changed) {
-				// Deliberately not finish(): manual-only emits no notification and
-				// carries no user-facing message, so there is nothing for finish() to do.
-				return {
-					outcome: "manual-only",
-					manualInstructions: companionPlan.manualInstructions,
-					installable: [],
-					errored: companionPlan.errored,
-					failures: [],
-					mcpPath: mcpPlan.path,
-				};
-			}
-
-			const needsInstallPackage = companionPlan.installable.length > 0;
-			if (!interaction.confirm || (needsInstallPackage && !installPackage)) {
-				return finish({
-					level: "warning",
-					outcome: "manual",
-					message: manualInstructions,
-					manualInstructions,
-					mcpPath: mcpPlan.path,
-				});
-			}
-
-			const confirmation = installConfirmationMessage(
-				companionPlan,
-				confirmationPlan,
-				loadedMcpCatalog.catalog,
-			);
-			let confirmed: boolean;
-			try {
-				confirmed = await interaction.confirm(
-					confirmation.title,
-					confirmation.message,
-				);
-			} catch (error) {
-				const message = [
-					`Could not confirm pi-workflow companion install automatically: ${error instanceof Error ? error.message : String(error)}`,
-					"",
-					manualInstructions,
-				].join("\n");
-				return finish({
-					level: "warning",
-					outcome: "manual",
-					message,
-					manualInstructions,
-					mcpPath: mcpPlan.path,
-				});
-			}
-			if (!confirmed) {
-				const message =
-					"Canceled. No companion packages or MCP configuration were changed.";
-				return finish({
-					level: "info",
-					outcome: "canceled",
-					message,
-					manualInstructions,
-					mcpPath: mcpPlan.path,
-				});
-			}
-
-			const failures = await installCompanionPackages(
-				interaction,
-				installPackage,
-				companionPlan.installable,
-			);
-			if (mcpConfigBlocked) {
-				const message = [
-					...companionOutcomeLines(failures, companionPlan),
-					mcpPlan.error ??
-						`Unable to read MCP configuration at ${mcpPlan.path}.`,
-					"No MCP configuration changes were written automatically.",
-					"",
-					manualMcpConfigurationInstructions(
-						mcpPlan,
-						loadedMcpCatalog.catalog,
-					),
-				].join("\n");
-				return finish({
-					level: "error",
-					outcome: "failed",
-					message,
-					failures,
-					manualInstructions,
-					mcpPath: mcpPlan.path,
-				});
-			}
-
-			let finalMcpPath = mcpPlan.path;
-			let wroteMcp = false;
-			if (mcpPlan.changed) {
-				const applyOutcome = applyMcpConfiguration(
-					mcpPlan,
-					loadedMcpCatalog.catalog,
-					mcp,
-				);
-
-				if (applyOutcome.status === "reread-failed") {
-					const message = [
-						...companionOutcomeLines(failures, companionPlan),
-						`MCP configuration at ${mcpPlan.path} could not be re-read after confirmation: ${applyOutcome.error}`,
-						"No MCP configuration changes were written.",
-						"",
-						manualMcpConfigurationInstructions(
-							mcpPlan,
-							loadedMcpCatalog.catalog,
-						),
-					].join("\n");
-					return finish({
-						level: "error",
-						outcome: "failed",
-						message,
-						failures,
-						manualInstructions: manualHarnessInstructions(
-							companionPlan,
-							mcpPlan,
-							loadedMcpCatalog.catalog,
-						),
-						mcpPath: mcpPlan.path,
-					});
-				}
-
-				if (applyOutcome.status === "write-failed") {
-					const latestMcpPlan = applyOutcome.latestPlan;
-					const message = [
-						...companionOutcomeLines(failures, companionPlan),
-						`Could not write pi-workflow MCP servers to ${latestMcpPlan.path}: ${applyOutcome.error}`,
-						"No MCP configuration changes were written automatically.",
-						"",
-						manualMcpConfigurationInstructions(
-							latestMcpPlan,
-							loadedMcpCatalog.catalog,
-						),
-					].join("\n");
-					return finish({
-						level: "error",
-						outcome: "failed",
-						message,
-						failures,
-						manualInstructions: manualHarnessInstructions(
-							companionPlan,
-							latestMcpPlan,
-							loadedMcpCatalog.catalog,
-						),
-						mcpPath: latestMcpPlan.path,
-					});
-				}
-
-				if (applyOutcome.status === "refused-concurrent-change") {
-					const latestMcpPlan = applyOutcome.latestPlan;
-					const message = [
-						...companionOutcomeLines(failures, companionPlan),
-						`MCP configuration at ${mcpPlan.path} changed after preview. No MCP configuration changes were written.`,
-						"Affected MCP server names:",
-						...applyOutcome.changedTargets.map((name) => `- ${name}`),
-						"",
-						`Review ${mcpPlan.path} and run /pi-workflow-install-companions again to confirm against the latest configuration.`,
-						"",
-						manualMcpConfigurationInstructions(
-							latestMcpPlan,
-							loadedMcpCatalog.catalog,
-						),
-					].join("\n");
-					return finish({
-						level: "error",
-						outcome: "failed",
-						message,
-						failures,
-						manualInstructions: manualHarnessInstructions(
-							companionPlan,
-							latestMcpPlan,
-							loadedMcpCatalog.catalog,
-						),
-						mcpPath: mcpPlan.path,
-					});
-				}
-
-				finalMcpPath = applyOutcome.path;
-				wroteMcp = applyOutcome.wrote;
-			}
-
-			const configuredMcp = wroteMcp
-				? `Configured pi-workflow MCP servers at ${finalMcpPath}.`
-				: "MCP servers were already configured.";
-			if (failures.length > 0) {
-				const message = [
-					configuredMcp,
-					"Some companion installs failed:",
-					...failures,
-					"",
-					companionPlan.manualInstructions,
-					"",
-					"Run /reload after the companion installs are fixed. Authenticate Sentry/Linear as needed.",
-				].join("\n");
-				return finish({
-					level: "error",
-					outcome: "failed",
-					message,
-					failures,
-					manualInstructions: companionPlan.manualInstructions,
-					mcpPath: finalMcpPath,
-				});
-			}
-			if (companionPlan.errored.length > 0) {
-				const unresolvedInstructions = manualInstallInstructions(
-					companionPlan.errored,
-					"Install or update pi-workflow companions manually:",
-				);
-				const message = [
-					configuredMcp,
-					"Some companions could not be inspected:",
-					...companionPlan.errored.map(
-						(companion) =>
-							`${companion.package}: ${companion.error ?? "unknown error"}`,
-					),
-					"",
-					unresolvedInstructions,
-					"",
-					"Run /reload after the unresolved companions are fixed. Authenticate Sentry/Linear as needed.",
-				].join("\n");
-				return finish({
-					level: "error",
-					outcome: "failed",
-					message,
-					manualInstructions: unresolvedInstructions,
-					mcpPath: finalMcpPath,
-				});
-			}
-
-			const actionSummary =
-				companionPlan.installable.length > 0
-					? `${configuredMcp} Installed or updated pi-workflow companions.`
-					: configuredMcp;
-			const message =
-				`${actionSummary} Run /reload. Authenticate Sentry/Linear as needed. pi-workflow does not connect or authenticate MCP servers during installation.`;
-			return finish({
-				level: "info",
-				outcome: "installed",
-				message,
-				manualInstructions,
-				mcpPath: finalMcpPath,
-			});
 		},
 	};
 }

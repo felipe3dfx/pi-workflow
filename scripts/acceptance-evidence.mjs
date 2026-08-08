@@ -9,6 +9,7 @@ const acceptanceScenarioNames = [
 	"sync",
 	"status",
 	"doctor",
+	"interactive-decisions",
 	"least-privilege-profiles",
 ];
 

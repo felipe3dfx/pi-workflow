@@ -1,21 +1,39 @@
 import { canonicalJson } from "./workflow-contracts.ts";
 import type { WorkflowArtifactStore } from "./workflow-artifacts.ts";
 import type { QaHandoffArtifact } from "./qa-handoff-workflow.ts";
+import type {
+	ExecutionLease,
+	ExecutionManifestBinding,
+} from "./interactive-decisions.ts";
+
+interface RecoveryExecutionBinding {
+	readonly decisionId: string;
+	readonly operationDigest: string;
+	readonly executionId: string;
+	readonly generation: number;
+}
 
 interface RecoveryState {
 	readonly issueId: string;
 	readonly digest: string;
 	readonly stage: "uncertain" | "released" | "verified";
 	readonly ownerId?: string;
+	readonly executionBinding?: RecoveryExecutionBinding;
 }
 
 export interface QaHandoffPublicationRecoveryStore {
-	read(
-		issueId: string,
-	): Promise<
-		| { readonly digest: string; readonly stage: "uncertain" | "verified" }
+	read(issueId: string): Promise<
+		| {
+				readonly digest: string;
+				readonly stage: "uncertain" | "verified";
+				readonly executionBinding?: RecoveryExecutionBinding;
+		  }
 		| undefined
 	>;
+	bindExecution(
+		artifact: QaHandoffArtifact,
+		lease: ExecutionLease,
+	): Promise<ExecutionManifestBinding>;
 	claim(artifact: QaHandoffArtifact, ownerId: string): Promise<void>;
 	release(artifact: QaHandoffArtifact, ownerId: string): Promise<void>;
 	finalizeVerified(artifact: QaHandoffArtifact): Promise<void>;
@@ -27,9 +45,12 @@ function parseRecoveryState(content: string, issueId: string): RecoveryState {
 		!value ||
 		typeof value !== "object" ||
 		Array.isArray(value) ||
-		(Object.keys(value).length !== 3 && Object.keys(value).length !== 4) ||
+		Object.keys(value).length < 3 ||
+		Object.keys(value).length > 5 ||
 		!Object.keys(value).every((key) =>
-			["issueId", "digest", "stage", "ownerId"].includes(key),
+			["issueId", "digest", "stage", "ownerId", "executionBinding"].includes(
+				key,
+			),
 		) ||
 		!("issueId" in value) ||
 		value.issueId !== issueId ||
@@ -43,6 +64,23 @@ function parseRecoveryState(content: string, issueId: string): RecoveryState {
 			value.stage !== "released" &&
 			value.stage !== "verified") ||
 		(value.stage === "verified" && "ownerId" in value) ||
+		("executionBinding" in value &&
+			(!value.executionBinding ||
+				typeof value.executionBinding !== "object" ||
+				Array.isArray(value.executionBinding) ||
+				Object.keys(value.executionBinding).length !== 4 ||
+				!("decisionId" in value.executionBinding) ||
+				typeof value.executionBinding.decisionId !== "string" ||
+				!value.executionBinding.decisionId ||
+				!("operationDigest" in value.executionBinding) ||
+				typeof value.executionBinding.operationDigest !== "string" ||
+				!value.executionBinding.operationDigest ||
+				!("executionId" in value.executionBinding) ||
+				typeof value.executionBinding.executionId !== "string" ||
+				!value.executionBinding.executionId ||
+				!("generation" in value.executionBinding) ||
+				!Number.isSafeInteger(value.executionBinding.generation) ||
+				(value.executionBinding.generation as number) < 1)) ||
 		content !== `${canonicalJson(value)}\n`
 	)
 		throw new Error("QA handoff publication recovery state is invalid.");
@@ -52,6 +90,12 @@ function parseRecoveryState(content: string, issueId: string): RecoveryState {
 		stage: value.stage,
 		...("ownerId" in value && typeof value.ownerId === "string"
 			? { ownerId: value.ownerId }
+			: {}),
+		...("executionBinding" in value && value.executionBinding
+			? {
+					executionBinding:
+						value.executionBinding as unknown as RecoveryExecutionBinding,
+				}
 			: {}),
 	};
 }
@@ -73,12 +117,14 @@ export function createQaHandoffPublicationRecoveryStore(options: {
 		artifact: QaHandoffArtifact,
 		stage: RecoveryState["stage"],
 		ownerId?: string,
+		executionBinding?: RecoveryExecutionBinding,
 	) =>
 		`${canonicalJson({
 			issueId: artifact.payload.issue.id,
 			digest: artifact.digest,
 			stage,
 			...(ownerId ? { ownerId } : {}),
+			...(executionBinding ? { executionBinding } : {}),
 		})}\n`;
 
 	const currentProject = () =>
@@ -108,9 +154,10 @@ export function createQaHandoffPublicationRecoveryStore(options: {
 		stage: RecoveryState["stage"],
 		expectedRevision: string | undefined,
 		ownerId?: string,
+		executionBinding?: RecoveryExecutionBinding,
 	): Promise<void> {
 		const topic = destination(artifact.payload.issue.id);
-		const content = contentFor(artifact, stage, ownerId);
+		const content = contentFor(artifact, stage, ownerId, executionBinding);
 		const saved = await options.store.write(
 			project,
 			topic,
@@ -136,8 +183,90 @@ export function createQaHandoffPublicationRecoveryStore(options: {
 			);
 			const state = parseRecoveryState(current.content, issueId);
 			return state.stage === "uncertain" || state.stage === "verified"
-				? { digest: state.digest, stage: state.stage }
+				? {
+						digest: state.digest,
+						stage: state.stage,
+						...(state.executionBinding
+							? { executionBinding: state.executionBinding }
+							: {}),
+					}
 				: undefined;
+		},
+		async bindExecution(artifact, lease) {
+			if (options.store.capabilities?.atomicCompareAndSwap !== true)
+				throw new Error(
+					"Atomic compare-and-swap is required for QA handoff recovery.",
+				);
+			const project = currentProject();
+			const issueId = artifact.payload.issue.id;
+			const topic = destination(issueId);
+			const executionBinding: RecoveryExecutionBinding = {
+				decisionId: lease.decisionId,
+				operationDigest: lease.operationDigest,
+				executionId: lease.executionId,
+				generation: lease.generation,
+			};
+			const manifest: ExecutionManifestBinding = {
+				...executionBinding,
+				ref: `workflow://qa-handoff/${issueId}/publication/${artifact.digest}`,
+			};
+			const current = await options.store.readCurrent(project, topic);
+			if (current) {
+				const state = parseRecoveryState(current.content, issueId);
+				if (
+					state.stage === "released" &&
+					(state.digest !== artifact.digest ||
+						(state.executionBinding &&
+							canonicalJson(state.executionBinding) !==
+								canonicalJson(executionBinding)))
+				) {
+					await writeAndVerify(
+						project,
+						artifact,
+						"released",
+						current.revision,
+						state.ownerId,
+						executionBinding,
+					);
+					return manifest;
+				}
+				if (state.digest !== artifact.digest)
+					throw new Error("QA handoff publication recovery state conflicts.");
+				if (state.executionBinding) {
+					if (
+						canonicalJson(state.executionBinding) !==
+						canonicalJson(executionBinding)
+					)
+						throw new Error(
+							"QA handoff publication execution binding conflicts.",
+						);
+					await verifyRevision(
+						project,
+						topic,
+						current.revision,
+						current.content,
+					);
+					return manifest;
+				}
+				await writeAndVerify(
+					project,
+					artifact,
+					state.stage,
+					current.revision,
+					state.ownerId,
+					executionBinding,
+				);
+				return manifest;
+			}
+			await writeAndVerify(
+				project,
+				artifact,
+				"released",
+				undefined,
+				undefined,
+				executionBinding,
+			);
+			return manifest;
 		},
 		async claim(artifact, ownerId) {
 			const project = currentProject();
@@ -171,7 +300,14 @@ export function createQaHandoffPublicationRecoveryStore(options: {
 					throw new Error("QA handoff publication is already verified.");
 			}
 			const topic = destination(issueId);
-			const content = contentFor(artifact, "uncertain", ownerId);
+			const content = contentFor(
+				artifact,
+				"uncertain",
+				ownerId,
+				current
+					? parseRecoveryState(current.content, issueId).executionBinding
+					: undefined,
+			);
 			let saved: { readonly revision: string };
 			try {
 				saved = await options.store.write(
@@ -238,6 +374,7 @@ export function createQaHandoffPublicationRecoveryStore(options: {
 				"released",
 				current.revision,
 				ownerId,
+				state.executionBinding,
 			);
 		},
 		async finalizeVerified(artifact) {
@@ -248,11 +385,19 @@ export function createQaHandoffPublicationRecoveryStore(options: {
 			const project = currentProject();
 			const issueId = artifact.payload.issue.id;
 			const topic = destination(issueId);
-			const content = contentFor(artifact, "verified");
 			for (let attempt = 0; attempt < 3; attempt += 1) {
 				const current = await options.store.readCurrent(project, topic);
+				const currentState = current
+					? parseRecoveryState(current.content, issueId)
+					: undefined;
+				const content = contentFor(
+					artifact,
+					"verified",
+					undefined,
+					currentState?.executionBinding,
+				);
 				if (current) {
-					const state = parseRecoveryState(current.content, issueId);
+					const state = currentState as RecoveryState;
 					if (state.digest !== artifact.digest)
 						throw new Error("QA handoff publication recovery state conflicts.");
 					if (state.stage === "verified") {

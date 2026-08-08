@@ -7,72 +7,99 @@ function setup() {
 	const calls = [];
 	const handlers = new Map();
 	const tools = new Map();
-	const workflow = {
-		async authorizeInvocation(issueId) {
-			calls.push({ operation: "authorizeInvocation", issueId });
-			return {
-				status: "authorized",
-				artifact: { digest: "authorized-digest" },
-			};
+	let active = false;
+	let pending = false;
+	const publication = {
+		allowedTools: [
+			"linear_get_user",
+			"linear_get_issue",
+			"linear_list_comments",
+			"linear_save_comment",
+			"workflow_qa_handoff",
+		],
+		start(issueId) {
+			calls.push({ operation: "start", issueId });
+			active = true;
 		},
-		async publish(input) {
-			calls.push({ operation: "publish", input });
-			return {
-				status: "published",
-				artifact: { digest: "authorized-digest" },
-				comment: { id: "opaque-comment", body: "cuerpo" },
-			};
+		setMcpAvailable(available) {
+			calls.push({ operation: "setMcpAvailable", available });
+		},
+		clear() {
+			active = false;
+			pending = false;
+		},
+		hasActiveTurn: () => active,
+		hasPendingDeveloperSelection: () => pending,
+		expectedModelCall: () =>
+			active
+				? { toolName: "linear_get_user", input: { query: "me" } }
+				: undefined,
+		nextCallInstruction: () => "next",
+		handleToolCall: async (event) => {
+			calls.push({ operation: "tool_call", event });
+		},
+		handleToolResult: async (event) => {
+			calls.push({ operation: "tool_result", event });
+			return true;
+		},
+		async complete(input) {
+			calls.push({ operation: "complete", input });
+			if (input.action === "publish_handoff") {
+				pending = false;
+				return { status: "continuing" };
+			}
+			active = false;
+			return { status: "cancelled", issueId: "ILA-2321" };
+		},
+		setPending(value) {
+			pending = value;
 		},
 	};
-	const runtime = createQaHandoffRuntime({ workflow });
+	const runtime = createQaHandoffRuntime({ mcpPublication: publication });
 	runtime.register({
 		on: (event, handler) => handlers.set(event, handler),
 		registerTool: (tool) => tools.set(tool.name, tool),
+		getActiveTools: () => publication.allowedTools,
 	});
-	return { calls, handlers, runtime, tools };
+	return { calls, handlers, publication, runtime, tools };
 }
 
-test("binds one Linear ID from the admitted public turn and publishes only that issue", async () => {
+test("binds the public issue anchor without treating it as publication approval", async () => {
 	const { calls, handlers, runtime, tools } = setup();
-	const event = {
+	runtime.handlePublicEntry({
 		type: "input",
 		text: "/qa-handoff ILA-2321",
 		source: "interactive",
-	};
+	});
 
-	runtime.handlePublicEntry(event);
 	const prompt = await handlers.get("before_agent_start")({
 		type: "before_agent_start",
 	});
-	const result = await tools.get("workflow_qa_handoff").execute("tool-1", {
-		issueId: "ILA-2321",
-	});
 
-	assert.equal(runtime.toolName, "workflow_qa_handoff");
-	assert.equal(runtime.hasActiveTurn(), false);
-	assert.deepEqual(calls, [
-		{ operation: "authorizeInvocation", issueId: "ILA-2321" },
-		{ operation: "publish", input: { issueId: "ILA-2321" } },
+	assert.equal(runtime.hasActiveTurn(), true);
+	assert.deepEqual(calls.slice(0, 2), [
+		{ operation: "start", issueId: "ILA-2321" },
+		{ operation: "setMcpAvailable", available: true },
 	]);
-	assert.match(prompt.systemPrompt, /issueId="ILA-2321"/);
-	assert.deepEqual(
-		tools.get("workflow_qa_handoff").parameters,
-		{
-			type: "object",
-			additionalProperties: false,
-			required: ["issueId"],
-			properties: {
-				issueId: {
-					type: "string",
-					pattern: "^[A-Z][A-Z0-9]*-[1-9][0-9]*$",
-				},
+	assert.match(prompt.systemPrompt, /linear_get_user/);
+	assert.deepEqual(tools.get("workflow_qa_handoff").parameters, {
+		type: "object",
+		additionalProperties: false,
+		required: ["action"],
+		properties: {
+			action: {
+				type: "string",
+				enum: ["publish_handoff", "cancel_decision"],
 			},
 		},
+	});
+	assert.equal(
+		calls.some(({ operation }) => operation === "authorizeInvocation"),
+		false,
 	);
-	assert.equal(JSON.parse(result.content[0].text).status, "published");
 });
 
-test("blocks mismatched or augmented tool input without reaching publication", async () => {
+test("uses the workflow tool only to transport a shared decision claim", async () => {
 	const { calls, runtime, tools } = setup();
 	runtime.handlePublicEntry({
 		type: "input",
@@ -80,178 +107,49 @@ test("blocks mismatched or augmented tool input without reaching publication", a
 		source: "interactive",
 	});
 
-	for (const input of [
-		{ issueId: "ILA-2322" },
-		{ issueId: "ILA-2321", body: "caller body" },
-		{ issueId: "ILA-2321", digest: "caller digest" },
-		{
-			issueId: "ILA-2321",
-			authority: { actorId: "caller", role: "Developer" },
-		},
-	]) {
-		const result = await tools.get("workflow_qa_handoff").execute("tool-1", input);
-		const outcome = JSON.parse(result.content[0].text);
-		assert.equal(outcome.status, "blocked");
-		assert.equal(outcome.blocker.code, "PI_WORKFLOW_QA_HANDOFF_INPUT_INVALID");
-	}
-	assert.deepEqual(calls, [
-		{ operation: "authorizeInvocation", issueId: "ILA-2321" },
-	]);
-});
-
-test("returns a stable blocker when workflow publication rejects", async () => {
-	const workflow = {
-		authorizeInvocation: async () => ({ status: "authorized" }),
-		publish: async () => {
-			throw new Error("Linear publication failed.");
-		},
-	};
-	const rejectingRuntime = createQaHandoffRuntime({ workflow });
-	const rejectingTools = new Map();
-	rejectingRuntime.register({
-		on: () => undefined,
-		registerTool: (tool) => rejectingTools.set(tool.name, tool),
-	});
-	rejectingRuntime.handlePublicEntry({
-		type: "input",
-		text: "/qa-handoff ILA-2321",
-		source: "interactive",
-	});
-
-	const result = await rejectingTools.get("workflow_qa_handoff").execute("tool-1", {
-		issueId: "ILA-2321",
-	});
+	const result = await tools
+		.get("workflow_qa_handoff")
+		.execute("tool-1", { action: "publish_handoff" });
 
 	assert.deepEqual(JSON.parse(result.content[0].text), {
-		status: "blocked",
-		blocker: {
-			code: "PI_WORKFLOW_QA_HANDOFF_PUBLICATION_FAILED",
-			message: "Linear publication failed.",
-		},
+		status: "continuing",
+	});
+	assert.equal(runtime.hasActiveTurn(), true);
+	assert.deepEqual(calls.at(-1), {
+		operation: "complete",
+		input: { action: "publish_handoff" },
 	});
 });
 
-test("does not authorize malformed or multi-ID public input", () => {
-	for (const text of [
-		"/qa-handoff",
-		"/qa-handoff ila-2321",
-		"/qa-handoff ILA-2321 ILA-2322",
-	]) {
-		const { calls, runtime } = setup();
-		runtime.handlePublicEntry({ type: "input", text, source: "interactive" });
-		assert.equal(runtime.hasActiveTurn(), false, text);
-		assert.deepEqual(calls, [], text);
-	}
-});
-
-test("authorizes one plain valid ID after the invalid-anchor corrective turn", async () => {
-	const { calls, handlers, runtime, tools } = setup();
+test("retains the corrective issue-anchor continuation", () => {
+	const { runtime } = setup();
 	runtime.handlePublicEntry({
 		type: "input",
 		text: "/qa-handoff invalid",
 		source: "interactive",
 	});
-	assert.equal(runtime.hasActiveTurn(), false);
-	assert.equal(runtime.hasPendingAnchorContinuation(), true);
-
-	await handlers.get("agent_settled")({ type: "agent_settled" });
 	const continuation = {
 		type: "input",
 		text: "ILA-2321",
 		source: "interactive",
 	};
+	assert.equal(runtime.hasPendingAnchorContinuation(), true);
 	assert.equal(runtime.shouldContinue(continuation), true);
 	runtime.handlePublicEntry(continuation);
 	assert.equal(runtime.hasPendingAnchorContinuation(), false);
 	assert.equal(runtime.hasActiveTurn(), true);
-
-	const first = await tools.get("workflow_qa_handoff").execute("tool-1", {
-		issueId: "ILA-2321",
-	});
-	const second = await tools.get("workflow_qa_handoff").execute("tool-2", {
-		issueId: "ILA-2321",
-	});
-
-	assert.equal(JSON.parse(first.content[0].text).status, "published");
-	assert.equal(
-		JSON.parse(second.content[0].text).blocker.code,
-		"PI_WORKFLOW_QA_HANDOFF_INPUT_INVALID",
-	);
-	assert.deepEqual(calls, [
-		{ operation: "authorizeInvocation", issueId: "ILA-2321" },
-		{ operation: "publish", input: { issueId: "ILA-2321" } },
-	]);
 });
 
-test("does not treat unrelated plain input as an invalid-anchor continuation", () => {
-	const { calls, runtime } = setup();
-	runtime.handlePublicEntry({
-		type: "input",
-		text: "/qa-handoff",
-		source: "interactive",
-	});
-
-	assert.equal(runtime.shouldContinue({
-		type: "input",
-		text: "please summarize the repository",
-		source: "interactive",
-	}), false);
-	assert.equal(runtime.hasPendingAnchorContinuation(), false);
-	assert.equal(runtime.hasActiveTurn(), false);
-	assert.deepEqual(calls, []);
-});
-
-test("consumes authorization after one terminal tool execution", async () => {
-	const { calls, handlers, runtime, tools } = setup();
+test("exposes pending shared selection after settlement without clearing the turn", async () => {
+	const { handlers, publication, runtime } = setup();
 	runtime.handlePublicEntry({
 		type: "input",
 		text: "/qa-handoff ILA-2321",
 		source: "interactive",
 	});
-
-	const first = await tools.get("workflow_qa_handoff").execute("tool-1", {
-		issueId: "ILA-2321",
-	});
-	const second = await tools.get("workflow_qa_handoff").execute("tool-2", {
-		issueId: "ILA-2321",
-	});
-
-	assert.equal(JSON.parse(first.content[0].text).status, "published");
-	assert.equal(
-		JSON.parse(second.content[0].text).blocker.code,
-		"PI_WORKFLOW_QA_HANDOFF_INPUT_INVALID",
-	);
-	assert.equal(runtime.hasActiveTurn(), false);
-	assert.equal(
-		await handlers.get("before_agent_start")({ type: "before_agent_start" }),
-		undefined,
-	);
-	assert.equal(calls.filter(({ operation }) => operation === "publish").length, 1);
-});
-
-test("settlement clears an unused authorization before a later turn", async () => {
-	const { calls, handlers, runtime, tools } = setup();
-	runtime.handlePublicEntry({
-		type: "input",
-		text: "/qa-handoff ILA-2321",
-		source: "interactive",
-	});
-
+	publication.setPending(true);
 	await handlers.get("agent_settled")({ type: "agent_settled" });
-	const prompt = await handlers.get("before_agent_start")({
-		type: "before_agent_start",
-	});
-	const result = await tools.get("workflow_qa_handoff").execute("tool-late", {
-		issueId: "ILA-2321",
-	});
 
-	assert.equal(prompt, undefined);
-	assert.equal(runtime.hasActiveTurn(), false);
-	assert.equal(
-		JSON.parse(result.content[0].text).blocker.code,
-		"PI_WORKFLOW_QA_HANDOFF_INPUT_INVALID",
-	);
-	assert.deepEqual(calls, [
-		{ operation: "authorizeInvocation", issueId: "ILA-2321" },
-	]);
+	assert.equal(runtime.hasPendingSelection(), true);
+	assert.equal(runtime.hasActiveTurn(), true);
 });

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -176,9 +177,16 @@ async function publicExtensionHarness(overrides = {}) {
 	const { default: piWorkflowExtension } = await packedModule(
 		"extensions/pi-workflow.ts",
 	);
+	const { createInMemoryDecisionStore } = await packedModule(
+		"extensions/interactive-decisions.ts",
+	);
+	const { createInMemoryCompanionInstallManifestStore } = await packedModule(
+		"extensions/companion-install-manifest.ts",
+	);
 	const handlers = new Map();
 	const tools = new Map();
 	const commands = new Map();
+	const sentMessages = [];
 	const defaultDefineProduct = {
 		advance: async () => ({ status: "blocked" }),
 		pendingRecommendation: () => undefined,
@@ -186,11 +194,6 @@ async function publicExtensionHarness(overrides = {}) {
 	};
 	const defaultQaHandoff = {
 		authorizeInvocation: async () => ({ status: "blocked" }),
-		publish: async () => ({ status: "blocked" }),
-	};
-	const defaultProductReview = {
-		prepare: async () => ({ status: "blocked" }),
-		approve: async () => ({ status: "blocked" }),
 		publish: async () => ({ status: "blocked" }),
 	};
 	const qaHandoffOptions = overrides.defaultQaHandoffRuntime
@@ -206,14 +209,12 @@ async function publicExtensionHarness(overrides = {}) {
 					runtime: overrides.productReviewRuntime,
 				},
 			}
-		: {
-				productReview: {
-					workflow: overrides.productReview ?? defaultProductReview,
-				},
-			};
+		: {};
 	piWorkflowExtension(
 		{
-			exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+			exec:
+				overrides.exec ??
+				(async () => ({ code: 0, stdout: "", stderr: "" })),
 			getActiveTools: () => [...(overrides.toolNames ?? [])],
 			getAllTools: () => (overrides.toolNames ?? []).map((name) => ({ name })),
 			on(event, handler) {
@@ -223,8 +224,24 @@ async function publicExtensionHarness(overrides = {}) {
 			},
 			registerTool: (tool) => tools.set(tool.name, tool),
 			registerCommand: (name, command) => commands.set(name, command),
+			sendUserMessage: (message) => sentMessages.push(message),
 		},
 		{
+			interactiveDecisions: {
+				store:
+					overrides.interactiveDecisionStore ?? createInMemoryDecisionStore(),
+				createExecutionId: () => "packed-companion-execution",
+				companionManifests:
+					overrides.companionManifests ??
+					createInMemoryCompanionInstallManifestStore(),
+			},
+			...(overrides.companionCatalog
+				? { catalog: overrides.companionCatalog }
+				: {}),
+			...(overrides.companionInteraction
+				? { interaction: overrides.companionInteraction }
+				: {}),
+			...(overrides.companionMcp ? { mcp: overrides.companionMcp } : {}),
 			defineProduct: {
 				workflow: overrides.defineProduct ?? defaultDefineProduct,
 				createDefinitionId: () => "packed-public-definition",
@@ -238,6 +255,7 @@ async function publicExtensionHarness(overrides = {}) {
 	);
 	return {
 		commands,
+		sentMessages,
 		tools,
 		async emit(event, value, context) {
 			let result;
@@ -356,8 +374,17 @@ async function traverseDeliverTicketPublicSeam() {
 }
 
 async function traverseProductReviewPublicSeam() {
+	const { createInMemoryDecisionStore } = await packedModule(
+		"extensions/interactive-decisions.ts",
+	);
+	const interactiveDecisionStore = createInMemoryDecisionStore();
 	const calls = [];
-	const actor = { id: "owner-1", name: "Owner", isActive: true, isGuest: false };
+	const actor = {
+		id: "owner-1",
+		name: "Owner",
+		isActive: true,
+		isGuest: false,
+	};
 	const baseIssue = {
 		id: "linear-uuid-2324",
 		identifier: "ILA-2324",
@@ -392,20 +419,60 @@ async function traverseProductReviewPublicSeam() {
 				read: async (issueId) => {
 					const value = recoveries.get(issueId);
 					return value?.stage === "uncertain" || value?.stage === "verified"
-						? { digest: value.digest, stage: value.stage }
+						? {
+								digest: value.digest,
+								stage: value.stage,
+								...(value.executionBinding
+									? { executionBinding: value.executionBinding }
+									: {}),
+							}
 						: undefined;
+				},
+				bindExecution: async (value, lease) => {
+					const issueId = value.payload.issue.id;
+					const existing = recoveries.get(issueId);
+					const executionBinding = {
+						decisionId: lease.decisionId,
+						operationDigest: lease.operationDigest,
+						executionId: lease.executionId,
+						generation: lease.generation,
+					};
+					recoveries.set(issueId, {
+						...(existing ?? { digest: value.digest, stage: "released" }),
+						executionBinding,
+					});
+					return {
+						...executionBinding,
+						ref: `workflow://product-review/${issueId}/publication/${value.digest}`,
+					};
 				},
 				claim: async (value, ownerId) => {
 					const existing = recoveries.get(value.payload.issue.id);
 					if (existing?.stage === "uncertain" && existing.ownerId !== ownerId)
 						throw new Error("packed product-review recovery already owned");
-					recoveries.set(value.payload.issue.id, { digest: value.digest, stage: "uncertain", ownerId });
+					recoveries.set(value.payload.issue.id, {
+						digest: value.digest,
+						stage: "uncertain",
+						ownerId,
+						executionBinding: existing?.executionBinding,
+					});
 				},
 				release: async (value, ownerId) => {
-					recoveries.set(value.payload.issue.id, { digest: value.digest, stage: "released", ownerId });
+					const existing = recoveries.get(value.payload.issue.id);
+					recoveries.set(value.payload.issue.id, {
+						digest: value.digest,
+						stage: "released",
+						ownerId,
+						executionBinding: existing?.executionBinding,
+					});
 				},
 				finalizeVerified: async (value) => {
-					recoveries.set(value.payload.issue.id, { digest: value.digest, stage: "verified" });
+					const existing = recoveries.get(value.payload.issue.id);
+					recoveries.set(value.payload.issue.id, {
+						digest: value.digest,
+						stage: "verified",
+						executionBinding: existing?.executionBinding,
+					});
 				},
 			},
 		};
@@ -417,10 +484,20 @@ async function traverseProductReviewPublicSeam() {
 		sessionManager: { getSessionId: () => "packed-product-review-session" },
 	};
 	let sequence = 0;
-	async function start(issue, activePersistence = persistence) {
+	async function start(
+		issue,
+		activePersistence = persistence,
+		activeDecisionStore = interactiveDecisionStore,
+	) {
 		const harness = await publicExtensionHarness({
 			defaultProductReviewRuntime: true,
-			toolNames: ["linear_get_user", "linear_get_issue", "linear_list_comments", "linear_save_comment"],
+			interactiveDecisionStore: activeDecisionStore,
+			toolNames: [
+				"linear_get_user",
+				"linear_get_issue",
+				"linear_list_comments",
+				"linear_save_comment",
+			],
 			productReviewRuntime: {
 				environment: {},
 				drafts: { read: async () => structuredClone(productDraft) },
@@ -428,11 +505,35 @@ async function traverseProductReviewPublicSeam() {
 				recovery: activePersistence.recovery,
 			},
 		});
-		await harness.emit("session_start", { type: "session_start" }, packedContext);
-		const admitted = await harness.emit("input", { type: "input", text: `/product-review ${issue.identifier}`, source: "interactive" }, packedContext);
-		invariant(admitted?.action === "continue", "packed product-review public entry failed");
-		const launch = await harness.emit("before_agent_start", { type: "before_agent_start" }, packedContext);
-		invariant(launch?.systemPrompt?.includes("artifact-backed Linear MCP product review"), "packed product-review did not use default MCP wiring");
+		await harness.emit(
+			"session_start",
+			{ type: "session_start" },
+			packedContext,
+		);
+		const admitted = await harness.emit(
+			"input",
+			{
+				type: "input",
+				text: `/product-review ${issue.identifier}`,
+				source: "interactive",
+			},
+			packedContext,
+		);
+		invariant(
+			admitted?.action === "continue",
+			"packed product-review public entry failed",
+		);
+		const launch = await harness.emit(
+			"before_agent_start",
+			{ type: "before_agent_start" },
+			packedContext,
+		);
+		invariant(
+			launch?.systemPrompt?.includes(
+				"artifact-backed Linear MCP product review",
+			),
+			"packed product-review did not use default MCP wiring",
+		);
 		return harness;
 	}
 	async function call(harness, toolName, input, payload) {
@@ -443,19 +544,72 @@ async function traverseProductReviewPublicSeam() {
 		invariant(!blocked, `packed product-review blocked ${toolName}`);
 		calls.push({ toolName, input: structuredClone(event.input) });
 		if (payload === undefined) return { event };
-		const result = await harness.emit("tool_result", { toolName, toolCallId, content: [{ type: "text", text: JSON.stringify(payload) }], isError: false }, packedContext);
+		const result = await harness.emit(
+			"tool_result",
+			{
+				toolName,
+				toolCallId,
+				content: [{ type: "text", text: JSON.stringify(payload) }],
+				isError: false,
+			},
+			packedContext,
+		);
 		return { event, result };
 	}
 	async function prepareAndSelect(harness, issue, prefix) {
 		await call(harness, "linear_get_user", { query: "me" }, actor);
-		await call(harness, "linear_get_issue", { id: issue.identifier, includeRelations: true }, issue);
-		const prepared = await call(harness, "linear_get_issue", { id: issue.identifier, includeRelations: true }, issue);
-		invariant(!/[a-f0-9]{64}/.test(prepared.result.content.at(-1).text), `${prefix} exposed a private digest`);
-		await harness.emit("agent_settled", { type: "agent_settled" }, packedContext);
-		const selection = await harness.emit("input", { type: "input", text: "La revisión está lista; puedes continuar.", source: "interactive" }, packedContext);
-		invariant(selection?.action === "continue", `${prefix} natural Owner selection failed`);
+		await call(
+			harness,
+			"linear_get_issue",
+			{ id: issue.identifier, includeRelations: true },
+			issue,
+		);
+		const prepared = await call(
+			harness,
+			"linear_get_issue",
+			{ id: issue.identifier, includeRelations: true },
+			issue,
+		);
+		if (!prepared.result) {
+			const terminal = await harness.tools
+				.get("workflow_product_review")
+				?.execute(`packed-product-review-${prefix}-blocked`, {});
+			throw new Error(
+				`${prefix} product-review preparation blocked: ${terminal?.content?.[0]?.text ?? "missing terminal outcome"}`,
+			);
+		}
+		invariant(
+			!/[a-f0-9]{64}/.test(prepared.result.content.at(-1).text),
+			`${prefix} exposed a private digest`,
+		);
+		if (prepared.result.content.at(-1).text.includes("linear_get_issue"))
+			return;
+		const descriptor = await harness.emit(
+			"before_agent_start",
+			{ type: "before_agent_start" },
+			packedContext,
+		);
+		invariant(
+			descriptor?.systemPrompt?.includes("1. Aceptado") &&
+				descriptor.systemPrompt.includes("3. Cancelar") &&
+				descriptor.systemPrompt.includes("Do not infer approval"),
+			`${prefix} did not use the shared product-review decision descriptor`,
+		);
+		const selection = await harness.emit(
+			"input",
+			{ type: "input", text: "1", source: "interactive" },
+			packedContext,
+		);
+		invariant(
+			selection?.action === "continue",
+			`${prefix} shared Owner selection failed`,
+		);
 		const continuationInput = { action: "select_result", result: "Aceptado" };
-		const continuationPrompt = await harness.emit("before_agent_start", { type: "before_agent_start" }, packedContext);
+		const continuationPrompt = await harness.emit(
+			"before_agent_start",
+			{ type: "before_agent_start" },
+			packedContext,
+		);
 		invariant(
 			continuationPrompt?.systemPrompt?.includes("workflow_product_review") &&
 				continuationPrompt.systemPrompt.includes("select_result") &&
@@ -502,20 +656,62 @@ async function traverseProductReviewPublicSeam() {
 		);
 	}
 	async function advanceAfterSelection(harness, issue) {
-		await call(harness, "linear_get_issue", { id: issue.identifier, includeRelations: true }, issue);
+		await call(
+			harness,
+			"linear_get_issue",
+			{ id: issue.identifier, includeRelations: true },
+			issue,
+		);
 	}
 
 	const interrupted = await start(baseIssue);
 	await prepareAndSelect(interrupted, baseIssue, "initial");
 	await advanceAfterSelection(interrupted, baseIssue);
-	await call(interrupted, "linear_list_comments", { issueId: baseIssue.identifier }, { comments: [], hasNextPage: false });
-	await call(interrupted, "linear_get_issue", { id: baseIssue.identifier, includeRelations: true }, baseIssue);
-	const save = await call(interrupted, "linear_save_comment", { issueId: baseIssue.identifier, body: "PI_WORKFLOW_CANONICAL_PRODUCT_REVIEW_BODY" }, undefined);
-	const digest = save.event.input.body.match(/product-review:([a-f0-9]{64})/)[1];
-	const expectedBody = (await readFile(join(packageRoot, "assets", "acceptance", "product-review.golden.md"), "utf8")).replace(/product-review:[a-f0-9]{64}/, `product-review:${digest}`);
-	invariant(save.event.input.body === expectedBody, "packed product-review did not substitute the exact canonical Spanish body");
-	const comment = { id: "packed-product-review-comment", body: save.event.input.body, quotedText: null, parentId: null };
-	await interrupted.emit("session_shutdown", { type: "session_shutdown" }, packedContext);
+	await call(
+		interrupted,
+		"linear_list_comments",
+		{ issueId: baseIssue.identifier },
+		{ comments: [], hasNextPage: false },
+	);
+	await call(
+		interrupted,
+		"linear_get_issue",
+		{ id: baseIssue.identifier, includeRelations: true },
+		baseIssue,
+	);
+	const save = await call(
+		interrupted,
+		"linear_save_comment",
+		{
+			issueId: baseIssue.identifier,
+			body: "PI_WORKFLOW_CANONICAL_PRODUCT_REVIEW_BODY",
+		},
+		undefined,
+	);
+	const digest = save.event.input.body.match(
+		/product-review:([a-f0-9]{64})/,
+	)[1];
+	const expectedBody = (
+		await readFile(
+			join(packageRoot, "assets", "acceptance", "product-review.golden.md"),
+			"utf8",
+		)
+	).replace(/product-review:[a-f0-9]{64}/, `product-review:${digest}`);
+	invariant(
+		save.event.input.body === expectedBody,
+		"packed product-review did not substitute the exact canonical Spanish body",
+	);
+	const comment = {
+		id: "packed-product-review-comment",
+		body: save.event.input.body,
+		quotedText: null,
+		parentId: null,
+	};
+	await interrupted.emit(
+		"session_shutdown",
+		{ type: "session_shutdown" },
+		packedContext,
+	);
 	invariant(
 		calls.filter(({ toolName }) => toolName === "linear_get_user").length === 1,
 		"packed product-review repeated identity lookup in one execution",
@@ -525,42 +721,107 @@ async function traverseProductReviewPublicSeam() {
 	const recovered = await start(advancedIssue);
 	await prepareAndSelect(recovered, advancedIssue, "recovery");
 	await advanceAfterSelection(recovered, advancedIssue);
-	await call(recovered, "linear_list_comments", { issueId: baseIssue.identifier }, { comments: [], hasNextPage: true, cursor: "packed-adoption-page-2" });
-	await call(recovered, "linear_list_comments", { issueId: baseIssue.identifier, cursor: "packed-adoption-page-2" }, { comments: [comment], hasNextPage: false });
-	await call(recovered, "linear_list_comments", { issueId: baseIssue.identifier }, { comments: [], hasNextPage: true, cursor: "packed-readback-page-2" });
-	await call(recovered, "linear_list_comments", { issueId: baseIssue.identifier, cursor: "packed-readback-page-2" }, { comments: [comment], hasNextPage: false });
-	await call(recovered, "linear_get_issue", { id: baseIssue.identifier, includeRelations: true }, advancedIssue);
+	await call(
+		recovered,
+		"linear_list_comments",
+		{ issueId: baseIssue.identifier },
+		{ comments: [], hasNextPage: true, cursor: "packed-adoption-page-2" },
+	);
+	await call(
+		recovered,
+		"linear_list_comments",
+		{ issueId: baseIssue.identifier, cursor: "packed-adoption-page-2" },
+		{ comments: [comment], hasNextPage: false },
+	);
+	await call(
+		recovered,
+		"linear_list_comments",
+		{ issueId: baseIssue.identifier },
+		{ comments: [], hasNextPage: true, cursor: "packed-readback-page-2" },
+	);
+	await call(
+		recovered,
+		"linear_list_comments",
+		{ issueId: baseIssue.identifier, cursor: "packed-readback-page-2" },
+		{ comments: [comment], hasNextPage: false },
+	);
+	await call(
+		recovered,
+		"linear_get_issue",
+		{ id: baseIssue.identifier, includeRelations: true },
+		advancedIssue,
+	);
 	await call(recovered, "workflow_product_review", {}, undefined);
-	const result = await recovered.tools.get("workflow_product_review")?.execute("packed-product-review-terminal", {});
+	const result = await recovered.tools
+		.get("workflow_product_review")
+		?.execute("packed-product-review-terminal", {});
 	const outcome = JSON.parse(result?.content?.[0]?.text ?? "null");
-	invariant(outcome.status === "published" && outcome.commentId === comment.id, "packed product-review did not recover through its public terminal tool");
-	invariant(calls.filter(({ toolName }) => toolName === "linear_save_comment").length === 1, "packed product-review authorized a duplicate comment mutation");
+	invariant(
+		outcome.status === "published" && outcome.commentId === comment.id,
+		"packed product-review did not recover through its public terminal tool",
+	);
+	invariant(
+		calls.filter(({ toolName }) => toolName === "linear_save_comment")
+			.length === 1,
+		"packed product-review authorized a duplicate comment mutation",
+	);
 	invariant(
 		calls.filter(({ toolName }) => toolName === "linear_get_user").length === 2,
 		"packed product-review recovery did not use exactly one identity lookup",
 	);
 
 	const driftPersistence = createPersistence();
-	const drifted = await start(baseIssue, driftPersistence);
+	const drifted = await start(
+		baseIssue,
+		driftPersistence,
+		createInMemoryDecisionStore(),
+	);
 	await prepareAndSelect(drifted, baseIssue, "protected-drift");
 	await advanceAfterSelection(drifted, baseIssue);
-	await call(drifted, "linear_list_comments", { issueId: baseIssue.identifier }, { comments: [], hasNextPage: false });
-	const mutationsBeforeDrift = calls.filter(({ toolName }) => toolName === "linear_save_comment").length;
-	await call(drifted, "linear_get_issue", { id: baseIssue.identifier, includeRelations: true }, { ...baseIssue, labels: ["Protected drift"] });
+	await call(
+		drifted,
+		"linear_list_comments",
+		{ issueId: baseIssue.identifier },
+		{ comments: [], hasNextPage: false },
+	);
+	const mutationsBeforeDrift = calls.filter(
+		({ toolName }) => toolName === "linear_save_comment",
+	).length;
+	await call(
+		drifted,
+		"linear_get_issue",
+		{ id: baseIssue.identifier, includeRelations: true },
+		{ ...baseIssue, labels: ["Protected drift"] },
+	);
 	await call(drifted, "workflow_product_review", {}, undefined);
-	const driftResult = await drifted.tools.get("workflow_product_review")?.execute("packed-product-review-drift-terminal", {});
+	const driftResult = await drifted.tools
+		.get("workflow_product_review")
+		?.execute("packed-product-review-drift-terminal", {});
 	const driftOutcome = JSON.parse(driftResult?.content?.[0]?.text ?? "null");
 	invariant(
 		driftOutcome.status === "blocked" &&
-			driftOutcome.blocker?.code === "PI_WORKFLOW_PRODUCT_REVIEW_REVISION_MISMATCH" &&
-			calls.filter(({ toolName }) => toolName === "linear_save_comment").length === mutationsBeforeDrift,
+			driftOutcome.blocker?.code ===
+				"PI_WORKFLOW_PRODUCT_REVIEW_REVISION_MISMATCH" &&
+			calls.filter(({ toolName }) => toolName === "linear_save_comment")
+				.length === mutationsBeforeDrift,
 		"packed product-review did not refuse protected-field drift before mutation",
 	);
 	invariant(
 		calls.filter(({ toolName }) => toolName === "linear_get_user").length === 3,
 		"packed product-review drift execution did not use exactly one identity lookup",
 	);
-	invariant(calls.every(({ toolName }) => ["linear_get_user", "linear_get_issue", "linear_list_comments", "linear_save_comment", "workflow_product_review"].includes(toolName)), "packed product-review escaped its exact MCP tool allowlist");
+	invariant(
+		calls.every(({ toolName }) =>
+			[
+				"linear_get_user",
+				"linear_get_issue",
+				"linear_list_comments",
+				"linear_save_comment",
+				"workflow_product_review",
+			].includes(toolName),
+		),
+		"packed product-review escaped its exact MCP tool allowlist",
+	);
 }
 
 async function traverseDiagnosticCommandSeams() {
@@ -647,6 +908,269 @@ async function runPackedSkillScenario() {
 		assertions: [
 			"four-public-skills-loaded",
 			"canonical-spanish-goldens-loaded",
+		],
+	};
+}
+
+async function runInteractiveDecisionContractScenario() {
+	const [
+		inventory,
+		defineSkill,
+		productSkill,
+		qaSkill,
+		deliverSkill,
+		deliverySource,
+		publicExtensionSource,
+		syncSource,
+		productRuntimeSource,
+		qaRuntimeSource,
+		toSpecAgent,
+		toTicketsAgent,
+	] = await Promise.all([
+		readFile(
+			join(packageRoot, "docs/design/interactive-decision-inventory.md"),
+			"utf8",
+		),
+		readFile(join(packageRoot, "skills/define-product/SKILL.md"), "utf8"),
+		readFile(join(packageRoot, "skills/product-review/SKILL.md"), "utf8"),
+		readFile(join(packageRoot, "skills/qa-handoff/SKILL.md"), "utf8"),
+		readFile(join(packageRoot, "skills/deliver-ticket/SKILL.md"), "utf8"),
+		readFile(
+			join(packageRoot, "extensions/delivery-pull-request-workflow.ts"),
+			"utf8",
+		),
+		readFile(join(packageRoot, "extensions/pi-workflow.ts"), "utf8"),
+		readFile(join(packageRoot, "scripts/pi-workflow-sync.mjs"), "utf8"),
+		readFile(join(packageRoot, "extensions/product-review-runtime.ts"), "utf8"),
+		readFile(join(packageRoot, "extensions/qa-handoff-runtime.ts"), "utf8"),
+		readFile(join(packageRoot, "assets/agents/to-spec.md"), "utf8"),
+		readFile(join(packageRoot, "assets/agents/to-tickets.md"), "utf8"),
+	]);
+	invariant(
+		inventory.includes("Active unmigrated closed decisions: 0") &&
+			!inventory.includes("active-unmigrated"),
+		"packed decision inventory contains an active unmigrated choice",
+	);
+
+	const {
+		createInMemoryDecisionStore,
+		createInteractiveDecisions,
+	} = await packedModule("extensions/interactive-decisions.ts");
+	const { createPiDecisionAdapter } = await packedModule(
+		"extensions/pi-decision-adapter.ts",
+	);
+	const action = { id: "acceptance.execute", input: { subject: "ILA-2474" } };
+	const request = {
+		scope: {
+			project: "pi-workflow",
+			workflow: "acceptance",
+			subject: "ILA-2474",
+		},
+		operation: {
+			kind: "verify-interactive-decisions",
+			phase: "contract.verification",
+			input: action.input,
+			artifacts: [{ digest: "a".repeat(64) }],
+			targets: [{ capability: "interactive-decisions" }],
+			evidence: [],
+		},
+		presentation: {
+			locale: "en",
+			summary: "Verify the shared decision contract?",
+			details: [],
+			consequences: ["Runs the exact acceptance operation."],
+			risks: [],
+			choices: [
+				{
+					id: action.id,
+					mode: "execute",
+					action,
+					label: "Verify",
+					description: "Verify this exact operation.",
+				},
+				{
+					id: "decision.cancel",
+					mode: "cancel",
+					action: { id: "decision.cancel", input: null },
+					label: "Cancel",
+					description: "Do not run the operation.",
+				},
+			],
+		},
+	};
+	const panelAdapter = createPiDecisionAdapter();
+	const fallbackAdapter = createPiDecisionAdapter();
+	const panelService = createInteractiveDecisions({
+		store: createInMemoryDecisionStore(),
+		claimSource: panelAdapter.claimSource,
+	});
+	const fallbackService = createInteractiveDecisions({
+		store: createInMemoryDecisionStore(),
+		claimSource: fallbackAdapter.claimSource,
+	});
+	const [panelPresentation, fallbackPresentation] = await Promise.all([
+		panelService.prepare(request),
+		fallbackService.prepare(request),
+	]);
+	const decisionContext = {
+		sessionId: "acceptance-session",
+		runId: "acceptance-run",
+		sequence: 1,
+		actor: {
+			actorId: "acceptance-owner",
+			authorityRevision: "acceptance-r1",
+			active: true,
+			guest: false,
+		},
+		claimBinding: { scope: request.scope, generation: 1 },
+	};
+	const panel = panelAdapter.present({
+		...decisionContext,
+		presentation: panelPresentation,
+		capability: { hasUI: true, activeTools: ["ask_user_question"] },
+	});
+	const fallback = fallbackAdapter.present({
+		...decisionContext,
+		presentation: fallbackPresentation,
+		capability: { hasUI: false, activeTools: [] },
+	});
+	invariant(
+		panel.kind === "panel" &&
+			fallback.kind === "fallback" &&
+			panel.input.questions[0].options.length === 2 &&
+			fallback.text.includes("1. Verify") &&
+			fallback.text.includes("2. Cancel"),
+		"panel and fallback did not originate from one shared descriptor",
+	);
+
+	const leaseService = createInteractiveDecisions({
+		store: createInMemoryDecisionStore(),
+		claimSource: { consume: async () => true },
+		createExecutionId: () => "acceptance-execution",
+	});
+	const prepared = await leaseService.prepare(request);
+	const authorized = await leaseService.authorize(
+		prepared.decisionId,
+		action,
+		decisionContext.actor,
+	);
+	invariant(authorized.kind === "authorized", "shared lease was not issued");
+	const manifest = {
+		ref: "workflow://acceptance/ILA-2474",
+		decisionId: authorized.lease.decisionId,
+		operationDigest: authorized.lease.operationDigest,
+		executionId: authorized.lease.executionId,
+		generation: authorized.lease.generation,
+	};
+	invariant(
+		(await leaseService.authorizeEffect(authorized.lease)).kind === "blocked",
+		"an effect was authorized before execution manifest binding",
+	);
+	invariant(
+		(await leaseService.bindExecutionManifest(authorized.lease, manifest)).kind ===
+			"authorized",
+		"executionId manifest binding failed",
+	);
+	for (let index = 0; index < 3; index += 1)
+		invariant(
+			(await leaseService.authorizeEffect(authorized.lease)).kind === "authorized",
+			"one lease did not fence every internal effect",
+		);
+
+	const { registerPublicEntryGuard } = await packedModule(
+		"extensions/public-entry-guard.ts",
+	);
+	const handlers = new Map();
+	let compatible = false;
+	registerPublicEntryGuard(
+		{ on: (event, handler) => handlers.set(event, handler) },
+		{
+			"define-product": {
+				status: "implemented",
+				allowedTools: ["workflow_define_product"],
+				hasActiveAuthorization: () => true,
+				hasActiveDecision: () => compatible,
+			},
+		},
+	);
+	const context = {
+		isIdle: () => true,
+		ui: { notify() {} },
+	};
+	await handlers.get("input")(
+		{ type: "input", text: "/define-product decision contract", source: "interactive" },
+		context,
+	);
+	invariant(
+		(await handlers.get("tool_call")(
+			{ toolName: "ask_user_question" },
+			context,
+		))?.block === true,
+		"question tool was allowed without a compatible active decision",
+	);
+	compatible = true;
+	invariant(
+		(await handlers.get("tool_call")(
+			{ toolName: "ask_user_question" },
+			context,
+		)) === undefined,
+		"question tool was blocked for a compatible active decision",
+	);
+
+	for (const skill of [defineSkill, productSkill, qaSkill])
+		invariant(
+			skill.includes("shared `interactive-decisions` descriptor") &&
+				skill.includes("require an exact phrase") &&
+					skill.includes("semantic action"),
+			"implemented skill retained phrase-based authorization",
+		);
+	for (const agent of [toSpecAgent, toTicketsAgent])
+		invariant(
+			agent.includes("workflow's shared decision authority owns approval") &&
+				!agent.includes("Require the Owner to approve"),
+			"packaged artifact agent retained approval authority",
+		);
+	invariant(
+		!deliverySource.includes('decision: "approved"') &&
+			!deliverySource.includes('decision: "confirmed"') &&
+			!deliverySource.includes("new Map<string, DeliveryPullRequestSnapshot>") &&
+			!syncSource.includes("[y/N]") &&
+			productRuntimeSource.includes("shared product-review decision descriptor") &&
+			qaRuntimeSource.includes("shared QA handoff decision descriptor"),
+		"an active legacy authorization route remains",
+	);
+	const reviewStart = deliverySource.indexOf("async function reviewDiff");
+	const confirmationStart = deliverySource.indexOf("async function confirmPr");
+	const reviewBody = deliverySource.slice(reviewStart, confirmationStart);
+	const confirmationBody = deliverySource.slice(confirmationStart);
+	invariant(
+		reviewBody.indexOf("await bindSharedManifest") <
+			reviewBody.indexOf("dependencies.git.inspect") &&
+			confirmationBody.indexOf("await bindSharedManifest") <
+				confirmationBody.indexOf("dependencies.git.inspect") &&
+			confirmationBody.includes("expectedSnapshot") &&
+			confirmationBody.includes("dependencies.git.find"),
+		"Delivery effects are not execution-bound and domain-revalidated",
+	);
+	invariant(
+		publicExtensionSource.includes('"deliver-ticket": { status: "pending" }') &&
+			!publicExtensionSource.includes("createDeliveryPullRequestWorkflow") &&
+			deliverSkill.includes("PI_WORKFLOW_CAPABILITY_PENDING"),
+		"deliver-ticket was enabled or bypassed the shared module",
+	);
+
+	return {
+		status: "passed",
+		assertions: [
+			"inventory-zero-active-unmigrated",
+			"panel-and-fallback-use-shared-descriptor",
+			"question-tool-requires-compatible-active-decision",
+			"one-lease-covers-each-logical-operation",
+			"execution-manifest-bound-before-first-effect",
+			"every-effect-rechecks-fencing-and-domain-preconditions",
+			"skills-use-semantic-actions-not-exact-phrases",
+			"active-legacy-authorization-routes-absent",
+			"deliver-ticket-remains-pending-and-module-blocked",
 		],
 	};
 }
@@ -909,7 +1433,12 @@ async function runDefineProductScenario() {
 				publicationRecovery = { ...identity, stage: "uncertain", ownerId };
 			},
 			recordCreated: async (identity, ownerId, issueId) => {
-				publicationRecovery = { ...identity, stage: "created", ownerId, issueId };
+				publicationRecovery = {
+					...identity,
+					stage: "created",
+					ownerId,
+					issueId,
+				};
 			},
 			release: async (identity, ownerId) => {
 				publicationRecovery = { ...identity, stage: "released", ownerId };
@@ -936,7 +1465,10 @@ async function runDefineProductScenario() {
 		"packed-define-publication-start",
 		{ action: "publish_spec" },
 	);
-	invariant(starting.status === "continuing", "packed MCP publication did not start");
+	invariant(
+		starting.status === "continuing",
+		"packed MCP publication did not start",
+	);
 	await publication.handleToolResult({
 		toolName: "workflow_define_product",
 		toolCallId: "packed-define-publication-start",
@@ -996,7 +1528,9 @@ async function runDefineProductScenario() {
 	await callPublication(linearIssue);
 	await callPublication(linearIssue);
 	await callPublication({ issues: [linearIssue], hasNextPage: false });
-	const publicationResult = await publication.complete({ action: "publish_spec" });
+	const publicationResult = await publication.complete({
+		action: "publish_spec",
+	});
 	const saveCalls = publicationCalls.filter(
 		(call) => call.toolName === "linear_save_issue",
 	);
@@ -1010,9 +1544,8 @@ async function runDefineProductScenario() {
 				state: "packed-backlog-1",
 			}) &&
 			publicationRecovery?.stage === "verified" &&
-			publicationCalls.filter(
-				(call) => call.toolName === "linear_get_user",
-			).length === 1,
+			publicationCalls.filter((call) => call.toolName === "linear_get_user")
+				.length === 1,
 		"packed authenticated MCP Delivery-parent publication drifted",
 	);
 	await traverseDefineProductPublicSeam();
@@ -1203,6 +1736,10 @@ async function runQaHandoffScenario() {
 	const { canonicalJson, digestCanonicalValue } = await packedModule(
 		"extensions/workflow-contracts.ts",
 	);
+	const { createInMemoryDecisionStore } = await packedModule(
+		"extensions/interactive-decisions.ts",
+	);
+	const interactiveDecisionStore = createInMemoryDecisionStore();
 	const legacyGoldenBody = await readFile(
 		join(packageRoot, "assets", "acceptance", "qa-handoff.golden.md"),
 		"utf8",
@@ -1250,6 +1787,7 @@ async function runQaHandoffScenario() {
 	async function startPackedMcpRuntime() {
 		const harness = await publicExtensionHarness({
 			defaultQaHandoffRuntime: true,
+			interactiveDecisionStore,
 			toolNames: packedMcpToolNames,
 		});
 		await harness.emit(
@@ -1301,6 +1839,51 @@ async function runQaHandoffScenario() {
 		);
 		return event;
 	}
+	async function selectQaPublication(harness) {
+		const descriptor = await harness.emit(
+			"before_agent_start",
+			{ type: "before_agent_start" },
+			packedContext,
+		);
+		invariant(
+			descriptor?.systemPrompt?.includes("Publicar entrega a QA") &&
+				descriptor.systemPrompt.includes("2. Cancelar") &&
+				descriptor.systemPrompt.includes("Do not infer approval"),
+			"packed QA handoff did not use the shared decision descriptor",
+		);
+		const selected = await harness.emit(
+			"input",
+			{ type: "input", text: "1", source: "interactive" },
+			packedContext,
+		);
+		invariant(
+			selected?.action === "continue",
+			"packed QA handoff shared selection failed",
+		);
+		const event = await packedMcpCall(
+			harness,
+			"workflow_qa_handoff",
+			{ action: "publish_handoff" },
+			undefined,
+		);
+		const result = await harness.tools
+			.get("workflow_qa_handoff")
+			?.execute(event.toolCallId, event.input);
+		invariant(
+			JSON.parse(result?.content?.[0]?.text ?? "null").status === "continuing",
+			"packed QA handoff public decision handshake did not continue",
+		);
+		await harness.emit(
+			"tool_result",
+			{
+				toolName: event.toolName,
+				toolCallId: event.toolCallId,
+				content: result.content,
+				isError: false,
+			},
+			packedContext,
+		);
+	}
 	const actorEvidence = {
 		id: qaDeveloper.actorId,
 		name: "Developer",
@@ -1335,6 +1918,13 @@ async function runQaHandoffScenario() {
 		issueCallInput,
 		qaMcpIssue,
 	);
+	await packedMcpCall(
+		interruptedHarness,
+		"linear_get_issue",
+		issueCallInput,
+		qaMcpIssue,
+	);
+	await selectQaPublication(interruptedHarness);
 	await packedMcpCall(
 		interruptedHarness,
 		"linear_get_issue",
@@ -1472,6 +2062,12 @@ async function runQaHandoffScenario() {
 	);
 	await packedMcpCall(
 		recoveredHarness,
+		"linear_get_issue",
+		issueCallInput,
+		qaMcpIssue,
+	);
+	await packedMcpCall(
+		recoveredHarness,
 		"linear_list_comments",
 		commentsCallInput,
 		{
@@ -1494,15 +2090,10 @@ async function runQaHandoffScenario() {
 		issueCallInput,
 		qaMcpIssue,
 	);
-	await packedMcpCall(
-		recoveredHarness,
-		"workflow_qa_handoff",
-		{ issueId: qaMcpIssue.identifier },
-		undefined,
-	);
+	await packedMcpCall(recoveredHarness, "workflow_qa_handoff", {}, undefined);
 	const packedMcpResult = await recoveredHarness.tools
 		.get("workflow_qa_handoff")
-		?.execute("packed-mcp-completion", { issueId: qaMcpIssue.identifier });
+		?.execute("packed-mcp-completion", {});
 	const packedMcpOutcome = JSON.parse(
 		packedMcpResult?.content?.[0]?.text ?? "null",
 	);
@@ -1517,6 +2108,11 @@ async function runQaHandoffScenario() {
 			{ toolName: "linear_get_user", input: { query: "me" } },
 			{ toolName: "linear_get_issue", input: issueCallInput },
 			{ toolName: "linear_get_issue", input: issueCallInput },
+			{
+				toolName: "workflow_qa_handoff",
+				input: { action: "publish_handoff" },
+			},
+			{ toolName: "linear_get_issue", input: issueCallInput },
 			{ toolName: "linear_list_comments", input: commentsCallInput },
 			{ toolName: "linear_get_issue", input: issueCallInput },
 			{
@@ -1529,12 +2125,13 @@ async function runQaHandoffScenario() {
 			{ toolName: "linear_get_user", input: { query: "me" } },
 			{ toolName: "linear_get_issue", input: issueCallInput },
 			{ toolName: "linear_get_issue", input: issueCallInput },
+			{ toolName: "linear_get_issue", input: issueCallInput },
 			{ toolName: "linear_list_comments", input: commentsCallInput },
 			{ toolName: "linear_list_comments", input: commentsCallInput },
 			{ toolName: "linear_get_issue", input: issueCallInput },
 			{
 				toolName: "workflow_qa_handoff",
-				input: { issueId: qaMcpIssue.identifier },
+				input: {},
 			},
 		]),
 		"packed default MCP QA handoff exact inputs or recovery sequence drifted",
@@ -1815,9 +2412,38 @@ async function runProductReviewScenario() {
 }
 
 async function runSyncScenario() {
-	const { createAgentAssetSync } = await packedModule(
-		"extensions/agent-asset-sync.ts",
-	);
+	const {
+		agentAssetApplyDecision,
+		agentAssetRecoveryDecision,
+		createAgentAssetSync,
+	} = await packedModule("extensions/agent-asset-sync.ts");
+	const { createInMemoryDecisionStore, createInteractiveDecisions } =
+		await packedModule("extensions/interactive-decisions.ts");
+	const syncActor = {
+		actorId: "packed-sync-user",
+		authorityRevision: "packed-sync/v1",
+		active: true,
+		guest: false,
+	};
+	let execution = 0;
+	const interactiveDecisions = createInteractiveDecisions({
+		store: createInMemoryDecisionStore(),
+		claimSource: { consume: async () => true },
+		createExecutionId: () => `packed-sync-execution-${++execution}`,
+	});
+	async function authorizeSync(descriptor) {
+		const presentation = await interactiveDecisions.prepare(descriptor.request);
+		const authorization = await interactiveDecisions.authorize(
+			presentation.decisionId,
+			descriptor.action,
+			syncActor,
+		);
+		invariant(
+			authorization.kind === "authorized",
+			"packed sync decision authorization failed",
+		);
+		return authorization;
+	}
 	const filesystem = fakeSyncFilesystem();
 	const sync = createAgentAssetSync({
 		catalog: {
@@ -1835,14 +2461,17 @@ async function runSyncScenario() {
 		agentDirectory: "/acceptance/agent/agents",
 		manifestPath: "/acceptance/agent/.pi-workflow/agent-assets.json",
 		operationDirectory: "/acceptance/agent/.pi-workflow/sync-operations",
-		nonce: () => "acceptance-operation",
+		interactiveDecisions,
 	});
 	const plan = await sync.plan();
 	invariant(
 		plan.status === "ready" && plan.actions[0]?.kind === "create",
 		"sync plan failed",
 	);
-	const applied = await sync.apply(plan, { confirm: async () => true });
+	const applyAuthorization = await authorizeSync(
+		agentAssetApplyDecision("pi-workflow", plan),
+	);
+	const applied = await sync.apply(plan, { lease: applyAuthorization.lease });
 	invariant(
 		applied.status === "applied" &&
 			applied.readiness === "ready" &&
@@ -1867,7 +2496,13 @@ async function runSyncScenario() {
 			settled.digest !== plan.digest,
 		"sync did not settle to an idempotent empty plan",
 	);
-	const rolledBack = await sync.rollback(applied.operationId);
+	const rollbackAuthorization = await authorizeSync(
+		agentAssetRecoveryDecision("pi-workflow", applied.operationId, "rollback"),
+	);
+	const rolledBack = await sync.rollback(
+		applied.operationId,
+		rollbackAuthorization,
+	);
 	invariant(rolledBack.status === "applied", "sync rollback recovery failed");
 	invariant(
 		(await filesystem.readFile(
@@ -1878,7 +2513,10 @@ async function runSyncScenario() {
 			)) === undefined,
 		"sync rollback did not restore the verified predecessor",
 	);
-	const resumed = await sync.resume(applied.operationId);
+	const resumeAuthorization = await authorizeSync(
+		agentAssetRecoveryDecision("pi-workflow", applied.operationId, "resume"),
+	);
+	const resumed = await sync.resume(applied.operationId, resumeAuthorization);
 	invariant(resumed.status === "applied", "sync resume recovery failed");
 	invariant(
 		(await filesystem.readFile(
@@ -2047,6 +2685,106 @@ async function runDiagnosticsScenarios() {
 			],
 		},
 	};
+}
+
+async function runCompanionInstallScenario() {
+	const directory = await mkdtemp(join(tmpdir(), "pi-workflow-packed-companion-"));
+	try {
+		const metadataPath = join(directory, "companions.json");
+		const agentDirectory = join(directory, "agent");
+		await writeFile(
+			metadataPath,
+			JSON.stringify({ schemaVersion: 1, companions: [{ package: "alpha" }] }),
+		);
+		const installCalls = [];
+		const harness = await publicExtensionHarness({
+			toolNames: ["ask_user_question"],
+			companionCatalog: {
+				metadataPath,
+				resolveInstalledVersion: () => ({}),
+			},
+			companionInteraction: {
+				installPackage: async (spec) => {
+					installCalls.push(spec);
+					return { code: 0 };
+				},
+			},
+			companionMcp: { agentDirectory },
+		});
+		const notifications = [];
+		const context = {
+			cwd: directory,
+			hasUI: true,
+			sessionManager: { getSessionId: () => "packed-companion-session" },
+			ui: {
+				notify: (message, level) => notifications.push({ message, level }),
+			},
+		};
+		await harness.commands
+			.get("pi-workflow-install-companions")
+			?.handler("", context);
+		invariant(
+			harness.sentMessages.length === 1 && installCalls.length === 0,
+			"companion command did not wait for shared authority before effects",
+		);
+		const instruction = await harness.emit("before_agent_start", {}, context);
+		const match = instruction?.systemPrompt?.match(
+			/ask_user_question exactly once with (\{.*\})\. Wait/,
+		);
+		invariant(match, "companion command did not present the shared panel");
+		const input = JSON.parse(match[1]);
+		const question = input.questions[0];
+		const answer = question.options[0].label;
+		await harness.emit(
+			"tool_call",
+			{
+				toolName: "ask_user_question",
+				toolCallId: "packed-companion-panel",
+				input,
+			},
+			context,
+		);
+		await harness.emit(
+			"tool_result",
+			{
+				toolName: "ask_user_question",
+				toolCallId: "packed-companion-panel",
+				isError: false,
+				details: {
+					answers: [
+						{
+							questionIndex: 0,
+							question: question.question,
+							kind: "option",
+							answer,
+						},
+					],
+					cancelled: false,
+				},
+			},
+			context,
+		);
+		const configured = JSON.parse(
+			await readFile(join(agentDirectory, "mcp.json"), "utf8"),
+		);
+		invariant(
+			installCalls.length === 1 &&
+				installCalls[0] === "npm:alpha" &&
+				Object.keys(configured.mcpServers ?? {}).length === 3 &&
+				notifications.at(-1)?.message.includes("reviewed MCP plan"),
+			"packed companion command did not execute the shared-authority joint plan",
+		);
+		return {
+			status: "passed",
+			assertions: [
+				"public-command-waits-for-shared-panel",
+				"one-claim-executes-package-and-mcp-plan",
+				"packed-runtime-uses-durable-joint-manifest",
+			],
+		};
+	} finally {
+		await rm(directory, { recursive: true, force: true });
+	}
 }
 
 function researchAsset(overrides = {}) {
@@ -2218,8 +2956,10 @@ const [
 	deliverTicket,
 	qaHandoff,
 	productReview,
+	companionInstall,
 	sync,
 	diagnostics,
+	interactiveDecisionContracts,
 	leastPrivilege,
 ] = await Promise.all([
 	runPackedSkillScenario(),
@@ -2227,8 +2967,10 @@ const [
 	runDeliverTicketScenario(),
 	runQaHandoffScenario(),
 	runProductReviewScenario(),
+	runCompanionInstallScenario(),
 	runSyncScenario(),
 	runDiagnosticsScenarios(),
+	runInteractiveDecisionContractScenario(),
 	runLeastPrivilegeScenario(),
 ]);
 
@@ -2240,9 +2982,13 @@ const report = createAcceptanceEvidence({
 		"deliver-ticket": deliverTicket,
 		"qa-handoff": qaHandoff,
 		"product-review": productReview,
-		sync,
+		sync: {
+			status: "passed",
+			assertions: [...sync.assertions, ...companionInstall.assertions],
+		},
 		status: diagnostics.status,
 		doctor: diagnostics.doctor,
+		"interactive-decisions": interactiveDecisionContracts,
 		"least-privilege-profiles": leastPrivilege,
 	},
 	safety: {

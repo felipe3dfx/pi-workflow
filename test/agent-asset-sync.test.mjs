@@ -13,12 +13,20 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
-import { createAgentAssetSync } from "../extensions/agent-asset-sync.ts";
 import {
-	createVerifiedOperation,
+	agentAssetApplyDecision,
+	agentAssetRecoveryDecision,
+	createAgentAssetSync as createRawAgentAssetSync,
+} from "../extensions/agent-asset-sync.ts";
+import {
+	createVerifiedOperation as createRawVerifiedOperation,
 	verifyOperationBackups,
 	verifyOperationManifest,
 } from "../extensions/agent-asset-operation.ts";
+import {
+	createInMemoryDecisionStore,
+	createInteractiveDecisions,
+} from "../extensions/interactive-decisions.ts";
 import { runSyncCommand } from "../extensions/pi-workflow-sync.ts";
 
 function createFakeFilesystem(files = {}) {
@@ -78,6 +86,108 @@ function createFakeFilesystem(files = {}) {
 
 function digest(content) {
 	return createHash("sha256").update(content).digest("hex");
+}
+
+const testActor = {
+	actorId: "sync-test-user",
+	authorityRevision: "sync-test/v1",
+	active: true,
+	guest: false,
+};
+
+function createDecisionFixture() {
+	let execution = 0;
+	const decisions = createInteractiveDecisions({
+		store: createInMemoryDecisionStore(),
+		claimSource: { consume: async () => true },
+		createExecutionId: () => `sync-execution-${++execution}`,
+	});
+	async function decide(descriptor) {
+		const recovery = await decisions.recover(
+			descriptor.request.scope,
+			testActor,
+		);
+		if (recovery.kind === "authorized")
+			return {
+				kind: "authorized",
+				lease: recovery.lease,
+				manifest: recovery.manifest,
+			};
+		if (recovery.kind === "none" || recovery.kind === "prepared") {
+			const presentation = await decisions.prepare(descriptor.request);
+			const authorization = await decisions.authorize(
+				presentation.decisionId,
+				descriptor.action,
+				testActor,
+			);
+			assert.equal(authorization.kind, "authorized");
+			return authorization;
+		}
+		throw new Error(`Unexpected sync decision state: ${recovery.kind}`);
+	}
+	return { decisions, decide };
+}
+
+function createAgentAssetSync(options) {
+	const fixture = createDecisionFixture();
+	const raw = createRawAgentAssetSync({
+		...options,
+		interactiveDecisions: fixture.decisions,
+	});
+	return {
+		...raw,
+		async apply(plan, legacyOptions = {}) {
+			const { digest: suppliedDigest, ...value } = plan;
+			if (suppliedDigest !== digest(JSON.stringify(value)))
+				return raw.apply(plan, { ...legacyOptions, lease: undefined });
+			if (legacyOptions.confirm && !(await legacyOptions.confirm(plan)))
+				return {
+					status: "canceled",
+					mutation: "none",
+					readiness: "blocked",
+					assets: [],
+					diagnostics: [],
+				};
+			const authorization = await fixture.decide(
+				agentAssetApplyDecision("pi-workflow", plan),
+			);
+			return raw.apply(plan, {
+				signal: legacyOptions.signal,
+				lease: authorization.lease,
+				manifest: authorization.manifest,
+			});
+		},
+		async resume(operationId) {
+			const authorization = await fixture.decide(
+				agentAssetRecoveryDecision("pi-workflow", operationId, "resume"),
+			);
+			return raw.resume(operationId, authorization);
+		},
+		async rollback(operationId) {
+			const authorization = await fixture.decide(
+				agentAssetRecoveryDecision("pi-workflow", operationId, "rollback"),
+			);
+			return raw.rollback(operationId, authorization);
+		},
+	};
+}
+
+function createVerifiedOperation(input, filesystem) {
+	return createRawVerifiedOperation(
+		{
+			...input,
+			executionLease: {
+				decisionId: "pi-workflow\u0000sync\u0000operation:test",
+				operationDigest: digest("operation-decision"),
+				actorId: testActor.actorId,
+				authorityRevision: testActor.authorityRevision,
+				action: { id: "sync.apply.execute", input: null },
+				executionId: "operation-test-execution",
+				generation: 1,
+			},
+		},
+		filesystem,
+	);
 }
 
 const approvedAgentNames = [
@@ -153,15 +263,19 @@ test("operation evidence derives a nonce-bound self-verifying manifest and backs
 	const prepared = await createVerifiedOperation(input, filesystem);
 	assert.equal(prepared.ok, true);
 	assert.equal(verifyOperationManifest(prepared.value).ok, true);
-	assert.equal(filesystem.writes.length, 3);
+	assert.equal(filesystem.writes.length, 4);
+	assert.match(filesystem.writes[0].path, /\/operation\.json$/);
 	assert.equal(
-		filesystem.writes[0].path,
+		filesystem.writes[1].path,
 		`${input.operationDirectory}/${prepared.value.operationId}/0.backup`,
 	);
-	assert.equal(filesystem.writes[0].content, "version one");
-	assert.equal(filesystem.writes[1].content, "manifest before");
-	assert.equal(filesystem.writes[2].content, "version two");
-	assert.equal((await verifyOperationBackups(prepared.value, filesystem)).ok, true);
+	assert.equal(filesystem.writes[1].content, "version one");
+	assert.equal(filesystem.writes[2].content, "manifest before");
+	assert.equal(filesystem.writes[3].content, "version two");
+	assert.equal(
+		(await verifyOperationBackups(prepared.value, filesystem)).ok,
+		true,
+	);
 
 	const differentNonce = await createVerifiedOperation(
 		{ ...input, nonce: "second-nonce" },
@@ -239,7 +353,9 @@ test("operation evidence records originally missing targets without inventing a 
 	assert.equal(prepared.ok, true);
 	assert.equal(prepared.value.targets[0].originallyMissing, true);
 	assert.equal(prepared.value.targets[0].backupDigest, null);
-	assert.equal(filesystem.writes.length, 1);
+	assert.equal(filesystem.writes.length, 2);
+	assert.match(filesystem.writes[0].path, /\/operation\.json$/);
+	assert.match(filesystem.writes[1].path, /\/0\.successor$/);
 	const verified = await verifyOperationBackups(prepared.value, filesystem);
 	assert.equal(verified.ok, true);
 });
@@ -264,8 +380,8 @@ test("operation evidence refuses to back up a target that changed after the appr
 					fromVersion: 1,
 					toVersion: 2,
 					previousContent: "version one",
-				sourceDigest: digest("version two"),
-				sourceContent: "version two",
+					sourceDigest: digest("version two"),
+					sourceContent: "version two",
 				},
 			],
 		},
@@ -273,7 +389,8 @@ test("operation evidence refuses to back up a target that changed after the appr
 	);
 
 	assert.equal(prepared.ok, false);
-	assert.equal(filesystem.writes.length, 0);
+	assert.equal(filesystem.writes.length, 1);
+	assert.match(filesystem.writes[0].path, /\/operation\.json$/);
 	assert.match(prepared.diagnostic, /changed after planning/i);
 });
 
@@ -308,8 +425,8 @@ test("apply confirms, atomically creates an agent, and verifies its manifest by 
 			verified: true,
 		},
 	]);
-	assert.match(filesystem.writes[0].path, /\/0\.successor$/);
-	assert.match(filesystem.writes[1].path, /\/operation\.json$/);
+	assert.match(filesystem.writes[0].path, /\/operation\.json$/);
+	assert.match(filesystem.writes[1].path, /\/0\.successor$/);
 	assert.equal(filesystem.writes[2].path, "/agent/agents/orchestrator.md");
 	assert.deepEqual(JSON.parse(filesystem.writes[3].content), {
 		schemaVersion: 1,
@@ -385,7 +502,7 @@ test("apply resumes an interrupted approved create idempotently", async () => {
 
 	assert.equal(interrupted.status, "blocked");
 	assert.equal(interrupted.mutation, "applied");
-	assert.equal(resumed.status, "applied");
+	assert.equal(resumed.status, "applied", JSON.stringify(resumed));
 	assert.equal(resumed.readiness, "ready");
 	assert.equal(
 		filesystem.writes.filter(
@@ -466,19 +583,21 @@ test("apply cancellation between assets reports canceled and remains resumable",
 	assert.equal(resumed.status, "applied");
 });
 
-test("pi-workflow-sync apply confirms and emits verified readiness through the command boundary", async () => {
+test("pi-workflow-sync apply uses shared decision authority and emits verified readiness", async () => {
 	const filesystem = createFakeFilesystem();
 	const output = [];
-	const sync = createAgentAssetSync({
+	const fixture = createDecisionFixture();
+	const sync = createRawAgentAssetSync({
 		catalog: packageCatalog,
 		filesystem,
 		agentDirectory: "/agent/agents",
 		manifestPath: "/agent/.pi-workflow/agent-assets.json",
+		interactiveDecisions: fixture.decisions,
 	});
 
 	const exitCode = await runSyncCommand(["apply"], {
 		sync,
-		confirm: async (plan) => plan.actions.length === 1,
+		decide: fixture.decide,
 		write: (text) => output.push(text),
 	});
 
@@ -486,6 +605,130 @@ test("pi-workflow-sync apply confirms and emits verified readiness through the c
 	const result = JSON.parse(output[0]);
 	assert.equal(result.status, "applied");
 	assert.equal(result.readiness, "ready");
+});
+
+test("apply binds one execution manifest and reauthorizes every durable mutation", async () => {
+	const events = [];
+	const filesystem = createFakeFilesystem();
+	const write = filesystem.writeFileAtomic;
+	filesystem.writeFileAtomic = async (...args) => {
+		events.push(["write", args[0]]);
+		return write(...args);
+	};
+	const fixture = createDecisionFixture();
+	const authority = {
+		async bindExecutionManifest(...args) {
+			events.push(["bind", args[1].ref]);
+			return fixture.decisions.bindExecutionManifest(...args);
+		},
+		async authorizeEffect(...args) {
+			events.push(["authorize", args[0].executionId]);
+			return fixture.decisions.authorizeEffect(...args);
+		},
+		recover: (...args) => fixture.decisions.recover(...args),
+	};
+	const sync = createRawAgentAssetSync({
+		catalog: packageCatalog,
+		filesystem,
+		agentDirectory: "/agent/agents",
+		manifestPath: "/agent/.pi-workflow/agent-assets.json",
+		interactiveDecisions: authority,
+	});
+	const plan = await sync.plan();
+	const authorization = await fixture.decide(
+		agentAssetApplyDecision("pi-workflow", plan),
+	);
+
+	const result = await sync.apply(plan, authorization);
+
+	assert.equal(result.status, "applied");
+	assert.equal(events[0][0], "bind");
+	const mutationEvents = events.filter(([kind]) => kind !== "bind");
+	assert.deepEqual(
+		mutationEvents.map(([kind]) => kind),
+		[
+			"authorize",
+			"write",
+			"authorize",
+			"write",
+			"authorize",
+			"write",
+			"authorize",
+			"write",
+		],
+	);
+	const operationWrite = filesystem.writes.find(({ path }) =>
+		path.endsWith("operation.json"),
+	);
+	const operation = JSON.parse(operationWrite.content);
+	assert.deepEqual(operation.executionBinding, {
+		decisionId: authorization.lease.decisionId,
+		operationDigest: authorization.lease.operationDigest,
+		executionId: authorization.lease.executionId,
+		generation: authorization.lease.generation,
+	});
+});
+
+test("a fencing loss immediately before an asset write preserves concurrent drift", async () => {
+	const filesystem = createFakeFilesystem();
+	const fixture = createDecisionFixture();
+	let authorizations = 0;
+	const authority = {
+		bindExecutionManifest: (...args) =>
+			fixture.decisions.bindExecutionManifest(...args),
+		async authorizeEffect(...args) {
+			authorizations += 1;
+			if (authorizations === 3)
+				filesystem.set("/agent/agents/orchestrator.md", "concurrent drift");
+			return fixture.decisions.authorizeEffect(...args);
+		},
+		recover: (...args) => fixture.decisions.recover(...args),
+	};
+	const sync = createRawAgentAssetSync({
+		catalog: packageCatalog,
+		filesystem,
+		agentDirectory: "/agent/agents",
+		manifestPath: "/agent/.pi-workflow/agent-assets.json",
+		interactiveDecisions: authority,
+	});
+	const plan = await sync.plan();
+	const authorization = await fixture.decide(
+		agentAssetApplyDecision("pi-workflow", plan),
+	);
+
+	const result = await sync.apply(plan, authorization);
+
+	assert.equal(result.status, "blocked");
+	assert.equal(result.mutation, "none");
+	assert.equal(
+		await filesystem.readFile("/agent/agents/orchestrator.md"),
+		"concurrent drift",
+	);
+});
+
+test("command apply fails closed when decision transport is unavailable or cancels", async () => {
+	for (const decide of [undefined, async () => ({ kind: "cancelled" })]) {
+		const filesystem = createFakeFilesystem();
+		const fixture = createDecisionFixture();
+		const sync = createRawAgentAssetSync({
+			catalog: packageCatalog,
+			filesystem,
+			agentDirectory: "/agent/agents",
+			manifestPath: "/agent/.pi-workflow/agent-assets.json",
+			interactiveDecisions: fixture.decisions,
+		});
+		const output = [];
+
+		const exitCode = await runSyncCommand(["apply"], {
+			sync,
+			decide,
+			write: (text) => output.push(JSON.parse(text)),
+		});
+
+		assert.equal(exitCode, decide ? 130 : 1);
+		assert.deepEqual(filesystem.writes, []);
+		assert.equal(output[0].status, decide ? "canceled" : "blocked");
+	}
 });
 
 test("apply replaces a clean managed asset and preserves unrelated manifest ownership", async () => {
@@ -625,17 +868,22 @@ test("apply persists verified recovery evidence before replacing an asset or its
 		nonce: () => "apply-recovery",
 	});
 
-	const result = await sync.apply(await sync.plan(), { confirm: async () => true });
+	const result = await sync.apply(await sync.plan(), {
+		confirm: async () => true,
+	});
 
 	assert.equal(result.status, "applied");
-	assert.match(filesystem.writes[0].path, /\/0\.backup$/);
-	assert.match(filesystem.writes[1].path, /\/1\.backup$/);
-	assert.equal(filesystem.writes[1].content, manifestContent);
-	assert.match(filesystem.writes[2].path, /\/0\.successor$/);
-	assert.match(filesystem.writes[3].path, /\/operation\.json$/);
+	assert.match(filesystem.writes[0].path, /\/operation\.json$/);
+	assert.match(filesystem.writes[1].path, /\/0\.backup$/);
+	assert.match(filesystem.writes[2].path, /\/1\.backup$/);
+	assert.equal(filesystem.writes[2].content, manifestContent);
+	assert.match(filesystem.writes[3].path, /\/0\.successor$/);
 	assert.equal(filesystem.writes[4].path, "/agent/agents/orchestrator.md");
-	assert.equal(filesystem.writes[5].path, "/agent/.pi-workflow/agent-assets.json");
-	const operation = JSON.parse(filesystem.writes[3].content);
+	assert.equal(
+		filesystem.writes[5].path,
+		"/agent/.pi-workflow/agent-assets.json",
+	);
+	const operation = JSON.parse(filesystem.writes[0].content);
 	assert.equal(operation.targets[0].backupDigest, digest(predecessor));
 	assert.equal(operation.manifestBeforeDigest, digest(manifestContent));
 	assert.equal(operation.manifestBackupDigest, digest(manifestContent));
@@ -645,7 +893,8 @@ test("apply refuses an interrupted recovery-evidence write before mutating an as
 	const filesystem = createFakeFilesystem();
 	const originalWrite = filesystem.writeFileAtomic;
 	filesystem.writeFileAtomic = async (path, content, expectedDigest) => {
-		if (path.endsWith("operation.json")) throw new Error("interrupted evidence");
+		if (path.endsWith("operation.json"))
+			throw new Error("interrupted evidence");
 		await originalWrite(path, content, expectedDigest);
 	};
 	const sync = createAgentAssetSync({
@@ -656,13 +905,17 @@ test("apply refuses an interrupted recovery-evidence write before mutating an as
 		nonce: () => "interrupted-evidence",
 	});
 
-	const result = await sync.apply(await sync.plan(), { confirm: async () => true });
+	const result = await sync.apply(await sync.plan(), {
+		confirm: async () => true,
+	});
 
 	assert.equal(result.status, "blocked");
 	assert.equal(result.mutation, "none");
-	assert.equal(filesystem.writes.length, 1);
-	assert.match(filesystem.writes[0].path, /\.successor$/);
-	assert.equal(await filesystem.readFile("/agent/agents/orchestrator.md"), undefined);
+	assert.equal(filesystem.writes.length, 0);
+	assert.equal(
+		await filesystem.readFile("/agent/agents/orchestrator.md"),
+		undefined,
+	);
 });
 
 test("resume requires the exact operation ID and verified manifest before restoring a partial apply", async () => {
@@ -687,19 +940,42 @@ test("resume requires the exact operation ID and verified manifest before restor
 		}),
 	});
 	const sync = createAgentAssetSync({
-		catalog: { schemaVersion: 1, assets: [{ kind: "agent", name: "orchestrator", version: 2, content: "version two" }] },
-		migrations: [{ subject: "orchestrator", fromVersion: 1, toVersion: 2, fromDigest: digest(predecessor), toDigest: digest("version two") }],
+		catalog: {
+			schemaVersion: 1,
+			assets: [
+				{
+					kind: "agent",
+					name: "orchestrator",
+					version: 2,
+					content: "version two",
+				},
+			],
+		},
+		migrations: [
+			{
+				subject: "orchestrator",
+				fromVersion: 1,
+				toVersion: 2,
+				fromDigest: digest(predecessor),
+				toDigest: digest("version two"),
+			},
+		],
 		filesystem,
 		agentDirectory: "/agent/agents",
 		manifestPath,
 		operationDirectory: "/agent/.pi-workflow/sync-operations",
 		nonce: () => "resume-operation",
 	});
-	const applied = await sync.apply(await sync.plan(), { confirm: async () => true });
+	const applied = await sync.apply(await sync.plan(), {
+		confirm: async () => true,
+	});
 	const operationPath = `/agent/.pi-workflow/sync-operations/${applied.operationId}/operation.json`;
 	const operation = JSON.parse(await filesystem.readFile(operationPath));
 	filesystem.set("/agent/agents/orchestrator.md", predecessor);
-	filesystem.set(manifestPath, await filesystem.readFile(operation.manifestBackupPath));
+	filesystem.set(
+		manifestPath,
+		await filesystem.readFile(operation.manifestBackupPath),
+	);
 	const writesBeforeInvalidId = filesystem.writes.length;
 
 	const invalidId = await sync.resume("0".repeat(64));
@@ -709,8 +985,14 @@ test("resume requires the exact operation ID and verified manifest before restor
 	assert.equal(invalidId.status, "blocked");
 	assert.equal(filesystem.writes.length, writesBeforeInvalidId + 2);
 	assert.equal(resumed.status, "applied");
-	assert.equal(await filesystem.readFile("/agent/agents/orchestrator.md"), "version two");
-	assert.equal(JSON.parse(await filesystem.readFile(manifestPath)).assets.legacy.digest, digest("legacy"));
+	assert.equal(
+		await filesystem.readFile("/agent/agents/orchestrator.md"),
+		"version two",
+	);
+	assert.equal(
+		JSON.parse(await filesystem.readFile(manifestPath)).assets.legacy.digest,
+		digest("legacy"),
+	);
 });
 
 test("recovery refuses stale evidence or a third target state without mutation", async () => {
@@ -723,7 +1005,9 @@ test("recovery refuses stale evidence or a third target state without mutation",
 		operationDirectory: "/agent/.pi-workflow/sync-operations",
 		nonce: () => "refuse-recovery",
 	});
-	const applied = await sync.apply(await sync.plan(), { confirm: async () => true });
+	const applied = await sync.apply(await sync.plan(), {
+		confirm: async () => true,
+	});
 	const operationPath = `/agent/.pi-workflow/sync-operations/${applied.operationId}/operation.json`;
 	const writesBeforeCorrupt = filesystem.writes.length;
 	filesystem.set(operationPath, "{corrupt");
@@ -732,7 +1016,9 @@ test("recovery refuses stale evidence or a third target state without mutation",
 	assert.equal(corrupt.status, "blocked");
 	assert.equal(filesystem.writes.length, writesBeforeCorrupt);
 
-	const operation = JSON.parse(filesystem.writes.find((write) => write.path === operationPath).content);
+	const operation = JSON.parse(
+		filesystem.writes.find((write) => write.path === operationPath).content,
+	);
 	filesystem.set(operationPath, JSON.stringify(operation));
 	filesystem.set("/agent/agents/orchestrator.md", "third state");
 	const writesBeforeThirdState = filesystem.writes.length;
@@ -740,7 +1026,10 @@ test("recovery refuses stale evidence or a third target state without mutation",
 
 	assert.equal(thirdState.status, "blocked");
 	assert.equal(filesystem.writes.length, writesBeforeThirdState);
-	assert.equal(await filesystem.readFile("/agent/agents/orchestrator.md"), "third state");
+	assert.equal(
+		await filesystem.readFile("/agent/agents/orchestrator.md"),
+		"third state",
+	);
 });
 
 test("rollback atomically restores predecessors, removes originally absent paths, and preserves project overrides", async () => {
@@ -755,14 +1044,58 @@ test("rollback atomically restores predecessors, removes originally absent paths
 		operationDirectory: "/agent/.pi-workflow/sync-operations",
 		nonce: () => "rollback-operation",
 	});
-	const applied = await sync.apply(await sync.plan(), { confirm: async () => true });
+	const applied = await sync.apply(await sync.plan(), {
+		confirm: async () => true,
+	});
 
 	const rolledBack = await sync.rollback(applied.operationId);
 
 	assert.equal(rolledBack.status, "applied");
-	assert.equal(await filesystem.readFile("/agent/agents/orchestrator.md"), undefined);
-	assert.equal(await filesystem.readFile("/agent/.pi-workflow/agent-assets.json"), undefined);
-	assert.equal(await filesystem.readFile("/project/.pi/agents/orchestrator.md"), "project override");
+	assert.equal(
+		await filesystem.readFile("/agent/agents/orchestrator.md"),
+		undefined,
+	);
+	assert.equal(
+		await filesystem.readFile("/agent/.pi-workflow/agent-assets.json"),
+		undefined,
+	);
+	assert.equal(
+		await filesystem.readFile("/project/.pi/agents/orchestrator.md"),
+		"project override",
+	);
+});
+
+test("terminal recovery authority rejects replay without another mutation", async () => {
+	const filesystem = createFakeFilesystem();
+	const fixture = createDecisionFixture();
+	const sync = createRawAgentAssetSync({
+		catalog: packageCatalog,
+		filesystem,
+		agentDirectory: "/agent/agents",
+		manifestPath: "/agent/.pi-workflow/agent-assets.json",
+		operationDirectory: "/agent/.pi-workflow/sync-operations",
+		interactiveDecisions: fixture.decisions,
+	});
+	const plan = await sync.plan();
+	const applyAuthorization = await fixture.decide(
+		agentAssetApplyDecision("pi-workflow", plan),
+	);
+	const applied = await sync.apply(plan, applyAuthorization);
+	const rollbackAuthorization = await fixture.decide(
+		agentAssetRecoveryDecision("pi-workflow", applied.operationId, "rollback"),
+	);
+	const first = await sync.rollback(applied.operationId, rollbackAuthorization);
+	const writesAfterFirst = filesystem.writes.length;
+
+	const replay = await sync.rollback(
+		applied.operationId,
+		rollbackAuthorization,
+	);
+
+	assert.equal(first.status, "applied");
+	assert.equal(replay.status, "blocked");
+	assert.equal(filesystem.writes.length, writesAfterFirst);
+	assert.match(replay.diagnostics[0], /authorization failed/i);
 });
 
 test("rollback restores verified predecessors after the catalog advances while resume requires durable successor evidence", async () => {
@@ -770,37 +1103,100 @@ test("rollback restores verified predecessors after the catalog advances while r
 	const manifestPath = "/agent/.pi-workflow/agent-assets.json";
 	const filesystem = createFakeFilesystem({
 		"/agent/agents/orchestrator.md": predecessor,
-		[manifestPath]: JSON.stringify({ schemaVersion: 1, assets: { orchestrator: { ownership: "package", version: 1, digest: digest(predecessor) } } }),
+		[manifestPath]: JSON.stringify({
+			schemaVersion: 1,
+			assets: {
+				orchestrator: {
+					ownership: "package",
+					version: 1,
+					digest: digest(predecessor),
+				},
+			},
+		}),
 	});
 	const before = createAgentAssetSync({
-		catalog: { schemaVersion: 1, assets: [{ kind: "agent", name: "orchestrator", version: 2, content: "version two" }] },
-		migrations: [{ subject: "orchestrator", fromVersion: 1, toVersion: 2, fromDigest: digest(predecessor), toDigest: digest("version two") }],
-		filesystem, agentDirectory: "/agent/agents", manifestPath, operationDirectory: "/agent/.pi-workflow/sync-operations", nonce: () => "catalog-advance",
+		catalog: {
+			schemaVersion: 1,
+			assets: [
+				{
+					kind: "agent",
+					name: "orchestrator",
+					version: 2,
+					content: "version two",
+				},
+			],
+		},
+		migrations: [
+			{
+				subject: "orchestrator",
+				fromVersion: 1,
+				toVersion: 2,
+				fromDigest: digest(predecessor),
+				toDigest: digest("version two"),
+			},
+		],
+		filesystem,
+		agentDirectory: "/agent/agents",
+		manifestPath,
+		operationDirectory: "/agent/.pi-workflow/sync-operations",
+		nonce: () => "catalog-advance",
 	});
-	const applied = await before.apply(await before.plan(), { confirm: async () => true });
+	const applied = await before.apply(await before.plan(), {
+		confirm: async () => true,
+	});
 	const after = createAgentAssetSync({
-		catalog: { schemaVersion: 1, assets: [{ kind: "agent", name: "orchestrator", version: 3, content: "version three" }] },
-		filesystem, agentDirectory: "/agent/agents", manifestPath, operationDirectory: "/agent/.pi-workflow/sync-operations",
+		catalog: {
+			schemaVersion: 1,
+			assets: [
+				{
+					kind: "agent",
+					name: "orchestrator",
+					version: 3,
+					content: "version three",
+				},
+			],
+		},
+		filesystem,
+		agentDirectory: "/agent/agents",
+		manifestPath,
+		operationDirectory: "/agent/.pi-workflow/sync-operations",
 	});
 
 	const rolledBack = await after.rollback(applied.operationId);
 	assert.equal(rolledBack.status, "applied");
-	assert.equal(await filesystem.readFile("/agent/agents/orchestrator.md"), predecessor);
+	assert.equal(
+		await filesystem.readFile("/agent/agents/orchestrator.md"),
+		predecessor,
+	);
 	assert.equal((await after.resume(applied.operationId)).status, "applied");
-	assert.equal(await filesystem.readFile("/agent/agents/orchestrator.md"), "version two");
+	assert.equal(
+		await filesystem.readFile("/agent/agents/orchestrator.md"),
+		"version two",
+	);
 });
 
 test("recovery reports applied mutation when a later rollback write fails", async () => {
 	const filesystem = createFakeFilesystem({
-		"/agent/.pi-workflow/agent-assets.json": JSON.stringify({ schemaVersion: 1, assets: {} }),
+		"/agent/.pi-workflow/agent-assets.json": JSON.stringify({
+			schemaVersion: 1,
+			assets: {},
+		}),
 	});
 	const sync = createAgentAssetSync({
-		catalog: packageCatalog, filesystem, agentDirectory: "/agent/agents", manifestPath: "/agent/.pi-workflow/agent-assets.json", operationDirectory: "/agent/.pi-workflow/sync-operations", nonce: () => "partial-rollback",
+		catalog: packageCatalog,
+		filesystem,
+		agentDirectory: "/agent/agents",
+		manifestPath: "/agent/.pi-workflow/agent-assets.json",
+		operationDirectory: "/agent/.pi-workflow/sync-operations",
+		nonce: () => "partial-rollback",
 	});
-	const applied = await sync.apply(await sync.plan(), { confirm: async () => true });
+	const applied = await sync.apply(await sync.plan(), {
+		confirm: async () => true,
+	});
 	const write = filesystem.writeFileAtomic;
 	filesystem.writeFileAtomic = async (path, content, expectedDigest) => {
-		if (path.endsWith("agent-assets.json")) throw new Error("manifest write interrupted");
+		if (path.endsWith("agent-assets.json"))
+			throw new Error("manifest write interrupted");
 		return write(path, content, expectedDigest);
 	};
 
@@ -812,7 +1208,9 @@ test("recovery reports applied mutation when a later rollback write fails", asyn
 
 test("apply, resume, and rollback hold one mutation boundary through durable evidence and report uncertain receipts", async () => {
 	const manifestPath = "/agent/.pi-workflow/agent-assets.json";
-	const filesystem = createFakeFilesystem({ [manifestPath]: JSON.stringify({ schemaVersion: 1, assets: {} }) });
+	const filesystem = createFakeFilesystem({
+		[manifestPath]: JSON.stringify({ schemaVersion: 1, assets: {} }),
+	});
 	const sync = createAgentAssetSync({
 		catalog: packageCatalog,
 		filesystem,
@@ -822,21 +1220,30 @@ test("apply, resume, and rollback hold one mutation boundary through durable evi
 		nonce: () => "durable-boundary",
 	});
 
-	const applied = await sync.apply(await sync.plan(), { confirm: async () => true });
+	const applied = await sync.apply(await sync.plan(), {
+		confirm: async () => true,
+	});
 	const operationId = applied.operationId;
 	assert.equal(applied.status, "applied");
 	assert.equal(filesystem.mutations.length, 2);
-	assert.deepEqual(filesystem.mutations.map(({ phase }) => phase), ["acquire", "release"]);
-	assert.equal(filesystem.writes.every((write) => write.mutationActive), true);
+	assert.deepEqual(
+		filesystem.mutations.map(({ phase }) => phase),
+		["acquire", "release"],
+	);
+	assert.equal(
+		filesystem.writes.every((write) => write.mutationActive),
+		true,
+	);
 
 	const resumed = await sync.resume(operationId);
 	const rolledBack = await sync.rollback(operationId);
 
 	assert.equal(resumed.status, "applied");
 	assert.equal(rolledBack.status, "applied");
-	assert.deepEqual(filesystem.mutations.map(({ phase }) => phase), [
-		"acquire", "release", "acquire", "release", "acquire", "release",
-	]);
+	assert.deepEqual(
+		filesystem.mutations.map(({ phase }) => phase),
+		["acquire", "release", "acquire", "release", "acquire", "release"],
+	);
 });
 
 test("apply preserves an applied durability-uncertain receipt from the filesystem boundary", async () => {
@@ -859,7 +1266,9 @@ test("apply preserves an applied durability-uncertain receipt from the filesyste
 		nonce: () => "uncertain-receipt",
 	});
 
-	const result = await sync.apply(await sync.plan(), { confirm: async () => true });
+	const result = await sync.apply(await sync.plan(), {
+		confirm: async () => true,
+	});
 
 	assert.equal(result.status, "blocked");
 	assert.equal(result.mutation, "applied");
@@ -895,7 +1304,9 @@ test("apply preserves successful and partial operation receipts when cooperative
 			nonce: () => `release-${partial}`,
 		});
 
-		const result = await sync.apply(await sync.plan(), { confirm: async () => true });
+		const result = await sync.apply(await sync.plan(), {
+			confirm: async () => true,
+		});
 
 		assert.equal(result.status, "blocked");
 		assert.equal(result.mutation, "applied");
@@ -1367,6 +1778,7 @@ test("pi-workflow-sync routes exact recovery commands with operation IDs and ref
 	const operationId = "a".repeat(64);
 	const output = [];
 	const calls = [];
+	const fixture = createDecisionFixture();
 	const sync = {
 		async resume(value) {
 			calls.push(["resume", value]);
@@ -1380,10 +1792,12 @@ test("pi-workflow-sync routes exact recovery commands with operation IDs and ref
 
 	const resumed = await runSyncCommand(["resume", operationId], {
 		sync,
+		decide: fixture.decide,
 		write: (text) => output.push(text),
 	});
 	const rolledBack = await runSyncCommand(["rollback", operationId], {
 		sync,
+		decide: fixture.decide,
 		write: (text) => output.push(text),
 	});
 	const invalid = await runSyncCommand(["resume", "not-an-operation-id"], {
@@ -1405,17 +1819,33 @@ test("pi-workflow-sync routes exact recovery commands with operation IDs and ref
 	]);
 	assert.equal(JSON.parse(output[0]).operationId, operationId);
 	assert.equal(JSON.parse(output[1]).operationId, operationId);
-	assert.equal(output[2], "Usage: pi-workflow-sync <inspect|plan|apply|resume <operationId>|rollback <operationId>>");
-	assert.equal(output[3], "Usage: pi-workflow-sync <inspect|plan|apply|resume <operationId>|rollback <operationId>>");
+	assert.equal(
+		output[2],
+		"Usage: pi-workflow-sync <inspect|plan|apply|resume <operationId>|rollback <operationId>>",
+	);
+	assert.equal(
+		output[3],
+		"Usage: pi-workflow-sync <inspect|plan|apply|resume <operationId>|rollback <operationId>>",
+	);
 });
 
-test("pi-workflow-sync recovers only global operation state and atomically removes rollback targets", async () => {
+test("pi-workflow-sync refuses rollback without interactive decision transport", async () => {
 	const root = mkdtempSync(resolve(tmpdir(), "pi-workflow-sync-"));
 	const agentHome = resolve(root, "global-agent-home");
-	const projectOverride = resolve(root, "project", ".pi", "agents", "orchestrator.md");
+	const projectOverride = resolve(
+		root,
+		"project",
+		".pi",
+		"agents",
+		"orchestrator.md",
+	);
 	const agentDirectory = resolve(agentHome, "agents");
 	const manifestPath = resolve(agentHome, ".pi-workflow", "agent-assets.json");
-	const operationDirectory = resolve(agentHome, ".pi-workflow", "sync-operations");
+	const operationDirectory = resolve(
+		agentHome,
+		".pi-workflow",
+		"sync-operations",
+	);
 	const filesystem = createFakeFilesystem();
 	const packagedCatalog = JSON.parse(
 		readFileSync(resolve("assets", "agent-assets.json"), "utf8"),
@@ -1444,7 +1874,9 @@ test("pi-workflow-sync recovers only global operation state and atomically remov
 			operationDirectory,
 			nonce: () => "global-adapter-recovery",
 		});
-		const applied = await sync.apply(await sync.plan(), { confirm: async () => true });
+		const applied = await sync.apply(await sync.plan(), {
+			confirm: async () => true,
+		});
 		assert.equal(applied.status, "applied", applied.diagnostics.join("\n"));
 		assert.ok(applied.operationId);
 		for (const [path, content] of Object.entries(filesystem.snapshot())) {
@@ -1464,10 +1896,12 @@ test("pi-workflow-sync recovers only global operation state and atomically remov
 			},
 		);
 
-		assert.equal(result.status, 0, result.stderr);
-		assert.equal(JSON.parse(result.stdout).operationId, applied.operationId);
-		assert.equal(existsSync(resolve(agentDirectory, "orchestrator.md")), false);
-		assert.equal(existsSync(manifestPath), false);
+		assert.equal(result.status, 1, result.stderr);
+		const refusal = JSON.parse(result.stdout);
+		assert.equal(refusal.status, "blocked");
+		assert.match(refusal.diagnostics[0], /require a terminal/i);
+		assert.equal(existsSync(resolve(agentDirectory, "orchestrator.md")), true);
+		assert.equal(existsSync(manifestPath), true);
 		assert.equal(readFileSync(projectOverride, "utf8"), "project override");
 	} finally {
 		rmSync(root, { recursive: true, force: true });
@@ -1644,8 +2078,20 @@ test("plan composes digest-bound adjacent migrations for a managed version jump"
 
 	assert.equal(plan.status, "ready");
 	assert.deepEqual(plan.actions[0].migrationSteps, [
-		{ subject: "orchestrator", fromVersion: 1, toVersion: 2, fromDigest: digest(predecessor), toDigest: digest(intermediate) },
-		{ subject: "orchestrator", fromVersion: 2, toVersion: 3, fromDigest: digest(intermediate), toDigest: digest(successor) },
+		{
+			subject: "orchestrator",
+			fromVersion: 1,
+			toVersion: 2,
+			fromDigest: digest(predecessor),
+			toDigest: digest(intermediate),
+		},
+		{
+			subject: "orchestrator",
+			fromVersion: 2,
+			toVersion: 3,
+			fromDigest: digest(intermediate),
+			toDigest: digest(successor),
+		},
 	]);
 	assert.deepEqual(filesystem.writes, []);
 });
@@ -1706,7 +2152,12 @@ test("plan blocks incomplete, duplicate, and digest-invalid migration chains wit
 			catalog: {
 				schemaVersion: 1,
 				assets: [
-					{ kind: "agent", name: "orchestrator", version: 3, content: successor },
+					{
+						kind: "agent",
+						name: "orchestrator",
+						version: 3,
+						content: successor,
+					},
 				],
 			},
 			migrations,

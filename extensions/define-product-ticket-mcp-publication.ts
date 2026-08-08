@@ -5,6 +5,8 @@ import {
 	renderDeliveryTicketBody,
 } from "./delivery-ticket-publication.ts";
 import type { ApprovedProductSpecRead } from "./engram-approved-spec-reader.ts";
+import type { ExecutionLease } from "./interactive-decisions.ts";
+import type { PiInteractiveDecisions } from "./pi-decision-adapter.ts";
 import {
 	createSingleUserAuthoritySession,
 	type SingleUserAuthoritySession,
@@ -66,6 +68,7 @@ export interface DefineProductTicketMcpPublicationDependencies {
 		current(): Promise<AuthenticatedAuthority | undefined>;
 	};
 	readonly authoritySession?: SingleUserAuthoritySession;
+	readonly interactiveDecisions?: PiInteractiveDecisions;
 	readonly toolIdentityReservationCapacity?: number;
 }
 
@@ -85,6 +88,7 @@ export interface DefineProductTicketMcpPublication {
 		definitionId: string,
 		toolCallId: string,
 		input: unknown,
+		executionLease?: ExecutionLease,
 	): Promise<
 		| DefineProductTicketMcpPublication.Continuing
 		| DefineProductTicketMcpPublication.Blocker
@@ -172,7 +176,9 @@ type Phase =
 	| "verify-child"
 	| "ready"
 	| "blocked";
-type IssuedPhase = Exclude<Phase, "idle" | "waiting" | "ready" | "blocked"> | "start";
+type IssuedPhase =
+	| Exclude<Phase, "idle" | "waiting" | "ready" | "blocked">
+	| "start";
 
 interface Discovery {
 	readonly ids: readonly string[];
@@ -189,7 +195,12 @@ interface Context {
 	readonly compatibilityAuthority?: AuthenticatedAuthority;
 	readonly ordered: readonly Ticket[];
 	readonly relations: readonly Relation[];
-	manifest: Awaited<ReturnType<ReturnType<typeof createTicketPublicationManifestStore>["prepare"]>>;
+	readonly executionLease?: ExecutionLease;
+	manifest: Awaited<
+		ReturnType<
+			ReturnType<typeof createTicketPublicationManifestStore>["prepare"]
+		>
+	>;
 	actor?: Actor;
 	parentStateId?: string;
 	parentStateName?: string;
@@ -211,7 +222,9 @@ function record(value: unknown): value is Record<string, unknown> {
 }
 
 function text(value: unknown): value is string {
-	return typeof value === "string" && value.length > 0 && value === value.trim();
+	return (
+		typeof value === "string" && value.length > 0 && value === value.trim()
+	);
 }
 
 function validCompatibilityAuthority(
@@ -233,16 +246,19 @@ function exactInput(
 	const supplied = Object.fromEntries(
 		Object.entries(value).filter(([, entry]) => entry !== undefined),
 	);
-	if (Object.keys(supplied).some((key) => !Object.hasOwn(expected, key))) return false;
+	if (Object.keys(supplied).some((key) => !Object.hasOwn(expected, key)))
+		return false;
 	return Object.entries(expected).every(([key, expectedValue]) => {
 		if (!Object.hasOwn(supplied, key)) {
 			if (expectedValue === null) return true;
-			if (Array.isArray(expectedValue) && expectedValue.length === 0) return true;
+			if (Array.isArray(expectedValue) && expectedValue.length === 0)
+				return true;
 		}
 		if (
 			expectedValue === null &&
 			(supplied[key] === "null" || supplied[key] === "")
-		) return true;
+		)
+			return true;
 		return (
 			Object.hasOwn(supplied, key) &&
 			canonicalJson(supplied[key]) === canonicalJson(expectedValue)
@@ -256,10 +272,8 @@ function normalizePiNullableInput(
 ): void {
 	if (!record(value)) return;
 	for (const [key, expectedValue] of Object.entries(expected)) {
-		if (
-			expectedValue === null &&
-			(value[key] === "null" || value[key] === "")
-		) value[key] = null;
+		if (expectedValue === null && (value[key] === "null" || value[key] === ""))
+			value[key] = null;
 	}
 }
 
@@ -271,7 +285,9 @@ function inputMismatch(
 	const supplied = Object.fromEntries(
 		Object.entries(value).filter(([, entry]) => entry !== undefined),
 	);
-	const unexpected = Object.keys(supplied).filter((key) => !Object.hasOwn(expected, key));
+	const unexpected = Object.keys(supplied).filter(
+		(key) => !Object.hasOwn(expected, key),
+	);
 	const missing = Object.entries(expected).flatMap(([key, expectedValue]) =>
 		!Object.hasOwn(supplied, key) &&
 		expectedValue !== null &&
@@ -285,11 +301,15 @@ function inputMismatch(
 			? [key]
 			: [],
 	);
-	return [
-		unexpected.length ? `unexpected=${unexpected.sort().join(",")}` : "",
-		missing.length ? `missing=${missing.sort().join(",")}` : "",
-		changed.length ? `changed=${changed.sort().join(",")}` : "",
-	].filter(Boolean).join("; ") || "stage or tool identity mismatch";
+	return (
+		[
+			unexpected.length ? `unexpected=${unexpected.sort().join(",")}` : "",
+			missing.length ? `missing=${missing.sort().join(",")}` : "",
+			changed.length ? `changed=${changed.sort().join(",")}` : "",
+		]
+			.filter(Boolean)
+			.join("; ") || "stage or tool identity mismatch"
+	);
 }
 
 function blocked(
@@ -306,7 +326,8 @@ function title(ticket: Ticket): string {
 function toolPayload(
 	event: DefineProductTicketMcpPublication.ToolResultEvent,
 ): unknown {
-	if (!Array.isArray(event.content) || event.content.length !== 1) return undefined;
+	if (!Array.isArray(event.content) || event.content.length !== 1)
+		return undefined;
 	const [entry] = event.content;
 	if (
 		!record(entry) ||
@@ -349,17 +370,20 @@ function directOrObjectId(
 	direct: string,
 	object: string,
 ): string | null | undefined {
-	if (!Object.hasOwn(value, direct) && !Object.hasOwn(value, object)) return null;
+	if (!Object.hasOwn(value, direct) && !Object.hasOwn(value, object))
+		return null;
 	if (value[direct] === null) return null;
 	if (text(value[direct])) return value[direct];
 	return objectId(value[object]);
 }
 
-function statusEvidence(value: Record<string, unknown>): {
-	readonly id?: string;
-	readonly name: string;
-	readonly type: string;
-} | undefined {
+function statusEvidence(value: Record<string, unknown>):
+	| {
+			readonly id?: string;
+			readonly name: string;
+			readonly type: string;
+	  }
+	| undefined {
 	if (record(value.status)) {
 		if (!text(value.status.name) || !text(value.status.type)) return undefined;
 		return {
@@ -394,10 +418,12 @@ function relationIds(value: unknown): readonly string[] | undefined {
 	return ids;
 }
 
-function issueRelations(value: Record<string, unknown>): {
-	readonly blockedBy: readonly string[];
-	readonly blocks: readonly string[];
-} | undefined {
+function issueRelations(value: Record<string, unknown>):
+	| {
+			readonly blockedBy: readonly string[];
+			readonly blocks: readonly string[];
+	  }
+	| undefined {
 	if (!record(value.relations)) return undefined;
 	const blockedBy = relationIds(value.relations.blockedBy);
 	const blocks = relationIds(value.relations.blocks);
@@ -413,7 +439,9 @@ function linearOrderedListPadding(markdown: string): string {
 		}
 		const start = index;
 		while (index < lines.length && /^\d+\. /.test(lines[index])) index += 1;
-		if (lines.slice(start, index).some((line) => Number.parseInt(line, 10) >= 10)) {
+		if (
+			lines.slice(start, index).some((line) => Number.parseInt(line, 10) >= 10)
+		) {
 			for (let item = start; item < index; item += 1)
 				lines[item] = lines[item].replace(/^([1-9])\. /, " $1. ");
 		}
@@ -422,17 +450,29 @@ function linearOrderedListPadding(markdown: string): string {
 }
 
 function exactMarkdown(expected: string, actual: string): boolean {
-	const withoutLegacyNewline = expected.endsWith("\n") ? expected.slice(0, -1) : expected;
-	return actual === expected || actual === withoutLegacyNewline || actual === linearOrderedListPadding(expected) || actual === linearOrderedListPadding(withoutLegacyNewline);
+	const withoutLegacyNewline = expected.endsWith("\n")
+		? expected.slice(0, -1)
+		: expected;
+	return (
+		actual === expected ||
+		actual === withoutLegacyNewline ||
+		actual === linearOrderedListPadding(expected) ||
+		actual === linearOrderedListPadding(withoutLegacyNewline)
+	);
 }
 
 function exactTicketMarkdown(expected: string, actual: string): boolean {
-	return exactMarkdown(expected, actual) || exactMarkdown(expected.replace(/^- /gm, "* "), actual);
+	return (
+		exactMarkdown(expected, actual) ||
+		exactMarkdown(expected.replace(/^- /gm, "* "), actual)
+	);
 }
 
 function estimatePoints(value: unknown): number | undefined {
 	if (typeof value === "number") return value;
-	return record(value) && typeof value.value === "number" ? value.value : undefined;
+	return record(value) && typeof value.value === "number"
+		? value.value
+		: undefined;
 }
 
 function exactParent(context: Context, value: unknown): boolean {
@@ -446,8 +486,10 @@ function exactParent(context: Context, value: unknown): boolean {
 		typeof value.description === "string" &&
 		exactMarkdown(context.approved.spec.payload.body, value.description) &&
 		status !== undefined &&
-		(context.parentStateName === undefined || status.name === context.parentStateName) &&
-		(context.parentStateType === undefined || status.type === context.parentStateType) &&
+		(context.parentStateName === undefined ||
+			status.name === context.parentStateName) &&
+		(context.parentStateType === undefined ||
+			status.type === context.parentStateType) &&
 		directOrObjectId(value, "assigneeId", "assignee") === null &&
 		directOrObjectId(value, "cycleId", "cycle") === null
 	);
@@ -464,8 +506,10 @@ function exactChild(
 	const labels = value.labels;
 	const projectId = directOrObjectId(value, "projectId", "project");
 	const exactBase =
-		directOrObjectId(value, "teamId", "team") === context.publication.graphParent.teamId &&
-		directOrObjectId(value, "parentId", "parent") === context.publication.graphParent.id &&
+		directOrObjectId(value, "teamId", "team") ===
+			context.publication.graphParent.teamId &&
+		directOrObjectId(value, "parentId", "parent") ===
+			context.publication.graphParent.id &&
 		value.title === title(ticket) &&
 		typeof value.description === "string" &&
 		exactTicketMarkdown(renderDeliveryTicketBody(ticket), value.description) &&
@@ -482,15 +526,20 @@ function exactChild(
 	if (!exactBase || !requireRelations) return exactBase;
 	const relations = issueRelations(value);
 	if (!relations) return false;
-	const byKey = new Map(context.manifest.children.map((child) => [child.stableKey, child.linearId]));
+	const byKey = new Map(
+		context.manifest.children.map((child) => [child.stableKey, child.linearId]),
+	);
 	const expectedBlockedBy = ticket.blockers.map((key) => byKey.get(key));
 	const expectedBlocks = context.graph.payload.tickets
 		.filter((candidate) => candidate.blockers.includes(ticket.stableKey))
 		.map((candidate) => byKey.get(candidate.stableKey));
-	if (expectedBlockedBy.some((id) => !id) || expectedBlocks.some((id) => !id)) return false;
+	if (expectedBlockedBy.some((id) => !id) || expectedBlocks.some((id) => !id))
+		return false;
 	return (
-		canonicalJson([...relations.blockedBy].sort()) === canonicalJson([...expectedBlockedBy].sort()) &&
-		canonicalJson([...relations.blocks].sort()) === canonicalJson([...expectedBlocks].sort())
+		canonicalJson([...relations.blockedBy].sort()) ===
+			canonicalJson([...expectedBlockedBy].sort()) &&
+		canonicalJson([...relations.blocks].sort()) ===
+			canonicalJson([...expectedBlocks].sort())
 	);
 }
 
@@ -513,18 +562,20 @@ function statusList(value: unknown):
 			text(status.name) &&
 			text(status.type),
 	)
-		? statuses as readonly (Record<string, unknown> & {
+		? (statuses as readonly (Record<string, unknown> & {
 				readonly id: string;
 				readonly name: string;
 				readonly type: string;
-		  })[]
+			})[])
 		: undefined;
 }
 
-function issuePage(value: unknown): {
-	readonly issues: readonly unknown[];
-	readonly nextCursor?: string;
-} | undefined {
+function issuePage(value: unknown):
+	| {
+			readonly issues: readonly unknown[];
+			readonly nextCursor?: string;
+	  }
+	| undefined {
 	if (!record(value) || !Array.isArray(value.issues)) return undefined;
 	if (value.hasNextPage === false) return { issues: value.issues };
 	if (value.hasNextPage === true && text(value.cursor))
@@ -548,12 +599,15 @@ function publicationMatches(
 		publication.graphRef.digest === graph.digest &&
 		publication.approvedSpecRef.digest === approved.spec.digest &&
 		graph.payload.language === "es" &&
-		canonicalJson(graph.payload.parent) === canonicalJson(publication.graphParent) &&
-		canonicalJson(publication.approval.payload.parent) === canonicalJson(publication.graphParent) &&
+		canonicalJson(graph.payload.parent) ===
+			canonicalJson(publication.graphParent) &&
+		canonicalJson(publication.approval.payload.parent) ===
+			canonicalJson(publication.graphParent) &&
 		publication.approval.payload.graphDigest === graph.digest &&
 		publication.approval.payload.actor.role === "Owner" &&
 		(owner === undefined ||
-			canonicalJson(publication.approval.payload.actor) === canonicalJson(owner))
+			canonicalJson(publication.approval.payload.actor) ===
+				canonicalJson(owner))
 	);
 }
 
@@ -602,7 +656,9 @@ export function createDefineProductTicketMcpPublication(
 		MAX_RESERVED_TOOL_IDENTITIES,
 	);
 	if (!Number.isSafeInteger(capacity) || capacity < 1)
-		throw new Error("Ticket MCP tool identity reservation capacity must be a positive integer.");
+		throw new Error(
+			"Ticket MCP tool identity reservation capacity must be a positive integer.",
+		);
 	const reservations = new Map<string, number>();
 	const processed = new Map<string, string>();
 	let callQueue: Promise<void> = Promise.resolve();
@@ -666,7 +722,10 @@ export function createDefineProductTicketMcpPublication(
 			);
 	}
 
-	function childFindInput(active: Context, allChildren = false): Readonly<Record<string, unknown>> {
+	function childFindInput(
+		active: Context,
+		allChildren = false,
+	): Readonly<Record<string, unknown>> {
 		const mutation = active.mutation;
 		if (!allChildren && mutation?.kind !== "child") return {};
 		return {
@@ -691,10 +750,17 @@ export function createDefineProductTicketMcpPublication(
 		if (!context) return undefined;
 		if (phase === "actor")
 			return { toolName: CURRENT_USER_TOOL, input: { query: "me" } };
-		if (phase === "parent" || phase === "mutation-parent" || phase === "verify-parent")
+		if (
+			phase === "parent" ||
+			phase === "mutation-parent" ||
+			phase === "verify-parent"
+		)
 			return {
 				toolName: GET_ISSUE_TOOL,
-				input: { id: context.publication.graphParent.id, includeRelations: true },
+				input: {
+					id: context.publication.graphParent.id,
+					includeRelations: true,
+				},
 			};
 		if (phase === "statuses")
 			return {
@@ -702,10 +768,14 @@ export function createDefineProductTicketMcpPublication(
 				input: { team: context.publication.graphParent.teamId },
 			};
 		if (phase === "child-find" || phase === "verify-children")
-			return { toolName: LIST_ISSUES_TOOL, input: childFindInput(context, phase === "verify-children") };
+			return {
+				toolName: LIST_ISSUES_TOOL,
+				input: childFindInput(context, phase === "verify-children"),
+			};
 		if (phase === "child-save") {
 			const mutation = context.mutation;
-			if (mutation?.kind !== "child" || !context.parentStateId) return undefined;
+			if (mutation?.kind !== "child" || !context.parentStateId)
+				return undefined;
 			return {
 				toolName: SAVE_ISSUE_TOOL,
 				input: {
@@ -729,19 +799,26 @@ export function createDefineProductTicketMcpPublication(
 		) {
 			const active = context;
 			const mutation = active.mutation;
-			const issueId = phase === "child-readback"
-				? active.mutationLinearId
-				: phase === "verify-child"
-					? active.manifest.children.find(
-						(child) => child.stableKey === active.ordered[active.verifyIndex]?.stableKey,
-					)?.linearId
-				: mutation?.kind === "relation"
-					? active.manifest.children.find(
-							(child) => child.stableKey === mutation.relation.blockedStableKey,
-						)?.linearId
-					: undefined;
+			const issueId =
+				phase === "child-readback"
+					? active.mutationLinearId
+					: phase === "verify-child"
+						? active.manifest.children.find(
+								(child) =>
+									child.stableKey ===
+									active.ordered[active.verifyIndex]?.stableKey,
+							)?.linearId
+						: mutation?.kind === "relation"
+							? active.manifest.children.find(
+									(child) =>
+										child.stableKey === mutation.relation.blockedStableKey,
+								)?.linearId
+							: undefined;
 			return issueId
-				? { toolName: GET_ISSUE_TOOL, input: { id: issueId, includeRelations: true } }
+				? {
+						toolName: GET_ISSUE_TOOL,
+						input: { id: issueId, includeRelations: true },
+					}
 				: undefined;
 		}
 		if (phase === "relation-save") {
@@ -774,7 +851,9 @@ export function createDefineProductTicketMcpPublication(
 		const publication = await options.approvedPublications.read(definitionId);
 		if (!publication)
 			throw Object.assign(
-				new Error("Ticket publication requires the exact durable approved graph."),
+				new Error(
+					"Ticket publication requires the exact durable approved graph.",
+				),
 				{ code: "PI_WORKFLOW_TICKET_APPROVAL_MISMATCH" },
 			);
 		const [graph, approved] = await Promise.all([
@@ -804,7 +883,9 @@ export function createDefineProductTicketMcpPublication(
 			)
 		)
 			throw Object.assign(
-				new Error("The durable approved ticket publication is malformed or conflicting."),
+				new Error(
+					"The durable approved ticket publication is malformed or conflicting.",
+				),
 				{ code: "PI_WORKFLOW_PUBLICATION_ARTIFACT_DRIFT" },
 			);
 		return { publication, graph, approved };
@@ -816,12 +897,15 @@ export function createDefineProductTicketMcpPublication(
 			options.owner ?? active.compatibilityAuthority,
 		);
 		if (
-			canonicalJson(current.publication) !== canonicalJson(active.publication) ||
+			canonicalJson(current.publication) !==
+				canonicalJson(active.publication) ||
 			canonicalJson(current.graph) !== canonicalJson(active.graph) ||
 			canonicalJson(current.approved) !== canonicalJson(active.approved)
 		)
 			throw Object.assign(
-				new Error("The approved ticket graph changed immediately before mutation."),
+				new Error(
+					"The approved ticket graph changed immediately before mutation.",
+				),
 				{ code: "PI_WORKFLOW_PUBLICATION_ARTIFACT_DRIFT" },
 			);
 	}
@@ -830,6 +914,7 @@ export function createDefineProductTicketMcpPublication(
 		definitionId: string,
 		toolCallId: string,
 		input: unknown,
+		executionLease?: ExecutionLease,
 	): Promise<
 		| DefineProductTicketMcpPublication.Continuing
 		| DefineProductTicketMcpPublication.Blocker
@@ -889,6 +974,37 @@ export function createDefineProductTicketMcpPublication(
 				definitionId,
 				compatibilityAuthority,
 			);
+			if (options.interactiveDecisions) {
+				if (!executionLease)
+					return blocked(
+						"PI_WORKFLOW_DECISION_CLAIM_MISSING",
+						"Ticket publication requires the shared ticket approval lease.",
+					);
+				if (
+					executionLease.action.id !== "define-product.tickets.publish" ||
+					canonicalJson(executionLease.action.input) !==
+						canonicalJson({
+							definitionId,
+							graphDigest: canonical.graph.digest,
+						})
+				)
+					return blocked(
+						"PI_WORKFLOW_DECISION_ACTION_MISMATCH",
+						"Ticket publication lease does not match the approved graph.",
+					);
+				const effect =
+					await options.interactiveDecisions.authorizeEffect(executionLease);
+				if (effect.kind === "blocked")
+					return blocked(effect.blocker.code, effect.blocker.message);
+				if (
+					effect.manifest.ref !==
+					`workflow://define-product/${definitionId}/ticket-publication/${canonical.graph.digest}`
+				)
+					return blocked(
+						"PI_WORKFLOW_DECISION_MANIFEST_CONFLICT",
+						"Ticket publication manifest does not match the approved graph.",
+					);
+			}
 			if (generation !== beginGeneration || phase !== "idle")
 				return blocked(
 					"PI_WORKFLOW_TICKET_MCP_PROTOCOL_INVALID",
@@ -907,7 +1023,7 @@ export function createDefineProductTicketMcpPublication(
 						`${right.blockedStableKey}:${right.blockingStableKey}`,
 					),
 				);
-			const manifest = await options.manifest.prepare({
+			let manifest = await options.manifest.prepare({
 				definitionId,
 				graphDigest: canonical.graph.digest,
 				parent: {
@@ -915,6 +1031,13 @@ export function createDefineProductTicketMcpPublication(
 					revision: canonical.publication.graphParent.revision,
 				},
 			});
+			if (executionLease)
+				manifest = await options.manifest.bindExecution(manifest.operationId, {
+					decisionId: executionLease.decisionId,
+					operationDigest: executionLease.operationDigest,
+					executionId: executionLease.executionId,
+					generation: executionLease.generation,
+				});
 			if (generation !== beginGeneration || phase !== "idle")
 				return blocked(
 					"PI_WORKFLOW_TICKET_MCP_PROTOCOL_INVALID",
@@ -931,14 +1054,15 @@ export function createDefineProductTicketMcpPublication(
 				...canonical,
 				...(compatibilityAuthority
 					? {
-							compatibilityAuthority: structuredClone(
-								compatibilityAuthority,
-							),
+							compatibilityAuthority: structuredClone(compatibilityAuthority),
 						}
 					: {}),
 				ordered,
 				relations,
 				manifest,
+				...(executionLease
+					? { executionLease: structuredClone(executionLease) }
+					: {}),
 				verifyIndex: 0,
 			};
 			reservations.set(identity, beginGeneration);
@@ -950,7 +1074,9 @@ export function createDefineProductTicketMcpPublication(
 				error && typeof error === "object" && "code" in error
 					? String(error.code)
 					: "PI_WORKFLOW_RECOVERY_FAILED",
-				error instanceof Error ? error.message : "Ticket publication recovery failed.",
+				error instanceof Error
+					? error.message
+					: "Ticket publication recovery failed.",
 			);
 		} finally {
 			if (generation === beginGeneration) beginning = false;
@@ -986,7 +1112,9 @@ export function createDefineProductTicketMcpPublication(
 							active.manifest.pendingMutation.stableKey !== next.stableKey)
 					)
 						throw Object.assign(
-							new Error("Durable mutation receipt conflicts with the next child."),
+							new Error(
+								"Durable mutation receipt conflicts with the next child.",
+							),
 							{ code: "PI_WORKFLOW_PUBLICATION_IDEMPOTENCY_CONFLICT" },
 						);
 					active.mutation = { kind: "child", ticket: next };
@@ -1032,11 +1160,15 @@ export function createDefineProductTicketMcpPublication(
 					if (
 						active.manifest.pendingMutation &&
 						(active.manifest.pendingMutation.kind !== "relation" ||
-							active.manifest.pendingMutation.blockedStableKey !== next.blockedStableKey ||
-							active.manifest.pendingMutation.blockingStableKey !== next.blockingStableKey)
+							active.manifest.pendingMutation.blockedStableKey !==
+								next.blockedStableKey ||
+							active.manifest.pendingMutation.blockingStableKey !==
+								next.blockingStableKey)
 					)
 						throw Object.assign(
-							new Error("Durable mutation receipt conflicts with the next blocker."),
+							new Error(
+								"Durable mutation receipt conflicts with the next blocker.",
+							),
 							{ code: "PI_WORKFLOW_PUBLICATION_IDEMPOTENCY_CONFLICT" },
 						);
 					active.mutation = { kind: "relation", relation: next };
@@ -1044,9 +1176,12 @@ export function createDefineProductTicketMcpPublication(
 					return;
 				}
 				if (active.manifest.pendingMutation)
-					throw Object.assign(new Error("Durable blocker receipt is orphaned."), {
-						code: "PI_WORKFLOW_PUBLICATION_IDEMPOTENCY_CONFLICT",
-					});
+					throw Object.assign(
+						new Error("Durable blocker receipt is orphaned."),
+						{
+							code: "PI_WORKFLOW_PUBLICATION_IDEMPOTENCY_CONFLICT",
+						},
+					);
 				active.manifest = await options.manifest.advance(
 					active.manifest.operationId,
 					"relations",
@@ -1056,7 +1191,10 @@ export function createDefineProductTicketMcpPublication(
 				ensureGenerationContext(queuedGeneration, active);
 				continue;
 			}
-			if (active.manifest.stage === "verifying" || active.manifest.stage === "verified") {
+			if (
+				active.manifest.stage === "verifying" ||
+				active.manifest.stage === "verified"
+			) {
 				active.verifyIndex = 0;
 				phase = "verify-parent";
 				return;
@@ -1110,6 +1248,22 @@ export function createDefineProductTicketMcpPublication(
 		}
 		try {
 			if (activePhase === "child-save" || activePhase === "relation-save") {
+				if (options.interactiveDecisions) {
+					if (!active.executionLease)
+						throw Object.assign(
+							new Error("Ticket mutation requires its shared execution lease."),
+							{
+								code: "PI_WORKFLOW_DECISION_CLAIM_MISSING",
+							},
+						);
+					const effect = await options.interactiveDecisions.authorizeEffect(
+						active.executionLease,
+					);
+					if (effect.kind === "blocked")
+						throw Object.assign(new Error(effect.blocker.message), {
+							code: effect.blocker.code,
+						});
+				}
 				await revalidate(active);
 				if (!isCurrent(queuedGeneration, activePhase, active, activeIssued))
 					return staleBlock();
@@ -1209,7 +1363,10 @@ export function createDefineProductTicketMcpPublication(
 			active.manifest.operationId,
 			"creating",
 			{
-				children: [...active.manifest.children, { stableKey: ticket.stableKey, linearId }],
+				children: [
+					...active.manifest.children,
+					{ stableKey: ticket.stableKey, linearId },
+				],
 				relations: active.manifest.relations,
 			},
 		);
@@ -1246,9 +1403,12 @@ export function createDefineProductTicketMcpPublication(
 	): Promise<void> {
 		if (issuedCall.phase === "start") {
 			if (!exactInput(payload, { status: "continuing" }))
-				throw Object.assign(new Error("Ticket publication continuation result was incompatible."), {
-					code: "PI_WORKFLOW_TICKET_MCP_INCOMPATIBLE",
-				});
+				throw Object.assign(
+					new Error("Ticket publication continuation result was incompatible."),
+					{
+						code: "PI_WORKFLOW_TICKET_MCP_INCOMPATIBLE",
+					},
+				);
 			const authenticated = authoritySession.user();
 			if (authenticated) {
 				active.actor = authenticated;
@@ -1265,32 +1425,48 @@ export function createDefineProductTicketMcpPublication(
 					actor.id !== active.compatibilityAuthority.actorId) ||
 				!authoritySession.authenticate(actor).ok
 			)
-				throw Object.assign(new Error("An active non-guest authenticated Linear user is required."), {
-					code: "PI_WORKFLOW_PUBLICATION_AUTHORITY_DRIFT",
-				});
+				throw Object.assign(
+					new Error(
+						"An active non-guest authenticated Linear user is required.",
+					),
+					{
+						code: "PI_WORKFLOW_PUBLICATION_AUTHORITY_DRIFT",
+					},
+				);
 			active.actor = actor;
 			phase = "parent";
 			return;
 		}
-		if (issuedCall.phase === "parent" || issuedCall.phase === "mutation-parent" || issuedCall.phase === "verify-parent") {
+		if (
+			issuedCall.phase === "parent" ||
+			issuedCall.phase === "mutation-parent" ||
+			issuedCall.phase === "verify-parent"
+		) {
 			if (!exactParent(active, payload))
-				throw Object.assign(new Error("The canonical Delivery parent changed or was malformed."), {
-					code: issuedCall.phase === "verify-parent"
-						? "PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH"
-						: "PI_WORKFLOW_PUBLICATION_PARENT_DRIFT",
-				});
+				throw Object.assign(
+					new Error("The canonical Delivery parent changed or was malformed."),
+					{
+						code:
+							issuedCall.phase === "verify-parent"
+								? "PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH"
+								: "PI_WORKFLOW_PUBLICATION_PARENT_DRIFT",
+					},
+				);
 			if (issuedCall.phase === "parent") {
 				const status = record(payload) ? statusEvidence(payload) : undefined;
 				if (!status)
-					throw Object.assign(new Error("The canonical Delivery parent state was malformed."), {
-						code: "PI_WORKFLOW_PUBLICATION_PARENT_DRIFT",
-					});
+					throw Object.assign(
+						new Error("The canonical Delivery parent state was malformed."),
+						{
+							code: "PI_WORKFLOW_PUBLICATION_PARENT_DRIFT",
+						},
+					);
 				active.parentStateName = status.name;
 				active.parentStateType = status.type;
 				phase = "statuses";
-			}
-			else if (issuedCall.phase === "mutation-parent")
-				phase = active.mutation?.kind === "child" ? "child-save" : "relation-save";
+			} else if (issuedCall.phase === "mutation-parent")
+				phase =
+					active.mutation?.kind === "child" ? "child-save" : "relation-save";
 			else {
 				active.discovery = { ids: [], conflicts: 0, seenCursors: new Set() };
 				phase = "verify-children";
@@ -1311,7 +1487,9 @@ export function createDefineProductTicketMcpPublication(
 			);
 			if (matches.length !== 1)
 				throw Object.assign(
-					new Error("Linear MCP did not resolve exactly one parent workflow state."),
+					new Error(
+						"Linear MCP did not resolve exactly one parent workflow state.",
+					),
 					{ code: "PI_WORKFLOW_PUBLICATION_STATE_UNKNOWN" },
 				);
 			active.parentStateId = matches[0].id;
@@ -1323,9 +1501,12 @@ export function createDefineProductTicketMcpPublication(
 			const discovery = active.discovery;
 			const page = issuePage(payload);
 			if (mutation?.kind !== "child" || !discovery || !page)
-				throw Object.assign(new Error("Linear MCP returned a malformed child lookup page."), {
-					code: "PI_WORKFLOW_LINEAR_MALFORMED_RESPONSE",
-				});
+				throw Object.assign(
+					new Error("Linear MCP returned a malformed child lookup page."),
+					{
+						code: "PI_WORKFLOW_LINEAR_MALFORMED_RESPONSE",
+					},
+				);
 			const ids = [...discovery.ids];
 			let conflicts = discovery.conflicts;
 			for (const candidate of page.issues) {
@@ -1342,9 +1523,12 @@ export function createDefineProductTicketMcpPublication(
 			}
 			if (page.nextCursor) {
 				if (discovery.seenCursors.has(page.nextCursor))
-					throw Object.assign(new Error("Linear MCP repeated a child lookup cursor."), {
-						code: "PI_WORKFLOW_LINEAR_MALFORMED_RESPONSE",
-					});
+					throw Object.assign(
+						new Error("Linear MCP repeated a child lookup cursor."),
+						{
+							code: "PI_WORKFLOW_LINEAR_MALFORMED_RESPONSE",
+						},
+					);
 				active.discovery = {
 					ids,
 					conflicts,
@@ -1365,9 +1549,14 @@ export function createDefineProductTicketMcpPublication(
 				return;
 			}
 			if (active.manifest.pendingMutation)
-				throw Object.assign(new Error("A prior child mutation is uncertain and cannot be repeated."), {
-					code: "PI_WORKFLOW_PUBLICATION_RECOVERY_PENDING",
-				});
+				throw Object.assign(
+					new Error(
+						"A prior child mutation is uncertain and cannot be repeated.",
+					),
+					{
+						code: "PI_WORKFLOW_PUBLICATION_RECOVERY_PENDING",
+					},
+				);
 			phase = "mutation-parent";
 			return;
 		}
@@ -1375,41 +1564,69 @@ export function createDefineProductTicketMcpPublication(
 			const discovery = active.discovery;
 			const page = issuePage(payload);
 			if (!discovery || !page)
-				throw Object.assign(new Error("Linear MCP returned a malformed final child page."), {
-					code: "PI_WORKFLOW_LINEAR_MALFORMED_RESPONSE",
-				});
+				throw Object.assign(
+					new Error("Linear MCP returned a malformed final child page."),
+					{
+						code: "PI_WORKFLOW_LINEAR_MALFORMED_RESPONSE",
+					},
+				);
 			const ids = [...discovery.ids];
 			let conflicts = discovery.conflicts;
 			for (const candidate of page.issues) {
-				if (!record(candidate) || !text(candidate.id) || !text(candidate.title)) {
+				if (
+					!record(candidate) ||
+					!text(candidate.id) ||
+					!text(candidate.title)
+				) {
 					conflicts += 1;
 					continue;
 				}
 				const matches = active.ordered.filter(
 					(ticket) => title(ticket) === candidate.title,
 				);
-				const receipt = matches.length === 1
-					? active.manifest.children.find(
-							(child) => child.stableKey === matches[0].stableKey,
-						)
-					: undefined;
+				const receipt =
+					matches.length === 1
+						? active.manifest.children.find(
+								(child) => child.stableKey === matches[0].stableKey,
+							)
+						: undefined;
 				if (!receipt || candidate.id !== receipt.linearId) conflicts += 1;
 				else ids.push(candidate.id);
 			}
 			if (page.nextCursor) {
 				if (discovery.seenCursors.has(page.nextCursor))
-					throw Object.assign(new Error("Linear MCP repeated the final child cursor."), {
-						code: "PI_WORKFLOW_LINEAR_MALFORMED_RESPONSE",
-					});
-				active.discovery = { ids, conflicts, cursor: page.nextCursor, seenCursors: new Set([...discovery.seenCursors, page.nextCursor]) };
+					throw Object.assign(
+						new Error("Linear MCP repeated the final child cursor."),
+						{
+							code: "PI_WORKFLOW_LINEAR_MALFORMED_RESPONSE",
+						},
+					);
+				active.discovery = {
+					ids,
+					conflicts,
+					cursor: page.nextCursor,
+					seenCursors: new Set([...discovery.seenCursors, page.nextCursor]),
+				};
 				phase = "verify-children";
 				return;
 			}
-			const expectedIds = active.manifest.children.map((child) => child.linearId);
-			if (conflicts || ids.length !== expectedIds.length || new Set(ids).size !== ids.length || !sameIds(ids, expectedIds))
-				throw Object.assign(new Error("Ticket publication child-set read-back did not match the approved graph."), {
-					code: "PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH",
-				});
+			const expectedIds = active.manifest.children.map(
+				(child) => child.linearId,
+			);
+			if (
+				conflicts ||
+				ids.length !== expectedIds.length ||
+				new Set(ids).size !== ids.length ||
+				!sameIds(ids, expectedIds)
+			)
+				throw Object.assign(
+					new Error(
+						"Ticket publication child-set read-back did not match the approved graph.",
+					),
+					{
+						code: "PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH",
+					},
+				);
 			active.discovery = undefined;
 			phase = "verify-child";
 			return;
@@ -1447,10 +1664,17 @@ export function createDefineProductTicketMcpPublication(
 		}
 		if (issuedCall.phase === "relation-read") {
 			const mutation = active.mutation;
-			if (mutation?.kind !== "relation" || !record(payload) || !text(payload.id))
-				throw Object.assign(new Error("Linear MCP returned a malformed blocker read."), {
-					code: "PI_WORKFLOW_LINEAR_MALFORMED_RESPONSE",
-				});
+			if (
+				mutation?.kind !== "relation" ||
+				!record(payload) ||
+				!text(payload.id)
+			)
+				throw Object.assign(
+					new Error("Linear MCP returned a malformed blocker read."),
+					{
+						code: "PI_WORKFLOW_LINEAR_MALFORMED_RESPONSE",
+					},
+				);
 			const blocked = active.manifest.children.find(
 				(child) => child.stableKey === mutation.relation.blockedStableKey,
 			);
@@ -1458,33 +1682,52 @@ export function createDefineProductTicketMcpPublication(
 				(child) => child.stableKey === mutation.relation.blockingStableKey,
 			);
 			const relations = issueRelations(payload);
-			if (!blocked || !blocking || payload.id !== blocked.linearId || !relations)
-				throw Object.assign(new Error("Linear MCP returned malformed native blocker evidence."), {
-					code: "PI_WORKFLOW_LINEAR_MALFORMED_RESPONSE",
-				});
-			const matches = relations.blockedBy.filter((id) => id === blocking.linearId);
+			if (
+				!blocked ||
+				!blocking ||
+				payload.id !== blocked.linearId ||
+				!relations
+			)
+				throw Object.assign(
+					new Error("Linear MCP returned malformed native blocker evidence."),
+					{
+						code: "PI_WORKFLOW_LINEAR_MALFORMED_RESPONSE",
+					},
+				);
+			const matches = relations.blockedBy.filter(
+				(id) => id === blocking.linearId,
+			);
 			if (matches.length > 1)
-				throw Object.assign(new Error("Native blocker evidence is ambiguous."), {
-					code: "PI_WORKFLOW_PUBLICATION_IDEMPOTENCY_CONFLICT",
-				});
+				throw Object.assign(
+					new Error("Native blocker evidence is ambiguous."),
+					{
+						code: "PI_WORKFLOW_PUBLICATION_IDEMPOTENCY_CONFLICT",
+					},
+				);
 			if (matches.length === 1) {
 				await recordRelation(active, mutation.relation, queuedGeneration);
 				return;
 			}
 			if (active.manifest.pendingMutation)
-				throw Object.assign(new Error("A prior blocker mutation is uncertain and cannot be repeated."), {
-					code: "PI_WORKFLOW_PUBLICATION_RECOVERY_PENDING",
-				});
+				throw Object.assign(
+					new Error(
+						"A prior blocker mutation is uncertain and cannot be repeated.",
+					),
+					{
+						code: "PI_WORKFLOW_PUBLICATION_RECOVERY_PENDING",
+					},
+				);
 			phase = "mutation-parent";
 			return;
 		}
 		if (issuedCall.phase === "relation-save") {
 			const mutation = active.mutation;
-			const blocked = mutation?.kind === "relation"
-				? active.manifest.children.find(
-						(child) => child.stableKey === mutation.relation.blockedStableKey,
-					)
-				: undefined;
+			const blocked =
+				mutation?.kind === "relation"
+					? active.manifest.children.find(
+							(child) => child.stableKey === mutation.relation.blockedStableKey,
+						)
+					: undefined;
 			if (
 				mutation?.kind !== "relation" ||
 				!blocked ||
@@ -1492,7 +1735,9 @@ export function createDefineProductTicketMcpPublication(
 				payload.id !== blocked.linearId
 			)
 				throw Object.assign(
-					new Error("Linear MCP returned a malformed blocker mutation identity."),
+					new Error(
+						"Linear MCP returned a malformed blocker mutation identity.",
+					),
 					{ code: "PI_WORKFLOW_LINEAR_MALFORMED_RESPONSE" },
 				);
 			phase = "relation-read";
@@ -1500,13 +1745,25 @@ export function createDefineProductTicketMcpPublication(
 		}
 		if (issuedCall.phase === "verify-child") {
 			const ticket = active.ordered[active.verifyIndex];
-			const receipt = ticket && active.manifest.children.find(
-				(child) => child.stableKey === ticket.stableKey,
-			);
-			if (!ticket || !receipt || !exactChild(active, ticket, payload, true) || payload.id !== receipt.linearId)
-				throw Object.assign(new Error("Ticket publication exact read-back did not match the approved graph."), {
-					code: "PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH",
-				});
+			const receipt =
+				ticket &&
+				active.manifest.children.find(
+					(child) => child.stableKey === ticket.stableKey,
+				);
+			if (
+				!ticket ||
+				!receipt ||
+				!exactChild(active, ticket, payload, true) ||
+				payload.id !== receipt.linearId
+			)
+				throw Object.assign(
+					new Error(
+						"Ticket publication exact read-back did not match the approved graph.",
+					),
+					{
+						code: "PI_WORKFLOW_PUBLICATION_READBACK_MISMATCH",
+					},
+				);
 			active.verifyIndex += 1;
 			if (active.verifyIndex < active.ordered.length) {
 				phase = "verify-child";
@@ -1529,9 +1786,12 @@ export function createDefineProductTicketMcpPublication(
 			phase = "ready";
 			return;
 		}
-		throw Object.assign(new Error("Ticket MCP result reached an invalid stage."), {
-			code: "PI_WORKFLOW_TICKET_MCP_PROTOCOL_INVALID",
-		});
+		throw Object.assign(
+			new Error("Ticket MCP result reached an invalid stage."),
+			{
+				code: "PI_WORKFLOW_TICKET_MCP_PROTOCOL_INVALID",
+			},
+		);
 	}
 
 	async function handleToolResultSerial(
@@ -1620,14 +1880,7 @@ export function createDefineProductTicketMcpPublication(
 			const reservationGeneration = reservations.get(identity);
 			if (reservationGeneration !== queuedGeneration) {
 				if (reservationGeneration !== undefined) return false;
-				if (
-					isCurrent(
-						queuedGeneration,
-						activePhase,
-						active,
-						issuedCall,
-					)
-				) {
+				if (isCurrent(queuedGeneration, activePhase, active, issuedCall)) {
 					fail(
 						"PI_WORKFLOW_TICKET_MCP_INCOMPATIBLE",
 						"Linear MCP returned a result without a current issued identity.",

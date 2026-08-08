@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
+import { createInMemoryDecisionStore } from "../extensions/interactive-decisions.ts";
 import { digestCanonicalValue } from "../extensions/workflow-contracts.ts";
 
 const LINEAR_TOOLS = [
@@ -81,6 +82,7 @@ function publicationPersistence(initialArtifact) {
 	const recoveries = new Map();
 	return {
 		getArtifact: () => structuredClone(artifact),
+		getRecovery: (issueId) => structuredClone(recoveries.get(issueId)),
 		artifacts: {
 			read: async () => structuredClone(artifact),
 			save: async (value) => {
@@ -90,12 +92,49 @@ function publicationPersistence(initialArtifact) {
 				return structuredClone(value);
 			},
 		},
-		recovery: {
+			recovery: {
 			read: async (issueId) => {
 				const value = recoveries.get(issueId);
-				return value?.stage === "uncertain" || value?.stage === "verified"
-					? { digest: value.digest, stage: value.stage }
+			return value?.stage === "uncertain" || value?.stage === "verified"
+					? {
+							digest: value.digest,
+							stage: value.stage,
+							...(value.executionBinding
+								? { executionBinding: value.executionBinding }
+								: {}),
+						}
 					: undefined;
+			},
+			bindExecution: async (value, lease) => {
+				const issueId = value.payload.issue.id;
+				const executionBinding = {
+					decisionId: lease.decisionId,
+					operationDigest: lease.operationDigest,
+					executionId: lease.executionId,
+					generation: lease.generation,
+				};
+				const existing = recoveries.get(issueId);
+				if (
+					existing &&
+					existing.stage !== "released" &&
+					existing.digest !== value.digest
+				)
+					throw new Error("recovery digest conflict");
+				if (
+					existing?.executionBinding &&
+					existing.stage !== "released" &&
+					JSON.stringify(existing.executionBinding) !==
+						JSON.stringify(executionBinding)
+				)
+					throw new Error("recovery execution binding conflict");
+				recoveries.set(issueId, {
+					...(existing ?? { digest: value.digest, stage: "released" }),
+					executionBinding,
+				});
+				return {
+					...executionBinding,
+					ref: `workflow://product-review/${issueId}/publication/${value.digest}`,
+				};
 			},
 			claim: async (value, ownerId) => {
 				const issueId = value.payload.issue.id;
@@ -107,10 +146,11 @@ function publicationPersistence(initialArtifact) {
 					existing.ownerId !== ownerId
 				)
 					throw new Error("recovery claim already owned");
-				recoveries.set(issueId, {
-					digest: value.digest,
-					stage: "uncertain",
-					ownerId,
+					recoveries.set(issueId, {
+						digest: value.digest,
+						stage: "uncertain",
+						ownerId,
+						executionBinding: existing?.executionBinding,
 				});
 			},
 			release: async (value, ownerId) => {
@@ -122,12 +162,15 @@ function publicationPersistence(initialArtifact) {
 					digest: value.digest,
 					stage: "released",
 					ownerId,
+					executionBinding: existing?.executionBinding,
 				});
 			},
 			finalizeVerified: async (value) => {
+				const existing = recoveries.get(value.payload.issue.id);
 				recoveries.set(value.payload.issue.id, {
 					digest: value.digest,
 					stage: "verified",
+					executionBinding: existing?.executionBinding,
 				});
 			},
 		},
@@ -162,6 +205,7 @@ function extensionHarness({
 	allTools = LINEAR_TOOLS,
 	runtimeEnvironment = {},
 	authenticatedAuthority,
+	interactiveDecisionStore = createInMemoryDecisionStore(),
 } = {}) {
 	const handlers = new Map();
 	const tools = new Map();
@@ -180,6 +224,7 @@ function extensionHarness({
 			},
 		},
 		{
+			interactiveDecisions: { store: interactiveDecisionStore },
 			productReview: {
 				runtime: {
 					environment: runtimeEnvironment,
@@ -191,6 +236,8 @@ function extensionHarness({
 			},
 		},
 	);
+	for (const handler of handlers.get("session_start") ?? [])
+		void handler({ type: "session_start" }, context);
 	return {
 		tools,
 		toolCalls,
@@ -209,6 +256,8 @@ function extensionHarness({
 
 const context = {
 	isIdle: () => true,
+	cwd: process.cwd(),
+	sessionManager: { getSessionId: () => "product-review-test-session" },
 	ui: { notify: () => {} },
 };
 
@@ -243,6 +292,24 @@ async function callMcp(harness, toolName, toolCallId, input, payload) {
 
 async function continueOwnerSelection(harness, prefix, result = "Aceptado") {
 	const input = { action: "select_result", result };
+	const descriptor = await harness.emit(
+		"before_agent_start",
+		{ type: "before_agent_start" },
+		context,
+	);
+	assert.match(descriptor.systemPrompt, /Seleccione el resultado/i);
+	assert.match(descriptor.systemPrompt, /1\. Aceptado/);
+	assert.match(descriptor.systemPrompt, /3\. Cancelar/);
+	assert.match(descriptor.systemPrompt, /Do not infer approval/i);
+	await harness.emit(
+		"input",
+		{
+			type: "input",
+			text: result === "Aceptado" ? "1" : "2",
+			source: "interactive",
+		},
+		context,
+	);
 	const prompt = await harness.emit(
 		"before_agent_start",
 		{ type: "before_agent_start" },
@@ -287,6 +354,7 @@ async function prepareAndSelect(
 	issue = validIssue(),
 	result = "Aceptado",
 	continueHandshake = true,
+	actor = ownerActor,
 ) {
 	assert.deepEqual(
 		await harness.emit(
@@ -305,7 +373,7 @@ async function prepareAndSelect(
 		"linear_get_user",
 		`${prefix}-auth-prepare`,
 		{ query: "me" },
-		ownerActor,
+		actor,
 	);
 	await callMcp(
 		harness,
@@ -322,19 +390,7 @@ async function prepareAndSelect(
 		issue,
 	);
 	assertPrivateSelectionSurface(verified.resultOutcome.content.at(-1).text);
-	await harness.emit("agent_settled", { type: "agent_settled" }, context);
-	assert.deepEqual(
-		await harness.emit(
-			"input",
-			{
-				type: "input",
-				text: result,
-				source: "interactive",
-			},
-			context,
-		),
-		{ action: "continue" },
-	);
+	if (/linear_get_issue/.test(verified.resultOutcome.content.at(-1).text)) return;
 	if (continueHandshake)
 		await continueOwnerSelection(harness, prefix, result);
 }
@@ -612,7 +668,7 @@ test("default product-review accepts real Pi's public ILA-2428 selection call af
 	assert.match(continued.content.at(-1).text, /linear_get_issue/);
 });
 
-test("default product-review presents natural Owner choices from authenticated protected issue evidence and the canonical draft", async () => {
+test("default product-review prepares only the shared Owner decision descriptor", async () => {
 	const harness = extensionHarness();
 	await harness.emit(
 		"input",
@@ -661,7 +717,8 @@ test("default product-review presents natural Owner choices from authenticated p
 		if (toolCallId === "product-issue-initial")
 			assert.match(evidence.content.at(-1).text, /linear_get_issue/);
 		else {
-			assert.match(evidence.content.at(-1).text, /decide naturally/i);
+			assert.match(evidence.content.at(-1).text, /shared decision descriptor/i);
+			assert.match(evidence.content.at(-1).text, /Never infer approval from prose/i);
 			assert.match(evidence.content.at(-1).text, /select_result/i);
 			assert.match(evidence.content.at(-1).text, /Aceptado/);
 			assert.match(evidence.content.at(-1).text, /Cambios requeridos/);
@@ -690,7 +747,9 @@ test("default product-review presents natural Owner choices from authenticated p
 		{ type: "before_agent_start" },
 		context,
 	);
-	assert.match(afterMemory.systemPrompt, /select_result/);
+	assert.match(afterMemory.systemPrompt, /Seleccione el resultado/i);
+	assert.match(afterMemory.systemPrompt, /1\. Aceptado/);
+	assert.match(afterMemory.systemPrompt, /3\. Cancelar/);
 });
 
 test("default product-review authenticates exactly once across preparation, approval, and publication", async () => {
@@ -743,12 +802,18 @@ test("default product-review authenticates exactly once across preparation, appr
 	}
 	assertPrivateSelectionSurface(preparedInstruction);
 	await harness.emit("agent_settled", { type: "agent_settled" }, context);
+	const descriptor = await harness.emit(
+		"before_agent_start",
+		{ type: "before_agent_start" },
+		context,
+	);
+	assert.match(descriptor.systemPrompt, /Seleccione el resultado/i);
 	assert.deepEqual(
 		await harness.emit(
 			"input",
 			{
 				type: "input",
-				text: "Aceptado",
+				text: "1",
 				source: "interactive",
 			},
 			context,
@@ -950,6 +1015,104 @@ test("default product-review accepts real Pi's public selection call before the 
 	});
 });
 
+test("public product-review cancellation consumes only the shared cancellation claim", async () => {
+	const persistence = publicationPersistence();
+	const harness = extensionHarness({ persistence });
+	await prepareAndSelect(
+		harness,
+		"cancel-review",
+		validIssue(),
+		"Aceptado",
+		false,
+	);
+	const descriptor = await harness.emit(
+		"before_agent_start",
+		{ type: "before_agent_start" },
+		context,
+	);
+	assert.match(descriptor.systemPrompt, /3\. Cancelar/);
+	await harness.emit(
+		"input",
+		{ type: "input", text: "3", source: "interactive" },
+		context,
+	);
+	const call = {
+		toolName: "workflow_product_review",
+		toolCallId: "cancel-review-action",
+		input: { action: "cancel_decision" },
+	};
+	assert.equal(await harness.emit("tool_call", call, context), undefined);
+	const result = await harness.tools
+		.get("workflow_product_review")
+		.execute(call.toolCallId, call.input);
+	assert.deepEqual(JSON.parse(result.content[0].text), {
+		status: "cancelled",
+		issueId: "ILA-2324",
+	});
+	assert.equal(persistence.getArtifact(), undefined);
+	assert.equal(persistence.getRecovery("ILA-2324"), undefined);
+	assert.equal(
+		harness.toolCalls.some(({ toolName }) => toolName === "linear_save_comment"),
+		false,
+	);
+});
+
+test("public product-review replaces a released lease after review drift", async () => {
+	const persistence = publicationPersistence();
+	const interactiveDecisionStore = createInMemoryDecisionStore();
+	const first = extensionHarness({ persistence, interactiveDecisionStore });
+	await prepareAndSelect(first, "drift-first");
+	const firstExecution = persistence.getRecovery("ILA-2324").executionBinding;
+	await first.emit("session_shutdown", { type: "session_shutdown" }, context);
+
+	const changedDraft = {
+		...productDraft,
+		findings: ["La evidencia de producto cambió antes de la publicación."],
+	};
+	const replacement = extensionHarness({
+		draft: changedDraft,
+		persistence,
+		interactiveDecisionStore,
+	});
+	await prepareAndSelect(replacement, "drift-replacement");
+	const replacementExecution =
+		persistence.getRecovery("ILA-2324").executionBinding;
+	assert.notEqual(replacementExecution.executionId, firstExecution.executionId);
+	assert.equal(replacementExecution.generation > firstExecution.generation, true);
+	await advanceApprovedToComments(replacement, "drift-replacement");
+	assert.deepEqual(persistence.getArtifact().payload.findings, changedDraft.findings);
+});
+
+test("public product-review requires changed-actor reapproval before replacing a released lease", async () => {
+	const persistence = publicationPersistence();
+	const interactiveDecisionStore = createInMemoryDecisionStore();
+	const first = extensionHarness({ persistence, interactiveDecisionStore });
+	await prepareAndSelect(first, "actor-first");
+	const firstExecution = persistence.getRecovery("ILA-2324").executionBinding;
+	await first.emit("session_shutdown", { type: "session_shutdown" }, context);
+
+	const changedActor = {
+		id: "owner-2",
+		name: "Second Owner",
+		isActive: true,
+		isGuest: false,
+	};
+	const replacement = extensionHarness({ persistence, interactiveDecisionStore });
+	await prepareAndSelect(
+		replacement,
+		"actor-reapproval",
+		validIssue(),
+		"Aceptado",
+		true,
+		changedActor,
+	);
+	const replacementExecution =
+		persistence.getRecovery("ILA-2324").executionBinding;
+	assert.notEqual(replacementExecution.executionId, firstExecution.executionId);
+	await advanceApprovedToComments(replacement, "actor-reapproval");
+	assert.equal(persistence.getArtifact().payload.authority.actorId, "owner-2");
+});
+
 test("public product-review selection calls fail closed without authorizing mutation", async (t) => {
 	const invalidCalls = [
 		["extra field", () => ({ extra: true })],
@@ -1014,21 +1177,9 @@ test("public product-review selection calls fail closed without authorizing muta
 			"public-extra",
 			validIssue(),
 			"Aceptado",
-			false,
+			true,
 		);
 		const input = { action: "select_result", result: "Aceptado" };
-		assert.equal(
-			await harness.emit(
-				"tool_call",
-				{
-					toolName: "workflow_product_review",
-					toolCallId: "public-extra-first",
-					input: structuredClone(input),
-				},
-				context,
-			),
-			undefined,
-		);
 		assert.equal(
 			(
 				await harness.emit(
@@ -1261,12 +1412,12 @@ test("public MCP product-review refuses a valid legacy v1 direct-workflow artifa
 	);
 });
 
-test("public product-review adopts the exact canonical root comment across paginated idempotent retries", async () => {
+test("public product-review marks verified publication terminal and blocks replay", async () => {
 	const persistence = publicationPersistence();
-	const first = extensionHarness({ persistence });
+	const interactiveDecisionStore = createInMemoryDecisionStore();
+	const first = extensionHarness({ persistence, interactiveDecisionStore });
 	await prepareAndSelect(first, "adopt-first");
 	await advanceApprovedToComments(first, "adopt-first");
-	const digest = persistence.getArtifact().digest;
 	await callMcp(first, "linear_list_comments", "adopt-first-comments", { issueId: "ILA-2324" }, { comments: [], hasNextPage: false });
 	await callMcp(first, "linear_get_issue", "adopt-first-issue-mutation", { id: "ILA-2324", includeRelations: true }, validIssue());
 	const save = await callMcp(
@@ -1287,40 +1438,29 @@ test("public product-review adopts the exact canonical root comment across pagin
 		commentId: comment.id,
 	});
 
-	const retry = extensionHarness({ persistence });
-	await prepareAndSelect(retry, "adopt-retry", advancedIssue);
-	await advanceApprovedToComments(retry, "adopt-retry", advancedIssue);
-	const retryDigest = persistence.getArtifact().digest;
-	assert.equal(retryDigest, digest);
-	await callMcp(
-		retry,
-		"linear_list_comments",
-		"adopt-retry-page-1",
-		{ issueId: "ILA-2324" },
-		{ comments: [{ id: "inline-copy", body: comment.body, quotedText: "anchor", parentId: null }], hasNextPage: true, cursor: "adopt-page-2" },
+	const retry = extensionHarness({ persistence, interactiveDecisionStore });
+	await retry.emit(
+		"input",
+		{ type: "input", text: "/product-review ILA-2324", source: "interactive" },
+		context,
 	);
-	const adopted = await callMcp(
-		retry,
-		"linear_list_comments",
-		"adopt-retry-page-2",
-		{ issueId: "ILA-2324", cursor: "adopt-page-2" },
-		{ comments: [comment], hasNextPage: false },
+	await callMcp(retry, "linear_get_user", "replay-auth", { query: "me" }, ownerActor);
+	await callMcp(retry, "linear_get_issue", "replay-issue", { id: "ILA-2324", includeRelations: true }, advancedIssue);
+	await callMcp(retry, "linear_get_issue", "replay-verify", { id: "ILA-2324", includeRelations: true }, advancedIssue);
+	assert.equal(
+		(await terminalOutcome(retry, "replay")).blocker.code,
+		"PI_WORKFLOW_DECISION_REPLAY",
 	);
-	assert.match(adopted.resultOutcome.content.at(-1).text, /linear_list_comments/);
-	assert.doesNotMatch(adopted.resultOutcome.content.at(-1).text, /linear_save_comment/);
-	await callMcp(retry, "linear_list_comments", "adopt-retry-readback-1", { issueId: "ILA-2324" }, { comments: [], hasNextPage: true, cursor: "readback-page-2" });
-	await callMcp(retry, "linear_list_comments", "adopt-retry-readback-2", { issueId: "ILA-2324", cursor: "readback-page-2" }, { comments: [comment], hasNextPage: false });
-	await callMcp(retry, "linear_get_issue", "adopt-retry-final", { id: "ILA-2324", includeRelations: true }, advancedIssue);
-	assert.deepEqual(await terminalOutcome(retry, "adopt-retry"), {
-		status: "published",
-		issueId: "ILA-2324",
-		commentId: comment.id,
-	});
+	assert.equal(
+		retry.toolCalls.some(({ toolName }) => toolName === "linear_save_comment"),
+		false,
+	);
 });
 
 test("public product-review recovers an uncertain save across runtime instances without authorizing a duplicate mutation", async () => {
 	const persistence = publicationPersistence();
-	const interrupted = extensionHarness({ persistence });
+	const interactiveDecisionStore = createInMemoryDecisionStore();
+	const interrupted = extensionHarness({ persistence, interactiveDecisionStore });
 	await prepareAndSelect(interrupted, "uncertain-first");
 	await advanceApprovedToComments(interrupted, "uncertain-first");
 	const digest = persistence.getArtifact().digest;
@@ -1336,7 +1476,7 @@ test("public product-review recovers an uncertain save across runtime instances 
 	assert.notEqual(uncertainSave.event.input.body, "PI_WORKFLOW_CANONICAL_PRODUCT_REVIEW_BODY");
 	await interrupted.emit("session_shutdown", { type: "session_shutdown" }, context);
 
-	const recovered = extensionHarness({ persistence });
+	const recovered = extensionHarness({ persistence, interactiveDecisionStore });
 	const currentIssue = validIssue({ updatedAt: "2026-07-27T19:21:03.958Z" });
 	await prepareAndSelect(recovered, "uncertain-retry", currentIssue);
 	await advanceApprovedToComments(recovered, "uncertain-retry", currentIssue);
@@ -1354,7 +1494,11 @@ test("public product-review recovers an uncertain save across runtime instances 
 	});
 
 	const absentPersistence = publicationPersistence();
-	const absent = extensionHarness({ persistence: absentPersistence });
+	const absentDecisionStore = createInMemoryDecisionStore();
+	const absent = extensionHarness({
+		persistence: absentPersistence,
+		interactiveDecisionStore: absentDecisionStore,
+	});
 	await prepareAndSelect(absent, "uncertain-absent");
 	await advanceApprovedToComments(absent, "uncertain-absent");
 	const absentDigest = absentPersistence.getArtifact().digest;
@@ -1362,7 +1506,10 @@ test("public product-review recovers an uncertain save across runtime instances 
 	await callMcp(absent, "linear_get_issue", "uncertain-absent-issue", { id: "ILA-2324", includeRelations: true }, validIssue());
 	await callMcp(absent, "linear_save_comment", "uncertain-absent-save", { issueId: "ILA-2324", body: "PI_WORKFLOW_CANONICAL_PRODUCT_REVIEW_BODY" }, undefined);
 	await absent.emit("session_shutdown", { type: "session_shutdown" }, context);
-	const absentRetry = extensionHarness({ persistence: absentPersistence });
+	const absentRetry = extensionHarness({
+		persistence: absentPersistence,
+		interactiveDecisionStore: absentDecisionStore,
+	});
 	await prepareAndSelect(absentRetry, "uncertain-absent-retry");
 	await advanceApprovedToComments(absentRetry, "uncertain-absent-retry");
 	assert.equal(absentPersistence.getArtifact().digest, absentDigest);
@@ -1376,6 +1523,7 @@ test("public product-review recovers an uncertain save across runtime instances 
 
 test("public product-review serializes concurrent save authorization without releasing uncertainty", async () => {
 	const persistence = publicationPersistence();
+	const interactiveDecisionStore = createInMemoryDecisionStore();
 	const claim = persistence.recovery.claim;
 	let claims = 0;
 	let firstClaimed;
@@ -1388,7 +1536,7 @@ test("public product-review serializes concurrent save authorization without rel
 		if (claims === 1) firstClaimed();
 		await claimGate;
 	};
-	const harness = extensionHarness({ persistence });
+	const harness = extensionHarness({ persistence, interactiveDecisionStore });
 	await prepareAndSelect(harness, "concurrent-save");
 	await advanceApprovedToComments(harness, "concurrent-save");
 	const digest = persistence.getArtifact().digest;
@@ -1404,7 +1552,7 @@ test("public product-review serializes concurrent save authorization without rel
 	assert.equal(outcomes.filter((outcome) => outcome?.block === true).length, 1);
 	await harness.emit("session_shutdown", { type: "session_shutdown" }, context);
 
-	const retry = extensionHarness({ persistence });
+	const retry = extensionHarness({ persistence, interactiveDecisionStore });
 	await prepareAndSelect(retry, "concurrent-save-retry");
 	await advanceApprovedToComments(retry, "concurrent-save-retry");
 	assert.equal(persistence.getArtifact().digest, digest);
