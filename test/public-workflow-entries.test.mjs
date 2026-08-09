@@ -88,6 +88,7 @@ extensions/delivery-start-workflow.ts
 extensions/delivery-ticket-graph.ts
 extensions/delivery-ticket-publication.ts
 extensions/delivery-workflow.ts
+extensions/durable-publication-recovery.ts
 extensions/engram-approved-spec-reader.ts
 extensions/exploration-recovery.ts
 extensions/interactive-decisions.ts
@@ -149,6 +150,7 @@ scripts/public-workflow-catalog.mjs
 scripts/run-packed-acceptance.mjs
 scripts/validate-packed-distribution.mjs
 scripts/validate-pi-package.mjs
+scripts/validate-publication-recovery-contract.mjs
 scripts/validate-release.mjs
 skills/define-product/SKILL.md
 skills/deliver-ticket/SKILL.md

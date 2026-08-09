@@ -333,6 +333,8 @@ test("define-product binds shared route authority before research execution", as
 				active: true,
 				guest: false,
 			});
+			if (claimAvailable)
+				pendingRecommendation.digest = "mutated-after-authorization-started";
 			return claimAvailable
 				? { kind: "authorized", lease }
 				: {

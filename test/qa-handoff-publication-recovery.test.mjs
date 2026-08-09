@@ -3,11 +3,14 @@ import test from "node:test";
 
 import { createQaHandoffPublicationRecoveryStore } from "../extensions/qa-handoff-publication-recovery.ts";
 
+assert.deepEqual(Object.keys(createQaHandoffPublicationRecoveryStore), []);
+
 function persistence() {
 	const values = new Map();
 	let revision = 0;
 	return {
 		capabilities: { atomicCompareAndSwap: true },
+		values,
 		seed(project, topic, content) {
 			revision += 1;
 			values.set(`${project}:${topic}`, {
@@ -52,7 +55,9 @@ test("durable QA recovery rejects malformed state and unavailable CAS", async ()
 		store: backing,
 		project: "pi-workflow",
 	});
-	await assert.rejects(malformed.read("ILA-2410"), /state is invalid/);
+	await assert.rejects(malformed.read("ILA-2410"), {
+		message: "QA handoff publication recovery state is invalid.",
+	});
 
 	const unavailable = createQaHandoffPublicationRecoveryStore({
 		store: { ...persistence(), capabilities: { atomicCompareAndSwap: false } },
@@ -60,7 +65,10 @@ test("durable QA recovery rejects malformed state and unavailable CAS", async ()
 	});
 	await assert.rejects(
 		unavailable.claim(artifact, "owner-a"),
-		/Atomic compare-and-swap/,
+		{
+			message:
+				"Atomic compare-and-swap is required for QA handoff recovery.",
+		},
 	);
 	await assert.rejects(
 		unavailable.release(artifact, "owner-a"),
@@ -246,8 +254,9 @@ test("durable QA recovery transitions released claims back to uncertain", async 
 });
 
 test("durable QA recovery preserves and fences the shared execution binding", async () => {
+	const backing = persistence();
 	const store = createQaHandoffPublicationRecoveryStore({
-		store: persistence(),
+		store: backing,
 		project: "pi-workflow",
 	});
 	const lease = {
@@ -270,6 +279,12 @@ test("durable QA recovery preserves and fences the shared execution binding", as
 		generation: lease.generation,
 		ref: `workflow://qa-handoff/ILA-2410/publication/${artifact.digest}`,
 	});
+	const recoveryTopic =
+		"workflow/qa-handoff-publication-recovery/ILA-2410";
+	assert.equal(
+		backing.values.get(`pi-workflow:${recoveryTopic}`).content,
+		`{"digest":"${artifact.digest}","executionBinding":{"decisionId":"decision.qa-handoff","executionId":"execution-1","generation":1,"operationDigest":"operation-digest"},"issueId":"ILA-2410","stage":"released"}\n`,
+	);
 	await store.claim(artifact, "runtime-1");
 	assert.deepEqual(await store.read("ILA-2410"), {
 		digest: artifact.digest,

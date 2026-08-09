@@ -14,6 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
+import { validatePublicationRecoveryContract } from "./validate-publication-recovery-contract.mjs";
 
 const execFileAsync = promisify(execFile);
 const workflows = [
@@ -51,6 +52,7 @@ const required = [
 	"scripts/check-acceptance.mjs",
 	"scripts/run-packed-acceptance.mjs",
 	"scripts/validate-release.mjs",
+	"scripts/validate-publication-recovery-contract.mjs",
 	"extensions/pi-workflow.ts",
 	"extensions/agent-asset-migrations.ts",
 	"extensions/agent-validator.ts",
@@ -199,8 +201,6 @@ async function validateExtracted(packageRoot) {
 			"extensions/agent-asset-operation.ts",
 			"extensions/approved-revision-publication-manifest.ts",
 			"extensions/ticket-publication-manifest.ts",
-			"extensions/product-review-publication-recovery.ts",
-			"extensions/qa-handoff-publication-recovery.ts",
 			"extensions/companion-install-manifest.ts",
 			"extensions/delivery-pull-request-workflow.ts",
 		]) {
@@ -211,6 +211,9 @@ async function validateExtracted(packageRoot) {
 				errors,
 			);
 		}
+		errors.push(
+			...(await validatePublicationRecoveryContract(packageRoot, "packed ")),
+		);
 		for (const name of ["define-product", "product-review", "qa-handoff"]) {
 			const skill = await readFile(
 				join(packageRoot, "skills", name, "SKILL.md"),

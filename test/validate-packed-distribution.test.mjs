@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -9,6 +10,22 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const validator = resolve("scripts/validate-packed-distribution.mjs");
+const durablePublicationRecoverySource = readFileSync(
+	resolve("extensions/durable-publication-recovery.ts"),
+	"utf8",
+);
+const productReviewPublicationRecoverySource = readFileSync(
+	resolve("extensions/product-review-publication-recovery.ts"),
+	"utf8",
+);
+const qaHandoffPublicationRecoverySource = readFileSync(
+	resolve("extensions/qa-handoff-publication-recovery.ts"),
+	"utf8",
+);
+const workflowContractsSource = readFileSync(
+	resolve("extensions/workflow-contracts.ts"),
+	"utf8",
+);
 const workflows = [
 	"define-product",
 	"deliver-ticket",
@@ -39,16 +56,22 @@ async function fixtureTarball({ omit, extra = {}, catalogVersion = 1 } = {}) {
 		"scripts/check-acceptance.mjs": "#!/usr/bin/env node\n",
 		"scripts/run-packed-acceptance.mjs": "#!/usr/bin/env node\n",
 		"scripts/validate-release.mjs": "#!/usr/bin/env node\n",
+		"scripts/validate-publication-recovery-contract.mjs": "export {};\n",
 		"extensions/pi-workflow.ts": "export default function extension() {}\n",
 		"extensions/agent-asset-migrations.ts": "export {};\n",
 		"extensions/agent-validator.ts": "export {};\n",
+		"extensions/durable-publication-recovery.ts":
+			durablePublicationRecoverySource,
+		"extensions/product-review-publication-recovery.ts":
+			productReviewPublicationRecoverySource,
+		"extensions/qa-handoff-publication-recovery.ts":
+			qaHandoffPublicationRecoverySource,
+		"extensions/workflow-contracts.ts": workflowContractsSource,
 			...Object.fromEntries(
 			[
 				"extensions/agent-asset-operation.ts",
 				"extensions/approved-revision-publication-manifest.ts",
 				"extensions/ticket-publication-manifest.ts",
-				"extensions/product-review-publication-recovery.ts",
-				"extensions/qa-handoff-publication-recovery.ts",
 				"extensions/companion-install-manifest.ts",
 				"extensions/delivery-pull-request-workflow.ts",
 			].map((relativePath) => [
@@ -129,6 +152,25 @@ test("accepts a supported packed distribution", async () => {
 		const result = await validate(fixture.tarball);
 		assert.equal(result.code, 0, result.stderr);
 		assert.match(result.stdout, /Packed distribution validation passed/);
+	} finally {
+		await rm(fixture.root, { recursive: true, force: true });
+	}
+});
+
+test("rejects an empty packed publication recovery factory", async () => {
+	const fixture = await fixtureTarball({
+		extra: {
+			"extensions/product-review-publication-recovery.ts":
+				"export function createProductReviewPublicationRecoveryStore() { return {}; }\n",
+		},
+	});
+	try {
+		const result = await validate(fixture.tarball);
+		assert.notEqual(result.code, 0);
+		assert.match(
+			result.stderr,
+			/packed product-review publication recovery contract failed: factory does not implement the durable recovery contract/,
+		);
 	} finally {
 		await rm(fixture.root, { recursive: true, force: true });
 	}

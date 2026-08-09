@@ -897,6 +897,18 @@ export function createDefineProductRuntime(
 		DefineProductCommand,
 		{ kind: "approve-approved-revision" | "publish-approved-revision" }
 	>;
+	type PreparedDecision = {
+		readonly decisionId: string;
+		readonly action: TypedDecisionAction;
+	};
+	type DecisionExecutionMessages = {
+		readonly decisionMissing: string;
+		readonly cancelled: string;
+	};
+	const boundDecisionMessages: DecisionExecutionMessages = {
+		decisionMissing: "The active shared decision is required.",
+		cancelled: "The shared decision was cancelled.",
+	};
 
 	let activeDefinitionId: string | undefined;
 	let activeWorkflowStateId: string | undefined;
@@ -909,32 +921,18 @@ export function createDefineProductRuntime(
 	let approvedRevisionCommand: ApprovedRevisionCommand | undefined;
 	let awaitingDomainAnchor = false;
 	let awaitingConfirmation = false;
-	let routeDecision:
-		| {
-				readonly decisionId: string;
-				readonly action: TypedDecisionAction;
-		  }
-		| undefined;
+	let routeDecision: PreparedDecision | undefined;
 	let teamDecision:
 		| {
 				readonly decisionId: string;
 				readonly actions: ReadonlyMap<string, TypedDecisionAction>;
 		  }
 		| undefined;
-	let specDecision:
-		| {
-				readonly decisionId: string;
-				readonly action: TypedDecisionAction;
-		  }
-		| undefined;
+	let specDecision: PreparedDecision | undefined;
 	let specExecutionLease: ExecutionLease | undefined;
-	let ticketDecision:
-		| { readonly decisionId: string; readonly action: TypedDecisionAction }
-		| undefined;
+	let ticketDecision: PreparedDecision | undefined;
 	let ticketExecutionLease: ExecutionLease | undefined;
-	let revisionDecision:
-		| { readonly decisionId: string; readonly action: TypedDecisionAction }
-		| undefined;
+	let revisionDecision: PreparedDecision | undefined;
 	let revisionExecutionLease: ExecutionLease | undefined;
 	let explorationAvailable = false;
 	let awaitingSpecInput = false;
@@ -1022,47 +1020,17 @@ export function createDefineProductRuntime(
 					message: "Route confirmation requires shared decision authority.",
 				},
 			};
-		const actor = decisionActor();
-		if (!actor || !routeDecision)
-			return {
-				status: "blocked",
-				blocker: {
-					code: "PI_WORKFLOW_DECISION_CLAIM_MISSING",
-					message: "Route confirmation requires the active shared decision.",
-				},
-			};
-		const authorization = await dependencies.interactiveDecisions.authorize(
-			routeDecision.decisionId,
-			routeDecision.action,
-			actor,
-		);
-		if (authorization.kind !== "authorized")
-			return authorization.kind === "blocked"
-				? decisionBlocked(authorization.blocker)
-				: {
-						status: "blocked",
-						blocker: {
-							code: "PI_WORKFLOW_DECISION_ACTION_MISMATCH",
-							message: "The route decision was cancelled.",
-						},
-					};
-		const manifest = {
-			ref: `workflow://define-product/${recommendation.definitionId}/route/${recommendation.digest}`,
-			decisionId: authorization.lease.decisionId,
-			operationDigest: authorization.lease.operationDigest,
-			executionId: authorization.lease.executionId,
-			generation: authorization.lease.generation,
-		};
-		const bound = await dependencies.interactiveDecisions.bindExecutionManifest(
-			authorization.lease,
-			manifest,
-		);
-		if (bound.kind === "blocked") return decisionBlocked(bound.blocker);
-		const effect = await dependencies.interactiveDecisions.authorizeEffect(
-			authorization.lease,
-		);
-		if (effect.kind === "blocked") return decisionBlocked(effect.blocker);
-		return undefined;
+		const manifestRef = `workflow://define-product/${recommendation.definitionId}/route/${recommendation.digest}`;
+		const authority = await authorizeDecisionExecution({
+			decision: routeDecision,
+			manifestRef,
+			messages: {
+				decisionMissing:
+					"Route confirmation requires the active shared decision.",
+				cancelled: "The route decision was cancelled.",
+			},
+		});
+		return "executionId" in authority ? undefined : authority;
 	}
 
 	async function prepareTeamDecision(
@@ -1094,49 +1062,21 @@ export function createDefineProductRuntime(
 					message: "Spec generation requires shared decision authority.",
 				},
 			};
-		const actor = decisionActor();
 		const action = teamDecision?.actions.get(teamId);
-		if (!actor || !action || !teamDecision)
-			return {
-				status: "blocked",
-				blocker: {
-					code: "PI_WORKFLOW_DECISION_CLAIM_MISSING",
-					message: "Spec generation requires the active shared team decision.",
-				},
-			};
-		const authorization = await dependencies.interactiveDecisions.authorize(
-			teamDecision.decisionId,
-			action,
-			actor,
-		);
-		if (authorization.kind !== "authorized")
-			return authorization.kind === "blocked"
-				? decisionBlocked(authorization.blocker)
-				: {
-						status: "blocked",
-						blocker: {
-							code: "PI_WORKFLOW_DECISION_ACTION_MISMATCH",
-							message: "The team decision was cancelled.",
-						},
-					};
-		const manifest = {
-			ref: `workflow://define-product/${activeDefinitionId}/spec-draft/${teamId}`,
-			decisionId: authorization.lease.decisionId,
-			operationDigest: authorization.lease.operationDigest,
-			executionId: authorization.lease.executionId,
-			generation: authorization.lease.generation,
-		};
-		const bound = await dependencies.interactiveDecisions.bindExecutionManifest(
-			authorization.lease,
-			manifest,
-		);
-		if (bound.kind === "blocked") return decisionBlocked(bound.blocker);
-		const effect = await dependencies.interactiveDecisions.authorizeEffect(
-			authorization.lease,
-		);
-		return effect.kind === "blocked"
-			? decisionBlocked(effect.blocker)
-			: undefined;
+		const manifestRef = `workflow://define-product/${activeDefinitionId}/spec-draft/${teamId}`;
+		const authority = await authorizeDecisionExecution({
+			decision:
+				teamDecision && action
+					? { decisionId: teamDecision.decisionId, action }
+					: undefined,
+			manifestRef,
+			messages: {
+				decisionMissing:
+					"Spec generation requires the active shared team decision.",
+				cancelled: "The team decision was cancelled.",
+			},
+		});
+		return "executionId" in authority ? undefined : authority;
 	}
 
 	async function prepareSpecDecision(
@@ -1168,47 +1108,18 @@ export function createDefineProductRuntime(
 					message: "Spec approval requires shared decision authority.",
 				},
 			};
-		const actor = decisionActor();
-		if (!actor || !specDecision || !approveSpecCommand)
-			return {
-				status: "blocked",
-				blocker: {
-					code: "PI_WORKFLOW_DECISION_CLAIM_MISSING",
-					message: "Spec approval requires the active shared decision.",
-				},
-			};
-		const authorization = await dependencies.interactiveDecisions.authorize(
-			specDecision.decisionId,
-			specDecision.action,
-			actor,
-		);
-		if (authorization.kind !== "authorized")
-			return authorization.kind === "blocked"
-				? decisionBlocked(authorization.blocker)
-				: {
-						status: "blocked",
-						blocker: {
-							code: "PI_WORKFLOW_DECISION_ACTION_MISMATCH",
-							message: "The Spec publication decision was cancelled.",
-						},
-					};
-		const manifest = {
-			ref: `workflow://define-product/${activeDefinitionId}/spec-publication/${approveSpecCommand.digest}`,
-			decisionId: authorization.lease.decisionId,
-			operationDigest: authorization.lease.operationDigest,
-			executionId: authorization.lease.executionId,
-			generation: authorization.lease.generation,
-		};
-		const bound = await dependencies.interactiveDecisions.bindExecutionManifest(
-			authorization.lease,
-			manifest,
-		);
-		if (bound.kind === "blocked") return decisionBlocked(bound.blocker);
-		const effect = await dependencies.interactiveDecisions.authorizeEffect(
-			authorization.lease,
-		);
-		if (effect.kind === "blocked") return decisionBlocked(effect.blocker);
-		specExecutionLease = authorization.lease;
+		const command = approveSpecCommand;
+		const manifestRef = `workflow://define-product/${activeDefinitionId}/spec-publication/${command?.digest ?? "missing"}`;
+		const authority = await authorizeDecisionExecution({
+			decision: command ? specDecision : undefined,
+			manifestRef,
+			messages: {
+				decisionMissing: "Spec approval requires the active shared decision.",
+				cancelled: "The Spec publication decision was cancelled.",
+			},
+		});
+		if (!("executionId" in authority)) return authority;
+		specExecutionLease = authority;
 		return undefined;
 	}
 
@@ -1257,24 +1168,25 @@ export function createDefineProductRuntime(
 		return { decisionId: presentation.decisionId, action: input.action };
 	}
 
-	async function authorizeBoundDecision(
-		decision:
-			| { readonly decisionId: string; readonly action: TypedDecisionAction }
-			| undefined,
-		manifestRef: string,
+	async function authorizeDecisionExecution(input: {
+		readonly decision: PreparedDecision | undefined;
+		readonly manifestRef: string;
+		readonly messages?: DecisionExecutionMessages;
+	}
 	): Promise<ExecutionLease | DefineProductOutcome> {
+		const messages = input.messages ?? boundDecisionMessages;
 		const actor = decisionActor();
-		if (!dependencies.interactiveDecisions || !actor || !decision)
+		if (!dependencies.interactiveDecisions || !actor || !input.decision)
 			return {
 				status: "blocked",
 				blocker: {
 					code: "PI_WORKFLOW_DECISION_CLAIM_MISSING",
-					message: "The active shared decision is required.",
+					message: messages.decisionMissing,
 				},
 			};
 		const authorization = await dependencies.interactiveDecisions.authorize(
-			decision.decisionId,
-			decision.action,
+			input.decision.decisionId,
+			input.decision.action,
 			actor,
 		);
 		if (authorization.kind !== "authorized")
@@ -1284,11 +1196,11 @@ export function createDefineProductRuntime(
 						status: "blocked",
 						blocker: {
 							code: "PI_WORKFLOW_DECISION_ACTION_MISMATCH",
-							message: "The shared decision was cancelled.",
+							message: messages.cancelled,
 						},
 					};
 		const manifest = {
-			ref: manifestRef,
+			ref: input.manifestRef,
 			decisionId: authorization.lease.decisionId,
 			operationDigest: authorization.lease.operationDigest,
 			executionId: authorization.lease.executionId,
@@ -2400,10 +2312,12 @@ export function createDefineProductRuntime(
 						};
 					}
 					{
-						const authority = await authorizeBoundDecision(
-							ticketDecision,
-							`workflow://define-product/${activeDefinitionId}/ticket-publication/${approveTicketsCommand.digest}`,
-						);
+						const publicationDigest = approveTicketsCommand.digest;
+						const manifestRef = `workflow://define-product/${activeDefinitionId}/ticket-publication/${publicationDigest}`;
+						const authority = await authorizeDecisionExecution({
+							decision: ticketDecision,
+							manifestRef,
+						});
 						if (!("executionId" in authority))
 							return {
 								content: [
@@ -2432,10 +2346,16 @@ export function createDefineProductRuntime(
 					}
 					if (dependencies.ticketMcpPublication) {
 						if (!ticketExecutionLease) {
-							const authority = await authorizeBoundDecision(
-								ticketDecision,
-								`workflow://define-product/${activeDefinitionId}/ticket-publication/${isRecord(ticketDecision?.action.input) && typeof ticketDecision.action.input.graphDigest === "string" ? ticketDecision.action.input.graphDigest : "missing"}`,
-							);
+							const graphDigest =
+								isRecord(ticketDecision?.action.input) &&
+								typeof ticketDecision.action.input.graphDigest === "string"
+									? ticketDecision.action.input.graphDigest
+									: "missing";
+							const manifestRef = `workflow://define-product/${activeDefinitionId}/ticket-publication/${graphDigest}`;
+							const authority = await authorizeDecisionExecution({
+								decision: ticketDecision,
+								manifestRef,
+							});
 							if (!("executionId" in authority))
 								return {
 									content: [
@@ -2515,10 +2435,12 @@ export function createDefineProductRuntime(
 						};
 					}
 					{
-						const authority = await authorizeBoundDecision(
-							revisionDecision,
-							`workflow://define-product/${activeDefinitionId}/approved-revision-publication/${approvedRevisionCommand.digest}`,
-						);
+						const publicationDigest = approvedRevisionCommand.digest;
+						const manifestRef = `workflow://define-product/${activeDefinitionId}/approved-revision-publication/${publicationDigest}`;
+						const authority = await authorizeDecisionExecution({
+							decision: revisionDecision,
+							manifestRef,
+						});
 						if (!("executionId" in authority))
 							return {
 								content: [
@@ -2557,10 +2479,11 @@ export function createDefineProductRuntime(
 						const draftDigest = isRecord(revisionDecision?.action.input)
 							? revisionDecision.action.input.draftDigest
 							: undefined;
-						const authority = await authorizeBoundDecision(
-							revisionDecision,
-							`workflow://define-product/${activeDefinitionId}/approved-revision-publication/${typeof draftDigest === "string" ? draftDigest : "missing"}`,
-						);
+						const manifestRef = `workflow://define-product/${activeDefinitionId}/approved-revision-publication/${typeof draftDigest === "string" ? draftDigest : "missing"}`;
+						const authority = await authorizeDecisionExecution({
+							decision: revisionDecision,
+							manifestRef,
+						});
 						if (!("executionId" in authority))
 							return {
 								content: [

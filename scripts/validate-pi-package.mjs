@@ -6,6 +6,7 @@ import process from "node:process";
 import { loadSkillsFromDir } from "@earendil-works/pi-coding-agent";
 import { parse as parseYaml } from "yaml";
 import { publicWorkflowCatalog } from "./public-workflow-catalog.mjs";
+import { validatePublicationRecoveryContract } from "./validate-publication-recovery-contract.mjs";
 
 const root = process.cwd();
 const packageJsonPath = path.join(root, "package.json");
@@ -626,8 +627,6 @@ try {
 		"extensions/agent-asset-operation.ts",
 		"extensions/approved-revision-publication-manifest.ts",
 		"extensions/ticket-publication-manifest.ts",
-		"extensions/product-review-publication-recovery.ts",
-		"extensions/qa-handoff-publication-recovery.ts",
 		"extensions/companion-install-manifest.ts",
 		"extensions/delivery-pull-request-workflow.ts",
 	];
@@ -638,6 +637,7 @@ try {
 			`${relativePath} must validate executionId and generation evidence`,
 		);
 	}
+	errors.push(...(await validatePublicationRecoveryContract(root)));
 
 	const activeSources = Object.fromEntries(
 		await Promise.all(
