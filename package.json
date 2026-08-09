@@ -27,6 +27,7 @@
   },
   "files": [
     "README.md",
+	"docs/design/interactive-decision-inventory.md",
     "scripts/**/*.mjs",
     "tools/pi-sandbox.mjs",
     "package.json",

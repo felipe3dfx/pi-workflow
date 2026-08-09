@@ -2,14 +2,20 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, readFile, realpath, rm } from "node:fs/promises";
-import { homedir, hostname } from "node:os";
+import { homedir, hostname, userInfo } from "node:os";
 import { dirname, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 
 import { createAgentAssetSync } from "../extensions/agent-asset-sync.ts";
 import { createAgentAssetFilesystem } from "../extensions/agent-asset-filesystem.ts";
+import {
+	createEngramDecisionStore,
+	createInteractiveDecisions,
+} from "../extensions/interactive-decisions.ts";
+import { createPiDecisionAdapter } from "../extensions/pi-decision-adapter.ts";
 import { runSyncCommand } from "../extensions/pi-workflow-sync.ts";
+import { createRuntimeEngramArtifactStore } from "../extensions/runtime-engram-store.ts";
 
 const packageDirectory = fileURLToPath(new URL("..", import.meta.url));
 const agentHome = resolve(
@@ -141,6 +147,160 @@ const filesystem = {
 };
 const controller = new AbortController();
 process.once("SIGINT", () => controller.abort());
+const decisionAdapter = createPiDecisionAdapter();
+const interactiveDecisions = createInteractiveDecisions({
+	store: createEngramDecisionStore({
+		store: createRuntimeEngramArtifactStore({
+			directory: () => agentHome,
+			sessionId: () => `pi-workflow-sync-${process.pid}`,
+		}),
+		project: "pi-workflow",
+	}),
+	claimSource: decisionAdapter.claimSource,
+});
+const localUser = userInfo();
+const actor = {
+	actorId: `local:${localUser.uid ?? localUser.username}@${hostname()}`,
+	authorityRevision: "local-os/v1",
+	active: true,
+	guest: false,
+};
+let decisionSequence = 0;
+
+async function decide(descriptor) {
+	if (!process.stdin.isTTY || !process.stdout.isTTY)
+		return {
+			kind: "blocked",
+			blocker: {
+				code: "PI_WORKFLOW_DECISION_STORE_UNAVAILABLE",
+				message:
+					"Interactive sync decisions require a terminal; no files were changed.",
+			},
+		};
+	let recovery = await interactiveDecisions.recover(
+		descriptor.request.scope,
+		actor,
+	);
+	if (recovery.kind === "active")
+		recovery = await interactiveDecisions.recover(
+			descriptor.request.scope,
+			actor,
+			{ kind: "resume", request: descriptor.request },
+		);
+	if (recovery.kind === "authorized") {
+		if (
+			JSON.stringify(recovery.lease.action) !==
+			JSON.stringify(descriptor.action)
+		)
+			return {
+				kind: "blocked",
+				blocker: {
+					code: "PI_WORKFLOW_DECISION_ACTION_MISMATCH",
+					message:
+						"Recovered sync authority does not match the requested operation.",
+				},
+			};
+		return {
+			kind: "authorized",
+			lease: recovery.lease,
+			manifest: recovery.manifest,
+		};
+	}
+	if (
+		recovery.kind === "cancelled" ||
+		recovery.kind === "superseded" ||
+		recovery.kind === "terminal"
+	)
+		return {
+			kind: "blocked",
+			blocker: {
+				code: "PI_WORKFLOW_DECISION_REPLAY",
+				message: `Sync decision is already ${recovery.kind}.`,
+			},
+		};
+	if (recovery.kind === "blocked")
+		return { kind: "blocked", blocker: recovery.blocker };
+	const presentation =
+		recovery.kind === "reapproval" || recovery.kind === "drift"
+			? recovery.presentation
+			: await interactiveDecisions.prepare(descriptor.request);
+	const claimBinding = await interactiveDecisions.claimBinding(
+		presentation.decisionId,
+	);
+	if (!claimBinding)
+		return {
+			kind: "blocked",
+			blocker: {
+				code: "PI_WORKFLOW_DECISION_CLAIM_MISSING",
+				message:
+					"The sync decision could not establish a fresh presentation claim.",
+			},
+		};
+	decisionSequence += 1;
+	const correlation = {
+		sessionId: `pi-workflow-sync-${process.pid}`,
+		runId: randomUUID(),
+		sequence: decisionSequence,
+	};
+	const prompt = decisionAdapter.present({
+		...correlation,
+		actor,
+		claimBinding,
+		presentation,
+		capability: { hasUI: false, activeTools: [] },
+	});
+	process.stdout.write(`${prompt.text}\n`);
+	const input = createInterface({
+		input: process.stdin,
+		output: process.stdout,
+	});
+	try {
+		let answer;
+		try {
+			answer = await input.question("Selection: ");
+		} catch (error) {
+			if (controller.signal.aborted) return { kind: "cancelled" };
+			throw error;
+		}
+		const claimed = decisionAdapter.handleFallbackResponse({
+			...correlation,
+			text: answer,
+		});
+		if (claimed !== "claimed")
+			return claimed === "cancelled"
+				? { kind: "cancelled" }
+				: {
+						kind: "blocked",
+						blocker: {
+							code: "PI_WORKFLOW_DECISION_CLAIM_MISSING",
+							message:
+								"The numbered response did not select a presented sync action.",
+						},
+					};
+		const choice = presentation.choices[Number(answer.trim()) - 1];
+		if (!choice)
+			return {
+				kind: "blocked",
+				blocker: {
+					code: "PI_WORKFLOW_DECISION_ACTION_MISMATCH",
+					message: "The selected sync action is unavailable.",
+				},
+			};
+		const authorization = await interactiveDecisions.authorize(
+			presentation.decisionId,
+			choice.actionId === descriptor.action.id
+				? descriptor.action
+				: { id: "decision.cancel", input: null },
+			actor,
+		);
+		if (authorization.kind === "authorized") return authorization;
+		if (authorization.kind === "cancelled") return { kind: "cancelled" };
+		return { kind: "blocked", blocker: authorization.blocker };
+	} finally {
+		input.close();
+		decisionAdapter.resetSession(correlation.sessionId);
+	}
+}
 
 function writeCanceled() {
 	process.stdout.write(
@@ -195,24 +355,10 @@ try {
 					".pi-workflow",
 					"sync-operations",
 				),
-				nonce: () => randomUUID(),
+				interactiveDecisions,
 			}),
 			write: (text) => process.stdout.write(`${text}\n`),
-			confirm: async (plan) => {
-				if (!process.stdin.isTTY || !process.stdout.isTTY) return false;
-				const prompt = createInterface({
-					input: process.stdin,
-					output: process.stdout,
-				});
-				try {
-					const answer = await prompt.question(
-						`Apply ${plan.actions.length} package-owned agent asset change(s) from plan ${plan.digest}? [y/N] `,
-					);
-					return answer.trim().toLowerCase() === "y";
-				} finally {
-					prompt.close();
-				}
-			},
+			decide,
 			signal: controller.signal,
 		});
 } catch (error) {

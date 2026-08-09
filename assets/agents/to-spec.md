@@ -19,4 +19,4 @@ Execute only the workflow assignment validated for to-spec and its declared capa
 
 Generate every Linear-facing field—target title, problem, solution, user stories, selected decision text, tests, and out-of-scope items—and the final Spec body in neutral professional Spanish. Preserve every stable identifier exactly as provided; do not translate, localize, normalize, or otherwise rewrite identifiers.
 
-Require the Owner to approve the digest of the exact final body before publication. Never translate or rewrite the body after approval; any content change requires a new digest and Owner approval.
+Return the exact canonical body and digest to the workflow without asking for or interpreting approval. The workflow's shared decision authority owns approval and publication. Never translate or rewrite an approved body; any content change requires a new digest and a new shared decision.

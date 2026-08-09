@@ -8,6 +8,10 @@ import type {
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 import {
+	createCompanionInstallManifestStore,
+	type CompanionInstallManifestStore,
+} from "./companion-install-manifest.ts";
+import {
 	createCompanionWorkflow,
 	type CompanionWorkflowOptions,
 } from "./companion-workflow.ts";
@@ -33,24 +37,22 @@ import {
 	createQaHandoffDraftStore,
 	type QaHandoffDraftStore,
 } from "./qa-handoff-draft-store.ts";
-import type {
-	createQaHandoffWorkflow,
-	QaHandoffArtifactStore,
-} from "./qa-handoff-workflow.ts";
+import type { QaHandoffArtifactStore } from "./qa-handoff-workflow.ts";
 import { createQaHandoffRuntime } from "./qa-handoff-runtime.ts";
-import type { createProductReviewWorkflow } from "./product-review-workflow.ts";
 import { createProductReviewRuntime } from "./product-review-runtime.ts";
 import { createRuntimeEngramArtifactStore } from "./runtime-engram-store.ts";
 import type { SingleUserAuthoritySession } from "./single-user-authority.ts";
 import {
 	createPiDecisionAdapter,
 	type PiDecisionAdapter,
+	type PiInteractiveDecisions,
 	registerPiDecisionAdapter,
 } from "./pi-decision-adapter.ts";
 import {
 	createEngramDecisionStore,
 	createInteractiveDecisions,
 	type DecisionStore,
+	type ManifestLookup,
 } from "./interactive-decisions.ts";
 import { registerPublicEntryGuard } from "./public-entry-guard.ts";
 import type {
@@ -61,46 +63,49 @@ import { createWorkflowDiagnostics } from "./workflow-diagnostics.ts";
 
 function createWorkflow(
 	pi: ExtensionAPI,
-	ctx: ExtensionCommandContext,
+	getContext: () => ExtensionCommandContext | ExtensionContext | undefined,
 	workflowOptions: CompanionWorkflowOptions = {},
 ) {
 	return createCompanionWorkflow({
 		catalog: workflowOptions.catalog,
 		interaction: {
-			// exec comes first so tests can override it via workflowOptions.interaction
-			// (the spread below); notify/confirm are intentionally locked after the
-			// spread so callers cannot swap out the real UI adapters.
+			// exec comes first so tests can override it via workflowOptions.interaction.
 			exec: (command, args) => pi.exec(command, args ?? []),
 			...workflowOptions.interaction,
-			notify: (message, level) => ctx.ui.notify(message, level),
-			confirm:
-				ctx.hasUI && ctx.ui.confirm
-					? (title, message) =>
-							ctx.ui.confirm?.(title, message) ?? Promise.resolve(false)
-					: undefined,
+			notify: (message, level) => getContext()?.ui.notify(message, level),
 		},
 		diagnostics: {
 			exec: (command, args) => pi.exec(command, args ?? []),
-			cwd: () => process.cwd(),
+			cwd: () => getContext()?.cwd ?? process.cwd(),
 			...workflowOptions.diagnostics,
 		},
 		mcp: workflowOptions.mcp,
+		authority: workflowOptions.authority,
 	});
 }
 
 const diagnosticUsage =
 	"Usage: /pi-workflow-<status|doctor> <installation|product <teamId>|delivery <issueId>|qa-handoff <issueId>|product-review <issueId>>";
 
-export function parseDiagnosticScope(args: string): DiagnosticScope | undefined {
+export function parseDiagnosticScope(
+	args: string,
+): DiagnosticScope | undefined {
 	const parts = args.trim().split(/\s+/).filter(Boolean);
-	if (parts.length === 1 && parts[0] === "installation") return { kind: "installation" };
+	if (parts.length === 1 && parts[0] === "installation")
+		return { kind: "installation" };
 	if (parts.length !== 2 || !parts[1]) return undefined;
 	if (parts[0] === "product") return { kind: "product", teamId: parts[1] };
 	if (parts[0] === "delivery" && /^[A-Z][A-Z0-9]*-[1-9][0-9]*$/.test(parts[1]))
 		return { kind: "delivery", issueId: parts[1] };
-	if (parts[0] === "qa-handoff" && /^[A-Z][A-Z0-9]*-[1-9][0-9]*$/.test(parts[1]))
+	if (
+		parts[0] === "qa-handoff" &&
+		/^[A-Z][A-Z0-9]*-[1-9][0-9]*$/.test(parts[1])
+	)
 		return { kind: "qa-handoff", issueId: parts[1] };
-	if (parts[0] === "product-review" && /^[A-Z][A-Z0-9]*-[1-9][0-9]*$/.test(parts[1]))
+	if (
+		parts[0] === "product-review" &&
+		/^[A-Z][A-Z0-9]*-[1-9][0-9]*$/.test(parts[1])
+	)
 		return { kind: "product-review", issueId: parts[1] };
 	return undefined;
 }
@@ -116,7 +121,6 @@ export interface PiWorkflowExtensionOptions extends CompanionWorkflowOptions {
 		runtime?: DefaultDefineProductRuntimeOptions;
 	};
 	qaHandoff?: {
-		workflow?: ReturnType<typeof createQaHandoffWorkflow>;
 		drafts?: QaHandoffDraftStore;
 		artifacts?: QaHandoffArtifactStore;
 		/** Infrastructure-only recovery adapter; public commands and tools are unchanged. */
@@ -125,13 +129,14 @@ export interface PiWorkflowExtensionOptions extends CompanionWorkflowOptions {
 		toolIdentityReservationCapacity?: number;
 	};
 	productReview?: {
-		workflow?: ReturnType<typeof createProductReviewWorkflow>;
 		runtime?: DefaultProductReviewRuntimeOptions;
 	};
 	interactiveDecisions?: {
 		adapter?: PiDecisionAdapter;
 		store?: DecisionStore;
 		createExecutionId?: () => string;
+		manifestLookup?: ManifestLookup;
+		companionManifests?: CompanionInstallManifestStore;
 	};
 }
 
@@ -165,31 +170,54 @@ export default function piWorkflowExtension(
 	});
 	const decisionAdapter =
 		workflowOptions.interactiveDecisions?.adapter ?? createPiDecisionAdapter();
-	const interactiveDecisions = registerPiDecisionAdapter(
-		pi,
-		decisionAdapter,
-		createInteractiveDecisions({
-			store:
-				workflowOptions.interactiveDecisions?.store ??
-				createEngramDecisionStore({
-					store: interactiveDecisionArtifactStore,
-					project: () => projectName(currentCtx?.cwd ?? process.cwd()),
-				}),
-			claimSource: decisionAdapter.claimSource,
-			createExecutionId:
-				workflowOptions.interactiveDecisions?.createExecutionId,
-		}),
-		() => currentCtx,
-	);
+	const interactiveDecisionService = createInteractiveDecisions({
+		store:
+			workflowOptions.interactiveDecisions?.store ??
+			createEngramDecisionStore({
+				store: interactiveDecisionArtifactStore,
+				project: () => projectName(currentCtx?.cwd ?? process.cwd()),
+			}),
+		claimSource: decisionAdapter.claimSource,
+		manifestLookup: workflowOptions.interactiveDecisions?.manifestLookup,
+		createExecutionId: workflowOptions.interactiveDecisions?.createExecutionId,
+	});
+	let registeredInteractiveDecisions: PiInteractiveDecisions | undefined;
+	const interactiveDecisions: PiInteractiveDecisions = {
+		prepare: (...args) => {
+			if (!registeredInteractiveDecisions)
+				throw new Error("Interactive decision adapter is not registered.");
+			return registeredInteractiveDecisions.prepare(...args);
+		},
+		authorize: (...args) => {
+			if (!registeredInteractiveDecisions)
+				throw new Error("Interactive decision adapter is not registered.");
+			return registeredInteractiveDecisions.authorize(...args);
+		},
+		bindExecutionManifest: (...args) => {
+			if (!registeredInteractiveDecisions)
+				throw new Error("Interactive decision adapter is not registered.");
+			return registeredInteractiveDecisions.bindExecutionManifest(...args);
+		},
+		authorizeEffect: (...args) => {
+			if (!registeredInteractiveDecisions)
+				throw new Error("Interactive decision adapter is not registered.");
+			return registeredInteractiveDecisions.authorizeEffect(...args);
+		},
+		hasActiveDecision: (...args) =>
+			registeredInteractiveDecisions?.hasActiveDecision(...args) ?? false,
+		recover: (...args) => {
+			if (!registeredInteractiveDecisions)
+				throw new Error("Interactive decision adapter is not registered.");
+			return registeredInteractiveDecisions.recover(...args);
+		},
+	};
 
 	const defineProductWorkflow =
 		workflowOptions.defineProduct?.workflow ??
-		createDefaultDefineProductWorkflow(
-			pi,
-			() => currentCtx,
-			workflowOptions.defineProduct?.runtime,
-		);
-	const configuredQaHandoffWorkflow = workflowOptions.qaHandoff?.workflow;
+		createDefaultDefineProductWorkflow(pi, () => currentCtx, {
+			...workflowOptions.defineProduct?.runtime,
+			interactiveDecisions,
+		});
 	const qaHandoffWorkflowArtifactStore = createRuntimeEngramArtifactStore({
 		sessionId: () => currentCtx?.sessionManager.getSessionId(),
 		directory: () => currentCtx?.cwd ?? process.cwd(),
@@ -223,30 +251,25 @@ export default function piWorkflowExtension(
 			store: qaHandoffWorkflowArtifactStore,
 			project: () => projectName(currentCtx?.cwd ?? process.cwd()),
 		});
-	const qaHandoffRuntime = createQaHandoffRuntime(
-		configuredQaHandoffWorkflow
-			? { workflow: configuredQaHandoffWorkflow }
-			: {
-					mcpPublication: createQaHandoffMcpPublication({
-						drafts: qaHandoffDrafts,
-						artifacts: qaHandoffArtifacts,
-						recovery: qaHandoffRecovery,
-						toolIdentityReservationCapacity:
-							workflowOptions.qaHandoff?.toolIdentityReservationCapacity,
-					}),
-				},
-	);
+	const qaHandoffRuntime = createQaHandoffRuntime({
+		mcpPublication: createQaHandoffMcpPublication({
+			drafts: qaHandoffDrafts,
+			artifacts: qaHandoffArtifacts,
+			recovery: qaHandoffRecovery,
+			project: projectName(currentCtx?.cwd ?? process.cwd()),
+			interactiveDecisions,
+			toolIdentityReservationCapacity:
+				workflowOptions.qaHandoff?.toolIdentityReservationCapacity,
+		}),
+	});
 	qaHandoffRuntime.register(pi);
-	const productReviewRuntime = createProductReviewRuntime(
-		workflowOptions.productReview?.workflow
-			? { workflow: workflowOptions.productReview.workflow }
-			: {
-					mcpPublication: createDefaultProductReviewMcpPublication(
-						() => currentCtx,
-						workflowOptions.productReview?.runtime,
-					),
-				},
-	);
+	const productReviewRuntime = createProductReviewRuntime({
+		mcpPublication: createDefaultProductReviewMcpPublication(
+			() => currentCtx,
+			interactiveDecisions,
+			workflowOptions.productReview?.runtime,
+		),
+	});
 	productReviewRuntime.register(pi);
 	const defaultDefineProductMcpPublication =
 		"mcpPublication" in defineProductWorkflow
@@ -268,6 +291,8 @@ export default function piWorkflowExtension(
 			: undefined;
 	const defineProductRuntime = createDefineProductRuntime({
 		workflow: defineProductWorkflow,
+		project: projectName(currentCtx?.cwd ?? process.cwd()),
+		interactiveDecisions,
 		createDefinitionId:
 			workflowOptions.defineProduct?.createDefinitionId ??
 			(() => crypto.randomUUID()),
@@ -282,6 +307,52 @@ export default function piWorkflowExtension(
 			: {}),
 	});
 	defineProductRuntime.register(pi);
+	let companionWorkflow!: ReturnType<typeof createCompanionWorkflow>;
+	registeredInteractiveDecisions = registerPiDecisionAdapter(
+		pi,
+		decisionAdapter,
+		interactiveDecisionService,
+		() => currentCtx,
+		undefined,
+		async () => {
+			await companionWorkflow.continuePending();
+		},
+	);
+	const companionManifests =
+		workflowOptions.interactiveDecisions?.companionManifests ??
+		createCompanionInstallManifestStore({
+			store: interactiveDecisionArtifactStore,
+			project: () => projectName(currentCtx?.cwd ?? process.cwd()),
+		});
+	companionWorkflow = createWorkflow(pi, () => currentCtx, {
+		catalog: workflowOptions.catalog,
+		interaction: workflowOptions.interaction,
+		diagnostics: workflowOptions.diagnostics,
+		mcp: workflowOptions.mcp,
+		authority:
+			workflowOptions.authority ??
+			{
+				project: () => projectName(currentCtx?.cwd ?? process.cwd()),
+				actor: () => {
+					const sessionId = currentCtx?.sessionManager?.getSessionId?.();
+					return sessionId
+						? {
+								actorId: `pi-session:${sessionId}`,
+								authorityRevision: `pi-session:${sessionId}/v1`,
+								active: true as const,
+								guest: false as const,
+							}
+						: undefined;
+				},
+				hasUI: () => currentCtx?.hasUI === true,
+				decisions: interactiveDecisions,
+				manifests: companionManifests,
+				requestTurn: () =>
+					pi.sendUserMessage(
+						"Present the pending pi-workflow companion installation decision.",
+					),
+			},
+	});
 	registerPublicEntryGuard(pi, {
 		"define-product": {
 			status: "implemented",
@@ -289,12 +360,16 @@ export default function piWorkflowExtension(
 			continueIf: (event) => defineProductRuntime.shouldContinue(event),
 			hasActiveAuthorization: () => defineProductRuntime.hasActiveTurn(),
 			retainAfterSettled: true,
+			hasActiveDecision: () =>
+				interactiveDecisions.hasActiveDecision("define-product"),
 			onAdmittedInput: (event) => defineProductRuntime.handlePublicEntry(event),
 		},
 		"deliver-ticket": { status: "pending" },
 		"qa-handoff": {
 			status: "implemented",
 			allowedTools: qaHandoffRuntime.allowedTools,
+			hasActiveDecision: () =>
+				interactiveDecisions.hasActiveDecision("qa-handoff"),
 			continueIf: (event) => qaHandoffRuntime.shouldContinue(event),
 			hasActiveAuthorization: () => qaHandoffRuntime.hasActiveTurn(),
 			onAdmittedInput: (event) => qaHandoffRuntime.handlePublicEntry(event),
@@ -303,6 +378,8 @@ export default function piWorkflowExtension(
 		"product-review": {
 			status: "implemented",
 			allowedTools: productReviewRuntime.allowedTools,
+			hasActiveDecision: () =>
+				interactiveDecisions.hasActiveDecision("product-review"),
 			continueIf: (event) => productReviewRuntime.shouldContinue(event),
 			hasActiveAuthorization: () => productReviewRuntime.hasActiveTurn(),
 			retainAfterSettled: true,
@@ -328,14 +405,14 @@ export default function piWorkflowExtension(
 				ctx.ui.notify(diagnosticUsage, "error");
 				return;
 			}
-			await createWorkflow(pi, ctx, workflowOptions)[
+			currentCtx = ctx;
+			await companionWorkflow[
 				mode === "status" ? "inspect" : "diagnose"
 			]();
 			return;
 		}
-		const report = await diagnostics[
-			mode === "status" ? "inspect" : "diagnose"
-		](scope);
+		const report =
+			await diagnostics[mode === "status" ? "inspect" : "diagnose"](scope);
 		ctx.ui.notify(
 			JSON.stringify(report, null, 2),
 			report.readiness === "ready"
@@ -360,7 +437,8 @@ export default function piWorkflowExtension(
 		description:
 			"Confirm and install missing or mismatched pi-workflow companion packages",
 		handler: async (_args, ctx) => {
-			await createWorkflow(pi, ctx, workflowOptions).installMissing();
+			currentCtx = ctx;
+			await companionWorkflow.installMissing();
 		},
 	});
 	return { interactiveDecisions };

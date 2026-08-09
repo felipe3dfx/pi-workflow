@@ -18,6 +18,15 @@ import {
 } from "./product-review-workflow.ts";
 import { createSingleUserAuthoritySession } from "./single-user-authority.ts";
 import { canonicalJson } from "./workflow-contracts.ts";
+import type {
+	AuthenticatedDecisionActor,
+	DecisionBlocker,
+	DecisionRequest,
+	ExecutionLease,
+	ExecutionManifestBinding,
+	TypedDecisionAction,
+} from "./interactive-decisions.ts";
+import type { PiInteractiveDecisions } from "./pi-decision-adapter.ts";
 
 export namespace ProductReviewMcpPublication {
 	export interface Blocker {
@@ -33,6 +42,11 @@ export namespace ProductReviewMcpPublication {
 
 	export interface ContinuingReview {
 		readonly status: "continuing";
+	}
+
+	export interface CancelledReview {
+		readonly status: "cancelled";
+		readonly issueId: string;
 	}
 
 	export interface ExpectedCall {
@@ -58,6 +72,8 @@ export interface ProductReviewMcpPublicationDependencies {
 	readonly drafts: ProductReviewDraftReader;
 	readonly artifacts: ProductReviewArtifactStore;
 	readonly recovery: ProductReviewPublicationRecoveryStore;
+	readonly project: string;
+	readonly interactiveDecisions: PiInteractiveDecisions;
 	/** Explicit compatibility policy. Default single-user execution derives authority from Linear. */
 	readonly owner?: {
 		readonly actorId: string;
@@ -78,7 +94,6 @@ export interface ProductReviewMcpPublication {
 	clear(): void;
 	hasActiveTurn(): boolean;
 	hasPendingOwnerSelection(): boolean;
-	select(input: unknown): ProductReviewMcpPublication.Blocker | undefined;
 	expectedModelCall(): ProductReviewMcpPublication.ExpectedCall | undefined;
 	nextCallInstruction(): string | undefined;
 	handleToolCall(
@@ -91,7 +106,8 @@ export interface ProductReviewMcpPublication {
 		input: unknown,
 	): Promise<
 		| ProductReviewMcpPublication.PublishedReview
-		| ProductReviewMcpPublication.ContinuingReview
+			| ProductReviewMcpPublication.ContinuingReview
+			| ProductReviewMcpPublication.CancelledReview
 		| ProductReviewMcpPublication.Blocker
 	>;
 }
@@ -154,6 +170,10 @@ function selectedResult(value: unknown): ProductReviewResult | undefined {
 	)
 		return undefined;
 	return value.result;
+}
+
+function cancellationSelected(value: unknown): boolean {
+	return exactInput(value, { action: "cancel_decision" });
 }
 
 function nonEmpty(value: unknown): value is string {
@@ -286,11 +306,16 @@ interface PreparedContext {
 	readonly choices: Readonly<
 		Record<ProductReviewResult, ProtectedProductReviewArtifact>
 	>;
+	readonly decision: {
+		readonly decisionId: string;
+		readonly actions: Readonly<Record<ProductReviewResult, TypedDecisionAction>>;
+	};
 }
 
 interface ApprovedContext extends PreparedContext {
 	readonly result: ProductReviewResult;
 	readonly artifact: ProtectedProductReviewArtifact;
+	readonly executionLease: ExecutionLease;
 }
 
 interface PublicationContext extends ApprovedContext {
@@ -603,6 +628,113 @@ function productIssueSnapshot(
 	};
 }
 
+function productReviewDecisionActor(
+	actorId: string,
+	authorityRevision: string,
+): AuthenticatedDecisionActor {
+	return {
+		actorId,
+		authorityRevision,
+		active: true,
+		guest: false,
+	};
+}
+
+export function productReviewDecisionRequest(
+	project: string,
+	issueId: string,
+	issue: LinearIssueEvidence,
+	choices: Readonly<Record<ProductReviewResult, ProtectedProductReviewArtifact>>,
+): {
+	readonly request: DecisionRequest;
+	readonly actions: Readonly<Record<ProductReviewResult, TypedDecisionAction>>;
+} {
+	const actions = {
+		Aceptado: {
+			id: "product-review.publish.accepted",
+			input: {
+				issueId,
+				result: "Aceptado",
+				digest: choices.Aceptado.digest,
+				protectedDigest: choices.Aceptado.payload.issue.protectedDigest,
+			},
+		},
+		"Cambios requeridos": {
+			id: "product-review.publish.changes-required",
+			input: {
+				issueId,
+				result: "Cambios requeridos",
+				digest: choices["Cambios requeridos"].digest,
+				protectedDigest:
+					choices["Cambios requeridos"].payload.issue.protectedDigest,
+			},
+		},
+	} satisfies Record<ProductReviewResult, TypedDecisionAction>;
+	return {
+		actions,
+		request: {
+			scope: { project, workflow: "product-review", subject: issueId },
+			operation: {
+				kind: "product-review.publication",
+				phase: "result-selection",
+				input: {
+					issueId,
+					issueRevision: issue.updatedAt,
+					protectedDigest:
+						choices.Aceptado.payload.issue.protectedDigest,
+				},
+				artifacts: [
+					{ result: "Aceptado", digest: choices.Aceptado.digest },
+					{
+						result: "Cambios requeridos",
+						digest: choices["Cambios requeridos"].digest,
+					},
+				],
+				targets: [{ kind: "linear-root-comment", issueId }],
+				evidence: [],
+			},
+			presentation: {
+				locale: "es",
+				summary: `Seleccione el resultado de la revisión de producto para ${issueId}.`,
+				details: [],
+				consequences: [
+					"El resultado seleccionado se publicará como comentario raíz canónico en Linear.",
+				],
+				risks: [
+					"La publicación se detendrá si cambian el issue, la autoridad o la evidencia aprobada.",
+				],
+				choices: [
+					{
+						id: "product-review.accepted",
+						mode: "execute",
+						action: actions.Aceptado,
+						label: "Aceptado",
+						description: "Aprobar y publicar la revisión de producto.",
+					},
+					{
+						id: "product-review.changes-required",
+						mode: "execute",
+						action: actions["Cambios requeridos"],
+						label: "Cambios requeridos",
+						description: "Publicar los cambios requeridos de la revisión.",
+					},
+					{
+						id: "product-review.cancel",
+						mode: "cancel",
+						action: { id: "decision.cancel", input: null },
+						label: "Cancelar",
+						description: "Cerrar esta decisión sin publicar en Linear.",
+					},
+				],
+			},
+		},
+	};
+}
+
+function decisionFailure(blocker: DecisionBlocker): ProductReviewMcpPublication.Blocker {
+	return blocked(blocker.code, blocker.message);
+}
+
 type State =
 	| { readonly phase: "idle" }
 	| { readonly phase: "current-user"; readonly issueId: string }
@@ -636,8 +768,12 @@ type State =
 			readonly toolCallId: string;
 	  }
 	| { readonly phase: "prepared"; readonly context: PreparedContext }
-	| { readonly phase: "public-selection"; readonly context: ApprovedContext }
 	| { readonly phase: "public-selection-result"; readonly context: ApprovedContext; readonly toolCallId: string }
+	| {
+			readonly phase: "cancelled";
+			readonly issueId: string;
+			readonly toolCallId: string;
+	  }
 	| { readonly phase: "issue-after-approval"; readonly context: ApprovedContext }
 	| { readonly phase: "issue-after-approval-result"; readonly context: ApprovedContext; readonly toolCallId: string }
 	| { readonly phase: "comments-before"; readonly context: PublicationContext; readonly read: CommentRead }
@@ -689,6 +825,176 @@ export function createProductReviewMcpPublication(
 			state = { phase: "blocked", blocker: { code, message } };
 	}
 
+	function currentDecisionActor(): AuthenticatedDecisionActor | undefined {
+		const authority = authoritySession.current("Owner");
+		return authority?.role === "Owner"
+			? productReviewDecisionActor(
+					authority.actorId,
+					authority.authorityRevision,
+				)
+			: undefined;
+	}
+
+	async function authorizeEffect(
+		context: ApprovedContext,
+	): Promise<ProductReviewMcpPublication.Blocker | undefined> {
+		const outcome = await options.interactiveDecisions.authorizeEffect(
+			context.executionLease,
+		);
+		return outcome.kind === "blocked"
+			? decisionFailure(outcome.blocker)
+			: undefined;
+	}
+
+	async function bindExecution(
+		context: Omit<ApprovedContext, "executionLease">,
+		lease: ExecutionLease,
+		boundManifest?: ExecutionManifestBinding,
+	): Promise<ApprovedContext | ProductReviewMcpPublication.Blocker> {
+		try {
+			const manifest = await options.recovery.bindExecution(context.artifact, lease);
+			if (
+				boundManifest &&
+				canonicalJson(boundManifest) !== canonicalJson(manifest)
+			)
+				return blocked(
+					"PI_WORKFLOW_DECISION_MANIFEST_CONFLICT",
+					"Recovered product-review decision manifest does not match durable publication recovery.",
+				);
+			if (!boundManifest) {
+				const bound =
+					await options.interactiveDecisions.bindExecutionManifest(lease, manifest);
+				if (bound.kind === "blocked") return decisionFailure(bound.blocker);
+			}
+			const approved = { ...context, executionLease: lease };
+			const effectFailure = await authorizeEffect(approved);
+			return effectFailure ?? approved;
+		} catch (error) {
+			return blocked(
+				"PI_WORKFLOW_PRODUCT_REVIEW_RECOVERY_PERSISTENCE_FAILED",
+				error instanceof Error
+					? error.message
+					: "Product review execution binding failed.",
+			);
+		}
+	}
+
+	function resultForAction(
+		actions: Readonly<Record<ProductReviewResult, TypedDecisionAction>>,
+		action: TypedDecisionAction,
+	): ProductReviewResult | undefined {
+		return (Object.entries(actions) as [ProductReviewResult, TypedDecisionAction][])
+			.find(([, candidate]) => canonicalJson(candidate) === canonicalJson(action))
+			?.[0];
+	}
+
+	async function restoreOrPrepareDecision(input: {
+		readonly issueId: string;
+		readonly actor: AuthenticatedLinearActor;
+		readonly issue: LinearIssueEvidence;
+		readonly choices: Readonly<
+			Record<ProductReviewResult, ProtectedProductReviewArtifact>
+		>;
+		readonly decisionActor: AuthenticatedDecisionActor;
+	}): Promise<State | ProductReviewMcpPublication.Blocker> {
+		const decision = productReviewDecisionRequest(
+			options.project,
+			input.issueId,
+			input.issue,
+			input.choices,
+		);
+		let recovery = await options.interactiveDecisions.recover(
+			decision.request.scope,
+			input.decisionActor,
+		);
+		if (recovery.kind === "active")
+			recovery = await options.interactiveDecisions.recover(
+				decision.request.scope,
+				input.decisionActor,
+				{ kind: "resume", request: decision.request },
+			);
+		if (recovery.kind === "authorized") {
+			const result = resultForAction(decision.actions, recovery.lease.action);
+			if (!result) {
+				recovery = await options.interactiveDecisions.recover(
+					decision.request.scope,
+					input.decisionActor,
+					{
+						kind: "drift",
+						request: decision.request,
+						diff: {
+							summary: "The product-review publication evidence changed.",
+							details: [
+								"The issue revision, protected digest, review result, or canonical artifact no longer matches the prior lease.",
+							],
+						},
+					},
+				);
+			} else {
+				const approved = await bindExecution(
+					{
+						...input,
+						decision: {
+							decisionId: recovery.lease.decisionId,
+							actions: decision.actions,
+						},
+						result,
+						artifact: input.choices[result],
+					},
+					recovery.lease,
+					recovery.manifest,
+				);
+				return "status" in approved
+					? approved
+					: { phase: "issue-after-approval", context: approved };
+			}
+		}
+		if (recovery.kind === "none") {
+			const presentation = await options.interactiveDecisions.prepare(
+				decision.request,
+				input.decisionActor,
+			);
+			return {
+				phase: "prepared",
+				context: {
+					issueId: input.issueId,
+					actor: input.actor,
+					issue: input.issue,
+					choices: input.choices,
+					decision: {
+						decisionId: presentation.decisionId,
+						actions: decision.actions,
+					},
+				},
+			};
+		}
+		if (
+			recovery.kind === "prepared" ||
+			recovery.kind === "reapproval" ||
+			recovery.kind === "drift"
+		) {
+			const decisionId =
+				recovery.kind === "prepared"
+					? recovery.decisionId
+					: recovery.presentation.decisionId;
+			return {
+				phase: "prepared",
+				context: {
+					issueId: input.issueId,
+					actor: input.actor,
+					issue: input.issue,
+					choices: input.choices,
+					decision: { decisionId, actions: decision.actions },
+				},
+			};
+		}
+		if (recovery.kind === "blocked") return decisionFailure(recovery.blocker);
+		return blocked(
+			"PI_WORKFLOW_DECISION_REPLAY",
+			`Product review decision is already ${recovery.kind}.`,
+		);
+	}
+
 	function start(issueId: string): void {
 		turnGeneration += 1;
 		recoveryOwnerId = randomUUID();
@@ -719,8 +1025,6 @@ export function createProductReviewMcpPublication(
 	function expectedModelCall():
 		| ProductReviewMcpPublication.ExpectedCall
 		| undefined {
-		if (state.phase === "public-selection")
-			return { toolName: WORKFLOW_TOOL, input: {} };
 		if (state.phase === "current-user")
 			return { toolName: CURRENT_USER_TOOL, input: { query: "me" } };
 		if (state.phase === "issue" || state.phase === "issue-verify")
@@ -770,6 +1074,10 @@ export function createProductReviewMcpPublication(
 			active.phase === "prepared" && event.toolName === WORKFLOW_TOOL
 				? selectedResult(event.input)
 				: undefined;
+		const typedCancellation =
+			active.phase === "prepared" &&
+			event.toolName === WORKFLOW_TOOL &&
+			cancellationSelected(event.input);
 		const expected = expectedModelCall();
 		const generation = turnGeneration;
 		const ownerId = recoveryOwnerId;
@@ -777,6 +1085,7 @@ export function createProductReviewMcpPublication(
 			return undefined;
 		if (
 			!typedSelection &&
+			!typedCancellation &&
 			(!expected ||
 				event.toolName !== expected.toolName ||
 				!exactInput(event.input, expected.input))
@@ -804,8 +1113,69 @@ export function createProductReviewMcpPublication(
 			);
 			return { block: true, reason: code };
 		}
+		if (active.phase === "prepared") {
+			const actor = currentDecisionActor();
+			if (!actor) {
+				const code = "PI_WORKFLOW_PRODUCT_REVIEW_AUTHORITY_MISMATCH";
+				fail(code, "Authenticated single-user Owner authority is unavailable.");
+				return { block: true, reason: code };
+			}
+			const action = typedCancellation
+				? { id: "decision.cancel", input: null }
+				: active.context.decision.actions[typedSelection as ProductReviewResult];
+			const authorization = await options.interactiveDecisions.authorize(
+				active.context.decision.decisionId,
+				action,
+				actor,
+			);
+			if (authorization.kind === "blocked") {
+				fail(authorization.blocker.code, authorization.blocker.message);
+				return { block: true, reason: authorization.blocker.code };
+			}
+			if (typedCancellation) {
+				if (authorization.kind !== "cancelled") {
+					const code = "PI_WORKFLOW_DECISION_ACTION_MISMATCH";
+					fail(code, "The shared product-review decision did not authorize cancellation.");
+					return { block: true, reason: code };
+				}
+				state = {
+					phase: "cancelled",
+					issueId: active.context.issueId,
+					toolCallId: event.toolCallId,
+				};
+				reservedToolIdentities.set(identity, generation);
+				return undefined;
+			}
+			if (authorization.kind !== "authorized" || !typedSelection) {
+				const code = "PI_WORKFLOW_DECISION_ACTION_MISMATCH";
+				fail(code, "The shared product-review decision did not authorize publication.");
+				return { block: true, reason: code };
+			}
+			const artifact = active.context.choices[typedSelection];
+			const approved = await bindExecution(
+				{ ...active.context, result: typedSelection, artifact },
+				authorization.lease,
+				undefined,
+			);
+			if ("status" in approved) {
+				fail(approved.blocker.code, approved.blocker.message);
+				return { block: true, reason: approved.blocker.code };
+			}
+			state = {
+				phase: "public-selection-result",
+				context: approved,
+				toolCallId: event.toolCallId,
+			};
+			reservedToolIdentities.set(identity, generation);
+			return undefined;
+		}
 		if (active.phase === "comment-create") {
 			try {
+				const effectFailure = await authorizeEffect(active.context);
+				if (effectFailure) {
+					fail(effectFailure.blocker.code, effectFailure.blocker.message);
+					return { block: true, reason: effectFailure.blocker.code };
+				}
 				// This durable uncertain claim is the final local operation before
 				// authorizing the external mutation. A crash after this point is
 				// recovered by lookup only; the mutation is never retried blindly.
@@ -835,31 +1205,10 @@ export function createProductReviewMcpPublication(
 			}
 		}
 		switch (active.phase) {
-			case "prepared": {
-				if (!typedSelection) return staleCallBlock();
-				const artifact = active.context.choices[typedSelection];
-				state = {
-					phase: "public-selection-result",
-					context: {
-						...active.context,
-						result: typedSelection,
-						artifact,
-					},
-					toolCallId: event.toolCallId,
-				};
-				break;
-			}
 			case "current-user":
 				state = {
 					phase: "current-user-result",
 					issueId: active.issueId,
-					toolCallId: event.toolCallId,
-				};
-				break;
-			case "public-selection":
-				state = {
-					phase: "public-selection-result",
-					context: active.context,
 					toolCallId: event.toolCallId,
 				};
 				break;
@@ -964,6 +1313,13 @@ export function createProductReviewMcpPublication(
 				"A different create-only product review artifact already exists.",
 			);
 			return undefined;
+		}
+		if (!existing) {
+			const effectFailure = await authorizeEffect(context);
+			if (effectFailure) {
+				fail(effectFailure.blocker.code, effectFailure.blocker.message);
+				return undefined;
+			}
 		}
 		const saved = existing ?? (await options.artifacts.save(context.artifact));
 		if (!stillActive()) return undefined;
@@ -1092,6 +1448,11 @@ export function createProductReviewMcpPublication(
 				classifyMcpError(event) === "permission-denied"
 			) {
 				try {
+					const effectFailure = await authorizeEffect(active.context);
+					if (effectFailure) {
+						fail(effectFailure.blocker.code, effectFailure.blocker.message);
+						return true;
+					}
 					await options.recovery.release(
 						active.context.artifact,
 						ownerId,
@@ -1202,10 +1563,24 @@ export function createProductReviewMcpPublication(
 					}
 					choices[existing.payload.result] = existing as ProtectedProductReviewArtifact;
 				}
-				state = {
-					phase: "prepared",
-					context: { issueId: active.issueId, actor: active.actor, issue, choices },
-				};
+				const decisionActor = currentDecisionActor();
+				if (!decisionActor) {
+					fail(
+						"PI_WORKFLOW_PRODUCT_REVIEW_AUTHORITY_MISMATCH",
+						"Authenticated single-user Owner authority is unavailable.",
+					);
+					return true;
+				}
+				const next = await restoreOrPrepareDecision({
+					issueId: active.issueId,
+					actor: active.actor,
+					issue,
+					choices,
+					decisionActor,
+				});
+				if (!isCurrent(generation, active)) return false;
+				if ("status" in next) fail(next.blocker.code, next.blocker.message);
+				else state = next;
 			} catch (error) {
 				if (!isCurrent(generation, active)) return false;
 				fail(record(error) && nonEmpty(error.code) ? error.code : "PI_WORKFLOW_PRODUCT_REVIEW_PREPARATION_FAILED", error instanceof Error ? error.message : "Product review preparation failed.");
@@ -1324,7 +1699,50 @@ export function createProductReviewMcpPublication(
 				return true;
 			}
 			try {
+				const effectFailure = await authorizeEffect(active.context);
+				if (effectFailure) {
+					fail(effectFailure.blocker.code, effectFailure.blocker.message);
+					return true;
+				}
 				await options.recovery.finalizeVerified(active.context.artifact);
+				if (!isCurrent(generation, active)) return false;
+				const actor = currentDecisionActor();
+				if (!actor) {
+					fail(
+						"PI_WORKFLOW_PRODUCT_REVIEW_AUTHORITY_MISMATCH",
+						"Authenticated single-user Owner authority is unavailable.",
+					);
+					return true;
+				}
+				const terminalEffectFailure = await authorizeEffect(active.context);
+				if (terminalEffectFailure) {
+					fail(
+						terminalEffectFailure.blocker.code,
+						terminalEffectFailure.blocker.message,
+					);
+					return true;
+				}
+				const terminal = await options.interactiveDecisions.recover(
+					{
+						project: options.project,
+						workflow: "product-review",
+						subject: active.context.issueId,
+					},
+					actor,
+					{ kind: "terminal", state: "published" },
+				);
+				if (terminal.kind !== "terminal") {
+					const blocker =
+						terminal.kind === "blocked"
+							? terminal.blocker
+							: {
+									code: "PI_WORKFLOW_DECISION_MANIFEST_CONFLICT" as const,
+									message:
+										"Product review publication could not persist terminal decision state.",
+								};
+					fail(blocker.code, blocker.message);
+					return true;
+				}
 				if (!isCurrent(generation, active)) return false;
 				state = { phase: "ready", context: active.context };
 			} catch (error) {
@@ -1395,41 +1813,24 @@ export function createProductReviewMcpPublication(
 		}
 	}
 
-	function select(
-		input: unknown,
-	): ProductReviewMcpPublication.Blocker | undefined {
-		if (
-			state.phase !== "prepared" ||
-			(input !== "Aceptado" && input !== "Cambios requeridos")
-		) {
-			const result = blocked(
-				"PI_WORKFLOW_PRODUCT_REVIEW_INPUT_INVALID",
-				"Approval requires an active prepared result.",
-			);
-			state = { phase: "blocked", blocker: result.blocker };
-			return result;
-		}
-		const artifact = state.context.choices[input];
-		state = {
-			phase: "public-selection",
-			context: {
-				...state.context,
-				result: input,
-				artifact,
-			},
-		};
-		return undefined;
-	}
-
 	async function complete(
 		input: unknown,
 	): Promise<
 		| ProductReviewMcpPublication.PublishedReview
 		| ProductReviewMcpPublication.ContinuingReview
+		| ProductReviewMcpPublication.CancelledReview
 		| ProductReviewMcpPublication.Blocker
 	> {
 		if (state.phase === "blocked")
 			return { status: "blocked", blocker: state.blocker };
+		if (
+			state.phase === "cancelled" &&
+			exactInput(input, { action: "cancel_decision" })
+		) {
+			const issueId = state.issueId;
+			clear();
+			return { status: "cancelled", issueId };
+		}
 		if (
 			state.phase === "public-selection-result" &&
 			exactInput(input, {
@@ -1455,7 +1856,7 @@ export function createProductReviewMcpPublication(
 		if (state.phase === "prepared") {
 			const recommendation =
 				state.context.choices.Aceptado.payload.recommendation;
-			return `Agent recommendation: ${recommendation}. Present the prepared review choices and ask the Owner to decide naturally. Interpret the Owner's language yourself; this runtime does not classify phrases. If the Owner selects a result, call ${WORKFLOW_TOOL} with exactly {"action":"select_result","result":"Aceptado"} or {"action":"select_result","result":"Cambios requeridos"}. If ambiguous, ask a follow-up and do not call tools. Do not display or request hashes or workflow metadata. Communicate in the language used by the user. Linear-facing publication content remains professional-neutral Spanish.`;
+			return `Agent recommendation: ${recommendation}. The shared decision descriptor is the only authorization surface. After it records a choice, call ${WORKFLOW_TOOL} with exactly {"action":"select_result","result":"Aceptado"}, {"action":"select_result","result":"Cambios requeridos"}, or {"action":"cancel_decision"} to match that choice. Never infer approval from prose. Do not display or request hashes or workflow metadata.`;
 		}
 		return undefined;
 	}
@@ -1467,7 +1868,6 @@ export function createProductReviewMcpPublication(
 		clear,
 		hasActiveTurn: () => state.phase !== "idle",
 		hasPendingOwnerSelection: () => state.phase === "prepared",
-		select,
 		expectedModelCall,
 		nextCallInstruction,
 		handleToolCall,

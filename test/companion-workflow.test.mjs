@@ -5,7 +5,10 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { createCompanionWorkflow } from "../extensions/companion-workflow.ts";
+import {
+	createCompanionWorkflow as createCompanionWorkflowCore,
+} from "../extensions/companion-workflow.ts";
+import { createInMemoryCompanionInstallManifestStore } from "../extensions/companion-install-manifest.ts";
 
 const mcpServerCatalog = JSON.parse(
 	readFileSync(new URL("../assets/mcp-servers.json", import.meta.url), "utf8"),
@@ -32,6 +35,129 @@ function createNotifications() {
 		notifications,
 		notify: (message, level = "info") => {
 			notifications.push({ message, level });
+		},
+	};
+}
+
+function createCompanionWorkflow(options = {}, selectedActions = []) {
+	let request;
+	let selectedActionId;
+	let execution = 0;
+	const state = { boundLeases: [], effectLeases: [] };
+	const manifests = createInMemoryCompanionInstallManifestStore();
+	const confirm = options.interaction?.confirm;
+	const decisions = {
+		async prepare(nextRequest) {
+			request = nextRequest;
+			selectedActionId = undefined;
+			return {
+				decisionId: `companion-test:${"a".repeat(64)}`,
+				...nextRequest.presentation,
+				choices: nextRequest.presentation.choices.map((choice) => ({
+					id: choice.id,
+					mode: choice.mode,
+					actionId: choice.action.id,
+					label: choice.label,
+					description: choice.description,
+				})),
+			};
+		},
+		async authorize(decisionId, action, actor) {
+			if (selectedActionId === undefined) {
+				selectedActionId = selectedActions.shift();
+				if (selectedActionId === undefined) {
+					const accepted = confirm
+						? await confirm(
+								request.presentation.summary,
+								request.presentation.details.join("\n"),
+							)
+						: false;
+					selectedActionId = accepted
+						? request.presentation.choices.find(
+								(choice) => choice.mode === "execute",
+							).action.id
+						: "decision.cancel";
+				}
+			}
+			if (action.id !== selectedActionId)
+				return {
+					kind: "blocked",
+					blocker: {
+						code: "PI_WORKFLOW_DECISION_CLAIM_MISSING",
+						message: "No matching shared claim.",
+					},
+				};
+			if (action.id === "decision.cancel")
+				return { kind: "cancelled", decisionId, receipt: {} };
+			execution += 1;
+			return {
+				kind: "authorized",
+				lease: {
+					decisionId,
+					operationDigest: "b".repeat(64),
+					executionId: `execution-${execution}`,
+					generation: execution,
+					actorId: actor.actorId,
+					authorityRevision: actor.authorityRevision,
+					action,
+				},
+				receipt: {},
+			};
+		},
+		async bindExecutionManifest(lease, manifest) {
+			state.boundLeases.push(lease);
+			return { kind: "authorized", lease, manifest };
+		},
+		async authorizeEffect(lease) {
+			state.effectLeases.push(lease);
+			return {
+				kind: "authorized",
+				lease,
+				manifest: {
+					ref: "workflow://companion-test",
+					decisionId: lease.decisionId,
+					operationDigest: lease.operationDigest,
+					executionId: lease.executionId,
+					generation: lease.generation,
+				},
+			};
+		},
+		async recover(_scope, _actor, directive) {
+			return directive?.kind === "terminal"
+				? { kind: "terminal", state: directive.state }
+				: { kind: "none" };
+		},
+		hasActiveDecision: () => false,
+	};
+	const workflow = createCompanionWorkflowCore({
+		...options,
+		interaction: options.interaction
+			? { ...options.interaction, confirm: undefined }
+			: options.interaction,
+		authority:
+			options.authority ??
+			{
+				project: "pi-workflow",
+				actor: () => ({
+					actorId: "companion-test-operator",
+					authorityRevision: "companion-test/v1",
+					active: true,
+					guest: false,
+				}),
+				hasUI: () => typeof confirm === "function",
+				decisions,
+				manifests,
+			},
+	});
+	return {
+		...workflow,
+		testState: state,
+		manifests,
+		async installMissing() {
+			const started = await workflow.installMissing();
+			return started.outcome === "awaiting-decision"
+				? ((await workflow.continuePending()) ?? started)
+				: started;
 		},
 	};
 }
@@ -211,7 +337,7 @@ test("installMissing installs missing companions and configures MCP servers afte
 				await readFile(join(agentDirectory, "mcp.json"), "utf8"),
 			);
 			assert.deepEqual(config, { mcpServers: mcpServerCatalog.mcpServers });
-			assert.match(result.message ?? "", /Configured pi-workflow MCP servers/);
+			assert.match(result.message ?? "", /configured the reviewed MCP plan/i);
 		},
 	);
 });
@@ -255,7 +381,7 @@ test("installMissing builds the pi install command from a generic exec capabilit
 	);
 });
 
-test("installMissing prints combined manual guidance without mutating when confirmation is unavailable", async () => {
+test("installMissing fails closed without shared UI authority", async () => {
 	await withMetadataFile(
 		[
 			{ package: "alpha" },
@@ -272,23 +398,25 @@ test("installMissing prints combined manual guidance without mutating when confi
 						return {};
 					},
 				},
-				interaction: { notify },
+				interaction: {
+					notify,
+					installPackage: async () => ({ code: 0 }),
+				},
 				mcp: { agentDirectory },
 			});
 
 			const result = await workflow.installMissing();
 
-			assert.equal(result.outcome, "manual");
+			assert.equal(result.outcome, "blocked");
 			assert.equal(notifications.length, 1);
-			assert.match(notifications[0].message, /pi install npm:beta/);
-			assert.match(notifications[0].message, /cannot mutate Pi configuration automatically/i);
-			assert.match(notifications[0].message, /mcp\.json/);
+			assert.match(notifications[0].message, /shared interactive decision authority/i);
+			assert.match(notifications[0].message, /no package or MCP effects were authorized/i);
 			await assert.rejects(readFile(join(agentDirectory, "mcp.json"), "utf8"));
 		},
 	);
 });
 
-test("installMissing falls back to manual instructions when confirm exists but no install adapter is provided", async () => {
+test("installMissing refuses the joint operation when package execution is unavailable", async () => {
 	await withMetadataFile(
 		[
 			{ package: "alpha" },
@@ -318,15 +446,10 @@ test("installMissing falls back to manual instructions when confirm exists but n
 
 			const result = await workflow.installMissing();
 
-			assert.equal(result.outcome, "manual");
+			assert.equal(result.outcome, "blocked");
 			assert.equal(confirmCalls, 0);
 			assert.equal(notifications.length, 1);
-			assert.match(notifications[0].message, /pi install npm:beta/);
-			assert.match(
-				notifications[0].message,
-				/cannot mutate Pi configuration automatically/i,
-			);
-			assert.match(notifications[0].message, /mcp\.json/);
+			assert.match(notifications[0].message, /package execution capability is unavailable/i);
 			await assert.rejects(readFile(join(agentDirectory, "mcp.json"), "utf8"));
 		},
 	);
@@ -381,7 +504,7 @@ test("installMissing preserves unrelated MCP configuration while merging the cat
 	);
 });
 
-test("installMissing reports refused-concurrent-change when the MCP config changes after preview", async () => {
+test("installMissing prepares shared reconciliation when targeted MCP state changes after preview", async () => {
 	await withMetadataFile(
 		[{ package: "alpha" }],
 		async ({ dir, metadataPath }) => {
@@ -431,16 +554,9 @@ test("installMissing reports refused-concurrent-change when the MCP config chang
 
 			const result = await workflow.installMissing();
 
-			assert.equal(result.outcome, "failed");
-			assert.match(
-				result.message ?? "",
-				/MCP configuration at .*mcp\.json changed after preview\. No MCP configuration changes were written\./,
-			);
-			assert.ok(result.manualInstructions && result.manualInstructions.length > 0);
-			assert.deepEqual(
-				notifications.map((entry) => entry.level),
-				["error"],
-			);
+			assert.equal(result.outcome, "awaiting-decision");
+			assert.match(result.message ?? "", /decision prepared/i);
+			assert.ok(notifications.every((entry) => entry.level === "info"));
 
 			const stillOnDisk = JSON.parse(await readFile(mcpPath, "utf8"));
 			assert.equal(
@@ -452,7 +568,7 @@ test("installMissing reports refused-concurrent-change when the MCP config chang
 	);
 });
 
-test("installMissing reports reread-failed with the restored message when the config is corrupted after confirmation", async () => {
+test("installMissing fails closed when MCP config becomes malformed after approval", async () => {
 	await withMetadataFile(
 		[{ package: "alpha" }],
 		async ({ dir, metadataPath }) => {
@@ -477,24 +593,20 @@ test("installMissing reports reread-failed with the restored message when the co
 
 			const result = await workflow.installMissing();
 
-			assert.equal(result.outcome, "failed");
+			assert.equal(result.outcome, "blocked");
 			assert.match(
 				result.message ?? "",
-				/MCP configuration at .*mcp\.json could not be re-read after confirmation: Refusing to overwrite malformed JSON/,
+				/Refusing to overwrite malformed JSON/,
 			);
-			assert.match(result.message ?? "", /No MCP configuration changes were written\./);
-			assert.ok(!/written automatically/.test(result.message ?? ""));
-			assert.deepEqual(
-				notifications.map((entry) => entry.level),
-				["error"],
-			);
+			assert.match(result.message ?? "", /closed before any new effect/i);
+			assert.equal(notifications.at(-1).level, "error");
 
 			assert.equal(await readFile(mcpPath, "utf8"), "{ not valid json");
 		},
 	);
 });
 
-test("installMissing reports write-failed when the MCP config cannot be written to disk", async () => {
+test("installMissing prepares reconciliation when the fenced MCP write fails", async () => {
 	await withMetadataFile(
 		[{ package: "alpha" }],
 		async ({ dir, metadataPath }) => {
@@ -519,19 +631,9 @@ test("installMissing reports write-failed when the MCP config cannot be written 
 			try {
 				const result = await workflow.installMissing();
 
-				assert.equal(result.outcome, "failed");
-				assert.match(
-					result.message ?? "",
-					/Could not write pi-workflow MCP servers to .*mcp\.json: /,
-				);
-				assert.match(
-					result.message ?? "",
-					/No MCP configuration changes were written automatically\./,
-				);
-				assert.deepEqual(
-					notifications.map((entry) => entry.level),
-					["error"],
-				);
+				assert.equal(result.outcome, "awaiting-decision");
+				assert.match(result.message ?? "", /decision prepared/i);
+				assert.ok(notifications.every((entry) => entry.level === "info"));
 			} finally {
 				chmodSync(agentDirectory, 0o700);
 			}
@@ -577,7 +679,7 @@ test("installMissing returns canceled and leaves packages and MCP untouched when
 			assert.equal(confirmPrompts.length, 1);
 			assert.match(
 				result.message ?? "",
-				/Canceled\. No companion packages or MCP configuration were changed\./,
+				/Canceled through the shared decision/,
 			);
 			assert.deepEqual(installCalls, []);
 			await assert.rejects(readFile(join(agentDirectory, "mcp.json"), "utf8"));
@@ -585,7 +687,7 @@ test("installMissing returns canceled and leaves packages and MCP untouched when
 	);
 });
 
-test("installMissing reports partial failure when a companion install exits non-zero during combined companion and MCP work", async () => {
+test("installMissing records non-zero package failure and prepares shared reconciliation", async () => {
 	await withMetadataFile(
 		[
 			{ package: "alpha" },
@@ -615,21 +717,9 @@ test("installMissing reports partial failure when a companion install exits non-
 
 			const result = await workflow.installMissing();
 
-			assert.equal(result.outcome, "failed");
+			assert.equal(result.outcome, "awaiting-decision");
 			assert.deepEqual(installCalls, ["npm:beta"]);
-			assert.match(
-				result.message ?? "",
-				/Configured pi-workflow MCP servers at .*mcp\.json\./,
-			);
-			assert.match(result.message ?? "", /Some companion installs failed:/);
-			assert.match(
-				result.message ?? "",
-				/npm:beta: permission denied/,
-			);
-			assert.doesNotMatch(
-				result.message ?? "",
-				/Installed or updated pi-workflow companions\./,
-			);
+			assert.match(result.message ?? "", /decision prepared/i);
 			const config = JSON.parse(
 				await readFile(join(agentDirectory, "mcp.json"), "utf8"),
 			);
@@ -638,7 +728,7 @@ test("installMissing reports partial failure when a companion install exits non-
 	);
 });
 
-test("installMissing reports partial failure when a companion install throws during combined companion and MCP work", async () => {
+test("installMissing records thrown package failure and prepares shared reconciliation", async () => {
 	await withMetadataFile(
 		[
 			{ package: "alpha" },
@@ -668,14 +758,9 @@ test("installMissing reports partial failure when a companion install throws dur
 
 			const result = await workflow.installMissing();
 
-			assert.equal(result.outcome, "failed");
+			assert.equal(result.outcome, "awaiting-decision");
 			assert.deepEqual(installCalls, ["npm:beta"]);
-			assert.match(result.message ?? "", /Some companion installs failed:/);
-			assert.match(result.message ?? "", /npm:beta: network down/);
-			assert.doesNotMatch(
-				result.message ?? "",
-				/pi-workflow does not connect or authenticate MCP servers during installation/,
-			);
+			assert.match(result.message ?? "", /decision prepared/i);
 			const config = JSON.parse(
 				await readFile(join(agentDirectory, "mcp.json"), "utf8"),
 			);
@@ -684,7 +769,7 @@ test("installMissing reports partial failure when a companion install throws dur
 	);
 });
 
-test("installMissing still installs safe companion packages when the existing MCP config is malformed", async () => {
+test("installMissing authorizes no package effect when the joint MCP plan is malformed", async () => {
 	await withMetadataFile(
 		[{ package: "beta" }],
 		async ({ dir, metadataPath }) => {
@@ -715,27 +800,20 @@ test("installMissing still installs safe companion packages when the existing MC
 
 			const result = await workflow.installMissing();
 
-			assert.equal(result.outcome, "failed");
-			assert.equal(confirmPrompts.length, 1);
-			assert.deepEqual(installCalls, ["npm:beta"]);
+			assert.equal(result.outcome, "config-error");
+			assert.equal(confirmPrompts.length, 0);
+			assert.deepEqual(installCalls, []);
 			assert.match(
 				result.message ?? "",
 				/Refusing to overwrite malformed JSON at .*mcp\.json/,
 			);
-			assert.match(
-				result.message ?? "",
-				/Edit .*mcp\.json manually and merge these MCP server definitions under top-level "mcpServers":/,
-			);
-			assert.match(
-				result.message ?? "",
-				/Preserve unrelated top-level fields and unrelated MCP servers\./,
-			);
+			assert.match(result.message ?? "", /No package or MCP effects were authorized/);
 			assert.equal(await readFile(mcpPath, "utf8"), "{\n  invalid json\n");
 		},
 	);
 });
 
-test("installMissing falls back to manual instructions when confirmation rejects", async () => {
+test("installMissing fails closed when shared decision authorization throws", async () => {
 	await withMetadataFile(
 		[{ package: "beta" }],
 		async ({ dir, metadataPath }) => {
@@ -762,15 +840,14 @@ test("installMissing falls back to manual instructions when confirmation rejects
 
 			const result = await workflow.installMissing();
 
-			assert.equal(result.outcome, "manual");
+			assert.equal(result.outcome, "blocked");
 			assert.deepEqual(installCalls, []);
-			assert.equal(notifications.length, 1);
+			assert.equal(notifications.length, 2);
 			assert.match(
-				notifications[0].message,
+				notifications.at(-1).message,
 				/confirmation adapter offline/,
 			);
-			assert.match(notifications[0].message, /pi install npm:beta/);
-			assert.match(notifications[0].message, /mcp\.json/);
+			assert.match(notifications.at(-1).message, /failed closed/i);
 			await assert.rejects(readFile(join(agentDirectory, "mcp.json"), "utf8"));
 		},
 	);
@@ -814,24 +891,100 @@ test("installMissing does not report global success when another companion could
 
 			const result = await workflow.installMissing();
 
-			assert.equal(result.outcome, "failed");
-			assert.deepEqual(installCalls, ["npm:beta"]);
+			assert.equal(result.outcome, "blocked");
+			assert.deepEqual(installCalls, []);
 			assert.match(
 				result.message ?? "",
-				/Some companions could not be inspected:/,
+				/Companion inspection is incomplete/,
 			);
 			assert.match(
 				result.message ?? "",
 				/alpha: package\.json unreadable/,
 			);
-			assert.match(
-				result.message ?? "",
-				/Install or update pi-workflow companions manually:/,
+			assert.match(result.message ?? "", /no package or MCP effects were authorized/i);
+		},
+	);
+});
+
+test("one shared lease fences every package and MCP effect in the joint operation", async () => {
+	await withMetadataFile(
+		[{ package: "alpha" }, { package: "beta" }],
+		async ({ dir, metadataPath }) => {
+			const workflow = createCompanionWorkflow({
+				catalog: { metadataPath, resolveInstalledVersion: () => ({}) },
+				interaction: {
+					confirm: async () => true,
+					installPackage: async () => ({ code: 0 }),
+				},
+				mcp: { agentDirectory: join(dir, "agent") },
+			});
+
+			const outcome = await workflow.installMissing();
+
+			assert.equal(outcome.outcome, "installed");
+			assert.equal(workflow.testState.boundLeases.length, 1);
+			assert.equal(workflow.testState.effectLeases.length, 3);
+			assert.equal(
+				new Set(
+					workflow.testState.effectLeases.map((lease) => lease.executionId),
+				).size,
+				1,
 			);
-			assert.doesNotMatch(
-				result.message ?? "",
-				/pi-workflow does not connect or authenticate MCP servers during installation/,
+			assert.equal(
+				workflow.testState.effectLeases[0].executionId,
+				workflow.testState.boundLeases[0].executionId,
 			);
 		},
 	);
+});
+
+test("shared reconcile retries only incomplete effects and clears durable failures", async () => {
+	await withMetadataFile([{ package: "alpha" }], async ({ dir, metadataPath }) => {
+		let attempts = 0;
+		const workflow = createCompanionWorkflow(
+			{
+				catalog: { metadataPath, resolveInstalledVersion: () => ({}) },
+				interaction: {
+					confirm: async () => true,
+					installPackage: async () => {
+						attempts += 1;
+						return attempts === 1
+							? { code: 1, stderr: "network down" }
+							: { code: 0 };
+					},
+				},
+				mcp: { agentDirectory: join(dir, "agent") },
+			},
+			["companions.install", "companions.reconcile"],
+		);
+
+		assert.equal((await workflow.installMissing()).outcome, "awaiting-decision");
+		assert.equal((await workflow.continuePending()).outcome, "installed");
+		assert.equal(attempts, 2);
+		assert.equal(workflow.testState.boundLeases.length, 2);
+	});
+});
+
+test("shared wait preserves partial progress and authorizes no recovery effect", async () => {
+	await withMetadataFile([{ package: "alpha" }], async ({ dir, metadataPath }) => {
+		const agentDirectory = join(dir, "agent");
+		const workflow = createCompanionWorkflow(
+			{
+				catalog: { metadataPath, resolveInstalledVersion: () => ({}) },
+				interaction: {
+					confirm: async () => true,
+					installPackage: async () => ({ code: 1, stderr: "offline" }),
+				},
+				mcp: { agentDirectory },
+			},
+			["companions.install", "companions.wait"],
+		);
+
+		assert.equal((await workflow.installMissing()).outcome, "awaiting-decision");
+		const effectsBeforeWait = workflow.testState.effectLeases.length;
+		assert.equal((await workflow.continuePending()).outcome, "waiting");
+		assert.equal(workflow.testState.effectLeases.length, effectsBeforeWait);
+		const operationId = workflow.testState.boundLeases[0].action.input.operationId;
+		assert.equal((await workflow.manifests.read(operationId))?.value.stage, "waiting");
+	});
 });

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -9,6 +10,22 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const validator = resolve("scripts/validate-packed-distribution.mjs");
+const durablePublicationRecoverySource = readFileSync(
+	resolve("extensions/durable-publication-recovery.ts"),
+	"utf8",
+);
+const productReviewPublicationRecoverySource = readFileSync(
+	resolve("extensions/product-review-publication-recovery.ts"),
+	"utf8",
+);
+const qaHandoffPublicationRecoverySource = readFileSync(
+	resolve("extensions/qa-handoff-publication-recovery.ts"),
+	"utf8",
+);
+const workflowContractsSource = readFileSync(
+	resolve("extensions/workflow-contracts.ts"),
+	"utf8",
+);
 const workflows = [
 	"define-product",
 	"deliver-ticket",
@@ -21,6 +38,8 @@ async function fixtureTarball({ omit, extra = {}, catalogVersion = 1 } = {}) {
 	const packageRoot = join(root, "package");
 	const files = {
 		"README.md": "# Fixture\n",
+		"docs/design/interactive-decision-inventory.md":
+			"# Interactive decision migration inventory\n\nActive unmigrated closed decisions: 0\n\n| `deliver-ticket` | pending | PI_WORKFLOW_CAPABILITY_PENDING |\n",
 		"package.json": JSON.stringify({
 			name: "@felipe.3dfx/pi-workflow",
 			version: "0.0.0-fixture",
@@ -37,9 +56,29 @@ async function fixtureTarball({ omit, extra = {}, catalogVersion = 1 } = {}) {
 		"scripts/check-acceptance.mjs": "#!/usr/bin/env node\n",
 		"scripts/run-packed-acceptance.mjs": "#!/usr/bin/env node\n",
 		"scripts/validate-release.mjs": "#!/usr/bin/env node\n",
+		"scripts/validate-publication-recovery-contract.mjs": "export {};\n",
 		"extensions/pi-workflow.ts": "export default function extension() {}\n",
 		"extensions/agent-asset-migrations.ts": "export {};\n",
 		"extensions/agent-validator.ts": "export {};\n",
+		"extensions/durable-publication-recovery.ts":
+			durablePublicationRecoverySource,
+		"extensions/product-review-publication-recovery.ts":
+			productReviewPublicationRecoverySource,
+		"extensions/qa-handoff-publication-recovery.ts":
+			qaHandoffPublicationRecoverySource,
+		"extensions/workflow-contracts.ts": workflowContractsSource,
+			...Object.fromEntries(
+			[
+				"extensions/agent-asset-operation.ts",
+				"extensions/approved-revision-publication-manifest.ts",
+				"extensions/ticket-publication-manifest.ts",
+				"extensions/companion-install-manifest.ts",
+				"extensions/delivery-pull-request-workflow.ts",
+			].map((relativePath) => [
+				relativePath,
+				"const executionId = 'fixture'; const generation = 1;\n",
+			]),
+			),
 		"assets/agents/Explore.md": "# Explore\n",
 		"assets/acceptance/qa-handoff.golden.md": "# Entrega para QA\n",
 		"assets/acceptance/product-review.golden.md": "# Revisión de producto\n",
@@ -69,7 +108,7 @@ async function fixtureTarball({ omit, extra = {}, catalogVersion = 1 } = {}) {
 			workflows.flatMap((name) => [
 				[
 					`skills/${name}/SKILL.md`,
-					`---\nname: ${name}\ndescription: fixture\n---\n`,
+					`---\nname: ${name}\ndescription: fixture\n---\n${name === "deliver-ticket" ? "PI_WORKFLOW_CAPABILITY_PENDING" : "Every closed human choice uses the shared `interactive-decisions` descriptor and a semantic action. Never require an exact phrase."}\n`,
 				],
 				[
 					`prompts/${name}.md`,
@@ -118,6 +157,25 @@ test("accepts a supported packed distribution", async () => {
 	}
 });
 
+test("rejects an empty packed publication recovery factory", async () => {
+	const fixture = await fixtureTarball({
+		extra: {
+			"extensions/product-review-publication-recovery.ts":
+				"export function createProductReviewPublicationRecoveryStore() { return {}; }\n",
+		},
+	});
+	try {
+		const result = await validate(fixture.tarball);
+		assert.notEqual(result.code, 0);
+		assert.match(
+			result.stderr,
+			/packed product-review publication recovery contract failed: factory does not implement the durable recovery contract/,
+		);
+	} finally {
+		await rm(fixture.root, { recursive: true, force: true });
+	}
+});
+
 test("rejects missing required packed resources", async () => {
 	const fixture = await fixtureTarball({ omit: "prompts/qa-handoff.md" });
 	try {
@@ -130,6 +188,42 @@ test("rejects missing required packed resources", async () => {
 	} finally {
 		await rm(fixture.root, { recursive: true, force: true });
 	}
+});
+
+test("rejects stale decision inventory and incomplete execution bindings", async (t) => {
+	await t.test("stale inventory", async () => {
+		const fixture = await fixtureTarball({
+			extra: {
+				"docs/design/interactive-decision-inventory.md":
+					"Active unmigrated closed decisions: 1\nactive-unmigrated\n",
+			},
+		});
+		try {
+			const result = await validate(fixture.tarball);
+			assert.notEqual(result.code, 0);
+			assert.match(result.stderr, /decision inventory is stale or incomplete/);
+		} finally {
+			await rm(fixture.root, { recursive: true, force: true });
+		}
+	});
+	await t.test("missing executionId", async () => {
+		const fixture = await fixtureTarball({
+			extra: {
+				"extensions/companion-install-manifest.ts":
+					"const generation = 1;\n",
+			},
+		});
+		try {
+			const result = await validate(fixture.tarball);
+			assert.notEqual(result.code, 0);
+			assert.match(
+				result.stderr,
+				/packed execution manifest validator is incomplete/,
+			);
+		} finally {
+			await rm(fixture.root, { recursive: true, force: true });
+		}
+	});
 });
 
 test("rejects forbidden and unsupported packed resources", async () => {

@@ -16,6 +16,7 @@ export interface PublicEntryCapability {
 	allowedTools?: readonly string[];
 	continueIf?: (event: InputEvent) => boolean;
 	hasActiveAuthorization?: () => boolean;
+	hasActiveDecision?: () => boolean;
 	retainAfterSettled?: boolean;
 	onAdmittedInput?: (event: InputEvent) => void;
 	onSettled?: () => void;
@@ -147,6 +148,8 @@ export function registerPublicEntryGuard(
 	});
 
 	pi.on("tool_call", (event) => {
+		if (event.toolName === "ask_user_question" && !activeCapability)
+			return { block: true, reason: PENDING_TOOL_REASON };
 		const descriptor = activeCapability
 			? capabilities[activeCapability]
 			: Object.values(capabilities).find(
@@ -172,6 +175,8 @@ export function registerPublicEntryGuard(
 			descriptor.status === "implemented" &&
 			descriptor.hasActiveAuthorization?.() &&
 			(descriptor.allowedTools?.includes(event.toolName) ||
+				(event.toolName === "ask_user_question" &&
+					descriptor.hasActiveDecision?.()) ||
 				isReadOnlyEngramCall(event))
 		)
 			return undefined;

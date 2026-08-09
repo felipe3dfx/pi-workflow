@@ -7,10 +7,14 @@ import type {
 import type {
 	AuthenticatedDecisionActor,
 	AuthorizationOutcome,
+	DecisionClaimBinding,
 	DecisionClaimSource,
 	DecisionPresentation,
 	DecisionRequest,
 	DecisionScope,
+	EffectAuthorizationOutcome,
+	ExecutionLease,
+	ExecutionManifestBinding,
 	RecoveryDirective,
 	RecoveryOutcome,
 	TypedDecisionAction,
@@ -25,6 +29,7 @@ interface PiDecisionContext {
 	readonly runId: string;
 	readonly sequence: number;
 	readonly actor: AuthenticatedDecisionActor;
+	readonly claimBinding: DecisionClaimBinding;
 }
 
 interface PiDecisionCapability {
@@ -72,6 +77,7 @@ export interface PiDecisionAdapter {
 		input: Pick<PiDecisionFallbackResponse, "sessionId" | "text">,
 	): PiDecisionResult;
 	resetSession(sessionId: string): void;
+	hasActiveDecision(sessionId: string, workflow: string): boolean;
 }
 
 interface InteractiveDecisionService {
@@ -81,6 +87,12 @@ interface InteractiveDecisionService {
 		action: TypedDecisionAction,
 		actor: AuthenticatedDecisionActor,
 	): Promise<AuthorizationOutcome>;
+	claimBinding(decisionId: string): Promise<DecisionClaimBinding | undefined>;
+	bindExecutionManifest(
+		lease: ExecutionLease,
+		manifest: ExecutionManifestBinding,
+	): Promise<EffectAuthorizationOutcome>;
+	authorizeEffect(lease: ExecutionLease): Promise<EffectAuthorizationOutcome>;
 	recover(
 		scope: DecisionScope,
 		actor: AuthenticatedDecisionActor,
@@ -98,6 +110,12 @@ export interface PiInteractiveDecisions {
 		action: TypedDecisionAction,
 		actor: AuthenticatedDecisionActor,
 	): Promise<AuthorizationOutcome>;
+	bindExecutionManifest(
+		lease: ExecutionLease,
+		manifest: ExecutionManifestBinding,
+	): Promise<EffectAuthorizationOutcome>;
+	authorizeEffect(lease: ExecutionLease): Promise<EffectAuthorizationOutcome>;
+	hasActiveDecision(workflow: string): boolean;
 	recover(
 		scope: DecisionScope,
 		actor: AuthenticatedDecisionActor,
@@ -133,6 +151,7 @@ type PiDecisionResult = "claimed" | "feedback" | "cancelled" | "ignored";
 interface Reservation {
 	readonly correlation: PiDecisionCorrelation;
 	readonly actor: AuthenticatedDecisionActor;
+	readonly claimBinding: DecisionClaimBinding;
 	readonly presentation: DecisionPresentation;
 	readonly presentationDigest: string;
 	readonly prompt: PiDecisionPrompt;
@@ -142,6 +161,7 @@ interface Reservation {
 
 interface Claim {
 	readonly sessionId: string;
+	readonly binding: DecisionClaimBinding;
 	readonly actionId: string;
 	readonly actor: AuthenticatedDecisionActor;
 	readonly expiresAt: number;
@@ -262,6 +282,7 @@ export function createPiDecisionAdapter(
 	const reservationOwners = new Map<string, string>();
 	const latestSequences = new Map<string, number>();
 	const claims = new Map<string, Claim>();
+	let activeSession: string | undefined;
 
 	function reservation(input: PiDecisionCorrelation): Reservation | undefined {
 		if (!validCorrelation(input)) return undefined;
@@ -300,6 +321,7 @@ export function createPiDecisionAdapter(
 		if (!choice) return "ignored";
 		claims.set(reserved.presentation.decisionId, {
 			sessionId: reserved.correlation.sessionId,
+			binding: structuredClone(reserved.claimBinding),
 			actionId: choice.actionId,
 			actor: reserved.actor,
 			expiresAt: reserved.expiresAt,
@@ -308,13 +330,26 @@ export function createPiDecisionAdapter(
 	}
 
 	const claimSource: DecisionClaimSource = {
-		async consume(decisionId, action, actor) {
+		async consume(decisionId, action, actor, binding) {
 			const pending = claims.get(decisionId);
-			if (!pending || pending.expiresAt <= now()) {
+			if (
+				!pending ||
+				pending.expiresAt <= now() ||
+				pending.sessionId !== activeSession
+			) {
 				claims.delete(decisionId);
 				return false;
 			}
-			if (!exact(pending.actor, actor) || pending.actionId !== action.id)
+			if (
+				!exact(pending.actor, actor) ||
+				pending.actionId !== action.id ||
+				!exact(pending.binding, {
+					scope: binding.scope,
+					generation: binding.generation,
+				}) ||
+				(binding.sessionId !== undefined &&
+					pending.sessionId !== binding.sessionId)
+			)
 				return false;
 			claims.delete(decisionId);
 			return true;
@@ -326,6 +361,7 @@ export function createPiDecisionAdapter(
 			if (!validCorrelation(input))
 				throw new Error("Pi decision correlation is invalid.");
 			const key = correlationKey(input);
+			activeSession = input.sessionId;
 			const latest = latestSequences.get(key) ?? 0;
 			if (input.sequence <= latest)
 				throw new Error("Pi decision sequence must advance monotonically.");
@@ -376,6 +412,7 @@ export function createPiDecisionAdapter(
 					sequence: input.sequence,
 				},
 				actor: structuredClone(input.actor),
+				claimBinding: structuredClone(input.claimBinding),
 				presentation: privatePresentation,
 				presentationDigest: digest(privatePresentation),
 				prompt: privatePrompt,
@@ -504,6 +541,12 @@ export function createPiDecisionAdapter(
 			for (const key of latestSequences.keys()) {
 				if (key.startsWith(`${sessionId}\u0000`)) latestSequences.delete(key);
 			}
+			if (activeSession === sessionId) activeSession = undefined;
+		},
+		hasActiveDecision(sessionId, workflow) {
+			return activeReservations(sessionId).some(
+				(reserved) => reserved.claimBinding.scope.workflow === workflow,
+			);
 		},
 	};
 }
@@ -544,12 +587,14 @@ export function registerPiDecisionAdapter(
 	decisions: InteractiveDecisionService,
 	getContext: () => unknown = () => undefined,
 	createRunId: () => string = randomUUID,
+	onClaimed?: () => Promise<void> | void,
 ): PiInteractiveDecisions {
 	const pending = new Map<
 		string,
 		{
 			readonly presentation: DecisionPresentation;
 			readonly actor: AuthenticatedDecisionActor;
+			readonly claimBinding: DecisionClaimBinding;
 		}
 	>();
 	const sequences = new Map<string, number>();
@@ -562,11 +607,12 @@ export function registerPiDecisionAdapter(
 	function queuePresentation(
 		presentation: DecisionPresentation,
 		actor: AuthenticatedDecisionActor,
+		claimBinding: DecisionClaimBinding,
 	): void {
 		const session = sessionId(getContext());
 		if (!session) return;
 		activeSession ??= session;
-		pending.set(session, { presentation, actor });
+		pending.set(session, { presentation, actor, claimBinding });
 	}
 	pi.on("session_start", (_event, ctx) => {
 		const session = sessionId(ctx);
@@ -586,6 +632,7 @@ export function registerPiDecisionAdapter(
 			runId: createRunId(),
 			sequence,
 			actor: prepared.actor,
+			claimBinding: prepared.claimBinding,
 			presentation: prepared.presentation,
 			capability: runtimeCapability(pi, ctx),
 		});
@@ -607,19 +654,20 @@ export function registerPiDecisionAdapter(
 		});
 		return undefined;
 	});
-	pi.on("tool_result", (event, ctx) => {
+	pi.on("tool_result", async (event, ctx) => {
 		const session = sessionId(ctx);
 		if (!session || event.toolName !== QUESTION_TOOL) return undefined;
-		adapter.handlePiToolResult({
+		const outcome = adapter.handlePiToolResult({
 			sessionId: session,
 			toolName: event.toolName,
 			toolCallId: event.toolCallId,
 			details: event.details,
 			isError: event.isError,
 		});
+		if (outcome === "claimed") await onClaimed?.();
 		return undefined;
 	});
-	pi.on("input", (event: InputEvent, ctx) => {
+	pi.on("input", async (event: InputEvent, ctx) => {
 		const session = sessionId(ctx);
 		if (
 			!session ||
@@ -627,7 +675,11 @@ export function registerPiDecisionAdapter(
 			event.streamingBehavior !== undefined
 		)
 			return undefined;
-		adapter.handlePiFallbackResponse({ sessionId: session, text: event.text });
+		const outcome = adapter.handlePiFallbackResponse({
+			sessionId: session,
+			text: event.text,
+		});
+		if (outcome === "claimed") await onClaimed?.();
 		return undefined;
 	});
 	pi.on("session_shutdown", (_event, ctx) => {
@@ -638,16 +690,28 @@ export function registerPiDecisionAdapter(
 	return {
 		async prepare(request, actor) {
 			const presentation = await decisions.prepare(request);
-			queuePresentation(presentation, actor);
+			const binding = await decisions.claimBinding(presentation.decisionId);
+			if (binding) queuePresentation(presentation, actor, binding);
 			return presentation;
 		},
 		authorize: (decisionId, action, actor) =>
 			decisions.authorize(decisionId, action, actor),
+		bindExecutionManifest: (lease, manifest) =>
+			decisions.bindExecutionManifest(lease, manifest),
+		authorizeEffect: (lease) => decisions.authorizeEffect(lease),
 		async recover(scope, actor, directive) {
 			const outcome = await decisions.recover(scope, actor, directive);
-			if (outcome.kind === "reapproval" || outcome.kind === "drift")
-				queuePresentation(outcome.presentation, actor);
+			if (outcome.kind === "reapproval" || outcome.kind === "drift") {
+				const binding = await decisions.claimBinding(
+					outcome.presentation.decisionId,
+				);
+				if (binding) queuePresentation(outcome.presentation, actor, binding);
+			}
 			return outcome;
+		},
+		hasActiveDecision(workflow) {
+			const session = sessionId(getContext());
+			return !!session && adapter.hasActiveDecision(session, workflow);
 		},
 	};
 }

@@ -14,6 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
+import { validatePublicationRecoveryContract } from "./validate-publication-recovery-contract.mjs";
 
 const execFileAsync = promisify(execFile);
 const workflows = [
@@ -38,17 +39,20 @@ const allowedRoots = [
 const allowedFiles = new Set([
 	"LICENSE",
 	"README.md",
+	"docs/design/interactive-decision-inventory.md",
 	"package.json",
 	"tools/pi-sandbox.mjs",
 ]);
 const required = [
 	"package.json",
 	"README.md",
+	"docs/design/interactive-decision-inventory.md",
 	"scripts/pi-workflow-sync.mjs",
 	"scripts/acceptance-evidence.mjs",
 	"scripts/check-acceptance.mjs",
 	"scripts/run-packed-acceptance.mjs",
 	"scripts/validate-release.mjs",
+	"scripts/validate-publication-recovery-contract.mjs",
 	"extensions/pi-workflow.ts",
 	"extensions/agent-asset-migrations.ts",
 	"extensions/agent-validator.ts",
@@ -173,6 +177,58 @@ async function validateExtracted(packageRoot) {
 					`Load and follow the \`${name}\` skill.\n\nArguments: $ARGUMENTS\n`,
 			`public prompt ${name} contains duplicated workflow prose`,
 			errors,
+		);
+	}
+
+	try {
+		const inventory = await readFile(
+			join(packageRoot, "docs/design/interactive-decision-inventory.md"),
+			"utf8",
+		);
+		check(
+			inventory.includes("Active unmigrated closed decisions: 0") &&
+				!inventory.includes("active-unmigrated"),
+			"packed interactive decision inventory is stale or incomplete",
+			errors,
+		);
+		check(
+			inventory.includes("`deliver-ticket` | pending") &&
+				inventory.includes("PI_WORKFLOW_CAPABILITY_PENDING"),
+			"packed inventory must preserve pending deliver-ticket",
+			errors,
+		);
+		for (const relativePath of [
+			"extensions/agent-asset-operation.ts",
+			"extensions/approved-revision-publication-manifest.ts",
+			"extensions/ticket-publication-manifest.ts",
+			"extensions/companion-install-manifest.ts",
+			"extensions/delivery-pull-request-workflow.ts",
+		]) {
+			const source = await readFile(join(packageRoot, relativePath), "utf8");
+			check(
+				source.includes("executionId") && source.includes("generation"),
+				`packed execution manifest validator is incomplete: ${relativePath}`,
+				errors,
+			);
+		}
+		errors.push(
+			...(await validatePublicationRecoveryContract(packageRoot, "packed ")),
+		);
+		for (const name of ["define-product", "product-review", "qa-handoff"]) {
+			const skill = await readFile(
+				join(packageRoot, "skills", name, "SKILL.md"),
+				"utf8",
+			);
+			check(
+				skill.includes("shared `interactive-decisions` descriptor") &&
+					skill.includes("require an exact phrase"),
+				`packed ${name} skill does not enforce semantic shared decisions`,
+				errors,
+			);
+		}
+	} catch (error) {
+		errors.push(
+			`invalid packed interactive decision contract: ${error instanceof Error ? error.message : String(error)}`,
 		);
 	}
 

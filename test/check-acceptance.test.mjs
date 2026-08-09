@@ -54,6 +54,7 @@ test("public acceptance command packs once and validates the extracted release c
 		"define-product",
 		"deliver-ticket",
 		"doctor",
+		"interactive-decisions",
 		"least-privilege-profiles",
 		"packed-skills",
 		"product-review",
@@ -112,6 +113,9 @@ test("public acceptance command packs once and validates the extracted release c
 		"verified-rollback-and-resume-recovery",
 		"unmanaged-collision-refused-without-mutation",
 		"public-cli-handler-dispatch",
+		"public-command-waits-for-shared-panel",
+		"one-claim-executes-package-and-mcp-plan",
+		"packed-runtime-uses-durable-joint-manifest",
 	]);
 	assert.deepEqual(report.scenarios.status.assertions, [
 		"read-only-checks-only",
@@ -131,6 +135,17 @@ test("public acceptance command packs once and validates the extracted release c
 	assert.deepEqual(report.scenarios["packed-skills"].assertions, [
 		"four-public-skills-loaded",
 		"canonical-spanish-goldens-loaded",
+	]);
+	assert.deepEqual(report.scenarios["interactive-decisions"].assertions, [
+		"inventory-zero-active-unmigrated",
+		"panel-and-fallback-use-shared-descriptor",
+		"question-tool-requires-compatible-active-decision",
+		"one-lease-covers-each-logical-operation",
+		"execution-manifest-bound-before-first-effect",
+		"every-effect-rechecks-fencing-and-domain-preconditions",
+		"skills-use-semantic-actions-not-exact-phrases",
+		"active-legacy-authorization-routes-absent",
+		"deliver-ticket-remains-pending-and-module-blocked",
 	]);
 	assert.deepEqual(report.scenarios["deliver-ticket"], {
 		status: "intentional-refusal",
@@ -161,6 +176,7 @@ test("acceptance evidence rejects empty and blank scenario assertions", () => {
 			"sync",
 			"status",
 			"doctor",
+			"interactive-decisions",
 			"least-privilege-profiles",
 		].map((name) => [
 			name,

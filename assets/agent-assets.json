@@ -202,14 +202,14 @@
       "name": "to-spec",
       "version": 1,
       "source": "assets/agents/to-spec.md",
-      "digest": "cf2bfaa6dd01e4a23aa6654442221474daa21ac4f4408d5c31e0a9e6afd659ee"
+      "digest": "9f7442045e36b52369bae32f3bc8594524071a78fd42e1ce1b36a9691d813663"
     },
     {
       "kind": "agent",
       "name": "to-tickets",
       "version": 1,
       "source": "assets/agents/to-tickets.md",
-      "digest": "525b50c4a872e4fe83b88819f66af9c91aa6aa30c22c6bd2e25c6ff99b381de6"
+      "digest": "02cd86005c982d02266770a37e305b6344dbadb576c2dfd01afbecdcc9b5831f"
     }
   ]
 }

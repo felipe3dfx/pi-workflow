@@ -11,7 +11,7 @@ node scripts/check-acceptance.mjs --tarball /absolute/path/to/release-candidate.
 
 The command creates at most one tarball, computes its SHA-256 digest, validates the packed distribution, extracts it into a temporary directory, and executes `scripts/run-packed-acceptance.mjs` from that extraction. The runner imports workflow modules only below the extracted package root. It uses deterministic in-memory fakes for Engram, Linear, the Pi runtime seam, filesystem mutation, and model availability. It does not use live systems or invoke `npm publish`.
 
-The evidence validator fails closed unless every required scenario has a terminal expected status and at least one non-blank assertion. It also requires the exact tarball digest and origin, the complete safety boundary, exact scenario names, and a canonical report digest.
+The evidence validator fails closed unless every required scenario has a terminal expected status and at least one non-blank assertion. It also requires the exact tarball digest and origin, the complete safety boundary, exact scenario names, and a canonical report digest. The packed package includes the authoritative interactive-decision inventory so acceptance can prove the non-runtime migration contract from the same extracted bytes.
 
 ## Scenario matrix
 
@@ -25,13 +25,14 @@ The evidence validator fails closed unless every required scenario has a termina
 | `sync` | Conditional writes, settled idempotency, rollback/resume recovery, and unmanaged-collision refusal. |
 | `status` | Read-only checks and summary-only output. |
 | `doctor` | Read-only checks and secret redaction. |
+| `interactive-decisions` | Zero active unmigrated choices; shared panel/fallback; guarded question tool; one lease per logical operation; execution-bound manifests; per-effect fencing and domain revalidation; semantic skill actions; no active legacy authorization; and honest pending `deliver-ticket`. |
 | `least-privilege-profiles` | Exact model registry queries, minimal research/prototype/to-tickets profiles, and capability/model drift refusals. |
 
 ## Repository gates
 
 `npm run check` runs repository formatting-independent lint checks, TypeScript checking, dependency analysis, focused-test protection, generated/resource guards, package and release validation, all tests, packed distribution validation, and packed acceptance. `prepublishOnly` delegates to this complete gate.
 
-The packed distribution validator requires the acceptance runner, evidence validator, public acceptance command, Spanish golden files, and release validator to be present in the tarball.
+The packed distribution validator requires the acceptance runner, evidence validator, public acceptance command, Spanish golden files, authoritative interactive-decision inventory, and release validator to be present in the tarball. It also rejects migrated manifest sources that omit `executionId` or fencing generation validation and implemented skills that restore phrase-based authorization.
 
 ## Release contract
 

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createProductReviewArtifactStore } from "../extensions/product-review-artifact-store.ts";
+import { createProductReviewPublicationRecoveryStore } from "../extensions/product-review-publication-recovery.ts";
 import {
 	createProductReviewDraftStore,
 	isProductReviewDraftArtifact,
@@ -15,6 +16,7 @@ import {
 } from "../extensions/workflow-contracts.ts";
 
 const issueId = "ILA-2324";
+assert.deepEqual(Object.keys(createProductReviewPublicationRecoveryStore), []);
 const draft = {
 	scope: "Validar el resultado de producto.",
 	stories: [{
@@ -52,6 +54,33 @@ function backend() {
 				const stored = values.get(topic);
 				return stored?.revision === revision ? stored.content : undefined;
 			},
+		},
+	};
+}
+
+function atomicBackend() {
+	const values = new Map();
+	const revisions = new Map();
+	let writes = 0;
+	return {
+		values,
+		store: {
+			capabilities: { atomicCompareAndSwap: true },
+			readCurrent: async (_project, topic) => values.get(topic),
+			write: async (_project, topic, content, expectedRevision) => {
+				const current = values.get(topic);
+				if (current?.revision !== expectedRevision)
+					throw Object.assign(new Error("compare-and-swap conflict"), {
+						code: "revision-conflict",
+					});
+				writes += 1;
+				const stored = { revision: `r${writes}`, content };
+				values.set(topic, stored);
+				revisions.set(`${topic}:${stored.revision}`, content);
+				return { revision: stored.revision };
+			},
+			readRevision: async (_project, topic, revision) =>
+				revisions.get(`${topic}:${revision}`),
 		},
 	};
 }
@@ -170,4 +199,124 @@ test("both stores reject operation without atomic compare-and-swap", async () =>
 		createProductReviewArtifactStore({ store: persistence.store, project: "pi-workflow" }).save(await artifactFixture()),
 		/Atomic CAS/,
 	);
+});
+
+test("publication recovery preserves and fences the shared execution binding", async () => {
+	const artifact = await artifactFixture();
+	const persistence = atomicBackend();
+	const recovery = createProductReviewPublicationRecoveryStore({
+		store: persistence.store,
+		project: "pi-workflow",
+	});
+	const lease = {
+		decisionId: "decision.product-review",
+		operationDigest: "operation-digest",
+		executionId: "execution-1",
+		generation: 1,
+		actorId: "owner-1",
+		authorityRevision: "owner-r1",
+		action: {
+			id: "product-review.publish.accepted",
+			input: { issueId, result: "Aceptado", digest: artifact.digest },
+		},
+	};
+	const manifest = await recovery.bindExecution(artifact, lease);
+	assert.deepEqual(manifest, {
+		decisionId: lease.decisionId,
+		operationDigest: lease.operationDigest,
+		executionId: lease.executionId,
+		generation: lease.generation,
+		ref: `workflow://product-review/${issueId}/publication/${artifact.digest}`,
+	});
+	const recoveryTopic = `workflow/product-review-publication-recovery/${issueId}`;
+	assert.equal(
+		persistence.values.get(recoveryTopic).content,
+		`{"digest":"${artifact.digest}","executionBinding":{"decisionId":"decision.product-review","executionId":"execution-1","generation":1,"operationDigest":"operation-digest"},"issueId":"${issueId}","stage":"released"}\n`,
+	);
+	await recovery.claim(artifact, "runtime-1");
+	assert.equal(
+		persistence.values.get(recoveryTopic).content,
+		`{"digest":"${artifact.digest}","executionBinding":{"decisionId":"decision.product-review","executionId":"execution-1","generation":1,"operationDigest":"operation-digest"},"issueId":"${issueId}","ownerId":"runtime-1","stage":"uncertain"}\n`,
+	);
+	assert.deepEqual(await recovery.read(issueId), {
+		digest: artifact.digest,
+		stage: "uncertain",
+		executionBinding: {
+			decisionId: lease.decisionId,
+			operationDigest: lease.operationDigest,
+			executionId: lease.executionId,
+			generation: lease.generation,
+		},
+	});
+	await assert.rejects(
+		recovery.bindExecution(artifact, { ...lease, executionId: "execution-2" }),
+		{
+			message:
+				"Product review publication execution binding conflicts.",
+		},
+	);
+	await recovery.finalizeVerified(artifact);
+	assert.equal((await recovery.read(issueId)).stage, "verified");
+	assert.equal(
+		(await recovery.read(issueId)).executionBinding.executionId,
+		"execution-1",
+	);
+});
+
+test("publication recovery adopts a same-owner claim that supersedes its saved revision", async () => {
+	const artifact = await artifactFixture();
+	const revisions = new Map();
+	let current;
+	const recovery = createProductReviewPublicationRecoveryStore({
+		project: "pi-workflow",
+		store: {
+			capabilities: { atomicCompareAndSwap: true },
+			readCurrent: async () => current,
+			readRevision: async (_project, _topic, revision) =>
+				revisions.get(revision),
+			write: async (_project, _topic, content) => {
+				revisions.set("saved-r1", content);
+				current = { revision: "rival-r2", content };
+				revisions.set(current.revision, current.content);
+				return { revision: "saved-r1" };
+			},
+		},
+	});
+
+	await recovery.claim(artifact, "runtime-1");
+	assert.equal(
+		current.content,
+		`{"digest":"${artifact.digest}","issueId":"${issueId}","ownerId":"runtime-1","stage":"uncertain"}\n`,
+	);
+	assert.deepEqual(await recovery.read(issueId), {
+		digest: artifact.digest,
+		stage: "uncertain",
+	});
+});
+
+test("publication recovery adopts an exact verified revision that supersedes its final write", async () => {
+	const artifact = await artifactFixture();
+	const revisions = new Map();
+	let current;
+	const recovery = createProductReviewPublicationRecoveryStore({
+		project: "pi-workflow",
+		store: {
+			capabilities: { atomicCompareAndSwap: true },
+			readCurrent: async () => current,
+			readRevision: async (_project, _topic, revision) =>
+				revisions.get(revision),
+			write: async (_project, _topic, content) => {
+				revisions.set("saved-r1", content);
+				current = { revision: "rival-r2", content };
+				revisions.set(current.revision, current.content);
+				return { revision: "saved-r1" };
+			},
+		},
+	});
+
+	await recovery.finalizeVerified(artifact);
+	assert.deepEqual(await recovery.read(issueId), {
+		digest: artifact.digest,
+		stage: "verified",
+	});
 });

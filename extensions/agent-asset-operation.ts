@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
+import type { ExecutionLease } from "./interactive-decisions.ts";
 
-const OPERATION_MANIFEST_SCHEMA_VERSION = 1 as const;
+const OPERATION_MANIFEST_SCHEMA_VERSION = 2 as const;
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 
 type Validation<T> = { ok: true; value: T } | { ok: false; diagnostic: string };
@@ -32,7 +33,13 @@ export interface OperationInput {
 	manifestAfterDigest: string | null;
 	manifestBeforeContent: string | undefined;
 	targets: readonly OperationTargetInput[];
+	executionLease: ExecutionLease;
 }
+
+type OperationExecutionBinding = Pick<
+	ExecutionLease,
+	"decisionId" | "operationDigest" | "executionId" | "generation"
+>;
 
 interface OperationManifestTarget {
 	targetPath: string;
@@ -60,6 +67,7 @@ export interface OperationManifest {
 	manifestBackupDigest: string | null;
 	manifestOriginallyMissing: boolean;
 	targets: readonly OperationManifestTarget[];
+	executionBinding: OperationExecutionBinding;
 	digest: string;
 }
 
@@ -102,11 +110,19 @@ function operationIdentity(input: {
 	manifestAfterDigest: string | null;
 	targets: readonly Pick<
 		OperationManifestTarget,
-		"targetPath" | "fromVersion" | "toVersion" | "previousDigest" | "sourceDigest"
+		| "targetPath"
+		| "fromVersion"
+		| "toVersion"
+		| "previousDigest"
+		| "sourceDigest"
 	>[];
+	executionBinding: OperationExecutionBinding;
 }): string {
 	return sha256(
-		canonicalJson({ schemaVersion: OPERATION_MANIFEST_SCHEMA_VERSION, ...input }),
+		canonicalJson({
+			schemaVersion: OPERATION_MANIFEST_SCHEMA_VERSION,
+			...input,
+		}),
 	);
 }
 
@@ -130,12 +146,13 @@ function validateInput(input: OperationInput): Validation<void> {
 		(input.manifestBeforeContent === undefined
 			? input.manifestBeforeDigest !== null
 			: sha256(input.manifestBeforeContent) !== input.manifestBeforeDigest) ||
-		!Array.isArray(input.targets)
+		!Array.isArray(input.targets) ||
+		!validExecutionLease(input.executionLease)
 	)
 		return {
 			ok: false,
 			diagnostic:
-			"Operation input must contain absolute paths, nonce, and matching manifest digests; no files were changed.",
+				"Operation input must contain absolute paths, nonce, and matching manifest digests; no files were changed.",
 		};
 	for (const target of input.targets) {
 		if (
@@ -159,7 +176,36 @@ function validateInput(input: OperationInput): Validation<void> {
 	return { ok: true, value: undefined };
 }
 
-function createOperationManifest(
+function validExecutionBinding(
+	value: unknown,
+): value is OperationExecutionBinding {
+	if (!isRecord(value)) return false;
+	return (
+		typeof value.decisionId === "string" &&
+		value.decisionId.length > 0 &&
+		validDigest(value.operationDigest) &&
+		typeof value.executionId === "string" &&
+		value.executionId.length > 0 &&
+		Number.isSafeInteger(value.generation) &&
+		(value.generation as number) > 0
+	);
+}
+
+function validExecutionLease(value: unknown): value is ExecutionLease {
+	if (!isRecord(value) || !validExecutionBinding(value)) return false;
+	const candidate = value as Record<string, unknown>;
+	return (
+		typeof candidate.actorId === "string" &&
+		candidate.actorId.length > 0 &&
+		typeof candidate.authorityRevision === "string" &&
+		candidate.authorityRevision.length > 0 &&
+		isRecord(candidate.action) &&
+		typeof candidate.action.id === "string" &&
+		candidate.action.id.length > 0
+	);
+}
+
+export function createOperationManifest(
 	input: OperationInput,
 ): Validation<OperationManifest> {
 	const inputValidation = validateInput(input);
@@ -169,7 +215,9 @@ function createOperationManifest(
 		fromVersion: target.fromVersion,
 		toVersion: target.toVersion,
 		previousDigest:
-			target.previousContent === undefined ? null : sha256(target.previousContent),
+			target.previousContent === undefined
+				? null
+				: sha256(target.previousContent),
 		sourceDigest: target.sourceDigest,
 	}));
 	const operationId = operationIdentity({
@@ -180,6 +228,12 @@ function createOperationManifest(
 		manifestBeforeDigest: input.manifestBeforeDigest,
 		manifestAfterDigest: input.manifestAfterDigest,
 		targets: identityTargets,
+		executionBinding: {
+			decisionId: input.executionLease.decisionId,
+			operationDigest: input.executionLease.operationDigest,
+			executionId: input.executionLease.executionId,
+			generation: input.executionLease.generation,
+		},
 	});
 	const manifestWithoutDigest: Omit<OperationManifest, "digest"> = {
 		schemaVersion: OPERATION_MANIFEST_SCHEMA_VERSION,
@@ -207,6 +261,12 @@ function createOperationManifest(
 			backupDigest: target.previousDigest,
 			originallyMissing: target.previousDigest === null,
 		})),
+		executionBinding: {
+			decisionId: input.executionLease.decisionId,
+			operationDigest: input.executionLease.operationDigest,
+			executionId: input.executionLease.executionId,
+			generation: input.executionLease.generation,
+		},
 	};
 	return {
 		ok: true,
@@ -220,10 +280,14 @@ function createOperationManifest(
 export function verifyOperationManifest(
 	value: unknown,
 ): Validation<OperationManifest> {
-	if (!isRecord(value) || value.schemaVersion !== OPERATION_MANIFEST_SCHEMA_VERSION)
+	if (
+		!isRecord(value) ||
+		value.schemaVersion !== OPERATION_MANIFEST_SCHEMA_VERSION
+	)
 		return {
 			ok: false,
-			diagnostic: "Operation manifest schema is unsupported; no files were changed.",
+			diagnostic:
+				"Operation manifest schema is unsupported; no files were changed.",
 		};
 	const manifest = value as unknown as OperationManifest;
 	if (
@@ -237,12 +301,15 @@ export function verifyOperationManifest(
 		!validNullableDigest(manifest.manifestBeforeDigest) ||
 		!validNullableDigest(manifest.manifestAfterDigest) ||
 		!validNullableDigest(manifest.manifestBackupDigest) ||
-		manifest.manifestOriginallyMissing !== (manifest.manifestBeforeDigest === null) ||
+		manifest.manifestOriginallyMissing !==
+			(manifest.manifestBeforeDigest === null) ||
 		(manifest.manifestOriginallyMissing
-			? manifest.manifestBackupPath !== null || manifest.manifestBackupDigest !== null
+			? manifest.manifestBackupPath !== null ||
+				manifest.manifestBackupDigest !== null
 			: typeof manifest.manifestBackupPath !== "string" ||
 				manifest.manifestBackupDigest !== manifest.manifestBeforeDigest) ||
 		!Array.isArray(manifest.targets) ||
+		!validExecutionBinding(manifest.executionBinding) ||
 		!validDigest(manifest.digest)
 	)
 		return {
@@ -269,7 +336,8 @@ export function verifyOperationManifest(
 		)
 			return {
 				ok: false,
-				diagnostic: "Operation manifest target is malformed; no files were changed.",
+				diagnostic:
+					"Operation manifest target is malformed; no files were changed.",
 			};
 	}
 	const expectedOperationId = operationIdentity({
@@ -286,9 +354,13 @@ export function verifyOperationManifest(
 			previousDigest: target.previousDigest,
 			sourceDigest: target.sourceDigest,
 		})),
+		executionBinding: manifest.executionBinding,
 	});
 	const { digest, ...withoutDigest } = manifest;
-	if (manifest.operationId !== expectedOperationId || digest !== manifestDigest(withoutDigest))
+	if (
+		manifest.operationId !== expectedOperationId ||
+		digest !== manifestDigest(withoutDigest)
+	)
 		return {
 			ok: false,
 			diagnostic:
@@ -330,7 +402,8 @@ export async function verifyOperationBackups(
 			)
 				return {
 					ok: false,
-					diagnostic: "Operation manifest backup digest does not match; no files were changed.",
+					diagnostic:
+						"Operation manifest backup digest does not match; no files were changed.",
 				};
 		} catch (error) {
 			return {
@@ -351,7 +424,10 @@ export async function verifyOperationSuccessors(
 	for (const target of manifestResult.value.targets) {
 		const successor = await filesystem.readFile(target.successorPath);
 		if (successor === undefined || sha256(successor) !== target.successorDigest)
-			return { ok: false, diagnostic: `Operation successor digest does not match for ${target.targetPath}; no files were changed.` };
+			return {
+				ok: false,
+				diagnostic: `Operation successor digest does not match for ${target.targetPath}; no files were changed.`,
+			};
 	}
 	return manifestResult;
 }
@@ -362,6 +438,31 @@ export async function createVerifiedOperation(
 ): Promise<Validation<OperationManifest>> {
 	const manifestResult = createOperationManifest(input);
 	if (!manifestResult.ok) return manifestResult;
+	const persisted = await persistVerifiedOperation(
+		manifestResult.value,
+		filesystem,
+	);
+	if (!persisted.ok) return persisted;
+	return materializeOperationEvidence(input, persisted.value, filesystem);
+}
+
+export async function materializeOperationEvidence(
+	input: OperationInput,
+	manifest: OperationManifest,
+	filesystem: OperationFilesystem,
+	beforeMutation: () => Promise<void> = async () => undefined,
+): Promise<Validation<OperationManifest>> {
+	const manifestResult = verifyOperationManifest(manifest);
+	if (!manifestResult.ok) return manifestResult;
+	if (
+		manifest.planDigest !== input.planDigest ||
+		manifest.executionBinding.executionId !== input.executionLease.executionId
+	)
+		return {
+			ok: false,
+			diagnostic:
+				"Operation evidence input does not match its execution-bound manifest; no asset files were changed.",
+		};
 	for (const [index, target] of manifestResult.value.targets.entries()) {
 		if (target.originallyMissing) continue;
 		const previousContent = input.targets[index]?.previousContent;
@@ -379,6 +480,25 @@ export async function createVerifiedOperation(
 				return {
 					ok: false,
 					diagnostic: `Operation target changed after planning: ${target.targetPath}; no files were changed.`,
+				};
+			const existing = await filesystem.readFile(target.backupPath as string);
+			if (existing !== undefined) {
+				if (sha256(existing) !== target.backupDigest)
+					return {
+						ok: false,
+						diagnostic: `Operation backup conflicts for ${target.targetPath}; no asset files were changed.`,
+					};
+				continue;
+			}
+			await beforeMutation();
+			const latestContent = await filesystem.readFile(target.targetPath);
+			if (
+				latestContent === undefined ||
+				sha256(latestContent) !== target.previousDigest
+			)
+				return {
+					ok: false,
+					diagnostic: `Operation target changed before backup: ${target.targetPath}; no asset files were changed.`,
 				};
 			await filesystem.writeFileAtomic(
 				target.backupPath as string,
@@ -401,13 +521,37 @@ export async function createVerifiedOperation(
 			)
 				return {
 					ok: false,
-					diagnostic: "Operation manifest changed after planning; no files were changed.",
+					diagnostic:
+						"Operation manifest changed after planning; no files were changed.",
 				};
-			await filesystem.writeFileAtomic(
+			const existing = await filesystem.readFile(
 				manifestResult.value.manifestBackupPath as string,
-				input.manifestBeforeContent as string,
-				null,
 			);
+			if (existing !== undefined) {
+				if (sha256(existing) !== manifestResult.value.manifestBackupDigest)
+					return {
+						ok: false,
+						diagnostic:
+							"Operation manifest backup conflicts; no asset files were changed.",
+					};
+			} else {
+				await beforeMutation();
+				const latest = await filesystem.readFile(input.manifestPath);
+				if (
+					latest === undefined ||
+					sha256(latest) !== manifestResult.value.manifestBeforeDigest
+				)
+					return {
+						ok: false,
+						diagnostic:
+							"Operation manifest changed before backup; no asset files were changed.",
+					};
+				await filesystem.writeFileAtomic(
+					manifestResult.value.manifestBackupPath as string,
+					input.manifestBeforeContent as string,
+					null,
+				);
+			}
 		} catch (error) {
 			return {
 				ok: false,
@@ -418,31 +562,65 @@ export async function createVerifiedOperation(
 	for (const [index, target] of manifestResult.value.targets.entries()) {
 		const successor = input.targets[index]?.sourceContent;
 		if (successor === undefined)
-			return { ok: false, diagnostic: `Operation successor source is missing for ${target.targetPath}; no files were changed.` };
+			return {
+				ok: false,
+				diagnostic: `Operation successor source is missing for ${target.targetPath}; no files were changed.`,
+			};
 		try {
+			const existing = await filesystem.readFile(target.successorPath);
+			if (existing !== undefined) {
+				if (sha256(existing) !== target.successorDigest)
+					return {
+						ok: false,
+						diagnostic: `Operation successor conflicts for ${target.targetPath}; no asset files were changed.`,
+					};
+				continue;
+			}
+			await beforeMutation();
 			await filesystem.writeFileAtomic(target.successorPath, successor, null);
 		} catch (error) {
-			return { ok: false, diagnostic: `Unable to create operation successor for ${target.targetPath}: ${error instanceof Error ? error.message : String(error)}. No asset files were changed.` };
+			return {
+				ok: false,
+				diagnostic: `Unable to create operation successor for ${target.targetPath}: ${error instanceof Error ? error.message : String(error)}. No asset files were changed.`,
+			};
 		}
 	}
-	return verifyOperationBackups(manifestResult.value, filesystem);
+	const backups = await verifyOperationBackups(
+		manifestResult.value,
+		filesystem,
+	);
+	if (!backups.ok) return backups;
+	return verifyOperationSuccessors(manifestResult.value, filesystem);
 }
 
 export async function persistVerifiedOperation(
 	manifest: OperationManifest,
 	filesystem: OperationFilesystem,
+	beforeMutation: () => Promise<void> = async () => undefined,
 ): Promise<Validation<OperationManifest>> {
-	const verified = await verifyOperationBackups(manifest, filesystem);
+	const verified = verifyOperationManifest(manifest);
 	if (!verified.ok) return verified;
 	const path = `${manifest.operationDirectory}/${manifest.operationId}/operation.json`;
 	const content = canonicalJson(manifest);
 	try {
+		const existing = await filesystem.readFile(path);
+		if (existing !== undefined) {
+			if (existing !== content)
+				return {
+					ok: false,
+					diagnostic:
+						"Operation manifest conflicts with existing durable evidence; no asset files were changed.",
+				};
+			return verifyOperationManifest(JSON.parse(existing));
+		}
+		await beforeMutation();
 		await filesystem.writeFileAtomic(path, content, null);
 		const readBack = await filesystem.readFile(path);
 		if (readBack !== content)
 			return {
 				ok: false,
-				diagnostic: "Operation manifest read-back does not match its atomic write; no asset files were changed.",
+				diagnostic:
+					"Operation manifest read-back does not match its atomic write; no asset files were changed.",
 			};
 		return verifyOperationManifest(JSON.parse(readBack));
 	} catch (error) {

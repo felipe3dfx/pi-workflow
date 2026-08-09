@@ -9,7 +9,7 @@ description: Prepare a QA handoff for one Linear issue from a domain anchor unde
 
 Evaluate this invocation guard before inspecting or handling inputs.
 
-The runtime extension admits only idle interactive invocations and blocks all tools while the capability is pending. For each relevant execution, the implemented runtime authenticates one active, non-guest Linear user exactly once with `linear_get_user` and caches a stable `single-user/v1` authority projection; never repeat that lookup before later actions or mutations. Human Owner/Developer role membership remains an organizational access boundary: this package does not infer role membership from the Linear user response.
+The runtime extension admits only idle interactive invocations. Pending capabilities block every tool. Implemented capabilities expose only their workflow-owned tools, and `ask_user_question` is available only while a compatible shared decision is active.
 
 For a forbidden runtime caller, the extension returns the PI_WORKFLOW_PUBLIC_ENTRY_FORBIDDEN blocker before the LLM runs.
 
@@ -27,11 +27,15 @@ What single Linear issue ID anchors this QA handoff?
 
 Ask no other question. Stop immediately after the question. Do not invoke tools or perform mutations.
 
+## Closed decisions
+
+Every closed human choice is presented by the shared `interactive-decisions` descriptor as either the compatible Pi panel or its numbered fallback. Wait for that descriptor and use only the semantic action recorded by its fresh claim. Never render a separate choice list, require an exact phrase, infer approval from prose, or construct decision IDs, digests, execution IDs, or authority fields. Ambiguous free-form feedback is not approval and must not trigger an effect.
+
 ## Publication
 
 After receiving an allowed invocation with a valid Linear ID:
 
-- The Developer's explicit invocation authorizes only the canonical `qa-handoff/v1` artifact that the runtime binds internally to that issue, its revision, and the exact Linear-facing body in professional neutral Spanish.
+- The Developer's invocation supplies only the issue anchor; it does not authorize publication. Wait for the shared publish or cancel action bound to the canonical `qa-handoff/v1` artifact, issue revision, and exact Linear-facing body in professional neutral Spanish.
 - Authenticate one active, non-guest Linear user when the runtime requests it; reuse that cached identity and never call `linear_get_user` again before publication.
 - Execute the QA handoff workflow for that same Linear ID. Do not provide a body, digest, authority, revision, or additional fields.
 - If the workflow returns a blocker, report the exact blocker and stop.

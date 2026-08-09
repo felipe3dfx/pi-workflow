@@ -89,9 +89,23 @@ export interface ExecutionLease extends ExecutionBinding {
 	readonly action: TypedDecisionAction;
 }
 
-interface ExecutionManifestBinding extends ExecutionBinding {
+export interface ExecutionManifestBinding extends ExecutionBinding {
 	readonly ref: string;
 }
+
+export interface DecisionClaimBinding {
+	readonly scope: DecisionScope;
+	readonly generation: number;
+	readonly sessionId?: string;
+}
+
+export type EffectAuthorizationOutcome =
+	| {
+			readonly kind: "authorized";
+			readonly lease: ExecutionLease;
+			readonly manifest: ExecutionManifestBinding;
+	  }
+	| { readonly kind: "blocked"; readonly blocker: DecisionBlocker };
 
 export interface DecisionBlocker {
 	readonly code:
@@ -237,10 +251,11 @@ export interface DecisionClaimSource {
 		decisionId: string,
 		action: TypedDecisionAction,
 		actor: AuthenticatedDecisionActor,
+		binding: DecisionClaimBinding,
 	): Promise<boolean>;
 }
 
-interface ManifestLookup {
+export interface ManifestLookup {
 	find(lease: ExecutionLease): Promise<readonly ExecutionManifestBinding[]>;
 }
 
@@ -434,6 +449,13 @@ const digestValue = (value: unknown): string => sha256(canonicalJson(value));
 const clone = <T>(value: T): T => structuredClone(value);
 const exact = (left: unknown, right: unknown): boolean =>
 	canonicalJson(left) === canonicalJson(right);
+const safelyExact = (left: unknown, right: unknown): boolean => {
+	try {
+		return exact(left, right);
+	} catch {
+		return false;
+	}
+};
 
 function decisionError(code: DecisionErrorCode, message: string): Error {
 	return Object.assign(new Error(message), { code });
@@ -1423,9 +1445,18 @@ export function createInteractiveDecisions(options: {
 				"PI_WORKFLOW_DECISION_ACTION_MISMATCH",
 				"Typed action does not match the prepared decision.",
 			);
+		const claimBinding = {
+			scope: clone(scope),
+			generation: stored.value.generation + 1,
+		};
 		if (
 			!options.claimSource ||
-			!(await options.claimSource.consume(decisionId, action, frozenActor))
+			!(await options.claimSource.consume(
+				decisionId,
+				action,
+				frozenActor,
+				claimBinding,
+			))
 		)
 			return blocker(
 				"PI_WORKFLOW_DECISION_CLAIM_MISSING",
@@ -1509,6 +1540,103 @@ export function createInteractiveDecisions(options: {
 				);
 			throw error;
 		}
+	}
+
+	async function claimBinding(
+		decisionId: string,
+	): Promise<DecisionClaimBinding | undefined> {
+		const parsedDecisionId = parseDecisionId(decisionId);
+		if (!parsedDecisionId) return undefined;
+		const stored = await loadByKey(parsedDecisionId.key);
+		if (
+			stored?.value.current.state !== "prepared" ||
+			stored.value.current.decisionId !== decisionId
+		)
+			return undefined;
+		return {
+			scope: clone(stored.value.scope),
+			generation: stored.value.generation + 1,
+		};
+	}
+
+	async function bindExecutionManifest(
+		candidateLease: ExecutionLease,
+		manifest: ExecutionManifestBinding,
+	): Promise<EffectAuthorizationOutcome> {
+		const parsedDecisionId = parseDecisionId(candidateLease?.decisionId);
+		if (!parsedDecisionId)
+			return blocker(
+				"PI_WORKFLOW_DECISION_MANIFEST_CONFLICT",
+				"Execution lease is invalid for manifest binding.",
+			);
+		const stored = await loadByKey(parsedDecisionId.key);
+		const current = stored?.value.current;
+		if (
+			!stored ||
+			!current ||
+			current.state !== "leased" ||
+			!safelyExact(lease(current), candidateLease) ||
+			!validManifest(manifest, candidateLease)
+		)
+			return blocker(
+				"PI_WORKFLOW_DECISION_MANIFEST_CONFLICT",
+				"Manifest binding must match the current fenced execution lease.",
+			);
+		if (current.manifest)
+			return blocker(
+				"PI_WORKFLOW_DECISION_REPLAY",
+				"Execution manifest has already been bound.",
+			);
+		const manifestedDecision: DurableLeasedDecision = {
+			...current,
+			manifest: clone(manifest),
+		};
+		try {
+			await save(stored.value.scope, stored.revision, {
+				...unsignedEnvelope(stored.value),
+				current: manifestedDecision,
+			});
+		} catch (error) {
+			if (isDecisionCasConflict(error))
+				return blocker(
+					"PI_WORKFLOW_DECISION_CAS_CONFLICT",
+					"Manifest binding lost its fencing race.",
+				);
+			throw error;
+		}
+		return {
+			kind: "authorized",
+			lease: clone(candidateLease),
+			manifest: clone(manifest),
+		};
+	}
+
+	async function authorizeEffect(
+		candidateLease: ExecutionLease,
+	): Promise<EffectAuthorizationOutcome> {
+		const parsedDecisionId = parseDecisionId(candidateLease?.decisionId);
+		if (!parsedDecisionId)
+			return blocker(
+				"PI_WORKFLOW_DECISION_MANIFEST_CONFLICT",
+				"Effect authorization requires a valid execution lease.",
+			);
+		const stored = await loadByKey(parsedDecisionId.key);
+		const current = stored?.value.current;
+		if (
+			current?.state !== "leased" ||
+			!safelyExact(lease(current), candidateLease) ||
+			!current.manifest ||
+			!validManifest(current.manifest, candidateLease)
+		)
+			return blocker(
+				"PI_WORKFLOW_DECISION_MANIFEST_CONFLICT",
+				"Effects require the current fenced lease and its bound manifest.",
+			);
+		return {
+			kind: "authorized",
+			lease: clone(candidateLease),
+			manifest: clone(current.manifest),
+		};
 	}
 
 	async function recover(
@@ -1805,5 +1933,12 @@ export function createInteractiveDecisions(options: {
 		};
 	}
 
-	return { prepare, authorize, recover };
+	return {
+		prepare,
+		authorize,
+		claimBinding,
+		bindExecutionManifest,
+		authorizeEffect,
+		recover,
+	};
 }

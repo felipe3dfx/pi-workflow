@@ -7,7 +7,6 @@ import {
 	createQaHandoffDraftStore,
 	type QaHandoffDraftReader,
 } from "./qa-handoff-draft-store.ts";
-import { createUnavailableQaHandoffWorkflow } from "./qa-handoff-runtime.ts";
 import {
 	createQaHandoffWorkflow,
 	type LinearQaHandoffGateway,
@@ -16,6 +15,18 @@ import {
 import { createRuntimeEngramArtifactStore } from "./runtime-engram-store.ts";
 import type { AuthenticatedAuthority } from "./workflow-contracts.ts";
 import type { WorkflowArtifactStore } from "./workflow-artifacts.ts";
+
+function unavailableQaHandoffWorkflow() {
+	const unavailable = async () => ({
+		status: "blocked" as const,
+		blocker: {
+			code: "PI_WORKFLOW_QA_HANDOFF_CONFIGURATION_REQUIRED",
+			message:
+				"The QA handoff artifact, Developer authority, and Linear adapters are not configured.",
+		},
+	});
+	return { authorizeInvocation: unavailable, publish: unavailable };
+}
 
 export interface DefaultQaHandoffRuntimeOptions {
 	readonly artifactStore?: WorkflowArtifactStore;
@@ -77,7 +88,7 @@ export function createDefaultQaHandoffWorkflow(
 	const gateway = options.gateway;
 	const authority =
 		options.authenticatedAuthority ?? configuredDeveloperAuthority(environment);
-	if (!gateway || !authority) return createUnavailableQaHandoffWorkflow();
+	if (!gateway || !authority) return unavailableQaHandoffWorkflow();
 
 	return createQaHandoffWorkflow({
 		gateway,

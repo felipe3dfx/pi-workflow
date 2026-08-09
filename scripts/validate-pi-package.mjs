@@ -6,11 +6,18 @@ import process from "node:process";
 import { loadSkillsFromDir } from "@earendil-works/pi-coding-agent";
 import { parse as parseYaml } from "yaml";
 import { publicWorkflowCatalog } from "./public-workflow-catalog.mjs";
+import { validatePublicationRecoveryContract } from "./validate-publication-recovery-contract.mjs";
 
 const root = process.cwd();
 const packageJsonPath = path.join(root, "package.json");
 const companionsPath = path.join(root, "assets", "companions.json");
 const mcpServersPath = path.join(root, "assets", "mcp-servers.json");
+const decisionInventoryPath = path.join(
+	root,
+	"docs",
+	"design",
+	"interactive-decision-inventory.md",
+);
 const errors = [];
 const expectedCompanionPackages = [
 	"@tintinweb/pi-subagents",
@@ -215,6 +222,10 @@ check(
 check(
 	packageJson.files?.includes("README.md"),
 	"package files must include README.md",
+);
+check(
+	packageJson.files?.includes("docs/design/interactive-decision-inventory.md"),
+	"package files must include the authoritative interactive decision inventory",
 );
 check(
 	packageJson.files?.includes("LICENSE"),
@@ -569,6 +580,139 @@ for (const obsoleteShimPath of [
 	check(
 		!(await pathExists(obsoleteShimPath)),
 		`obsolete third-party extension shim must be removed: ${obsoleteShimPath}`,
+	);
+}
+
+try {
+	const inventory = await readFile(decisionInventoryPath, "utf8");
+	check(
+		inventory.includes("Active unmigrated closed decisions: 0"),
+		"interactive decision inventory must report zero active unmigrated closed decisions",
+	);
+	check(
+		!inventory.includes("active-unmigrated"),
+		"interactive decision inventory must not contain an active-unmigrated row",
+	);
+	for (const actionId of [
+		"define-product.route.confirm",
+		"define-product.spec.publish",
+		"define-product.tickets.publish",
+		"define-product.revision.publish",
+		"product-review.publish.accepted",
+		"product-review.publish.changes-required",
+		"qa-handoff.publish",
+		"sync.apply.execute",
+		"sync.resume.execute",
+		"sync.rollback.execute",
+		"companions.install",
+		"companions.reconcile",
+		"companions.wait",
+		"delivery.review.approve",
+		"delivery.review.reject",
+		"delivery.pr.confirm",
+		"delivery.pr.reject",
+		"decision.cancel",
+	])
+		check(
+			inventory.includes(`\`${actionId}\``),
+			`interactive decision inventory is missing semantic action ${actionId}`,
+		);
+	check(
+		inventory.includes("`deliver-ticket` | pending") &&
+			inventory.includes("PI_WORKFLOW_CAPABILITY_PENDING"),
+		"interactive decision inventory must preserve the pending deliver-ticket contract",
+	);
+
+	const manifestSources = [
+		"extensions/agent-asset-operation.ts",
+		"extensions/approved-revision-publication-manifest.ts",
+		"extensions/ticket-publication-manifest.ts",
+		"extensions/companion-install-manifest.ts",
+		"extensions/delivery-pull-request-workflow.ts",
+	];
+	for (const relativePath of manifestSources) {
+		const source = await readFile(path.join(root, relativePath), "utf8");
+		check(
+			source.includes("executionId") && source.includes("generation"),
+			`${relativePath} must validate executionId and generation evidence`,
+		);
+	}
+	errors.push(...(await validatePublicationRecoveryContract(root)));
+
+	const activeSources = Object.fromEntries(
+		await Promise.all(
+			[
+				"extensions/delivery-pull-request-workflow.ts",
+				"extensions/pi-workflow.ts",
+				"extensions/product-review-runtime.ts",
+				"extensions/qa-handoff-runtime.ts",
+				"extensions/public-entry-guard.ts",
+				"scripts/pi-workflow-sync.mjs",
+			].map(async (relativePath) => [
+				relativePath,
+				await readFile(path.join(root, relativePath), "utf8"),
+			]),
+		),
+	);
+	const deliverySource = activeSources["extensions/delivery-pull-request-workflow.ts"];
+	for (const legacy of [
+		'decision: "approved"',
+		'decision: "rejected"',
+		'decision: "confirmed"',
+		"new Map<string, DeliveryPullRequestSnapshot>",
+	])
+		check(
+			!deliverySource.includes(legacy),
+			`active Delivery PR workflow contains legacy authorization: ${legacy}`,
+		);
+	const syncSource = activeSources["scripts/pi-workflow-sync.mjs"];
+	check(
+		!syncSource.includes("[y/N]"),
+		"active sync CLI must not contain legacy y/N authorization",
+	);
+	check(
+		activeSources["extensions/product-review-runtime.ts"].includes(
+			"shared product-review decision descriptor",
+		) &&
+			activeSources["extensions/qa-handoff-runtime.ts"].includes(
+				"shared QA handoff decision descriptor",
+			),
+		"active public runtimes must transport only shared decision claims",
+	);
+	check(
+		activeSources["extensions/public-entry-guard.ts"].includes(
+			"hasActiveDecision",
+		) &&
+			activeSources["extensions/public-entry-guard.ts"].includes(
+				"ask_user_question",
+			),
+		"public entry guard must gate the question tool on active shared decisions",
+	);
+	check(
+		activeSources["extensions/pi-workflow.ts"].includes(
+			'"deliver-ticket": { status: "pending" }',
+		) &&
+			!activeSources["extensions/pi-workflow.ts"].includes(
+				"createDeliveryPullRequestWorkflow",
+			),
+		"deliver-ticket must remain pending and uncomposed",
+	);
+
+	for (const name of ["define-product", "product-review", "qa-handoff"]) {
+		const skill = await readFile(
+			path.join(root, "skills", name, "SKILL.md"),
+			"utf8",
+		);
+		check(
+			skill.includes("shared `interactive-decisions` descriptor") &&
+				skill.includes("Never render a separate choice list") &&
+					skill.includes("require an exact phrase"),
+			`${name} skill must require shared semantic decisions without phrase authorization`,
+		);
+	}
+} catch (error) {
+	errors.push(
+		`failed to validate interactive decision contracts: ${error instanceof Error ? error.message : String(error)}`,
 	);
 }
 

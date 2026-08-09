@@ -9,6 +9,9 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const validatorPath = resolve("scripts/validate-pi-package.mjs");
+const publicationRecoveryValidatorPath = resolve(
+	"scripts/validate-publication-recovery-contract.mjs",
+);
 
 function loadJsonFixture(relativePath) {
 	return JSON.parse(
@@ -23,6 +26,54 @@ const publicEntryNames = [
 	"product-review",
 	"qa-handoff",
 ];
+const interactiveDecisionActionIds = [
+	"define-product.route.confirm",
+	"define-product.spec.publish",
+	"define-product.tickets.publish",
+	"define-product.revision.publish",
+	"product-review.publish.accepted",
+	"product-review.publish.changes-required",
+	"qa-handoff.publish",
+	"sync.apply.execute",
+	"sync.resume.execute",
+	"sync.rollback.execute",
+	"companions.install",
+	"companions.reconcile",
+	"companions.wait",
+	"delivery.review.approve",
+	"delivery.review.reject",
+	"delivery.pr.confirm",
+	"delivery.pr.reject",
+	"decision.cancel",
+];
+const interactiveDecisionInventory = `# Interactive decision migration inventory
+
+Active unmigrated closed decisions: 0
+
+${interactiveDecisionActionIds.map((actionId) => `- \`${actionId}\``).join("\n")}
+
+| \`deliver-ticket\` | pending | PI_WORKFLOW_CAPABILITY_PENDING |
+`;
+const executionManifestSource =
+	"const executionId = 'fixture'; const generation = 1;\n";
+const durablePublicationRecoverySource = readFileSync(
+	resolve("extensions/durable-publication-recovery.ts"),
+	"utf8",
+);
+const productReviewPublicationRecoverySource = readFileSync(
+	resolve("extensions/product-review-publication-recovery.ts"),
+	"utf8",
+);
+const qaHandoffPublicationRecoverySource = readFileSync(
+	resolve("extensions/qa-handoff-publication-recovery.ts"),
+	"utf8",
+);
+const workflowContractsSource = readFileSync(
+	resolve("extensions/workflow-contracts.ts"),
+	"utf8",
+);
+const sharedDecisionSkillSource =
+	"Every closed human choice uses the shared `interactive-decisions` descriptor. Never render a separate choice list or require an exact phrase.\n";
 const companionEntries = [
 	"gentle-engram",
 	"pi-mcp-adapter",
@@ -43,6 +94,7 @@ function baselinePackageJson(overrides = {}) {
 		publishConfig: { access: "public" },
 		files: [
 			"README.md",
+			"docs/design/interactive-decision-inventory.md",
 			"scripts/**/*.mjs",
 			"package.json",
 			"LICENSE",
@@ -97,12 +149,13 @@ async function createFixture({
 } = {}) {
 	const root = await mkdtemp(join(tmpdir(), "pi-workflow-validator-"));
 	await mkdir(join(root, "assets"), { recursive: true });
+	await mkdir(join(root, "docs", "design"), { recursive: true });
 	await mkdir(join(root, "extensions"), { recursive: true });
 	for (const name of publicWorkflows) {
 		await mkdir(join(root, "skills", name), { recursive: true });
 		await writeFile(
 			join(root, "skills", name, "SKILL.md"),
-			`---\nname: ${name}\ndescription: ${name} fixture\n---\n\n# ${name}\n`,
+			`---\nname: ${name}\ndescription: ${name} fixture\n---\n\n# ${name}\n\n${name === "deliver-ticket" ? "PI_WORKFLOW_CAPABILITY_PENDING\n" : sharedDecisionSkillSource}`,
 		);
 		await mkdir(join(root, "prompts"), { recursive: true });
 		await writeFile(
@@ -110,6 +163,10 @@ async function createFixture({
 			`---\ndescription: ${name} fixture\n---\nLoad and follow the \`${name}\` skill.\n\nArguments: $ARGUMENTS\n`,
 		);
 	}
+	await writeFile(
+		join(root, "docs", "design", "interactive-decision-inventory.md"),
+		interactiveDecisionInventory,
+	);
 	await writeFile(
 		join(root, "package.json"),
 		`${JSON.stringify(packageJson, null, 2)}\n`,
@@ -124,7 +181,49 @@ async function createFixture({
 	);
 	await writeFile(
 		join(root, "extensions", "pi-workflow.ts"),
-		"export default function piWorkflowExtension() {}\n",
+		'const workflows = { "deliver-ticket": { status: "pending" } };\nexport default function piWorkflowExtension() {}\n',
+	);
+	for (const relativePath of [
+		"extensions/agent-asset-operation.ts",
+		"extensions/approved-revision-publication-manifest.ts",
+		"extensions/ticket-publication-manifest.ts",
+		"extensions/companion-install-manifest.ts",
+		"extensions/delivery-pull-request-workflow.ts",
+	]) {
+		await writeFile(join(root, relativePath), executionManifestSource);
+	}
+	await writeFile(
+		join(root, "extensions", "durable-publication-recovery.ts"),
+		durablePublicationRecoverySource,
+	);
+	await writeFile(
+		join(root, "extensions", "product-review-publication-recovery.ts"),
+		productReviewPublicationRecoverySource,
+	);
+	await writeFile(
+		join(root, "extensions", "qa-handoff-publication-recovery.ts"),
+		qaHandoffPublicationRecoverySource,
+	);
+	await writeFile(
+		join(root, "extensions", "workflow-contracts.ts"),
+		workflowContractsSource,
+	);
+	await writeFile(
+		join(root, "extensions", "product-review-runtime.ts"),
+		"const transport = 'shared product-review decision descriptor';\n",
+	);
+	await writeFile(
+		join(root, "extensions", "qa-handoff-runtime.ts"),
+		"const transport = 'shared QA handoff decision descriptor';\n",
+	);
+	await writeFile(
+		join(root, "extensions", "public-entry-guard.ts"),
+		"const hasActiveDecision = true; const tool = 'ask_user_question';\n",
+	);
+	await mkdir(join(root, "scripts"), { recursive: true });
+	await writeFile(
+		join(root, "scripts", "pi-workflow-sync.mjs"),
+		"export {};\n",
 	);
 	if (companionWorkflow !== null) {
 		await writeFile(
@@ -159,6 +258,56 @@ test("validates a baseline package fixture", async () => {
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
+});
+
+test("validates publication recovery factories behaviorally", async (t) => {
+	await t.test("rejects an empty recovery factory", async () => {
+		const root = await createFixture();
+		try {
+			await writeFile(
+				join(root, "extensions", "product-review-publication-recovery.ts"),
+				"export function createProductReviewPublicationRecoveryStore() { return {}; }\n",
+			);
+			const result = await runValidator(root);
+			assert.notEqual(result.code, 0);
+			assert.match(
+				result.stderr,
+				/product-review publication recovery contract failed: factory does not implement the durable recovery contract/,
+			);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	await t.test("rejects a factory without execution evidence validation", async () => {
+		const root = await createFixture();
+		try {
+			await writeFile(
+				join(root, "extensions", "qa-handoff-publication-recovery.ts"),
+				`export function createQaHandoffPublicationRecoveryStore({ store, project }) {
+	return {
+		async read(issueId) {
+			const current = await store.readCurrent(project, issueId);
+			if (!current) return undefined;
+			const value = JSON.parse(current.content);
+			return { digest: value.digest, stage: value.stage, executionBinding: value.executionBinding };
+		},
+		async claim() { throw new Error("read-back mismatch"); },
+		async finalizeVerified() { throw new Error("read-back mismatch"); },
+	};
+}
+`,
+			);
+			const result = await runValidator(root);
+			assert.notEqual(result.code, 0);
+			assert.match(
+				result.stderr,
+				/qa-handoff publication recovery contract failed: factory accepted missing executionId/,
+			);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
 });
 
 test("rejects a public skill directory without SKILL.md", async () => {
@@ -270,6 +419,10 @@ test("validator follows the production catalog and still rejects unauthorized re
 	try {
 		const scriptPath = join(scriptRoot, "validate-pi-package.mjs");
 		await copyFile(validatorPath, scriptPath);
+		await copyFile(
+			publicationRecoveryValidatorPath,
+			join(scriptRoot, "validate-publication-recovery-contract.mjs"),
+		);
 		await writeFile(
 			join(scriptRoot, "public-workflow-catalog.mjs"),
 			`export const publicWorkflowCatalog = ${JSON.stringify(catalogNames.map((name) => ({ name })))};\n`,

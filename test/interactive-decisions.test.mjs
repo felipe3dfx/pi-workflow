@@ -262,6 +262,64 @@ test("authorize consumes one fresh matching action and issues one fenced lease",
 	assert.deepEqual(await decisions.recover(scope, actor), outcome);
 });
 
+test("an execution manifest must be explicitly bound before effect authorization", async () => {
+	const decisions = service();
+	const prepared = await decisions.prepare(request());
+	const leased = await decisions.authorize(prepared.decisionId, approve, actor);
+	const manifest = {
+		ref: "engram://execution-manifest",
+		decisionId: leased.lease.decisionId,
+		operationDigest: leased.lease.operationDigest,
+		executionId: leased.lease.executionId,
+		generation: leased.lease.generation,
+	};
+
+	assert.equal(
+		(await decisions.authorizeEffect(leased.lease)).blocker.code,
+		"PI_WORKFLOW_DECISION_MANIFEST_CONFLICT",
+	);
+	assert.deepEqual(
+		await decisions.bindExecutionManifest(leased.lease, manifest),
+		{
+			kind: "authorized",
+			lease: leased.lease,
+			manifest,
+		},
+	);
+	assert.deepEqual(await decisions.authorizeEffect(leased.lease), {
+		kind: "authorized",
+		lease: leased.lease,
+		manifest,
+	});
+	assert.equal(
+		(await decisions.bindExecutionManifest(leased.lease, manifest)).blocker.code,
+		"PI_WORKFLOW_DECISION_REPLAY",
+	);
+});
+
+test("manifest binding rejects the wrong execution and fencing generation", async () => {
+	for (const leaseMutation of [
+		(lease) => ({ ...lease, executionId: "execution-other" }),
+		(lease) => ({ ...lease, generation: lease.generation + 1 }),
+	]) {
+		const decisions = service();
+		const prepared = await decisions.prepare(request());
+		const leased = await decisions.authorize(prepared.decisionId, approve, actor);
+		const wrongLease = leaseMutation(leased.lease);
+		const manifest = {
+			ref: "engram://wrong-manifest",
+			decisionId: wrongLease.decisionId,
+			operationDigest: wrongLease.operationDigest,
+			executionId: wrongLease.executionId,
+			generation: wrongLease.generation,
+		};
+		assert.equal(
+			(await decisions.bindExecutionManifest(wrongLease, manifest)).blocker.code,
+			"PI_WORKFLOW_DECISION_MANIFEST_CONFLICT",
+		);
+	}
+});
+
 test("authorize fails closed for missing claims, mismatched actions, and cancellation", async () => {
 	const missingClaim = service({ claimSource: undefined });
 	const prepared = await missingClaim.prepare(request());

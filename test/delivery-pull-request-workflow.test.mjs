@@ -2,11 +2,22 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+	createDeliveryPullRequestManifestStore,
 	createDeliveryPullRequestWorkflow,
 	createFakeDeliveryPullRequestGateways,
 } from "../extensions/delivery-pull-request-workflow.ts";
+import {
+	createInMemoryDecisionStore,
+	createInteractiveDecisions,
+} from "../extensions/interactive-decisions.ts";
 
-const developer = { actorId: "developer-1", role: "Developer" };
+const developer = {
+	actorId: "developer-1",
+	role: "Developer",
+	authorityRevision: "developer-r1",
+	active: true,
+	guest: false,
+};
 
 const snapshot = {
 	branch: "ILA-2322",
@@ -16,169 +27,367 @@ const snapshot = {
 	clean: true,
 };
 
-function setup(overrides = {}) {
-	const fakes = createFakeDeliveryPullRequestGateways({
-		repository: snapshot,
-		sourceBranch: "main",
-		...overrides,
-	});
+const ticket = {
+	id: "ILA-2322",
+	title: "Preparar PR",
+	state: "In Progress",
+};
+
+function manifestPersistence() {
+	const entries = new Map();
+	let revision = 0;
 	return {
-		fakes,
-		workflow: createDeliveryPullRequestWorkflow(fakes.gateways),
+		entries,
+		persistence: {
+			async read(operationId) {
+				return structuredClone(entries.get(operationId));
+			},
+			async create(value) {
+				if (entries.has(value.operationId)) throw new Error("manifest exists");
+				const stored = { revision: `r${++revision}`, value: structuredClone(value) };
+				entries.set(value.operationId, stored);
+				return structuredClone(stored);
+			},
+			async compareAndSwap(expectedRevision, value) {
+				const current = entries.get(value.operationId);
+				if (!current || current.revision !== expectedRevision)
+					throw new Error("manifest CAS conflict");
+				const stored = { revision: `r${++revision}`, value: structuredClone(value) };
+				entries.set(value.operationId, stored);
+				return structuredClone(stored);
+			},
+		},
 	};
 }
 
-test("review-diff prepares an exact PR draft without publishing it", async () => {
-	const { workflow, fakes } = setup();
-	const result = await workflow.reviewDiff({
-		ticket: { id: "ILA-2322", title: "Revisar el diff y preparar el PR", state: "In Progress" },
-		developer,
-		snapshot,
-		decision: "approved",
+function setup(options = {}) {
+	const fakes =
+		options.fakes ??
+		createFakeDeliveryPullRequestGateways({
+			repository: snapshot,
+			sourceBranch: "main",
+		});
+	const decisionsStore = options.decisionsStore ?? createInMemoryDecisionStore();
+	const manifestBacking = options.manifestBacking ?? manifestPersistence();
+	const manifests = createDeliveryPullRequestManifestStore({
+		persistence: manifestBacking.persistence,
 	});
-
-	assert.equal(result.status, "awaiting-confirmation");
-	assert.deepEqual(result.draft, {
-		ticketId: "ILA-2322",
-		head: "ILA-2322",
-		target: "main",
-		title: "ILA-2322 — Revisar el diff y preparar el PR",
-		description: [
-			"## Ticket",
-			"ILA-2322",
-			"",
-			"## Evidencia revisada",
-			"- Commit: abc123",
-			"- Digest del árbol: tree-1",
-			"- Digest del diff: diff-1",
-		].join("\n"),
-		link: "https://github.test/compare/main...ILA-2322",
-		evidence: { headCommit: "abc123", treeDigest: "tree-1", diffDigest: "diff-1" },
+	const sequence = options.sequence ?? { value: 0 };
+	const service = createInteractiveDecisions({
+		store: decisionsStore,
+		claimSource: { consume: async () => true },
+		createExecutionId: () => `execution-${++sequence.value}`,
 	});
-	assert.deepEqual(fakes.publications, []);
-});
-
-test("review-diff honors an explicit Developer target override", async () => {
-	const { workflow } = setup();
-	const result = await workflow.reviewDiff({
-		ticket: { id: "ILA-2322", title: "Preparar PR", state: "In Progress" },
-		developer,
-		snapshot,
-		targetBranch: "qa",
-		decision: "approved",
+	const decisions = {
+		prepare: (request) => service.prepare(request),
+		authorize: (...args) => service.authorize(...args),
+		bindExecutionManifest: (...args) => service.bindExecutionManifest(...args),
+		authorizeEffect: (...args) => service.authorizeEffect(...args),
+		recover: (...args) => service.recover(...args),
+		hasActiveDecision: () => false,
+	};
+	const workflow = createDeliveryPullRequestWorkflow({
+		...fakes.gateways,
+		git: options.git ?? fakes.gateways.git,
+		project: "pi-workflow",
+		interactiveDecisions: decisions,
+		manifests,
 	});
-	assert.equal(result.draft.target, "qa");
-	assert.equal(result.draft.link, "https://github.test/compare/qa...ILA-2322");
-});
+	return {
+		decisionsStore,
+		fakes,
+		manifestBacking,
+		manifests,
+		sequence,
+		workflow,
+	};
+}
 
-test("human rejection does not prepare or publish a PR", async () => {
-	const { workflow, fakes } = setup();
-	const result = await workflow.reviewDiff({
-		ticket: { id: "ILA-2322", title: "Preparar PR", state: "In Progress" },
-		developer,
-		snapshot,
-		decision: "rejected",
+async function review(harness, overrides = {}) {
+	const input = { ticket, developer, snapshot, ...overrides };
+	const prepared = await harness.workflow.reviewDiff(input);
+	assert.equal(prepared.status, "awaiting-review-decision");
+	const reviewed = await harness.workflow.reviewDiff({
+		...input,
+		action: prepared.actions.approve,
 	});
-	assert.deepEqual(result, { status: "review-rejected" });
-	assert.deepEqual(fakes.events, []);
-	assert.deepEqual(fakes.publications, []);
-});
+	assert.equal(reviewed.status, "awaiting-confirmation");
+	return reviewed;
+}
 
-test("confirm-pr refuses publication when the reviewed snapshot changed", async () => {
-	const { workflow, fakes } = setup();
-	const reviewed = await workflow.reviewDiff({
-		ticket: { id: "ILA-2322", title: "Preparar PR", state: "In Progress" },
-		developer,
-		snapshot,
-		decision: "approved",
-	});
-	fakes.setRepository({ ...snapshot, headCommit: "def456", diffDigest: "diff-2" });
+test("review approval binds durable shared authority before inspecting Git", async () => {
+	const harness = setup();
+	const prepared = await harness.workflow.reviewDiff({ ticket, developer, snapshot });
 
-	await assert.rejects(
-		() => workflow.confirmPr({ draft: reviewed.draft, developer, decision: "confirmed" }),
-		(error) => error.code === "PI_WORKFLOW_REVIEWED_DIFF_CHANGED",
+	assert.equal(prepared.status, "awaiting-review-decision");
+	assert.deepEqual(
+		Object.values(prepared.actions).map(({ id }) => id),
+		["delivery.review.approve", "delivery.review.reject", "decision.cancel"],
 	);
-	assert.deepEqual(fakes.publications, []);
-});
+	assert.deepEqual(harness.fakes.events, []);
 
-test("confirm-pr requires explicit confirmation and never changes Linear state", async () => {
-	const { workflow, fakes } = setup();
-	const ticket = { id: "ILA-2322", title: "Preparar PR", state: "In Progress" };
-	const reviewed = await workflow.reviewDiff({
+	const reviewed = await harness.workflow.reviewDiff({
 		ticket,
 		developer,
 		snapshot,
-		decision: "approved",
+		action: prepared.actions.approve,
 	});
+	assert.equal(reviewed.status, "awaiting-confirmation");
+	assert.deepEqual(harness.fakes.events, ["git:inspect"]);
+	const manifest = await harness.manifests.read(reviewed.operationId);
+	assert.equal(manifest.stage, "reviewed");
+	assert.equal(manifest.reviewExecution.executionId, "execution-1");
+	assert.deepEqual(harness.fakes.publications, []);
+});
+
+test("review rejection and cancellation are distinct shared actions with no Git effects", async () => {
+	for (const [selection, expected] of [
+		["reject", "review-rejected"],
+		["cancel", "review-cancelled"],
+	]) {
+		const harness = setup();
+		const prepared = await harness.workflow.reviewDiff({ ticket, developer, snapshot });
+		const result = await harness.workflow.reviewDiff({
+			ticket,
+			developer,
+			snapshot,
+			action: prepared.actions[selection],
+		});
+		assert.equal(result.status, expected);
+		assert.deepEqual(harness.fakes.events, []);
+		assert.deepEqual(harness.fakes.publications, []);
+	}
+});
+
+test("PR confirmation fences every Git call and publishes the exact durable draft", async () => {
+	const harness = setup();
+	const reviewed = await review(harness);
+	const prepared = await harness.workflow.confirmPr({
+		operationId: reviewed.operationId,
+		draft: reviewed.draft,
+		developer,
+	});
+	assert.equal(prepared.status, "awaiting-pr-decision");
 	assert.deepEqual(
-		await workflow.confirmPr({ draft: reviewed.draft, developer, decision: "rejected" }),
-		{ status: "confirmation-rejected" },
+		Object.values(prepared.actions).map(({ id }) => id),
+		["delivery.pr.confirm", "delivery.pr.reject", "decision.cancel"],
 	);
-	assert.deepEqual(fakes.publications, []);
 
-	const published = await workflow.confirmPr({
+	const published = await harness.workflow.confirmPr({
+		operationId: reviewed.operationId,
 		draft: reviewed.draft,
 		developer,
-		decision: "confirmed",
+		action: prepared.actions.approve,
 	});
-	assert.equal(published.status, "pr-published");
-	assert.equal(published.pullRequest.url, "https://github.test/pull/1");
-	assert.equal(fakes.publications.length, 1);
-	assert.equal(ticket.state, "In Progress");
+	assert.deepEqual(published, {
+		status: "pr-published",
+		pullRequest: { url: "https://github.test/pull/1" },
+	});
+	assert.deepEqual(harness.fakes.events, [
+		"git:inspect",
+		"git:inspect",
+		"git:find",
+		"git:inspect",
+		"git:find",
+		"git:publish:execution-2",
+		"git:find",
+	]);
+	assert.deepEqual(harness.fakes.publications[0].draft, reviewed.draft);
+	const manifest = await harness.manifests.read(reviewed.operationId);
+	assert.equal(manifest.stage, "published");
+	assert.equal(manifest.publicationExecution.executionId, "execution-2");
 });
 
-test("both human gates reject missing decisions without side effects", async () => {
-	const { workflow, fakes } = setup();
-	const input = {
-		ticket: { id: "ILA-2322", title: "Preparar PR", state: "In Progress" },
+test("publication rejection and cancellation never inspect or publish", async () => {
+	for (const [selection, expected] of [
+		["reject", "publication-rejected"],
+		["cancel", "confirmation-cancelled"],
+	]) {
+		const harness = setup();
+		const reviewed = await review(harness);
+		const prepared = await harness.workflow.confirmPr({
+			operationId: reviewed.operationId,
+			draft: reviewed.draft,
+			developer,
+		});
+		const eventCount = harness.fakes.events.length;
+		const result = await harness.workflow.confirmPr({
+			operationId: reviewed.operationId,
+			draft: reviewed.draft,
+			developer,
+			action: prepared.actions[selection],
+		});
+		assert.equal(result.status, expected);
+		assert.equal(harness.fakes.events.length, eventCount);
+		assert.deepEqual(harness.fakes.publications, []);
+	}
+});
+
+test("repository drift immediately before publication closes the lease without publishing", async () => {
+	const harness = setup();
+	const reviewed = await review(harness);
+	const prepared = await harness.workflow.confirmPr({
+		operationId: reviewed.operationId,
+		draft: reviewed.draft,
 		developer,
-		snapshot,
+	});
+	harness.fakes.setRepository({ ...snapshot, headCommit: "changed", diffDigest: "diff-2" });
+
+	await assert.rejects(
+		() =>
+			harness.workflow.confirmPr({
+				operationId: reviewed.operationId,
+				draft: reviewed.draft,
+				developer,
+				action: prepared.actions.approve,
+			}),
+		(error) => error.code === "PI_WORKFLOW_REVIEWED_DIFF_CHANGED",
+	);
+	assert.deepEqual(harness.fakes.publications, []);
+	assert.equal((await harness.manifests.read(reviewed.operationId)).stage, "publication-drifted");
+});
+
+test("restart reconciles an uncertain successful publication without replaying it", async () => {
+	const base = setup();
+	const reviewed = await review(base);
+	const prepared = await base.workflow.confirmPr({
+		operationId: reviewed.operationId,
+		draft: reviewed.draft,
+		developer,
+	});
+	let failAfterPublish = true;
+	const uncertainGit = {
+		...base.fakes.gateways.git,
+		async publish(input) {
+			const result = await base.fakes.gateways.git.publish(input);
+			if (failAfterPublish) {
+				failAfterPublish = false;
+				throw new Error("connection lost after publish");
+			}
+			return result;
+		},
 	};
+	const first = setup({
+		fakes: base.fakes,
+		git: uncertainGit,
+		decisionsStore: base.decisionsStore,
+		manifestBacking: base.manifestBacking,
+		sequence: base.sequence,
+	});
 	await assert.rejects(
-		() => workflow.reviewDiff(input),
-		(error) => error.code === "PI_WORKFLOW_REVIEW_DIFF_DECISION_REQUIRED",
+		() =>
+			first.workflow.confirmPr({
+				operationId: reviewed.operationId,
+				draft: reviewed.draft,
+				developer,
+				action: prepared.actions.approve,
+			}),
+		/Publication remains recoverable/,
 	);
-	assert.deepEqual(fakes.publications, []);
+	assert.equal(base.fakes.publications.length, 1);
+	assert.equal((await first.manifests.read(reviewed.operationId)).stage, "publication-uncertain");
 
-	const reviewed = await workflow.reviewDiff({ ...input, decision: "approved" });
-	await assert.rejects(
-		() => workflow.confirmPr({ draft: reviewed.draft, developer }),
-		(error) => error.code === "PI_WORKFLOW_PR_CONFIRMATION_REQUIRED",
-	);
-	assert.deepEqual(fakes.publications, []);
-});
-
-test("awaited gateway calls cannot change the reviewed or published inputs", async () => {
-	const { workflow, fakes } = setup();
-	const ticket = { id: "ILA-2322", title: "Preparar PR", state: "In Progress" };
-	const review = workflow.reviewDiff({ ticket, developer, snapshot, decision: "approved" });
-	ticket.id = "ILA-9999";
-	const reviewed = await review;
-	assert.equal(reviewed.draft.ticketId, "ILA-2322");
-
-	const confirmation = workflow.confirmPr({
+	const restarted = setup({
+		fakes: base.fakes,
+		decisionsStore: base.decisionsStore,
+		manifestBacking: base.manifestBacking,
+		sequence: base.sequence,
+	});
+	const recovered = await restarted.workflow.confirmPr({
+		operationId: reviewed.operationId,
 		draft: reviewed.draft,
 		developer,
-		decision: "confirmed",
 	});
-	reviewed.draft.target = "attacker-target";
-	await confirmation;
-	assert.equal(fakes.publications[0].target, "main");
+	assert.deepEqual(recovered, {
+		status: "pr-published",
+		pullRequest: { url: "https://github.test/pull/1" },
+	});
+	assert.equal(base.fakes.publications.length, 1);
 });
 
-test("an approved draft can be published at most once", async () => {
-	const { workflow, fakes } = setup();
-	const reviewed = await workflow.reviewDiff({
-		ticket: { id: "ILA-2322", title: "Preparar PR", state: "In Progress" },
+test("changed Developer authority cannot resume an active publication lease", async () => {
+	const base = setup();
+	const reviewed = await review(base);
+	const prepared = await base.workflow.confirmPr({
+		operationId: reviewed.operationId,
+		draft: reviewed.draft,
 		developer,
-		snapshot,
-		decision: "approved",
+	});
+	const interrupted = setup({
+		fakes: base.fakes,
+		git: {
+			...base.fakes.gateways.git,
+			async publish() {
+				throw new Error("publication interrupted before mutation");
+			},
+		},
+		decisionsStore: base.decisionsStore,
+		manifestBacking: base.manifestBacking,
+		sequence: base.sequence,
+	});
+	await assert.rejects(() =>
+		interrupted.workflow.confirmPr({
+			operationId: reviewed.operationId,
+			draft: reviewed.draft,
+			developer,
+			action: prepared.actions.approve,
+		}),
+	);
+	assert.equal(
+		(await interrupted.manifests.read(reviewed.operationId)).stage,
+		"publication-uncertain",
+	);
+	const restarted = setup({
+		fakes: base.fakes,
+		decisionsStore: base.decisionsStore,
+		manifestBacking: base.manifestBacking,
+		sequence: base.sequence,
+	});
+
+	await assert.rejects(
+		() =>
+			restarted.workflow.confirmPr({
+				operationId: reviewed.operationId,
+				draft: reviewed.draft,
+				developer: { ...developer, authorityRevision: "developer-r2" },
+			}),
+		(error) => error.code === "PI_WORKFLOW_DECISION_ACTOR_MISMATCH",
+	);
+	assert.deepEqual(base.fakes.publications, []);
+});
+
+test("tampered drafts and concurrent confirmations cannot publish twice", async () => {
+	const harness = setup();
+	const reviewed = await review(harness);
+	await assert.rejects(
+		() =>
+			harness.workflow.confirmPr({
+				operationId: reviewed.operationId,
+				draft: { ...reviewed.draft, target: "attacker" },
+				developer,
+			}),
+		(error) => error.code === "PI_WORKFLOW_PR_CONFIRMATION_INVALID",
+	);
+	const prepared = await harness.workflow.confirmPr({
+		operationId: reviewed.operationId,
+		draft: reviewed.draft,
+		developer,
 	});
 	const outcomes = await Promise.allSettled([
-		workflow.confirmPr({ draft: reviewed.draft, developer, decision: "confirmed" }),
-		workflow.confirmPr({ draft: reviewed.draft, developer, decision: "confirmed" }),
+		harness.workflow.confirmPr({
+			operationId: reviewed.operationId,
+			draft: reviewed.draft,
+			developer,
+			action: prepared.actions.approve,
+		}),
+		harness.workflow.confirmPr({
+			operationId: reviewed.operationId,
+			draft: reviewed.draft,
+			developer,
+			action: prepared.actions.approve,
+		}),
 	]);
 	assert.equal(outcomes.filter(({ status }) => status === "fulfilled").length, 1);
 	assert.equal(outcomes.filter(({ status }) => status === "rejected").length, 1);
-	assert.equal(fakes.publications.length, 1);
+	assert.equal(harness.fakes.publications.length, 1);
 });

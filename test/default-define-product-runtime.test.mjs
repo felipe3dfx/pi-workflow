@@ -14,23 +14,35 @@ import { createInMemoryDelegationCheckpointStore } from "../extensions/delegatio
 import { createLinearDeliveryParentGateway } from "../extensions/linear-delivery-parent-gateway.ts";
 import { createRuntimeLinearDeliveryParentTransport } from "../extensions/runtime-linear-delivery-parent.ts";
 import * as defaultDefineProductModule from "../extensions/default-define-product.ts";
-import { canonicalJson, digestCanonicalValue } from "../extensions/workflow-contracts.ts";
-import { createDeliveryTicketGraph, createSpecCoverageIndex, createTicketGraphApproval } from "../extensions/delivery-ticket-graph.ts";
-import { createProductSpecApprovalEnvelope, createProductSpecEnvelope } from "../extensions/product-spec.ts";
+import {
+	canonicalJson,
+	digestCanonicalValue,
+} from "../extensions/workflow-contracts.ts";
+import {
+	createDeliveryTicketGraph,
+	createSpecCoverageIndex,
+	createTicketGraphApproval,
+} from "../extensions/delivery-ticket-graph.ts";
+import {
+	createProductSpecApprovalEnvelope,
+	createProductSpecEnvelope,
+} from "../extensions/product-spec.ts";
 import { createWorkflowArtifactInterface } from "../extensions/workflow-artifacts.ts";
+import { createInMemoryDecisionStore } from "../extensions/interactive-decisions.ts";
 
 test("to-tickets gives one corrective turn when the first turn omits the required graph write", async () => {
 	const prompts = [];
 	let wroteGraph = false;
-	const result = await defaultDefineProductModule.executeRequiredTicketGraphTurn({
-		prompt: "generate",
-		execute: async (prompt) => {
-			prompts.push(prompt);
-			if (prompts.length === 2) wroteGraph = true;
-			return `turn-${prompts.length}`;
-		},
-		hasWrittenGraph: () => wroteGraph,
-	});
+	const result =
+		await defaultDefineProductModule.executeRequiredTicketGraphTurn({
+			prompt: "generate",
+			execute: async (prompt) => {
+				prompts.push(prompt);
+				if (prompts.length === 2) wroteGraph = true;
+				return `turn-${prompts.length}`;
+			},
+			hasWrittenGraph: () => wroteGraph,
+		});
 	assert.equal(result, "turn-2");
 	assert.equal(prompts[0], "generate");
 	assert.match(prompts[1], /action=write_graph/);
@@ -39,14 +51,15 @@ test("to-tickets gives one corrective turn when the first turn omits the require
 
 test("to-tickets does not spend a corrective turn after a successful graph write", async () => {
 	let calls = 0;
-	const result = await defaultDefineProductModule.executeRequiredTicketGraphTurn({
-		prompt: "generate",
-		execute: async () => {
-			calls += 1;
-			return "written";
-		},
-		hasWrittenGraph: () => true,
-	});
+	const result =
+		await defaultDefineProductModule.executeRequiredTicketGraphTurn({
+			prompt: "generate",
+			execute: async () => {
+				calls += 1;
+				return "written";
+			},
+			hasWrittenGraph: () => true,
+		});
 	assert.equal(result, "written");
 	assert.equal(calls, 1);
 });
@@ -117,6 +130,7 @@ const DEFINE_PRODUCT_MCP_TOOLS = [
 ];
 
 function loadExtension(runtime = {}) {
+	const { interactiveDecisionStore, ...defineProductRuntime } = runtime;
 	const handlers = new Map();
 	const handlerCounts = new Map();
 	const tools = new Map();
@@ -131,17 +145,22 @@ function loadExtension(runtime = {}) {
 				handlerCounts.set(event, (handlerCounts.get(event) ?? 0) + 1);
 				const previous = handlers.get(event);
 				handlers.set(event, async (...args) => {
-					if (previous) await previous(...args);
-					return handler(...args);
+					const previousOutcome = previous
+						? await previous(...args)
+						: undefined;
+					return (await handler(...args)) ?? previousOutcome;
 				});
 			},
 		},
 		{
+			interactiveDecisions: {
+				store: interactiveDecisionStore ?? createInMemoryDecisionStore(),
+			},
 			defineProduct: {
 				createDefinitionId: () => "definition-1",
 				runtime: {
 					checkpointStore: createInMemoryDelegationCheckpointStore(),
-					...runtime,
+					...defineProductRuntime,
 				},
 			},
 		},
@@ -158,7 +177,10 @@ function loadAuthorityRuntime() {
 	const authoritySession = createSingleUserAuthoritySession();
 	const runtime = createDefineProductRuntime({
 		workflow: {
-			advance: async () => ({ status: "blocked", blocker: { code: "unused", message: "unused" } }),
+			advance: async () => ({
+				status: "blocked",
+				blocker: { code: "unused", message: "unused" },
+			}),
 			pendingRecommendation: () => undefined,
 			reset() {},
 		},
@@ -205,13 +227,40 @@ function executionContext() {
 	};
 }
 
+async function authenticateOwner(handlers, ctx, id = "owner-1") {
+	const toolCallId = `authenticate-${id}`;
+	await handlers.get("before_agent_start")({ systemPrompt: "base" }, ctx);
+	await handlers.get("tool_call")(
+		{ toolName: "linear_get_user", toolCallId, input: { query: "me" } },
+		ctx,
+	);
+	await handlers.get("tool_result")(
+		{
+			toolName: "linear_get_user",
+			toolCallId,
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({
+						id,
+						name: "Owner",
+						isActive: true,
+						isGuest: false,
+					}),
+				},
+			],
+			isError: false,
+		},
+		ctx,
+	);
+}
+
 function productionSpecRequest(overrides = {}) {
 	return {
 		action: "to_spec",
 		teamId: "team-grupo-ilao",
 		title: "Incorporar aprobaciones exactas del Spec",
-		problem:
-			"El equipo necesita gestionar clientes y permisos correctamente.",
+		problem: "El equipo necesita gestionar clientes y permisos correctamente.",
 		solution:
 			"El flujo genera un Spec español exacto y exige aprobación vinculada a su identidad completa.",
 		userStories: [
@@ -252,7 +301,8 @@ function productionSpecRuntimeOptions(overrides = {}) {
 		approvedSpecReader: createEngramApprovedSpecReader({
 			project: "pi-workflow",
 			store: {
-				readCurrent: async (project, topic) => approvedTopics.get(`${project}:${topic}`),
+				readCurrent: async (project, topic) =>
+					approvedTopics.get(`${project}:${topic}`),
 				write: async (project, topic, content) => {
 					approvedRevision += 1;
 					const stored = { revision: `approved-r${approvedRevision}`, content };
@@ -322,30 +372,30 @@ async function prepareProductionSpec(runtimeOptions = {}, specOverrides = {}) {
 	);
 	authorityLookupCount += 1;
 	await handlers.get("tool_call")(
-			{
-				toolName: "linear_get_user",
-				toolCallId: "define-execution-user",
-				input: { query: "me" },
-			},
-			ctx,
-		);
-		await handlers.get("tool_result")(
-			{
-				toolName: "linear_get_user",
-				toolCallId: "define-execution-user",
-				content: [
-					{
-						type: "text",
-						text: JSON.stringify({
-							id: "owner-felipe",
-							name: "Owner",
-							isActive: true,
-							isGuest: false,
-						}),
-					},
-				],
-				isError: false,
-			},
+		{
+			toolName: "linear_get_user",
+			toolCallId: "define-execution-user",
+			input: { query: "me" },
+		},
+		ctx,
+	);
+	await handlers.get("tool_result")(
+		{
+			toolName: "linear_get_user",
+			toolCallId: "define-execution-user",
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({
+						id: "owner-felipe",
+						name: "Owner",
+						isActive: true,
+						isGuest: false,
+					}),
+				},
+			],
+			isError: false,
+		},
 		ctx,
 	);
 	const recommendation = await tool.execute(
@@ -363,10 +413,22 @@ async function prepareProductionSpec(runtimeOptions = {}, specOverrides = {}) {
 		undefined,
 		ctx,
 	);
+	const routeDecisionPrompt = await handlers.get("before_agent_start")(
+		{ systemPrompt: "base" },
+		ctx,
+	);
+	assert.match(
+		routeDecisionPrompt.systemPrompt,
+		/Present this decision verbatim/,
+	);
+	assert.doesNotMatch(
+		routeDecisionPrompt.systemPrompt,
+		/call workflow_define_product.*confirm_route/i,
+	);
 	await handlers.get("input")(
 		{
 			type: "input",
-			text: "Continúa con la ruta de investigación recomendada.",
+			text: "1",
 			source: "interactive",
 		},
 		ctx,
@@ -413,6 +475,11 @@ async function prepareProductionSpec(runtimeOptions = {}, specOverrides = {}) {
 		},
 		ctx,
 	);
+	const teamDecisionPrompt = await handlers.get("before_agent_start")(
+		{ systemPrompt: "base" },
+		ctx,
+	);
+	assert.match(teamDecisionPrompt.systemPrompt, /Which Linear team/);
 	const sameTurn = await tool.execute(
 		"same-turn-spec",
 		productionSpecRequest(specOverrides),
@@ -423,12 +490,12 @@ async function prepareProductionSpec(runtimeOptions = {}, specOverrides = {}) {
 	assert.equal(sameTurn.details.status, "blocked");
 	assert.equal(
 		sameTurn.details.blocker.code,
-		"PI_WORKFLOW_SPEC_ARTIFACT_INVALID",
+		"PI_WORKFLOW_DECISION_CLAIM_MISSING",
 	);
 	await handlers.get("input")(
 		{
 			type: "input",
-			text: "Usa el equipo Grupo ILAO y el título Incorporar aprobaciones exactas del Spec",
+			text: specOverrides.teamId === "team-1" ? "2" : "1",
 			source: "interactive",
 		},
 		ctx,
@@ -441,6 +508,7 @@ async function prepareProductionSpec(runtimeOptions = {}, specOverrides = {}) {
 		ctx,
 	);
 	assert.equal(ready.details.status, "spec-ready");
+	await handlers.get("before_agent_start")({ systemPrompt: "base" }, ctx);
 	return {
 		authorityLookupCount,
 		ctx,
@@ -459,15 +527,16 @@ test("production session manager creates named persistent sessions and resumes t
 			typeof defaultDefineProductModule.createRecoverableSessionManager,
 			"function",
 		);
-		const first = await defaultDefineProductModule.createRecoverableSessionManager(
-			root,
-			sessionDirectory,
-			{
-				attempt: 1,
-				sessionId: "production-session-1",
-				verifiedArtifacts: [],
-			},
-		);
+		const first =
+			await defaultDefineProductModule.createRecoverableSessionManager(
+				root,
+				sessionDirectory,
+				{
+					attempt: 1,
+					sessionId: "production-session-1",
+					verifiedArtifacts: [],
+				},
+			);
 		first.appendMessage({
 			role: "assistant",
 			content: [{ type: "text", text: "verified progress" }],
@@ -485,23 +554,27 @@ test("production session manager creates named persistent sessions and resumes t
 			stopReason: "stop",
 			timestamp: Date.now(),
 		});
-		const resumed = await defaultDefineProductModule.createRecoverableSessionManager(
-			join(root, "different-disposable-copy"),
-			sessionDirectory,
-			{
-				attempt: 1,
-				sessionId: "new-request-id",
-				resumeSessionId: "production-session-1",
-				verifiedArtifacts: [],
-			},
-		);
+		const resumed =
+			await defaultDefineProductModule.createRecoverableSessionManager(
+				join(root, "different-disposable-copy"),
+				sessionDirectory,
+				{
+					attempt: 1,
+					sessionId: "new-request-id",
+					resumeSessionId: "production-session-1",
+					verifiedArtifacts: [],
+				},
+			);
 		assert.equal(resumed.getSessionId(), "production-session-1");
 		assert.equal(resumed.getSessionName(), "production-session-1");
 		assert.match(resumed.getSessionFile(), /production-session-1/);
 		assert.equal(
-			resumed.getEntries().some(
-				(entry) => entry.type === "message" && entry.message.role === "assistant",
-			),
+			resumed
+				.getEntries()
+				.some(
+					(entry) =>
+						entry.type === "message" && entry.message.role === "assistant",
+				),
 			true,
 		);
 	} finally {
@@ -524,10 +597,12 @@ test("production exploration tool merges scoped progress and intervenes only in 
 		});
 		const fakeSession = {
 			sessionId: "active-production-session",
-			messages: [{
-				role: "assistant",
-				content: [{ type: "text", text: "cancelled cleanly" }],
-			}],
+			messages: [
+				{
+					role: "assistant",
+					content: [{ type: "text", text: "cancelled cleanly" }],
+				},
+			],
 			async bindExtensions() {},
 			subscribe() {
 				return () => {};
@@ -610,19 +685,22 @@ test("production exploration tool merges scoped progress and intervenes only in 
 			payload: { completed: 1 },
 		});
 		assert.deepEqual(merged.details, artifact);
-		assert.deepEqual(calls.progress, [{
-			batchKey: "comparison-1",
-			payload: { completed: 1 },
-		}]);
+		assert.deepEqual(calls.progress, [
+			{
+				batchKey: "comparison-1",
+				payload: { completed: 1 },
+			},
+		]);
 		await executor.intervene("active-production-session", {
 			kind: "steer",
 			guidance: "Narrow to first-run onboarding.",
 		});
 		await assert.rejects(
-			() => executor.intervene("different-session", {
-				kind: "cancel",
-				reason: "must not affect the active session",
-			}),
+			() =>
+				executor.intervene("different-session", {
+					kind: "cancel",
+					reason: "must not affect the active session",
+				}),
 			/exact active Pi session is unavailable/,
 		);
 		await executor.intervene("active-production-session", {
@@ -711,10 +789,7 @@ test("runtime Engram store performs conditional writes with exact read-back", as
 		if (url.includes("/search?")) {
 			return Response.json(
 				observation
-					? [
-							{ ...observation, id: 41, content: '{"value":0}' },
-							observation,
-						]
+					? [{ ...observation, id: 41, content: '{"value":0}' }, observation]
 					: [],
 			);
 		}
@@ -742,30 +817,43 @@ test("runtime Engram store performs conditional writes with exact read-back", as
 		});
 		assert.equal(store.capabilities.atomicCompareAndSwap, true);
 		const content = '{"value":1}\n';
-		const created = await store.write("pi-workflow", "workflow/TOPIC", content, undefined);
+		const created = await store.write(
+			"pi-workflow",
+			"workflow/TOPIC",
+			content,
+			undefined,
+		);
 		assert.equal(created.revision, "42");
 		assert.deepEqual(await store.readCurrent("pi-workflow", "workflow/TOPIC"), {
 			revision: "42",
 			content,
 		});
-		assert.equal(await store.readRevision("pi-workflow", "workflow/TOPIC", "42"), content);
-		assert.deepEqual(requests.filter((request) => request.method === "POST").map((request) => request.body), [
-			{
-				id: "pi-session-1",
-				project: "pi-workflow",
-				directory: "/workspace/project",
-			},
-			{
-				project: "pi-workflow",
-				topic_key: "workflow/TOPIC",
-				title: "pi-workflow artifact+lf: workflow/TOPIC",
-				content: '{"value":1}\n',
-				type: "architecture",
-				scope: "project",
-				session_id: "pi-session-1",
-				expected_revision: null,
-			},
-		]);
+		assert.equal(
+			await store.readRevision("pi-workflow", "workflow/TOPIC", "42"),
+			content,
+		);
+		assert.deepEqual(
+			requests
+				.filter((request) => request.method === "POST")
+				.map((request) => request.body),
+			[
+				{
+					id: "pi-session-1",
+					project: "pi-workflow",
+					directory: "/workspace/project",
+				},
+				{
+					project: "pi-workflow",
+					topic_key: "workflow/TOPIC",
+					title: "pi-workflow artifact+lf: workflow/TOPIC",
+					content: '{"value":1}\n',
+					type: "architecture",
+					scope: "project",
+					session_id: "pi-session-1",
+					expected_revision: null,
+				},
+			],
+		);
 	} finally {
 		globalThis.fetch = originalFetch;
 	}
@@ -777,73 +865,69 @@ test("default workflow executes prototype and design-alternative in disposable i
 		new URL("./fixtures/private-skills/research/SKILL.md", import.meta.url),
 	);
 	const ctx = executionContext();
-	const workflow = createDefaultDefineProductWorkflow(
-		{},
-		() => ctx,
-		{
-			artifactStore: createArtifactStore(),
-			checkpointStore: createInMemoryDelegationCheckpointStore(),
-			webExtensionPath: fileURLToPath(
-				new URL("./fixtures/pi-web-access/index.ts", import.meta.url),
-			),
-			skillEntries: [
-				{ name: "research", path: skillPath, scope: "core" },
-				{ name: "prototype", path: skillPath, scope: "core" },
-				{ name: "codebase-design", path: skillPath, scope: "core" },
-			],
-			researchExecutor: async (input) => {
-				await input.writeArtifact({
-					findings: [
-						{
-							claim: "A verified research input is available.",
-							evidence: [
-								{
-									uri: "https://example.com/source",
-									title: "Source",
-									retrievedAt: "2026-07-14T00:00:00.000Z",
-								},
-							],
-						},
-					],
-					limitations: [],
-				});
-				return { assistantText: "Research ready." };
-			},
-			explorationExecutor: async (input) => {
-				explorations.push(input);
-				assert.notEqual(input.cwd, process.cwd());
-				assert.equal(input.launchProvenance.agentName, "prototype");
-				assert.equal(
-					input.launchProvenance.capabilityProfile,
-					"isolated-prototype",
-				);
-				assert.deepEqual(input.allowedTools, [
-					"read",
-					"grep",
-					"find",
-					"ls",
-					"edit",
-					"write",
-					"bash",
-					"workflow_artifact_session",
-				]);
-				assert.equal("checkpointStore" in input, false);
-				await input.writeArtifact({
-					summary: `${input.intent} result`,
-					comparison: [
-						{
-							criterion: "Owner comparability",
-							assessment: `${input.intent} can be compared from the same schema.`,
-						},
-					],
-					changedPaths:
-						input.intent === "prototype" ? ["prototype/index.html"] : [],
-					limitations: [],
-				});
-				return { assistantText: `${input.intent} ready.` };
-			},
+	const workflow = createDefaultDefineProductWorkflow({}, () => ctx, {
+		artifactStore: createArtifactStore(),
+		checkpointStore: createInMemoryDelegationCheckpointStore(),
+		webExtensionPath: fileURLToPath(
+			new URL("./fixtures/pi-web-access/index.ts", import.meta.url),
+		),
+		skillEntries: [
+			{ name: "research", path: skillPath, scope: "core" },
+			{ name: "prototype", path: skillPath, scope: "core" },
+			{ name: "codebase-design", path: skillPath, scope: "core" },
+		],
+		researchExecutor: async (input) => {
+			await input.writeArtifact({
+				findings: [
+					{
+						claim: "A verified research input is available.",
+						evidence: [
+							{
+								uri: "https://example.com/source",
+								title: "Source",
+								retrievedAt: "2026-07-14T00:00:00.000Z",
+							},
+						],
+					},
+				],
+				limitations: [],
+			});
+			return { assistantText: "Research ready." };
 		},
-	);
+		explorationExecutor: async (input) => {
+			explorations.push(input);
+			assert.notEqual(input.cwd, process.cwd());
+			assert.equal(input.launchProvenance.agentName, "prototype");
+			assert.equal(
+				input.launchProvenance.capabilityProfile,
+				"isolated-prototype",
+			);
+			assert.deepEqual(input.allowedTools, [
+				"read",
+				"grep",
+				"find",
+				"ls",
+				"edit",
+				"write",
+				"bash",
+				"workflow_artifact_session",
+			]);
+			assert.equal("checkpointStore" in input, false);
+			await input.writeArtifact({
+				summary: `${input.intent} result`,
+				comparison: [
+					{
+						criterion: "Owner comparability",
+						assessment: `${input.intent} can be compared from the same schema.`,
+					},
+				],
+				changedPaths:
+					input.intent === "prototype" ? ["prototype/index.html"] : [],
+				limitations: [],
+			});
+			return { assistantText: `${input.intent} ready.` };
+		},
+	});
 	const recommendation = await workflow.advance({
 		kind: "recommend-route",
 		definitionId: "definition-runtime",
@@ -886,8 +970,12 @@ test("default runtime resumes compatible exploration, persists progress, and per
 	let recoveryState;
 	const explorationRecoveryStore = {
 		load: async () => recoveryState,
-		save: async (state) => { recoveryState = structuredClone(state); },
-		clear: async () => { recoveryState = undefined; },
+		save: async (state) => {
+			recoveryState = structuredClone(state);
+		},
+		clear: async () => {
+			recoveryState = undefined;
+		},
 	};
 	const artifactStore = createAtomicArtifactStore();
 	const skillPath = fileURLToPath(
@@ -910,14 +998,18 @@ test("default runtime resumes compatible exploration, persists progress, and per
 			],
 			researchExecutor: async (input) => {
 				await input.writeArtifact({
-					findings: [{
-						claim: "Verified research",
-						evidence: [{
-							uri: "https://example.com/research",
-							title: "Research",
-							retrievedAt: "2026-07-14T00:00:00.000Z",
-						}],
-					}],
+					findings: [
+						{
+							claim: "Verified research",
+							evidence: [
+								{
+									uri: "https://example.com/research",
+									title: "Research",
+									retrievedAt: "2026-07-14T00:00:00.000Z",
+								},
+							],
+						},
+					],
 					limitations: [],
 				});
 				return { assistantText: "Research ready." };
@@ -983,7 +1075,10 @@ test("default runtime resumes compatible exploration, persists progress, and per
 	const recovered = await workflow.advance(command);
 	assert.equal(recovered.result.status, "completed");
 	assert.equal(calls.length, 3);
-	assert.equal(calls[1].launchOptions.resumeSessionId, calls[0].launchOptions.sessionId);
+	assert.equal(
+		calls[1].launchOptions.resumeSessionId,
+		calls[0].launchOptions.sessionId,
+	);
 	assert.deepEqual(
 		calls[1].launchOptions.verifiedArtifacts.map(({ schema }) => schema),
 		["workflow-progress"],
@@ -992,10 +1087,12 @@ test("default runtime resumes compatible exploration, persists progress, and per
 	assert.equal(calls[2].launchOptions.resumeSessionId, undefined);
 	assert.equal("partialOutput" in calls[1].launchOptions, false);
 	const terminal = JSON.parse(
-		(await artifactStore.readCurrent(
-			"pi-workflow",
-			recovered.result.artifacts[0].topic,
-		)).content,
+		(
+			await artifactStore.readCurrent(
+				"pi-workflow",
+				recovered.result.artifacts[0].topic,
+			)
+		).content,
 	);
 	assert.deepEqual(
 		terminal.payload.progressBatches.map(({ batchKey, supersedes }) => ({
@@ -1023,17 +1120,17 @@ test("default packaged entry ignores legacy Owner environment and privately bind
 		assert.equal("authorityRevision" in tool.parameters.properties, false);
 		assert.ok((handlerCounts.get("agent_settled") ?? 0) >= 3);
 
-		await handlers.get("agent_settled")(
-			{ type: "agent_settled" },
-			ctx,
-		);
+		await handlers.get("agent_settled")({ type: "agent_settled" }, ctx);
 		const approvalPrompt = await handlers.get("before_agent_start")({
 			systemPrompt: "base",
 		});
 		assert.match(approvalPrompt.systemPrompt, /spec-approved/);
 		assert.match(approvalPrompt.systemPrompt, /publish_spec/);
 		assert.match(approvalPrompt.systemPrompt, /same turn/);
-		assert.match(approvalPrompt.systemPrompt, /do not ask for another human confirmation/i);
+		assert.match(
+			approvalPrompt.systemPrompt,
+			/do not ask for another human confirmation/i,
+		);
 		for (const event of [
 			{ type: "input", text: "Apruebo.", source: "extension" },
 			{
@@ -1054,12 +1151,12 @@ test("default packaged entry ignores legacy Owner environment and privately bind
 			assert.equal(refused.details.status, "blocked");
 			assert.equal(
 				refused.details.blocker.code,
-				"PI_WORKFLOW_SPEC_APPROVAL_REQUIRED",
+				"PI_WORKFLOW_DECISION_CLAIM_MISSING",
 			);
 		}
 
 		await handlers.get("input")(
-			{ type: "input", text: "Apruebo.", source: "interactive" },
+			{ type: "input", text: "1", source: "interactive" },
 			ctx,
 		);
 		assert.equal(
@@ -1080,7 +1177,10 @@ test("default packaged entry ignores legacy Owner environment and privately bind
 		assert.equal(approved.details.status, "spec-approved");
 		assert.equal(approved.details.approval.status, "approved");
 		assert.equal(approved.details.approval.actor, undefined);
-		assert.doesNotMatch(approved.content[0].text, /authorityRevision|digest|revision/);
+		assert.doesNotMatch(
+			approved.content[0].text,
+			/authorityRevision|digest|revision/,
+		);
 	} finally {
 		if (previousActorId === undefined) {
 			delete process.env.PI_WORKFLOW_OWNER_ACTOR_ID;
@@ -1101,21 +1201,13 @@ test("default packaged approval requires no launch-host Owner authority", async 
 	delete process.env.PI_WORKFLOW_OWNER_ACTOR_ID;
 	delete process.env.PI_WORKFLOW_OWNER_AUTHORITY_REVISION;
 	try {
-		const {
-			authorityLookupCount,
-			ctx,
-			handlerCounts,
-			handlers,
-			tool,
-		} = await prepareProductionSpec();
+		const { authorityLookupCount, ctx, handlerCounts, handlers, tool } =
+			await prepareProductionSpec();
 		assert.equal(authorityLookupCount, 1);
 		assert.ok((handlerCounts.get("agent_settled") ?? 0) >= 3);
-		await handlers.get("agent_settled")(
-			{ type: "agent_settled" },
-			ctx,
-		);
+		await handlers.get("agent_settled")({ type: "agent_settled" }, ctx);
 		await handlers.get("input")(
-			{ type: "input", text: "Apruebo.", source: "interactive" },
+			{ type: "input", text: "1", source: "interactive" },
 			ctx,
 		);
 		const outcome = await tool.execute(
@@ -1159,48 +1251,90 @@ test("runtime authentication reservations reject reset, replacement, late duplic
 	await t.test("session reset", async () => {
 		const { handlers } = loadExtension(productionSpecRuntimeOptions());
 		const ctx = executionContext();
-		await handlers.get("input")({ text: "/define-product first", source: "interactive" }, ctx);
-		assert.equal(await handlers.get("tool_call")(call("reused-reset"), ctx), undefined);
+		await handlers.get("input")(
+			{ text: "/define-product first", source: "interactive" },
+			ctx,
+		);
+		assert.equal(
+			await handlers.get("tool_call")(call("reused-reset"), ctx),
+			undefined,
+		);
 		await handlers.get("session_start")({}, ctx);
-		await handlers.get("input")({ text: "/define-product after reset", source: "interactive" }, ctx);
+		await handlers.get("input")(
+			{ text: "/define-product after reset", source: "interactive" },
+			ctx,
+		);
 		await handlers.get("tool_call")(call("reused-reset"), ctx);
 		await handlers.get("tool_result")(result("reused-reset"), ctx);
-		const prompt = await handlers.get("before_agent_start")({ systemPrompt: "base" }, ctx);
+		const prompt = await handlers.get("before_agent_start")(
+			{ systemPrompt: "base" },
+			ctx,
+		);
 		assert.match(prompt.systemPrompt, /call linear_get_user with only/i);
 	});
 
 	await t.test("active replacement and late duplicate", async () => {
 		const { handlers, runtime } = loadAuthorityRuntime();
-		runtime.handlePublicEntry({ text: "/define-product first", source: "interactive" });
+		runtime.handlePublicEntry({
+			text: "/define-product first",
+			source: "interactive",
+		});
 		assert.equal(await handlers.get("tool_call")(call("old-call")), undefined);
-		runtime.handlePublicEntry({ text: "/define-product replacement", source: "interactive" });
+		runtime.handlePublicEntry({
+			text: "/define-product replacement",
+			source: "interactive",
+		});
 		assert.deepEqual(await handlers.get("tool_call")(call("old-call")), {
 			block: true,
 			reason: "PI_WORKFLOW_DEFINE_PRODUCT_AUTHORITY_MISMATCH",
 		});
 		assert.equal(await handlers.get("tool_call")(call("new-call")), undefined);
 		await handlers.get("tool_result")(result("old-call"));
-		const pending = await handlers.get("before_agent_start")({ systemPrompt: "base" });
+		const pending = await handlers.get("before_agent_start")({
+			systemPrompt: "base",
+		});
 		assert.match(pending.systemPrompt, /one pending linear_get_user result/i);
 		await handlers.get("tool_result")(result("new-call"));
-		await handlers.get("tool_result")(result("old-call", { ...user, id: "late-duplicate" }));
-		const authenticated = await handlers.get("before_agent_start")({ systemPrompt: "base" });
+		await handlers.get("tool_result")(
+			result("old-call", { ...user, id: "late-duplicate" }),
+		);
+		const authenticated = await handlers.get("before_agent_start")({
+			systemPrompt: "base",
+		});
 		assert.doesNotMatch(authenticated.systemPrompt, /linear_get_user/);
-		assert.doesNotMatch(authenticated.systemPrompt, /stop without approving or mutating/i);
+		assert.doesNotMatch(
+			authenticated.systemPrompt,
+			/stop without approving or mutating/i,
+		);
 	});
 
 	await t.test("concurrent duplicate results", async () => {
 		const { handlers } = loadExtension(productionSpecRuntimeOptions());
 		const ctx = executionContext();
-		await handlers.get("input")({ text: "/define-product concurrent", source: "interactive" }, ctx);
-		assert.equal(await handlers.get("tool_call")(call("concurrent-call"), ctx), undefined);
+		await handlers.get("input")(
+			{ text: "/define-product concurrent", source: "interactive" },
+			ctx,
+		);
+		assert.equal(
+			await handlers.get("tool_call")(call("concurrent-call"), ctx),
+			undefined,
+		);
 		await Promise.all([
 			handlers.get("tool_result")(result("concurrent-call"), ctx),
-			handlers.get("tool_result")(result("concurrent-call", { ...user, id: "duplicate-user" }), ctx),
+			handlers.get("tool_result")(
+				result("concurrent-call", { ...user, id: "duplicate-user" }),
+				ctx,
+			),
 		]);
-		const prompt = await handlers.get("before_agent_start")({ systemPrompt: "base" }, ctx);
+		const prompt = await handlers.get("before_agent_start")(
+			{ systemPrompt: "base" },
+			ctx,
+		);
 		assert.doesNotMatch(prompt.systemPrompt, /linear_get_user/);
-		assert.doesNotMatch(prompt.systemPrompt, /stop without approving or mutating/i);
+		assert.doesNotMatch(
+			prompt.systemPrompt,
+			/stop without approving or mutating/i,
+		);
 	});
 });
 
@@ -1214,10 +1348,7 @@ test("default define-product blocks inactive, guest, and malformed users after o
 			"guest",
 			{ id: "owner-felipe", name: "Owner", isActive: true, isGuest: true },
 		],
-		[
-			"malformed",
-			{ id: "owner-felipe", isActive: true, isGuest: false },
-		],
+		["malformed", { id: "owner-felipe", isActive: true, isGuest: false }],
 	]) {
 		await t.test(name, async () => {
 			const { handlers } = loadExtension(productionSpecRuntimeOptions());
@@ -1268,22 +1399,49 @@ test("default define-product blocks inactive, guest, and malformed users after o
 
 test("default define-product persists and restores exact approved-revision recovery through terminal publication", async () => {
 	const artifactStore = createAtomicArtifactStore();
-	const owner = { actorId: "owner-1", role: "Owner", authorityRevision: "authority-r1" };
+	const owner = {
+		actorId: "owner-1",
+		role: "Owner",
+		authorityRevision: "authority-r1",
+	};
 	const issues = new Map([
-		["ILA-2317", { id: "ILA-2317", description: "Descripción anterior", updatedAt: "issue-r1", workflow: { state: "In Progress", assignee: "owner-1", cycle: "cycle-1", labels: ["workflow"], project: "pi-workflow" } }],
+		[
+			"ILA-2317",
+			{
+				id: "ILA-2317",
+				description: "Descripción anterior",
+				updatedAt: "issue-r1",
+				workflow: {
+					state: "In Progress",
+					assignee: "owner-1",
+					cycle: "cycle-1",
+					labels: ["workflow"],
+					project: "pi-workflow",
+				},
+			},
+		],
 	]);
 	const comments = new Map();
+	const interactiveDecisionStore = createInMemoryDecisionStore();
 	const linearApprovedRevision = {
 		getIssue: async ({ id }) => structuredClone(issues.get(id)),
-		listComments: async ({ issueId }) => structuredClone(comments.get(issueId) ?? []),
+		listComments: async ({ issueId }) =>
+			structuredClone(comments.get(issueId) ?? []),
 		async saveComment({ issueId, body }) {
-			const comment = { id: `comment-${(comments.get(issueId) ?? []).length + 1}`, body };
+			const comment = {
+				id: `comment-${(comments.get(issueId) ?? []).length + 1}`,
+				body,
+			};
 			comments.set(issueId, [...(comments.get(issueId) ?? []), comment]);
 			return structuredClone(comment);
 		},
 		async saveIssue({ id, description }) {
 			const current = issues.get(id);
-			const updated = { ...current, description, updatedAt: `${current.updatedAt}:updated` };
+			const updated = {
+				...current,
+				description,
+				updatedAt: `${current.updatedAt}:updated`,
+			};
 			issues.set(id, updated);
 			return structuredClone(updated);
 		},
@@ -1293,31 +1451,56 @@ test("default define-product persists and restores exact approved-revision recov
 		checkpointStore: createInMemoryDelegationCheckpointStore(),
 		linearApprovedRevision,
 		authenticatedAuthority: { current: async () => owner },
+		interactiveDecisionStore,
 	};
-	const initial = createDefaultDefineProductWorkflow({}, () => executionContext(), options);
+	const initial = createDefaultDefineProductWorkflow(
+		{},
+		() => executionContext(),
+		options,
+	);
 	const ready = await initial.advance({
 		kind: "to-approved-revision",
 		definitionId: "definition-1",
 		revisionKind: "product-revision",
-		affectedIssues: [{ id: "ILA-2317", nextDescription: "Descripción aprobada" }],
+		affectedIssues: [
+			{ id: "ILA-2317", nextDescription: "Descripción aprobada" },
+		],
 		sourceCommentKind: "product-revision",
-		sourceCommentBody: "Revisión aprobada.\n\nReferencia de flujo: product-revision:{{digest}}",
+		sourceCommentBody:
+			"Revisión aprobada.\n\nReferencia de flujo: product-revision:{{digest}}",
 	});
 	assert.equal(ready.status, "revision-ready", JSON.stringify(ready));
 	const digest = ready.revision.digest;
 
 	const approvalRuntime = loadExtension(options);
-	await approvalRuntime.handlers.get("session_start")({}, executionContext());
-	const approvalPrompt = (await approvalRuntime.handlers.get("before_agent_start")({ systemPrompt: "base" })).systemPrompt;
+	const approvalContext = executionContext();
+	await approvalRuntime.handlers.get("session_start")({}, approvalContext);
+	await authenticateOwner(approvalRuntime.handlers, approvalContext);
+	const approvalPrompt = (
+		await approvalRuntime.handlers.get("before_agent_start")(
+			{ systemPrompt: "base" },
+			approvalContext,
+		)
+	).systemPrompt;
 	assert.doesNotMatch(approvalPrompt, new RegExp(digest));
-	const wrongApproval = await approvalRuntime.tool.execute("wrong", { action: "approve_approved_revision", definitionId: "definition-1", digest: "0".repeat(64) });
+	const wrongApproval = await approvalRuntime.tool.execute("wrong", {
+		action: "approve_approved_revision",
+		definitionId: "definition-1",
+		digest: "0".repeat(64),
+	});
 	assert.equal(wrongApproval.details.status, "blocked");
 	await approvalRuntime.handlers.get("input")(
-		{ type: "input", text: "Apruebo", source: "interactive" },
+		{ type: "input", text: "1", source: "interactive" },
 		executionContext(),
 	);
-	const approved = await approvalRuntime.tool.execute("approve", { action: "approve_approved_revision" });
-	assert.equal(approved.details.status, "revision-approved", JSON.stringify(approved.details));
+	const approved = await approvalRuntime.tool.execute("approve", {
+		action: "approve_approved_revision",
+	});
+	assert.equal(
+		approved.details.status,
+		"revision-approved",
+		JSON.stringify(approved.details),
+	);
 	assert.equal(approved.details.revision.digest, undefined);
 	const approvalMarker = await artifactStore.readCurrent(
 		"pi-workflow",
@@ -1326,70 +1509,213 @@ test("default define-product persists and restores exact approved-revision recov
 	const approvedDigest = JSON.parse(approvalMarker.content).digest;
 
 	const publicationRuntime = loadExtension(options);
-	await publicationRuntime.handlers.get("session_start")({}, executionContext());
-	const publicationPrompt = (await publicationRuntime.handlers.get("before_agent_start")({ systemPrompt: "base" })).systemPrompt;
+	const publicationContext = executionContext();
+	await publicationRuntime.handlers.get("session_start")(
+		{},
+		publicationContext,
+	);
+	await authenticateOwner(publicationRuntime.handlers, publicationContext);
+	const publicationPrompt = (
+		await publicationRuntime.handlers.get("before_agent_start")(
+			{ systemPrompt: "base" },
+			publicationContext,
+		)
+	).systemPrompt;
 	assert.doesNotMatch(publicationPrompt, new RegExp(approvedDigest));
-	const wrongPublication = await publicationRuntime.tool.execute("wrong", { action: "publish_approved_revision", definitionId: "definition-1", digest: "f".repeat(64) });
+	const wrongPublication = await publicationRuntime.tool.execute("wrong", {
+		action: "publish_approved_revision",
+		definitionId: "definition-1",
+		digest: "f".repeat(64),
+	});
 	assert.equal(wrongPublication.details.status, "blocked");
-	const published = await publicationRuntime.tool.execute("publish", { action: "publish_approved_revision" });
-	assert.equal(published.details.status, "revision-published", JSON.stringify(published.details));
+	const published = await publicationRuntime.tool.execute("publish", {
+		action: "publish_approved_revision",
+	});
+	assert.equal(
+		published.details.status,
+		"revision-published",
+		JSON.stringify(published.details),
+	);
 	assert.equal(issues.get("ILA-2317").description, "Descripción aprobada");
 
-	const terminal = createDefaultDefineProductWorkflow({}, () => executionContext(), options);
+	const terminal = createDefaultDefineProductWorkflow(
+		{},
+		() => executionContext(),
+		options,
+	);
 	assert.equal(await terminal.restoreRecovery(), undefined);
-	const marker = await artifactStore.readCurrent("pi-workflow", "workflow/define-product/approved-revision-recovery");
-	assert.deepEqual(JSON.parse(marker.content), { definitionId: "definition-1", digest: approvedDigest, phase: "completed" });
+	const marker = await artifactStore.readCurrent(
+		"pi-workflow",
+		"workflow/define-product/approved-revision-recovery",
+	);
+	assert.deepEqual(JSON.parse(marker.content), {
+		definitionId: "definition-1",
+		digest: approvedDigest,
+		phase: "completed",
+	});
 });
 
 test("default define-product to-tickets delegates exact refs, persists the graph, and returns tickets-ready", async () => {
 	const artifactStore = createAtomicArtifactStore();
 	const spec = createProductSpecEnvelope({
 		definitionId: "definition-1",
-		target: { kind: "linear-parent-description", teamId: "team-1", title: "Canonical delivery" },
+		target: {
+			kind: "linear-parent-description",
+			teamId: "team-1",
+			title: "Canonical delivery",
+		},
 		revision: "spec-r1",
-		problem: "El equipo puede publicar una definición distinta de la que revisó el Owner.",
-		solution: "El flujo conserva y publica el Spec español exacto aprobado por el Owner.",
-		userStories: ["Como Owner, quiero aprobar el cuerpo exacto antes de publicarlo.", "Como Developer, quiero recibir una definición estable y verificable."],
-		decisions: [{ id: "decision-1", status: "resolved", pertinent: true, text: "La descripción del Delivery parent conserva el Spec canónico." }],
-		tests: ["Verificar que la descripción publicada coincide con el Spec aprobado."], outOfScope: ["Crear los Delivery tickets derivados."], supportArtifacts: [],
+		problem:
+			"El equipo puede publicar una definición distinta de la que revisó el Owner.",
+		solution:
+			"El flujo conserva y publica el Spec español exacto aprobado por el Owner.",
+		userStories: [
+			"Como Owner, quiero aprobar el cuerpo exacto antes de publicarlo.",
+			"Como Developer, quiero recibir una definición estable y verificable.",
+		],
+		decisions: [
+			{
+				id: "decision-1",
+				status: "resolved",
+				pertinent: true,
+				text: "La descripción del Delivery parent conserva el Spec canónico.",
+			},
+		],
+		tests: [
+			"Verificar que la descripción publicada coincide con el Spec aprobado.",
+		],
+		outOfScope: ["Crear los Delivery tickets derivados."],
+		supportArtifacts: [],
 	});
-	const approvedSnapshot = { spec, approval: createProductSpecApprovalEnvelope({ spec, actor: { actorId: "owner-1", role: "Owner", authorityRevision: "authority-r1" } }) };
+	const approvedSnapshot = {
+		spec,
+		approval: createProductSpecApprovalEnvelope({
+			spec,
+			actor: {
+				actorId: "owner-1",
+				role: "Owner",
+				authorityRevision: "authority-r1",
+			},
+		}),
+	};
 	const approvedTopic = "workflow/define-product/definition-1/approved-spec";
 	const { revision: approvedRevision } = await artifactStore.write(
-		"pi-workflow", approvedTopic, `${JSON.stringify(approvedSnapshot)}\n`, undefined,
+		"pi-workflow",
+		approvedTopic,
+		`${JSON.stringify(approvedSnapshot)}\n`,
+		undefined,
 	);
 	const approved = { ...approvedSnapshot, sourceRevision: approvedRevision };
-	const parent = { id: "parent-1", teamId: "team-1", revision: "spec-r1", specDigest: spec.digest };
-	const parentUnsigned = { schema: "delivery-parent", schemaVersion: 1, payload: parent };
-	const parentRef = await createWorkflowArtifactInterface(artifactStore).openSession({
-		project: { name: "pi-workflow", root: process.cwd() }, topic: "workflow/define-product/definition-1/published-parent", schema: "delivery-parent", schemaVersion: 1, strategy: "snapshot", aliases: [],
-	}).writeDeliveryParentSnapshot({ ...parentUnsigned, digest: digestCanonicalValue(parentUnsigned) });
-	const approvedSpecRef = { kind: "engram", project: "pi-workflow", topic: approvedTopic, revision: approvedRevision, schema: "approved-spec", schemaVersion: 1, digest: spec.digest };
+	const parent = {
+		id: "parent-1",
+		teamId: "team-1",
+		revision: "spec-r1",
+		specDigest: spec.digest,
+	};
+	const parentUnsigned = {
+		schema: "delivery-parent",
+		schemaVersion: 1,
+		payload: parent,
+	};
+	const parentRef = await createWorkflowArtifactInterface(artifactStore)
+		.openSession({
+			project: { name: "pi-workflow", root: process.cwd() },
+			topic: "workflow/define-product/definition-1/published-parent",
+			schema: "delivery-parent",
+			schemaVersion: 1,
+			strategy: "snapshot",
+			aliases: [],
+		})
+		.writeDeliveryParentSnapshot({
+			...parentUnsigned,
+			digest: digestCanonicalValue(parentUnsigned),
+		});
+	const approvedSpecRef = {
+		kind: "engram",
+		project: "pi-workflow",
+		topic: approvedTopic,
+		revision: approvedRevision,
+		schema: "approved-spec",
+		schemaVersion: 1,
+		digest: spec.digest,
+	};
 	const launches = [];
-	const workflow = createDefaultDefineProductWorkflow({}, () => executionContext(), {
-		artifactStore,
-		checkpointStore: createInMemoryDelegationCheckpointStore(),
-		approvedSpecReader: { read: async () => structuredClone(approved) },
-		authenticatedAuthority: { current: async () => approved.approval.payload.actor },
-		ticketGraphExecutor: async (input) => {
-			launches.push(input);
-			assert.match(await input.readArtifact("approved-spec"), /product-spec/);
-			assert.match(await input.readArtifact("delivery-parent"), /parent-1/);
-			const graph = createDeliveryTicketGraph({
-				parent, language: "es",
-				coverage: createSpecCoverageIndex({ stories: [{ id: "story-1", contextId: "context-1", acceptanceCriteria: ["ac-1"] }], decisions: ["decision-1"], tests: ["test-1"] }),
-				tickets: [{ stableKey: "TICKET-1", title: "Entregar alcance", outcome: "Resultado verificable", acceptanceCriteria: ["Criterio uno", "Criterio dos", "Criterio tres", "Criterio cuatro"], estimate: { points: 1, rationale: "Trabajo acotado" }, blockers: [], refs: [{ kind: "story", id: "story-1" }, { kind: "decision", id: "decision-1" }, { kind: "test", id: "test-1" }], deliveryBindings: [{ storyId: "story-1", acceptanceCriterionId: "ac-1", contextId: "context-1" }] }],
-			});
-			await input.writeArtifact(graph);
-			return { assistantText: "Ticket graph ready." };
+	const workflow = createDefaultDefineProductWorkflow(
+		{},
+		() => executionContext(),
+		{
+			artifactStore,
+			checkpointStore: createInMemoryDelegationCheckpointStore(),
+			approvedSpecReader: { read: async () => structuredClone(approved) },
+			authenticatedAuthority: {
+				current: async () => approved.approval.payload.actor,
+			},
+			ticketGraphExecutor: async (input) => {
+				launches.push(input);
+				assert.match(await input.readArtifact("approved-spec"), /product-spec/);
+				assert.match(await input.readArtifact("delivery-parent"), /parent-1/);
+				const graph = createDeliveryTicketGraph({
+					parent,
+					language: "es",
+					coverage: createSpecCoverageIndex({
+						stories: [
+							{
+								id: "story-1",
+								contextId: "context-1",
+								acceptanceCriteria: ["ac-1"],
+							},
+						],
+						decisions: ["decision-1"],
+						tests: ["test-1"],
+					}),
+					tickets: [
+						{
+							stableKey: "TICKET-1",
+							title: "Entregar alcance",
+							outcome: "Resultado verificable",
+							acceptanceCriteria: [
+								"Criterio uno",
+								"Criterio dos",
+								"Criterio tres",
+								"Criterio cuatro",
+							],
+							estimate: { points: 1, rationale: "Trabajo acotado" },
+							blockers: [],
+							refs: [
+								{ kind: "story", id: "story-1" },
+								{ kind: "decision", id: "decision-1" },
+								{ kind: "test", id: "test-1" },
+							],
+							deliveryBindings: [
+								{
+									storyId: "story-1",
+									acceptanceCriterionId: "ac-1",
+									contextId: "context-1",
+								},
+							],
+						},
+					],
+				});
+				await input.writeArtifact(graph);
+				return { assistantText: "Ticket graph ready." };
+			},
 		},
+	);
+	const outcome = await workflow.advance({
+		kind: "to-tickets",
+		definitionId: "definition-1",
+		approvedSpecRef,
+		parentRef,
 	});
-	const outcome = await workflow.advance({ kind: "to-tickets", definitionId: "definition-1", approvedSpecRef, parentRef });
 	assert.equal(outcome.status, "tickets-ready", outcome.blocker?.message);
 	assert.equal(launches.length, 1);
 	assert.equal(launches[0].allowedTools.at(-1), "workflow_artifact_session");
 	assert.deepEqual(outcome.graph.payload.parent, parent);
-	const persisted = await artifactStore.readRevision("pi-workflow", outcome.graphRef.topic, outcome.graphRef.revision);
+	const persisted = await artifactStore.readRevision(
+		"pi-workflow",
+		outcome.graphRef.topic,
+		outcome.graphRef.revision,
+	);
 	assert.equal(JSON.parse(persisted).digest, outcome.graph.digest);
 });
 
@@ -1410,14 +1736,24 @@ test("explicit legacy gateway compatibility publishes the Engram-approved body",
 			assert.equal(init.headers.Authorization, "linear-key");
 			const request = JSON.parse(String(init.body));
 			if (request.operationName === "DeliveryParentPreflight") {
-				return Response.json({ data: {
-					viewer: { id: "owner-felipe" },
-					team: {
-						id: "team-grupo-ilao",
-						cyclesEnabled: true,
-						states: { nodes: [{ id: "backlog-1", type: "backlog", updatedAt: "2026-07-14T00:00:00.000Z" }] },
+				return Response.json({
+					data: {
+						viewer: { id: "owner-felipe" },
+						team: {
+							id: "team-grupo-ilao",
+							cyclesEnabled: true,
+							states: {
+								nodes: [
+									{
+										id: "backlog-1",
+										type: "backlog",
+										updatedAt: "2026-07-14T00:00:00.000Z",
+									},
+								],
+							},
+						},
 					},
-				} });
+				});
 			}
 			if (request.operationName === "DeliveryParentCreate") {
 				parent = {
@@ -1429,7 +1765,9 @@ test("explicit legacy gateway compatibility publishes the Engram-approved body",
 					cycle: null,
 					assignee: null,
 				};
-				return Response.json({ data: { issueCreate: { success: true, issue: parent } } });
+				return Response.json({
+					data: { issueCreate: { success: true, issue: parent } },
+				});
 			}
 			return Response.json({ data: { issue: parent } });
 		}
@@ -1469,13 +1807,24 @@ test("explicit legacy gateway compatibility publishes the Engram-approved body",
 				}),
 			),
 			authenticatedAuthority: {
-				current: async () => ({ actorId: "owner-felipe", role: "Owner", authorityRevision: "owner-policy-r3" }),
+				current: async () => ({
+					actorId: "owner-felipe",
+					role: "Owner",
+					authorityRevision: "owner-policy-r3",
+				}),
 			},
 			publicationManifest: {
 				create: (value) => ({ ...value, digest: digestCanonicalValue(value) }),
-				load: async () => manifest && { revision: String(manifestRevision), value: structuredClone(manifest) },
+				load: async () =>
+					manifest && {
+						revision: String(manifestRevision),
+						value: structuredClone(manifest),
+					},
 				save: async (value, expectedRevision) => {
-					assert.equal(expectedRevision, manifest ? String(manifestRevision) : undefined);
+					assert.equal(
+						expectedRevision,
+						manifest ? String(manifestRevision) : undefined,
+					);
 					manifest = structuredClone(value);
 					manifestRevision += 1;
 					return String(manifestRevision);
@@ -1483,13 +1832,29 @@ test("explicit legacy gateway compatibility publishes the Engram-approved body",
 			},
 		});
 		await handlers.get("input")(
-			{ type: "input", text: "Apruebo", source: "interactive" },
+			{ type: "input", text: "1", source: "interactive" },
 			ctx,
 		);
-		const approved = await tool.execute("approval", { action: "approve_spec" }, undefined, undefined, ctx);
+		const approved = await tool.execute(
+			"approval",
+			{ action: "approve_spec" },
+			undefined,
+			undefined,
+			ctx,
+		);
 		assert.equal(approved.details.status, "spec-approved");
-		const published = await tool.execute("publication", { action: "publish_spec" }, undefined, undefined, ctx);
-		assert.equal(published.details.status, "spec-published", JSON.stringify(published.details));
+		const published = await tool.execute(
+			"publication",
+			{ action: "publish_spec" },
+			undefined,
+			undefined,
+			ctx,
+		);
+		assert.equal(
+			published.details.status,
+			"spec-published",
+			JSON.stringify(published.details),
+		);
 		assert.equal(parent.description, ready.details.spec.body);
 		assert.equal(manifest.stage, "verified");
 	} finally {
@@ -1508,20 +1873,21 @@ test("injected authenticated authority blocks mismatched Spec approval after one
 		authorityRevision: "compatibility-r1",
 	};
 	let persistedApprovals = 0;
-	const { authorityLookupCount, ctx, handlers, tool } = await prepareProductionSpec({
-		authenticatedAuthority: { current: async () => policy },
-		approvedSpecReader: {
-			read: async () => {
-				throw new Error("No approved Spec should exist.");
+	const { authorityLookupCount, ctx, handlers, tool } =
+		await prepareProductionSpec({
+			authenticatedAuthority: { current: async () => policy },
+			approvedSpecReader: {
+				read: async () => {
+					throw new Error("No approved Spec should exist.");
+				},
+				save: async () => {
+					persistedApprovals += 1;
+					throw new Error("A mismatched approval must not be persisted.");
+				},
 			},
-			save: async () => {
-				persistedApprovals += 1;
-				throw new Error("A mismatched approval must not be persisted.");
-			},
-		},
-	});
+		});
 	await handlers.get("input")(
-		{ type: "input", text: "Apruebo", source: "interactive" },
+		{ type: "input", text: "1", source: "interactive" },
 		ctx,
 	);
 	const outcome = await tool.execute(
@@ -1548,19 +1914,14 @@ test("default define-product uses one user lookup and ignores LINEAR_API_KEY and
 	delete process.env.PI_WORKFLOW_OWNER_AUTHORITY_REVISION;
 	process.env.LINEAR_API_KEY = "must-not-be-read";
 	try {
-		const {
-			authorityLookupCount,
-			ctx,
-			handlers,
-			ready,
-			tool,
-		} = await prepareProductionSpec(
-			{ artifactStore: createAtomicArtifactStore() },
-			{ teamId: "team-1" },
-		);
+		const { authorityLookupCount, ctx, handlers, ready, tool } =
+			await prepareProductionSpec(
+				{ artifactStore: createAtomicArtifactStore() },
+				{ teamId: "team-1" },
+			);
 		await handlers.get("before_agent_start")({ systemPrompt: "base" }, ctx);
 		await handlers.get("input")(
-			{ type: "input", text: "Apruebo", source: "interactive" },
+			{ type: "input", text: "1", source: "interactive" },
 			ctx,
 		);
 		const approved = await tool.execute(
@@ -1635,7 +1996,16 @@ test("default define-product uses one user lookup and ignores LINEAR_API_KEY and
 			limit: 250,
 			orderBy: "updatedAt",
 			includeArchived: false,
-			fields: ["id", "title", "description", "status", "statusType", "assigneeId", "teamId", "cycleId"],
+			fields: [
+				"id",
+				"title",
+				"description",
+				"status",
+				"statusType",
+				"assigneeId",
+				"teamId",
+				"cycleId",
+			],
 		};
 		await mcp("linear_list_issues", candidateInput, {
 			issues: [],
@@ -1678,7 +2048,10 @@ test("default define-product uses one user lookup and ignores LINEAR_API_KEY and
 			toolCallId: "publish-mcp-terminal",
 			input: { action: "publish_spec" },
 		};
-		assert.equal(await handlers.get("tool_call")(terminalEvent, ctx), undefined);
+		assert.equal(
+			await handlers.get("tool_call")(terminalEvent, ctx),
+			undefined,
+		);
 		const published = await tool.execute(
 			terminalEvent.toolCallId,
 			terminalEvent.input,
@@ -1698,13 +2071,20 @@ test("default define-product uses one user lookup and ignores LINEAR_API_KEY and
 				assigneeId: null,
 			},
 		});
-		assert.doesNotMatch(published.content[0].text, /digest|revision|publicationKey|parentRef/);
+		assert.doesNotMatch(
+			published.content[0].text,
+			/digest|revision|publicationKey|parentRef/,
+		);
 		assert.equal(authorityLookupCount, 1);
 		assert.equal(
 			mcpCalls.filter(({ toolName }) => toolName === "linear_get_user").length,
 			0,
 		);
-		assert.equal(mcpCalls.filter(({ toolName }) => toolName === "linear_save_issue").length, 1);
+		assert.equal(
+			mcpCalls.filter(({ toolName }) => toolName === "linear_save_issue")
+				.length,
+			1,
+		);
 		assert.deepEqual(
 			mcpCalls.find(({ toolName }) => toolName === "linear_save_issue").input,
 			{
@@ -1715,9 +2095,11 @@ test("default define-product uses one user lookup and ignores LINEAR_API_KEY and
 			},
 		);
 	} finally {
-		if (previousActorId === undefined) delete process.env.PI_WORKFLOW_OWNER_ACTOR_ID;
+		if (previousActorId === undefined)
+			delete process.env.PI_WORKFLOW_OWNER_ACTOR_ID;
 		else process.env.PI_WORKFLOW_OWNER_ACTOR_ID = previousActorId;
-		if (previousRevision === undefined) delete process.env.PI_WORKFLOW_OWNER_AUTHORITY_REVISION;
+		if (previousRevision === undefined)
+			delete process.env.PI_WORKFLOW_OWNER_AUTHORITY_REVISION;
 		else process.env.PI_WORKFLOW_OWNER_AUTHORITY_REVISION = previousRevision;
 		if (previousLinearKey === undefined) delete process.env.LINEAR_API_KEY;
 		else process.env.LINEAR_API_KEY = previousLinearKey;
@@ -1728,30 +2110,41 @@ test("default packaged define-product routes publish_tickets to MCP when no nati
 	let active = false;
 	const calls = [];
 	const ticketMcpPublication = {
-		allowedTools: ["linear_get_user", "linear_get_issue", "linear_list_issue_statuses", "linear_list_issues", "linear_save_issue", "workflow_define_product"],
+		allowedTools: [
+			"linear_get_user",
+			"linear_get_issue",
+			"linear_list_issue_statuses",
+			"linear_list_issues",
+			"linear_save_issue",
+			"workflow_define_product",
+		],
 		setMcpAvailable() {},
-		clear() { active = false; },
+		clear() {
+			active = false;
+		},
 		hasActiveTurn: () => active,
 		begin: async (definitionId, toolCallId, input) => {
 			active = true;
 			calls.push({ definitionId, toolCallId, input });
 			return { status: "continuing" };
 		},
-		complete: async () => ({ status: "blocked", blocker: { code: "unused", message: "unused" } }),
-		expectedModelCall: () => active ? { toolName: "linear_get_user", input: { query: "me" } } : undefined,
+		complete: async () => ({
+			status: "blocked",
+			blocker: { code: "unused", message: "unused" },
+		}),
+		expectedModelCall: () =>
+			active
+				? { toolName: "linear_get_user", input: { query: "me" } }
+				: undefined,
 		nextCallInstruction: () => undefined,
 		handleToolCall: async () => undefined,
 		handleToolResult: async () => false,
 	};
-	const workflow = createDefaultDefineProductWorkflow(
-		{},
-		() => undefined,
-		{
-			artifactStore: createAtomicArtifactStore(),
-			checkpointStore: createInMemoryDelegationCheckpointStore(),
-			ticketMcpPublication,
-		},
-	);
+	const workflow = createDefaultDefineProductWorkflow({}, () => undefined, {
+		artifactStore: createAtomicArtifactStore(),
+		checkpointStore: createInMemoryDelegationCheckpointStore(),
+		ticketMcpPublication,
+	});
 	assert.equal(workflow.ticketMcpPublication, ticketMcpPublication);
 	assert.equal("linearDeliveryTickets" in workflow, false);
 
@@ -1763,16 +2156,12 @@ test("default packaged define-product routes publish_tickets to MCP when no nati
 		createBlocker: async () => {},
 		readBack: async () => ({}),
 	};
-	const compatible = createDefaultDefineProductWorkflow(
-		{},
-		() => undefined,
-		{
-			artifactStore: createAtomicArtifactStore(),
-			checkpointStore: createInMemoryDelegationCheckpointStore(),
-			linearDeliveryTickets: nativeGateway,
-			ticketMcpPublication,
-		},
-	);
+	const compatible = createDefaultDefineProductWorkflow({}, () => undefined, {
+		artifactStore: createAtomicArtifactStore(),
+		checkpointStore: createInMemoryDelegationCheckpointStore(),
+		linearDeliveryTickets: nativeGateway,
+		ticketMcpPublication,
+	});
 	assert.equal(compatible.ticketMcpPublication, undefined);
 	assert.deepEqual(calls, []);
 });
@@ -1780,8 +2169,12 @@ test("default packaged define-product routes publish_tickets to MCP when no nati
 test("default define-product restores approved ticket publication across sandbox roots and routes action-only publication to MCP", async () => {
 	const previousCodingAgentDir = process.env.PI_CODING_AGENT_DIR;
 	const previousAgentHome = process.env.PI_AGENT_HOME;
-	const sandboxOne = await mkdtemp(join(tmpdir(), "pi-workflow-ticket-recovery-one-"));
-	const sandboxTwo = await mkdtemp(join(tmpdir(), "pi-workflow-ticket-recovery-two-"));
+	const sandboxOne = await mkdtemp(
+		join(tmpdir(), "pi-workflow-ticket-recovery-one-"),
+	);
+	const sandboxTwo = await mkdtemp(
+		join(tmpdir(), "pi-workflow-ticket-recovery-two-"),
+	);
 	const artifactStore = createAtomicArtifactStore();
 	const definitionId = "definition-1";
 	const actor = {
@@ -1928,6 +2321,15 @@ test("default define-product restores approved ticket publication across sandbox
 		});
 		const secondContext = executionContext();
 		await second.handlers.get("session_start")({}, secondContext);
+		await authenticateOwner(second.handlers, secondContext);
+		await second.handlers.get("before_agent_start")(
+			{ systemPrompt: "base" },
+			secondContext,
+		);
+		await second.handlers.get("input")(
+			{ type: "input", text: "1", source: "interactive" },
+			secondContext,
+		);
 		const startEvent = {
 			toolName: "workflow_define_product",
 			toolCallId: "cross-sandbox-publication",
@@ -1948,14 +2350,12 @@ test("default define-product restores approved ticket publication across sandbox
 		const continuation = await second.handlers.get("tool_result")(
 			{
 				...startEvent,
-				content: [
-					{ type: "text", text: JSON.stringify(publication.details) },
-				],
+				content: [{ type: "text", text: JSON.stringify(publication.details) }],
 				isError: false,
 			},
 			secondContext,
 		);
-		assert.match(continuation.content.at(-1).text, /linear_get_user/);
+		assert.match(continuation.content.at(-1).text, /linear_get_issue/);
 
 		let sequence = 0;
 		const mcpCalls = [];
@@ -2014,12 +2414,6 @@ test("default define-product restores approved ticket publication across sandbox
 			assigneeId: null,
 			cycleId: null,
 		};
-		await mcp("linear_get_user", { query: "me" }, {
-			id: "owner-1",
-			name: "Owner",
-			isActive: true,
-			isGuest: false,
-		});
 		await mcp(
 			"linear_get_issue",
 			{ id: parent.id, includeRelations: true },
@@ -2118,10 +2512,11 @@ test("default define-product restores approved ticket publication across sandbox
 		assert.deepEqual(terminal.details, { status: "tickets-published" });
 		assert.equal(
 			mcpCalls.filter(({ toolName }) => toolName === "linear_get_user").length,
-			1,
+			0,
 		);
 		assert.equal(
-			mcpCalls.filter(({ toolName }) => toolName === "linear_save_issue").length,
+			mcpCalls.filter(({ toolName }) => toolName === "linear_save_issue")
+				.length,
 			1,
 		);
 	} finally {
@@ -2144,64 +2539,336 @@ test("default public publish_tickets uses canonical Engram re-reads before mutat
 	const observations = new Map();
 	let revision = 0;
 	const definitionId = "definition-tickets";
-	const parent = { id: "parent-1", teamId: "team-1", revision: "parent-r1", specDigest: "spec-digest" };
+	const parent = {
+		id: "parent-1",
+		teamId: "team-1",
+		revision: "parent-r1",
+		specDigest: "spec-digest",
+	};
 	const spec = createProductSpecEnvelope({
-		definitionId, target: { kind: "linear-parent-description", teamId: "team-1", title: "Delivery" }, revision: "parent-r1", problem: "Problema exacto", solution: "Solución exacta", userStories: ["Como Owner, quiero publicar tickets exactos."], decisions: [{ id: "decision-1", status: "resolved", pertinent: true, text: "El grafo aprobado es canónico." }], tests: ["Verificar publicación exacta."], outOfScope: ["Delegación."], supportArtifacts: [],
+		definitionId,
+		target: {
+			kind: "linear-parent-description",
+			teamId: "team-1",
+			title: "Delivery",
+		},
+		revision: "parent-r1",
+		problem: "Problema exacto",
+		solution: "Solución exacta",
+		userStories: ["Como Owner, quiero publicar tickets exactos."],
+		decisions: [
+			{
+				id: "decision-1",
+				status: "resolved",
+				pertinent: true,
+				text: "El grafo aprobado es canónico.",
+			},
+		],
+		tests: ["Verificar publicación exacta."],
+		outOfScope: ["Delegación."],
+		supportArtifacts: [],
 	});
 	parent.specDigest = spec.digest;
-	const graph = createDeliveryTicketGraph({ parent, language: "es", coverage: createSpecCoverageIndex({ stories: [{ id: "story-1", contextId: "delivery", acceptanceCriteria: ["ac-1", "ac-2"] }], decisions: ["decision-1"], tests: ["test-1"] }), tickets: [
-		{ stableKey: "T-1", title: "Primero", outcome: "Primer resultado", acceptanceCriteria: ["Uno", "Dos", "Tres", "Cuatro"], estimate: { points: 1, rationale: "Pequeño" }, blockers: [], refs: [{ kind: "story", id: "story-1" }, { kind: "decision", id: "decision-1" }, { kind: "test", id: "test-1" }], deliveryBindings: [{ storyId: "story-1", acceptanceCriterionId: "ac-1", contextId: "delivery" }] },
-		{ stableKey: "T-2", title: "Segundo", outcome: "Segundo resultado", acceptanceCriteria: ["Uno", "Dos", "Tres", "Cuatro"], estimate: { points: 2, rationale: "Pequeño" }, blockers: ["T-1"], refs: [{ kind: "story", id: "story-1" }, { kind: "decision", id: "decision-1" }, { kind: "test", id: "test-1" }], deliveryBindings: [{ storyId: "story-1", acceptanceCriterionId: "ac-2", contextId: "delivery" }] },
-	] });
-	const owner = { actorId: "owner-1", role: "Owner", authorityRevision: "authority-r1" };
+	const graph = createDeliveryTicketGraph({
+		parent,
+		language: "es",
+		coverage: createSpecCoverageIndex({
+			stories: [
+				{
+					id: "story-1",
+					contextId: "delivery",
+					acceptanceCriteria: ["ac-1", "ac-2"],
+				},
+			],
+			decisions: ["decision-1"],
+			tests: ["test-1"],
+		}),
+		tickets: [
+			{
+				stableKey: "T-1",
+				title: "Primero",
+				outcome: "Primer resultado",
+				acceptanceCriteria: ["Uno", "Dos", "Tres", "Cuatro"],
+				estimate: { points: 1, rationale: "Pequeño" },
+				blockers: [],
+				refs: [
+					{ kind: "story", id: "story-1" },
+					{ kind: "decision", id: "decision-1" },
+					{ kind: "test", id: "test-1" },
+				],
+				deliveryBindings: [
+					{
+						storyId: "story-1",
+						acceptanceCriterionId: "ac-1",
+						contextId: "delivery",
+					},
+				],
+			},
+			{
+				stableKey: "T-2",
+				title: "Segundo",
+				outcome: "Segundo resultado",
+				acceptanceCriteria: ["Uno", "Dos", "Tres", "Cuatro"],
+				estimate: { points: 2, rationale: "Pequeño" },
+				blockers: ["T-1"],
+				refs: [
+					{ kind: "story", id: "story-1" },
+					{ kind: "decision", id: "decision-1" },
+					{ kind: "test", id: "test-1" },
+				],
+				deliveryBindings: [
+					{
+						storyId: "story-1",
+						acceptanceCriterionId: "ac-2",
+						contextId: "delivery",
+					},
+				],
+			},
+		],
+	});
+	const owner = {
+		actorId: "owner-1",
+		role: "Owner",
+		authorityRevision: "authority-r1",
+	};
 	const approval = createTicketGraphApproval({ graph, actor: owner });
-	const put = (topic, content) => { const stored = { id: ++revision, project: "pi-workflow", topic_key: topic, content }; observations.set(`pi-workflow:${topic}`, stored); observations.set(String(stored.id), stored); return String(stored.id); };
+	const put = (topic, content) => {
+		const stored = {
+			id: ++revision,
+			project: "pi-workflow",
+			topic_key: topic,
+			content,
+		};
+		observations.set(`pi-workflow:${topic}`, stored);
+		observations.set(String(stored.id), stored);
+		return String(stored.id);
+	};
 	const specTopic = `workflow/define-product/${definitionId}/approved-spec`;
 	const graphTopic = `workflow/define-product/${definitionId}/approved-ticket-graph/${graph.digest}`;
-	const specRevision = put(specTopic, JSON.stringify({ spec, approval: createProductSpecApprovalEnvelope({ spec, actor: owner }) }));
+	const specRevision = put(
+		specTopic,
+		JSON.stringify({
+			spec,
+			approval: createProductSpecApprovalEnvelope({ spec, actor: owner }),
+		}),
+	);
 	const parentTopic = `workflow/define-product/${definitionId}/published-parent`;
-	const parentUnsigned = { schema: "delivery-parent", schemaVersion: 1, payload: parent };
-	const parentRevision = put(parentTopic, `${canonicalJson({ ...parentUnsigned, digest: digestCanonicalValue(parentUnsigned) })}\n`);
+	const parentUnsigned = {
+		schema: "delivery-parent",
+		schemaVersion: 1,
+		payload: parent,
+	};
+	const parentRevision = put(
+		parentTopic,
+		`${canonicalJson({ ...parentUnsigned, digest: digestCanonicalValue(parentUnsigned) })}\n`,
+	);
 	const graphRevision = put(graphTopic, `${canonicalJson(graph)}\n`);
-	const publication = { definitionId, approvedSpecRef: { kind: "engram", project: "pi-workflow", topic: specTopic, revision: specRevision, schema: "approved-spec", schemaVersion: 1, digest: spec.digest }, parentRef: { kind: "engram", project: "pi-workflow", topic: parentTopic, revision: parentRevision, schema: "delivery-parent", schemaVersion: 1, digest: digestCanonicalValue(parentUnsigned) }, graphRef: { kind: "engram", project: "pi-workflow", topic: graphTopic, revision: graphRevision, schema: "delivery-ticket-graph", schemaVersion: 1, digest: graph.digest }, graphParent: parent, approval };
-	const unsigned = { schema: "approved-ticket-publication", schemaVersion: 1, payload: publication };
-	put(`workflow/define-product/${definitionId}/approved-ticket-publication`, `${canonicalJson({ ...unsigned, digest: digestCanonicalValue(unsigned) })}\n`);
+	const publication = {
+		definitionId,
+		approvedSpecRef: {
+			kind: "engram",
+			project: "pi-workflow",
+			topic: specTopic,
+			revision: specRevision,
+			schema: "approved-spec",
+			schemaVersion: 1,
+			digest: spec.digest,
+		},
+		parentRef: {
+			kind: "engram",
+			project: "pi-workflow",
+			topic: parentTopic,
+			revision: parentRevision,
+			schema: "delivery-parent",
+			schemaVersion: 1,
+			digest: digestCanonicalValue(parentUnsigned),
+		},
+		graphRef: {
+			kind: "engram",
+			project: "pi-workflow",
+			topic: graphTopic,
+			revision: graphRevision,
+			schema: "delivery-ticket-graph",
+			schemaVersion: 1,
+			digest: graph.digest,
+		},
+		graphParent: parent,
+		approval,
+	};
+	const unsigned = {
+		schema: "approved-ticket-publication",
+		schemaVersion: 1,
+		payload: publication,
+	};
+	put(
+		`workflow/define-product/${definitionId}/approved-ticket-publication`,
+		`${canonicalJson({ ...unsigned, digest: digestCanonicalValue(unsigned) })}\n`,
+	);
 	let stale = false;
-	let recovery = { definitionId, approvedSpecRef: publication.approvedSpecRef, parentRef: publication.parentRef, graphRef: publication.graphRef, digest: graph.digest, authority: owner };
+	let recovery = {
+		definitionId,
+		approvedSpecRef: publication.approvedSpecRef,
+		parentRef: publication.parentRef,
+		graphRef: publication.graphRef,
+		digest: graph.digest,
+		authority: owner,
+	};
 	const mutations = [];
 	const linearDeliveryTickets = {
-		readAuthoritySnapshot: async (input) => ({ ...input, authorityRevision: input.authorityRevision, requiredCapabilities: ["sub-issues", "native-blockers", "estimates", "triage-state"], mutationPermission: true, state: { parent: "compatible", team: "compatible" } }),
-		findChildren: async () => [], findBlockers: async () => [], createChild: async ({ child }) => { mutations.push(`child:${child.stableKey}`); return { stableKey: child.stableKey, linearId: child.stableKey }; }, createBlocker: async ({ blockedStableKey }) => { mutations.push(`edge:${blockedStableKey}`); }, readBack: async () => ({ parent: { id: parent.id, teamId: parent.teamId, revision: parent.revision }, children: graph.payload.tickets.map((ticket) => ({ stableKey: ticket.stableKey, title: ticket.title, body: `Resultado\n\n${ticket.outcome}\n\nCriterios de aceptación\n\n${ticket.acceptanceCriteria.map((criterion) => `- ${criterion}`).join("\n")}`, estimate: ticket.estimate.points, workflow: { state: "Triage", assignee: null, cycle: null, labels: [], project: null }, linearId: ticket.stableKey, blockedBy: ticket.blockers, blocks: ticket.stableKey === "T-1" ? ["T-2"] : [] })) }),
+		readAuthoritySnapshot: async (input) => ({
+			...input,
+			authorityRevision: input.authorityRevision,
+			requiredCapabilities: [
+				"sub-issues",
+				"native-blockers",
+				"estimates",
+				"triage-state",
+			],
+			mutationPermission: true,
+			state: { parent: "compatible", team: "compatible" },
+		}),
+		findChildren: async () => [],
+		findBlockers: async () => [],
+		createChild: async ({ child }) => {
+			mutations.push(`child:${child.stableKey}`);
+			return { stableKey: child.stableKey, linearId: child.stableKey };
+		},
+		createBlocker: async ({ blockedStableKey }) => {
+			mutations.push(`edge:${blockedStableKey}`);
+		},
+		readBack: async () => ({
+			parent: {
+				id: parent.id,
+				teamId: parent.teamId,
+				revision: parent.revision,
+			},
+			children: graph.payload.tickets.map((ticket) => ({
+				stableKey: ticket.stableKey,
+				title: ticket.title,
+				body: `Resultado\n\n${ticket.outcome}\n\nCriterios de aceptación\n\n${ticket.acceptanceCriteria.map((criterion) => `- ${criterion}`).join("\n")}`,
+				estimate: ticket.estimate.points,
+				workflow: {
+					state: "Triage",
+					assignee: null,
+					cycle: null,
+					labels: [],
+					project: null,
+				},
+				linearId: ticket.stableKey,
+				blockedBy: ticket.blockers,
+				blocks: ticket.stableKey === "T-1" ? ["T-2"] : [],
+			})),
+		}),
 	};
 	globalThis.fetch = async (input, init = {}) => {
 		const url = new URL(String(input));
-		if (url.pathname === "/sessions" && init.method === "POST") return Response.json({});
-		if (url.pathname === "/observations" && (init.method ?? "GET") === "GET") return Response.json(observations.get(`${url.searchParams.get("project")}:${url.searchParams.get("topic_key")}`) ? [observations.get(`${url.searchParams.get("project")}:${url.searchParams.get("topic_key")}`)] : []);
-		if (url.pathname === "/observations" && init.method === "POST") { const body = JSON.parse(String(init.body)); const current = observations.get(`${body.project}:${body.topic_key}`); if ((current?.id && String(current.id)) !== (body.expected_revision ?? undefined)) return new Response("conflict", { status: 409 }); const stored = { id: ++revision, ...body }; observations.set(`${body.project}:${body.topic_key}`, stored); observations.set(String(stored.id), stored); return Response.json({ id: stored.id }); }
+		if (url.pathname === "/sessions" && init.method === "POST")
+			return Response.json({});
+		if (url.pathname === "/observations" && (init.method ?? "GET") === "GET")
+			return Response.json(
+				observations.get(
+					`${url.searchParams.get("project")}:${url.searchParams.get("topic_key")}`,
+				)
+					? [
+							observations.get(
+								`${url.searchParams.get("project")}:${url.searchParams.get("topic_key")}`,
+							),
+						]
+					: [],
+			);
+		if (url.pathname === "/observations" && init.method === "POST") {
+			const body = JSON.parse(String(init.body));
+			const current = observations.get(`${body.project}:${body.topic_key}`);
+			if (
+				(current?.id && String(current.id)) !==
+				(body.expected_revision ?? undefined)
+			)
+				return new Response("conflict", { status: 409 });
+			const stored = { id: ++revision, ...body };
+			observations.set(`${body.project}:${body.topic_key}`, stored);
+			observations.set(String(stored.id), stored);
+			return Response.json({ id: stored.id });
+		}
 		if (url.pathname === "/search") {
 			const topic = url.searchParams.get("q")?.toLowerCase();
 			const project = url.searchParams.get("project");
-			const unique = new Map([...observations.values()].map((item) => [item.id, item]));
-			return Response.json([...unique.values()].filter((item) => item.project === project && item.topic_key.toLowerCase() === topic));
+			const unique = new Map(
+				[...observations.values()].map((item) => [item.id, item]),
+			);
+			return Response.json(
+				[...unique.values()].filter(
+					(item) =>
+						item.project === project && item.topic_key.toLowerCase() === topic,
+				),
+			);
 		}
 		return Response.json(observations.get(url.pathname.split("/").at(-1)));
 	};
 	try {
-		const { handlers, tool } = loadExtension({ ticketApprovalRecoveryStore: { load: async () => recovery, save: async (value) => { recovery = value; }, clear: async () => { recovery = undefined; } }, authenticatedAuthority: { current: async () => stale ? { ...owner, authorityRevision: "authority-r2" } : owner }, linearDeliveryTickets });
+		const { handlers, tool } = loadExtension({
+			ticketApprovalRecoveryStore: {
+				load: async () => recovery,
+				save: async (value) => {
+					recovery = value;
+				},
+				clear: async () => {
+					recovery = undefined;
+				},
+			},
+			authenticatedAuthority: {
+				current: async () =>
+					stale ? { ...owner, authorityRevision: "authority-r2" } : owner,
+			},
+			linearDeliveryTickets,
+		});
 		await handlers.get("session_start")({}, executionContext());
 		stale = true;
-		const injected = await tool.execute("injected", { action: "publish_tickets", definitionId, authority: { actorId: "attacker" } }, undefined, undefined, executionContext());
-		assert.equal(injected.details.blocker.code, "PI_WORKFLOW_TICKET_APPROVAL_MISMATCH");
-		const blocked = await tool.execute("stale", { action: "publish_tickets" }, undefined, undefined, executionContext());
-		assert.equal(blocked.details.blocker.code, "PI_WORKFLOW_PUBLICATION_AUTHORITY_DRIFT");
+		const injected = await tool.execute(
+			"injected",
+			{
+				action: "publish_tickets",
+				definitionId,
+				authority: { actorId: "attacker" },
+			},
+			undefined,
+			undefined,
+			executionContext(),
+		);
+		assert.equal(
+			injected.details.blocker.code,
+			"PI_WORKFLOW_TICKET_APPROVAL_MISMATCH",
+		);
+		const blocked = await tool.execute(
+			"stale",
+			{ action: "publish_tickets" },
+			undefined,
+			undefined,
+			executionContext(),
+		);
+		assert.equal(
+			blocked.details.blocker.code,
+			"PI_WORKFLOW_PUBLICATION_AUTHORITY_DRIFT",
+		);
 		assert.deepEqual(mutations, []);
 		stale = false;
-		const published = await tool.execute("published", { action: "publish_tickets" }, undefined, undefined, executionContext());
-		assert.equal(published.details.status, "tickets-published", JSON.stringify(published.details));
+		const published = await tool.execute(
+			"published",
+			{ action: "publish_tickets" },
+			undefined,
+			undefined,
+			executionContext(),
+		);
+		assert.equal(
+			published.details.status,
+			"tickets-published",
+			JSON.stringify(published.details),
+		);
 		assert.deepEqual(mutations, ["child:T-1", "child:T-2", "edge:T-2"]);
 		assert.equal(recovery.definitionId, definitionId);
 		assert.equal(recovery.digest, graph.digest);
-	} finally { globalThis.fetch = originalFetch; }
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
 });
 
 test("default packaged entry ignores incomplete legacy Owner environment", async () => {
@@ -2212,7 +2879,7 @@ test("default packaged entry ignores incomplete legacy Owner environment", async
 	try {
 		const { ctx, handlers, tool } = await prepareProductionSpec();
 		await handlers.get("input")(
-			{ type: "input", text: "Apruebo", source: "interactive" },
+			{ type: "input", text: "1", source: "interactive" },
 			ctx,
 		);
 		const outcome = await tool.execute(
@@ -2264,21 +2931,24 @@ test("production runtime preserves pending Spec, active turn, and authority afte
 		"blocked-retry",
 		productionSpecRequest({
 			problem:
-				"El equipo puede revisar <?xml version=\"1.0\"?> antes de publicar.",
+				'El equipo puede revisar <?xml version="1.0"?> antes de publicar.',
 		}),
 		undefined,
 		undefined,
 		ctx,
 	);
 	assert.equal(blocked.details.status, "blocked");
-	assert.equal(blocked.details.blocker.code, "PI_WORKFLOW_SPEC_ARTIFACT_INVALID");
+	assert.equal(
+		blocked.details.blocker.code,
+		"PI_WORKFLOW_SPEC_ARTIFACT_INVALID",
+	);
 	const prompt = await handlers.get("before_agent_start")({
 		systemPrompt: "base",
 	});
 	assert.match(prompt.systemPrompt, /approve_spec/);
 
 	await handlers.get("input")(
-		{ type: "input", text: "Apruebo", source: "interactive" },
+		{ type: "input", text: "1", source: "interactive" },
 		ctx,
 	);
 	const approved = await tool.execute(
@@ -2316,7 +2986,10 @@ test("Owner feedback revises a ready Spec without repeating known target context
 		systemPrompt: "base",
 	});
 	assert.match(revisionPrompt.systemPrompt, /feedback on the ready Spec/i);
-	assert.match(revisionPrompt.systemPrompt, /reuse the exact privately retained Linear team/i);
+	assert.match(
+		revisionPrompt.systemPrompt,
+		/reuse the exact privately retained Linear team/i,
+	);
 	assert.match(revisionPrompt.systemPrompt, /derive the title/i);
 	assert.match(revisionPrompt.systemPrompt, /professional neutral Spanish/i);
 
@@ -2331,8 +3004,15 @@ test("Owner feedback revises a ready Spec without repeating known target context
 		undefined,
 		ctx,
 	);
-	assert.equal(revised.details.status, "spec-ready", JSON.stringify(revised.details));
-	assert.equal(revised.details.spec.target.teamId, ready.details.spec.target.teamId);
+	assert.equal(
+		revised.details.status,
+		"spec-ready",
+		JSON.stringify(revised.details),
+	);
+	assert.equal(
+		revised.details.spec.target.teamId,
+		ready.details.spec.target.teamId,
+	);
 	assert.match(revised.details.spec.body, /Ctrl\+O alterna/);
 });
 
@@ -2346,6 +3026,35 @@ test("Owner feedback revises a recovered ready Spec without rerunning research",
 		authenticatedAuthority: { current: async () => ownerAuthority },
 	});
 	await handlers.get("session_start")({ type: "session_start" }, ctx);
+	await handlers.get("before_agent_start")({ systemPrompt: "base" }, ctx);
+	await handlers.get("tool_call")(
+		{
+			toolName: "linear_get_user",
+			toolCallId: "recovered-spec-user",
+			input: { query: "me" },
+		},
+		ctx,
+	);
+	await handlers.get("tool_result")(
+		{
+			toolName: "linear_get_user",
+			toolCallId: "recovered-spec-user",
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({
+						id: "owner-felipe",
+						name: "Owner",
+						isActive: true,
+						isGuest: false,
+					}),
+				},
+			],
+			isError: false,
+		},
+		ctx,
+	);
+	await handlers.get("before_agent_start")({ systemPrompt: "base" }, ctx);
 	await handlers.get("input")(
 		{
 			type: "input",
@@ -2365,14 +3074,22 @@ test("Owner feedback revises a recovered ready Spec without rerunning research",
 		undefined,
 		ctx,
 	);
-	assert.equal(revised.details.status, "spec-ready", JSON.stringify(revised.details));
-	assert.equal(revised.details.spec.target.teamId, ready.details.spec.target.teamId);
+	assert.equal(
+		revised.details.status,
+		"spec-ready",
+		JSON.stringify(revised.details),
+	);
+	assert.equal(
+		revised.details.spec.target.teamId,
+		ready.details.spec.target.teamId,
+	);
 	assert.match(revised.details.spec.body, /Ctrl\+O alterna/);
 
+	await handlers.get("before_agent_start")({ systemPrompt: "base" }, ctx);
 	await handlers.get("input")(
 		{
 			type: "input",
-			text: "La especificación refleja lo acordado; adelante con ella.",
+			text: "1",
 			source: "interactive",
 		},
 		ctx,
@@ -2384,10 +3101,14 @@ test("Owner feedback revises a recovered ready Spec without rerunning research",
 		undefined,
 		ctx,
 	);
-	assert.equal(approved.details.status, "spec-approved", JSON.stringify(approved.details));
+	assert.equal(
+		approved.details.status,
+		"spec-approved",
+		JSON.stringify(approved.details),
+	);
 });
 
-test("exact Owner approval recovers a durable pending Spec after in-memory phase drift", async () => {
+test("exact shared Owner choice approves the durable pending Spec", async () => {
 	const ownerAuthority = {
 		actorId: "owner-felipe",
 		role: "Owner",
@@ -2400,15 +3121,7 @@ test("exact Owner approval recovers a durable pending Spec after in-memory phase
 	await handlers.get("input")(
 		{
 			type: "input",
-			text: "Ajusta el comportamiento de Ctrl+O.",
-			source: "interactive",
-		},
-		ctx,
-	);
-	await handlers.get("input")(
-		{
-			type: "input",
-			text: "Queda aprobada en los términos presentados.",
+			text: "1",
 			source: "interactive",
 		},
 		ctx,
@@ -2420,7 +3133,11 @@ test("exact Owner approval recovers a durable pending Spec after in-memory phase
 		undefined,
 		ctx,
 	);
-	assert.equal(approved.details.status, "spec-approved", JSON.stringify(approved.details));
+	assert.equal(
+		approved.details.status,
+		"spec-approved",
+		JSON.stringify(approved.details),
+	);
 	assert.deepEqual(approved.details.spec, ready.details.spec);
 });
 
@@ -2429,8 +3146,12 @@ test("default define-product host-binds the corrective reply after a missing dom
 	const { handlers, tool } = loadExtension({
 		ticketApprovalRecoveryStore: {
 			load: async () => ticketRecovery,
-			save: async (value) => { ticketRecovery = structuredClone(value); },
-			clear: async () => { ticketRecovery = undefined; },
+			save: async (value) => {
+				ticketRecovery = structuredClone(value);
+			},
+			clear: async () => {
+				ticketRecovery = undefined;
+			},
 		},
 	});
 	const ctx = executionContext();
@@ -2477,7 +3198,10 @@ test("default define-product host-binds the corrective reply after a missing dom
 	);
 	assert.equal(recommendation.details.status, "awaiting-confirmation");
 	assert.equal(recommendation.details.recommendation.domainAnchor, undefined);
-	assert.doesNotMatch(recommendation.content[0].text, /model rewrite|corrective product idea/);
+	assert.doesNotMatch(
+		recommendation.content[0].text,
+		/model rewrite|corrective product idea/,
+	);
 });
 
 test("default define-product keeps token, research, and artifact identity bound to the session definition", async () => {
@@ -2525,6 +3249,34 @@ test("default define-product keeps token, research, and artifact identity bound 
 		},
 		ctx,
 	);
+	await handlers.get("before_agent_start")({ systemPrompt: "base" }, ctx);
+	await handlers.get("tool_call")(
+		{
+			toolName: "linear_get_user",
+			toolCallId: "identity-binding-user",
+			input: { query: "me" },
+		},
+		ctx,
+	);
+	await handlers.get("tool_result")(
+		{
+			toolName: "linear_get_user",
+			toolCallId: "identity-binding-user",
+			content: [
+				{
+					type: "text",
+					text: JSON.stringify({
+						id: "owner-felipe",
+						name: "Owner",
+						isActive: true,
+						isGuest: false,
+					}),
+				},
+			],
+			isError: false,
+		},
+		ctx,
+	);
 
 	const rejected = await tool.execute(
 		"tool-0",
@@ -2542,7 +3294,10 @@ test("default define-product keeps token, research, and artifact identity bound 
 		undefined,
 		ctx,
 	);
-	assert.equal(rejected.details.blocker.code, "PI_WORKFLOW_DEFINITION_ID_MISMATCH");
+	assert.equal(
+		rejected.details.blocker.code,
+		"PI_WORKFLOW_DEFINITION_ID_MISMATCH",
+	);
 	assert.equal(launches.length, 0);
 
 	const recommendation = await tool.execute(
@@ -2565,13 +3320,17 @@ test("default define-product keeps token, research, and artifact identity bound 
 		"assessment",
 		"recommendedRoute",
 	]);
-	assert.doesNotMatch(recommendation.content[0].text, /definitionId|domainAnchor|digest|confirmationToken/);
+	assert.doesNotMatch(
+		recommendation.content[0].text,
+		/definitionId|domainAnchor|digest|confirmationToken/,
+	);
 
 	await handlers.get("agent_settled")({ type: "agent_settled" }, ctx);
+	await handlers.get("before_agent_start")({ systemPrompt: "base" }, ctx);
 	await handlers.get("input")(
 		{
 			type: "input",
-			text: "Yes, use wayfinder and research competitor maps",
+			text: "1",
 			source: "interactive",
 		},
 		ctx,

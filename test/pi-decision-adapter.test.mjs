@@ -9,6 +9,27 @@ import {
 	createPiDecisionAdapter,
 	registerPiDecisionAdapter,
 } from "../extensions/pi-decision-adapter.ts";
+import {
+	agentAssetApplyDecision,
+	agentAssetRecoveryDecision,
+} from "../extensions/agent-asset-sync.ts";
+import {
+	defineProductRevisionDecision,
+	defineProductRouteDecision,
+	defineProductSpecDecision,
+	defineProductTeamDecision,
+	defineProductTicketDecision,
+} from "../extensions/define-product-runtime.ts";
+import { productReviewDecisionRequest } from "../extensions/product-review-mcp-publication.ts";
+import { qaHandoffDecisionRequest } from "../extensions/qa-handoff-mcp-publication.ts";
+import {
+	companionInstallDecision,
+	companionRecoveryDecision,
+} from "../extensions/companion-workflow.ts";
+import {
+	deliveryPublicationDecision,
+	deliveryReviewDecision,
+} from "../extensions/delivery-pull-request-workflow.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 
 const actor = {
@@ -88,12 +109,329 @@ async function authorizationFixture(options = {}) {
 	return { adapter, decisions, presentation };
 }
 
+const claimBinding = {
+	scope,
+	generation: 1,
+};
+
 const context = {
 	sessionId: "session-1",
 	runId: "run-1",
 	sequence: 1,
 	actor,
+	claimBinding,
 };
+
+function inventoriedDecisionDescriptors() {
+	const digest = (character) => character.repeat(64);
+	const recommendation = {
+		definitionId: "definition-parity",
+		domainAnchor: "decision parity",
+		domainAnchorDigest: digest("a"),
+		assessment: { clarity: "clear", breadth: "narrow", reasons: ["bounded"] },
+		recommendedRoute: "wayfinder",
+		digest: digest("b"),
+		confirmationToken: "c".repeat(43),
+		issuedAt: 1,
+	};
+	const reviewChoices = Object.fromEntries(
+		["Aceptado", "Cambios requeridos"].map((result, index) => [
+			result,
+			{
+				digest: digest(index === 0 ? "c" : "d"),
+				payload: { issue: { protectedDigest: digest("e") } },
+			},
+		]),
+	);
+	const mcpPlan = {
+		path: "/tmp/mcp.json",
+		changed: false,
+		targets: [],
+		additions: [],
+		replacements: [],
+	};
+	const companionIdentity = {
+		packages: [{ package: "alpha", spec: "alpha@1" }],
+		mcp: { path: mcpPlan.path, catalogDigest: digest("f") },
+	};
+	const snapshot = {
+		branch: "ticket/ILA-2474",
+		headCommit: "head-1",
+		treeDigest: digest("1"),
+		diffDigest: digest("2"),
+		clean: true,
+	};
+	const draft = {
+		ticketId: "ILA-2474",
+		head: snapshot.branch,
+		target: "main",
+		title: "Close decision parity",
+		description: "Exact reviewed draft",
+		link: "https://example.test/compare",
+		evidence: {
+			headCommit: snapshot.headCommit,
+			treeDigest: snapshot.treeDigest,
+			diffDigest: snapshot.diffDigest,
+		},
+	};
+	const plan = {
+		digest: digest("3"),
+		manifestDigest: digest("4"),
+		inspectionDigest: digest("5"),
+		actions: [],
+	};
+	return [
+		["define-product", defineProductRouteDecision("pi-workflow", recommendation)],
+		[
+			"define-product-team",
+			defineProductTeamDecision(
+				"pi-workflow",
+				"definition-parity",
+				new Map([["team-1", "Team One"]]),
+			),
+		],
+		[
+			"define-product-spec",
+			defineProductSpecDecision("pi-workflow", "definition-parity", {
+				kind: "approve-spec",
+				target: { kind: "linear-parent-description", teamId: "team-1", title: "Spec" },
+				revision: "spec-r1",
+				digest: digest("0"),
+			}),
+		],
+		[
+			"define-product-tickets",
+			defineProductTicketDecision("pi-workflow", "definition-parity", digest("1")),
+		],
+		[
+			"define-product-revision",
+			defineProductRevisionDecision("pi-workflow", "definition-parity", digest("2")),
+		],
+		[
+			"product-review",
+			productReviewDecisionRequest(
+				"pi-workflow",
+				"ILA-2474",
+				{ updatedAt: "revision-1" },
+				reviewChoices,
+			),
+		],
+		[
+			"qa-handoff",
+			qaHandoffDecisionRequest(
+				"pi-workflow",
+				{ issueId: "ILA-2474", issueRevision: "revision-1" },
+				{ digest: digest("6") },
+			),
+		],
+		["sync-apply", agentAssetApplyDecision("pi-workflow", plan)],
+		["sync-resume", agentAssetRecoveryDecision("pi-workflow", digest("7"), "resume")],
+		["sync-rollback", agentAssetRecoveryDecision("pi-workflow", digest("7"), "rollback")],
+		[
+			"companions-install",
+			companionInstallDecision("pi-workflow", companionIdentity, digest("8"), mcpPlan),
+		],
+		[
+			"companions-recovery",
+			companionRecoveryDecision("pi-workflow", digest("9"), 2, digest("8"), ["partial"]),
+		],
+		["delivery-review", deliveryReviewDecision("pi-workflow", digest("a"), snapshot, draft)],
+		["delivery-publication", deliveryPublicationDecision("pi-workflow", digest("a"), draft)],
+	];
+}
+
+async function transportFixture(requestValue, capability) {
+	const adapter = createPiDecisionAdapter();
+	const decisions = createInteractiveDecisions({
+		store: createInMemoryDecisionStore(),
+		claimSource: adapter.claimSource,
+		createExecutionId: () => "execution-parity",
+	});
+	const presentation = await decisions.prepare(requestValue);
+	const prompt = adapter.present({
+		sessionId: "session-parity",
+		runId: "run-parity",
+		sequence: 1,
+		actor,
+		claimBinding: { scope: requestValue.scope, generation: 1 },
+		presentation,
+		capability,
+	});
+	return { adapter, decisions, presentation, prompt };
+}
+
+async function selectDecisionChoice(requestValue, capability, choiceIndex) {
+	const fixture = await transportFixture(requestValue, capability);
+	if (fixture.prompt.kind === "panel") {
+		const toolCallId = `panel-${choiceIndex}`;
+		assert.equal(
+			fixture.adapter.handleToolCall({
+				sessionId: "session-parity",
+				runId: "run-parity",
+				sequence: 1,
+				toolName: "ask_user_question",
+				toolCallId,
+				input: fixture.prompt.input,
+			}),
+			true,
+		);
+		const question = fixture.prompt.input.questions[0];
+		assert.equal(
+			fixture.adapter.handleToolResult({
+				sessionId: "session-parity",
+				runId: "run-parity",
+				sequence: 1,
+				toolName: "ask_user_question",
+				toolCallId,
+				details: {
+					cancelled: false,
+					answers: [
+						{
+							answer: question.options[choiceIndex].label,
+							kind: "option",
+							question: question.question,
+							questionIndex: 0,
+						},
+					],
+				},
+			}),
+			"claimed",
+		);
+	} else {
+		assert.equal(
+			fixture.adapter.handleFallbackResponse({
+				sessionId: "session-parity",
+				runId: "run-parity",
+				sequence: 1,
+				text: String(choiceIndex + 1),
+			}),
+			"claimed",
+		);
+	}
+	const choice = requestValue.presentation.choices[choiceIndex];
+	return fixture.decisions.authorize(fixture.presentation.decisionId, choice.action, actor);
+}
+
+test("every inventoried decision family preserves panel and numbered fallback semantics", async () => {
+	const panelCapability = { hasUI: true, activeTools: ["ask_user_question"] };
+	const fallbackCapability = { hasUI: false, activeTools: [] };
+	for (const [name, descriptor] of inventoriedDecisionDescriptors()) {
+		const panel = await transportFixture(descriptor.request, panelCapability);
+		const fallback = await transportFixture(descriptor.request, fallbackCapability);
+		assert.equal(panel.prompt.kind, "panel", name);
+		assert.equal(fallback.prompt.kind, "fallback", name);
+		assert.deepEqual(
+			panel.prompt.input.questions[0].options,
+			descriptor.request.presentation.choices.map(({ label, description }) => ({
+				label,
+				description,
+			})),
+			name,
+		);
+		for (const [index, choice] of descriptor.request.presentation.choices.entries()) {
+			assert.match(
+				fallback.prompt.text,
+				new RegExp(`${index + 1}\\. ${choice.label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
+				name,
+			);
+			for (const capability of [panelCapability, fallbackCapability]) {
+				const outcome = await selectDecisionChoice(
+					descriptor.request,
+					capability,
+					index,
+				);
+				assert.equal(
+					outcome.kind,
+					choice.mode === "cancel" ? "cancelled" : "authorized",
+					`${name}:${choice.action.id}`,
+				);
+			}
+		}
+
+		const custom = await transportFixture(descriptor.request, panelCapability);
+		const customCallId = `custom-${name}`;
+		custom.adapter.handleToolCall({
+			sessionId: "session-parity",
+			runId: "run-parity",
+			sequence: 1,
+			toolName: "ask_user_question",
+			toolCallId: customCallId,
+			input: custom.prompt.input,
+		});
+		const question = custom.prompt.input.questions[0];
+		assert.equal(
+			custom.adapter.handleToolResult({
+				sessionId: "session-parity",
+				runId: "run-parity",
+				sequence: 1,
+				toolName: "ask_user_question",
+				toolCallId: customCallId,
+				details: {
+					cancelled: false,
+					answers: [
+						{
+							answer: "Need more context",
+							kind: "custom",
+							question: question.question,
+							questionIndex: 0,
+						},
+					],
+				},
+			}),
+			"feedback",
+			name,
+		);
+
+		const malformedPanel = await transportFixture(descriptor.request, panelCapability);
+		const malformedCallId = `malformed-${name}`;
+		malformedPanel.adapter.handleToolCall({
+			sessionId: "session-parity",
+			runId: "run-parity",
+			sequence: 1,
+			toolName: "ask_user_question",
+			toolCallId: malformedCallId,
+			input: malformedPanel.prompt.input,
+		});
+		assert.equal(
+			malformedPanel.adapter.handleToolResult({
+				sessionId: "session-parity",
+				runId: "run-parity",
+				sequence: 1,
+				toolName: "ask_user_question",
+				toolCallId: malformedCallId,
+				details: { answers: [] },
+			}),
+			"ignored",
+			name,
+		);
+
+		const freeText = await transportFixture(descriptor.request, fallbackCapability);
+		assert.equal(
+			freeText.adapter.handleFallbackResponse({
+				sessionId: "session-parity",
+				runId: "run-parity",
+				sequence: 1,
+				text: "Need more context",
+			}),
+			"feedback",
+			name,
+		);
+		const malformedFallback = await transportFixture(
+			descriptor.request,
+			fallbackCapability,
+		);
+		assert.equal(
+			malformedFallback.adapter.handleFallbackResponse({
+				sessionId: "session-parity",
+				runId: "run-parity",
+				sequence: 1,
+				text: "99",
+			}),
+			"ignored",
+			name,
+		);
+	}
+});
 
 function workflowExtensionHarness(
 	activeTools = ["ask_user_question"],
@@ -164,7 +502,15 @@ function hostContext(overrides = {}) {
 }
 
 test("piWorkflowExtension prepares, emits, correlates, and authorizes one panel decision", async () => {
-	const harness = workflowExtensionHarness();
+	let inspectedLease;
+	const harness = workflowExtensionHarness(["ask_user_question"], {
+		manifestLookup: {
+			async find(lease) {
+				inspectedLease = lease;
+				return [];
+			},
+		},
+	});
 	const ctx = hostContext();
 	await harness.emit("session_start", { type: "session_start" }, ctx);
 	const presentation = await harness.extension.interactiveDecisions.prepare(
@@ -220,16 +566,26 @@ test("piWorkflowExtension prepares, emits, correlates, and authorizes one panel 
 		},
 		ctx,
 	);
+	const authorized = await harness.extension.interactiveDecisions.authorize(
+		presentation.decisionId,
+		approve,
+		actor,
+	);
+	assert.equal(authorized.kind, "authorized");
+	const manifest = {
+		ref: "engram://composed-manifest",
+		decisionId: authorized.lease.decisionId,
+		operationDigest: authorized.lease.operationDigest,
+		executionId: authorized.lease.executionId,
+		generation: authorized.lease.generation,
+	};
+	const effects = harness.extension.interactiveDecisions;
 	assert.equal(
-		(
-			await harness.extension.interactiveDecisions.authorize(
-				presentation.decisionId,
-				approve,
-				actor,
-			)
-		).kind,
+		(await effects.bindExecutionManifest(authorized.lease, manifest)).kind,
 		"authorized",
 	);
+	await harness.extension.interactiveDecisions.recover(scope, actor);
+	assert.deepEqual(inspectedLease, authorized.lease);
 });
 
 test("piWorkflowExtension forwards shared-authority recovery directives", async () => {
@@ -792,6 +1148,42 @@ test("panel capability falls back for more than four visible options", async () 
 
 	assert.equal(prompt.kind, "fallback");
 	assert.match(prompt.text, /5\. Cancelar - No modifica Linear/);
+});
+
+test("a private claim enforces workflow scope, fencing generation, and session", async () => {
+	const fixture = await authorizationFixture();
+	const prompt = fixture.adapter.present({
+		...context,
+		presentation: fixture.presentation,
+		capability: { hasUI: false, activeTools: [] },
+	});
+	assert.equal(prompt.kind, "fallback");
+	assert.equal(
+		fixture.adapter.handleFallbackResponse({ ...context, text: "1" }),
+		"claimed",
+	);
+	const consume = (binding) =>
+		fixture.adapter.claimSource.consume(
+			fixture.presentation.decisionId,
+			approve,
+			actor,
+			binding,
+		);
+
+	for (const incompatible of [
+		{ ...claimBinding, generation: 2, sessionId: context.sessionId },
+		{
+			...claimBinding,
+			scope: { ...scope, workflow: "product-review" },
+			sessionId: context.sessionId,
+		},
+		{ ...claimBinding, sessionId: "session-other" },
+	]) {
+		assert.equal(await consume(incompatible), false);
+	}
+	const compatible = { ...claimBinding, sessionId: context.sessionId };
+	assert.equal(await consume(compatible), true);
+	assert.equal(await consume(compatible), false);
 });
 
 test("localized equivalents remain panel-safe while exact companion sentinels fall back", async () => {

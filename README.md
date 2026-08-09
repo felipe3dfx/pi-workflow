@@ -6,7 +6,9 @@ This package exposes its own Pi extension plus four native workflow skills and f
 
 ## Public workflow boundary
 
-`/define-product`, `/deliver-ticket`, `/qa-handoff`, `/product-review`, and their matching `/skill:<name>` forms are admitted only from idle interactive Pi input. RPC, extension, steering, follow-up, and reentrant invocations are blocked before prompt or skill expansion. While an admitted public-entry turn is pending, the extension blocks every tool call; later workflow modules must enforce authority before any mutation.
+`/define-product`, `/deliver-ticket`, `/qa-handoff`, `/product-review`, and their matching `/skill:<name>` forms are admitted only from idle interactive Pi input. RPC, extension, steering, follow-up, and reentrant invocations are blocked before prompt or skill expansion. Pending capabilities block every tool. Implemented capabilities expose only workflow-owned tools, and `ask_user_question` is allowed only while a compatible shared decision is active.
+
+All active closed human choices use `extensions/interactive-decisions.ts`. The same transport-neutral descriptor renders either the compatible Pi panel or a numbered fallback. A fresh private claim issues one execution lease for one logical operation; its manifest binds `decisionId`, `operationDigest`, `executionId`, and fencing `generation` before the first effect. Every internal effect rechecks that lease and its domain predecessor or read-back evidence. Semantic tool actions transport a claimed choice but never authorize effects by themselves, and skills do not require exact approval phrases. The authoritative current-state ledger is [`docs/design/interactive-decision-inventory.md`](docs/design/interactive-decision-inventory.md).
 
 The default package uses a single-user harness authority model and requires no `PI_WORKFLOW_OWNER_*` environment variables. Each relevant execution calls authenticated Linear MCP `linear_get_user` with exactly `{"query":"me"}` once, requires one active non-guest user, freezes that identity for the execution, and projects workflow authority with the stable revision `single-user/v1`. The cached identity is reused for later approvals, reads, and mutations; repeated identity lookups are rejected. Owner and Developer remain organizational roles selected by the workflow, not claims accepted from model or tool arguments.
 
@@ -16,11 +18,11 @@ Default `define-product` Delivery-parent publication uses authenticated Linear M
 
 Approved Delivery-ticket continuation is stored in the repository project's Engram namespace at the single stable topic `workflow/define-product/ticket-approval-recovery`. Its canonical digest envelope binds the exact definition, approved-Spec reference, published-parent reference, approved-ticket-graph reference and digest, and historical Owner provenance. `session_start` re-reads and validates every referenced artifact and all content bindings without requiring the prior sandbox's actor or authority revision. Action-only `publish_tickets` then authenticates one active non-guest Linear user and publishes through the exact MCP protocol. Content, artifact revision, graph, parent, or digest drift still blocks. The selector-free store permits one active continuation per project; identical saves are idempotent, conflicting continuations fail, and only verified clear writes the canonical tombstone.
 
-`qa-handoff` is an implemented single-issue capability. Its public invocation accepts only one Linear ID, authenticates one active non-guest Linear user once, verifies that user as the issue's assigned and labeled Developer, and derives the canonical body and stable `single-user/v1` authority projection without model input. Missing or malformed authentication, evidence, or durable storage fails closed. Existing canonical artifacts retain historical authority provenance when their approved content still matches. The only external side effect is exactly one root issue comment; status, assignee, Cycle, labels, estimate, blockers, relations, and description remain manual and unchanged.
+`qa-handoff` is an implemented single-issue capability. Its public invocation accepts only one Linear ID but does not authorize publication. The runtime authenticates one active non-guest Linear user once, verifies that user as the issue's assigned and labeled Developer, derives the canonical body and stable `single-user/v1` authority projection without model input, and presents the shared publish/cancel decision. Missing or malformed authentication, evidence, decision authority, or durable storage fails closed. Existing canonical artifacts retain historical authority provenance when their approved content still matches. The only external side effect is exactly one root issue comment; status, assignee, Cycle, labels, estimate, blockers, relations, and description remain manual and unchanged.
 
 The default packaged QA handoff composition uses only authenticated Linear MCP tools; it never reads `LINEAR_API_KEY` or calls Linear's API directly. It persists validated `qa-handoff-draft/v1` artifacts under the current repository project's Engram topic `workflow/qa-handoff-draft/<LINEAR-ID>`, stores the immutable canonical publication artifact under `workflow/qa-handoff/<LINEAR-ID>`, and uses `ENGRAM_URL` when set (otherwise Engram's local default). Before returning `published`, it checks existing comments for the exact workflow reference, creates only the canonical root comment when absent, and verifies the exact comment ID and body with a later MCP read.
 
-The default packaged product-review composition follows the same authenticated MCP-only boundary and never reads `LINEAR_API_KEY`, `PI_WORKFLOW_OWNER_*`, or Linear HTTP directly. It authenticates once, reads the create-only `product-review-draft/v1` from `workflow/product-review-draft/<LINEAR-ID>`, binds the complete protected issue snapshot and stable Owner projection into two exact Spanish results, and requires the Owner to select one result in a second interactive turn. It reuses the cached identity after selection and before the one comment mutation. Existing exact artifacts retain their historical authority provenance when protected issue content and draft remain unchanged. The selected immutable artifact is stored at `workflow/product-review/<LINEAR-ID>`.
+The default packaged product-review composition follows the same authenticated MCP-only boundary and never reads `LINEAR_API_KEY`, `PI_WORKFLOW_OWNER_*`, or Linear HTTP directly. It authenticates once, reads the create-only `product-review-draft/v1` from `workflow/product-review-draft/<LINEAR-ID>`, binds the complete protected issue snapshot and stable Owner projection into two exact Spanish results, and presents those results through the shared decision panel or numbered fallback. It reuses the cached identity after the claimed semantic selection and before the one comment mutation. Existing exact artifacts retain their historical authority provenance when protected issue content and draft remain unchanged. The selected immutable artifact is stored at `workflow/product-review/<LINEAR-ID>`.
 
 Canonical `product-review/v1` artifacts created by the earlier direct-workflow implementation did not contain `payload.issue.protectedDigest`. The artifact reader continues to validate and return those legacy bytes with their original digest and body so persisted v1 data remains inspectable, but the create-only store never writes a new digest-less artifact or overwrites one. The authenticated MCP publication path refuses such a legacy artifact before mutation because it cannot prove the complete protected MCP issue binding; every newly produced MCP artifact requires `protectedDigest`.
 
@@ -88,7 +90,7 @@ Inspect companion package status:
 /pi-workflow-doctor
 ```
 
-Install missing companions after reviewing the confirmation prompt:
+Install missing companions after reviewing the shared package-and-MCP decision:
 
 ```text
 /pi-workflow-install-companions
@@ -100,7 +102,7 @@ Then reload Pi again so companion resources are loaded:
 /reload
 ```
 
-In non-UI contexts, the install command prints the exact unversioned `pi install npm:<pkg>` commands instead of installing automatically. Once installed, run `pi update --extensions` (packages only) or `pi update --all` (Pi and packages) to receive upstream companion updates.
+In non-UI contexts, automatic companion installation fails closed and prints the exact unversioned `pi install npm:<pkg>` commands instead of mutating package or MCP state. Once installed, run `pi update --extensions` (packages only) or `pi update --all` (Pi and packages) to receive upstream companion updates.
 
 ### Disposable Pi test launcher
 
@@ -139,7 +141,7 @@ pi-workflow-sync rollback <operationId>
 
 `inspect` and `plan` are strictly read-only and return `mutation: "none"`. `inspect` reports ownership and drift; `plan` derives deterministic `create`, `replace`, or `migrate` actions. A `refusal` blocks unmanaged collisions, managed drift, unsupported migration chains, and newer installed versions before mutation.
 
-`apply` replans after explicit confirmation and accepts only the exact approved plan digest. Every target and manifest write uses compare-and-swap against its approved predecessor, runs under a cooperative mutation lock, and is verified by read-back. Before replacing package-owned state, the command persists digest-bound backups, successors, and an operation manifest. The returned `operationId` identifies that recovery evidence.
+`apply` replans after the shared semantic decision and accepts only the exact approved plan digest. One execution lease covers every internal write. Every target and manifest write rechecks fencing, uses compare-and-swap against its approved predecessor, runs under a cooperative mutation lock, and is verified by read-back. Before replacing package-owned state, the command persists digest-bound backups, successors, and an execution-bound operation manifest. The returned `operationId` identifies that recovery evidence.
 
 Use `resume <operationId>` to complete a verified interrupted operation or `rollback <operationId>` to restore verified predecessors and remove targets that were originally absent. Recovery refuses malformed evidence, unsupported paths, or an unrecognized current state. It preserves unrelated manifest ownership and project-level overrides.
 
@@ -151,8 +153,8 @@ The companion install flow also manages the Pi MCP catalog from [`assets/mcp-ser
 
 - It writes only `${PI_CODING_AGENT_DIR:-${PI_AGENT_HOME:-~/.pi/agent}}/mcp.json`.
 - It preserves unrelated top-level fields and unrelated MCP servers.
-- After confirmation it re-reads the latest config before writing; if a targeted `context7`, `sentry`, or `linear` entry changed after preview, the command stops and asks you to rerun against the latest file.
-- Exact `context7`, `sentry`, and `linear` entries are previewed before confirmation; malformed JSON or write failures are reported with the target path and manual recovery guidance.
+- After the shared decision it re-reads the latest config before writing; if a targeted `context7`, `sentry`, or `linear` entry changed after preview, the command prepares shared reconciliation instead of retrying blindly.
+- Exact `context7`, `sentry`, and `linear` entries are included in the shared plan before approval; malformed JSON or write failures are reported with the target path and manual recovery guidance.
 - The flow never performs MCP authentication. After a successful install, run `/reload` and follow any Sentry or Linear OAuth prompts in Pi if those servers need them.
 - Exact catalog contents are validated by `npm run check:publish`.
 
@@ -211,7 +213,7 @@ In scope:
 - four public workflow skills and four thin homonymous prompt templates;
 - status and doctor commands for configured companions;
 - CodeGraph companion, CLI, and project-index readiness diagnostics;
-- explicit companion installation after user confirmation;
+- explicit companion installation after a shared semantic decision;
 - unversioned companion sources updated explicitly through Pi;
 - deterministic generation of public skills and prompts from `scripts/public-workflow-catalog.mjs`;
 - install and update documentation.
@@ -263,6 +265,9 @@ The release guard validates that:
 - exactly four homonymous workflow skills and prompt templates are exposed;
 - prompt templates contain only exact skill loading and argument forwarding;
 - public workflow resources exactly match the authoritative catalog;
+- the authoritative interactive-decision inventory reports zero active unmigrated choices and remains present in the packed package;
+- every migrated manifest validator requires `executionId` and fencing generation evidence;
+- active skills and runtimes contain no phrase-based or legacy closed-choice authorization route;
 - no Pi manifest paths point into `node_modules`;
 - no `bundledDependencies` or `bundleDependencies` field exists;
 - companion metadata includes the expected unversioned package names;
