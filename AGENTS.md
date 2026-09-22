@@ -68,3 +68,17 @@ This repository does not currently require:
 
 Project-owned skills may define product or workflow behavior within their documented scope.
 Global skills may provide methodology or implementation assistance, but they must not introduce new project requirements, mutate project policy, or override repository-owned instructions.
+<!-- setup-workflow-routing:start -->
+
+## Workflow Contracts
+
+Read these files in order:
+
+1. `AGENTS.md`
+2. `docs/agents/issue-tracker.md`
+3. `docs/agents/domain.md`
+4. `docs/agents/workflow.md`
+5. `docs/agents/quality.md`
+6. `docs/agents/pull-requests.md`
+
+<!-- setup-workflow-routing:end -->
