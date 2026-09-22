@@ -1,8 +1,8 @@
 {
   "name": "@felipe.3dfx/pi-workflow",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "type": "module",
-  "description": "Pi workflow meta-configuration package for explicit companion package setup.",
+  "description": "Pi harness package for companion readiness. Product workflow lives in Grupo Ilao engineering skills.",
   "license": "MIT",
   "keywords": [
     "pi-package",
@@ -22,20 +22,14 @@
   "publishConfig": {
     "access": "public"
   },
-  "bin": {
-    "pi-workflow-sync": "./scripts/pi-workflow-sync.mjs"
-  },
   "files": [
     "README.md",
-	"docs/design/interactive-decision-inventory.md",
     "scripts/**/*.mjs",
     "tools/pi-sandbox.mjs",
     "package.json",
     "LICENSE",
     "extensions/",
-    "assets/",
-    "skills/",
-    "prompts/"
+    "assets/"
   ],
   "scripts": {
     "pack:dry-run": "npm pack --dry-run",
@@ -43,29 +37,18 @@
     "format": "biome format --write .",
     "check:biome": "biome check --formatter-enabled=false .",
     "check:focused-tests": "node scripts/forbid-focused-tests.mjs",
-    "generate:public-workflows": "node scripts/generate-public-workflows.mjs --write",
     "pi:sandbox": "node tools/pi-sandbox.mjs",
-    "check:generated": "node scripts/generate-public-workflows.mjs --check",
-    "check:agent-assets": "node scripts/check-agent-assets.mjs --check",
     "check:publish": "node scripts/validate-pi-package.mjs",
     "check:release": "node scripts/validate-release.mjs",
     "check:distribution": "node scripts/validate-packed-distribution.mjs",
-    "check:acceptance": "node scripts/check-acceptance.mjs",
     "check:typecheck": "tsc --noEmit",
     "check:knip": "knip",
-    "check:coverage": "node --test --experimental-test-coverage --test-coverage-include='extensions/runtime-linear-delivery-ticket.ts' --test-coverage-lines=97 --test-coverage-branches=80 --test-coverage-functions=95 test/linear-delivery-ticket.test.mjs",
-    "check": "npm run check:biome && npm run check:typecheck && npm run check:knip && npm run check:focused-tests && npm run check:generated && npm run check:agent-assets && npm run check:publish && npm run check:release && npm run check:coverage && node --test test/*.test.mjs && npm run check:distribution && npm run check:acceptance",
+    "check": "npm run check:biome && npm run check:typecheck && npm run check:knip && npm run check:focused-tests && npm run check:publish && npm run check:release && node --test test/*.test.mjs && npm run check:distribution",
     "prepublishOnly": "npm run check"
   },
   "pi": {
     "extensions": [
       "./extensions/pi-workflow.ts"
-    ],
-    "skills": [
-      "./skills"
-    ],
-    "prompts": [
-      "./prompts"
     ]
   },
   "engines": {
@@ -76,7 +59,6 @@
     "@earendil-works/pi-coding-agent": "0.80.6",
     "@types/node": "^22.20.1",
     "knip": "^6.25.0",
-    "typescript": "^7.0.2",
-    "yaml": "2.9.0"
+    "typescript": "^7.0.2"
   }
 }

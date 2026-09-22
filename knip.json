@@ -1,5 +1,5 @@
 {
   "$schema": "https://unpkg.com/knip@latest/schema.json",
-  "entry": ["extensions/pi-workflow.ts", "scripts/run-packed-acceptance.mjs"],
+  "entry": ["extensions/pi-workflow.ts", "scripts/*.mjs"],
   "ignore": [".agents/**"]
 }
