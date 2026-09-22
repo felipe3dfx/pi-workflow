@@ -1,0 +1,27 @@
+# ADR Format and Lifecycle
+
+ADRs live only in root `docs/adr/` and use a unique sequential four-digit prefix: `0012-short-title.md`.
+
+```md
+# ADR 0012: {Short title}
+
+## Status
+
+Acceptance: approval and merge of the introducing PR.
+
+## Decision
+
+{What was decided and why.}
+```
+
+Add context, considered options, and consequences only when they help a future reader understand a consequential trade-off.
+
+## Lifecycle
+
+- Create an ADR only when the decision is hard to reverse, surprising without context, and the result of a real trade-off.
+- An in-process ADR is persisted on its PR branch and may change during review. Initial creation is no-replace: scan its four-digit prefix and exact path, preview the complete proposed bytes at that exact path, obtain explicit approval for those exact bytes, then immediately scan the prefix and exact path again and publish those approved bytes only through a no-replace operation. Before merge, an approved revision may replace only the same PR-owned file under the procedure below. Approval and merge of the introducing PR are the acceptance point.
+- After acceptance, every section is immutable except `Status` and dated entries appended under `## Clarifications`; `Decision` is immutable. A clarification must illustrate context without changing the accepted meaning; it cannot introduce, remove, qualify, or reinterpret a decision. `Status` may link to a replacement. For an allowed post-merge mutation, first capture the destination identity: target OID, exact target-path state (including its byte digest and any platform identity required for compare-and-swap), the prefix and exact-path collision result, and the existing `Status` and `## Clarifications` boundaries. Only then generate the complete preview, verify its diff changes only the existing `Status` section and/or appends `YYYY-MM-DD`-dated entries under `## Clarifications`, and obtain explicit approval for those exact path and bytes against that captured identity, collision evidence, and allowed-section diff. Immediately before publication, recapture and require the same destination identity, target OID, collision evidence, and allowed-section diff; any changed or unavailable evidence fails closed and requires a new preview and approval. After that immediate target-OID recheck, publish only with a conditional atomic operation that fails if the captured destination identity changes, then read the target back to confirm exact-byte equality.
+- A substantive change to an accepted ADR requires a new sequential ADR. Its `Decision` explicitly states `Supersedes: ADR-NNNN`; that relationship is fixed when its introducing PR is merged.
+- The local prefix and exact-path scans are no-clobber creation guards for the current checkout only. On initial creation, any duplicate blocks creation. `merge-base` is the sole authoritative baseline for same-PR ownership: first capture one target commit OID, then capture the merge-base against that target and inspect the current diff against that same captured target. A file is same-PR-owned only when its exact ADR path is absent at the captured merge-base and present in that current diff. If the target OID, merge-base, or diff evidence is unavailable, or the target has moved, fail closed and recapture all evidence before proceeding. That rule prevents replacement of an accepted or otherwise pre-existing ADR. Before merge, only the expected same-PR-owned prefix and exact path may be replaced; any additional or different prefix or path collision blocks replacement. Report a blocking collision; do not overwrite, renumber silently, or create a general ADR graph.
+- Publish approved bytes observably: prepare the complete approved bytes in a temporary file in the target directory, then flush and close that file. For initial creation, immediately recheck the prefix and exact path, then use a no-replace publish operation that fails if the target exists. For every pre-merge revision, first capture the destination identity: target OID, exact target-path state (including its byte digest and any platform identity required for compare-and-swap), same-PR ownership from that target OID's merge-base and current diff, and the prefix and exact-path collision result. Only then generate the complete preview and obtain explicit approval for those exact path and bytes against that captured identity and collision evidence. Immediately before publication, recapture and require the same destination identity, target OID, ownership evidence, and collision evidence; any changed or unavailable evidence fails closed and requires a new preview and approval. After that immediate target-OID recheck, use a conditional atomic replacement that fails if the captured destination identity changes. Race-safe completion for every replacement and allowed post-merge mutation requires that conditional publication succeeds, all required evidence remains unchanged through the immediately-before-publication recheck, and a read-back at the exact path contains exactly the approved bytes. Use operations that provide these guarantees on the current platform; do not fall back to copy, truncate, or overwrite behavior.
+- Downstream integration, not local creation, owns the combined-target prefix and path check plus binding that check to the observed target's freshness. #19 and #20 own those target-bound checks; do not treat their failure or absence as a local guard.

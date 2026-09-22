@@ -1,0 +1,362 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "create-pr invocation output",
+  "description": "Schema version 1.0 describes one invocation's evidence. It is not a durable execution ledger. Every declared property is present; null, empty arrays, and empty objects encode known absence or inapplicability. Missing requirements also appear in missing-evidence.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema-version",
+    "status",
+    "requested-scope",
+    "target",
+    "snapshot",
+    "consumed-evidence",
+    "content-decisions",
+    "plan",
+    "approval",
+    "drafts",
+    "effects",
+    "warnings",
+    "missing-evidence",
+    "invalidation-details"
+  ],
+  "properties": {
+    "schema-version": { "const": "1.0" },
+    "status": {
+      "enum": ["draft", "awaiting-approval", "completed", "incomplete", "blocked", "cancelled"]
+    },
+    "requested-scope": { "$ref": "#/$defs/requestedScope" },
+    "target": { "$ref": "#/$defs/target" },
+    "snapshot": { "$ref": "#/$defs/nullableSnapshot" },
+    "consumed-evidence": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/consumedEvidence" }
+    },
+    "content-decisions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/contentDecision" }
+    },
+    "plan": { "$ref": "#/$defs/plan" },
+    "approval": { "$ref": "#/$defs/approval" },
+    "drafts": { "$ref": "#/$defs/drafts" },
+    "effects": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/effect" }
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding" }
+    },
+    "missing-evidence": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/missingEvidence" }
+    },
+    "invalidation-details": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/invalidation" }
+    }
+  },
+  "$defs": {
+    "nullableString": { "type": ["string", "null"] },
+    "nonEmptyString": { "type": "string", "minLength": 1 },
+    "nullableReference": { "anyOf": [{ "$ref": "#/$defs/reference" }, { "type": "null" }] },
+    "nullableSnapshot": { "anyOf": [{ "$ref": "#/$defs/snapshot" }, { "type": "null" }] },
+    "stringList": { "type": "array", "items": { "type": "string" } },
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "identity", "reference"],
+      "properties": {
+        "kind": { "$ref": "#/$defs/nonEmptyString" },
+        "identity": { "anyOf": [{ "$ref": "#/$defs/nonEmptyString" }, { "type": "null" }] },
+        "reference": { "anyOf": [{ "$ref": "#/$defs/nonEmptyString" }, { "type": "null" }] }
+      }
+    },
+    "requestedScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operations", "selected-content", "ticket", "parent-relationships"],
+      "properties": {
+        "operations": {
+          "type": "array",
+          "items": { "enum": ["commit", "push", "pull-request", "relationship", "tracker-comment"] }
+        },
+        "selected-content": { "$ref": "#/$defs/stringList" },
+        "ticket": { "$ref": "#/$defs/nullableReference" },
+        "parent-relationships": { "type": "array", "items": { "$ref": "#/$defs/reference" } }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "source", "proposed-destination", "destination-confirmed"],
+      "properties": {
+        "repository": { "$ref": "#/$defs/nullableReference" },
+        "source": { "$ref": "#/$defs/nullableReference" },
+        "proposed-destination": { "$ref": "#/$defs/nullableReference" },
+        "destination-confirmed": { "type": ["boolean", "null"] }
+      }
+    },
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "snapshot-version",
+        "target-id",
+        "target-kind",
+        "selected-scope",
+        "repository-id",
+        "base-ref",
+        "current-ref",
+        "branch",
+        "repository-status",
+        "paths-and-diffs"
+      ],
+      "properties": {
+        "snapshot-version": { "const": "1.0" },
+        "target-id": { "type": "string" },
+        "target-kind": { "enum": ["capture", "working-tree", "branch", "pull-request"] },
+        "selected-scope": { "type": "string" },
+        "repository-id": { "type": "string" },
+        "base-ref": { "$ref": "#/$defs/nullableString" },
+        "current-ref": { "$ref": "#/$defs/nullableString" },
+        "branch": { "$ref": "#/$defs/nullableString" },
+        "repository-status": { "$ref": "#/$defs/nullableString" },
+        "paths-and-diffs": { "$ref": "#/$defs/partitions" }
+      }
+    },
+    "partitions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["committed", "staged", "worktree", "untracked"],
+      "properties": {
+        "committed": { "type": "array", "items": { "$ref": "#/$defs/diffUnit" } },
+        "staged": { "type": "array", "items": { "$ref": "#/$defs/diffUnit" } },
+        "worktree": { "type": "array", "items": { "$ref": "#/$defs/diffUnit" } },
+        "untracked": { "type": "array", "items": { "$ref": "#/$defs/diffUnit" } }
+      }
+    },
+    "diffUnit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "change", "source-path", "mode", "diff"],
+      "properties": {
+        "path": { "type": "string" },
+        "change": { "enum": ["added", "modified", "deleted", "renamed"] },
+        "source-path": { "$ref": "#/$defs/nullableString" },
+        "mode": { "$ref": "#/$defs/nullableString" },
+        "diff": { "type": "string" }
+      }
+    },
+    "consumedEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "kind", "source-status", "identity", "reference", "freshness", "operation-required"],
+      "properties": {
+        "owner": { "type": "string" },
+        "kind": { "type": "string" },
+        "source-status": { "$ref": "#/$defs/nullableString" },
+        "identity": { "$ref": "#/$defs/nullableString" },
+        "reference": { "$ref": "#/$defs/nullableString" },
+        "freshness": { "enum": ["fresh", "stale", "unknown", null] },
+        "operation-required": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "contentDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unit", "classification", "decision", "user-decision-evidence", "reason"],
+      "properties": {
+        "unit": { "type": "string" },
+        "classification": { "type": "string" },
+        "decision": { "enum": ["included", "excluded", "unresolved"] },
+        "user-decision-evidence": { "$ref": "#/$defs/nullableString" },
+        "reason": { "$ref": "#/$defs/nullableString" }
+      }
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["plan-id", "revision", "selected-content", "effects", "material-change", "recovery-plan"],
+      "properties": {
+        "plan-id": { "type": "string", "description": "Invocation-local identifier, not reusable authorization." },
+        "revision": { "type": "integer", "minimum": 0 },
+        "selected-content": { "$ref": "#/$defs/stringList" },
+        "effects": { "type": "array", "items": { "$ref": "#/$defs/plannedEffect" } },
+        "material-change": { "type": "boolean" },
+        "recovery-plan": { "anyOf": [{ "$ref": "#/$defs/recoveryPlan" }, { "type": "null" }] }
+      }
+    },
+    "plannedEffect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "operation", "target", "draft", "requires-approval"],
+      "properties": {
+        "id": { "type": "string" },
+        "operation": { "enum": ["commit", "push", "pull-request", "relationship", "tracker-comment"] },
+        "target": { "$ref": "#/$defs/nullableReference" },
+        "draft": { "anyOf": [{ "$ref": "#/$defs/plannedArtifact" }, { "type": "null" }] },
+        "requires-approval": { "type": "boolean" }
+      }
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "authorized-plan-id", "authorized-revision", "decision-evidence", "consumer-constraints"],
+      "properties": {
+        "state": { "enum": ["not-requested", "pending", "approved", "revoked"] },
+        "authorized-plan-id": { "$ref": "#/$defs/nullableString" },
+        "authorized-revision": { "type": ["integer", "null"], "minimum": 0 },
+        "decision-evidence": { "$ref": "#/$defs/nullableString" },
+        "consumer-constraints": { "type": "array", "items": { "$ref": "#/$defs/finding" } }
+      }
+    },
+    "drafts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "pull-request", "relationships", "tracker-comment"],
+      "properties": {
+        "commit": { "anyOf": [{ "$ref": "#/$defs/commitDraft" }, { "type": "null" }] },
+        "pull-request": { "anyOf": [{ "$ref": "#/$defs/pullRequestDraft" }, { "type": "null" }] },
+        "relationships": { "type": "array", "items": { "$ref": "#/$defs/relationshipDraft" } },
+        "tracker-comment": { "anyOf": [{ "$ref": "#/$defs/trackerCommentDraft" }, { "type": "null" }] }
+      }
+    },
+    "effect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["planned-effect-id", "operation", "target", "state", "observed-artifact", "evidence", "source-snapshot", "reconciled-at"],
+      "properties": {
+        "planned-effect-id": { "type": "string" },
+        "operation": { "enum": ["commit", "push", "pull-request", "relationship", "tracker-comment"] },
+        "target": { "$ref": "#/$defs/nullableReference" },
+        "state": { "enum": ["not-started", "confirmed", "failed", "unknown"] },
+        "observed-artifact": { "anyOf": [{ "$ref": "#/$defs/observedArtifact" }, { "type": "null" }] },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/reference" } },
+        "source-snapshot": { "$ref": "#/$defs/nullableSnapshot" },
+        "reconciled-at": { "$ref": "#/$defs/nullableString" }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["finding", "impact", "user-disposition", "evidence"],
+      "properties": {
+        "finding": { "type": "string" },
+        "impact": { "type": "string" },
+        "user-disposition": { "$ref": "#/$defs/nullableString" },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/reference" } }
+      }
+    },
+    "missingEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "requirement", "operation", "impact", "approved-degraded-path"],
+      "properties": {
+        "owner": { "type": "string" },
+        "requirement": { "type": "string" },
+        "operation": { "$ref": "#/$defs/nullableString" },
+        "impact": { "type": "string" },
+        "approved-degraded-path": { "anyOf": [{ "$ref": "#/$defs/degradedPath" }, { "type": "null" }] }
+      }
+    },
+    "plannedArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "content"],
+      "properties": {
+        "kind": { "enum": ["commit", "pull-request", "relationship", "tracker-comment"] },
+        "content": { "type": "string" }
+      }
+    },
+    "commitDraft": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["message", "selected-content", "planned-base", "signing-required"],
+      "properties": {
+        "message": { "type": "string" },
+        "selected-content": { "$ref": "#/$defs/stringList" },
+        "planned-base": { "$ref": "#/$defs/nullableString" },
+        "signing-required": { "type": "boolean" }
+      }
+    },
+    "pullRequestDraft": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "body", "source", "destination"],
+      "properties": {
+        "title": { "type": "string" },
+        "body": { "type": "string" },
+        "source": { "$ref": "#/$defs/nullableReference" },
+        "destination": { "$ref": "#/$defs/nullableReference" }
+      }
+    },
+    "relationshipDraft": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "source", "target"],
+      "properties": {
+        "kind": { "type": "string" },
+        "source": { "$ref": "#/$defs/nullableReference" },
+        "target": { "$ref": "#/$defs/nullableReference" }
+      }
+    },
+    "trackerCommentDraft": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["language", "body", "target-ticket", "append-only", "ticket-state-change"],
+      "properties": {
+        "language": { "const": "es" },
+        "body": { "type": "string" },
+        "target-ticket": { "$ref": "#/$defs/nullableReference" },
+        "append-only": { "const": true },
+        "ticket-state-change": { "const": false }
+      }
+    },
+    "observedArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "identity", "reference", "source", "destination", "signature", "selected-tree"],
+      "properties": {
+        "kind": { "enum": ["commit", "push", "pull-request", "relationship", "tracker-comment"] },
+        "identity": { "$ref": "#/$defs/nullableString" },
+        "reference": { "$ref": "#/$defs/nullableString" },
+        "source": { "$ref": "#/$defs/nullableReference" },
+        "destination": { "$ref": "#/$defs/nullableReference" },
+        "signature": { "$ref": "#/$defs/nullableString" },
+        "selected-tree": { "$ref": "#/$defs/nullableString" }
+      }
+    },
+    "recoveryPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["approved", "consumer-policy-evidence", "actions"],
+      "properties": {
+        "approved": { "type": "boolean" },
+        "consumer-policy-evidence": { "$ref": "#/$defs/nullableString" },
+        "actions": { "$ref": "#/$defs/stringList" }
+      }
+    },
+    "degradedPath": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["approval-evidence", "owner", "limitation"],
+      "properties": {
+        "approval-evidence": { "type": "string" },
+        "owner": { "type": "string" },
+        "limitation": { "type": "string" }
+      }
+    },
+    "invalidation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cause", "affected-evidence", "affected-operations", "required-owner-refresh"],
+      "properties": {
+        "cause": { "type": "string" },
+        "affected-evidence": { "$ref": "#/$defs/stringList" },
+        "affected-operations": { "$ref": "#/$defs/stringList" },
+        "required-owner-refresh": { "$ref": "#/$defs/stringList" }
+      }
+    }
+  }
+}
