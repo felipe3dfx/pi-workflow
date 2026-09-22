@@ -1,0 +1,111 @@
+{
+  "fixture-version": "1.0",
+  "purpose": "Maintainer-only synthetic expectations for static contract review; these fixtures do not execute the skill or a provider.",
+  "fixtures": [
+    {
+      "id": "partial-commit-approved",
+      "input": { "requested-operations": ["commit"], "selected-content": ["skills/example/SKILL.md"], "approval": "plan-7", "final-pr-review": "absent", "final-qa-impact": "absent" },
+      "expect": { "status": "completed", "effects": [{ "operation": "commit", "state": "confirmed" }], "not-requested": ["push", "pull-request", "tracker-comment"], "historical-evidence-preserved": true }
+    },
+    {
+      "id": "full-publication-one-approval",
+      "input": { "requested-operations": ["commit", "push", "pull-request", "tracker-comment"], "approval": "plan-8", "consumer-approval": "satisfied" },
+      "expect": { "status": "completed", "one-approval-covers-named-effects": true, "tracker-comment": { "language": "es", "append-only": true, "ticket-state-change": false } }
+    },
+    {
+      "id": "revised-plan-requires-approval",
+      "input": { "approved-plan": "plan-9/revision-0", "changed-selected-content": true },
+      "expect": { "status": "awaiting-approval", "approval-reused": false, "invalidation-owner": "scope-audit" }
+    },
+    {
+      "id": "absent-authorization",
+      "input": { "requested-operations": ["commit"], "approval": null },
+      "expect": { "status": "blocked", "effect-state": "not-started", "missing-evidence": ["authorization"] }
+    },
+    {
+      "id": "stricter-consumer-policy",
+      "input": { "approval": "plan-10", "consumer-required-approval": "missing" },
+      "expect": { "status": "blocked", "effect-state": "not-started", "missing-evidence": ["consumer approval"] }
+    },
+    {
+      "id": "unrelated-change-excluded-and-cancelled",
+      "input": { "pre-existing": ["notes.txt"], "user-decision": "excluded", "cancelled": true },
+      "expect": { "status": "cancelled", "content-decision": "excluded", "worktree-preserved": true }
+    },
+    {
+      "id": "signed-commit-failure",
+      "input": { "requested-operations": ["commit"], "signature-verification": "failed" },
+      "expect": { "status": "incomplete", "effect": { "operation": "commit", "state": "failed" }, "signing-configuration-changed": false }
+    },
+    {
+      "id": "initial-pr-without-final-review",
+      "input": { "requested-operations": ["pull-request", "tracker-comment"], "final-pr-review": "absent", "final-qa-impact": "absent" },
+      "expect": { "publication-permitted-by-shared-contract": true, "reported-statuses-preserved": true, "promotion-ready": false }
+    },
+    {
+      "id": "corrective-commit-awaits-subsequent-review",
+      "input": { "requested-operations": ["commit", "push"], "prior-final-review": "approved", "new-commit": true },
+      "expect": { "status": "completed", "prior-approval-is-historical": true, "next-owner": "code-review re-review" }
+    },
+    {
+      "id": "failed-push-after-confirmed-commit",
+      "input": { "commit": "confirmed", "push": "failed" },
+      "expect": { "status": "incomplete", "effects": [{ "operation": "commit", "state": "confirmed" }, { "operation": "push", "state": "failed" }], "further-mutations": false }
+    },
+    {
+      "id": "uncertain-pr-reconciliation",
+      "input": { "pull-request": "unknown", "resume": true, "provider-reconciliation": "existing-pr-found" },
+      "expect": { "status": "incomplete", "reconciled-effect-state": "confirmed", "duplicate-pr-created": false }
+    },
+    {
+      "id": "comment-failure-after-pr",
+      "input": { "pull-request": "confirmed", "tracker-comment": "failed" },
+      "expect": { "status": "incomplete", "effects": [{ "operation": "pull-request", "state": "confirmed" }, { "operation": "tracker-comment", "state": "failed" }], "ticket-state-changed": false }
+    },
+    {
+      "id": "concurrent-change-stops-plan",
+      "input": { "concurrent-change": true },
+      "expect": { "status": "incomplete", "further-mutations": false, "requires-reconciliation": true }
+    },
+    {
+      "id": "recovery-requires-policy-and-approval",
+      "input": { "recovery": "history rewrite", "consumer-policy": "absent", "recovery-approval": "absent" },
+      "expect": { "status": "blocked", "recovery-executed": false }
+    },
+    {
+      "id": "explicit-user-inclusion",
+      "input": { "pre-existing": ["skills/example/SKILL.md"], "user-decision": "included" },
+      "expect": { "content-decision": "included", "user-decision-evidence": "required" }
+    },
+    {
+      "id": "signed-conventional-selected-tree",
+      "input": { "commit-message": "feat(engineering): add example", "signature": "valid", "selected-tree": "matches-planned-candidate" },
+      "expect": { "status": "completed", "commit-confirmed": true }
+    },
+    {
+      "id": "exact-pr-draft-preserved",
+      "input": { "pr-title": "Add example", "pr-body": "Selected content only." },
+      "expect": { "draft-title": "Add example", "draft-body": "Selected content only." }
+    },
+    {
+      "id": "mandatory-check-failure-blocks-effect",
+      "input": { "consumer-required-check": "failed", "operation": "push" },
+      "expect": { "status": "blocked", "effect-state": "not-started", "missing-evidence": ["required consumer check"] }
+    },
+    {
+      "id": "pending-ci-reported-not-prepublication-blocker",
+      "input": { "consumer-required-before-publication": false, "ci": "pending" },
+      "expect": { "status": "completed", "ci-status": "pending", "ci-upgraded-to-passed": false }
+    },
+    {
+      "id": "overridden-destination-requires-confirmation",
+      "input": { "recorded-destination": "integration", "requested-destination": "release", "destination-confirmed": false },
+      "expect": { "status": "awaiting-approval", "mutation-permitted": false }
+    }
+  ],
+  "validation-evidence": {
+    "static-schema-and-wording-checks": { "execution-status": "not-recorded", "reason": "Actual results belong to the maintainer handoff." },
+    "deterministic-simulations": { "execution-status": "not-run", "reason": "This skill has no test-only workflow executor." },
+    "fresh-context-skill-executions": { "execution-status": "not-run", "reason": "Runtime smoke belongs to catalog integration." }
+  }
+}

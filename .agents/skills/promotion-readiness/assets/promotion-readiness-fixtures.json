@@ -1,0 +1,127 @@
+{
+  "fixture-kind": "static contract examples",
+  "execution-status": "not a runtime invocation",
+  "cases": [
+    {
+      "name": "missing-confirmed-destination-blocks-audit",
+      "input-facts": {
+        "destination-confirmation": {"proposed": "release/2026", "selected": null, "confirmed": false},
+        "bases": {"working": "integration/2026", "production": "release/2026"},
+        "evidence-form": "relationship"
+      },
+      "expected-facts": {
+        "verdict": "BLOCKED",
+        "missing-reason": "absent",
+        "source-statuses-preserved": true,
+        "manual-action-prohibited": false
+      }
+    },
+    {
+      "name": "user-overrides-proposed-destination-with-current-evidence",
+      "input-facts": {
+        "destination-confirmation": {"proposed": "release/2026", "selected": "production/2026", "confirmed": true},
+        "bases": {"working": "integration/2026", "production": "production/2026"},
+        "evidence-form": "normalized-stack",
+        "final-review-status": "ready",
+        "final-qa-status": "ready",
+        "same-final-snapshot": true
+      },
+      "expected-facts": {
+        "verdict": "READY",
+        "proposal-may-differ": true,
+        "warnings-empty": true,
+        "missing-evidence-empty": true
+      }
+    },
+    {
+      "name": "incomplete-provenance-remains-evaluable-warning",
+      "input-facts": {
+        "destination-confirmation": {"proposed": "release/2026", "selected": "release/2026", "confirmed": true},
+        "bases": {"working": "integration/2026", "production": "release/2026"},
+        "evidence-form": "relationship",
+        "final-review-status": "ready",
+        "final-qa-status": "ready",
+        "same-final-snapshot": true,
+        "provenance-gap": "child ticket lacks integration-origin reference",
+        "disposition": "accepted"
+      },
+      "expected-facts": {
+        "verdict": "READY WITH WARNINGS",
+        "warning-disposition": "accepted",
+        "missing-evidence-reason": "incomplete",
+        "accepted-does-not-upgrade-evidence": true
+      }
+    },
+    {
+      "name": "stale-final-qa-prevents-meaningful-assessment",
+      "input-facts": {
+        "destination-confirmation": {"proposed": "release/2026", "selected": "release/2026", "confirmed": true},
+        "bases": {"working": "integration/2026", "production": "release/2026"},
+        "evidence-form": "relationship",
+        "final-review-status": "ready",
+        "final-qa-status": "ready",
+        "same-final-snapshot": false
+      },
+      "expected-facts": {
+        "verdict": "BLOCKED",
+        "missing-reason": "stale",
+        "prior-review-repeated": false,
+        "prior-qa-repeated": false
+      }
+    },
+    {
+      "name": "parent-requirement-outstanding-is-visible",
+      "input-facts": {
+        "destination-confirmation": {"proposed": "release/2026", "selected": "release/2026", "confirmed": true},
+        "bases": {"working": "integration/2026", "production": "release/2026"},
+        "evidence-form": "relationship",
+        "parent-coverage": "outstanding",
+        "final-review-status": "ready",
+        "final-qa-status": "ready",
+        "same-final-snapshot": true
+      },
+      "expected-facts": {
+        "verdict": "READY WITH WARNINGS",
+        "parent-coverage-preserved": true,
+        "warning-required": true
+      }
+    },
+    {
+      "name": "contradictory-final-evidence-blocks-audit",
+      "input-facts": {
+        "destination-confirmation": {"proposed": "release/2026", "selected": "release/2026", "confirmed": true},
+        "bases": {"working": "integration/2026", "production": "release/2026"},
+        "evidence-form": "relationship",
+        "final-review-status": "ready",
+        "final-qa-status": "ready",
+        "evidence-consistency": "contradictory"
+      },
+      "expected-facts": {"verdict": "BLOCKED", "missing-reason": "contradictory"}
+    },
+    {
+      "name": "pending-risk-disposition-remains-evaluable-warning",
+      "input-facts": {
+        "destination-confirmation": {"proposed": "release/2026", "selected": "release/2026", "confirmed": true},
+        "bases": {"working": "integration/2026", "production": "release/2026"},
+        "evidence-form": "relationship",
+        "final-review-status": "ready",
+        "final-qa-status": "ready",
+        "same-final-snapshot": true,
+        "risk-disposition": "pending"
+      },
+      "expected-facts": {"verdict": "READY WITH WARNINGS", "warning-disposition": "pending"}
+    },
+    {
+      "name": "nonstack-relationship-evidence-matches-stack-ready-result",
+      "input-facts": {
+        "destination-confirmation": {"proposed": "release/2026", "selected": "production/2026", "confirmed": true},
+        "bases": {"working": "integration/2026", "production": "production/2026"},
+        "evidence-form": "relationship",
+        "final-review-status": "ready",
+        "final-qa-status": "ready",
+        "same-final-snapshot": true
+      },
+      "expected-facts": {"verdict": "READY", "equivalent-to": "user-overrides-proposed-destination-with-current-evidence"}
+    }
+  ]
+}

@@ -1,0 +1,77 @@
+{
+  "fixture-kind": "static output-shape examples",
+  "execution-status": "not a runtime invocation",
+  "examples": [
+    {
+      "name": "ready-preserves-final-snapshot-and-source-statuses",
+      "input-evidence": {
+        "source-statuses": {
+          "scope-20": "ready",
+          "review-20": "ready",
+          "qa-20": "ready",
+          "relationship-20": "observed"
+        }
+      },
+      "expected-output": {
+        "schema-version": "1.0",
+        "verdict": "READY",
+        "target": {"repository": "synthetic/repository", "kind": "pull-request", "id": "20"},
+        "snapshot": {
+          "snapshot-version": "1.0",
+          "target-id": "20",
+          "target-kind": "pull-request",
+          "selected-scope": "delivery-20",
+          "repository-id": "synthetic/repository",
+          "base-ref": "production/2026@a1",
+          "current-ref": "delivery-20@b2",
+          "branch": "delivery-20",
+          "repository-status": "clean",
+          "paths-and-diffs": {
+            "committed": [{"path": "src/delivery.py", "change": "modified", "source-path": null, "mode": null, "diff": "-old\n+new"}],
+            "staged": [],
+            "worktree": [],
+            "untracked": []
+          }
+        },
+        "destination-confirmation": {"proposed": "production/2026", "selected": "production/2026", "confirmed": true, "evidence": "user-confirmation-20"},
+        "bases": {"working": {"value": "integration/2026", "evidence": "workflow-20"}, "production": {"value": "production/2026", "evidence": "workflow-20"}},
+        "consumed-evidence": [
+          {"kind": "scope-audit", "identity": "scope-20", "reference": "scope-20", "status": "ready", "snapshot": {"snapshot-version": "1.0", "target-id": "20", "target-kind": "pull-request", "selected-scope": "delivery-20", "repository-id": "synthetic/repository", "base-ref": "production/2026@a1", "current-ref": "delivery-20@b2", "branch": "delivery-20", "repository-status": "clean", "paths-and-diffs": {"committed": [{"path": "src/delivery.py", "change": "modified", "source-path": null, "mode": null, "diff": "-old\n+new"}], "staged": [], "worktree": [], "untracked": []}}, "freshness": "fresh", "validation": "valid", "gaps": [], "disposition": "none"},
+          {"kind": "final-review", "identity": "review-20", "reference": "review-20", "status": "ready", "snapshot": {"snapshot-version": "1.0", "target-id": "20", "target-kind": "pull-request", "selected-scope": "delivery-20", "repository-id": "synthetic/repository", "base-ref": "production/2026@a1", "current-ref": "delivery-20@b2", "branch": "delivery-20", "repository-status": "clean", "paths-and-diffs": {"committed": [{"path": "src/delivery.py", "change": "modified", "source-path": null, "mode": null, "diff": "-old\n+new"}], "staged": [], "worktree": [], "untracked": []}}, "freshness": "fresh", "validation": "valid", "gaps": [], "disposition": "none"},
+          {"kind": "qa-impact", "identity": "qa-20", "reference": "qa-20", "status": "ready", "snapshot": {"snapshot-version": "1.0", "target-id": "20", "target-kind": "pull-request", "selected-scope": "delivery-20", "repository-id": "synthetic/repository", "base-ref": "production/2026@a1", "current-ref": "delivery-20@b2", "branch": "delivery-20", "repository-status": "clean", "paths-and-diffs": {"committed": [{"path": "src/delivery.py", "change": "modified", "source-path": null, "mode": null, "diff": "-old\n+new"}], "staged": [], "worktree": [], "untracked": []}}, "freshness": "fresh", "validation": "valid", "gaps": [], "disposition": "none"},
+          {"kind": "relationship", "identity": "relationship-20", "reference": "parent-20", "status": "observed", "snapshot": null, "freshness": "not-applicable", "validation": "valid", "gaps": [], "disposition": "none"}
+        ],
+        "provenance": [{"unit": "src/delivery.py", "approved-scope": ["delivery-20"], "integration-origin": ["parent-20"], "evidence": ["issue-20"], "gaps": [], "disposition": "none"}],
+        "parent-coverage": [{"parent": "parent-20", "requirements": [{"requirement": "R-20", "coverage": "covered", "evidence": ["issue-20"], "gaps": [], "disposition": "none"}], "evidence": ["parent-20"], "gaps": [], "disposition": "none"}],
+        "warnings": [],
+        "missing-evidence": [],
+        "invalidation-details": [],
+        "feedback": [{"subject": "delivery-20", "assessment": "Evidence is sufficient and current.", "supported-by": ["scope-20", "review-20", "qa-20"], "requires-review": []}],
+        "read-only-no-mutation": true
+      }
+    },
+    {
+      "name": "blocked-null-snapshot-names-absent-input-without-invention",
+      "input-evidence": {"source-statuses": {"relationship-20": "observed"}},
+      "expected-output": {
+        "schema-version": "1.0",
+        "verdict": "BLOCKED",
+        "target": {"repository": "synthetic/repository", "kind": "delivery", "id": "20"},
+        "snapshot": null,
+        "destination-confirmation": {"proposed": "production/2026", "selected": null, "confirmed": false, "evidence": null},
+        "bases": {"working": {"value": "integration/2026", "evidence": "workflow-20"}, "production": {"value": "production/2026", "evidence": "workflow-20"}},
+        "consumed-evidence": [{"kind": "relationship", "identity": "relationship-20", "reference": "parent-20", "status": "observed", "snapshot": null, "freshness": "not-applicable", "validation": "valid", "gaps": [], "disposition": "none"}],
+        "provenance": [],
+        "parent-coverage": [],
+        "warnings": [],
+        "missing-evidence": [
+          {"subject": "destination", "needed": "user confirmation", "reason": "absent", "impact": "Destination cannot be audited.", "owner": "user"},
+          {"subject": "snapshot", "needed": "Issue #18 common snapshot", "reason": "inaccessible", "impact": "Delivery content cannot be assessed.", "owner": "harness"}
+        ],
+        "invalidation-details": [],
+        "feedback": [{"subject": "delivery-20", "assessment": "Evidence does not permit a meaningful audit.", "supported-by": ["relationship-20"], "requires-review": ["destination", "snapshot"]}],
+        "read-only-no-mutation": true
+      }
+    }
+  ]
+}

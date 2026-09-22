@@ -1,0 +1,69 @@
+{
+  "purpose": "Maintainer-only static output shapes. They are concrete schema examples, not workflow executions or provider evidence.",
+  "outputs": {
+    "blocked-no-snapshot": {
+      "schema-version": "1.0",
+      "status": "blocked",
+      "requested-scope": { "operations": ["commit"], "selected-content": [], "ticket": null, "parent-relationships": [] },
+      "target": { "repository": null, "source": null, "proposed-destination": null, "destination-confirmed": null },
+      "snapshot": null,
+      "consumed-evidence": [],
+      "content-decisions": [],
+      "plan": { "plan-id": "blocked-1", "revision": 0, "selected-content": [], "effects": [], "material-change": false, "recovery-plan": null },
+      "approval": { "state": "not-requested", "authorized-plan-id": null, "authorized-revision": null, "decision-evidence": null, "consumer-constraints": [] },
+      "drafts": { "commit": null, "pull-request": null, "relationships": [], "tracker-comment": null },
+      "effects": [],
+      "warnings": [],
+      "missing-evidence": [{ "owner": "consumer workflow", "requirement": "repository target", "operation": "commit", "impact": "Cannot inspect the selected candidate.", "approved-degraded-path": null }],
+      "invalidation-details": []
+    },
+    "commit-only-signed": {
+      "schema-version": "1.0",
+      "status": "completed",
+      "requested-scope": { "operations": ["commit"], "selected-content": ["skills/example/SKILL.md"], "ticket": null, "parent-relationships": [] },
+      "target": { "repository": { "kind": "repository", "identity": "skills", "reference": "local" }, "source": { "kind": "branch", "identity": "issue-20", "reference": "refs/heads/issue-20" }, "proposed-destination": null, "destination-confirmed": null },
+      "snapshot": { "snapshot-version": "1.0", "target-id": "issue-20", "target-kind": "working-tree", "selected-scope": "skills/example/SKILL.md", "repository-id": "skills", "base-ref": "main@a1", "current-ref": "issue-20@b0", "branch": "issue-20", "repository-status": "staged", "paths-and-diffs": { "committed": [], "staged": [{ "path": "skills/example/SKILL.md", "change": "modified", "source-path": null, "mode": null, "diff": "- old\n+ new" }], "worktree": [], "untracked": [] } },
+      "consumed-evidence": [{ "owner": "implement", "kind": "handoff", "source-status": "ready", "identity": "handoff-20", "reference": "local", "freshness": "fresh", "operation-required": ["commit"] }],
+      "content-decisions": [{ "unit": "skills/example/SKILL.md", "classification": "owned", "decision": "included", "user-decision-evidence": "approval-20", "reason": "Explicit user selection." }],
+      "plan": { "plan-id": "commit-1", "revision": 0, "selected-content": ["skills/example/SKILL.md"], "effects": [{ "id": "commit-1", "operation": "commit", "target": { "kind": "branch", "identity": "issue-20", "reference": "refs/heads/issue-20" }, "draft": { "kind": "commit", "content": "feat(engineering): add example" }, "requires-approval": true }], "material-change": false, "recovery-plan": null },
+      "approval": { "state": "approved", "authorized-plan-id": "commit-1", "authorized-revision": 0, "decision-evidence": "approval-20", "consumer-constraints": [] },
+      "drafts": { "commit": { "message": "feat(engineering): add example", "selected-content": ["skills/example/SKILL.md"], "planned-base": "main@a1", "signing-required": true }, "pull-request": null, "relationships": [], "tracker-comment": null },
+      "effects": [{ "planned-effect-id": "commit-1", "operation": "commit", "target": { "kind": "branch", "identity": "issue-20", "reference": "refs/heads/issue-20" }, "state": "confirmed", "observed-artifact": { "kind": "commit", "identity": "b1", "reference": "b1", "source": { "kind": "branch", "identity": "issue-20", "reference": "refs/heads/issue-20" }, "destination": null, "signature": "valid", "selected-tree": "tree-b1" }, "evidence": [{ "kind": "verification", "identity": "commit-b1", "reference": "selected tree and diff match" }], "source-snapshot": { "snapshot-version": "1.0", "target-id": "issue-20", "target-kind": "working-tree", "selected-scope": "skills/example/SKILL.md", "repository-id": "skills", "base-ref": "main@a1", "current-ref": "issue-20@b0", "branch": "issue-20", "repository-status": "staged", "paths-and-diffs": { "committed": [], "staged": [{ "path": "skills/example/SKILL.md", "change": "modified", "source-path": null, "mode": null, "diff": "- old\n+ new" }], "worktree": [], "untracked": [] } }, "reconciled-at": "local" }],
+      "warnings": [],
+      "missing-evidence": [],
+      "invalidation-details": []
+    },
+    "pending-ci-pr-publication": {
+      "schema-version": "1.0",
+      "status": "completed",
+      "requested-scope": { "operations": ["pull-request", "tracker-comment"], "selected-content": ["skills/example/SKILL.md"], "ticket": { "kind": "ticket", "identity": "20", "reference": "tracker/20" }, "parent-relationships": [] },
+      "target": { "repository": { "kind": "repository", "identity": "skills", "reference": "remote" }, "source": { "kind": "commit", "identity": "b1", "reference": "b1" }, "proposed-destination": { "kind": "branch", "identity": "integration", "reference": "refs/heads/integration" }, "destination-confirmed": true },
+      "snapshot": { "snapshot-version": "1.0", "target-id": "b1", "target-kind": "branch", "selected-scope": "skills/example/SKILL.md", "repository-id": "skills", "base-ref": "integration@a1", "current-ref": "issue-20@b1", "branch": "issue-20", "repository-status": null, "paths-and-diffs": { "committed": [{ "path": "skills/example/SKILL.md", "change": "modified", "source-path": null, "mode": null, "diff": "- old\n+ new" }], "staged": [], "worktree": [], "untracked": [] } },
+      "consumed-evidence": [{ "owner": "consumer CI", "kind": "check", "source-status": "pending", "identity": "ci-44", "reference": "checks/44", "freshness": "fresh", "operation-required": [] }],
+      "content-decisions": [{ "unit": "skills/example/SKILL.md", "classification": "owned", "decision": "included", "user-decision-evidence": "approval-21", "reason": "Explicit user selection." }],
+      "plan": { "plan-id": "pr-1", "revision": 0, "selected-content": ["skills/example/SKILL.md"], "effects": [{ "id": "pr-1", "operation": "pull-request", "target": { "kind": "branch", "identity": "integration", "reference": "refs/heads/integration" }, "draft": { "kind": "pull-request", "content": "Add example" }, "requires-approval": true }, { "id": "comment-1", "operation": "tracker-comment", "target": { "kind": "ticket", "identity": "20", "reference": "tracker/20" }, "draft": { "kind": "tracker-comment", "content": "Se publicó la PR." }, "requires-approval": true }], "material-change": false, "recovery-plan": null },
+      "approval": { "state": "approved", "authorized-plan-id": "pr-1", "authorized-revision": 0, "decision-evidence": "approval-21", "consumer-constraints": [] },
+      "drafts": { "commit": null, "pull-request": { "title": "Add example", "body": "Selected content only.", "source": { "kind": "commit", "identity": "b1", "reference": "b1" }, "destination": { "kind": "branch", "identity": "integration", "reference": "refs/heads/integration" } }, "relationships": [], "tracker-comment": { "language": "es", "body": "Se publicó la PR b1 con evidencia local.", "target-ticket": { "kind": "ticket", "identity": "20", "reference": "tracker/20" }, "append-only": true, "ticket-state-change": false } },
+      "effects": [{ "planned-effect-id": "pr-1", "operation": "pull-request", "target": { "kind": "branch", "identity": "integration", "reference": "refs/heads/integration" }, "state": "confirmed", "observed-artifact": { "kind": "pull-request", "identity": "53", "reference": "pr/53", "source": { "kind": "commit", "identity": "b1", "reference": "b1" }, "destination": { "kind": "branch", "identity": "integration", "reference": "refs/heads/integration" }, "signature": null, "selected-tree": "tree-b1" }, "evidence": [{ "kind": "provider", "identity": "53", "reference": "pr/53" }], "source-snapshot": null, "reconciled-at": "provider" }, { "planned-effect-id": "comment-1", "operation": "tracker-comment", "target": { "kind": "ticket", "identity": "20", "reference": "tracker/20" }, "state": "confirmed", "observed-artifact": { "kind": "tracker-comment", "identity": "c-20", "reference": "comment/c-20", "source": null, "destination": { "kind": "ticket", "identity": "20", "reference": "tracker/20" }, "signature": null, "selected-tree": null }, "evidence": [{ "kind": "provider", "identity": "c-20", "reference": "comment/c-20" }], "source-snapshot": null, "reconciled-at": "provider" }],
+      "warnings": [{ "finding": "CI is pending and is not a consumer pre-publication requirement.", "impact": "Report pending status without upgrading it to passed.", "user-disposition": null, "evidence": [{ "kind": "check", "identity": "ci-44", "reference": "checks/44" }] }],
+      "missing-evidence": [],
+      "invalidation-details": []
+    },
+    "partial-failure-retains-current-refs": {
+      "schema-version": "1.0",
+      "status": "incomplete",
+      "requested-scope": { "operations": ["commit", "push"], "selected-content": ["skills/example/SKILL.md"], "ticket": null, "parent-relationships": [] },
+      "target": { "repository": { "kind": "repository", "identity": "skills", "reference": "local" }, "source": { "kind": "branch", "identity": "issue-20", "reference": "refs/heads/issue-20" }, "proposed-destination": null, "destination-confirmed": null },
+      "snapshot": { "snapshot-version": "1.0", "target-id": "issue-20", "target-kind": "working-tree", "selected-scope": "skills/example/SKILL.md", "repository-id": "skills", "base-ref": "main@a1", "current-ref": "issue-20@b1", "branch": "issue-20", "repository-status": "staged", "paths-and-diffs": { "committed": [], "staged": [{ "path": "skills/example/SKILL.md", "change": "modified", "source-path": null, "mode": null, "diff": "- old\n+ new" }], "worktree": [], "untracked": [] } },
+      "consumed-evidence": [],
+      "content-decisions": [{ "unit": "skills/example/SKILL.md", "classification": "owned", "decision": "included", "user-decision-evidence": "approval-22", "reason": "Explicit user selection." }],
+      "plan": { "plan-id": "push-1", "revision": 0, "selected-content": ["skills/example/SKILL.md"], "effects": [{ "id": "commit-2", "operation": "commit", "target": { "kind": "branch", "identity": "issue-20", "reference": "refs/heads/issue-20" }, "draft": { "kind": "commit", "content": "feat(engineering): add example" }, "requires-approval": true }, { "id": "push-1", "operation": "push", "target": null, "draft": null, "requires-approval": true }], "material-change": false, "recovery-plan": null },
+      "approval": { "state": "approved", "authorized-plan-id": "push-1", "authorized-revision": 0, "decision-evidence": "approval-22", "consumer-constraints": [] },
+      "drafts": { "commit": null, "pull-request": null, "relationships": [], "tracker-comment": null },
+      "effects": [{ "planned-effect-id": "commit-2", "operation": "commit", "target": { "kind": "branch", "identity": "issue-20", "reference": "refs/heads/issue-20" }, "state": "confirmed", "observed-artifact": { "kind": "commit", "identity": "b2", "reference": "b2", "source": { "kind": "branch", "identity": "issue-20", "reference": "refs/heads/issue-20" }, "destination": null, "signature": "valid", "selected-tree": "tree-b2" }, "evidence": [], "source-snapshot": { "snapshot-version": "1.0", "target-id": "issue-20", "target-kind": "working-tree", "selected-scope": "skills/example/SKILL.md", "repository-id": "skills", "base-ref": "main@a1", "current-ref": "issue-20@b1", "branch": "issue-20", "repository-status": "staged", "paths-and-diffs": { "committed": [], "staged": [{ "path": "skills/example/SKILL.md", "change": "modified", "source-path": null, "mode": null, "diff": "- old\n+ new" }], "worktree": [], "untracked": [] } }, "reconciled-at": "local" }, { "planned-effect-id": "push-1", "operation": "push", "target": null, "state": "failed", "observed-artifact": null, "evidence": [], "source-snapshot": null, "reconciled-at": "local" }],
+      "warnings": [],
+      "missing-evidence": [],
+      "invalidation-details": []
+    }
+  }
+}
