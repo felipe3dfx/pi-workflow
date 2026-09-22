@@ -31,3 +31,15 @@ The user-confirmed command `/pi-workflow-install-companions --apply`. Without `-
 ### Engineering skills
 
 The Grupo Ilao skills that own delivery process. A consumer installs them from that catalog. pi-workflow does not bundle, route, or reinterpret them.
+
+### Harness capability
+
+A pi-workflow behavior that is not a companion package. The harness owns it and does not install it from the companion catalog.
+
+_Avoid_: bundled companion, absorbed package
+
+### Child session
+
+A Pi session distinct from the parent session. It belongs to a harness capability, not to a companion package.
+
+_Avoid_: subagent package, workflow run
