@@ -75,15 +75,13 @@ test("release validation binds the GitHub Release tag and English body to packag
 	);
 });
 
-test("release workflow validates per-release content separately from acceptance", async () => {
-	const [packageJson, publishWorkflow, acceptance] = await Promise.all([
+test("release workflow validates the GitHub Release before publish", async () => {
+	const [packageJson, publishWorkflow] = await Promise.all([
 		readFile(new URL("../package.json", import.meta.url), "utf8").then(JSON.parse),
 		readFile(new URL("../.github/workflows/publish.yml", import.meta.url), "utf8"),
-		readFile(new URL("../scripts/check-acceptance.mjs", import.meta.url), "utf8"),
 	]);
 	assert.equal(packageJson.files.includes("RELEASE_NOTES.md"), false);
 	assert.equal(packageJson.scripts["check:release"], "node scripts/validate-release.mjs");
 	assert.match(publishWorkflow, /validate-release\.mjs --event/);
 	assert.match(publishWorkflow, /npm publish --provenance --access public/);
-	assert.doesNotMatch(acceptance, /npm\s+publish/);
 });

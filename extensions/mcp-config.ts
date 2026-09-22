@@ -58,7 +58,7 @@ export interface CompanionMcpAdapters {
 }
 
 const packageDirectory = dirname(fileURLToPath(import.meta.url));
-export const defaultMcpServerCatalogPath = resolve(
+const defaultMcpServerCatalogPath = resolve(
 	packageDirectory,
 	"../assets/mcp-servers.json",
 );
@@ -151,7 +151,7 @@ function definitionsEqual(left: unknown, right: unknown): boolean {
 	return canonicalJson(left) === canonicalJson(right);
 }
 
-export function mcpConfigPath(mcpOptions: CompanionMcpAdapters = {}): string {
+function mcpConfigPath(mcpOptions: CompanionMcpAdapters = {}): string {
 	return resolve(activePiAgentDirectory(mcpOptions), "mcp.json");
 }
 
@@ -314,19 +314,6 @@ function writeJsonAtomically(path: string, value: Record<string, unknown>) {
 		}
 		throw error;
 	}
-}
-
-export function emptyMcpConfigurationPlan(
-	mcpOptions: CompanionMcpAdapters = {},
-): McpConfigurationPlan {
-	return {
-		changed: false,
-		path: mcpConfigPath(mcpOptions),
-		mergedConfig: {},
-		additions: [],
-		replacements: [],
-		targets: [],
-	};
 }
 
 /**
