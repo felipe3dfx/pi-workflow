@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
@@ -155,6 +155,20 @@ type ModelListsLoad =
 	| { status: "loaded"; lists: ModelLists }
 	| { status: "refused"; reason: string };
 
+function errorCode(error: unknown): unknown {
+	return (error as { code?: unknown }).code;
+}
+
+function entryExists(path: string): boolean {
+	try {
+		lstatSync(path);
+		return true;
+	} catch (error) {
+		if (errorCode(error) === "ENOENT") return false;
+		throw error;
+	}
+}
+
 async function notConfigured(): Promise<never> {
 	throw new Error("not configured");
 }
@@ -193,7 +207,13 @@ export function createModelLists(options: ModelListsOptions = {}) {
 	}
 
 	async function create(ctx: CommandContext) {
-		const replacing = existsSync(path);
+		let replacing: boolean;
+		try {
+			replacing = entryExists(path);
+		} catch (error) {
+			report(ctx, `Unable to read ${path}: ${errorMessage(error)}`, "error");
+			return { status: "refused", leftOut: [] };
+		}
 		if (replacing && !ctx.hasUI) {
 			report(ctx, `${path} exists and was not replaced.`, "warning");
 			return { status: "kept", leftOut: [] };
@@ -218,7 +238,17 @@ export function createModelLists(options: ModelListsOptions = {}) {
 			lists.specialists[placement.taskType]?.push(placement.entry);
 			lists.tiers[creationMap[placement.taskType]]?.push(placement.entry);
 		}
-		writeJsonAtomically(path, lists);
+		try {
+			writeJsonAtomically(path, lists, { replace: replacing });
+		} catch (error) {
+			if (errorCode(error) !== "EEXIST") throw error;
+			report(
+				ctx,
+				`${path} appeared while the lists were being built and was not replaced.`,
+				"warning",
+			);
+			return { status: "kept", leftOut };
+		}
 		report(
 			ctx,
 			`${replacing ? "Replaced" : "Created"} ${path}. It applies after /reload.`,
@@ -240,11 +270,9 @@ export function createModelLists(options: ModelListsOptions = {}) {
 	function readLists(): ModelListsLoad {
 		let text: string;
 		try {
+			if (!entryExists(path)) return { status: "absent" };
 			text = readFileSync(path, "utf8");
 		} catch (error) {
-			if ((error as { code?: unknown }).code === "ENOENT") {
-				return { status: "absent" };
-			}
 			return {
 				status: "refused",
 				reason: `Unable to read ${path}: ${errorMessage(error)}`,
@@ -267,15 +295,16 @@ export function createModelLists(options: ModelListsOptions = {}) {
 			report(ctx, "The model lists editor needs the TUI.", "error");
 			return { status: "refused" };
 		}
+		let existed: boolean;
 		let text: string;
 		try {
-			text = readFileSync(path, "utf8");
+			existed = entryExists(path);
+			text = existed
+				? readFileSync(path, "utf8")
+				: `${JSON.stringify(emptyLists(), null, 2)}\n`;
 		} catch (error) {
-			if ((error as { code?: unknown }).code !== "ENOENT") {
-				report(ctx, `Unable to read ${path}: ${errorMessage(error)}`, "error");
-				return { status: "refused" };
-			}
-			text = `${JSON.stringify(emptyLists(), null, 2)}\n`;
+			report(ctx, `Unable to read ${path}: ${errorMessage(error)}`, "error");
+			return { status: "refused" };
 		}
 		let title = `Model lists: ${path}`;
 		for (;;) {
@@ -289,7 +318,17 @@ export function createModelLists(options: ModelListsOptions = {}) {
 				title = `Invalid model lists (${errorMessage(error)}). Fix and save, or cancel.`;
 				continue;
 			}
-			writeJsonAtomically(path, lists);
+			try {
+				writeJsonAtomically(path, lists, { replace: existed });
+			} catch (error) {
+				if (errorCode(error) !== "EEXIST") throw error;
+				report(
+					ctx,
+					`${path} appeared while editing and was not replaced.`,
+					"warning",
+				);
+				return { status: "kept" };
+			}
 			report(ctx, `Saved ${path}. It applies after /reload.`, "info");
 			return { status: "saved" };
 		}

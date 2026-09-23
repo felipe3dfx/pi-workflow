@@ -1,4 +1,5 @@
 import {
+	linkSync,
 	mkdirSync,
 	readFileSync,
 	renameSync,
@@ -296,7 +297,11 @@ function changedMcpTargets(
 		.map((target) => target.name);
 }
 
-export function writeJsonAtomically(path: string, value: Record<string, unknown>) {
+export function writeJsonAtomically(
+	path: string,
+	value: Record<string, unknown>,
+	{ replace = true } = {},
+) {
 	const directory = dirname(path);
 	mkdirSync(directory, { recursive: true });
 	// ponytail: pid+timestamp assumes a single synchronous writer per process;
@@ -304,7 +309,8 @@ export function writeJsonAtomically(path: string, value: Record<string, unknown>
 	const temporaryPath = `${path}.${process.pid}.${Date.now()}.tmp`;
 	try {
 		writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-		renameSync(temporaryPath, path);
+		if (replace) renameSync(temporaryPath, path);
+		else linkSync(temporaryPath, path);
 	} catch (error) {
 		try {
 			unlinkSync(temporaryPath);
@@ -314,6 +320,7 @@ export function writeJsonAtomically(path: string, value: Record<string, unknown>
 		}
 		throw error;
 	}
+	if (!replace) unlinkSync(temporaryPath);
 }
 
 /**

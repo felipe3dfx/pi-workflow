@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -429,5 +429,126 @@ test("in print mode the model list commands print the usage for extra arguments"
 			assert.match(message, /\/pi-workflow-models \| \/pi-workflow-models-edit/);
 		}
 		await assert.rejects(readFile(path, "utf8"), { code: "ENOENT" });
+	});
+});
+
+test("a file created by another process during classification is never replaced", async (t) => {
+	t.mock.method(console, "error", () => {});
+	for (const hasUI of [true, false]) {
+		await withConfigDirectory(async ({ path }) => {
+			const lists = createModelLists({
+				path,
+				research: placeEverything.research,
+				classify: async () => {
+					await writeExisting(path);
+					return "chat";
+				},
+			});
+			const confirms = [];
+			const { ctx, notifications } = commandContext({
+				hasUI,
+				models: [model("nan", "gemma4")],
+				confirm: async () => {
+					confirms.push(true);
+					return true;
+				},
+			});
+
+			const outcome = await lists.create(ctx);
+
+			assert.equal(outcome.status, "kept", `hasUI=${hasUI}`);
+			assert.equal(await readFile(path, "utf8"), existingContent);
+			assert.equal(confirms.length, 0);
+			assert.deepEqual(await readdir(dirname(path)), ["pi-workflow-models.json"]);
+			if (hasUI) assert.match(notifications.at(-1).message, /not replaced/);
+		});
+	}
+});
+
+async function writeDanglingSymlink(path) {
+	await mkdir(dirname(path), { recursive: true });
+	await symlink(join(dirname(path), "missing-target.json"), path);
+}
+
+test("a dangling symlink is unreadable, not absent", async () => {
+	await withConfigDirectory(async ({ path }) => {
+		await writeDanglingSymlink(path);
+
+		const result = createModelLists({ path }).load();
+
+		assert.equal(result.status, "refused");
+		assert.match(result.reason, /Unable to read/);
+	});
+});
+
+test("the command does not replace a dangling symlink without confirmation", async (t) => {
+	t.mock.method(console, "error", () => {});
+	for (const hasUI of [true, false]) {
+		await withConfigDirectory(async ({ path }) => {
+			await writeDanglingSymlink(path);
+			const questions = [];
+			const lists = createModelLists({ path, ...placeEverything });
+			const { ctx } = commandContext({
+				hasUI,
+				models: [model("nan", "gemma4")],
+				confirm: async () => {
+					questions.push(true);
+					return false;
+				},
+			});
+
+			assert.equal((await lists.create(ctx)).status, "kept", `hasUI=${hasUI}`);
+			assert.equal(questions.length, hasUI ? 1 : 0);
+			assert.equal((await lstat(path)).isSymbolicLink(), true);
+		});
+	}
+});
+
+test("the TUI editor refuses a dangling symlink instead of starting a new file", async () => {
+	await withConfigDirectory(async ({ path }) => {
+		await writeDanglingSymlink(path);
+		let edits = 0;
+		const { ctx } = commandContext({
+			editor: async () => {
+				edits += 1;
+				return JSON.stringify({ schemaVersion: 1, specialists: {}, tiers: {}, taskTypes: {} });
+			},
+		});
+
+		assert.equal((await createModelLists({ path }).edit(ctx)).status, "refused");
+		assert.equal(edits, 0);
+		assert.equal((await lstat(path)).isSymbolicLink(), true);
+	});
+});
+
+test("the command refuses when the file entry cannot be inspected", async (t) => {
+	t.mock.method(console, "error", () => {});
+	await withConfigDirectory(async ({ dir }) => {
+		const notADirectory = join(dir, "agent");
+		await writeFile(notADirectory, "", "utf8");
+		const path = join(notADirectory, "pi-workflow-models.json");
+		const { ctx, notifications } = commandContext({ models: [model("nan", "gemma4")] });
+
+		const outcome = await createModelLists({ path, ...placeEverything }).create(ctx);
+
+		assert.equal(outcome.status, "refused");
+		assert.match(notifications.at(-1).message, /Unable to read/);
+	});
+});
+
+test("the TUI editor does not replace a file created by another process while editing", async () => {
+	await withConfigDirectory(async ({ path }) => {
+		const { ctx, notifications } = commandContext({
+			editor: async (_title, prefill) => {
+				await writeExisting(path);
+				return prefill;
+			},
+		});
+
+		const outcome = await createModelLists({ path }).edit(ctx);
+
+		assert.equal(outcome.status, "kept");
+		assert.equal(await readFile(path, "utf8"), existingContent);
+		assert.match(notifications.at(-1).message, /not replaced/);
 	});
 });
