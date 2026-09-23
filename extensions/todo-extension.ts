@@ -88,7 +88,10 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			switch (params.action) {
 				case "write": {
-					const tasks = todoList.write(params.tasks ?? []);
+					if (params.tasks === undefined) {
+						throw new Error("tasks is required for write");
+					}
+					const tasks = todoList.write(params.tasks);
 					reveal();
 					syncHeader(ctx);
 					return { content: [{ type: "text", text: summarize(tasks) }], details: { tasks } };

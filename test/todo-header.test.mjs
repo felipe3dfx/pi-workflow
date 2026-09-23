@@ -84,3 +84,38 @@ test("a newline embedded in task text is normalised to a space instead of breaki
 	assert.ok(row.includes("line two"));
 	assert.equal(row.includes("\n"), false);
 });
+
+test("a CRLF embedded in task text is normalised, not just the LF", () => {
+	const tasks = [{ id: 1, text: "line one\r\nline two", done: false }];
+	const lines = renderTodoBox(fakeTheme(), tasks, { collapsed: false, showDone: true }, 80);
+	const row = lines.find((line) => line.includes("line one"));
+	assert.ok(row);
+	assert.ok(row.includes("line two"));
+	assert.equal(row.includes("\r"), false);
+	assert.equal(row.includes("\n"), false);
+});
+
+test("a CSI escape sequence in task text is neutralised before styling", () => {
+	const tasks = [{ id: 1, text: "clear \x1b[2J the screen", done: false }];
+	const lines = renderTodoBox(fakeTheme(), tasks, { collapsed: false, showDone: true }, 80);
+	for (const line of lines) {
+		assert.equal(line.includes("\x1b"), false, `line contains ESC: ${JSON.stringify(line)}`);
+	}
+});
+
+test("a right-to-left override character is blanked", () => {
+	const tasks = [{ id: 1, text: "before ‮after", done: false }];
+	const lines = renderTodoBox(fakeTheme(), tasks, { collapsed: false, showDone: true }, 80);
+	for (const line of lines) {
+		assert.equal(line.includes("‮"), false, `line contains U+202E: ${JSON.stringify(line)}`);
+	}
+});
+
+test("a ZWJ family emoji keeps its full width instead of being stripped", () => {
+	const family = "\u{1F468}‍\u{1F469}‍\u{1F467}‍\u{1F466}";
+	const tasks = [{ id: 1, text: family, done: false }];
+	const lines = renderTodoBox(fakeTheme(), tasks, { collapsed: false, showDone: true }, 80);
+	const row = lines.find((line) => line.includes("\u{1F468}"));
+	assert.ok(row);
+	assert.ok(row.includes(family));
+});

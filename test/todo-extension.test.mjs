@@ -106,6 +106,37 @@ test("write replaces the whole list", async () => {
 	assert.equal(result.details.tasks[1].done, true);
 });
 
+test("write with an explicit empty tasks array clears the list", async () => {
+	const { pi, tools } = fakePi();
+	registerSessionTodo(pi);
+	await execute(tools, "add", { text: "stale" });
+	const result = await execute(tools, "write", { tasks: [] });
+	assert.deepEqual(result.details.tasks, []);
+});
+
+test("write without tasks throws and does not mutate the list", async () => {
+	const { pi, tools } = fakePi();
+	registerSessionTodo(pi);
+	await execute(tools, "add", { text: "stale" });
+	await assert.rejects(() => execute(tools, "write", {}), /tasks is required for write/);
+	const result = await execute(tools, "list", {});
+	assert.deepEqual(result.details.tasks, [{ id: 1, text: "stale", done: false }]);
+});
+
+test("session_start does not replay a write that failed because tasks was omitted", async () => {
+	const { pi, tools, handlers } = fakePi();
+	registerSessionTodo(pi);
+	const branch = [
+		todoResultEntry([{ id: 1, text: "kept", done: false }]),
+		{ type: "message", message: { role: "toolResult", toolName: "todo", isError: true, details: undefined } },
+	];
+	const { ctx } = fakeCtx({ mode: "tui", branch });
+	await fireEvent(handlers, "session_start", ctx);
+
+	const listed = await execute(tools, "list", {}, ctx);
+	assert.deepEqual(listed.details.tasks, [{ id: 1, text: "kept", done: false }]);
+});
+
 test("list reports the current tasks without mutating them", async () => {
 	const { pi, tools } = fakePi();
 	registerSessionTodo(pi);

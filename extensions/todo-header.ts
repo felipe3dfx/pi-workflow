@@ -14,6 +14,12 @@ const CLOSE_HINT = "×";
 const CORNER_TOP = "┌";
 const CORNER_BOTTOM = "└";
 
+const UNSAFE_TERMINAL_CHARACTERS = /[\p{Cc}\p{Bidi_Control}]/gu;
+
+function sanitizeTaskText(text: string): string {
+	return text.replace(UNSAFE_TERMINAL_CHARACTERS, " ");
+}
+
 export function renderTodoBox(
 	theme: TodoTheme,
 	tasks: Task[],
@@ -34,7 +40,7 @@ export function renderTodoBox(
 	const bottom = theme.fg("borderMuted", CORNER_BOTTOM);
 
 	const rows = visible.map((task) => {
-		const text = task.text.replace(/\n/g, " ");
+		const text = sanitizeTaskText(task.text);
 		return task.done
 			? theme.fg("success", `  ✓ ${text}`)
 			: theme.bold(theme.fg("accent", `  □ ${text}`));
