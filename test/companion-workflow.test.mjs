@@ -6,7 +6,6 @@ import { tmpdir } from "node:os";
 
 import {
 	createCompanionWorkflow,
-	getCodeGraphReadiness,
 	getCompanionState,
 	loadCompanionsFromPath,
 	manualInstallInstructions,
@@ -28,16 +27,6 @@ test("catalog helpers fail closed on invalid metadata and format manual install 
 	assert.match(loaded.error, /Unable to load companion metadata/);
 	assert.equal(getCompanionState({ package: "alpha" }, () => ({})).status, "missing");
 	assert.match(manualInstallInstructions([{ package: "alpha" }], "Install:"), /pi install npm:alpha/);
-	const readiness = await getCodeGraphReadiness({
-		companion: { package: "@vndv/pi-codegraph", status: "missing" },
-		exec: async () => {
-			throw new Error("missing");
-		},
-		cwd: () => "/tmp/pi-workflow-no-index",
-		directoryExists: () => false,
-	});
-	assert.equal(readiness.cli, "missing");
-	assert.equal(readiness.index, "missing");
 });
 
 test("inspect reports missing companions without installing them", async () => {
@@ -91,6 +80,44 @@ test("install without apply prints the plan and does not mutate", async () => {
 		assert.equal(installs, 0);
 		assert.match(result.manualInstructions, /pi install npm:beta/);
 	});
+});
+
+test("status and doctor flag a missing pi-pretty install as a warning without mentioning CodeGraph or removed packages", async () => {
+	const notifications = [];
+	const workflow = createCompanionWorkflow({
+		catalog: {
+			resolveInstalledVersion: (name) =>
+				name === "@heyhuynhgiabuu/pi-pretty" ? {} : { version: "1.0.0" },
+		},
+		interaction: {
+			notify: (message, level) => notifications.push({ message, level }),
+			installPackage: async () => {
+				throw new Error("must not install");
+			},
+		},
+	});
+	const inspectResult = await workflow.inspect();
+	const diagnoseResult = await workflow.diagnose();
+	for (const result of [inspectResult, diagnoseResult]) {
+		assert.equal(result.level, "warning");
+		assert.match(result.message, /@heyhuynhgiabuu\/pi-pretty — missing/);
+		assert.doesNotMatch(result.message, /@tintinweb\/pi-subagents/);
+		assert.doesNotMatch(result.message, /@vndv\/pi-codegraph/);
+		assert.doesNotMatch(result.message, /CodeGraph/);
+	}
+	assert.equal(notifications.length, 2);
+});
+
+test("doctor reports info when every catalog companion is installed, with no CodeGraph mention", async () => {
+	const workflow = createCompanionWorkflow({
+		catalog: {
+			resolveInstalledVersion: () => ({ version: "1.0.0" }),
+		},
+		interaction: {},
+	});
+	const result = await workflow.diagnose();
+	assert.equal(result.level, "info");
+	assert.doesNotMatch(result.message, /CodeGraph/);
 });
 
 test("apply installs missing companions and stops when install fails", async () => {

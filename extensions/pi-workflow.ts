@@ -24,11 +24,6 @@ function createWorkflow(
 			...options.interaction,
 			notify: (message, level) => getContext()?.ui.notify(message, level),
 		},
-		diagnostics: {
-			exec: (command, args) => pi.exec(command, args ?? []),
-			cwd: () => getContext()?.cwd ?? process.cwd(),
-			...options.diagnostics,
-		},
 		mcp: options.mcp,
 	});
 }
@@ -69,7 +64,7 @@ export default function piWorkflowExtension(
 		handler: (args, ctx) => runCatalogCommand("inspect", args, ctx),
 	});
 	pi.registerCommand("pi-workflow-doctor", {
-		description: "Show companion and CodeGraph diagnostic detail",
+		description: "Show companion diagnostic detail",
 		handler: (args, ctx) => runCatalogCommand("diagnose", args, ctx),
 	});
 	pi.registerCommand("pi-workflow-install-companions", {
