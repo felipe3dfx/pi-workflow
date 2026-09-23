@@ -66,13 +66,15 @@ The launcher lives behind the extension adapter. The extension registers the too
 
 ### Operator surfaces
 
-The operator can see the children of the current session on a card above the editor. Each row shows the agent, the task label, the model, and the elapsed time. The current step is shown only while the child is waiting for a reply. Choosing a child from the overlay writes a markdown transcript and opens it in `$EDITOR`. It is not a live conversation inside the TUI. Print mode does not open the overlay.
+The operator sees the children of the current session in Pi's header, above the chat. The lists are not transcript lines. Pi uses `setHeader`. That placement is not a proven scroll pin. The header reads `Subagents` and the count. An empty list is omitted. Each row shows the name, the current step, the model, the effort, and the elapsed time. The active row is highlighted. Effort also appears on the session input.
 
-A `todo` tool and its card keep the session task list. The tool can write the whole list, add one task, update one task, clear the list, or list it. This is not an ODD feature document, an Engram mirror, or a review trigger.
+`[↗]` opens that child's detail inside the TUI. Thinking in that detail can be collapsed. `[x]` on the list cancels that child. A cancelled child stays visible without `[↗]`. In the detail, `[x]` closes the viewer and does not cancel. `Ctrl+x` cancels the child. `q` or `Esc` also closes the detail. A click works in fullscreen. Every click also has a key, because regular mode leaves the mouse to the terminal.
 
-`ask_user_choice` asks one question with two to four closed options. `ask_user_question` asks a validated questionnaire. Both are refused in print mode, with a warning and no invented answer. They do not launch a child.
+Session tasks are not children. They appear in that same header, below the subagent list. The chat starts after the header. The list sits in a box with bracket corners outside the text column, space above and below, and a `×` that collapses it. A pending row is highlighted. A done row uses a green check. `h` hides or shows done tasks. The line near the input counts running children, not tasks. The tool can write the whole list, add one task, update one task, clear the list, or list it. It does not create a feature document.
 
-The harness renders `read`, `bash`, `grep`, `find`, `ls`, `edit`, and `write` in a compact form. This does not change what those tools do.
+A question panel replaces the input. The transcript stays above it. The header says how many questions are waiting, plus the elapsed time and the token count. Options are numbered, with a radio and a description on the right. The active option is highlighted across the row. `z` is the free-text row. `Tab` moves to the next answer. `Esc` scrolls the transcript and leaves the question panel open. It is not a refusal. `Shift+x` dismisses the panel and the asking tool receives a refusal. It does not invent an answer. Answering does not launch a child. Print mode refuses the panel the same way.
+
+A closed tool or thought is one short line. Opening it shows the body under that title. A thick left bar encloses both the title and the body. `Enter` opens it. Left arrow or `Ctrl+e` closes it. Opening it does not change the file or the tool result.
 
 `pi-pretty` remains an expected companion. If it is missing, the harness is degraded and nothing is installed. The harness does not copy gentle-shell thinking-label patches.
 
@@ -96,8 +98,8 @@ Tests cross the launcher interface and the extension adapter, not private helper
 - A same-turn config file is not read. An invalid file is a refusal.
 - Status and doctor follow the edited catalog and do not treat a missing CodeGraph index as a missing companion.
 - Packed distribution includes `assets/contracts/` and still rejects `skills/`, `prompts/`, and `assets/agents/`.
-- The card shows a background child. The overlay opens its transcript in `$EDITOR`. Print mode refuses the overlay and both question tools.
-- `todo` changes only the session task list. It does not create a feature document.
+- The header shows a background child and the session task list. `[↗]` opens the in-TUI detail. Print mode refuses the question panel and does not invent an answer.
+- `todo` changes only the session task list. It does not create a feature document. A closed tool or thought is one line. Opening it does not change the file.
 
 ## Out of scope
 
@@ -105,7 +107,7 @@ ODD, RDD, SDD, remediation, inter-session messaging, shell chrome, runtime metri
 
 ## Prototype
 
-None. Disposition: not required. Functional questions were resolved by reading gentle-shell and the referent router, then confirmed in the brief.
+`prototype/child-session-operator/`. Disposition: reference-only. It is evidence, not an implementation base.
 
 ## Approved deviations
 
@@ -121,6 +123,6 @@ Pi child sessions, Jev, the Pi model catalog, and the existing companion install
 
 ## Feature review
 
-Final verdict: `READY`. Handoff: `origin/main` `0e460e0`, ADR 0005 accepted. Focused background review: `READY`. No undisposed warning.
+Final verdict: `READY WITH WARNINGS`. Handoff: `present (root-selected)`, `CONTEXT.md`, ADR 0005 accepted. The user accepted the four warnings in the review report.
 
 Report: `docs/specs/child-session-delegation-review.md`.

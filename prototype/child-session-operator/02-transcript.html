@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Prototipo 2: detalle del subagente</title>
+  <link rel="stylesheet" href="prototype.css">
+</head>
+<body>
+  <main class="page">
+    <p class="kicker"><a href="index.html">Mapa</a> · página 2 de 5 · la lista ya está aprobada</p>
+    <h1>Detalle del subagente</h1>
+    <div class="layout">
+      <section>
+        <div class="question">
+          <strong>Pregunta.</strong>
+          <p>¿[↗] abre este detalle dentro de la TUI, como Grok, y no un archivo en $EDITOR?</p>
+        </div>
+        <h2>Mira solo esto</h2>
+        <ul class="check">
+          <li>El encabezado nombra al hijo, su modelo y su effort.</li>
+          <li>[x] cierra este visor. No cancela al hijo.</li>
+          <li>Ctrl+x sí cancela al hijo.</li>
+          <li>El hilo se lee aquí. Thinking se puede plegar.</li>
+          <li>q o Esc vuelven a la lista.</li>
+        </ul>
+        <p class="note">Copia la segunda captura. El archivo de $EDITOR queda en duda.</p>
+      </section>
+      <section class="grok" aria-label="Detalle de un subagente">
+        <div class="grok-top">
+          <span><span class="agent-name">:: Subagent</span> Subagente espera 1 minuto · grok-4.7 (high)</span>
+<span>Thinking · 4.8s <button type="button" id="cancel">[x]</button></span>
+        </div>
+        <div class="grok-top"><span>~</span><span>6.0K / 500K</span></div>
+        <div class="grok-body">
+          <div class="user-bar"><span>) Ejecuta exactamente este comando y nada más: sleep 60</span><span class="stamp">1:56 PM</span></div>
+          <p>◆ Thinking…</p>
+          <p id="thought">The user wants me to execute exactly this command and nothing more: sleep 60</p>
+        </div>
+        <div class="grok-status">Thinking… 1.9s</div>
+        <div class="grok-foot keys">
+          <span><button type="button" id="back">q/Esc:back</button> &nbsp; <button type="button" id="collapse">Ctrl+e:collapse thinking</button> &nbsp; <button type="button" id="cancel-key">Ctrl+x:cancel</button></span>
+          <span>4.5s ↓5.99k [stop]</span>
+        </div>
+      </section>
+    </div>
+  </main>
+  <script>
+    const thought = document.querySelector("#thought");
+    const status = document.querySelector(".grok-status");
+    document.querySelector("#collapse").onclick = () => {
+      thought.hidden = !thought.hidden;
+    };
+    const closeViewer = () => {
+      location.href = "01-tarjeta.html";
+    };
+    document.querySelector("#cancel").onclick = closeViewer;
+    document.querySelector("#back").onclick = closeViewer;
+    document.querySelector("#cancel-key").onclick = () => {
+      status.textContent = "subagente cancelado";
+    };
+  </script>
+</body>
+</html>

@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Prototipo 6: tool o pensamiento expandido</title>
+  <link rel="stylesheet" href="prototype.css">
+</head>
+<body>
+  <main class="page">
+    <p class="kicker"><a href="index.html">Mapa</a> · página 6 · foto de las 2:50</p>
+    <h1>Tool o pensamiento expandido</h1>
+    <div class="layout">
+      <section>
+        <div class="question">
+          <strong>Pregunta.</strong>
+          <p>¿Al abrirlo, el texto queda debajo de la línea y encerrado por una barra a la izquierda?</p>
+        </div>
+        <ul class="check">
+          <li>Cerrado, solo se ve `◆ Thought` o `◆ read`.</li>
+          <li>Abierto, el cuerpo va debajo, con barra izquierda.</li>
+          <li>Enter abre. La flecha izquierda cierra.</li>
+          <li>Abrirlo no cambia el archivo ni el resultado.</li>
+        </ul>
+      </section>
+      <section class="grok" aria-label="Pensamiento expandido">
+        <div class="grok-top"><span>~</span><span>66K / 500K &nbsp; [Dashboard]</span></div>
+        <div class="grok-body">
+          <div class="todo-done">× Revisar el doctor</div>
+          <div class="user-bar"><span>) Preguntame 5 cosas random</span><span class="stamp">2:47 PM</span></div>
+          <div id="thought" class="expanded">
+            <p class="tree-head">◆ Thought for 14.9s</p>
+            <div id="body">
+              The user wants me to ask them 5 random questions. I have the ask_user_question tool. They said "preguntame 5 cosas random".
+            </div>
+          </div>
+          <p class="tree-head">◆ Ask 5 questions</p>
+          <div id="tool">
+            <p class="tree-head" id="tool-line">◆ read assets/companions.json</p>
+            <div id="tool-body" hidden>12 líneas. El archivo no cambió.</div>
+          </div>
+        </div>
+        <div class="grok-input"><span>) Build anything</span><span class="agent-meta">Grok 4.7 (low) · always-approve</span></div>
+        <div class="grok-foot keys"><span><kbd>←</kbd>:collapse &nbsp; <kbd>Enter</kbd>:open &nbsp; <kbd>Ctrl+e</kbd>:collapse thinking</span></div>
+      </section>
+    </div>
+  </main>
+  <script>
+    const body = document.querySelector("#body");
+    const toolBody = document.querySelector("#tool-body");
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        toolBody.hidden = false;
+        document.querySelector("#tool").classList.add("expanded");
+      }
+      if (event.key === "ArrowLeft" || (event.ctrlKey && event.key === "e")) {
+        body.hidden = true;
+        toolBody.hidden = true;
+        document.querySelector("#thought").classList.remove("expanded");
+        document.querySelector("#tool").classList.remove("expanded");
+      }
+    });
+    document.querySelector("#tool-line").onclick = () => {
+      toolBody.hidden = !toolBody.hidden;
+      document.querySelector("#tool").classList.toggle("expanded", !toolBody.hidden);
+    };
+    document.querySelector("#thought").onclick = () => {
+      body.hidden = !body.hidden;
+      document.querySelector("#thought").classList.toggle("expanded", !body.hidden);
+    };
+  </script>
+</body>
+</html>

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Prototipo 4: casos del header</title>
+  <link rel="stylesheet" href="prototype.css">
+</head>
+<body>
+  <main class="page">
+    <p class="kicker"><a href="index.html">Mapa</a> · página 4 · casos para validar</p>
+    <h1>Casos del header</h1>
+    <div class="layout">
+      <section>
+        <div class="question">
+          <strong>Pregunta.</strong>
+          <p>¿Cada caso del header se distingue sin mezclar un hijo con una tarea?</p>
+        </div>
+        <ul class="check">
+          <li>Las dos listas.</li>
+          <li>Solo hijos, o solo todos.</li>
+          <li>Header vacío.</li>
+          <li>Caja colapsada con la ×.</li>
+          <li>Un hijo cancelado, sin [↗].</li>
+        </ul>
+        <div class="controls" id="cases"></div>
+      </section>
+      <section class="grok" aria-label="Casos del header">
+        <div class="pi-header">
+          <div class="label">header de Pi · setHeader</div>
+          <div id="header"></div>
+        </div>
+        <div class="chat-start">aquí empieza el chat</div>
+        <div class="grok-body">
+          <div class="user-bar"><span>) anota el trabajo y lanza solo el mapa</span><span class="stamp">2:10 PM</span></div>
+          <p>◆ Thought for 2.1s</p>
+        </div>
+        <div class="grok-status" id="status"></div>
+        <div class="grok-input"><span>) ▍</span><span class="agent-meta">Grok 4.7 (high) · always-approve</span></div>
+      </section>
+    </div>
+  </main>
+  <script>
+    const cases = [
+      ["both", "Las dos"],
+      ["agents", "Solo hijos"],
+      ["todos", "Solo todos"],
+      ["empty", "Header vacío"],
+      ["collapsed", "Caja colapsada"],
+      ["cancelled", "Hijo cancelado"]
+    ];
+    const header = document.querySelector("#header");
+    const status = document.querySelector("#status");
+    const buttons = document.querySelector("#cases");
+    const child = (cancelled) => `
+      <div class="tree-head">· Subagents 1</div>
+      <div class="agent-row active">
+        <span><span class="agent-name">:: Subagent</span> explore · ${cancelled ? "cancelado" : "mapear el lanzador"}</span>
+        <span class="agent-meta">grok-4.7 (high) 12s ${cancelled ? "" : "[↗][x]"}</span>
+      </div>`;
+    const todos = (collapsed) => collapsed
+      ? `<div class="tree-head">todos colapsados</div>`
+      : `<div class="todo-box"><button type="button" class="close" data-collapse aria-label="Colapsar todos">×</button><div class="todo-row active">□ Revisar el doctor</div><div class="todo-row todo-done">✓ Escribir el contrato de las listas</div></div>`;
+    function show(name) {
+      const agents = name === "both" || name === "agents" || name === "collapsed" || name === "cancelled";
+      const tasks = name === "both" || name === "todos" || name === "collapsed";
+      header.innerHTML = `${agents ? child(name === "cancelled") : ""}${tasks ? todos(name === "collapsed") : ""}`;
+      status.hidden = !agents || name === "cancelled";
+      status.textContent = name === "cancelled" ? "" : "○ 1 subagent still running";
+      document.querySelectorAll("[data-case]").forEach((button) => {
+        button.setAttribute("aria-pressed", String(button.dataset.case === name));
+      });
+      const close = header.querySelector("[data-collapse]");
+      if (close) close.onclick = () => show("collapsed");
+    }
+    buttons.innerHTML = cases.map(([name, label]) => `<button type="button" data-case="${name}">${label}</button>`).join("");
+    buttons.onclick = (event) => {
+      const button = event.target.closest("[data-case]");
+      if (button) show(button.dataset.case);
+    };
+    show("both");
+  </script>
+</body>
+</html>

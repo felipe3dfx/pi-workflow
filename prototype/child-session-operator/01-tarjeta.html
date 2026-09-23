@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Prototipo 1: header de Pi</title>
+  <link rel="stylesheet" href="prototype.css">
+</head>
+<body>
+  <main class="page">
+    <p class="kicker"><a href="index.html">Mapa</a> · página 1 · lo que Pi sí puede</p>
+    <h1>Listas en el header</h1>
+    <div class="layout">
+      <section>
+        <div class="question">
+          <strong>Pregunta.</strong>
+          <p>¿Las dos listas se leen en el header, encima del chat, sin reescribir el transcript?</p>
+        </div>
+        <ul class="check">
+          <li>El header reemplaza el de arranque. No es una línea del hilo.</li>
+          <li>Subagents va primero. Todos va debajo, en su caja.</li>
+          <li>El chat empieza después de la línea punteada.</li>
+          <li>Si haces scroll, este header no está probado como ancla fija.</li>
+        </ul>
+        <p class="note">Spike de Pi 0.87.1: <code>setHeader</code>. No reemplaza toda la pantalla.</p>
+      </section>
+      <section class="grok" aria-label="Header de Pi encima del chat">
+        <div class="pi-header">
+          <div class="label">header de Pi · setHeader</div>
+          <div class="tree-head">· Subagents 2</div>
+          <div class="agent-row active">
+            <span><span class="agent-name">:: Subagent</span> espera B · Run sleep 60…</span>
+            <span class="agent-meta">grok-4.7 (high) 8.3s <span class="actions"><button type="button" onclick="location.href='02-transcript.html'">[↗]</button><button type="button">[x]</button></span></span>
+          </div>
+          <div class="agent-row">
+            <span><span class="agent-name">:: Subagent</span> espera A · Run sleep 60…</span>
+            <span class="agent-meta">grok-4.7 (high) 8.3s [↗][x]</span>
+          </div>
+          <div class="todo-box">
+            <button type="button" class="close" aria-label="Colapsar todos">×</button>
+            <div class="todo-row active">□ Revisar el doctor</div>
+            <div class="todo-row todo-done">✓ Escribir el contrato de las listas</div>
+          </div>
+        </div>
+        <div class="chat-start">aquí empieza el chat · el header no reescribe estas líneas</div>
+        <div class="grok-body">
+          <div class="user-bar"><span>) lanza dos subagentes y anota las tareas</span><span class="stamp">2:37 PM</span></div>
+          <p>◆ Thought for 5.7s</p>
+          <p>listo para la foto</p>
+        </div>
+        <div class="grok-status">○ 2 subagents still running</div>
+        <div class="grok-input"><span>) ▍</span><span class="agent-meta">Grok 4.7 (high) · always-approve</span></div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>
