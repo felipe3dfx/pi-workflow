@@ -15,6 +15,7 @@ const required = [
 	"LICENSE",
 	"extensions/pi-workflow.ts",
 	"extensions/companion-workflow.ts",
+	"extensions/codegraph-tool.ts",
 	"extensions/mcp-config.ts",
 	"assets/companions.json",
 	"assets/mcp-servers.json",
