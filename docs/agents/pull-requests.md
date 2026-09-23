@@ -21,7 +21,7 @@ Use `GitHub` and create a pull request with:
 - Source and proposed destination: `main`
 - Body: the fixed template below; add no other section.
 - Linked ticket and required evidence: the pull request cites the tracker ticket identifier, and how evidence returns to the ticket belongs to `issue-tracker.md`.
-- Reviewers, labels, and drafts: open the pull request as a draft with no labels and no reviewers. Ready-for-review, labels, and reviewers are a manual human process.
+- Reviewers, labels, and drafts: open the pull request ready for review, with no labels and no reviewers. Labels and reviewers remain a manual human process.
 
 A missing or unresolved required rule is a blocker for that external effect; do not invent it.
 
