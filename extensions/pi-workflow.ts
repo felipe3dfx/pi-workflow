@@ -8,10 +8,7 @@ import {
 	createCompanionWorkflow,
 	type CompanionWorkflowOptions,
 } from "./companion-workflow.ts";
-import {
-	type CodeGraphAdapters,
-	createCodeGraphTool,
-} from "./codegraph-tool.ts";
+import { type CodeGraphAdapters, createCodeGraphTool } from "./codegraph-tool.ts";
 import {
 	createModelLists,
 	type ModelListsOptions,
