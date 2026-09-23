@@ -7,6 +7,7 @@ import {
 	createAskUserChoiceTool,
 	createAskUserPanelState,
 	createAskUserQuestionTool,
+	registerAskUserQueueCounter,
 } from "../extensions/ask-user-panel.ts";
 
 const fakeTheme = {
@@ -72,6 +73,7 @@ test("a session with hasUI but no TUI mode refuses ask_user_question the same wa
 
 test("TUI ask_user_choice answers with the selected option on Enter", async () => {
 	const state = createAskUserPanelState();
+	state.pendingCount = 1;
 	const tool = createAskUserChoiceTool(state);
 	const { ctx, send } = tuiContext();
 	const pending = tool.execute(
@@ -86,7 +88,6 @@ test("TUI ask_user_choice answers with the selected option on Enter", async () =
 	send("\r");
 	const result = await pending;
 	assert.deepEqual(result.details, { status: "answered", kind: "option", index: 1, label: "No" });
-	assert.equal(state.pendingCount, 0);
 });
 
 test("digits jump directly to the numbered option", async () => {
@@ -208,6 +209,7 @@ test("render truncates every line to the requested width even with wide characte
 
 test("the panel header names the waiting count and the token count from ctx.getContextUsage", async () => {
 	const state = createAskUserPanelState();
+	state.pendingCount = 1;
 	const tool = createAskUserChoiceTool(state);
 	const { ctx, send, render } = tuiContext();
 	const pending = tool.execute(
@@ -245,6 +247,25 @@ test("options render numbered with a radio and their description, and z is the f
 	assert.equal(lines[2], "1 (●) Yes  Ship it");
 	assert.equal(lines[3], "2 (○) No");
 	assert.equal(lines[4], "z (○) Type your answer");
+	send("X");
+	await pending;
+});
+
+test("the browse hint omits the z key and states what Esc does when free text is disabled", async () => {
+	const state = createAskUserPanelState();
+	const tool = createAskUserChoiceTool(state);
+	const { ctx, send, render } = tuiContext();
+	const pending = tool.execute(
+		"call-f1-hint",
+		{ question: "Deploy now?", options: [{ label: "Yes" }, { label: "No" }], allowFreeText: false },
+		undefined,
+		undefined,
+		ctx,
+	);
+	const lines = render(80);
+	const hint = lines[lines.length - 1];
+	assert.doesNotMatch(hint, /z:/);
+	assert.match(hint, /Esc:panel stays open/);
 	send("X");
 	await pending;
 });
@@ -465,7 +486,7 @@ test("ask_user_choice free text still requires z before typing takes effect", as
 	assert.deepEqual(result.details, { status: "answered", kind: "text", text: "ignored" });
 });
 
-test("R14: ask_user_question opens directly in edit mode, so typing yields the answer immediately", async () => {
+test("ask_user_question opens directly in edit mode, so typing yields the answer immediately", async () => {
 	const state = createAskUserPanelState();
 	const tool = createAskUserQuestionTool(state);
 	const { ctx, send } = tuiContext();
@@ -476,7 +497,7 @@ test("R14: ask_user_question opens directly in edit mode, so typing yields the a
 	assert.deepEqual(result.details, { status: "answered", kind: "text", text: "Xylophone" });
 });
 
-test("R14: Esc returns ask_user_question to browse mode, then Shift+X dismisses", async () => {
+test("Esc returns ask_user_question to browse mode, then Shift+X dismisses", async () => {
 	const state = createAskUserPanelState();
 	const tool = createAskUserQuestionTool(state);
 	const { ctx, send } = tuiContext();
@@ -487,7 +508,7 @@ test("R14: Esc returns ask_user_question to browse mode, then Shift+X dismisses"
 	assert.equal(result.details.status, "refused");
 });
 
-test("R15: the free-text row is only IME-focused while actively in edit mode", async () => {
+test("the free-text row is only IME-focused while actively in edit mode", async () => {
 	const state = createAskUserPanelState();
 	const tool = createAskUserQuestionTool(state);
 	const { ctx, send, render } = tuiContext();
@@ -499,4 +520,112 @@ test("R15: the free-text row is only IME-focused while actively in edit mode", a
 	assert.ok(!browseLine.includes(CURSOR_MARKER), "did not expect the marker while in browse mode");
 	send("X");
 	await pending;
+});
+
+function fakeQueueCounterPi() {
+	const handlers = {};
+	const pi = {
+		on: (event, handler) => {
+			handlers[event] = handler;
+		},
+	};
+	return {
+		pi,
+		messageEnd: (content) => handlers.message_end({ type: "message_end", message: { role: "assistant", content } }),
+		toolExecutionEnd: (toolName, toolCallId) =>
+			handlers.tool_execution_end({ type: "tool_execution_end", toolCallId, toolName, result: {}, isError: false }),
+		turnEnd: () => handlers.turn_end({ type: "turn_end", turnIndex: 0, message: {}, toolResults: [] }),
+	};
+}
+
+test("the header counts ask_user_* calls queued in the same assistant message and decrements as each finishes", async () => {
+	const state = createAskUserPanelState();
+	const counter = fakeQueueCounterPi();
+	registerAskUserQueueCounter(counter.pi, state);
+	counter.messageEnd([
+		{ type: "toolCall", id: "1", name: "ask_user_choice", arguments: {} },
+		{ type: "toolCall", id: "2", name: "ask_user_question", arguments: {} },
+	]);
+	assert.equal(state.pendingCount, 2);
+
+	const choiceTool = createAskUserChoiceTool(state);
+	const first = tuiContext();
+	const pendingFirst = choiceTool.execute(
+		"call-f2-1",
+		{ question: "Deploy now?", options: [{ label: "Yes" }] },
+		undefined,
+		undefined,
+		first.ctx,
+	);
+	assert.match(first.render(80)[0], /2 questions waiting/);
+	first.send("\r");
+	await pendingFirst;
+	counter.toolExecutionEnd("ask_user_choice", "1");
+	assert.equal(state.pendingCount, 1);
+
+	const questionTool = createAskUserQuestionTool(state);
+	const second = tuiContext();
+	const pendingSecond = questionTool.execute("call-f2-2", { question: "Why?" }, undefined, undefined, second.ctx);
+	assert.match(second.render(80)[0], /1 question waiting/);
+	second.send("\x1b");
+	second.send("X");
+	await pendingSecond;
+	counter.toolExecutionEnd("ask_user_question", "2");
+	assert.equal(state.pendingCount, 0);
+});
+
+test("a blocked or invalid first call still frees its slot via tool_execution_end, leaving the valid second call counted", async () => {
+	const state = createAskUserPanelState();
+	const counter = fakeQueueCounterPi();
+	registerAskUserQueueCounter(counter.pi, state);
+	counter.messageEnd([
+		{ type: "toolCall", id: "1", name: "ask_user_choice", arguments: {} },
+		{ type: "toolCall", id: "2", name: "ask_user_question", arguments: {} },
+	]);
+	assert.equal(state.pendingCount, 2);
+
+	counter.toolExecutionEnd("ask_user_choice", "1");
+	assert.equal(state.pendingCount, 1);
+
+	const questionTool = createAskUserQuestionTool(state);
+	const { ctx, send, render } = tuiContext();
+	const pending = questionTool.execute("call-f2-blocked", { question: "Why?" }, undefined, undefined, ctx);
+	assert.match(render(80)[0], /1 question waiting/);
+	send("\x1b");
+	send("X");
+	await pending;
+	counter.toolExecutionEnd("ask_user_question", "2");
+	assert.equal(state.pendingCount, 0);
+});
+
+test("turn_end resets the waiting count even when calls were skipped by an abort", async () => {
+	const state = createAskUserPanelState();
+	const counter = fakeQueueCounterPi();
+	registerAskUserQueueCounter(counter.pi, state);
+	counter.messageEnd([
+		{ type: "toolCall", id: "1", name: "ask_user_choice", arguments: {} },
+		{ type: "toolCall", id: "2", name: "ask_user_question", arguments: {} },
+	]);
+	assert.equal(state.pendingCount, 2);
+
+	counter.toolExecutionEnd("ask_user_choice", "1");
+	assert.equal(state.pendingCount, 1);
+
+	counter.turnEnd();
+	assert.equal(state.pendingCount, 0);
+});
+
+test("the waiting count never goes negative when a panel runs without being counted by message_end", async () => {
+	const state = createAskUserPanelState();
+	const counter = fakeQueueCounterPi();
+	registerAskUserQueueCounter(counter.pi, state);
+	assert.equal(state.pendingCount, 0);
+
+	const tool = createAskUserChoiceTool(state);
+	const { ctx, send } = tuiContext();
+	const pending = tool.execute("call-f2-uncounted", { question: "Deploy?", options: [{ label: "Yes" }] }, undefined, undefined, ctx);
+	send("\r");
+	await pending;
+	counter.toolExecutionEnd("ask_user_choice", "call-f2-uncounted");
+	assert.equal(state.pendingCount, 0);
 });

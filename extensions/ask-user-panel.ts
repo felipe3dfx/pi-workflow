@@ -1,4 +1,4 @@
-import type { AgentToolResult, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { decodeKittyPrintable, Input, Key, matchesKey, truncateToWidth, type Component } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
@@ -18,6 +18,24 @@ export interface AskUserPanelState {
 
 export function createAskUserPanelState(): AskUserPanelState {
 	return { pendingCount: 0 };
+}
+
+const ASK_USER_TOOL_NAMES = new Set(["ask_user_choice", "ask_user_question"]);
+
+export function registerAskUserQueueCounter(pi: ExtensionAPI, state: AskUserPanelState): void {
+	pi.on("message_end", (event) => {
+		if (event.message.role !== "assistant") return;
+		state.pendingCount = event.message.content.filter(
+			(block) => block.type === "toolCall" && ASK_USER_TOOL_NAMES.has(block.name),
+		).length;
+	});
+	pi.on("tool_execution_end", (event) => {
+		if (!ASK_USER_TOOL_NAMES.has(event.toolName)) return;
+		state.pendingCount = Math.max(0, state.pendingCount - 1);
+	});
+	pi.on("turn_end", () => {
+		state.pendingCount = 0;
+	});
 }
 
 function printableChar(data: string): string | undefined {
@@ -60,123 +78,121 @@ async function askPanel(
 		return refusal(ABORTED_REASON);
 	}
 
-	state.pendingCount += 1;
 	const startedAt = Date.now();
 
-	try {
-		const answer = await ctx.ui.custom<AskUserAnswer>((_tui, theme, _keybindings, done) => {
-			const freeTextIndex = options.length;
-			const rowCount = allowFreeText ? options.length + 1 : options.length;
-			const input = new Input();
-			let index = 0;
-			let mode: "browse" | "edit" = allowFreeText && options.length === 0 ? "edit" : "browse";
+	const answer = await ctx.ui.custom<AskUserAnswer>((_tui, theme, _keybindings, done) => {
+		const freeTextIndex = options.length;
+		const rowCount = allowFreeText ? options.length + 1 : options.length;
+		const input = new Input();
+		let index = 0;
+		let mode: "browse" | "edit" = allowFreeText && options.length === 0 ? "edit" : "browse";
 
-			const isFreeTextRow = (i: number) => allowFreeText && i === freeTextIndex;
+		const isFreeTextRow = (i: number) => allowFreeText && i === freeTextIndex;
 
-			const finish = (result: AskUserAnswer) => {
-				signal?.removeEventListener("abort", onAbort);
-				done(result);
-			};
-			const onAbort = () => finish({ status: "refused", reason: ABORTED_REASON });
-			signal?.addEventListener("abort", onAbort, { once: true });
+		const finish = (result: AskUserAnswer) => {
+			signal?.removeEventListener("abort", onAbort);
+			done(result);
+		};
+		const onAbort = () => finish({ status: "refused", reason: ABORTED_REASON });
+		signal?.addEventListener("abort", onAbort, { once: true });
 
-			input.onSubmit = (value) => {
-				if (value.trim().length === 0) return;
-				finish({ status: "answered", kind: "text", text: value });
-			};
-			input.onEscape = () => {};
+		input.onSubmit = (value) => {
+			if (value.trim().length === 0) return;
+			finish({ status: "answered", kind: "text", text: value });
+		};
+		input.onEscape = () => {};
 
-			const submitCurrent = () => {
-				const option = options[index];
-				finish({ status: "answered", kind: "option", index, label: option.label });
-			};
+		const submitCurrent = () => {
+			const option = options[index];
+			finish({ status: "answered", kind: "option", index, label: option.label });
+		};
 
-			const component: Component = {
-				render(width) {
-					const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
-					const usage = ctx.getContextUsage();
-					const tokenInfo = usage?.tokens != null ? `${usage.tokens} tokens` : "token count unavailable";
-					const waiting = `${state.pendingCount} question${state.pendingCount === 1 ? "" : "s"} waiting`;
-					const lines = [
-						theme.fg("dim", `${waiting} · ${elapsedSeconds}s · ${tokenInfo}`),
-						theme.bold(question),
-					];
-					options.forEach((option, i) => {
-						const active = i === index;
-						const radio = active ? "●" : "○";
-						const left = `${i + 1} (${radio}) ${option.label}`;
-						const row = option.description ? `${left}  ${option.description}` : left;
-						lines.push(active ? theme.fg("accent", row) : row);
-					});
-					if (allowFreeText) {
-						const active = isFreeTextRow(index);
-						input.focused = active && mode === "edit";
-						const radio = active ? "●" : "○";
-						const prefix = `z (${radio}) `;
-						const row = input.focused
-							? prefix + (input.render(Math.max(width - prefix.length, 1))[0] ?? "")
-							: `${prefix}${input.getValue() || "Type your answer"}`;
-						lines.push(active ? theme.fg("accent", row) : row);
-					}
-					const hint =
-						mode === "edit"
-							? "Enter:submit  Tab:next answer  Esc:back to browse"
-							: "Tab:next answer  Enter:select  z:edit free text  Shift+X:dismiss";
-					lines.push(theme.fg("dim", hint));
-					return lines.map((line) => truncateToWidth(line, width));
-				},
-				invalidate() {},
-				handleInput(data: string) {
-					if (mode === "edit") {
-						if (matchesKey(data, Key.tab)) {
-							mode = "browse";
-							index = (index + 1) % rowCount;
-							return;
-						}
-						if (matchesKey(data, Key.escape)) {
-							mode = "browse";
-							return;
-						}
-						input.handleInput(data);
-						return;
-					}
+		const component: Component = {
+			render(width) {
+				const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
+				const usage = ctx.getContextUsage();
+				const tokenInfo = usage?.tokens != null ? `${usage.tokens} tokens` : "token count unavailable";
+				const waiting = `${state.pendingCount} question${state.pendingCount === 1 ? "" : "s"} waiting`;
+				const lines = [
+					theme.fg("dim", `${waiting} · ${elapsedSeconds}s · ${tokenInfo}`),
+					theme.bold(question),
+				];
+				options.forEach((option, i) => {
+					const active = i === index;
+					const radio = active ? "●" : "○";
+					const left = `${i + 1} (${radio}) ${option.label}`;
+					const row = option.description ? `${left}  ${option.description}` : left;
+					lines.push(active ? theme.fg("accent", row) : row);
+				});
+				if (allowFreeText) {
+					const active = isFreeTextRow(index);
+					input.focused = active && mode === "edit";
+					const radio = active ? "●" : "○";
+					const prefix = `z (${radio}) `;
+					const row = input.focused
+						? prefix + (input.render(Math.max(width - prefix.length, 1))[0] ?? "")
+						: `${prefix}${input.getValue() || "Type your answer"}`;
+					lines.push(active ? theme.fg("accent", row) : row);
+				}
+				const browseHintParts = ["Tab:next answer", "Enter:select"];
+				if (allowFreeText) browseHintParts.push("z:edit free text");
+				browseHintParts.push("Esc:panel stays open", "Shift+X:dismiss");
+				const hint =
+					mode === "edit"
+						? "Enter:submit  Tab:next answer  Esc:back to browse"
+						: browseHintParts.join("  ");
+				lines.push(theme.fg("dim", hint));
+				return lines.map((line) => truncateToWidth(line, width));
+			},
+			invalidate() {},
+			handleInput(data: string) {
+				if (mode === "edit") {
 					if (matchesKey(data, Key.tab)) {
+						mode = "browse";
 						index = (index + 1) % rowCount;
 						return;
 					}
-					if (matchesKey(data, Key.shift("x"))) {
-						finish({ status: "refused", reason: "The operator dismissed the question with Shift+X." });
+					if (matchesKey(data, Key.escape)) {
+						mode = "browse";
 						return;
 					}
-					if (matchesKey(data, Key.enter)) {
-						if (isFreeTextRow(index)) {
-							mode = "edit";
-							return;
-						}
-						submitCurrent();
-						return;
-					}
-					const char = printableChar(data);
-					if (char === undefined) return;
-					const digit = Number.parseInt(char, 10);
-					if (!Number.isNaN(digit) && digit >= 1 && digit <= options.length) {
-						index = digit - 1;
-						return;
-					}
-					if (allowFreeText && (char === "z" || char === "Z")) {
-						index = freeTextIndex;
+					input.handleInput(data);
+					return;
+				}
+				if (matchesKey(data, Key.tab)) {
+					index = (index + 1) % rowCount;
+					return;
+				}
+				if (matchesKey(data, Key.shift("x"))) {
+					finish({ status: "refused", reason: "The operator dismissed the question with Shift+X." });
+					return;
+				}
+				if (matchesKey(data, Key.enter)) {
+					if (isFreeTextRow(index)) {
 						mode = "edit";
+						return;
 					}
-				},
-			};
+					submitCurrent();
+					return;
+				}
+				const char = printableChar(data);
+				if (char === undefined) return;
+				const digit = Number.parseInt(char, 10);
+				if (!Number.isNaN(digit) && digit >= 1 && digit <= options.length) {
+					index = digit - 1;
+					return;
+				}
+				if (allowFreeText && (char === "z" || char === "Z")) {
+					index = freeTextIndex;
+					mode = "edit";
+				}
+			},
+		};
 
-			return component;
-		});
+		return component;
+	});
 
-		return { content: [{ type: "text", text: describeAnswer(answer) }], details: answer };
-	} finally {
-		state.pendingCount -= 1;
-	}
+	return { content: [{ type: "text", text: describeAnswer(answer) }], details: answer };
 }
 
 const optionSchema = Type.Object({

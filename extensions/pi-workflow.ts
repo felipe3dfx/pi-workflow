@@ -8,6 +8,7 @@ import {
 	createAskUserChoiceTool,
 	createAskUserPanelState,
 	createAskUserQuestionTool,
+	registerAskUserQueueCounter,
 } from "./ask-user-panel.ts";
 import {
 	createCompanionWorkflow,
@@ -67,6 +68,7 @@ export default function piWorkflowExtension(
 	const askUserPanelState = createAskUserPanelState();
 	pi.registerTool(createAskUserChoiceTool(askUserPanelState));
 	pi.registerTool(createAskUserQuestionTool(askUserPanelState));
+	registerAskUserQueueCounter(pi, askUserPanelState);
 
 	pi.registerCommand("pi-workflow-status", {
 		description: "Summarize companion package readiness",
