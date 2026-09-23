@@ -8,9 +8,14 @@ import {
 	createCompanionWorkflow,
 	type CompanionWorkflowOptions,
 } from "./companion-workflow.ts";
+import {
+	createModelLists,
+	type ModelListsOptions,
+	report,
+} from "./model-lists.ts";
 
 const usage =
-	"Usage: /pi-workflow-status | /pi-workflow-doctor | /pi-workflow-install-companions [--apply]";
+	"Usage: /pi-workflow-status | /pi-workflow-doctor | /pi-workflow-install-companions [--apply] | /pi-workflow-models | /pi-workflow-models-edit";
 
 function createWorkflow(
 	pi: ExtensionAPI,
@@ -30,11 +35,12 @@ function createWorkflow(
 
 export default function piWorkflowExtension(
 	pi: ExtensionAPI,
-	options: CompanionWorkflowOptions = {},
+	options: CompanionWorkflowOptions & { modelLists?: ModelListsOptions } = {},
 ) {
 	let currentCtx: ExtensionContext | ExtensionCommandContext | undefined;
 	const context = () => currentCtx;
 	const workflow = createWorkflow(pi, context, options);
+	const modelLists = createModelLists(options.modelLists);
 
 	pi.on("session_start", async (_event, ctx) => {
 		currentCtx = ctx;
@@ -78,6 +84,27 @@ export default function piWorkflowExtension(
 			}
 			currentCtx = ctx;
 			await workflow.installMissing(parts[0] === "--apply");
+		},
+	});
+	pi.registerCommand("pi-workflow-models", {
+		description:
+			"Create the global model lists when missing, or replace them after confirmation",
+		handler: async (args, ctx) => {
+			if (args.trim()) {
+				report(ctx, usage, "error");
+				return;
+			}
+			await modelLists.create(ctx);
+		},
+	});
+	pi.registerCommand("pi-workflow-models-edit", {
+		description: "Edit the global model lists in the TUI",
+		handler: async (args, ctx) => {
+			if (args.trim()) {
+				report(ctx, usage, "error");
+				return;
+			}
+			await modelLists.edit(ctx);
 		},
 	});
 }
