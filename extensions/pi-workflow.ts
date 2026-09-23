@@ -5,6 +5,11 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import {
+	createAskUserChoiceTool,
+	createAskUserPanelState,
+	createAskUserQuestionTool,
+} from "./ask-user-panel.ts";
+import {
 	createCompanionWorkflow,
 	type CompanionWorkflowOptions,
 } from "./companion-workflow.ts";
@@ -58,6 +63,10 @@ export default function piWorkflowExtension(
 		currentCtx = ctx;
 		await workflow[mode]();
 	}
+
+	const askUserPanelState = createAskUserPanelState();
+	pi.registerTool(createAskUserChoiceTool(askUserPanelState));
+	pi.registerTool(createAskUserQuestionTool(askUserPanelState));
 
 	pi.registerCommand("pi-workflow-status", {
 		description: "Summarize companion package readiness",
