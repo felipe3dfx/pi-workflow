@@ -14,6 +14,7 @@ import {
 	createCompanionWorkflow,
 	type CompanionWorkflowOptions,
 } from "./companion-workflow.ts";
+import { type CodeGraphAdapters, createCodeGraphTool } from "./codegraph-tool.ts";
 
 const usage =
 	"Usage: /pi-workflow-status | /pi-workflow-doctor | /pi-workflow-install-companions [--apply]";
@@ -36,7 +37,7 @@ function createWorkflow(
 
 export default function piWorkflowExtension(
 	pi: ExtensionAPI,
-	options: CompanionWorkflowOptions = {},
+	options: CompanionWorkflowOptions & { codegraph?: CodeGraphAdapters } = {},
 ) {
 	let currentCtx: ExtensionContext | ExtensionCommandContext | undefined;
 	const context = () => currentCtx;
@@ -65,6 +66,7 @@ export default function piWorkflowExtension(
 		await workflow[mode]();
 	}
 
+	pi.registerTool(createCodeGraphTool(options.codegraph));
 	const askUserPanelState = createAskUserPanelState();
 	pi.registerTool(createAskUserChoiceTool(askUserPanelState));
 	pi.registerTool(createAskUserQuestionTool(askUserPanelState));
