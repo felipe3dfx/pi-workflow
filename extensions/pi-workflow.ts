@@ -14,6 +14,7 @@ import {
 	type ModelListsOptions,
 	report,
 } from "./model-lists.ts";
+import { registerSessionTodo } from "./todo-extension.ts";
 
 const usage =
 	"Usage: /pi-workflow-status | /pi-workflow-doctor | /pi-workflow-install-companions [--apply] | /pi-workflow-models | /pi-workflow-models-edit";
@@ -44,6 +45,7 @@ export default function piWorkflowExtension(
 	let currentCtx: ExtensionContext | ExtensionCommandContext | undefined;
 	const context = () => currentCtx;
 	const workflow = createWorkflow(pi, context, options);
+	registerSessionTodo(pi);
 	const modelLists = createModelLists(options.modelLists);
 
 	pi.on("session_start", async (_event, ctx) => {

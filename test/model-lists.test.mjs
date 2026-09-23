@@ -354,6 +354,7 @@ test("the extension registers the create command and the TUI editor over the sam
 			exec: async () => ({ code: 0 }),
 			registerCommand: (name, command) => commands.set(name, command),
 			registerTool: () => {},
+			registerShortcut: () => {},
 		};
 		piWorkflowExtension(pi, { modelLists: { path, ...placeEverything } });
 
@@ -383,6 +384,7 @@ test("the model list commands reject extra arguments with the shared usage", asy
 			exec: async () => ({ code: 0 }),
 			registerCommand: (name, command) => commands.set(name, command),
 			registerTool: () => {},
+			registerShortcut: () => {},
 		};
 		piWorkflowExtension(pi, { modelLists: { path, ...placeEverything } });
 
@@ -416,6 +418,7 @@ test("in print mode the model list commands print the usage for extra arguments"
 			exec: async () => ({ code: 0 }),
 			registerCommand: (name, command) => commands.set(name, command),
 			registerTool: () => {},
+			registerShortcut: () => {},
 		};
 		piWorkflowExtension(pi, { modelLists: { path, ...placeEverything } });
 

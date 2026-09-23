@@ -55,13 +55,17 @@
     "node": ">=22.19"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.3",
     "@earendil-works/pi-coding-agent": "0.80.6",
+    "@earendil-works/pi-tui": "0.80.6",
     "@types/node": "^22.20.1",
     "knip": "^6.25.0",
+    "typebox": "1.1.38",
     "typescript": "^7.0.2"
   }
 }
