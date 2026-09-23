@@ -2,27 +2,30 @@
 
 Estado: PUBLISHED
 
-Paquete: brief de delegación confirmado en la sesión de origen.
-Handoff: `origin/main` `0e460e0`, ADR 0005 aceptado.
-Veredicto: `READY`.
+Paquete: `docs/features/child-session-delegation.md` y el prototipo `prototype/child-session-operator/`.
+Handoff: `present (root-selected)`, `CONTEXT.md`, ADR 0005 aceptado.
+Veredicto: `READY WITH WARNINGS`.
 
 ## Resultado
 
-La revisión final del paquete, y la revisión enfocada posterior del default de background, no dejaron bloqueadores ni advertencias sin disposición.
+La revisión del paquete nuevo usó tres lentes en `openai-codex/gpt-6-sol` con `medium`. El usuario dispuso los hallazgos.
 
-La revisión enfocada usó `openai-codex/gpt-6-sol` en `medium`. Las tres lentes devolvieron ninguno. La regla no contradice print mode, el resultado empujado, quedarse en la sesión, ni el rechazo sin hijo.
-
-La spec publicada omitió superficies que el brief ya revisado incluía. Esta publicación las restituye: tarjeta de agentes, transcript en `$EDITOR`, lista `todo`, `ask_user_choice`, `ask_user_question` y render compacto de tools. No es una decisión nueva. No copia los parches de thinking de gentle-shell.
+La spec anterior pedía una tarjeta y un transcript en `$EDITOR`. Esta publicación la reemplaza por el header de Pi y el detalle dentro de la TUI. Un spike en Pi 0.87.1 mostró que `setHeader` puede pintar las listas encima del chat. No prueba un ancla al hacer scroll ni un reemplazo de toda la pantalla.
 
 ## Autoridad
 
-Handoff: `present (root-selected)`, `CONTEXT.md`. ADR 0005 aceptado por el merge del PR #62. El catálogo vigente en `0e460e0` todavía lista los companions viejos. Esa diferencia es la consecuencia aceptada del ADR hasta el cambio de código de esta feature.
+Handoff: `present (root-selected)`, `CONTEXT.md`. ADR 0005 aceptado. El informe de autoridad está en `docs/features/child-session-delegation-authority-review.md`. El encabezado visible `Subagents` no es un término del glosario. No se escribió uno.
 
 ## Decisions, Deviations and Accepted Risks
 
-None identified.
+La desviación autorizada sigue siendo la del ADR 0005. No hay desinstalación silenciosa.
 
-La desviación autorizada es la del ADR 0005: child session y acceso a CodeGraph son capacidades del harness. `@tintinweb/pi-subagents` y `@vndv/pi-codegraph` dejan de ser companions esperados. `@heyhuynhgiabuu/pi-pretty` es un companion esperado. Esta feature es el cambio de código que el ADR dejó pendiente. No hay desinstalación silenciosa.
+Advertencias aceptadas por el usuario:
+
+- La lista no define si un hijo terminado sigue visible, ni cómo el teclado mueve la fila.
+- `Tab` avanza de pregunta, sin definir la respuesta parcial que se conserva.
+- La selección de modelo y el comando que investiga listas siguen más amplios que el lanzamiento.
+- Tareas, preguntas y tools siguen en esta feature aunque no creen un hijo.
 
 ## Spec
 

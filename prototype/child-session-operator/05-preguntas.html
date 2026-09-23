@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Prototipo 5: pregunta</title>
+  <link rel="stylesheet" href="prototype.css">
+</head>
+<body>
+  <main class="page">
+    <p class="kicker"><a href="index.html">Mapa</a> · página 5 · foto de las 2:47</p>
+    <h1>Pregunta al operador</h1>
+    <div class="layout">
+      <section>
+        <div class="question">
+          <strong>Pregunta.</strong>
+          <p>¿El panel queda abajo, sobre el campo, y el hilo sigue arriba?</p>
+        </div>
+        <ul class="check">
+          <li>`Esc` desplaza el hilo. El panel sigue abierto. No es un rechazo.</li>
+          <li>El panel no es la caja de todos.</li>
+          <li>La opción activa ocupa todo el ancho y trae la descripción a la derecha.</li>
+          <li>`z` es la fila libre. Shift+x cierra el panel.</li>
+        </ul>
+      </section>
+      <section class="grok" aria-label="Pregunta abajo del hilo">
+        <div class="grok-top"><span>~</span><span>66K / 500K &nbsp; [Dashboard]</span></div>
+        <div class="grok-body" id="thread" style="max-height: 180px; overflow: auto;">
+          <div class="todo-done">× Revisar el doctor</div>
+          <div class="todo-done">× Escribir el contrato de las listas</div>
+          <div class="user-bar"><span>) Preguntame 5 cosas random</span><span class="stamp">3:24 PM</span></div>
+          <div class="expanded">
+            <p class="tree-head">◆ Thought for 3.9s</p>
+            <div>The user wants me to ask 5 random questions again.</div>
+          </div>
+          <p>Te las dejo en el formulario de la TUI. <span class="stamp">3:24 PM</span></p>
+          <p class="tree-head">◆ Ask 5 questions</p>
+        </div>
+        <div class="grok-top">
+          <span>◆ Waiting on answers for 5 questions</span>
+          <span>17s ↓66.0k [stop]</span>
+        </div>
+        <div id="ask" style="margin: 0 12px 8px; background: #2a2a2a; border-radius: 4px; padding: 8px 0 4px;">
+          <div style="padding: 0 10px 8px;">Si pudieras teletransportarte ahora mismo, ¿a dónde irías?</div>
+          <div class="todo-row active" data-option style="display: flex; justify-content: space-between;"><span>1 (●) A la playa (Recommended)</span><span class="agent-meta">Sol, agua y cero pendientes.</span></div>
+          <div class="todo-row" data-option style="display: flex; justify-content: space-between;"><span>2 (○) A una ciudad que no conozcas</span><span class="agent-meta">Perderte un rato sin plan.</span></div>
+          <div class="todo-row" data-option style="display: flex; justify-content: space-between;"><span>3 (○) A la cocina de tu casa</span><span class="agent-meta">Lo familiar gana.</span></div>
+          <div class="todo-row" data-option style="display: flex; justify-content: space-between;"><span>4 (○) Al espacio</span><span class="agent-meta">Aunque sea un minuto.</span></div>
+          <div class="todo-row" data-option>z (○) Type your answer here</div>
+          <div class="grok-top">
+            <span>[1/5] ↑/↓ navigate · ←/→ question · y copy</span>
+            <span>Enter:select</span>
+          </div>
+        </div>
+        <div class="grok-status" id="answer"></div>
+        <div class="grok-foot keys"><span><kbd>Tab</kbd>:next answer &nbsp; <kbd>Esc</kbd>:scrollback &nbsp; <kbd>Shift+x</kbd>:dismiss</span></div>
+      </section>
+    </div>
+  </main>
+  <script>
+    const rows = [...document.querySelectorAll("[data-option]")];
+    const panel = document.querySelector("#ask");
+    let index = 0;
+    function mark(text, on) {
+      return text.replace(/[●○]/, on ? "●" : "○");
+    }
+    function paint() {
+      rows.forEach((row, i) => {
+        row.classList.toggle("active", i === index);
+        const label = row.querySelector("span") || row;
+        label.textContent = mark(label.textContent, i === index);
+      });
+    }
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Tab" || event.key === "ArrowDown") {
+        event.preventDefault();
+        index = (index + 1) % rows.length;
+        paint();
+      }
+      if (event.key === "Escape") {
+        const thread = document.querySelector("#thread");
+        thread.scrollTop = 0;
+        document.querySelector("#answer").textContent = "Scrollback. La pregunta sigue abierta.";
+      }
+      if (event.key === "x" && event.shiftKey) {
+        panel.hidden = true;
+        document.querySelector("#answer").textContent = "Rechazo. No se inventa una respuesta.";
+      }
+    });
+    rows.forEach((row, i) => {
+      row.onclick = () => {
+        index = i;
+        paint();
+      };
+    });
+  </script>
+</body>
+</html>

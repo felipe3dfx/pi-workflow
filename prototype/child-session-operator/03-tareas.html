@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Prototipo 3: todos en el header</title>
+  <link rel="stylesheet" href="prototype.css">
+</head>
+<body>
+  <main class="page">
+    <p class="kicker"><a href="index.html">Mapa</a> · página 3 · header de Pi</p>
+    <h1>Todos en el header</h1>
+    <div class="layout">
+      <section>
+        <div class="question">
+          <strong>Pregunta.</strong>
+          <p>¿Sin hijos, el header muestra solo la caja de todos?</p>
+        </div>
+        <ul class="check">
+          <li>No hay sección Subagents.</li>
+          <li>La caja conserva corchetes, margen y la X.</li>
+          <li>El texto de la tarea no se corre por el borde.</li>
+          <li>El chat empieza debajo del header.</li>
+        </ul>
+      </section>
+      <section class="grok" aria-label="Solo todos en el header">
+        <div class="pi-header">
+          <div class="label">header de Pi · setHeader</div>
+          <div class="todo-box" id="box">
+            <button type="button" class="close" id="close" aria-label="Colapsar todos">×</button>
+            <div class="todo-row active">□ Revisar el doctor</div>
+            <div class="todo-row todo-done" id="done">✓ Escribir el contrato de las listas</div>
+          </div>
+        </div>
+        <div class="chat-start">aquí empieza el chat</div>
+        <div class="grok-body">
+          <div class="user-bar"><span>) anota las tareas de esta sesión</span><span class="stamp">2:37 PM</span></div>
+          <p>No lancé ningún subagente.</p>
+        </div>
+        <div class="grok-input"><span>) ▍</span><span class="agent-meta">Grok 4.7 (low) · always-approve</span></div>
+        <div class="grok-foot keys"><span><kbd>h</kbd>:hide done</span></div>
+      </section>
+    </div>
+  </main>
+  <script>
+    document.querySelector("#close").onclick = () => {
+      document.querySelector("#box").hidden = true;
+    };
+  </script>
+</body>
+</html>
