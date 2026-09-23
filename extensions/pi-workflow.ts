@@ -8,6 +8,7 @@ import {
 	createCompanionWorkflow,
 	type CompanionWorkflowOptions,
 } from "./companion-workflow.ts";
+import { registerSessionTodo } from "./todo-extension.ts";
 
 const usage =
 	"Usage: /pi-workflow-status | /pi-workflow-doctor | /pi-workflow-install-companions [--apply]";
@@ -35,6 +36,7 @@ export default function piWorkflowExtension(
 	let currentCtx: ExtensionContext | ExtensionCommandContext | undefined;
 	const context = () => currentCtx;
 	const workflow = createWorkflow(pi, context, options);
+	registerSessionTodo(pi);
 
 	pi.on("session_start", async (_event, ctx) => {
 		currentCtx = ctx;
