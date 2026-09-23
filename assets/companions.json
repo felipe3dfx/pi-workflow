@@ -10,16 +10,12 @@
       "description": "MCP adapter resources for Pi."
     },
     {
-      "package": "@tintinweb/pi-subagents",
-      "description": "Subagent orchestration resources for Pi."
-    },
-    {
       "package": "pi-web-access",
       "description": "Web access extension and skills for Pi."
     },
     {
-      "package": "@vndv/pi-codegraph",
-      "description": "CodeGraph companion package for code intelligence and project index support."
+      "package": "@heyhuynhgiabuu/pi-pretty",
+      "description": "Pretty rendering for Pi tool output and thinking."
     }
   ]
 }
