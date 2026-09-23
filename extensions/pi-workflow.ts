@@ -8,6 +8,7 @@ import {
 	createCompanionWorkflow,
 	type CompanionWorkflowOptions,
 } from "./companion-workflow.ts";
+import { type CodeGraphAdapters, createCodeGraphTool } from "./codegraph-tool.ts";
 import { registerSessionTodo } from "./todo-extension.ts";
 
 const usage =
@@ -31,7 +32,7 @@ function createWorkflow(
 
 export default function piWorkflowExtension(
 	pi: ExtensionAPI,
-	options: CompanionWorkflowOptions = {},
+	options: CompanionWorkflowOptions & { codegraph?: CodeGraphAdapters } = {},
 ) {
 	let currentCtx: ExtensionContext | ExtensionCommandContext | undefined;
 	const context = () => currentCtx;
@@ -61,6 +62,7 @@ export default function piWorkflowExtension(
 		await workflow[mode]();
 	}
 
+	pi.registerTool(createCodeGraphTool(options.codegraph));
 	pi.registerCommand("pi-workflow-status", {
 		description: "Summarize companion package readiness",
 		handler: (args, ctx) => runCatalogCommand("inspect", args, ctx),
