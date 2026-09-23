@@ -20,7 +20,7 @@ Create a GitHub issue in `felipe3dfx/pi-workflow` with these confirmed fields:
 
 - Title: `none (confirmed absent)`
 - Body: `none (confirmed absent)`
-- Labels, assignee, milestone, project, and linked issues: `labels, assignee, milestone, and project remain none (confirmed absent); linked issues use gh issue edit --add-blocked-by`
+- Labels, assignee, milestone, project, and linked issues: `labels, assignee, milestone, and project remain none (confirmed absent); linked issues use gh issue edit --add-blocked-by; parent and child use gh issue edit --parent`
 
 Publication capability:
 
