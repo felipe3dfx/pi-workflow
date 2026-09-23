@@ -10,6 +10,8 @@ const commands = [
 	"pi-workflow-status",
 	"pi-workflow-doctor",
 	"pi-workflow-install-companions",
+	"pi-workflow-models",
+	"pi-workflow-models-edit",
 ];
 
 export async function validatePiPackage(packageRoot = root) {

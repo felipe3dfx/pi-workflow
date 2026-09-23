@@ -1,4 +1,5 @@
 import {
+	linkSync,
 	mkdirSync,
 	readFileSync,
 	renameSync,
@@ -63,7 +64,7 @@ const defaultMcpServerCatalogPath = resolve(
 	"../assets/mcp-servers.json",
 );
 
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
+export function isPlainRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
@@ -77,7 +78,7 @@ function piAgentHome(): string {
 		: resolve(process.env.HOME ?? homedir(), ".pi", "agent");
 }
 
-function activePiAgentDirectory(
+export function activePiAgentDirectory(
 	mcpOptions: CompanionMcpAdapters = {},
 ): string {
 	if (mcpOptions.agentDirectory) {
@@ -296,7 +297,11 @@ function changedMcpTargets(
 		.map((target) => target.name);
 }
 
-function writeJsonAtomically(path: string, value: Record<string, unknown>) {
+export function writeJsonAtomically(
+	path: string,
+	value: Record<string, unknown>,
+	{ replace = true } = {},
+) {
 	const directory = dirname(path);
 	mkdirSync(directory, { recursive: true });
 	// ponytail: pid+timestamp assumes a single synchronous writer per process;
@@ -304,7 +309,8 @@ function writeJsonAtomically(path: string, value: Record<string, unknown>) {
 	const temporaryPath = `${path}.${process.pid}.${Date.now()}.tmp`;
 	try {
 		writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-		renameSync(temporaryPath, path);
+		if (replace) renameSync(temporaryPath, path);
+		else linkSync(temporaryPath, path);
 	} catch (error) {
 		try {
 			unlinkSync(temporaryPath);
@@ -314,6 +320,7 @@ function writeJsonAtomically(path: string, value: Record<string, unknown>) {
 		}
 		throw error;
 	}
+	if (!replace) unlinkSync(temporaryPath);
 }
 
 /**
