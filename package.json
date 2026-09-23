@@ -54,6 +54,9 @@
   "engines": {
     "node": ">=22.19"
   },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
   "devDependencies": {
     "@biomejs/biome": "^2.5.3",
     "@earendil-works/pi-coding-agent": "0.80.6",
