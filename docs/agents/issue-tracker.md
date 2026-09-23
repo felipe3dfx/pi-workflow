@@ -20,7 +20,7 @@ Create a GitHub issue in `felipe3dfx/pi-workflow` with these confirmed fields:
 
 - Title: `none (confirmed absent)`
 - Body: `none (confirmed absent)`
-- Labels, assignee, milestone, project, and linked issues: `none (confirmed absent)`
+- Labels, assignee, milestone, project, and linked issues: `labels, assignee, milestone, and project remain none (confirmed absent); linked issues use gh issue edit --add-blocked-by`
 
 Publication capability:
 
@@ -28,7 +28,7 @@ Publication capability:
 - evidence: repository permissions include admin, push, and triage; has_issues is true
 - provider: gh
 - limits: no issue was created in this repository during discovery
-- effects/approval: create, edit, label, assign, or close requires explicit approval
+- effects/approval: create, edit, label, assign, close, or relate requires explicit approval
 - degraded: none (confirmed absent)
 - blocked when: permission is missing or the GitHub API fails
 
