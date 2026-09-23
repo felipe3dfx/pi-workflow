@@ -1,5 +1,13 @@
 import type { AgentToolResult, ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { decodeKittyPrintable, Input, Key, matchesKey, truncateToWidth, type Component } from "@earendil-works/pi-tui";
+import {
+	decodeKittyPrintable,
+	Input,
+	Key,
+	matchesKey,
+	truncateToWidth,
+	wrapTextWithAnsi,
+	type Component,
+} from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 interface AskUserOption {
@@ -36,6 +44,17 @@ export function registerAskUserQueueCounter(pi: ExtensionAPI, state: AskUserPane
 	pi.on("turn_end", () => {
 		state.pendingCount = 0;
 	});
+}
+
+const CONTROL_OR_BIDI = /[\p{Cc}\p{Bidi_Control}]/gu;
+
+function normalizeSingleLine(text: string): string {
+	return text.replace(/\r\n/g, " ").replace(CONTROL_OR_BIDI, " ");
+}
+
+function normalizeQuestionText(text: string): string {
+	const withLf = text.replace(/\r\n?/g, "\n");
+	return withLf.replace(CONTROL_OR_BIDI, (ch) => (ch === "\n" ? ch : " "));
 }
 
 function printableChar(data: string): string | undefined {
@@ -115,13 +134,15 @@ async function askPanel(
 				const waiting = `${state.pendingCount} question${state.pendingCount === 1 ? "" : "s"} waiting`;
 				const lines = [
 					theme.fg("dim", `${waiting} · ${elapsedSeconds}s · ${tokenInfo}`),
-					theme.bold(question),
+					...wrapTextWithAnsi(theme.bold(normalizeQuestionText(question)), width),
 				];
 				options.forEach((option, i) => {
 					const active = i === index;
 					const radio = active ? "●" : "○";
-					const left = `${i + 1} (${radio}) ${option.label}`;
-					const row = option.description ? `${left}  ${option.description}` : left;
+					const label = normalizeSingleLine(option.label);
+					const left = `${i + 1} (${radio}) ${label}`;
+					const description = option.description ? normalizeSingleLine(option.description) : undefined;
+					const row = description ? `${left}  ${description}` : left;
 					lines.push(active ? theme.fg("accent", row) : row);
 				});
 				if (allowFreeText) {

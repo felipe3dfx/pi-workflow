@@ -629,3 +629,171 @@ test("the waiting count never goes negative when a panel runs without being coun
 	counter.toolExecutionEnd("ask_user_choice", "call-f2-uncounted");
 	assert.equal(state.pendingCount, 0);
 });
+
+test("a question with embedded newlines wraps into separate one-line render entries", async () => {
+	const state = createAskUserPanelState();
+	const tool = createAskUserChoiceTool(state);
+	const { ctx, send, render } = tuiContext();
+	const question = "Deploy now?\nRestart workers?\nContinue?";
+	const pending = tool.execute(
+		"call-multiline-question",
+		{ question, options: [{ label: "Yes" }] },
+		undefined,
+		undefined,
+		ctx,
+	);
+	const width = 20;
+	const lines = render(width);
+	for (const line of lines) {
+		assert.ok(!line.includes("\n"), `line contains an embedded newline: ${JSON.stringify(line)}`);
+		assert.ok(visibleWidth(line) <= width, `line exceeds width ${width}: ${JSON.stringify(line)}`);
+	}
+	assert.equal(lines.length, 7, "expected header + 3 question lines + option + free-text + hint");
+	assert.ok(lines.some((line) => line.includes("Deploy now?")));
+	assert.ok(lines.some((line) => line.includes("Restart workers?")));
+	assert.ok(lines.some((line) => line.includes("Continue?")));
+	send("X");
+	await pending;
+});
+
+test("newlines in option labels and descriptions are normalized so each option stays one render row", async () => {
+	const state = createAskUserPanelState();
+	const tool = createAskUserChoiceTool(state);
+	const { ctx, send, render } = tuiContext();
+	const pending = tool.execute(
+		"call-multiline-option",
+		{
+			question: "Pick one",
+			options: [
+				{ label: "Yes\nplease", description: "Ship it\nnow" },
+				{ label: "No" },
+			],
+		},
+		undefined,
+		undefined,
+		ctx,
+	);
+	const width = 80;
+	const lines = render(width);
+	for (const line of lines) {
+		assert.ok(!line.includes("\n"), `line contains an embedded newline: ${JSON.stringify(line)}`);
+		assert.ok(visibleWidth(line) <= width, `line exceeds width ${width}: ${JSON.stringify(line)}`);
+	}
+	assert.ok(lines.some((line) => line.includes("Yes please") && line.includes("Ship it now")));
+	send("X");
+	await pending;
+});
+
+test("CR and CRLF line endings in the question normalize like LF before wrapping", async () => {
+	const state = createAskUserPanelState();
+	const tool = createAskUserChoiceTool(state);
+	const { ctx, send, render } = tuiContext();
+	const question = "Deploy now?\r\nRestart workers?\rContinue?";
+	const pending = tool.execute(
+		"call-cr-question",
+		{ question, options: [{ label: "Yes" }] },
+		undefined,
+		undefined,
+		ctx,
+	);
+	const width = 20;
+	const lines = render(width);
+	for (const line of lines) {
+		assert.ok(!line.includes("\r"), `line contains a stray carriage return: ${JSON.stringify(line)}`);
+		assert.ok(!line.includes("\n"), `line contains an embedded newline: ${JSON.stringify(line)}`);
+		assert.ok(visibleWidth(line) <= width, `line exceeds width ${width}: ${JSON.stringify(line)}`);
+	}
+	assert.equal(lines.length, 7, "expected header + 3 question lines + option + free-text + hint");
+	send("X");
+	await pending;
+});
+
+test("an ANSI erase-screen sequence and a bidi override in the question cannot break out of a rendered row", async () => {
+	const state = createAskUserPanelState();
+	const tool = createAskUserChoiceTool(state);
+	const { ctx, send, render } = tuiContext();
+	const question = "Deploy\x1b[2Jnow?‮evil?";
+	const pending = tool.execute(
+		"call-escape-question",
+		{ question, options: [{ label: "Yes" }] },
+		undefined,
+		undefined,
+		ctx,
+	);
+	const width = 80;
+	const lines = render(width);
+	for (const line of lines) {
+		assert.ok(!line.includes("\x1b[2J"), `line contains the raw escape sequence: ${JSON.stringify(line)}`);
+		assert.ok(!line.includes("‮"), `line contains the bidi override: ${JSON.stringify(line)}`);
+		assert.ok(visibleWidth(line) <= width, `line exceeds width ${width}: ${JSON.stringify(line)}`);
+	}
+	send("X");
+	await pending;
+});
+
+test("an ANSI erase-screen sequence and a bidi override in an option label/description are neutralized", async () => {
+	const state = createAskUserPanelState();
+	const tool = createAskUserChoiceTool(state);
+	const { ctx, send, render } = tuiContext();
+	const pending = tool.execute(
+		"call-escape-option",
+		{
+			question: "Pick one",
+			options: [{ label: "Yes\x1b[2J", description: "Ship‮it" }],
+		},
+		undefined,
+		undefined,
+		ctx,
+	);
+	const width = 80;
+	const lines = render(width);
+	for (const line of lines) {
+		assert.ok(!line.includes("\x1b[2J"), `line contains the raw escape sequence: ${JSON.stringify(line)}`);
+		assert.ok(!line.includes("‮"), `line contains the bidi override: ${JSON.stringify(line)}`);
+		assert.ok(visibleWidth(line) <= width, `line exceeds width ${width}: ${JSON.stringify(line)}`);
+	}
+	send("X");
+	await pending;
+});
+
+test("a tab in the question does not exceed the render width", async () => {
+	const state = createAskUserPanelState();
+	const tool = createAskUserChoiceTool(state);
+	const { ctx, send, render } = tuiContext();
+	const question = "Deploy\tnow?";
+	const pending = tool.execute(
+		"call-tab-question",
+		{ question, options: [{ label: "Yes" }] },
+		undefined,
+		undefined,
+		ctx,
+	);
+	const width = 10;
+	const lines = render(width);
+	for (const line of lines) {
+		assert.ok(visibleWidth(line) <= width, `line exceeds width ${width}: ${JSON.stringify(line)}`);
+	}
+	send("X");
+	await pending;
+});
+
+test("a ZWJ emoji sequence in an option label keeps its visible width unchanged", async () => {
+	const state = createAskUserPanelState();
+	const tool = createAskUserChoiceTool(state);
+	const { ctx, send, render } = tuiContext();
+	const family = "\u{1F468}‍\u{1F469}‍\u{1F467}";
+	const pending = tool.execute(
+		"call-zwj-option",
+		{ question: "Pick one", options: [{ label: family }] },
+		undefined,
+		undefined,
+		ctx,
+	);
+	const width = 80;
+	const lines = render(width);
+	const optionLine = lines.find((line) => line.includes(family));
+	assert.ok(optionLine, "expected the ZWJ emoji sequence to survive normalization intact");
+	assert.equal(visibleWidth(optionLine), visibleWidth(`1 (●) ${family}`));
+	send("X");
+	await pending;
+});
