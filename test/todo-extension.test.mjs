@@ -86,6 +86,15 @@ async function fireEvent(handlers, event, ctx) {
 	}
 }
 
+test("the todo tool advertises itself in the system prompt so the model finds it", () => {
+	const { pi, tools } = fakePi();
+	registerSessionTodo(pi);
+	const tool = tools.get("todo");
+	assert.match(tool.promptSnippet, /todo/i);
+	assert.ok(Array.isArray(tool.promptGuidelines) && tool.promptGuidelines.length > 0);
+	assert.ok(tool.promptGuidelines.some((line) => /todo/i.test(line)));
+});
+
 test("add appends a pending task and reports it", async () => {
 	const { pi, tools } = fakePi();
 	registerSessionTodo(pi);

@@ -84,6 +84,11 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 		label: "Todo",
 		description:
 			"Manage the current session's task list, shown in the header. Actions: write (replace the whole list), add, update, clear, list. Session-scoped only; never creates a file.",
+		promptSnippet: "Track the session's todo list, shown in the header, with write/add/update/clear/list",
+		promptGuidelines: [
+			"Use todo, not a markdown or TODO file, whenever the user asks for a task list or to track work for this session, unless the user explicitly asks for a file; todo never creates a file.",
+			"Prefer todo write to replace the whole plan when it changes, and todo update to move one task's status as work progresses.",
+		],
 		parameters: TodoParams,
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			switch (params.action) {
