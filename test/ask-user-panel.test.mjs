@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { CURSOR_MARKER, visibleWidth } from "@earendil-works/pi-tui";
+import { CURSOR_MARKER, KeybindingsManager, TUI_KEYBINDINGS, visibleWidth } from "@earendil-works/pi-tui";
 
 import {
 	createAskUserChoiceTool,
@@ -28,6 +28,11 @@ function noUiContext(mode) {
 	};
 }
 
+const fakeKeybindings = new KeybindingsManager(TUI_KEYBINDINGS);
+const UP = "\x1b[A";
+const DOWN = "\x1b[B";
+const SPACE = " ";
+
 function tuiContext() {
 	let component;
 	let resolveDone;
@@ -39,7 +44,7 @@ function tuiContext() {
 		mode: "tui",
 		ui: {
 			custom: (factory) => {
-				component = factory({}, fakeTheme, {}, (result) => resolveDone(result));
+				component = factory({}, fakeTheme, fakeKeybindings, (result) => resolveDone(result));
 				return donePromise;
 			},
 		},
@@ -84,7 +89,7 @@ test("TUI ask_user_choice answers with the selected option on Enter", async () =
 		ctx,
 	);
 	assert.equal(state.pendingCount, 1);
-	send("\t");
+	send(DOWN);
 	send("\r");
 	const result = await pending;
 	assert.deepEqual(result.details, { status: "answered", kind: "option", index: 1, label: "No" });
@@ -247,6 +252,10 @@ test("options render numbered with a radio and their description, and z is the f
 	assert.equal(lines[2], "1 (●) Yes  Ship it");
 	assert.equal(lines[3], "2 (○) No");
 	assert.equal(lines[4], "z (○) Type your answer");
+	send(DOWN);
+	send(DOWN);
+	const hintLines = render(80);
+	assert.match(hintLines[hintLines.length - 1], /Enter:edit free text/);
 	send("X");
 	await pending;
 });
@@ -796,4 +805,270 @@ test("a ZWJ emoji sequence in an option label keeps its visible width unchanged"
 	assert.equal(visibleWidth(optionLine), visibleWidth(`1 (●) ${family}`));
 	send("X");
 	await pending;
+});
+
+test("Down and Up move the active row in browse mode, and Enter answers the active row", async () => {
+	const state = createAskUserPanelState();
+	const tool = createAskUserChoiceTool(state);
+	const { ctx, send, render } = tuiContext();
+	const pending = tool.execute(
+		"call-nav-1",
+		{
+			question: "Pick one",
+			options: [{ label: "A" }, { label: "B" }, { label: "C" }],
+			allowFreeText: false,
+		},
+		undefined,
+		undefined,
+		ctx,
+	);
+	send(DOWN);
+	send(DOWN);
+	send(UP);
+	assert.ok(render(80).some((line) => line === "2 (●) B"));
+	send("\r");
+	const result = await pending;
+	assert.deepEqual(result.details, { status: "answered", kind: "option", index: 1, label: "B" });
+});
+
+test("Tab no longer moves the active row", async () => {
+	const state = createAskUserPanelState();
+	const tool = createAskUserChoiceTool(state);
+	const { ctx, send, render } = tuiContext();
+	const pending = tool.execute(
+		"call-nav-tab",
+		{ question: "Pick one", options: [{ label: "A" }, { label: "B" }], allowFreeText: false },
+		undefined,
+		undefined,
+		ctx,
+	);
+	send("\t");
+	assert.ok(render(80).some((line) => line === "1 (●) A"));
+	send("X");
+	await pending;
+});
+
+test("Up/Down from edit mode leave edit mode and move the active row", async () => {
+	const state = createAskUserPanelState();
+	const tool = createAskUserChoiceTool(state);
+	const { ctx, send, render } = tuiContext();
+	const pending = tool.execute(
+		"call-nav-edit-exit",
+		{ question: "Pick one", options: [{ label: "A" }, { label: "B" }] },
+		undefined,
+		undefined,
+		ctx,
+	);
+	send("z");
+	send("hi");
+	send(DOWN);
+	assert.ok(render(80).some((line) => line === "1 (●) A"));
+	send("\r");
+	const result = await pending;
+	assert.deepEqual(result.details, { status: "answered", kind: "option", index: 0, label: "A" });
+});
+
+test("multiple mode renders checkboxes instead of radios", async () => {
+	const state = createAskUserPanelState();
+	const tool = createAskUserChoiceTool(state);
+	const { ctx, send, render } = tuiContext();
+	const pending = tool.execute(
+		"call-multi-render",
+		{ question: "Pick some", options: [{ label: "A" }, { label: "B" }], allowFreeText: false, multiple: true },
+		undefined,
+		undefined,
+		ctx,
+	);
+	let lines = render(80);
+	assert.ok(lines.some((line) => line === "1 [ ] A"));
+	assert.ok(lines.some((line) => line === "2 [ ] B"));
+	send(SPACE);
+	lines = render(80);
+	assert.ok(lines.some((line) => line === "1 [x] A"));
+	send("\r");
+	await pending;
+});
+
+test("multiple mode: the free-text row is never rendered as a checkbox, since Space cannot mark it", async () => {
+	const state = createAskUserPanelState();
+	const tool = createAskUserChoiceTool(state);
+	const { ctx, send, render } = tuiContext();
+	const pending = tool.execute(
+		"call-multi-freetext-glyph",
+		{ question: "Pick some", options: [{ label: "A" }], multiple: true },
+		undefined,
+		undefined,
+		ctx,
+	);
+	send(DOWN);
+	send("z");
+	send("x");
+	const lines = render(80);
+	const freeTextLine = lines.find((line) => line.startsWith("z "));
+	assert.ok(freeTextLine.startsWith("z (") && !freeTextLine.startsWith("z ["));
+	send(UP);
+	send(SPACE);
+	send("\r");
+	const result = await pending;
+	assert.deepEqual(result.details, {
+		status: "answered",
+		kind: "options",
+		indices: [0],
+		labels: ["A"],
+		text: "x",
+	});
+});
+
+test("multiple mode: Space toggles the active option", async () => {
+	const state = createAskUserPanelState();
+	const tool = createAskUserChoiceTool(state);
+	const { ctx, send, render } = tuiContext();
+	const pending = tool.execute(
+		"call-multi-space",
+		{ question: "Pick some", options: [{ label: "A" }, { label: "B" }], allowFreeText: false, multiple: true },
+		undefined,
+		undefined,
+		ctx,
+	);
+	send(SPACE);
+	assert.ok(render(80).some((line) => line === "1 [x] A"));
+	send(SPACE);
+	assert.ok(render(80).some((line) => line === "1 [ ] A"));
+	send(SPACE);
+	send("\r");
+	const result = await pending;
+	assert.deepEqual(result.details, { status: "answered", kind: "options", indices: [0], labels: ["A"] });
+});
+
+test("multiple mode: digits jump without marking", async () => {
+	const state = createAskUserPanelState();
+	const tool = createAskUserChoiceTool(state);
+	const { ctx, send, render } = tuiContext();
+	const pending = tool.execute(
+		"call-multi-digit",
+		{
+			question: "Pick some",
+			options: [{ label: "A" }, { label: "B" }, { label: "C" }],
+			allowFreeText: false,
+			multiple: true,
+		},
+		undefined,
+		undefined,
+		ctx,
+	);
+	send("2");
+	let lines = render(80);
+	assert.ok(lines.some((line) => line === "2 [ ] B"), "digit alone must not mark the option");
+	send(SPACE);
+	lines = render(80);
+	assert.ok(lines.some((line) => line === "2 [x] B"));
+	send("\r");
+	const result = await pending;
+	assert.deepEqual(result.details, { status: "answered", kind: "options", indices: [1], labels: ["B"] });
+});
+
+test("multiple mode: Enter with nothing marked is ignored", async () => {
+	const state = createAskUserPanelState();
+	const tool = createAskUserChoiceTool(state);
+	const { ctx, send } = tuiContext();
+	const pending = tool.execute(
+		"call-multi-empty-enter",
+		{ question: "Pick some", options: [{ label: "A" }, { label: "B" }], allowFreeText: false, multiple: true },
+		undefined,
+		undefined,
+		ctx,
+	);
+	let settled = false;
+	pending.then(() => {
+		settled = true;
+	});
+	send("\r");
+	await Promise.resolve();
+	await Promise.resolve();
+	assert.equal(settled, false);
+	send("1");
+	send(SPACE);
+	send("\r");
+	const result = await pending;
+	assert.deepEqual(result.details, { status: "answered", kind: "options", indices: [0], labels: ["A"] });
+});
+
+test("multiple mode: free text typed into the z row is included with the marked options", async () => {
+	const state = createAskUserPanelState();
+	const tool = createAskUserChoiceTool(state);
+	const { ctx, send } = tuiContext();
+	const pending = tool.execute(
+		"call-multi-freetext",
+		{ question: "Pick some", options: [{ label: "A" }, { label: "B" }], multiple: true },
+		undefined,
+		undefined,
+		ctx,
+	);
+	send("1");
+	send(SPACE);
+	send("z");
+	for (const char of "also this") send(char);
+	send("\r");
+	const result = await pending;
+	assert.deepEqual(result.details, {
+		status: "answered",
+		kind: "options",
+		indices: [0],
+		labels: ["A"],
+		text: "also this",
+	});
+});
+
+test("multiple mode: Enter with only free text and no option marked with Space is ignored", async () => {
+	const state = createAskUserPanelState();
+	const tool = createAskUserChoiceTool(state);
+	const { ctx, send } = tuiContext();
+	const pending = tool.execute(
+		"call-multi-freetext-only",
+		{ question: "Pick some", options: [{ label: "A" }, { label: "B" }], multiple: true },
+		undefined,
+		undefined,
+		ctx,
+	);
+	let settled = false;
+	pending.then(() => {
+		settled = true;
+	});
+	send("z");
+	for (const char of "just text") send(char);
+	send("\r");
+	await Promise.resolve();
+	await Promise.resolve();
+	assert.equal(settled, false, "free text alone must not be enough to submit");
+	send(DOWN);
+	send(SPACE);
+	send("\r");
+	const result = await pending;
+	assert.deepEqual(result.details, {
+		status: "answered",
+		kind: "options",
+		indices: [0],
+		labels: ["A"],
+		text: "just text",
+	});
+});
+
+test("without multiple, ask_user_choice behaviour and result stay exactly as a single radio choice", async () => {
+	const state = createAskUserPanelState();
+	const tool = createAskUserChoiceTool(state);
+	const { ctx, send, render } = tuiContext();
+	const pending = tool.execute(
+		"call-single-unchanged",
+		{ question: "Pick one", options: [{ label: "A" }, { label: "B" }], allowFreeText: false },
+		undefined,
+		undefined,
+		ctx,
+	);
+	const lines = render(80);
+	assert.ok(lines.some((line) => line === "1 (●) A"));
+	assert.ok(lines.some((line) => line === "2 (○) B"));
+	send(DOWN);
+	send("\r");
+	const result = await pending;
+	assert.deepEqual(result.details, { status: "answered", kind: "option", index: 1, label: "B" });
 });
