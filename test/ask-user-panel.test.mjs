@@ -506,6 +506,20 @@ test("ask_user_question opens directly in edit mode, so typing yields the answer
 	assert.deepEqual(result.details, { status: "answered", kind: "text", text: "Xylophone" });
 });
 
+test("Tab in edit mode is ignored: it does not type and does not leave edit mode", async () => {
+	const state = createAskUserPanelState();
+	const tool = createAskUserQuestionTool(state);
+	const { ctx, send } = tuiContext();
+	const pending = tool.execute("call-tab-in-edit", { question: "Favorite instrument?" }, undefined, undefined, ctx);
+	send("h");
+	send("i");
+	send("\t");
+	send("!");
+	send("\r");
+	const result = await pending;
+	assert.deepEqual(result.details, { status: "answered", kind: "text", text: "hi!" });
+});
+
 test("Esc returns ask_user_question to browse mode, then Shift+X dismisses", async () => {
 	const state = createAskUserPanelState();
 	const tool = createAskUserQuestionTool(state);
