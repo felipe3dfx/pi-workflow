@@ -33,7 +33,7 @@ function model(provider, id) {
 	return { provider, id, name: id, contextWindow: 200000, reasoning: true };
 }
 
-function commandContext({ hasUI = true, models = [], confirm = async () => false, editor } = {}) {
+function commandContext({ hasUI = true, models = [], confirm = async () => false, custom } = {}) {
 	const notifications = [];
 	const ctx = {
 		hasUI,
@@ -41,7 +41,7 @@ function commandContext({ hasUI = true, models = [], confirm = async () => false
 		ui: {
 			notify: (message, level) => notifications.push({ message, level }),
 			confirm,
-			editor: editor ?? (async () => undefined),
+			custom: custom ?? (async () => undefined),
 		},
 		modelRegistry: { getAvailable: () => models },
 	};
@@ -287,95 +287,6 @@ test("a file changed outside the command applies only after /reload", async () =
 	});
 });
 
-test("the TUI editor writes the same file, reopening on invalid content", async () => {
-	await withConfigDirectory(async ({ path }) => {
-		await writeExisting(path);
-		const edited = {
-			schemaVersion: 1,
-			specialists: { chat: [{ model: "nan/gemma4", thinking: "low" }] },
-			tiers: { quick: [{ model: "nan/gemma4", thinking: "low" }] },
-			taskTypes: { chat: "quick" },
-		};
-		const prefills = [];
-		const answers = ["{ broken", JSON.stringify(edited)];
-		const { ctx } = commandContext({
-			editor: async (title, prefill) => {
-				prefills.push({ title, prefill });
-				return answers.shift();
-			},
-		});
-		const lists = createModelLists({ path });
-
-		assert.equal((await lists.edit(ctx)).status, "saved");
-		assert.equal(prefills[0].prefill, existingContent);
-		assert.equal(prefills[1].prefill, "{ broken");
-		assert.match(prefills[1].title, /Invalid/);
-		assert.deepEqual(await readJson(path), edited);
-		assert.deepEqual(lists.load(), { status: "loaded", lists: JSON.parse(existingContent) });
-		assert.deepEqual(createModelLists({ path }).load(), { status: "loaded", lists: edited });
-	});
-});
-
-test("the TUI editor starts a missing file from the creation map and cancel writes nothing", async () => {
-	await withConfigDirectory(async ({ path }) => {
-		const prefills = [];
-		const { ctx } = commandContext({
-			editor: async (_title, prefill) => {
-				prefills.push(prefill);
-				return undefined;
-			},
-		});
-
-		assert.equal((await createModelLists({ path }).edit(ctx)).status, "cancelled");
-		const template = JSON.parse(prefills[0]);
-		assert.deepEqual(template.taskTypes, creationMap);
-		assert.deepEqual(template.tiers, { quick: [], standard: [], high: [] });
-		await assert.rejects(readFile(path, "utf8"), { code: "ENOENT" });
-	});
-});
-
-test("the editor refuses without the TUI and writes nothing", async (t) => {
-	await withConfigDirectory(async ({ path }) => {
-		const printed = [];
-		t.mock.method(console, "error", (message) => printed.push(message));
-		const { ctx } = commandContext({ hasUI: false, editor: async () => JSON.stringify({}) });
-
-		assert.equal((await createModelLists({ path }).edit(ctx)).status, "refused");
-		assert.equal(printed.length, 1);
-		await assert.rejects(readFile(path, "utf8"), { code: "ENOENT" });
-	});
-});
-
-test("the extension registers the create command and the TUI editor over the same file", async () => {
-	await withConfigDirectory(async ({ path }) => {
-		const commands = new Map();
-		const pi = {
-			on: () => {},
-			exec: async () => ({ code: 0 }),
-			registerCommand: (name, command) => commands.set(name, command),
-			registerTool: () => {},
-			registerShortcut: () => {},
-		};
-		piWorkflowExtension(pi, { modelLists: { path, ...placeEverything } });
-
-		const created = commandContext({ models: [model("nan", "gemma4")] });
-		await commands.get("pi-workflow-models").handler("", created.ctx);
-		const saved = await readFile(path, "utf8");
-
-		const prefills = [];
-		const edited = commandContext({
-			editor: async (_title, prefill) => {
-				prefills.push(prefill);
-				return undefined;
-			},
-		});
-		await commands.get("pi-workflow-models-edit").handler("", edited.ctx);
-
-		assert.deepEqual(JSON.parse(prefills[0]), JSON.parse(saved));
-		assert.deepEqual(JSON.parse(saved).specialists.chat, [{ model: "nan/gemma4", thinking: "low" }]);
-	});
-});
-
 test("the model list commands reject extra arguments with the shared usage", async () => {
 	await withConfigDirectory(async ({ path }) => {
 		const commands = new Map();
@@ -392,9 +303,8 @@ test("the model list commands reject extra arguments with the shared usage", asy
 			let edits = 0;
 			const { ctx, notifications } = commandContext({
 				models: [model("nan", "gemma4")],
-				editor: async () => {
+				custom: async () => {
 					edits += 1;
-					return undefined;
 				},
 			});
 			await commands.get(name).handler("--force", ctx);
@@ -507,23 +417,6 @@ test("the command does not replace a dangling symlink without confirmation", asy
 	}
 });
 
-test("the TUI editor refuses a dangling symlink instead of starting a new file", async () => {
-	await withConfigDirectory(async ({ path }) => {
-		await writeDanglingSymlink(path);
-		let edits = 0;
-		const { ctx } = commandContext({
-			editor: async () => {
-				edits += 1;
-				return JSON.stringify({ schemaVersion: 1, specialists: {}, tiers: {}, taskTypes: {} });
-			},
-		});
-
-		assert.equal((await createModelLists({ path }).edit(ctx)).status, "refused");
-		assert.equal(edits, 0);
-		assert.equal((await lstat(path)).isSymbolicLink(), true);
-	});
-});
-
 test("the command refuses when the file entry cannot be inspected", async (t) => {
 	t.mock.method(console, "error", () => {});
 	await withConfigDirectory(async ({ dir }) => {
@@ -536,22 +429,5 @@ test("the command refuses when the file entry cannot be inspected", async (t) =>
 
 		assert.equal(outcome.status, "refused");
 		assert.match(notifications.at(-1).message, /Unable to read/);
-	});
-});
-
-test("the TUI editor does not replace a file created by another process while editing", async () => {
-	await withConfigDirectory(async ({ path }) => {
-		const { ctx, notifications } = commandContext({
-			editor: async (_title, prefill) => {
-				await writeExisting(path);
-				return prefill;
-			},
-		});
-
-		const outcome = await createModelLists({ path }).edit(ctx);
-
-		assert.equal(outcome.status, "kept");
-		assert.equal(await readFile(path, "utf8"), existingContent);
-		assert.match(notifications.at(-1).message, /not replaced/);
 	});
 });
