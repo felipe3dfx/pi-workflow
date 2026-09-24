@@ -198,9 +198,10 @@ async function askPanel(
 				browseHintParts.push(enterHint);
 				if (allowFreeText) browseHintParts.push("z:edit free text");
 				browseHintParts.push("Esc:panel stays open", "Shift+X:dismiss");
+				const editEnterHint = multiple ? (hasAnyMarked ? "submit marked" : "select at least one") : "submit";
 				const hint =
 					mode === "edit"
-						? `Enter:submit${multiple ? " marked" : ""}  ↑/↓:leave & move  Esc:back to browse`
+						? `Enter:${editEnterHint}  ↑/↓:leave & move  Esc:back to browse`
 						: browseHintParts.join("  ");
 				lines.push(theme.fg("dim", hint));
 				return lines.map((line) => truncateToWidth(line, width));
