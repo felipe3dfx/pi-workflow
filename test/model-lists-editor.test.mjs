@@ -190,6 +190,64 @@ async function saveFrom(panel, editing, path) {
 	return readJson(path);
 }
 
+test("the catalog lists only available models and keeps stored unavailable entries", async () => {
+	await withConfigDirectory(async ({ path }) => {
+		await writeLists(path, {
+			specialists: { chat: [{ model: "openai-codex/gpt-6-astra", thinking: "max" }] },
+			tiers: {},
+			taskTypes: {},
+		});
+		const { ctx, nextPanel } = editorContext({ available: [catalog[0]] });
+		const editing = createModelLists({ path }).edit(ctx);
+		const panel = await nextPanel();
+
+		press(panel, keys.enter, keys.enter, "a");
+		const shown = panel.render(80).join("\n");
+		assert.match(shown, /openai-codex\/gpt-5\.6-luna/);
+		assert.doesNotMatch(shown, /gpt-6-astra|mimo-v2\.5/);
+		type(panel, "astra");
+		assert.match(panel.render(80).join("\n"), /No matches/);
+		press(panel, keys.escape, "s");
+
+		assert.equal((await editing).status, "saved");
+		assert.deepEqual((await readJson(path)).specialists.chat, [
+			{ model: "openai-codex/gpt-6-astra", thinking: "max" },
+		]);
+	});
+});
+
+test("after an addition the catalog returns cleared for the next model, and Esc goes back to the list", async () => {
+	await withConfigDirectory(async ({ path }) => {
+		const { ctx, nextPanel } = editorContext();
+		const editing = createModelLists({ path }).edit(ctx);
+		const panel = await nextPanel();
+
+		press(panel, keys.enter, keys.enter, "a");
+		type(panel, "luna");
+		press(panel, keys.enter, keys.down, keys.down, keys.down, keys.down, keys.enter);
+		const catalogAgain = panel.render(80);
+		assert.match(catalogAgain[0], /^Add .*1 model/);
+		assert.ok(catalogAgain[1].startsWith(`> ${CURSOR_MARKER}`), JSON.stringify(catalogAgain[1]));
+		assert.equal(catalogAgain.filter((line) => /openai-codex|nan\//.test(line)).length, 3);
+
+		type(panel, "mimo");
+		press(panel, keys.enter, keys.enter);
+		assert.match(panel.render(80)[0], /^Add .*2 models/);
+		press(panel, keys.escape);
+		const list = panel.render(80);
+		assert.equal(list[0], "Specialists: chat");
+		assert.match(list[1], /1 {2}openai-codex\/gpt-5\.6-luna/);
+		assert.match(list[2], /2 {2}nan\/mimo-v2\.5/);
+		press(panel, "s");
+
+		assert.equal((await editing).status, "saved");
+		assert.deepEqual((await readJson(path)).specialists.chat, [
+			{ model: "openai-codex/gpt-5.6-luna", thinking: "high" },
+			{ model: "nan/mimo-v2.5", thinking: "off" },
+		]);
+	});
+});
+
 test("d removes the selected model from the list", async () => {
 	await withConfigDirectory(async ({ path }) => {
 		const { panel, editing } = await openImplementList(path);
@@ -245,7 +303,7 @@ test("the add flow offers only the thinking levels the model supports", async ()
 		const levels = panel.render(80).slice(1, -1);
 
 		assert.deepEqual(levels.map((line) => line.trim().replace(/^→ /, "")), ["off"]);
-		press(panel, keys.escape, keys.escape, keys.escape, keys.escape);
+		press(panel, keys.escape, keys.escape, keys.escape, keys.escape, keys.escape);
 		await editing;
 	});
 });
@@ -267,6 +325,26 @@ test("t keeps the stored level of a model that is not in the catalog", async () 
 		assert.equal((await editing).status, "saved");
 		assert.deepEqual((await readJson(path)).specialists.chat, [
 			{ model: "retired/model", thinking: "medium" },
+		]);
+	});
+});
+
+test("t cycles a stored model that is registered but has no credentials", async () => {
+	await withConfigDirectory(async ({ path }) => {
+		await writeLists(path, {
+			specialists: { chat: [{ model: "openai-codex/gpt-6-astra", thinking: "max" }] },
+			tiers: {},
+			taskTypes: {},
+		});
+		const { ctx, nextPanel } = editorContext({ available: [catalog[0]] });
+		const editing = createModelLists({ path }).edit(ctx);
+		const panel = await nextPanel();
+
+		press(panel, keys.enter, keys.enter, "t", "s");
+
+		assert.equal((await editing).status, "saved");
+		assert.deepEqual((await readJson(path)).specialists.chat, [
+			{ model: "openai-codex/gpt-6-astra", thinking: "off" },
 		]);
 	});
 });
@@ -333,7 +411,7 @@ test("s on the thinking-level screen does not save or drop the model being added
 			new Promise((resolve) => setImmediate(() => resolve(false))),
 		]);
 		assert.equal(settled, false);
-		press(panel, keys.enter, "s");
+		press(panel, keys.enter, keys.escape, "s");
 
 		assert.equal((await editing).status, "saved");
 		assert.deepEqual((await readJson(path)).specialists.chat, [
@@ -401,7 +479,7 @@ test("the catalog honours remapped selection keybindings", async (t) => {
 		const editing = createModelLists({ path }).edit(ctx);
 		const panel = await nextPanel();
 
-		press(panel, keys.enter, keys.enter, "a", "\x0e", keys.enter, keys.enter, "s");
+		press(panel, keys.enter, keys.enter, "a", "\x0e", keys.enter, keys.enter, keys.escape, "s");
 
 		assert.equal((await editing).status, "saved");
 		assert.deepEqual((await readJson(path)).specialists.chat, [
@@ -490,7 +568,7 @@ test("every rendered row fits the width and hostile model names cannot inject co
 			taskTypes: {},
 		});
 		const { ctx, nextPanel } = editorContext();
-		ctx.modelRegistry.getAll = () => [{ provider: "nan", id: "evil\x1b[2J\u202Ename" }];
+		ctx.modelRegistry.getAvailable = () => [{ provider: "nan", id: "evil\x1b[2J\u202Ename" }];
 		const editing = createModelLists({ path }).edit(ctx);
 		const panel = await nextPanel();
 		const width = 24;
@@ -505,7 +583,7 @@ test("every rendered row fits the width and hostile model names cannot inject co
 		screens.push(panel.render(width));
 		press(panel, keys.enter);
 		screens.push(panel.render(width));
-		press(panel, keys.escape, keys.escape, keys.escape, keys.down, keys.down, keys.enter);
+		press(panel, keys.escape, keys.escape, keys.escape, keys.escape, keys.down, keys.down, keys.enter);
 		screens.push(panel.render(width));
 
 		for (const line of screens.flat()) {
