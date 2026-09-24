@@ -1053,6 +1053,27 @@ test("multiple mode: Enter with only free text and no option marked with Space i
 	});
 });
 
+test("multiple mode: the edit-mode hint reflects whether anything is marked", async () => {
+	const state = createAskUserPanelState();
+	const tool = createAskUserChoiceTool(state);
+	const { ctx, send, render } = tuiContext();
+	const pending = tool.execute(
+		"call-multi-edit-hint",
+		{ question: "Pick some", options: [{ label: "A" }], multiple: true },
+		undefined,
+		undefined,
+		ctx,
+	);
+	send("z");
+	assert.match(render(80).at(-1), /select at least one/);
+	send(UP);
+	send(SPACE);
+	send("z");
+	assert.match(render(80).at(-1), /submit marked/);
+	send("\r");
+	await pending;
+});
+
 test("without multiple, ask_user_choice behaviour and result stay exactly as a single radio choice", async () => {
 	const state = createAskUserPanelState();
 	const tool = createAskUserChoiceTool(state);
