@@ -17,7 +17,7 @@ Grupo Ilao engineering skills own process semantics: discovery, specification, t
 
 Status and doctor are read-only. Install without `--apply` prints the plan and does not mutate Pi. `--apply` is the confirmation for that invocation: it installs missing companions and aligns the MCP catalog. A failed install stops. It does not retry an uncertain effect.
 
-`/pi-workflow-models` creates the global model lists file (`pi-workflow-models.json` in the Pi agent directory) with specialist lists, the `quick`, `standard`, and `high` tier lists, and the task-type map. It replaces an existing file only after TUI confirmation; print mode only warns. A model that research or Jev cannot place is left out. `/pi-workflow-models-edit` edits the same file in the TUI. A written file applies after `/reload`. Model classification through Jev and research is not wired yet, so the command creates the file with the task-type map and empty lists and warns for each model it leaves out.
+`/pi-workflow-models` creates the global model lists file (`pi-workflow-models.json` in the Pi agent directory) with specialist lists, the `quick`, `standard`, and `high` tier lists, and the task-type map. It replaces an existing file only after TUI confirmation; print mode only warns. A model that research or Jev cannot place is left out. `/pi-workflow-models-edit` edits the same file in a TUI panel: specialist lists, tier lists, and the task-type map, with models picked from the Pi model catalog. It refuses an invalid or unreadable file. A written file applies after `/reload`. Model classification through Jev and research is not wired yet, so the command creates the file with the task-type map and empty lists and warns for each model it leaves out.
 
 ## Install
 

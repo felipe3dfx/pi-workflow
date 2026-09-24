@@ -1,8 +1,10 @@
 import { lstatSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
+import { createModelListsEditor } from "./model-lists-editor.ts";
 import {
 	activePiAgentDirectory,
 	isPlainRecord,
@@ -79,7 +81,7 @@ export interface ModelListsOptions {
 
 type CommandContext = Pick<
 	ExtensionCommandContext,
-	"hasUI" | "ui" | "modelRegistry"
+	"hasUI" | "mode" | "ui" | "modelRegistry"
 >;
 
 type Placement =
@@ -291,47 +293,73 @@ export function createModelLists(options: ModelListsOptions = {}) {
 	const snapshot = readLists();
 
 	async function edit(ctx: CommandContext) {
-		if (!ctx.hasUI) {
+		if (!ctx.hasUI || ctx.mode !== "tui") {
 			report(ctx, "The model lists editor needs the TUI.", "error");
 			return { status: "refused" };
 		}
-		let existed: boolean;
-		let text: string;
-		try {
-			existed = entryExists(path);
-			text = existed
-				? readFileSync(path, "utf8")
-				: `${JSON.stringify(emptyLists(), null, 2)}\n`;
-		} catch (error) {
-			report(ctx, `Unable to read ${path}: ${errorMessage(error)}`, "error");
+		const current = readLists();
+		if (current.status === "refused") {
+			report(ctx, current.reason, "error");
 			return { status: "refused" };
 		}
-		let title = `Model lists: ${path}`;
+		const existed = current.status === "loaded";
+		const source = existed ? current.lists : emptyLists();
+		const lists = {
+			specialists: Object.fromEntries(
+				taskTypes.map((type) => [type, [...(source.specialists[type] ?? [])]]),
+			),
+			tiers: Object.fromEntries(
+				tiers.map((tier) => [tier, [...(source.tiers[tier] ?? [])]]),
+			),
+			taskTypes: { ...source.taskTypes },
+		};
+		const unchanged = JSON.stringify(lists);
+		const available = new Set(
+			ctx.modelRegistry
+				.getAvailable()
+				.map((model) => `${model.provider}/${model.id}`),
+		);
+		const catalog = ctx.modelRegistry.getAll().map((model) => {
+			const name = `${model.provider}/${model.id}`;
+			return {
+				model: name,
+				available: available.has(name),
+				thinking: getSupportedThinkingLevels(model),
+			};
+		});
 		for (;;) {
-			const edited = await ctx.ui.editor(title, text);
-			if (edited === undefined) return { status: "cancelled" };
-			let lists: ModelLists;
-			try {
-				lists = parseModelLists(edited);
-			} catch (error) {
-				text = edited;
-				title = `Invalid model lists (${errorMessage(error)}). Fix and save, or cancel.`;
-				continue;
+			const action = await ctx.ui.custom<"save" | "exit">(
+				(_tui, theme, keybindings, done) =>
+					createModelListsEditor(lists, catalog, theme, keybindings, done),
+			);
+			if (action === "save") break;
+			if (
+				JSON.stringify(lists) === unchanged ||
+				(await ctx.ui.confirm(
+					"Discard changes?",
+					"The model lists have unsaved changes.",
+				))
+			) {
+				return { status: "cancelled" };
 			}
-			try {
-				writeJsonAtomically(path, lists, { replace: existed });
-			} catch (error) {
-				if (errorCode(error) !== "EEXIST") throw error;
-				report(
-					ctx,
-					`${path} appeared while editing and was not replaced.`,
-					"warning",
-				);
-				return { status: "kept" };
-			}
-			report(ctx, `Saved ${path}. It applies after /reload.`, "info");
-			return { status: "saved" };
 		}
+		try {
+			writeJsonAtomically(
+				path,
+				{ schemaVersion: 1, ...lists },
+				{ replace: existed },
+			);
+		} catch (error) {
+			if (errorCode(error) !== "EEXIST") throw error;
+			report(
+				ctx,
+				`${path} appeared while editing and was not replaced.`,
+				"warning",
+			);
+			return { status: "kept" };
+		}
+		report(ctx, `Saved ${path}. It applies after /reload.`, "info");
+		return { status: "saved" };
 	}
 
 	return { create, load: () => snapshot, edit };
