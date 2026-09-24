@@ -314,23 +314,25 @@ export function createModelLists(options: ModelListsOptions = {}) {
 			taskTypes: { ...source.taskTypes },
 		};
 		const unchanged = JSON.stringify(lists);
-		const available = new Set(
+		const name = (model: { provider: string; id: string }) =>
+			`${model.provider}/${model.id}`;
+		const catalog = ctx.modelRegistry.getAvailable().map(name);
+		const supportedThinking = Object.fromEntries(
 			ctx.modelRegistry
-				.getAvailable()
-				.map((model) => `${model.provider}/${model.id}`),
+				.getAll()
+				.map((model) => [name(model), getSupportedThinkingLevels(model)]),
 		);
-		const catalog = ctx.modelRegistry.getAll().map((model) => {
-			const name = `${model.provider}/${model.id}`;
-			return {
-				model: name,
-				available: available.has(name),
-				thinking: getSupportedThinkingLevels(model),
-			};
-		});
 		for (;;) {
 			const action = await ctx.ui.custom<"save" | "exit">(
 				(_tui, theme, keybindings, done) =>
-					createModelListsEditor(lists, catalog, theme, keybindings, done),
+					createModelListsEditor(
+						lists,
+						catalog,
+						supportedThinking,
+						theme,
+						keybindings,
+						done,
+					),
 			);
 			if (action === "save") break;
 			if (

@@ -21,12 +21,6 @@ export type EditableLists = {
 	taskTypes: Record<string, string | undefined>;
 };
 
-export type CatalogModel = {
-	model: string;
-	available: boolean;
-	thinking: string[];
-};
-
 type Screen = {
 	title: string;
 	hint: string;
@@ -58,7 +52,8 @@ function selectListTheme(theme: Theme): SelectListTheme {
 
 export function createModelListsEditor(
 	lists: EditableLists,
-	catalog: CatalogModel[],
+	catalog: string[],
+	supportedThinking: Record<string, string[]>,
 	theme: Theme,
 	keybindings: KeybindingsManager,
 	done: (action: "save" | "exit") => void,
@@ -103,28 +98,37 @@ export function createModelListsEditor(
 		};
 	}
 
-	function catalogScreen(add: (entry: Entry) => void): Screen {
+	function catalogScreen(
+		listTitle: string,
+		entries: Entry[],
+		add: (entry: Entry) => void,
+	): Screen {
 		const input = new Input();
 		input.focused = true;
-		const items = catalog.map((entry) => ({
-			value: entry.model,
-			label: sanitize(entry.model),
-			description: entry.available ? "available" : "no credentials",
+		const items = catalog.map((model) => ({
+			value: model,
+			label: sanitize(model),
 		}));
 		const choose = (item: SelectItem) => {
-			pop();
 			push(
 				thinkingScreen(
 					item.value,
-					catalog.find((entry) => entry.model === item.value)?.thinking ?? [],
-					add,
+					supportedThinking[item.value] ?? [],
+					(entry) => {
+						add(entry);
+						input.setValue("");
+						filtered = items;
+						list = selectList(filtered, choose);
+					},
 				),
 			);
 		};
 		let filtered = items;
 		let list = selectList(filtered, choose);
 		return {
-			title: "Add a model from the catalog",
+			get title() {
+				return `Add to ${listTitle} · ${entries.length} model${entries.length === 1 ? "" : "s"}`;
+			},
 			blocksSave: true,
 			hint: "Type to filter · ↑↓ choose · Enter select · Esc back",
 			render(width) {
@@ -185,7 +189,7 @@ export function createModelListsEditor(
 				const key = printable(data);
 				if (key === "a") {
 					push(
-						catalogScreen((entry) => {
+						catalogScreen(title, entries, (entry) => {
 							entries.push(entry);
 							list = rebuild(entries.length - 1);
 						}),
@@ -196,9 +200,7 @@ export function createModelListsEditor(
 					list = rebuild(Math.min(index, entries.length - 1));
 				} else if (key === "t" && entries.length > 0) {
 					const entry = entries[selectedIndex()];
-					const levels = catalog.find(
-						(candidate) => candidate.model === entry.model,
-					)?.thinking ?? [entry.thinking];
+					const levels = supportedThinking[entry.model] ?? [entry.thinking];
 					entry.thinking =
 						levels[(levels.indexOf(entry.thinking) + 1) % levels.length];
 					list = rebuild(selectedIndex());
