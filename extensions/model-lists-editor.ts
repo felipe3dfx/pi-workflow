@@ -105,6 +105,7 @@ export function createModelListsEditor(
 
 	function catalogScreen(add: (entry: Entry) => void): Screen {
 		const input = new Input();
+		input.focused = true;
 		const items = catalog.map((entry) => ({
 			value: entry.model,
 			label: sanitize(entry.model),
@@ -127,7 +128,7 @@ export function createModelListsEditor(
 			blocksSave: true,
 			hint: "Type to filter · ↑↓ choose · Enter select · Esc back",
 			render(width) {
-				const filter = `Filter: ${input.getValue()}`;
+				const [filter] = input.render(width);
 				if (filtered.length === 0) return [filter, "  No matches"];
 				return [filter, ...list.render(width)];
 			},
@@ -145,6 +146,7 @@ export function createModelListsEditor(
 					return;
 				}
 				input.handleInput(data);
+				input.setValue(sanitize(input.getValue()));
 				filtered = fuzzyFilter(items, input.getValue(), (item) => item.value);
 				list = selectList(filtered, choose);
 			},
@@ -238,11 +240,12 @@ export function createModelListsEditor(
 	}
 
 	function mapScreen(title: string): Screen {
-		const tierLabel = (type: string) => `◂ ${lists.taskTypes[type] ?? "—"} ▸`;
+		const typeWidth = Math.max(...taskTypes.map((type) => type.length));
+		const tierLabel = (type: string) =>
+			`${type.padEnd(typeWidth)}  ◂ ${lists.taskTypes[type] ?? "—"} ▸`;
 		const items = taskTypes.map((type) => ({
 			value: type,
-			label: type,
-			description: tierLabel(type),
+			label: tierLabel(type),
 		}));
 		const list = selectList(items, () => {});
 		const cycle = (offset: number) => {
@@ -254,7 +257,7 @@ export function createModelListsEditor(
 					(stops.indexOf(lists.taskTypes[item.value]) + offset + stops.length) %
 						stops.length
 				];
-			item.description = tierLabel(item.value);
+			item.label = tierLabel(item.value);
 		};
 		return {
 			title,

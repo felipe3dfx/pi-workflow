@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
 import {
+	CURSOR_MARKER,
 	KeybindingsManager,
 	setKeybindings,
 	TUI_KEYBINDINGS,
@@ -310,7 +311,7 @@ test("s saves from a nested screen but types into the catalog filter", async () 
 		const { panel, editing } = await openImplementList(path);
 
 		press(panel, "a", "s");
-		assert.match(panel.render(80)[1], /Filter: s/);
+		assert.ok(panel.render(80)[1].startsWith("> s"));
 		press(panel, keys.escape, "d", "s");
 
 		assert.equal((await editing).status, "saved");
@@ -338,6 +339,56 @@ test("s on the thinking-level screen does not save or drop the model being added
 		assert.deepEqual((await readJson(path)).specialists.chat, [
 			{ model: "openai-codex/gpt-5.6-luna", thinking: "off" },
 		]);
+	});
+});
+
+test("a pasted control sequence in the catalog filter never reaches the screen", async () => {
+	await withConfigDirectory(async ({ path }) => {
+		const { ctx, nextPanel } = editorContext();
+		const editing = createModelLists({ path }).edit(ctx);
+		const panel = await nextPanel();
+
+		press(panel, keys.enter, keys.enter, "a", "\x1b[200~ab\x1b]52;c;SGVsbG8=\x07\x1b[201~");
+
+		for (const line of panel.render(80)) {
+			let visible = line;
+			for (const own of [CURSOR_MARKER, "\x1b[7m", "\x1b[27m", "\x1b[0m"]) {
+				visible = visible.replaceAll(own, "");
+			}
+			assert.ok(!visible.includes("\x1b") && !visible.includes("\x07"), JSON.stringify(line));
+		}
+		press(panel, keys.escape, keys.escape, keys.escape, keys.escape);
+		await editing;
+	});
+});
+
+test("the catalog filter shows the input cursor where typing will insert", async () => {
+	await withConfigDirectory(async ({ path }) => {
+		const { ctx, nextPanel } = editorContext();
+		const editing = createModelLists({ path }).edit(ctx);
+		const panel = await nextPanel();
+
+		press(panel, keys.enter, keys.enter, "a", "a", "b", keys.left);
+		const filter = panel.render(80)[1];
+
+		assert.ok(filter.includes(`a${CURSOR_MARKER}\x1b[7mb`), JSON.stringify(filter));
+		press(panel, keys.escape, keys.escape, keys.escape, keys.escape);
+		await editing;
+	});
+});
+
+test("the map keeps the tier visible at 40 columns while the arrows change it", async () => {
+	await withConfigDirectory(async ({ path }) => {
+		const { ctx, nextPanel } = editorContext({ confirm: () => true });
+		const editing = createModelLists({ path }).edit(ctx);
+		const panel = await nextPanel();
+
+		press(panel, keys.down, keys.down, keys.enter);
+		assert.match(panel.render(40)[1], /chat\s+◂ quick ▸/);
+		press(panel, keys.right);
+		assert.match(panel.render(40)[1], /chat\s+◂ standard ▸/);
+		press(panel, keys.escape, keys.escape);
+		await editing;
 	});
 });
 
