@@ -17,6 +17,7 @@ interface AskUserOption {
 
 export type AskUserAnswer =
 	| { status: "answered"; kind: "option"; index: number; label: string }
+	| { status: "answered"; kind: "options"; indices: number[]; labels: string[]; text?: string }
 	| { status: "answered"; kind: "text"; text: string }
 	| { status: "refused"; reason: string };
 
@@ -79,6 +80,11 @@ function refusal(reason: string): AgentToolResult<AskUserAnswer> {
 function describeAnswer(answer: AskUserAnswer): string {
 	if (answer.status === "refused") return `Refused: ${answer.reason}`;
 	if (answer.kind === "option") return `Selected option ${answer.index + 1}: ${answer.label}`;
+	if (answer.kind === "options") {
+		const parts = answer.indices.map((i, k) => `${i + 1}: ${answer.labels[k]}`);
+		const base = `Selected options ${parts.join(", ")}`;
+		return answer.text ? `${base}; free text: ${answer.text}` : base;
+	}
 	return `Free-text answer: ${answer.text}`;
 }
 
@@ -88,6 +94,7 @@ async function askPanel(
 	question: string,
 	options: AskUserOption[],
 	allowFreeText: boolean,
+	multiple: boolean,
 	signal: AbortSignal | undefined,
 ): Promise<AgentToolResult<AskUserAnswer>> {
 	if (!ctx.hasUI || ctx.mode !== "tui") {
@@ -99,10 +106,11 @@ async function askPanel(
 
 	const startedAt = Date.now();
 
-	const answer = await ctx.ui.custom<AskUserAnswer>((_tui, theme, _keybindings, done) => {
+	const answer = await ctx.ui.custom<AskUserAnswer>((_tui, theme, keybindings, done) => {
 		const freeTextIndex = options.length;
 		const rowCount = allowFreeText ? options.length + 1 : options.length;
 		const input = new Input();
+		const marked = new Set<number>();
 		let index = 0;
 		let mode: "browse" | "edit" = allowFreeText && options.length === 0 ? "edit" : "browse";
 
@@ -115,7 +123,30 @@ async function askPanel(
 		const onAbort = () => finish({ status: "refused", reason: ABORTED_REASON });
 		signal?.addEventListener("abort", onAbort, { once: true });
 
+		const toggleMark = (i: number) => {
+			if (marked.has(i)) marked.delete(i);
+			else marked.add(i);
+		};
+
+		const submitMarked = () => {
+			const indices = [...marked].sort((a, b) => a - b);
+			if (indices.length === 0) return;
+			const text = input.getValue().trim();
+			const labels = indices.map((i) => options[i].label);
+			finish({
+				status: "answered",
+				kind: "options",
+				indices,
+				labels,
+				...(text.length > 0 ? { text } : {}),
+			});
+		};
+
 		input.onSubmit = (value) => {
+			if (multiple) {
+				submitMarked();
+				return;
+			}
 			if (value.trim().length === 0) return;
 			finish({ status: "answered", kind: "text", text: value });
 		};
@@ -125,6 +156,9 @@ async function askPanel(
 			const option = options[index];
 			finish({ status: "answered", kind: "option", index, label: option.label });
 		};
+
+		const rowMarker = (checked: boolean, active: boolean, checkable = true) =>
+			multiple && checkable ? (checked ? "[x]" : "[ ]") : active ? "(●)" : "(○)";
 
 		const component: Component = {
 			render(width) {
@@ -138,9 +172,9 @@ async function askPanel(
 				];
 				options.forEach((option, i) => {
 					const active = i === index;
-					const radio = active ? "●" : "○";
+					const glyph = rowMarker(marked.has(i), active);
 					const label = normalizeSingleLine(option.label);
-					const left = `${i + 1} (${radio}) ${label}`;
+					const left = `${i + 1} ${glyph} ${label}`;
 					const description = option.description ? normalizeSingleLine(option.description) : undefined;
 					const row = description ? `${left}  ${description}` : left;
 					lines.push(active ? theme.fg("accent", row) : row);
@@ -148,19 +182,25 @@ async function askPanel(
 				if (allowFreeText) {
 					const active = isFreeTextRow(index);
 					input.focused = active && mode === "edit";
-					const radio = active ? "●" : "○";
-					const prefix = `z (${radio}) `;
+					const glyph = rowMarker(false, active, false);
+					const prefix = `z ${glyph} `;
 					const row = input.focused
 						? prefix + (input.render(Math.max(width - prefix.length, 1))[0] ?? "")
 						: `${prefix}${input.getValue() || "Type your answer"}`;
 					lines.push(active ? theme.fg("accent", row) : row);
 				}
-				const browseHintParts = ["Tab:next answer", "Enter:select"];
+				const hasAnyMarked = marked.size > 0;
+				const enterHint = isFreeTextRow(index)
+					? "Enter:edit free text"
+					: `Enter:${multiple ? (hasAnyMarked ? "submit marked" : "select at least one") : "select"}`;
+				const browseHintParts = ["↑/↓:move"];
+				if (multiple) browseHintParts.push("Space:mark");
+				browseHintParts.push(enterHint);
 				if (allowFreeText) browseHintParts.push("z:edit free text");
 				browseHintParts.push("Esc:panel stays open", "Shift+X:dismiss");
 				const hint =
 					mode === "edit"
-						? "Enter:submit  Tab:next answer  Esc:back to browse"
+						? `Enter:submit${multiple ? " marked" : ""}  ↑/↓:leave & move  Esc:back to browse`
 						: browseHintParts.join("  ");
 				lines.push(theme.fg("dim", hint));
 				return lines.map((line) => truncateToWidth(line, width));
@@ -168,7 +208,12 @@ async function askPanel(
 			invalidate() {},
 			handleInput(data: string) {
 				if (mode === "edit") {
-					if (matchesKey(data, Key.tab)) {
+					if (keybindings.matches(data, "tui.select.up")) {
+						mode = "browse";
+						index = (index - 1 + rowCount) % rowCount;
+						return;
+					}
+					if (keybindings.matches(data, "tui.select.down")) {
 						mode = "browse";
 						index = (index + 1) % rowCount;
 						return;
@@ -180,7 +225,11 @@ async function askPanel(
 					input.handleInput(data);
 					return;
 				}
-				if (matchesKey(data, Key.tab)) {
+				if (keybindings.matches(data, "tui.select.up")) {
+					index = (index - 1 + rowCount) % rowCount;
+					return;
+				}
+				if (keybindings.matches(data, "tui.select.down")) {
 					index = (index + 1) % rowCount;
 					return;
 				}
@@ -188,12 +237,20 @@ async function askPanel(
 					finish({ status: "refused", reason: "The operator dismissed the question with Shift+X." });
 					return;
 				}
+				if (multiple && matchesKey(data, Key.space) && !isFreeTextRow(index)) {
+					toggleMark(index);
+					return;
+				}
 				if (matchesKey(data, Key.enter)) {
 					if (isFreeTextRow(index)) {
 						mode = "edit";
 						return;
 					}
-					submitCurrent();
+					if (multiple) {
+						submitMarked();
+					} else {
+						submitCurrent();
+					}
 					return;
 				}
 				const char = printableChar(data);
@@ -227,6 +284,12 @@ const choiceParameters = Type.Object({
 	allowFreeText: Type.Optional(
 		Type.Boolean({ description: "Whether the operator may answer with free text instead of a listed option. Defaults to true." }),
 	),
+	multiple: Type.Optional(
+		Type.Boolean({
+			description:
+				"If true, the operator marks any number of options (checkboxes) instead of choosing exactly one, and submits every marked option at once, plus free text if typed. Defaults to false (single choice).",
+		}),
+	),
 });
 
 export function createAskUserChoiceTool(state: AskUserPanelState): ToolDefinition<typeof choiceParameters, AskUserAnswer> {
@@ -234,16 +297,25 @@ export function createAskUserChoiceTool(state: AskUserPanelState): ToolDefinitio
 		name: "ask_user_choice",
 		label: "Ask User Choice",
 		description:
-			"Ask the operator to pick one of several numbered options from the TUI question panel. Refuses in print mode or when no TUI session is available, and never launches a child session.",
+			"Ask the operator to pick one of several numbered options, or several with multiple: true, from the TUI question panel. Refuses in print mode or when no TUI session is available, and never launches a child session.",
 		promptSnippet: "Ask the operator to choose among numbered options in the TUI question panel",
 		promptGuidelines: [
 			"Use ask_user_choice for a closed decision with a short list of named options.",
+			"Set multiple: true on ask_user_choice only when the options are not mutually exclusive.",
 			"ask_user_choice never launches a child session and never invents an answer when the operator dismisses or is unavailable.",
 		],
 		parameters: choiceParameters,
 		executionMode: "sequential",
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			return askPanel(ctx, state, params.question, params.options, params.allowFreeText ?? true, signal);
+			return askPanel(
+				ctx,
+				state,
+				params.question,
+				params.options,
+				params.allowFreeText ?? true,
+				params.multiple ?? false,
+				signal,
+			);
 		},
 	};
 }
@@ -266,7 +338,7 @@ export function createAskUserQuestionTool(state: AskUserPanelState): ToolDefinit
 		parameters: questionParameters,
 		executionMode: "sequential",
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			return askPanel(ctx, state, params.question, [], true, signal);
+			return askPanel(ctx, state, params.question, [], true, false, signal);
 		},
 	};
 }
