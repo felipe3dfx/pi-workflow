@@ -82,28 +82,44 @@ test("install without apply prints the plan and does not mutate", async () => {
 	});
 });
 
-test("status and doctor flag a missing pi-pretty install as a warning without mentioning CodeGraph or removed packages", async () => {
-	const notifications = [];
+test("status and doctor no longer expect pi-pretty and mention no CodeGraph or removed packages", async () => {
 	const workflow = createCompanionWorkflow({
 		catalog: {
 			resolveInstalledVersion: (name) =>
 				name === "@heyhuynhgiabuu/pi-pretty" ? {} : { version: "1.0.0" },
 		},
-		interaction: {
-			notify: (message, level) => notifications.push({ message, level }),
-			installPackage: async () => {
-				throw new Error("must not install");
-			},
-		},
+		interaction: {},
 	});
-	const inspectResult = await workflow.inspect();
-	const diagnoseResult = await workflow.diagnose();
-	for (const result of [inspectResult, diagnoseResult]) {
-		assert.equal(result.level, "warning");
-		assert.match(result.message, /@heyhuynhgiabuu\/pi-pretty — missing/);
+	for (const result of [await workflow.inspect(), await workflow.diagnose()]) {
+		assert.equal(result.level, "info");
+		assert.doesNotMatch(result.message, /pi-pretty/);
 		assert.doesNotMatch(result.message, /@tintinweb\/pi-subagents/);
 		assert.doesNotMatch(result.message, /@vndv\/pi-codegraph/);
 		assert.doesNotMatch(result.message, /CodeGraph/);
+	}
+});
+
+test("status and doctor warn that an installed pi-pretty collides with the harness tools without removing it", async () => {
+	const notifications = [];
+	const workflow = createCompanionWorkflow({
+		catalog: {
+			resolveInstalledVersion: () => ({ version: "1.0.0" }),
+		},
+		interaction: {
+			notify: (message, level) => notifications.push({ message, level }),
+			installPackage: async () => {
+				throw new Error("must not install or remove");
+			},
+			exec: async () => {
+				throw new Error("must not run commands");
+			},
+		},
+	});
+	for (const result of [await workflow.inspect(), await workflow.diagnose()]) {
+		assert.equal(result.level, "warning");
+		assert.match(result.message, /@heyhuynhgiabuu\/pi-pretty/);
+		assert.match(result.message, /read, bash, grep, find, ls/);
+		assert.match(result.message, /pi remove npm:@heyhuynhgiabuu\/pi-pretty/);
 	}
 	assert.equal(notifications.length, 2);
 });
@@ -111,7 +127,8 @@ test("status and doctor flag a missing pi-pretty install as a warning without me
 test("doctor reports info when every catalog companion is installed, with no CodeGraph mention", async () => {
 	const workflow = createCompanionWorkflow({
 		catalog: {
-			resolveInstalledVersion: () => ({ version: "1.0.0" }),
+			resolveInstalledVersion: (name) =>
+				name === "@heyhuynhgiabuu/pi-pretty" ? {} : { version: "1.0.0" },
 		},
 		interaction: {},
 	});

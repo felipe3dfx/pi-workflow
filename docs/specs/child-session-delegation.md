@@ -74,13 +74,13 @@ Session tasks are not children. They appear in that same header, below the subag
 
 A question panel replaces the input. The transcript stays above it. The header says how many questions are waiting, plus the elapsed time and the token count. Options are numbered, with a marker and a description on the right. The active option is highlighted across the row. In browse mode, ↑/↓ move the active row and Enter answers it; digits jump straight to an option. Tab no longer moves between rows. `z` enters the free-text row and switches to edit mode, where every key, including a leading `x` or `X`, is typed as text. Esc leaves edit mode back to browse; in browse mode it leaves the question panel open and is not a refusal. `Shift+X` dismisses the panel outside edit mode; the asking tool then receives a refusal and does not invent an answer. `ask_user_question` has no options and opens straight in edit mode. `ask_user_choice` with `multiple: true` shows checkboxes instead of a single marker; Space toggles the active option, and Enter submits the marked options once at least one is marked, with any typed free text carried as an extra. Answering does not launch a child. An aborted turn closes the panel with a refusal. Ask-user tools run one at a time. Print mode refuses the panel the same way.
 
-A closed tool or thought is one short line. Opening it shows the body under that title. A thick left bar encloses both the title and the body. `Enter` opens it. Left arrow or `Ctrl+e` closes it. Opening it does not change the file or the tool result.
+A closed tool is one line. Opening it shows the body under that title. A thick left bar encloses both the title and the body. Pi's global expand toggle opens and closes it. Opening it does not change the file or the tool result. Thinking keeps Pi's native one-line collapse.
 
-`pi-pretty` remains an expected companion. If it is missing, the harness is degraded and nothing is installed. The harness does not copy gentle-shell thinking-label patches.
+`pi-pretty` is not an expected companion. If it is installed, status and doctor warn that it registers the same tool names and name the external removal command. The harness does not uninstall it. The harness does not copy gentle-shell thinking-label patches.
 
 ### Companions and CodeGraph
 
-One catalog edit removes `@tintinweb/pi-subagents` and `@vndv/pi-codegraph`, and adds `@heyhuynhgiabuu/pi-pretty`. Status and doctor follow that file. They do not special-case CodeGraph as a companion. A missing `pi-pretty` install is a degraded harness. Nothing is installed or uninstalled silently.
+One catalog edit removes `@tintinweb/pi-subagents` and `@vndv/pi-codegraph`. Status and doctor follow that file. They do not special-case CodeGraph as a companion. Nothing is installed or uninstalled silently.
 
 If `@tintinweb/pi-subagents` is still installed, spawn tools are not registered. Status, doctor, and explicit companion install remain. The warning names the external removal command and the harness does not run it.
 
@@ -99,7 +99,7 @@ Tests cross the launcher interface and the extension adapter, not private helper
 - Status and doctor follow the edited catalog and do not treat a missing CodeGraph index as a missing companion.
 - Packed distribution includes `assets/contracts/` and still rejects `skills/`, `prompts/`, and `assets/agents/`.
 - The header shows a background child and the session task list. `[↗]` opens the in-TUI detail. Print mode refuses the question panel and does not invent an answer.
-- `todo` changes only the session task list. It does not create a feature document. A closed tool or thought is one line. Opening it does not change the file.
+- `todo` changes only the session task list. It does not create a feature document. A closed tool is one line. Opening it does not change the file.
 
 ## Out of scope
 
