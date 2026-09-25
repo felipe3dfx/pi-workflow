@@ -101,9 +101,12 @@ interface ResolvedCompanionCatalog {
 	actionable: CompanionState[];
 	loadError?: string;
 	collidingPackageInstalled: boolean;
+	legacySpawnPackageBlocked: boolean;
+	legacySpawnPackageError?: string;
 }
 
 const collidingPackage = "@heyhuynhgiabuu/pi-pretty";
+const legacySpawnPackage = "@tintinweb/pi-subagents";
 
 const requireFromPackage = createRequire(import.meta.url);
 const packageDirectory = dirname(fileURLToPath(import.meta.url));
@@ -218,6 +221,23 @@ function getInstalledCompanionVersion(packageName: string): {
 	}
 }
 
+function spawnToolsAllowed(legacySpawnPackageState: {
+	version?: string;
+	error?: string;
+}): boolean {
+	return !legacySpawnPackageState.version && !legacySpawnPackageState.error;
+}
+
+function legacySpawnPackageWarningLines(error?: string): string[] {
+	return [
+		error
+			? `${legacySpawnPackage} may be installed (its install state could not be confirmed: ${error}). Spawn tools are not registered while it remains. Remove it yourself:`
+			: `${legacySpawnPackage} is installed and spawn tools are not registered while it remains. Remove it yourself:`,
+		`pi remove npm:${legacySpawnPackage}`,
+		"Then run /reload.",
+	];
+}
+
 export function getCompanionState(
 	companion: CompanionPackage,
 	resolveInstalledVersion: ResolveInstalledVersion = getInstalledCompanionVersion,
@@ -249,12 +269,15 @@ function resolveCompanionCatalog(
 	const states = loaded.companions.map((companion) =>
 		getCompanionState(companion, resolveInstalledVersion),
 	);
+	const legacySpawnPackageState = resolveInstalledVersion(legacySpawnPackage);
 	return {
 		metadataPath,
 		states,
 		actionable: states.filter((companion) => companion.status !== "installed"),
 		loadError: loaded.error,
 		collidingPackageInstalled: Boolean(resolveInstalledVersion(collidingPackage).version),
+		legacySpawnPackageBlocked: !spawnToolsAllowed(legacySpawnPackageState),
+		legacySpawnPackageError: legacySpawnPackageState.error,
 	};
 }
 
@@ -347,13 +370,19 @@ function renderCompanionCatalogStatus(
 		);
 	}
 
+	if (catalog.legacySpawnPackageBlocked) {
+		lines.push("", ...legacySpawnPackageWarningLines(catalog.legacySpawnPackageError));
+	}
+
 	if (options.metadataPath) lines.push("", `Companion metadata: ${options.metadataPath}`);
 
 	return {
 		lines,
 		level: notificationLevel(
 			Boolean(catalog.loadError),
-			catalog.actionable.length > 0 || catalog.collidingPackageInstalled,
+			catalog.actionable.length > 0 ||
+				catalog.collidingPackageInstalled ||
+				catalog.legacySpawnPackageBlocked,
 		),
 	};
 }
@@ -383,6 +412,21 @@ export function createCompanionWorkflow(options: CompanionWorkflowOptions = {}) 
 	const interaction = options.interaction ?? {};
 
 	return {
+		async checkSpawnTools(): Promise<{ allowed: boolean }> {
+			const resolveInstalledVersion =
+				options.catalog?.resolveInstalledVersion ?? getInstalledCompanionVersion;
+			const legacySpawnPackageState = resolveInstalledVersion(legacySpawnPackage);
+			const allowed = spawnToolsAllowed(legacySpawnPackageState);
+			if (!allowed) {
+				notify(
+					interaction,
+					legacySpawnPackageWarningLines(legacySpawnPackageState.error).join("\n"),
+					"warning",
+				);
+			}
+			return { allowed };
+		},
+
 		async inspect(): Promise<InspectResult> {
 			const catalog = resolveCompanionCatalog(options.catalog);
 			const { lines, level } = renderCompanionCatalogStatus(catalog, {

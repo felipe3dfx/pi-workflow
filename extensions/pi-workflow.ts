@@ -60,6 +60,7 @@ export default function piWorkflowExtension(
 
 	pi.on("session_start", async (_event, ctx) => {
 		currentCtx = ctx;
+		await workflow.checkSpawnTools();
 	});
 	pi.on("tool_execution_start", async (_event, ctx) => {
 		currentCtx = ctx;
