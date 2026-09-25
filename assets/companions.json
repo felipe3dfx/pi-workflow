@@ -12,10 +12,6 @@
     {
       "package": "pi-web-access",
       "description": "Web access extension and skills for Pi."
-    },
-    {
-      "package": "@heyhuynhgiabuu/pi-pretty",
-      "description": "Pretty rendering for Pi tool output and thinking."
     }
   ]
 }

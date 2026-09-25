@@ -100,7 +100,10 @@ interface ResolvedCompanionCatalog {
 	states: CompanionState[];
 	actionable: CompanionState[];
 	loadError?: string;
+	collidingPackageInstalled: boolean;
 }
+
+const collidingPackage = "@heyhuynhgiabuu/pi-pretty";
 
 const requireFromPackage = createRequire(import.meta.url);
 const packageDirectory = dirname(fileURLToPath(import.meta.url));
@@ -251,6 +254,7 @@ function resolveCompanionCatalog(
 		states,
 		actionable: states.filter((companion) => companion.status !== "installed"),
 		loadError: loaded.error,
+		collidingPackageInstalled: Boolean(resolveInstalledVersion(collidingPackage).version),
 	};
 }
 
@@ -294,9 +298,9 @@ export function manualInstallInstructions(
 	].join("\n");
 }
 
-function notificationLevel(loadError: boolean, actionableCount: number): NotificationLevel {
+function notificationLevel(loadError: boolean, needsAttention: boolean): NotificationLevel {
 	if (loadError) return "error";
-	if (actionableCount > 0) return "warning";
+	if (needsAttention) return "warning";
 	return "info";
 }
 
@@ -334,11 +338,23 @@ function renderCompanionCatalogStatus(
 		lines.push("", "All configured companions are installed.");
 	}
 
+	if (catalog.collidingPackageInstalled) {
+		lines.push(
+			"",
+			`${collidingPackage} is installed and registers the same tool names as pi-workflow (read, bash, grep, find, ls). pi-workflow does not remove it. Remove it yourself:`,
+			`pi remove npm:${collidingPackage}`,
+			"Then run /reload.",
+		);
+	}
+
 	if (options.metadataPath) lines.push("", `Companion metadata: ${options.metadataPath}`);
 
 	return {
 		lines,
-		level: notificationLevel(Boolean(catalog.loadError), catalog.actionable.length),
+		level: notificationLevel(
+			Boolean(catalog.loadError),
+			catalog.actionable.length > 0 || catalog.collidingPackageInstalled,
+		),
 	};
 }
 

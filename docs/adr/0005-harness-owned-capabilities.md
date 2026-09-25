@@ -4,6 +4,8 @@
 
 Acceptance: approval and merge of the introducing PR.
 
+The `pi-pretty` companion clause is superseded by [ADR 0006](0006-harness-owns-compact-tool-rendering.md).
+
 ## Decision
 
 pi-workflow may own capabilities that are not companion packages. A child session and CodeGraph access are harness capabilities. `@tintinweb/pi-subagents` and `@vndv/pi-codegraph` are not expected companions. `@heyhuynhgiabuu/pi-pretty` is an expected companion and remains independently owned.
