@@ -46,22 +46,28 @@ function fakePi() {
 }
 
 function fakeCtx({ mode = "tui", branch = [] } = {}) {
-	let headerFactory;
-	let headerCalls = 0;
+	let widgetFactory;
+	let widgetCalls = 0;
+	let widgetKey;
+	let widgetOptions;
 	let currentBranch = branch;
 	return {
 		ctx: {
 			mode,
 			ui: {
-				setHeader: (factory) => {
-					headerFactory = factory;
-					headerCalls += 1;
+				setWidget: (key, factory, options) => {
+					widgetKey = key;
+					widgetFactory = factory;
+					widgetOptions = options;
+					widgetCalls += 1;
 				},
 			},
 			sessionManager: { getBranch: () => currentBranch },
 		},
-		getHeaderFactory: () => headerFactory,
-		headerCallCount: () => headerCalls,
+		getWidgetFactory: () => widgetFactory,
+		widgetCallCount: () => widgetCalls,
+		getWidgetKey: () => widgetKey,
+		getWidgetOptions: () => widgetOptions,
 		setBranch: (next) => {
 			currentBranch = next;
 		},
@@ -211,50 +217,52 @@ test("the todo tool never writes into the process working directory", async () =
 	}
 });
 
-test("in tui mode, the header is installed only once a task exists", async () => {
+test("in tui mode, the widget is installed above the editor only once a task exists", async () => {
 	const { pi, tools } = fakePi();
 	registerSessionTodo(pi);
-	const { ctx, getHeaderFactory, headerCallCount } = fakeCtx({ mode: "tui" });
+	const { ctx, getWidgetFactory, widgetCallCount, getWidgetKey, getWidgetOptions } = fakeCtx({ mode: "tui" });
 
-	assert.equal(headerCallCount(), 0);
+	assert.equal(widgetCallCount(), 0);
 	await execute(tools, "add", { text: "Review the doctor output" }, ctx);
-	assert.equal(headerCallCount(), 1);
-	assert.ok(getHeaderFactory());
+	assert.equal(widgetCallCount(), 1);
+	assert.equal(getWidgetKey(), "session-todo");
+	assert.equal(getWidgetOptions()?.placement, "aboveEditor");
+	assert.ok(getWidgetFactory());
 
 	const { tui } = fakeTui();
-	const lines = getHeaderFactory()(tui, fakeTheme()).render(80);
+	const lines = getWidgetFactory()(tui, fakeTheme()).render(80);
 	assert.ok(lines.some((line) => line.includes("Review the doctor output")));
 });
 
-test("in tui mode, the built-in header is restored once the list empties", async () => {
+test("in tui mode, the widget is cleared once the list empties", async () => {
 	const { pi, tools } = fakePi();
 	registerSessionTodo(pi);
-	const { ctx, getHeaderFactory, headerCallCount } = fakeCtx({ mode: "tui" });
+	const { ctx, getWidgetFactory, widgetCallCount } = fakeCtx({ mode: "tui" });
 
 	await execute(tools, "add", { text: "Review the doctor output" }, ctx);
-	assert.equal(headerCallCount(), 1);
+	assert.equal(widgetCallCount(), 1);
 
 	await execute(tools, "clear", {}, ctx);
-	assert.equal(headerCallCount(), 2);
-	assert.equal(getHeaderFactory(), undefined);
+	assert.equal(widgetCallCount(), 2);
+	assert.equal(getWidgetFactory(), undefined);
 });
 
-test("outside tui mode, executing the tool never touches the header", async () => {
+test("outside tui mode, executing the tool never touches the widget", async () => {
 	const { pi, tools } = fakePi();
 	registerSessionTodo(pi);
-	const { ctx, headerCallCount } = fakeCtx({ mode: "print" });
+	const { ctx, widgetCallCount } = fakeCtx({ mode: "print" });
 	await execute(tools, "add", { text: "Review the doctor output" }, ctx);
-	assert.equal(headerCallCount(), 0);
+	assert.equal(widgetCallCount(), 0);
 });
 
 test("alt+shift+t toggles the box open and closed", async () => {
 	const { pi, tools, shortcuts } = fakePi();
 	registerSessionTodo(pi);
-	const { ctx, getHeaderFactory } = fakeCtx({ mode: "tui" });
+	const { ctx, getWidgetFactory } = fakeCtx({ mode: "tui" });
 	await execute(tools, "add", { text: "Review the doctor output" }, ctx);
 
 	const { tui } = fakeTui();
-	const component = getHeaderFactory()(tui, fakeTheme());
+	const component = getWidgetFactory()(tui, fakeTheme());
 	assert.ok(component.render(80).some((line) => line.includes("Review the doctor output")));
 
 	await shortcuts.get("alt+shift+t").handler(ctx);
@@ -267,25 +275,25 @@ test("alt+shift+t toggles the box open and closed", async () => {
 test("adding a task after collapsing reopens the box", async () => {
 	const { pi, tools, shortcuts } = fakePi();
 	registerSessionTodo(pi);
-	const { ctx, getHeaderFactory } = fakeCtx({ mode: "tui" });
+	const { ctx, getWidgetFactory } = fakeCtx({ mode: "tui" });
 	await execute(tools, "add", { text: "Review the doctor output" }, ctx);
 	await shortcuts.get("alt+shift+t").handler(ctx);
 
 	await execute(tools, "add", { text: "Write the list contract" }, ctx);
 
 	const { tui } = fakeTui();
-	const component = getHeaderFactory()(tui, fakeTheme());
+	const component = getWidgetFactory()(tui, fakeTheme());
 	assert.ok(component.render(80).some((line) => line.includes("Write the list contract")));
 });
 
 test("alt+shift+h hides and re-shows done tasks", async () => {
 	const { pi, tools, shortcuts } = fakePi();
 	registerSessionTodo(pi);
-	const { ctx, getHeaderFactory } = fakeCtx({ mode: "tui" });
+	const { ctx, getWidgetFactory } = fakeCtx({ mode: "tui" });
 	await execute(tools, "write", { tasks: [{ text: "pending" }, { text: "finished", done: true }] }, ctx);
 
 	const { tui } = fakeTui();
-	const component = getHeaderFactory()(tui, fakeTheme());
+	const component = getWidgetFactory()(tui, fakeTheme());
 	assert.ok(component.render(80).some((line) => line.includes("finished")));
 
 	await shortcuts.get("alt+shift+h").handler(ctx);
@@ -305,11 +313,11 @@ test("session_start rebuilds the list from the last todo tool result on the bran
 			{ id: 2, text: "recent", done: false },
 		]),
 	];
-	const { ctx, getHeaderFactory } = fakeCtx({ mode: "tui", branch });
+	const { ctx, getWidgetFactory } = fakeCtx({ mode: "tui", branch });
 	await fireEvent(handlers, "session_start", ctx);
 
 	const { tui } = fakeTui();
-	const lines = getHeaderFactory()(tui, fakeTheme()).render(80);
+	const lines = getWidgetFactory()(tui, fakeTheme()).render(80);
 	assert.ok(lines.some((line) => line.includes("old")));
 	assert.ok(lines.some((line) => line.includes("recent")));
 
@@ -324,11 +332,11 @@ test("session_start ignores a failed todo tool result", async () => {
 		todoResultEntry([{ id: 1, text: "kept", done: false }]),
 		todoResultEntry([{ id: 2, text: "should be ignored", done: false }], { isError: true }),
 	];
-	const { ctx, getHeaderFactory } = fakeCtx({ mode: "tui", branch });
+	const { ctx, getWidgetFactory } = fakeCtx({ mode: "tui", branch });
 	await fireEvent(handlers, "session_start", ctx);
 
 	const { tui } = fakeTui();
-	const lines = getHeaderFactory()(tui, fakeTheme()).render(80);
+	const lines = getWidgetFactory()(tui, fakeTheme()).render(80);
 	assert.ok(lines.some((line) => line.includes("kept")));
 	assert.ok(!lines.some((line) => line.includes("should be ignored")));
 });
@@ -337,28 +345,28 @@ test("session_start starts empty when the restored list has no open tasks", asyn
 	const { pi, handlers } = fakePi();
 	registerSessionTodo(pi);
 	const branch = [todoResultEntry([{ id: 1, text: "finished", done: true }])];
-	const { ctx, getHeaderFactory, headerCallCount } = fakeCtx({ mode: "tui", branch });
+	const { ctx, getWidgetFactory, widgetCallCount } = fakeCtx({ mode: "tui", branch });
 	await fireEvent(handlers, "session_start", ctx);
 
-	assert.equal(headerCallCount(), 0);
-	assert.equal(getHeaderFactory(), undefined);
+	assert.equal(widgetCallCount(), 0);
+	assert.equal(getWidgetFactory(), undefined);
 });
 
-test("session_start header sync installs the header when the restored list has open tasks", async () => {
+test("session_start widget sync installs the widget above the editor when the restored list has open tasks", async () => {
 	const { pi, handlers } = fakePi();
 	registerSessionTodo(pi);
 	const branch = [todoResultEntry([{ id: 1, text: "still open", done: false }])];
-	const { ctx, getHeaderFactory, headerCallCount } = fakeCtx({ mode: "tui", branch });
+	const { ctx, getWidgetFactory, widgetCallCount } = fakeCtx({ mode: "tui", branch });
 	await fireEvent(handlers, "session_start", ctx);
 
-	assert.equal(headerCallCount(), 1);
-	assert.ok(getHeaderFactory());
+	assert.equal(widgetCallCount(), 1);
+	assert.ok(getWidgetFactory());
 });
 
 test("session_tree rebuilds the list from the tree's branch, like session_start does", async () => {
 	const { pi, tools, handlers } = fakePi();
 	registerSessionTodo(pi);
-	const { ctx, getHeaderFactory, setBranch } = fakeCtx({
+	const { ctx, getWidgetFactory, setBranch } = fakeCtx({
 		mode: "tui",
 		branch: [todoResultEntry([{ id: 1, text: "on the old branch", done: false }])],
 	});
@@ -368,7 +376,7 @@ test("session_tree rebuilds the list from the tree's branch, like session_start 
 	await fireEvent(handlers, "session_tree", ctx);
 
 	const { tui } = fakeTui();
-	const lines = getHeaderFactory()(tui, fakeTheme()).render(80);
+	const lines = getWidgetFactory()(tui, fakeTheme()).render(80);
 	assert.ok(lines.some((line) => line.includes("on the tree branch")));
 	assert.ok(!lines.some((line) => line.includes("on the old branch")));
 

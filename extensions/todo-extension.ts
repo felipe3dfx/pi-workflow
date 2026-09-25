@@ -46,13 +46,15 @@ function replayTasks(entries: ReturnType<ExtensionContext["sessionManager"]["get
 	return tasks.length > 0 && tasks.every((task) => task.done) ? [] : tasks;
 }
 
+const WIDGET_KEY = "session-todo";
+
 export function registerSessionTodo(pi: ExtensionAPI): void {
 	const todoList = createTodoList();
 	const boxState: TodoBoxState = { collapsed: false, showDone: true };
 	let currentTui: { requestRender: (force?: boolean) => void } | undefined;
-	let headerInstalled = false;
+	let widgetInstalled = false;
 
-	function headerFactory(tui: { requestRender: (force?: boolean) => void }, theme: Theme) {
+	function widgetFactory(tui: { requestRender: (force?: boolean) => void }, theme: Theme) {
 		currentTui = tui;
 		return {
 			render(width: number) {
@@ -67,15 +69,15 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 		currentTui?.requestRender();
 	}
 
-	function syncHeader(ctx: ExtensionContext): void {
+	function syncWidget(ctx: ExtensionContext): void {
 		if (ctx.mode !== "tui") return;
 		const hasTasks = todoList.list().length > 0;
-		if (hasTasks && !headerInstalled) {
-			ctx.ui.setHeader(headerFactory);
-			headerInstalled = true;
-		} else if (!hasTasks && headerInstalled) {
-			ctx.ui.setHeader(undefined);
-			headerInstalled = false;
+		if (hasTasks && !widgetInstalled) {
+			ctx.ui.setWidget(WIDGET_KEY, widgetFactory, { placement: "aboveEditor" });
+			widgetInstalled = true;
+		} else if (!hasTasks && widgetInstalled) {
+			ctx.ui.setWidget(WIDGET_KEY, undefined);
+			widgetInstalled = false;
 		}
 	}
 
@@ -83,8 +85,8 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 		name: "todo",
 		label: "Todo",
 		description:
-			"Manage the current session's task list, shown in the header. Actions: write (replace the whole list), add, update, clear, list. Session-scoped only; never creates a file.",
-		promptSnippet: "Track the session's todo list, shown in the header, with write/add/update/clear/list",
+			"Manage the current session's task list, shown in a box pinned above the input. Actions: write (replace the whole list), add, update, clear, list. Session-scoped only; never creates a file.",
+		promptSnippet: "Track the session's todo list, shown above the input, with write/add/update/clear/list",
 		promptGuidelines: [
 			"Use todo, not a markdown or TODO file, whenever the user asks for a task list or to track work for this session, unless the user explicitly asks for a file; todo never creates a file.",
 			"Prefer todo write to replace the whole plan when it changes, and todo update to move one task's status as work progresses.",
@@ -98,7 +100,7 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 					}
 					const tasks = todoList.write(params.tasks);
 					reveal();
-					syncHeader(ctx);
+					syncWidget(ctx);
 					return { content: [{ type: "text", text: summarize(tasks) }], details: { tasks } };
 				}
 				case "add": {
@@ -107,7 +109,7 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 					}
 					const task = todoList.add(params.text);
 					reveal();
-					syncHeader(ctx);
+					syncWidget(ctx);
 					return {
 						content: [{ type: "text", text: `Added #${task.id}: ${task.text}` }],
 						details: { tasks: todoList.list() },
@@ -122,13 +124,13 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 						throw new Error(`task #${params.id} not found`);
 					}
 					reveal();
-					syncHeader(ctx);
+					syncWidget(ctx);
 					return { content: [{ type: "text", text: `Updated #${task.id}` }], details: { tasks: todoList.list() } };
 				}
 				case "clear": {
 					todoList.clear();
 					reveal();
-					syncHeader(ctx);
+					syncWidget(ctx);
 					return { content: [{ type: "text", text: "Cleared session tasks" }], details: { tasks: [] } };
 				}
 				case "list":
@@ -141,7 +143,7 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 	});
 
 	pi.registerShortcut("alt+shift+t", {
-		description: "Collapse or expand the session task box in the header",
+		description: "Collapse or expand the session task box above the input",
 		handler: async (_ctx) => {
 			boxState.collapsed = !boxState.collapsed;
 			currentTui?.requestRender();
@@ -149,7 +151,7 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 	});
 
 	pi.registerShortcut("alt+shift+h", {
-		description: "Show or hide done session tasks in the header",
+		description: "Show or hide done session tasks above the input",
 		handler: async (_ctx) => {
 			boxState.showDone = !boxState.showDone;
 			currentTui?.requestRender();
@@ -158,7 +160,7 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 
 	async function restoreFromBranch(_event: unknown, ctx: ExtensionContext) {
 		todoList.restore(replayTasks(ctx.sessionManager.getBranch()));
-		syncHeader(ctx);
+		syncWidget(ctx);
 	}
 
 	pi.on("session_start", restoreFromBranch);
