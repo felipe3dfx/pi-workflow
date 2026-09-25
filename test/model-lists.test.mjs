@@ -79,19 +79,36 @@ function commandContext({
 	return { ctx, notifications };
 }
 
-function fakeJev(answer) {
+const openRouterUrl = "https://openrouter.ai/api/v1/models";
+
+function fakeJev(answer, openRouter = () => Response.json({ data: [] })) {
 	const requests = [];
+	const openRouterRequests = [];
 	const fetch = async (url, init) => {
+		if (url === openRouterUrl) {
+			openRouterRequests.push({ url, init });
+			return openRouter();
+		}
 		const body = JSON.parse(init.body);
 		requests.push({ url, init, body });
-		const [question] = Object.keys(body.questions);
-		const choice = answer(body, question);
-		if (choice instanceof Response) return choice;
+		const questions = Object.keys(body.questions);
+		const answered = answer(body, questions[0]);
+		if (answered instanceof Response) return answered;
+		if (typeof answered === "string") {
+			return Response.json({
+				answers: { [questions[0]]: { choice: answered, confidence: 0.9 } },
+			});
+		}
 		return Response.json({
-			answers: { [question]: { choice, confidence: 0.9 } },
+			answers: Object.fromEntries(
+				questions.map((question) => [
+					question,
+					{ noul: answered[question] ?? 0 },
+				]),
+			),
 		});
 	};
-	return { fetch, requests };
+	return { fetch, requests, openRouterRequests };
 }
 
 function isThinkingQuestion(body) {
@@ -112,9 +129,9 @@ test("the command creates the missing file with specialists, tier lists, and the
 			}),
 			classify: async (candidate) =>
 				({
-					"gpt-5.6-luna": "implement",
-					"gpt-6-astra": "review",
-					"qwen3.8-flash": "chat",
+					"gpt-5.6-luna": { implement: 1 },
+					"gpt-6-astra": { review: 1 },
+					"qwen3.8-flash": { chat: 1 },
 				})[candidate.id],
 		});
 		const { ctx } = commandContext({
@@ -162,7 +179,7 @@ test("a model that research or Jev cannot place is left out and the others are s
 			},
 			classify: async (candidate) => {
 				if (candidate.id === "jev-down") throw new Error("Jev timed out");
-				return candidate.id === "abstained" ? "premium" : "debug";
+				return { debug: 1 };
 			},
 		});
 		const { ctx, notifications } = commandContext({
@@ -171,7 +188,6 @@ test("a model that research or Jev cannot place is left out and the others are s
 				model("nan", "offline"),
 				model("nan", "unpinned"),
 				model("nan", "jev-down"),
-				model("nan", "abstained"),
 			],
 		});
 
@@ -180,7 +196,7 @@ test("a model that research or Jev cannot place is left out and the others are s
 		assert.equal(outcome.status, "created");
 		assert.deepEqual(
 			outcome.leftOut.map((entry) => entry.model),
-			["nan/offline", "nan/unpinned", "nan/jev-down", "nan/abstained"],
+			["nan/offline", "nan/unpinned", "nan/jev-down"],
 		);
 		const saved = await readJson(path);
 		assert.deepEqual(saved.specialists.debug, [
@@ -207,7 +223,7 @@ async function writeExisting(path) {
 
 const placeEverything = {
 	research: async () => ({ thinking: "low", notes: "" }),
-	classify: async () => "chat",
+	classify: async () => ({ chat: 1 }),
 };
 
 test("in the TUI an existing file is replaced only after confirmation", async () => {
@@ -463,7 +479,7 @@ test("a file created by another process during classification is never replaced"
 				research: placeEverything.research,
 				classify: async () => {
 					await writeExisting(path);
-					return "chat";
+					return { chat: 1 };
 				},
 			});
 			const confirms = [];
@@ -550,7 +566,7 @@ test("the command refuses when the file entry cannot be inspected", async (t) =>
 test("without injected adapters, Jev picks the thinking level for the cost tier, then the task type", async () => {
 	await withConfigDirectory(async ({ path }) => {
 		const jev = fakeJev((body) =>
-			isThinkingQuestion(body) ? "medium" : "implement",
+			isThinkingQuestion(body) ? "medium" : { implement: 0.9 },
 		);
 		const lists = createModelLists({ path, fetch: jev.fetch });
 		const { ctx } = commandContext({
@@ -582,12 +598,9 @@ test("without injected adapters, Jev picks the thinking level for the cost tier,
 			assert.equal(request.init.headers.Authorization, "Bearer ts-secret");
 			assert.equal(request.init.headers["Content-Type"], "application/json");
 			assert.equal(request.body.model, "jev-latest");
-			assert.equal(Object.values(request.body.questions)[0].type, "choice");
 			assert.ok(request.init.signal instanceof AbortSignal);
 		}
-		const [thinking, taskType] = jev.requests.map(
-			(request) => Object.values(request.body.questions)[0],
-		);
+		const thinking = Object.values(jev.requests[0].body.questions)[0];
 		assert.equal(
 			jev.requests[0].body.state.tier,
 			"quick: Mechanical work, transcription, and cheap sweeps",
@@ -601,7 +614,11 @@ test("without injected adapters, Jev picks the thinking level for the cost tier,
 			"high",
 			"xhigh",
 		]);
-		assert.deepEqual(Object.keys(taskType.criteria), Object.keys(creationMap));
+		assert.equal(thinking.type, "choice");
+		assert.deepEqual(
+			Object.keys(jev.requests[1].body.questions),
+			Object.keys(creationMap),
+		);
 		for (const request of jev.requests) {
 			const notes = request.body.state.model;
 			assert.match(notes, /gpt-6-astra \(openai-codex\/gpt-6-astra\)/);
@@ -622,7 +639,7 @@ test("without injected adapters, Jev picks the thinking level for the cost tier,
 test("Jev is told plainly when a model reports zero cost", async () => {
 	await withConfigDirectory(async ({ path }) => {
 		const jev = fakeJev((body) =>
-			isThinkingQuestion(body) ? "low" : "research",
+			isThinkingQuestion(body) ? "low" : { research: 0.9 },
 		);
 		const lists = createModelLists({ path, fetch: jev.fetch });
 		const { ctx } = commandContext({
@@ -643,6 +660,234 @@ test("Jev is told plainly when a model reports zero cost", async () => {
 	});
 });
 
+function specialtiesRequest(requests, name) {
+	return requests.find(
+		(request) =>
+			!isThinkingQuestion(request.body) &&
+			request.body.state.model.startsWith(`${name} `),
+	);
+}
+
+test("Jev researches each model with its OpenRouter description, fetched once and matched by id without signs", async () => {
+	await withConfigDirectory(async ({ path }) => {
+		const jev = fakeJev(
+			(body) => (isThinkingQuestion(body) ? "low" : { chat: 0.9 }),
+			() =>
+				Response.json({
+					data: [
+						{ id: "x/gpt-6-luna" },
+						{
+							id: "openai/gpt-6-luna:batch",
+							description: "Chat and classification.",
+						},
+						{ id: "resale/glm-5.3-flash", description: "A resold copy." },
+						{ id: "z-ai/glm-5.3-flash", description: "Agentic coding." },
+					],
+				}),
+		);
+		const lists = createModelLists({ path, fetch: jev.fetch });
+		const { ctx, notifications } = commandContext({
+			models: [
+				model("openai-codex", "GPT-6-Luna", { input: 1, output: 1 }),
+				model("zai", "glm5.3-flash", { input: 2, output: 2 }),
+			],
+			typesafeKey: "ts-secret",
+		});
+
+		const outcome = await lists.create(ctx);
+
+		assert.deepEqual(outcome.leftOut, []);
+		assert.equal(jev.openRouterRequests.length, 1);
+		assert.ok(jev.openRouterRequests[0].init.signal instanceof AbortSignal);
+		const described = {
+			"GPT-6-Luna": "Chat and classification.",
+			"glm5.3-flash": "Agentic coding.",
+		};
+		for (const [name, description] of Object.entries(described)) {
+			const requests = jev.requests.filter((request) =>
+				request.body.state.model.startsWith(`${name} `),
+			);
+			assert.equal(requests.length, 2, name);
+			for (const request of requests) {
+				assert.ok(request.body.state.model.includes(description), name);
+			}
+		}
+		assert.doesNotMatch(
+			JSON.stringify(jev.requests.map((request) => request.body.state)),
+			/resold/,
+		);
+		assert.deepEqual(
+			notifications.filter((entry) => entry.level === "warning"),
+			[],
+		);
+	});
+});
+
+test("Jev answers one yes/no question per task type in a single request", async () => {
+	await withConfigDirectory(async ({ path }) => {
+		const jev = fakeJev((body) =>
+			isThinkingQuestion(body) ? "low" : { debug: 0.7 },
+		);
+		const lists = createModelLists({ path, fetch: jev.fetch });
+		const { ctx } = commandContext({
+			models: [model("xai", "grok-4.7")],
+			typesafeKey: "ts-secret",
+		});
+
+		await lists.create(ctx);
+
+		assert.equal(jev.requests.length, 2);
+		const { questions } = specialtiesRequest(jev.requests, "grok-4.7").body;
+		assert.deepEqual(Object.keys(questions), Object.keys(creationMap));
+		for (const [type, question] of Object.entries(questions)) {
+			assert.equal(question.type, "noul", type);
+			assert.match(question.instructions, /`model`/);
+			assert.match(question.instructions, new RegExp(type));
+			assert.deepEqual(Object.keys(question.criteria), ["true", "false"]);
+		}
+		assert.deepEqual((await readJson(path)).specialists.debug, [
+			{ model: "xai/grok-4.7", thinking: "low" },
+		]);
+	});
+});
+
+test("a model joins every specialist list Jev says yes to, ordered by probability, and one with none keeps its tier", async () => {
+	await withConfigDirectory(async ({ path }) => {
+		const answers = {
+			alpha: { implement: 0.6, review: 0.9 },
+			beta: { implement: 0.8, review: 0.49 },
+			gamma: { chat: 0.4 },
+			delta: { implement: 0.6, review: 0.5 },
+		};
+		const jev = fakeJev((body) =>
+			isThinkingQuestion(body)
+				? "low"
+				: answers[body.state.model.split(" ")[0]],
+		);
+		const lists = createModelLists({ path, fetch: jev.fetch });
+		const { ctx } = commandContext({
+			models: [
+				model("x", "alpha", { input: 1, output: 1 }),
+				model("x", "beta", { input: 2, output: 2 }),
+				model("x", "gamma", { input: 3, output: 3 }),
+				model("x", "delta", { input: 4, output: 4 }),
+			],
+			typesafeKey: "ts-secret",
+		});
+
+		const outcome = await lists.create(ctx);
+
+		assert.deepEqual(outcome.leftOut, []);
+		const saved = await readJson(path);
+		const names = (entries) => entries.map((entry) => entry.model);
+		assert.deepEqual(names(saved.specialists.implement), [
+			"x/beta",
+			"x/alpha",
+			"x/delta",
+		]);
+		assert.deepEqual(names(saved.specialists.review), ["x/alpha", "x/delta"]);
+		assert.deepEqual(names(saved.specialists.chat), []);
+		assert.ok(
+			Object.values(saved.tiers).some((entries) =>
+				names(entries).includes("x/gamma"),
+			),
+		);
+	});
+});
+
+test("a model OpenRouter does not describe is researched from the Pi catalog only and reported", async () => {
+	await withConfigDirectory(async ({ path }) => {
+		const jev = fakeJev(
+			(body) => (isThinkingQuestion(body) ? "low" : { chat: 0.9 }),
+			() =>
+				Response.json({
+					data: [{ id: "x/two", description: "The second model." }],
+				}),
+		);
+		const lists = createModelLists({ path, fetch: jev.fetch });
+		const { ctx, notifications } = commandContext({
+			models: [model("x", "one"), model("x", "two")],
+			typesafeKey: "ts-secret",
+		});
+
+		const outcome = await lists.create(ctx);
+
+		assert.deepEqual(outcome.leftOut, []);
+		assert.deepEqual(
+			(await readJson(path)).specialists.chat.map((entry) => entry.model),
+			["x/one", "x/two"],
+		);
+		const warnings = notifications.filter((entry) => entry.level === "warning");
+		assert.equal(warnings.length, 1);
+		assert.equal(
+			warnings[0].message,
+			"No OpenRouter description, researched from the Pi catalog only:\n- x/one",
+		);
+	});
+});
+
+test("when OpenRouter does not answer, models are researched from the Pi catalog only with one warning", async () => {
+	const failures = [
+		() => new Response("secret body", { status: 502 }),
+		() => {
+			throw new TypeError("fetch failed");
+		},
+		() => new Response("<html>secret body</html>"),
+		() => Response.json({ models: [] }),
+	];
+	for (const failure of failures) {
+		await withConfigDirectory(async ({ path }) => {
+			const jev = fakeJev(
+				(body) => (isThinkingQuestion(body) ? "low" : { chat: 0.9 }),
+				failure,
+			);
+			const lists = createModelLists({ path, fetch: jev.fetch });
+			const { ctx, notifications } = commandContext({
+				models: [model("x", "one"), model("x", "two")],
+				typesafeKey: "ts-secret",
+			});
+
+			const outcome = await lists.create(ctx);
+
+			assert.deepEqual(outcome.leftOut, []);
+			assert.equal(jev.openRouterRequests.length, 1);
+			assert.equal((await readJson(path)).specialists.chat.length, 2);
+			const warnings = notifications.filter(
+				(entry) => entry.level === "warning",
+			);
+			assert.equal(warnings.length, 1);
+			assert.match(
+				warnings[0].message,
+				/^OpenRouter did not answer, so models were researched from the Pi catalog only: /,
+			);
+			assert.doesNotMatch(warnings[0].message, /secret body/);
+		});
+	}
+});
+
+test("a specialties answer missing a task type leaves the model out", async () => {
+	await withConfigDirectory(async ({ path }) => {
+		const jev = fakeJev((body) =>
+			isThinkingQuestion(body)
+				? "low"
+				: Response.json({ answers: { chat: { noul: 0.9 } } }),
+		);
+		const lists = createModelLists({ path, fetch: jev.fetch });
+		const { ctx } = commandContext({
+			models: [model("x", "one")],
+			typesafeKey: "ts-secret",
+		});
+
+		const outcome = await lists.create(ctx);
+
+		assert.deepEqual(
+			outcome.leftOut.map((entry) => entry.model),
+			["x/one"],
+		);
+		assert.deepEqual((await readJson(path)).specialists.chat, []);
+	});
+});
+
 function tierLists(saved) {
 	return Object.fromEntries(
 		Object.entries(saved.tiers).map(([tier, entries]) => [
@@ -654,7 +899,9 @@ function tierLists(saved) {
 
 test("tiers split the priced catalog into thirds by output cost, input cost breaking ties", async () => {
 	await withConfigDirectory(async ({ path }) => {
-		const jev = fakeJev((body) => (isThinkingQuestion(body) ? "low" : "chat"));
+		const jev = fakeJev((body) =>
+			isThinkingQuestion(body) ? "low" : { chat: 0.9 },
+		);
 		const lists = createModelLists({ path, fetch: jev.fetch });
 		const { ctx } = commandContext({
 			models: [
@@ -684,7 +931,9 @@ test("tiers split the priced catalog into thirds by output cost, input cost brea
 
 test("input cost breaks a tie in output cost", async () => {
 	await withConfigDirectory(async ({ path }) => {
-		const jev = fakeJev((body) => (isThinkingQuestion(body) ? "low" : "chat"));
+		const jev = fakeJev((body) =>
+			isThinkingQuestion(body) ? "low" : { chat: 0.9 },
+		);
 		const lists = createModelLists({ path, fetch: jev.fetch });
 		const { ctx } = commandContext({
 			models: [
@@ -707,7 +956,9 @@ test("input cost breaks a tie in output cost", async () => {
 
 test("models with the same cost share a tier", async () => {
 	await withConfigDirectory(async ({ path }) => {
-		const jev = fakeJev((body) => (isThinkingQuestion(body) ? "low" : "chat"));
+		const jev = fakeJev((body) =>
+			isThinkingQuestion(body) ? "low" : { chat: 0.9 },
+		);
 		const lists = createModelLists({ path, fetch: jev.fetch });
 		const { ctx } = commandContext({
 			models: [
@@ -731,7 +982,7 @@ test("models with the same cost share a tier", async () => {
 test("a model without catalog cost joins only its specialist list, is asked thinking without a tier, and is reported", async () => {
 	await withConfigDirectory(async ({ path }) => {
 		const jev = fakeJev((body) =>
-			isThinkingQuestion(body) ? "medium" : "research",
+			isThinkingQuestion(body) ? "medium" : { research: 0.9 },
 		);
 		const lists = createModelLists({ path, fetch: jev.fetch });
 		const { ctx, notifications } = commandContext({
@@ -765,7 +1016,9 @@ test("a model without catalog cost joins only its specialist list, is asked thin
 			Object.values(thinking.body.questions)[0].instructions,
 			/tier/,
 		);
-		const warnings = notifications.filter((entry) => entry.level === "warning");
+		const warnings = notifications.filter((entry) =>
+			entry.message.startsWith("No catalog cost"),
+		);
 		assert.equal(warnings.length, 1);
 		assert.match(
 			warnings[0].message,
@@ -780,7 +1033,7 @@ test("a model Jev cannot place does not shift the tiers of the others", async ()
 		const jev = fakeJev((body) => {
 			if (body.state.model.startsWith("mid "))
 				return new Response("", { status: 502 });
-			return isThinkingQuestion(body) ? "low" : "chat";
+			return isThinkingQuestion(body) ? "low" : { chat: 0.9 };
 		});
 		const lists = createModelLists({ path, fetch: jev.fetch });
 		const { ctx } = commandContext({
@@ -833,7 +1086,9 @@ test("without a TypeSafe login every model is left out and no request is sent", 
 
 test("Jev offers only the supported levels and a level outside them is never saved", async () => {
 	await withConfigDirectory(async ({ path }) => {
-		const jev = fakeJev((body) => (isThinkingQuestion(body) ? "high" : "chat"));
+		const jev = fakeJev((body) =>
+			isThinkingQuestion(body) ? "high" : { chat: 0.9 },
+		);
 		const lists = createModelLists({ path, fetch: jev.fetch });
 		const { ctx } = commandContext({
 			models: [{ ...model("nan", "qwen3.8-flash"), reasoning: false }],
@@ -908,7 +1163,7 @@ test("at most four models are placed at once and every model is still saved in o
 				inFlight -= 1;
 				return { thinking: "low", notes: "" };
 			},
-			classify: async () => "chat",
+			classify: async () => ({ chat: 1 }),
 		});
 		const ids = Array.from({ length: 10 }, (_, index) => `m${index}`);
 		const { ctx } = commandContext({

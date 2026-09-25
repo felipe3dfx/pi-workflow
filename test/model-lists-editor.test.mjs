@@ -627,7 +627,7 @@ test("the extension's edit command opens the panel over the file the create comm
 			modelLists: {
 				path,
 				research: async () => ({ thinking: "low", notes: "" }),
-				classify: async () => "chat",
+				classify: async () => ({ chat: 1 }),
 			},
 		});
 		const { ctx, nextPanel } = editorContext({ available: [{ provider: "nan", id: "mimo-v2.5", cost: { input: 1, output: 1 } }] });

@@ -8,7 +8,7 @@ import {
 } from "@earendil-works/pi-ai";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
-import { askJevChoice, type Fetch } from "./jev-client.ts";
+import { askJevChoice, askJevNouls, type Fetch } from "./jev-client.ts";
 import { createModelListsEditor } from "./model-lists-editor.ts";
 import {
 	activePiAgentDirectory,
@@ -95,6 +95,9 @@ const thinkingCriteria: Record<ThinkingLevel, string> = {
 };
 
 const placementWorkers = 4;
+const openRouterModels = "https://openrouter.ai/api/v1/models";
+const openRouterTimeoutMs = 15_000;
+const specialistThreshold = 0.5;
 
 type ModelCandidate = Model<Api>;
 
@@ -108,7 +111,7 @@ type ModelAdapters = {
 	classify: (
 		model: ModelCandidate,
 		research: ModelResearch,
-	) => Promise<string | undefined>;
+	) => Promise<Partial<Record<TaskType, number>>>;
 };
 
 export interface ModelListsOptions {
@@ -126,7 +129,7 @@ type CommandContext = Pick<
 type Placement =
 	| {
 			model: string;
-			taskType: TaskType;
+			specialties: Partial<Record<TaskType, number>>;
 			tier: Tier | undefined;
 			entry: ModelEntry;
 	  }
@@ -243,21 +246,88 @@ function catalogNotes(candidate: ModelCandidate): string {
 	].join(", ");
 }
 
-function jevAdapters(
-	ctx: CommandContext,
-	fetch: Fetch | undefined,
-): ModelAdapters {
+type OpenRouterEntry = { vendor: string; name: string; description: string };
+
+function withoutSigns(value: string): string {
+	return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+async function openRouterEntries(
+	fetch: Fetch = globalThis.fetch,
+): Promise<OpenRouterEntry[]> {
+	const response = await fetch(openRouterModels, {
+		signal: AbortSignal.timeout(openRouterTimeoutMs),
+	});
+	if (!response.ok) throw new Error(`OpenRouter returned ${response.status}`);
+	const payload: unknown = await response.json().catch(() => {
+		throw new Error("OpenRouter returned invalid JSON");
+	});
+	if (!isPlainRecord(payload) || !Array.isArray(payload.data)) {
+		throw new Error("OpenRouter returned no model list");
+	}
+	return payload.data.flatMap((entry: unknown) => {
+		if (
+			!isPlainRecord(entry) ||
+			typeof entry.id !== "string" ||
+			typeof entry.description !== "string"
+		) {
+			return [];
+		}
+		const slash = entry.id.indexOf("/");
+		return [
+			{
+				vendor: withoutSigns(entry.id.slice(0, Math.max(slash, 0))),
+				name: withoutSigns(entry.id.slice(slash + 1).split(":")[0]),
+				description: entry.description,
+			},
+		];
+	});
+}
+
+function openRouterDescription(
+	entries: OpenRouterEntry[],
+	candidate: ModelCandidate,
+): string | undefined {
+	const matches = entries.filter(
+		({ name }) => name === withoutSigns(candidate.id),
+	);
+	return (
+		matches.find(({ vendor }) => vendor === withoutSigns(candidate.provider)) ??
+		matches[0]
+	)?.description;
+}
+
+function jevAdapters(ctx: CommandContext, fetch: Fetch | undefined) {
 	let key: Promise<string> | undefined;
 	const apiKey = () => {
 		key ??= typesafeKey(ctx);
 		return key;
 	};
-	return {
+	let openRouter:
+		| Promise<{ entries: OpenRouterEntry[] } | { failure: string }>
+		| undefined;
+	const undescribed: string[] = [];
+	const adapters: ModelAdapters = {
 		async research(candidate, tier) {
 			const supported = getSupportedThinkingLevels(candidate);
-			const notes = catalogNotes(candidate);
+			const token = await apiKey();
+			openRouter ??= openRouterEntries(fetch).then(
+				(entries) => ({ entries }),
+				(error: unknown) => ({ failure: errorMessage(error) }),
+			);
+			const found = await openRouter;
+			const description =
+				"entries" in found
+					? openRouterDescription(found.entries, candidate)
+					: undefined;
+			if ("entries" in found && description === undefined) {
+				undescribed.push(`${candidate.provider}/${candidate.id}`);
+			}
+			const notes = description
+				? `${catalogNotes(candidate)}. OpenRouter description: ${description}`
+				: catalogNotes(candidate);
 			const thinking = await askJevChoice(
-				await apiKey(),
+				token,
 				{
 					state: tier
 						? { model: notes, tier: `${tier}: ${tierCriteria[tier]}` }
@@ -275,18 +345,41 @@ function jevAdapters(
 			return { thinking, notes };
 		},
 		async classify(_candidate, found) {
-			return askJevChoice(
+			return askJevNouls(
 				await apiKey(),
 				{
 					state: { model: found.notes },
-					instructions:
-						"Which single task type is `model` best suited for? Judge the kind of work it does best, not its intelligence or speed. Context capacity matters only for which specialist list it belongs to.",
-					criteria: taskTypeCriteria,
+					questions: Object.fromEntries(
+						taskTypes.map((type) => [
+							type,
+							{
+								instructions: `Is \`model\` a good specialist for ${type} work? Judge the kind of work it does well, not its intelligence or speed. Context capacity matters only for which specialist lists it belongs to.`,
+								criteria: {
+									true: `It does ${type} work well: ${taskTypeCriteria[type]}`,
+									false: `It is not a good fit for ${type} work: ${taskTypeCriteria[type]}`,
+								},
+							},
+						]),
+					),
 				},
 				fetch,
 			);
 		},
 	};
+	const evidenceWarning = async (): Promise<string | undefined> => {
+		if (!openRouter) return undefined;
+		const found = await openRouter;
+		if ("failure" in found) {
+			return `OpenRouter did not answer, so models were researched from the Pi catalog only: ${found.failure}`;
+		}
+		return undescribed.length > 0
+			? [
+					"No OpenRouter description, researched from the Pi catalog only:",
+					...undescribed.map((model) => `- ${model}`),
+				].join("\n")
+			: undefined;
+	};
+	return { adapters, evidenceWarning };
 }
 
 function costTiers(candidates: ModelCandidate[]): Array<Tier | undefined> {
@@ -331,13 +424,10 @@ export function createModelLists(options: ModelListsOptions = {}) {
 			if (!isOneOf(thinkingLevels, found.thinking)) {
 				return { model, reason: "research found no thinking level" };
 			}
-			const taskType = await classify(candidate, found);
-			if (!isOneOf(taskTypes, taskType)) {
-				return { model, reason: "Jev named no known task type" };
-			}
+			const specialties = await classify(candidate, found);
 			return {
 				model,
-				taskType,
+				specialties,
 				tier,
 				entry: { model, thinking: found.thinking },
 			};
@@ -367,8 +457,8 @@ export function createModelLists(options: ModelListsOptions = {}) {
 		}
 		const jev = jevAdapters(ctx, options.fetch);
 		const adapters = {
-			research: options.research ?? jev.research,
-			classify: options.classify ?? jev.classify,
+			research: options.research ?? jev.adapters.research,
+			classify: options.classify ?? jev.adapters.classify,
 		};
 		const lists = emptyLists();
 		const leftOut: Array<{ model: string; reason: string }> = [];
@@ -388,15 +478,24 @@ export function createModelLists(options: ModelListsOptions = {}) {
 			}
 		};
 		await Promise.all(Array.from({ length: placementWorkers }, worker));
+		const placed = placements.filter((placement) => "entry" in placement);
 		for (const placement of placements) {
 			if (!("entry" in placement)) {
 				leftOut.push(placement);
 				continue;
 			}
-			lists.specialists[placement.taskType]?.push(placement.entry);
 			if (placement.tier) lists.tiers[placement.tier]?.push(placement.entry);
 			else untiered.push(placement.model);
 		}
+		for (const type of taskTypes) {
+			const probability = (placement: (typeof placed)[number]) =>
+				placement.specialties[type] ?? 0;
+			lists.specialists[type] = placed
+				.filter((placement) => probability(placement) >= specialistThreshold)
+				.sort((a, b) => probability(b) - probability(a))
+				.map((placement) => placement.entry);
+		}
+		const evidenceWarning = await jev.evidenceWarning();
 		try {
 			writeJsonAtomically(path, lists, { replace: replacing });
 		} catch (error) {
@@ -413,6 +512,7 @@ export function createModelLists(options: ModelListsOptions = {}) {
 			`${replacing ? "Replaced" : "Created"} ${path}. It applies after /reload.`,
 			"info",
 		);
+		if (evidenceWarning) report(ctx, evidenceWarning, "warning");
 		if (untiered.length > 0) {
 			report(
 				ctx,
