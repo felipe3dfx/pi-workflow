@@ -626,11 +626,11 @@ test("the extension's edit command opens the panel over the file the create comm
 		piWorkflowExtension(pi, {
 			modelLists: {
 				path,
-				research: async () => ({ tier: "quick", thinking: "low", notes: "" }),
+				research: async () => ({ thinking: "low", notes: "" }),
 				classify: async () => "chat",
 			},
 		});
-		const { ctx, nextPanel } = editorContext({ available: [{ provider: "nan", id: "mimo-v2.5" }] });
+		const { ctx, nextPanel } = editorContext({ available: [{ provider: "nan", id: "mimo-v2.5", cost: { input: 1, output: 1 } }] });
 		await commands.get("pi-workflow-models").handler("", ctx);
 
 		const editing = commands.get("pi-workflow-models-edit").handler("", ctx);

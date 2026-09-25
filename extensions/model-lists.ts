@@ -98,10 +98,13 @@ const placementWorkers = 4;
 
 type ModelCandidate = Model<Api>;
 
-type ModelResearch = { tier: string; thinking: string; notes: string };
+type ModelResearch = { thinking: string; notes: string };
 
 type ModelAdapters = {
-	research: (model: ModelCandidate) => Promise<ModelResearch>;
+	research: (
+		model: ModelCandidate,
+		tier: Tier | undefined,
+	) => Promise<ModelResearch>;
 	classify: (
 		model: ModelCandidate,
 		research: ModelResearch,
@@ -121,7 +124,12 @@ type CommandContext = Pick<
 >;
 
 type Placement =
-	| { model: string; taskType: TaskType; tier: Tier; entry: ModelEntry }
+	| {
+			model: string;
+			taskType: TaskType;
+			tier: Tier | undefined;
+			entry: ModelEntry;
+	  }
 	| { model: string; reason: string };
 
 function isOneOf<T extends string>(
@@ -245,26 +253,16 @@ function jevAdapters(
 		return key;
 	};
 	return {
-		async research(candidate) {
+		async research(candidate, tier) {
 			const supported = getSupportedThinkingLevels(candidate);
 			const notes = catalogNotes(candidate);
-			const tier = await askJevChoice(
-				await apiKey(),
-				{
-					state: { model: notes },
-					instructions:
-						"Which tier should `model` sit in? Judge its capability and cost from the catalog evidence.",
-					criteria: tierCriteria,
-				},
-				fetch,
-			);
-			if (!isOneOf(tiers, tier)) throw new Error("Jev named no known tier");
 			const thinking = await askJevChoice(
 				await apiKey(),
 				{
-					state: { model: notes, tier: `${tier}: ${tierCriteria[tier]}` },
-					instructions:
-						"Which thinking level should `model` run at by default for delegated work in `tier`? Pick only among the offered levels.",
+					state: tier
+						? { model: notes, tier: `${tier}: ${tierCriteria[tier]}` }
+						: { model: notes },
+					instructions: `Which thinking level should \`model\` run at by default for delegated work${tier ? " in `tier`" : ""}? Pick only among the offered levels.`,
 					criteria: Object.fromEntries(
 						supported.map((level) => [level, thinkingCriteria[level]]),
 					),
@@ -274,7 +272,7 @@ function jevAdapters(
 			if (!(supported as string[]).includes(thinking)) {
 				throw new Error(`Jev picked unsupported thinking level ${thinking}`);
 			}
-			return { tier, thinking, notes };
+			return { thinking, notes };
 		},
 		async classify(_candidate, found) {
 			return askJevChoice(
@@ -289,6 +287,23 @@ function jevAdapters(
 			);
 		},
 	};
+}
+
+function costTiers(candidates: ModelCandidate[]): Array<Tier | undefined> {
+	const priced = candidates
+		.filter(({ cost }) => cost.input !== 0 || cost.output !== 0)
+		.sort(
+			(a, b) => a.cost.output - b.cost.output || a.cost.input - b.cost.input,
+		);
+	return candidates.map(({ cost }) => {
+		const index = priced.findIndex(
+			(other) =>
+				other.cost.output === cost.output && other.cost.input === cost.input,
+		);
+		return index === -1
+			? undefined
+			: tiers[Math.floor((index * tiers.length) / priced.length)];
+	});
 }
 
 export function report(
@@ -307,14 +322,12 @@ export function createModelLists(options: ModelListsOptions = {}) {
 
 	async function place(
 		candidate: ModelCandidate,
+		tier: Tier | undefined,
 		{ research, classify }: ModelAdapters,
 	): Promise<Placement> {
 		const model = `${candidate.provider}/${candidate.id}`;
 		try {
-			const found = await research(candidate);
-			if (!isOneOf(tiers, found.tier)) {
-				return { model, reason: "Jev named no known tier" };
-			}
+			const found = await research(candidate, tier);
 			if (!isOneOf(thinkingLevels, found.thinking)) {
 				return { model, reason: "research found no thinking level" };
 			}
@@ -325,7 +338,7 @@ export function createModelLists(options: ModelListsOptions = {}) {
 			return {
 				model,
 				taskType,
-				tier: found.tier,
+				tier,
 				entry: { model, thinking: found.thinking },
 			};
 		} catch (error) {
@@ -359,13 +372,19 @@ export function createModelLists(options: ModelListsOptions = {}) {
 		};
 		const lists = emptyLists();
 		const leftOut: Array<{ model: string; reason: string }> = [];
+		const untiered: string[] = [];
 		const candidates = ctx.modelRegistry.getAvailable();
+		const candidateTiers = costTiers(candidates);
 		const placements: Placement[] = [];
 		let next = 0;
 		const worker = async () => {
 			while (next < candidates.length) {
 				const index = next++;
-				placements[index] = await place(candidates[index], adapters);
+				placements[index] = await place(
+					candidates[index],
+					candidateTiers[index],
+					adapters,
+				);
 			}
 		};
 		await Promise.all(Array.from({ length: placementWorkers }, worker));
@@ -375,7 +394,8 @@ export function createModelLists(options: ModelListsOptions = {}) {
 				continue;
 			}
 			lists.specialists[placement.taskType]?.push(placement.entry);
-			lists.tiers[placement.tier]?.push(placement.entry);
+			if (placement.tier) lists.tiers[placement.tier]?.push(placement.entry);
+			else untiered.push(placement.model);
 		}
 		try {
 			writeJsonAtomically(path, lists, { replace: replacing });
@@ -393,6 +413,16 @@ export function createModelLists(options: ModelListsOptions = {}) {
 			`${replacing ? "Replaced" : "Created"} ${path}. It applies after /reload.`,
 			"info",
 		);
+		if (untiered.length > 0) {
+			report(
+				ctx,
+				[
+					"No catalog cost, so no tier:",
+					...untiered.map((model) => `- ${model}`),
+				].join("\n"),
+				"warning",
+			);
+		}
 		if (leftOut.length > 0) {
 			report(
 				ctx,
