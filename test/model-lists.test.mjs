@@ -42,7 +42,16 @@ async function withConfigDirectory(run) {
 }
 
 function model(provider, id) {
-	return { provider, id, name: id, contextWindow: 200000, reasoning: true };
+	return {
+		provider,
+		id,
+		name: id,
+		contextWindow: 200000,
+		maxTokens: 64000,
+		reasoning: true,
+		input: ["text", "image"],
+		cost: { input: 3, output: 15, cacheRead: 0, cacheWrite: 0 },
+	};
 }
 
 function commandContext({
@@ -89,6 +98,13 @@ function isThinkingQuestion(body) {
 	return Object.keys(Object.values(body.questions)[0].criteria).includes("off");
 }
 
+function isTierQuestion(body) {
+	return (
+		Object.keys(Object.values(body.questions)[0].criteria).join() ===
+		"quick,standard,high"
+	);
+}
+
 async function readJson(path) {
 	return JSON.parse(await readFile(path, "utf8"));
 }
@@ -98,6 +114,11 @@ test("the command creates the missing file with specialists, tier lists, and the
 		const lists = createModelLists({
 			path,
 			research: async (candidate) => ({
+				tier: {
+					"gpt-5.6-luna": "high",
+					"gpt-6-astra": "standard",
+					"qwen3.8-flash": "quick",
+				}[candidate.id],
 				thinking: candidate.provider === "nan" ? "low" : "high",
 				notes: `${candidate.id} notes`,
 			}),
@@ -134,8 +155,8 @@ test("the command creates the missing file with specialists, tier lists, and the
 		assert.deepEqual(saved.specialists.plan, []);
 		assert.deepEqual(saved.tiers, {
 			quick: [{ model: "nan/qwen3.8-flash", thinking: "low" }],
-			standard: [{ model: "openai-codex/gpt-5.6-luna", thinking: "high" }],
-			high: [{ model: "openai-codex/gpt-6-astra", thinking: "high" }],
+			standard: [{ model: "openai-codex/gpt-6-astra", thinking: "high" }],
+			high: [{ model: "openai-codex/gpt-5.6-luna", thinking: "high" }],
 		});
 	});
 });
@@ -147,6 +168,7 @@ test("a model that research or Jev cannot place is left out and the others are s
 			research: async (candidate) => {
 				if (candidate.id === "offline") throw new Error("search failed");
 				return {
+					tier: candidate.id === "untiered" ? "premium" : "standard",
 					thinking: candidate.id === "unpinned" ? "turbo" : "medium",
 					notes: "",
 				};
@@ -161,6 +183,7 @@ test("a model that research or Jev cannot place is left out and the others are s
 				model("xai", "grok-4.7"),
 				model("nan", "offline"),
 				model("nan", "unpinned"),
+				model("nan", "untiered"),
 				model("nan", "jev-down"),
 				model("nan", "abstained"),
 			],
@@ -171,7 +194,13 @@ test("a model that research or Jev cannot place is left out and the others are s
 		assert.equal(outcome.status, "created");
 		assert.deepEqual(
 			outcome.leftOut.map((entry) => entry.model),
-			["nan/offline", "nan/unpinned", "nan/jev-down", "nan/abstained"],
+			[
+				"nan/offline",
+				"nan/unpinned",
+				"nan/untiered",
+				"nan/jev-down",
+				"nan/abstained",
+			],
 		);
 		const saved = await readJson(path);
 		assert.deepEqual(saved.specialists.debug, [
@@ -184,6 +213,7 @@ test("a model that research or Jev cannot place is left out and the others are s
 		});
 		const warning = notifications.find((entry) => entry.level === "warning");
 		assert.match(warning.message, /nan\/offline: search failed/);
+		assert.match(warning.message, /nan\/untiered: .*tier/);
 		assert.match(warning.message, /nan\/jev-down: Jev timed out/);
 	});
 });
@@ -197,7 +227,7 @@ async function writeExisting(path) {
 }
 
 const placeEverything = {
-	research: async () => ({ thinking: "low", notes: "" }),
+	research: async () => ({ tier: "quick", thinking: "low", notes: "" }),
 	classify: async () => "chat",
 };
 
@@ -538,11 +568,12 @@ test("the command refuses when the file entry cannot be inspected", async (t) =>
 	});
 });
 
-test("without injected adapters, Jev picks the thinking level among the supported levels and the task type", async () => {
+test("without injected adapters, Jev picks the tier, then the thinking level for that tier, then the task type", async () => {
 	await withConfigDirectory(async ({ path }) => {
-		const jev = fakeJev((body) =>
-			isThinkingQuestion(body) ? "medium" : "review",
-		);
+		const jev = fakeJev((body) => {
+			if (isTierQuestion(body)) return "high";
+			return isThinkingQuestion(body) ? "medium" : "implement";
+		});
 		const lists = createModelLists({ path, fetch: jev.fetch });
 		const { ctx } = commandContext({
 			models: [
@@ -558,13 +589,15 @@ test("without injected adapters, Jev picks the thinking level among the supporte
 
 		assert.deepEqual(outcome.leftOut, []);
 		const saved = await readJson(path);
-		assert.deepEqual(saved.specialists.review, [
+		assert.deepEqual(saved.specialists.implement, [
 			{ model: "openai-codex/gpt-6-astra", thinking: "medium" },
 		]);
-		assert.deepEqual(saved.tiers.high, [
-			{ model: "openai-codex/gpt-6-astra", thinking: "medium" },
-		]);
-		assert.equal(jev.requests.length, 2);
+		assert.deepEqual(saved.tiers, {
+			quick: [],
+			standard: [],
+			high: [{ model: "openai-codex/gpt-6-astra", thinking: "medium" }],
+		});
+		assert.equal(jev.requests.length, 3);
 		for (const request of jev.requests) {
 			assert.equal(request.url, "https://api.typesafe.ai/v1/systemone");
 			assert.equal(request.init.method, "POST");
@@ -574,9 +607,15 @@ test("without injected adapters, Jev picks the thinking level among the supporte
 			assert.equal(Object.values(request.body.questions)[0].type, "choice");
 			assert.ok(request.init.signal instanceof AbortSignal);
 		}
-		const [thinking, taskType] = jev.requests.map(
+		const [tier, thinking, taskType] = jev.requests.map(
 			(request) => Object.values(request.body.questions)[0],
 		);
+		assert.deepEqual(Object.keys(tier.criteria), ["quick", "standard", "high"]);
+		assert.equal(
+			jev.requests[1].body.state.tier,
+			"high: Judge: coordination, review, and risk",
+		);
+		assert.match(thinking.instructions, /tier/);
 		assert.deepEqual(Object.keys(thinking.criteria), [
 			"off",
 			"minimal",
@@ -586,7 +625,83 @@ test("without injected adapters, Jev picks the thinking level among the supporte
 			"xhigh",
 		]);
 		assert.deepEqual(Object.keys(taskType.criteria), Object.keys(creationMap));
-		assert.match(JSON.stringify(jev.requests[1].body.state), /200000/);
+		for (const request of jev.requests) {
+			const notes = request.body.state.model;
+			assert.match(notes, /gpt-6-astra \(openai-codex\/gpt-6-astra\)/);
+			assert.match(notes, /reasoning supported/);
+			assert.match(notes, /context window 200000 tokens/);
+			assert.match(notes, /max output 64000 tokens/);
+			assert.match(notes, /input text, image/);
+			assert.match(notes, /\$3 per million input tokens/);
+			assert.match(notes, /\$15 per million output tokens/);
+			assert.match(
+				notes,
+				/thinking levels off, minimal, low, medium, high, xhigh/,
+			);
+		}
+	});
+});
+
+test("Jev is told plainly when a model reports zero cost", async () => {
+	await withConfigDirectory(async ({ path }) => {
+		const jev = fakeJev((body) => {
+			if (isTierQuestion(body)) return "standard";
+			return isThinkingQuestion(body) ? "low" : "research";
+		});
+		const lists = createModelLists({ path, fetch: jev.fetch });
+		const { ctx } = commandContext({
+			models: [
+				{
+					...model("openai-codex", "gpt-5.6-luna"),
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				},
+			],
+			typesafeKey: "ts-secret",
+		});
+
+		await lists.create(ctx);
+
+		const notes = jev.requests[0].body.state.model;
+		assert.match(notes, /cost reported as 0 per million input tokens/);
+		assert.match(notes, /cost reported as 0 per million output tokens/);
+	});
+});
+
+test("a tier question that fails or names no tier leaves the model out and the others are saved", async () => {
+	await withConfigDirectory(async ({ path }) => {
+		const jev = fakeJev((body) => {
+			if (isTierQuestion(body)) {
+				if (body.state.model.startsWith("jev-down "))
+					return new Response("", { status: 502 });
+				return body.state.model.startsWith("abstained ") ? "premium" : "quick";
+			}
+			return isThinkingQuestion(body) ? "low" : "chat";
+		});
+		const lists = createModelLists({ path, fetch: jev.fetch });
+		const { ctx } = commandContext({
+			models: [
+				model("nan", "jev-down"),
+				model("nan", "abstained"),
+				model("nan", "gemma4"),
+			],
+			typesafeKey: "ts-secret",
+		});
+
+		const outcome = await lists.create(ctx);
+
+		assert.deepEqual(outcome.leftOut, [
+			{ model: "nan/jev-down", reason: "Jev returned 502" },
+			{ model: "nan/abstained", reason: "Jev named no known tier" },
+		]);
+		const saved = await readJson(path);
+		assert.deepEqual(saved.tiers, {
+			quick: [{ model: "nan/gemma4", thinking: "low" }],
+			standard: [],
+			high: [],
+		});
+		assert.deepEqual(saved.specialists.chat, [
+			{ model: "nan/gemma4", thinking: "low" },
+		]);
 	});
 });
 
@@ -618,7 +733,10 @@ test("without a TypeSafe login every model is left out and no request is sent", 
 
 test("Jev offers only the supported levels and a level outside them is never saved", async () => {
 	await withConfigDirectory(async ({ path }) => {
-		const jev = fakeJev((body) => (isThinkingQuestion(body) ? "high" : "chat"));
+		const jev = fakeJev((body) => {
+			if (isTierQuestion(body)) return "quick";
+			return isThinkingQuestion(body) ? "high" : "chat";
+		});
 		const lists = createModelLists({ path, fetch: jev.fetch });
 		const { ctx } = commandContext({
 			models: [{ ...model("nan", "qwen3.8-flash"), reasoning: false }],
@@ -628,10 +746,10 @@ test("Jev offers only the supported levels and a level outside them is never sav
 		const outcome = await lists.create(ctx);
 
 		assert.deepEqual(
-			Object.keys(Object.values(jev.requests[0].body.questions)[0].criteria),
+			Object.keys(Object.values(jev.requests[1].body.questions)[0].criteria),
 			["off"],
 		);
-		assert.equal(jev.requests.length, 1);
+		assert.equal(jev.requests.length, 2);
 		assert.deepEqual(
 			outcome.leftOut.map((entry) => entry.model),
 			["nan/qwen3.8-flash"],
@@ -643,11 +761,12 @@ test("Jev offers only the supported levels and a level outside them is never sav
 
 test("a failing Jev response leaves the model out with its status and never the body or the key", async () => {
 	await withConfigDirectory(async ({ path }) => {
-		const jev = fakeJev((body, _question) =>
-			isThinkingQuestion(body)
+		const jev = fakeJev((body, _question) => {
+			if (isTierQuestion(body)) return "quick";
+			return isThinkingQuestion(body)
 				? "low"
-				: new Response("  overloaded, key ts-other  \n", { status: 503 }),
-		);
+				: new Response("  overloaded, key ts-other  \n", { status: 503 });
+		});
 		const lists = createModelLists({ path, fetch: jev.fetch });
 		const { ctx, notifications } = commandContext({
 			models: [model("nan", "gemma4")],
@@ -691,7 +810,7 @@ test("at most four models are placed at once and every model is still saved in o
 				peak = Math.max(peak, inFlight);
 				await new Promise((resolve) => waiting.push(resolve));
 				inFlight -= 1;
-				return { thinking: "low", notes: "" };
+				return { tier: "quick", thinking: "low", notes: "" };
 			},
 			classify: async () => "chat",
 		});

@@ -626,7 +626,7 @@ test("the extension's edit command opens the panel over the file the create comm
 		piWorkflowExtension(pi, {
 			modelLists: {
 				path,
-				research: async () => ({ thinking: "low", notes: "" }),
+				research: async () => ({ tier: "quick", thinking: "low", notes: "" }),
 				classify: async () => "chat",
 			},
 		});
