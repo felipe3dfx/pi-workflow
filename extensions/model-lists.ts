@@ -199,7 +199,7 @@ function parseModelLists(text: string): ModelLists {
 	return parsed;
 }
 
-type ModelListsLoad =
+export type ModelListsLoad =
 	| { status: "absent" }
 	| { status: "loaded"; lists: ModelLists }
 	| { status: "refused"; reason: string };
