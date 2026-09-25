@@ -60,6 +60,7 @@ function loadTool(adapters) {
 			on() {},
 			registerCommand() {},
 			registerShortcut() {},
+			registerProvider() {},
 			registerTool: (tool) => tools.push(tool),
 			exec: async () => {
 				throw new Error("registration must not run commands");

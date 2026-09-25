@@ -99,9 +99,9 @@ async function assertPinnedLocalPi(root, executable) {
 			"utf8",
 		),
 	).version;
-	if (expected !== "0.80.6" || installed !== expected)
+	if (expected !== "0.87.1" || installed !== expected)
 		throw new Error(
-			`Disposable Pi requires the project-local pinned version 0.80.6; package=${expected ?? "missing"}, installed=${installed ?? "missing"}.`,
+			`Disposable Pi requires the project-local pinned version 0.87.1; package=${expected ?? "missing"}, installed=${installed ?? "missing"}.`,
 		);
 	await access(executable);
 }

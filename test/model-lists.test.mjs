@@ -1,6 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import {
+	lstat,
+	mkdir,
+	mkdtemp,
+	readdir,
+	readFile,
+	rm,
+	symlink,
+	writeFile,
+} from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -23,7 +32,10 @@ const creationMap = {
 async function withConfigDirectory(run) {
 	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-model-lists-"));
 	try {
-		return await run({ dir, path: join(dir, "agent", "pi-workflow-models.json") });
+		return await run({
+			dir,
+			path: join(dir, "agent", "pi-workflow-models.json"),
+		});
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -33,7 +45,13 @@ function model(provider, id) {
 	return { provider, id, name: id, contextWindow: 200000, reasoning: true };
 }
 
-function commandContext({ hasUI = true, models = [], confirm = async () => false, custom } = {}) {
+function commandContext({
+	hasUI = true,
+	models = [],
+	confirm = async () => false,
+	custom,
+	typesafeKey,
+} = {}) {
 	const notifications = [];
 	const ctx = {
 		hasUI,
@@ -43,9 +61,32 @@ function commandContext({ hasUI = true, models = [], confirm = async () => false
 			confirm,
 			custom: custom ?? (async () => undefined),
 		},
-		modelRegistry: { getAvailable: () => models },
+		modelRegistry: {
+			getAvailable: () => models,
+			getApiKeyForProvider: async (provider) =>
+				provider === "typesafe" ? typesafeKey : undefined,
+		},
 	};
 	return { ctx, notifications };
+}
+
+function fakeJev(answer) {
+	const requests = [];
+	const fetch = async (url, init) => {
+		const body = JSON.parse(init.body);
+		requests.push({ url, init, body });
+		const [question] = Object.keys(body.questions);
+		const choice = answer(body, question);
+		if (choice instanceof Response) return choice;
+		return Response.json({
+			answers: { [question]: { choice, confidence: 0.9 } },
+		});
+	};
+	return { fetch, requests };
+}
+
+function isThinkingQuestion(body) {
+	return Object.keys(Object.values(body.questions)[0].criteria).includes("off");
 }
 
 async function readJson(path) {
@@ -61,9 +102,11 @@ test("the command creates the missing file with specialists, tier lists, and the
 				notes: `${candidate.id} notes`,
 			}),
 			classify: async (candidate) =>
-				({ "gpt-5.6-luna": "implement", "gpt-6-astra": "review", "qwen3.8-flash": "chat" })[
-					candidate.id
-				],
+				({
+					"gpt-5.6-luna": "implement",
+					"gpt-6-astra": "review",
+					"qwen3.8-flash": "chat",
+				})[candidate.id],
 		});
 		const { ctx } = commandContext({
 			models: [
@@ -85,7 +128,9 @@ test("the command creates the missing file with specialists, tier lists, and the
 		assert.deepEqual(saved.specialists.review, [
 			{ model: "openai-codex/gpt-6-astra", thinking: "high" },
 		]);
-		assert.deepEqual(saved.specialists.chat, [{ model: "nan/qwen3.8-flash", thinking: "low" }]);
+		assert.deepEqual(saved.specialists.chat, [
+			{ model: "nan/qwen3.8-flash", thinking: "low" },
+		]);
 		assert.deepEqual(saved.specialists.plan, []);
 		assert.deepEqual(saved.tiers, {
 			quick: [{ model: "nan/qwen3.8-flash", thinking: "low" }],
@@ -101,7 +146,10 @@ test("a model that research or Jev cannot place is left out and the others are s
 			path,
 			research: async (candidate) => {
 				if (candidate.id === "offline") throw new Error("search failed");
-				return { thinking: candidate.id === "unpinned" ? "turbo" : "medium", notes: "" };
+				return {
+					thinking: candidate.id === "unpinned" ? "turbo" : "medium",
+					notes: "",
+				};
 			},
 			classify: async (candidate) => {
 				if (candidate.id === "jev-down") throw new Error("Jev timed out");
@@ -126,7 +174,9 @@ test("a model that research or Jev cannot place is left out and the others are s
 			["nan/offline", "nan/unpinned", "nan/jev-down", "nan/abstained"],
 		);
 		const saved = await readJson(path);
-		assert.deepEqual(saved.specialists.debug, [{ model: "xai/grok-4.7", thinking: "medium" }]);
+		assert.deepEqual(saved.specialists.debug, [
+			{ model: "xai/grok-4.7", thinking: "medium" },
+		]);
 		assert.deepEqual(saved.tiers, {
 			quick: [],
 			standard: [{ model: "xai/grok-4.7", thinking: "medium" }],
@@ -138,7 +188,8 @@ test("a model that research or Jev cannot place is left out and the others are s
 	});
 });
 
-const existingContent = '{"schemaVersion":1,"specialists":{},"tiers":{},"taskTypes":{}}\n';
+const existingContent =
+	'{"schemaVersion":1,"specialists":{},"tiers":{},"taskTypes":{}}\n';
 
 async function writeExisting(path) {
 	await mkdir(dirname(path), { recursive: true });
@@ -202,7 +253,10 @@ test("print mode creates the file when it is missing", async (t) => {
 	await withConfigDirectory(async ({ path }) => {
 		t.mock.method(console, "error", () => {});
 		const lists = createModelLists({ path, ...placeEverything });
-		const { ctx } = commandContext({ hasUI: false, models: [model("nan", "gemma4")] });
+		const { ctx } = commandContext({
+			hasUI: false,
+			models: [model("nan", "gemma4")],
+		});
 
 		assert.equal((await lists.create(ctx)).status, "created");
 		assert.deepEqual((await readJson(path)).specialists.chat, [
@@ -215,7 +269,9 @@ test("the loader reads a valid file, and NaN entries may sit in any list", async
 	await withConfigDirectory(async ({ path }) => {
 		const content = {
 			schemaVersion: 1,
-			specialists: { research: [{ model: "nan/mimo-v2.5", thinking: "medium" }] },
+			specialists: {
+				research: [{ model: "nan/mimo-v2.5", thinking: "medium" }],
+			},
 			tiers: {
 				high: [
 					{ model: "openai-codex/gpt-6-astra", thinking: "low" },
@@ -227,7 +283,10 @@ test("the loader reads a valid file, and NaN entries may sit in any list", async
 		await mkdir(dirname(path), { recursive: true });
 		await writeFile(path, JSON.stringify(content), "utf8");
 
-		assert.deepEqual(createModelLists({ path }).load(), { status: "loaded", lists: content });
+		assert.deepEqual(createModelLists({ path }).load(), {
+			status: "loaded",
+			lists: content,
+		});
 	});
 });
 
@@ -242,11 +301,36 @@ test("an invalid or unreadable file is a refusal, not an absent file", async () 
 		await mkdir(dirname(path), { recursive: true });
 		const invalid = [
 			"{ not json",
-			JSON.stringify({ schemaVersion: 1, specialists: {}, tiers: { premium: [] }, taskTypes: {} }),
-			JSON.stringify({ schemaVersion: 1, specialists: {}, tiers: {}, taskTypes: { chat: "premium" } }),
-			JSON.stringify({ schemaVersion: 1, specialists: { chat: [{ model: "nan/gemma4" }] }, tiers: {}, taskTypes: {} }),
-			JSON.stringify({ schemaVersion: 1, specialists: { chats: [] }, tiers: {}, taskTypes: {} }),
-			JSON.stringify({ schemaVersion: 2, specialists: {}, tiers: {}, taskTypes: {} }),
+			JSON.stringify({
+				schemaVersion: 1,
+				specialists: {},
+				tiers: { premium: [] },
+				taskTypes: {},
+			}),
+			JSON.stringify({
+				schemaVersion: 1,
+				specialists: {},
+				tiers: {},
+				taskTypes: { chat: "premium" },
+			}),
+			JSON.stringify({
+				schemaVersion: 1,
+				specialists: { chat: [{ model: "nan/gemma4" }] },
+				tiers: {},
+				taskTypes: {},
+			}),
+			JSON.stringify({
+				schemaVersion: 1,
+				specialists: { chats: [] },
+				tiers: {},
+				taskTypes: {},
+			}),
+			JSON.stringify({
+				schemaVersion: 2,
+				specialists: {},
+				tiers: {},
+				taskTypes: {},
+			}),
 		];
 		for (const content of invalid) {
 			await writeFile(path, content, "utf8");
@@ -272,7 +356,9 @@ test("a file created in this turn is not read and is not a refusal until /reload
 
 		const afterReload = createModelLists({ path }).load();
 		assert.equal(afterReload.status, "loaded");
-		assert.deepEqual(afterReload.lists.tiers.quick, [{ model: "nan/gemma4", thinking: "low" }]);
+		assert.deepEqual(afterReload.lists.tiers.quick, [
+			{ model: "nan/gemma4", thinking: "low" },
+		]);
 	});
 });
 
@@ -282,7 +368,10 @@ test("a file changed outside the command applies only after /reload", async () =
 		const lists = createModelLists({ path });
 		await writeFile(path, "{ not json", "utf8");
 
-		assert.deepEqual(lists.load(), { status: "loaded", lists: JSON.parse(existingContent) });
+		assert.deepEqual(lists.load(), {
+			status: "loaded",
+			lists: JSON.parse(existingContent),
+		});
 		assert.equal(createModelLists({ path }).load().status, "refused");
 	});
 });
@@ -296,6 +385,7 @@ test("the model list commands reject extra arguments with the shared usage", asy
 			registerCommand: (name, command) => commands.set(name, command),
 			registerTool: () => {},
 			registerShortcut: () => {},
+			registerProvider: () => {},
 		};
 		piWorkflowExtension(pi, { modelLists: { path, ...placeEverything } });
 
@@ -312,7 +402,10 @@ test("the model list commands reject extra arguments with the shared usage", asy
 			assert.equal(edits, 0, name);
 			assert.equal(notifications.length, 1, name);
 			assert.equal(notifications[0].level, "error");
-			assert.match(notifications[0].message, /\/pi-workflow-models \| \/pi-workflow-models-edit/);
+			assert.match(
+				notifications[0].message,
+				/\/pi-workflow-models \| \/pi-workflow-models-edit/,
+			);
 		}
 		await assert.rejects(readFile(path, "utf8"), { code: "ENOENT" });
 	});
@@ -329,17 +422,24 @@ test("in print mode the model list commands print the usage for extra arguments"
 			registerCommand: (name, command) => commands.set(name, command),
 			registerTool: () => {},
 			registerShortcut: () => {},
+			registerProvider: () => {},
 		};
 		piWorkflowExtension(pi, { modelLists: { path, ...placeEverything } });
 
 		for (const name of ["pi-workflow-models", "pi-workflow-models-edit"]) {
-			const { ctx } = commandContext({ hasUI: false, models: [model("nan", "gemma4")] });
+			const { ctx } = commandContext({
+				hasUI: false,
+				models: [model("nan", "gemma4")],
+			});
 			await commands.get(name).handler("--force", ctx);
 		}
 
 		assert.equal(printed.length, 2);
 		for (const message of printed) {
-			assert.match(message, /\/pi-workflow-models \| \/pi-workflow-models-edit/);
+			assert.match(
+				message,
+				/\/pi-workflow-models \| \/pi-workflow-models-edit/,
+			);
 		}
 		await assert.rejects(readFile(path, "utf8"), { code: "ENOENT" });
 	});
@@ -372,7 +472,9 @@ test("a file created by another process during classification is never replaced"
 			assert.equal(outcome.status, "kept", `hasUI=${hasUI}`);
 			assert.equal(await readFile(path, "utf8"), existingContent);
 			assert.equal(confirms.length, 0);
-			assert.deepEqual(await readdir(dirname(path)), ["pi-workflow-models.json"]);
+			assert.deepEqual(await readdir(dirname(path)), [
+				"pi-workflow-models.json",
+			]);
 			if (hasUI) assert.match(notifications.at(-1).message, /not replaced/);
 		});
 	}
@@ -423,11 +525,237 @@ test("the command refuses when the file entry cannot be inspected", async (t) =>
 		const notADirectory = join(dir, "agent");
 		await writeFile(notADirectory, "", "utf8");
 		const path = join(notADirectory, "pi-workflow-models.json");
-		const { ctx, notifications } = commandContext({ models: [model("nan", "gemma4")] });
+		const { ctx, notifications } = commandContext({
+			models: [model("nan", "gemma4")],
+		});
 
-		const outcome = await createModelLists({ path, ...placeEverything }).create(ctx);
+		const outcome = await createModelLists({ path, ...placeEverything }).create(
+			ctx,
+		);
 
 		assert.equal(outcome.status, "refused");
 		assert.match(notifications.at(-1).message, /Unable to read/);
 	});
+});
+
+test("without injected adapters, Jev picks the thinking level among the supported levels and the task type", async () => {
+	await withConfigDirectory(async ({ path }) => {
+		const jev = fakeJev((body) =>
+			isThinkingQuestion(body) ? "medium" : "review",
+		);
+		const lists = createModelLists({ path, fetch: jev.fetch });
+		const { ctx } = commandContext({
+			models: [
+				{
+					...model("openai-codex", "gpt-6-astra"),
+					thinkingLevelMap: { xhigh: "xhigh" },
+				},
+			],
+			typesafeKey: "ts-secret",
+		});
+
+		const outcome = await lists.create(ctx);
+
+		assert.deepEqual(outcome.leftOut, []);
+		const saved = await readJson(path);
+		assert.deepEqual(saved.specialists.review, [
+			{ model: "openai-codex/gpt-6-astra", thinking: "medium" },
+		]);
+		assert.deepEqual(saved.tiers.high, [
+			{ model: "openai-codex/gpt-6-astra", thinking: "medium" },
+		]);
+		assert.equal(jev.requests.length, 2);
+		for (const request of jev.requests) {
+			assert.equal(request.url, "https://api.typesafe.ai/v1/systemone");
+			assert.equal(request.init.method, "POST");
+			assert.equal(request.init.headers.Authorization, "Bearer ts-secret");
+			assert.equal(request.init.headers["Content-Type"], "application/json");
+			assert.equal(request.body.model, "jev-latest");
+			assert.equal(Object.values(request.body.questions)[0].type, "choice");
+			assert.ok(request.init.signal instanceof AbortSignal);
+		}
+		const [thinking, taskType] = jev.requests.map(
+			(request) => Object.values(request.body.questions)[0],
+		);
+		assert.deepEqual(Object.keys(thinking.criteria), [
+			"off",
+			"minimal",
+			"low",
+			"medium",
+			"high",
+			"xhigh",
+		]);
+		assert.deepEqual(Object.keys(taskType.criteria), Object.keys(creationMap));
+		assert.match(JSON.stringify(jev.requests[1].body.state), /200000/);
+	});
+});
+
+test("without a TypeSafe login every model is left out and no request is sent", async () => {
+	await withConfigDirectory(async ({ path }) => {
+		const jev = fakeJev(() => "chat");
+		const lists = createModelLists({ path, fetch: jev.fetch });
+		const { ctx } = commandContext({
+			models: [model("nan", "gemma4"), model("xai", "grok-4.7")],
+		});
+
+		const outcome = await lists.create(ctx);
+
+		assert.equal(outcome.status, "created");
+		assert.deepEqual(
+			outcome.leftOut.map((entry) => entry.model),
+			["nan/gemma4", "xai/grok-4.7"],
+		);
+		for (const entry of outcome.leftOut) {
+			assert.equal(
+				entry.reason,
+				"no TypeSafe API key; run /login and choose TypeSafe (Jev) or set TYPESAFE_API_KEY",
+			);
+		}
+		assert.equal(jev.requests.length, 0);
+		assert.deepEqual((await readJson(path)).specialists.chat, []);
+	});
+});
+
+test("Jev offers only the supported levels and a level outside them is never saved", async () => {
+	await withConfigDirectory(async ({ path }) => {
+		const jev = fakeJev((body) => (isThinkingQuestion(body) ? "high" : "chat"));
+		const lists = createModelLists({ path, fetch: jev.fetch });
+		const { ctx } = commandContext({
+			models: [{ ...model("nan", "qwen3.8-flash"), reasoning: false }],
+			typesafeKey: "ts-secret",
+		});
+
+		const outcome = await lists.create(ctx);
+
+		assert.deepEqual(
+			Object.keys(Object.values(jev.requests[0].body.questions)[0].criteria),
+			["off"],
+		);
+		assert.equal(jev.requests.length, 1);
+		assert.deepEqual(
+			outcome.leftOut.map((entry) => entry.model),
+			["nan/qwen3.8-flash"],
+		);
+		assert.match(outcome.leftOut[0].reason, /high/);
+		assert.deepEqual((await readJson(path)).specialists.chat, []);
+	});
+});
+
+test("a failing Jev response leaves the model out with its status and never the body or the key", async () => {
+	await withConfigDirectory(async ({ path }) => {
+		const jev = fakeJev((body, _question) =>
+			isThinkingQuestion(body)
+				? "low"
+				: new Response("  overloaded, key ts-other  \n", { status: 503 }),
+		);
+		const lists = createModelLists({ path, fetch: jev.fetch });
+		const { ctx, notifications } = commandContext({
+			models: [model("nan", "gemma4")],
+			typesafeKey: "ts-secret",
+		});
+
+		const outcome = await lists.create(ctx);
+
+		assert.equal(outcome.leftOut.length, 1);
+		assert.equal(outcome.leftOut[0].reason, "Jev returned 503");
+		assert.doesNotMatch(outcome.leftOut[0].reason, /overloaded|ts-other/);
+		for (const { message } of notifications)
+			assert.doesNotMatch(message, /ts-secret/);
+	});
+});
+
+test("a Jev response that is not JSON leaves the model out without quoting the body", async () => {
+	await withConfigDirectory(async ({ path }) => {
+		const jev = fakeJev(() => new Response("<html>proxy secret</html>"));
+		const lists = createModelLists({ path, fetch: jev.fetch });
+		const { ctx } = commandContext({
+			models: [model("nan", "gemma4")],
+			typesafeKey: "ts-secret",
+		});
+
+		const outcome = await lists.create(ctx);
+
+		assert.equal(outcome.leftOut[0].reason, "Jev returned invalid JSON");
+	});
+});
+
+test("at most four models are placed at once and every model is still saved in order", async () => {
+	await withConfigDirectory(async ({ path }) => {
+		let inFlight = 0;
+		let peak = 0;
+		const waiting = [];
+		const lists = createModelLists({
+			path,
+			research: async () => {
+				inFlight += 1;
+				peak = Math.max(peak, inFlight);
+				await new Promise((resolve) => waiting.push(resolve));
+				inFlight -= 1;
+				return { thinking: "low", notes: "" };
+			},
+			classify: async () => "chat",
+		});
+		const ids = Array.from({ length: 10 }, (_, index) => `m${index}`);
+		const { ctx } = commandContext({
+			models: ids.map((id) => model("nan", id)),
+		});
+
+		const creating = lists.create(ctx);
+		while (true) {
+			await new Promise((resolve) => setImmediate(resolve));
+			const next = waiting.shift();
+			if (!next) break;
+			next();
+		}
+		const outcome = await creating;
+
+		assert.equal(peak, 4);
+		assert.deepEqual(outcome.leftOut, []);
+		assert.deepEqual(
+			(await readJson(path)).specialists.chat.map((entry) => entry.model),
+			ids.map((id) => `nan/${id}`),
+		);
+	});
+});
+
+test("the extension registers TypeSafe as an API-key provider without models for /login and TYPESAFE_API_KEY", async () => {
+	const providers = [];
+	piWorkflowExtension({
+		on: () => {},
+		exec: async () => ({ code: 0 }),
+		registerCommand: () => {},
+		registerTool: () => {},
+		registerShortcut: () => {},
+		registerProvider: (provider) => providers.push(provider),
+	});
+
+	assert.equal(providers.length, 1);
+	const [typesafe] = providers;
+	assert.equal(typesafe.id, "typesafe");
+	assert.equal(typesafe.name, "TypeSafe (Jev)");
+	assert.deepEqual(typesafe.getModels(), []);
+	assert.equal(typesafe.auth.oauth, undefined);
+	const signal = new AbortController().signal;
+	const prompts = [];
+	const credential = await typesafe.auth.apiKey.login({
+		signal,
+		notify: () => {},
+		prompt: async (prompt) => {
+			prompts.push(prompt.type);
+			return "ts-typed";
+		},
+	});
+	assert.deepEqual(prompts, ["secret"]);
+	assert.deepEqual(credential, { type: "api_key", key: "ts-typed" });
+	const env = {
+		env: async (name) => (name === "TYPESAFE_API_KEY" ? "ts-env" : undefined),
+	};
+	const stored = await typesafe.auth.apiKey.resolve({
+		ctx: env,
+		credential,
+		signal,
+	});
+	assert.equal(stored.auth.apiKey, "ts-typed");
+	const fromEnv = await typesafe.auth.apiKey.resolve({ ctx: env, signal });
+	assert.equal(fromEnv.auth.apiKey, "ts-env");
 });

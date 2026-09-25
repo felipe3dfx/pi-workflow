@@ -20,6 +20,7 @@ import {
 	type ModelListsOptions,
 	report,
 } from "./model-lists.ts";
+import { registerTypesafeLogin } from "./jev-client.ts";
 import { registerSessionTodo } from "./todo-extension.ts";
 import { registerCompactTools } from "./compact-tools.ts";
 
@@ -54,6 +55,7 @@ export default function piWorkflowExtension(
 	const workflow = createWorkflow(pi, context, options);
 	registerSessionTodo(pi);
 	registerCompactTools(pi);
+	registerTypesafeLogin(pi);
 	const modelLists = createModelLists(options.modelLists);
 
 	pi.on("session_start", async (_event, ctx) => {
