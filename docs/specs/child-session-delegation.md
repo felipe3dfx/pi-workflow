@@ -98,7 +98,7 @@ Tests cross the launcher interface and the extension adapter, not private helper
 - A same-turn config file is not read. An invalid file is a refusal.
 - Status and doctor follow the edited catalog and do not treat a missing CodeGraph index as a missing companion.
 - Packed distribution includes `assets/contracts/` and still rejects `skills/`, `prompts/`, and `assets/agents/`.
-- The header shows a background child and the session task list. `[↗]` opens the in-TUI detail. Print mode refuses the question panel and does not invent an answer.
+- The header shows a background child, and the session task list sits in a widget above the input. `[↗]` opens the in-TUI detail. Print mode refuses the question panel and does not invent an answer.
 - `todo` changes only the session task list. It does not create a feature document. A closed tool is one line. Opening it does not change the file.
 
 ## Out of scope
