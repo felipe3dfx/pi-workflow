@@ -19,6 +19,9 @@ const required = [
 	"extensions/mcp-config.ts",
 	"assets/companions.json",
 	"assets/mcp-servers.json",
+	"assets/contracts/explore.md",
+	"assets/contracts/worker.md",
+	"assets/contracts/verify.md",
 	"tools/pi-sandbox.mjs",
 ];
 const forbiddenPrefixes = ["skills/", "prompts/", "assets/agents/", "assets/acceptance/"];
