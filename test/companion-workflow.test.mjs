@@ -10,6 +10,42 @@ import {
 	loadCompanionsFromPath,
 	manualInstallInstructions,
 } from "../extensions/companion-workflow.ts";
+import piWorkflowExtension from "../extensions/pi-workflow.ts";
+
+function fakePiExtensionApi() {
+	const handlers = new Map();
+	return {
+		pi: {
+			on(event, handler) {
+				const list = handlers.get(event) ?? [];
+				list.push(handler);
+				handlers.set(event, list);
+			},
+			registerCommand() {},
+			registerShortcut() {},
+			registerProvider() {},
+			registerTool() {},
+			exec: async () => {
+				throw new Error("must not run commands");
+			},
+		},
+		handlers,
+	};
+}
+
+async function fireEvent(handlers, event, ctx) {
+	for (const handler of handlers.get(event) ?? []) {
+		await handler({}, ctx);
+	}
+}
+
+function fakeSessionStartCtx(notifications = []) {
+	return {
+		mode: "tui",
+		ui: { notify: (message, level) => notifications.push({ message, level }) },
+		sessionManager: { getBranch: () => [] },
+	};
+}
 
 async function withMetadataFile(companions, run) {
 	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-companion-"));
@@ -86,7 +122,7 @@ test("status and doctor no longer expect pi-pretty and mention no CodeGraph or r
 	const workflow = createCompanionWorkflow({
 		catalog: {
 			resolveInstalledVersion: (name) =>
-				name === "@heyhuynhgiabuu/pi-pretty" ? {} : { version: "1.0.0" },
+				name === "@heyhuynhgiabuu/pi-pretty" || name === "@tintinweb/pi-subagents" ? {} : { version: "1.0.0" },
 		},
 		interaction: {},
 	});
@@ -128,7 +164,7 @@ test("doctor reports info when every catalog companion is installed, with no Cod
 	const workflow = createCompanionWorkflow({
 		catalog: {
 			resolveInstalledVersion: (name) =>
-				name === "@heyhuynhgiabuu/pi-pretty" ? {} : { version: "1.0.0" },
+				name === "@heyhuynhgiabuu/pi-pretty" || name === "@tintinweb/pi-subagents" ? {} : { version: "1.0.0" },
 		},
 		interaction: {},
 	});
@@ -166,4 +202,127 @@ test("apply installs missing companions and stops when install fails", async () 
 		assert.deepEqual(specs, ["npm:beta"]);
 		assert.match(result.failures[0], /offline/);
 	});
+});
+
+function catalogResolverWithLegacyState(legacyState) {
+	return (name) => {
+		if (name === "@tintinweb/pi-subagents") return legacyState;
+		if (name === "@heyhuynhgiabuu/pi-pretty") return {};
+		return { version: "1.0.0" };
+	};
+}
+
+test("status and doctor warn that an installed legacy spawn package blocks spawn tools, isolated from every other companion", async () => {
+	const notifications = [];
+	const workflow = createCompanionWorkflow({
+		catalog: {
+			resolveInstalledVersion: catalogResolverWithLegacyState({ version: "2.0.0" }),
+		},
+		interaction: {
+			notify: (message, level) => notifications.push({ message, level }),
+		},
+	});
+	for (const result of [await workflow.inspect(), await workflow.diagnose()]) {
+		assert.equal(result.level, "warning");
+		assert.match(result.message, /@tintinweb\/pi-subagents/);
+		assert.match(result.message, /pi remove npm:@tintinweb\/pi-subagents/);
+	}
+	assert.equal(notifications.length, 2);
+
+	const otherwiseIdentical = createCompanionWorkflow({
+		catalog: {
+			resolveInstalledVersion: catalogResolverWithLegacyState({}),
+		},
+		interaction: {},
+	});
+	const result = await otherwiseIdentical.diagnose();
+	assert.equal(result.level, "info");
+});
+
+test("spawn tools stay blocked and the warning surfaces the error when the legacy package's install state cannot be read", async () => {
+	const notifications = [];
+	const workflow = createCompanionWorkflow({
+		catalog: {
+			resolveInstalledVersion: catalogResolverWithLegacyState({
+				error: "EACCES: permission denied",
+			}),
+		},
+		interaction: {
+			notify: (message, level) => notifications.push({ message, level }),
+		},
+	});
+	const result = await workflow.checkSpawnTools();
+	assert.equal(result.allowed, false);
+	assert.equal(notifications.length, 1);
+	assert.equal(notifications[0].level, "warning");
+	assert.match(notifications[0].message, /EACCES: permission denied/);
+	assert.match(notifications[0].message, /pi remove npm:@tintinweb\/pi-subagents/);
+});
+
+test("status and doctor stay available and do not mention the legacy spawn package when it is not installed", async () => {
+	const workflow = createCompanionWorkflow({
+		catalog: {
+			resolveInstalledVersion: (name) =>
+				name === "@tintinweb/pi-subagents" || name === "@heyhuynhgiabuu/pi-pretty"
+					? {}
+					: { version: "1.0.0" },
+		},
+		interaction: {},
+	});
+	for (const result of [await workflow.inspect(), await workflow.diagnose()]) {
+		assert.equal(result.level, "info");
+		assert.doesNotMatch(result.message, /@tintinweb\/pi-subagents/);
+	}
+});
+
+test("checkSpawnTools warns at session start when the legacy spawn package is installed and stays silent otherwise", async () => {
+	const notifications = [];
+	const blocked = createCompanionWorkflow({
+		catalog: {
+			resolveInstalledVersion: (name) =>
+				name === "@tintinweb/pi-subagents" ? { version: "2.0.0" } : {},
+		},
+		interaction: {
+			notify: (message, level) => notifications.push({ message, level }),
+		},
+	});
+	const blockedResult = await blocked.checkSpawnTools();
+	assert.equal(blockedResult.allowed, false);
+	assert.equal(notifications.length, 1);
+	assert.equal(notifications[0].level, "warning");
+	assert.match(notifications[0].message, /pi remove npm:@tintinweb\/pi-subagents/);
+
+	const allowed = createCompanionWorkflow({
+		catalog: { resolveInstalledVersion: () => ({}) },
+		interaction: {
+			notify: () => {
+				throw new Error("must not notify when nothing is installed");
+			},
+		},
+	});
+	const allowedResult = await allowed.checkSpawnTools();
+	assert.equal(allowedResult.allowed, true);
+});
+
+test("piWorkflowExtension warns at session start when the legacy spawn package is installed, and stays silent when it is not", async () => {
+	const { pi, handlers } = fakePiExtensionApi();
+	piWorkflowExtension(pi, {
+		catalog: {
+			resolveInstalledVersion: (name) =>
+				name === "@tintinweb/pi-subagents" ? { version: "2.0.0" } : {},
+		},
+	});
+	const notifications = [];
+	await fireEvent(handlers, "session_start", fakeSessionStartCtx(notifications));
+	assert.equal(notifications.length, 1);
+	assert.equal(notifications[0].level, "warning");
+	assert.match(notifications[0].message, /pi remove npm:@tintinweb\/pi-subagents/);
+
+	const silent = fakePiExtensionApi();
+	piWorkflowExtension(silent.pi, {
+		catalog: { resolveInstalledVersion: () => ({}) },
+	});
+	const silentNotifications = [];
+	await fireEvent(silent.handlers, "session_start", fakeSessionStartCtx(silentNotifications));
+	assert.equal(silentNotifications.length, 0);
 });
