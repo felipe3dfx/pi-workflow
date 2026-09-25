@@ -260,7 +260,7 @@ test("options render numbered with a radio and their description, and z is the f
 	await pending;
 });
 
-test("the browse hint omits the z key and states what Esc does when free text is disabled", async () => {
+test("the z row and its hint always render, even if a caller passes allowFreeText: false", async () => {
 	const state = createAskUserPanelState();
 	const tool = createAskUserChoiceTool(state);
 	const { ctx, send, render } = tuiContext();
@@ -273,8 +273,8 @@ test("the browse hint omits the z key and states what Esc does when free text is
 	);
 	const lines = render(80);
 	const hint = lines[lines.length - 1];
-	assert.doesNotMatch(hint, /z:/);
-	assert.match(hint, /Esc:panel stays open/);
+	assert.ok(lines.some((line) => line.startsWith("z ")), "expected the free-text row to render");
+	assert.match(hint, /z:edit free text/);
 	send("X");
 	await pending;
 });
@@ -830,7 +830,6 @@ test("Down and Up move the active row in browse mode, and Enter answers the acti
 		{
 			question: "Pick one",
 			options: [{ label: "A" }, { label: "B" }, { label: "C" }],
-			allowFreeText: false,
 		},
 		undefined,
 		undefined,
@@ -851,7 +850,7 @@ test("Tab no longer moves the active row", async () => {
 	const { ctx, send, render } = tuiContext();
 	const pending = tool.execute(
 		"call-nav-tab",
-		{ question: "Pick one", options: [{ label: "A" }, { label: "B" }], allowFreeText: false },
+		{ question: "Pick one", options: [{ label: "A" }, { label: "B" }] },
 		undefined,
 		undefined,
 		ctx,
@@ -888,7 +887,7 @@ test("multiple mode renders checkboxes instead of radios", async () => {
 	const { ctx, send, render } = tuiContext();
 	const pending = tool.execute(
 		"call-multi-render",
-		{ question: "Pick some", options: [{ label: "A" }, { label: "B" }], allowFreeText: false, multiple: true },
+		{ question: "Pick some", options: [{ label: "A" }, { label: "B" }], multiple: true },
 		undefined,
 		undefined,
 		ctx,
@@ -939,7 +938,7 @@ test("multiple mode: Space toggles the active option", async () => {
 	const { ctx, send, render } = tuiContext();
 	const pending = tool.execute(
 		"call-multi-space",
-		{ question: "Pick some", options: [{ label: "A" }, { label: "B" }], allowFreeText: false, multiple: true },
+		{ question: "Pick some", options: [{ label: "A" }, { label: "B" }], multiple: true },
 		undefined,
 		undefined,
 		ctx,
@@ -963,7 +962,6 @@ test("multiple mode: digits jump without marking", async () => {
 		{
 			question: "Pick some",
 			options: [{ label: "A" }, { label: "B" }, { label: "C" }],
-			allowFreeText: false,
 			multiple: true,
 		},
 		undefined,
@@ -987,7 +985,7 @@ test("multiple mode: Enter with nothing marked is ignored", async () => {
 	const { ctx, send } = tuiContext();
 	const pending = tool.execute(
 		"call-multi-empty-enter",
-		{ question: "Pick some", options: [{ label: "A" }, { label: "B" }], allowFreeText: false, multiple: true },
+		{ question: "Pick some", options: [{ label: "A" }, { label: "B" }], multiple: true },
 		undefined,
 		undefined,
 		ctx,
@@ -1094,7 +1092,7 @@ test("without multiple, ask_user_choice behaviour and result stay exactly as a s
 	const { ctx, send, render } = tuiContext();
 	const pending = tool.execute(
 		"call-single-unchanged",
-		{ question: "Pick one", options: [{ label: "A" }, { label: "B" }], allowFreeText: false },
+		{ question: "Pick one", options: [{ label: "A" }, { label: "B" }] },
 		undefined,
 		undefined,
 		ctx,

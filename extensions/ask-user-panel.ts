@@ -93,7 +93,6 @@ async function askPanel(
 	state: AskUserPanelState,
 	question: string,
 	options: AskUserOption[],
-	allowFreeText: boolean,
 	multiple: boolean,
 	signal: AbortSignal | undefined,
 ): Promise<AgentToolResult<AskUserAnswer>> {
@@ -108,13 +107,13 @@ async function askPanel(
 
 	const answer = await ctx.ui.custom<AskUserAnswer>((_tui, theme, keybindings, done) => {
 		const freeTextIndex = options.length;
-		const rowCount = allowFreeText ? options.length + 1 : options.length;
+		const rowCount = options.length + 1;
 		const input = new Input();
 		const marked = new Set<number>();
 		let index = 0;
-		let mode: "browse" | "edit" = allowFreeText && options.length === 0 ? "edit" : "browse";
+		let mode: "browse" | "edit" = options.length === 0 ? "edit" : "browse";
 
-		const isFreeTextRow = (i: number) => allowFreeText && i === freeTextIndex;
+		const isFreeTextRow = (i: number) => i === freeTextIndex;
 
 		const finish = (result: AskUserAnswer) => {
 			signal?.removeEventListener("abort", onAbort);
@@ -179,16 +178,14 @@ async function askPanel(
 					const row = description ? `${left}  ${description}` : left;
 					lines.push(active ? theme.fg("accent", row) : row);
 				});
-				if (allowFreeText) {
-					const active = isFreeTextRow(index);
-					input.focused = active && mode === "edit";
-					const glyph = rowMarker(false, active, false);
-					const prefix = `z ${glyph} `;
-					const row = input.focused
-						? prefix + (input.render(Math.max(width - prefix.length, 1))[0] ?? "")
-						: `${prefix}${input.getValue() || "Type your answer"}`;
-					lines.push(active ? theme.fg("accent", row) : row);
-				}
+				const active = isFreeTextRow(index);
+				input.focused = active && mode === "edit";
+				const glyph = rowMarker(false, active, false);
+				const prefix = `z ${glyph} `;
+				const row = input.focused
+					? prefix + (input.render(Math.max(width - prefix.length, 1))[0] ?? "")
+					: `${prefix}${input.getValue() || "Type your answer"}`;
+				lines.push(active ? theme.fg("accent", row) : row);
 				const hasAnyMarked = marked.size > 0;
 				const enterHint = isFreeTextRow(index)
 					? "Enter:edit free text"
@@ -196,8 +193,7 @@ async function askPanel(
 				const browseHintParts = ["↑/↓:move"];
 				if (multiple) browseHintParts.push("Space:mark");
 				browseHintParts.push(enterHint);
-				if (allowFreeText) browseHintParts.push("z:edit free text");
-				browseHintParts.push("Esc:panel stays open", "Shift+X:dismiss");
+				browseHintParts.push("z:edit free text", "Esc:panel stays open", "Shift+X:dismiss");
 				const editEnterHint = multiple ? (hasAnyMarked ? "submit marked" : "select at least one") : "submit";
 				const hint =
 					mode === "edit"
@@ -261,7 +257,7 @@ async function askPanel(
 					index = digit - 1;
 					return;
 				}
-				if (allowFreeText && (char === "z" || char === "Z")) {
+				if (char === "z" || char === "Z") {
 					index = freeTextIndex;
 					mode = "edit";
 				}
@@ -282,9 +278,6 @@ const optionSchema = Type.Object({
 const choiceParameters = Type.Object({
 	question: Type.String({ description: "The question to ask the operator." }),
 	options: Type.Array(optionSchema, { minItems: 1, description: "Numbered options presented to the operator." }),
-	allowFreeText: Type.Optional(
-		Type.Boolean({ description: "Whether the operator may answer with free text instead of a listed option. Defaults to true." }),
-	),
 	multiple: Type.Optional(
 		Type.Boolean({
 			description:
@@ -308,15 +301,7 @@ export function createAskUserChoiceTool(state: AskUserPanelState): ToolDefinitio
 		parameters: choiceParameters,
 		executionMode: "sequential",
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			return askPanel(
-				ctx,
-				state,
-				params.question,
-				params.options,
-				params.allowFreeText ?? true,
-				params.multiple ?? false,
-				signal,
-			);
+			return askPanel(ctx, state, params.question, params.options, params.multiple ?? false, signal);
 		},
 	};
 }
@@ -339,7 +324,7 @@ export function createAskUserQuestionTool(state: AskUserPanelState): ToolDefinit
 		parameters: questionParameters,
 		executionMode: "sequential",
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			return askPanel(ctx, state, params.question, [], true, false, signal);
+			return askPanel(ctx, state, params.question, [], false, signal);
 		},
 	};
 }
