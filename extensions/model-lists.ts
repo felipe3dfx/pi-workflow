@@ -1,9 +1,14 @@
 import { lstatSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
+import {
+	type Api,
+	getSupportedThinkingLevels,
+	type Model,
+} from "@earendil-works/pi-ai";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
+import { askJevChoice, type Fetch } from "./jev-client.ts";
 import { createModelListsEditor } from "./model-lists-editor.ts";
 import {
 	activePiAgentDirectory,
@@ -60,23 +65,48 @@ const creationMap: Record<TaskType, Tier> = {
 	review: "high",
 };
 
-type ModelCandidate = {
-	provider: string;
-	id: string;
-	name: string;
-	contextWindow: number;
-	reasoning: boolean;
+const taskTypeCriteria: Record<TaskType, string> = {
+	chat: "Conversational answers and quick back-and-forth",
+	explain: "Explaining code, concepts, or behavior",
+	write: "Writing prose, documentation, or messages",
+	operate: "Running commands and operating tools or environments",
+	implement: "Implementing features and writing code",
+	debug: "Diagnosing and fixing failures",
+	refactor: "Restructuring code without changing behavior",
+	research: "Reading large sources and gathering findings",
+	plan: "Designing approaches and breaking down work",
+	review: "Reviewing changes and judging their correctness",
 };
+
+const thinkingCriteria: Record<ThinkingLevel, string> = {
+	off: "No extended reasoning",
+	minimal: "The least extended reasoning the model offers",
+	low: "Light reasoning for direct work",
+	medium: "Balanced reasoning for everyday work",
+	high: "Deep reasoning for demanding work",
+	xhigh: "Very deep reasoning",
+	max: "The deepest reasoning the model offers",
+};
+
+const placementWorkers = 4;
+
+type ModelCandidate = Model<Api>;
 
 type ModelResearch = { thinking: string; notes: string };
 
-export interface ModelListsOptions {
-	path?: string;
-	research?: (model: ModelCandidate) => Promise<ModelResearch>;
-	classify?: (
+type ModelAdapters = {
+	research: (model: ModelCandidate) => Promise<ModelResearch>;
+	classify: (
 		model: ModelCandidate,
 		research: ModelResearch,
 	) => Promise<string | undefined>;
+};
+
+export interface ModelListsOptions {
+	path?: string;
+	fetch?: Fetch;
+	research?: ModelAdapters["research"];
+	classify?: ModelAdapters["classify"];
 }
 
 type CommandContext = Pick<
@@ -171,8 +201,59 @@ function entryExists(path: string): boolean {
 	}
 }
 
-async function notConfigured(): Promise<never> {
-	throw new Error("not configured");
+async function typesafeKey(ctx: CommandContext): Promise<string> {
+	const found = await ctx.modelRegistry.getApiKeyForProvider("typesafe");
+	if (!found) {
+		throw new Error(
+			"no TypeSafe API key; run /login and choose TypeSafe (Jev) or set TYPESAFE_API_KEY",
+		);
+	}
+	return found;
+}
+
+function jevAdapters(
+	ctx: CommandContext,
+	fetch: Fetch | undefined,
+): ModelAdapters {
+	let key: Promise<string> | undefined;
+	const apiKey = () => {
+		key ??= typesafeKey(ctx);
+		return key;
+	};
+	return {
+		async research(candidate) {
+			const supported = getSupportedThinkingLevels(candidate);
+			const notes = `${candidate.name} (${candidate.provider}/${candidate.id}): reasoning ${candidate.reasoning ? "supported" : "not supported"}, context window ${candidate.contextWindow} tokens, thinking levels ${supported.join(", ")}`;
+			const thinking = await askJevChoice(
+				await apiKey(),
+				{
+					state: { model: notes },
+					instructions:
+						"Which thinking level should `model` run at by default for delegated work? Pick only among the offered levels.",
+					criteria: Object.fromEntries(
+						supported.map((level) => [level, thinkingCriteria[level]]),
+					),
+				},
+				fetch,
+			);
+			if (!(supported as string[]).includes(thinking)) {
+				throw new Error(`Jev picked unsupported thinking level ${thinking}`);
+			}
+			return { thinking, notes };
+		},
+		async classify(_candidate, found) {
+			return askJevChoice(
+				await apiKey(),
+				{
+					state: { model: found.notes },
+					instructions:
+						"Which single task type is `model` best suited for? Judge the kind of work it does best, not its intelligence or speed. Context capacity matters only for which specialist list it belongs to.",
+					criteria: taskTypeCriteria,
+				},
+				fetch,
+			);
+		},
+	};
 }
 
 export function report(
@@ -188,10 +269,11 @@ export function createModelLists(options: ModelListsOptions = {}) {
 	const path =
 		options.path ??
 		resolve(activePiAgentDirectory(), "pi-workflow-models.json");
-	const research = options.research ?? notConfigured;
-	const classify = options.classify ?? notConfigured;
 
-	async function place(candidate: ModelCandidate): Promise<Placement> {
+	async function place(
+		candidate: ModelCandidate,
+		{ research, classify }: ModelAdapters,
+	): Promise<Placement> {
 		const model = `${candidate.provider}/${candidate.id}`;
 		try {
 			const found = await research(candidate);
@@ -227,11 +309,23 @@ export function createModelLists(options: ModelListsOptions = {}) {
 			report(ctx, `${path} was not replaced.`, "info");
 			return { status: "kept", leftOut: [] };
 		}
+		const jev = jevAdapters(ctx, options.fetch);
+		const adapters = {
+			research: options.research ?? jev.research,
+			classify: options.classify ?? jev.classify,
+		};
 		const lists = emptyLists();
 		const leftOut: Array<{ model: string; reason: string }> = [];
-		const placements = await Promise.all(
-			ctx.modelRegistry.getAvailable().map((candidate) => place(candidate)),
-		);
+		const candidates = ctx.modelRegistry.getAvailable();
+		const placements: Placement[] = [];
+		let next = 0;
+		const worker = async () => {
+			while (next < candidates.length) {
+				const index = next++;
+				placements[index] = await place(candidates[index], adapters);
+			}
+		};
+		await Promise.all(Array.from({ length: placementWorkers }, worker));
 		for (const placement of placements) {
 			if (!("entry" in placement)) {
 				leftOut.push(placement);

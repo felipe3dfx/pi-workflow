@@ -621,6 +621,7 @@ test("the extension's edit command opens the panel over the file the create comm
 			registerCommand: (name, command) => commands.set(name, command),
 			registerTool: () => {},
 			registerShortcut: () => {},
+			registerProvider: () => {},
 		};
 		piWorkflowExtension(pi, {
 			modelLists: {

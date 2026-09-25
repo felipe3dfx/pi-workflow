@@ -41,6 +41,7 @@ function loadTools() {
 		on() {},
 		registerCommand() {},
 		registerShortcut() {},
+		registerProvider() {},
 		registerTool: (tool) => tools.set(tool.name, tool),
 		exec: async () => ({ code: 0, stdout: "", stderr: "" }),
 	});
@@ -61,7 +62,14 @@ async function withWorkspace(run) {
 }
 
 function executionContext(cwd) {
-	return { cwd, isProjectTrusted: () => false };
+	return {
+		cwd,
+		isProjectTrusted: () => false,
+		sessionManager: {
+			getSessionId: () => "session-1",
+			getSessionFile: () => undefined,
+		},
+	};
 }
 
 function renderContext(args, expanded, cwd) {
