@@ -65,6 +65,12 @@ const creationMap: Record<TaskType, Tier> = {
 	review: "high",
 };
 
+const tierCriteria: Record<Tier, string> = {
+	quick: "Mechanical work, transcription, and cheap sweeps",
+	standard: "Worker: exploration, implementation, and tests",
+	high: "Judge: coordination, review, and risk",
+};
+
 const taskTypeCriteria: Record<TaskType, string> = {
 	chat: "Conversational answers and quick back-and-forth",
 	explain: "Explaining code, concepts, or behavior",
@@ -92,7 +98,7 @@ const placementWorkers = 4;
 
 type ModelCandidate = Model<Api>;
 
-type ModelResearch = { thinking: string; notes: string };
+type ModelResearch = { tier: string; thinking: string; notes: string };
 
 type ModelAdapters = {
 	research: (model: ModelCandidate) => Promise<ModelResearch>;
@@ -115,7 +121,7 @@ type CommandContext = Pick<
 >;
 
 type Placement =
-	| { model: string; taskType: TaskType; entry: ModelEntry }
+	| { model: string; taskType: TaskType; tier: Tier; entry: ModelEntry }
 	| { model: string; reason: string };
 
 function isOneOf<T extends string>(
@@ -211,6 +217,24 @@ async function typesafeKey(ctx: CommandContext): Promise<string> {
 	return found;
 }
 
+function price(value: number, kind: string): string {
+	return value === 0
+		? `cost reported as 0 per million ${kind} tokens`
+		: `$${value} per million ${kind} tokens`;
+}
+
+function catalogNotes(candidate: ModelCandidate): string {
+	return [
+		`${candidate.name} (${candidate.provider}/${candidate.id}): reasoning ${candidate.reasoning ? "supported" : "not supported"}`,
+		`context window ${candidate.contextWindow} tokens`,
+		`max output ${candidate.maxTokens} tokens`,
+		`input ${candidate.input.join(", ")}`,
+		price(candidate.cost.input, "input"),
+		price(candidate.cost.output, "output"),
+		`thinking levels ${getSupportedThinkingLevels(candidate).join(", ")}`,
+	].join(", ");
+}
+
 function jevAdapters(
 	ctx: CommandContext,
 	fetch: Fetch | undefined,
@@ -223,13 +247,24 @@ function jevAdapters(
 	return {
 		async research(candidate) {
 			const supported = getSupportedThinkingLevels(candidate);
-			const notes = `${candidate.name} (${candidate.provider}/${candidate.id}): reasoning ${candidate.reasoning ? "supported" : "not supported"}, context window ${candidate.contextWindow} tokens, thinking levels ${supported.join(", ")}`;
-			const thinking = await askJevChoice(
+			const notes = catalogNotes(candidate);
+			const tier = await askJevChoice(
 				await apiKey(),
 				{
 					state: { model: notes },
 					instructions:
-						"Which thinking level should `model` run at by default for delegated work? Pick only among the offered levels.",
+						"Which tier should `model` sit in? Judge its capability and cost from the catalog evidence.",
+					criteria: tierCriteria,
+				},
+				fetch,
+			);
+			if (!isOneOf(tiers, tier)) throw new Error("Jev named no known tier");
+			const thinking = await askJevChoice(
+				await apiKey(),
+				{
+					state: { model: notes, tier: `${tier}: ${tierCriteria[tier]}` },
+					instructions:
+						"Which thinking level should `model` run at by default for delegated work in `tier`? Pick only among the offered levels.",
 					criteria: Object.fromEntries(
 						supported.map((level) => [level, thinkingCriteria[level]]),
 					),
@@ -239,7 +274,7 @@ function jevAdapters(
 			if (!(supported as string[]).includes(thinking)) {
 				throw new Error(`Jev picked unsupported thinking level ${thinking}`);
 			}
-			return { thinking, notes };
+			return { tier, thinking, notes };
 		},
 		async classify(_candidate, found) {
 			return askJevChoice(
@@ -277,6 +312,9 @@ export function createModelLists(options: ModelListsOptions = {}) {
 		const model = `${candidate.provider}/${candidate.id}`;
 		try {
 			const found = await research(candidate);
+			if (!isOneOf(tiers, found.tier)) {
+				return { model, reason: "Jev named no known tier" };
+			}
 			if (!isOneOf(thinkingLevels, found.thinking)) {
 				return { model, reason: "research found no thinking level" };
 			}
@@ -284,7 +322,12 @@ export function createModelLists(options: ModelListsOptions = {}) {
 			if (!isOneOf(taskTypes, taskType)) {
 				return { model, reason: "Jev named no known task type" };
 			}
-			return { model, taskType, entry: { model, thinking: found.thinking } };
+			return {
+				model,
+				taskType,
+				tier: found.tier,
+				entry: { model, thinking: found.thinking },
+			};
 		} catch (error) {
 			return { model, reason: errorMessage(error) };
 		}
@@ -332,7 +375,7 @@ export function createModelLists(options: ModelListsOptions = {}) {
 				continue;
 			}
 			lists.specialists[placement.taskType]?.push(placement.entry);
-			lists.tiers[creationMap[placement.taskType]]?.push(placement.entry);
+			lists.tiers[placement.tier]?.push(placement.entry);
 		}
 		try {
 			writeJsonAtomically(path, lists, { replace: replacing });
