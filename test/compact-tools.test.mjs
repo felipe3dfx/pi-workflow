@@ -134,6 +134,7 @@ test("read, write, edit, ls, and bash produce the built-in effect and result", a
 });
 
 test("a closed tool is one short line and hides its body", () => {
+	initTheme("dark", false);
 	const tools = loadTools();
 	const titles = {
 		read: [{ path: "src/app.ts" }, "◆ read src/app.ts"],
@@ -180,69 +181,49 @@ test("a closed tool is one short line and hides its body", () => {
 	assert.ok(stripVTControlCharacters(narrow.render(20)[0]).length <= 20);
 });
 
-test("an open tool encloses its title and body in a thick left bar without changing the result", async () => {
+test("an open tool shows exactly what Pi draws for the call and result, inside a thick left bar", () => {
 	initTheme("dark", false);
 	const tools = loadTools();
-	await withWorkspace(async (cwd) => {
-		await writeFile(join(cwd, "note.txt"), "alpha\nbeta\n");
-		const tool = tools.get("read");
-		const args = { path: "note.txt" };
-		const result = await tool.execute(
-			"call-1",
-			args,
-			undefined,
-			undefined,
-			executionContext(cwd),
-		);
-		const snapshot = structuredClone(result);
-		const context = renderContext(args, true, cwd);
-
-		const title = lines(tool.renderCall(args, theme, context));
-		const body = lines(
-			tool.renderResult(
-				result,
-				{ expanded: true, isPartial: false },
-				theme,
-				context,
-			),
-		);
-
-		assert.deepEqual(title, ["┃ ◆ read note.txt"]);
-		assert.ok(body.length > 0);
-		assert.ok(
-			body.every((line) => line.startsWith("┃")),
-			body.join("\n"),
-		);
-		assert.ok(body.some((line) => line.includes("alpha")));
-		assert.ok(body.some((line) => line.includes("beta")));
-		assert.deepEqual(result, snapshot);
-		assert.equal(
-			await readFile(join(cwd, "note.txt"), "utf8"),
-			"alpha\nbeta\n",
-		);
-	});
-});
-
-test("an open write shows the tool result text when the built-in body is empty", () => {
-	initTheme("dark", false);
-	const tool = loadTools().get("write");
-	const args = { path: "b.ts", content: "x" };
+	const width = 24;
+	const cases = {
+		read: { path: "package.json", offset: 2 },
+		bash: { command: "printf done\necho more" },
+		grep: { pattern: "TODO", path: "src" },
+		find: { pattern: "*.ts" },
+		ls: { path: "extensions" },
+		edit: { path: "a.ts", edits: [{ oldText: "a", newText: "b" }] },
+		write: { path: "b.txt", content: "first line\nsecond line" },
+	};
 	const result = {
-		content: [{ type: "text", text: "Successfully wrote 1 bytes to b.ts" }],
+		content: [{ type: "text", text: "one\ntwo" }],
 		details: undefined,
 	};
-	const context = renderContext(args, true, process.cwd());
-	assert.deepEqual(
-		lines(
-			tool.renderResult(
-				result,
-				{ expanded: true, isPartial: false },
-				theme,
-				context,
-			),
-		),
-		["┃ Successfully wrote 1 bytes to b.ts"],
-	);
+	const options = { expanded: true, isPartial: false };
+	for (const [name, args] of Object.entries(cases)) {
+		const builtIn = builtIns[name](process.cwd());
+		const piContext = renderContext(args, true, process.cwd());
+		const expected = [
+			...builtIn.renderCall(args, theme, piContext).render(width - 2),
+			...builtIn
+				.renderResult(result, options, theme, piContext)
+				.render(width - 2),
+		].map((line) => `┃ ${line}`);
+		const snapshot = structuredClone(result);
+
+		const tool = tools.get(name);
+		const context = renderContext(args, true, process.cwd());
+		const actual = [
+			...tool.renderCall(args, theme, context).render(width),
+			...tool.renderResult(result, options, theme, context).render(width),
+		];
+
+		assert.deepEqual(actual, expected, name);
+		assert.ok(
+			actual.every((line) => !line.includes("◆")),
+			name,
+		);
+		assert.deepEqual(result, snapshot, name);
+	}
 });
 
 test("a closed tool that failed keeps a red title", () => {
@@ -259,4 +240,28 @@ test("a closed tool that failed keeps a red title", () => {
 		.renderCall({ command: "false" }, tagged, context)
 		.render(80);
 	assert.match(line, /^<error>◆ bash<\/error>/);
+});
+
+test("an open bash keeps the elapsed time Pi draws", () => {
+	initTheme("dark", false);
+	const tool = loadTools().get("bash");
+	const args = { command: "printf done" };
+	const context = renderContext(args, true, process.cwd());
+	tool.renderCall(args, theme, context);
+	const body = lines(
+		tool.renderResult(
+			{ content: [{ type: "text", text: "done" }], details: undefined },
+			{ expanded: true, isPartial: false },
+			theme,
+			context,
+		),
+	);
+	assert.ok(
+		body.every((line) => line.startsWith("┃")),
+		body.join("\n"),
+	);
+	assert.ok(
+		body.some((line) => /Took \d/.test(line)),
+		body.join("\n"),
+	);
 });

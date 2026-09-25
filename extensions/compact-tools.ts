@@ -12,7 +12,7 @@ import {
 	SettingsManager,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { type Component, Text, TruncatedText } from "@earendil-works/pi-tui";
+import { type Component, TruncatedText } from "@earendil-works/pi-tui";
 
 type Theme = Parameters<NonNullable<ToolDefinition["renderCall"]>>[1];
 
@@ -24,27 +24,26 @@ function settings(ctx: ExtensionContext) {
 
 const hidden: Component = { render: () => [], invalidate() {} };
 
-class Barred implements Component {
-	readonly inner: Component;
-	private readonly bar: string;
-	private readonly fallback: Component;
+class View implements Component {
+	readonly own: Component;
+	private readonly closed: Component;
+	private readonly bar: string | undefined;
 
-	constructor(inner: Component, bar: string, fallback = hidden) {
-		this.inner = inner;
+	constructor(own: Component, closed: Component, bar: string | undefined) {
+		this.own = own;
+		this.closed = closed;
 		this.bar = bar;
-		this.fallback = fallback;
 	}
 
 	render(width: number) {
-		const innerWidth = Math.max(1, width - 2);
-		const lines = this.inner.render(innerWidth);
-		return (lines.length > 0 ? lines : this.fallback.render(innerWidth)).map(
-			(line) => `${this.bar} ${line}`,
-		);
+		if (this.bar === undefined) return this.closed.render(width);
+		return this.own
+			.render(Math.max(1, width - 2))
+			.map((line) => `${this.bar} ${line}`);
 	}
 
 	invalidate() {
-		this.inner.invalidate();
+		this.own.invalidate();
 	}
 }
 
@@ -65,11 +64,8 @@ function title(name: string, args: unknown, theme: Theme, isError: boolean) {
 	return subject ? `${head} ${theme.fg("accent", subject)}` : head;
 }
 
-function resultText(result: { content: { type: string; text?: string }[] }) {
-	return result.content
-		.filter((part) => part.type === "text")
-		.map((part) => part.text ?? "")
-		.join("\n");
+function bar(theme: Theme, expanded: boolean) {
+	return expanded ? theme.fg("borderMuted", "┃") : undefined;
 }
 
 function compact<
@@ -90,28 +86,32 @@ function compact<
 		execute: (toolCallId, params, signal, onUpdate, ctx) =>
 			create(ctx.cwd, ctx).execute(toolCallId, params, signal, onUpdate, ctx),
 		renderCall(args, theme, context) {
-			const line = new TruncatedText(title(name, args, theme, context.isError));
-			return context.expanded
-				? new Barred(line, theme.fg("borderMuted", "┃"))
-				: line;
+			const previous =
+				context.lastComponent instanceof View
+					? context.lastComponent.own
+					: undefined;
+			const own =
+				builtIn.renderCall?.(args, theme, {
+					...context,
+					lastComponent: previous,
+				}) ?? hidden;
+			return new View(
+				own,
+				new TruncatedText(title(name, args, theme, context.isError)),
+				bar(theme, context.expanded),
+			);
 		},
 		renderResult(result, options, theme, context) {
-			if (!context.expanded) return hidden;
 			const previous =
-				context.lastComponent instanceof Barred
-					? context.lastComponent.inner
+				context.lastComponent instanceof View
+					? context.lastComponent.own
 					: undefined;
-			const body =
+			const own =
 				builtIn.renderResult?.(result, options, theme, {
 					...context,
 					lastComponent: previous,
 				}) ?? hidden;
-			const fallback = new Text(
-				theme.fg("toolOutput", resultText(result)),
-				0,
-				0,
-			);
-			return new Barred(body, theme.fg("borderMuted", "┃"), fallback);
+			return new View(own, hidden, bar(theme, context.expanded));
 		},
 	};
 }
