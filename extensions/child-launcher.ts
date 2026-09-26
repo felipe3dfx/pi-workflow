@@ -5,10 +5,20 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import {
+	getSupportedThinkingLevels,
+	type ModelThinkingLevel,
+} from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import { askJevChoice, type Fetch } from "./jev-client.ts";
-import type { ModelListsLoad } from "./model-lists.ts";
+import { askJevChoice, askJevNouls, type Fetch } from "./jev-client.ts";
+import {
+	type ModelLists,
+	type ModelListsLoad,
+	type TaskType,
+	taskTypeCriteria,
+	taskTypes,
+} from "./model-lists.ts";
 
 export interface LaunchRequest {
 	role?: string;
@@ -33,9 +43,14 @@ const defaultContractsDirectory = resolve(
 	"../assets/contracts",
 );
 
-type LauncherContext = Pick<ExtensionContext, "cwd" | "modelRegistry">;
+type LauncherContext = Pick<
+	ExtensionContext,
+	"cwd" | "modelRegistry" | "model" | "thinkingLevel"
+>;
 
 type Refusal = { status: "refused"; warning: string; reason: string };
+
+type Pair = { model: string; thinking: ModelThinkingLevel };
 
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
@@ -92,6 +107,46 @@ const stays = (reason: string): Refusal => ({
 	reason,
 });
 
+const typeThreshold = 0.5;
+
+function sessionPair(ctx: LauncherContext): Pair | Refusal {
+	if (!ctx.model || !ctx.thinkingLevel) {
+		return refused("The session has no model and thinking to use.");
+	}
+	return {
+		model: `${ctx.model.provider}/${ctx.model.id}`,
+		thinking: ctx.thinkingLevel,
+	};
+}
+
+function walk(
+	type: TaskType,
+	lists: ModelLists | undefined,
+	ctx: LauncherContext,
+): Pair | Refusal | { unavailable: string } {
+	const tier = lists?.taskTypes[type];
+	const entries = [
+		...(lists?.specialists[type] ?? []),
+		...((tier && lists?.tiers[tier]) || []),
+	];
+	if (entries.length === 0) return sessionPair(ctx);
+	const available = ctx.modelRegistry.getAvailable();
+	const selected = entries.find(({ model, thinking }) => {
+		const found = available.find(
+			(candidate) => `${candidate.provider}/${candidate.id}` === model,
+		);
+		return (
+			found !== undefined &&
+			getSupportedThinkingLevels(found).includes(thinking)
+		);
+	});
+	return (
+		selected ?? {
+			unavailable: `No model in the ${type} lists is available in Pi at its thinking level.`,
+		}
+	);
+}
+
 export function createChildLauncher(options: ChildLauncherOptions) {
 	const contractsDirectory =
 		options.contractsDirectory ?? defaultContractsDirectory;
@@ -110,10 +165,11 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 	async function jevVerdict(
 		task: string,
 		ctx: LauncherContext,
-	): Promise<Refusal | undefined> {
+	): Promise<string | Refusal> {
+		let apiKey: string | undefined;
 		let verdict: string;
 		try {
-			const apiKey = await ctx.modelRegistry.getApiKeyForProvider("typesafe");
+			apiKey = await ctx.modelRegistry.getApiKeyForProvider("typesafe");
 			if (!apiKey) {
 				throw new Error(
 					"no TypeSafe API key; run /login and choose TypeSafe (Jev) or set TYPESAFE_API_KEY",
@@ -135,9 +191,48 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		} catch (error) {
 			return stays(`Jev did not answer: ${errorMessage(error)}`);
 		}
-		if (verdict === "leave") return undefined;
+		if (verdict === "leave") return apiKey;
 		if (verdict === "stay") return stays("Jev answered that the work stays.");
 		return stays(`Jev did not answer: unexpected choice ${verdict}`);
+	}
+
+	async function classify(
+		task: string,
+		apiKey: string,
+	): Promise<TaskType | { uncertain: string }> {
+		let answers: Record<string, number>;
+		try {
+			answers = await askJevNouls(
+				apiKey,
+				{
+					state: { task },
+					questions: Object.fromEntries(
+						taskTypes.map((type) => [
+							type,
+							{
+								instructions: `Is \`task\` ${type} work?`,
+								criteria: {
+									true: `It is ${type} work: ${taskTypeCriteria[type]}`,
+									false: `It is not ${type} work: ${taskTypeCriteria[type]}`,
+								},
+							},
+						]),
+					),
+				},
+				options.fetch,
+			);
+		} catch (error) {
+			return { uncertain: `Jev did not answer: ${errorMessage(error)}` };
+		}
+		const top = Math.max(...taskTypes.map((type) => answers[type]));
+		const leaders = taskTypes.filter((type) => answers[type] === top);
+		if (top < typeThreshold) {
+			return { uncertain: `no task type reached ${typeThreshold}` };
+		}
+		if (leaders.length > 1) {
+			return { uncertain: `${leaders.join(" and ")} tied` };
+		}
+		return leaders[0];
 	}
 
 	async function decide(request: LaunchRequest, ctx: LauncherContext) {
@@ -153,15 +248,37 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		if (lists.status === "refused") return refused(lists.reason);
 		const worktree = await gitRoot(resolve(ctx.cwd, request.worktree ?? "."));
 		if (typeof worktree !== "string") return worktree;
-		const refusal = await jevVerdict(request.task, ctx);
-		if (refusal) return refusal;
+		const apiKey = await jevVerdict(request.task, ctx);
+		if (typeof apiKey !== "string") return apiKey;
+		const type = await classify(request.task, apiKey);
+		let pair: Pair | Refusal | { unavailable: string };
+		if (typeof type === "string") {
+			pair = walk(
+				type,
+				lists.status === "loaded" ? lists.lists : undefined,
+				ctx,
+			);
+		} else {
+			warnings.push(
+				`The task type is uncertain (${type.uncertain}), so the session model and thinking are used.`,
+			);
+			pair = sessionPair(ctx);
+		}
+		const plan = { role, contract, task: request.task, worktree, warnings };
+		if ("unavailable" in pair) {
+			return {
+				status: "pending" as const,
+				...plan,
+				warning: "The work stays pending. No child was launched.",
+				reason: pair.unavailable,
+			};
+		}
+		if ("status" in pair) return pair;
 		return {
 			status: "launch" as const,
-			role,
-			contract,
-			task: request.task,
-			worktree,
-			warnings,
+			...plan,
+			model: pair.model,
+			thinking: pair.thinking,
 		};
 	}
 	return { decide };
