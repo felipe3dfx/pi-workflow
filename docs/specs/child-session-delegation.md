@@ -35,6 +35,8 @@ The parent passes only the role name and the task. The file in `assets/contracts
 
 There is no named-model precedence. The launcher selects one pair and runs that pair. A list walk is selection, not a mismatch. A mismatch is when the child would run a different model or thinking than the selected pair. Then the child does not start and the work stays pending.
 
+Jev classifies the task. The launcher sends the task with one yes/no question per task type in a single request. The task type is the one with the highest yes probability. The type is uncertain when that probability is below 0.5, when two types tie for it, or when Jev does not answer. The role and the parent do not name the task type.
+
 Order:
 
 1. If the work stays, do not launch.

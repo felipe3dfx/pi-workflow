@@ -16,7 +16,7 @@ import {
 	writeJsonAtomically,
 } from "./mcp-config.ts";
 
-const taskTypes = [
+export const taskTypes = [
 	"chat",
 	"explain",
 	"write",
@@ -39,13 +39,13 @@ const thinkingLevels = [
 	"max",
 ] as const;
 
-type TaskType = (typeof taskTypes)[number];
+export type TaskType = (typeof taskTypes)[number];
 type Tier = (typeof tiers)[number];
 type ThinkingLevel = (typeof thinkingLevels)[number];
 
 type ModelEntry = { model: string; thinking: ThinkingLevel };
 
-type ModelLists = {
+export type ModelLists = {
 	schemaVersion: 1;
 	specialists: Partial<Record<TaskType, ModelEntry[]>>;
 	tiers: Partial<Record<Tier, ModelEntry[]>>;
@@ -71,7 +71,7 @@ const tierCriteria: Record<Tier, string> = {
 	high: "Judge: coordination, review, and risk",
 };
 
-const taskTypeCriteria: Record<TaskType, string> = {
+export const taskTypeCriteria: Record<TaskType, string> = {
 	chat: "Conversational answers and quick back-and-forth",
 	explain: "Explaining code, concepts, or behavior",
 	write: "Writing prose, documentation, or messages",

@@ -35,11 +35,22 @@ async function withWorkspace(run) {
 	}
 }
 
-function fakeJev(answer) {
+function fakeJev(answer, types = { implement: 0.9 }) {
 	const requests = [];
 	const fetch = async (_url, init) => {
 		const body = JSON.parse(init.body);
 		requests.push(body);
+		if (!body.questions.choice) {
+			if (types instanceof Response) return types;
+			return Response.json({
+				answers: Object.fromEntries(
+					Object.keys(body.questions).map((type) => [
+						type,
+						{ noul: types[type] ?? 0.1 },
+					]),
+				),
+			});
+		}
 		const answered = answer(body);
 		if (answered instanceof Response) return answered;
 		return Response.json({
@@ -49,13 +60,35 @@ function fakeJev(answer) {
 	return { fetch, requests };
 }
 
-function launcherContext(cwd, { typesafeKey = "typesafe-key" } = {}) {
+const sessionPair = { model: "session/model", thinking: "medium" };
+
+function catalogModel(name, reasoning = true) {
+	const [provider, id] = name.split("/");
+	return { provider, id, reasoning };
+}
+
+function launcherContext(
+	cwd,
+	{ typesafeKey = "typesafe-key", available = [], session = true } = {},
+) {
 	return {
 		cwd,
+		model: session ? catalogModel(sessionPair.model) : undefined,
+		thinkingLevel: session ? sessionPair.thinking : undefined,
 		modelRegistry: {
 			getApiKeyForProvider: async (provider) =>
 				provider === "typesafe" ? typesafeKey : undefined,
+			getAvailable: () => available,
 		},
+	};
+}
+
+function loadedLists({ specialists = {}, tiers = {}, taskTypes = {} }) {
+	return {
+		load: () => ({
+			status: "loaded",
+			lists: { schemaVersion: 1, specialists, tiers, taskTypes },
+		}),
 	};
 }
 
@@ -270,17 +303,30 @@ test("a model lists file created in this turn is not read and is not a refusal",
 	await withWorkspace(async ({ dir, worktree }) => {
 		const path = join(dir, "pi-workflow-models.json");
 		const modelLists = createModelLists({ path });
-		await writeFile(path, "{ not json", "utf8");
+		await writeFile(
+			path,
+			JSON.stringify({
+				schemaVersion: 1,
+				specialists: { implement: [{ model: "new/model", thinking: "low" }] },
+				tiers: {},
+				taskTypes: {},
+			}),
+			"utf8",
+		);
 
 		const result = await createChildLauncher({
 			modelLists,
 			fetch: leave(),
 		}).decide(
 			{ role: "worker", task: "Fix the failing test" },
-			launcherContext(worktree),
+			launcherContext(worktree, { available: [catalogModel("new/model")] }),
 		);
 
 		assert.equal(result.status, "launch");
+		assert.deepEqual(
+			{ model: result.model, thinking: result.thinking },
+			sessionPair,
+		);
 	});
 });
 
@@ -443,5 +489,330 @@ test("git location variables in the environment cannot make a false worktree roo
 				}
 			}
 		}
+	});
+});
+
+test("Jev classifies the task alone with one yes or no question per task type in one request", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const jev = fakeJev(() => "leave", { debug: 0.8, implement: 0.6 });
+		const launcher = createChildLauncher({
+			modelLists: loadedLists({
+				specialists: {
+					debug: [{ model: "fast/debugger", thinking: "high" }],
+					implement: [{ model: "fast/coder", thinking: "low" }],
+				},
+				tiers: { standard: [{ model: "fast/coder", thinking: "low" }] },
+				taskTypes: { debug: "standard" },
+			}),
+			fetch: jev.fetch,
+		});
+
+		const result = await launcher.decide(
+			{ role: "verify", task: "Find why the build fails" },
+			launcherContext(worktree, {
+				available: [catalogModel("fast/debugger"), catalogModel("fast/coder")],
+			}),
+		);
+
+		assert.equal(result.status, "launch");
+		assert.equal(result.model, "fast/debugger");
+		assert.equal(result.thinking, "high");
+		assert.deepEqual(result.warnings, []);
+		assert.equal(jev.requests.length, 2);
+		const classification = jev.requests[1];
+		assert.deepEqual(classification.state, {
+			task: "Find why the build fails",
+		});
+		assert.deepEqual(Object.keys(classification.questions).sort(), [
+			"chat",
+			"debug",
+			"explain",
+			"implement",
+			"operate",
+			"plan",
+			"refactor",
+			"research",
+			"review",
+			"write",
+		]);
+		for (const question of Object.values(classification.questions)) {
+			assert.equal(question.type, "noul");
+		}
+	});
+});
+
+test("a known type walks its specialist list, then the tier list the saved map names, skipping unavailable pairs", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const lists = loadedLists({
+			specialists: {
+				implement: [
+					{ model: "gone/model", thinking: "low" },
+					{ model: "plain/model", thinking: "high" },
+				],
+			},
+			tiers: {
+				standard: [{ model: "standard/model", thinking: "medium" }],
+				high: [
+					{ model: "gone/other", thinking: "high" },
+					{ model: "high/model", thinking: "xhigh" },
+					{ model: "high/model", thinking: "high" },
+				],
+			},
+			taskTypes: { implement: "high" },
+		});
+		const available = [
+			catalogModel("plain/model", false),
+			catalogModel("standard/model"),
+			catalogModel("high/model"),
+			catalogModel("session/model"),
+		];
+		for (const role of ["explore", "worker", "verify"]) {
+			const result = await createChildLauncher({
+				modelLists: lists,
+				fetch: leave(),
+			}).decide(
+				{ role, task: "Add the export command" },
+				launcherContext(worktree, { available }),
+			);
+			assert.equal(result.status, "launch");
+			assert.equal(result.model, "high/model");
+			assert.equal(result.thinking, "high");
+			assert.deepEqual(result.warnings, []);
+		}
+	});
+});
+
+test("a known type with one defined list walks that list and does not use the session model", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const available = [
+			catalogModel("special/model"),
+			catalogModel("tier/model"),
+			catalogModel("session/model"),
+		];
+		const cases = [
+			[
+				{
+					specialists: {
+						implement: [{ model: "special/model", thinking: "low" }],
+					},
+					tiers: { standard: [] },
+					taskTypes: { implement: "standard" },
+				},
+				{ model: "special/model", thinking: "low" },
+			],
+			[
+				{
+					specialists: { implement: [] },
+					tiers: { quick: [{ model: "tier/model", thinking: "minimal" }] },
+					taskTypes: { implement: "quick" },
+				},
+				{ model: "tier/model", thinking: "minimal" },
+			],
+		];
+		for (const [lists, expected] of cases) {
+			const result = await createChildLauncher({
+				modelLists: loadedLists(lists),
+				fetch: leave(),
+			}).decide(
+				{ role: "worker", task: "Add the export command" },
+				launcherContext(worktree, { available }),
+			);
+			assert.equal(result.status, "launch");
+			assert.deepEqual(
+				{ model: result.model, thinking: result.thinking },
+				expected,
+			);
+		}
+	});
+});
+
+test("a known type whose selected lists are both undefined uses the session model and thinking", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const empty = loadedLists({
+			specialists: {
+				implement: [],
+				debug: [{ model: "x/y", thinking: "low" }],
+			},
+			tiers: { standard: [], high: [{ model: "x/y", thinking: "low" }] },
+			taskTypes: { implement: "standard" },
+		});
+		const unmapped = loadedLists({
+			tiers: { standard: [{ model: "x/y", thinking: "low" }] },
+		});
+		for (const modelLists of [absentLists, empty, unmapped]) {
+			const result = await createChildLauncher({
+				modelLists,
+				fetch: leave(),
+			}).decide(
+				{ role: "worker", task: "Add the export command" },
+				launcherContext(worktree, { available: [catalogModel("x/y")] }),
+			);
+			assert.equal(result.status, "launch");
+			assert.deepEqual(
+				{ model: result.model, thinking: result.thinking },
+				sessionPair,
+			);
+			assert.deepEqual(result.warnings, []);
+		}
+	});
+});
+
+test("an uncertain task type uses the session model and thinking even when lists exist, and warns", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const lists = loadedLists({
+			specialists: {
+				implement: [{ model: "special/model", thinking: "low" }],
+				debug: [{ model: "special/model", thinking: "low" }],
+			},
+			tiers: { standard: [{ model: "special/model", thinking: "low" }] },
+			taskTypes: { implement: "standard", debug: "standard" },
+		});
+		const answers = [
+			[{ implement: 0.49, debug: 0.3 }, /0\.5/],
+			[{ implement: 0.7, debug: 0.7 }, /tied/],
+			[new Response("down", { status: 503 }), /Jev did not answer/],
+		];
+		for (const [types, why] of answers) {
+			const result = await createChildLauncher({
+				modelLists: lists,
+				fetch: fakeJev(() => "leave", types).fetch,
+			}).decide(
+				{ role: "worker", task: "Look into the export" },
+				launcherContext(worktree, {
+					available: [catalogModel("special/model")],
+				}),
+			);
+			assert.equal(result.status, "launch");
+			assert.deepEqual(
+				{ model: result.model, thinking: result.thinking },
+				sessionPair,
+			);
+			assert.equal(result.warnings.length, 1);
+			assert.match(result.warnings[0], /uncertain/);
+			assert.match(result.warnings[0], why);
+		}
+	});
+});
+
+test("an unavailable selected pair does not start: the work stays pending with no child id", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const lists = loadedLists({
+			specialists: {
+				implement: [
+					{ model: "gone/model", thinking: "low" },
+					{ model: "plain/model", thinking: "high" },
+				],
+			},
+			tiers: {
+				quick: [{ model: "quick/model", thinking: "low" }],
+				standard: [{ model: "gone/other", thinking: "medium" }],
+			},
+			taskTypes: { implement: "standard" },
+		});
+		const result = await createChildLauncher({
+			modelLists: lists,
+			fetch: leave(),
+		}).decide(
+			{ role: "worker", task: "Add the export command" },
+			launcherContext(worktree, {
+				available: [
+					catalogModel("plain/model", false),
+					catalogModel("quick/model"),
+					catalogModel("session/model"),
+				],
+			}),
+		);
+
+		assert.equal(result.status, "pending");
+		assert.equal("id" in result, false);
+		assert.equal("model" in result, false);
+		assert.equal("thinking" in result, false);
+		assert.ok(result.warning.length > 0);
+		assert.match(result.reason, /implement/);
+		assert.equal(result.role, "worker");
+		assert.match(result.contract.prompt, /You are a worker/);
+		assert.equal(result.task, "Add the export command");
+		assert.equal(result.worktree, await realpath(worktree));
+	});
+});
+
+test("a session without a model or thinking is refused when the session pair is needed", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const result = await createChildLauncher({
+			modelLists: absentLists,
+			fetch: leave(),
+		}).decide(
+			{ role: "worker", task: "Add the export command" },
+			launcherContext(worktree, { session: false }),
+		);
+
+		assertRefused(result, /session/);
+	});
+});
+
+test("a pending result keeps the warnings collected before selection", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const result = await createChildLauncher({
+			modelLists: loadedLists({
+				specialists: { implement: [{ model: "gone/model", thinking: "low" }] },
+			}),
+			fetch: leave(),
+		}).decide({ task: "Add the export command" }, launcherContext(worktree));
+
+		assert.equal(result.status, "pending");
+		assert.equal(result.role, "worker");
+		assert.equal(result.warnings.length, 1);
+		assert.match(result.warnings[0], /No role was named/);
+	});
+});
+
+test("an uncertain type in a session without a model or thinking is refused", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const result = await createChildLauncher({
+			modelLists: absentLists,
+			fetch: fakeJev(() => "leave", { implement: 0.3 }).fetch,
+		}).decide(
+			{ role: "worker", task: "Look into the export" },
+			launcherContext(worktree, { session: false }),
+		);
+
+		assertRefused(result, /session/);
+	});
+});
+
+test("a top probability of exactly 0.5 is a known type and walks its list", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const result = await createChildLauncher({
+			modelLists: loadedLists({
+				specialists: {
+					implement: [{ model: "special/model", thinking: "low" }],
+				},
+			}),
+			fetch: fakeJev(() => "leave", { implement: 0.5 }).fetch,
+		}).decide(
+			{ role: "worker", task: "Add the export command" },
+			launcherContext(worktree, { available: [catalogModel("special/model")] }),
+		);
+
+		assert.equal(result.status, "launch");
+		assert.deepEqual(
+			{ model: result.model, thinking: result.thinking },
+			{ model: "special/model", thinking: "low" },
+		);
+		assert.deepEqual(result.warnings, []);
+	});
+});
+
+test("a session with a model but no thinking is refused when the session pair is needed", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const result = await createChildLauncher({
+			modelLists: absentLists,
+			fetch: leave(),
+		}).decide(
+			{ role: "worker", task: "Add the export command" },
+			{ ...launcherContext(worktree), thinkingLevel: undefined },
+		);
+
+		assertRefused(result, /session/);
 	});
 });
