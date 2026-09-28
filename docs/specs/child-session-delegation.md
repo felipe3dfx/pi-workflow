@@ -62,6 +62,12 @@ If the session can receive a later result, the child starts in the background. T
 
 Working states are queued, running, and waiting for a reply. Terminal states are completed, failed, cancelled, and timed out. Cancel from the model and stop from the TUI reach cancelled. `continue` starts a new child from the saved conversation of a completed child. The completed record stays terminal. The new child has its own id and starts queued. Failed, cancelled, and timed-out children are not continued.
 
+At most five children run at once, counting running and waiting children. The rest stay queued and start first in, first out. A child with no activity for four minutes, or thirty minutes while a tool is still running, is timed out; time spent queued does not count, and a foreground call then fails as timed out.
+
+A child may ask the parent one question at a time. Each question is numbered and the child waits for a reply. The parent model answers with `reply_child`, naming the child and the question number. A reply to a question that is not waiting, or to a child that has ended, is refused and never answers another question. A question has no expiry of its own: it ends with its reply, a cancel, the end of the session, or the stall watchdog, which leaves the child timed out. A foreground child's question fails at once.
+
+The model lists children and reads one child's state or final result with `list_children`, `child_status`, and `child_result`, and cancels with `cancel_child`. The operator lists them with `/pi-workflow-children` and cancels with `/pi-workflow-child-cancel <id>` until the header controls exist. Every terminal state delivers one message naming the state, except a cancel the model requested, whose tool result is the delivery. `continue_child` takes a follow-up task, reuses the completed child's contract, model, and thinking without asking Jev again, and may be repeated on the same completed record. Child records and completed conversations are kept until the session ends. A child that finishes between the parent's abort and the session's shutdown is delivered to the outgoing session only.
+
 A refusal is a result with no child id, a warning, and a reason. It is not a child state. An invalid worktree is rejected before launch. The harness does not create or clean up worktrees. It only selects an existing root.
 
 The launcher lives behind the extension adapter. The extension registers the tool. It does not own selection policy.

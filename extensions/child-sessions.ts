@@ -2,16 +2,18 @@ import { randomUUID } from "node:crypto";
 
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import {
+	type AgentSessionEvent,
 	createAgentSession,
 	DefaultResourceLoader,
 	type ExtensionContext,
 	getAgentDir,
 	type ModelRuntime,
+	type SessionEntry,
 	SessionManager,
 	SettingsManager,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { type Static, Type } from "typebox";
 
 import type { createChildLauncher } from "./child-launcher.ts";
 
@@ -22,9 +24,20 @@ interface ChildSpec {
 	prompt: string;
 	tools: string[];
 	modelRegistry: ExtensionContext["modelRegistry"];
+	onEvent(event: AgentSessionEvent): void;
+	ask(question: string): Promise<string>;
+	entries?: SessionEntry[];
+	parentSession?: string;
+}
+
+interface Conversation {
+	sessionId: string;
+	entries: SessionEntry[];
 }
 
 interface ChildHandle {
+	sessionId: string;
+	entries(): SessionEntry[];
 	model: string | undefined;
 	thinking: string;
 	tools: string[];
@@ -36,6 +49,7 @@ interface ChildHandle {
 export type ChildSessionFactory = (spec: ChildSpec) => Promise<ChildHandle>;
 
 type Plan = {
+	role: string;
 	contract: { prompt: string; tools: string[] };
 	task: string;
 	worktree: string;
@@ -43,7 +57,92 @@ type Plan = {
 	thinking: ModelThinkingLevel;
 };
 
-type Deliver = (id: string, text: string, failed: boolean) => void;
+type ChildState =
+	| "queued"
+	| "running"
+	| "waiting"
+	| "completed"
+	| "failed"
+	| "cancelled"
+	| "timed out";
+
+export interface ChildRecord {
+	id: string;
+	role: string;
+	task: string;
+	worktree: string;
+	model: string;
+	thinking: ModelThinkingLevel;
+	state: ChildState;
+	createdAt: number;
+	startedAt?: number;
+	endedAt?: number;
+	text?: string;
+	continuedFrom?: string;
+}
+
+interface Child {
+	record: ChildRecord;
+	plan: Plan;
+	handle: ChildHandle;
+	watch: ReturnType<typeof createWatch>;
+	conversation?: Conversation;
+	asked: number;
+	question?: {
+		number: number;
+		resolve(answer: string): void;
+		reject(error: Error): void;
+	};
+}
+
+type Schedule = (run: () => void, ms: number) => () => void;
+
+const runningLimit = 5;
+const stallMs = 4 * 60_000;
+const toolStallMs = 30 * 60_000;
+
+const scheduleTimer: Schedule = (run, ms) => {
+	const timer = setTimeout(run, ms);
+	timer.unref();
+	return () => clearTimeout(timer);
+};
+
+function createWatch(schedule: Schedule, onStall: (reason: string) => void) {
+	const tools = new Map<string, string>();
+	let cancel: (() => void) | undefined;
+	function arm() {
+		cancel?.();
+		const tool: string | undefined = tools.values().next().value;
+		const ms = tool === undefined ? stallMs : toolStallMs;
+		const reason =
+			tool === undefined
+				? `no activity for ${ms / 60_000} minutes.`
+				: `the tool ${tool} ran for ${ms / 60_000} minutes without finishing.`;
+		cancel = schedule(() => {
+			cancel = undefined;
+			onStall(reason);
+		}, ms);
+	}
+	return {
+		start: arm,
+		event(event: AgentSessionEvent) {
+			if (event.type === "tool_execution_start") {
+				tools.set(event.toolCallId, event.toolName);
+			} else if (event.type === "tool_execution_end") {
+				tools.delete(event.toolCallId);
+			}
+			if (cancel) arm();
+		},
+		stop() {
+			cancel?.();
+			cancel = undefined;
+		},
+	};
+}
+
+export function isWorking(state: ChildState) {
+	return state === "queued" || state === "running" || state === "waiting";
+}
 
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
@@ -60,6 +159,10 @@ function parentRuntime(
 		? (runtime as ModelRuntime)
 		: undefined;
 }
+
+const askParentParameters = Type.Object({
+	question: Type.String({ description: "One question for the parent." }),
+});
 
 const createPiChildSession: ChildSessionFactory = async (spec) => {
 	const runtime = parentRuntime(spec.modelRegistry);
@@ -89,11 +192,31 @@ const createPiChildSession: ChildSessionFactory = async (spec) => {
 			spec.model.slice(slash + 1),
 		),
 		thinkingLevel: spec.thinking,
-		tools: spec.tools,
+		tools: [...spec.tools, "ask_parent"],
+		customTools: [
+			{
+				name: "ask_parent",
+				label: "Ask Parent",
+				description:
+					"Ask the parent session one question and wait for its answer. Use it only when the task cannot continue without a decision the parent owns. An error result means no answer will come; continue without one.",
+				parameters: askParentParameters,
+				async execute(_toolCallId, params: Static<typeof askParentParameters>) {
+					return {
+						content: [{ type: "text", text: await spec.ask(params.question) }],
+						details: {},
+					};
+				},
+			},
+		],
 		resourceLoader,
-		sessionManager: SessionManager.inMemory(spec.cwd),
+		sessionManager: SessionManager.inMemory(
+			spec.cwd,
+			{ parentSession: spec.parentSession },
+			spec.entries,
+		),
 		settingsManager,
 	});
+	session.subscribe((event) => spec.onEvent(event));
 	let stopped = false;
 	const stream = session.agent.streamFunction;
 	// abort() and dispose() do not cancel a prompt still preparing its run, so the
@@ -103,6 +226,8 @@ const createPiChildSession: ChildSessionFactory = async (spec) => {
 		return stream(...args);
 	};
 	return {
+		sessionId: session.sessionId,
+		entries: () => session.sessionManager.getEntries(),
 		model: session.model && `${session.model.provider}/${session.model.id}`,
 		thinking: session.thinkingLevel,
 		tools: session.getActiveToolNames(),
@@ -138,11 +263,125 @@ const abortedBeforeLaunch = {
 
 export function createChildSessions(options: {
 	create?: ChildSessionFactory;
-	deliver: Deliver;
+	deliver: (record: ChildRecord) => void;
+	ask: (record: ChildRecord, question: string, number: number) => void;
 	report: (message: string) => void;
+	schedule?: Schedule;
 }) {
 	const create = options.create ?? createPiChildSession;
-	const running = new Map<string, ChildHandle>();
+	const schedule = options.schedule ?? scheduleTimer;
+	const children = new Map<string, Child>();
+	const queue: Child[] = [];
+	let generation = 0;
+
+	function warn(message: string) {
+		try {
+			options.report(message);
+		} catch {}
+	}
+
+	function pump() {
+		let running = [...children.values()].filter(
+			(child) =>
+				child.record.state === "running" || child.record.state === "waiting",
+		).length;
+		while (running < runningLimit && queue.length > 0) {
+			const child = queue.shift() as Child;
+			running += 1;
+			run(child);
+		}
+	}
+
+	function run(child: Child) {
+		child.record.state = "running";
+		child.record.startedAt = Date.now();
+		child.watch.start();
+		void child.handle.run(child.plan.task).then(
+			(text) => finish(child, "completed", text),
+			(error: unknown) => finish(child, "failed", errorMessage(error)),
+		);
+	}
+
+	function finish(
+		child: Child,
+		state: ChildState,
+		text: string,
+		deliver = true,
+	) {
+		const { record } = child;
+		if (!isWorking(record.state) || children.get(record.id) !== child) return;
+		const queued = queue.indexOf(child);
+		if (queued >= 0) queue.splice(queued, 1);
+		child.watch.stop();
+		record.state = state;
+		record.text = text;
+		record.endedAt = Date.now();
+		answer(
+			child,
+			new Error(
+				state === "cancelled"
+					? "The child was cancelled."
+					: `The child ${state}.`,
+			),
+		);
+		try {
+			if (state === "completed") {
+				child.conversation = {
+					sessionId: child.handle.sessionId,
+					entries: child.handle.entries(),
+				};
+			}
+			child.handle.dispose();
+		} catch (error) {
+			warn(`Child ${record.id}: ${errorMessage(error)}`);
+		}
+		pump();
+		if (!deliver) return;
+		try {
+			options.deliver({ ...record });
+		} catch (error) {
+			warn(`Child ${record.id}: ${errorMessage(error)}`);
+		}
+	}
+
+	function answer(child: Child, reply: string | Error) {
+		const { question } = child;
+		if (!question) return;
+		child.question = undefined;
+		if (child.record.state === "waiting") child.record.state = "running";
+		if (reply instanceof Error) question.reject(reply);
+		else question.resolve(reply);
+	}
+
+	function ask(child: Child, question: string) {
+		if (child.question) {
+			return Promise.reject(
+				new Error("A question is already waiting for the parent's reply."),
+			);
+		}
+		if (
+			children.get(child.record.id) !== child ||
+			child.record.state !== "running"
+		) {
+			return Promise.reject(new Error("The child is not running."));
+		}
+		child.asked += 1;
+		const number = child.asked;
+		return new Promise<string>((resolve, reject) => {
+			child.question = { number, resolve, reject };
+			child.record.state = "waiting";
+			try {
+				options.ask({ ...child.record }, question, number);
+			} catch (error) {
+				answer(
+					child,
+					new Error(
+						`The question could not reach the parent: ${errorMessage(error)}`,
+					),
+				);
+			}
+		});
+	}
 
 	async function start(
 		plan: Plan,
@@ -151,8 +390,14 @@ export function createChildSessions(options: {
 			signal?: AbortSignal;
 			modelRegistry: ExtensionContext["modelRegistry"];
 		},
+		from?: { id: string; conversation: Conversation },
 	) {
 		if (launch.signal?.aborted) return abortedBeforeLaunch;
+		let stall = (_reason: string) => {};
+		let asked = (_question: string) =>
+			Promise.reject<string>(new Error("The child is not running."));
+		const watch = createWatch(schedule, (reason) => stall(reason));
+		const launchedIn = generation;
 		let handle: ChildHandle;
 		try {
 			handle = await create({
@@ -162,6 +407,10 @@ export function createChildSessions(options: {
 				prompt: plan.contract.prompt,
 				tools: plan.contract.tools,
 				modelRegistry: launch.modelRegistry,
+				onEvent: (event) => watch.event(event),
+				ask: (question) => asked(question),
+				entries: from?.conversation.entries,
+				parentSession: from?.conversation.sessionId,
 			});
 		} catch (error) {
 			return {
@@ -193,53 +442,147 @@ export function createChildSessions(options: {
 			handle.dispose();
 			return abortedBeforeLaunch;
 		}
+		if (launchedIn !== generation) {
+			handle.dispose();
+			return {
+				status: "refused" as const,
+				warning: "Launch refused. No child was launched.",
+				reason: "The session ended before the child launched.",
+			};
+		}
 		if (!launch.background) {
-			const abort = () => void handle.abort();
+			const abort = () => void handle.abort().catch(() => {});
 			launch.signal?.addEventListener("abort", abort, { once: true });
+			let timedOut: string | undefined;
+			stall = (reason) => {
+				timedOut = reason;
+				abort();
+			};
+			asked = () =>
+				Promise.reject<string>(
+					new Error(
+						"The parent cannot answer: it is waiting for this child in the foreground. Continue without an answer.",
+					),
+				);
+			watch.start();
 			try {
-				return {
-					status: "completed" as const,
-					text: await handle.run(plan.task),
-				};
+				const text = await handle.run(plan.task).catch((error: unknown) => {
+					throw timedOut
+						? new Error(`The child timed out: ${timedOut}`)
+						: error;
+				});
+				return { status: "completed" as const, text };
 			} finally {
+				watch.stop();
 				launch.signal?.removeEventListener("abort", abort);
 				handle.dispose();
 			}
 		}
-		const id = randomUUID();
-		running.set(id, handle);
-		void handle
-			.run(plan.task)
-			.then(
-				(text) => ({ text, failed: false }),
-				(error: unknown) => ({ text: errorMessage(error), failed: true }),
-			)
-			.then(({ text, failed }) => {
-				if (!running.delete(id)) return;
-				try {
-					options.deliver(id, text, failed);
-				} finally {
-					handle.dispose();
-				}
-			})
-			.catch((error: unknown) =>
-				options.report(`Child ${id}: ${errorMessage(error)}`),
-			)
-			.catch(() => {});
-		return { status: "started" as const, id };
+		const child: Child = {
+			record: {
+				id: randomUUID(),
+				role: plan.role,
+				task: plan.task,
+				worktree: plan.worktree,
+				model: plan.model,
+				thinking: plan.thinking,
+				state: "queued",
+				createdAt: Date.now(),
+				continuedFrom: from?.id,
+			},
+			plan,
+			handle,
+			watch,
+			asked: 0,
+		};
+		stall = (reason) => finish(child, "timed out", reason);
+		asked = (question) => ask(child, question);
+		children.set(child.record.id, child);
+		queue.push(child);
+		queueMicrotask(pump);
+		return { status: "queued" as const, id: child.record.id };
+	}
+
+	function resume(
+		id: string,
+		task: string,
+		launch: {
+			signal?: AbortSignal;
+			modelRegistry: ExtensionContext["modelRegistry"];
+		},
+	) {
+		const child = children.get(id);
+		const refuse = (reason: string) => ({
+			status: "refused" as const,
+			warning: "Continue refused. No child was launched.",
+			reason,
+		});
+		if (!child) return refuse(`No child ${id} in this session.`);
+		if (!child.conversation) {
+			return refuse(
+				`Child ${id} is ${child.record.state}; only a completed child can be continued.`,
+			);
+		}
+		return start(
+			{ ...child.plan, task },
+			{ ...launch, background: true },
+			{ id, conversation: child.conversation },
+		);
+	}
+
+	function reply(id: string, number: number, text: string) {
+		const child = children.get(id);
+		if (!child) return `No child ${id} in this session.`;
+		if (!isWorking(child.record.state)) {
+			return `Child ${id} is ${child.record.state}; question ${number} can no longer be answered.`;
+		}
+		if (child.question?.number !== number) {
+			return `Question ${number} of child ${id} is not waiting for a reply.`;
+		}
+		answer(child, text);
+		return `Reply sent to child ${id}.`;
+	}
+
+	function cancel(id: string, deliver: boolean) {
+		const child = children.get(id);
+		if (!child)
+			return { cancelled: false, message: `No child ${id} in this session.` };
+		if (!isWorking(child.record.state)) {
+			return {
+				cancelled: false,
+				message: `Child ${id} is ${child.record.state}; only a queued, running, or waiting child can be cancelled.`,
+			};
+		}
+		finish(child, "cancelled", "The child was cancelled.", deliver);
+		return { cancelled: true, message: `Child ${id} cancelled.` };
+	}
+
+	function get(id: string): ChildRecord | undefined {
+		const child = children.get(id);
+		return child && { ...child.record };
+	}
+
+	function list(): ChildRecord[] {
+		return [...children.values()].map((child) => ({ ...child.record }));
 	}
 
 	function disposeAll() {
-		const handles = [...running.values()];
-		running.clear();
-		for (const handle of handles) {
+		generation += 1;
+		const working = [...children.values()].filter((child) =>
+			isWorking(child.record.state),
+		);
+		children.clear();
+		queue.length = 0;
+		for (const child of working) {
+			child.watch.stop();
+			answer(child, new Error("The session ended."));
 			try {
-				handle.dispose();
+				child.handle.dispose();
 			} catch {}
 		}
 	}
 
-	return { start, disposeAll };
+	return { start, resume, reply, cancel, get, list, disposeAll };
 }
 
 const spawnChildParameters = Type.Object({
@@ -317,24 +660,179 @@ export function createSpawnChildTool(
 				signal,
 				modelRegistry: ctx.modelRegistry,
 			});
-			if (started.status === "refused" || started.status === "pending") {
-				return notLaunched(started.status, {
-					...started,
-					warnings: plan.warnings,
-				});
-			}
-			if (started.status === "completed") {
-				return report([...plan.warnings, started.text], {
-					status: "completed",
-				});
-			}
-			return report(
-				[
-					...plan.warnings,
-					`Child ${started.id} started in the background. Its result arrives later as a message.`,
-				],
-				{ status: "started", id: started.id },
+			return launched(started, plan.warnings);
+		},
+	};
+}
+
+function launched(
+	started: Awaited<ReturnType<ReturnType<typeof createChildSessions>["start"]>>,
+	warnings: string[],
+) {
+	if (started.status === "refused" || started.status === "pending") {
+		return notLaunched(started.status, { ...started, warnings });
+	}
+	if (started.status === "completed") {
+		return report([...warnings, started.text], { status: "completed" });
+	}
+	return report(
+		[
+			...warnings,
+			`Child ${started.id} is queued in the background. Its result arrives later as a message.`,
+		],
+		{ status: started.status, id: started.id },
+	);
+}
+
+const continueChildParameters = Type.Object({
+	id: Type.String({ description: "The id of a completed child." }),
+	task: Type.String({
+		description: "The follow-up task for the child's saved conversation.",
+	}),
+});
+
+export function createContinueChildTool(
+	sessions: ReturnType<typeof createChildSessions>,
+): ToolDefinition<typeof continueChildParameters, Record<string, unknown>> {
+	return {
+		name: "continue_child",
+		label: "Continue Child",
+		description:
+			"Start a new background child from the saved conversation of a completed child, with a follow-up task. The completed child keeps its record; the new child has its own id and runs on the same contract, model, and thinking.",
+		promptGuidelines: [
+			"continue_child accepts only a completed child; failed, cancelled, and timed-out children are not continued.",
+		],
+		parameters: continueChildParameters,
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			return launched(
+				await sessions.resume(params.id, params.task, {
+					signal,
+					modelRegistry: ctx.modelRegistry,
+				}),
+				[],
 			);
 		},
 	};
+}
+
+function describeChild(child: ChildRecord) {
+	const times = [
+		`created ${new Date(child.createdAt).toISOString()}`,
+		child.startedAt && `started ${new Date(child.startedAt).toISOString()}`,
+		child.endedAt && `ended ${new Date(child.endedAt).toISOString()}`,
+	].filter(Boolean);
+	return [
+		child.id,
+		child.role,
+		child.state,
+		`${child.model} ${child.thinking}`,
+		...times,
+	].join(" · ");
+}
+
+export function describeChildren(children: ChildRecord[]) {
+	return children.length > 0
+		? children.map(describeChild)
+		: ["No children in this session."];
+}
+
+const childIdParameters = Type.Object({
+	id: Type.String({ description: "The child id that spawn_child returned." }),
+});
+
+const replyChildParameters = Type.Object({
+	id: Type.String({ description: "The id of the child waiting for a reply." }),
+	question: Type.Integer({
+		description: "The question number from the child's question message.",
+	}),
+	answer: Type.String({ description: "The answer to the child's question." }),
+});
+
+function unknownChild(id: string) {
+	return report([`No child ${id} in this session.`], { id });
+}
+
+export function createChildQueryTools(
+	sessions: ReturnType<typeof createChildSessions>,
+) {
+	const listChildren: ToolDefinition<
+		ReturnType<typeof Type.Object>,
+		Record<string, unknown>
+	> = {
+		name: "list_children",
+		label: "List Children",
+		description:
+			"List the child sessions of this session with their role, state, model, and times.",
+		parameters: Type.Object({}),
+		async execute() {
+			const children = sessions.list();
+			return report(describeChildren(children), { children });
+		},
+	};
+	const childStatus: ToolDefinition<
+		typeof childIdParameters,
+		Record<string, unknown>
+	> = {
+		name: "child_status",
+		label: "Child Status",
+		description: "Show the state of one child session.",
+		parameters: childIdParameters,
+		async execute(_toolCallId, params) {
+			const child = sessions.get(params.id);
+			if (!child) return unknownChild(params.id);
+			return report([describeChild(child)], { child });
+		},
+	};
+	const childResult: ToolDefinition<
+		typeof childIdParameters,
+		Record<string, unknown>
+	> = {
+		name: "child_result",
+		label: "Child Result",
+		description:
+			"Return the final text of a child session that has ended: its answer, or why it did not complete.",
+		parameters: childIdParameters,
+		async execute(_toolCallId, params) {
+			const child = sessions.get(params.id);
+			if (!child) return unknownChild(params.id);
+			if (child.text === undefined) {
+				return report(
+					[`Child ${child.id} is ${child.state} and has no result yet.`],
+					{ id: child.id, state: child.state },
+				);
+			}
+			return report([child.text], { id: child.id, state: child.state });
+		},
+	};
+	const cancelChild: ToolDefinition<
+		typeof childIdParameters,
+		Record<string, unknown>
+	> = {
+		name: "cancel_child",
+		label: "Cancel Child",
+		description: "Cancel a queued, running, or waiting child session.",
+		parameters: childIdParameters,
+		async execute(_toolCallId, params) {
+			const { message } = sessions.cancel(params.id, false);
+			const child = sessions.get(params.id);
+			return report([message], { id: params.id, state: child?.state });
+		},
+	};
+	const replyChild: ToolDefinition<
+		typeof replyChildParameters,
+		Record<string, unknown>
+	> = {
+		name: "reply_child",
+		label: "Reply Child",
+		description:
+			"Answer the question a child session is waiting on, naming the question number from its message. A reply to a question that is not waiting is refused.",
+		parameters: replyChildParameters,
+		async execute(_toolCallId, params) {
+			return report(
+				[sessions.reply(params.id, params.question, params.answer)],
+				{ id: params.id, question: params.question },
+			);
+		},
+	};
+	return [listChildren, childStatus, childResult, cancelChild, replyChild];
 }
