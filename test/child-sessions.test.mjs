@@ -790,7 +790,10 @@ test("aborting a foreground call while the child's prompt is still preparing sen
 			await preparing.promise;
 			call.abort();
 			release.resolve();
-			await assert.rejects(result, /The child session was stopped\./);
+			await assert.rejects(
+				result,
+				/The call was aborted and the child was stopped\./,
+			);
 		});
 
 		assert.equal(parent.requests.length, 0);
@@ -2193,5 +2196,164 @@ test("a launch whose child session is created after session shutdown is refused 
 			(await use(extension, "list_children", {})).details.children,
 			[],
 		);
+	});
+});
+
+function holdPreparation(runtime) {
+	const preparing = Promise.withResolvers();
+	const release = Promise.withResolvers();
+	const checkAuth = runtime.checkAuth.bind(runtime);
+	runtime.hasConfiguredAuth = () => false;
+	runtime.checkAuth = async (...args) => {
+		preparing.resolve();
+		await release.promise;
+		return checkAuth(...args);
+	};
+	return { preparing: preparing.promise, release: release.resolve };
+}
+
+test("a foreground child held in preparation through Pi's SDK times out without waiting for its run, and never sends a request", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const child = await realChild(
+			agentDir,
+			fauxAssistantMessage("Late answer."),
+		);
+		const hold = holdPreparation(child.parent.runtime);
+		const unhandled = await collectUnhandled(async () => {
+			const call = spawnReal(child, worktree, "print");
+			await hold.preparing;
+			child.clock.fire(minutes(4));
+
+			assert.equal(
+				await settledNow(call),
+				"The child timed out: no activity for 4 minutes.",
+			);
+
+			hold.release();
+			await delay(50);
+		});
+
+		assert.equal(child.parent.requests.length, 0);
+		assert.equal(child.extension.messages.length, 0);
+		assert.deepEqual(unhandled, []);
+	});
+});
+
+test("aborting a foreground call through Pi's SDK while the child is held in preparation returns at once, and never sends a request", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const child = await realChild(
+			agentDir,
+			fauxAssistantMessage("Late answer."),
+		);
+		const hold = holdPreparation(child.parent.runtime);
+		const call = new AbortController();
+		const unhandled = await collectUnhandled(async () => {
+			const result = spawn(
+				child.extension.tool,
+				{ role: "worker", task: "Fix the failing test" },
+				{ ...toolContext("print", worktree), ...child.parent.context },
+				call.signal,
+			);
+			await hold.preparing;
+			call.abort();
+
+			assert.equal(
+				await settledNow(result),
+				"The call was aborted and the child was stopped.",
+			);
+
+			hold.release();
+			await delay(50);
+		});
+
+		assert.equal(child.parent.requests.length, 0);
+		assert.deepEqual(unhandled, []);
+	});
+});
+
+test("a foreground child whose run rejects only after the timeout has already failed the call as timed out", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const clock = manualClock();
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			fetch: fakeJev().fetch,
+			schedule: clock.schedule,
+		});
+		const unhandled = await collectUnhandled(async () => {
+			const call = spawn(
+				extension.tool,
+				{ role: "worker", task: "Fix the failing test" },
+				toolContext("print", worktree),
+			);
+			await eventually(() => children.created[0]?.tasks.length === 1);
+			clock.fire(minutes(4));
+
+			assert.equal(
+				await settledNow(call),
+				"The child timed out: no activity for 4 minutes.",
+			);
+			assert.equal(children.created[0].disposals, 1);
+
+			children.created[0].result.reject(new Error("Request was aborted"));
+			await settle();
+		});
+
+		assert.equal(extension.messages.length, 0);
+		assert.deepEqual(unhandled, []);
+	});
+});
+
+test("aborting a foreground call's signal after the call has ended does nothing more to its child", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const clock = manualClock();
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			fetch: fakeJev().fetch,
+			schedule: clock.schedule,
+		});
+		const unhandled = await collectUnhandled(async () => {
+			const completed = new AbortController();
+			const done = spawn(
+				extension.tool,
+				{ role: "worker", task: "Fix the failing test" },
+				toolContext("print", worktree),
+				completed.signal,
+			);
+			await eventually(() => children.created[0]?.tasks.length === 1);
+			children.created[0].result.resolve("All tests pass.");
+			assert.match(text(await done), /All tests pass\./);
+			completed.abort();
+
+			const timedOut = new AbortController();
+			const late = spawn(
+				extension.tool,
+				{ role: "worker", task: "Fix the failing test" },
+				toolContext("print", worktree),
+				timedOut.signal,
+			);
+			await eventually(() => children.created[1]?.tasks.length === 1);
+			clock.fire(minutes(4));
+			assert.equal(
+				await settledNow(late),
+				"The child timed out: no activity for 4 minutes.",
+			);
+			children.created[1].result.resolve("Too late.");
+			timedOut.abort();
+			await settle();
+		});
+
+		assert.deepEqual(
+			children.created.map(({ aborts, disposals }) => ({ aborts, disposals })),
+			[
+				{ aborts: 0, disposals: 1 },
+				{ aborts: 1, disposals: 1 },
+			],
+		);
+		assert.equal(extension.messages.length, 0);
+		assert.deepEqual(unhandled, []);
 	});
 });

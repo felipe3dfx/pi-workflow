@@ -451,13 +451,15 @@ export function createChildSessions(options: {
 			};
 		}
 		if (!launch.background) {
-			const abort = () => void handle.abort().catch(() => {});
-			launch.signal?.addEventListener("abort", abort, { once: true });
-			let timedOut: string | undefined;
-			stall = (reason) => {
-				timedOut = reason;
-				abort();
+			const stopped = Promise.withResolvers<never>();
+			const stop = (error: Error) => {
+				stopped.reject(error);
+				void handle.abort().catch(() => {});
 			};
+			const abort = () =>
+				stop(new Error("The call was aborted and the child was stopped."));
+			launch.signal?.addEventListener("abort", abort, { once: true });
+			stall = (reason) => stop(new Error(`The child timed out: ${reason}`));
 			asked = () =>
 				Promise.reject<string>(
 					new Error(
@@ -466,11 +468,10 @@ export function createChildSessions(options: {
 				);
 			watch.start();
 			try {
-				const text = await handle.run(plan.task).catch((error: unknown) => {
-					throw timedOut
-						? new Error(`The child timed out: ${timedOut}`)
-						: error;
-				});
+				const text = await Promise.race([
+					handle.run(plan.task),
+					stopped.promise,
+				]);
 				return { status: "completed" as const, text };
 			} finally {
 				watch.stop();
