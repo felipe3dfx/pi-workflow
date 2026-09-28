@@ -15,12 +15,18 @@ import {
 	type CompanionWorkflowOptions,
 } from "./companion-workflow.ts";
 import { type CodeGraphAdapters, createCodeGraphTool } from "./codegraph-tool.ts";
+import { createChildLauncher } from "./child-launcher.ts";
+import {
+	type ChildSessionFactory,
+	createChildSessions,
+	createSpawnChildTool,
+} from "./child-sessions.ts";
 import {
 	createModelLists,
 	type ModelListsOptions,
 	report,
 } from "./model-lists.ts";
-import { registerTypesafeLogin } from "./jev-client.ts";
+import { type Fetch, registerTypesafeLogin } from "./jev-client.ts";
 import { registerSessionTodo } from "./todo-extension.ts";
 import { registerCompactTools } from "./compact-tools.ts";
 
@@ -48,6 +54,7 @@ export default function piWorkflowExtension(
 	options: CompanionWorkflowOptions & {
 		codegraph?: CodeGraphAdapters;
 		modelLists?: ModelListsOptions;
+		childSessions?: { create?: ChildSessionFactory; fetch?: Fetch };
 	} = {},
 ) {
 	let currentCtx: ExtensionContext | ExtensionCommandContext | undefined;
@@ -57,16 +64,48 @@ export default function piWorkflowExtension(
 	registerCompactTools(pi);
 	registerTypesafeLogin(pi);
 	const modelLists = createModelLists(options.modelLists);
+	const childSessions = createChildSessions({
+		create: options.childSessions?.create,
+		deliver: (id, text, failed) =>
+			pi.sendMessage(
+				{
+					customType: "pi-workflow-child-result",
+					content: failed
+						? `Child ${id} failed: ${text}`
+						: `Child ${id} finished:\n\n${text}`,
+					display: true,
+					details: { id, failed },
+				},
+				{ deliverAs: "followUp", triggerTurn: true },
+			),
+		report: (message) => {
+			if (currentCtx) report(currentCtx, message, "error");
+		},
+	});
+	let spawnChildRegistered = false;
 
 	pi.on("session_start", async (_event, ctx) => {
 		currentCtx = ctx;
-		await workflow.checkSpawnTools();
+		const { allowed } = await workflow.checkSpawnTools();
+		if (allowed && !spawnChildRegistered) {
+			spawnChildRegistered = true;
+			pi.registerTool(
+				createSpawnChildTool(
+					createChildLauncher({
+						modelLists,
+						fetch: options.childSessions?.fetch,
+					}),
+					childSessions,
+				),
+			);
+		}
 	});
 	pi.on("tool_execution_start", async (_event, ctx) => {
 		currentCtx = ctx;
 	});
 	pi.on("session_shutdown", async () => {
 		currentCtx = undefined;
+		childSessions.disposeAll();
 	});
 
 	async function runCatalogCommand(
