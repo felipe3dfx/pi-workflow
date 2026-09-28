@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Prototipo 9: detalle en vivo</title>
+  <link rel="stylesheet" href="prototype.css">
+</head>
+<body>
+  <main class="page">
+    <p class="kicker"><a href="index.html">Mapa</a> · página 9 · <span class="proposal">propuesta #71 (pendiente de aprobación)</span></p>
+    <h1>Detalle en vivo de un hijo</h1>
+    <div class="layout">
+      <section>
+        <div class="question">
+          <strong>Pregunta.</strong>
+          <p>¿`Enter` en la vista abre el hilo del hijo en vivo, siguiendo la cola, y cualquier estado se puede abrir?</p>
+        </div>
+        <ul class="check">
+          <li>El encabezado nombra al hijo, su modelo, effort, estado y tiempo.</li>
+          <li>El hilo muestra texto, tool calls y thinking, y sigue la cola.</li>
+          <li>Thinking se pliega con el toggle de Pi: `ctrl+t thinking`.</li>
+          <li>Aquí hay un bloque plegado y otro abierto.</li>
+          <li>`Esc` vuelve a la lista. `q` cierra la vista. `s`/`c` cancela.</li>
+          <li>Un hijo cancelado también se abre. Solo falta cancelar.</li>
+        </ul>
+        <div class="controls">
+          <button type="button" data-case="live">Hijo en ejecución</button>
+          <button type="button" data-case="cancelled">Hijo cancelado</button>
+        </div>
+      </section>
+      <section class="grok" aria-label="Detalle de un hijo">
+        <div class="overlay-top">
+          <span><span class="agent-name" id="name">worker a1b2</span> · grok-4.7 (high)</span>
+          <span id="state" class="agent-meta"></span>
+        </div>
+        <div class="grok-body scroller" id="thread">
+          <div class="user-bar"><span>) Revisa el doctor y corre las pruebas</span><span class="stamp">2:37 PM</span></div>
+          <div data-thinking>
+            <p class="tree-head thinking">◆ Thought for 2.4s</p>
+            <div class="thinking" data-body>I should read the doctor module first, then run the test suite.</div>
+          </div>
+          <p class="tree-head">◆ read src/doctor.ts</p>
+          <p>El doctor revisa tres cosas: config, sesión y herramientas.</p>
+          <div data-thinking>
+            <p class="tree-head thinking">◆ Thought for 1.1s</p>
+            <div class="thinking" data-body>The config check looks fine. Now run npm test to confirm nothing else breaks.</div>
+          </div>
+          <p class="tree-head" id="last-tool">◆ bash npm test · Running</p>
+          <div id="tail">&nbsp;&nbsp;✓ doctor › config (4 ms)<br>&nbsp;&nbsp;✓ doctor › session (7 ms)</div>
+        </div>
+        <div class="caption" id="caption">siguiendo la cola</div>
+        <div class="grok-status" id="status"></div>
+        <div class="grok-foot keys">
+          <span id="keys"></span>
+        </div>
+      </section>
+    </div>
+  </main>
+  <script>
+    const blocks = [...document.querySelectorAll("[data-thinking]")];
+    const thread = document.querySelector("#thread");
+    const tail = document.querySelector("#tail");
+    const status = document.querySelector("#status");
+    let mode = "live";
+    let timer = null;
+    function setThinking(block, open) {
+      block.querySelector("[data-body]").hidden = !open;
+      block.classList.toggle("expanded", open);
+    }
+    setThinking(blocks[0], false);
+    setThinking(blocks[1], true);
+    blocks.forEach((b) => { b.querySelector("p").onclick = () => setThinking(b, b.querySelector("[data-body]").hidden); });
+    function toggleAll() {
+      const open = blocks.some((b) => b.querySelector("[data-body]").hidden);
+      for (const b of blocks) setThinking(b, open);
+    }
+    function stream() {
+      let n = 0;
+      const lines = ["✓ doctor › tools (3 ms)", "✓ children › cancel (12 ms)", "✓ children › continue (9 ms)", "✓ children › view (5 ms)"];
+      clearInterval(timer);
+      timer = setInterval(() => {
+        if (mode !== "live" || n >= lines.length) return clearInterval(timer);
+        tail.innerHTML += `<br>&nbsp;&nbsp;${lines[n++]}`;
+        thread.scrollTop = thread.scrollHeight;
+      }, 1200);
+    }
+    function show(name) {
+      mode = name;
+      const cancelled = name === "cancelled";
+      document.querySelector("#state").innerHTML = cancelled ? `<span class="g-cancelled">–</span> cancelled · 8s` : `<span class="g-running">◐</span> running · 12s`;
+      document.querySelector("#name").textContent = cancelled ? "worker g7h8" : "worker a1b2";
+      document.querySelector("#last-tool").textContent = cancelled ? "◆ bash npm test · Cancelled" : "◆ bash npm test · Running";
+      document.querySelector("#caption").textContent = cancelled ? "hijo cancelado · el hilo se lee igual, sin cancelar" : "siguiendo la cola";
+      document.querySelector("#keys").innerHTML = `<kbd>Esc</kbd> back · <kbd>q</kbd> close${cancelled ? "" : " · <kbd>s</kbd>/<kbd>c</kbd> cancel"} · <kbd>ctrl+t</kbd> thinking`;
+      status.textContent = "";
+      document.querySelectorAll("[data-case]").forEach((b) => {
+        b.setAttribute("aria-pressed", String(b.dataset.case === name));
+      });
+      thread.scrollTop = thread.scrollHeight;
+      if (!cancelled) stream();
+    }
+    document.addEventListener("keydown", (e) => {
+      if (e.ctrlKey && e.key === "t") { e.preventDefault(); toggleAll(); }
+      else if (e.key === "Escape") location.href = "08-vista.html";
+      else if (e.key === "q") location.href = "07-caja-fija.html";
+      else if ((e.key === "s" || e.key === "c") && mode === "live") status.textContent = "Cancel worker a1b2? y/n";
+      else if (e.key === "y" && status.textContent.startsWith("Cancel")) show("cancelled");
+      else if (e.key === "n") status.textContent = "";
+    });
+    document.querySelector(".controls").onclick = (e) => { const b = e.target.closest("[data-case]"); if (b) show(b.dataset.case); };
+    show(location.hash === "#cancelled" ? "cancelled" : "live");
+  </script>
+</body>
+</html>

@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 
-import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
+import type {
+	AssistantMessage,
+	ModelThinkingLevel,
+} from "@earendil-works/pi-ai";
 import {
 	type AgentSessionEvent,
 	createAgentSession,
@@ -16,6 +19,7 @@ import {
 import { type Static, Type } from "typebox";
 
 import type { createChildLauncher } from "./child-launcher.ts";
+import { sanitizeTaskText } from "./todo-header.ts";
 
 interface ChildSpec {
 	cwd: string;
@@ -79,6 +83,7 @@ export interface ChildRecord {
 	endedAt?: number;
 	text?: string;
 	continuedFrom?: string;
+	step?: string;
 }
 
 interface Child {
@@ -87,6 +92,10 @@ interface Child {
 	handle: ChildHandle;
 	watch: ReturnType<typeof createWatch>;
 	conversation?: Conversation;
+	entries?: SessionEntry[];
+	streaming?: AssistantMessage;
+	tools: Map<string, string>;
+	followers: Set<() => void>;
 	asked: number;
 	question?: {
 		number: number;
@@ -95,13 +104,13 @@ interface Child {
 	};
 }
 
-type Schedule = (run: () => void, ms: number) => () => void;
+export type Schedule = (run: () => void, ms: number) => () => void;
 
 const runningLimit = 5;
 const stallMs = 4 * 60_000;
 const toolStallMs = 30 * 60_000;
 
-const scheduleTimer: Schedule = (run, ms) => {
+export const scheduleTimer: Schedule = (run, ms) => {
 	const timer = setTimeout(run, ms);
 	timer.unref();
 	return () => clearTimeout(timer);
@@ -138,6 +147,15 @@ function createWatch(schedule: Schedule, onStall: (reason: string) => void) {
 			cancel = undefined;
 		},
 	};
+}
+
+export function describeTool(name: string, args: unknown) {
+	const detail = Object.values(args ?? {}).find(
+		(value) => typeof value === "string",
+	);
+	return sanitizeTaskText(
+		detail === undefined ? name : `${name} ${detail.split("\n")[0]}`,
+	);
 }
 
 export function isWorking(state: ChildState) {
@@ -272,12 +290,62 @@ export function createChildSessions(options: {
 	const schedule = options.schedule ?? scheduleTimer;
 	const children = new Map<string, Child>();
 	const queue: Child[] = [];
+	const listeners = new Set<() => void>();
 	let generation = 0;
 
 	function warn(message: string) {
 		try {
 			options.report(message);
 		} catch {}
+	}
+
+	function changed() {
+		for (const listener of [...listeners]) {
+			try {
+				listener();
+			} catch (error) {
+				warn(errorMessage(error));
+			}
+		}
+	}
+
+	function track(child: Child, event: AgentSessionEvent) {
+		if (children.get(child.record.id) !== child) return;
+		if (event.type === "message_start" || event.type === "message_update") {
+			if (event.message.role === "assistant") child.streaming = event.message;
+		} else if (event.type === "message_end") {
+			child.streaming = undefined;
+		}
+		let step: string | undefined | null = null;
+		if (event.type === "tool_execution_start") {
+			child.tools.set(
+				event.toolCallId,
+				describeTool(event.toolName, event.args),
+			);
+			step = [...child.tools.values()].at(-1);
+		} else if (event.type === "tool_execution_end") {
+			child.tools.delete(event.toolCallId);
+			step = [...child.tools.values()].at(-1);
+		} else if (event.type === "message_update" && child.tools.size === 0) {
+			const kind = event.assistantMessageEvent.type;
+			if (kind.startsWith("thinking")) step = "thinking";
+			else if (kind.startsWith("text")) step = "writing";
+		}
+		for (const follower of [...child.followers]) {
+			try {
+				follower();
+			} catch (error) {
+				warn(errorMessage(error));
+			}
+		}
+		if (
+			step !== null &&
+			step !== child.record.step &&
+			child.record.state === "running"
+		) {
+			child.record.step = step;
+			changed();
+		}
 	}
 
 	function pump() {
@@ -296,6 +364,7 @@ export function createChildSessions(options: {
 		child.record.state = "running";
 		child.record.startedAt = Date.now();
 		child.watch.start();
+		changed();
 		void child.handle.run(child.plan.task).then(
 			(text) => finish(child, "completed", text),
 			(error: unknown) => finish(child, "failed", errorMessage(error)),
@@ -316,6 +385,8 @@ export function createChildSessions(options: {
 		record.state = state;
 		record.text = text;
 		record.endedAt = Date.now();
+		record.step = undefined;
+		child.streaming = undefined;
 		answer(
 			child,
 			new Error(
@@ -325,10 +396,11 @@ export function createChildSessions(options: {
 			),
 		);
 		try {
+			child.entries = child.handle.entries();
 			if (state === "completed") {
 				child.conversation = {
 					sessionId: child.handle.sessionId,
-					entries: child.handle.entries(),
+					entries: child.entries,
 				};
 			}
 			child.handle.dispose();
@@ -336,6 +408,7 @@ export function createChildSessions(options: {
 			warn(`Child ${record.id}: ${errorMessage(error)}`);
 		}
 		pump();
+		changed();
 		if (!deliver) return;
 		try {
 			options.deliver({ ...record });
@@ -348,7 +421,11 @@ export function createChildSessions(options: {
 		const { question } = child;
 		if (!question) return;
 		child.question = undefined;
-		if (child.record.state === "waiting") child.record.state = "running";
+		if (child.record.state === "waiting") {
+			child.record.state = "running";
+			child.record.step = undefined;
+			changed();
+		}
 		if (reply instanceof Error) question.reject(reply);
 		else question.resolve(reply);
 	}
@@ -370,6 +447,8 @@ export function createChildSessions(options: {
 		return new Promise<string>((resolve, reject) => {
 			child.question = { number, resolve, reject };
 			child.record.state = "waiting";
+			child.record.step = `asks question ${number}`;
+			changed();
 			try {
 				options.ask({ ...child.record }, question, number);
 			} catch (error) {
@@ -396,6 +475,7 @@ export function createChildSessions(options: {
 		let stall = (_reason: string) => {};
 		let asked = (_question: string) =>
 			Promise.reject<string>(new Error("The child is not running."));
+		let observe = (_event: AgentSessionEvent) => {};
 		const watch = createWatch(schedule, (reason) => stall(reason));
 		const launchedIn = generation;
 		let handle: ChildHandle;
@@ -407,7 +487,10 @@ export function createChildSessions(options: {
 				prompt: plan.contract.prompt,
 				tools: plan.contract.tools,
 				modelRegistry: launch.modelRegistry,
-				onEvent: (event) => watch.event(event),
+				onEvent: (event) => {
+					watch.event(event);
+					observe(event);
+				},
 				ask: (question) => asked(question),
 				entries: from?.conversation.entries,
 				parentSession: from?.conversation.sessionId,
@@ -494,12 +577,16 @@ export function createChildSessions(options: {
 			plan,
 			handle,
 			watch,
+			tools: new Map(),
+			followers: new Set(),
 			asked: 0,
 		};
 		stall = (reason) => finish(child, "timed out", reason);
 		asked = (question) => ask(child, question);
+		observe = (event) => track(child, event);
 		children.set(child.record.id, child);
 		queue.push(child);
+		changed();
 		queueMicrotask(pump);
 		return { status: "queued" as const, id: child.record.id };
 	}
@@ -567,6 +654,28 @@ export function createChildSessions(options: {
 		return [...children.values()].map((child) => ({ ...child.record }));
 	}
 
+	function subscribe(listener: () => void) {
+		listeners.add(listener);
+		return () => {
+			listeners.delete(listener);
+		};
+	}
+
+	function follow(id: string, listener: () => void) {
+		const followers = children.get(id)?.followers;
+		followers?.add(listener);
+		return () => {
+			followers?.delete(listener);
+		};
+	}
+
+	function thread(id: string) {
+		const child = children.get(id);
+		if (!child) return undefined;
+		if (child.entries) return { entries: child.entries };
+		return { entries: child.handle.entries(), streaming: child.streaming };
+	}
+
 	function disposeAll() {
 		generation += 1;
 		const working = [...children.values()].filter((child) =>
@@ -581,9 +690,21 @@ export function createChildSessions(options: {
 				child.handle.dispose();
 			} catch {}
 		}
+		changed();
 	}
 
-	return { start, resume, reply, cancel, get, list, disposeAll };
+	return {
+		start,
+		resume,
+		reply,
+		cancel,
+		get,
+		list,
+		subscribe,
+		follow,
+		thread,
+		disposeAll,
+	};
 }
 
 const spawnChildParameters = Type.Object({
@@ -731,7 +852,7 @@ function describeChild(child: ChildRecord) {
 	].join(" · ");
 }
 
-export function describeChildren(children: ChildRecord[]) {
+function describeChildren(children: ChildRecord[]) {
 	return children.length > 0
 		? children.map(describeChild)
 		: ["No children in this session."];
