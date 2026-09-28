@@ -94,6 +94,14 @@ const createPiChildSession: ChildSessionFactory = async (spec) => {
 		sessionManager: SessionManager.inMemory(spec.cwd),
 		settingsManager,
 	});
+	let stopped = false;
+	const stream = session.agent.streamFunction;
+	// abort() and dispose() do not cancel a prompt still preparing its run, so the
+	// run it later starts must be stopped before its provider request.
+	session.agent.streamFunction = (...args) => {
+		if (stopped) throw new Error("The child session was stopped.");
+		return stream(...args);
+	};
 	return {
 		model: session.model && `${session.model.provider}/${session.model.id}`,
 		thinking: session.thinkingLevel,
@@ -111,8 +119,14 @@ const createPiChildSession: ChildSessionFactory = async (spec) => {
 			}
 			return session.getLastAssistantText() ?? "";
 		},
-		abort: () => session.abort(),
-		dispose: () => session.dispose(),
+		abort: () => {
+			stopped = true;
+			return session.abort();
+		},
+		dispose: () => {
+			stopped = true;
+			session.dispose();
+		},
 	};
 };
 

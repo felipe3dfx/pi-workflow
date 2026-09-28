@@ -587,6 +587,7 @@ async function fauxParent(agentDir, response) {
 	const modelRegistry = new ModelRegistry(runtime);
 	modelRegistry.getApiKeyForProvider = async () => "typesafe-key";
 	return {
+		runtime,
 		requests,
 		context: { model: faux.getModel(), thinkingLevel: "high", modelRegistry },
 	};
@@ -665,6 +666,85 @@ async function collectUnhandled(run) {
 	}
 	return unhandled;
 }
+
+test("a background child disposed at session shutdown while its prompt is still preparing never sends a provider request", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const parent = await fauxParent(
+			agentDir,
+			fauxAssistantMessage("Late answer."),
+		);
+		const preparing = Promise.withResolvers();
+		const release = Promise.withResolvers();
+		const checkAuth = parent.runtime.checkAuth.bind(parent.runtime);
+		parent.runtime.hasConfiguredAuth = () => false;
+		parent.runtime.checkAuth = async (...args) => {
+			preparing.resolve();
+			await release.promise;
+			return checkAuth(...args);
+		};
+		const { tool, messages, fire } = await loadSpawnTool({
+			agentDir,
+			fetch: fakeJev().fetch,
+		});
+
+		const unhandled = await collectUnhandled(async () => {
+			const result = await spawn(
+				tool,
+				{ role: "worker", task: "Fix the failing test" },
+				{ ...toolContext("tui", worktree), ...parent.context },
+			);
+			assert.equal(result.details.status, "started", text(result));
+			await preparing.promise;
+			await fire("session_shutdown", { reason: "quit" });
+			release.resolve();
+			await settle();
+		});
+
+		assert.equal(parent.requests.length, 0);
+		assert.equal(messages.length, 0);
+		assert.deepEqual(unhandled, []);
+	});
+});
+
+test("aborting a foreground call while the child's prompt is still preparing sends no provider request and does not complete", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const parent = await fauxParent(
+			agentDir,
+			fauxAssistantMessage("Late answer."),
+		);
+		const preparing = Promise.withResolvers();
+		const release = Promise.withResolvers();
+		const checkAuth = parent.runtime.checkAuth.bind(parent.runtime);
+		parent.runtime.hasConfiguredAuth = () => false;
+		parent.runtime.checkAuth = async (...args) => {
+			preparing.resolve();
+			await release.promise;
+			return checkAuth(...args);
+		};
+		const { tool, messages } = await loadSpawnTool({
+			agentDir,
+			fetch: fakeJev().fetch,
+		});
+		const call = new AbortController();
+
+		const unhandled = await collectUnhandled(async () => {
+			const result = spawn(
+				tool,
+				{ role: "worker", task: "Fix the failing test" },
+				{ ...toolContext("print", worktree), ...parent.context },
+				call.signal,
+			);
+			await preparing.promise;
+			call.abort();
+			release.resolve();
+			await assert.rejects(result, /The child session was stopped\./);
+		});
+
+		assert.equal(parent.requests.length, 0);
+		assert.equal(messages.length, 0);
+		assert.deepEqual(unhandled, []);
+	});
+});
 
 test("a background result is still delivered when disposing the child throws, and nothing is left unhandled", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
