@@ -9,6 +9,8 @@ import {
 	truncateHead,
 } from "@earendil-works/pi-coding-agent";
 
+import { gitEnvironment } from "./git-environment.ts";
+
 type CodeGraphOperation = "init" | "query" | "explore";
 
 interface CodeGraphParameters {
@@ -26,7 +28,7 @@ export interface CodeGraphAdapters {
 	run?: (
 		command: string,
 		args: string[],
-		options: { cwd: string; signal?: AbortSignal },
+		options: { cwd: string; env: NodeJS.ProcessEnv; signal?: AbortSignal },
 	) => Promise<RunResult>;
 }
 
@@ -35,11 +37,12 @@ const fallback = "Use read, grep, and find instead.";
 function runCommand(
 	command: string,
 	args: string[],
-	options: { cwd: string; signal?: AbortSignal },
+	options: { cwd: string; env: NodeJS.ProcessEnv; signal?: AbortSignal },
 ): Promise<RunResult> {
 	return new Promise((resolve, reject) => {
 		const child = spawn(command, args, {
 			cwd: options.cwd,
+			env: options.env,
 			signal: options.signal,
 			shell: false,
 			stdio: ["ignore", "pipe", "pipe"],
@@ -96,6 +99,7 @@ export function createCodeGraphTool(adapters: CodeGraphAdapters = {}) {
 		try {
 			result = await run("git", ["rev-parse", "--show-toplevel"], {
 				cwd: workspace,
+				env: gitEnvironment(),
 				signal,
 			});
 		} catch (error) {
@@ -154,7 +158,11 @@ export function createCodeGraphTool(adapters: CodeGraphAdapters = {}) {
 			const args = commandArguments(params, root);
 			let result: RunResult;
 			try {
-				result = await run("codegraph", args, { cwd: root, signal });
+				result = await run("codegraph", args, {
+					cwd: root,
+					env: gitEnvironment(),
+					signal,
+				});
 			} catch (error) {
 				if (signal?.aborted) throw error;
 				if (isMissing(error)) {

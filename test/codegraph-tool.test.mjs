@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -268,4 +269,114 @@ test("registration runs nothing and the tool accepts only an operation and a que
 		"query",
 		"explore",
 	]);
+});
+
+test("git location variables in the environment cannot make a false Git root valid", async (t) => {
+	const base = realpathSync(
+		mkdtempSync(join(tmpdir(), "pi-workflow-codegraph-git-")),
+	);
+	t.after(() => rmSync(base, { recursive: true, force: true }));
+	const repo = join(base, "repo");
+	const nested = join(repo, "src");
+	const plain = join(base, "plain");
+	mkdirSync(nested, { recursive: true });
+	mkdirSync(plain);
+	execFileSync("git", ["init", "--quiet", repo]);
+	const cases = [
+		[plain, { GIT_DIR: join(repo, ".git") }],
+		[nested, { GIT_WORK_TREE: nested }],
+	];
+	for (const [cwd, variables] of cases) {
+		const envs = [];
+		const tool = loadTool({
+			run: async (command, args, options) => {
+				envs.push({ command, env: { ...options.env } });
+				try {
+					const stdout = execFileSync(command, args, {
+						cwd: options.cwd,
+						env: options.env,
+						encoding: "utf8",
+						stdio: ["ignore", "pipe", "ignore"],
+					});
+					return { code: 0, stdout, stderr: "" };
+				} catch {
+					return { code: 1, stdout: "", stderr: "" };
+				}
+			},
+		});
+		const saved = { ...process.env };
+		Object.assign(process.env, variables);
+		try {
+			await assert.rejects(
+				execute(tool, { operation: "query", query: "Workflow" }, cwd),
+				/real Git root/,
+			);
+		} finally {
+			for (const name of Object.keys(variables)) {
+				if (name in saved) process.env[name] = saved[name];
+				else delete process.env[name];
+			}
+		}
+		assert.deepEqual(
+			envs.map((call) => call.command),
+			["git"],
+		);
+		for (const name of Object.keys(variables)) {
+			assert.equal(name in envs[0].env, false);
+		}
+	}
+});
+
+test("codegraph runs without git location variables in its environment", async (t) => {
+	const workspace = fakeWorkspace(t);
+	const envs = [];
+	const tool = loadTool({
+		run: async (command, args, options) => {
+			envs.push({ ...options.env });
+			return workspace.adapters.run(command, args, options);
+		},
+	});
+	const saved = { ...process.env };
+	Object.assign(process.env, { GIT_DIR: "/x/.git", GIT_WORK_TREE: "/x" });
+	try {
+		await execute(
+			tool,
+			{ operation: "query", query: "Workflow" },
+			workspace.root,
+		);
+	} finally {
+		for (const name of ["GIT_DIR", "GIT_WORK_TREE"]) {
+			if (name in saved) process.env[name] = saved[name];
+			else delete process.env[name];
+		}
+	}
+	assert.equal(envs.length, 2);
+	for (const env of envs) {
+		assert.equal("GIT_DIR" in env, false);
+		assert.equal("GIT_WORK_TREE" in env, false);
+	}
+});
+
+test("the default runner ignores GIT_DIR when validating the Git root", async (t) => {
+	const base = realpathSync(
+		mkdtempSync(join(tmpdir(), "pi-workflow-codegraph-default-")),
+	);
+	t.after(() => rmSync(base, { recursive: true, force: true }));
+	const repo = join(base, "repo");
+	const plain = join(base, "plain");
+	mkdirSync(repo);
+	mkdirSync(plain);
+	execFileSync("git", ["init", "--quiet", repo]);
+	const tool = loadTool();
+	const saved = process.env.GIT_DIR;
+	process.env.GIT_DIR = join(repo, ".git");
+	try {
+		await assert.rejects(
+			execute(tool, { operation: "query", query: "Workflow" }, plain),
+			/real Git root/,
+		);
+	} finally {
+		if (saved === undefined) delete process.env.GIT_DIR;
+		else process.env.GIT_DIR = saved;
+	}
 });
