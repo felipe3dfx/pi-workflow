@@ -1,6 +1,6 @@
 # Child-session delegation
 
-Status: PUBLISHED
+Status: IMPLEMENTED (#63–#74, parent #77)
 
 Package: delegation brief confirmed in the originating session.
 Review handoff: `origin/main` `0e460e0`, ADR 0005 accepted.
@@ -27,7 +27,7 @@ The harness extension remains the adapter. A child-session launcher module behin
 
 Jev answers whether the work should leave the session. It stays for architecture, an unresolved user decision, or a conflict between agents. If Jev does not answer, the work stays and the operator is warned. No child is launched.
 
-If it leaves, Jev names `explore`, `worker`, or `verify`. A missing role uses `worker` and warns. An unknown role is a refusal. The known set is those three names, whether or not the contract file can be read. A missing or unreadable contract is a refusal, not `worker`.
+The parent names `explore`, `worker`, or `verify` with the task; Jev does not name the role. Role, contract, model lists, and worktree are checked before Jev is asked. A missing role uses `worker` and warns. An unknown role is a refusal. The known set is those three names, whether or not the contract file can be read. A missing or unreadable contract is a refusal, not `worker`.
 
 The parent passes only the role name and the task. The file in `assets/contracts/` owns the prompt and tools. Those files are harness child contracts, not engineering skills. Task types do not invoke engineering skills.
 
@@ -68,7 +68,7 @@ A child may ask the parent one question at a time. Each question is numbered and
 
 The model lists children and reads one child's state or final result with `list_children`, `child_status`, and `child_result`, and cancels with `cancel_child`. The operator lists and cancels them from the children view. Every terminal state delivers one message naming the state, except a cancel the model requested, whose tool result is the delivery. `continue_child` takes a follow-up task, reuses the completed child's contract, model, and thinking without asking Jev again, and may be repeated on the same completed record. Child records and completed conversations are kept until the session ends. A child that finishes between the parent's abort and the session's shutdown is delivered to the outgoing session only.
 
-A refusal is a result with no child id, a warning, and a reason. It is not a child state. An invalid worktree is rejected before launch. The harness does not create or clean up worktrees. It only selects an existing root.
+A refusal is a result with no child id, a warning, and a reason. It is not a child state. An invalid worktree is rejected before launch. Any real, existing Git root is accepted, not only the session's repository. `GIT_DIR` and `GIT_WORK_TREE` are ignored when the root is checked. The harness does not create or clean up worktrees. It only selects an existing root.
 
 The launcher lives behind the extension adapter. The extension registers the tool. It does not own selection policy.
 
@@ -76,7 +76,7 @@ The launcher lives behind the extension adapter. The extension registers the too
 
 The operator sees the children of the current session in a Pi widget pinned just above the input, above the task box, so it stays in view and redraws only its own lines. It keeps the approved header design: it reads `Subagents` and the count, an empty list is omitted, and each row shows the name, the current step, the model, the effort, and the elapsed time, with the active row highlighted. It refreshes at once on a state change and once per second only while a child is working, with redraws grouped at most every 400 ms. Finished rows stay visible for 60 seconds, at most three of them, and the box shows up to eight rows plus `… N more`. Effort also appears on the session input through Pi's footer.
 
-Because the widget cannot receive keys, `alt+a` or `/pi-workflow-children` opens a full-screen children view on demand. In it, `j`/`k` move the active row, `Enter` opens that child's live detail, `s` or `c` cancels it after a confirmation (a queued child is cancelled without one), `Esc` goes back from the detail, and `q` closes the view. Every state can be opened, cancelled included. Thinking in the detail can be collapsed with Pi's thinking toggle. A click works inside the view in fullscreen, and every click also has a key, because regular mode leaves the mouse to the terminal.
+Because the widget cannot receive keys, `alt+a` or `/pi-workflow-children` opens a full-screen children view on demand. In it, `j`/`k` move the active row, `Enter` opens that child's live detail, `s` or `c` cancels it after a confirmation (a queued child is cancelled without one), `Esc` goes back from the detail, and `q` closes the view. Every state can be opened, cancelled included. Thinking in the detail can be collapsed with Pi's thinking toggle. A click works inside the view in fullscreen, and every click also has a key, because regular mode leaves the mouse to the terminal. Child content shown in the box, the view, and the detail is stripped of terminal control sequences. The view closes when a non-overlay, such as the question panel, takes focus.
 
 Session tasks are not children. The box does not share the subagent list's header; it is a Pi widget pinned just above the input, so it stays in view once earlier turns scroll the transcript. The box only appears while tasks exist. The list sits in a box with bracket corners outside the text column, space above and below. Because the widget cannot receive keys, `alt+shift+t` collapses or expands the box and `alt+shift+h` shows or hides done tasks. A pending row is highlighted. A done row uses a green check. The list is rebuilt, without reading any file, from the last successful `todo` result's details on session start and on tree navigation. A session that ends with every task done starts its next list empty. The tool can write the whole list, add one task, update one task, clear the list, or list it. It does not create a feature document.
 
@@ -92,7 +92,7 @@ One catalog edit removes `@tintinweb/pi-subagents` and `@vndv/pi-codegraph`. Sta
 
 If `@tintinweb/pi-subagents` is still installed, spawn tools are not registered. Status, doctor, and explicit companion install remain. The warning names the external removal command and the harness does not run it.
 
-The `codegraph` tool copies the gentle-shell contract: `init`, `query`, and `explore` on the current Git root only. No other path and no shell command. A missing index may be created by `init`. A symlink or non-directory index is rejected. A workspace that is not the real Git root is a tool error and the command does not run. A missing binary is unavailable and tells the caller to use `read`, `grep`, and `find`. Other run failures are failed, with the same fallback. `init` is a tool operation, not a human confirmation and not startup.
+The `codegraph` tool copies the gentle-shell contract: `init`, `query`, and `explore` on the current Git root only. No other path and no shell command. A missing index may be created by `init`. A symlink or non-directory index is rejected. A workspace that is not the real Git root is a tool error and the command does not run. `GIT_DIR` and `GIT_WORK_TREE` are ignored when the root is checked and when the binary runs. A missing binary is unavailable and tells the caller to use `read`, `grep`, and `find`. Other run failures are failed, with the same fallback. `init` is a tool operation, not a human confirmation and not startup.
 
 ## Testing decisions
 
@@ -123,7 +123,8 @@ Harness-owned child session and CodeGraph access are authorized by ADR 0005. The
 
 ## Accepted risks
 
-None identified by the final feature-review.
+- A worktree may be any real Git root on the disk, not only the session's repository (#64).
+- A child that finishes between the parent's abort and the session's shutdown delivers its result to the outgoing session only (#68).
 
 ## Dependencies
 

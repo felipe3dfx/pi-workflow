@@ -11,6 +11,7 @@ import {
 } from "@earendil-works/pi-ai";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+import { gitEnvironment } from "./git-environment.ts";
 import { askJevChoice, askJevNouls, type Fetch } from "./jev-client.ts";
 import {
 	type ModelLists,
@@ -78,11 +79,6 @@ function parseContract(text: string): Contract {
 }
 
 const execFileAsync = promisify(execFile);
-
-function gitEnvironment(): NodeJS.ProcessEnv {
-	const { GIT_DIR: _dir, GIT_WORK_TREE: _workTree, ...env } = process.env;
-	return env;
-}
 
 async function gitRoot(worktree: string): Promise<string | Refusal> {
 	const invalid = refused(
