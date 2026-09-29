@@ -6,6 +6,7 @@ import {
 	ModelSelectorComponent,
 	OAuthSelectorComponent,
 	SessionSelectorComponent,
+	SettingsSelectorComponent,
 	type Theme,
 	ThinkingSelectorComponent,
 	TreeSelectorComponent,
@@ -20,11 +21,15 @@ import {
 	type SelectListTheme,
 	type SettingItem,
 	SettingsList,
+	Spacer,
 	stripTerminalSequences,
+	type TuiMouseEvent,
+	type TuiMouseEventResult,
 	truncateToWidth,
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
+import { marginFor } from "./chrome-editor.ts";
 
 export type MenuTheme = Pick<Theme, "fg" | "bg" | "bold">;
 export type Hint = [key: string, action: string];
@@ -68,6 +73,9 @@ type SettingsListState = {
 	searchEnabled: boolean;
 	searchInput?: Component;
 	submenuComponent: Component | null;
+	submenuItemIndex: number | null;
+	onCancel(): void;
+	handleInput(data: string): void;
 	getDisplayItems(): SettingItem[];
 	getVisibleRange(items: SettingItem[]): {
 		startIndex: number;
@@ -270,12 +278,18 @@ function wrapRenderItem(original: Method) {
 				primaryColumnWidth,
 			);
 		const t = theme();
-		const prefixWidth = 2;
-		const mark = isSelected ? t.bold(t.fg("text", "▸ ")) : t.fg("dim", "▸ ");
+		const baked = item.label ?? "";
+		const current = baked.startsWith("✓ ");
+		const shown =
+			current || baked.startsWith("  ")
+				? { ...item, label: baked.slice(2) }
+				: item;
+		const prefixWidth = 3;
+		const mark = current ? t.fg("text", " ● ") : t.fg("dim", " ○ ");
 		const label = (text: string) =>
 			isSelected ? t.bold(t.fg("text", text)) : t.fg("text", text);
 		const row = (line: string) =>
-			isSelected ? selectedRow(t, line, width) : line;
+			isSelected ? selectedRow(t, line, width) : fit(line, width);
 		if (descriptionSingleLine && width > 40) {
 			const effectivePrimaryColumnWidth = Math.max(
 				1,
@@ -286,7 +300,7 @@ function wrapRenderItem(original: Method) {
 				effectivePrimaryColumnWidth - PRIMARY_COLUMN_GAP,
 			);
 			const truncatedValue = this.truncatePrimary(
-				item,
+				shown,
 				isSelected,
 				maxPrimaryWidth,
 				effectivePrimaryColumnWidth,
@@ -309,14 +323,14 @@ function wrapRenderItem(original: Method) {
 				);
 			}
 		}
-		const maxWidth = width - prefixWidth - 2;
+		const maxWidth = Math.max(0, width - prefixWidth - 2);
 		const truncatedValue = this.truncatePrimary(
-			item,
+			shown,
 			isSelected,
 			maxWidth,
 			maxWidth,
 		);
-		return row(fit(`${mark}${label(truncatedValue)}`, width));
+		return row(`${mark}${label(truncatedValue)}`);
 	} as Method;
 }
 
@@ -378,14 +392,15 @@ function renderMainList(this: SettingsListState, width: number) {
 	for (let i = startIndex; i < endIndex; i++) {
 		const item = displayItems[i];
 		if (!item) continue;
+		const action = !item.submenu && item.values?.length === 1;
 		lines.push(
 			menuRow(
 				t,
 				item.label,
-				valueStyle(t, item.currentValue),
+				action ? "" : valueStyle(t, item.currentValue),
 				i === this.selectedIndex,
 				width,
-				Boolean(item.submenu),
+				action || Boolean(item.submenu),
 			),
 		);
 	}
@@ -429,16 +444,26 @@ function restyleTitle(t: MenuTheme, text: string) {
 		: undefined;
 }
 
+function restyleLabel(t: MenuTheme, text: string) {
+	const tick = t.fg("accent", "✓ ");
+	const rest = text.startsWith(tick) ? text.slice(tick.length) : text;
+	const at = rest.indexOf("\x1b");
+	const plain = at < 0 ? rest : rest.slice(0, at);
+	return `${rest === text ? "" : t.fg("text", "● ")}${plain.trim() ? t.fg("text", plain) + rest.slice(plain.length) : rest}`;
+}
+
 function restyleRow(t: MenuTheme, text: string) {
 	const pi = t.fg("accent", "→ ");
 	if (!text.startsWith(pi))
-		return text.startsWith("  ") ? t.fg("dim", "▸ ") + text.slice(2) : text;
+		return text.startsWith("  ")
+			? t.fg("dim", "▸ ") + restyleLabel(t, text.slice(2))
+			: text;
 	const [open, close] = t.fg("accent", "\u0000").split("\u0000");
 	let rest = text.slice(pi.length);
-	const check =
-		[t.fg("accent", "✓ "), "  "].find((mark) => rest.startsWith(mark + open)) ??
-		"";
-	rest = rest.slice(check.length);
+	const tick = t.fg("accent", "✓ ");
+	const found = [tick, "  "].find((mark) => rest.startsWith(mark + open)) ?? "";
+	rest = rest.slice(found.length);
+	const check = found === tick ? t.fg("text", "● ") : found;
 	const end = rest.indexOf(close);
 	const label = rest.startsWith(open) ? rest.slice(open.length, end) : "";
 	const shown =
@@ -448,29 +473,68 @@ function restyleRow(t: MenuTheme, text: string) {
 	return `${t.bold(t.fg("text", "▸ "))}${check}${shown}`;
 }
 
-function restyle(t: MenuTheme, node: unknown, swaps: Swap[], search = false) {
-	const active = (node as { activeComponent?: unknown }).activeComponent;
-	if (active) restyle(t, active, swaps, search);
-	const children = (node as { children?: Partial<Padded>[] }).children;
-	if (!Array.isArray(children)) return;
-	const texts = children.filter(
+type Dress = { search?: boolean; pane?: boolean; notices?: boolean };
+
+function isText(child: unknown): child is Styled {
+	const node = child as Partial<Padded> | undefined;
+	return typeof node?.text === "string" && typeof node.paddingX === "number";
+}
+
+function swap(swaps: Swap[], owner: object, key: string, value: unknown) {
+	const slots = owner as Record<string, unknown>;
+	swaps.push([slots, key, slots[key]]);
+	slots[key] = value;
+}
+
+function quiet(t: MenuTheme, text: string) {
+	const plain = stripTerminalSequences(text);
+	return [t.fg("warning", plain), t.fg("success", plain)].includes(text)
+		? t.fg("dim", plain)
+		: undefined;
+}
+
+function hidePane(t: MenuTheme, children: unknown[], swaps: Swap[]) {
+	const nested = children.some(
 		(child) =>
-			typeof child?.text === "string" && typeof child.paddingX === "number",
-	) as Styled[];
+			child instanceof SettingsList &&
+			(child as unknown as SettingsListState).submenuComponent,
+	);
+	const titled = isText(children[0]);
+	children.forEach((child, i) => {
+		if (child instanceof Spacer) {
+			if (nested || (titled && i === 1)) swap(swaps, child, "lines", 0);
+		} else if (isText(child)) {
+			const plain = stripTerminalSequences(child.text);
+			swap(
+				swaps,
+				child,
+				"text",
+				nested || (titled && i === 0) ? "" : t.fg("dim", plain),
+			);
+		}
+	});
+}
+
+function restyle(t: MenuTheme, node: unknown, swaps: Swap[], dress: Dress) {
+	const active = (node as { activeComponent?: unknown }).activeComponent;
+	if (active) restyle(t, active, swaps, dress);
+	const children = (node as { children?: unknown[] }).children;
+	if (!Array.isArray(children)) return;
+	if (dress.pane) hidePane(t, children, swaps);
+	const texts = children.filter(isText);
 	const listed = texts.some(({ text }) =>
 		text.startsWith(t.fg("accent", "→ ")),
 	);
 	for (const child of texts) {
 		const text =
+			(dress.notices ? quiet(t, child.text) : undefined) ??
 			restyleTitle(t, child.text) ??
 			(listed ? restyleRow(t, child.text) : child.text);
-		if (text === child.text) continue;
-		swaps.push([child, "text", child.text]);
-		child.text = text;
+		if (text !== child.text) swap(swaps, child, "text", text);
 	}
 	for (const child of children) {
-		if (search && child instanceof Input) dressSearch(child, swaps);
-		else restyle(t, child, swaps, search);
+		if (dress.search && child instanceof Input) dressSearch(child, swaps);
+		else restyle(t, child, swaps, dress);
 	}
 }
 
@@ -502,10 +566,28 @@ function piHints(t: MenuTheme, text: string): Hint[] | undefined {
 	return hints.length > 0 && end === text.length ? hints : undefined;
 }
 
+export function displayKey(key: string) {
+	if (key === "↑↓") return "↑/↓";
+	return key
+		.split("/")
+		.map((alternative) =>
+			alternative
+				.split("+")
+				.map((part) =>
+					/^escape$/i.test(part)
+						? "Esc"
+						: part.charAt(0).toUpperCase() + part.slice(1),
+				)
+				.join("+"),
+		)
+		.join("/");
+}
+
 function restyleHints(line: string, width: number) {
 	const body = line.trim();
-	const hints = body && piHints(theme(), body);
-	if (!hints) return line;
+	const found = body && piHints(theme(), body);
+	if (!found) return line;
+	const hints = found.map(([key, action]): Hint => [displayKey(key), action]);
 	const shown = stripTerminalSequences(line);
 	const lead = shown.length - shown.trimStart().length;
 	const { lines } = hintRows(theme(), hints, Math.max(1, width - lead), false);
@@ -528,24 +610,150 @@ function swapMarker(line: string, width: number) {
 
 function wrapSelectorRender(
 	original: Method,
-	root: (self: unknown) => unknown = (self) => self,
-	search = false,
+	root: (self: unknown) => unknown,
+	dress: Dress,
+	margin: boolean,
 ) {
 	return function (this: unknown, width: number) {
 		const node = root(this);
 		if (!node)
 			return (original as (width: number) => string[]).call(this, width);
+		const edge = margin ? marginFor(width) : 0;
+		const inner = width - edge * 2;
 		const swaps: Swap[] = [];
 		try {
-			restyle(theme(), node, swaps, search);
+			restyle(theme(), node, swaps, dress);
 			return (original as (width: number) => string[])
-				.call(this, width)
-				.map((line) => restyleHints(swapMarker(line, width), width));
+				.call(this, inner)
+				.map(
+					(line) =>
+						" ".repeat(edge) + restyleHints(swapMarker(line, inner), inner),
+				);
 		} finally {
 			unswap(swaps);
 		}
 	} as Method;
 }
+
+type MouseHandler = (event: TuiMouseEvent) => TuiMouseEventResult | undefined;
+
+function shifted(event: TuiMouseEvent, left: number, width: number) {
+	return { ...event, x: event.x - left, width };
+}
+
+function wrapMarginMouse(original: Method) {
+	return function (this: unknown, event: TuiMouseEvent) {
+		const edge = marginFor(event.width);
+		return (original as MouseHandler).call(
+			this,
+			shifted(event, edge, event.width - edge * 2),
+		);
+	} as Method;
+}
+
+type SettingsSelectorState = {
+	children: Component[];
+	mouseLayout?: {
+		width: number;
+		children: { component: Component; height: number }[];
+	};
+	getSettingsList(): SettingsList;
+};
+
+function findList(node: unknown): SettingsListState | undefined {
+	if (node instanceof SettingsList) return node as unknown as SettingsListState;
+	const { activeComponent, children } = node as {
+		activeComponent?: unknown;
+		children?: unknown[];
+	};
+	for (const child of [activeComponent, ...(children ?? [])]) {
+		const found = child ? findList(child) : undefined;
+		if (found) return found;
+	}
+	return undefined;
+}
+
+function paneTitle(node: unknown) {
+	const [title] = (node as { children?: unknown[] }).children ?? [];
+	return isText(title) ? stripTerminalSequences(title.text) : undefined;
+}
+
+function crumbs(list: SettingsListState): string[] {
+	const open = list.submenuComponent;
+	if (!open || list.submenuItemIndex === null) return [];
+	const step = (open as { activeComponent?: unknown }).activeComponent;
+	const label =
+		(step ? paneTitle(step) : undefined) ??
+		list.getDisplayItems()[list.submenuItemIndex]?.label ??
+		"";
+	const nested = findList(open);
+	return [label, ...(nested ? crumbs(nested) : [])].filter(Boolean);
+}
+
+function settingsFrame(width: number) {
+	const edge = marginFor(width);
+	const outer = width - edge * 2;
+	return {
+		edge,
+		outer,
+		left: edge + 1 + framePad(outer),
+		inner: Math.max(1, outer - 2 - framePad(outer) * 2),
+		top: outer >= 4 ? 1 : 0,
+	};
+}
+
+function renderSettings(this: SettingsSelectorState, width: number) {
+	const list = this.getSettingsList();
+	const { edge, outer, inner, top } = settingsFrame(width);
+	const body = list.render(inner);
+	this.mouseLayout = {
+		width: inner,
+		children: [
+			{ component: this.children[0], height: top },
+			{ component: list, height: body.length },
+			{ component: this.children[this.children.length - 1], height: top },
+		],
+	};
+	const title = [
+		"Settings",
+		...crumbs(list as unknown as SettingsListState),
+	].join(" › ");
+	return modalFrame(theme(), title, body, outer).map(
+		(line) => " ".repeat(edge) + line,
+	);
+}
+
+function closeSettings(list: SettingsListState) {
+	for (let depth = 0; list.submenuComponent && depth < 8; depth++)
+		list.handleInput("\x1b");
+	if (!list.submenuComponent) list.onCancel();
+}
+
+function wrapSettingsMouse(original: Method) {
+	return function (this: SettingsSelectorState, event: TuiMouseEvent) {
+		const { edge, outer, left, inner } = settingsFrame(event.width);
+		const shut = closeSpan(outer);
+		const x = event.x - edge;
+		if (event.y === 0 && shut && x >= shut.start && x < shut.end) {
+			if (event.type !== "click" || event.button !== "left") return undefined;
+			closeSettings(this.getSettingsList() as unknown as SettingsListState);
+			return { handled: true };
+		}
+		return (original as MouseHandler).call(this, shifted(event, left, inner));
+	} as Method;
+}
+
+const selectors: [object, Dress][] = [
+	[ModelSelectorComponent.prototype, { search: true, notices: true }],
+	[SessionSelectorComponent.prototype, {}],
+	[TreeSelectorComponent.prototype, {}],
+	[UserMessageSelectorComponent.prototype, {}],
+	[ExtensionSelectorComponent.prototype, {}],
+	[OAuthSelectorComponent.prototype, { search: true }],
+	[ExtensionInputComponent.prototype, {}],
+	[ExtensionEditorComponent.prototype, {}],
+	[ThinkingSelectorComponent.prototype, {}],
+];
 
 const targets: {
 	proto: object;
@@ -578,26 +786,33 @@ const targets: {
 			wrapSelectorRender(
 				original,
 				(list) => (list as SettingsListState).submenuComponent,
-				true,
+				{ search: true, pane: true },
+				false,
 			),
 		replaces: false,
 	},
-	...[
-		ModelSelectorComponent,
-		SessionSelectorComponent,
-		TreeSelectorComponent,
-		UserMessageSelectorComponent,
-		ExtensionSelectorComponent,
-		OAuthSelectorComponent,
-		ExtensionInputComponent,
-		ExtensionEditorComponent,
-		ThinkingSelectorComponent,
-	].map((selector) => ({
-		proto: selector.prototype,
+	{
+		proto: SettingsSelectorComponent.prototype,
 		name: "render",
-		create: wrapSelectorRender,
+		create: () => renderSettings as Method,
 		replaces: false,
-	})),
+	},
+	{
+		proto: SettingsSelectorComponent.prototype,
+		name: "handleMouse",
+		create: wrapSettingsMouse,
+		replaces: false,
+	},
+	...selectors.flatMap(([proto, dress]) => [
+		{
+			proto,
+			name: "render",
+			create: (original: Method) =>
+				wrapSelectorRender(original, (self) => self, dress, true),
+			replaces: false,
+		},
+		{ proto, name: "handleMouse", create: wrapMarginMouse, replaces: false },
+	]),
 ];
 
 function slot(proto: object) {

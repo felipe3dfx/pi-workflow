@@ -1,15 +1,18 @@
-import type { AgentToolResult, ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
 	decodeKittyPrintable,
 	Input,
 	Key,
 	matchesKey,
+	Text,
 	truncateToWidth,
+	visibleWidth,
 	wrapTextWithAnsi,
 	type Component,
 } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import type { FooterHints } from "./chrome.ts";
+import { marginFor } from "./chrome-editor.ts";
 
 interface AskUserOption {
 	label: string;
@@ -22,33 +25,10 @@ export type AskUserAnswer =
 	| { status: "answered"; kind: "text"; text: string }
 	| { status: "refused"; reason: string };
 
-export interface AskUserPanelState {
-	pendingCount: number;
-}
-
-export function createAskUserPanelState(): AskUserPanelState {
-	return { pendingCount: 0 };
-}
-
 const ACCENT_BAR = "┃";
-
-const ASK_USER_TOOL_NAMES = new Set(["ask_user_choice", "ask_user_question"]);
-
-export function registerAskUserQueueCounter(pi: ExtensionAPI, state: AskUserPanelState): void {
-	pi.on("message_end", (event) => {
-		if (event.message.role !== "assistant") return;
-		state.pendingCount = event.message.content.filter(
-			(block) => block.type === "toolCall" && ASK_USER_TOOL_NAMES.has(block.name),
-		).length;
-	});
-	pi.on("tool_execution_end", (event) => {
-		if (!ASK_USER_TOOL_NAMES.has(event.toolName)) return;
-		state.pendingCount = Math.max(0, state.pendingCount - 1);
-	});
-	pi.on("turn_end", () => {
-		state.pendingCount = 0;
-	});
-}
+const RESET = "\x1b[0m";
+const padLeft = 3;
+const padRight = 2;
 
 const CONTROL_OR_BIDI = /[\p{Cc}\p{Bidi_Control}]/gu;
 
@@ -93,7 +73,6 @@ function describeAnswer(answer: AskUserAnswer): string {
 
 async function askPanel(
 	ctx: ExtensionContext,
-	state: AskUserPanelState,
 	hints: FooterHints,
 	question: string,
 	options: AskUserOption[],
@@ -106,8 +85,6 @@ async function askPanel(
 	if (signal?.aborted) {
 		return refusal(ABORTED_REASON);
 	}
-
-	const startedAt = Date.now();
 
 	const answer = await ctx.ui.custom<AskUserAnswer>((_tui, theme, keybindings, done) => {
 		const freeTextIndex = options.length;
@@ -165,45 +142,65 @@ async function askPanel(
 
 		const component: Component = {
 			render(width) {
-				const bodyWidth = Math.max(0, width - 1);
+				const margin = " ".repeat(marginFor(width));
+				const bodyWidth = Math.max(0, width - margin.length * 2 - 1);
+				const contentWidth = Math.max(1, bodyWidth - padLeft - padRight);
 				const block = (content: string, selected = false) =>
+					margin +
 					theme.fg("text", ACCENT_BAR) +
-					theme.bg(
-						selected ? "selectedBg" : "customMessageBg",
-						truncateToWidth(`  ${content}`, bodyWidth, "", true),
-					);
+					truncateToWidth(`${" ".repeat(padLeft)}${content}`, bodyWidth, "", true)
+						.split(RESET)
+						.map((part) => theme.bg(selected ? "selectedBg" : "customMessageBg", part))
+						.join(RESET) +
+					margin;
 				const marker = (glyph: string, on: boolean) =>
 					on ? theme.bold(theme.fg("text", glyph)) : theme.fg("dim", glyph);
-				const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
-				const usage = ctx.getContextUsage();
-				const tokenInfo = usage?.tokens != null ? `${usage.tokens} tokens` : "token count unavailable";
-				const waiting = `${state.pendingCount} question${state.pendingCount === 1 ? "" : "s"} waiting`;
+				const numberWidth = String(Math.max(options.length, 1)).length;
+				const prefixWidth = numberWidth + 5;
+				const labels = options.map((option) => normalizeSingleLine(option.label));
+				const labelRoom = Math.max(0, contentWidth - prefixWidth);
+				const labelWidth = Math.min(
+					Math.max(0, ...labels.map((label) => visibleWidth(label))),
+					options.some((option) => option.description) ? Math.floor(0.45 * labelRoom) : labelRoom,
+				);
+				const descriptionWidth = contentWidth - prefixWidth - labelWidth - 2;
 				const lines = [
-					block(theme.fg("dim", `${waiting} · ${elapsedSeconds}s · ${tokenInfo}`)),
-					...wrapTextWithAnsi(theme.bold(normalizeQuestionText(question)), Math.max(1, bodyWidth - 2)).map((line) =>
-						block(line),
-					),
+					block(""),
+					...wrapTextWithAnsi(
+						theme.bold(theme.fg("text", normalizeQuestionText(question))),
+						contentWidth,
+					).map((line) => block(line)),
+					block(""),
 				];
 				options.forEach((option, i) => {
 					const active = i === index;
 					const glyph = rowMarker(marked.has(i), active);
-					const label = normalizeSingleLine(option.label);
-					const description = option.description ? normalizeSingleLine(option.description) : undefined;
-					const styledLabel = theme.fg("text", active ? theme.bold(label) : label);
-					const row =
-						`${theme.fg("text", String(i + 1))} ${marker(glyph, multiple ? marked.has(i) : active)} ${styledLabel}` +
-						(description ? `  ${theme.fg("dim", description)}` : "");
-					lines.push(block(row, active));
+					const description = option.description ? normalizeSingleLine(option.description) : "";
+					const head = `${theme.fg("text", String(i + 1).padStart(numberWidth))} ${marker(glyph, multiple ? marked.has(i) : active)} `;
+					const shown = description && descriptionWidth >= 4;
+					if (!active) {
+						const label = truncateToWidth(labels[i], labelWidth, "…", true);
+						const tail = shown ? `  ${theme.fg("dim", truncateToWidth(description, descriptionWidth, "…"))}` : "";
+						lines.push(block(`${head}${theme.fg("text", label)}${tail}`));
+						return;
+					}
+					const labelLines = wrapTextWithAnsi(labels[i], Math.max(1, labelWidth));
+					const descriptionLines = shown ? wrapTextWithAnsi(description, descriptionWidth) : [];
+					for (let k = 0; k < Math.max(labelLines.length, descriptionLines.length); k++) {
+						const label = theme.fg("text", theme.bold(truncateToWidth(labelLines[k] ?? "", labelWidth, "", true)));
+						const tail = descriptionLines[k] ? `  ${theme.fg("dim", descriptionLines[k])}` : "";
+						lines.push(block(`${k === 0 ? head : " ".repeat(prefixWidth)}${label}${tail}`, true));
+					}
 				});
 				const active = isFreeTextRow(index);
 				input.focused = active && mode === "edit";
 				const glyph = rowMarker(false, active, false);
-				const prefix = `${theme.fg("text", "z")} ${marker(glyph, active && !multiple)} `;
-				const prefixWidth = 6;
+				const prefix = `${theme.fg("text", "z".padStart(numberWidth))} ${marker(glyph, active && !multiple)} `;
 				const row = input.focused
-					? prefix + (input.render(Math.max(bodyWidth - 2 - prefixWidth, 1))[0] ?? "")
+					? prefix + (input.render(Math.max(contentWidth - prefixWidth, 1))[0] ?? "")
 					: prefix + (input.getValue() ? theme.fg("text", input.getValue()) : theme.fg("dim", "Type your answer"));
 				lines.push(block(row, active));
+				lines.push(block(""));
 				const hasAnyMarked = marked.size > 0;
 				const enterHint = isFreeTextRow(index)
 					? "Enter:edit free text"
@@ -293,6 +290,52 @@ async function askPanel(
 	return { content: [{ type: "text", text: describeAnswer(answer) }], details: answer };
 }
 
+type AskTheme = Parameters<NonNullable<ToolDefinition["renderCall"]>>[1];
+
+const hidden: Component = { render: () => [], invalidate() {} };
+
+function answerText(answer: AskUserAnswer | undefined) {
+	if (!answer) return "";
+	if (answer.status === "refused") return "Dismissed";
+	if (answer.kind === "option") return answer.label;
+	if (answer.kind === "text") return answer.text;
+	return [...answer.labels, ...(answer.text ? [answer.text] : [])].join(", ");
+}
+
+function contentAnswer(content: AgentToolResult<unknown>["content"]) {
+	const text = content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n");
+	const single = /^Selected option \d+: ([\s\S]*)$/.exec(text);
+	if (single) return single[1];
+	const many = /^Selected options ([\s\S]*?)(?:; free text: ([\s\S]*))?$/.exec(text);
+	if (many) return [many[1].replace(/(^|, )\d+: /g, "$1"), many[2]].filter(Boolean).join(", ");
+	return /^Free-text answer: ([\s\S]*)$/.exec(text)?.[1] ?? "";
+}
+
+function askRenderers() {
+	return {
+		renderShell: "self" as const,
+		renderCall: () => hidden,
+		renderResult(
+			result: AgentToolResult<AskUserAnswer>,
+			options: { isPartial: boolean },
+			theme: AskTheme,
+			context: { args: { question?: string } },
+		): Component {
+			if (options.isPartial) return hidden;
+			const question = normalizeSingleLine(context.args.question ?? "");
+			const answer = normalizeSingleLine(
+				result.details ? answerText(result.details) : contentAnswer(result.content),
+			).trim();
+			const head = `${theme.fg("toolTitle", "◆")} ${theme.bold(theme.fg("muted", "Asked"))} ${theme.fg("dim", question)}`;
+			return new Text(
+				answer ? `${head}\n  ${theme.fg("dim", `↳ ${answer}`)}` : head,
+				0,
+				0,
+			);
+		},
+	};
+}
+
 const optionSchema = Type.Object({
 	label: Type.String({ description: "The option's label, shown next to its number." }),
 	description: Type.Optional(Type.String({ description: "Short description shown to the right of the option." })),
@@ -309,7 +352,7 @@ const choiceParameters = Type.Object({
 	),
 });
 
-export function createAskUserChoiceTool(state: AskUserPanelState, hints: FooterHints): ToolDefinition<typeof choiceParameters, AskUserAnswer> {
+export function createAskUserChoiceTool(hints: FooterHints): ToolDefinition<typeof choiceParameters, AskUserAnswer> {
 	return {
 		name: "ask_user_choice",
 		label: "Ask User Choice",
@@ -323,8 +366,9 @@ export function createAskUserChoiceTool(state: AskUserPanelState, hints: FooterH
 		],
 		parameters: choiceParameters,
 		executionMode: "sequential",
+		...askRenderers(),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			return askPanel(ctx, state, hints, params.question, params.options, params.multiple ?? false, signal);
+			return askPanel(ctx, hints, params.question, params.options, params.multiple ?? false, signal);
 		},
 	};
 }
@@ -333,7 +377,7 @@ const questionParameters = Type.Object({
 	question: Type.String({ description: "The open-ended question to ask the operator." }),
 });
 
-export function createAskUserQuestionTool(state: AskUserPanelState, hints: FooterHints): ToolDefinition<typeof questionParameters, AskUserAnswer> {
+export function createAskUserQuestionTool(hints: FooterHints): ToolDefinition<typeof questionParameters, AskUserAnswer> {
 	return {
 		name: "ask_user_question",
 		label: "Ask User Question",
@@ -346,8 +390,9 @@ export function createAskUserQuestionTool(state: AskUserPanelState, hints: Foote
 		],
 		parameters: questionParameters,
 		executionMode: "sequential",
+		...askRenderers(),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			return askPanel(ctx, state, hints, params.question, [], false, signal);
+			return askPanel(ctx, hints, params.question, [], false, signal);
 		},
 	};
 }

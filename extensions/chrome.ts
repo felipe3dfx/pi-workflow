@@ -15,8 +15,12 @@ import {
 } from "@earendil-works/pi-tui";
 
 import { createChromeEditor, marginFor } from "./chrome-editor.ts";
-import { patchMenus, restoreMenus } from "./chrome-menus.ts";
-import { patchMessages, restoreMessages } from "./chrome-messages.ts";
+import { displayKey, patchMenus, restoreMenus } from "./chrome-menus.ts";
+import {
+	patchMessages,
+	registerMessages,
+	restoreMessages,
+} from "./chrome-messages.ts";
 import {
 	type createChildSessions,
 	isWorking,
@@ -164,12 +168,13 @@ export function renderStatusRow(
 	data: StatusData,
 	width: number,
 ) {
-	const room = width - marginFor(width) * 2 - 1;
+	const indent = marginFor(width) ? 2 : 0;
+	const room = width - marginFor(width) * 2 - indent;
 	const frames = data.waiting ? waitingFrames : workingFrames;
 	const spinner = frames[data.frame % frames.length];
 	const label = sanitizeTaskText(data.label);
 	const activity = data.tool
-		? `${theme.fg("dim", "Run ")}${theme.fg("success", sanitizeTaskText(data.tool))}`
+		? `${theme.fg("dim", "Run ")}${theme.fg("text", sanitizeTaskText(data.tool))}`
 		: theme.fg("text", label);
 	const phase =
 		data.stepMs !== undefined && room >= phaseTimerMinWidth
@@ -182,22 +187,8 @@ export function renderStatusRow(
 		.filter(Boolean)
 		.join(" ");
 	const left = `${theme.fg("text", spinner)} ${activity}${phase}`;
-	if (!totals) return indented([truncateToWidth(left, room)], width, 1);
-	return indented([spread(left, theme.fg("dim", totals), room)], width, 1);
-}
-
-function displayKey(keys: string) {
-	const first = keys.split("/")[0] ?? "";
-	return first
-		.split("+")
-		.map((part) =>
-			part === "escape"
-				? "Esc"
-				: part.length > 1
-					? part.charAt(0).toUpperCase() + part.slice(1)
-					: part,
-		)
-		.join("+");
+	if (!totals) return indented([truncateToWidth(left, room)], width, indent);
+	return indented([spread(left, theme.fg("dim", totals), room)], width, indent);
 }
 
 const idleHints: [Keybinding, string][] = [
@@ -221,7 +212,7 @@ export function footerHints(
 ): Hint[] {
 	if (panel) return panel;
 	return (working ? workingHints : idleHints).flatMap(([binding, action]) => {
-		const key = displayKey(keys(binding));
+		const key = displayKey(keys(binding).split("/")[0] ?? "");
 		return key ? [{ key, action }] : [];
 	});
 }
@@ -279,6 +270,7 @@ export function registerChrome(
 	let frame = 0;
 	let stopTick: (() => void) | undefined;
 	let unsubscribe: (() => void)[] = [];
+	registerMessages(pi);
 
 	function requestRender() {
 		for (const tui of renders) tui.requestRender();
@@ -464,10 +456,12 @@ export function registerChrome(
 	});
 	pi.on("model_select", async () => requestRender());
 	pi.on("thinking_level_select", async () => requestRender());
-	pi.on("session_shutdown", async () => {
+	pi.on("session_shutdown", async (event) => {
 		stop();
-		restoreMessages();
-		restoreMenus();
+		if (event.reason === "quit") {
+			restoreMessages();
+			restoreMenus();
+		}
 		ctx?.ui.setWorkingVisible(true);
 		ctx?.ui.setWorkingIndicator();
 		ctx?.ui.setWorkingMessage();

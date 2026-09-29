@@ -208,3 +208,15 @@ test("the slash token keeps its own color inside the text color", async () => {
 	assert.match(line, /<text><mdHeading>\/execute-plan<\/mdHeading> doc\.md/);
 	assert.equal(line.split(CURSOR_MARKER).length, 2);
 });
+
+test("command names in the autocomplete rows get a slash prefix, and other completions do not", async () => {
+	const input = await editor(bare);
+	const rows = ["  plain   [user] desc", "❯ skill:pdf   Make PDFs"];
+	input.setText("/p");
+	const shown = input.renderMenu(rows, 40, bare).map(visible);
+	assert.match(shown[1], /^ {2} {2}\/plain {3}/);
+	assert.match(shown[2], /^ {2}❯ \/skill:pdf/);
+	input.setText("@src");
+	const files = input.renderMenu(rows, 40, bare).map(visible);
+	assert.doesNotMatch(files.join(""), /\//);
+});

@@ -33,6 +33,7 @@ import {
 	childMeta,
 	childName,
 } from "./children-box.ts";
+import { marginFor } from "./chrome-editor.ts";
 import {
 	closeSpan,
 	framePad,
@@ -44,6 +45,8 @@ import {
 	sectionRule,
 } from "./chrome-menus.ts";
 import { sanitizeMultilineText, sanitizeTaskText } from "./todo-header.ts";
+
+const minModalRows = 8;
 
 type Sessions = ReturnType<typeof createChildSessions>;
 type Action =
@@ -218,6 +221,7 @@ function createChildrenView(
 	let unfollow: (() => void) | undefined;
 	let layout = {
 		width: 0,
+		edge: 0,
 		left: 0,
 		ids: new Map<number, string>(),
 		hints: [] as (HintSpan & { y: number; action: Action })[],
@@ -390,6 +394,7 @@ function createChildrenView(
 			rows: lines.slice(first, first + body),
 			ids: ids.slice(first, first + body),
 			working: true,
+			compact: list.length === 0,
 		};
 	}
 
@@ -403,15 +408,18 @@ function createChildrenView(
 			rows: [state, ...lines.slice(-(body - 1))].slice(0, body),
 			ids: [],
 			working: isWorking(child.state),
+			compact: false,
 		};
 	}
 
 	return {
-		render(width: number) {
+		render(full: number) {
 			if (!host.focused()) {
 				close();
 				return [];
 			}
+			const edge = marginFor(full);
+			const width = full - edge * 2;
 			const height = Math.max(4, tui.terminal.rows);
 			const pad = framePad(width);
 			const inner = Math.max(1, width - 2 - pad * 2);
@@ -428,15 +436,19 @@ function createChildrenView(
 			const view = child
 				? renderDetail(child, inner, body)
 				: renderList(inner, body);
-			const rows = view.rows.slice(0, body);
-			while (rows.length < body) rows.push("");
-			const hintTop = 2 + body;
+			const size = view.compact
+				? Math.min(body, Math.max(view.rows.length, minModalRows - 3 - shownHints))
+				: body;
+			const rows = view.rows.slice(0, size);
+			while (rows.length < size) rows.push("");
+			const hintTop = 2 + size;
 			layout = {
 				width,
-				left: 1 + pad,
+				edge,
+				left: edge + 1 + pad,
 				ids: new Map(
 					view.ids.flatMap((id, i) =>
-						id === undefined || i >= body
+						id === undefined || i >= size
 							? []
 							: [[i + 1, id] as [number, string]],
 					),
@@ -449,12 +461,13 @@ function createChildrenView(
 						action: keys[span.index][1],
 					})),
 			};
+			const margin = " ".repeat(edge);
 			return modalFrame(
 				theme,
 				view.title,
 				[...rows, status(), ...hints.lines.slice(0, shownHints)],
 				width,
-			);
+			).map((line) => margin + line);
 		},
 		invalidate() {},
 		handleInput(data: string) {
@@ -467,8 +480,8 @@ function createChildrenView(
 			if (
 				event.y === 0 &&
 				shut &&
-				event.x >= shut.start &&
-				event.x < shut.end
+				event.x - layout.edge >= shut.start &&
+				event.x - layout.edge < shut.end
 			) {
 				close();
 				return { handled: true };

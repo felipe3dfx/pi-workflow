@@ -10,6 +10,7 @@ import {
 	initTheme,
 	ModelSelectorComponent,
 	OAuthSelectorComponent,
+	SettingsSelectorComponent,
 } from "@earendil-works/pi-coding-agent";
 import {
 	Container,
@@ -22,6 +23,7 @@ import {
 } from "@earendil-works/pi-tui";
 
 import {
+	displayKey,
 	hintRows,
 	menuRow,
 	modalFrame,
@@ -91,13 +93,13 @@ function settingsList() {
 	);
 }
 
-test("a patched SelectList marks rows with ▸, highlights the selected row full width, and dims descriptions and the scroll info", (t) => {
+test("a patched SelectList marks rows with ○, highlights the selected row full width, and dims descriptions and the scroll info", (t) => {
 	patched(t);
 	const list = selectList();
 	const lines = list.render(60);
 	const shown = plain(lines);
-	assert.match(shown[0], /^▸ alpha\s+The first choice\s*$/);
-	assert.match(shown[1], /^▸ beta\s+The second choice$/);
+	assert.match(shown[0], /^ ○ alpha\s+The first choice\s*$/);
+	assert.match(shown[1], /^ ○ beta\s+The second choice$/);
 	assert.equal(shown[2], "  (1/3)");
 	assert.ok(lines[0].startsWith(selectedBg));
 	assert.equal(visibleWidth(lines[0]), 60);
@@ -105,9 +107,30 @@ test("a patched SelectList marks rows with ▸, highlights the selected row full
 	assert.ok(lines[1].includes(theme.fg("dim", "The second choice")));
 	assert.equal(lines[2], theme.fg("dim", "  (1/3)"));
 	assert.ok(!shown.join("\n").includes("→"));
+	assert.ok(!shown.join("\n").includes("▸"));
 	list.handleInput("\x1b[B");
 	assert.ok(list.render(60)[1].startsWith(selectedBg));
 	assert.equal(list.getSelectedItem().value, "beta");
+});
+
+test("picker rows turn pi's baked ✓ prefix into ● and strip the blank prefix", (t) => {
+	patched(t);
+	const list = new SelectList(
+		[
+			{ value: "dark", label: "✓ dark" },
+			{ value: "light", label: "  light", description: "Bright" },
+		],
+		5,
+		getSelectListTheme(),
+		{ minPrimaryColumnWidth: 12, maxPrimaryColumnWidth: 32 },
+	);
+	const lines = list.render(60);
+	assert.match(plain(lines)[0], /^ ● dark\s*$/);
+	assert.match(plain(lines)[1], /^ ○ light {7}Bright$/);
+	assert.ok(lines[0].startsWith(selectedBg));
+	assert.ok(lines[0].includes(`${theme.fg("text", " ● ")}${strong("dark")}`));
+	assert.ok(lines[1].includes(theme.fg("dim", " ○ ")));
+	assert.ok(lines[1].includes(theme.fg("text", "light")));
 });
 
 test("a patched SettingsList right-aligns values, dims off/false, adds a dim › for submenus, and restyles the hint", (t) => {
@@ -138,6 +161,25 @@ test("a patched SettingsList right-aligns values, dims off/false, adds a dim ›
 	list.handleInput("\x1b[B");
 	list.handleInput("\x1b[B");
 	assert.match(plain(list.render(50))[3], /^▸ Theme\s+dark ›\s$/);
+});
+
+test("a patched SettingsList shows single-value action rows with a › and no value", (t) => {
+	patched(t);
+	const list = new SettingsList(
+		[
+			{
+				id: "apply",
+				label: "Apply",
+				currentValue: "save and go back",
+				values: ["save and go back"],
+			},
+		],
+		5,
+		getSettingsListTheme(),
+		() => {},
+		() => {},
+	);
+	assert.match(plain(list.render(30))[0], /^▸ Apply {21}› $/);
 });
 
 test("a patched SettingsList search input shows a dim ❯ prompt and a Type to search placeholder", (t) => {
@@ -305,17 +347,18 @@ function openSubmenu(id, nested = false) {
 	return list;
 }
 
-test("settings select submenus get a text title, ▸ rows on selectedBg, and Grok hints", (t) => {
+test("settings select submenus hide pi's title, dim the description, and render radio rows with Grok hints", (t) => {
 	patched(t);
 	const lines = openSubmenu("theme").render(70);
-	assert.ok(lines[0].includes(strong("Theme")));
-	assert.ok(lines[2].includes(theme.fg("muted", "Select a theme")));
+	assert.ok(lines[0].startsWith(theme.fg("dim", "Select a theme")));
+	assert.equal(lines[1], "");
+	assert.ok(!plain(lines).join("\n").includes("Theme"));
 	assert.ok(!lines.join("").includes(accent));
-	assert.match(plain([lines[4]])[0], /^▸ {3}automatic\s+Use separate themes/);
-	assert.ok(lines[4].includes(theme.fg("dim", "▸ ")));
-	assert.ok(lines[5].startsWith(selectedBg));
-	assert.ok(lines[5].includes(`${strong("▸ ")}${strong("✓ dark")}`));
-	assert.equal(visibleWidth(lines[5]), 70);
+	assert.match(plain([lines[2]])[0], /^ ○ automatic\s+Use separate themes/);
+	assert.ok(lines[2].includes(theme.fg("dim", " ○ ")));
+	assert.ok(lines[3].startsWith(selectedBg));
+	assert.ok(lines[3].includes(`${theme.fg("text", " ● ")}${strong("dark")}`));
+	assert.equal(visibleWidth(lines[3]), 70);
 	assert.equal(plain([lines.at(-1)])[0], "  Enter select  |  Esc go back");
 	assert.ok(
 		lines.at(-1).includes(`${strong("Esc")} ${theme.fg("dim", "go back")}`),
@@ -326,11 +369,14 @@ test("stepped submenus restyle the active step and its search input", (t) => {
 	patched(t);
 	const list = openSubmenu("model-thinking");
 	const lines = list.render(70);
-	assert.ok(lines[0].includes(strong("Per-Model Thinking Level")));
+	assert.equal(
+		plain(lines)[0].trimEnd(),
+		"Step 1/2 · Select a model to configure",
+	);
 	assert.ok(!lines.join("").includes(accent));
-	assert.match(plain([lines[4]])[0], /^❯ Type to search\s*$/);
-	assert.ok(lines[6].startsWith(selectedBg));
-	assert.ok(lines[7].includes(theme.fg("dim", "▸ ")));
+	assert.match(plain([lines[2]])[0], /^❯ Type to search\s*$/);
+	assert.ok(lines[4].startsWith(selectedBg));
+	assert.ok(lines[5].includes(theme.fg("dim", " ○ ")));
 	assert.equal(
 		plain([lines.at(-1)])[0],
 		"  Type filter  |  Enter select  |  Esc go back",
@@ -344,39 +390,38 @@ test("stepped submenus restyle the active step and its search input", (t) => {
 	);
 });
 
-test("nested settings submenus keep descriptions and restyle the inner select submenu", (t) => {
+test("nested settings submenus keep descriptions and show only the innermost pane", (t) => {
 	patched(t);
-	const outer = plain(openSubmenu("auto-theme").render(70));
-	assert.equal(outer[0].trim(), "Automatic Theme");
+	const outer = openSubmenu("auto-theme").render(70);
 	assert.ok(
-		outer.includes(
+		outer[0].startsWith(theme.fg("dim", "Choose themes for light and dark.")),
+	);
+	assert.ok(
+		plain(outer).includes(
 			"  Theme to use in automatic mode when the terminal is light",
 		),
 	);
-	assert.equal(outer.at(-1), "  Enter/Space change  |  Esc cancel");
-	const inner = openSubmenu("auto-theme", true).render(70);
-	assert.ok(inner.some((line) => line.includes(strong("Automatic Theme"))));
-	assert.ok(inner.some((line) => line.includes(strong("Light Theme"))));
-	assert.ok(!inner.join("").includes(accent));
-	assert.equal(plain([inner.at(-1)])[0], "  Enter select  |  Esc go back");
+	assert.match(plain(outer)[3], /^▸ Apply\s+›\s$/);
+	assert.equal(plain(outer).at(-1), "  Enter/Space change  |  Esc cancel");
+	const inner = plain(openSubmenu("auto-theme", true).render(70));
+	assert.deepEqual(
+		inner.slice(0, 4).map((line) => line.trimEnd()),
+		["Select the light theme", "", " ● dark", " ○ light"],
+	);
+	assert.equal(inner.at(-1), "  Enter select  |  Esc go back");
 });
 
-test("settings submenus keep pi's line counts and never exceed the width from 10 to 160 columns", (t) => {
-	t.after(restoreMenus);
-	const submenus = [
+test("settings submenus never exceed the width from 10 to 160 columns", (t) => {
+	patched(t);
+	const lists = [
 		openSubmenu("theme"),
 		openSubmenu("model-thinking"),
 		openSubmenu("auto-theme", true),
+		openSubmenu("auto-theme"),
 	];
-	const lists = [...submenus, openSubmenu("auto-theme")];
 	for (let width = 10; width <= 160; width++) {
 		for (const list of lists) {
-			restoreMenus();
-			const native = list.render(width).length;
-			patchMenus();
 			const lines = list.render(width);
-			if (submenus.includes(list))
-				assert.equal(lines.length, native, `${width}`);
 			for (const line of lines)
 				assert.ok(
 					visibleWidth(line) <= width,
@@ -416,8 +461,8 @@ test("a native theme keeps the pi-tui rendering, and custom selectors swap their
 		{ render: () => [`${theme.fg("accent", "→ ")}model`, "  other"] },
 	];
 	const lines = selector.render(20);
-	assert.deepEqual(plain(lines), [`▸ model${" ".repeat(13)}`, "  other"]);
-	assert.ok(lines[0].startsWith(selectedBg));
+	assert.deepEqual(plain(lines), [` ▸ model${" ".repeat(11)}`, "   other"]);
+	assert.ok(lines[0].startsWith(` ${selectedBg}`));
 });
 
 const strong = (text) => theme.bold(theme.fg("text", text));
@@ -464,7 +509,7 @@ test("the auth-method selector renders a text title, a bold text selected label,
 	const [title, selected, other, hints] = [2, 4, 5, 7].map((i) => lines[i]);
 	assert.ok(title.includes(strong("Select authentication method:")));
 	assert.ok(!title.includes(accent));
-	assert.ok(selected.startsWith(selectedBg));
+	assert.ok(selected.startsWith(` ${selectedBg}`));
 	assert.ok(
 		selected.includes(`${strong("▸ ")}${strong("Sign in with an account")}`),
 	);
@@ -472,32 +517,33 @@ test("the auth-method selector renders a text title, a bold text selected label,
 	assert.ok(!lines.join("").includes(accent));
 	assert.equal(
 		plain([hints])[0],
-		" ↑↓ navigate  |  enter select  |  escape/ctrl+c cancel",
+		"  ↑/↓ navigate  |  Enter select  |  Esc/Ctrl+C cancel",
 	);
-	assert.ok(hints.includes(`${strong("↑↓")} ${theme.fg("dim", "navigate")}`));
+	assert.ok(hints.includes(`${strong("↑/↓")} ${theme.fg("dim", "navigate")}`));
 });
 
 test("the provider picker and the input dialog get the same title, row, and hint styling", (t) => {
 	patched(t);
 	const provider = providerSelector().render(70);
 	assert.ok(provider[2].includes(strong("Select provider to configure:")));
-	assert.ok(provider[6].startsWith(selectedBg));
+	assert.ok(provider[6].startsWith(` ${selectedBg}`));
 	assert.ok(provider[6].includes(strong("Anthropic")));
 	assert.ok(provider[7].includes(theme.fg("success", " ✓ configured")));
 	assert.ok(!provider.join("").includes(accent));
 	const input = inputDialog().render(70);
 	assert.ok(input[2].includes(strong("Project name")));
 	assert.ok(!input.join("").includes(accent));
-	assert.equal(plain([input[6]])[0], " enter submit  |  escape/ctrl+c cancel");
+	assert.equal(plain([input[6]])[0], "  Enter submit  |  Esc/Ctrl+C cancel");
 });
 
-test("restyled selectors keep pi's line counts and never exceed the width from 10 to 160 columns", (t) => {
+test("restyled selectors keep pi's line counts inside the page margin and never exceed the width from 10 to 160 columns", (t) => {
 	t.after(restoreMenus);
 	const components = [authSelector(), providerSelector(), inputDialog()];
 	for (let width = 10; width <= 160; width++) {
+		const margin = width >= 16 ? 1 : 0;
 		for (const component of components) {
 			restoreMenus();
-			const native = component.render(width).length;
+			const native = component.render(width - margin * 2).length;
 			patchMenus();
 			const lines = component.render(width);
 			assert.equal(lines.length, native, `${width}`);
@@ -537,8 +583,11 @@ test("patching twice is idempotent and restore puts the pi-tui methods back", ()
 		ExtensionSelectorComponent,
 		OAuthSelectorComponent,
 		ExtensionInputComponent,
-	])
+		SettingsSelectorComponent,
+	]) {
 		assert.equal(Object.hasOwn(selector.prototype, "render"), false);
+		assert.equal(Object.hasOwn(selector.prototype, "handleMouse"), false);
+	}
 	assert.match(plain(selectList().render(60))[0], /^→ alpha/);
 	const selector = authSelector();
 	const native = selector.render(70);
@@ -582,4 +631,128 @@ test("the modal frame puts the title and a dim [×] on a square border and fits 
 			);
 		}
 	}
+});
+
+function settingsSelector(onCancel = () => {}) {
+	const list = settingsSubmenus();
+	list.onCancel = onCancel;
+	const selector = Object.create(SettingsSelectorComponent.prototype);
+	selector.children = [{ render: () => ["─"] }, list, { render: () => ["─"] }];
+	selector.settingsList = list;
+	return { selector, list };
+}
+
+function mouse(type, x, y, width, height) {
+	return {
+		type,
+		button: "left",
+		x,
+		y,
+		screenX: x,
+		screenY: y,
+		width,
+		height,
+		shift: false,
+		alt: false,
+		ctrl: false,
+	};
+}
+
+test("settings render inside a margined modal frame titled with the submenu breadcrumb", (t) => {
+	patched(t);
+	const { selector, list } = settingsSelector();
+	const main = plain(selector.render(60));
+	assert.match(main[0], /^ ┌─ Settings ─+ \[×\] ─┐$/);
+	assert.match(main[1], /^ │ {2}❯ Type to search\s+│$/);
+	assert.match(main.at(-1), /^ └─+┘$/);
+	assert.ok(!main.includes("─"));
+	list.selectItem("auto-theme");
+	list.activateItem();
+	assert.match(plain(selector.render(60))[0], /─ Settings › Automatic theme ─/);
+	list.handleInput("\r");
+	const nested = plain(selector.render(60));
+	assert.match(nested[0], /─ Settings › Automatic theme › Light theme ─/);
+	assert.match(nested[1], /^ │ {2}Select the light theme\s+│$/);
+	for (let width = 1; width <= 160; width++)
+		for (const line of selector.render(width))
+			assert.ok(visibleWidth(line) <= width, `${width}`);
+});
+
+test("stepped settings panes use the active step title as the last breadcrumb", (t) => {
+	patched(t);
+	const { selector, list } = settingsSelector();
+	list.selectItem("model-thinking");
+	list.activateItem();
+	assert.match(
+		plain(selector.render(80))[0],
+		/─ Settings › Per-Model Thinking Level ─/,
+	);
+});
+
+test("settings mouse clicks land on the framed rows and the [×] closes every level", (t) => {
+	patched(t);
+	let cancelled = 0;
+	const { selector, list } = settingsSelector(() => cancelled++);
+	const lines = selector.render(60);
+	const row = plain(lines).findIndex((line) =>
+		line.includes("Automatic theme"),
+	);
+	for (const type of ["press", "click"])
+		selector.handleMouse(mouse(type, 8, row, 60, lines.length));
+	assert.ok(list.submenuComponent);
+	assert.match(plain(selector.render(60))[0], /› Automatic theme/);
+	const close = plain(lines)[0].indexOf("×");
+	assert.equal(
+		selector.handleMouse(mouse("press", close, 0, 60, lines.length)),
+		undefined,
+	);
+	selector.handleMouse(mouse("click", close, 0, 60, lines.length));
+	assert.equal(list.submenuComponent, null);
+	assert.equal(cancelled, 1);
+});
+
+test("the model selector marks the current model with ●, keeps labels in text, and dims its notices", (t) => {
+	patched(t);
+	const rows = new Container();
+	rows.addChild(
+		new Text(
+			`${theme.fg("accent", "→ ")}${theme.fg("accent", "✓ ")}${theme.fg("accent", "grok")} ${theme.fg("muted", "[demo]")}`,
+			0,
+			0,
+		),
+	);
+	rows.addChild(
+		new Text(
+			`  ${theme.fg("accent", "✓ ")}glm ${theme.fg("muted", "[demo]")}`,
+			0,
+			0,
+		),
+	);
+	rows.addChild(new Text(`    qwen ${theme.fg("muted", "[demo]")}`, 0, 0));
+	rows.addChild(
+		new Text(theme.fg("success", "  Model catalogs refreshed."), 0, 0),
+	);
+	const selector = Object.create(ModelSelectorComponent.prototype);
+	selector.children = [
+		new Text(theme.fg("warning", "Only showing configured models."), 0, 0),
+		rows,
+	];
+	const lines = selector.render(60);
+	assert.ok(
+		lines[0].includes(theme.fg("dim", "Only showing configured models.")),
+	);
+	assert.ok(lines[1].includes(`${theme.fg("text", "● ")}${strong("grok")}`));
+	assert.ok(
+		lines[2].includes(`${theme.fg("text", "● ")}${theme.fg("text", "glm ")}`),
+	);
+	assert.ok(lines[3].includes(theme.fg("text", "  qwen ")));
+	assert.ok(lines[4].includes(theme.fg("dim", "  Model catalogs refreshed.")));
+	assert.ok(!lines.join("").includes("✓"));
+});
+
+test("hint keys use one casing", () => {
+	assert.equal(displayKey("↑↓"), "↑/↓");
+	assert.equal(displayKey("enter"), "Enter");
+	assert.equal(displayKey("escape/ctrl+c"), "Esc/Ctrl+C");
+	assert.equal(displayKey("Ctrl+S"), "Ctrl+S");
 });

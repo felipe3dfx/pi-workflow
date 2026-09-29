@@ -243,14 +243,20 @@ class ChromeEditor extends CustomEditor {
 		if (lines.length === 0) return [];
 		const scroll = lines.find((line) => line.includes(SCROLL));
 		const items = lines.filter((line) => line !== scroll);
+		const typed = this.getText();
+		const commands = typed.startsWith("/") && !/\s/.test(typed);
 		const rows = items.map((line) => {
+			const selected = stripTerminalSequences(line).trimStart().startsWith("❯");
+			const named =
+				commands && !line.includes(EMPTY)
+					? unmark(line).replace(selected ? "❯ " : /^ {2}/, (head) => `${head}/`)
+					: unmark(line);
 			const text = truncateToWidth(
-				`${" ".repeat(gutter)}${unmark(line)}`,
+				`${" ".repeat(gutter)}${named}`,
 				width,
 				"",
 			);
 			const row = text + " ".repeat(Math.max(0, width - visibleWidth(text)));
-			const selected = stripTerminalSequences(line).trimStart().startsWith("❯");
 			return row
 				.split(RESET)
 				.map((part) =>

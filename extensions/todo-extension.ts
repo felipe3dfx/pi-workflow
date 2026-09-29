@@ -163,9 +163,6 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 		syncWidget(ctx);
 	}
 
-	pi.on("session_start", async (_event, ctx) => {
-		if (ctx.mode === "tui") ctx.ui.setHiddenThinkingLabel?.("◆ Thought");
-	});
 	pi.on("session_start", restoreFromBranch);
 	pi.on("session_tree", restoreFromBranch);
 }

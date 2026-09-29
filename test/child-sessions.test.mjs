@@ -177,7 +177,7 @@ function loadExtension({
 				mode,
 				hasUI: true,
 				ui,
-				sessionManager: { getBranch: () => branch },
+				sessionManager: { getBranch: () => branch, getEntries: () => [] },
 			});
 		}
 	};
@@ -2557,6 +2557,21 @@ test("each TUI session start installs the box again, and print mode installs no 
 	});
 });
 
+test("the empty subagents modal is sized to its content instead of filling the terminal", async () => {
+	await withWorkspace(async ({ agentDir }) => {
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: fakeChildren().create,
+			fetch: fakeJev().fetch,
+		});
+		const lines = openChildren(extension, { rows: 40 }).lines();
+		assert.equal(lines.length, 8);
+		assert.match(lines[0], /^ ┌─ Subagents 0 ─+ \[×\] ─┐$/);
+		assert.match(lines[1], /No children in this session\./);
+		assert.match(lines.at(-1), /^ └─+┘$/);
+	});
+});
+
 test("alt+a and /workflow:subagents open a full-screen overlay of every child; j/k move the highlighted row and q or Esc close it", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
@@ -2577,13 +2592,13 @@ test("alt+a and /workflow:subagents open a full-screen overlay of every child; j
 		assert.equal(view.view.options.overlayOptions.maxHeight, "100%");
 		const lines = view.lines();
 		assert.equal(lines.length, 12);
-		assert.match(lines[0], /^┌─ Subagents 2 ─+ \[×\] ─┐$/);
-		assert.match(lines[1], /^│ {3}Active ─+ {2}│$/);
+		assert.match(lines[0], /^ ┌─ Subagents 2 ─+ \[×\] ─┐$/);
+		assert.match(lines[1], /^ │ {3}Active ─+ {2}│$/);
 		assert.match(
 			lines[2],
 			/▸ ◐ worker [0-9a-f]{4} Run the tests +running · model \(medium\) \d+s ›/,
 		);
-		assert.match(lines[3], /^│ {3}Finished ─+ {2}│$/);
+		assert.match(lines[3], /^ │ {3}Finished ─+ {2}│$/);
 		assert.match(
 			lines[4],
 			/▸ ✓ worker [0-9a-f]{4} Map the launcher +completed · model \(medium\) \d+s ›/,
@@ -2592,7 +2607,7 @@ test("alt+a and /workflow:subagents open a full-screen overlay of every child; j
 			lines.at(-2),
 			/j\/k move {2}\| {2}Enter detail {2}\| {2}s\/c cancel {2}\| {2}q close/,
 		);
-		assert.match(lines.at(-1), /^└─+┘$/);
+		assert.match(lines.at(-1), /^ └─+┘$/);
 		for (const width of [10, 40, 80, 160]) {
 			for (const line of view.component.render(width)) {
 				assert.ok(visibleWidth(line) <= width, `${width}: ${line}`);
@@ -2727,8 +2742,8 @@ test("Enter opens a live detail that follows the tail, collapses thinking with P
 		view.press("\r");
 		let lines = view.lines();
 		let body = lines.join("\n");
-		assert.match(lines[0], /^┌─ worker [0-9a-f]{4} · model \(medium\) ─+ \[×\] ─┐$/);
-		assert.match(lines[1], /^│ {2}◐ running · \d+s +│$/);
+		assert.match(lines[0], /^ ┌─ worker [0-9a-f]{4} · model \(medium\) ─+ \[×\] ─┐$/);
+		assert.match(lines[1], /^ │ {2}◐ running · \d+s +│$/);
 		assert.match(body, /Review the doctor/);
 		assert.match(body, /I should read the doctor module first\./);
 		assert.match(body, /The doctor checks three things\./);
@@ -2751,7 +2766,7 @@ test("Enter opens a live detail that follows the tail, collapses thinking with P
 		const threadLines = view
 			.lines()
 			.slice(2, -3)
-			.map((line) => line.slice(1, -1));
+			.map((line) => line.slice(2, -1));
 		assert.match(
 			threadLines.findLast((line) => line.trim() !== ""),
 			/Streaming the tail\./,

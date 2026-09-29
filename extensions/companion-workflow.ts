@@ -359,6 +359,7 @@ type Alignment = {
 	heading: string;
 	path?: string;
 	misaligned: string[];
+	conflicts?: string[];
 	error?: string;
 	note?: string;
 };
@@ -403,6 +404,7 @@ function settingsAlignment(
 		heading,
 		path: plan.path,
 		misaligned: plan.misaligned,
+		conflicts: plan.conflicts,
 		error: plan.error,
 	};
 }
@@ -411,12 +413,15 @@ function alignmentLines(alignment: Alignment): string[] {
 	const note = alignment.note ? [alignment.note] : [];
 	if (alignment.error)
 		return ["", alignment.heading, `✗ ${alignment.error}`, ...note];
-	if (alignment.misaligned.length > 0) {
+	const conflicts = alignment.conflicts ?? [];
+	if (alignment.misaligned.length > 0 || conflicts.length > 0) {
 		return [
 			"",
 			alignment.heading,
-			`✗ ${alignment.path} — not aligned: ${alignment.misaligned.join(", ")}`,
-			"Run /workflow:setup to align it.",
+			`✗ ${alignment.path} — not aligned: ${[...alignment.misaligned, ...conflicts].join(", ")}`,
+			...(alignment.misaligned.length > 0
+				? ["Run /workflow:setup to align it."]
+				: []),
 			...note,
 		];
 	}
@@ -476,7 +481,11 @@ function renderCompanionCatalogStatus(
 			catalog.actionable.length > 0 ||
 				catalog.collidingPackages.length > 0 ||
 				catalog.legacySpawnPackageBlocked ||
-				options.alignments.some((alignment) => alignment.misaligned.length > 0),
+				options.alignments.some(
+					(alignment) =>
+						alignment.misaligned.length > 0 ||
+						(alignment.conflicts?.length ?? 0) > 0,
+				),
 		),
 	};
 }

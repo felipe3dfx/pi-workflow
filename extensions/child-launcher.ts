@@ -1,7 +1,6 @@
 import { execFile } from "node:child_process";
 import { readFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 

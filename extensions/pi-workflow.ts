@@ -6,9 +6,7 @@ import type {
 
 import {
 	createAskUserChoiceTool,
-	createAskUserPanelState,
 	createAskUserQuestionTool,
-	registerAskUserQueueCounter,
 } from "./ask-user-panel.ts";
 import {
 	createCompanionWorkflow,
@@ -164,10 +162,8 @@ export default function piWorkflowExtension(
 	}
 
 	pi.registerTool(createCodeGraphTool(options.codegraph));
-	const askUserPanelState = createAskUserPanelState();
-	pi.registerTool(createAskUserChoiceTool(askUserPanelState, footerHints));
-	pi.registerTool(createAskUserQuestionTool(askUserPanelState, footerHints));
-	registerAskUserQueueCounter(pi, askUserPanelState);
+	pi.registerTool(createAskUserChoiceTool(footerHints));
+	pi.registerTool(createAskUserQuestionTool(footerHints));
 
 	pi.registerCommand("workflow:status", {
 		description: "Summarize companion, MCP, and default settings readiness",

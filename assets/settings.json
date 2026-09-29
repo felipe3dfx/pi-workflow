@@ -3,6 +3,7 @@
   "settings": {
     "tuiMode": "fullscreen",
     "theme": "pi-workflow",
-    "quietStartup": true
+    "quietStartup": true,
+    "defaultTools": ["+codemode"]
   }
 }

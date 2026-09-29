@@ -56,7 +56,7 @@ function fakeSessionStartCtx(notifications = []) {
 			setEditorComponent() {},
 			setWorkingVisible() {},
 		},
-		sessionManager: { getBranch: () => [] },
+		sessionManager: { getBranch: () => [], getEntries: () => [] },
 	};
 }
 
@@ -611,6 +611,41 @@ test("status reports a misaligned MCP configuration and points to /workflow:setu
 				result.message,
 				/MCP configuration:\n✗ .*mcp\.json — not aligned: context7\nRun \/workflow:setup/,
 			);
+		},
+	);
+});
+
+test("status does not point to /workflow:setup when the only settings misalignment is a conflict setup cannot fix", async () => {
+	await withMetadataFile(
+		[{ package: "alpha" }],
+		async ({ metadataPath, dir }) => {
+			const catalogPath = join(dir, "settings-catalog.json");
+			await writeFile(
+				catalogPath,
+				JSON.stringify({ schemaVersion: 1, settings: { defaultTools: ["+codemode"] } }),
+				"utf8",
+			);
+			await writeFile(
+				join(dir, "settings.json"),
+				JSON.stringify({ defaultTools: ["-codemode"] }),
+				"utf8",
+			);
+			const workflow = createCompanionWorkflow({
+				catalog: {
+					metadataPath,
+					resolveInstalledVersion: installedExceptBlocked,
+				},
+				interaction: {},
+				mcp: aligned.mcp,
+				settings: { catalogPath, agentDirectory: dir },
+			});
+			const result = await workflow.inspect();
+			assert.equal(result.level, "warning");
+			assert.match(
+				result.message,
+				/Default settings:\n✗ .*settings\.json — not aligned: defaultTools: -codemode conflicts with \+codemode \(remove it manually\)/,
+			);
+			assert.doesNotMatch(result.message, /Default settings:(.|\n)*Run \/workflow:setup/);
 		},
 	);
 });

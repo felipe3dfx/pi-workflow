@@ -107,13 +107,13 @@ test("the status row shows the spinner, activity, and step time on the left and 
 	const [line] = plain(renderStatusRow(theme, data, 70));
 	assert.equal(
 		line,
-		`  ⠋ Waiting for response… 3.6s${" ".repeat(28)}3.7s ⇣2.96k`,
+		`   ⠋ Waiting for response… 3.6s${" ".repeat(27)}3.7s ⇣2.96k`,
 	);
 	assert.equal(visibleWidth(line), 69);
 	assert.doesNotMatch(plain(renderStatusRow(theme, data, 50))[0], /3\.6s/);
 	assert.match(
 		plain(renderStatusRow(theme, { ...data, tool: "bash" }, 70))[0],
-		/^ {2}⠋ Run bash 3\.6s/,
+		/^ {3}⠋ Run bash 3\.6s/,
 	);
 	assert.deepEqual(
 		plain(
@@ -128,7 +128,7 @@ test("the status row shows the spinner, activity, and step time on the left and 
 				70,
 			),
 		),
-		["  : Subagent: worker a1b2… 2.1s"],
+		["   : Subagent: worker a1b2… 2.1s"],
 	);
 	for (const width of [20, 8, 1]) {
 		assert.ok(visibleWidth(renderStatusRow(theme, data, width)[0]) <= width);
@@ -149,12 +149,12 @@ const resolve = (binding) => keys[binding] ?? "";
 test("the footer shows Pi's real keys for the idle and working contexts, and the question panel can replace them", () => {
 	assert.deepEqual(
 		plain(renderFooter(theme, footerHints(false, undefined, resolve), 100)),
-		[" Shift+Tab:thinking  │  Ctrl+p:model  │  Ctrl+o:expand  │  Ctrl+c:clear"],
+		[" Shift+Tab:thinking  │  Ctrl+P:model  │  Ctrl+O:expand  │  Ctrl+C:clear"],
 	);
 	assert.deepEqual(
 		plain(renderFooter(theme, footerHints(true, undefined, resolve), 100)),
 		[
-			" Esc:interrupt  │  Enter:steer  │  Alt+Enter:follow-up  │  Ctrl+o:expand",
+			" Esc:interrupt  │  Enter:steer  │  Alt+Enter:follow-up  │  Ctrl+O:expand",
 		],
 	);
 	const unbound = footerHints(false, undefined, (binding) =>
@@ -175,7 +175,7 @@ test("the footer shows Pi's real keys for the idle and working contexts, and the
 test("the footer drops the hints that do not fit instead of cutting one in half", () => {
 	const hints = footerHints(false, undefined, resolve);
 	assert.deepEqual(plain(renderFooter(theme, hints, 37)), [
-		" Shift+Tab:thinking  │  Ctrl+p:model",
+		" Shift+Tab:thinking  │  Ctrl+P:model",
 	]);
 	assert.deepEqual(plain(renderFooter(theme, hints, 5)), [""]);
 });
@@ -311,7 +311,7 @@ test("the footer shows other extensions' statuses on the right and drops whole s
 	const [narrow] = plain(
 		renderFooter(theme, hints, 40, ["build ok", "lsp: ts"]),
 	);
-	assert.equal(narrow, " Shift+Tab:thinking  │  Ctrl+p:model");
+	assert.equal(narrow, " Shift+Tab:thinking  │  Ctrl+P:model");
 	const [partial] = plain(
 		renderFooter(theme, hints, 47, ["build ok", "lsp: ts"]),
 	);
@@ -361,7 +361,10 @@ function fakeChrome(entries = []) {
 		cwd: "/tmp",
 		model: undefined,
 		getContextUsage: () => undefined,
-		sessionManager: { buildContextEntries: () => entries },
+		sessionManager: {
+			buildContextEntries: () => entries,
+			getEntries: () => [],
+		},
 		ui: {
 			theme,
 			setWorkingVisible: (visible) => calls.push(["working", visible]),
@@ -436,7 +439,7 @@ test("registerChrome installs the chrome and hides Pi's working row on session_s
 	assert.deepEqual(chrome.calls, [["working", false]]);
 	await chrome.emit("agent_start");
 	assert.ok(chrome.timers.size > 0);
-	await chrome.emit("session_shutdown");
+	await chrome.emit("session_shutdown", { reason: "quit" });
 	assert.deepEqual(chrome.calls.slice(1), [
 		["working", true],
 		["indicator"],
@@ -533,8 +536,8 @@ test("the autocomplete list renders above the box between rules, with the total 
 	const { lines } = await withMenu();
 	assert.equal(lines.length, 10);
 	assert.equal(lines[0], ` ${"─".repeat(56)}8─`);
-	assert.match(lines[1], /^ {3}❯ cmd0 +run command 0 +$/);
-	assert.match(lines[2], /^ {5}cmd1 +run command 1 +$/);
+	assert.match(lines[1], /^ {3}❯ \/cmd0 +run command 0 +$/);
+	assert.match(lines[2], /^ {5}\/cmd1 +run command 1 +$/);
 	assert.equal(lines[6], ` ${"─".repeat(58)}`);
 	assert.match(lines[7], /^ ╭─+╮$/);
 	assert.match(lines[8], /^ │ ❯ \/ +│$/);
@@ -605,10 +608,10 @@ test("the header, status row, footer, and box keep a one-column margin that shri
 			plain(editor().render(width)),
 		])
 			for (const line of lines) {
-				assert.match(line, /^ {1,2}\S/, `${width}: ${line}`);
+				assert.match(line, /^ {1,3}\S/, `${width}: ${line}`);
 				assert.ok(visibleWidth(line) <= width - 1);
 			}
-		assert.match(plain(renderStatusRow(theme, data, width))[0], /^ {2}⠋/);
+		assert.match(plain(renderStatusRow(theme, data, width))[0], /^ {3}⠋/);
 	}
 	for (const width of [15, 12, 5]) {
 		assert.doesNotMatch(
@@ -618,7 +621,7 @@ test("the header, status row, footer, and box keep a one-column margin that shri
 			/^ /,
 		);
 		assert.doesNotMatch(plain(renderFooter(theme, hints, width))[0], /^ /);
-		assert.match(plain(renderStatusRow(theme, data, width))[0], /^ ?⠋/);
+		assert.match(plain(renderStatusRow(theme, data, width))[0], /^ {0,2}⠋/);
 		assert.doesNotMatch(plain(editor().render(width))[0], /^ /);
 		for (const line of [
 			...renderHeader(theme, header, width),

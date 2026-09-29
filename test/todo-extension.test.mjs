@@ -46,7 +46,6 @@ function fakePi() {
 }
 
 function fakeCtx({ mode = "tui", branch = [] } = {}) {
-	let hiddenThinkingLabel;
 	let widgetFactory;
 	let widgetCalls = 0;
 	let widgetKey;
@@ -56,9 +55,6 @@ function fakeCtx({ mode = "tui", branch = [] } = {}) {
 		ctx: {
 			mode,
 			ui: {
-				setHiddenThinkingLabel: (label) => {
-					hiddenThinkingLabel = label;
-				},
 				setWidget: (key, factory, options) => {
 					widgetKey = key;
 					widgetFactory = factory;
@@ -68,7 +64,6 @@ function fakeCtx({ mode = "tui", branch = [] } = {}) {
 			},
 			sessionManager: { getBranch: () => currentBranch },
 		},
-		getHiddenThinkingLabel: () => hiddenThinkingLabel,
 		getWidgetFactory: () => widgetFactory,
 		widgetCallCount: () => widgetCalls,
 		getWidgetKey: () => widgetKey,
@@ -388,15 +383,4 @@ test("session_tree rebuilds the list from the tree's branch, like session_start 
 	const listed = await execute(tools, "list", {}, ctx);
 	assert.match(listed.content[0].text, /on the tree branch/);
 	assert.doesNotMatch(listed.content[0].text, /on the old branch/);
-});
-
-test("session_start labels hidden thinking in the TUI only", async () => {
-	const { pi, handlers } = fakePi();
-	registerSessionTodo(pi);
-	const tui = fakeCtx({ mode: "tui" });
-	await fireEvent(handlers, "session_start", tui.ctx);
-	assert.equal(tui.getHiddenThinkingLabel(), "◆ Thought");
-	const print = fakeCtx({ mode: "print" });
-	await fireEvent(handlers, "session_start", print.ctx);
-	assert.equal(print.getHiddenThinkingLabel(), undefined);
 });

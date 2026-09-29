@@ -13,11 +13,11 @@
     },
     "sentry": {
       "url": "https://mcp.sentry.dev/mcp",
-      "exposure": "deferred"
+      "exposure": "codemode-deferred"
     },
     "linear": {
       "url": "https://mcp.linear.app/mcp",
-      "exposure": "deferred"
+      "exposure": "codemode-deferred"
     }
   }
 }

@@ -23,6 +23,7 @@ export type PiSettingsPlan = {
 	path: string;
 	changed: boolean;
 	misaligned: string[];
+	conflicts: string[];
 	merged: Record<string, unknown>;
 	error?: string;
 };
@@ -64,6 +65,19 @@ export function loadPiSettingsCatalog(options: PiSettingsAdapters = {}): {
 	}
 }
 
+function negate(item: unknown): string {
+	const text = String(item);
+	return text.startsWith("+") ? `-${text.slice(1)}` : `+${text.slice(1)}`;
+}
+
+function isNegatedIn(item: unknown, existing: unknown[]): boolean {
+	return (
+		typeof item === "string" &&
+		/^[+-]./.test(item) &&
+		existing.includes(negate(item))
+	);
+}
+
 export function planPiSettings(
 	catalog: PiSettingsCatalog,
 	options: PiSettingsAdapters = {},
@@ -76,6 +90,7 @@ export function planPiSettings(
 		path,
 		changed: false,
 		misaligned: [],
+		conflicts: [],
 		merged: {},
 		error: `Refusing to overwrite malformed JSON at ${path}: ${reason}`,
 	});
@@ -92,15 +107,36 @@ export function planPiSettings(
 				: undefined;
 		if (code !== "ENOENT") return refused(errorMessage(error));
 	}
-	const misaligned = Object.keys(catalog.settings).filter(
-		(key) => !definitionsEqual(current[key], catalog.settings[key]),
-	);
-	return {
-		path,
-		changed: misaligned.length > 0,
-		misaligned,
-		merged: { ...current, ...catalog.settings },
-	};
+	const misaligned: string[] = [];
+	const conflicts: string[] = [];
+	const merged: Record<string, unknown> = { ...current };
+	let changed = false;
+	for (const [key, expected] of Object.entries(catalog.settings)) {
+		if (!Array.isArray(expected)) {
+			if (!definitionsEqual(current[key], expected)) {
+				misaligned.push(key);
+				merged[key] = expected;
+				changed = true;
+			}
+			continue;
+		}
+		const existing = Array.isArray(current[key]) ? current[key] : [];
+		const missing = expected.filter(
+			(item) => !existing.some((entry) => definitionsEqual(entry, item)),
+		);
+		if (missing.length === 0) continue;
+		const blocking = missing.filter((item) => isNegatedIn(item, existing));
+		if (blocking.length > 0) {
+			conflicts.push(
+				`${key}: ${blocking.map((item) => `${negate(item)} conflicts with ${item}`).join(", ")} (remove it manually)`,
+			);
+			continue;
+		}
+		misaligned.push(`${key}: missing ${missing.join(", ")}`);
+		merged[key] = [...existing, ...missing];
+		changed = true;
+	}
+	return { path, changed, misaligned, conflicts, merged };
 }
 
 export function applyPiSettings(

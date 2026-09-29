@@ -19,8 +19,8 @@ Grupo Ilao engineering skills own process semantics: discovery, specification, t
 `/workflow:setup` takes no arguments. It:
 
 - installs the missing companions listed in `assets/companions.json`. A failed install stops; an uncertain effect is not retried.
-- aligns Pi-native MCP servers in `mcp.json` in the Pi agent directory from `assets/mcp-servers.json`, per catalog key. Keys you or Pi manage are preserved. `context7` is exposed directly; `sentry` and `linear` are deferred. Servers that need OAuth are authorized with `/mcp login <server>`.
-- applies the default Pi settings from `assets/settings.json`: `tuiMode` `fullscreen`, `theme` `pi-workflow`, and `quietStartup`.
+- aligns Pi-native MCP servers in `mcp.json` in the Pi agent directory from `assets/mcp-servers.json`, per catalog key. Keys you or Pi manage are preserved. `context7` is exposed directly; `sentry` and `linear` are `codemode-deferred`. Servers that need OAuth are authorized with `/mcp login <server>`.
+- applies the default Pi settings from `assets/settings.json`: `tuiMode` `fullscreen`, `theme` `pi-workflow`, `quietStartup`, and `defaultTools` `+codemode`, which enables the built-in `codemode` tool.
 - warns about colliding packages and never removes them. See below.
 - notes a legacy `mcp-adapter.json`, which is no longer read.
 
