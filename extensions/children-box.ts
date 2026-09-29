@@ -75,7 +75,7 @@ export function childElapsed(child: ChildRecord, now: number) {
 	return `${Math.floor(seconds / 3600)}h ${pad(Math.floor(seconds / 60) % 60)}m`;
 }
 
-export function childMeta(child: ChildRecord, now: number) {
+function childMeta(child: ChildRecord, now: number) {
 	if (child.state === "queued") return "queued";
 	const model = child.model.slice(child.model.indexOf("/") + 1);
 	return `${model} (${child.thinking}) ${childElapsed(child, now)}`;

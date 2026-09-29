@@ -149,7 +149,7 @@ function createWatch(schedule: Schedule, onStall: (reason: string) => void) {
 	};
 }
 
-export function describeTool(name: string, args: unknown) {
+function describeTool(name: string, args: unknown) {
 	const detail = Object.values(args ?? {}).find(
 		(value) => typeof value === "string",
 	);
@@ -161,6 +161,23 @@ export function describeTool(name: string, args: unknown) {
 export function isWorking(state: ChildState) {
 	return state === "queued" || state === "running" || state === "waiting";
 }
+
+export function childDetails(record: ChildRecord, now = Date.now()) {
+	return {
+		id: record.id,
+		state: record.state,
+		role: record.role,
+		model: record.model,
+		thinking: record.thinking,
+		task: record.task.trim().split("\n")[0],
+		elapsedMs: (record.endedAt ?? now) - (record.startedAt ?? record.createdAt),
+		text: record.text,
+	};
+}
+
+export type ChildDetails = ReturnType<typeof childDetails> & {
+	question?: number;
+};
 
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);

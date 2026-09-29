@@ -46,6 +46,7 @@ function loadTools() {
 		on() {},
 		registerCommand() {},
 		registerShortcut() {},
+		registerMessageRenderer() {},
 		registerProvider() {},
 		registerTool: (tool) => tools.set(tool.name, tool),
 		exec: async () => ({ code: 0, stdout: "", stderr: "" }),

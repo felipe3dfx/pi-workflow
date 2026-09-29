@@ -90,11 +90,11 @@ function theme() {
 	return current;
 }
 
-function fit(line: string, width: number) {
+export function fit(line: string, width: number) {
 	return visibleWidth(line) > width ? truncateToWidth(line, width, "") : line;
 }
 
-function selectedRow(t: MenuTheme, line: string, width: number) {
+export function selectedRow(t: MenuTheme, line: string, width: number) {
 	const clipped = fit(line, width);
 	const padded =
 		clipped + " ".repeat(Math.max(0, width - visibleWidth(clipped)));

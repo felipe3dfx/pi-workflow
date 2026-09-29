@@ -29,6 +29,7 @@ function fakePiExtensionApi() {
 			},
 			registerCommand() {},
 			registerShortcut() {},
+			registerMessageRenderer() {},
 			registerProvider() {},
 			registerTool() {},
 			exec: async () => {

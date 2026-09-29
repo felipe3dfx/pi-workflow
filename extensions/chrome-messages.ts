@@ -40,7 +40,7 @@ const thinkingTimeType = "pi-workflow-thinking-time";
 const minTitleWidth = 4;
 const stampGap = 2;
 const minTextWidth = 20;
-const assistantInset = 3;
+export const assistantInset = 3;
 const userMargin = 1;
 const userInset = 2;
 const imageLine = new RegExp(`${String.fromCharCode(27)}(?:_G|\\]1337;File=)`);
@@ -103,7 +103,7 @@ function theme() {
 	return current;
 }
 
-function edgeFor(edge: number, outer: number) {
+export function edgeFor(edge: number, outer: number) {
 	return Math.min(edge, Math.max(0, Math.floor((outer - minTextWidth) / 2)));
 }
 

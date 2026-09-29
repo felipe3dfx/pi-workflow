@@ -14,9 +14,11 @@ import {
 } from "./companion-workflow.ts";
 import { type CodeGraphAdapters, createCodeGraphTool } from "./codegraph-tool.ts";
 import { createChildLauncher } from "./child-launcher.ts";
+import { registerChildResultCards } from "./child-result-card.ts";
 import {
 	type ChildRecord,
 	type ChildSessionFactory,
+	childDetails,
 	createChildQueryTools,
 	createChildSessions,
 	createContinueChildTool,
@@ -78,6 +80,7 @@ export default function piWorkflowExtension(
 	const context = () => currentCtx;
 	const workflow = createWorkflow(pi, context, options);
 	registerCompactTools(pi);
+	registerChildResultCards(pi);
 	const modelProfiles = createModelProfiles(options.modelProfiles);
 	const childSessions = createChildSessions({
 		create: options.childSessions?.create,
@@ -88,7 +91,7 @@ export default function piWorkflowExtension(
 					customType: "pi-workflow-child-result",
 					content: childOutcome(child),
 					display: true,
-					details: { id: child.id, state: child.state },
+					details: childDetails(child),
 				},
 				{ deliverAs: "followUp", triggerTurn: true },
 			),
@@ -98,7 +101,7 @@ export default function piWorkflowExtension(
 					customType: "pi-workflow-child-question",
 					content: `Child ${child.id} asks (question ${number}):\n\n${question}\n\nAnswer with reply_child with question ${number}.`,
 					display: true,
-					details: { id: child.id, state: child.state, question: number },
+					details: { ...childDetails(child), question: number, text: question },
 				},
 				{ deliverAs: "steer", triggerTurn: true },
 			),

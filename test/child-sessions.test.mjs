@@ -150,6 +150,7 @@ function loadExtension({
 			},
 			registerCommand: (name, command) => commands.set(name, command),
 			registerShortcut: (key, shortcut) => shortcuts.set(key, shortcut),
+			registerMessageRenderer() {},
 			registerProvider() {},
 			registerTool: (tool) => tools.push(tool),
 			sendMessage: (message, options) => {
@@ -229,6 +230,7 @@ function text(result) {
 }
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
+const stateOfDetails = ({ id, state }) => ({ id, state });
 
 async function eventually(condition) {
 	for (let i = 0; i < 500 && !condition(); i++) await delay(10);
@@ -315,9 +317,16 @@ for (const mode of ["tui", "rpc"]) {
 			const [{ message, options }] = messages;
 			assert.equal(message.customType, "pi-workflow-child-result");
 			assert.equal(message.display, true);
-			assert.deepEqual(message.details, {
+			const { elapsedMs, ...details } = message.details;
+			assert.ok(elapsedMs >= 0);
+			assert.deepEqual(details, {
 				id: result.details.id,
 				state: "completed",
+				role: "worker",
+				model: "session/model",
+				thinking: "medium",
+				task: "Fix the failing test",
+				text: "All tests pass.",
 			});
 			assert.match(message.content, /completed:\n\nAll tests pass\./);
 			assert.deepEqual(options, { deliverAs: "followUp", triggerTurn: true });
@@ -566,7 +575,7 @@ test("a failed background child is delivered as a failure message", async () => 
 		await settle();
 
 		assert.equal(messages.length, 1);
-		assert.deepEqual(messages[0].message.details, {
+		assert.deepEqual(stateOfDetails(messages[0].message.details), {
 			id: result.details.id,
 			state: "failed",
 		});
@@ -1147,7 +1156,7 @@ test("cancel_child and the children view leave a running child in the same cance
 		assert.match(view.lines().join("\n"), /worker [0-9a-f]{4} cancelled\./);
 		assert.equal(children.created[1].disposals, 1);
 		assert.equal(extension.messages.length, 1);
-		assert.deepEqual(extension.messages[0].message.details, {
+		assert.deepEqual(stateOfDetails(extension.messages[0].message.details), {
 			id: byOperator,
 			state: "cancelled",
 		});
@@ -1269,7 +1278,7 @@ test("a running child silent for four minutes times out, a tool in flight stretc
 		assert.equal(await stateOf(extension, ids[0]), "timed out");
 		assert.equal(first.disposals, 1);
 		assert.equal(extension.messages.length, 1);
-		assert.deepEqual(extension.messages[0].message.details, {
+		assert.deepEqual(stateOfDetails(extension.messages[0].message.details), {
 			id: ids[0],
 			state: "timed out",
 		});
@@ -1548,7 +1557,10 @@ test("a child that asks waits for the parent model's reply_child answer, still h
 		const [{ message, options }] = extension.messages;
 		assert.equal(message.customType, "pi-workflow-child-question");
 		assert.equal(message.display, true);
-		assert.deepEqual(message.details, { id, state: "waiting", question: 1 });
+		assert.equal(message.details.id, id);
+		assert.equal(message.details.state, "waiting");
+		assert.equal(message.details.question, 1);
+		assert.equal(message.details.text, "Which file holds the parser?");
 		assert.match(
 			message.content,
 			new RegExp(
@@ -1841,10 +1853,13 @@ test("a streaming child that stalls through Pi's SDK times out, is delivered as 
 		assert.equal(await stateOf(child.extension, id), "timed out");
 		assert.equal(child.parent.requests.length, 1);
 		assert.equal(child.extension.messages.length, 1);
-		assert.deepEqual(child.extension.messages[0].message.details, {
-			id,
-			state: "timed out",
-		});
+		assert.deepEqual(
+			stateOfDetails(child.extension.messages[0].message.details),
+			{
+				id,
+				state: "timed out",
+			},
+		);
 		assert.deepEqual(child.clock.pending(), []);
 		assert.deepEqual(unhandled, []);
 	});
@@ -1906,7 +1921,7 @@ test("continue_child through Pi's SDK sends the completed child's conversation p
 				extension.messages[1].message.content,
 				/completed:\n\nSecond answer\./,
 			);
-			assert.deepEqual(extension.messages[1].message.details, {
+			assert.deepEqual(stateOfDetails(extension.messages[1].message.details), {
 				id: next.details.id,
 				state: "completed",
 			});
@@ -1995,7 +2010,7 @@ test("a child through Pi's SDK that waits for a reply that never comes ends time
 
 		assert.equal(await stateOf(extension, id), "timed out");
 		assert.equal(extension.messages.length, 2);
-		assert.deepEqual(extension.messages[1].message.details, {
+		assert.deepEqual(stateOfDetails(extension.messages[1].message.details), {
 			id,
 			state: "timed out",
 		});
@@ -2385,6 +2400,7 @@ function openChildren(extension, { rows = 20, via = "shortcut" } = {}) {
 		closed = true;
 		view.resolve();
 	});
+	for (let i = 0; i < 20; i++) component.handleInput("k");
 	return {
 		opened,
 		view,
@@ -2592,19 +2608,19 @@ test("alt+a and /workflow:subagents open a full-screen overlay of every child; j
 		assert.equal(view.view.options.overlayOptions.maxHeight, "100%");
 		const lines = view.lines();
 		assert.equal(lines.length, 12);
-		assert.match(lines[0], /^ ┌─ Subagents 2 ─+ \[×\] ─┐$/);
-		assert.match(lines[1], /^ │ {3}Active ─+ {2}│$/);
+		assert.match(lines[0], /^ ┌─ Subagents 2 · 1 active ─+ \[×\] ─┐$/);
+		assert.match(
+			lines[1],
+			/^ │ {3}Active ─+ │ ◐ worker [0-9a-f]{4} +running · \d+s {2}│$/,
+		);
 		assert.match(
 			lines[2],
-			/▸ ◐ worker [0-9a-f]{4} Run the tests +running · model \(medium\) \d+s ›/,
+			/^ │ {2}▸ ◐ worker [0-9a-f]{4} Run the\.\.\. \d+s │ model \(medium\) · wt: repo/,
 		);
-		assert.match(lines[3], /^ │ {3}Finished ─+ {2}│$/);
+		assert.match(lines[3], /^ │ {3}Finished ─+ │ Run the tests/);
+		assert.match(lines[4], /^ │ {4}✓ worker [0-9a-f]{4} Map the\.\.\. \d+s │/);
 		assert.match(
-			lines[4],
-			/▸ ✓ worker [0-9a-f]{4} Map the launcher +completed · model \(medium\) \d+s ›/,
-		);
-		assert.match(
-			lines.at(-2),
+			view.lines(60).at(-2),
 			/j\/k move {2}\| {2}Enter detail {2}\| {2}s\/c cancel {2}\| {2}q close/,
 		);
 		assert.match(lines.at(-1), /^ └─+┘$/);
@@ -2664,17 +2680,20 @@ test("in the view, s or c asks y/n before cancelling a running child, cancels a 
 
 		view.press("c", "y");
 		assert.equal(await stateOf(extension, ids[0]), "cancelled");
-		assert.deepEqual(extension.messages.at(-1).message.details, {
-			id: ids[0],
-			state: "cancelled",
-		});
+		assert.deepEqual(
+			stateOfDetails(extension.messages.at(-1).message.details),
+			{
+				id: ids[0],
+				state: "cancelled",
+			},
+		);
 		await settle();
 		assert.equal(await stateOf(extension, ids[5]), "running");
 
 		const more = await spawnBackground(extension, worktree);
 		await settle();
 		assert.equal(await stateOf(extension, more), "queued");
-		view.press("j", "j", "j", "j", "j", "c");
+		view.press("k", "k", "k", "k", "k", "k", "j", "j", "j", "j", "j", "c");
 		assert.equal(await stateOf(extension, more), "cancelled");
 		assert.doesNotMatch(view.lines().join("\n"), /y\/n/);
 
@@ -2740,18 +2759,16 @@ test("Enter opens a live detail that follows the tail, collapses thinking with P
 		];
 		const view = openChildren(extension, { rows: 40 });
 		view.press("\r");
-		let lines = view.lines();
+		let lines = view.lines(60);
 		let body = lines.join("\n");
-		assert.match(lines[0], /^ ┌─ worker [0-9a-f]{4} · model \(medium\) ─+ \[×\] ─┐$/);
-		assert.match(lines[1], /^ │ {2}◐ running · \d+s +│$/);
-		assert.match(body, /Review the doctor/);
+		assert.match(lines[0], /^ ┌─ Subagents 1 · 1 active ─+ \[×\] ─┐$/);
+		assert.match(lines[1], /^ │ {2}◐ worker [0-9a-f]{4} +running · \d+s {2}│$/);
+		assert.match(body, /❯ Review the doctor/);
 		assert.match(body, /I should read the doctor module first\./);
 		assert.match(body, /The doctor checks three things\./);
-		assert.match(body, /◆ bash npm test · Running/);
-		assert.match(
-			lines.at(-2),
-			/Esc back {2}\| {2}q close {2}\| {2}s\/c cancel {2}\| {2}ctrl\+t thinking/,
-		);
+		assert.match(body, /◆ Run npm test/);
+		assert.match(body, /Esc back {2}\| {2}Ctrl\+J\/K scroll/);
+		assert.match(body, /s\/c cancel {2}\| {2}Ctrl\+T thinking/);
 
 		const renders = view.tui.renders;
 		child.spec.onEvent({
@@ -2763,9 +2780,9 @@ test("Enter opens a live detail that follows the tail, collapses thinking with P
 			assistantMessageEvent: { type: "text_delta" },
 		});
 		assert.ok(view.tui.renders > renders);
-		const threadLines = view
-			.lines()
-			.slice(2, -3)
+		lines = view.lines(60);
+		const threadLines = lines
+			.slice(2, lines.findIndex((line) => /Esc back/.test(line)) - 1)
 			.map((line) => line.slice(2, -1));
 		assert.match(
 			threadLines.findLast((line) => line.trim() !== ""),
@@ -2773,25 +2790,29 @@ test("Enter opens a live detail that follows the tail, collapses thinking with P
 		);
 
 		view.press("\x14");
-		body = view.lines().join("\n");
+		body = view.lines(60).join("\n");
 		assert.doesNotMatch(body, /I should read the doctor module first/);
 		assert.match(body, /◆ Thought/);
 		view.press("\x14");
 		assert.match(
-			view.lines().join("\n"),
+			view.lines(60).join("\n"),
 			/I should read the doctor module first/,
 		);
 
 		view.press("s");
-		assert.match(view.lines().join("\n"), /Cancel worker [0-9a-f]{4}\? y\/n/);
+		assert.match(view.lines(60).join("\n"), /Cancel worker [0-9a-f]{4}\? y\/n/);
 		view.press("y");
 		assert.equal(await stateOf(extension, id), "cancelled");
-		lines = view.lines();
-		assert.match(lines[1], /– cancelled · \d+s/);
+		lines = view.lines(60);
+		assert.match(lines[1], /– worker [0-9a-f]{4} +cancelled · \d+s/);
 		assert.match(lines.join("\n"), /The doctor checks three things\./);
-		assert.match(lines.join("\n"), /◆ bash npm test · Cancelled/);
+		assert.match(lines.join("\n"), /◆ Run npm test/);
+		assert.match(
+			lines.join("\n"),
+			/ Result ─+[\s\S]*The child was cancelled\./,
+		);
 		assert.doesNotMatch(lines.join("\n"), /Streaming the tail/);
-		assert.doesNotMatch(lines.at(-2), /s\/c cancel/);
+		assert.doesNotMatch(lines.join("\n"), /s\/c cancel/);
 
 		view.press("\x1b");
 		assert.match(view.lines()[0], /Subagents 1/);
@@ -2872,20 +2893,22 @@ test("in fullscreen a click selects a row, a double click opens it, and each foo
 				clickCount,
 			});
 
-		view.lines();
-		assert.deepEqual(click(3, 3), { handled: true });
-		assert.equal(view.active(), 3);
-		click(3, 3, 2);
-		assert.match(view.lines()[0], /worker [0-9a-f]{4} · model/);
-		const back = view.lines().at(-2).indexOf("Esc back");
-		click(back + 1, 10);
-		assert.match(view.lines()[0], /Subagents 2/);
-		const footer = view.lines().at(-2);
+		view.lines(60);
+		assert.deepEqual(click(5, 3), { handled: true });
+		assert.equal(view.active(60), 3);
+		click(5, 3, 2);
+		let lines = view.lines(60);
+		assert.match(lines[1], /◐ worker [0-9a-f]{4} +running · \d+s/);
+		const at = lines.findIndex((line) => line.includes("Esc back"));
+		click(lines[at].indexOf("Esc back") + 1, at);
+		assert.match(view.lines(60)[1], /Active ─/);
+		const footer = view.lines(60).at(-2);
 		click(footer.indexOf("s/c cancel") + 1, 10);
-		assert.match(view.lines().join("\n"), /Cancel worker [0-9a-f]{4}\? y\/n/);
-		click(view.lines().at(-2).indexOf("n no") + 1, 10);
-		assert.doesNotMatch(view.lines().join("\n"), /y\/n/);
-		assert.equal(click(view.lines()[0].indexOf("×"), 0).handled, true);
+		assert.match(view.lines(60).join("\n"), /Cancel worker [0-9a-f]{4}\? y\/n/);
+		click(view.lines(60).at(-2).indexOf("n no") + 1, 10);
+		assert.doesNotMatch(view.lines(60).join("\n"), /y\/n/);
+		lines = view.lines(60);
+		assert.equal(click(lines[0].indexOf("×"), 0).handled, true);
 		assert.equal(view.closed(), true);
 	});
 });
@@ -3009,7 +3032,7 @@ test("escape sequences in a child's tool arguments never reach the step, the row
 			assert.equal(text.includes("\x1b]52"), false);
 			assert.equal(text.includes("\u202e"), false);
 		}
-		assert.match(plain(detail), /◆ bash a \[2Jb \]52;c;eA== c d · Running/);
+		assert.match(plain(detail), /◆ Run a \[2Jb \]52;c;eA== c d/);
 	});
 });
 
@@ -3053,29 +3076,28 @@ test("the view lists waiting, running, queued, then finished children, and a cli
 		void children.created[4].spec.ask("Which branch?");
 		const view = openChildren(extension, { rows: 14 });
 		const order = view
-			.lines()
+			.lines(60)
 			.filter((line) => /worker [0-9a-f]{4}/.test(line))
 			.map((line) => line.match(/worker ([0-9a-f]{4})/)[1]);
 		assert.deepEqual(
 			order,
 			[4, 1, 2, 3, 5, 6, 0].map((i) => ids[i].slice(0, 4)),
 		);
-		assert.equal(view.active(), 2);
-		assert.match(view.lines()[2], /\? worker [0-9a-f]{4} asks question 1/);
-		assert.match(view.lines()[8], /Finished ─/);
+		assert.equal(view.active(60), 2);
+		assert.match(view.lines(60)[2], /\? worker [0-9a-f]{4} asks question 1/);
+		assert.match(view.lines(60)[8], /Finished ─/);
 
 		view.component.handleMouse({
 			type: "click",
 			button: "left",
-			x: 3,
+			x: 5,
 			y: 9,
 			clickCount: 2,
 		});
 		assert.match(
-			view.lines()[0],
-			new RegExp(`worker ${ids[0].slice(0, 4)} · model`),
+			view.lines(60)[1],
+			new RegExp(`✓ worker ${ids[0].slice(0, 4)} +completed · \\d+s`),
 		);
-		assert.match(view.lines()[1], /✓ completed/);
 	});
 });
 
@@ -3283,28 +3305,28 @@ test("a double click opens the child painted on that row even if the order chang
 		await spawnBackground(extension, worktree, "Second");
 		await settle();
 		const view = openChildren(extension, { rows: 12 });
-		view.component.render(100);
+		view.component.render(60);
 		children.created[1].spec.ask("Which branch?").catch(() => {});
 		view.component.handleMouse({
 			type: "click",
 			button: "left",
-			x: 3,
+			x: 5,
 			y: 2,
 			clickCount: 2,
 		});
 		assert.match(
-			view.lines()[0],
-			new RegExp(`worker ${first.slice(0, 4)} · model`),
+			view.lines(60)[1],
+			new RegExp(`◐ worker ${first.slice(0, 4)} +running`),
 		);
 
 		view.press("\x1b");
-		view.component.render(100);
+		view.component.render(60);
 		await extension.fire("session_shutdown", { reason: "new" });
 		assert.equal(
 			view.component.handleMouse({
 				type: "click",
 				button: "left",
-				x: 3,
+				x: 5,
 				y: 2,
 				clickCount: 2,
 			}),
@@ -3325,18 +3347,18 @@ test("a click after leaving the detail and before the next redraw opens nothing"
 		await spawnBackground(extension, worktree);
 		await settle();
 		const view = openChildren(extension, { rows: 12 });
-		view.component.render(100);
+		view.component.render(60);
 		view.press("\r");
-		view.component.render(100);
+		view.component.render(60);
 		view.press("\x1b");
 		const click = view.component.handleMouse({
 			type: "click",
 			button: "left",
-			x: 3,
+			x: 5,
 			y: 1,
 			clickCount: 2,
 		});
 		assert.equal(click, undefined);
-		assert.match(view.lines()[0], /Subagents 1/);
+		assert.match(view.lines(60)[1], /Active ─/);
 	});
 });

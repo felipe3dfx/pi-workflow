@@ -173,6 +173,7 @@ function extensionCommands(path) {
 			registerCommand: (name, command) => commands.set(name, command),
 			registerTool: () => {},
 			registerShortcut: () => {},
+			registerMessageRenderer: () => {},
 			registerProvider: () => {},
 		},
 		{ modelProfiles: { path } },

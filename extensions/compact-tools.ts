@@ -73,16 +73,8 @@ function toolRow(theme: Theme, status: Status, label: string, detail = "") {
 }
 
 function title(name: string, args: unknown, theme: Theme, status: Status) {
-	const fields = (args ?? {}) as Record<string, unknown>;
-	const subject = [
-		fields.command,
-		fields.pattern,
-		fields.path,
-		fields.file_path,
-	].find(
-		(value): value is string => typeof value === "string" && value.length > 0,
-	);
-	return toolRow(theme, status, verbs[name] ?? name, subject?.split("\n")[0]);
+	const [label, detail] = toolLabel(name, args);
+	return toolRow(theme, status, label, detail);
 }
 
 function titleCase(value: string) {
@@ -93,11 +85,22 @@ function titleCase(value: string) {
 		.join(" ");
 }
 
-function firstText(args: unknown) {
-	for (const value of Object.values((args ?? {}) as Record<string, unknown>))
-		if (typeof value === "string" && value.trim())
-			return value.trim().split("\n")[0];
-	return "";
+export function toolLabel(name: string, args: unknown) {
+	const fields = (args ?? {}) as Record<string, unknown>;
+	if (name.startsWith("mcp__")) {
+		const [server, ...action] = name.slice(5).split("__");
+		return [titleCase(server), titleCase(action.join(" "))];
+	}
+	const verb = verbs[name];
+	const subject = (
+		verb
+			? [fields.command, fields.pattern, fields.path, fields.file_path]
+			: Object.values(fields)
+	).find(
+		(value): value is string =>
+			typeof value === "string" && value.trim().length > 0,
+	);
+	return [verb ?? titleCase(name), subject?.trim().split("\n")[0] ?? ""];
 }
 
 function fallbackTitle(
@@ -107,16 +110,11 @@ function fallbackTitle(
 	theme: Theme,
 	status: Status,
 ) {
-	if (name.startsWith("mcp__")) {
-		const [server, ...action] = name.slice(5).split("__");
-		return toolRow(
-			theme,
-			status,
-			titleCase(server),
-			titleCase(action.join(" ")),
-		);
+	if (label === undefined || name.startsWith("mcp__")) {
+		const [head, detail] = toolLabel(name, args);
+		return toolRow(theme, status, head, detail);
 	}
-	return toolRow(theme, status, titleCase(label ?? name), firstText(args));
+	return toolRow(theme, status, titleCase(label), toolLabel(name, args)[1]);
 }
 
 function outputText(result: { content: { type: string; text?: string }[] }) {

@@ -636,6 +636,7 @@ test("/workflow:models opens the panel over the saved profiles and /workflow:mod
 			registerTool: () => {},
 			registerShortcut: () => {},
 			registerProvider: () => {},
+			registerMessageRenderer: () => {},
 		};
 		piWorkflowExtension(pi, { modelProfiles: { path } });
 		const { ctx, nextPanel } = editorContext();

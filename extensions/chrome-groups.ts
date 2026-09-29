@@ -1,6 +1,7 @@
 // Relies on Pi 0.99.1 chat container internals (InteractiveMode.chatContainer, ToolExecutionComponent fields).
 import {
 	AssistantMessageComponent,
+	CustomMessageComponent,
 	type Theme,
 	ToolExecutionComponent,
 } from "@earendil-works/pi-coding-agent";
@@ -65,7 +66,7 @@ type Seg = {
 	child: Component;
 	from: number;
 	to: number;
-	role: "gap" | "tool" | "thought" | "block";
+	role: "gap" | "tool" | "card" | "thought" | "block";
 	open: boolean;
 	running: boolean;
 	failed: boolean;
@@ -75,13 +76,18 @@ type Seg = {
 type Span = { start: number; claimed: Set<number>; members: number[] };
 type Shared = {
 	thoughts: WeakMap<object, { open: boolean; running: boolean }>;
+	cards: WeakMap<object, { open: boolean; failed: boolean }>;
 	expandedGroups: WeakSet<object>;
 };
 
 const SHARED = Symbol.for("pi-workflow:chrome-groups:shared");
 const slots = globalThis as Record<symbol, Shared | undefined>;
-slots[SHARED] ??= { thoughts: new WeakMap(), expandedGroups: new WeakSet() };
-const { thoughts, expandedGroups } = slots[SHARED];
+slots[SHARED] ??= {
+	thoughts: new WeakMap(),
+	cards: new WeakMap(),
+	expandedGroups: new WeakSet(),
+};
+const { thoughts, cards, expandedGroups } = slots[SHARED];
 const patched = new Set<Container>();
 
 function theme() {
@@ -130,10 +136,38 @@ export function markThought(
 	thoughts.set(region, state);
 }
 
+export function markCard(
+	card: object,
+	state: { open: boolean; failed: boolean },
+) {
+	cards.set(card, state);
+}
+
 type MouseLayout = {
 	width: number;
 	children: { component: Component; height: number }[];
 };
+
+function rowOf(child: Component) {
+	if (child instanceof ToolExecutionComponent) {
+		const tool = child as unknown as ToolState;
+		return {
+			role: "tool" as const,
+			open: tool.expanded,
+			running: tool.isPartial,
+			failed: tool.result?.isError === true,
+			kind: toolKind(tool.toolName, tool.args),
+		};
+	}
+	if (child instanceof CustomMessageComponent) {
+		const card = cards.get(
+			(child as unknown as { customComponent?: object }).customComponent ?? {},
+		);
+		if (card)
+			return { role: "card" as const, kind: "subagent" as Kind, ...card };
+	}
+	return undefined;
+}
 
 function segments(child: Component, lines: string[]): Seg[] {
 	const base = {
@@ -146,24 +180,15 @@ function segments(child: Component, lines: string[]): Seg[] {
 	if (lines.length === 0) return [];
 	if (child instanceof Spacer)
 		return [{ ...base, from: 0, to: lines.length, role: "gap" }];
-	if (child instanceof ToolExecutionComponent) {
-		const tool = child as unknown as ToolState;
-		const row: Seg = {
-			...base,
-			from: 0,
-			to: lines.length,
-			role: "tool",
-			open: tool.expanded,
-			running: tool.isPartial,
-			failed: tool.result?.isError === true,
-			kind: toolKind(tool.toolName, tool.args),
-		};
+	const row = rowOf(child);
+	if (row) {
+		const seg: Seg = { ...base, ...row, from: 0, to: lines.length };
 		if (lines.length > 1 && visibleWidth(lines[0]) === 0)
 			return [
 				{ ...base, from: 0, to: 1, role: "gap" },
-				{ ...row, from: 1 },
+				{ ...seg, from: 1 },
 			];
-		return [row];
+		return [seg];
 	}
 	if (child instanceof AssistantMessageComponent) {
 		const content = (child as unknown as { contentContainer: Container })
@@ -216,7 +241,10 @@ function participates(seg: Seg) {
 }
 
 function compact(seg: Seg) {
-	return (seg.role === "tool" || seg.role === "thought") && !seg.open;
+	return (
+		(seg.role === "tool" || seg.role === "card" || seg.role === "thought") &&
+		!seg.open
+	);
 }
 
 function spans(items: Seg[]) {
@@ -260,6 +288,16 @@ function spans(items: Seg[]) {
 		}
 		i = j;
 	}
+	i = 0;
+	while (i < items.length) {
+		let j = i;
+		while (j < items.length && items[j].role === "card") j++;
+		const run = Array.from({ length: j - i }, (_, k) => i + k);
+		const closed = run.filter((k) => !items[k].open);
+		if (run.length > 1 && closed.length > 0)
+			found.push({ start: i, claimed: new Set(closed), members: run });
+		i = Math.max(j, i + 1);
+	}
 	return found;
 }
 
@@ -269,7 +307,7 @@ function groupLabel(members: Seg[], width: number) {
 	let running = false;
 	let failed = 0;
 	for (const seg of members) {
-		if (seg.role !== "tool") continue;
+		if (seg.role !== "tool" && seg.role !== "card") continue;
 		const bucket = buckets.find((b) => b.kind === seg.kind);
 		if (bucket) bucket.count++;
 		else buckets.push({ kind: seg.kind, count: 1 });

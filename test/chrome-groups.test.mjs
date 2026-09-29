@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { stripVTControlCharacters } from "node:util";
 
 import {
+	CustomMessageComponent,
 	InteractiveMode,
 	initTheme,
 	ToolExecutionComponent,
@@ -21,12 +22,15 @@ const markdownTheme = new Proxy({}, { get: () => (text) => text });
 const plain = (lines) =>
 	lines.map((line) => stripVTControlCharacters(line).trimEnd());
 
+const renderers = new Map();
+
 function loadTools() {
 	const tools = new Map();
 	piWorkflowExtension({
 		on() {},
 		registerCommand() {},
 		registerShortcut() {},
+		registerMessageRenderer: (type, render) => renderers.set(type, render),
 		registerProvider() {},
 		registerTool: (tool) => tools.set(tool.name, tool),
 		exec: async () => ({ code: 0, stdout: "", stderr: "" }),
@@ -82,8 +86,18 @@ function chat(t, { hideThinking = true } = {}) {
 		mode.chatContainer.addChild(component);
 		return component;
 	};
+	const card = (customType, details) => {
+		const component = new CustomMessageComponent(
+			{ role: "custom", customType, content: "", details, display: true },
+			renderers.get(customType),
+			markdownTheme,
+			1,
+		);
+		mode.chatContainer.addChild(component);
+		return component;
+	};
 	const render = (width = 80) => plain(mode.chatContainer.render(width));
-	return { mode, say, tool, render };
+	return { mode, say, tool, card, render };
 }
 
 const thought = (text = "think") => ({ type: "thinking", thinking: text });
@@ -304,4 +318,67 @@ test("a reloaded module instance folds the thoughts and keeps the groups the pre
 	const closed = render();
 	assert.ok(!closed.some((line) => line.includes("◆ Thought")));
 	assert.ok(!closed.includes("   ◆ Read a.ts"));
+});
+
+const result = (id, state = "completed", text = "Listo.") => ({
+	id: `${id}-0000-4000-8000-000000000000`,
+	state,
+	role: "worker",
+	model: "openai/gpt-6-luna",
+	thinking: "high",
+	task: "Revisa el parser",
+	elapsedMs: 62_000,
+	text,
+});
+
+test("consecutive subagent result cards fold into one ◈ row that counts the failures, while a lone card and a question stay visible", (t) => {
+	const { mode, say, card, render } = chat(t);
+	const container = mode.chatContainer;
+	card("pi-workflow-child-result", result("1111"));
+	say([said("Sigo.")], "stop");
+	card("pi-workflow-child-result", result("2222"));
+	card("pi-workflow-child-result", result("3333", "failed", "no activity"));
+	card("pi-workflow-child-result", result("4444"));
+	card("pi-workflow-child-question", {
+		...result("5555", "waiting", "¿Sigo?"),
+		question: 2,
+	});
+	const closed = render();
+	assert.ok(
+		closed.includes("   ◆ Subagent worker 1111  gpt-6-luna (high) · 1m 02s"),
+	);
+	const header = closed.indexOf("   ◈ Ran 3 subagents · 1 failed");
+	assert.ok(header > 0);
+	assert.ok(!closed.some((line) => line.includes("worker 2222")));
+	assert.equal(closed[header + 1], "");
+	assert.equal(
+		closed[header + 2],
+		"   ◆ Subagent worker 5555 asks · question 2",
+	);
+	for (let width = 10; width <= 160; width++) {
+		const lines = container.render(width);
+		const heights = container.mouseLayout.children.reduce(
+			(sum, entry) => sum + entry.height,
+			0,
+		);
+		assert.equal(heights, lines.length, `width ${width}`);
+		for (const line of lines)
+			assert.ok(visibleWidth(line) <= width, `width ${width}: ${line}`);
+	}
+	assert.ok(click(container, 80, header)?.handled);
+	assert.deepEqual(render().slice(header, header + 7), [
+		"   ◈ Ran 3 subagents · 1 failed",
+		"   ◆ Subagent worker 2222  gpt-6-luna (high) · 1m 02s",
+		"     Listo.",
+		"   ◆ Subagent worker 3333 failed  gpt-6-luna (high) · 1m 02s",
+		"     no activity",
+		"   ◆ Subagent worker 4444  gpt-6-luna (high) · 1m 02s",
+		"     Listo.",
+	]);
+	assert.ok(click(container, 80, header)?.handled);
+	for (const child of container.children)
+		if (child instanceof CustomMessageComponent) child.setExpanded(true);
+	const expanded = render();
+	assert.ok(!expanded.some((line) => line.includes("◈")));
+	assert.ok(expanded.some((line) => line.includes("worker 2222")));
 });
