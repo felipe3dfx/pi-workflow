@@ -3134,3 +3134,158 @@ test("closing the view from an open detail stops following the child", async () 
 		assert.equal(view.tui.renders, closed);
 	});
 });
+
+const hostileBytes = [
+	"\x1b[2J",
+	"\x1b]52;c;",
+	"\x1b]8;;x",
+	"\x1b]0;",
+	"\x9b",
+	"‮",
+	"⁦",
+];
+
+function hostile(label) {
+	return `${label}\x1b[2J\x1b]52;c;eA==\x07\x1b]8;;x\x07\x1b]0;title\x07\x9b31m‮⁦end\tcol\nnext ${label}`;
+}
+
+test("control sequences in a child's task, text, thinking, and streaming updates never reach the rendered detail", async () => {
+	initTheme("dark", false);
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			fetch: fakeJev().fetch,
+		});
+		await spawnBackground(extension, worktree);
+		await settle();
+		const child = children.created[0];
+		child.entries = [
+			userEntry("u1", hostile("task")),
+			assistantEntry("a1", [
+				{ type: "thinking", thinking: hostile("thought") },
+				{ type: "text", text: hostile("answer") },
+			]),
+			{
+				...assistantEntry("a2", [{ type: "text", text: "partial" }]),
+				message: {
+					...assistantEntry("a2", []).message,
+					content: [{ type: "text", text: "partial" }],
+					stopReason: "error",
+					errorMessage: hostile("failure"),
+				},
+			},
+			{
+				type: "message",
+				id: "r1",
+				message: {
+					role: "toolResult",
+					toolCallId: "t1",
+					toolName: "bash",
+					content: [{ type: "text", text: hostile("output") }],
+					isError: false,
+				},
+			},
+		];
+		child.spec.onEvent({
+			type: "message_update",
+			message: {
+				role: "assistant",
+				content: [
+					{ type: "thinking", thinking: hostile("streamed thought") },
+					{ type: "text", text: hostile("streamed answer") },
+				],
+			},
+			assistantMessageEvent: { type: "text_delta" },
+		});
+		const view = openChildren(extension, { rows: 80 });
+		view.press("\r");
+		const emitted = view.component.render(100).join("\n");
+		for (const bytes of hostileBytes) {
+			assert.equal(emitted.includes(bytes), false, JSON.stringify(bytes));
+		}
+		const shown = plain(emitted);
+		for (const label of [
+			"task",
+			"thought",
+			"answer",
+			"streamed thought",
+			"streamed answer",
+			"failure",
+		]) {
+			assert.match(shown, new RegExp(`next ${label}`));
+		}
+	});
+});
+
+test("a double click opens the child painted on that row even if the order changed before the next redraw, and a vanished child does nothing", async () => {
+	initTheme("dark", false);
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			fetch: fakeJev().fetch,
+		});
+		const first = await spawnBackground(extension, worktree, "First");
+		await spawnBackground(extension, worktree, "Second");
+		await settle();
+		const view = openChildren(extension, { rows: 12 });
+		view.component.render(100);
+		children.created[1].spec.ask("Which branch?").catch(() => {});
+		view.component.handleMouse({
+			type: "click",
+			button: "left",
+			x: 3,
+			y: 1,
+			clickCount: 2,
+		});
+		assert.match(
+			view.lines()[0],
+			new RegExp(`worker ${first.slice(0, 4)} · model`),
+		);
+
+		view.press("\x1b");
+		view.component.render(100);
+		await extension.fire("session_shutdown", { reason: "new" });
+		assert.equal(
+			view.component.handleMouse({
+				type: "click",
+				button: "left",
+				x: 3,
+				y: 1,
+				clickCount: 2,
+			}),
+			undefined,
+		);
+	});
+});
+
+test("a click after leaving the detail and before the next redraw opens nothing", async () => {
+	initTheme("dark", false);
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			fetch: fakeJev().fetch,
+		});
+		await spawnBackground(extension, worktree);
+		await settle();
+		const view = openChildren(extension, { rows: 12 });
+		view.component.render(100);
+		view.press("\r");
+		view.component.render(100);
+		view.press("\x1b");
+		const click = view.component.handleMouse({
+			type: "click",
+			button: "left",
+			x: 3,
+			y: 1,
+			clickCount: 2,
+		});
+		assert.equal(click, undefined);
+		assert.match(view.lines()[0], /Subagents 1/);
+	});
+});

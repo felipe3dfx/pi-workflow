@@ -16,8 +16,14 @@ const CORNER_BOTTOM = "└";
 
 const UNSAFE_TERMINAL_CHARACTERS = /[\p{Cc}\p{Bidi_Control}]/gu;
 
+const UNSAFE_MULTILINE_CHARACTERS = /(?![\n\t])[\p{Cc}\p{Bidi_Control}]/gu;
+
 export function sanitizeTaskText(text: string): string {
 	return text.replace(UNSAFE_TERMINAL_CHARACTERS, " ");
+}
+
+export function sanitizeMultilineText(text: string): string {
+	return text.replace(UNSAFE_MULTILINE_CHARACTERS, " ");
 }
 
 export function renderTodoBox(

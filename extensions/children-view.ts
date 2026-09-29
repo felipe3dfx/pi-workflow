@@ -35,6 +35,7 @@ import {
 	renderChildRow,
 	spread,
 } from "./children-box.ts";
+import { sanitizeMultilineText } from "./todo-header.ts";
 
 type Sessions = ReturnType<typeof createChildSessions>;
 type Action =
@@ -50,9 +51,26 @@ type Action =
 type Segment = { action: Action; start: number; end: number };
 
 function userText(content: string | { type: string; text?: string }[]) {
-	return typeof content === "string"
-		? content
-		: content.map((part) => part.text ?? "").join("\n");
+	return sanitizeMultilineText(
+		typeof content === "string"
+			? content
+			: content.map((part) => part.text ?? "").join("\n"),
+	);
+}
+
+function cleanMessage(message: AssistantMessage): AssistantMessage {
+	return {
+		...message,
+		errorMessage:
+			message.errorMessage && sanitizeMultilineText(message.errorMessage),
+		content: message.content.map((part) =>
+			part.type === "text"
+				? { ...part, text: sanitizeMultilineText(part.text) }
+				: part.type === "thinking"
+					? { ...part, thinking: sanitizeMultilineText(part.thinking) }
+					: part,
+		),
+	};
 }
 
 function createThread(theme: ChildTheme) {
@@ -121,7 +139,7 @@ function createThread(theme: ChildTheme) {
 					let component = cache.get(entry.id);
 					if (!component) {
 						component = new AssistantMessageComponent(
-							message,
+							cleanMessage(message),
 							hideThinking,
 							markdown,
 						);
@@ -132,7 +150,7 @@ function createThread(theme: ChildTheme) {
 				}
 			}
 			if (thread.streaming) {
-				live.updateContent(thread.streaming, true);
+				live.updateContent(cleanMessage(thread.streaming), true);
 				lines.push(...live.render(width));
 				lines.push(...toolLines(thread.streaming, results, state, width));
 			}
@@ -191,7 +209,7 @@ function createChildrenView(
 	let notice = "";
 	let thread = createThread(theme);
 	let unfollow: (() => void) | undefined;
-	let layout = { first: 0, rows: 0, footer: -1, segments: [] as Segment[] };
+	let layout = { ids: [] as string[], footer: -1, segments: [] as Segment[] };
 	const unsubscribe = sessions.subscribe(() => tui.requestRender());
 	const thinkingKey = keybindings.getKeys("app.thinking.toggle").join("/");
 	host.open.add(close);
@@ -331,25 +349,24 @@ function createChildrenView(
 		const { list, index } = children();
 		const now = Date.now();
 		const first = Math.max(0, index - body + 1);
-		layout = { ...layout, first, rows: Math.min(body, list.length - first) };
+		const painted = list.slice(first, first + body);
+		layout.ids = painted.map((child) => child.id);
 		const top = spread(
 			`${theme.fg("dim", "·")} ${theme.bold("Subagents")} ${list.length}`,
 			theme.fg("dim", "/pi-workflow-children · alt+a"),
 			width,
 		);
-		const rows = list
-			.slice(first, first + body)
-			.map((child, i) =>
-				renderChildRow(
-					theme,
-					child,
-					child.state === "queued"
-						? "queued"
-						: `${child.state} · ${childMeta(child, now)}`,
-					first + i === index,
-					width,
-				),
-			);
+		const rows = painted.map((child, i) =>
+			renderChildRow(
+				theme,
+				child,
+				child.state === "queued"
+					? "queued"
+					: `${child.state} · ${childMeta(child, now)}`,
+				first + i === index,
+				width,
+			),
+		);
 		if (list.length === 0) {
 			rows.push(theme.fg("dim", " No children in this session."));
 		}
@@ -357,6 +374,7 @@ function createChildrenView(
 	}
 
 	function renderDetail(child: ChildRecord, width: number, body: number) {
+		layout.ids = [];
 		const model = child.model.slice(child.model.indexOf("/") + 1);
 		const top = spread(
 			`${theme.fg("accent", childName(child))} · ${model} (${child.thinking})`,
@@ -406,10 +424,9 @@ function createChildrenView(
 				press(segment.action);
 				return { handled: true };
 			}
-			if (detail || confirming || event.y < 1 || event.y > layout.rows) {
-				return undefined;
-			}
-			selected = children().list[layout.first + event.y - 1]?.id;
+			const id = layout.ids[event.y - 1];
+			if (detail || confirming || !id || !sessions.get(id)) return undefined;
+			selected = id;
 			if ((event.clickCount ?? 1) >= 2) press("open");
 			else tui.requestRender();
 			return { handled: true };
