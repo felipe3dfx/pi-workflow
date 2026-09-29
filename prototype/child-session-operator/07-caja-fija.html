@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Prototipo 7: caja fija de subagentes</title>
+  <link rel="stylesheet" href="prototype.css">
+</head>
+<body>
+  <main class="page">
+    <p class="kicker"><a href="index.html">Mapa</a> · página 7 · <span class="proposal">propuesta #71 (pendiente de aprobación)</span></p>
+    <h1>Caja fija encima del campo</h1>
+    <div class="layout">
+      <section>
+        <div class="question">
+          <strong>Pregunta.</strong>
+          <p>¿La caja de subagentes queda fija justo encima del campo, sobre la caja de todos, aunque el hilo haga scroll?</p>
+        </div>
+        <ul class="check">
+          <li>Es un widget de Pi encima del campo. Ya no va en el header.</li>
+          <li>Título `Subagents` más el conteo. Fila activa resaltada.</li>
+          <li>Cada fila: estado, nombre, paso actual, modelo, effort y tiempo.</li>
+          <li>Subagents va arriba. La caja de todos va debajo, pegada al campo.</li>
+          <li>Sin botones [↗] ni [x]: la caja no recibe teclas. Pista `alt+a view`.</li>
+          <li>Los terminados quedan 60 s, máximo 3. Hasta 8 filas y `… N more`.</li>
+          <li>Sin hijos, la caja se omite.</li>
+          <li>El effort de la sesión sale en el footer de Pi: `grok-4.7 • high`.</li>
+        </ul>
+        <div class="controls" id="cases"></div>
+        <p class="note">Se refresca en cada cambio de estado y cada segundo solo mientras algún hijo trabaja. Si todo terminó, no hay reloj.</p>
+        <p class="note">Estados: ○ queued · ◐ running · ? waiting · ✓ completed · ✗ failed · – cancelled · ⧖ timed out.</p>
+      </section>
+      <section class="grok" aria-label="Caja fija encima del campo">
+        <div class="grok-top"><span>~/pi-workflow</span><span>66K / 500K</span></div>
+        <div class="grok-body scroller" id="thread">
+          <div class="user-bar"><span>) revisa el doctor y el lanzador en paralelo</span><span class="stamp">2:37 PM</span></div>
+          <p class="tree-head">◆ Thought for 5.7s</p>
+          <p>Lanzo dos subagentes: uno para el doctor y otro para el lanzador.</p>
+          <p class="tree-head">◆ subagent_run worker a1b2</p>
+          <p class="tree-head">◆ subagent_run explore c3d4</p>
+          <p>Mientras tanto reviso el contrato de las listas.</p>
+          <p class="tree-head">◆ read docs/specs/child-session-delegation.md</p>
+          <p class="tree-head">◆ read src/children/session.ts</p>
+          <p>El contrato pide que la lista no reescriba el transcript.</p>
+          <p class="tree-head">◆ Thought for 3.2s</p>
+          <p>Sigo esperando a los dos hijos.</p>
+          <p class="tree-head">◆ read src/children/view.ts</p>
+          <p>Último mensaje del hilo. <span class="stamp">2:41 PM</span></p>
+        </div>
+        <div class="dock">
+          <div class="scroll-hint" id="hint" hidden>↑ hilo desplazado hacia arriba · la caja sigue fija</div>
+          <div class="label">widget de Pi · aboveEditor</div>
+          <div class="sub-box" id="box"></div>
+          <div class="sub-box">
+            <div class="todo-box">
+              <button type="button" class="close" aria-label="Colapsar todos">×</button>
+              <div class="todo-row active">□ Revisar el doctor</div>
+              <div class="todo-row todo-done">✓ Escribir el contrato de las listas</div>
+            </div>
+          </div>
+          <div class="grok-input"><span>) ▍</span><span class="agent-meta">always-approve</span></div>
+          <div class="pi-footer"><span>~/pi-workflow (71)</span><span>grok-4.7 • high</span></div>
+        </div>
+      </section>
+    </div>
+  </main>
+  <script>
+    const glyph = {
+      queued: ["○", "g-queued"], running: ["◐", "g-running"], waiting: ["?", "g-waiting"],
+      completed: ["✓", "g-completed"], failed: ["✗", "g-failed"], cancelled: ["–", "g-cancelled"], timedout: ["⧖", "g-timedout"]
+    };
+    const row = ([state, name, step, model, time], active) => {
+      const [g, cls] = glyph[state];
+      const right = state === "queued" ? "queued" : `${model} ${time}`;
+      return `<div class="agent-row${active ? " active" : ""}"><span><span class="${cls}">${g}</span> <span class="agent-name">${name}</span> <span class="step">${step}</span></span><span class="agent-meta">${right}</span></div>`;
+    };
+    const base = [
+      ["running", "worker a1b2", "Run npm test…", "grok-4.7 (high)", "12s"],
+      ["waiting", "explore c3d4", "asks question 1", "grok-4.7 (low)", "31s"]
+    ];
+    const finished = [
+      ["running", "worker a1b2", "Run npm test…", "grok-4.7 (high)", "12s"],
+      ["completed", "explore c3d4", "mapear el lanzador", "grok-4.7 (low)", "44s"],
+      ["failed", "worker e5f6", "Run npm run check", "grok-4.7 (high)", "1m 02s"],
+      ["cancelled", "worker g7h8", "revisar el doctor", "grok-4.7 (high)", "8s"]
+    ];
+    const many = [
+      ["waiting", "explore c3d4", "asks question 1", "grok-4.7 (low)", "31s"],
+      ["running", "worker a1b2", "Run npm test…", "grok-4.7 (high)", "12s"],
+      ["running", "worker i9j0", "Edit src/children/view.ts", "grok-4.7 (high)", "9s"],
+      ["running", "explore k1l2", "Read docs/agents/workflow.md", "grok-4.7 (low)", "7s"],
+      ["running", "worker m3n4", "Run npm run lint", "grok-4.7 (high)", "5s"],
+      ["queued", "worker o5p6", "revisar el lanzador"],
+      ["queued", "worker q7r8", "revisar el doctor"],
+      ["timedout", "worker s9t0", "Run sleep 600", "grok-4.7 (high)", "5m 00s"]
+    ];
+    const box = (rows, extra) => `
+      <div class="tree-head">· Subagents ${rows.length + extra} <span class="agent-meta">&nbsp; alt+a view</span></div>
+      ${rows.map((r, i) => row(r, i === 0)).join("")}
+      ${extra ? `<div class="more">… ${extra} more · alt+a view</div>` : ""}`;
+    const cases = [
+      ["normal", "Normal"],
+      ["scrolled", "Hilo con scroll arriba"],
+      ["finished", "Terminados (60 s)"],
+      ["many", "Muchos hijos"],
+      ["empty", "Sin hijos (omitida)"]
+    ];
+    const el = document.querySelector("#box");
+    const thread = document.querySelector("#thread");
+    const hint = document.querySelector("#hint");
+    function show(name) {
+      el.innerHTML = name === "empty" ? "" : name === "many" ? box(many, 3) : name === "finished" ? box(finished, 0) : box(base, 0);
+      el.hidden = name === "empty";
+      thread.scrollTop = name === "scrolled" ? 0 : thread.scrollHeight;
+      hint.hidden = name !== "scrolled";
+      document.querySelectorAll("[data-case]").forEach((b) => {
+        b.setAttribute("aria-pressed", String(b.dataset.case === name));
+      });
+    }
+    const buttons = document.querySelector("#cases");
+    buttons.innerHTML = cases.map(([n, l]) => `<button type="button" data-case="${n}">${l}</button>`).join("");
+    buttons.onclick = (e) => { const b = e.target.closest("[data-case]"); if (b) show(b.dataset.case); };
+    thread.onscroll = () => { hint.hidden = thread.scrollTop + thread.clientHeight >= thread.scrollHeight - 4; };
+    show("normal");
+  </script>
+</body>
+</html>

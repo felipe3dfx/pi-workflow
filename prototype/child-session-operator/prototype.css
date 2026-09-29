@@ -50,3 +50,23 @@ button[aria-pressed="true"] { border-color: #e6b450; color: #e6b450; }
 .expanded { margin-left: 4px; padding-left: 10px; border-left: 3px solid #6a6a6a; }
 .grok-input { margin: 0 12px 8px; border: 1px solid #3a3a3a; border-radius: 8px; padding: 10px 12px; display: flex; justify-content: space-between; }
 .keys kbd { color: #eee; font-weight: 700; }
+.proposal { color: #e6b450; }
+.superseded { color: #777; text-decoration: line-through; }
+.grok-body.scroller { max-height: 260px; overflow: auto; }
+.dock { border-top: 1px solid #333; background: #141414; padding-top: 6px; }
+.dock .label { color: #777; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; padding: 0 12px; }
+.sub-box { margin: 4px 12px 0; }
+.sub-box .agent-row .step { color: #bdbdbd; }
+.more { color: #8d8d8d; padding: 2px 8px; }
+.g-queued { color: #8d8d8d; }
+.g-running { color: #8eb6ff; }
+.g-waiting { color: #e6b450; }
+.g-completed { color: #6fbf73; }
+.g-failed, .g-timedout { color: #e06c75; }
+.g-cancelled { color: #9a9a9a; }
+.pi-footer { display: flex; justify-content: space-between; color: #777; padding: 0 12px 8px; }
+.scroll-hint { color: #e6b450; padding: 0 12px; font-size: 12px; }
+.overlay-top { display: flex; justify-content: space-between; color: #d6d6d6; padding: 8px 12px; border-bottom: 1px solid #333; }
+.confirm { margin: 8px 12px; padding: 8px 10px; background: #2a2a2a; border-left: 4px solid #e6b450; }
+.thinking { color: #8d8d8d; }
+.caption { color: #9a9a9a; font-size: 12px; padding: 0 12px; }

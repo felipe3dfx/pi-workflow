@@ -23,9 +23,10 @@ import {
 	createChildSessions,
 	createContinueChildTool,
 	createSpawnChildTool,
-	describeChildren,
-	isWorking,
+	type Schedule,
 } from "./child-sessions.ts";
+import { registerChildrenBox } from "./children-box.ts";
+import { createChildrenViews } from "./children-view.ts";
 import {
 	createModelLists,
 	type ModelListsOptions,
@@ -36,7 +37,7 @@ import { registerSessionTodo } from "./todo-extension.ts";
 import { registerCompactTools } from "./compact-tools.ts";
 
 const usage =
-	"Usage: /pi-workflow-status | /pi-workflow-doctor | /pi-workflow-install-companions [--apply] | /pi-workflow-models | /pi-workflow-models-edit | /pi-workflow-children | /pi-workflow-child-cancel <id>";
+	"Usage: /pi-workflow-status | /pi-workflow-doctor | /pi-workflow-install-companions [--apply] | /pi-workflow-models | /pi-workflow-models-edit | /pi-workflow-children";
 
 function childOutcome({ id, state, text }: ChildRecord) {
 	if (state === "completed") return `Child ${id} completed:\n\n${text}`;
@@ -68,14 +69,14 @@ export default function piWorkflowExtension(
 		childSessions?: {
 			create?: ChildSessionFactory;
 			fetch?: Fetch;
-			schedule?: Parameters<typeof createChildSessions>[0]["schedule"];
+			schedule?: Schedule;
+			refresh?: Schedule;
 		};
 	} = {},
 ) {
 	let currentCtx: ExtensionContext | ExtensionCommandContext | undefined;
 	const context = () => currentCtx;
 	const workflow = createWorkflow(pi, context, options);
-	registerSessionTodo(pi);
 	registerCompactTools(pi);
 	registerTypesafeLogin(pi);
 	const modelLists = createModelLists(options.modelLists);
@@ -106,6 +107,15 @@ export default function piWorkflowExtension(
 			if (currentCtx) report(currentCtx, message, "error");
 		},
 	});
+	const childrenViews = createChildrenViews(childSessions);
+	registerChildrenBox(pi, childSessions, options.childSessions?.refresh);
+	registerSessionTodo(pi);
+	pi.registerShortcut("alt+a", {
+		description: "Open the children view",
+		handler: async (ctx) => {
+			if (ctx.mode === "tui") await childrenViews.open(ctx);
+		},
+	});
 	let spawnChildRegistered = false;
 
 	pi.on("session_start", async (_event, ctx) => {
@@ -133,6 +143,7 @@ export default function piWorkflowExtension(
 	});
 	pi.on("session_shutdown", async () => {
 		currentCtx = undefined;
+		childrenViews.close();
 		childSessions.disposeAll();
 	});
 
@@ -177,33 +188,17 @@ export default function piWorkflowExtension(
 		},
 	});
 	pi.registerCommand("pi-workflow-children", {
-		description: "List the child sessions of this session",
+		description: "Open the children view of this session",
 		handler: async (args, ctx) => {
 			if (args.trim()) {
 				report(ctx, usage, "error");
 				return;
 			}
-			report(ctx, describeChildren(childSessions.list()).join("\n"), "info");
-		},
-	});
-	pi.registerCommand("pi-workflow-child-cancel", {
-		description: "Cancel a queued, running, or waiting child session",
-		getArgumentCompletions: (prefix) =>
-			childSessions
-				.list()
-				.filter(
-					(child) =>
-						isWorking(child.state) && child.id.startsWith(prefix.trim()),
-				)
-				.map((child) => ({ value: child.id, label: child.id })),
-		handler: async (args, ctx) => {
-			const id = args.trim();
-			if (!id || /\s/.test(id)) {
-				report(ctx, usage, "error");
+			if (ctx.mode !== "tui") {
+				report(ctx, "The children view needs the TUI.", "error");
 				return;
 			}
-			const { cancelled, message } = childSessions.cancel(id, true);
-			report(ctx, message, cancelled ? "info" : "error");
+			await childrenViews.open(ctx);
 		},
 	});
 	pi.registerCommand("pi-workflow-models", {

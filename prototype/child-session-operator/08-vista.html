@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Prototipo 8: vista de subagentes</title>
+  <link rel="stylesheet" href="prototype.css">
+</head>
+<body>
+  <main class="page">
+    <p class="kicker"><a href="index.html">Mapa</a> · página 8 · <span class="proposal">propuesta #71 (pendiente de aprobación)</span></p>
+    <h1>Vista de subagentes a pantalla completa</h1>
+    <div class="layout">
+      <section>
+        <div class="question">
+          <strong>Pregunta.</strong>
+          <p>¿`alt+a` o `/pi-workflow-children` abren esta vista, y desde aquí se elige y se cancela un hijo?</p>
+        </div>
+        <ul class="check">
+          <li>Lista todos los hijos, también los terminados. La fila activa va resaltada.</li>
+          <li>`j`/`k` mueven. `Enter` abre el detalle.</li>
+          <li>`s` o `c` cancelan. Queued se cancela sin confirmar.</li>
+          <li>Running o waiting piden confirmación: `y`/`n`.</li>
+          <li>Terminados no se cancelan, pero sí se abren.</li>
+          <li>`q` cierra la vista y vuelve al chat.</li>
+        </ul>
+        <div class="controls">
+          <button type="button" id="case-list">Lista</button>
+          <button type="button" id="case-confirm">Confirmación (running)</button>
+          <button type="button" id="case-queued">Cancelar queued</button>
+        </div>
+        <p class="note">Prueba con el teclado o con los botones del footer. Esta vista reemplaza los [↗] y [x] por fila.</p>
+      </section>
+      <section class="grok" aria-label="Vista de subagentes">
+        <div class="overlay-top"><span>· Subagents <span id="count"></span></span><span class="agent-meta">/pi-workflow-children · alt+a</span></div>
+        <div class="grok-body" id="list"></div>
+        <div class="confirm" id="confirm" hidden></div>
+        <div class="grok-status" id="status"></div>
+        <div class="grok-foot keys">
+          <span>
+            <button type="button" data-key="j"><kbd>j</kbd>/<kbd>k</kbd> move</button>
+            <button type="button" data-key="Enter"><kbd>Enter</kbd> detail</button>
+            <button type="button" data-key="s"><kbd>s</kbd>/<kbd>c</kbd> cancel</button>
+            <button type="button" data-key="q"><kbd>q</kbd> close</button>
+          </span>
+        </div>
+      </section>
+    </div>
+  </main>
+  <script>
+    const glyph = {
+      queued: ["○", "g-queued"], running: ["◐", "g-running"], waiting: ["?", "g-waiting"],
+      completed: ["✓", "g-completed"], failed: ["✗", "g-failed"], cancelled: ["–", "g-cancelled"], timedout: ["⧖", "g-timedout"]
+    };
+    const children = [
+      { state: "waiting", name: "explore c3d4", step: "asks question 1", model: "grok-4.7 (low)", time: "31s" },
+      { state: "running", name: "worker a1b2", step: "Run npm test…", model: "grok-4.7 (high)", time: "12s" },
+      { state: "queued", name: "worker o5p6", step: "revisar el lanzador" },
+      { state: "completed", name: "explore k1l2", step: "mapear el doctor", model: "grok-4.7 (low)", time: "44s" },
+      { state: "failed", name: "worker e5f6", step: "Run npm run check", model: "grok-4.7 (high)", time: "1m 02s" },
+      { state: "cancelled", name: "worker g7h8", step: "revisar el doctor", model: "grok-4.7 (high)", time: "8s" },
+      { state: "timedout", name: "worker s9t0", step: "Run sleep 600", model: "grok-4.7 (high)", time: "5m 00s" }
+    ];
+    const live = (c) => c.state === "queued" || c.state === "running" || c.state === "waiting";
+    let index = 1;
+    let pending = null;
+    const list = document.querySelector("#list");
+    const confirmBox = document.querySelector("#confirm");
+    const status = document.querySelector("#status");
+    function paint() {
+      document.querySelector("#count").textContent = children.length;
+      list.innerHTML = children.map((c, i) => {
+        const [g, cls] = glyph[c.state];
+        const right = c.state === "queued" ? "queued" : `${c.model} ${c.time}`;
+        return `<div class="agent-row${i === index ? " active" : ""}" data-i="${i}"><span><span class="${cls}">${g}</span> <span class="agent-name">${c.name}</span> ${c.step}</span><span class="agent-meta">${c.state} · ${right}</span></div>`;
+      }).join("");
+      confirmBox.hidden = pending === null;
+      if (pending !== null) confirmBox.innerHTML = `Cancel ${children[pending].name}? <kbd>y</kbd>/<kbd>n</kbd>`;
+    }
+    function cancel(i) {
+      children[i].state = "cancelled";
+      children[i].step = "cancelado";
+      children[i].model = children[i].model || "—";
+      children[i].time = children[i].time || "0s";
+      status.textContent = `${children[i].name} cancelado`;
+    }
+    function key(k) {
+      if (pending !== null) {
+        if (k === "y") cancel(pending);
+        if (k === "y" || k === "n" || k === "Escape") { if (k !== "y") status.textContent = "Sin cambios."; pending = null; }
+        paint();
+        return;
+      }
+      if (k === "j" || k === "ArrowDown") index = Math.min(children.length - 1, index + 1);
+      if (k === "k" || k === "ArrowUp") index = Math.max(0, index - 1);
+      if (k === "Enter") location.href = `09-detalle.html#${children[index].state === "cancelled" ? "cancelled" : "live"}`;
+      if (k === "q") location.href = "07-caja-fija.html";
+      if (k === "s" || k === "c") {
+        const c = children[index];
+        if (!live(c)) status.textContent = `${c.name} ya terminó. No se cancela, pero se puede abrir.`;
+        else if (c.state === "queued") cancel(index);
+        else pending = index;
+      }
+      paint();
+    }
+    document.addEventListener("keydown", (e) => key(e.key));
+    list.onclick = (e) => { const r = e.target.closest("[data-i]"); if (r) { index = Number(r.dataset.i); paint(); } };
+    document.querySelectorAll("[data-key]").forEach((b) => { b.onclick = () => key(b.dataset.key); });
+    document.querySelector("#case-list").onclick = () => { pending = null; status.textContent = ""; paint(); };
+    document.querySelector("#case-confirm").onclick = () => { index = 1; pending = null; key("s"); };
+    document.querySelector("#case-queued").onclick = () => { index = 2; pending = null; key("c"); };
+    paint();
+  </script>
+</body>
+</html>

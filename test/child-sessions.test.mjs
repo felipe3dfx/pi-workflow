@@ -13,6 +13,7 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import process from "node:process";
+import { stripVTControlCharacters } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
@@ -21,7 +22,16 @@ import {
 	fauxProvider,
 	fauxToolCall,
 } from "@earendil-works/pi-ai";
-import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import {
+	initTheme,
+	ModelRegistry,
+	ModelRuntime,
+} from "@earendil-works/pi-coding-agent";
+import {
+	KeybindingsManager,
+	TUI_KEYBINDINGS,
+	TuiMainScreen,
+} from "@earendil-works/pi-tui";
 
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 
@@ -81,7 +91,7 @@ function fakeChildren({ model, thinking, tools, run, dispose, onCreate } = {}) {
 			aborts: 0,
 			disposals: 0,
 			result: Promise.withResolvers(),
-			entries: [{ type: "message", id: `entry-${created.length}` }],
+			entries: [userEntry(`entry-${created.length}`, spec.prompt)],
 		};
 		created.push(child);
 		return {
@@ -113,19 +123,37 @@ function loadExtension({
 	legacy = false,
 	sendMessage,
 	schedule,
+	refresh,
+	branch = [],
 }) {
 	const handlers = new Map();
 	const tools = [];
 	const commands = new Map();
+	const shortcuts = new Map();
 	const messages = [];
 	const notifications = [];
+	const widgets = new Map();
+	const views = [];
+	const ui = {
+		notify: (message, level) => notifications.push({ message, level }),
+		setWidget(key, factory, options) {
+			widgets.delete(key);
+			if (factory) widgets.set(key, { factory, options });
+		},
+		setStatus() {},
+		custom(factory, options) {
+			const view = { factory, options, ...Promise.withResolvers() };
+			views.push(view);
+			return view.promise;
+		},
+	};
 	piWorkflowExtension(
 		{
 			on(event, handler) {
 				handlers.set(event, [...(handlers.get(event) ?? []), handler]);
 			},
 			registerCommand: (name, command) => commands.set(name, command),
-			registerShortcut() {},
+			registerShortcut: (key, shortcut) => shortcuts.set(key, shortcut),
 			registerProvider() {},
 			registerTool: (tool) => tools.push(tool),
 			sendMessage: (message, options) => {
@@ -144,39 +172,32 @@ function loadExtension({
 						: {},
 			},
 			modelLists: { path: join(agentDir, "pi-workflow-models.json") },
-			childSessions: { create, fetch, schedule },
+			childSessions: { create, fetch, schedule, refresh },
 		},
 	);
-	const fire = async (event, payload = {}) => {
+	const fire = async (event, payload = {}, mode = "tui") => {
 		for (const handler of handlers.get(event) ?? []) {
 			await handler(payload, {
-				mode: "tui",
+				mode,
 				hasUI: true,
-				ui: {
-					notify: (message, level) => notifications.push({ message, level }),
-					setWidget() {},
-					setStatus() {},
-				},
-				sessionManager: { getBranch: () => [] },
+				ui,
+				sessionManager: { getBranch: () => branch },
 			});
 		}
 	};
-	const command = (name, args = "") =>
-		commands.get(name).handler(args, {
-			mode: "tui",
-			hasUI: true,
-			ui: {
-				notify: (message, level) => notifications.push({ message, level }),
-			},
-		});
+	const command = (name, args = "", mode = "tui") =>
+		commands.get(name).handler(args, { mode, hasUI: true, ui });
 	return {
 		tools,
 		messages,
 		notifications,
+		widgets,
+		views,
+		shortcuts,
+		commands,
+		ui,
 		fire,
 		command,
-		completions: (name, prefix) =>
-			commands.get(name).getArgumentCompletions(prefix),
 		named: (name) => tools.find((tool) => tool.name === name),
 		spawnTools: () => tools.filter((tool) => tool.name === "spawn_child"),
 	};
@@ -1021,7 +1042,7 @@ test("at most five children run at once; the others wait queued and start first 
 	});
 });
 
-test("list_children, child_status, child_result, and /pi-workflow-children report the children of this session", async () => {
+test("list_children, child_status, and child_result report the children of this session", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
 		const extension = await loadSpawnTool({
@@ -1029,8 +1050,10 @@ test("list_children, child_status, child_result, and /pi-workflow-children repor
 			create: children.create,
 			fetch: fakeJev().fetch,
 		});
-		await extension.command("pi-workflow-children");
-		assert.match(extension.notifications.at(-1).message, /No children/);
+		assert.match(
+			text(await use(extension, "list_children", {})),
+			/No children/,
+		);
 
 		const done = await spawnBackground(extension, worktree);
 		const busy = await spawnBackground(extension, worktree);
@@ -1079,11 +1102,6 @@ test("list_children, child_status, child_result, and /pi-workflow-children repor
 			const unknown = await use(extension, name, { id: "nope" });
 			assert.match(text(unknown), /No child nope in this session/);
 		}
-
-		await extension.command("pi-workflow-children");
-		const shown = extension.notifications.at(-1).message;
-		assert.match(shown, new RegExp(`${done} · worker · completed`));
-		assert.match(shown, new RegExp(`${busy} · worker · running`));
 	});
 });
 
@@ -1110,7 +1128,7 @@ test("session shutdown forgets the children of the session", async () => {
 	});
 });
 
-test("cancel_child and /pi-workflow-child-cancel leave a running child in the same cancelled state; only the command delivers it", async () => {
+test("cancel_child and the children view leave a running child in the same cancelled state; only the view delivers it", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
 		const extension = await loadSpawnTool({
@@ -1128,11 +1146,9 @@ test("cancel_child and /pi-workflow-child-cancel leave a running child in the sa
 		assert.equal(children.created[0].disposals, 1);
 		assert.equal(extension.messages.length, 0);
 
-		await extension.command("pi-workflow-child-cancel", byOperator);
-		assert.equal(
-			extension.notifications.at(-1).message,
-			`Child ${byOperator} cancelled.`,
-		);
+		const view = openChildren(extension);
+		view.press("s", "y");
+		assert.match(view.lines().join("\n"), /worker [0-9a-f]{4} cancelled\./);
 		assert.equal(children.created[1].disposals, 1);
 		assert.equal(extension.messages.length, 1);
 		assert.deepEqual(extension.messages[0].message.details, {
@@ -1194,44 +1210,9 @@ test("cancelling a child that already ended, or an unknown id, is refused and ch
 		);
 		const unknown = await use(extension, "cancel_child", { id: "nope" });
 		assert.match(text(unknown), /No child nope in this session/);
-		await extension.command("pi-workflow-child-cancel", id);
-		assert.equal(extension.notifications.at(-1).level, "error");
-		assert.match(extension.notifications.at(-1).message, /is completed/);
-		await extension.command("pi-workflow-child-cancel", "");
-		assert.match(
-			extension.notifications.at(-1).message,
-			/Usage: .*\/pi-workflow-child-cancel <id>/,
-		);
 
 		assert.equal(await stateOf(extension, id), "completed");
 		assert.equal(extension.messages.length, 0);
-	});
-});
-
-test("/pi-workflow-child-cancel completes the ids of children still working", async () => {
-	await withWorkspace(async ({ worktree, agentDir }) => {
-		const children = fakeChildren();
-		const extension = await loadSpawnTool({
-			agentDir,
-			create: children.create,
-			fetch: fakeJev().fetch,
-		});
-		const done = await spawnBackground(extension, worktree);
-		const busy = await spawnBackground(extension, worktree);
-		await settle();
-		children.created[0].result.resolve("Done.");
-		await settle();
-
-		const items = await extension.completions("pi-workflow-child-cancel", "");
-		assert.deepEqual(
-			items.map((item) => item.value),
-			[busy],
-		);
-		assert.notEqual(done, busy);
-		assert.deepEqual(
-			await extension.completions("pi-workflow-child-cancel", "zzz"),
-			[],
-		);
 	});
 });
 
@@ -1274,7 +1255,11 @@ test("a running child silent for four minutes times out, a tool in flight stretc
 
 		const [first] = children.created;
 		const emit = (event) => first.spec.onEvent(event);
-		emit({ type: "message_update" });
+		emit({
+			type: "message_update",
+			message: { role: "assistant", content: [] },
+			assistantMessageEvent: { type: "text_delta" },
+		});
 		assert.deepEqual(clock.pending(), Array(5).fill(minutes(4)));
 		emit({ type: "tool_execution_start", toolCallId: "t1", toolName: "bash" });
 		assert.equal(clock.pending().filter((ms) => ms === minutes(30)).length, 1);
@@ -1317,7 +1302,11 @@ test("a running child silent for four minutes times out, a tool in flight stretc
 		);
 
 		for (const child of children.created) child.result.resolve("Late result.");
-		emit({ type: "message_update" });
+		emit({
+			type: "message_update",
+			message: { role: "assistant", content: [] },
+			assistantMessageEvent: { type: "text_delta" },
+		});
 		await settle();
 		assert.equal(extension.messages.length, 6);
 		assert.deepEqual(clock.pending(), []);
@@ -2355,5 +2344,948 @@ test("aborting a foreground call's signal after the call has ended does nothing 
 		);
 		assert.equal(extension.messages.length, 0);
 		assert.deepEqual(unhandled, []);
+	});
+});
+
+const boxKey = "pi-workflow-children";
+
+const plainTheme = {
+	fg: (_color, text) => text,
+	bg: (_color, text) => `\x1b[7m${text}\x1b[27m`,
+	bold: (text) => text,
+	italic: (text) => text,
+};
+
+const viewKeys = new KeybindingsManager({
+	...TUI_KEYBINDINGS,
+	"app.thinking.toggle": {
+		defaultKeys: "ctrl+t",
+		description: "Toggle thinking",
+	},
+});
+
+const plain = (line) => stripVTControlCharacters(line);
+
+function boxOf(extension, tui = { requestRender() {} }) {
+	return extension.widgets.get(boxKey).factory(tui, plainTheme);
+}
+
+function openChildren(extension, { rows = 20, via = "shortcut" } = {}) {
+	const ctx = { mode: "tui", hasUI: true, ui: extension.ui };
+	const opened =
+		via === "shortcut"
+			? extension.shortcuts.get("alt+a").handler(ctx)
+			: extension.command("pi-workflow-children");
+	const view = extension.views.at(-1);
+	const tui = {
+		renders: 0,
+		requestRender() {
+			this.renders += 1;
+		},
+		terminal: { rows, columns: 100 },
+	};
+	let closed = false;
+	const component = view.factory(tui, plainTheme, viewKeys, () => {
+		closed = true;
+		view.resolve();
+	});
+	return {
+		opened,
+		view,
+		tui,
+		component,
+		closed: () => closed,
+		press: (...keys) => {
+			for (const key of keys) component.handleInput(key);
+		},
+		lines: (width = 100) => component.render(width).map(plain),
+		active: (width = 100) =>
+			component.render(width).findIndex((line) => line.startsWith("\x1b[7m")),
+	};
+}
+
+const todoBranch = [
+	{
+		type: "message",
+		message: {
+			role: "toolResult",
+			toolName: "todo",
+			isError: false,
+			details: { tasks: [{ id: 1, text: "Review the doctor", done: false }] },
+		},
+	},
+];
+
+test("a background child shows in the subagent box pinned above the input and above the task box, with its live step", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			fetch: fakeJev().fetch,
+			branch: todoBranch,
+		});
+		assert.deepEqual([...extension.widgets.keys()], [boxKey, "session-todo"]);
+		assert.equal(
+			extension.widgets.get(boxKey).options.placement,
+			"aboveEditor",
+		);
+		const box = boxOf(extension);
+		assert.deepEqual(box.render(100), []);
+
+		const id = await spawnBackground(extension, worktree);
+		await settle();
+		const lines = box.render(100).map(plain);
+		assert.match(lines[0], /· Subagents 1 +alt\+a view/);
+		assert.match(
+			lines[1],
+			/◐ worker [0-9a-f]{4} Fix the failing test +model \(medium\) \d+s$/,
+		);
+
+		children.created[0].spec.onEvent({
+			type: "tool_execution_start",
+			toolCallId: "t1",
+			toolName: "bash",
+			args: { command: "npm test\n--watch" },
+		});
+		assert.match(
+			plain(box.render(100)[1]),
+			/◐ worker [0-9a-f]{4} bash npm test +model/,
+		);
+		const [record] = (await use(extension, "list_children", {})).details
+			.children;
+		assert.equal(record.step, "bash npm test");
+
+		children.created[0].spec.onEvent({
+			type: "tool_execution_end",
+			toolCallId: "t1",
+			toolName: "bash",
+			result: {},
+			isError: false,
+		});
+		assert.match(
+			plain(box.render(100)[1]),
+			/◐ worker [0-9a-f]{4} Fix the failing test/,
+		);
+		assert.equal(await stateOf(extension, id), "running");
+	});
+});
+
+test("the box refreshes at once on a state change, groups redraws within 400 ms, ticks each second only while a child works, drops finished rows at 60 s with one timer, and schedules nothing when idle or after shutdown", async (t) => {
+	t.mock.timers.enable({ apis: ["Date"], now: 1_000_000 });
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const clock = manualClock();
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			fetch: fakeJev().fetch,
+			refresh: clock.schedule,
+		});
+		const tui = { renders: 0, requestRender: () => (tui.renders += 1) };
+		const box = boxOf(extension, tui);
+		const uiTimers = () => clock.pending().sort((a, b) => a - b);
+		assert.deepEqual(uiTimers(), []);
+
+		await spawnBackground(extension, worktree);
+		assert.equal(tui.renders, 1);
+		await settle();
+		for (const toolName of ["read", "bash", "edit"]) {
+			children.created[0].spec.onEvent({
+				type: "tool_execution_start",
+				toolCallId: toolName,
+				toolName,
+				args: {},
+			});
+		}
+		assert.equal(tui.renders, 1);
+		clock.fire(400);
+		assert.equal(tui.renders, 2);
+		clock.fire(400);
+		assert.equal(tui.renders, 2);
+		assert.deepEqual(uiTimers(), [1000]);
+
+		clock.fire(1000);
+		assert.equal(tui.renders, 3);
+		assert.deepEqual(uiTimers(), [400, 1000]);
+		clock.fire(400);
+
+		children.created[0].result.resolve("Done.");
+		await settle();
+		assert.equal(tui.renders, 4);
+		clock.fire(400);
+		clock.fire(1000);
+		clock.fire(400);
+		assert.deepEqual(uiTimers(), [60_000]);
+		assert.match(plain(box.render(100)[1]), /✓ worker/);
+		t.mock.timers.tick(60_000);
+		const expired = tui.renders;
+		clock.fire(60_000);
+		clock.fire(400);
+		assert.equal(tui.renders, expired + 1);
+		assert.deepEqual(box.render(100), []);
+		assert.deepEqual(uiTimers(), []);
+		const idle = tui.renders;
+
+		await spawnBackground(extension, worktree);
+		await settle();
+		assert.ok(uiTimers().includes(1000));
+		await extension.fire("session_shutdown", { reason: "quit" });
+		assert.deepEqual(uiTimers(), []);
+		assert.equal(tui.renders, idle + 1);
+	});
+});
+
+test("each TUI session start installs the box again, and print mode installs no box", async () => {
+	await withWorkspace(async ({ agentDir }) => {
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: fakeChildren().create,
+			fetch: fakeJev().fetch,
+		});
+		await extension.fire("session_shutdown", { reason: "new" });
+		extension.widgets.clear();
+		await extension.fire("session_start");
+		assert.ok(extension.widgets.has(boxKey));
+
+		const printed = loadExtension({
+			agentDir,
+			create: fakeChildren().create,
+			fetch: fakeJev().fetch,
+		});
+		await printed.fire("session_start", {}, "print");
+		assert.equal(printed.widgets.has(boxKey), false);
+	});
+});
+
+test("alt+a and /pi-workflow-children open a full-screen overlay of every child; j/k move the highlighted row and q or Esc close it", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			fetch: fakeJev().fetch,
+		});
+		await spawnBackground(extension, worktree, "Map the launcher");
+		await spawnBackground(extension, worktree, "Run the tests");
+		await settle();
+		children.created[0].result.resolve("Done.");
+		await settle();
+
+		const view = openChildren(extension, { rows: 12 });
+		assert.equal(view.view.options.overlay, true);
+		assert.equal(view.view.options.overlayOptions.width, "100%");
+		assert.equal(view.view.options.overlayOptions.maxHeight, "100%");
+		const lines = view.lines();
+		assert.equal(lines.length, 12);
+		assert.match(lines[0], /· Subagents 2 +\/pi-workflow-children · alt\+a/);
+		assert.match(
+			lines[1],
+			/◐ worker [0-9a-f]{4} Run the tests +running · model \(medium\) \d+s/,
+		);
+		assert.match(
+			lines[2],
+			/✓ worker [0-9a-f]{4} Map the launcher +completed · model \(medium\) \d+s/,
+		);
+		assert.match(
+			lines.at(-1),
+			/j\/k move · Enter detail · s\/c cancel · q close/,
+		);
+		assert.equal(view.active(), 1);
+		view.press("j");
+		assert.equal(view.active(), 2);
+		view.press("j");
+		assert.equal(view.active(), 2);
+		view.press("k");
+		assert.equal(view.active(), 1);
+		view.press("q");
+		assert.equal(view.closed(), true);
+		await view.opened;
+
+		const byCommand = openChildren(extension, { via: "command" });
+		assert.match(byCommand.lines()[0], /Subagents 2/);
+		byCommand.press("\x1b");
+		assert.equal(byCommand.closed(), true);
+
+		await extension.command("pi-workflow-children", "extra");
+		assert.match(extension.notifications.at(-1).message, /Usage:/);
+		const views = extension.views.length;
+		await extension.command("pi-workflow-children", "", "rpc");
+		assert.equal(extension.views.length, views);
+		assert.equal(extension.notifications.at(-1).level, "error");
+		assert.equal(extension.commands.has("pi-workflow-child-cancel"), false);
+		assert.doesNotMatch(extension.notifications.at(-2).message, /child-cancel/);
+	});
+});
+
+test("in the view, s or c asks y/n before cancelling a running child, cancels a queued child at once, and refuses a finished child", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			fetch: fakeJev().fetch,
+		});
+		const ids = [];
+		for (let i = 0; i < 6; i++)
+			ids.push(await spawnBackground(extension, worktree));
+		await settle();
+		const view = openChildren(extension);
+
+		view.press("s");
+		assert.match(view.lines().join("\n"), /Cancel worker [0-9a-f]{4}\? y\/n/);
+		assert.match(view.lines().at(-1), /y yes · n no/);
+		view.press("q", "n");
+		assert.equal(view.closed(), false);
+		assert.equal(await stateOf(extension, ids[0]), "running");
+		assert.doesNotMatch(view.lines().join("\n"), /Cancel worker/);
+
+		view.press("c", "y");
+		assert.equal(await stateOf(extension, ids[0]), "cancelled");
+		assert.deepEqual(extension.messages.at(-1).message.details, {
+			id: ids[0],
+			state: "cancelled",
+		});
+		await settle();
+		assert.equal(await stateOf(extension, ids[5]), "running");
+
+		const more = await spawnBackground(extension, worktree);
+		await settle();
+		assert.equal(await stateOf(extension, more), "queued");
+		view.press("j", "j", "j", "j", "j", "c");
+		assert.equal(await stateOf(extension, more), "cancelled");
+		assert.doesNotMatch(view.lines().join("\n"), /y\/n/);
+
+		const delivered = extension.messages.length;
+		view.press("k", "s");
+		assert.match(
+			view.lines().join("\n"),
+			/already ended; it cannot be cancelled/,
+		);
+		assert.equal(await stateOf(extension, ids[0]), "cancelled");
+		assert.equal(extension.messages.length, delivered);
+	});
+});
+
+function userEntry(id, text) {
+	return { type: "message", id, message: { role: "user", content: text } };
+}
+
+function assistantEntry(id, content) {
+	return {
+		type: "message",
+		id,
+		message: {
+			role: "assistant",
+			content,
+			api: "faux",
+			provider: "faux",
+			model: "faux",
+			stopReason: "toolUse",
+			usage: {},
+			timestamp: 0,
+		},
+	};
+}
+
+test("Enter opens a live detail that follows the tail, collapses thinking with Pi's toggle, cancels after y/n, and Esc goes back while q closes", async () => {
+	initTheme("dark", false);
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			fetch: fakeJev().fetch,
+		});
+		const id = await spawnBackground(extension, worktree, "Review the doctor");
+		await settle();
+		const child = children.created[0];
+		child.entries = [
+			userEntry("u1", "Review the doctor"),
+			assistantEntry("a1", [
+				{
+					type: "thinking",
+					thinking: "I should read the doctor module first.",
+				},
+				{ type: "text", text: "The doctor checks three things." },
+				{
+					type: "toolCall",
+					id: "t1",
+					name: "bash",
+					arguments: { command: "npm test" },
+				},
+			]),
+		];
+		const view = openChildren(extension, { rows: 40 });
+		view.press("\r");
+		let lines = view.lines();
+		let body = lines.join("\n");
+		assert.match(
+			lines[0],
+			/worker [0-9a-f]{4} · model \(medium\) +◐ running · \d+s/,
+		);
+		assert.match(body, /Review the doctor/);
+		assert.match(body, /I should read the doctor module first\./);
+		assert.match(body, /The doctor checks three things\./);
+		assert.match(body, /◆ bash npm test · Running/);
+		assert.match(
+			lines.at(-1),
+			/Esc back · q close · s\/c cancel · ctrl\+t thinking/,
+		);
+
+		const renders = view.tui.renders;
+		child.spec.onEvent({
+			type: "message_update",
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "Streaming the tail." }],
+			},
+			assistantMessageEvent: { type: "text_delta" },
+		});
+		assert.ok(view.tui.renders > renders);
+		const threadLines = view.lines().slice(1, -2);
+		assert.match(
+			threadLines.findLast((line) => line.trim() !== ""),
+			/Streaming the tail\./,
+		);
+
+		view.press("\x14");
+		body = view.lines().join("\n");
+		assert.doesNotMatch(body, /I should read the doctor module first/);
+		assert.match(body, /Thinking\.\.\./);
+		view.press("\x14");
+		assert.match(
+			view.lines().join("\n"),
+			/I should read the doctor module first/,
+		);
+
+		view.press("s");
+		assert.match(view.lines().join("\n"), /Cancel worker [0-9a-f]{4}\? y\/n/);
+		view.press("y");
+		assert.equal(await stateOf(extension, id), "cancelled");
+		lines = view.lines();
+		assert.match(lines[0], /– cancelled · \d+s/);
+		assert.match(lines.join("\n"), /The doctor checks three things\./);
+		assert.match(lines.join("\n"), /◆ bash npm test · Cancelled/);
+		assert.doesNotMatch(lines.join("\n"), /Streaming the tail/);
+		assert.doesNotMatch(lines.at(-1), /s\/c cancel/);
+
+		view.press("\x1b");
+		assert.match(view.lines()[0], /Subagents 1/);
+		assert.equal(view.closed(), false);
+		view.press("\r", "q");
+		assert.equal(view.closed(), true);
+	});
+});
+
+test("a tall thread shows only its tail in the detail", async () => {
+	initTheme("dark", false);
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			fetch: fakeJev().fetch,
+		});
+		await spawnBackground(extension, worktree);
+		await settle();
+		children.created[0].entries = Array.from({ length: 30 }, (_, i) =>
+			assistantEntry(`a${i}`, [{ type: "text", text: `Line ${i}.` }]),
+		);
+		const view = openChildren(extension, { rows: 10 });
+		view.press("\r");
+		const lines = view.lines();
+		assert.equal(lines.length, 10);
+		assert.match(lines.join("\n"), /Line 29\./);
+		assert.doesNotMatch(lines.join("\n"), /Line 0\./);
+	});
+});
+
+test("in fullscreen a click selects a row, a double click opens it, and each footer label runs its key", async () => {
+	initTheme("dark", false);
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			fetch: fakeJev().fetch,
+		});
+		await spawnBackground(extension, worktree, "First");
+		await spawnBackground(extension, worktree, "Second");
+		await settle();
+		const view = openChildren(extension, { rows: 12 });
+		const click = (x, y, clickCount = 1) =>
+			view.component.handleMouse({
+				type: "click",
+				button: "left",
+				x,
+				y,
+				clickCount,
+			});
+
+		view.lines();
+		assert.deepEqual(click(3, 2), { handled: true });
+		assert.equal(view.active(), 2);
+		click(3, 2, 2);
+		assert.match(view.lines()[0], /worker [0-9a-f]{4} · model/);
+		const back = view.lines().at(-1).indexOf("Esc back");
+		click(back + 1, 11);
+		assert.match(view.lines()[0], /Subagents 2/);
+		const footer = view.lines().at(-1);
+		click(footer.indexOf("s/c cancel") + 1, 11);
+		assert.match(view.lines().join("\n"), /Cancel worker [0-9a-f]{4}\? y\/n/);
+		click(view.lines().at(-1).indexOf("n no") + 1, 11);
+		assert.doesNotMatch(view.lines().join("\n"), /y\/n/);
+		click(footer.indexOf("q close") + 1, 11);
+		assert.equal(view.closed(), true);
+	});
+});
+
+class FakeTerminal {
+	start(onInput) {
+		this.onInput = onInput;
+	}
+	stop() {}
+	async drainInput() {}
+	write() {}
+	get columns() {
+		return 80;
+	}
+	get rows() {
+		return 24;
+	}
+	get kittyProtocolActive() {
+		return false;
+	}
+	moveBy() {}
+	hideCursor() {}
+	showCursor() {}
+	clearLine() {}
+	clearFromCursor() {}
+	clearScreen() {}
+	setTitle() {}
+	setProgress() {}
+}
+
+function overlayHost(tui) {
+	return (factory, options) =>
+		new Promise((resolve) => {
+			let closed = false;
+			const component = factory(tui, plainTheme, viewKeys, (result) => {
+				if (closed) return;
+				closed = true;
+				tui.hideOverlay();
+				resolve(result);
+			});
+			const handle = tui.showOverlay(component, options.overlayOptions);
+			options.onHandle?.(handle);
+		});
+}
+
+test("a dialog that takes focus while the children view is open closes the view, so the dialog stays visible and keeps the keys", async () => {
+	await withWorkspace(async ({ agentDir }) => {
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: fakeChildren().create,
+			fetch: fakeJev().fetch,
+		});
+		const terminal = new FakeTerminal();
+		const tui = new TuiMainScreen(terminal);
+		const keys = [];
+		const component = (name) => ({
+			render: () => [name],
+			invalidate() {},
+			handleInput: (data) => keys.push([name, data]),
+		});
+		const editor = component("editor");
+		tui.addChild(editor);
+		tui.setFocus(editor);
+		tui.start();
+		extension.ui.custom = overlayHost(tui);
+		const opened = extension.shortcuts
+			.get("alt+a")
+			.handler({ mode: "tui", hasUI: true, ui: extension.ui });
+		tui.renderNow();
+		assert.equal(await settledNow(opened), "still pending");
+
+		const panel = component("panel");
+		tui.removeChild(editor);
+		tui.addChild(panel);
+		tui.setFocus(panel);
+		tui.renderNow();
+		assert.equal(await settledNow(opened), "resolved");
+		terminal.onInput("\r");
+		assert.deepEqual(keys, [["panel", "\r"]]);
+		tui.stop();
+	});
+});
+
+test("escape sequences in a child's tool arguments never reach the step, the rows, or the detail", async () => {
+	initTheme("dark", false);
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			fetch: fakeJev().fetch,
+		});
+		await spawnBackground(extension, worktree);
+		await settle();
+		const hostile = { command: "a\x1b[2Jb\x1b]52;c;eA==\x07c\u202ed" };
+		const child = children.created[0];
+		child.spec.onEvent({
+			type: "tool_execution_start",
+			toolCallId: "t1",
+			toolName: "bash",
+			args: hostile,
+		});
+		child.entries = [
+			assistantEntry("a1", [
+				{ type: "toolCall", id: "t1", name: "bash", arguments: hostile },
+			]),
+		];
+		const [record] = (await use(extension, "list_children", {})).details
+			.children;
+		const view = openChildren(extension);
+		const rows = view.component.render(100).join("\n");
+		view.press("\r");
+		const detail = view.component.render(100).join("\n");
+		for (const text of [
+			record.step,
+			boxOf(extension).render(100).join(),
+			rows,
+			detail,
+		]) {
+			assert.equal(text.includes("\x1b[2J"), false);
+			assert.equal(text.includes("\x1b]52"), false);
+			assert.equal(text.includes("\u202e"), false);
+		}
+		assert.match(plain(detail), /◆ bash a \[2Jb \]52;c;eA== c d · Running/);
+	});
+});
+
+test("session shutdown closes an open children view and drops its listeners", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			fetch: fakeJev().fetch,
+		});
+		const view = openChildren(extension);
+		view.press("\r");
+		await extension.fire("session_shutdown", { reason: "new" });
+		assert.equal(view.closed(), true);
+		assert.equal(await settledNow(view.opened), "resolved");
+
+		await extension.fire("session_start");
+		const renders = view.tui.renders;
+		await spawnBackground(extension, worktree);
+		await settle();
+		assert.equal(view.tui.renders, renders);
+	});
+});
+
+test("the view lists waiting, running, queued, then finished children, and a click picks the row it shows", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			fetch: fakeJev().fetch,
+		});
+		const ids = [];
+		for (let i = 0; i < 7; i++) {
+			ids.push(await spawnBackground(extension, worktree, `Task ${i}`));
+		}
+		await settle();
+		children.created[0].result.resolve("Done.");
+		await settle();
+		void children.created[4].spec.ask("Which branch?");
+		const view = openChildren(extension, { rows: 12 });
+		const order = view
+			.lines()
+			.slice(1, 8)
+			.map((line) => line.match(/worker ([0-9a-f]{4})/)[1]);
+		assert.deepEqual(
+			order,
+			[4, 1, 2, 3, 5, 6, 0].map((i) => ids[i].slice(0, 4)),
+		);
+		assert.equal(view.active(), 1);
+		assert.match(view.lines()[1], /\? worker [0-9a-f]{4} asks question 1/);
+
+		view.component.handleMouse({
+			type: "click",
+			button: "left",
+			x: 3,
+			y: 7,
+			clickCount: 2,
+		});
+		assert.match(
+			view.lines()[0],
+			new RegExp(`worker ${ids[0].slice(0, 4)} · model .*✓ completed`),
+		);
+	});
+});
+
+test("an overlay opened over the children view keeps its focus and closes normally, and the view still works afterwards", async () => {
+	await withWorkspace(async ({ agentDir }) => {
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: fakeChildren().create,
+			fetch: fakeJev().fetch,
+		});
+		const terminal = new FakeTerminal();
+		const tui = new TuiMainScreen(terminal);
+		const keys = [];
+		const editor = {
+			render: () => ["editor"],
+			invalidate() {},
+			handleInput: (data) => keys.push(["editor", data]),
+		};
+		tui.addChild(editor);
+		tui.setFocus(editor);
+		tui.start();
+		extension.ui.custom = overlayHost(tui);
+		const opened = extension.shortcuts
+			.get("alt+a")
+			.handler({ mode: "tui", hasUI: true, ui: extension.ui });
+		tui.renderNow();
+
+		let closeOther;
+		const other = overlayHost(tui)(
+			(_tui, _theme, _keys, done) => {
+				closeOther = done;
+				return {
+					render: () => ["OTHER"],
+					invalidate() {},
+					handleInput: (data) => keys.push(["other", data]),
+				};
+			},
+			{ overlayOptions: { width: 20, anchor: "center" } },
+		);
+		tui.renderNow();
+		assert.equal(await settledNow(opened), "still pending");
+		terminal.onInput("x");
+		assert.deepEqual(keys, [["other", "x"]]);
+
+		closeOther("done");
+		tui.renderNow();
+		assert.equal(await settledNow(other), "resolved");
+		assert.equal(await settledNow(opened), "still pending");
+		terminal.onInput("q");
+		tui.renderNow();
+		assert.equal(await settledNow(opened), "resolved");
+		terminal.onInput("z");
+		assert.deepEqual(keys, [
+			["other", "x"],
+			["editor", "z"],
+		]);
+		tui.stop();
+	});
+});
+
+test("a child that starts while a finished row waits to expire gets the one-second tick at once", async (t) => {
+	t.mock.timers.enable({ apis: ["Date"], now: 1_000_000 });
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const clock = manualClock();
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			fetch: fakeJev().fetch,
+			refresh: clock.schedule,
+		});
+		boxOf(extension);
+		await spawnBackground(extension, worktree);
+		await settle();
+		children.created[0].result.resolve("Done.");
+		await settle();
+		clock.fire(400);
+		clock.fire(1000);
+		const ticks = () => clock.pending().filter((ms) => ms !== 400);
+		assert.deepEqual(ticks(), [60_000]);
+
+		await spawnBackground(extension, worktree);
+		await settle();
+		assert.deepEqual(ticks(), [1000]);
+	});
+});
+
+test("closing the view from an open detail stops following the child", async () => {
+	initTheme("dark", false);
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			fetch: fakeJev().fetch,
+		});
+		await spawnBackground(extension, worktree);
+		await settle();
+		const view = openChildren(extension);
+		view.press("\r");
+		children.created[0].spec.onEvent({ type: "turn_start" });
+		const followed = view.tui.renders;
+		assert.ok(followed > 0);
+		view.press("q");
+		const closed = view.tui.renders;
+		children.created[0].spec.onEvent({ type: "turn_start" });
+		assert.equal(view.tui.renders, closed);
+	});
+});
+
+const hostileBytes = [
+	"\x1b[2J",
+	"\x1b]52;c;",
+	"\x1b]8;;x",
+	"\x1b]0;",
+	"\x9b",
+	"‮",
+	"⁦",
+];
+
+function hostile(label) {
+	return `${label}\x1b[2J\x1b]52;c;eA==\x07\x1b]8;;x\x07\x1b]0;title\x07\x9b31m‮⁦end\tcol\nnext ${label}`;
+}
+
+test("control sequences in a child's task, text, thinking, and streaming updates never reach the rendered detail", async () => {
+	initTheme("dark", false);
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			fetch: fakeJev().fetch,
+		});
+		await spawnBackground(extension, worktree);
+		await settle();
+		const child = children.created[0];
+		child.entries = [
+			userEntry("u1", hostile("task")),
+			assistantEntry("a1", [
+				{ type: "thinking", thinking: hostile("thought") },
+				{ type: "text", text: hostile("answer") },
+			]),
+			{
+				...assistantEntry("a2", [{ type: "text", text: "partial" }]),
+				message: {
+					...assistantEntry("a2", []).message,
+					content: [{ type: "text", text: "partial" }],
+					stopReason: "error",
+					errorMessage: hostile("failure"),
+				},
+			},
+			{
+				type: "message",
+				id: "r1",
+				message: {
+					role: "toolResult",
+					toolCallId: "t1",
+					toolName: "bash",
+					content: [{ type: "text", text: hostile("output") }],
+					isError: false,
+				},
+			},
+		];
+		child.spec.onEvent({
+			type: "message_update",
+			message: {
+				role: "assistant",
+				content: [
+					{ type: "thinking", thinking: hostile("streamed thought") },
+					{ type: "text", text: hostile("streamed answer") },
+				],
+			},
+			assistantMessageEvent: { type: "text_delta" },
+		});
+		const view = openChildren(extension, { rows: 80 });
+		view.press("\r");
+		const emitted = view.component.render(100).join("\n");
+		for (const bytes of hostileBytes) {
+			assert.equal(emitted.includes(bytes), false, JSON.stringify(bytes));
+		}
+		const shown = plain(emitted);
+		for (const label of [
+			"task",
+			"thought",
+			"answer",
+			"streamed thought",
+			"streamed answer",
+			"failure",
+		]) {
+			assert.match(shown, new RegExp(`next ${label}`));
+		}
+	});
+});
+
+test("a double click opens the child painted on that row even if the order changed before the next redraw, and a vanished child does nothing", async () => {
+	initTheme("dark", false);
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			fetch: fakeJev().fetch,
+		});
+		const first = await spawnBackground(extension, worktree, "First");
+		await spawnBackground(extension, worktree, "Second");
+		await settle();
+		const view = openChildren(extension, { rows: 12 });
+		view.component.render(100);
+		children.created[1].spec.ask("Which branch?").catch(() => {});
+		view.component.handleMouse({
+			type: "click",
+			button: "left",
+			x: 3,
+			y: 1,
+			clickCount: 2,
+		});
+		assert.match(
+			view.lines()[0],
+			new RegExp(`worker ${first.slice(0, 4)} · model`),
+		);
+
+		view.press("\x1b");
+		view.component.render(100);
+		await extension.fire("session_shutdown", { reason: "new" });
+		assert.equal(
+			view.component.handleMouse({
+				type: "click",
+				button: "left",
+				x: 3,
+				y: 1,
+				clickCount: 2,
+			}),
+			undefined,
+		);
+	});
+});
+
+test("a click after leaving the detail and before the next redraw opens nothing", async () => {
+	initTheme("dark", false);
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			fetch: fakeJev().fetch,
+		});
+		await spawnBackground(extension, worktree);
+		await settle();
+		const view = openChildren(extension, { rows: 12 });
+		view.component.render(100);
+		view.press("\r");
+		view.component.render(100);
+		view.press("\x1b");
+		const click = view.component.handleMouse({
+			type: "click",
+			button: "left",
+			x: 3,
+			y: 1,
+			clickCount: 2,
+		});
+		assert.equal(click, undefined);
+		assert.match(view.lines()[0], /Subagents 1/);
 	});
 });

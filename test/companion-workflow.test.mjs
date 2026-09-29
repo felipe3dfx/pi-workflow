@@ -42,7 +42,10 @@ async function fireEvent(handlers, event, ctx) {
 function fakeSessionStartCtx(notifications = []) {
 	return {
 		mode: "tui",
-		ui: { notify: (message, level) => notifications.push({ message, level }) },
+		ui: {
+			notify: (message, level) => notifications.push({ message, level }),
+			setWidget() {},
+		},
 		sessionManager: { getBranch: () => [] },
 	};
 }
