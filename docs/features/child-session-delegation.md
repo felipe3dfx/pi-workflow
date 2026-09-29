@@ -1,8 +1,8 @@
 # Feature brief: child-session delegation
 
-Status: user-confirmed. Prototype disposition: reference-only. This brief is not an implementation base.
+Status: superseded by `docs/specs/child-session-delegation.md`. This brief is a historical record of the user-confirmed design, not an implementation base.
 
-The non-UI decisions remain in `docs/specs/child-session-delegation.md`. The operator surfaces below replace that spec's operator-surface section. That replacement is a functional change and is not yet folded into the published spec.
+The spec is authoritative for every decision below. Where this brief differs from it, the spec wins.
 
 ## Operator surfaces
 
