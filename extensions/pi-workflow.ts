@@ -26,18 +26,19 @@ import {
 	type Schedule,
 } from "./child-sessions.ts";
 import { registerChildrenBox } from "./children-box.ts";
+import { createFooterHints, registerChrome } from "./chrome.ts";
 import { createChildrenViews } from "./children-view.ts";
 import {
-	createModelLists,
-	type ModelListsOptions,
+	createModelProfiles,
+	type ModelProfilesOptions,
 	report,
-} from "./model-lists.ts";
-import { type Fetch, registerTypesafeLogin } from "./jev-client.ts";
+} from "./model-profiles.ts";
+import type { Fetch } from "./jev-client.ts";
 import { registerSessionTodo } from "./todo-extension.ts";
 import { registerCompactTools } from "./compact-tools.ts";
 
 const usage =
-	"Usage: /pi-workflow-status | /pi-workflow-doctor | /pi-workflow-install-companions [--apply] | /pi-workflow-models | /pi-workflow-models-edit | /pi-workflow-children";
+	"Usage: /workflow:status | /workflow:doctor | /workflow:setup | /workflow:models | /workflow:subagents";
 
 function childOutcome({ id, state, text }: ChildRecord) {
 	if (state === "completed") return `Child ${id} completed:\n\n${text}`;
@@ -58,6 +59,7 @@ function createWorkflow(
 			notify: (message, level) => getContext()?.ui.notify(message, level),
 		},
 		mcp: options.mcp,
+		settings: options.settings,
 	});
 }
 
@@ -65,7 +67,7 @@ export default function piWorkflowExtension(
 	pi: ExtensionAPI,
 	options: CompanionWorkflowOptions & {
 		codegraph?: CodeGraphAdapters;
-		modelLists?: ModelListsOptions;
+		modelProfiles?: ModelProfilesOptions;
 		childSessions?: {
 			create?: ChildSessionFactory;
 			fetch?: Fetch;
@@ -78,8 +80,7 @@ export default function piWorkflowExtension(
 	const context = () => currentCtx;
 	const workflow = createWorkflow(pi, context, options);
 	registerCompactTools(pi);
-	registerTypesafeLogin(pi);
-	const modelLists = createModelLists(options.modelLists);
+	const modelProfiles = createModelProfiles(options.modelProfiles);
 	const childSessions = createChildSessions({
 		create: options.childSessions?.create,
 		schedule: options.childSessions?.schedule,
@@ -110,8 +111,10 @@ export default function piWorkflowExtension(
 	const childrenViews = createChildrenViews(childSessions);
 	registerChildrenBox(pi, childSessions, options.childSessions?.refresh);
 	registerSessionTodo(pi);
+	const footerHints = createFooterHints();
+	registerChrome(pi, childSessions, footerHints);
 	pi.registerShortcut("alt+a", {
-		description: "Open the children view",
+		description: "Open the subagents view",
 		handler: async (ctx) => {
 			if (ctx.mode === "tui") await childrenViews.open(ctx);
 		},
@@ -126,7 +129,7 @@ export default function piWorkflowExtension(
 			pi.registerTool(
 				createSpawnChildTool(
 					createChildLauncher({
-						modelLists,
+						modelProfiles,
 						fetch: options.childSessions?.fetch,
 					}),
 					childSessions,
@@ -162,33 +165,32 @@ export default function piWorkflowExtension(
 
 	pi.registerTool(createCodeGraphTool(options.codegraph));
 	const askUserPanelState = createAskUserPanelState();
-	pi.registerTool(createAskUserChoiceTool(askUserPanelState));
-	pi.registerTool(createAskUserQuestionTool(askUserPanelState));
+	pi.registerTool(createAskUserChoiceTool(askUserPanelState, footerHints));
+	pi.registerTool(createAskUserQuestionTool(askUserPanelState, footerHints));
 	registerAskUserQueueCounter(pi, askUserPanelState);
 
-	pi.registerCommand("pi-workflow-status", {
-		description: "Summarize companion package readiness",
+	pi.registerCommand("workflow:status", {
+		description: "Summarize companion, MCP, and default settings readiness",
 		handler: (args, ctx) => runCatalogCommand("inspect", args, ctx),
 	});
-	pi.registerCommand("pi-workflow-doctor", {
+	pi.registerCommand("workflow:doctor", {
 		description: "Show companion diagnostic detail",
 		handler: (args, ctx) => runCatalogCommand("diagnose", args, ctx),
 	});
-	pi.registerCommand("pi-workflow-install-companions", {
+	pi.registerCommand("workflow:setup", {
 		description:
-			"Show the companion install plan, or apply it when --apply confirms the command",
+			"Install missing companions, align the MCP catalog, and apply default settings",
 		handler: async (args, ctx) => {
-			const parts = args.trim().split(/\s+/).filter(Boolean);
-			if (parts.length > 1 || (parts.length === 1 && parts[0] !== "--apply")) {
+			if (args.trim()) {
 				ctx.ui.notify(usage, "error");
 				return;
 			}
 			currentCtx = ctx;
-			await workflow.installMissing(parts[0] === "--apply");
+			await workflow.setup();
 		},
 	});
-	pi.registerCommand("pi-workflow-children", {
-		description: "Open the children view of this session",
+	pi.registerCommand("workflow:subagents", {
+		description: "Open the subagents view of this session",
 		handler: async (args, ctx) => {
 			if (args.trim()) {
 				report(ctx, usage, "error");
@@ -201,25 +203,14 @@ export default function piWorkflowExtension(
 			await childrenViews.open(ctx);
 		},
 	});
-	pi.registerCommand("pi-workflow-models", {
-		description:
-			"Create the global model lists when missing, or replace them after confirmation",
+	pi.registerCommand("workflow:models", {
+		description: "Edit the global model profiles in the TUI",
 		handler: async (args, ctx) => {
 			if (args.trim()) {
 				report(ctx, usage, "error");
 				return;
 			}
-			await modelLists.create(ctx);
-		},
-	});
-	pi.registerCommand("pi-workflow-models-edit", {
-		description: "Edit the global model lists in the TUI",
-		handler: async (args, ctx) => {
-			if (args.trim()) {
-				report(ctx, usage, "error");
-				return;
-			}
-			await modelLists.edit(ctx);
+			await modelProfiles.edit(ctx);
 		},
 	});
 }

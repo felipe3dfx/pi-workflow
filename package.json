@@ -29,7 +29,8 @@
     "package.json",
     "LICENSE",
     "extensions/",
-    "assets/"
+    "assets/",
+    "themes/"
   ],
   "scripts": {
     "pack:dry-run": "npm pack --dry-run",
@@ -49,22 +50,25 @@
   "pi": {
     "extensions": [
       "./extensions/pi-workflow.ts"
+    ],
+    "themes": [
+      "./themes/pi-workflow.json"
     ]
   },
   "engines": {
     "node": ">=22.19"
   },
   "peerDependencies": {
-    "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*",
+    "@earendil-works/pi-ai": ">=0.99.0",
+    "@earendil-works/pi-coding-agent": ">=0.99.0",
+    "@earendil-works/pi-tui": ">=0.99.0",
     "typebox": "*"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.3",
-    "@earendil-works/pi-ai": "0.87.1",
-    "@earendil-works/pi-coding-agent": "0.87.1",
-    "@earendil-works/pi-tui": "0.87.1",
+    "@earendil-works/pi-ai": "0.99.1",
+    "@earendil-works/pi-coding-agent": "0.99.1",
+    "@earendil-works/pi-tui": "0.99.1",
     "@types/node": "^22.20.1",
     "knip": "^6.25.0",
     "typebox": "1.1.38",

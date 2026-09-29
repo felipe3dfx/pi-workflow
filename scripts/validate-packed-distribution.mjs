@@ -7,6 +7,7 @@ import { join, relative } from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { validateTheme } from "./validate-pi-package.mjs";
 
 const execFileAsync = promisify(execFile);
 const required = [
@@ -17,8 +18,11 @@ const required = [
 	"extensions/companion-workflow.ts",
 	"extensions/codegraph-tool.ts",
 	"extensions/mcp-config.ts",
+	"extensions/pi-settings.ts",
 	"assets/companions.json",
 	"assets/mcp-servers.json",
+	"assets/settings.json",
+	"themes/pi-workflow.json",
 	"assets/contracts/explore.md",
 	"assets/contracts/worker.md",
 	"assets/contracts/verify.md",
@@ -83,7 +87,10 @@ async function main() {
 	try {
 		const packed = await npmPack(process.cwd(), workspace);
 		const packageRoot = await extract(packed, join(workspace, "extract"));
-		const errors = validatePackedFiles(await filesUnder(packageRoot));
+		const errors = [
+			...validatePackedFiles(await filesUnder(packageRoot)),
+			...(await validateTheme(packageRoot)),
+		];
 		if (errors.length > 0) throw new Error(errors.join("\n"));
 		process.stdout.write("Packed distribution validation passed.\n");
 	} finally {

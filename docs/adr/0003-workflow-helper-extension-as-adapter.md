@@ -1,6 +1,6 @@
 # Workflow helper extension as adapter
 
-The pi-workflow helper extension is the adapter from harness domain concepts into Pi commands. It should expose the public command interface for status, doctor, and explicit companion install, but harness policy should live behind that adapter in deeper modules such as the companion catalog, harness doctor, and harness release guard.
+The pi-workflow helper extension is the adapter from harness domain concepts into Pi commands. It should expose the public command interface for status, doctor, and setup, but harness policy should live behind that adapter in deeper modules such as the companion catalog, harness doctor, and harness release guard.
 
 ## Considered Options
 

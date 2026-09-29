@@ -59,7 +59,7 @@ test("the box reads Subagents with the count, and each row shows the state, name
 		now,
 		100,
 	);
-	assert.match(lines[0], /· Subagents 2 +alt\+a view/);
+	assert.match(lines[0], /▾ Subagents 2 +alt\+a view/);
 	assert.match(
 		lines[1],
 		/\? explore c3d4 asks question 1 +grok-4\.7 \(low\) 1m 02s/,
@@ -158,4 +158,23 @@ test("every line fits the width, including wide task text", () => {
 		);
 		for (const line of lines) assert.ok(visibleWidth(line) <= width);
 	}
+});
+
+test("the running glyph and the role use the accent while the short id stays plain", () => {
+	const tagged = {
+		...theme,
+		fg: (color, text) => `<${color}>${text}</${color}>`,
+	};
+	const [, row] = renderChildrenBox(tagged, [child({})], now, 200);
+	assert.match(row, /<accent>◐<\/accent> <accent>worker<\/accent> a1b2 /);
+});
+
+test("the heading is a dim chevron, a bold muted title, and a dim count", () => {
+	const tagged = {
+		...theme,
+		fg: (color, text) => `<${color}>${text}</${color}>`,
+		bold: (text) => `<b>${text}</b>`,
+	};
+	const [heading] = renderChildrenBox(tagged, [child({})], now, 80);
+	assert.match(heading, /^<dim>▾<\/dim> <b><muted>Subagents<\/muted><\/b> <dim>1<\/dim> +<dim>alt\+a view<\/dim>$/);
 });

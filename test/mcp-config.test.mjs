@@ -1,6 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import {
+	chmodSync,
+	lstatSync,
+	mkdirSync,
+	readdirSync,
+	statSync,
+	symlinkSync,
+} from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -107,6 +114,83 @@ test("planMcpConfiguration reports replacements when existing definitions drift 
 	});
 });
 
+const exposureCatalog = {
+	schemaVersion: 1,
+	mcpServers: {
+		foo: { url: "https://example.test/foo", exposure: "direct" },
+	},
+};
+
+test("an entry with extra keys plus the catalog keys is aligned and left untouched by setup", async () => {
+	await withAgentDirectory(async ({ agentDirectory }) => {
+		const configPath = join(agentDirectory, "mcp.json");
+		const config = {
+			mcpServers: {
+				foo: { ...exposureCatalog.mcpServers.foo, enabled: false },
+			},
+		};
+		await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+
+		const plan = planMcpConfiguration(exposureCatalog, { agentDirectory });
+		assert.equal(plan.changed, false);
+		assert.deepEqual(plan.replacements, []);
+
+		const outcome = applyMcpConfiguration(plan, exposureCatalog, {
+			agentDirectory,
+		});
+		assert.deepEqual(outcome, {
+			status: "applied",
+			path: configPath,
+			wrote: false,
+		});
+		assert.deepEqual(JSON.parse(await readFile(configPath, "utf8")), config);
+	});
+});
+
+test("an entry with a different exposure is reported and fixed while its extra keys are kept", async () => {
+	await withAgentDirectory(async ({ agentDirectory }) => {
+		const configPath = join(agentDirectory, "mcp.json");
+		await writeFile(
+			configPath,
+			`${JSON.stringify(
+				{
+					mcpServers: {
+						foo: {
+							url: "https://example.test/foo",
+							exposure: "proxy",
+							enabled: false,
+							toolExposure: "custom",
+						},
+					},
+				},
+				null,
+				2,
+			)}\n`,
+			"utf8",
+		);
+
+		const plan = planMcpConfiguration(exposureCatalog, { agentDirectory });
+		assert.equal(plan.changed, true);
+		assert.equal(plan.replacements.length, 1);
+		assert.deepEqual(plan.replacements[0].keys, ["exposure"]);
+
+		const outcome = applyMcpConfiguration(plan, exposureCatalog, {
+			agentDirectory,
+		});
+		assert.equal(outcome.status, "applied");
+		assert.deepEqual(JSON.parse(await readFile(configPath, "utf8")), {
+			mcpServers: {
+				foo: {
+					url: "https://example.test/foo",
+					exposure: "direct",
+					enabled: false,
+					toolExposure: "custom",
+				},
+			},
+		});
+	});
+});
+
 test("planMcpConfiguration reports an error for corrupt existing configuration", async () => {
 	await withAgentDirectory(async ({ agentDirectory }) => {
 		await writeFile(join(agentDirectory, "mcp.json"), "{ not valid json", "utf8");
@@ -137,6 +221,42 @@ test("applyMcpConfiguration writes the merged configuration atomically on the ha
 			telemetry: { enabled: true },
 			mcpServers: catalog.mcpServers,
 		});
+	});
+});
+
+test("applyMcpConfiguration keeps a 0600 mcp.json at 0600", async () => {
+	await withAgentDirectory(async ({ agentDirectory }) => {
+		const path = join(agentDirectory, "mcp.json");
+		await writeFile(path, "{}\n", { encoding: "utf8", mode: 0o600 });
+		chmodSync(path, 0o600);
+
+		const plan = planMcpConfiguration(catalog, { agentDirectory });
+		const outcome = applyMcpConfiguration(plan, catalog, { agentDirectory });
+
+		assert.equal(outcome.status, "applied");
+		assert.equal(statSync(path).mode & 0o777, 0o600);
+	});
+});
+
+test("applyMcpConfiguration writes through a symlinked mcp.json and keeps the link", async () => {
+	await withAgentDirectory(async ({ dir, agentDirectory }) => {
+		const realPath = join(dir, "dotfiles-mcp.json");
+		await writeFile(realPath, "{}\n", "utf8");
+		const linkPath = join(agentDirectory, "mcp.json");
+		symlinkSync(realPath, linkPath);
+
+		const plan = planMcpConfiguration(catalog, { agentDirectory });
+		const outcome = applyMcpConfiguration(plan, catalog, { agentDirectory });
+
+		assert.equal(outcome.status, "applied");
+		assert.ok(lstatSync(linkPath).isSymbolicLink());
+		assert.deepEqual(JSON.parse(await readFile(realPath, "utf8")), {
+			mcpServers: catalog.mcpServers,
+		});
+		assert.deepEqual(
+			readdirSync(dir).filter((name) => name.endsWith(".tmp")),
+			[],
+		);
 	});
 });
 
@@ -339,8 +459,9 @@ test("manualMcpConfigurationInstructions renders the catalog and flags same-name
 		assert.match(instructions, new RegExp(plan.path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 		assert.match(instructions, /"foo"/);
 		assert.match(instructions, /"bar"/);
-		assert.match(instructions, /Same-name conflicts must be replaced only after reviewing/);
-		assert.match(instructions, /https:\/\/example\.test\/drifted/);
+		assert.match(instructions, /Set only the differing keys below/);
+		assert.match(instructions, /url: current "https:\/\/example\.test\/drifted", expected "https:\/\/example\.test\/foo"/);
+		assert.match(instructions, /\/mcp login sentry and \/mcp login linear/);
 	});
 });
 
@@ -350,9 +471,6 @@ test("manualMcpConfigurationInstructions omits the conflict warning when there a
 
 		const instructions = manualMcpConfigurationInstructions(plan, catalog);
 
-		assert.doesNotMatch(
-			instructions,
-			/Same-name conflicts must be replaced only after reviewing/,
-		);
+		assert.doesNotMatch(instructions, /Set only the differing keys below/);
 	});
 });

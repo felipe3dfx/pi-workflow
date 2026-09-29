@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "settings": {
+    "tuiMode": "fullscreen",
+    "theme": "pi-workflow",
+    "quietStartup": true
+  }
+}

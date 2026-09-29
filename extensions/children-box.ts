@@ -86,7 +86,11 @@ export function childGlyph(theme: ChildTheme, child: ChildRecord) {
 	return theme.fg(color, glyph);
 }
 
-export function renderChildRow(
+function childrenHeading(theme: ChildTheme, count: number) {
+	return `${theme.fg("dim", "▾")} ${theme.bold(theme.fg("muted", "Subagents"))} ${theme.fg("dim", String(count))}`;
+}
+
+function renderChildRow(
 	theme: ChildTheme,
 	child: ChildRecord,
 	meta: string,
@@ -94,7 +98,7 @@ export function renderChildRow(
 	width: number,
 ) {
 	const step = sanitizeTaskText(child.step ?? child.task.trim().split("\n")[0]);
-	const left = ` ${childGlyph(theme, child)} ${theme.fg("accent", childName(child))} ${step}`;
+	const left = ` ${childGlyph(theme, child)} ${theme.fg("accent", child.role)} ${child.id.slice(0, 4)} ${step}`;
 	const line = spread(left, theme.fg("dim", meta), width);
 	return active ? theme.bg("selectedBg", line) : line;
 }
@@ -121,7 +125,7 @@ export function renderChildrenBox(
 	const shown = rows.slice(0, maxRows);
 	const hint = theme.fg("dim", "alt+a view");
 	const lines = [
-		`${theme.fg("dim", "·")} ${theme.bold("Subagents")} ${rows.length}  ${hint}`,
+		spread(childrenHeading(theme, rows.length), hint, width),
 		...shown.map((child, i) =>
 			renderChildRow(theme, child, childMeta(child, now), i === 0, width),
 		),

@@ -9,14 +9,15 @@
         "--",
         "context7-mcp"
       ],
-      "directTools": true
+      "exposure": "direct"
     },
     "sentry": {
-      "url": "https://mcp.sentry.dev/mcp"
+      "url": "https://mcp.sentry.dev/mcp",
+      "exposure": "deferred"
     },
     "linear": {
       "url": "https://mcp.linear.app/mcp",
-      "directTools": true
+      "exposure": "deferred"
     }
   }
 }

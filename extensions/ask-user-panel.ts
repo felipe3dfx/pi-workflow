@@ -9,6 +9,7 @@ import {
 	type Component,
 } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import type { FooterHints } from "./chrome.ts";
 
 interface AskUserOption {
 	label: string;
@@ -28,6 +29,8 @@ export interface AskUserPanelState {
 export function createAskUserPanelState(): AskUserPanelState {
 	return { pendingCount: 0 };
 }
+
+const ACCENT_BAR = "┃";
 
 const ASK_USER_TOOL_NAMES = new Set(["ask_user_choice", "ask_user_question"]);
 
@@ -91,6 +94,7 @@ function describeAnswer(answer: AskUserAnswer): string {
 async function askPanel(
 	ctx: ExtensionContext,
 	state: AskUserPanelState,
+	hints: FooterHints,
 	question: string,
 	options: AskUserOption[],
 	multiple: boolean,
@@ -161,31 +165,45 @@ async function askPanel(
 
 		const component: Component = {
 			render(width) {
+				const bodyWidth = Math.max(0, width - 1);
+				const block = (content: string, selected = false) =>
+					theme.fg("text", ACCENT_BAR) +
+					theme.bg(
+						selected ? "selectedBg" : "customMessageBg",
+						truncateToWidth(`  ${content}`, bodyWidth, "", true),
+					);
+				const marker = (glyph: string, on: boolean) =>
+					on ? theme.bold(theme.fg("text", glyph)) : theme.fg("dim", glyph);
 				const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
 				const usage = ctx.getContextUsage();
 				const tokenInfo = usage?.tokens != null ? `${usage.tokens} tokens` : "token count unavailable";
 				const waiting = `${state.pendingCount} question${state.pendingCount === 1 ? "" : "s"} waiting`;
 				const lines = [
-					theme.fg("dim", `${waiting} · ${elapsedSeconds}s · ${tokenInfo}`),
-					...wrapTextWithAnsi(theme.bold(normalizeQuestionText(question)), width),
+					block(theme.fg("dim", `${waiting} · ${elapsedSeconds}s · ${tokenInfo}`)),
+					...wrapTextWithAnsi(theme.bold(normalizeQuestionText(question)), Math.max(1, bodyWidth - 2)).map((line) =>
+						block(line),
+					),
 				];
 				options.forEach((option, i) => {
 					const active = i === index;
 					const glyph = rowMarker(marked.has(i), active);
 					const label = normalizeSingleLine(option.label);
-					const left = `${i + 1} ${glyph} ${label}`;
 					const description = option.description ? normalizeSingleLine(option.description) : undefined;
-					const row = description ? `${left}  ${description}` : left;
-					lines.push(active ? theme.fg("accent", row) : row);
+					const styledLabel = theme.fg("text", active ? theme.bold(label) : label);
+					const row =
+						`${theme.fg("text", String(i + 1))} ${marker(glyph, multiple ? marked.has(i) : active)} ${styledLabel}` +
+						(description ? `  ${theme.fg("dim", description)}` : "");
+					lines.push(block(row, active));
 				});
 				const active = isFreeTextRow(index);
 				input.focused = active && mode === "edit";
 				const glyph = rowMarker(false, active, false);
-				const prefix = `z ${glyph} `;
+				const prefix = `${theme.fg("text", "z")} ${marker(glyph, active && !multiple)} `;
+				const prefixWidth = 6;
 				const row = input.focused
-					? prefix + (input.render(Math.max(width - prefix.length, 1))[0] ?? "")
-					: `${prefix}${input.getValue() || "Type your answer"}`;
-				lines.push(active ? theme.fg("accent", row) : row);
+					? prefix + (input.render(Math.max(bodyWidth - 2 - prefixWidth, 1))[0] ?? "")
+					: prefix + (input.getValue() ? theme.fg("text", input.getValue()) : theme.fg("dim", "Type your answer"));
+				lines.push(block(row, active));
 				const hasAnyMarked = marked.size > 0;
 				const enterHint = isFreeTextRow(index)
 					? "Enter:edit free text"
@@ -195,11 +213,16 @@ async function askPanel(
 				browseHintParts.push(enterHint);
 				browseHintParts.push("z:edit free text", "Esc:panel stays open", "Shift+X:dismiss");
 				const editEnterHint = multiple ? (hasAnyMarked ? "submit marked" : "select at least one") : "submit";
-				const hint =
+				const hintParts =
 					mode === "edit"
-						? `Enter:${editEnterHint}  ↑/↓:leave & move  Esc:back to browse`
-						: browseHintParts.join("  ");
-				lines.push(theme.fg("dim", hint));
+						? [`Enter:${editEnterHint}`, "↑/↓:leave & move", "Esc:back to browse"]
+						: browseHintParts;
+				hints.set(
+					hintParts.map((part) => {
+						const split = part.indexOf(":");
+						return { key: part.slice(0, split), action: part.slice(split + 1) };
+					}),
+				);
 				return lines.map((line) => truncateToWidth(line, width));
 			},
 			invalidate() {},
@@ -265,7 +288,7 @@ async function askPanel(
 		};
 
 		return component;
-	});
+	}).finally(() => hints.set(undefined));
 
 	return { content: [{ type: "text", text: describeAnswer(answer) }], details: answer };
 }
@@ -286,7 +309,7 @@ const choiceParameters = Type.Object({
 	),
 });
 
-export function createAskUserChoiceTool(state: AskUserPanelState): ToolDefinition<typeof choiceParameters, AskUserAnswer> {
+export function createAskUserChoiceTool(state: AskUserPanelState, hints: FooterHints): ToolDefinition<typeof choiceParameters, AskUserAnswer> {
 	return {
 		name: "ask_user_choice",
 		label: "Ask User Choice",
@@ -301,7 +324,7 @@ export function createAskUserChoiceTool(state: AskUserPanelState): ToolDefinitio
 		parameters: choiceParameters,
 		executionMode: "sequential",
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			return askPanel(ctx, state, params.question, params.options, params.multiple ?? false, signal);
+			return askPanel(ctx, state, hints, params.question, params.options, params.multiple ?? false, signal);
 		},
 	};
 }
@@ -310,7 +333,7 @@ const questionParameters = Type.Object({
 	question: Type.String({ description: "The open-ended question to ask the operator." }),
 });
 
-export function createAskUserQuestionTool(state: AskUserPanelState): ToolDefinition<typeof questionParameters, AskUserAnswer> {
+export function createAskUserQuestionTool(state: AskUserPanelState, hints: FooterHints): ToolDefinition<typeof questionParameters, AskUserAnswer> {
 	return {
 		name: "ask_user_question",
 		label: "Ask User Question",
@@ -324,7 +347,7 @@ export function createAskUserQuestionTool(state: AskUserPanelState): ToolDefinit
 		parameters: questionParameters,
 		executionMode: "sequential",
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			return askPanel(ctx, state, params.question, [], false, signal);
+			return askPanel(ctx, state, hints, params.question, [], false, signal);
 		},
 	};
 }

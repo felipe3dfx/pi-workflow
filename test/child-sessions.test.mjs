@@ -31,6 +31,7 @@ import {
 	KeybindingsManager,
 	TUI_KEYBINDINGS,
 	TuiMainScreen,
+	visibleWidth,
 } from "@earendil-works/pi-tui";
 
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
@@ -59,23 +60,12 @@ async function withWorkspace(run) {
 	}
 }
 
-function fakeJev({ choice = "leave", types = { implement: 0.9 } } = {}) {
+function fakeJev({ choice = "leave" } = {}) {
 	const requests = [];
 	const fetch = async (_url, init) => {
-		const body = JSON.parse(init.body);
-		requests.push(body);
-		if (body.questions.choice) {
-			return Response.json({
-				answers: { choice: { choice, confidence: 0.9 } },
-			});
-		}
+		requests.push(JSON.parse(init.body));
 		return Response.json({
-			answers: Object.fromEntries(
-				Object.keys(body.questions).map((type) => [
-					type,
-					{ noul: types[type] ?? 0.1 },
-				]),
-			),
+			answers: { choice: { choice, confidence: 0.9 } },
 		});
 	};
 	return { fetch, requests };
@@ -141,6 +131,12 @@ function loadExtension({
 			if (factory) widgets.set(key, { factory, options });
 		},
 		setStatus() {},
+		setHeader() {},
+		setFooter() {},
+		setEditorComponent() {},
+		setWorkingVisible() {},
+		setWorkingIndicator() {},
+		setWorkingMessage() {},
 		custom(factory, options) {
 			const view = { factory, options, ...Promise.withResolvers() };
 			views.push(view);
@@ -171,7 +167,7 @@ function loadExtension({
 						? { version: "2.0.0" }
 						: {},
 			},
-			modelLists: { path: join(agentDir, "pi-workflow-models.json") },
+			modelProfiles: { path: join(agentDir, "pi-workflow-models.json") },
 			childSessions: { create, fetch, schedule, refresh },
 		},
 	);
@@ -447,17 +443,16 @@ test("refused and pending launches return a warning and reason with no child id 
 	});
 });
 
-test("a selected pair Pi cannot run leaves the work pending with no child id", async () => {
+test("a profile model Pi cannot run refuses the launch with no child id", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		await writeFile(
 			join(agentDir, "pi-workflow-models.json"),
 			JSON.stringify({
-				schemaVersion: 1,
-				specialists: {
-					implement: [{ model: "missing/model", thinking: "high" }],
+				schemaVersion: 2,
+				active: "default",
+				profiles: {
+					default: { worker: { model: "missing/model", thinking: "high" } },
 				},
-				tiers: {},
-				taskTypes: {},
 			}),
 		);
 		const children = fakeChildren();
@@ -473,9 +468,10 @@ test("a selected pair Pi cannot run leaves the work pending with no child id", a
 			toolContext("tui", worktree),
 		);
 
-		assert.equal(result.details.status, "pending");
+		assert.equal(result.details.status, "refused");
+		assert.match(result.details.reason, /missing\/model/);
 		assert.equal("id" in result.details, false);
-		assert.match(text(result), /The work stays pending/);
+		assert.match(text(result), /Launch refused/);
 		assert.equal(children.created.length, 0);
 	});
 });
@@ -2375,7 +2371,7 @@ function openChildren(extension, { rows = 20, via = "shortcut" } = {}) {
 	const opened =
 		via === "shortcut"
 			? extension.shortcuts.get("alt+a").handler(ctx)
-			: extension.command("pi-workflow-children");
+			: extension.command("workflow:subagents");
 	const view = extension.views.at(-1);
 	const tui = {
 		renders: 0,
@@ -2400,7 +2396,7 @@ function openChildren(extension, { rows = 20, via = "shortcut" } = {}) {
 		},
 		lines: (width = 100) => component.render(width).map(plain),
 		active: (width = 100) =>
-			component.render(width).findIndex((line) => line.startsWith("\x1b[7m")),
+			component.render(width).findIndex((line) => line.includes("\x1b[7m")),
 	};
 }
 
@@ -2425,7 +2421,10 @@ test("a background child shows in the subagent box pinned above the input and ab
 			fetch: fakeJev().fetch,
 			branch: todoBranch,
 		});
-		assert.deepEqual([...extension.widgets.keys()], [boxKey, "session-todo"]);
+		assert.deepEqual(
+			[...extension.widgets.keys()],
+			[boxKey, "session-todo", "pi-workflow-status"],
+		);
 		assert.equal(
 			extension.widgets.get(boxKey).options.placement,
 			"aboveEditor",
@@ -2436,7 +2435,7 @@ test("a background child shows in the subagent box pinned above the input and ab
 		const id = await spawnBackground(extension, worktree);
 		await settle();
 		const lines = box.render(100).map(plain);
-		assert.match(lines[0], /· Subagents 1 +alt\+a view/);
+		assert.match(lines[0], /▾ Subagents 1 +alt\+a view/);
 		assert.match(
 			lines[1],
 			/◐ worker [0-9a-f]{4} Fix the failing test +model \(medium\) \d+s$/,
@@ -2558,7 +2557,7 @@ test("each TUI session start installs the box again, and print mode installs no 
 	});
 });
 
-test("alt+a and /pi-workflow-children open a full-screen overlay of every child; j/k move the highlighted row and q or Esc close it", async () => {
+test("alt+a and /workflow:subagents open a full-screen overlay of every child; j/k move the highlighted row and q or Esc close it", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
 		const extension = await loadSpawnTool({
@@ -2578,26 +2577,34 @@ test("alt+a and /pi-workflow-children open a full-screen overlay of every child;
 		assert.equal(view.view.options.overlayOptions.maxHeight, "100%");
 		const lines = view.lines();
 		assert.equal(lines.length, 12);
-		assert.match(lines[0], /· Subagents 2 +\/pi-workflow-children · alt\+a/);
-		assert.match(
-			lines[1],
-			/◐ worker [0-9a-f]{4} Run the tests +running · model \(medium\) \d+s/,
-		);
+		assert.match(lines[0], /^┌─ Subagents 2 ─+ \[×\] ─┐$/);
+		assert.match(lines[1], /^│ {3}Active ─+ {2}│$/);
 		assert.match(
 			lines[2],
-			/✓ worker [0-9a-f]{4} Map the launcher +completed · model \(medium\) \d+s/,
+			/▸ ◐ worker [0-9a-f]{4} Run the tests +running · model \(medium\) \d+s ›/,
+		);
+		assert.match(lines[3], /^│ {3}Finished ─+ {2}│$/);
+		assert.match(
+			lines[4],
+			/▸ ✓ worker [0-9a-f]{4} Map the launcher +completed · model \(medium\) \d+s ›/,
 		);
 		assert.match(
-			lines.at(-1),
-			/j\/k move · Enter detail · s\/c cancel · q close/,
+			lines.at(-2),
+			/j\/k move {2}\| {2}Enter detail {2}\| {2}s\/c cancel {2}\| {2}q close/,
 		);
-		assert.equal(view.active(), 1);
-		view.press("j");
+		assert.match(lines.at(-1), /^└─+┘$/);
+		for (const width of [10, 40, 80, 160]) {
+			for (const line of view.component.render(width)) {
+				assert.ok(visibleWidth(line) <= width, `${width}: ${line}`);
+			}
+		}
 		assert.equal(view.active(), 2);
 		view.press("j");
-		assert.equal(view.active(), 2);
+		assert.equal(view.active(), 4);
+		view.press("j");
+		assert.equal(view.active(), 4);
 		view.press("k");
-		assert.equal(view.active(), 1);
+		assert.equal(view.active(), 2);
 		view.press("q");
 		assert.equal(view.closed(), true);
 		await view.opened;
@@ -2607,10 +2614,10 @@ test("alt+a and /pi-workflow-children open a full-screen overlay of every child;
 		byCommand.press("\x1b");
 		assert.equal(byCommand.closed(), true);
 
-		await extension.command("pi-workflow-children", "extra");
+		await extension.command("workflow:subagents", "extra");
 		assert.match(extension.notifications.at(-1).message, /Usage:/);
 		const views = extension.views.length;
-		await extension.command("pi-workflow-children", "", "rpc");
+		await extension.command("workflow:subagents", "", "rpc");
 		assert.equal(extension.views.length, views);
 		assert.equal(extension.notifications.at(-1).level, "error");
 		assert.equal(extension.commands.has("pi-workflow-child-cancel"), false);
@@ -2634,7 +2641,7 @@ test("in the view, s or c asks y/n before cancelling a running child, cancels a 
 
 		view.press("s");
 		assert.match(view.lines().join("\n"), /Cancel worker [0-9a-f]{4}\? y\/n/);
-		assert.match(view.lines().at(-1), /y yes · n no/);
+		assert.match(view.lines().at(-2), /y yes {2}\| {2}n no/);
 		view.press("q", "n");
 		assert.equal(view.closed(), false);
 		assert.equal(await stateOf(extension, ids[0]), "running");
@@ -2720,17 +2727,15 @@ test("Enter opens a live detail that follows the tail, collapses thinking with P
 		view.press("\r");
 		let lines = view.lines();
 		let body = lines.join("\n");
-		assert.match(
-			lines[0],
-			/worker [0-9a-f]{4} · model \(medium\) +◐ running · \d+s/,
-		);
+		assert.match(lines[0], /^┌─ worker [0-9a-f]{4} · model \(medium\) ─+ \[×\] ─┐$/);
+		assert.match(lines[1], /^│ {2}◐ running · \d+s +│$/);
 		assert.match(body, /Review the doctor/);
 		assert.match(body, /I should read the doctor module first\./);
 		assert.match(body, /The doctor checks three things\./);
 		assert.match(body, /◆ bash npm test · Running/);
 		assert.match(
-			lines.at(-1),
-			/Esc back · q close · s\/c cancel · ctrl\+t thinking/,
+			lines.at(-2),
+			/Esc back {2}\| {2}q close {2}\| {2}s\/c cancel {2}\| {2}ctrl\+t thinking/,
 		);
 
 		const renders = view.tui.renders;
@@ -2743,7 +2748,10 @@ test("Enter opens a live detail that follows the tail, collapses thinking with P
 			assistantMessageEvent: { type: "text_delta" },
 		});
 		assert.ok(view.tui.renders > renders);
-		const threadLines = view.lines().slice(1, -2);
+		const threadLines = view
+			.lines()
+			.slice(2, -3)
+			.map((line) => line.slice(1, -1));
 		assert.match(
 			threadLines.findLast((line) => line.trim() !== ""),
 			/Streaming the tail\./,
@@ -2752,7 +2760,7 @@ test("Enter opens a live detail that follows the tail, collapses thinking with P
 		view.press("\x14");
 		body = view.lines().join("\n");
 		assert.doesNotMatch(body, /I should read the doctor module first/);
-		assert.match(body, /Thinking\.\.\./);
+		assert.match(body, /◆ Thought/);
 		view.press("\x14");
 		assert.match(
 			view.lines().join("\n"),
@@ -2764,11 +2772,11 @@ test("Enter opens a live detail that follows the tail, collapses thinking with P
 		view.press("y");
 		assert.equal(await stateOf(extension, id), "cancelled");
 		lines = view.lines();
-		assert.match(lines[0], /– cancelled · \d+s/);
+		assert.match(lines[1], /– cancelled · \d+s/);
 		assert.match(lines.join("\n"), /The doctor checks three things\./);
 		assert.match(lines.join("\n"), /◆ bash npm test · Cancelled/);
 		assert.doesNotMatch(lines.join("\n"), /Streaming the tail/);
-		assert.doesNotMatch(lines.at(-1), /s\/c cancel/);
+		assert.doesNotMatch(lines.at(-2), /s\/c cancel/);
 
 		view.press("\x1b");
 		assert.match(view.lines()[0], /Subagents 1/);
@@ -2801,6 +2809,32 @@ test("a tall thread shows only its tail in the detail", async () => {
 	});
 });
 
+test("the children view never renders more lines than the terminal is tall", async () => {
+	initTheme("dark", false);
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			fetch: fakeJev().fetch,
+		});
+		await spawnBackground(extension, worktree, "First");
+		await settle();
+		for (let rows = 4; rows <= 8; rows++) {
+			const view = openChildren(extension, { rows });
+			for (let width = 10; width <= 80; width++) {
+				const lines = view.lines(width);
+				assert.ok(lines.length <= rows, `${rows}x${width}: ${lines.length}`);
+			}
+			view.press("\r");
+			for (let width = 10; width <= 80; width++) {
+				const lines = view.lines(width);
+				assert.ok(lines.length <= rows, `detail ${rows}x${width}: ${lines.length}`);
+			}
+		}
+	});
+});
+
 test("in fullscreen a click selects a row, a double click opens it, and each footer label runs its key", async () => {
 	initTheme("dark", false);
 	await withWorkspace(async ({ worktree, agentDir }) => {
@@ -2824,19 +2858,19 @@ test("in fullscreen a click selects a row, a double click opens it, and each foo
 			});
 
 		view.lines();
-		assert.deepEqual(click(3, 2), { handled: true });
-		assert.equal(view.active(), 2);
-		click(3, 2, 2);
+		assert.deepEqual(click(3, 3), { handled: true });
+		assert.equal(view.active(), 3);
+		click(3, 3, 2);
 		assert.match(view.lines()[0], /worker [0-9a-f]{4} · model/);
-		const back = view.lines().at(-1).indexOf("Esc back");
-		click(back + 1, 11);
+		const back = view.lines().at(-2).indexOf("Esc back");
+		click(back + 1, 10);
 		assert.match(view.lines()[0], /Subagents 2/);
-		const footer = view.lines().at(-1);
-		click(footer.indexOf("s/c cancel") + 1, 11);
+		const footer = view.lines().at(-2);
+		click(footer.indexOf("s/c cancel") + 1, 10);
 		assert.match(view.lines().join("\n"), /Cancel worker [0-9a-f]{4}\? y\/n/);
-		click(view.lines().at(-1).indexOf("n no") + 1, 11);
+		click(view.lines().at(-2).indexOf("n no") + 1, 10);
 		assert.doesNotMatch(view.lines().join("\n"), /y\/n/);
-		click(footer.indexOf("q close") + 1, 11);
+		assert.equal(click(view.lines()[0].indexOf("×"), 0).handled, true);
 		assert.equal(view.closed(), true);
 	});
 });
@@ -3002,29 +3036,31 @@ test("the view lists waiting, running, queued, then finished children, and a cli
 		children.created[0].result.resolve("Done.");
 		await settle();
 		void children.created[4].spec.ask("Which branch?");
-		const view = openChildren(extension, { rows: 12 });
+		const view = openChildren(extension, { rows: 14 });
 		const order = view
 			.lines()
-			.slice(1, 8)
+			.filter((line) => /worker [0-9a-f]{4}/.test(line))
 			.map((line) => line.match(/worker ([0-9a-f]{4})/)[1]);
 		assert.deepEqual(
 			order,
 			[4, 1, 2, 3, 5, 6, 0].map((i) => ids[i].slice(0, 4)),
 		);
-		assert.equal(view.active(), 1);
-		assert.match(view.lines()[1], /\? worker [0-9a-f]{4} asks question 1/);
+		assert.equal(view.active(), 2);
+		assert.match(view.lines()[2], /\? worker [0-9a-f]{4} asks question 1/);
+		assert.match(view.lines()[8], /Finished ─/);
 
 		view.component.handleMouse({
 			type: "click",
 			button: "left",
 			x: 3,
-			y: 7,
+			y: 9,
 			clickCount: 2,
 		});
 		assert.match(
 			view.lines()[0],
-			new RegExp(`worker ${ids[0].slice(0, 4)} · model .*✓ completed`),
+			new RegExp(`worker ${ids[0].slice(0, 4)} · model`),
 		);
+		assert.match(view.lines()[1], /✓ completed/);
 	});
 });
 
@@ -3238,7 +3274,7 @@ test("a double click opens the child painted on that row even if the order chang
 			type: "click",
 			button: "left",
 			x: 3,
-			y: 1,
+			y: 2,
 			clickCount: 2,
 		});
 		assert.match(
@@ -3254,7 +3290,7 @@ test("a double click opens the child painted on that row even if the order chang
 				type: "click",
 				button: "left",
 				x: 3,
-				y: 1,
+				y: 2,
 				clickCount: 2,
 			}),
 			undefined,

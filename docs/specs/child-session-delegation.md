@@ -18,7 +18,7 @@ The harness extension remains the adapter. A child-session launcher module behin
 
 - As the operator, I stay on the current session model while a child does bounded work.
 - As the operator, I see running children and can stop them from the TUI.
-- As the operator, I can edit the model lists from the TUI, or let a command create them once.
+- As the operator, I can manage model profiles from the TUI and choose which one is active.
 - As the operator, I am warned, not surprised, when a launch is refused or a companion is missing.
 
 ## Implementation decisions
@@ -27,32 +27,30 @@ The harness extension remains the adapter. A child-session launcher module behin
 
 Jev answers whether the work should leave the session. It stays for architecture, an unresolved user decision, or a conflict between agents. If Jev does not answer, the work stays and the operator is warned. No child is launched.
 
-The parent names `explore`, `worker`, or `verify` with the task; Jev does not name the role. Role, contract, model lists, and worktree are checked before Jev is asked. A missing role uses `worker` and warns. An unknown role is a refusal. The known set is those three names, whether or not the contract file can be read. A missing or unreadable contract is a refusal, not `worker`.
+The parent names `explore`, `worker`, or `verify` with the task; Jev does not name the role. Role, contract, model profiles, worktree, and the selected model are checked before Jev is asked. A missing role uses `worker` and warns. An unknown role is a refusal. The known set is those three names, whether or not the contract file can be read. A missing or unreadable contract is a refusal, not `worker`.
 
-The parent passes only the role name and the task. The file in `assets/contracts/` owns the prompt and tools. Those files are harness child contracts, not engineering skills. Task types do not invoke engineering skills.
+The parent passes only the role name and the task. The file in `assets/contracts/` owns the prompt and tools. Those files are harness child contracts, not engineering skills.
 
 ### Model selection
 
-There is no named-model precedence. The launcher selects one pair and runs that pair. A list walk is selection, not a mismatch. A mismatch is when the child would run a different model or thinking than the selected pair. Then the child does not start and the work stays pending.
+There is no named-model precedence. The launcher selects one pair and runs that pair. A mismatch is when the child would run a different model or thinking than the selected pair. Then the child does not start and the work stays pending.
 
-Jev classifies the task. The launcher sends the task with one yes/no question per task type in a single request. The task type is the one with the highest yes probability. The type is uncertain when that probability is below 0.5, when two types tie for it, or when Jev does not answer. The role and the parent do not name the task type.
+The child's role selects a specialist of the active model profile: `explore` selects `explorer`, `worker` selects `worker`, and `verify` selects `verifier`. Jev does not classify the task and does not choose a model.
 
 Order:
 
-1. If the work stays, do not launch.
-2. If the task type is uncertain or unknown, do not walk lists. Use the session model and thinking, and warn.
-3. Otherwise the task type selects the specialist list of that name and, through the saved map, which tier list to walk. The map does not rewrite list contents at launch. The role does not select a model list.
-4. Walk defined lists only. An empty list is undefined. If only one selected list is defined, walk that list. Do not use the session model for that case.
-5. If the type is known and both selected lists are undefined, use the session model and thinking.
-6. Unavailable means Pi does not have the model, or it cannot run at the selected thinking. If every defined entry is unavailable, the work stays pending. Do not drop to another tier.
-
-Tiers are only `quick`, `standard`, and `high`. There is no premium tier and no forced tier. The creation map is initial file content: `chat`, `explain`, and `write` name `quick`; `operate`, `implement`, `debug`, `refactor`, and `research` name `standard`; `plan` and `review` name `high`.
+1. Role: an unknown role is a refusal; a missing role uses `worker` and warns.
+2. Contract: a missing or unreadable contract is a refusal.
+3. Model profiles: an invalid or unreadable file, including a schema v1 file, is a refusal. A missing file is not.
+4. Worktree: an invalid worktree is a refusal.
+5. Model: with no file, or when the active profile has no entry for the specialist, the child inherits the session model and thinking. If the session has neither, the launch is refused. Otherwise the entry is the pair. A model Pi does not have, or a thinking level the model does not support, is a refusal that names the profile, the specialist, and the setting. There is no fallback to another model.
+6. Jev: asked last whether the work stays or leaves. If the work stays, or Jev does not answer, do not launch.
 
 ### Configuration
 
-One global file holds specialist lists, tier lists, and the task-type map. The command and the TUI write that same file. The TUI editor is a panel navigated by sections: specialists, tiers, and the task-type map. Models are picked from Pi's catalog of available models, and thinking is limited to the levels each model supports. After adding a model, the editor stays in the catalog to add another. Saving replaces the file only when it already existed; otherwise it creates the file without overwriting one that appeared meanwhile. Unsaved changes ask to confirm discarding before exit. The command creates the file only when missing. Replacement requires confirmation. Print mode does not replace an existing file. It only warns. If the file is missing, print mode may create it. A file created in the current turn is not read and is not a refusal. It applies only after `/reload`. An invalid or unreadable file is a refusal.
+One global file, `pi-workflow-models.json` in the Pi agent directory, holds the model profiles: `{schemaVersion: 2, active, profiles: {slug: {explorer, worker, verifier}}}`, where each specialist entry is `{model, thinking}`. Profile slugs match `[a-z0-9-]{1,64}`. Any specialist entry may be omitted and then inherits the session model.
 
-The command researches each model locally from Pi's catalog metadata (name, reasoning, context window, maximum output, input modalities, cost per million tokens, and supported thinking levels) and on the internet from OpenRouter's public model descriptions, fetched once per run and matched by model id without signs. A model OpenRouter does not describe is researched from Pi's catalog only and reported. If OpenRouter does not answer, the command warns and researches every model from Pi's catalog only. The tier follows cost relative to the available catalog, not Jev: models with a cost are sorted by output cost, input cost breaking ties, and the first third goes to `quick`, the middle third to `standard`, and the last third to `high`. Models with the same cost share a tier, and the split is fixed before Jev is asked, so a model left out does not move the others. A model whose catalog cost is 0 gets no tier list, joins only its specialist lists, and is reported. Jev picks each model's thinking level for its tier (`quick` for mechanical work, transcription, and cheap sweeps; `standard` for exploration, implementation, and tests; `high` for coordination, review, and risk) among the levels the model supports. Both questions receive the OpenRouter description when there is one. Jev answers one yes/no question per task type in a single request, judging the kind of work the model does well, not its intelligence or speed. Context capacity affects only specialist placement. The model joins each specialist list where the yes probability is at least 0.5, possibly several or none, and each list is ordered by probability from highest to lowest. A model in no specialist list keeps its tier list. The TUI can change the specialist lists. The map only names which tier a task type walks at launch. If either question fails, the model is left out and the others are saved. NaN may appear in any list if the user or the command places it. There is no hardcoded long-context model.
+`/workflow:models` opens a modal panel. It creates, duplicates, renames, deletes, and activates profiles, and picks a model and thinking level for each specialist. Models come from Pi's catalog of available models, and thinking is limited to the levels each model supports. A save writes the file and applies immediately, without `/reload`. A schema v1 file is refused; there is no migration.
 
 Jev does not decide quota failover, workflow authorization, result correctness, or which of two agents is right. It does not answer risk, complexity, capability, or deep-reasoning questions. There is no consult tool.
 
@@ -76,7 +74,7 @@ The launcher lives behind the extension adapter. The extension registers the too
 
 The operator sees the children of the current session in a Pi widget pinned just above the input, above the task box, so it stays in view and redraws only its own lines. It keeps the approved header design: it reads `Subagents` and the count, an empty list is omitted, and each row shows the name, the current step, the model, the effort, and the elapsed time, with the active row highlighted. It refreshes at once on a state change and once per second only while a child is working, with redraws grouped at most every 400 ms. Finished rows stay visible for 60 seconds, at most three of them, and the box shows up to eight rows plus `… N more`. Effort also appears on the session input through Pi's footer.
 
-Because the widget cannot receive keys, `alt+a` or `/pi-workflow-children` opens a full-screen children view on demand. In it, `j`/`k` move the active row, `Enter` opens that child's live detail, `s` or `c` cancels it after a confirmation (a queued child is cancelled without one), `Esc` goes back from the detail, and `q` closes the view. Every state can be opened, cancelled included. Thinking in the detail can be collapsed with Pi's thinking toggle. A click works inside the view in fullscreen, and every click also has a key, because regular mode leaves the mouse to the terminal. Child content shown in the box, the view, and the detail is stripped of terminal control sequences. The view closes when a non-overlay, such as the question panel, takes focus.
+Because the widget cannot receive keys, `alt+a` or `/workflow:subagents` opens a full-screen children view on demand. In it, `j`/`k` move the active row, `Enter` opens that child's live detail, `s` or `c` cancels it after a confirmation (a queued child is cancelled without one), `Esc` goes back from the detail, and `q` closes the view. Every state can be opened, cancelled included. Thinking in the detail can be collapsed with Pi's thinking toggle. A click works inside the view in fullscreen, and every click also has a key, because regular mode leaves the mouse to the terminal. Child content shown in the box, the view, and the detail is stripped of terminal control sequences. The view closes when a non-overlay, such as the question panel, takes focus.
 
 Session tasks are not children. The box does not share the subagent list's header; it is a Pi widget pinned just above the input, so it stays in view once earlier turns scroll the transcript. The box only appears while tasks exist. The list sits in a box with bracket corners outside the text column, space above and below. Because the widget cannot receive keys, `alt+shift+t` collapses or expands the box and `alt+shift+h` shows or hides done tasks. A pending row is highlighted. A done row uses a green check. The list is rebuilt, without reading any file, from the last successful `todo` result's details on session start and on tree navigation. A session that ends with every task done starts its next list empty. The tool can write the whole list, add one task, update one task, clear the list, or list it. It does not create a feature document.
 
@@ -90,7 +88,7 @@ A closed tool is one line. Opening it shows the body under that title. A thick l
 
 One catalog edit removes `@tintinweb/pi-subagents` and `@vndv/pi-codegraph`. Status and doctor follow that file. They do not special-case CodeGraph as a companion. Nothing is installed or uninstalled silently.
 
-If `@tintinweb/pi-subagents` is still installed, spawn tools are not registered. Status, doctor, and explicit companion install remain. The warning names the external removal command and the harness does not run it.
+If `@tintinweb/pi-subagents` is still installed, spawn tools are not registered. Status, doctor, and `/workflow:setup` remain. The warning names the external removal command and the harness does not run it.
 
 The `codegraph` tool copies the gentle-shell contract: `init`, `query`, and `explore` on the current Git root only. No other path and no shell command. A missing index may be created by `init`. A symlink or non-directory index is rejected. A workspace that is not the real Git root is a tool error and the command does not run. `GIT_DIR` and `GIT_WORK_TREE` are ignored when the root is checked and when the binary runs. A missing binary is unavailable and tells the caller to use `read`, `grep`, and `find`. Other run failures are failed, with the same fallback. `init` is a tool operation, not a human confirmation and not startup.
 
@@ -98,12 +96,11 @@ The `codegraph` tool copies the gentle-shell contract: `init`, `query`, and `exp
 
 Tests cross the launcher interface and the extension adapter, not private helpers.
 
-- Stay, missing Jev answer, unknown role, missing contract, invalid file, and invalid worktree produce a refusal and no child id.
-- A known type with one defined list walks that list and does not use the session model.
-- An uncertain type uses the session model even when lists exist.
-- An unavailable selected pair does not start.
+- Stay, missing Jev answer, unknown role, missing contract, invalid or v1 profiles file, and invalid worktree produce a refusal and no child id.
+- The role selects its specialist in the active profile. A missing entry inherits the session model and thinking.
+- An unavailable model or an unsupported thinking level refuses the launch before Jev is asked.
+- Jev's stay or leave verdict runs after the local checks.
 - A session that can receive a later result starts the child in the background. Print mode rejects background and returns the foreground result in the same call.
-- A same-turn config file is not read. An invalid file is a refusal.
 - Status and doctor follow the edited catalog and do not treat a missing CodeGraph index as a missing companion.
 - Packed distribution includes `assets/contracts/` and still rejects `skills/`, `prompts/`, and `assets/agents/`.
 - The pinned subagent box shows a background child, and the session task list sits in a widget above the input. `alt+a` opens the children view with the live detail. Print mode refuses the question panel and does not invent an answer.
@@ -128,7 +125,7 @@ Harness-owned child session and CodeGraph access are authorized by ADR 0005. The
 
 ## Dependencies
 
-Pi child sessions, Jev, the Pi model catalog, and the existing companion install command. Engineering skills stay unowned.
+Pi child sessions, Jev, the Pi model catalog, and the `/workflow:setup` command. Engineering skills stay unowned.
 
 ## Feature review
 

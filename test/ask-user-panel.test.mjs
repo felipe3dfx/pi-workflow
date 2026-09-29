@@ -9,9 +9,11 @@ import {
 	createAskUserQuestionTool,
 	registerAskUserQueueCounter,
 } from "../extensions/ask-user-panel.ts";
+import { createFooterHints } from "../extensions/chrome.ts";
 
 const fakeTheme = {
 	fg: (_name, text) => text,
+	bg: (_name, text) => text,
 	bold: (text) => text,
 };
 
@@ -53,12 +55,13 @@ function tuiContext() {
 	return {
 		ctx,
 		send: (data) => component.handleInput(data),
-		render: (width = 80) => component.render(width),
+		render: (width = 80) => component.render(width).map((line) => line.replace(/^┃ {2}/, "").trimEnd()),
+		renderRaw: (width = 80) => component.render(width),
 	};
 }
 
 test("print mode refuses ask_user_choice without inventing an answer and never opens the panel", async () => {
-	const tool = createAskUserChoiceTool(createAskUserPanelState());
+	const tool = createAskUserChoiceTool(createAskUserPanelState(), createFooterHints());
 	const result = await tool.execute(
 		"call-1",
 		{ question: "Deploy now?", options: [{ label: "Yes" }, { label: "No" }] },
@@ -71,7 +74,7 @@ test("print mode refuses ask_user_choice without inventing an answer and never o
 });
 
 test("a session with hasUI but no TUI mode refuses ask_user_question the same way", async () => {
-	const tool = createAskUserQuestionTool(createAskUserPanelState());
+	const tool = createAskUserQuestionTool(createAskUserPanelState(), createFooterHints());
 	const result = await tool.execute("call-2", { question: "Why?" }, undefined, undefined, noUiContext("rpc"));
 	assert.equal(result.details.status, "refused");
 });
@@ -79,7 +82,7 @@ test("a session with hasUI but no TUI mode refuses ask_user_question the same wa
 test("TUI ask_user_choice answers with the selected option on Enter", async () => {
 	const state = createAskUserPanelState();
 	state.pendingCount = 1;
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const { ctx, send } = tuiContext();
 	const pending = tool.execute(
 		"call-3",
@@ -97,7 +100,7 @@ test("TUI ask_user_choice answers with the selected option on Enter", async () =
 
 test("digits jump directly to the numbered option", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const { ctx, send } = tuiContext();
 	const pending = tool.execute(
 		"call-4",
@@ -114,7 +117,7 @@ test("digits jump directly to the numbered option", async () => {
 
 test("Esc leaves the panel open instead of resolving it", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const { ctx, send } = tuiContext();
 	const pending = tool.execute(
 		"call-5",
@@ -138,7 +141,7 @@ test("Esc leaves the panel open instead of resolving it", async () => {
 
 test("Shift+X dismisses the panel with a refusal, never an invented answer", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const { ctx, send } = tuiContext();
 	const pending = tool.execute(
 		"call-6",
@@ -155,7 +158,7 @@ test("Shift+X dismisses the panel with a refusal, never an invented answer", asy
 
 test("ask_user_question collects free text typed into the z row", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserQuestionTool(state);
+	const tool = createAskUserQuestionTool(state, createFooterHints());
 	const { ctx, send } = tuiContext();
 	const pending = tool.execute("call-7", { question: "What should happen next?" }, undefined, undefined, ctx);
 	for (const char of "later") send(char);
@@ -166,7 +169,7 @@ test("ask_user_question collects free text typed into the z row", async () => {
 
 test("z jumps to the free-text row for ask_user_choice when free text is allowed", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const { ctx, send } = tuiContext();
 	const pending = tool.execute(
 		"call-8",
@@ -184,13 +187,13 @@ test("z jumps to the free-text row for ask_user_choice when free text is allowed
 
 test("both tools run sequentially so a second panel cannot evict the first", () => {
 	const state = createAskUserPanelState();
-	assert.equal(createAskUserChoiceTool(state).executionMode, "sequential");
-	assert.equal(createAskUserQuestionTool(state).executionMode, "sequential");
+	assert.equal(createAskUserChoiceTool(state, createFooterHints()).executionMode, "sequential");
+	assert.equal(createAskUserQuestionTool(state, createFooterHints()).executionMode, "sequential");
 });
 
 test("render truncates every line to the requested width even with wide characters", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const { ctx, send, render } = tuiContext();
 	const pending = tool.execute(
 		"call-r2",
@@ -215,7 +218,7 @@ test("render truncates every line to the requested width even with wide characte
 test("the panel header names the waiting count and the token count from ctx.getContextUsage", async () => {
 	const state = createAskUserPanelState();
 	state.pendingCount = 1;
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const { ctx, send, render } = tuiContext();
 	const pending = tool.execute(
 		"call-r7-header",
@@ -233,7 +236,8 @@ test("the panel header names the waiting count and the token count from ctx.getC
 
 test("options render numbered with a radio and their description, and z is the free-text row", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const hints = createFooterHints();
+	const tool = createAskUserChoiceTool(state, hints);
 	const { ctx, send, render } = tuiContext();
 	const pending = tool.execute(
 		"call-r7-rows",
@@ -254,15 +258,16 @@ test("options render numbered with a radio and their description, and z is the f
 	assert.equal(lines[4], "z (○) Type your answer");
 	send(DOWN);
 	send(DOWN);
-	const hintLines = render(80);
-	assert.match(hintLines[hintLines.length - 1], /Enter:edit free text/);
+	render(80);
+	assert.deepEqual(hints.get()?.[1], { key: "Enter", action: "edit free text" });
 	send("X");
 	await pending;
 });
 
 test("the z row and its hint always render, even if a caller passes allowFreeText: false", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const hints = createFooterHints();
+	const tool = createAskUserChoiceTool(state, hints);
 	const { ctx, send, render } = tuiContext();
 	const pending = tool.execute(
 		"call-f1-hint",
@@ -272,16 +277,15 @@ test("the z row and its hint always render, even if a caller passes allowFreeTex
 		ctx,
 	);
 	const lines = render(80);
-	const hint = lines[lines.length - 1];
 	assert.ok(lines.some((line) => line.startsWith("z ")), "expected the free-text row to render");
-	assert.match(hint, /z:edit free text/);
+	assert.ok(hints.get()?.some((hint) => hint.key === "z" && hint.action === "edit free text"));
 	send("X");
 	await pending;
 });
 
 test("typing X after other characters into the free-text row inserts it instead of dismissing", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserQuestionTool(state);
+	const tool = createAskUserQuestionTool(state, createFooterHints());
 	const { ctx, send } = tuiContext();
 	const pending = tool.execute("call-r3-insert", { question: "What tech?" }, undefined, undefined, ctx);
 	send("a");
@@ -293,7 +297,7 @@ test("typing X after other characters into the free-text row inserts it instead 
 
 test("aborting before the panel opens refuses without ever calling ui.custom", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const controller = new AbortController();
 	controller.abort();
 	let opened = false;
@@ -321,7 +325,7 @@ test("aborting before the panel opens refuses without ever calling ui.custom", a
 
 test("aborting while the panel is open resolves with a refusal, not an invented answer", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const { ctx } = tuiContext();
 	const controller = new AbortController();
 	const pending = tool.execute(
@@ -339,7 +343,7 @@ test("aborting while the panel is open resolves with a refusal, not an invented 
 
 test("free text captures a bracketed paste as plain text", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserQuestionTool(state);
+	const tool = createAskUserQuestionTool(state, createFooterHints());
 	const { ctx, send } = tuiContext();
 	const pending = tool.execute("call-r5-paste", { question: "Paste the log" }, undefined, undefined, ctx);
 	send("\x1b[200~pasted answer\x1b[201~");
@@ -350,7 +354,7 @@ test("free text captures a bracketed paste as plain text", async () => {
 
 test("free text captures an emoji typed directly", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserQuestionTool(state);
+	const tool = createAskUserQuestionTool(state, createFooterHints());
 	const { ctx, send } = tuiContext();
 	const pending = tool.execute("call-r5-emoji", { question: "React with an emoji" }, undefined, undefined, ctx);
 	send("😀");
@@ -361,7 +365,7 @@ test("free text captures an emoji typed directly", async () => {
 
 test("free text captures a kitty CSI-u printable key", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserQuestionTool(state);
+	const tool = createAskUserQuestionTool(state, createFooterHints());
 	const { ctx, send } = tuiContext();
 	const pending = tool.execute("call-r5-kitty", { question: "Kitty protocol input" }, undefined, undefined, ctx);
 	send("\x1b[97u");
@@ -372,7 +376,7 @@ test("free text captures a kitty CSI-u printable key", async () => {
 
 test("the active free-text row scrolls to keep the cursor and the answer's end visible", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserQuestionTool(state);
+	const tool = createAskUserQuestionTool(state, createFooterHints());
 	const { ctx, send, render } = tuiContext();
 	const pending = tool.execute("call-r11", { question: "Explain" }, undefined, undefined, ctx);
 	const longAnswer = "x".repeat(80);
@@ -387,7 +391,7 @@ test("the active free-text row scrolls to keep the cursor and the answer's end v
 
 test("the abort listener is removed once the panel resolves normally", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const controller = new AbortController();
 	let addCount = 0;
 	let removeCount = 0;
@@ -417,7 +421,7 @@ test("the abort listener is removed once the panel resolves normally", async () 
 
 test("ask_user_choice: typing after z in edit mode produces the typed answer", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const { ctx, send } = tuiContext();
 	const pending = tool.execute(
 		"call-r12-edit",
@@ -435,7 +439,7 @@ test("ask_user_choice: typing after z in edit mode produces the typed answer", a
 
 test("ask_user_choice: Shift+X in browse mode refuses without entering edit mode", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const { ctx, send } = tuiContext();
 	const pending = tool.execute(
 		"call-r12-browse-dismiss",
@@ -451,7 +455,7 @@ test("ask_user_choice: Shift+X in browse mode refuses without entering edit mode
 
 test("ask_user_choice: Esc in edit mode returns to browse without refusing, and the panel stays open", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const { ctx, send } = tuiContext();
 	const pending = tool.execute(
 		"call-r12-esc-edit",
@@ -479,7 +483,7 @@ test("ask_user_choice: Esc in edit mode returns to browse without refusing, and 
 
 test("ask_user_choice free text still requires z before typing takes effect", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const { ctx, send } = tuiContext();
 	const pending = tool.execute(
 		"call-r12-requires-z",
@@ -497,7 +501,7 @@ test("ask_user_choice free text still requires z before typing takes effect", as
 
 test("ask_user_question opens directly in edit mode, so typing yields the answer immediately", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserQuestionTool(state);
+	const tool = createAskUserQuestionTool(state, createFooterHints());
 	const { ctx, send } = tuiContext();
 	const pending = tool.execute("call-r14-immediate", { question: "Favorite instrument?" }, undefined, undefined, ctx);
 	for (const char of "Xylophone") send(char);
@@ -508,7 +512,7 @@ test("ask_user_question opens directly in edit mode, so typing yields the answer
 
 test("Tab in edit mode is ignored: it does not type and does not leave edit mode", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserQuestionTool(state);
+	const tool = createAskUserQuestionTool(state, createFooterHints());
 	const { ctx, send } = tuiContext();
 	const pending = tool.execute("call-tab-in-edit", { question: "Favorite instrument?" }, undefined, undefined, ctx);
 	send("h");
@@ -522,7 +526,7 @@ test("Tab in edit mode is ignored: it does not type and does not leave edit mode
 
 test("Esc returns ask_user_question to browse mode, then Shift+X dismisses", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserQuestionTool(state);
+	const tool = createAskUserQuestionTool(state, createFooterHints());
 	const { ctx, send } = tuiContext();
 	const pending = tool.execute("call-r14-esc-dismiss", { question: "Favorite instrument?" }, undefined, undefined, ctx);
 	send("\x1b");
@@ -533,7 +537,7 @@ test("Esc returns ask_user_question to browse mode, then Shift+X dismisses", asy
 
 test("the free-text row is only IME-focused while actively in edit mode", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserQuestionTool(state);
+	const tool = createAskUserQuestionTool(state, createFooterHints());
 	const { ctx, send, render } = tuiContext();
 	const pending = tool.execute("call-r15-focus", { question: "Favorite instrument?" }, undefined, undefined, ctx);
 	const editLine = render(80).find((line) => line.startsWith("z ("));
@@ -571,7 +575,7 @@ test("the header counts ask_user_* calls queued in the same assistant message an
 	]);
 	assert.equal(state.pendingCount, 2);
 
-	const choiceTool = createAskUserChoiceTool(state);
+	const choiceTool = createAskUserChoiceTool(state, createFooterHints());
 	const first = tuiContext();
 	const pendingFirst = choiceTool.execute(
 		"call-f2-1",
@@ -586,7 +590,7 @@ test("the header counts ask_user_* calls queued in the same assistant message an
 	counter.toolExecutionEnd("ask_user_choice", "1");
 	assert.equal(state.pendingCount, 1);
 
-	const questionTool = createAskUserQuestionTool(state);
+	const questionTool = createAskUserQuestionTool(state, createFooterHints());
 	const second = tuiContext();
 	const pendingSecond = questionTool.execute("call-f2-2", { question: "Why?" }, undefined, undefined, second.ctx);
 	assert.match(second.render(80)[0], /1 question waiting/);
@@ -610,7 +614,7 @@ test("a blocked or invalid first call still frees its slot via tool_execution_en
 	counter.toolExecutionEnd("ask_user_choice", "1");
 	assert.equal(state.pendingCount, 1);
 
-	const questionTool = createAskUserQuestionTool(state);
+	const questionTool = createAskUserQuestionTool(state, createFooterHints());
 	const { ctx, send, render } = tuiContext();
 	const pending = questionTool.execute("call-f2-blocked", { question: "Why?" }, undefined, undefined, ctx);
 	assert.match(render(80)[0], /1 question waiting/);
@@ -644,7 +648,7 @@ test("the waiting count never goes negative when a panel runs without being coun
 	registerAskUserQueueCounter(counter.pi, state);
 	assert.equal(state.pendingCount, 0);
 
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const { ctx, send } = tuiContext();
 	const pending = tool.execute("call-f2-uncounted", { question: "Deploy?", options: [{ label: "Yes" }] }, undefined, undefined, ctx);
 	send("\r");
@@ -655,7 +659,7 @@ test("the waiting count never goes negative when a panel runs without being coun
 
 test("a question with embedded newlines wraps into separate one-line render entries", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const { ctx, send, render } = tuiContext();
 	const question = "Deploy now?\nRestart workers?\nContinue?";
 	const pending = tool.execute(
@@ -671,7 +675,7 @@ test("a question with embedded newlines wraps into separate one-line render entr
 		assert.ok(!line.includes("\n"), `line contains an embedded newline: ${JSON.stringify(line)}`);
 		assert.ok(visibleWidth(line) <= width, `line exceeds width ${width}: ${JSON.stringify(line)}`);
 	}
-	assert.equal(lines.length, 7, "expected header + 3 question lines + option + free-text + hint");
+	assert.equal(lines.length, 6, "expected header + 3 question lines + option + free-text");
 	assert.ok(lines.some((line) => line.includes("Deploy now?")));
 	assert.ok(lines.some((line) => line.includes("Restart workers?")));
 	assert.ok(lines.some((line) => line.includes("Continue?")));
@@ -681,7 +685,7 @@ test("a question with embedded newlines wraps into separate one-line render entr
 
 test("newlines in option labels and descriptions are normalized so each option stays one render row", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const { ctx, send, render } = tuiContext();
 	const pending = tool.execute(
 		"call-multiline-option",
@@ -709,7 +713,7 @@ test("newlines in option labels and descriptions are normalized so each option s
 
 test("CR and CRLF line endings in the question normalize like LF before wrapping", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const { ctx, send, render } = tuiContext();
 	const question = "Deploy now?\r\nRestart workers?\rContinue?";
 	const pending = tool.execute(
@@ -726,14 +730,14 @@ test("CR and CRLF line endings in the question normalize like LF before wrapping
 		assert.ok(!line.includes("\n"), `line contains an embedded newline: ${JSON.stringify(line)}`);
 		assert.ok(visibleWidth(line) <= width, `line exceeds width ${width}: ${JSON.stringify(line)}`);
 	}
-	assert.equal(lines.length, 7, "expected header + 3 question lines + option + free-text + hint");
+	assert.equal(lines.length, 6, "expected header + 3 question lines + option + free-text");
 	send("X");
 	await pending;
 });
 
 test("an ANSI erase-screen sequence and a bidi override in the question cannot break out of a rendered row", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const { ctx, send, render } = tuiContext();
 	const question = "Deploy\x1b[2Jnow?‮evil?";
 	const pending = tool.execute(
@@ -756,7 +760,7 @@ test("an ANSI erase-screen sequence and a bidi override in the question cannot b
 
 test("an ANSI erase-screen sequence and a bidi override in an option label/description are neutralized", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const { ctx, send, render } = tuiContext();
 	const pending = tool.execute(
 		"call-escape-option",
@@ -781,7 +785,7 @@ test("an ANSI erase-screen sequence and a bidi override in an option label/descr
 
 test("a tab in the question does not exceed the render width", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const { ctx, send, render } = tuiContext();
 	const question = "Deploy\tnow?";
 	const pending = tool.execute(
@@ -802,7 +806,7 @@ test("a tab in the question does not exceed the render width", async () => {
 
 test("a ZWJ emoji sequence in an option label keeps its visible width unchanged", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const { ctx, send, render } = tuiContext();
 	const family = "\u{1F468}‍\u{1F469}‍\u{1F467}";
 	const pending = tool.execute(
@@ -823,7 +827,7 @@ test("a ZWJ emoji sequence in an option label keeps its visible width unchanged"
 
 test("Down and Up move the active row in browse mode, and Enter answers the active row", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const { ctx, send, render } = tuiContext();
 	const pending = tool.execute(
 		"call-nav-1",
@@ -846,7 +850,7 @@ test("Down and Up move the active row in browse mode, and Enter answers the acti
 
 test("Tab no longer moves the active row", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const { ctx, send, render } = tuiContext();
 	const pending = tool.execute(
 		"call-nav-tab",
@@ -863,7 +867,7 @@ test("Tab no longer moves the active row", async () => {
 
 test("Up/Down from edit mode leave edit mode and move the active row", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const { ctx, send, render } = tuiContext();
 	const pending = tool.execute(
 		"call-nav-edit-exit",
@@ -883,7 +887,7 @@ test("Up/Down from edit mode leave edit mode and move the active row", async () 
 
 test("multiple mode renders checkboxes instead of radios", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const { ctx, send, render } = tuiContext();
 	const pending = tool.execute(
 		"call-multi-render",
@@ -904,7 +908,7 @@ test("multiple mode renders checkboxes instead of radios", async () => {
 
 test("multiple mode: the free-text row is never rendered as a checkbox, since Space cannot mark it", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const { ctx, send, render } = tuiContext();
 	const pending = tool.execute(
 		"call-multi-freetext-glyph",
@@ -934,7 +938,7 @@ test("multiple mode: the free-text row is never rendered as a checkbox, since Sp
 
 test("multiple mode: Space toggles the active option", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const { ctx, send, render } = tuiContext();
 	const pending = tool.execute(
 		"call-multi-space",
@@ -955,7 +959,7 @@ test("multiple mode: Space toggles the active option", async () => {
 
 test("multiple mode: digits jump without marking", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const { ctx, send, render } = tuiContext();
 	const pending = tool.execute(
 		"call-multi-digit",
@@ -981,7 +985,7 @@ test("multiple mode: digits jump without marking", async () => {
 
 test("multiple mode: Enter with nothing marked is ignored", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const { ctx, send } = tuiContext();
 	const pending = tool.execute(
 		"call-multi-empty-enter",
@@ -1007,7 +1011,7 @@ test("multiple mode: Enter with nothing marked is ignored", async () => {
 
 test("multiple mode: free text typed into the z row is included with the marked options", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const { ctx, send } = tuiContext();
 	const pending = tool.execute(
 		"call-multi-freetext",
@@ -1033,7 +1037,7 @@ test("multiple mode: free text typed into the z row is included with the marked 
 
 test("multiple mode: Enter with only free text and no option marked with Space is ignored", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const { ctx, send } = tuiContext();
 	const pending = tool.execute(
 		"call-multi-freetext-only",
@@ -1067,7 +1071,8 @@ test("multiple mode: Enter with only free text and no option marked with Space i
 
 test("multiple mode: the edit-mode hint reflects whether anything is marked", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const hints = createFooterHints();
+	const tool = createAskUserChoiceTool(state, hints);
 	const { ctx, send, render } = tuiContext();
 	const pending = tool.execute(
 		"call-multi-edit-hint",
@@ -1077,18 +1082,20 @@ test("multiple mode: the edit-mode hint reflects whether anything is marked", as
 		ctx,
 	);
 	send("z");
-	assert.match(render(80).at(-1), /select at least one/);
+	render(80);
+	assert.equal(hints.get()?.[0].action, "select at least one");
 	send(UP);
 	send(SPACE);
 	send("z");
-	assert.match(render(80).at(-1), /submit marked/);
+	render(80);
+	assert.equal(hints.get()?.[0].action, "submit marked");
 	send("\r");
 	await pending;
 });
 
 test("without multiple, ask_user_choice behaviour and result stay exactly as a single radio choice", async () => {
 	const state = createAskUserPanelState();
-	const tool = createAskUserChoiceTool(state);
+	const tool = createAskUserChoiceTool(state, createFooterHints());
 	const { ctx, send, render } = tuiContext();
 	const pending = tool.execute(
 		"call-single-unchanged",
@@ -1104,4 +1111,101 @@ test("without multiple, ask_user_choice behaviour and result stay exactly as a s
 	send("\r");
 	const result = await pending;
 	assert.deepEqual(result.details, { status: "answered", kind: "option", index: 1, label: "B" });
+});
+
+test("the panel is a block with an accent bar, the selected row on selectedBg, and dim secondary text", async () => {
+	const tagged = {
+		fg: (color, text) => `<${color}>${text}</${color}>`,
+		bg: (color, text) => `[${color}]${text}[/${color}]`,
+		bold: (text) => `<b>${text}</b>`,
+	};
+	const { ctx, send, renderRaw } = (() => {
+		const context = tuiContext();
+		return context;
+	})();
+	const tool = createAskUserChoiceTool(createAskUserPanelState(), createFooterHints());
+	const original = ctx.ui.custom;
+	ctx.ui.custom = (factory) => original((tui, _theme, keys, done) => factory(tui, tagged, keys, done));
+	const pending = tool.execute(
+		"call-look",
+		{ question: "Deploy now?", options: [{ label: "Yes", description: "Ship it" }, { label: "No" }] },
+		undefined,
+		undefined,
+		ctx,
+	);
+	const lines = renderRaw(300);
+	for (const line of lines) {
+		assert.ok(line.startsWith("<text>┃</text>"), `missing accent bar: ${line}`);
+		assert.ok(visibleWidth(line) <= 300);
+	}
+	assert.match(lines[1], /\[customMessageBg\].*<b>Deploy now\?<\/b>/);
+	assert.match(lines[2], /^<text>┃<\/text>\[selectedBg\]/);
+	assert.match(lines[2], /<b><text>\(●\)<\/text><\/b>/);
+	assert.match(lines[2], /<dim>Ship it<\/dim>/);
+	assert.match(lines[3], /\[customMessageBg\]/);
+	assert.match(lines[3], /<dim>\(○\)<\/dim>/);
+	send("X");
+	await pending;
+});
+
+test("the footer shows the panel hints while it is open, switches with the mode, and clears on answer", async () => {
+	const hints = createFooterHints();
+	const tool = createAskUserChoiceTool(createAskUserPanelState(), hints);
+	const { ctx, send, render } = tuiContext();
+	assert.equal(hints.get(), undefined);
+	const pending = tool.execute(
+		"call-footer-hints",
+		{ question: "Pick", options: [{ label: "A" }] },
+		undefined,
+		undefined,
+		ctx,
+	);
+	const lines = render(80);
+	assert.ok(!lines.some((line) => line.includes("Shift+X")), "hints must not render inline");
+	assert.deepEqual(hints.get()?.[0], { key: "↑/↓", action: "move" });
+	assert.deepEqual(hints.get()?.at(-1), { key: "Shift+X", action: "dismiss" });
+	send("z");
+	render(80);
+	assert.deepEqual(hints.get(), [
+		{ key: "Enter", action: "submit" },
+		{ key: "↑/↓", action: "leave & move" },
+		{ key: "Esc", action: "back to browse" },
+	]);
+	send("a");
+	send("\r");
+	await pending;
+	assert.equal(hints.get(), undefined);
+});
+
+test("the footer hints clear when the panel is dismissed or aborted", async () => {
+	const hints = createFooterHints();
+	const tool = createAskUserChoiceTool(createAskUserPanelState(), hints);
+	const dismissed = tuiContext();
+	const first = tool.execute(
+		"call-footer-cancel",
+		{ question: "Pick", options: [{ label: "A" }] },
+		undefined,
+		undefined,
+		dismissed.ctx,
+	);
+	dismissed.render(80);
+	assert.ok(hints.get());
+	dismissed.send("X");
+	await first;
+	assert.equal(hints.get(), undefined);
+
+	const controller = new AbortController();
+	const aborted = tuiContext();
+	const second = tool.execute(
+		"call-footer-abort",
+		{ question: "Pick", options: [{ label: "A" }] },
+		controller.signal,
+		undefined,
+		aborted.ctx,
+	);
+	aborted.render(80);
+	assert.ok(hints.get());
+	controller.abort();
+	await second;
+	assert.equal(hints.get(), undefined);
 });

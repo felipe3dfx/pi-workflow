@@ -6,12 +6,21 @@ import { fileURLToPath } from "node:url";
 
 import {
 	applyMcpConfiguration,
+	legacyMcpAdapterNote,
 	loadMcpServerCatalog,
 	manualMcpConfigurationInstructions,
 	planMcpConfiguration,
 	type CompanionMcpAdapters,
 	type McpConfigurationPlan,
 } from "./mcp-config.ts";
+import {
+	applyPiSettings,
+	loadPiSettingsCatalog,
+	manualPiSettingsInstructions,
+	type PiSettingsAdapters,
+	type PiSettingsCatalog,
+	planPiSettings,
+} from "./pi-settings.ts";
 
 export interface CompanionPackage {
 	package: string;
@@ -66,6 +75,7 @@ export interface CompanionWorkflowOptions {
 	catalog?: CompanionCatalogAdapters;
 	interaction?: CompanionInteractionAdapters;
 	mcp?: CompanionMcpAdapters;
+	settings?: PiSettingsAdapters;
 }
 
 export interface InspectResult {
@@ -77,11 +87,11 @@ export interface InspectResult {
 	metadataPath: string;
 }
 
-export interface InstallMissingResult {
+export interface SetupResult {
 	outcome:
 		| "metadata-error"
 		| "mcp-catalog-error"
-		| "manual"
+		| "settings-catalog-error"
 		| "failed"
 		| "config-error"
 		| "noop"
@@ -93,6 +103,7 @@ export interface InstallMissingResult {
 	errored: CompanionState[];
 	failures: string[];
 	mcpPath?: string;
+	settingsPath?: string;
 }
 
 interface ResolvedCompanionCatalog {
@@ -100,12 +111,27 @@ interface ResolvedCompanionCatalog {
 	states: CompanionState[];
 	actionable: CompanionState[];
 	loadError?: string;
-	collidingPackageInstalled: boolean;
+	collidingPackages: (typeof collidingPackages)[number][];
 	legacySpawnPackageBlocked: boolean;
 	legacySpawnPackageError?: string;
 }
 
-const collidingPackage = "@heyhuynhgiabuu/pi-pretty";
+const collidingPackages = [
+	{
+		name: "@heyhuynhgiabuu/pi-pretty",
+		conflict:
+			"registers the same tool names as pi-workflow (read, bash, grep, find, ls)",
+	},
+	{
+		name: "pi-powerline-footer",
+		conflict: "replaces the same header, footer, and editor as pi-workflow",
+	},
+	{
+		name: "pi-mcp-adapter",
+		conflict:
+			"replaces Pi's built-in /mcp, so Pi ignores mcp.json while it is installed",
+	},
+];
 const legacySpawnPackage = "@tintinweb/pi-subagents";
 
 const requireFromPackage = createRequire(import.meta.url);
@@ -275,7 +301,9 @@ function resolveCompanionCatalog(
 		states,
 		actionable: states.filter((companion) => companion.status !== "installed"),
 		loadError: loaded.error,
-		collidingPackageInstalled: Boolean(resolveInstalledVersion(collidingPackage).version),
+		collidingPackages: collidingPackages.filter(
+			({ name }) => resolveInstalledVersion(name).version,
+		),
 		legacySpawnPackageBlocked: !spawnToolsAllowed(legacySpawnPackageState),
 		legacySpawnPackageError: legacySpawnPackageState.error,
 	};
@@ -327,11 +355,80 @@ function notificationLevel(loadError: boolean, needsAttention: boolean): Notific
 	return "info";
 }
 
+type Alignment = {
+	heading: string;
+	path?: string;
+	misaligned: string[];
+	error?: string;
+	note?: string;
+};
+
+function mcpAlignment(mcp: CompanionMcpAdapters | undefined): Alignment {
+	const heading = "MCP configuration:";
+	const loaded = loadMcpServerCatalog(mcp);
+	if (!loaded.catalog) {
+		return {
+			heading,
+			misaligned: [],
+			error: loaded.error ?? "Unable to load the MCP server catalog.",
+		};
+	}
+	const plan = planMcpConfiguration(loaded.catalog, mcp);
+	return {
+		heading,
+		path: plan.path,
+		misaligned: [
+			...plan.additions,
+			...plan.replacements.map((replacement) => replacement.name),
+		],
+		error: plan.error,
+		note: legacyMcpAdapterNote(mcp),
+	};
+}
+
+function settingsAlignment(
+	settings: PiSettingsAdapters | undefined,
+): Alignment {
+	const heading = "Default settings:";
+	const loaded = loadPiSettingsCatalog(settings);
+	if (!loaded.catalog) {
+		return {
+			heading,
+			misaligned: [],
+			error: loaded.error ?? "Unable to load the settings catalog.",
+		};
+	}
+	const plan = planPiSettings(loaded.catalog, settings);
+	return {
+		heading,
+		path: plan.path,
+		misaligned: plan.misaligned,
+		error: plan.error,
+	};
+}
+
+function alignmentLines(alignment: Alignment): string[] {
+	const note = alignment.note ? [alignment.note] : [];
+	if (alignment.error)
+		return ["", alignment.heading, `✗ ${alignment.error}`, ...note];
+	if (alignment.misaligned.length > 0) {
+		return [
+			"",
+			alignment.heading,
+			`✗ ${alignment.path} — not aligned: ${alignment.misaligned.join(", ")}`,
+			"Run /workflow:setup to align it.",
+			...note,
+		];
+	}
+	return ["", alignment.heading, `✓ ${alignment.path} — aligned`, ...note];
+}
+
 function renderCompanionCatalogStatus(
 	catalog: ResolvedCompanionCatalog,
 	options: {
 		heading: string;
 		metadataPath?: string;
+		alignments: Alignment[];
 	},
 ): { lines: string[]; level: NotificationLevel } {
 	const lines = [
@@ -351,7 +448,7 @@ function renderCompanionCatalogStatus(
 	} else if (catalog.actionable.length > 0) {
 		lines.push(
 			"",
-			"Missing or unreadable companions are installed independently. Run /pi-workflow-install-companions or install manually:",
+			"Missing or unreadable companions are installed independently. Run /workflow:setup or install manually:",
 			...catalog.actionable.map(
 				(companion) => `pi install ${companionInstallSpec(companion)}`,
 			),
@@ -361,30 +458,36 @@ function renderCompanionCatalogStatus(
 		lines.push("", "All configured companions are installed.");
 	}
 
-	if (catalog.collidingPackageInstalled) {
-		lines.push(
-			"",
-			`${collidingPackage} is installed and registers the same tool names as pi-workflow (read, bash, grep, find, ls). pi-workflow does not remove it. Remove it yourself:`,
-			`pi remove npm:${collidingPackage}`,
-			"Then run /reload.",
-		);
-	}
+	lines.push(...collisionLines(catalog));
 
 	if (catalog.legacySpawnPackageBlocked) {
 		lines.push("", ...legacySpawnPackageWarningLines(catalog.legacySpawnPackageError));
 	}
+
+	for (const alignment of options.alignments) lines.push(...alignmentLines(alignment));
 
 	if (options.metadataPath) lines.push("", `Companion metadata: ${options.metadataPath}`);
 
 	return {
 		lines,
 		level: notificationLevel(
-			Boolean(catalog.loadError),
+			Boolean(catalog.loadError) ||
+				options.alignments.some((alignment) => alignment.error),
 			catalog.actionable.length > 0 ||
-				catalog.collidingPackageInstalled ||
-				catalog.legacySpawnPackageBlocked,
+				catalog.collidingPackages.length > 0 ||
+				catalog.legacySpawnPackageBlocked ||
+				options.alignments.some((alignment) => alignment.misaligned.length > 0),
 		),
 	};
+}
+
+function collisionLines(catalog: ResolvedCompanionCatalog) {
+	return catalog.collidingPackages.flatMap(({ name, conflict }) => [
+		"",
+		`${name} is installed and ${conflict}. pi-workflow does not remove it. Remove it yourself:`,
+		`pi remove npm:${name}`,
+		"Then run /reload.",
+	]);
 }
 
 function notify(
@@ -396,9 +499,9 @@ function notify(
 }
 
 function emptyInstallResult(
-	outcome: InstallMissingResult["outcome"],
-	extra: Partial<InstallMissingResult> = {},
-): InstallMissingResult {
+	outcome: SetupResult["outcome"],
+	extra: Partial<SetupResult> = {},
+): SetupResult {
 	return {
 		outcome,
 		installable: [],
@@ -410,6 +513,28 @@ function emptyInstallResult(
 
 export function createCompanionWorkflow(options: CompanionWorkflowOptions = {}) {
 	const interaction = options.interaction ?? {};
+
+	async function reportStatus(heading: string): Promise<InspectResult> {
+		const catalog = resolveCompanionCatalog(options.catalog);
+		const { lines, level } = renderCompanionCatalogStatus(catalog, {
+			heading,
+			metadataPath: catalog.metadataPath,
+			alignments: [
+				mcpAlignment(options.mcp),
+				settingsAlignment(options.settings),
+			],
+		});
+		const message = lines.join("\n");
+		notify(interaction, message, level);
+		return {
+			message,
+			level,
+			states: catalog.states,
+			actionable: catalog.actionable,
+			loadError: catalog.loadError,
+			metadataPath: catalog.metadataPath,
+		};
+	}
 
 	return {
 		async checkSpawnTools(): Promise<{ allowed: boolean }> {
@@ -427,43 +552,10 @@ export function createCompanionWorkflow(options: CompanionWorkflowOptions = {}) 
 			return { allowed };
 		},
 
-		async inspect(): Promise<InspectResult> {
-			const catalog = resolveCompanionCatalog(options.catalog);
-			const { lines, level } = renderCompanionCatalogStatus(catalog, {
-				heading: "pi-workflow companion status",
-				metadataPath: catalog.metadataPath,
-			});
-			const message = lines.join("\n");
-			notify(interaction, message, level);
-			return {
-				message,
-				level,
-				states: catalog.states,
-				actionable: catalog.actionable,
-				loadError: catalog.loadError,
-				metadataPath: catalog.metadataPath,
-			};
-		},
+		inspect: () => reportStatus("pi-workflow companion status"),
+		diagnose: () => reportStatus("pi-workflow companion doctor"),
 
-		async diagnose(): Promise<InspectResult> {
-			const catalog = resolveCompanionCatalog(options.catalog);
-			const { lines, level } = renderCompanionCatalogStatus(catalog, {
-				heading: "pi-workflow companion doctor",
-				metadataPath: catalog.metadataPath,
-			});
-			const message = lines.join("\n");
-			notify(interaction, message, level);
-			return {
-				message,
-				level,
-				states: catalog.states,
-				actionable: catalog.actionable,
-				loadError: catalog.loadError,
-				metadataPath: catalog.metadataPath,
-			};
-		},
-
-		async installMissing(apply = false): Promise<InstallMissingResult> {
+		async setup(): Promise<SetupResult> {
 			const catalog = resolveCompanionCatalog(options.catalog);
 			if (catalog.loadError) {
 				notify(interaction, catalog.loadError, "error");
@@ -479,12 +571,31 @@ export function createCompanionWorkflow(options: CompanionWorkflowOptions = {}) 
 				return emptyInstallResult("mcp-catalog-error", { message });
 			}
 
+			const legacyNote = legacyMcpAdapterNote(options.mcp);
+			if (legacyNote) notify(interaction, legacyNote, "info");
+
 			const mcpPlan = planMcpConfiguration(loadedMcp.catalog, options.mcp);
 			if (mcpPlan.error) {
 				notify(interaction, mcpPlan.error, "error");
 				return emptyInstallResult("config-error", {
 					message: mcpPlan.error,
 					mcpPath: mcpPlan.path,
+				});
+			}
+
+			const loadedSettings = loadPiSettingsCatalog(options.settings);
+			if (!loadedSettings.catalog) {
+				const message = loadedSettings.error ?? "Unable to load the settings catalog.";
+				notify(interaction, message, "error");
+				return emptyInstallResult("settings-catalog-error", { message });
+			}
+
+			const settingsPlan = planPiSettings(loadedSettings.catalog, options.settings);
+			if (settingsPlan.error) {
+				notify(interaction, settingsPlan.error, "error");
+				return emptyInstallResult("config-error", {
+					message: settingsPlan.error,
+					settingsPath: settingsPlan.path,
 				});
 			}
 
@@ -496,27 +607,38 @@ export function createCompanionWorkflow(options: CompanionWorkflowOptions = {}) 
 					"Install or update pi-workflow companions manually:",
 				),
 				manualMcpConfigurationInstructions(mcpPlan, loadedMcp.catalog),
+				manualPiSettingsInstructions(settingsPlan, loadedSettings.catalog),
 			].join("\n\n");
 			const base = {
 				installable,
 				errored,
 				manualInstructions,
 				mcpPath: mcpPlan.path,
+				settingsPath: settingsPlan.path,
 			};
-			const hasWork = installable.length > 0 || errored.length > 0 || mcpPlan.changed;
+			const hasWork =
+				installable.length > 0 || errored.length > 0 || mcpPlan.changed || settingsPlan.changed;
 			if (!hasWork) {
-				const message = "All configured companions are installed and MCP configuration matches the catalog.";
-				notify(interaction, message, "info");
-				return emptyInstallResult("noop", { message, mcpPath: mcpPlan.path });
+				const message =
+					"All configured companions are installed, MCP configuration matches the catalog, and default settings are applied.";
+				const full = [message, ...collisionLines(catalog)].join("\n");
+				notify(
+					interaction,
+					full,
+					catalog.collidingPackages.length > 0 ? "warning" : "info",
+				);
+				return emptyInstallResult("noop", {
+					message: full,
+					mcpPath: mcpPlan.path,
+					settingsPath: settingsPlan.path,
+				});
 			}
 
-			if (!apply) {
-				const message = `${manualInstructions}\n\nRe-run /pi-workflow-install-companions --apply to confirm this install.`;
-				notify(interaction, message, "warning");
-				return { outcome: "manual", message, ...base, failures: [] };
-			}
-
-			if (installable.length === 0 && !mcpPlan.changed) {
+			if (
+				installable.length === 0 &&
+				!mcpPlan.changed &&
+				!settingsPlan.changed
+			) {
 				notify(interaction, manualInstructions, "error");
 				return { outcome: "manual-only", message: manualInstructions, ...base, failures: [] };
 			}
@@ -544,35 +666,84 @@ export function createCompanionWorkflow(options: CompanionWorkflowOptions = {}) 
 				return { outcome: "failed", message, ...base, failures };
 			}
 
-			return finishMcpApply(interaction, mcpPlan, loadedMcp.catalog, options.mcp, base);
+			return finishApply(
+				interaction,
+				mcpPlan,
+				loadedMcp.catalog,
+				loadedSettings.catalog,
+				options,
+				base,
+				catalog,
+			);
 		},
 	};
 }
 
-async function finishMcpApply(
+async function finishApply(
 	interaction: CompanionInteractionAdapters,
 	mcpPlan: McpConfigurationPlan,
 	catalog: NonNullable<ReturnType<typeof loadMcpServerCatalog>["catalog"]>,
-	mcp: CompanionMcpAdapters | undefined,
-	base: Pick<InstallMissingResult, "installable" | "errored" | "manualInstructions" | "mcpPath">,
-): Promise<InstallMissingResult> {
-	const applied = applyMcpConfiguration(mcpPlan, catalog, mcp);
-	if (applied.status === "applied") {
-		const message = applied.wrote
-			? `Installed companions and updated MCP configuration at ${applied.path}. Run /reload.`
-			: "Installed companions. MCP configuration already matched the catalog. Run /reload.";
-		notify(interaction, message, base.errored.length > 0 ? "warning" : "info");
-		return { outcome: "installed", message, ...base, failures: [] };
-	}
+	settingsCatalog: PiSettingsCatalog,
+	options: CompanionWorkflowOptions,
+	base: Pick<
+		SetupResult,
+		"installable" | "errored" | "manualInstructions" | "mcpPath" | "settingsPath"
+	>,
+	companions: ResolvedCompanionCatalog,
+): Promise<SetupResult> {
+	const applied = applyMcpConfiguration(mcpPlan, catalog, options.mcp);
 	if (applied.status === "refused-concurrent-change") {
 		const message = `Refusing to write MCP configuration because these entries changed: ${applied.changedTargets.join(", ")}.`;
 		notify(interaction, message, "error");
 		return { outcome: "config-error", message, ...base, failures: [] };
 	}
-	const message =
-		applied.status === "reread-failed"
-			? applied.error
-			: `Unable to write MCP configuration: ${applied.error}`;
-	notify(interaction, message, "error");
-	return { outcome: "config-error", message, ...base, failures: [] };
+	if (applied.status !== "applied") {
+		const message =
+			applied.status === "reread-failed"
+				? applied.error
+				: `Unable to write MCP configuration: ${applied.error}`;
+		notify(interaction, message, "error");
+		return { outcome: "config-error", message, ...base, failures: [] };
+	}
+	const settings = applyPiSettings(settingsCatalog, options.settings);
+	if (settings.error) {
+		const done = [
+			base.installable.length > 0 ? "Companions were installed." : undefined,
+			applied.wrote
+				? `MCP configuration was updated at ${applied.path}.`
+				: undefined,
+		].filter((line) => line !== undefined);
+		const message =
+			done.length > 0
+				? `${settings.error}\n${done.join(" ")} Run /reload to pick these up, then fix the settings error and run setup again.`
+				: settings.error;
+		notify(interaction, message, "error");
+		return { outcome: "config-error", message, ...base, failures: [] };
+	}
+	const summary = [
+		base.installable.length > 0
+			? applied.wrote
+				? `Installed companions and updated MCP configuration at ${applied.path}.`
+				: "Installed companions. MCP configuration already matched the catalog."
+			: applied.wrote
+				? `Updated MCP configuration at ${applied.path}.`
+				: "MCP configuration already matched the catalog.",
+		settings.wrote
+			? `Applied default settings at ${settings.path}. Restart Pi to apply them; /reload is not enough.`
+			: "Default settings already matched the catalog. Run /reload.",
+	].join(" ");
+	const message = [
+		base.errored.length > 0
+			? `${summary}\n\nThese companions need attention:\n${base.manualInstructions}`
+			: summary,
+		...collisionLines(companions),
+	].join("\n");
+	notify(
+		interaction,
+		message,
+		base.errored.length > 0 || companions.collidingPackages.length > 0
+			? "warning"
+			: "info",
+	);
+	return { outcome: "installed", message, ...base, failures: [] };
 }

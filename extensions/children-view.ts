@@ -32,10 +32,18 @@ import {
 	childGlyph,
 	childMeta,
 	childName,
-	renderChildRow,
-	spread,
 } from "./children-box.ts";
-import { sanitizeMultilineText } from "./todo-header.ts";
+import {
+	closeSpan,
+	framePad,
+	type Hint,
+	type HintSpan,
+	hintRows,
+	menuRow,
+	modalFrame,
+	sectionRule,
+} from "./chrome-menus.ts";
+import { sanitizeMultilineText, sanitizeTaskText } from "./todo-header.ts";
 
 type Sessions = ReturnType<typeof createChildSessions>;
 type Action =
@@ -48,7 +56,6 @@ type Action =
 	| "thinking"
 	| "yes"
 	| "no";
-type Segment = { action: Action; start: number; end: number };
 
 function userText(content: string | { type: string; text?: string }[]) {
 	return sanitizeMultilineText(
@@ -209,7 +216,12 @@ function createChildrenView(
 	let notice = "";
 	let thread = createThread(theme);
 	let unfollow: (() => void) | undefined;
-	let layout = { ids: [] as string[], footer: -1, segments: [] as Segment[] };
+	let layout = {
+		width: 0,
+		left: 0,
+		ids: new Map<number, string>(),
+		hints: [] as (HintSpan & { y: number; action: Action })[],
+	};
 	const unsubscribe = sessions.subscribe(() => tui.requestRender());
 	const thinkingKey = keybindings.getKeys("app.thinking.toggle").join("/");
 	host.open.add(close);
@@ -307,85 +319,89 @@ function createChildrenView(
 		return undefined;
 	}
 
-	function footer(width: number, working: boolean) {
-		const keys: [string, Action][] = confirming
-			? [
-					["y yes", "yes"],
-					["n no", "no"],
-				]
-			: detail
-				? [
-						["Esc back", "back"],
-						["q close", "close"],
-						...(working ? [["s/c cancel", "cancel"] as [string, Action]] : []),
-						[`${thinkingKey} thinking`, "thinking"],
-					]
-				: [
-						["j/k move", "down"],
-						["Enter detail", "open"],
-						["s/c cancel", "cancel"],
-						["q close", "close"],
-					];
-		let column = 1;
-		layout.segments = keys.map(([label, action]) => {
-			const segment = { action, start: column, end: column + label.length };
-			column = segment.end + 3;
-			return segment;
-		});
-		const text = ` ${keys.map(([label]) => label).join(" · ")}`;
-		return truncateToWidth(theme.fg("dim", text), width);
+	function footer(working: boolean): [Hint, Action][] {
+		if (confirming)
+			return [
+				[["y", "yes"], "yes"],
+				[["n", "no"], "no"],
+			];
+		if (detail)
+			return [
+				[["Esc", "back"], "back"],
+				[["q", "close"], "close"],
+				...(working ? [[["s/c", "cancel"], "cancel"] as [Hint, Action]] : []),
+				[[thinkingKey, "thinking"], "thinking"],
+			];
+		return [
+			[["j/k", "move"], "down"],
+			[["Enter", "detail"], "open"],
+			[["s/c", "cancel"], "cancel"],
+			[["q", "close"], "close"],
+		];
 	}
 
 	function status() {
 		const pending =
 			confirming === undefined ? undefined : sessions.get(confirming);
 		if (pending) {
-			return theme.fg("warning", ` Cancel ${childName(pending)}? y/n`);
+			return theme.fg("warning", `Cancel ${childName(pending)}? y/n`);
 		}
-		return theme.fg("dim", ` ${notice}`);
+		return theme.fg("dim", notice);
 	}
 
 	function renderList(width: number, body: number) {
 		const { list, index } = children();
 		const now = Date.now();
-		const first = Math.max(0, index - body + 1);
-		const painted = list.slice(first, first + body);
-		layout.ids = painted.map((child) => child.id);
-		const top = spread(
-			`${theme.fg("dim", "·")} ${theme.bold("Subagents")} ${list.length}`,
-			theme.fg("dim", "/pi-workflow-children · alt+a"),
-			width,
-		);
-		const rows = painted.map((child, i) =>
-			renderChildRow(
-				theme,
-				child,
+		const lines: string[] = [];
+		const ids: (string | undefined)[] = [];
+		let section = "";
+		list.forEach((child, i) => {
+			const name = isWorking(child.state) ? "Active" : "Finished";
+			if (name !== section) {
+				section = name;
+				lines.push(sectionRule(theme, name, width));
+				ids.push(undefined);
+			}
+			const step = sanitizeTaskText(
+				child.step ?? child.task.trim().split("\n")[0],
+			);
+			const meta =
 				child.state === "queued"
 					? "queued"
-					: `${child.state} · ${childMeta(child, now)}`,
-				first + i === index,
-				width,
-			),
-		);
+					: `${child.state} · ${childMeta(child, now)}`;
+			lines.push(
+				menuRow(
+					theme,
+					`${childGlyph(theme, child)} ${theme.fg("accent", child.role)} ${child.id.slice(0, 4)} ${step}`,
+					theme.fg("dim", meta),
+					i === index,
+					width,
+					true,
+				),
+			);
+			ids.push(child.id);
+		});
 		if (list.length === 0) {
-			rows.push(theme.fg("dim", " No children in this session."));
+			lines.push(theme.fg("dim", "No children in this session."));
 		}
-		return { top, rows, working: true };
+		const first = Math.max(0, ids.indexOf(list[index]?.id) - body + 1);
+		return {
+			title: `Subagents ${list.length}`,
+			rows: lines.slice(first, first + body),
+			ids: ids.slice(first, first + body),
+			working: true,
+		};
 	}
 
 	function renderDetail(child: ChildRecord, width: number, body: number) {
-		layout.ids = [];
 		const model = child.model.slice(child.model.indexOf("/") + 1);
-		const top = spread(
-			`${theme.fg("accent", childName(child))} · ${model} (${child.thinking})`,
-			`${childGlyph(theme, child)} ${theme.fg("dim", `${child.state} · ${childElapsed(child, Date.now())}`)}`,
-			width,
-		);
+		const state = `${childGlyph(theme, child)} ${theme.fg("dim", `${child.state} · ${childElapsed(child, Date.now())}`)}`;
 		const content = sessions.thread(child.id);
 		const lines = content ? thread.lines(content, child.state, width) : [];
 		return {
-			top,
-			rows: lines.slice(-body),
+			title: `${childName(child)} · ${model} (${child.thinking})`,
+			rows: [state, ...lines.slice(-(body - 1))].slice(0, body),
+			ids: [],
 			working: isWorking(child.state),
 		};
 	}
@@ -397,17 +413,48 @@ function createChildrenView(
 				return [];
 			}
 			const height = Math.max(4, tui.terminal.rows);
-			const body = height - 3;
+			const pad = framePad(width);
+			const inner = Math.max(1, width - 2 - pad * 2);
 			const child = detail === undefined ? undefined : sessions.get(detail);
 			if (detail !== undefined && !child) detail = undefined;
+			const keys = footer(child ? isWorking(child.state) : true);
+			const hints = hintRows(
+				theme,
+				keys.map(([hint]) => hint),
+				inner,
+			);
+			const shownHints = Math.min(hints.lines.length, Math.max(0, height - 3));
+			const body = Math.max(0, height - 3 - shownHints);
 			const view = child
-				? renderDetail(child, width, body)
-				: renderList(width, body);
-			const lines = [view.top, ...view.rows];
-			while (lines.length < height - 2) lines.push("");
-			lines.push(status(), footer(width, view.working));
-			layout.footer = height - 1;
-			return lines.map((line) => truncateToWidth(line, width));
+				? renderDetail(child, inner, body)
+				: renderList(inner, body);
+			const rows = view.rows.slice(0, body);
+			while (rows.length < body) rows.push("");
+			const hintTop = 2 + body;
+			layout = {
+				width,
+				left: 1 + pad,
+				ids: new Map(
+					view.ids.flatMap((id, i) =>
+						id === undefined || i >= body
+							? []
+							: [[i + 1, id] as [number, string]],
+					),
+				),
+				hints: hints.spans
+					.filter((span) => span.row < shownHints)
+					.map((span) => ({
+						...span,
+						y: hintTop + span.row,
+						action: keys[span.index][1],
+					})),
+			};
+			return modalFrame(
+				theme,
+				view.title,
+				[...rows, status(), ...hints.lines.slice(0, shownHints)],
+				width,
+			);
 		},
 		invalidate() {},
 		handleInput(data: string) {
@@ -416,15 +463,25 @@ function createChildrenView(
 		},
 		handleMouse(event: TuiMouseEvent) {
 			if (event.type !== "click" || event.button !== "left") return undefined;
-			if (event.y === layout.footer) {
-				const segment = layout.segments.find(
-					(item) => event.x >= item.start && event.x < item.end,
-				);
-				if (!segment) return undefined;
-				press(segment.action);
+			const shut = closeSpan(layout.width);
+			if (
+				event.y === 0 &&
+				shut &&
+				event.x >= shut.start &&
+				event.x < shut.end
+			) {
+				close();
 				return { handled: true };
 			}
-			const id = layout.ids[event.y - 1];
+			const x = event.x - layout.left;
+			const hint = layout.hints.find(
+				(span) => span.y === event.y && x >= span.start && x < span.end,
+			);
+			if (hint) {
+				press(hint.action);
+				return { handled: true };
+			}
+			const id = layout.ids.get(event.y);
 			if (detail || confirming || !id || !sessions.get(id)) return undefined;
 			selected = id;
 			if ((event.clickCount ?? 1) >= 2) press("open");

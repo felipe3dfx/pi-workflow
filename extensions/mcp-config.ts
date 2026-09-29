@@ -1,8 +1,12 @@
 import {
+	chmodSync,
+	existsSync,
 	linkSync,
 	mkdirSync,
 	readFileSync,
+	realpathSync,
 	renameSync,
+	statSync,
 	unlinkSync,
 	writeFileSync,
 } from "node:fs";
@@ -38,6 +42,7 @@ export type McpConfigurationPlan = {
 		name: string;
 		current: unknown;
 		expected: McpServerDefinition;
+		keys: string[];
 	}>;
 	targets: McpConfigurationTarget[];
 	error?: string;
@@ -148,12 +153,33 @@ function canonicalJson(value: unknown): string {
 	return JSON.stringify(value);
 }
 
-function definitionsEqual(left: unknown, right: unknown): boolean {
+function misalignedKeys(
+	current: unknown,
+	expected: McpServerDefinition,
+): string[] {
+	const currentEntry = isPlainRecord(current) ? current : {};
+	return Object.keys(expected).filter(
+		(key) => !definitionsEqual(currentEntry[key], expected[key]),
+	);
+}
+
+export function definitionsEqual(left: unknown, right: unknown): boolean {
 	return canonicalJson(left) === canonicalJson(right);
 }
 
 function mcpConfigPath(mcpOptions: CompanionMcpAdapters = {}): string {
 	return resolve(activePiAgentDirectory(mcpOptions), "mcp.json");
+}
+
+export function legacyMcpAdapterNote(
+	mcpOptions: CompanionMcpAdapters = {},
+): string | undefined {
+	const legacyPath = resolve(
+		activePiAgentDirectory(mcpOptions),
+		"mcp-adapter.json",
+	);
+	if (!existsSync(legacyPath)) return undefined;
+	return `${legacyPath} is no longer read. Move any servers you still need from it to ${mcpConfigPath(mcpOptions)}.`;
 }
 
 function readExistingMcpConfiguration(path: string): {
@@ -222,15 +248,14 @@ export function planMcpConfiguration(
 		.filter((target) => !target.existed)
 		.map((target) => target.name);
 	const replacements = targets
-		.filter(
-			(target) =>
-				target.existed && !definitionsEqual(target.current, target.expected),
-		)
+		.filter((target) => target.existed)
 		.map((target) => ({
 			name: target.name,
 			current: target.current,
 			expected: target.expected,
-		}));
+			keys: misalignedKeys(target.current, target.expected),
+		}))
+		.filter((replacement) => replacement.keys.length > 0);
 
 	return {
 		changed: additions.length > 0 || replacements.length > 0,
@@ -239,7 +264,15 @@ export function planMcpConfiguration(
 			...existingRoot,
 			mcpServers: {
 				...currentServers,
-				...catalog.mcpServers,
+				...Object.fromEntries(
+					targets.map((target) => [
+						target.name,
+						{
+							...(isPlainRecord(target.current) ? target.current : {}),
+							...target.expected,
+						},
+					]),
+				),
 			},
 		},
 		additions,
@@ -258,22 +291,26 @@ export function manualMcpConfigurationInstructions(
 ): string {
 	const replacementLines = plan.replacements.flatMap((replacement) => [
 		`- ${replacement.name}`,
-		"Current:",
-		formatJsonBlock(replacement.current),
-		"Expected:",
-		formatJsonBlock(replacement.expected),
+		...replacement.keys.map(
+			(key) =>
+				`  ${key}: current ${JSON.stringify(
+					isPlainRecord(replacement.current)
+						? replacement.current[key]
+						: replacement.current,
+				)}, expected ${JSON.stringify(replacement.expected[key])}`,
+		),
 	]);
 
 	return [
 		"pi-workflow cannot mutate Pi configuration automatically in this context.",
 		`Edit ${plan.path} manually and merge these MCP server definitions under top-level "mcpServers":`,
 		formatJsonBlock(catalog.mcpServers),
-		"Preserve unrelated top-level fields and unrelated MCP servers.",
+		"Preserve unrelated top-level fields, unrelated MCP servers, and extra keys already set on these servers.",
 		plan.replacements.length > 0
-			? "Same-name conflicts must be replaced only after reviewing the current vs expected definitions below:"
+			? "Set only the differing keys below on the existing servers, after reviewing current vs expected values:"
 			: "",
 		...replacementLines,
-		"Then run /reload and authenticate Sentry/Linear as needed.",
+		"Then run /reload and authenticate each OAuth server with /mcp login <server>, for example /mcp login sentry and /mcp login linear.",
 	]
 		.filter((line) => line.length > 0)
 		.join("\n");
@@ -302,14 +339,21 @@ export function writeJsonAtomically(
 	value: Record<string, unknown>,
 	{ replace = true } = {},
 ) {
-	const directory = dirname(path);
+	const existing = replace && existsSync(path);
+	const target = existing ? realpathSync(path) : path;
+	const mode = existing ? statSync(target).mode & 0o777 : undefined;
+	const directory = dirname(target);
 	mkdirSync(directory, { recursive: true });
 	// ponytail: pid+timestamp assumes a single synchronous writer per process;
 	// concurrent writers in the same process could collide on this name.
-	const temporaryPath = `${path}.${process.pid}.${Date.now()}.tmp`;
+	const temporaryPath = `${target}.${process.pid}.${Date.now()}.tmp`;
 	try {
-		writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-		if (replace) renameSync(temporaryPath, path);
+		writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, {
+			encoding: "utf8",
+			mode,
+		});
+		if (mode !== undefined) chmodSync(temporaryPath, mode);
+		if (replace) renameSync(temporaryPath, target);
 		else linkSync(temporaryPath, path);
 	} catch (error) {
 		try {

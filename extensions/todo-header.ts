@@ -13,6 +13,8 @@ export type TodoTheme = Pick<Theme, "fg" | "bold">;
 const CLOSE_HINT = "×";
 const CORNER_TOP = "┌";
 const CORNER_BOTTOM = "└";
+const CORNER_BOTTOM_RIGHT = "┘";
+const SIDE = "│";
 
 const UNSAFE_TERMINAL_CHARACTERS = /[\p{Cc}\p{Bidi_Control}]/gu;
 
@@ -43,13 +45,18 @@ export function renderTodoBox(
 	const visible = tasks.filter((task) => state.showDone || !task.done);
 	const fillerWidth = Math.max(0, safeWidth - CORNER_TOP.length - CLOSE_HINT.length);
 	const top = theme.fg("borderMuted", CORNER_TOP) + " ".repeat(fillerWidth) + theme.fg("dim", CLOSE_HINT);
-	const bottom = theme.fg("borderMuted", CORNER_BOTTOM);
+	const bottom =
+		theme.fg("borderMuted", CORNER_BOTTOM) +
+		" ".repeat(Math.max(0, safeWidth - CORNER_BOTTOM.length - CORNER_BOTTOM_RIGHT.length)) +
+		theme.fg("borderMuted", CORNER_BOTTOM_RIGHT);
 
 	const rows = visible.map((task) => {
 		const text = sanitizeTaskText(task.text);
-		return task.done
-			? theme.fg("success", `  ✓ ${text}`)
-			: theme.bold(theme.fg("accent", `  □ ${text}`));
+		const content = task.done
+			? `${theme.fg("success", "✓")} ${theme.fg("muted", text)}`
+			: `${theme.fg("text", "□")} ${theme.fg("text", text)}`;
+		const inner = truncateToWidth(` ${content}`, Math.max(0, safeWidth - 2), "…", true);
+		return theme.fg("borderMuted", SIDE) + inner + theme.fg("borderMuted", SIDE);
 	});
 
 	return ["", top, ...rows, bottom, ""].map((line) => truncateToWidth(line, safeWidth));
