@@ -61,6 +61,7 @@ function loadTool(adapters) {
 			on() {},
 			registerCommand() {},
 			registerShortcut() {},
+			registerMessageRenderer() {},
 			registerProvider() {},
 			registerTool: (tool) => tools.push(tool),
 			exec: async () => {

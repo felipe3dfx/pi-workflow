@@ -1,165 +1,288 @@
+import { basename } from "node:path";
 import type {
 	AssistantMessage,
 	ToolResultMessage,
 } from "@earendil-works/pi-ai";
 import {
-	AssistantMessageComponent,
 	type ExtensionContext,
 	getMarkdownTheme,
 	type KeybindingsManager,
-	type SessionEntry,
-	UserMessageComponent,
+	type ThemeColor,
 } from "@earendil-works/pi-coding-agent";
 import {
-	type Component,
 	Key,
+	Markdown,
 	matchesKey,
 	type OverlayHandle,
 	type TuiMouseEvent,
 	truncateToWidth,
+	visibleWidth,
+	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 
 import {
 	type ChildRecord,
 	type createChildSessions,
-	describeTool,
 	isWorking,
+	type Schedule,
+	scheduleTimer,
 } from "./child-sessions.ts";
 import {
 	byState,
 	type ChildTheme,
 	childElapsed,
 	childGlyph,
-	childMeta,
 	childName,
-	renderChildRow,
 	spread,
 } from "./children-box.ts";
-import { sanitizeMultilineText } from "./todo-header.ts";
+import { marginFor } from "./chrome-editor.ts";
+import { toolLabel } from "./compact-tools.ts";
+import {
+	closeSpan,
+	displayKey,
+	fit,
+	framePad,
+	type Hint,
+	type HintSpan,
+	hintRows,
+	modalFrame,
+	sectionRule,
+	selectedRow,
+} from "./chrome-menus.ts";
+import { sanitizeMultilineText, sanitizeTaskText } from "./todo-header.ts";
+
+const minModalRows = 8;
+const splitWidth = 57;
+const divider = " │ ";
+const promptRows = 4;
+const twoLineRows = 12;
+const tickMs = 1000;
 
 type Sessions = ReturnType<typeof createChildSessions>;
+type Thread = NonNullable<ReturnType<Sessions["thread"]>>;
+type Block = { kind: "text" | "row"; rows: string[] };
+type Span = { x: number; width: number };
 type Action =
 	| "down"
 	| "up"
 	| "open"
+	| "focus"
+	| "back"
+	| "pageDown"
+	| "pageUp"
+	| "follow"
+	| "prompt"
 	| "cancel"
 	| "close"
-	| "back"
 	| "thinking"
 	| "yes"
 	| "no";
-type Segment = { action: Action; start: number; end: number };
+
+function clean(text: string) {
+	return sanitizeMultilineText(text).replaceAll("\t", "   ").trim();
+}
 
 function userText(content: string | { type: string; text?: string }[]) {
-	return sanitizeMultilineText(
+	return clean(
 		typeof content === "string"
 			? content
 			: content.map((part) => part.text ?? "").join("\n"),
 	);
 }
 
-function cleanMessage(message: AssistantMessage): AssistantMessage {
-	return {
-		...message,
-		errorMessage:
-			message.errorMessage && sanitizeMultilineText(message.errorMessage),
-		content: message.content.map((part) =>
-			part.type === "text"
-				? { ...part, text: sanitizeMultilineText(part.text) }
-				: part.type === "thinking"
-					? { ...part, thinking: sanitizeMultilineText(part.thinking) }
-					: part,
-		),
-	};
+function wrap(text: string, width: number) {
+	return text
+		.split("\n")
+		.flatMap((line) => wrapTextWithAnsi(line, Math.max(1, width)));
+}
+
+function seconds(ms: number) {
+	return `${(Math.max(0, ms) / 1000).toFixed(1)}s`;
+}
+
+function count(tokens: number) {
+	if (tokens < 1000) return String(tokens);
+	if (tokens < 1_000_000) return `${(tokens / 1000).toFixed(1)}k`;
+	return `${(tokens / 1_000_000).toFixed(1)}M`;
+}
+
+function usage(thread: Thread | undefined) {
+	let tokens = 0;
+	let cost = 0;
+	for (const entry of thread?.entries ?? []) {
+		if (entry.type !== "message" || entry.message.role !== "assistant")
+			continue;
+		tokens += entry.message.usage?.totalTokens ?? 0;
+		cost += entry.message.usage?.cost?.total ?? 0;
+	}
+	return [
+		...(tokens > 0 ? [`${count(tokens)} tok`] : []),
+		...(cost > 0 ? [`$${cost.toFixed(2)}`] : []),
+	];
+}
+
+function pad(line: string, width: number) {
+	const clipped = fit(line, width);
+	return clipped + " ".repeat(Math.max(0, width - visibleWidth(clipped)));
 }
 
 function createThread(theme: ChildTheme) {
 	const markdown = getMarkdownTheme();
-	const cache = new Map<string, Component>();
-	const live = new AssistantMessageComponent(undefined, false, markdown);
+	const cache = new Map<string, Block[]>();
+	const thoughts = new Map<string, { start: number; end?: number }>();
 	let hideThinking = false;
 
-	function toolLines(
+	function row(color: ThemeColor, label: string, detail = "") {
+		const head = `${theme.fg(color, "◆")} ${theme.bold(theme.fg("muted", sanitizeTaskText(label)))}`;
+		const tail = sanitizeTaskText(detail);
+		return tail ? `${head} ${theme.fg("dim", tail)}` : head;
+	}
+
+	function thought(key: string, running: boolean) {
+		const time = thoughts.get(key);
+		if (running) {
+			if (!time) thoughts.set(key, { start: Date.now() });
+			return undefined;
+		}
+		if (!time) return undefined;
+		time.end ??= Date.now();
+		return time.end - time.start;
+	}
+
+	function assistant(
+		id: string,
 		message: AssistantMessage,
 		results: Map<string, ToolResultMessage>,
-		state: ChildRecord["state"],
+		streaming: boolean,
 		width: number,
+		duplicate = "",
 	) {
-		return message.content.flatMap((part) => {
-			if (part.type !== "toolCall") return [];
-			const result = results.get(part.id);
-			const status = result
-				? result.isError
-					? "Error"
-					: "Complete"
-				: isWorking(state)
-					? "Running"
-					: state[0].toUpperCase() + state.slice(1);
-			const line = ` ◆ ${describeTool(part.name, part.arguments)} · ${status}`;
-			return [truncateToWidth(theme.fg("muted", line), width)];
+		const blocks: Block[] = [];
+		message.content.forEach((part, index) => {
+			if (part.type === "thinking") {
+				const text = clean(part.thinking);
+				if (!text) return;
+				const running = streaming && index === message.content.length - 1;
+				const ms = thought(`${id}:${message.timestamp}:${index}`, running);
+				const head = running
+					? row("dim", "Thinking…")
+					: row("dim", "Thought", ms === undefined ? "" : `for ${seconds(ms)}`);
+				const body = hideThinking
+					? []
+					: wrap(text, width - 2).map((line) => `  ${theme.fg("dim", line)}`);
+				blocks.push({ kind: "row", rows: [head, ...body] });
+			} else if (part.type === "text") {
+				const text = clean(part.text);
+				if (text && text !== duplicate) {
+					blocks.push({
+						kind: "text",
+						rows: new Markdown(text, 0, 0, markdown).render(width),
+					});
+				}
+			} else if (part.type === "toolCall") {
+				const result = results.get(part.id);
+				const color = result ? (result.isError ? "error" : "toolTitle") : "dim";
+				const [label, detail] = toolLabel(part.name, part.arguments);
+				blocks.push({ kind: "row", rows: [row(color, label, detail)] });
+			}
 		});
+		const error = message.errorMessage && clean(message.errorMessage);
+		if (error && error !== duplicate) {
+			blocks.push({
+				kind: "row",
+				rows: wrap(error, width - 2).map(
+					(line, i) =>
+						`${i === 0 ? `${theme.fg("error", "◆")} ` : "  "}${theme.fg("muted", line)}`,
+				),
+			});
+		}
+		return blocks;
+	}
+
+	function user(text: string, width: number): Block[] {
+		return [
+			{
+				kind: "text",
+				rows: wrap(text, width - 2).map(
+					(line, i) =>
+						`${i === 0 ? theme.fg("accent", "❯ ") : "  "}${theme.fg("text", line)}`,
+				),
+			},
+		];
 	}
 
 	return {
 		toggleThinking() {
 			hideThinking = !hideThinking;
-			live.setHideThinkingBlock(hideThinking);
-			for (const component of cache.values()) {
-				if (component instanceof AssistantMessageComponent) {
-					component.setHideThinkingBlock(hideThinking);
-				}
-			}
 		},
-		lines(
-			thread: { entries: SessionEntry[]; streaming?: AssistantMessage },
-			state: ChildRecord["state"],
-			width: number,
-		) {
+		forget() {
+			cache.clear();
+		},
+		lines(thread: Thread, child: ChildRecord, width: number) {
+			const finalText = isWorking(child.state) ? "" : clean(child.text ?? "");
 			const results = new Map<string, ToolResultMessage>();
 			for (const entry of thread.entries) {
 				if (entry.type === "message" && entry.message.role === "toolResult") {
 					results.set(entry.message.toolCallId, entry.message);
 				}
 			}
-			const lines: string[] = [];
+			const working = isWorking(child.state);
+			const task = clean(child.task);
+			const blocks: Block[] = [];
+			const lastAssistant = thread.entries.findLast(
+				(entry) =>
+					entry.type === "message" && entry.message.role === "assistant",
+			);
 			for (const entry of thread.entries) {
 				if (entry.type !== "message") continue;
 				const { message } = entry;
-				if (message.role === "user") {
-					let component = cache.get(entry.id);
-					if (!component) {
-						component = new UserMessageComponent(
-							userText(message.content),
-							markdown,
+				if (message.role !== "user" && message.role !== "assistant") continue;
+				const duplicate = entry === lastAssistant ? finalText : "";
+				const key = `${child.id}:${entry.id}:${width}:${hideThinking}:${duplicate}`;
+				let shown = cache.get(key);
+				if (!shown) {
+					if (message.role === "user") {
+						const text = userText(message.content);
+						shown = text && text !== task ? user(text, width) : [];
+						cache.set(key, shown);
+					} else {
+						shown = assistant(
+							child.id,
+							message,
+							results,
+							false,
+							width,
+							duplicate,
 						);
-						cache.set(entry.id, component);
-					}
-					lines.push("", ...component.render(width));
-				} else if (message.role === "assistant") {
-					let component = cache.get(entry.id);
-					if (!component) {
-						component = new AssistantMessageComponent(
-							cleanMessage(message),
-							hideThinking,
-							markdown,
+						const settled = message.content.every(
+							(part) => part.type !== "toolCall" || results.has(part.id),
 						);
-						cache.set(entry.id, component);
+						if (settled || !working) cache.set(key, shown);
 					}
-					lines.push(...component.render(width));
-					lines.push(...toolLines(message, results, state, width));
 				}
+				blocks.push(...shown);
 			}
 			if (thread.streaming) {
-				live.updateContent(cleanMessage(thread.streaming), true);
-				lines.push(...live.render(width));
-				lines.push(...toolLines(thread.streaming, results, state, width));
+				blocks.push(
+					...assistant(child.id, thread.streaming, results, true, width),
+				);
+			}
+			const lines: string[] = [];
+			let last: Block["kind"] | undefined;
+			for (const block of blocks) {
+				if (last && (block.kind === "text" || last === "text")) lines.push("");
+				lines.push(...block.rows);
+				last = block.kind;
 			}
 			return lines;
 		},
 	};
 }
 
-export function createChildrenViews(sessions: Sessions) {
+export function createChildrenViews(
+	sessions: Sessions,
+	schedule: Schedule = scheduleTimer,
+) {
 	const open = new Set<() => void>();
 	return {
 		async open(ctx: ExtensionContext) {
@@ -169,6 +292,7 @@ export function createChildrenViews(sessions: Sessions) {
 					createChildrenView(sessions, tui, theme, keybindings, {
 						done,
 						open,
+						schedule,
 						focused: () =>
 							handle?.isFocused() !== false ||
 							// pi-tui types isOverlayFocused as protected; it is public at runtime.
@@ -201,33 +325,88 @@ function createChildrenView(
 	tui: { requestRender(): void; terminal: { rows: number } },
 	theme: ChildTheme,
 	keybindings: KeybindingsManager,
-	host: { done(): void; open: Set<() => void>; focused(): boolean },
+	host: {
+		done(): void;
+		open: Set<() => void>;
+		schedule: Schedule;
+		focused(): boolean;
+	},
 ) {
-	let selected: string | undefined;
-	let detail: string | undefined;
+	let selected: string | undefined = sessions
+		.list()
+		.filter((child) => !isWorking(child.state))
+		.sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0))[0]?.id;
+	let focus: "list" | "detail" = "list";
 	let confirming: string | undefined;
 	let notice = "";
-	let thread = createThread(theme);
+	let listTop = 0;
+	let listFree = false;
+	let detailTop = 0;
+	let detailMax = 0;
+	let detailRoom = 1;
+	let listRoom = 1;
+	let follow = true;
+	let promptOpen = false;
+	let followed: string | undefined;
 	let unfollow: (() => void) | undefined;
-	let layout = { ids: [] as string[], footer: -1, segments: [] as Segment[] };
-	const unsubscribe = sessions.subscribe(() => tui.requestRender());
-	const thinkingKey = keybindings.getKeys("app.thinking.toggle").join("/");
+	let tick: (() => void) | undefined;
+	const thread = createThread(theme);
+	let layout = {
+		width: 0,
+		edge: 0,
+		left: 0,
+		size: 0,
+		split: false,
+		list: undefined as Span | undefined,
+		detail: undefined as Span | undefined,
+		ids: new Map<number, string>(),
+		hints: [] as (HintSpan & { y: number; action: Action })[],
+	};
+	const unsubscribe = sessions.subscribe(() => {
+		tui.requestRender();
+		arm();
+	});
+	const thinkingKey = displayKey(
+		keybindings.getKeys("app.thinking.toggle").join("/"),
+	);
 	host.open.add(close);
+	arm();
+
+	function arm() {
+		if (tick || !host.open.has(close)) return;
+		if (!sessions.list().some((child) => isWorking(child.state))) return;
+		tick = host.schedule(() => {
+			tick = undefined;
+			tui.requestRender();
+			arm();
+		}, tickMs);
+	}
 
 	function children() {
 		const list = sessions.list().sort(byState);
-		const index = Math.max(
-			0,
-			list.findIndex((child) => child.id === selected),
-		);
-		return { list, index };
+		const found = list.findIndex((child) => child.id === selected);
+		if (found === -1 && focus === "detail" && !layout.split) focus = "list";
+		const index = Math.max(0, found);
+		return { list, index, child: list[index] as ChildRecord | undefined };
+	}
+
+	function track(id: string | undefined) {
+		if (id === followed) return;
+		unfollow?.();
+		followed = id;
+		unfollow = id ? sessions.follow(id, () => tui.requestRender()) : undefined;
+		follow = true;
+		detailTop = 0;
+		promptOpen = false;
+		thread.forget();
 	}
 
 	function cleanup() {
 		host.open.delete(close);
 		unsubscribe();
 		unfollow?.();
-		unfollow = undefined;
+		tick?.();
+		unfollow = tick = undefined;
 	}
 
 	function close() {
@@ -241,11 +420,26 @@ function createChildrenView(
 		notice = result.cancelled ? `${name} cancelled.` : result.message;
 	}
 
+	function scrollDetail(delta: number) {
+		detailTop = Math.max(0, Math.min(detailMax, detailTop + delta));
+		follow = detailTop >= detailMax;
+	}
+
+	function scrollList(delta: number) {
+		listTop = Math.max(0, listTop + delta);
+		listFree = true;
+	}
+
+	function scrollFocused(sign: number) {
+		if (focus === "list" && layout.split)
+			scrollList(sign * Math.max(1, listRoom - 1));
+		else scrollDetail(sign * Math.max(1, detailRoom - 1));
+	}
+
 	function press(action: Action) {
-		const { list, index } = children();
-		const target = detail ?? list[index]?.id;
-		const child = target === undefined ? undefined : sessions.get(target);
+		const { list, index, child } = children();
 		const name = child ? childName(child) : "";
+		const single = !layout.split && focus === "detail";
 		notice = "";
 		if (action === "yes" && confirming) {
 			const pending = sessions.get(confirming);
@@ -253,20 +447,29 @@ function createChildrenView(
 			confirming = undefined;
 		} else if (action === "no") {
 			confirming = undefined;
+		} else if ((action === "down" || action === "up") && single) {
+			scrollDetail(action === "down" ? 1 : -1);
 		} else if (action === "down" || action === "up") {
 			const next = Math.min(
 				list.length - 1,
 				Math.max(0, index + (action === "down" ? 1 : -1)),
 			);
 			selected = list[next]?.id;
+			listFree = false;
 		} else if (action === "open" && child) {
-			detail = child.id;
-			thread = createThread(theme);
-			unfollow = sessions.follow(child.id, () => tui.requestRender());
+			selected = child.id;
+			focus = "detail";
+		} else if (action === "focus" && child) {
+			selected = child.id;
+			focus = focus === "list" ? "detail" : "list";
 		} else if (action === "back") {
-			unfollow?.();
-			unfollow = undefined;
-			detail = undefined;
+			focus = "list";
+		} else if (action === "pageDown" || action === "pageUp") {
+			scrollFocused(action === "pageDown" ? 1 : -1);
+		} else if (action === "follow") {
+			follow = true;
+		} else if (action === "prompt") {
+			promptOpen = !promptOpen;
 		} else if (action === "close") {
 			close();
 		} else if (action === "thinking") {
@@ -291,12 +494,19 @@ function createChildrenView(
 		}
 		if (data === "q") return "close";
 		if (data === "s" || data === "c") return "cancel";
-		if (detail) {
-			if (matchesKey(data, Key.escape)) return "back";
-			if (keybindings.matches(data, "app.thinking.toggle")) return "thinking";
-			return undefined;
+		if (data === "f") return "follow";
+		if (data === "p") return "prompt";
+		if (keybindings.matches(data, "app.thinking.toggle")) return "thinking";
+		if (matchesKey(data, Key.ctrl("j")) || matchesKey(data, Key.pageDown)) {
+			return "pageDown";
 		}
-		if (matchesKey(data, Key.escape)) return "close";
+		if (matchesKey(data, Key.ctrl("k")) || matchesKey(data, Key.pageUp)) {
+			return "pageUp";
+		}
+		if (matchesKey(data, Key.tab)) return "focus";
+		if (matchesKey(data, Key.escape)) {
+			return focus === "detail" && !layout.split ? "back" : "close";
+		}
 		if (matchesKey(data, Key.enter)) return "open";
 		if (data === "j" || keybindings.matches(data, "tui.select.down")) {
 			return "down";
@@ -307,107 +517,300 @@ function createChildrenView(
 		return undefined;
 	}
 
-	function footer(width: number, working: boolean) {
-		const keys: [string, Action][] = confirming
-			? [
-					["y yes", "yes"],
-					["n no", "no"],
-				]
-			: detail
-				? [
-						["Esc back", "back"],
-						["q close", "close"],
-						...(working ? [["s/c cancel", "cancel"] as [string, Action]] : []),
-						[`${thinkingKey} thinking`, "thinking"],
-					]
-				: [
-						["j/k move", "down"],
-						["Enter detail", "open"],
-						["s/c cancel", "cancel"],
-						["q close", "close"],
-					];
-		let column = 1;
-		layout.segments = keys.map(([label, action]) => {
-			const segment = { action, start: column, end: column + label.length };
-			column = segment.end + 3;
-			return segment;
-		});
-		const text = ` ${keys.map(([label]) => label).join(" · ")}`;
-		return truncateToWidth(theme.fg("dim", text), width);
+	function footer(split: boolean, detail: boolean, working: boolean) {
+		if (confirming)
+			return [
+				[["y", "yes"], "yes"],
+				[["n", "no"], "no"],
+			] as [Hint, Action][];
+		const cancelHint: [Hint, Action][] = working
+			? [[["s/c", "cancel"], "cancel"]]
+			: [];
+		const scroll: [Hint, Action][] = [
+			[["Ctrl+J/K", "scroll"], "pageDown"],
+			[["f", "follow"], "follow"],
+		];
+		const thinking: [Hint, Action] = [[thinkingKey, "thinking"], "thinking"];
+		if (split)
+			return [
+				[["j/k", "move"], "down"],
+				[["Tab", "focus"], "focus"],
+				...scroll,
+				...cancelHint,
+				thinking,
+				[["q", "close"], "close"],
+			] as [Hint, Action][];
+		if (detail)
+			return [
+				[["Esc", "back"], "back"],
+				...scroll,
+				...cancelHint,
+				thinking,
+				[["q", "close"], "close"],
+			] as [Hint, Action][];
+		return [
+			[["j/k", "move"], "down"],
+			[["Enter", "detail"], "open"],
+			[["s/c", "cancel"], "cancel"],
+			[["q", "close"], "close"],
+		] as [Hint, Action][];
 	}
 
 	function status() {
 		const pending =
 			confirming === undefined ? undefined : sessions.get(confirming);
 		if (pending) {
-			return theme.fg("warning", ` Cancel ${childName(pending)}? y/n`);
+			return theme.fg("warning", `Cancel ${childName(pending)}? y/n`);
 		}
-		return theme.fg("dim", ` ${notice}`);
+		return theme.fg("dim", notice);
 	}
 
-	function renderList(width: number, body: number) {
-		const { list, index } = children();
+	function rule(label: string, width: number, focused: boolean) {
+		if (!focused) return sectionRule(theme, label, width);
+		const title = truncateToWidth(` ${label} `, width, "");
+		return (
+			theme.bold(theme.fg("accent", title)) +
+			theme.fg("accent", "─".repeat(Math.max(0, width - visibleWidth(title))))
+		);
+	}
+
+	function renderList(
+		list: ChildRecord[],
+		index: number,
+		width: number,
+		rows: number,
+		focused: boolean,
+	) {
 		const now = Date.now();
-		const first = Math.max(0, index - body + 1);
-		const painted = list.slice(first, first + body);
-		layout.ids = painted.map((child) => child.id);
-		const top = spread(
-			`${theme.fg("dim", "·")} ${theme.bold("Subagents")} ${list.length}`,
-			theme.fg("dim", "/pi-workflow-children · alt+a"),
-			width,
-		);
-		const rows = painted.map((child, i) =>
-			renderChildRow(
-				theme,
-				child,
-				child.state === "queued"
-					? "queued"
-					: `${child.state} · ${childMeta(child, now)}`,
-				first + i === index,
-				width,
-			),
-		);
+		const two = rows >= twoLineRows;
+		const lines: string[] = [];
+		const ids: (string | undefined)[] = [];
+		let section = "";
+		list.forEach((child, i) => {
+			const name = isWorking(child.state) ? "Active" : "Finished";
+			if (name !== section) {
+				section = name;
+				lines.push(rule(name, width, false));
+				ids.push(undefined);
+			}
+			const active = i === index;
+			const mark = active
+				? focused
+					? theme.bold(theme.fg("accent", "▸ "))
+					: theme.fg("dim", "▸ ")
+				: "  ";
+			const step = sanitizeTaskText(
+				child.step ?? child.task.trim().split("\n")[0],
+			);
+			const color = child.state === "waiting" ? "warning" : "dim";
+			const head = `${mark}${childGlyph(theme, child)} ${theme.fg("accent", child.role)} ${theme.fg("dim", child.id.slice(0, 4))}`;
+			const right = theme.fg(
+				"dim",
+				child.state === "queued" ? "queued" : childElapsed(child, now),
+			);
+			const shown = two
+				? [
+						spread(head, right, width),
+						`    ${theme.fg(color, truncateToWidth(step, Math.max(0, width - 4), "…"))}`,
+					]
+				: [spread(`${head} ${theme.fg(color, step)}`, right, width)];
+			for (const line of shown) {
+				lines.push(active ? selectedRow(theme, line, width) : line);
+				ids.push(child.id);
+			}
+		});
 		if (list.length === 0) {
-			rows.push(theme.fg("dim", " No children in this session."));
+			lines.push(theme.fg("dim", "No children in this session."));
+			ids.push(undefined);
 		}
-		return { top, rows, working: true };
-	}
-
-	function renderDetail(child: ChildRecord, width: number, body: number) {
-		layout.ids = [];
-		const model = child.model.slice(child.model.indexOf("/") + 1);
-		const top = spread(
-			`${theme.fg("accent", childName(child))} · ${model} (${child.thinking})`,
-			`${childGlyph(theme, child)} ${theme.fg("dim", `${child.state} · ${childElapsed(child, Date.now())}`)}`,
-			width,
-		);
-		const content = sessions.thread(child.id);
-		const lines = content ? thread.lines(content, child.state, width) : [];
+		const at = ids.indexOf(list[index]?.id);
+		if (!listFree && at >= 0) {
+			const start = at > 0 && ids[at - 1] === undefined ? at - 1 : at;
+			const end = at + (two ? 2 : 1);
+			if (start < listTop) listTop = start;
+			if (end > listTop + rows) listTop = end - rows;
+		}
+		listTop = Math.max(0, Math.min(listTop, lines.length - rows));
 		return {
-			top,
-			rows: lines.slice(-body),
-			working: isWorking(child.state),
+			lines: lines.slice(listTop, listTop + rows),
+			ids: ids.slice(listTop, listTop + rows),
 		};
 	}
 
+	function header(
+		child: ChildRecord,
+		content: Thread | undefined,
+		width: number,
+		focused: boolean,
+	) {
+		const model = child.model.slice(child.model.indexOf("/") + 1);
+		const state =
+			child.state === "queued"
+				? "queued"
+				: `${child.state} · ${childElapsed(child, Date.now())}`;
+		const meta = [
+			`${model} (${child.thinking})`,
+			...usage(content),
+			`wt: ${basename(child.worktree)}`,
+		].join(" · ");
+		return [
+			spread(
+				`${childGlyph(theme, child)} ${theme.bold(theme.fg(focused ? "accent" : "text", childName(child)))}`,
+				theme.fg("dim", state),
+				width,
+			),
+			theme.fg("dim", truncateToWidth(sanitizeTaskText(meta), width, "…")),
+			theme.fg(
+				"muted",
+				truncateToWidth(
+					sanitizeTaskText(child.task.trim().split("\n")[0]),
+					width,
+					"…",
+				),
+			),
+		];
+	}
+
+	function detailBody(
+		child: ChildRecord,
+		content: Thread | undefined,
+		width: number,
+		focused: boolean,
+	) {
+		const lines = [rule("Prompt", width, focused)];
+		const prompt = wrap(clean(child.task), width - 2);
+		const shown = promptOpen ? prompt : prompt.slice(0, promptRows);
+		lines.push(
+			...shown.map(
+				(line, i) =>
+					`${i === 0 ? theme.fg("accent", "❯ ") : "  "}${theme.fg("text", line)}`,
+			),
+		);
+		if (shown.length < prompt.length) {
+			lines.push(
+				theme.fg(
+					"dim",
+					`  … +${prompt.length - shown.length} lines · p expand`,
+				),
+			);
+		}
+		lines.push(rule("Thread", width, focused));
+		const threadLines = content ? thread.lines(content, child, width) : [];
+		lines.push(
+			...(threadLines.length > 0
+				? threadLines
+				: [theme.fg("dim", "Waiting for the first event…")]),
+		);
+		if (!isWorking(child.state)) {
+			const text = clean(child.text ?? "");
+			lines.push("", rule("Result", width, focused));
+			if (child.state === "completed") {
+				lines.push(
+					...new Markdown(text, 0, 0, getMarkdownTheme()).render(width),
+				);
+			} else {
+				const color = child.state === "cancelled" ? "muted" : "error";
+				lines.push(...wrap(text, width).map((line) => theme.fg(color, line)));
+			}
+		}
+		return lines;
+	}
+
+	function renderDetail(
+		child: ChildRecord,
+		width: number,
+		rows: number,
+		focused: boolean,
+	) {
+		const content = sessions.thread(child.id);
+		const top = header(child, content, width, focused).slice(0, rows);
+		detailRoom = Math.max(1, rows - top.length);
+		const body = detailBody(child, content, width, focused);
+		detailMax = Math.max(0, body.length - detailRoom);
+		detailTop = follow ? detailMax : Math.min(detailTop, detailMax);
+		return [...top, ...body.slice(detailTop, detailTop + detailRoom)];
+	}
+
 	return {
-		render(width: number) {
+		render(full: number) {
 			if (!host.focused()) {
 				close();
 				return [];
 			}
+			const edge = marginFor(full);
+			const width = full - edge * 2;
 			const height = Math.max(4, tui.terminal.rows);
-			const body = height - 3;
-			const child = detail === undefined ? undefined : sessions.get(detail);
-			if (detail !== undefined && !child) detail = undefined;
-			const view = child
-				? renderDetail(child, width, body)
-				: renderList(width, body);
-			const lines = [view.top, ...view.rows];
-			while (lines.length < height - 2) lines.push("");
-			lines.push(status(), footer(width, view.working));
-			layout.footer = height - 1;
-			return lines.map((line) => truncateToWidth(line, width));
+			const framing = framePad(width);
+			const inner = Math.max(1, width - 2 - framing * 2);
+			const { list, index, child } = children();
+			selected = child?.id;
+			track(child?.id);
+			const split = inner >= splitWidth && child !== undefined;
+			const detail = child !== undefined && (split || focus === "detail");
+			const keys = footer(split, detail, child ? isWorking(child.state) : true);
+			const hints = hintRows(
+				theme,
+				keys.map(([hint]) => hint),
+				inner,
+			);
+			const shownHints = Math.min(hints.lines.length, Math.max(0, height - 3));
+			const body = Math.max(0, height - 3 - shownHints);
+			const size =
+				list.length === 0
+					? Math.min(body, Math.max(1, minModalRows - 3 - shownHints))
+					: body;
+			const listWidth = split
+				? Math.min(34, Math.max(22, Math.floor(inner * 0.32)))
+				: inner;
+			const detailWidth = split ? inner - listWidth - divider.length : inner;
+			const listPane =
+				split || !detail
+					? renderList(list, index, listWidth, size, !split || focus === "list")
+					: undefined;
+			if (listPane) listRoom = size;
+			const detailPane =
+				detail && child
+					? renderDetail(child, detailWidth, size, focus === "detail")
+					: undefined;
+			const rows = Array.from({ length: size }, (_, i) =>
+				split
+					? `${pad(listPane?.lines[i] ?? "", listWidth)}${theme.fg("border", divider)}${pad(detailPane?.[i] ?? "", detailWidth)}`
+					: ((listPane?.lines ?? detailPane)?.[i] ?? ""),
+			);
+			const hintTop = 2 + size;
+			const left = edge + 1 + framing;
+			layout = {
+				width,
+				edge,
+				left,
+				size,
+				split,
+				list: listPane ? { x: 0, width: listWidth } : undefined,
+				detail: detailPane
+					? { x: split ? listWidth + divider.length : 0, width: detailWidth }
+					: undefined,
+				ids: new Map(
+					(listPane?.ids ?? []).flatMap((id, i) =>
+						id === undefined ? [] : [[i + 1, id] as [number, string]],
+					),
+				),
+				hints: hints.spans
+					.filter((span) => span.row < shownHints)
+					.map((span) => ({
+						...span,
+						y: hintTop + span.row,
+						action: keys[span.index][1],
+					})),
+			};
+			const working = list.filter((item) => isWorking(item.state)).length;
+			const title = `Subagents ${list.length}${working > 0 ? ` · ${working} active` : ""}`;
+			const margin = " ".repeat(edge);
+			return modalFrame(
+				theme,
+				title,
+				[...rows, status(), ...hints.lines.slice(0, shownHints)],
+				width,
+			).map((line) => margin + line);
 		},
 		invalidate() {},
 		handleInput(data: string) {
@@ -415,20 +818,58 @@ function createChildrenView(
 			if (action) press(action);
 		},
 		handleMouse(event: TuiMouseEvent) {
-			if (event.type !== "click" || event.button !== "left") return undefined;
-			if (event.y === layout.footer) {
-				const segment = layout.segments.find(
-					(item) => event.x >= item.start && event.x < item.end,
-				);
-				if (!segment) return undefined;
-				press(segment.action);
+			const click = event.type === "click" && event.button === "left";
+			const shut = closeSpan(layout.width);
+			if (
+				click &&
+				event.y === 0 &&
+				shut &&
+				event.x - layout.edge >= shut.start &&
+				event.x - layout.edge < shut.end
+			) {
+				close();
 				return { handled: true };
 			}
-			const id = layout.ids[event.y - 1];
-			if (detail || confirming || !id || !sessions.get(id)) return undefined;
+			const x = event.x - layout.left;
+			const hint = click
+				? layout.hints.find(
+						(span) => span.y === event.y && x >= span.start && x < span.end,
+					)
+				: undefined;
+			if (hint) {
+				press(hint.action);
+				return { handled: true };
+			}
+			if (event.y < 1 || event.y > layout.size) return undefined;
+			const inside = (span: Span | undefined) =>
+				span !== undefined && x >= span.x && x < span.x + span.width;
+			const pane = inside(layout.list)
+				? "list"
+				: inside(layout.detail)
+					? "detail"
+					: undefined;
+			if (!pane) return undefined;
+			if (event.type === "wheel") {
+				const delta = event.wheelDelta ?? 0;
+				if (delta === 0) return undefined;
+				if (pane === "list") scrollList(delta);
+				else scrollDetail(delta);
+				tui.requestRender();
+				return { handled: true };
+			}
+			if (!click || confirming) return undefined;
+			if (pane === "detail") {
+				if (!layout.split) return undefined;
+				focus = "detail";
+				tui.requestRender();
+				return { handled: true };
+			}
+			const id = layout.ids.get(event.y);
+			if (!id || !sessions.get(id)) return undefined;
 			selected = id;
-			if ((event.clickCount ?? 1) >= 2) press("open");
-			else tui.requestRender();
+			listFree = false;
+			focus = (event.clickCount ?? 1) >= 2 ? "detail" : "list";
+			tui.requestRender();
 			return { handled: true };
 		},
 		dispose: cleanup,

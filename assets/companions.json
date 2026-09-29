@@ -6,8 +6,8 @@
       "description": "Persistent memory tools and Engram integration for Pi."
     },
     {
-      "package": "pi-mcp-adapter",
-      "description": "MCP adapter resources for Pi."
+      "package": "@gtrabanco/pi-nan-provider",
+      "description": "NaN model provider for Pi."
     },
     {
       "package": "pi-web-access",

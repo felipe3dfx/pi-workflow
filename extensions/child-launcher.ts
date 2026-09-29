@@ -1,7 +1,6 @@
 import { execFile } from "node:child_process";
 import { readFileSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
@@ -12,14 +11,8 @@ import {
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { gitEnvironment } from "./git-environment.ts";
-import { askJevChoice, askJevNouls, type Fetch } from "./jev-client.ts";
-import {
-	type ModelLists,
-	type ModelListsLoad,
-	type TaskType,
-	taskTypeCriteria,
-	taskTypes,
-} from "./model-lists.ts";
+import { askJevChoice, type Fetch } from "./jev-client.ts";
+import type { ModelProfilesLoad, Specialist } from "./model-profiles.ts";
 
 export interface LaunchRequest {
 	role?: string;
@@ -28,7 +21,7 @@ export interface LaunchRequest {
 }
 
 export interface ChildLauncherOptions {
-	modelLists: { load: () => ModelListsLoad };
+	modelProfiles: { load: () => ModelProfilesLoad };
 	contractsDirectory?: string;
 	fetch?: Fetch;
 }
@@ -36,6 +29,12 @@ export interface ChildLauncherOptions {
 const roles = ["explore", "worker", "verify"] as const;
 
 type Role = (typeof roles)[number];
+
+const specialistByRole: Record<Role, Specialist> = {
+	explore: "explorer",
+	worker: "worker",
+	verify: "verifier",
+};
 
 type Contract = { prompt: string; tools: string[] };
 
@@ -103,8 +102,6 @@ const stays = (reason: string): Refusal => ({
 	reason,
 });
 
-const typeThreshold = 0.5;
-
 function sessionPair(ctx: LauncherContext): Pair | Refusal {
 	if (!ctx.model || !ctx.thinkingLevel) {
 		return refused("The session has no model and thinking to use.");
@@ -115,32 +112,31 @@ function sessionPair(ctx: LauncherContext): Pair | Refusal {
 	};
 }
 
-function walk(
-	type: TaskType,
-	lists: ModelLists | undefined,
+function profilePair(
+	role: Role,
+	profiles: ModelProfilesLoad,
 	ctx: LauncherContext,
-): Pair | Refusal | { unavailable: string } {
-	const tier = lists?.taskTypes[type];
-	const entries = [
-		...(lists?.specialists[type] ?? []),
-		...((tier && lists?.tiers[tier]) || []),
-	];
-	if (entries.length === 0) return sessionPair(ctx);
-	const available = ctx.modelRegistry.getAvailable();
-	const selected = entries.find(({ model, thinking }) => {
-		const found = available.find(
-			(candidate) => `${candidate.provider}/${candidate.id}` === model,
+): Pair | Refusal {
+	if (profiles.status !== "loaded") return sessionPair(ctx);
+	const { active } = profiles.profiles;
+	const specialist = specialistByRole[role];
+	const entry = profiles.profiles.profiles[active][specialist];
+	if (!entry) return sessionPair(ctx);
+	const setting = `Profile ${active} sets ${specialist} to ${entry.model} at ${entry.thinking}`;
+	const found = ctx.modelRegistry
+		.getAvailable()
+		.find(
+			(candidate) => `${candidate.provider}/${candidate.id}` === entry.model,
 		);
-		return (
-			found !== undefined &&
-			getSupportedThinkingLevels(found).includes(thinking)
+	if (!found) {
+		return refused(`${setting}, but that model is not available in Pi.`);
+	}
+	if (!getSupportedThinkingLevels(found).includes(entry.thinking)) {
+		return refused(
+			`${setting}, but that model does not support thinking ${entry.thinking}.`,
 		);
-	});
-	return (
-		selected ?? {
-			unavailable: `No model in the ${type} lists is available in Pi at its thinking level.`,
-		}
-	);
+	}
+	return entry;
 }
 
 export function createChildLauncher(options: ChildLauncherOptions) {
@@ -161,14 +157,13 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 	async function jevVerdict(
 		task: string,
 		ctx: LauncherContext,
-	): Promise<string | Refusal> {
-		let apiKey: string | undefined;
+	): Promise<Refusal | undefined> {
 		let verdict: string;
 		try {
-			apiKey = await ctx.modelRegistry.getApiKeyForProvider("typesafe");
+			const apiKey = await ctx.modelRegistry.getApiKeyForProvider("typesafe");
 			if (!apiKey) {
 				throw new Error(
-					"no TypeSafe API key; run /login and choose TypeSafe (Jev) or set TYPESAFE_API_KEY",
+					"no TypeSafe API key; run /login and choose TypeSafe or set TYPESAFE_API_KEY",
 				);
 			}
 			verdict = await askJevChoice(
@@ -187,48 +182,9 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		} catch (error) {
 			return stays(`Jev did not answer: ${errorMessage(error)}`);
 		}
-		if (verdict === "leave") return apiKey;
+		if (verdict === "leave") return undefined;
 		if (verdict === "stay") return stays("Jev answered that the work stays.");
 		return stays(`Jev did not answer: unexpected choice ${verdict}`);
-	}
-
-	async function classify(
-		task: string,
-		apiKey: string,
-	): Promise<TaskType | { uncertain: string }> {
-		let answers: Record<string, number>;
-		try {
-			answers = await askJevNouls(
-				apiKey,
-				{
-					state: { task },
-					questions: Object.fromEntries(
-						taskTypes.map((type) => [
-							type,
-							{
-								instructions: `Is \`task\` ${type} work?`,
-								criteria: {
-									true: `It is ${type} work: ${taskTypeCriteria[type]}`,
-									false: `It is not ${type} work: ${taskTypeCriteria[type]}`,
-								},
-							},
-						]),
-					),
-				},
-				options.fetch,
-			);
-		} catch (error) {
-			return { uncertain: `Jev did not answer: ${errorMessage(error)}` };
-		}
-		const top = Math.max(...taskTypes.map((type) => answers[type]));
-		const leaders = taskTypes.filter((type) => answers[type] === top);
-		if (top < typeThreshold) {
-			return { uncertain: `no task type reached ${typeThreshold}` };
-		}
-		if (leaders.length > 1) {
-			return { uncertain: `${leaders.join(" and ")} tied` };
-		}
-		return leaders[0];
 	}
 
 	async function decide(request: LaunchRequest, ctx: LauncherContext) {
@@ -240,39 +196,21 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			return refused(`unknown role ${role}; expected ${roles.join(", ")}`);
 		const contract = readContract(role);
 		if ("status" in contract) return contract;
-		const lists = options.modelLists.load();
-		if (lists.status === "refused") return refused(lists.reason);
+		const profiles = options.modelProfiles.load();
+		if (profiles.status === "refused") return refused(profiles.reason);
 		const worktree = await gitRoot(resolve(ctx.cwd, request.worktree ?? "."));
 		if (typeof worktree !== "string") return worktree;
-		const apiKey = await jevVerdict(request.task, ctx);
-		if (typeof apiKey !== "string") return apiKey;
-		const type = await classify(request.task, apiKey);
-		let pair: Pair | Refusal | { unavailable: string };
-		if (typeof type === "string") {
-			pair = walk(
-				type,
-				lists.status === "loaded" ? lists.lists : undefined,
-				ctx,
-			);
-		} else {
-			warnings.push(
-				`The task type is uncertain (${type.uncertain}), so the session model and thinking are used.`,
-			);
-			pair = sessionPair(ctx);
-		}
-		const plan = { role, contract, task: request.task, worktree, warnings };
-		if ("unavailable" in pair) {
-			return {
-				status: "pending" as const,
-				...plan,
-				warning: "The work stays pending. No child was launched.",
-				reason: pair.unavailable,
-			};
-		}
+		const pair = profilePair(role, profiles, ctx);
 		if ("status" in pair) return pair;
+		const stay = await jevVerdict(request.task, ctx);
+		if (stay) return stay;
 		return {
 			status: "launch" as const,
-			...plan,
+			role,
+			contract,
+			task: request.task,
+			worktree,
+			warnings,
 			model: pair.model,
 			thinking: pair.thinking,
 		};

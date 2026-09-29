@@ -1,6 +1,3 @@
-import { createProvider, envApiKeyAuth } from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-
 const endpoint = "https://api.typesafe.ai/v1/systemone";
 const timeoutMs = 15_000;
 
@@ -10,14 +7,6 @@ export interface JevChoice {
 	state: Record<string, unknown>;
 	instructions: string;
 	criteria: Record<string, string>;
-}
-
-export interface JevNouls {
-	state: Record<string, unknown>;
-	questions: Record<
-		string,
-		{ instructions: string; criteria: { true: string; false: string } }
-	>;
 }
 
 type JevAnswers = Record<string, Record<string, unknown> | undefined>;
@@ -64,49 +53,4 @@ export async function askJevChoice(
 	const choice = answers.choice?.choice;
 	if (typeof choice !== "string") throw new Error("Jev returned no choice");
 	return choice;
-}
-
-export async function askJevNouls(
-	apiKey: string,
-	{ state, questions }: JevNouls,
-	fetch: Fetch = globalThis.fetch,
-): Promise<Record<string, number>> {
-	const answers = await askJev(
-		apiKey,
-		state,
-		Object.fromEntries(
-			Object.entries(questions).map(([key, question]) => [
-				key,
-				{ type: "noul", ...question },
-			]),
-		),
-		fetch,
-	);
-	return Object.fromEntries(
-		Object.keys(questions).map((key) => {
-			const probability = answers[key]?.noul;
-			if (
-				typeof probability !== "number" ||
-				probability < 0 ||
-				probability > 1
-			) {
-				throw new Error(`Jev returned no answer for ${key}`);
-			}
-			return [key, probability];
-		}),
-	);
-}
-
-export function registerTypesafeLogin(pi: ExtensionAPI) {
-	pi.registerProvider(
-		createProvider({
-			id: "typesafe",
-			name: "TypeSafe (Jev)",
-			auth: {
-				apiKey: envApiKeyAuth("TypeSafe API key", ["TYPESAFE_API_KEY"]),
-			},
-			models: [],
-			api: {},
-		}),
-	);
 }

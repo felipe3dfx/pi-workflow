@@ -1,23 +1,50 @@
 # @felipe.3dfx/pi-workflow
 
-A Pi harness package for companion readiness. Version 0.2.0 removes the 0.1.x product workflow. Product workflow no longer lives here.
+A Pi harness package. Version 0.2.0 removes the 0.1.x product workflow. Product workflow no longer lives here.
 
-Grupo Ilao engineering skills own process semantics: discovery, specification, tickets, implementation, review, QA impact, and publication. This package only reports and installs the companion packages those skills ask a Pi harness to provide. It does not publish Linear issues, store workflow artifacts, or reconcile uncertain external effects.
+Grupo Ilao engineering skills own process semantics: discovery, specification, tickets, implementation, review, QA impact, and publication. This package reports and installs the companion packages those skills ask a Pi harness to provide, aligns their MCP servers and default Pi settings, and owns child sessions and the terminal chrome. It does not publish Linear issues, store workflow artifacts, or reconcile uncertain external effects.
 
 ## Commands
 
 ```text
-/pi-workflow-status
-/pi-workflow-doctor
-/pi-workflow-install-companions
-/pi-workflow-install-companions --apply
-/pi-workflow-models
-/pi-workflow-models-edit
+/workflow:status
+/workflow:doctor
+/workflow:setup
+/workflow:models
+/workflow:subagents
 ```
 
-Status and doctor are read-only. Install without `--apply` prints the plan and does not mutate Pi. `--apply` is the confirmation for that invocation: it installs missing companions and aligns the MCP catalog. A failed install stops. It does not retry an uncertain effect.
+`/workflow:status` and `/workflow:doctor` are read-only. They report companions, MCP alignment, settings alignment, and colliding packages.
 
-`/pi-workflow-models` creates the global model lists file (`pi-workflow-models.json` in the Pi agent directory) with specialist lists, the `quick`, `standard`, and `high` tier lists, and the task-type map. It replaces an existing file only after TUI confirmation; print mode only warns. A model that research or Jev cannot place is left out. `/pi-workflow-models-edit` edits the same file in a TUI panel: specialist lists, tier lists, and the task-type map, with models picked from the Pi model catalog. It refuses an invalid or unreadable file. A written file applies after `/reload`. The command reads each model's Pi catalog metadata (reasoning, context window, maximum output, input modalities, and cost) and its public OpenRouter description, fetched once; a model without a description, or every model when OpenRouter does not answer, is researched from the Pi catalog only and reported. The tier follows the model's cost relative to the available catalog: models with a cost are sorted by output cost, input cost breaking ties, and split into thirds for `quick`, `standard`, and `high`, with equal costs sharing a tier. A model with no catalog cost gets no tier, joins only its specialist lists, and is reported. The command then asks Jev (TypeSafe) to pick its thinking level for that tier among the levels the model supports, then one yes/no question per task type: the model joins every specialist list with a yes probability of at least 0.5, and each list is ordered by that probability. It never invents a tier or thinking level: a model whose research or classification fails is left out with a reason and the others are saved. Jev needs a TypeSafe API key: run `/login` and choose "TypeSafe (Jev)" (API key; Pi stores it in `auth.json` under `typesafe`, and `/logout` removes it), or set `TYPESAFE_API_KEY`. Without a key every model is left out and no request is sent.
+`/workflow:setup` takes no arguments. It:
+
+- installs the missing companions listed in `assets/companions.json`. A failed install stops; an uncertain effect is not retried.
+- aligns Pi-native MCP servers in `mcp.json` in the Pi agent directory from `assets/mcp-servers.json`, per catalog key. Keys you or Pi manage are preserved. `context7` is exposed directly; `sentry` and `linear` are `codemode-deferred`. Servers that need OAuth are authorized with `/mcp login <server>`.
+- applies the default Pi settings from `assets/settings.json`: `tuiMode` `fullscreen`, `theme` `pi-workflow`, `quietStartup`, and `defaultTools` `+codemode`, which enables the built-in `codemode` tool.
+- warns about colliding packages and never removes them. See below.
+- notes a legacy `mcp-adapter.json`, which is no longer read.
+
+`/workflow:subagents` (`alt+a`) opens the children view for the current session.
+
+## Model profiles
+
+`/workflow:models` opens a modal panel over `pi-workflow-models.json` in the Pi agent directory. You create, duplicate, rename, delete, and activate profiles, and pick a model and a thinking level for each specialist. A save applies immediately.
+
+A profile assigns a model and thinking level to three specialists: `explorer`, `worker`, and `verifier`. A child's role selects the specialist of the active profile: `explore` to `explorer`, `worker` to `worker`, `verify` to `verifier`. A specialist with no entry inherits the session model and thinking. A model that Pi does not have, or a thinking level the model does not support, refuses the launch. A schema v1 file is refused. Jev is asked only whether the work stays or leaves the session, after the local checks. Jev needs a TypeSafe API key: run `/login` and choose TypeSafe, or set `TYPESAFE_API_KEY`.
+
+## Theme and chrome
+
+The package ships the `pi-workflow` theme (`themes/pi-workflow.json`). The extension restyles Pi's terminal UI in the Grok Build style: a header, footer key hints, a status row, a rounded input editor whose model label is colored by thinking level, autocomplete above the box, and slash-command coloring. It also restyles messages (user block with timestamp, `Thought for Ns` line, a thick left bar on expanded thinking, assistant timestamps) and menus (select lists, settings lists, Pi's selectors, and the settings submenus).
+
+This works by patching Pi internals copied from Pi 0.99.1, with no version guard. Re-verify it on every Pi upgrade. See ADR 0007.
+
+## Colliding packages
+
+These packages overlap with what the harness owns. Status and doctor warn about them. Setup never removes them.
+
+- `@heyhuynhgiabuu/pi-pretty` registers the same tool names.
+- `pi-powerline-footer` replaces the same header, footer, and editor.
+- `pi-mcp-adapter` replaces Pi's built-in `/mcp`, so Pi ignores `mcp.json` while it is installed.
 
 ## Install
 
@@ -25,16 +52,16 @@ Status and doctor are read-only. Install without `--apply` prints the plan and d
 pi install npm:@felipe.3dfx/pi-workflow
 ```
 
-Reload Pi, then inspect companions:
+Reload Pi, then inspect the harness:
 
 ```text
 /reload
-/pi-workflow-status
+/workflow:status
 ```
 
 Install engineering skills from the Grupo Ilao catalog into the consumer repository. This package does not bundle them.
 
-0.1.x commands `/define-product`, `/deliver-ticket`, `/qa-handoff`, and `/product-review` are gone. Use the engineering skills instead. `pi-workflow-sync` is gone with the packaged agent assets.
+0.1.x commands `/define-product`, `/deliver-ticket`, `/qa-handoff`, and `/product-review` are gone. Use the engineering skills instead. The `pi-workflow-sync` command is gone with the packaged agent assets.
 
 ## Disposable Pi test launcher
 
@@ -47,4 +74,4 @@ The launcher isolates Pi home, configuration, packages, and sessions. It is not 
 ## Requirements
 
 - Node.js `>=22.19`
-- Pi CLI available in the target environment
+- Pi CLI `>=0.99.0` available in the target environment

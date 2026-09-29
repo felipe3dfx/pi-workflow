@@ -31,8 +31,11 @@ test("an expanded box has margin above and below, and brackets outside the inden
 	const top = lines[1];
 	const row = lines[2];
 	assert.ok(top.startsWith("┌"));
-	assert.ok(row.startsWith("  "));
+	assert.ok(row.startsWith("│ "));
+	assert.ok(row.endsWith("│"));
 	assert.equal(row.indexOf("┌"), -1);
+	assert.ok(lines[lines.length - 2].startsWith("└"));
+	assert.ok(lines[lines.length - 2].endsWith("┘"));
 });
 
 test("a pending row and a done row render distinctly, with a green check on the done row", () => {

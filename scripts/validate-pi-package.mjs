@@ -7,12 +7,43 @@ import { pathToFileURL } from "node:url";
 
 const root = process.cwd();
 const commands = [
-	"pi-workflow-status",
-	"pi-workflow-doctor",
-	"pi-workflow-install-companions",
-	"pi-workflow-models",
-	"pi-workflow-models-edit",
+	"workflow:status",
+	"workflow:doctor",
+	"workflow:setup",
+	"workflow:models",
 ];
+
+const themeSchemaPath = path.join(
+	root,
+	"node_modules",
+	"@earendil-works",
+	"pi-coding-agent",
+	"dist",
+	"modes",
+	"interactive",
+	"theme",
+	"theme-schema.json",
+);
+
+export async function validateTheme(packageRoot, name = "pi-workflow") {
+	const errors = [];
+	const schema = JSON.parse(await readFile(themeSchemaPath, "utf8"));
+	let theme;
+	try {
+		theme = JSON.parse(
+			await readFile(path.join(packageRoot, "themes", `${name}.json`), "utf8"),
+		);
+	} catch (error) {
+		return [`themes/${name}.json must exist and parse as JSON: ${error.message}`];
+	}
+	if (theme.name !== name) errors.push(`themes/${name}.json name must equal ${name}`);
+	for (const token of schema.properties.colors.required) {
+		if (theme.colors?.[token] === undefined) {
+			errors.push(`themes/${name}.json is missing required color token ${token}`);
+		}
+	}
+	return errors;
+}
 
 export async function validatePiPackage(packageRoot = root) {
 	const errors = [];
@@ -24,6 +55,9 @@ export async function validatePiPackage(packageRoot = root) {
 	);
 	const mcpServers = JSON.parse(
 		await readFile(path.join(packageRoot, "assets", "mcp-servers.json"), "utf8"),
+	);
+	const settings = JSON.parse(
+		await readFile(path.join(packageRoot, "assets", "settings.json"), "utf8"),
 	);
 	const extension = await readFile(
 		path.join(packageRoot, "extensions", "pi-workflow.ts"),
@@ -44,6 +78,12 @@ export async function validatePiPackage(packageRoot = root) {
 		JSON.stringify(packageJson.pi?.extensions) === JSON.stringify(["./extensions/pi-workflow.ts"]),
 		"pi.extensions must expose only ./extensions/pi-workflow.ts",
 	);
+	check(
+		JSON.stringify(packageJson.pi?.themes) === JSON.stringify(["./themes/pi-workflow.json"]),
+		"pi.themes must expose only ./themes/pi-workflow.json",
+	);
+	check(packageJson.files?.includes("themes/"), "package files must ship themes/");
+	errors.push(...(await validateTheme(packageRoot)));
 	check(packageJson.pi?.skills === undefined, "pi.skills must not bundle workflow skills");
 	check(packageJson.pi?.prompts === undefined, "pi.prompts must not bundle workflow prompts");
 	check(packageJson.bin === undefined, "package must not expose a workflow sync binary");
@@ -67,10 +107,16 @@ export async function validatePiPackage(packageRoot = root) {
 			!Array.isArray(mcpServers.mcpServers),
 		"MCP catalog must be a schemaVersion 1 mcpServers object",
 	);
+	check(
+		settings.schemaVersion === 1 &&
+			settings.settings &&
+			typeof settings.settings === "object" &&
+			!Array.isArray(settings.settings),
+		"settings catalog must be a schemaVersion 1 settings object",
+	);
 	for (const command of commands) {
 		check(extension.includes(`"${command}"`), `extension must register ${command}`);
 	}
-	check(extension.includes('"--apply"'), "install command must require explicit --apply");
 	check(
 		!/define-product|qa-handoff|product-review|interactive-decisions|publication-recovery/.test(
 			extension,

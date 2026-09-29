@@ -12,10 +12,15 @@ import {
 	createGrepToolDefinition,
 	createLsToolDefinition,
 	createReadToolDefinition,
+	createCodemodeExtension,
 	createWriteToolDefinition,
 	initTheme,
 } from "@earendil-works/pi-coding-agent";
 
+import {
+	fallbackRenderers,
+	usesFallback,
+} from "../extensions/compact-tools.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 
 const builtIns = {
@@ -41,6 +46,7 @@ function loadTools() {
 		on() {},
 		registerCommand() {},
 		registerShortcut() {},
+		registerMessageRenderer() {},
 		registerProvider() {},
 		registerTool: (tool) => tools.set(tool.name, tool),
 		exec: async () => ({ code: 0, stdout: "", stderr: "" }),
@@ -145,13 +151,13 @@ test("a closed tool is one short line and hides its body", () => {
 	initTheme("dark", false);
 	const tools = loadTools();
 	const titles = {
-		read: [{ path: "src/app.ts" }, "◆ read src/app.ts"],
-		bash: [{ command: "npm test\nnpm run lint" }, "◆ bash npm test"],
-		grep: [{ pattern: "TODO", path: "src" }, "◆ grep TODO"],
-		find: [{ pattern: "*.ts" }, "◆ find *.ts"],
-		ls: [{}, "◆ ls"],
-		edit: [{ path: "a.ts", edits: [] }, "◆ edit a.ts"],
-		write: [{ path: "b.ts", content: "x\ny\nz" }, "◆ write b.ts"],
+		read: [{ path: "src/app.ts" }, "◆ Read src/app.ts"],
+		bash: [{ command: "npm test\nnpm run lint" }, "◆ Run npm test"],
+		grep: [{ pattern: "TODO", path: "src" }, "◆ Search TODO"],
+		find: [{ pattern: "*.ts" }, "◆ Find *.ts"],
+		ls: [{}, "◆ List"],
+		edit: [{ path: "a.ts", edits: [] }, "◆ Edit a.ts"],
+		write: [{ path: "b.ts", content: "x\ny\nz" }, "◆ Write b.ts"],
 	};
 	const result = {
 		content: [{ type: "text", text: "one\ntwo" }],
@@ -234,7 +240,7 @@ test("an open tool shows exactly what Pi draws for the call and result, inside a
 	}
 });
 
-test("a closed tool that failed keeps a red title", () => {
+test("a closed tool colors only its glyph by status: error, running dim, done toolTitle", () => {
 	const tool = loadTools().get("bash");
 	const tagged = {
 		...theme,
@@ -244,10 +250,18 @@ test("a closed tool that failed keeps a red title", () => {
 		...renderContext({ command: "false" }, false, "/"),
 		isError: true,
 	};
-	const [line] = tool
-		.renderCall({ command: "false" }, tagged, context)
-		.render(80);
-	assert.match(line, /^<error>◆ bash<\/error>/);
+	const row = (status) =>
+		tool
+			.renderCall({ command: "false" }, tagged, { ...context, ...status })
+			.render(80)[0]
+			.trimEnd();
+	const rest = "<muted>Run</muted> <dim>false</dim>";
+	assert.equal(row({}), `<error>◆</error> ${rest}`);
+	assert.equal(
+		row({ isError: false, isPartial: true }),
+		`<dim>◆</dim> ${rest}`,
+	);
+	assert.equal(row({ isError: false }), `<toolTitle>◆</toolTitle> ${rest}`);
 });
 
 test("an open bash keeps the elapsed time Pi draws", () => {
@@ -272,4 +286,138 @@ test("an open bash keeps the elapsed time Pi draws", () => {
 		body.some((line) => /Took \d/.test(line)),
 		body.join("\n"),
 	);
+});
+
+test("MCP and renderer-less tools render one Grok row closed and their arguments and output open", () => {
+	const tagged = {
+		...theme,
+		fg: (color, text) => `<${color}>${text}</${color}>`,
+		bold: (text) => `<b>${text}</b>`,
+	};
+	const renderCall = () => {};
+	assert.equal(
+		usesFallback({
+			toolName: "mcp__engram__mem_search",
+			toolDefinition: { renderCall },
+		}),
+		true,
+	);
+	assert.equal(
+		usesFallback({
+			toolName: "spawn_child",
+			toolDefinition: { label: "Spawn Child" },
+		}),
+		true,
+	);
+	assert.equal(usesFallback({ toolName: "unknown" }), true);
+	assert.equal(
+		usesFallback({ toolName: "read", toolDefinition: { renderCall } }),
+		false,
+	);
+	const status = { isError: false, isPartial: false };
+	const mcp = fallbackRenderers({ toolName: "mcp__engram__mem_search" });
+	const args = { query: "typebox", project: "pi" };
+	const closed = { ...status, expanded: false };
+	assert.deepEqual(
+		mcp
+			.renderCall(args, tagged, closed)
+			.render(80)
+			.map((line) => line.trimEnd()),
+		[
+			"<toolTitle>◆</toolTitle> <b><muted>Engram</muted></b> <dim>Mem Search</dim>",
+		],
+	);
+	const output = { content: [{ type: "text", text: "Found 2" }] };
+	assert.deepEqual(mcp.renderResult(output, {}, tagged, closed).render(80), []);
+	const child = fallbackRenderers({
+		toolName: "spawn_child",
+		toolDefinition: { label: "Spawn Child" },
+	});
+	assert.deepEqual(
+		lines(
+			child.renderCall({ task: "Audit\nthe repo" }, theme, {
+				...status,
+				isPartial: true,
+				expanded: false,
+			}),
+		),
+		["◆ Spawn Child Audit"],
+	);
+	const open = { ...status, expanded: true };
+	assert.deepEqual(
+		[
+			...lines(mcp.renderCall(args, theme, open), 30),
+			...lines(mcp.renderResult(output, {}, theme, open), 30),
+		],
+		[
+			"┃ ◆ Engram Mem Search",
+			"┃ {",
+			'┃   "query": "typebox",',
+			'┃   "project": "pi"',
+			"┃ }",
+			"┃ Found 2",
+		],
+	);
+	for (let width = 1; width <= 40; width++)
+		for (const line of mcp.renderCall(args, theme, open).render(width))
+			assert.ok(
+				stripVTControlCharacters(line).length <= Math.max(width, 3),
+				`${width}`,
+			);
+});
+
+test("a codemode script is one Run script row closed and Pi's code and output under the bar open", () => {
+	initTheme("dark", false);
+	let codemode;
+	createCodemodeExtension()({
+		registerTool: (tool) => {
+			codemode = tool;
+		},
+		appendEntry() {},
+		getSettings: () => ({}),
+		getAllTools: () => [],
+	});
+	const row = { toolName: "codemode", toolDefinition: codemode };
+	assert.equal(usesFallback(row), true);
+	const renderers = fallbackRenderers(row);
+	const args = {
+		code: '// @options: {"max_output_tokens": 1000}\nconst issues = await sentry_search_issues({ query: "is:unresolved" });\nreturn issues.length;',
+	};
+	const context = renderContext(args, false, "/");
+	const call = renderers.renderCall(args, theme, context);
+	assert.deepEqual(lines(call, 100), [
+		"◆ Run script const issues = await sentry_search_issues({ query: \"is:unresolved\" });",
+	]);
+	const result = {
+		content: [
+			{ type: "text", text: "Script completed\nWall time 0.4 seconds\nOutput:\n" },
+			{ type: "text", text: "3" },
+		],
+		details: {
+			calls: [
+				{ name: "mcp__sentry__search_issues", args: "{}", status: "ok" },
+				{ name: "mcp__linear__get_issue", args: "{}", status: "ok" },
+				{ name: "mcp__sentry__get_issue", args: "{}", status: "ok" },
+			],
+		},
+	};
+	const closed = renderers.renderResult(result, { expanded: false, isPartial: false }, theme, context);
+	assert.deepEqual(lines(closed, 80), []);
+	assert.deepEqual(lines(call, 80), [
+		"◆ Run script Sentry Search Issues, Linear Get Issue, … · 3 tool calls",
+	]);
+	const open = renderContext(args, true, "/");
+	open.state = context.state;
+	const expanded = [
+		...lines(renderers.renderCall(args, theme, open), 80),
+		...lines(renderers.renderResult(result, { expanded: true, isPartial: false }, theme, open), 80),
+	];
+	assert.ok(expanded.every((line) => line.startsWith("┃")));
+	assert.ok(expanded[0].includes("codemode"));
+	assert.ok(expanded.some((line) => line.includes("return issues.length;")));
+	assert.ok(expanded.some((line) => line.includes("mcp__linear__get_issue")));
+	assert.equal(expanded.at(-1), "┃ 3");
+	for (let width = 1; width <= 60; width++)
+		for (const line of call.render(width))
+			assert.ok(stripVTControlCharacters(line).length <= width, `width ${width}`);
 });
