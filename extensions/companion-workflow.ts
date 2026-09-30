@@ -749,7 +749,7 @@ async function finishApply(
 		].filter((line) => line !== undefined);
 		const message = noted(
 			done.length > 0
-				? `${settings.error}\n${done.join(" ")} Run /reload to pick these up, then fix the settings error and run setup again.`
+				? `${settings.error}\n${done.join(" ")} Run /reload to pick these up, then fix the settings error and run /workflow:configure again.`
 				: settings.error,
 		);
 		notify(interaction, message, "error");

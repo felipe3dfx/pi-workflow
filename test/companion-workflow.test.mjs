@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+import { capabilities, occupants, replaceSelection } from "../extensions/configure.ts";
 import {
 	createCompanionWorkflow,
 	getCompanionState,
@@ -784,6 +785,8 @@ test("a settings write failure after an MCP write reports what was already done"
 				assert.equal(result.outcome, "config-error");
 				assert.match(result.message, /MCP configuration was updated/);
 				assert.match(result.message, /\/reload/);
+				assert.match(result.message, /\/workflow:configure/);
+				assert.doesNotMatch(result.message, /run setup/);
 				assert.doesNotMatch(result.message, /Companions were installed/);
 			} finally {
 				chmodSync(settingsDirectory, 0o700);
@@ -811,4 +814,151 @@ test("settings write keeps 0600 permissions and writes through a symlink", async
 			tuiMode: "fullscreen",
 		});
 	});
+});
+
+function clearedSelection() {
+	return {
+		schemaVersion: 1,
+		capabilities: Object.fromEntries(
+			capabilities.map((capability) => [capability, false]),
+		),
+		expectations: {},
+	};
+}
+
+function seatedNames() {
+	const names = new Set();
+	for (const place of ["header", "above-input", "overlay", "message-stream"]) {
+		for (const capability of occupants(place)) names.add(capability);
+	}
+	return [...names].sort();
+}
+
+function savedSelection(on) {
+	return {
+		schemaVersion: 1,
+		capabilities: Object.fromEntries(
+			capabilities.map((capability) => [capability, on.includes(capability)]),
+		),
+		expectations: { alpha: true },
+	};
+}
+
+async function withSelectionExtension(selection, run) {
+	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-selection-"));
+	replaceSelection(clearedSelection());
+	try {
+		const metadataPath = join(dir, "companions.json");
+		await writeFile(
+			metadataPath,
+			JSON.stringify({ schemaVersion: 1, companions: [{ package: "alpha" }] }),
+			"utf8",
+		);
+		if (selection !== undefined) {
+			await writeFile(
+				join(dir, "pi-workflow-selection.json"),
+				JSON.stringify(selection),
+				"utf8",
+			);
+		}
+		const handlers = new Map();
+		const commands = new Map();
+		const notifications = [];
+		const ui = {
+			notify: (message, level) => notifications.push({ message, level }),
+			setWidget() {},
+			setStatus() {},
+			setHeader() {},
+			setFooter() {},
+			setEditorComponent() {},
+			setWorkingVisible() {},
+			setWorkingIndicator() {},
+			setWorkingMessage() {},
+			custom() {
+				return Promise.resolve();
+			},
+		};
+		piWorkflowExtension(
+			{
+				on(event, handler) {
+					handlers.set(event, [...(handlers.get(event) ?? []), handler]);
+				},
+				registerCommand: (name, command) => commands.set(name, command),
+				registerShortcut() {},
+				registerMessageRenderer() {},
+				registerProvider() {},
+				registerTool() {},
+				sendMessage() {},
+				exec: async () => {
+					throw new Error("must not run commands");
+				},
+			},
+			{
+				catalog: {
+					metadataPath,
+					resolveInstalledVersion: () => ({}),
+				},
+				mcp: { agentDirectory: dir },
+			},
+		);
+		const sessionCtx = (mode, hasUI) => ({
+			mode,
+			hasUI,
+			ui,
+			cwd: dir,
+			sessionManager: { getBranch: () => [], getEntries: () => [] },
+		});
+		return await run({
+			notifications,
+			fire: async (mode, hasUI) => {
+				for (const handler of handlers.get("session_start") ?? []) {
+					await handler({}, sessionCtx(mode, hasUI));
+				}
+			},
+			configure: (mode) =>
+				commands.get("workflow:configure").handler("", sessionCtx(mode, true)),
+		});
+	} finally {
+		replaceSelection(clearedSelection());
+		await rm(dir, { recursive: true, force: true });
+	}
+}
+
+test("session start seats a saved selection in print, rpc, json, and tui", async () => {
+	const saved = savedSelection(["todo"]);
+	const modes = [
+		["print", undefined],
+		["rpc", false],
+		["json", true],
+		["tui", true],
+	];
+	for (const [mode, hasUI] of modes) {
+		await withSelectionExtension(saved, async ({ fire }) => {
+			await fire(mode, hasUI);
+			assert.deepEqual(seatedNames(), ["todo"]);
+		});
+	}
+});
+
+test("session start with no selection file does not seat a capability", async () => {
+	await withSelectionExtension(undefined, async ({ fire }) => {
+		await fire("print", true);
+		assert.deepEqual(seatedNames(), []);
+		replaceSelection(savedSelection(["codegraph"]));
+		await fire("json", false);
+		assert.deepEqual(seatedNames(), ["codegraph"]);
+	});
+});
+
+test("workflow:configure outside the TUI notifies that it needs the TUI and does not seat a saved selection", async () => {
+	const saved = savedSelection(["todo"]);
+	for (const mode of ["print", "json"]) {
+		await withSelectionExtension(saved, async ({ configure, notifications }) => {
+			await configure(mode);
+			assert.deepEqual(notifications, [
+				{ message: "Configure needs the TUI.", level: "error" },
+			]);
+			assert.deepEqual(seatedNames(), []);
+		});
+	}
 });

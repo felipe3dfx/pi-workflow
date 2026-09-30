@@ -173,7 +173,7 @@ export default function piWorkflowExtension(
 		);
 	}
 
-	function seatFromDisk(ctx: { hasUI?: boolean; mode?: string }) {
+	function seatFromDisk() {
 		const loaded = companionPackages();
 		if (loaded.error) return { status: "refused" as const, reason: loaded.error };
 		const packages = loaded.companions.map((companion) => companion.package);
@@ -192,7 +192,7 @@ export default function piWorkflowExtension(
 		}
 		const selection = readSelection(text, packages);
 		if (selection.status === "refused") return selection;
-		if (text === undefined || !ctx.hasUI || ctx.mode !== "tui") return selection;
+		if (text === undefined) return selection;
 		replaceSelection(selection.selection);
 		return selection;
 	}
@@ -249,7 +249,7 @@ export default function piWorkflowExtension(
 
 	pi.on("session_start", async (_event, ctx) => {
 		currentCtx = ctx;
-		const seated = seatFromDisk(ctx);
+		const seated = seatFromDisk();
 		if (seated.status === "refused") report(ctx, seated.reason, "error");
 		const { allowed } = await workflow.checkSpawnTools();
 		syncAskUserTools(pi, footerHints);
@@ -301,7 +301,11 @@ export default function piWorkflowExtension(
 				return;
 			}
 			currentCtx = ctx;
-			const seated = seatFromDisk(ctx);
+			if (!ctx.hasUI || ctx.mode !== "tui") {
+				report(ctx, "Configure needs the TUI.", "error");
+				return;
+			}
+			const seated = seatFromDisk();
 			if (seated.status === "refused") {
 				report(ctx, seated.reason, "error");
 				return;
