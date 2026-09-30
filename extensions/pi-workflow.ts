@@ -121,25 +121,25 @@ export default function piWorkflowExtension(
 		},
 	});
 	let spawnChildRegistered = false;
+	const launcher = createChildLauncher({
+		modelProfiles,
+		fetch: options.childSessions?.fetch,
+	});
 
 	pi.on("session_start", async (_event, ctx) => {
 		currentCtx = ctx;
 		const { allowed } = await workflow.checkSpawnTools();
 		if (allowed && !spawnChildRegistered) {
 			spawnChildRegistered = true;
-			pi.registerTool(
-				createSpawnChildTool(
-					createChildLauncher({
-						modelProfiles,
-						fetch: options.childSessions?.fetch,
-					}),
-					childSessions,
-				),
-			);
+			pi.registerTool(createSpawnChildTool(launcher, childSessions));
 			pi.registerTool(createContinueChildTool(childSessions));
 			for (const tool of createChildQueryTools(childSessions)) {
 				pi.registerTool(tool);
 			}
+			pi.on("turn_start", () => {
+				launcher.beginTurn();
+			});
+			pi.on("tool_call", (event, toolCtx) => launcher.gateToolCall(event, toolCtx));
 		}
 	});
 	pi.on("tool_execution_start", async (_event, ctx) => {

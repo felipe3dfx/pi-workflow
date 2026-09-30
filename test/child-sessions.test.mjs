@@ -60,13 +60,41 @@ async function withWorkspace(run) {
 	}
 }
 
-function fakeJev({ choice = "leave" } = {}) {
+function choiceAnswer(choice, criteria = {}) {
+	return {
+		type: "choice",
+		choice,
+		confidence: 0.9,
+		probabilities: Object.fromEntries(
+			Object.keys(criteria).map((key) => [key, key === choice ? 1 : 0]),
+		),
+	};
+}
+
+function fakeJev({ choice = "leave", specialist } = {}) {
 	const requests = [];
+	const specialists = ["explorer", "worker", "verifier"];
 	const fetch = async (_url, init) => {
-		requests.push(JSON.parse(init.body));
-		return Response.json({
-			answers: { choice: { choice, confidence: 0.9 } },
-		});
+		const body = JSON.parse(init.body);
+		requests.push(body);
+		const questions = body.questions ?? {};
+		const suggested = body.state?.suggested_specialist;
+		const picked = specialists.includes(specialist)
+			? specialist
+			: specialists.includes(suggested)
+				? suggested
+				: "worker";
+		const answers = {};
+		if (questions.specialist) {
+			answers.specialist = choiceAnswer(picked, questions.specialist.criteria);
+		}
+		if (questions.destination) {
+			answers.destination = choiceAnswer(
+				choice === "stay" ? "stay" : "leave",
+				questions.destination.criteria,
+			);
+		}
+		return Response.json({ model: "jev-1.13.0", id: "req-1", answers });
 	};
 	return { fetch, requests };
 }
@@ -298,7 +326,10 @@ for (const mode of ["tui", "rpc"]) {
 
 			assert.equal(result.details.status, "queued");
 			assert.match(result.details.id, uuid);
+			assert.equal(result.details.role, "worker");
+			assert.equal(result.details.jev.answers.specialist.choice, "worker");
 			assert.match(text(result), new RegExp(`${result.details.id} is queued`));
+			assert.match(text(result), /Jev selected worker\./);
 			assert.equal(children.created.length, 1);
 			const [child] = children.created;
 			await settle();
@@ -359,6 +390,9 @@ for (const mode of ["print", "json"]) {
 			);
 
 			assert.match(text(result), /All tests pass\./);
+			assert.doesNotMatch(text(result), /Jev selected/);
+			assert.equal(result.details.role, "worker");
+			assert.equal(result.details.jev.answers.destination.choice, "leave");
 			assert.equal("id" in result.details, false);
 			assert.equal(messages.length, 0);
 			assert.equal(children.created[0].disposals, 1);
@@ -445,6 +479,11 @@ test("refused and pending launches return a warning and reason with no child id 
 			assert.equal(result.details.status, status);
 			assert.match(result.details.reason, reason);
 			assert.equal("id" in result.details, false);
+			if (jev) {
+				assert.equal(result.details.jev.answers.destination.choice, "stay");
+			} else {
+				assert.equal("jev" in result.details, false);
+			}
 			assert.match(text(result), /No child was launched/);
 			assert.equal(children.created.length, 0);
 			assert.equal(messages.length, 0);
@@ -608,7 +647,7 @@ test("session shutdown disposes running background children, which then deliver 
 	});
 });
 
-test("a null role is treated as missing: worker is used with a warning", async () => {
+test("a null role is missing and does not warn that worker was assumed", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren({ run: async () => "Done." });
 		const { tool } = await loadSpawnTool({
@@ -623,8 +662,81 @@ test("a null role is treated as missing: worker is used with a warning", async (
 			toolContext("print", worktree),
 		);
 
-		assert.match(text(result), /No role was named, so worker is used\./);
+		assert.equal(result.details.status, "completed");
+		assert.equal(result.details.role, "worker");
+		assert.doesNotMatch(text(result), /No role was named/);
 		assert.deepEqual(children.created[0].spec.tools, workerTools);
+	});
+});
+
+test("an explicit child request in the user message is sent to Jev without a destination question", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren({ run: async () => "Done." });
+		const jev = fakeJev();
+		const { tool } = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			fetch: jev.fetch,
+		});
+
+		const result = await spawn(
+			tool,
+			{ task: "Map the module" },
+			{
+				...toolContext("print", worktree),
+				sessionManager: {
+					getBranch: () => [
+						{
+							type: "message",
+							id: "older",
+							message: { role: "user", content: "Look at the file" },
+						},
+						{
+							type: "message",
+							id: "assistant",
+							message: {
+								role: "assistant",
+								content: [{ type: "text", text: "I can spawn a child." }],
+							},
+						},
+						{
+							type: "message",
+							id: "tool",
+							message: {
+								role: "toolResult",
+								content: [{ type: "text", text: "child" }],
+							},
+						},
+						{
+							type: "message",
+							id: "latest",
+							message: {
+								role: "user",
+								content: [
+									{ type: "text", text: "Use a child" },
+									{ type: "text", text: "to map the module" },
+								],
+							},
+						},
+						{
+							type: "message",
+							id: "blank",
+							message: { role: "user", content: "   " },
+						},
+					],
+				},
+			},
+		);
+
+		assert.equal(result.details.status, "completed");
+		assert.equal(jev.requests.length, 1);
+		assert.equal(
+			jev.requests[0].state.user_request,
+			"Use a child\nto map the module",
+		);
+		assert.equal(jev.requests[0].state.delegation_intent, "explicit");
+		assert.equal(jev.requests[0].state.task, "Map the module");
+		assert.equal(jev.requests[0].questions.destination, undefined);
 	});
 });
 
@@ -1376,6 +1488,8 @@ test("continue_child starts a new queued child from a completed child's conversa
 		assert.match(next, uuid);
 		assert.notEqual(next, done);
 		assert.match(text(result), new RegExp(`${next} is queued`));
+		assert.doesNotMatch(text(result), /Jev selected/);
+		assert.equal("jev" in result.details, false);
 		assert.equal(jev.requests.length, jevRequests);
 		const [first] = children.created;
 		const continued = children.created.at(-1);

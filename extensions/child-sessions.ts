@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type {
 	AssistantMessage,
 	ModelThinkingLevel,
+	UserMessage,
 } from "@earendil-works/pi-ai";
 import {
 	type AgentSessionEvent,
@@ -19,6 +20,7 @@ import {
 import { type Static, Type } from "typebox";
 
 import type { createChildLauncher } from "./child-launcher.ts";
+import type { JevResult } from "./jev-client.ts";
 import { sanitizeTaskText } from "./todo-header.ts";
 
 interface ChildSpec {
@@ -729,7 +731,7 @@ const spawnChildParameters = Type.Object({
 	role: Type.Optional(
 		Type.String({
 			description:
-				"The child contract: explore, worker, or verify. Omit it to use worker.",
+				"A suggestion (explore, worker, or verify). Jev selects the specialist; omitting it does not choose worker.",
 		}),
 	),
 	worktree: Type.Optional(
@@ -746,7 +748,12 @@ const spawnChildParameters = Type.Object({
 	),
 });
 
-type Outcome = { warning: string; reason: string; warnings?: string[] };
+type Outcome = {
+	warning: string;
+	reason: string;
+	warnings?: string[];
+	jev?: JevResult;
+};
 
 function report(lines: string[], details: Record<string, unknown>) {
 	return {
@@ -758,8 +765,39 @@ function report(lines: string[], details: Record<string, unknown>) {
 function notLaunched(status: string, outcome: Outcome) {
 	return report(
 		[...(outcome.warnings ?? []), outcome.warning, `Reason: ${outcome.reason}`],
-		{ status, reason: outcome.reason },
+		{
+			status,
+			reason: outcome.reason,
+			...(outcome.jev ? { jev: outcome.jev } : {}),
+		},
 	);
+}
+
+function userText(content: UserMessage["content"]): string {
+	if (typeof content === "string") return content.trim();
+	return content
+		.flatMap((part) => (part.type === "text" ? [part.text] : []))
+		.join("\n")
+		.trim();
+}
+
+export function latestUserRequest(
+	entries: readonly SessionEntry[] | undefined,
+): string | undefined {
+	if (!entries) return undefined;
+	for (let index = entries.length - 1; index >= 0; index -= 1) {
+		const entry = entries[index];
+		if (entry?.type !== "message" || entry.message.role !== "user") continue;
+		const text = userText(entry.message.content);
+		if (text.length > 0) return text;
+	}
+	return undefined;
+}
+
+function sessionBranch(ctx: {
+	sessionManager?: Pick<ExtensionContext["sessionManager"], "getBranch">;
+}): readonly SessionEntry[] | undefined {
+	return ctx.sessionManager?.getBranch();
 }
 
 export function createSpawnChildTool(
@@ -773,8 +811,9 @@ export function createSpawnChildTool(
 			"Delegate a bounded task to a child session that runs under a harness contract. The harness decides whether the work leaves this session and which model runs it. In an interactive session the call returns the child id at once and the result arrives later as a message; in print and json modes the result returns in the same call.",
 		promptSnippet: "Delegate a bounded task to a child session",
 		promptGuidelines: [
-			"Pass only the role and the task to spawn_child; the harness owns the child's prompt, tools, and model.",
-			"A spawn_child refusal or pending result has no child id and is not retried.",
+			"Pass the task and, when the user named one, the suggested role (explore, worker, or verify). The harness reads the user message and Jev selects the specialist.",
+			"A refusal or a queued id is not a completed result and is not retried.",
+			"The parent asks Jev once per user turn before read, grep, find, ls, edit, write, bash, powershell, or codegraph query and explore. A block means call spawn_child and use the role named in the reason. Reads of AGENTS.md, CONTEXT.md, and one docs/agents markdown file stay available, and so does codegraph init.",
 		],
 		parameters: spawnChildParameters,
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
@@ -785,11 +824,13 @@ export function createSpawnChildTool(
 					reason: `${ctx.mode} mode runs the child in the foreground and cannot run it in the background.`,
 				});
 			}
+			const userRequest = latestUserRequest(sessionBranch(ctx));
 			const plan = await launcher.decide(
 				{
 					role: params.role ?? undefined,
 					task: params.task,
 					worktree: params.worktree,
+					...(userRequest ? { userRequest } : {}),
 				},
 				ctx,
 			);
@@ -799,7 +840,10 @@ export function createSpawnChildTool(
 				signal,
 				modelRegistry: ctx.modelRegistry,
 			});
-			return launched(started, plan.warnings);
+			return launched(started, plan.warnings, {
+				role: plan.role,
+				jev: plan.jev,
+			});
 		},
 	};
 }
@@ -807,19 +851,31 @@ export function createSpawnChildTool(
 function launched(
 	started: Awaited<ReturnType<ReturnType<typeof createChildSessions>["start"]>>,
 	warnings: string[],
+	selection?: { role: string; jev: JevResult },
 ) {
 	if (started.status === "refused" || started.status === "pending") {
-		return notLaunched(started.status, { ...started, warnings });
+		return notLaunched(started.status, {
+			...started,
+			warnings,
+			...(selection ? { jev: selection.jev } : {}),
+		});
 	}
+	const selected = selection
+		? { role: selection.role, jev: selection.jev }
+		: {};
 	if (started.status === "completed") {
-		return report([...warnings, started.text], { status: "completed" });
+		return report([...warnings, started.text], {
+			status: "completed",
+			...selected,
+		});
 	}
 	return report(
 		[
 			...warnings,
 			`Child ${started.id} is queued in the background. Its result arrives later as a message.`,
+			...(selection ? [`Jev selected ${selection.role}.`] : []),
 		],
-		{ status: started.status, id: started.id },
+		{ status: started.status, id: started.id, ...selected },
 	);
 }
 

@@ -555,7 +555,24 @@ test("a launch right after a panel save uses the saved profile", async () => {
 		const result = await createChildLauncher({
 			modelProfiles: profiles,
 			fetch: async () =>
-				Response.json({ answers: { choice: { choice: "leave", confidence: 0.9 } } }),
+				Response.json({
+					model: "jev-1.13.0",
+					id: "req-1",
+					answers: {
+						specialist: {
+							type: "choice",
+							choice: "worker",
+							confidence: 0.9,
+							probabilities: { explorer: 0, worker: 1, verifier: 0 },
+						},
+						destination: {
+							type: "choice",
+							choice: "leave",
+							confidence: 0.9,
+							probabilities: { stay: 0, leave: 1 },
+						},
+					},
+				}),
 		}).decide(
 			{ role: "worker", task: "Add the export command" },
 			{
