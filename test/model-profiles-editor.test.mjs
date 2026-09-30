@@ -15,8 +15,15 @@ import {
 import { execFileSync } from "node:child_process";
 
 import { createChildLauncher } from "../extensions/child-launcher.ts";
+import { capabilities, replaceSelection } from "../extensions/configure.ts";
 import { createModelProfiles } from "../extensions/model-profiles.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
+
+replaceSelection({
+	schemaVersion: 1,
+	capabilities: Object.fromEntries(capabilities.map((capability) => [capability, true])),
+	expectations: {},
+});
 
 const keys = {
 	enter: "\r",

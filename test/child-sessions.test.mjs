@@ -34,7 +34,14 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 
+import { capabilities, replaceSelection } from "../extensions/configure.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
+
+replaceSelection({
+	schemaVersion: 1,
+	capabilities: Object.fromEntries(capabilities.map((capability) => [capability, true])),
+	expectations: {},
+});
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 

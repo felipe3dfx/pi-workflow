@@ -29,6 +29,7 @@ export interface ChildLauncherOptions {
 	modelProfiles: { load: () => ModelProfilesLoad };
 	contractsDirectory?: string;
 	fetch?: Fetch;
+	childSessionSeated?: () => boolean;
 }
 
 const roles = ["explore", "worker", "verify"] as const;
@@ -444,13 +445,16 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 	}
 
 	function beginTurn() {
-		turn = undefined;
+		// The shared verdict stays until the next operator message.
 	}
 
 	async function gateToolCall(
 		event: ToolCallEvent,
 		ctx: GateContext,
 	): Promise<{ allow: true } | { allow: false; reason: string }> {
+		if (options.childSessionSeated && !options.childSessionSeated()) {
+			return { allow: true };
+		}
 		if (!gatedTool(event, ctx.cwd)) return { allow: true };
 		const userRequest = latestUserRequest(ctx.sessionManager?.getBranch());
 		if (!userRequest) return { allow: true };

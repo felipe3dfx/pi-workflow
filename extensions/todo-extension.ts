@@ -1,8 +1,21 @@
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-import { renderTodoBox, type TodoBoxState } from "./todo-header.ts";
+import { held, notifyPlace, occupants, paint } from "./configure.ts";
+import { paintAboveInput } from "./shell.ts";
+import { offerTool } from "./tool-offer.ts";
+import {
+	renderTodoBox,
+	todoAboveInput,
+	type TodoBoxState,
+} from "./todo-header.ts";
 import { createTodoList, type Task } from "./todo-list.ts";
+
+let syncTodo: (api: ExtensionAPI) => void = () => {};
+
+export function syncTodoTool(api: ExtensionAPI) {
+	syncTodo(api);
+}
 
 const TodoWriteTask = Type.Object({
 	text: Type.String({ description: "Task text" }),
@@ -58,7 +71,11 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 		currentTui = tui;
 		return {
 			render(width: number) {
-				return renderTodoBox(theme, todoList.list(), boxState, width);
+				paint(todoAboveInput, (paintedWidth) =>
+					renderTodoBox(theme, todoList.list(), boxState, paintedWidth),
+				);
+				if (occupants("above-input").includes("child-session")) return [];
+				return paintAboveInput(width);
 			},
 			invalidate() {},
 		};
@@ -67,6 +84,7 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 	function reveal(): void {
 		boxState.collapsed = false;
 		currentTui?.requestRender();
+		notifyPlace("above-input");
 	}
 
 	function syncWidget(ctx: ExtensionContext): void {
@@ -81,6 +99,13 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 		}
 	}
 
+	const registerTodo = pi.registerTool.bind(pi);
+	pi.registerTool = (tool) => {
+		if (tool.name === "todo") {
+			syncTodo = (api) => offerTool(api, tool, held(todoAboveInput));
+		}
+		return registerTodo(tool);
+	};
 	pi.registerTool({
 		name: "todo",
 		label: "Todo",
@@ -93,6 +118,17 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 		],
 		parameters: TodoParams,
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			if (!held(todoAboveInput)) {
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: "Todo is not seated. Run /workflow:configure.",
+						},
+					],
+					details: { status: "refused" },
+				};
+			}
 			switch (params.action) {
 				case "write": {
 					if (params.tasks === undefined) {
@@ -141,12 +177,14 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 			}
 		},
 	});
+	pi.registerTool = registerTodo;
 
 	pi.registerShortcut("alt+shift+t", {
 		description: "Collapse or expand the session task box above the input",
 		handler: async (_ctx) => {
 			boxState.collapsed = !boxState.collapsed;
 			currentTui?.requestRender();
+			notifyPlace("above-input");
 		},
 	});
 
@@ -155,6 +193,7 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 		handler: async (_ctx) => {
 			boxState.showDone = !boxState.showDone;
 			currentTui?.requestRender();
+			notifyPlace("above-input");
 		},
 	});
 

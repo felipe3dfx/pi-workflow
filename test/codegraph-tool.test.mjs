@@ -13,7 +13,14 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { capabilities, replaceSelection } from "../extensions/configure.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
+
+replaceSelection({
+	schemaVersion: 1,
+	capabilities: Object.fromEntries(capabilities.map((capability) => [capability, true])),
+	expectations: {},
+});
 
 function missing(path) {
 	return Object.assign(new Error(`ENOENT: ${path}`), { code: "ENOENT" });

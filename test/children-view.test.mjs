@@ -10,6 +10,13 @@ import {
 } from "@earendil-works/pi-tui";
 
 import { createChildrenViews } from "../extensions/children-view.ts";
+import { capabilities, replaceSelection } from "../extensions/configure.ts";
+
+replaceSelection({
+	schemaVersion: 1,
+	capabilities: Object.fromEntries(capabilities.map((capability) => [capability, true])),
+	expectations: {},
+});
 
 initTheme("dark", false);
 

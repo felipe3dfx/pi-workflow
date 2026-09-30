@@ -14,6 +14,10 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { type Component, Text, TruncatedText } from "@earendil-works/pi-tui";
 
+import { claim, held } from "./configure.ts";
+
+const compactStream = claim("compact-rendering", "message-stream");
+
 type Theme = Parameters<NonNullable<ToolDefinition["renderCall"]>>[1];
 type RenderContext = Parameters<NonNullable<ToolDefinition["renderCall"]>>[2];
 type ScriptCall = { name: string };
@@ -139,14 +143,18 @@ function compact<
 		cwd: string,
 		ctx?: ExtensionContext,
 	) => ToolDefinition<TParams, TDetails, TState>,
+	session: ExtensionContext,
 ): ToolDefinition<TParams, TDetails, TState> {
-	const builtIn = create(process.cwd());
+	const builtIn = create(session.cwd, session);
 	return {
 		...builtIn,
 		renderShell: "self",
 		execute: (toolCallId, params, signal, onUpdate, ctx) =>
 			create(ctx.cwd, ctx).execute(toolCallId, params, signal, onUpdate, ctx),
 		renderCall(args, theme, context) {
+			if (!held(compactStream)) {
+				return builtIn.renderCall?.(args, theme, context) ?? hidden;
+			}
 			const previous =
 				context.lastComponent instanceof View
 					? context.lastComponent.own
@@ -163,6 +171,11 @@ function compact<
 			);
 		},
 		renderResult(result, options, theme, context) {
+			if (!held(compactStream)) {
+				return (
+					builtIn.renderResult?.(result, options, theme, context) ?? hidden
+				);
+			}
 			const previous =
 				context.lastComponent instanceof View
 					? context.lastComponent.own
@@ -296,30 +309,38 @@ export function fallbackRenderers(row: Fallback) {
 }
 
 // The options mirror what Pi's session passes when it builds its own base tools.
-export function registerCompactTools(pi: ExtensionAPI) {
-	pi.registerTool(
-		compact("read", (cwd, ctx) =>
-			createReadToolDefinition(
-				cwd,
-				ctx && { autoResizeImages: settings(ctx).getImageAutoResize() },
-			),
+export function syncCompactTools(pi: ExtensionAPI, ctx?: ExtensionContext) {
+	if (!ctx?.cwd || typeof ctx.isProjectTrusted !== "function") return;
+	const on = held(compactStream);
+	const register = (name: string, create: (cwd: string, ctx?: ExtensionContext) => object) => {
+		const tool = (on
+			? compact(name, create as Parameters<typeof compact>[1], ctx)
+			: create(ctx.cwd, ctx)) as Parameters<ExtensionAPI["registerTool"]>[0];
+		pi.registerTool(tool);
+	};
+	register("read", (cwd, ctx) =>
+		createReadToolDefinition(
+			cwd,
+			ctx && { autoResizeImages: settings(ctx).getImageAutoResize() },
 		),
 	);
-	pi.registerTool(
-		compact("bash", (cwd, ctx) => {
-			const shell = ctx && settings(ctx);
-			return createBashToolDefinition(
-				cwd,
-				shell && {
-					commandPrefix: shell.getShellCommandPrefix(),
-					shellPath: shell.getShellPath(),
-				},
-			);
-		}),
-	);
-	pi.registerTool(compact("grep", (cwd) => createGrepToolDefinition(cwd)));
-	pi.registerTool(compact("find", (cwd) => createFindToolDefinition(cwd)));
-	pi.registerTool(compact("ls", (cwd) => createLsToolDefinition(cwd)));
-	pi.registerTool(compact("edit", (cwd) => createEditToolDefinition(cwd)));
-	pi.registerTool(compact("write", (cwd) => createWriteToolDefinition(cwd)));
+	register("bash", (cwd, ctx) => {
+		const shell = ctx && settings(ctx);
+		return createBashToolDefinition(
+			cwd,
+			shell && {
+				commandPrefix: shell.getShellCommandPrefix(),
+				shellPath: shell.getShellPath(),
+			},
+		);
+	});
+	register("grep", (cwd) => createGrepToolDefinition(cwd));
+	register("find", (cwd) => createFindToolDefinition(cwd));
+	register("ls", (cwd) => createLsToolDefinition(cwd));
+	register("edit", (cwd) => createEditToolDefinition(cwd));
+	register("write", (cwd) => createWriteToolDefinition(cwd));
+}
+
+export function registerCompactTools(pi: ExtensionAPI) {
+	syncCompactTools(pi);
 }

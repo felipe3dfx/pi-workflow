@@ -19,8 +19,10 @@ import {
 
 import {
 	fallbackRenderers,
+	syncCompactTools,
 	usesFallback,
 } from "../extensions/compact-tools.ts";
+import { readSelection, replaceSelection } from "../extensions/configure.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 
 const builtIns = {
@@ -40,9 +42,13 @@ const theme = {
 	italic: (text) => text,
 };
 
+function sessionContext(cwd) {
+	return { cwd, isProjectTrusted: () => false };
+}
+
 function loadTools() {
 	const tools = new Map();
-	piWorkflowExtension({
+	const pi = {
 		on() {},
 		registerCommand() {},
 		registerShortcut() {},
@@ -50,7 +56,11 @@ function loadTools() {
 		registerProvider() {},
 		registerTool: (tool) => tools.set(tool.name, tool),
 		exec: async () => ({ code: 0, stdout: "", stderr: "" }),
-	});
+	};
+	const preview = readSelection(undefined, []);
+	if (preview.status === "ready") replaceSelection(preview.selection);
+	piWorkflowExtension(pi);
+	syncCompactTools(pi, sessionContext(process.cwd()));
 	return tools;
 }
 
@@ -420,4 +430,39 @@ test("a codemode script is one Run script row closed and Pi's code and output un
 	for (let width = 1; width <= 60; width++)
 		for (const line of call.render(width))
 			assert.ok(stripVTControlCharacters(line).length <= width, `width ${width}`);
+});
+
+test("turning compact rendering off registers the seven tools with the session cwd", async () => {
+	await withWorkspace(async (cwd) => {
+		const preview = readSelection(undefined, []);
+		assert.equal(preview.status, "ready");
+		preview.selection.capabilities["compact-rendering"] = false;
+		replaceSelection(preview.selection);
+		const skipped = [];
+		syncCompactTools({ registerTool: (tool) => skipped.push(tool.name) });
+		assert.deepEqual(skipped, []);
+		const tools = new Map();
+		syncCompactTools(
+			{ registerTool: (tool) => tools.set(tool.name, tool) },
+			sessionContext(cwd),
+		);
+		for (const name of Object.keys(builtIns)) assert.ok(tools.has(name), name);
+		const result = await tools.get("bash").execute(
+			"call-1",
+			{ command: "pwd" },
+			undefined,
+			undefined,
+			{
+				isProjectTrusted: () => false,
+				sessionManager: {
+					getSessionId: () => "session-1",
+					getSessionFile: () => undefined,
+				},
+			},
+		);
+		const text = result.content
+			.map((block) => (block.type === "text" ? block.text : ""))
+			.join("\n");
+		assert.match(text, new RegExp(cwd));
+	});
 });

@@ -23,10 +23,14 @@ import {
 import {
 	type ChildRecord,
 	type createChildSessions,
+	childOverlay,
 	isWorking,
 	type Schedule,
 	scheduleTimer,
 } from "./child-sessions.ts";
+import { childModelLine, childStep } from "./child-projection.ts";
+import { held } from "./configure.ts";
+
 import {
 	byState,
 	type ChildTheme,
@@ -49,6 +53,12 @@ import {
 	selectedRow,
 } from "./chrome-menus.ts";
 import { sanitizeMultilineText, sanitizeTaskText } from "./todo-header.ts";
+
+let closeSeatedView: () => void = () => {};
+
+export function closeChildrenView() {
+	closeSeatedView();
+}
 
 const minModalRows = 8;
 const splitWidth = 57;
@@ -283,8 +293,19 @@ export function createChildrenViews(
 	schedule: Schedule = scheduleTimer,
 ) {
 	const open = new Set<() => void>();
+	const close = () => {
+		for (const closeOne of [...open]) closeOne();
+	};
+	closeSeatedView = close;
 	return {
 		async open(ctx: ExtensionContext) {
+			if (!held(childOverlay)) {
+				ctx.ui.notify(
+					"Child session is not seated. Run /workflow:configure.",
+					"error",
+				);
+				return;
+			}
 			let handle: OverlayHandle | undefined;
 			await ctx.ui.custom<void>(
 				(tui, theme, keybindings, done) =>
@@ -313,9 +334,7 @@ export function createChildrenViews(
 				},
 			);
 		},
-		close() {
-			for (const close of [...open]) close();
-		},
+		close,
 	};
 }
 
@@ -598,9 +617,7 @@ function createChildrenView(
 					? theme.bold(theme.fg("accent", "▸ "))
 					: theme.fg("dim", "▸ ")
 				: "  ";
-			const step = sanitizeTaskText(
-				child.step ?? child.task.trim().split("\n")[0],
-			);
+			const step = sanitizeTaskText(childStep(child));
 			const color = child.state === "waiting" ? "warning" : "dim";
 			const head = `${mark}${childGlyph(theme, child)} ${theme.fg("accent", child.role)} ${theme.fg("dim", child.id.slice(0, 4))}`;
 			const right = theme.fg(
@@ -642,13 +659,12 @@ function createChildrenView(
 		width: number,
 		focused: boolean,
 	) {
-		const model = child.model.slice(child.model.indexOf("/") + 1);
 		const state =
 			child.state === "queued"
 				? "queued"
 				: `${child.state} · ${childElapsed(child, Date.now())}`;
 		const meta = [
-			`${model} (${child.thinking})`,
+			childModelLine(child),
 			...usage(content),
 			`wt: ${basename(child.worktree)}`,
 		].join(" · ");

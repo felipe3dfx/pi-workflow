@@ -4,8 +4,15 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
+import { capabilities, replaceSelection } from "../extensions/configure.ts";
 import { createModelProfiles } from "../extensions/model-profiles.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
+
+replaceSelection({
+	schemaVersion: 1,
+	capabilities: Object.fromEntries(capabilities.map((capability) => [capability, true])),
+	expectations: {},
+});
 
 async function withConfigDirectory(run) {
 	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-model-profiles-"));

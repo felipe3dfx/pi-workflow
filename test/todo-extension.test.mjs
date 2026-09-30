@@ -4,7 +4,16 @@ import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+import { capabilities, replaceSelection } from "../extensions/configure.ts";
 import { registerSessionTodo } from "../extensions/todo-extension.ts";
+
+replaceSelection({
+	schemaVersion: 1,
+	capabilities: Object.fromEntries(
+		capabilities.map((capability) => [capability, capability === "todo"]),
+	),
+	expectations: {},
+});
 
 function fakeTheme() {
 	return {

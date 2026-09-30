@@ -10,6 +10,15 @@ import {
 import { visibleWidth } from "@earendil-works/pi-tui";
 
 import { registerChildResultCards } from "../extensions/child-result-card.ts";
+import { capabilities, replaceSelection } from "../extensions/configure.ts";
+
+replaceSelection({
+	schemaVersion: 1,
+	capabilities: Object.fromEntries(
+		capabilities.map((capability) => [capability, capability === "child-session"]),
+	),
+	expectations: {},
+});
 
 const piTui = await import(
 	createRequire(import.meta.resolve("@earendil-works/pi-coding-agent")).resolve(

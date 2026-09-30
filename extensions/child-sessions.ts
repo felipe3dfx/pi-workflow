@@ -20,8 +20,12 @@ import {
 import { type Static, Type } from "typebox";
 
 import type { createChildLauncher } from "./child-launcher.ts";
+import { claim, held } from "./configure.ts";
 import type { JevResult } from "./jev-client.ts";
+import { projectChild } from "./child-projection.ts";
 import { sanitizeTaskText } from "./todo-header.ts";
+
+export const childOverlay = claim("child-session", "overlay");
 
 interface ChildSpec {
 	cwd: string;
@@ -165,15 +169,16 @@ export function isWorking(state: ChildState) {
 }
 
 export function childDetails(record: ChildRecord, now = Date.now()) {
+	const projected = projectChild(record, now);
 	return {
-		id: record.id,
-		state: record.state,
-		role: record.role,
-		model: record.model,
-		thinking: record.thinking,
-		task: record.task.trim().split("\n")[0],
-		elapsedMs: (record.endedAt ?? now) - (record.startedAt ?? record.createdAt),
-		text: record.text,
+		id: projected.id,
+		state: projected.state,
+		role: projected.role,
+		model: projected.model,
+		thinking: projected.thinking,
+		task: projected.task,
+		elapsedMs: projected.elapsedMs,
+		text: projected.text,
 	};
 }
 
@@ -755,6 +760,14 @@ type Outcome = {
 	jev?: JevResult;
 };
 
+function unseatedChild() {
+	if (held(childOverlay)) return undefined;
+	return report(
+		["Child session is not seated. Run /workflow:configure."],
+		{ status: "refused" },
+	);
+}
+
 function report(lines: string[], details: Record<string, unknown>) {
 	return {
 		content: [{ type: "text" as const, text: lines.join("\n") }],
@@ -818,6 +831,8 @@ export function createSpawnChildTool(
 		],
 		parameters: spawnChildParameters,
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			const unseated = unseatedChild();
+			if (unseated) return unseated;
 			const background = ctx.mode === "tui" || ctx.mode === "rpc";
 			if (params.background && !background) {
 				return notLaunched("refused", {
@@ -910,6 +925,8 @@ export function createContinueChildTool(
 		],
 		parameters: continueChildParameters,
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			const unseated = unseatedChild();
+			if (unseated) return unseated;
 			return launched(
 				await sessions.resume(params.id, params.task, {
 					signal,
@@ -971,6 +988,8 @@ export function createChildQueryTools(
 			"List the child sessions of this session with their role, state, model, and times.",
 		parameters: Type.Object({}),
 		async execute() {
+			const unseated = unseatedChild();
+			if (unseated) return unseated;
 			const children = sessions.list();
 			return report(describeChildren(children), { children });
 		},
@@ -984,6 +1003,8 @@ export function createChildQueryTools(
 		description: "Show the state of one child session.",
 		parameters: childIdParameters,
 		async execute(_toolCallId, params) {
+			const unseated = unseatedChild();
+			if (unseated) return unseated;
 			const child = sessions.get(params.id);
 			if (!child) return unknownChild(params.id);
 			return report([describeChild(child)], { child });
@@ -999,6 +1020,8 @@ export function createChildQueryTools(
 			"Return the final text of a child session that has ended: its answer, or why it did not complete.",
 		parameters: childIdParameters,
 		async execute(_toolCallId, params) {
+			const unseated = unseatedChild();
+			if (unseated) return unseated;
 			const child = sessions.get(params.id);
 			if (!child) return unknownChild(params.id);
 			if (child.text === undefined) {
@@ -1019,6 +1042,8 @@ export function createChildQueryTools(
 		description: "Cancel a queued, running, or waiting child session.",
 		parameters: childIdParameters,
 		async execute(_toolCallId, params) {
+			const unseated = unseatedChild();
+			if (unseated) return unseated;
 			const { message } = sessions.cancel(params.id, false);
 			const child = sessions.get(params.id);
 			return report([message], { id: params.id, state: child?.state });
@@ -1034,6 +1059,8 @@ export function createChildQueryTools(
 			"Answer the question a child session is waiting on, naming the question number from its message. A reply to a question that is not waiting is refused.",
 		parameters: replyChildParameters,
 		async execute(_toolCallId, params) {
+			const unseated = unseatedChild();
+			if (unseated) return unseated;
 			return report(
 				[sessions.reply(params.id, params.question, params.answer)],
 				{ id: params.id, question: params.question },

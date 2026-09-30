@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+import { capabilities, occupants, replaceSelection } from "../extensions/configure.ts";
 import {
 	createCompanionWorkflow,
 	getCompanionState,
@@ -102,6 +103,38 @@ test("catalog helpers fail closed on invalid metadata and format manual install 
 	assert.match(manualInstallInstructions([{ package: "alpha" }], "Install:"), /pi install npm:alpha/);
 });
 
+test("status degrades a missing companion only when an expectation names it", async () => {
+	await withMetadataFile(
+		[{ package: "alpha" }, { package: "beta" }],
+		async ({ metadataPath }) => {
+			const named = createCompanionWorkflow({
+				...aligned,
+				catalog: {
+					metadataPath,
+					resolveInstalledVersion: () => ({}),
+				},
+				expectedPackages: () => ["alpha"],
+			});
+			const expected = await named.inspect();
+			assert.equal(expected.level, "warning");
+			assert.match(expected.message, /pi install npm:alpha/);
+			assert.doesNotMatch(expected.message, /pi install npm:beta/);
+
+			const unnamed = createCompanionWorkflow({
+				...aligned,
+				catalog: {
+					metadataPath,
+					resolveInstalledVersion: () => ({}),
+				},
+				expectedPackages: () => [],
+			});
+			const idle = await unnamed.inspect();
+			assert.equal(idle.level, "info");
+			assert.doesNotMatch(idle.message, /Missing or unreadable companions/);
+		},
+	);
+});
+
 test("inspect reports missing companions without installing them", async () => {
 	await withMetadataFile([{ package: "alpha" }], async ({ metadataPath }) => {
 		const notifications = [];
@@ -119,8 +152,9 @@ test("inspect reports missing companions without installing them", async () => {
 			},
 		});
 		const result = await workflow.inspect();
-		assert.equal(result.level, "warning");
+		assert.equal(result.level, "info");
 		assert.match(result.message, /alpha — missing/);
+		assert.doesNotMatch(result.message, /Missing or unreadable companions/);
 		assert.equal(notifications.length, 1);
 	});
 });
@@ -300,7 +334,7 @@ test("doctor reports info when every catalog companion is installed, with no Cod
 	assert.doesNotMatch(result.message, /CodeGraph/);
 });
 
-test("setup installs missing companions and stops when install fails", async () => {
+test("setup still aligns MCP and default settings when a companion install fails", async () => {
 	await withMetadataFile([{ package: "beta" }], async ({ metadataPath, dir }) => {
 		const specs = [];
 		const workflow = createCompanionWorkflow({
@@ -329,6 +363,8 @@ test("setup installs missing companions and stops when install fails", async () 
 		assert.equal(result.outcome, "failed");
 		assert.deepEqual(specs, ["npm:beta"]);
 		assert.match(result.failures[0], /offline/);
+		assert.match(result.message, /MCP configuration/);
+		assert.match(result.message, /[Dd]efault settings/);
 	});
 });
 
@@ -547,7 +583,7 @@ test("setup fails closed on a malformed settings file without overwriting it", a
 	});
 });
 
-test("status and doctor report default settings as aligned or pointing to /workflow:setup", async () => {
+test("status and doctor report default settings as aligned or pointing to /workflow:configure", async () => {
 	await withSettingsWorkflow(
 		JSON.stringify({ tuiMode: "fullscreen" }),
 		async ({ workflow }) => {
@@ -574,7 +610,7 @@ test("status and doctor report default settings as aligned or pointing to /workf
 				assert.equal(result.level, "warning");
 				assert.match(
 					result.message,
-					/Default settings:\n✗ .* — not aligned: tuiMode\nRun \/workflow:setup/,
+					/Default settings:\n✗ .* — not aligned: tuiMode\nRun \/workflow:configure/,
 				);
 			}
 			assert.deepEqual(JSON.parse(await readFile(settingsPath, "utf8")), {
@@ -584,7 +620,7 @@ test("status and doctor report default settings as aligned or pointing to /workf
 	);
 });
 
-test("status reports a misaligned MCP configuration and points to /workflow:setup", async () => {
+test("status reports a misaligned MCP configuration and points to /workflow:configure", async () => {
 	await withMetadataFile(
 		[{ package: "alpha" }],
 		async ({ metadataPath, dir }) => {
@@ -610,13 +646,13 @@ test("status reports a misaligned MCP configuration and points to /workflow:setu
 			assert.equal(result.level, "warning");
 			assert.match(
 				result.message,
-				/MCP configuration:\n✗ .*mcp\.json — not aligned: context7\nRun \/workflow:setup/,
+				/MCP configuration:\n✗ .*mcp\.json — not aligned: context7\nRun \/workflow:configure/,
 			);
 		},
 	);
 });
 
-test("status does not point to /workflow:setup when the only settings misalignment is a conflict setup cannot fix", async () => {
+test("status does not point to /workflow:configure when the only settings misalignment is a conflict setup cannot fix", async () => {
 	await withMetadataFile(
 		[{ package: "alpha" }],
 		async ({ metadataPath, dir }) => {
@@ -646,7 +682,7 @@ test("status does not point to /workflow:setup when the only settings misalignme
 				result.message,
 				/Default settings:\n✗ .*settings\.json — not aligned: defaultTools: -codemode conflicts with \+codemode \(remove it manually\)/,
 			);
-			assert.doesNotMatch(result.message, /Default settings:(.|\n)*Run \/workflow:setup/);
+			assert.doesNotMatch(result.message, /Default settings:(.|\n)*Run \/workflow:configure/);
 		},
 	);
 });
@@ -749,6 +785,8 @@ test("a settings write failure after an MCP write reports what was already done"
 				assert.equal(result.outcome, "config-error");
 				assert.match(result.message, /MCP configuration was updated/);
 				assert.match(result.message, /\/reload/);
+				assert.match(result.message, /\/workflow:configure/);
+				assert.doesNotMatch(result.message, /run setup/);
 				assert.doesNotMatch(result.message, /Companions were installed/);
 			} finally {
 				chmodSync(settingsDirectory, 0o700);
@@ -776,4 +814,151 @@ test("settings write keeps 0600 permissions and writes through a symlink", async
 			tuiMode: "fullscreen",
 		});
 	});
+});
+
+function clearedSelection() {
+	return {
+		schemaVersion: 1,
+		capabilities: Object.fromEntries(
+			capabilities.map((capability) => [capability, false]),
+		),
+		expectations: {},
+	};
+}
+
+function seatedNames() {
+	const names = new Set();
+	for (const place of ["header", "above-input", "overlay", "message-stream"]) {
+		for (const capability of occupants(place)) names.add(capability);
+	}
+	return [...names].sort();
+}
+
+function savedSelection(on) {
+	return {
+		schemaVersion: 1,
+		capabilities: Object.fromEntries(
+			capabilities.map((capability) => [capability, on.includes(capability)]),
+		),
+		expectations: { alpha: true },
+	};
+}
+
+async function withSelectionExtension(selection, run) {
+	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-selection-"));
+	replaceSelection(clearedSelection());
+	try {
+		const metadataPath = join(dir, "companions.json");
+		await writeFile(
+			metadataPath,
+			JSON.stringify({ schemaVersion: 1, companions: [{ package: "alpha" }] }),
+			"utf8",
+		);
+		if (selection !== undefined) {
+			await writeFile(
+				join(dir, "pi-workflow-selection.json"),
+				JSON.stringify(selection),
+				"utf8",
+			);
+		}
+		const handlers = new Map();
+		const commands = new Map();
+		const notifications = [];
+		const ui = {
+			notify: (message, level) => notifications.push({ message, level }),
+			setWidget() {},
+			setStatus() {},
+			setHeader() {},
+			setFooter() {},
+			setEditorComponent() {},
+			setWorkingVisible() {},
+			setWorkingIndicator() {},
+			setWorkingMessage() {},
+			custom() {
+				return Promise.resolve();
+			},
+		};
+		piWorkflowExtension(
+			{
+				on(event, handler) {
+					handlers.set(event, [...(handlers.get(event) ?? []), handler]);
+				},
+				registerCommand: (name, command) => commands.set(name, command),
+				registerShortcut() {},
+				registerMessageRenderer() {},
+				registerProvider() {},
+				registerTool() {},
+				sendMessage() {},
+				exec: async () => {
+					throw new Error("must not run commands");
+				},
+			},
+			{
+				catalog: {
+					metadataPath,
+					resolveInstalledVersion: () => ({}),
+				},
+				mcp: { agentDirectory: dir },
+			},
+		);
+		const sessionCtx = (mode, hasUI) => ({
+			mode,
+			hasUI,
+			ui,
+			cwd: dir,
+			sessionManager: { getBranch: () => [], getEntries: () => [] },
+		});
+		return await run({
+			notifications,
+			fire: async (mode, hasUI) => {
+				for (const handler of handlers.get("session_start") ?? []) {
+					await handler({}, sessionCtx(mode, hasUI));
+				}
+			},
+			configure: (mode) =>
+				commands.get("workflow:configure").handler("", sessionCtx(mode, true)),
+		});
+	} finally {
+		replaceSelection(clearedSelection());
+		await rm(dir, { recursive: true, force: true });
+	}
+}
+
+test("session start seats a saved selection in print, rpc, json, and tui", async () => {
+	const saved = savedSelection(["todo"]);
+	const modes = [
+		["print", undefined],
+		["rpc", false],
+		["json", true],
+		["tui", true],
+	];
+	for (const [mode, hasUI] of modes) {
+		await withSelectionExtension(saved, async ({ fire }) => {
+			await fire(mode, hasUI);
+			assert.deepEqual(seatedNames(), ["todo"]);
+		});
+	}
+});
+
+test("session start with no selection file does not seat a capability", async () => {
+	await withSelectionExtension(undefined, async ({ fire }) => {
+		await fire("print", true);
+		assert.deepEqual(seatedNames(), []);
+		replaceSelection(savedSelection(["codegraph"]));
+		await fire("json", false);
+		assert.deepEqual(seatedNames(), ["codegraph"]);
+	});
+});
+
+test("workflow:configure outside the TUI notifies that it needs the TUI and does not seat a saved selection", async () => {
+	const saved = savedSelection(["todo"]);
+	for (const mode of ["print", "json"]) {
+		await withSelectionExtension(saved, async ({ configure, notifications }) => {
+			await configure(mode);
+			assert.deepEqual(notifications, [
+				{ message: "Configure needs the TUI.", level: "error" },
+			]);
+			assert.deepEqual(seatedNames(), []);
+		});
+	}
 });

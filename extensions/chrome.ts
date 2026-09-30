@@ -21,16 +21,11 @@ import {
 	registerMessages,
 	restoreMessages,
 } from "./chrome-messages.ts";
-import {
-	type createChildSessions,
-	isWorking,
-	type Schedule,
-	scheduleTimer,
-} from "./child-sessions.ts";
-import { childName, spread } from "./children-box.ts";
+import { type Schedule, scheduleTimer } from "./child-sessions.ts";
+import { spread } from "./children-box.ts";
+import { readHeader, watchHeader } from "./shell.ts";
 import { sanitizeTaskText } from "./todo-header.ts";
 
-type Sessions = ReturnType<typeof createChildSessions>;
 export type ChromeTheme = Pick<Theme, "fg" | "bold" | "bg">;
 export type Hint = { key: string; action: string };
 export type KeyResolver = (binding: Keybinding) => string;
@@ -252,7 +247,6 @@ export function renderFooter(
 
 export function registerChrome(
 	pi: ExtensionAPI,
-	sessions: Sessions,
 	hints: FooterHints,
 	schedule: Schedule = scheduleTimer,
 ) {
@@ -277,7 +271,7 @@ export function registerChrome(
 	}
 
 	function waitingChild() {
-		return sessions.list().find((child) => isWorking(child.state));
+		return readHeader();
 	}
 
 	function tick() {
@@ -324,8 +318,8 @@ export function registerChrome(
 		return {
 			frame,
 			waiting: true,
-			label: `Subagent: ${childName(child)}…`,
-			stepMs: now - (child.startedAt ?? child.createdAt),
+			label: child.label ?? "Subagent…",
+			stepMs: child.stepMs ?? 0,
 		};
 	}
 
@@ -357,8 +351,7 @@ export function registerChrome(
 							branch: branch(),
 							cwd: startCtx.cwd,
 							home: homedir(),
-							working: sessions.list().filter((child) => isWorking(child.state))
-								.length,
+							working: readHeader()?.count ?? 0,
 							usage: startCtx.getContextUsage(),
 						},
 						width,
@@ -407,7 +400,7 @@ export function registerChrome(
 			return input;
 		});
 		unsubscribe = [
-			sessions.subscribe(() => {
+			watchHeader(() => {
 				requestRender();
 				if (!stopTick) tick();
 			}),

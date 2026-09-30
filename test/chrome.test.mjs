@@ -334,7 +334,7 @@ function fakeChrome(entries = []) {
 	};
 	let subscriptions = 0;
 	let active = 0;
-	const sessions = {
+	const _sessions = {
 		list: () => [],
 		subscribe() {
 			subscriptions += 1;
@@ -376,7 +376,7 @@ function fakeChrome(entries = []) {
 			setEditorComponent: (factory) => (factories.editor = factory),
 		},
 	};
-	registerChrome(pi, sessions, hints, schedule);
+	registerChrome(pi, hints, schedule);
 	const emit = async (event, payload = {}) => {
 		for (const handler of handlers.get(event) ?? [])
 			await handler(payload, ctx);
@@ -453,9 +453,15 @@ test("a second session_start replaces the subscriptions instead of duplicating t
 	const chrome = fakeChrome();
 	await chrome.emit("session_start");
 	await chrome.emit("session_start");
-	assert.equal(chrome.subscriptions(), 2);
-	assert.equal(chrome.active(), 1);
 	assert.equal(chrome.hintSubs.active, 1);
+	chrome.factories.header(chrome.tui, theme);
+	chrome.tui.requestRender = () => chrome.calls.push(["render"]);
+	const { notifyPlace } = await import("../extensions/configure.ts");
+	notifyPlace("header");
+	assert.equal(
+		chrome.calls.filter((call) => call[0] === "render").length,
+		1,
+	);
 });
 
 test("the status row keeps showing a tool that is still running when a later parallel tool ends", async () => {
