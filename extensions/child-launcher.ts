@@ -64,13 +64,60 @@ const specialistCriteria: Record<Specialist, string> = {
 	verifier: "An independent check of work that is already done.",
 };
 
-const destinationInstructions =
-	"Should this package leave the parent session and run in a child?";
+const destinationInstructions = "Where should this package go?";
 
 const destinationCriteria = {
-	stay: "The user still has to make a decision, or the package is not bounded enough for a child to finish alone. Deciding an architecture with the user stays here.",
-	leave: "A bounded package a child session can finish on its own. Investigating an architecture can leave.",
+	decide:
+		"A product decision is still open. The parent must ask the user one question and wait. Choosing an architecture with the user is a decision.",
+	stay: "The package is small and already understood, so the parent can finish it in this session.",
+	leave:
+		"A bounded package a child session can finish on its own. Investigating an architecture can leave.",
 };
+
+type SkillRoute =
+	| { name: string; destination: "stay" }
+	| { name: string; destination: "leave" | "approval"; role: Role };
+
+const skillRoutes: SkillRoute[] = [
+	{ name: "promotion-readiness", destination: "leave", role: "verify" },
+	{ name: "writing-for-agents", destination: "approval", role: "worker" },
+	{ name: "mutation-testing", destination: "leave", role: "verify" },
+	{ name: "review-critique", destination: "leave", role: "verify" },
+	{ name: "domain-modeling", destination: "stay" },
+	{ name: "codebase-design", destination: "stay" },
+	{ name: "feature-review", destination: "leave", role: "verify" },
+	{ name: "setup-workflow", destination: "approval", role: "worker" },
+	{ name: "code-review", destination: "leave", role: "verify" },
+	{ name: "scope-audit", destination: "leave", role: "explore" },
+	{ name: "qa-impact", destination: "leave", role: "explore" },
+	{ name: "to-tickets", destination: "stay" },
+	{ name: "create-pr", destination: "stay" },
+	{ name: "prototype", destination: "approval", role: "worker" },
+	{ name: "implement", destination: "leave", role: "worker" },
+	{ name: "simplify", destination: "leave", role: "explore" },
+	{ name: "to-spec", destination: "approval", role: "worker" },
+	{ name: "feature", destination: "stay" },
+	{ name: "tdd", destination: "leave", role: "worker" },
+];
+
+const skillMatchers = skillRoutes
+	.map((route) => ({
+		route,
+		pattern: new RegExp(
+			`(?<![\\p{L}\\p{N}_-])${route.name}(?![\\p{L}\\p{N}_-])`,
+			"iu",
+		),
+	}))
+	.sort((left, right) => right.route.name.length - left.route.name.length);
+
+const approval =
+	/(?<![\p{L}\p{N}_-])(?:aprobado|approved|publica|publish|hazlo)(?![\p{L}\p{N}_-])/iu;
+
+function matchedSkill(userRequest: string | undefined): SkillRoute | undefined {
+	if (!userRequest) return undefined;
+	return skillMatchers.find((candidate) => candidate.pattern.test(userRequest))
+		?.route;
+}
 
 type Contract = { prompt: string; tools: string[] };
 
@@ -89,8 +136,9 @@ type GateContext = LauncherContext & {
 };
 
 type Verdict =
-	| { kind: "launch"; role: Role; jev: JevResult }
+	| { kind: "launch"; role: Role; jev?: JevResult; skill?: string }
 	| { kind: "stay"; refusal: Refusal }
+	| { kind: "decide"; refusal: Refusal }
 	| { kind: "blocked"; refusal: Refusal };
 
 type Refusal = {
@@ -147,11 +195,20 @@ async function gitRoot(worktree: string): Promise<string | Refusal> {
 }
 
 const stayWarning = "The work stays in this session. No child was launched.";
+const decideWarning =
+	"Ask the user one question and wait. No child was launched.";
 const blockedWarning = "Launch blocked. No child was launched.";
 
 const stays = (reason: string, jev?: JevResult): Refusal => ({
 	status: "refused",
 	warning: stayWarning,
+	reason,
+	...(jev ? { jev } : {}),
+});
+
+const decides = (reason: string, jev?: JevResult): Refusal => ({
+	status: "refused",
+	warning: decideWarning,
 	reason,
 	...(jev ? { jev } : {}),
 });
@@ -162,6 +219,20 @@ const blocked = (reason: string, jev?: JevResult): Refusal => ({
 	reason,
 	...(jev ? { jev } : {}),
 });
+
+function skillJudgment(
+	userRequest: string | undefined,
+): { role: Role; skill: string } | Refusal | undefined {
+	const skill = matchedSkill(userRequest);
+	if (!skill) return undefined;
+	if (
+		skill.destination === "stay" ||
+		(skill.destination === "approval" && !approval.test(userRequest ?? ""))
+	) {
+		return stays(`The ${skill.name} skill keeps this work in the parent.`);
+	}
+	return { role: skill.role, skill: skill.name };
+}
 
 const gatedTools = new Set([
 	"read",
@@ -289,7 +360,9 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 	async function judge(
 		request: LaunchRequest,
 		ctx: LauncherContext,
-	): Promise<{ role: Role; jev: JevResult } | Refusal> {
+	): Promise<{ role: Role; jev?: JevResult; skill?: string } | Refusal> {
+		const routed = skillJudgment(request.userRequest);
+		if (routed) return routed;
 		const intent = delegationIntent(request.userRequest);
 		const suggested =
 			request.role !== undefined && isRole(request.role)
@@ -333,9 +406,12 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		if (
 			!choiceIn(specialist, specialists) ||
 			(intent === "optional" &&
-				!choiceIn(destination, ["stay", "leave"] as const))
+				!choiceIn(destination, ["decide", "stay", "leave"] as const))
 		) {
 			return blocked("Jev returned an invalid selection.", jev);
+		}
+		if (intent === "optional" && destination?.choice === "decide") {
+			return decides("Jev answered that a decision is still open.", jev);
 		}
 		if (intent === "optional" && destination?.choice === "stay") {
 			return stays("Jev answered that the work stays.", jev);
@@ -343,12 +419,22 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		return { role: roleBySpecialist[specialist.choice], jev };
 	}
 
-	function toVerdict(judgment: { role: Role; jev: JevResult } | Refusal): Verdict {
+	function toVerdict(
+		judgment: { role: Role; jev?: JevResult; skill?: string } | Refusal,
+	): Verdict {
 		if (!("status" in judgment)) {
-			return { kind: "launch", role: judgment.role, jev: judgment.jev };
+			return {
+				kind: "launch",
+				role: judgment.role,
+				...(judgment.jev ? { jev: judgment.jev } : {}),
+				...(judgment.skill ? { skill: judgment.skill } : {}),
+			};
 		}
 		if (judgment.warning === stayWarning) {
 			return { kind: "stay", refusal: judgment };
+		}
+		if (judgment.warning === decideWarning) {
+			return { kind: "decide", refusal: judgment };
 		}
 		return { kind: "blocked", refusal: judgment };
 	}
@@ -379,16 +465,23 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		if (!userRequest) return undefined;
 		const verdict = await verdictFor({ task: userRequest, userRequest }, ctx);
 		if (verdict.kind === "stay") return undefined;
-		if (verdict.kind === "blocked") {
+		if (verdict.kind !== "launch") {
 			return {
 				block: true,
 				reason: `${verdict.refusal.warning}\n${verdict.refusal.reason}`,
 			};
 		}
+		const selected = verdict.skill
+			? `The ${verdict.skill} skill selected the ${verdict.role} role.`
+			: `Jev selected the ${verdict.role} role.`;
 		return {
 			block: true,
-			reason: `Call spawn_child. Jev selected the ${verdict.role} role.`,
+			reason: `Call spawn_child. ${selected}`,
 		};
+	}
+
+	function classify(request: LaunchRequest, ctx: LauncherContext) {
+		return verdictFor(request, ctx);
 	}
 
 	async function decide(request: LaunchRequest, ctx: LauncherContext) {
@@ -402,9 +495,10 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		const verdict = await verdictFor(request, ctx);
 		if (verdict.kind !== "launch") return verdict.refusal;
 		const contract = readContract(verdict.role);
-		if ("status" in contract) return { ...contract, jev: verdict.jev };
+		const jev = verdict.jev ? { jev: verdict.jev } : {};
+		if ("status" in contract) return { ...contract, ...jev };
 		const pair = profilePair(verdict.role, profiles, ctx);
-		if ("status" in pair) return { ...pair, jev: verdict.jev };
+		if ("status" in pair) return { ...pair, ...jev };
 		return {
 			status: "launch" as const,
 			role: verdict.role,
@@ -414,8 +508,9 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			warnings: [] as string[],
 			model: pair.model,
 			thinking: pair.thinking,
-			jev: verdict.jev,
+			...jev,
+			...(verdict.skill ? { skill: verdict.skill } : {}),
 		};
 	}
-	return { decide, beginTurn, gateToolCall };
+	return { decide, beginTurn, gateToolCall, classify };
 }
