@@ -13,12 +13,11 @@ import {
 } from "@earendil-works/pi-tui";
 
 import {
-	closeSpan,
-	framePad,
 	type Hint,
 	hintRows,
 	menuRow,
 	modalFrame,
+	modalMetrics,
 	sectionRule,
 } from "./chrome-menus.ts";
 import {
@@ -439,7 +438,7 @@ export function createModelProfilesEditor(
 		render(width) {
 			frameWidth = width;
 			const screen = stack[stack.length - 1];
-			const inner = Math.max(1, width - 2 - framePad(width) * 2);
+			const inner = Math.max(1, modalMetrics(width).inner);
 			const head = ["", ...(notice ? [theme.fg("warning", notice), ""] : [])];
 			const tail = ["", ...hintRows(theme, screen.hints, inner).lines];
 			const room = Math.max(0, terminalRows() - 2);
@@ -456,7 +455,7 @@ export function createModelProfilesEditor(
 		},
 		handleMouse(event: TuiMouseEvent) {
 			if (event.type !== "click" || event.button !== "left") return undefined;
-			const shut = closeSpan(frameWidth);
+			const shut = modalMetrics(frameWidth).close;
 			if (event.y !== 0 || !shut || event.x < shut.start || event.x >= shut.end)
 				return undefined;
 			done("exit");

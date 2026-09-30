@@ -38,14 +38,13 @@ import {
 import { marginFor } from "./chrome-editor.ts";
 import { toolLabel } from "./compact-tools.ts";
 import {
-	closeSpan,
 	displayKey,
 	fit,
-	framePad,
 	type Hint,
 	type HintSpan,
 	hintRows,
 	modalFrame,
+	modalMetrics,
 	sectionRule,
 	selectedRow,
 } from "./chrome-menus.ts";
@@ -740,8 +739,8 @@ function createChildrenView(
 			const edge = marginFor(full);
 			const width = full - edge * 2;
 			const height = Math.max(4, tui.terminal.rows);
-			const framing = framePad(width);
-			const inner = Math.max(1, width - 2 - framing * 2);
+			const metrics = modalMetrics(width);
+			const inner = Math.max(1, metrics.inner);
 			const { list, index, child } = children();
 			selected = child?.id;
 			track(child?.id);
@@ -778,7 +777,7 @@ function createChildrenView(
 					: ((listPane?.lines ?? detailPane)?.[i] ?? ""),
 			);
 			const hintTop = 2 + size;
-			const left = edge + 1 + framing;
+			const left = edge + metrics.inset;
 			layout = {
 				width,
 				edge,
@@ -819,7 +818,7 @@ function createChildrenView(
 		},
 		handleMouse(event: TuiMouseEvent) {
 			const click = event.type === "click" && event.button === "left";
-			const shut = closeSpan(layout.width);
+			const shut = modalMetrics(layout.width).close;
 			if (
 				click &&
 				event.y === 0 &&
