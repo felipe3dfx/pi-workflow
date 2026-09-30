@@ -1,6 +1,6 @@
 {
   "name": "@felipe.3dfx/pi-workflow",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "type": "module",
   "description": "Pi harness package for companion readiness. Product workflow lives in Grupo Ilao engineering skills.",
   "license": "MIT",

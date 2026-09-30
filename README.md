@@ -1,6 +1,6 @@
 # @felipe.3dfx/pi-workflow
 
-A Pi harness package. Version 0.2.0 removes the 0.1.x product workflow. Product workflow no longer lives here.
+A Pi harness package. Version 1.0.0 removes the 0.1.x product workflow. Product workflow no longer lives here.
 
 Grupo Ilao engineering skills own process semantics: discovery, specification, tickets, implementation, review, QA impact, and publication. This package reports and installs the companion packages those skills ask a Pi harness to provide, aligns their MCP servers and default Pi settings, and owns child sessions and the terminal chrome. It does not publish Linear issues, store workflow artifacts, or reconcile uncertain external effects.
 
