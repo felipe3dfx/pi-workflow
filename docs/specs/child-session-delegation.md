@@ -12,7 +12,7 @@ The operator talks to one parent Pi session. Work that is bounded enough to leav
 
 ## Solution
 
-The harness extension remains the adapter. A child-session launcher module behind that adapter decides whether to launch, which contract to use, and which model and thinking pair to run. Jev answers closed questions. Code composes the launch. The parent passes only a role name and a task.
+The harness extension remains the adapter. A child-session launcher module behind that adapter decides whether to launch, which contract to use, and which model and thinking pair to run. Jev answers closed questions. Code composes the launch. The parent passes a task and may pass a role suggestion.
 
 ## User stories
 
@@ -25,26 +25,39 @@ The harness extension remains the adapter. A child-session launcher module behin
 
 ### Delegation
 
-Jev answers whether the work should leave the session. It stays for architecture, an unresolved user decision, or a conflict between agents. If Jev does not answer, the work stays and the operator is warned. No child is launched.
+Three decisions stay separate. This change covers destination (parent or child) and specialist (`explorer`, `worker`, or `verifier`). Model and thinking still come from the active profile entry for the chosen specialist. Dynamic model routing, confidence thresholds, and a Jev-verified model cascade are later work.
 
-The parent names `explore`, `worker`, or `verify` with the task; Jev does not name the role. Role, contract, model profiles, worktree, and the selected model are checked before Jev is asked. A missing role uses `worker` and warns. An unknown role is a refusal. The known set is those three names, whether or not the contract file can be read. A missing or unreadable contract is a refusal, not `worker`.
+The harness copies the latest user message. Explicit intent is detected from that message, not from the task string the parent wrote. An explicit request for a child, subagent, or delegation fixes the destination to child. Jev is not asked stay or leave in that case, so an architecture investigation cannot be vetoed for being architecture. Without explicit intent, one Jev call answers destination and specialist independently. `stay` keeps the work in the parent. On `spawn_child`, the warning is "The work stays in this session". `leave` selects the specialist. It blocks a gated parent tool instead of launching, and `spawn_child` launches that specialist. Investigating an architecture can leave. Deciding an architecture with the user stays. Those are different.
 
-The parent passes only the role name and the task. The file in `assets/contracts/` owns the prompt and tools. Those files are harness child contracts, not engineering skills.
+A missing key, a transport or parse failure, or a label outside the question's criteria blocks the launch and blocks a gated parent tool. The warning is "Launch blocked", distinct from "The work stays in this session". The harness does not invent `stay` and does not fill `worker`. The client keeps the choice, probabilities, confidence, the Jev model, and a request id when the payload has one. Policy does not branch on confidence. Jev returns no written rationale.
+
+The parent may pass `explore`, `worker`, or `verify`. That role is a suggestion. A suggested role does not replace a verdict already stored for that user message. A missing role is not silently `worker` and does not warn that `worker` was assumed. An unknown role is a refusal before Jev when `spawn_child` asks. The known set is those three names, whether or not the contract file can be read. Jev selects `explorer`, `worker`, or `verifier` from the requested action and may override the suggestion. The harness maps that to the contract role `explore`, `worker`, or `verify`, then reads the contract and the active profile. A missing or unreadable contract is "Launch refused", not `worker`.
+
+Invalid profiles file and invalid worktree still refuse the launch before Jev when `spawn_child` asks. When it reuses the turn's verdict, those checks still run and still refuse. The selected specialist's missing contract, unavailable model, or unsupported thinking refuses after Jev, because the specialist was not known earlier. Those remain "Launch refused".
+
+Jev is consulted from `spawn_child` and from the parent's `tool_call` hook. Child sessions are started with extensions disabled, so the hook does not apply to them. One verdict is kept per user turn. `turn_start` drops it.
+
+The hook does not ask Jev and does not block `spawn_child`, `continue_child`, `reply_child`, `cancel_child`, `list_children`, `child_status`, `child_result`, `ask_user_choice`, `ask_user_question`, or `todo`. It does not ask or block `codegraph` `init`. It does not ask or block a `read` of `AGENTS.md`, `CONTEXT.md`, or `docs/agents/<file>.md` when that path resolves inside the session cwd. Those reads are the only trivial exception. There is no file-count threshold.
+
+`read`, `grep`, `find`, `ls`, `edit`, `write`, `bash`, `powershell`, and `codegraph` `query` or `explore` are gated. The first gated tool of the turn sends the latest user message as both the task and the user request. The hook adds no suggested role. If that turn has no user message, the tool runs and Jev is not asked. An explicit request for a child, subagent, or delegation, or a `leave` answer, blocks the tool. The reason tells the parent to call `spawn_child` and names the role Jev selected. `stay` lets the tool run, and later gated tools in the turn do not ask again. A missing key, a transport or parse failure, or a label outside the criteria blocks the tool with "Launch blocked". The harness does not invent `stay` or `worker`. `spawn_child` in that same turn reuses the verdict for that user message. A suggested role on the call does not replace the cached role. Local launch checks still run. Confidence is kept and does not change the decision.
+
+The parent passes the task and may pass a role suggestion. The file in `assets/contracts/` owns the prompt and tools. Those files are harness child contracts, not engineering skills.
 
 ### Model selection
 
 There is no named-model precedence. The launcher selects one pair and runs that pair. A mismatch is when the child would run a different model or thinking than the selected pair. Then the child does not start and the work stays pending.
 
-The child's role selects a specialist of the active model profile: `explore` selects `explorer`, `worker` selects `worker`, and `verify` selects `verifier`. Jev does not classify the task and does not choose a model.
+The child's role selects a specialist of the active model profile: `explore` selects `explorer`, `worker` selects `worker`, and `verify` selects `verifier`. Jev selects that specialist and does not choose a model. The model and thinking check for that specialist runs after Jev.
 
-Order:
+When `spawn_child` asks, the order is:
 
-1. Role: an unknown role is a refusal; a missing role uses `worker` and warns.
-2. Contract: a missing or unreadable contract is a refusal.
-3. Model profiles: an invalid or unreadable file, including a schema v1 file, is a refusal. A missing file is not.
-4. Worktree: an invalid worktree is a refusal.
-5. Model: with no file, or when the active profile has no entry for the specialist, the child inherits the session model and thinking. If the session has neither, the launch is refused. Otherwise the entry is the pair. A model Pi does not have, or a thinking level the model does not support, is a refusal that names the profile, the specialist, and the setting. There is no fallback to another model.
-6. Jev: asked last whether the work stays or leaves. If the work stays, or Jev does not answer, do not launch.
+1. Role: an unknown role is a refusal before Jev. A missing role is not `worker` and does not warn.
+2. Model profiles: an invalid or unreadable file, including a schema v1 file, is a refusal before Jev. A missing file is not.
+3. Worktree: an invalid worktree is a refusal before Jev.
+4. Explicit intent: the harness copies the latest user message and does not read intent from the task. An explicit request for a child, subagent, or delegation fixes the destination to child. Jev is not asked stay or leave.
+5. Jev: selects `explorer`, `worker`, or `verifier` and may override the suggestion. Without explicit intent, one call answers destination and specialist independently. `stay` does not launch. `leave` launches the selected specialist. With explicit intent, Jev is not asked stay or leave. A missing key, a transport or parse failure, or a label outside the criteria blocks the launch. Do not invent `stay` or fill `worker`.
+6. Contract: map the specialist to `explore`, `worker`, or `verify`. A missing or unreadable contract is "Launch refused", not `worker`.
+7. Model: with no file, or when the active profile has no entry for the specialist, the child inherits the session model and thinking. If the session has neither, the launch is refused. Otherwise the entry is the pair. A model Pi does not have, or a thinking level the model does not support, is a refusal that names the profile, the specialist, and the setting. There is no fallback to another model.
 
 ### Configuration
 
@@ -96,10 +109,13 @@ The `codegraph` tool copies the gentle-shell contract: `init`, `query`, and `exp
 
 Tests cross the launcher interface and the extension adapter, not private helpers.
 
-- Stay, missing Jev answer, unknown role, missing contract, invalid or v1 profiles file, and invalid worktree produce a refusal and no child id.
+- `stay` warns "The work stays in this session" and does not launch. It is not "Launch blocked".
+- A missing key, a transport or parse failure, or a label outside the criteria warns "Launch blocked" and produces no child id. The harness does not invent `stay` or fill `worker`.
+- An unknown role, an invalid or v1 profiles file, and an invalid worktree refuse the launch and produce no child id. They are refusals before Jev when `spawn_child` asks.
+- A missing role is not `worker` and does not warn that `worker` was assumed.
+- The selected specialist's missing contract, an unavailable model, or an unsupported thinking level is "Launch refused" after Jev.
+- Without explicit intent, Jev answers destination and specialist before the contract and model checks. It is not asked last. Explicit intent fixes the destination to child and does not ask stay or leave.
 - The role selects its specialist in the active profile. A missing entry inherits the session model and thinking.
-- An unavailable model or an unsupported thinking level refuses the launch before Jev is asked.
-- Jev's stay or leave verdict runs after the local checks.
 - A session that can receive a later result starts the child in the background. Print mode rejects background and returns the foreground result in the same call.
 - Status and doctor follow the edited catalog and do not treat a missing CodeGraph index as a missing companion.
 - Packed distribution includes `assets/contracts/` and still rejects `skills/`, `prompts/`, and `assets/agents/`.

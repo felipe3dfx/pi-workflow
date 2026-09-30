@@ -2,6 +2,8 @@
 
 Status: design validation only. This note records a conversation. It is not an ADR and it does not establish an operational requirement.
 
+This note is not operational. Its fail-open fixed model table is deferred. The implemented destination and specialist contract lives in `docs/specs/child-session-delegation.md`.
+
 Implementation home: this repository (`pi-workflow`), not `grupo-ilao/skills`.
 
 ## Decision
