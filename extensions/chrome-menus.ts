@@ -192,13 +192,23 @@ export function hintRows(
 	return { lines, spans };
 }
 
-export function framePad(width: number) {
+function framePad(width: number) {
 	return width >= 30 ? 2 : width >= 6 ? 1 : 0;
 }
 
-export function closeSpan(width: number) {
+function closeSpan(width: number) {
 	const start = width - close.length - 2;
 	return start > 4 ? { start: start + 1, end: start + 4 } : undefined;
+}
+
+export function modalMetrics(width: number) {
+	const pad = framePad(width);
+	return {
+		pad,
+		inner: width - 2 - pad * 2,
+		inset: 1 + pad,
+		close: closeSpan(width),
+	};
 }
 
 export function modalFrame(
@@ -208,10 +218,9 @@ export function modalFrame(
 	width: number,
 ) {
 	if (width < 4) return body.map((line) => fit(line, width));
-	const pad = framePad(width);
-	const inner = width - 2 - pad * 2;
+	const { pad, inner, close: shutSpan } = modalMetrics(width);
 	const border = (text: string) => t.fg("border", text);
-	const shut = closeSpan(width) ? close : "";
+	const shut = shutSpan ? close : "";
 	const room = width - 6 - shut.length;
 	const name = room >= 1 ? truncateToWidth(title, room, "…") : "";
 	const rule = Math.max(
@@ -693,11 +702,12 @@ function crumbs(list: SettingsListState): string[] {
 function settingsFrame(width: number) {
 	const edge = marginFor(width);
 	const outer = width - edge * 2;
+	const metrics = modalMetrics(outer);
 	return {
 		edge,
 		outer,
-		left: edge + 1 + framePad(outer),
-		inner: Math.max(1, outer - 2 - framePad(outer) * 2),
+		left: edge + metrics.inset,
+		inner: Math.max(1, metrics.inner),
 		top: outer >= 4 ? 1 : 0,
 	};
 }
@@ -732,7 +742,7 @@ function closeSettings(list: SettingsListState) {
 function wrapSettingsMouse(original: Method) {
 	return function (this: SettingsSelectorState, event: TuiMouseEvent) {
 		const { edge, outer, left, inner } = settingsFrame(event.width);
-		const shut = closeSpan(outer);
+		const shut = modalMetrics(outer).close;
 		const x = event.x - edge;
 		if (event.y === 0 && shut && x >= shut.start && x < shut.end) {
 			if (event.type !== "click" || event.button !== "left") return undefined;
