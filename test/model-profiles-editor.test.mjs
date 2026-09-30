@@ -573,7 +573,7 @@ test("a launch right after a panel save uses the saved profile", async () => {
 						},
 					},
 				}),
-		}).decide(
+		}).prepareLaunch(
 			{ role: "worker", task: "Add the export command" },
 			{
 				cwd: worktree,
@@ -586,7 +586,7 @@ test("a launch right after a panel save uses the saved profile", async () => {
 			},
 		);
 
-		assert.equal(result.status, "launch");
+		assert.equal(result.kind, "ready");
 		assert.equal(result.model, "openai-codex/gpt-5.6-luna");
 		assert.equal(result.thinking, "low");
 	});

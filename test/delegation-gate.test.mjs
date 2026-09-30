@@ -163,7 +163,7 @@ test("the first grep blocks when Jev says leave, names the role, and asks destin
 	);
 
 	assert.deepEqual(input, snapshot);
-	assert.equal(result.block, true);
+	assert.equal(result.allow, false);
 	assert.match(result.reason, /spawn_child/);
 	assert.match(result.reason, /\bexplore\b/);
 	assert.equal(jev.requests.length, 1);
@@ -194,8 +194,8 @@ test("the second gated tool in the turn does not call Jev again", async () => {
 		ctx,
 	);
 
-	assert.equal(first.block, true);
-	assert.equal(second.block, true);
+	assert.equal(first.allow, false);
+	assert.equal(second.allow, false);
 	assert.equal(second.reason, first.reason);
 	assert.match(second.reason, /\bworker\b/);
 	assert.equal(jev.requests.length, 1);
@@ -215,15 +215,18 @@ test("Jev stay allows the tool and a later tool does not ask again", async () =>
 			{ toolName: "bash", input: { command: "ls" } },
 			ctx,
 		);
-		const decided = await launcher.decide(
+		const decided = await launcher.prepareLaunch(
 			{ role: "explore", task: "parent paraphrase", userRequest: message },
 			ctx,
 		);
 
-		assert.equal(first, undefined);
-		assert.equal(second, undefined);
-		assert.equal(decided.status, "refused");
-		assert.match(decided.warning, /stays/);
+		assert.equal(first.allow, true);
+		assert.equal(second.allow, true);
+		assert.equal(decided.kind, "stay");
+		assert.equal(
+			decided.warning,
+			"The work stays in this session. No child was launched.",
+		);
 		assert.equal(jev.requests.length, 1);
 		assert.equal(jev.requests[0].state.delegation_intent, "optional");
 		assert.equal(jev.requests[0].state.user_request, message);
@@ -240,7 +243,7 @@ test("explicit child text blocks a read and does not ask where the work should g
 			gateContext("/work", branchEnding(message, "Look at the previous note")),
 		);
 
-		assert.equal(result.block, true);
+		assert.equal(result.allow, false);
 		assert.match(result.reason, /spawn_child/);
 		assert.match(result.reason, /\bworker\b/);
 		assert.equal(jev.requests.length, 1);
@@ -267,9 +270,9 @@ test("a read of AGENTS.md does not call Jev or block, and the next grep asks onc
 		"docs/agents/../agents/workflow.md",
 	];
 	for (const path of reads) {
-		assert.equal(
+		assert.deepEqual(
 			await launcher.gateToolCall({ toolName: "read", input: { path } }, ctx),
-			undefined,
+			{ allow: true },
 		);
 	}
 	assert.equal(jev.requests.length, 0);
@@ -282,15 +285,15 @@ test("a read of AGENTS.md does not call Jev or block, and the next grep asks onc
 		{ toolName: "bash", input: { command: "cat AGENTS.md" } },
 		ctx,
 	);
-	assert.equal(grep.block, true);
-	assert.equal(bash.block, true);
+	assert.equal(grep.allow, false);
+	assert.equal(bash.allow, false);
 	assert.equal(jev.requests.length, 1);
-	assert.equal(
+	assert.deepEqual(
 		await launcher.gateToolCall(
 			{ toolName: "read", input: { path: "AGENTS.md" } },
 			ctx,
 		),
-		undefined,
+		{ allow: true },
 	);
 	assert.equal(jev.requests.length, 1);
 
@@ -299,7 +302,7 @@ test("a read of AGENTS.md does not call Jev or block, and the next grep asks onc
 		{ toolName: "read", input: { path: "../AGENTS.md" } },
 		ctx,
 	);
-	assert.equal(escaped.block, true);
+	assert.equal(escaped.allow, false);
 	assert.equal(jev.requests.length, 2);
 });
 
@@ -320,17 +323,17 @@ test("codegraph init is not gated and codegraph explore is", async () => {
 		"todo",
 	];
 	for (const toolName of harness) {
-		assert.equal(
+		assert.deepEqual(
 			await launcher.gateToolCall({ toolName, input: { task: "Map it" } }, ctx),
-			undefined,
+			{ allow: true },
 		);
 	}
-	assert.equal(
+	assert.deepEqual(
 		await launcher.gateToolCall(
 			{ toolName: "codegraph", input: { operation: "init" } },
 			ctx,
 		),
-		undefined,
+		{ allow: true },
 	);
 	assert.equal(jev.requests.length, 0);
 
@@ -338,18 +341,18 @@ test("codegraph init is not gated and codegraph explore is", async () => {
 		{ toolName: "codegraph", input: { operation: "explore", query: "launcher" } },
 		ctx,
 	);
-	assert.equal(explored.block, true);
+	assert.equal(explored.allow, false);
 	assert.match(explored.reason, /\bexplore\b/);
 	const queried = await launcher.gateToolCall(
 		{ toolName: "codegraph", input: { operation: "query", query: "launcher" } },
 		ctx,
 	);
-	assert.equal(queried.block, true);
+	assert.equal(queried.allow, false);
 	assert.equal(jev.requests.length, 1);
 	for (const toolName of harness) {
-		assert.equal(
+		assert.deepEqual(
 			await launcher.gateToolCall({ toolName, input: {} }, ctx),
-			undefined,
+			{ allow: true },
 		);
 	}
 	assert.equal(jev.requests.length, 1);
@@ -382,17 +385,17 @@ test("an invalid Jev selection blocks the tool and is not a stay", async () => {
 			{ toolName: "grep", input: { pattern: "sources" } },
 			ctx,
 		);
-		const decided = await launcher.decide(
+		const decided = await launcher.prepareLaunch(
 			{ role: "worker", task: "parent paraphrase", userRequest: message },
 			ctx,
 		);
 
-		assert.equal(result.block, true);
+		assert.equal(result.allow, false);
 		assert.match(result.reason, /Launch blocked/);
 		assert.match(result.reason, /invalid selection/);
 		assert.doesNotMatch(result.reason, /stays/);
-		assert.equal(decided.status, "refused");
-		assert.match(decided.warning, /Launch blocked/);
+		assert.equal(decided.kind, "blocked");
+		assert.equal(decided.warning, "Launch blocked. No child was launched.");
 		assert.doesNotMatch(decided.warning, /stays/);
 		assert.equal(decided.jev.answers.specialist.choice, "architect");
 		assert.equal(decided.jev.answers.specialist.confidence, 0.2);
@@ -410,14 +413,14 @@ test("decide() after a leave verdict asks Jev once and launches the cached role"
 			{ toolName: "grep", input: { pattern: "compare" } },
 			ctx,
 		);
-		const result = await launcher.decide(
+		const result = await launcher.prepareLaunch(
 			{ role: "worker", task: "parent paraphrase", userRequest: message },
 			ctx,
 		);
 
-		assert.equal(blocked.block, true);
+		assert.equal(blocked.allow, false);
 		assert.match(blocked.reason, /\bexplore\b/);
-		assert.equal(result.status, "launch");
+		assert.equal(result.kind, "ready");
 		assert.equal(result.role, "explore");
 		assert.equal(result.task, "parent paraphrase");
 		assert.equal(result.model, "session/model");
@@ -438,7 +441,7 @@ test("decide() stores the verdict so a later gated tool does not ask Jev again",
 		const jev = fakeJev("verifier", 0.15);
 		const launcher = launcherFor(jev.fetch);
 		const ctx = gateContext(worktree, branchEnding(message));
-		const result = await launcher.decide(
+		const result = await launcher.prepareLaunch(
 			{
 				role: "worker",
 				task: "Add the missing export",
@@ -451,10 +454,10 @@ test("decide() stores the verdict so a later gated tool does not ask Jev again",
 			ctx,
 		);
 
-		assert.equal(result.status, "launch");
+		assert.equal(result.kind, "ready");
 		assert.equal(result.role, "verify");
 		assert.equal(result.jev.answers.specialist.confidence, 0.15);
-		assert.equal(blocked.block, true);
+		assert.equal(blocked.allow, false);
 		assert.match(blocked.reason, /\bverify\b/);
 		assert.equal(jev.requests.length, 1);
 		assert.equal(jev.requests[0].state.suggested_specialist, "worker");
@@ -475,7 +478,7 @@ test("beginTurn drops the verdict so the next gated tool asks Jev again", async 
 		{ toolName: "ls", input: { path: "extensions" } },
 		ctx,
 	);
-	assert.equal(again.block, true);
+	assert.equal(again.allow, false);
 	assert.equal(jev.requests.length, 2);
 });
 
@@ -493,12 +496,12 @@ test("a missing user message does not call Jev or block", async () => {
 	for (const branch of branches) {
 		const ctx = gateContext("/work", branch);
 		if (branch === undefined) delete ctx.sessionManager;
-		assert.equal(
+		assert.deepEqual(
 			await launcher.gateToolCall(
 				{ toolName: "grep", input: { pattern: "x" } },
 				ctx,
 			),
-			undefined,
+			{ allow: true },
 		);
 	}
 	assert.equal(jev.requests.length, 0);
@@ -530,7 +533,7 @@ test("concurrent gated calls in one turn share a single Jev request", async () =
 	release();
 	const [left, right] = await Promise.all([first, second]);
 	assert.equal(jev.requests.length, 1);
-	assert.equal(left.block, true);
+	assert.equal(left.allow, false);
 	assert.equal(right.reason, left.reason);
 });
 
@@ -603,17 +606,20 @@ test("decide blocks the tool until one question is asked and does not launch", a
 			{ toolName: "bash", input: { command: "ls" } },
 			ctx,
 		);
-		const decided = await launcher.decide(
+		const decided = await launcher.prepareLaunch(
 			{ task: "parent paraphrase", userRequest: message },
 			ctx,
 		);
 
-		assert.equal(blocked.block, true);
+		assert.equal(blocked.allow, false);
 		assert.match(blocked.reason, /Ask the user one question and wait/);
 		assert.doesNotMatch(blocked.reason, /spawn_child/);
 		assert.equal(again.reason, blocked.reason);
-		assert.equal(decided.status, "refused");
-		assert.match(decided.warning, /Ask the user one question and wait/);
+		assert.equal(decided.kind, "decide");
+		assert.equal(
+			decided.warning,
+			"Ask the user one question and wait. No child was launched.",
+		);
 		assert.equal(jev.requests.length, 1);
 		assert.equal("decide" in jev.requests[0].questions.destination.criteria, true);
 	});
@@ -642,19 +648,19 @@ test("a named skill routes without calling Jev, and a parent-owned skill beats a
 				{ toolName: "grep", input: { pattern: skill } },
 				ctx,
 			);
-			const decided = await launcher.decide(
+			const decided = await launcher.prepareLaunch(
 				{ role: "explore", task: "parent paraphrase", userRequest: message },
 				ctx,
 			);
 
-			assert.equal(blocked.block, true, skill);
+			assert.equal(blocked.allow, false, skill);
 			assert.match(
 				blocked.reason,
 				new RegExp(`The ${skill} skill selected the ${role} role`),
 				skill,
 			);
 			assert.doesNotMatch(blocked.reason, /Jev selected/, skill);
-			assert.equal(decided.status, "launch", skill);
+			assert.equal(decided.kind, "ready", skill);
 			assert.equal(decided.role, role, skill);
 			assert.equal(decided.skill, skill, skill);
 			assert.equal("jev" in decided, false, skill);
@@ -676,14 +682,18 @@ test("a named skill routes without calling Jev, and a parent-owned skill beats a
 				{ toolName: "read", input: { path: "src/main.ts" } },
 				ctx,
 			);
-			const decided = await launcher.decide(
+			const decided = await launcher.prepareLaunch(
 				{ task: "parent paraphrase", userRequest: message },
 				ctx,
 			);
 
-			assert.equal(allowed, undefined, skill);
-			assert.equal(decided.status, "refused", skill);
-			assert.match(decided.warning, /stays/, skill);
+			assert.equal(allowed.allow, true, skill);
+			assert.equal(decided.kind, "stay", skill);
+			assert.equal(
+				decided.warning,
+				"The work stays in this session. No child was launched.",
+				skill,
+			);
 			assert.match(decided.reason, new RegExp(skill), skill);
 			assert.equal(jev.requests.length, 0, skill);
 		}
@@ -723,14 +733,14 @@ test("approval skills stay until the same message approves the work", async () =
 					{ toolName: "bash", input: { command: "ls" } },
 					ctx,
 				);
-				const decided = await launcher.decide(
+				const decided = await launcher.prepareLaunch(
 					{ task: "parent paraphrase", userRequest: message },
 					ctx,
 				);
 
 				assert.equal(jev.requests.length, 0, message);
 				if (action === "stay") {
-					assert.equal(gated, undefined, message);
+					assert.equal(gated.allow, true, message);
 					assert.match(decided.warning, /stays/, message);
 				} else {
 					assert.match(
@@ -738,7 +748,7 @@ test("approval skills stay until the same message approves the work", async () =
 						new RegExp(`The ${skill} skill selected the worker role`),
 						message,
 					);
-					assert.equal(decided.status, "launch", message);
+					assert.equal(decided.kind, "ready", message);
 					assert.equal(decided.role, "worker", message);
 				}
 			}

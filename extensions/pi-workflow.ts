@@ -140,7 +140,11 @@ export default function piWorkflowExtension(
 			pi.on("turn_start", () => {
 				launcher.beginTurn();
 			});
-			pi.on("tool_call", (event, toolCtx) => launcher.gateToolCall(event, toolCtx));
+			pi.on("tool_call", async (event, toolCtx) => {
+				const gate = await launcher.gateToolCall(event, toolCtx);
+				if (gate.allow) return;
+				return { block: true, reason: gate.reason };
+			});
 		}
 	});
 	pi.on("tool_execution_start", async (_event, ctx) => {

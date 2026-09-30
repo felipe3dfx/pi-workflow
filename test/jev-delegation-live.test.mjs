@@ -42,7 +42,7 @@ test(
 			createChildLauncher({
 				modelProfiles: absentProfiles,
 				fetch,
-			}).decide(request, context());
+			}).prepareLaunch(request, context());
 		const specialists = {
 			explore: "explorer",
 			worker: "worker",
@@ -56,8 +56,8 @@ test(
 				...(item.suggestedRole ? { role: item.suggestedRole } : {}),
 			});
 			assert.equal(
-				result.status,
-				"launch",
+				result.kind,
+				"ready",
 				`${item.name}: ${result.reason ?? result.warning ?? ""}`,
 			);
 			assert.equal(result.role, item.expected.role, item.name);
