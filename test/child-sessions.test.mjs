@@ -89,8 +89,9 @@ function fakeJev({ choice = "leave", specialist } = {}) {
 			answers.specialist = choiceAnswer(picked, questions.specialist.criteria);
 		}
 		if (questions.destination) {
+			const destinations = ["stay", "leave", "decide"];
 			answers.destination = choiceAnswer(
-				choice === "stay" ? "stay" : "leave",
+				destinations.includes(choice) ? choice : "leave",
 				questions.destination.criteria,
 			);
 		}
@@ -737,6 +738,46 @@ test("an explicit child request in the user message is sent to Jev without a des
 		assert.equal(jev.requests[0].state.delegation_intent, "explicit");
 		assert.equal(jev.requests[0].state.task, "Map the module");
 		assert.equal(jev.requests[0].questions.destination, undefined);
+	});
+});
+
+test("a named implement skill launches a worker without calling Jev", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const jev = fakeJev();
+		const { tool } = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			fetch: jev.fetch,
+		});
+
+		const result = await spawn(
+			tool,
+			{ task: "Implement the ticket" },
+			{
+				...toolContext("tui", worktree),
+				sessionManager: {
+					getBranch: () => [
+						{
+							type: "message",
+							message: {
+								role: "user",
+								content: "Usa la skill implement para este ticket",
+							},
+						},
+					],
+				},
+			},
+		);
+
+		assert.equal(result.details.status, "queued");
+		assert.equal(result.details.role, "worker");
+		assert.equal(result.details.skill, "implement");
+		assert.equal("jev" in result.details, false);
+		assert.match(text(result), /The implement skill selected the worker role/);
+		assert.doesNotMatch(text(result), /Jev selected/);
+		assert.equal(jev.requests.length, 0);
+		assert.equal(children.created.length, 1);
 	});
 });
 

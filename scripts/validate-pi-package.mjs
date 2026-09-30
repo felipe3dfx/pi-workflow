@@ -11,6 +11,7 @@ const commands = [
 	"workflow:doctor",
 	"workflow:setup",
 	"workflow:models",
+	"workflow:delegation-check",
 ];
 
 const themeSchemaPath = path.join(

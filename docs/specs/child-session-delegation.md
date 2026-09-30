@@ -27,7 +27,7 @@ The harness extension remains the adapter. A child-session launcher module behin
 
 Three decisions stay separate. This change covers destination (parent or child) and specialist (`explorer`, `worker`, or `verifier`). Model and thinking still come from the active profile entry for the chosen specialist. Dynamic model routing, confidence thresholds, and a Jev-verified model cascade are later work.
 
-The harness copies the latest user message. Explicit intent is detected from that message, not from the task string the parent wrote. An explicit request for a child, subagent, or delegation fixes the destination to child. Jev is not asked stay or leave in that case, so an architecture investigation cannot be vetoed for being architecture. Without explicit intent, one Jev call answers destination and specialist independently. `stay` keeps the work in the parent. On `spawn_child`, the warning is "The work stays in this session". `leave` selects the specialist. It blocks a gated parent tool instead of launching, and `spawn_child` launches that specialist. Investigating an architecture can leave. Deciding an architecture with the user stays. Those are different.
+The harness copies the latest user message. A named engineering skill in that message selects the destination and specialist in code, and Jev is not called. `feature-review`, `code-review`, `review-critique`, `promotion-readiness`, and `mutation-testing` leave as `verify`. `simplify`, `scope-audit`, and `qa-impact` leave as `explore`. `implement` and `tdd` leave as `worker`. `codebase-design`, `feature`, `domain-modeling`, `to-tickets`, and `create-pr` stay in the parent, including when the message also asks for a child. `prototype`, `to-spec`, `setup-workflow`, and `writing-for-agents` stay until the same message also shows approval (`aprobado`, `approved`, `publica`, `publish`, or `hazlo`); then they leave as `worker`. Longer skill names match first, and a hyphen is part of the name. The harness does not load the skill files. Explicit intent is detected from that message, not from the task string the parent wrote, when no skill route matches. An explicit request for a child, subagent, or delegation fixes the destination to child. Jev is not asked the destination in that case, so an architecture investigation cannot be vetoed for being architecture. Without explicit intent and without a skill route, one Jev call answers destination and specialist independently. `decide` means a product decision is still open. It blocks a gated parent tool, tells the parent to ask one question and wait, and does not launch. The warning is "Ask the user one question and wait". `stay` means the package is small and already understood. It keeps the work in the parent. On `spawn_child`, the warning is "The work stays in this session". `leave` selects the specialist. It blocks a gated parent tool instead of launching, and `spawn_child` launches that specialist. Investigating an architecture can leave. Choosing an architecture with the user is `decide`.
 
 A missing key, a transport or parse failure, or a label outside the question's criteria blocks the launch and blocks a gated parent tool. The warning is "Launch blocked", distinct from "The work stays in this session". The harness does not invent `stay` and does not fill `worker`. The client keeps the choice, probabilities, confidence, the Jev model, and a request id when the payload has one. Policy does not branch on confidence. Jev returns no written rationale.
 
@@ -39,25 +39,26 @@ Jev is consulted from `spawn_child` and from the parent's `tool_call` hook. Chil
 
 The hook does not ask Jev and does not block `spawn_child`, `continue_child`, `reply_child`, `cancel_child`, `list_children`, `child_status`, `child_result`, `ask_user_choice`, `ask_user_question`, or `todo`. It does not ask or block `codegraph` `init`. It does not ask or block a `read` of `AGENTS.md`, `CONTEXT.md`, or `docs/agents/<file>.md` when that path resolves inside the session cwd. Those reads are the only trivial exception. There is no file-count threshold.
 
-`read`, `grep`, `find`, `ls`, `edit`, `write`, `bash`, `powershell`, and `codegraph` `query` or `explore` are gated. The first gated tool of the turn sends the latest user message as both the task and the user request. The hook adds no suggested role. If that turn has no user message, the tool runs and Jev is not asked. An explicit request for a child, subagent, or delegation, or a `leave` answer, blocks the tool. The reason tells the parent to call `spawn_child` and names the role Jev selected. `stay` lets the tool run, and later gated tools in the turn do not ask again. A missing key, a transport or parse failure, or a label outside the criteria blocks the tool with "Launch blocked". The harness does not invent `stay` or `worker`. `spawn_child` in that same turn reuses the verdict for that user message. A suggested role on the call does not replace the cached role. Local launch checks still run. Confidence is kept and does not change the decision.
+`read`, `grep`, `find`, `ls`, `edit`, `write`, `bash`, `powershell`, and `codegraph` `query` or `explore` are gated. The first gated tool of the turn sends the latest user message as both the task and the user request. The hook adds no suggested role. If that turn has no user message, the tool runs and Jev is not asked. A skill route does not call Jev. An explicit request for a child, subagent, or delegation, or a `leave` answer, blocks the tool. The reason tells the parent to call `spawn_child` and names the role. `decide` blocks the tool, tells the parent to ask one question and wait, and does not say `spawn_child`. `stay` lets the tool run, and later gated tools in the turn do not ask again. A missing key, a transport or parse failure, or a label outside the criteria blocks the tool with "Launch blocked". The harness does not invent `stay`, `decide`, or `worker`. `spawn_child` in that same turn reuses the verdict for that user message, including a skill route. A suggested role on the call does not replace the cached role. Local launch checks still run. Confidence is kept and does not change the decision.
 
-The parent passes the task and may pass a role suggestion. The file in `assets/contracts/` owns the prompt and tools. Those files are harness child contracts, not engineering skills.
+The parent passes the task and may pass a role suggestion. The file in `assets/contracts/` owns the prompt and tools. Those files are harness child contracts, not engineering skills. The worker prompt ends with `status`, `files_changed`, `validation`, and `left_undone`. `completed` is only for commands whose output is in the result. Explore, verify, and worker must not claim a command ran or a check passed unless that output is in the result. Verify also says what remained unverified. The parent does not declare the work finished without that worker block. The harness does not parse the block. `ask_parent` stays the only mid-run question channel.
 
 ### Model selection
 
 There is no named-model precedence. The launcher selects one pair and runs that pair. A mismatch is when the child would run a different model or thinking than the selected pair. Then the child does not start and the work stays pending.
 
-The child's role selects a specialist of the active model profile: `explore` selects `explorer`, `worker` selects `worker`, and `verify` selects `verifier`. Jev selects that specialist and does not choose a model. The model and thinking check for that specialist runs after Jev.
+The child's role selects a specialist of the active model profile: `explore` selects `explorer`, `worker` selects `worker`, and `verify` selects `verifier`. Jev or a named skill selects that specialist and does not choose a model. The model and thinking check for that specialist runs after the specialist is known.
 
 When `spawn_child` asks, the order is:
 
 1. Role: an unknown role is a refusal before Jev. A missing role is not `worker` and does not warn.
 2. Model profiles: an invalid or unreadable file, including a schema v1 file, is a refusal before Jev. A missing file is not.
 3. Worktree: an invalid worktree is a refusal before Jev.
-4. Explicit intent: the harness copies the latest user message and does not read intent from the task. An explicit request for a child, subagent, or delegation fixes the destination to child. Jev is not asked stay or leave.
-5. Jev: selects `explorer`, `worker`, or `verifier` and may override the suggestion. Without explicit intent, one call answers destination and specialist independently. `stay` does not launch. `leave` launches the selected specialist. With explicit intent, Jev is not asked stay or leave. A missing key, a transport or parse failure, or a label outside the criteria blocks the launch. Do not invent `stay` or fill `worker`.
-6. Contract: map the specialist to `explore`, `worker`, or `verify`. A missing or unreadable contract is "Launch refused", not `worker`.
-7. Model: with no file, or when the active profile has no entry for the specialist, the child inherits the session model and thinking. If the session has neither, the launch is refused. Otherwise the entry is the pair. A model Pi does not have, or a thinking level the model does not support, is a refusal that names the profile, the specialist, and the setting. There is no fallback to another model.
+4. Skill route: a named engineering skill in the latest user message selects destination and specialist in code. Jev is not called. A parent-owned skill stays even when the message also asks for a child.
+5. Explicit intent: when no skill route matches, the harness copies the latest user message and does not read intent from the task. An explicit request for a child, subagent, or delegation fixes the destination to child. Jev is not asked the destination.
+6. Jev: selects `explorer`, `worker`, or `verifier` and may override the suggestion. Without explicit intent, one call answers destination and specialist independently. `decide` asks one question and does not launch. `stay` does not launch. `leave` launches the selected specialist. With explicit intent, Jev is not asked the destination. A missing key, a transport or parse failure, or a label outside the criteria blocks the launch. Do not invent `stay`, `decide`, or fill `worker`.
+7. Contract: map the specialist to `explore`, `worker`, or `verify`. A missing or unreadable contract is "Launch refused", not `worker`.
+8. Model: with no file, or when the active profile has no entry for the specialist, the child inherits the session model and thinking. If the session has neither, the launch is refused. Otherwise the entry is the pair. A model Pi does not have, or a thinking level the model does not support, is a refusal that names the profile, the specialist, and the setting. There is no fallback to another model.
 
 ### Configuration
 
@@ -109,12 +110,16 @@ The `codegraph` tool copies the gentle-shell contract: `init`, `query`, and `exp
 
 Tests cross the launcher interface and the extension adapter, not private helpers.
 
-- `stay` warns "The work stays in this session" and does not launch. It is not "Launch blocked".
+- `decide` warns "Ask the user one question and wait", blocks gated tools, does not say `spawn_child`, and does not launch.
+- `stay` warns "The work stays in this session" and does not launch. It lets gated tools run. It is not "Launch blocked" and it is not `decide`.
+- A named engineering skill routes in code, does not call Jev, and beats an explicit child request when the skill stays in the parent.
+- `/workflow:delegation-check` scores the fixed cases against Jev and does not launch a child. It is not part of `npm run check`. A missing TypeSafe key is a fail line.
+- Child contract tests keep the worker return block and the ban on claiming a command or check that is not in the result. The harness does not parse that block.
 - A missing key, a transport or parse failure, or a label outside the criteria warns "Launch blocked" and produces no child id. The harness does not invent `stay` or fill `worker`.
 - An unknown role, an invalid or v1 profiles file, and an invalid worktree refuse the launch and produce no child id. They are refusals before Jev when `spawn_child` asks.
 - A missing role is not `worker` and does not warn that `worker` was assumed.
 - The selected specialist's missing contract, an unavailable model, or an unsupported thinking level is "Launch refused" after Jev.
-- Without explicit intent, Jev answers destination and specialist before the contract and model checks. It is not asked last. Explicit intent fixes the destination to child and does not ask stay or leave.
+- Without a skill route and without explicit intent, Jev answers destination and specialist before the contract and model checks. It is not asked last. Explicit intent fixes the destination to child and does not ask the destination. A skill route does not ask Jev.
 - The role selects its specialist in the active profile. A missing entry inherits the session model and thinking.
 - A session that can receive a later result starts the child in the background. Print mode rejects background and returns the foreground result in the same call.
 - Status and doctor follow the edited catalog and do not treat a missing CodeGraph index as a missing companion.
@@ -124,7 +129,7 @@ Tests cross the launcher interface and the extension adapter, not private helper
 
 ## Out of scope
 
-ODD, RDD, SDD, remediation, inter-session messaging, shell chrome, runtime metrics, skill registry, startup banner, budget, prompt-cache switching, parent model changes, Laya, skill-gate packs, and a consult tool.
+ODD, RDD, SDD, remediation, inter-session messaging, shell chrome, runtime metrics, a skill registry, startup banner, budget, prompt-cache switching, parent model changes, Laya, skill-gate packs, and a consult tool. The harness matches a fixed list of engineering skill names. It does not load skill files.
 
 ## Prototype
 
@@ -141,7 +146,7 @@ Harness-owned child session and CodeGraph access are authorized by ADR 0005. The
 
 ## Dependencies
 
-Pi child sessions, Jev, the Pi model catalog, and the `/workflow:setup` command. Engineering skills stay unowned.
+Pi child sessions, Jev, the Pi model catalog, and the `/workflow:setup` command. Engineering skill files stay outside this package. The harness matches their names only.
 
 ## Feature review
 

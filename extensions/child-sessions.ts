@@ -811,9 +811,10 @@ export function createSpawnChildTool(
 			"Delegate a bounded task to a child session that runs under a harness contract. The harness decides whether the work leaves this session and which model runs it. In an interactive session the call returns the child id at once and the result arrives later as a message; in print and json modes the result returns in the same call.",
 		promptSnippet: "Delegate a bounded task to a child session",
 		promptGuidelines: [
-			"Pass the task and, when the user named one, the suggested role (explore, worker, or verify). The harness reads the user message and Jev selects the specialist.",
+			"Pass the task and, when the user named one, the suggested role (explore, worker, or verify). The harness reads the user message. A named engineering skill selects the specialist. Otherwise Jev does.",
 			"A refusal or a queued id is not a completed result and is not retried.",
-			"The parent asks Jev once per user turn before read, grep, find, ls, edit, write, bash, powershell, or codegraph query and explore. A block means call spawn_child and use the role named in the reason. Reads of AGENTS.md, CONTEXT.md, and one docs/agents markdown file stay available, and so does codegraph init.",
+			"The parent asks once per user turn before read, grep, find, ls, edit, write, bash, powershell, or codegraph query and explore. A block that names a role means call spawn_child and use that role. A block that says to ask the user one question means ask that one question and wait. Reads of AGENTS.md, CONTEXT.md, and one docs/agents markdown file stay available, and so does codegraph init.",
+			"Do not declare the work finished unless the child result contains status, files_changed, validation, and left_undone.",
 		],
 		parameters: spawnChildParameters,
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
@@ -842,7 +843,8 @@ export function createSpawnChildTool(
 			});
 			return launched(started, plan.warnings, {
 				role: plan.role,
-				jev: plan.jev,
+				...(plan.jev ? { jev: plan.jev } : {}),
+				...(plan.skill ? { skill: plan.skill } : {}),
 			});
 		},
 	};
@@ -851,18 +853,27 @@ export function createSpawnChildTool(
 function launched(
 	started: Awaited<ReturnType<ReturnType<typeof createChildSessions>["start"]>>,
 	warnings: string[],
-	selection?: { role: string; jev: JevResult },
+	selection?: { role: string; jev?: JevResult; skill?: string },
 ) {
 	if (started.status === "refused" || started.status === "pending") {
 		return notLaunched(started.status, {
 			...started,
 			warnings,
-			...(selection ? { jev: selection.jev } : {}),
+			...(selection?.jev ? { jev: selection.jev } : {}),
 		});
 	}
 	const selected = selection
-		? { role: selection.role, jev: selection.jev }
+		? {
+				role: selection.role,
+				...(selection.jev ? { jev: selection.jev } : {}),
+				...(selection.skill ? { skill: selection.skill } : {}),
+			}
 		: {};
+	const selectionLine = selection?.skill
+		? `The ${selection.skill} skill selected the ${selection.role} role.`
+		: selection
+			? `Jev selected ${selection.role}.`
+			: undefined;
 	if (started.status === "completed") {
 		return report([...warnings, started.text], {
 			status: "completed",
@@ -873,7 +884,7 @@ function launched(
 		[
 			...warnings,
 			`Child ${started.id} is queued in the background. Its result arrives later as a message.`,
-			...(selection ? [`Jev selected ${selection.role}.`] : []),
+			...(selectionLine ? [selectionLine] : []),
 		],
 		{ status: started.status, id: started.id, ...selected },
 	);

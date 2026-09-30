@@ -14,6 +14,7 @@ import {
 } from "./companion-workflow.ts";
 import { type CodeGraphAdapters, createCodeGraphTool } from "./codegraph-tool.ts";
 import { createChildLauncher } from "./child-launcher.ts";
+import { runDelegationCheck } from "./delegation-check.ts";
 import { registerChildResultCards } from "./child-result-card.ts";
 import {
 	type ChildRecord,
@@ -38,7 +39,7 @@ import { registerSessionTodo } from "./todo-extension.ts";
 import { registerCompactTools } from "./compact-tools.ts";
 
 const usage =
-	"Usage: /workflow:status | /workflow:doctor | /workflow:setup | /workflow:models | /workflow:subagents";
+	"Usage: /workflow:status | /workflow:doctor | /workflow:setup | /workflow:models | /workflow:subagents | /workflow:delegation-check";
 
 function childOutcome({ id, state, text }: ChildRecord) {
 	if (state === "completed") return `Child ${id} completed:\n\n${text}`;
@@ -210,6 +211,21 @@ export default function piWorkflowExtension(
 				return;
 			}
 			await modelProfiles.edit(ctx);
+		},
+	});
+	pi.registerCommand("workflow:delegation-check", {
+		description:
+			"Score the fixed delegation cases against Jev without launching a child",
+		handler: async (args, ctx) => {
+			if (args.trim()) {
+				report(ctx, usage, "error");
+				return;
+			}
+			const { lines, failed } = await runDelegationCheck(ctx, {
+				fetch: options.childSessions?.fetch,
+				modelProfiles,
+			});
+			report(ctx, lines.join("\n"), failed ? "error" : "info");
 		},
 	});
 }

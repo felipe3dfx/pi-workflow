@@ -43,7 +43,7 @@ function fakeJev(answer, confidence = 0.91) {
 			);
 		}
 		if (questions.destination) {
-			const picked = text === "stay" || text === "leave" ? text : "leave";
+			const picked = ["stay", "leave", "decide"].includes(text) ? text : "leave";
 			answers.destination = choiceAnswer(
 				picked,
 				questions.destination.criteria,
@@ -434,14 +434,14 @@ test("decide() after a leave verdict asks Jev once and launches the cached role"
 
 test("decide() stores the verdict so a later gated tool does not ask Jev again", async () => {
 	await withWorkspace(async ({ worktree }) => {
-		const message = "Implement the missing export";
+		const message = "Add the missing export";
 		const jev = fakeJev("verifier", 0.15);
 		const launcher = launcherFor(jev.fetch);
 		const ctx = gateContext(worktree, branchEnding(message));
 		const result = await launcher.decide(
 			{
 				role: "worker",
-				task: "Implement the missing export",
+				task: "Add the missing export",
 				userRequest: message,
 			},
 			ctx,
@@ -586,5 +586,162 @@ test("the parent registers the gate with spawn_child only when spawn tools are a
 		assert.equal(blocked.tools.some((tool) => tool.name === "spawn_child"), false);
 		assert.equal(blocked.handlers.get("tool_call"), undefined);
 		assert.equal(blocked.handlers.get("turn_start"), undefined);
+	});
+});
+
+test("decide blocks the tool until one question is asked and does not launch", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const message = "Quiero decidir contigo si este cambio debe existir";
+		const jev = fakeJev("decide");
+		const launcher = launcherFor(jev.fetch);
+		const ctx = gateContext(worktree, branchEnding(message));
+		const blocked = await launcher.gateToolCall(
+			{ toolName: "grep", input: { pattern: "gate" } },
+			ctx,
+		);
+		const again = await launcher.gateToolCall(
+			{ toolName: "bash", input: { command: "ls" } },
+			ctx,
+		);
+		const decided = await launcher.decide(
+			{ task: "parent paraphrase", userRequest: message },
+			ctx,
+		);
+
+		assert.equal(blocked.block, true);
+		assert.match(blocked.reason, /Ask the user one question and wait/);
+		assert.doesNotMatch(blocked.reason, /spawn_child/);
+		assert.equal(again.reason, blocked.reason);
+		assert.equal(decided.status, "refused");
+		assert.match(decided.warning, /Ask the user one question and wait/);
+		assert.equal(jev.requests.length, 1);
+		assert.equal("decide" in jev.requests[0].questions.destination.criteria, true);
+	});
+});
+
+test("a named skill routes without calling Jev, and a parent-owned skill beats an explicit child request", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const leave = [
+			["feature-review", "verify"],
+			["code-review", "verify"],
+			["review-critique", "verify"],
+			["promotion-readiness", "verify"],
+			["mutation-testing", "verify"],
+			["simplify", "explore"],
+			["scope-audit", "explore"],
+			["qa-impact", "explore"],
+			["implement", "worker"],
+			["tdd", "worker"],
+		];
+		for (const [skill, role] of leave) {
+			const message = `Usa ${skill} en este paquete`;
+			const jev = fakeJev("explorer");
+			const launcher = launcherFor(jev.fetch);
+			const ctx = gateContext(worktree, branchEnding(message));
+			const blocked = await launcher.gateToolCall(
+				{ toolName: "grep", input: { pattern: skill } },
+				ctx,
+			);
+			const decided = await launcher.decide(
+				{ role: "explore", task: "parent paraphrase", userRequest: message },
+				ctx,
+			);
+
+			assert.equal(blocked.block, true, skill);
+			assert.match(
+				blocked.reason,
+				new RegExp(`The ${skill} skill selected the ${role} role`),
+				skill,
+			);
+			assert.doesNotMatch(blocked.reason, /Jev selected/, skill);
+			assert.equal(decided.status, "launch", skill);
+			assert.equal(decided.role, role, skill);
+			assert.equal(decided.skill, skill, skill);
+			assert.equal("jev" in decided, false, skill);
+			assert.equal(jev.requests.length, 0, skill);
+		}
+
+		for (const skill of [
+			"codebase-design",
+			"feature",
+			"domain-modeling",
+			"to-tickets",
+			"create-pr",
+		]) {
+			const message = `Quiero un subagente para ${skill} y hazlo`;
+			const jev = fakeJev("worker");
+			const launcher = launcherFor(jev.fetch);
+			const ctx = gateContext(worktree, branchEnding(message));
+			const allowed = await launcher.gateToolCall(
+				{ toolName: "read", input: { path: "src/main.ts" } },
+				ctx,
+			);
+			const decided = await launcher.decide(
+				{ task: "parent paraphrase", userRequest: message },
+				ctx,
+			);
+
+			assert.equal(allowed, undefined, skill);
+			assert.equal(decided.status, "refused", skill);
+			assert.match(decided.warning, /stays/, skill);
+			assert.match(decided.reason, new RegExp(skill), skill);
+			assert.equal(jev.requests.length, 0, skill);
+		}
+	});
+});
+
+test("feature-review wins over feature and implement when the message names all three", async () => {
+	const jev = fakeJev("worker");
+	const launcher = launcherFor(jev.fetch);
+	const message = "Corre feature-review y después implement el feature";
+	const blocked = await launcher.gateToolCall(
+		{ toolName: "grep", input: { pattern: "brief" } },
+		gateContext("/work", branchEnding(message)),
+	);
+
+	assert.match(blocked.reason, /feature-review skill selected the verify role/);
+	assert.doesNotMatch(blocked.reason, /The feature skill/);
+	assert.equal(jev.requests.length, 0);
+});
+
+test("approval skills stay until the same message approves the work", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		for (const skill of [
+			"prototype",
+			"to-spec",
+			"setup-workflow",
+			"writing-for-agents",
+		]) {
+			for (const [message, action] of [
+				[`Quiero un subagente para ${skill}`, "stay"],
+				[`${skill} ya está aprobado`, "launch"],
+			]) {
+				const jev = fakeJev("explorer");
+				const launcher = launcherFor(jev.fetch);
+				const ctx = gateContext(worktree, branchEnding(message));
+				const gated = await launcher.gateToolCall(
+					{ toolName: "bash", input: { command: "ls" } },
+					ctx,
+				);
+				const decided = await launcher.decide(
+					{ task: "parent paraphrase", userRequest: message },
+					ctx,
+				);
+
+				assert.equal(jev.requests.length, 0, message);
+				if (action === "stay") {
+					assert.equal(gated, undefined, message);
+					assert.match(decided.warning, /stays/, message);
+				} else {
+					assert.match(
+						gated.reason,
+						new RegExp(`The ${skill} skill selected the worker role`),
+						message,
+					);
+					assert.equal(decided.status, "launch", message);
+					assert.equal(decided.role, "worker", message);
+				}
+			}
+		}
 	});
 });

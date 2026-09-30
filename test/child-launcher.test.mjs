@@ -59,19 +59,20 @@ function fakeJev(answer) {
 		const specialists = ["explorer", "worker", "verifier"];
 		const text = typeof answered === "string" ? answered : "leave";
 		const named = specialists.includes(text);
+		const destinations = ["stay", "leave", "decide"];
 		const suggested = body.state?.suggested_specialist;
 		if (questions.specialist) {
 			const picked = named
 				? text
 				: specialists.includes(suggested)
 					? suggested
-					: text === "stay" || text === "leave"
+					: destinations.includes(text)
 						? "worker"
 						: text;
 			answers.specialist = choiceAnswer(picked, questions.specialist.criteria);
 		}
 		if (questions.destination) {
-			const picked = text === "stay" || text === "leave" ? text : named ? "leave" : text;
+			const picked = destinations.includes(text) ? text : named ? "leave" : text;
 			answers.destination = choiceAnswer(picked, questions.destination.criteria);
 		}
 		return Response.json({ model: "jev-1.13.0", id: "req-1", answers });
@@ -750,7 +751,7 @@ test("an implementation package and an independent check take the specialist Jev
 			);
 		const implementation = await launch(
 			"worker",
-			"Implement the missing export and its test",
+			"Add the missing export and its test",
 		);
 		const check = await launch(
 			"verifier",
