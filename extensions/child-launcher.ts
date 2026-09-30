@@ -16,6 +16,7 @@ import type {
 import { latestUserRequest } from "./child-sessions.ts";
 import { gitEnvironment } from "./git-environment.ts";
 import { askJev, type Fetch, type JevResult } from "./jev-client.ts";
+import { jevRoutingEnabled } from "./workflow-settings.ts";
 import type { ModelProfilesLoad, Specialist } from "./model-profiles.ts";
 
 export interface LaunchRequest {
@@ -368,6 +369,12 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 	): Promise<Assessment> {
 		const routed = skillJudgment(request.userRequest);
 		if (routed) return routed;
+		if (!jevRoutingEnabled()) {
+			if (request.role !== undefined && isRole(request.role)) {
+				return { kind: "launch", role: request.role };
+			}
+			return { kind: "stay", reason: "Jev routing is off." };
+		}
 		const intent = delegationIntent(request.userRequest);
 		const suggested =
 			request.role !== undefined && isRole(request.role)
@@ -438,9 +445,15 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		ctx: LauncherContext,
 	): Promise<Assessment> {
 		const userRequest = request.userRequest;
-		if (userRequest && turn?.userRequest === userRequest) return turn.pending;
+		const bypass =
+			!jevRoutingEnabled() &&
+			request.role !== undefined &&
+			isRole(request.role);
+		if (!bypass && userRequest && turn?.userRequest === userRequest) {
+			return turn.pending;
+		}
 		const pending = judge(request, ctx);
-		if (userRequest) turn = { userRequest, pending };
+		if (!bypass && userRequest) turn = { userRequest, pending };
 		return pending;
 	}
 

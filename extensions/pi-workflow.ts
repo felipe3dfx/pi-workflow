@@ -59,9 +59,10 @@ import type { Fetch } from "./jev-client.ts";
 import { registerSessionTodo, syncTodoTool } from "./todo-extension.ts";
 import { registerCompactTools, syncCompactTools } from "./compact-tools.ts";
 import { activePiAgentDirectory, writeJsonAtomically } from "./mcp-config.ts";
+import { openWorkflowSettings } from "./workflow-settings.ts";
 
 const usage =
-	"Usage: /workflow:status | /workflow:doctor | /workflow:configure | /workflow:models | /workflow:subagents | /workflow:delegation-check";
+	"Usage: /workflow:status | /workflow:doctor | /workflow:configure | /workflow:models | /workflow:subagents | /workflow:delegation-check | /workflow:settings";
 
 
 
@@ -369,6 +370,16 @@ export default function piWorkflowExtension(
 				return;
 			}
 			await modelProfiles.edit(ctx);
+		},
+	});
+	pi.registerCommand("workflow:settings", {
+		description: "Open workflow settings",
+		handler: async (args, ctx) => {
+			if (args.trim()) {
+				report(ctx, usage, "error");
+				return;
+			}
+			await openWorkflowSettings(ctx);
 		},
 	});
 	pi.registerCommand("workflow:delegation-check", {
