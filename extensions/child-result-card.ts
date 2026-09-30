@@ -17,7 +17,7 @@ import type { ChildDetails, ChildRecord } from "./child-sessions.ts";
 import { childElapsed, spread } from "./children-box.ts";
 import { markCard } from "./chrome-groups.ts";
 import { assistantInset, edgeFor } from "./chrome-messages.ts";
-import { claim, linesFor, paint } from "./configure.ts";
+import { claim, paint } from "./configure.ts";
 import { childModelLine } from "./child-projection.ts";
 import { paintMessageStream } from "./shell.ts";
 import { sanitizeMultilineText, sanitizeTaskText } from "./todo-header.ts";
@@ -140,8 +140,7 @@ class ResultCard implements Component {
 
 	render(outer: number) {
 		paint(childStream, (width) => this.cardLines(width));
-		paintMessageStream(outer);
-		return linesFor(childStream, outer);
+		return paintMessageStream(outer);
 	}
 
 	cardLines(outer: number) {

@@ -12,8 +12,8 @@ import {
 	type Schedule,
 	scheduleTimer,
 } from "./child-sessions.ts";
-import { claim, linesFor, paint } from "./configure.ts";
-import { notifyHeader } from "./shell.ts";
+import { claim, held, paint, subscribePlace } from "./configure.ts";
+import { notifyHeader, paintAboveInput } from "./shell.ts";
 import { sanitizeTaskText } from "./todo-header.ts";
 
 const childAboveInput = claim("child-session", "above-input");
@@ -134,6 +134,7 @@ export function registerChildrenBox(
 ) {
 	let tui: { requestRender(): void } | undefined;
 	let unsubscribe: (() => void) | undefined;
+	let unsubscribePlace: (() => void) | undefined;
 	let tick: (() => void) | undefined;
 	let tickWait = 0;
 	let cooling: (() => void) | undefined;
@@ -178,9 +179,10 @@ export function registerChildrenBox(
 
 	function stop() {
 		unsubscribe?.();
+		unsubscribePlace?.();
 		tick?.();
 		cooling?.();
-		unsubscribe = tick = cooling = tui = undefined;
+		unsubscribe = unsubscribePlace = tick = cooling = tui = undefined;
 		dirty = false;
 	}
 
@@ -201,7 +203,8 @@ export function registerChildrenBox(
 								paintedWidth,
 							),
 						);
-						return linesFor(childAboveInput, width);
+						if (!held(childAboveInput)) return [];
+						return paintAboveInput(width);
 					},
 					invalidate() {},
 				};
@@ -209,6 +212,7 @@ export function registerChildrenBox(
 			{ placement: "aboveEditor" },
 		);
 		unsubscribe = sessions.subscribe(update);
+		unsubscribePlace = subscribePlace("above-input", () => render());
 	});
 	pi.on("session_shutdown", async () => stop());
 }

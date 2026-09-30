@@ -102,6 +102,38 @@ test("catalog helpers fail closed on invalid metadata and format manual install 
 	assert.match(manualInstallInstructions([{ package: "alpha" }], "Install:"), /pi install npm:alpha/);
 });
 
+test("status degrades a missing companion only when an expectation names it", async () => {
+	await withMetadataFile(
+		[{ package: "alpha" }, { package: "beta" }],
+		async ({ metadataPath }) => {
+			const named = createCompanionWorkflow({
+				...aligned,
+				catalog: {
+					metadataPath,
+					resolveInstalledVersion: () => ({}),
+				},
+				expectedPackages: () => ["alpha"],
+			});
+			const expected = await named.inspect();
+			assert.equal(expected.level, "warning");
+			assert.match(expected.message, /pi install npm:alpha/);
+			assert.doesNotMatch(expected.message, /pi install npm:beta/);
+
+			const unnamed = createCompanionWorkflow({
+				...aligned,
+				catalog: {
+					metadataPath,
+					resolveInstalledVersion: () => ({}),
+				},
+				expectedPackages: () => [],
+			});
+			const idle = await unnamed.inspect();
+			assert.equal(idle.level, "info");
+			assert.doesNotMatch(idle.message, /Missing or unreadable companions/);
+		},
+	);
+});
+
 test("inspect reports missing companions without installing them", async () => {
 	await withMetadataFile([{ package: "alpha" }], async ({ metadataPath }) => {
 		const notifications = [];
@@ -119,8 +151,9 @@ test("inspect reports missing companions without installing them", async () => {
 			},
 		});
 		const result = await workflow.inspect();
-		assert.equal(result.level, "warning");
+		assert.equal(result.level, "info");
 		assert.match(result.message, /alpha — missing/);
+		assert.doesNotMatch(result.message, /Missing or unreadable companions/);
 		assert.equal(notifications.length, 1);
 	});
 });
@@ -300,7 +333,7 @@ test("doctor reports info when every catalog companion is installed, with no Cod
 	assert.doesNotMatch(result.message, /CodeGraph/);
 });
 
-test("setup installs missing companions and stops when install fails", async () => {
+test("setup still aligns MCP and default settings when a companion install fails", async () => {
 	await withMetadataFile([{ package: "beta" }], async ({ metadataPath, dir }) => {
 		const specs = [];
 		const workflow = createCompanionWorkflow({
@@ -329,6 +362,8 @@ test("setup installs missing companions and stops when install fails", async () 
 		assert.equal(result.outcome, "failed");
 		assert.deepEqual(specs, ["npm:beta"]);
 		assert.match(result.failures[0], /offline/);
+		assert.match(result.message, /MCP configuration/);
+		assert.match(result.message, /[Dd]efault settings/);
 	});
 });
 

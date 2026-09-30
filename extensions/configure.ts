@@ -160,7 +160,17 @@ export function readSelection(
 	};
 }
 
-let seatedNow = defaultSelection([]);
+function unseatedSelection(): Selection {
+	return {
+		schemaVersion: 1,
+		capabilities: Object.fromEntries(
+			capabilities.map((capability) => [capability, false]),
+		) as Record<Capability, boolean>,
+		expectations: {},
+	};
+}
+
+let seatedNow = unseatedSelection();
 
 export function replaceSelection(selection: Selection) {
 	seatedNow = selection;
@@ -195,10 +205,6 @@ export function paint(id: Claim, draw: (width: number) => string[]) {
 function painted(id: Claim, width: number): string[] {
 	if (!held(id)) return [];
 	return painters.get(id)?.(width) ?? [];
-}
-
-export function linesFor(id: Claim, width: number): string[] {
-	return painted(id, width);
 }
 
 export function paintPlace(place: Place, width: number): string[] {

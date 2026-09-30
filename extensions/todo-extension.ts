@@ -1,19 +1,21 @@
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-import { held, linesFor, paint } from "./configure.ts";
+import { held, notifyPlace, occupants, paint } from "./configure.ts";
+import { paintAboveInput } from "./shell.ts";
 import { offerTool } from "./tool-offer.ts";
-let syncTodo: (api: ExtensionAPI) => void = () => {};
-
-export function syncTodoTool(api: ExtensionAPI) {
-	syncTodo(api);
-}
 import {
 	renderTodoBox,
 	todoAboveInput,
 	type TodoBoxState,
 } from "./todo-header.ts";
 import { createTodoList, type Task } from "./todo-list.ts";
+
+let syncTodo: (api: ExtensionAPI) => void = () => {};
+
+export function syncTodoTool(api: ExtensionAPI) {
+	syncTodo(api);
+}
 
 const TodoWriteTask = Type.Object({
 	text: Type.String({ description: "Task text" }),
@@ -72,7 +74,8 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 				paint(todoAboveInput, (paintedWidth) =>
 					renderTodoBox(theme, todoList.list(), boxState, paintedWidth),
 				);
-				return linesFor(todoAboveInput, width);
+				if (occupants("above-input").includes("child-session")) return [];
+				return paintAboveInput(width);
 			},
 			invalidate() {},
 		};
@@ -81,6 +84,7 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 	function reveal(): void {
 		boxState.collapsed = false;
 		currentTui?.requestRender();
+		notifyPlace("above-input");
 	}
 
 	function syncWidget(ctx: ExtensionContext): void {
@@ -180,6 +184,7 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 		handler: async (_ctx) => {
 			boxState.collapsed = !boxState.collapsed;
 			currentTui?.requestRender();
+			notifyPlace("above-input");
 		},
 	});
 
@@ -188,6 +193,7 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 		handler: async (_ctx) => {
 			boxState.showDone = !boxState.showDone;
 			currentTui?.requestRender();
+			notifyPlace("above-input");
 		},
 	});
 

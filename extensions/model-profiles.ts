@@ -7,17 +7,15 @@ import {
 } from "@earendil-works/pi-ai";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
-import { claim, paint } from "./configure.ts";
+import { claim, held } from "./configure.ts";
 import {
 	activePiAgentDirectory,
 	isPlainRecord,
 	writeJsonAtomically,
 } from "./mcp-config.ts";
 import { createModelProfilesEditor } from "./model-profiles-editor.ts";
-import { paintOverlay } from "./shell.ts";
 
 const profileOverlay = claim("model-profiles", "overlay");
-paint(profileOverlay, () => ["profiles"]);
 
 export const specialists = ["explorer", "worker", "verifier"] as const;
 const thinkingLevels: readonly ModelThinkingLevel[] = [
@@ -198,7 +196,7 @@ export function createModelProfiles(options: ModelProfilesOptions = {}) {
 	let snapshot = readProfiles();
 
 	async function edit(ctx: CommandContext) {
-		if (!paintOverlay(1).includes("profiles")) {
+		if (!held(profileOverlay)) {
 			report(
 				ctx,
 				"Model profiles are not seated. Run /workflow:configure.",

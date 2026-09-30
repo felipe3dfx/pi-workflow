@@ -14,12 +14,11 @@ import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { FooterHints } from "./chrome.ts";
 import { marginFor } from "./chrome-editor.ts";
-import { claim, held, paint } from "./configure.ts";
-import { paintOverlay } from "./shell.ts";
+import { claim, held } from "./configure.ts";
+import { closeChildrenView } from "./children-view.ts";
 import { offerTool } from "./tool-offer.ts";
 
 const questionOverlay = claim("operator-questions", "overlay");
-paint(questionOverlay, () => ["questions"]);
 
 interface AskUserOption {
 	label: string;
@@ -93,6 +92,7 @@ async function askPanel(
 		return refusal(ABORTED_REASON);
 	}
 
+	closeChildrenView();
 	const answer = await ctx.ui.custom<AskUserAnswer>((_tui, theme, keybindings, done) => {
 		const freeTextIndex = options.length;
 		const rowCount = options.length + 1;
@@ -292,7 +292,7 @@ async function askPanel(
 		};
 
 		return component;
-	}).finally(() => hints.set(undefined));
+	}, { overlay: true }).finally(() => hints.set(undefined));
 
 	return { content: [{ type: "text", text: describeAnswer(answer) }], details: answer };
 }
@@ -364,8 +364,8 @@ export function createAskUserChoiceTool(hints: FooterHints): ToolDefinition<type
 		name: "ask_user_choice",
 		label: "Ask User Choice",
 		description:
-			"Ask the operator to pick one of several numbered options, or several with multiple: true, from the TUI question panel. Refuses in print mode or when no TUI session is available, and never launches a child session.",
-		promptSnippet: "Ask the operator to choose among numbered options in the TUI question panel",
+			"Ask the operator to pick one of several numbered options, or several with multiple: true, from the overlay. Refuses in print mode or when no TUI session is available, and never launches a child session.",
+		promptSnippet: "Ask the operator to choose among numbered options in the overlay",
 		promptGuidelines: [
 			"Use ask_user_choice for a closed decision with a short list of named options.",
 			"Set multiple: true on ask_user_choice only when the options are not mutually exclusive.",
@@ -375,7 +375,7 @@ export function createAskUserChoiceTool(hints: FooterHints): ToolDefinition<type
 		executionMode: "sequential",
 		...askRenderers(),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			if (!paintOverlay(1).includes("questions")) {
+			if (!held(questionOverlay)) {
 				return {
 					content: [
 						{
@@ -403,8 +403,8 @@ export function createAskUserQuestionTool(hints: FooterHints): ToolDefinition<ty
 		name: "ask_user_question",
 		label: "Ask User Question",
 		description:
-			"Ask the operator an open question and collect a free-text answer from the TUI question panel. Refuses in print mode or when no TUI session is available, and never launches a child session.",
-		promptSnippet: "Ask the operator an open question in the TUI question panel",
+			"Ask the operator an open question and collect a free-text answer from the overlay. Refuses in print mode or when no TUI session is available, and never launches a child session.",
+		promptSnippet: "Ask the operator an open question in the overlay",
 		promptGuidelines: [
 			"Use ask_user_question for an open question with no fixed set of options.",
 			"ask_user_question never launches a child session and never invents an answer when the operator dismisses or is unavailable.",
@@ -413,7 +413,7 @@ export function createAskUserQuestionTool(hints: FooterHints): ToolDefinition<ty
 		executionMode: "sequential",
 		...askRenderers(),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			if (!paintOverlay(1).includes("questions")) {
+			if (!held(questionOverlay)) {
 				return {
 					content: [
 						{

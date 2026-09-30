@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { setImmediate } from "node:timers";
 
 import { createChildLauncher } from "../extensions/child-launcher.ts";
+import { capabilities, replaceSelection } from "../extensions/configure.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 
 const absentProfiles = { load: () => ({ status: "absent" }) };
@@ -84,8 +85,8 @@ function gateContext(cwd, branch) {
 	};
 }
 
-function launcherFor(fetch) {
-	return createChildLauncher({ modelProfiles: absentProfiles, fetch });
+function launcherFor(fetch, options = {}) {
+	return createChildLauncher({ modelProfiles: absentProfiles, fetch, ...options });
 }
 
 async function withWorkspace(run) {
@@ -303,7 +304,7 @@ test("a read of AGENTS.md does not call Jev or block, and the next grep asks onc
 		ctx,
 	);
 	assert.equal(escaped.allow, false);
-	assert.equal(jev.requests.length, 2);
+	assert.equal(jev.requests.length, 1);
 });
 
 test("codegraph init is not gated and codegraph explore is", async () => {
@@ -464,9 +465,10 @@ test("decide() stores the verdict so a later gated tool does not ask Jev again",
 	});
 });
 
-test("beginTurn drops the verdict so the next gated tool asks Jev again", async () => {
+test("beginTurn keeps the verdict, the next operator message asks again, and unseating lets the tool run", async () => {
 	const jev = fakeJev("explorer");
-	const launcher = launcherFor(jev.fetch);
+	let seated = true;
+	const launcher = launcherFor(jev.fetch, { childSessionSeated: () => seated });
 	const ctx = gateContext("/work", branchEnding("Map the launcher module"));
 	await launcher.gateToolCall(
 		{ toolName: "find", input: { pattern: "judge" } },
@@ -479,6 +481,25 @@ test("beginTurn drops the verdict so the next gated tool asks Jev again", async 
 		ctx,
 	);
 	assert.equal(again.allow, false);
+	assert.equal(jev.requests.length, 1);
+
+	seated = false;
+	assert.deepEqual(
+		await launcher.gateToolCall(
+			{ toolName: "grep", input: { pattern: "gate" } },
+			ctx,
+		),
+		{ allow: true },
+	);
+	assert.equal(jev.requests.length, 1);
+
+	seated = true;
+	const next = gateContext("/work", branchEnding("A later operator message"));
+	const refreshed = await launcher.gateToolCall(
+		{ toolName: "grep", input: { pattern: "gate" } },
+		next,
+	);
+	assert.equal(refreshed.allow, false);
 	assert.equal(jev.requests.length, 2);
 });
 
@@ -554,6 +575,11 @@ test("the parent registers the gate with spawn_child only when spawn tools are a
 				getEntries: () => [],
 			},
 		};
+		replaceSelection({
+			schemaVersion: 1,
+			capabilities: Object.fromEntries(capabilities.map((capability) => [capability, true])),
+			expectations: {},
+		});
 		await allowed.fire("session_start", {}, session);
 		await allowed.fire("session_start", {}, session);
 		assert.equal(allowed.tools.filter((tool) => tool.name === "spawn_child").length, 1);
@@ -578,7 +604,7 @@ test("the parent registers the gate with spawn_child only when spawn tools are a
 			{ type: "tool_call", toolCallId: "c2", toolName: "ls", input: { path: "." } },
 			ctx,
 		);
-		assert.equal(jev.requests.length, 2);
+		assert.equal(jev.requests.length, 1);
 
 		const blocked = loadExtension({
 			fetch: fakeJev("leave").fetch,

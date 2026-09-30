@@ -76,6 +76,7 @@ export interface CompanionWorkflowOptions {
 	interaction?: CompanionInteractionAdapters;
 	mcp?: CompanionMcpAdapters;
 	settings?: PiSettingsAdapters;
+	expectedPackages?: () => readonly string[];
 }
 
 export interface InspectResult {
@@ -434,8 +435,12 @@ function renderCompanionCatalogStatus(
 		heading: string;
 		metadataPath?: string;
 		alignments: Alignment[];
+		expected?: ReadonlySet<string>;
 	},
 ): { lines: string[]; level: NotificationLevel } {
+	const degraded = catalog.actionable.filter((companion) =>
+		options.expected?.has(companion.package),
+	);
 	const lines = [
 		options.heading,
 		"",
@@ -450,11 +455,11 @@ function renderCompanionCatalogStatus(
 			"",
 			"Companion status is degraded; pi-workflow cannot confirm configured companion state.",
 		);
-	} else if (catalog.actionable.length > 0) {
+	} else if (degraded.length > 0) {
 		lines.push(
 			"",
 			"Missing or unreadable companions are installed independently. Run /workflow:configure or install manually:",
-			...catalog.actionable.map(
+			...degraded.map(
 				(companion) => `pi install ${companionInstallSpec(companion)}`,
 			),
 			"Then run /reload.",
@@ -478,7 +483,7 @@ function renderCompanionCatalogStatus(
 		level: notificationLevel(
 			Boolean(catalog.loadError) ||
 				options.alignments.some((alignment) => alignment.error),
-			catalog.actionable.length > 0 ||
+			degraded.length > 0 ||
 				catalog.collidingPackages.length > 0 ||
 				catalog.legacySpawnPackageBlocked ||
 				options.alignments.some(
@@ -525,6 +530,10 @@ export function createCompanionWorkflow(options: CompanionWorkflowOptions = {}) 
 
 	async function reportStatus(heading: string): Promise<InspectResult> {
 		const catalog = resolveCompanionCatalog(options.catalog);
+		const expected = new Set(options.expectedPackages?.() ?? []);
+		const degraded = catalog.actionable.filter((companion) =>
+			expected.has(companion.package),
+		);
 		const { lines, level } = renderCompanionCatalogStatus(catalog, {
 			heading,
 			metadataPath: catalog.metadataPath,
@@ -532,6 +541,7 @@ export function createCompanionWorkflow(options: CompanionWorkflowOptions = {}) 
 				mcpAlignment(options.mcp),
 				settingsAlignment(options.settings),
 			],
+			expected,
 		});
 		const message = lines.join("\n");
 		notify(interaction, message, level);
@@ -539,7 +549,7 @@ export function createCompanionWorkflow(options: CompanionWorkflowOptions = {}) 
 			message,
 			level,
 			states: catalog.states,
-			actionable: catalog.actionable,
+			actionable: degraded,
 			loadError: catalog.loadError,
 			metadataPath: catalog.metadataPath,
 		};
@@ -680,12 +690,6 @@ export function createCompanionWorkflow(options: CompanionWorkflowOptions = {}) 
 					);
 				}
 			}
-			if (failures.length > 0) {
-				const message = `Companion install stopped:\n${failures.join("\n")}`;
-				notify(interaction, message, "error");
-				return { outcome: "failed", message, ...base, failures };
-			}
-
 			return finishApply(
 				interaction,
 				mcpPlan,
@@ -694,6 +698,7 @@ export function createCompanionWorkflow(options: CompanionWorkflowOptions = {}) 
 				options,
 				base,
 				catalog,
+				failures,
 			);
 		},
 	};
@@ -710,38 +715,48 @@ async function finishApply(
 		"installable" | "errored" | "manualInstructions" | "mcpPath" | "settingsPath"
 	>,
 	companions: ResolvedCompanionCatalog,
+	failures: string[] = [],
 ): Promise<SetupResult> {
+	const noted = (text: string) =>
+		failures.length > 0
+			? `Companion install failed:\n${failures.join("\n")}\n${text}`
+			: text;
 	const applied = applyMcpConfiguration(mcpPlan, catalog, options.mcp);
 	if (applied.status === "refused-concurrent-change") {
-		const message = `Refusing to write MCP configuration because these entries changed: ${applied.changedTargets.join(", ")}.`;
+		const message = noted(
+			`Refusing to write MCP configuration because these entries changed: ${applied.changedTargets.join(", ")}.`,
+		);
 		notify(interaction, message, "error");
-		return { outcome: "config-error", message, ...base, failures: [] };
+		return { outcome: "config-error", message, ...base, failures };
 	}
 	if (applied.status !== "applied") {
-		const message =
+		const message = noted(
 			applied.status === "reread-failed"
 				? applied.error
-				: `Unable to write MCP configuration: ${applied.error}`;
+				: `Unable to write MCP configuration: ${applied.error}`,
+		);
 		notify(interaction, message, "error");
-		return { outcome: "config-error", message, ...base, failures: [] };
+		return { outcome: "config-error", message, ...base, failures };
 	}
 	const settings = applyPiSettings(settingsCatalog, options.settings);
+	const installedCount = base.installable.length - failures.length;
 	if (settings.error) {
 		const done = [
-			base.installable.length > 0 ? "Companions were installed." : undefined,
+			installedCount > 0 ? "Companions were installed." : undefined,
 			applied.wrote
 				? `MCP configuration was updated at ${applied.path}.`
 				: undefined,
 		].filter((line) => line !== undefined);
-		const message =
+		const message = noted(
 			done.length > 0
 				? `${settings.error}\n${done.join(" ")} Run /reload to pick these up, then fix the settings error and run setup again.`
-				: settings.error;
+				: settings.error,
+		);
 		notify(interaction, message, "error");
-		return { outcome: "config-error", message, ...base, failures: [] };
+		return { outcome: "config-error", message, ...base, failures };
 	}
 	const summary = [
-		base.installable.length > 0
+		installedCount > 0
 			? applied.wrote
 				? `Installed companions and updated MCP configuration at ${applied.path}.`
 				: "Installed companions. MCP configuration already matched the catalog."
@@ -752,18 +767,27 @@ async function finishApply(
 			? `Applied default settings at ${settings.path}. Restart Pi to apply them; /reload is not enough.`
 			: "Default settings already matched the catalog. Run /reload.",
 	].join(" ");
-	const message = [
-		base.errored.length > 0
-			? `${summary}\n\nThese companions need attention:\n${base.manualInstructions}`
-			: summary,
-		...collisionLines(companions),
-	].join("\n");
+	const message = noted(
+		[
+			base.errored.length > 0
+				? `${summary}\n\nThese companions need attention:\n${base.manualInstructions}`
+				: summary,
+			...collisionLines(companions),
+		].join("\n"),
+	);
 	notify(
 		interaction,
 		message,
-		base.errored.length > 0 || companions.collidingPackages.length > 0
-			? "warning"
-			: "info",
+		failures.length > 0
+			? "error"
+			: base.errored.length > 0 || companions.collidingPackages.length > 0
+				? "warning"
+				: "info",
 	);
-	return { outcome: "installed", message, ...base, failures: [] };
+	return {
+		outcome: failures.length > 0 ? "failed" : "installed",
+		message,
+		...base,
+		failures,
+	};
 }

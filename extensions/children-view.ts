@@ -28,9 +28,9 @@ import {
 	type Schedule,
 	scheduleTimer,
 } from "./child-sessions.ts";
-import { paint } from "./configure.ts";
 import { childModelLine, childStep } from "./child-projection.ts";
-import { paintOverlay } from "./shell.ts";
+import { held } from "./configure.ts";
+
 import {
 	byState,
 	type ChildTheme,
@@ -53,6 +53,12 @@ import {
 	selectedRow,
 } from "./chrome-menus.ts";
 import { sanitizeMultilineText, sanitizeTaskText } from "./todo-header.ts";
+
+let closeSeatedView: () => void = () => {};
+
+export function closeChildrenView() {
+	closeSeatedView();
+}
 
 const minModalRows = 8;
 const splitWidth = 57;
@@ -287,10 +293,13 @@ export function createChildrenViews(
 	schedule: Schedule = scheduleTimer,
 ) {
 	const open = new Set<() => void>();
+	const close = () => {
+		for (const closeOne of [...open]) closeOne();
+	};
+	closeSeatedView = close;
 	return {
 		async open(ctx: ExtensionContext) {
-				paint(childOverlay, () => ["child-view"]);
-			if (!paintOverlay(1).includes("child-view")) {
+			if (!held(childOverlay)) {
 				ctx.ui.notify(
 					"Child session is not seated. Run /workflow:configure.",
 					"error",
@@ -325,9 +334,7 @@ export function createChildrenViews(
 				},
 			);
 		},
-		close() {
-			for (const close of [...open]) close();
-		},
+		close,
 	};
 }
 

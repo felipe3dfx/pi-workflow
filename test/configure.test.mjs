@@ -24,6 +24,14 @@ import {
 
 const packages = ["gentle-engram", "@gtrabanco/pi-nan-provider", "pi-web-access"];
 
+test("the absent-file preview does not seat a capability", () => {
+	const selection = readSelection(undefined, packages);
+	assert.equal(selection.status, "ready");
+	const child = claim("child-session", "header");
+	assert.equal(held(child), false);
+	release(child);
+});
+
 test("a missing companion is installed only when its expectation is on", () => {
 	const selection = readSelection(undefined, packages);
 	assert.equal(selection.status, "ready");

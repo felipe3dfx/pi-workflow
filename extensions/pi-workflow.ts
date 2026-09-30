@@ -79,6 +79,7 @@ function createWorkflow(
 		},
 		mcp: options.mcp,
 		settings: options.settings,
+		expectedPackages: options.expectedPackages,
 	});
 }
 
@@ -97,7 +98,10 @@ export default function piWorkflowExtension(
 ) {
 	let currentCtx: ExtensionContext | ExtensionCommandContext | undefined;
 	const context = () => currentCtx;
-	const workflow = createWorkflow(pi, context, options);
+	const workflow = createWorkflow(pi, context, {
+		...options,
+		expectedPackages: expectedPackageNames,
+	});
 	registerCompactTools(pi);
 	registerChildResultCards(pi);
 	const modelProfiles = createModelProfiles(options.modelProfiles);
@@ -153,6 +157,7 @@ export default function piWorkflowExtension(
 	const launcher = createChildLauncher({
 		modelProfiles,
 		fetch: options.childSessions?.fetch,
+		childSessionSeated: () => held(childOverlay),
 	});
 
 	function selectionPath() {
@@ -168,7 +173,7 @@ export default function piWorkflowExtension(
 		);
 	}
 
-	function seatFromDisk() {
+	function seatFromDisk(ctx: { hasUI?: boolean; mode?: string }) {
 		const loaded = companionPackages();
 		if (loaded.error) return { status: "refused" as const, reason: loaded.error };
 		const packages = loaded.companions.map((companion) => companion.package);
@@ -187,8 +192,26 @@ export default function piWorkflowExtension(
 		}
 		const selection = readSelection(text, packages);
 		if (selection.status === "refused") return selection;
+		if (text === undefined || !ctx.hasUI || ctx.mode !== "tui") return selection;
 		replaceSelection(selection.selection);
 		return selection;
+	}
+
+	function expectedPackageNames(): readonly string[] {
+		const loaded = companionPackages();
+		if (loaded.error) return [];
+		const packages = loaded.companions.map((companion) => companion.package);
+		let text: string | undefined;
+		try {
+			text = readFileSync(selectionPath(), "utf8");
+		} catch {
+			return [];
+		}
+		const selection = readSelection(text, packages);
+		if (selection.status !== "ready") return [];
+		return Object.entries(selection.selection.expectations)
+			.filter(([, on]) => on)
+			.map(([name]) => name);
 	}
 
 	const childTools = [
@@ -217,6 +240,7 @@ export default function piWorkflowExtension(
 			launcher.beginTurn();
 		});
 		pi.on("tool_call", async (event, toolCtx) => {
+			if (!held(childOverlay)) return;
 			const gate = await launcher.gateToolCall(event, toolCtx);
 			if (gate.allow) return;
 			return { block: true, reason: gate.reason };
@@ -225,13 +249,13 @@ export default function piWorkflowExtension(
 
 	pi.on("session_start", async (_event, ctx) => {
 		currentCtx = ctx;
-		const seated = seatFromDisk();
+		const seated = seatFromDisk(ctx);
 		if (seated.status === "refused") report(ctx, seated.reason, "error");
 		const { allowed } = await workflow.checkSpawnTools();
 		syncAskUserTools(pi, footerHints);
 		syncTodoTool(pi);
 		syncCodeGraphTool(pi, options.codegraph);
-		syncCompactTools(pi);
+		syncCompactTools(pi, ctx);
 		registerChildTools(allowed);
 	});
 	pi.on("tool_execution_start", async (_event, ctx) => {
@@ -277,7 +301,7 @@ export default function piWorkflowExtension(
 				return;
 			}
 			currentCtx = ctx;
-			const seated = seatFromDisk();
+			const seated = seatFromDisk(ctx);
 			if (seated.status === "refused") {
 				report(ctx, seated.reason, "error");
 				return;
@@ -303,7 +327,7 @@ export default function piWorkflowExtension(
 			syncAskUserTools(pi, footerHints);
 			syncTodoTool(pi);
 			syncCodeGraphTool(pi, options.codegraph);
-			syncCompactTools(pi);
+			syncCompactTools(pi, ctx);
 			registerChildTools(allowed);
 			const expected = Object.entries(guided.expectations)
 				.filter(([, on]) => on)

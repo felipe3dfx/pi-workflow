@@ -14,11 +14,9 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { type Component, Text, TruncatedText } from "@earendil-works/pi-tui";
 
-import { claim, held, paint } from "./configure.ts";
-import { paintMessageStream } from "./shell.ts";
+import { claim, held } from "./configure.ts";
 
 const compactStream = claim("compact-rendering", "message-stream");
-paint(compactStream, () => ["compact"]);
 
 type Theme = Parameters<NonNullable<ToolDefinition["renderCall"]>>[1];
 type RenderContext = Parameters<NonNullable<ToolDefinition["renderCall"]>>[2];
@@ -145,15 +143,16 @@ function compact<
 		cwd: string,
 		ctx?: ExtensionContext,
 	) => ToolDefinition<TParams, TDetails, TState>,
+	session: ExtensionContext,
 ): ToolDefinition<TParams, TDetails, TState> {
-	const builtIn = create(process.cwd());
+	const builtIn = create(session.cwd, session);
 	return {
 		...builtIn,
 		renderShell: "self",
 		execute: (toolCallId, params, signal, onUpdate, ctx) =>
 			create(ctx.cwd, ctx).execute(toolCallId, params, signal, onUpdate, ctx),
 		renderCall(args, theme, context) {
-			if (!paintMessageStream(1).includes("compact")) {
+			if (!held(compactStream)) {
 				return builtIn.renderCall?.(args, theme, context) ?? hidden;
 			}
 			const previous =
@@ -172,7 +171,7 @@ function compact<
 			);
 		},
 		renderResult(result, options, theme, context) {
-			if (!paintMessageStream(1).includes("compact")) {
+			if (!held(compactStream)) {
 				return (
 					builtIn.renderResult?.(result, options, theme, context) ?? hidden
 				);
@@ -310,10 +309,13 @@ export function fallbackRenderers(row: Fallback) {
 }
 
 // The options mirror what Pi's session passes when it builds its own base tools.
-export function syncCompactTools(pi: ExtensionAPI) {
+export function syncCompactTools(pi: ExtensionAPI, ctx?: ExtensionContext) {
+	if (!ctx?.cwd || typeof ctx.isProjectTrusted !== "function") return;
 	const on = held(compactStream);
 	const register = (name: string, create: (cwd: string, ctx?: ExtensionContext) => object) => {
-		const tool = (on ? compact(name, create as Parameters<typeof compact>[1]) : create(process.cwd())) as Parameters<ExtensionAPI["registerTool"]>[0];
+		const tool = (on
+			? compact(name, create as Parameters<typeof compact>[1], ctx)
+			: create(ctx.cwd, ctx)) as Parameters<ExtensionAPI["registerTool"]>[0];
 		pi.registerTool(tool);
 	};
 	register("read", (cwd, ctx) =>

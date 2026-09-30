@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { initTheme } from "@earendil-works/pi-coding-agent";
 import { CURSOR_MARKER, KeybindingsManager, TUI_KEYBINDINGS, visibleWidth } from "@earendil-works/pi-tui";
 
 import {
@@ -8,6 +9,14 @@ import {
 	createAskUserQuestionTool,
 } from "../extensions/ask-user-panel.ts";
 import { createFooterHints } from "../extensions/chrome.ts";
+import { createChildrenViews } from "../extensions/children-view.ts";
+import { capabilities, replaceSelection } from "../extensions/configure.ts";
+
+replaceSelection({
+	schemaVersion: 1,
+	capabilities: Object.fromEntries(capabilities.map((capability) => [capability, true])),
+	expectations: {},
+});
 
 const fakeTheme = {
 	fg: (_name, text) => text,
@@ -39,11 +48,13 @@ function tuiContext() {
 	const donePromise = new Promise((resolve) => {
 		resolveDone = resolve;
 	});
+	let customOptions;
 	const ctx = {
 		hasUI: true,
 		mode: "tui",
 		ui: {
-			custom: (factory) => {
+			custom: (factory, options) => {
+				customOptions = options;
 				component = factory({}, fakeTheme, fakeKeybindings, (result) => resolveDone(result));
 				return donePromise;
 			},
@@ -52,6 +63,7 @@ function tuiContext() {
 	};
 	return {
 		ctx,
+		options: () => customOptions,
 		send: (data) => component.handleInput(data),
 		render: (width = 80) => component.render(width).map((line) => line.replace(/^ ?┃ {3}/, "").trimEnd()),
 		renderRaw: (width = 80) => component.render(width),
@@ -75,6 +87,64 @@ test("a session with hasUI but no TUI mode refuses ask_user_question the same wa
 	const tool = createAskUserQuestionTool(createFooterHints());
 	const result = await tool.execute("call-2", { question: "Why?" }, undefined, undefined, noUiContext("rpc"));
 	assert.equal(result.details.status, "refused");
+});
+
+test("the operator question opens as an overlay and closes the children view", async () => {
+	initTheme("dark", false);
+	const keys = new KeybindingsManager({
+		...TUI_KEYBINDINGS,
+		"app.thinking.toggle": {
+			defaultKeys: "ctrl+t",
+			description: "Toggle thinking",
+		},
+	});
+	let closed = false;
+	const sessions = {
+		list: () => [],
+		subscribe: () => () => {},
+		follow: () => () => {},
+		thread: () => undefined,
+		cancel: () => ({ cancelled: false, message: "" }),
+	};
+	const views = createChildrenViews(sessions, () => () => {});
+	let factory;
+	void views.open({
+		hasUI: true,
+		mode: "tui",
+		ui: {
+			notify() {},
+			custom(make) {
+				factory = make;
+				return new Promise(() => {});
+			},
+		},
+	});
+	factory(
+		{
+			requestRender() {},
+			terminal: { rows: 40, columns: 100 },
+			isOverlayFocused: () => true,
+		},
+		fakeTheme,
+		keys,
+		() => {
+			closed = true;
+		},
+	);
+	const tool = createAskUserChoiceTool(createFooterHints());
+	const { ctx, send, options } = tuiContext();
+	const pending = tool.execute(
+		"call-overlay",
+		{ question: "Deploy now?", options: [{ label: "Yes" }, { label: "No" }] },
+		undefined,
+		undefined,
+		ctx,
+	);
+	assert.equal(closed, true);
+	assert.deepEqual(options(), { overlay: true });
+	send("\r");
+	const result = await pending;
+	assert.equal(result.details.status, "answered");
 });
 
 test("TUI ask_user_choice answers with the selected option on Enter", async () => {

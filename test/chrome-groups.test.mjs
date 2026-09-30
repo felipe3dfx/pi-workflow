@@ -15,6 +15,8 @@ import {
 	patchMessages,
 	restoreMessages,
 } from "../extensions/chrome-messages.ts";
+import { syncCompactTools } from "../extensions/compact-tools.ts";
+import { readSelection, replaceSelection } from "../extensions/configure.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 
 const at1155 = new Date(2026, 8, 29, 11, 55).getTime();
@@ -26,7 +28,7 @@ const renderers = new Map();
 
 function loadTools() {
 	const tools = new Map();
-	piWorkflowExtension({
+	const pi = {
 		on() {},
 		registerCommand() {},
 		registerShortcut() {},
@@ -34,7 +36,11 @@ function loadTools() {
 		registerProvider() {},
 		registerTool: (tool) => tools.set(tool.name, tool),
 		exec: async () => ({ code: 0, stdout: "", stderr: "" }),
-	});
+	};
+	const preview = readSelection(undefined, []);
+	if (preview.status === "ready") replaceSelection(preview.selection);
+	piWorkflowExtension(pi);
+	syncCompactTools(pi, { cwd: process.cwd(), isProjectTrusted: () => false });
 	return tools;
 }
 

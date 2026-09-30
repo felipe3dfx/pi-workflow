@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { capabilities, replaceSelection } from "../extensions/configure.ts";
 import { delegationCases, runDelegationCheck } from "../extensions/delegation-check.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 
@@ -168,6 +169,11 @@ test("a missing TypeSafe key is a fail line and the skill case still runs", asyn
 });
 
 test("/workflow:delegation-check rejects extra arguments and reports a missing key without throwing", async () => {
+	replaceSelection({
+		schemaVersion: 1,
+		capabilities: Object.fromEntries(capabilities.map((capability) => [capability, true])),
+		expectations: {},
+	});
 	const commands = new Map();
 	const notifications = [];
 	piWorkflowExtension(
