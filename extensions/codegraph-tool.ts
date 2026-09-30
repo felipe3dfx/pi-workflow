@@ -9,7 +9,12 @@ import {
 	truncateHead,
 } from "@earendil-works/pi-coding-agent";
 
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { claim, held } from "./configure.ts";
+import { offerTool } from "./tool-offer.ts";
 import { gitEnvironment } from "./git-environment.ts";
+
+const codegraphStream = claim("codegraph", "message-stream");
 
 type CodeGraphOperation = "init" | "query" | "explore";
 
@@ -152,6 +157,17 @@ export function createCodeGraphTool(adapters: CodeGraphAdapters = {}) {
 			_onUpdate: unknown,
 			ctx: Pick<ExtensionContext, "cwd">,
 		) {
+			if (!held(codegraphStream)) {
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: "CodeGraph access is not seated. Run /workflow:configure.",
+						},
+					],
+					details: { status: "refused" },
+				};
+			}
 			const root = realpathSync(ctx.cwd);
 			await assertGitRoot(root, signal);
 			assertIndexDirectory(root);
@@ -188,4 +204,11 @@ export function createCodeGraphTool(adapters: CodeGraphAdapters = {}) {
 			return outcome("ok", output || "CodeGraph completed without output.");
 		},
 	};
+}
+
+export function syncCodeGraphTool(
+	pi: ExtensionAPI,
+	adapters?: CodeGraphAdapters,
+) {
+	offerTool(pi, createCodeGraphTool(adapters), held(codegraphStream));
 }

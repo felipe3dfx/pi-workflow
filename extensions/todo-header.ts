@@ -1,7 +1,10 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 
+import { claim } from "./configure.ts";
 import type { Task } from "./todo-list.ts";
+
+export const todoAboveInput = claim("todo", "above-input");
 
 export interface TodoBoxState {
 	collapsed: boolean;

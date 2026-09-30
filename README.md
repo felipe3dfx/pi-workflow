@@ -9,7 +9,7 @@ Grupo Ilao engineering skills own process semantics: discovery, specification, t
 ```text
 /workflow:status
 /workflow:doctor
-/workflow:setup
+/workflow:configure
 /workflow:models
 /workflow:subagents
 /workflow:delegation-check
@@ -17,9 +17,9 @@ Grupo Ilao engineering skills own process semantics: discovery, specification, t
 
 `/workflow:status` and `/workflow:doctor` are read-only. They report companions, MCP alignment, settings alignment, and colliding packages.
 
-`/workflow:setup` takes no arguments. It:
+`/workflow:configure` takes no arguments. It opens a guided review, then applies the local selection in the current session. It:
 
-- installs the missing companions listed in `assets/companions.json`. A failed install stops; an uncertain effect is not retried.
+- installs missing companions whose expectation is on. A failed install stops; an uncertain effect is not retried. Turning an expectation off does not uninstall the package.
 - aligns Pi-native MCP servers in `mcp.json` in the Pi agent directory from `assets/mcp-servers.json`, per catalog key. Keys you or Pi manage are preserved. `context7` is exposed directly; `sentry` and `linear` are `codemode-deferred`. Servers that need OAuth are authorized with `/mcp login <server>`.
 - applies the default Pi settings from `assets/settings.json`: `tuiMode` `fullscreen`, `theme` `pi-workflow`, `quietStartup`, and `defaultTools` `+codemode`, which enables the built-in `codemode` tool.
 - warns about colliding packages and never removes them. See below.
@@ -28,6 +28,7 @@ Grupo Ilao engineering skills own process semantics: discovery, specification, t
 `/workflow:subagents` (`alt+a`) opens the children view for the current session.
 
 `/workflow:delegation-check` scores a fixed set of delegation cases against Jev and prints pass or fail for each one. It does not launch a child. It needs a TypeSafe API key, and a missing key is a fail line. It is not part of `npm run check`.
+
 
 ## Model profiles
 
@@ -43,7 +44,7 @@ This works by patching Pi internals copied from Pi 0.99.1, with no version guard
 
 ## Colliding packages
 
-These packages overlap with what the harness owns. Status and doctor warn about them. Setup never removes them.
+These packages overlap with what the harness owns. Status, doctor, and configure warn about them. Configure never removes them.
 
 - `@heyhuynhgiabuu/pi-pretty` registers the same tool names.
 - `pi-powerline-footer` replaces the same header, footer, and editor.

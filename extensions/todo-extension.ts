@@ -1,7 +1,18 @@
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-import { renderTodoBox, type TodoBoxState } from "./todo-header.ts";
+import { held, linesFor, paint } from "./configure.ts";
+import { offerTool } from "./tool-offer.ts";
+let syncTodo: (api: ExtensionAPI) => void = () => {};
+
+export function syncTodoTool(api: ExtensionAPI) {
+	syncTodo(api);
+}
+import {
+	renderTodoBox,
+	todoAboveInput,
+	type TodoBoxState,
+} from "./todo-header.ts";
 import { createTodoList, type Task } from "./todo-list.ts";
 
 const TodoWriteTask = Type.Object({
@@ -58,7 +69,10 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 		currentTui = tui;
 		return {
 			render(width: number) {
-				return renderTodoBox(theme, todoList.list(), boxState, width);
+				paint(todoAboveInput, (paintedWidth) =>
+					renderTodoBox(theme, todoList.list(), boxState, paintedWidth),
+				);
+				return linesFor(todoAboveInput, width);
 			},
 			invalidate() {},
 		};
@@ -81,6 +95,13 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 		}
 	}
 
+	const registerTodo = pi.registerTool.bind(pi);
+	pi.registerTool = (tool) => {
+		if (tool.name === "todo") {
+			syncTodo = (api) => offerTool(api, tool, held(todoAboveInput));
+		}
+		return registerTodo(tool);
+	};
 	pi.registerTool({
 		name: "todo",
 		label: "Todo",
@@ -93,6 +114,17 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 		],
 		parameters: TodoParams,
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			if (!held(todoAboveInput)) {
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: "Todo is not seated. Run /workflow:configure.",
+						},
+					],
+					details: { status: "refused" },
+				};
+			}
 			switch (params.action) {
 				case "write": {
 					if (params.tasks === undefined) {
@@ -141,6 +173,7 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 			}
 		},
 	});
+	pi.registerTool = registerTodo;
 
 	pi.registerShortcut("alt+shift+t", {
 		description: "Collapse or expand the session task box above the input",

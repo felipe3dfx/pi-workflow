@@ -12,7 +12,11 @@ import {
 	type Schedule,
 	scheduleTimer,
 } from "./child-sessions.ts";
+import { claim, linesFor, paint } from "./configure.ts";
+import { notifyHeader } from "./shell.ts";
 import { sanitizeTaskText } from "./todo-header.ts";
+
+const childAboveInput = claim("child-session", "above-input");
 
 type Sessions = ReturnType<typeof createChildSessions>;
 export type ChildTheme = Pick<Theme, "fg" | "bg" | "bold">;
@@ -48,9 +52,9 @@ export function byState(a: ChildRecord, b: ChildRecord) {
 	return rank[a.state] - rank[b.state];
 }
 
-export function childName(child: ChildRecord) {
-	return `${child.role} ${child.id.slice(0, 4)}`;
-}
+import { childElapsed, childModelLine, childStep } from "./child-projection.ts";
+
+export { childElapsed, childName } from "./child-projection.ts";
 
 export function spread(left: string, right: string, width: number) {
 	const shown = truncateToWidth(
@@ -61,24 +65,9 @@ export function spread(left: string, right: string, width: number) {
 	return truncateToWidth(`${shown}${" ".repeat(gap)}${right}`, width);
 }
 
-export function childElapsed(child: ChildRecord, now: number) {
-	const seconds = Math.max(
-		0,
-		Math.floor(
-			((child.endedAt ?? now) - (child.startedAt ?? child.createdAt)) / 1000,
-		),
-	);
-	const pad = (value: number) => String(value).padStart(2, "0");
-	if (seconds < 60) return `${seconds}s`;
-	if (seconds < 3600)
-		return `${Math.floor(seconds / 60)}m ${pad(seconds % 60)}s`;
-	return `${Math.floor(seconds / 3600)}h ${pad(Math.floor(seconds / 60) % 60)}m`;
-}
-
 function childMeta(child: ChildRecord, now: number) {
 	if (child.state === "queued") return "queued";
-	const model = child.model.slice(child.model.indexOf("/") + 1);
-	return `${model} (${child.thinking}) ${childElapsed(child, now)}`;
+	return `${childModelLine(child)} ${childElapsed(child, now)}`;
 }
 
 export function childGlyph(theme: ChildTheme, child: ChildRecord) {
@@ -97,7 +86,7 @@ function renderChildRow(
 	active: boolean,
 	width: number,
 ) {
-	const step = sanitizeTaskText(child.step ?? child.task.trim().split("\n")[0]);
+	const step = sanitizeTaskText(childStep(child));
 	const left = ` ${childGlyph(theme, child)} ${theme.fg("accent", child.role)} ${child.id.slice(0, 4)} ${step}`;
 	const line = spread(left, theme.fg("dim", meta), width);
 	return active ? theme.bg("selectedBg", line) : line;
@@ -166,6 +155,7 @@ export function registerChildrenBox(
 
 	function update() {
 		render();
+		notifyHeader();
 		const now = Date.now();
 		const records = sessions.list();
 		const wait = records.some((child) => isWorking(child.state))
@@ -202,8 +192,17 @@ export function registerChildrenBox(
 			(widgetTui, theme) => {
 				tui = widgetTui;
 				return {
-					render: (width: number) =>
-						renderChildrenBox(theme, sessions.list(), Date.now(), width),
+					render: (width: number) => {
+						paint(childAboveInput, (paintedWidth) =>
+							renderChildrenBox(
+								theme,
+								sessions.list(),
+								Date.now(),
+								paintedWidth,
+							),
+						);
+						return linesFor(childAboveInput, width);
+					},
 					invalidate() {},
 				};
 			},

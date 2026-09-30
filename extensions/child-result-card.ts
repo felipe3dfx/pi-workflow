@@ -17,7 +17,12 @@ import type { ChildDetails, ChildRecord } from "./child-sessions.ts";
 import { childElapsed, spread } from "./children-box.ts";
 import { markCard } from "./chrome-groups.ts";
 import { assistantInset, edgeFor } from "./chrome-messages.ts";
+import { claim, linesFor, paint } from "./configure.ts";
+import { childModelLine } from "./child-projection.ts";
+import { paintMessageStream } from "./shell.ts";
 import { sanitizeMultilineText, sanitizeTaskText } from "./todo-header.ts";
+
+const childStream = claim("child-session", "message-stream");
 
 const RESULT_TYPE = "pi-workflow-child-result";
 const QUESTION_TYPE = "pi-workflow-child-question";
@@ -87,7 +92,10 @@ function header(theme: Theme, card: Card, question: boolean) {
 		line += ` ${theme.fg(tone(card, question), card.state)}`;
 	const meta = [
 		card.model &&
-			`${card.model.slice(card.model.indexOf("/") + 1)}${card.thinking ? ` (${card.thinking})` : ""}`,
+			childModelLine({
+				model: card.model,
+				thinking: card.thinking,
+			}),
 		card.elapsedMs !== undefined &&
 			childElapsed({ createdAt: 0, endedAt: card.elapsedMs } as ChildRecord, 0),
 	].filter(Boolean);
@@ -131,6 +139,12 @@ class ResultCard implements Component {
 	}
 
 	render(outer: number) {
+		paint(childStream, (width) => this.cardLines(width));
+		paintMessageStream(outer);
+		return linesFor(childStream, outer);
+	}
+
+	cardLines(outer: number) {
 		const t = this.theme;
 		const edge = edgeFor(assistantInset, outer);
 		const width = Math.max(1, outer - edge * 2);

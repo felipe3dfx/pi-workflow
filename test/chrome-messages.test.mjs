@@ -766,7 +766,6 @@ test("the chrome patches the message components on a TUI session_start, keeps th
 	};
 	registerChrome(
 		pi,
-		{ list: () => [], subscribe: () => () => {} },
 		{ get: () => undefined, subscribe: () => () => {} },
 		() => () => {},
 	);

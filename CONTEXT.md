@@ -4,37 +4,39 @@
 
 ### pi-workflow
 
-The Pi harness package that reports companion readiness and, on explicit `/workflow:setup`, installs the companion catalog, aligns MCP servers, and applies default Pi settings. It does not own product workflow.
+The Pi harness package that reports companion readiness and, on explicit `/workflow:configure`, applies the local selection. It does not own product workflow.
 
 _Avoid_: workflow engine, publication runtime, operating system
 
 ### Companion package
 
-An independently owned Pi package that the harness expects to be present. pi-workflow does not absorb its source or resources.
+An independently owned Pi package that a companion expectation can name. pi-workflow does not absorb its source or resources.
 
 ### Companion catalog
 
-The versioned list of expected companion packages in `assets/companions.json`.
+The versioned list of companion packages in `assets/companions.json`. A companion expectation names one entry from this list.
 
 ### MCP server catalog
 
-The versioned MCP server definitions in `assets/mcp-servers.json`. Setup aligns Pi-native servers in `mcp.json` per catalog key and preserves keys the user or Pi manages. Each server has an exposure: `direct` or `deferred`.
+The versioned MCP server definitions in `assets/mcp-servers.json`. Configure aligns Pi-native servers in `mcp.json` per catalog key and preserves keys the user or Pi manages. Each server has an exposure: `direct` or `deferred`.
 
 ### Degraded harness
 
-A state where one or more companion packages are missing, unreadable, or mismatched. Status and doctor must show the gap. They must not install anything.
+A state where one or more companion packages named by a companion expectation are missing, unreadable, or mismatched. Status and doctor must show the gap. They must not install anything.
 
-### Setup
+### Configure
 
-The user-run command `/workflow:setup` (previously the explicit companion install). It takes no arguments, installs missing companions directly, aligns the MCP server catalog, and applies the default Pi settings. It warns about colliding packages and never removes them.
+The operator's guided confirmation, for the current session, of seated harness capabilities and companion expectations.
+
+_Avoid_: setup, `/workflow:setup`, installer
 
 ### Default settings
 
-The versioned Pi settings in `assets/settings.json` that setup applies: `tuiMode`, `theme`, and `quietStartup`.
+The versioned Pi settings in `assets/settings.json` that Configure applies: `tuiMode`, `theme`, and `quietStartup`.
 
 ### Colliding package
 
-An installed package that overlaps with a harness capability: `@heyhuynhgiabuu/pi-pretty`, `pi-powerline-footer`, or `pi-mcp-adapter`. Status, doctor, and setup warn. The harness never uninstalls it.
+An installed package that overlaps with a harness capability: `@heyhuynhgiabuu/pi-pretty`, `pi-powerline-footer`, or `pi-mcp-adapter`. Status, doctor, and Configure warn. The harness never uninstalls it.
 
 ### Model profile
 
@@ -50,7 +52,7 @@ The Grupo Ilao skills that own delivery process. A consumer installs them from t
 
 ### Harness capability
 
-A pi-workflow behavior that is not a companion package. The harness owns it and does not install it from the companion catalog.
+A pi-workflow behavior that is not a companion package: child session, todo, operator question, model profile, CodeGraph access, or compact rendering. The harness owns it and does not install it from the companion catalog.
 
 _Avoid_: bundled companion, absorbed package
 
@@ -63,3 +65,51 @@ _Avoid_: subagent package, workflow run
 ### Chrome
 
 The Grok Build-style terminal UI the harness applies: header, footer hints, status row, input editor, message and menu styling, and the `pi-workflow` theme. It patches Pi internals; see ADR 0007.
+
+### Shell
+
+The always-seated surface that owns visual language, screen places, and Chrome.
+
+_Avoid_: feature board, plugin host
+
+### Visual language
+
+The shared theme, frame, and rhythm of the shell.
+
+_Avoid_: design system
+
+### Screen place
+
+A region of the shell: the header, above the input, an overlay, or the message stream. The seated capability declares which place it occupies.
+
+_Avoid_: feature slot
+
+### Companion expectation
+
+The local choice that one companion catalog entry is expected on this installation.
+
+_Avoid_: uninstall, catalog edit
+
+### Todo
+
+The session's task list, seated as a harness capability.
+
+_Avoid_: issue, ticket
+
+### Operator question
+
+The prompt the operator answers, seated as a harness capability.
+
+_Avoid_: dialog, form
+
+### Compact rendering
+
+The harness presentation of Pi's seven tools: `read`, `bash`, `grep`, `find`, `ls`, `edit`, and `write`.
+
+_Avoid_: pi-pretty
+
+### CodeGraph access
+
+The harness capability for structural questions about the current repository.
+
+_Avoid_: companion package

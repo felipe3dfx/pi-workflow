@@ -9,7 +9,7 @@ const root = process.cwd();
 const commands = [
 	"workflow:status",
 	"workflow:doctor",
-	"workflow:setup",
+	"workflow:configure",
 	"workflow:models",
 	"workflow:delegation-check",
 ];

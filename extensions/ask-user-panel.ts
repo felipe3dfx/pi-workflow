@@ -11,8 +11,15 @@ import {
 	type Component,
 } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { FooterHints } from "./chrome.ts";
 import { marginFor } from "./chrome-editor.ts";
+import { claim, held, paint } from "./configure.ts";
+import { paintOverlay } from "./shell.ts";
+import { offerTool } from "./tool-offer.ts";
+
+const questionOverlay = claim("operator-questions", "overlay");
+paint(questionOverlay, () => ["questions"]);
 
 interface AskUserOption {
 	label: string;
@@ -368,6 +375,20 @@ export function createAskUserChoiceTool(hints: FooterHints): ToolDefinition<type
 		executionMode: "sequential",
 		...askRenderers(),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			if (!paintOverlay(1).includes("questions")) {
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: "Operator questions are not seated. Run /workflow:configure.",
+						},
+					],
+					details: {
+						status: "refused",
+						reason: "Operator questions are not seated.",
+					},
+				};
+			}
 			return askPanel(ctx, hints, params.question, params.options, params.multiple ?? false, signal);
 		},
 	};
@@ -392,7 +413,27 @@ export function createAskUserQuestionTool(hints: FooterHints): ToolDefinition<ty
 		executionMode: "sequential",
 		...askRenderers(),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			if (!paintOverlay(1).includes("questions")) {
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: "Operator questions are not seated. Run /workflow:configure.",
+						},
+					],
+					details: {
+						status: "refused",
+						reason: "Operator questions are not seated.",
+					},
+				};
+			}
 			return askPanel(ctx, hints, params.question, [], false, signal);
 		},
 	};
+}
+
+export function syncAskUserTools(pi: ExtensionAPI, hints: FooterHints) {
+	const on = held(questionOverlay);
+	offerTool(pi, createAskUserChoiceTool(hints), on);
+	offerTool(pi, createAskUserQuestionTool(hints), on);
 }

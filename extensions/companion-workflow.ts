@@ -136,7 +136,7 @@ const legacySpawnPackage = "@tintinweb/pi-subagents";
 
 const requireFromPackage = createRequire(import.meta.url);
 const packageDirectory = dirname(fileURLToPath(import.meta.url));
-const companionMetadataPath = resolve(
+export const companionMetadataPath = resolve(
 	packageDirectory,
 	"../assets/companions.json",
 );
@@ -420,7 +420,7 @@ function alignmentLines(alignment: Alignment): string[] {
 			alignment.heading,
 			`✗ ${alignment.path} — not aligned: ${[...alignment.misaligned, ...conflicts].join(", ")}`,
 			...(alignment.misaligned.length > 0
-				? ["Run /workflow:setup to align it."]
+				? ["Run /workflow:configure to align it."]
 				: []),
 			...note,
 		];
@@ -453,7 +453,7 @@ function renderCompanionCatalogStatus(
 	} else if (catalog.actionable.length > 0) {
 		lines.push(
 			"",
-			"Missing or unreadable companions are installed independently. Run /workflow:setup or install manually:",
+			"Missing or unreadable companions are installed independently. Run /workflow:configure or install manually:",
 			...catalog.actionable.map(
 				(companion) => `pi install ${companionInstallSpec(companion)}`,
 			),
@@ -564,7 +564,7 @@ export function createCompanionWorkflow(options: CompanionWorkflowOptions = {}) 
 		inspect: () => reportStatus("pi-workflow companion status"),
 		diagnose: () => reportStatus("pi-workflow companion doctor"),
 
-		async setup(): Promise<SetupResult> {
+		async setup(expectedPackages?: readonly string[]): Promise<SetupResult> {
 			const catalog = resolveCompanionCatalog(options.catalog);
 			if (catalog.loadError) {
 				notify(interaction, catalog.loadError, "error");
@@ -608,8 +608,19 @@ export function createCompanionWorkflow(options: CompanionWorkflowOptions = {}) 
 				});
 			}
 
-			const installable = catalog.states.filter((companion) => companion.status === "missing");
-			const errored = catalog.states.filter((companion) => companion.status === "error");
+			const expected = expectedPackages
+				? new Set(expectedPackages)
+				: undefined;
+			const installable = catalog.states.filter(
+				(companion) =>
+					companion.status === "missing" &&
+					(!expected || expected.has(companion.package)),
+			);
+			const errored = catalog.states.filter(
+				(companion) =>
+					companion.status === "error" &&
+					(!expected || expected.has(companion.package)),
+			);
 			const manualInstructions = [
 				manualInstallInstructions(
 					[...installable, ...errored],

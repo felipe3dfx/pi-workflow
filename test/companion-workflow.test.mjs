@@ -547,7 +547,7 @@ test("setup fails closed on a malformed settings file without overwriting it", a
 	});
 });
 
-test("status and doctor report default settings as aligned or pointing to /workflow:setup", async () => {
+test("status and doctor report default settings as aligned or pointing to /workflow:configure", async () => {
 	await withSettingsWorkflow(
 		JSON.stringify({ tuiMode: "fullscreen" }),
 		async ({ workflow }) => {
@@ -574,7 +574,7 @@ test("status and doctor report default settings as aligned or pointing to /workf
 				assert.equal(result.level, "warning");
 				assert.match(
 					result.message,
-					/Default settings:\n✗ .* — not aligned: tuiMode\nRun \/workflow:setup/,
+					/Default settings:\n✗ .* — not aligned: tuiMode\nRun \/workflow:configure/,
 				);
 			}
 			assert.deepEqual(JSON.parse(await readFile(settingsPath, "utf8")), {
@@ -584,7 +584,7 @@ test("status and doctor report default settings as aligned or pointing to /workf
 	);
 });
 
-test("status reports a misaligned MCP configuration and points to /workflow:setup", async () => {
+test("status reports a misaligned MCP configuration and points to /workflow:configure", async () => {
 	await withMetadataFile(
 		[{ package: "alpha" }],
 		async ({ metadataPath, dir }) => {
@@ -610,13 +610,13 @@ test("status reports a misaligned MCP configuration and points to /workflow:setu
 			assert.equal(result.level, "warning");
 			assert.match(
 				result.message,
-				/MCP configuration:\n✗ .*mcp\.json — not aligned: context7\nRun \/workflow:setup/,
+				/MCP configuration:\n✗ .*mcp\.json — not aligned: context7\nRun \/workflow:configure/,
 			);
 		},
 	);
 });
 
-test("status does not point to /workflow:setup when the only settings misalignment is a conflict setup cannot fix", async () => {
+test("status does not point to /workflow:configure when the only settings misalignment is a conflict setup cannot fix", async () => {
 	await withMetadataFile(
 		[{ package: "alpha" }],
 		async ({ metadataPath, dir }) => {
@@ -646,7 +646,7 @@ test("status does not point to /workflow:setup when the only settings misalignme
 				result.message,
 				/Default settings:\n✗ .*settings\.json — not aligned: defaultTools: -codemode conflicts with \+codemode \(remove it manually\)/,
 			);
-			assert.doesNotMatch(result.message, /Default settings:(.|\n)*Run \/workflow:setup/);
+			assert.doesNotMatch(result.message, /Default settings:(.|\n)*Run \/workflow:configure/);
 		},
 	);
 });
