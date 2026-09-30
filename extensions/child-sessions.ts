@@ -826,7 +826,7 @@ export function createSpawnChildTool(
 				});
 			}
 			const userRequest = latestUserRequest(sessionBranch(ctx));
-			const plan = await launcher.decide(
+			const plan = await launcher.prepareLaunch(
 				{
 					role: params.role ?? undefined,
 					task: params.task,
@@ -835,7 +835,7 @@ export function createSpawnChildTool(
 				},
 				ctx,
 			);
-			if (plan.status !== "launch") return notLaunched(plan.status, plan);
+			if (plan.kind !== "ready") return notLaunched("refused", plan);
 			const started = await sessions.start(plan, {
 				background,
 				signal,

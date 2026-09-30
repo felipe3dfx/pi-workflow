@@ -124,7 +124,7 @@ function actionOf(verdict: Verdict): DelegationAction {
 }
 
 function evidence(verdict: Verdict): string {
-	const jev = verdict.kind === "launch" ? verdict.jev : verdict.refusal.jev;
+	const jev = verdict.jev;
 	if (!jev) return "";
 	const specialist = jev.answers.specialist;
 	const destination = jev.answers.destination;
@@ -171,7 +171,7 @@ function scoreLine(
 	}
 	const detail = evidence(verdict);
 	if (mismatches.length > 0) {
-		const reason = verdict.kind === "launch" ? "" : `; ${verdict.refusal.reason}`;
+		const reason = verdict.kind === "launch" ? "" : `; ${verdict.reason}`;
 		return `fail: ${item.name}: ${mismatches.join("; ")}${detail}${reason}`;
 	}
 	const specialist = role ? `, specialist ${role}` : "";

@@ -115,7 +115,7 @@ function loadedProfiles(profiles, active = "default") {
 const absentProfiles = { load: () => ({ status: "absent" }) };
 
 function assertRefused(result, reason) {
-	assert.equal(result.status, "refused");
+	assert.notEqual(result.kind, "ready");
 	assert.equal("id" in result, false);
 	assert.equal(typeof result.warning, "string");
 	assert.ok(result.warning.length > 0);
@@ -130,11 +130,16 @@ test("work Jev keeps in the session is refused with a warning and no child id", 
 			fetch: jev.fetch,
 		});
 
-		const result = await launcher.decide(
+		const result = await launcher.prepareLaunch(
 			{ role: "worker", task: "Decide the storage architecture" },
 			launcherContext(worktree),
 		);
 
+		assert.equal(result.kind, "stay");
+		assert.equal(
+			result.warning,
+			"The work stays in this session. No child was launched.",
+		);
 		assertRefused(result, /stays/);
 		assert.equal(jev.requests.length, 1);
 		assert.equal(jev.requests[0].state.task, "Decide the storage architecture");
@@ -154,7 +159,7 @@ test("a missing Jev answer blocks the launch and does not decide to stay", async
 		];
 		for (const { fetch } of failures) {
 			const launcher = createChildLauncher({ modelProfiles: absentProfiles, fetch });
-			const result = await launcher.decide(
+			const result = await launcher.prepareLaunch(
 				{ role: "worker", task: "Fix the failing test" },
 				launcherContext(worktree),
 			);
@@ -168,7 +173,7 @@ test("a missing Jev answer blocks the launch and does not decide to stay", async
 			fetch: fakeJev(() => "leave").fetch,
 		});
 		assertRefused(
-			await noKey.decide(
+			await noKey.prepareLaunch(
 				{ role: "worker", task: "Fix the failing test" },
 				launcherContext(worktree, { typesafeKey: null }),
 			),
@@ -198,11 +203,11 @@ test("a role Jev lets leave gets its contract prompt and tools", async () => {
 			fetch: leave(),
 		});
 		for (const role of ["explore", "worker", "verify"]) {
-			const result = await launcher.decide(
+			const result = await launcher.prepareLaunch(
 				{ role, task: "Map the launcher module" },
 				launcherContext(worktree),
 			);
-			assert.equal(result.status, "launch");
+			assert.equal(result.kind, "ready");
 			assert.equal(result.role, role);
 			assert.equal(result.task, "Map the launcher module");
 			assert.deepEqual(result.warnings, []);
@@ -210,7 +215,7 @@ test("a role Jev lets leave gets its contract prompt and tools", async () => {
 			assert.ok(result.contract.tools.includes("read"));
 		}
 
-		const explore = await launcher.decide(
+		const explore = await launcher.prepareLaunch(
 			{ role: "explore", task: "Map the launcher module" },
 			launcherContext(worktree),
 		);
@@ -225,12 +230,12 @@ test("a missing role launches the specialist Jev chooses and does not assume wor
 			fetch: fakeJev(() => "explorer").fetch,
 		});
 
-		const result = await launcher.decide(
+		const result = await launcher.prepareLaunch(
 			{ task: "Compare the two sources" },
 			launcherContext(worktree),
 		);
 
-		assert.equal(result.status, "launch");
+		assert.equal(result.kind, "ready");
 		assert.equal(result.role, "explore");
 		assert.match(result.contract.prompt, /You are an explore/);
 		assert.deepEqual(result.warnings, []);
@@ -254,7 +259,7 @@ test("an unknown role is refused even when a contract file has its name", async 
 			fetch: leave(),
 		});
 
-		const result = await launcher.decide(
+		const result = await launcher.prepareLaunch(
 			{ role: "wizard", task: "Fix the failing test" },
 			launcherContext(worktree),
 		);
@@ -273,7 +278,7 @@ test("a missing or unreadable contract is refused and never falls back to worker
 			fetch: leave(),
 		});
 
-		const missing = await launcher.decide(
+		const missing = await launcher.prepareLaunch(
 			{ role: "worker", task: "Fix the failing test" },
 			launcherContext(worktree),
 		);
@@ -284,7 +289,7 @@ test("a missing or unreadable contract is refused and never falls back to worker
 		await mkdir(join(contractsDirectory, "explore.md"));
 		await writeFile(join(contractsDirectory, "verify.md"), "no front matter\n");
 		for (const role of ["explore", "verify"]) {
-			const unreadable = await launcher.decide(
+			const unreadable = await launcher.prepareLaunch(
 				{ role, task: "Fix the failing test" },
 				launcherContext(worktree),
 			);
@@ -292,7 +297,7 @@ test("a missing or unreadable contract is refused and never falls back to worker
 			assert.equal("role" in unreadable, false);
 		}
 
-		const noRole = await launcher.decide(
+		const noRole = await launcher.prepareLaunch(
 			{ task: "Fix the failing test" },
 			launcherContext(worktree),
 		);
@@ -304,7 +309,7 @@ test("an invalid, schema version 1, or unreadable model profiles file is refused
 	await withWorkspace(async ({ dir, worktree }) => {
 		const path = join(dir, "pi-workflow-models.json");
 		const decide = (modelProfiles) =>
-			createChildLauncher({ modelProfiles, fetch: leave() }).decide(
+			createChildLauncher({ modelProfiles, fetch: leave() }).prepareLaunch(
 				{ role: "worker", task: "Fix the failing test" },
 				launcherContext(worktree),
 			);
@@ -354,12 +359,12 @@ test("a model profiles file created in this turn is not read and is not a refusa
 		const result = await createChildLauncher({
 			modelProfiles,
 			fetch: leave(),
-		}).decide(
+		}).prepareLaunch(
 			{ role: "worker", task: "Fix the failing test" },
 			launcherContext(worktree, { available: [catalogModel("new/model")] }),
 		);
 
-		assert.equal(result.status, "launch");
+		assert.equal(result.kind, "ready");
 		assert.deepEqual(
 			{ model: result.model, thinking: result.thinking },
 			sessionPair,
@@ -381,7 +386,7 @@ test("an invalid worktree is refused before any child would be created", async (
 		});
 
 		for (const candidate of [join(dir, "missing"), file, plain, nested]) {
-			const result = await launcher.decide(
+			const result = await launcher.prepareLaunch(
 				{ role: "worker", task: "Fix the failing test", worktree: candidate },
 				launcherContext(worktree),
 			);
@@ -390,7 +395,7 @@ test("an invalid worktree is refused before any child would be created", async (
 		}
 
 		assertRefused(
-			await launcher.decide(
+			await launcher.prepareLaunch(
 				{ role: "worker", task: "Fix the failing test" },
 				launcherContext(nested),
 			),
@@ -406,20 +411,20 @@ test("a Git root worktree is the launch root", async () => {
 			fetch: leave(),
 		});
 
-		const explicit = await launcher.decide(
+		const explicit = await launcher.prepareLaunch(
 			{ role: "worker", task: "Fix the failing test", worktree },
 			launcherContext(dir),
 		);
-		assert.equal(explicit.status, "launch");
+		assert.equal(explicit.kind, "ready");
 		assert.equal(explicit.worktree, await realpath(worktree));
 
-		const fromSession = await launcher.decide(
+		const fromSession = await launcher.prepareLaunch(
 			{ role: "worker", task: "Fix the failing test" },
 			launcherContext(worktree),
 		);
 		assert.equal(fromSession.worktree, await realpath(worktree));
 
-		const relativePath = await launcher.decide(
+		const relativePath = await launcher.prepareLaunch(
 			{
 				role: "worker",
 				task: "Fix the failing test",
@@ -427,16 +432,16 @@ test("a Git root worktree is the launch root", async () => {
 			},
 			launcherContext(dir),
 		);
-		assert.equal(relativePath.status, "launch");
+		assert.equal(relativePath.kind, "ready");
 		assert.equal(relativePath.worktree, await realpath(worktree));
 
 		const link = join(dir, "link");
 		await symlink(worktree, link);
-		const throughLink = await launcher.decide(
+		const throughLink = await launcher.prepareLaunch(
 			{ role: "worker", task: "Fix the failing test", worktree: link },
 			launcherContext(dir),
 		);
-		assert.equal(throughLink.status, "launch");
+		assert.equal(throughLink.kind, "ready");
 		assert.equal(throughLink.worktree, await realpath(worktree));
 	});
 });
@@ -460,7 +465,7 @@ test("a request refused by a local check never asks Jev", async () => {
 				modelProfiles: absentProfiles,
 				fetch: jev.fetch,
 				...options,
-			}).decide(
+			}).prepareLaunch(
 				{ task: "Fix the failing test", ...request },
 				launcherContext(worktree),
 			);
@@ -481,7 +486,7 @@ test("a contract saved with CRLF line endings reads like the LF one", async () =
 				modelProfiles: absentProfiles,
 				contractsDirectory: directory,
 				fetch: leave(),
-			}).decide(
+			}).prepareLaunch(
 				{ role: "worker", task: "Fix the failing test" },
 				launcherContext(worktree),
 			);
@@ -489,7 +494,7 @@ test("a contract saved with CRLF line endings reads like the LF one", async () =
 		const crlf = await decide(contractsDirectory);
 		const reference = await decide(realContracts);
 
-		assert.equal(crlf.status, "launch");
+		assert.equal(crlf.kind, "ready");
 		assert.deepEqual(crlf.contract, reference.contract);
 	});
 });
@@ -512,7 +517,7 @@ test("git location variables in the environment cannot make a false worktree roo
 			const saved = { ...process.env };
 			Object.assign(process.env, variables);
 			try {
-				const result = await launcher.decide(
+				const result = await launcher.prepareLaunch(
 					{ role: "worker", task: "Fix the failing test", worktree: candidate },
 					launcherContext(dir),
 				);
@@ -556,11 +561,11 @@ test("each specialist Jev chooses runs the model and thinking of that entry in t
 			const result = await createChildLauncher({
 				modelProfiles: profiles,
 				fetch: jev.fetch,
-			}).decide(
+			}).prepareLaunch(
 				{ role, task: "Add the export command" },
 				launcherContext(worktree, { available: everyModel }),
 			);
-			assert.equal(result.status, "launch");
+			assert.equal(result.kind, "ready");
 			assert.deepEqual({ model: result.model, thinking: result.thinking }, pair);
 			assert.deepEqual(result.warnings, []);
 			assert.equal(jev.requests.length, 1);
@@ -585,11 +590,11 @@ test("a specialist missing from the active profile, or no profiles file, inherit
 			const result = await createChildLauncher({
 				modelProfiles,
 				fetch: leave(),
-			}).decide(
+			}).prepareLaunch(
 				{ role, task: "Add the export command" },
 				launcherContext(worktree, { available: everyModel }),
 			);
-			assert.equal(result.status, "launch");
+			assert.equal(result.kind, "ready");
 			assert.deepEqual(
 				{ model: result.model, thinking: result.thinking },
 				sessionPair,
@@ -616,7 +621,7 @@ test("a configured model Pi cannot run is refused with the profile, specialist, 
 			const result = await createChildLauncher({
 				modelProfiles: loadedProfiles({ main: profile }, "main"),
 				fetch: leave(),
-			}).decide(
+			}).prepareLaunch(
 				{ role: "worker", task: "Add the export command" },
 				launcherContext(worktree, { available }),
 			);
@@ -635,7 +640,7 @@ test("a misconfigured profile is refused after Jev selects that specialist", asy
 				default: { worker: { model: "gone/model", thinking: "low" } },
 			}),
 			fetch: jev.fetch,
-		}).decide(
+		}).prepareLaunch(
 			{ role: "worker", task: "Add the export command" },
 			launcherContext(worktree),
 		);
@@ -651,7 +656,7 @@ test("a session without a model or thinking is refused when the session pair is 
 		const result = await createChildLauncher({
 			modelProfiles: absentProfiles,
 			fetch: leave(),
-		}).decide(
+		}).prepareLaunch(
 			{ role: "worker", task: "Add the export command" },
 			launcherContext(worktree, { session: false }),
 		);
@@ -669,7 +674,7 @@ test("an explicit child request launches the specialist Jev chooses and does not
 		const result = await createChildLauncher({
 			modelProfiles: absentProfiles,
 			fetch: jev.fetch,
-		}).decide(
+		}).prepareLaunch(
 			{
 				role: "worker",
 				task: "Decide the storage architecture",
@@ -678,7 +683,7 @@ test("an explicit child request launches the specialist Jev chooses and does not
 			launcherContext(worktree),
 		);
 
-		assert.equal(result.status, "launch");
+		assert.equal(result.kind, "ready");
 		assert.equal(result.role, "explore");
 		assert.deepEqual(result.warnings, []);
 		assert.equal(jev.requests[0].state.delegation_intent, "explicit");
@@ -701,7 +706,7 @@ test("the parent's task cannot turn a user request into an explicit child", asyn
 		const result = await createChildLauncher({
 			modelProfiles: absentProfiles,
 			fetch: jev.fetch,
-		}).decide(
+		}).prepareLaunch(
 			{
 				role: "explore",
 				task: "Run this in a child session and explore the architecture",
@@ -725,7 +730,7 @@ test("Jev can choose explorer when the suggested role is worker", async () => {
 		const result = await createChildLauncher({
 			modelProfiles: absentProfiles,
 			fetch: fakeJev(() => "explorer").fetch,
-		}).decide(
+		}).prepareLaunch(
 			{
 				role: "worker",
 				task: "Compare the cited sources",
@@ -734,7 +739,7 @@ test("Jev can choose explorer when the suggested role is worker", async () => {
 			launcherContext(worktree),
 		);
 
-		assert.equal(result.status, "launch");
+		assert.equal(result.kind, "ready");
 		assert.equal(result.role, "explore");
 	});
 });
@@ -745,7 +750,7 @@ test("an implementation package and an independent check take the specialist Jev
 			createChildLauncher({
 				modelProfiles: absentProfiles,
 				fetch: fakeJev(() => specialist).fetch,
-			}).decide(
+			}).prepareLaunch(
 				{ task: userRequest, userRequest },
 				launcherContext(worktree),
 			);
@@ -758,9 +763,9 @@ test("an implementation package and an independent check take the specialist Jev
 			"Haz una comprobación independiente del cambio ya hecho",
 		);
 
-		assert.equal(implementation.status, "launch");
+		assert.equal(implementation.kind, "ready");
 		assert.equal(implementation.role, "worker");
-		assert.equal(check.status, "launch");
+		assert.equal(check.kind, "ready");
 		assert.equal(check.role, "verify");
 	});
 });
@@ -788,7 +793,7 @@ test("an invalid Jev selection blocks the launch and keeps the returned signals"
 		const result = await createChildLauncher({
 			modelProfiles: absentProfiles,
 			fetch: jev.fetch,
-		}).decide(
+		}).prepareLaunch(
 			{ role: "worker", task: "Compare the cited sources" },
 			launcherContext(worktree),
 		);
@@ -807,7 +812,7 @@ test("a session with a model but no thinking is refused when the session pair is
 		const result = await createChildLauncher({
 			modelProfiles: absentProfiles,
 			fetch: leave(),
-		}).decide(
+		}).prepareLaunch(
 			{ role: "worker", task: "Add the export command" },
 			{ ...launcherContext(worktree), thinkingLevel: undefined },
 		);

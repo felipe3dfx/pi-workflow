@@ -11,7 +11,6 @@ import {
 import type {
 	ExtensionContext,
 	ToolCallEvent,
-	ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent";
 
 import { latestUserRequest } from "./child-sessions.ts";
@@ -135,17 +134,28 @@ type GateContext = LauncherContext & {
 	sessionManager?: Pick<ExtensionContext["sessionManager"], "getBranch">;
 };
 
-type Verdict =
+type Assessment =
 	| { kind: "launch"; role: Role; jev?: JevResult; skill?: string }
-	| { kind: "stay"; refusal: Refusal }
-	| { kind: "decide"; refusal: Refusal }
-	| { kind: "blocked"; refusal: Refusal };
+	| { kind: "stay" | "decide" | "blocked"; reason: string; jev?: JevResult };
 
-type Refusal = {
-	status: "refused";
+type Outcome = {
+	kind: "stay" | "decide" | "blocked" | "refused";
 	warning: string;
 	reason: string;
 	jev?: JevResult;
+};
+
+type Ready = {
+	kind: "ready";
+	role: Role;
+	contract: Contract;
+	task: string;
+	worktree: string;
+	warnings: string[];
+	model: string;
+	thinking: ModelThinkingLevel;
+	jev?: JevResult;
+	skill?: string;
 };
 
 type Pair = { model: string; thinking: ModelThinkingLevel };
@@ -154,11 +164,24 @@ function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
-const refused = (reason: string): Refusal => ({
-	status: "refused",
-	warning: "Launch refused. No child was launched.",
-	reason,
-});
+const warningFor = {
+	stay: "The work stays in this session. No child was launched.",
+	decide: "Ask the user one question and wait. No child was launched.",
+	blocked: "Launch blocked. No child was launched.",
+	refused: "Launch refused. No child was launched.",
+} as const;
+
+function outcome(
+	kind: keyof typeof warningFor,
+	reason: string,
+	jev?: JevResult,
+): Outcome {
+	return { kind, warning: warningFor[kind], reason, ...(jev ? { jev } : {}) };
+}
+
+function show(assessment: Exclude<Assessment, { kind: "launch" }>): Outcome {
+	return outcome(assessment.kind, assessment.reason, assessment.jev);
+}
 
 function isRole(value: string): value is Role {
 	return (roles as readonly string[]).includes(value);
@@ -177,8 +200,9 @@ function parseContract(text: string): Contract {
 
 const execFileAsync = promisify(execFile);
 
-async function gitRoot(worktree: string): Promise<string | Refusal> {
-	const invalid = refused(
+async function gitRoot(worktree: string): Promise<string | Outcome> {
+	const invalid = outcome(
+		"refused",
 		`${worktree} is not a valid worktree: it must be an existing Git root.`,
 	);
 	try {
@@ -194,44 +218,19 @@ async function gitRoot(worktree: string): Promise<string | Refusal> {
 	}
 }
 
-const stayWarning = "The work stays in this session. No child was launched.";
-const decideWarning =
-	"Ask the user one question and wait. No child was launched.";
-const blockedWarning = "Launch blocked. No child was launched.";
-
-const stays = (reason: string, jev?: JevResult): Refusal => ({
-	status: "refused",
-	warning: stayWarning,
-	reason,
-	...(jev ? { jev } : {}),
-});
-
-const decides = (reason: string, jev?: JevResult): Refusal => ({
-	status: "refused",
-	warning: decideWarning,
-	reason,
-	...(jev ? { jev } : {}),
-});
-
-const blocked = (reason: string, jev?: JevResult): Refusal => ({
-	status: "refused",
-	warning: blockedWarning,
-	reason,
-	...(jev ? { jev } : {}),
-});
-
-function skillJudgment(
-	userRequest: string | undefined,
-): { role: Role; skill: string } | Refusal | undefined {
+function skillJudgment(userRequest: string | undefined): Assessment | undefined {
 	const skill = matchedSkill(userRequest);
 	if (!skill) return undefined;
 	if (
 		skill.destination === "stay" ||
 		(skill.destination === "approval" && !approval.test(userRequest ?? ""))
 	) {
-		return stays(`The ${skill.name} skill keeps this work in the parent.`);
+		return {
+			kind: "stay",
+			reason: `The ${skill.name} skill keeps this work in the parent.`,
+		};
 	}
-	return { role: skill.role, skill: skill.name };
+	return { kind: "launch", role: skill.role, skill: skill.name };
 }
 
 const gatedTools = new Set([
@@ -305,9 +304,9 @@ function choiceIn<T extends string>(
 	return answer !== undefined && (allowed as readonly string[]).includes(answer.choice);
 }
 
-function sessionPair(ctx: LauncherContext): Pair | Refusal {
+function sessionPair(ctx: LauncherContext): Pair | Outcome {
 	if (!ctx.model || !ctx.thinkingLevel) {
-		return refused("The session has no model and thinking to use.");
+		return outcome("refused", "The session has no model and thinking to use.");
 	}
 	return {
 		model: `${ctx.model.provider}/${ctx.model.id}`,
@@ -319,7 +318,7 @@ function profilePair(
 	role: Role,
 	profiles: ModelProfilesLoad,
 	ctx: LauncherContext,
-): Pair | Refusal {
+): Pair | Outcome {
 	if (profiles.status !== "loaded") return sessionPair(ctx);
 	const { active } = profiles.profiles;
 	const specialist = specialistByRole[role];
@@ -332,10 +331,14 @@ function profilePair(
 			(candidate) => `${candidate.provider}/${candidate.id}` === entry.model,
 		);
 	if (!found) {
-		return refused(`${setting}, but that model is not available in Pi.`);
+		return outcome(
+			"refused",
+			`${setting}, but that model is not available in Pi.`,
+		);
 	}
 	if (!getSupportedThinkingLevels(found).includes(entry.thinking)) {
-		return refused(
+		return outcome(
+			"refused",
 			`${setting}, but that model does not support thinking ${entry.thinking}.`,
 		);
 	}
@@ -346,12 +349,13 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 	const contractsDirectory =
 		options.contractsDirectory ?? defaultContractsDirectory;
 
-	function readContract(role: Role): Contract | Refusal {
+	function readContract(role: Role): Contract | Outcome {
 		const path = join(contractsDirectory, `${role}.md`);
 		try {
 			return parseContract(readFileSync(path, "utf8"));
 		} catch (error) {
-			return refused(
+			return outcome(
+				"refused",
 				`Unable to read the contract for ${role} at ${path}: ${errorMessage(error)}`,
 			);
 		}
@@ -360,7 +364,7 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 	async function judge(
 		request: LaunchRequest,
 		ctx: LauncherContext,
-	): Promise<{ role: Role; jev?: JevResult; skill?: string } | Refusal> {
+	): Promise<Assessment> {
 		const routed = skillJudgment(request.userRequest);
 		if (routed) return routed;
 		const intent = delegationIntent(request.userRequest);
@@ -399,7 +403,10 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			}
 			jev = await askJev(apiKey, state, questions, options.fetch);
 		} catch (error) {
-			return blocked(`Jev did not answer: ${errorMessage(error)}`);
+			return {
+				kind: "blocked",
+				reason: `Jev did not answer: ${errorMessage(error)}`,
+			};
 		}
 		const specialist = jev.answers.specialist;
 		const destination = jev.answers.destination;
@@ -408,46 +415,30 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			(intent === "optional" &&
 				!choiceIn(destination, ["decide", "stay", "leave"] as const))
 		) {
-			return blocked("Jev returned an invalid selection.", jev);
+			return { kind: "blocked", reason: "Jev returned an invalid selection.", jev };
 		}
 		if (intent === "optional" && destination?.choice === "decide") {
-			return decides("Jev answered that a decision is still open.", jev);
-		}
-		if (intent === "optional" && destination?.choice === "stay") {
-			return stays("Jev answered that the work stays.", jev);
-		}
-		return { role: roleBySpecialist[specialist.choice], jev };
-	}
-
-	function toVerdict(
-		judgment: { role: Role; jev?: JevResult; skill?: string } | Refusal,
-	): Verdict {
-		if (!("status" in judgment)) {
 			return {
-				kind: "launch",
-				role: judgment.role,
-				...(judgment.jev ? { jev: judgment.jev } : {}),
-				...(judgment.skill ? { skill: judgment.skill } : {}),
+				kind: "decide",
+				reason: "Jev answered that a decision is still open.",
+				jev,
 			};
 		}
-		if (judgment.warning === stayWarning) {
-			return { kind: "stay", refusal: judgment };
+		if (intent === "optional" && destination?.choice === "stay") {
+			return { kind: "stay", reason: "Jev answered that the work stays.", jev };
 		}
-		if (judgment.warning === decideWarning) {
-			return { kind: "decide", refusal: judgment };
-		}
-		return { kind: "blocked", refusal: judgment };
+		return { kind: "launch", role: roleBySpecialist[specialist.choice], jev };
 	}
 
-	let turn: { userRequest: string; pending: Promise<Verdict> } | undefined;
+	let turn: { userRequest: string; pending: Promise<Assessment> } | undefined;
 
 	function verdictFor(
 		request: LaunchRequest,
 		ctx: LauncherContext,
-	): Promise<Verdict> {
+	): Promise<Assessment> {
 		const userRequest = request.userRequest;
 		if (userRequest && turn?.userRequest === userRequest) return turn.pending;
-		const pending = judge(request, ctx).then(toVerdict);
+		const pending = judge(request, ctx);
 		if (userRequest) turn = { userRequest, pending };
 		return pending;
 	}
@@ -459,58 +450,61 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 	async function gateToolCall(
 		event: ToolCallEvent,
 		ctx: GateContext,
-	): Promise<ToolCallEventResult | undefined> {
-		if (!gatedTool(event, ctx.cwd)) return undefined;
+	): Promise<{ allow: true } | { allow: false; reason: string }> {
+		if (!gatedTool(event, ctx.cwd)) return { allow: true };
 		const userRequest = latestUserRequest(ctx.sessionManager?.getBranch());
-		if (!userRequest) return undefined;
+		if (!userRequest) return { allow: true };
 		const verdict = await verdictFor({ task: userRequest, userRequest }, ctx);
-		if (verdict.kind === "stay") return undefined;
+		if (verdict.kind === "stay") return { allow: true };
 		if (verdict.kind !== "launch") {
-			return {
-				block: true,
-				reason: `${verdict.refusal.warning}\n${verdict.refusal.reason}`,
-			};
+			const shown = show(verdict);
+			return { allow: false, reason: `${shown.warning}\n${shown.reason}` };
 		}
 		const selected = verdict.skill
 			? `The ${verdict.skill} skill selected the ${verdict.role} role.`
 			: `Jev selected the ${verdict.role} role.`;
-		return {
-			block: true,
-			reason: `Call spawn_child. ${selected}`,
-		};
+		return { allow: false, reason: `Call spawn_child. ${selected}` };
 	}
 
 	function classify(request: LaunchRequest, ctx: LauncherContext) {
-		return verdictFor(request, ctx);
+		return verdictFor(request, ctx).then((assessment) =>
+			assessment.kind === "launch" ? assessment : show(assessment),
+		);
 	}
 
-	async function decide(request: LaunchRequest, ctx: LauncherContext) {
+	async function prepareLaunch(
+		request: LaunchRequest,
+		ctx: LauncherContext,
+	): Promise<Ready | Outcome> {
 		if (request.role !== undefined && !isRole(request.role)) {
-			return refused(`unknown role ${request.role}; expected ${roles.join(", ")}`);
+			return outcome(
+				"refused",
+				`unknown role ${request.role}; expected ${roles.join(", ")}`,
+			);
 		}
 		const profiles = options.modelProfiles.load();
-		if (profiles.status === "refused") return refused(profiles.reason);
+		if (profiles.status === "refused") return outcome("refused", profiles.reason);
 		const worktree = await gitRoot(resolve(ctx.cwd, request.worktree ?? "."));
 		if (typeof worktree !== "string") return worktree;
 		const verdict = await verdictFor(request, ctx);
-		if (verdict.kind !== "launch") return verdict.refusal;
+		if (verdict.kind !== "launch") return show(verdict);
 		const contract = readContract(verdict.role);
 		const jev = verdict.jev ? { jev: verdict.jev } : {};
-		if ("status" in contract) return { ...contract, ...jev };
+		if ("kind" in contract) return { ...contract, ...jev };
 		const pair = profilePair(verdict.role, profiles, ctx);
-		if ("status" in pair) return { ...pair, ...jev };
+		if ("kind" in pair) return { ...pair, ...jev };
 		return {
-			status: "launch" as const,
+			kind: "ready",
 			role: verdict.role,
 			contract,
 			task: request.task,
 			worktree,
-			warnings: [] as string[],
+			warnings: [],
 			model: pair.model,
 			thinking: pair.thinking,
 			...jev,
 			...(verdict.skill ? { skill: verdict.skill } : {}),
 		};
 	}
-	return { decide, beginTurn, gateToolCall, classify };
+	return { prepareLaunch, beginTurn, gateToolCall, classify };
 }
