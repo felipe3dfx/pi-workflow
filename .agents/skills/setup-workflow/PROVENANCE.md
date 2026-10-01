@@ -64,13 +64,15 @@ SOFTWARE.
 
 2026-09-21, from `humanlayer/skills` `plugins/show-me/skills/show-me` at commit `bba9d13ab34f0a87f1cc33df4dd196372393ddfc`.
 
+2026-10-01, the glossary rename, following upstream `mattpocock/skills` commit `e484a8095543718ced436b9b49a8160ed4554000`.
+
 ## Material used
 
 The setup run sequence and the domain-document and issue-tracker playbook formats from `SKILL.md`, `domain.md`, and the GitHub, GitLab, and local Markdown issue-tracker templates. The three-section pull-request body template and its section guidance from `skills/in-progress/pr/SKILL.md`, whose section shape that record credits to Dex Horthy's `show-me` in `humanlayer/skills`.
 
 ## Modifications
 
-Grupo Ilao converted the source setup into an agent-agnostic workflow-discovery skill, added Linear, removed triage labels and provider-specific execution requirements, and added idempotent drift handling, distributed capability states, branch proposals, quality, and pull-request playbooks. The pull-request body derives from `skills/in-progress/pr`, condensed to the fixed three-section contract `assets/pull-requests.md` ships and extended with per-section fill guidance.
+Grupo Ilao converted the source setup into an agent-agnostic workflow-discovery skill, added Linear, removed triage labels and provider-specific execution requirements, and added idempotent drift handling, distributed capability states, branch proposals, quality, and pull-request playbooks. The pull-request body derives from `skills/in-progress/pr`, condensed to the fixed three-section contract `assets/pull-requests.md` ships and extended with per-section fill guidance. Following upstream `mattpocock/skills` commit `e484a8095543718ced436b9b49a8160ed4554000`, the domain playbook and validator use `GLOSSARY.md` and `GLOSSARY-MAP.md`; a root file under a retired name blocks and is reported as drift instead of being adopted.
 
 ## Approval
 

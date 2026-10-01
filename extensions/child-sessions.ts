@@ -826,7 +826,7 @@ export function createSpawnChildTool(
 		promptGuidelines: [
 			"Pass the task and, when the user named one, the suggested role (explore, worker, or verify). The harness reads the user message. A named engineering skill selects the specialist. Otherwise Jev does.",
 			"A refusal or a queued id is not a completed result and is not retried.",
-			"The parent asks once per user turn before read, grep, find, ls, edit, write, bash, powershell, or codegraph query and explore. A block that names a role means call spawn_child and use that role. A block that says to ask the user one question means ask that one question and wait. Reads of AGENTS.md, CONTEXT.md, and one docs/agents markdown file stay available, and so does codegraph init.",
+			"The parent asks once per user turn before read, grep, find, ls, edit, write, bash, powershell, or codegraph query and explore. A block that names a role means call spawn_child and use that role. A block that says to ask the user one question means ask that one question and wait. Reads of AGENTS.md, GLOSSARY.md, and one docs/agents markdown file stay available, and so does codegraph init.",
 			"Do not declare the work finished unless the child result contains status, files_changed, validation, and left_undone.",
 		],
 		parameters: spawnChildParameters,

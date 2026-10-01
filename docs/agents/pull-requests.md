@@ -2,7 +2,20 @@
 
 ## Commit Structure
 
-Create commits according to `conventional commits`. A pull request may carry as many commits as needed. Publishing a pull request never closes or transitions the tracker ticket; closing it stays a separate human decision.
+Create commits in English with this template. A pull request may carry as many commits as needed. Publishing a pull request never closes or transitions the tracker ticket; closing it stays a separate human decision.
+
+```text
+<type>(<scope>): <summary>
+
+<body stating why the change was made>
+
+Refs: <ticket identifier>
+```
+
+- `type` is one of feat, fix, refactor, test, docs, chore; the summary is in the imperative.
+- The pull request title is in English: the commit header followed by the ticket identifier in parentheses, as in `feat(renewals): add premium calculation (AUT-103)`.
+- The ticket is referenced only by the branch name and the pull request title, never with a closing keyword.
+- Commits and pull requests carry no attribution trailer or line naming an AI agent, model, or tool.
 
 Commit capability:
 
@@ -18,10 +31,10 @@ Commit capability:
 
 Use `GitHub` and create a pull request with:
 
-- Source and proposed destination: `main`
+- Source and proposed destination: the source is the child ticket branch; the proposed destination is the parent integration branch, or the production base for a parent integration branch.
 - Body: the fixed template below; add no other section.
 - Linked ticket and required evidence: the pull request cites the tracker ticket identifier, and how evidence returns to the ticket belongs to `issue-tracker.md`.
-- Reviewers, labels, and drafts: open the pull request ready for review, with no labels and no reviewers. Labels and reviewers remain a manual human process.
+- Reviewers, labels, and drafts: open the pull request as a draft with no labels and no reviewers. Ready-for-review, labels, and reviewers are a manual human process.
 
 A missing or unresolved required rule is a blocker for that external effect; do not invent it.
 

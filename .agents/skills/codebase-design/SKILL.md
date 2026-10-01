@@ -18,7 +18,7 @@ The vocabulary never yields. The terms below are the shared language, and a proj
 
 A concrete recommendation does yield. The consumer's architecture rules, ADRs, coding standards, and known system boundaries take precedence over any suggestion made here, and the code in this document illustrates a concept rather than prescribing style. When a recommendation contradicts a recorded decision, surface the contradiction instead of overriding it silently:
 
-> _Contradicts ADR-0007 (event-sourced orders), but worth reopening because…_
+> _Contradicts ADR-NNNN (event-sourced orders), but worth reopening because…_
 
 ## Glossary
 
@@ -63,6 +63,8 @@ Use these terms exactly: don't substitute "component," "service," "API," or "bou
 │  Thin Implementation            │  ← Just passes through
 └─────────────────────────────────┘
 ```
+
+When designing or reusing an interface, preserve the domain semantics its callers rely on; do not equate surface similarity with equivalent meaning.
 
 When designing an interface, ask:
 

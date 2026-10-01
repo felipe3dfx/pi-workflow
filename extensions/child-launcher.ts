@@ -268,7 +268,7 @@ function authorityRead(path: string | undefined, cwd: string): boolean {
 	if (!path) return false;
 	const rel = withinCwd(path, cwd);
 	if (rel === undefined) return false;
-	if (rel === "AGENTS.md" || rel === "CONTEXT.md") return true;
+	if (rel === "AGENTS.md" || rel === "GLOSSARY.md") return true;
 	const parts = rel.split(sep);
 	const name = parts[2];
 	return (
