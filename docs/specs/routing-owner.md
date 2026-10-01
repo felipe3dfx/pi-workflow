@@ -20,7 +20,7 @@ The seam is the routing module behind the extension adapter. Callers see the sto
 
 - As the operator, I start with Jev routing off, and my choice remains until I change it.
 - As the operator, I turn Jev routing on or off from the existing settings list.
-- As the operator, I can run repository-state commands in the parent while routing is off.
+- As the operator, I can run `git` and `gh` in the parent while routing is off.
 - As the operator, I am not blocked because a skill name appeared in my message.
 
 ## Implementation decisions
@@ -35,7 +35,7 @@ The settings command opens the existing settings list. The row shows the current
 
 ### Off
 
-Jev is not called. Gated parent tools run. Failing to delegate does not block them. The parent names the child role on launch. `explore` is read-only mapping. `worker` is implementation or command execution. `verify` is read-only verification. A launch with no role does not invent `worker` and does not launch. A named role may launch. Commands that read repository state, including `git` and `gh`, stay in the parent. The explore contract still has no shell.
+Jev is not called. Gated parent tools run. Failing to delegate does not block them. The parent names the child role on launch. `explore` is read-only mapping. `worker` is implementation or command execution. `verify` is read-only verification. A launch with no role does not invent `worker` and does not launch. A named role may launch. Invocations of `git` and `gh` are the repository-state commands. While routing is off they stay in the parent. A named role does not move them to a child. The explore contract still has no shell.
 
 ### On
 
@@ -55,7 +55,9 @@ An engineering skill name does not select a destination or a Specialist. The har
 
 The explore child does not run commands. A tool result that did not run is not invented.
 
-Repository-state commands stay in the parent only while routing is off. While routing is on, Jev may leave that work to a Specialist. That does not give the explore contract a shell.
+The gated parent tools are `read`, `grep`, `find`, `ls`, `edit`, `write`, `bash`, `powershell`, and `codegraph` `query` or `explore`.
+
+Invocations of `git` and `gh` stay in the parent only while routing is off. A named role does not move them to a child while routing is off. While routing is on, Jev may leave that work to a Specialist. That does not give the explore contract a shell.
 
 ## Testing decisions
 
@@ -63,7 +65,7 @@ Tests cross the routing seam and the settings list, not private helpers.
 
 - A missing choice document is off and does not call Jev.
 - Changing the settings row to on persists across a new process. Restart does not reset it. The model profiles document is unchanged.
-- While off, a gated parent tool runs, including a repository-state command. A launch with no role does not launch and does not invent `worker`. A named role may launch. Jev is not called.
+- While off, a gated parent tool runs. Invocations of `git` and `gh` stay in the parent. A named role does not move them to a child. A launch with no role does not launch and does not invent `worker`. A named role may launch. Jev is not called.
 - While on, `stay` lets the next gated tool run. `decide` blocks it and does not say to launch. `leave` names the Specialist Jev chose and does not let the parent tool run.
 - An explicit child request while on does not ask Jev for the destination and still asks for the Specialist.
 - A skill name in the user message does not change the destination or the Specialist.
