@@ -47,7 +47,7 @@ An explicit request in the latest user message for a child, subagent, or delegat
 
 One verdict is kept for one user message. A new user message asks again. Starting a turn does not by itself discard the verdict for the same message.
 
-A missing key, a transport or parse failure, or a label outside the criteria blocks the launch and blocks a gated parent tool. The warning is Launch blocked. The harness does not invent `stay` or `worker`.
+Jev is asked through Pi's classifier model registry, always as `typesafe/jev-latest`. Another provider's Jev is not a substitute. The harness does not keep its own Jev client. A missing key, a missing classifier model, a classification that does not stop normally, or a label outside the criteria blocks the launch and blocks a gated parent tool. The warning is Launch blocked. The harness does not invent `stay` or `worker`.
 
 ### Both modes
 
@@ -55,7 +55,11 @@ An engineering skill name does not select a destination or a Specialist. The har
 
 The explore child does not run commands. A tool result that did not run is not invented.
 
-The gated parent tools are `read`, `grep`, `find`, `ls`, `edit`, `write`, `bash`, `powershell`, and `codegraph` `query` or `explore`.
+The gated parent tools are `read`, `grep`, `find`, `ls`, `edit`, `write`, `bash`, `powershell`, and `codegraph` `query` or `explore`. A gated tool called from a `codemode` script is gated like a direct call. `codemode` itself is not gated.
+
+This contract owns the destination and the Specialist. It does not choose a model. The parent model never changes. The model profile chooses the child's model, and a profile entry may name any model in Pi's catalog, including a virtual model.
+
+The child session runs in the parent process through the Pi SDK.
 
 Invocations of `git` and `gh` stay in the parent only while routing is off. A named role does not move them to a child while routing is off. While routing is on, Jev may leave that work to a Specialist. That does not give the explore contract a shell.
 
@@ -70,12 +74,13 @@ Tests cross the routing seam and the settings list, not private helpers.
 - An explicit child request while on does not ask Jev for the destination and still asks for the Specialist.
 - A skill name in the user message does not change the destination or the Specialist.
 - The same user message reuses one verdict. A different message asks again.
-- A missing key while on is Launch blocked. A missing key while off is not.
+- A missing key while on is Launch blocked. A missing key while off is not. A classification that does not stop normally while on is Launch blocked.
+- A gated tool called from a `codemode` script follows the same verdict as a direct call.
 - The explore contract still has no shell. A result does not claim a command ran unless that output is present.
 
 ## Out of scope
 
-Giving the explore contract a shell. Putting the choice inside the model profiles document. Using the TypeSafe key as the switch. Detecting a "do not delegate" phrase. Claiming compatibility with another product's orchestration. Accepting ADR 0008 by the presence of its file. Changing the historical delegation spec's READY status.
+Giving the explore contract a shell. Putting the choice inside the model profiles document. Using the TypeSafe key as the switch. Detecting a "do not delegate" phrase. Claiming compatibility with another product's orchestration. Accepting ADR 0008 by the presence of its file. Changing the historical delegation spec's READY status. Choosing the parent's model per turn, including a Pi virtual model that consults Jev. Shipping a pi-workflow virtual model or a per-request router for children. Running a child as a separate `pi` process.
 
 ## Prototype
 
@@ -91,7 +96,7 @@ The installed switch starts on and does not persist. That behavior is not the co
 
 ## Dependencies
 
-Pi child sessions, the existing settings list, the Pi agent directory that already holds model profiles, and Jev when routing is on. Engineering skill files stay outside this package.
+Pi 1.0 or later, Pi child sessions, the existing settings list, the Pi agent directory that already holds model profiles, and `typesafe/jev-latest` through Pi's classifier model registry when routing is on. Engineering skill files stay outside this package.
 
 ## Feature review
 
