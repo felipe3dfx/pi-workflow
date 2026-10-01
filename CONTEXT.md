@@ -42,9 +42,21 @@ An installed package that overlaps with a harness capability: `@heyhuynhgiabuu/p
 
 A named set of model and thinking assignments, one per specialist, stored in `pi-workflow-models.json` (schema v2) with one profile active. A missing specialist entry inherits the session model.
 
+### Jev
+
+The optional owner of routing for a parent session.
+
+_Avoid_: engineering skill, TypeSafe key
+
+### Jev routing
+
+The persistent choice, stored with the user's Pi configuration, of whether Jev owns routing. It is off until the user turns it on.
+
+_Avoid_: process switch, repository setting
+
 ### Specialist
 
-One of `explorer`, `worker`, or `verifier`. A child's role selects its specialist: `explore` to `explorer`, `worker` to `worker`, `verify` to `verifier`.
+One of `explorer`, `worker`, or `verifier`, mapped from the child roles `explore`, `worker`, and `verify`. The parent names the role while Jev routing is off, and Jev names the specialist while Jev routing is on.
 
 ### Engineering skills
 
