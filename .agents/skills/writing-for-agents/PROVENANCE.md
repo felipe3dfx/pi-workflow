@@ -48,12 +48,12 @@ SOFTWARE.
 
 1. Frontmatter rewritten to this repository's normative shape. The upstream description carries no `Trigger:` prefix and names no vocabulary, so it was rewritten to front-load both; `metadata.author` records this repository's catalog owner, and Matt Pocock is recorded above as the source author.
 2. Added a `Precedence` section: the vocabulary and the levers never yield, while repository policy governs location, frontmatter, licensing, provenance, and the word budget, and decides any specific rule the two disagree on.
-3. Added the exemption claim required by the style guide for a skill that is entirely reference. The upstream body is 1,777 words against a 1,000-word maximum written for instructions a run executes.
+3. The upstream body is 1,777 words against this repository's 1,000-word body maximum, which the validator enforces. Instead of claiming the style guide's all-reference exemption, the body keeps the material every branch needs (context pointers, the two loads, the information hierarchy and progressive disclosure) and discloses the rest behind a pointer list that names the branch for each file: `Steps and completion criteria` and `When to split` moved to `references/STEPS-AND-SPLITTING.md`; `Leading words` with its negation guidance moved to `references/LEADING-WORDS.md`; the co-location and sprawl paragraphs with the `Pruning` list moved to `references/PRUNING.md`. The pointer to `SKILL-MECHANICS.md` joined that list, and its sequence-cut cross-reference was repointed to `STEPS-AND-SPLITTING.md`. Each new file opens with a title and a line naming its branch. The body is now 787 words.
 4. `SKILL-MECHANICS.md` moved to `references/` per this repository's layout, and the two internal links repointed. A title heading was added because the upstream file opens without one and this repository's Markdown gate requires it.
 
 ## Delta completeness
 
-The instructional content is adopted verbatim. Every change above is structural or is repository policy; no lever, definition, or recommendation was altered, added, or removed.
+The instructional content is adopted verbatim. Every change above is structural or is repository policy; moved passages keep their upstream wording, and no lever, definition, or recommendation was altered, added, or removed.
 
 ## Approval
 

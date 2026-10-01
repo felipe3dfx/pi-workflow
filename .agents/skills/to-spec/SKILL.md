@@ -4,7 +4,7 @@ description: "Trigger: synthesize an approved feature definition into an authori
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "1.0"
+  version: "1.1"
   provenance: derived
 ---
 
@@ -24,7 +24,7 @@ If a requirement fails, report each absence or contradiction and return it to `f
 
 Write one complete English technical specification from the approved definition without changing functional decisions. Include the problem, solution, user stories, implementation decisions, testing decisions, out-of-scope behavior, prototype decisions, approved deviations, accepted risks, dependencies and native relationships, and a reference to the final feature-review report.
 
-Use `codebase-design` vocabulary. Propose the highest useful existing seam when a recommendation needs one, but consumer architecture and accepted ADRs govern concrete choices. Specify observable behavior and test decisions, not stale file paths or implementation snippets. Record shared-capability invariants that implementation and ticket slicing must preserve. If synthesis exposes a material ambiguity or contradiction, return it to its owner and require focused reverification by `feature-review` before resuming.
+Use `codebase-design` vocabulary. For every proposed structural decision, state its evidence, reason, and necessity, and label it mandatory or a recommendation. A technical choice is mandatory only when an applicable authority rule, accepted decision, contract, or dependency indispensable to approved behavior requires it; cite the source and necessity. Preserve approved observable behavior and every applicable binding constraint from standards, accepted decisions, consumer contracts, and necessary dependencies; state the source and reason for each mandatory constraint. Include a recommended structural choice only when its evidenced reason shows the need it serves. Propose the highest useful existing seam when useful, but do not turn a design recommendation into an obligation merely by specifying it. If synthesis exposes a material ambiguity or contradiction among binding authorities or against approved behavior, return it to its owner for resolution and require focused reverification by `feature-review` before resuming. Do not resolve an unresolved contradiction by preference or proceed with it. Record shared-capability invariants that implementation and ticket slicing must preserve. Specify observable behavior and test decisions, not stale file paths or implementation snippets.
 
 ## Preparation, Publication and Handoff
 

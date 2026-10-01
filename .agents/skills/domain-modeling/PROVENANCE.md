@@ -4,6 +4,8 @@
 
 <https://github.com/mattpocock/skills/tree/885e2ca4d842d139e9aef4e48d366c63cb1b8013/skills/engineering/domain-modeling>
 
+<https://github.com/mattpocock/skills/tree/d81f3a183412e71a5b1e84ca21bc1a35eea03a60/skills/engineering/domain-modeling>
+
 ## Author or owner
 
 Matt Pocock
@@ -38,13 +40,17 @@ SOFTWARE.
 
 2026-08-25, at commit `885e2ca4d842d139e9aef4e48d366c63cb1b8013`.
 
+2026-10-01, release v1.3 at commit `d81f3a183412e71a5b1e84ca21bc1a35eea03a60`.
+
+2026-10-01, the glossary rename, following upstream `mattpocock/skills` commit `e484a8095543718ced436b9b49a8160ed4554000`.
+
 ## Material used
 
-The activation boundary; terminology challenge, sharpening, scenario, and code-evidence practices; inline glossary updates; glossary constraints; and the three-part ADR offering gate from `SKILL.md`, `CONTEXT-FORMAT.md`, and `ADR-FORMAT.md`.
+The activation boundary; terminology challenge, sharpening, scenario, and code-evidence practices; inline glossary updates; glossary constraints; and the three-part ADR offering gate from `SKILL.md`, `CONTEXT-FORMAT.md`, and `ADR-FORMAT.md`. From `d81f3a183412e71a5b1e84ca21bc1a35eea03a60`, the trigger on writing or editing the glossary or an ADR directly. From `e484a8095543718ced436b9b49a8160ed4554000`, the `GLOSSARY.md` and `GLOSSARY-MAP.md` names and `GLOSSARY-FORMAT.md`.
 
 ## Modifications
 
-Grupo Ilao made authority reading supporting work rather than activation; delegated layout discovery, shell ownership, marker validation, and drift reporting to `setup-workflow`; fixed the validator handoff to the deterministic sibling path `../setup-workflow/scripts/setup_workflow.py`; added fail-closed resolved-contract checks and the fallback glossary region; added glossary evidence, conflict visibility, and impact scope; adopted one root `docs/adr/` namespace instead of Matt's context-local ADR directories; and added the accepted ADR lifecycle, prefix checks, preview, approval, and reporting contracts from ADRs 0009–0011.
+Grupo Ilao made authority reading supporting work rather than activation; delegated layout discovery, shell ownership, marker validation, and drift reporting to `setup-workflow`; fixed the validator handoff to the deterministic sibling path `../setup-workflow/scripts/setup_workflow.py`; added fail-closed resolved-contract checks and the fallback glossary region; added glossary evidence, conflict visibility, and impact scope; adopted one root `docs/adr/` namespace instead of Matt's context-local ADR directories; adopted the upstream `GLOSSARY.md` and `GLOSSARY-MAP.md` names without a path for the retired `CONTEXT.md` and `CONTEXT-MAP.md`; and added the accepted ADR lifecycle, prefix checks, preview, approval, and reporting contracts from ADRs 0009–0011.
 
 ## Approval
 

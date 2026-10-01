@@ -1,47 +1,61 @@
 ---
 name: code-review
-description: "Trigger: review a working diff, branch, or pull request against Standards and Spec. Produce a read-only, draft-only senior-review handoff with normalized findings."
+description: "Trigger: review a ticket's diff inside the implementation loop, or a parent integration branch against its specification. Report Standards, Spec, and Valuable Tests findings side by side."
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "1.0.2"
-  provenance: original
+  version: "2.0.0"
+  provenance: derived
 ---
 
 # Review Code Changes
 
 ## Activation Contract
 
-Review one candidate against applicable Standards and ticket/spec authority. Produce a draft for a senior human reviewer. Remain read-only: inspect evidence and temporary isolated artifacts only; create no external effect.
+Run once per implementation loop, after the build and before critique, in a context other than the implementer's. Review the diff since a fixed point along three axes, each in its own isolated context, and hand the report to `review-critique`.
+
+The fixed point is the ticket's base for a child ticket. For a parent integration branch reviewed against its specification, it is the production base. The diff runs from the merge-base of the fixed point to the current state, committed and uncommitted.
+
+This skill is read-only. It reads the diff, the files around it, and the sources each axis names. It never edits, fixes, comments, commits, or publishes.
 
 ## Decision Gates
 
-Resolve repository/PR identity, target kind, base and head, snapshot, prior-review identity, and evidence freshness. Consume current `scope-audit` evidence without reclassifying units. Reuse it only when `snapshot-version`, target, selected scope, repository, base/current refs, branch, repository status, and every canonically ordered committed/staged/worktree/untracked partition entry (`path`, `change`, `source-path`, `mode`, `diff`) match by deep equality. Refresh it only when missing, incomplete, stale, for another target, or contradicted by the observed snapshot; use replacement evidence only after revalidation. Apply precedence: `blocked` for an inaccessible target, contradictory authorities without governing resolution, or a required capability that is unavailable with no approved degraded path. An unavailable capability is allowed only with an explicitly approved, evidenced degraded path; `incomplete-context` applies only when the target is accessible and required evidence is missing, stale, mismatched, or incomplete. Propagate `scope-audit` status: `blocked` stays blocked and `incomplete-context` stays incomplete until refreshed and revalidated. Return `ready` only after completing the required inventory of the current target and snapshot, ready scope-audit, implementation handoff, authorities, breadcrumbs, and relevant discussion. An empty relevant-discussion inventory is valid when none exists. A missing prior review selects initial mode; only an identified prior review with unverifiable evidence is incomplete.
+- The fixed point does not resolve: **blocked**. Name the ref.
+- The diff is empty: report that there is nothing to review and stop.
+- The ticket, or the specification for a parent integration branch, cannot be read: **blocked**. Name what is missing.
+- The harness cannot provide three isolated contexts: **blocked**. Ask the harness for them; never run two axes in one context, and never run an axis in the reviewer's own context.
 
-Select `initial` when no prior review exists or the caller explicitly requests a review from scratch; otherwise select `re-review`. An initial review examines the complete candidate while attributing every finding to it. A re-review first compares code and relevant discussion with the prior review: when neither changed, stop with zero new findings and state explicitly that nothing changed, nothing new was commented, and the prior review remains valid. When only discussion changed, assess prior findings only and emit zero new findings. When code changed, inspect only the delta from the reviewed snapshot plus necessary context; a defect introduced or exposed by that delta is a normal finding and must cite the exposing delta.
+## Execution Steps
 
-## Execution
+1. Pin the fixed point. Record the fixed point, the current head, the commit list since the fixed point, and whether uncommitted changes are included.
+2. Collect each axis's sources: for Standards, [team standards and smell baseline](references/standards.md) and the repository's `docs/agents/coding-standards.md` when it exists; for Spec, the ticket, or the specification and every child ticket for a parent integration branch; for Valuable Tests, [the valuable-tests rubric](../tdd/references/valuable-tests.md) and the seams agreed before the first test, taken from the implementation handoff or the ticket.
+3. Dispatch each axis to its own context, in parallel when the harness allows. Give each one the fixed point, the head, the commit list, its own sources by path, and its brief below. An axis receives no other axis's sources or findings.
+4. Assemble the report from the three axis reports, verbatim or lightly cleaned.
 
-1. Read Standards, ticket/spec, accepted decisions, scope evidence, implementation handoff, breadcrumbs, candidate context, prior findings, and relevant discussion. Complete this inventory before evaluating findings; if any required authority or evidence is absent, stale, mismatched, or inaccessible, apply the status gate instead of guessing.
-2. Record every prior actionable comment as `resolved`, `accepted-argument`, `unresolved`, or `not-verifiable`. Accept an argument only when it is an explicit response in the PR or a visible tracker decision, with stable reference, author, time, affected unit, and relationship to the comment. Classify a non-requested, non-argued change as `unrequested-change`; assign severity from demonstrated risk.
-3. Normalize each new finding with stable ID, location, claim, exact evidence, impact, severity, confidence, applicable Standard or Spec authority, requested action, and traceability. Include zero findings explicitly.
-4. Write the Output Contract to the handoff file, including target validation, mode, scope evidence, implementation handoff, decisions/ADRs, breadcrumbs, deviations with rationale, findings, prior-comment outcomes, and senior-review context. Answer the human with the short draft only.
-5. Mark the output `draft-only`; do not comment, approve, request changes, change tracker state, commit, create a PR, or publish.
+### Standards brief
 
-## Completion
+Read only the team standards shipped with the skill and the repository's `docs/agents/coding-standards.md` when present; do not mine other repository documents for standards. Report every broken standard and every baseline smell, quoting the hunk, classified as the standards file says.
 
-A human records publication approval separately. A pre-approval draft may be `ready`; `qa-impact` is not required to produce that draft. Any later code change invalidates human approval. After human approval, require `qa-impact` on the approved head and same final snapshot before considering the overall process complete; a missing or mismatched result then yields `incomplete-context`.
+### Spec brief
 
-## Handoff channel
+Report requirements that are missing or partial, behavior the diff adds that the ticket or specification did not ask for, and requirements implemented wrongly. Quote the ticket or specification line for each finding. For a parent integration branch, confirm every child ticket's requirement is present.
 
-Write the Output Contract JSON to `ilao-code-review-handoff.json` inside a new directory in the platform temporary directory for this invocation. Do not write it in the repository, do not name an operating-system path, and do not put the JSON in the human message. The human message states status, review mode, each finding's id, severity, claim, and requested action, or an explicit zero-finding result, the next action, and that handoff path. Both the message and the file must exist before the run is complete. If a later run needs the file and it is gone, regenerate it. Do not block the user and do not print the JSON.
+### Valuable Tests brief
 
-Chat example: "Draft-only. Status ready. Mode initial. F1 high: claim. Requested action: name it. Next: the senior reviewer decides publication. Handoff: the temporary path." The file holds the Output Contract, including nested snapshots. The message does not.
+Apply the rubric to every test the diff adds or changes: tautological tests, structure-sensitive tests, and mocks that hide failure or verify through a side channel. Also report a behavior the diff changes that has no test at its agreed seam, unless a no-valuable-test-seam exception is recorded. Name the failure mode for each finding. A finding is `hard` when a behavior agreed at a seam has no test, or its test cannot fail; every other rubric tell is `judgement`.
 
 ## Output Contract
 
-Write valid JSON to the handoff file, with every key present: `schema-version: "1.0"`, `status`, `draft-only: true`, `target`, `snapshot`, `validation`, `review-mode`, `consumed-scope-audit`, `implementation-handoff`, `breadcrumbs`, `decisions-and-adrs`, `deviations`, `prior-review`, `prior-comment-outcomes`, `findings`, `senior-review-context`, `scope-refresh`, `qa-impact-requirement`, `missing-context`, `invalidation-details`, and `read-only-no-mutation: true`. `target` contains `repository`, `id`, and `kind`; `snapshot` contains `snapshot-version`, `target-id`, `target-kind`, `selected-scope`, `repository-id`, `base-ref`, `current-ref`, `branch`, `repository-status`, and ordered `paths-and-diffs` partitions whose entries contain `path`, `change`, `source-path`, `mode`, and `diff`; `validation` contains `current`, `mismatches`, `unavailable`, and `omitted`; each finding contains stable `id`, `location`, `claim`, `evidence`, `impact`, `severity`, `confidence`, `authority`, `requested-action`, and `traceability`; each prior outcome contains `comment-id`, `outcome`, and evidence, and `accepted-argument` additionally contains a non-null `argument-source` with `kind`, `reference`, `author`, `time`, `unit`, and `relationship`; other outcomes may use `null`.
+Prose, under three headings in this order: `## Standards`, `## Spec`, `## Valuable Tests`. Open with the fixed point, the head, and whether uncommitted changes were included. When one axis runs on its own, return only its own section, with that opening line and its count line.
 
-`consumed-scope-audit` must contain `schema-version: "1.0"`, `status`, `snapshot`, `validation`, `classifications`, `responsibility-surfaces`, `foreign-and-excluded-pre-existing`, `unresolved-units`, `missing-context`, `invalidation-details`, `qa-impact-handoff`, and `read-only-no-mutation: true`. Its `snapshot` uses the exact schema above and must deep-equal `snapshot`; its `status` propagates `blocked` and `incomplete-context`, and `status: ready` is required for a ready review. It must deep-equal the supplied scope-audit as a whole, field for field, including `validation` and `foreign-and-excluded-pre-existing`, and must reject unsupported extra fields. `qa-impact-handoff` contains `handoff-version: "1.0"`, `handoff-state: present`, `snapshot-identity`, `scope-status`, `classifications`, `responsibility-surfaces`, `unresolved-units`, `missing-context`, and `invalidation-details`; `snapshot-identity` uses the exact snapshot schema and must deep-equal `snapshot`, `scope-status` must equal the consumed scope-audit `status`, and its `classifications`, `responsibility-surfaces`, `unresolved-units`, `missing-context`, and `invalidation-details` must each deep-equal the matching `consumed-scope-audit` value.
+Each finding carries:
 
-Keep stable finding IDs across re-reviews, use empty arrays/objects or `null` explicitly, and emit exactly one outcome per prior actionable comment. Use only `ready`, `incomplete-context`, or `blocked` for status.
+- a stable ID: `STD-n`, `SPEC-n`, or `TEST-n`, numbered within its axis; a later review in the same loop continues the numbering and never reuses an ID;
+- `hard` or `judgement`;
+- a repository-relative path with a line in the reviewed version (the head, plus uncommitted changes when included), or the ticket or specification line when the finding is a missing requirement or a missing test at an agreed seam;
+- the claim, in one sentence;
+- the evidence: the quoted hunk, plus the standard, the ticket or specification line, or the rubric failure mode it breaks.
+
+An axis with nothing to report says so in one line, and says why when the diff gave it nothing to review, such as a diff without tests.
+
+Never merge findings across axes, rerank them, or pick a single worst finding. End with one line giving the finding count per axis and the most serious finding within each axis.

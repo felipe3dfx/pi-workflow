@@ -4,7 +4,7 @@ description: "Trigger: develop a feature or fix test-first. Establish behavior-l
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "1.0"
+  version: "1.1"
   provenance: derived
 ---
 
@@ -29,7 +29,9 @@ A documentation-only, purely visual, or configuration-only change may record a n
 
 Work in vertical slices, not a batch of imagined tests followed by implementation. Test the public result, side effect, or state rather than private methods, internal collaborators, call order, or plumbing. Do not hide assertions in stubs or calculate the expected value by the same rule under test. A function-level test is appropriate only where that function owns a durable rule not covered at a more useful seam.
 
-Use the consumer's runner, framework, test layout, fixtures, and nearest useful end-to-end seam. Run focused tests during the loop and record actual commands and results; failures after GREEN return the candidate to implementation until it is functioning. TDD records evidence for the caller's temporary candidate capture and does not publish or commit it.
+Read [valuable tests](references/valuable-tests.md) before writing the first test of a behavior: it is the rubric each test must meet, and the one review grades the tests against.
+
+Use the consumer's runner, framework, test layout, fixtures, and nearest useful end-to-end seam. Run focused tests during the loop and record actual commands and results; failures after GREEN return the candidate to implementation until it is functioning. TDD records evidence for the caller and does not commit or publish.
 
 ## Output Contract
 

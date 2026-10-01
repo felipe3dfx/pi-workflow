@@ -6,12 +6,14 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import io
+import re
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
 SCRIPT = Path(__file__).with_name("setup_workflow.py")
+REAL_ASSETS = SCRIPT.parent.parent / "assets"
 
 
 def case_insensitive_filesystem() -> bool:
@@ -44,6 +46,24 @@ def load_setup_workflow():
 
 ROUTING_START = "<!-- setup-workflow-routing:start -->"
 TARGET_NAMES = ("domain.md", "issue-tracker.md", "pull-requests.md", "quality.md", "workflow.md")
+
+OLD_PULL_REQUEST_PLAYBOOK = """# Pull Request Playbook
+
+## Commit Structure
+
+Create commits according to `Conventional Commits`. A pull request may carry as many commits as needed.
+
+Commit capability:
+
+- state: supported
+- provider: git
+
+## When a Skill Says "Create a Pull Request"
+
+Use `forgejo` and create a pull request with:
+
+- Source and proposed destination: `feature to develop`
+"""
 DOMAIN_AUTHORITY_START = "<!-- domain-modeling:authority:start -->"
 DOMAIN_AUTHORITY_END = "<!-- domain-modeling:authority:end -->"
 ROUTING_BLOCK = """<!-- setup-workflow-routing:start -->
@@ -87,7 +107,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
         )
         (self.assets / "domain.md").write_text(
             "# Domain\n\n- Domain authority: `{{DOMAIN_AUTHORITY_PATH}}`\n"
-            "- Context map: `{{CONTEXT_MAP_PATH}}`\n\n"
+            "- Glossary map: `{{GLOSSARY_MAP_PATH}}`\n\n"
             + DOMAIN_AUTHORITY_START
             + "\nAuthority state: {{DOMAIN_AUTHORITY_STATE}}\n"
             + DOMAIN_AUTHORITY_END
@@ -103,8 +123,9 @@ class SetupWorkflowCliTests(unittest.TestCase):
             "# Quality\n\n{{FOCUSED_VALIDATION_COMMANDS}}\n", encoding="utf-8"
         )
         (self.assets / "pull-requests.md").write_text(
-            "# PRs\n\n{{COMMIT_CONVENTION}}\n", encoding="utf-8"
+            "# PRs\n\n{{PULL_REQUEST_PROVIDER}}\n", encoding="utf-8"
         )
+        (self.assets / "coding-standards.md").write_text("# Coding Standards\n", encoding="utf-8")
         (self.assets / "routing-block.md").write_text(ROUTING_BLOCK, encoding="utf-8")
 
     def write_values(self, name: str, content: str) -> Path:
@@ -115,12 +136,12 @@ class SetupWorkflowCliTests(unittest.TestCase):
     def full_values(self) -> str:
         return (
             "TRACKER_CAPABILITY_STATE = unsupported\n"
-            "CONTEXT_MAP_PATH = none (confirmed absent)\n"
+            "GLOSSARY_MAP_PATH = none (confirmed absent)\n"
             "DOMAIN_AUTHORITY_PATH = docs/agents/domain.md\n"
             "DOMAIN_AUTHORITY_STATE = absent (fallback-required)\n"
             "WORKING_BASE = main\n"
             "FOCUSED_VALIDATION_COMMANDS = <marker>\n"
-            "COMMIT_CONVENTION = Conventional Commits\n"
+            "PULL_REQUEST_PROVIDER = github\n"
         )
 
     def run_script(self, *args: str) -> subprocess.CompletedProcess[str]:
@@ -185,150 +206,152 @@ class SetupWorkflowCliTests(unittest.TestCase):
             arguments += ["--approve", approval]
         return self.run_script(*arguments)
 
-    def run_context_map(self) -> subprocess.CompletedProcess[str]:
-        return self.run_script("context-map", "--repo", str(self.repo))
+    def run_glossary_map(self) -> subprocess.CompletedProcess[str]:
+        return self.run_script("glossary-map", "--repo", str(self.repo))
 
-    def test_context_map_reports_reachable_glossaries_before_root_glossary(self) -> None:
-        (self.repo / "CONTEXT.md").write_text("# Root glossary\n", encoding="utf-8")
+    def test_glossary_map_reports_reachable_glossaries_before_root_glossary(self) -> None:
+        (self.repo / "GLOSSARY.md").write_text("# Root glossary\n", encoding="utf-8")
         ordering = self.repo / "src" / "ordering"
         billing = self.repo / "src" / "billing"
         ordering.mkdir(parents=True)
         billing.mkdir(parents=True)
-        (ordering / "CONTEXT.md").write_text("# Ordering\n", encoding="utf-8")
-        (billing / "CONTEXT.md").write_text("# Billing\n", encoding="utf-8")
-        (self.repo / "CONTEXT-MAP.md").write_text(
-            "# Context Map\n\n## Contexts\n\n"
-            "- [Ordering](./src/ordering/CONTEXT.md) — orders\n"
-            "- [Billing](./src/billing/CONTEXT.md) — billing\n\n"
+        (ordering / "GLOSSARY.md").write_text("# Ordering\n", encoding="utf-8")
+        (billing / "GLOSSARY.md").write_text("# Billing\n", encoding="utf-8")
+        (self.repo / "GLOSSARY-MAP.md").write_text(
+            "# Glossary Map\n\n## Contexts\n\n"
+            "- [Ordering](./src/ordering/GLOSSARY.md) — orders\n"
+            "- [Billing](./src/billing/GLOSSARY.md) — billing\n\n"
             "## Relationships\n\n- **Ordering → Billing**: invoices\n",
             encoding="utf-8",
         )
 
-        result = self.run_context_map()
+        result = self.run_glossary_map()
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(
             result.stdout,
-            "map CONTEXT-MAP.md\n"
-            "context Ordering\tsrc/ordering/CONTEXT.md\n"
-            "context Billing\tsrc/billing/CONTEXT.md\n",
+            "map GLOSSARY-MAP.md\n"
+            "context Ordering\tsrc/ordering/GLOSSARY.md\n"
+            "context Billing\tsrc/billing/GLOSSARY.md\n",
         )
         self.assertNotIn("Root glossary", result.stdout)
 
-    def test_context_map_blocks_zero_entries_without_falling_back_to_root_glossary(self) -> None:
-        (self.repo / "CONTEXT.md").write_text("# Root glossary\n", encoding="utf-8")
-        (self.repo / "CONTEXT-MAP.md").write_text("## Contexts\n", encoding="utf-8")
+    def test_glossary_map_blocks_zero_entries_without_falling_back_to_root_glossary(self) -> None:
+        (self.repo / "GLOSSARY.md").write_text("# Root glossary\n", encoding="utf-8")
+        (self.repo / "GLOSSARY-MAP.md").write_text("## Contexts\n", encoding="utf-8")
 
-        result = self.run_context_map()
+        result = self.run_glossary_map()
 
         self.assertEqual(result.returncode, 1)
         self.assertIn("no contextual glossaries listed", result.stderr)
         self.assertEqual(result.stdout, "")
 
-    def test_context_map_refuses_a_malformed_map_without_falling_back_to_root_glossary(
+    def test_glossary_map_refuses_a_malformed_map_without_falling_back_to_root_glossary(
         self,
     ) -> None:
-        (self.repo / "CONTEXT.md").write_text("# Root glossary\n", encoding="utf-8")
-        (self.repo / "CONTEXT-MAP.md").write_text(
-            "# Context Map\n\n## Contexts\n\n- ordering: src/ordering/CONTEXT.md\n",
+        (self.repo / "GLOSSARY.md").write_text("# Root glossary\n", encoding="utf-8")
+        (self.repo / "GLOSSARY-MAP.md").write_text(
+            "# Glossary Map\n\n## Contexts\n\n- ordering: src/ordering/GLOSSARY.md\n",
             encoding="utf-8",
         )
 
-        result = self.run_context_map()
+        result = self.run_glossary_map()
 
         self.assertEqual(result.returncode, 1)
-        self.assertIn("malformed context map", result.stderr)
+        self.assertIn("malformed glossary map", result.stderr)
         self.assertNotIn("Root glossary", result.stdout)
         self.assertEqual(result.stdout, "")
 
-    def test_context_map_refuses_unreachable_or_outside_glossary_entries(self) -> None:
+    def test_glossary_map_refuses_unreachable_or_outside_glossary_entries(self) -> None:
         outside = self.root / "outside"
         outside.mkdir()
-        (outside / "CONTEXT.md").write_text("# Outside\n", encoding="utf-8")
+        (outside / "GLOSSARY.md").write_text("# Outside\n", encoding="utf-8")
         cases = {
-            "missing": "./src/missing/CONTEXT.md",
-            "outside": "../outside/CONTEXT.md",
+            "missing": "./src/missing/GLOSSARY.md",
+            "outside": "../outside/GLOSSARY.md",
             "not-glossary": "./src/context.txt",
         }
         for name, target in cases.items():
             with self.subTest(name=name):
-                (self.repo / "CONTEXT-MAP.md").write_text(
+                (self.repo / "GLOSSARY-MAP.md").write_text(
                     f"## Contexts\n\n- [Context]({target})\n", encoding="utf-8"
                 )
 
-                result = self.run_context_map()
+                result = self.run_glossary_map()
 
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("refused:", result.stderr)
                 self.assertEqual(result.stdout, "")
 
-    def test_context_map_refuses_control_characters_in_labels(self) -> None:
+    def test_glossary_map_refuses_control_characters_in_labels(self) -> None:
         context = self.repo / "src" / "orders"
         context.mkdir(parents=True)
-        (context / "CONTEXT.md").write_text("# Orders\n", encoding="utf-8")
+        (context / "GLOSSARY.md").write_text("# Orders\n", encoding="utf-8")
         for label in ("Orders\tSales", "Orders\x1fSales", "Orders\x00Sales"):
             with self.subTest(label=label):
-                (self.repo / "CONTEXT-MAP.md").write_text(
-                    f"## Contexts\n\n- [{label}](./src/orders/CONTEXT.md)\n", encoding="utf-8"
+                (self.repo / "GLOSSARY-MAP.md").write_text(
+                    f"## Contexts\n\n- [{label}](./src/orders/GLOSSARY.md)\n", encoding="utf-8"
                 )
 
-                result = self.run_context_map()
+                result = self.run_glossary_map()
 
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("context label contains a control character", result.stderr)
                 self.assertEqual(result.stdout, "")
 
-    def test_context_map_refuses_control_characters_in_targets_before_path_resolution(self) -> None:
+    def test_glossary_map_refuses_control_characters_in_targets_before_path_resolution(
+        self,
+    ) -> None:
         context = self.repo / "src" / "orders"
         context.mkdir(parents=True)
-        (context / "CONTEXT.md").write_text("# Orders\n", encoding="utf-8")
-        target = "./src/orders/CONTEXT\x00.md"
-        (self.repo / "CONTEXT-MAP.md").write_text(
+        (context / "GLOSSARY.md").write_text("# Orders\n", encoding="utf-8")
+        target = "./src/orders/GLOSSARY\x00.md"
+        (self.repo / "GLOSSARY-MAP.md").write_text(
             f"## Contexts\n\n- [Orders]({target})\n", encoding="utf-8"
         )
 
-        result = self.run_context_map()
+        result = self.run_glossary_map()
 
         self.assertEqual(result.returncode, 1)
         self.assertIn("glossary target contains a control character", result.stderr)
         self.assertEqual(result.stdout, "")
 
-    def test_context_map_refuses_ambiguous_labels_and_glossaries(self) -> None:
+    def test_glossary_map_refuses_ambiguous_labels_and_glossaries(self) -> None:
         context = self.repo / "src" / "orders"
         context.mkdir(parents=True)
-        (context / "CONTEXT.md").write_text("# Orders\n", encoding="utf-8")
+        (context / "GLOSSARY.md").write_text("# Orders\n", encoding="utf-8")
         cases = {
-            "labels": "- [Orders](./src/orders/CONTEXT.md)\n- [orders](./src/orders/CONTEXT.md)\n",
-            "glossaries": "- [Orders](./src/orders/CONTEXT.md)\n- [Sales](./src/orders/./CONTEXT.md)\n",
+            "labels": "- [Orders](./src/orders/GLOSSARY.md)\n- [orders](./src/orders/GLOSSARY.md)\n",
+            "glossaries": "- [Orders](./src/orders/GLOSSARY.md)\n- [Sales](./src/orders/./GLOSSARY.md)\n",
         }
         for name, entries in cases.items():
             with self.subTest(name=name):
-                (self.repo / "CONTEXT-MAP.md").write_text(
+                (self.repo / "GLOSSARY-MAP.md").write_text(
                     "## Contexts\n\n" + entries, encoding="utf-8"
                 )
 
-                result = self.run_context_map()
+                result = self.run_glossary_map()
 
                 self.assertEqual(result.returncode, 1)
-                self.assertIn("ambiguous context map", result.stderr)
+                self.assertIn("ambiguous glossary map", result.stderr)
                 self.assertEqual(result.stdout, "")
 
     @unittest.skipIf(
         FOLDS_CASE,
         "this filesystem folds case, so two case-fold-equivalent names cannot coexist; "
         "the same refusal is covered by "
-        "test_context_map_refuses_several_root_map_candidates",
+        "test_glossary_map_refuses_several_root_map_candidates",
     )
-    def test_context_map_refuses_casefold_ambiguous_root_map_names(self) -> None:
-        (self.repo / "CONTEXT-MAP.md").write_text("## Contexts\n", encoding="utf-8")
-        (self.repo / "context-map.md").write_text("## Contexts\n", encoding="utf-8")
+    def test_glossary_map_refuses_casefold_ambiguous_root_map_names(self) -> None:
+        (self.repo / "GLOSSARY-MAP.md").write_text("## Contexts\n", encoding="utf-8")
+        (self.repo / "glossary-map.md").write_text("## Contexts\n", encoding="utf-8")
 
-        result = self.run_context_map()
+        result = self.run_glossary_map()
 
         self.assertEqual(result.returncode, 1)
-        self.assertIn("ambiguous root context map names", result.stderr)
+        self.assertIn("ambiguous root glossary map names", result.stderr)
 
-    def test_context_map_refuses_several_root_map_candidates(self) -> None:
+    def test_glossary_map_refuses_several_root_map_candidates(self) -> None:
         """The same refusal, decided in process, so no filesystem can hide it.
 
         The test above builds the ambiguity out of two real files and therefore only
@@ -336,64 +359,111 @@ class SetupWorkflowCliTests(unittest.TestCase):
         candidate list directly, so the decision is covered everywhere.
         """
         module = load_setup_workflow()
-        first = self.repo / "CONTEXT-MAP.md"
-        second = self.repo / "CONTEXT-MAP.other.md"
+        first = self.repo / "GLOSSARY-MAP.md"
+        second = self.repo / "GLOSSARY-MAP.other.md"
         first.write_text("## Contexts\n", encoding="utf-8")
         second.write_text("## Contexts\n", encoding="utf-8")
 
-        original = module.context_map_candidates
-        module.context_map_candidates = lambda repo: [first, second]
+        original = module.glossary_map_candidates
+        module.glossary_map_candidates = lambda repo: [first, second]
         captured = io.StringIO()
         try:
             with contextlib.redirect_stderr(captured), self.assertRaises(SystemExit) as raised:
-                module.cmd_context_map(self.repo)
+                module.cmd_glossary_map(self.repo)
         finally:
-            module.context_map_candidates = original
+            module.glossary_map_candidates = original
 
         self.assertEqual(raised.exception.code, 1)
-        self.assertIn("ambiguous root context map names", captured.getvalue())
+        self.assertIn("ambiguous root glossary map names", captured.getvalue())
 
-    def test_context_map_refuses_a_symlinked_glossary_outside_the_repository(self) -> None:
+    def test_glossary_map_refuses_a_symlinked_glossary_outside_the_repository(self) -> None:
         outside = self.root / "outside"
         outside.mkdir()
-        (outside / "CONTEXT.md").write_text("# Outside\n", encoding="utf-8")
+        (outside / "GLOSSARY.md").write_text("# Outside\n", encoding="utf-8")
         source = self.repo / "src"
         source.mkdir()
         (source / "context").symlink_to(outside, target_is_directory=True)
-        (self.repo / "CONTEXT-MAP.md").write_text(
-            "## Contexts\n\n- [Outside](./src/context/CONTEXT.md)\n", encoding="utf-8"
+        (self.repo / "GLOSSARY-MAP.md").write_text(
+            "## Contexts\n\n- [Outside](./src/context/GLOSSARY.md)\n", encoding="utf-8"
         )
 
-        result = self.run_context_map()
+        result = self.run_glossary_map()
 
         self.assertEqual(result.returncode, 1)
         self.assertIn("resolves outside the repository", result.stderr)
         self.assertEqual(result.stdout, "")
 
-    def test_context_map_refuses_invalid_utf8(self) -> None:
-        (self.repo / "CONTEXT-MAP.md").write_bytes(b"## Contexts\n\xff")
+    def test_glossary_map_refuses_invalid_utf8(self) -> None:
+        (self.repo / "GLOSSARY-MAP.md").write_bytes(b"## Contexts\n\xff")
 
-        result = self.run_context_map()
+        result = self.run_glossary_map()
 
         self.assertEqual(result.returncode, 1)
         self.assertIn("expected UTF-8 text", result.stderr)
         self.assertEqual(result.stdout, "")
 
+    def test_glossary_map_blocks_a_retired_root_file_with_or_without_its_replacement(self) -> None:
+        cases = {
+            "context-alone": (["CONTEXT.md"], "retired root CONTEXT.md: rename it to GLOSSARY.md"),
+            "context-map-alone": (
+                ["CONTEXT-MAP.md"],
+                "retired root CONTEXT-MAP.md: rename it to GLOSSARY-MAP.md",
+            ),
+            "context-casefolded": (
+                ["context.md"],
+                "retired root context.md: rename it to GLOSSARY.md",
+            ),
+            "context-with-glossary": (
+                ["CONTEXT.md", "GLOSSARY.md"],
+                "retired root CONTEXT.md: rename it to GLOSSARY.md",
+            ),
+            "context-map-with-glossary-map": (
+                ["CONTEXT-MAP.md", "GLOSSARY-MAP.md"],
+                "retired root CONTEXT-MAP.md: rename it to GLOSSARY-MAP.md",
+            ),
+        }
+        for name, (files, message) in cases.items():
+            with self.subTest(name=name):
+                for file in files:
+                    (self.repo / file).write_text("## Contexts\n", encoding="utf-8")
+
+                result = self.run_glossary_map()
+
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(message, result.stderr)
+                self.assertEqual(result.stdout, "")
+                for file in files:
+                    (self.repo / file).unlink()
+
+    def test_glossary_map_refuses_an_entry_pointing_to_a_retired_glossary_name(self) -> None:
+        orders = self.repo / "src" / "orders"
+        orders.mkdir(parents=True)
+        (orders / "CONTEXT.md").write_text("# Orders\n", encoding="utf-8")
+        (self.repo / "GLOSSARY-MAP.md").write_text(
+            "## Contexts\n\n- [Orders](./src/orders/CONTEXT.md)\n", encoding="utf-8"
+        )
+
+        result = self.run_glossary_map()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("unreachable glossary entry", result.stderr)
+        self.assertEqual(result.stdout, "")
+
     def test_render_exposes_all_map_entries_without_a_fixed_selection(self) -> None:
-        orders = self.repo / "contexts" / "Orders" / "CONTEXT.md"
-        billing = self.repo / "contexts" / "Billing" / "CONTEXT.md"
+        orders = self.repo / "contexts" / "Orders" / "GLOSSARY.md"
+        billing = self.repo / "contexts" / "Billing" / "GLOSSARY.md"
         for glossary in (orders, billing):
             glossary.parent.mkdir(parents=True, exist_ok=True)
             glossary.write_text(f"# {glossary.parent.name}\n", encoding="utf-8")
-        (self.repo / "CONTEXT-MAP.md").write_text(
-            "## Contexts\n\n- [Orders](./contexts/Orders/CONTEXT.md)\n"
-            "- [Billing](./contexts/Billing/CONTEXT.md)\n",
+        (self.repo / "GLOSSARY-MAP.md").write_text(
+            "## Contexts\n\n- [Orders](./contexts/Orders/GLOSSARY.md)\n"
+            "- [Billing](./contexts/Billing/GLOSSARY.md)\n",
             encoding="utf-8",
         )
         values = self.write_values(
             "values.txt",
             self.full_values()
-            .replace("none (confirmed absent)", "CONTEXT-MAP.md")
+            .replace("none (confirmed absent)", "GLOSSARY-MAP.md")
             .replace("docs/agents/domain.md", "none (select per invocation)")
             .replace("absent (fallback-required)", "present (map-available)"),
         )
@@ -404,28 +474,28 @@ class SetupWorkflowCliTests(unittest.TestCase):
         domain = (self.repo / "docs" / "agents" / "domain.md").read_text(encoding="utf-8")
         self.assertIn("- Domain authority: `none (select per invocation)`", domain)
         self.assertIn("Authority state: present (map-available)", domain)
-        entries = self.run_context_map()
+        entries = self.run_glossary_map()
         self.assertEqual(entries.returncode, 0, entries.stderr)
-        self.assertIn("context Orders\tcontexts/Orders/CONTEXT.md", entries.stdout)
-        self.assertIn("context Billing\tcontexts/Billing/CONTEXT.md", entries.stdout)
+        self.assertIn("context Orders\tcontexts/Orders/GLOSSARY.md", entries.stdout)
+        self.assertIn("context Billing\tcontexts/Billing/GLOSSARY.md", entries.stdout)
         workflow = (self.repo / "docs" / "agents" / "workflow.md").read_text(encoding="utf-8")
         self.assertIn("docs/agents/domain.md and the authority it resolves", workflow)
         self.assertNotIn("none (select per invocation)", workflow)
 
     def test_render_preserves_lexical_symlinked_authority_paths(self) -> None:
-        glossary = self.repo / "contexts" / "orders" / "CONTEXT.md"
+        glossary = self.repo / "contexts" / "orders" / "GLOSSARY.md"
         glossary.parent.mkdir(parents=True)
         glossary.write_text("# Orders\n", encoding="utf-8")
         map_source = self.repo / "metadata" / "map.md"
         map_source.parent.mkdir()
         map_source.write_text(
-            "## Contexts\n\n- [Orders](./contexts/orders/CONTEXT.md)\n", encoding="utf-8"
+            "## Contexts\n\n- [Orders](./contexts/orders/GLOSSARY.md)\n", encoding="utf-8"
         )
-        (self.repo / "CONTEXT-MAP.md").symlink_to(map_source)
+        (self.repo / "GLOSSARY-MAP.md").symlink_to(map_source)
         map_values = self.write_values(
             "map-values.txt",
             self.full_values()
-            .replace("none (confirmed absent)", "CONTEXT-MAP.md")
+            .replace("none (confirmed absent)", "GLOSSARY-MAP.md")
             .replace("docs/agents/domain.md", "none (select per invocation)")
             .replace("absent (fallback-required)", "present (map-available)"),
         )
@@ -434,26 +504,26 @@ class SetupWorkflowCliTests(unittest.TestCase):
 
         self.assertEqual(map_result.returncode, 0, map_result.stderr)
         map_domain = (self.repo / "docs" / "agents" / "domain.md").read_text(encoding="utf-8")
-        self.assertIn("- Context map: `CONTEXT-MAP.md`", map_domain)
+        self.assertIn("- Glossary map: `GLOSSARY-MAP.md`", map_domain)
         map_diff_result = self.run_diff(map_values)
         self.assertEqual(map_diff_result.returncode, 0, map_diff_result.stderr)
         self.assertIn(
             f"IDENTICAL {self.repo / 'docs' / 'agents' / 'domain.md'}", map_diff_result.stdout
         )
-        context_map_result = self.run_context_map()
-        self.assertEqual(context_map_result.returncode, 0, context_map_result.stderr)
-        self.assertTrue(context_map_result.stdout.startswith("map CONTEXT-MAP.md\n"))
+        glossary_map_result = self.run_glossary_map()
+        self.assertEqual(glossary_map_result.returncode, 0, glossary_map_result.stderr)
+        self.assertTrue(glossary_map_result.stdout.startswith("map GLOSSARY-MAP.md\n"))
 
         for path in (self.repo / "docs" / "agents").glob("*.md"):
             path.unlink()
-        (self.repo / "CONTEXT-MAP.md").unlink()
+        (self.repo / "GLOSSARY-MAP.md").unlink()
         root_source = self.repo / "metadata" / "root.md"
         root_source.write_text("# Root\n", encoding="utf-8")
-        (self.repo / "CONTEXT.md").symlink_to(root_source)
+        (self.repo / "GLOSSARY.md").symlink_to(root_source)
         root_values = self.write_values(
             "root-values.txt",
             self.full_values()
-            .replace("docs/agents/domain.md", "CONTEXT.md")
+            .replace("docs/agents/domain.md", "GLOSSARY.md")
             .replace("absent (fallback-required)", "present (root-selected)"),
         )
 
@@ -461,7 +531,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
 
         self.assertEqual(root_result.returncode, 0, root_result.stderr)
         root_domain = (self.repo / "docs" / "agents" / "domain.md").read_text(encoding="utf-8")
-        self.assertIn("- Domain authority: `CONTEXT.md`", root_domain)
+        self.assertIn("- Domain authority: `GLOSSARY.md`", root_domain)
         root_diff_result = self.run_diff(root_values)
         self.assertEqual(root_diff_result.returncode, 0, root_diff_result.stderr)
         self.assertIn(
@@ -469,11 +539,11 @@ class SetupWorkflowCliTests(unittest.TestCase):
         )
 
     def test_render_accepts_case_preserved_root_selected_authority(self) -> None:
-        (self.repo / "context.md").write_text("# Root glossary\n", encoding="utf-8")
+        (self.repo / "glossary.md").write_text("# Root glossary\n", encoding="utf-8")
         values = self.write_values(
             "values.txt",
             self.full_values()
-            .replace("docs/agents/domain.md", "context.md")
+            .replace("docs/agents/domain.md", "glossary.md")
             .replace("absent (fallback-required)", "present (root-selected)"),
         )
 
@@ -481,17 +551,17 @@ class SetupWorkflowCliTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         domain = (self.repo / "docs" / "agents" / "domain.md").read_text(encoding="utf-8")
-        self.assertIn("- Domain authority: `context.md`", domain)
+        self.assertIn("- Domain authority: `glossary.md`", domain)
         self.assertIn("Authority state: present (root-selected)", domain)
 
     def test_render_withholds_invalid_domain_authority_but_writes_unrelated_playbooks(self) -> None:
         cases = {
             "unknown-state": self.full_values().replace("absent (fallback-required)", "absent"),
             "fallback-external-path": self.full_values().replace(
-                "docs/agents/domain.md", "CONTEXT.md"
+                "docs/agents/domain.md", "GLOSSARY.md"
             ),
             "fallback-map-path": self.full_values().replace(
-                "none (confirmed absent)", "CONTEXT-MAP.md"
+                "none (confirmed absent)", "GLOSSARY-MAP.md"
             ),
         }
         for name, content in cases.items():
@@ -512,12 +582,12 @@ class SetupWorkflowCliTests(unittest.TestCase):
                 for path in docs.glob("*.md"):
                     path.unlink()
 
-    def test_render_and_diff_report_a_context_map_directory_without_traceback(self) -> None:
-        (self.repo / "CONTEXT-MAP.md").mkdir()
+    def test_render_and_diff_report_a_glossary_map_directory_without_traceback(self) -> None:
+        (self.repo / "GLOSSARY-MAP.md").mkdir()
         values = self.write_values(
             "values.txt",
             self.full_values()
-            .replace("none (confirmed absent)", "CONTEXT-MAP.md")
+            .replace("none (confirmed absent)", "GLOSSARY-MAP.md")
             .replace("docs/agents/domain.md", "none (select per invocation)")
             .replace("absent (fallback-required)", "present (map-available)"),
         )
@@ -538,16 +608,16 @@ class SetupWorkflowCliTests(unittest.TestCase):
         )
         self.assertNotIn("Traceback", diff_result.stderr)
 
-    def test_render_and_diff_withhold_a_context_map_target_control_character(self) -> None:
+    def test_render_and_diff_withhold_a_glossary_map_target_control_character(self) -> None:
         values = self.write_values(
             "values.txt",
             self.full_values()
-            .replace("none (confirmed absent)", "CONTEXT-MAP.md")
+            .replace("none (confirmed absent)", "GLOSSARY-MAP.md")
             .replace("docs/agents/domain.md", "none (select per invocation)")
             .replace("absent (fallback-required)", "present (map-available)"),
         )
-        (self.repo / "CONTEXT-MAP.md").write_text(
-            "## Contexts\n\n- [Orders](./contexts/CONTEXT\x00.md)\n", encoding="utf-8"
+        (self.repo / "GLOSSARY-MAP.md").write_text(
+            "## Contexts\n\n- [Orders](./contexts/GLOSSARY\x00.md)\n", encoding="utf-8"
         )
 
         render_result = self.run_render(values)
@@ -562,12 +632,61 @@ class SetupWorkflowCliTests(unittest.TestCase):
         self.assertIn("glossary target contains a control character", diff_result.stdout)
         self.assertNotIn("Traceback", diff_result.stderr)
 
-    def test_render_withholds_a_malformed_context_map_but_writes_unrelated_playbooks(self) -> None:
-        (self.repo / "CONTEXT-MAP.md").write_text("## Contexts\n", encoding="utf-8")
+    def test_render_withholds_domain_for_a_retired_root_file_in_every_state(self) -> None:
+        cases = {
+            "context-fallback": ("CONTEXT.md", self.full_values()),
+            "context-map-fallback": ("CONTEXT-MAP.md", self.full_values()),
+            "context-with-glossary-root-selected": (
+                "CONTEXT.md",
+                self.full_values()
+                .replace("docs/agents/domain.md", "GLOSSARY.md")
+                .replace("absent (fallback-required)", "present (root-selected)"),
+            ),
+        }
+        for name, (retired, content) in cases.items():
+            with self.subTest(name=name):
+                (self.repo / retired).write_text("# Retired\n", encoding="utf-8")
+                (self.repo / "GLOSSARY.md").write_text("# Glossary\n", encoding="utf-8")
+                if name == "context-map-fallback":
+                    (self.repo / "GLOSSARY.md").unlink()
+                values = self.write_values("values.txt", content)
+
+                result = self.run_render(values)
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("WITHHELD", result.stderr)
+                self.assertIn(f"retired root {retired}", result.stderr)
+                docs = self.repo / "docs" / "agents"
+                self.assertFalse((docs / "domain.md").exists())
+                self.assertTrue((docs / "workflow.md").is_file())
+                for path in docs.glob("*.md"):
+                    path.unlink()
+                for path in (self.repo / retired, self.repo / "GLOSSARY.md"):
+                    path.unlink(missing_ok=True)
+
+    def test_diff_and_update_withhold_domain_for_a_retired_root_file(self) -> None:
+        values = self.write_values("values.txt", self.full_values())
+        self.run_render(values)
+        domain = self.repo / "docs" / "agents" / "domain.md"
+        rendered = domain.read_text(encoding="utf-8")
+        (self.repo / "CONTEXT.md").write_text("# Retired\n", encoding="utf-8")
+
+        diff_result = self.run_diff(values)
+        update_result = self.run_update(values, "domain.md")
+
+        self.assertEqual(diff_result.returncode, 0, diff_result.stderr)
+        self.assertIn("FORM-DRIFT domain authority withheld", diff_result.stdout)
+        self.assertIn("retired root CONTEXT.md: rename it to GLOSSARY.md", diff_result.stdout)
+        self.assertIn("WITHHELD", update_result.stderr)
+        self.assertIn("retired root CONTEXT.md", update_result.stderr)
+        self.assertEqual(domain.read_text(encoding="utf-8"), rendered)
+
+    def test_render_withholds_a_malformed_glossary_map_but_writes_unrelated_playbooks(self) -> None:
+        (self.repo / "GLOSSARY-MAP.md").write_text("## Contexts\n", encoding="utf-8")
         values = self.write_values(
             "values.txt",
             self.full_values()
-            .replace("none (confirmed absent)", "CONTEXT-MAP.md")
+            .replace("none (confirmed absent)", "GLOSSARY-MAP.md")
             .replace("docs/agents/domain.md", "none (select per invocation)")
             .replace("absent (fallback-required)", "present (map-available)"),
         )
@@ -581,20 +700,20 @@ class SetupWorkflowCliTests(unittest.TestCase):
         self.assertFalse((docs / "domain.md").exists())
         self.assertTrue((docs / "workflow.md").is_file())
 
-    def test_render_refuses_a_context_map_glossary_outside_the_repository(self) -> None:
+    def test_render_refuses_a_glossary_map_glossary_outside_the_repository(self) -> None:
         outside = self.root / "outside"
         outside.mkdir()
-        (outside / "CONTEXT.md").write_text("# Outside\n", encoding="utf-8")
+        (outside / "GLOSSARY.md").write_text("# Outside\n", encoding="utf-8")
         source = self.repo / "src"
         source.mkdir()
         (source / "context").symlink_to(outside, target_is_directory=True)
-        (self.repo / "CONTEXT-MAP.md").write_text(
-            "## Contexts\n\n- [Outside](./src/context/CONTEXT.md)\n", encoding="utf-8"
+        (self.repo / "GLOSSARY-MAP.md").write_text(
+            "## Contexts\n\n- [Outside](./src/context/GLOSSARY.md)\n", encoding="utf-8"
         )
         values = self.write_values(
             "values.txt",
             self.full_values()
-            .replace("none (confirmed absent)", "CONTEXT-MAP.md")
+            .replace("none (confirmed absent)", "GLOSSARY-MAP.md")
             .replace("docs/agents/domain.md", "none (select per invocation)")
             .replace("absent (fallback-required)", "present (map-available)"),
         )
@@ -606,17 +725,17 @@ class SetupWorkflowCliTests(unittest.TestCase):
         self.assertFalse((self.repo / "docs" / "agents").exists())
 
     def test_render_withholds_a_fixed_map_selection(self) -> None:
-        glossary = self.repo / "contexts" / "Orders" / "CONTEXT.md"
+        glossary = self.repo / "contexts" / "Orders" / "GLOSSARY.md"
         glossary.parent.mkdir(parents=True)
         glossary.write_text("# Orders\n", encoding="utf-8")
-        (self.repo / "CONTEXT-MAP.md").write_text(
-            "## Contexts\n\n- [Orders](./contexts/Orders/CONTEXT.md)\n", encoding="utf-8"
+        (self.repo / "GLOSSARY-MAP.md").write_text(
+            "## Contexts\n\n- [Orders](./contexts/Orders/GLOSSARY.md)\n", encoding="utf-8"
         )
         values = self.write_values(
             "values.txt",
             self.full_values()
-            .replace("none (confirmed absent)", "CONTEXT-MAP.md")
-            .replace("docs/agents/domain.md", "contexts/Orders/CONTEXT.md")
+            .replace("none (confirmed absent)", "GLOSSARY-MAP.md")
+            .replace("docs/agents/domain.md", "contexts/Orders/GLOSSARY.md")
             .replace("absent (fallback-required)", "present (map-available)"),
         )
 
@@ -650,18 +769,20 @@ class SetupWorkflowCliTests(unittest.TestCase):
         domain = self.repo / "docs" / "agents" / "domain.md"
         domain.write_text(
             domain.read_text(encoding="utf-8").replace(
-                "- Context map: `none (confirmed absent)`",
-                "- Context map: `CONTEXT-MAP.md`",
+                "- Glossary map: `none (confirmed absent)`",
+                "- Glossary map: `GLOSSARY-MAP.md`",
             ),
             encoding="utf-8",
         )
 
         declaration_result = self.run_diff(values)
 
-        self.assertIn("exact Context map handoff declaration", declaration_result.stdout)
+        self.assertIn("exact Glossary map handoff declaration", declaration_result.stdout)
         domain.write_text(
             domain.read_text(encoding="utf-8")
-            .replace("- Context map: `CONTEXT-MAP.md`", "- Context map: `none (confirmed absent)`")
+            .replace(
+                "- Glossary map: `GLOSSARY-MAP.md`", "- Glossary map: `none (confirmed absent)`"
+            )
             .replace(
                 DOMAIN_AUTHORITY_END,
                 "## Language\n\n**Order**:\nA request.\n" + DOMAIN_AUTHORITY_END,
@@ -819,7 +940,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
         domain_content = (
             "# Hand-written\n\n"
             "- Domain authority: `docs/agents/domain.md`\n"
-            "- Context map: `none (confirmed absent)`\n\n"
+            "- Glossary map: `none (confirmed absent)`\n\n"
             + DOMAIN_AUTHORITY_START
             + "\nAuthority state: absent (fallback-required)\n"
             + DOMAIN_AUTHORITY_END
@@ -884,7 +1005,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
         values = self.write_values("values.txt", self.full_values())
         (self.assets / "domain.md").write_text(
             "# Domain\n- Domain authority: `{{DOMAIN_AUTHORITY_PATH}}`\n"
-            "- Context map: `{{CONTEXT_MAP_PATH}}`\n{{DOMAIN_AUTHORITY_STATE}}\n",
+            "- Glossary map: `{{GLOSSARY_MAP_PATH}}`\n{{DOMAIN_AUTHORITY_STATE}}\n",
             encoding="utf-8",
         )
 
@@ -1404,11 +1525,11 @@ class SetupWorkflowCliTests(unittest.TestCase):
         )
         values_content = (
             "TRACKER_CAPABILITY_STATE = unsupported\n"
-            "CONTEXT_MAP_PATH = none (confirmed absent)\n"
+            "GLOSSARY_MAP_PATH = none (confirmed absent)\n"
             "DOMAIN_AUTHORITY_PATH = docs/agents/domain.md\n"
             "DOMAIN_AUTHORITY_STATE = absent (fallback-required)\n"
             "WORKING_BASE = main\n"
-            "COMMIT_CONVENTION = Conventional Commits\n"
+            "PULL_REQUEST_PROVIDER = github\n"
             "TEST_CONVENTIONS = docs/agents/testing.md\n"
             "TEST_EXECUTION_CONSTRAINTS = docker compose up\n"
         )
@@ -1489,8 +1610,8 @@ class SetupWorkflowCliTests(unittest.TestCase):
             (self.assets / "domain.md")
             .read_text(encoding="utf-8")
             .replace(
-                "- Context map: `{{CONTEXT_MAP_PATH}}`\n",
-                "- Context map: `{{CONTEXT_MAP_PATH}}`\n\nAdded contract line.\n",
+                "- Glossary map: `{{GLOSSARY_MAP_PATH}}`\n",
+                "- Glossary map: `{{GLOSSARY_MAP_PATH}}`\n\nAdded contract line.\n",
             ),
             encoding="utf-8",
         )
@@ -1503,6 +1624,106 @@ class SetupWorkflowCliTests(unittest.TestCase):
         self.assertIn("Added contract line.", updated)
         self.assertIn("Authority state: present (fallback-established)", updated)
         self.assertEqual(updated.split(DOMAIN_AUTHORITY_START)[1], region_before)
+
+    def real_assets_values(self) -> str:
+        lines = {}
+        for asset in sorted(REAL_ASSETS.glob("*.md")):
+            if asset.name.startswith("issue-tracker-") and asset.name != "issue-tracker-none.md":
+                continue
+            for token in re.findall(r"\{\{([A-Za-z0-9_]+)\}\}", asset.read_text(encoding="utf-8")):
+                lines[token] = (
+                    "supported" if token.endswith("_CAPABILITY_STATE") else f"{token} value"
+                )
+        lines.update(
+            GLOSSARY_MAP_PATH="none (confirmed absent)",
+            DOMAIN_AUTHORITY_PATH="docs/agents/domain.md",
+            DOMAIN_AUTHORITY_STATE="absent (fallback-required)",
+            PULL_REQUEST_PROVIDER="forgejo",
+        )
+        return "".join(f"{token} = {value}\n" for token, value in lines.items())
+
+    def use_real_assets(self) -> None:
+        self.assets = REAL_ASSETS
+
+    def test_render_ships_the_fixed_commit_and_pull_request_conventions(self) -> None:
+        self.use_real_assets()
+        values = self.write_values("values.txt", self.real_assets_values())
+
+        result = self.run_render_with(values, (*TARGET_NAMES, "coding-standards.md"))
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        playbook = (self.repo / "docs" / "agents" / "pull-requests.md").read_text(encoding="utf-8")
+        for required in (
+            "<type>(<scope>): <summary>",
+            "Refs: <ticket identifier>",
+            "feat(renewals): add premium calculation (AUT-103)",
+            "the source is the child ticket branch; the proposed destination is the parent integration branch, or the production base for a parent integration branch",
+        ):
+            self.assertIn(required, playbook)
+        self.assertNotIn("{{COMMIT_CONVENTION}}", playbook)
+        self.assertNotIn("{{PULL_REQUEST_BRANCH_RULES}}", playbook)
+        self.assertTrue((self.repo / "docs" / "agents" / "coding-standards.md").is_file())
+
+    def test_update_brings_an_old_playbook_up_to_date_and_keeps_recorded_values(self) -> None:
+        self.use_real_assets()
+        values = self.write_values("values.txt", self.real_assets_values())
+        self.run_render_with(values, (*TARGET_NAMES, "coding-standards.md"))
+        playbook = self.repo / "docs" / "agents" / "pull-requests.md"
+        playbook.write_text(OLD_PULL_REQUEST_PLAYBOOK, encoding="utf-8")
+        before = playbook.read_text(encoding="utf-8")
+        self.assertIn("`Conventional Commits`", before)
+        self.assertIn("`feature to develop`", before)
+
+        result = self.run_update(values, "pull-requests.md")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        updated = playbook.read_text(encoding="utf-8")
+        self.assertNotIn("Conventional Commits", updated)
+        self.assertNotIn("feature to develop", updated)
+        self.assertIn("Refs: <ticket identifier>", updated)
+        self.assertIn("`forgejo`", updated)
+        self.assertIn("state: supported", updated)
+
+    def test_update_and_render_leave_existing_coding_standards_untouched(self) -> None:
+        self.use_real_assets()
+        values = self.write_values("values.txt", self.real_assets_values())
+        self.run_render_with(values, TARGET_NAMES)
+        standards = self.repo / "docs" / "agents" / "coding-standards.md"
+        standards.write_text("# Ours\n\n## Style\n\n{{NOT_A_TOKEN}}\nuse tabs\n", encoding="utf-8")
+        before = standards.read_bytes()
+
+        update = self.run_update(values, *TARGET_NAMES, "coding-standards.md")
+        render = self.run_render_with(values, (*TARGET_NAMES, "coding-standards.md"))
+        diff = self.run_diff(values)
+
+        self.assertEqual(update.returncode, 0, update.stderr)
+        self.assertEqual(render.returncode, 0, render.stderr)
+        self.assertEqual(standards.read_bytes(), before)
+        self.assertNotIn("coding-standards.md", diff.stdout)
+
+    def test_coding_standards_is_created_only_when_approved(self) -> None:
+        self.use_real_assets()
+        values = self.write_values("values.txt", self.real_assets_values())
+        standards = self.repo / "docs" / "agents" / "coding-standards.md"
+
+        self.run_render_with(values, TARGET_NAMES)
+        self.assertFalse(standards.exists())
+
+        self.run_update(values, "coding-standards.md")
+        self.assertTrue(standards.is_file())
+
+    def test_values_file_supplying_a_fixed_convention_token_is_rejected(self) -> None:
+        self.use_real_assets()
+        for token in ("COMMIT_CONVENTION", "PULL_REQUEST_BRANCH_RULES"):
+            values = self.write_values(
+                "values.txt", self.real_assets_values() + f"{token} = anything\n"
+            )
+
+            result = self.run_render_with(values, TARGET_NAMES)
+
+            self.assertEqual(result.returncode, 1)
+            self.assertIn(token, result.stderr)
+            self.assertFalse((self.repo / "docs" / "agents" / "pull-requests.md").exists())
 
 
 if __name__ == "__main__":

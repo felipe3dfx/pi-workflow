@@ -15,6 +15,7 @@ MARKER = "<marker>"
 CAPABILITY_STATES = {"supported", "requires-setup", "unsupported", MARKER}
 TRACKER_CHOICES = ("github", "gitlab", "linear", "local-markdown", "none")
 SHARED_TEMPLATES = ("domain.md", "workflow.md", "quality.md", "pull-requests.md")
+CODING_STANDARDS = "coding-standards.md"
 ROUTING_START = "<!-- setup-workflow-routing:start -->"
 ROUTING_END = "<!-- setup-workflow-routing:end -->"
 DOMAIN_AUTHORITY_START = "<!-- domain-modeling:authority:start -->"
@@ -27,13 +28,14 @@ AUTHORITY_STATES = {
 }
 CONFIRMED_ABSENT = "none (confirmed absent)"
 SELECTION_REQUIRED = "none (select per invocation)"
-CONTEXT_MAP_NAME = "CONTEXT-MAP.md"
-CONTEXT_GLOSSARY_NAME = "CONTEXT.md"
+GLOSSARY_MAP_NAME = "GLOSSARY-MAP.md"
+GLOSSARY_NAME = "GLOSSARY.md"
+RETIRED_ROOT_NAMES = {"context.md": GLOSSARY_NAME, "context-map.md": GLOSSARY_MAP_NAME}
 CONTEXTS_HEADING = re.compile(r"^##\s+Contexts\s*$", re.IGNORECASE)
 SECOND_LEVEL_HEADING = re.compile(r"^##(?:\s|$)")
 CONTEXT_ENTRY = re.compile(r"^\s*[-*+]\s+\[([^\]]+)\]\(([^)\s]+)\)(?:\s+.*)?$")
 DOMAIN_AUTHORITY_DECLARATION = re.compile(r"^- Domain authority: `([^`]+)`$")
-CONTEXT_MAP_DECLARATION = re.compile(r"^- Context map: `([^`]+)`$")
+GLOSSARY_MAP_DECLARATION = re.compile(r"^- Glossary map: `([^`]+)`$")
 AUTHORITY_STATE_DECLARATION = re.compile(r"^Authority state: (.+)$")
 GLOSSARY_TERM = re.compile(r"^\*\*(?=\S)[^*\n]*\S\*\*:$")
 LANGUAGE_HEADING = re.compile(r"^##\s+Language\s*$")
@@ -286,6 +288,23 @@ def approved_target_names(approvals: list[str], targets: set[str]) -> set[str]:
     return approved
 
 
+def create_consumer_owned(
+    assets: Path, docs_dir: Path, approved: set[str], repo: Path
+) -> list[str]:
+    messages: list[str] = []
+    target = docs_dir / CODING_STANDARDS
+    require_contained([target], repo)
+    if target.exists():
+        messages.append(f"skipped (exists) {target}")
+    elif CODING_STANDARDS in approved:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text((assets / CODING_STANDARDS).read_text(encoding="utf-8"), encoding="utf-8")
+        messages.append(f"wrote {target}")
+    else:
+        messages.append(f"MISSING {target} (no approval; not written)")
+    return messages
+
+
 def cmd_render(
     assets: Path, values_path: Path, tracker: str, repo: Path, approvals: list[str]
 ) -> int:
@@ -308,7 +327,7 @@ def cmd_render(
     for target in expected_targets.values():
         if target.exists() and not target.is_file():
             refuse(f"refused: {target} exists but is not a regular file")
-    approved = approved_target_names(approvals, set(expected_targets))
+    approved = approved_target_names(approvals, {*expected_targets, CODING_STANDARDS})
     domain_target = expected_targets["domain.md"]
     values, errors = parse_values(values_path)
     authority_errors = authority_value_errors(values, repo)
@@ -357,6 +376,8 @@ def cmd_render(
         print(f"skipped (exists) {target}")
     for target in unapproved:
         print(f"MISSING {target} (no approval; not written)")
+    for message in create_consumer_owned(assets, docs_dir, approved, repo):
+        print(message)
     return 0
 
 
@@ -381,17 +402,25 @@ def repository_path(path: Path, repo: Path) -> str:
 
 def root_glossary_candidates(repo: Path) -> list[Path]:
     return sorted(
-        (
-            path
-            for path in repo.iterdir()
-            if path.name.casefold() == CONTEXT_GLOSSARY_NAME.casefold()
-        ),
+        (path for path in repo.iterdir() if path.name.casefold() == GLOSSARY_NAME.casefold()),
         key=lambda path: path.name,
     )
 
 
+def retired_root_errors(repo: Path) -> list[str]:
+    retired = sorted(
+        (path for path in repo.iterdir() if path.name.casefold() in RETIRED_ROOT_NAMES),
+        key=lambda path: path.name,
+    )
+    require_contained(retired, repo)
+    return [
+        f"retired root {path.name}: rename it to {RETIRED_ROOT_NAMES[path.name.casefold()]}"
+        for path in retired
+    ]
+
+
 def authority_value_errors(values: dict[str, str], repo: Path | None) -> list[str]:
-    required = ("CONTEXT_MAP_PATH", "DOMAIN_AUTHORITY_PATH", "DOMAIN_AUTHORITY_STATE")
+    required = ("GLOSSARY_MAP_PATH", "DOMAIN_AUTHORITY_PATH", "DOMAIN_AUTHORITY_STATE")
     missing = [token for token in required if token not in values]
     if missing:
         return [f"missing value for token {token}" for token in missing]
@@ -399,7 +428,7 @@ def authority_value_errors(values: dict[str, str], repo: Path | None) -> list[st
     if state not in AUTHORITY_STATES:
         return [f"invalid domain authority state: {state!r}"]
     authority_path = values["DOMAIN_AUTHORITY_PATH"]
-    map_path = values["CONTEXT_MAP_PATH"]
+    map_path = values["GLOSSARY_MAP_PATH"]
     fallback_path = "docs/agents/domain.md"
     if state == "present (map-available)":
         if authority_path != SELECTION_REQUIRED:
@@ -413,36 +442,39 @@ def authority_value_errors(values: dict[str, str], repo: Path | None) -> list[st
         return [f"{state} requires DOMAIN_AUTHORITY_PATH = {fallback_path}"]
     if repo is None:
         return []
-    maps = context_map_candidates(repo)
+    retired_errors = retired_root_errors(repo)
+    if retired_errors:
+        return retired_errors
+    maps = glossary_map_candidates(repo)
     roots = root_glossary_candidates(repo)
     require_contained([*maps, *roots], repo)
     if state == "present (map-available)":
-        if len(maps) != 1 or maps[0].name != CONTEXT_MAP_NAME:
-            return ["present (map-available) requires exactly one valid root CONTEXT-MAP.md"]
+        if len(maps) != 1 or maps[0].name != GLOSSARY_MAP_NAME:
+            return ["present (map-available) requires exactly one valid root GLOSSARY-MAP.md"]
         try:
-            parse_context_map(maps[0], repo)
+            parse_glossary_map(maps[0], repo)
         except DomainAuthorityError as error:
             return [str(error)]
         expected_map = repository_path(maps[0], repo)
         if map_path != expected_map:
-            return [f"present (map-available) requires CONTEXT_MAP_PATH = {expected_map}"]
+            return [f"present (map-available) requires GLOSSARY_MAP_PATH = {expected_map}"]
     elif state == "present (root-selected)":
         if maps:
-            return ["present (root-selected) requires no root CONTEXT-MAP.md"]
+            return ["present (root-selected) requires no root GLOSSARY-MAP.md"]
         if len(roots) != 1 or not roots[0].is_file():
-            return ["present (root-selected) requires exactly one root CONTEXT.md"]
+            return ["present (root-selected) requires exactly one root GLOSSARY.md"]
         expected_root = repository_path(roots[0], repo)
         if map_path != CONFIRMED_ABSENT:
-            return [f"present (root-selected) requires CONTEXT_MAP_PATH = {CONFIRMED_ABSENT}"]
+            return [f"present (root-selected) requires GLOSSARY_MAP_PATH = {CONFIRMED_ABSENT}"]
         if authority_path != expected_root:
             return [f"present (root-selected) requires DOMAIN_AUTHORITY_PATH = {expected_root}"]
     else:
         if maps:
-            return [f"{state} requires no root CONTEXT-MAP.md"]
+            return [f"{state} requires no root GLOSSARY-MAP.md"]
         if roots:
-            return [f"{state} requires no root CONTEXT.md"]
+            return [f"{state} requires no root GLOSSARY.md"]
         if map_path != CONFIRMED_ABSENT:
-            return [f"{state} requires CONTEXT_MAP_PATH = {CONFIRMED_ABSENT}"]
+            return [f"{state} requires GLOSSARY_MAP_PATH = {CONFIRMED_ABSENT}"]
     return []
 
 
@@ -457,15 +489,15 @@ def domain_contract_error(content: str, values: dict[str, str], repo: Path) -> s
         match.group(1) for line in lines if (match := DOMAIN_AUTHORITY_DECLARATION.fullmatch(line))
     ]
     map_declarations = [
-        match.group(1) for line in lines if (match := CONTEXT_MAP_DECLARATION.fullmatch(line))
+        match.group(1) for line in lines if (match := GLOSSARY_MAP_DECLARATION.fullmatch(line))
     ]
     if (
         len(authority_declarations) != 1
         or authority_declarations[0] != values["DOMAIN_AUTHORITY_PATH"]
     ):
         return "expected one exact Domain authority handoff declaration"
-    if len(map_declarations) != 1 or map_declarations[0] != values["CONTEXT_MAP_PATH"]:
-        return "expected one exact Context map handoff declaration"
+    if len(map_declarations) != 1 or map_declarations[0] != values["GLOSSARY_MAP_PATH"]:
+        return "expected one exact Glossary map handoff declaration"
     region = content[starts[0] + len(DOMAIN_AUTHORITY_START) : ends[0]].replace("\r\n", "\n")
     region_lines = region.strip("\n").split("\n")
     if not region_lines:
@@ -657,6 +689,8 @@ def report_surviving_placeholders(docs_dir: Path, repo: Path, expected_paths: se
         return
     for path in sorted(docs_dir.glob("*.md")):
         require_contained([path], repo)
+        if path.name == CODING_STANDARDS:
+            continue
         if not path.is_file():
             if path not in expected_paths:
                 print(f"FORM-DRIFT {path} is not a regular file")
@@ -779,7 +813,7 @@ def cmd_update(
     if value_errors or render_errors:
         raise SystemExit(1)
 
-    approved = approved_target_names(approvals, set(expected_targets))
+    approved = approved_target_names(approvals, {*expected_targets, CODING_STANDARDS})
 
     refusals: list[Path] = []
     for name in sorted(expected_targets):
@@ -845,24 +879,26 @@ def cmd_update(
             continue
         target.write_text(desired, encoding="utf-8")
         print(f"updated {target}")
+    for message in create_consumer_owned(assets, docs_dir, approved, repo):
+        print(message)
     return 1 if refusals else 0
 
 
-def context_map_candidates(repo: Path) -> list[Path]:
+def glossary_map_candidates(repo: Path) -> list[Path]:
     return sorted(
-        (path for path in repo.iterdir() if path.name.casefold() == CONTEXT_MAP_NAME.casefold()),
+        (path for path in repo.iterdir() if path.name.casefold() == GLOSSARY_MAP_NAME.casefold()),
         key=lambda path: path.name,
     )
 
 
-def parse_context_map(map_path: Path, repo: Path) -> list[tuple[str, Path]]:
+def parse_glossary_map(map_path: Path, repo: Path) -> list[tuple[str, Path]]:
     if not map_path.is_file():
-        raise DomainAuthorityError(f"malformed context map {map_path}: not a regular file")
+        raise DomainAuthorityError(f"malformed glossary map {map_path}: not a regular file")
     try:
         lines = map_path.read_text(encoding="utf-8").splitlines()
     except UnicodeDecodeError:
         raise DomainAuthorityError(
-            f"malformed context map {map_path}: expected UTF-8 text"
+            f"malformed glossary map {map_path}: expected UTF-8 text"
         ) from None
 
     heading_lines = [
@@ -872,7 +908,7 @@ def parse_context_map(map_path: Path, repo: Path) -> list[tuple[str, Path]]:
     ]
     if len(heading_lines) != 1:
         raise DomainAuthorityError(
-            f"malformed context map {map_path}: expected exactly one '## Contexts' heading"
+            f"malformed glossary map {map_path}: expected exactly one '## Contexts' heading"
         )
 
     entries: list[tuple[str, Path]] = []
@@ -885,26 +921,26 @@ def parse_context_map(map_path: Path, repo: Path) -> list[tuple[str, Path]]:
         entry = CONTEXT_ENTRY.fullmatch(line)
         if entry is None:
             raise DomainAuthorityError(
-                f"malformed context map {map_path}:{line_number}: expected a Markdown glossary link"
+                f"malformed glossary map {map_path}:{line_number}: expected a Markdown glossary link"
             )
         label, target = entry.groups()
         if any(unicodedata.category(character) == "Cc" for character in label):
             raise DomainAuthorityError(
-                f"malformed context map {map_path}:{line_number}: context label contains a control character"
+                f"malformed glossary map {map_path}:{line_number}: context label contains a control character"
             )
         if any(unicodedata.category(character) == "Cc" for character in target):
             raise DomainAuthorityError(
-                f"malformed context map {map_path}:{line_number}: glossary target contains a control character"
+                f"malformed glossary map {map_path}:{line_number}: glossary target contains a control character"
             )
         if not label.strip() or "#" in target or "?" in target or Path(target).is_absolute():
             raise DomainAuthorityError(
-                f"malformed context map {map_path}:{line_number}: expected a relative glossary file link"
+                f"malformed glossary map {map_path}:{line_number}: expected a relative glossary file link"
             )
         entries.append((label.strip(), map_path.parent / target))
 
     if not entries:
         raise DomainAuthorityError(
-            f"malformed context map {map_path}: no contextual glossaries listed"
+            f"malformed glossary map {map_path}: no contextual glossaries listed"
         )
 
     labels: set[str] = set()
@@ -914,38 +950,41 @@ def parse_context_map(map_path: Path, repo: Path) -> list[tuple[str, Path]]:
         folded_label = label.casefold()
         if folded_label in labels:
             raise DomainAuthorityError(
-                f"ambiguous context map {map_path}: duplicate context label {label!r}"
+                f"ambiguous glossary map {map_path}: duplicate context label {label!r}"
             )
         labels.add(folded_label)
         require_contained([target], repo)
-        if target.name.casefold() != CONTEXT_GLOSSARY_NAME.casefold() or not target.is_file():
+        if target.name.casefold() != GLOSSARY_NAME.casefold() or not target.is_file():
             raise DomainAuthorityError(f"unreachable glossary entry in {map_path}: {target}")
         resolved_target = str(target.resolve()).casefold()
         if resolved_target in targets:
             raise DomainAuthorityError(
-                f"ambiguous context map {map_path}: duplicate glossary {target}"
+                f"ambiguous glossary map {map_path}: duplicate glossary {target}"
             )
         targets.add(resolved_target)
         glossaries.append((label, target))
     return glossaries
 
 
-def cmd_context_map(repo: Path) -> int:
+def cmd_glossary_map(repo: Path) -> int:
     if not repo.is_dir():
         refuse(f"refused: repository {repo} is not a directory")
-    candidates = context_map_candidates(repo)
+    retired_errors = retired_root_errors(repo)
+    if retired_errors:
+        refuse(f"refused: {'; '.join(retired_errors)}")
+    candidates = glossary_map_candidates(repo)
     if not candidates:
         print("absent")
         return 0
     require_contained(candidates, repo)
-    if len(candidates) != 1 or candidates[0].name != CONTEXT_MAP_NAME:
+    if len(candidates) != 1 or candidates[0].name != GLOSSARY_MAP_NAME:
         names = ", ".join(path.name for path in candidates)
-        refuse(f"refused: ambiguous root context map names: {names}")
+        refuse(f"refused: ambiguous root glossary map names: {names}")
     map_path = candidates[0]
     if not map_path.is_file():
-        refuse(f"refused: malformed context map {map_path}: not a regular file")
+        refuse(f"refused: malformed glossary map {map_path}: not a regular file")
     try:
-        glossaries = parse_context_map(map_path, repo)
+        glossaries = parse_glossary_map(map_path, repo)
     except DomainAuthorityError as error:
         refuse(f"refused: {error}")
         return 1
@@ -1041,8 +1080,8 @@ def build_parser() -> argparse.ArgumentParser:
     update_parser.add_argument("--repo", required=True, type=Path)
     update_parser.add_argument("--approve", action="append", default=[], metavar="FILE")
 
-    context_map_parser = subparsers.add_parser("context-map")
-    context_map_parser.add_argument("--repo", required=True, type=Path)
+    glossary_map_parser = subparsers.add_parser("glossary-map")
+    glossary_map_parser.add_argument("--repo", required=True, type=Path)
 
     routing_parser = subparsers.add_parser("routing")
     routing_parser.add_argument("--repo", required=True, type=Path)
@@ -1066,8 +1105,8 @@ def main() -> int:
         return cmd_update(
             arguments.assets, arguments.values, arguments.tracker, arguments.repo, arguments.approve
         )
-    if arguments.command == "context-map":
-        return cmd_context_map(arguments.repo)
+    if arguments.command == "glossary-map":
+        return cmd_glossary_map(arguments.repo)
     return cmd_routing(arguments.repo, arguments.check, arguments.append, arguments.approve)
 
 

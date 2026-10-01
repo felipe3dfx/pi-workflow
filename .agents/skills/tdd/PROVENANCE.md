@@ -2,7 +2,7 @@
 
 ## Source
 
-<https://github.com/mattpocock/skills/tree/6acc160e4e0cd062dbbbd7a1b26ae92855edf07e/skills/engineering/tdd/SKILL.md>. Consumer evidence reviewed at immutable `ilaos-website` revision `71529c277cfc4688f0ffdb5b7653e4b18c8dd9f2`: `.agents/skills/prepare-commit/SKILL.md`.
+<https://github.com/mattpocock/skills/tree/6acc160e4e0cd062dbbbd7a1b26ae92855edf07e/skills/engineering/tdd/SKILL.md>. Rubric material from <https://github.com/mattpocock/skills/tree/d81f3a183412e71a5b1e84ca21bc1a35eea03a60/skills/engineering/tdd>: `tests.md` and `mocking.md`. Consumer evidence reviewed at immutable `ilaos-website` revision `71529c277cfc4688f0ffdb5b7653e4b18c8dd9f2`: `.agents/skills/prepare-commit/SKILL.md`.
 
 ## Author or owner
 
@@ -36,16 +36,16 @@ SOFTWARE.
 
 ## Retrieved
 
-2026-08-31, from `mattpocock-skills` version 1.2.3 at commit `6acc160e4e0cd062dbbbd7a1b26ae92855edf07e`; consumer evidence reviewed from the local `ilaos-website` checkout on the same date.
+2026-08-31, from `mattpocock-skills` version 1.2.3 at commit `6acc160e4e0cd062dbbbd7a1b26ae92855edf07e`; consumer evidence reviewed from the local `ilaos-website` checkout on the same date. 2026-10-01, `tests.md` and `mocking.md` from `mattpocock-skills` at commit `d81f3a183412e71a5b1e84ca21bc1a35eea03a60`, 75 commits after version 1.2.3.
 
 ## Material used
 
-The upstream public-seam rule, independent expected values, anti-patterns, and vertical RED→GREEN tracer-bullet loop. Consumer evidence informed durable test-quality and final-quality boundaries.
+The upstream public-seam rule, independent expected values, anti-patterns, and vertical RED→GREEN tracer-bullet loop. Consumer evidence informed durable test-quality and final-quality boundaries. From `tests.md` and `mocking.md`: behavior through public interfaces, the implementation-coupled and tautological test patterns, verification through a side channel, and mocking only at system boundaries through narrow, operation-specific interfaces.
 
 ## Modifications
 
-Grupo Ilao removed consumer-specific file and framework instructions; added approved-handoff and authority consumption, no-valuable-seam exceptions, reproducible evidence per behavior, explicit triangulation, and an uncommitted candidate-capture handoff. The frontmatter was normalized to this catalog.
+Grupo Ilao removed consumer-specific file and framework instructions; added approved-handoff and authority consumption, no-valuable-seam exceptions, reproducible evidence per behavior, explicit triangulation, and an uncommitted candidate-capture handoff. The frontmatter was normalized to this catalog. The `tests.md` and `mocking.md` material was rewritten in Grupo Ilao's words as `references/valuable-tests.md`, the rubric the review's Valuable Tests axis applies: code examples were removed, the patterns were grouped into three failure modes (tautological, structure-sensitive, and mocks that hide failure), the requirement that a doubled boundary has a test driving its failure path was added, and the deep-module argument for sturdier tests was added. The uncommitted candidate-capture handoff was removed, because the caller now commits locally.
 
 ## Approval
 
-Internal reuse under the MIT license was approved by the Issue #17 group specification.
+Internal reuse under the MIT license was approved by the Issue #17 group specification. The `d81f3a1` material is approved through review of the pull request that introduces it.

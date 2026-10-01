@@ -265,7 +265,7 @@ test("a read of AGENTS.md does not call Jev or block, and the next grep asks onc
 		"./AGENTS.md",
 		"docs/../AGENTS.md",
 		join(cwd, "AGENTS.md"),
-		"CONTEXT.md",
+		"GLOSSARY.md",
 		"docs/agents/workflow.md",
 		join(cwd, "docs/agents/domain.md"),
 		"docs/agents/../agents/workflow.md",

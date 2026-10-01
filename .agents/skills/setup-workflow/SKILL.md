@@ -4,7 +4,7 @@ description: "Trigger: configure repository workflow playbooks or audit existing
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "1.3"
+  version: "2.0"
   provenance: derived
 ---
 
@@ -20,14 +20,15 @@ Configure repository-level playbooks. For every script step, invoke `python3` wi
 - Unconfirmed values remain unresolved markers. A user-confirmed or repository-stated absence is `none (confirmed absent)` with its evidence. A value slot contains only a marker, `none (confirmed absent)`, or the candidate exactly as the repository spells it; prose belongs in discovery fields, not value slots.
 - Each capability carries exactly one state from [references/runtime-contract.md](references/runtime-contract.md); propagate a stated absence to dependent capabilities, count candidates per governing value, and count a standalone capability separately.
 - With a Linear tracker, `CHILD_BRANCH_CONVENTION` is the pattern `<KEY>-<number>` built from the resolved Linear team's key (`ENG-<number>`, never a literal identifier); branch history, prefix styles, and slugs supply no candidate, and an unresolved key leaves a marker.
-- The contracts in [assets/pull-requests.md](assets/pull-requests.md) are fixed and never rediscovered or asked for; resolve its remaining tokens normally.
+- The contracts in [assets/pull-requests.md](assets/pull-requests.md) are fixed and never rediscovered or asked for: the commit template, the pull-request title, the ticket reference, and the pull-request source and destination rules. Resolve its remaining tokens normally.
+- `docs/agents/coding-standards.md` holds the repository's own coding standards, read only by the review. It is consumer-owned: create it from [assets/coding-standards.md](assets/coding-standards.md) only when absent, with its own approval, and never diff, rewrite, or refuse over it afterward.
 
 ## Discover and Confirm
 
 1. Inspect the root instruction file, `docs/agents/`, remotes and branches, tracker evidence, domain authority, validation conventions, and pull-request practice. Surface unrelated `docs/agents/` files for confirmation. Discovery ends when every template value and capability has repository evidence or an unresolved status.
 2. If root `AGENTS.md` is absent, stop before writing and resolve it first. Propose the harness's named initializer when it offers one; otherwise a minimal `AGENTS.md` carrying a title, one discovered repository line, and the routing block. Present one proposal, never an unqualified choice. Its approval may be collected before, with, or after other playbook findings, but `AGENTS.md` is never written before its own explicit approval.
 3. Present findings in routing-block order, instruction file first. An existing recorded value is resolved but still compared; a surviving marker is reported. Repeated occurrences count once. One verified candidate skips its question; multiple require the user's choice; zero require confirmed absence or a supplied candidate. Batch unresolved values per playbook into one question. Working, production, and parent branches are recorded or marked unresolved, never gated.
-4. Resolve and record the Domain Authority Handoff by the exclusive states in [references/runtime-contract.md](references/runtime-contract.md), proving a map with the installed `context-map` validator.
+4. Resolve and record the Domain Authority Handoff by the exclusive states in [references/runtime-contract.md](references/runtime-contract.md), proving a map with the installed `glossary-map` validator.
 
 ## Write and Re-run
 
