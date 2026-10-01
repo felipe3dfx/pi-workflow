@@ -45,9 +45,9 @@ An explicit request in the latest user message for a child, subagent, or delegat
 
 `stay` lets the next gated parent tool run. It does not launch. It is not Launch blocked. `decide` tells the parent to ask one question and wait. It does not launch. `leave` does not launch by itself. It tells the parent to launch the Specialist Jev chose.
 
-One verdict is kept for one user message. A new user message asks again. Starting a turn does not by itself discard the verdict for the same message.
+One verdict is kept for one user message. A new user message asks again. Starting a turn does not by itself discard the verdict for the same message. Launch blocked is not kept as the verdict. The next gated parent tool or launch for the same message asks Jev again.
 
-Jev is asked through Pi's classifier model registry, always as `typesafe/jev-latest`. Another provider's Jev is not a substitute. The harness does not keep its own Jev client. A missing key, a missing classifier model, a classification that does not stop normally, or a label outside the criteria blocks the launch and blocks a gated parent tool. The warning is Launch blocked. The harness does not invent `stay` or `worker`.
+Jev is asked through Pi's classifier model registry, always as `typesafe/jev-latest`. Another provider's Jev is not a substitute, and its credentials alone do not count. The harness does not keep its own Jev client. A missing key, a missing `typesafe/jev-latest` classifier, a classification whose stop reason is not `stop` (`error`, or `aborted` when the turn is cancelled), or a label outside the criteria blocks the launch and blocks a gated parent tool. The warning is Launch blocked. The harness does not invent `stay` or `worker`.
 
 ### Both modes
 
@@ -55,11 +55,11 @@ An engineering skill name does not select a destination or a Specialist. The har
 
 The explore child does not run commands. A tool result that did not run is not invented.
 
-The gated parent tools are `read`, `grep`, `find`, `ls`, `edit`, `write`, `bash`, `powershell`, and `codegraph` `query` or `explore`. A gated tool called from a `codemode` script is gated like a direct call. `codemode` itself is not gated.
+The gated parent tools are `read`, `grep`, `find`, `ls`, `edit`, `write`, `bash`, `powershell`, and `codegraph` `query` or `explore`. A gated tool called from a `codemode` script follows the same verdict as a direct call. When that call is blocked, the script receives the block reason, and the parent model also receives it outside the script, so a script cannot hide it. `codemode` itself is not gated.
 
 This contract owns the destination and the Specialist. It does not choose a model. The parent model never changes. The model profile chooses the child's model, and a profile entry may name any model in Pi's catalog, including a virtual model.
 
-The child session runs in the parent process through the Pi SDK.
+The child session runs in the parent process through the Pi SDK. This is a design constraint, not a tested behavior.
 
 Invocations of `git` and `gh` stay in the parent only while routing is off. A named role does not move them to a child while routing is off. While routing is on, Jev may leave that work to a Specialist. That does not give the explore contract a shell.
 
@@ -73,9 +73,10 @@ Tests cross the routing seam and the settings list, not private helpers.
 - While on, `stay` lets the next gated tool run. `decide` blocks it and does not say to launch. `leave` names the Specialist Jev chose and does not let the parent tool run.
 - An explicit child request while on does not ask Jev for the destination and still asks for the Specialist.
 - A skill name in the user message does not change the destination or the Specialist.
-- The same user message reuses one verdict. A different message asks again.
-- A missing key while on is Launch blocked. A missing key while off is not. A classification that does not stop normally while on is Launch blocked.
-- A gated tool called from a `codemode` script follows the same verdict as a direct call.
+- The same user message reuses one verdict. A different message asks again. After Launch blocked, the next gated tool or launch for the same message asks Jev again.
+- A missing key while on is Launch blocked. A missing key while off is not. While on, a missing `typesafe/jev-latest` classifier, credentials for another provider's Jev alone, a stop reason other than `stop`, or a label outside the criteria is Launch blocked.
+- A gated tool called from a `codemode` script follows the same verdict as a direct call. When it is blocked, the parent model receives the block reason even if the script drops it. While on, a `codemode` script that calls no gated tool runs after `leave`.
+- Launching a child does not change the parent's model or thinking. A profile entry that names a virtual model launches the child on that model.
 - The explore contract still has no shell. A result does not claim a command ran unless that output is present.
 
 ## Out of scope
