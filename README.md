@@ -42,7 +42,7 @@ A profile assigns a model and thinking level to three specialists: `explorer`, `
 
 The package ships the `pi-workflow` theme (`themes/pi-workflow.json`). The extension restyles Pi's terminal UI in the Grok Build style: a header, footer key hints, a status row, a rounded input editor whose model label is colored by thinking level, autocomplete above the box, and slash-command coloring. It also restyles messages (user block with timestamp, `Thought for Ns` line, a thick left bar on expanded thinking, assistant timestamps) and menus (select lists, settings lists, Pi's selectors, and the settings submenus).
 
-This works by patching Pi internals copied from Pi 0.99.1, with no version guard. Re-verify it on every Pi upgrade. See ADR 0007.
+This works by patching Pi internals copied from Pi 1.0.0, with no version guard. Re-verify it on every Pi upgrade. See ADR 0007.
 
 ## Colliding packages
 
@@ -80,4 +80,4 @@ The launcher isolates Pi home, configuration, packages, and sessions. It is not 
 ## Requirements
 
 - Node.js `>=22.19`
-- Pi CLI `>=0.99.0` available in the target environment
+- Pi CLI `>=1.0.0` available in the target environment
