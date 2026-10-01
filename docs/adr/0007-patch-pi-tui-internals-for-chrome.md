@@ -10,7 +10,7 @@ Pi exposes no extension hooks for styling messages, menus, or the input editor. 
 
 ## Decision
 
-pi-workflow monkey-patches Pi's TUI prototypes for message and menu styling. The replacement logic is copied from Pi 0.99.1. The patches are applied on `session_start` and restored on `session_shutdown`. They are idempotent. There is no Pi version guard.
+pi-workflow monkey-patches Pi's TUI prototypes for message and menu styling. The replacement logic is copied from the Pi version named in each patch module's source note. The patches are applied on `session_start` and restored on `session_shutdown`. They are idempotent. There is no Pi version guard.
 
 Where Pi does expose an API (header, footer, widgets, editor component, theme), the chrome uses it.
 
@@ -22,4 +22,4 @@ Where Pi does expose an API (header, footer, widgets, editor component, theme), 
 
 ## Consequences
 
-Every Pi upgrade requires re-verifying the chrome. The patch modules (`extensions/chrome-messages.ts`, `extensions/chrome-menus.ts`) carry source notes naming the Pi version and functions they replicate. A Pi change to those internals can break the styling or the session with no warning from the harness. The peer range is `>=0.99.0`.
+Every Pi upgrade requires re-verifying the chrome. The patch modules (`extensions/chrome-messages.ts`, `extensions/chrome-menus.ts`) carry source notes naming the Pi version and functions they replicate. A Pi change to those internals can break the styling or the session with no warning from the harness. The peer range is the one in `package.json`.

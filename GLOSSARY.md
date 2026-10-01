@@ -40,19 +40,25 @@ An installed package that overlaps with a harness capability: `@heyhuynhgiabuu/p
 
 ### Model profile
 
-A named set of model and thinking assignments, one per specialist, stored in `pi-workflow-models.json` (schema v2) with one profile active. A missing specialist entry inherits the session model.
+A named set of model and thinking assignments, one per specialist, stored in `pi-workflow-models.json` (schema v2) with one profile active. A missing specialist entry inherits the session model. An entry may name any model in Pi's catalog, including a virtual model.
 
 ### Jev
 
-The optional owner of routing for a parent session.
+TypeSafe's classifier model, `typesafe/jev-latest` in Pi's catalog. When Jev routing is on, it owns routing for a parent session.
 
-_Avoid_: engineering skill, TypeSafe key
+_Avoid_: engineering skill, TypeSafe key, another provider's Jev
 
 ### Jev routing
 
-The persistent choice, stored with the user's Pi configuration, of whether Jev owns routing. It is off until the user turns it on.
+The persistent choice, stored with the user's Pi configuration, of whether Jev owns routing. It is off until the user turns it on. While it is on, Jev chooses the destination and the Specialist, never a model.
 
-_Avoid_: process switch, repository setting
+_Avoid_: process switch, repository setting, Jev router, virtual model routing
+
+### Launch blocked
+
+The warning when Jev routing is on and Jev gives no valid answer. No child launches and the gated parent tool does not run. It is not kept as the verdict for the user message.
+
+_Avoid_: stay, worker fallback
 
 ### Specialist
 
