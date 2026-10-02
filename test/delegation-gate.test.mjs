@@ -9,6 +9,9 @@ import { setImmediate } from "node:timers";
 import { createChildLauncher } from "../extensions/child-launcher.ts";
 import { capabilities, replaceSelection } from "../extensions/configure.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
+import { turnJevRoutingOn } from "./support/jev-routing.mjs";
+
+turnJevRoutingOn();
 
 const absentProfiles = { load: () => ({ status: "absent" }) };
 const specialists = ["explorer", "worker", "verifier"];

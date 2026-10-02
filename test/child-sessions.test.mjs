@@ -36,6 +36,9 @@ import {
 
 import { capabilities, replaceSelection } from "../extensions/configure.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
+import { turnJevRoutingOn } from "./support/jev-routing.mjs";
+
+turnJevRoutingOn();
 
 replaceSelection({
 	schemaVersion: 1,

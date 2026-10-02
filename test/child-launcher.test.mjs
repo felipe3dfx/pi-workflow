@@ -18,6 +18,9 @@ import { fileURLToPath } from "node:url";
 
 import { createChildLauncher } from "../extensions/child-launcher.ts";
 import { createModelProfiles } from "../extensions/model-profiles.ts";
+import { turnJevRoutingOn } from "./support/jev-routing.mjs";
+
+turnJevRoutingOn();
 
 const realContracts = fileURLToPath(
 	new URL("../assets/contracts/", import.meta.url),

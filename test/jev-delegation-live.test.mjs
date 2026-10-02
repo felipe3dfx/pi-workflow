@@ -5,6 +5,9 @@ import { fileURLToPath } from "node:url";
 
 import { createChildLauncher } from "../extensions/child-launcher.ts";
 import { delegationCases } from "../extensions/delegation-check.ts";
+import { turnJevRoutingOn } from "./support/jev-routing.mjs";
+
+turnJevRoutingOn();
 
 const enabled =
 	process.env.PI_WORKFLOW_JEV_LIVE === "1" &&

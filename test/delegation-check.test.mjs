@@ -4,6 +4,9 @@ import assert from "node:assert/strict";
 import { capabilities, replaceSelection } from "../extensions/configure.ts";
 import { delegationCases, runDelegationCheck } from "../extensions/delegation-check.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
+import { turnJevRoutingOn } from "./support/jev-routing.mjs";
+
+turnJevRoutingOn();
 
 const absentProfiles = { load: () => ({ status: "absent" }) };
 

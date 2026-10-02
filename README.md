@@ -30,7 +30,7 @@ Grupo Ilao engineering skills own process semantics: discovery, specification, t
 
 `/workflow:delegation-check` scores a fixed set of delegation cases against Jev and prints pass or fail for each one. It does not launch a child. It needs a TypeSafe API key, and a missing key is a fail line. It is not part of `npm run check`.
 
-`/workflow:settings` opens the settings list. In this build the switch starts on and lasts for the process. While it is off, Jev is not asked and a launch needs a role. ADR 0008 decides that routing starts off and persists beside the model profiles. This command does not do that yet.
+`/workflow:settings` opens the settings list. Jev routing starts off. The choice is saved in `pi-workflow-routing.json` in the Pi agent directory and survives a restart; it does not change `pi-workflow-models.json`. While it is off, Jev is not asked and a launch needs a role.
 
 ## Model profiles
 
