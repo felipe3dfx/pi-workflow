@@ -4,6 +4,8 @@
 
 Acceptance: approval and merge of the introducing PR.
 
+The clause that commands that read repository state, including `git` and `gh`, stay in the parent session is superseded by [ADR 0011](0011-git-and-gh-guard-in-child-bash.md).
+
 ## Decision
 
 Routing has one owner at a time. Jev routing is off until the user turns it on. That choice persists until the user changes it. It is stored in the user's Pi configuration, beside the model profiles.
