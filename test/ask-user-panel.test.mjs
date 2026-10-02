@@ -1238,7 +1238,7 @@ test("renderResult omits the answer row when the result has no details", () => {
 	assert.deepEqual(lines.map((line) => line.trimEnd()), ["◆ Asked Deploy now?"]);
 });
 
-test("renderResult without details falls back to the answer in a recognizable result text", () => {
+test("renderResult without details does not read the answer from the result text", () => {
 	const tool = createAskUserChoiceTool(createFooterHints());
 	const context = { args: { question: "Deploy now?" } };
 	const answer = (text) =>
@@ -1247,11 +1247,8 @@ test("renderResult without details falls back to the answer in a recognizable re
 			.render(80)
 			.map((line) => line.trimEnd())
 			.slice(1);
-	assert.deepEqual(answer("Selected option 2: No, wait"), ["  ↳ No, wait"]);
-	assert.deepEqual(answer("Selected options 1: Yes, 3: Later; free text: soon"), ["  ↳ Yes, Later, soon"]);
-	assert.deepEqual(answer("Free-text answer: tomorrow"), ["  ↳ tomorrow"]);
-	assert.deepEqual(answer("Refused: The turn was aborted."), []);
-	assert.deepEqual(answer("something else"), []);
+	assert.deepEqual(answer("Selected option 2: No, wait"), []);
+	assert.deepEqual(answer("Free-text answer: tomorrow"), []);
 });
 
 test("renderResult strips control and bidi characters from the answer", () => {
