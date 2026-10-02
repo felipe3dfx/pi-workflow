@@ -857,6 +857,31 @@ test("references that exist under cwd are listed in the child's task", async () 
 	});
 });
 
+test("references checked from a subdirectory reach the child as absolute paths", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		await mkdir(join(worktree, "docs"));
+		await writeFile(join(worktree, "docs", "policy.md"), "policy");
+		const launcher = createChildLauncher({ modelProfiles: absentProfiles });
+
+		const result = await launcher.prepareLaunch(
+			{
+				role: "worker",
+				task: "Apply the policy",
+				references: ["policy.md"],
+				worktree: "..",
+			},
+			launcherContext(join(worktree, "docs")),
+		);
+
+		assert.equal(result.kind, "ready");
+		const absolute = await realpath(join(worktree, "docs", "policy.md"));
+		assert.match(
+			result.task,
+			new RegExp(`\\n- ${absolute.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`),
+		);
+	});
+});
+
 test("a launch without references keeps the task unchanged", async () => {
 	await withWorkspace(async ({ worktree }) => {
 		const launcher = createChildLauncher({ modelProfiles: absentProfiles });

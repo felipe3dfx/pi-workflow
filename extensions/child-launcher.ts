@@ -210,21 +210,27 @@ function withinCwd(path: string, cwd: string): string | undefined {
 	}
 }
 
-function unreachableReference(
+function resolveReferences(
 	references: readonly string[],
 	cwd: string,
-): string | undefined {
+): string[] | { unreachable: string } {
 	try {
 		const root = realpathSync(cwd);
-		return references.find((reference) => {
+		const paths: string[] = [];
+		for (const reference of references) {
 			try {
-				return withinCwd(realpathSync(resolve(cwd, reference)), root) === undefined;
+				const path = realpathSync(resolve(cwd, reference));
+				if (withinCwd(path, root) === undefined) {
+					return { unreachable: reference };
+				}
+				paths.push(path);
 			} catch {
-				return true;
+				return { unreachable: reference };
 			}
-		});
+		}
+		return paths;
 	} catch {
-		return references[0];
+		return references.length > 0 ? { unreachable: references[0] } : [];
 	}
 }
 
@@ -501,11 +507,11 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		const profiles = options.modelProfiles.load();
 		if (profiles.status === "refused") return outcome("refused", profiles.reason);
 		const references = request.references ?? [];
-		const unreachable = unreachableReference(references, ctx.cwd);
-		if (unreachable !== undefined) {
+		const paths = resolveReferences(references, ctx.cwd);
+		if (!Array.isArray(paths)) {
 			return outcome(
 				"refused",
-				`reference ${unreachable} does not exist or is outside ${ctx.cwd}`,
+				`reference ${paths.unreachable} does not exist or is outside ${ctx.cwd}`,
 			);
 		}
 		const worktree = await gitRoot(resolve(ctx.cwd, request.worktree ?? "."));
@@ -523,7 +529,7 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			contract,
 			task:
 				references.length > 0
-					? `${request.task}\n\nRead these paths first:\n${references.map((reference) => `- ${reference}`).join("\n")}`
+					? `${request.task}\n\nRead these paths first:\n${paths.map((path) => `- ${path}`).join("\n")}`
 					: request.task,
 			worktree,
 			warnings: [],
