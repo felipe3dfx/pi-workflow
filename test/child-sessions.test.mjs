@@ -47,6 +47,10 @@ replaceSelection({
 	expectations: {},
 });
 
+const packageVersion = JSON.parse(
+	await readFile(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"),
+).version;
+
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 const workerContract = await readFile(
@@ -156,6 +160,7 @@ function loadExtension({
 	const commands = new Map();
 	const shortcuts = new Map();
 	const messages = [];
+	const entries = [];
 	const notifications = [];
 	const widgets = new Map();
 	const views = [];
@@ -193,6 +198,7 @@ function loadExtension({
 				messages.push({ message, options });
 				sendMessage?.(message, options);
 			},
+			appendEntry: (customType, data) => entries.push({ customType, data }),
 			exec: async () => {
 				throw new Error("must not run commands");
 			},
@@ -224,6 +230,7 @@ function loadExtension({
 	return {
 		tools,
 		messages,
+		entries,
 		notifications,
 		widgets,
 		views,
@@ -370,8 +377,9 @@ for (const mode of ["tui", "rpc"]) {
 				thinking: "medium",
 				task: "Fix the failing test",
 				text: "All tests pass.",
+				verdict: undefined,
 			});
-			assert.match(message.content, /completed:\n\nAll tests pass\./);
+			assert.match(message.content, /completed\. Verdict: absent\.\n\nAll tests pass\./);
 			assert.deepEqual(options, { deliverAs: "steer", triggerTurn: true });
 			assert.equal(child.disposals, 1);
 			assert.deepEqual(ctx.model, {
@@ -628,6 +636,64 @@ test("a failed background child is delivered as a failure message", async () => 
 		});
 		assert.match(messages[0].message.content, /provider overloaded/);
 		assert.equal(children.created[0].disposals, 1);
+	});
+});
+
+test("each Run state transition of a child is appended to the parent session as a bounded trace entry", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		await writeFile(join(worktree, "AGENTS.md"), "policy");
+		const children = fakeChildren();
+		const { tool, entries, messages } = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+
+		const result = await spawn(
+			tool,
+			{ role: "worker", task: "Secret task text", references: ["AGENTS.md"] },
+			toolContext("tui", worktree),
+		);
+		await settle();
+		children.created[0].result.resolve("status: done\nfull result body");
+		await settle();
+
+		const traces = entries.filter(
+			(entry) => entry.customType === "pi-workflow-child-trace",
+		);
+		assert.deepEqual(
+			traces.map((entry) => entry.data.state),
+			["queued", "running", "completed"],
+		);
+		for (const { data } of traces) {
+			assert.equal(data.id, result.details.id);
+			assert.equal(data.role, "worker");
+			assert.equal(data.chosenBy, "jev");
+			assert.deepEqual(data.tools, workerTools);
+			assert.deepEqual(data.references, ["AGENTS.md"]);
+			assert.equal(data.version, packageVersion);
+			assert.ok(!JSON.stringify(data).includes("Secret task text"));
+			assert.ok(!JSON.stringify(data).includes("full result body"));
+		}
+		assert.equal(traces[2].data.verdict, "done");
+		assert.equal(traces[0].data.verdict, undefined);
+		assert.equal(messages.length, 1);
+	});
+});
+
+test("a trace entry that cannot be appended does not break the child", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		extension.entries.push = () => {
+			throw new Error("disk full");
+		};
+
+		await spawnBackground(extension, worktree);
+		await settle();
+		children.created[0].result.resolve("Done.");
+		await settle();
+
+		assert.equal(extension.messages.length, 1);
 	});
 });
 
@@ -2123,7 +2189,7 @@ test("continue_child through Pi's SDK sends the completed child's conversation p
 			await eventually(() => extension.messages.length === 2);
 			assert.match(
 				extension.messages[1].message.content,
-				/completed:\n\nSecond answer\./,
+				/completed\. Verdict: absent\.\n\nSecond answer\./,
 			);
 			assert.deepEqual(stateOfDetails(extension.messages[1].message.details), {
 				id: next.details.id,
@@ -2187,7 +2253,7 @@ test("a background child asks through Pi's SDK, the parent model replies, and th
 
 		assert.match(
 			extension.messages[1].message.content,
-			/completed:\n\nFixed src\/parser\.ts\./,
+			/completed\. Verdict: absent\.\n\nFixed src\/parser\.ts\./,
 		);
 		assert.ok(sent(parent.requests[1]).includes("src/parser.ts"));
 		assert.equal(await stateOf(extension, id), "completed");
@@ -3592,7 +3658,7 @@ test("results pending at one turn boundary arrive together in a single message",
 		]);
 		assert.equal(
 			message.content,
-			`Child ${first} completed:\n\nFirst answer.\n\nChild ${second} failed: provider overloaded`,
+			`Child ${first} completed. Verdict: absent.\n\nFirst answer.\n\nChild ${second} failed: provider overloaded`,
 		);
 		assert.deepEqual(options, { deliverAs: "steer", triggerTurn: true });
 	});

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 import type {
 	AssistantMessage,
@@ -22,8 +23,14 @@ import { type Static, Type } from "typebox";
 
 import type { createChildLauncher } from "./child-launcher.ts";
 import { claim, held } from "./configure.ts";
-import { projectChild } from "./child-projection.ts";
+import { childVerdict, projectChild } from "./child-projection.ts";
 import { sanitizeTaskText } from "./todo-header.ts";
+
+const packageVersion = (
+	JSON.parse(
+		readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+	) as { version: string }
+).version;
 
 export const childOverlay = claim("child-session", "overlay");
 
@@ -65,6 +72,8 @@ type Plan = {
 	worktree: string;
 	model: string;
 	thinking: ModelThinkingLevel;
+	chosenBy: "parent" | "jev";
+	references: string[];
 };
 
 type ChildState =
@@ -108,6 +117,17 @@ interface Child {
 		resolve(answer: string): void;
 		reject(error: Error): void;
 	};
+}
+
+export interface ChildTrace {
+	id: string;
+	role: string;
+	chosenBy: "parent" | "jev";
+	tools: string[];
+	references: string[];
+	state: ChildState;
+	verdict?: string;
+	version: string;
 }
 
 export type Schedule = (run: () => void, ms: number) => () => void;
@@ -179,6 +199,10 @@ export function childDetails(record: ChildRecord, now = Date.now()) {
 		task: projected.task,
 		elapsedMs: projected.elapsedMs,
 		text: projected.text,
+		verdict:
+			projected.state === "completed"
+				? childVerdict(projected.role, projected.text)
+				: undefined,
 	};
 }
 
@@ -307,6 +331,7 @@ export function createChildSessions(options: {
 	create?: ChildSessionFactory;
 	deliver: () => void;
 	ask: (record: ChildRecord, question: string, number: number) => void;
+	trace: (entry: ChildTrace) => void;
 	report: (message: string) => void;
 	schedule?: Schedule;
 }) {
@@ -323,6 +348,28 @@ export function createChildSessions(options: {
 		try {
 			options.report(message);
 		} catch {}
+	}
+
+	function trace(child: Child) {
+		const { record, plan } = child;
+		const verdict =
+			record.state === "completed"
+				? childVerdict(record.role, record.text)
+				: undefined;
+		try {
+			options.trace({
+				id: record.id,
+				role: record.role,
+				chosenBy: plan.chosenBy,
+				tools: plan.contract.tools,
+				references: plan.references,
+				state: record.state,
+				...(verdict ? { verdict } : {}),
+				version: packageVersion,
+			});
+		} catch (error) {
+			warn(`Child ${record.id}: ${errorMessage(error)}`);
+		}
 	}
 
 	function changed() {
@@ -389,6 +436,7 @@ export function createChildSessions(options: {
 	function run(child: Child) {
 		child.record.state = "running";
 		child.record.startedAt = Date.now();
+		trace(child);
 		child.watch.start();
 		changed();
 		void child.handle.run(child.plan.task).then(
@@ -412,6 +460,7 @@ export function createChildSessions(options: {
 		record.text = text;
 		record.endedAt = Date.now();
 		record.step = undefined;
+		trace(child);
 		child.streaming = undefined;
 		answer(
 			child,
@@ -451,6 +500,7 @@ export function createChildSessions(options: {
 		if (child.record.state === "waiting") {
 			child.record.state = "running";
 			child.record.step = undefined;
+			trace(child);
 			changed();
 		}
 		if (reply instanceof Error) question.reject(reply);
@@ -475,6 +525,7 @@ export function createChildSessions(options: {
 			child.question = { number, resolve, reject };
 			child.record.state = "waiting";
 			child.record.step = `asks question ${number}`;
+			trace(child);
 			changed();
 			try {
 				options.ask({ ...child.record }, question, number);
@@ -613,6 +664,7 @@ export function createChildSessions(options: {
 		observe = (event) => track(child, event);
 		children.set(child.record.id, child);
 		queue.push(child);
+		trace(child);
 		changed();
 		queueMicrotask(pump);
 		return { status: "queued" as const, id: child.record.id };
@@ -769,6 +821,12 @@ const spawnChildParameters = Type.Object({
 				"An existing Git root for the child to work in. Defaults to the current Git root.",
 		}),
 	),
+	references: Type.Optional(
+		Type.Array(Type.String(), {
+			description:
+				"Paths under the current directory the child must read. The launch is refused when one does not exist or resolves outside it.",
+		}),
+	),
 	background: Type.Optional(
 		Type.Literal(true, {
 			description:
@@ -870,6 +928,7 @@ export function createSpawnChildTool(
 					role: params.role ?? undefined,
 					task: params.task,
 					worktree: params.worktree,
+					references: params.references,
 					...(userRequest ? { userRequest } : {}),
 				},
 				ctx,
@@ -912,6 +971,9 @@ function launched(
 	if (started.status === "completed") {
 		return report([...warnings, started.text], {
 			status: "completed",
+			...(selection
+				? { verdict: childVerdict(selection.role, started.text) }
+				: {}),
 			...selected,
 		});
 	}
