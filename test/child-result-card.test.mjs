@@ -236,3 +236,28 @@ test("every card line fits the width it is given", (t) => {
 				assert.ok(visibleWidth(line) <= width, `width ${width}: ${line}`);
 	}
 });
+
+test("results delivered together render one card per result, in delivery order", (t) => {
+	const { card } = cards(t);
+	const failed = {
+		...details,
+		id: "9999aaaa-0000-4000-8000-000000000000",
+		state: "failed",
+		text: "provider overloaded",
+	};
+	assert.deepEqual(
+		plain(
+			card({
+				customType: "pi-workflow-child-result",
+				details: { results: [details, failed] },
+			}),
+		),
+		[
+			"",
+			"   ◆ Subagent worker 5636  gpt-6-luna (high) · 1m 02s                (ctrl+o to expand)",
+			"     He terminado; ejecuté sleep 60 y esperé 60 segundos.",
+			"   ◆ Subagent worker 9999 failed  gpt-6-luna (high) · 1m 02s         (ctrl+o to expand)",
+			"     provider overloaded",
+		],
+	);
+});
