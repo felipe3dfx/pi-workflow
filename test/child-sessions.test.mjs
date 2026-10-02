@@ -960,9 +960,8 @@ test("an explicit child request in the user message is sent to Jev without a des
 			jev.requests[0].state.user_request,
 			"Use a child\nto map the module",
 		);
-		assert.equal(jev.requests[0].state.delegation_intent, "explicit");
 		assert.equal(jev.requests[0].state.task, "Map the module");
-		assert.equal(jev.requests[0].questions.destination, undefined);
+		assert.equal(jev.requests[0].questions.destination.type, "choice");
 	});
 });
 

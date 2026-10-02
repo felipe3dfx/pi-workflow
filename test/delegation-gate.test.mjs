@@ -176,7 +176,6 @@ test("the first grep blocks when Jev says leave, names the role, and asks destin
 	assert.equal(request.questions.destination.type, "choice");
 	assert.equal(request.questions.specialist.type, "choice");
 	assert.equal(request.questions.choice, undefined);
-	assert.equal(request.state.delegation_intent, "optional");
 	assert.equal(request.state.task, message);
 	assert.equal(request.state.user_request, message);
 	assert.equal("suggested_specialist" in request.state, false);
@@ -229,7 +228,6 @@ test("Jev stay allows the tool and a later tool does not ask again", async () =>
 			"The work stays in this session. No child was launched.",
 		);
 		assert.equal(jev.requests.length, 1);
-		assert.equal(jev.requests[0].state.delegation_intent, "optional");
 		assert.equal(jev.requests[0].state.user_request, message);
 		assert.equal(jev.requests[0].questions.destination.type, "choice");
 	});
@@ -270,7 +268,7 @@ test("a stay from spawn_child lets the parent's next git, gh, and read run on th
 	});
 });
 
-test("explicit child text blocks a read and does not ask where the work should go", async () => {
+test("explicit child text blocks a read and asks Jev for destination and specialist", async () => {
 	for (const message of ["Revisa esto con un hijo", "Read the file with a child"]) {
 		const jev = fakeJev("worker");
 		const launcher = launcherFor();
@@ -283,10 +281,11 @@ test("explicit child text blocks a read and does not ask where the work should g
 		assert.match(result.reason, /spawn_child/);
 		assert.match(result.reason, /\bworker\b/);
 		assert.equal(jev.requests.length, 1);
-		assert.equal(jev.requests[0].state.delegation_intent, "explicit");
 		assert.equal(jev.requests[0].state.user_request, message);
-		assert.equal(jev.requests[0].questions.destination, undefined);
-		assert.deepEqual(Object.keys(jev.requests[0].questions), ["specialist"]);
+		assert.deepEqual(Object.keys(jev.requests[0].questions).sort(), [
+			"destination",
+			"specialist",
+		]);
 	}
 });
 
@@ -748,8 +747,7 @@ test("with Jev routing on, a named skill fixes neither the destination nor the s
 		assert.equal(delegated.kind, "ready");
 		assert.equal(delegated.role, "explore");
 		assert.equal(explicit.requests.length, 1);
-		assert.equal(explicit.requests[0].state.delegation_intent, "explicit");
-		assert.equal(explicit.requests[0].questions.destination, undefined);
+		assert.equal(explicit.requests[0].questions.destination.type, "choice");
 	});
 });
 

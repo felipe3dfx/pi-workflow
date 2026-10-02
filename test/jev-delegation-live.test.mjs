@@ -77,10 +77,6 @@ test(
 			assert.equal(result.role, item.expected.role, item.name);
 			const body = requests[before];
 			assert.equal(body.state.user_request, item.userRequest, item.name);
-			if (!item.expected.destinationAsked) {
-				assert.equal(body.state.delegation_intent, "explicit", item.name);
-				assert.equal(body.questions.destination, undefined, item.name);
-			}
 			if (item.suggestedRole) {
 				assert.equal(
 					body.state.suggested_specialist,
