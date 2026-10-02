@@ -823,3 +823,22 @@ test("a session with a model but no thinking is refused when the session pair is
 		assertRefused(result, /session/);
 	});
 });
+
+test("while Jev routing is on, git and gh in a named role's task go to Jev like any other work", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const jev = fakeJev(() => "leave");
+		const launcher = createChildLauncher({
+			modelProfiles: absentProfiles,
+			fetch: jev.fetch,
+		});
+		const result = await launcher.prepareLaunch(
+			{ role: "worker", task: "git status" },
+			launcherContext(worktree),
+		);
+		assert.ok(jev.requests.length >= 1);
+		assert.notEqual(
+			result.reason,
+			"git and gh stay in the parent while Jev routing is off.",
+		);
+	});
+});

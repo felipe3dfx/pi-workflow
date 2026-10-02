@@ -54,6 +54,8 @@ const specialists = ["explorer", "worker", "verifier"] as const;
 const explicitDelegation =
 	/\b(?:subagente|subagent|spawn_child|hijo|child)\b|sesi[oó]n hija|child session|\bdeleg/iu;
 
+const repositoryStateCommand = /^\s*(?:git|gh)(?: |$)/u;
+
 const specialistInstructions =
 	"Which specialist should carry out the requested action? Choose from the action in `user_request` and `task`. `suggested_specialist` is a hint and does not decide the answer.";
 
@@ -308,6 +310,12 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 	): Promise<Assessment> {
 		if (!jevRoutingEnabled()) {
 			if (request.role !== undefined && isRole(request.role)) {
+				if (repositoryStateCommand.test(request.task)) {
+					return {
+						kind: "stay",
+						reason: "git and gh stay in the parent while Jev routing is off.",
+					};
+				}
 				return { kind: "launch", role: request.role };
 			}
 			return { kind: "stay", reason: "Jev routing is off." };
