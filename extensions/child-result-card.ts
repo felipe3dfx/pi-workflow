@@ -32,7 +32,6 @@ const OPENED = Symbol.for("pi-workflow:child-result-card:opened");
 const slots = globalThis as Record<symbol, Map<string, boolean> | undefined>;
 slots[OPENED] ??= new Map();
 const opened = slots[OPENED];
-const previewLines = 3;
 const indent = 2;
 
 type Card = Partial<ChildDetails> & { id: string; text: string };
@@ -84,15 +83,38 @@ function tone(card: Card, question: boolean): ThemeColor {
 	return "toolTitle";
 }
 
-function header(theme: Theme, card: Card, question: boolean) {
+function verdictTone(verdict: string): ThemeColor {
+	if (verdict === "fail") return "error";
+	if (verdict === "blocked") return "warning";
+	return "success";
+}
+
+function reason(card: Card) {
+	if (
+		card.state !== "failed" &&
+		card.state !== "timed out" &&
+		card.verdict !== "fail" &&
+		card.verdict !== "blocked"
+	)
+		return undefined;
+	return card.text
+		.split("\n")
+		.map((line) => line.trim())
+		.find((line) => line && !/^verdict:/i.test(line));
+}
+
+function header(theme: Theme, card: Card, question: boolean, open: boolean) {
 	const name = [card.role, card.id.slice(0, 4)].filter(Boolean).join(" ");
 	let line = `${theme.fg(tone(card, question), "◆")} ${theme.bold(theme.fg("muted", "Subagent"))} ${name}`;
 	if (question)
 		return `${line} ${theme.fg("warning", `asks · question ${card.question ?? "?"}`)}`;
 	if (card.state && card.state !== "completed")
 		line += ` ${theme.fg(tone(card, question), card.state)}`;
+	if (card.verdict)
+		line += ` ${theme.fg(verdictTone(card.verdict), card.verdict)}`;
 	const meta = [
-		card.model &&
+		open &&
+			card.model &&
 			childModelLine({
 				model: card.model,
 				thinking: card.thinking,
@@ -149,9 +171,8 @@ class ResultCard implements Component {
 		const edge = edgeFor(assistantInset, outer);
 		const width = Math.max(1, outer - edge * 2);
 		const open = this.open();
-		const full = open || this.question || this.state.failed;
-		const key = keyText("app.tools.expand");
-		const head = header(t, this.card, this.question);
+				const key = keyText("app.tools.expand");
+		const head = header(t, this.card, this.question, open);
 		const hint = key
 			? t.fg(
 					"dim",
@@ -166,17 +187,13 @@ class ResultCard implements Component {
 		const lines: string[] = [];
 		if (open && this.card.task)
 			lines.push(t.fg("dim", `Task ${sanitizeTaskText(this.card.task)}`));
-		if (this.card.text.trim()) {
+		if (open || this.question) {
 			const body = this.body.render(inner).map((line) => line.trimEnd());
 			while (body.length > 0 && body.at(-1) === "") body.pop();
-			const preview = body.filter((line) => visibleWidth(line) > 0);
-			if (full) lines.push(...body);
-			else if (preview.length <= previewLines) lines.push(...preview);
-			else
-				lines.push(
-					...preview.slice(0, previewLines),
-					t.fg("dim", `… +${preview.length - previewLines} lines`),
-				);
+			lines.push(...body);
+		} else {
+			const why = reason(this.card);
+			if (why) lines.push(t.fg("dim", sanitizeTaskText(why)));
 		}
 		if (open) lines.push(t.fg("dim", "alt+a  open in subagents view"));
 		const margin = " ".repeat(edge);
