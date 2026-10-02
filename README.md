@@ -30,7 +30,7 @@ Grupo Ilao engineering skills own process semantics: discovery, specification, t
 
 `/workflow:delegation-check` scores a fixed set of delegation cases against Jev and prints pass or fail for each one. It asks Jev through Pi's classifier registry, like a launch. It does not launch a child. It needs a TypeSafe API key, and a missing key is a fail line. It also needs Jev routing on: while routing is off, each case that calls Jev is a fail line, and Jev is not asked. It is not part of `npm run check`.
 
-`/workflow:settings` opens the settings list. Jev routing starts off. The choice is saved in `pi-workflow-routing.json` in the Pi agent directory and survives a restart; it does not change `pi-workflow-models.json`. While it is off, Jev is not asked and a launch needs a role.
+`/workflow:settings` opens the settings list. Jev routing starts off. The choice is saved in `pi-workflow-routing.json` in the Pi agent directory and survives a restart; it does not change `pi-workflow-models.json`. While it is off, Jev is not asked and a launch needs a role. A launch does not read the task text; a child's `bash` refuses a command that runs `git` or `gh`, or one it cannot read with confidence, and the child reports blocked or asks the parent.
 
 ## Model profiles
 
