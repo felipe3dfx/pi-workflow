@@ -352,23 +352,25 @@ export function createChildSessions(options: {
 
 	function trace(child: Child) {
 		const { record, plan } = child;
+		traceRun(record.id, plan, record.state, record.text);
+	}
+
+	function traceRun(id: string, plan: Plan, state: ChildState, text?: string) {
 		const verdict =
-			record.state === "completed"
-				? childVerdict(record.role, record.text)
-				: undefined;
+			state === "completed" ? childVerdict(plan.role, text) : undefined;
 		try {
 			options.trace({
-				id: record.id,
-				role: record.role,
+				id,
+				role: plan.role,
 				chosenBy: plan.chosenBy,
 				tools: plan.contract.tools,
 				references: plan.references,
-				state: record.state,
+				state,
 				...(verdict ? { verdict } : {}),
 				version: packageVersion,
 			});
 		} catch (error) {
-			warn(`Child ${record.id}: ${errorMessage(error)}`);
+			warn(`Child ${id}: ${errorMessage(error)}`);
 		}
 	}
 
@@ -612,15 +614,22 @@ export function createChildSessions(options: {
 			};
 		}
 		if (!launch.background) {
+			const id = randomUUID();
+			let ended: ChildState = "failed";
 			const stopped = Promise.withResolvers<never>();
-			const stop = (error: Error) => {
+			const stop = (state: ChildState, error: Error) => {
+				ended = state;
 				stopped.reject(error);
 				void handle.abort().catch(() => {});
 			};
 			const abort = () =>
-				stop(new Error("The call was aborted and the child was stopped."));
+				stop(
+					"cancelled",
+					new Error("The call was aborted and the child was stopped."),
+				);
 			launch.signal?.addEventListener("abort", abort, { once: true });
-			stall = (reason) => stop(new Error(`The child timed out: ${reason}`));
+			stall = (reason) =>
+				stop("timed out", new Error(`The child timed out: ${reason}`));
 			asked = () =>
 				Promise.reject<string>(
 					new Error(
@@ -628,12 +637,17 @@ export function createChildSessions(options: {
 					),
 				);
 			watch.start();
+			traceRun(id, plan, "running");
 			try {
 				const text = await Promise.race([
 					handle.run(plan.task),
 					stopped.promise,
 				]);
+				traceRun(id, plan, "completed", text);
 				return { status: "completed" as const, text };
+			} catch (error) {
+				traceRun(id, plan, ended);
+				throw error;
 			} finally {
 				watch.stop();
 				launch.signal?.removeEventListener("abort", abort);

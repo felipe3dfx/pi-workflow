@@ -680,6 +680,67 @@ test("each Run state transition of a child is appended to the parent session as 
 	});
 });
 
+test("a foreground child appends its running and terminal Run states as trace entries", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren({
+			run: async () => "status: blocked\nfull result body",
+		});
+		const { tool, entries } = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+
+		await spawn(
+			tool,
+			{ role: "worker", task: "Secret task text" },
+			toolContext("print", worktree),
+		);
+
+		const traces = entries.filter(
+			(entry) => entry.customType === "pi-workflow-child-trace",
+		);
+		assert.deepEqual(
+			traces.map((entry) => entry.data.state),
+			["running", "completed"],
+		);
+		assert.equal(traces[0].data.id, traces[1].data.id);
+		assert.equal(traces[1].data.role, "worker");
+		assert.equal(traces[1].data.verdict, "blocked");
+		assert.ok(!JSON.stringify(traces).includes("Secret task text"));
+		assert.ok(!JSON.stringify(traces).includes("full result body"));
+	});
+});
+
+test("a foreground child that fails appends a failed trace entry", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren({
+			run: async () => {
+				throw new Error("provider overloaded");
+			},
+		});
+		const { tool, entries } = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+
+		await assert.rejects(
+			spawn(
+				tool,
+				{ role: "worker", task: "Fix the failing test" },
+				toolContext("print", worktree),
+			),
+			/provider overloaded/,
+		);
+
+		assert.deepEqual(
+			entries
+				.filter((entry) => entry.customType === "pi-workflow-child-trace")
+				.map((entry) => entry.data.state),
+			["running", "failed"],
+		);
+	});
+});
+
 test("a trace entry that cannot be appended does not break the child", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
