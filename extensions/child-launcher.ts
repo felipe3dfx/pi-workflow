@@ -25,6 +25,7 @@ export interface LaunchRequest {
 	role?: string;
 	task: string;
 	worktree?: string;
+	references?: string[];
 	userRequest?: string;
 }
 
@@ -203,6 +204,24 @@ function withinCwd(path: string, cwd: string): string | undefined {
 		return rel;
 	} catch {
 		return undefined;
+	}
+}
+
+function unreachableReference(
+	references: readonly string[],
+	cwd: string,
+): string | undefined {
+	try {
+		const root = realpathSync(cwd);
+		return references.find((reference) => {
+			try {
+				return withinCwd(realpathSync(resolve(cwd, reference)), root) === undefined;
+			} catch {
+				return true;
+			}
+		});
+	} catch {
+		return references[0];
 	}
 }
 
@@ -478,6 +497,14 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		}
 		const profiles = options.modelProfiles.load();
 		if (profiles.status === "refused") return outcome("refused", profiles.reason);
+		const references = request.references ?? [];
+		const unreachable = unreachableReference(references, ctx.cwd);
+		if (unreachable !== undefined) {
+			return outcome(
+				"refused",
+				`reference ${unreachable} does not exist or is outside ${ctx.cwd}`,
+			);
+		}
 		const worktree = await gitRoot(resolve(ctx.cwd, request.worktree ?? "."));
 		if (typeof worktree !== "string") return worktree;
 		const verdict = await verdictFor(request, ctx);
@@ -491,7 +518,10 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			kind: "ready",
 			role: verdict.role,
 			contract,
-			task: request.task,
+			task:
+				references.length > 0
+					? `${request.task}\n\nRead these paths first:\n${references.map((reference) => `- ${reference}`).join("\n")}`
+					: request.task,
 			worktree,
 			warnings: [],
 			model: pair.model,
