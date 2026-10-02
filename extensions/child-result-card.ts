@@ -90,27 +90,13 @@ function verdictTone(verdict: string): ThemeColor {
 }
 
 function reason(card: Card) {
-	if (
-		card.state !== "failed" &&
-		card.state !== "timed out" &&
-		card.verdict !== "fail" &&
-		card.verdict !== "blocked"
-	)
-		return undefined;
-	const lines = card.text.split("\n").map((line) => line.trim());
-	const undone = lines.findIndex((line) => /^left_undone:\s*$/i.test(line));
-	const item = lines[undone + 1]?.match(/^-\s*(.+)$/)?.[1];
-	if (undone >= 0 && item) return item;
-	const verdict = lines.findLastIndex((line) =>
-		/^verdict:\s*(fail|blocked)\s*$/i.test(line),
-	);
-	if (verdict >= 0) {
-		const near =
-			lines.slice(verdict + 1).find(Boolean) ??
-			lines.slice(0, verdict).findLast(Boolean);
-		if (near) return near;
-	}
-	return lines.find((line) => line && !/^(verdict|status):/i.test(line));
+	if (card.state === "failed" || card.state === "timed out")
+		return card.text
+			.split("\n")
+			.map((line) => line.trim())
+			.find(Boolean);
+	if (card.verdict === "done" || card.verdict === "pass") return undefined;
+	return card.result?.reason;
 }
 
 function header(theme: Theme, card: Card, question: boolean, open: boolean) {

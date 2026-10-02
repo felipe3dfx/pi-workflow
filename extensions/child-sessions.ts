@@ -24,9 +24,11 @@ import { type Static, Type } from "typebox";
 import type { createChildLauncher } from "./child-launcher.ts";
 import { claim, held } from "./configure.ts";
 import {
+	type ChildResult,
 	childOutcome,
-	childVerdict,
 	projectChild,
+	reportsResult,
+	resultParameters,
 } from "./child-projection.ts";
 import { sanitizeTaskText } from "./todo-header.ts";
 
@@ -40,6 +42,7 @@ export const childOverlay = claim("child-session", "overlay");
 
 interface ChildSpec {
 	cwd: string;
+	role: string;
 	model: string;
 	thinking: ModelThinkingLevel;
 	prompt: string;
@@ -47,6 +50,7 @@ interface ChildSpec {
 	modelRegistry: ExtensionContext["modelRegistry"];
 	onEvent(event: AgentSessionEvent): void;
 	ask(question: string): Promise<string>;
+	report(result: ChildResult): void;
 	entries?: SessionEntry[];
 	parentSession?: string;
 }
@@ -101,6 +105,7 @@ export interface ChildRecord {
 	startedAt?: number;
 	endedAt?: number;
 	text?: string;
+	result?: ChildResult;
 	continuedFrom?: string;
 	step?: string;
 }
@@ -203,10 +208,8 @@ export function childDetails(record: ChildRecord, now = Date.now()) {
 		task: projected.task,
 		elapsedMs: projected.elapsedMs,
 		text: projected.text,
-		verdict:
-			projected.state === "completed"
-				? childVerdict(projected.role, projected.text)
-				: undefined,
+		result: record.result,
+		verdict: record.state === "completed" ? record.result?.verdict : undefined,
 	};
 }
 
@@ -231,9 +234,14 @@ function parentRuntime(
 }
 
 const askParentTool = "ask_parent";
+const reportResultTool = "report_result";
 
 function childTools(plan: Plan) {
-	return [...plan.contract.tools, askParentTool];
+	return [
+		...plan.contract.tools,
+		askParentTool,
+		...(reportsResult(plan.role) ? [reportResultTool] : []),
+	];
 }
 
 const askParentParameters = Type.Object({
@@ -283,6 +291,26 @@ const createPiChildSession: ChildSessionFactory = async (spec) => {
 					};
 				},
 			},
+			...(reportsResult(spec.role)
+				? [
+						{
+							name: reportResultTool,
+							label: "Report Result",
+							description:
+								"Report your Verdict and result to the parent before your final answer. Call it again to correct it; the last call counts.",
+							parameters: resultParameters[spec.role],
+							async execute(_toolCallId: string, params: ChildResult) {
+								spec.report(params);
+								return {
+									content: [
+										{ type: "text" as const, text: "Result recorded." },
+									],
+									details: {},
+								};
+							},
+						},
+					]
+				: []),
 		],
 		resourceLoader,
 		sessionManager: SessionManager.inMemory(
@@ -362,12 +390,16 @@ export function createChildSessions(options: {
 
 	function trace(child: Child) {
 		const { record, plan } = child;
-		traceRun(record.id, plan, record.state, record.text);
+		traceRun(record.id, plan, record.state, record.result);
 	}
 
-	function traceRun(id: string, plan: Plan, state: ChildState, text?: string) {
-		const verdict =
-			state === "completed" ? childVerdict(plan.role, text) : undefined;
+	function traceRun(
+		id: string,
+		plan: Plan,
+		state: ChildState,
+		result?: ChildResult,
+	) {
+		const verdict = state === "completed" ? result?.verdict : undefined;
 		try {
 			options.trace({
 				id,
@@ -566,12 +598,14 @@ export function createChildSessions(options: {
 		let asked = (_question: string) =>
 			Promise.reject<string>(new Error("The child is not running."));
 		let observe = (_event: AgentSessionEvent) => {};
+		let reported = (_result: ChildResult) => {};
 		const watch = createWatch(schedule, (reason) => stall(reason));
 		const launchedIn = generation;
 		let handle: ChildHandle;
 		try {
 			handle = await create({
 				cwd: plan.worktree,
+				role: plan.role,
 				model: plan.model,
 				thinking: plan.thinking,
 				prompt: plan.contract.prompt,
@@ -582,6 +616,7 @@ export function createChildSessions(options: {
 					observe(event);
 				},
 				ask: (question) => asked(question),
+				report: (result) => reported(result),
 				entries: from?.conversation.entries,
 				parentSession: from?.conversation.sessionId,
 			});
@@ -646,6 +681,10 @@ export function createChildSessions(options: {
 						"The parent cannot answer: it is waiting for this child in the foreground. Continue without an answer.",
 					),
 				);
+			let result: ChildResult | undefined;
+			reported = (value) => {
+				result = value;
+			};
 			watch.start();
 			traceRun(id, plan, "running");
 			try {
@@ -653,8 +692,8 @@ export function createChildSessions(options: {
 					handle.run(plan.task),
 					stopped.promise,
 				]);
-				traceRun(id, plan, "completed", text);
-				return { status: "completed" as const, text };
+				traceRun(id, plan, "completed", result);
+				return { status: "completed" as const, text, result };
 			} catch (error) {
 				traceRun(id, plan, ended);
 				throw error;
@@ -685,6 +724,9 @@ export function createChildSessions(options: {
 		};
 		stall = (reason) => finish(child, "timed out", reason);
 		asked = (question) => ask(child, question);
+		reported = (result) => {
+			if (isWorking(child.record.state)) child.record.result = result;
+		};
 		observe = (event) => track(child, event);
 		children.set(child.record.id, child);
 		queue.push(child);
@@ -926,7 +968,7 @@ export function createSpawnChildTool(
 			"Pass the task and, when the user named one, the suggested role (explore, worker, or verify). The harness reads the user message. Jev selects the specialist.",
 			"A refusal or a queued id is not a completed result and is not retried.",
 			"The parent asks once per user turn before read, grep, find, ls, edit, write, bash, powershell, or codegraph query and explore. A block that names a role means call spawn_child and use that role. A block that says to ask the user one question means ask that one question and wait. Reads of AGENTS.md, GLOSSARY.md, and one docs/agents markdown file stay available, and so does codegraph init.",
-			"Do not declare the work finished unless the child result contains status, files_changed, validation, and left_undone.",
+			"Do not declare the work finished unless the child result reports a done Verdict with its files_changed, validation, and left_undone.",
 		],
 		parameters: spawnChildParameters,
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
@@ -987,12 +1029,17 @@ function launched(
 		: undefined;
 	if (started.status === "completed") {
 		const outcome = selection
-			? childOutcome({ ...selection, state: "completed", text: started.text })
+			? childOutcome({
+					...selection,
+					state: "completed",
+					text: started.text,
+					result: started.result,
+				})
 			: started.text;
 		return report([...warnings, outcome], {
 			status: "completed",
 			...(selection
-				? { verdict: childVerdict(selection.role, started.text) }
+				? { verdict: started.result?.verdict, result: started.result }
 				: {}),
 			...selected,
 		});

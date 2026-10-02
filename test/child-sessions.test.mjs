@@ -58,7 +58,17 @@ const workerContract = await readFile(
 	"utf8",
 );
 const workerTools = ["read", "bash", "edit", "write", "grep", "find", "ls"];
-const spawnedTools = [...workerTools, "ask_parent"];
+const spawnedTools = [...workerTools, "ask_parent", "report_result"];
+
+function workerResult(verdict, reason = `The work is ${verdict}.`) {
+	return {
+		verdict,
+		reason,
+		files_changed: ["src/a.ts: fixed the parser"],
+		validation: ["npm test: 12 passed"],
+		left_undone: [],
+	};
+}
 
 async function withWorkspace(run) {
 	const dir = await realpath(
@@ -133,7 +143,7 @@ function fakeChildren({ model, thinking, tools, run, dispose, onCreate } = {}) {
 			tools: tools ?? spec.tools,
 			run: async (task) => {
 				child.tasks.push(task);
-				return run ? run(task) : child.result.promise;
+				return run ? run(task, child.spec) : child.result.promise;
 			},
 			abort: async () => {
 				child.aborts += 1;
@@ -378,6 +388,7 @@ for (const mode of ["tui", "rpc"]) {
 				thinking: "medium",
 				task: "Fix the failing test",
 				text: "All tests pass.",
+				result: undefined,
 				verdict: undefined,
 			});
 			assert.match(message.content, /completed\. Verdict: absent\.\n\nAll tests pass\./);
@@ -423,7 +434,10 @@ for (const mode of ["print", "json"]) {
 test("a foreground result shows its Run state and Verdict to the parent", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren({
-			run: async () => "Could not finish.\n\nstatus: partial",
+			run: async (_task, spec) => {
+				spec.report(workerResult("partial", "The migration is pending."));
+				return "Could not finish.";
+			},
 		});
 		const { tool } = await loadSpawnTool({ agentDir, create: children.create });
 
@@ -435,8 +449,9 @@ test("a foreground result shows its Run state and Verdict to the parent", async 
 
 		assert.match(
 			text(result),
-			/^Child completed\. Verdict: partial\.\n\nCould not finish\./,
+			/^Child completed\. Verdict: partial\.\nReason: The migration is pending\.\n[\s\S]*\n\nCould not finish\.$/,
 		);
+		assert.equal(result.details.verdict, "partial");
 	});
 });
 
@@ -676,7 +691,8 @@ test("each Run state transition of a child is appended to the parent session as 
 			toolContext("tui", worktree),
 		);
 		await settle();
-		children.created[0].result.resolve("status: done\nfull result body");
+		children.created[0].spec.report(workerResult("done"));
+		children.created[0].result.resolve("full result body");
 		await settle();
 
 		const traces = entries.filter(
@@ -702,10 +718,48 @@ test("each Run state transition of a child is appended to the parent session as 
 	});
 });
 
+test("a worker reports its result with report_result; the last call wins and reaches the parent, the trace, and child_result", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		const id = await spawnBackground(extension, worktree);
+		await settle();
+		const [child] = children.created;
+
+		child.spec.report(workerResult("done"));
+		child.spec.report(workerResult("blocked", "Database access is missing"));
+		child.result.resolve("I stopped before the migration.");
+		await settle();
+
+		const [{ message }] = extension.messages;
+		assert.equal(message.details.verdict, "blocked");
+		assert.deepEqual(
+			message.details.result,
+			workerResult("blocked", "Database access is missing"),
+		);
+		assert.match(
+			message.content,
+			/completed\. Verdict: blocked\.\nReason: Database access is missing\nfiles_changed:\n- src\/a\.ts: fixed the parser\nvalidation:\n- npm test: 12 passed\nleft_undone:\n- none\n\nI stopped before the migration\.$/,
+		);
+		const traces = await backgroundTraceStates(extension, id);
+		assert.equal(traces.at(-1).verdict, "blocked");
+		assert.match(
+			text(await use(extension, "child_result", { id })),
+			/Verdict: blocked\.\nReason: Database access is missing/,
+		);
+	});
+});
+
 test("a foreground child appends its running and terminal Run states as trace entries", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren({
-			run: async () => "status: blocked\nfull result body",
+			run: async (_task, spec) => {
+				spec.report(workerResult("blocked"));
+				return "full result body";
+			},
 		});
 		const { tool, entries } = await loadSpawnTool({
 			agentDir,
@@ -1006,6 +1060,7 @@ test("a named implement skill does not select the worker; Jev chooses the specia
 		);
 		assert.equal(jev.requests[0].state.suggested_specialist, "worker");
 		assert.equal(children.created.length, 1);
+		assert.ok(!children.created[0].spec.tools.includes("report_result"));
 	});
 });
 
@@ -2416,6 +2471,33 @@ test("a background child asks through Pi's SDK, the parent model replies, and th
 		assert.ok(sent(parent.requests[1]).includes("src/parser.ts"));
 		assert.equal(await stateOf(extension, id), "completed");
 		assert.deepEqual(unhandled, []);
+	});
+});
+
+function reporting(result) {
+	return fauxAssistantMessage(fauxToolCall("report_result", result), {
+		stopReason: "toolUse",
+	});
+}
+
+test("a worker reports through Pi's SDK; a result outside its role's schema is refused and the last valid call is delivered", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const child = await realChild(agentDir, [
+			reporting({ ...workerResult("done"), verdict: "pass" }),
+			reporting(workerResult("partial", "The migration is pending.")),
+			fauxAssistantMessage("Fixed src/parser.ts."),
+		]);
+		const { extension, parent } = child;
+		await spawnReal(child, worktree);
+		await eventually(() => extension.messages.length === 1);
+
+		const refused = parent.requests[1].messages.at(-1);
+		assert.equal(refused.toolName, "report_result");
+		assert.equal(refused.isError, true);
+		const { message } = extension.messages[0];
+		assert.equal(message.details.verdict, "partial");
+		assert.equal(message.details.result.reason, "The migration is pending.");
+		assert.equal(message.details.text, "Fixed src/parser.ts.");
 	});
 });
 
