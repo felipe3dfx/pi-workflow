@@ -2628,7 +2628,7 @@ test("a child that finishes between the parent's abort and session shutdown is d
 		await settle();
 
 		call.abort();
-		children.created[0].result.resolve("Finished in the gap.");
+		children.created[0].result.reject(new Error("Failed in the gap."));
 		await settle();
 		await extension.fire("session_shutdown", { reason: "new" });
 		session = "next";
@@ -4083,3 +4083,103 @@ test("an idle parent receives results that end together in one message that star
 		assert.deepEqual(options, { deliverAs: "steer", triggerTurn: true });
 	});
 });
+
+test("five children that end at different times reach the parent in one delivery that starts one turn", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		const ids = [];
+		for (let i = 0; i < 5; i++)
+			ids.push(await spawnBackground(extension, worktree));
+		await settle();
+		const verdicts = ["done", "pass", undefined, "done", "pass"];
+
+		for (const [i, child] of children.created.entries()) {
+			if (verdicts[i]) child.spec.report(workerResult(verdicts[i]));
+			child.result.resolve(`Answer ${i}.`);
+			await settle();
+			await extension.fire("turn_end");
+			await extension.fire("agent_settled");
+			if (i < 4) assert.equal(extension.messages.length, 0);
+		}
+
+		assert.equal(extension.messages.length, 1);
+		const [{ message, options }] = extension.messages;
+		assert.deepEqual(
+			message.details.results.map(stateOfDetails),
+			ids.map((id) => ({ id, state: "completed" })),
+		);
+		assert.deepEqual(options, { deliverAs: "steer", triggerTurn: true });
+	});
+});
+
+for (const [trigger, event] of [
+	["failed", "fails"],
+	["timed out", "times out"],
+	["cancelled", "is cancelled from the view"],
+	["blocked", "reports blocked"],
+	["fail", "reports fail"],
+	["partial", "reports partial"],
+	["question", "asks a question"],
+]) {
+	test(`a child that ${event} wakes the parent at once with every pending result while another child still works`, async () => {
+		await withWorkspace(async ({ worktree, agentDir }) => {
+			const clock = manualClock();
+			const children = fakeChildren();
+			const extension = await loadSpawnTool({
+				agentDir,
+				create: children.create,
+				schedule: clock.schedule,
+			});
+			const quiet = await spawnBackground(extension, worktree);
+			const waker = await spawnBackground(extension, worktree);
+			await spawnBackground(extension, worktree);
+			await settle();
+			const [first, second, third] = children.created;
+			first.spec.report(workerResult("done"));
+			first.result.resolve("Quiet answer.");
+			await settle();
+			assert.equal(extension.messages.length, 0);
+
+			if (trigger === "failed") {
+				second.result.reject(new Error("provider overloaded"));
+			} else if (trigger === "timed out") {
+				third.spec.onEvent({
+					type: "tool_execution_start",
+					toolCallId: "call-1",
+					toolName: "bash",
+					args: {},
+				});
+				clock.fire(minutes(4));
+			} else if (trigger === "cancelled") {
+				const view = openChildren(extension);
+				view.press("s", "y");
+			} else if (trigger === "question") {
+				second.spec.ask("Which file holds the parser?");
+			} else {
+				second.spec.report(workerResult(trigger));
+				second.result.resolve("Waking answer.");
+			}
+			await settle();
+
+			const delivered = extension.messages.map(({ message }) => message);
+			const results = delivered.find(
+				(message) => message.customType === "pi-workflow-child-result",
+			);
+			const resultIds = (results.details.results ?? [results.details]).map(
+				(details) => details.id,
+			);
+			if (trigger === "question") {
+				assert.deepEqual(resultIds, [quiet]);
+				assert.equal(delivered.at(-1).customType, "pi-workflow-child-question");
+				assert.equal(delivered.at(-1).details.id, waker);
+			} else {
+				assert.equal(delivered.length, 1);
+				assert.deepEqual(resultIds, [quiet, waker]);
+			}
+		});
+	});
+}

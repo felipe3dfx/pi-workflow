@@ -199,6 +199,14 @@ export function isWorking(state: ChildState) {
 	return state === "queued" || state === "running" || state === "waiting";
 }
 
+function quiet(record: ChildRecord) {
+	const verdict = record.result?.verdict;
+	return (
+		record.state === "completed" &&
+		(verdict === undefined || verdict === "done" || verdict === "pass")
+	);
+}
+
 export function childDetails(record: ChildRecord, now = Date.now()) {
 	const projected = projectChild(record, now);
 	return {
@@ -805,6 +813,13 @@ export function createChildSessions(options: {
 		return [...pending];
 	}
 
+	function wakesParent() {
+		return (
+			pending.some((record) => !quiet(record)) ||
+			![...children.values()].some((child) => isWorking(child.record.state))
+		);
+	}
+
 	function get(id: string): ChildRecord | undefined {
 		const child = children.get(id);
 		return child && { ...child.record };
@@ -861,6 +876,7 @@ export function createChildSessions(options: {
 		cancel,
 		consume,
 		pendingResults,
+		wakesParent,
 		get,
 		list,
 		subscribe,
