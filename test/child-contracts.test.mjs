@@ -61,3 +61,12 @@ test("every contract names the missing-capability response and forbids simulatin
 test("the worker contract declares that children have no MCP and cannot launch children", async () => {
 	assert.match(await contract("worker"), /no MCP tools and cannot launch child sessions/);
 });
+
+test("the explore and verify contracts offer codegraph and the worker contract does not", async () => {
+	for (const role of ["explore", "verify"]) {
+		const text = await contract(role);
+		assert.match(text, /^---\ntools: .*\bcodegraph\b.*\n---/);
+		assert.match(text, /codegraph with query and explore/);
+	}
+	assert.doesNotMatch(await contract("worker"), /codegraph/);
+});
