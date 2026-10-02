@@ -1,3 +1,5 @@
+import { type Static, Type } from "typebox";
+
 export function childName(child: { role: string; id: string }) {
 	return `${child.role} ${child.id.slice(0, 4)}`;
 }
@@ -38,22 +40,56 @@ export function childStep(child: { step?: string; task: string }) {
 	return child.step ?? childTaskLine(child.task);
 }
 
-const verdictLines: Record<string, { line: RegExp; values: string[] }> = {
-	worker: {
-		line: /^status:[ \t]*(.*?)[ \t\r]*$/gimu,
-		values: ["done", "partial", "blocked"],
-	},
-	verify: {
-		line: /^verdict:[ \t]*(.*?)[ \t\r]*$/gimu,
-		values: ["pass", "fail", "blocked"],
-	},
+const list = (description: string) =>
+	Type.Array(Type.String(), { description });
+
+const reason = Type.String({
+	description: "One line on why the task reached this Verdict.",
+});
+
+export const resultParameters = {
+	worker: Type.Object({
+		verdict: Type.Union([
+			Type.Literal("done"),
+			Type.Literal("partial"),
+			Type.Literal("blocked"),
+		]),
+		reason,
+		files_changed: list("Each changed path with its change."),
+		validation: list("Each exact command with its observed result."),
+		left_undone: list("What remains; empty when nothing does."),
+	}),
+	verify: Type.Object({
+		verdict: Type.Union([
+			Type.Literal("pass"),
+			Type.Literal("fail"),
+			Type.Literal("blocked"),
+		]),
+		reason,
+		findings: list("Each finding with its evidence."),
+		unverified: list("What remained unverified."),
+	}),
 };
 
-export function childVerdict(role: string, text: string | undefined) {
-	const spec = verdictLines[role];
-	if (!spec || text === undefined) return undefined;
-	const last = [...text.matchAll(spec.line)].at(-1)?.[1]?.toLowerCase();
-	return last && spec.values.includes(last) ? last : undefined;
+export type ChildResult =
+	| Static<typeof resultParameters.worker>
+	| Static<typeof resultParameters.verify>;
+
+export function reportsResult(
+	role: string,
+): role is keyof typeof resultParameters {
+	return Object.hasOwn(resultParameters, role);
+}
+
+function resultLines({ verdict, reason, ...fields }: ChildResult) {
+	return [
+		`Verdict: ${verdict}.`,
+		`Reason: ${reason}`,
+		...Object.entries(fields).flatMap(([field, items]) => [
+			`${field}:`,
+			...(items.length > 0 ? items : ["none"]).map((item) => `- ${item}`),
+		]),
+	].join("\n");
 }
 
 export function childOutcome(child: {
@@ -61,12 +97,15 @@ export function childOutcome(child: {
 	state: string;
 	role: string;
 	text?: string;
+	result?: ChildResult;
 }) {
 	const name = child.id ? `Child ${child.id}` : "Child";
 	if (child.state === "completed") {
-		const verdict = verdictLines[child.role]
-			? ` Verdict: ${childVerdict(child.role, child.text) ?? "absent"}.`
-			: "";
+		const verdict = !reportsResult(child.role)
+			? ""
+			: child.result
+				? ` ${resultLines(child.result)}`
+				: " Verdict: absent.";
 		return `${name} completed.${verdict}\n\n${child.text ?? ""}`;
 	}
 	if (child.state === "cancelled") return `${name} cancelled.`;

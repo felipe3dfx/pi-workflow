@@ -4,6 +4,8 @@ Status: IMPLEMENTED (#63–#74, parent #77)
 
 Superseded for routing by [routing-owner.md](routing-owner.md): skill routes and the explicit-intent shortcut described here no longer exist.
 
+Superseded for the child result by #150: workers and verifiers report their Verdict through the `report_result` tool instead of a text block.
+
 Package: delegation brief confirmed in the originating session.
 Review handoff: `origin/main` `0e460e0`, ADR 0005 accepted.
 Verdict: `READY`.

@@ -1,73 +1,65 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { childOutcome, childVerdict } from "../extensions/child-projection.ts";
+import { childOutcome } from "../extensions/child-projection.ts";
 import { childDetails } from "../extensions/child-sessions.ts";
 
-const workerBlock = (word) =>
-	`Changed it.\n\nstatus: ${word}\nfiles_changed:\n- a.ts: fixed\nvalidation:\n- npm test: ok\nleft_undone:\n- none`;
-
-test("a worker Verdict is done, partial, or blocked and is read from its status line", () => {
-	for (const word of ["done", "partial", "blocked"]) {
-		assert.equal(childVerdict("worker", workerBlock(word)), word);
-	}
+const record = (role, text, result) => ({
+	id: "child-1",
+	role,
+	state: "completed",
+	model: "p/m",
+	thinking: "medium",
+	task: "t",
+	createdAt: 0,
+	text,
+	...(result ? { result } : {}),
 });
 
-test("a verifier Verdict is pass, fail, or blocked", () => {
-	for (const word of ["pass", "fail", "blocked"]) {
-		assert.equal(childVerdict("verify", `Checked.\n\nverdict: ${word}`), word);
-	}
-});
+const blockedWorker = {
+	verdict: "blocked",
+	reason: "Database access is missing",
+	files_changed: ["a.ts: fixed"],
+	validation: [],
+	left_undone: ["Run the migration"],
+};
 
-test("an absent or invalid Verdict is reported as absent and never inferred", () => {
-	assert.equal(childVerdict("worker", "All tests pass."), undefined);
-	assert.equal(childVerdict("worker", workerBlock("completed")), undefined);
-	assert.equal(childVerdict("verify", "verdict: maybe"), undefined);
-	assert.equal(childVerdict("verify", workerBlock("done")), undefined);
-});
-
-test("the Verdict is the last status or verdict line, and an invalid last line leaves it absent", () => {
+test("the parent receives Run state, the reported Verdict, its reason and fields, then the child's text", () => {
+	const blocked = record("worker", "Changed it.", blockedWorker);
 	assert.equal(
-		childVerdict("verify", "verdict: pass\nRechecked.\nverdict: fail"),
-		"fail",
+		childOutcome(blocked),
+		"Child child-1 completed. Verdict: blocked.\nReason: Database access is missing\nfiles_changed:\n- a.ts: fixed\nvalidation:\n- none\nleft_undone:\n- Run the migration\n\nChanged it.",
 	);
-	assert.equal(
-		childVerdict("verify", "verdict: pass\nRechecked.\nverdict: maybe"),
-		undefined,
-	);
-	assert.equal(
-		childVerdict("worker", "status: done\nstatus: finished"),
-		undefined,
-	);
-	assert.equal(childVerdict("verify", "verdict: pass\nverdict:\npass"), undefined);
-	assert.equal(childVerdict("worker", "status: done\nstatus:\ndone"), undefined);
-});
-
-test("an explorer emits no Verdict", () => {
-	assert.equal(childVerdict("explore", "verdict: pass\nstatus: done"), undefined);
-});
-
-test("the parent receives Run state and Verdict separately", () => {
-	const record = (role, text) => ({
-		id: "child-1",
-		role,
-		state: "completed",
-		model: "p/m",
-		thinking: "medium",
-		task: "t",
-		createdAt: 0,
-		text,
-	});
-	const blocked = record("worker", workerBlock("blocked"));
-	assert.match(childOutcome(blocked), /^Child child-1 completed\. Verdict: blocked\./);
 	assert.equal(childDetails(blocked).state, "completed");
 	assert.equal(childDetails(blocked).verdict, "blocked");
+	assert.deepEqual(childDetails(blocked).result, blockedWorker);
+});
 
-	const bare = record("verify", "looks fine");
-	assert.match(childOutcome(bare), /^Child child-1 completed\. Verdict: absent\./);
-	assert.equal(childDetails(bare).verdict, undefined);
+test("a child that never reported has an absent Verdict, never inferred from its text", () => {
+	for (const [role, text] of [
+		["worker", "status: done\nfiles_changed:\n- a.ts"],
+		["verify", "verdict: pass"],
+	]) {
+		const bare = record(role, text);
+		assert.equal(
+			childOutcome(bare),
+			`Child child-1 completed. Verdict: absent.\n\n${text}`,
+		);
+		assert.equal(childDetails(bare).verdict, undefined);
+	}
+});
 
+test("an explorer has no Verdict", () => {
 	const found = record("explore", "src/a.ts:3");
-	assert.match(childOutcome(found), /^Child child-1 completed\.\n\nsrc\/a\.ts:3/);
+	assert.equal(childOutcome(found), "Child child-1 completed.\n\nsrc/a.ts:3");
 	assert.equal(childDetails(found).verdict, undefined);
+});
+
+test("a reported Verdict counts only for a completed child", () => {
+	const failed = {
+		...record("worker", "provider overloaded", blockedWorker),
+		state: "failed",
+	};
+	assert.equal(childOutcome(failed), "Child child-1 failed: provider overloaded");
+	assert.equal(childDetails(failed).verdict, undefined);
 });

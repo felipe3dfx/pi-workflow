@@ -92,68 +92,44 @@ test("a collapsed result is one row with the role, id, Verdict, elapsed time, an
 	]);
 });
 
-test("a blocked or failed Verdict shows its reason on a second line without expanding", (t) => {
+test("a blocked, partial, or failed Verdict shows its reported reason on a second line without expanding", (t) => {
 	const { card } = cards(t);
-	for (const verdict of ["blocked", "fail"])
+	for (const [role, verdict, gap] of [
+		["worker", "blocked", 28],
+		["worker", "partial", 28],
+		["verify", "fail", 31],
+	])
 		assert.deepEqual(
 			plain(
 				card({
 					customType: "pi-workflow-child-result",
 					details: {
 						...details,
+						role,
 						verdict,
-						text: `Verdict: ${verdict}\n\nDatabase access is missing\n\nanother detail`,
+						result: { verdict, reason: "Database access is missing" },
+						text: `Summary first.\n\nleft_undone:\n- another detail\nverdict: ${verdict}`,
 					},
 				}),
 			).slice(1),
 			[
-				`   ◆ Subagent worker 5636 ${verdict}  1m 02s${" ".repeat(verdict === "fail" ? 31 : 28)}(ctrl+o to expand)`,
+				`   ◆ Subagent ${role} 5636 ${verdict}  1m 02s${" ".repeat(gap)}(ctrl+o to expand)`,
 				"     Database access is missing",
 			],
 		);
 });
 
-test("a blocked worker shows the first left_undone item as its reason", (t) => {
+test("a done or passing Verdict shows no reason collapsed", (t) => {
 	const { card } = cards(t);
-	const blocked = (text) =>
-		plain(
-			card({
-				customType: "pi-workflow-child-result",
-				details: { ...details, verdict: "blocked", text },
-			}),
-		)[2];
-	assert.equal(
-		blocked(
-			"## Summary\n\nCould not continue.\n\nstatus: blocked\nfiles_changed:\n- none\nvalidation:\n- none\nleft_undone:\n- Database access is missing\n- Another pending item",
-		),
-		"     Database access is missing",
-	);
-	assert.equal(
-		blocked("status: blocked\nleft_undone:\n- The credential is missing"),
-		"     The credential is missing",
-	);
-});
-
-test("a failed or blocked verifier shows the line next to its verdict as its reason", (t) => {
-	const { card } = cards(t);
-	const verifier = (verdict, text) =>
-		plain(
-			card({
-				customType: "pi-workflow-child-result",
-				details: { ...details, role: "verify", verdict, text },
-			}),
-		)[2];
-	assert.equal(
-		verifier(
-			"fail",
-			"## Review\n\nRan npm test.\nThe migration fails on null ids.\nverdict: fail",
-		),
-		"     The migration fails on null ids.",
-	);
-	assert.equal(
-		verifier("blocked", "Intro.\n\nverdict: blocked\nThere is no database access."),
-		"     There is no database access.",
-	);
+	const done = card({
+		customType: "pi-workflow-child-result",
+		details: {
+			...details,
+			verdict: "done",
+			result: { verdict: "done", reason: "All checks ran" },
+		},
+	});
+	assert.equal(plain(done).length, 2);
 });
 
 test("ctrl+o shows the task, the whole result, and the subagents view key", (t) => {
