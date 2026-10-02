@@ -801,11 +801,10 @@ test("while Jev routing is on, git and gh in a named role's task go to Jev like 
 		const jev = fakeJev(() => "leave");
 		const launcher = createChildLauncher({
 			modelProfiles: absentProfiles,
-			fetch: jev.fetch,
 		});
 		const result = await launcher.prepareLaunch(
 			{ role: "worker", task: "git status" },
-			launcherContext(worktree),
+			launcherContext(worktree, { jev }),
 		);
 		assert.ok(jev.requests.length >= 1);
 		assert.notEqual(
