@@ -89,7 +89,7 @@ None. The historical operator prototype remains reference-only for the previous 
 
 ## Approved deviations
 
-The historical delegation spec still routes by skill name and has no off mode. That spec is not the contract for this change. ADR 0008 records the decision and is not accepted authority. Accepted ADR 0005 still owns the child session as a harness capability.
+The historical delegation spec still routes by skill name and has no off mode. That spec is not the contract for this change. ADR 0008 records the decision. Accepted ADR 0005 still owns the child session as a harness capability.
 
 ## Accepted risks
 
