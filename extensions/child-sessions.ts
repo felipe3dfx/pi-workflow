@@ -23,7 +23,11 @@ import { type Static, Type } from "typebox";
 
 import type { createChildLauncher } from "./child-launcher.ts";
 import { claim, held } from "./configure.ts";
-import { childVerdict, projectChild } from "./child-projection.ts";
+import {
+	childOutcome,
+	childVerdict,
+	projectChild,
+} from "./child-projection.ts";
 import { sanitizeTaskText } from "./todo-header.ts";
 
 const packageVersion = (
@@ -983,7 +987,10 @@ function launched(
 		? `Jev selected ${selection.role}.`
 		: undefined;
 	if (started.status === "completed") {
-		return report([...warnings, started.text], {
+		const outcome = selection
+			? childOutcome({ ...selection, state: "completed", text: started.text })
+			: started.text;
+		return report([...warnings, outcome], {
 			status: "completed",
 			...(selection
 				? { verdict: childVerdict(selection.role, started.text) }
@@ -1127,7 +1134,10 @@ export function createChildQueryTools(
 				);
 			}
 			sessions.consume(child.id);
-			return report([child.text], { id: child.id, state: child.state });
+			return report([childOutcome(child)], {
+				id: child.id,
+				state: child.state,
+			});
 		},
 	};
 	const cancelChild: ToolDefinition<

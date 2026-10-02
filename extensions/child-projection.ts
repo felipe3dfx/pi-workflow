@@ -50,19 +50,20 @@ export function childVerdict(role: string, text: string | undefined) {
 }
 
 export function childOutcome(child: {
-	id: string;
+	id?: string;
 	state: string;
 	role: string;
 	text?: string;
 }) {
+	const name = child.id ? `Child ${child.id}` : "Child";
 	if (child.state === "completed") {
 		const verdict = verdictLines[child.role]
 			? ` Verdict: ${childVerdict(child.role, child.text) ?? "absent"}.`
 			: "";
-		return `Child ${child.id} completed.${verdict}\n\n${child.text ?? ""}`;
+		return `${name} completed.${verdict}\n\n${child.text ?? ""}`;
 	}
-	if (child.state === "cancelled") return `Child ${child.id} cancelled.`;
-	return `Child ${child.id} ${child.state}: ${child.text ?? ""}`;
+	if (child.state === "cancelled") return `${name} cancelled.`;
+	return `${name} ${child.state}: ${child.text ?? ""}`;
 }
 
 export function projectChild(

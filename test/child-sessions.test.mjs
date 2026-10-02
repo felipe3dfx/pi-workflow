@@ -419,6 +419,26 @@ for (const mode of ["print", "json"]) {
 	});
 }
 
+test("a foreground result shows its Run state and Verdict to the parent", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren({
+			run: async () => "Could not finish.\n\nstatus: partial",
+		});
+		const { tool } = await loadSpawnTool({ agentDir, create: children.create });
+
+		const result = await spawn(
+			tool,
+			{ role: "worker", task: "Fix the failing test" },
+			toolContext("print", worktree),
+		);
+
+		assert.match(
+			text(result),
+			/^Child completed\. Verdict: partial\.\n\nCould not finish\./,
+		);
+	});
+});
+
 test("print mode refuses an explicit background request before asking Jev or creating a child", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
@@ -1436,7 +1456,10 @@ test("list_children, child_status, and child_result report the children of this 
 		assert.match(text(status), new RegExp(`${busy} · worker · running`));
 
 		const result = await use(extension, "child_result", { id: done });
-		assert.equal(text(result), "All tests pass.");
+		assert.equal(
+			text(result),
+			`Child ${done} completed. Verdict: absent.\n\nAll tests pass.`,
+		);
 		assert.equal(result.details.state, "completed");
 		const pending = await use(extension, "child_result", { id: busy });
 		assert.match(
@@ -3740,7 +3763,7 @@ test("a result the parent read with child_result is not delivered again and trig
 		await settle();
 
 		const result = await use(extension, "child_result", { id: read });
-		assert.equal(text(result), "Read answer.");
+		assert.match(text(result), /\n\nRead answer\.$/);
 		await extension.fire("turn_end");
 		assert.equal(extension.messages.length, 0);
 
@@ -3815,9 +3838,9 @@ test("session start drops pending results for the model, and child_result still 
 		await extension.fire("agent_settled");
 
 		assert.equal(extension.messages.length, 0);
-		assert.equal(
+		assert.match(
 			text(await use(extension, "child_result", { id })),
-			"Earlier answer.",
+			/\n\nEarlier answer\.$/,
 		);
 	});
 });
