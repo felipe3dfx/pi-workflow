@@ -26,6 +26,21 @@ test("an absent or invalid Verdict is reported as absent and never inferred", ()
 	assert.equal(childVerdict("verify", workerBlock("done")), undefined);
 });
 
+test("the Verdict is the last status or verdict line, and an invalid last line leaves it absent", () => {
+	assert.equal(
+		childVerdict("verify", "verdict: pass\nRechecked.\nverdict: fail"),
+		"fail",
+	);
+	assert.equal(
+		childVerdict("verify", "verdict: pass\nRechecked.\nverdict: maybe"),
+		undefined,
+	);
+	assert.equal(
+		childVerdict("worker", "status: done\nstatus: finished"),
+		undefined,
+	);
+});
+
 test("an explorer emits no Verdict", () => {
 	assert.equal(childVerdict("explore", "verdict: pass\nstatus: done"), undefined);
 });

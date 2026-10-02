@@ -38,15 +38,22 @@ export function childStep(child: { step?: string; task: string }) {
 	return child.step ?? childTaskLine(child.task);
 }
 
-const verdictLines: Record<string, RegExp> = {
-	worker: /^status:\s*(done|partial|blocked)\s*$/gimu,
-	verify: /^verdict:\s*(pass|fail|blocked)\s*$/gimu,
+const verdictLines: Record<string, { line: RegExp; values: string[] }> = {
+	worker: {
+		line: /^status:\s*(.*?)\s*$/gimu,
+		values: ["done", "partial", "blocked"],
+	},
+	verify: {
+		line: /^verdict:\s*(.*?)\s*$/gimu,
+		values: ["pass", "fail", "blocked"],
+	},
 };
 
 export function childVerdict(role: string, text: string | undefined) {
-	const pattern = verdictLines[role];
-	if (!pattern || text === undefined) return undefined;
-	return [...text.matchAll(pattern)].at(-1)?.[1]?.toLowerCase();
+	const spec = verdictLines[role];
+	if (!spec || text === undefined) return undefined;
+	const last = [...text.matchAll(spec.line)].at(-1)?.[1]?.toLowerCase();
+	return last && spec.values.includes(last) ? last : undefined;
 }
 
 export function childOutcome(child: {
