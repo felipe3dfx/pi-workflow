@@ -351,7 +351,7 @@ test("consecutive subagent result cards fold into one ◈ row that counts the fa
 	});
 	const closed = render();
 	assert.ok(
-		closed.includes("   ◆ Subagent worker 1111  gpt-6-luna (high) · 1m 02s"),
+		closed.includes("   ◆ Subagent worker 1111  1m 02s"),
 	);
 	const header = closed.indexOf("   ◈ Ran 3 subagents · 1 failed");
 	assert.ok(header > 0);
@@ -372,14 +372,12 @@ test("consecutive subagent result cards fold into one ◈ row that counts the fa
 			assert.ok(visibleWidth(line) <= width, `width ${width}: ${line}`);
 	}
 	assert.ok(click(container, 80, header)?.handled);
-	assert.deepEqual(render().slice(header, header + 7), [
+	assert.deepEqual(render().slice(header, header + 5), [
 		"   ◈ Ran 3 subagents · 1 failed",
-		"   ◆ Subagent worker 2222  gpt-6-luna (high) · 1m 02s",
-		"     Listo.",
-		"   ◆ Subagent worker 3333 failed  gpt-6-luna (high) · 1m 02s",
+		"   ◆ Subagent worker 2222  1m 02s",
+		"   ◆ Subagent worker 3333 failed  1m 02s",
 		"     no activity",
-		"   ◆ Subagent worker 4444  gpt-6-luna (high) · 1m 02s",
-		"     Listo.",
+		"   ◆ Subagent worker 4444  1m 02s",
 	]);
 	assert.ok(click(container, 80, header)?.handled);
 	for (const child of container.children)
