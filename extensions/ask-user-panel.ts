@@ -309,15 +309,6 @@ function answerText(answer: AskUserAnswer | undefined) {
 	return [...answer.labels, ...(answer.text ? [answer.text] : [])].join(", ");
 }
 
-function contentAnswer(content: AgentToolResult<unknown>["content"]) {
-	const text = content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n");
-	const single = /^Selected option \d+: ([\s\S]*)$/.exec(text);
-	if (single) return single[1];
-	const many = /^Selected options ([\s\S]*?)(?:; free text: ([\s\S]*))?$/.exec(text);
-	if (many) return [many[1].replace(/(^|, )\d+: /g, "$1"), many[2]].filter(Boolean).join(", ");
-	return /^Free-text answer: ([\s\S]*)$/.exec(text)?.[1] ?? "";
-}
-
 function askRenderers() {
 	return {
 		renderShell: "self" as const,
@@ -330,9 +321,7 @@ function askRenderers() {
 		): Component {
 			if (options.isPartial) return hidden;
 			const question = normalizeSingleLine(context.args.question ?? "");
-			const answer = normalizeSingleLine(
-				result.details ? answerText(result.details) : contentAnswer(result.content),
-			).trim();
+			const answer = normalizeSingleLine(answerText(result.details)).trim();
 			const head = `${theme.fg("toolTitle", "◆")} ${theme.bold(theme.fg("muted", "Asked"))} ${theme.fg("dim", question)}`;
 			return new Text(
 				answer ? `${head}\n  ${theme.fg("dim", `↳ ${answer}`)}` : head,
