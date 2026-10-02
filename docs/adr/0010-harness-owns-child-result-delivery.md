@@ -10,7 +10,7 @@ The harness keeps a queue of child results that the parent has not consumed. A r
 
 The harness delivers pending results at a turn boundary. A busy parent receives them at the end of the current turn, through `turn_end`, or when its run settles. An idle parent receives them as soon as they end. Every result pending at one boundary goes out in one message, so the parent answers once. The message is a steering message that triggers a turn. A consumed result is never sent, so it starts no turn and renders no card.
 
-Starting or resuming a session drops the pending results of the earlier run. They stay available through `child_result`.
+Ending the parent session drops the pending results. Children live in process memory and do not outlive the parent session, so after a resume `child_result` reports that the child is gone.
 
 Supersedes: none.
 
