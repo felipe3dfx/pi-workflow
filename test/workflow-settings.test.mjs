@@ -11,6 +11,7 @@ import { SettingsList } from "@earendil-works/pi-tui";
 import { patchMenus, restoreMenus } from "../extensions/chrome-menus.ts";
 import { createChildLauncher } from "../extensions/child-launcher.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
+import { classifierRegistry } from "./support/fake-jev.mjs";
 import { withAgentDirectory } from "./support/jev-routing.mjs";
 
 initTheme("dark", false);
@@ -33,7 +34,7 @@ function extension(commands, notifications) {
 	};
 }
 
-function launcherContext(cwd) {
+function launcherContext(cwd, jev) {
 	return {
 		cwd,
 		model: { provider: "session", id: "model", reasoning: true },
@@ -41,6 +42,7 @@ function launcherContext(cwd) {
 		modelRegistry: {
 			getApiKeyForProvider: async () => "typesafe-key",
 			getAvailable: () => [],
+			...jev.registry,
 		},
 		sessionManager: {
 			getBranch: () => [
@@ -106,15 +108,11 @@ test("/workflow:settings turns Jev routing off on the existing settings line", a
 	assert.ok(shown.some((line) => /Jev routing\s+off\s*$/.test(line)));
 	assert.ok(lines.some((line) => line.includes(theme.fg("dim", "off"))));
 
-	const requests = [];
+	const jev = classifierRegistry(() => ({}));
 	const launcher = createChildLauncher({
 		modelProfiles: { load: () => ({ status: "absent" }) },
-		fetch: async () => {
-			requests.push(1);
-			return Response.json({ answers: {} });
-		},
 	});
-	const ctx = launcherContext(worktree);
+	const ctx = launcherContext(worktree, jev);
 	assert.deepEqual(
 		await launcher.gateToolCall(
 			{ toolName: "grep", input: { pattern: "source" } },
@@ -136,7 +134,7 @@ test("/workflow:settings turns Jev routing off on the existing settings line", a
 	);
 	assert.equal(explicit.kind, "ready");
 	assert.equal(explicit.role, "worker");
-	assert.equal(requests.length, 0);
+	assert.equal(jev.requests.length, 0);
 });
 
 test("with Jev routing off, a message naming implement neither calls Jev nor launches a worker", async (t) => {
@@ -144,17 +142,13 @@ test("with Jev routing off, a message naming implement neither calls Jev nor lau
 	const worktree = join(dir, "repo");
 	await mkdir(worktree);
 	execFileSync("git", ["init", "--quiet"], { cwd: worktree });
-	const requests = [];
+	const jev = classifierRegistry(() => ({}));
 	const launcher = createChildLauncher({
 		modelProfiles: { load: () => ({ status: "absent" }) },
-		fetch: async () => {
-			requests.push(1);
-			return Response.json({ answers: {} });
-		},
 	});
 	const message = "implement the toggle";
 	const ctx = {
-		...launcherContext(worktree),
+		...launcherContext(worktree, jev),
 		sessionManager: {
 			getBranch: () => [
 				{ type: "message", message: { role: "user", content: message } },
@@ -175,7 +169,7 @@ test("with Jev routing off, a message naming implement neither calls Jev nor lau
 	);
 	assert.equal(decided.kind, "stay");
 	assert.equal(decided.reason, "Jev routing is off.");
-	assert.equal(requests.length, 0);
+	assert.equal(jev.requests.length, 0);
 });
 
 for (const [label, write] of [
@@ -199,15 +193,11 @@ for (const [label, write] of [
 		const worktree = join(dir, "repo");
 		await mkdir(worktree);
 		execFileSync("git", ["init", "--quiet"], { cwd: worktree });
-		const requests = [];
+		const jev = classifierRegistry(() => ({}));
 		const launcher = createChildLauncher({
 			modelProfiles: { load: () => ({ status: "absent" }) },
-			fetch: async () => {
-				requests.push(1);
-				return Response.json({ answers: {} });
-			},
 		});
-		const ctx = launcherContext(worktree);
+		const ctx = launcherContext(worktree, jev);
 
 		assert.deepEqual(
 			await launcher.gateToolCall(
@@ -223,7 +213,7 @@ for (const [label, write] of [
 		assert.equal(launch.kind, "stay");
 		assert.equal(launch.reason, "Jev routing is off.");
 		assert.doesNotMatch(launch.warning, /Launch blocked/);
-		assert.equal(requests.length, 0);
+		assert.equal(jev.requests.length, 0);
 	});
 }
 

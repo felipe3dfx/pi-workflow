@@ -9,6 +9,7 @@ import { setImmediate } from "node:timers";
 import { createChildLauncher } from "../extensions/child-launcher.ts";
 import { capabilities, replaceSelection } from "../extensions/configure.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
+import { classifierRegistry } from "./support/fake-jev.mjs";
 import { turnJevRoutingOn } from "./support/jev-routing.mjs";
 
 turnJevRoutingOn();
@@ -28,14 +29,10 @@ function choiceAnswer(choice, criteria, confidence = 0.91) {
 }
 
 function fakeJev(answer, confidence = 0.91) {
-	const requests = [];
-	const fetch = async (_url, init) => {
-		const body = JSON.parse(init.body);
-		requests.push(body);
-		const answered = typeof answer === "function" ? answer(body) : answer;
-		if (answered instanceof Response) return answered;
-		if (answered && typeof answered === "object") return Response.json(answered);
-		const questions = body.questions ?? {};
+	return classifierRegistry((context) => {
+		const answered = typeof answer === "function" ? answer(context) : answer;
+		if (answered && typeof answered === "object") return answered;
+		const questions = context.questions ?? {};
 		const text = typeof answered === "string" ? answered : "leave";
 		const named = specialists.includes(text);
 		const answers = {};
@@ -54,9 +51,8 @@ function fakeJev(answer, confidence = 0.91) {
 				confidence,
 			);
 		}
-		return Response.json({ model: "jev-1.13.0", id: "req-1", answers });
-	};
-	return { fetch, requests };
+		return { answers };
+	});
 }
 
 function branchEnding(text, older = "Use a child for the old turn") {
@@ -74,7 +70,7 @@ function branchEnding(text, older = "Use a child for the old turn") {
 	];
 }
 
-function gateContext(cwd, branch) {
+function gateContext(cwd, branch, jev) {
 	return {
 		cwd,
 		model: { provider: "session", id: "model", reasoning: true },
@@ -83,13 +79,14 @@ function gateContext(cwd, branch) {
 			getApiKeyForProvider: async (provider) =>
 				provider === "typesafe" ? "typesafe-key" : undefined,
 			getAvailable: () => [],
+			...jev?.registry,
 		},
 		sessionManager: { getBranch: () => branch },
 	};
 }
 
-function launcherFor(fetch, options = {}) {
-	return createChildLauncher({ modelProfiles: absentProfiles, fetch, ...options });
+function launcherFor(options = {}) {
+	return createChildLauncher({ modelProfiles: absentProfiles, ...options });
 }
 
 async function withWorkspace(run) {
@@ -104,10 +101,11 @@ async function withWorkspace(run) {
 	}
 }
 
-function loadExtension({ fetch, legacy = false, profilesPath }) {
+function loadExtension({ legacy = false, profilesPath }) {
 	const handlers = new Map();
 	const tools = [];
 	const notifications = [];
+	const messages = [];
 	const ui = {
 		notify: (message, level) => notifications.push({ message, level }),
 		setWidget() {},
@@ -129,7 +127,7 @@ function loadExtension({ fetch, legacy = false, profilesPath }) {
 			registerMessageRenderer() {},
 			registerProvider() {},
 			registerTool: (tool) => tools.push(tool),
-			sendMessage() {},
+			sendMessage: (message, options) => messages.push({ message, options }),
 			exec: async () => {
 				throw new Error("must not run commands");
 			},
@@ -142,7 +140,6 @@ function loadExtension({ fetch, legacy = false, profilesPath }) {
 						: {},
 			},
 			modelProfiles: { path: profilesPath },
-			childSessions: { fetch },
 		},
 	);
 	const fire = async (event, payload = {}, ctx = {}) => {
@@ -152,18 +149,18 @@ function loadExtension({ fetch, legacy = false, profilesPath }) {
 		}
 		return result;
 	};
-	return { handlers, tools, fire, notifications, ui };
+	return { handlers, tools, fire, notifications, messages, ui };
 }
 
 test("the first grep blocks when Jev says leave, names the role, and asks destination", async () => {
 	const message = "Find where launch decides to stay";
 	const jev = fakeJev("explorer", 0.2);
-	const launcher = launcherFor(jev.fetch);
+	const launcher = launcherFor();
 	const input = { pattern: "judge", path: "extensions/child-launcher.ts" };
 	const snapshot = { ...input };
 	const result = await launcher.gateToolCall(
 		{ toolName: "grep", input },
-		gateContext("/work", branchEnding(message)),
+		gateContext("/work", branchEnding(message), jev),
 	);
 
 	assert.deepEqual(input, snapshot);
@@ -187,8 +184,8 @@ test("the first grep blocks when Jev says leave, names the role, and asks destin
 
 test("the second gated tool in the turn does not call Jev again", async () => {
 	const jev = fakeJev("worker");
-	const launcher = launcherFor(jev.fetch);
-	const ctx = gateContext("/work", branchEnding("Map the launcher module"));
+	const launcher = launcherFor();
+	const ctx = gateContext("/work", branchEnding("Map the launcher module"), jev);
 	const first = await launcher.gateToolCall(
 		{ toolName: "grep", input: { pattern: "judge" } },
 		ctx,
@@ -209,8 +206,8 @@ test("Jev stay allows the tool and a later tool does not ask again", async () =>
 	await withWorkspace(async ({ worktree }) => {
 		const message = "Decide the storage architecture with me";
 		const jev = fakeJev("stay");
-		const launcher = launcherFor(jev.fetch);
-		const ctx = gateContext(worktree, branchEnding(message));
+		const launcher = launcherFor();
+		const ctx = gateContext(worktree, branchEnding(message), jev);
 		const first = await launcher.gateToolCall(
 			{ toolName: "grep", input: { pattern: "storage" } },
 			ctx,
@@ -241,10 +238,10 @@ test("Jev stay allows the tool and a later tool does not ask again", async () =>
 test("explicit child text blocks a read and does not ask where the work should go", async () => {
 	for (const message of ["Revisa esto con un hijo", "Read the file with a child"]) {
 		const jev = fakeJev("worker");
-		const launcher = launcherFor(jev.fetch);
+		const launcher = launcherFor();
 		const result = await launcher.gateToolCall(
 			{ toolName: "read", input: { path: "src/main.ts" } },
-			gateContext("/work", branchEnding(message, "Look at the previous note")),
+			gateContext("/work", branchEnding(message, "Look at the previous note"), jev),
 		);
 
 		assert.equal(result.allow, false);
@@ -261,8 +258,8 @@ test("explicit child text blocks a read and does not ask where the work should g
 test("a read of AGENTS.md does not call Jev or block, and the next grep asks once", async () => {
 	const cwd = "/work";
 	const jev = fakeJev("explorer");
-	const launcher = launcherFor(jev.fetch);
-	const ctx = gateContext(cwd, branchEnding("Find where launch decides to stay"));
+	const launcher = launcherFor();
+	const ctx = gateContext(cwd, branchEnding("Find where launch decides to stay"), jev);
 	const reads = [
 		"AGENTS.md",
 		"./AGENTS.md",
@@ -312,8 +309,8 @@ test("a read of AGENTS.md does not call Jev or block, and the next grep asks onc
 
 test("codegraph init is not gated and codegraph explore is", async () => {
 	const jev = fakeJev("explorer");
-	const launcher = launcherFor(jev.fetch);
-	const ctx = gateContext("/work", branchEnding("Map the launcher module"));
+	const launcher = launcherFor();
+	const ctx = gateContext("/work", branchEnding("Map the launcher module"), jev);
 	const harness = [
 		"spawn_child",
 		"continue_child",
@@ -366,8 +363,6 @@ test("an invalid Jev selection blocks the tool and is not a stay", async () => {
 	await withWorkspace(async ({ worktree }) => {
 		const message = "Compare the cited sources";
 		const jev = fakeJev(() => ({
-			model: "jev-1.13.0",
-			id: "req-invalid",
 			answers: {
 				specialist: {
 					type: "choice",
@@ -383,8 +378,8 @@ test("an invalid Jev selection blocks the tool and is not a stay", async () => {
 				},
 			},
 		}));
-		const launcher = launcherFor(jev.fetch);
-		const ctx = gateContext(worktree, branchEnding(message));
+		const launcher = launcherFor();
+		const ctx = gateContext(worktree, branchEnding(message), jev);
 		const result = await launcher.gateToolCall(
 			{ toolName: "grep", input: { pattern: "sources" } },
 			ctx,
@@ -403,7 +398,7 @@ test("an invalid Jev selection blocks the tool and is not a stay", async () => {
 		assert.doesNotMatch(decided.warning, /stays/);
 		assert.equal(decided.jev.answers.specialist.choice, "architect");
 		assert.equal(decided.jev.answers.specialist.confidence, 0.2);
-		assert.equal(jev.requests.length, 1);
+		assert.equal(jev.requests.length, 2);
 	});
 });
 
@@ -411,8 +406,8 @@ test("decide() after a leave verdict asks Jev once and launches the cached role"
 	await withWorkspace(async ({ worktree }) => {
 		const message = "Compare the two implementations";
 		const jev = fakeJev("explorer", 0.2);
-		const launcher = launcherFor(jev.fetch);
-		const ctx = gateContext(worktree, branchEnding(message));
+		const launcher = launcherFor();
+		const ctx = gateContext(worktree, branchEnding(message), jev);
 		const blocked = await launcher.gateToolCall(
 			{ toolName: "grep", input: { pattern: "compare" } },
 			ctx,
@@ -443,8 +438,8 @@ test("decide() stores the verdict so a later gated tool does not ask Jev again",
 	await withWorkspace(async ({ worktree }) => {
 		const message = "Add the missing export";
 		const jev = fakeJev("verifier", 0.15);
-		const launcher = launcherFor(jev.fetch);
-		const ctx = gateContext(worktree, branchEnding(message));
+		const launcher = launcherFor();
+		const ctx = gateContext(worktree, branchEnding(message), jev);
 		const result = await launcher.prepareLaunch(
 			{
 				role: "worker",
@@ -471,8 +466,8 @@ test("decide() stores the verdict so a later gated tool does not ask Jev again",
 test("beginTurn keeps the verdict, the next operator message asks again, and unseating lets the tool run", async () => {
 	const jev = fakeJev("explorer");
 	let seated = true;
-	const launcher = launcherFor(jev.fetch, { childSessionSeated: () => seated });
-	const ctx = gateContext("/work", branchEnding("Map the launcher module"));
+	const launcher = launcherFor({ childSessionSeated: () => seated });
+	const ctx = gateContext("/work", branchEnding("Map the launcher module"), jev);
 	await launcher.gateToolCall(
 		{ toolName: "find", input: { pattern: "judge" } },
 		ctx,
@@ -497,7 +492,7 @@ test("beginTurn keeps the verdict, the next operator message asks again, and uns
 	assert.equal(jev.requests.length, 1);
 
 	seated = true;
-	const next = gateContext("/work", branchEnding("A later operator message"));
+	const next = gateContext("/work", branchEnding("A later operator message"), jev);
 	const refreshed = await launcher.gateToolCall(
 		{ toolName: "grep", input: { pattern: "gate" } },
 		next,
@@ -508,7 +503,7 @@ test("beginTurn keeps the verdict, the next operator message asks again, and uns
 
 test("a missing user message does not call Jev or block", async () => {
 	const jev = fakeJev("leave");
-	const launcher = launcherFor(jev.fetch);
+	const launcher = launcherFor();
 	const branches = [
 		undefined,
 		[],
@@ -518,7 +513,7 @@ test("a missing user message does not call Jev or block", async () => {
 		[{ type: "message", message: { role: "user", content: [] } }],
 	];
 	for (const branch of branches) {
-		const ctx = gateContext("/work", branch);
+		const ctx = gateContext("/work", branch, jev);
 		if (branch === undefined) delete ctx.sessionManager;
 		assert.deepEqual(
 			await launcher.gateToolCall(
@@ -537,13 +532,14 @@ test("concurrent gated calls in one turn share a single Jev request", async () =
 	const hold = new Promise((resolve) => {
 		release = resolve;
 	});
-	const fetch = async (url, init) => {
-		const response = jev.fetch(url, init);
+	const classify = jev.registry.classify;
+	jev.registry.classify = async (...args) => {
+		const result = classify(...args);
 		await hold;
-		return response;
+		return result;
 	};
-	const launcher = launcherFor(fetch);
-	const ctx = gateContext("/work", branchEnding("Map the launcher module"));
+	const launcher = launcherFor();
+	const ctx = gateContext("/work", branchEnding("Map the launcher module"), jev);
 	const first = launcher.gateToolCall(
 		{ toolName: "grep", input: { pattern: "a" } },
 		ctx,
@@ -565,7 +561,6 @@ test("the parent registers the gate with spawn_child only when spawn tools are a
 	await withWorkspace(async ({ worktree }) => {
 		const jev = fakeJev("explorer");
 		const allowed = loadExtension({
-			fetch: jev.fetch,
 			profilesPath: join(worktree, "missing-profiles.json"),
 		});
 		const session = {
@@ -589,7 +584,7 @@ test("the parent registers the gate with spawn_child only when spawn tools are a
 		assert.equal(allowed.handlers.get("tool_call").length, 1);
 		assert.equal(allowed.handlers.get("turn_start").length, 1);
 
-		const ctx = gateContext(worktree, branchEnding("Map the launcher module"));
+		const ctx = gateContext(worktree, branchEnding("Map the launcher module"), jev);
 		const first = await allowed.fire(
 			"tool_call",
 			{ type: "tool_call", toolCallId: "c1", toolName: "grep", input: { pattern: "map" } },
@@ -610,7 +605,6 @@ test("the parent registers the gate with spawn_child only when spawn tools are a
 		assert.equal(jev.requests.length, 1);
 
 		const blocked = loadExtension({
-			fetch: fakeJev("leave").fetch,
 			legacy: true,
 			profilesPath: join(worktree, "missing-profiles.json"),
 		});
@@ -625,8 +619,8 @@ test("decide blocks the tool until one question is asked and does not launch", a
 	await withWorkspace(async ({ worktree }) => {
 		const message = "Quiero decidir contigo si este cambio debe existir";
 		const jev = fakeJev("decide");
-		const launcher = launcherFor(jev.fetch);
-		const ctx = gateContext(worktree, branchEnding(message));
+		const launcher = launcherFor();
+		const ctx = gateContext(worktree, branchEnding(message), jev);
 		const blocked = await launcher.gateToolCall(
 			{ toolName: "grep", input: { pattern: "gate" } },
 			ctx,
@@ -663,8 +657,8 @@ test("with Jev routing on, a named skill fixes neither the destination nor the s
 			["prototype ya está aprobado", "explorer", "explore"],
 		]) {
 			const jev = fakeJev(answer);
-			const launcher = launcherFor(jev.fetch);
-			const ctx = gateContext(worktree, branchEnding(message));
+			const launcher = launcherFor();
+			const ctx = gateContext(worktree, branchEnding(message), jev);
 			const blocked = await launcher.gateToolCall(
 				{ toolName: "grep", input: { pattern: "ticket" } },
 				ctx,
@@ -687,8 +681,8 @@ test("with Jev routing on, a named skill fixes neither the destination nor the s
 
 		const stayed = fakeJev("stay");
 		const stayMessage = "Usa implement para este cambio pequeño";
-		const stayLauncher = launcherFor(stayed.fetch);
-		const stayCtx = gateContext(worktree, branchEnding(stayMessage));
+		const stayLauncher = launcherFor();
+		const stayCtx = gateContext(worktree, branchEnding(stayMessage), stayed);
 		assert.deepEqual(
 			await stayLauncher.gateToolCall(
 				{ toolName: "read", input: { path: "src/main.ts" } },
@@ -700,10 +694,10 @@ test("with Jev routing on, a named skill fixes neither the destination nor the s
 
 		const suggested = fakeJev("verifier");
 		const suggestedMessage = "Usa implement en este paquete";
-		const suggestedLauncher = launcherFor(suggested.fetch);
+		const suggestedLauncher = launcherFor();
 		const fromTool = await suggestedLauncher.prepareLaunch(
 			{ role: "worker", task: "Implement the ticket", userRequest: suggestedMessage },
-			gateContext(worktree, branchEnding(suggestedMessage)),
+			gateContext(worktree, branchEnding(suggestedMessage), suggested),
 		);
 		assert.equal(fromTool.kind, "ready");
 		assert.equal(fromTool.role, "verify");
@@ -711,10 +705,10 @@ test("with Jev routing on, a named skill fixes neither the destination nor the s
 
 		const explicit = fakeJev("explorer");
 		const explicitMessage = "Quiero un subagente para domain-modeling y hazlo";
-		const explicitLauncher = launcherFor(explicit.fetch);
+		const explicitLauncher = launcherFor();
 		const delegated = await explicitLauncher.prepareLaunch(
 			{ task: "parent paraphrase", userRequest: explicitMessage },
-			gateContext(worktree, branchEnding(explicitMessage)),
+			gateContext(worktree, branchEnding(explicitMessage), explicit),
 		);
 		assert.equal(delegated.kind, "ready");
 		assert.equal(delegated.role, "explore");
@@ -728,13 +722,13 @@ test("a missing TypeSafe key blocks the gated tool and the launch without invent
 	await withWorkspace(async ({ worktree }) => {
 		const message = "Add the missing export and its test";
 		const jev = fakeJev("worker");
-		const ctx = gateContext(worktree, branchEnding(message));
+		const ctx = gateContext(worktree, branchEnding(message), jev);
 		ctx.modelRegistry.getApiKeyForProvider = async () => undefined;
-		const blocked = await launcherFor(jev.fetch).gateToolCall(
+		const blocked = await launcherFor().gateToolCall(
 			{ toolName: "edit", input: { path: "src/export.ts" } },
 			ctx,
 		);
-		const decided = await launcherFor(jev.fetch).prepareLaunch(
+		const decided = await launcherFor().prepareLaunch(
 			{ task: "parent paraphrase", userRequest: message },
 			ctx,
 		);
@@ -755,13 +749,13 @@ test("while routing is on, Jev can leave git and gh work to a specialist and exp
 		for (const command of ["git status", "gh pr list"]) {
 			const message = `Run ${command} and report what you find`;
 			const jev = fakeJev("explorer");
-			const launcher = launcherFor(jev.fetch);
-			const ctx = gateContext(worktree, branchEnding(message));
+			const launcher = launcherFor();
+			const ctx = gateContext(worktree, branchEnding(message), jev);
 			const blocked = await launcher.gateToolCall(
 				{ toolName: "bash", input: { command } },
 				ctx,
 			);
-			const launched = await launcherFor(jev.fetch).prepareLaunch(
+			const launched = await launcherFor().prepareLaunch(
 				{ role: "worker", task: command, userRequest: message },
 				ctx,
 			);
@@ -779,5 +773,234 @@ test("while routing is on, Jev can leave git and gh work to a specialist and exp
 			assert.equal(jev.requests[0].state.user_request, message, command);
 			assert.equal(jev.requests[1].state.task, command, command);
 		}
+	});
+});
+
+test("Jev is asked through Pi's classifier registry as typesafe/jev-latest with the turn's signal", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const message = "Map the launcher module";
+		const jev = fakeJev("explorer");
+		const turn = new AbortController();
+		const ctx = { ...gateContext(worktree, branchEnding(message), jev), signal: turn.signal };
+		const blocked = await launcherFor().gateToolCall(
+			{ toolName: "grep", input: { pattern: "judge" } },
+			ctx,
+		);
+		const launched = await launcherFor().prepareLaunch(
+			{ task: "parent paraphrase", userRequest: message },
+			ctx,
+		);
+
+		assert.equal(blocked.reason, "Call spawn_child. Jev selected the explore role.");
+		assert.equal(launched.kind, "ready");
+		assert.equal(jev.requests.length, 2);
+		assert.equal(jev.options[0].signal, turn.signal);
+		assert.equal(jev.options[1].signal, turn.signal);
+	});
+});
+
+test("without typesafe/jev-latest in the registry, or with only another provider's Jev, the launch is blocked", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const message = "Add the missing export and its test";
+		const absent = fakeJev("worker");
+		const missing = gateContext(worktree, branchEnding(message), absent);
+		missing.modelRegistry.findOfType = () => undefined;
+		const elsewhere = classifierRegistry(() => ({}), { provider: "openrouter" });
+		const other = gateContext(worktree, branchEnding(message), elsewhere);
+		other.modelRegistry.getApiKeyForProvider = async (provider) =>
+			provider === "openrouter" ? "openrouter-key" : undefined;
+		for (const ctx of [missing, other]) {
+			const blocked = await launcherFor().gateToolCall(
+				{ toolName: "edit", input: { path: "src/export.ts" } },
+				ctx,
+			);
+			const decided = await launcherFor().prepareLaunch(
+				{ task: "parent paraphrase", userRequest: message },
+				ctx,
+			);
+
+			assert.equal(blocked.allow, false);
+			assert.match(blocked.reason, /Launch blocked/);
+			assert.match(blocked.reason, /typesafe\/jev-latest/);
+			assert.doesNotMatch(blocked.reason, /stays|spawn_child/);
+			assert.equal(decided.kind, "blocked");
+			assert.equal("role" in decided, false);
+		}
+		assert.equal(absent.requests.length, 0);
+		assert.equal(elsewhere.requests.length, 0);
+	});
+});
+
+test("a classification that does not stop, including a cancelled turn, blocks the launch and invents no verdict", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const message = "Add the missing export and its test";
+		for (const stopReason of ["error", "aborted"]) {
+			const jev = fakeJev(() => ({
+				stopReason,
+				errorMessage: `Jev ${stopReason}`,
+				answers: {
+					specialist: choiceAnswer("worker", { worker: "" }),
+					destination: choiceAnswer("stay", { stay: "" }),
+				},
+			}));
+			const ctx = gateContext(worktree, branchEnding(message), jev);
+			const blocked = await launcherFor().gateToolCall(
+				{ toolName: "bash", input: { command: "ls" } },
+				ctx,
+			);
+			const decided = await launcherFor().prepareLaunch(
+				{ role: "worker", task: "parent paraphrase", userRequest: message },
+				ctx,
+			);
+
+			assert.equal(blocked.allow, false, stopReason);
+			assert.match(blocked.reason, /Launch blocked/, stopReason);
+			assert.match(blocked.reason, new RegExp(`Jev ${stopReason}`), stopReason);
+			assert.doesNotMatch(blocked.reason, /stays|spawn_child/, stopReason);
+			assert.equal(decided.kind, "blocked", stopReason);
+			assert.equal("role" in decided, false, stopReason);
+		}
+	});
+});
+
+test("Launch blocked is not kept: the next gated tool and the next launch for the same message ask Jev again", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const message = "Map the launcher module";
+		let failing = true;
+		const jev = fakeJev((context) =>
+			failing
+				? { stopReason: "error", errorMessage: "Jev is down" }
+				: {
+						answers: {
+							specialist: choiceAnswer("explorer", context.questions.specialist.criteria),
+							destination: choiceAnswer("leave", context.questions.destination.criteria),
+						},
+					},
+		);
+		const launcher = launcherFor();
+		const ctx = gateContext(worktree, branchEnding(message), jev);
+		const first = await launcher.gateToolCall(
+			{ toolName: "grep", input: { pattern: "judge" } },
+			ctx,
+		);
+		const second = await launcher.gateToolCall(
+			{ toolName: "read", input: { path: "src/main.ts" } },
+			ctx,
+		);
+		const blockedLaunch = await launcher.prepareLaunch(
+			{ task: "parent paraphrase", userRequest: message },
+			ctx,
+		);
+		failing = false;
+		const launched = await launcher.prepareLaunch(
+			{ task: "parent paraphrase", userRequest: message },
+			ctx,
+		);
+		const third = await launcher.gateToolCall(
+			{ toolName: "ls", input: { path: "." } },
+			ctx,
+		);
+
+		assert.match(first.reason, /Launch blocked/);
+		assert.match(second.reason, /Launch blocked/);
+		assert.equal(blockedLaunch.kind, "blocked");
+		assert.equal(launched.kind, "ready");
+		assert.equal(launched.role, "explore");
+		assert.equal(third.reason, "Call spawn_child. Jev selected the explore role.");
+		assert.equal(jev.requests.length, 4);
+	});
+});
+
+async function seatedExtension(worktree, message) {
+	const extension = loadExtension({
+		profilesPath: join(worktree, "missing-profiles.json"),
+	});
+	replaceSelection({
+		schemaVersion: 1,
+		capabilities: Object.fromEntries(capabilities.map((capability) => [capability, true])),
+		expectations: {},
+	});
+	await extension.fire("session_start", {}, {
+		mode: "print",
+		hasUI: true,
+		ui: extension.ui,
+		cwd: worktree,
+		sessionManager: {
+			getBranch: () => branchEnding(message),
+			getEntries: () => [],
+		},
+	});
+	return extension;
+}
+
+test("a gated tool called from a codemode script follows the direct verdict and its block also reaches the parent model", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const message = "Map the launcher module";
+		const jev = fakeJev("explorer");
+		const extension = await seatedExtension(worktree, message);
+		const ctx = gateContext(worktree, branchEnding(message), jev);
+		const direct = await extension.fire(
+			"tool_call",
+			{ type: "tool_call", toolCallId: "c1", toolName: "grep", input: { pattern: "map" } },
+			ctx,
+		);
+		assert.equal(extension.messages.length, 0);
+		const nested = await extension.fire(
+			"tool_call",
+			{
+				type: "tool_call",
+				toolCallId: "c2/1",
+				parentToolCallId: "c2",
+				toolName: "read",
+				input: { path: "src/main.ts" },
+			},
+			ctx,
+		);
+
+		assert.equal(direct.block, true);
+		assert.deepEqual(nested, direct);
+		assert.equal(jev.requests.length, 1);
+		assert.equal(extension.messages.length, 1);
+		assert.equal(extension.messages[0].message.content, direct.reason);
+		assert.equal(extension.messages[0].message.display, true);
+		assert.equal(extension.messages[0].options.deliverAs, "steer");
+	});
+});
+
+test("while routing is on, a codemode script runs after leave and its nested calls follow a stay", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const message = "Map the launcher module";
+		const left = fakeJev("explorer");
+		const leaving = await seatedExtension(worktree, message);
+		const leaveCtx = gateContext(worktree, branchEnding(message), left);
+		await leaving.fire(
+			"tool_call",
+			{ type: "tool_call", toolCallId: "c1", toolName: "bash", input: { command: "ls" } },
+			leaveCtx,
+		);
+		const script = await leaving.fire(
+			"tool_call",
+			{ type: "tool_call", toolCallId: "c2", toolName: "codemode", input: { code: "text(1)" } },
+			leaveCtx,
+		);
+		assert.equal(script, undefined);
+		assert.equal(left.requests.length, 1);
+
+		const stayed = fakeJev("stay");
+		const staying = await seatedExtension(worktree, message);
+		const nested = await staying.fire(
+			"tool_call",
+			{
+				type: "tool_call",
+				toolCallId: "c3/1",
+				parentToolCallId: "c3",
+				toolName: "grep",
+				input: { pattern: "map" },
+			},
+			gateContext(worktree, branchEnding(message), stayed),
+		);
+		assert.equal(nested, undefined);
+		assert.equal(staying.messages.length, 0);
+		assert.equal(stayed.requests.length, 1);
 	});
 });

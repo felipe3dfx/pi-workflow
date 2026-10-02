@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type {
 	AssistantMessage,
+	ClassifierResult,
 	ModelThinkingLevel,
 	UserMessage,
 } from "@earendil-works/pi-ai";
@@ -21,7 +22,6 @@ import { type Static, Type } from "typebox";
 
 import type { createChildLauncher } from "./child-launcher.ts";
 import { claim, held } from "./configure.ts";
-import type { JevResult } from "./jev-client.ts";
 import { projectChild } from "./child-projection.ts";
 import { sanitizeTaskText } from "./todo-header.ts";
 
@@ -757,7 +757,7 @@ type Outcome = {
 	warning: string;
 	reason: string;
 	warnings?: string[];
-	jev?: JevResult;
+	jev?: ClassifierResult;
 };
 
 function unseatedChild() {
@@ -867,7 +867,7 @@ export function createSpawnChildTool(
 function launched(
 	started: Awaited<ReturnType<ReturnType<typeof createChildSessions>["start"]>>,
 	warnings: string[],
-	selection?: { role: string; jev?: JevResult },
+	selection?: { role: string; jev?: ClassifierResult },
 ) {
 	if (started.status === "refused" || started.status === "pending") {
 		return notLaunched(started.status, {

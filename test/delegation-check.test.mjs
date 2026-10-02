@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { capabilities, replaceSelection } from "../extensions/configure.ts";
 import { delegationCases, runDelegationCheck } from "../extensions/delegation-check.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
+import { classifierRegistry } from "./support/fake-jev.mjs";
 import { turnJevRoutingOn, withAgentDirectory } from "./support/jev-routing.mjs";
 
 turnJevRoutingOn();
@@ -33,11 +34,8 @@ function destinationFor(item) {
 	return "leave";
 }
 
-function answeringFetch(fixed) {
-	const requests = [];
-	const fetch = async (_url, init) => {
-		const body = JSON.parse(init.body);
-		requests.push(body);
+function answeringJev(fixed) {
+	return classifierRegistry((body) => {
 		const item =
 			fixed ??
 			delegationCases.find(
@@ -57,12 +55,11 @@ function answeringFetch(fixed) {
 				questions.destination.criteria,
 			);
 		}
-		return Response.json({ model: "jev-1.13.0", id: "req-1", answers });
-	};
-	return { fetch, requests };
+		return { answers };
+	});
 }
 
-function context(apiKey = "typesafe-key") {
+function context(jev, apiKey = "typesafe-key") {
 	return {
 		cwd: "/work",
 		model: { provider: "session", id: "model", reasoning: true },
@@ -71,14 +68,14 @@ function context(apiKey = "typesafe-key") {
 			getApiKeyForProvider: async (provider) =>
 				provider === "typesafe" ? apiKey : undefined,
 			getAvailable: () => [],
+			...jev.registry,
 		},
 	};
 }
 
 test("delegation check scores the fixed cases against Jev answers and sends a named skill to Jev", async () => {
-	const jev = answeringFetch();
-	const { lines, failed } = await runDelegationCheck(context(), {
-		fetch: jev.fetch,
+	const jev = answeringJev();
+	const { lines, failed } = await runDelegationCheck(context(jev), {
 		modelProfiles: absentProfiles,
 	});
 
@@ -130,11 +127,10 @@ test("delegation check scores the fixed cases against Jev answers and sends a na
 });
 
 test("delegation check names the mismatched specialist and does not launch a child", async () => {
-	const jev = answeringFetch({
+	const jev = answeringJev({
 		expected: { action: "launch", role: "explore" },
 	});
-	const { lines, failed } = await runDelegationCheck(context(), {
-		fetch: jev.fetch,
+	const { lines, failed } = await runDelegationCheck(context(jev), {
 		modelProfiles: absentProfiles,
 	});
 
@@ -151,9 +147,8 @@ test("delegation check names the mismatched specialist and does not launch a chi
 });
 
 test("a missing TypeSafe key is a fail line for every case, including a named skill", async () => {
-	const jev = answeringFetch();
-	const { lines, failed } = await runDelegationCheck(context(null), {
-		fetch: jev.fetch,
+	const jev = answeringJev();
+	const { lines, failed } = await runDelegationCheck(context(jev, null), {
 		modelProfiles: absentProfiles,
 	});
 
@@ -162,17 +157,16 @@ test("a missing TypeSafe key is a fail line for every case, including a named sk
 	for (const item of delegationCases) {
 		assert.match(
 			lines.find((line) => line.startsWith(`fail: ${item.name}`)),
-			/TypeSafe API key is missing/,
+			/no TypeSafe API key/,
 		);
 	}
 });
 
 test("Jev routing off fails every case, including a named skill, without calling Jev", async (t) => {
 	withAgentDirectory(t);
-	const jev = answeringFetch();
+	const jev = answeringJev();
 
-	const { lines, failed } = await runDelegationCheck(context(), {
-		fetch: jev.fetch,
+	const { lines, failed } = await runDelegationCheck(context(jev), {
 		modelProfiles: absentProfiles,
 	});
 
@@ -229,12 +223,13 @@ test("/workflow:delegation-check rejects extra arguments and reports a missing k
 		modelRegistry: {
 			getApiKeyForProvider: async () => undefined,
 			getAvailable: () => [],
+			...answeringJev().registry,
 		},
 	});
 	assert.equal(notifications[1].level, "error");
-	assert.match(notifications[1].message, /TypeSafe API key is missing/);
+	assert.match(notifications[1].message, /no TypeSafe API key/);
 	assert.match(
 		notifications[1].message,
-		/fail: implement skill: TypeSafe API key is missing/,
+		/fail: implement skill: .*no TypeSafe API key/,
 	);
 });
