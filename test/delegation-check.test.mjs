@@ -75,7 +75,7 @@ function context(apiKey = "typesafe-key") {
 	};
 }
 
-test("delegation check scores the fixed cases against Jev answers and skips the network for a skill", async () => {
+test("delegation check scores the fixed cases against Jev answers and sends a named skill to Jev", async () => {
 	const jev = answeringFetch();
 	const { lines, failed } = await runDelegationCheck(context(), {
 		fetch: jev.fetch,
@@ -118,15 +118,15 @@ test("delegation check scores the fixed cases against Jev answers and skips the 
 		/destination asked no/,
 	);
 	const skill = lines.find((line) => line.startsWith("pass: implement skill"));
-	assert.match(skill, /action launch, specialist worker, destination asked no/);
-	assert.doesNotMatch(skill, /confidence/);
+	assert.match(skill, /action launch, specialist worker, destination asked yes/);
+	assert.match(skill, /specialist choice worker/);
 	assert.equal(
 		jev.requests.some(
 			(body) => body.state.user_request === "Usa la skill implement para este ticket.",
 		),
-		false,
+		true,
 	);
-	assert.equal(jev.requests.length, delegationCases.filter((item) => item.expected.callsJev).length);
+	assert.equal(jev.requests.length, delegationCases.length);
 });
 
 test("delegation check names the mismatched specialist and does not launch a child", async () => {
@@ -150,7 +150,7 @@ test("delegation check names the mismatched specialist and does not launch a chi
 	assert.equal(lines.some((line) => /child .*queued|spawn_child/.test(line)), false);
 });
 
-test("a missing TypeSafe key is a fail line and the skill case still runs", async () => {
+test("a missing TypeSafe key is a fail line for every case, including a named skill", async () => {
 	const jev = answeringFetch();
 	const { lines, failed } = await runDelegationCheck(context(null), {
 		fetch: jev.fetch,
@@ -159,19 +159,15 @@ test("a missing TypeSafe key is a fail line and the skill case still runs", asyn
 
 	assert.equal(failed, true);
 	assert.equal(jev.requests.length, 0);
-	for (const item of delegationCases.filter((candidate) => candidate.expected.callsJev)) {
+	for (const item of delegationCases) {
 		assert.match(
 			lines.find((line) => line.startsWith(`fail: ${item.name}`)),
 			/TypeSafe API key is missing/,
 		);
 	}
-	assert.match(
-		lines.find((line) => line.startsWith("pass: implement skill")),
-		/specialist worker/,
-	);
 });
 
-test("Jev routing off fails every Jev case without calling Jev and still runs the skill case", async (t) => {
+test("Jev routing off fails every case, including a named skill, without calling Jev", async (t) => {
 	withAgentDirectory(t);
 	const jev = answeringFetch();
 
@@ -183,17 +179,13 @@ test("Jev routing off fails every Jev case without calling Jev and still runs th
 	assert.equal(failed, true);
 	assert.equal(jev.requests.length, 0);
 	assert.equal(lines.length, delegationCases.length);
-	for (const item of delegationCases.filter((candidate) => candidate.expected.callsJev)) {
+	for (const item of delegationCases) {
 		assert.ok(
 			lines.includes(
 				`fail: ${item.name}: Jev routing is off. Turn it on in /workflow:settings.`,
 			),
 		);
 	}
-	assert.match(
-		lines.find((line) => line.startsWith("pass: implement skill")),
-		/specialist worker/,
-	);
 });
 
 test("/workflow:delegation-check rejects extra arguments and reports a missing key without throwing", async () => {
@@ -241,5 +233,8 @@ test("/workflow:delegation-check rejects extra arguments and reports a missing k
 	});
 	assert.equal(notifications[1].level, "error");
 	assert.match(notifications[1].message, /TypeSafe API key is missing/);
-	assert.match(notifications[1].message, /pass: implement skill/);
+	assert.match(
+		notifications[1].message,
+		/fail: implement skill: TypeSafe API key is missing/,
+	);
 });

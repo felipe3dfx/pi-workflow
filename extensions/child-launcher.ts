@@ -75,51 +75,6 @@ const destinationCriteria = {
 		"A bounded package a child session can finish on its own. Investigating an architecture can leave.",
 };
 
-type SkillRoute =
-	| { name: string; destination: "stay" }
-	| { name: string; destination: "leave" | "approval"; role: Role };
-
-const skillRoutes: SkillRoute[] = [
-	{ name: "promotion-readiness", destination: "leave", role: "verify" },
-	{ name: "writing-for-agents", destination: "approval", role: "worker" },
-	{ name: "mutation-testing", destination: "leave", role: "verify" },
-	{ name: "review-critique", destination: "leave", role: "verify" },
-	{ name: "domain-modeling", destination: "stay" },
-	{ name: "codebase-design", destination: "stay" },
-	{ name: "feature-review", destination: "leave", role: "verify" },
-	{ name: "setup-workflow", destination: "approval", role: "worker" },
-	{ name: "code-review", destination: "leave", role: "verify" },
-	{ name: "scope-audit", destination: "leave", role: "explore" },
-	{ name: "qa-impact", destination: "leave", role: "explore" },
-	{ name: "to-tickets", destination: "stay" },
-	{ name: "create-pr", destination: "stay" },
-	{ name: "prototype", destination: "approval", role: "worker" },
-	{ name: "implement", destination: "leave", role: "worker" },
-	{ name: "simplify", destination: "leave", role: "explore" },
-	{ name: "to-spec", destination: "approval", role: "worker" },
-	{ name: "feature", destination: "stay" },
-	{ name: "tdd", destination: "leave", role: "worker" },
-];
-
-const skillMatchers = skillRoutes
-	.map((route) => ({
-		route,
-		pattern: new RegExp(
-			`(?<![\\p{L}\\p{N}_-])${route.name}(?![\\p{L}\\p{N}_-])`,
-			"iu",
-		),
-	}))
-	.sort((left, right) => right.route.name.length - left.route.name.length);
-
-const approval =
-	/(?<![\p{L}\p{N}_-])(?:aprobado|approved|publica|publish|hazlo)(?![\p{L}\p{N}_-])/iu;
-
-function matchedSkill(userRequest: string | undefined): SkillRoute | undefined {
-	if (!userRequest) return undefined;
-	return skillMatchers.find((candidate) => candidate.pattern.test(userRequest))
-		?.route;
-}
-
 type Contract = { prompt: string; tools: string[] };
 
 const defaultContractsDirectory = resolve(
@@ -137,7 +92,7 @@ type GateContext = LauncherContext & {
 };
 
 type Assessment =
-	| { kind: "launch"; role: Role; jev?: JevResult; skill?: string }
+	| { kind: "launch"; role: Role; jev?: JevResult }
 	| { kind: "stay" | "decide" | "blocked"; reason: string; jev?: JevResult };
 
 type Outcome = {
@@ -157,7 +112,6 @@ type Ready = {
 	model: string;
 	thinking: ModelThinkingLevel;
 	jev?: JevResult;
-	skill?: string;
 };
 
 type Pair = { model: string; thinking: ModelThinkingLevel };
@@ -218,21 +172,6 @@ async function gitRoot(worktree: string): Promise<string | Outcome> {
 	} catch {
 		return invalid;
 	}
-}
-
-function skillJudgment(userRequest: string | undefined): Assessment | undefined {
-	const skill = matchedSkill(userRequest);
-	if (!skill) return undefined;
-	if (
-		skill.destination === "stay" ||
-		(skill.destination === "approval" && !approval.test(userRequest ?? ""))
-	) {
-		return {
-			kind: "stay",
-			reason: `The ${skill.name} skill keeps this work in the parent.`,
-		};
-	}
-	return { kind: "launch", role: skill.role, skill: skill.name };
 }
 
 const gatedTools = new Set([
@@ -367,8 +306,6 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		request: LaunchRequest,
 		ctx: LauncherContext,
 	): Promise<Assessment> {
-		const routed = skillJudgment(request.userRequest);
-		if (routed) return routed;
 		if (!jevRoutingEnabled()) {
 			if (request.role !== undefined && isRole(request.role)) {
 				return { kind: "launch", role: request.role };
@@ -477,10 +414,10 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			const shown = show(verdict);
 			return { allow: false, reason: `${shown.warning}\n${shown.reason}` };
 		}
-		const selected = verdict.skill
-			? `The ${verdict.skill} skill selected the ${verdict.role} role.`
-			: `Jev selected the ${verdict.role} role.`;
-		return { allow: false, reason: `Call spawn_child. ${selected}` };
+		return {
+			allow: false,
+			reason: `Call spawn_child. Jev selected the ${verdict.role} role.`,
+		};
 	}
 
 	function classify(request: LaunchRequest, ctx: LauncherContext) {
@@ -520,7 +457,6 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			model: pair.model,
 			thinking: pair.thinking,
 			...jev,
-			...(verdict.skill ? { skill: verdict.skill } : {}),
 		};
 	}
 	return { prepareLaunch, beginTurn, gateToolCall, classify };
