@@ -80,6 +80,24 @@ A Pi session distinct from the parent session. It belongs to a harness capabilit
 
 _Avoid_: subagent package, workflow run
 
+### Run state
+
+Where a child session is in its run: queued, running, waiting, completed, failed, cancelled, or timed out. It says nothing about whether the work succeeded.
+
+_Avoid_: status, verdict
+
+### Verdict
+
+What the Specialist concludes about its task. A worker reports done, partial, or blocked. A verifier reports pass, fail, or blocked. An explorer reports no Verdict.
+
+_Avoid_: status, completed
+
+### Consumed result
+
+A child result the parent session has already received, by reading it, by automatic delivery, or by continuing that child. A consumed result is never delivered again.
+
+_Avoid_: read result, acknowledged result
+
 ### Chrome
 
 The Grok Build-style terminal UI the harness applies: header, footer hints, status row, input editor, message and menu styling, and the `pi-workflow` theme. It patches Pi internals; see ADR 0007.

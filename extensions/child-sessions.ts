@@ -749,6 +749,12 @@ const spawnChildParameters = Type.Object({
 				"An existing Git root for the child to work in. Defaults to the current Git root.",
 		}),
 	),
+	references: Type.Optional(
+		Type.Array(Type.String(), {
+			description:
+				"Paths under the current directory the child must read. The launch is refused when one does not exist or resolves outside it.",
+		}),
+	),
 	background: Type.Optional(
 		Type.Literal(true, {
 			description:
@@ -850,6 +856,7 @@ export function createSpawnChildTool(
 					role: params.role ?? undefined,
 					task: params.task,
 					worktree: params.worktree,
+					references: params.references,
 					...(userRequest ? { userRequest } : {}),
 				},
 				ctx,

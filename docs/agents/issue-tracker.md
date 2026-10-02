@@ -9,7 +9,7 @@ GitHub issue access:
 - state: supported
 - evidence: gh issue list and gh label list succeeded
 - provider: gh
-- limits: repository issues are enabled; none exist
+- limits: repository issues are enabled
 - effects/approval: read
 - degraded: none (confirmed absent)
 - blocked when: gh is missing, unauthenticated, or the GitHub API fails
@@ -27,7 +27,7 @@ Publication capability:
 - state: supported
 - evidence: repository permissions include admin, push, and triage; has_issues is true
 - provider: gh
-- limits: no issue was created in this repository during discovery
+- limits: none
 - effects/approval: create, edit, label, assign, close, or relate requires explicit approval
 - degraded: none (confirmed absent)
 - blocked when: permission is missing or the GitHub API fails
@@ -43,7 +43,7 @@ Read capability:
 - state: supported
 - evidence: gh issue list succeeded for felipe3dfx/pi-workflow
 - provider: gh
-- limits: repository issues are enabled; none exist
+- limits: repository issues are enabled
 - effects/approval: read
 - degraded: none (confirmed absent)
 - blocked when: gh is missing, unauthenticated, or the GitHub API fails
