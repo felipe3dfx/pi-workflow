@@ -896,7 +896,7 @@ test("a null role is missing and does not warn that worker was assumed", async (
 	});
 });
 
-test("an explicit child request in the user message is sent to Jev without a destination question", async () => {
+test("an explicit child request in the user message is sent to Jev with the destination question", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren({ run: async () => "Done." });
 		const jev = fakeJev();
