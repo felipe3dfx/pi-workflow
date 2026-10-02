@@ -63,10 +63,11 @@ const specialistInstructions =
 
 const specialistCriteria: Record<Specialist, string> = {
 	explorer:
-		"Read-only investigation, source comparison, or mapping how something works, including an architecture investigation.",
+		"Read-only investigation, source comparison, or mapping how something works, including an architecture investigation. Not a review of a pull request or of work that is already done.",
 	worker:
 		"Implementation, a fix, or another change a child can finish under its contract.",
-	verifier: "An independent check of work that is already done.",
+	verifier:
+		"An independent review or check of work that is already done, including a pull request, a diff, or finished changes.",
 };
 
 const destinationInstructions = "Where should this package go?";

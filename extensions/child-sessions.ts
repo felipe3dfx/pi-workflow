@@ -22,7 +22,7 @@ import { type Static, Type } from "typebox";
 
 import type { createChildLauncher } from "./child-launcher.ts";
 import { claim, held } from "./configure.ts";
-import { projectChild } from "./child-projection.ts";
+import { childVerdict, projectChild } from "./child-projection.ts";
 import { sanitizeTaskText } from "./todo-header.ts";
 
 export const childOverlay = claim("child-session", "overlay");
@@ -179,6 +179,10 @@ export function childDetails(record: ChildRecord, now = Date.now()) {
 		task: projected.task,
 		elapsedMs: projected.elapsedMs,
 		text: projected.text,
+		verdict:
+			projected.state === "completed"
+				? childVerdict(projected.role, projected.text)
+				: undefined,
 	};
 }
 
@@ -895,6 +899,9 @@ function launched(
 	if (started.status === "completed") {
 		return report([...warnings, started.text], {
 			status: "completed",
+			...(selection
+				? { verdict: childVerdict(selection.role, started.text) }
+				: {}),
 			...selected,
 		});
 	}
