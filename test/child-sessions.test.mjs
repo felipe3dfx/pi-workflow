@@ -58,6 +58,7 @@ const workerContract = await readFile(
 	"utf8",
 );
 const workerTools = ["read", "bash", "edit", "write", "grep", "find", "ls"];
+const spawnedTools = [...workerTools, "ask_parent"];
 
 async function withWorkspace(run) {
 	const dir = await realpath(
@@ -356,7 +357,7 @@ for (const mode of ["tui", "rpc"]) {
 			assert.equal(child.spec.cwd, worktree);
 			assert.equal(child.spec.model, "session/model");
 			assert.equal(child.spec.thinking, "medium");
-			assert.deepEqual(child.spec.tools, workerTools);
+			assert.deepEqual(child.spec.tools, spawnedTools);
 			assert.ok(workerContract.includes(child.spec.prompt));
 			assert.equal(messages.length, 0);
 
@@ -688,7 +689,7 @@ test("each Run state transition of a child is appended to the parent session as 
 			assert.equal(data.id, result.details.id);
 			assert.equal(data.role, "worker");
 			assert.equal(data.chosenBy, "jev");
-			assert.deepEqual(data.tools, workerTools);
+			assert.deepEqual(data.tools, spawnedTools);
 			assert.deepEqual(data.references, ["AGENTS.md"]);
 			assert.equal(data.version, packageVersion);
 			assert.ok(!JSON.stringify(data).includes("Secret task text"));
@@ -761,6 +762,72 @@ test("a foreground child that fails appends a failed trace entry", async () => {
 	});
 });
 
+async function backgroundTraceStates(extension, id) {
+	await settle();
+	return extension.entries
+		.filter(
+			(entry) =>
+				entry.customType === "pi-workflow-child-trace" && entry.data.id === id,
+		)
+		.map((entry) => entry.data);
+}
+
+test("a child that asks is traced as waiting, and as running again once the parent answers", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		const id = await spawnBackground(extension, worktree);
+		await settle();
+
+		const answer = children.created[0].spec.ask("Which file?");
+		assert.deepEqual(
+			(await backgroundTraceStates(extension, id)).map((data) => data.state),
+			["queued", "running", "waiting"],
+		);
+
+		await use(extension, "reply_child", { id, question: 1, answer: "a.ts" });
+		await answer;
+		assert.deepEqual(
+			(await backgroundTraceStates(extension, id)).map((data) => data.state),
+			["queued", "running", "waiting", "running"],
+		);
+	});
+});
+
+test("a background child that fails, is cancelled, or times out is traced with that state and no Verdict", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const clock = manualClock();
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			schedule: clock.schedule,
+		});
+		const failed = await spawnBackground(extension, worktree);
+		const cancelled = await spawnBackground(extension, worktree);
+		const timedOut = await spawnBackground(extension, worktree);
+		await settle();
+
+		children.created[0].result.reject(new Error("provider overloaded"));
+		await settle();
+		await use(extension, "cancel_child", { id: cancelled });
+		clock.fire(minutes(4));
+
+		for (const [id, state] of [
+			[failed, "failed"],
+			[cancelled, "cancelled"],
+			[timedOut, "timed out"],
+		]) {
+			const traces = await backgroundTraceStates(extension, id);
+			assert.equal(traces.at(-1).state, state);
+			assert.equal(traces.at(-1).verdict, undefined);
+		}
+	});
+});
+
 test("a trace entry that cannot be appended does not break the child", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
@@ -818,7 +885,7 @@ test("a null role is missing and does not warn that worker was assumed", async (
 		assert.equal(result.details.status, "completed");
 		assert.equal(result.details.role, "worker");
 		assert.doesNotMatch(text(result), /No role was named/);
-		assert.deepEqual(children.created[0].spec.tools, workerTools);
+		assert.deepEqual(children.created[0].spec.tools, spawnedTools);
 	});
 });
 
@@ -1006,7 +1073,7 @@ test("the default child factory runs the contract on the parent's model runtime 
 		assert.match(system.sections.cwd, new RegExp(worktree));
 		assert.deepEqual(
 			system.toolsAdded.map((tool) => tool.name).sort(),
-			[...workerTools, "ask_parent"].sort(),
+			[...spawnedTools].sort(),
 		);
 		assert.equal(messages.length, 0);
 	});

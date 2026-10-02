@@ -230,6 +230,12 @@ function parentRuntime(
 		: undefined;
 }
 
+const askParentTool = "ask_parent";
+
+function childTools(plan: Plan) {
+	return [...plan.contract.tools, askParentTool];
+}
+
 const askParentParameters = Type.Object({
 	question: Type.String({ description: "One question for the parent." }),
 });
@@ -262,10 +268,10 @@ const createPiChildSession: ChildSessionFactory = async (spec) => {
 			spec.model.slice(slash + 1),
 		),
 		thinkingLevel: spec.thinking,
-		tools: [...spec.tools, "ask_parent"],
+		tools: spec.tools,
 		customTools: [
 			{
-				name: "ask_parent",
+				name: askParentTool,
 				label: "Ask Parent",
 				description:
 					"Ask the parent session one question and wait for its answer. Use it only when the task cannot continue without a decision the parent owns. An error result means no answer will come; continue without one.",
@@ -367,7 +373,7 @@ export function createChildSessions(options: {
 				id,
 				role: plan.role,
 				chosenBy: plan.chosenBy,
-				tools: plan.contract.tools,
+				tools: childTools(plan),
 				references: plan.references,
 				state,
 				...(verdict ? { verdict } : {}),
@@ -569,7 +575,7 @@ export function createChildSessions(options: {
 				model: plan.model,
 				thinking: plan.thinking,
 				prompt: plan.contract.prompt,
-				tools: plan.contract.tools,
+				tools: childTools(plan),
 				modelRegistry: launch.modelRegistry,
 				onEvent: (event) => {
 					watch.event(event);
