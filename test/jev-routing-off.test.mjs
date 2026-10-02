@@ -77,7 +77,7 @@ test("while Jev routing is off, every gated parent tool runs without Jev, even f
 	assert.equal(jev.requests.length, 0);
 });
 
-test("while Jev routing is off, a named role keeps git and gh in the parent and launches for other work", async (t) => {
+test("while Jev routing is off, a named role launches without reading the task text", async (t) => {
 	const { dir, launcher, jev } = offLauncher(t);
 	const worktree = await gitWorktree(dir);
 	const ctx = parentContext(
@@ -89,36 +89,9 @@ test("while Jev routing is off, a named role keeps git and gh in the parent and 
 	for (const [role, task] of [
 		["worker", "git status"],
 		["worker", "  gh pr create --fill"],
-		["verify", "git"],
-		["explore", "gh"],
-		["worker", "Run git status"],
-		["worker", "cd repo && git log"],
-		["worker", "/usr/bin/git status"],
-		["worker", "git\tstatus"],
-		["worker", "Open it with gh pr create"],
 		["verify", "Check the branch (git)"],
 		["explore", "Map how the parser calls git"],
-		["worker", "Commit the fix with git."],
-		["worker", "Run Git status"],
-		["worker", "GH pr create"],
-	]) {
-		const kept = await launcher.prepareLaunch({ role, task }, ctx);
-		assert.equal(kept.kind, "stay");
-		assert.equal(
-			kept.reason,
-			"git and gh stay in the parent while Jev routing is off.",
-		);
-		assert.equal("role" in kept, false);
-	}
-
-	for (const [role, task] of [
 		["worker", "Fix the parser"],
-		["worker", "gitignore the build directory"],
-		["worker", "Update the github workflow"],
-		["worker", "Update the GitHub workflow"],
-		["explore", "Read .git/config"],
-		["worker", "Remove the ghost entries"],
-		["verify", "Check each digit"],
 	]) {
 		const launched = await launcher.prepareLaunch({ role, task }, ctx);
 		assert.equal(launched.kind, "ready");

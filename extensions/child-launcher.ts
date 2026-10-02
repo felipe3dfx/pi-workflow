@@ -53,8 +53,6 @@ const roleBySpecialist: Record<Specialist, Role> = {
 
 const specialists = ["explorer", "worker", "verifier"] as const;
 
-const repositoryStateCommand = /(?<![\p{L}\p{N}_.-])(?:git|gh)(?![\p{L}\p{N}_-])/iu;
-
 const specialistInstructions =
 	"Which specialist should carry out the requested action? Choose from the action in `user_request` and `task`. `suggested_specialist` is a hint and does not decide the answer.";
 
@@ -333,12 +331,6 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 	): Promise<Assessment> {
 		if (!jevRoutingEnabled()) {
 			if (request.role !== undefined && isRole(request.role)) {
-				if (repositoryStateCommand.test(request.task)) {
-					return {
-						kind: "stay",
-						reason: "git and gh stay in the parent while Jev routing is off.",
-					};
-				}
 				return { kind: "launch", role: request.role };
 			}
 			return { kind: "stay", reason: "Jev routing is off." };
