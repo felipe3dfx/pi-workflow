@@ -3921,7 +3921,7 @@ test("continue_child consumes the earlier result, and the new record keeps conti
 	});
 });
 
-test("session shutdown drops pending results for the model", async () => {
+test("session shutdown drops pending results, and the ended children are gone from child_result", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
 		const extension = await loadSpawnTool({
@@ -3940,6 +3940,10 @@ test("session shutdown drops pending results for the model", async () => {
 		await extension.fire("agent_settled");
 
 		assert.equal(extension.messages.length, 0);
+		assert.match(
+			text(await use(extension, "child_result", { id })),
+			/^No child .+ in this session/,
+		);
 	});
 });
 
