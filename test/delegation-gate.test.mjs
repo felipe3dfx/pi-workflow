@@ -235,6 +235,41 @@ test("Jev stay allows the tool and a later tool does not ask again", async () =>
 	});
 });
 
+test("a stay from spawn_child lets the parent's next git, gh, and read run on the same verdict", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const message = "Revisa SYN-2320 contra qa con git diff y git log";
+		const jev = fakeJev("stay");
+		const launcher = launcherFor();
+		const ctx = gateContext(worktree, branchEnding(message), jev);
+		const decided = await launcher.prepareLaunch(
+			{ role: "explore", task: "Compare SYN-2320 with qa", userRequest: message },
+			ctx,
+		);
+		const gated = [];
+		for (const event of [
+			{ toolName: "bash", input: { command: "git diff qa...SYN-2320" } },
+			{ toolName: "bash", input: { command: "git merge-base qa SYN-2320" } },
+			{ toolName: "bash", input: { command: "gh pr view SYN-2320" } },
+			{ toolName: "read", input: { path: "src/index.ts" } },
+		]) {
+			gated.push(await launcher.gateToolCall(event, ctx));
+		}
+
+		assert.equal(decided.kind, "stay");
+		assert.equal(
+			decided.warning,
+			"The work stays in this session. No child was launched.",
+		);
+		assert.deepEqual(gated, [
+			{ allow: true },
+			{ allow: true },
+			{ allow: true },
+			{ allow: true },
+		]);
+		assert.equal(jev.requests.length, 1);
+	});
+});
+
 test("explicit child text blocks a read and does not ask where the work should go", async () => {
 	for (const message of ["Revisa esto con un hijo", "Read the file with a child"]) {
 		const jev = fakeJev("worker");
