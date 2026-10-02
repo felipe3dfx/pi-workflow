@@ -3781,6 +3781,40 @@ test("a result the parent read with child_result is not delivered again and trig
 	});
 });
 
+test("a result whose delivery throws stays pending and is delivered on the next turn", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		let failures = 1;
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			sendMessage: () => {
+				if (failures-- > 0) throw new Error("transport closed");
+			},
+		});
+		const id = await spawnBackground(extension, worktree);
+		await settle();
+		extension.busy(true);
+		children.created[0].result.resolve("Late answer.");
+		await settle();
+
+		await extension.fire("turn_end");
+		assert.match(
+			extension.notifications.at(-1).message,
+			/could not be delivered: transport closed/,
+		);
+		await extension.fire("turn_end");
+
+		assert.equal(extension.messages.length, 2);
+		assert.deepEqual(stateOfDetails(extension.messages[1].message.details), {
+			id,
+			state: "completed",
+		});
+		await extension.fire("agent_settled");
+		assert.equal(extension.messages.length, 2);
+	});
+});
+
 test("continue_child consumes the earlier result, and the new record keeps continuedFrom", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();

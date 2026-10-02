@@ -749,11 +749,8 @@ export function createChildSessions(options: {
 		pending = pending.filter((record) => record.id !== id);
 	}
 
-	function takePending() {
-		const taken = pending;
-		pending = [];
-		for (const record of taken) consumed.add(record.id);
-		return taken;
+	function pendingResults() {
+		return [...pending];
 	}
 
 	function dropPending() {
@@ -814,7 +811,7 @@ export function createChildSessions(options: {
 		reply,
 		cancel,
 		consume,
-		takePending,
+		pendingResults,
 		dropPending,
 		get,
 		list,

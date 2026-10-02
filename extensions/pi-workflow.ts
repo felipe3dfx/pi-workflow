@@ -126,7 +126,7 @@ export default function piWorkflowExtension(
 		},
 	});
 	function deliverResults() {
-		const results = childSessions.takePending();
+		const results = childSessions.pendingResults();
 		if (results.length === 0) return;
 		try {
 			pi.sendMessage(
@@ -141,6 +141,7 @@ export default function piWorkflowExtension(
 				},
 				{ deliverAs: "steer", triggerTurn: true },
 			);
+			for (const child of results) childSessions.consume(child.id);
 		} catch (error) {
 			if (currentCtx)
 				report(
