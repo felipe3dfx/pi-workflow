@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -163,6 +166,37 @@ test("a missing TypeSafe key is a fail line and the skill case still runs", asyn
 		assert.match(
 			lines.find((line) => line.startsWith(`fail: ${item.name}`)),
 			/TypeSafe API key is missing/,
+		);
+	}
+	assert.match(
+		lines.find((line) => line.startsWith("pass: implement skill")),
+		/specialist worker/,
+	);
+});
+
+test("Jev routing off fails every Jev case without calling Jev and still runs the skill case", async (t) => {
+	const dir = mkdtempSync(join(tmpdir(), "pi-workflow-agent-"));
+	const previous = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = dir;
+	t.after(() => {
+		process.env.PI_CODING_AGENT_DIR = previous;
+		rmSync(dir, { recursive: true, force: true });
+	});
+	const jev = answeringFetch();
+
+	const { lines, failed } = await runDelegationCheck(context(), {
+		fetch: jev.fetch,
+		modelProfiles: absentProfiles,
+	});
+
+	assert.equal(failed, true);
+	assert.equal(jev.requests.length, 0);
+	assert.equal(lines.length, delegationCases.length);
+	for (const item of delegationCases.filter((candidate) => candidate.expected.callsJev)) {
+		assert.ok(
+			lines.includes(
+				`fail: ${item.name}: Jev routing is off. Turn it on in /workflow:settings.`,
+			),
 		);
 	}
 	assert.match(
