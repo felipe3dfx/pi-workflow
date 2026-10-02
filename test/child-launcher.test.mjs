@@ -842,10 +842,7 @@ test("while Jev routing is on, git and gh in a named role's task go to Jev like 
 			launcherContext(worktree, { jev }),
 		);
 		assert.ok(jev.requests.length >= 1);
-		assert.notEqual(
-			result.reason,
-			"git and gh stay in the parent while Jev routing is off.",
-		);
+		assert.equal(result.kind, "ready");
 	});
 });
 
