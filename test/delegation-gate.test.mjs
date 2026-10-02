@@ -468,7 +468,7 @@ test("decide() after a leave verdict asks Jev once and launches the cached role"
 	});
 });
 
-test("a launch stores the verdict so a later gated tool does not ask Jev again", async () => {
+test("a prepared launch stores the verdict so a later gated tool does not ask Jev again", async () => {
 	await withWorkspace(async ({ worktree }) => {
 		const message = "Add the missing export";
 		const jev = fakeJev("verifier", 0.15);
@@ -482,7 +482,7 @@ test("a launch stores the verdict so a later gated tool does not ask Jev again",
 			},
 			ctx,
 		);
-		const allowed = await launcher.gateToolCall(
+		const blocked = await launcher.gateToolCall(
 			{ toolName: "edit", input: { path: "src/export.ts" } },
 			ctx,
 		);
@@ -490,7 +490,8 @@ test("a launch stores the verdict so a later gated tool does not ask Jev again",
 		assert.equal(result.kind, "ready");
 		assert.equal(result.role, "verify");
 		assert.equal(result.jev.answers.specialist.confidence, 0.15);
-		assert.equal(allowed.allow, true);
+		assert.equal(blocked.allow, false);
+		assert.match(blocked.reason, /\bverify\b/);
 		assert.equal(jev.requests.length, 1);
 		assert.equal(jev.requests[0].state.suggested_specialist, "worker");
 	});
@@ -938,7 +939,7 @@ test("Launch blocked is not kept: the next gated tool and the next launch for th
 		assert.equal(blockedLaunch.kind, "blocked");
 		assert.equal(launched.kind, "ready");
 		assert.equal(launched.role, "explore");
-		assert.deepEqual(third, { allow: true });
+		assert.equal(third.reason, "Call spawn_child. Jev selected the explore role.");
 		assert.equal(jev.requests.length, 4);
 	});
 });
@@ -1051,6 +1052,7 @@ test("after a launch for the message under leave, gated parent tools run without
 			{ task: "Research the three files", userRequest: message },
 			ctx,
 		);
+		launcher.recordLaunch(message);
 		const after = await launcher.gateToolCall(
 			{ toolName: "read", input: { path: "package.json" } },
 			ctx,
@@ -1078,6 +1080,7 @@ test("a launch for one message does not unblock the next message under leave", a
 			{ task: "t", userRequest: "First delegated request" },
 			first,
 		);
+		launcher.recordLaunch("First delegated request");
 		const next = await launcher.gateToolCall(
 			{ toolName: "read", input: { path: "package.json" } },
 			gateContext(worktree, branchEnding("Second delegated request"), jev),

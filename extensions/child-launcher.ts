@@ -502,7 +502,6 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		if ("kind" in contract) return { ...contract, ...jev };
 		const pair = profilePair(verdict.role, profiles, ctx);
 		if ("kind" in pair) return { ...pair, ...jev };
-		if (turn && turn.userRequest === request.userRequest) turn.launched = true;
 		return {
 			kind: "ready",
 			role: verdict.role,
@@ -520,5 +519,8 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			...jev,
 		};
 	}
-	return { prepareLaunch, beginTurn, gateToolCall, classify };
+	function recordLaunch(userRequest: string | undefined) {
+		if (turn && turn.userRequest === userRequest) turn.launched = true;
+	}
+	return { prepareLaunch, recordLaunch, beginTurn, gateToolCall, classify };
 }

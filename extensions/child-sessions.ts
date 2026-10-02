@@ -1018,6 +1018,9 @@ export function createSpawnChildTool(
 				signal,
 				modelRegistry: ctx.modelRegistry,
 			});
+			if (started.status === "queued" || started.status === "completed") {
+				launcher.recordLaunch(userRequest);
+			}
 			return launched(started, plan.warnings, {
 				role: plan.role,
 				...(plan.jev ? { jev: plan.jev } : {}),

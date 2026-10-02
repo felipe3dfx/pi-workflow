@@ -254,6 +254,7 @@ function loadExtension({
 			idle = !value;
 		},
 		named: (name) => tools.find((tool) => tool.name === name),
+		gate: (event, ctx) => handlers.get("tool_call")[0](event, ctx),
 		spawnTools: () => tools.filter((tool) => tool.name === "spawn_child"),
 	};
 }
@@ -544,6 +545,39 @@ test("refused and pending launches return a warning and reason with no child id 
 			assert.equal(children.created.length, 0);
 			assert.equal(messages.length, 0);
 		}
+	});
+});
+
+test("under leave, the parent's gated tools stay blocked until a launch for the message succeeds", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const message = "Research the parser and tell me the package version";
+		let failures = 1;
+		const children = fakeChildren({
+			onCreate: () => {
+				if (failures-- > 0) throw new Error("provider gone");
+			},
+		});
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const ctx = {
+			...toolContext("tui", worktree, fakeJev({ specialist: "explorer" })),
+			sessionManager: {
+				getBranch: () => [
+					{ type: "message", message: { role: "user", content: message } },
+				],
+			},
+		};
+		const read = { toolName: "read", input: { path: "package.json" } };
+
+		const refused = await spawn(extension.tool, { task: "Research the parser" }, ctx);
+		const afterRefusal = await extension.gate(read, ctx);
+		const queued = await spawn(extension.tool, { task: "Research the parser" }, ctx);
+		const afterLaunch = await extension.gate(read, ctx);
+
+		assert.equal(refused.details.status, "refused");
+		assert.equal(afterRefusal.block, true);
+		assert.match(afterRefusal.reason, /\bexplore\b/);
+		assert.equal(queued.details.status, "queued");
+		assert.equal(afterLaunch, undefined);
 	});
 });
 
