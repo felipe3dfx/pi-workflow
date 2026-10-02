@@ -181,7 +181,7 @@ class ResultCard implements Component {
 		const edge = edgeFor(assistantInset, outer);
 		const width = Math.max(1, outer - edge * 2);
 		const open = this.open();
-				const key = keyText("app.tools.expand");
+		const key = keyText("app.tools.expand");
 		const head = header(t, this.card, this.question, open);
 		const hint = key
 			? t.fg(
@@ -248,10 +248,8 @@ function resultCards(message: Message, expanded: boolean, theme: Theme) {
 
 export function registerChildResultCards(pi: ExtensionAPI) {
 	for (const type of [RESULT_TYPE, QUESTION_TYPE])
-		pi.registerMessageRenderer(
-			type,
-			(message, { expanded }, theme) =>
-				resultCards(message, expanded, theme),
+		pi.registerMessageRenderer(type, (message, { expanded }, theme) =>
+			resultCards(message, expanded, theme),
 		);
 	pi.on("session_shutdown", async () => {
 		opened.clear();
