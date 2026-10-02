@@ -312,6 +312,15 @@ const createPiChildSession: ChildSessionFactory = async (spec) => {
 								"Report your Verdict and result to the parent before your final answer. Call it again to correct it; the last call counts.",
 							parameters: resultParameters[spec.role],
 							async execute(_toolCallId: string, params: ChildResult) {
+								if (
+									!params.reason &&
+									params.verdict !== "done" &&
+									params.verdict !== "pass"
+								) {
+									throw new Error(
+										`A ${params.verdict} Verdict needs a reason.`,
+									);
+								}
 								spec.report(params);
 								return {
 									content: [

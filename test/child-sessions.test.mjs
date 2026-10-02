@@ -2558,6 +2558,30 @@ test("a worker reports through Pi's SDK; a result outside its role's schema is r
 	});
 });
 
+test("a worker through Pi's SDK reports done without a reason, and a blocked result without a reason is refused", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const { reason: _reason, ...blocked } = workerResult("blocked");
+		const { reason: _done, ...done } = workerResult("done");
+		const child = await realChild(agentDir, [
+			reporting(blocked),
+			reporting(done),
+			fauxAssistantMessage("Fixed src/parser.ts."),
+		]);
+		const { extension, parent } = child;
+		await spawnReal(child, worktree);
+		await eventually(() => extension.messages.length === 1);
+
+		const refused = parent.requests[1].messages.at(-1);
+		assert.equal(refused.toolName, "report_result");
+		assert.equal(refused.isError, true);
+		assert.match(refused.content[0].text, /reason/);
+		const { message } = extension.messages[0];
+		assert.equal(message.details.verdict, "done");
+		assert.equal(message.details.result.reason, undefined);
+		assert.doesNotMatch(message.content, /Reason:/);
+	});
+});
+
 test("a child through Pi's SDK that waits for a reply that never comes ends timed out by the watchdog, and a late reply is refused", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const child = await realChild(agentDir, [

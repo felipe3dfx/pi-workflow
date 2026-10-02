@@ -43,9 +43,12 @@ export function childStep(child: { step?: string; task: string }) {
 const list = (description: string) =>
 	Type.Array(Type.String(), { description });
 
-const reason = Type.String({
-	description: "One line on why the task reached this Verdict.",
-});
+const reason = Type.Optional(
+	Type.String({
+		description:
+			"One line on why the task reached this Verdict. Required unless the Verdict is done or pass.",
+	}),
+);
 
 export const resultParameters = {
 	worker: Type.Object({
@@ -84,7 +87,7 @@ export function reportsResult(
 function resultLines({ verdict, reason, ...fields }: ChildResult) {
 	return [
 		`Verdict: ${verdict}.`,
-		`Reason: ${reason}`,
+		...(reason ? [`Reason: ${reason}`] : []),
 		...Object.entries(fields).flatMap(([field, items]) => [
 			`${field}:`,
 			...(items.length > 0 ? items : ["none"]).map((item) => `- ${item}`),
