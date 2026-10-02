@@ -37,43 +37,9 @@ const indent = 2;
 type Card = Partial<ChildDetails> & { id: string; text: string };
 type Message = { customType: string; content: unknown; details?: unknown };
 
-function contentText(content: unknown) {
-	if (typeof content === "string") return content;
-	if (!Array.isArray(content)) return "";
-	return content
-		.filter((part) => part?.type === "text")
-		.map((part) => part.text)
-		.join("\n");
-}
-
 function parse(message: Message): Card {
 	const details = (message.details ?? {}) as Partial<ChildDetails>;
-	const id = details.id ?? "";
-	if (typeof details.role === "string")
-		return { ...details, id, text: details.text ?? "" };
-	const content = contentText(message.content);
-	const asked = content.match(
-		/^Child (\S+) asks \(question (\d+)\):\n\n([\s\S]*)\n\nAnswer with reply_child/,
-	);
-	if (asked)
-		return {
-			...details,
-			id: asked[1],
-			state: "waiting",
-			question: Number(asked[2]),
-			text: asked[3],
-		};
-	const outcome = content.match(
-		/^Child (\S+) (completed|failed|timed out|cancelled)(?::\n\n|: |\.)([\s\S]*)$/,
-	);
-	if (outcome)
-		return {
-			...details,
-			id: outcome[1],
-			state: outcome[2] as ChildRecord["state"],
-			text: outcome[2] === "cancelled" ? "" : outcome[3],
-		};
-	return { ...details, id, text: content };
+	return { ...details, id: details.id ?? "", text: details.text ?? "" };
 }
 
 function tone(card: Card, question: boolean): ThemeColor {

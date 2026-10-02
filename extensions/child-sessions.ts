@@ -21,6 +21,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 
+import { createChildBashTool } from "./child-bash.ts";
 import type { createChildLauncher } from "./child-launcher.ts";
 import { createChildCodeGraphTool } from "./codegraph-tool.ts";
 import { claim, held } from "./configure.ts";
@@ -287,6 +288,7 @@ const createPiChildSession: ChildSessionFactory = async (spec) => {
 		thinkingLevel: spec.thinking,
 		tools: spec.tools,
 		customTools: [
+			createChildBashTool(spec.cwd),
 			createChildCodeGraphTool(spec.cwd),
 			{
 				name: askParentTool,

@@ -183,50 +183,29 @@ test("failures show their reason collapsed, and questions always show their whol
 	assert.ok(asked.render(90)[1].includes(theme.fg("warning", "◆")));
 });
 
-test("sessions saved before the richer details still render from the message content", (t) => {
+test("without details the card is not rebuilt from the message content", (t) => {
 	const { card } = cards(t);
-	const old = (customType, content, state) =>
-		plain(card({ customType, content, details: { id, state } }));
 	assert.deepEqual(
-		old(
-			"pi-workflow-child-result",
-			`Child ${id} completed:\n\nListo.`,
-			"completed",
-		),
-		[
-			"",
-			"   ◆ Subagent 5636                                                   (ctrl+o to expand)",
-		],
-	);
-	assert.deepEqual(
-		old("pi-workflow-child-result", `Child ${id} failed: boom`, "failed").slice(
-			1,
-		),
+		plain(
+			card({
+				customType: "pi-workflow-child-result",
+				content: `Child ${id} failed: boom`,
+				details: { id, state: "failed" },
+			}),
+		).slice(1),
 		[
 			"   ◆ Subagent 5636 failed                                            (ctrl+o to expand)",
-			"     boom",
 		],
 	);
 	assert.deepEqual(
-		old(
-			"pi-workflow-child-result",
-			`Child ${id} cancelled.`,
-			"cancelled",
+		plain(
+			card({
+				customType: "pi-workflow-child-question",
+				content: `Child ${id} asks (question 3):\n\n¿Cuál?\n\nAnswer with reply_child with question 3.`,
+				details: { id },
+			}),
 		).slice(1),
-		[
-			"   ◆ Subagent 5636 cancelled                                         (ctrl+o to expand)",
-		],
-	);
-	assert.deepEqual(
-		old(
-			"pi-workflow-child-question",
-			`Child ${id} asks (question 3):\n\n¿Cuál?\n\nAnswer with reply_child with question 3.`,
-			"waiting",
-		).slice(1),
-		[
-			"   ◆ Subagent 5636 asks · question 3                                 (ctrl+o to expand)",
-			"     ¿Cuál?",
-		],
+		["   ◆ Subagent 5636 asks · question ?                                 (ctrl+o to expand)"],
 	);
 });
 
