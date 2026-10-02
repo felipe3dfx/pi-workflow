@@ -113,6 +113,49 @@ test("a blocked or failed Verdict shows its reason on a second line without expa
 		);
 });
 
+test("a blocked worker shows the first left_undone item as its reason", (t) => {
+	const { card } = cards(t);
+	const blocked = (text) =>
+		plain(
+			card({
+				customType: "pi-workflow-child-result",
+				details: { ...details, verdict: "blocked", text },
+			}),
+		)[2];
+	assert.equal(
+		blocked(
+			"## Resumen\n\nNo pude seguir.\n\nstatus: blocked\nfiles_changed:\n- none\nvalidation:\n- none\nleft_undone:\n- Falta acceso a la base\n- Otro pendiente",
+		),
+		"     Falta acceso a la base",
+	);
+	assert.equal(
+		blocked("status: blocked\nleft_undone:\n- Falta la credencial"),
+		"     Falta la credencial",
+	);
+});
+
+test("a failed or blocked verifier shows the line next to its verdict as its reason", (t) => {
+	const { card } = cards(t);
+	const verifier = (verdict, text) =>
+		plain(
+			card({
+				customType: "pi-workflow-child-result",
+				details: { ...details, role: "verify", verdict, text },
+			}),
+		)[2];
+	assert.equal(
+		verifier(
+			"fail",
+			"## Revisión\n\nCorrí npm test.\nLa migración falla con ids nulos.\nverdict: fail",
+		),
+		"     La migración falla con ids nulos.",
+	);
+	assert.equal(
+		verifier("blocked", "Intro.\n\nverdict: blocked\nNo hay acceso a la base."),
+		"     No hay acceso a la base.",
+	);
+});
+
 test("ctrl+o shows the task, the whole result, and the subagents view key", (t) => {
 	const { card } = cards(t);
 	const component = card({
