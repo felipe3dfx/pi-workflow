@@ -2,6 +2,8 @@
 
 Status: IMPLEMENTED (#63–#74, parent #77)
 
+Superseded for routing by [routing-owner.md](routing-owner.md): skill routes and the explicit-intent shortcut described here no longer exist.
+
 Package: delegation brief confirmed in the originating session.
 Review handoff: `origin/main` `0e460e0`, ADR 0005 accepted.
 Verdict: `READY`.

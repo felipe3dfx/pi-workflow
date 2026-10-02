@@ -649,12 +649,9 @@ test("a session without a model or thinking is refused when the session pair is 
 	});
 });
 
-test("an explicit child request launches the specialist Jev chooses and does not ask whether to stay", async () => {
+test("an explicit child request asks Jev for destination and specialist and launches the specialist Jev chooses", async () => {
 	await withWorkspace(async ({ worktree }) => {
-		const jev = fakeJev((body) => {
-			assert.equal(body.questions.destination, undefined);
-			return "explorer";
-		});
+		const jev = fakeJev(() => "explorer");
 		const result = await createChildLauncher({
 			modelProfiles: absentProfiles,
 		}).prepareLaunch(
@@ -669,7 +666,7 @@ test("an explicit child request launches the specialist Jev chooses and does not
 		assert.equal(result.kind, "ready");
 		assert.equal(result.role, "explore");
 		assert.deepEqual(result.warnings, []);
-		assert.equal(jev.requests[0].state.delegation_intent, "explicit");
+		assert.equal(jev.requests[0].questions.destination.type, "choice");
 		assert.equal(
 			jev.requests[0].state.user_request,
 			"Explora con un hijo la arquitectura de estas dos implementaciones",
@@ -680,6 +677,27 @@ test("an explicit child request launches the specialist Jev chooses and does not
 		assert.equal(result.jev.provider, "typesafe");
 		assert.equal(result.jev.model, "jev-latest");
 		assert.equal(result.jev.answers.specialist.confidence, 0.91);
+	});
+});
+
+test("Jev's destination criteria cover an explicit child or subagent request under leave and exclude it from stay", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const jev = fakeJev(() => "leave");
+		const result = await createChildLauncher({
+			modelProfiles: absentProfiles,
+		}).prepareLaunch(
+			{
+				role: "worker",
+				task: "Wait 10 seconds and report.",
+				userRequest: "Lanza 5 subagentes que esperen 10 segundos",
+			},
+			launcherContext(worktree, { jev }),
+		);
+
+		assert.equal(result.kind, "ready");
+		const { criteria } = jev.requests[0].questions.destination;
+		assert.match(criteria.leave, /explicitly asks to delegate to child sessions or subagents/);
+		assert.match(criteria.stay, /did not ask for a child session or subagent/);
 	});
 });
 
@@ -698,7 +716,6 @@ test("the parent's task cannot turn a user request into an explicit child", asyn
 		);
 
 		assertRefused(result, /stays/);
-		assert.equal(jev.requests[0].state.delegation_intent, "optional");
 		assert.equal(jev.requests[0].questions.destination.type, "choice");
 		assert.equal(
 			jev.requests[0].state.user_request,

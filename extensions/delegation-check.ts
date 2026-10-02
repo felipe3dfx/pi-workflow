@@ -31,7 +31,31 @@ export const delegationCases: readonly DelegationCase[] = [
 		expected: {
 			action: "launch",
 			role: "explore",
-			destinationAsked: false,
+			destinationAsked: true,
+		},
+	},
+	{
+		name: "explicit subagents in Spanish",
+		live: true,
+		task: "Wait 10 seconds and report.",
+		userRequest: "Lanza 5 subagentes que esperen 10 segundos",
+		suggestedRole: "worker",
+		expected: {
+			action: "launch",
+			role: "worker",
+			destinationAsked: true,
+		},
+	},
+	{
+		name: "explicit subagents in English",
+		live: true,
+		task: "Wait 10 seconds and report.",
+		userRequest: "Spawn three subagents to wait 10 seconds each",
+		suggestedRole: "worker",
+		expected: {
+			action: "launch",
+			role: "worker",
+			destinationAsked: true,
 		},
 	},
 	{

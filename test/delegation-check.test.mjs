@@ -112,7 +112,7 @@ test("delegation check scores the fixed cases against Jev answers and sends a na
 	);
 	assert.match(
 		lines.find((line) => line.startsWith("pass: explicit architecture research")),
-		/destination asked no/,
+		/destination asked yes/,
 	);
 	const skill = lines.find((line) => line.startsWith("pass: implement skill"));
 	assert.match(skill, /action launch, specialist worker, destination asked yes/);

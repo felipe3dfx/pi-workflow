@@ -41,7 +41,7 @@ Jev is not called. Gated parent tools run. Failing to delegate does not block th
 
 Jev chooses whether the work stays or leaves and which Specialist launches. The parent does not choose the Specialist again. A suggested role does not override Jev.
 
-An explicit request in the latest user message for a child, subagent, or delegation fixes the destination to leave. Jev still chooses the Specialist. Jev is not asked whether to stay.
+One Jev call always answers destination and Specialist. Jev's `leave` criterion covers an explicit request in the latest user message for a child, subagent, or delegation, in any language or wording, and its `stay` criterion excludes it.
 
 `stay` lets the next gated parent tool run. It does not launch. It is not Launch blocked. `decide` tells the parent to ask one question and wait. It does not launch. `leave` does not launch by itself. It tells the parent to launch the Specialist Jev chose.
 
@@ -71,7 +71,7 @@ Tests cross the routing seam and the settings list, not private helpers.
 - Changing the settings row to on persists across a new process. Restart does not reset it. The model profiles document is unchanged.
 - While off, a gated parent tool runs. Invocations of `git` and `gh` stay in the parent. A named role does not move them to a child. A launch with no role does not launch and does not invent `worker`. A named role may launch. Jev is not called.
 - While on, `stay` lets the next gated tool run. `decide` blocks it and does not say to launch. `leave` names the Specialist Jev chose and does not let the parent tool run.
-- An explicit child request while on does not ask Jev for the destination and still asks for the Specialist.
+- An explicit child request while on asks Jev for the destination and the Specialist in the same call.
 - A skill name in the user message does not change the destination or the Specialist.
 - The same user message reuses one verdict. A different message asks again. After Launch blocked, the next gated tool or launch for the same message asks Jev again.
 - A missing key while on is Launch blocked. A missing key while off is not. While on, a missing `typesafe/jev-latest` classifier, credentials for another provider's Jev alone, a stop reason other than `stop`, or a label outside the criteria is Launch blocked.

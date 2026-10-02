@@ -53,9 +53,6 @@ const roleBySpecialist: Record<Specialist, Role> = {
 
 const specialists = ["explorer", "worker", "verifier"] as const;
 
-const explicitDelegation =
-	/\b(?:subagente|subagent|spawn_child|hijo|child)\b|sesi[oó]n hija|child session|\bdeleg/iu;
-
 const repositoryStateCommand = /(?<![\p{L}\p{N}_.-])(?:git|gh)(?![\p{L}\p{N}_-])/iu;
 
 const specialistInstructions =
@@ -75,9 +72,9 @@ const destinationInstructions = "Where should this package go?";
 const destinationCriteria = {
 	decide:
 		"A product decision is still open. The parent must ask the user one question and wait. Choosing an architecture with the user is a decision.",
-	stay: "The package is small and already understood, so the parent can finish it in this session.",
+	stay: "The package is small and already understood, so the parent can finish it in this session, and the user did not ask for a child session or subagent.",
 	leave:
-		"A bounded package a child session can finish on its own. Investigating an architecture can leave.",
+		"A bounded package a child session can finish on its own, or the user explicitly asks to delegate to child sessions or subagents, in any language or wording. Investigating an architecture can leave.",
 };
 
 type Contract = { prompt: string; tools: string[] };
@@ -263,12 +260,6 @@ function gatedTool(event: ToolCallEvent, cwd: string): boolean {
 	return true;
 }
 
-function delegationIntent(userRequest: string | undefined) {
-	return userRequest && explicitDelegation.test(userRequest)
-		? "explicit"
-		: "optional";
-}
-
 function choiceIn<T extends string>(
 	answer: ClassifierAnswer | undefined,
 	allowed: readonly T[],
@@ -352,14 +343,12 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			}
 			return { kind: "stay", reason: "Jev routing is off." };
 		}
-		const intent = delegationIntent(request.userRequest);
 		const suggested =
 			request.role !== undefined && isRole(request.role)
 				? specialistByRole[request.role]
 				: undefined;
 		const state: ClassifierContext["state"] = {
 			...(request.userRequest ? { user_request: request.userRequest } : {}),
-			delegation_intent: intent,
 			task: request.task,
 			...(suggested ? { suggested_specialist: suggested } : {}),
 			available_specialists: [...specialists],
@@ -370,15 +359,11 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 				instructions: specialistInstructions,
 				criteria: specialistCriteria,
 			},
-			...(intent === "optional"
-				? {
-						destination: {
-							type: "choice",
-							instructions: destinationInstructions,
-							criteria: destinationCriteria,
-						},
-					}
-				: {}),
+			destination: {
+				type: "choice",
+				instructions: destinationInstructions,
+				criteria: destinationCriteria,
+			},
 		};
 		const model = ctx.modelRegistry.findOfType(
 			"classifier",
@@ -420,19 +405,18 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		const destination = jev.answers.destination;
 		if (
 			!choiceIn(specialist, specialists) ||
-			(intent === "optional" &&
-				!choiceIn(destination, ["decide", "stay", "leave"] as const))
+			!choiceIn(destination, ["decide", "stay", "leave"] as const)
 		) {
 			return { kind: "blocked", reason: "Jev returned an invalid selection.", jev };
 		}
-		if (intent === "optional" && choiceIn(destination, ["decide"] as const)) {
+		if (choiceIn(destination, ["decide"] as const)) {
 			return {
 				kind: "decide",
 				reason: "Jev answered that a decision is still open.",
 				jev,
 			};
 		}
-		if (intent === "optional" && choiceIn(destination, ["stay"] as const)) {
+		if (choiceIn(destination, ["stay"] as const)) {
 			return { kind: "stay", reason: "Jev answered that the work stays.", jev };
 		}
 		return { kind: "launch", role: roleBySpecialist[specialist.choice], jev };
