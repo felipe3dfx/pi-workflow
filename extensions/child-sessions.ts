@@ -753,10 +753,6 @@ export function createChildSessions(options: {
 		return [...pending];
 	}
 
-	function dropPending() {
-		pending = [];
-	}
-
 	function get(id: string): ChildRecord | undefined {
 		const child = children.get(id);
 		return child && { ...child.record };
@@ -795,6 +791,7 @@ export function createChildSessions(options: {
 		);
 		children.clear();
 		queue.length = 0;
+		pending = [];
 		for (const child of working) {
 			child.watch.stop();
 			answer(child, new Error("The session ended."));
@@ -812,7 +809,6 @@ export function createChildSessions(options: {
 		cancel,
 		consume,
 		pendingResults,
-		dropPending,
 		get,
 		list,
 		subscribe,

@@ -279,7 +279,6 @@ export default function piWorkflowExtension(
 
 	pi.on("session_start", async (_event, ctx) => {
 		currentCtx = ctx;
-		childSessions.dropPending();
 		const seated = seatFromDisk();
 		if (seated.status === "refused") report(ctx, seated.reason, "error");
 		const { allowed } = await workflow.checkSpawnTools();

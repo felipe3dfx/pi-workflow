@@ -3854,7 +3854,7 @@ test("continue_child consumes the earlier result, and the new record keeps conti
 	});
 });
 
-test("session start drops pending results for the model, and child_result still returns them", async () => {
+test("session shutdown drops pending results for the model", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
 		const extension = await loadSpawnTool({
@@ -3867,15 +3867,12 @@ test("session start drops pending results for the model, and child_result still 
 		children.created[0].result.resolve("Earlier answer.");
 		await settle();
 
+		await extension.fire("session_shutdown");
 		await extension.fire("session_start", { reason: "resume" });
 		await extension.fire("turn_end");
 		await extension.fire("agent_settled");
 
 		assert.equal(extension.messages.length, 0);
-		assert.match(
-			text(await use(extension, "child_result", { id })),
-			/\n\nEarlier answer\.$/,
-		);
 	});
 });
 
