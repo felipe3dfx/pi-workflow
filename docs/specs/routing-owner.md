@@ -1,6 +1,6 @@
 # Routing owner
 
-Status: Published. Not implemented.
+Status: IMPLEMENTED (#118, #119, #124, #125).
 
 Package: the confirmed routing package after the renewed feature review.
 Review handoff: READY WITH WARNINGS. ADR 0008 is a local record, not accepted authority.
@@ -93,7 +93,7 @@ The historical delegation spec still routes by skill name and has no off mode. T
 
 ## Accepted risks
 
-The installed switch starts on and does not persist. That behavior is not the contract. A Jev choice can vary between messages. That is the cost of turning Jev on.
+A Jev choice can vary between messages. That is the cost of turning Jev on.
 
 ## Dependencies
 
