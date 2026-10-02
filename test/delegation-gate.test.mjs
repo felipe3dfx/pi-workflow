@@ -723,3 +723,61 @@ test("with Jev routing on, a named skill fixes neither the destination nor the s
 		assert.equal(explicit.requests[0].questions.destination, undefined);
 	});
 });
+
+test("a missing TypeSafe key blocks the gated tool and the launch without inventing stay or worker", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const message = "Add the missing export and its test";
+		const jev = fakeJev("worker");
+		const ctx = gateContext(worktree, branchEnding(message));
+		ctx.modelRegistry.getApiKeyForProvider = async () => undefined;
+		const blocked = await launcherFor(jev.fetch).gateToolCall(
+			{ toolName: "edit", input: { path: "src/export.ts" } },
+			ctx,
+		);
+		const decided = await launcherFor(jev.fetch).prepareLaunch(
+			{ task: "parent paraphrase", userRequest: message },
+			ctx,
+		);
+
+		assert.equal(blocked.allow, false);
+		assert.match(blocked.reason, /Launch blocked/);
+		assert.match(blocked.reason, /TypeSafe/);
+		assert.doesNotMatch(blocked.reason, /stays|spawn_child/);
+		assert.equal(decided.kind, "blocked");
+		assert.equal(decided.warning, "Launch blocked. No child was launched.");
+		assert.equal("role" in decided, false);
+		assert.equal(jev.requests.length, 0);
+	});
+});
+
+test("while routing is on, Jev can leave git and gh work to a specialist and explore still has no shell", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		for (const command of ["git status", "gh pr list"]) {
+			const message = `Run ${command} and report what you find`;
+			const jev = fakeJev("explorer");
+			const launcher = launcherFor(jev.fetch);
+			const ctx = gateContext(worktree, branchEnding(message));
+			const blocked = await launcher.gateToolCall(
+				{ toolName: "bash", input: { command } },
+				ctx,
+			);
+			const launched = await launcherFor(jev.fetch).prepareLaunch(
+				{ role: "worker", task: command, userRequest: message },
+				ctx,
+			);
+
+			assert.equal(blocked.allow, false, command);
+			assert.match(
+				blocked.reason,
+				/Call spawn_child\. Jev selected the explore role\./,
+				command,
+			);
+			assert.equal(launched.kind, "ready", command);
+			assert.equal(launched.role, "explore", command);
+			assert.equal(launched.contract.tools.includes("bash"), false, command);
+			assert.equal(jev.requests.length, 2, command);
+			assert.equal(jev.requests[0].state.user_request, message, command);
+			assert.equal(jev.requests[1].state.task, command, command);
+		}
+	});
+});
