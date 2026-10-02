@@ -22,6 +22,7 @@ import {
 import { type Static, Type } from "typebox";
 
 import type { createChildLauncher } from "./child-launcher.ts";
+import { createChildCodeGraphTool } from "./codegraph-tool.ts";
 import { claim, held } from "./configure.ts";
 import {
 	childOutcome,
@@ -270,6 +271,7 @@ const createPiChildSession: ChildSessionFactory = async (spec) => {
 		thinkingLevel: spec.thinking,
 		tools: spec.tools,
 		customTools: [
+			createChildCodeGraphTool(spec.cwd),
 			{
 				name: askParentTool,
 				label: "Ask Parent",
