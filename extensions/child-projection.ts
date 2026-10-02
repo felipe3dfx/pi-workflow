@@ -38,8 +38,29 @@ export function childStep(child: { step?: string; task: string }) {
 	return child.step ?? childTaskLine(child.task);
 }
 
-export function childOutcome(child: { id: string; state: string; text?: string }) {
-	if (child.state === "completed") return `Child ${child.id} completed:\n\n${child.text ?? ""}`;
+const verdictLines: Record<string, RegExp> = {
+	worker: /^status:\s*(done|partial|blocked)\s*$/gimu,
+	verify: /^verdict:\s*(pass|fail|blocked)\s*$/gimu,
+};
+
+export function childVerdict(role: string, text: string | undefined) {
+	const pattern = verdictLines[role];
+	if (!pattern || text === undefined) return undefined;
+	return [...text.matchAll(pattern)].at(-1)?.[1]?.toLowerCase();
+}
+
+export function childOutcome(child: {
+	id: string;
+	state: string;
+	role: string;
+	text?: string;
+}) {
+	if (child.state === "completed") {
+		const verdict = verdictLines[child.role]
+			? ` Verdict: ${childVerdict(child.role, child.text) ?? "absent"}.`
+			: "";
+		return `Child ${child.id} completed.${verdict}\n\n${child.text ?? ""}`;
+	}
 	if (child.state === "cancelled") return `Child ${child.id} cancelled.`;
 	return `Child ${child.id} ${child.state}: ${child.text ?? ""}`;
 }

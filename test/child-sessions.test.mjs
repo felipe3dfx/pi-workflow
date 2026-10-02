@@ -365,8 +365,9 @@ for (const mode of ["tui", "rpc"]) {
 				thinking: "medium",
 				task: "Fix the failing test",
 				text: "All tests pass.",
+				verdict: undefined,
 			});
-			assert.match(message.content, /completed:\n\nAll tests pass\./);
+			assert.match(message.content, /completed\. Verdict: absent\.\n\nAll tests pass\./);
 			assert.deepEqual(options, { deliverAs: "followUp", triggerTurn: true });
 			assert.equal(child.disposals, 1);
 			assert.deepEqual(ctx.model, {
@@ -2112,7 +2113,7 @@ test("continue_child through Pi's SDK sends the completed child's conversation p
 			await eventually(() => extension.messages.length === 2);
 			assert.match(
 				extension.messages[1].message.content,
-				/completed:\n\nSecond answer\./,
+				/completed\. Verdict: absent\.\n\nSecond answer\./,
 			);
 			assert.deepEqual(stateOfDetails(extension.messages[1].message.details), {
 				id: next.details.id,
@@ -2176,7 +2177,7 @@ test("a background child asks through Pi's SDK, the parent model replies, and th
 
 		assert.match(
 			extension.messages[1].message.content,
-			/completed:\n\nFixed src\/parser\.ts\./,
+			/completed\. Verdict: absent\.\n\nFixed src\/parser\.ts\./,
 		);
 		assert.ok(sent(parent.requests[1]).includes("src/parser.ts"));
 		assert.equal(await stateOf(extension, id), "completed");

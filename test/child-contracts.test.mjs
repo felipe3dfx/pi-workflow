@@ -26,22 +26,23 @@ test("the explore contract keeps paths, line numbers, and unconfirmed work", asy
 	assert.match(text, /Do not change any file/);
 });
 
-test("the verify contract keeps a pass or fail verdict and names what stayed unverified", async () => {
+test("the verify contract keeps a pass, fail, or blocked verdict and names what stayed unverified", async () => {
 	const text = await contract("verify");
-	assert.match(text, /verdict: pass or fail/);
+	assert.match(text, /verdict: pass \| fail \| blocked/);
+	assert.match(text, /Use blocked, with the reason/);
 	assert.match(text, /Do not change any file/);
 	assert.match(text, /what remained unverified/);
 });
 
 test("the worker contract asks for the return block and keeps ask_parent as the question channel", async () => {
 	const text = await contract("worker");
-	assert.match(text, /status: completed \| partial \| blocked/);
+	assert.match(text, /status: done \| partial \| blocked/);
 	assert.match(text, /files_changed:/);
 	assert.match(text, /validation:/);
 	assert.match(text, /left_undone:/);
 	assert.match(text, /exact command/);
 	assert.match(text, /observed result/);
-	assert.match(text, /Use completed only when those commands ran and their output is in this result/);
+	assert.match(text, /Use done only when those commands ran and their output is in this result/);
 	assert.match(text, /ask_parent/);
 	assert.doesNotMatch(text, /interaction_required/);
 });
