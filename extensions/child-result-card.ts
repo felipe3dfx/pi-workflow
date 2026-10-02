@@ -7,6 +7,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
 	type Component,
+	Container,
 	Markdown,
 	type TuiMouseEvent,
 	truncateToWidth,
@@ -198,12 +199,32 @@ class ResultCard implements Component {
 	}
 }
 
+function resultCards(message: Message, expanded: boolean, theme: Theme) {
+	const { results } = (message.details ?? {}) as { results?: ChildDetails[] };
+	if (!Array.isArray(results)) return new ResultCard(message, expanded, theme);
+	const batch = new Container();
+	const cards = results.map(
+		(details) =>
+			new ResultCard({ ...message, content: "", details }, expanded, theme),
+	);
+	for (const card of cards) batch.addChild(card);
+	markCard(batch, {
+		get open() {
+			return cards.every((card) => card.state.open);
+		},
+		get failed() {
+			return cards.some((card) => card.state.failed);
+		},
+	});
+	return batch;
+}
+
 export function registerChildResultCards(pi: ExtensionAPI) {
 	for (const type of [RESULT_TYPE, QUESTION_TYPE])
 		pi.registerMessageRenderer(
 			type,
 			(message, { expanded }, theme) =>
-				new ResultCard(message, expanded, theme),
+				resultCards(message, expanded, theme),
 		);
 	pi.on("session_shutdown", async () => {
 		opened.clear();

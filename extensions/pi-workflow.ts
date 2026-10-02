@@ -107,16 +107,9 @@ export default function piWorkflowExtension(
 	const childSessions = createChildSessions({
 		create: options.childSessions?.create,
 		schedule: options.childSessions?.schedule,
-		deliver: (child) =>
-			pi.sendMessage(
-				{
-					customType: "pi-workflow-child-result",
-					content: childOutcome(child),
-					display: true,
-					details: childDetails(child),
-				},
-				{ deliverAs: "followUp", triggerTurn: true },
-			),
+		deliver: () => {
+			if (currentCtx?.isIdle()) queueMicrotask(deliverResults);
+		},
 		ask: (child, question, number) =>
 			pi.sendMessage(
 				{
@@ -131,6 +124,33 @@ export default function piWorkflowExtension(
 			if (currentCtx) report(currentCtx, message, "error");
 		},
 	});
+	function deliverResults() {
+		const results = childSessions.takePending();
+		if (results.length === 0) return;
+		try {
+			pi.sendMessage(
+				{
+					customType: "pi-workflow-child-result",
+					content: results.map(childOutcome).join("\n\n"),
+					display: true,
+					details:
+						results.length === 1
+							? childDetails(results[0])
+							: { results: results.map((child) => childDetails(child)) },
+				},
+				{ deliverAs: "steer", triggerTurn: true },
+			);
+		} catch (error) {
+			if (currentCtx)
+				report(
+					currentCtx,
+					`Child results could not be delivered: ${error instanceof Error ? error.message : String(error)}`,
+					"error",
+				);
+		}
+	}
+	pi.on("turn_end", deliverResults);
+	pi.on("agent_settled", deliverResults);
 	const childrenViews = createChildrenViews(childSessions);
 	registerChildrenBox(pi, childSessions, options.childSessions?.refresh);
 	registerSessionTodo(pi);
@@ -257,6 +277,7 @@ export default function piWorkflowExtension(
 
 	pi.on("session_start", async (_event, ctx) => {
 		currentCtx = ctx;
+		childSessions.dropPending();
 		const seated = seatFromDisk();
 		if (seated.status === "refused") report(ctx, seated.reason, "error");
 		const { allowed } = await workflow.checkSpawnTools();

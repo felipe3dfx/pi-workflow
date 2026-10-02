@@ -305,7 +305,7 @@ const abortedBeforeLaunch = {
 
 export function createChildSessions(options: {
 	create?: ChildSessionFactory;
-	deliver: (record: ChildRecord) => void;
+	deliver: () => void;
 	ask: (record: ChildRecord, question: string, number: number) => void;
 	report: (message: string) => void;
 	schedule?: Schedule;
@@ -314,6 +314,8 @@ export function createChildSessions(options: {
 	const schedule = options.schedule ?? scheduleTimer;
 	const children = new Map<string, Child>();
 	const queue: Child[] = [];
+	const consumed = new Set<string>();
+	let pending: ChildRecord[] = [];
 	const listeners = new Set<() => void>();
 	let generation = 0;
 
@@ -433,9 +435,10 @@ export function createChildSessions(options: {
 		}
 		pump();
 		changed();
-		if (!deliver) return;
+		if (!deliver || consumed.has(record.id)) return;
+		pending.push({ ...record });
 		try {
-			options.deliver({ ...record });
+			options.deliver();
 		} catch (error) {
 			warn(`Child ${record.id}: ${errorMessage(error)}`);
 		}
@@ -615,7 +618,7 @@ export function createChildSessions(options: {
 		return { status: "queued" as const, id: child.record.id };
 	}
 
-	function resume(
+	async function resume(
 		id: string,
 		task: string,
 		launch: {
@@ -635,11 +638,13 @@ export function createChildSessions(options: {
 				`Child ${id} is ${child.record.state}; only a completed child can be continued.`,
 			);
 		}
-		return start(
+		const started = await start(
 			{ ...child.plan, task },
 			{ ...launch, background: true },
 			{ id, conversation: child.conversation },
 		);
+		if (started.status === "queued") consume(id);
+		return started;
 	}
 
 	function reply(id: string, number: number, text: string) {
@@ -667,6 +672,22 @@ export function createChildSessions(options: {
 		}
 		finish(child, "cancelled", "The child was cancelled.", deliver);
 		return { cancelled: true, message: `Child ${id} cancelled.` };
+	}
+
+	function consume(id: string) {
+		consumed.add(id);
+		pending = pending.filter((record) => record.id !== id);
+	}
+
+	function takePending() {
+		const taken = pending;
+		pending = [];
+		for (const record of taken) consumed.add(record.id);
+		return taken;
+	}
+
+	function dropPending() {
+		pending = [];
 	}
 
 	function get(id: string): ChildRecord | undefined {
@@ -722,6 +743,9 @@ export function createChildSessions(options: {
 		resume,
 		reply,
 		cancel,
+		consume,
+		takePending,
+		dropPending,
 		get,
 		list,
 		subscribe,
@@ -1026,6 +1050,7 @@ export function createChildQueryTools(
 					{ id: child.id, state: child.state },
 				);
 			}
+			sessions.consume(child.id);
 			return report([child.text], { id: child.id, state: child.state });
 		},
 	};
