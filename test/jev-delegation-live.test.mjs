@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+
+import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 
 import { createChildLauncher } from "../extensions/child-launcher.ts";
 import { delegationCases } from "../extensions/delegation-check.ts";
@@ -19,33 +24,39 @@ const skip = enabled
 const root = fileURLToPath(new URL("..", import.meta.url));
 const absentProfiles = { load: () => ({ status: "absent" }) };
 
-function context() {
-	return {
-		cwd: root,
-		model: { provider: "session", id: "model", reasoning: true },
-		thinkingLevel: "medium",
-		modelRegistry: {
-			getApiKeyForProvider: async (provider) =>
-				provider === "typesafe" ? process.env.TYPESAFE_API_KEY : undefined,
-			getAvailable: () => [],
-		},
+async function recordingRegistry(dir, requests) {
+	const runtime = await ModelRuntime.create({
+		authPath: join(dir, "auth.json"),
+		modelsPath: null,
+		refreshOnCreate: false,
+	});
+	const modelRegistry = new ModelRegistry(runtime);
+	const classify = modelRegistry.classify.bind(modelRegistry);
+	modelRegistry.classify = (model, context, options) => {
+		requests.push(context);
+		return classify(model, context, options);
 	};
+	return modelRegistry;
 }
 
 test(
 	"live Jev selects the specialist for four clear delegation cases",
 	{ skip, timeout: 120_000 },
-	async () => {
+	async (t) => {
+		const dir = await mkdtemp(join(tmpdir(), "pi-workflow-jev-live-"));
+		t.after(() => rm(dir, { recursive: true, force: true }));
 		const requests = [];
-		const fetch = async (url, init) => {
-			requests.push(JSON.parse(init.body));
-			return globalThis.fetch(url, init);
-		};
+		const modelRegistry = await recordingRegistry(dir, requests);
 		const decide = (request) =>
-			createChildLauncher({
-				modelProfiles: absentProfiles,
-				fetch,
-			}).prepareLaunch(request, context());
+			createChildLauncher({ modelProfiles: absentProfiles }).prepareLaunch(
+				request,
+				{
+					cwd: root,
+					model: { provider: "session", id: "model", reasoning: true },
+					thinkingLevel: "medium",
+					modelRegistry,
+				},
+			);
 		const specialists = {
 			explore: "explorer",
 			worker: "worker",

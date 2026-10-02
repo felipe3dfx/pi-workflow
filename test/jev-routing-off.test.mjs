@@ -5,19 +5,18 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import { createChildLauncher } from "../extensions/child-launcher.ts";
+import { classifierRegistry } from "./support/fake-jev.mjs";
 import { withAgentDirectory } from "./support/jev-routing.mjs";
 
 function offLauncher(t) {
 	const dir = withAgentDirectory(t);
-	const jevRequests = [];
+	const jev = classifierRegistry(() => {
+		throw new Error("Jev is unreachable");
+	});
 	const launcher = createChildLauncher({
 		modelProfiles: { load: () => ({ status: "absent" }) },
-		fetch: async (url) => {
-			jevRequests.push(url);
-			throw new Error("Jev is unreachable");
-		},
 	});
-	return { dir, launcher, jevRequests };
+	return { dir, launcher, jev };
 }
 
 async function gitWorktree(dir) {
@@ -27,14 +26,16 @@ async function gitWorktree(dir) {
 	return worktree;
 }
 
-function parentContext(cwd, userRequest) {
+function parentContext(cwd, userRequest, jev) {
 	return {
 		cwd,
 		model: { provider: "session", id: "model", reasoning: true },
 		thinkingLevel: "medium",
 		modelRegistry: {
-			getApiKeyForProvider: async () => undefined,
+			getApiKeyForProvider: async (provider) =>
+				provider === "typesafe" ? "typesafe-key" : undefined,
 			getAvailable: () => [],
+			...jev.registry,
 		},
 		sessionManager: {
 			getBranch: () => [
@@ -45,8 +46,12 @@ function parentContext(cwd, userRequest) {
 }
 
 test("while Jev routing is off, every gated parent tool runs without Jev, even from a codemode script", async (t) => {
-	const { dir, launcher, jevRequests } = offLauncher(t);
-	const ctx = parentContext(dir, "Fix the parser and open the pull request");
+	const { dir, launcher, jev } = offLauncher(t);
+	const ctx = parentContext(
+		dir,
+		"Fix the parser and open the pull request",
+		jev,
+	);
 
 	for (const event of [
 		{ toolName: "read", input: { path: "src/parser.ts" } },
@@ -69,13 +74,17 @@ test("while Jev routing is off, every gated parent tool runs without Jev, even f
 	]) {
 		assert.deepEqual(await launcher.gateToolCall(event, ctx), { allow: true });
 	}
-	assert.equal(jevRequests.length, 0);
+	assert.equal(jev.requests.length, 0);
 });
 
 test("while Jev routing is off, a named role keeps git and gh in the parent and launches for other work", async (t) => {
-	const { dir, launcher, jevRequests } = offLauncher(t);
+	const { dir, launcher, jev } = offLauncher(t);
 	const worktree = await gitWorktree(dir);
-	const ctx = parentContext(worktree, "Run git status, then fix the parser");
+	const ctx = parentContext(
+		worktree,
+		"Run git status, then fix the parser",
+		jev,
+	);
 
 	for (const [role, task] of [
 		["worker", "git status"],
@@ -116,5 +125,5 @@ test("while Jev routing is off, a named role keeps git and gh in the parent and 
 		assert.equal(launched.role, role);
 		assert.equal(launched.task, task);
 	}
-	assert.equal(jevRequests.length, 0);
+	assert.equal(jev.requests.length, 0);
 });

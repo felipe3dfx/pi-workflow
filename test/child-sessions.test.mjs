@@ -36,7 +36,8 @@ import {
 
 import { capabilities, replaceSelection } from "../extensions/configure.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
-import { turnJevRoutingOn } from "./support/jev-routing.mjs";
+import { classifierRegistry } from "./support/fake-jev.mjs";
+import { turnJevRoutingOn, withAgentDirectory } from "./support/jev-routing.mjs";
 
 turnJevRoutingOn();
 
@@ -82,11 +83,8 @@ function choiceAnswer(choice, criteria = {}) {
 }
 
 function fakeJev({ choice = "leave", specialist } = {}) {
-	const requests = [];
 	const specialists = ["explorer", "worker", "verifier"];
-	const fetch = async (_url, init) => {
-		const body = JSON.parse(init.body);
-		requests.push(body);
+	return classifierRegistry((body) => {
 		const questions = body.questions ?? {};
 		const suggested = body.state?.suggested_specialist;
 		const picked = specialists.includes(specialist)
@@ -105,9 +103,8 @@ function fakeJev({ choice = "leave", specialist } = {}) {
 				questions.destination.criteria,
 			);
 		}
-		return Response.json({ model: "jev-1.13.0", id: "req-1", answers });
-	};
-	return { fetch, requests };
+		return { answers };
+	});
 }
 
 function fakeChildren({ model, thinking, tools, run, dispose, onCreate } = {}) {
@@ -148,7 +145,6 @@ function fakeChildren({ model, thinking, tools, run, dispose, onCreate } = {}) {
 function loadExtension({
 	agentDir,
 	create,
-	fetch,
 	legacy = false,
 	sendMessage,
 	schedule,
@@ -208,7 +204,7 @@ function loadExtension({
 						: {},
 			},
 			modelProfiles: { path: join(agentDir, "pi-workflow-models.json") },
-			childSessions: { create, fetch, schedule, refresh },
+			childSessions: { create, schedule, refresh },
 		},
 	);
 	const fire = async (event, payload = {}, mode = "tui") => {
@@ -246,7 +242,7 @@ async function loadSpawnTool(options) {
 	return { ...extension, tool };
 }
 
-function toolContext(mode, cwd) {
+function toolContext(mode, cwd, jev = fakeJev()) {
 	return {
 		mode,
 		hasUI: mode === "tui" || mode === "rpc",
@@ -256,6 +252,7 @@ function toolContext(mode, cwd) {
 		modelRegistry: {
 			getApiKeyForProvider: async () => "typesafe-key",
 			getAvailable: () => [],
+			...jev.registry,
 		},
 	};
 }
@@ -325,7 +322,6 @@ for (const mode of ["tui", "rpc"]) {
 			const { tool, messages } = await loadSpawnTool({
 				agentDir,
 				create: children.create,
-				fetch: fakeJev().fetch,
 			});
 			const ctx = toolContext(mode, worktree);
 
@@ -391,7 +387,6 @@ for (const mode of ["print", "json"]) {
 			const { tool, messages } = await loadSpawnTool({
 				agentDir,
 				create: children.create,
-				fetch: fakeJev().fetch,
 			});
 
 			const result = await spawn(
@@ -418,14 +413,13 @@ test("print mode refuses an explicit background request before asking Jev or cre
 		const { tool, messages } = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: jev.fetch,
 		});
 
 		for (const mode of ["print", "json"]) {
 			const result = await spawn(
 				tool,
 				{ role: "worker", task: "Fix the failing test", background: true },
-				toolContext(mode, worktree),
+				toolContext(mode, worktree, jev),
 			);
 
 			assert.equal(result.details.status, "refused");
@@ -444,7 +438,6 @@ test("an interactive session accepts an explicit background request as redundant
 		const { tool } = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 		});
 
 		const result = await spawn(
@@ -482,10 +475,13 @@ test("refused and pending launches return a warning and reason with no child id 
 			const { tool, messages } = await loadSpawnTool({
 				agentDir,
 				create: children.create,
-				fetch: fakeJev(jev).fetch,
 			});
 
-			const result = await spawn(tool, params, toolContext("tui", worktree));
+			const result = await spawn(
+				tool,
+				params,
+				toolContext("tui", worktree, fakeJev(jev)),
+			);
 
 			assert.equal(result.details.status, status);
 			assert.match(result.details.reason, reason);
@@ -518,7 +514,6 @@ test("a profile model Pi cannot run refuses the launch with no child id", async 
 		const { tool } = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 		});
 
 		const result = await spawn(
@@ -551,7 +546,6 @@ test("a child that would run another model or thinking stays pending, and one mi
 			const { tool, messages } = await loadSpawnTool({
 				agentDir,
 				create: children.create,
-				fetch: fakeJev().fetch,
 			});
 
 			const result = await spawn(
@@ -576,7 +570,6 @@ test("aborting a foreground call aborts the child, while a background child igno
 		const { tool } = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 		});
 
 		const foreground = new AbortController();
@@ -612,7 +605,6 @@ test("a failed background child is delivered as a failure message", async () => 
 		const { tool, messages } = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 		});
 
 		const result = await spawn(
@@ -640,7 +632,6 @@ test("session shutdown disposes running background children, which then deliver 
 		const { tool, messages, fire } = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 		});
 		await spawn(
 			tool,
@@ -664,7 +655,6 @@ test("a null role is missing and does not warn that worker was assumed", async (
 		const { tool } = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 		});
 
 		const result = await spawn(
@@ -687,14 +677,13 @@ test("an explicit child request in the user message is sent to Jev without a des
 		const { tool } = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: jev.fetch,
 		});
 
 		const result = await spawn(
 			tool,
 			{ task: "Map the module" },
 			{
-				...toolContext("print", worktree),
+				...toolContext("print", worktree, jev),
 				sessionManager: {
 					getBranch: () => [
 						{
@@ -758,14 +747,13 @@ test("a named implement skill does not select the worker; Jev chooses the specia
 		const { tool } = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: jev.fetch,
 		});
 
 		const result = await spawn(
 			tool,
 			{ role: "worker", task: "Implement the ticket" },
 			{
-				...toolContext("tui", worktree),
+				...toolContext("tui", worktree, jev),
 				sessionManager: {
 					getBranch: () => [
 						{
@@ -798,7 +786,7 @@ test("a named implement skill does not select the worker; Jev chooses the specia
 
 test("the default child factory refuses when the session's model runtime is not reachable", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
-		const { tool } = await loadSpawnTool({ agentDir, fetch: fakeJev().fetch });
+		const { tool } = await loadSpawnTool({ agentDir });
 
 		const result = await spawn(
 			tool,
@@ -833,6 +821,7 @@ async function fauxParent(agentDir, responses, { tokensPerSecond } = {}) {
 	);
 	const modelRegistry = new ModelRegistry(runtime);
 	modelRegistry.getApiKeyForProvider = async () => "typesafe-key";
+	Object.assign(modelRegistry, fakeJev().registry);
 	return {
 		runtime,
 		requests,
@@ -848,7 +837,6 @@ test("the default child factory runs the contract on the parent's model runtime 
 		);
 		const { tool, messages } = await loadSpawnTool({
 			agentDir,
-			fetch: fakeJev().fetch,
 		});
 
 		const result = await spawn(
@@ -872,6 +860,69 @@ test("the default child factory runs the contract on the parent's model runtime 
 	});
 });
 
+test("launching a child keeps the parent's model and thinking, and a profile naming a virtual model runs the child on it", async () => {
+	await assertLaunchKeepsParentModel(fakeJev());
+});
+
+test("with Jev routing off, launching a named role keeps the parent's model and thinking, and a profile naming a virtual model runs the child on it", async (t) => {
+	withAgentDirectory(t);
+	const jev = fakeJev();
+	await assertLaunchKeepsParentModel(jev);
+	assert.equal(jev.requests.length, 0);
+});
+
+async function assertLaunchKeepsParentModel(jev) {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const parent = await fauxParent(
+			agentDir,
+			fauxAssistantMessage("Routed answer."),
+		);
+		const routes = [];
+		parent.runtime.registerVirtualModel({
+			provider: "router",
+			id: "auto",
+			name: "Auto",
+			thinkingLevels: ["low", "high"],
+			route(request) {
+				routes.push(`${request.model.provider}/${request.model.id}:${request.thinkingLevel}`);
+				return { model: parent.context.model, thinkingLevel: "high" };
+			},
+		});
+		await writeFile(
+			join(agentDir, "pi-workflow-models.json"),
+			JSON.stringify({
+				schemaVersion: 2,
+				active: "default",
+				profiles: {
+					default: { worker: { model: "router/auto", thinking: "low" } },
+				},
+			}),
+		);
+		const extension = await loadSpawnTool({ agentDir });
+		const ctx = { ...toolContext("tui", worktree, jev), ...parent.context };
+		const parentModel = ctx.model;
+
+		const result = await spawn(
+			extension.tool,
+			{ role: "worker", task: "Fix the failing test" },
+			ctx,
+		);
+		await eventually(() => extension.messages.length === 1);
+
+		assert.equal(result.details.status, "queued", text(result));
+		assert.deepEqual(routes, ["router/auto:low"]);
+		assert.equal(parent.requests.length, 1);
+		const child = (await use(extension, "child_status", { id: result.details.id }))
+			.details.child;
+		assert.equal(child.state, "completed");
+		assert.equal(child.model, "router/auto");
+		assert.equal(child.thinking, "low");
+		assert.equal(ctx.model, parentModel);
+		assert.equal(`${ctx.model.provider}/${ctx.model.id}`, "faux/child");
+		assert.equal(ctx.thinkingLevel, "high");
+	});
+}
+
 test("a foreground child whose run ends in a provider error is a tool error", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const parent = await fauxParent(
@@ -883,7 +934,6 @@ test("a foreground child whose run ends in a provider error is a tool error", as
 		);
 		const { tool } = await loadSpawnTool({
 			agentDir,
-			fetch: fakeJev().fetch,
 		});
 
 		await assert.rejects(
@@ -931,7 +981,6 @@ test("a background child disposed at session shutdown while its prompt is still 
 		};
 		const { tool, messages, fire } = await loadSpawnTool({
 			agentDir,
-			fetch: fakeJev().fetch,
 		});
 
 		const unhandled = await collectUnhandled(async () => {
@@ -970,7 +1019,6 @@ test("aborting a foreground call while the child's prompt is still preparing sen
 		};
 		const { tool, messages } = await loadSpawnTool({
 			agentDir,
-			fetch: fakeJev().fetch,
 		});
 		const call = new AbortController();
 
@@ -1006,7 +1054,6 @@ test("a background result is still delivered when disposing the child throws, an
 		const { tool, messages, notifications } = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 		});
 		notifications.length = 0;
 
@@ -1035,7 +1082,6 @@ test("a background child is disposed and nothing is left unhandled when deliveri
 		const { tool, messages, notifications } = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 			sendMessage: () => {
 				throw new Error("stale extension context");
 			},
@@ -1070,7 +1116,6 @@ test("session shutdown disposes every background child even when one dispose thr
 		const { tool, messages, fire } = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 		});
 		for (let i = 0; i < 2; i++) {
 			await spawn(
@@ -1099,7 +1144,6 @@ test("a call aborted before launch is refused with a reason and runs no child, i
 			const { tool, messages } = await loadSpawnTool({
 				agentDir,
 				create: children.create,
-				fetch: fakeJev().fetch,
 			});
 			const aborted = new AbortController();
 			aborted.abort();
@@ -1131,7 +1175,6 @@ test("a call aborted while the child session is being created is refused and the
 			const { tool, messages } = await loadSpawnTool({
 				agentDir,
 				create: children.create,
-				fetch: fakeJev().fetch,
 			});
 
 			const result = await spawn(
@@ -1179,7 +1222,6 @@ test("at most five children run at once; the others wait queued and start first 
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 		});
 		const ids = [];
 		for (let i = 0; i < 7; i++) {
@@ -1221,7 +1263,6 @@ test("list_children, child_status, and child_result report the children of this 
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 		});
 		assert.match(
 			text(await use(extension, "list_children", {})),
@@ -1284,7 +1325,6 @@ test("session shutdown forgets the children of the session", async () => {
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 		});
 		const id = await spawnBackground(extension, worktree);
 		await settle();
@@ -1307,7 +1347,6 @@ test("cancel_child and the children view leave a running child in the same cance
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 		});
 		const byModel = await spawnBackground(extension, worktree);
 		const byOperator = await spawnBackground(extension, worktree);
@@ -1344,7 +1383,6 @@ test("a queued child that is cancelled never runs", async () => {
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 		});
 		const ids = [];
 		for (let i = 0; i < 6; i++)
@@ -1368,7 +1406,6 @@ test("cancelling a child that already ended, or an unknown id, is refused and ch
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 		});
 		const id = await spawnBackground(extension, worktree);
 		await settle();
@@ -1417,7 +1454,6 @@ test("a running child silent for four minutes times out, a tool in flight stretc
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 			schedule: clock.schedule,
 		});
 		const ids = [];
@@ -1493,7 +1529,6 @@ test("a foreground child silent for four minutes is aborted and the call fails a
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 			schedule: clock.schedule,
 		});
 
@@ -1522,7 +1557,6 @@ test("continue_child starts a new queued child from a completed child's conversa
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: jev.fetch,
 		});
 		const done = await spawnBackground(extension, worktree);
 		await settle();
@@ -1536,7 +1570,7 @@ test("continue_child starts a new queued child from a completed child's conversa
 			extension,
 			"continue_child",
 			{ id: done, task: "Now add a test" },
-			toolContext("tui", worktree),
+			toolContext("tui", worktree, jev),
 		);
 
 		const next = result.details.id;
@@ -1575,7 +1609,7 @@ test("continue_child starts a new queued child from a completed child's conversa
 			extension,
 			"continue_child",
 			{ id: done, task: "And another" },
-			toolContext("tui", worktree),
+			toolContext("tui", worktree, jev),
 		);
 		assert.equal(again.details.status, "queued");
 		assert.ok(![done, next].includes(again.details.id));
@@ -1589,7 +1623,6 @@ test("continue_child refuses failed, cancelled, timed-out, working, and unknown 
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 			schedule: clock.schedule,
 		});
 		const failed = await spawnBackground(extension, worktree);
@@ -1657,7 +1690,6 @@ test("a continued child whose session cannot be created is refused with no child
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 		});
 		const done = await spawnBackground(extension, worktree);
 		await settle();
@@ -1685,7 +1717,6 @@ test("a completed child cannot be continued after session shutdown", async () =>
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 		});
 		const done = await spawnBackground(extension, worktree);
 		await settle();
@@ -1711,7 +1742,6 @@ test("a child that asks waits for the parent model's reply_child answer, still h
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 			schedule: clock.schedule,
 		});
 		const ids = [];
@@ -1778,7 +1808,6 @@ test("a repeated reply to an answered question never answers the child's next qu
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 			schedule: clock.schedule,
 		});
 		const id = await spawnBackground(extension, worktree);
@@ -1823,7 +1852,6 @@ test("a reply to a child that has ended is refused", async () => {
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 			schedule: manualClock().schedule,
 		});
 		const id = await spawnBackground(extension, worktree);
@@ -1852,7 +1880,6 @@ test("a child asks one question at a time", async () => {
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 			schedule: manualClock().schedule,
 		});
 		const id = await spawnBackground(extension, worktree);
@@ -1877,7 +1904,6 @@ test("cancelling a waiting child, or shutting the session down, rejects its ques
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 			schedule: manualClock().schedule,
 		});
 		const cancelled = await spawnBackground(extension, worktree);
@@ -1905,7 +1931,6 @@ test("a question the parent cannot receive fails at once and the child keeps run
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 			schedule: manualClock().schedule,
 			sendMessage: () => {
 				throw new Error("stale extension context");
@@ -1928,7 +1953,6 @@ test("a foreground child's question fails closed because the parent is waiting i
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 			schedule: manualClock().schedule,
 		});
 
@@ -1964,7 +1988,6 @@ async function realChild(agentDir, responses, options) {
 	const clock = manualClock();
 	const extension = await loadSpawnTool({
 		agentDir,
-		fetch: fakeJev().fetch,
 		schedule: clock.schedule,
 	});
 	return { parent, clock, extension };
@@ -2252,7 +2275,6 @@ test("a child that finishes between the parent's abort and session shutdown is d
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 			sendMessage: () => deliveredTo.push(session),
 		});
 		const call = new AbortController();
@@ -2304,7 +2326,6 @@ test("a child that is no longer working cannot ask the parent", async () => {
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 			schedule: manualClock().schedule,
 		});
 		const cancelled = await spawnBackground(extension, worktree);
@@ -2340,7 +2361,6 @@ test("a launch whose child session is created after session shutdown is refused 
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 		});
 
 		const call = spawn(
@@ -2448,7 +2468,6 @@ test("a foreground child whose run rejects only after the timeout has already fa
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 			schedule: clock.schedule,
 		});
 		const unhandled = await collectUnhandled(async () => {
@@ -2482,7 +2501,6 @@ test("aborting a foreground call's signal after the call has ended does nothing 
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 			schedule: clock.schedule,
 		});
 		const unhandled = await collectUnhandled(async () => {
@@ -2604,7 +2622,6 @@ test("a background child shows in the subagent box pinned above the input and ab
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 			branch: todoBranch,
 		});
 		assert.deepEqual(
@@ -2664,7 +2681,6 @@ test("the box refreshes at once on a state change, groups redraws within 400 ms,
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 			refresh: clock.schedule,
 		});
 		const tui = { renders: 0, requestRender: () => (tui.renders += 1) };
@@ -2726,7 +2742,6 @@ test("each TUI session start installs the box again, and print mode installs no 
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: fakeChildren().create,
-			fetch: fakeJev().fetch,
 		});
 		await extension.fire("session_shutdown", { reason: "new" });
 		extension.widgets.clear();
@@ -2736,7 +2751,6 @@ test("each TUI session start installs the box again, and print mode installs no 
 		const printed = loadExtension({
 			agentDir,
 			create: fakeChildren().create,
-			fetch: fakeJev().fetch,
 		});
 		await printed.fire("session_start", {}, "print");
 		assert.equal(printed.widgets.has(boxKey), false);
@@ -2748,7 +2762,6 @@ test("the empty subagents modal is sized to its content instead of filling the t
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: fakeChildren().create,
-			fetch: fakeJev().fetch,
 		});
 		const lines = openChildren(extension, { rows: 40 }).lines();
 		assert.equal(lines.length, 8);
@@ -2764,7 +2777,6 @@ test("alt+a and /workflow:subagents open a full-screen overlay of every child; j
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 		});
 		await spawnBackground(extension, worktree, "Map the launcher");
 		await spawnBackground(extension, worktree, "Run the tests");
@@ -2832,7 +2844,6 @@ test("in the view, s or c asks y/n before cancelling a running child, cancels a 
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 		});
 		const ids = [];
 		for (let i = 0; i < 6; i++)
@@ -2906,7 +2917,6 @@ test("Enter opens a live detail that follows the tail, collapses thinking with P
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 		});
 		const id = await spawnBackground(extension, worktree, "Review the doctor");
 		await settle();
@@ -2999,7 +3009,6 @@ test("a tall thread shows only its tail in the detail", async () => {
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 		});
 		await spawnBackground(extension, worktree);
 		await settle();
@@ -3022,7 +3031,6 @@ test("the children view never renders more lines than the terminal is tall", asy
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 		});
 		await spawnBackground(extension, worktree, "First");
 		await settle();
@@ -3048,7 +3056,6 @@ test("in fullscreen a click selects a row, a double click opens it, and each foo
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 		});
 		await spawnBackground(extension, worktree, "First");
 		await spawnBackground(extension, worktree, "Second");
@@ -3129,7 +3136,6 @@ test("a dialog that takes focus while the children view is open closes the view,
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: fakeChildren().create,
-			fetch: fakeJev().fetch,
 		});
 		const terminal = new FakeTerminal();
 		const tui = new TuiMainScreen(terminal);
@@ -3169,7 +3175,6 @@ test("escape sequences in a child's tool arguments never reach the step, the row
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 		});
 		await spawnBackground(extension, worktree);
 		await settle();
@@ -3212,7 +3217,6 @@ test("session shutdown closes an open children view and drops its listeners", as
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 		});
 		const view = openChildren(extension);
 		view.press("\r");
@@ -3234,7 +3238,6 @@ test("the view lists waiting, running, queued, then finished children, and a cli
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 		});
 		const ids = [];
 		for (let i = 0; i < 7; i++) {
@@ -3276,7 +3279,6 @@ test("an overlay opened over the children view keeps its focus and closes normal
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: fakeChildren().create,
-			fetch: fakeJev().fetch,
 		});
 		const terminal = new FakeTerminal();
 		const tui = new TuiMainScreen(terminal);
@@ -3336,7 +3338,6 @@ test("a child that starts while a finished row waits to expire gets the one-seco
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 			refresh: clock.schedule,
 		});
 		boxOf(extension);
@@ -3362,7 +3363,6 @@ test("closing the view from an open detail stops following the child", async () 
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 		});
 		await spawnBackground(extension, worktree);
 		await settle();
@@ -3399,7 +3399,6 @@ test("control sequences in a child's task, text, thinking, and streaming updates
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 		});
 		await spawnBackground(extension, worktree);
 		await settle();
@@ -3469,7 +3468,6 @@ test("a double click opens the child painted on that row even if the order chang
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 		});
 		const first = await spawnBackground(extension, worktree, "First");
 		await spawnBackground(extension, worktree, "Second");
@@ -3512,7 +3510,6 @@ test("a click after leaving the detail and before the next redraw opens nothing"
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			fetch: fakeJev().fetch,
 		});
 		await spawnBackground(extension, worktree);
 		await settle();

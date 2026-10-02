@@ -4,7 +4,6 @@ import {
 	type ChildLauncherOptions,
 	createChildLauncher,
 } from "./child-launcher.ts";
-import type { Fetch } from "./jev-client.ts";
 import { jevRoutingEnabled } from "./workflow-settings.ts";
 
 type DelegationAction = "launch" | "stay" | "decide" | "block";
@@ -100,16 +99,12 @@ export const delegationCases: readonly DelegationCase[] = [
 
 type CheckContext = Pick<
 	ExtensionContext,
-	"cwd" | "modelRegistry" | "model" | "thinkingLevel"
+	"cwd" | "modelRegistry" | "model" | "thinkingLevel" | "signal"
 >;
 
 type Verdict = Awaited<
 	ReturnType<ReturnType<typeof createChildLauncher>["classify"]>
 >;
-
-interface RecordedBody {
-	questions?: { destination?: unknown };
-}
 
 function actionOf(verdict: Verdict): DelegationAction {
 	if (verdict.kind === "launch") return "launch";
@@ -126,23 +121,22 @@ function evidence(verdict: Verdict): string {
 	const primary =
 		verdict.kind === "launch" ? specialist : (destination ?? specialist);
 	const parts: string[] = [];
-	if (specialist?.choice) parts.push(`specialist choice ${specialist.choice}`);
-	if (destination?.choice) parts.push(`destination choice ${destination.choice}`);
-	if (primary?.confidence !== undefined) {
-		parts.push(`confidence ${primary.confidence}`);
+	if (specialist?.type === "choice") {
+		parts.push(`specialist choice ${specialist.choice}`);
 	}
-	if (primary?.probabilities) {
+	if (destination?.type === "choice") {
+		parts.push(`destination choice ${destination.choice}`);
+	}
+	if (primary?.type === "choice") {
+		parts.push(`confidence ${primary.confidence}`);
 		parts.push(`probabilities ${JSON.stringify(primary.probabilities)}`);
 	}
 	return parts.length > 0 ? `; ${parts.join("; ")}` : "";
 }
 
-function scoreLine(
-	item: DelegationCase,
-	verdict: Verdict,
-	destinationAsked: boolean,
-): string {
+function scoreLine(item: DelegationCase, verdict: Verdict): string {
 	const action = actionOf(verdict);
+	const destinationAsked = verdict.jev?.answers.destination !== undefined;
 	const role = verdict.kind === "launch" ? verdict.role : undefined;
 	const mismatches: string[] = [];
 	if (action !== item.expected.action) {
@@ -169,26 +163,10 @@ function scoreLine(
 
 export async function runDelegationCheck(
 	ctx: CheckContext,
-	options: {
-		fetch?: Fetch;
-		modelProfiles: ChildLauncherOptions["modelProfiles"];
-	},
+	options: { modelProfiles: ChildLauncherOptions["modelProfiles"] },
 ): Promise<{ lines: string[]; failed: boolean }> {
-	let apiKey: string | undefined;
-	let keyError: string | undefined;
-	try {
-		apiKey = await ctx.modelRegistry.getApiKeyForProvider("typesafe");
-	} catch (error) {
-		keyError = error instanceof Error ? error.message : String(error);
-	}
-	const requests: RecordedBody[] = [];
-	const fetch: Fetch = async (input, init) => {
-		if (typeof init?.body === "string") requests.push(JSON.parse(init.body));
-		return (options.fetch ?? globalThis.fetch)(input, init);
-	};
 	const launcher = createChildLauncher({
 		modelProfiles: options.modelProfiles,
-		fetch,
 	});
 	const lines: string[] = [];
 	const routingOn = jevRoutingEnabled();
@@ -199,13 +177,6 @@ export async function runDelegationCheck(
 			);
 			continue;
 		}
-		if (!apiKey) {
-			lines.push(
-				`fail: ${item.name}: ${keyError ?? "TypeSafe API key is missing."}`,
-			);
-			continue;
-		}
-		const before = requests.length;
 		try {
 			const verdict = await launcher.classify(
 				{
@@ -215,10 +186,7 @@ export async function runDelegationCheck(
 				},
 				ctx,
 			);
-			const body = requests[before];
-			lines.push(
-				scoreLine(item, verdict, Boolean(body?.questions?.destination)),
-			);
+			lines.push(scoreLine(item, verdict));
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			lines.push(`fail: ${item.name}: ${message}`);

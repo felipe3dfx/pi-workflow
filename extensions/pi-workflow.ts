@@ -55,7 +55,6 @@ import {
 	type ModelProfilesOptions,
 	report,
 } from "./model-profiles.ts";
-import type { Fetch } from "./jev-client.ts";
 import { registerSessionTodo, syncTodoTool } from "./todo-extension.ts";
 import { registerCompactTools, syncCompactTools } from "./compact-tools.ts";
 import { activePiAgentDirectory, writeJsonAtomically } from "./mcp-config.ts";
@@ -91,7 +90,6 @@ export default function piWorkflowExtension(
 		modelProfiles?: ModelProfilesOptions;
 		childSessions?: {
 			create?: ChildSessionFactory;
-			fetch?: Fetch;
 			schedule?: Schedule;
 			refresh?: Schedule;
 		};
@@ -157,7 +155,6 @@ export default function piWorkflowExtension(
 	});
 	const launcher = createChildLauncher({
 		modelProfiles,
-		fetch: options.childSessions?.fetch,
 		childSessionSeated: () => held(childOverlay),
 	});
 
@@ -244,6 +241,16 @@ export default function piWorkflowExtension(
 			if (!held(childOverlay)) return;
 			const gate = await launcher.gateToolCall(event, toolCtx);
 			if (gate.allow) return;
+			if (event.parentToolCallId) {
+				pi.sendMessage(
+					{
+						customType: "pi-workflow-gate-block",
+						content: gate.reason,
+						display: true,
+					},
+					{ deliverAs: "steer" },
+				);
+			}
 			return { block: true, reason: gate.reason };
 		});
 	}
@@ -399,7 +406,6 @@ export default function piWorkflowExtension(
 				return;
 			}
 			const { lines, failed } = await runDelegationCheck(ctx, {
-				fetch: options.childSessions?.fetch,
 				modelProfiles,
 			});
 			report(ctx, lines.join("\n"), failed ? "error" : "info");

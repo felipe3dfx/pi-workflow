@@ -5,6 +5,9 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import {
+	type ClassifierAnswer,
+	type ClassifierContext,
+	type ClassifierResult,
 	getSupportedThinkingLevels,
 	type ModelThinkingLevel,
 } from "@earendil-works/pi-ai";
@@ -15,7 +18,6 @@ import type {
 
 import { latestUserRequest } from "./child-sessions.ts";
 import { gitEnvironment } from "./git-environment.ts";
-import { askJev, type Fetch, type JevResult } from "./jev-client.ts";
 import { jevRoutingEnabled } from "./workflow-settings.ts";
 import type { ModelProfilesLoad, Specialist } from "./model-profiles.ts";
 
@@ -29,7 +31,6 @@ export interface LaunchRequest {
 export interface ChildLauncherOptions {
 	modelProfiles: { load: () => ModelProfilesLoad };
 	contractsDirectory?: string;
-	fetch?: Fetch;
 	childSessionSeated?: () => boolean;
 }
 
@@ -86,7 +87,7 @@ const defaultContractsDirectory = resolve(
 
 type LauncherContext = Pick<
 	ExtensionContext,
-	"cwd" | "modelRegistry" | "model" | "thinkingLevel"
+	"cwd" | "modelRegistry" | "model" | "thinkingLevel" | "signal"
 >;
 
 type GateContext = LauncherContext & {
@@ -94,14 +95,14 @@ type GateContext = LauncherContext & {
 };
 
 type Assessment =
-	| { kind: "launch"; role: Role; jev?: JevResult }
-	| { kind: "stay" | "decide" | "blocked"; reason: string; jev?: JevResult };
+	| { kind: "launch"; role: Role; jev?: ClassifierResult }
+	| { kind: "stay" | "decide" | "blocked"; reason: string; jev?: ClassifierResult };
 
 type Outcome = {
 	kind: "stay" | "decide" | "blocked" | "refused";
 	warning: string;
 	reason: string;
-	jev?: JevResult;
+	jev?: ClassifierResult;
 };
 
 type Ready = {
@@ -113,7 +114,7 @@ type Ready = {
 	warnings: string[];
 	model: string;
 	thinking: ModelThinkingLevel;
-	jev?: JevResult;
+	jev?: ClassifierResult;
 };
 
 type Pair = { model: string; thinking: ModelThinkingLevel };
@@ -132,7 +133,7 @@ const warningFor = {
 function outcome(
 	kind: keyof typeof warningFor,
 	reason: string,
-	jev?: JevResult,
+	jev?: ClassifierResult,
 ): Outcome {
 	return { kind, warning: warningFor[kind], reason, ...(jev ? { jev } : {}) };
 }
@@ -241,10 +242,13 @@ function delegationIntent(userRequest: string | undefined) {
 }
 
 function choiceIn<T extends string>(
-	answer: JevResult["answers"][string] | undefined,
+	answer: ClassifierAnswer | undefined,
 	allowed: readonly T[],
-): answer is JevResult["answers"][string] & { choice: T } {
-	return answer !== undefined && (allowed as readonly string[]).includes(answer.choice);
+): answer is ClassifierAnswer & { type: "choice"; choice: T } {
+	return (
+		answer?.type === "choice" &&
+		(allowed as readonly string[]).includes(answer.choice)
+	);
 }
 
 function sessionPair(ctx: LauncherContext): Pair | Outcome {
@@ -325,28 +329,41 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			request.role !== undefined && isRole(request.role)
 				? specialistByRole[request.role]
 				: undefined;
-		const state: Record<string, unknown> = {
+		const state: ClassifierContext["state"] = {
 			...(request.userRequest ? { user_request: request.userRequest } : {}),
 			delegation_intent: intent,
 			task: request.task,
 			...(suggested ? { suggested_specialist: suggested } : {}),
 			available_specialists: [...specialists],
 		};
-		const questions = {
+		const questions: ClassifierContext["questions"] = {
 			specialist: {
+				type: "choice",
 				instructions: specialistInstructions,
 				criteria: specialistCriteria,
 			},
 			...(intent === "optional"
 				? {
 						destination: {
+							type: "choice",
 							instructions: destinationInstructions,
 							criteria: destinationCriteria,
 						},
 					}
 				: {}),
 		};
-		let jev: JevResult;
+		const model = ctx.modelRegistry.findOfType(
+			"classifier",
+			"typesafe",
+			"jev-latest",
+		);
+		if (!model) {
+			return {
+				kind: "blocked",
+				reason:
+					"Jev did not answer: typesafe/jev-latest is not in Pi's classifier registry.",
+			};
+		}
 		try {
 			const apiKey = await ctx.modelRegistry.getApiKeyForProvider("typesafe");
 			if (!apiKey) {
@@ -354,11 +371,21 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 					"no TypeSafe API key; run /login and choose TypeSafe or set TYPESAFE_API_KEY",
 				);
 			}
-			jev = await askJev(apiKey, state, questions, options.fetch);
 		} catch (error) {
 			return {
 				kind: "blocked",
 				reason: `Jev did not answer: ${errorMessage(error)}`,
+			};
+		}
+		const jev = await ctx.modelRegistry.classify(
+			model,
+			{ state, questions },
+			{ signal: ctx.signal },
+		);
+		if (jev.stopReason !== "stop") {
+			return {
+				kind: "blocked",
+				reason: `Jev did not answer: ${jev.errorMessage ?? `stop reason ${jev.stopReason}`}`,
 			};
 		}
 		const specialist = jev.answers.specialist;
@@ -370,14 +397,14 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		) {
 			return { kind: "blocked", reason: "Jev returned an invalid selection.", jev };
 		}
-		if (intent === "optional" && destination?.choice === "decide") {
+		if (intent === "optional" && choiceIn(destination, ["decide"] as const)) {
 			return {
 				kind: "decide",
 				reason: "Jev answered that a decision is still open.",
 				jev,
 			};
 		}
-		if (intent === "optional" && destination?.choice === "stay") {
+		if (intent === "optional" && choiceIn(destination, ["stay"] as const)) {
 			return { kind: "stay", reason: "Jev answered that the work stays.", jev };
 		}
 		return { kind: "launch", role: roleBySpecialist[specialist.choice], jev };
@@ -397,7 +424,12 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		if (!bypass && userRequest && turn?.userRequest === userRequest) {
 			return turn.pending;
 		}
-		const pending = judge(request, ctx);
+		const pending: Promise<Assessment> = judge(request, ctx).then((verdict) => {
+			if (verdict.kind === "blocked" && turn?.pending === pending) {
+				turn = undefined;
+			}
+			return verdict;
+		});
 		if (!bypass && userRequest) turn = { userRequest, pending };
 		return pending;
 	}
