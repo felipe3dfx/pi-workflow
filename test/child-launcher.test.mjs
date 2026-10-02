@@ -813,3 +813,70 @@ test("while Jev routing is on, git and gh in a named role's task go to Jev like 
 		);
 	});
 });
+
+test("references that exist under cwd are listed in the child's task", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		await mkdir(join(worktree, "docs"));
+		await writeFile(join(worktree, "docs", "policy.md"), "policy");
+		await writeFile(join(worktree, "AGENTS.md"), "agents");
+		const launcher = createChildLauncher({ modelProfiles: absentProfiles });
+
+		const result = await launcher.prepareLaunch(
+			{
+				role: "worker",
+				task: "Apply the policy",
+				references: ["docs/policy.md", "AGENTS.md"],
+			},
+			launcherContext(worktree),
+		);
+
+		assert.equal(result.kind, "ready");
+		assert.match(result.task, /^Apply the policy/);
+		assert.match(result.task, /docs\/policy\.md/);
+		assert.match(result.task, /AGENTS\.md/);
+	});
+});
+
+test("a launch without references keeps the task unchanged", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const launcher = createChildLauncher({ modelProfiles: absentProfiles });
+
+		const result = await launcher.prepareLaunch(
+			{ role: "worker", task: "Apply the policy" },
+			launcherContext(worktree),
+		);
+
+		assert.equal(result.kind, "ready");
+		assert.equal(result.task, "Apply the policy");
+	});
+});
+
+test("a reference that does not exist refuses the launch and names the path", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const launcher = createChildLauncher({ modelProfiles: absentProfiles });
+
+		const result = await launcher.prepareLaunch(
+			{ role: "worker", task: "Apply the policy", references: ["docs/missing.md"] },
+			launcherContext(worktree),
+		);
+
+		assertRefused(result, /docs\/missing\.md/);
+	});
+});
+
+test("a reference outside cwd, directly or through a symlink, refuses the launch and names the path", async () => {
+	await withWorkspace(async ({ dir, worktree }) => {
+		await writeFile(join(dir, "outside.md"), "outside");
+		await symlink(join(dir, "outside.md"), join(worktree, "link.md"));
+		const launcher = createChildLauncher({ modelProfiles: absentProfiles });
+
+		for (const reference of ["../outside.md", join(dir, "outside.md"), "link.md"]) {
+			const result = await launcher.prepareLaunch(
+				{ role: "worker", task: "Apply the policy", references: [reference] },
+				launcherContext(worktree),
+			);
+
+			assertRefused(result, new RegExp(reference.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+		}
+	});
+});
