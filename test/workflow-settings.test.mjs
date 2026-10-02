@@ -1,8 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 
@@ -12,6 +11,7 @@ import { SettingsList } from "@earendil-works/pi-tui";
 import { patchMenus, restoreMenus } from "../extensions/chrome-menus.ts";
 import { createChildLauncher } from "../extensions/child-launcher.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
+import { withAgentDirectory } from "./support/jev-routing.mjs";
 
 initTheme("dark", false);
 const theme = globalThis[Symbol.for("@earendil-works/pi-coding-agent:theme")];
@@ -31,18 +31,6 @@ function extension(commands, notifications) {
 		command: commands.get("workflow:settings"),
 		notify: (message, level) => notifications.push({ message, level }),
 	};
-}
-
-async function withAgentDirectory(t) {
-	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-agent-"));
-	const previous = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = dir;
-	t.after(async () => {
-		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previous;
-		await rm(dir, { recursive: true, force: true });
-	});
-	return dir;
 }
 
 function launcherContext(cwd) {
@@ -98,7 +86,7 @@ test("/workflow:settings rejects extra arguments and needs the TUI", async () =>
 test("/workflow:settings turns Jev routing off on the existing settings line", async (t) => {
 	patchMenus();
 	t.after(restoreMenus);
-	const dir = await withAgentDirectory(t);
+	const dir = withAgentDirectory(t);
 	await writeFile(
 		join(dir, "pi-workflow-routing.json"),
 		JSON.stringify({ schemaVersion: 1, jevRouting: "on" }),
@@ -177,7 +165,7 @@ for (const [label, write] of [
 	],
 ]) {
 	test(`Jev routing is off without asking Jev when the choice document is ${label}`, async (t) => {
-		const dir = await withAgentDirectory(t);
+		const dir = withAgentDirectory(t);
 		await write(join(dir, "pi-workflow-routing.json"));
 		const worktree = join(dir, "repo");
 		await mkdir(worktree);
@@ -211,7 +199,7 @@ for (const [label, write] of [
 }
 
 test("turning Jev routing on persists for a new process and leaves the model profiles alone", async (t) => {
-	const dir = await withAgentDirectory(t);
+	const dir = withAgentDirectory(t);
 	const profilesPath = join(dir, "pi-workflow-models.json");
 	const profiles =
 		'{"schemaVersion":2,"active":"default","profiles":{"default":{}}}\n';

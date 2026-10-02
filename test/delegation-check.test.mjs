@@ -1,13 +1,10 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import { capabilities, replaceSelection } from "../extensions/configure.ts";
 import { delegationCases, runDelegationCheck } from "../extensions/delegation-check.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
-import { turnJevRoutingOn } from "./support/jev-routing.mjs";
+import { turnJevRoutingOn, withAgentDirectory } from "./support/jev-routing.mjs";
 
 turnJevRoutingOn();
 
@@ -175,13 +172,7 @@ test("a missing TypeSafe key is a fail line and the skill case still runs", asyn
 });
 
 test("Jev routing off fails every Jev case without calling Jev and still runs the skill case", async (t) => {
-	const dir = mkdtempSync(join(tmpdir(), "pi-workflow-agent-"));
-	const previous = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = dir;
-	t.after(() => {
-		process.env.PI_CODING_AGENT_DIR = previous;
-		rmSync(dir, { recursive: true, force: true });
-	});
+	withAgentDirectory(t);
 	const jev = answeringFetch();
 
 	const { lines, failed } = await runDelegationCheck(context(), {
