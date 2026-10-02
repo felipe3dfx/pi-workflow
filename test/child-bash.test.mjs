@@ -74,6 +74,13 @@ test("while Jev routing is off, a child's bash refuses git and gh wherever the s
 		["eval git status", "git"],
 		["find . -name a -exec git add {} \\;", "git"],
 		["2>/dev/null git status", "git"],
+		["nice -n 5 time -p git status", "git"],
+		["timeout -s KILL 5 git status", "git"],
+		["ls | xargs -I {} git add {}", "git"],
+		["ls | xargs -n1 gh issue view", "gh"],
+		["sudo -u root -- git status", "git"],
+		["env -u FOO -C repo git status", "git"],
+		["find . -exec env git add {} \\;", "git"],
 	]) {
 		await assert.rejects(
 			run(command),
@@ -103,6 +110,9 @@ test("while Jev routing is off, a child's bash refuses a command it cannot read 
 		`echo \${x:-$(git status)}`,
 		"cat <<EOF\n$(git status)\nEOF",
 		"echo git | bash",
+		"env -S 'git status'",
+		"sudo --bogus git status",
+		"xargs -Z git add",
 	]) {
 		await assert.rejects(
 			run(command),
@@ -134,9 +144,19 @@ test("while Jev routing is off, a child's bash runs a command that only mentions
 		["test -n git && echo yes", "yes"],
 		["[[ git == git ]] && echo same", "same"],
 		["env FOO=git printenv FOO", "git"],
+		["nice grep -o git README.md | head -n1", "git"],
+		["timeout 5 grep -o git README.md | head -n1", "git"],
+		["echo README.md | xargs grep -o git | head -n1", "git"],
+		["env FOO=1 grep -o gh README.md | head -n1", "gh"],
 	]) {
 		assert.equal(text(await run(command)).trim(), output, command);
 	}
+});
+
+test("while Jev routing is off, a child's bash runs a timed command that only mentions git", async (t) => {
+	withAgentDirectory(t);
+
+	assert.match(text(await run("time grep -c git README.md")), /^\d+/);
 });
 
 test("while Jev routing is on, a child's bash runs git", async (t) => {

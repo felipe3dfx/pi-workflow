@@ -27,21 +27,148 @@ const keywords = new Set([
 
 const unsupported = new Set(["case", "coproc", "function", "select"]);
 
-const wrappers = new Set([
-	"builtin",
-	"command",
-	"doas",
-	"env",
-	"exec",
-	"ionice",
-	"nice",
-	"nohup",
-	"setsid",
-	"stdbuf",
-	"sudo",
-	"time",
-	"timeout",
-	"xargs",
+type Wrapper = { flags: string[]; values: string[]; operands?: number };
+
+const wrappers = new Map<string, Wrapper>([
+	["builtin", { flags: [], values: [] }],
+	["command", { flags: ["-p", "-v", "-V"], values: [] }],
+	["doas", { flags: ["-n", "-s"], values: ["-u", "-C"] }],
+	[
+		"env",
+		{
+			flags: ["-i", "-0", "-v", "--ignore-environment", "--null", "--debug"],
+			values: ["-u", "-C", "--unset", "--chdir"],
+		},
+	],
+	["exec", { flags: ["-c", "-l"], values: ["-a"] }],
+	[
+		"ionice",
+		{
+			flags: ["-t", "--ignore"],
+			values: ["-c", "-n", "--class", "--classdata"],
+		},
+	],
+	["nice", { flags: [], values: ["-n", "--adjustment"] }],
+	["nohup", { flags: [], values: [] }],
+	[
+		"setsid",
+		{ flags: ["-c", "-f", "-w", "--ctty", "--fork", "--wait"], values: [] },
+	],
+	[
+		"stdbuf",
+		{ flags: [], values: ["-i", "-o", "-e", "--input", "--output", "--error"] },
+	],
+	[
+		"sudo",
+		{
+			flags: [
+				"-A",
+				"-b",
+				"-E",
+				"-H",
+				"-n",
+				"-P",
+				"-S",
+				"-s",
+				"-i",
+				"-k",
+				"--askpass",
+				"--background",
+				"--preserve-env",
+				"--set-home",
+				"--non-interactive",
+				"--preserve-groups",
+				"--stdin",
+				"--shell",
+				"--login",
+				"--reset-timestamp",
+			],
+			values: [
+				"-C",
+				"-D",
+				"-g",
+				"-h",
+				"-p",
+				"-R",
+				"-r",
+				"-T",
+				"-t",
+				"-U",
+				"-u",
+				"--close-from",
+				"--chdir",
+				"--group",
+				"--host",
+				"--prompt",
+				"--chroot",
+				"--role",
+				"--command-timeout",
+				"--type",
+				"--other-user",
+				"--user",
+			],
+		},
+	],
+	[
+		"time",
+		{
+			flags: [
+				"-p",
+				"-a",
+				"-v",
+				"-q",
+				"--portability",
+				"--append",
+				"--verbose",
+				"--quiet",
+			],
+			values: ["-f", "-o", "--format", "--output"],
+		},
+	],
+	[
+		"timeout",
+		{
+			flags: ["-v", "--verbose", "--preserve-status", "--foreground"],
+			values: ["-s", "-k", "--signal", "--kill-after"],
+			operands: 1,
+		},
+	],
+	[
+		"xargs",
+		{
+			flags: [
+				"-0",
+				"-r",
+				"-t",
+				"-p",
+				"-x",
+				"-o",
+				"--null",
+				"--no-run-if-empty",
+				"--verbose",
+				"--interactive",
+				"--exit",
+				"--open-tty",
+			],
+			values: [
+				"-a",
+				"-d",
+				"-E",
+				"-I",
+				"-L",
+				"-n",
+				"-P",
+				"-s",
+				"--arg-file",
+				"--delimiter",
+				"--max-lines",
+				"--max-args",
+				"--max-procs",
+				"--max-chars",
+				"--process-slot-var",
+			],
+		},
+	],
 ]);
 
 const shells = new Set(["sh", "bash", "dash", "ksh", "zsh", "fish"]);
@@ -249,6 +376,12 @@ function isAssignment(word: Word): boolean {
 
 function invoked(words: Word[], at: number, found: Set<string>): void {
 	const name = programName(words[at]);
+	const wrapper = wrappers.get(name);
+	if (wrapper) {
+		const program = wrapped(words, at, wrapper);
+		if (program !== undefined) invoked(words, program, found);
+		return;
+	}
 	const args = words.slice(at + 1);
 	if (name === "git" || name === "gh") found.add(name);
 	if (name === "eval") {
@@ -282,6 +415,35 @@ function invoked(words: Word[], at: number, found: Set<string>): void {
 	}
 }
 
+function wrapped(
+	words: Word[],
+	at: number,
+	{ flags, values, operands = 0 }: Wrapper,
+): number | undefined {
+	let index = at + 1;
+	for (; index < words.length; index++) {
+		const option = words[index].text;
+		if (option === "--") {
+			index++;
+			break;
+		}
+		if (!option.startsWith("-") || option === "-") break;
+		const name = option.startsWith("--") ? option.split("=")[0] : option;
+		if (flags.includes(name) || /^-\d+$/.test(name)) continue;
+		if (values.includes(name)) {
+			if (name === option) index++;
+			continue;
+		}
+		if (!option.startsWith("--") && values.includes(option.slice(0, 2))) {
+			continue;
+		}
+		fail();
+	}
+	while (index < words.length && isAssignment(words[index])) index++;
+	index += operands;
+	return index < words.length ? index : undefined;
+}
+
 function inspect(words: Word[], found: Set<string>): void {
 	let at = 0;
 	while (
@@ -294,19 +456,7 @@ function inspect(words: Word[], found: Set<string>): void {
 	const name = programName(words[at]);
 	if (name === "for") return;
 	if (unsupported.has(name)) fail();
-	if (
-		name === "env" &&
-		words.some((word) => /^(?:-S|--split-string)/.test(word.text))
-	) {
-		fail();
-	}
-	if (!wrappers.has(name)) {
-		invoked(words, at, found);
-		return;
-	}
-	for (let index = at + 1; index < words.length; index++) {
-		if (!isAssignment(words[index])) invoked(words, index, found);
-	}
+	invoked(words, at, found);
 }
 
 function programs(command: string): Set<string> {
