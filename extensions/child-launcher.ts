@@ -54,7 +54,7 @@ const specialists = ["explorer", "worker", "verifier"] as const;
 const explicitDelegation =
 	/\b(?:subagente|subagent|spawn_child|hijo|child)\b|sesi[oó]n hija|child session|\bdeleg/iu;
 
-const repositoryStateCommand = /^\s*(?:git|gh)(?: |$)/u;
+const repositoryStateCommand = /(?<![\p{L}\p{N}_.-])(?:git|gh)(?![\p{L}\p{N}_-])/u;
 
 const specialistInstructions =
 	"Which specialist should carry out the requested action? Choose from the action in `user_request` and `task`. `suggested_specialist` is a hint and does not decide the answer.";
