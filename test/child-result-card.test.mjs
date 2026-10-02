@@ -70,26 +70,90 @@ const plain = (component, width = 90) =>
 		.render(width)
 		.map((line) => stripVTControlCharacters(line).trimEnd());
 
-test("a collapsed result is one calm row with the model, the elapsed time, Pi's expand key, and up to three preview lines", (t) => {
+test("a collapsed result is one row with the role, id, Verdict, elapsed time, and Pi's expand key", (t) => {
 	const { card } = cards(t);
 	assert.deepEqual(
 		plain(card({ customType: "pi-workflow-child-result", details })),
 		[
 			"",
-			"   ◆ Subagent worker 5636  gpt-6-luna (high) · 1m 02s                (ctrl+o to expand)",
-			"     He terminado; ejecuté sleep 60 y esperé 60 segundos.",
+			"   ◆ Subagent worker 5636  1m 02s                                    (ctrl+o to expand)",
 		],
 	);
 	const long = card({
 		customType: "pi-workflow-child-result",
-		details: { ...details, text: "uno\n\ndos\n\ntres\n\ncuatro\n\ncinco" },
+		details: {
+			...details,
+			verdict: "pass",
+			text: "uno\n\ndos\n\ntres\n\ncuatro\n\ncinco",
+		},
 	});
-	assert.deepEqual(plain(long).slice(2), [
-		"     uno",
-		"     dos",
-		"     tres",
-		"     … +2 lines",
+	assert.deepEqual(plain(long).slice(1), [
+		"   ◆ Subagent worker 5636 pass  1m 02s                               (ctrl+o to expand)",
 	]);
+});
+
+test("a blocked or failed Verdict shows its reason on a second line without expanding", (t) => {
+	const { card } = cards(t);
+	for (const verdict of ["blocked", "fail"])
+		assert.deepEqual(
+			plain(
+				card({
+					customType: "pi-workflow-child-result",
+					details: {
+						...details,
+						verdict,
+						text: `Verdict: ${verdict}\n\nDatabase access is missing\n\nanother detail`,
+					},
+				}),
+			).slice(1),
+			[
+				`   ◆ Subagent worker 5636 ${verdict}  1m 02s${" ".repeat(verdict === "fail" ? 31 : 28)}(ctrl+o to expand)`,
+				"     Database access is missing",
+			],
+		);
+});
+
+test("a blocked worker shows the first left_undone item as its reason", (t) => {
+	const { card } = cards(t);
+	const blocked = (text) =>
+		plain(
+			card({
+				customType: "pi-workflow-child-result",
+				details: { ...details, verdict: "blocked", text },
+			}),
+		)[2];
+	assert.equal(
+		blocked(
+			"## Summary\n\nCould not continue.\n\nstatus: blocked\nfiles_changed:\n- none\nvalidation:\n- none\nleft_undone:\n- Database access is missing\n- Another pending item",
+		),
+		"     Database access is missing",
+	);
+	assert.equal(
+		blocked("status: blocked\nleft_undone:\n- The credential is missing"),
+		"     The credential is missing",
+	);
+});
+
+test("a failed or blocked verifier shows the line next to its verdict as its reason", (t) => {
+	const { card } = cards(t);
+	const verifier = (verdict, text) =>
+		plain(
+			card({
+				customType: "pi-workflow-child-result",
+				details: { ...details, role: "verify", verdict, text },
+			}),
+		)[2];
+	assert.equal(
+		verifier(
+			"fail",
+			"## Review\n\nRan npm test.\nThe migration fails on null ids.\nverdict: fail",
+		),
+		"     The migration fails on null ids.",
+	);
+	assert.equal(
+		verifier("blocked", "Intro.\n\nverdict: blocked\nThere is no database access."),
+		"     There is no database access.",
+	);
 });
 
 test("ctrl+o shows the task, the whole result, and the subagents view key", (t) => {
@@ -114,19 +178,17 @@ test("ctrl+o shows the task, the whole result, and the subagents view key", (t) 
 	]);
 });
 
-test("failures and questions always show their whole text and take the error and warning tones", (t) => {
+test("failures show their reason collapsed, and questions always show their whole text, in the error and warning tones", (t) => {
 	const { card } = cards(t);
 	const error = "line 1\n\nline 2\n\nline 3\n\nline 4";
 	const failed = card({
 		customType: "pi-workflow-child-result",
 		details: { ...details, state: "timed out", text: error },
 	});
-	const lines = plain(failed);
-	assert.equal(
-		lines[1],
-		"   ◆ Subagent worker 5636 timed out  gpt-6-luna (high) · 1m 02s      (ctrl+o to expand)",
-	);
-	assert.ok(lines.includes("     line 4"));
+	assert.deepEqual(plain(failed).slice(1), [
+		"   ◆ Subagent worker 5636 timed out  1m 02s                          (ctrl+o to expand)",
+		"     line 1",
+	]);
 	const asked = card({
 		customType: "pi-workflow-child-question",
 		details: {
@@ -158,7 +220,6 @@ test("sessions saved before the richer details still render from the message con
 		[
 			"",
 			"   ◆ Subagent 5636                                                   (ctrl+o to expand)",
-			"     Listo.",
 		],
 	);
 	assert.deepEqual(
@@ -235,4 +296,28 @@ test("every card line fits the width it is given", (t) => {
 			for (const line of component.render(width))
 				assert.ok(visibleWidth(line) <= width, `width ${width}: ${line}`);
 	}
+});
+
+test("results delivered together render one card per result, in delivery order", (t) => {
+	const { card } = cards(t);
+	const failed = {
+		...details,
+		id: "9999aaaa-0000-4000-8000-000000000000",
+		state: "failed",
+		text: "provider overloaded",
+	};
+	assert.deepEqual(
+		plain(
+			card({
+				customType: "pi-workflow-child-result",
+				details: { results: [details, failed] },
+			}),
+		),
+		[
+			"",
+			"   ◆ Subagent worker 5636  1m 02s                                    (ctrl+o to expand)",
+			"   ◆ Subagent worker 9999 failed  1m 02s                             (ctrl+o to expand)",
+			"     provider overloaded",
+		],
+	);
 });

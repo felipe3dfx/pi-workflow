@@ -47,6 +47,10 @@ replaceSelection({
 	expectations: {},
 });
 
+const packageVersion = JSON.parse(
+	await readFile(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"),
+).version;
+
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 const workerContract = await readFile(
@@ -54,6 +58,7 @@ const workerContract = await readFile(
 	"utf8",
 );
 const workerTools = ["read", "bash", "edit", "write", "grep", "find", "ls"];
+const spawnedTools = [...workerTools, "ask_parent"];
 
 async function withWorkspace(run) {
 	const dir = await realpath(
@@ -156,9 +161,11 @@ function loadExtension({
 	const commands = new Map();
 	const shortcuts = new Map();
 	const messages = [];
+	const entries = [];
 	const notifications = [];
 	const widgets = new Map();
 	const views = [];
+	let idle = true;
 	const ui = {
 		notify: (message, level) => notifications.push({ message, level }),
 		setWidget(key, factory, options) {
@@ -192,6 +199,7 @@ function loadExtension({
 				messages.push({ message, options });
 				sendMessage?.(message, options);
 			},
+			appendEntry: (customType, data) => entries.push({ customType, data }),
 			exec: async () => {
 				throw new Error("must not run commands");
 			},
@@ -213,6 +221,7 @@ function loadExtension({
 				mode,
 				hasUI: true,
 				ui,
+				isIdle: () => idle,
 				sessionManager: { getBranch: () => branch, getEntries: () => [] },
 			});
 		}
@@ -222,6 +231,7 @@ function loadExtension({
 	return {
 		tools,
 		messages,
+		entries,
 		notifications,
 		widgets,
 		views,
@@ -230,6 +240,9 @@ function loadExtension({
 		ui,
 		fire,
 		command,
+		busy: (value) => {
+			idle = !value;
+		},
 		named: (name) => tools.find((tool) => tool.name === name),
 		spawnTools: () => tools.filter((tool) => tool.name === "spawn_child"),
 	};
@@ -344,7 +357,7 @@ for (const mode of ["tui", "rpc"]) {
 			assert.equal(child.spec.cwd, worktree);
 			assert.equal(child.spec.model, "session/model");
 			assert.equal(child.spec.thinking, "medium");
-			assert.deepEqual(child.spec.tools, workerTools);
+			assert.deepEqual(child.spec.tools, spawnedTools);
 			assert.ok(workerContract.includes(child.spec.prompt));
 			assert.equal(messages.length, 0);
 
@@ -365,9 +378,10 @@ for (const mode of ["tui", "rpc"]) {
 				thinking: "medium",
 				task: "Fix the failing test",
 				text: "All tests pass.",
+				verdict: undefined,
 			});
-			assert.match(message.content, /completed:\n\nAll tests pass\./);
-			assert.deepEqual(options, { deliverAs: "followUp", triggerTurn: true });
+			assert.match(message.content, /completed\. Verdict: absent\.\n\nAll tests pass\./);
+			assert.deepEqual(options, { deliverAs: "steer", triggerTurn: true });
 			assert.equal(child.disposals, 1);
 			assert.deepEqual(ctx.model, {
 				provider: "session",
@@ -405,6 +419,26 @@ for (const mode of ["print", "json"]) {
 		});
 	});
 }
+
+test("a foreground result shows its Run state and Verdict to the parent", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren({
+			run: async () => "Could not finish.\n\nstatus: partial",
+		});
+		const { tool } = await loadSpawnTool({ agentDir, create: children.create });
+
+		const result = await spawn(
+			tool,
+			{ role: "worker", task: "Fix the failing test" },
+			toolContext("print", worktree),
+		);
+
+		assert.match(
+			text(result),
+			/^Child completed\. Verdict: partial\.\n\nCould not finish\./,
+		);
+	});
+});
 
 test("print mode refuses an explicit background request before asking Jev or creating a child", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
@@ -567,7 +601,7 @@ test("a child that would run another model or thinking stays pending, and one mi
 test("aborting a foreground call aborts the child, while a background child ignores the call's signal", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
-		const { tool } = await loadSpawnTool({
+		const { tool, entries } = await loadSpawnTool({
 			agentDir,
 			create: children.create,
 		});
@@ -585,6 +619,7 @@ test("aborting a foreground call aborts the child, while a background child igno
 		children.created[0].result.reject(new Error("aborted"));
 		await assert.rejects(call, /aborted/);
 		assert.equal(children.created[0].disposals, 1);
+		assert.deepEqual(traceStates(entries), ["running", "cancelled"]);
 
 		const background = new AbortController();
 		await spawn(
@@ -623,6 +658,197 @@ test("a failed background child is delivered as a failure message", async () => 
 		});
 		assert.match(messages[0].message.content, /provider overloaded/);
 		assert.equal(children.created[0].disposals, 1);
+	});
+});
+
+test("each Run state transition of a child is appended to the parent session as a bounded trace entry", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		await writeFile(join(worktree, "AGENTS.md"), "policy");
+		const children = fakeChildren();
+		const { tool, entries, messages } = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+
+		const result = await spawn(
+			tool,
+			{ role: "worker", task: "Secret task text", references: ["AGENTS.md"] },
+			toolContext("tui", worktree),
+		);
+		await settle();
+		children.created[0].result.resolve("status: done\nfull result body");
+		await settle();
+
+		const traces = entries.filter(
+			(entry) => entry.customType === "pi-workflow-child-trace",
+		);
+		assert.deepEqual(
+			traces.map((entry) => entry.data.state),
+			["queued", "running", "completed"],
+		);
+		for (const { data } of traces) {
+			assert.equal(data.id, result.details.id);
+			assert.equal(data.role, "worker");
+			assert.equal(data.chosenBy, "jev");
+			assert.deepEqual(data.tools, spawnedTools);
+			assert.deepEqual(data.references, ["AGENTS.md"]);
+			assert.equal(data.version, packageVersion);
+			assert.ok(!JSON.stringify(data).includes("Secret task text"));
+			assert.ok(!JSON.stringify(data).includes("full result body"));
+		}
+		assert.equal(traces[2].data.verdict, "done");
+		assert.equal(traces[0].data.verdict, undefined);
+		assert.equal(messages.length, 1);
+	});
+});
+
+test("a foreground child appends its running and terminal Run states as trace entries", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren({
+			run: async () => "status: blocked\nfull result body",
+		});
+		const { tool, entries } = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+
+		await spawn(
+			tool,
+			{ role: "worker", task: "Secret task text" },
+			toolContext("print", worktree),
+		);
+
+		const traces = entries.filter(
+			(entry) => entry.customType === "pi-workflow-child-trace",
+		);
+		assert.deepEqual(
+			traces.map((entry) => entry.data.state),
+			["running", "completed"],
+		);
+		assert.equal(traces[0].data.id, traces[1].data.id);
+		assert.equal(traces[1].data.role, "worker");
+		assert.equal(traces[1].data.verdict, "blocked");
+		assert.ok(!JSON.stringify(traces).includes("Secret task text"));
+		assert.ok(!JSON.stringify(traces).includes("full result body"));
+	});
+});
+
+test("a foreground child that fails appends a failed trace entry", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren({
+			run: async () => {
+				throw new Error("provider overloaded");
+			},
+		});
+		const { tool, entries } = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+
+		await assert.rejects(
+			spawn(
+				tool,
+				{ role: "worker", task: "Fix the failing test" },
+				toolContext("print", worktree),
+			),
+			/provider overloaded/,
+		);
+
+		assert.deepEqual(
+			entries
+				.filter((entry) => entry.customType === "pi-workflow-child-trace")
+				.map((entry) => entry.data.state),
+			["running", "failed"],
+		);
+	});
+});
+
+function traceStates(entries) {
+	return entries
+		.filter((entry) => entry.customType === "pi-workflow-child-trace")
+		.map((entry) => entry.data.state);
+}
+
+async function backgroundTraceStates(extension, id) {
+	await settle();
+	return extension.entries
+		.filter(
+			(entry) =>
+				entry.customType === "pi-workflow-child-trace" && entry.data.id === id,
+		)
+		.map((entry) => entry.data);
+}
+
+test("a child that asks is traced as waiting, and as running again once the parent answers", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		const id = await spawnBackground(extension, worktree);
+		await settle();
+
+		const answer = children.created[0].spec.ask("Which file?");
+		assert.deepEqual(
+			(await backgroundTraceStates(extension, id)).map((data) => data.state),
+			["queued", "running", "waiting"],
+		);
+
+		await use(extension, "reply_child", { id, question: 1, answer: "a.ts" });
+		await answer;
+		assert.deepEqual(
+			(await backgroundTraceStates(extension, id)).map((data) => data.state),
+			["queued", "running", "waiting", "running"],
+		);
+	});
+});
+
+test("a background child that fails, is cancelled, or times out is traced with that state and no Verdict", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const clock = manualClock();
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			schedule: clock.schedule,
+		});
+		const failed = await spawnBackground(extension, worktree);
+		const cancelled = await spawnBackground(extension, worktree);
+		const timedOut = await spawnBackground(extension, worktree);
+		await settle();
+
+		children.created[0].result.reject(new Error("provider overloaded"));
+		await settle();
+		await use(extension, "cancel_child", { id: cancelled });
+		clock.fire(minutes(4));
+
+		for (const [id, state] of [
+			[failed, "failed"],
+			[cancelled, "cancelled"],
+			[timedOut, "timed out"],
+		]) {
+			const traces = await backgroundTraceStates(extension, id);
+			assert.equal(traces.at(-1).state, state);
+			assert.equal(traces.at(-1).verdict, undefined);
+		}
+	});
+});
+
+test("a trace entry that cannot be appended does not break the child", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		extension.entries.push = () => {
+			throw new Error("disk full");
+		};
+
+		await spawnBackground(extension, worktree);
+		await settle();
+		children.created[0].result.resolve("Done.");
+		await settle();
+
+		assert.equal(extension.messages.length, 1);
 	});
 });
 
@@ -666,7 +892,7 @@ test("a null role is missing and does not warn that worker was assumed", async (
 		assert.equal(result.details.status, "completed");
 		assert.equal(result.details.role, "worker");
 		assert.doesNotMatch(text(result), /No role was named/);
-		assert.deepEqual(children.created[0].spec.tools, workerTools);
+		assert.deepEqual(children.created[0].spec.tools, spawnedTools);
 	});
 });
 
@@ -854,7 +1080,7 @@ test("the default child factory runs the contract on the parent's model runtime 
 		assert.match(system.sections.cwd, new RegExp(worktree));
 		assert.deepEqual(
 			system.toolsAdded.map((tool) => tool.name).sort(),
-			[...workerTools, "ask_parent"].sort(),
+			[...spawnedTools].sort(),
 		);
 		assert.equal(messages.length, 0);
 	});
@@ -1304,7 +1530,10 @@ test("list_children, child_status, and child_result report the children of this 
 		assert.match(text(status), new RegExp(`${busy} · worker · running`));
 
 		const result = await use(extension, "child_result", { id: done });
-		assert.equal(text(result), "All tests pass.");
+		assert.equal(
+			text(result),
+			`Child ${done} completed. Verdict: absent.\n\nAll tests pass.`,
+		);
 		assert.equal(result.details.state, "completed");
 		const pending = await use(extension, "child_result", { id: busy });
 		assert.match(
@@ -1360,6 +1589,7 @@ test("cancel_child and the children view leave a running child in the same cance
 
 		const view = openChildren(extension);
 		view.press("s", "y");
+		await settle();
 		assert.match(view.lines().join("\n"), /worker [0-9a-f]{4} cancelled\./);
 		assert.equal(children.created[1].disposals, 1);
 		assert.equal(extension.messages.length, 1);
@@ -1505,6 +1735,11 @@ test("a running child silent for four minutes times out, a tool in flight stretc
 				"timed out",
 			],
 		);
+		assert.equal(extension.messages.length, 2);
+		assert.deepEqual(
+			extension.messages[1].message.details.results.map(stateOfDetails),
+			ids.slice(1).map((id) => ({ id, state: "timed out" })),
+		);
 		assert.match(
 			extension.messages[1].message.content,
 			/no activity for 4 minutes/,
@@ -1517,7 +1752,7 @@ test("a running child silent for four minutes times out, a tool in flight stretc
 			assistantMessageEvent: { type: "text_delta" },
 		});
 		await settle();
-		assert.equal(extension.messages.length, 6);
+		assert.equal(extension.messages.length, 2);
 		assert.deepEqual(clock.pending(), []);
 	});
 });
@@ -1547,6 +1782,7 @@ test("a foreground child silent for four minutes is aborted and the call fails a
 		assert.equal(children.created[0].disposals, 1);
 		assert.deepEqual(clock.pending(), []);
 		assert.equal(extension.messages.length, 0);
+		assert.deepEqual(traceStates(extension.entries), ["running", "timed out"]);
 	});
 });
 
@@ -2112,7 +2348,7 @@ test("continue_child through Pi's SDK sends the completed child's conversation p
 			await eventually(() => extension.messages.length === 2);
 			assert.match(
 				extension.messages[1].message.content,
-				/completed:\n\nSecond answer\./,
+				/completed\. Verdict: absent\.\n\nSecond answer\./,
 			);
 			assert.deepEqual(stateOfDetails(extension.messages[1].message.details), {
 				id: next.details.id,
@@ -2176,7 +2412,7 @@ test("a background child asks through Pi's SDK, the parent model replies, and th
 
 		assert.match(
 			extension.messages[1].message.content,
-			/completed:\n\nFixed src\/parser\.ts\./,
+			/completed\. Verdict: absent\.\n\nFixed src\/parser\.ts\./,
 		);
 		assert.ok(sent(parent.requests[1]).includes("src/parser.ts"));
 		assert.equal(await stateOf(extension, id), "completed");
@@ -3527,5 +3763,219 @@ test("a click after leaving the detail and before the next redraw opens nothing"
 		});
 		assert.equal(click, undefined);
 		assert.match(view.lines(60)[1], /Active ─/);
+	});
+});
+
+test("a busy parent receives a child result after the current turn, steered rather than held until the run ends", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		const id = await spawnBackground(extension, worktree);
+		await settle();
+		extension.busy(true);
+
+		children.created[0].result.resolve("Done.");
+		await settle();
+		assert.equal(extension.messages.length, 0);
+
+		await extension.fire("turn_end");
+
+		assert.equal(extension.messages.length, 1);
+		const [{ message, options }] = extension.messages;
+		assert.deepEqual(stateOfDetails(message.details), { id, state: "completed" });
+		assert.deepEqual(options, { deliverAs: "steer", triggerTurn: true });
+	});
+});
+
+test("results pending at one turn boundary arrive together in a single message", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		const first = await spawnBackground(extension, worktree);
+		const second = await spawnBackground(extension, worktree);
+		await settle();
+		extension.busy(true);
+
+		children.created[0].result.resolve("First answer.");
+		children.created[1].result.reject(new Error("provider overloaded"));
+		await settle();
+		await extension.fire("turn_end");
+		await extension.fire("turn_end");
+
+		assert.equal(extension.messages.length, 1);
+		const [{ message, options }] = extension.messages;
+		assert.equal(message.customType, "pi-workflow-child-result");
+		assert.deepEqual(message.details.results.map(stateOfDetails), [
+			{ id: first, state: "completed" },
+			{ id: second, state: "failed" },
+		]);
+		assert.equal(
+			message.content,
+			`Child ${first} completed. Verdict: absent.\n\nFirst answer.\n\nChild ${second} failed: provider overloaded`,
+		);
+		assert.deepEqual(options, { deliverAs: "steer", triggerTurn: true });
+	});
+});
+
+test("a result the parent read with child_result is not delivered again and triggers no turn", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		const read = await spawnBackground(extension, worktree);
+		const other = await spawnBackground(extension, worktree);
+		await settle();
+		extension.busy(true);
+		children.created[0].result.resolve("Read answer.");
+		await settle();
+
+		const result = await use(extension, "child_result", { id: read });
+		assert.match(text(result), /\n\nRead answer\.$/);
+		await extension.fire("turn_end");
+		assert.equal(extension.messages.length, 0);
+
+		children.created[1].result.resolve("Other answer.");
+		await settle();
+		await extension.fire("turn_end");
+		assert.equal(extension.messages.length, 1);
+		assert.deepEqual(stateOfDetails(extension.messages[0].message.details), {
+			id: other,
+			state: "completed",
+		});
+		await use(extension, "child_result", { id: other });
+		await extension.fire("agent_settled");
+		assert.equal(extension.messages.length, 1);
+	});
+});
+
+test("a result whose delivery throws stays pending and is delivered on the next turn", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		let failures = 1;
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			sendMessage: () => {
+				if (failures-- > 0) throw new Error("transport closed");
+			},
+		});
+		const id = await spawnBackground(extension, worktree);
+		await settle();
+		extension.busy(true);
+		children.created[0].result.resolve("Late answer.");
+		await settle();
+
+		await extension.fire("turn_end");
+		assert.match(
+			extension.notifications.at(-1).message,
+			/could not be delivered: transport closed/,
+		);
+		await extension.fire("turn_end");
+
+		assert.equal(extension.messages.length, 2);
+		assert.deepEqual(stateOfDetails(extension.messages[1].message.details), {
+			id,
+			state: "completed",
+		});
+		await extension.fire("agent_settled");
+		assert.equal(extension.messages.length, 2);
+	});
+});
+
+test("continue_child consumes the earlier result, and the new record keeps continuedFrom", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		const done = await spawnBackground(extension, worktree);
+		await settle();
+		extension.busy(true);
+		children.created[0].result.resolve("First answer.");
+		await settle();
+
+		const result = await use(
+			extension,
+			"continue_child",
+			{ id: done, task: "Now add a test" },
+			toolContext("tui", worktree),
+		);
+		await extension.fire("turn_end");
+
+		assert.equal(extension.messages.length, 0);
+		const next = result.details.id;
+		assert.equal(
+			(await use(extension, "child_status", { id: next })).details.child
+				.continuedFrom,
+			done,
+		);
+		await settle();
+		children.created[1].result.resolve("Second answer.");
+		await settle();
+		await extension.fire("turn_end");
+		assert.deepEqual(
+			extension.messages.map(({ message }) => stateOfDetails(message.details)),
+			[{ id: next, state: "completed" }],
+		);
+	});
+});
+
+test("session shutdown drops pending results, and the ended children are gone from child_result", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		const id = await spawnBackground(extension, worktree);
+		await settle();
+		extension.busy(true);
+		children.created[0].result.resolve("Earlier answer.");
+		await settle();
+
+		await extension.fire("session_shutdown");
+		await extension.fire("session_start", { reason: "resume" });
+		await extension.fire("turn_end");
+		await extension.fire("agent_settled");
+
+		assert.equal(extension.messages.length, 0);
+		assert.match(
+			text(await use(extension, "child_result", { id })),
+			/^No child .+ in this session/,
+		);
+	});
+});
+
+test("an idle parent receives results that end together in one message that starts one turn", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		const first = await spawnBackground(extension, worktree);
+		const second = await spawnBackground(extension, worktree);
+		await settle();
+
+		children.created[0].result.resolve("First answer.");
+		children.created[1].result.resolve("Second answer.");
+		await settle();
+
+		assert.equal(extension.messages.length, 1);
+		const [{ message, options }] = extension.messages;
+		assert.deepEqual(message.details.results.map(stateOfDetails), [
+			{ id: first, state: "completed" },
+			{ id: second, state: "completed" },
+		]);
+		assert.deepEqual(options, { deliverAs: "steer", triggerTurn: true });
 	});
 });

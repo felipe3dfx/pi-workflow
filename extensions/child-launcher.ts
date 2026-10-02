@@ -25,6 +25,7 @@ export interface LaunchRequest {
 	role?: string;
 	task: string;
 	worktree?: string;
+	references?: string[];
 	userRequest?: string;
 }
 
@@ -62,10 +63,11 @@ const specialistInstructions =
 
 const specialistCriteria: Record<Specialist, string> = {
 	explorer:
-		"Read-only investigation, source comparison, or mapping how something works, including an architecture investigation.",
+		"Read-only investigation, source comparison, or mapping how something works, including an architecture investigation. Not a review of a pull request or of work that is already done.",
 	worker:
 		"Implementation, a fix, or another change a child can finish under its contract.",
-	verifier: "An independent check of work that is already done.",
+	verifier:
+		"An independent review or check of work that is already done, including a pull request, a diff, or finished changes.",
 };
 
 const destinationInstructions = "Where should this package go?";
@@ -114,6 +116,8 @@ type Ready = {
 	warnings: string[];
 	model: string;
 	thinking: ModelThinkingLevel;
+	chosenBy: "parent" | "jev";
+	references: string[];
 	jev?: ClassifierResult;
 };
 
@@ -203,6 +207,30 @@ function withinCwd(path: string, cwd: string): string | undefined {
 		return rel;
 	} catch {
 		return undefined;
+	}
+}
+
+function resolveReferences(
+	references: readonly string[],
+	cwd: string,
+): string[] | { unreachable: string } {
+	try {
+		const root = realpathSync(cwd);
+		const paths: string[] = [];
+		for (const reference of references) {
+			try {
+				const path = realpathSync(resolve(cwd, reference));
+				if (withinCwd(path, root) === undefined) {
+					return { unreachable: reference };
+				}
+				paths.push(path);
+			} catch {
+				return { unreachable: reference };
+			}
+		}
+		return paths;
+	} catch {
+		return references.length > 0 ? { unreachable: references[0] } : [];
 	}
 }
 
@@ -478,6 +506,14 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		}
 		const profiles = options.modelProfiles.load();
 		if (profiles.status === "refused") return outcome("refused", profiles.reason);
+		const references = request.references ?? [];
+		const paths = resolveReferences(references, ctx.cwd);
+		if (!Array.isArray(paths)) {
+			return outcome(
+				"refused",
+				`reference ${paths.unreachable} does not exist or is outside ${ctx.cwd}`,
+			);
+		}
 		const worktree = await gitRoot(resolve(ctx.cwd, request.worktree ?? "."));
 		if (typeof worktree !== "string") return worktree;
 		const verdict = await verdictFor(request, ctx);
@@ -491,11 +527,16 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			kind: "ready",
 			role: verdict.role,
 			contract,
-			task: request.task,
+			task:
+				references.length > 0
+					? `${request.task}\n\nRead these paths first:\n${paths.map((path) => `- ${path}`).join("\n")}`
+					: request.task,
 			worktree,
 			warnings: [],
 			model: pair.model,
 			thinking: pair.thinking,
+			chosenBy: verdict.jev ? "jev" : "parent",
+			references,
 			...jev,
 		};
 	}

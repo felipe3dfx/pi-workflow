@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 import type {
 	AssistantMessage,
@@ -22,8 +23,18 @@ import { type Static, Type } from "typebox";
 
 import type { createChildLauncher } from "./child-launcher.ts";
 import { claim, held } from "./configure.ts";
-import { projectChild } from "./child-projection.ts";
+import {
+	childOutcome,
+	childVerdict,
+	projectChild,
+} from "./child-projection.ts";
 import { sanitizeTaskText } from "./todo-header.ts";
+
+const packageVersion = (
+	JSON.parse(
+		readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+	) as { version: string }
+).version;
 
 export const childOverlay = claim("child-session", "overlay");
 
@@ -65,6 +76,8 @@ type Plan = {
 	worktree: string;
 	model: string;
 	thinking: ModelThinkingLevel;
+	chosenBy: "parent" | "jev";
+	references: string[];
 };
 
 type ChildState =
@@ -108,6 +121,17 @@ interface Child {
 		resolve(answer: string): void;
 		reject(error: Error): void;
 	};
+}
+
+export interface ChildTrace {
+	id: string;
+	role: string;
+	chosenBy: "parent" | "jev";
+	tools: string[];
+	references: string[];
+	state: ChildState;
+	verdict?: string;
+	version: string;
 }
 
 export type Schedule = (run: () => void, ms: number) => () => void;
@@ -179,6 +203,10 @@ export function childDetails(record: ChildRecord, now = Date.now()) {
 		task: projected.task,
 		elapsedMs: projected.elapsedMs,
 		text: projected.text,
+		verdict:
+			projected.state === "completed"
+				? childVerdict(projected.role, projected.text)
+				: undefined,
 	};
 }
 
@@ -200,6 +228,12 @@ function parentRuntime(
 	return typeof runtime?.getModel === "function"
 		? (runtime as ModelRuntime)
 		: undefined;
+}
+
+const askParentTool = "ask_parent";
+
+function childTools(plan: Plan) {
+	return [...plan.contract.tools, askParentTool];
 }
 
 const askParentParameters = Type.Object({
@@ -234,10 +268,10 @@ const createPiChildSession: ChildSessionFactory = async (spec) => {
 			spec.model.slice(slash + 1),
 		),
 		thinkingLevel: spec.thinking,
-		tools: [...spec.tools, "ask_parent"],
+		tools: spec.tools,
 		customTools: [
 			{
-				name: "ask_parent",
+				name: askParentTool,
 				label: "Ask Parent",
 				description:
 					"Ask the parent session one question and wait for its answer. Use it only when the task cannot continue without a decision the parent owns. An error result means no answer will come; continue without one.",
@@ -305,8 +339,9 @@ const abortedBeforeLaunch = {
 
 export function createChildSessions(options: {
 	create?: ChildSessionFactory;
-	deliver: (record: ChildRecord) => void;
+	deliver: () => void;
 	ask: (record: ChildRecord, question: string, number: number) => void;
+	trace: (entry: ChildTrace) => void;
 	report: (message: string) => void;
 	schedule?: Schedule;
 }) {
@@ -314,6 +349,8 @@ export function createChildSessions(options: {
 	const schedule = options.schedule ?? scheduleTimer;
 	const children = new Map<string, Child>();
 	const queue: Child[] = [];
+	const consumed = new Set<string>();
+	let pending: ChildRecord[] = [];
 	const listeners = new Set<() => void>();
 	let generation = 0;
 
@@ -321,6 +358,30 @@ export function createChildSessions(options: {
 		try {
 			options.report(message);
 		} catch {}
+	}
+
+	function trace(child: Child) {
+		const { record, plan } = child;
+		traceRun(record.id, plan, record.state, record.text);
+	}
+
+	function traceRun(id: string, plan: Plan, state: ChildState, text?: string) {
+		const verdict =
+			state === "completed" ? childVerdict(plan.role, text) : undefined;
+		try {
+			options.trace({
+				id,
+				role: plan.role,
+				chosenBy: plan.chosenBy,
+				tools: childTools(plan),
+				references: plan.references,
+				state,
+				...(verdict ? { verdict } : {}),
+				version: packageVersion,
+			});
+		} catch (error) {
+			warn(`Child ${id}: ${errorMessage(error)}`);
+		}
 	}
 
 	function changed() {
@@ -387,6 +448,7 @@ export function createChildSessions(options: {
 	function run(child: Child) {
 		child.record.state = "running";
 		child.record.startedAt = Date.now();
+		trace(child);
 		child.watch.start();
 		changed();
 		void child.handle.run(child.plan.task).then(
@@ -410,6 +472,7 @@ export function createChildSessions(options: {
 		record.text = text;
 		record.endedAt = Date.now();
 		record.step = undefined;
+		trace(child);
 		child.streaming = undefined;
 		answer(
 			child,
@@ -433,9 +496,10 @@ export function createChildSessions(options: {
 		}
 		pump();
 		changed();
-		if (!deliver) return;
+		if (!deliver || consumed.has(record.id)) return;
+		pending.push({ ...record });
 		try {
-			options.deliver({ ...record });
+			options.deliver();
 		} catch (error) {
 			warn(`Child ${record.id}: ${errorMessage(error)}`);
 		}
@@ -448,6 +512,7 @@ export function createChildSessions(options: {
 		if (child.record.state === "waiting") {
 			child.record.state = "running";
 			child.record.step = undefined;
+			trace(child);
 			changed();
 		}
 		if (reply instanceof Error) question.reject(reply);
@@ -472,6 +537,7 @@ export function createChildSessions(options: {
 			child.question = { number, resolve, reject };
 			child.record.state = "waiting";
 			child.record.step = `asks question ${number}`;
+			trace(child);
 			changed();
 			try {
 				options.ask({ ...child.record }, question, number);
@@ -509,7 +575,7 @@ export function createChildSessions(options: {
 				model: plan.model,
 				thinking: plan.thinking,
 				prompt: plan.contract.prompt,
-				tools: plan.contract.tools,
+				tools: childTools(plan),
 				modelRegistry: launch.modelRegistry,
 				onEvent: (event) => {
 					watch.event(event);
@@ -558,15 +624,22 @@ export function createChildSessions(options: {
 			};
 		}
 		if (!launch.background) {
+			const id = randomUUID();
+			let ended: ChildState = "failed";
 			const stopped = Promise.withResolvers<never>();
-			const stop = (error: Error) => {
+			const stop = (state: ChildState, error: Error) => {
+				ended = state;
 				stopped.reject(error);
 				void handle.abort().catch(() => {});
 			};
 			const abort = () =>
-				stop(new Error("The call was aborted and the child was stopped."));
+				stop(
+					"cancelled",
+					new Error("The call was aborted and the child was stopped."),
+				);
 			launch.signal?.addEventListener("abort", abort, { once: true });
-			stall = (reason) => stop(new Error(`The child timed out: ${reason}`));
+			stall = (reason) =>
+				stop("timed out", new Error(`The child timed out: ${reason}`));
 			asked = () =>
 				Promise.reject<string>(
 					new Error(
@@ -574,12 +647,17 @@ export function createChildSessions(options: {
 					),
 				);
 			watch.start();
+			traceRun(id, plan, "running");
 			try {
 				const text = await Promise.race([
 					handle.run(plan.task),
 					stopped.promise,
 				]);
+				traceRun(id, plan, "completed", text);
 				return { status: "completed" as const, text };
+			} catch (error) {
+				traceRun(id, plan, ended);
+				throw error;
 			} finally {
 				watch.stop();
 				launch.signal?.removeEventListener("abort", abort);
@@ -610,12 +688,13 @@ export function createChildSessions(options: {
 		observe = (event) => track(child, event);
 		children.set(child.record.id, child);
 		queue.push(child);
+		trace(child);
 		changed();
 		queueMicrotask(pump);
 		return { status: "queued" as const, id: child.record.id };
 	}
 
-	function resume(
+	async function resume(
 		id: string,
 		task: string,
 		launch: {
@@ -635,11 +714,13 @@ export function createChildSessions(options: {
 				`Child ${id} is ${child.record.state}; only a completed child can be continued.`,
 			);
 		}
-		return start(
+		const started = await start(
 			{ ...child.plan, task },
 			{ ...launch, background: true },
 			{ id, conversation: child.conversation },
 		);
+		if (started.status === "queued") consume(id);
+		return started;
 	}
 
 	function reply(id: string, number: number, text: string) {
@@ -667,6 +748,15 @@ export function createChildSessions(options: {
 		}
 		finish(child, "cancelled", "The child was cancelled.", deliver);
 		return { cancelled: true, message: `Child ${id} cancelled.` };
+	}
+
+	function consume(id: string) {
+		consumed.add(id);
+		pending = pending.filter((record) => record.id !== id);
+	}
+
+	function pendingResults() {
+		return [...pending];
 	}
 
 	function get(id: string): ChildRecord | undefined {
@@ -707,6 +797,7 @@ export function createChildSessions(options: {
 		);
 		children.clear();
 		queue.length = 0;
+		pending = [];
 		for (const child of working) {
 			child.watch.stop();
 			answer(child, new Error("The session ended."));
@@ -722,6 +813,8 @@ export function createChildSessions(options: {
 		resume,
 		reply,
 		cancel,
+		consume,
+		pendingResults,
 		get,
 		list,
 		subscribe,
@@ -743,6 +836,12 @@ const spawnChildParameters = Type.Object({
 		Type.String({
 			description:
 				"An existing Git root for the child to work in. Defaults to the current Git root.",
+		}),
+	),
+	references: Type.Optional(
+		Type.Array(Type.String(), {
+			description:
+				"Paths under the current directory the child must read. The launch is refused when one does not exist or resolves outside it.",
 		}),
 	),
 	background: Type.Optional(
@@ -846,6 +945,7 @@ export function createSpawnChildTool(
 					role: params.role ?? undefined,
 					task: params.task,
 					worktree: params.worktree,
+					references: params.references,
 					...(userRequest ? { userRequest } : {}),
 				},
 				ctx,
@@ -886,8 +986,14 @@ function launched(
 		? `Jev selected ${selection.role}.`
 		: undefined;
 	if (started.status === "completed") {
-		return report([...warnings, started.text], {
+		const outcome = selection
+			? childOutcome({ ...selection, state: "completed", text: started.text })
+			: started.text;
+		return report([...warnings, outcome], {
 			status: "completed",
+			...(selection
+				? { verdict: childVerdict(selection.role, started.text) }
+				: {}),
 			...selected,
 		});
 	}
@@ -1026,7 +1132,11 @@ export function createChildQueryTools(
 					{ id: child.id, state: child.state },
 				);
 			}
-			return report([child.text], { id: child.id, state: child.state });
+			sessions.consume(child.id);
+			return report([childOutcome(child)], {
+				id: child.id,
+				state: child.state,
+			});
 		},
 	};
 	const cancelChild: ToolDefinition<

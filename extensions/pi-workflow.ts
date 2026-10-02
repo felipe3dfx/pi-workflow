@@ -107,16 +107,9 @@ export default function piWorkflowExtension(
 	const childSessions = createChildSessions({
 		create: options.childSessions?.create,
 		schedule: options.childSessions?.schedule,
-		deliver: (child) =>
-			pi.sendMessage(
-				{
-					customType: "pi-workflow-child-result",
-					content: childOutcome(child),
-					display: true,
-					details: childDetails(child),
-				},
-				{ deliverAs: "followUp", triggerTurn: true },
-			),
+		deliver: () => {
+			if (currentCtx?.isIdle()) queueMicrotask(deliverResults);
+		},
 		ask: (child, question, number) =>
 			pi.sendMessage(
 				{
@@ -127,10 +120,39 @@ export default function piWorkflowExtension(
 				},
 				{ deliverAs: "steer", triggerTurn: true },
 			),
+		trace: (entry) => pi.appendEntry("pi-workflow-child-trace", entry),
 		report: (message) => {
 			if (currentCtx) report(currentCtx, message, "error");
 		},
 	});
+	function deliverResults() {
+		const results = childSessions.pendingResults();
+		if (results.length === 0) return;
+		try {
+			pi.sendMessage(
+				{
+					customType: "pi-workflow-child-result",
+					content: results.map(childOutcome).join("\n\n"),
+					display: true,
+					details:
+						results.length === 1
+							? childDetails(results[0])
+							: { results: results.map((child) => childDetails(child)) },
+				},
+				{ deliverAs: "steer", triggerTurn: true },
+			);
+			for (const child of results) childSessions.consume(child.id);
+		} catch (error) {
+			if (currentCtx)
+				report(
+					currentCtx,
+					`Child results could not be delivered: ${error instanceof Error ? error.message : String(error)}`,
+					"error",
+				);
+		}
+	}
+	pi.on("turn_end", deliverResults);
+	pi.on("agent_settled", deliverResults);
 	const childrenViews = createChildrenViews(childSessions);
 	registerChildrenBox(pi, childSessions, options.childSessions?.refresh);
 	registerSessionTodo(pi);

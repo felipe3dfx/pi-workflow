@@ -38,10 +38,39 @@ export function childStep(child: { step?: string; task: string }) {
 	return child.step ?? childTaskLine(child.task);
 }
 
-export function childOutcome(child: { id: string; state: string; text?: string }) {
-	if (child.state === "completed") return `Child ${child.id} completed:\n\n${child.text ?? ""}`;
-	if (child.state === "cancelled") return `Child ${child.id} cancelled.`;
-	return `Child ${child.id} ${child.state}: ${child.text ?? ""}`;
+const verdictLines: Record<string, { line: RegExp; values: string[] }> = {
+	worker: {
+		line: /^status:[ \t]*(.*?)[ \t\r]*$/gimu,
+		values: ["done", "partial", "blocked"],
+	},
+	verify: {
+		line: /^verdict:[ \t]*(.*?)[ \t\r]*$/gimu,
+		values: ["pass", "fail", "blocked"],
+	},
+};
+
+export function childVerdict(role: string, text: string | undefined) {
+	const spec = verdictLines[role];
+	if (!spec || text === undefined) return undefined;
+	const last = [...text.matchAll(spec.line)].at(-1)?.[1]?.toLowerCase();
+	return last && spec.values.includes(last) ? last : undefined;
+}
+
+export function childOutcome(child: {
+	id?: string;
+	state: string;
+	role: string;
+	text?: string;
+}) {
+	const name = child.id ? `Child ${child.id}` : "Child";
+	if (child.state === "completed") {
+		const verdict = verdictLines[child.role]
+			? ` Verdict: ${childVerdict(child.role, child.text) ?? "absent"}.`
+			: "";
+		return `${name} completed.${verdict}\n\n${child.text ?? ""}`;
+	}
+	if (child.state === "cancelled") return `${name} cancelled.`;
+	return `${name} ${child.state}: ${child.text ?? ""}`;
 }
 
 export function projectChild(

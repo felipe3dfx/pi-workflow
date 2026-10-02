@@ -7,6 +7,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
 	type Component,
+	Container,
 	Markdown,
 	type TuiMouseEvent,
 	truncateToWidth,
@@ -31,7 +32,6 @@ const OPENED = Symbol.for("pi-workflow:child-result-card:opened");
 const slots = globalThis as Record<symbol, Map<string, boolean> | undefined>;
 slots[OPENED] ??= new Map();
 const opened = slots[OPENED];
-const previewLines = 3;
 const indent = 2;
 
 type Card = Partial<ChildDetails> & { id: string; text: string };
@@ -83,15 +83,48 @@ function tone(card: Card, question: boolean): ThemeColor {
 	return "toolTitle";
 }
 
-function header(theme: Theme, card: Card, question: boolean) {
+function verdictTone(verdict: string): ThemeColor {
+	if (verdict === "fail") return "error";
+	if (verdict === "blocked") return "warning";
+	return "success";
+}
+
+function reason(card: Card) {
+	if (
+		card.state !== "failed" &&
+		card.state !== "timed out" &&
+		card.verdict !== "fail" &&
+		card.verdict !== "blocked"
+	)
+		return undefined;
+	const lines = card.text.split("\n").map((line) => line.trim());
+	const undone = lines.findIndex((line) => /^left_undone:\s*$/i.test(line));
+	const item = lines[undone + 1]?.match(/^-\s*(.+)$/)?.[1];
+	if (undone >= 0 && item) return item;
+	const verdict = lines.findLastIndex((line) =>
+		/^verdict:\s*(fail|blocked)\s*$/i.test(line),
+	);
+	if (verdict >= 0) {
+		const near =
+			lines.slice(verdict + 1).find(Boolean) ??
+			lines.slice(0, verdict).findLast(Boolean);
+		if (near) return near;
+	}
+	return lines.find((line) => line && !/^(verdict|status):/i.test(line));
+}
+
+function header(theme: Theme, card: Card, question: boolean, open: boolean) {
 	const name = [card.role, card.id.slice(0, 4)].filter(Boolean).join(" ");
 	let line = `${theme.fg(tone(card, question), "◆")} ${theme.bold(theme.fg("muted", "Subagent"))} ${name}`;
 	if (question)
 		return `${line} ${theme.fg("warning", `asks · question ${card.question ?? "?"}`)}`;
 	if (card.state && card.state !== "completed")
 		line += ` ${theme.fg(tone(card, question), card.state)}`;
+	if (card.verdict)
+		line += ` ${theme.fg(verdictTone(card.verdict), card.verdict)}`;
 	const meta = [
-		card.model &&
+		open &&
+			card.model &&
 			childModelLine({
 				model: card.model,
 				thinking: card.thinking,
@@ -148,9 +181,8 @@ class ResultCard implements Component {
 		const edge = edgeFor(assistantInset, outer);
 		const width = Math.max(1, outer - edge * 2);
 		const open = this.open();
-		const full = open || this.question || this.state.failed;
 		const key = keyText("app.tools.expand");
-		const head = header(t, this.card, this.question);
+		const head = header(t, this.card, this.question, open);
 		const hint = key
 			? t.fg(
 					"dim",
@@ -165,17 +197,13 @@ class ResultCard implements Component {
 		const lines: string[] = [];
 		if (open && this.card.task)
 			lines.push(t.fg("dim", `Task ${sanitizeTaskText(this.card.task)}`));
-		if (this.card.text.trim()) {
+		if (open || this.question) {
 			const body = this.body.render(inner).map((line) => line.trimEnd());
 			while (body.length > 0 && body.at(-1) === "") body.pop();
-			const preview = body.filter((line) => visibleWidth(line) > 0);
-			if (full) lines.push(...body);
-			else if (preview.length <= previewLines) lines.push(...preview);
-			else
-				lines.push(
-					...preview.slice(0, previewLines),
-					t.fg("dim", `… +${preview.length - previewLines} lines`),
-				);
+			lines.push(...body);
+		} else {
+			const why = reason(this.card);
+			if (why) lines.push(t.fg("dim", sanitizeTaskText(why)));
 		}
 		if (open) lines.push(t.fg("dim", "alt+a  open in subagents view"));
 		const margin = " ".repeat(edge);
@@ -198,12 +226,30 @@ class ResultCard implements Component {
 	}
 }
 
+function resultCards(message: Message, expanded: boolean, theme: Theme) {
+	const { results } = (message.details ?? {}) as { results?: ChildDetails[] };
+	if (!Array.isArray(results)) return new ResultCard(message, expanded, theme);
+	const batch = new Container();
+	const cards = results.map(
+		(details) =>
+			new ResultCard({ ...message, content: "", details }, expanded, theme),
+	);
+	for (const card of cards) batch.addChild(card);
+	markCard(batch, {
+		get open() {
+			return cards.every((card) => card.state.open);
+		},
+		get failed() {
+			return cards.some((card) => card.state.failed);
+		},
+	});
+	return batch;
+}
+
 export function registerChildResultCards(pi: ExtensionAPI) {
 	for (const type of [RESULT_TYPE, QUESTION_TYPE])
-		pi.registerMessageRenderer(
-			type,
-			(message, { expanded }, theme) =>
-				new ResultCard(message, expanded, theme),
+		pi.registerMessageRenderer(type, (message, { expanded }, theme) =>
+			resultCards(message, expanded, theme),
 		);
 	pi.on("session_shutdown", async () => {
 		opened.clear();
