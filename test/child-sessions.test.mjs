@@ -1140,6 +1140,29 @@ test("the default child factory runs the contract on the parent's model runtime 
 	});
 });
 
+test("the default child factory gives an explore child a read-only codegraph and no init", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const parent = await fauxParent(agentDir, fauxAssistantMessage("Found it."));
+		const { tool } = await loadSpawnTool({ agentDir });
+
+		const result = await spawn(
+			tool,
+			{ role: "explore", task: "Map the launcher" },
+			{ ...toolContext("print", worktree), ...parent.context },
+		);
+
+		assert.equal(result.details.status, "completed", text(result));
+		const [system] = parent.requests[0].messages;
+		const added = system.toolsAdded.map((added) => added.name);
+		assert.ok(added.includes("codegraph"));
+		const codegraph = system.toolsAdded.find((added) => added.name === "codegraph");
+		assert.deepEqual(codegraph.parameters.properties.operation.enum, [
+			"query",
+			"explore",
+		]);
+	});
+});
+
 test("launching a child keeps the parent's model and thinking, and a profile naming a virtual model runs the child on it", async () => {
 	await assertLaunchKeepsParentModel(fakeJev());
 });

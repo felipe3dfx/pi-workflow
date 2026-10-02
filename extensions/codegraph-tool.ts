@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { lstatSync, realpathSync, type Stats } from "node:fs";
+import { existsSync, lstatSync, realpathSync, type Stats } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -202,6 +202,44 @@ export function createCodeGraphTool(adapters: CodeGraphAdapters = {}) {
 				);
 			}
 			return outcome("ok", output || "CodeGraph completed without output.");
+		},
+	};
+}
+
+export function createChildCodeGraphTool(
+	cwd: string,
+	adapters?: CodeGraphAdapters,
+) {
+	const tool = createCodeGraphTool(adapters);
+	return {
+		...tool,
+		description:
+			"Search or explore the CodeGraph index of this worktree. It is read-only, accepts no path and no shell command.",
+		promptSnippet: "Search or explore the CodeGraph index of this worktree",
+		promptGuidelines: [
+			"Use codegraph query for symbols or codegraph explore for source and call paths before reading files one by one.",
+		],
+		parameters: {
+			...tool.parameters,
+			properties: {
+				...tool.parameters.properties,
+				operation: { type: "string", enum: ["query", "explore"] },
+			},
+		} as const,
+		async execute(
+			toolCallId: string,
+			params: CodeGraphParameters,
+			signal?: AbortSignal,
+		) {
+			if (params.operation !== "query" && params.operation !== "explore") {
+				throw new Error("CodeGraph here accepts only query or explore.");
+			}
+			if (!existsSync(join(cwd, ".codegraph"))) {
+				throw new Error(
+					`This worktree has no .codegraph index. ${fallback}`,
+				);
+			}
+			return tool.execute(toolCallId, params, signal, undefined, { cwd });
 		},
 	};
 }
