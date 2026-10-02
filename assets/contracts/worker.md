@@ -12,3 +12,4 @@ left_undone:
 - <what remains, or none>
 
 Use done only when those commands ran and their output is in this result. When you cannot continue, set status to blocked and name what remains under left_undone.
+When the task needs a capability you do not have, set status to blocked and name the missing capability under left_undone, or ask the parent with ask_parent. Do not simulate the result. You have no MCP tools and cannot launch child sessions.

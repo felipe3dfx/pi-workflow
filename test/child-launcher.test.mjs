@@ -750,6 +750,24 @@ test("an implementation package and an independent check take the specialist Jev
 	});
 });
 
+test("the verifier criterion covers review of finished work and the explorer criterion excludes it", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		let criteria;
+		const jev = fakeJev((body) => {
+			criteria = body.questions.specialist.criteria;
+			return "verifier";
+		});
+		await createChildLauncher({ modelProfiles: absentProfiles }).prepareLaunch(
+			{ task: "Review PR 12", userRequest: "Review PR 12" },
+			launcherContext(worktree, { jev }),
+		);
+
+		assert.match(criteria.verifier, /review or check of work that is already done/);
+		assert.match(criteria.verifier, /pull request/);
+		assert.match(criteria.explorer, /Not a review of a pull request or of work that is already done/);
+	});
+});
+
 test("an invalid Jev selection blocks the launch and keeps the returned signals", async () => {
 	await withWorkspace(async ({ worktree }) => {
 		const jev = fakeJev(() => ({

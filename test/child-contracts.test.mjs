@@ -46,3 +46,18 @@ test("the worker contract asks for the return block and keeps ask_parent as the 
 	assert.match(text, /ask_parent/);
 	assert.doesNotMatch(text, /interaction_required/);
 });
+
+test("every contract names the missing-capability response and forbids simulating the result", async () => {
+	for (const role of ["explore", "worker", "verify"]) {
+		const text = await contract(role);
+		assert.match(text, /capability you do not have/);
+		assert.match(text, /ask_parent/);
+		assert.match(text, /Do not simulate the result/);
+	}
+	assert.match(await contract("verify"), /verdict: blocked/);
+	assert.match(await contract("worker"), /status to blocked and name the missing capability/);
+});
+
+test("the worker contract declares that children have no MCP and cannot launch children", async () => {
+	assert.match(await contract("worker"), /no MCP tools and cannot launch child sessions/);
+});
