@@ -422,7 +422,9 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		return { kind: "launch", role: roleBySpecialist[specialist.choice], jev };
 	}
 
-	let turn: { userRequest: string; pending: Promise<Assessment> } | undefined;
+	let turn:
+		| { userRequest: string; pending: Promise<Assessment>; launched?: true }
+		| undefined;
 
 	function verdictFor(
 		request: LaunchRequest,
@@ -462,6 +464,7 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		if (!userRequest) return { allow: true };
 		const verdict = await verdictFor({ task: userRequest, userRequest }, ctx);
 		if (verdict.kind === "stay") return { allow: true };
+		if (verdict.kind === "launch" && turn?.launched) return { allow: true };
 		if (verdict.kind !== "launch") {
 			const shown = show(verdict);
 			return { allow: false, reason: `${shown.warning}\n${shown.reason}` };
@@ -507,6 +510,7 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		if ("kind" in contract) return { ...contract, ...jev };
 		const pair = profilePair(verdict.role, profiles, ctx);
 		if ("kind" in pair) return { ...pair, ...jev };
+		if (turn && turn.userRequest === request.userRequest) turn.launched = true;
 		return {
 			kind: "ready",
 			role: verdict.role,

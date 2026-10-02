@@ -43,7 +43,7 @@ Jev chooses whether the work stays or leaves and which Specialist launches. The 
 
 One Jev call always answers destination and Specialist. Jev's `leave` criterion covers an explicit request in the latest user message for a child, subagent, or delegation, in any language or wording, and its `stay` criterion excludes it.
 
-`stay` lets the next gated parent tool run. It does not launch. It is not Launch blocked. `decide` tells the parent to ask one question and wait. It does not launch. `leave` does not launch by itself. It tells the parent to launch the Specialist Jev chose.
+`stay` lets the next gated parent tool run. It does not launch. It is not Launch blocked. `decide` tells the parent to ask one question and wait. It does not launch. `leave` does not launch by itself. It tells the parent to launch the Specialist Jev chose. Once a child has launched for that user message, the parent's gated tools run for the rest of that message without asking Jev again. Before the launch, `leave` still blocks.
 
 One verdict is kept for one user message. A new user message asks again. Starting a turn does not by itself discard the verdict for the same message. Launch blocked is not kept as the verdict. The next gated parent tool or launch for the same message asks Jev again.
 
@@ -70,7 +70,7 @@ Tests cross the routing seam and the settings list, not private helpers.
 - A missing choice document is off and does not call Jev.
 - Changing the settings row to on persists across a new process. Restart does not reset it. The model profiles document is unchanged.
 - While off, a gated parent tool runs. Invocations of `git` and `gh` stay in the parent. A named role does not move them to a child. A launch with no role does not launch and does not invent `worker`. A named role may launch. Jev is not called.
-- While on, `stay` lets the next gated tool run. `decide` blocks it and does not say to launch. `leave` names the Specialist Jev chose and does not let the parent tool run.
+- While on, `stay` lets the next gated tool run. `decide` blocks it and does not say to launch. `leave` names the Specialist Jev chose and does not let the parent tool run. After a launch for the same message, the parent tool runs and Jev is not asked again.
 - An explicit child request while on asks Jev for the destination and the Specialist in the same call.
 - A skill name in the user message does not change the destination or the Specialist.
 - The same user message reuses one verdict. A different message asks again. After Launch blocked, the next gated tool or launch for the same message asks Jev again.
