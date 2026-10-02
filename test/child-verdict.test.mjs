@@ -39,6 +39,8 @@ test("the Verdict is the last status or verdict line, and an invalid last line l
 		childVerdict("worker", "status: done\nstatus: finished"),
 		undefined,
 	);
+	assert.equal(childVerdict("verify", "verdict: pass\nverdict:\npass"), undefined);
+	assert.equal(childVerdict("worker", "status: done\nstatus:\ndone"), undefined);
 });
 
 test("an explorer emits no Verdict", () => {

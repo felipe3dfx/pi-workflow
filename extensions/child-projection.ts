@@ -40,11 +40,11 @@ export function childStep(child: { step?: string; task: string }) {
 
 const verdictLines: Record<string, { line: RegExp; values: string[] }> = {
 	worker: {
-		line: /^status:\s*(.*?)\s*$/gimu,
+		line: /^status:[ \t]*(.*?)[ \t\r]*$/gimu,
 		values: ["done", "partial", "blocked"],
 	},
 	verify: {
-		line: /^verdict:\s*(.*?)\s*$/gimu,
+		line: /^verdict:[ \t]*(.*?)[ \t\r]*$/gimu,
 		values: ["pass", "fail", "blocked"],
 	},
 };
