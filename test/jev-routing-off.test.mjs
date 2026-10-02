@@ -90,6 +90,8 @@ test("while Jev routing is off, a named role keeps git and gh in the parent and 
 		["verify", "Check the branch (git)"],
 		["explore", "Map how the parser calls git"],
 		["worker", "Commit the fix with git."],
+		["worker", "Run Git status"],
+		["worker", "GH pr create"],
 	]) {
 		const kept = await launcher.prepareLaunch({ role, task }, ctx);
 		assert.equal(kept.kind, "stay");
@@ -104,6 +106,7 @@ test("while Jev routing is off, a named role keeps git and gh in the parent and 
 		["worker", "Fix the parser"],
 		["worker", "gitignore the build directory"],
 		["worker", "Update the github workflow"],
+		["worker", "Update the GitHub workflow"],
 		["explore", "Read .git/config"],
 		["worker", "Remove the ghost entries"],
 		["verify", "Check each digit"],
