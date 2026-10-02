@@ -852,6 +852,8 @@ test("references that exist under cwd are listed in the child's task", async () 
 		assert.match(result.task, /^Apply the policy/);
 		assert.match(result.task, /docs\/policy\.md/);
 		assert.match(result.task, /AGENTS\.md/);
+		assert.deepEqual(result.references, ["docs/policy.md", "AGENTS.md"]);
+		assert.equal(result.chosenBy, "parent");
 	});
 });
 

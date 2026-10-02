@@ -127,6 +127,7 @@ export default function piWorkflowExtension(
 				},
 				{ deliverAs: "steer", triggerTurn: true },
 			),
+		trace: (entry) => pi.appendEntry("pi-workflow-child-trace", entry),
 		report: (message) => {
 			if (currentCtx) report(currentCtx, message, "error");
 		},
