@@ -3,7 +3,7 @@
 Status: IMPLEMENTED (#118, #119, #124, #125).
 
 Package: the confirmed routing package after the renewed feature review.
-Review handoff: READY WITH WARNINGS. ADR 0008 is a local record, not accepted authority.
+Review handoff: ADR 0008 accepted on the merge of its introducing PR.
 Verdict: READY WITH WARNINGS.
 
 ## Problem
