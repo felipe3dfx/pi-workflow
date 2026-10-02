@@ -601,7 +601,7 @@ test("a child that would run another model or thinking stays pending, and one mi
 test("aborting a foreground call aborts the child, while a background child ignores the call's signal", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
-		const { tool } = await loadSpawnTool({
+		const { tool, entries } = await loadSpawnTool({
 			agentDir,
 			create: children.create,
 		});
@@ -619,6 +619,7 @@ test("aborting a foreground call aborts the child, while a background child igno
 		children.created[0].result.reject(new Error("aborted"));
 		await assert.rejects(call, /aborted/);
 		assert.equal(children.created[0].disposals, 1);
+		assert.deepEqual(traceStates(entries), ["running", "cancelled"]);
 
 		const background = new AbortController();
 		await spawn(
@@ -761,6 +762,12 @@ test("a foreground child that fails appends a failed trace entry", async () => {
 		);
 	});
 });
+
+function traceStates(entries) {
+	return entries
+		.filter((entry) => entry.customType === "pi-workflow-child-trace")
+		.map((entry) => entry.data.state);
+}
 
 async function backgroundTraceStates(extension, id) {
 	await settle();
@@ -1775,6 +1782,7 @@ test("a foreground child silent for four minutes is aborted and the call fails a
 		assert.equal(children.created[0].disposals, 1);
 		assert.deepEqual(clock.pending(), []);
 		assert.equal(extension.messages.length, 0);
+		assert.deepEqual(traceStates(extension.entries), ["running", "timed out"]);
 	});
 });
 
