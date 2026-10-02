@@ -415,3 +415,27 @@ test("the child codegraph tool reports a missing index without running codegraph
 	);
 	assert.equal(workspace.codegraphCalls().length, 0);
 });
+
+test("the child codegraph tool tells the child to read directly when CodeGraph is not seated", async (t) => {
+	const workspace = fakeWorkspace(t);
+	const tool = createChildCodeGraphTool(workspace.root, workspace.adapters);
+	const seated = Object.fromEntries(capabilities.map((capability) => [capability, true]));
+	replaceSelection({
+		schemaVersion: 1,
+		capabilities: { ...seated, codegraph: false },
+		expectations: {},
+	});
+	t.after(() =>
+		replaceSelection({ schemaVersion: 1, capabilities: seated, expectations: {} }),
+	);
+
+	await assert.rejects(
+		tool.execute("call-1", { operation: "query", query: "Workflow" }),
+		(error) => {
+			assert.match(error.message, /read, grep, and find/);
+			assert.doesNotMatch(error.message, /workflow:configure/);
+			return true;
+		},
+	);
+	assert.equal(workspace.codegraphCalls().length, 0);
+});
