@@ -183,30 +183,23 @@ test("failures show their reason collapsed, and questions always show their whol
 	assert.ok(asked.render(90)[1].includes(theme.fg("warning", "◆")));
 });
 
-test("without details the card is not rebuilt from the message content", (t) => {
+test("without compatible details the card is not built and Pi shows the message content as is", (t) => {
 	const { card } = cards(t);
-	assert.deepEqual(
-		plain(
-			card({
-				customType: "pi-workflow-child-result",
-				content: `Child ${id} failed: boom`,
-				details: { id, state: "failed" },
-			}),
-		).slice(1),
-		[
-			"   ◆ Subagent 5636 failed                                            (ctrl+o to expand)",
-		],
-	);
-	assert.deepEqual(
-		plain(
-			card({
-				customType: "pi-workflow-child-question",
-				content: `Child ${id} asks (question 3):\n\n¿Cuál?\n\nAnswer with reply_child with question 3.`,
-				details: { id },
-			}),
-		).slice(1),
-		["   ◆ Subagent 5636 asks · question ?                                 (ctrl+o to expand)"],
-	);
+	for (const message of [
+		{
+			customType: "pi-workflow-child-result",
+			content: `Child ${id} failed: boom`,
+			details: { id, state: "failed" },
+		},
+		{
+			customType: "pi-workflow-child-question",
+			content: `Child ${id} asks (question 3): which one?`,
+		},
+	]) {
+		const lines = plain(card(message));
+		assert.equal(lines.some((line) => line.includes("Subagent")), false);
+		assert.ok(lines.some((line) => line.includes(message.content)));
+	}
 });
 
 test("a click toggles one card, the choice survives Pi's rebuild, and session shutdown forgets it", async (t) => {

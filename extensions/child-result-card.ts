@@ -179,8 +179,12 @@ class ResultCard implements Component {
 }
 
 function resultCards(message: Message, expanded: boolean, theme: Theme) {
-	const { results } = (message.details ?? {}) as { results?: ChildDetails[] };
-	if (!Array.isArray(results)) return new ResultCard(message, expanded, theme);
+	const { results, role } = (message.details ?? {}) as {
+		results?: ChildDetails[];
+		role?: string;
+	};
+	if (!Array.isArray(results))
+		return role ? new ResultCard(message, expanded, theme) : undefined;
 	const batch = new Container();
 	const cards = results.map(
 		(details) =>
