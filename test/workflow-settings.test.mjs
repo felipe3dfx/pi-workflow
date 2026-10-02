@@ -225,46 +225,51 @@ test("turning Jev routing on persists for a new process and leaves the model pro
 	panel.handleInput(" ");
 	assert.ok(shown().some((line) => /Jev routing\s+on\s*$/.test(line)));
 
-	const restarted = execFileSync(
-		process.execPath,
-		[
-			"--input-type=module",
-			"--eval",
-			`
-			import { initTheme } from "@earendil-works/pi-coding-agent";
-			import { stripVTControlCharacters } from "node:util";
-			import piWorkflowExtension from ${JSON.stringify(new URL("../extensions/pi-workflow.ts", import.meta.url).href)};
-			initTheme("dark", false);
-			const commands = new Map();
-			piWorkflowExtension({
-				on() {},
-				exec: async () => ({ code: 0 }),
-				registerCommand: (name, command) => commands.set(name, command),
-				registerTool() {},
-				registerShortcut() {},
-				registerMessageRenderer() {},
-				registerProvider() {},
-				sendMessage() {},
-			});
-			await commands.get("workflow:settings").handler("", {
-				hasUI: true,
-				mode: "tui",
-				ui: {
-					notify() {},
-					custom: async (factory) => {
-						const panel = factory(undefined, undefined, undefined, () => {});
-						for (const line of panel.render(50)) console.log(stripVTControlCharacters(line));
+	const restart = () =>
+		execFileSync(
+			process.execPath,
+			[
+				"--input-type=module",
+				"--eval",
+				`
+				import { initTheme } from "@earendil-works/pi-coding-agent";
+				import { stripVTControlCharacters } from "node:util";
+				import piWorkflowExtension from ${JSON.stringify(new URL("../extensions/pi-workflow.ts", import.meta.url).href)};
+				initTheme("dark", false);
+				const commands = new Map();
+				piWorkflowExtension({
+					on() {},
+					exec: async () => ({ code: 0 }),
+					registerCommand: (name, command) => commands.set(name, command),
+					registerTool() {},
+					registerShortcut() {},
+					registerMessageRenderer() {},
+					registerProvider() {},
+					sendMessage() {},
+				});
+				await commands.get("workflow:settings").handler("", {
+					hasUI: true,
+					mode: "tui",
+					ui: {
+						notify() {},
+						custom: async (factory) => {
+							const panel = factory(undefined, undefined, undefined, () => {});
+							for (const line of panel.render(50)) console.log(stripVTControlCharacters(line));
+						},
 					},
-				},
-			});
-			`,
-		],
-		{
-			cwd: new URL("..", import.meta.url),
-			env: { ...process.env, PI_CODING_AGENT_DIR: dir },
-			encoding: "utf8",
-		},
-	);
-	assert.match(restarted, /Jev routing\s+on\s*$/m);
+				});
+				`,
+			],
+			{
+				cwd: new URL("..", import.meta.url),
+				env: { ...process.env, PI_CODING_AGENT_DIR: dir },
+				encoding: "utf8",
+			},
+		);
+	assert.match(restart(), /Jev routing\s+on\s*$/m);
+
+	panel.handleInput(" ");
+	assert.ok(shown().some((line) => /Jev routing\s+off\s*$/.test(line)));
+	assert.match(restart(), /Jev routing\s+off\s*$/m);
 	assert.equal(await readFile(profilesPath, "utf8"), profiles);
 });
