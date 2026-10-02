@@ -751,10 +751,10 @@ test("an explicit child request in the user message is sent to Jev without a des
 	});
 });
 
-test("a named implement skill launches a worker without calling Jev", async () => {
+test("a named implement skill does not select the worker; Jev chooses the specialist", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
-		const jev = fakeJev();
+		const jev = fakeJev({ specialist: "explorer" });
 		const { tool } = await loadSpawnTool({
 			agentDir,
 			create: children.create,
@@ -763,7 +763,7 @@ test("a named implement skill launches a worker without calling Jev", async () =
 
 		const result = await spawn(
 			tool,
-			{ task: "Implement the ticket" },
+			{ role: "worker", task: "Implement the ticket" },
 			{
 				...toolContext("tui", worktree),
 				sessionManager: {
@@ -781,12 +781,17 @@ test("a named implement skill launches a worker without calling Jev", async () =
 		);
 
 		assert.equal(result.details.status, "queued");
-		assert.equal(result.details.role, "worker");
-		assert.equal(result.details.skill, "implement");
-		assert.equal("jev" in result.details, false);
-		assert.match(text(result), /The implement skill selected the worker role/);
-		assert.doesNotMatch(text(result), /Jev selected/);
-		assert.equal(jev.requests.length, 0);
+		assert.equal(result.details.role, "explore");
+		assert.equal("skill" in result.details, false);
+		assert.equal(result.details.jev.answers.specialist.choice, "explorer");
+		assert.match(text(result), /Jev selected explore/);
+		assert.doesNotMatch(text(result), /skill selected/);
+		assert.equal(jev.requests.length, 1);
+		assert.equal(
+			jev.requests[0].state.user_request,
+			"Usa la skill implement para este ticket",
+		);
+		assert.equal(jev.requests[0].state.suggested_specialist, "worker");
 		assert.equal(children.created.length, 1);
 	});
 });

@@ -136,16 +136,45 @@ test("/workflow:settings turns Jev routing off on the existing settings line", a
 	);
 	assert.equal(explicit.kind, "ready");
 	assert.equal(explicit.role, "worker");
-	const skilled = await launcher.prepareLaunch(
-		{
-			task: "Implement the toggle",
-			userRequest: "Please implement the toggle",
+	assert.equal(requests.length, 0);
+});
+
+test("with Jev routing off, a message naming implement neither calls Jev nor launches a worker", async (t) => {
+	const dir = withAgentDirectory(t);
+	const worktree = join(dir, "repo");
+	await mkdir(worktree);
+	execFileSync("git", ["init", "--quiet"], { cwd: worktree });
+	const requests = [];
+	const launcher = createChildLauncher({
+		modelProfiles: { load: () => ({ status: "absent" }) },
+		fetch: async () => {
+			requests.push(1);
+			return Response.json({ answers: {} });
 		},
+	});
+	const message = "implement the toggle";
+	const ctx = {
+		...launcherContext(worktree),
+		sessionManager: {
+			getBranch: () => [
+				{ type: "message", message: { role: "user", content: message } },
+			],
+		},
+	};
+
+	assert.deepEqual(
+		await launcher.gateToolCall(
+			{ toolName: "edit", input: { path: "src/toggle.ts" } },
+			ctx,
+		),
+		{ allow: true },
+	);
+	const decided = await launcher.prepareLaunch(
+		{ task: "Implement the toggle", userRequest: message },
 		ctx,
 	);
-	assert.equal(skilled.kind, "ready");
-	assert.equal(skilled.role, "worker");
-	assert.equal(skilled.skill, "implement");
+	assert.equal(decided.kind, "stay");
+	assert.equal(decided.reason, "Jev routing is off.");
 	assert.equal(requests.length, 0);
 });
 

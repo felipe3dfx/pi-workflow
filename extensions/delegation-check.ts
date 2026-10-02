@@ -19,7 +19,6 @@ interface DelegationCase {
 		action: DelegationAction;
 		role?: "explore" | "worker" | "verify";
 		destinationAsked: boolean;
-		callsJev: boolean;
 	};
 }
 
@@ -34,7 +33,6 @@ export const delegationCases: readonly DelegationCase[] = [
 			action: "launch",
 			role: "explore",
 			destinationAsked: false,
-			callsJev: true,
 		},
 	},
 	{
@@ -48,7 +46,6 @@ export const delegationCases: readonly DelegationCase[] = [
 			action: "launch",
 			role: "explore",
 			destinationAsked: true,
-			callsJev: true,
 		},
 	},
 	{
@@ -61,7 +58,6 @@ export const delegationCases: readonly DelegationCase[] = [
 			action: "launch",
 			role: "worker",
 			destinationAsked: true,
-			callsJev: true,
 		},
 	},
 	{
@@ -74,7 +70,6 @@ export const delegationCases: readonly DelegationCase[] = [
 			action: "launch",
 			role: "verify",
 			destinationAsked: true,
-			callsJev: true,
 		},
 	},
 	{
@@ -82,14 +77,14 @@ export const delegationCases: readonly DelegationCase[] = [
 		task: "Decide whether this product change should exist.",
 		userRequest:
 			"Quiero decidir contigo si este cambio de producto debe existir. La decisión sigue abierta.",
-		expected: { action: "decide", destinationAsked: true, callsJev: true },
+		expected: { action: "decide", destinationAsked: true },
 	},
 	{
 		name: "small understood answer",
 		task: "Restate the stay warning in one sentence.",
 		userRequest:
 			"Esto ya está entendido y es pequeño. Dime aquí, en una frase, qué dice el warning de quedarse en la sesión.",
-		expected: { action: "stay", destinationAsked: true, callsJev: true },
+		expected: { action: "stay", destinationAsked: true },
 	},
 	{
 		name: "implement skill",
@@ -98,8 +93,7 @@ export const delegationCases: readonly DelegationCase[] = [
 		expected: {
 			action: "launch",
 			role: "worker",
-			destinationAsked: false,
-			callsJev: false,
+			destinationAsked: true,
 		},
 	},
 ];
@@ -146,7 +140,6 @@ function evidence(verdict: Verdict): string {
 function scoreLine(
 	item: DelegationCase,
 	verdict: Verdict,
-	called: boolean,
 	destinationAsked: boolean,
 ): string {
 	const action = actionOf(verdict);
@@ -163,11 +156,6 @@ function scoreLine(
 	if (destinationAsked !== item.expected.destinationAsked) {
 		mismatches.push(
 			`destination question expected ${item.expected.destinationAsked ? "yes" : "no"}, got ${destinationAsked ? "yes" : "no"}`,
-		);
-	}
-	if (called !== item.expected.callsJev) {
-		mismatches.push(
-			`Jev call expected ${item.expected.callsJev ? "yes" : "no"}, got ${called ? "yes" : "no"}`,
 		);
 	}
 	const detail = evidence(verdict);
@@ -205,13 +193,13 @@ export async function runDelegationCheck(
 	const lines: string[] = [];
 	const routingOn = jevRoutingEnabled();
 	for (const item of delegationCases) {
-		if (item.expected.callsJev && !routingOn) {
+		if (!routingOn) {
 			lines.push(
 				`fail: ${item.name}: Jev routing is off. Turn it on in /workflow:settings.`,
 			);
 			continue;
 		}
-		if (item.expected.callsJev && !apiKey) {
+		if (!apiKey) {
 			lines.push(
 				`fail: ${item.name}: ${keyError ?? "TypeSafe API key is missing."}`,
 			);
@@ -229,12 +217,7 @@ export async function runDelegationCheck(
 			);
 			const body = requests[before];
 			lines.push(
-				scoreLine(
-					item,
-					verdict,
-					requests.length > before,
-					Boolean(body?.questions?.destination),
-				),
+				scoreLine(item, verdict, Boolean(body?.questions?.destination)),
 			);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
