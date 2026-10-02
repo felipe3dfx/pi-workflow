@@ -102,13 +102,13 @@ test("a blocked or failed Verdict shows its reason on a second line without expa
 					details: {
 						...details,
 						verdict,
-						text: `Verdict: ${verdict}\n\nFalta acceso a la base\n\notro detalle`,
+						text: `Verdict: ${verdict}\n\nDatabase access is missing\n\nanother detail`,
 					},
 				}),
 			).slice(1),
 			[
 				`   ◆ Subagent worker 5636 ${verdict}  1m 02s${" ".repeat(verdict === "fail" ? 31 : 28)}(ctrl+o to expand)`,
-				"     Falta acceso a la base",
+				"     Database access is missing",
 			],
 		);
 });
@@ -124,13 +124,13 @@ test("a blocked worker shows the first left_undone item as its reason", (t) => {
 		)[2];
 	assert.equal(
 		blocked(
-			"## Resumen\n\nNo pude seguir.\n\nstatus: blocked\nfiles_changed:\n- none\nvalidation:\n- none\nleft_undone:\n- Falta acceso a la base\n- Otro pendiente",
+			"## Summary\n\nCould not continue.\n\nstatus: blocked\nfiles_changed:\n- none\nvalidation:\n- none\nleft_undone:\n- Database access is missing\n- Another pending item",
 		),
-		"     Falta acceso a la base",
+		"     Database access is missing",
 	);
 	assert.equal(
-		blocked("status: blocked\nleft_undone:\n- Falta la credencial"),
-		"     Falta la credencial",
+		blocked("status: blocked\nleft_undone:\n- The credential is missing"),
+		"     The credential is missing",
 	);
 });
 
@@ -146,13 +146,13 @@ test("a failed or blocked verifier shows the line next to its verdict as its rea
 	assert.equal(
 		verifier(
 			"fail",
-			"## Revisión\n\nCorrí npm test.\nLa migración falla con ids nulos.\nverdict: fail",
+			"## Review\n\nRan npm test.\nThe migration fails on null ids.\nverdict: fail",
 		),
-		"     La migración falla con ids nulos.",
+		"     The migration fails on null ids.",
 	);
 	assert.equal(
-		verifier("blocked", "Intro.\n\nverdict: blocked\nNo hay acceso a la base."),
-		"     No hay acceso a la base.",
+		verifier("blocked", "Intro.\n\nverdict: blocked\nThere is no database access."),
+		"     There is no database access.",
 	);
 });
 
