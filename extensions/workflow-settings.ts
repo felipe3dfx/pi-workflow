@@ -1,14 +1,42 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { getSettingsListTheme } from "@earendil-works/pi-coding-agent";
 import { SettingsList, type SettingItem } from "@earendil-works/pi-tui";
 
+import {
+	activePiAgentDirectory,
+	isPlainRecord,
+	writeJsonAtomically,
+} from "./mcp-config.ts";
 import { report } from "./model-profiles.ts";
 
 const routingValues = ["on", "off"] as const;
 
 type Routing = (typeof routingValues)[number];
 
-let routing: Routing = "on";
+function isRouting(value: unknown): value is Routing {
+	return value === "on" || value === "off";
+}
+
+function routingPath(): string {
+	return resolve(activePiAgentDirectory(), "pi-workflow-routing.json");
+}
+
+function readRouting(): Routing {
+	try {
+		const choice: unknown = JSON.parse(readFileSync(routingPath(), "utf8"));
+		if (
+			isPlainRecord(choice) &&
+			choice.schemaVersion === 1 &&
+			isRouting(choice.jevRouting)
+		) {
+			return choice.jevRouting;
+		}
+	} catch {}
+	return "off";
+}
 
 type WorkflowSetting = {
 	id: string;
@@ -25,15 +53,20 @@ const settings: WorkflowSetting[] = [
 		label: "Jev routing",
 		description: "Ask Jev before routing a turn",
 		values: routingValues,
-		get: () => routing,
+		get: readRouting,
 		set: (value) => {
-			if (value === "on" || value === "off") routing = value;
+			if (isRouting(value)) {
+				writeJsonAtomically(routingPath(), {
+					schemaVersion: 1,
+					jevRouting: value,
+				});
+			}
 		},
 	},
 ];
 
 export function jevRoutingEnabled(): boolean {
-	return routing === "on";
+	return readRouting() === "on";
 }
 
 function createWorkflowSettingsList(onCancel: () => void): SettingsList {

@@ -4,6 +4,9 @@ import assert from "node:assert/strict";
 import { capabilities, replaceSelection } from "../extensions/configure.ts";
 import { delegationCases, runDelegationCheck } from "../extensions/delegation-check.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
+import { turnJevRoutingOn, withAgentDirectory } from "./support/jev-routing.mjs";
+
+turnJevRoutingOn();
 
 const absentProfiles = { load: () => ({ status: "absent" }) };
 
@@ -160,6 +163,31 @@ test("a missing TypeSafe key is a fail line and the skill case still runs", asyn
 		assert.match(
 			lines.find((line) => line.startsWith(`fail: ${item.name}`)),
 			/TypeSafe API key is missing/,
+		);
+	}
+	assert.match(
+		lines.find((line) => line.startsWith("pass: implement skill")),
+		/specialist worker/,
+	);
+});
+
+test("Jev routing off fails every Jev case without calling Jev and still runs the skill case", async (t) => {
+	withAgentDirectory(t);
+	const jev = answeringFetch();
+
+	const { lines, failed } = await runDelegationCheck(context(), {
+		fetch: jev.fetch,
+		modelProfiles: absentProfiles,
+	});
+
+	assert.equal(failed, true);
+	assert.equal(jev.requests.length, 0);
+	assert.equal(lines.length, delegationCases.length);
+	for (const item of delegationCases.filter((candidate) => candidate.expected.callsJev)) {
+		assert.ok(
+			lines.includes(
+				`fail: ${item.name}: Jev routing is off. Turn it on in /workflow:settings.`,
+			),
 		);
 	}
 	assert.match(

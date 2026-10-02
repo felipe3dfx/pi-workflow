@@ -5,6 +5,7 @@ import {
 	createChildLauncher,
 } from "./child-launcher.ts";
 import type { Fetch } from "./jev-client.ts";
+import { jevRoutingEnabled } from "./workflow-settings.ts";
 
 type DelegationAction = "launch" | "stay" | "decide" | "block";
 
@@ -202,7 +203,14 @@ export async function runDelegationCheck(
 		fetch,
 	});
 	const lines: string[] = [];
+	const routingOn = jevRoutingEnabled();
 	for (const item of delegationCases) {
+		if (item.expected.callsJev && !routingOn) {
+			lines.push(
+				`fail: ${item.name}: Jev routing is off. Turn it on in /workflow:settings.`,
+			);
+			continue;
+		}
 		if (item.expected.callsJev && !apiKey) {
 			lines.push(
 				`fail: ${item.name}: ${keyError ?? "TypeSafe API key is missing."}`,
