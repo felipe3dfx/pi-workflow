@@ -116,6 +116,8 @@ type Ready = {
 	warnings: string[];
 	model: string;
 	thinking: ModelThinkingLevel;
+	chosenBy: "parent" | "jev";
+	references: string[];
 	jev?: ClassifierResult;
 };
 
@@ -527,6 +529,8 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			warnings: [],
 			model: pair.model,
 			thinking: pair.thinking,
+			chosenBy: verdict.jev ? "jev" : "parent",
+			references,
 			...jev,
 		};
 	}

@@ -47,6 +47,10 @@ replaceSelection({
 	expectations: {},
 });
 
+const packageVersion = JSON.parse(
+	await readFile(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"),
+).version;
+
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 const workerContract = await readFile(
@@ -156,6 +160,7 @@ function loadExtension({
 	const commands = new Map();
 	const shortcuts = new Map();
 	const messages = [];
+	const entries = [];
 	const notifications = [];
 	const widgets = new Map();
 	const views = [];
@@ -192,6 +197,7 @@ function loadExtension({
 				messages.push({ message, options });
 				sendMessage?.(message, options);
 			},
+			appendEntry: (customType, data) => entries.push({ customType, data }),
 			exec: async () => {
 				throw new Error("must not run commands");
 			},
@@ -222,6 +228,7 @@ function loadExtension({
 	return {
 		tools,
 		messages,
+		entries,
 		notifications,
 		widgets,
 		views,
@@ -624,6 +631,64 @@ test("a failed background child is delivered as a failure message", async () => 
 		});
 		assert.match(messages[0].message.content, /provider overloaded/);
 		assert.equal(children.created[0].disposals, 1);
+	});
+});
+
+test("each Run state transition of a child is appended to the parent session as a bounded trace entry", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		await writeFile(join(worktree, "AGENTS.md"), "policy");
+		const children = fakeChildren();
+		const { tool, entries, messages } = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+
+		const result = await spawn(
+			tool,
+			{ role: "worker", task: "Secret task text", references: ["AGENTS.md"] },
+			toolContext("tui", worktree),
+		);
+		await settle();
+		children.created[0].result.resolve("status: done\nfull result body");
+		await settle();
+
+		const traces = entries.filter(
+			(entry) => entry.customType === "pi-workflow-child-trace",
+		);
+		assert.deepEqual(
+			traces.map((entry) => entry.data.state),
+			["queued", "running", "completed"],
+		);
+		for (const { data } of traces) {
+			assert.equal(data.id, result.details.id);
+			assert.equal(data.role, "worker");
+			assert.equal(data.chosenBy, "jev");
+			assert.deepEqual(data.tools, workerTools);
+			assert.deepEqual(data.references, ["AGENTS.md"]);
+			assert.equal(data.version, packageVersion);
+			assert.ok(!JSON.stringify(data).includes("Secret task text"));
+			assert.ok(!JSON.stringify(data).includes("full result body"));
+		}
+		assert.equal(traces[2].data.verdict, "done");
+		assert.equal(traces[0].data.verdict, undefined);
+		assert.equal(messages.length, 1);
+	});
+});
+
+test("a trace entry that cannot be appended does not break the child", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		extension.entries.push = () => {
+			throw new Error("disk full");
+		};
+
+		await spawnBackground(extension, worktree);
+		await settle();
+		children.created[0].result.resolve("Done.");
+		await settle();
+
+		assert.equal(extension.messages.length, 1);
 	});
 });
 
