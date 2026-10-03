@@ -110,7 +110,8 @@ export default function piWorkflowExtension(
 		deliver: () => {
 			if (currentCtx?.isIdle()) queueMicrotask(deliverResults);
 		},
-		ask: (child, question, number) =>
+		ask: (child, question, number) => {
+			sendResults();
 			pi.sendMessage(
 				{
 					customType: "pi-workflow-child-question",
@@ -119,13 +120,17 @@ export default function piWorkflowExtension(
 					details: { ...childDetails(child), question: number, text: question },
 				},
 				{ deliverAs: "steer", triggerTurn: true },
-			),
+			);
+		},
 		trace: (entry) => pi.appendEntry("pi-workflow-child-trace", entry),
 		report: (message) => {
 			if (currentCtx) report(currentCtx, message, "error");
 		},
 	});
 	function deliverResults() {
+		if (childSessions.wakesParent()) sendResults();
+	}
+	function sendResults() {
 		const results = childSessions.pendingResults();
 		if (results.length === 0) return;
 		try {

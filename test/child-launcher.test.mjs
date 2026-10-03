@@ -219,7 +219,7 @@ test("a role Jev lets leave gets its contract prompt and tools", async () => {
 			{ role: "explore", task: "Map the launcher module" },
 			launcherContext(worktree),
 		);
-		assert.deepEqual(explore.contract.tools, ["read", "grep", "find", "ls"]);
+		assert.deepEqual(explore.contract.tools, ["read", "grep", "find", "ls", "codegraph"]);
 	});
 });
 
@@ -842,10 +842,7 @@ test("while Jev routing is on, git and gh in a named role's task go to Jev like 
 			launcherContext(worktree, { jev }),
 		);
 		assert.ok(jev.requests.length >= 1);
-		assert.notEqual(
-			result.reason,
-			"git and gh stay in the parent while Jev routing is off.",
-		);
+		assert.equal(result.kind, "ready");
 	});
 });
 

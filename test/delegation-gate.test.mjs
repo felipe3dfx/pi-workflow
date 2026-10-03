@@ -468,7 +468,7 @@ test("decide() after a leave verdict asks Jev once and launches the cached role"
 	});
 });
 
-test("decide() stores the verdict so a later gated tool does not ask Jev again", async () => {
+test("a prepared launch stores the verdict so a later gated tool does not ask Jev again", async () => {
 	await withWorkspace(async ({ worktree }) => {
 		const message = "Add the missing export";
 		const jev = fakeJev("verifier", 0.15);
@@ -1035,5 +1035,58 @@ test("while routing is on, a codemode script runs after leave and its nested cal
 		assert.equal(nested, undefined);
 		assert.equal(staying.messages.length, 0);
 		assert.equal(stayed.requests.length, 1);
+	});
+});
+
+test("after a launch for the message under leave, gated parent tools run without asking Jev again", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const message = "Research three files in parallel and tell me the package version";
+		const jev = fakeJev("explorer");
+		const launcher = launcherFor();
+		const ctx = gateContext(worktree, branchEnding(message), jev);
+		const before = await launcher.gateToolCall(
+			{ toolName: "read", input: { path: "package.json" } },
+			ctx,
+		);
+		const launch = await launcher.prepareLaunch(
+			{ task: "Research the three files", userRequest: message },
+			ctx,
+		);
+		launcher.recordLaunch(message);
+		const after = await launcher.gateToolCall(
+			{ toolName: "read", input: { path: "package.json" } },
+			ctx,
+		);
+		const afterCodegraph = await launcher.gateToolCall(
+			{ toolName: "codegraph", input: { action: "explore", query: "x" } },
+			ctx,
+		);
+
+		assert.equal(before.allow, false);
+		assert.match(before.reason, /\bexplore\b/);
+		assert.equal(launch.kind, "ready");
+		assert.deepEqual(after, { allow: true });
+		assert.deepEqual(afterCodegraph, { allow: true });
+		assert.equal(jev.requests.length, 1);
+	});
+});
+
+test("a launch for one message does not unblock the next message under leave", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const jev = fakeJev("explorer");
+		const launcher = launcherFor();
+		const first = gateContext(worktree, branchEnding("First delegated request"), jev);
+		await launcher.prepareLaunch(
+			{ task: "t", userRequest: "First delegated request" },
+			first,
+		);
+		launcher.recordLaunch("First delegated request");
+		const next = await launcher.gateToolCall(
+			{ toolName: "read", input: { path: "package.json" } },
+			gateContext(worktree, branchEnding("Second delegated request"), jev),
+		);
+
+		assert.equal(next.allow, false);
+		assert.equal(jev.requests.length, 2);
 	});
 });

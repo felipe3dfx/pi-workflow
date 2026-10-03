@@ -15,7 +15,10 @@ import { capabilities, replaceSelection } from "../extensions/configure.ts";
 replaceSelection({
 	schemaVersion: 1,
 	capabilities: Object.fromEntries(
-		capabilities.map((capability) => [capability, capability === "child-session"]),
+		capabilities.map((capability) => [
+			capability,
+			capability === "child-session",
+		]),
 	),
 	expectations: {},
 });
@@ -92,68 +95,58 @@ test("a collapsed result is one row with the role, id, Verdict, elapsed time, an
 	]);
 });
 
-test("a blocked or failed Verdict shows its reason on a second line without expanding", (t) => {
+test("a blocked, partial, or failed Verdict shows its reported reason on a second line without expanding", (t) => {
 	const { card } = cards(t);
-	for (const verdict of ["blocked", "fail"])
+	for (const [role, verdict, gap] of [
+		["worker", "blocked", 28],
+		["worker", "partial", 28],
+		["verify", "fail", 31],
+	])
 		assert.deepEqual(
 			plain(
 				card({
 					customType: "pi-workflow-child-result",
 					details: {
 						...details,
+						role,
 						verdict,
-						text: `Verdict: ${verdict}\n\nDatabase access is missing\n\nanother detail`,
+						result: { verdict, reason: "Database access is missing" },
+						text: `Summary first.\n\nleft_undone:\n- another detail\nverdict: ${verdict}`,
 					},
 				}),
 			).slice(1),
 			[
-				`   ◆ Subagent worker 5636 ${verdict}  1m 02s${" ".repeat(verdict === "fail" ? 31 : 28)}(ctrl+o to expand)`,
+				`   ◆ Subagent ${role} 5636 ${verdict}  1m 02s${" ".repeat(gap)}(ctrl+o to expand)`,
 				"     Database access is missing",
 			],
 		);
 });
 
-test("a blocked worker shows the first left_undone item as its reason", (t) => {
+test("a done or passing Verdict shows no reason collapsed", (t) => {
 	const { card } = cards(t);
-	const blocked = (text) =>
-		plain(
-			card({
-				customType: "pi-workflow-child-result",
-				details: { ...details, verdict: "blocked", text },
-			}),
-		)[2];
-	assert.equal(
-		blocked(
-			"## Summary\n\nCould not continue.\n\nstatus: blocked\nfiles_changed:\n- none\nvalidation:\n- none\nleft_undone:\n- Database access is missing\n- Another pending item",
-		),
-		"     Database access is missing",
-	);
-	assert.equal(
-		blocked("status: blocked\nleft_undone:\n- The credential is missing"),
-		"     The credential is missing",
-	);
+	const done = card({
+		customType: "pi-workflow-child-result",
+		details: {
+			...details,
+			verdict: "done",
+			result: { verdict: "done", reason: "All checks ran" },
+		},
+	});
+	assert.equal(plain(done).length, 2);
 });
 
-test("a failed or blocked verifier shows the line next to its verdict as its reason", (t) => {
+test("a partial Verdict shows in the warning tone because the work is incomplete", (t) => {
 	const { card } = cards(t);
-	const verifier = (verdict, text) =>
-		plain(
-			card({
-				customType: "pi-workflow-child-result",
-				details: { ...details, role: "verify", verdict, text },
-			}),
-		)[2];
-	assert.equal(
-		verifier(
-			"fail",
-			"## Review\n\nRan npm test.\nThe migration fails on null ids.\nverdict: fail",
-		),
-		"     The migration fails on null ids.",
-	);
-	assert.equal(
-		verifier("blocked", "Intro.\n\nverdict: blocked\nThere is no database access."),
-		"     There is no database access.",
-	);
+	const partial = card({
+		customType: "pi-workflow-child-result",
+		details: {
+			...details,
+			verdict: "partial",
+			result: { verdict: "partial", reason: "The migration is pending." },
+		},
+	});
+	const theme = globalThis[Symbol.for("@earendil-works/pi-coding-agent:theme")];
+	assert.ok(partial.render(90)[1].includes(theme.fg("warning", "partial")));
 });
 
 test("ctrl+o shows the task, the whole result, and the subagents view key", (t) => {
@@ -175,6 +168,59 @@ test("ctrl+o shows the task, the whole result, and the subagents view key", (t) 
 		"",
 		"     cuatro",
 		"     alt+a  open in subagents view",
+	]);
+});
+
+test("ctrl+o shows the reported reason and result fields between the task and the final text", (t) => {
+	const { card } = cards(t);
+	const worker = card({
+		customType: "pi-workflow-child-result",
+		details: {
+			...details,
+			verdict: "partial",
+			result: {
+				verdict: "partial",
+				reason: "The migration is pending.",
+				files_changed: ["src/a.ts: fixed the parser"],
+				validation: ["npm test: 12 passed"],
+				left_undone: [],
+			},
+			text: "uno",
+		},
+	});
+	worker.setExpanded(true);
+	assert.deepEqual(plain(worker).slice(2, -1), [
+		"     Task Ejecuta sleep 60 para esperar 60 segundos",
+		"     Reason: The migration is pending.",
+		"     files_changed:",
+		"     - src/a.ts: fixed the parser",
+		"     validation:",
+		"     - npm test: 12 passed",
+		"     left_undone:",
+		"     - none",
+		"     uno",
+	]);
+	const verifier = card({
+		customType: "pi-workflow-child-result",
+		details: {
+			...details,
+			role: "verify",
+			verdict: "pass",
+			result: {
+				verdict: "pass",
+				findings: ["The parser handles tabs."],
+				unverified: ["Windows paths."],
+			},
+			text: "dos",
+		},
+	});
+	verifier.setExpanded(true);
+	assert.deepEqual(plain(verifier).slice(3, -1), [
+		"     findings:",
+		"     - The parser handles tabs.",
+		"     unverified:",
+		"     - Windows paths.",
+		"     dos",
 	]);
 });
 
@@ -207,51 +253,26 @@ test("failures show their reason collapsed, and questions always show their whol
 	assert.ok(asked.render(90)[1].includes(theme.fg("warning", "◆")));
 });
 
-test("sessions saved before the richer details still render from the message content", (t) => {
+test("without compatible details the card is not built and Pi shows the message content as is", (t) => {
 	const { card } = cards(t);
-	const old = (customType, content, state) =>
-		plain(card({ customType, content, details: { id, state } }));
-	assert.deepEqual(
-		old(
-			"pi-workflow-child-result",
-			`Child ${id} completed:\n\nListo.`,
-			"completed",
-		),
-		[
-			"",
-			"   ◆ Subagent 5636                                                   (ctrl+o to expand)",
-		],
-	);
-	assert.deepEqual(
-		old("pi-workflow-child-result", `Child ${id} failed: boom`, "failed").slice(
-			1,
-		),
-		[
-			"   ◆ Subagent 5636 failed                                            (ctrl+o to expand)",
-			"     boom",
-		],
-	);
-	assert.deepEqual(
-		old(
-			"pi-workflow-child-result",
-			`Child ${id} cancelled.`,
-			"cancelled",
-		).slice(1),
-		[
-			"   ◆ Subagent 5636 cancelled                                         (ctrl+o to expand)",
-		],
-	);
-	assert.deepEqual(
-		old(
-			"pi-workflow-child-question",
-			`Child ${id} asks (question 3):\n\n¿Cuál?\n\nAnswer with reply_child with question 3.`,
-			"waiting",
-		).slice(1),
-		[
-			"   ◆ Subagent 5636 asks · question 3                                 (ctrl+o to expand)",
-			"     ¿Cuál?",
-		],
-	);
+	for (const message of [
+		{
+			customType: "pi-workflow-child-result",
+			content: `Child ${id} failed: boom`,
+			details: { id, state: "failed" },
+		},
+		{
+			customType: "pi-workflow-child-question",
+			content: `Child ${id} asks (question 3): which one?`,
+		},
+	]) {
+		const lines = plain(card(message));
+		assert.equal(
+			lines.some((line) => line.includes("Subagent")),
+			false,
+		);
+		assert.ok(lines.some((line) => line.includes(message.content)));
+	}
 });
 
 test("a click toggles one card, the choice survives Pi's rebuild, and session shutdown forgets it", async (t) => {

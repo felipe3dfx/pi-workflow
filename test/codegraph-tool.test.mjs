@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { capabilities, replaceSelection } from "../extensions/configure.ts";
+import { createChildCodeGraphTool } from "../extensions/codegraph-tool.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 
 replaceSelection({
@@ -387,4 +388,54 @@ test("the default runner ignores GIT_DIR when validating the Git root", async (t
 		if (saved === undefined) delete process.env.GIT_DIR;
 		else process.env.GIT_DIR = saved;
 	}
+});
+
+test("the child codegraph tool queries and explores the child's own root and offers no init", async (t) => {
+	const workspace = fakeWorkspace(t);
+	const tool = createChildCodeGraphTool(workspace.root, workspace.adapters);
+	assert.deepEqual(tool.parameters.properties.operation.enum, ["query", "explore"]);
+	const result = await tool.execute("call-1", { operation: "explore", query: "Workflow" });
+	assert.equal(result.details.status, "ok");
+	assert.deepEqual(workspace.codegraphCalls().map((call) => call.args), [
+		["explore", "--path", workspace.root, "--", "Workflow"],
+	]);
+	await assert.rejects(
+		tool.execute("call-2", { operation: "init" }),
+		/query or explore/,
+	);
+	assert.equal(workspace.codegraphCalls().length, 1);
+});
+
+test("the child codegraph tool reports a missing index without running codegraph", async (t) => {
+	const workspace = fakeWorkspace(t, { index: "missing" });
+	const tool = createChildCodeGraphTool(workspace.root, workspace.adapters);
+	await assert.rejects(
+		tool.execute("call-1", { operation: "query", query: "Workflow" }),
+		/no \.codegraph index/,
+	);
+	assert.equal(workspace.codegraphCalls().length, 0);
+});
+
+test("the child codegraph tool tells the child to read directly when CodeGraph is not seated", async (t) => {
+	const workspace = fakeWorkspace(t);
+	const tool = createChildCodeGraphTool(workspace.root, workspace.adapters);
+	const seated = Object.fromEntries(capabilities.map((capability) => [capability, true]));
+	replaceSelection({
+		schemaVersion: 1,
+		capabilities: { ...seated, codegraph: false },
+		expectations: {},
+	});
+	t.after(() =>
+		replaceSelection({ schemaVersion: 1, capabilities: seated, expectations: {} }),
+	);
+
+	await assert.rejects(
+		tool.execute("call-1", { operation: "query", query: "Workflow" }),
+		(error) => {
+			assert.match(error.message, /read, grep, and find/);
+			assert.doesNotMatch(error.message, /workflow:configure/);
+			return true;
+		},
+	);
+	assert.equal(workspace.codegraphCalls().length, 0);
 });

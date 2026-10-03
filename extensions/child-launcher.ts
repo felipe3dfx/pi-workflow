@@ -53,8 +53,6 @@ const roleBySpecialist: Record<Specialist, Role> = {
 
 const specialists = ["explorer", "worker", "verifier"] as const;
 
-const repositoryStateCommand = /(?<![\p{L}\p{N}_.-])(?:git|gh)(?![\p{L}\p{N}_-])/iu;
-
 const specialistInstructions =
 	"Which specialist should carry out the requested action? Choose from the action in `user_request` and `task`. `suggested_specialist` is a hint and does not decide the answer.";
 
@@ -147,7 +145,7 @@ function isRole(value: string): value is Role {
 	return (roles as readonly string[]).includes(value);
 }
 
-function parseContract(text: string): Contract {
+export function parseContract(text: string): Contract {
 	const match = /^---\ntools: (.+)\n---\n([\s\S]*\S[\s\S]*)$/.exec(
 		text.replaceAll("\r\n", "\n"),
 	);
@@ -333,12 +331,6 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 	): Promise<Assessment> {
 		if (!jevRoutingEnabled()) {
 			if (request.role !== undefined && isRole(request.role)) {
-				if (repositoryStateCommand.test(request.task)) {
-					return {
-						kind: "stay",
-						reason: "git and gh stay in the parent while Jev routing is off.",
-					};
-				}
 				return { kind: "launch", role: request.role };
 			}
 			return { kind: "stay", reason: "Jev routing is off." };
@@ -422,7 +414,9 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		return { kind: "launch", role: roleBySpecialist[specialist.choice], jev };
 	}
 
-	let turn: { userRequest: string; pending: Promise<Assessment> } | undefined;
+	let turn:
+		| { userRequest: string; pending: Promise<Assessment>; launched?: true }
+		| undefined;
 
 	function verdictFor(
 		request: LaunchRequest,
@@ -462,6 +456,7 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		if (!userRequest) return { allow: true };
 		const verdict = await verdictFor({ task: userRequest, userRequest }, ctx);
 		if (verdict.kind === "stay") return { allow: true };
+		if (verdict.kind === "launch" && turn?.launched) return { allow: true };
 		if (verdict.kind !== "launch") {
 			const shown = show(verdict);
 			return { allow: false, reason: `${shown.warning}\n${shown.reason}` };
@@ -524,5 +519,8 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			...jev,
 		};
 	}
-	return { prepareLaunch, beginTurn, gateToolCall, classify };
+	function recordLaunch(userRequest: string | undefined) {
+		if (turn && turn.userRequest === userRequest) turn.launched = true;
+	}
+	return { prepareLaunch, recordLaunch, beginTurn, gateToolCall, classify };
 }

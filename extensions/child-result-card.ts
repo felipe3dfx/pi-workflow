@@ -19,7 +19,7 @@ import { childElapsed, spread } from "./children-box.ts";
 import { markCard } from "./chrome-groups.ts";
 import { assistantInset, edgeFor } from "./chrome-messages.ts";
 import { claim, paint } from "./configure.ts";
-import { childModelLine } from "./child-projection.ts";
+import { childModelLine, resultFieldLines } from "./child-projection.ts";
 import { paintMessageStream } from "./shell.ts";
 import { sanitizeMultilineText, sanitizeTaskText } from "./todo-header.ts";
 
@@ -37,43 +37,9 @@ const indent = 2;
 type Card = Partial<ChildDetails> & { id: string; text: string };
 type Message = { customType: string; content: unknown; details?: unknown };
 
-function contentText(content: unknown) {
-	if (typeof content === "string") return content;
-	if (!Array.isArray(content)) return "";
-	return content
-		.filter((part) => part?.type === "text")
-		.map((part) => part.text)
-		.join("\n");
-}
-
 function parse(message: Message): Card {
 	const details = (message.details ?? {}) as Partial<ChildDetails>;
-	const id = details.id ?? "";
-	if (typeof details.role === "string")
-		return { ...details, id, text: details.text ?? "" };
-	const content = contentText(message.content);
-	const asked = content.match(
-		/^Child (\S+) asks \(question (\d+)\):\n\n([\s\S]*)\n\nAnswer with reply_child/,
-	);
-	if (asked)
-		return {
-			...details,
-			id: asked[1],
-			state: "waiting",
-			question: Number(asked[2]),
-			text: asked[3],
-		};
-	const outcome = content.match(
-		/^Child (\S+) (completed|failed|timed out|cancelled)(?::\n\n|: |\.)([\s\S]*)$/,
-	);
-	if (outcome)
-		return {
-			...details,
-			id: outcome[1],
-			state: outcome[2] as ChildRecord["state"],
-			text: outcome[2] === "cancelled" ? "" : outcome[3],
-		};
-	return { ...details, id, text: content };
+	return { ...details, id: details.id ?? "", text: details.text ?? "" };
 }
 
 function tone(card: Card, question: boolean): ThemeColor {
@@ -85,32 +51,18 @@ function tone(card: Card, question: boolean): ThemeColor {
 
 function verdictTone(verdict: string): ThemeColor {
 	if (verdict === "fail") return "error";
-	if (verdict === "blocked") return "warning";
+	if (verdict === "blocked" || verdict === "partial") return "warning";
 	return "success";
 }
 
 function reason(card: Card) {
-	if (
-		card.state !== "failed" &&
-		card.state !== "timed out" &&
-		card.verdict !== "fail" &&
-		card.verdict !== "blocked"
-	)
-		return undefined;
-	const lines = card.text.split("\n").map((line) => line.trim());
-	const undone = lines.findIndex((line) => /^left_undone:\s*$/i.test(line));
-	const item = lines[undone + 1]?.match(/^-\s*(.+)$/)?.[1];
-	if (undone >= 0 && item) return item;
-	const verdict = lines.findLastIndex((line) =>
-		/^verdict:\s*(fail|blocked)\s*$/i.test(line),
-	);
-	if (verdict >= 0) {
-		const near =
-			lines.slice(verdict + 1).find(Boolean) ??
-			lines.slice(0, verdict).findLast(Boolean);
-		if (near) return near;
-	}
-	return lines.find((line) => line && !/^(verdict|status):/i.test(line));
+	if (card.state === "failed" || card.state === "timed out")
+		return card.text
+			.split("\n")
+			.map((line) => line.trim())
+			.find(Boolean);
+	if (card.verdict === "done" || card.verdict === "pass") return undefined;
+	return card.result?.reason;
 }
 
 function header(theme: Theme, card: Card, question: boolean, open: boolean) {
@@ -197,6 +149,9 @@ class ResultCard implements Component {
 		const lines: string[] = [];
 		if (open && this.card.task)
 			lines.push(t.fg("dim", `Task ${sanitizeTaskText(this.card.task)}`));
+		if (open && this.card.result)
+			for (const line of resultFieldLines(this.card.result))
+				lines.push(t.fg("dim", sanitizeTaskText(line)));
 		if (open || this.question) {
 			const body = this.body.render(inner).map((line) => line.trimEnd());
 			while (body.length > 0 && body.at(-1) === "") body.pop();
@@ -227,8 +182,12 @@ class ResultCard implements Component {
 }
 
 function resultCards(message: Message, expanded: boolean, theme: Theme) {
-	const { results } = (message.details ?? {}) as { results?: ChildDetails[] };
-	if (!Array.isArray(results)) return new ResultCard(message, expanded, theme);
+	const { results, role } = (message.details ?? {}) as {
+		results?: ChildDetails[];
+		role?: string;
+	};
+	if (!Array.isArray(results))
+		return role ? new ResultCard(message, expanded, theme) : undefined;
 	const batch = new Container();
 	const cards = results.map(
 		(details) =>

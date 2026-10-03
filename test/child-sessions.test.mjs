@@ -58,7 +58,17 @@ const workerContract = await readFile(
 	"utf8",
 );
 const workerTools = ["read", "bash", "edit", "write", "grep", "find", "ls"];
-const spawnedTools = [...workerTools, "ask_parent"];
+const spawnedTools = [...workerTools, "ask_parent", "report_result"];
+
+function workerResult(verdict, reason = `The work is ${verdict}.`) {
+	return {
+		verdict,
+		reason,
+		files_changed: ["src/a.ts: fixed the parser"],
+		validation: ["npm test: 12 passed"],
+		left_undone: [],
+	};
+}
 
 async function withWorkspace(run) {
 	const dir = await realpath(
@@ -133,7 +143,7 @@ function fakeChildren({ model, thinking, tools, run, dispose, onCreate } = {}) {
 			tools: tools ?? spec.tools,
 			run: async (task) => {
 				child.tasks.push(task);
-				return run ? run(task) : child.result.promise;
+				return run ? run(task, child.spec) : child.result.promise;
 			},
 			abort: async () => {
 				child.aborts += 1;
@@ -244,6 +254,7 @@ function loadExtension({
 			idle = !value;
 		},
 		named: (name) => tools.find((tool) => tool.name === name),
+		gate: (event, ctx) => handlers.get("tool_call")[0](event, ctx),
 		spawnTools: () => tools.filter((tool) => tool.name === "spawn_child"),
 	};
 }
@@ -378,6 +389,7 @@ for (const mode of ["tui", "rpc"]) {
 				thinking: "medium",
 				task: "Fix the failing test",
 				text: "All tests pass.",
+				result: undefined,
 				verdict: undefined,
 			});
 			assert.match(message.content, /completed\. Verdict: absent\.\n\nAll tests pass\./);
@@ -423,7 +435,10 @@ for (const mode of ["print", "json"]) {
 test("a foreground result shows its Run state and Verdict to the parent", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren({
-			run: async () => "Could not finish.\n\nstatus: partial",
+			run: async (_task, spec) => {
+				spec.report(workerResult("partial", "The migration is pending."));
+				return "Could not finish.";
+			},
 		});
 		const { tool } = await loadSpawnTool({ agentDir, create: children.create });
 
@@ -435,8 +450,9 @@ test("a foreground result shows its Run state and Verdict to the parent", async 
 
 		assert.match(
 			text(result),
-			/^Child completed\. Verdict: partial\.\n\nCould not finish\./,
+			/^Child completed\. Verdict: partial\.\nReason: The migration is pending\.\n[\s\S]*\n\nCould not finish\.$/,
 		);
+		assert.equal(result.details.verdict, "partial");
 	});
 });
 
@@ -529,6 +545,76 @@ test("refused and pending launches return a warning and reason with no child id 
 			assert.equal(children.created.length, 0);
 			assert.equal(messages.length, 0);
 		}
+	});
+});
+
+test("under leave, the parent's gated tools stay blocked until a launch for the message succeeds", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const message = "Research the parser and tell me the package version";
+		let failures = 1;
+		const children = fakeChildren({
+			onCreate: () => {
+				if (failures-- > 0) throw new Error("provider gone");
+			},
+		});
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const ctx = {
+			...toolContext("tui", worktree, fakeJev({ specialist: "explorer" })),
+			sessionManager: {
+				getBranch: () => [
+					{ type: "message", message: { role: "user", content: message } },
+				],
+			},
+		};
+		const read = { toolName: "read", input: { path: "package.json" } };
+
+		const refused = await spawn(extension.tool, { task: "Research the parser" }, ctx);
+		const afterRefusal = await extension.gate(read, ctx);
+		const queued = await spawn(extension.tool, { task: "Research the parser" }, ctx);
+		const afterLaunch = await extension.gate(read, ctx);
+
+		assert.equal(refused.details.status, "refused");
+		assert.equal(afterRefusal.block, true);
+		assert.match(afterRefusal.reason, /\bexplore\b/);
+		assert.equal(queued.details.status, "queued");
+		assert.equal(afterLaunch, undefined);
+	});
+});
+
+test("under leave, a foreground child that starts and then fails unblocks the parent's gated tools, and a refusal before start does not", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const message = "Research the parser and tell me the package version";
+		let failures = 1;
+		const children = fakeChildren({
+			onCreate: () => {
+				if (failures-- > 0) throw new Error("provider gone");
+			},
+			run: async () => {
+				throw new Error("provider overloaded");
+			},
+		});
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const ctx = {
+			...toolContext("print", worktree, fakeJev({ specialist: "explorer" })),
+			sessionManager: {
+				getBranch: () => [
+					{ type: "message", message: { role: "user", content: message } },
+				],
+			},
+		};
+		const read = { toolName: "read", input: { path: "package.json" } };
+
+		const refused = await spawn(extension.tool, { task: "Research the parser" }, ctx);
+		const afterRefusal = await extension.gate(read, ctx);
+		await assert.rejects(
+			spawn(extension.tool, { task: "Research the parser" }, ctx),
+			/provider overloaded/,
+		);
+		const afterFailure = await extension.gate(read, ctx);
+
+		assert.equal(refused.details.status, "refused");
+		assert.equal(afterRefusal.block, true);
+		assert.equal(afterFailure, undefined);
 	});
 });
 
@@ -676,7 +762,8 @@ test("each Run state transition of a child is appended to the parent session as 
 			toolContext("tui", worktree),
 		);
 		await settle();
-		children.created[0].result.resolve("status: done\nfull result body");
+		children.created[0].spec.report(workerResult("done"));
+		children.created[0].result.resolve("full result body");
 		await settle();
 
 		const traces = entries.filter(
@@ -702,10 +789,49 @@ test("each Run state transition of a child is appended to the parent session as 
 	});
 });
 
+test("a worker reports its result with report_result; the last call wins and reaches the parent, the trace, and child_result", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		const id = await spawnBackground(extension, worktree);
+		await settle();
+		const [child] = children.created;
+
+		child.spec.report(workerResult("done"));
+		child.spec.report(workerResult("blocked", "Database access is missing"));
+		child.result.resolve("I stopped before the migration.");
+		await settle();
+
+		const [{ message }] = extension.messages;
+		assert.equal(message.details.verdict, "blocked");
+		assert.deepEqual(
+			message.details.result,
+			workerResult("blocked", "Database access is missing"),
+		);
+		assert.match(
+			message.content,
+			/completed\. Verdict: blocked\.\nReason: Database access is missing\nfiles_changed:\n- src\/a\.ts: fixed the parser\nvalidation:\n- npm test: 12 passed\nleft_undone:\n- none\n\nI stopped before the migration\.$/,
+		);
+		const traces = await backgroundTraceStates(extension, id);
+		assert.equal(traces.at(-1).verdict, "blocked");
+		assert.equal(traces.at(-1).reason, "Database access is missing");
+		assert.match(
+			text(await use(extension, "child_result", { id })),
+			/Verdict: blocked\.\nReason: Database access is missing/,
+		);
+	});
+});
+
 test("a foreground child appends its running and terminal Run states as trace entries", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren({
-			run: async () => "status: blocked\nfull result body",
+			run: async (_task, spec) => {
+				spec.report(workerResult("blocked"));
+				return "full result body";
+			},
 		});
 		const { tool, entries } = await loadSpawnTool({
 			agentDir,
@@ -728,6 +854,7 @@ test("a foreground child appends its running and terminal Run states as trace en
 		assert.equal(traces[0].data.id, traces[1].data.id);
 		assert.equal(traces[1].data.role, "worker");
 		assert.equal(traces[1].data.verdict, "blocked");
+		assert.equal(traces[1].data.reason, "The work is blocked.");
 		assert.ok(!JSON.stringify(traces).includes("Secret task text"));
 		assert.ok(!JSON.stringify(traces).includes("full result body"));
 	});
@@ -1006,6 +1133,7 @@ test("a named implement skill does not select the worker; Jev chooses the specia
 		);
 		assert.equal(jev.requests[0].state.suggested_specialist, "worker");
 		assert.equal(children.created.length, 1);
+		assert.ok(!children.created[0].spec.tools.includes("report_result"));
 	});
 });
 
@@ -1082,6 +1210,29 @@ test("the default child factory runs the contract on the parent's model runtime 
 			[...spawnedTools].sort(),
 		);
 		assert.equal(messages.length, 0);
+	});
+});
+
+test("the default child factory gives an explore child a read-only codegraph and no init", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const parent = await fauxParent(agentDir, fauxAssistantMessage("Found it."));
+		const { tool } = await loadSpawnTool({ agentDir });
+
+		const result = await spawn(
+			tool,
+			{ role: "explore", task: "Map the launcher" },
+			{ ...toolContext("print", worktree), ...parent.context },
+		);
+
+		assert.equal(result.details.status, "completed", text(result));
+		const [system] = parent.requests[0].messages;
+		const added = system.toolsAdded.map((added) => added.name);
+		assert.ok(added.includes("codegraph"));
+		const codegraph = system.toolsAdded.find((added) => added.name === "codegraph");
+		assert.deepEqual(codegraph.parameters.properties.operation.enum, [
+			"query",
+			"explore",
+		]);
 	});
 });
 
@@ -1422,10 +1573,11 @@ async function spawnBackground(
 	extension,
 	worktree,
 	task = "Fix the failing test",
+	role = "worker",
 ) {
 	const result = await spawn(
 		extension.tool,
-		{ role: "worker", task },
+		{ role, task },
 		toolContext("tui", worktree),
 	);
 	return result.details.id;
@@ -2419,6 +2571,80 @@ test("a background child asks through Pi's SDK, the parent model replies, and th
 	});
 });
 
+function reporting(result) {
+	return fauxAssistantMessage(fauxToolCall("report_result", result), {
+		stopReason: "toolUse",
+	});
+}
+
+test("a worker reports through Pi's SDK; a result outside its role's schema is refused and the last valid call is delivered", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const child = await realChild(agentDir, [
+			reporting({ ...workerResult("done"), verdict: "pass" }),
+			reporting(workerResult("partial", "The migration is pending.")),
+			fauxAssistantMessage("Fixed src/parser.ts."),
+		]);
+		const { extension, parent } = child;
+		await spawnReal(child, worktree);
+		await eventually(() => extension.messages.length === 1);
+
+		const refused = parent.requests[1].messages.at(-1);
+		assert.equal(refused.toolName, "report_result");
+		assert.equal(refused.isError, true);
+		const { message } = extension.messages[0];
+		assert.equal(message.details.verdict, "partial");
+		assert.equal(message.details.result.reason, "The migration is pending.");
+		assert.equal(message.details.text, "Fixed src/parser.ts.");
+	});
+});
+
+test("a worker result through Pi's SDK with a property outside its role's schema is refused and the last valid call is delivered", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const child = await realChild(agentDir, [
+			reporting({ ...workerResult("done"), summary: "Finished" }),
+			reporting(workerResult("partial", "The migration is pending.")),
+			fauxAssistantMessage("Fixed src/parser.ts."),
+		]);
+		const { extension, parent } = child;
+		await spawnReal(child, worktree);
+		await eventually(() => extension.messages.length === 1);
+
+		const refused = parent.requests[1].messages.at(-1);
+		assert.equal(refused.toolName, "report_result");
+		assert.equal(refused.isError, true);
+		const { message } = extension.messages[0];
+		assert.deepEqual(
+			message.details.result,
+			workerResult("partial", "The migration is pending."),
+		);
+		assert.match(message.content, /Verdict: partial\./);
+	});
+});
+
+test("a worker through Pi's SDK reports done without a reason, and a blocked result without a reason is refused", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const { reason: _reason, ...blocked } = workerResult("blocked");
+		const { reason: _done, ...done } = workerResult("done");
+		const child = await realChild(agentDir, [
+			reporting(blocked),
+			reporting(done),
+			fauxAssistantMessage("Fixed src/parser.ts."),
+		]);
+		const { extension, parent } = child;
+		await spawnReal(child, worktree);
+		await eventually(() => extension.messages.length === 1);
+
+		const refused = parent.requests[1].messages.at(-1);
+		assert.equal(refused.toolName, "report_result");
+		assert.equal(refused.isError, true);
+		assert.match(refused.content[0].text, /reason/);
+		const { message } = extension.messages[0];
+		assert.equal(message.details.verdict, "done");
+		assert.equal(message.details.result.reason, undefined);
+		assert.doesNotMatch(message.content, /Reason:/);
+	});
+});
+
 test("a child through Pi's SDK that waits for a reply that never comes ends timed out by the watchdog, and a late reply is refused", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const child = await realChild(agentDir, [
@@ -2523,7 +2749,7 @@ test("a child that finishes between the parent's abort and session shutdown is d
 		await settle();
 
 		call.abort();
-		children.created[0].result.resolve("Finished in the gap.");
+		children.created[0].result.reject(new Error("Failed in the gap."));
 		await settle();
 		await extension.fire("session_shutdown", { reason: "new" });
 		session = "next";
@@ -3855,6 +4081,33 @@ test("a result the parent read with child_result is not delivered again and trig
 	});
 });
 
+test("a child_result call that cannot render the result leaves it pending for delivery", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		const id = await spawnBackground(extension, worktree);
+		await settle();
+		extension.busy(true);
+		children.created[0].spec.report({
+			...workerResult("done"),
+			files_changed: "src/a.ts",
+		});
+		children.created[0].result.resolve("Answer.");
+		await settle();
+
+		await assert.rejects(use(extension, "child_result", { id }));
+		await extension.fire("turn_end");
+
+		assert.match(
+			extension.notifications.at(-1)?.message ?? "",
+			/could not be delivered/,
+		);
+	});
+});
+
 test("a result whose delivery throws stays pending and is delivered on the next turn", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
@@ -3978,3 +4231,117 @@ test("an idle parent receives results that end together in one message that star
 		assert.deepEqual(options, { deliverAs: "steer", triggerTurn: true });
 	});
 });
+
+test("five children that end at different times reach the parent in one delivery that starts one turn", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		const ids = [];
+		for (let i = 0; i < 5; i++)
+			ids.push(await spawnBackground(extension, worktree));
+		await settle();
+		const verdicts = ["done", "done", undefined, "done", "done"];
+
+		for (const [i, child] of children.created.entries()) {
+			if (verdicts[i]) child.spec.report(workerResult(verdicts[i]));
+			child.result.resolve(`Answer ${i}.`);
+			await settle();
+			await extension.fire("turn_end");
+			await extension.fire("agent_settled");
+			if (i < 4) assert.equal(extension.messages.length, 0);
+		}
+
+		assert.equal(extension.messages.length, 1);
+		const [{ message, options }] = extension.messages;
+		assert.deepEqual(
+			message.details.results.map(stateOfDetails),
+			ids.map((id) => ({ id, state: "completed" })),
+		);
+		assert.deepEqual(options, { deliverAs: "steer", triggerTurn: true });
+	});
+});
+
+for (const [trigger, event] of [
+	["failed", "fails"],
+	["timed out", "times out"],
+	["cancelled", "is cancelled from the view"],
+	["blocked", "reports blocked"],
+	["fail", "reports fail"],
+	["partial", "reports partial"],
+	["question", "asks a question"],
+]) {
+	test(`a child that ${event} wakes the parent at once with every pending result while another child still works`, async () => {
+		await withWorkspace(async ({ worktree, agentDir }) => {
+			const clock = manualClock();
+			const children = fakeChildren();
+			const extension = await loadSpawnTool({
+				agentDir,
+				create: children.create,
+				schedule: clock.schedule,
+			});
+			const quiet = await spawnBackground(extension, worktree);
+			const waker = await spawnBackground(
+				extension,
+				worktree,
+				"Verify the parser fix",
+				trigger === "fail" ? "verify" : "worker",
+			);
+			await spawnBackground(extension, worktree);
+			await settle();
+			const [first, second, third] = children.created;
+			first.spec.report(workerResult("done"));
+			first.result.resolve("Quiet answer.");
+			await settle();
+			assert.equal(extension.messages.length, 0);
+
+			if (trigger === "failed") {
+				second.result.reject(new Error("provider overloaded"));
+			} else if (trigger === "timed out") {
+				third.spec.onEvent({
+					type: "tool_execution_start",
+					toolCallId: "call-1",
+					toolName: "bash",
+					args: {},
+				});
+				clock.fire(minutes(4));
+			} else if (trigger === "cancelled") {
+				const view = openChildren(extension);
+				view.press("s", "y");
+			} else if (trigger === "question") {
+				second.spec.ask("Which file holds the parser?");
+			} else if (trigger === "fail") {
+				assert.equal(second.spec.role, "verify");
+				second.spec.report({
+					verdict: "fail",
+					reason: "The parser still drops tabs.",
+					findings: ["test/parser.test.ts: the tab case fails"],
+					unverified: [],
+				});
+				second.result.resolve("Waking answer.");
+			} else {
+				second.spec.report(workerResult(trigger));
+				second.result.resolve("Waking answer.");
+			}
+			await settle();
+
+			const delivered = extension.messages.map(({ message }) => message);
+			const results = delivered.find(
+				(message) => message.customType === "pi-workflow-child-result",
+			);
+			const resultIds = (results.details.results ?? [results.details]).map(
+				(details) => details.id,
+			);
+			if (trigger === "question") {
+				assert.deepEqual(resultIds, [quiet]);
+				assert.equal(delivered.at(-1).customType, "pi-workflow-child-question");
+				assert.equal(delivered.at(-1).details.id, waker);
+			} else {
+				assert.equal(delivered.length, 1);
+				assert.deepEqual(resultIds, [quiet, waker]);
+			}
+		});
+	});
+}

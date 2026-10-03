@@ -93,7 +93,7 @@ function commandArguments(params: CodeGraphParameters, root: string) {
 	return [params.operation, "--path", root, "--", params.query];
 }
 
-export function createCodeGraphTool(adapters: CodeGraphAdapters = {}) {
+function codegraphRunner(adapters: CodeGraphAdapters) {
 	const run = adapters.run ?? runCommand;
 
 	async function assertGitRoot(workspace: string, signal?: AbortSignal) {
@@ -115,13 +115,16 @@ export function createCodeGraphTool(adapters: CodeGraphAdapters = {}) {
 			throw notRoot;
 	}
 
-	function assertIndexDirectory(root: string) {
+	function assertIndexDirectory(root: string, required: boolean) {
 		let index: Stats;
 		try {
 			index = lstatSync(join(root, ".codegraph"));
 		} catch (error) {
-			if (isMissing(error)) return;
-			throw error;
+			if (!isMissing(error)) throw error;
+			if (required) {
+				throw new Error(`This worktree has no .codegraph index. ${fallback}`);
+			}
+			return;
 		}
 		if (index.isSymbolicLink() || !index.isDirectory()) {
 			throw new Error(
@@ -130,6 +133,61 @@ export function createCodeGraphTool(adapters: CodeGraphAdapters = {}) {
 		}
 	}
 
+	return async function runIn(
+		cwd: string,
+		params: CodeGraphParameters,
+		signal: AbortSignal | undefined,
+		indexRequired: boolean,
+	) {
+		const root = realpathSync(cwd);
+		await assertGitRoot(root, signal);
+		assertIndexDirectory(root, indexRequired);
+		const args = commandArguments(params, root);
+		let result: RunResult;
+		try {
+			result = await run("codegraph", args, {
+				cwd: root,
+				env: gitEnvironment(),
+				signal,
+			});
+		} catch (error) {
+			if (signal?.aborted) throw error;
+			if (isMissing(error)) {
+				return outcome(
+					"unavailable",
+					`CodeGraph is unavailable because the codegraph binary was not found. ${fallback}`,
+				);
+			}
+			return outcome(
+				"failed",
+				`CodeGraph failed to run: ${(error as Error).message}. ${fallback}`,
+			);
+		}
+		const output = truncate(
+			[result.stdout, result.stderr].filter(Boolean).join("\n"),
+		);
+		if (result.code !== 0) {
+			return outcome(
+				"failed",
+				`CodeGraph failed with exit code ${result.code}. ${fallback}\n\n${output}`,
+			);
+		}
+		return outcome("ok", output || "CodeGraph completed without output.");
+	};
+}
+
+const codegraphParameters = {
+	type: "object",
+	additionalProperties: false,
+	required: ["operation"],
+	properties: {
+		operation: { type: "string", enum: ["init", "query", "explore"] },
+		query: { type: "string", minLength: 1 },
+	},
+} as const;
+
+export function createCodeGraphTool(adapters: CodeGraphAdapters = {}) {
+	const runIn = codegraphRunner(adapters);
 	return {
 		name: "codegraph",
 		label: "CodeGraph",
@@ -140,15 +198,7 @@ export function createCodeGraphTool(adapters: CodeGraphAdapters = {}) {
 		promptGuidelines: [
 			"Use codegraph init when the current Git root has no .codegraph index, then codegraph query for symbols or codegraph explore for source and call paths.",
 		],
-		parameters: {
-			type: "object",
-			additionalProperties: false,
-			required: ["operation"],
-			properties: {
-				operation: { type: "string", enum: ["init", "query", "explore"] },
-				query: { type: "string", minLength: 1 },
-			},
-		} as const,
+		parameters: codegraphParameters,
 		executionMode: "sequential" as const,
 		async execute(
 			_toolCallId: string,
@@ -168,40 +218,47 @@ export function createCodeGraphTool(adapters: CodeGraphAdapters = {}) {
 					details: { status: "refused" },
 				};
 			}
-			const root = realpathSync(ctx.cwd);
-			await assertGitRoot(root, signal);
-			assertIndexDirectory(root);
-			const args = commandArguments(params, root);
-			let result: RunResult;
-			try {
-				result = await run("codegraph", args, {
-					cwd: root,
-					env: gitEnvironment(),
-					signal,
-				});
-			} catch (error) {
-				if (signal?.aborted) throw error;
-				if (isMissing(error)) {
-					return outcome(
-						"unavailable",
-						`CodeGraph is unavailable because the codegraph binary was not found. ${fallback}`,
-					);
-				}
-				return outcome(
-					"failed",
-					`CodeGraph failed to run: ${(error as Error).message}. ${fallback}`,
+			return runIn(ctx.cwd, params, signal, false);
+		},
+	};
+}
+
+export function createChildCodeGraphTool(
+	cwd: string,
+	adapters?: CodeGraphAdapters,
+) {
+	const runIn = codegraphRunner(adapters ?? {});
+	return {
+		name: "codegraph",
+		label: "CodeGraph",
+		executionMode: "sequential" as const,
+		description:
+			"Search or explore the CodeGraph index of this worktree. It is read-only, accepts no path and no shell command.",
+		promptSnippet: "Search or explore the CodeGraph index of this worktree",
+		promptGuidelines: [
+			"Use codegraph query for symbols or codegraph explore for source and call paths before reading files one by one.",
+		],
+		parameters: {
+			...codegraphParameters,
+			properties: {
+				...codegraphParameters.properties,
+				operation: { type: "string", enum: ["query", "explore"] },
+			},
+		} as const,
+		async execute(
+			_toolCallId: string,
+			params: CodeGraphParameters,
+			signal?: AbortSignal,
+		) {
+			if (params.operation !== "query" && params.operation !== "explore") {
+				throw new Error("CodeGraph here accepts only query or explore.");
+			}
+			if (!held(codegraphStream)) {
+				throw new Error(
+					`CodeGraph is not available to this child. ${fallback}`,
 				);
 			}
-			const output = truncate(
-				[result.stdout, result.stderr].filter(Boolean).join("\n"),
-			);
-			if (result.code !== 0) {
-				return outcome(
-					"failed",
-					`CodeGraph failed with exit code ${result.code}. ${fallback}\n\n${output}`,
-				);
-			}
-			return outcome("ok", output || "CodeGraph completed without output.");
+			return runIn(cwd, params, signal, true);
 		},
 	};
 }
