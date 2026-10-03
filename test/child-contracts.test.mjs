@@ -4,6 +4,8 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { parseContract } from "../extensions/child-launcher.ts";
+
 const contracts = fileURLToPath(new URL("../assets/contracts/", import.meta.url));
 
 async function contract(role) {
@@ -73,7 +75,7 @@ test("the worker contract declares that children have no MCP and cannot launch c
 test("the explore and verify contracts offer codegraph and the worker contract does not", async () => {
 	for (const role of ["explore", "verify"]) {
 		const text = await contract(role);
-		assert.match(text, /^---\ntools: .*\bcodegraph\b.*\n---/);
+		assert.ok(parseContract(text).tools.includes("codegraph"));
 		assert.match(text, /codegraph with query and explore/);
 	}
 	assert.doesNotMatch(await contract("worker"), /codegraph/);

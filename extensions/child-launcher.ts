@@ -145,7 +145,7 @@ function isRole(value: string): value is Role {
 	return (roles as readonly string[]).includes(value);
 }
 
-function parseContract(text: string): Contract {
+export function parseContract(text: string): Contract {
 	const match = /^---\ntools: (.+)\n---\n([\s\S]*\S[\s\S]*)$/.exec(
 		text.replaceAll("\r\n", "\n"),
 	);
