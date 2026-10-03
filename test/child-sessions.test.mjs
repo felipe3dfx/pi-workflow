@@ -780,6 +780,7 @@ test("a worker reports its result with report_result; the last call wins and rea
 		);
 		const traces = await backgroundTraceStates(extension, id);
 		assert.equal(traces.at(-1).verdict, "blocked");
+		assert.equal(traces.at(-1).reason, "Database access is missing");
 		assert.match(
 			text(await use(extension, "child_result", { id })),
 			/Verdict: blocked\.\nReason: Database access is missing/,
@@ -816,6 +817,7 @@ test("a foreground child appends its running and terminal Run states as trace en
 		assert.equal(traces[0].data.id, traces[1].data.id);
 		assert.equal(traces[1].data.role, "worker");
 		assert.equal(traces[1].data.verdict, "blocked");
+		assert.equal(traces[1].data.reason, "The work is blocked.");
 		assert.ok(!JSON.stringify(traces).includes("Secret task text"));
 		assert.ok(!JSON.stringify(traces).includes("full result body"));
 	});

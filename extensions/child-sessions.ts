@@ -138,6 +138,7 @@ export interface ChildTrace {
 	references: string[];
 	state: ChildState;
 	verdict?: string;
+	reason?: string;
 	version: string;
 }
 
@@ -420,7 +421,7 @@ export function createChildSessions(options: {
 		state: ChildState,
 		result?: ChildResult,
 	) {
-		const verdict = state === "completed" ? result?.verdict : undefined;
+		const completed = state === "completed" ? result : undefined;
 		try {
 			options.trace({
 				id,
@@ -429,7 +430,8 @@ export function createChildSessions(options: {
 				tools: childTools(plan),
 				references: plan.references,
 				state,
-				...(verdict ? { verdict } : {}),
+				...(completed ? { verdict: completed.verdict } : {}),
+				...(completed?.reason ? { reason: completed.reason } : {}),
 				version: packageVersion,
 			});
 		} catch (error) {
