@@ -1573,10 +1573,11 @@ async function spawnBackground(
 	extension,
 	worktree,
 	task = "Fix the failing test",
+	role = "worker",
 ) {
 	const result = await spawn(
 		extension.tool,
-		{ role: "worker", task },
+		{ role, task },
 		toolContext("tui", worktree),
 	);
 	return result.details.id;
@@ -4282,7 +4283,12 @@ for (const [trigger, event] of [
 				schedule: clock.schedule,
 			});
 			const quiet = await spawnBackground(extension, worktree);
-			const waker = await spawnBackground(extension, worktree);
+			const waker = await spawnBackground(
+				extension,
+				worktree,
+				"Verify the parser fix",
+				trigger === "fail" ? "verify" : "worker",
+			);
 			await spawnBackground(extension, worktree);
 			await settle();
 			const [first, second, third] = children.created;
@@ -4306,6 +4312,15 @@ for (const [trigger, event] of [
 				view.press("s", "y");
 			} else if (trigger === "question") {
 				second.spec.ask("Which file holds the parser?");
+			} else if (trigger === "fail") {
+				assert.equal(second.spec.role, "verify");
+				second.spec.report({
+					verdict: "fail",
+					reason: "The parser still drops tabs.",
+					findings: ["test/parser.test.ts: the tab case fails"],
+					unverified: [],
+				});
+				second.result.resolve("Waking answer.");
 			} else {
 				second.spec.report(workerResult(trigger));
 				second.result.resolve("Waking answer.");
