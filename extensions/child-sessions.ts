@@ -1211,11 +1211,12 @@ export function createChildQueryTools(
 					{ id: child.id, state: child.state },
 				);
 			}
-			sessions.consume(child.id);
-			return report([childOutcome(child)], {
+			const outcome = report([childOutcome(child)], {
 				id: child.id,
 				state: child.state,
 			});
+			sessions.consume(child.id);
+			return outcome;
 		},
 	};
 	const cancelChild: ToolDefinition<

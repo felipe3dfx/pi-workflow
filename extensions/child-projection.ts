@@ -51,27 +51,33 @@ const reason = Type.Optional(
 );
 
 export const resultParameters = {
-	worker: Type.Object({
-		verdict: Type.Union([
-			Type.Literal("done"),
-			Type.Literal("partial"),
-			Type.Literal("blocked"),
-		]),
-		reason,
-		files_changed: list("Each changed path with its change."),
-		validation: list("Each exact command with its observed result."),
-		left_undone: list("What remains; empty when nothing does."),
-	}),
-	verify: Type.Object({
-		verdict: Type.Union([
-			Type.Literal("pass"),
-			Type.Literal("fail"),
-			Type.Literal("blocked"),
-		]),
-		reason,
-		findings: list("Each finding with its evidence."),
-		unverified: list("What remained unverified."),
-	}),
+	worker: Type.Object(
+		{
+			verdict: Type.Union([
+				Type.Literal("done"),
+				Type.Literal("partial"),
+				Type.Literal("blocked"),
+			]),
+			reason,
+			files_changed: list("Each changed path with its change."),
+			validation: list("Each exact command with its observed result."),
+			left_undone: list("What remains; empty when nothing does."),
+		},
+		{ additionalProperties: false },
+	),
+	verify: Type.Object(
+		{
+			verdict: Type.Union([
+				Type.Literal("pass"),
+				Type.Literal("fail"),
+				Type.Literal("blocked"),
+			]),
+			reason,
+			findings: list("Each finding with its evidence."),
+			unverified: list("What remained unverified."),
+		},
+		{ additionalProperties: false },
+	),
 };
 
 export type ChildResult =

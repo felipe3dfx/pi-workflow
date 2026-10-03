@@ -2558,6 +2558,29 @@ test("a worker reports through Pi's SDK; a result outside its role's schema is r
 	});
 });
 
+test("a worker result through Pi's SDK with a property outside its role's schema is refused and the last valid call is delivered", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const child = await realChild(agentDir, [
+			reporting({ ...workerResult("done"), summary: "Finished" }),
+			reporting(workerResult("partial", "The migration is pending.")),
+			fauxAssistantMessage("Fixed src/parser.ts."),
+		]);
+		const { extension, parent } = child;
+		await spawnReal(child, worktree);
+		await eventually(() => extension.messages.length === 1);
+
+		const refused = parent.requests[1].messages.at(-1);
+		assert.equal(refused.toolName, "report_result");
+		assert.equal(refused.isError, true);
+		const { message } = extension.messages[0];
+		assert.deepEqual(
+			message.details.result,
+			workerResult("partial", "The migration is pending."),
+		);
+		assert.match(message.content, /Verdict: partial\./);
+	});
+});
+
 test("a worker through Pi's SDK reports done without a reason, and a blocked result without a reason is refused", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const { reason: _reason, ...blocked } = workerResult("blocked");
@@ -4015,6 +4038,33 @@ test("a result the parent read with child_result is not delivered again and trig
 		await use(extension, "child_result", { id: other });
 		await extension.fire("agent_settled");
 		assert.equal(extension.messages.length, 1);
+	});
+});
+
+test("a child_result call that cannot render the result leaves it pending for delivery", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		const id = await spawnBackground(extension, worktree);
+		await settle();
+		extension.busy(true);
+		children.created[0].spec.report({
+			...workerResult("done"),
+			files_changed: "src/a.ts",
+		});
+		children.created[0].result.resolve("Answer.");
+		await settle();
+
+		await assert.rejects(use(extension, "child_result", { id }));
+		await extension.fire("turn_end");
+
+		assert.match(
+			extension.notifications.at(-1)?.message ?? "",
+			/could not be delivered/,
+		);
 	});
 });
 
