@@ -61,7 +61,7 @@ This contract owns the destination and the Specialist. It does not choose a mode
 
 The child session runs in the parent process through the Pi SDK. This is a design constraint, not a tested behavior.
 
-Invocations of `git` and `gh` stay in the parent only while routing is off. While routing is off, the child's `bash` refuses them. While routing is on, Jev may leave that work to a Specialist. That does not give the explore contract a shell.
+Invocations of `git` and `gh` stay in the parent only while routing is off. While routing is off, the child's `bash` refuses them when they are looked up through `PATH`; an absolute path or a reset `PATH` bypasses that policy guard. While routing is on, Jev may leave that work to a Specialist. That does not give the explore contract a shell.
 
 ## Testing decisions
 
@@ -69,7 +69,7 @@ Tests cross the routing seam and the settings list, not private helpers.
 
 - A missing choice document is off and does not call Jev.
 - Changing the settings row to on persists across a new process. Restart does not reset it. The model profiles document is unchanged.
-- While off, a gated parent tool runs. A task that mentions `git` or `gh` launches with its named role, and the child's `bash` refuses a command that runs `git` or `gh`, while one that only names them as an argument runs. A launch with no role does not launch and does not invent `worker`. A named role may launch. Jev is not called.
+- While off, a gated parent tool runs. A task that mentions `git` or `gh` launches with its named role, and the child's `bash` refuses a command that runs `git` or `gh` through `PATH`, while one that only names them as an argument runs. A launch with no role does not launch and does not invent `worker`. A named role may launch. Jev is not called.
 - While on, `stay` lets the next gated tool run. `decide` blocks it and does not say to launch. `leave` names the Specialist Jev chose and does not let the parent tool run. After a launch for the same message, the parent tool runs and Jev is not asked again.
 - An explicit child request while on asks Jev for the destination and the Specialist in the same call.
 - A skill name in the user message does not change the destination or the Specialist.
