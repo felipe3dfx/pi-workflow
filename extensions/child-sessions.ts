@@ -613,6 +613,7 @@ export function createChildSessions(options: {
 			background: boolean;
 			signal?: AbortSignal;
 			modelRegistry: ExtensionContext["modelRegistry"];
+			onLaunch?: () => void;
 		},
 		from?: { id: string; conversation: Conversation },
 	) {
@@ -709,6 +710,7 @@ export function createChildSessions(options: {
 				result = value;
 			};
 			watch.start();
+			launch.onLaunch?.();
 			traceRun(id, plan, "running");
 			try {
 				const text = await Promise.race([
@@ -753,6 +755,7 @@ export function createChildSessions(options: {
 		observe = (event) => track(child, event);
 		children.set(child.record.id, child);
 		queue.push(child);
+		launch.onLaunch?.();
 		trace(child);
 		changed();
 		queueMicrotask(pump);
@@ -1028,10 +1031,8 @@ export function createSpawnChildTool(
 				background,
 				signal,
 				modelRegistry: ctx.modelRegistry,
+				onLaunch: () => launcher.recordLaunch(userRequest),
 			});
-			if (started.status === "queued" || started.status === "completed") {
-				launcher.recordLaunch(userRequest);
-			}
 			return launched(started, plan.warnings, {
 				role: plan.role,
 				...(plan.jev ? { jev: plan.jev } : {}),

@@ -581,6 +581,43 @@ test("under leave, the parent's gated tools stay blocked until a launch for the 
 	});
 });
 
+test("under leave, a foreground child that starts and then fails unblocks the parent's gated tools, and a refusal before start does not", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const message = "Research the parser and tell me the package version";
+		let failures = 1;
+		const children = fakeChildren({
+			onCreate: () => {
+				if (failures-- > 0) throw new Error("provider gone");
+			},
+			run: async () => {
+				throw new Error("provider overloaded");
+			},
+		});
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const ctx = {
+			...toolContext("print", worktree, fakeJev({ specialist: "explorer" })),
+			sessionManager: {
+				getBranch: () => [
+					{ type: "message", message: { role: "user", content: message } },
+				],
+			},
+		};
+		const read = { toolName: "read", input: { path: "package.json" } };
+
+		const refused = await spawn(extension.tool, { task: "Research the parser" }, ctx);
+		const afterRefusal = await extension.gate(read, ctx);
+		await assert.rejects(
+			spawn(extension.tool, { task: "Research the parser" }, ctx),
+			/provider overloaded/,
+		);
+		const afterFailure = await extension.gate(read, ctx);
+
+		assert.equal(refused.details.status, "refused");
+		assert.equal(afterRefusal.block, true);
+		assert.equal(afterFailure, undefined);
+	});
+});
+
 test("a profile model Pi cannot run refuses the launch with no child id", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		await writeFile(
