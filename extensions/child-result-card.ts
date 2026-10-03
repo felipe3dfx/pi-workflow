@@ -51,7 +51,7 @@ function tone(card: Card, question: boolean): ThemeColor {
 
 function verdictTone(verdict: string): ThemeColor {
 	if (verdict === "fail") return "error";
-	if (verdict === "blocked") return "warning";
+	if (verdict === "blocked" || verdict === "partial") return "warning";
 	return "success";
 }
 

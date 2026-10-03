@@ -15,7 +15,10 @@ import { capabilities, replaceSelection } from "../extensions/configure.ts";
 replaceSelection({
 	schemaVersion: 1,
 	capabilities: Object.fromEntries(
-		capabilities.map((capability) => [capability, capability === "child-session"]),
+		capabilities.map((capability) => [
+			capability,
+			capability === "child-session",
+		]),
 	),
 	expectations: {},
 });
@@ -132,6 +135,20 @@ test("a done or passing Verdict shows no reason collapsed", (t) => {
 	assert.equal(plain(done).length, 2);
 });
 
+test("a partial Verdict shows in the warning tone because the work is incomplete", (t) => {
+	const { card } = cards(t);
+	const partial = card({
+		customType: "pi-workflow-child-result",
+		details: {
+			...details,
+			verdict: "partial",
+			result: { verdict: "partial", reason: "The migration is pending." },
+		},
+	});
+	const theme = globalThis[Symbol.for("@earendil-works/pi-coding-agent:theme")];
+	assert.ok(partial.render(90)[1].includes(theme.fg("warning", "partial")));
+});
+
 test("ctrl+o shows the task, the whole result, and the subagents view key", (t) => {
 	const { card } = cards(t);
 	const component = card({
@@ -197,7 +214,10 @@ test("without compatible details the card is not built and Pi shows the message 
 		},
 	]) {
 		const lines = plain(card(message));
-		assert.equal(lines.some((line) => line.includes("Subagent")), false);
+		assert.equal(
+			lines.some((line) => line.includes("Subagent")),
+			false,
+		);
 		assert.ok(lines.some((line) => line.includes(message.content)));
 	}
 });
