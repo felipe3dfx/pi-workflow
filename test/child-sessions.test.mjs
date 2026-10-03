@@ -4153,7 +4153,7 @@ test("five children that end at different times reach the parent in one delivery
 		for (let i = 0; i < 5; i++)
 			ids.push(await spawnBackground(extension, worktree));
 		await settle();
-		const verdicts = ["done", "pass", undefined, "done", "pass"];
+		const verdicts = ["done", "done", undefined, "done", "done"];
 
 		for (const [i, child] of children.created.entries()) {
 			if (verdicts[i]) child.spec.report(workerResult(verdicts[i]));
