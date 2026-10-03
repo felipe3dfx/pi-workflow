@@ -176,6 +176,16 @@ function codegraphRunner(adapters: CodeGraphAdapters) {
 	};
 }
 
+const codegraphParameters = {
+	type: "object",
+	additionalProperties: false,
+	required: ["operation"],
+	properties: {
+		operation: { type: "string", enum: ["init", "query", "explore"] },
+		query: { type: "string", minLength: 1 },
+	},
+} as const;
+
 export function createCodeGraphTool(adapters: CodeGraphAdapters = {}) {
 	const runIn = codegraphRunner(adapters);
 	return {
@@ -188,15 +198,7 @@ export function createCodeGraphTool(adapters: CodeGraphAdapters = {}) {
 		promptGuidelines: [
 			"Use codegraph init when the current Git root has no .codegraph index, then codegraph query for symbols or codegraph explore for source and call paths.",
 		],
-		parameters: {
-			type: "object",
-			additionalProperties: false,
-			required: ["operation"],
-			properties: {
-				operation: { type: "string", enum: ["init", "query", "explore"] },
-				query: { type: "string", minLength: 1 },
-			},
-		} as const,
+		parameters: codegraphParameters,
 		executionMode: "sequential" as const,
 		async execute(
 			_toolCallId: string,
@@ -225,10 +227,11 @@ export function createChildCodeGraphTool(
 	cwd: string,
 	adapters?: CodeGraphAdapters,
 ) {
-	const tool = createCodeGraphTool(adapters);
 	const runIn = codegraphRunner(adapters ?? {});
 	return {
-		...tool,
+		name: "codegraph",
+		label: "CodeGraph",
+		executionMode: "sequential" as const,
 		description:
 			"Search or explore the CodeGraph index of this worktree. It is read-only, accepts no path and no shell command.",
 		promptSnippet: "Search or explore the CodeGraph index of this worktree",
@@ -236,9 +239,9 @@ export function createChildCodeGraphTool(
 			"Use codegraph query for symbols or codegraph explore for source and call paths before reading files one by one.",
 		],
 		parameters: {
-			...tool.parameters,
+			...codegraphParameters,
 			properties: {
-				...tool.parameters.properties,
+				...codegraphParameters.properties,
 				operation: { type: "string", enum: ["query", "explore"] },
 			},
 		} as const,
