@@ -171,6 +171,59 @@ test("ctrl+o shows the task, the whole result, and the subagents view key", (t) 
 	]);
 });
 
+test("ctrl+o shows the reported reason and result fields between the task and the final text", (t) => {
+	const { card } = cards(t);
+	const worker = card({
+		customType: "pi-workflow-child-result",
+		details: {
+			...details,
+			verdict: "partial",
+			result: {
+				verdict: "partial",
+				reason: "The migration is pending.",
+				files_changed: ["src/a.ts: fixed the parser"],
+				validation: ["npm test: 12 passed"],
+				left_undone: [],
+			},
+			text: "uno",
+		},
+	});
+	worker.setExpanded(true);
+	assert.deepEqual(plain(worker).slice(2, -1), [
+		"     Task Ejecuta sleep 60 para esperar 60 segundos",
+		"     Reason: The migration is pending.",
+		"     files_changed:",
+		"     - src/a.ts: fixed the parser",
+		"     validation:",
+		"     - npm test: 12 passed",
+		"     left_undone:",
+		"     - none",
+		"     uno",
+	]);
+	const verifier = card({
+		customType: "pi-workflow-child-result",
+		details: {
+			...details,
+			role: "verify",
+			verdict: "pass",
+			result: {
+				verdict: "pass",
+				findings: ["The parser handles tabs."],
+				unverified: ["Windows paths."],
+			},
+			text: "dos",
+		},
+	});
+	verifier.setExpanded(true);
+	assert.deepEqual(plain(verifier).slice(3, -1), [
+		"     findings:",
+		"     - The parser handles tabs.",
+		"     unverified:",
+		"     - Windows paths.",
+		"     dos",
+	]);
+});
+
 test("failures show their reason collapsed, and questions always show their whole text, in the error and warning tones", (t) => {
 	const { card } = cards(t);
 	const error = "line 1\n\nline 2\n\nline 3\n\nline 4";

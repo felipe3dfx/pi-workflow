@@ -90,15 +90,24 @@ export function reportsResult(
 	return Object.hasOwn(resultParameters, role);
 }
 
-function resultLines({ verdict, reason, ...fields }: ChildResult) {
+export function resultFieldLines({
+	verdict: _verdict,
+	reason,
+	...fields
+}: ChildResult) {
 	return [
-		`Verdict: ${verdict}.`,
 		...(reason ? [`Reason: ${reason}`] : []),
 		...Object.entries(fields).flatMap(([field, items]) => [
 			`${field}:`,
 			...(items.length > 0 ? items : ["none"]).map((item) => `- ${item}`),
 		]),
-	].join("\n");
+	];
+}
+
+function resultLines(result: ChildResult) {
+	return [`Verdict: ${result.verdict}.`, ...resultFieldLines(result)].join(
+		"\n",
+	);
 }
 
 export function childOutcome(child: {

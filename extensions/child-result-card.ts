@@ -19,7 +19,7 @@ import { childElapsed, spread } from "./children-box.ts";
 import { markCard } from "./chrome-groups.ts";
 import { assistantInset, edgeFor } from "./chrome-messages.ts";
 import { claim, paint } from "./configure.ts";
-import { childModelLine } from "./child-projection.ts";
+import { childModelLine, resultFieldLines } from "./child-projection.ts";
 import { paintMessageStream } from "./shell.ts";
 import { sanitizeMultilineText, sanitizeTaskText } from "./todo-header.ts";
 
@@ -149,6 +149,9 @@ class ResultCard implements Component {
 		const lines: string[] = [];
 		if (open && this.card.task)
 			lines.push(t.fg("dim", `Task ${sanitizeTaskText(this.card.task)}`));
+		if (open && this.card.result)
+			for (const line of resultFieldLines(this.card.result))
+				lines.push(t.fg("dim", sanitizeTaskText(line)));
 		if (open || this.question) {
 			const body = this.body.render(inner).map((line) => line.trimEnd());
 			while (body.length > 0 && body.at(-1) === "") body.pop();
