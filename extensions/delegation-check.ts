@@ -96,6 +96,30 @@ export const delegationCases: readonly DelegationCase[] = [
 		},
 	},
 	{
+		name: "independent review request",
+		live: true,
+		task: "Independently check the work.",
+		userRequest:
+			"Revisa de forma independiente si docs/adr/0011-git-and-gh-guard-in-child-bash.md describe correctamente lo que hace extensions/child-bash.ts. Quiero un veredicto claro.",
+		expected: {
+			action: "launch",
+			role: "verify",
+			destinationAsked: true,
+		},
+	},
+	{
+		name: "independent verification request",
+		live: true,
+		task: "Independently check the work.",
+		userRequest:
+			"Verifica de forma independiente que la rama feature-inexistente pasa todos los tests de este repo",
+		expected: {
+			action: "launch",
+			role: "verify",
+			destinationAsked: true,
+		},
+	},
+	{
 		name: "open product decision",
 		task: "Decide whether this product change should exist.",
 		userRequest:

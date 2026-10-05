@@ -27,6 +27,6 @@ Supersedes: ADR-0008, only its clause that commands that read repository state, 
 
 ## Consequences
 
-A task that only mentions `git` launches, and a command that only mentions `git` as an argument runs. A command, script, or interpreter that looks up `git` or `gh` through `PATH` gets the stub's message and a non-zero exit. Every program the child runs loses `git` and `gh`, including `npm run check`.
+A task that only mentions `git` launches, and a command that only mentions `git` as an argument runs. A command, script, or interpreter that looks up `git` or `gh` through `PATH` gets the stub's message, and the stub exits non-zero. A wrapping pipeline, script, or interpreter may not propagate that status (`git --version | wc -l` exits 0), but `git` itself does not run. Every program the child runs loses `git` and `gh`, including `npm run check`.
 
 An absolute path to the real binary, such as `/usr/bin/git`, bypasses the guard, and so does a command that resets `PATH`. It is a policy guard, not a sandbox.

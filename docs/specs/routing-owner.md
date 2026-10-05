@@ -41,7 +41,7 @@ Jev is not called. Gated parent tools run. Failing to delegate does not block th
 
 Jev chooses whether the work stays or leaves and which Specialist launches. The parent does not choose the Specialist again. A suggested role does not override Jev.
 
-One Jev call always answers destination and Specialist. Jev's `leave` criterion covers an explicit request in the latest user message for a child, subagent, or delegation, in any language or wording, and its `stay` criterion excludes it.
+One Jev call always answers destination and Specialist. Jev's `leave` criterion covers an explicit request in the latest user message for a child, subagent, or delegation, in any language or wording, and its `stay` criterion excludes it. The `leave` criterion also covers a user request for an independent review or check of work, which must run in a session other than the parent, and `stay` excludes that too.
 
 `stay` lets the next gated parent tool run. It does not launch. It is not Launch blocked. `decide` tells the parent to ask one question and wait. It does not launch. `leave` does not launch by itself. It tells the parent to launch the Specialist Jev chose. Once a child has launched for that user message, the parent's gated tools run for the rest of that message without asking Jev again. Before the launch, `leave` still blocks.
 
