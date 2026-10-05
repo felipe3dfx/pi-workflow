@@ -1241,6 +1241,82 @@ test("launching a child keeps the parent's model and thinking, and a profile nam
 	await assertLaunchKeepsParentModel(fakeJev());
 });
 
+test("with Jev routing off, the launch response names the launched role and not Jev", async (t) => {
+	withAgentDirectory(t);
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const { tool } = await loadSpawnTool({ agentDir, create: children.create });
+
+		const result = await spawn(
+			tool,
+			{ role: "verify", task: "Run the checks" },
+			toolContext("tui", worktree),
+		);
+
+		assert.equal(result.details.status, "queued", text(result));
+		assert.match(text(result), /Launched as verify\./);
+		assert.doesNotMatch(text(result), /Jev selected/);
+	});
+});
+
+test("spawn_child tells the parent to end its turn instead of polling", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const { tool } = await loadSpawnTool({
+			agentDir,
+			create: fakeChildren().create,
+		});
+		const guidance = tool.promptGuidelines.join("\n");
+		assert.match(guidance, /end your turn/i);
+		assert.match(
+			guidance,
+			/sleep, list_children, child_status, or child_result/,
+		);
+
+		const result = await spawn(
+			tool,
+			{ role: "worker", task: "Fix the failing test" },
+			toolContext("tui", worktree),
+		);
+		assert.match(text(result), /End your turn/i);
+		assert.match(text(result), /do not poll/i);
+	});
+});
+
+test("spawn_child describes who decides the role and what each role can do", async () => {
+	await withWorkspace(async ({ agentDir }) => {
+		const { tool } = await loadSpawnTool({
+			agentDir,
+			create: fakeChildren().create,
+		});
+		const role = tool.parameters.properties.role.description;
+		assert.match(role, /Jev routing is off, the role you pass decides/);
+		assert.match(role, /on, it is a suggestion/);
+		const guidance = tool.promptGuidelines.join("\n");
+		assert.match(
+			guidance,
+			/explore reads files and queries CodeGraph; it cannot run commands or edit/,
+		);
+		assert.match(
+			guidance,
+			/verify checks work that is already done and may run read-only commands such as tests, without editing/,
+		);
+		assert.match(guidance, /worker implements changes and runs any other command/);
+		assert.match(
+			guidance,
+			/When Jev routing is on, the parent asks once per user turn/,
+		);
+		assert.doesNotMatch(guidance, /(^|\. )Jev selects the specialist/m);
+		assert.match(
+			guidance,
+			/When Jev routing is on, the role is a suggestion and Jev selects the specialist/,
+		);
+		assert.match(
+			tool.description,
+			/When Jev routing is on, the harness decides whether the work leaves/,
+		);
+	});
+});
+
 test("with Jev routing off, launching a named role keeps the parent's model and thinking, and a profile naming a virtual model runs the child on it", async (t) => {
 	withAgentDirectory(t);
 	const jev = fakeJev();

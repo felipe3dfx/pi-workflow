@@ -905,7 +905,7 @@ const spawnChildParameters = Type.Object({
 	role: Type.Optional(
 		Type.String({
 			description:
-				"A suggestion (explore, worker, or verify). Jev selects the specialist; omitting it does not choose worker.",
+				"explore, worker, or verify. When Jev routing is off, the role you pass decides and omitting it does not choose worker. When on, it is a suggestion and Jev selects the specialist.",
 		}),
 	),
 	worktree: Type.Optional(
@@ -996,12 +996,13 @@ export function createSpawnChildTool(
 		name: "spawn_child",
 		label: "Spawn Child",
 		description:
-			"Delegate a bounded task to a child session that runs under a harness contract. The harness decides whether the work leaves this session and which model runs it. In an interactive session the call returns the child id at once and the result arrives later as a message; in print and json modes the result returns in the same call.",
+			"Delegate a bounded task to a child session that runs under a harness contract. When Jev routing is on, the harness decides whether the work leaves this session. The active profile picks the model for the role. In an interactive session the call returns the child id at once and the result arrives later as a message; in print and json modes the result returns in the same call.",
 		promptSnippet: "Delegate a bounded task to a child session",
 		promptGuidelines: [
-			"Pass the task and, when the user named one, the suggested role (explore, worker, or verify). The harness reads the user message. Jev selects the specialist.",
-			"A refusal or a queued id is not a completed result and is not retried.",
-			"The parent asks once per user turn before read, grep, find, ls, edit, write, bash, powershell, or codegraph query and explore. A block that names a role means call spawn_child and use that role. A block that says to ask the user one question means ask that one question and wait. Reads of AGENTS.md, GLOSSARY.md, and one docs/agents markdown file stay available, and so does codegraph init.",
+			"Pass the task and the role (explore, worker, or verify). When Jev routing is on, the role is a suggestion and Jev selects the specialist from the user message.",
+			"When Jev routing is off, the role you pass decides. Roles: explore reads files and queries CodeGraph; it cannot run commands or edit. verify checks work that is already done and may run read-only commands such as tests, without editing. worker implements changes and runs any other command.",
+			"A refusal or a queued id is not a completed result and is not retried. After a background child is queued, end your turn: its result wakes you. Do not poll with sleep, list_children, child_status, or child_result.",
+			"When Jev routing is on, the parent asks once per user turn before read, grep, find, ls, edit, write, bash, powershell, or codegraph query and explore. A block that names a role means call spawn_child and use that role. A block that says to ask the user one question means ask that one question and wait. Reads of AGENTS.md, GLOSSARY.md, and one docs/agents markdown file stay available, and so does codegraph init.",
 			"Do not declare the work finished unless a worker result reports a done Verdict with its files_changed, validation, and left_undone, and do not declare it verified unless a verify result reports a pass Verdict with its findings and unverified.",
 		],
 		parameters: spawnChildParameters,
@@ -1060,7 +1061,9 @@ function launched(
 			}
 		: {};
 	const selectionLine = selection
-		? `Jev selected ${selection.role}.`
+		? selection.jev
+			? `Jev selected ${selection.role}.`
+			: `Launched as ${selection.role}.`
 		: undefined;
 	if (started.status === "completed") {
 		const outcome = selection
@@ -1082,7 +1085,7 @@ function launched(
 	return report(
 		[
 			...warnings,
-			`Child ${started.id} is queued in the background. Its result arrives later as a message.`,
+			`Child ${started.id} is queued in the background. Its result arrives later as a message. End your turn and do not poll; the result wakes you.`,
 			...(selectionLine ? [selectionLine] : []),
 		],
 		{ status: started.status, id: started.id, ...selected },

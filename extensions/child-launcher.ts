@@ -70,9 +70,9 @@ const destinationInstructions = "Where should this package go?";
 const destinationCriteria = {
 	decide:
 		"A product decision is still open. The parent must ask the user one question and wait. Choosing an architecture with the user is a decision.",
-	stay: "The package is small and already understood, so the parent can finish it in this session, and the user did not ask for a child session or subagent.",
+	stay: "The package is small and already understood, so the parent can finish it in this session, and the user did not ask for a child session or subagent, nor for an independent review or check of work.",
 	leave:
-		"A bounded package a child session can finish on its own, or the user explicitly asks to delegate to child sessions or subagents, in any language or wording. Investigating an architecture can leave.",
+		"A bounded package a child session can finish on its own, or the user explicitly asks to delegate to child sessions or subagents, in any language or wording, or the user asks for an independent review or check of work, which must run in a session other than the parent. Investigating an architecture can leave.",
 };
 
 type Contract = { prompt: string; tools: string[] };

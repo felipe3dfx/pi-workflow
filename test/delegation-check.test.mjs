@@ -114,6 +114,12 @@ test("delegation check scores the fixed cases against Jev answers and sends a na
 		lines.find((line) => line.startsWith("pass: explicit architecture research")),
 		/destination asked yes/,
 	);
+	for (const name of ["independent review request", "independent verification request"]) {
+		assert.match(
+			lines.find((line) => line.startsWith(`pass: ${name}`)),
+			/action launch, specialist verify, destination asked yes/,
+		);
+	}
 	const skill = lines.find((line) => line.startsWith("pass: implement skill"));
 	assert.match(skill, /action launch, specialist worker, destination asked yes/);
 	assert.match(skill, /specialist choice worker/);

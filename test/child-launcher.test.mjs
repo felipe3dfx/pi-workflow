@@ -698,6 +698,9 @@ test("Jev's destination criteria cover an explicit child or subagent request und
 		const { criteria } = jev.requests[0].questions.destination;
 		assert.match(criteria.leave, /explicitly asks to delegate to child sessions or subagents/);
 		assert.match(criteria.stay, /did not ask for a child session or subagent/);
+		assert.match(criteria.leave, /independent review or check of work/);
+		assert.match(criteria.leave, /session other than the parent/);
+		assert.match(criteria.stay, /nor for an independent review or check of work/);
 	});
 });
 
