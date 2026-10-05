@@ -14,12 +14,12 @@ The operator talks to one parent session. Routing can trap that session: gated t
 
 Jev routing is one persistent choice. It is off until the operator turns it on. While it is off, the parent names the child role and Jev is not called. While it is on, Jev chooses whether the work stays or leaves and which Specialist launches. An engineering skill name never selects a Specialist.
 
-The seam is the routing module behind the extension adapter. Callers see the stored choice, the settings list, and the launch result. They do not see where the choice is stored.
+The seam is the routing module behind the extension adapter. Callers see the stored choice, the `/workflow:config` menu row, and the launch result. They do not see where the choice is stored.
 
 ## User stories
 
 - As the operator, I start with Jev routing off, and my choice remains until I change it.
-- As the operator, I turn Jev routing on or off from the existing settings list.
+- As the operator, I turn Jev routing on or off from a row of the `/workflow:config` menu.
 - As the operator, I can run `git` and `gh` in the parent while routing is off.
 - As the operator, I am not blocked because a skill name appeared in my message.
 
@@ -29,9 +29,9 @@ The seam is the routing module behind the extension adapter. Callers see the sto
 
 Jev routing is off until the operator turns it on. The choice persists until the operator changes it. Restarting Pi does not reset it. It is stored in the user's Pi configuration, in the same directory as the model profiles, in a separate document. It is not a field of the model profiles document. The TypeSafe key is not the switch.
 
-A missing or unreadable choice document is off. It is not a launch failure. An invalid value is off. The operator can set it again from the settings list.
+A missing or unreadable choice document is off. It is not a launch failure. An invalid value is off. The operator can set it again from the `/workflow:config` menu row.
 
-`/workflow:config settings` opens the existing settings list. The row shows the current value. `off` uses the existing dim treatment. The command needs the TUI. Extra arguments are refused. Print mode does not open the list.
+The `/workflow:config` menu has a Jev routing row after the capability rows. The row shows the current value and edits only the draft. The choice is saved when the operator confirms Apply, and the Apply review lists the change. Cancelling writes nothing. `off` uses the existing dim treatment. The command needs the TUI. Extra arguments, including `settings`, are refused. Print mode does not open the menu.
 
 ### Off
 
@@ -65,10 +65,10 @@ Invocations of `git` and `gh` stay in the parent only while routing is off. Whil
 
 ## Testing decisions
 
-Tests cross the routing seam and the settings list, not private helpers.
+Tests cross the routing seam and the `/workflow:config` menu, not private helpers.
 
 - A missing choice document is off and does not call Jev.
-- Changing the settings row to on persists across a new process. Restart does not reset it. The model profiles document is unchanged.
+- Changing the menu row to on and confirming Apply persists across a new process. Restart does not reset it. The model profiles document is unchanged.
 - While off, a gated parent tool runs. A task that mentions `git` or `gh` launches with its named role, and the child's `bash` refuses a command that runs `gh`, or `git` from inside the child's worktree, through `PATH`, while one that only names them as an argument runs. A launch with no role does not launch and does not invent `worker`. A named role may launch. Jev is not called.
 - While on, `stay` lets the next gated tool run. `decide` blocks it and does not say to launch. `leave` names the Specialist Jev chose and does not let the parent tool run. After a launch for the same message, the parent tool runs and Jev is not asked again.
 - An explicit child request while on asks Jev for the destination and the Specialist in the same call.
@@ -97,7 +97,7 @@ A Jev choice can vary between messages. That is the cost of turning Jev on.
 
 ## Dependencies
 
-Pi 1.0 or later, Pi child sessions, the existing settings list, the Pi agent directory that already holds model profiles, and `typesafe/jev-latest` through Pi's classifier model registry when routing is on. Engineering skill files stay outside this package.
+Pi 1.0 or later, Pi child sessions, the `/workflow:config` menu, the Pi agent directory that already holds model profiles, and `typesafe/jev-latest` through Pi's classifier model registry when routing is on. Engineering skill files stay outside this package.
 
 ## Feature review
 

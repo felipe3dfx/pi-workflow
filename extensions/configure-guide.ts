@@ -27,12 +27,14 @@ export async function guideSelection(
 		package: string;
 		status: "missing" | "installed" | "error";
 	}[],
-): Promise<Selection | undefined> {
+	jevRouting: boolean,
+): Promise<{ selection: Selection; jevRouting: boolean } | undefined> {
 	if (!ctx.hasUI || ctx.mode !== "tui") {
 		report(ctx, "Configure needs the TUI.", "error");
 		return undefined;
 	}
 	const draft: Selection = structuredClone(selection);
+	let draftRouting = jevRouting;
 	let confirmed = false;
 	await ctx.ui.custom(
 		(_tui, _theme, _keybindings, done) => {
@@ -44,6 +46,13 @@ export async function guideSelection(
 					currentValue: draft.capabilities[capability] ? "on" : "off",
 					values: ["on", "off"],
 				})),
+				{
+					id: "jev-routing",
+					label: "Jev routing",
+					description: "Ask Jev before routing a turn",
+					currentValue: draftRouting ? "on" : "off",
+					values: ["on", "off"],
+				},
 				...packages.map((name) => ({
 					id: `expectation:${name}`,
 					label: name,
@@ -59,7 +68,14 @@ export async function guideSelection(
 					submenu: (_value, closeSubmenu) =>
 						new SettingsList(
 							[
-								...describePlan(selection, draft, states).map((line, index) => ({
+								...[
+									...describePlan(selection, draft, states),
+									...(draftRouting === jevRouting
+										? []
+										: [
+												`Jev routing: ${jevRouting ? "on" : "off"} -> ${draftRouting ? "on" : "off"}`,
+											]),
+								].map((line, index) => ({
 									id: `plan-${index}`,
 									label: line,
 									currentValue: "",
@@ -92,6 +108,8 @@ export async function guideSelection(
 					if (id.startsWith("capability:")) {
 						const capability = id.slice("capability:".length) as Capability;
 						draft.capabilities[capability] = on;
+					} else if (id === "jev-routing") {
+						draftRouting = on;
 					} else if (id.startsWith("expectation:")) {
 						draft.expectations[id.slice("expectation:".length)] = on;
 					}
@@ -109,5 +127,7 @@ export async function guideSelection(
 			},
 		},
 	);
-	return confirmed ? draft : undefined;
+	return confirmed
+		? { selection: draft, jevRouting: draftRouting }
+		: undefined;
 }

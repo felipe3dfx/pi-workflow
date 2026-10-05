@@ -182,7 +182,7 @@ test("Jev routing off fails every case, including a named skill, without calling
 	for (const item of delegationCases) {
 		assert.ok(
 			lines.includes(
-				`fail: ${item.name}: Jev routing is off. Turn it on in /workflow:config settings.`,
+				`fail: ${item.name}: Jev routing is off. Turn it on in /workflow:config.`,
 			),
 		);
 	}
