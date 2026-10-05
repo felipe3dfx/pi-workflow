@@ -68,12 +68,16 @@ function commits(dir) {
 	}).trim();
 }
 
-function fakeGh(t) {
+function fakeGh(t, failure) {
 	const dir = temporaryDirectory(t, "pi-workflow-fake-gh-");
 	const log = join(dir, "calls.log");
 	writeFileSync(
 		join(dir, "gh"),
-		`#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\nprintf 'fake gh %s\\n' "$*"\n`,
+		`#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\n${
+			failure
+				? `printf '%s\\n' '${failure.stderr}' >&2\nexit ${failure.exitCode}\n`
+				: `printf 'fake gh %s\\n' "$*"\n`
+		}`,
 		{ mode: 0o755 },
 	);
 	const previous = process.env.PATH;
@@ -144,6 +148,19 @@ for (const state of ["off", "on"]) {
 			assert.equal(text(result), `fake gh ${args}\n`, command);
 		}
 		assert.match(calls(), /^run view --log-failed$/m);
+	});
+
+	test(`while Jev routing is ${state}, a child's bash propagates a failing gh read`, async (t) => {
+		routing(t, state);
+		const calls = fakeGh(t, { exitCode: 3, stderr: "gh: run 1 not found" });
+		const dir = worktree(t);
+
+		const result = await run("gh run view 1 --log-failed", dir);
+
+		assert.equal(result.isError, true);
+		assert.equal(result.structuredContent.exit_code, 3);
+		assert.match(result.structuredContent.output, /gh: run 1 not found/);
+		assert.match(calls(), /^run view 1 --log-failed$/m);
 	});
 
 	test(`while Jev routing is ${state}, a child's bash refuses each reserved git subcommand in its worktree`, async (t) => {
