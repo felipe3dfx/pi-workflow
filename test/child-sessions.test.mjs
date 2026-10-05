@@ -1296,8 +1296,15 @@ test("spawn_child describes who decides the role and what each role can do", asy
 			guidance,
 			/explore reads files and queries CodeGraph; it cannot run commands or edit/,
 		);
-		assert.match(guidance, /verify runs commands and checks without editing/);
-		assert.match(guidance, /worker edits files and runs commands/);
+		assert.match(
+			guidance,
+			/verify checks work that is already done and may run read-only commands such as tests, without editing/,
+		);
+		assert.match(guidance, /worker implements changes and runs any other command/);
+		assert.match(
+			guidance,
+			/When Jev routing is on, the parent asks once per user turn/,
+		);
 		assert.doesNotMatch(guidance, /(^|\. )Jev selects the specialist/m);
 		assert.match(
 			guidance,
