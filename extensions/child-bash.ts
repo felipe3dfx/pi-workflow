@@ -3,6 +3,7 @@ import {
 	constants,
 	mkdtempSync,
 	realpathSync,
+	rmSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -56,6 +57,11 @@ function stubDirectory(cwd: string): string {
 	});
 	stubs.set(root, dir);
 	return dir;
+}
+
+export function removeStubDirectories() {
+	for (const dir of stubs.values()) rmSync(dir, { recursive: true, force: true });
+	stubs.clear();
 }
 
 export function createChildBashTool(cwd: string) {

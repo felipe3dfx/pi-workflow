@@ -55,18 +55,20 @@ function fakeJev(answer, confidence = 0.91) {
 	});
 }
 
-function branchEnding(text, older = "Use a child for the old turn") {
+function branchEnding(text, older = "Use a child for the old turn", id = text) {
 	return [
-		{ type: "message", message: { role: "user", content: older } },
+		{ id: "older", type: "message", message: { role: "user", content: older } },
 		{
+			id: "waiting",
 			type: "message",
 			message: { role: "assistant", content: [{ type: "text", text: "Waiting." }] },
 		},
 		{
+			id,
 			type: "message",
 			message: { role: "user", content: [{ type: "text", text }] },
 		},
-		{ type: "message", message: { role: "user", content: "   " } },
+		{ id: "blank", type: "message", message: { role: "user", content: "   " } },
 	];
 }
 
@@ -217,7 +219,12 @@ test("Jev stay allows the tool and a later tool does not ask again", async () =>
 			ctx,
 		);
 		const decided = await launcher.prepareLaunch(
-			{ role: "explore", task: "parent paraphrase", userRequest: message },
+			{
+				role: "explore",
+				task: "parent paraphrase",
+				userRequest: message,
+				userMessageId: message,
+			},
 			ctx,
 		);
 
@@ -241,7 +248,12 @@ test("a stay from spawn_child lets the parent's next git, gh, and read run on th
 		const launcher = launcherFor();
 		const ctx = gateContext(worktree, branchEnding(message), jev);
 		const decided = await launcher.prepareLaunch(
-			{ role: "explore", task: "Compare SYN-2320 with qa", userRequest: message },
+			{
+				role: "explore",
+				task: "Compare SYN-2320 with qa",
+				userRequest: message,
+				userMessageId: message,
+			},
 			ctx,
 		);
 		const gated = [];
@@ -420,7 +432,12 @@ test("an invalid Jev selection blocks the tool and is not a stay", async () => {
 			ctx,
 		);
 		const decided = await launcher.prepareLaunch(
-			{ role: "worker", task: "parent paraphrase", userRequest: message },
+			{
+				role: "worker",
+				task: "parent paraphrase",
+				userRequest: message,
+				userMessageId: message,
+			},
 			ctx,
 		);
 
@@ -448,7 +465,12 @@ test("decide() after a leave verdict asks Jev once and launches the cached role"
 			ctx,
 		);
 		const result = await launcher.prepareLaunch(
-			{ role: "worker", task: "parent paraphrase", userRequest: message },
+			{
+				role: "worker",
+				task: "parent paraphrase",
+				userRequest: message,
+				userMessageId: message,
+			},
 			ctx,
 		);
 
@@ -480,6 +502,7 @@ test("a prepared launch stores the verdict so a later gated tool does not ask Je
 				role: "worker",
 				task: "Add the missing export",
 				userRequest: message,
+				userMessageId: message,
 			},
 			ctx,
 		);
@@ -665,7 +688,11 @@ test("decide blocks the tool until one question is asked and does not launch", a
 			ctx,
 		);
 		const decided = await launcher.prepareLaunch(
-			{ task: "parent paraphrase", userRequest: message },
+			{
+				task: "parent paraphrase",
+				userRequest: message,
+				userMessageId: message,
+			},
 			ctx,
 		);
 
@@ -699,7 +726,12 @@ test("with Jev routing on, a named skill fixes neither the destination nor the s
 				ctx,
 			);
 			const decided = await launcher.prepareLaunch(
-				{ role: "worker", task: "parent paraphrase", userRequest: message },
+				{
+					role: "worker",
+					task: "parent paraphrase",
+					userRequest: message,
+					userMessageId: message,
+				},
 				ctx,
 			);
 
@@ -731,7 +763,12 @@ test("with Jev routing on, a named skill fixes neither the destination nor the s
 		const suggestedMessage = "Usa implement en este paquete";
 		const suggestedLauncher = launcherFor();
 		const fromTool = await suggestedLauncher.prepareLaunch(
-			{ role: "worker", task: "Implement the ticket", userRequest: suggestedMessage },
+			{
+				role: "worker",
+				task: "Implement the ticket",
+				userRequest: suggestedMessage,
+				userMessageId: suggestedMessage,
+			},
 			gateContext(worktree, branchEnding(suggestedMessage), suggested),
 		);
 		assert.equal(fromTool.kind, "ready");
@@ -742,7 +779,11 @@ test("with Jev routing on, a named skill fixes neither the destination nor the s
 		const explicitMessage = "Quiero un subagente para domain-modeling y hazlo";
 		const explicitLauncher = launcherFor();
 		const delegated = await explicitLauncher.prepareLaunch(
-			{ task: "parent paraphrase", userRequest: explicitMessage },
+			{
+				task: "parent paraphrase",
+				userRequest: explicitMessage,
+				userMessageId: explicitMessage,
+			},
 			gateContext(worktree, branchEnding(explicitMessage), explicit),
 		);
 		assert.equal(delegated.kind, "ready");
@@ -763,7 +804,11 @@ test("a missing TypeSafe key blocks the gated tool and the launch without invent
 			ctx,
 		);
 		const decided = await launcherFor().prepareLaunch(
-			{ task: "parent paraphrase", userRequest: message },
+			{
+				task: "parent paraphrase",
+				userRequest: message,
+				userMessageId: message,
+			},
 			ctx,
 		);
 
@@ -790,7 +835,12 @@ test("while routing is on, Jev can leave git and gh work to a specialist and exp
 				ctx,
 			);
 			const launched = await launcherFor().prepareLaunch(
-				{ role: "worker", task: command, userRequest: message },
+				{
+					role: "worker",
+					task: command,
+					userRequest: message,
+					userMessageId: message,
+				},
 				ctx,
 			);
 
@@ -821,7 +871,11 @@ test("Jev is asked through Pi's classifier registry as typesafe/jev-latest with 
 			ctx,
 		);
 		const launched = await launcherFor().prepareLaunch(
-			{ task: "parent paraphrase", userRequest: message },
+			{
+				task: "parent paraphrase",
+				userRequest: message,
+				userMessageId: message,
+			},
 			ctx,
 		);
 
@@ -849,7 +903,11 @@ test("without typesafe/jev-latest in the registry, or with only another provider
 				ctx,
 			);
 			const decided = await launcherFor().prepareLaunch(
-				{ task: "parent paraphrase", userRequest: message },
+				{
+					task: "parent paraphrase",
+					userRequest: message,
+					userMessageId: message,
+				},
 				ctx,
 			);
 
@@ -883,7 +941,12 @@ test("a classification that does not stop, including a cancelled turn, blocks th
 				ctx,
 			);
 			const decided = await launcherFor().prepareLaunch(
-				{ role: "worker", task: "parent paraphrase", userRequest: message },
+				{
+					role: "worker",
+					task: "parent paraphrase",
+					userRequest: message,
+					userMessageId: message,
+				},
 				ctx,
 			);
 
@@ -922,12 +985,20 @@ test("Launch blocked is not kept: the next gated tool and the next launch for th
 			ctx,
 		);
 		const blockedLaunch = await launcher.prepareLaunch(
-			{ task: "parent paraphrase", userRequest: message },
+			{
+				task: "parent paraphrase",
+				userRequest: message,
+				userMessageId: message,
+			},
 			ctx,
 		);
 		failing = false;
 		const launched = await launcher.prepareLaunch(
-			{ task: "parent paraphrase", userRequest: message },
+			{
+				task: "parent paraphrase",
+				userRequest: message,
+				userMessageId: message,
+			},
 			ctx,
 		);
 		const third = await launcher.gateToolCall(
@@ -1050,7 +1121,11 @@ test("after a launch for the message under leave, gated parent tools run without
 			ctx,
 		);
 		const launch = await launcher.prepareLaunch(
-			{ task: "Research the three files", userRequest: message },
+			{
+				task: "Research the three files",
+				userRequest: message,
+				userMessageId: message,
+			},
 			ctx,
 		);
 		launcher.recordLaunch(message);
@@ -1078,7 +1153,11 @@ test("a launch for one message does not unblock the next message under leave", a
 		const launcher = launcherFor();
 		const first = gateContext(worktree, branchEnding("First delegated request"), jev);
 		await launcher.prepareLaunch(
-			{ task: "t", userRequest: "First delegated request" },
+			{
+				task: "t",
+				userRequest: "First delegated request",
+				userMessageId: "First delegated request",
+			},
 			first,
 		);
 		launcher.recordLaunch("First delegated request");
@@ -1088,6 +1167,31 @@ test("a launch for one message does not unblock the next message under leave", a
 		);
 
 		assert.equal(next.allow, false);
+		assert.equal(jev.requests.length, 2);
+	});
+});
+
+test("a new message with the same text gets its own verdict and no launch from the earlier message", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const message = "Research three files in parallel and tell me the package version";
+		const jev = fakeJev("explorer");
+		const launcher = launcherFor();
+		const earlier = gateContext(worktree, branchEnding(message, undefined, "first"), jev);
+		await launcher.gateToolCall(
+			{ toolName: "read", input: { path: "package.json" } },
+			earlier,
+		);
+		await launcher.gateToolCall(
+			{ toolName: "grep", input: { pattern: "version" } },
+			earlier,
+		);
+		launcher.recordLaunch("first");
+		const repeated = await launcher.gateToolCall(
+			{ toolName: "read", input: { path: "package.json" } },
+			gateContext(worktree, branchEnding(message, undefined, "second"), jev),
+		);
+
+		assert.equal(repeated.allow, false);
 		assert.equal(jev.requests.length, 2);
 	});
 });

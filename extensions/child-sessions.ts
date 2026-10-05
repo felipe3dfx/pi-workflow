@@ -971,13 +971,13 @@ function userText(content: UserMessage["content"]): string {
 
 export function latestUserRequest(
 	entries: readonly SessionEntry[] | undefined,
-): string | undefined {
+): { id: string; text: string } | undefined {
 	if (!entries) return undefined;
 	for (let index = entries.length - 1; index >= 0; index -= 1) {
 		const entry = entries[index];
 		if (entry?.type !== "message" || entry.message.role !== "user") continue;
 		const text = userText(entry.message.content);
-		if (text.length > 0) return text;
+		if (text.length > 0) return { id: entry.id, text };
 	}
 	return undefined;
 }
@@ -1023,7 +1023,9 @@ export function createSpawnChildTool(
 					task: params.task,
 					worktree: params.worktree,
 					references: params.references,
-					...(userRequest ? { userRequest } : {}),
+					...(userRequest
+						? { userRequest: userRequest.text, userMessageId: userRequest.id }
+						: {}),
 				},
 				ctx,
 			);
@@ -1032,7 +1034,7 @@ export function createSpawnChildTool(
 				background,
 				signal,
 				modelRegistry: ctx.modelRegistry,
-				onLaunch: () => launcher.recordLaunch(userRequest),
+				onLaunch: () => launcher.recordLaunch(userRequest?.id),
 			});
 			return launched(started, plan.warnings, {
 				role: plan.role,

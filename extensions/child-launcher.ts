@@ -27,6 +27,7 @@ export interface LaunchRequest {
 	worktree?: string;
 	references?: string[];
 	userRequest?: string;
+	userMessageId?: string;
 }
 
 export interface ChildLauncherOptions {
@@ -415,19 +416,19 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 	}
 
 	let turn:
-		| { userRequest: string; pending: Promise<Assessment>; launched?: true }
+		| { userMessageId: string; pending: Promise<Assessment>; launched?: true }
 		| undefined;
 
 	function verdictFor(
 		request: LaunchRequest,
 		ctx: LauncherContext,
 	): Promise<Assessment> {
-		const userRequest = request.userRequest;
+		const userMessageId = request.userMessageId;
 		const bypass =
 			!jevRoutingEnabled() &&
 			request.role !== undefined &&
 			isRole(request.role);
-		if (!bypass && userRequest && turn?.userRequest === userRequest) {
+		if (!bypass && userMessageId && turn?.userMessageId === userMessageId) {
 			return turn.pending;
 		}
 		const pending: Promise<Assessment> = judge(request, ctx).then((verdict) => {
@@ -436,7 +437,7 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			}
 			return verdict;
 		});
-		if (!bypass && userRequest) turn = { userRequest, pending };
+		if (!bypass && userMessageId) turn = { userMessageId, pending };
 		return pending;
 	}
 
@@ -454,7 +455,14 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		if (!gatedTool(event, ctx.cwd)) return { allow: true };
 		const userRequest = latestUserRequest(ctx.sessionManager?.getBranch());
 		if (!userRequest) return { allow: true };
-		const verdict = await verdictFor({ task: userRequest, userRequest }, ctx);
+		const verdict = await verdictFor(
+			{
+				task: userRequest.text,
+				userRequest: userRequest.text,
+				userMessageId: userRequest.id,
+			},
+			ctx,
+		);
 		if (verdict.kind === "stay") return { allow: true };
 		if (verdict.kind === "launch" && turn?.launched) return { allow: true };
 		if (verdict.kind !== "launch") {
@@ -519,8 +527,8 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			...jev,
 		};
 	}
-	function recordLaunch(userRequest: string | undefined) {
-		if (turn && turn.userRequest === userRequest) turn.launched = true;
+	function recordLaunch(userMessageId: string | undefined) {
+		if (turn && turn.userMessageId === userMessageId) turn.launched = true;
 	}
 	return { prepareLaunch, recordLaunch, beginTurn, gateToolCall, classify };
 }

@@ -53,7 +53,7 @@ function record(id, overrides = {}) {
 	return {
 		id: `${id}000000-0000-0000-0000-000000000000`,
 		role: "worker",
-		task: "Ejecuta sleep 60 para esperar 60 segundos y después confirma que has terminado. No modifiques archivos.",
+		task: "Run sleep 60 to wait 60 seconds, then confirm that you are done. Do not modify files.",
 		worktree: "/home/u/repos/pi-workflow",
 		model: "xai/gpt-6-luna",
 		thinking: "high",
@@ -236,7 +236,7 @@ function threeChildren() {
 		role: "worker",
 		endedAt: now - 1_000,
 		startedAt: now - 65_000,
-		text: "Esperé 60 segundos.",
+		text: "Waited 60 seconds.",
 	});
 	const failed = record("27c1", {
 		state: "failed",
@@ -284,7 +284,7 @@ test("from 65 columns the view splits into a list and a detail pane; below that 
 		wide[2],
 		/▸ ◐ worker 5636 +1m 0\ds │ gpt-6-luna \(high\) · 6\.2k tok · \$0\.01 · wt: pi-workflow/,
 	);
-	assert.match(wide[3], /^ │ {6}bash sleep 60 +│ Ejecuta sleep 60 /);
+	assert.match(wide[3], /^ │ {6}bash sleep 60 +│ Run sleep 60 /);
 
 	const narrow = view.lines(80);
 	assert.equal(narrow[1].indexOf("│", 2), 1 + 1 + 2 + 23 + 1);
@@ -304,7 +304,7 @@ test("list rows take two lines under Active and Finished rules, and the selected
 	assert.match(lines[3], /│ {6}bash sleep 60/);
 	assert.match(lines[4], /│ {2} Finished ─/);
 	assert.match(lines[5], /│ {4}✓ worker a809 +1m 04s/);
-	assert.match(lines[6], /│ {6}Ejecuta sleep 60/);
+	assert.match(lines[6], /│ {6}Run sleep 60/);
 	assert.match(lines[7], /│ {4}✗ reviewer 27c1 +4m 00s/);
 	assert.ok(raw[2].includes("\x1b[48;5;236m"));
 	assert.ok(raw[3].includes("\x1b[48;5;236m"));
@@ -338,7 +338,7 @@ test("the list keeps the selected child in view and falls back to one line per c
 test("the detail shows a header, the clamped prompt, the thread in chat rows, and a result once the child ends", () => {
 	const long = Array.from(
 		{ length: 8 },
-		(_, i) => `Paso ${i} del trabajo.`,
+		(_, i) => `Step ${i} of the work.`,
 	).join("\n");
 	const running = record("5636", { task: long });
 	const failed = record("27c1", {
@@ -353,9 +353,9 @@ test("the detail shows a header, the clamped prompt, the thread in chat rows, an
 	const view = open(sessions, { rows: 60 });
 	let text = view.lines(120).join("\n");
 	assert.match(text, / Prompt ─/);
-	assert.match(text, /❯ Paso 0 del trabajo\./);
-	assert.match(text, /Paso 3 del trabajo\./);
-	assert.doesNotMatch(text, /Paso 4 del trabajo\./);
+	assert.match(text, /❯ Step 0 of the work\./);
+	assert.match(text, /Step 3 of the work\./);
+	assert.doesNotMatch(text, /Step 4 of the work\./);
 	assert.match(text, /… \+4 lines · p expand/);
 	assert.match(text, / Thread ─/);
 	assert.match(text, /◆ Thought\s/);
@@ -371,7 +371,7 @@ test("the detail shows a header, the clamped prompt, the thread in chat rows, an
 	assert.ok(raw.includes("\x1b[90m◆\x1b[39m \x1b[1m\x1b[37mRun"));
 
 	view.press("p");
-	assert.match(view.lines(120).join("\n"), /Paso 7 del trabajo\./);
+	assert.match(view.lines(120).join("\n"), /Step 7 of the work\./);
 
 	view.press("\x14");
 	text = view.lines(120).join("\n");
@@ -561,7 +561,7 @@ test("the final assistant text and the error appear once, in the Result section,
 	const done = record("a809", {
 		state: "completed",
 		endedAt: now - 1_000,
-		text: "Esperé 60 segundos.",
+		text: "Waited 60 seconds.",
 	});
 	const failed = record("27c1", {
 		state: "failed",
@@ -571,8 +571,8 @@ test("the final assistant text and the error appear once, in the Result section,
 	const sessions = fakeSessions([failed, done], {
 		[done.id]: {
 			entries: [
-				assistant("m1", [{ type: "text", text: "Primero reviso." }]),
-				assistant("m2", [{ type: "text", text: "Esperé 60 segundos.  " }]),
+				assistant("m1", [{ type: "text", text: "Checking first." }]),
+				assistant("m2", [{ type: "text", text: "Waited 60 seconds.  " }]),
 			],
 		},
 		[failed.id]: {
@@ -586,8 +586,8 @@ test("the final assistant text and the error appear once, in the Result section,
 	});
 	const view = open(sessions, { rows: 60, latest: true });
 	let text = view.lines(120).join("\n");
-	assert.match(text, /Primero reviso\./);
-	assert.equal(text.match(/Esperé 60 segundos\./g)?.length, 1);
+	assert.match(text, /Checking first\./);
+	assert.equal(text.match(/Waited 60 seconds\./g)?.length, 1);
 	assert.match(text, / Result ─/);
 	view.press("k");
 	text = view.lines(120).join("\n");
