@@ -567,7 +567,7 @@ test("under leave, the parent's gated tools stay blocked until a launch for the 
 			...toolContext("tui", worktree, fakeJev({ specialist: "explorer" })),
 			sessionManager: {
 				getBranch: () => [
-					{ type: "message", message: { role: "user", content: message } },
+					{ id: "request", type: "message", message: { role: "user", content: message } },
 				],
 			},
 		};
@@ -603,7 +603,7 @@ test("under leave, a foreground child that starts and then fails unblocks the pa
 			...toolContext("print", worktree, fakeJev({ specialist: "explorer" })),
 			sessionManager: {
 				getBranch: () => [
-					{ type: "message", message: { role: "user", content: message } },
+					{ id: "request", type: "message", message: { role: "user", content: message } },
 				],
 			},
 		};
