@@ -31,6 +31,7 @@ import {
 	createCodeGraphTool,
 	syncCodeGraphTool,
 } from "./codegraph-tool.ts";
+import { removeStubDirectories } from "./child-bash.ts";
 import { createChildLauncher } from "./child-launcher.ts";
 import { runDelegationCheck } from "./delegation-check.ts";
 import { registerChildResultCards } from "./child-result-card.ts";
@@ -292,6 +293,7 @@ export default function piWorkflowExtension(
 		currentCtx = undefined;
 		childrenViews.close();
 		childSessions.disposeAll();
+		removeStubDirectories();
 	});
 
 	async function runCatalogCommand(
