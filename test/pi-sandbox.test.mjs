@@ -119,7 +119,7 @@ test("real launcher uses the project-local pinned Pi and cleans up after exit", 
 		[join(root, "tools", "pi-sandbox.mjs"), "--", "--version"],
 		{ cwd: root },
 	);
-	assert.match(stdout, /1\.0\.0/);
+	assert.match(stdout, /1\.0\.3/);
 	const sandboxRoot = stderr.match(/Disposable Pi sandbox: (.+)/)?.[1];
 	assert.ok(sandboxRoot);
 	await assert.rejects(() =>

@@ -56,7 +56,10 @@ function chat(t, { hideThinking = true } = {}) {
 		getMarkdownThemeWithSettings: () => markdownTheme,
 		getMarkdownTransformers: () => [],
 		outputPad: 1,
-		session: { getToolDefinition: (name) => tools.get(name) },
+		session: {
+			getToolDefinition: (name) => tools.get(name),
+			extensionRunner: { resolveToolRenderers: (_name, base) => base() },
+		},
 	};
 	const add = (message) =>
 		InteractiveMode.prototype.addMessageToChat.call(mode, {

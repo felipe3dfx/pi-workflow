@@ -196,7 +196,10 @@ test("MCP tools and tools without a call renderer get the compact self-rendered 
 	const bare = { name: "spawn_child", label: "Spawn Child" };
 	const definitions = { read: own, [mcp.name]: mcp, spawn_child: bare };
 	const mode = {
-		session: { getToolDefinition: (name) => definitions[name] },
+		session: {
+			getToolDefinition: (name) => definitions[name],
+			extensionRunner: { resolveToolRenderers: (_name, base) => base() },
+		},
 	};
 	const lookup = (name) =>
 		InteractiveMode.prototype.getRegisteredToolDefinition.call(mode, name);

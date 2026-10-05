@@ -55,7 +55,7 @@ export type InstallPackage = (
 	spec: string,
 ) => Promise<{ code: number; stdout?: string; stderr?: string }>;
 
-export interface CompanionCatalogAdapters {
+interface CompanionCatalogAdapters {
 	metadataPath?: string;
 	resolveInstalledVersion?: ResolveInstalledVersion;
 }
