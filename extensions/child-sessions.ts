@@ -26,7 +26,7 @@ import { createChildBashTool } from "./child-bash.ts";
 import type { createChildLauncher } from "./child-launcher.ts";
 import { createChildCodeGraphTool } from "./codegraph-tool.ts";
 import { answerCard } from "./child-result-card.ts";
-import { hidden } from "./compact-tools.ts";
+import { hidden, outputText } from "./compact-tools.ts";
 import { claim, held } from "./configure.ts";
 import {
 	type ChildResult,
@@ -1295,10 +1295,7 @@ export function createChildQueryTools(
 		renderResult: (result, _options, theme, context) =>
 			context.isError
 				? new Text(
-						theme.fg(
-							"error",
-							result.content.map((part) => ("text" in part ? part.text : "")).join("\n"),
-						),
+						theme.fg("error", outputText(result)),
 						0,
 						0,
 					)

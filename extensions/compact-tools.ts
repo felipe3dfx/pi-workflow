@@ -108,7 +108,7 @@ export function toolLabel(name: string, args: unknown) {
 	return [verb ?? titleCase(name), subject?.trim().split("\n")[0] ?? ""];
 }
 
-function outputText(result: { content: { type: string; text?: string }[] }) {
+export function outputText(result: { content: { type: string; text?: string }[] }) {
 	return result.content
 		.filter((part) => part.type === "text")
 		.map((part) => part.text ?? "")
