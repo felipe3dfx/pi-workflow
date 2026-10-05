@@ -8,7 +8,7 @@ Acceptance: approval and merge of the introducing PR.
 
 A child session reads `git` and GitHub state on its own. Commands that mutate the repository or the remote, or publish, stay with the parent. The policy is a denylist: everything not listed runs, and the list grows only with evidence from a real session. It applies the same way whether Jev routing is on or off.
 
-The child's `bash` runs each command after a harness-owned prefix, set through the bash tool's `commandPrefix` option, that defines the shell functions `git` and `gh`. The functions are not exported and are POSIX `sh`, so they work in `bash`, `zsh`, and `dash`; their helpers carry a `__pi_workflow_` prefix and keep their variables in a subshell. A function decides from the command words it receives and the working directory. When it allows a command, it runs the real program with `command git "$@"` or `command gh "$@"`. When it blocks one, it writes this message to standard error and returns 126:
+The child's `bash` runs each command after a harness-owned prefix, set through the bash tool's `commandPrefix` option, that defines the shell functions `git` and `gh`. The functions are not exported and are POSIX `sh`, run by the tool's `/bin/bash -c`; their helpers carry a `__pi_workflow_` prefix and keep their variables in a subshell. A function decides from the command words it receives and the working directory. When it allows a command, it runs the real program with `command git "$@"` or `command gh "$@"`. When it blocks one, it writes this message to standard error and returns 126:
 
 "`<command>` is reserved for the parent. Continue without it and list the exact command in your result; do not ask the parent to run it."
 
@@ -38,4 +38,4 @@ Deferred until a real session shows the need: `git` config alias and `gh` alias 
 Accepted risks:
 
 - R1: the denylist lets unanticipated mutating subcommands, config aliases, environment overrides, absolute paths, `command git`, descendant processes such as `sh -c`, `xargs`, and npm scripts, and `git -C <worktree>` or `--git-dir` invoked from outside the worktree through. The functions guide the model; they are not a security boundary. In-process tools such as the `codegraph` tool do not go through them.
-- R2: whole-command blocks also refuse some reads: `git branch --list`, `git config --get`, `git tag -l`, `git fetch`, read-only `gh api`, and reads under the blocked `gh` groups, such as `gh release view`, `gh secret list`, and `gh auth status`. Harden or relax only with evidence.
+- R2: whole-command blocks also refuse some reads: `git branch --list`, `git config --get`, `git tag -l`, `git fetch`, read-only `gh api`, `git bisect log`, `git sparse-checkout list`, and reads under the blocked `gh` groups, such as `gh release view`, `gh secret list`, `gh auth status`, `gh variable list`, `gh extension list`, `gh alias list`, and `gh ssh-key list`. Harden or relax only with evidence.
