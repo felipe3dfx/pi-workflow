@@ -1298,6 +1298,15 @@ test("spawn_child describes who decides the role and what each role can do", asy
 		);
 		assert.match(guidance, /verify runs commands and checks without editing/);
 		assert.match(guidance, /worker edits files and runs commands/);
+		assert.doesNotMatch(guidance, /(^|\. )Jev selects the specialist/m);
+		assert.match(
+			guidance,
+			/When Jev routing is on, the role is a suggestion and Jev selects the specialist/,
+		);
+		assert.match(
+			tool.description,
+			/When Jev routing is on, the harness decides whether the work leaves/,
+		);
 	});
 });
 
