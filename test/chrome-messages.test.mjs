@@ -113,18 +113,18 @@ const answer = { type: "text", text: "Launching six children." };
 
 test("the user message is a prompt block on userMessageBg with a right-aligned timestamp that drops when the width cannot fit it", (t) => {
 	patched(t);
-	const component = userComponent("Lanza 6 hijos seguidos");
+	const component = userComponent("Spawn six children now");
 	assert.deepEqual(plain(component.render(40)), [
 		" ".repeat(39),
-		`   ❯ Lanza 6 hijos seguidos${" ".repeat(2)}11:55 AM  `,
+		`   ❯ Spawn six children now${" ".repeat(2)}11:55 AM  `,
 		" ".repeat(39),
 	]);
 	assert.deepEqual(plain(component.render(30)).slice(1, 2), [
-		"   ❯ Lanza 6 hijos seguidos".padEnd(29),
+		"   ❯ Spawn six children now".padEnd(29),
 	]);
 	assert.equal(
 		plain(component.render(120))[1],
-		`   ❯ Lanza 6 hijos seguidos${" ".repeat(82)}11:55 AM  `,
+		`   ❯ Spawn six children now${" ".repeat(82)}11:55 AM  `,
 	);
 	const styled = component.render(40)[1];
 	assert.ok(styled.includes(theme.bold(theme.fg("userMessageText", "❯ "))));
@@ -551,20 +551,20 @@ test("assistant and user text default to the text color while markdown elements 
 	assert.ok(line.includes(theme.fg("code", "run")));
 	assert.ok(!line.includes(theme.fg("text", "run")));
 	assert.ok(
-		userComponent("Lanza hijos")
+		userComponent("Spawn child")
 			.render(40)[1]
-			.includes(theme.fg("text", "Lanza hijos")),
+			.includes(theme.fg("text", "Spawn child")),
 	);
 });
 
 test("tabs in a prompt expand to three spaces before the dedent and the hanging indent", (t) => {
 	patched(t);
-	const lines = plain(userComponent("Pasos:\n\tuno\n\t\tdos").render(60));
-	const uno = lines.find((line) => line.includes("uno"));
-	const dos = lines.find((line) => line.includes("dos"));
-	assert.ok(!uno.includes("\t") && !dos.includes("\t"));
-	assert.equal(dos.indexOf("dos") - uno.indexOf("uno"), 3);
-	assert.equal(uno.indexOf("uno"), lines.find((line) => line.includes("Pasos")).indexOf("Pasos"));
+	const lines = plain(userComponent("Steps:\n\tone\n\t\ttwo").render(60));
+	const one = lines.find((line) => line.includes("one"));
+	const two = lines.find((line) => line.includes("two"));
+	assert.ok(!one.includes("\t") && !two.includes("\t"));
+	assert.equal(two.indexOf("two") - one.indexOf("one"), 3);
+	assert.equal(one.indexOf("one"), lines.find((line) => line.includes("Steps")).indexOf("Steps"));
 });
 
 test("only the latest collapsed thinking row advertises the expand hint", (t) => {

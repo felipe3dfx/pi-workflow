@@ -74,7 +74,7 @@ function chat(t, { hideThinking = true } = {}) {
 			timestamp: at1155,
 			...message,
 		});
-	add({ role: "user", content: "Revisa los PR" });
+	add({ role: "user", content: "Review the PRs" });
 	const say = (content, stopReason = "toolUse") => {
 		add({ role: "assistant", content, stopReason });
 		const [component] = mode.chatContainer.children.slice(-1);
@@ -160,7 +160,7 @@ test("Pi tool names map onto Grok's verb buckets", () => {
 
 test("read-only tools and the thoughts between them fold into one ◈ row while commands and MCP calls stay contiguous rows", (t) => {
 	const { say, tool, render } = chat(t);
-	say([thought(), said("Voy a revisar.")]);
+	say([thought(), said("Taking a look.")]);
 	tool("read", { path: "/x/skills/review/SKILL.md" });
 	tool("tool_search", { query: "engram" });
 	tool("mcp__engram__mem_context", { project: "p" });
@@ -168,18 +168,18 @@ test("read-only tools and the thoughts between them fold into one ◈ row while 
 	say([thought()]);
 	tool("read", { path: "a.ts" });
 	tool("grep", { pattern: "TODO" }, { isError: true });
-	say([said("Listo.")], "stop");
+	say([said("Ready.")], "stop");
 	assert.deepEqual(body(render()), [
 		"   ◆ Thought",
 		"",
-		"   Voy a revisar.                                                    11:55 AM",
+		"   Taking a look.                                                    11:55 AM",
 		"",
 		"   ◈ Read 1 skill, Searched 1 MCP tool",
 		"   ◆ Engram Mem Context",
 		"   ◆ Run gh pr view 904",
 		"   ◈ Read 1 file, Searched 1 pattern · 1 failed",
 		"",
-		"   Listo.                                                            11:55 AM",
+		"   Ready.                                                            11:55 AM",
 	]);
 });
 
@@ -337,13 +337,13 @@ test("a reloaded module instance folds the thoughts and keeps the groups the pre
 	assert.ok(!closed.includes("   ◆ Read a.ts"));
 });
 
-const result = (id, state = "completed", text = "Listo.") => ({
+const result = (id, state = "completed", text = "Ready.") => ({
 	id: `${id}-0000-4000-8000-000000000000`,
 	state,
 	role: "worker",
 	model: "openai/gpt-6-luna",
 	thinking: "high",
-	task: "Revisa el parser",
+	task: "Review the parser",
 	elapsedMs: 62_000,
 	text,
 });
@@ -352,12 +352,12 @@ test("consecutive subagent result cards fold into one ◈ row that counts the fa
 	const { mode, say, card, render } = chat(t);
 	const container = mode.chatContainer;
 	card("pi-workflow-child-result", result("1111"));
-	say([said("Sigo.")], "stop");
+	say([said("On it.")], "stop");
 	card("pi-workflow-child-result", result("2222"));
 	card("pi-workflow-child-result", result("3333", "failed", "no activity"));
 	card("pi-workflow-child-result", result("4444"));
 	card("pi-workflow-child-question", {
-		...result("5555", "waiting", "¿Sigo?"),
+		...result("5555", "waiting", "Go on?"),
 		question: 2,
 	});
 	const closed = render();

@@ -36,9 +36,9 @@ const details = {
 	role: "worker",
 	model: "openai/gpt-6-luna",
 	thinking: "high",
-	task: "Ejecuta sleep 60 para esperar 60 segundos",
+	task: "Run sleep 60 to wait 60 seconds",
 	elapsedMs: 62_000,
-	text: "He terminado; ejecuté `sleep 60` y esperé 60 segundos.",
+	text: "Done; I ran `sleep 60` and waited 60 seconds.",
 };
 
 function cards(t) {
@@ -87,7 +87,7 @@ test("a collapsed result is one row with the role, id, Verdict, elapsed time, an
 		details: {
 			...details,
 			verdict: "pass",
-			text: "uno\n\ndos\n\ntres\n\ncuatro\n\ncinco",
+			text: "one\n\ntwo\n\nthree\n\nfour\n\nfive",
 		},
 	});
 	assert.deepEqual(plain(long).slice(1), [
@@ -153,20 +153,20 @@ test("ctrl+o shows the task, the whole result, and the subagents view key", (t) 
 	const { card } = cards(t);
 	const component = card({
 		customType: "pi-workflow-child-result",
-		details: { ...details, text: "uno\n\ndos\n\ntres\n\ncuatro" },
+		details: { ...details, text: "one\n\ntwo\n\nthree\n\nfour" },
 	});
 	component.setExpanded(true);
 	assert.deepEqual(plain(component), [
 		"",
 		"   ◆ Subagent worker 5636  gpt-6-luna (high) · 1m 02s              (ctrl+o to collapse)",
-		"     Task Ejecuta sleep 60 para esperar 60 segundos",
-		"     uno",
+		"     Task Run sleep 60 to wait 60 seconds",
+		"     one",
 		"",
-		"     dos",
+		"     two",
 		"",
-		"     tres",
+		"     three",
 		"",
-		"     cuatro",
+		"     four",
 		"     alt+a  open in subagents view",
 	]);
 });
@@ -185,12 +185,12 @@ test("ctrl+o shows the reported reason and result fields between the task and th
 				validation: ["npm test: 12 passed"],
 				left_undone: [],
 			},
-			text: "uno",
+			text: "one",
 		},
 	});
 	worker.setExpanded(true);
 	assert.deepEqual(plain(worker).slice(2, -1), [
-		"     Task Ejecuta sleep 60 para esperar 60 segundos",
+		"     Task Run sleep 60 to wait 60 seconds",
 		"     Reason: The migration is pending.",
 		"     files_changed:",
 		"     - src/a.ts: fixed the parser",
@@ -198,7 +198,7 @@ test("ctrl+o shows the reported reason and result fields between the task and th
 		"     - npm test: 12 passed",
 		"     left_undone:",
 		"     - none",
-		"     uno",
+		"     one",
 	]);
 	const verifier = card({
 		customType: "pi-workflow-child-result",
@@ -211,7 +211,7 @@ test("ctrl+o shows the reported reason and result fields between the task and th
 				findings: ["The parser handles tabs."],
 				unverified: ["Windows paths."],
 			},
-			text: "dos",
+			text: "two",
 		},
 	});
 	verifier.setExpanded(true);
@@ -220,7 +220,7 @@ test("ctrl+o shows the reported reason and result fields between the task and th
 		"     - The parser handles tabs.",
 		"     unverified:",
 		"     - Windows paths.",
-		"     dos",
+		"     two",
 	]);
 });
 
@@ -241,12 +241,12 @@ test("failures show their reason collapsed, and questions always show their whol
 			...details,
 			state: "waiting",
 			question: 2,
-			text: "¿Debo tocar X?",
+			text: "Should I touch X?",
 		},
 	});
 	assert.deepEqual(plain(asked).slice(1), [
 		"   ◆ Subagent worker 5636 asks · question 2                          (ctrl+o to expand)",
-		"     ¿Debo tocar X?",
+		"     Should I touch X?",
 	]);
 	const theme = globalThis[Symbol.for("@earendil-works/pi-coding-agent:theme")];
 	assert.ok(failed.render(90)[1].includes(theme.fg("error", "◆")));
