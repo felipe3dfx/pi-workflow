@@ -31,7 +31,7 @@ Jev routing is off until the operator turns it on. The choice persists until the
 
 A missing or unreadable choice document is off. It is not a launch failure. An invalid value is off. The operator can set it again from the settings list.
 
-The settings command opens the existing settings list. The row shows the current value. `off` uses the existing dim treatment. The command needs the TUI. Extra arguments are refused. Print mode does not open the list.
+`/workflow:config settings` opens the existing settings list. The row shows the current value. `off` uses the existing dim treatment. The command needs the TUI. Extra arguments are refused. Print mode does not open the list.
 
 ### Off
 

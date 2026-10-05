@@ -23,9 +23,20 @@ test("the command validator requires subagents and rejects obsolete configure/se
 		),
 		[],
 	);
-	assert.ok(
-		validateCommandSurface(
-			'pi.registerCommand("workflow:configure", {}); pi.registerCommand("workflow:settings", {});',
-		).length >= 3,
-	);
+	const required = [
+		"workflow:status",
+		"workflow:doctor",
+		"workflow:config",
+		"workflow:models",
+		"workflow:subagents",
+		"workflow:delegation-check",
+	];
+	for (const obsolete of ["workflow:configure", "workflow:settings"]) {
+		const extension = [...required, obsolete]
+			.map((command) => `pi.registerCommand("${command}", {});`)
+			.join(" ");
+		assert.deepEqual(validateCommandSurface(extension), [
+			`extension must not register obsolete ${obsolete}`,
+		]);
+	}
 });
