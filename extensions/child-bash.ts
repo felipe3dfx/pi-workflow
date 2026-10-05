@@ -70,10 +70,12 @@ function gitDecision(root: string): string {
 
 const ghDecision = line`group=;
 	verb=;
+	option=;
 	while [ "$#" -gt 0 ] && [ -z "$verb" ]; do
 		case "$1" in
 		-R|--repo) shift ;;
-		-*) ;;
+		--repo=*) ;;
+		-*) option=1 ;;
 		*) if [ -z "$group" ]; then group=$1; else verb=$1; fi ;;
 		esac;
 		[ "$#" -gt 0 ] && shift;
@@ -81,6 +83,7 @@ const ghDecision = line`group=;
 	case "$group" in
 	""|help|search) ;;
 	*)
+		[ -n "$option" ] && verb=;
 		case "$verb" in
 		view|list|diff|checks|status|watch|download) ;;
 		clone) [ "$group" = repo ] || reserved="gh $group $verb" ;;
