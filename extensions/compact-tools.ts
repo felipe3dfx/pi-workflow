@@ -29,7 +29,7 @@ function settings(ctx: ExtensionContext) {
 	});
 }
 
-const hidden: Component = { render: () => [], invalidate() {} };
+export const hidden: Component = { render: () => [], invalidate() {} };
 
 class View implements Component {
 	readonly own: Component;

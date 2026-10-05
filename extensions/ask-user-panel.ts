@@ -14,6 +14,7 @@ import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { FooterHints } from "./chrome.ts";
 import { marginFor } from "./chrome-editor.ts";
+import { hidden } from "./compact-tools.ts";
 import { claim, held } from "./configure.ts";
 import { closeChildrenView } from "./children-view.ts";
 import { offerTool } from "./tool-offer.ts";
@@ -298,8 +299,6 @@ async function askPanel(
 }
 
 type AskTheme = Parameters<NonNullable<ToolDefinition["renderCall"]>>[1];
-
-const hidden: Component = { render: () => [], invalidate() {} };
 
 function answerText(answer: AskUserAnswer | undefined) {
 	if (!answer) return "";
