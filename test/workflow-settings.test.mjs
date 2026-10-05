@@ -289,3 +289,21 @@ test("turning Jev routing on persists for a new process and leaves the model pro
 	assert.match(restart(), /Jev routing\s+off\s*$/m);
 	assert.equal(await readFile(profilesPath, "utf8"), profiles);
 });
+
+test("/workflow:status and /workflow:doctor report unsupported arguments without UI", async () => {
+	const notifications = [];
+	const { commands, notify } = extension(new Map(), notifications);
+	const originalError = console.error;
+	const errors = [];
+	console.error = (message) => errors.push(message);
+	try {
+		for (const name of ["workflow:status", "workflow:doctor"]) {
+			await commands.get(name).handler("--force", { hasUI: false, mode: "print", ui: { notify } });
+		}
+	} finally {
+		console.error = originalError;
+	}
+	assert.deepEqual(notifications, []);
+	assert.equal(errors.length, 2);
+	assert.ok(errors.every((message) => message.startsWith("Usage: /workflow:status")));
+});

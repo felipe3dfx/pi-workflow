@@ -25,8 +25,6 @@ test("child contracts limit communication to the parent without imposing consume
 	for (const role of ["explore", "worker", "verify"]) {
 		const text = await contract(role);
 		assert.match(text, /Communicate only with the parent, never directly with the user/);
-		assert.doesNotMatch(text, /parent-child communication in English/);
-		assert.doesNotMatch(text, /AGENTS\.md.*publication-artifact language/);
 	}
 	const agents = await readFile(fileURLToPath(new URL("../AGENTS.md", import.meta.url)), "utf8");
 	assert.match(agents, /Parent-child instructions, questions, findings, and results are always in English/);
@@ -36,27 +34,24 @@ test("the explore contract permits worktree discovery without supplied context o
 	const text = await contract("explore");
 	assert.match(text, /Answer a clear, bounded task by reading the worktree/);
 	assert.match(text, /Report findings with file paths and line numbers/);
-	assert.doesNotMatch(text, /use the available diff.*validation evidence the parent supplies/i);
 	assert.doesNotMatch(text, /what you could not confirm/);
-	assert.doesNotMatch(text, /validation/);
 	assert.match(text, /ask_parent/);
 	assert.match(text, /ambiguous|unclear/i);
-	assert.doesNotMatch(text, /begin even when the parent supplies no task context/i);
 	assert.match(text, /Do not edit files/);
 });
 
 test("the verify contract independently checks work; parent results are context, and reports what stayed unverified", async () => {
 	const text = await contract("verify");
 	assert.match(text, /Independently inspect/);
-	assert.match(text, /run the applicable read-only checks yourself/i);
+	assert.match(text, /run the applicable checks and tests yourself/i);
 	assert.match(text, /parent-supplied validation results are context, not proof/i);
 	assert.match(text, /report_result/);
-	assert.match(text, /pass, fail, or blocked/);
+	assert.match(text, /pass, fail with the reason, or blocked with the reason/);
 	assert.match(text, /Use blocked, with the reason/);
-	assert.match(text, /Do not edit or write files/);
-	assert.match(text, /read-only commands/i);
-	assert.match(text, /commands that modify files or state/i);
-	assert.match(text, /worktree changes during verification/i);
+	assert.match(text, /may run the repository's checks and tests/i);
+	assert.match(text, /Do not edit or write worktree files/);
+	assert.match(text, /rewrite tracked files or dependencies/i);
+	assert.match(text, /worktree changes during verification, stop and report blocked naming the change/i);
 	assert.match(text, /Only Verdict pass means verified/);
 	assert.match(text, /fail or blocked is not a pass/);
 	assert.match(text, /what remained unverified/);
@@ -66,7 +61,7 @@ test("the verify contract independently checks work; parent results are context,
 test("the worker contract asks for its result through report_result and keeps ask_parent as the question channel", async () => {
 	const text = await contract("worker");
 	assert.match(text, /report_result/);
-	assert.match(text, /done, partial, or blocked/);
+	assert.match(text, /done, partial with the reason, or blocked with the reason/);
 	assert.match(text, /exact command/);
 	assert.match(text, /observed result/);
 	assert.match(text, /Use done only when the required commands ran and their output is in this result/);

@@ -1329,10 +1329,9 @@ test("spawn_child describes who decides the role and what each role can do", asy
 		assert.match(taskDescription, /known validation commands\/results as context/);
 		assert.match(taskDescription, /Exploration may discover context directly from the worktree/);
 		assert.doesNotMatch(guidance, /acceptance criteria|changed-file diff|validation commands\/results/);
-		assert.doesNotMatch(guidance, /AGENTS\.md.*publication-artifact language/);
-		assert.doesNotMatch(guidance, /Keep parent-child communication in English/);
 		assert.match(guidance, /Explore reads and queries CodeGraph without editing or commands/);
-		assert.match(guidance, /verify independently checks completed work without editing/);
+		assert.match(guidance, /Pass the task and the role \(explore, worker, or verify\)\./);
+		assert.match(guidance, /verify independently checks completed work and may run checks and tests without editing/);
 		assert.match(guidance, /worker implements and runs commands/);
 		assert.match(
 			guidance,

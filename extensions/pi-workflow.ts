@@ -302,7 +302,7 @@ export default function piWorkflowExtension(
 		ctx: ExtensionCommandContext,
 	) {
 		if (args.trim()) {
-			ctx.ui.notify(usage, "error");
+			report(ctx, usage, "error");
 			return;
 		}
 		currentCtx = ctx;

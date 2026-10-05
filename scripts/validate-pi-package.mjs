@@ -6,7 +6,7 @@ import process from "node:process";
 import { pathToFileURL } from "node:url";
 
 const root = process.cwd();
-const commands = [
+export const commands = [
 	"workflow:status",
 	"workflow:doctor",
 	"workflow:config",

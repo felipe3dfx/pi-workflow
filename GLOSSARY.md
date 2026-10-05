@@ -18,7 +18,7 @@ The versioned list of companion packages in `assets/companions.json`. A companio
 
 ### MCP server catalog
 
-The versioned MCP server definitions in `assets/mcp-servers.json`. Configure aligns Pi-native servers in `mcp.json` per catalog key and preserves keys the user or Pi manages. Each server has an exposure: `direct` or `deferred`.
+The versioned MCP server definitions in `assets/mcp-servers.json`. `/workflow:config` aligns Pi-native servers in `mcp.json` per catalog key and preserves keys the user or Pi manages. Each server has an exposure: `direct` or `deferred`.
 
 ### Degraded harness
 
@@ -32,11 +32,11 @@ _Avoid_: setup, `/workflow:setup`, installer
 
 ### Default settings
 
-The versioned Pi settings in `assets/settings.json` that Configure applies: `tuiMode`, `theme`, and `quietStartup`.
+The versioned Pi settings in `assets/settings.json` that `/workflow:config` applies: `tuiMode`, `theme`, `quietStartup`, and `defaultTools` (`+codemode`).
 
 ### Colliding package
 
-An installed package that overlaps with a harness capability: `@heyhuynhgiabuu/pi-pretty`, `pi-powerline-footer`, or `pi-mcp-adapter`. Status, doctor, and Configure warn. The harness never uninstalls it.
+An installed package that overlaps with a harness capability: `@heyhuynhgiabuu/pi-pretty`, `pi-powerline-footer`, or `pi-mcp-adapter`. Status, doctor, and `/workflow:config` warn. The harness never uninstalls it.
 
 ### Model profile
 
