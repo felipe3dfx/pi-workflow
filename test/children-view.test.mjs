@@ -571,7 +571,7 @@ test("the final assistant text and the error appear once, in the Result section,
 	const sessions = fakeSessions([failed, done], {
 		[done.id]: {
 			entries: [
-				assistant("m1", [{ type: "text", text: "Primero reviso." }]),
+				assistant("m1", [{ type: "text", text: "Checking first." }]),
 				assistant("m2", [{ type: "text", text: "Waited 60 seconds.  " }]),
 			],
 		},
@@ -586,7 +586,7 @@ test("the final assistant text and the error appear once, in the Result section,
 	});
 	const view = open(sessions, { rows: 60, latest: true });
 	let text = view.lines(120).join("\n");
-	assert.match(text, /Primero reviso\./);
+	assert.match(text, /Checking first\./);
 	assert.equal(text.match(/Waited 60 seconds\./g)?.length, 1);
 	assert.match(text, / Result ─/);
 	view.press("k");
