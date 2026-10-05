@@ -461,6 +461,19 @@ test("a child's bash keeps the guard when the user's prefix sets nounset", async
 	assert.equal(text(await run("gh", dir, "set -u")), "fake gh \n");
 });
 
+test("a child's bash keeps the guard when the user's prefix sets errexit", async (t) => {
+	routing(t, "off");
+	fakeGh(t);
+	const dir = worktree(t);
+
+	for (const prefix of ["set -e", "set -o errexit"]) {
+		assert.equal(text(await run("echo hi", dir, prefix)), "hi\n", prefix);
+		const result = await run("git commit -am x", dir, prefix);
+		assert.equal(result.structuredContent.exit_code, 126, prefix);
+		assert.equal(result.structuredContent.output, reserved("git commit"), prefix);
+	}
+});
+
 test("a child's bash reports a syntax error two lines below the command's line", async (t) => {
 	routing(t, "off");
 

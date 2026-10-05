@@ -103,7 +103,7 @@ export function createChildBashTool(
 	cwd: string,
 	userPrefix?: string,
 ) {
-	const commandPrefix = `unalias git gh 2>/dev/null\n${guard("git", gitDecision(physical(cwd)))}${guard("gh", ghDecision)}`;
+	const commandPrefix = `unalias git gh 2>/dev/null || :\n${guard("git", gitDecision(physical(cwd)))}${guard("gh", ghDecision)}`;
 	return defineTool(
 		createBashToolDefinition(cwd, {
 			commandPrefix: userPrefix
