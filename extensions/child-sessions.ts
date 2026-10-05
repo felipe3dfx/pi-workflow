@@ -19,11 +19,13 @@ import {
 	SettingsManager,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import { type Component, Text } from "@earendil-works/pi-tui";
 import { type Static, Type } from "typebox";
 
 import { createChildBashTool } from "./child-bash.ts";
 import type { createChildLauncher } from "./child-launcher.ts";
 import { createChildCodeGraphTool } from "./codegraph-tool.ts";
+import { answerCard } from "./child-result-card.ts";
 import { claim, held } from "./configure.ts";
 import {
 	type ChildResult,
@@ -793,15 +795,18 @@ export function createChildSessions(options: {
 
 	function reply(id: string, number: number, text: string) {
 		const child = children.get(id);
-		if (!child) return `No child ${id} in this session.`;
+		if (!child) throw new Error(`No child ${id} in this session.`);
 		if (!isWorking(child.record.state)) {
-			return `Child ${id} is ${child.record.state}; question ${number} can no longer be answered.`;
+			throw new Error(
+				`Child ${id} is ${child.record.state}; question ${number} can no longer be answered.`,
+			);
 		}
 		if (child.question?.number !== number) {
-			return `Question ${number} of child ${id} is not waiting for a reply.`;
+			throw new Error(
+				`Question ${number} of child ${id} is not waiting for a reply.`,
+			);
 		}
 		answer(child, text);
-		return `Reply sent to child ${id}.`;
 	}
 
 	function cancel(id: string, deliver: boolean) {
@@ -938,13 +943,14 @@ type Outcome = {
 	jev?: ClassifierResult;
 };
 
+const unseatedMessage = "Child session is not seated. Run /workflow:config.";
+
 function unseatedChild() {
 	if (held(childOverlay)) return undefined;
-	return report(
-		["Child session is not seated. Run /workflow:config."],
-		{ status: "refused" },
-	);
+	return report([unseatedMessage], { status: "refused" });
 }
+
+const hidden: Component = { render: () => [], invalidate() {} };
 
 function report(lines: string[], details: Record<string, unknown>) {
 	return {
@@ -1256,13 +1262,26 @@ export function createChildQueryTools(
 			"Answer the question a child session is waiting on, naming the question number from its message. A reply to a question that is not waiting is refused.",
 		parameters: replyChildParameters,
 		async execute(_toolCallId, params) {
-			const unseated = unseatedChild();
-			if (unseated) return unseated;
-			return report(
-				[sessions.reply(params.id, params.question, params.answer)],
-				{ id: params.id, question: params.question },
-			);
+			if (unseatedChild()) throw new Error(unseatedMessage);
+			sessions.reply(params.id, params.question, params.answer);
+			return report([`Reply sent to child ${params.id}.`], {
+				id: params.id,
+				question: params.question,
+			});
 		},
+		renderShell: "self",
+		renderCall: (args, theme) => answerCard(args, theme),
+		renderResult: (result, _options, theme, context) =>
+			context.isError
+				? new Text(
+						theme.fg(
+							"error",
+							result.content.map((part) => ("text" in part ? part.text : "")).join("\n"),
+						),
+						0,
+						0,
+					)
+				: hidden,
 	};
 	return [listChildren, childStatus, childResult, cancelChild, replyChild];
 }

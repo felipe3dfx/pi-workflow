@@ -36,6 +36,7 @@ import {
 } from "@earendil-works/pi-tui";
 
 import { createChildBashTool } from "../extensions/child-bash.ts";
+import { compactToolRenderers } from "../extensions/compact-tools.ts";
 import { capabilities, replaceSelection } from "../extensions/configure.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 import { classifierRegistry } from "./support/fake-jev.mjs";
@@ -2279,22 +2280,98 @@ test("a child that asks waits for the parent model's reply_child answer, still h
 		assert.equal(await answer, "src/parser.ts");
 		assert.equal(await stateOf(extension, id), "running");
 
-		const again = await use(extension, "reply_child", {
-			id,
-			question: 1,
-			answer: "x",
-		});
-		assert.equal(
-			text(again),
-			`Question 1 of child ${id} is not waiting for a reply.`,
+		await assert.rejects(
+			use(extension, "reply_child", { id, question: 1, answer: "x" }),
+			{ message: `Question 1 of child ${id} is not waiting for a reply.` },
 		);
-		const unknown = await use(extension, "reply_child", {
-			id: "nope",
-			question: 1,
-			answer: "x",
-		});
-		assert.match(text(unknown), /No child nope in this session/);
+		await assert.rejects(
+			use(extension, "reply_child", { id: "nope", question: 1, answer: "x" }),
+			{ message: "No child nope in this session." },
+		);
 	});
+});
+
+test("a reply while the child session is not seated is a tool error and reaches no child", async (t) => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			schedule: manualClock().schedule,
+		});
+		const id = await spawnBackground(extension, worktree);
+		await settle();
+		children.created[0].spec.ask("Which file?");
+		const seated = Object.fromEntries(
+			capabilities.map((capability) => [capability, true]),
+		);
+		replaceSelection({
+			schemaVersion: 1,
+			capabilities: { ...seated, "child-session": false },
+			expectations: {},
+		});
+		t.after(() =>
+			replaceSelection({
+				schemaVersion: 1,
+				capabilities: seated,
+				expectations: {},
+			}),
+		);
+
+		await assert.rejects(
+			use(extension, "reply_child", { id, question: 1, answer: "a.ts" }),
+			{ message: "Child session is not seated. Run /workflow:config." },
+		);
+		replaceSelection({
+			schemaVersion: 1,
+			capabilities: seated,
+			expectations: {},
+		});
+		assert.equal(await stateOf(extension, id), "waiting");
+	});
+});
+
+test("reply_child paints the answer card with compact rendering on and off, shows a refusal's reason, and shows nothing on success", async (t) => {
+	initTheme("dark", false);
+	const extension = await loadSpawnTool({ agentDir: tmpdir() });
+	const tool = extension.named("reply_child");
+	const theme = globalThis[Symbol.for("@earendil-works/pi-coding-agent:theme")];
+	const args = { id: "5636a1b2-0000", question: 3, answer: "src/parser.ts" };
+	const lines = (component) =>
+		component.render(60).map((line) => stripVTControlCharacters(line).trimEnd());
+	const seated = Object.fromEntries(
+		capabilities.map((capability) => [capability, true]),
+	);
+	t.after(() =>
+		replaceSelection({ schemaVersion: 1, capabilities: seated, expectations: {} }),
+	);
+	const cards = [];
+	for (const compact of [true, false]) {
+		replaceSelection({
+			schemaVersion: 1,
+			capabilities: { ...seated, "compact-rendering": compact },
+			expectations: {},
+		});
+		const renderers = compactToolRenderers("reply_child", () => tool);
+		assert.equal(renderers.renderCall, tool.renderCall);
+		cards.push(lines(renderers.renderCall(args, theme, {})));
+	}
+	assert.deepEqual(cards[0], cards[1]);
+	assert.deepEqual(cards[0], [
+		"   ◆ Parent → 5636 · answer 3",
+		"     src/parser.ts",
+	]);
+	const result = (isError, message) => ({
+		content: [{ type: "text", text: message }],
+		details: {},
+		isError,
+	});
+	const render = (isError, message) =>
+		lines(tool.renderResult(result(isError, message), {}, theme, { isError }));
+	assert.deepEqual(render(false, "Reply sent to child 5636."), []);
+	assert.deepEqual(render(true, "No child nope in this session."), [
+		"No child nope in this session.",
+	]);
 });
 
 test("a repeated reply to an answered question never answers the child's next question", async () => {
@@ -2321,15 +2398,13 @@ test("a repeated reply to an answered question never answers the child's next qu
 			[1, 2],
 		);
 
-		const late = await use(extension, "reply_child", {
-			id,
-			question: 1,
-			answer: "Yes, delete it.",
-		});
-
-		assert.equal(
-			text(late),
-			`Question 1 of child ${id} is not waiting for a reply.`,
+		await assert.rejects(
+			use(extension, "reply_child", {
+				id,
+				question: 1,
+				answer: "Yes, delete it.",
+			}),
+			{ message: `Question 1 of child ${id} is not waiting for a reply.` },
 		);
 		assert.equal(await stateOf(extension, id), "waiting");
 		const reply = await use(extension, "reply_child", {
@@ -2356,15 +2431,11 @@ test("a reply to a child that has ended is refused", async () => {
 		await use(extension, "cancel_child", { id });
 		assert.equal(await asked(), "The child was cancelled.");
 
-		const reply = await use(extension, "reply_child", {
-			id,
-			question: 1,
-			answer: "src/a.ts",
-		});
-
-		assert.equal(
-			text(reply),
-			`Child ${id} is cancelled; question 1 can no longer be answered.`,
+		await assert.rejects(
+			use(extension, "reply_child", { id, question: 1, answer: "src/a.ts" }),
+			{
+				message: `Child ${id} is cancelled; question 1 can no longer be answered.`,
+			},
 		);
 		assert.equal(await stateOf(extension, id), "cancelled");
 	});
@@ -2781,14 +2852,11 @@ test("a child through Pi's SDK that waits for a reply that never comes ends time
 			extension.messages[1].message.content,
 			/ask_parent ran for 30 minutes/,
 		);
-		const late = await use(extension, "reply_child", {
-			id,
-			question: 1,
-			answer: "src/a.ts",
-		});
-		assert.equal(
-			text(late),
-			`Child ${id} is timed out; question 1 can no longer be answered.`,
+		await assert.rejects(
+			use(extension, "reply_child", { id, question: 1, answer: "src/a.ts" }),
+			{
+				message: `Child ${id} is timed out; question 1 can no longer be answered.`,
+			},
 		);
 		assert.equal(parent.requests.length, 1);
 		assert.deepEqual(unhandled, []);
