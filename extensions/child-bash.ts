@@ -38,7 +38,7 @@ function gitDecision(root: string): string {
 		case "$1" in
 		-c)
 			shift;
-			case "$1" in [Aa][Ll][Ii][Aa][Ss].*) reserved="git -c alias" ;; esac ;;
+			case "\${1-}" in [Aa][Ll][Ii][Aa][Ss].*) reserved="git -c alias" ;; esac ;;
 		-c[Aa][Ll][Ii][Aa][Ss].*) reserved="git -c alias" ;;
 		-C|--git-dir|--work-tree|--namespace|--exec-path|--config-env|--attr-source) shift ;;
 		-*) ;;
@@ -103,8 +103,7 @@ export function createChildBashTool(
 	cwd: string,
 	userPrefix?: string,
 ) {
-	const commandPrefix =
-		guard("git", gitDecision(physical(cwd))) + guard("gh", ghDecision);
+	const commandPrefix = `unalias git gh 2>/dev/null\n${guard("git", gitDecision(physical(cwd)))}${guard("gh", ghDecision)}`;
 	return defineTool(
 		createBashToolDefinition(cwd, {
 			commandPrefix: userPrefix

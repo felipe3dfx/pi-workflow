@@ -420,13 +420,54 @@ test("a child's bash keeps the user's shell prefix alongside the guard", async (
 	assert.equal(commits(dir), "1");
 });
 
-test("a child's bash reports a syntax error one line below the command's line", async (t) => {
+test("a child's bash keeps the guard when the user's prefix aliases git and gh", async (t) => {
+	routing(t, "off");
+	fakeGh(t);
+	const dir = worktree(t);
+	const prefix =
+		"shopt -s expand_aliases\nalias git='echo aliased'\nalias gh='echo aliased'";
+
+	const status = await run("git status", dir, prefix);
+	const read = await run("gh pr view 12", dir, prefix);
+	const result = await run("git commit -am x", dir, prefix);
+
+	assert.match(text(status), /On branch/);
+	assert.equal(text(read), "fake gh pr view 12\n");
+	assert.equal(result.structuredContent.exit_code, 126);
+	assert.equal(result.structuredContent.output, reserved("git commit"));
+	assert.equal(commits(dir), "1");
+});
+
+test("a child's bash keeps the guard when the user's prefix sets nounset", async (t) => {
+	routing(t, "off");
+	fakeGh(t);
+	const dir = worktree(t);
+
+	for (const [command, expected] of [
+		["git -c alias.ci=commit ci", "git -c alias"],
+		["git commit -am x", "git commit"],
+		["gh pr merge 12", "gh pr merge"],
+		["gh pr --subject view merge 12", "gh pr"],
+	]) {
+		const result = await run(command, dir, "set -u");
+
+		assert.equal(result.structuredContent.exit_code, 126, command);
+		assert.equal(result.structuredContent.output, reserved(expected), command);
+	}
+	const missing = await run("git -c", dir, "set -u");
+	assert.equal(missing.structuredContent.exit_code, 129);
+	assert.doesNotMatch(missing.structuredContent.output, /unbound|reserved/);
+	assert.match(text(await run("git status", dir, "set -u")), /On branch/);
+	assert.equal(text(await run("gh", dir, "set -u")), "fake gh \n");
+});
+
+test("a child's bash reports a syntax error two lines below the command's line", async (t) => {
 	routing(t, "off");
 
 	const result = await run("echo ok\nif then", worktree(t));
 
 	assert.equal(result.isError, true);
-	assert.match(text(result), /line 3: syntax error/);
+	assert.match(text(result), /line 4: syntax error/);
 });
 
 test("a child's bash for a missing directory is created and its commands fail", async (t) => {
