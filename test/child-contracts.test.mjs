@@ -34,7 +34,7 @@ test("the explore contract permits worktree discovery without supplied context o
 	const text = await contract("explore");
 	assert.match(text, /Answer a clear, bounded task by reading the worktree/);
 	assert.match(text, /Report findings with file paths and line numbers/);
-	assert.doesNotMatch(text, /what you could not confirm/);
+	assert.match(text, /distinguish confirmed facts from open questions/);
 	assert.match(text, /ask_parent/);
 	assert.match(text, /ambiguous|unclear/i);
 	assert.match(text, /Do not edit files/);
@@ -51,7 +51,7 @@ test("the verify contract independently checks work; parent results are context,
 	assert.match(text, /may run the repository's checks and tests/i);
 	assert.match(text, /Do not edit or write worktree files/);
 	assert.match(text, /rewrite tracked files or dependencies/i);
-	assert.match(text, /worktree changes during verification, stop and report blocked naming the change/i);
+	assert.match(text, /tracked worktree files change during verification, stop and report blocked naming the change/i);
 	assert.match(text, /Only Verdict pass means verified/);
 	assert.match(text, /fail or blocked is not a pass/);
 	assert.match(text, /what remained unverified/);
