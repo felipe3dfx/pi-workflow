@@ -140,7 +140,7 @@ _Avoid_: dialog, form
 
 ### Compact rendering
 
-The harness presentation of Pi's seven tools: `read`, `bash`, `grep`, `find`, `ls`, `edit`, and `write`.
+The harness presentation of tool rows: Pi's seven tools (`read`, `bash`, `grep`, `find`, `ls`, `edit`, and `write`), MCP tools, `codemode`, and any tool whose owner provides no call renderer.
 
 _Avoid_: pi-pretty
 

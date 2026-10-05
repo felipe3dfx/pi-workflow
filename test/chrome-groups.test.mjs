@@ -26,13 +26,15 @@ const plain = (lines) =>
 
 const renderers = new Map();
 
-function loadTools() {
+function loadSession() {
 	const tools = new Map();
+	const resolvers = [];
 	const pi = {
 		on() {},
 		registerCommand() {},
 		registerShortcut() {},
 		registerMessageRenderer: (type, render) => renderers.set(type, render),
+		registerToolRenderer: (resolver) => resolvers.push(resolver),
 		registerProvider() {},
 		registerTool: (tool) => tools.set(tool.name, tool),
 		exec: async () => ({ code: 0, stdout: "", stderr: "" }),
@@ -41,14 +43,23 @@ function loadTools() {
 	if (preview.status === "ready") replaceSelection(preview.selection);
 	piWorkflowExtension(pi);
 	syncCompactTools(pi, { cwd: process.cwd(), isProjectTrusted: () => false });
-	return tools;
+	return {
+		getToolDefinition: (name) => tools.get(name),
+		extensionRunner: {
+			resolveToolRenderers: (name, base) =>
+				resolvers.reduceRight(
+					(next, resolver) => () => resolver(name, next),
+					base,
+				)(),
+		},
+	};
 }
 
 function chat(t, { hideThinking = true } = {}) {
 	initTheme("dark", false);
 	patchMessages();
 	t.after(restoreMessages);
-	const tools = loadTools();
+	const session = loadSession();
 	const ui = { requestRender() {} };
 	const mode = {
 		chatContainer: new Container(),
@@ -56,10 +67,7 @@ function chat(t, { hideThinking = true } = {}) {
 		getMarkdownThemeWithSettings: () => markdownTheme,
 		getMarkdownTransformers: () => [],
 		outputPad: 1,
-		session: {
-			getToolDefinition: (name) => tools.get(name),
-			extensionRunner: { resolveToolRenderers: (_name, base) => base() },
-		},
+		session,
 	};
 	const add = (message) =>
 		InteractiveMode.prototype.addMessageToChat.call(mode, {

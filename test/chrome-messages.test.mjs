@@ -19,6 +19,8 @@ import {
 	restoreMessages,
 	thinkingSteps,
 } from "../extensions/chrome-messages.ts";
+import { registerCompactTools } from "../extensions/compact-tools.ts";
+import { readSelection, replaceSelection } from "../extensions/configure.ts";
 
 const piTui = await import(
 	createRequire(import.meta.resolve("@earendil-works/pi-coding-agent")).resolve(
@@ -46,7 +48,6 @@ const pristine = {
 	updateContent: AssistantMessageComponent.prototype.updateContent,
 	rebuild: UserMessageComponent.prototype.rebuild,
 	addMessageToChat: InteractiveMode.prototype.addMessageToChat,
-	toolDefinition: InteractiveMode.prototype.getRegisteredToolDefinition,
 	toolRender: ToolExecutionComponent.prototype.render,
 	toolMouse: ToolExecutionComponent.prototype.handleMouse,
 	bashRender: Object.hasOwn(BashExecutionComponent.prototype, "render"),
@@ -58,8 +59,6 @@ function isPristine() {
 			pristine.updateContent &&
 		UserMessageComponent.prototype.rebuild === pristine.rebuild &&
 		InteractiveMode.prototype.addMessageToChat === pristine.addMessageToChat &&
-		InteractiveMode.prototype.getRegisteredToolDefinition ===
-			pristine.toolDefinition &&
 		ToolExecutionComponent.prototype.render === pristine.toolRender &&
 		ToolExecutionComponent.prototype.handleMouse === pristine.toolMouse &&
 		Object.hasOwn(BashExecutionComponent.prototype, "render") ===
@@ -185,8 +184,10 @@ test("an assistant error is a red glyph with muted text that wraps under the tex
 	assert.ok(lines[1].includes(`${theme.fg("error", "◆")} ${muted}Error:`));
 });
 
-test("MCP tools and tools without a call renderer get the compact self-rendered row, others keep their definition", (t) => {
+test("MCP tools and tools without a call renderer get the compact self-rendered row through the tool renderer resolver, others keep their definition", (t) => {
 	patched(t);
+	const preview = readSelection(undefined, []);
+	if (preview.status === "ready") replaceSelection(preview.selection);
 	const own = { name: "read", renderCall() {} };
 	const mcp = {
 		name: "mcp__engram__mem_search",
@@ -195,10 +196,16 @@ test("MCP tools and tools without a call renderer get the compact self-rendered 
 	};
 	const bare = { name: "spawn_child", label: "Spawn Child" };
 	const definitions = { read: own, [mcp.name]: mcp, spawn_child: bare };
+	const resolvers = [];
+	registerCompactTools({
+		registerToolRenderer: (resolver) => resolvers.push(resolver),
+		registerTool() {},
+	});
+	assert.equal(resolvers.length, 1);
 	const mode = {
 		session: {
 			getToolDefinition: (name) => definitions[name],
-			extensionRunner: { resolveToolRenderers: (_name, base) => base() },
+			extensionRunner: { resolveToolRenderers: resolvers[0] },
 		},
 	};
 	const lookup = (name) =>
@@ -207,7 +214,6 @@ test("MCP tools and tools without a call renderer get the compact self-rendered 
 	for (const name of [mcp.name, "spawn_child", "unknown_tool"]) {
 		const definition = lookup(name);
 		assert.equal(definition.renderShell, "self", name);
-		assert.equal(definition.name, name);
 		assert.notEqual(definition.renderCall, mcp.renderCall);
 	}
 	const row = new ToolExecutionComponent(

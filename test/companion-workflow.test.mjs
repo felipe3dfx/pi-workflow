@@ -31,6 +31,7 @@ function fakePiExtensionApi() {
 			registerCommand() {},
 			registerShortcut() {},
 			registerMessageRenderer() {},
+			registerToolRenderer() {},
 			registerProvider() {},
 			registerTool() {},
 			exec: async () => {
@@ -886,6 +887,7 @@ async function withSelectionExtension(selection, run) {
 				registerCommand: (name, command) => commands.set(name, command),
 				registerShortcut() {},
 				registerMessageRenderer() {},
+				registerToolRenderer() {},
 				registerProvider() {},
 				registerTool() {},
 				sendMessage() {},
