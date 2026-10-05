@@ -89,7 +89,7 @@ test("a session with hasUI but no TUI mode refuses ask_user_question the same wa
 	assert.equal(result.details.status, "refused");
 });
 
-test("the operator question opens as an overlay and closes the children view", async () => {
+test("the operator question opens as a bottom overlay and closes the children view", async () => {
 	initTheme("dark", false);
 	const keys = new KeybindingsManager({
 		...TUI_KEYBINDINGS,
@@ -141,7 +141,7 @@ test("the operator question opens as an overlay and closes the children view", a
 		ctx,
 	);
 	assert.equal(closed, true);
-	assert.deepEqual(options(), { overlay: true });
+	assert.deepEqual(options(), { overlay: true, overlayOptions: { anchor: "bottom-center" } });
 	send("\r");
 	const result = await pending;
 	assert.equal(result.details.status, "answered");
