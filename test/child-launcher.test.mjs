@@ -701,7 +701,7 @@ test("Jev's destination criteria cover an explicit child or subagent request und
 		assert.match(criteria.leave, /independent review or check of work/);
 		assert.match(criteria.leave, /session other than the parent/);
 		assert.match(criteria.stay, /nor for an independent review or check of work/);
-		assert.match(criteria.stay, /reserved operation \(mutating git or gh, publication\) always stays/);
+		assert.match(criteria.stay, /reserved operation \(mutating git or gh, publication\) in the request stays with the parent, but only that part/);
 		assert.match(criteria.decide, /reserved operation \(mutating git or gh, publication\) is not an open product decision by itself and stays with the parent/);
 		assert.match(criteria.leave, /never including reserved operations \(mutating git or gh, publication\), which stay with the parent/);
 	});

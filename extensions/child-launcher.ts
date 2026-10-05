@@ -73,7 +73,7 @@ const destinationInstructions = "Where should this package go?";
 const destinationCriteria = {
 	decide:
 		`A product decision is still open. The parent must ask the user one question and wait. Choosing an architecture with the user is a decision. A reserved operation (${reservedOperations}) is not an open product decision by itself and stays with the parent.`,
-	stay: `The package is small and already understood, so the parent can finish it in this session, and the user did not ask for a child session or subagent, nor for an independent review or check of work. A reserved operation (${reservedOperations}) always stays.`,
+	stay: `The package is small and already understood, so the parent can finish it in this session, and the user did not ask for a child session or subagent, nor for an independent review or check of work. A reserved operation (${reservedOperations}) in the request stays with the parent, but only that part: the rest of the package is judged on its own.`,
 	leave:
 		`A bounded package a child session can finish on its own, never including reserved operations (${reservedOperations}), which stay with the parent, or the user explicitly asks to delegate to child sessions or subagents, in any language or wording, or the user asks for an independent review or check of work, which must run in a session other than the parent. Investigating an architecture can leave.`,
 };
