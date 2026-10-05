@@ -57,7 +57,7 @@ const reservedOperations = "mutating git or gh, publication";
 const specialists = ["explorer", "worker", "verifier"] as const;
 
 const specialistInstructions =
-	`Which specialist should carry out the requested action? Choose from the action in \`user_request\` and \`task\`. Reserved operations (${reservedOperations}) are never part of a child package and stay with the parent, so never choose a specialist for them. \`suggested_specialist\` is a hint and does not decide the answer.`;
+	`Which specialist should carry out the requested action? Choose from the action in \`user_request\` and \`task\`. Reserved operations (${reservedOperations}) are never part of a child package and stay with the parent. \`suggested_specialist\` is a hint and does not decide the answer.`;
 
 const specialistCriteria: Record<Specialist, string> = {
 	explorer:

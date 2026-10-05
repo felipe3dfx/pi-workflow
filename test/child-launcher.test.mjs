@@ -788,10 +788,31 @@ test("the verifier criterion covers review of finished work and the explorer cri
 		);
 
 		assert.match(instructions, /Reserved operations \(mutating git or gh, publication\) are never part of a child package and stay with the parent/);
+		assert.doesNotMatch(instructions, /never choose/);
 		assert.match(criteria.verifier, /review or check of work that is already done/);
 		assert.match(criteria.verifier, /pull request/);
 		assert.match(criteria.worker, /excluding reserved operations \(mutating git or gh, publication\), which stay with the parent/);
 		assert.match(criteria.explorer, /Not a review of a pull request or of work that is already done/);
+	});
+});
+
+test("a reserved request stays with the parent instead of blocking the launch", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const jev = fakeJev((body) => ({
+			answers: {
+				specialist: choiceAnswer("worker", body.questions.specialist.criteria),
+				destination: choiceAnswer("stay", body.questions.destination.criteria),
+			},
+		}));
+		const result = await createChildLauncher({
+			modelProfiles: absentProfiles,
+		}).prepareLaunch(
+			{ task: "Commit and push this", userRequest: "commit and push this" },
+			launcherContext(worktree, { jev }),
+		);
+
+		assert.equal(result.kind, "stay");
+		assert.doesNotMatch(result.warning, /Launch blocked/);
 	});
 });
 
