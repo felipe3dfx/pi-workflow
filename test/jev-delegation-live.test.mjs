@@ -40,7 +40,7 @@ async function recordingRegistry(dir, requests) {
 }
 
 test(
-	"live Jev selects the specialist for four clear delegation cases",
+	"live Jev selects the specialist for every live delegation case",
 	{ skip, timeout: 120_000 },
 	async (t) => {
 		const dir = await mkdtemp(join(tmpdir(), "pi-workflow-jev-live-"));
