@@ -905,7 +905,7 @@ const spawnChildParameters = Type.Object({
 	role: Type.Optional(
 		Type.String({
 			description:
-				"A suggestion (explore, worker, or verify). Jev selects the specialist; omitting it does not choose worker.",
+				"explore, worker, or verify. When Jev routing is off, the role you pass decides and omitting it does not choose worker. When on, it is a suggestion and Jev selects the specialist.",
 		}),
 	),
 	worktree: Type.Optional(
@@ -937,10 +937,9 @@ type Outcome = {
 
 function unseatedChild() {
 	if (held(childOverlay)) return undefined;
-	return report(
-		["Child session is not seated. Run /workflow:configure."],
-		{ status: "refused" },
-	);
+	return report(["Child session is not seated. Run /workflow:configure."], {
+		status: "refused",
+	});
 }
 
 function report(lines: string[], details: Record<string, unknown>) {
@@ -1000,7 +999,8 @@ export function createSpawnChildTool(
 		promptSnippet: "Delegate a bounded task to a child session",
 		promptGuidelines: [
 			"Pass the task and, when the user named one, the suggested role (explore, worker, or verify). The harness reads the user message. Jev selects the specialist.",
-			"A refusal or a queued id is not a completed result and is not retried.",
+			"When Jev routing is off, the role you pass decides. Roles: explore reads files and queries CodeGraph; it cannot run commands or edit. verify runs commands and checks without editing. worker edits files and runs commands.",
+			"A refusal or a queued id is not a completed result and is not retried. After a background child is queued, end your turn: its result wakes you. Do not poll with sleep, list_children, child_status, or child_result.",
 			"The parent asks once per user turn before read, grep, find, ls, edit, write, bash, powershell, or codegraph query and explore. A block that names a role means call spawn_child and use that role. A block that says to ask the user one question means ask that one question and wait. Reads of AGENTS.md, GLOSSARY.md, and one docs/agents markdown file stay available, and so does codegraph init.",
 			"Do not declare the work finished unless a worker result reports a done Verdict with its files_changed, validation, and left_undone, and do not declare it verified unless a verify result reports a pass Verdict with its findings and unverified.",
 		],
@@ -1060,7 +1060,9 @@ function launched(
 			}
 		: {};
 	const selectionLine = selection
-		? `Jev selected ${selection.role}.`
+		? selection.jev
+			? `Jev selected ${selection.role}.`
+			: `Launched as ${selection.role}.`
 		: undefined;
 	if (started.status === "completed") {
 		const outcome = selection
@@ -1082,7 +1084,7 @@ function launched(
 	return report(
 		[
 			...warnings,
-			`Child ${started.id} is queued in the background. Its result arrives later as a message.`,
+			`Child ${started.id} is queued in the background. Its result arrives later as a message. End your turn and do not poll; the result wakes you.`,
 			...(selectionLine ? [selectionLine] : []),
 		],
 		{ status: started.status, id: started.id, ...selected },
