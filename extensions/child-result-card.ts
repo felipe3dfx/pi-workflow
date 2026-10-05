@@ -207,9 +207,14 @@ class AnswerCard implements Component {
 	head: string;
 	body: Markdown;
 
-	constructor(id: string, question: number, answer: string, theme: Theme) {
-		this.head = `${theme.fg("toolTitle", "◆")} ${theme.bold(theme.fg("muted", "Parent"))} → ${id.slice(0, 4)} ${theme.fg("toolTitle", `· answer ${question}`)}`;
-		this.body = markdownBody(answer);
+	constructor(
+		id: string | undefined,
+		question: number | undefined,
+		answer: string | undefined,
+		theme: Theme,
+	) {
+		this.head = `${theme.fg("toolTitle", "◆")} ${theme.bold(theme.fg("muted", "Parent"))} → ${sanitizeTaskText(id ?? "").slice(0, 4)} ${theme.fg("toolTitle", `· answer ${question ?? "?"}`)}`;
+		this.body = markdownBody(answer ?? "");
 	}
 
 	render(outer: number) {
@@ -225,7 +230,7 @@ class AnswerCard implements Component {
 }
 
 export function answerCard(
-	args: { id: string; question: number; answer: string },
+	args: Partial<{ id: string; question: number; answer: string }>,
 	theme: Theme,
 ) {
 	return new AnswerCard(args.id, args.question, args.answer, theme);

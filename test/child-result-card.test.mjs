@@ -388,3 +388,22 @@ test("every answer card line fits the width it is given", (t) => {
 		for (const line of component.render(width))
 			assert.ok(visibleWidth(line) <= width, `width ${width}: ${line}`);
 });
+
+test("the answer card renders partial streaming arguments without throwing or printing undefined", (t) => {
+	cards(t);
+	for (const args of [{}, { id }, { question: 3 }, { answer: "text" }]) {
+		const lines = plain(answerCard(args, theme()));
+		assert.ok(lines.length > 0);
+		for (const line of lines) assert.doesNotMatch(line, /undefined/);
+	}
+	assert.equal(plain(answerCard({}, theme()))[0], "   ◆ Parent →  · answer ?");
+});
+
+test("the answer card header strips terminal escapes and newlines from the id", (t) => {
+	cards(t);
+	const component = answerCard(
+		{ id: "a\nb\u001b[31mcdef", question: 1, answer: "x" },
+		theme(),
+	);
+	assert.equal(plain(component)[0], "   ◆ Parent → a b  · answer 1");
+});
