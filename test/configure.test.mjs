@@ -61,7 +61,7 @@ test("an unseated brick leaves its place empty and keeps the other brick's order
 	if (selection.status !== "ready") return;
 	selection.selection.capabilities["child-session"] = false;
 	replaceSelection(selection.selection);
-	contribute("child-session", "header", () => ({ count: 2, label: "Subagent" }));
+	contribute("child-session", "header", () => ({ count: 2 }));
 	contribute("todo", "above-input", () => ({ count: 1 }));
 
 	const child = claim("child-session", "above-input");

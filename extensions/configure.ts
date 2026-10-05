@@ -18,7 +18,7 @@ const places = [
 
 export type Place = (typeof places)[number];
 
-export type PlaceReading = { count: number; label?: string; stepMs?: number };
+export type PlaceReading = { count: number };
 
 const placement: Record<Capability, { place: Place; order: number }[]> = {
 	"child-session": [

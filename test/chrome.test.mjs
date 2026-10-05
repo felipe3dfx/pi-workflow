@@ -115,21 +115,6 @@ test("the status row shows the spinner, activity, and step time on the left and 
 		plain(renderStatusRow(theme, { ...data, tool: "bash" }, 70))[0],
 		/^ {3}⠋ Run bash 3\.6s/,
 	);
-	assert.deepEqual(
-		plain(
-			renderStatusRow(
-				theme,
-				{
-					frame: 1,
-					waiting: true,
-					label: "Subagent: worker a1b2…",
-					stepMs: 2_100,
-				},
-				70,
-			),
-		),
-		["   : Subagent: worker a1b2… 2.1s"],
-	);
 	for (const width of [20, 8, 1]) {
 		assert.ok(visibleWidth(renderStatusRow(theme, data, width)[0]) <= width);
 	}
@@ -483,6 +468,25 @@ test("the status row keeps showing a tool that is still running when a later par
 	assert.match(plain(widget.render(70))[0], /Run read/);
 	await chrome.emit("tool_execution_end", { toolCallId: "a" });
 	assert.match(plain(widget.render(70))[0], /Waiting for response/);
+});
+
+test("the status row renders only while the parent works and hides the step time while the step is the turn itself", async (t) => {
+	t.mock.timers.enable({ apis: ["Date"], now: 1_000 });
+	const chrome = fakeChrome();
+	await chrome.emit("session_start");
+	const widget = chrome.factories.widget(chrome.tui, theme);
+	assert.deepEqual(widget.render(70), []);
+	await chrome.emit("agent_start");
+	t.mock.timers.tick(4_500);
+	assert.match(plain(widget.render(70))[0], /^ {3}\S Waiting for response… +4\.5s$/);
+	await chrome.emit("tool_execution_start", {
+		toolCallId: "a",
+		toolName: "bash",
+	});
+	t.mock.timers.tick(1_000);
+	assert.match(plain(widget.render(70))[0], /^ {3}\S Run bash 1\.0s +5\.5s$/);
+	await chrome.emit("agent_end");
+	assert.deepEqual(widget.render(70), []);
 });
 
 test("the footer strips complete escape sequences from styled statuses and renders them dim", () => {

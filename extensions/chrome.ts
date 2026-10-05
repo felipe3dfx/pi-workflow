@@ -22,7 +22,7 @@ import {
 	restoreMessages,
 } from "./chrome-messages.ts";
 import { type Schedule, scheduleTimer } from "./child-sessions.ts";
-import { spread } from "./children-box.ts";
+import { spinnerMs, spread, workingFrames } from "./children-box.ts";
 import { fixHeader } from "./fixed-header.ts";
 import { readHeader, watchHeader } from "./shell.ts";
 import { sanitizeTaskText } from "./todo-header.ts";
@@ -32,10 +32,7 @@ export type Hint = { key: string; action: string };
 export type KeyResolver = (binding: Keybinding) => string;
 
 const STATUS_WIDGET = "pi-workflow-status";
-const spinnerMs = 133;
 const phaseTimerMinWidth = 60;
-const workingFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"];
-const waitingFrames = ["⋅", ":", "⸬", "⁙"];
 
 function plainText(text: string) {
 	return sanitizeTaskText(stripTerminalSequences(text));
@@ -153,7 +150,6 @@ export interface StatusData {
 	frame: number;
 	label: string;
 	tool?: string;
-	waiting?: boolean;
 	stepMs?: number;
 	turnMs?: number;
 	outputTokens?: number;
@@ -166,8 +162,7 @@ export function renderStatusRow(
 ) {
 	const indent = marginFor(width) ? 2 : 0;
 	const room = width - marginFor(width) * 2 - indent;
-	const frames = data.waiting ? waitingFrames : workingFrames;
-	const spinner = frames[data.frame % frames.length];
+	const spinner = workingFrames[data.frame % workingFrames.length];
 	const label = sanitizeTaskText(data.label);
 	const activity = data.tool
 		? `${theme.fg("dim", "Run ")}${theme.fg("text", sanitizeTaskText(data.tool))}`
@@ -272,14 +267,10 @@ export function registerChrome(
 		for (const tui of renders) tui.requestRender();
 	}
 
-	function waitingChild() {
-		return readHeader();
-	}
-
 	function tick() {
 		stopTick?.();
 		stopTick = undefined;
-		if (!ctx || (!working && !waitingChild())) return;
+		if (!ctx || !working) return;
 		frame += 1;
 		requestRender();
 		stopTick = schedule(tick, spinnerMs);
@@ -305,23 +296,14 @@ export function registerChrome(
 
 	function statusData(): StatusData | undefined {
 		const now = Date.now();
-		if (working) {
-			return {
-				frame,
-				label,
-				tool,
-				stepMs: now - stepStart,
-				turnMs: now - turnStart,
-				outputTokens: doneTokens + liveTokens,
-			};
-		}
-		const child = waitingChild();
-		if (!child) return undefined;
+		if (!working) return undefined;
 		return {
 			frame,
-			waiting: true,
-			label: child.label ?? "Subagent…",
-			stepMs: child.stepMs ?? 0,
+			label,
+			tool,
+			stepMs: stepStart === turnStart ? undefined : now - stepStart,
+			turnMs: now - turnStart,
+			outputTokens: doneTokens + liveTokens,
 		};
 	}
 
@@ -411,22 +393,16 @@ export function registerChrome(
 				input.addToHistory(text);
 			return input;
 		});
-		unsubscribe = [
-			watchHeader(() => {
-				requestRender();
-				if (!stopTick) tick();
-			}),
-			hints.subscribe(requestRender),
-		];
+		unsubscribe = [watchHeader(requestRender), hints.subscribe(requestRender)];
 	});
 
 	pi.on("agent_start", async () => {
 		working = true;
 		running.clear();
-		turnStart = Date.now();
 		doneTokens = 0;
 		liveTokens = 0;
 		step("Waiting for response…");
+		turnStart = stepStart;
 		tick();
 	});
 	pi.on("message_update", async (event) => {

@@ -175,6 +175,7 @@ function loadExtension({
 	const notifications = [];
 	const widgets = new Map();
 	const views = [];
+	const headers = {};
 	let idle = true;
 	const ui = {
 		notify: (message, level) => notifications.push({ message, level }),
@@ -183,7 +184,7 @@ function loadExtension({
 			if (factory) widgets.set(key, { factory, options });
 		},
 		setStatus() {},
-		setHeader() {},
+		setHeader: (factory) => (headers.main = factory),
 		setFooter() {},
 		setEditorComponent() {},
 		setWorkingVisible() {},
@@ -232,6 +233,8 @@ function loadExtension({
 				mode,
 				hasUI: true,
 				ui,
+				cwd: "/tmp",
+				getContextUsage: () => undefined,
 				isIdle: () => idle,
 				sessionManager: { getBranch: () => branch, getEntries: () => [] },
 			});
@@ -245,6 +248,7 @@ function loadExtension({
 		entries,
 		notifications,
 		widgets,
+		headers,
 		views,
 		shortcuts,
 		commands,
@@ -3179,7 +3183,7 @@ test("a background child shows in the subagent box pinned above the input and ab
 		assert.match(lines[0], /▾ Subagents 1 +alt\+a view/);
 		assert.match(
 			lines[1],
-			/◐ worker [0-9a-f]{4} Fix the failing test +model \(medium\) \d+s$/,
+			/[⠋⠙⠹⠸⠼⠴⠦⠧] worker [0-9a-f]{4} Fix the failing test +model \(medium\) \d+s$/,
 		);
 
 		children.created[0].spec.onEvent({
@@ -3190,7 +3194,7 @@ test("a background child shows in the subagent box pinned above the input and ab
 		});
 		assert.match(
 			plain(box.render(100)[1]),
-			/◐ worker [0-9a-f]{4} bash npm test +model/,
+			/[⠋⠙⠹⠸⠼⠴⠦⠧] worker [0-9a-f]{4} bash npm test +model/,
 		);
 		const [record] = (await use(extension, "list_children", {})).details
 			.children;
@@ -3205,13 +3209,38 @@ test("a background child shows in the subagent box pinned above the input and ab
 		});
 		assert.match(
 			plain(box.render(100)[1]),
-			/◐ worker [0-9a-f]{4} Fix the failing test/,
+			/[⠋⠙⠹⠸⠼⠴⠦⠧] worker [0-9a-f]{4} Fix the failing test/,
 		);
 		assert.equal(await stateOf(extension, id), "running");
 	});
 });
 
-test("the box refreshes at once on a state change, groups redraws within 400 ms, ticks each second only while a child works, drops finished rows at 60 s with one timer, and schedules nothing when idle or after shutdown", async (t) => {
+test("the header's working-children count follows a child's state while the parent stays idle", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		const tui = { renders: 0, requestRender: () => (tui.renders += 1) };
+		const header = extension.headers.main(tui, plainTheme);
+		const working = () => plain(header.render(80)[0]).match(/◆ (\d+)/)?.[1];
+		assert.equal(working(), undefined);
+
+		const before = tui.renders;
+		await spawnBackground(extension, worktree);
+		await settle();
+		assert.ok(tui.renders > before);
+		assert.equal(working(), "1");
+
+		const afterStart = tui.renders;
+		children.created[0].result.resolve("All tests pass.");
+		await eventually(() => working() === undefined);
+		assert.ok(tui.renders > afterStart);
+	});
+});
+
+test("the box refreshes at once on a state change, groups redraws within 400 ms, ticks each second only while a child works, spins every 133 ms only while one runs, drops finished rows at 60 s with one timer, and schedules nothing when idle or after shutdown", async (t) => {
 	t.mock.timers.enable({ apis: ["Date"], now: 1_000_000 });
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const clock = manualClock();
@@ -3242,16 +3271,21 @@ test("the box refreshes at once on a state change, groups redraws within 400 ms,
 		assert.equal(tui.renders, 2);
 		clock.fire(400);
 		assert.equal(tui.renders, 2);
-		assert.deepEqual(uiTimers(), [1000]);
+		assert.deepEqual(uiTimers(), [133, 1000]);
+		clock.fire(133);
+		clock.fire(133);
+		assert.equal(tui.renders, 4);
+		assert.deepEqual(uiTimers(), [133, 1000]);
 
 		clock.fire(1000);
-		assert.equal(tui.renders, 3);
-		assert.deepEqual(uiTimers(), [400, 1000]);
+		assert.equal(tui.renders, 5);
+		assert.deepEqual(uiTimers(), [133, 400, 1000]);
 		clock.fire(400);
 
 		children.created[0].result.resolve("Done.");
 		await settle();
-		assert.equal(tui.renders, 4);
+		assert.equal(tui.renders, 6);
+		assert.ok(!uiTimers().includes(133));
 		clock.fire(400);
 		clock.fire(1000);
 		clock.fire(400);
@@ -3269,6 +3303,7 @@ test("the box refreshes at once on a state change, groups redraws within 400 ms,
 		await spawnBackground(extension, worktree);
 		await settle();
 		assert.ok(uiTimers().includes(1000));
+		assert.ok(uiTimers().includes(133));
 		await extension.fire("session_shutdown", { reason: "quit" });
 		assert.deepEqual(uiTimers(), []);
 		assert.equal(tui.renders, idle + 1);
@@ -3890,7 +3925,7 @@ test("a child that starts while a finished row waits to expire gets the one-seco
 
 		await spawnBackground(extension, worktree);
 		await settle();
-		assert.deepEqual(ticks(), [1000]);
+		assert.deepEqual(ticks().sort((a, b) => a - b), [133, 1000]);
 	});
 });
 
