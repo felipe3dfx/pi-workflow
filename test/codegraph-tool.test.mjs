@@ -291,7 +291,7 @@ test("git location variables in the environment cannot make a false Git root val
 	const plain = join(base, "plain");
 	mkdirSync(nested, { recursive: true });
 	mkdirSync(plain);
-	execFileSync("git", ["init", "--quiet", repo]);
+	execFileSync("git", ["init", "--quiet", repo], { cwd: base });
 	const cases = [
 		[plain, { GIT_DIR: join(repo, ".git") }],
 		[nested, { GIT_WORK_TREE: nested }],
@@ -376,7 +376,7 @@ test("the default runner ignores GIT_DIR when validating the Git root", async (t
 	const plain = join(base, "plain");
 	mkdirSync(repo);
 	mkdirSync(plain);
-	execFileSync("git", ["init", "--quiet", repo]);
+	execFileSync("git", ["init", "--quiet", repo], { cwd: base });
 	const tool = loadTool();
 	const saved = process.env.GIT_DIR;
 	process.env.GIT_DIR = join(repo, ".git");

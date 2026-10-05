@@ -1,13 +1,20 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 
 import { createChildBashTool } from "../extensions/child-bash.ts";
 import { withAgentDirectory } from "./support/jev-routing.mjs";
 
-function run(command) {
-	return createChildBashTool(process.cwd()).execute(
+function run(command, cwd = process.cwd()) {
+	return createChildBashTool(cwd).execute(
 		"call-1",
 		{ command },
 		undefined,
@@ -48,6 +55,61 @@ for (const [command, program, skip] of [
 	});
 }
 
+function temporaryDirectory(t, prefix = "pi-workflow-git-") {
+	const dir = mkdtempSync(join(tmpdir(), prefix));
+	t.after(() => rmSync(dir, { recursive: true, force: true }));
+	return dir;
+}
+
+function assertRefused(output, program) {
+	assert.match(output, new RegExp(`\\b${program}\\b.*parent`));
+	assert.match(output, /ask_parent/);
+	assert.doesNotMatch(output, /git version|gh version|On branch/);
+}
+
+test("while Jev routing is off, a child's bash runs git init in a directory outside its worktree", async (t) => {
+	withAgentDirectory(t);
+	const outside = temporaryDirectory(t);
+
+	const output = text(await run(`cd '${outside}' && git init`));
+
+	assert.match(output, /Initialized empty Git repository/);
+	assert.ok(existsSync(join(outside, ".git")));
+});
+
+test("while Jev routing is off, a child's bash refuses git status at its worktree root", async (t) => {
+	withAgentDirectory(t);
+
+	assertRefused(text(await run("git status")), "git");
+});
+
+test("while Jev routing is off, a child's bash refuses git status in a subdirectory of its worktree", async (t) => {
+	withAgentDirectory(t);
+
+	assertRefused(text(await run("cd test && git status")), "git");
+});
+
+test("while Jev routing is off, a child's bash refuses gh outside its worktree", async (t) => {
+	withAgentDirectory(t);
+	const outside = temporaryDirectory(t);
+
+	assertRefused(text(await run(`cd '${outside}' && gh --version`)), "gh");
+});
+
+test("while Jev routing is off, a worktree path with a space and a single quote keeps the git guard", async (t) => {
+	withAgentDirectory(t);
+	const parent = temporaryDirectory(t);
+	const worktree = join(parent, "it's a worktree");
+	mkdirSync(join(worktree, "sub"), { recursive: true });
+	const outside = temporaryDirectory(t);
+
+	assertRefused(text(await run("cd sub && git status", worktree)), "git");
+	assert.match(
+		text(await run(`cd '${outside}' && git init`, worktree)),
+		/Initialized empty Git repository/,
+	);
+});
+
 test("while Jev routing is off, a child's bash runs a command that only mentions git", async (t) => {
 	withAgentDirectory(t);
 
@@ -70,5 +132,8 @@ test("while Jev routing is on, a child's bash runs git", async (t) => {
 		JSON.stringify({ schemaVersion: 1, jevRouting: "on" }),
 	);
 
-	assert.match(text(await run("git --version")), /^git version/);
+	assert.match(
+		text(await run("git --version", temporaryDirectory(t))),
+		/^git version/,
+	);
 });
