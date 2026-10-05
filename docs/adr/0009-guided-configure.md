@@ -4,13 +4,15 @@
 
 Acceptance: approval and merge of the introducing PR.
 
+Superseded by ADR 0012 for the command name and argumentless-command clauses.
+
 ## Decision
 
-`/workflow:config` replaces `/workflow:setup`. With no argument, it is the operator's guided confirmation, for the current session, of which harness capabilities are seated and which companion catalog entries are expected. `/workflow:config settings` opens the existing Jev routing settings panel.
+`/workflow:configure` replaces `/workflow:setup`. The command is the operator's guided confirmation, for the current session, of which harness capabilities are seated and which companion catalog entries are expected. It takes no arguments.
 
 The guide is one overlay list, not a wizard. It offers each harness capability on or off, then each current catalog expectation on or off, then Apply. Apply shows the plan: which capabilities will be seated or unseated, which missing expected companions will be installed, which installed packages will be left installed, that nothing is uninstalled, and that MCP servers and default settings will be aligned. Confirm apply applies that plan. Closing the list without Confirm apply, including Esc, writes nothing, applies nothing, and reports no error.
 
-Without a TUI, or with an unsupported argument, the command reports the error and applies nothing. The `settings` argument opens the Jev routing panel and does not apply a companion selection. An absent selection file opens the guide on the default: every harness capability on, and every current catalog entry expected. Nothing is written or applied until Confirm apply. An unreadable selection, or an invalid one, reports the error, does not open the guide, does not write, and does not apply. Invalid means the text is not JSON, `schemaVersion` is not 1, a harness capability is missing, a value is not boolean, or the expectation for a package in the current catalog is missing. A catalog that gained a package makes an older file invalid because that expectation is missing. Configure does not overwrite a refused file. The operator recovers by deleting the file, so the next open uses the absent-file default, or by fixing the file outside the command.
+Without a TUI, or with any argument, the command reports the error and applies nothing. An absent selection file opens the guide on the default: every harness capability on, and every current catalog entry expected. Nothing is written or applied until Confirm apply. An unreadable selection, or an invalid one, reports the error, does not open the guide, does not write, and does not apply. Invalid means the text is not JSON, `schemaVersion` is not 1, a harness capability is missing, a value is not boolean, or the expectation for a package in the current catalog is missing. A catalog that gained a package makes an older file invalid because that expectation is missing. Configure does not overwrite a refused file. The operator recovers by deleting the file, so the next open uses the absent-file default, or by fixing the file outside the command.
 
 One module applies the selection. It does not split `installMissing` into a new installer module. ADR 0004 stands. The command is the adapter. A skill does not guide or apply it. A separate binary does not guide or apply it.
 

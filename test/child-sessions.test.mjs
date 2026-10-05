@@ -1321,15 +1321,13 @@ test("spawn_child describes who decides the role and what each role can do", asy
 		assert.match(role, /Jev routing is off, the role you pass decides/);
 		assert.match(role, /on, it is a suggestion/);
 		const guidance = tool.promptGuidelines.join("\n");
-		assert.match(
-			guidance,
-			/explore reads files and queries CodeGraph; it cannot run commands or edit/,
-		);
-		assert.match(
-			guidance,
-			/verify checks work that is already done and may run read-only commands such as tests, without editing/,
-		);
-		assert.match(guidance, /worker implements changes and runs any other command/);
+		assert.match(guidance, /For worker and verify, include available acceptance criteria and the relevant changed-file diff/);
+		assert.match(guidance, /known validation commands\/results as context/);
+		assert.match(guidance, /The verifier independently runs applicable checks/);
+		assert.match(guidance, /Explore may discover context by reading the worktree and does not need supplied diff or validation evidence/);
+		assert.match(guidance, /Explore reads and queries CodeGraph without editing or commands/);
+		assert.match(guidance, /verify independently checks completed work without editing/);
+		assert.match(guidance, /worker implements and runs commands/);
 		assert.match(
 			guidance,
 			/When Jev routing is on, the parent asks once per user turn/,

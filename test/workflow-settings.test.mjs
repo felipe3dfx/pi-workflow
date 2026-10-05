@@ -77,6 +77,10 @@ test("/workflow:config settings rejects unknown arguments and needs the TUI", as
 	const notifications = [];
 	const { command, commands, notify } = extension(new Map(), notifications);
 	assert.match(command.description, /Jev routing/);
+	assert.deepEqual(command.getArgumentCompletions("set"), [
+		{ value: "settings", label: "settings" },
+	]);
+	assert.equal(command.getArgumentCompletions("unknown"), null);
 	assert.equal(commands.has("workflow:settings"), false);
 	assert.equal(commands.has("workflow:configure"), false);
 

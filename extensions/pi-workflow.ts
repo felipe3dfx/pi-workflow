@@ -324,13 +324,17 @@ export default function piWorkflowExtension(
 	pi.registerCommand("workflow:config", {
 		description:
 			"Configure companions and harness capabilities, or manage Jev routing with 'settings'",
+		getArgumentCompletions: (prefix) =>
+			"settings".startsWith(prefix)
+				? [{ value: "settings", label: "settings" }]
+				: null,
 		handler: async (args, ctx) => {
 			if (args.trim() === "settings") {
 				await openWorkflowSettings(ctx);
 				return;
 			}
 			if (args.trim()) {
-				ctx.ui.notify(usage, "error");
+				report(ctx, usage, "error");
 				return;
 			}
 			currentCtx = ctx;

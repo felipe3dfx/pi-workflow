@@ -13,7 +13,7 @@ async function contract(role) {
 }
 
 const unobserved =
-	"Never claim a command ran or a check passed unless that output is in this result.";
+	"Never claim a command ran or a check passed unless its output is in this result.";
 
 test("child contracts forbid unobserved command and check claims", async () => {
 	for (const role of ["explore", "worker", "verify"]) {
@@ -21,15 +21,30 @@ test("child contracts forbid unobserved command and check claims", async () => {
 	}
 });
 
-test("the explore contract keeps paths, line numbers, and unconfirmed work", async () => {
-	const text = await contract("explore");
-	assert.match(text, /file paths and line numbers/);
-	assert.match(text, /what you could not confirm/);
-	assert.match(text, /Do not change any file/);
+test("child contracts limit communication to the parent and defer publication language to AGENTS.md", async () => {
+	for (const role of ["explore", "worker", "verify"]) {
+		const text = await contract(role);
+		assert.match(text, /Communicate only with the parent, never directly with the user/);
+		assert.match(text, /parent-child communication in English/);
+		assert.match(text, /Follow `AGENTS\.md` for publication-artifact language/);
+	}
 });
 
-test("the verify contract asks for a pass, fail, or blocked Verdict through report_result and names what stayed unverified", async () => {
+test("the explore contract permits worktree discovery without supplied context or validation", async () => {
+	const text = await contract("explore");
+	assert.match(text, /Answer the task by reading the worktree/);
+	assert.match(text, /Report findings with file paths and line numbers/);
+	assert.doesNotMatch(text, /use the available diff.*validation evidence the parent supplies/i);
+	assert.doesNotMatch(text, /what you could not confirm/);
+	assert.doesNotMatch(text, /validation/);
+	assert.match(text, /Do not edit files/);
+});
+
+test("the verify contract independently checks work; parent results are context, and reports what stayed unverified", async () => {
 	const text = await contract("verify");
+	assert.match(text, /Independently inspect/);
+	assert.match(text, /run the applicable checks yourself/i);
+	assert.match(text, /parent-supplied validation results are context, not proof/i);
 	assert.match(text, /report_result/);
 	assert.match(text, /pass, fail, or blocked/);
 	assert.match(text, /Use blocked, with the reason/);
@@ -38,13 +53,14 @@ test("the verify contract asks for a pass, fail, or blocked Verdict through repo
 	assert.doesNotMatch(text, /verdict: pass \| fail \| blocked/);
 });
 
+
 test("the worker contract asks for its result through report_result and keeps ask_parent as the question channel", async () => {
 	const text = await contract("worker");
 	assert.match(text, /report_result/);
 	assert.match(text, /done, partial, or blocked/);
 	assert.match(text, /exact command/);
 	assert.match(text, /observed result/);
-	assert.match(text, /Use done only when those commands ran and their output is in this result/);
+	assert.match(text, /Use done only when the required commands ran and their output is in this result/);
 	assert.match(text, /ask_parent/);
 	assert.doesNotMatch(text, /status: done \| partial \| blocked/);
 	assert.doesNotMatch(text, /interaction_required/);
@@ -59,7 +75,7 @@ test("every contract names the missing-capability response and forbids simulatin
 		const text = await contract(role);
 		assert.match(text, /capability you do not have/);
 		assert.match(text, /ask_parent/);
-		assert.match(text, /Do not simulate the result/);
+		assert.match(text, /Do not simulate results/);
 	}
 	for (const role of ["worker", "verify"])
 		assert.match(
@@ -76,7 +92,7 @@ test("the explore and verify contracts offer codegraph and the worker contract d
 	for (const role of ["explore", "verify"]) {
 		const text = await contract(role);
 		assert.ok(parseContract(text).tools.includes("codegraph"));
-		assert.match(text, /codegraph with query and explore/);
+		assert.match(text, /codegraph query and explore/);
 	}
 	assert.doesNotMatch(await contract("worker"), /codegraph/);
 });

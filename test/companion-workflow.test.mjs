@@ -917,8 +917,8 @@ async function withSelectionExtension(selection, run) {
 					await handler({}, sessionCtx(mode, hasUI));
 				}
 			},
-			configure: (mode) =>
-				commands.get("workflow:config").handler("", sessionCtx(mode, true)),
+			configure: (mode, args = "", hasUI = true) =>
+				commands.get("workflow:config").handler(args, sessionCtx(mode, hasUI)),
 		});
 	} finally {
 		replaceSelection(clearedSelection());
@@ -950,6 +950,25 @@ test("session start with no selection file does not seat a capability", async ()
 		await fire("json", false);
 		assert.deepEqual(seatedNames(), ["codegraph"]);
 	});
+});
+
+test("workflow:config reports unsupported arguments without UI in print and json modes", async () => {
+	const originalError = console.error;
+	const errors = [];
+	console.error = (message) => errors.push(message);
+	try {
+		for (const mode of ["print", "json"]) {
+			await withSelectionExtension(savedSelection(["todo"]), async ({ configure, notifications }) => {
+				await configure(mode, "unsupported", false);
+				assert.deepEqual(notifications, []);
+				assert.deepEqual(seatedNames(), []);
+			});
+		}
+	} finally {
+		console.error = originalError;
+	}
+	assert.equal(errors.length, 2);
+	assert.ok(errors.every((message) => message.startsWith("Usage: /workflow:status")));
 });
 
 test("workflow:config outside the TUI notifies that it needs the TUI and does not seat a saved selection", async () => {

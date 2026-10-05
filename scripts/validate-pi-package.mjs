@@ -11,8 +11,24 @@ const commands = [
 	"workflow:doctor",
 	"workflow:config",
 	"workflow:models",
+	"workflow:subagents",
 	"workflow:delegation-check",
 ];
+
+export function validateCommandSurface(extension) {
+	const errors = [];
+	for (const command of commands) {
+		if (!extension.includes(`"${command}"`)) {
+			errors.push(`extension must register ${command}`);
+		}
+	}
+	for (const command of ["workflow:configure", "workflow:settings"]) {
+		if (extension.includes(`"${command}"`)) {
+			errors.push(`extension must not register obsolete ${command}`);
+		}
+	}
+	return errors;
+}
 
 const themeSchemaPath = path.join(
 	root,
@@ -115,9 +131,7 @@ export async function validatePiPackage(packageRoot = root) {
 			!Array.isArray(settings.settings),
 		"settings catalog must be a schemaVersion 1 settings object",
 	);
-	for (const command of commands) {
-		check(extension.includes(`"${command}"`), `extension must register ${command}`);
-	}
+	errors.push(...validateCommandSurface(extension));
 	check(
 		!/define-product|qa-handoff|product-review|interactive-decisions|publication-recovery/.test(
 			extension,
