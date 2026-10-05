@@ -297,7 +297,7 @@ const createPiChildSession: ChildSessionFactory = async (spec) => {
 				name: askParentTool,
 				label: "Ask Parent",
 				description:
-					"Ask the parent session one question and wait for its answer. Use it only when the task cannot continue without a decision the parent owns. An error result means no answer will come; continue without one.",
+					"Ask the parent session one question and wait for its answer. Use it only when you are blocked and the answer changes your next step; a command reserved for the parent is not a reason to ask. An error result means no answer will come; continue without one.",
 				parameters: askParentParameters,
 				async execute(_toolCallId, params: Static<typeof askParentParameters>) {
 					return {
@@ -1010,6 +1010,7 @@ export function createSpawnChildTool(
 		promptGuidelines: [
 			"Pass the task and the role (explore, worker, or verify). When Jev routing is on, the role is a suggestion and Jev selects the specialist; otherwise the role determines the contract. Explore reads and queries CodeGraph without editing or commands; verify independently checks completed work and may run checks and tests without editing; worker implements and runs commands.",
 			"Children communicate only with the parent, never directly with the user.",
+			"Do not delegate mutating git or gh commands or publication: they are reserved for the parent and stay with it. Do not ask the child for intermediate progress reports. Copy evidence you already have into the task; references accept only paths inside the cwd. There is no channel to a running child; use reply_child only when the child asks.",
 			"A refusal or a queued id is not a completed result and is not retried. After a background child is queued, end your turn: its result wakes you. Do not poll with sleep, list_children, child_status, or child_result.",
 			"Do not declare work done without a worker Verdict of done and its files_changed, validation, and left_undone fields. Do not declare work verified without a verifier Verdict of pass and its findings and unverified fields; partial, fail, and blocked are not success.",
 			"When Jev routing is on, the parent asks once per user turn before read, grep, find, ls, edit, write, bash, powershell, or codegraph query and explore. A block that names a role means call spawn_child and use that role. A block that says to ask the user one question means ask that one question and wait. Reads of AGENTS.md, GLOSSARY.md, and one docs/agents markdown file stay available, and so does codegraph init.",

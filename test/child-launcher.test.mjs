@@ -701,6 +701,8 @@ test("Jev's destination criteria cover an explicit child or subagent request und
 		assert.match(criteria.leave, /independent review or check of work/);
 		assert.match(criteria.leave, /session other than the parent/);
 		assert.match(criteria.stay, /nor for an independent review or check of work/);
+		assert.match(criteria.stay, /reserved operation \(mutating git or gh, publication\) always stays/);
+		assert.match(criteria.leave, /never including reserved operations \(mutating git or gh, publication\), which stay with the parent/);
 	});
 });
 
@@ -773,8 +775,10 @@ test("an implementation package and an independent check take the specialist Jev
 test("the verifier criterion covers review of finished work and the explorer criterion excludes it", async () => {
 	await withWorkspace(async ({ worktree }) => {
 		let criteria;
+		let instructions;
 		const jev = fakeJev((body) => {
 			criteria = body.questions.specialist.criteria;
+			instructions = body.questions.specialist.instructions;
 			return "verifier";
 		});
 		await createChildLauncher({ modelProfiles: absentProfiles }).prepareLaunch(
@@ -782,8 +786,10 @@ test("the verifier criterion covers review of finished work and the explorer cri
 			launcherContext(worktree, { jev }),
 		);
 
+		assert.match(instructions, /Reserved operations \(mutating git or gh, publication\) are never part of a child package and stay with the parent/);
 		assert.match(criteria.verifier, /review or check of work that is already done/);
 		assert.match(criteria.verifier, /pull request/);
+		assert.match(criteria.worker, /excluding reserved operations \(mutating git or gh, publication\), which stay with the parent/);
 		assert.match(criteria.explorer, /Not a review of a pull request or of work that is already done/);
 	});
 });

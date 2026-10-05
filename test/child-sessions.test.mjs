@@ -1301,6 +1301,11 @@ test("spawn_child tells the parent to end its turn instead of polling", async ()
 			guidance,
 			/sleep, list_children, child_status, or child_result/,
 		);
+		assert.match(guidance, /Do not delegate mutating git or gh commands or publication/);
+		assert.match(guidance, /reserved for the parent/);
+		assert.match(guidance, /Do not ask the child for intermediate progress reports/);
+		assert.match(guidance, /references accept only paths inside the cwd/);
+		assert.match(guidance, /no channel to a running child; use reply_child only when the child asks/);
 		assert.match(guidance, /Do not declare work done without a worker Verdict of done/);
 		assert.match(guidance, /Do not declare work verified without a verifier Verdict of pass/);
 		assert.match(guidance, /partial, fail, and blocked are not success/);

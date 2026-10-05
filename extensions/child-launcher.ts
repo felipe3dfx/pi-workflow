@@ -55,13 +55,13 @@ const roleBySpecialist: Record<Specialist, Role> = {
 const specialists = ["explorer", "worker", "verifier"] as const;
 
 const specialistInstructions =
-	"Which specialist should carry out the requested action? Choose from the action in `user_request` and `task`. `suggested_specialist` is a hint and does not decide the answer.";
+	"Which specialist should carry out the requested action? Choose from the action in `user_request` and `task`. Reserved operations (mutating git or gh, publication) are never part of a child package and stay with the parent, so never choose a specialist for them. `suggested_specialist` is a hint and does not decide the answer.";
 
 const specialistCriteria: Record<Specialist, string> = {
 	explorer:
 		"Read-only investigation, source comparison, or mapping how something works, including an architecture investigation. Not a review of a pull request or of work that is already done.",
 	worker:
-		"Implementation, a fix, or another change a child can finish under its contract.",
+		"Implementation, a fix, or another change a child can finish under its contract, excluding reserved operations (mutating git or gh, publication), which stay with the parent.",
 	verifier:
 		"An independent review or check of work that is already done, including a pull request, a diff, or finished changes.",
 };
@@ -71,9 +71,9 @@ const destinationInstructions = "Where should this package go?";
 const destinationCriteria = {
 	decide:
 		"A product decision is still open. The parent must ask the user one question and wait. Choosing an architecture with the user is a decision.",
-	stay: "The package is small and already understood, so the parent can finish it in this session, and the user did not ask for a child session or subagent, nor for an independent review or check of work.",
+	stay: "The package is small and already understood, so the parent can finish it in this session, and the user did not ask for a child session or subagent, nor for an independent review or check of work. A reserved operation (mutating git or gh, publication) always stays.",
 	leave:
-		"A bounded package a child session can finish on its own, or the user explicitly asks to delegate to child sessions or subagents, in any language or wording, or the user asks for an independent review or check of work, which must run in a session other than the parent. Investigating an architecture can leave.",
+		"A bounded package a child session can finish on its own, never including reserved operations (mutating git or gh, publication), which stay with the parent, or the user explicitly asks to delegate to child sessions or subagents, in any language or wording, or the user asks for an independent review or check of work, which must run in a session other than the parent. Investigating an architecture can leave.",
 };
 
 type Contract = { prompt: string; tools: string[] };
