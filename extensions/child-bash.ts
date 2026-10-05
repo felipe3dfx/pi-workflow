@@ -42,14 +42,14 @@ function gitDecision(root: string): string {
 	done
 	verb=
 	case "$subcommand" in
-	remote|submodule|reflog)
+	remote|submodule|reflog|lfs)
 		while [ "$#" -gt 0 ] && [ -z "$verb" ]; do
 			case "$1" in -*) ;; *) verb=$1 ;; esac
 			shift
 		done ;;
 	esac
 	[ -n "$reserved" ] || case "$subcommand" in
-	commit|merge|rebase|cherry-pick|revert|am|reset|tag|branch|update-ref|push|pull|fetch|checkout|switch|restore|clean|stash|add|rm|mv|apply|config|worktree|gc|notes|bisect|sparse-checkout|update-index|read-tree|symbolic-ref|replace|filter-branch|prune)
+	commit|merge|rebase|cherry-pick|revert|am|reset|tag|branch|update-ref|push|pull|fetch|checkout|switch|restore|clean|stash|add|rm|mv|apply|config|worktree|gc|notes|bisect|sparse-checkout|update-index|read-tree|symbolic-ref|replace|filter-branch|prune|stage|send-email|maintenance|repack)
 		reserved="git $subcommand" ;;
 	remote)
 		case "$verb" in add|set-url|remove|rm|rename|update|prune|set-head|set-branches) reserved="git remote $verb" ;; esac ;;
@@ -57,6 +57,8 @@ function gitDecision(root: string): string {
 		case "$verb" in add|update|init|deinit|sync|foreach|absorbgitdirs|set-branch|set-url) reserved="git submodule $verb" ;; esac ;;
 	reflog)
 		case "$verb" in expire|delete) reserved="git reflog $verb" ;; esac ;;
+	lfs)
+		[ "$verb" = push ] && reserved="git lfs push" ;;
 	esac
 `;
 }

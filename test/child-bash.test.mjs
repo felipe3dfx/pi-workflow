@@ -209,12 +209,16 @@ for (const state of ["off", "on"]) {
 			"replace",
 			"filter-branch",
 			"prune",
+			"stage",
+			"send-email",
+			"maintenance",
+			"repack",
 		]) {
 			await assertReserved(`git ${subcommand}`, dir, `git ${subcommand}`);
 		}
 	});
 
-	test(`while Jev routing is ${state}, a child's bash refuses mutating remote, submodule, and reflog verbs in its worktree`, async (t) => {
+	test(`while Jev routing is ${state}, a child's bash refuses mutating remote, submodule, reflog, and lfs verbs in its worktree`, async (t) => {
 		routing(t, state);
 		const dir = worktree(t);
 
@@ -240,6 +244,8 @@ for (const state of ["off", "on"]) {
 			["git submodule set-url x y", "git submodule set-url"],
 			["git reflog expire --all", "git reflog expire"],
 			["git reflog delete HEAD@{0}", "git reflog delete"],
+			["git lfs push origin main", "git lfs push"],
+			["git lfs --dry-run push origin", "git lfs push"],
 		]) {
 			await assertReserved(command, dir, expected);
 		}
