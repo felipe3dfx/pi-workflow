@@ -1285,7 +1285,7 @@ export function createChildQueryTools(
 			});
 		},
 		renderShell: "self",
-		renderCall: (args, theme) => answerCard(args, theme),
+		renderCall: () => hidden,
 		renderResult: (result, _options, theme, context) =>
 			context.isError
 				? new Text(
@@ -1296,7 +1296,7 @@ export function createChildQueryTools(
 						0,
 						0,
 					)
-				: hidden,
+				: answerCard(context.args, theme),
 	};
 	return [listChildren, childStatus, childResult, cancelChild, replyChild];
 }

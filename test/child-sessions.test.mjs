@@ -2312,7 +2312,7 @@ test("a reply while the child session is not seated is a tool error and reaches 
 	});
 });
 
-test("reply_child paints the answer card with compact rendering on and off, shows a refusal's reason, and shows nothing on success", async (t) => {
+test("reply_child paints the answer card with compact rendering on and off, shows only a refusal's reason without a card, and paints the card only on delivery", async (t) => {
 	initTheme("dark", false);
 	const extension = await loadSpawnTool({ agentDir: tmpdir() });
 	const tool = extension.named("reply_child");
@@ -2334,7 +2334,17 @@ test("reply_child paints the answer card with compact rendering on and off, show
 			expectations: {},
 		});
 		const renderers = compactToolRenderers("reply_child", () => tool);
-		cards.push(lines(renderers.renderCall(args, theme, {})));
+		assert.deepEqual(lines(renderers.renderCall(args, theme, {})), []);
+		cards.push(
+			lines(
+				renderers.renderResult(
+					{ content: [{ type: "text", text: "sent" }], details: {} },
+					{},
+					theme,
+					{ args, isError: false },
+				),
+			),
+		);
 	}
 	assert.deepEqual(cards[0], cards[1]);
 	assert.deepEqual(cards[0], [
@@ -2349,15 +2359,12 @@ test("reply_child paints the answer card with compact rendering on and off, show
 		() => assert.fail("the reply was accepted"),
 		(error) => error.message,
 	);
-	const render = (isError, message) =>
-		tool.renderResult(
-			{ content: [{ type: "text", text: message }], details: {}, isError },
-			{},
-			theme,
-			{ isError },
-		);
-	assert.deepEqual(lines(render(false, "Reply sent to child 5636.")), []);
-	const refused = render(true, refusal);
+	const refused = tool.renderResult(
+		{ content: [{ type: "text", text: refusal }], details: {}, isError: true },
+		{},
+		theme,
+		{ args, isError: true },
+	);
 	assert.deepEqual(lines(refused), ["No child nope in this session."]);
 	assert.ok(refused.render(60)[0].includes(theme.fg("error", refusal)));
 });
