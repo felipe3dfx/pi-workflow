@@ -292,7 +292,7 @@ async function askPanel(
 		};
 
 		return component;
-	}, { overlay: true }).finally(() => hints.set(undefined));
+	}, { overlay: true, overlayOptions: { anchor: "bottom-center" } }).finally(() => hints.set(undefined));
 
 	return { content: [{ type: "text", text: describeAnswer(answer) }], details: answer };
 }
