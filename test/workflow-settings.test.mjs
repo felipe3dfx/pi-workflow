@@ -30,7 +30,8 @@ function extension(commands, notifications) {
 		sendMessage() {},
 	});
 	return {
-		command: commands.get("workflow:settings"),
+		command: commands.get("workflow:config"),
+		commands,
 		notify: (message, level) => notifications.push({ message, level }),
 	};
 }
@@ -58,7 +59,7 @@ function launcherContext(cwd, jev) {
 
 async function openSettings(command, notify) {
 	let panel;
-	await command.handler("", {
+	await command.handler("settings", {
 		hasUI: true,
 		mode: "tui",
 		ui: {
@@ -72,21 +73,23 @@ async function openSettings(command, notify) {
 	return panel;
 }
 
-test("/workflow:settings rejects extra arguments and needs the TUI", async () => {
+test("/workflow:config settings rejects unknown arguments and needs the TUI", async () => {
 	const notifications = [];
-	const { command, notify } = extension(new Map(), notifications);
-	assert.equal(command.description, "Open workflow settings");
+	const { command, commands, notify } = extension(new Map(), notifications);
+	assert.match(command.description, /Jev routing/);
+	assert.equal(commands.has("workflow:settings"), false);
+	assert.equal(commands.has("workflow:configure"), false);
 
 	await command.handler("--force", { hasUI: true, mode: "tui", ui: { notify } });
 	assert.equal(notifications[0].level, "error");
-	assert.match(notifications[0].message, /\/workflow:settings/);
+	assert.match(notifications[0].message, /\/workflow:config/);
 
-	await command.handler("", { hasUI: true, mode: "print", ui: { notify } });
+	await command.handler("settings", { hasUI: true, mode: "print", ui: { notify } });
 	assert.equal(notifications.at(-1).level, "error");
 	assert.match(notifications.at(-1).message, /needs the TUI/);
 });
 
-test("/workflow:settings turns Jev routing off on the existing settings line", async (t) => {
+test("/workflow:config settings turns Jev routing off on the existing settings line", async (t) => {
 	patchMenus();
 	t.after(restoreMenus);
 	const dir = withAgentDirectory(t);
@@ -256,7 +259,7 @@ test("turning Jev routing on persists for a new process and leaves the model pro
 					registerProvider() {},
 					sendMessage() {},
 				});
-				await commands.get("workflow:settings").handler("", {
+				await commands.get("workflow:config").handler("settings", {
 					hasUI: true,
 					mode: "tui",
 					ui: {

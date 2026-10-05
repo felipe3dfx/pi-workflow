@@ -584,7 +584,7 @@ test("setup fails closed on a malformed settings file without overwriting it", a
 	});
 });
 
-test("status and doctor report default settings as aligned or pointing to /workflow:configure", async () => {
+test("status and doctor report default settings as aligned or pointing to /workflow:config", async () => {
 	await withSettingsWorkflow(
 		JSON.stringify({ tuiMode: "fullscreen" }),
 		async ({ workflow }) => {
@@ -611,7 +611,7 @@ test("status and doctor report default settings as aligned or pointing to /workf
 				assert.equal(result.level, "warning");
 				assert.match(
 					result.message,
-					/Default settings:\n✗ .* — not aligned: tuiMode\nRun \/workflow:configure/,
+					/Default settings:\n✗ .* — not aligned: tuiMode\nRun \/workflow:config/,
 				);
 			}
 			assert.deepEqual(JSON.parse(await readFile(settingsPath, "utf8")), {
@@ -621,7 +621,7 @@ test("status and doctor report default settings as aligned or pointing to /workf
 	);
 });
 
-test("status reports a misaligned MCP configuration and points to /workflow:configure", async () => {
+test("status reports a misaligned MCP configuration and points to /workflow:config", async () => {
 	await withMetadataFile(
 		[{ package: "alpha" }],
 		async ({ metadataPath, dir }) => {
@@ -647,13 +647,13 @@ test("status reports a misaligned MCP configuration and points to /workflow:conf
 			assert.equal(result.level, "warning");
 			assert.match(
 				result.message,
-				/MCP configuration:\n✗ .*mcp\.json — not aligned: context7\nRun \/workflow:configure/,
+				/MCP configuration:\n✗ .*mcp\.json — not aligned: context7\nRun \/workflow:config/,
 			);
 		},
 	);
 });
 
-test("status does not point to /workflow:configure when the only settings misalignment is a conflict setup cannot fix", async () => {
+test("status does not point to /workflow:config when the only settings misalignment is a conflict setup cannot fix", async () => {
 	await withMetadataFile(
 		[{ package: "alpha" }],
 		async ({ metadataPath, dir }) => {
@@ -683,7 +683,7 @@ test("status does not point to /workflow:configure when the only settings misali
 				result.message,
 				/Default settings:\n✗ .*settings\.json — not aligned: defaultTools: -codemode conflicts with \+codemode \(remove it manually\)/,
 			);
-			assert.doesNotMatch(result.message, /Default settings:(.|\n)*Run \/workflow:configure/);
+			assert.doesNotMatch(result.message, /Default settings:(.|\n)*Run \/workflow:config/);
 		},
 	);
 });
@@ -786,7 +786,7 @@ test("a settings write failure after an MCP write reports what was already done"
 				assert.equal(result.outcome, "config-error");
 				assert.match(result.message, /MCP configuration was updated/);
 				assert.match(result.message, /\/reload/);
-				assert.match(result.message, /\/workflow:configure/);
+				assert.match(result.message, /\/workflow:config/);
 				assert.doesNotMatch(result.message, /run setup/);
 				assert.doesNotMatch(result.message, /Companions were installed/);
 			} finally {
@@ -918,7 +918,7 @@ async function withSelectionExtension(selection, run) {
 				}
 			},
 			configure: (mode) =>
-				commands.get("workflow:configure").handler("", sessionCtx(mode, true)),
+				commands.get("workflow:config").handler("", sessionCtx(mode, true)),
 		});
 	} finally {
 		replaceSelection(clearedSelection());
@@ -952,7 +952,7 @@ test("session start with no selection file does not seat a capability", async ()
 	});
 });
 
-test("workflow:configure outside the TUI notifies that it needs the TUI and does not seat a saved selection", async () => {
+test("workflow:config outside the TUI notifies that it needs the TUI and does not seat a saved selection", async () => {
 	const saved = savedSelection(["todo"]);
 	for (const mode of ["print", "json"]) {
 		await withSelectionExtension(saved, async ({ configure, notifications }) => {

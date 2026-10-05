@@ -938,7 +938,7 @@ type Outcome = {
 function unseatedChild() {
 	if (held(childOverlay)) return undefined;
 	return report(
-		["Child session is not seated. Run /workflow:configure."],
+		["Child session is not seated. Run /workflow:config."],
 		{ status: "refused" },
 	);
 }

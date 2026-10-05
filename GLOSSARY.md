@@ -4,7 +4,7 @@
 
 ### pi-workflow
 
-The Pi harness package that reports companion readiness and, on explicit `/workflow:configure`, applies the local selection. It does not own product workflow.
+The Pi harness package that reports companion readiness and, on explicit `/workflow:config`, applies the local selection. It does not own product workflow.
 
 _Avoid_: workflow engine, publication runtime, operating system
 

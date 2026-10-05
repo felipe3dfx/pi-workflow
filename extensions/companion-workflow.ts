@@ -421,7 +421,7 @@ function alignmentLines(alignment: Alignment): string[] {
 			alignment.heading,
 			`✗ ${alignment.path} — not aligned: ${[...alignment.misaligned, ...conflicts].join(", ")}`,
 			...(alignment.misaligned.length > 0
-				? ["Run /workflow:configure to align it."]
+				? ["Run /workflow:config to align it."]
 				: []),
 			...note,
 		];
@@ -458,7 +458,7 @@ function renderCompanionCatalogStatus(
 	} else if (degraded.length > 0) {
 		lines.push(
 			"",
-			"Missing or unreadable companions are installed independently. Run /workflow:configure or install manually:",
+			"Missing or unreadable companions are installed independently. Run /workflow:config or install manually:",
 			...degraded.map(
 				(companion) => `pi install ${companionInstallSpec(companion)}`,
 			),
@@ -749,7 +749,7 @@ async function finishApply(
 		].filter((line) => line !== undefined);
 		const message = noted(
 			done.length > 0
-				? `${settings.error}\n${done.join(" ")} Run /reload to pick these up, then fix the settings error and run /workflow:configure again.`
+				? `${settings.error}\n${done.join(" ")} Run /reload to pick these up, then fix the settings error and run /workflow:config again.`
 				: settings.error,
 		);
 		notify(interaction, message, "error");

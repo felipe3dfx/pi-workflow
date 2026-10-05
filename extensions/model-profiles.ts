@@ -199,7 +199,7 @@ export function createModelProfiles(options: ModelProfilesOptions = {}) {
 		if (!held(profileOverlay)) {
 			report(
 				ctx,
-				"Model profiles are not seated. Run /workflow:configure.",
+				"Model profiles are not seated. Run /workflow:config.",
 				"error",
 			);
 			return { status: "refused" };

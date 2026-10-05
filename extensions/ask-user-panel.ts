@@ -369,7 +369,7 @@ export function createAskUserChoiceTool(hints: FooterHints): ToolDefinition<type
 					content: [
 						{
 							type: "text" as const,
-							text: "Operator questions are not seated. Run /workflow:configure.",
+							text: "Operator questions are not seated. Run /workflow:config.",
 						},
 					],
 					details: {
@@ -407,7 +407,7 @@ export function createAskUserQuestionTool(hints: FooterHints): ToolDefinition<ty
 					content: [
 						{
 							type: "text" as const,
-							text: "Operator questions are not seated. Run /workflow:configure.",
+							text: "Operator questions are not seated. Run /workflow:config.",
 						},
 					],
 					details: {

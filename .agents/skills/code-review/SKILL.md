@@ -29,7 +29,7 @@ This skill is read-only. It reads the diff, the files around it, and the sources
 
 1. Pin the fixed point. Record the fixed point, the current head, the commit list since the fixed point, and whether uncommitted changes are included.
 2. Collect each axis's sources: for Standards, [team standards and smell baseline](references/standards.md) and the repository's `docs/agents/coding-standards.md` when it exists; for Spec, the ticket, or the specification and every child ticket for a parent integration branch; for Valuable Tests, [the valuable-tests rubric](../tdd/references/valuable-tests.md) and the seams agreed before the first test, taken from the implementation handoff or the ticket.
-3. Dispatch each axis to its own context, in parallel when the harness allows. Give each one the fixed point, the head, the commit list, its own sources by path, and its brief below. An axis receives no other axis's sources or findings.
+3. Dispatch each axis to its own context, in parallel when the harness allows. In its initial handoff, give each one the available diff, fixed point, head, commit list, ticket/specification context, validation evidence, its own sources by path, and its brief below. If evidence is unavailable, identify that gap instead of implying it was supplied. Parent-child instructions, questions, findings, and results remain in English; user-facing communication follows the user's language. Linear publication artifacts remain professional Spanish. An axis receives no other axis's sources or findings.
 4. Assemble the report from the three axis reports, verbatim or lightly cleaned.
 
 ### Standards brief

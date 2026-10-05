@@ -106,7 +106,7 @@ A closed tool is one line. Opening it shows the body under that title. A thick l
 
 One catalog edit removes `@tintinweb/pi-subagents` and `@vndv/pi-codegraph`. Status and doctor follow that file. They do not special-case CodeGraph as a companion. Nothing is installed or uninstalled silently.
 
-If `@tintinweb/pi-subagents` is still installed, spawn tools are not registered. Status, doctor, and `/workflow:configure` remain. The warning names the external removal command and the harness does not run it.
+If `@tintinweb/pi-subagents` is still installed, spawn tools are not registered. Status, doctor, and `/workflow:config` remain. The warning names the external removal command and the harness does not run it.
 
 The `codegraph` tool copies the gentle-shell contract: `init`, `query`, and `explore` on the current Git root only. No other path and no shell command. A missing index may be created by `init`. A symlink or non-directory index is rejected. A workspace that is not the real Git root is a tool error and the command does not run. `GIT_DIR` and `GIT_WORK_TREE` are ignored when the root is checked and when the binary runs. A missing binary is unavailable and tells the caller to use `read`, `grep`, and `find`. Other run failures are failed, with the same fallback. `init` is a tool operation, not a human confirmation and not startup.
 
@@ -150,7 +150,7 @@ Harness-owned child session and CodeGraph access are authorized by ADR 0005. The
 
 ## Dependencies
 
-Pi child sessions, Jev, the Pi model catalog, and the `/workflow:configure` command. Engineering skill files stay outside this package. The harness matches their names only.
+Pi child sessions, Jev, the Pi model catalog, and the `/workflow:config` command. Engineering skill files stay outside this package. The harness matches their names only.
 
 ## Feature review
 

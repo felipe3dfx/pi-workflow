@@ -221,7 +221,7 @@ export async function runDelegationCheck(
 	for (const item of delegationCases) {
 		if (!routingOn) {
 			lines.push(
-				`fail: ${item.name}: Jev routing is off. Turn it on in /workflow:settings.`,
+				`fail: ${item.name}: Jev routing is off. Turn it on in /workflow:config settings.`,
 			);
 			continue;
 		}
