@@ -398,3 +398,20 @@ test("a child's bash runs shell arithmetic", async (t) => {
 
 	assert.equal(text(await run("echo $((2*3))", worktree(t))).trim(), "6");
 });
+
+test("a child's bash reports a syntax error one line below the command's line", async (t) => {
+	routing(t, "off");
+
+	const result = await run("echo ok\nif then", worktree(t));
+
+	assert.equal(result.isError, true);
+	assert.match(text(result), /line 3: syntax error/);
+});
+
+test("a child's bash for a missing directory is created and its commands fail", async (t) => {
+	routing(t, "off");
+
+	await assert.rejects(
+		run("git status", join(temporaryDirectory(t), "missing")),
+	);
+});

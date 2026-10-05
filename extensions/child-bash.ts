@@ -8,46 +8,52 @@ function shellQuote(value: string): string {
 	return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
-function guard(program: string, decision: string): string {
-	return `__pi_workflow_${program}_guard() (
-	reserved=
-${decision}	[ -z "$reserved" ] && exit 0
-	printf '\`%s\` is reserved for the parent. Continue without it and list the exact command in your result; do not ask the parent to run it.\\n' "$reserved" >&2
-	exit 126
-)
-${program}() {
-	__pi_workflow_${program}_guard "$@" || return 126
-	command ${program} "$@"
+function line(strings: TemplateStringsArray, ...values: string[]): string {
+	return strings
+		.map((part) => part.replace(/\n\t*/g, " "))
+		.reduce((code, part, index) => `${code}${values[index - 1]}${part}`);
 }
-`;
+
+function guard(program: string, decision: string): string {
+	return line`__pi_workflow_${program}_guard() (
+	reserved=;
+	${decision}
+	[ -z "$reserved" ] && exit 0;
+	printf '\`%s\` is reserved for the parent. Continue without it and list the exact command in your result; do not ask the parent to run it.\\n' "$reserved" >&2;
+	exit 126
+);
+${program}() {
+	__pi_workflow_${program}_guard "$@" || return 126;
+	command ${program} "$@";
+};`;
 }
 
 function gitDecision(root: string): string {
-	return `	case "$(pwd -P)/" in
+	return line`case "$(pwd -P)/" in
 	${shellQuote(`${root}/`)}*) ;;
 	*) exit 0 ;;
-	esac
-	subcommand=
+	esac;
+	subcommand=;
 	while [ "$#" -gt 0 ] && [ -z "$subcommand" ]; do
 		case "$1" in
 		-c)
-			shift
+			shift;
 			case "$1" in [Aa][Ll][Ii][Aa][Ss].*) reserved="git -c alias" ;; esac ;;
 		-c[Aa][Ll][Ii][Aa][Ss].*) reserved="git -c alias" ;;
 		-C|--git-dir|--work-tree|--namespace|--exec-path|--config-env|--attr-source) shift ;;
 		-*) ;;
 		*) subcommand=$1 ;;
-		esac
-		[ "$#" -gt 0 ] && shift
-	done
-	verb=
+		esac;
+		[ "$#" -gt 0 ] && shift;
+	done;
+	verb=;
 	case "$subcommand" in
 	remote|submodule|reflog|lfs)
 		while [ "$#" -gt 0 ] && [ -z "$verb" ]; do
-			case "$1" in -*) ;; *) verb=$1 ;; esac
-			shift
+			case "$1" in -*) ;; *) verb=$1 ;; esac;
+			shift;
 		done ;;
-	esac
+	esac;
 	[ -n "$reserved" ] || case "$subcommand" in
 	commit|merge|rebase|cherry-pick|revert|am|reset|tag|branch|update-ref|push|pull|fetch|checkout|switch|restore|clean|stash|add|rm|mv|apply|config|worktree|gc|notes|bisect|sparse-checkout|update-index|read-tree|symbolic-ref|replace|filter-branch|prune|stage|send-email|maintenance|repack)
 		reserved="git $subcommand" ;;
@@ -59,20 +65,19 @@ function gitDecision(root: string): string {
 		case "$verb" in expire|delete) reserved="git reflog $verb" ;; esac ;;
 	lfs)
 		[ "$verb" = push ] && reserved="git lfs push" ;;
-	esac
-`;
+	esac;`;
 }
 
-const ghDecision = `	group=
-	verb=
+const ghDecision = line`group=;
+	verb=;
 	while [ "$#" -gt 0 ] && [ -z "$verb" ]; do
 		case "$1" in
 		-R|--repo) shift ;;
 		-*) ;;
 		*) if [ -z "$group" ]; then group=$1; else verb=$1; fi ;;
-		esac
-		[ "$#" -gt 0 ] && shift
-	done
+		esac;
+		[ "$#" -gt 0 ] && shift;
+	done;
 	case "$group" in
 	""|help|search) ;;
 	*)
@@ -81,14 +86,21 @@ const ghDecision = `	group=
 		clone) [ "$group" = repo ] || reserved="gh $group $verb" ;;
 		*) reserved="gh $group\${verb:+ $verb}" ;;
 		esac ;;
-	esac
-`;
+	esac;`;
+
+function physical(cwd: string): string {
+	try {
+		return realpathSync(cwd);
+	} catch {
+		return cwd;
+	}
+}
 
 export function createChildBashTool(cwd: string) {
 	return defineTool(
 		createBashToolDefinition(cwd, {
 			commandPrefix:
-				guard("git", gitDecision(realpathSync(cwd))) + guard("gh", ghDecision),
+				guard("git", gitDecision(physical(cwd))) + guard("gh", ghDecision),
 		}),
 	);
 }
