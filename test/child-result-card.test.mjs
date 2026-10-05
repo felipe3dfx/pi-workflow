@@ -9,7 +9,10 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 
-import { registerChildResultCards } from "../extensions/child-result-card.ts";
+import {
+	answerCard,
+	registerChildResultCards,
+} from "../extensions/child-result-card.ts";
 import { capabilities, replaceSelection } from "../extensions/configure.ts";
 
 replaceSelection({
@@ -67,6 +70,9 @@ function cards(t) {
 		);
 	return { card, shutdown: () => handlers.get("session_shutdown")() };
 }
+
+const theme = () =>
+	globalThis[Symbol.for("@earendil-works/pi-coding-agent:theme")];
 
 const plain = (component, width = 90) =>
 	component
@@ -341,4 +347,42 @@ test("results delivered together render one card per result, in delivery order",
 			"     provider overloaded",
 		],
 	);
+});
+
+test("the answer card is the question card's twin: Parent header with the question number, the whole answer, no role, no expand hint", (t) => {
+	const { card } = cards(t);
+	const answer = "line 1\n\nline 2\n\nline 3\n\nline 4";
+	const component = answerCard({ id, question: 2, answer }, theme());
+	const asked = card({
+		customType: "pi-workflow-child-question",
+		details: { ...details, state: "waiting", question: 2, text: "Q?" },
+	});
+	assert.deepEqual(plain(component), [
+		"   ◆ Parent → 5636 · answer 2",
+		"     line 1",
+		"",
+		"     line 2",
+		"",
+		"     line 3",
+		"",
+		"     line 4",
+	]);
+	assert.equal(
+		plain(component)[0].indexOf("◆"),
+		plain(asked)[1].indexOf("◆"),
+	);
+	assert.ok(
+		component.render(90)[0].includes(theme().fg("toolTitle", "◆")),
+	);
+});
+
+test("every answer card line fits the width it is given", (t) => {
+	cards(t);
+	const component = answerCard(
+		{ id, question: 12, answer: `${"palabra ".repeat(40)}\n\n\tcon\ttab` },
+		theme(),
+	);
+	for (let width = 8; width <= 160; width++)
+		for (const line of component.render(width))
+			assert.ok(visibleWidth(line) <= width, `width ${width}: ${line}`);
 });
