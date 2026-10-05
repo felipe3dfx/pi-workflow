@@ -434,7 +434,7 @@ test("the child codegraph tool tells the child to read directly when CodeGraph i
 		tool.execute("call-1", { operation: "query", query: "Workflow" }),
 		(error) => {
 			assert.match(error.message, /read, grep, and find/);
-			assert.doesNotMatch(error.message, /workflow:configure/);
+			assert.doesNotMatch(error.message, /workflow:config/);
 			return true;
 		},
 	);

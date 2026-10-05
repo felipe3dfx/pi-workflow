@@ -45,7 +45,7 @@ The hook does not ask Jev and does not block `spawn_child`, `continue_child`, `r
 
 `read`, `grep`, `find`, `ls`, `edit`, `write`, `bash`, `powershell`, and `codegraph` `query` or `explore` are gated. The first gated tool of the turn sends the latest user message as both the task and the user request. The hook adds no suggested role. If that turn has no user message, the tool runs and Jev is not asked. A skill route does not call Jev. An explicit request for a child, subagent, or delegation, or a `leave` answer, blocks the tool. The reason tells the parent to call `spawn_child` and names the role. `decide` blocks the tool, tells the parent to ask one question and wait, and does not say `spawn_child`. `stay` lets the tool run, and later gated tools in the turn do not ask again. A missing key, a transport or parse failure, or a label outside the criteria blocks the tool with "Launch blocked". The harness does not invent `stay`, `decide`, or `worker`. `spawn_child` in that same turn reuses the verdict for that user message, including a skill route. A suggested role on the call does not replace the cached role. Local launch checks still run. Confidence is kept and does not change the decision.
 
-The parent passes the task and may pass a role suggestion. The file in `assets/contracts/` owns the prompt and tools. Those files are harness child contracts, not engineering skills. The worker prompt ends with `status`, `files_changed`, `validation`, and `left_undone`. `completed` is only for commands whose output is in the result. Explore, verify, and worker must not claim a command ran or a check passed unless that output is in the result. Verify also says what remained unverified. The parent does not declare the work finished without that worker block. The harness does not parse the block. `ask_parent` stays the only mid-run question channel.
+The parent passes the task and may pass a role suggestion. The file in `assets/contracts/` owns the prompt and tools. Those files are harness child contracts, not engineering skills. The worker prompt asks for `report_result` with a Verdict, `files_changed`, `validation`, and `left_undone`, then a short final summary. Verdict `done` is only for commands whose output is in the result. Explore, verify, and worker must not claim a command ran or a check passed unless that output is in the result. Verify also says what remained unverified. The parent does not declare the work finished without a worker Verdict of `done` and those fields. `ask_parent` stays the only mid-run question channel.
 
 ### Model selection
 
@@ -106,7 +106,7 @@ A closed tool is one line. Opening it shows the body under that title. A thick l
 
 One catalog edit removes `@tintinweb/pi-subagents` and `@vndv/pi-codegraph`. Status and doctor follow that file. They do not special-case CodeGraph as a companion. Nothing is installed or uninstalled silently.
 
-If `@tintinweb/pi-subagents` is still installed, spawn tools are not registered. Status, doctor, and `/workflow:configure` remain. The warning names the external removal command and the harness does not run it.
+If `@tintinweb/pi-subagents` is still installed, spawn tools are not registered. Status, doctor, and `/workflow:config` remain. The warning names the external removal command and the harness does not run it.
 
 The `codegraph` tool copies the gentle-shell contract: `init`, `query`, and `explore` on the current Git root only. No other path and no shell command. A missing index may be created by `init`. A symlink or non-directory index is rejected. A workspace that is not the real Git root is a tool error and the command does not run. `GIT_DIR` and `GIT_WORK_TREE` are ignored when the root is checked and when the binary runs. A missing binary is unavailable and tells the caller to use `read`, `grep`, and `find`. Other run failures are failed, with the same fallback. `init` is a tool operation, not a human confirmation and not startup.
 
@@ -150,7 +150,7 @@ Harness-owned child session and CodeGraph access are authorized by ADR 0005. The
 
 ## Dependencies
 
-Pi child sessions, Jev, the Pi model catalog, and the `/workflow:configure` command. Engineering skill files stay outside this package. The harness matches their names only.
+Pi child sessions, Jev, the Pi model catalog, and the `/workflow:config` command. Engineering skill files stay outside this package. The harness matches their names only.
 
 ## Feature review
 

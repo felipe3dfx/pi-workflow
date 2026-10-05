@@ -61,7 +61,7 @@ import { activePiAgentDirectory, writeJsonAtomically } from "./mcp-config.ts";
 import { openWorkflowSettings } from "./workflow-settings.ts";
 
 const usage =
-	"Usage: /workflow:status | /workflow:doctor | /workflow:configure | /workflow:models | /workflow:subagents | /workflow:delegation-check | /workflow:settings";
+	"Usage: /workflow:status | /workflow:doctor | /workflow:config [settings] | /workflow:models | /workflow:subagents | /workflow:delegation-check";
 
 
 
@@ -302,7 +302,7 @@ export default function piWorkflowExtension(
 		ctx: ExtensionCommandContext,
 	) {
 		if (args.trim()) {
-			ctx.ui.notify(usage, "error");
+			report(ctx, usage, "error");
 			return;
 		}
 		currentCtx = ctx;
@@ -321,12 +321,20 @@ export default function piWorkflowExtension(
 		description: "Show companion diagnostic detail",
 		handler: (args, ctx) => runCatalogCommand("diagnose", args, ctx),
 	});
-	pi.registerCommand("workflow:configure", {
+	pi.registerCommand("workflow:config", {
 		description:
-			"Review the local selection, then seat capabilities and install expected companions",
+			"Configure companions and harness capabilities, or manage Jev routing with 'settings'",
+		getArgumentCompletions: (prefix) =>
+			"settings".startsWith(prefix)
+				? [{ value: "settings", label: "settings" }]
+				: null,
 		handler: async (args, ctx) => {
+			if (args.trim() === "settings") {
+				await openWorkflowSettings(ctx);
+				return;
+			}
 			if (args.trim()) {
-				ctx.ui.notify(usage, "error");
+				report(ctx, usage, "error");
 				return;
 			}
 			currentCtx = ctx;
@@ -378,7 +386,7 @@ export default function piWorkflowExtension(
 			if (!held(childOverlay)) {
 				report(
 					ctx,
-					"Child session is not seated. Run /workflow:configure.",
+					"Child session is not seated. Run /workflow:config.",
 					"error",
 				);
 				return;
@@ -400,16 +408,6 @@ export default function piWorkflowExtension(
 			await modelProfiles.edit(ctx);
 		},
 	});
-	pi.registerCommand("workflow:settings", {
-		description: "Open workflow settings",
-		handler: async (args, ctx) => {
-			if (args.trim()) {
-				report(ctx, usage, "error");
-				return;
-			}
-			await openWorkflowSettings(ctx);
-		},
-	});
 	pi.registerCommand("workflow:delegation-check", {
 		description:
 			"Score the fixed delegation cases against Jev without launching a child",
@@ -421,7 +419,7 @@ export default function piWorkflowExtension(
 			if (!held(childOverlay)) {
 				report(
 					ctx,
-					"Child session is not seated. Run /workflow:configure.",
+					"Child session is not seated. Run /workflow:config.",
 					"error",
 				);
 				return;

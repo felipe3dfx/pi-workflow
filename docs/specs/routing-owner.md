@@ -31,11 +31,11 @@ Jev routing is off until the operator turns it on. The choice persists until the
 
 A missing or unreadable choice document is off. It is not a launch failure. An invalid value is off. The operator can set it again from the settings list.
 
-The settings command opens the existing settings list. The row shows the current value. `off` uses the existing dim treatment. The command needs the TUI. Extra arguments are refused. Print mode does not open the list.
+`/workflow:config settings` opens the existing settings list. The row shows the current value. `off` uses the existing dim treatment. The command needs the TUI. Extra arguments are refused. Print mode does not open the list.
 
 ### Off
 
-Jev is not called. Gated parent tools run. Failing to delegate does not block them. The parent names the child role on launch. `explore` is read-only mapping. `worker` is implementation or command execution. `verify` is read-only verification. A launch with no role does not invent `worker` and does not launch. A named role may launch. Invocations of `git` and `gh` are the repository-state commands. While routing is off they stay in the parent: a launch does not read the task text, and the child's `bash` resolves `git` and `gh` to stubs on `PATH`: `gh` refuses to run, and `git` refuses from inside the child's worktree, as [ADR 0011](../adr/0011-git-and-gh-guard-in-child-bash.md) decides. The explore contract still has no shell.
+Jev is not called. Gated parent tools run. Failing to delegate does not block them. The parent names the child role on launch. `explore` is read-only mapping. `worker` is implementation or command execution. `verify` is verification that may run checks and tests without editing the worktree. A launch with no role does not invent `worker` and does not launch. A named role may launch. Invocations of `git` and `gh` are the repository-state commands. While routing is off they stay in the parent: a launch does not read the task text, and the child's `bash` resolves `git` and `gh` to stubs on `PATH`: `gh` refuses to run, and `git` refuses from inside the child's worktree, as [ADR 0011](../adr/0011-git-and-gh-guard-in-child-bash.md) decides. The explore contract still has no shell.
 
 ### On
 

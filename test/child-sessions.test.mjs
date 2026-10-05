@@ -1300,6 +1300,9 @@ test("spawn_child tells the parent to end its turn instead of polling", async ()
 			guidance,
 			/sleep, list_children, child_status, or child_result/,
 		);
+		assert.match(guidance, /Do not declare work done without a worker Verdict of done/);
+		assert.match(guidance, /Do not declare work verified without a verifier Verdict of pass/);
+		assert.match(guidance, /partial, fail, and blocked are not success/);
 
 		const result = await spawn(
 			tool,
@@ -1321,15 +1324,15 @@ test("spawn_child describes who decides the role and what each role can do", asy
 		assert.match(role, /Jev routing is off, the role you pass decides/);
 		assert.match(role, /on, it is a suggestion/);
 		const guidance = tool.promptGuidelines.join("\n");
-		assert.match(
-			guidance,
-			/explore reads files and queries CodeGraph; it cannot run commands or edit/,
-		);
-		assert.match(
-			guidance,
-			/verify checks work that is already done and may run read-only commands such as tests, without editing/,
-		);
-		assert.match(guidance, /worker implements changes and runs any other command/);
+		const taskDescription = tool.parameters.properties.task.description;
+		assert.match(taskDescription, /acceptance criteria and changed-file\/diff context/);
+		assert.match(taskDescription, /known validation commands\/results as context/);
+		assert.match(taskDescription, /Exploration may discover context directly from the worktree/);
+		assert.doesNotMatch(guidance, /acceptance criteria|changed-file diff|validation commands\/results/);
+		assert.match(guidance, /Explore reads and queries CodeGraph without editing or commands/);
+		assert.match(guidance, /Pass the task and the role \(explore, worker, or verify\)\./);
+		assert.match(guidance, /verify independently checks completed work and may run checks and tests without editing/);
+		assert.match(guidance, /worker implements and runs commands/);
 		assert.match(
 			guidance,
 			/When Jev routing is on, the parent asks once per user turn/,

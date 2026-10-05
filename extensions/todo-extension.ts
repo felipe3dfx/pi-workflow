@@ -123,7 +123,7 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 					content: [
 						{
 							type: "text" as const,
-							text: "Todo is not seated. Run /workflow:configure.",
+							text: "Todo is not seated. Run /workflow:config.",
 						},
 					],
 					details: { status: "refused" },

@@ -113,10 +113,10 @@ test("while Jev routing is off, a worktree path with a space and a single quote 
 test("while Jev routing is off, a child's bash runs a command that only mentions git", async (t) => {
 	withAgentDirectory(t);
 
-	const result = await run("grep -c git README.md");
+	const result = await run("printf 'git\\n' | grep -c git");
 
 	assert.equal(result.isError, undefined);
-	assert.match(text(result), /^\d+/);
+	assert.equal(text(result).trim(), "1");
 });
 
 test("while Jev routing is off, a child's bash runs shell arithmetic", async (t) => {

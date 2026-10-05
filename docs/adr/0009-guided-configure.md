@@ -4,6 +4,8 @@
 
 Acceptance: approval and merge of the introducing PR.
 
+Superseded by ADR 0012 for the command name and argumentless-command clauses.
+
 ## Decision
 
 `/workflow:configure` replaces `/workflow:setup`. The command is the operator's guided confirmation, for the current session, of which harness capabilities are seated and which companion catalog entries are expected. It takes no arguments.

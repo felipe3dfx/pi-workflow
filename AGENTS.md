@@ -16,7 +16,7 @@ Research documents describe evaluated systems and do not establish operational r
 
 ## Language Contract
 
-Design and task artifacts, agent definitions, and internal Engram artifacts are written in English by default.
+Parent-child instructions, questions, findings, and results are always in English. User-facing communication follows the user's language. Design and task artifacts, agent definitions, and internal Engram artifacts are written in English by default.
 
 Any content that an agent designs or implements for eventual publication in Linear must be authored in
 professional neutral Spanish before Owner approval. Stable identifiers, hashes, schema names, code

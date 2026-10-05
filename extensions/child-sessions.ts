@@ -901,7 +901,10 @@ export function createChildSessions(options: {
 }
 
 const spawnChildParameters = Type.Object({
-	task: Type.String({ description: "The bounded task the child completes." }),
+	task: Type.String({
+		description:
+			"The bounded task. For implementation or verification, include relevant available acceptance criteria and changed-file/diff context; include known validation commands/results as context, never as a substitute for a verifier's independent checks. Exploration may discover context directly from the worktree.",
+	}),
 	role: Type.Optional(
 		Type.String({
 			description:
@@ -938,7 +941,7 @@ type Outcome = {
 function unseatedChild() {
 	if (held(childOverlay)) return undefined;
 	return report(
-		["Child session is not seated. Run /workflow:configure."],
+		["Child session is not seated. Run /workflow:config."],
 		{ status: "refused" },
 	);
 }
@@ -999,11 +1002,11 @@ export function createSpawnChildTool(
 			"Delegate a bounded task to a child session that runs under a harness contract. When Jev routing is on, the harness decides whether the work leaves this session. The active profile picks the model for the role. In an interactive session the call returns the child id at once and the result arrives later as a message; in print and json modes the result returns in the same call.",
 		promptSnippet: "Delegate a bounded task to a child session",
 		promptGuidelines: [
-			"Pass the task and the role (explore, worker, or verify). When Jev routing is on, the role is a suggestion and Jev selects the specialist from the user message.",
-			"When Jev routing is off, the role you pass decides. Roles: explore reads files and queries CodeGraph; it cannot run commands or edit. verify checks work that is already done and may run read-only commands such as tests, without editing. worker implements changes and runs any other command.",
+			"Pass the task and the role (explore, worker, or verify). When Jev routing is on, the role is a suggestion and Jev selects the specialist; otherwise the role determines the contract. Explore reads and queries CodeGraph without editing or commands; verify independently checks completed work and may run checks and tests without editing; worker implements and runs commands.",
+			"Children communicate only with the parent, never directly with the user.",
 			"A refusal or a queued id is not a completed result and is not retried. After a background child is queued, end your turn: its result wakes you. Do not poll with sleep, list_children, child_status, or child_result.",
+			"Do not declare work done without a worker Verdict of done and its files_changed, validation, and left_undone fields. Do not declare work verified without a verifier Verdict of pass and its findings and unverified fields; partial, fail, and blocked are not success.",
 			"When Jev routing is on, the parent asks once per user turn before read, grep, find, ls, edit, write, bash, powershell, or codegraph query and explore. A block that names a role means call spawn_child and use that role. A block that says to ask the user one question means ask that one question and wait. Reads of AGENTS.md, GLOSSARY.md, and one docs/agents markdown file stay available, and so does codegraph init.",
-			"Do not declare the work finished unless a worker result reports a done Verdict with its files_changed, validation, and left_undone, and do not declare it verified unless a verify result reports a pass Verdict with its findings and unverified.",
 		],
 		parameters: spawnChildParameters,
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
