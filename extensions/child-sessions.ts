@@ -316,10 +316,7 @@ const createPiChildSession: ChildSessionFactory = async (spec) => {
 		thinkingLevel: spec.thinking,
 		tools: spec.tools,
 		customTools: [
-			createChildBashTool(spec.cwd, {
-				commandPrefix: userSettings.getShellCommandPrefix(),
-				shellPath: userSettings.getShellPath(),
-			}),
+			createChildBashTool(spec.cwd, userSettings.getShellCommandPrefix()),
 			createChildCodeGraphTool(spec.cwd),
 			createAskParentTool(spec.ask),
 			...(reportsResult(spec.role)

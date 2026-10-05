@@ -101,16 +101,15 @@ function physical(cwd: string): string {
 
 export function createChildBashTool(
 	cwd: string,
-	shell: { commandPrefix?: string; shellPath?: string } = {},
+	userPrefix?: string,
 ) {
 	const commandPrefix =
 		guard("git", gitDecision(physical(cwd))) + guard("gh", ghDecision);
 	return defineTool(
 		createBashToolDefinition(cwd, {
-			commandPrefix: shell.commandPrefix
-				? `${shell.commandPrefix}\n${commandPrefix}`
+			commandPrefix: userPrefix
+				? `${userPrefix}\n${commandPrefix}`
 				: commandPrefix,
-			shellPath: shell.shellPath,
 		}),
 	);
 }

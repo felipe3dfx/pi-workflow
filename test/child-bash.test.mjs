@@ -406,28 +406,15 @@ test("a child's bash runs shell arithmetic", async (t) => {
 	assert.equal(text(await run("echo $((2*3))", worktree(t))).trim(), "6");
 });
 
-test("a child's bash keeps the user's shell settings alongside the guard", async (t) => {
+test("a child's bash keeps the user's shell prefix alongside the guard", async (t) => {
 	routing(t, "off");
 	const dir = worktree(t);
-	const shell = join(temporaryDirectory(t, "pi-workflow-shell-"), "bash");
-	writeFileSync(
-		shell,
-		`#!/bin/sh\nPI_WORKFLOW_SHELL=user exec /bin/bash "$@"\n`,
-		{ mode: 0o755 },
-	);
-	const options = {
-		commandPrefix: "greet() { echo hello; }\nPI_WORKFLOW_PREFIX=on",
-		shellPath: shell,
-	};
+	const prefix = "greet() { echo hello; }\nPI_WORKFLOW_PREFIX=on";
 
-	const user = await run(
-		'greet; echo "$PI_WORKFLOW_PREFIX $PI_WORKFLOW_SHELL"',
-		dir,
-		options,
-	);
-	const result = await run("git commit -am x", dir, options);
+	const user = await run('greet; echo "$PI_WORKFLOW_PREFIX"', dir, prefix);
+	const result = await run("git commit -am x", dir, prefix);
 
-	assert.equal(text(user), "hello\non user\n");
+	assert.equal(text(user), "hello\non\n");
 	assert.equal(result.structuredContent.exit_code, 126);
 	assert.equal(result.structuredContent.output, reserved("git commit"));
 	assert.equal(commits(dir), "1");
