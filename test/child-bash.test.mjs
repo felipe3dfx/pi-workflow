@@ -15,8 +15,8 @@ import { delimiter, join } from "node:path";
 import { createChildBashTool } from "../extensions/child-bash.ts";
 import { withAgentDirectory } from "./support/jev-routing.mjs";
 
-function run(command, cwd) {
-	return createChildBashTool(cwd).execute(
+function run(command, cwd, options) {
+	return createChildBashTool(cwd, options).execute(
 		"call-1",
 		{ command },
 		undefined,
@@ -397,6 +397,33 @@ test("a child's bash runs shell arithmetic", async (t) => {
 	routing(t, "off");
 
 	assert.equal(text(await run("echo $((2*3))", worktree(t))).trim(), "6");
+});
+
+test("a child's bash keeps the user's shell settings alongside the guard", async (t) => {
+	routing(t, "off");
+	const dir = worktree(t);
+	const shell = join(temporaryDirectory(t, "pi-workflow-shell-"), "bash");
+	writeFileSync(
+		shell,
+		`#!/bin/sh\nPI_WORKFLOW_SHELL=user exec /bin/bash "$@"\n`,
+		{ mode: 0o755 },
+	);
+	const options = {
+		commandPrefix: "greet() { echo hello; }\nPI_WORKFLOW_PREFIX=on",
+		shellPath: shell,
+	};
+
+	const user = await run(
+		'greet; echo "$PI_WORKFLOW_PREFIX $PI_WORKFLOW_SHELL"',
+		dir,
+		options,
+	);
+	const result = await run("git commit -am x", dir, options);
+
+	assert.equal(text(user), "hello\non user\n");
+	assert.equal(result.structuredContent.exit_code, 126);
+	assert.equal(result.structuredContent.output, reserved("git commit"));
+	assert.equal(commits(dir), "1");
 });
 
 test("a child's bash reports a syntax error one line below the command's line", async (t) => {

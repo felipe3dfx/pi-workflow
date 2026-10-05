@@ -290,6 +290,9 @@ const createPiChildSession: ChildSessionFactory = async (spec) => {
 	}
 	const slash = spec.model.indexOf("/");
 	const settingsManager = SettingsManager.inMemory();
+	const userSettings = SettingsManager.create(spec.cwd, getAgentDir(), {
+		projectTrusted: false,
+	});
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: spec.cwd,
 		agentDir: getAgentDir(),
@@ -313,7 +316,10 @@ const createPiChildSession: ChildSessionFactory = async (spec) => {
 		thinkingLevel: spec.thinking,
 		tools: spec.tools,
 		customTools: [
-			createChildBashTool(spec.cwd),
+			createChildBashTool(spec.cwd, {
+				commandPrefix: userSettings.getShellCommandPrefix(),
+				shellPath: userSettings.getShellPath(),
+			}),
 			createChildCodeGraphTool(spec.cwd),
 			createAskParentTool(spec.ask),
 			...(reportsResult(spec.role)
