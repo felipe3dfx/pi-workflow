@@ -162,7 +162,10 @@ test("toggling Jev routing and confirming Apply persists it for a new process an
 		focus(panel, "Confirm apply");
 		panel.handleInput("\r");
 	});
-	assert.ok(review.some((line) => /Jev routing: off -> on/.test(line)));
+	assert.equal(
+		review.findIndex((line) => /Jev routing: off -> on/.test(line)),
+		0,
+	);
 	assert.deepEqual(await storedRouting(dir), { schemaVersion: 1, jevRouting: "on" });
 	assert.equal(await readFile(profilesPath, "utf8"), profiles);
 

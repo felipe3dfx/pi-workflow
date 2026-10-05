@@ -69,12 +69,12 @@ export async function guideSelection(
 						new SettingsList(
 							[
 								...[
-									...describePlan(selection, draft, states),
 									...(draftRouting === jevRouting
 										? []
 										: [
 												`Jev routing: ${jevRouting ? "on" : "off"} -> ${draftRouting ? "on" : "off"}`,
 											]),
+									...describePlan(selection, draft, states),
 								].map((line, index) => ({
 									id: `plan-${index}`,
 									label: line,
