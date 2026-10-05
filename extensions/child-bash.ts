@@ -30,15 +30,33 @@ function gitDecision(root: string): string {
 	subcommand=
 	while [ "$#" -gt 0 ] && [ -z "$subcommand" ]; do
 		case "$1" in
-		-C|-c|--git-dir|--work-tree|--namespace|--exec-path|--config-env|--attr-source) shift ;;
+		-c)
+			shift
+			case "$1" in [Aa][Ll][Ii][Aa][Ss].*) reserved="git -c alias" ;; esac ;;
+		-c[Aa][Ll][Ii][Aa][Ss].*) reserved="git -c alias" ;;
+		-C|--git-dir|--work-tree|--namespace|--exec-path|--config-env|--attr-source) shift ;;
 		-*) ;;
 		*) subcommand=$1 ;;
 		esac
 		[ "$#" -gt 0 ] && shift
 	done
+	verb=
 	case "$subcommand" in
-	commit|merge|rebase|cherry-pick|revert|am|reset|tag|branch|update-ref|push|pull|fetch|checkout|switch|restore|clean|stash|add|rm|mv|apply|config|worktree|gc|notes)
+	remote|submodule|reflog)
+		while [ "$#" -gt 0 ] && [ -z "$verb" ]; do
+			case "$1" in -*) ;; *) verb=$1 ;; esac
+			shift
+		done ;;
+	esac
+	[ -n "$reserved" ] || case "$subcommand" in
+	commit|merge|rebase|cherry-pick|revert|am|reset|tag|branch|update-ref|push|pull|fetch|checkout|switch|restore|clean|stash|add|rm|mv|apply|config|worktree|gc|notes|bisect|sparse-checkout|update-index|read-tree|symbolic-ref|replace|filter-branch|prune)
 		reserved="git $subcommand" ;;
+	remote)
+		case "$verb" in add|set-url|remove|rm|rename|update|prune|set-head|set-branches) reserved="git remote $verb" ;; esac ;;
+	submodule)
+		case "$verb" in add|update|init|deinit|sync|foreach|absorbgitdirs|set-branch|set-url) reserved="git submodule $verb" ;; esac ;;
+	reflog)
+		case "$verb" in expire|delete) reserved="git reflog $verb" ;; esac ;;
 	esac
 `;
 }
@@ -54,13 +72,14 @@ const ghDecision = `	group=
 		[ "$#" -gt 0 ] && shift
 	done
 	case "$verb" in
-	create|edit|merge|close|reopen|delete|comment|review|rerun|cancel|ready|checkout)
+	create|edit|merge|close|reopen|delete|comment|review|rerun|cancel|ready|checkout|update-branch|sync|fork|set|disable|enable|transfer|develop|lock|unlock|pin|unpin|archive|unarchive|rename|deploy-key)
 		reserved="gh $group $verb" ;;
 	esac
 	case "$group" in
 	api) reserved="gh api" ;;
-	auth|secret|release) reserved="gh $group\${verb:+ $verb}" ;;
+	auth|secret|release|extension|alias|ssh-key|gpg-key|variable) reserved="gh $group\${verb:+ $verb}" ;;
 	workflow) [ "$verb" = run ] && reserved="gh workflow run" ;;
+	label) [ "$verb" = clone ] && reserved="gh label clone" ;;
 	esac
 `;
 

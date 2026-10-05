@@ -136,6 +136,8 @@ for (const state of ["off", "on"]) {
 			["gh pr status", "pr status"],
 			["gh -R owner/repo pr view 12", "-R owner/repo pr view 12"],
 			["gh workflow view ci", "workflow view ci"],
+			["gh repo clone owner/repo", "repo clone owner/repo"],
+			["gh label list", "label list"],
 			["cd /tmp && gh pr list", "pr list"],
 		]) {
 			const result = await run(command, dir);
@@ -190,9 +192,84 @@ for (const state of ["off", "on"]) {
 			"worktree",
 			"gc",
 			"notes",
+			"bisect",
+			"sparse-checkout",
+			"update-index",
+			"read-tree",
+			"symbolic-ref",
+			"replace",
+			"filter-branch",
+			"prune",
 		]) {
 			await assertReserved(`git ${subcommand}`, dir, `git ${subcommand}`);
 		}
+	});
+
+	test(`while Jev routing is ${state}, a child's bash refuses mutating remote, submodule, and reflog verbs in its worktree`, async (t) => {
+		routing(t, state);
+		const dir = worktree(t);
+
+		for (const [command, expected] of [
+			["git remote add upstream https://example.invalid/r", "git remote add"],
+			["git remote set-url origin x", "git remote set-url"],
+			["git remote remove origin", "git remote remove"],
+			["git remote rm origin", "git remote rm"],
+			["git remote rename origin o", "git remote rename"],
+			["git remote update", "git remote update"],
+			["git remote prune origin", "git remote prune"],
+			["git remote set-head origin -a", "git remote set-head"],
+			["git remote set-branches origin main", "git remote set-branches"],
+			["git remote -v add upstream x", "git remote add"],
+			["git submodule add https://example.invalid/r", "git submodule add"],
+			["git submodule update --init", "git submodule update"],
+			["git submodule init", "git submodule init"],
+			["git submodule deinit --all", "git submodule deinit"],
+			["git submodule sync", "git submodule sync"],
+			["git submodule --quiet foreach true", "git submodule foreach"],
+			["git submodule absorbgitdirs", "git submodule absorbgitdirs"],
+			["git submodule set-branch -b main x", "git submodule set-branch"],
+			["git submodule set-url x y", "git submodule set-url"],
+			["git reflog expire --all", "git reflog expire"],
+			["git reflog delete HEAD@{0}", "git reflog delete"],
+		]) {
+			await assertReserved(command, dir, expected);
+		}
+	});
+
+	test(`while Jev routing is ${state}, a child's bash runs remote, submodule, and reflog reads in its worktree`, async (t) => {
+		routing(t, state);
+		const dir = worktree(t);
+		execFileSync(
+			"git",
+			["remote", "add", "origin", "https://example.invalid/r"],
+			{ cwd: dir },
+		);
+
+		for (const [command, expected] of [
+			["git remote -v", /origin\s+https:\/\/example\.invalid\/r/],
+			["git remote get-url origin", /^https:\/\/example\.invalid\/r$/m],
+			["git submodule status", /^\(no output\)$/],
+			["git reflog", /first/],
+		]) {
+			const result = await run(command, dir);
+
+			assert.equal(result.isError, undefined, command);
+			assert.match(text(result), expected, command);
+		}
+	});
+
+	test(`while Jev routing is ${state}, a child's bash refuses an inline git alias in its worktree`, async (t) => {
+		routing(t, state);
+		const dir = worktree(t);
+
+		for (const command of [
+			"git -c alias.ci=commit ci -am x",
+			"git -calias.p=push p",
+			"git -c color.ui=never -c alias.s=status s",
+		]) {
+			await assertReserved(command, dir, "git -c alias");
+		}
+		assert.equal(commits(dir), "1");
 	});
 
 	test(`while Jev routing is ${state}, a child's bash finds the git subcommand after leading global options`, async (t) => {
@@ -238,6 +315,28 @@ for (const state of ["off", "on"]) {
 			["gh run cancel 1", "gh run cancel"],
 			["gh pr ready 12", "gh pr ready"],
 			["gh pr checkout 12", "gh pr checkout"],
+			["gh pr update-branch 12", "gh pr update-branch"],
+			["gh repo sync", "gh repo sync"],
+			["gh repo fork owner/repo", "gh repo fork"],
+			["gh config set editor vim", "gh config set"],
+			["gh workflow disable ci", "gh workflow disable"],
+			["gh workflow enable ci", "gh workflow enable"],
+			["gh issue transfer 1 owner/other", "gh issue transfer"],
+			["gh issue develop 1", "gh issue develop"],
+			["gh issue lock 1", "gh issue lock"],
+			["gh pr unlock 12", "gh pr unlock"],
+			["gh issue pin 1", "gh issue pin"],
+			["gh issue unpin 1", "gh issue unpin"],
+			["gh repo archive owner/repo", "gh repo archive"],
+			["gh repo unarchive owner/repo", "gh repo unarchive"],
+			["gh repo rename other", "gh repo rename"],
+			["gh repo deploy-key list", "gh repo deploy-key"],
+			["gh extension install owner/gh-x", "gh extension install"],
+			["gh alias list", "gh alias list"],
+			["gh ssh-key add key.pub", "gh ssh-key add"],
+			["gh gpg-key list", "gh gpg-key list"],
+			["gh variable get X", "gh variable get"],
+			["gh label clone owner/other", "gh label clone"],
 		]) {
 			await assertReserved(command, dir, expected);
 		}
