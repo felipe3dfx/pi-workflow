@@ -138,6 +138,15 @@ for (const state of ["off", "on"]) {
 			["gh workflow view ci", "workflow view ci"],
 			["gh repo clone owner/repo", "repo clone owner/repo"],
 			["gh label list", "label list"],
+			["gh run view 1 --log-failed", "run view 1 --log-failed"],
+			["gh run download 1", "run download 1"],
+			["gh run watch 1", "run watch 1"],
+			["gh search issues x", "search issues x"],
+			["gh search", "search"],
+			["gh release view v1", "release view v1"],
+			["gh", ""],
+			["gh help pr", "help pr"],
+			["gh --version", "--version"],
 			["cd /tmp && gh pr list", "pr list"],
 		]) {
 			const result = await run(command, dir);
@@ -291,52 +300,28 @@ for (const state of ["off", "on"]) {
 		assert.equal(commits(dir), "1");
 	});
 
-	test(`while Jev routing is ${state}, a child's bash refuses each reserved gh command from any directory`, async (t) => {
+	test(`while Jev routing is ${state}, a child's bash refuses every gh command outside the allowed reads from any directory`, async (t) => {
 		routing(t, state);
 		const calls = fakeGh(t);
 		const dir = worktree(t);
 
 		for (const [command, expected] of [
-			["gh api repos/owner/repo", "gh api"],
-			["gh auth status", "gh auth status"],
-			["gh secret list", "gh secret list"],
-			["gh release view v1", "gh release view"],
-			["cd /tmp && gh release create v0", "gh release create"],
+			["gh api repos/owner/repo", "gh api repos/owner/repo"],
 			["gh workflow run ci", "gh workflow run"],
 			["gh pr create --fill", "gh pr create"],
 			["gh issue edit 1", "gh issue edit"],
 			["gh -R owner/repo pr merge 12", "gh pr merge"],
 			["gh --repo=owner/repo pr close 12", "gh pr close"],
 			["gh pr -R owner/repo reopen 12", "gh pr reopen"],
-			["gh repo delete owner/repo", "gh repo delete"],
-			["gh issue comment 1 -b x", "gh issue comment"],
-			["gh pr review 12 --approve", "gh pr review"],
-			["gh run rerun 1", "gh run rerun"],
-			["gh run cancel 1", "gh run cancel"],
-			["gh pr ready 12", "gh pr ready"],
+			["gh pr --subject x merge 12", "gh pr x"],
+			["gh pr revert 1", "gh pr revert"],
 			["gh pr checkout 12", "gh pr checkout"],
-			["gh pr update-branch 12", "gh pr update-branch"],
-			["gh repo sync", "gh repo sync"],
-			["gh repo fork owner/repo", "gh repo fork"],
-			["gh config set editor vim", "gh config set"],
-			["gh workflow disable ci", "gh workflow disable"],
-			["gh workflow enable ci", "gh workflow enable"],
-			["gh issue transfer 1 owner/other", "gh issue transfer"],
-			["gh issue develop 1", "gh issue develop"],
-			["gh issue lock 1", "gh issue lock"],
-			["gh pr unlock 12", "gh pr unlock"],
-			["gh issue pin 1", "gh issue pin"],
-			["gh issue unpin 1", "gh issue unpin"],
-			["gh repo archive owner/repo", "gh repo archive"],
-			["gh repo unarchive owner/repo", "gh repo unarchive"],
-			["gh repo rename other", "gh repo rename"],
-			["gh repo deploy-key list", "gh repo deploy-key"],
-			["gh extension install owner/gh-x", "gh extension install"],
-			["gh alias list", "gh alias list"],
-			["gh ssh-key add key.pub", "gh ssh-key add"],
-			["gh gpg-key list", "gh gpg-key list"],
-			["gh variable get X", "gh variable get"],
+			["gh repo set-default owner/repo", "gh repo set-default"],
+			["gh repo autolink create x y", "gh repo autolink"],
+			["gh project item-add 1", "gh project item-add"],
 			["gh label clone owner/other", "gh label clone"],
+			["gh browse", "gh browse"],
+			["cd /tmp && gh release create v0", "gh release create"],
 		]) {
 			await assertReserved(command, dir, expected);
 		}

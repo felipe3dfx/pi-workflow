@@ -71,15 +71,14 @@ const ghDecision = `	group=
 		esac
 		[ "$#" -gt 0 ] && shift
 	done
-	case "$verb" in
-	create|edit|merge|close|reopen|delete|comment|review|rerun|cancel|ready|checkout|update-branch|sync|fork|set|disable|enable|transfer|develop|lock|unlock|pin|unpin|archive|unarchive|rename|deploy-key)
-		reserved="gh $group $verb" ;;
-	esac
 	case "$group" in
-	api) reserved="gh api" ;;
-	auth|secret|release|extension|alias|ssh-key|gpg-key|variable) reserved="gh $group\${verb:+ $verb}" ;;
-	workflow) [ "$verb" = run ] && reserved="gh workflow run" ;;
-	label) [ "$verb" = clone ] && reserved="gh label clone" ;;
+	""|help|search) ;;
+	*)
+		case "$verb" in
+		view|list|diff|checks|status|watch|download) ;;
+		clone) [ "$group" = repo ] || reserved="gh $group $verb" ;;
+		*) reserved="gh $group\${verb:+ $verb}" ;;
+		esac ;;
 	esac
 `;
 
