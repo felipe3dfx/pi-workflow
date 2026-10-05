@@ -23,6 +23,7 @@ import {
 } from "./chrome-messages.ts";
 import { type Schedule, scheduleTimer } from "./child-sessions.ts";
 import { spread } from "./children-box.ts";
+import { fixHeader } from "./fixed-header.ts";
 import { readHeader, watchHeader } from "./shell.ts";
 import { sanitizeTaskText } from "./todo-header.ts";
 
@@ -264,6 +265,7 @@ export function registerChrome(
 	let frame = 0;
 	let stopTick: (() => void) | undefined;
 	let unsubscribe: (() => void)[] = [];
+	let fixed: ReturnType<typeof fixHeader> | undefined;
 	registerMessages(pi);
 
 	function requestRender() {
@@ -328,6 +330,8 @@ export function registerChrome(
 		stopTick = undefined;
 		for (const off of unsubscribe) off();
 		unsubscribe = [];
+		fixed?.stop();
+		fixed = undefined;
 		renders.clear();
 		running.clear();
 		working = false;
@@ -343,7 +347,7 @@ export function registerChrome(
 		ui.setWorkingVisible(false);
 		ui.setHeader((tui, theme) => {
 			renders.add(tui);
-			return {
+			const header = {
 				render: (width: number) =>
 					renderHeader(
 						theme,
@@ -357,6 +361,14 @@ export function registerChrome(
 						width,
 					),
 				invalidate() {},
+			};
+			fixed?.stop();
+			const slot = fixHeader(tui, header);
+			fixed = slot;
+			return {
+				render: (width: number) => (slot.active() ? [] : header.render(width)),
+				invalidate() {},
+				dispose: () => slot.stop(),
 			};
 		});
 		ui.setFooter((tui, theme, footerData) => {
