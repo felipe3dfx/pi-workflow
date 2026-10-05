@@ -33,10 +33,6 @@ function reserved(command) {
 	return `\`${command}\` is reserved for the parent. Continue without it and list the exact command in your result; do not ask the parent to run it.\n`;
 }
 
-const hasPython = process.env.PATH.split(delimiter).some((dir) =>
-	existsSync(join(dir, "python3")),
-);
-
 function temporaryDirectory(t, prefix = "pi-workflow-git-") {
 	const dir = mkdtempSync(join(tmpdir(), prefix));
 	t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -263,29 +259,27 @@ for (const state of ["off", "on"]) {
 	});
 }
 
-for (const [command, expected, skip] of [
-	["/usr/bin/env git commit -am x", "git commit"],
-	[
-		`python3 -c "import subprocess;subprocess.run(['git','push'])"`,
-		"git push",
-		!hasPython,
-	],
-	["sh -c 'gh release create v0'", "gh release create"],
-]) {
-	test(`a child's bash refuses a reserved command reached through ${command}`, {
-		skip,
-	}, async (t) => {
-		routing(t, "off");
-		fakeGh(t);
-		const dir = worktree(t);
+test("a child's guard does not reach processes its command starts", async (t) => {
+	routing(t, "off");
+	const dir = worktree(t);
 
-		assert.equal(
-			(await run(command, dir)).structuredContent.output,
-			reserved(expected),
-		);
-		assert.equal(commits(dir), "1");
-	});
-}
+	for (const command of [
+		"sh -c 'git config core.hooksPath .husky'",
+		"sh -c 'git stash list'",
+		"printf 'branch --show-current\\n' | xargs git",
+	]) {
+		const result = await run(command, dir);
+
+		assert.equal(result.isError, undefined, command);
+	}
+	assert.equal(
+		execFileSync("git", ["config", "core.hooksPath"], {
+			cwd: dir,
+			encoding: "utf8",
+		}).trim(),
+		".husky",
+	);
+});
 
 test("a worktree path with a space and a single quote keeps the git guard", async (t) => {
 	routing(t, "off");

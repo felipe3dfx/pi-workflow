@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import {
 	mkdir,
 	mkdtemp,
@@ -35,7 +34,6 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 
-import { createChildBashTool } from "../extensions/child-bash.ts";
 import { createAskParentTool } from "../extensions/child-sessions.ts";
 import { compactToolRenderers } from "../extensions/compact-tools.ts";
 import { capabilities, replaceSelection } from "../extensions/configure.ts";
@@ -1008,29 +1006,6 @@ test("session shutdown disposes running background children, which then deliver 
 
 		assert.equal(messages.length, 0);
 		assert.equal(children.created[0].disposals, 1);
-	});
-});
-
-test("session shutdown removes the git and gh stub directories, and a later child's bash creates new ones", async (t) => {
-	await withWorkspace(async ({ worktree, agentDir }) => {
-		withAgentDirectory(t);
-		const { fire } = await loadSpawnTool({ agentDir, create: fakeChildren().create });
-		const stubDirectory = async () => {
-			const result = await createChildBashTool(worktree).execute(
-				"call-1",
-				{ command: 'printf %s "$PATH"' },
-			);
-			return result.content[0].text.split(":")[0];
-		};
-		const before = await stubDirectory();
-		assert.ok(existsSync(join(before, "git")));
-
-		await fire("session_shutdown", { reason: "quit" });
-		const after = await stubDirectory();
-
-		assert.equal(existsSync(before), false);
-		assert.notEqual(after, before);
-		assert.ok(existsSync(join(after, "git")));
 	});
 });
 
