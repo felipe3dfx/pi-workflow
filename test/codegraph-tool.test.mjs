@@ -70,6 +70,7 @@ function loadTool(adapters) {
 			registerCommand() {},
 			registerShortcut() {},
 			registerMessageRenderer() {},
+			registerToolRenderer() {},
 			registerProvider() {},
 			registerTool: (tool) => tools.push(tool),
 			exec: async () => {

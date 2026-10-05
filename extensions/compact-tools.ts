@@ -11,6 +11,7 @@ import {
 	getAgentDir,
 	SettingsManager,
 	type ToolDefinition,
+	type ToolRenderers,
 } from "@earendil-works/pi-coding-agent";
 import { type Component, Text, TruncatedText } from "@earendil-works/pi-tui";
 
@@ -107,20 +108,6 @@ export function toolLabel(name: string, args: unknown) {
 	return [verb ?? titleCase(name), subject?.trim().split("\n")[0] ?? ""];
 }
 
-function fallbackTitle(
-	name: string,
-	label: string | undefined,
-	args: unknown,
-	theme: Theme,
-	status: Status,
-) {
-	if (label === undefined || name.startsWith("mcp__")) {
-		const [head, detail] = toolLabel(name, args);
-		return toolRow(theme, status, head, detail);
-	}
-	return toolRow(theme, status, titleCase(label), toolLabel(name, args)[1]);
-}
-
 function outputText(result: { content: { type: string; text?: string }[] }) {
 	return result.content
 		.filter((part) => part.type === "text")
@@ -190,16 +177,11 @@ function compact<
 	};
 }
 
-type Fallback = {
-	toolName: string;
-	toolDefinition?: Pick<ToolDefinition, "label" | "renderCall" | "renderResult">;
-};
-
-export function usesFallback(row: Fallback) {
+function usesFallback(toolName: string, own: ToolRenderers | undefined) {
 	return (
-		row.toolName.startsWith("mcp__") ||
-		row.toolName === "codemode" ||
-		!row.toolDefinition?.renderCall
+		toolName.startsWith("mcp__") ||
+		toolName === "codemode" ||
+		!own?.renderCall
 	);
 }
 
@@ -232,7 +214,7 @@ function scriptDetail(code: unknown, calls: ScriptCall[]) {
 	);
 }
 
-function scriptRenderers(definition: Fallback["toolDefinition"]) {
+function scriptRenderers(definition: ToolRenderers | undefined) {
 	return {
 		renderCall(args: unknown, theme: Theme, context: RenderContext): Component {
 			const state = context.state as { calls?: ScriptCall[] };
@@ -273,18 +255,15 @@ function scriptRenderers(definition: Fallback["toolDefinition"]) {
 	};
 }
 
-export function fallbackRenderers(row: Fallback) {
-	if (row.toolName === "codemode") return scriptRenderers(row.toolDefinition);
-	const label = row.toolName.startsWith("mcp__")
-		? undefined
-		: row.toolDefinition?.label;
+function fallbackRenderers(toolName: string, own: ToolRenderers | undefined) {
+	if (toolName === "codemode") return scriptRenderers(own);
 	return {
 		renderCall(
 			args: unknown,
 			theme: Theme,
 			context: Status & { expanded: boolean },
 		): Component {
-			const head = fallbackTitle(row.toolName, label, args, theme, context);
+			const head = title(toolName, args, theme, context);
 			const body = JSON.stringify(args ?? {}, null, 2);
 			return new View(
 				new Text(`${head}\n${theme.fg("dim", body)}`, 0, 0),
@@ -306,6 +285,16 @@ export function fallbackRenderers(row: Fallback) {
 			);
 		},
 	};
+}
+
+export function compactToolRenderers(
+	toolName: string,
+	next: () => ToolRenderers | undefined,
+): ToolRenderers | undefined {
+	if (!held(compactStream)) return next();
+	const own = next();
+	if (!usesFallback(toolName, own)) return own;
+	return { ...own, renderShell: "self", ...fallbackRenderers(toolName, own) };
 }
 
 // The options mirror what Pi's session passes when it builds its own base tools.
@@ -342,5 +331,6 @@ export function syncCompactTools(pi: ExtensionAPI, ctx?: ExtensionContext) {
 }
 
 export function registerCompactTools(pi: ExtensionAPI) {
+	pi.registerToolRenderer(compactToolRenderers);
 	syncCompactTools(pi);
 }

@@ -203,6 +203,7 @@ function loadExtension({
 			registerCommand: (name, command) => commands.set(name, command),
 			registerShortcut: (key, shortcut) => shortcuts.set(key, shortcut),
 			registerMessageRenderer() {},
+			registerToolRenderer() {},
 			registerProvider() {},
 			registerTool: (tool) => tools.push(tool),
 			sendMessage: (message, options) => {

@@ -16,11 +16,11 @@ import {
 	createWriteToolDefinition,
 	initTheme,
 } from "@earendil-works/pi-coding-agent";
+import { createToolHtmlRenderer } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/export-html/tool-renderer.js";
 
 import {
-	fallbackRenderers,
+	compactToolRenderers,
 	syncCompactTools,
-	usesFallback,
 } from "../extensions/compact-tools.ts";
 import { readSelection, replaceSelection } from "../extensions/configure.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
@@ -46,13 +46,14 @@ function sessionContext(cwd) {
 	return { cwd, isProjectTrusted: () => false };
 }
 
-function loadTools() {
+function loadTools(resolvers = []) {
 	const tools = new Map();
 	const pi = {
 		on() {},
 		registerCommand() {},
 		registerShortcut() {},
 		registerMessageRenderer() {},
+		registerToolRenderer: (resolver) => resolvers.push(resolver),
 		registerProvider() {},
 		registerTool: (tool) => tools.set(tool.name, tool),
 		exec: async () => ({ code: 0, stdout: "", stderr: "" }),
@@ -103,6 +104,19 @@ function renderContext(args, expanded, cwd) {
 		showImages: false,
 		isError: false,
 	};
+}
+
+function loadCodemode() {
+	let codemode;
+	createCodemodeExtension()({
+		registerTool: (tool) => {
+			codemode = tool;
+		},
+		appendEntry() {},
+		getSettings: () => ({}),
+		getAllTools: () => [],
+	});
+	return codemode;
 }
 
 function lines(component, width = 60) {
@@ -304,28 +318,14 @@ test("MCP and renderer-less tools render one Grok row closed and their arguments
 		fg: (color, text) => `<${color}>${text}</${color}>`,
 		bold: (text) => `<b>${text}</b>`,
 	};
+	loadTools();
 	const renderCall = () => {};
-	assert.equal(
-		usesFallback({
-			toolName: "mcp__engram__mem_search",
-			toolDefinition: { renderCall },
-		}),
-		true,
-	);
-	assert.equal(
-		usesFallback({
-			toolName: "spawn_child",
-			toolDefinition: { label: "Spawn Child" },
-		}),
-		true,
-	);
-	assert.equal(usesFallback({ toolName: "unknown" }), true);
-	assert.equal(
-		usesFallback({ toolName: "read", toolDefinition: { renderCall } }),
-		false,
-	);
+	const mcp = compactToolRenderers("mcp__engram__mem_search", () => ({
+		renderCall,
+	}));
+	assert.equal(mcp.renderShell, "self");
+	assert.notEqual(mcp.renderCall, renderCall);
 	const status = { isError: false, isPartial: false };
-	const mcp = fallbackRenderers({ toolName: "mcp__engram__mem_search" });
 	const args = { query: "typebox", project: "pi" };
 	const closed = { ...status, expanded: false };
 	assert.deepEqual(
@@ -339,10 +339,11 @@ test("MCP and renderer-less tools render one Grok row closed and their arguments
 	);
 	const output = { content: [{ type: "text", text: "Found 2" }] };
 	assert.deepEqual(mcp.renderResult(output, {}, tagged, closed).render(80), []);
-	const child = fallbackRenderers({
-		toolName: "spawn_child",
-		toolDefinition: { label: "Spawn Child" },
-	});
+	const child = compactToolRenderers("spawn_child", () => ({
+		renderShell: "default",
+	}));
+	assert.equal(child.renderShell, "self");
+	assert.equal(compactToolRenderers("unknown", () => undefined).renderShell, "self");
 	assert.deepEqual(
 		lines(
 			child.renderCall({ task: "Audit\nthe repo" }, theme, {
@@ -378,18 +379,11 @@ test("MCP and renderer-less tools render one Grok row closed and their arguments
 
 test("a codemode script is one Run script row closed and Pi's code and output under the bar open", () => {
 	initTheme("dark", false);
-	let codemode;
-	createCodemodeExtension()({
-		registerTool: (tool) => {
-			codemode = tool;
-		},
-		appendEntry() {},
-		getSettings: () => ({}),
-		getAllTools: () => [],
-	});
-	const row = { toolName: "codemode", toolDefinition: codemode };
-	assert.equal(usesFallback(row), true);
-	const renderers = fallbackRenderers(row);
+	loadTools();
+	const codemode = loadCodemode();
+	const renderers = compactToolRenderers("codemode", () => codemode);
+	assert.equal(renderers.renderShell, "self");
+	assert.notEqual(renderers.renderCall, codemode.renderCall);
 	const args = {
 		code: '// @options: {"max_output_tokens": 1000}\nconst issues = await sentry_search_issues({ query: "is:unresolved" });\nreturn issues.length;',
 	};
@@ -430,6 +424,64 @@ test("a codemode script is one Run script row closed and Pi's code and output un
 	for (let width = 1; width <= 60; width++)
 		for (const line of call.render(width))
 			assert.ok(stripVTControlCharacters(line).length <= width, `width ${width}`);
+});
+
+test("a tool with its own call renderer passes through, and so does every tool when compact rendering is off", () => {
+	loadTools();
+	const own = { renderCall() {}, renderResult() {} };
+	assert.equal(compactToolRenderers("read", () => own), own);
+	const preview = readSelection(undefined, []);
+	assert.equal(preview.status, "ready");
+	preview.selection.capabilities["compact-rendering"] = false;
+	replaceSelection(preview.selection);
+	const mcp = { renderCall() {} };
+	assert.equal(compactToolRenderers("mcp__engram__mem_search", () => mcp), mcp);
+	assert.equal(compactToolRenderers("spawn_child", () => undefined), undefined);
+});
+
+test("the HTML export draws codemode and MCP rows through the registered resolver", () => {
+	initTheme("dark", false);
+	const resolvers = [];
+	loadTools(resolvers);
+	const definitions = { codemode: loadCodemode() };
+	const html = createToolHtmlRenderer({
+		getToolRenderers: (name) =>
+			resolvers.reduceRight(
+				(next, resolver) => () => resolver(name, next),
+				() => definitions[name],
+			)(),
+		theme,
+		cwd: "/",
+	});
+	const cases = {
+		codemode: { code: "const head = 1;\nreturn sentinel;" },
+		mcp__engram__mem_search: { query: "typebox" },
+		spawn_child: { task: "Audit", scope: "sentinel-value" },
+	};
+	const heads = {
+		codemode: "Run script",
+		mcp__engram__mem_search: "Engram",
+		spawn_child: "Spawn Child",
+	};
+	for (const [name, args] of Object.entries(cases)) {
+		const call = html.renderCall(`call-${name}`, name, args);
+		assert.ok(call?.includes(heads[name]), name);
+		const hidden = {
+			codemode: ["return sentinel;"],
+			mcp__engram__mem_search: ["typebox"],
+			spawn_child: ["sentinel-value"],
+		}[name];
+		for (const value of hidden)
+			assert.ok(!call.includes(value), `${name} call omits ${value}`);
+		const result = html.renderResult(
+			`call-${name}`,
+			name,
+			[{ type: "text", text: "Found 2" }],
+			undefined,
+			false,
+		);
+		assert.ok(result?.expanded.includes("Found 2"), name);
+	}
 });
 
 test("turning compact rendering off registers the seven tools with the session cwd", async () => {

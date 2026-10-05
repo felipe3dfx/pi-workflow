@@ -198,6 +198,7 @@ test("/workflow:delegation-check rejects extra arguments and reports a missing k
 			registerTool() {},
 			registerShortcut() {},
 			registerMessageRenderer() {},
+			registerToolRenderer() {},
 			registerProvider() {},
 			sendMessage() {},
 		},

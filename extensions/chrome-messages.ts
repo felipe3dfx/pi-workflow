@@ -28,7 +28,6 @@ import {
 } from "@earendil-works/pi-tui";
 
 import { markThought, patchChat, restoreChat } from "./chrome-groups.ts";
-import { fallbackRenderers, usesFallback } from "./compact-tools.ts";
 import { sanitizeTaskText } from "./todo-header.ts";
 
 const THEME_KEY = Symbol.for("@earendil-works/pi-coding-agent:theme");
@@ -594,24 +593,6 @@ function guarded(replacement: Method) {
 }
 
 type MouseEvent = { x: number; width: number };
-type ToolDefinitionLike = Parameters<typeof usesFallback>[0]["toolDefinition"];
-
-function wrapToolDefinition(original: Method) {
-	return function (this: unknown, toolName: string) {
-		const toolDefinition = (
-			original as (name: string) => ToolDefinitionLike
-		).call(this, toolName);
-		const row = { toolName, toolDefinition };
-		if (!usesFallback(row)) return toolDefinition;
-		return {
-			...toolDefinition,
-			name: toolName,
-			renderShell: "self",
-			...fallbackRenderers(row),
-		};
-	} as Method;
-}
-
 function wrapRowRender(original: Method) {
 	return function (this: unknown, outer: number) {
 		const edge = edgeFor(assistantInset, outer);
@@ -672,12 +653,6 @@ const targets: {
 		proto: InteractiveMode.prototype,
 		name: "renderSessionEntries",
 		create: wrapRenderSessionEntries,
-		replaces: false,
-	},
-	{
-		proto: InteractiveMode.prototype,
-		name: "getRegisteredToolDefinition",
-		create: wrapToolDefinition,
 		replaces: false,
 	},
 	...[ToolExecutionComponent, BashExecutionComponent].flatMap((row) => [

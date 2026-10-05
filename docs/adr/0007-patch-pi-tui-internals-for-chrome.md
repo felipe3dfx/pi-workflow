@@ -23,3 +23,5 @@ Where Pi does expose an API (header, footer, widgets, editor component, theme), 
 ## Consequences
 
 Every Pi upgrade requires re-verifying the chrome. The patch modules (`extensions/chrome-messages.ts`, `extensions/chrome-menus.ts`) carry source notes naming the Pi version and functions they replicate. A Pi change to those internals can break the styling or the session with no warning from the harness. The peer range is the one in `package.json`.
+
+Tool row renderers go through Pi's `registerToolRenderer`, not a patch.

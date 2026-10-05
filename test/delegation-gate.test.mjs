@@ -125,6 +125,7 @@ function loadExtension({ legacy = false, profilesPath }) {
 			registerCommand() {},
 			registerShortcut() {},
 			registerMessageRenderer() {},
+			registerToolRenderer() {},
 			registerProvider() {},
 			registerTool: (tool) => tools.push(tool),
 			sendMessage: (message, options) => messages.push({ message, options }),

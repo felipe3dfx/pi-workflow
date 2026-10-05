@@ -22,3 +22,5 @@ Supersedes: ADR-0005, only its clause that `@heyhuynhgiabuu/pi-pretty` is an exp
 Overriding the tools makes `grep`, `find`, and `ls` active by default. A missing `pi-pretty` install is no longer a degraded harness. Per-row `Enter`, left arrow, and `Ctrl+e` bindings are not provided, because Pi has no per-row focus and reserves `Enter` for submit.
 
 The overrides call Pi's built-in tool factories with the session working directory and read settings on each call. A session that injects its own tools or settings through the SDK loses them for these seven tools. With `--no-builtin-tools`, all seven stay active because they are extension tools.
+
+MCP tools, `codemode`, and tools without a call renderer get compact rows through Pi's `registerToolRenderer`, which also applies to the HTML export; renderer-less third-party tools are titled from their tool name. Pi's HTML export draws calls only collapsed, so exported compact rows show the call head without arguments or script code.

@@ -181,6 +181,7 @@ function extensionCommands(path) {
 			registerTool: () => {},
 			registerShortcut: () => {},
 			registerMessageRenderer: () => {},
+			registerToolRenderer: () => {},
 			registerProvider: () => {},
 		},
 		{ modelProfiles: { path } },

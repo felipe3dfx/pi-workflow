@@ -25,6 +25,7 @@ function extension(commands, notifications) {
 		registerTool() {},
 		registerShortcut() {},
 		registerMessageRenderer() {},
+		registerToolRenderer() {},
 		registerProvider() {},
 		sendMessage() {},
 	});
@@ -251,6 +252,7 @@ test("turning Jev routing on persists for a new process and leaves the model pro
 					registerTool() {},
 					registerShortcut() {},
 					registerMessageRenderer() {},
+					registerToolRenderer() {},
 					registerProvider() {},
 					sendMessage() {},
 				});
