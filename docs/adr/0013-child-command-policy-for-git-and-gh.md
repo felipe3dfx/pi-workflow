@@ -30,7 +30,7 @@ Supersedes: ADR-0011. This reverses its clause, accepted in #166, that the child
 
 A child runs `git status`, `git diff`, `git log`, `git show`, and `gh` reads without asking. A blocked command fails non-zero, and the child lists it in its result for the parent to run. Tests and tools that run `git` outside the worktree keep working, including `npm run check` inside a child.
 
-Deferred until a real session shows the need: `git` and `gh` alias resolution; the `GIT_DIR`, `GIT_WORK_TREE`, and `GIT_CONFIG_*` environment overrides; absolute-path invocations of `git` or `gh`; and stubs for the shell programs `rm` and `find`.
+Deferred until a real session shows the need: `git` and `gh` alias resolution; the `GIT_DIR`, `GIT_WORK_TREE`, and `GIT_CONFIG_*` environment overrides; absolute-path invocations of `git` or `gh`; stubs for the shell programs `rm` and `find`; and SQL.
 
 Accepted risks:
 

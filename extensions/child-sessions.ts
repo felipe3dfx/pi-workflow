@@ -261,6 +261,27 @@ const askParentParameters = Type.Object({
 	question: Type.String({ description: "One question for the parent." }),
 });
 
+export function createAskParentTool(
+	ask: (question: string) => Promise<string>,
+) {
+	return {
+		name: askParentTool,
+		label: "Ask Parent",
+		description:
+			"Ask the parent session one question and wait for its answer. Use it only when you are blocked and the answer changes your next step; a command reserved for the parent is not a reason to ask. An error result means no answer will come; continue without one.",
+		parameters: askParentParameters,
+		async execute(
+			_toolCallId: string,
+			params: Static<typeof askParentParameters>,
+		) {
+			return {
+				content: [{ type: "text" as const, text: await ask(params.question) }],
+				details: {},
+			};
+		},
+	};
+}
+
 const createPiChildSession: ChildSessionFactory = async (spec) => {
 	const runtime = parentRuntime(spec.modelRegistry);
 	if (!runtime) {
@@ -293,19 +314,7 @@ const createPiChildSession: ChildSessionFactory = async (spec) => {
 		customTools: [
 			createChildBashTool(spec.cwd),
 			createChildCodeGraphTool(spec.cwd),
-			{
-				name: askParentTool,
-				label: "Ask Parent",
-				description:
-					"Ask the parent session one question and wait for its answer. Use it only when you are blocked and the answer changes your next step; a command reserved for the parent is not a reason to ask. An error result means no answer will come; continue without one.",
-				parameters: askParentParameters,
-				async execute(_toolCallId, params: Static<typeof askParentParameters>) {
-					return {
-						content: [{ type: "text", text: await spec.ask(params.question) }],
-						details: {},
-					};
-				},
-			},
+			createAskParentTool(spec.ask),
 			...(reportsResult(spec.role)
 				? [
 						{
@@ -1263,7 +1272,7 @@ export function createChildQueryTools(
 			"Answer the question a child session is waiting on, naming the question number from its message. A reply to a question that is not waiting is refused.",
 		parameters: replyChildParameters,
 		async execute(_toolCallId, params) {
-			if (unseatedChild()) throw new Error(unseatedMessage);
+			if (!held(childOverlay)) throw new Error(unseatedMessage);
 			sessions.reply(params.id, params.question, params.answer);
 			return report([`Reply sent to child ${params.id}.`], {
 				id: params.id,

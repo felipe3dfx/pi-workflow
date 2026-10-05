@@ -168,12 +168,12 @@ class ResultCard implements Component {
 					`(${sanitizeTaskText(key)} to ${this.expanded ? "collapse" : "expand"})`,
 				)
 			: "";
+		const open = this.open();
 		return frame(
 			outer,
-			header(t, this.card, this.question, this.open()),
+			header(t, this.card, this.question, open),
 			hint,
 			(inner) => {
-				const open = this.open();
 				const lines: string[] = [];
 				if (open && this.card.task)
 					lines.push(t.fg("dim", `Task ${sanitizeTaskText(this.card.task)}`));

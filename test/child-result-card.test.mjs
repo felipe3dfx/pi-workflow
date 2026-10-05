@@ -355,7 +355,7 @@ test("the answer card is the question card's twin: Parent header with the questi
 	const component = answerCard({ id, question: 2, answer }, theme());
 	const asked = card({
 		customType: "pi-workflow-child-question",
-		details: { ...details, state: "waiting", question: 2, text: "Q?" },
+		details: { ...details, state: "waiting", question: 2, text: answer },
 	});
 	assert.deepEqual(plain(component), [
 		"   ◆ Parent → 5636 · answer 2",
@@ -371,9 +371,11 @@ test("the answer card is the question card's twin: Parent header with the questi
 		plain(component)[0].indexOf("◆"),
 		plain(asked)[1].indexOf("◆"),
 	);
-	assert.ok(
-		component.render(90)[0].includes(theme().fg("toolTitle", "◆")),
-	);
+	const answerLines = component.render(90);
+	const askedLines = asked.render(90).slice(1);
+	const labelStyle = (header) => header.match(/◆\S* (\S*?)[A-Z]/)[1];
+	assert.equal(labelStyle(answerLines[0]), labelStyle(askedLines[0]));
+	assert.deepEqual(answerLines.slice(1), askedLines.slice(1));
 });
 
 test("every answer card line fits the width it is given", (t) => {

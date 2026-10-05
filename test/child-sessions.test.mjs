@@ -36,6 +36,7 @@ import {
 } from "@earendil-works/pi-tui";
 
 import { createChildBashTool } from "../extensions/child-bash.ts";
+import { createAskParentTool } from "../extensions/child-sessions.ts";
 import { compactToolRenderers } from "../extensions/compact-tools.ts";
 import { capabilities, replaceSelection } from "../extensions/configure.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
@@ -2358,7 +2359,6 @@ test("reply_child paints the answer card with compact rendering on and off, show
 			expectations: {},
 		});
 		const renderers = compactToolRenderers("reply_child", () => tool);
-		assert.equal(renderers.renderCall, tool.renderCall);
 		cards.push(lines(renderers.renderCall(args, theme, {})));
 	}
 	assert.deepEqual(cards[0], cards[1]);
@@ -2366,17 +2366,37 @@ test("reply_child paints the answer card with compact rendering on and off, show
 		"   ◆ Parent → 5636 · answer 3",
 		"     src/parser.ts",
 	]);
-	const result = (isError, message) => ({
-		content: [{ type: "text", text: message }],
-		details: {},
-		isError,
-	});
+	const refusal = await use(extension, "reply_child", {
+		id: "nope",
+		question: 1,
+		answer: "x",
+	}).then(
+		() => assert.fail("the reply was accepted"),
+		(error) => error.message,
+	);
 	const render = (isError, message) =>
-		lines(tool.renderResult(result(isError, message), {}, theme, { isError }));
-	assert.deepEqual(render(false, "Reply sent to child 5636."), []);
-	assert.deepEqual(render(true, "No child nope in this session."), [
-		"No child nope in this session.",
-	]);
+		tool.renderResult(
+			{ content: [{ type: "text", text: message }], details: {}, isError },
+			{},
+			theme,
+			{ isError },
+		);
+	assert.deepEqual(lines(render(false, "Reply sent to child 5636.")), []);
+	const refused = render(true, refusal);
+	assert.deepEqual(lines(refused), ["No child nope in this session."]);
+	assert.ok(refused.render(60)[0].includes(theme.fg("error", refusal)));
+});
+
+test("the ask_parent description tells the child to ask only when blocked and not to ask about reserved commands", () => {
+	const { description } = createAskParentTool(async () => "answer");
+	assert.match(
+		description,
+		/only when you are blocked and the answer changes your next step/,
+	);
+	assert.match(
+		description,
+		/a command reserved for the parent is not a reason to ask/,
+	);
 });
 
 test("a repeated reply to an answered question never answers the child's next question", async () => {
