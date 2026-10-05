@@ -45,7 +45,6 @@ import {
 	isWorking,
 	type Schedule,
 } from "./child-sessions.ts";
-import { childName } from "./children-box.ts";
 import { childOutcome } from "./child-projection.ts";
 import { registerChildrenBox } from "./children-box.ts";
 import { createFooterHints, registerChrome } from "./chrome.ts";
@@ -162,17 +161,10 @@ export default function piWorkflowExtension(
 	registerChildrenBox(pi, childSessions, options.childSessions?.refresh);
 	registerSessionTodo(pi);
 	const footerHints = createFooterHints();
-	contribute("child-session", "header", () => {
-		const working = childSessions
-			.list()
-			.filter((child) => isWorking(child.state));
-		const first = working[0];
-		return {
-			count: working.length,
-			label: first ? `Subagent: ${childName(first)}…` : undefined,
-			stepMs: first ? Date.now() - (first.startedAt ?? first.createdAt) : 0,
-		};
-	});
+	contribute("child-session", "header", () => ({
+		count: childSessions.list().filter((child) => isWorking(child.state))
+			.length,
+	}));
 	registerChrome(pi, footerHints);
 	pi.registerShortcut("alt+a", {
 		description: "Open the subagents view",

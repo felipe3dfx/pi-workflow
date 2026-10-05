@@ -64,7 +64,7 @@ test("the box reads Subagents with the count, and each row shows the state, name
 		lines[1],
 		/\? explore c3d4 asks question 1 +grok-4\.7 \(low\) 1m 02s/,
 	);
-	assert.match(lines[2], /◐ worker a1b2 bash npm test +grok-4\.7 \(high\) 12s/);
+	assert.match(lines[2], /⠦ worker a1b2 bash npm test +grok-4\.7 \(high\) 12s/);
 	assert.equal(lines.length, 3);
 });
 
@@ -94,7 +94,7 @@ test("every row shows its role plus a four-character id, even when the role is u
 	);
 	assert.match(lines[1], /worker a1b2 /);
 	assert.match(lines[2], /worker c3d4 /);
-	assert.match(lines[3], /◐ explore e5f6 Fix/);
+	assert.match(lines[3], /⠦ explore e5f6 Fix/);
 });
 
 test("finished rows stay 60 seconds, at most the three latest, after the working rows", () => {
@@ -117,7 +117,7 @@ test("finished rows stay 60 seconds, at most the three latest, after the working
 		lines
 			.slice(1)
 			.map((line) => stripVTControlCharacters(line).trim().split(" ")[0]),
-		["◐", "✓", "✗", "–"],
+		["⠦", "✓", "✗", "–"],
 	);
 	assert.match(lines[0], /Subagents 4/);
 	assert.doesNotMatch(lines.join("\n"), /old|slow/);
@@ -143,7 +143,7 @@ test("waiting rows come first, then running, then queued, and the box shows eigh
 	assert.match(lines[0], /Subagents 11/);
 	assert.equal(lines.length, 10);
 	assert.match(lines[1], /\? w /);
-	assert.match(lines[2], /◐ r0 /);
+	assert.match(lines[2], /⠦ r0 /);
 	assert.match(lines[6], /○ q0 /);
 	assert.match(lines[9], /… 3 more · alt\+a view/);
 });
@@ -166,7 +166,7 @@ test("the running glyph and the role use the accent while the short id stays pla
 		fg: (color, text) => `<${color}>${text}</${color}>`,
 	};
 	const [, row] = renderChildrenBox(tagged, [child({})], now, 200);
-	assert.match(row, /<accent>◐<\/accent> <accent>worker<\/accent> a1b2 /);
+	assert.match(row, /<accent>⠦<\/accent> <accent>worker<\/accent> a1b2 /);
 });
 
 test("the heading is a dim chevron, a bold muted title, and a dim count", () => {
@@ -177,4 +177,28 @@ test("the heading is a dim chevron, a bold muted title, and a dim count", () => 
 	};
 	const [heading] = renderChildrenBox(tagged, [child({})], now, 80);
 	assert.match(heading, /^<dim>▾<\/dim> <b><muted>Subagents<\/muted><\/b> <dim>1<\/dim> +<dim>alt\+a view<\/dim>$/);
+});
+
+test("a running row cycles the working spinner every 133 ms while other states keep their glyph", () => {
+	const glyphAt = (record, at) =>
+		stripVTControlCharacters(renderChildrenBox(theme, [record], at, 80)[1])
+			.trim()
+			.split(" ")[0];
+	const start = 1_000_000 - (1_000_000 % (133 * 8));
+	assert.deepEqual(
+		Array.from({ length: 9 }, (_, i) => glyphAt(child({}), start + i * 133)),
+		["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠋"],
+	);
+	assert.equal(glyphAt(child({}), start + 132), "⠋");
+	for (const [state, glyph] of [
+		["queued", "○"],
+		["waiting", "?"],
+		["completed", "✓"],
+		["failed", "✗"],
+		["cancelled", "–"],
+		["timed out", "⧖"],
+	]) {
+		for (const at of [start, start + 133])
+			assert.equal(glyphAt(child({ state, endedAt: at }), at), glyph);
+	}
 });

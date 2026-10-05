@@ -27,6 +27,8 @@ const maxFinished = 3;
 const maxRows = 8;
 const tickMs = 1000;
 const coalesceMs = 400;
+export const spinnerMs = 133;
+export const workingFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"];
 
 const glyphs: Record<ChildRecord["state"], [string, ThemeColor]> = {
 	queued: ["○", "muted"],
@@ -75,6 +77,13 @@ export function childGlyph(theme: ChildTheme, child: ChildRecord) {
 	return theme.fg(color, glyph);
 }
 
+function rowGlyph(theme: ChildTheme, child: ChildRecord, now: number) {
+	if (child.state !== "running") return childGlyph(theme, child);
+	const frame =
+		workingFrames[Math.floor(now / spinnerMs) % workingFrames.length];
+	return theme.fg(glyphs.running[1], frame);
+}
+
 function childrenHeading(theme: ChildTheme, count: number) {
 	return `${theme.fg("dim", "▾")} ${theme.bold(theme.fg("muted", "Subagents"))} ${theme.fg("dim", String(count))}`;
 }
@@ -82,12 +91,13 @@ function childrenHeading(theme: ChildTheme, count: number) {
 function renderChildRow(
 	theme: ChildTheme,
 	child: ChildRecord,
-	meta: string,
+	now: number,
 	active: boolean,
 	width: number,
 ) {
 	const step = sanitizeTaskText(childStep(child));
-	const left = ` ${childGlyph(theme, child)} ${theme.fg("accent", child.role)} ${child.id.slice(0, 4)} ${step}`;
+	const meta = childMeta(child, now);
+	const left = ` ${rowGlyph(theme, child, now)} ${theme.fg("accent", child.role)} ${child.id.slice(0, 4)} ${step}`;
 	const line = spread(left, theme.fg("dim", meta), width);
 	return active ? theme.bg("selectedBg", line) : line;
 }
@@ -116,7 +126,7 @@ export function renderChildrenBox(
 	const lines = [
 		spread(childrenHeading(theme, rows.length), hint, width),
 		...shown.map((child, i) =>
-			renderChildRow(theme, child, childMeta(child, now), i === 0, width),
+			renderChildRow(theme, child, now, i === 0, width),
 		),
 	];
 	if (rows.length > shown.length) {
@@ -137,6 +147,7 @@ export function registerChildrenBox(
 	let unsubscribePlace: (() => void) | undefined;
 	let tick: (() => void) | undefined;
 	let tickWait = 0;
+	let spin: (() => void) | undefined;
 	let cooling: (() => void) | undefined;
 	let dirty = false;
 
@@ -154,11 +165,20 @@ export function registerChildrenBox(
 		}, coalesceMs);
 	}
 
+	function animate() {
+		tui?.requestRender();
+		spin = schedule(animate, spinnerMs);
+	}
+
 	function update() {
 		render();
 		notifyHeader();
 		const now = Date.now();
 		const records = sessions.list();
+		if (!records.some((child) => child.state === "running")) {
+			spin?.();
+			spin = undefined;
+		} else if (!spin) spin = schedule(animate, spinnerMs);
 		const wait = records.some((child) => isWorking(child.state))
 			? tickMs
 			: Math.min(
@@ -182,7 +202,8 @@ export function registerChildrenBox(
 		unsubscribePlace?.();
 		tick?.();
 		cooling?.();
-		unsubscribe = unsubscribePlace = tick = cooling = tui = undefined;
+		spin?.();
+		unsubscribe = unsubscribePlace = tick = cooling = spin = tui = undefined;
 		dirty = false;
 	}
 
