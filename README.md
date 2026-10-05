@@ -25,7 +25,7 @@ For configuration decisions and behavior, see [ADR 0009](docs/adr/0009-guided-co
 - `/workflow:config` applies the package's default Pi settings: `tuiMode: "fullscreen"`, `theme: "pi-workflow"`, `quietStartup: true`, and `defaultTools: ["+codemode"]`.
 - Workflow choices are stored in the Pi agent directory: `pi-workflow-selection.json`, `pi-workflow-models.json`, and `pi-workflow-routing.json`.
 - Legacy `mcp-adapter.json` configuration is not read; the built-in Pi MCP settings are used. See the warning about `pi-mcp-adapter` below.
-- While Jev routing is off, the child shell's `git`/`gh` guard is a policy boundary, not a security boundary: absolute paths, resetting `PATH`, or running `git -C <repo>` from outside the worktree can bypass it. See [ADR 0011](docs/adr/0011-git-and-gh-guard-in-child-bash.md).
+- Child sessions read `git` and GitHub state on their own; mutating `git` subcommands inside the child's worktree and mutating or publishing `gh` commands stay with the parent, whether Jev routing is on or off. The child shell's guard is a policy boundary, not a security boundary: absolute paths, resetting `PATH`, aliases, `GIT_*` overrides, or running `git -C <repo>` from outside the worktree can bypass it. See [ADR 0013](docs/adr/0013-child-command-policy-for-git-and-gh.md).
 
 For internal communication and publication-language requirements, see the [Language Contract in `AGENTS.md`](AGENTS.md#language-contract).
 

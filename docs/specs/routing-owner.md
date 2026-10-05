@@ -35,7 +35,7 @@ The `/workflow:config` menu has a Jev routing row after the capability rows. The
 
 ### Off
 
-Jev is not called. Gated parent tools run. Failing to delegate does not block them. The parent names the child role on launch. `explore` is read-only mapping. `worker` is implementation or command execution. `verify` is verification that may run checks and tests without editing the worktree. A launch with no role does not invent `worker` and does not launch. A named role may launch. Invocations of `git` and `gh` are the repository-state commands. While routing is off they stay in the parent: a launch does not read the task text, and the child's `bash` resolves `git` and `gh` to stubs on `PATH`: `gh` refuses to run, and `git` refuses from inside the child's worktree, as [ADR 0011](../adr/0011-git-and-gh-guard-in-child-bash.md) decides. The explore contract still has no shell.
+Jev is not called. Gated parent tools run. Failing to delegate does not block them. The parent names the child role on launch. `explore` is read-only mapping. `worker` is implementation or command execution. `verify` is verification that may run checks and tests without editing the worktree. A launch with no role does not invent `worker` and does not launch. A named role may launch. A launch does not read the task text. The explore contract still has no shell.
 
 ### On
 
@@ -61,7 +61,7 @@ This contract owns the destination and the Specialist. It does not choose a mode
 
 The child session runs in the parent process through the Pi SDK. This is a design constraint, not a tested behavior.
 
-Invocations of `git` and `gh` stay in the parent only while routing is off. While routing is off, the child's `bash` refuses `gh`, and `git` from inside the child's worktree, when they are looked up through `PATH`; `git` from outside the worktree runs. An absolute path, a reset `PATH`, or `git -C <repo>` from outside the worktree bypasses that policy guard. While routing is on, Jev may leave that work to a Specialist. That does not give the explore contract a shell.
+The child command policy for `git` and `gh` is the same whether routing is on or off, as [ADR 0013](../adr/0013-child-command-policy-for-git-and-gh.md) decides. A child reads `git` and GitHub state on its own. Mutating `git` subcommands from inside the child's worktree, and mutating or publishing `gh` commands from any directory, stay with the parent: the child's `bash` resolves `git` and `gh` to stubs on `PATH` that refuse them with a message telling the child to continue and list the command in its result. `git` from outside the worktree runs. An absolute path, a reset `PATH`, an alias, a `GIT_*` override, or `git -C <repo>` from outside the worktree bypasses that policy guard. Neither routing mode gives the explore contract a shell.
 
 ## Testing decisions
 
@@ -69,12 +69,13 @@ Tests cross the routing seam and the `/workflow:config` menu, not private helper
 
 - A missing choice document is off and does not call Jev.
 - Changing the menu row to on and confirming Apply persists across a new process. Restart does not reset it. The model profiles document is unchanged.
-- While off, a gated parent tool runs. A task that mentions `git` or `gh` launches with its named role, and the child's `bash` refuses a command that runs `gh`, or `git` from inside the child's worktree, through `PATH`, while one that only names them as an argument runs. A launch with no role does not launch and does not invent `worker`. A named role may launch. Jev is not called.
+- While off, a gated parent tool runs. A task that mentions `git` or `gh` launches with its named role. A launch with no role does not launch and does not invent `worker`. A named role may launch. Jev is not called.
 - While on, `stay` lets the next gated tool run. `decide` blocks it and does not say to launch. `leave` names the Specialist Jev chose and does not let the parent tool run. After a launch for the same message, the parent tool runs and Jev is not asked again.
 - An explicit child request while on asks Jev for the destination and the Specialist in the same call.
 - A skill name in the user message does not change the destination or the Specialist.
 - The same user message reuses one verdict. A different message asks again. After Launch blocked, the next gated tool or launch for the same message asks Jev again.
 - A missing key while on is Launch blocked. A missing key while off is not. While on, a missing `typesafe/jev-latest` classifier, credentials for another provider's Jev alone, a stop reason other than `stop`, or a label outside the criteria is Launch blocked.
+- With routing on and off, the child's `bash` runs `git` and `gh` reads, refuses each reserved `git` subcommand from inside the child's worktree and each reserved `gh` command from any directory with the same message, runs `git` from outside the worktree, and runs a command that only names them as an argument.
 - A gated tool called from a `codemode` script follows the same verdict as a direct call. When it is blocked, the parent model receives the block reason even if the script drops it. While on, a `codemode` script that calls no gated tool runs after `leave`.
 - Launching a child does not change the parent's model or thinking. A profile entry that names a virtual model launches the child on that model.
 - The explore contract still has no shell. A result does not claim a command ran unless that output is present.

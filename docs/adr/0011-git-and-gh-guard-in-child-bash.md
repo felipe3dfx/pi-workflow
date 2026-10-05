@@ -4,6 +4,8 @@
 
 Acceptance: approval and merge of the introducing PR.
 
+Superseded by [ADR 0013](0013-child-command-policy-for-git-and-gh.md).
+
 ## Decision
 
 While Jev routing is off, `git` and `gh` stay in the parent session. The harness enforces that rule where a child session runs programs, not on the text of the task it launches with.
