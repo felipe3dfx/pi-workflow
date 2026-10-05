@@ -132,5 +132,8 @@ test("while Jev routing is on, a child's bash runs git", async (t) => {
 		JSON.stringify({ schemaVersion: 1, jevRouting: "on" }),
 	);
 
-	assert.match(text(await run("git --version")), /^git version/);
+	assert.match(
+		text(await run("git --version", temporaryDirectory(t))),
+		/^git version/,
+	);
 });
