@@ -58,10 +58,10 @@ import {
 import { registerSessionTodo, syncTodoTool } from "./todo-extension.ts";
 import { registerCompactTools, syncCompactTools } from "./compact-tools.ts";
 import { activePiAgentDirectory, writeJsonAtomically } from "./mcp-config.ts";
-import { openWorkflowSettings } from "./workflow-settings.ts";
+import { jevRoutingEnabled, setJevRouting } from "./workflow-settings.ts";
 
 const usage =
-	"Usage: /workflow:status | /workflow:doctor | /workflow:config [settings] | /workflow:models | /workflow:subagents | /workflow:delegation-check";
+	"Usage: /workflow:status | /workflow:doctor | /workflow:config | /workflow:models | /workflow:subagents | /workflow:delegation-check";
 
 
 
@@ -323,16 +323,8 @@ export default function piWorkflowExtension(
 	});
 	pi.registerCommand("workflow:config", {
 		description:
-			"Configure companions and harness capabilities, or manage Jev routing with 'settings'",
-		getArgumentCompletions: (prefix) =>
-			"settings".startsWith(prefix)
-				? [{ value: "settings", label: "settings" }]
-				: null,
+			"Configure companions, harness capabilities, and Jev routing",
 		handler: async (args, ctx) => {
-			if (args.trim() === "settings") {
-				await openWorkflowSettings(ctx);
-				return;
-			}
 			if (args.trim()) {
 				report(ctx, usage, "error");
 				return;
@@ -355,22 +347,26 @@ export default function piWorkflowExtension(
 					options.catalog?.resolveInstalledVersion,
 				),
 			);
+			const routing = jevRoutingEnabled();
 			const guided = await guideSelection(
 				ctx,
 				seated.selection,
 				packages,
 				states,
+				routing,
 			);
 			if (!guided) return;
-			writeJsonAtomically(selectionPath(), guided);
-			replaceSelection(guided);
+			const { selection: chosen, jevRouting } = guided;
+			writeJsonAtomically(selectionPath(), chosen);
+			if (jevRouting !== routing) setJevRouting(jevRouting);
+			replaceSelection(chosen);
 			const { allowed } = await workflow.checkSpawnTools();
 			syncAskUserTools(pi, footerHints);
 			syncTodoTool(pi);
 			syncCodeGraphTool(pi, options.codegraph);
 			syncCompactTools(pi, ctx);
 			registerChildTools(allowed);
-			const expected = Object.entries(guided.expectations)
+			const expected = Object.entries(chosen.expectations)
 				.filter(([, on]) => on)
 				.map(([name]) => name);
 			await workflow.setup(expected);

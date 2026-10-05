@@ -6,16 +6,14 @@ import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 
 import { initTheme } from "@earendil-works/pi-coding-agent";
-import { SettingsList } from "@earendil-works/pi-tui";
 
-import { patchMenus, restoreMenus } from "../extensions/chrome-menus.ts";
 import { createChildLauncher } from "../extensions/child-launcher.ts";
+import { capabilities } from "../extensions/configure.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 import { classifierRegistry } from "./support/fake-jev.mjs";
 import { withAgentDirectory } from "./support/jev-routing.mjs";
 
 initTheme("dark", false);
-const theme = globalThis[Symbol.for("@earendil-works/pi-coding-agent:theme")];
 
 function extension(commands, notifications) {
 	piWorkflowExtension({
@@ -57,45 +55,191 @@ function launcherContext(cwd, jev) {
 	};
 }
 
-async function openSettings(command, notify) {
+const DOWN = "\x1b[B";
+const ESC = "\x1b";
+
+async function driveConfig(command, notify, drive) {
 	let panel;
-	await command.handler("settings", {
+	await command.handler("", {
 		hasUI: true,
 		mode: "tui",
 		ui: {
 			notify,
-			custom: async (factory) => {
-				panel = factory(undefined, undefined, undefined, () => {});
-			},
+			custom: (factory) =>
+				new Promise((resolve) => {
+					panel = factory(undefined, undefined, undefined, () => resolve());
+					drive(panel);
+				}),
 		},
 	});
-	assert.ok(panel instanceof SettingsList);
 	return panel;
 }
 
-test("/workflow:config settings rejects unknown arguments and needs the TUI", async () => {
+const shown = (panel) =>
+	panel.render(60).map((line) => stripVTControlCharacters(line));
+
+function focusRouting(panel) {
+	for (let i = 0; i < capabilities.length; i++) panel.handleInput(DOWN);
+}
+
+function focus(panel, label) {
+	for (let i = 0; i < 20 && !shown(panel).some((line) => line.startsWith(`→ ${label}`)); i++) {
+		panel.handleInput(DOWN);
+	}
+}
+
+function openApply(panel) {
+	focus(panel, "Apply");
+	panel.handleInput("\r");
+}
+
+function confirmApply(panel) {
+	openApply(panel);
+	focus(panel, "Confirm apply");
+	panel.handleInput("\r");
+}
+
+async function storedRouting(dir) {
+	try {
+		return JSON.parse(await readFile(join(dir, "pi-workflow-routing.json"), "utf8"));
+	} catch {
+		return undefined;
+	}
+}
+
+test("/workflow:config rejects the settings argument and unknown arguments, and needs the TUI", async () => {
 	const notifications = [];
 	const { command, commands, notify } = extension(new Map(), notifications);
 	assert.match(command.description, /Jev routing/);
-	assert.deepEqual(command.getArgumentCompletions("set"), [
-		{ value: "settings", label: "settings" },
-	]);
-	assert.equal(command.getArgumentCompletions("unknown"), null);
+	assert.equal(command.getArgumentCompletions, undefined);
 	assert.equal(commands.has("workflow:settings"), false);
 	assert.equal(commands.has("workflow:configure"), false);
 
-	await command.handler("--force", { hasUI: true, mode: "tui", ui: { notify } });
-	assert.equal(notifications[0].level, "error");
-	assert.match(notifications[0].message, /\/workflow:config/);
+	for (const args of ["--force", "settings"]) {
+		await command.handler(args, { hasUI: true, mode: "tui", ui: { notify } });
+		assert.equal(notifications.at(-1).level, "error");
+		assert.match(notifications.at(-1).message, /Usage: .*\/workflow:config \|/);
+		assert.doesNotMatch(notifications.at(-1).message, /settings\]/);
+	}
 
-	await command.handler("settings", { hasUI: true, mode: "print", ui: { notify } });
+	await command.handler("", { hasUI: true, mode: "print", ui: { notify } });
 	assert.equal(notifications.at(-1).level, "error");
 	assert.match(notifications.at(-1).message, /needs the TUI/);
 });
 
-test("/workflow:config settings turns Jev routing off on the existing settings line", async (t) => {
-	patchMenus();
-	t.after(restoreMenus);
+test("the /workflow:config menu shows the stored Jev routing after the capabilities", async (t) => {
+	const dir = withAgentDirectory(t);
+	await writeFile(
+		join(dir, "pi-workflow-routing.json"),
+		JSON.stringify({ schemaVersion: 1, jevRouting: "on" }),
+	);
+	const { command, notify } = extension(new Map(), []);
+	let lines;
+	await driveConfig(command, notify, (panel) => {
+		lines = shown(panel);
+		panel.handleInput(ESC);
+	});
+	const routing = lines.findIndex((line) => /Jev routing\s+on\s*$/.test(line));
+	assert.ok(routing > 0);
+	assert.ok(lines.findIndex((line) => /Compact rendering/.test(line)) < routing);
+});
+
+test("toggling Jev routing and confirming Apply persists it for a new process and leaves the model profiles alone", async (t) => {
+	const dir = withAgentDirectory(t);
+	const profilesPath = join(dir, "pi-workflow-models.json");
+	const profiles =
+		'{"schemaVersion":2,"active":"default","profiles":{"default":{}}}\n';
+	await writeFile(profilesPath, profiles);
+	const { command, notify } = extension(new Map(), []);
+	let review;
+	await driveConfig(command, notify, (panel) => {
+		focusRouting(panel);
+		assert.ok(shown(panel).some((line) => /Jev routing\s+off\s*$/.test(line)));
+		panel.handleInput(" ");
+		assert.ok(shown(panel).some((line) => /Jev routing\s+on\s*$/.test(line)));
+		openApply(panel);
+		review = shown(panel);
+		focus(panel, "Confirm apply");
+		panel.handleInput("\r");
+	});
+	assert.ok(review.some((line) => /Jev routing: off -> on/.test(line)));
+	assert.deepEqual(await storedRouting(dir), { schemaVersion: 1, jevRouting: "on" });
+	assert.equal(await readFile(profilesPath, "utf8"), profiles);
+
+	const restarted = execFileSync(
+		process.execPath,
+		[
+			"--input-type=module",
+			"--eval",
+			`
+			import { initTheme } from "@earendil-works/pi-coding-agent";
+			import { stripVTControlCharacters } from "node:util";
+import piWorkflowExtension from ${JSON.stringify(new URL("../extensions/pi-workflow.ts", import.meta.url).href)};
+			initTheme("dark", false);
+			const commands = new Map();
+			piWorkflowExtension({
+				on() {},
+				exec: async () => ({ code: 0 }),
+				registerCommand: (name, command) => commands.set(name, command),
+				registerTool() {},
+				registerShortcut() {},
+				registerMessageRenderer() {},
+				registerToolRenderer() {},
+				registerProvider() {},
+				sendMessage() {},
+			});
+			await commands.get("workflow:config").handler("", {
+				hasUI: true,
+				mode: "tui",
+				ui: {
+					notify() {},
+					custom: async (factory) => {
+						const panel = factory(undefined, undefined, undefined, () => {});
+						for (const line of panel.render(60)) console.log(stripVTControlCharacters(line));
+					},
+				},
+			});
+			`,
+		],
+		{
+			cwd: new URL("..", import.meta.url),
+			env: { ...process.env, PI_CODING_AGENT_DIR: dir },
+			encoding: "utf8",
+		},
+	);
+	assert.match(restarted, /Jev routing\s+on\s*$/m);
+});
+
+test("toggling Jev routing and cancelling with Esc writes nothing", async (t) => {
+	const dir = withAgentDirectory(t);
+	const { command, notify } = extension(new Map(), []);
+	await driveConfig(command, notify, (panel) => {
+		focusRouting(panel);
+		panel.handleInput(" ");
+		assert.ok(shown(panel).some((line) => /Jev routing\s+on\s*$/.test(line)));
+		panel.handleInput(ESC);
+	});
+	assert.equal(await storedRouting(dir), undefined);
+});
+
+test("the Apply review omits Jev routing when it is unchanged", async (t) => {
+	withAgentDirectory(t);
+	const { command, notify } = extension(new Map(), []);
+	let review;
+	await driveConfig(command, notify, (panel) => {
+		focusRouting(panel);
+		panel.handleInput(" ");
+		panel.handleInput(" ");
+		openApply(panel);
+		review = shown(panel);
+		panel.handleInput(ESC);
+		panel.handleInput(ESC);
+	});
+	assert.ok(review.some((line) => /Does not uninstall packages/.test(line)));
+	assert.ok(review.every((line) => !/Jev routing:/.test(line)));
+});
+
+test("turning Jev routing off in the menu gates a launch on the stored choice", async (t) => {
 	const dir = withAgentDirectory(t);
 	await writeFile(
 		join(dir, "pi-workflow-routing.json"),
@@ -104,17 +248,14 @@ test("/workflow:config settings turns Jev routing off on the existing settings l
 	const worktree = join(dir, "repo");
 	await mkdir(worktree);
 	execFileSync("git", ["init", "--quiet"], { cwd: worktree });
-	const notifications = [];
-	const { command, notify } = extension(new Map(), notifications);
-	const panel = await openSettings(command, notify);
-	const before = panel.render(50).map((line) => stripVTControlCharacters(line));
-	assert.ok(before.some((line) => /Jev routing\s+on\s*$/.test(line)));
-
-	panel.handleInput(" ");
-	const lines = panel.render(50);
-	const shown = lines.map((line) => stripVTControlCharacters(line));
-	assert.ok(shown.some((line) => /Jev routing\s+off\s*$/.test(line)));
-	assert.ok(lines.some((line) => line.includes(theme.fg("dim", "off"))));
+	const { command, notify } = extension(new Map(), []);
+	await driveConfig(command, notify, (p) => {
+		focusRouting(p);
+		p.handleInput(" ");
+		assert.ok(shown(p).some((line) => /Jev routing\s+off\s*$/.test(line)));
+		confirmApply(p);
+	});
+	assert.deepEqual(await storedRouting(dir), { schemaVersion: 1, jevRouting: "off" });
 
 	const jev = classifierRegistry(() => ({}));
 	const launcher = createChildLauncher({
@@ -134,14 +275,6 @@ test("/workflow:config settings turns Jev routing off on the existing settings l
 	);
 	assert.equal(missingRole.kind, "stay");
 	assert.equal(missingRole.reason, "Jev routing is off.");
-	assert.doesNotMatch(missingRole.warning, /Launch blocked/);
-	assert.doesNotMatch(missingRole.reason, /Jev answered/);
-	const explicit = await launcher.prepareLaunch(
-		{ role: "worker", task: "Map the source", userRequest: "Map the source" },
-		ctx,
-	);
-	assert.equal(explicit.kind, "ready");
-	assert.equal(explicit.role, "worker");
 	assert.equal(jev.requests.length, 0);
 });
 
@@ -224,71 +357,6 @@ for (const [label, write] of [
 		assert.equal(jev.requests.length, 0);
 	});
 }
-
-test("turning Jev routing on persists for a new process and leaves the model profiles alone", async (t) => {
-	const dir = withAgentDirectory(t);
-	const profilesPath = join(dir, "pi-workflow-models.json");
-	const profiles =
-		'{"schemaVersion":2,"active":"default","profiles":{"default":{}}}\n';
-	await writeFile(profilesPath, profiles);
-	const { command, notify } = extension(new Map(), []);
-	const panel = await openSettings(command, notify);
-	const shown = () =>
-		panel.render(50).map((line) => stripVTControlCharacters(line));
-	assert.ok(shown().some((line) => /Jev routing\s+off\s*$/.test(line)));
-
-	panel.handleInput(" ");
-	assert.ok(shown().some((line) => /Jev routing\s+on\s*$/.test(line)));
-
-	const restart = () =>
-		execFileSync(
-			process.execPath,
-			[
-				"--input-type=module",
-				"--eval",
-				`
-				import { initTheme } from "@earendil-works/pi-coding-agent";
-				import { stripVTControlCharacters } from "node:util";
-				import piWorkflowExtension from ${JSON.stringify(new URL("../extensions/pi-workflow.ts", import.meta.url).href)};
-				initTheme("dark", false);
-				const commands = new Map();
-				piWorkflowExtension({
-					on() {},
-					exec: async () => ({ code: 0 }),
-					registerCommand: (name, command) => commands.set(name, command),
-					registerTool() {},
-					registerShortcut() {},
-					registerMessageRenderer() {},
-					registerToolRenderer() {},
-					registerProvider() {},
-					sendMessage() {},
-				});
-				await commands.get("workflow:config").handler("settings", {
-					hasUI: true,
-					mode: "tui",
-					ui: {
-						notify() {},
-						custom: async (factory) => {
-							const panel = factory(undefined, undefined, undefined, () => {});
-							for (const line of panel.render(50)) console.log(stripVTControlCharacters(line));
-						},
-					},
-				});
-				`,
-			],
-			{
-				cwd: new URL("..", import.meta.url),
-				env: { ...process.env, PI_CODING_AGENT_DIR: dir },
-				encoding: "utf8",
-			},
-		);
-	assert.match(restart(), /Jev routing\s+on\s*$/m);
-
-	panel.handleInput(" ");
-	assert.ok(shown().some((line) => /Jev routing\s+off\s*$/.test(line)));
-	assert.match(restart(), /Jev routing\s+off\s*$/m);
-	assert.equal(await readFile(profilesPath, "utf8"), profiles);
-});
 
 test("/workflow:status and /workflow:doctor report unsupported arguments without UI", async () => {
 	const notifications = [];
