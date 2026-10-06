@@ -1,5 +1,4 @@
 import { realpathSync } from "node:fs";
-import { basename } from "node:path";
 import {
 	createBashToolDefinition,
 	defineTool,
@@ -24,8 +23,8 @@ function guard(program: string, decision: string): string {
 	exit 126
 );
 ${program}() {
-	__pi_workflow_${program}_guard "$@" || return 126;
-	command ${program} "$@";
+	__pi_workflow_${program}_guard \${1+"$@"} || return 126;
+	${program === "git" ? "GIT_OPTIONAL_LOCKS=0 " : ""}command ${program} \${1+"$@"};
 };`;
 }
 
@@ -51,7 +50,7 @@ function gitDecision(root: string): string {
 		esac;
 		[ "$#" -gt 0 ] && shift;
 	done;
-	for word in "$@"; do
+	for word in \${1+"$@"}; do
 		case "$subcommand $word" in
 		"grep -O"*|"grep -"[!-]*O*|"grep --op"*|"ls-remote -u"*|"ls-remote -"[!-]*u*|"ls-remote --u"*|"ls-remote --exe"*|*" --output"|*" --output="*)
 			reserved="\${reserved:-git $subcommand}" ;;
@@ -63,7 +62,7 @@ function gitDecision(root: string): string {
 		verb=;
 		case "\${1-}" in
 		-*)
-			for word in "$@"; do
+			for word in \${1+"$@"}; do
 				case "$word" in -*) ;; *) reserved="git $subcommand" ;; esac;
 			done ;;
 		*) verb=\${1-} ;;
@@ -73,7 +72,7 @@ function gitDecision(root: string): string {
 		*) reserved="git $subcommand\${verb:+ $verb}" ;;
 		esac ;;
 	branch|tag)
-		for word in "$@"; do
+		for word in \${1+"$@"}; do
 			case "$subcommand $word" in
 			"branch --show-current"|"branch -a"|"branch --all"|"branch -r"|"branch --remotes"|"branch --list"|"branch -l"|"branch -v"|"branch -vv"|"branch --verbose"|"branch --contains="*|"branch --merged="*|"branch --no-merged="*|"branch --points-at="*|"branch --format="*|"branch --sort="*|"tag -l"|"tag --list") ;;
 			*) reserved="git $subcommand" ;;
@@ -81,7 +80,7 @@ function gitDecision(root: string): string {
 		done ;;
 	config)
 		list=;
-		for word in "$@"; do
+		for word in \${1+"$@"}; do
 			case "$word" in
 			--show-origin) ;;
 			--get|--get-all|--get-regexp|--list|-l) list=1 ;;
@@ -112,7 +111,7 @@ const ghDecision = line`group=;
 	*)
 		[ -n "$option" ] && verb=;
 		case "$verb" in
-		view|list|diff|checks|status|watch|download) ;;
+		view|list|diff|checks|status|watch) ;;
 		*) reserved="gh $group\${verb:+ $verb}" ;;
 		esac ;;
 	esac;`;
@@ -132,12 +131,12 @@ export interface ChildShell {
 	shellPath?: string;
 }
 
-const posixShell = /^(bash|zsh|sh|dash|ksh|mksh)$/;
+const posixShell = /(^|[/\\])(bash|zsh|sh|dash|ksh|mksh)(\.exe)?$/i;
 
 export function createChildBashTool(cwd: string, shell: ChildShell = {}) {
 	const commandPrefix = `unalias git gh 2>/dev/null || :\n${guard("git", gitDecision(physical(cwd)))}${guard("gh", ghDecision)}`;
 	const user =
-		!shell.shellPath || posixShell.test(basename(shell.shellPath)) ? shell : {};
+		!shell.shellPath || posixShell.test(shell.shellPath) ? shell : {};
 	return defineTool(
 		createBashToolDefinition(cwd, {
 			commandPrefix: user.commandPrefix

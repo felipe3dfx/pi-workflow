@@ -7,6 +7,8 @@ import {
 	mkdtempSync,
 	readFileSync,
 	rmSync,
+	statSync,
+	utimesSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -156,7 +158,6 @@ for (const state of ["off", "on"]) {
 			["gh workflow view ci", "workflow view ci"],
 			["gh label list", "label list"],
 			["gh run view 1 --log-failed", "run view 1 --log-failed"],
-			["gh run download 1", "run download 1"],
 			["gh run watch 1", "run watch 1"],
 			["gh search issues x", "search issues x"],
 			["gh search", "search"],
@@ -487,6 +488,8 @@ for (const state of ["off", "on"]) {
 			["gh auth", "gh auth"],
 			["gh repo clone a/b", "gh repo clone"],
 			["gh repo clone a/b -- --template=x", "gh repo clone"],
+			["gh run download 1", "gh run download"],
+			["gh release download -O package.json --clobber", "gh release download"],
 		]) {
 			await assertReserved(command, dir, expected);
 		}
@@ -542,6 +545,24 @@ test("a worktree path with a space and a single quote keeps the git guard", asyn
 		text(await run(`cd '${outside}' && git init`, dir)),
 		/Initialized empty Git repository/,
 	);
+});
+
+test("a child's git read does not take the index lock", async (t) => {
+	routing(t, "off");
+	const dir = worktree(t);
+	execFileSync("git", [...identity, "commit", "-qam", "second"], { cwd: dir });
+	const index = join(dir, ".git", "index");
+	const past = new Date(Date.now() - 60_000);
+	utimesSync(join(dir, "file.txt"), past, past);
+	utimesSync(index, past, past);
+	const before = statSync(index).mtimeMs;
+
+	const result = await run('git status --short; echo "[${GIT_OPTIONAL_LOCKS-}]"', dir);
+
+	assert.equal(text(result), "[]\n");
+	assert.equal(statSync(index).mtimeMs, before);
+	execFileSync("git", ["status", "--short"], { cwd: dir });
+	assert.notEqual(statSync(index).mtimeMs, before);
 });
 
 test("a child's bash runs a command that only mentions git", async (t) => {
@@ -609,7 +630,10 @@ test("a child's bash keeps the guard when the user's prefix sets nounset", async
 		assert.equal(result.structuredContent.output, reserved(expected), command);
 	}
 	assert.match(text(await run("git status", dir, "set -u")), /On branch/);
+	assert.match(text(await run("git", dir, "set -u")), /usage: git/);
+	assert.match(text(await run("git branch", dir, "set -u")), /^\* (main|master)$/m);
 	assert.equal(text(await run("gh", dir, "set -u")), "fake gh \n");
+	assert.equal(text(await run("gh pr view 12", dir, "set -u")), "fake gh pr view 12\n");
 });
 
 test("a child's bash keeps the guard when the user's prefix sets errexit", async (t) => {
@@ -691,3 +715,22 @@ test("a child's bash runs only the guard with the default bash for a shell outsi
 	assert.equal(shell.calls(), "");
 	assert.equal(commits(dir), "1");
 });
+
+for (const name of ["bash.exe", "zsh.EXE", "C:\\Program Files\\Git\\bin\\bash.exe"]) {
+	test(`a child's bash runs the user's prefix and the guard with the shell ${name}`, async (t) => {
+		routing(t, "off");
+		const dir = worktree(t);
+		const shell = fakeShell(t, name);
+		const bash = createChildBashTool(dir, {
+			commandPrefix: "PI_WORKFLOW_PREFIX=on",
+			shellPath: shell.path,
+		});
+
+		const user = await bash.execute("call-1", { command: 'echo "$PI_WORKFLOW_PREFIX"' });
+		const result = await bash.execute("call-2", { command: "git commit -am x" });
+
+		assert.equal(text(user), "on\n");
+		assert.equal(result.structuredContent.output, reserved("git commit"));
+		assert.equal(shell.calls(), `${shell.path}\n${shell.path}\n`);
+	});
+}
