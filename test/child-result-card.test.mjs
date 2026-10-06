@@ -417,9 +417,55 @@ test("the answer card is reused for the same arguments and rebuilt when they cha
 	assert.notEqual(answerCard(args, theme(), {}), first);
 });
 
+test("a rejected answer card swaps the status for rejected and prints the reason, indented under the header", (t) => {
+	cards(t);
+	const reason = `Question 2 of child ${id.slice(0, 4)} is not waiting for a reply.`;
+	const component = answerCard({ id, question: 2, answer: "x" }, theme(), undefined, reason);
+	assert.deepEqual(plain(component), [
+		"   ◆ Parent → 5636 · answer 2 rejected",
+		"     Question 2 of child 5636 is not waiting for a reply.",
+	]);
+	const [head, body] = component.render(90);
+	assert.ok(head.includes(theme().fg("error", "◆")));
+	assert.ok(head.includes(theme().fg("error", "· answer 2 rejected")));
+	assert.ok(body.includes(theme().fg("error", reason)));
+	assert.equal(plain(component)[1].search(/\S/), plain(component)[0].indexOf("◆") + 2);
+});
+
+test("every rejected answer card line fits the width it is given", (t) => {
+	cards(t);
+	const component = answerCard(
+		{ id, question: 12 },
+		theme(),
+		undefined,
+		`${"palabra ".repeat(40)}\n\tcon\ttab`,
+	);
+	for (let width = 8; width <= 160; width++)
+		for (const line of component.render(width))
+			assert.ok(visibleWidth(line) <= width, `width ${width}: ${line}`);
+});
+
+test("a rejected answer card renders partial arguments with a question mark and no undefined", (t) => {
+	cards(t);
+	const lines = plain(answerCard({}, theme(), undefined, "refused"));
+	assert.deepEqual(lines, ["   ◆ Parent →  · answer ? rejected", "     refused"]);
+});
+
+test("the answer card is rebuilt when the rejection changes and reused when it is identical", (t) => {
+	cards(t);
+	const args = { id, question: 2, answer: "text" };
+	const pending = answerCard(args, theme());
+	const rejected = answerCard(args, theme(), pending, "refused");
+	assert.notEqual(rejected, pending);
+	assert.equal(answerCard({ ...args }, theme(), rejected, "refused"), rejected);
+	assert.notEqual(answerCard(args, theme(), rejected, "other"), rejected);
+	assert.notEqual(answerCard(args, theme(), rejected), rejected);
+});
+
 test("with the child-session claim unseated every child card falls back to its header and text", (t) => {
 	const { card } = cards(t);
 	const answer = answerCard({ id, question: 2, answer: "Use X." }, theme());
+	const rejected = answerCard({ id, question: 1 }, theme(), undefined, "Refused \u001b[31mhere.");
 	const result = card({ customType: "pi-workflow-child-result", details });
 	const asked = card({
 		customType: "pi-workflow-child-question",
@@ -442,6 +488,10 @@ test("with the child-session claim unseated every child card falls back to its h
 	);
 	const text = (c) => plain(c).filter(Boolean);
 	assert.deepEqual(text(answer), ["Parent → 5636 · answer 2", "Use X."]);
+	assert.deepEqual(text(rejected), [
+		"Parent → 5636 · answer 1 rejected",
+		"Refused  [31mhere.",
+	]);
 	assert.deepEqual(text(result), [
 		"Subagent worker 5636  1m 02s",
 		details.text,
