@@ -575,10 +575,12 @@ test("a child's bash reports a syntax error two lines below the command's line",
 	assert.match(text(result), /line 4: syntax error/);
 });
 
-test("a child's bash for a missing directory is created and its commands fail", async (t) => {
+test("a child's bash cannot be created for a worktree that does not resolve", (t) => {
 	routing(t, "off");
+	const missing = join(temporaryDirectory(t), "missing");
 
-	await assert.rejects(
-		run("git status", join(temporaryDirectory(t), "missing")),
+	assert.throws(
+		() => createChildBashTool(missing),
+		new Error(`The child's worktree ${missing} cannot be resolved.`),
 	);
 });

@@ -110,8 +110,10 @@ const ghDecision = line`group=;
 function physical(cwd: string): string {
 	try {
 		return realpathSync(cwd);
-	} catch {
-		return cwd;
+	} catch (error) {
+		throw new Error(`The child's worktree ${cwd} cannot be resolved.`, {
+			cause: error,
+		});
 	}
 }
 
