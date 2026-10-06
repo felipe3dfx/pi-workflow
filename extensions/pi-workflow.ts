@@ -21,7 +21,7 @@ import {
 } from "./companion-workflow.ts";
 import { guideSelection } from "./configure-guide.ts";
 import { readSelection } from "./configure.ts";
-import { contribute, replaceSelection, seated } from "./shell.ts";
+import { contribute, notifyHeader, replaceSelection, seated } from "./shell.ts";
 import {
 	type CodeGraphAdapters,
 	createCodeGraphTool,
@@ -158,6 +158,7 @@ export default function piWorkflowExtension(
 		count: childSessions.list().filter((child) => isWorking(child.state))
 			.length,
 	}));
+	childSessions.subscribe(notifyHeader);
 	registerChrome(pi, footerHints);
 	pi.registerShortcut("alt+a", {
 		description: "Open the subagents view",
