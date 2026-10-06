@@ -339,6 +339,36 @@ for (const state of ["off", "on"]) {
 		assert.equal(commits(dir), "1");
 	});
 
+	test(`while Jev routing is ${state}, a child's bash refuses git read options that run a command or write a file in its worktree`, async (t) => {
+		routing(t, state);
+		const dir = worktree(t);
+
+		for (const [command, expected] of [
+			["git grep -O touch one", "git grep"],
+			["git grep -Otouch one", "git grep"],
+			["git grep -nOtouch one", "git grep"],
+			["git grep --open-files-in-pager=touch one", "git grep"],
+			["git grep --open-files-in-pager touch one", "git grep"],
+			["git grep --open touch one", "git grep"],
+			["git ls-remote --upload-pack=touch .", "git ls-remote"],
+			["git ls-remote --upload-pack touch .", "git ls-remote"],
+			["git ls-remote -u touch .", "git ls-remote"],
+			["git ls-remote -utouch .", "git ls-remote"],
+			["git ls-remote -qu touch .", "git ls-remote"],
+			["git ls-remote --exec=touch .", "git ls-remote"],
+			["git log --output=out.txt", "git log"],
+			["git diff --output out.txt", "git diff"],
+			["git show --output=out.txt", "git show"],
+			["git stash show --output=out.txt", "git stash"],
+		]) {
+			await assertReserved(command, dir, expected);
+		}
+		assert.equal(existsSync(join(dir, "touch")), false);
+		assert.equal(existsSync(join(dir, "out.txt")), false);
+		assert.match(text(await run("git grep -n two -- file.txt", dir)), /file\.txt:1:two/);
+		assert.match(text(await run("git log --output-indicator-new=+ -1 --oneline", dir)), /first/);
+	});
+
 	test(`while Jev routing is ${state}, a child's bash refuses a git config override that is not a color or quotePath in its worktree`, async (t) => {
 		routing(t, state);
 		const dir = worktree(t);
