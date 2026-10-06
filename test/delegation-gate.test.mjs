@@ -10,6 +10,7 @@ import { createChildLauncher } from "../extensions/child-launcher.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
+import { createJevRouting } from "../extensions/workflow-settings.ts";
 import { classifierRegistry } from "./support/fake-jev.mjs";
 import { turnJevRoutingOn } from "./support/jev-routing.mjs";
 
@@ -537,7 +538,7 @@ test("a prepared launch stores the verdict so a later gated tool does not ask Je
 	});
 });
 
-test("the same message reuses the decision across a turn start, a new message asks Jev again, and unseated gated tools run without Jev", async () => {
+test("the same message reuses the decision across a turn start, a new message asks Jev again, and unseated gated tools run despite the cached block", async () => {
 	await withWorkspace(async ({ worktree, agentDirectory }) => {
 		const jev = fakeJev("explorer");
 		const extension = await seatedExtension(
@@ -573,10 +574,45 @@ test("the same message reuses the decision across a turn start, a new message as
 		const unseated = await extension.fire(
 			"tool_call",
 			{ type: "tool_call", toolCallId: "c4", toolName: "grep", input: { pattern: "gate" } },
-			gateContext(worktree, branchEnding("An unseated operator message"), jev),
+			next,
 		);
 		assert.equal(unseated, undefined);
 		assert.equal(jev.requests.length, 2);
+	});
+});
+
+test("a reseat or a Jev routing change within the same message reuses the decision already made", async () => {
+	await withWorkspace(async ({ worktree, agentDirectory }) => {
+		const jev = fakeJev("explorer");
+		const extension = await seatedExtension(
+			{ worktree, agentDirectory },
+			"Map the launcher module",
+		);
+		const ctx = gateContext(worktree, branchEnding("Map the launcher module"), jev);
+		const first = await extension.fire(
+			"tool_call",
+			{ type: "tool_call", toolCallId: "c1", toolName: "find", input: { pattern: "judge" } },
+			ctx,
+		);
+		assert.equal(first.block, true);
+
+		seatEverything(false);
+		seatEverything(true);
+		const reseated = await extension.fire(
+			"tool_call",
+			{ type: "tool_call", toolCallId: "c2", toolName: "ls", input: { path: "extensions" } },
+			ctx,
+		);
+		assert.deepEqual(reseated, first);
+
+		createJevRouting(agentDirectory).set(false);
+		const routedOff = await extension.fire(
+			"tool_call",
+			{ type: "tool_call", toolCallId: "c3", toolName: "grep", input: { pattern: "gate" } },
+			ctx,
+		);
+		assert.deepEqual(routedOff, first);
+		assert.equal(jev.requests.length, 1);
 	});
 });
 
