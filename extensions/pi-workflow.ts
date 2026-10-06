@@ -154,6 +154,16 @@ export default function piWorkflowExtension(
 		createContinueChildTool(childSessions),
 		...createChildQueryTools(childSessions),
 	];
+	let spawnToolsAllowed = false;
+
+	function offerChildTools() {
+		launcher.offerChildTools(
+			pi,
+			childTools,
+			spawnToolsAllowed,
+			childSessions.list().some((child) => child.state === "waiting"),
+		);
+	}
 
 	const seating = createSeating({
 		agentDirectory,
@@ -169,14 +179,13 @@ export default function piWorkflowExtension(
 			() => syncTodoTool(pi),
 			() => syncCodeGraphTool(pi, options.codegraph),
 			() => syncCompactTools(pi, currentCtx),
-			async () =>
-				launcher.offerChildTools(
-					pi,
-					childTools,
-					(await workflow.checkSpawnTools()).allowed,
-				),
+			async () => {
+				spawnToolsAllowed = (await workflow.checkSpawnTools()).allowed;
+				offerChildTools();
+			},
 		],
 	});
+	childSessions.subscribe(offerChildTools);
 
 	pi.on("session_start", async (_event, ctx) => {
 		currentCtx = ctx;

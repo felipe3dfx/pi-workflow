@@ -227,6 +227,9 @@ function loadExtension({
 		busy: (value) => {
 			idle = !value;
 		},
+		installLegacy: () => {
+			legacy = true;
+		},
 		named: (name) => tools.find((tool) => tool.name === name),
 		gate: (event, ctx) => handlers.get("tool_call")[0](event, ctx),
 		spawnTools: () => tools.filter((tool) => tool.name === "spawn_child"),
@@ -2311,7 +2314,27 @@ test("a child that asks waits for the parent model's reply_child answer, still h
 	});
 });
 
-test("a reply while the child session is not seated is a tool error and reaches no child", async (t) => {
+const offeredTools = ["spawn_child", ...childTools];
+
+function offers(extension) {
+	return Object.fromEntries(
+		offeredTools.map((name) => [
+			name,
+			extension.tools.findLast((tool) => tool.name === name).exposure,
+		]),
+	);
+}
+
+function offersWith(exposure, replyExposure = exposure) {
+	return Object.fromEntries(
+		offeredTools.map((name) => [
+			name,
+			name === "reply_child" ? replyExposure : exposure,
+		]),
+	);
+}
+
+test("while a child waits, reply_child is offered and accepts the answer with child session unseated, and is hidden again once no child waits", async (t) => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
 		const extension = await loadSpawnTool({
@@ -2321,15 +2344,9 @@ test("a reply while the child session is not seated is a tool error and reaches 
 		});
 		const id = await spawnBackground(extension, worktree);
 		await settle();
-		children.created[0].spec.ask("Which file?");
 		const seated = Object.fromEntries(
 			capabilities.map((capability) => [capability, true]),
 		);
-		replaceSelection({
-			schemaVersion: 1,
-			capabilities: { ...seated, "child-session": false },
-			expectations: {},
-		});
 		t.after(() =>
 			replaceSelection({
 				schemaVersion: 1,
@@ -2337,17 +2354,70 @@ test("a reply while the child session is not seated is a tool error and reaches 
 				expectations: {},
 			}),
 		);
-
-		await assert.rejects(
-			use(extension, "reply_child", { id, question: 1, answer: "a.ts" }),
-			{ message: "Child session is not seated. Run /workflow:config." },
-		);
 		replaceSelection({
 			schemaVersion: 1,
-			capabilities: seated,
+			capabilities: { ...seated, "child-session": false },
 			expectations: {},
 		});
-		assert.equal(await stateOf(extension, id), "waiting");
+		await extension.fire("session_start");
+		assert.deepEqual(offers(extension), offersWith("hidden"));
+
+		const asked = children.created[0].spec.ask("Which file?");
+		assert.deepEqual(offers(extension), offersWith("hidden", "direct"));
+		await assert.rejects(
+			use(extension, "reply_child", { id, question: 2, answer: "a.ts" }),
+			{ message: `Question 2 of child ${id} is not waiting for a reply.` },
+		);
+		const reply = await use(extension, "reply_child", {
+			id,
+			question: 1,
+			answer: "a.ts",
+		});
+
+		assert.equal(text(reply), `Reply sent to child ${id}.`);
+		assert.equal(await asked, "a.ts");
+		assert.deepEqual(offers(extension), offersWith("hidden"));
+	});
+});
+
+test("with the legacy spawn package detected after the first offer, a child waiting or no longer waiting changes no child tool's offer", async (t) => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			schedule: manualClock().schedule,
+		});
+		const id = await spawnBackground(extension, worktree);
+		await settle();
+		const registrations = () =>
+			extension.tools.filter((tool) => offeredTools.includes(tool.name)).length;
+		const registered = registrations();
+		const seated = Object.fromEntries(
+			capabilities.map((capability) => [capability, true]),
+		);
+		t.after(() =>
+			replaceSelection({
+				schemaVersion: 1,
+				capabilities: seated,
+				expectations: {},
+			}),
+		);
+		extension.installLegacy();
+		replaceSelection({
+			schemaVersion: 1,
+			capabilities: { ...seated, "child-session": false },
+			expectations: {},
+		});
+		await extension.fire("session_start");
+
+		const asked = children.created[0].spec.ask("Which file?");
+		assert.equal(registrations(), registered);
+		await use(extension, "reply_child", { id, question: 1, answer: "a.ts" });
+		assert.equal(await asked, "a.ts");
+
+		assert.equal(registrations(), registered);
+		assert.deepEqual(offers(extension), offersWith("direct"));
 	});
 });
 
@@ -2365,7 +2435,6 @@ test("reply_child paints the answer card with compact rendering on and off, pain
 	t.after(() =>
 		replaceSelection({ schemaVersion: 1, capabilities: seated, expectations: {} }),
 	);
-	const unseatedReason = "Child session is not seated. Run /workflow:config.";
 	const cards = [];
 	for (const compact of [true, false]) {
 		replaceSelection({
@@ -2401,7 +2470,6 @@ test("reply_child paints the answer card with compact rendering on and off, pain
 	);
 	const reasons = [
 		refusal,
-		unseatedReason,
 		`Child ${args.id} is completed; question 3 can no longer be answered.`,
 	];
 	for (const compact of [true, false]) {
@@ -2432,7 +2500,7 @@ test("reply_child paints the answer card with compact rendering on and off, pain
 	});
 	const renderers = compactToolRenderers("reply_child", () => tool);
 	const unseated = renderers.renderResult(
-		{ content: [{ type: "text", text: unseatedReason }], details: {}, isError: true },
+		{ content: [{ type: "text", text: refusal }], details: {}, isError: true },
 		{},
 		theme,
 		{ args, isError: true },
@@ -2440,7 +2508,7 @@ test("reply_child paints the answer card with compact rendering on and off, pain
 	const [head, body] = unseated.render(200);
 	assert.ok(head.includes(theme.fg("error", "◆")));
 	assert.ok(head.includes(theme.fg("error", "· answer 3 rejected")));
-	assert.ok(body.includes(theme.fg("error", unseatedReason)));
+	assert.ok(body.includes(theme.fg("error", refusal)));
 });
 
 test("reply_child falls back to a plain-text answer when the child-session card is not seated", async (t) => {
