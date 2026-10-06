@@ -3295,7 +3295,7 @@ test("aborting a foreground call's signal after the call has ended does nothing 
 	});
 });
 
-const boxKey = "pi-workflow-children";
+const boxKey = "pi-workflow-above-input";
 
 const plainTheme = {
 	fg: (_color, text) => text,
@@ -3375,14 +3375,20 @@ test("a background child shows in the subagent box pinned above the input and ab
 		});
 		assert.deepEqual(
 			[...extension.widgets.keys()],
-			[boxKey, "session-todo", "pi-workflow-status"],
+			[boxKey, "pi-workflow-status"],
 		);
 		assert.equal(
 			extension.widgets.get(boxKey).options.placement,
 			"aboveEditor",
 		);
 		const box = boxOf(extension);
-		assert.deepEqual(box.render(100), []);
+		assert.deepEqual(box.render(100).map(plain), [
+			"",
+			"┌                                                                                                  ×",
+			"│ □ Review the doctor                                                                              │",
+			"└                                                                                                  ┘",
+			"",
+		]);
 
 		const id = await spawnBackground(extension, worktree);
 		await settle();
@@ -3419,6 +3425,40 @@ test("a background child shows in the subagent box pinned above the input and ab
 			/[⠋⠙⠹⠸⠼⠴⠦⠧] worker [0-9a-f]{4} Fix the failing test/,
 		);
 		assert.equal(await stateOf(extension, id), "running");
+	});
+});
+
+test("with child session unseated, a task that arrives mid-session shows in the one widget above the status row", async (t) => {
+	await withWorkspace(async ({ agentDir }) => {
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: fakeChildren().create,
+		});
+		const seated = Object.fromEntries(
+			capabilities.map((capability) => [capability, true]),
+		);
+		replaceSelection({
+			schemaVersion: 1,
+			capabilities: { ...seated, "child-session": false },
+			expectations: {},
+		});
+		t.after(() =>
+			replaceSelection({
+				schemaVersion: 1,
+				capabilities: seated,
+				expectations: {},
+			}),
+		);
+		const box = boxOf(extension);
+		assert.deepEqual(box.render(100), []);
+
+		await use(extension, "todo", { action: "add", text: "Arrive late" });
+
+		assert.deepEqual(
+			[...extension.widgets.keys()],
+			[boxKey, "pi-workflow-status"],
+		);
+		assert.ok(box.render(100).some((line) => plain(line).includes("Arrive late")));
 	});
 });
 

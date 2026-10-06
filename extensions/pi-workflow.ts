@@ -21,6 +21,7 @@ import { createSeating } from "./seating.ts";
 import {
 	contribute,
 	notifyHeader,
+	registerShell,
 	seated,
 	seatedCapabilities,
 } from "./shell.ts";
@@ -110,8 +111,14 @@ export default function piWorkflowExtension(
 	pi.on("turn_end", () => childSessions.atBoundary());
 	pi.on("agent_settled", () => childSessions.atBoundary());
 	const childrenViews = createChildrenViews(childSessions);
-	registerChildrenBox(pi, childSessions, options.childSessions?.refresh);
-	registerSessionTodo(pi);
+	const { requestAboveInputRender } = registerShell(pi);
+	registerChildrenBox(
+		pi,
+		childSessions,
+		requestAboveInputRender,
+		options.childSessions?.refresh,
+	);
+	registerSessionTodo(pi, requestAboveInputRender);
 	const footerHints = createFooterHints();
 	contribute("child-session", "header", () => ({
 		count: childSessions.list().filter((child) => isWorking(child.state))
