@@ -2382,7 +2382,7 @@ test("a reply while the child session is not seated is a tool error and reaches 
 	});
 });
 
-test("reply_child paints the answer card with compact rendering on and off, shows only a refusal's reason without a card, and paints the card only on delivery", async (t) => {
+test("reply_child paints the answer card with compact rendering on and off, paints a refusal as a rejected card with its reason in both modes, and the plain answer card only on delivery", async (t) => {
 	initTheme("dark", false);
 	const extension = await loadSpawnTool({ agentDir: tmpdir() });
 	const tool = extension.named("reply_child");
@@ -2396,6 +2396,7 @@ test("reply_child paints the answer card with compact rendering on and off, show
 	t.after(() =>
 		replaceSelection({ schemaVersion: 1, capabilities: seated, expectations: {} }),
 	);
+	const unseatedReason = "Child session is not seated. Run /workflow:config.";
 	const cards = [];
 	for (const compact of [true, false]) {
 		replaceSelection({
@@ -2429,14 +2430,48 @@ test("reply_child paints the answer card with compact rendering on and off, show
 		() => assert.fail("the reply was accepted"),
 		(error) => error.message,
 	);
-	const refused = tool.renderResult(
-		{ content: [{ type: "text", text: refusal }], details: {}, isError: true },
+	const reasons = [
+		refusal,
+		unseatedReason,
+		`Child ${args.id} is completed; question 3 can no longer be answered.`,
+	];
+	for (const compact of [true, false]) {
+		replaceSelection({
+			schemaVersion: 1,
+			capabilities: { ...seated, "compact-rendering": compact },
+			expectations: {},
+		});
+		const renderers = compactToolRenderers("reply_child", () => tool);
+		for (const reason of reasons) {
+			const refused = renderers.renderResult(
+				{ content: [{ type: "text", text: reason }], details: {}, isError: true },
+				{},
+				theme,
+				{ args, isError: true },
+			);
+			assert.equal(lines(refused)[0], "   ◆ Parent → 5636 · answer 3 rejected");
+			assert.ok(refused.render(200)[0].includes(theme.fg("error", "◆")));
+			assert.ok(
+				refused.render(200)[1].includes(theme.fg("error", reason)),
+			);
+		}
+	}
+	replaceSelection({
+		schemaVersion: 1,
+		capabilities: { ...seated, "child-session": false },
+		expectations: {},
+	});
+	const renderers = compactToolRenderers("reply_child", () => tool);
+	const unseated = renderers.renderResult(
+		{ content: [{ type: "text", text: unseatedReason }], details: {}, isError: true },
 		{},
 		theme,
 		{ args, isError: true },
 	);
-	assert.deepEqual(lines(refused), ["No child nope in this session."]);
-	assert.ok(refused.render(60)[0].includes(theme.fg("error", refusal)));
+	const [head, body] = unseated.render(200);
+	assert.ok(head.includes(theme.fg("error", "◆")));
+	assert.ok(head.includes(theme.fg("error", "· answer 3 rejected")));
+	assert.ok(body.includes(theme.fg("error", unseatedReason)));
 });
 
 test("reply_child falls back to a plain-text answer when the child-session card is not seated", async (t) => {

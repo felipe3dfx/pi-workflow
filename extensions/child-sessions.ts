@@ -19,7 +19,7 @@ import {
 	SettingsManager,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { type Component, Text } from "@earendil-works/pi-tui";
+import type { Component } from "@earendil-works/pi-tui";
 import { type Static, Type } from "typebox";
 
 import { type ChildShell, createChildBashTool } from "./child-bash.ts";
@@ -1298,13 +1298,12 @@ export function createChildQueryTools(
 		renderShell: "self",
 		renderCall: () => hidden,
 		renderResult: (result, _options, theme, context) =>
-			context.isError
-				? new Text(
-						theme.fg("error", outputText(result)),
-						0,
-						0,
-					)
-				: answerCard(context.args, theme, context.lastComponent),
+			answerCard(
+				context.args,
+				theme,
+				context.lastComponent,
+				context.isError ? outputText(result) : undefined,
+			),
 	};
 	return [listChildren, childStatus, childResult, cancelChild, replyChild];
 }

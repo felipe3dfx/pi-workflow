@@ -15,6 +15,7 @@ import {
 	type TuiMouseEvent,
 	truncateToWidth,
 	visibleWidth,
+	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 
 import type { ChildDetails, ChildRecord } from "./child-sessions.ts";
@@ -127,13 +128,14 @@ function paintCard(
 	head: string,
 	text: string,
 	lines: (width: number) => string[],
+	fallbackText?: string,
 ) {
 	if (held(childStream)) {
 		paint(childStream, lines);
 		return paintMessageStream(outer);
 	}
 	const plain = `${sanitizeTaskText(stripVTControlCharacters(head)).replace(/^◆ /, "")}\n${sanitizeMultilineText(text.trim()).replaceAll("\t", "   ")}`;
-	fallback.update(plain);
+	fallback.update(fallbackText ?? plain);
 	return fallback.render(outer);
 }
 
@@ -248,6 +250,7 @@ class AnswerCard implements Component {
 	readonly answer: string | undefined;
 	readonly body: Markdown;
 	readonly theme: Theme;
+	readonly rejection: string | undefined;
 	readonly fallback = new Fallback();
 	private cachedHead: string | undefined;
 
@@ -256,22 +259,43 @@ class AnswerCard implements Component {
 		question: number | undefined,
 		answer: string | undefined,
 		theme: Theme,
+		rejection?: string,
 	) {
 		this.id = id;
 		this.question = question;
 		this.answer = answer;
 		this.theme = theme;
+		this.rejection = rejection;
 		this.body = markdownBody(answer ?? "");
 	}
 
 	get head() {
-		this.cachedHead ??= `${this.theme.fg("toolTitle", "◆")} ${this.theme.bold(this.theme.fg("muted", "Parent"))} → ${sanitizeTaskText(this.id ?? "").slice(0, 4)} ${this.theme.fg("toolTitle", `· answer ${this.question ?? "?"}`)}`;
+		if (this.cachedHead !== undefined) return this.cachedHead;
+		const color = this.rejection === undefined ? "toolTitle" : "error";
+		const status = `· answer ${this.question ?? "?"}${this.rejection === undefined ? "" : " rejected"}`;
+		this.cachedHead = `${this.theme.fg(color, "◆")} ${this.theme.bold(this.theme.fg("muted", "Parent"))} → ${sanitizeTaskText(this.id ?? "").slice(0, 4)} ${this.theme.fg(color, status)}`;
 		return this.cachedHead;
 	}
 
 	render(outer: number) {
-		return paintCard(outer, this.fallback, this.head, this.answer ?? "", (width) =>
-			frame(width, this.head, "", (inner) => bodyLines(this.body, inner)),
+		const rejection = this.rejection;
+		return paintCard(
+			outer,
+			this.fallback,
+			this.head,
+			this.answer ?? "",
+			(width) =>
+				frame(width, this.head, "", (inner) =>
+					rejection === undefined
+						? bodyLines(this.body, inner)
+						: wrapTextWithAnsi(
+								sanitizeMultilineText(rejection).replaceAll("\t", "   "),
+								inner,
+							).map((line) => this.theme.fg("error", line)),
+				),
+			rejection === undefined
+				? undefined
+				: `${this.head}\n${this.theme.fg("error", sanitizeMultilineText(rejection.trim()).replaceAll("\t", "   "))}`,
 		);
 	}
 
@@ -285,16 +309,24 @@ export function answerCard(
 	args: Partial<{ id: string; question: number; answer: string }>,
 	theme: Theme,
 	previous?: unknown,
+	rejection?: string,
 ) {
 	if (
 		previous instanceof AnswerCard &&
+		previous.rejection === rejection &&
 		previous.id === args.id &&
 		previous.question === args.question &&
 		previous.answer === args.answer &&
 		previous.theme === theme
 	)
 		return previous;
-	return new AnswerCard(args.id, args.question, args.answer, theme);
+	return new AnswerCard(
+		args.id,
+		args.question,
+		args.answer,
+		theme,
+		rejection,
+	);
 }
 
 function resultCards(message: Message, expanded: boolean, theme: Theme) {
