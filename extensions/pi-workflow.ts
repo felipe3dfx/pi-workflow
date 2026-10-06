@@ -58,7 +58,7 @@ const usage =
 function createWorkflow(
 	pi: ExtensionAPI,
 	getContext: () => ExtensionCommandContext | ExtensionContext | undefined,
-	options: CompanionWorkflowOptions = {},
+	options: CompanionWorkflowOptions,
 ) {
 	return createCompanionWorkflow({
 		catalog: options.catalog,
@@ -76,7 +76,8 @@ function createWorkflow(
 
 export default function piWorkflowExtension(
 	pi: ExtensionAPI,
-	options: CompanionWorkflowOptions & {
+	options: Omit<CompanionWorkflowOptions, "agentDirectory"> & {
+		agentDirectory?: string;
 		codegraph?: CodeGraphAdapters;
 		childSessions?: {
 			create?: ChildSessionFactory;

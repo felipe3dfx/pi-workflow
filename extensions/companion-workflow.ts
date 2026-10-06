@@ -4,7 +4,6 @@ import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { resolveAgentDirectory } from "./agent-directory.ts";
 import {
 	applyMcpConfiguration,
 	legacyMcpAdapterNote,
@@ -77,7 +76,7 @@ export interface CompanionWorkflowOptions {
 	interaction?: CompanionInteractionAdapters;
 	mcp?: CompanionMcpAdapters;
 	settings?: PiSettingsAdapters;
-	agentDirectory?: string;
+	agentDirectory: string;
 	expectedPackages?: () => readonly string[];
 }
 
@@ -531,9 +530,9 @@ function emptyInstallResult(
 	};
 }
 
-export function createCompanionWorkflow(options: CompanionWorkflowOptions = {}) {
+export function createCompanionWorkflow(options: CompanionWorkflowOptions) {
 	const interaction = options.interaction ?? {};
-	const agentDirectory = resolveAgentDirectory(options.agentDirectory);
+	const { agentDirectory } = options;
 
 	async function reportStatus(heading: string): Promise<InspectResult> {
 		const catalog = resolveCompanionCatalog(options.catalog);
