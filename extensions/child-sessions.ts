@@ -19,7 +19,6 @@ import {
 	SettingsManager,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import type { Component } from "@earendil-works/pi-tui";
 import { type Static, Type } from "typebox";
 
 import { type ChildShell, createChildBashTool } from "./child-bash.ts";
@@ -35,7 +34,7 @@ import {
 	reportsResult,
 	resultParameters,
 } from "./child-projection.ts";
-import { settings } from "./shell-settings.ts";
+import { shellOptions } from "./shell-settings.ts";
 import { sanitizeTaskText } from "./todo-header.ts";
 
 const packageVersion = (
@@ -282,16 +281,6 @@ export function createAskParentTool(
 				details: {},
 			};
 		},
-	};
-}
-
-function childShell(
-	ctx: Pick<ExtensionContext, "cwd" | "isProjectTrusted">,
-): ChildShell {
-	const user = settings(ctx);
-	return {
-		commandPrefix: user.getShellCommandPrefix(),
-		shellPath: user.getShellPath(),
 	};
 }
 
@@ -1067,7 +1056,7 @@ export function createSpawnChildTool(
 				background,
 				signal,
 				modelRegistry: ctx.modelRegistry,
-				shell: () => childShell(ctx),
+				shell: () => shellOptions(ctx),
 				onLaunch: () => launcher.recordLaunch(userRequest?.id),
 			});
 			return launched(started, plan.warnings, {
@@ -1154,7 +1143,7 @@ export function createContinueChildTool(
 				await sessions.resume(params.id, params.task, {
 					signal,
 					modelRegistry: ctx.modelRegistry,
-					shell: () => childShell(ctx),
+					shell: () => shellOptions(ctx),
 				}),
 				[],
 			);
