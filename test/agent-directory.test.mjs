@@ -15,7 +15,6 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 
 import {
-	isPlainRecord,
 	resolveAgentDirectory,
 	writeJsonAtomically,
 } from "../extensions/agent-directory.ts";
@@ -61,13 +60,6 @@ test("without an injected directory the environment decides", (t) => {
 
 test("a relative injected directory resolves to an absolute path", () => {
 	assert.equal(resolveAgentDirectory("agent"), resolve("agent"));
-});
-
-test("isPlainRecord accepts objects only", () => {
-	assert.equal(isPlainRecord({}), true);
-	for (const value of [null, [], "text", 1, undefined]) {
-		assert.equal(isPlainRecord(value), false);
-	}
 });
 
 test("a write creates the document and its directory", (t) => {

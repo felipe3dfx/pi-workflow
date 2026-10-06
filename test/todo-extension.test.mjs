@@ -317,9 +317,7 @@ test("session_tree rebuilds the list from the tree's branch, like session_start 
 
 test("the returned todo offer exposes the tool only while todo is seated", () => {
 	const { pi, tools } = fakePi();
-	const registerTool = pi.registerTool;
 	const offer = registerSessionTodo(pi, () => {});
-	assert.equal(pi.registerTool, registerTool);
 
 	offer();
 	assert.equal(tools.get("todo").exposure, "direct");

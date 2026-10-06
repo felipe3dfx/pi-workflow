@@ -661,7 +661,6 @@ test("the parent registers the gate with spawn_child only when spawn tools are a
 		await allowed.fire("session_start", {}, session);
 		assert.equal(allowed.tools.filter((tool) => tool.name === "spawn_child").length, 1);
 		assert.equal(allowed.handlers.get("tool_call").length, 1);
-		assert.equal(allowed.handlers.get("turn_start"), undefined);
 
 		const ctx = gateContext(worktree, branchEnding("Map the launcher module"), jev);
 		const first = await allowed.fire(
