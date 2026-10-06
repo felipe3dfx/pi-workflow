@@ -2,7 +2,6 @@
 import {
 	AssistantMessageComponent,
 	CustomMessageComponent,
-	type Theme,
 	ToolExecutionComponent,
 } from "@earendil-works/pi-coding-agent";
 import {
@@ -12,8 +11,8 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
+import { theme } from "./visual-language.ts";
 
-const THEME_KEY = Symbol.for("@earendil-works/pi-coding-agent:theme");
 const maxVisible = 10;
 
 type Kind =
@@ -89,13 +88,6 @@ slots[SHARED] ??= {
 };
 const { thoughts, cards, expandedGroups } = slots[SHARED];
 const patched = new Set<Container>();
-
-function theme() {
-	const current = (globalThis as Record<symbol, Theme | undefined>)[THEME_KEY];
-	if (!current)
-		throw new Error("Theme not initialized. Call initTheme() first.");
-	return current;
-}
 
 export function toolKind(name: string, args: unknown): Kind {
 	if (name.startsWith("mcp__")) return "mcp";
