@@ -90,6 +90,16 @@ export function reportsResult(
 	return Object.hasOwn(resultParameters, role);
 }
 
+export function needsNoReason(
+	state: string | undefined,
+	verdict: string | undefined,
+) {
+	return (
+		state === "completed" &&
+		(verdict === undefined || verdict === "done" || verdict === "pass")
+	);
+}
+
 export function resultFieldLines({
 	verdict: _verdict,
 	reason,

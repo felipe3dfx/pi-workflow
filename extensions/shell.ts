@@ -45,6 +45,7 @@ let seatedNow = Object.fromEntries(
 
 export function replaceSelection(selection: Selection) {
 	seatedNow = selection.capabilities;
+	notifyHeader();
 }
 
 export function seatedCapabilities(): Pick<Selection, "capabilities"> {

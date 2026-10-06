@@ -18,7 +18,12 @@ import {
 } from "./companion-workflow.ts";
 import { guideSelection } from "./configure-guide.ts";
 import { createSeating } from "./seating.ts";
-import { contribute, seated, seatedCapabilities } from "./shell.ts";
+import {
+	contribute,
+	notifyHeader,
+	seated,
+	seatedCapabilities,
+} from "./shell.ts";
 import {
 	type CodeGraphAdapters,
 	createCodeGraphTool,
@@ -29,14 +34,12 @@ import { runDelegationCheck } from "./delegation-check.ts";
 import { registerChildResultCards } from "./child-result-card.ts";
 import {
 	type ChildSessionFactory,
-	childDetails,
 	createChildQueryTools,
 	createChildSessions,
 	createContinueChildTool,
 	createSpawnChildTool,
 	isWorking,
 } from "./child-sessions.ts";
-import { childOutcome } from "./child-projection.ts";
 import type { Schedule } from "./clock.ts";
 import { registerChildrenBox } from "./children-box.ts";
 import { createFooterHints, registerChrome } from "./chrome.ts";
@@ -96,57 +99,16 @@ export default function piWorkflowExtension(
 	const childSessions = createChildSessions({
 		create: options.childSessions?.create,
 		schedule: options.childSessions?.schedule,
-		deliver: () => {
-			if (currentCtx?.isIdle()) queueMicrotask(deliverResults);
-		},
-		ask: (child, question, number) => {
-			sendResults();
-			pi.sendMessage(
-				{
-					customType: "pi-workflow-child-question",
-					content: `Child ${child.id} asks (question ${number}):\n\n${question}\n\nAnswer with reply_child with question ${number}.`,
-					display: true,
-					details: { ...childDetails(child), question: number, text: question },
-				},
-				{ deliverAs: "steer", triggerTurn: true },
-			);
-		},
+		send: (message) =>
+			pi.sendMessage(message, { deliverAs: "steer", triggerTurn: true }),
+		idle: () => currentCtx?.isIdle() ?? false,
 		trace: (entry) => pi.appendEntry("pi-workflow-child-trace", entry),
 		report: (message) => {
 			if (currentCtx) report(currentCtx, message, "error");
 		},
 	});
-	function deliverResults() {
-		if (childSessions.wakesParent()) sendResults();
-	}
-	function sendResults() {
-		const results = childSessions.pendingResults();
-		if (results.length === 0) return;
-		try {
-			pi.sendMessage(
-				{
-					customType: "pi-workflow-child-result",
-					content: results.map(childOutcome).join("\n\n"),
-					display: true,
-					details:
-						results.length === 1
-							? childDetails(results[0])
-							: { results: results.map((child) => childDetails(child)) },
-				},
-				{ deliverAs: "steer", triggerTurn: true },
-			);
-			for (const child of results) childSessions.consume(child.id);
-		} catch (error) {
-			if (currentCtx)
-				report(
-					currentCtx,
-					`Child results could not be delivered: ${error instanceof Error ? error.message : String(error)}`,
-					"error",
-				);
-		}
-	}
-	pi.on("turn_end", deliverResults);
-	pi.on("agent_settled", deliverResults);
+	pi.on("turn_end", () => childSessions.atBoundary());
+	pi.on("agent_settled", () => childSessions.atBoundary());
 	const childrenViews = createChildrenViews(childSessions);
 	registerChildrenBox(pi, childSessions, options.childSessions?.refresh);
 	registerSessionTodo(pi);
@@ -155,6 +117,7 @@ export default function piWorkflowExtension(
 		count: childSessions.list().filter((child) => isWorking(child.state))
 			.length,
 	}));
+	childSessions.subscribe(notifyHeader);
 	registerChrome(pi, footerHints);
 	pi.registerShortcut("alt+a", {
 		description: "Open the subagents view",

@@ -39,6 +39,7 @@ import { compactToolRenderers } from "../extensions/compact-tools.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
+import { fakeChildren, userEntry } from "./support/fake-children.mjs";
 import { classifierRegistry } from "./support/fake-jev.mjs";
 import { turnJevRoutingOn, withAgentDirectory } from "./support/jev-routing.mjs";
 
@@ -123,41 +124,6 @@ function fakeJev({ choice = "leave", specialist } = {}) {
 		}
 		return { answers };
 	});
-}
-
-function fakeChildren({ model, thinking, tools, run, dispose, onCreate } = {}) {
-	const created = [];
-	const create = async (spec) => {
-		await onCreate?.();
-		const child = {
-			spec,
-			tasks: [],
-			aborts: 0,
-			disposals: 0,
-			result: Promise.withResolvers(),
-			entries: [userEntry(`entry-${created.length}`, spec.prompt)],
-		};
-		created.push(child);
-		return {
-			sessionId: `session-${created.length - 1}`,
-			entries: () => child.entries,
-			model: model ?? spec.model,
-			thinking: thinking ?? spec.thinking,
-			tools: tools ?? spec.tools,
-			run: async (task) => {
-				child.tasks.push(task);
-				return run ? run(task, child.spec) : child.result.promise;
-			},
-			abort: async () => {
-				child.aborts += 1;
-			},
-			dispose: () => {
-				child.disposals += 1;
-				dispose?.(child);
-			},
-		};
-	};
-	return { create, created };
 }
 
 function loadExtension({
@@ -3702,10 +3668,6 @@ test("in the view, s or c asks y/n before cancelling a running child, cancels a 
 		assert.equal(extension.messages.length, delivered);
 	});
 });
-
-function userEntry(id, text) {
-	return { type: "message", id, message: { role: "user", content: text } };
-}
 
 function assistantEntry(id, content) {
 	return {
