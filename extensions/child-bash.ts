@@ -95,6 +95,9 @@ const ghDecision = line`group=;
 	done;
 	case "$group" in
 	""|help|search) ;;
+	auth)
+		[ -n "$option" ] && verb=;
+		reserved="gh auth\${verb:+ $verb}" ;;
 	*)
 		[ -n "$option" ] && verb=;
 		case "$verb" in

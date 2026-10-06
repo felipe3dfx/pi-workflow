@@ -228,6 +228,7 @@ for (const state of ["off", "on"]) {
 			"send-email",
 			"maintenance",
 			"repack",
+			"credential",
 			"send-pack",
 			"fast-import",
 			"imap-send",
@@ -290,6 +291,7 @@ for (const state of ["off", "on"]) {
 			["git config --get --add a.b c", "git config"],
 			["git config --show-origin", "git config"],
 			["git config", "git config"],
+			["git credential fill", "git credential"],
 			["git send-pack origin HEAD:refs/heads/main", "git send-pack"],
 			["git bisect log", "git bisect"],
 			["git notes list", "git notes"],
@@ -421,6 +423,11 @@ for (const state of ["off", "on"]) {
 			["gh label clone owner/other", "gh label clone"],
 			["gh browse", "gh browse"],
 			["cd /tmp && gh release create v0", "gh release create"],
+			["gh auth status", "gh auth status"],
+			["gh auth status -t", "gh auth status"],
+			["gh auth token", "gh auth token"],
+			["gh auth --hostname github.com token", "gh auth"],
+			["gh auth", "gh auth"],
 		]) {
 			await assertReserved(command, dir, expected);
 		}
