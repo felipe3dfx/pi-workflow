@@ -532,19 +532,23 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		if (turn && turn.userMessageId === userMessageId) turn.launched = true;
 	}
 	let gateInstalled = false;
-	let childToolsOn: boolean | undefined;
+	const childToolsOn = new Map<string, boolean>();
 
 	function offerChildTools(
 		pi: ExtensionAPI,
-		tools: readonly object[],
+		tools: readonly { name: string }[],
 		allowed: boolean,
+		waiting: boolean,
 	) {
 		if (!allowed) return;
 		const on = seated("child-session", "overlay");
 		if (!gateInstalled && !on) return;
-		if (gateInstalled && childToolsOn === on) return;
-		childToolsOn = on;
-		for (const tool of tools) offerTool(pi, tool, on);
+		for (const tool of tools) {
+			const offered = on || (waiting && tool.name === "reply_child");
+			if (childToolsOn.get(tool.name) === offered) continue;
+			childToolsOn.set(tool.name, offered);
+			offerTool(pi, tool, offered);
+		}
 		if (gateInstalled) return;
 		gateInstalled = true;
 		pi.on("tool_call", async (event, toolCtx) => {

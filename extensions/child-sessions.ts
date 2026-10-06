@@ -1294,7 +1294,6 @@ export function createChildQueryTools(
 			"Answer the question a child session is waiting on, naming the question number from its message. A reply to a question that is not waiting is refused.",
 		parameters: replyChildParameters,
 		async execute(_toolCallId, params) {
-			if (!seated("child-session", "overlay")) throw new Error(unseatedMessage);
 			sessions.reply(params.id, params.question, params.answer);
 			return report([`Reply sent to child ${params.id}.`], {
 				id: params.id,
