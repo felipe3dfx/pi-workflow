@@ -1,4 +1,5 @@
 import { realpathSync } from "node:fs";
+import { basename } from "node:path";
 import {
 	createBashToolDefinition,
 	defineTool,
@@ -117,16 +118,23 @@ function physical(cwd: string): string {
 	}
 }
 
-export function createChildBashTool(
-	cwd: string,
-	userPrefix?: string,
-) {
+export interface ChildShell {
+	commandPrefix?: string;
+	shellPath?: string;
+}
+
+const posixShell = /^(bash|zsh|sh|dash|ksh|mksh)$/;
+
+export function createChildBashTool(cwd: string, shell: ChildShell = {}) {
 	const commandPrefix = `unalias git gh 2>/dev/null || :\n${guard("git", gitDecision(physical(cwd)))}${guard("gh", ghDecision)}`;
+	const user =
+		!shell.shellPath || posixShell.test(basename(shell.shellPath)) ? shell : {};
 	return defineTool(
 		createBashToolDefinition(cwd, {
-			commandPrefix: userPrefix
-				? `${userPrefix}\n${commandPrefix}`
+			commandPrefix: user.commandPrefix
+				? `${user.commandPrefix}\n${commandPrefix}`
 				: commandPrefix,
+			shellPath: user.shellPath,
 		}),
 	);
 }

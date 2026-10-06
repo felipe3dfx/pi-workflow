@@ -278,6 +278,7 @@ function toolContext(mode, cwd, jev = fakeJev()) {
 		mode,
 		hasUI: mode === "tui" || mode === "rpc",
 		cwd,
+		isProjectTrusted: () => false,
 		model: { provider: "session", id: "model", reasoning: true },
 		thinkingLevel: "medium",
 		modelRegistry: {
@@ -1240,6 +1241,47 @@ test("the default child factory gives an explore child a read-only codegraph and
 			"query",
 			"explore",
 		]);
+	});
+});
+
+test("the default child factory runs a trusted project's shell prefix in the child's bash", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		await mkdir(join(worktree, ".pi"));
+		await writeFile(
+			join(worktree, ".pi", "settings.json"),
+			JSON.stringify({ shellCommandPrefix: "PI_WORKFLOW_PREFIX=project" }),
+		);
+		const echo = () =>
+			fauxAssistantMessage(
+				fauxToolCall("bash", { command: 'echo "[$PI_WORKFLOW_PREFIX]"' }),
+				{ stopReason: "toolUse" },
+			);
+		const parent = await fauxParent(agentDir, [
+			echo(),
+			fauxAssistantMessage("Trusted."),
+			echo(),
+			fauxAssistantMessage("Untrusted."),
+		]);
+		const { tool } = await loadSpawnTool({ agentDir });
+
+		for (const trusted of [true, false]) {
+			const result = await spawn(
+				tool,
+				{ role: "worker", task: "Echo the prefix" },
+				{
+					...toolContext("print", worktree),
+					...parent.context,
+					isProjectTrusted: () => trusted,
+				},
+			);
+			assert.equal(result.details.status, "completed", text(result));
+		}
+
+		const outputs = parent.requests
+			.flatMap((request) => request.messages)
+			.filter((message) => message.role === "toolResult")
+			.map((message) => message.content.map((part) => part.text).join(""));
+		assert.deepEqual(outputs, ["[project]\n", "[]\n"]);
 	});
 });
 

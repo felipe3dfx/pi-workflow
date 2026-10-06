@@ -53,6 +53,7 @@ interface ChildSpec {
 	prompt: string;
 	tools: string[];
 	modelRegistry: ExtensionContext["modelRegistry"];
+	parent: Pick<ExtensionContext, "cwd" | "isProjectTrusted">;
 	onEvent(event: AgentSessionEvent): void;
 	ask(question: string): Promise<string>;
 	report(result: ChildResult): void;
@@ -290,8 +291,8 @@ const createPiChildSession: ChildSessionFactory = async (spec) => {
 	}
 	const slash = spec.model.indexOf("/");
 	const settingsManager = SettingsManager.inMemory();
-	const userSettings = SettingsManager.create(spec.cwd, getAgentDir(), {
-		projectTrusted: false,
+	const userSettings = SettingsManager.create(spec.parent.cwd, getAgentDir(), {
+		projectTrusted: spec.parent.isProjectTrusted(),
 	});
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: spec.cwd,
@@ -316,7 +317,10 @@ const createPiChildSession: ChildSessionFactory = async (spec) => {
 		thinkingLevel: spec.thinking,
 		tools: spec.tools,
 		customTools: [
-			createChildBashTool(spec.cwd, userSettings.getShellCommandPrefix()),
+			createChildBashTool(spec.cwd, {
+				commandPrefix: userSettings.getShellCommandPrefix(),
+				shellPath: userSettings.getShellPath(),
+			}),
 			createChildCodeGraphTool(spec.cwd),
 			createAskParentTool(spec.ask),
 			...(reportsResult(spec.role)
@@ -628,6 +632,7 @@ export function createChildSessions(options: {
 			background: boolean;
 			signal?: AbortSignal;
 			modelRegistry: ExtensionContext["modelRegistry"];
+			parent: Pick<ExtensionContext, "cwd" | "isProjectTrusted">;
 			onLaunch?: () => void;
 		},
 		from?: { id: string; conversation: Conversation },
@@ -650,6 +655,7 @@ export function createChildSessions(options: {
 				prompt: plan.contract.prompt,
 				tools: childTools(plan),
 				modelRegistry: launch.modelRegistry,
+				parent: launch.parent,
 				onEvent: (event) => {
 					watch.event(event);
 					observe(event);
@@ -783,6 +789,7 @@ export function createChildSessions(options: {
 		launch: {
 			signal?: AbortSignal;
 			modelRegistry: ExtensionContext["modelRegistry"];
+			parent: Pick<ExtensionContext, "cwd" | "isProjectTrusted">;
 		},
 	) {
 		const child = children.get(id);
@@ -1055,6 +1062,7 @@ export function createSpawnChildTool(
 				background,
 				signal,
 				modelRegistry: ctx.modelRegistry,
+				parent: ctx,
 				onLaunch: () => launcher.recordLaunch(userRequest?.id),
 			});
 			return launched(started, plan.warnings, {
@@ -1141,6 +1149,7 @@ export function createContinueChildTool(
 				await sessions.resume(params.id, params.task, {
 					signal,
 					modelRegistry: ctx.modelRegistry,
+					parent: ctx,
 				}),
 				[],
 			);

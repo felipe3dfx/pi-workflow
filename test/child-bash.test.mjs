@@ -16,7 +16,7 @@ import { createChildBashTool } from "../extensions/child-bash.ts";
 import { withAgentDirectory } from "./support/jev-routing.mjs";
 
 function run(command, cwd, options) {
-	return createChildBashTool(cwd, options).execute(
+	return createChildBashTool(cwd, options && { commandPrefix: options }).execute(
 		"call-1",
 		{ command },
 		undefined,
@@ -583,4 +583,52 @@ test("a child's bash cannot be created for a worktree that does not resolve", (t
 		() => createChildBashTool(missing),
 		new Error(`The child's worktree ${missing} cannot be resolved.`),
 	);
+});
+
+function fakeShell(t, name) {
+	const dir = temporaryDirectory(t, "pi-workflow-shell-");
+	const path = join(dir, name);
+	const log = join(dir, "calls.log");
+	writeFileSync(
+		path,
+		`#!/bin/sh\nprintf '%s\\n' "$0" >> '${log}'\nexec /bin/bash "$@"\n`,
+		{ mode: 0o755 },
+	);
+	return { path, calls: () => (existsSync(log) ? readFileSync(log, "utf8") : "") };
+}
+
+test("a child's bash runs the user's prefix and the guard with a POSIX-family shell", async (t) => {
+	routing(t, "off");
+	const dir = worktree(t);
+	const shell = fakeShell(t, "zsh");
+	const bash = createChildBashTool(dir, {
+		commandPrefix: "PI_WORKFLOW_PREFIX=on",
+		shellPath: shell.path,
+	});
+
+	const user = await bash.execute("call-1", { command: 'echo "$PI_WORKFLOW_PREFIX"' });
+	const result = await bash.execute("call-2", { command: "git commit -am x" });
+
+	assert.equal(text(user), "on\n");
+	assert.equal(result.structuredContent.output, reserved("git commit"));
+	assert.equal(shell.calls(), `${shell.path}\n${shell.path}\n`);
+	assert.equal(commits(dir), "1");
+});
+
+test("a child's bash runs only the guard with the default bash for a shell outside the POSIX family", async (t) => {
+	routing(t, "off");
+	const dir = worktree(t);
+	const shell = fakeShell(t, "fish");
+	const bash = createChildBashTool(dir, {
+		commandPrefix: "set -gx PI_WORKFLOW_PREFIX on",
+		shellPath: shell.path,
+	});
+
+	const user = await bash.execute("call-1", { command: 'echo "[$PI_WORKFLOW_PREFIX]"' });
+	const result = await bash.execute("call-2", { command: "git commit -am x" });
+
+	assert.equal(text(user), "[]\n");
+	assert.equal(result.structuredContent.output, reserved("git commit"));
+	assert.equal(shell.calls(), "");
+	assert.equal(commits(dir), "1");
 });
