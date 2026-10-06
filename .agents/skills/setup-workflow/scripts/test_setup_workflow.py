@@ -1625,21 +1625,26 @@ class SetupWorkflowCliTests(unittest.TestCase):
         self.assertIn("Authority state: present (fallback-established)", updated)
         self.assertEqual(updated.split(DOMAIN_AUTHORITY_START)[1], region_before)
 
-    def real_assets_values(self) -> str:
+    def asset_values(self, asset: Path) -> dict[str, str]:
+        return {
+            token: "supported" if token.endswith("_CAPABILITY_STATE") else f"{token} value"
+            for token in re.findall(r"\{\{([A-Za-z0-9_]+)\}\}", asset.read_text(encoding="utf-8"))
+        }
+
+    def real_assets_values(self, **overrides: str) -> str:
         lines = {}
         for asset in sorted(REAL_ASSETS.glob("*.md")):
             if asset.name.startswith("issue-tracker-") and asset.name != "issue-tracker-none.md":
                 continue
-            for token in re.findall(r"\{\{([A-Za-z0-9_]+)\}\}", asset.read_text(encoding="utf-8")):
-                lines[token] = (
-                    "supported" if token.endswith("_CAPABILITY_STATE") else f"{token} value"
-                )
+            lines.update(self.asset_values(asset))
         lines.update(
             GLOSSARY_MAP_PATH="none (confirmed absent)",
             DOMAIN_AUTHORITY_PATH="docs/agents/domain.md",
             DOMAIN_AUTHORITY_STATE="absent (fallback-required)",
             PULL_REQUEST_PROVIDER="forgejo",
+            APPROVAL_POLICY="external-only",
         )
+        lines.update(overrides)
         return "".join(f"{token} = {value}\n" for token, value in lines.items())
 
     def use_real_assets(self) -> None:
@@ -1658,11 +1663,120 @@ class SetupWorkflowCliTests(unittest.TestCase):
             "Refs: <ticket identifier>",
             "feat(renewals): add premium calculation (AUT-103)",
             "the source is the child ticket branch; the proposed destination is the parent integration branch, or the production base for a parent integration branch",
+            "no skill or tracker automation closes a specification's parent ticket",
         ):
             self.assertIn(required, playbook)
         self.assertNotIn("{{COMMIT_CONVENTION}}", playbook)
         self.assertNotIn("{{PULL_REQUEST_BRANCH_RULES}}", playbook)
         self.assertTrue((self.repo / "docs" / "agents" / "coding-standards.md").is_file())
+
+    def tracker_values(self, tracker: str) -> str:
+        lines = self.asset_values(REAL_ASSETS / f"issue-tracker-{tracker}.md")
+        return self.real_assets_values() + "".join(
+            f"{token} = {value}\n" for token, value in lines.items()
+        )
+
+    def test_render_and_update_ship_the_parent_child_and_closure_lines_of_github_and_linear(
+        self,
+    ) -> None:
+        self.use_real_assets()
+        expected = {
+            "github": (
+                "the issue's parent and sub-issues",
+                "publish the parent-child (sub-issue) relationship and read it back",
+            ),
+            "linear": (
+                "keeps every closing automation off: parent auto-close, sub-issue auto-close, and auto-close of inactive issues",
+                "the specification's parent wins over a `parent` required by the fields above",
+            ),
+        }
+        for tracker, phrases in expected.items():
+            with self.subTest(tracker=tracker):
+                values = self.write_values(f"{tracker}.txt", self.tracker_values(tracker))
+                playbook = self.repo / "docs" / "agents" / "issue-tracker.md"
+                playbook.unlink(missing_ok=True)
+                arguments = (
+                    "--assets",
+                    str(REAL_ASSETS),
+                    "--values",
+                    str(values),
+                    "--tracker",
+                    tracker,
+                    "--repo",
+                    str(self.repo),
+                    "--approve",
+                    "issue-tracker.md",
+                )
+
+                render = self.run_script("render", *arguments)
+
+                self.assertEqual(render.returncode, 0, render.stderr)
+                rendered = playbook.read_text(encoding="utf-8")
+                self.assertNotIn("{{", rendered)
+                for phrase in phrases:
+                    self.assertIn(phrase, rendered)
+
+                recorded = (
+                    "\n".join(
+                        line
+                        for line in rendered.splitlines()
+                        if not any(phrase in line for phrase in phrases)
+                    )
+                    + "\n"
+                )
+                playbook.write_text(recorded, encoding="utf-8")
+
+                update = self.run_script("update", *arguments)
+
+                self.assertEqual(update.returncode, 0, update.stderr)
+                updated = playbook.read_text(encoding="utf-8")
+                for phrase in phrases:
+                    self.assertIn(phrase, updated)
+                self.assertIn(f"{tracker.upper()}_COMMENT_POLICY value", updated)
+
+    def test_render_records_the_child_integration_mode_in_the_review_policy(self) -> None:
+        self.use_real_assets()
+        values = self.write_values(
+            "values.txt", self.real_assets_values() + "CHILD_INTEGRATION = direct\n"
+        )
+
+        result = self.run_render_with(values, TARGET_NAMES)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        playbook = (self.repo / "docs" / "agents" / "workflow.md").read_text(encoding="utf-8")
+        review_policy = playbook.split("## Review Policy")[1].split("## Ownership")[0]
+        self.assertIn("Child integration: `direct`", review_policy)
+
+    def test_render_records_each_approval_policy_level(self) -> None:
+        self.use_real_assets()
+        for policy in ("every-step", "external-only", "autonomous"):
+            with self.subTest(policy=policy):
+                values = self.write_values(
+                    "values.txt", self.real_assets_values(APPROVAL_POLICY=policy)
+                )
+                playbook = self.repo / "docs" / "agents" / "workflow.md"
+                playbook.unlink(missing_ok=True)
+
+                result = self.run_render_with(values, ("workflow.md",))
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(
+                    f"- Approval policy: `{policy}`", playbook.read_text(encoding="utf-8")
+                )
+
+    def test_render_refuses_an_unknown_approval_policy(self) -> None:
+        self.use_real_assets()
+        for policy in ("ask-sometimes", "none (confirmed absent)"):
+            with self.subTest(policy=policy):
+                values = self.write_values(
+                    "values.txt", self.real_assets_values(APPROVAL_POLICY=policy)
+                )
+
+                result = self.run_render_with(values, TARGET_NAMES)
+
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(f"invalid approval policy: {policy!r}", result.stderr)
+                self.assertFalse((self.repo / "docs" / "agents" / "workflow.md").exists())
 
     def test_update_brings_an_old_playbook_up_to_date_and_keeps_recorded_values(self) -> None:
         self.use_real_assets()

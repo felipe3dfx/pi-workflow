@@ -64,13 +64,17 @@ findings to their owner as `restart recommended` for the user to decide; and
 classifies implementation dependencies, external configuration, and capability
 dependencies. Capability dependencies remain
 invocation preconditions rather than tickets, tracker relationships, or durable
-state. Publication binds a user-approved final preview to its listed effects. As a substantive transformation, it defines the publication-failure boundary at the mutation request: `blocked` means publication cannot proceed and no mutation request was sent, so preflight, handoff, and capability failures can block without tracker evidence. `partial failure` begins once a mutation request was sent or may have been sent, including when it is later confirmed rejected or its result or required read-back cannot be verified. Every `partial failure` stops at the last verifiable frontier, reconciles when tracker evidence becomes available, invalidates authorization, produces a complete substitute preview from the reconciled state, and requires new explicit authorization before resuming; if reconciliation is unavailable, it remains a `partial failure` and does not resume. It explicitly records a user's decision to proceed after a
+state. Publication binds a final preview, authorized as the approval policy requires or published and reported under `autonomous`, to its listed effects. As a substantive transformation, it defines the publication-failure boundary at the mutation request: `blocked` means publication cannot proceed and no mutation request was sent, so preflight, handoff, and capability failures can block without tracker evidence. `partial failure` begins once a mutation request was sent or may have been sent, including when it is later confirmed rejected or its result or required read-back cannot be verified. Every `partial failure` stops at the last verifiable frontier, reconciles when tracker evidence becomes available, invalidates authorization, produces a complete substitute preview from the reconciled state, and always requires new explicit authorization before resuming, whatever the approval policy; if reconciliation is unavailable, it remains a `partial failure` and does not resume. It explicitly records a user's decision to proceed after a
 definition finding and that decision's impact in the handoff and completion
 output. Publication verifies and reads back create, update, move, and
 relationship mutations; it creates when no equivalent exists and stops for
 multiple or conflicting matches.
 
-The skill is limited to product-ticket breakdown and handoff. It does not
+It requires and verifies the parent in the handoff, hangs new, updated, and
+confirmed-moved tickets with read-back in GitHub and Linear, and treats another
+unconfirmed parent as a conflicting match.
+
+The skill is limited to product-ticket breakdown, its tickets' parent relationship, and handoff. It does not
 rediscover or repair the upstream definition, impose owner policy, create
 capture IDs or propagated hashes, maintain distributed workflow state, or
 supersede the issue #16/group-spec authorities. The frontmatter was normalized

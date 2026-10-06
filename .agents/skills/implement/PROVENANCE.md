@@ -51,6 +51,7 @@ The upstream loop at `d81f3a1`: `tdd` at pre-agreed seams, type checks and singl
 5. `code-review` runs in a context other than the implementer's against the ticket's base, followed by `review-critique`; only accepted or developer-accepted findings are applied, in a fresh context, and a second review runs only when a fix changes behavior.
 6. The commit uses the repository's existing signing configuration and the fixed commit template, with no AI attribution.
 7. Added developer-owned scope and risk, discretionary technical recommendations, selective prototype recovery, the developer-approved append-only Spanish issue comment, cancellation that preserves work, and the prose handoff to `create-pr` and `qa-impact`.
+8. Each context that executes `tdd`, `code-review`, or `review-critique` loads it by name, with no link and no harness tool named, including the second review's context.
 
 ## Approval
 

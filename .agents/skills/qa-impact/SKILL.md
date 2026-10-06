@@ -4,7 +4,7 @@ description: "Trigger: derive supplemental manual regression cases for a pushed 
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "2.0"
+  version: "2.2"
   provenance: original
 ---
 
@@ -19,6 +19,7 @@ Run when `create-pr` pushes a candidate, on the pushed head commit, and again on
 - The approved ticket and specification as behavior authority.
 - The consumer playbooks, including QA environments and the issue-tracker comment rules.
 - The head commit SHA and the diff since the base at that head.
+- The recorded decisions: deviations, accepted risks, and scope expansions from the `implement` handoff and the approved ticket comments. They are settled; never report one as an unresolved exposure.
 
 The head SHA is the evidence identity. A result names it, and it is fresh only while it names the current head; a new head makes it historical and needs a new run.
 
@@ -35,7 +36,7 @@ Report `blocked` when the head, the diff, or a required capability is inaccessib
 
 Return two things:
 
-- **Tracker comment draft**, in Spanish, addressed to the child ticket and never published by this skill. It names the head SHA, visibly states the status token `ready`, `incomplete-context`, or `blocked`, and carries the cases, the no-impact rationales, and any unresolved exposures. Publishing it is a separate effect: approval of the exact text and target ticket, append-only, read back to confirm, with a failure reported as unpublished.
+- **Tracker comment draft**, in Spanish, addressed to the child ticket, or to the parent ticket when the head is a parent integration branch, and never published by this skill. It names the head SHA, visibly states the status token `ready`, `incomplete-context`, or `blocked`, and carries the cases, the no-impact rationales, and any unresolved exposures. Publishing it is a separate effect under the pull-request playbook's approval policy and approval preview, append-only, read back to confirm, with a failure reported as unpublished.
 - **Status in prose**: the head SHA, the status, the surfaces analyzed, the excluded direct scenarios, the unresolved exposures and missing evidence, and that a new head needs a new run.
 
 `incomplete-context` needs a human decision. `blocked` is a process failure, never a no-impact result.

@@ -4,7 +4,7 @@ description: "Trigger: judge code-review findings inside the implementation loop
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "2.0.0"
+  version: "2.1.0"
   provenance: original
 ---
 
@@ -40,4 +40,4 @@ For each finding, in the report's order:
 
 Prose, one entry per finding in the review's order, each opening with the finding's ID unchanged, then its verdict and the fix, evidence, or trade-off the verdict requires. Every finding gets exactly one entry.
 
-End with one line listing the accepted IDs, as in `Accepted: STD-2, TEST-1`, or `Accepted: none`.
+End with one line listing the accepted IDs, as in `Accepted: STD-2, TEST-1`, or `Accepted: none`. Then list each rejected finding for the developer as its ID, `rejected`, and a one-line reason; it needs no answer.

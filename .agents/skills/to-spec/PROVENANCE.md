@@ -55,6 +55,10 @@ publication of both artifacts before `PUBLISHED`, and the ticket-slicing
 handoff contract. The frontmatter was normalized to this repository's required
 shape.
 
+In GitHub and Linear, the skill publishes or reuses the specification's parent
+ticket with preflight, preview, read-back, and `PUBLISHED` over three artifacts;
+hands the parent to `to-tickets`; and loads `codebase-design` by name.
+
 ## Approval
 
 Grupo Ilao approved internal reuse under the MIT license.

@@ -4,7 +4,7 @@ description: "Trigger: adversarially review a complete feature definition before
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "1.0"
+  version: "1.1"
   provenance: derived
 ---
 
@@ -40,6 +40,6 @@ For every finding, record lens, finding, exact evidence, impact, severity (`bloc
 None identified.
 ```
 
-When populated, include the deviation, alternative decision, reason, impact, evidence, affected artifact or contract, required review, and user disposition. An undisposed warning, risk, divergence, or critical evidence gap is a blocker.
+When populated, include the deviation, alternative decision, reason, impact, evidence, affected artifact or contract, required review, and user disposition. An undisposed warning, risk, divergence, or critical evidence gap is a blocker. Present each finding that needs a user disposition as the pull-request playbook's approval preview, or as [the shipped rules](../setup-workflow/assets/pull-requests.md#approval-gates-and-external-effects) define it when that playbook has none. Accepting a warning or risk is always asked, whatever the approval policy.
 
 Return `READY` only with no blockers or warnings; return `READY WITH WARNINGS` only with no blockers and the user's explicit, traceable acceptance for every warning; otherwise return `BLOCKED`. Corrections return to their owner. Reverify an accepted deviation before improving a blocked verdict. Keep drafts private. The final report consolidates findings, user dispositions, corrections, reverifications, accepted warnings, and verdict. Write human-facing reports, tracker comments, and publication metadata in Spanish; technical specifications and evidence may retain English repository terminology.
