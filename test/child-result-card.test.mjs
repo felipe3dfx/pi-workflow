@@ -416,3 +416,39 @@ test("the answer card is reused for the same arguments and rebuilt when they cha
 	assert.notEqual(answerCard({ ...args, answer: "other" }, theme(), first), first);
 	assert.notEqual(answerCard(args, theme(), {}), first);
 });
+
+test("with the child-session claim unseated every child card falls back to its header and text", (t) => {
+	const { card } = cards(t);
+	const answer = answerCard({ id, question: 2, answer: "Use X." }, theme());
+	const result = card({ customType: "pi-workflow-child-result", details });
+	const asked = card({
+		customType: "pi-workflow-child-question",
+		details: { ...details, state: "waiting", question: 2, text: "Which one?" },
+	});
+	const held = [answer, result, asked].map((c) => plain(c));
+	replaceSelection({
+		schemaVersion: 1,
+		capabilities: Object.fromEntries(capabilities.map((c) => [c, false])),
+		expectations: {},
+	});
+	t.after(() =>
+		replaceSelection({
+			schemaVersion: 1,
+			capabilities: Object.fromEntries(
+				capabilities.map((c) => [c, c === "child-session"]),
+			),
+			expectations: {},
+		}),
+	);
+	const text = (c) => plain(c).filter(Boolean);
+	assert.deepEqual(text(answer), ["Parent → 5636 · answer 2", "Use X."]);
+	assert.deepEqual(text(result), [
+		"Subagent worker 5636  1m 02s",
+		details.text,
+	]);
+	assert.deepEqual(text(asked), [
+		"Subagent worker 5636 asks · question 2",
+		"Which one?",
+	]);
+	assert.ok(held.every((lines) => lines.some((line) => line.includes("◆"))));
+});

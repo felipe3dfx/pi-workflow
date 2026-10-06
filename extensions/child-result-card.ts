@@ -1,3 +1,5 @@
+import { stripVTControlCharacters } from "node:util";
+
 import {
 	type ExtensionAPI,
 	getMarkdownTheme,
@@ -105,6 +107,36 @@ function bodyLines(body: Markdown, inner: number) {
 	return lines;
 }
 
+class Fallback extends Text {
+	private last = "";
+
+	constructor() {
+		super("", 0, 0);
+	}
+
+	update(text: string) {
+		if (text === this.last) return;
+		this.last = text;
+		this.setText(text);
+	}
+}
+
+function paintCard(
+	outer: number,
+	fallback: Fallback,
+	head: string,
+	text: string,
+	lines: (width: number) => string[],
+) {
+	if (held(childStream)) {
+		paint(childStream, lines);
+		return paintMessageStream(outer);
+	}
+	const plain = `${sanitizeTaskText(stripVTControlCharacters(head)).replace(/^◆ /, "")}\n${sanitizeMultilineText(text.trim()).replaceAll("\t", "   ")}`;
+	fallback.update(plain);
+	return fallback.render(outer);
+}
+
 function frame(
 	outer: number,
 	head: string,
@@ -133,6 +165,7 @@ class ResultCard implements Component {
 	expanded: boolean;
 	theme: Theme;
 	body: Markdown;
+	readonly fallback = new Fallback();
 	state: { open: boolean; failed: boolean };
 
 	constructor(message: Message, expanded: boolean, theme: Theme) {
@@ -156,8 +189,13 @@ class ResultCard implements Component {
 	}
 
 	render(outer: number) {
-		paint(childStream, (width) => this.cardLines(width));
-		return paintMessageStream(outer);
+		return paintCard(
+			outer,
+			this.fallback,
+			header(this.theme, this.card, this.question, this.open()),
+			this.card.text,
+			(width) => this.cardLines(width),
+		);
 	}
 
 	cardLines(outer: number) {
@@ -210,6 +248,8 @@ class AnswerCard implements Component {
 	readonly answer: string | undefined;
 	readonly body: Markdown;
 	readonly theme: Theme;
+	readonly fallback = new Fallback();
+	private cachedHead: string | undefined;
 
 	constructor(
 		id: string | undefined,
@@ -225,25 +265,18 @@ class AnswerCard implements Component {
 	}
 
 	get head() {
-		return `${this.theme.fg("toolTitle", "◆")} ${this.theme.bold(this.theme.fg("muted", "Parent"))} → ${sanitizeTaskText(this.id ?? "").slice(0, 4)} ${this.theme.fg("toolTitle", `· answer ${this.question ?? "?"}`)}`;
+		this.cachedHead ??= `${this.theme.fg("toolTitle", "◆")} ${this.theme.bold(this.theme.fg("muted", "Parent"))} → ${sanitizeTaskText(this.id ?? "").slice(0, 4)} ${this.theme.fg("toolTitle", `· answer ${this.question ?? "?"}`)}`;
+		return this.cachedHead;
 	}
 
 	render(outer: number) {
-		if (!held(childStream)) {
-			const plain = `Parent → ${sanitizeTaskText(this.id ?? "").slice(0, 4)} · answer ${this.question ?? "?"}`;
-			return new Text(
-				`${plain}\n${sanitizeMultilineText((this.answer ?? "").trim()).replaceAll("\t", "   ")}`,
-				0,
-				0,
-			).render(outer);
-		}
-		paint(childStream, (width) =>
+		return paintCard(outer, this.fallback, this.head, this.answer ?? "", (width) =>
 			frame(width, this.head, "", (inner) => bodyLines(this.body, inner)),
 		);
-		return paintMessageStream(outer);
 	}
 
 	invalidate() {
+		this.cachedHead = undefined;
 		this.body.invalidate();
 	}
 }
