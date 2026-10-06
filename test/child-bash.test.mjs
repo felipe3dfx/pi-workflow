@@ -114,6 +114,20 @@ for (const state of ["off", "on"]) {
 			["git log --oneline", /first/],
 			["git show --stat", /file\.txt/],
 			["cd sub && git status --short", /file\.txt/],
+			["git -C . status", /On branch/],
+			["git -c core.quotePath=false status --short", /file\.txt/],
+			["git worktree list", /\[(main|master)\]/],
+			["git stash list", /^\(no output\)$/],
+			["git branch --show-current", /^(main|master)$/m],
+			["git branch", /^\* (main|master)$/m],
+			["git branch -vv --list 'ma*'", /first/],
+			["git branch --contains HEAD", /(main|master)/],
+			["git tag -l", /^\(no output\)$/],
+			["git config --get user.name || git config --list", /./],
+			["git config --show-origin --get-regexp '^core\\.'", /core\./],
+			["git rev-parse --show-toplevel", /worktree/],
+			["git ls-files", /file\.txt/],
+			["git version", /git version/],
 		]) {
 			const result = await run(command, dir);
 
@@ -185,8 +199,6 @@ for (const state of ["off", "on"]) {
 			"revert",
 			"am",
 			"reset",
-			"tag",
-			"branch",
 			"update-ref",
 			"push",
 			"pull",
@@ -216,6 +228,13 @@ for (const state of ["off", "on"]) {
 			"send-email",
 			"maintenance",
 			"repack",
+			"send-pack",
+			"fast-import",
+			"imap-send",
+			"svn",
+			"init",
+			"clone",
+			"archive",
 		]) {
 			await assertReserved(`git ${subcommand}`, dir, `git ${subcommand}`);
 		}
@@ -249,6 +268,33 @@ for (const state of ["off", "on"]) {
 			["git reflog delete HEAD@{0}", "git reflog delete"],
 			["git lfs push origin main", "git lfs push"],
 			["git lfs --dry-run push origin", "git lfs push"],
+			["git lfs migrate import --everything", "git lfs migrate"],
+			["git lfs", "git lfs"],
+			["git stash", "git stash"],
+			["git stash -u", "git stash"],
+			["git stash pop", "git stash pop"],
+			["git stash drop", "git stash drop"],
+			["git worktree add ../x", "git worktree add"],
+			["git worktree", "git worktree"],
+			["git reflog main", "git reflog main"],
+			["git submodule foreach true", "git submodule foreach"],
+			["git branch new", "git branch"],
+			["git branch -D main", "git branch"],
+			["git branch -a new", "git branch"],
+			["git branch --set-upstream-to=x", "git branch"],
+			["git tag v1", "git tag"],
+			["git tag -d v1", "git tag"],
+			["git tag -a -m x v1", "git tag"],
+			["git config user.name x", "git config"],
+			["git config --unset user.name", "git config"],
+			["git config --get --add a.b c", "git config"],
+			["git config --show-origin", "git config"],
+			["git config", "git config"],
+			["git send-pack origin HEAD:refs/heads/main", "git send-pack"],
+			["git bisect log", "git bisect"],
+			["git notes list", "git notes"],
+			["git sparse-checkout list", "git sparse-checkout"],
+			["git stage -A", "git stage"],
 		]) {
 			await assertReserved(command, dir, expected);
 		}
@@ -284,27 +330,67 @@ for (const state of ["off", "on"]) {
 			"git -c alias.ci=commit ci -am x",
 			"git -calias.p=push p",
 			"git -c color.ui=never -c alias.s=status s",
+			"git -c alias.x=status x",
 		]) {
-			await assertReserved(command, dir, "git -c alias");
+			await assertReserved(command, dir, "git -c");
 		}
 		assert.equal(commits(dir), "1");
 	});
 
-	test(`while Jev routing is ${state}, a child's bash finds the git subcommand after leading global options`, async (t) => {
+	test(`while Jev routing is ${state}, a child's bash refuses a git config override that is not a color or quotePath in its worktree`, async (t) => {
+		routing(t, state);
+		const dir = worktree(t);
+
+		for (const command of [
+			"git -c core.pager='git push' log",
+			"git -c core.editor=x commit",
+			"git -ccore.sshCommand=x ls-remote origin",
+			"git -c diff.external=x diff",
+			"git -c user.name=x log",
+			"git -c",
+		]) {
+			await assertReserved(command, dir, "git -c");
+		}
+		for (const [command, expected] of [
+			["git --config-env=alias.x=V x", "git --config-env"],
+			["git --config-env=core.pager=V log", "git --config-env"],
+			["git --config-env core.pager=V log", "git --config-env"],
+		]) {
+			await assertReserved(command, dir, expected);
+		}
+	});
+
+	test(`while Jev routing is ${state}, a child's bash finds the git subcommand after the allowed global options`, async (t) => {
 		routing(t, state);
 		const dir = worktree(t);
 
 		for (const command of [
 			"git --no-pager commit -am x",
 			"git -C . commit -am x",
-			"git -c user.name=x commit -am x",
-			"git --git-dir .git --work-tree . commit -am x",
-			"git --git-dir=.git commit -am x",
-			"git --namespace n --exec-path /x --config-env a.b=C commit -am x",
-			"git -P -C sub -c a.b=c commit -am x",
+			"git -c color.ui=never commit -am x",
+			"git -C sub --no-pager -ccolor.ui=never commit -am x",
 			"cd sub && git commit -am x",
 		]) {
 			await assertReserved(command, dir, "git commit");
+		}
+		assert.equal(commits(dir), "1");
+	});
+
+	test(`while Jev routing is ${state}, a child's bash refuses every other git global option in its worktree`, async (t) => {
+		routing(t, state);
+		const dir = worktree(t);
+
+		for (const [command, expected] of [
+			["git --git-dir=.git log", "git --git-dir"],
+			["git --git-dir .git --work-tree . commit -am x", "git --git-dir"],
+			["git --work-tree=. status", "git --work-tree"],
+			["git --namespace n log", "git --namespace"],
+			["git --exec-path=/x log", "git --exec-path"],
+			["git -P log", "git -P"],
+			["git --paginate log", "git --paginate"],
+			["git --version", "git --version"],
+		]) {
+			await assertReserved(command, dir, expected);
 		}
 		assert.equal(commits(dir), "1");
 	});
@@ -363,6 +449,7 @@ test("a child's guard does not reach processes its command starts", async (t) =>
 	for (const command of [
 		"sh -c 'git config core.hooksPath .husky'",
 		"sh -c 'git stash list'",
+		"sh -c 'git stash'",
 		"printf 'branch --show-current\\n' | xargs git",
 	]) {
 		const result = await run(command, dir);
@@ -444,7 +531,8 @@ test("a child's bash keeps the guard when the user's prefix sets nounset", async
 	const dir = worktree(t);
 
 	for (const [command, expected] of [
-		["git -c alias.ci=commit ci", "git -c alias"],
+		["git -c alias.ci=commit ci", "git -c"],
+		["git -c", "git -c"],
 		["git commit -am x", "git commit"],
 		["gh pr merge 12", "gh pr merge"],
 		["gh pr --subject view merge 12", "gh pr"],
@@ -454,9 +542,6 @@ test("a child's bash keeps the guard when the user's prefix sets nounset", async
 		assert.equal(result.structuredContent.exit_code, 126, command);
 		assert.equal(result.structuredContent.output, reserved(expected), command);
 	}
-	const missing = await run("git -c", dir, "set -u");
-	assert.equal(missing.structuredContent.exit_code, 129);
-	assert.doesNotMatch(missing.structuredContent.output, /unbound|reserved/);
 	assert.match(text(await run("git status", dir, "set -u")), /On branch/);
 	assert.equal(text(await run("gh", dir, "set -u")), "fake gh \n");
 });
