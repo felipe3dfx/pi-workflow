@@ -955,6 +955,79 @@ test("session start with no selection file does not seat a capability", async ()
 	});
 });
 
+test("session start reports a refused selection with its text and keeps the current seating", async () => {
+	const refused = { ...savedSelection(["todo"]), schemaVersion: 2 };
+	await withSelectionExtension(refused, async ({ fire, notifications }) => {
+		replaceSelection(savedSelection(["codegraph"]));
+		await fire("tui", true);
+		assert.deepEqual(notifications, [
+			{ message: "Selection must use schemaVersion 1.", level: "error" },
+		]);
+		assert.deepEqual(seatedNames(), ["codegraph"]);
+	});
+});
+
+test("session start offers the capabilities' tools in today's order and checks the legacy spawn package right before the child session offer", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-offer-order-"));
+	replaceSelection(clearedSelection());
+	try {
+		const metadataPath = join(dir, "companions.json");
+		await writeFile(
+			metadataPath,
+			JSON.stringify({ schemaVersion: 1, companions: [{ package: "alpha" }] }),
+			"utf8",
+		);
+		await writeFile(
+			join(dir, "pi-workflow-selection.json"),
+			JSON.stringify(savedSelection(capabilities)),
+			"utf8",
+		);
+		const { pi, handlers } = fakePiExtensionApi();
+		const log = [];
+		pi.registerTool = (tool) => log.push(tool.name);
+		piWorkflowExtension(pi, {
+			agentDirectory: dir,
+			catalog: {
+				metadataPath,
+				resolveInstalledVersion: (name) => {
+					if (name === "@tintinweb/pi-subagents") log.push("legacy check");
+					return {};
+				},
+			},
+		});
+		log.length = 0;
+		await fireEvent(handlers, "session_start", {
+			...fakeSessionStartCtx(),
+			cwd: dir,
+			isProjectTrusted: () => false,
+		});
+		assert.deepEqual(log, [
+			"ask_user_choice",
+			"ask_user_question",
+			"todo",
+			"codegraph",
+			"read",
+			"bash",
+			"grep",
+			"find",
+			"ls",
+			"edit",
+			"write",
+			"legacy check",
+			"spawn_child",
+			"continue_child",
+			"list_children",
+			"child_status",
+			"child_result",
+			"cancel_child",
+			"reply_child",
+		]);
+	} finally {
+		replaceSelection(clearedSelection());
+		await rm(dir, { recursive: true, force: true });
+	}
+});
+
 test("workflow:config reports unsupported arguments without UI in print and json modes", async () => {
 	const originalError = console.error;
 	const errors = [];
