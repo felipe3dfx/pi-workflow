@@ -93,13 +93,12 @@ function header(theme: Theme, card: Card, question: boolean, open: boolean) {
 		: line;
 }
 
+function clean(text: string) {
+	return sanitizeMultilineText(text.trim()).replaceAll("\t", "   ");
+}
+
 function markdownBody(text: string) {
-	return new Markdown(
-		sanitizeMultilineText(text.trim()).replaceAll("\t", "   "),
-		0,
-		0,
-		getMarkdownTheme(),
-	);
+	return new Markdown(text, 0, 0, getMarkdownTheme());
 }
 
 function bodyLines(body: Markdown, inner: number) {
@@ -122,20 +121,21 @@ class Fallback extends Text {
 	}
 }
 
+function plainHead(head: string) {
+	return sanitizeTaskText(stripVTControlCharacters(head)).replace(/^◆ /, "");
+}
+
 function paintCard(
 	outer: number,
 	fallback: Fallback,
-	head: string,
-	text: string,
 	lines: (width: number) => string[],
-	fallbackText?: string,
+	plain: () => string,
 ) {
 	if (held(childStream)) {
 		paint(childStream, lines);
 		return paintMessageStream(outer);
 	}
-	const plain = `${sanitizeTaskText(stripVTControlCharacters(head)).replace(/^◆ /, "")}\n${sanitizeMultilineText(text.trim()).replaceAll("\t", "   ")}`;
-	fallback.update(fallbackText ?? plain);
+	fallback.update(plain());
 	return fallback.render(outer);
 }
 
@@ -166,6 +166,7 @@ class ResultCard implements Component {
 	question: boolean;
 	expanded: boolean;
 	theme: Theme;
+	text: string;
 	body: Markdown;
 	readonly fallback = new Fallback();
 	state: { open: boolean; failed: boolean };
@@ -178,7 +179,8 @@ class ResultCard implements Component {
 			: this.card.id;
 		this.expanded = expanded;
 		this.theme = theme;
-		this.body = markdownBody(this.card.text);
+		this.text = clean(this.card.text);
+		this.body = markdownBody(this.text);
 		this.state = {
 			open: this.open(),
 			failed: this.card.state === "failed" || this.card.state === "timed out",
@@ -194,10 +196,17 @@ class ResultCard implements Component {
 		return paintCard(
 			outer,
 			this.fallback,
-			header(this.theme, this.card, this.question, this.open()),
-			this.card.text,
 			(width) => this.cardLines(width),
+			() => this.plain(),
 		);
+	}
+
+	plain() {
+		const open = this.open();
+		const head = plainHead(header(this.theme, this.card, this.question, open));
+		if (open || this.question) return `${head}\n${this.text}`;
+		const why = reason(this.card);
+		return why ? `${head}\n${sanitizeTaskText(why)}` : head;
 	}
 
 	cardLines(outer: number) {
@@ -248,9 +257,11 @@ class AnswerCard implements Component {
 	readonly id: string | undefined;
 	readonly question: number | undefined;
 	readonly answer: string | undefined;
+	readonly text: string;
 	readonly body: Markdown;
 	readonly theme: Theme;
 	readonly rejection: string | undefined;
+	readonly rejectionText: string | undefined;
 	readonly fallback = new Fallback();
 	private cachedHead: string | undefined;
 
@@ -266,7 +277,9 @@ class AnswerCard implements Component {
 		this.answer = answer;
 		this.theme = theme;
 		this.rejection = rejection;
-		this.body = markdownBody(answer ?? "");
+		this.rejectionText = rejection === undefined ? undefined : clean(rejection);
+		this.text = clean(answer ?? "");
+		this.body = markdownBody(this.text);
 	}
 
 	get head() {
@@ -278,24 +291,22 @@ class AnswerCard implements Component {
 	}
 
 	render(outer: number) {
-		const rejection = this.rejection;
+		const rejectionText = this.rejectionText;
 		return paintCard(
 			outer,
 			this.fallback,
-			this.head,
-			this.answer ?? "",
 			(width) =>
 				frame(width, this.head, "", (inner) =>
-					rejection === undefined
+					rejectionText === undefined
 						? bodyLines(this.body, inner)
-						: wrapTextWithAnsi(
-								sanitizeMultilineText(rejection).replaceAll("\t", "   "),
-								inner,
-							).map((line) => this.theme.fg("error", line)),
+						: wrapTextWithAnsi(rejectionText, inner).map((line) =>
+								this.theme.fg("error", line),
+							),
 				),
-			rejection === undefined
-				? undefined
-				: `${this.head}\n${this.theme.fg("error", sanitizeMultilineText(rejection.trim()).replaceAll("\t", "   "))}`,
+			() =>
+				rejectionText === undefined
+					? `${plainHead(this.head)}\n${this.text}`
+					: `${this.head}\n${this.theme.fg("error", rejectionText)}`,
 		);
 	}
 

@@ -14,7 +14,7 @@ import {
 import { type Component, Text, TruncatedText } from "@earendil-works/pi-tui";
 
 import { claim, held } from "./configure.ts";
-import { settings } from "./shell-settings.ts";
+import { settings, shellOptions } from "./shell-settings.ts";
 
 const compactStream = claim("compact-rendering", "message-stream");
 
@@ -306,16 +306,9 @@ export function syncCompactTools(pi: ExtensionAPI, ctx?: ExtensionContext) {
 			ctx && { autoResizeImages: settings(ctx).getImageAutoResize() },
 		),
 	);
-	register("bash", (cwd, ctx) => {
-		const shell = ctx && settings(ctx);
-		return createBashToolDefinition(
-			cwd,
-			shell && {
-				commandPrefix: shell.getShellCommandPrefix(),
-				shellPath: shell.getShellPath(),
-			},
-		);
-	});
+	register("bash", (cwd, ctx) =>
+		createBashToolDefinition(cwd, ctx && shellOptions(ctx)),
+	);
 	register("grep", (cwd) => createGrepToolDefinition(cwd));
 	register("find", (cwd) => createFindToolDefinition(cwd));
 	register("ls", (cwd) => createLsToolDefinition(cwd));

@@ -475,11 +475,15 @@ test("with the child-session claim unseated every child card falls back to its h
 	const answer = answerCard({ id, question: 2, answer: "Use X." }, theme());
 	const rejected = answerCard({ id, question: 1 }, theme(), undefined, "Refused \u001b[31mhere.");
 	const result = card({ customType: "pi-workflow-child-result", details });
+	const failed = card({
+		customType: "pi-workflow-child-result",
+		details: { ...details, state: "failed", text: "Model refused.\nTrace." },
+	});
 	const asked = card({
 		customType: "pi-workflow-child-question",
 		details: { ...details, state: "waiting", question: 2, text: "Which one?" },
 	});
-	const held = [answer, result, asked].map((c) => plain(c));
+	const held = [answer, result, failed, asked].map((c) => plain(c));
 	replaceSelection({
 		schemaVersion: 1,
 		capabilities: Object.fromEntries(capabilities.map((c) => [c, false])),
@@ -504,10 +508,32 @@ test("with the child-session claim unseated every child card falls back to its h
 	assert.ok(rejectedHead.includes(theme().fg("error", "◆")));
 	assert.ok(rejectedHead.includes(theme().fg("error", "· answer 1 rejected")));
 	assert.ok(rejectedBody.includes(theme().fg("error", "Refused  [31mhere.")));
+	assert.deepEqual(text(result), ["Subagent worker 5636  1m 02s"]);
+	result.setExpanded(true);
 	assert.deepEqual(text(result), [
-		"Subagent worker 5636  1m 02s",
+		"Subagent worker 5636  gpt-6-luna (high) · 1m 02s",
 		details.text,
 	]);
+	result.setExpanded(false);
+	assert.deepEqual(text(result), ["Subagent worker 5636  1m 02s"]);
+	assert.deepEqual(text(failed), [
+		"Subagent worker 5636 failed  1m 02s",
+		"Model refused.",
+	]);
+	for (const verdict of ["blocked", "partial", "fail"]) {
+		const structured = card({
+			customType: "pi-workflow-child-result",
+			details: {
+				...details,
+				verdict,
+				result: { verdict, reason: "Database access is missing" },
+			},
+		});
+		assert.deepEqual(text(structured), [
+			`Subagent worker 5636 ${verdict}  1m 02s`,
+			"Database access is missing",
+		]);
+	}
 	assert.deepEqual(text(asked), [
 		"Subagent worker 5636 asks · question 2",
 		"Which one?",

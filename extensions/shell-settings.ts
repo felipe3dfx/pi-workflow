@@ -11,3 +11,13 @@ export function settings(
 		projectTrusted: ctx.isProjectTrusted(),
 	});
 }
+
+export function shellOptions(
+	ctx: Pick<ExtensionContext, "cwd" | "isProjectTrusted">,
+) {
+	const user = settings(ctx);
+	return {
+		commandPrefix: user.getShellCommandPrefix(),
+		shellPath: user.getShellPath(),
+	};
+}
