@@ -337,7 +337,7 @@ export function registerChrome(
 							branch: branch(),
 							cwd: startCtx.cwd,
 							home: homedir(),
-							working: readHeader()?.count ?? 0,
+							working: readHeader(),
 							usage: startCtx.getContextUsage(),
 						},
 						width,

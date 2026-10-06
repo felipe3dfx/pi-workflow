@@ -19,8 +19,8 @@ import {
 import { guideSelection } from "./configure-guide.ts";
 import { createSeating } from "./seating.ts";
 import {
-	contribute,
 	notifyHeader,
+	occupyHeader,
 	registerShell,
 	seated,
 	seatedCapabilities,
@@ -121,10 +121,10 @@ export default function piWorkflowExtension(
 	);
 	const offerTodoTool = registerSessionTodo(pi, requestAboveInputRender);
 	const footerHints = createFooterHints();
-	contribute("child-session", "header", () => ({
-		count: childSessions.list().filter((child) => isWorking(child.state))
-			.length,
-	}));
+	occupyHeader(
+		"child-session",
+		() => childSessions.list().filter((child) => isWorking(child.state)).length,
+	);
 	childSessions.subscribe(notifyHeader);
 	registerChrome(pi, footerHints);
 	pi.registerShortcut("alt+a", {

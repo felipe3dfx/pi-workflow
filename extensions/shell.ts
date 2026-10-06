@@ -15,8 +15,6 @@ const places = [
 
 type Place = (typeof places)[number];
 
-type PlaceReading = { count: number };
-
 const placement: Record<Capability, { place: Place; order: number }[]> = {
 	"child-session": [
 		{ place: "header", order: 0 },
@@ -31,14 +29,8 @@ const placement: Record<Capability, { place: Place; order: number }[]> = {
 	"compact-rendering": [{ place: "message-stream", order: 0 }],
 };
 
-type Contribution = {
-	place: Place;
-	order: number;
-	read: () => PlaceReading;
-};
-
-const contributions = new Map<Capability, Contribution>();
-const placeListeners = new Map<Place, Set<() => void>>();
+let headerOccupant: { capability: Capability; read: () => number } | undefined;
+const headerListeners = new Set<() => void>();
 const aboveInput = new Map<
 	Capability,
 	(width: number, theme: Theme) => string[]
@@ -122,51 +114,26 @@ export function registerShell(pi: ExtensionAPI) {
 	return { requestAboveInputRender: () => aboveInputTui?.requestRender() };
 }
 
-export function contribute(
-	capability: Capability,
-	place: Place,
-	read: () => PlaceReading,
-) {
-	const order =
-		placement[capability].find((seat) => seat.place === place)?.order ?? 0;
-	contributions.set(capability, { place, order, read });
+export function occupyHeader(capability: Capability, read: () => number) {
+	declare(capability, "header");
+	headerOccupant = { capability, read };
 }
 
-export function readPlace(place: Place): PlaceReading | undefined {
-	for (const capability of occupants(place)) {
-		const contribution = contributions.get(capability);
-		if (!contribution || contribution.place !== place) continue;
-		const reading = contribution.read();
-		if (reading.count > 0) return reading;
-	}
-	return undefined;
-}
-
-function subscribePlace(place: Place, listener: () => void) {
-	const listeners = placeListeners.get(place) ?? new Set();
-	listeners.add(listener);
-	placeListeners.set(place, listeners);
-	return () => listeners.delete(listener);
-}
-
-export function resetPlaces() {
-	contributions.clear();
-	placeListeners.clear();
-	aboveInput.clear();
-}
-
-export function notifyPlace(place: Place) {
-	for (const listener of placeListeners.get(place) ?? []) listener();
-}
-
-export function readHeader() {
-	return readPlace("header");
+export function readHeader(): number {
+	if (!headerOccupant || !seatedNow[headerOccupant.capability]) return 0;
+	return headerOccupant.read();
 }
 
 export function watchHeader(listener: () => void) {
-	return subscribePlace("header", listener);
+	headerListeners.add(listener);
+	return () => headerListeners.delete(listener);
 }
 
 export function notifyHeader() {
-	notifyPlace("header");
+	for (const listener of headerListeners) listener();
+}
+
+export function resetPlaces() {
+	headerOccupant = undefined;
+	aboveInput.clear();
 }

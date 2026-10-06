@@ -3,12 +3,11 @@ import assert from "node:assert/strict";
 
 import { readSelection } from "../extensions/configure.ts";
 import {
-	contribute,
 	occupants,
 	occupyAboveInput,
+	occupyHeader,
 	paintAboveInput,
 	readHeader,
-	readPlace,
 	registerShell,
 	replaceSelection,
 	resetPlaces,
@@ -58,8 +57,6 @@ test("an unseated occupant leaves the above-input place empty and keeps the othe
 		resetPlaces();
 	});
 	replaceSelection(selectionWith({ "child-session": false }));
-	contribute("child-session", "header", () => ({ count: 2 }));
-	contribute("todo", "above-input", () => ({ count: 1 }));
 	let childDrawn = false;
 	occupyAboveInput("todo", () => ["todo"]);
 	occupyAboveInput("child-session", () => {
@@ -72,8 +69,6 @@ test("an unseated occupant leaves the above-input place empty and keeps the othe
 	assert.deepEqual(occupants("above-input"), ["todo"]);
 	assert.equal(occupants("overlay").includes("child-session"), false);
 	assert.equal(occupants("message-stream").includes("compact-rendering"), true);
-	assert.equal(readPlace("header"), undefined);
-	assert.deepEqual(readPlace("above-input"), { count: 1 });
 
 	replaceSelection(selectionWith({}));
 	assert.deepEqual(paintAboveInput(10, theme), ["child", "todo"]);
@@ -175,13 +170,29 @@ test("the header reading is zero while child session has no seat and follows the
 		replaceSelection(selectionWith({}));
 		resetPlaces();
 	});
-	contribute("child-session", "header", () => ({ count: 2 }));
+	occupyHeader("child-session", () => 2);
 	replaceSelection(selectionWith({ "child-session": false }));
-	assert.equal(readHeader()?.count ?? 0, 0);
+	assert.equal(readHeader(), 0);
 	replaceSelection(selectionWith({}));
-	assert.equal(readHeader()?.count, 2);
+	assert.equal(readHeader(), 2);
 	replaceSelection(selectionWith({ "child-session": false }));
-	assert.equal(readHeader()?.count ?? 0, 0);
+	assert.equal(readHeader(), 0);
+});
+
+test("the header has one occupant, and only a capability declared there can take it", (t) => {
+	t.after(() => {
+		replaceSelection(selectionWith({}));
+		resetPlaces();
+	});
+	replaceSelection(selectionWith({}));
+	assert.equal(readHeader(), 0);
+	assert.throws(
+		() => occupyHeader("todo", () => 1),
+		/todo is not declared at header/,
+	);
+	occupyHeader("child-session", () => 1);
+	occupyHeader("child-session", () => 3);
+	assert.equal(readHeader(), 3);
 });
 
 test("the header signal fires on every seating change until it is unsubscribed", (t) => {
