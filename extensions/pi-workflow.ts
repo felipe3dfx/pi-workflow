@@ -46,7 +46,7 @@ import { registerChildrenBox } from "./children-box.ts";
 import { createFooterHints, registerChrome } from "./chrome.ts";
 import { createChildrenViews } from "./children-view.ts";
 import { createModelProfiles, report } from "./model-profiles.ts";
-import { registerSessionTodo, syncTodoTool } from "./todo-extension.ts";
+import { registerSessionTodo } from "./todo-extension.ts";
 import { registerCompactTools, syncCompactTools } from "./compact-tools.ts";
 import { resolveAgentDirectory } from "./agent-directory.ts";
 import { createJevRouting } from "./workflow-settings.ts";
@@ -119,7 +119,7 @@ export default function piWorkflowExtension(
 		requestAboveInputRender,
 		options.childSessions?.refresh,
 	);
-	registerSessionTodo(pi, requestAboveInputRender);
+	const offerTodoTool = registerSessionTodo(pi, requestAboveInputRender);
 	const footerHints = createFooterHints();
 	contribute("child-session", "header", () => ({
 		count: childSessions.list().filter((child) => isWorking(child.state))
@@ -176,7 +176,7 @@ export default function piWorkflowExtension(
 		},
 		offers: [
 			() => syncAskUserTools(pi, footerHints),
-			() => syncTodoTool(pi),
+			offerTodoTool,
 			() => syncCodeGraphTool(pi, options.codegraph),
 			() => syncCompactTools(pi, currentCtx),
 			async () => {

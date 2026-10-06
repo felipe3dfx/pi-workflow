@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 import { occupyAboveInput, seated } from "./shell.ts";
@@ -8,12 +8,6 @@ import {
 	type TodoBoxState,
 } from "./todo-header.ts";
 import { createTodoList, type Task } from "./todo-list.ts";
-
-let syncTodo: (api: ExtensionAPI) => void = () => {};
-
-export function syncTodoTool(api: ExtensionAPI) {
-	syncTodo(api);
-}
 
 const TodoWriteTask = Type.Object({
 	text: Type.String({ description: "Task text" }),
@@ -60,7 +54,7 @@ function replayTasks(entries: ReturnType<ExtensionContext["sessionManager"]["get
 export function registerSessionTodo(
 	pi: ExtensionAPI,
 	requestRender: () => void,
-): void {
+): () => void {
 	const todoList = createTodoList();
 	const boxState: TodoBoxState = { collapsed: false, showDone: true };
 	occupyAboveInput("todo", (width, theme) =>
@@ -72,14 +66,7 @@ export function registerSessionTodo(
 		requestRender();
 	}
 
-	const registerTodo = pi.registerTool.bind(pi);
-	pi.registerTool = (tool) => {
-		if (tool.name === "todo") {
-			syncTodo = (api) => offerTool(api, tool, seated("todo", "above-input"));
-		}
-		return registerTodo(tool);
-	};
-	pi.registerTool({
+	const tool: ToolDefinition<typeof TodoParams> = {
 		name: "todo",
 		label: "Todo",
 		description:
@@ -145,8 +132,8 @@ export function registerSessionTodo(
 					};
 			}
 		},
-	});
-	pi.registerTool = registerTodo;
+	};
+	pi.registerTool(tool);
 
 	pi.registerShortcut("alt+shift+t", {
 		description: "Collapse or expand the session task box above the input",
@@ -171,4 +158,6 @@ export function registerSessionTodo(
 
 	pi.on("session_start", restoreFromBranch);
 	pi.on("session_tree", restoreFromBranch);
+
+	return () => offerTool(pi, tool, seated("todo", "above-input"));
 }
