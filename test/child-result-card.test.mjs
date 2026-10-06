@@ -9,7 +9,10 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 
-import { registerChildResultCards } from "../extensions/child-result-card.ts";
+import {
+	answerCard,
+	registerChildResultCards,
+} from "../extensions/child-result-card.ts";
 import { capabilities, replaceSelection } from "../extensions/configure.ts";
 
 replaceSelection({
@@ -67,6 +70,9 @@ function cards(t) {
 		);
 	return { card, shutdown: () => handlers.get("session_shutdown")() };
 }
+
+const theme = () =>
+	globalThis[Symbol.for("@earendil-works/pi-coding-agent:theme")];
 
 const plain = (component, width = 90) =>
 	component
@@ -341,4 +347,108 @@ test("results delivered together render one card per result, in delivery order",
 			"     provider overloaded",
 		],
 	);
+});
+
+test("the answer card is the question card's twin: Parent header with the question number, the whole answer, no role, no expand hint", (t) => {
+	const { card } = cards(t);
+	const answer = "line 1\n\nline 2\n\nline 3\n\nline 4";
+	const component = answerCard({ id, question: 2, answer }, theme());
+	const asked = card({
+		customType: "pi-workflow-child-question",
+		details: { ...details, state: "waiting", question: 2, text: answer },
+	});
+	assert.deepEqual(plain(component), [
+		"   ◆ Parent → 5636 · answer 2",
+		"     line 1",
+		"",
+		"     line 2",
+		"",
+		"     line 3",
+		"",
+		"     line 4",
+	]);
+	assert.equal(
+		plain(component)[0].indexOf("◆"),
+		plain(asked)[1].indexOf("◆"),
+	);
+	const answerLines = component.render(90);
+	const askedLines = asked.render(90).slice(1);
+	const labelStyle = (header) => header.match(/◆\S* (\S*?)[A-Z]/)[1];
+	assert.equal(labelStyle(answerLines[0]), labelStyle(askedLines[0]));
+	assert.deepEqual(answerLines.slice(1), askedLines.slice(1));
+});
+
+test("every answer card line fits the width it is given", (t) => {
+	cards(t);
+	const component = answerCard(
+		{ id, question: 12, answer: `${"palabra ".repeat(40)}\n\n\tcon\ttab` },
+		theme(),
+	);
+	for (let width = 8; width <= 160; width++)
+		for (const line of component.render(width))
+			assert.ok(visibleWidth(line) <= width, `width ${width}: ${line}`);
+});
+
+test("the answer card renders partial streaming arguments without throwing or printing undefined", (t) => {
+	cards(t);
+	for (const args of [{}, { id }, { question: 3 }, { answer: "text" }]) {
+		const lines = plain(answerCard(args, theme()));
+		assert.ok(lines.length > 0);
+		for (const line of lines) assert.doesNotMatch(line, /undefined/);
+	}
+	assert.equal(plain(answerCard({}, theme()))[0], "   ◆ Parent →  · answer ?");
+});
+
+test("the answer card header strips terminal escapes and newlines from the id", (t) => {
+	cards(t);
+	const component = answerCard(
+		{ id: "a\nb\u001b[31mcdef", question: 1, answer: "x" },
+		theme(),
+	);
+	assert.equal(plain(component)[0], "   ◆ Parent → a b  · answer 1");
+});
+
+test("the answer card is reused for the same arguments and rebuilt when they change", (t) => {
+	cards(t);
+	const args = { id, question: 2, answer: "text" };
+	const first = answerCard(args, theme());
+	assert.equal(answerCard({ ...args }, theme(), first), first);
+	assert.notEqual(answerCard({ ...args, answer: "other" }, theme(), first), first);
+	assert.notEqual(answerCard(args, theme(), {}), first);
+});
+
+test("with the child-session claim unseated every child card falls back to its header and text", (t) => {
+	const { card } = cards(t);
+	const answer = answerCard({ id, question: 2, answer: "Use X." }, theme());
+	const result = card({ customType: "pi-workflow-child-result", details });
+	const asked = card({
+		customType: "pi-workflow-child-question",
+		details: { ...details, state: "waiting", question: 2, text: "Which one?" },
+	});
+	const held = [answer, result, asked].map((c) => plain(c));
+	replaceSelection({
+		schemaVersion: 1,
+		capabilities: Object.fromEntries(capabilities.map((c) => [c, false])),
+		expectations: {},
+	});
+	t.after(() =>
+		replaceSelection({
+			schemaVersion: 1,
+			capabilities: Object.fromEntries(
+				capabilities.map((c) => [c, c === "child-session"]),
+			),
+			expectations: {},
+		}),
+	);
+	const text = (c) => plain(c).filter(Boolean);
+	assert.deepEqual(text(answer), ["Parent → 5636 · answer 2", "Use X."]);
+	assert.deepEqual(text(result), [
+		"Subagent worker 5636  1m 02s",
+		details.text,
+	]);
+	assert.deepEqual(text(asked), [
+		"Subagent worker 5636 asks · question 2",
+		"Which one?",
+	]);
+	assert.ok(held.every((lines) => lines.some((line) => line.includes("◆"))));
 });

@@ -701,6 +701,9 @@ test("Jev's destination criteria cover an explicit child or subagent request und
 		assert.match(criteria.leave, /independent review or check of work/);
 		assert.match(criteria.leave, /session other than the parent/);
 		assert.match(criteria.stay, /nor for an independent review or check of work/);
+		assert.match(criteria.stay, /reserved operation \(mutating git or gh, publication\) in the request stays with the parent, but only that part/);
+		assert.match(criteria.decide, /reserved operation \(mutating git or gh, publication\) is not an open product decision by itself and stays with the parent/);
+		assert.match(criteria.leave, /A reserved operation \(mutating git or gh, publication\) in the request stays with the parent, but only that part: the rest of the package is judged on its own/);
 	});
 });
 
@@ -773,8 +776,10 @@ test("an implementation package and an independent check take the specialist Jev
 test("the verifier criterion covers review of finished work and the explorer criterion excludes it", async () => {
 	await withWorkspace(async ({ worktree }) => {
 		let criteria;
+		let instructions;
 		const jev = fakeJev((body) => {
 			criteria = body.questions.specialist.criteria;
+			instructions = body.questions.specialist.instructions;
 			return "verifier";
 		});
 		await createChildLauncher({ modelProfiles: absentProfiles }).prepareLaunch(
@@ -782,9 +787,32 @@ test("the verifier criterion covers review of finished work and the explorer cri
 			launcherContext(worktree, { jev }),
 		);
 
+		assert.match(instructions, /Reserved operations \(mutating git or gh, publication\) are never part of a child package and stay with the parent/);
+		assert.doesNotMatch(instructions, /never choose/);
 		assert.match(criteria.verifier, /review or check of work that is already done/);
 		assert.match(criteria.verifier, /pull request/);
+		assert.match(criteria.worker, /excluding reserved operations \(mutating git or gh, publication\), which stay with the parent/);
 		assert.match(criteria.explorer, /Not a review of a pull request or of work that is already done/);
+	});
+});
+
+test("a reserved request stays with the parent instead of blocking the launch", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const jev = fakeJev((body) => ({
+			answers: {
+				specialist: choiceAnswer("worker", body.questions.specialist.criteria),
+				destination: choiceAnswer("stay", body.questions.destination.criteria),
+			},
+		}));
+		const result = await createChildLauncher({
+			modelProfiles: absentProfiles,
+		}).prepareLaunch(
+			{ task: "Commit and push this", userRequest: "commit and push this" },
+			launcherContext(worktree, { jev }),
+		);
+
+		assert.equal(result.kind, "stay");
+		assert.doesNotMatch(result.warning, /Launch blocked/);
 	});
 });
 

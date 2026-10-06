@@ -36,6 +36,7 @@ test("the explore contract permits worktree discovery without supplied context o
 	assert.match(text, /Report findings with file paths and line numbers/);
 	assert.match(text, /distinguish confirmed facts from open questions/);
 	assert.match(text, /ask_parent/);
+	assert.match(text, /Use ask_parent only when blocked and the answer changes your next step/);
 	assert.match(text, /ambiguous|unclear/i);
 	assert.match(text, /Do not edit files/);
 });
@@ -48,6 +49,11 @@ test("the verify contract independently checks work; parent results are context,
 	assert.match(text, /report_result/);
 	assert.match(text, /pass, fail with the reason, or blocked with the reason/);
 	assert.match(text, /Use blocked, with the reason/);
+	assert.match(text, /A command reserved for the parent is not a missing capability or unavailable evidence/);
+	assert.match(text, /list the exact command in unverified/);
+	assert.match(text, /use ask_parent only when blocked and the answer changes your next step/);
+	assert.match(text, /Put memory-worthy facts in findings; never ask the parent to save memory/);
+	assert.doesNotMatch(text, /ask_parent or report blocked/);
 	assert.match(text, /may run the repository's checks and tests/i);
 	assert.match(text, /Do not edit or write worktree files/);
 	assert.match(text, /rewrite tracked files or dependencies/i);
@@ -64,7 +70,12 @@ test("the worker contract asks for its result through report_result and keeps as
 	assert.match(text, /done, partial with the reason, or blocked with the reason/);
 	assert.match(text, /exact command/);
 	assert.match(text, /observed result/);
+	assert.match(text, /Required commands exclude commands reserved for the parent/);
 	assert.match(text, /Use done only when the required commands ran and their output is in this result/);
+	assert.match(text, /a reserved command is not a missing capability, so report done when the rest is complete and list the exact command in left_undone/);
+	assert.match(text, /Use ask_parent only when blocked and the answer changes your next step/);
+	assert.match(text, /Put memory-worthy facts in the final summary; never ask the parent to save memory/);
+	assert.doesNotMatch(text, /When you need a decision, ask_parent/);
 	assert.match(text, /partial or blocked is not done/);
 	assert.match(text, /files_changed, validation, and left_undone/);
 	assert.match(text, /After report_result, give the parent a short final summary/);
@@ -81,14 +92,17 @@ test("every contract names the missing-capability response and forbids simulatin
 	for (const role of ["explore", "worker", "verify"]) {
 		const text = await contract(role);
 		assert.match(text, /capability you do not have/);
-		assert.match(text, /ask_parent/);
+		assert.match(text, /ask_parent only when blocked and the answer changes (your|its) next step/i);
 		assert.match(text, /Do not simulate results/);
 	}
-	for (const role of ["worker", "verify"])
-		assert.match(
-			await contract(role),
-			/report blocked and name the missing capability/,
-		);
+	assert.match(
+		await contract("worker"),
+		/report blocked and name the missing capability/,
+	);
+	assert.match(
+		await contract("verify"),
+		/report blocked and name the missing capability/,
+	);
 });
 
 test("the worker contract declares that children have no MCP and cannot launch children", async () => {

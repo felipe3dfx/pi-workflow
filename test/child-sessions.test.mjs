@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import {
 	mkdir,
 	mkdtemp,
@@ -35,7 +34,8 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 
-import { createChildBashTool } from "../extensions/child-bash.ts";
+import { createAskParentTool } from "../extensions/child-sessions.ts";
+import { compactToolRenderers } from "../extensions/compact-tools.ts";
 import { capabilities, replaceSelection } from "../extensions/configure.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 import { classifierRegistry } from "./support/fake-jev.mjs";
@@ -278,6 +278,7 @@ function toolContext(mode, cwd, jev = fakeJev()) {
 		mode,
 		hasUI: mode === "tui" || mode === "rpc",
 		cwd,
+		isProjectTrusted: () => false,
 		model: { provider: "session", id: "model", reasoning: true },
 		thinkingLevel: "medium",
 		modelRegistry: {
@@ -1009,29 +1010,6 @@ test("session shutdown disposes running background children, which then deliver 
 	});
 });
 
-test("session shutdown removes the git and gh stub directories, and a later child's bash creates new ones", async (t) => {
-	await withWorkspace(async ({ worktree, agentDir }) => {
-		withAgentDirectory(t);
-		const { fire } = await loadSpawnTool({ agentDir, create: fakeChildren().create });
-		const stubDirectory = async () => {
-			const result = await createChildBashTool(worktree).execute(
-				"call-1",
-				{ command: 'printf %s "$PATH"' },
-			);
-			return result.content[0].text.split(":")[0];
-		};
-		const before = await stubDirectory();
-		assert.ok(existsSync(join(before, "git")));
-
-		await fire("session_shutdown", { reason: "quit" });
-		const after = await stubDirectory();
-
-		assert.equal(existsSync(before), false);
-		assert.notEqual(after, before);
-		assert.ok(existsSync(join(after, "git")));
-	});
-});
-
 test("a null role is missing and does not warn that worker was assumed", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren({ run: async () => "Done." });
@@ -1266,6 +1244,47 @@ test("the default child factory gives an explore child a read-only codegraph and
 	});
 });
 
+test("the default child factory runs a trusted project's shell prefix in the child's bash", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		await mkdir(join(worktree, ".pi"));
+		await writeFile(
+			join(worktree, ".pi", "settings.json"),
+			JSON.stringify({ shellCommandPrefix: "PI_WORKFLOW_PREFIX=project" }),
+		);
+		const echo = () =>
+			fauxAssistantMessage(
+				fauxToolCall("bash", { command: 'echo "[$PI_WORKFLOW_PREFIX]"' }),
+				{ stopReason: "toolUse" },
+			);
+		const parent = await fauxParent(agentDir, [
+			echo(),
+			fauxAssistantMessage("Trusted."),
+			echo(),
+			fauxAssistantMessage("Untrusted."),
+		]);
+		const { tool } = await loadSpawnTool({ agentDir });
+
+		for (const trusted of [true, false]) {
+			const result = await spawn(
+				tool,
+				{ role: "worker", task: "Echo the prefix" },
+				{
+					...toolContext("print", worktree),
+					...parent.context,
+					isProjectTrusted: () => trusted,
+				},
+			);
+			assert.equal(result.details.status, "completed", text(result));
+		}
+
+		const outputs = parent.requests
+			.flatMap((request) => request.messages)
+			.filter((message) => message.role === "toolResult")
+			.map((message) => message.content.map((part) => part.text).join(""));
+		assert.deepEqual(outputs, ["[project]\n", "[]\n"]);
+	});
+});
+
 test("launching a child keeps the parent's model and thinking, and a profile naming a virtual model runs the child on it", async () => {
 	await assertLaunchKeepsParentModel(fakeJev());
 });
@@ -1300,6 +1319,11 @@ test("spawn_child tells the parent to end its turn instead of polling", async ()
 			guidance,
 			/sleep, list_children, child_status, or child_result/,
 		);
+		assert.match(guidance, /Do not delegate mutating git or gh commands or publication/);
+		assert.match(guidance, /reserved for the parent/);
+		assert.match(guidance, /Do not ask the child for intermediate progress reports/);
+		assert.match(guidance, /references accept only paths inside the cwd/);
+		assert.match(guidance, /no channel to a running child; use reply_child only when the child asks/);
 		assert.match(guidance, /Do not declare work done without a worker Verdict of done/);
 		assert.match(guidance, /Do not declare work verified without a verifier Verdict of pass/);
 		assert.match(guidance, /partial, fail, and blocked are not success/);
@@ -2173,6 +2197,34 @@ test("continue_child refuses failed, cancelled, timed-out, working, and unknown 
 	});
 });
 
+test("continue_child refuses an unknown child without reading the shell settings", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		let reads = 0;
+
+		const result = await use(
+			extension,
+			"continue_child",
+			{ id: "nope", task: "Try again" },
+			{
+				...toolContext("tui", worktree),
+				isProjectTrusted: () => {
+					reads += 1;
+					return false;
+				},
+			},
+		);
+
+		assert.equal(result.details.status, "refused");
+		assert.match(text(result), /No child nope in this session/);
+		assert.equal(reads, 0);
+	});
+});
+
 test("a continued child whose session cannot be created is refused with no child id", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		let creates = 0;
@@ -2279,22 +2331,156 @@ test("a child that asks waits for the parent model's reply_child answer, still h
 		assert.equal(await answer, "src/parser.ts");
 		assert.equal(await stateOf(extension, id), "running");
 
-		const again = await use(extension, "reply_child", {
-			id,
-			question: 1,
-			answer: "x",
-		});
-		assert.equal(
-			text(again),
-			`Question 1 of child ${id} is not waiting for a reply.`,
+		await assert.rejects(
+			use(extension, "reply_child", { id, question: 1, answer: "x" }),
+			{ message: `Question 1 of child ${id} is not waiting for a reply.` },
 		);
-		const unknown = await use(extension, "reply_child", {
-			id: "nope",
-			question: 1,
-			answer: "x",
-		});
-		assert.match(text(unknown), /No child nope in this session/);
+		await assert.rejects(
+			use(extension, "reply_child", { id: "nope", question: 1, answer: "x" }),
+			{ message: "No child nope in this session." },
+		);
 	});
+});
+
+test("a reply while the child session is not seated is a tool error and reaches no child", async (t) => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			schedule: manualClock().schedule,
+		});
+		const id = await spawnBackground(extension, worktree);
+		await settle();
+		children.created[0].spec.ask("Which file?");
+		const seated = Object.fromEntries(
+			capabilities.map((capability) => [capability, true]),
+		);
+		replaceSelection({
+			schemaVersion: 1,
+			capabilities: { ...seated, "child-session": false },
+			expectations: {},
+		});
+		t.after(() =>
+			replaceSelection({
+				schemaVersion: 1,
+				capabilities: seated,
+				expectations: {},
+			}),
+		);
+
+		await assert.rejects(
+			use(extension, "reply_child", { id, question: 1, answer: "a.ts" }),
+			{ message: "Child session is not seated. Run /workflow:config." },
+		);
+		replaceSelection({
+			schemaVersion: 1,
+			capabilities: seated,
+			expectations: {},
+		});
+		assert.equal(await stateOf(extension, id), "waiting");
+	});
+});
+
+test("reply_child paints the answer card with compact rendering on and off, shows only a refusal's reason without a card, and paints the card only on delivery", async (t) => {
+	initTheme("dark", false);
+	const extension = await loadSpawnTool({ agentDir: tmpdir() });
+	const tool = extension.named("reply_child");
+	const theme = globalThis[Symbol.for("@earendil-works/pi-coding-agent:theme")];
+	const args = { id: "5636a1b2-0000", question: 3, answer: "src/parser.ts" };
+	const lines = (component) =>
+		component.render(60).map((line) => stripVTControlCharacters(line).trimEnd());
+	const seated = Object.fromEntries(
+		capabilities.map((capability) => [capability, true]),
+	);
+	t.after(() =>
+		replaceSelection({ schemaVersion: 1, capabilities: seated, expectations: {} }),
+	);
+	const cards = [];
+	for (const compact of [true, false]) {
+		replaceSelection({
+			schemaVersion: 1,
+			capabilities: { ...seated, "compact-rendering": compact },
+			expectations: {},
+		});
+		const renderers = compactToolRenderers("reply_child", () => tool);
+		assert.deepEqual(lines(renderers.renderCall(args, theme, {})), []);
+		cards.push(
+			lines(
+				renderers.renderResult(
+					{ content: [{ type: "text", text: "sent" }], details: {} },
+					{},
+					theme,
+					{ args, isError: false },
+				),
+			),
+		);
+	}
+	assert.deepEqual(cards[0], cards[1]);
+	assert.deepEqual(cards[0], [
+		"   ◆ Parent → 5636 · answer 3",
+		"     src/parser.ts",
+	]);
+	const refusal = await use(extension, "reply_child", {
+		id: "nope",
+		question: 1,
+		answer: "x",
+	}).then(
+		() => assert.fail("the reply was accepted"),
+		(error) => error.message,
+	);
+	const refused = tool.renderResult(
+		{ content: [{ type: "text", text: refusal }], details: {}, isError: true },
+		{},
+		theme,
+		{ args, isError: true },
+	);
+	assert.deepEqual(lines(refused), ["No child nope in this session."]);
+	assert.ok(refused.render(60)[0].includes(theme.fg("error", refusal)));
+});
+
+test("reply_child falls back to a plain-text answer when the child-session card is not seated", async (t) => {
+	initTheme("dark", false);
+	const extension = await loadSpawnTool({ agentDir: tmpdir() });
+	const tool = extension.named("reply_child");
+	const theme = globalThis[Symbol.for("@earendil-works/pi-coding-agent:theme")];
+	const args = { id: "5636a1b2-0000", question: 3, answer: "src/\u001b[31mparser.ts" };
+	const seated = Object.fromEntries(
+		capabilities.map((capability) => [capability, true]),
+	);
+	t.after(() =>
+		replaceSelection({ schemaVersion: 1, capabilities: seated, expectations: {} }),
+	);
+	replaceSelection({
+		schemaVersion: 1,
+		capabilities: { ...seated, "child-session": false },
+		expectations: {},
+	});
+	const component = tool.renderResult(
+		{ content: [{ type: "text", text: "sent" }], details: {} },
+		{},
+		theme,
+		{ args, isError: false },
+	);
+	assert.deepEqual(
+		component
+			.render(60)
+			.map((line) => stripVTControlCharacters(line).trimEnd())
+			.filter(Boolean),
+		["Parent → 5636 · answer 3", "src/ [31mparser.ts"],
+	);
+});
+
+test("the ask_parent description tells the child to ask only when blocked and not to ask about reserved commands", () => {
+	const { description } = createAskParentTool(async () => "answer");
+	assert.match(
+		description,
+		/only when you are blocked and the answer changes your next step/,
+	);
+	assert.match(
+		description,
+		/a command reserved for the parent is not a reason to ask/,
+	);
 });
 
 test("a repeated reply to an answered question never answers the child's next question", async () => {
@@ -2321,15 +2507,13 @@ test("a repeated reply to an answered question never answers the child's next qu
 			[1, 2],
 		);
 
-		const late = await use(extension, "reply_child", {
-			id,
-			question: 1,
-			answer: "Yes, delete it.",
-		});
-
-		assert.equal(
-			text(late),
-			`Question 1 of child ${id} is not waiting for a reply.`,
+		await assert.rejects(
+			use(extension, "reply_child", {
+				id,
+				question: 1,
+				answer: "Yes, delete it.",
+			}),
+			{ message: `Question 1 of child ${id} is not waiting for a reply.` },
 		);
 		assert.equal(await stateOf(extension, id), "waiting");
 		const reply = await use(extension, "reply_child", {
@@ -2356,15 +2540,11 @@ test("a reply to a child that has ended is refused", async () => {
 		await use(extension, "cancel_child", { id });
 		assert.equal(await asked(), "The child was cancelled.");
 
-		const reply = await use(extension, "reply_child", {
-			id,
-			question: 1,
-			answer: "src/a.ts",
-		});
-
-		assert.equal(
-			text(reply),
-			`Child ${id} is cancelled; question 1 can no longer be answered.`,
+		await assert.rejects(
+			use(extension, "reply_child", { id, question: 1, answer: "src/a.ts" }),
+			{
+				message: `Child ${id} is cancelled; question 1 can no longer be answered.`,
+			},
 		);
 		assert.equal(await stateOf(extension, id), "cancelled");
 	});
@@ -2781,14 +2961,11 @@ test("a child through Pi's SDK that waits for a reply that never comes ends time
 			extension.messages[1].message.content,
 			/ask_parent ran for 30 minutes/,
 		);
-		const late = await use(extension, "reply_child", {
-			id,
-			question: 1,
-			answer: "src/a.ts",
-		});
-		assert.equal(
-			text(late),
-			`Child ${id} is timed out; question 1 can no longer be answered.`,
+		await assert.rejects(
+			use(extension, "reply_child", { id, question: 1, answer: "src/a.ts" }),
+			{
+				message: `Child ${id} is timed out; question 1 can no longer be answered.`,
+			},
 		);
 		assert.equal(parent.requests.length, 1);
 		assert.deepEqual(unhandled, []);

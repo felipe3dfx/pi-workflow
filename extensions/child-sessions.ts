@@ -19,11 +19,14 @@ import {
 	SettingsManager,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import { type Component, Text } from "@earendil-works/pi-tui";
 import { type Static, Type } from "typebox";
 
-import { createChildBashTool } from "./child-bash.ts";
+import { type ChildShell, createChildBashTool } from "./child-bash.ts";
 import type { createChildLauncher } from "./child-launcher.ts";
 import { createChildCodeGraphTool } from "./codegraph-tool.ts";
+import { answerCard } from "./child-result-card.ts";
+import { hidden, outputText } from "./compact-tools.ts";
 import { claim, held } from "./configure.ts";
 import {
 	type ChildResult,
@@ -32,6 +35,7 @@ import {
 	reportsResult,
 	resultParameters,
 } from "./child-projection.ts";
+import { settings } from "./shell-settings.ts";
 import { sanitizeTaskText } from "./todo-header.ts";
 
 const packageVersion = (
@@ -50,6 +54,7 @@ interface ChildSpec {
 	prompt: string;
 	tools: string[];
 	modelRegistry: ExtensionContext["modelRegistry"];
+	shell: ChildShell;
 	onEvent(event: AgentSessionEvent): void;
 	ask(question: string): Promise<string>;
 	report(result: ChildResult): void;
@@ -259,6 +264,37 @@ const askParentParameters = Type.Object({
 	question: Type.String({ description: "One question for the parent." }),
 });
 
+export function createAskParentTool(
+	ask: (question: string) => Promise<string>,
+) {
+	return {
+		name: askParentTool,
+		label: "Ask Parent",
+		description:
+			"Ask the parent session one question and wait for its answer. Use it only when you are blocked and the answer changes your next step; a command reserved for the parent is not a reason to ask. An error result means no answer will come; continue without one.",
+		parameters: askParentParameters,
+		async execute(
+			_toolCallId: string,
+			params: Static<typeof askParentParameters>,
+		) {
+			return {
+				content: [{ type: "text" as const, text: await ask(params.question) }],
+				details: {},
+			};
+		},
+	};
+}
+
+function childShell(
+	ctx: Pick<ExtensionContext, "cwd" | "isProjectTrusted">,
+): ChildShell {
+	const user = settings(ctx);
+	return {
+		commandPrefix: user.getShellCommandPrefix(),
+		shellPath: user.getShellPath(),
+	};
+}
+
 const createPiChildSession: ChildSessionFactory = async (spec) => {
 	const runtime = parentRuntime(spec.modelRegistry);
 	if (!runtime) {
@@ -289,21 +325,9 @@ const createPiChildSession: ChildSessionFactory = async (spec) => {
 		thinkingLevel: spec.thinking,
 		tools: spec.tools,
 		customTools: [
-			createChildBashTool(spec.cwd),
+			createChildBashTool(spec.cwd, spec.shell),
 			createChildCodeGraphTool(spec.cwd),
-			{
-				name: askParentTool,
-				label: "Ask Parent",
-				description:
-					"Ask the parent session one question and wait for its answer. Use it only when the task cannot continue without a decision the parent owns. An error result means no answer will come; continue without one.",
-				parameters: askParentParameters,
-				async execute(_toolCallId, params: Static<typeof askParentParameters>) {
-					return {
-						content: [{ type: "text", text: await spec.ask(params.question) }],
-						details: {},
-					};
-				},
-			},
+			createAskParentTool(spec.ask),
 			...(reportsResult(spec.role)
 				? [
 						{
@@ -613,6 +637,7 @@ export function createChildSessions(options: {
 			background: boolean;
 			signal?: AbortSignal;
 			modelRegistry: ExtensionContext["modelRegistry"];
+			shell: () => ChildShell;
 			onLaunch?: () => void;
 		},
 		from?: { id: string; conversation: Conversation },
@@ -635,6 +660,7 @@ export function createChildSessions(options: {
 				prompt: plan.contract.prompt,
 				tools: childTools(plan),
 				modelRegistry: launch.modelRegistry,
+				shell: launch.shell(),
 				onEvent: (event) => {
 					watch.event(event);
 					observe(event);
@@ -768,6 +794,7 @@ export function createChildSessions(options: {
 		launch: {
 			signal?: AbortSignal;
 			modelRegistry: ExtensionContext["modelRegistry"];
+			shell: () => ChildShell;
 		},
 	) {
 		const child = children.get(id);
@@ -793,15 +820,18 @@ export function createChildSessions(options: {
 
 	function reply(id: string, number: number, text: string) {
 		const child = children.get(id);
-		if (!child) return `No child ${id} in this session.`;
+		if (!child) throw new Error(`No child ${id} in this session.`);
 		if (!isWorking(child.record.state)) {
-			return `Child ${id} is ${child.record.state}; question ${number} can no longer be answered.`;
+			throw new Error(
+				`Child ${id} is ${child.record.state}; question ${number} can no longer be answered.`,
+			);
 		}
 		if (child.question?.number !== number) {
-			return `Question ${number} of child ${id} is not waiting for a reply.`;
+			throw new Error(
+				`Question ${number} of child ${id} is not waiting for a reply.`,
+			);
 		}
 		answer(child, text);
-		return `Reply sent to child ${id}.`;
 	}
 
 	function cancel(id: string, deliver: boolean) {
@@ -938,12 +968,11 @@ type Outcome = {
 	jev?: ClassifierResult;
 };
 
+const unseatedMessage = "Child session is not seated. Run /workflow:config.";
+
 function unseatedChild() {
 	if (held(childOverlay)) return undefined;
-	return report(
-		["Child session is not seated. Run /workflow:config."],
-		{ status: "refused" },
-	);
+	return report([unseatedMessage], { status: "refused" });
 }
 
 function report(lines: string[], details: Record<string, unknown>) {
@@ -1004,6 +1033,7 @@ export function createSpawnChildTool(
 		promptGuidelines: [
 			"Pass the task and the role (explore, worker, or verify). When Jev routing is on, the role is a suggestion and Jev selects the specialist; otherwise the role determines the contract. Explore reads and queries CodeGraph without editing or commands; verify independently checks completed work and may run checks and tests without editing; worker implements and runs commands.",
 			"Children communicate only with the parent, never directly with the user.",
+			"Do not delegate mutating git or gh commands or publication: they are reserved for the parent and stay with it. Do not ask the child for intermediate progress reports. Copy evidence you already have into the task; references accept only paths inside the cwd. There is no channel to a running child; use reply_child only when the child asks.",
 			"A refusal or a queued id is not a completed result and is not retried. After a background child is queued, end your turn: its result wakes you. Do not poll with sleep, list_children, child_status, or child_result.",
 			"Do not declare work done without a worker Verdict of done and its files_changed, validation, and left_undone fields. Do not declare work verified without a verifier Verdict of pass and its findings and unverified fields; partial, fail, and blocked are not success.",
 			"When Jev routing is on, the parent asks once per user turn before read, grep, find, ls, edit, write, bash, powershell, or codegraph query and explore. A block that names a role means call spawn_child and use that role. A block that says to ask the user one question means ask that one question and wait. Reads of AGENTS.md, GLOSSARY.md, and one docs/agents markdown file stay available, and so does codegraph init.",
@@ -1037,6 +1067,7 @@ export function createSpawnChildTool(
 				background,
 				signal,
 				modelRegistry: ctx.modelRegistry,
+				shell: () => childShell(ctx),
 				onLaunch: () => launcher.recordLaunch(userRequest?.id),
 			});
 			return launched(started, plan.warnings, {
@@ -1123,6 +1154,7 @@ export function createContinueChildTool(
 				await sessions.resume(params.id, params.task, {
 					signal,
 					modelRegistry: ctx.modelRegistry,
+					shell: () => childShell(ctx),
 				}),
 				[],
 			);
@@ -1256,13 +1288,23 @@ export function createChildQueryTools(
 			"Answer the question a child session is waiting on, naming the question number from its message. A reply to a question that is not waiting is refused.",
 		parameters: replyChildParameters,
 		async execute(_toolCallId, params) {
-			const unseated = unseatedChild();
-			if (unseated) return unseated;
-			return report(
-				[sessions.reply(params.id, params.question, params.answer)],
-				{ id: params.id, question: params.question },
-			);
+			if (!held(childOverlay)) throw new Error(unseatedMessage);
+			sessions.reply(params.id, params.question, params.answer);
+			return report([`Reply sent to child ${params.id}.`], {
+				id: params.id,
+				question: params.question,
+			});
 		},
+		renderShell: "self",
+		renderCall: () => hidden,
+		renderResult: (result, _options, theme, context) =>
+			context.isError
+				? new Text(
+						theme.fg("error", outputText(result)),
+						0,
+						0,
+					)
+				: answerCard(context.args, theme, context.lastComponent),
 	};
 	return [listChildren, childStatus, childResult, cancelChild, replyChild];
 }

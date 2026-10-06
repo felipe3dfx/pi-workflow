@@ -1,84 +1,154 @@
-import {
-	accessSync,
-	constants,
-	mkdtempSync,
-	realpathSync,
-	rmSync,
-	writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { realpathSync } from "node:fs";
 import {
 	createBashToolDefinition,
 	defineTool,
 } from "@earendil-works/pi-coding-agent";
 
-import { jevRoutingEnabled } from "./workflow-settings.ts";
-
-const stubs = new Map<string, string>();
-
 function shellQuote(value: string): string {
 	return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
-function realGit(): string | undefined {
-	for (const dir of (process.env.PATH ?? "").split(delimiter)) {
-		if (!dir) continue;
-		const candidate = join(dir, "git");
-		try {
-			accessSync(candidate, constants.X_OK);
-			return candidate;
-		} catch {}
+function line(strings: TemplateStringsArray, ...values: string[]): string {
+	return strings
+		.map((part) => part.replace(/\n\t*/g, " "))
+		.reduce((code, part, index) => `${code}${values[index - 1]}${part}`);
+}
+
+function guard(program: string, decision: string): string {
+	return line`__pi_workflow_${program}_guard() (
+	reserved=;
+	${decision}
+	[ -z "$reserved" ] && exit 0;
+	printf '\`%s\` is reserved for the parent. Continue without it and list the exact command in your result; do not ask the parent to run it.\\n' "$reserved" >&2;
+	exit 126
+);
+${program}() {
+	__pi_workflow_${program}_guard \${1+"$@"} || return 126;
+	${program === "git" ? "GIT_OPTIONAL_LOCKS=0 " : ""}command ${program} \${1+"$@"};
+};`;
+}
+
+function gitDecision(root: string): string {
+	return line`root=${shellQuote(root)};
+	command -v cygpath >/dev/null 2>&1 && posix=$(cygpath -u "$root" 2>/dev/null) && root=$posix || :;
+	case "$(pwd -P)/" in
+	"$root"/*) ;;
+	*) exit 0 ;;
+	esac;
+	subcommand=;
+	while [ "$#" -gt 0 ] && [ -z "$subcommand" ] && [ -z "$reserved" ]; do
+		case "$1" in
+		--no-pager) ;;
+		-C) shift ;;
+		-c|-c?*)
+			key=\${1#-c};
+			[ -n "$key" ] || { shift; key=\${1-}; };
+			case "$key" in
+			[Cc][Oo][Ll][Oo][Rr].*|[Cc][Oo][Rr][Ee].[Qq][Uu][Oo][Tt][Ee][Pp][Aa][Tt][Hh]|[Cc][Oo][Rr][Ee].[Qq][Uu][Oo][Tt][Ee][Pp][Aa][Tt][Hh]=*) ;;
+			*) reserved="git -c" ;;
+			esac ;;
+		-*) reserved="git \${1%%=*}" ;;
+		*) subcommand=$1 ;;
+		esac;
+		[ "$#" -gt 0 ] && shift;
+	done;
+	for word in \${1+"$@"}; do
+		case "$subcommand $word" in
+		"grep -O"*|"grep -"[!-]*O*|"grep --op"*|"ls-remote -u"*|"ls-remote -"[!-]*u*|"ls-remote --u"*|"ls-remote --exe"*|*" --output"|*" --output="*)
+			reserved="\${reserved:-git $subcommand}" ;;
+		esac;
+	done;
+	[ -n "$reserved" ] || case "$subcommand" in
+	""|status|diff|log|show|blame|grep|ls-files|ls-tree|ls-remote|cat-file|rev-parse|rev-list|merge-base|describe|shortlog|name-rev|for-each-ref|show-ref|show-branch|whatchanged|range-diff|diff-tree|diff-files|diff-index|cherry|count-objects|check-ignore|check-attr|var|version|help) ;;
+	reflog|stash|worktree|remote|submodule|lfs)
+		verb=;
+		case "\${1-}" in
+		-*)
+			for word in \${1+"$@"}; do
+				case "$word" in -*) ;; *) reserved="git $subcommand" ;; esac;
+			done ;;
+		*) verb=\${1-} ;;
+		esac;
+		[ -n "$reserved" ] || case "$subcommand $verb" in
+		"reflog "|"reflog show"|"stash list"|"stash show"|"worktree list"|"remote "|"remote show"|"remote get-url"|"submodule "|"submodule status"|"submodule summary"|"lfs ls-files"|"lfs status"|"lfs env"|"lfs version") ;;
+		*) reserved="git $subcommand\${verb:+ $verb}" ;;
+		esac ;;
+	branch|tag)
+		for word in \${1+"$@"}; do
+			case "$subcommand $word" in
+			"branch --show-current"|"branch -a"|"branch --all"|"branch -r"|"branch --remotes"|"branch --list"|"branch -l"|"branch -v"|"branch -vv"|"branch --verbose"|"branch --contains="*|"branch --merged="*|"branch --no-merged="*|"branch --points-at="*|"branch --format="*|"branch --sort="*|"tag -l"|"tag --list") ;;
+			*) reserved="git $subcommand" ;;
+			esac;
+		done ;;
+	config)
+		list=;
+		for word in \${1+"$@"}; do
+			case "$word" in
+			--show-origin) ;;
+			--get|--get-all|--get-regexp|--list|-l) list=1 ;;
+			-*) reserved="git config" ;;
+			*) [ -n "$list" ] || reserved="git config" ;;
+			esac;
+		done;
+		[ -n "$list" ] || reserved="git config" ;;
+	*) reserved="git $subcommand" ;;
+	esac;`;
+}
+
+const ghDecision = line`group=;
+	verb=;
+	option=;
+	while [ "$#" -gt 0 ] && [ -z "$verb" ]; do
+		case "$1" in
+		-R|--repo) shift ;;
+		--repo=*) ;;
+		-*) option=1 ;;
+		*) if [ -z "$group" ]; then group=$1; else verb=$1; fi ;;
+		esac;
+		[ "$#" -gt 0 ] && shift;
+	done;
+	case "$group" in
+	""|help|search) ;;
+	api|auth) reserved="gh $group" ;;
+	*)
+		[ -n "$option" ] && verb=;
+		case "$verb" in
+		view|list|diff|checks|status|watch) ;;
+		*) reserved="gh $group\${verb:+ $verb}" ;;
+		esac ;;
+	esac;`;
+
+function physical(cwd: string): string {
+	try {
+		return realpathSync(cwd);
+	} catch (error) {
+		throw new Error(`The child's worktree ${cwd} cannot be resolved.`, {
+			cause: error,
+		});
 	}
-	return undefined;
 }
 
-function blocked(program: string): string {
-	return `echo "${program} runs in the parent session while Jev routing is off, so it was not run. Report blocked with this reason, or ask the parent with ask_parent." >&2\nexit 126\n`;
+export interface ChildShell {
+	commandPrefix?: string;
+	shellPath?: string;
 }
 
-function stubDirectory(cwd: string): string {
-	const root = realpathSync(cwd);
-	const cached = stubs.get(root);
-	if (cached) return cached;
-	const dir = mkdtempSync(join(tmpdir(), "pi-workflow-child-bash-"));
-	const git = realGit();
-	writeFileSync(
-		join(dir, "git"),
-		`#!/bin/sh\ncase "$(pwd -P)/" in\n${shellQuote(`${root}/`)}*)\n${blocked("git")};;\nesac\n${
-			git
-				? `exec ${shellQuote(git)} "$@"\n`
-				: `echo "git: command not found" >&2\nexit 127\n`
-		}`,
-		{ mode: 0o755 },
-	);
-	writeFileSync(join(dir, "gh"), `#!/bin/sh\n${blocked("gh")}`, {
-		mode: 0o755,
-	});
-	stubs.set(root, dir);
-	return dir;
+const posixShell = /(^|[/\\])(bash|zsh|sh|dash|ksh|mksh)(\.exe)?$/i;
+
+export function guardPrefix(root: string): string {
+	return `unalias git gh 2>/dev/null || :\n${guard("git", gitDecision(root))}${guard("gh", ghDecision)}`;
 }
 
-export function removeStubDirectories() {
-	for (const dir of stubs.values()) rmSync(dir, { recursive: true, force: true });
-	stubs.clear();
-}
-
-export function createChildBashTool(cwd: string) {
+export function createChildBashTool(cwd: string, shell: ChildShell = {}) {
+	const commandPrefix = guardPrefix(physical(cwd));
+	const user =
+		!shell.shellPath || posixShell.test(shell.shellPath) ? shell : {};
 	return defineTool(
 		createBashToolDefinition(cwd, {
-			spawnHook: (context) =>
-				jevRoutingEnabled()
-					? context
-					: {
-							...context,
-							env: {
-								...context.env,
-								PATH: [stubDirectory(cwd), context.env.PATH]
-									.filter(Boolean)
-									.join(delimiter),
-							},
-						},
+			commandPrefix: user.commandPrefix
+				? `${user.commandPrefix}\n${commandPrefix}`
+				: commandPrefix,
+			shellPath: user.shellPath,
 		}),
 	);
 }

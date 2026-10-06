@@ -1,3 +1,5 @@
+import { stripVTControlCharacters } from "node:util";
+
 import {
 	type ExtensionAPI,
 	getMarkdownTheme,
@@ -9,6 +11,7 @@ import {
 	type Component,
 	Container,
 	Markdown,
+	Text,
 	type TuiMouseEvent,
 	truncateToWidth,
 	visibleWidth,
@@ -18,7 +21,7 @@ import type { ChildDetails, ChildRecord } from "./child-sessions.ts";
 import { childElapsed, spread } from "./children-box.ts";
 import { markCard } from "./chrome-groups.ts";
 import { assistantInset, edgeFor } from "./chrome-messages.ts";
-import { claim, paint } from "./configure.ts";
+import { claim, held, paint } from "./configure.ts";
 import { childModelLine, resultFieldLines } from "./child-projection.ts";
 import { paintMessageStream } from "./shell.ts";
 import { sanitizeMultilineText, sanitizeTaskText } from "./todo-header.ts";
@@ -89,6 +92,72 @@ function header(theme: Theme, card: Card, question: boolean, open: boolean) {
 		: line;
 }
 
+function markdownBody(text: string) {
+	return new Markdown(
+		sanitizeMultilineText(text.trim()).replaceAll("\t", "   "),
+		0,
+		0,
+		getMarkdownTheme(),
+	);
+}
+
+function bodyLines(body: Markdown, inner: number) {
+	const lines = body.render(inner).map((line) => line.trimEnd());
+	while (lines.length > 0 && lines.at(-1) === "") lines.pop();
+	return lines;
+}
+
+class Fallback extends Text {
+	private last = "";
+
+	constructor() {
+		super("", 0, 0);
+	}
+
+	update(text: string) {
+		if (text === this.last) return;
+		this.last = text;
+		this.setText(text);
+	}
+}
+
+function paintCard(
+	outer: number,
+	fallback: Fallback,
+	head: string,
+	text: string,
+	lines: (width: number) => string[],
+) {
+	if (held(childStream)) {
+		paint(childStream, lines);
+		return paintMessageStream(outer);
+	}
+	const plain = `${sanitizeTaskText(stripVTControlCharacters(head)).replace(/^◆ /, "")}\n${sanitizeMultilineText(text.trim()).replaceAll("\t", "   ")}`;
+	fallback.update(plain);
+	return fallback.render(outer);
+}
+
+function frame(
+	outer: number,
+	head: string,
+	hint: string,
+	content: (inner: number) => string[],
+) {
+	const edge = edgeFor(assistantInset, outer);
+	const width = Math.max(1, outer - edge * 2);
+	const top =
+		hint && visibleWidth(head) + visibleWidth(hint) + 2 <= width
+			? spread(head, hint, width)
+			: truncateToWidth(head, width);
+	const inner = Math.max(1, width - indent);
+	const margin = " ".repeat(edge);
+	const pad = " ".repeat(indent);
+	return [
+		margin + top,
+		...content(inner).map((line) => margin + pad + truncateToWidth(line, inner)),
+	];
+}
+
 class ResultCard implements Component {
 	card: Card;
 	key: string;
@@ -96,6 +165,7 @@ class ResultCard implements Component {
 	expanded: boolean;
 	theme: Theme;
 	body: Markdown;
+	readonly fallback = new Fallback();
 	state: { open: boolean; failed: boolean };
 
 	constructor(message: Message, expanded: boolean, theme: Theme) {
@@ -106,12 +176,7 @@ class ResultCard implements Component {
 			: this.card.id;
 		this.expanded = expanded;
 		this.theme = theme;
-		this.body = new Markdown(
-			sanitizeMultilineText(this.card.text.trim()).replaceAll("\t", "   "),
-			0,
-			0,
-			getMarkdownTheme(),
-		);
+		this.body = markdownBody(this.card.text);
 		this.state = {
 			open: this.open(),
 			failed: this.card.state === "failed" || this.card.state === "timed out",
@@ -124,49 +189,45 @@ class ResultCard implements Component {
 	}
 
 	render(outer: number) {
-		paint(childStream, (width) => this.cardLines(width));
-		return paintMessageStream(outer);
+		return paintCard(
+			outer,
+			this.fallback,
+			header(this.theme, this.card, this.question, this.open()),
+			this.card.text,
+			(width) => this.cardLines(width),
+		);
 	}
 
 	cardLines(outer: number) {
 		const t = this.theme;
-		const edge = edgeFor(assistantInset, outer);
-		const width = Math.max(1, outer - edge * 2);
-		const open = this.open();
 		const key = keyText("app.tools.expand");
-		const head = header(t, this.card, this.question, open);
 		const hint = key
 			? t.fg(
 					"dim",
 					`(${sanitizeTaskText(key)} to ${this.expanded ? "collapse" : "expand"})`,
 				)
 			: "";
-		const top =
-			hint && visibleWidth(head) + visibleWidth(hint) + 2 <= width
-				? spread(head, hint, width)
-				: truncateToWidth(head, width);
-		const inner = Math.max(1, width - indent);
-		const lines: string[] = [];
-		if (open && this.card.task)
-			lines.push(t.fg("dim", `Task ${sanitizeTaskText(this.card.task)}`));
-		if (open && this.card.result)
-			for (const line of resultFieldLines(this.card.result))
-				lines.push(t.fg("dim", sanitizeTaskText(line)));
-		if (open || this.question) {
-			const body = this.body.render(inner).map((line) => line.trimEnd());
-			while (body.length > 0 && body.at(-1) === "") body.pop();
-			lines.push(...body);
-		} else {
-			const why = reason(this.card);
-			if (why) lines.push(t.fg("dim", sanitizeTaskText(why)));
-		}
-		if (open) lines.push(t.fg("dim", "alt+a  open in subagents view"));
-		const margin = " ".repeat(edge);
-		const pad = " ".repeat(indent);
-		return [
-			margin + top,
-			...lines.map((line) => margin + pad + truncateToWidth(line, inner)),
-		];
+		const open = this.open();
+		return frame(
+			outer,
+			header(t, this.card, this.question, open),
+			hint,
+			(inner) => {
+				const lines: string[] = [];
+				if (open && this.card.task)
+					lines.push(t.fg("dim", `Task ${sanitizeTaskText(this.card.task)}`));
+				if (open && this.card.result)
+					for (const line of resultFieldLines(this.card.result))
+						lines.push(t.fg("dim", sanitizeTaskText(line)));
+				if (open || this.question) lines.push(...bodyLines(this.body, inner));
+				else {
+					const why = reason(this.card);
+					if (why) lines.push(t.fg("dim", sanitizeTaskText(why)));
+				}
+				if (open) lines.push(t.fg("dim", "alt+a  open in subagents view"));
+				return lines;
+			},
+		);
 	}
 
 	invalidate() {
@@ -179,6 +240,61 @@ class ResultCard implements Component {
 		this.state.open = this.open();
 		return { handled: true };
 	}
+}
+
+class AnswerCard implements Component {
+	readonly id: string | undefined;
+	readonly question: number | undefined;
+	readonly answer: string | undefined;
+	readonly body: Markdown;
+	readonly theme: Theme;
+	readonly fallback = new Fallback();
+	private cachedHead: string | undefined;
+
+	constructor(
+		id: string | undefined,
+		question: number | undefined,
+		answer: string | undefined,
+		theme: Theme,
+	) {
+		this.id = id;
+		this.question = question;
+		this.answer = answer;
+		this.theme = theme;
+		this.body = markdownBody(answer ?? "");
+	}
+
+	get head() {
+		this.cachedHead ??= `${this.theme.fg("toolTitle", "◆")} ${this.theme.bold(this.theme.fg("muted", "Parent"))} → ${sanitizeTaskText(this.id ?? "").slice(0, 4)} ${this.theme.fg("toolTitle", `· answer ${this.question ?? "?"}`)}`;
+		return this.cachedHead;
+	}
+
+	render(outer: number) {
+		return paintCard(outer, this.fallback, this.head, this.answer ?? "", (width) =>
+			frame(width, this.head, "", (inner) => bodyLines(this.body, inner)),
+		);
+	}
+
+	invalidate() {
+		this.cachedHead = undefined;
+		this.body.invalidate();
+	}
+}
+
+export function answerCard(
+	args: Partial<{ id: string; question: number; answer: string }>,
+	theme: Theme,
+	previous?: unknown,
+) {
+	if (
+		previous instanceof AnswerCard &&
+		previous.id === args.id &&
+		previous.question === args.question &&
+		previous.answer === args.answer &&
+		previous.theme === theme
+	)
+		return previous;
+	return new AnswerCard(args.id, args.question, args.answer, theme);
 }
 
 function resultCards(message: Message, expanded: boolean, theme: Theme) {

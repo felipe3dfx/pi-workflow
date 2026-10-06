@@ -8,14 +8,13 @@ import {
 	createWriteToolDefinition,
 	type ExtensionAPI,
 	type ExtensionContext,
-	getAgentDir,
-	SettingsManager,
 	type ToolDefinition,
 	type ToolRenderers,
 } from "@earendil-works/pi-coding-agent";
 import { type Component, Text, TruncatedText } from "@earendil-works/pi-tui";
 
 import { claim, held } from "./configure.ts";
+import { settings } from "./shell-settings.ts";
 
 const compactStream = claim("compact-rendering", "message-stream");
 
@@ -23,13 +22,7 @@ type Theme = Parameters<NonNullable<ToolDefinition["renderCall"]>>[1];
 type RenderContext = Parameters<NonNullable<ToolDefinition["renderCall"]>>[2];
 type ScriptCall = { name: string };
 
-function settings(ctx: ExtensionContext) {
-	return SettingsManager.create(ctx.cwd, getAgentDir(), {
-		projectTrusted: ctx.isProjectTrusted(),
-	});
-}
-
-const hidden: Component = { render: () => [], invalidate() {} };
+export const hidden: Component = { render: () => [], invalidate() {} };
 
 class View implements Component {
 	readonly own: Component;
@@ -108,7 +101,7 @@ export function toolLabel(name: string, args: unknown) {
 	return [verb ?? titleCase(name), subject?.trim().split("\n")[0] ?? ""];
 }
 
-function outputText(result: { content: { type: string; text?: string }[] }) {
+export function outputText(result: { content: { type: string; text?: string }[] }) {
 	return result.content
 		.filter((part) => part.type === "text")
 		.map((part) => part.text ?? "")
