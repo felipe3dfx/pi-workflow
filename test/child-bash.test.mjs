@@ -1,11 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
+	realpathSync,
 	rmSync,
 	statSync,
 	utimesSync,
@@ -14,7 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 
-import { createChildBashTool } from "../extensions/child-bash.ts";
+import { createChildBashTool, guardPrefix } from "../extensions/child-bash.ts";
 import { withAgentDirectory } from "./support/jev-routing.mjs";
 
 function run(command, cwd, options) {
@@ -545,6 +546,37 @@ test("a worktree path with a space and a single quote keeps the git guard", asyn
 		text(await run(`cd '${outside}' && git init`, dir)),
 		/Initialized empty Git repository/,
 	);
+});
+
+test("a Windows worktree root keeps the git guard where cygpath converts it", (t) => {
+	routing(t, "off");
+	const dir = worktree(t);
+	const outside = temporaryDirectory(t);
+	const root = "C:\\Users\\child\\it's a worktree";
+	const bin = temporaryDirectory(t, "pi-workflow-fake-cygpath-");
+	writeFileSync(
+		join(bin, "cygpath"),
+		`#!/bin/sh\n[ "$1" = -u ] && [ "$2" = '${root.replaceAll("'", "'\\''")}' ] && printf '%s\\n' '${realpathSync(dir)}'\n`,
+		{ mode: 0o755 },
+	);
+	const bash = (command, cwd) =>
+		spawnSync("bash", ["-c", `${guardPrefix(root)}\n${command}`], {
+			cwd,
+			encoding: "utf8",
+			env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}` },
+		});
+
+	const inside = bash("git commit -qam x", join(dir, "sub"));
+	const elsewhere = bash(
+		`git init -q && git ${identity.join(" ")} commit -q --allow-empty -m x && git log --oneline`,
+		outside,
+	);
+
+	assert.equal(inside.status, 126);
+	assert.equal(inside.stderr, reserved("git commit"));
+	assert.equal(commits(dir), "1");
+	assert.equal(elsewhere.status, 0, elsewhere.stderr);
+	assert.match(elsewhere.stdout, / x$/m);
 });
 
 test("a child's git read does not take the index lock", async (t) => {

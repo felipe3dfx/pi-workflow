@@ -29,8 +29,10 @@ ${program}() {
 }
 
 function gitDecision(root: string): string {
-	return line`case "$(pwd -P)/" in
-	${shellQuote(`${root}/`)}*) ;;
+	return line`root=${shellQuote(root)};
+	command -v cygpath >/dev/null 2>&1 && posix=$(cygpath -u "$root" 2>/dev/null) && root=$posix || :;
+	case "$(pwd -P)/" in
+	"$root"/*) ;;
 	*) exit 0 ;;
 	esac;
 	subcommand=;
@@ -133,8 +135,12 @@ export interface ChildShell {
 
 const posixShell = /(^|[/\\])(bash|zsh|sh|dash|ksh|mksh)(\.exe)?$/i;
 
+export function guardPrefix(root: string): string {
+	return `unalias git gh 2>/dev/null || :\n${guard("git", gitDecision(root))}${guard("gh", ghDecision)}`;
+}
+
 export function createChildBashTool(cwd: string, shell: ChildShell = {}) {
-	const commandPrefix = `unalias git gh 2>/dev/null || :\n${guard("git", gitDecision(physical(cwd)))}${guard("gh", ghDecision)}`;
+	const commandPrefix = guardPrefix(physical(cwd));
 	const user =
 		!shell.shellPath || posixShell.test(shell.shellPath) ? shell : {};
 	return defineTool(
