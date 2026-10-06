@@ -1299,7 +1299,7 @@ export function createChildQueryTools(
 						0,
 						0,
 					)
-				: answerCard(context.args, theme),
+				: answerCard(context.args, theme, context.lastComponent),
 	};
 	return [listChildren, childStatus, childResult, cancelChild, replyChild];
 }

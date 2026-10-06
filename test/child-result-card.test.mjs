@@ -407,3 +407,12 @@ test("the answer card header strips terminal escapes and newlines from the id", 
 	);
 	assert.equal(plain(component)[0], "   ◆ Parent → a b  · answer 1");
 });
+
+test("the answer card is reused for the same arguments and rebuilt when they change", (t) => {
+	cards(t);
+	const args = { id, question: 2, answer: "text" };
+	const first = answerCard(args, theme());
+	assert.equal(answerCard({ ...args }, theme(), first), first);
+	assert.notEqual(answerCard({ ...args, answer: "other" }, theme(), first), first);
+	assert.notEqual(answerCard(args, theme(), {}), first);
+});

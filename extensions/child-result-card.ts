@@ -251,7 +251,16 @@ class AnswerCard implements Component {
 export function answerCard(
 	args: Partial<{ id: string; question: number; answer: string }>,
 	theme: Theme,
+	previous?: unknown,
 ) {
+	if (
+		previous instanceof AnswerCard &&
+		previous.id === args.id &&
+		previous.question === args.question &&
+		previous.answer === args.answer &&
+		previous.theme === theme
+	)
+		return previous;
 	return new AnswerCard(args.id, args.question, args.answer, theme);
 }
 
