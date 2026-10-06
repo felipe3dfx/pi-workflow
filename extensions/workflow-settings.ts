@@ -2,10 +2,10 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import {
-	activePiAgentDirectory,
 	isPlainRecord,
+	resolveAgentDirectory,
 	writeJsonAtomically,
-} from "./mcp-config.ts";
+} from "./agent-directory.ts";
 
 type Routing = "on" | "off";
 
@@ -14,7 +14,7 @@ function isRouting(value: unknown): value is Routing {
 }
 
 function routingPath(): string {
-	return resolve(activePiAgentDirectory(), "pi-workflow-routing.json");
+	return resolve(resolveAgentDirectory(), "pi-workflow-routing.json");
 }
 
 function readRouting(): Routing {

@@ -49,14 +49,10 @@ import { childOutcome } from "./child-projection.ts";
 import { registerChildrenBox } from "./children-box.ts";
 import { createFooterHints, registerChrome } from "./chrome.ts";
 import { createChildrenViews } from "./children-view.ts";
-import {
-	createModelProfiles,
-	type ModelProfilesOptions,
-	report,
-} from "./model-profiles.ts";
+import { createModelProfiles, report } from "./model-profiles.ts";
 import { registerSessionTodo, syncTodoTool } from "./todo-extension.ts";
 import { registerCompactTools, syncCompactTools } from "./compact-tools.ts";
-import { activePiAgentDirectory, writeJsonAtomically } from "./mcp-config.ts";
+import { resolveAgentDirectory, writeJsonAtomically } from "./agent-directory.ts";
 import { jevRoutingEnabled, setJevRouting } from "./workflow-settings.ts";
 
 const usage =
@@ -78,6 +74,7 @@ function createWorkflow(
 		},
 		mcp: options.mcp,
 		settings: options.settings,
+		agentDirectory: options.agentDirectory,
 		expectedPackages: options.expectedPackages,
 	});
 }
@@ -86,7 +83,6 @@ export default function piWorkflowExtension(
 	pi: ExtensionAPI,
 	options: CompanionWorkflowOptions & {
 		codegraph?: CodeGraphAdapters;
-		modelProfiles?: ModelProfilesOptions;
 		childSessions?: {
 			create?: ChildSessionFactory;
 			schedule?: Schedule;
@@ -94,15 +90,17 @@ export default function piWorkflowExtension(
 		};
 	} = {},
 ) {
+	const agentDirectory = resolveAgentDirectory(options.agentDirectory);
 	let currentCtx: ExtensionContext | ExtensionCommandContext | undefined;
 	const context = () => currentCtx;
 	const workflow = createWorkflow(pi, context, {
 		...options,
+		agentDirectory,
 		expectedPackages: expectedPackageNames,
 	});
 	registerCompactTools(pi);
 	registerChildResultCards(pi);
-	const modelProfiles = createModelProfiles(options.modelProfiles);
+	const modelProfiles = createModelProfiles(agentDirectory);
 	const childSessions = createChildSessions({
 		create: options.childSessions?.create,
 		schedule: options.childSessions?.schedule,
@@ -178,10 +176,7 @@ export default function piWorkflowExtension(
 	});
 
 	function selectionPath() {
-		return resolve(
-			activePiAgentDirectory(options.mcp),
-			"pi-workflow-selection.json",
-		);
+		return resolve(agentDirectory, "pi-workflow-selection.json");
 	}
 
 	function companionPackages() {

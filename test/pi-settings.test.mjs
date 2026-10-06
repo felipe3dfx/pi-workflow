@@ -36,10 +36,10 @@ test("shipped catalogs enable codemode and expose MCP servers through it", () =>
 
 test("array settings append the missing item and keep the user's items", async () => {
 	await withSettings({ defaultTools: ["+tool_search"] }, async (options) => {
-		const plan = planPiSettings(catalog, options);
+		const plan = planPiSettings(catalog, options.agentDirectory);
 		assert.equal(plan.changed, true);
 		assert.deepEqual(plan.misaligned, ["defaultTools: missing +codemode"]);
-		assert.deepEqual(applyPiSettings(catalog, options), {
+		assert.deepEqual(applyPiSettings(catalog, options.agentDirectory), {
 			path: options.path,
 			wrote: true,
 		});
@@ -51,7 +51,7 @@ test("array settings append the missing item and keep the user's items", async (
 
 test("array settings are created when the key is absent", async () => {
 	await withSettings({ theme: "dark" }, async (options) => {
-		applyPiSettings(catalog, options);
+		applyPiSettings(catalog, options.agentDirectory);
 		assert.deepEqual(JSON.parse(await readFile(options.path, "utf8")), {
 			theme: "dark",
 			defaultTools: ["+codemode"],
@@ -63,23 +63,23 @@ test("an aligned array is a no-op regardless of order", async () => {
 	await withSettings(
 		{ defaultTools: ["+codemode", "+tool_search"] },
 		async (options) => {
-			const plan = planPiSettings(catalog, options);
+			const plan = planPiSettings(catalog, options.agentDirectory);
 			assert.equal(plan.changed, false);
 			assert.deepEqual(plan.misaligned, []);
-			assert.equal(applyPiSettings(catalog, options).wrote, false);
+			assert.equal(applyPiSettings(catalog, options.agentDirectory).wrote, false);
 		},
 	);
 });
 
 test("an explicit -codemode is reported and left alone", async () => {
 	await withSettings({ defaultTools: ["-codemode"] }, async (options) => {
-		const plan = planPiSettings(catalog, options);
+		const plan = planPiSettings(catalog, options.agentDirectory);
 		assert.equal(plan.changed, false);
 		assert.deepEqual(plan.misaligned, []);
 		assert.deepEqual(plan.conflicts, [
 			"defaultTools: -codemode conflicts with +codemode (remove it manually)",
 		]);
-		assert.equal(applyPiSettings(catalog, options).wrote, false);
+		assert.equal(applyPiSettings(catalog, options.agentDirectory).wrote, false);
 		assert.deepEqual(JSON.parse(await readFile(options.path, "utf8")), {
 			defaultTools: ["-codemode"],
 		});
