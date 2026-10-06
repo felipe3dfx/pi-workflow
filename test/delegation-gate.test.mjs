@@ -13,7 +13,7 @@ import piWorkflowExtension from "../extensions/pi-workflow.ts";
 import { classifierRegistry } from "./support/fake-jev.mjs";
 import { turnJevRoutingOn } from "./support/jev-routing.mjs";
 
-turnJevRoutingOn();
+const jevRouting = turnJevRoutingOn();
 
 const absentProfiles = { load: () => ({ status: "absent" }) };
 const specialists = ["explorer", "worker", "verifier"];
@@ -89,22 +89,29 @@ function gateContext(cwd, branch, jev) {
 }
 
 function launcherFor(options = {}) {
-	return createChildLauncher({ modelProfiles: absentProfiles, ...options });
+	return createChildLauncher({
+		modelProfiles: absentProfiles,
+		jevRouting,
+		...options,
+	});
 }
 
 async function withWorkspace(run) {
 	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-delegation-gate-"));
 	try {
 		const worktree = join(dir, "repo");
+		const agentDirectory = join(dir, "agent");
 		await mkdir(worktree);
+		await mkdir(agentDirectory);
 		execFileSync("git", ["init", "--quiet"], { cwd: worktree });
-		return await run({ worktree });
+		return await run({ worktree, agentDirectory });
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
 }
 
 function loadExtension({ legacy = false, agentDirectory }) {
+	turnJevRoutingOn(agentDirectory);
 	const handlers = new Map();
 	const tools = [];
 	const notifications = [];
@@ -617,10 +624,10 @@ test("concurrent gated calls in one turn share a single Jev request", async () =
 });
 
 test("the parent registers the gate with spawn_child only when spawn tools are allowed", async () => {
-	await withWorkspace(async ({ worktree }) => {
+	await withWorkspace(async ({ worktree, agentDirectory }) => {
 		const jev = fakeJev("explorer");
 		const allowed = loadExtension({
-			agentDirectory: worktree,
+			agentDirectory,
 		});
 		const session = {
 			mode: "print",
@@ -665,7 +672,7 @@ test("the parent registers the gate with spawn_child only when spawn tools are a
 
 		const blocked = loadExtension({
 			legacy: true,
-			agentDirectory: worktree,
+			agentDirectory,
 		});
 		await blocked.fire("session_start", {}, { ...session, ui: blocked.ui });
 		assert.equal(blocked.tools.some((tool) => tool.name === "spawn_child"), false);
@@ -1017,9 +1024,9 @@ test("Launch blocked is not kept: the next gated tool and the next launch for th
 	});
 });
 
-async function seatedExtension(worktree, message) {
+async function seatedExtension({ worktree, agentDirectory }, message) {
 	const extension = loadExtension({
-		agentDirectory: worktree,
+		agentDirectory,
 	});
 	replaceSelection({
 		schemaVersion: 1,
@@ -1040,10 +1047,10 @@ async function seatedExtension(worktree, message) {
 }
 
 test("a gated tool called from a codemode script follows the direct verdict and its block also reaches the parent model", async () => {
-	await withWorkspace(async ({ worktree }) => {
+	await withWorkspace(async ({ worktree, agentDirectory }) => {
 		const message = "Map the launcher module";
 		const jev = fakeJev("explorer");
-		const extension = await seatedExtension(worktree, message);
+		const extension = await seatedExtension({ worktree, agentDirectory }, message);
 		const ctx = gateContext(worktree, branchEnding(message), jev);
 		const direct = await extension.fire(
 			"tool_call",
@@ -1074,10 +1081,10 @@ test("a gated tool called from a codemode script follows the direct verdict and 
 });
 
 test("while routing is on, a codemode script runs after leave and its nested calls follow a stay", async () => {
-	await withWorkspace(async ({ worktree }) => {
+	await withWorkspace(async ({ worktree, agentDirectory }) => {
 		const message = "Map the launcher module";
 		const left = fakeJev("explorer");
-		const leaving = await seatedExtension(worktree, message);
+		const leaving = await seatedExtension({ worktree, agentDirectory }, message);
 		const leaveCtx = gateContext(worktree, branchEnding(message), left);
 		await leaving.fire(
 			"tool_call",
@@ -1093,7 +1100,7 @@ test("while routing is on, a codemode script runs after leave and its nested cal
 		assert.equal(left.requests.length, 1);
 
 		const stayed = fakeJev("stay");
-		const staying = await seatedExtension(worktree, message);
+		const staying = await seatedExtension({ worktree, agentDirectory }, message);
 		const nested = await staying.fire(
 			"tool_call",
 			{

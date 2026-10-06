@@ -18,6 +18,7 @@ import { createChildLauncher } from "../extensions/child-launcher.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
 import { createModelProfiles } from "../extensions/model-profiles.ts";
+import { createJevRouting } from "../extensions/workflow-settings.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 import { classifierRegistry } from "./support/fake-jev.mjs";
 
@@ -579,6 +580,7 @@ test("a launch right after a panel save uses the saved profile", async () => {
 		}));
 		const result = await createChildLauncher({
 			modelProfiles: profiles,
+			jevRouting: createJevRouting(dirname(path)),
 		}).prepareLaunch(
 			{ role: "worker", task: "Add the export command" },
 			{

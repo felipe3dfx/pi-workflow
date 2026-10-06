@@ -49,7 +49,7 @@ import { createModelProfiles, report } from "./model-profiles.ts";
 import { registerSessionTodo, syncTodoTool } from "./todo-extension.ts";
 import { registerCompactTools, syncCompactTools } from "./compact-tools.ts";
 import { resolveAgentDirectory } from "./agent-directory.ts";
-import { jevRoutingEnabled, setJevRouting } from "./workflow-settings.ts";
+import { createJevRouting } from "./workflow-settings.ts";
 
 const usage =
 	"Usage: /workflow:status | /workflow:doctor | /workflow:config | /workflow:models | /workflow:subagents | /workflow:delegation-check";
@@ -97,6 +97,7 @@ export default function piWorkflowExtension(
 	registerCompactTools(pi);
 	registerChildResultCards(pi);
 	const modelProfiles = createModelProfiles(agentDirectory);
+	const jevRouting = createJevRouting(agentDirectory);
 	const childSessions = createChildSessions({
 		create: options.childSessions?.create,
 		schedule: options.childSessions?.schedule,
@@ -134,6 +135,7 @@ export default function piWorkflowExtension(
 	});
 	const launcher = createChildLauncher({
 		modelProfiles,
+		jevRouting,
 		childSessionSeated: () => seated("child-session", "overlay"),
 	});
 
@@ -278,7 +280,7 @@ export default function piWorkflowExtension(
 					options.catalog?.resolveInstalledVersion,
 				),
 			);
-			const routing = jevRoutingEnabled();
+			const routing = jevRouting.enabled();
 			const guided = await guideSelection(
 				ctx,
 				read.selection,
@@ -288,9 +290,9 @@ export default function piWorkflowExtension(
 				seatedCapabilities(),
 			);
 			if (!guided) return;
-			const { selection: chosen, jevRouting } = guided;
+			const { selection: chosen, jevRouting: chosenRouting } = guided;
 			seating.save(chosen);
-			if (jevRouting !== routing) setJevRouting(jevRouting);
+			if (chosenRouting !== routing) jevRouting.set(chosenRouting);
 			await seating.seat(chosen);
 			const expected = Object.entries(chosen.expectations)
 				.filter(([, on]) => on)
@@ -348,6 +350,7 @@ export default function piWorkflowExtension(
 			}
 			const { lines, failed } = await runDelegationCheck(ctx, {
 				modelProfiles,
+				jevRouting,
 			});
 			report(ctx, lines.join("\n"), failed ? "error" : "info");
 		},

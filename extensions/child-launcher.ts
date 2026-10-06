@@ -18,7 +18,7 @@ import type {
 
 import { latestUserRequest } from "./child-sessions.ts";
 import { gitEnvironment } from "./git-environment.ts";
-import { jevRoutingEnabled } from "./workflow-settings.ts";
+import type { JevRouting } from "./workflow-settings.ts";
 import type { ModelProfilesLoad, Specialist } from "./model-profiles.ts";
 
 export interface LaunchRequest {
@@ -32,6 +32,7 @@ export interface LaunchRequest {
 
 export interface ChildLauncherOptions {
 	modelProfiles: { load: () => ModelProfilesLoad };
+	jevRouting: Pick<JevRouting, "enabled">;
 	contractsDirectory?: string;
 	childSessionSeated?: () => boolean;
 }
@@ -332,7 +333,7 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		request: LaunchRequest,
 		ctx: LauncherContext,
 	): Promise<Assessment> {
-		if (!jevRoutingEnabled()) {
+		if (!options.jevRouting.enabled()) {
 			if (request.role !== undefined && isRole(request.role)) {
 				return { kind: "launch", role: request.role };
 			}
@@ -427,7 +428,7 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 	): Promise<Assessment> {
 		const userMessageId = request.userMessageId;
 		const bypass =
-			!jevRoutingEnabled() &&
+			!options.jevRouting.enabled() &&
 			request.role !== undefined &&
 			isRole(request.role);
 		if (!bypass && userMessageId && turn?.userMessageId === userMessageId) {
