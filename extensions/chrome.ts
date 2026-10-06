@@ -21,11 +21,11 @@ import {
 	registerMessages,
 	restoreMessages,
 } from "./chrome-messages.ts";
-import { type Schedule, scheduleTimer } from "./child-sessions.ts";
-import { spinnerMs, spread, workingFrames } from "./children-box.ts";
+import { type Schedule, scheduleTimer } from "./clock.ts";
 import { fixHeader } from "./fixed-header.ts";
 import { readHeader, watchHeader } from "./shell.ts";
 import { sanitizeTaskText } from "./todo-header.ts";
+import { spinnerMs, spread, workingFrames } from "./visual-language.ts";
 
 export type ChromeTheme = Pick<Theme, "fg" | "bold" | "bg">;
 export type Hint = { key: string; action: string };

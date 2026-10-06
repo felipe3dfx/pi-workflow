@@ -25,19 +25,20 @@ import {
 	type createChildSessions,
 	childOverlay,
 	isWorking,
-	type Schedule,
-	scheduleTimer,
 } from "./child-sessions.ts";
-import { childModelLine, childStep } from "./child-projection.ts";
+import {
+	childElapsed,
+	childModelLine,
+	childName,
+	childStep,
+} from "./child-projection.ts";
+import { type Schedule, scheduleTimer } from "./clock.ts";
 import { held } from "./configure.ts";
 
 import {
 	byState,
 	type ChildTheme,
-	childElapsed,
 	childGlyph,
-	childName,
-	spread,
 } from "./children-box.ts";
 import { marginFor } from "./chrome-editor.ts";
 import { toolLabel } from "./compact-tools.ts";
@@ -53,6 +54,7 @@ import {
 	selectedRow,
 } from "./chrome-menus.ts";
 import { sanitizeMultilineText, sanitizeTaskText } from "./todo-header.ts";
+import { spread } from "./visual-language.ts";
 
 let closeSeatedView: () => void = () => {};
 
