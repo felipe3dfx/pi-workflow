@@ -120,8 +120,9 @@ for (const state of ["off", "on"]) {
 			["git stash list", /^\(no output\)$/],
 			["git branch --show-current", /^(main|master)$/m],
 			["git branch", /^\* (main|master)$/m],
-			["git branch -vv --list 'ma*'", /first/],
-			["git branch --contains HEAD", /(main|master)/],
+			["git branch -vv --list", /first/],
+			["git branch --verbose -a", /first/],
+			["git branch --contains=HEAD --sort=refname", /(main|master)/],
 			["git tag -l", /^\(no output\)$/],
 			["git config --get user.name || git config --list", /./],
 			["git config --show-origin --get-regexp '^core\\.'", /core\./],
@@ -153,7 +154,6 @@ for (const state of ["off", "on"]) {
 			["gh pr -R owner/repo view 12", "pr -R owner/repo view 12"],
 			["gh pr list --state open", "pr list --state open"],
 			["gh workflow view ci", "workflow view ci"],
-			["gh repo clone owner/repo", "repo clone owner/repo"],
 			["gh label list", "label list"],
 			["gh run view 1 --log-failed", "run view 1 --log-failed"],
 			["gh run download 1", "run download 1"],
@@ -285,6 +285,12 @@ for (const state of ["off", "on"]) {
 			["git reflog main", "git reflog main"],
 			["git submodule foreach true", "git submodule foreach"],
 			["git branch new", "git branch"],
+			["git branch -v newb", "git branch"],
+			["git branch -vv newc", "git branch"],
+			["git branch --verbose newd", "git branch"],
+			["git branch --contains HEAD", "git branch"],
+			["git branch --list 'ma*'", "git branch"],
+			["git tag -l 'v*'", "git tag"],
 			["git branch -D main", "git branch"],
 			["git branch -a new", "git branch"],
 			["git branch --set-upstream-to=x", "git branch"],
@@ -305,6 +311,13 @@ for (const state of ["off", "on"]) {
 		]) {
 			await assertReserved(command, dir, expected);
 		}
+		assert.match(
+			execFileSync("git", ["for-each-ref", "--format=%(refname)"], {
+				cwd: dir,
+				encoding: "utf8",
+			}),
+			/^refs\/heads\/(main|master)\n$/,
+		);
 	});
 
 	test(`while Jev routing is ${state}, a child's bash runs remote, submodule, and reflog reads in its worktree`, async (t) => {
@@ -472,6 +485,8 @@ for (const state of ["off", "on"]) {
 			["gh auth token", "gh auth"],
 			["gh auth --hostname github.com token", "gh auth"],
 			["gh auth", "gh auth"],
+			["gh repo clone a/b", "gh repo clone"],
+			["gh repo clone a/b -- --template=x", "gh repo clone"],
 		]) {
 			await assertReserved(command, dir, expected);
 		}

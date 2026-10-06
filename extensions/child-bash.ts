@@ -72,21 +72,24 @@ function gitDecision(root: string): string {
 		"reflog "|"reflog show"|"stash list"|"stash show"|"worktree list"|"remote "|"remote show"|"remote get-url"|"submodule "|"submodule status"|"submodule summary"|"lfs ls-files"|"lfs status"|"lfs env"|"lfs version") ;;
 		*) reserved="git $subcommand\${verb:+ $verb}" ;;
 		esac ;;
-	branch|tag|config)
-		list=;
-		while [ "$#" -gt 0 ] && [ -z "$reserved" ]; do
-			case "$subcommand $1" in
-			"branch --show-current"|"branch -a"|"branch --all"|"branch -r"|"branch --remotes"|"config --show-origin") ;;
-			"branch --list"|"branch -l"|"branch -v"|"branch -vv"|"branch --verbose"|"branch --contains="*|"branch --merged="*|"branch --no-merged="*|"tag -l"|"tag --list"|"config --get"|"config --get-all"|"config --get-regexp"|"config --list"|"config -l") list=1 ;;
-			"branch --contains"|"branch --merged"|"branch --no-merged")
-				list=1;
-				case "\${2-}" in ""|-*) ;; *) shift ;; esac ;;
-			"branch -"*|"tag -"*|"config -"*) reserved="git $subcommand" ;;
-			*) [ -n "$list" ] || reserved="git $subcommand" ;;
+	branch|tag)
+		for word in "$@"; do
+			case "$subcommand $word" in
+			"branch --show-current"|"branch -a"|"branch --all"|"branch -r"|"branch --remotes"|"branch --list"|"branch -l"|"branch -v"|"branch -vv"|"branch --verbose"|"branch --contains="*|"branch --merged="*|"branch --no-merged="*|"branch --points-at="*|"branch --format="*|"branch --sort="*|"tag -l"|"tag --list") ;;
+			*) reserved="git $subcommand" ;;
 			esac;
-			shift;
+		done ;;
+	config)
+		list=;
+		for word in "$@"; do
+			case "$word" in
+			--show-origin) ;;
+			--get|--get-all|--get-regexp|--list|-l) list=1 ;;
+			-*) reserved="git config" ;;
+			*) [ -n "$list" ] || reserved="git config" ;;
+			esac;
 		done;
-		[ "$subcommand" = config ] && [ -z "$list" ] && reserved="git config" ;;
+		[ -n "$list" ] || reserved="git config" ;;
 	*) reserved="git $subcommand" ;;
 	esac;`;
 }
@@ -110,7 +113,6 @@ const ghDecision = line`group=;
 		[ -n "$option" ] && verb=;
 		case "$verb" in
 		view|list|diff|checks|status|watch|download) ;;
-		clone) [ "$group" = repo ] || reserved="gh $group $verb" ;;
 		*) reserved="gh $group\${verb:+ $verb}" ;;
 		esac ;;
 	esac;`;
