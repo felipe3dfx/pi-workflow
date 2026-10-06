@@ -22,7 +22,7 @@ import {
 import { type Component, Text } from "@earendil-works/pi-tui";
 import { type Static, Type } from "typebox";
 
-import { createChildBashTool } from "./child-bash.ts";
+import { type ChildShell, createChildBashTool } from "./child-bash.ts";
 import type { createChildLauncher } from "./child-launcher.ts";
 import { createChildCodeGraphTool } from "./codegraph-tool.ts";
 import { answerCard } from "./child-result-card.ts";
@@ -45,11 +45,6 @@ const packageVersion = (
 ).version;
 
 export const childOverlay = claim("child-session", "overlay");
-
-interface ChildShell {
-	commandPrefix: string | undefined;
-	shellPath: string | undefined;
-}
 
 interface ChildSpec {
 	cwd: string;
