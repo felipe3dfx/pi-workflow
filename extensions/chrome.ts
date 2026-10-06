@@ -25,7 +25,7 @@ import { type Schedule, scheduleTimer } from "./child-sessions.ts";
 import { spinnerMs, spread, workingFrames } from "./children-box.ts";
 import { fixHeader } from "./fixed-header.ts";
 import { readHeader, watchHeader } from "./shell.ts";
-import { sanitizeTaskText } from "./todo-header.ts";
+import { terminalSafeLine } from "./terminal-safe-text.ts";
 
 export type ChromeTheme = Pick<Theme, "fg" | "bold" | "bg">;
 export type Hint = { key: string; action: string };
@@ -35,7 +35,7 @@ const STATUS_WIDGET = "pi-workflow-status";
 const phaseTimerMinWidth = 60;
 
 function plainText(text: string) {
-	return sanitizeTaskText(stripTerminalSequences(text));
+	return terminalSafeLine(stripTerminalSequences(text));
 }
 
 export function createFooterHints() {
@@ -58,7 +58,7 @@ export function createFooterHints() {
 export type FooterHints = ReturnType<typeof createFooterHints>;
 
 export function shortenPath(path: string, home: string) {
-	const clean = sanitizeTaskText(path);
+	const clean = terminalSafeLine(path);
 	const inHome =
 		home !== "" && (clean === home || clean.startsWith(`${home}/`));
 	const rest = inHome ? clean.slice(home.length) : clean;
@@ -134,7 +134,7 @@ export function renderHeader(
 			),
 		);
 	}
-	const branch = data.branch ? sanitizeTaskText(data.branch) : "";
+	const branch = data.branch ? terminalSafeLine(data.branch) : "";
 	const location = [
 		branch && theme.fg("dim", branch),
 		theme.fg("text", shortenPath(data.cwd, data.home)),
@@ -163,9 +163,9 @@ export function renderStatusRow(
 	const indent = marginFor(width) ? 2 : 0;
 	const room = width - marginFor(width) * 2 - indent;
 	const spinner = workingFrames[data.frame % workingFrames.length];
-	const label = sanitizeTaskText(data.label);
+	const label = terminalSafeLine(data.label);
 	const activity = data.tool
-		? `${theme.fg("dim", "Run ")}${theme.fg("text", sanitizeTaskText(data.tool))}`
+		? `${theme.fg("dim", "Run ")}${theme.fg("text", terminalSafeLine(data.tool))}`
 		: theme.fg("text", label);
 	const phase =
 		data.stepMs !== undefined && room >= phaseTimerMinWidth
@@ -219,8 +219,8 @@ export function renderFooter(
 	let line = "";
 	let used = 0;
 	for (const hint of hints) {
-		const key = sanitizeTaskText(hint.key);
-		const action = sanitizeTaskText(hint.action);
+		const key = terminalSafeLine(hint.key);
+		const action = terminalSafeLine(hint.action);
 		const gap = line ? 5 : 0;
 		const size = gap + visibleWidth(key) + 1 + visibleWidth(action);
 		if (used + size > room) break;

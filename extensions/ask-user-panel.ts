@@ -18,6 +18,7 @@ import { hidden } from "./compact-tools.ts";
 import { claim, held } from "./configure.ts";
 import { closeChildrenView } from "./children-view.ts";
 import { offerTool } from "./tool-offer.ts";
+import { terminalSafeBlock, terminalSafeLine } from "./terminal-safe-text.ts";
 
 const questionOverlay = claim("operator-questions", "overlay");
 
@@ -37,15 +38,12 @@ const RESET = "\x1b[0m";
 const padLeft = 3;
 const padRight = 2;
 
-const CONTROL_OR_BIDI = /[\p{Cc}\p{Bidi_Control}]/gu;
-
 function normalizeSingleLine(text: string): string {
-	return text.replace(/\r\n/g, " ").replace(CONTROL_OR_BIDI, " ");
+	return terminalSafeLine(text.replace(/\r\n/g, " "));
 }
 
 function normalizeQuestionText(text: string): string {
-	const withLf = text.replace(/\r\n?/g, "\n");
-	return withLf.replace(CONTROL_OR_BIDI, (ch) => (ch === "\n" ? ch : " "));
+	return terminalSafeBlock(text.replace(/\r\n?/g, "\n"));
 }
 
 function printableChar(data: string): string | undefined {

@@ -25,8 +25,8 @@ import {
 	profileName,
 	type Specialist,
 	specialists,
-	UNSAFE_TERMINAL_CHARACTERS,
 } from "./model-profiles.ts";
+import { terminalSafeLine } from "./terminal-safe-text.ts";
 
 type Screen = {
 	title: string;
@@ -39,7 +39,7 @@ type Screen = {
 const VISIBLE_ROWS = 10;
 
 function sanitize(text: string): string {
-	return text.replace(UNSAFE_TERMINAL_CHARACTERS, " ");
+	return terminalSafeLine(text);
 }
 
 function printable(data: string): string {

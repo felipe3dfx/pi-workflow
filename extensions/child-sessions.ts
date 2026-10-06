@@ -35,7 +35,7 @@ import {
 	resultParameters,
 } from "./child-projection.ts";
 import { shellOptions } from "./shell-settings.ts";
-import { sanitizeTaskText } from "./todo-header.ts";
+import { terminalSafeLine } from "./terminal-safe-text.ts";
 
 const packageVersion = (
 	JSON.parse(
@@ -195,7 +195,7 @@ function describeTool(name: string, args: unknown) {
 	const detail = Object.values(args ?? {}).find(
 		(value) => typeof value === "string",
 	);
-	return sanitizeTaskText(
+	return terminalSafeLine(
 		detail === undefined ? name : `${name} ${detail.split("\n")[0]}`,
 	);
 }

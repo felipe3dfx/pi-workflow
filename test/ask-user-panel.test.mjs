@@ -732,6 +732,25 @@ test("a tab in the question does not exceed the render width", async () => {
 	await pending;
 });
 
+test("a tab in the question renders as three spaces", async () => {
+	const tool = createAskUserChoiceTool(createFooterHints());
+	const { ctx, send, render } = tuiContext();
+	const pending = tool.execute(
+		"call-tab-spaces",
+		{ question: "Deploy\tnow?", options: [{ label: "Yes" }] },
+		undefined,
+		undefined,
+		ctx,
+	);
+	const lines = render(80);
+	assert.ok(
+		lines.some((line) => line.includes("Deploy   now?")),
+		`expected a tab to render as three spaces: ${JSON.stringify(lines)}`,
+	);
+	send("X");
+	await pending;
+});
+
 test("a ZWJ emoji sequence in an option label keeps its visible width unchanged", async () => {
 	const tool = createAskUserChoiceTool(createFooterHints());
 	const { ctx, send, render } = tuiContext();
