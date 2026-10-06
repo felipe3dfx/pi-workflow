@@ -1,18 +1,8 @@
-import {
-	chmodSync,
-	existsSync,
-	linkSync,
-	mkdirSync,
-	readFileSync,
-	realpathSync,
-	renameSync,
-	statSync,
-	unlinkSync,
-	writeFileSync,
-} from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { isPlainRecord, writeJsonAtomically } from "./agent-directory.ts";
 
 type McpServerDefinition = Record<string, unknown>;
 
@@ -60,7 +50,6 @@ export type McpConfigurationApplyOutcome =
 
 export interface CompanionMcpAdapters {
 	catalogPath?: string;
-	agentDirectory?: string;
 }
 
 const packageDirectory = dirname(fileURLToPath(import.meta.url));
@@ -69,29 +58,8 @@ const defaultMcpServerCatalogPath = resolve(
 	"../assets/mcp-servers.json",
 );
 
-export function isPlainRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function isMcpServerDefinition(value: unknown): value is McpServerDefinition {
 	return isPlainRecord(value);
-}
-
-function piAgentHome(): string {
-	return process.env.PI_AGENT_HOME
-		? resolve(process.env.PI_AGENT_HOME)
-		: resolve(process.env.HOME ?? homedir(), ".pi", "agent");
-}
-
-export function activePiAgentDirectory(
-	mcpOptions: CompanionMcpAdapters = {},
-): string {
-	if (mcpOptions.agentDirectory) {
-		return resolve(mcpOptions.agentDirectory);
-	}
-	return process.env.PI_CODING_AGENT_DIR
-		? resolve(process.env.PI_CODING_AGENT_DIR)
-		: piAgentHome();
 }
 
 function loadMcpServerCatalogFromPath(
@@ -167,19 +135,14 @@ export function definitionsEqual(left: unknown, right: unknown): boolean {
 	return canonicalJson(left) === canonicalJson(right);
 }
 
-function mcpConfigPath(mcpOptions: CompanionMcpAdapters = {}): string {
-	return resolve(activePiAgentDirectory(mcpOptions), "mcp.json");
+function mcpConfigPath(agentDirectory: string): string {
+	return resolve(agentDirectory, "mcp.json");
 }
 
-export function legacyMcpAdapterNote(
-	mcpOptions: CompanionMcpAdapters = {},
-): string | undefined {
-	const legacyPath = resolve(
-		activePiAgentDirectory(mcpOptions),
-		"mcp-adapter.json",
-	);
+export function legacyMcpAdapterNote(agentDirectory: string): string | undefined {
+	const legacyPath = resolve(agentDirectory, "mcp-adapter.json");
 	if (!existsSync(legacyPath)) return undefined;
-	return `${legacyPath} is no longer read. Move any servers you still need from it to ${mcpConfigPath(mcpOptions)}.`;
+	return `${legacyPath} is no longer read. Move any servers you still need from it to ${mcpConfigPath(agentDirectory)}.`;
 }
 
 function readExistingMcpConfiguration(path: string): {
@@ -215,9 +178,9 @@ function readExistingMcpConfiguration(path: string): {
 
 export function planMcpConfiguration(
 	catalog: McpServerCatalog,
-	mcpOptions: CompanionMcpAdapters = {},
+	agentDirectory: string,
 ): McpConfigurationPlan {
-	const path = mcpConfigPath(mcpOptions);
+	const path = mcpConfigPath(agentDirectory);
 	const loaded = readExistingMcpConfiguration(path);
 	if (loaded.error || !loaded.root) {
 		return {
@@ -334,39 +297,6 @@ function changedMcpTargets(
 		.map((target) => target.name);
 }
 
-export function writeJsonAtomically(
-	path: string,
-	value: Record<string, unknown>,
-	{ replace = true } = {},
-) {
-	const existing = replace && existsSync(path);
-	const target = existing ? realpathSync(path) : path;
-	const mode = existing ? statSync(target).mode & 0o777 : undefined;
-	const directory = dirname(target);
-	mkdirSync(directory, { recursive: true });
-	// ponytail: pid+timestamp assumes a single synchronous writer per process;
-	// concurrent writers in the same process could collide on this name.
-	const temporaryPath = `${target}.${process.pid}.${Date.now()}.tmp`;
-	try {
-		writeFileSync(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, {
-			encoding: "utf8",
-			mode,
-		});
-		if (mode !== undefined) chmodSync(temporaryPath, mode);
-		if (replace) renameSync(temporaryPath, target);
-		else linkSync(temporaryPath, path);
-	} catch (error) {
-		try {
-			unlinkSync(temporaryPath);
-		} catch {
-			// ignore cleanup failures; an orphaned "<path>.<pid>.<timestamp>.tmp"
-			// file may remain on disk if this unlink also fails
-		}
-		throw error;
-	}
-	if (!replace) unlinkSync(temporaryPath);
-}
-
 /**
  * Re-plans against the current on-disk configuration, refuses if a target
  * changed concurrently since `plan` was produced, and otherwise writes the
@@ -376,9 +306,9 @@ export function writeJsonAtomically(
 export function applyMcpConfiguration(
 	plan: McpConfigurationPlan,
 	catalog: McpServerCatalog,
-	mcpOptions: CompanionMcpAdapters = {},
+	agentDirectory: string,
 ): McpConfigurationApplyOutcome {
-	const latestPlan = planMcpConfiguration(catalog, mcpOptions);
+	const latestPlan = planMcpConfiguration(catalog, agentDirectory);
 	if (latestPlan.error) {
 		return { status: "reread-failed", error: latestPlan.error };
 	}

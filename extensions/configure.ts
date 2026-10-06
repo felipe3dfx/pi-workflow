@@ -1,3 +1,5 @@
+import { isPlainRecord } from "./agent-directory.ts";
+
 export const capabilities = [
 	"child-session",
 	"todo",
@@ -26,10 +28,6 @@ export type ApplyPlan = {
 	seated: Capability[];
 	unseated: Capability[];
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function isCapability(value: string): value is Capability {
 	return (capabilities as readonly string[]).includes(value);
@@ -60,12 +58,12 @@ export function readSelection(
 	} catch {
 		return { status: "refused", reason: "Selection is not valid JSON." };
 	}
-	if (!isRecord(parsed) || parsed.schemaVersion !== 1) {
+	if (!isPlainRecord(parsed) || parsed.schemaVersion !== 1) {
 		return { status: "refused", reason: "Selection must use schemaVersion 1." };
 	}
 	const capabilityRecord = parsed.capabilities;
 	const expectationRecord = parsed.expectations;
-	if (!isRecord(capabilityRecord) || !isRecord(expectationRecord)) {
+	if (!isPlainRecord(capabilityRecord) || !isPlainRecord(expectationRecord)) {
 		return {
 			status: "refused",
 			reason: "Selection must name capabilities and expectations.",

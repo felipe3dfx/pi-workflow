@@ -226,7 +226,7 @@ function loadExtension({
 						? { version: "2.0.0" }
 						: {},
 			},
-			modelProfiles: { path: join(agentDir, "pi-workflow-models.json") },
+			agentDirectory: agentDir,
 			childSessions: { create, schedule, refresh },
 		},
 	);
