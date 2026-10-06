@@ -8,28 +8,19 @@ import {
 	createWriteToolDefinition,
 	type ExtensionAPI,
 	type ExtensionContext,
-	getAgentDir,
-	SettingsManager,
 	type ToolDefinition,
 	type ToolRenderers,
 } from "@earendil-works/pi-coding-agent";
 import { type Component, Text, TruncatedText } from "@earendil-works/pi-tui";
 
 import { claim, held } from "./configure.ts";
+import { settings } from "./shell-settings.ts";
 
 const compactStream = claim("compact-rendering", "message-stream");
 
 type Theme = Parameters<NonNullable<ToolDefinition["renderCall"]>>[1];
 type RenderContext = Parameters<NonNullable<ToolDefinition["renderCall"]>>[2];
 type ScriptCall = { name: string };
-
-export function settings(
-	ctx: Pick<ExtensionContext, "cwd" | "isProjectTrusted">,
-) {
-	return SettingsManager.create(ctx.cwd, getAgentDir(), {
-		projectTrusted: ctx.isProjectTrusted(),
-	});
-}
 
 export const hidden: Component = { render: () => [], invalidate() {} };
 

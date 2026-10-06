@@ -26,7 +26,7 @@ import { createChildBashTool } from "./child-bash.ts";
 import type { createChildLauncher } from "./child-launcher.ts";
 import { createChildCodeGraphTool } from "./codegraph-tool.ts";
 import { answerCard } from "./child-result-card.ts";
-import { hidden, outputText, settings } from "./compact-tools.ts";
+import { hidden, outputText } from "./compact-tools.ts";
 import { claim, held } from "./configure.ts";
 import {
 	type ChildResult,
@@ -35,6 +35,7 @@ import {
 	reportsResult,
 	resultParameters,
 } from "./child-projection.ts";
+import { settings } from "./shell-settings.ts";
 import { sanitizeTaskText } from "./todo-header.ts";
 
 const packageVersion = (
