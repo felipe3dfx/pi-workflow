@@ -26,7 +26,7 @@ import { createChildBashTool } from "./child-bash.ts";
 import type { createChildLauncher } from "./child-launcher.ts";
 import { createChildCodeGraphTool } from "./codegraph-tool.ts";
 import { answerCard } from "./child-result-card.ts";
-import { hidden, outputText } from "./compact-tools.ts";
+import { hidden, outputText, settings } from "./compact-tools.ts";
 import { claim, held } from "./configure.ts";
 import {
 	type ChildResult,
@@ -291,9 +291,7 @@ const createPiChildSession: ChildSessionFactory = async (spec) => {
 	}
 	const slash = spec.model.indexOf("/");
 	const settingsManager = SettingsManager.inMemory();
-	const userSettings = SettingsManager.create(spec.parent.cwd, getAgentDir(), {
-		projectTrusted: spec.parent.isProjectTrusted(),
-	});
+	const userSettings = settings(spec.parent);
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: spec.cwd,
 		agentDir: getAgentDir(),

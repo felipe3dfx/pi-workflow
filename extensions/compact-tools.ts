@@ -23,7 +23,9 @@ type Theme = Parameters<NonNullable<ToolDefinition["renderCall"]>>[1];
 type RenderContext = Parameters<NonNullable<ToolDefinition["renderCall"]>>[2];
 type ScriptCall = { name: string };
 
-function settings(ctx: ExtensionContext) {
+export function settings(
+	ctx: Pick<ExtensionContext, "cwd" | "isProjectTrusted">,
+) {
 	return SettingsManager.create(ctx.cwd, getAgentDir(), {
 		projectTrusted: ctx.isProjectTrusted(),
 	});
