@@ -4,7 +4,7 @@ description: "Trigger: develop a feature or fix test-first. Establish behavior-l
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "1.1"
+  version: "1.2"
   provenance: derived
 ---
 
@@ -16,7 +16,7 @@ Use for meaningful observable behavior while implementing an approved change. Th
 
 ## Decision Gate
 
-Consume the technical handoff, applicable authority, and consumer testing contract. Before a test, confirm the named seam or ask the developer to resolve a missing or contradicted seam. Prefer the highest useful existing public interface that fully exercises the behavior. Use `codebase-design` only when seam shape needs design vocabulary.
+Consume the technical handoff, applicable authority, and consumer testing contract. Before a test, confirm the named seam or ask the developer to resolve a missing or contradicted seam. Prefer the highest useful existing public interface that fully exercises the behavior. Load the `codebase-design` skill only when seam shape needs design vocabulary.
 
 A documentation-only, purely visual, or configuration-only change may record a no-valuable-test-seam exception only when it has no valuable test seam and the decision is recorded. Otherwise missing seams, an unresolved governing-authority or required-contract contradiction, or an unavailable required test path blocks this activity rather than inventing an internal test.
 

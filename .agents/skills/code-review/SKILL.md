@@ -4,7 +4,7 @@ description: "Trigger: review a ticket's diff inside the implementation loop, or
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "2.0.0"
+  version: "2.1.0"
   provenance: derived
 ---
 
@@ -16,7 +16,7 @@ Run once per implementation loop, after the build and before critique, in a cont
 
 The fixed point is the ticket's base for a child ticket. For a parent integration branch reviewed against its specification, it is the production base. The diff runs from the merge-base of the fixed point to the current state, committed and uncommitted.
 
-This skill is read-only. It reads the diff, the files around it, and the sources each axis names. It never edits, fixes, comments, commits, or publishes.
+This skill never changes the reviewed tree. It reads the diff, the files around it, and the sources each axis names, and runs tests only in a scratch checkout. It never edits, fixes, comments, commits, or publishes.
 
 ## Decision Gates
 
@@ -28,8 +28,8 @@ This skill is read-only. It reads the diff, the files around it, and the sources
 ## Execution Steps
 
 1. Pin the fixed point. Record the fixed point, the current head, the commit list since the fixed point, and whether uncommitted changes are included.
-2. Collect each axis's sources: for Standards, [team standards and smell baseline](references/standards.md) and the repository's `docs/agents/coding-standards.md` when it exists; for Spec, the ticket, or the specification and every child ticket for a parent integration branch; for Valuable Tests, [the valuable-tests rubric](../tdd/references/valuable-tests.md) and the seams agreed before the first test, taken from the implementation handoff or the ticket.
-3. Dispatch each axis to its own context, in parallel when the harness allows. In its initial handoff, give each one the available diff, fixed point, head, commit list, ticket/specification context, validation evidence, its own sources by path, and its brief below. If evidence is unavailable, identify that gap instead of implying it was supplied. Keep parent-child handoffs, questions, findings, and results in English; follow the [repository Language Contract](../../../AGENTS.md#language-contract) for user-facing and publication-artifact language. An axis receives no other axis's sources or findings.
+2. Collect each axis's sources: for Standards, [team standards and smell baseline](references/standards.md) and the repository's `docs/agents/coding-standards.md` when it exists; for Spec, the ticket and its specification for a child ticket, or the specification and every child ticket for a parent integration branch, read fresh from the tracker, plus the published decision comments, never a scope note written by whoever invoked the review; for Valuable Tests, [the valuable-tests rubric](../tdd/references/valuable-tests.md) and the seams agreed before the first test, taken from the implementation handoff or the ticket.
+3. Dispatch each axis to its own context, in parallel when the harness allows. Give each one the fixed point, the head, the commit list, its own sources by path, and its brief below. An axis receives no other axis's sources or findings.
 4. Assemble the report from the three axis reports, verbatim or lightly cleaned.
 
 ### Standards brief
@@ -42,7 +42,7 @@ Report requirements that are missing or partial, behavior the diff adds that the
 
 ### Valuable Tests brief
 
-Apply the rubric to every test the diff adds or changes: tautological tests, structure-sensitive tests, and mocks that hide failure or verify through a side channel. Also report a behavior the diff changes that has no test at its agreed seam, unless a no-valuable-test-seam exception is recorded. Name the failure mode for each finding. A finding is `hard` when a behavior agreed at a seam has no test, or its test cannot fail; every other rubric tell is `judgement`.
+Run each test file the diff adds or changes, whole, against the fixed point's production code, in a scratch checkout that leaves the reviewed tree untouched; a test that passes there does not test the change. Apply the rubric to every test the diff adds or changes: tautological tests, structure-sensitive tests, and mocks that hide failure or verify through a side channel. Also report a behavior the diff changes that has no test at its agreed seam, unless a no-valuable-test-seam exception is recorded. Name the failure mode for each finding. A finding is `hard` when a behavior agreed at a seam has no test, or its test cannot fail, including one that passes against the fixed point; every other rubric tell is `judgement`.
 
 ## Output Contract
 

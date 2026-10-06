@@ -4,7 +4,7 @@ description: "Trigger: define a product feature from an idea or tracker issue. R
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "1.0"
+  version: "1.1"
   provenance: derived
 ---
 
@@ -28,7 +28,7 @@ Read the consumer's recorded contracts, resolved Domain Authority Handoff, appli
 
 ## Feature Brief
 
-Maintain one user-confirmed brief with the problem and user; desired outcome; scope boundaries; scenarios, states, actions, and errors; decisions, assumptions, and open questions; relevant sources; shared-capability comparisons and invariants; prototype findings and disposition; dependencies; deviations; risks; and evidence gaps.
+Maintain one user-confirmed brief with the problem and user; desired outcome; scope boundaries; scenarios, states, actions, and errors; decisions, assumptions, and open questions; relevant sources; shared-capability comparisons and invariants; prototype findings and disposition; dependencies; deviations; risks; and evidence gaps. Show each brief change for acceptance as the pull-request playbook's approval preview, or as [the shipped rules](../setup-workflow/assets/pull-requests.md#approval-gates-and-external-effects) define it when that playbook has none. The brief is product intent, so its acceptance is always asked, whatever the approval policy.
 
 ## Output Contract
 

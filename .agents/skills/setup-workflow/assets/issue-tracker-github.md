@@ -34,9 +34,11 @@ Publication capability:
 
 Do not invent labels, milestones, projects, or relationships when a marker remains unresolved. Return the issue number and URL after creation.
 
+When both the parent issue and the child issue exist, publish the parent-child (sub-issue) relationship and read it back before reporting it published.
+
 ## When a Skill Says "Fetch the Relevant Ticket"
 
-Retrieve the issue body, comments, state, labels, assignees, milestone, project, linked issues, and linked pull requests. Resolve whether a referenced number is an issue or pull request before acting.
+Retrieve the issue body, comments, state, labels, assignees, milestone, project, linked issues, linked pull requests, and the issue's parent and sub-issues. Resolve whether a referenced number is an issue or pull request before acting.
 
 Read capability:
 

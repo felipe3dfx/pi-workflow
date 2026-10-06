@@ -4,7 +4,7 @@ description: "Trigger: resolve or evolve canonical domain language, write or edi
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "2.0"
+  version: "2.1"
   provenance: derived
 ---
 
@@ -36,7 +36,7 @@ Before renaming, splitting, merging, or redefining a term, search its glossary, 
 
 Offer an ADR only when the decision is hard to reverse, surprising without context, and the result of a real trade-off. Otherwise do not create one. ADRs live only in root `docs/adr/`; follow [the ADR format and lifecycle](references/ADR-FORMAT.md). Follow the consumer's recorded language and presentation conventions unless a higher-priority workflow invariant applies.
 
-For a new ADR, prepare the complete proposed bytes and exact path, then follow [the ADR format and lifecycle](references/ADR-FORMAT.md) as the lifecycle authority. Before merge, an approved revision may replace only a file whose same-PR ownership the lifecycle rules establish. Report the lifecycle action. Downstream target checks remain owned by `create-pr`; handoffs receive only a read-only Domain Authority review.
+For a new ADR, prepare the complete proposed bytes and exact path as its approval preview, then follow [the ADR format and lifecycle](references/ADR-FORMAT.md) as the lifecycle authority. Approvals follow the pull-request playbook's approval policy and approval preview; with no recorded policy, use `every-step` and [the shipped rules](../setup-workflow/assets/pull-requests.md#approval-gates-and-external-effects), telling the user once to run `setup-workflow update`. Before merge, an approved revision may replace only a file whose same-PR ownership the lifecycle rules establish. Report the lifecycle action. Downstream target checks remain owned by `create-pr`; handoffs receive only a read-only Domain Authority review.
 
 ## Report
 

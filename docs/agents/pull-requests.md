@@ -2,7 +2,7 @@
 
 ## Commit Structure
 
-Create commits in English with this template. A pull request may carry as many commits as needed. Publishing a pull request never closes or transitions the tracker ticket; closing it stays a separate human decision.
+Create commits in English with this template. A pull request may carry as many commits as needed. Publishing a pull request never closes or transitions the tracker ticket; closing it stays a separate effect under the approval policy, and no skill or tracker automation closes a specification's parent ticket.
 
 ```text
 <type>(<scope>): <summary>
@@ -115,11 +115,23 @@ Write the body with these three sections, in this order and with no others, and 
 
 ## Approval Gates and External Effects
 
-Approval is per effect: every external effect requires the explicit approval of the person performing it, and approval evidence is preserved with the pull request or its linked ticket. The playbook records no standing approval and no named approver; the per-invocation plan `create-pr` requires is that skill's own contract.
+The approval policy recorded in `workflow.md` decides which effects wait for the user's explicit approval:
+
+- `every-step`: every effect, local drafts and artifacts included.
+- `external-only`: only external effects: a push, a pull request, a comment, an issue or any other tracker change, a merge, and a ticket closure.
+- `autonomous`: none; the final report lists each effect with its destination, its action, and its link, not its full text.
+
+A missing or unresolved policy is `every-step`; tell the user once to run `setup-workflow update`. Every level asks before a force-push, before deleting a remote branch, an issue, or a comment, and before any direct write to the production base. A merge into the working base and a ticket closure follow the policy.
+
+The policy governs approvals, not decisions. Where the agent has a grounded recommendation, `autonomous` applies it and records it in the final report; a decision that needs what only the user has, such as product intent, risk acceptance, or a finding that needs the user's intent, is always asked. A sub-agent never asks for approval: it returns its drafts to the orchestrator, which presents them under the policy.
+
+Approval preview: before asking for any approval, show in the conversation the complete literal content, its destination (repository and pull request, ticket, or file path), and the action (create, edit, close, merge, and so on). A question never replaces the content.
+
+Approval is per effect, given by the person performing it, and its evidence is preserved with the pull request or its linked ticket. The playbook names no approver. Under `direct` child integration, the batch rule, approved wherever the policy asks, is the approval, and its evidence, for the child-ticket closures it covers; the per-invocation plan `create-pr` requires is that skill's own contract.
 
 ## Review and Merge
 
-Review, required checks, and merge belong to the pull-request provider: `GitHub` owns branch protection and decides who may merge through the destination branch's permissions. Never merge, push, or change remote state without the applicable approval.
+Review, required checks, and merge of a pull request belong to the pull-request provider: `GitHub` owns branch protection and decides who may merge through the destination branch's permissions. Never merge, push, or change remote state without the applicable approval.
 
 ### Review Capability
 

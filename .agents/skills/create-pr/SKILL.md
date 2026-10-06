@@ -4,7 +4,7 @@ description: "Trigger: publish a locally committed ticket candidate: push, draft
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "2.0"
+  version: "2.2"
   provenance: original
 ---
 
@@ -12,13 +12,15 @@ metadata:
 
 ## Activation Contract
 
-Publish a candidate that is already committed. For a child ticket, consume the `implement` handoff, which names the ticket, the branch, and the commit SHAs. For a parent integration branch, consume a parent publication handoff from the developer that names the parent ticket, the branch, its production base, the head SHA, the commits since that base, and the coverage evidence: the `code-review` report on that branch against its specification. Also consume the consumer workflow, pull-request, and issue-tracker playbooks. The playbooks own the commit template, the title rule, the pull-request body, the providers, and the recorded bases; consume them rather than restating them.
+Publish a candidate that is already committed. For a child ticket, consume the `implement` handoff, which names the ticket, the branch, and the commit SHAs. For a parent integration branch, consume a parent publication handoff from the developer or `implement-spec` that names the parent ticket, the branch, its production base, the head SHA, the commits since that base, and the coverage evidence: the `code-review` report on that branch against its specification. Also consume the consumer workflow, pull-request, and issue-tracker playbooks. The playbooks own the commit template, the title rule, the pull-request body, the providers, and the recorded bases; consume them rather than restating them.
 
 Perform only the requested subset of these effects: push the branch, open the draft pull request, record the ticket and parent relationships, and append the Spanish ticket comment. Commits come from `implement`; this skill never creates, amends, squashes, or rewrites one.
 
 ## Decision Gates
 
 Resolve the candidate from repository state: the branch, its commits since the base, and its head SHA must match the handoff. A mismatch, an uncommitted change inside the candidate, or a missing commit returns to the handoff's owner: `implement` for a child ticket, the developer for a parent integration branch. A parent publication handoff without a coverage report for its current head, or with an unresolved missing-requirement finding, blocks publication.
+
+Under `pull-request` child integration, when more than one child of the same parent is open, run an integration check before publishing a child: apply every open sibling head onto the parent integration branch in a scratch copy, then run the full validation gate. A failure returns to `implement` for the tickets involved.
 
 The merge destination is an explicit input on every invocation. Propose it from the recorded bases and the playbook's branch rule, and have the user confirm it. A destination that differs from the recorded value is a decision, never a reason to refuse.
 
@@ -30,7 +32,7 @@ A missing or `requires-setup` capability the playbooks mark as required blocks i
 
 ## Plan and Execution
 
-Draft the pull-request title, the body using the playbook's three sections and no other, the source and confirmed destination, the relationships, and the append-only Spanish ticket comment that links the pull request and its evidence and never changes the ticket's state. The pull request opens as a draft with no labels and no reviewers. Present one plan listing every external effect with its exact content. Obtain explicit approval for each effect; a material change to content, operation, or destination needs a revised approval.
+Draft the pull-request title, the body using the playbook's three sections and no other, the source and confirmed destination, the relationships, and the append-only Spanish ticket comment that links the pull request and its evidence and never changes the ticket's state. The pull request opens as a draft with no labels and no reviewers. Present one plan listing every external effect the approval policy gates, each as its approval preview, and obtain explicit approval for each; a material change to content, operation, or destination needs a revised approval. Approvals follow the pull-request playbook's approval policy and approval preview; with no recorded policy, use `every-step` and [the shipped rules](../setup-workflow/assets/pull-requests.md#approval-gates-and-external-effects), telling the user once to run `setup-workflow update`.
 
 Before each approved effect, revalidate its inputs against current repository and provider state: head SHA, remote refs, destination OID, and the decision-record check. After the push, confirm the remote branch points at the planned head SHA; after opening the pull request, confirm its source, destination, and draft state.
 

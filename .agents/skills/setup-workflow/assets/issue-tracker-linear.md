@@ -35,6 +35,8 @@ Publication capability:
 
 Do not invent a team, project, label, or state when a marker remains unresolved. Return the issue identifier and URL after creation.
 
+For the tickets of a specification, the specification's parent wins over a `parent` required by the fields above; the parent issue itself still follows those fields.
+
 ## When a Skill Says "Fetch the Relevant Ticket"
 
 Retrieve the issue description, comments, state, priority, labels, project, parent and child relationships, assignee, and linked artifacts. Treat the fetched issue as the source of truth for the requested work.
@@ -52,3 +54,5 @@ Read capability:
 ## Comments and Updates
 
 Write human-facing issue titles, descriptions, and comments in Spanish. This is a workflow invariant, not a consumer preference, and it holds even where the repository's own conventions prescribe another language. Append progress or decisions according to `{{LINEAR_COMMENT_POLICY}}`. When a pull request exists for an issue, an append-only Spanish comment on that issue carries the pull request URL and evidence; it never changes the issue state, and no comment policy overrides it. Changes that create, update, assign, or close an issue are external effects and require the approval defined in `pull-requests.md`.
+
+The team that uses this workflow keeps every closing automation off: parent auto-close, sub-issue auto-close, and auto-close of inactive issues.

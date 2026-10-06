@@ -4,7 +4,7 @@ description: "Trigger: configure repository workflow playbooks or audit existing
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "2.0"
+  version: "2.4"
   provenance: derived
 ---
 
@@ -20,6 +20,8 @@ Configure repository-level playbooks. For every script step, invoke `python3` wi
 - Unconfirmed values remain unresolved markers. A user-confirmed or repository-stated absence is `none (confirmed absent)` with its evidence. A value slot contains only a marker, `none (confirmed absent)`, or the candidate exactly as the repository spells it; prose belongs in discovery fields, not value slots.
 - Each capability carries exactly one state from [references/runtime-contract.md](references/runtime-contract.md); propagate a stated absence to dependent capabilities, count candidates per governing value, and count a standalone capability separately.
 - With a Linear tracker, `CHILD_BRANCH_CONVENTION` is the pattern `<KEY>-<number>` built from the resolved Linear team's key (`ENG-<number>`, never a literal identifier); branch history, prefix styles, and slugs supply no candidate, and an unresolved key leaves a marker.
+- `CHILD_INTEGRATION` is `pull-request` (each child ticket gets its own draft pull request into the parent integration branch) or `direct` (children merge locally into the parent integration branch; only the parent gets a pull request). It is a team decision: propose `pull-request`, ask once, record it. `implement-spec` requires `direct`.
+- `APPROVAL_POLICY` decides what later skills ask approval for: `every-step` (every effect; each ticket draft is approved before the next), `external-only` (only external effects; a local ADR is written without asking, publishing the comment citing it asks), or `autonomous` (none; the pull request opens without asking and the final report links it). A force-push, a remote deletion, and a direct write to the production base always ask. It is a project decision: explain each level with its example, propose `external-only`, and record only the user's explicit choice. It never replaces this skill's own per-file approval.
 - The contracts in [assets/pull-requests.md](assets/pull-requests.md) are fixed and never rediscovered or asked for: the commit template, the pull-request title, the ticket reference, and the pull-request source and destination rules. Resolve its remaining tokens normally.
 - `docs/agents/coding-standards.md` holds the repository's own coding standards, read only by the review. It is consumer-owned: create it from [assets/coding-standards.md](assets/coding-standards.md) only when absent, with its own approval, and never diff, rewrite, or refuse over it afterward.
 

@@ -13,6 +13,7 @@ from typing import NoReturn
 
 MARKER = "<marker>"
 CAPABILITY_STATES = {"supported", "requires-setup", "unsupported", MARKER}
+APPROVAL_POLICIES = {"every-step", "external-only", "autonomous", MARKER}
 TRACKER_CHOICES = ("github", "gitlab", "linear", "local-markdown", "none")
 SHARED_TEMPLATES = ("domain.md", "workflow.md", "quality.md", "pull-requests.md")
 CODING_STANDARDS = "coding-standards.md"
@@ -118,6 +119,9 @@ def validate(
             value = values[token]
             if value not in CAPABILITY_STATES:
                 errors.append(f"invalid capability state for {token}: {value!r}")
+    policy = values.get("APPROVAL_POLICY", MARKER)
+    if "APPROVAL_POLICY" in template_tokens and policy not in APPROVAL_POLICIES:
+        errors.append(f"invalid approval policy: {policy!r}")
     return errors
 
 

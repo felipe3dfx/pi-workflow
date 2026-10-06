@@ -25,6 +25,13 @@ These are proposals for later skills. Confirm the merge destination for each cha
 - Prefer breadth over depth when choosing independent work: `none (confirmed absent)`
 - Maximum dependency-chain depth: `none (confirmed absent)`
 - Maximum open unreviewed pull requests per implementer: `none (confirmed absent)`
+- Child integration: `direct`
+
+## Approval Policy
+
+- Approval policy: `autonomous`
+
+`pull-requests.md` defines what each level asks for, what every level asks for, and the approval preview.
 
 ## Ownership
 

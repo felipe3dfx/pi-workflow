@@ -25,6 +25,13 @@ These are proposals for later skills. Confirm the merge destination for each cha
 - Prefer breadth over depth when choosing independent work: `{{REVIEW_BREADTH_POLICY}}`
 - Maximum dependency-chain depth: `{{MAXIMUM_DEPENDENCY_DEPTH}}`
 - Maximum open unreviewed pull requests per implementer: `{{OPEN_PULL_REQUEST_LIMIT}}`
+- Child integration: `{{CHILD_INTEGRATION}}`
+
+## Approval Policy
+
+- Approval policy: `{{APPROVAL_POLICY}}`
+
+`pull-requests.md` defines what each level asks for, what every level asks for, and the approval preview.
 
 ## Ownership
 
