@@ -6,6 +6,7 @@ import { join } from "node:path";
 
 import { createChildLauncher } from "../extensions/child-launcher.ts";
 import { classifierRegistry } from "./support/fake-jev.mjs";
+import { createJevRouting } from "../extensions/workflow-settings.ts";
 import { withAgentDirectory } from "./support/jev-routing.mjs";
 
 function offLauncher(t) {
@@ -15,6 +16,7 @@ function offLauncher(t) {
 	});
 	const launcher = createChildLauncher({
 		modelProfiles: { load: () => ({ status: "absent" }) },
+		jevRouting: createJevRouting(dir),
 	});
 	return { dir, launcher, jev };
 }

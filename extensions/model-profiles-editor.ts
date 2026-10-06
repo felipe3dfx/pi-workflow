@@ -25,8 +25,8 @@ import {
 	profileName,
 	type Specialist,
 	specialists,
-	UNSAFE_TERMINAL_CHARACTERS,
 } from "./model-profiles.ts";
+import { terminalSafeLine } from "./terminal-safe-text.ts";
 
 type Screen = {
 	title: string;
@@ -37,10 +37,6 @@ type Screen = {
 };
 
 const VISIBLE_ROWS = 10;
-
-function sanitize(text: string): string {
-	return text.replace(UNSAFE_TERMINAL_CHARACTERS, " ");
-}
 
 function printable(data: string): string {
 	return decodeKittyPrintable(data) ?? data;
@@ -152,7 +148,7 @@ export function createModelProfilesEditor(
 			render: (width) => input.render(width),
 			handleInput(data) {
 				input.handleInput(data);
-				input.setValue(sanitize(input.getValue()));
+				input.setValue(terminalSafeLine(input.getValue()));
 			},
 		};
 	}
@@ -191,7 +187,7 @@ export function createModelProfilesEditor(
 			choose(item.value as ModelThinkingLevel),
 		);
 		return {
-			title: `Thinking level for ${sanitize(model)}`,
+			title: `Thinking level for ${terminalSafeLine(model)}`,
 			hints: [
 				["↑/↓", "choose"],
 				["Enter", "confirm"],
@@ -216,7 +212,7 @@ export function createModelProfilesEditor(
 			.filter((model) => (supportedThinking[model] ?? []).length > 0)
 			.map((model) => ({
 				value: model,
-				label: sanitize(model),
+				label: terminalSafeLine(model),
 			}));
 		const choose = (item: SelectItem) =>
 			push(
@@ -258,7 +254,7 @@ export function createModelProfilesEditor(
 					return;
 				}
 				input.handleInput(data);
-				input.setValue(sanitize(input.getValue()));
+				input.setValue(terminalSafeLine(input.getValue()));
 				filtered = fuzzyFilter(items, input.getValue(), (item) => item.value);
 				list = selectList(filtered, choose);
 			},
@@ -276,7 +272,7 @@ export function createModelProfilesEditor(
 					description: entry
 						? theme.fg(
 								"text",
-								`${sanitize(entry.model)} · thinking: ${entry.thinking}`,
+								`${terminalSafeLine(entry.model)} · thinking: ${entry.thinking}`,
 							)
 						: theme.fg("dim", "inherits session model"),
 				};
@@ -289,7 +285,7 @@ export function createModelProfilesEditor(
 					const specialist = item.value as Specialist;
 					push(
 						catalogScreen(
-							`${sanitize(name)} · ${specialist} model`,
+							`${terminalSafeLine(name)} · ${specialist} model`,
 							(model, thinking) => {
 								profile()[specialist] = { model, thinking };
 								list = rebuild(specialists.indexOf(specialist));
@@ -304,7 +300,7 @@ export function createModelProfilesEditor(
 			specialists.indexOf(list.getSelectedItem()?.value as Specialist);
 		return {
 			get title() {
-				return `Profile ${sanitize(name)}${state.active === name ? " (active)" : ""}`;
+				return `Profile ${terminalSafeLine(name)}${state.active === name ? " (active)" : ""}`;
 			},
 			hints: [
 				["↑/↓", "choose"],
@@ -335,7 +331,7 @@ export function createModelProfilesEditor(
 		const rebuild = (selected: number) => {
 			items = names().map((name) => ({
 				value: name,
-				label: sanitize(name),
+				label: terminalSafeLine(name),
 				description:
 					name === state.active
 						? `${theme.fg("accent", "●")} ${theme.fg("text", "active")}`
@@ -395,7 +391,7 @@ export function createModelProfilesEditor(
 				} else if (key === "d") {
 					push(
 						nameScreen(
-							`Duplicate ${sanitize(selected)} as`,
+							`Duplicate ${terminalSafeLine(selected)} as`,
 							`${selected}-copy`,
 							(name) => {
 								state.profiles[name] = structuredClone(
@@ -408,7 +404,7 @@ export function createModelProfilesEditor(
 				} else if (key === "r") {
 					push(
 						nameScreen(
-							`Rename ${sanitize(selected)} to`,
+							`Rename ${terminalSafeLine(selected)} to`,
 							selected,
 							(name) => renamed(selected, name),
 							selected,
@@ -420,7 +416,7 @@ export function createModelProfilesEditor(
 						return;
 					}
 					push(
-						confirmScreen(`Delete profile ${sanitize(selected)}?`, () => {
+						confirmScreen(`Delete profile ${terminalSafeLine(selected)}?`, () => {
 							delete state.profiles[selected];
 							list = rebuild(0);
 						}),

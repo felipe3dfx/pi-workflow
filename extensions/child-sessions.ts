@@ -26,24 +26,25 @@ import type { createChildLauncher } from "./child-launcher.ts";
 import { createChildCodeGraphTool } from "./codegraph-tool.ts";
 import { answerCard } from "./child-result-card.ts";
 import { hidden, outputText } from "./compact-tools.ts";
-import { claim, held } from "./configure.ts";
+import { type Schedule, scheduleTimer } from "./clock.ts";
+import { seated } from "./shell.ts";
 import {
 	type ChildResult,
 	childOutcome,
+	needsNoReason,
 	projectChild,
 	reportsResult,
 	resultParameters,
+	verdictNeedsNoReason,
 } from "./child-projection.ts";
 import { shellOptions } from "./shell-settings.ts";
-import { sanitizeTaskText } from "./todo-header.ts";
+import { terminalSafeLine } from "./terminal-safe-text.ts";
 
 const packageVersion = (
 	JSON.parse(
 		readFileSync(new URL("../package.json", import.meta.url), "utf8"),
 	) as { version: string }
 ).version;
-
-export const childOverlay = claim("child-session", "overlay");
 
 interface ChildSpec {
 	cwd: string;
@@ -146,17 +147,9 @@ export interface ChildTrace {
 	version: string;
 }
 
-export type Schedule = (run: () => void, ms: number) => () => void;
-
 const runningLimit = 5;
 const stallMs = 4 * 60_000;
 const toolStallMs = 30 * 60_000;
-
-export const scheduleTimer: Schedule = (run, ms) => {
-	const timer = setTimeout(run, ms);
-	timer.unref();
-	return () => clearTimeout(timer);
-};
 
 function createWatch(schedule: Schedule, onStall: (reason: string) => void) {
 	const tools = new Map<string, string>();
@@ -195,7 +188,7 @@ function describeTool(name: string, args: unknown) {
 	const detail = Object.values(args ?? {}).find(
 		(value) => typeof value === "string",
 	);
-	return sanitizeTaskText(
+	return terminalSafeLine(
 		detail === undefined ? name : `${name} ${detail.split("\n")[0]}`,
 	);
 }
@@ -204,15 +197,7 @@ export function isWorking(state: ChildState) {
 	return state === "queued" || state === "running" || state === "waiting";
 }
 
-function quiet(record: ChildRecord) {
-	const verdict = record.result?.verdict;
-	return (
-		record.state === "completed" &&
-		(verdict === undefined || verdict === "done" || verdict === "pass")
-	);
-}
-
-export function childDetails(record: ChildRecord, now = Date.now()) {
+function childDetails(record: ChildRecord, now = Date.now()) {
 	const projected = projectChild(record, now);
 	return {
 		id: projected.id,
@@ -328,8 +313,7 @@ const createPiChildSession: ChildSessionFactory = async (spec) => {
 							async execute(_toolCallId: string, params: ChildResult) {
 								if (
 									!params.reason &&
-									params.verdict !== "done" &&
-									params.verdict !== "pass"
+									!verdictNeedsNoReason(params.verdict)
 								) {
 									throw new Error(
 										`A ${params.verdict} Verdict needs a reason.`,
@@ -400,10 +384,17 @@ const abortedBeforeLaunch = {
 	reason: "The call was aborted before the child launched.",
 };
 
+interface ChildMessage {
+	customType: "pi-workflow-child-result" | "pi-workflow-child-question";
+	content: string;
+	display: true;
+	details: unknown;
+}
+
 export function createChildSessions(options: {
 	create?: ChildSessionFactory;
-	deliver: () => void;
-	ask: (record: ChildRecord, question: string, number: number) => void;
+	send: (message: ChildMessage) => void;
+	idle: () => boolean;
 	trace: (entry: ChildTrace) => void;
 	report: (message: string) => void;
 	schedule?: Schedule;
@@ -567,7 +558,7 @@ export function createChildSessions(options: {
 		if (!deliver || consumed.has(record.id)) return;
 		pending.push({ ...record });
 		try {
-			options.deliver();
+			if (options.idle()) queueMicrotask(atBoundary);
 		} catch (error) {
 			warn(`Child ${record.id}: ${errorMessage(error)}`);
 		}
@@ -608,7 +599,17 @@ export function createChildSessions(options: {
 			trace(child);
 			changed();
 			try {
-				options.ask({ ...child.record }, question, number);
+				flush();
+				options.send({
+					customType: "pi-workflow-child-question",
+					content: `Child ${child.record.id} asks (question ${number}):\n\n${question}\n\nAnswer with reply_child with question ${number}.`,
+					display: true,
+					details: {
+						...childDetails(child.record),
+						question: number,
+						text: question,
+					},
+				});
 			} catch (error) {
 				answer(
 					child,
@@ -842,15 +843,33 @@ export function createChildSessions(options: {
 		pending = pending.filter((record) => record.id !== id);
 	}
 
-	function pendingResults() {
-		return [...pending];
+	function atBoundary() {
+		if (
+			pending.some(
+				(record) => !needsNoReason(record.state, record.result?.verdict),
+			) ||
+			![...children.values()].some((child) => isWorking(child.record.state))
+		)
+			flush();
 	}
 
-	function wakesParent() {
-		return (
-			pending.some((record) => !quiet(record)) ||
-			![...children.values()].some((child) => isWorking(child.record.state))
-		);
+	function flush() {
+		const results = [...pending];
+		if (results.length === 0) return;
+		try {
+			options.send({
+				customType: "pi-workflow-child-result",
+				content: results.map(childOutcome).join("\n\n"),
+				display: true,
+				details:
+					results.length === 1
+						? childDetails(results[0])
+						: { results: results.map((child) => childDetails(child)) },
+			});
+			for (const child of results) consume(child.id);
+		} catch (error) {
+			warn(`Child results could not be delivered: ${errorMessage(error)}`);
+		}
 	}
 
 	function get(id: string): ChildRecord | undefined {
@@ -860,6 +879,18 @@ export function createChildSessions(options: {
 
 	function list(): ChildRecord[] {
 		return [...children.values()].map((child) => ({ ...child.record }));
+	}
+
+	function working() {
+		return [...children.values()].filter((child) =>
+			isWorking(child.record.state),
+		).length;
+	}
+
+	function waiting() {
+		return [...children.values()].some(
+			(child) => child.record.state === "waiting",
+		);
 	}
 
 	function subscribe(listener: () => void) {
@@ -908,10 +939,11 @@ export function createChildSessions(options: {
 		reply,
 		cancel,
 		consume,
-		pendingResults,
-		wakesParent,
+		atBoundary,
 		get,
 		list,
+		working,
+		waiting,
 		subscribe,
 		follow,
 		thread,
@@ -960,7 +992,7 @@ type Outcome = {
 const unseatedMessage = "Child session is not seated. Run /workflow:config.";
 
 function unseatedChild() {
-	if (held(childOverlay)) return undefined;
+	if (seated("child-session", "overlay")) return undefined;
 	return report([unseatedMessage], { status: "refused" });
 }
 
@@ -1277,7 +1309,6 @@ export function createChildQueryTools(
 			"Answer the question a child session is waiting on, naming the question number from its message. A reply to a question that is not waiting is refused.",
 		parameters: replyChildParameters,
 		async execute(_toolCallId, params) {
-			if (!held(childOverlay)) throw new Error(unseatedMessage);
 			sessions.reply(params.id, params.question, params.answer);
 			return report([`Reply sent to child ${params.id}.`], {
 				id: params.id,

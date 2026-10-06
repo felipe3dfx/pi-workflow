@@ -1,6 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-
 import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
@@ -20,12 +17,14 @@ import {
 	loadCompanionsFromPath,
 } from "./companion-workflow.ts";
 import { guideSelection } from "./configure-guide.ts";
+import { createSeating } from "./seating.ts";
 import {
-	contribute,
-	held,
-	readSelection,
-	replaceSelection,
-} from "./configure.ts";
+	notifyHeader,
+	occupyHeader,
+	registerShell,
+	seated,
+	seatedCapabilities,
+} from "./shell.ts";
 import {
 	type CodeGraphAdapters,
 	createCodeGraphTool,
@@ -36,28 +35,20 @@ import { runDelegationCheck } from "./delegation-check.ts";
 import { registerChildResultCards } from "./child-result-card.ts";
 import {
 	type ChildSessionFactory,
-	childDetails,
 	createChildQueryTools,
 	createChildSessions,
-	childOverlay,
 	createContinueChildTool,
 	createSpawnChildTool,
-	isWorking,
-	type Schedule,
 } from "./child-sessions.ts";
-import { childOutcome } from "./child-projection.ts";
+import type { Schedule } from "./clock.ts";
 import { registerChildrenBox } from "./children-box.ts";
 import { createFooterHints, registerChrome } from "./chrome.ts";
 import { createChildrenViews } from "./children-view.ts";
-import {
-	createModelProfiles,
-	type ModelProfilesOptions,
-	report,
-} from "./model-profiles.ts";
-import { registerSessionTodo, syncTodoTool } from "./todo-extension.ts";
+import { createModelProfiles, report } from "./model-profiles.ts";
+import { registerSessionTodo } from "./todo-extension.ts";
 import { registerCompactTools, syncCompactTools } from "./compact-tools.ts";
-import { activePiAgentDirectory, writeJsonAtomically } from "./mcp-config.ts";
-import { jevRoutingEnabled, setJevRouting } from "./workflow-settings.ts";
+import { resolveAgentDirectory } from "./agent-directory.ts";
+import { createJevRouting } from "./workflow-settings.ts";
 
 const usage =
 	"Usage: /workflow:status | /workflow:doctor | /workflow:config | /workflow:models | /workflow:subagents | /workflow:delegation-check";
@@ -67,7 +58,7 @@ const usage =
 function createWorkflow(
 	pi: ExtensionAPI,
 	getContext: () => ExtensionCommandContext | ExtensionContext | undefined,
-	options: CompanionWorkflowOptions = {},
+	options: CompanionWorkflowOptions,
 ) {
 	return createCompanionWorkflow({
 		catalog: options.catalog,
@@ -78,15 +69,16 @@ function createWorkflow(
 		},
 		mcp: options.mcp,
 		settings: options.settings,
+		agentDirectory: options.agentDirectory,
 		expectedPackages: options.expectedPackages,
 	});
 }
 
 export default function piWorkflowExtension(
 	pi: ExtensionAPI,
-	options: CompanionWorkflowOptions & {
+	options: Omit<CompanionWorkflowOptions, "agentDirectory"> & {
+		agentDirectory?: string;
 		codegraph?: CodeGraphAdapters;
-		modelProfiles?: ModelProfilesOptions;
 		childSessions?: {
 			create?: ChildSessionFactory;
 			schedule?: Schedule;
@@ -94,77 +86,43 @@ export default function piWorkflowExtension(
 		};
 	} = {},
 ) {
+	const agentDirectory = resolveAgentDirectory(options.agentDirectory);
 	let currentCtx: ExtensionContext | ExtensionCommandContext | undefined;
 	const context = () => currentCtx;
 	const workflow = createWorkflow(pi, context, {
 		...options,
+		agentDirectory,
 		expectedPackages: expectedPackageNames,
 	});
 	registerCompactTools(pi);
 	registerChildResultCards(pi);
-	const modelProfiles = createModelProfiles(options.modelProfiles);
+	const modelProfiles = createModelProfiles(agentDirectory);
+	const jevRouting = createJevRouting(agentDirectory);
 	const childSessions = createChildSessions({
 		create: options.childSessions?.create,
 		schedule: options.childSessions?.schedule,
-		deliver: () => {
-			if (currentCtx?.isIdle()) queueMicrotask(deliverResults);
-		},
-		ask: (child, question, number) => {
-			sendResults();
-			pi.sendMessage(
-				{
-					customType: "pi-workflow-child-question",
-					content: `Child ${child.id} asks (question ${number}):\n\n${question}\n\nAnswer with reply_child with question ${number}.`,
-					display: true,
-					details: { ...childDetails(child), question: number, text: question },
-				},
-				{ deliverAs: "steer", triggerTurn: true },
-			);
-		},
+		send: (message) =>
+			pi.sendMessage(message, { deliverAs: "steer", triggerTurn: true }),
+		idle: () => currentCtx?.isIdle() ?? false,
 		trace: (entry) => pi.appendEntry("pi-workflow-child-trace", entry),
 		report: (message) => {
 			if (currentCtx) report(currentCtx, message, "error");
 		},
 	});
-	function deliverResults() {
-		if (childSessions.wakesParent()) sendResults();
-	}
-	function sendResults() {
-		const results = childSessions.pendingResults();
-		if (results.length === 0) return;
-		try {
-			pi.sendMessage(
-				{
-					customType: "pi-workflow-child-result",
-					content: results.map(childOutcome).join("\n\n"),
-					display: true,
-					details:
-						results.length === 1
-							? childDetails(results[0])
-							: { results: results.map((child) => childDetails(child)) },
-				},
-				{ deliverAs: "steer", triggerTurn: true },
-			);
-			for (const child of results) childSessions.consume(child.id);
-		} catch (error) {
-			if (currentCtx)
-				report(
-					currentCtx,
-					`Child results could not be delivered: ${error instanceof Error ? error.message : String(error)}`,
-					"error",
-				);
-		}
-	}
-	pi.on("turn_end", deliverResults);
-	pi.on("agent_settled", deliverResults);
+	pi.on("turn_end", () => childSessions.atBoundary());
+	pi.on("agent_settled", () => childSessions.atBoundary());
 	const childrenViews = createChildrenViews(childSessions);
-	registerChildrenBox(pi, childSessions, options.childSessions?.refresh);
-	registerSessionTodo(pi);
+	const { requestAboveInputRender } = registerShell(pi);
+	registerChildrenBox(
+		pi,
+		childSessions,
+		requestAboveInputRender,
+		options.childSessions?.refresh,
+	);
+	const offerTodoTool = registerSessionTodo(pi, requestAboveInputRender);
 	const footerHints = createFooterHints();
-	contribute("child-session", "header", () => ({
-		count: childSessions.list().filter((child) => isWorking(child.state))
-			.length,
-	}));
+	occupyHeader("child-session", childSessions.working);
+	childSessions.subscribe(notifyHeader);
 	registerChrome(pi, footerHints);
 	pi.registerShortcut("alt+a", {
 		description: "Open the subagents view",
@@ -172,17 +130,7 @@ export default function piWorkflowExtension(
 			if (ctx.mode === "tui") await childrenViews.open(ctx);
 		},
 	});
-	const launcher = createChildLauncher({
-		modelProfiles,
-		childSessionSeated: () => held(childOverlay),
-	});
-
-	function selectionPath() {
-		return resolve(
-			activePiAgentDirectory(options.mcp),
-			"pi-workflow-selection.json",
-		);
-	}
+	const launcher = createChildLauncher({ modelProfiles, jevRouting });
 
 	function companionPackages() {
 		return loadCompanionsFromPath(
@@ -190,100 +138,49 @@ export default function piWorkflowExtension(
 		);
 	}
 
-	function seatFromDisk() {
-		const loaded = companionPackages();
-		if (loaded.error) return { status: "refused" as const, reason: loaded.error };
-		const packages = loaded.companions.map((companion) => companion.package);
-		let text: string | undefined;
-		try {
-			text = readFileSync(selectionPath(), "utf8");
-		} catch (error) {
-			const code =
-				error instanceof Error && "code" in error ? error.code : undefined;
-			if (code !== "ENOENT") {
-				return {
-					status: "refused" as const,
-					reason: `Unable to read the selection: ${error instanceof Error ? error.message : String(error)}`,
-				};
-			}
-		}
-		const selection = readSelection(text, packages);
-		if (selection.status === "refused") return selection;
-		if (text === undefined) return selection;
-		replaceSelection(selection.selection);
-		return selection;
-	}
-
 	function expectedPackageNames(): readonly string[] {
-		const loaded = companionPackages();
-		if (loaded.error) return [];
-		const packages = loaded.companions.map((companion) => companion.package);
-		let text: string | undefined;
-		try {
-			text = readFileSync(selectionPath(), "utf8");
-		} catch {
-			return [];
-		}
-		const selection = readSelection(text, packages);
-		if (selection.status !== "ready") return [];
-		return Object.entries(selection.selection.expectations)
+		const read = seating.read();
+		if (read.status !== "ready") return [];
+		return Object.entries(read.selection.expectations)
 			.filter(([, on]) => on)
 			.map(([name]) => name);
 	}
 
-	const childTools = [
-		createSpawnChildTool(launcher, childSessions),
-		createContinueChildTool(childSessions),
-		...createChildQueryTools(childSessions),
-	];
-	let childHooks = false;
-	let childOffered: boolean | undefined;
+	const childTools = launcher.childToolsOffer(
+		pi,
+		[
+			createSpawnChildTool(launcher, childSessions),
+			createContinueChildTool(childSessions),
+			...createChildQueryTools(childSessions),
+		],
+		childSessions,
+		workflow.checkSpawnTools,
+	);
 
-	function registerChildTools(allowed: boolean) {
-		if (!allowed) return;
-		const on = held(childOverlay);
-		if (!childHooks && !on) return;
-		if (childHooks && childOffered === on) return;
-		childOffered = on;
-		for (const tool of childTools) {
-			pi.registerTool({
-			...tool,
-			exposure: on ? "direct" : "hidden",
-		} as typeof tool);
-		}
-		if (childHooks) return;
-		childHooks = true;
-		pi.on("turn_start", () => {
-			launcher.beginTurn();
-		});
-		pi.on("tool_call", async (event, toolCtx) => {
-			if (!held(childOverlay)) return;
-			const gate = await launcher.gateToolCall(event, toolCtx);
-			if (gate.allow) return;
-			if (event.parentToolCallId) {
-				pi.sendMessage(
-					{
-						customType: "pi-workflow-gate-block",
-						content: gate.reason,
-						display: true,
-					},
-					{ deliverAs: "steer" },
-				);
-			}
-			return { block: true, reason: gate.reason };
-		});
-	}
+	const seating = createSeating({
+		agentDirectory,
+		packages: () => {
+			const loaded = companionPackages();
+			return {
+				packages: loaded.companions.map((companion) => companion.package),
+				error: loaded.error,
+			};
+		},
+		offers: [
+			() => syncAskUserTools(pi, footerHints),
+			offerTodoTool,
+			() => syncCodeGraphTool(pi, options.codegraph),
+			() => syncCompactTools(pi, currentCtx),
+			childTools.offer,
+		],
+	});
+	childSessions.subscribe(childTools.refresh);
 
 	pi.on("session_start", async (_event, ctx) => {
 		currentCtx = ctx;
-		const seated = seatFromDisk();
-		if (seated.status === "refused") report(ctx, seated.reason, "error");
-		const { allowed } = await workflow.checkSpawnTools();
-		syncAskUserTools(pi, footerHints);
-		syncTodoTool(pi);
-		syncCodeGraphTool(pi, options.codegraph);
-		syncCompactTools(pi, ctx);
-		registerChildTools(allowed);
+		const read = seating.read();
+		if (read.status === "refused") report(ctx, read.reason, "error");
+		await seating.seat(read.status === "ready" ? read.selection : undefined);
 	});
 	pi.on("tool_execution_start", async (_event, ctx) => {
 		currentCtx = ctx;
@@ -332,9 +229,9 @@ export default function piWorkflowExtension(
 				report(ctx, "Configure needs the TUI.", "error");
 				return;
 			}
-			const seated = seatFromDisk();
-			if (seated.status === "refused") {
-				report(ctx, seated.reason, "error");
+			const read = seating.read();
+			if (read.status === "refused") {
+				report(ctx, read.reason, "error");
 				return;
 			}
 			const loaded = companionPackages();
@@ -345,25 +242,20 @@ export default function piWorkflowExtension(
 					options.catalog?.resolveInstalledVersion,
 				),
 			);
-			const routing = jevRoutingEnabled();
+			const routing = jevRouting.enabled();
 			const guided = await guideSelection(
 				ctx,
-				seated.selection,
+				read.selection,
 				packages,
 				states,
 				routing,
+				seatedCapabilities(),
 			);
 			if (!guided) return;
-			const { selection: chosen, jevRouting } = guided;
-			writeJsonAtomically(selectionPath(), chosen);
-			if (jevRouting !== routing) setJevRouting(jevRouting);
-			replaceSelection(chosen);
-			const { allowed } = await workflow.checkSpawnTools();
-			syncAskUserTools(pi, footerHints);
-			syncTodoTool(pi);
-			syncCodeGraphTool(pi, options.codegraph);
-			syncCompactTools(pi, ctx);
-			registerChildTools(allowed);
+			const { selection: chosen, jevRouting: chosenRouting } = guided;
+			seating.save(chosen);
+			if (chosenRouting !== routing) jevRouting.set(chosenRouting);
+			await seating.seat(chosen);
 			const expected = Object.entries(chosen.expectations)
 				.filter(([, on]) => on)
 				.map(([name]) => name);
@@ -377,7 +269,7 @@ export default function piWorkflowExtension(
 				report(ctx, usage, "error");
 				return;
 			}
-			if (!held(childOverlay)) {
+			if (!seated("child-session", "overlay")) {
 				report(
 					ctx,
 					"Child session is not seated. Run /workflow:config.",
@@ -410,7 +302,7 @@ export default function piWorkflowExtension(
 				report(ctx, usage, "error");
 				return;
 			}
-			if (!held(childOverlay)) {
+			if (!seated("child-session", "overlay")) {
 				report(
 					ctx,
 					"Child session is not seated. Run /workflow:config.",
@@ -420,6 +312,7 @@ export default function piWorkflowExtension(
 			}
 			const { lines, failed } = await runDelegationCheck(ctx, {
 				modelProfiles,
+				jevRouting,
 			});
 			report(ctx, lines.join("\n"), failed ? "error" : "info");
 		},

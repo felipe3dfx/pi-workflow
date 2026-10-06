@@ -10,7 +10,8 @@ import {
 } from "../extensions/ask-user-panel.ts";
 import { createFooterHints } from "../extensions/chrome.ts";
 import { createChildrenViews } from "../extensions/children-view.ts";
-import { capabilities, replaceSelection } from "../extensions/configure.ts";
+import { capabilities } from "../extensions/configure.ts";
+import { replaceSelection } from "../extensions/shell.ts";
 
 replaceSelection({
 	schemaVersion: 1,
@@ -728,6 +729,25 @@ test("a tab in the question does not exceed the render width", async () => {
 	for (const line of lines) {
 		assert.ok(visibleWidth(line) <= width, `line exceeds width ${width}: ${JSON.stringify(line)}`);
 	}
+	send("X");
+	await pending;
+});
+
+test("a tab in the question renders as three spaces", async () => {
+	const tool = createAskUserChoiceTool(createFooterHints());
+	const { ctx, send, render } = tuiContext();
+	const pending = tool.execute(
+		"call-tab-spaces",
+		{ question: "Deploy\tnow?", options: [{ label: "Yes" }] },
+		undefined,
+		undefined,
+		ctx,
+	);
+	const lines = render(80);
+	assert.ok(
+		lines.some((line) => line.includes("Deploy   now?")),
+		`expected a tab to render as three spaces: ${JSON.stringify(lines)}`,
+	);
 	send("X");
 	await pending;
 });

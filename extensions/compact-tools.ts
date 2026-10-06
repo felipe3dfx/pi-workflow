@@ -13,10 +13,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { type Component, Text, TruncatedText } from "@earendil-works/pi-tui";
 
-import { claim, held } from "./configure.ts";
+import { seated } from "./shell.ts";
 import { settings, shellOptions } from "./shell-settings.ts";
-
-const compactStream = claim("compact-rendering", "message-stream");
 
 type Theme = Parameters<NonNullable<ToolDefinition["renderCall"]>>[1];
 type RenderContext = Parameters<NonNullable<ToolDefinition["renderCall"]>>[2];
@@ -132,7 +130,7 @@ function compact<
 		execute: (toolCallId, params, signal, onUpdate, ctx) =>
 			create(ctx.cwd, ctx).execute(toolCallId, params, signal, onUpdate, ctx),
 		renderCall(args, theme, context) {
-			if (!held(compactStream)) {
+			if (!seated("compact-rendering", "message-stream")) {
 				return builtIn.renderCall?.(args, theme, context) ?? hidden;
 			}
 			const previous =
@@ -151,7 +149,7 @@ function compact<
 			);
 		},
 		renderResult(result, options, theme, context) {
-			if (!held(compactStream)) {
+			if (!seated("compact-rendering", "message-stream")) {
 				return (
 					builtIn.renderResult?.(result, options, theme, context) ?? hidden
 				);
@@ -284,7 +282,7 @@ export function compactToolRenderers(
 	toolName: string,
 	next: () => ToolRenderers | undefined,
 ): ToolRenderers | undefined {
-	if (!held(compactStream)) return next();
+	if (!seated("compact-rendering", "message-stream")) return next();
 	const own = next();
 	if (!usesFallback(toolName, own)) return own;
 	return { ...own, renderShell: "self", ...fallbackRenderers(toolName, own) };
@@ -293,7 +291,7 @@ export function compactToolRenderers(
 // The options mirror what Pi's session passes when it builds its own base tools.
 export function syncCompactTools(pi: ExtensionAPI, ctx?: ExtensionContext) {
 	if (!ctx?.cwd || typeof ctx.isProjectTrusted !== "function") return;
-	const on = held(compactStream);
+	const on = seated("compact-rendering", "message-stream");
 	const register = (name: string, create: (cwd: string, ctx?: ExtensionContext) => object) => {
 		const tool = (on
 			? compact(name, create as Parameters<typeof compact>[1], ctx)

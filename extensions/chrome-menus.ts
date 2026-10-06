@@ -30,6 +30,12 @@ import {
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import { marginFor } from "./chrome-editor.ts";
+import {
+	createPatchSet,
+	type PatchMethod,
+	type PatchTarget,
+} from "./chrome-patch.ts";
+import { theme } from "./visual-language.ts";
 
 export type MenuTheme = Pick<Theme, "fg" | "bg" | "bold">;
 export type Hint = [key: string, action: string];
@@ -43,19 +49,11 @@ export type HintSpan = {
 export const NATIVE: unique symbol = Symbol.for(
 	"pi-workflow:chrome-menus:native",
 );
-const THEME_KEY = Symbol.for("@earendil-works/pi-coding-agent:theme");
-const ORIGINAL = Symbol.for("pi-workflow:chrome-menus:original");
-const INHERITED = Symbol.for("pi-workflow:chrome-menus:inherited");
 const RESET = "\x1b[0m";
 const PRIMARY_COLUMN_GAP = 2;
 const MIN_DESCRIPTION_WIDTH = 10;
 const hintGap = "  |  ";
 const close = " [×] ";
-
-type Method = ((...args: never[]) => unknown) & {
-	[ORIGINAL]?: Method;
-	[INHERITED]?: boolean;
-};
 
 type SelectListState = {
 	theme: SelectListTheme & { [NATIVE]?: true };
@@ -82,13 +80,6 @@ type SettingsListState = {
 		endIndex: number;
 	};
 };
-
-function theme() {
-	const current = (globalThis as Record<symbol, Theme | undefined>)[THEME_KEY];
-	if (!current)
-		throw new Error("Theme not initialized. Call initTheme() first.");
-	return current;
-}
 
 export function fit(line: string, width: number) {
 	return visibleWidth(line) > width ? truncateToWidth(line, width, "") : line;
@@ -252,7 +243,7 @@ const listTheme: SelectListTheme = {
 	noMatch: (text) => theme().fg("dim", text),
 };
 
-function wrapSelectRender(original: Method) {
+function wrapSelectRender(original: PatchMethod) {
 	return function (this: SelectListState, width: number) {
 		if (this.theme[NATIVE])
 			return (original as (width: number) => string[]).call(this, width);
@@ -265,10 +256,10 @@ function wrapSelectRender(original: Method) {
 		} finally {
 			this.theme = own;
 		}
-	} as Method;
+	} as PatchMethod;
 }
 
-function wrapRenderItem(original: Method) {
+function wrapRenderItem(original: PatchMethod) {
 	return function (
 		this: SelectListState & { layout: SelectListLayoutOptions },
 		item: SelectItem,
@@ -340,7 +331,7 @@ function wrapRenderItem(original: Method) {
 			maxWidth,
 		);
 		return row(`${mark}${label(truncatedValue)}`);
-	} as Method;
+	} as PatchMethod;
 }
 
 type Swap = [Record<string, unknown>, string, unknown];
@@ -618,7 +609,7 @@ function swapMarker(line: string, width: number) {
 }
 
 function wrapSelectorRender(
-	original: Method,
+	original: PatchMethod,
 	root: (self: unknown) => unknown,
 	dress: Dress,
 	margin: boolean,
@@ -641,7 +632,7 @@ function wrapSelectorRender(
 		} finally {
 			unswap(swaps);
 		}
-	} as Method;
+	} as PatchMethod;
 }
 
 type MouseHandler = (event: TuiMouseEvent) => TuiMouseEventResult | undefined;
@@ -650,14 +641,14 @@ function shifted(event: TuiMouseEvent, left: number, width: number) {
 	return { ...event, x: event.x - left, width };
 }
 
-function wrapMarginMouse(original: Method) {
+function wrapMarginMouse(original: PatchMethod) {
 	return function (this: unknown, event: TuiMouseEvent) {
 		const edge = marginFor(event.width);
 		return (original as MouseHandler).call(
 			this,
 			shifted(event, edge, event.width - edge * 2),
 		);
-	} as Method;
+	} as PatchMethod;
 }
 
 type SettingsSelectorState = {
@@ -739,7 +730,7 @@ function closeSettings(list: SettingsListState) {
 	if (!list.submenuComponent) list.onCancel();
 }
 
-function wrapSettingsMouse(original: Method) {
+function wrapSettingsMouse(original: PatchMethod) {
 	return function (this: SettingsSelectorState, event: TuiMouseEvent) {
 		const { edge, outer, left, inner } = settingsFrame(event.width);
 		const shut = modalMetrics(outer).close;
@@ -750,7 +741,7 @@ function wrapSettingsMouse(original: Method) {
 			return { handled: true };
 		}
 		return (original as MouseHandler).call(this, shifted(event, left, inner));
-	} as Method;
+	} as PatchMethod;
 }
 
 const selectors: [object, Dress][] = [
@@ -765,12 +756,7 @@ const selectors: [object, Dress][] = [
 	[ThinkingSelectorComponent.prototype, {}],
 ];
 
-const targets: {
-	proto: object;
-	name: string;
-	create: (original: Method) => Method;
-	replaces: boolean;
-}[] = [
+const targets: PatchTarget[] = [
 	{
 		proto: SelectList.prototype,
 		name: "render",
@@ -786,7 +772,7 @@ const targets: {
 	{
 		proto: SettingsList.prototype,
 		name: "renderMainList",
-		create: () => renderMainList as Method,
+		create: () => renderMainList as PatchMethod,
 		replaces: true,
 	},
 	{
@@ -804,7 +790,7 @@ const targets: {
 	{
 		proto: SettingsSelectorComponent.prototype,
 		name: "render",
-		create: () => renderSettings as Method,
+		create: () => renderSettings as PatchMethod,
 		replaces: false,
 	},
 	{
@@ -817,7 +803,7 @@ const targets: {
 		{
 			proto,
 			name: "render",
-			create: (original: Method) =>
+			create: (original: PatchMethod) =>
 				wrapSelectorRender(original, (self) => self, dress, true),
 			replaces: false,
 		},
@@ -825,35 +811,12 @@ const targets: {
 	]),
 ];
 
-function slot(proto: object) {
-	return proto as Record<string, Method | undefined>;
-}
-
-function pristine(method: Method, name: string) {
-	return Function.prototype.toString.call(method).startsWith(`${name}(`);
-}
+const patchSet = createPatchSet("chrome-menus", targets);
 
 export function patchMenus() {
-	for (const { proto, name, create, replaces } of targets) {
-		const current = slot(proto)[name];
-		if (!current) continue;
-		const original = current[ORIGINAL] ?? current;
-		if (replaces && !pristine(original, name)) continue;
-		const inherited = current[ORIGINAL]
-			? current[INHERITED]
-			: !Object.hasOwn(proto, name);
-		const patched = create(original);
-		patched[ORIGINAL] = original;
-		patched[INHERITED] = inherited;
-		slot(proto)[name] = patched;
-	}
+	patchSet.patch();
 }
 
 export function restoreMenus() {
-	for (const { proto, name } of targets) {
-		const current = slot(proto)[name];
-		if (!current?.[ORIGINAL]) continue;
-		if (current[INHERITED]) delete slot(proto)[name];
-		else slot(proto)[name] = current[ORIGINAL];
-	}
+	patchSet.restore();
 }

@@ -1,21 +1,13 @@
-import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-import { held, notifyPlace, occupants, paint } from "./configure.ts";
-import { paintAboveInput } from "./shell.ts";
+import { occupyAboveInput, seated } from "./shell.ts";
 import { offerTool } from "./tool-offer.ts";
 import {
 	renderTodoBox,
-	todoAboveInput,
 	type TodoBoxState,
 } from "./todo-header.ts";
 import { createTodoList, type Task } from "./todo-list.ts";
-
-let syncTodo: (api: ExtensionAPI) => void = () => {};
-
-export function syncTodoTool(api: ExtensionAPI) {
-	syncTodo(api);
-}
 
 const TodoWriteTask = Type.Object({
 	text: Type.String({ description: "Task text" }),
@@ -59,54 +51,22 @@ function replayTasks(entries: ReturnType<ExtensionContext["sessionManager"]["get
 	return tasks.length > 0 && tasks.every((task) => task.done) ? [] : tasks;
 }
 
-const WIDGET_KEY = "session-todo";
-
-export function registerSessionTodo(pi: ExtensionAPI): void {
+export function registerSessionTodo(
+	pi: ExtensionAPI,
+	requestRender: () => void,
+): () => void {
 	const todoList = createTodoList();
 	const boxState: TodoBoxState = { collapsed: false, showDone: true };
-	let currentTui: { requestRender: (force?: boolean) => void } | undefined;
-	let widgetInstalled = false;
-
-	function widgetFactory(tui: { requestRender: (force?: boolean) => void }, theme: Theme) {
-		currentTui = tui;
-		return {
-			render(width: number) {
-				paint(todoAboveInput, (paintedWidth) =>
-					renderTodoBox(theme, todoList.list(), boxState, paintedWidth),
-				);
-				if (occupants("above-input").includes("child-session")) return [];
-				return paintAboveInput(width);
-			},
-			invalidate() {},
-		};
-	}
+	occupyAboveInput("todo", (width, theme) =>
+		renderTodoBox(theme, todoList.list(), boxState, width),
+	);
 
 	function reveal(): void {
 		boxState.collapsed = false;
-		currentTui?.requestRender();
-		notifyPlace("above-input");
+		requestRender();
 	}
 
-	function syncWidget(ctx: ExtensionContext): void {
-		if (ctx.mode !== "tui") return;
-		const hasTasks = todoList.list().length > 0;
-		if (hasTasks && !widgetInstalled) {
-			ctx.ui.setWidget(WIDGET_KEY, widgetFactory, { placement: "aboveEditor" });
-			widgetInstalled = true;
-		} else if (!hasTasks && widgetInstalled) {
-			ctx.ui.setWidget(WIDGET_KEY, undefined);
-			widgetInstalled = false;
-		}
-	}
-
-	const registerTodo = pi.registerTool.bind(pi);
-	pi.registerTool = (tool) => {
-		if (tool.name === "todo") {
-			syncTodo = (api) => offerTool(api, tool, held(todoAboveInput));
-		}
-		return registerTodo(tool);
-	};
-	pi.registerTool({
+	const tool: ToolDefinition<typeof TodoParams> = {
 		name: "todo",
 		label: "Todo",
 		description:
@@ -117,8 +77,8 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 			"Prefer todo write to replace the whole plan when it changes, and todo update to move one task's status as work progresses.",
 		],
 		parameters: TodoParams,
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			if (!held(todoAboveInput)) {
+		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+			if (!seated("todo", "above-input")) {
 				return {
 					content: [
 						{
@@ -136,7 +96,6 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 					}
 					const tasks = todoList.write(params.tasks);
 					reveal();
-					syncWidget(ctx);
 					return { content: [{ type: "text", text: summarize(tasks) }], details: { tasks } };
 				}
 				case "add": {
@@ -145,7 +104,6 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 					}
 					const task = todoList.add(params.text);
 					reveal();
-					syncWidget(ctx);
 					return {
 						content: [{ type: "text", text: `Added #${task.id}: ${task.text}` }],
 						details: { tasks: todoList.list() },
@@ -160,13 +118,11 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 						throw new Error(`task #${params.id} not found`);
 					}
 					reveal();
-					syncWidget(ctx);
 					return { content: [{ type: "text", text: `Updated #${task.id}` }], details: { tasks: todoList.list() } };
 				}
 				case "clear": {
 					todoList.clear();
 					reveal();
-					syncWidget(ctx);
 					return { content: [{ type: "text", text: "Cleared session tasks" }], details: { tasks: [] } };
 				}
 				case "list":
@@ -176,15 +132,14 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 					};
 			}
 		},
-	});
-	pi.registerTool = registerTodo;
+	};
+	pi.registerTool(tool);
 
 	pi.registerShortcut("alt+shift+t", {
 		description: "Collapse or expand the session task box above the input",
 		handler: async (_ctx) => {
 			boxState.collapsed = !boxState.collapsed;
-			currentTui?.requestRender();
-			notifyPlace("above-input");
+			requestRender();
 		},
 	});
 
@@ -192,16 +147,17 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 		description: "Show or hide done session tasks above the input",
 		handler: async (_ctx) => {
 			boxState.showDone = !boxState.showDone;
-			currentTui?.requestRender();
-			notifyPlace("above-input");
+			requestRender();
 		},
 	});
 
 	async function restoreFromBranch(_event: unknown, ctx: ExtensionContext) {
 		todoList.restore(replayTasks(ctx.sessionManager.getBranch()));
-		syncWidget(ctx);
+		requestRender();
 	}
 
 	pi.on("session_start", restoreFromBranch);
 	pi.on("session_tree", restoreFromBranch);
+
+	return () => offerTool(pi, tool, seated("todo", "above-input"));
 }

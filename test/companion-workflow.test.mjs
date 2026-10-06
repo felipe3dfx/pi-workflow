@@ -5,7 +5,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { capabilities, occupants, replaceSelection } from "../extensions/configure.ts";
+import { capabilities } from "../extensions/configure.ts";
+import { occupants, replaceSelection } from "../extensions/shell.ts";
 import {
 	createCompanionWorkflow,
 	getCompanionState,
@@ -76,14 +77,9 @@ await writeFile(
 );
 test.after(() => rm(alignedDir, { recursive: true, force: true }));
 const aligned = {
-	mcp: {
-		catalogPath: join(alignedDir, "mcp-servers.json"),
-		agentDirectory: alignedDir,
-	},
-	settings: {
-		catalogPath: join(alignedDir, "settings-catalog.json"),
-		agentDirectory: alignedDir,
-	},
+	mcp: { catalogPath: join(alignedDir, "mcp-servers.json") },
+	settings: { catalogPath: join(alignedDir, "settings-catalog.json") },
+	agentDirectory: alignedDir,
 };
 
 async function withMetadataFile(companions, run) {
@@ -286,8 +282,8 @@ test("status and doctor warn that an installed pi-mcp-adapter hides mcp.json fro
 
 test("status and setup note that an existing mcp-adapter.json is no longer read and leave it untouched", async () => {
 	await withMetadataFile([{ package: "alpha" }], async ({ metadataPath }) => {
-		await withFinishApplyDirectories(async ({ mcp, settings }) => {
-			const legacyPath = join(mcp.agentDirectory, "mcp-adapter.json");
+		await withFinishApplyDirectories(async ({ mcp, settings, agentDirectory }) => {
+			const legacyPath = join(agentDirectory, "mcp-adapter.json");
 			const legacy = '{ "mcpServers": { "old": { "command": "old" } } }\n';
 			await writeFile(legacyPath, legacy, "utf8");
 			const notifications = [];
@@ -302,8 +298,9 @@ test("status and setup note that an existing mcp-adapter.json is no longer read 
 				},
 				mcp,
 				settings,
+				agentDirectory,
 			});
-			const note = `${legacyPath} is no longer read. Move any servers you still need from it to ${join(mcp.agentDirectory, "mcp.json")}.`;
+			const note = `${legacyPath} is no longer read. Move any servers you still need from it to ${join(agentDirectory, "mcp.json")}.`;
 			const status = await workflow.inspect();
 			assert.ok(status.message.includes(note));
 			await workflow.setup();
@@ -314,7 +311,7 @@ test("status and setup note that an existing mcp-adapter.json is no longer read 
 			);
 			assert.equal(await readFile(legacyPath, "utf8"), legacy);
 			const written = JSON.parse(
-				await readFile(join(mcp.agentDirectory, "mcp.json"), "utf8"),
+				await readFile(join(agentDirectory, "mcp.json"), "utf8"),
 			);
 			assert.deepEqual(Object.keys(written.mcpServers), ["context7"]);
 		});
@@ -349,11 +346,9 @@ test("setup still aligns MCP and default settings when a companion install fails
 					return { code: 1, stderr: "offline" };
 				},
 			},
-			mcp: {
-				catalogPath: join(dir, "mcp-servers.json"),
-				agentDirectory: dir,
-			},
+			mcp: { catalogPath: join(dir, "mcp-servers.json") },
 			settings: aligned.settings,
+			agentDirectory: dir,
 		});
 		await writeFile(
 			join(dir, "mcp-servers.json"),
@@ -528,7 +523,8 @@ async function withSettingsWorkflow(existingSettings, run) {
 					},
 				},
 				mcp: aligned.mcp,
-				settings: { catalogPath, agentDirectory: dir },
+				settings: { catalogPath },
+				agentDirectory: dir,
 			});
 			await run({ workflow, settingsPath });
 		},
@@ -640,8 +636,9 @@ test("status reports a misaligned MCP configuration and points to /workflow:conf
 					resolveInstalledVersion: installedExceptBlocked,
 				},
 				interaction: {},
-				mcp: { catalogPath, agentDirectory: dir },
+				mcp: { catalogPath },
 				settings: aligned.settings,
+				agentDirectory: dir,
 			});
 			const result = await workflow.inspect();
 			assert.equal(result.level, "warning");
@@ -675,7 +672,8 @@ test("status does not point to /workflow:config when the only settings misalignm
 				},
 				interaction: {},
 				mcp: aligned.mcp,
-				settings: { catalogPath, agentDirectory: dir },
+				settings: { catalogPath },
+				agentDirectory: dir,
 			});
 			const result = await workflow.inspect();
 			assert.equal(result.level, "warning");
@@ -691,10 +689,8 @@ test("status does not point to /workflow:config when the only settings misalignm
 async function withFinishApplyDirectories(run) {
 	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-finish-"));
 	try {
-		const mcpDirectory = join(dir, "mcp");
-		const settingsDirectory = join(dir, "settings");
-		await mkdir(mcpDirectory);
-		await mkdir(settingsDirectory);
+		const agentDirectory = join(dir, "agent");
+		await mkdir(agentDirectory);
 		const mcpCatalogPath = join(dir, "mcp-servers.json");
 		const settingsCatalogPath = join(dir, "settings-catalog.json");
 		await writeFile(
@@ -712,12 +708,9 @@ async function withFinishApplyDirectories(run) {
 		);
 		return await run({
 			dir,
-			mcp: { catalogPath: mcpCatalogPath, agentDirectory: mcpDirectory },
-			settings: {
-				catalogPath: settingsCatalogPath,
-				agentDirectory: settingsDirectory,
-			},
-			settingsDirectory,
+			mcp: { catalogPath: mcpCatalogPath },
+			settings: { catalogPath: settingsCatalogPath },
+			agentDirectory,
 		});
 	} finally {
 		await rm(dir, { recursive: true, force: true });
@@ -726,7 +719,7 @@ async function withFinishApplyDirectories(run) {
 
 test("setup does not claim companions were installed when only MCP and settings changed", async () => {
 	await withMetadataFile([{ package: "alpha" }], async ({ metadataPath }) => {
-		await withFinishApplyDirectories(async ({ mcp, settings }) => {
+		await withFinishApplyDirectories(async ({ mcp, settings, agentDirectory }) => {
 			const workflow = createCompanionWorkflow({
 				catalog: { metadataPath, resolveInstalledVersion: () => ({ version: "1.0.0" }) },
 				interaction: {
@@ -736,6 +729,7 @@ test("setup does not claim companions were installed when only MCP and settings 
 				},
 				mcp,
 				settings,
+				agentDirectory,
 			});
 			const result = await workflow.setup();
 			assert.equal(result.outcome, "installed");
@@ -747,7 +741,7 @@ test("setup does not claim companions were installed when only MCP and settings 
 
 test("setup lists errored companions and manual instructions in the final message", async () => {
 	await withMetadataFile([{ package: "alpha" }], async ({ metadataPath }) => {
-		await withFinishApplyDirectories(async ({ mcp, settings }) => {
+		await withFinishApplyDirectories(async ({ mcp, settings, agentDirectory }) => {
 			const notifications = [];
 			const workflow = createCompanionWorkflow({
 				catalog: {
@@ -760,6 +754,7 @@ test("setup lists errored companions and manual instructions in the final messag
 				},
 				mcp,
 				settings,
+				agentDirectory,
 			});
 			const result = await workflow.setup();
 			assert.equal(result.outcome, "installed");
@@ -773,14 +768,22 @@ test("setup lists errored companions and manual instructions in the final messag
 
 test("a settings write failure after an MCP write reports what was already done", async () => {
 	await withMetadataFile([{ package: "alpha" }], async ({ metadataPath }) => {
-		await withFinishApplyDirectories(async ({ mcp, settings, settingsDirectory }) => {
+		await withFinishApplyDirectories(async ({ dir, mcp, settings, agentDirectory }) => {
 			const workflow = createCompanionWorkflow({
 				catalog: { metadataPath, resolveInstalledVersion: () => ({ version: "1.0.0" }) },
 				interaction: { installPackage: async () => ({ code: 0 }) },
 				mcp,
 				settings,
+				agentDirectory,
 			});
-			chmodSync(settingsDirectory, 0o500);
+			const lockedDirectory = join(dir, "locked");
+			await mkdir(lockedDirectory);
+			await writeFile(join(lockedDirectory, "settings.json"), "{}", "utf8");
+			symlinkSync(
+				join(lockedDirectory, "settings.json"),
+				join(agentDirectory, "settings.json"),
+			);
+			chmodSync(lockedDirectory, 0o500);
 			try {
 				const result = await workflow.setup();
 				assert.equal(result.outcome, "config-error");
@@ -790,7 +793,7 @@ test("a settings write failure after an MCP write reports what was already done"
 				assert.doesNotMatch(result.message, /run setup/);
 				assert.doesNotMatch(result.message, /Companions were installed/);
 			} finally {
-				chmodSync(settingsDirectory, 0o700);
+				chmodSync(lockedDirectory, 0o700);
 			}
 		});
 	});
@@ -900,7 +903,7 @@ async function withSelectionExtension(selection, run) {
 					metadataPath,
 					resolveInstalledVersion: () => ({}),
 				},
-				mcp: { agentDirectory: dir },
+				agentDirectory: dir,
 			},
 		);
 		const sessionCtx = (mode, hasUI) => ({
@@ -950,6 +953,79 @@ test("session start with no selection file does not seat a capability", async ()
 		await fire("json", false);
 		assert.deepEqual(seatedNames(), ["codegraph"]);
 	});
+});
+
+test("session start reports a refused selection with its text and keeps the current seating", async () => {
+	const refused = { ...savedSelection(["todo"]), schemaVersion: 2 };
+	await withSelectionExtension(refused, async ({ fire, notifications }) => {
+		replaceSelection(savedSelection(["codegraph"]));
+		await fire("tui", true);
+		assert.deepEqual(notifications, [
+			{ message: "Selection must use schemaVersion 1.", level: "error" },
+		]);
+		assert.deepEqual(seatedNames(), ["codegraph"]);
+	});
+});
+
+test("session start offers the capabilities' tools in today's order and checks the legacy spawn package right before the child session offer", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-offer-order-"));
+	replaceSelection(clearedSelection());
+	try {
+		const metadataPath = join(dir, "companions.json");
+		await writeFile(
+			metadataPath,
+			JSON.stringify({ schemaVersion: 1, companions: [{ package: "alpha" }] }),
+			"utf8",
+		);
+		await writeFile(
+			join(dir, "pi-workflow-selection.json"),
+			JSON.stringify(savedSelection(capabilities)),
+			"utf8",
+		);
+		const { pi, handlers } = fakePiExtensionApi();
+		const log = [];
+		pi.registerTool = (tool) => log.push(tool.name);
+		piWorkflowExtension(pi, {
+			agentDirectory: dir,
+			catalog: {
+				metadataPath,
+				resolveInstalledVersion: (name) => {
+					if (name === "@tintinweb/pi-subagents") log.push("legacy check");
+					return {};
+				},
+			},
+		});
+		log.length = 0;
+		await fireEvent(handlers, "session_start", {
+			...fakeSessionStartCtx(),
+			cwd: dir,
+			isProjectTrusted: () => false,
+		});
+		assert.deepEqual(log, [
+			"ask_user_choice",
+			"ask_user_question",
+			"todo",
+			"codegraph",
+			"read",
+			"bash",
+			"grep",
+			"find",
+			"ls",
+			"edit",
+			"write",
+			"legacy check",
+			"spawn_child",
+			"continue_child",
+			"list_children",
+			"child_status",
+			"child_result",
+			"cancel_child",
+			"reply_child",
+		]);
+	} finally {
+		replaceSelection(clearedSelection());
+		await rm(dir, { recursive: true, force: true });
+	}
 });
 
 test("workflow:config reports unsupported arguments without UI in print and json modes", async () => {

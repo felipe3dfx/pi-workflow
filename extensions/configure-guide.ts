@@ -28,6 +28,7 @@ export async function guideSelection(
 		status: "missing" | "installed" | "error";
 	}[],
 	jevRouting: boolean,
+	seated: Pick<Selection, "capabilities">,
 ): Promise<{ selection: Selection; jevRouting: boolean } | undefined> {
 	if (!ctx.hasUI || ctx.mode !== "tui") {
 		report(ctx, "Configure needs the TUI.", "error");
@@ -74,7 +75,7 @@ export async function guideSelection(
 										: [
 												`Jev routing: ${jevRouting ? "on" : "off"} -> ${draftRouting ? "on" : "off"}`,
 											]),
-									...describePlan(selection, draft, states),
+									...describePlan(seated, draft, states),
 								].map((line, index) => ({
 									id: `plan-${index}`,
 									label: line,

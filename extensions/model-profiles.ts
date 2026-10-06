@@ -7,15 +7,10 @@ import {
 } from "@earendil-works/pi-ai";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
-import { claim, held } from "./configure.ts";
-import {
-	activePiAgentDirectory,
-	isPlainRecord,
-	writeJsonAtomically,
-} from "./mcp-config.ts";
+import { seated } from "./shell.ts";
+import { isPlainRecord, writeJsonAtomically } from "./agent-directory.ts";
 import { createModelProfilesEditor } from "./model-profiles-editor.ts";
-
-const profileOverlay = claim("model-profiles", "overlay");
+import { terminalSafeLine } from "./terminal-safe-text.ts";
 
 export const specialists = ["explorer", "worker", "verifier"] as const;
 const thinkingLevels: readonly ModelThinkingLevel[] = [
@@ -42,12 +37,6 @@ export type EditableProfiles = {
 export type ModelProfiles = { schemaVersion: 2 } & EditableProfiles;
 
 export const profileName = /^[a-z0-9-]{1,64}$/;
-
-export const UNSAFE_TERMINAL_CHARACTERS = /[\p{Cc}\p{Bidi_Control}]/gu;
-
-export interface ModelProfilesOptions {
-	path?: string;
-}
 
 type CommandContext = Pick<
 	ExtensionCommandContext,
@@ -77,7 +66,7 @@ function isModelEntry(value: unknown): value is ModelEntry {
 		hasOnlyKeys(value, ["model", "thinking"]) &&
 		typeof value.model === "string" &&
 		value.model.includes("/") &&
-		value.model.search(UNSAFE_TERMINAL_CHARACTERS) === -1 &&
+		terminalSafeLine(value.model) === value.model &&
 		isOneOf(thinkingLevels, value.thinking)
 	);
 }
@@ -161,10 +150,8 @@ export function report(
 	else console.error(message);
 }
 
-export function createModelProfiles(options: ModelProfilesOptions = {}) {
-	const path =
-		options.path ??
-		resolve(activePiAgentDirectory(), "pi-workflow-models.json");
+export function createModelProfiles(agentDirectory: string) {
+	const path = resolve(agentDirectory, "pi-workflow-models.json");
 
 	function readText(): string | undefined {
 		return entryExists(path) ? readFileSync(path, "utf8") : undefined;
@@ -196,7 +183,7 @@ export function createModelProfiles(options: ModelProfilesOptions = {}) {
 	let snapshot = readProfiles();
 
 	async function edit(ctx: CommandContext) {
-		if (!held(profileOverlay)) {
+		if (!seated("model-profiles", "overlay")) {
 			report(
 				ctx,
 				"Model profiles are not seated. Run /workflow:config.",

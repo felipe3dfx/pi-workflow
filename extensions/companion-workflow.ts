@@ -76,6 +76,7 @@ export interface CompanionWorkflowOptions {
 	interaction?: CompanionInteractionAdapters;
 	mcp?: CompanionMcpAdapters;
 	settings?: PiSettingsAdapters;
+	agentDirectory: string;
 	expectedPackages?: () => readonly string[];
 }
 
@@ -365,7 +366,10 @@ type Alignment = {
 	note?: string;
 };
 
-function mcpAlignment(mcp: CompanionMcpAdapters | undefined): Alignment {
+function mcpAlignment(
+	mcp: CompanionMcpAdapters | undefined,
+	agentDirectory: string,
+): Alignment {
 	const heading = "MCP configuration:";
 	const loaded = loadMcpServerCatalog(mcp);
 	if (!loaded.catalog) {
@@ -375,7 +379,7 @@ function mcpAlignment(mcp: CompanionMcpAdapters | undefined): Alignment {
 			error: loaded.error ?? "Unable to load the MCP server catalog.",
 		};
 	}
-	const plan = planMcpConfiguration(loaded.catalog, mcp);
+	const plan = planMcpConfiguration(loaded.catalog, agentDirectory);
 	return {
 		heading,
 		path: plan.path,
@@ -384,12 +388,13 @@ function mcpAlignment(mcp: CompanionMcpAdapters | undefined): Alignment {
 			...plan.replacements.map((replacement) => replacement.name),
 		],
 		error: plan.error,
-		note: legacyMcpAdapterNote(mcp),
+		note: legacyMcpAdapterNote(agentDirectory),
 	};
 }
 
 function settingsAlignment(
 	settings: PiSettingsAdapters | undefined,
+	agentDirectory: string,
 ): Alignment {
 	const heading = "Default settings:";
 	const loaded = loadPiSettingsCatalog(settings);
@@ -400,7 +405,7 @@ function settingsAlignment(
 			error: loaded.error ?? "Unable to load the settings catalog.",
 		};
 	}
-	const plan = planPiSettings(loaded.catalog, settings);
+	const plan = planPiSettings(loaded.catalog, agentDirectory);
 	return {
 		heading,
 		path: plan.path,
@@ -525,8 +530,9 @@ function emptyInstallResult(
 	};
 }
 
-export function createCompanionWorkflow(options: CompanionWorkflowOptions = {}) {
+export function createCompanionWorkflow(options: CompanionWorkflowOptions) {
 	const interaction = options.interaction ?? {};
+	const { agentDirectory } = options;
 
 	async function reportStatus(heading: string): Promise<InspectResult> {
 		const catalog = resolveCompanionCatalog(options.catalog);
@@ -538,8 +544,8 @@ export function createCompanionWorkflow(options: CompanionWorkflowOptions = {}) 
 			heading,
 			metadataPath: catalog.metadataPath,
 			alignments: [
-				mcpAlignment(options.mcp),
-				settingsAlignment(options.settings),
+				mcpAlignment(options.mcp, agentDirectory),
+				settingsAlignment(options.settings, agentDirectory),
 			],
 			expected,
 		});
@@ -590,10 +596,10 @@ export function createCompanionWorkflow(options: CompanionWorkflowOptions = {}) 
 				return emptyInstallResult("mcp-catalog-error", { message });
 			}
 
-			const legacyNote = legacyMcpAdapterNote(options.mcp);
+			const legacyNote = legacyMcpAdapterNote(agentDirectory);
 			if (legacyNote) notify(interaction, legacyNote, "info");
 
-			const mcpPlan = planMcpConfiguration(loadedMcp.catalog, options.mcp);
+			const mcpPlan = planMcpConfiguration(loadedMcp.catalog, agentDirectory);
 			if (mcpPlan.error) {
 				notify(interaction, mcpPlan.error, "error");
 				return emptyInstallResult("config-error", {
@@ -609,7 +615,7 @@ export function createCompanionWorkflow(options: CompanionWorkflowOptions = {}) 
 				return emptyInstallResult("settings-catalog-error", { message });
 			}
 
-			const settingsPlan = planPiSettings(loadedSettings.catalog, options.settings);
+			const settingsPlan = planPiSettings(loadedSettings.catalog, agentDirectory);
 			if (settingsPlan.error) {
 				notify(interaction, settingsPlan.error, "error");
 				return emptyInstallResult("config-error", {
@@ -695,7 +701,7 @@ export function createCompanionWorkflow(options: CompanionWorkflowOptions = {}) 
 				mcpPlan,
 				loadedMcp.catalog,
 				loadedSettings.catalog,
-				options,
+				agentDirectory,
 				base,
 				catalog,
 				failures,
@@ -709,7 +715,7 @@ async function finishApply(
 	mcpPlan: McpConfigurationPlan,
 	catalog: NonNullable<ReturnType<typeof loadMcpServerCatalog>["catalog"]>,
 	settingsCatalog: PiSettingsCatalog,
-	options: CompanionWorkflowOptions,
+	agentDirectory: string,
 	base: Pick<
 		SetupResult,
 		"installable" | "errored" | "manualInstructions" | "mcpPath" | "settingsPath"
@@ -721,7 +727,7 @@ async function finishApply(
 		failures.length > 0
 			? `Companion install failed:\n${failures.join("\n")}\n${text}`
 			: text;
-	const applied = applyMcpConfiguration(mcpPlan, catalog, options.mcp);
+	const applied = applyMcpConfiguration(mcpPlan, catalog, agentDirectory);
 	if (applied.status === "refused-concurrent-change") {
 		const message = noted(
 			`Refusing to write MCP configuration because these entries changed: ${applied.changedTargets.join(", ")}.`,
@@ -738,7 +744,7 @@ async function finishApply(
 		notify(interaction, message, "error");
 		return { outcome: "config-error", message, ...base, failures };
 	}
-	const settings = applyPiSettings(settingsCatalog, options.settings);
+	const settings = applyPiSettings(settingsCatalog, agentDirectory);
 	const installedCount = base.installable.length - failures.length;
 	if (settings.error) {
 		const done = [

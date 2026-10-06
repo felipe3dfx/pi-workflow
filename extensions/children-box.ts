@@ -3,32 +3,28 @@ import type {
 	Theme,
 	ThemeColor,
 } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth } from "@earendil-works/pi-tui";
 
 import {
 	type ChildRecord,
 	type createChildSessions,
 	isWorking,
-	type Schedule,
-	scheduleTimer,
 } from "./child-sessions.ts";
-import { claim, held, paint, subscribePlace } from "./configure.ts";
-import { notifyHeader, paintAboveInput } from "./shell.ts";
-import { sanitizeTaskText } from "./todo-header.ts";
-
-const childAboveInput = claim("child-session", "above-input");
+import { type Schedule, scheduleTimer } from "./clock.ts";
+import {
+	occupyAboveInput,
+} from "./shell.ts";
+import { terminalSafeLine } from "./terminal-safe-text.ts";
+import { spinnerMs, spread, workingFrames } from "./visual-language.ts";
 
 type Sessions = ReturnType<typeof createChildSessions>;
 export type ChildTheme = Pick<Theme, "fg" | "bg" | "bold">;
 
-const WIDGET_KEY = "pi-workflow-children";
 const retainMs = 60_000;
 const maxFinished = 3;
 const maxRows = 8;
 const tickMs = 1000;
 const coalesceMs = 400;
-export const spinnerMs = 133;
-export const workingFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"];
 
 const glyphs: Record<ChildRecord["state"], [string, ThemeColor]> = {
 	queued: ["○", "muted"],
@@ -55,17 +51,6 @@ export function byState(a: ChildRecord, b: ChildRecord) {
 }
 
 import { childElapsed, childModelLine, childStep } from "./child-projection.ts";
-
-export { childElapsed, childName } from "./child-projection.ts";
-
-export function spread(left: string, right: string, width: number) {
-	const shown = truncateToWidth(
-		left,
-		Math.max(0, width - visibleWidth(right) - 1),
-	);
-	const gap = Math.max(1, width - visibleWidth(shown) - visibleWidth(right));
-	return truncateToWidth(`${shown}${" ".repeat(gap)}${right}`, width);
-}
 
 function childMeta(child: ChildRecord, now: number) {
 	if (child.state === "queued") return "queued";
@@ -95,7 +80,7 @@ function renderChildRow(
 	active: boolean,
 	width: number,
 ) {
-	const step = sanitizeTaskText(childStep(child));
+	const step = terminalSafeLine(childStep(child));
 	const meta = childMeta(child, now);
 	const left = ` ${rowGlyph(theme, child, now)} ${theme.fg("accent", child.role)} ${child.id.slice(0, 4)} ${step}`;
 	const line = spread(left, theme.fg("dim", meta), width);
@@ -140,23 +125,26 @@ export function renderChildrenBox(
 export function registerChildrenBox(
 	pi: ExtensionAPI,
 	sessions: Sessions,
+	requestRender: () => void,
 	schedule: Schedule = scheduleTimer,
 ) {
-	let tui: { requestRender(): void } | undefined;
 	let unsubscribe: (() => void) | undefined;
-	let unsubscribePlace: (() => void) | undefined;
 	let tick: (() => void) | undefined;
 	let tickWait = 0;
 	let spin: (() => void) | undefined;
 	let cooling: (() => void) | undefined;
 	let dirty = false;
 
+	occupyAboveInput("child-session", (width, theme) =>
+		renderChildrenBox(theme, sessions.list(), Date.now(), width),
+	);
+
 	function render() {
 		if (cooling) {
 			dirty = true;
 			return;
 		}
-		tui?.requestRender();
+		requestRender();
 		cooling = schedule(() => {
 			cooling = undefined;
 			if (!dirty) return;
@@ -166,13 +154,12 @@ export function registerChildrenBox(
 	}
 
 	function animate() {
-		tui?.requestRender();
+		requestRender();
 		spin = schedule(animate, spinnerMs);
 	}
 
 	function update() {
 		render();
-		notifyHeader();
 		const now = Date.now();
 		const records = sessions.list();
 		if (!records.some((child) => child.state === "running")) {
@@ -199,41 +186,17 @@ export function registerChildrenBox(
 
 	function stop() {
 		unsubscribe?.();
-		unsubscribePlace?.();
 		tick?.();
 		cooling?.();
 		spin?.();
-		unsubscribe = unsubscribePlace = tick = cooling = spin = tui = undefined;
+		unsubscribe = tick = cooling = spin = undefined;
 		dirty = false;
 	}
 
 	pi.on("session_start", async (_event, ctx) => {
 		stop();
 		if (ctx.mode !== "tui") return;
-		ctx.ui.setWidget(
-			WIDGET_KEY,
-			(widgetTui, theme) => {
-				tui = widgetTui;
-				return {
-					render: (width: number) => {
-						paint(childAboveInput, (paintedWidth) =>
-							renderChildrenBox(
-								theme,
-								sessions.list(),
-								Date.now(),
-								paintedWidth,
-							),
-						);
-						if (!held(childAboveInput)) return [];
-						return paintAboveInput(width);
-					},
-					invalidate() {},
-				};
-			},
-			{ placement: "aboveEditor" },
-		);
 		unsubscribe = sessions.subscribe(update);
-		unsubscribePlace = subscribePlace("above-input", () => render());
 	});
 	pi.on("session_shutdown", async () => stop());
 }

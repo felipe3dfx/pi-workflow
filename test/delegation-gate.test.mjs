@@ -7,12 +7,14 @@ import { join } from "node:path";
 import { setImmediate } from "node:timers";
 
 import { createChildLauncher } from "../extensions/child-launcher.ts";
-import { capabilities, replaceSelection } from "../extensions/configure.ts";
+import { capabilities } from "../extensions/configure.ts";
+import { replaceSelection } from "../extensions/shell.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
+import { createJevRouting } from "../extensions/workflow-settings.ts";
 import { classifierRegistry } from "./support/fake-jev.mjs";
 import { turnJevRoutingOn } from "./support/jev-routing.mjs";
 
-turnJevRoutingOn();
+const jevRouting = turnJevRoutingOn();
 
 const absentProfiles = { load: () => ({ status: "absent" }) };
 const specialists = ["explorer", "worker", "verifier"];
@@ -87,23 +89,39 @@ function gateContext(cwd, branch, jev) {
 	};
 }
 
+function seatEverything(on = true) {
+	replaceSelection({
+		schemaVersion: 1,
+		capabilities: Object.fromEntries(capabilities.map((capability) => [capability, on])),
+		expectations: {},
+	});
+}
+
 function launcherFor(options = {}) {
-	return createChildLauncher({ modelProfiles: absentProfiles, ...options });
+	seatEverything();
+	return createChildLauncher({
+		modelProfiles: absentProfiles,
+		jevRouting,
+		...options,
+	});
 }
 
 async function withWorkspace(run) {
 	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-delegation-gate-"));
 	try {
 		const worktree = join(dir, "repo");
+		const agentDirectory = join(dir, "agent");
 		await mkdir(worktree);
+		await mkdir(agentDirectory);
 		execFileSync("git", ["init", "--quiet"], { cwd: worktree });
-		return await run({ worktree });
+		return await run({ worktree, agentDirectory });
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
 }
 
-function loadExtension({ legacy = false, profilesPath }) {
+function loadExtension({ legacy = false, agentDirectory }) {
+	turnJevRoutingOn(agentDirectory);
 	const handlers = new Map();
 	const tools = [];
 	const notifications = [];
@@ -142,7 +160,7 @@ function loadExtension({ legacy = false, profilesPath }) {
 						? { version: "2.0.0" }
 						: {},
 			},
-			modelProfiles: { path: profilesPath },
+			agentDirectory,
 		},
 	);
 	const fire = async (event, payload = {}, ctx = {}) => {
@@ -345,7 +363,6 @@ test("a read of AGENTS.md does not call Jev or block, and the next grep asks onc
 	);
 	assert.equal(jev.requests.length, 1);
 
-	launcher.beginTurn();
 	const escaped = await launcher.gateToolCall(
 		{ toolName: "read", input: { path: "../AGENTS.md" } },
 		ctx,
@@ -521,42 +538,82 @@ test("a prepared launch stores the verdict so a later gated tool does not ask Je
 	});
 });
 
-test("beginTurn keeps the verdict, the next operator message asks again, and unseating lets the tool run", async () => {
-	const jev = fakeJev("explorer");
-	let seated = true;
-	const launcher = launcherFor({ childSessionSeated: () => seated });
-	const ctx = gateContext("/work", branchEnding("Map the launcher module"), jev);
-	await launcher.gateToolCall(
-		{ toolName: "find", input: { pattern: "judge" } },
-		ctx,
-	);
-	assert.equal(jev.requests.length, 1);
-	launcher.beginTurn();
-	const again = await launcher.gateToolCall(
-		{ toolName: "ls", input: { path: "extensions" } },
-		ctx,
-	);
-	assert.equal(again.allow, false);
-	assert.equal(jev.requests.length, 1);
-
-	seated = false;
-	assert.deepEqual(
-		await launcher.gateToolCall(
-			{ toolName: "grep", input: { pattern: "gate" } },
+test("the same message reuses the decision across a turn start, a new message asks Jev again, and unseated gated tools run despite the cached block", async () => {
+	await withWorkspace(async ({ worktree, agentDirectory }) => {
+		const jev = fakeJev("explorer");
+		const extension = await seatedExtension(
+			{ worktree, agentDirectory },
+			"Map the launcher module",
+		);
+		const ctx = gateContext(worktree, branchEnding("Map the launcher module"), jev);
+		const first = await extension.fire(
+			"tool_call",
+			{ type: "tool_call", toolCallId: "c1", toolName: "find", input: { pattern: "judge" } },
 			ctx,
-		),
-		{ allow: true },
-	);
-	assert.equal(jev.requests.length, 1);
+		);
+		await extension.fire("turn_start", { type: "turn_start", turnIndex: 1, timestamp: 1 }, ctx);
+		const again = await extension.fire(
+			"tool_call",
+			{ type: "tool_call", toolCallId: "c2", toolName: "ls", input: { path: "extensions" } },
+			ctx,
+		);
+		assert.equal(first.block, true);
+		assert.deepEqual(again, first);
+		assert.equal(jev.requests.length, 1);
 
-	seated = true;
-	const next = gateContext("/work", branchEnding("A later operator message"), jev);
-	const refreshed = await launcher.gateToolCall(
-		{ toolName: "grep", input: { pattern: "gate" } },
-		next,
-	);
-	assert.equal(refreshed.allow, false);
-	assert.equal(jev.requests.length, 2);
+		const next = gateContext(worktree, branchEnding("A later operator message"), jev);
+		const refreshed = await extension.fire(
+			"tool_call",
+			{ type: "tool_call", toolCallId: "c3", toolName: "grep", input: { pattern: "gate" } },
+			next,
+		);
+		assert.equal(refreshed.block, true);
+		assert.equal(jev.requests.length, 2);
+
+		seatEverything(false);
+		const unseated = await extension.fire(
+			"tool_call",
+			{ type: "tool_call", toolCallId: "c4", toolName: "grep", input: { pattern: "gate" } },
+			next,
+		);
+		assert.equal(unseated, undefined);
+		assert.equal(jev.requests.length, 2);
+	});
+});
+
+test("a reseat or a Jev routing change within the same message reuses the decision already made", async () => {
+	await withWorkspace(async ({ worktree, agentDirectory }) => {
+		const jev = fakeJev("explorer");
+		const extension = await seatedExtension(
+			{ worktree, agentDirectory },
+			"Map the launcher module",
+		);
+		const ctx = gateContext(worktree, branchEnding("Map the launcher module"), jev);
+		const first = await extension.fire(
+			"tool_call",
+			{ type: "tool_call", toolCallId: "c1", toolName: "find", input: { pattern: "judge" } },
+			ctx,
+		);
+		assert.equal(first.block, true);
+
+		seatEverything(false);
+		seatEverything(true);
+		const reseated = await extension.fire(
+			"tool_call",
+			{ type: "tool_call", toolCallId: "c2", toolName: "ls", input: { path: "extensions" } },
+			ctx,
+		);
+		assert.deepEqual(reseated, first);
+
+		createJevRouting(agentDirectory).set(false);
+		const routedOff = await extension.fire(
+			"tool_call",
+			{ type: "tool_call", toolCallId: "c3", toolName: "grep", input: { pattern: "gate" } },
+			ctx,
+		);
+		assert.deepEqual(routedOff, first);
+		assert.equal(jev.requests.length, 1);
+	});
 });
 
 test("a missing user message does not call Jev or block", async () => {
@@ -616,10 +673,10 @@ test("concurrent gated calls in one turn share a single Jev request", async () =
 });
 
 test("the parent registers the gate with spawn_child only when spawn tools are allowed", async () => {
-	await withWorkspace(async ({ worktree }) => {
+	await withWorkspace(async ({ worktree, agentDirectory }) => {
 		const jev = fakeJev("explorer");
 		const allowed = loadExtension({
-			profilesPath: join(worktree, "missing-profiles.json"),
+			agentDirectory,
 		});
 		const session = {
 			mode: "print",
@@ -640,7 +697,6 @@ test("the parent registers the gate with spawn_child only when spawn tools are a
 		await allowed.fire("session_start", {}, session);
 		assert.equal(allowed.tools.filter((tool) => tool.name === "spawn_child").length, 1);
 		assert.equal(allowed.handlers.get("tool_call").length, 1);
-		assert.equal(allowed.handlers.get("turn_start").length, 1);
 
 		const ctx = gateContext(worktree, branchEnding("Map the launcher module"), jev);
 		const first = await allowed.fire(
@@ -651,11 +707,6 @@ test("the parent registers the gate with spawn_child only when spawn tools are a
 		assert.equal(first.block, true);
 		assert.equal(jev.requests.length, 1);
 		await allowed.fire(
-			"turn_start",
-			{ type: "turn_start", turnIndex: 1, timestamp: 1 },
-			ctx,
-		);
-		await allowed.fire(
 			"tool_call",
 			{ type: "tool_call", toolCallId: "c2", toolName: "ls", input: { path: "." } },
 			ctx,
@@ -664,12 +715,11 @@ test("the parent registers the gate with spawn_child only when spawn tools are a
 
 		const blocked = loadExtension({
 			legacy: true,
-			profilesPath: join(worktree, "missing-profiles.json"),
+			agentDirectory,
 		});
 		await blocked.fire("session_start", {}, { ...session, ui: blocked.ui });
 		assert.equal(blocked.tools.some((tool) => tool.name === "spawn_child"), false);
 		assert.equal(blocked.handlers.get("tool_call"), undefined);
-		assert.equal(blocked.handlers.get("turn_start"), undefined);
 	});
 });
 
@@ -1016,15 +1066,11 @@ test("Launch blocked is not kept: the next gated tool and the next launch for th
 	});
 });
 
-async function seatedExtension(worktree, message) {
+async function seatedExtension({ worktree, agentDirectory }, message) {
 	const extension = loadExtension({
-		profilesPath: join(worktree, "missing-profiles.json"),
+		agentDirectory,
 	});
-	replaceSelection({
-		schemaVersion: 1,
-		capabilities: Object.fromEntries(capabilities.map((capability) => [capability, true])),
-		expectations: {},
-	});
+	seatEverything();
 	await extension.fire("session_start", {}, {
 		mode: "print",
 		hasUI: true,
@@ -1039,10 +1085,10 @@ async function seatedExtension(worktree, message) {
 }
 
 test("a gated tool called from a codemode script follows the direct verdict and its block also reaches the parent model", async () => {
-	await withWorkspace(async ({ worktree }) => {
+	await withWorkspace(async ({ worktree, agentDirectory }) => {
 		const message = "Map the launcher module";
 		const jev = fakeJev("explorer");
-		const extension = await seatedExtension(worktree, message);
+		const extension = await seatedExtension({ worktree, agentDirectory }, message);
 		const ctx = gateContext(worktree, branchEnding(message), jev);
 		const direct = await extension.fire(
 			"tool_call",
@@ -1073,10 +1119,10 @@ test("a gated tool called from a codemode script follows the direct verdict and 
 });
 
 test("while routing is on, a codemode script runs after leave and its nested calls follow a stay", async () => {
-	await withWorkspace(async ({ worktree }) => {
+	await withWorkspace(async ({ worktree, agentDirectory }) => {
 		const message = "Map the launcher module";
 		const left = fakeJev("explorer");
-		const leaving = await seatedExtension(worktree, message);
+		const leaving = await seatedExtension({ worktree, agentDirectory }, message);
 		const leaveCtx = gateContext(worktree, branchEnding(message), left);
 		await leaving.fire(
 			"tool_call",
@@ -1092,7 +1138,7 @@ test("while routing is on, a codemode script runs after leave and its nested cal
 		assert.equal(left.requests.length, 1);
 
 		const stayed = fakeJev("stay");
-		const staying = await seatedExtension(worktree, message);
+		const staying = await seatedExtension({ worktree, agentDirectory }, message);
 		const nested = await staying.fire(
 			"tool_call",
 			{

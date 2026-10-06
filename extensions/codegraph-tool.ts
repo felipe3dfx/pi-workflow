@@ -10,11 +10,9 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { claim, held } from "./configure.ts";
+import { seated } from "./shell.ts";
 import { offerTool } from "./tool-offer.ts";
 import { gitEnvironment } from "./git-environment.ts";
-
-const codegraphStream = claim("codegraph", "message-stream");
 
 type CodeGraphOperation = "init" | "query" | "explore";
 
@@ -207,7 +205,7 @@ export function createCodeGraphTool(adapters: CodeGraphAdapters = {}) {
 			_onUpdate: unknown,
 			ctx: Pick<ExtensionContext, "cwd">,
 		) {
-			if (!held(codegraphStream)) {
+			if (!seated("codegraph", "message-stream")) {
 				return {
 					content: [
 						{
@@ -253,7 +251,7 @@ export function createChildCodeGraphTool(
 			if (params.operation !== "query" && params.operation !== "explore") {
 				throw new Error("CodeGraph here accepts only query or explore.");
 			}
-			if (!held(codegraphStream)) {
+			if (!seated("codegraph", "message-stream")) {
 				throw new Error(
 					`CodeGraph is not available to this child. ${fallback}`,
 				);
@@ -267,5 +265,5 @@ export function syncCodeGraphTool(
 	pi: ExtensionAPI,
 	adapters?: CodeGraphAdapters,
 ) {
-	offerTool(pi, createCodeGraphTool(adapters), held(codegraphStream));
+	offerTool(pi, createCodeGraphTool(adapters), seated("codegraph", "message-stream"));
 }

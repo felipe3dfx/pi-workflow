@@ -441,8 +441,8 @@ test("a second session_start replaces the subscriptions instead of duplicating t
 	assert.equal(chrome.hintSubs.active, 1);
 	chrome.factories.header(chrome.tui, theme);
 	chrome.tui.requestRender = () => chrome.calls.push(["render"]);
-	const { notifyPlace } = await import("../extensions/configure.ts");
-	notifyPlace("header");
+	const { notifyHeader } = await import("../extensions/shell.ts");
+	notifyHeader();
 	assert.equal(
 		chrome.calls.filter((call) => call[0] === "render").length,
 		1,

@@ -1,10 +1,8 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 
-import { claim } from "./configure.ts";
+import { terminalSafeLine } from "./terminal-safe-text.ts";
 import type { Task } from "./todo-list.ts";
-
-export const todoAboveInput = claim("todo", "above-input");
 
 export interface TodoBoxState {
 	collapsed: boolean;
@@ -18,18 +16,6 @@ const CORNER_TOP = "┌";
 const CORNER_BOTTOM = "└";
 const CORNER_BOTTOM_RIGHT = "┘";
 const SIDE = "│";
-
-const UNSAFE_TERMINAL_CHARACTERS = /[\p{Cc}\p{Bidi_Control}]/gu;
-
-const UNSAFE_MULTILINE_CHARACTERS = /(?![\n\t])[\p{Cc}\p{Bidi_Control}]/gu;
-
-export function sanitizeTaskText(text: string): string {
-	return text.replace(UNSAFE_TERMINAL_CHARACTERS, " ");
-}
-
-export function sanitizeMultilineText(text: string): string {
-	return text.replace(UNSAFE_MULTILINE_CHARACTERS, " ");
-}
 
 export function renderTodoBox(
 	theme: TodoTheme,
@@ -54,7 +40,7 @@ export function renderTodoBox(
 		theme.fg("borderMuted", CORNER_BOTTOM_RIGHT);
 
 	const rows = visible.map((task) => {
-		const text = sanitizeTaskText(task.text);
+		const text = terminalSafeLine(task.text);
 		const content = task.done
 			? `${theme.fg("success", "✓")} ${theme.fg("muted", text)}`
 			: `${theme.fg("text", "□")} ${theme.fg("text", text)}`;
