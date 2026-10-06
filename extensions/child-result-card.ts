@@ -128,13 +128,14 @@ function paintCard(
 	head: string,
 	text: string,
 	lines: (width: number) => string[],
+	fallbackText?: string,
 ) {
 	if (held(childStream)) {
 		paint(childStream, lines);
 		return paintMessageStream(outer);
 	}
 	const plain = `${sanitizeTaskText(stripVTControlCharacters(head)).replace(/^◆ /, "")}\n${sanitizeMultilineText(text.trim()).replaceAll("\t", "   ")}`;
-	fallback.update(plain);
+	fallback.update(fallbackText ?? plain);
 	return fallback.render(outer);
 }
 
@@ -282,7 +283,7 @@ class AnswerCard implements Component {
 			outer,
 			this.fallback,
 			this.head,
-			rejection ?? this.answer ?? "",
+			this.answer ?? "",
 			(width) =>
 				frame(width, this.head, "", (inner) =>
 					rejection === undefined
@@ -292,6 +293,9 @@ class AnswerCard implements Component {
 								inner,
 							).map((line) => this.theme.fg("error", line)),
 				),
+			rejection === undefined
+				? undefined
+				: `${this.head}\n${this.theme.fg("error", sanitizeMultilineText(rejection.trim()).replaceAll("\t", "   "))}`,
 		);
 	}
 

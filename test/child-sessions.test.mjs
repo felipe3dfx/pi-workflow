@@ -2456,6 +2456,22 @@ test("reply_child paints the answer card with compact rendering on and off, pain
 			);
 		}
 	}
+	replaceSelection({
+		schemaVersion: 1,
+		capabilities: { ...seated, "child-session": false },
+		expectations: {},
+	});
+	const renderers = compactToolRenderers("reply_child", () => tool);
+	const unseated = renderers.renderResult(
+		{ content: [{ type: "text", text: unseatedReason }], details: {}, isError: true },
+		{},
+		theme,
+		{ args, isError: true },
+	);
+	const [head, body] = unseated.render(200);
+	assert.ok(head.includes(theme.fg("error", "◆")));
+	assert.ok(head.includes(theme.fg("error", "· answer 3 rejected")));
+	assert.ok(body.includes(theme.fg("error", unseatedReason)));
 });
 
 test("reply_child falls back to a plain-text answer when the child-session card is not seated", async (t) => {

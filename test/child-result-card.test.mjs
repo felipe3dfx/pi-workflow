@@ -438,7 +438,7 @@ test("every rejected answer card line fits the width it is given", (t) => {
 		{ id, question: 12 },
 		theme(),
 		undefined,
-		`${"palabra ".repeat(40)}\n\tcon\ttab`,
+		`${"word ".repeat(40)}\n\twith\ttab`,
 	);
 	for (let width = 8; width <= 160; width++)
 		for (const line of component.render(width))
@@ -455,11 +455,22 @@ test("the answer card is rebuilt when the rejection changes and reused when it i
 	cards(t);
 	const args = { id, question: 2, answer: "text" };
 	const pending = answerCard(args, theme());
+	assert.deepEqual(plain(pending), ["   ◆ Parent → 5636 · answer 2", "     text"]);
 	const rejected = answerCard(args, theme(), pending, "refused");
-	assert.notEqual(rejected, pending);
+	assert.deepEqual(plain(rejected), [
+		"   ◆ Parent → 5636 · answer 2 rejected",
+		"     refused",
+	]);
 	assert.equal(answerCard({ ...args }, theme(), rejected, "refused"), rejected);
-	assert.notEqual(answerCard(args, theme(), rejected, "other"), rejected);
-	assert.notEqual(answerCard(args, theme(), rejected), rejected);
+	const changed = answerCard(args, theme(), rejected, "other");
+	assert.notEqual(changed, rejected);
+	assert.deepEqual(plain(changed), [
+		"   ◆ Parent → 5636 · answer 2 rejected",
+		"     other",
+	]);
+	const delivered = answerCard(args, theme(), changed);
+	assert.notEqual(delivered, changed);
+	assert.deepEqual(plain(delivered), ["   ◆ Parent → 5636 · answer 2", "     text"]);
 });
 
 test("with the child-session claim unseated every child card falls back to its header and text", (t) => {
@@ -489,9 +500,13 @@ test("with the child-session claim unseated every child card falls back to its h
 	const text = (c) => plain(c).filter(Boolean);
 	assert.deepEqual(text(answer), ["Parent → 5636 · answer 2", "Use X."]);
 	assert.deepEqual(text(rejected), [
-		"Parent → 5636 · answer 1 rejected",
+		"◆ Parent → 5636 · answer 1 rejected",
 		"Refused  [31mhere.",
 	]);
+	const [rejectedHead, rejectedBody] = rejected.render(90);
+	assert.ok(rejectedHead.includes(theme().fg("error", "◆")));
+	assert.ok(rejectedHead.includes(theme().fg("error", "· answer 1 rejected")));
+	assert.ok(rejectedBody.includes(theme().fg("error", "Refused  [31mhere.")));
 	assert.deepEqual(text(result), [
 		"Subagent worker 5636  1m 02s",
 		details.text,
