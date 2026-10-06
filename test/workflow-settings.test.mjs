@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { mkdirSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
@@ -8,8 +9,13 @@ import { stripVTControlCharacters } from "node:util";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 
 import { createChildLauncher } from "../extensions/child-launcher.ts";
-import { capabilities } from "../extensions/configure.ts";
+import {
+	companionMetadataPath,
+	loadCompanionsFromPath,
+} from "../extensions/companion-workflow.ts";
+import { capabilities, readSelection } from "../extensions/configure.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
+import { occupants, replaceSelection, seated } from "../extensions/shell.ts";
 import { classifierRegistry } from "./support/fake-jev.mjs";
 import { withAgentDirectory } from "./support/jev-routing.mjs";
 
@@ -377,4 +383,126 @@ test("/workflow:status and /workflow:doctor report unsupported arguments without
 	assert.deepEqual(notifications, []);
 	assert.equal(errors.length, 2);
 	assert.ok(errors.every((message) => message.startsWith("Usage: /workflow:status")));
+});
+
+const companionNames = loadCompanionsFromPath(companionMetadataPath).companions.map(
+	(companion) => companion.package,
+);
+
+function selectionWith(on) {
+	const read = readSelection(undefined, companionNames);
+	for (const capability of capabilities) {
+		read.selection.capabilities[capability] = on.includes(capability);
+	}
+	return read.selection;
+}
+
+function seatedNames() {
+	const names = new Set();
+	for (const place of ["header", "above-input", "overlay", "message-stream"]) {
+		for (const capability of occupants(place)) names.add(capability);
+	}
+	return [...names].sort();
+}
+
+function seatOnly(t, on) {
+	replaceSelection(selectionWith(on));
+	t.after(() => replaceSelection(selectionWith([])));
+}
+
+const selectionFile = (dir) => join(dir, "pi-workflow-selection.json");
+
+test("closing /workflow:config without confirming changes neither the seating nor the disk", async (t) => {
+	const dir = withAgentDirectory(t);
+	await writeFile(selectionFile(dir), JSON.stringify(selectionWith(["codegraph"])));
+	seatOnly(t, ["todo"]);
+	const { command, notify } = extension(new Map(), []);
+	await driveConfig(command, notify, (panel) => panel.handleInput(ESC));
+	assert.deepEqual(seatedNames(), ["todo"]);
+	assert.deepEqual(
+		JSON.parse(await readFile(selectionFile(dir), "utf8")),
+		selectionWith(["codegraph"]),
+	);
+});
+
+test("the /workflow:config guide opens from the selection on disk, not the seated one", async (t) => {
+	const dir = withAgentDirectory(t);
+	await writeFile(selectionFile(dir), JSON.stringify(selectionWith(["codegraph"])));
+	seatOnly(t, ["todo"]);
+	const { command, notify } = extension(new Map(), []);
+	let lines;
+	await driveConfig(command, notify, (panel) => {
+		lines = shown(panel);
+		panel.handleInput(ESC);
+	});
+	assert.ok(lines.some((line) => /CodeGraph\s+on\s*$/.test(line)));
+	assert.ok(lines.some((line) => /Todo\s+off\s*$/.test(line)));
+});
+
+test("the Apply plan compares against the seated selection", async (t) => {
+	const dir = withAgentDirectory(t);
+	await writeFile(selectionFile(dir), JSON.stringify(selectionWith(["codegraph", "todo"])));
+	seatOnly(t, ["todo"]);
+	const { command, notify } = extension(new Map(), []);
+	let review;
+	await driveConfig(command, notify, (panel) => {
+		openApply(panel);
+		review = shown(panel);
+		panel.handleInput(ESC);
+		panel.handleInput(ESC);
+	});
+	assert.ok(review.some((line) => /Seat codegraph/.test(line)));
+	assert.ok(review.every((line) => !/(Seat|Unseat) todo/.test(line)));
+});
+
+test("on a fresh installation the first plan seats each capability that is on", async (t) => {
+	const dir = withAgentDirectory(t);
+	await writeFile(selectionFile(dir), JSON.stringify(selectionWith(["codegraph"])));
+	seatOnly(t, []);
+	const { command, notify } = extension(new Map(), []);
+	let review;
+	await driveConfig(command, notify, (panel) => {
+		openApply(panel);
+		review = shown(panel);
+		panel.handleInput(ESC);
+		panel.handleInput(ESC);
+	});
+	assert.ok(review.some((line) => /Seat codegraph/.test(line)));
+	assert.ok(review.every((line) => !/Seat todo/.test(line)));
+});
+
+test("an unreadable selection reports the error and does not open the guide", async (t) => {
+	const dir = withAgentDirectory(t);
+	await writeFile(selectionFile(dir), "{nope");
+	const notifications = [];
+	const { command, notify } = extension(new Map(), notifications);
+	let opened = false;
+	await command.handler("", {
+		hasUI: true,
+		mode: "tui",
+		ui: {
+			notify,
+			custom: async () => {
+				opened = true;
+			},
+		},
+	});
+	assert.equal(opened, false);
+	assert.deepEqual(notifications, [
+		{ message: "Selection is not valid JSON.", level: "error" },
+	]);
+});
+
+test("a failed selection write on confirm stops before seating", async (t) => {
+	const dir = withAgentDirectory(t);
+	seatOnly(t, ["todo"]);
+	const { command, notify } = extension(new Map(), []);
+	await assert.rejects(
+		driveConfig(command, notify, (panel) => {
+			mkdirSync(selectionFile(dir));
+			confirmApply(panel);
+		}),
+	);
+	assert.deepEqual(seatedNames(), ["todo"]);
+	assert.equal(seated("todo", "above-input"), true);
 });
