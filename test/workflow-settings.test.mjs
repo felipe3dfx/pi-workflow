@@ -532,3 +532,19 @@ test("a failed selection write on confirm stops before seating", async (t) => {
 	assert.deepEqual(seatedNames(), ["todo"]);
 	assert.equal(seated("todo", "above-input"), true);
 });
+
+test("a failed Jev routing write on confirm stops before seating", async (t) => {
+	const dir = withAgentDirectory(t);
+	seatOnly(t, ["todo"]);
+	const { command, notify } = extension(new Map(), [], dir);
+	await assert.rejects(
+		driveConfig(command, notify, (panel) => {
+			focusRouting(panel);
+			panel.handleInput(" ");
+			mkdirSync(join(dir, "pi-workflow-routing.json"));
+			confirmApply(panel);
+		}),
+	);
+	assert.deepEqual(seatedNames(), ["todo"]);
+	assert.equal(seated("todo", "above-input"), true);
+});
