@@ -6,9 +6,10 @@ import { replaceSelection } from "../extensions/shell.ts";
 import { delegationCases, runDelegationCheck } from "../extensions/delegation-check.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 import { classifierRegistry } from "./support/fake-jev.mjs";
+import { createJevRouting } from "../extensions/workflow-settings.ts";
 import { turnJevRoutingOn, withAgentDirectory } from "./support/jev-routing.mjs";
 
-turnJevRoutingOn();
+const jevRouting = turnJevRoutingOn();
 
 const absentProfiles = { load: () => ({ status: "absent" }) };
 
@@ -78,6 +79,7 @@ test("delegation check scores the fixed cases against Jev answers and sends a na
 	const jev = answeringJev();
 	const { lines, failed } = await runDelegationCheck(context(jev), {
 		modelProfiles: absentProfiles,
+		jevRouting,
 	});
 
 	assert.equal(failed, false);
@@ -139,6 +141,7 @@ test("delegation check names the mismatched specialist and does not launch a chi
 	});
 	const { lines, failed } = await runDelegationCheck(context(jev), {
 		modelProfiles: absentProfiles,
+		jevRouting,
 	});
 
 	assert.equal(failed, true);
@@ -157,6 +160,7 @@ test("a missing TypeSafe key is a fail line for every case, including a named sk
 	const jev = answeringJev();
 	const { lines, failed } = await runDelegationCheck(context(jev, null), {
 		modelProfiles: absentProfiles,
+		jevRouting,
 	});
 
 	assert.equal(failed, true);
@@ -170,11 +174,11 @@ test("a missing TypeSafe key is a fail line for every case, including a named sk
 });
 
 test("Jev routing off fails every case, including a named skill, without calling Jev", async (t) => {
-	withAgentDirectory(t);
 	const jev = answeringJev();
 
 	const { lines, failed } = await runDelegationCheck(context(jev), {
 		modelProfiles: absentProfiles,
+		jevRouting: createJevRouting(withAgentDirectory(t)),
 	});
 
 	assert.equal(failed, true);
@@ -189,7 +193,9 @@ test("Jev routing off fails every case, including a named skill, without calling
 	}
 });
 
-test("/workflow:delegation-check rejects extra arguments and reports a missing key without throwing", async () => {
+test("/workflow:delegation-check rejects extra arguments and reports a missing key without throwing", async (t) => {
+	const agentDirectory = withAgentDirectory(t);
+	turnJevRoutingOn(agentDirectory);
 	replaceSelection({
 		schemaVersion: 1,
 		capabilities: Object.fromEntries(capabilities.map((capability) => [capability, true])),
@@ -209,7 +215,7 @@ test("/workflow:delegation-check rejects extra arguments and reports a missing k
 			registerProvider() {},
 			sendMessage() {},
 		},
-		{},
+		{ agentDirectory },
 	);
 	const command = commands.get("workflow:delegation-check");
 	const ui = {

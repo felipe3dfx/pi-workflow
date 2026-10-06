@@ -12,7 +12,7 @@ import { createChildLauncher } from "../extensions/child-launcher.ts";
 import { delegationCases } from "../extensions/delegation-check.ts";
 import { turnJevRoutingOn } from "./support/jev-routing.mjs";
 
-turnJevRoutingOn();
+const jevRouting = turnJevRoutingOn();
 
 const enabled =
 	process.env.PI_WORKFLOW_JEV_LIVE === "1" &&
@@ -48,7 +48,10 @@ test(
 		const requests = [];
 		const modelRegistry = await recordingRegistry(dir, requests);
 		const decide = (request) =>
-			createChildLauncher({ modelProfiles: absentProfiles }).prepareLaunch(
+			createChildLauncher({
+				modelProfiles: absentProfiles,
+				jevRouting,
+			}).prepareLaunch(
 				request,
 				{
 					cwd: root,

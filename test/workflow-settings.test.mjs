@@ -1,13 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 
 import { initTheme } from "@earendil-works/pi-coding-agent";
 
 import { createChildLauncher } from "../extensions/child-launcher.ts";
+import { createJevRouting } from "../extensions/workflow-settings.ts";
 import { capabilities } from "../extensions/configure.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 import { classifierRegistry } from "./support/fake-jev.mjs";
@@ -15,18 +16,21 @@ import { withAgentDirectory } from "./support/jev-routing.mjs";
 
 initTheme("dark", false);
 
-function extension(commands, notifications) {
-	piWorkflowExtension({
-		on() {},
-		exec: async () => ({ code: 0 }),
-		registerCommand: (name, command) => commands.set(name, command),
-		registerTool() {},
-		registerShortcut() {},
-		registerMessageRenderer() {},
-		registerToolRenderer() {},
-		registerProvider() {},
-		sendMessage() {},
-	});
+function extension(commands, notifications, agentDirectory) {
+	piWorkflowExtension(
+		{
+			on() {},
+			exec: async () => ({ code: 0 }),
+			registerCommand: (name, command) => commands.set(name, command),
+			registerTool() {},
+			registerShortcut() {},
+			registerMessageRenderer() {},
+			registerToolRenderer() {},
+			registerProvider() {},
+			sendMessage() {},
+		},
+		{ agentDirectory },
+	);
 	return {
 		command: commands.get("workflow:config"),
 		commands,
@@ -133,7 +137,7 @@ test("the /workflow:config menu shows the stored Jev routing after the capabilit
 		join(dir, "pi-workflow-routing.json"),
 		JSON.stringify({ schemaVersion: 1, jevRouting: "on" }),
 	);
-	const { command, notify } = extension(new Map(), []);
+	const { command, notify } = extension(new Map(), [], dir);
 	let lines;
 	await driveConfig(command, notify, (panel) => {
 		lines = shown(panel);
@@ -150,7 +154,7 @@ test("toggling Jev routing and confirming Apply persists it for a new process an
 	const profiles =
 		'{"schemaVersion":2,"active":"default","profiles":{"default":{}}}\n';
 	await writeFile(profilesPath, profiles);
-	const { command, notify } = extension(new Map(), []);
+	const { command, notify } = extension(new Map(), [], dir);
 	let review;
 	await driveConfig(command, notify, (panel) => {
 		focusRouting(panel);
@@ -215,7 +219,7 @@ import piWorkflowExtension from ${JSON.stringify(new URL("../extensions/pi-workf
 
 test("toggling Jev routing and cancelling with Esc writes nothing", async (t) => {
 	const dir = withAgentDirectory(t);
-	const { command, notify } = extension(new Map(), []);
+	const { command, notify } = extension(new Map(), [], dir);
 	await driveConfig(command, notify, (panel) => {
 		focusRouting(panel);
 		panel.handleInput(" ");
@@ -226,8 +230,8 @@ test("toggling Jev routing and cancelling with Esc writes nothing", async (t) =>
 });
 
 test("the Apply review omits Jev routing when it is unchanged", async (t) => {
-	withAgentDirectory(t);
-	const { command, notify } = extension(new Map(), []);
+	const dir = withAgentDirectory(t);
+	const { command, notify } = extension(new Map(), [], dir);
 	let review;
 	await driveConfig(command, notify, (panel) => {
 		focusRouting(panel);
@@ -251,7 +255,7 @@ test("turning Jev routing off in the menu gates a launch on the stored choice", 
 	const worktree = join(dir, "repo");
 	await mkdir(worktree);
 	execFileSync("git", ["init", "--quiet"], { cwd: worktree });
-	const { command, notify } = extension(new Map(), []);
+	const { command, notify } = extension(new Map(), [], dir);
 	await driveConfig(command, notify, (p) => {
 		focusRouting(p);
 		p.handleInput(" ");
@@ -263,6 +267,7 @@ test("turning Jev routing off in the menu gates a launch on the stored choice", 
 	const jev = classifierRegistry(() => ({}));
 	const launcher = createChildLauncher({
 		modelProfiles: { load: () => ({ status: "absent" }) },
+		jevRouting: createJevRouting(dir),
 	});
 	const ctx = launcherContext(worktree, jev);
 	assert.deepEqual(
@@ -289,6 +294,7 @@ test("with Jev routing off, a message naming implement neither calls Jev nor lau
 	const jev = classifierRegistry(() => ({}));
 	const launcher = createChildLauncher({
 		modelProfiles: { load: () => ({ status: "absent" }) },
+		jevRouting: createJevRouting(dir),
 	});
 	const message = "implement the toggle";
 	const ctx = {
@@ -340,6 +346,7 @@ for (const [label, write] of [
 		const jev = classifierRegistry(() => ({}));
 		const launcher = createChildLauncher({
 			modelProfiles: { load: () => ({ status: "absent" }) },
+			jevRouting: createJevRouting(dir),
 		});
 		const ctx = launcherContext(worktree, jev);
 
@@ -360,6 +367,25 @@ for (const [label, write] of [
 		assert.equal(jev.requests.length, 0);
 	});
 }
+
+test("Jev routing follows its document in the injected directory on each read", async (t) => {
+	const dir = withAgentDirectory(t);
+	const path = join(dir, "pi-workflow-routing.json");
+	const jevRouting = createJevRouting(dir);
+	assert.equal(jevRouting.enabled(), false);
+
+	jevRouting.set(true);
+	assert.equal(jevRouting.enabled(), true);
+
+	await writeFile(path, "{ corrupt");
+	assert.equal(jevRouting.enabled(), false);
+
+	await writeFile(path, JSON.stringify({ schemaVersion: 1, jevRouting: "on" }));
+	assert.equal(jevRouting.enabled(), true);
+
+	await rm(path);
+	assert.equal(jevRouting.enabled(), false);
+});
 
 test("/workflow:status and /workflow:doctor report unsupported arguments without UI", async () => {
 	const notifications = [];

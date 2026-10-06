@@ -40,9 +40,7 @@ import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 import { classifierRegistry } from "./support/fake-jev.mjs";
-import { turnJevRoutingOn, withAgentDirectory } from "./support/jev-routing.mjs";
-
-turnJevRoutingOn();
+import { turnJevRoutingOn } from "./support/jev-routing.mjs";
 
 replaceSelection({
 	schemaVersion: 1,
@@ -168,7 +166,9 @@ function loadExtension({
 	schedule,
 	refresh,
 	branch = [],
+	jevRouting = "on",
 }) {
+	if (jevRouting === "on") turnJevRoutingOn(agentDir);
 	const handlers = new Map();
 	const tools = [];
 	const commands = new Map();
@@ -410,7 +410,7 @@ for (const mode of ["tui", "rpc"]) {
 				reasoning: true,
 			});
 			assert.equal(ctx.thinkingLevel, "medium");
-			assert.deepEqual(await readdir(agentDir), []);
+			assert.deepEqual(await readdir(agentDir), ["pi-workflow-routing.json"]);
 		});
 	});
 }
@@ -1290,11 +1290,14 @@ test("launching a child keeps the parent's model and thinking, and a profile nam
 	await assertLaunchKeepsParentModel(fakeJev());
 });
 
-test("with Jev routing off, the launch response names the launched role and not Jev", async (t) => {
-	withAgentDirectory(t);
+test("with Jev routing off, the launch response names the launched role and not Jev", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
-		const { tool } = await loadSpawnTool({ agentDir, create: children.create });
+		const { tool } = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			jevRouting: "off",
+		});
 
 		const result = await spawn(
 			tool,
@@ -1374,14 +1377,13 @@ test("spawn_child describes who decides the role and what each role can do", asy
 	});
 });
 
-test("with Jev routing off, launching a named role keeps the parent's model and thinking, and a profile naming a virtual model runs the child on it", async (t) => {
-	withAgentDirectory(t);
+test("with Jev routing off, launching a named role keeps the parent's model and thinking, and a profile naming a virtual model runs the child on it", async () => {
 	const jev = fakeJev();
-	await assertLaunchKeepsParentModel(jev);
+	await assertLaunchKeepsParentModel(jev, "off");
 	assert.equal(jev.requests.length, 0);
 });
 
-async function assertLaunchKeepsParentModel(jev) {
+async function assertLaunchKeepsParentModel(jev, jevRouting = "on") {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const parent = await fauxParent(
 			agentDir,
@@ -1408,7 +1410,7 @@ async function assertLaunchKeepsParentModel(jev) {
 				},
 			}),
 		);
-		const extension = await loadSpawnTool({ agentDir });
+		const extension = await loadSpawnTool({ agentDir, jevRouting });
 		const ctx = { ...toolContext("tui", worktree, jev), ...parent.context };
 		const parentModel = ctx.model;
 

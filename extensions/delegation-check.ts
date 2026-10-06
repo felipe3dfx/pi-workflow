@@ -4,7 +4,6 @@ import {
 	type ChildLauncherOptions,
 	createChildLauncher,
 } from "./child-launcher.ts";
-import { jevRoutingEnabled } from "./workflow-settings.ts";
 
 type DelegationAction = "launch" | "stay" | "decide" | "block";
 
@@ -211,13 +210,14 @@ function scoreLine(item: DelegationCase, verdict: Verdict): string {
 
 export async function runDelegationCheck(
 	ctx: CheckContext,
-	options: { modelProfiles: ChildLauncherOptions["modelProfiles"] },
+	options: Pick<ChildLauncherOptions, "modelProfiles" | "jevRouting">,
 ): Promise<{ lines: string[]; failed: boolean }> {
 	const launcher = createChildLauncher({
 		modelProfiles: options.modelProfiles,
+		jevRouting: options.jevRouting,
 	});
 	const lines: string[] = [];
-	const routingOn = jevRoutingEnabled();
+	const routingOn = options.jevRouting.enabled();
 	for (const item of delegationCases) {
 		if (!routingOn) {
 			lines.push(
