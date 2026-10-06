@@ -881,6 +881,18 @@ export function createChildSessions(options: {
 		return [...children.values()].map((child) => ({ ...child.record }));
 	}
 
+	function working() {
+		return [...children.values()].filter((child) =>
+			isWorking(child.record.state),
+		).length;
+	}
+
+	function waiting() {
+		return [...children.values()].some(
+			(child) => child.record.state === "waiting",
+		);
+	}
+
 	function subscribe(listener: () => void) {
 		listeners.add(listener);
 		return () => {
@@ -930,6 +942,8 @@ export function createChildSessions(options: {
 		atBoundary,
 		get,
 		list,
+		working,
+		waiting,
 		subscribe,
 		follow,
 		thread,

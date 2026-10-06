@@ -534,38 +534,51 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 	let gateInstalled = false;
 	const childToolsOn = new Map<string, boolean>();
 
-	function offerChildTools(
+	function childToolsOffer(
 		pi: ExtensionAPI,
 		tools: readonly { name: string }[],
-		allowed: boolean,
-		waiting: boolean,
+		children: { waiting(): boolean },
+		checkSpawnTools: () => Promise<{ allowed: boolean }>,
 	) {
-		if (!allowed) return;
-		const on = seated("child-session", "overlay");
-		if (!gateInstalled && !on) return;
-		for (const tool of tools) {
-			const offered = on || (waiting && tool.name === "reply_child");
-			if (childToolsOn.get(tool.name) === offered) continue;
-			childToolsOn.set(tool.name, offered);
-			offerTool(pi, tool, offered);
-		}
-		if (gateInstalled) return;
-		gateInstalled = true;
-		pi.on("tool_call", async (event, toolCtx) => {
-			const gate = await gateToolCall(event, toolCtx);
-			if (gate.allow) return;
-			if (event.parentToolCallId) {
-				pi.sendMessage(
-					{
-						customType: "pi-workflow-gate-block",
-						content: gate.reason,
-						display: true,
-					},
-					{ deliverAs: "steer" },
-				);
+		let allowed = false;
+
+		function refresh() {
+			if (!allowed) return;
+			const on = seated("child-session", "overlay");
+			if (!gateInstalled && !on) return;
+			const waiting = children.waiting();
+			for (const tool of tools) {
+				const offered = on || (waiting && tool.name === "reply_child");
+				if (childToolsOn.get(tool.name) === offered) continue;
+				childToolsOn.set(tool.name, offered);
+				offerTool(pi, tool, offered);
 			}
-			return { block: true, reason: gate.reason };
-		});
+			if (gateInstalled) return;
+			gateInstalled = true;
+			pi.on("tool_call", async (event, toolCtx) => {
+				const gate = await gateToolCall(event, toolCtx);
+				if (gate.allow) return;
+				if (event.parentToolCallId) {
+					pi.sendMessage(
+						{
+							customType: "pi-workflow-gate-block",
+							content: gate.reason,
+							display: true,
+						},
+						{ deliverAs: "steer" },
+					);
+				}
+				return { block: true, reason: gate.reason };
+			});
+		}
+
+		return {
+			async offer() {
+				allowed = (await checkSpawnTools()).allowed;
+				refresh();
+			},
+			refresh,
+		};
 	}
 
 	return {
@@ -573,6 +586,6 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		recordLaunch,
 		gateToolCall,
 		classify,
-		offerChildTools,
+		childToolsOffer,
 	};
 }

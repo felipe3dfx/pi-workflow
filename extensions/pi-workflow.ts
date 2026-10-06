@@ -39,7 +39,6 @@ import {
 	createChildSessions,
 	createContinueChildTool,
 	createSpawnChildTool,
-	isWorking,
 } from "./child-sessions.ts";
 import type { Schedule } from "./clock.ts";
 import { registerChildrenBox } from "./children-box.ts";
@@ -121,10 +120,7 @@ export default function piWorkflowExtension(
 	);
 	const offerTodoTool = registerSessionTodo(pi, requestAboveInputRender);
 	const footerHints = createFooterHints();
-	occupyHeader(
-		"child-session",
-		() => childSessions.list().filter((child) => isWorking(child.state)).length,
-	);
+	occupyHeader("child-session", childSessions.working);
 	childSessions.subscribe(notifyHeader);
 	registerChrome(pi, footerHints);
 	pi.registerShortcut("alt+a", {
@@ -149,21 +145,16 @@ export default function piWorkflowExtension(
 			.map(([name]) => name);
 	}
 
-	const childTools = [
-		createSpawnChildTool(launcher, childSessions),
-		createContinueChildTool(childSessions),
-		...createChildQueryTools(childSessions),
-	];
-	let spawnToolsAllowed = false;
-
-	function offerChildTools() {
-		launcher.offerChildTools(
-			pi,
-			childTools,
-			spawnToolsAllowed,
-			childSessions.list().some((child) => child.state === "waiting"),
-		);
-	}
+	const childTools = launcher.childToolsOffer(
+		pi,
+		[
+			createSpawnChildTool(launcher, childSessions),
+			createContinueChildTool(childSessions),
+			...createChildQueryTools(childSessions),
+		],
+		childSessions,
+		workflow.checkSpawnTools,
+	);
 
 	const seating = createSeating({
 		agentDirectory,
@@ -179,13 +170,10 @@ export default function piWorkflowExtension(
 			offerTodoTool,
 			() => syncCodeGraphTool(pi, options.codegraph),
 			() => syncCompactTools(pi, currentCtx),
-			async () => {
-				spawnToolsAllowed = (await workflow.checkSpawnTools()).allowed;
-				offerChildTools();
-			},
+			childTools.offer,
 		],
 	});
-	childSessions.subscribe(offerChildTools);
+	childSessions.subscribe(childTools.refresh);
 
 	pi.on("session_start", async (_event, ctx) => {
 		currentCtx = ctx;
