@@ -1,6 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-
 import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
@@ -20,8 +17,13 @@ import {
 	loadCompanionsFromPath,
 } from "./companion-workflow.ts";
 import { guideSelection } from "./configure-guide.ts";
-import { readSelection } from "./configure.ts";
-import { contribute, notifyHeader, replaceSelection, seated } from "./shell.ts";
+import { createSeating } from "./seating.ts";
+import {
+	contribute,
+	notifyHeader,
+	seated,
+	seatedCapabilities,
+} from "./shell.ts";
 import {
 	type CodeGraphAdapters,
 	createCodeGraphTool,
@@ -45,7 +47,7 @@ import { createChildrenViews } from "./children-view.ts";
 import { createModelProfiles, report } from "./model-profiles.ts";
 import { registerSessionTodo, syncTodoTool } from "./todo-extension.ts";
 import { registerCompactTools, syncCompactTools } from "./compact-tools.ts";
-import { resolveAgentDirectory, writeJsonAtomically } from "./agent-directory.ts";
+import { resolveAgentDirectory } from "./agent-directory.ts";
 import { jevRoutingEnabled, setJevRouting } from "./workflow-settings.ts";
 
 const usage =
@@ -128,53 +130,16 @@ export default function piWorkflowExtension(
 		childSessionSeated: () => seated("child-session", "overlay"),
 	});
 
-	function selectionPath() {
-		return resolve(agentDirectory, "pi-workflow-selection.json");
-	}
-
 	function companionPackages() {
 		return loadCompanionsFromPath(
 			options.catalog?.metadataPath ?? companionMetadataPath,
 		);
 	}
 
-	function seatFromDisk() {
-		const loaded = companionPackages();
-		if (loaded.error) return { status: "refused" as const, reason: loaded.error };
-		const packages = loaded.companions.map((companion) => companion.package);
-		let text: string | undefined;
-		try {
-			text = readFileSync(selectionPath(), "utf8");
-		} catch (error) {
-			const code =
-				error instanceof Error && "code" in error ? error.code : undefined;
-			if (code !== "ENOENT") {
-				return {
-					status: "refused" as const,
-					reason: `Unable to read the selection: ${error instanceof Error ? error.message : String(error)}`,
-				};
-			}
-		}
-		const selection = readSelection(text, packages);
-		if (selection.status === "refused") return selection;
-		if (text === undefined) return selection;
-		replaceSelection(selection.selection);
-		return selection;
-	}
-
 	function expectedPackageNames(): readonly string[] {
-		const loaded = companionPackages();
-		if (loaded.error) return [];
-		const packages = loaded.companions.map((companion) => companion.package);
-		let text: string | undefined;
-		try {
-			text = readFileSync(selectionPath(), "utf8");
-		} catch {
-			return [];
-		}
-		const selection = readSelection(text, packages);
-		if (selection.status !== "ready") return [];
-		return Object.entries(selection.selection.expectations)
+		const read = seating.read();
+		if (read.status !== "ready") return [];
+		return Object.entries(read.selection.expectations)
 			.filter(([, on]) => on)
 			.map(([name]) => name);
 	}
@@ -222,16 +187,29 @@ export default function piWorkflowExtension(
 		});
 	}
 
+	const seating = createSeating({
+		agentDirectory,
+		packages: () => {
+			const loaded = companionPackages();
+			return {
+				packages: loaded.companions.map((companion) => companion.package),
+				error: loaded.error,
+			};
+		},
+		offers: [
+			() => syncAskUserTools(pi, footerHints),
+			() => syncTodoTool(pi),
+			() => syncCodeGraphTool(pi, options.codegraph),
+			() => syncCompactTools(pi, currentCtx),
+			async () => registerChildTools((await workflow.checkSpawnTools()).allowed),
+		],
+	});
+
 	pi.on("session_start", async (_event, ctx) => {
 		currentCtx = ctx;
-		const seated = seatFromDisk();
-		if (seated.status === "refused") report(ctx, seated.reason, "error");
-		const { allowed } = await workflow.checkSpawnTools();
-		syncAskUserTools(pi, footerHints);
-		syncTodoTool(pi);
-		syncCodeGraphTool(pi, options.codegraph);
-		syncCompactTools(pi, ctx);
-		registerChildTools(allowed);
+		const read = seating.read();
+		if (read.status === "refused") report(ctx, read.reason, "error");
+		await seating.seat(read.status === "ready" ? read.selection : undefined);
 	});
 	pi.on("tool_execution_start", async (_event, ctx) => {
 		currentCtx = ctx;
@@ -280,9 +258,9 @@ export default function piWorkflowExtension(
 				report(ctx, "Configure needs the TUI.", "error");
 				return;
 			}
-			const seated = seatFromDisk();
-			if (seated.status === "refused") {
-				report(ctx, seated.reason, "error");
+			const read = seating.read();
+			if (read.status === "refused") {
+				report(ctx, read.reason, "error");
 				return;
 			}
 			const loaded = companionPackages();
@@ -296,22 +274,17 @@ export default function piWorkflowExtension(
 			const routing = jevRoutingEnabled();
 			const guided = await guideSelection(
 				ctx,
-				seated.selection,
+				read.selection,
 				packages,
 				states,
 				routing,
+				seatedCapabilities(),
 			);
 			if (!guided) return;
 			const { selection: chosen, jevRouting } = guided;
-			writeJsonAtomically(selectionPath(), chosen);
+			seating.save(chosen);
 			if (jevRouting !== routing) setJevRouting(jevRouting);
-			replaceSelection(chosen);
-			const { allowed } = await workflow.checkSpawnTools();
-			syncAskUserTools(pi, footerHints);
-			syncTodoTool(pi);
-			syncCodeGraphTool(pi, options.codegraph);
-			syncCompactTools(pi, ctx);
-			registerChildTools(allowed);
+			await seating.seat(chosen);
 			const expected = Object.entries(chosen.expectations)
 				.filter(([, on]) => on)
 				.map(([name]) => name);

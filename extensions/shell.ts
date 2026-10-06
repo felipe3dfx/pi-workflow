@@ -48,6 +48,10 @@ export function replaceSelection(selection: Selection) {
 	notifyHeader();
 }
 
+export function seatedCapabilities(): Pick<Selection, "capabilities"> {
+	return { capabilities: { ...seatedNow } };
+}
+
 function declare(capability: Capability, place: Place) {
 	if (!placement[capability].some((seat) => seat.place === place)) {
 		throw new Error(`${capability} is not declared at ${place}`);
