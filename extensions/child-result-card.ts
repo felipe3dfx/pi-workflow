@@ -9,6 +9,7 @@ import {
 	type Component,
 	Container,
 	Markdown,
+	Text,
 	type TuiMouseEvent,
 	truncateToWidth,
 	visibleWidth,
@@ -18,7 +19,7 @@ import type { ChildDetails, ChildRecord } from "./child-sessions.ts";
 import { childElapsed, spread } from "./children-box.ts";
 import { markCard } from "./chrome-groups.ts";
 import { assistantInset, edgeFor } from "./chrome-messages.ts";
-import { claim, paint } from "./configure.ts";
+import { claim, held, paint } from "./configure.ts";
 import { childModelLine, resultFieldLines } from "./child-projection.ts";
 import { paintMessageStream } from "./shell.ts";
 import { sanitizeMultilineText, sanitizeTaskText } from "./todo-header.ts";
@@ -204,8 +205,11 @@ class ResultCard implements Component {
 }
 
 class AnswerCard implements Component {
-	head: string;
-	body: Markdown;
+	readonly id: string | undefined;
+	readonly question: number | undefined;
+	readonly answer: string | undefined;
+	readonly body: Markdown;
+	readonly theme: Theme;
 
 	constructor(
 		id: string | undefined,
@@ -213,11 +217,26 @@ class AnswerCard implements Component {
 		answer: string | undefined,
 		theme: Theme,
 	) {
-		this.head = `${theme.fg("toolTitle", "◆")} ${theme.bold(theme.fg("muted", "Parent"))} → ${sanitizeTaskText(id ?? "").slice(0, 4)} ${theme.fg("toolTitle", `· answer ${question ?? "?"}`)}`;
+		this.id = id;
+		this.question = question;
+		this.answer = answer;
+		this.theme = theme;
 		this.body = markdownBody(answer ?? "");
 	}
 
+	get head() {
+		return `${this.theme.fg("toolTitle", "◆")} ${this.theme.bold(this.theme.fg("muted", "Parent"))} → ${sanitizeTaskText(this.id ?? "").slice(0, 4)} ${this.theme.fg("toolTitle", `· answer ${this.question ?? "?"}`)}`;
+	}
+
 	render(outer: number) {
+		if (!held(childStream)) {
+			const plain = `Parent → ${sanitizeTaskText(this.id ?? "").slice(0, 4)} · answer ${this.question ?? "?"}`;
+			return new Text(
+				`${plain}\n${sanitizeMultilineText((this.answer ?? "").trim()).replaceAll("\t", "   ")}`,
+				0,
+				0,
+			).render(outer);
+		}
 		paint(childStream, (width) =>
 			frame(width, this.head, "", (inner) => bodyLines(this.body, inner)),
 		);

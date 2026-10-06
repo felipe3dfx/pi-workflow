@@ -2411,6 +2411,38 @@ test("reply_child paints the answer card with compact rendering on and off, show
 	assert.ok(refused.render(60)[0].includes(theme.fg("error", refusal)));
 });
 
+test("reply_child falls back to a plain-text answer when the child-session card is not seated", async (t) => {
+	initTheme("dark", false);
+	const extension = await loadSpawnTool({ agentDir: tmpdir() });
+	const tool = extension.named("reply_child");
+	const theme = globalThis[Symbol.for("@earendil-works/pi-coding-agent:theme")];
+	const args = { id: "5636a1b2-0000", question: 3, answer: "src/\u001b[31mparser.ts" };
+	const seated = Object.fromEntries(
+		capabilities.map((capability) => [capability, true]),
+	);
+	t.after(() =>
+		replaceSelection({ schemaVersion: 1, capabilities: seated, expectations: {} }),
+	);
+	replaceSelection({
+		schemaVersion: 1,
+		capabilities: { ...seated, "child-session": false },
+		expectations: {},
+	});
+	const component = tool.renderResult(
+		{ content: [{ type: "text", text: "sent" }], details: {} },
+		{},
+		theme,
+		{ args, isError: false },
+	);
+	assert.deepEqual(
+		component
+			.render(60)
+			.map((line) => stripVTControlCharacters(line).trimEnd())
+			.filter(Boolean),
+		["Parent → 5636 · answer 3", "src/ [31mparser.ts"],
+	);
+});
+
 test("the ask_parent description tells the child to ask only when blocked and not to ask about reserved commands", () => {
 	const { description } = createAskParentTool(async () => "answer");
 	assert.match(
