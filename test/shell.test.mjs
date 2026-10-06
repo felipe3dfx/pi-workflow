@@ -14,16 +14,10 @@ import {
 	seated,
 	watchHeader,
 } from "../extensions/shell.ts";
+import { selectionWith } from "./support/selection.mjs";
 
 const theme = {};
 const packages = ["gentle-engram", "@gtrabanco/pi-nan-provider", "pi-web-access"];
-
-function selectionWith(changes) {
-	const selection = readSelection(undefined, packages);
-	assert.equal(selection.status, "ready");
-	Object.assign(selection.selection.capabilities, changes);
-	return selection.selection;
-}
 
 test("reading the absent-file selection seats no capability", () => {
 	assert.equal(readSelection(undefined, packages).status, "ready");
@@ -32,11 +26,11 @@ test("reading the absent-file selection seats no capability", () => {
 });
 
 test("the seated predicate answers for a declared place and follows the seating", (t) => {
-	t.after(() => replaceSelection(selectionWith({})));
-	replaceSelection(selectionWith({ "child-session": false }));
+	t.after(() => replaceSelection(selectionWith(packages, {})));
+	replaceSelection(selectionWith(packages, { "child-session": false }));
 	assert.equal(seated("child-session", "message-stream"), false);
 	assert.equal(seated("compact-rendering", "message-stream"), true);
-	replaceSelection(selectionWith({}));
+	replaceSelection(selectionWith(packages, {}));
 	assert.equal(seated("child-session", "message-stream"), true);
 });
 
@@ -53,10 +47,10 @@ test("the seated predicate refuses a place the capability does not declare", () 
 
 test("an unseated occupant leaves the above-input place empty and keeps the other occupant's order", (t) => {
 	t.after(() => {
-		replaceSelection(selectionWith({}));
+		replaceSelection(selectionWith(packages, {}));
 		resetPlaces();
 	});
-	replaceSelection(selectionWith({ "child-session": false }));
+	replaceSelection(selectionWith(packages, { "child-session": false }));
 	let childDrawn = false;
 	occupyAboveInput("todo", () => ["todo"]);
 	occupyAboveInput("child-session", () => {
@@ -70,7 +64,7 @@ test("an unseated occupant leaves the above-input place empty and keeps the othe
 	assert.equal(occupants("overlay").includes("child-session"), false);
 	assert.equal(occupants("message-stream").includes("compact-rendering"), true);
 
-	replaceSelection(selectionWith({}));
+	replaceSelection(selectionWith(packages, {}));
 	assert.deepEqual(paintAboveInput(10, theme), ["child", "todo"]);
 });
 
@@ -83,10 +77,10 @@ test("a capability occupies the above-input place only where it is declared", ()
 
 test("a second occupation of the above-input place replaces the first draw", (t) => {
 	t.after(() => {
-		replaceSelection(selectionWith({}));
+		replaceSelection(selectionWith(packages, {}));
 		resetPlaces();
 	});
-	replaceSelection(selectionWith({}));
+	replaceSelection(selectionWith(packages, {}));
 	occupyAboveInput("todo", () => ["first"]);
 	occupyAboveInput("todo", () => ["second"]);
 	assert.deepEqual(paintAboveInput(10, theme), ["second"]);
@@ -94,10 +88,10 @@ test("a second occupation of the above-input place replaces the first draw", (t)
 
 test("each occupant draws once per frame with the width and theme the widget was given", (t) => {
 	t.after(() => {
-		replaceSelection(selectionWith({}));
+		replaceSelection(selectionWith(packages, {}));
 		resetPlaces();
 	});
-	replaceSelection(selectionWith({}));
+	replaceSelection(selectionWith(packages, {}));
 	const calls = [];
 	occupyAboveInput("child-session", (width, given) => {
 		calls.push(["child", width, given]);
@@ -136,10 +130,10 @@ function shellHost() {
 
 test("the Shell installs one above-editor widget on a TUI session start and none in other modes", async (t) => {
 	t.after(() => {
-		replaceSelection(selectionWith({}));
+		replaceSelection(selectionWith(packages, {}));
 		resetPlaces();
 	});
-	replaceSelection(selectionWith({}));
+	replaceSelection(selectionWith(packages, {}));
 	occupyAboveInput("todo", (width) => [`todo ${width}`]);
 	const host = shellHost();
 	await host.fire("session_start", "print");
@@ -167,24 +161,24 @@ test("the Shell installs one above-editor widget on a TUI session start and none
 
 test("the header reading is zero while child session has no seat and follows the seating", (t) => {
 	t.after(() => {
-		replaceSelection(selectionWith({}));
+		replaceSelection(selectionWith(packages, {}));
 		resetPlaces();
 	});
 	occupyHeader("child-session", () => 2);
-	replaceSelection(selectionWith({ "child-session": false }));
+	replaceSelection(selectionWith(packages, { "child-session": false }));
 	assert.equal(readHeader(), 0);
-	replaceSelection(selectionWith({}));
+	replaceSelection(selectionWith(packages, {}));
 	assert.equal(readHeader(), 2);
-	replaceSelection(selectionWith({ "child-session": false }));
+	replaceSelection(selectionWith(packages, { "child-session": false }));
 	assert.equal(readHeader(), 0);
 });
 
 test("the header has one occupant, and only a capability declared there can take it", (t) => {
 	t.after(() => {
-		replaceSelection(selectionWith({}));
+		replaceSelection(selectionWith(packages, {}));
 		resetPlaces();
 	});
-	replaceSelection(selectionWith({}));
+	replaceSelection(selectionWith(packages, {}));
 	assert.equal(readHeader(), 0);
 	assert.throws(
 		() => occupyHeader("todo", () => 1),
@@ -196,15 +190,15 @@ test("the header has one occupant, and only a capability declared there can take
 });
 
 test("the header signal fires on every seating change until it is unsubscribed", (t) => {
-	t.after(() => replaceSelection(selectionWith({})));
+	t.after(() => replaceSelection(selectionWith(packages, {})));
 	let fired = 0;
 	const unwatch = watchHeader(() => {
 		fired += 1;
 	});
-	replaceSelection(selectionWith({ "child-session": false }));
-	replaceSelection(selectionWith({}));
+	replaceSelection(selectionWith(packages, { "child-session": false }));
+	replaceSelection(selectionWith(packages, {}));
 	assert.equal(fired, 2);
 	unwatch();
-	replaceSelection(selectionWith({ "child-session": false }));
+	replaceSelection(selectionWith(packages, { "child-session": false }));
 	assert.equal(fired, 2);
 });

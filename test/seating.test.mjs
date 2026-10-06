@@ -4,9 +4,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { capabilities, readSelection } from "../extensions/configure.ts";
+import { capabilities } from "../extensions/configure.ts";
 import { createSeating } from "../extensions/seating.ts";
 import { replaceSelection, seated } from "../extensions/shell.ts";
+import { selectionWith } from "./support/selection.mjs";
 
 const names = ["alpha", "beta"];
 const loadedPackages = () => ({ packages: names });
@@ -17,13 +18,6 @@ function noneSeated() {
 		capabilities: Object.fromEntries(capabilities.map((c) => [c, false])),
 		expectations: {},
 	};
-}
-
-function selectionWith(changes) {
-	const read = readSelection(undefined, names);
-	assert.equal(read.status, "ready");
-	Object.assign(read.selection.capabilities, changes);
-	return read.selection;
 }
 
 function setup(t, { offers = [], packages = loadedPackages } = {}) {
@@ -43,13 +37,13 @@ test("an absent selection reads as the default and seats nothing", (t) => {
 	const { seating } = setup(t);
 	const read = seating.read();
 	assert.equal(read.status, "absent");
-	assert.deepEqual(read.selection, selectionWith({}));
+	assert.deepEqual(read.selection, selectionWith(names, {}));
 	assert.equal(seated("child-session", "header"), false);
 });
 
 test("a ready selection reads without seating it", (t) => {
 	const { dir, seating } = setup(t);
-	const selection = selectionWith({ todo: false });
+	const selection = selectionWith(names, { todo: false });
 	writeFileSync(path(dir), JSON.stringify(selection));
 	assert.deepEqual(seating.read(), { status: "ready", selection });
 	assert.equal(seated("child-session", "header"), false);
@@ -84,7 +78,7 @@ test("a companion catalog error is refused with its text", (t) => {
 
 test("a saved selection reads back identical", (t) => {
 	const { seating } = setup(t);
-	const selection = selectionWith({ codegraph: false });
+	const selection = selectionWith(names, { codegraph: false });
 	seating.save(selection);
 	assert.deepEqual(seating.read(), { status: "ready", selection });
 });
@@ -92,7 +86,7 @@ test("a saved selection reads back identical", (t) => {
 test("saving fails when the write fails", (t) => {
 	const { dir, seating } = setup(t);
 	mkdirSync(path(dir));
-	assert.throws(() => seating.save(selectionWith({})));
+	assert.throws(() => seating.save(selectionWith(names, {})));
 });
 
 test("seating replaces the seated selection before the first offer runs", async (t) => {
@@ -100,14 +94,14 @@ test("seating replaces the seated selection before the first offer runs", async 
 	const { seating } = setup(t, {
 		offers: [() => seenSeated.push(seated("todo", "above-input"))],
 	});
-	await seating.seat(selectionWith({}));
+	await seating.seat(selectionWith(names, {}));
 	assert.deepEqual(seenSeated, [true]);
 });
 
 test("seating without a selection keeps the current seating and still offers", async (t) => {
 	let offered = 0;
 	const { seating } = setup(t, { offers: [() => offered++] });
-	replaceSelection(selectionWith({ todo: true, "child-session": false }));
+	replaceSelection(selectionWith(names, { todo: true, "child-session": false }));
 	await seating.seat();
 	assert.equal(offered, 1);
 	assert.equal(seated("todo", "above-input"), true);
@@ -122,7 +116,7 @@ test("offers run in list order and each is awaited", async (t) => {
 		events.push(`${name}:end`);
 	};
 	const { seating } = setup(t, { offers: [slow("a"), slow("b"), slow("c")] });
-	await seating.seat(selectionWith({}));
+	await seating.seat(selectionWith(names, {}));
 	assert.deepEqual(events, [
 		"a:start",
 		"a:end",
@@ -144,7 +138,7 @@ test("a failed offer stops the later ones and keeps the new selection", async (t
 			() => ran.push("c"),
 		],
 	});
-	await assert.rejects(seating.seat(selectionWith({ todo: true })), /offer b failed/);
+	await assert.rejects(seating.seat(selectionWith(names, { todo: true })), /offer b failed/);
 	assert.deepEqual(ran, ["a"]);
 	assert.equal(seated("todo", "above-input"), true);
 });
