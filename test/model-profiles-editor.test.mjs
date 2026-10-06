@@ -15,7 +15,8 @@ import {
 import { execFileSync } from "node:child_process";
 
 import { createChildLauncher } from "../extensions/child-launcher.ts";
-import { capabilities, replaceSelection } from "../extensions/configure.ts";
+import { capabilities } from "../extensions/configure.ts";
+import { replaceSelection } from "../extensions/shell.ts";
 import { createModelProfiles } from "../extensions/model-profiles.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 import { classifierRegistry } from "./support/fake-jev.mjs";

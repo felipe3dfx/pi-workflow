@@ -4,7 +4,8 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { capabilities, replaceSelection } from "../extensions/configure.ts";
+import { capabilities } from "../extensions/configure.ts";
+import { replaceSelection } from "../extensions/shell.ts";
 import { createModelProfiles } from "../extensions/model-profiles.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 

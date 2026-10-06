@@ -22,7 +22,8 @@ import {
 	compactToolRenderers,
 	syncCompactTools,
 } from "../extensions/compact-tools.ts";
-import { readSelection, replaceSelection } from "../extensions/configure.ts";
+import { readSelection } from "../extensions/configure.ts";
+import { replaceSelection } from "../extensions/shell.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 
 const builtIns = {

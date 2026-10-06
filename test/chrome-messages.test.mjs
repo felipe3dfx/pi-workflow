@@ -20,7 +20,8 @@ import {
 	thinkingSteps,
 } from "../extensions/chrome-messages.ts";
 import { registerCompactTools } from "../extensions/compact-tools.ts";
-import { readSelection, replaceSelection } from "../extensions/configure.ts";
+import { readSelection } from "../extensions/configure.ts";
+import { replaceSelection } from "../extensions/shell.ts";
 
 const piTui = await import(
 	createRequire(import.meta.resolve("@earendil-works/pi-coding-agent")).resolve(

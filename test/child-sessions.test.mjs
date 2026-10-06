@@ -36,7 +36,8 @@ import {
 
 import { createAskParentTool } from "../extensions/child-sessions.ts";
 import { compactToolRenderers } from "../extensions/compact-tools.ts";
-import { capabilities, replaceSelection } from "../extensions/configure.ts";
+import { capabilities } from "../extensions/configure.ts";
+import { replaceSelection } from "../extensions/shell.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 import { classifierRegistry } from "./support/fake-jev.mjs";
 import { turnJevRoutingOn, withAgentDirectory } from "./support/jev-routing.mjs";

@@ -15,11 +15,9 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { FooterHints } from "./chrome.ts";
 import { marginFor } from "./chrome-editor.ts";
 import { hidden } from "./compact-tools.ts";
-import { claim, held } from "./configure.ts";
+import { seated } from "./shell.ts";
 import { closeChildrenView } from "./children-view.ts";
 import { offerTool } from "./tool-offer.ts";
-
-const questionOverlay = claim("operator-questions", "overlay");
 
 interface AskUserOption {
 	label: string;
@@ -363,7 +361,7 @@ export function createAskUserChoiceTool(hints: FooterHints): ToolDefinition<type
 		executionMode: "sequential",
 		...askRenderers(),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			if (!held(questionOverlay)) {
+			if (!seated("operator-questions", "overlay")) {
 				return {
 					content: [
 						{
@@ -401,7 +399,7 @@ export function createAskUserQuestionTool(hints: FooterHints): ToolDefinition<ty
 		executionMode: "sequential",
 		...askRenderers(),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			if (!held(questionOverlay)) {
+			if (!seated("operator-questions", "overlay")) {
 				return {
 					content: [
 						{
@@ -421,7 +419,7 @@ export function createAskUserQuestionTool(hints: FooterHints): ToolDefinition<ty
 }
 
 export function syncAskUserTools(pi: ExtensionAPI, hints: FooterHints) {
-	const on = held(questionOverlay);
+	const on = seated("operator-questions", "overlay");
 	offerTool(pi, createAskUserChoiceTool(hints), on);
 	offerTool(pi, createAskUserQuestionTool(hints), on);
 }
