@@ -19,12 +19,16 @@ import {
 } from "@earendil-works/pi-tui";
 
 import type { ChildDetails, ChildRecord } from "./child-sessions.ts";
-import { childElapsed, spread } from "./children-box.ts";
 import { markCard } from "./chrome-groups.ts";
 import { assistantInset, edgeFor } from "./chrome-messages.ts";
-import { childModelLine, resultFieldLines } from "./child-projection.ts";
+import {
+	childElapsed,
+	childModelLine,
+	resultFieldLines,
+} from "./child-projection.ts";
 import { seated } from "./shell.ts";
 import { sanitizeMultilineText, sanitizeTaskText } from "./todo-header.ts";
+import { spread } from "./visual-language.ts";
 
 const RESULT_TYPE = "pi-workflow-child-result";
 const QUESTION_TYPE = "pi-workflow-child-question";

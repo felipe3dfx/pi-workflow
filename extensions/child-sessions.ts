@@ -26,6 +26,7 @@ import type { createChildLauncher } from "./child-launcher.ts";
 import { createChildCodeGraphTool } from "./codegraph-tool.ts";
 import { answerCard } from "./child-result-card.ts";
 import { hidden, outputText } from "./compact-tools.ts";
+import { type Schedule, scheduleTimer } from "./clock.ts";
 import { seated } from "./shell.ts";
 import {
 	type ChildResult,
@@ -144,17 +145,9 @@ export interface ChildTrace {
 	version: string;
 }
 
-export type Schedule = (run: () => void, ms: number) => () => void;
-
 const runningLimit = 5;
 const stallMs = 4 * 60_000;
 const toolStallMs = 30 * 60_000;
-
-export const scheduleTimer: Schedule = (run, ms) => {
-	const timer = setTimeout(run, ms);
-	timer.unref();
-	return () => clearTimeout(timer);
-};
 
 function createWatch(schedule: Schedule, onStall: (reason: string) => void) {
 	const tools = new Map<string, string>();

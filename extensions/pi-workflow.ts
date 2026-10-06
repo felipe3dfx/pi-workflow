@@ -38,9 +38,9 @@ import {
 	createContinueChildTool,
 	createSpawnChildTool,
 	isWorking,
-	type Schedule,
 } from "./child-sessions.ts";
 import { childOutcome } from "./child-projection.ts";
+import type { Schedule } from "./clock.ts";
 import { registerChildrenBox } from "./children-box.ts";
 import { createFooterHints, registerChrome } from "./chrome.ts";
 import { createChildrenViews } from "./children-view.ts";
