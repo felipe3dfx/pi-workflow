@@ -12,7 +12,6 @@ import {
 } from "./child-sessions.ts";
 import { type Schedule, scheduleTimer } from "./clock.ts";
 import {
-	notifyHeader,
 	occupyAboveInput,
 	paintAboveInput,
 	seated,
@@ -162,7 +161,6 @@ export function registerChildrenBox(
 
 	function update() {
 		render();
-		notifyHeader();
 		const now = Date.now();
 		const records = sessions.list();
 		if (!records.some((child) => child.state === "running")) {
