@@ -45,6 +45,11 @@ const packageVersion = (
 
 export const childOverlay = claim("child-session", "overlay");
 
+interface ChildShell {
+	commandPrefix: string | undefined;
+	shellPath: string | undefined;
+}
+
 interface ChildSpec {
 	cwd: string;
 	role: string;
@@ -53,7 +58,7 @@ interface ChildSpec {
 	prompt: string;
 	tools: string[];
 	modelRegistry: ExtensionContext["modelRegistry"];
-	parent: Pick<ExtensionContext, "cwd" | "isProjectTrusted">;
+	shell: ChildShell;
 	onEvent(event: AgentSessionEvent): void;
 	ask(question: string): Promise<string>;
 	report(result: ChildResult): void;
@@ -284,6 +289,16 @@ export function createAskParentTool(
 	};
 }
 
+function childShell(
+	ctx: Pick<ExtensionContext, "cwd" | "isProjectTrusted">,
+): ChildShell {
+	const user = settings(ctx);
+	return {
+		commandPrefix: user.getShellCommandPrefix(),
+		shellPath: user.getShellPath(),
+	};
+}
+
 const createPiChildSession: ChildSessionFactory = async (spec) => {
 	const runtime = parentRuntime(spec.modelRegistry);
 	if (!runtime) {
@@ -291,7 +306,6 @@ const createPiChildSession: ChildSessionFactory = async (spec) => {
 	}
 	const slash = spec.model.indexOf("/");
 	const settingsManager = SettingsManager.inMemory();
-	const userSettings = settings(spec.parent);
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: spec.cwd,
 		agentDir: getAgentDir(),
@@ -315,10 +329,7 @@ const createPiChildSession: ChildSessionFactory = async (spec) => {
 		thinkingLevel: spec.thinking,
 		tools: spec.tools,
 		customTools: [
-			createChildBashTool(spec.cwd, {
-				commandPrefix: userSettings.getShellCommandPrefix(),
-				shellPath: userSettings.getShellPath(),
-			}),
+			createChildBashTool(spec.cwd, spec.shell),
 			createChildCodeGraphTool(spec.cwd),
 			createAskParentTool(spec.ask),
 			...(reportsResult(spec.role)
@@ -630,7 +641,7 @@ export function createChildSessions(options: {
 			background: boolean;
 			signal?: AbortSignal;
 			modelRegistry: ExtensionContext["modelRegistry"];
-			parent: Pick<ExtensionContext, "cwd" | "isProjectTrusted">;
+			shell: ChildShell;
 			onLaunch?: () => void;
 		},
 		from?: { id: string; conversation: Conversation },
@@ -653,7 +664,7 @@ export function createChildSessions(options: {
 				prompt: plan.contract.prompt,
 				tools: childTools(plan),
 				modelRegistry: launch.modelRegistry,
-				parent: launch.parent,
+				shell: launch.shell,
 				onEvent: (event) => {
 					watch.event(event);
 					observe(event);
@@ -787,7 +798,7 @@ export function createChildSessions(options: {
 		launch: {
 			signal?: AbortSignal;
 			modelRegistry: ExtensionContext["modelRegistry"];
-			parent: Pick<ExtensionContext, "cwd" | "isProjectTrusted">;
+			shell: ChildShell;
 		},
 	) {
 		const child = children.get(id);
@@ -1060,7 +1071,7 @@ export function createSpawnChildTool(
 				background,
 				signal,
 				modelRegistry: ctx.modelRegistry,
-				parent: ctx,
+				shell: childShell(ctx),
 				onLaunch: () => launcher.recordLaunch(userRequest?.id),
 			});
 			return launched(started, plan.warnings, {
@@ -1147,7 +1158,7 @@ export function createContinueChildTool(
 				await sessions.resume(params.id, params.task, {
 					signal,
 					modelRegistry: ctx.modelRegistry,
-					parent: ctx,
+					shell: childShell(ctx),
 				}),
 				[],
 			);
