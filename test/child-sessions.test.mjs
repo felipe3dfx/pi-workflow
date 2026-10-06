@@ -3468,6 +3468,8 @@ test("a background child shows in the subagent box pinned above the input and ab
 			lines[1],
 			/[⠋⠙⠹⠸⠼⠴⠦⠧] worker [0-9a-f]{4} Fix the failing test +model \(medium\) \d+s$/,
 		);
+		const task = lines.findIndex((line) => line.includes("□ Review the doctor"));
+		assert.ok(task > 1);
 
 		children.created[0].spec.onEvent({
 			type: "tool_execution_start",

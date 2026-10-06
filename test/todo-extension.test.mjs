@@ -156,13 +156,15 @@ test("update changes an existing task's done flag", async () => {
 	assert.equal(result.details.tasks[0].done, true);
 });
 
-test("clear empties the list", async () => {
+test("clear empties the list and the box", async () => {
 	const { pi, tools } = fakePi();
 	registerSessionTodo(pi, () => {});
 	await execute(tools, "add", { text: "alpha" });
+	assert.ok(paintAboveInput(80, fakeTheme()).some((line) => line.includes("alpha")));
 	const result = await execute(tools, "clear", {});
 	assert.match(result.content[0].text, /Cleared/);
 	assert.deepEqual(result.details.tasks, []);
+	assert.deepEqual(paintAboveInput(80, fakeTheme()), []);
 });
 
 test("add without text throws instead of returning a disguised error", async () => {
