@@ -255,24 +255,29 @@ for (const state of ["off", "on"]) {
 			["git remote prune origin", "git remote prune"],
 			["git remote set-head origin -a", "git remote set-head"],
 			["git remote set-branches origin main", "git remote set-branches"],
-			["git remote -v add upstream x", "git remote add"],
+			["git remote -v add upstream x", "git remote"],
 			["git submodule add https://example.invalid/r", "git submodule add"],
 			["git submodule update --init", "git submodule update"],
 			["git submodule init", "git submodule init"],
 			["git submodule deinit --all", "git submodule deinit"],
 			["git submodule sync", "git submodule sync"],
-			["git submodule --quiet foreach true", "git submodule foreach"],
+			["git submodule --quiet foreach true", "git submodule"],
 			["git submodule absorbgitdirs", "git submodule absorbgitdirs"],
 			["git submodule set-branch -b main x", "git submodule set-branch"],
 			["git submodule set-url x y", "git submodule set-url"],
 			["git reflog expire --all", "git reflog expire"],
 			["git reflog delete HEAD@{0}", "git reflog delete"],
 			["git lfs push origin main", "git lfs push"],
-			["git lfs --dry-run push origin", "git lfs push"],
+			["git lfs --dry-run push origin", "git lfs"],
 			["git lfs migrate import --everything", "git lfs migrate"],
 			["git lfs", "git lfs"],
 			["git stash", "git stash"],
 			["git stash -u", "git stash"],
+			["git stash -m list", "git stash"],
+			["git stash -m show", "git stash"],
+			["git stash -- show", "git stash"],
+			["git worktree --verbose list", "git worktree"],
+			["git reflog -n 1 show", "git reflog"],
 			["git stash pop", "git stash pop"],
 			["git stash drop", "git stash drop"],
 			["git worktree add ../x", "git worktree add"],
@@ -316,6 +321,9 @@ for (const state of ["off", "on"]) {
 			["git remote get-url origin", /^https:\/\/example\.invalid\/r$/m],
 			["git submodule status", /^\(no output\)$/],
 			["git reflog", /first/],
+			["git reflog --all", /first/],
+			["git remote --verbose", /origin/],
+			["git submodule --quiet", /^\(no output\)$/],
 		]) {
 			const result = await run(command, dir);
 
@@ -360,11 +368,15 @@ for (const state of ["off", "on"]) {
 			["git diff --output out.txt", "git diff"],
 			["git show --output=out.txt", "git show"],
 			["git stash show --output=out.txt", "git stash"],
+			["git ls-remote -o -- --upload-pack='touch X;' .", "git ls-remote"],
+			["git grep --untracked -e -- \"-Osh -c 'touch X'\"", "git grep"],
+			["git grep -e -Ofoo", "git grep"],
 		]) {
 			await assertReserved(command, dir, expected);
 		}
 		assert.equal(existsSync(join(dir, "touch")), false);
 		assert.equal(existsSync(join(dir, "out.txt")), false);
+		assert.equal(existsSync(join(dir, "X")), false);
 		assert.match(text(await run("git grep -n two -- file.txt", dir)), /file\.txt:1:two/);
 		assert.match(text(await run("git log --output-indicator-new=+ -1 --oneline", dir)), /first/);
 	});
@@ -433,7 +445,9 @@ for (const state of ["off", "on"]) {
 		const dir = worktree(t);
 
 		for (const [command, expected] of [
-			["gh api repos/owner/repo", "gh api repos/owner/repo"],
+			["gh api repos/owner/repo", "gh api"],
+			["gh api list -X DELETE", "gh api"],
+			["gh api view", "gh api"],
 			["gh workflow run ci", "gh workflow run"],
 			["gh pr create --fill", "gh pr create"],
 			["gh issue edit 1", "gh issue edit"],
@@ -453,9 +467,9 @@ for (const state of ["off", "on"]) {
 			["gh label clone owner/other", "gh label clone"],
 			["gh browse", "gh browse"],
 			["cd /tmp && gh release create v0", "gh release create"],
-			["gh auth status", "gh auth status"],
-			["gh auth status -t", "gh auth status"],
-			["gh auth token", "gh auth token"],
+			["gh auth status", "gh auth"],
+			["gh auth status -t", "gh auth"],
+			["gh auth token", "gh auth"],
 			["gh auth --hostname github.com token", "gh auth"],
 			["gh auth", "gh auth"],
 		]) {

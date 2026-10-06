@@ -52,7 +52,6 @@ function gitDecision(root: string): string {
 		[ "$#" -gt 0 ] && shift;
 	done;
 	for word in "$@"; do
-		[ "$word" = -- ] && break;
 		case "$subcommand $word" in
 		"grep -O"*|"grep -"[!-]*O*|"grep --op"*|"ls-remote -u"*|"ls-remote -"[!-]*u*|"ls-remote --u"*|"ls-remote --exe"*|*" --output"|*" --output="*)
 			reserved="\${reserved:-git $subcommand}" ;;
@@ -62,11 +61,14 @@ function gitDecision(root: string): string {
 	""|status|diff|log|show|blame|grep|ls-files|ls-tree|ls-remote|cat-file|rev-parse|rev-list|merge-base|describe|shortlog|name-rev|for-each-ref|show-ref|show-branch|whatchanged|range-diff|diff-tree|diff-files|diff-index|cherry|count-objects|check-ignore|check-attr|var|version|help) ;;
 	reflog|stash|worktree|remote|submodule|lfs)
 		verb=;
-		while [ "$#" -gt 0 ] && [ -z "$verb" ]; do
-			case "$1" in -*) ;; *) verb=$1 ;; esac;
-			shift;
-		done;
-		case "$subcommand $verb" in
+		case "\${1-}" in
+		-*)
+			for word in "$@"; do
+				case "$word" in -*) ;; *) reserved="git $subcommand" ;; esac;
+			done ;;
+		*) verb=\${1-} ;;
+		esac;
+		[ -n "$reserved" ] || case "$subcommand $verb" in
 		"reflog "|"reflog show"|"stash list"|"stash show"|"worktree list"|"remote "|"remote show"|"remote get-url"|"submodule "|"submodule status"|"submodule summary"|"lfs ls-files"|"lfs status"|"lfs env"|"lfs version") ;;
 		*) reserved="git $subcommand\${verb:+ $verb}" ;;
 		esac ;;
@@ -103,9 +105,7 @@ const ghDecision = line`group=;
 	done;
 	case "$group" in
 	""|help|search) ;;
-	auth)
-		[ -n "$option" ] && verb=;
-		reserved="gh auth\${verb:+ $verb}" ;;
+	api|auth) reserved="gh $group" ;;
 	*)
 		[ -n "$option" ] && verb=;
 		case "$verb" in
