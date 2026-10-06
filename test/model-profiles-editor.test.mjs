@@ -134,7 +134,7 @@ async function readJson(path) {
 
 async function openPanel(path, options) {
 	const context = editorContext(options);
-	const editing = createModelProfiles({ path }).edit(context.ctx);
+	const editing = createModelProfiles(dirname(path)).edit(context.ctx);
 	const panel = await context.nextPanel();
 	return { ...context, editing, panel };
 }
@@ -400,7 +400,7 @@ test("an invalid, schema version 1, or unreadable file refuses to open the panel
 			const invalid = editorContext();
 			invalid.ctx.ui.custom = () => assert.fail("the panel must not open");
 
-			assert.equal((await createModelProfiles({ path }).edit(invalid.ctx)).status, "refused");
+			assert.equal((await createModelProfiles(dirname(path)).edit(invalid.ctx)).status, "refused");
 			assert.match(invalid.notifications.at(-1).message, reason);
 			assert.equal(await readFile(path, "utf8"), content);
 		}
@@ -410,7 +410,7 @@ test("an invalid, schema version 1, or unreadable file refuses to open the panel
 		const dangling = editorContext();
 		dangling.ctx.ui.custom = () => assert.fail("the panel must not open");
 
-		assert.equal((await createModelProfiles({ path }).edit(dangling.ctx)).status, "refused");
+		assert.equal((await createModelProfiles(dirname(path)).edit(dangling.ctx)).status, "refused");
 		assert.match(dangling.notifications.at(-1).message, /Unable to read/);
 		assert.equal((await lstat(path)).isSymbolicLink(), true);
 	});
@@ -422,7 +422,7 @@ test("the panel refuses outside the TUI", async (t) => {
 	await withConfigDirectory(async ({ path }) => {
 		for (const context of [editorContext({ hasUI: false, mode: "print" }), editorContext({ mode: "rpc" })]) {
 			context.ctx.ui.custom = () => assert.fail("the panel must not open");
-			assert.equal((await createModelProfiles({ path }).edit(context.ctx)).status, "refused");
+			assert.equal((await createModelProfiles(dirname(path)).edit(context.ctx)).status, "refused");
 		}
 		assert.deepEqual(printed, ["The model profiles panel needs the TUI."]);
 		await assert.rejects(readFile(path, "utf8"), { code: "ENOENT" });
@@ -486,7 +486,7 @@ test("every rendered row fits the width and hostile model names cannot inject co
 		});
 		const { ctx, nextPanel } = editorContext();
 		ctx.modelRegistry.getAvailable = () => [{ provider: "nan", id: "evil\x1b[2J‮name" }];
-		const editing = createModelProfiles({ path }).edit(ctx);
+		const editing = createModelProfiles(dirname(path)).edit(ctx);
 		const panel = await nextPanel();
 		const width = 24;
 		const screens = [];
@@ -548,7 +548,7 @@ test("saving keeps a file that became unreadable while the panel was open", asyn
 
 test("a launch right after a panel save uses the saved profile", async () => {
 	await withConfigDirectory(async ({ dir, path }) => {
-		const profiles = createModelProfiles({ path });
+		const profiles = createModelProfiles(dirname(path));
 		const context = editorContext();
 		const editing = profiles.edit(context.ctx);
 		const panel = await context.nextPanel();
@@ -623,7 +623,7 @@ test("the model picker does not offer a model with no supported thinking levels"
 		};
 		const context = editorContext({ available: [...catalog, silent] });
 		context.ctx.modelRegistry.getAll = () => [...catalog, silent];
-		const editing = createModelProfiles({ path }).edit(context.ctx);
+		const editing = createModelProfiles(dirname(path)).edit(context.ctx);
 		const panel = await context.nextPanel();
 
 		press(panel, keys.enter, keys.enter);
@@ -663,7 +663,7 @@ test("/workflow:models opens the panel over the saved profiles and /workflow:mod
 			registerMessageRenderer: () => {},
 			registerToolRenderer: () => {},
 		};
-		piWorkflowExtension(pi, { modelProfiles: { path } });
+		piWorkflowExtension(pi, { agentDirectory: dirname(path) });
 		const { ctx, nextPanel } = editorContext();
 
 		assert.equal(commands.has("workflow:models-edit"), false);

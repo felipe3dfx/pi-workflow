@@ -19,12 +19,17 @@ import {
 } from "@earendil-works/pi-tui";
 
 import type { ChildDetails, ChildRecord } from "./child-sessions.ts";
-import { childElapsed, spread } from "./children-box.ts";
 import { markCard } from "./chrome-groups.ts";
 import { assistantInset, edgeFor } from "./chrome-messages.ts";
-import { childModelLine, resultFieldLines } from "./child-projection.ts";
+import {
+	childElapsed,
+	childModelLine,
+	needsNoReason,
+	resultFieldLines,
+} from "./child-projection.ts";
 import { seated } from "./shell.ts";
-import { sanitizeMultilineText, sanitizeTaskText } from "./todo-header.ts";
+import { terminalSafeBlock, terminalSafeLine } from "./terminal-safe-text.ts";
+import { spread } from "./visual-language.ts";
 
 const RESULT_TYPE = "pi-workflow-child-result";
 const QUESTION_TYPE = "pi-workflow-child-question";
@@ -62,7 +67,7 @@ function reason(card: Card) {
 			.split("\n")
 			.map((line) => line.trim())
 			.find(Boolean);
-	if (card.verdict === "done" || card.verdict === "pass") return undefined;
+	if (needsNoReason(card.state, card.verdict)) return undefined;
 	return card.result?.reason;
 }
 
@@ -91,7 +96,7 @@ function header(theme: Theme, card: Card, question: boolean, open: boolean) {
 }
 
 function clean(text: string) {
-	return sanitizeMultilineText(text.trim()).replaceAll("\t", "   ");
+	return terminalSafeBlock(text.trim());
 }
 
 function markdownBody(text: string) {
@@ -119,7 +124,7 @@ class Fallback extends Text {
 }
 
 function plainHead(head: string) {
-	return sanitizeTaskText(stripVTControlCharacters(head)).replace(/^◆ /, "");
+	return terminalSafeLine(stripVTControlCharacters(head)).replace(/^◆ /, "");
 }
 
 function paintCard(
@@ -200,7 +205,7 @@ class ResultCard implements Component {
 		const head = plainHead(header(this.theme, this.card, this.question, open));
 		if (open || this.question) return `${head}\n${this.text}`;
 		const why = reason(this.card);
-		return why ? `${head}\n${sanitizeTaskText(why)}` : head;
+		return why ? `${head}\n${terminalSafeLine(why)}` : head;
 	}
 
 	cardLines(outer: number) {
@@ -209,7 +214,7 @@ class ResultCard implements Component {
 		const hint = key
 			? t.fg(
 					"dim",
-					`(${sanitizeTaskText(key)} to ${this.expanded ? "collapse" : "expand"})`,
+					`(${terminalSafeLine(key)} to ${this.expanded ? "collapse" : "expand"})`,
 				)
 			: "";
 		const open = this.open();
@@ -220,14 +225,14 @@ class ResultCard implements Component {
 			(inner) => {
 				const lines: string[] = [];
 				if (open && this.card.task)
-					lines.push(t.fg("dim", `Task ${sanitizeTaskText(this.card.task)}`));
+					lines.push(t.fg("dim", `Task ${terminalSafeLine(this.card.task)}`));
 				if (open && this.card.result)
 					for (const line of resultFieldLines(this.card.result))
-						lines.push(t.fg("dim", sanitizeTaskText(line)));
+						lines.push(t.fg("dim", terminalSafeLine(line)));
 				if (open || this.question) lines.push(...bodyLines(this.body, inner));
 				else {
 					const why = reason(this.card);
-					if (why) lines.push(t.fg("dim", sanitizeTaskText(why)));
+					if (why) lines.push(t.fg("dim", terminalSafeLine(why)));
 				}
 				if (open) lines.push(t.fg("dim", "alt+a  open in subagents view"));
 				return lines;
@@ -280,7 +285,7 @@ class AnswerCard implements Component {
 		if (this.cachedHead !== undefined) return this.cachedHead;
 		const color = this.rejection === undefined ? "toolTitle" : "error";
 		const status = `· answer ${this.question ?? "?"}${this.rejection === undefined ? "" : " rejected"}`;
-		this.cachedHead = `${this.theme.fg(color, "◆")} ${this.theme.bold(this.theme.fg("muted", "Parent"))} → ${sanitizeTaskText(this.id ?? "").slice(0, 4)} ${this.theme.fg(color, status)}`;
+		this.cachedHead = `${this.theme.fg(color, "◆")} ${this.theme.bold(this.theme.fg("muted", "Parent"))} → ${terminalSafeLine(this.id ?? "").slice(0, 4)} ${this.theme.fg(color, status)}`;
 		return this.cachedHead;
 	}
 

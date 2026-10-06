@@ -7,11 +7,13 @@ import {
 	occupants,
 	occupyAboveInput,
 	paintAboveInput,
+	readHeader,
 	readPlace,
 	registerShell,
 	replaceSelection,
 	resetPlaces,
 	seated,
+	watchHeader,
 } from "../extensions/shell.ts";
 
 const theme = {};
@@ -166,4 +168,32 @@ test("the Shell installs one above-editor widget on a TUI session start and none
 	await host.fire("session_shutdown", "tui");
 	host.shell.requestAboveInputRender();
 	assert.equal(renders, 1);
+});
+
+test("the header reading is zero while child session has no seat and follows the seating", (t) => {
+	t.after(() => {
+		replaceSelection(selectionWith({}));
+		resetPlaces();
+	});
+	contribute("child-session", "header", () => ({ count: 2 }));
+	replaceSelection(selectionWith({ "child-session": false }));
+	assert.equal(readHeader()?.count ?? 0, 0);
+	replaceSelection(selectionWith({}));
+	assert.equal(readHeader()?.count, 2);
+	replaceSelection(selectionWith({ "child-session": false }));
+	assert.equal(readHeader()?.count ?? 0, 0);
+});
+
+test("the header signal fires on every seating change until it is unsubscribed", (t) => {
+	t.after(() => replaceSelection(selectionWith({})));
+	let fired = 0;
+	const unwatch = watchHeader(() => {
+		fired += 1;
+	});
+	replaceSelection(selectionWith({ "child-session": false }));
+	replaceSelection(selectionWith({}));
+	assert.equal(fired, 2);
+	unwatch();
+	replaceSelection(selectionWith({ "child-session": false }));
+	assert.equal(fired, 2);
 });

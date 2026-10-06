@@ -32,7 +32,7 @@ import {
 	type PatchMethod,
 	type PatchTarget,
 } from "./chrome-patch.ts";
-import { sanitizeTaskText } from "./todo-header.ts";
+import { terminalSafeLine } from "./terminal-safe-text.ts";
 import { theme } from "./visual-language.ts";
 
 const SHARED = Symbol.for("pi-workflow:chrome-messages:shared");
@@ -242,7 +242,7 @@ export function thinkingSteps(blocks: string[]) {
 
 function thinkingHeader(parts: HeaderParts, width: number) {
 	const t = theme();
-	const label = sanitizeTaskText(parts.label);
+	const label = terminalSafeLine(parts.label);
 	const duration = parts.duration?.();
 	const meta =
 		duration === undefined ? "" : ` for ${thoughtDuration(duration)}`;
@@ -250,7 +250,7 @@ function thinkingHeader(parts: HeaderParts, width: number) {
 	let line = `${t.fg("dim", "◆")} ${t.bold(t.fg("muted", label))}${meta ? t.fg("dim", meta) : ""}`;
 	const room = width - used - 3;
 	if (parts.title && room >= minTitleWidth) {
-		const full = sanitizeTaskText(parts.title);
+		const full = terminalSafeLine(parts.title);
 		const title =
 			visibleWidth(full) > room
 				? `${sliceByColumn(full, 0, room - 1, true)}…`
@@ -259,7 +259,7 @@ function thinkingHeader(parts: HeaderParts, width: number) {
 		used += 3 + visibleWidth(title);
 	}
 	const key = parts.hint?.() ? keyText("app.thinking.toggle") : "";
-	const hint = key ? `  (${sanitizeTaskText(key)} to expand)` : "";
+	const hint = key ? `  (${terminalSafeLine(key)} to expand)` : "";
 	if (hint && used + visibleWidth(hint) <= width) line += t.fg("dim", hint);
 	return line;
 }
@@ -430,13 +430,12 @@ function updateContent(
 			const latest = shared.latestCollapsed;
 			if (hidden && (!latest || message.timestamp >= latest.at))
 				shared.latestCollapsed = { owner: this, runIndex, at: message.timestamp };
-			const owner = this;
 			const thinkingComponent = hidden
 				? new ThinkingHeader(
 						{
 							...header,
 							hint: () =>
-								shared.latestCollapsed?.owner === owner &&
+								shared.latestCollapsed?.owner === this &&
 								shared.latestCollapsed.runIndex === runIndex,
 						},
 						inset,

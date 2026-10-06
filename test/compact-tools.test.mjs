@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -47,6 +48,9 @@ function sessionContext(cwd) {
 	return { cwd, isProjectTrusted: () => false };
 }
 
+const agentDirectory = mkdtempSync(join(tmpdir(), "pi-workflow-agent-"));
+test.after(() => rmSync(agentDirectory, { recursive: true, force: true }));
+
 function loadTools(resolvers = []) {
 	const tools = new Map();
 	const pi = {
@@ -61,20 +65,16 @@ function loadTools(resolvers = []) {
 	};
 	const preview = readSelection(undefined, []);
 	if (preview.status === "ready") replaceSelection(preview.selection);
-	piWorkflowExtension(pi);
+	piWorkflowExtension(pi, { agentDirectory });
 	syncCompactTools(pi, sessionContext(process.cwd()));
 	return tools;
 }
 
 async function withWorkspace(run) {
 	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-tools-"));
-	const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = join(dir, "agent");
 	try {
 		return await run(dir);
 	} finally {
-		if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-		else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
 		await rm(dir, { recursive: true, force: true });
 	}
 }

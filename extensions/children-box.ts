@@ -9,14 +9,13 @@ import {
 	type ChildRecord,
 	type createChildSessions,
 	isWorking,
-	type Schedule,
-	scheduleTimer,
 } from "./child-sessions.ts";
+import { type Schedule, scheduleTimer } from "./clock.ts";
 import {
-	notifyHeader,
 	occupyAboveInput,
 } from "./shell.ts";
-import { sanitizeTaskText } from "./todo-header.ts";
+import { terminalSafeLine } from "./terminal-safe-text.ts";
+import { spinnerMs, spread, workingFrames } from "./visual-language.ts";
 
 type Sessions = ReturnType<typeof createChildSessions>;
 export type ChildTheme = Pick<Theme, "fg" | "bg" | "bold">;
@@ -26,8 +25,6 @@ const maxFinished = 3;
 const maxRows = 8;
 const tickMs = 1000;
 const coalesceMs = 400;
-export const spinnerMs = 133;
-export const workingFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"];
 
 const glyphs: Record<ChildRecord["state"], [string, ThemeColor]> = {
 	queued: ["○", "muted"],
@@ -54,17 +51,6 @@ export function byState(a: ChildRecord, b: ChildRecord) {
 }
 
 import { childElapsed, childModelLine, childStep } from "./child-projection.ts";
-
-export { childElapsed, childName } from "./child-projection.ts";
-
-export function spread(left: string, right: string, width: number) {
-	const shown = truncateToWidth(
-		left,
-		Math.max(0, width - visibleWidth(right) - 1),
-	);
-	const gap = Math.max(1, width - visibleWidth(shown) - visibleWidth(right));
-	return truncateToWidth(`${shown}${" ".repeat(gap)}${right}`, width);
-}
 
 function childMeta(child: ChildRecord, now: number) {
 	if (child.state === "queued") return "queued";
@@ -94,7 +80,7 @@ function renderChildRow(
 	active: boolean,
 	width: number,
 ) {
-	const step = sanitizeTaskText(childStep(child));
+	const step = terminalSafeLine(childStep(child));
 	const meta = childMeta(child, now);
 	const left = ` ${rowGlyph(theme, child, now)} ${theme.fg("accent", child.role)} ${child.id.slice(0, 4)} ${step}`;
 	const line = spread(left, theme.fg("dim", meta), width);
@@ -174,7 +160,6 @@ export function registerChildrenBox(
 
 	function update() {
 		render();
-		notifyHeader();
 		const now = Date.now();
 		const records = sessions.list();
 		if (!records.some((child) => child.state === "running")) {

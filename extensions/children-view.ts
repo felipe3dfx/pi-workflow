@@ -24,19 +24,20 @@ import {
 	type ChildRecord,
 	type createChildSessions,
 	isWorking,
-	type Schedule,
-	scheduleTimer,
 } from "./child-sessions.ts";
-import { childModelLine, childStep } from "./child-projection.ts";
+import {
+	childElapsed,
+	childModelLine,
+	childName,
+	childStep,
+} from "./child-projection.ts";
+import { type Schedule, scheduleTimer } from "./clock.ts";
 import { seated } from "./shell.ts";
 
 import {
 	byState,
 	type ChildTheme,
-	childElapsed,
 	childGlyph,
-	childName,
-	spread,
 } from "./children-box.ts";
 import { marginFor } from "./chrome-editor.ts";
 import { toolLabel } from "./compact-tools.ts";
@@ -51,7 +52,8 @@ import {
 	sectionRule,
 	selectedRow,
 } from "./chrome-menus.ts";
-import { sanitizeMultilineText, sanitizeTaskText } from "./todo-header.ts";
+import { terminalSafeBlock, terminalSafeLine } from "./terminal-safe-text.ts";
+import { spread } from "./visual-language.ts";
 
 let closeSeatedView: () => void = () => {};
 
@@ -87,7 +89,7 @@ type Action =
 	| "no";
 
 function clean(text: string) {
-	return sanitizeMultilineText(text).replaceAll("\t", "   ").trim();
+	return terminalSafeBlock(text).trim();
 }
 
 function userText(content: string | { type: string; text?: string }[]) {
@@ -141,8 +143,8 @@ function createThread(theme: ChildTheme) {
 	let hideThinking = false;
 
 	function row(color: ThemeColor, label: string, detail = "") {
-		const head = `${theme.fg(color, "◆")} ${theme.bold(theme.fg("muted", sanitizeTaskText(label)))}`;
-		const tail = sanitizeTaskText(detail);
+		const head = `${theme.fg(color, "◆")} ${theme.bold(theme.fg("muted", terminalSafeLine(label)))}`;
+		const tail = terminalSafeLine(detail);
 		return tail ? `${head} ${theme.fg("dim", tail)}` : head;
 	}
 
@@ -616,7 +618,7 @@ function createChildrenView(
 					? theme.bold(theme.fg("accent", "▸ "))
 					: theme.fg("dim", "▸ ")
 				: "  ";
-			const step = sanitizeTaskText(childStep(child));
+			const step = terminalSafeLine(childStep(child));
 			const color = child.state === "waiting" ? "warning" : "dim";
 			const head = `${mark}${childGlyph(theme, child)} ${theme.fg("accent", child.role)} ${theme.fg("dim", child.id.slice(0, 4))}`;
 			const right = theme.fg(
@@ -673,11 +675,11 @@ function createChildrenView(
 				theme.fg("dim", state),
 				width,
 			),
-			theme.fg("dim", truncateToWidth(sanitizeTaskText(meta), width, "…")),
+			theme.fg("dim", truncateToWidth(terminalSafeLine(meta), width, "…")),
 			theme.fg(
 				"muted",
 				truncateToWidth(
-					sanitizeTaskText(child.task.trim().split("\n")[0]),
+					terminalSafeLine(child.task.trim().split("\n")[0]),
 					width,
 					"…",
 				),

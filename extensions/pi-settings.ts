@@ -2,12 +2,8 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import {
-	activePiAgentDirectory,
-	definitionsEqual,
-	isPlainRecord,
-	writeJsonAtomically,
-} from "./mcp-config.ts";
+import { isPlainRecord, writeJsonAtomically } from "./agent-directory.ts";
+import { definitionsEqual } from "./mcp-config.ts";
 
 export type PiSettingsCatalog = {
 	schemaVersion: number;
@@ -16,7 +12,6 @@ export type PiSettingsCatalog = {
 
 export interface PiSettingsAdapters {
 	catalogPath?: string;
-	agentDirectory?: string;
 }
 
 export type PiSettingsPlan = {
@@ -80,12 +75,9 @@ function isNegatedIn(item: unknown, existing: unknown[]): boolean {
 
 export function planPiSettings(
 	catalog: PiSettingsCatalog,
-	options: PiSettingsAdapters = {},
+	agentDirectory: string,
 ): PiSettingsPlan {
-	const path = resolve(
-		activePiAgentDirectory({ agentDirectory: options.agentDirectory }),
-		"settings.json",
-	);
+	const path = resolve(agentDirectory, "settings.json");
 	const refused = (reason: string): PiSettingsPlan => ({
 		path,
 		changed: false,
@@ -141,9 +133,9 @@ export function planPiSettings(
 
 export function applyPiSettings(
 	catalog: PiSettingsCatalog,
-	options: PiSettingsAdapters = {},
+	agentDirectory: string,
 ): { path: string; wrote: boolean; error?: string } {
-	const plan = planPiSettings(catalog, options);
+	const plan = planPiSettings(catalog, agentDirectory);
 	if (plan.error) return { path: plan.path, wrote: false, error: plan.error };
 	if (!plan.changed) return { path: plan.path, wrote: false };
 	try {
