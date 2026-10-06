@@ -70,7 +70,7 @@ test("loadMcpServerCatalog reports an error for an invalid schema version", asyn
 
 test("planMcpConfiguration marks a plan as changed with all additions when no file exists", async () => {
 	await withAgentDirectory(async ({ agentDirectory }) => {
-		const plan = planMcpConfiguration(catalog, { agentDirectory });
+		const plan = planMcpConfiguration(catalog, agentDirectory);
 		assert.equal(plan.changed, true);
 		assert.deepEqual(plan.additions.sort(), ["bar", "foo"]);
 		assert.deepEqual(plan.replacements, []);
@@ -86,7 +86,7 @@ test("planMcpConfiguration is a noop when existing definitions already match the
 			"utf8",
 		);
 
-		const plan = planMcpConfiguration(catalog, { agentDirectory });
+		const plan = planMcpConfiguration(catalog, agentDirectory);
 		assert.equal(plan.changed, false);
 		assert.deepEqual(plan.additions, []);
 		assert.deepEqual(plan.replacements, []);
@@ -105,7 +105,7 @@ test("planMcpConfiguration reports replacements when existing definitions drift 
 			"utf8",
 		);
 
-		const plan = planMcpConfiguration(catalog, { agentDirectory });
+		const plan = planMcpConfiguration(catalog, agentDirectory);
 		assert.equal(plan.changed, true);
 		assert.deepEqual(plan.additions, ["bar"]);
 		assert.equal(plan.replacements.length, 1);
@@ -131,13 +131,11 @@ test("an entry with extra keys plus the catalog keys is aligned and left untouch
 		};
 		await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
 
-		const plan = planMcpConfiguration(exposureCatalog, { agentDirectory });
+		const plan = planMcpConfiguration(exposureCatalog, agentDirectory);
 		assert.equal(plan.changed, false);
 		assert.deepEqual(plan.replacements, []);
 
-		const outcome = applyMcpConfiguration(plan, exposureCatalog, {
-			agentDirectory,
-		});
+		const outcome = applyMcpConfiguration(plan, exposureCatalog, agentDirectory);
 		assert.deepEqual(outcome, {
 			status: "applied",
 			path: configPath,
@@ -169,14 +167,12 @@ test("an entry with a different exposure is reported and fixed while its extra k
 			"utf8",
 		);
 
-		const plan = planMcpConfiguration(exposureCatalog, { agentDirectory });
+		const plan = planMcpConfiguration(exposureCatalog, agentDirectory);
 		assert.equal(plan.changed, true);
 		assert.equal(plan.replacements.length, 1);
 		assert.deepEqual(plan.replacements[0].keys, ["exposure"]);
 
-		const outcome = applyMcpConfiguration(plan, exposureCatalog, {
-			agentDirectory,
-		});
+		const outcome = applyMcpConfiguration(plan, exposureCatalog, agentDirectory);
 		assert.equal(outcome.status, "applied");
 		assert.deepEqual(JSON.parse(await readFile(configPath, "utf8")), {
 			mcpServers: {
@@ -195,7 +191,7 @@ test("planMcpConfiguration reports an error for corrupt existing configuration",
 	await withAgentDirectory(async ({ agentDirectory }) => {
 		await writeFile(join(agentDirectory, "mcp.json"), "{ not valid json", "utf8");
 
-		const plan = planMcpConfiguration(catalog, { agentDirectory });
+		const plan = planMcpConfiguration(catalog, agentDirectory);
 		assert.equal(plan.changed, false);
 		assert.match(plan.error, /Refusing to overwrite malformed JSON/);
 	});
@@ -209,8 +205,8 @@ test("applyMcpConfiguration writes the merged configuration atomically on the ha
 			"utf8",
 		);
 
-		const plan = planMcpConfiguration(catalog, { agentDirectory });
-		const outcome = applyMcpConfiguration(plan, catalog, { agentDirectory });
+		const plan = planMcpConfiguration(catalog, agentDirectory);
+		const outcome = applyMcpConfiguration(plan, catalog, agentDirectory);
 
 		assert.equal(outcome.status, "applied");
 		assert.equal(outcome.path, join(agentDirectory, "mcp.json"));
@@ -230,8 +226,8 @@ test("applyMcpConfiguration keeps a 0600 mcp.json at 0600", async () => {
 		await writeFile(path, "{}\n", { encoding: "utf8", mode: 0o600 });
 		chmodSync(path, 0o600);
 
-		const plan = planMcpConfiguration(catalog, { agentDirectory });
-		const outcome = applyMcpConfiguration(plan, catalog, { agentDirectory });
+		const plan = planMcpConfiguration(catalog, agentDirectory);
+		const outcome = applyMcpConfiguration(plan, catalog, agentDirectory);
 
 		assert.equal(outcome.status, "applied");
 		assert.equal(statSync(path).mode & 0o777, 0o600);
@@ -245,8 +241,8 @@ test("applyMcpConfiguration writes through a symlinked mcp.json and keeps the li
 		const linkPath = join(agentDirectory, "mcp.json");
 		symlinkSync(realPath, linkPath);
 
-		const plan = planMcpConfiguration(catalog, { agentDirectory });
-		const outcome = applyMcpConfiguration(plan, catalog, { agentDirectory });
+		const plan = planMcpConfiguration(catalog, agentDirectory);
+		const outcome = applyMcpConfiguration(plan, catalog, agentDirectory);
 
 		assert.equal(outcome.status, "applied");
 		assert.ok(lstatSync(linkPath).isSymbolicLink());
@@ -269,7 +265,7 @@ test("applyMcpConfiguration refuses when a target changes concurrently after the
 			"utf8",
 		);
 
-		const plan = planMcpConfiguration(catalog, { agentDirectory });
+		const plan = planMcpConfiguration(catalog, agentDirectory);
 
 		await writeFile(
 			configPath,
@@ -286,7 +282,7 @@ test("applyMcpConfiguration refuses when a target changes concurrently after the
 			"utf8",
 		);
 
-		const outcome = applyMcpConfiguration(plan, catalog, { agentDirectory });
+		const outcome = applyMcpConfiguration(plan, catalog, agentDirectory);
 
 		assert.equal(outcome.status, "refused-concurrent-change");
 		assert.deepEqual(outcome.changedTargets, ["foo"]);
@@ -310,11 +306,11 @@ test("applyMcpConfiguration reports reread-failed when the config is corrupted b
 			"utf8",
 		);
 
-		const plan = planMcpConfiguration(catalog, { agentDirectory });
+		const plan = planMcpConfiguration(catalog, agentDirectory);
 
 		await writeFile(configPath, "{ not valid json", "utf8");
 
-		const outcome = applyMcpConfiguration(plan, catalog, { agentDirectory });
+		const outcome = applyMcpConfiguration(plan, catalog, agentDirectory);
 
 		assert.equal(outcome.status, "reread-failed");
 		assert.match(outcome.error, /Refusing to overwrite malformed JSON/);
@@ -333,7 +329,7 @@ test("applyMcpConfiguration refuses when a previewed server is deleted before ap
 			"utf8",
 		);
 
-		const plan = planMcpConfiguration(catalog, { agentDirectory });
+		const plan = planMcpConfiguration(catalog, agentDirectory);
 
 		await writeFile(
 			configPath,
@@ -341,7 +337,7 @@ test("applyMcpConfiguration refuses when a previewed server is deleted before ap
 			"utf8",
 		);
 
-		const outcome = applyMcpConfiguration(plan, catalog, { agentDirectory });
+		const outcome = applyMcpConfiguration(plan, catalog, agentDirectory);
 
 		assert.equal(outcome.status, "refused-concurrent-change");
 		assert.deepEqual(outcome.changedTargets, ["foo"]);
@@ -358,13 +354,13 @@ test("applyMcpConfiguration is a no-op that leaves the file untouched when the p
 			"utf8",
 		);
 
-		const plan = planMcpConfiguration(catalog, { agentDirectory });
+		const plan = planMcpConfiguration(catalog, agentDirectory);
 		assert.equal(plan.changed, false);
 
 		const before = await readFile(configPath, "utf8");
 		const statBefore = statSync(configPath).mtimeMs;
 
-		const outcome = applyMcpConfiguration(plan, catalog, { agentDirectory });
+		const outcome = applyMcpConfiguration(plan, catalog, agentDirectory);
 
 		assert.equal(outcome.status, "applied");
 		assert.equal(outcome.path, configPath);
@@ -384,11 +380,11 @@ test("applyMcpConfiguration reports write-failed and leaves no temp file when th
 			"utf8",
 		);
 
-		const plan = planMcpConfiguration(catalog, { agentDirectory });
+		const plan = planMcpConfiguration(catalog, agentDirectory);
 
 		chmodSync(agentDirectory, 0o500);
 		try {
-			const outcome = applyMcpConfiguration(plan, catalog, { agentDirectory });
+			const outcome = applyMcpConfiguration(plan, catalog, agentDirectory);
 
 			assert.equal(outcome.status, "write-failed");
 			assert.ok(typeof outcome.error === "string" && outcome.error.length > 0);
@@ -412,7 +408,7 @@ test("applyMcpConfiguration write-failed reports a freshly re-read latestPlan, n
 			"utf8",
 		);
 
-		const plan = planMcpConfiguration(catalog, { agentDirectory });
+		const plan = planMcpConfiguration(catalog, agentDirectory);
 		assert.equal(plan.mergedConfig.telemetry.sampleRate, undefined);
 
 		// Mutate an untracked top-level field after the preview plan was built.
@@ -430,7 +426,7 @@ test("applyMcpConfiguration write-failed reports a freshly re-read latestPlan, n
 
 		chmodSync(agentDirectory, 0o500);
 		try {
-			const outcome = applyMcpConfiguration(plan, catalog, { agentDirectory });
+			const outcome = applyMcpConfiguration(plan, catalog, agentDirectory);
 
 			assert.equal(outcome.status, "write-failed");
 			assert.ok(outcome.latestPlan);
@@ -451,7 +447,7 @@ test("manualMcpConfigurationInstructions renders the catalog and flags same-name
 			`${JSON.stringify({ mcpServers: { foo: { url: "https://example.test/drifted" } } }, null, 2)}\n`,
 			"utf8",
 		);
-		const plan = planMcpConfiguration(catalog, { agentDirectory });
+		const plan = planMcpConfiguration(catalog, agentDirectory);
 
 		const instructions = manualMcpConfigurationInstructions(plan, catalog);
 
@@ -467,7 +463,7 @@ test("manualMcpConfigurationInstructions renders the catalog and flags same-name
 
 test("manualMcpConfigurationInstructions omits the conflict warning when there are no replacements", async () => {
 	await withAgentDirectory(async ({ agentDirectory }) => {
-		const plan = planMcpConfiguration(catalog, { agentDirectory });
+		const plan = planMcpConfiguration(catalog, agentDirectory);
 
 		const instructions = manualMcpConfigurationInstructions(plan, catalog);
 

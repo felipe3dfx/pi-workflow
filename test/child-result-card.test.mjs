@@ -13,7 +13,8 @@ import {
 	answerCard,
 	registerChildResultCards,
 } from "../extensions/child-result-card.ts";
-import { capabilities, replaceSelection } from "../extensions/configure.ts";
+import { capabilities } from "../extensions/configure.ts";
+import { replaceSelection } from "../extensions/shell.ts";
 
 replaceSelection({
 	schemaVersion: 1,

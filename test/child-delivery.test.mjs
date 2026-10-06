@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { capabilities, replaceSelection } from "../extensions/configure.ts";
+import { capabilities } from "../extensions/configure.ts";
+import { replaceSelection } from "../extensions/shell.ts";
 import { recordingCore } from "./support/fake-children.mjs";
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));

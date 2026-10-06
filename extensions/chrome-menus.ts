@@ -30,6 +30,12 @@ import {
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import { marginFor } from "./chrome-editor.ts";
+import {
+	createPatchSet,
+	type PatchMethod,
+	type PatchTarget,
+} from "./chrome-patch.ts";
+import { theme } from "./visual-language.ts";
 
 export type MenuTheme = Pick<Theme, "fg" | "bg" | "bold">;
 export type Hint = [key: string, action: string];
@@ -43,19 +49,13 @@ export type HintSpan = {
 export const NATIVE: unique symbol = Symbol.for(
 	"pi-workflow:chrome-menus:native",
 );
-const THEME_KEY = Symbol.for("@earendil-works/pi-coding-agent:theme");
-const ORIGINAL = Symbol.for("pi-workflow:chrome-menus:original");
-const INHERITED = Symbol.for("pi-workflow:chrome-menus:inherited");
 const RESET = "\x1b[0m";
 const PRIMARY_COLUMN_GAP = 2;
 const MIN_DESCRIPTION_WIDTH = 10;
 const hintGap = "  |  ";
 const close = " [×] ";
 
-type Method = ((...args: never[]) => unknown) & {
-	[ORIGINAL]?: Method;
-	[INHERITED]?: boolean;
-};
+type Method = PatchMethod;
 
 type SelectListState = {
 	theme: SelectListTheme & { [NATIVE]?: true };
@@ -82,13 +82,6 @@ type SettingsListState = {
 		endIndex: number;
 	};
 };
-
-function theme() {
-	const current = (globalThis as Record<symbol, Theme | undefined>)[THEME_KEY];
-	if (!current)
-		throw new Error("Theme not initialized. Call initTheme() first.");
-	return current;
-}
 
 export function fit(line: string, width: number) {
 	return visibleWidth(line) > width ? truncateToWidth(line, width, "") : line;
@@ -765,12 +758,7 @@ const selectors: [object, Dress][] = [
 	[ThinkingSelectorComponent.prototype, {}],
 ];
 
-const targets: {
-	proto: object;
-	name: string;
-	create: (original: Method) => Method;
-	replaces: boolean;
-}[] = [
+const targets: PatchTarget[] = [
 	{
 		proto: SelectList.prototype,
 		name: "render",
@@ -825,35 +813,12 @@ const targets: {
 	]),
 ];
 
-function slot(proto: object) {
-	return proto as Record<string, Method | undefined>;
-}
-
-function pristine(method: Method, name: string) {
-	return Function.prototype.toString.call(method).startsWith(`${name}(`);
-}
+const patchSet = createPatchSet("chrome-menus", targets);
 
 export function patchMenus() {
-	for (const { proto, name, create, replaces } of targets) {
-		const current = slot(proto)[name];
-		if (!current) continue;
-		const original = current[ORIGINAL] ?? current;
-		if (replaces && !pristine(original, name)) continue;
-		const inherited = current[ORIGINAL]
-			? current[INHERITED]
-			: !Object.hasOwn(proto, name);
-		const patched = create(original);
-		patched[ORIGINAL] = original;
-		patched[INHERITED] = inherited;
-		slot(proto)[name] = patched;
-	}
+	patchSet.patch();
 }
 
 export function restoreMenus() {
-	for (const { proto, name } of targets) {
-		const current = slot(proto)[name];
-		if (!current?.[ORIGINAL]) continue;
-		if (current[INHERITED]) delete slot(proto)[name];
-		else slot(proto)[name] = current[ORIGINAL];
-	}
+	patchSet.restore();
 }

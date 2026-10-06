@@ -8,7 +8,6 @@ import {
 	keyText,
 	type MarkdownTransformContext,
 	type MarkdownTransformer,
-	type Theme,
 	ToolExecutionComponent,
 	UserMessageComponent,
 } from "@earendil-works/pi-coding-agent";
@@ -28,12 +27,15 @@ import {
 } from "@earendil-works/pi-tui";
 
 import { markThought, patchChat, restoreChat } from "./chrome-groups.ts";
-import { sanitizeTaskText } from "./todo-header.ts";
+import {
+	createPatchSet,
+	type PatchMethod,
+	type PatchTarget,
+} from "./chrome-patch.ts";
+import { terminalSafeLine } from "./terminal-safe-text.ts";
+import { theme } from "./visual-language.ts";
 
-const THEME_KEY = Symbol.for("@earendil-works/pi-coding-agent:theme");
-const ORIGINAL = Symbol.for("pi-workflow:chrome-messages:original");
 const SHARED = Symbol.for("pi-workflow:chrome-messages:shared");
-const INHERITED = Symbol.for("pi-workflow:chrome-messages:inherited");
 const piDefaultHiddenLabel = "Thinking...";
 const thinkingTimeType = "pi-workflow-thinking-time";
 const minTitleWidth = 4;
@@ -48,10 +50,7 @@ const foregroundCodes = new RegExp(
 	"g",
 );
 
-type Method = ((...args: never[]) => unknown) & {
-	[ORIGINAL]?: Method;
-	[INHERITED]?: boolean;
-};
+type Method = PatchMethod;
 type Frame = { first: string; rest: string; stamp?: string; trail?: number };
 type ThinkingTime = { timestamp: number; runIndex: number; ms: number };
 type HeaderParts = {
@@ -94,13 +93,6 @@ slots[SHARED] ??= { userStamps: new WeakMap(), thinkingTimes: new Map() };
 const shared = slots[SHARED];
 const { userStamps, thinkingTimes } = shared;
 let pendingUserStamp: number | undefined;
-
-function theme() {
-	const current = (globalThis as Record<symbol, Theme | undefined>)[THEME_KEY];
-	if (!current)
-		throw new Error("Theme not initialized. Call initTheme() first.");
-	return current;
-}
 
 export function edgeFor(edge: number, outer: number) {
 	return Math.min(edge, Math.max(0, Math.floor((outer - minTextWidth) / 2)));
@@ -250,7 +242,7 @@ export function thinkingSteps(blocks: string[]) {
 
 function thinkingHeader(parts: HeaderParts, width: number) {
 	const t = theme();
-	const label = sanitizeTaskText(parts.label);
+	const label = terminalSafeLine(parts.label);
 	const duration = parts.duration?.();
 	const meta =
 		duration === undefined ? "" : ` for ${thoughtDuration(duration)}`;
@@ -258,7 +250,7 @@ function thinkingHeader(parts: HeaderParts, width: number) {
 	let line = `${t.fg("dim", "◆")} ${t.bold(t.fg("muted", label))}${meta ? t.fg("dim", meta) : ""}`;
 	const room = width - used - 3;
 	if (parts.title && room >= minTitleWidth) {
-		const full = sanitizeTaskText(parts.title);
+		const full = terminalSafeLine(parts.title);
 		const title =
 			visibleWidth(full) > room
 				? `${sliceByColumn(full, 0, room - 1, true)}…`
@@ -267,7 +259,7 @@ function thinkingHeader(parts: HeaderParts, width: number) {
 		used += 3 + visibleWidth(title);
 	}
 	const key = parts.hint?.() ? keyText("app.thinking.toggle") : "";
-	const hint = key ? `  (${sanitizeTaskText(key)} to expand)` : "";
+	const hint = key ? `  (${terminalSafeLine(key)} to expand)` : "";
 	if (hint && used + visibleWidth(hint) <= width) line += t.fg("dim", hint);
 	return line;
 }
@@ -438,13 +430,12 @@ function updateContent(
 			const latest = shared.latestCollapsed;
 			if (hidden && (!latest || message.timestamp >= latest.at))
 				shared.latestCollapsed = { owner: this, runIndex, at: message.timestamp };
-			const owner = this;
 			const thinkingComponent = hidden
 				? new ThinkingHeader(
 						{
 							...header,
 							hint: () =>
-								shared.latestCollapsed?.owner === owner &&
+								shared.latestCollapsed?.owner === this &&
 								shared.latestCollapsed.runIndex === runIndex,
 						},
 						inset,
@@ -625,12 +616,7 @@ function wrapRowMouse(original: Method) {
 	} as Method;
 }
 
-const targets: {
-	proto: object;
-	name: string;
-	create: (original: Method) => Method;
-	replaces: boolean;
-}[] = [
+const targets: PatchTarget[] = [
 	{
 		proto: AssistantMessageComponent.prototype,
 		name: "updateContent",
@@ -671,37 +657,14 @@ const targets: {
 	]),
 ];
 
-function slot(proto: object) {
-	return proto as Record<string, Method | undefined>;
-}
-
-function pristine(method: Method, name: string) {
-	return Function.prototype.toString.call(method).startsWith(`${name}(`);
-}
+const patchSet = createPatchSet("chrome-messages", targets);
 
 export function patchMessages() {
-	for (const { proto, name, create, replaces } of targets) {
-		const current = slot(proto)[name];
-		if (!current) continue;
-		const original = current[ORIGINAL] ?? current;
-		if (replaces && !pristine(original, name)) continue;
-		const inherited = current[ORIGINAL]
-			? current[INHERITED]
-			: !Object.hasOwn(proto, name);
-		const patched = create(original);
-		patched[ORIGINAL] = original;
-		patched[INHERITED] = inherited;
-		slot(proto)[name] = patched;
-	}
+	patchSet.patch();
 }
 
 export function restoreMessages() {
-	for (const { proto, name } of targets) {
-		const current = slot(proto)[name];
-		if (!current?.[ORIGINAL]) continue;
-		if (current[INHERITED]) delete slot(proto)[name];
-		else slot(proto)[name] = current[ORIGINAL];
-	}
+	patchSet.restore();
 	restoreChat();
 	thinkingTimes.clear();
 	shared.latestCollapsed = undefined;

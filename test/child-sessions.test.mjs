@@ -36,7 +36,8 @@ import {
 
 import { createAskParentTool } from "../extensions/child-sessions.ts";
 import { compactToolRenderers } from "../extensions/compact-tools.ts";
-import { capabilities, replaceSelection } from "../extensions/configure.ts";
+import { capabilities } from "../extensions/configure.ts";
+import { replaceSelection } from "../extensions/shell.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 import { fakeChildren, userEntry } from "./support/fake-children.mjs";
 import { classifierRegistry } from "./support/fake-jev.mjs";
@@ -191,7 +192,7 @@ function loadExtension({
 						? { version: "2.0.0" }
 						: {},
 			},
-			modelProfiles: { path: join(agentDir, "pi-workflow-models.json") },
+			agentDirectory: agentDir,
 			childSessions: { create, schedule, refresh },
 		},
 	);

@@ -15,11 +15,10 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { FooterHints } from "./chrome.ts";
 import { marginFor } from "./chrome-editor.ts";
 import { hidden } from "./compact-tools.ts";
-import { claim, held } from "./configure.ts";
+import { seated } from "./shell.ts";
 import { closeChildrenView } from "./children-view.ts";
 import { offerTool } from "./tool-offer.ts";
-
-const questionOverlay = claim("operator-questions", "overlay");
+import { terminalSafeBlock, terminalSafeLine } from "./terminal-safe-text.ts";
 
 interface AskUserOption {
 	label: string;
@@ -37,15 +36,12 @@ const RESET = "\x1b[0m";
 const padLeft = 3;
 const padRight = 2;
 
-const CONTROL_OR_BIDI = /[\p{Cc}\p{Bidi_Control}]/gu;
-
 function normalizeSingleLine(text: string): string {
-	return text.replace(/\r\n/g, " ").replace(CONTROL_OR_BIDI, " ");
+	return terminalSafeLine(text.replace(/\r\n/g, " "));
 }
 
 function normalizeQuestionText(text: string): string {
-	const withLf = text.replace(/\r\n?/g, "\n");
-	return withLf.replace(CONTROL_OR_BIDI, (ch) => (ch === "\n" ? ch : " "));
+	return terminalSafeBlock(text.replace(/\r\n?/g, "\n"));
 }
 
 function printableChar(data: string): string | undefined {
@@ -363,7 +359,7 @@ export function createAskUserChoiceTool(hints: FooterHints): ToolDefinition<type
 		executionMode: "sequential",
 		...askRenderers(),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			if (!held(questionOverlay)) {
+			if (!seated("operator-questions", "overlay")) {
 				return {
 					content: [
 						{
@@ -401,7 +397,7 @@ export function createAskUserQuestionTool(hints: FooterHints): ToolDefinition<ty
 		executionMode: "sequential",
 		...askRenderers(),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			if (!held(questionOverlay)) {
+			if (!seated("operator-questions", "overlay")) {
 				return {
 					content: [
 						{
@@ -421,7 +417,7 @@ export function createAskUserQuestionTool(hints: FooterHints): ToolDefinition<ty
 }
 
 export function syncAskUserTools(pi: ExtensionAPI, hints: FooterHints) {
-	const on = held(questionOverlay);
+	const on = seated("operator-questions", "overlay");
 	offerTool(pi, createAskUserChoiceTool(hints), on);
 	offerTool(pi, createAskUserQuestionTool(hints), on);
 }

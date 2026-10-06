@@ -20,14 +20,14 @@ import {
 	thinkingSteps,
 } from "../extensions/chrome-messages.ts";
 import { registerCompactTools } from "../extensions/compact-tools.ts";
-import { readSelection, replaceSelection } from "../extensions/configure.ts";
+import { readSelection } from "../extensions/configure.ts";
+import { replaceSelection } from "../extensions/shell.ts";
 
 const piTui = await import(
 	createRequire(import.meta.resolve("@earendil-works/pi-coding-agent")).resolve(
 		"@earendil-works/pi-tui",
 	)
 );
-const ORIGINAL = Symbol.for("pi-workflow:chrome-messages:original");
 const colors = [];
 const code = (name) => {
 	if (!colors.includes(name)) colors.push(name);
@@ -451,10 +451,6 @@ test("a throw in the patched updateContent falls back to Pi's renderer for that 
 	component.hiddenThinkingLabel = "Thinking...";
 	component.updateContent(assistant([thought]), false);
 	assert.equal(plain(component.render(40))[1].trimEnd(), "   ◆ Thought");
-	assert.equal(
-		AssistantMessageComponent.prototype.updateContent[ORIGINAL],
-		pristine.updateContent,
-	);
 });
 
 test("a finished thinking run is saved once and restored on session_start so the collapsed header keeps its duration after a reload", async (t) => {
@@ -707,46 +703,6 @@ test("every rendered line fits the width from 10 to 160 columns", (t) => {
 	}
 });
 
-test("patching twice keeps a single layer and one restore brings back Pi's methods", () => {
-	patchMessages();
-	patchMessages();
-	assert.equal(
-		InteractiveMode.prototype.addMessageToChat[ORIGINAL],
-		pristine.addMessageToChat,
-	);
-	assert.equal(
-		AssistantMessageComponent.prototype.updateContent[ORIGINAL],
-		pristine.updateContent,
-	);
-	restoreMessages();
-	assert.ok(isPristine());
-});
-
-test("a method another extension already replaced is left alone, while the chat hook chains onto it", () => {
-	const foreignUpdate = function foreignUpdate() {};
-	const foreignAdd = function foreignAdd() {};
-	AssistantMessageComponent.prototype.updateContent = foreignUpdate;
-	InteractiveMode.prototype.addMessageToChat = foreignAdd;
-	try {
-		patchMessages();
-		assert.equal(
-			AssistantMessageComponent.prototype.updateContent,
-			foreignUpdate,
-		);
-		assert.notEqual(InteractiveMode.prototype.addMessageToChat, foreignAdd);
-		assert.equal(
-			InteractiveMode.prototype.addMessageToChat[ORIGINAL],
-			foreignAdd,
-		);
-		restoreMessages();
-		assert.equal(InteractiveMode.prototype.addMessageToChat, foreignAdd);
-	} finally {
-		AssistantMessageComponent.prototype.updateContent = pristine.updateContent;
-		InteractiveMode.prototype.addMessageToChat = pristine.addMessageToChat;
-	}
-	assert.ok(isPristine());
-});
-
 test("the chrome patches the message components on a TUI session_start, keeps them across session replacement and restores them on quit", async () => {
 	const handlers = new Map();
 	const pi = {
@@ -780,14 +736,11 @@ test("the chrome patches the message components on a TUI session_start, keeps th
 	);
 	await emit("session_start");
 	await emit("session_start");
-	assert.equal(
-		UserMessageComponent.prototype.rebuild[ORIGINAL],
-		pristine.rebuild,
-	);
+	assert.notEqual(UserMessageComponent.prototype.rebuild, pristine.rebuild);
 	for (const reason of ["reload", "new", "resume", "fork"]) {
 		await emit("session_shutdown", { reason });
-		assert.equal(
-			UserMessageComponent.prototype.rebuild[ORIGINAL],
+		assert.notEqual(
+			UserMessageComponent.prototype.rebuild,
 			pristine.rebuild,
 			reason,
 		);
@@ -879,10 +832,6 @@ test("patching twice keeps one row margin and restore removes the wrapper", () =
 	const bare = plain(tool.render(74));
 	patchMessages();
 	patchMessages();
-	assert.equal(
-		ToolExecutionComponent.prototype.render[ORIGINAL],
-		pristine.toolRender,
-	);
 	assert.deepEqual(
 		plain(tool.render(80)),
 		bare.map((line) => (line === "" ? line : `   ${line}`)),

@@ -11,7 +11,7 @@ import {
 	symlink,
 	writeFile,
 } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -310,7 +310,7 @@ test("an invalid, schema version 1, or unreadable model profiles file is refused
 			);
 
 		await writeFile(path, "{ not json", "utf8");
-		const invalid = await decide(createModelProfiles({ path }));
+		const invalid = await decide(createModelProfiles(dirname(path)));
 		assertRefused(invalid, /Invalid model profiles/);
 		assert.ok(invalid.reason.includes(path));
 
@@ -325,20 +325,20 @@ test("an invalid, schema version 1, or unreadable model profiles file is refused
 			"utf8",
 		);
 		assertRefused(
-			await decide(createModelProfiles({ path })),
+			await decide(createModelProfiles(dirname(path))),
 			/schema version 1.*recreate the profiles/,
 		);
 
 		await rm(path);
 		await mkdir(path);
-		assertRefused(await decide(createModelProfiles({ path })), /Unable to read/);
+		assertRefused(await decide(createModelProfiles(dirname(path))), /Unable to read/);
 	});
 });
 
 test("a model profiles file created in this turn is not read and is not a refusal", async () => {
 	await withWorkspace(async ({ dir, worktree }) => {
 		const path = join(dir, "pi-workflow-models.json");
-		const modelProfiles = createModelProfiles({ path });
+		const modelProfiles = createModelProfiles(dirname(path));
 		await writeFile(
 			path,
 			JSON.stringify({
@@ -446,7 +446,7 @@ test("a request refused by a local check never asks Jev", async () => {
 			[{ role: "wizard" }, {}, /unknown role/],
 			[
 				{ role: "explore" },
-				{ modelProfiles: createModelProfiles({ path: listsPath }) },
+				{ modelProfiles: createModelProfiles(dirname(listsPath)) },
 				/Invalid model profiles/,
 			],
 			[{ role: "explore", worktree: join(dir, "missing") }, {}, /worktree/],

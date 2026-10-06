@@ -4,7 +4,8 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { capabilities, replaceSelection } from "../extensions/configure.ts";
+import { capabilities } from "../extensions/configure.ts";
+import { replaceSelection } from "../extensions/shell.ts";
 import { createModelProfiles } from "../extensions/model-profiles.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 
@@ -52,7 +53,7 @@ test("the loader reads a valid file with optional specialists", async () => {
 	await withConfigDirectory(async ({ path }) => {
 		await writeJson(path, valid);
 
-		assert.deepEqual(createModelProfiles({ path }).load(), {
+		assert.deepEqual(createModelProfiles(dirname(path)).load(), {
 			status: "loaded",
 			profiles: valid,
 		});
@@ -61,7 +62,7 @@ test("the loader reads a valid file with optional specialists", async () => {
 
 test("the loader treats a missing file as absent", async () => {
 	await withConfigDirectory(async ({ path }) => {
-		assert.deepEqual(createModelProfiles({ path }).load(), {
+		assert.deepEqual(createModelProfiles(dirname(path)).load(), {
 			status: "absent",
 		});
 	});
@@ -114,7 +115,7 @@ test("an invalid file is a refusal, never an absent file", async () => {
 		];
 		for (const content of invalid) {
 			await writeJson(path, content);
-			const result = createModelProfiles({ path }).load();
+			const result = createModelProfiles(dirname(path)).load();
 			assert.equal(result.status, "refused", JSON.stringify(content));
 			assert.match(result.reason, /Invalid model profiles/);
 			assert.ok(result.reason.includes(path));
@@ -124,7 +125,7 @@ test("an invalid file is a refusal, never an absent file", async () => {
 			profiles: { ["a".repeat(64)]: {} },
 			active: "a".repeat(64),
 		});
-		assert.equal(createModelProfiles({ path }).load().status, "loaded");
+		assert.equal(createModelProfiles(dirname(path)).load().status, "loaded");
 	});
 });
 
@@ -137,7 +138,7 @@ test("schema version 1 model lists are refused with a message to recreate the pr
 			taskTypes: {},
 		});
 
-		const result = createModelProfiles({ path }).load();
+		const result = createModelProfiles(dirname(path)).load();
 
 		assert.equal(result.status, "refused");
 		assert.match(result.reason, /schema version 1/);
@@ -148,13 +149,13 @@ test("schema version 1 model lists are refused with a message to recreate the pr
 test("an unreadable file or a dangling symlink is a refusal, not an absent file", async () => {
 	await withConfigDirectory(async ({ path }) => {
 		await mkdir(path, { recursive: true });
-		const directory = createModelProfiles({ path }).load();
+		const directory = createModelProfiles(dirname(path)).load();
 		assert.equal(directory.status, "refused");
 		assert.match(directory.reason, /Unable to read/);
 
 		await rm(path, { recursive: true });
 		await symlink(join(dirname(path), "missing-target.json"), path);
-		const dangling = createModelProfiles({ path }).load();
+		const dangling = createModelProfiles(dirname(path)).load();
 		assert.equal(dangling.status, "refused");
 		assert.match(dangling.reason, /Unable to read/);
 	});
@@ -163,11 +164,11 @@ test("an unreadable file or a dangling symlink is a refusal, not an absent file"
 test("a file changed after loading applies only after /reload", async () => {
 	await withConfigDirectory(async ({ path }) => {
 		await writeJson(path, valid);
-		const profiles = createModelProfiles({ path });
+		const profiles = createModelProfiles(dirname(path));
 		await writeFile(path, "{ not json", "utf8");
 
 		assert.deepEqual(profiles.load(), { status: "loaded", profiles: valid });
-		assert.equal(createModelProfiles({ path }).load().status, "refused");
+		assert.equal(createModelProfiles(dirname(path)).load().status, "refused");
 	});
 });
 
@@ -184,7 +185,7 @@ function extensionCommands(path) {
 			registerToolRenderer: () => {},
 			registerProvider: () => {},
 		},
-		{ modelProfiles: { path } },
+		{ agentDirectory: dirname(path) },
 	);
 	return commands;
 }

@@ -7,7 +7,8 @@ import { join } from "node:path";
 import { setImmediate } from "node:timers";
 
 import { createChildLauncher } from "../extensions/child-launcher.ts";
-import { capabilities, replaceSelection } from "../extensions/configure.ts";
+import { capabilities } from "../extensions/configure.ts";
+import { replaceSelection } from "../extensions/shell.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 import { classifierRegistry } from "./support/fake-jev.mjs";
 import { turnJevRoutingOn } from "./support/jev-routing.mjs";
@@ -103,7 +104,7 @@ async function withWorkspace(run) {
 	}
 }
 
-function loadExtension({ legacy = false, profilesPath }) {
+function loadExtension({ legacy = false, agentDirectory }) {
 	const handlers = new Map();
 	const tools = [];
 	const notifications = [];
@@ -142,7 +143,7 @@ function loadExtension({ legacy = false, profilesPath }) {
 						? { version: "2.0.0" }
 						: {},
 			},
-			modelProfiles: { path: profilesPath },
+			agentDirectory,
 		},
 	);
 	const fire = async (event, payload = {}, ctx = {}) => {
@@ -619,7 +620,7 @@ test("the parent registers the gate with spawn_child only when spawn tools are a
 	await withWorkspace(async ({ worktree }) => {
 		const jev = fakeJev("explorer");
 		const allowed = loadExtension({
-			profilesPath: join(worktree, "missing-profiles.json"),
+			agentDirectory: worktree,
 		});
 		const session = {
 			mode: "print",
@@ -664,7 +665,7 @@ test("the parent registers the gate with spawn_child only when spawn tools are a
 
 		const blocked = loadExtension({
 			legacy: true,
-			profilesPath: join(worktree, "missing-profiles.json"),
+			agentDirectory: worktree,
 		});
 		await blocked.fire("session_start", {}, { ...session, ui: blocked.ui });
 		assert.equal(blocked.tools.some((tool) => tool.name === "spawn_child"), false);
@@ -1018,7 +1019,7 @@ test("Launch blocked is not kept: the next gated tool and the next launch for th
 
 async function seatedExtension(worktree, message) {
 	const extension = loadExtension({
-		profilesPath: join(worktree, "missing-profiles.json"),
+		agentDirectory: worktree,
 	});
 	replaceSelection({
 		schemaVersion: 1,

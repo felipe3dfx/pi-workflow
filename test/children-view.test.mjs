@@ -10,7 +10,8 @@ import {
 } from "@earendil-works/pi-tui";
 
 import { createChildrenViews } from "../extensions/children-view.ts";
-import { capabilities, replaceSelection } from "../extensions/configure.ts";
+import { capabilities } from "../extensions/configure.ts";
+import { replaceSelection } from "../extensions/shell.ts";
 
 replaceSelection({
 	schemaVersion: 1,

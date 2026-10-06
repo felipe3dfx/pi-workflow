@@ -26,7 +26,8 @@ import type { createChildLauncher } from "./child-launcher.ts";
 import { createChildCodeGraphTool } from "./codegraph-tool.ts";
 import { answerCard } from "./child-result-card.ts";
 import { hidden, outputText } from "./compact-tools.ts";
-import { claim, held } from "./configure.ts";
+import { type Schedule, scheduleTimer } from "./clock.ts";
+import { seated } from "./shell.ts";
 import {
 	type ChildResult,
 	childOutcome,
@@ -36,15 +37,13 @@ import {
 	resultParameters,
 } from "./child-projection.ts";
 import { shellOptions } from "./shell-settings.ts";
-import { sanitizeTaskText } from "./todo-header.ts";
+import { terminalSafeLine } from "./terminal-safe-text.ts";
 
 const packageVersion = (
 	JSON.parse(
 		readFileSync(new URL("../package.json", import.meta.url), "utf8"),
 	) as { version: string }
 ).version;
-
-export const childOverlay = claim("child-session", "overlay");
 
 interface ChildSpec {
 	cwd: string;
@@ -147,17 +146,9 @@ export interface ChildTrace {
 	version: string;
 }
 
-export type Schedule = (run: () => void, ms: number) => () => void;
-
 const runningLimit = 5;
 const stallMs = 4 * 60_000;
 const toolStallMs = 30 * 60_000;
-
-export const scheduleTimer: Schedule = (run, ms) => {
-	const timer = setTimeout(run, ms);
-	timer.unref();
-	return () => clearTimeout(timer);
-};
 
 function createWatch(schedule: Schedule, onStall: (reason: string) => void) {
 	const tools = new Map<string, string>();
@@ -196,7 +187,7 @@ function describeTool(name: string, args: unknown) {
 	const detail = Object.values(args ?? {}).find(
 		(value) => typeof value === "string",
 	);
-	return sanitizeTaskText(
+	return terminalSafeLine(
 		detail === undefined ? name : `${name} ${detail.split("\n")[0]}`,
 	);
 }
@@ -986,7 +977,7 @@ type Outcome = {
 const unseatedMessage = "Child session is not seated. Run /workflow:config.";
 
 function unseatedChild() {
-	if (held(childOverlay)) return undefined;
+	if (seated("child-session", "overlay")) return undefined;
 	return report([unseatedMessage], { status: "refused" });
 }
 
@@ -1303,7 +1294,7 @@ export function createChildQueryTools(
 			"Answer the question a child session is waiting on, naming the question number from its message. A reply to a question that is not waiting is refused.",
 		parameters: replyChildParameters,
 		async execute(_toolCallId, params) {
-			if (!held(childOverlay)) throw new Error(unseatedMessage);
+			if (!seated("child-session", "overlay")) throw new Error(unseatedMessage);
 			sessions.reply(params.id, params.question, params.answer);
 			return report([`Reply sent to child ${params.id}.`], {
 				id: params.id,

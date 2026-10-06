@@ -13,7 +13,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { capabilities, replaceSelection } from "../extensions/configure.ts";
+import { capabilities } from "../extensions/configure.ts";
+import { replaceSelection } from "../extensions/shell.ts";
 import { createChildCodeGraphTool } from "../extensions/codegraph-tool.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 

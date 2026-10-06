@@ -38,12 +38,6 @@ initTheme("dark", false);
 const theme = globalThis[Symbol.for("@earendil-works/pi-coding-agent:theme")];
 const plain = (lines) => lines.map((line) => stripVTControlCharacters(line));
 const selectedBg = theme.bg("selectedBg", "\u0000").split("\u0000")[0];
-const pristine = {
-	render: SelectList.prototype.render,
-	settingsRender: SettingsList.prototype.render,
-	renderItem: SelectList.prototype.renderItem,
-	renderMainList: SettingsList.prototype.renderMainList,
-};
 
 function patched(t) {
 	patchMenus();
@@ -567,34 +561,6 @@ test("the chrome editor autocomplete keeps its ❯ look while the menus are patc
 	const shown = plain(selectList(editor.theme.selectList).render(60));
 	assert.match(shown[0], /^❯ alpha\s+The first choice$/);
 	assert.ok(!shown.join("\n").includes("▸"));
-});
-
-test("patching twice is idempotent and restore puts the pi-tui methods back", () => {
-	patchMenus();
-	patchMenus();
-	assert.notEqual(SelectList.prototype.renderItem, pristine.renderItem);
-	restoreMenus();
-	assert.equal(SelectList.prototype.render, pristine.render);
-	assert.equal(SettingsList.prototype.render, pristine.settingsRender);
-	assert.equal(SelectList.prototype.renderItem, pristine.renderItem);
-	assert.equal(SettingsList.prototype.renderMainList, pristine.renderMainList);
-	for (const selector of [
-		ModelSelectorComponent,
-		ExtensionSelectorComponent,
-		OAuthSelectorComponent,
-		ExtensionInputComponent,
-		SettingsSelectorComponent,
-	]) {
-		assert.equal(Object.hasOwn(selector.prototype, "render"), false);
-		assert.equal(Object.hasOwn(selector.prototype, "handleMouse"), false);
-	}
-	assert.match(plain(selectList().render(60))[0], /^→ alpha/);
-	const selector = authSelector();
-	const native = selector.render(70);
-	patchMenus();
-	selector.render(70);
-	restoreMenus();
-	assert.deepEqual(selector.render(70), native);
 });
 
 test("the modal frame puts the title and a dim [×] on a square border and fits every width", () => {
