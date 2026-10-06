@@ -579,6 +579,13 @@ test("a Windows worktree root keeps the git guard where cygpath converts it", (t
 	assert.match(elsewhere.stdout, / x$/m);
 });
 
+test("the guard expands the command words only in the form bash 3.2 accepts under nounset", () => {
+	const prefix = guardPrefix("/worktree");
+
+	assert.match(prefix, /\$\{1\+"\$@"\}/);
+	assert.doesNotMatch(prefix.replace(/\$\{1\+"\$@"\}/g, ""), /"\$@"/);
+});
+
 test("a child's git read does not take the index lock", async (t) => {
 	routing(t, "off");
 	const dir = worktree(t);
