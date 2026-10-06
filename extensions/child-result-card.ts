@@ -23,7 +23,11 @@ import { childElapsed, spread } from "./children-box.ts";
 import { markCard } from "./chrome-groups.ts";
 import { assistantInset, edgeFor } from "./chrome-messages.ts";
 import { claim, held, paint } from "./configure.ts";
-import { childModelLine, resultFieldLines } from "./child-projection.ts";
+import {
+	childModelLine,
+	needsNoReason,
+	resultFieldLines,
+} from "./child-projection.ts";
 import { paintMessageStream } from "./shell.ts";
 import { sanitizeMultilineText, sanitizeTaskText } from "./todo-header.ts";
 
@@ -65,7 +69,7 @@ function reason(card: Card) {
 			.split("\n")
 			.map((line) => line.trim())
 			.find(Boolean);
-	if (card.verdict === "done" || card.verdict === "pass") return undefined;
+	if (needsNoReason(card.state, card.verdict)) return undefined;
 	return card.result?.reason;
 }
 

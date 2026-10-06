@@ -30,6 +30,7 @@ import { claim, held } from "./configure.ts";
 import {
 	type ChildResult,
 	childOutcome,
+	needsNoReason,
 	projectChild,
 	reportsResult,
 	resultParameters,
@@ -204,15 +205,7 @@ export function isWorking(state: ChildState) {
 	return state === "queued" || state === "running" || state === "waiting";
 }
 
-function quiet(record: ChildRecord) {
-	const verdict = record.result?.verdict;
-	return (
-		record.state === "completed" &&
-		(verdict === undefined || verdict === "done" || verdict === "pass")
-	);
-}
-
-export function childDetails(record: ChildRecord, now = Date.now()) {
+function childDetails(record: ChildRecord, now = Date.now()) {
 	const projected = projectChild(record, now);
 	return {
 		id: projected.id,
@@ -328,8 +321,7 @@ const createPiChildSession: ChildSessionFactory = async (spec) => {
 							async execute(_toolCallId: string, params: ChildResult) {
 								if (
 									!params.reason &&
-									params.verdict !== "done" &&
-									params.verdict !== "pass"
+									!needsNoReason("completed", params.verdict)
 								) {
 									throw new Error(
 										`A ${params.verdict} Verdict needs a reason.`,
@@ -400,10 +392,17 @@ const abortedBeforeLaunch = {
 	reason: "The call was aborted before the child launched.",
 };
 
+interface ChildMessage {
+	customType: "pi-workflow-child-result" | "pi-workflow-child-question";
+	content: string;
+	display: true;
+	details: unknown;
+}
+
 export function createChildSessions(options: {
 	create?: ChildSessionFactory;
-	deliver: () => void;
-	ask: (record: ChildRecord, question: string, number: number) => void;
+	send: (message: ChildMessage) => void;
+	idle: () => boolean;
 	trace: (entry: ChildTrace) => void;
 	report: (message: string) => void;
 	schedule?: Schedule;
@@ -567,7 +566,7 @@ export function createChildSessions(options: {
 		if (!deliver || consumed.has(record.id)) return;
 		pending.push({ ...record });
 		try {
-			options.deliver();
+			if (options.idle()) queueMicrotask(atBoundary);
 		} catch (error) {
 			warn(`Child ${record.id}: ${errorMessage(error)}`);
 		}
@@ -608,7 +607,17 @@ export function createChildSessions(options: {
 			trace(child);
 			changed();
 			try {
-				options.ask({ ...child.record }, question, number);
+				flush();
+				options.send({
+					customType: "pi-workflow-child-question",
+					content: `Child ${child.record.id} asks (question ${number}):\n\n${question}\n\nAnswer with reply_child with question ${number}.`,
+					display: true,
+					details: {
+						...childDetails(child.record),
+						question: number,
+						text: question,
+					},
+				});
 			} catch (error) {
 				answer(
 					child,
@@ -842,15 +851,33 @@ export function createChildSessions(options: {
 		pending = pending.filter((record) => record.id !== id);
 	}
 
-	function pendingResults() {
-		return [...pending];
+	function atBoundary() {
+		if (
+			pending.some(
+				(record) => !needsNoReason(record.state, record.result?.verdict),
+			) ||
+			![...children.values()].some((child) => isWorking(child.record.state))
+		)
+			flush();
 	}
 
-	function wakesParent() {
-		return (
-			pending.some((record) => !quiet(record)) ||
-			![...children.values()].some((child) => isWorking(child.record.state))
-		);
+	function flush() {
+		const results = [...pending];
+		if (results.length === 0) return;
+		try {
+			options.send({
+				customType: "pi-workflow-child-result",
+				content: results.map(childOutcome).join("\n\n"),
+				display: true,
+				details:
+					results.length === 1
+						? childDetails(results[0])
+						: { results: results.map((child) => childDetails(child)) },
+			});
+			for (const child of results) consume(child.id);
+		} catch (error) {
+			warn(`Child results could not be delivered: ${errorMessage(error)}`);
+		}
 	}
 
 	function get(id: string): ChildRecord | undefined {
@@ -908,8 +935,7 @@ export function createChildSessions(options: {
 		reply,
 		cancel,
 		consume,
-		pendingResults,
-		wakesParent,
+		atBoundary,
 		get,
 		list,
 		subscribe,
