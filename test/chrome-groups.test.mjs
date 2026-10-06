@@ -16,7 +16,8 @@ import {
 	restoreMessages,
 } from "../extensions/chrome-messages.ts";
 import { syncCompactTools } from "../extensions/compact-tools.ts";
-import { readSelection, replaceSelection } from "../extensions/configure.ts";
+import { readSelection } from "../extensions/configure.ts";
+import { replaceSelection } from "../extensions/shell.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 
 const at1155 = new Date(2026, 8, 29, 11, 55).getTime();

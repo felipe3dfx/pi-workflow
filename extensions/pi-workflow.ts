@@ -20,12 +20,8 @@ import {
 	loadCompanionsFromPath,
 } from "./companion-workflow.ts";
 import { guideSelection } from "./configure-guide.ts";
-import {
-	contribute,
-	held,
-	readSelection,
-	replaceSelection,
-} from "./configure.ts";
+import { readSelection } from "./configure.ts";
+import { contribute, replaceSelection, seated } from "./shell.ts";
 import {
 	type CodeGraphAdapters,
 	createCodeGraphTool,
@@ -39,7 +35,6 @@ import {
 	childDetails,
 	createChildQueryTools,
 	createChildSessions,
-	childOverlay,
 	createContinueChildTool,
 	createSpawnChildTool,
 	isWorking,
@@ -174,7 +169,7 @@ export default function piWorkflowExtension(
 	});
 	const launcher = createChildLauncher({
 		modelProfiles,
-		childSessionSeated: () => held(childOverlay),
+		childSessionSeated: () => seated("child-session", "overlay"),
 	});
 
 	function selectionPath() {
@@ -241,7 +236,7 @@ export default function piWorkflowExtension(
 
 	function registerChildTools(allowed: boolean) {
 		if (!allowed) return;
-		const on = held(childOverlay);
+		const on = seated("child-session", "overlay");
 		if (!childHooks && !on) return;
 		if (childHooks && childOffered === on) return;
 		childOffered = on;
@@ -257,7 +252,7 @@ export default function piWorkflowExtension(
 			launcher.beginTurn();
 		});
 		pi.on("tool_call", async (event, toolCtx) => {
-			if (!held(childOverlay)) return;
+			if (!seated("child-session", "overlay")) return;
 			const gate = await launcher.gateToolCall(event, toolCtx);
 			if (gate.allow) return;
 			if (event.parentToolCallId) {
@@ -377,7 +372,7 @@ export default function piWorkflowExtension(
 				report(ctx, usage, "error");
 				return;
 			}
-			if (!held(childOverlay)) {
+			if (!seated("child-session", "overlay")) {
 				report(
 					ctx,
 					"Child session is not seated. Run /workflow:config.",
@@ -410,7 +405,7 @@ export default function piWorkflowExtension(
 				report(ctx, usage, "error");
 				return;
 			}
-			if (!held(childOverlay)) {
+			if (!seated("child-session", "overlay")) {
 				report(
 					ctx,
 					"Child session is not seated. Run /workflow:config.",

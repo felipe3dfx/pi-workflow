@@ -23,13 +23,12 @@ import {
 import {
 	type ChildRecord,
 	type createChildSessions,
-	childOverlay,
 	isWorking,
 	type Schedule,
 	scheduleTimer,
 } from "./child-sessions.ts";
 import { childModelLine, childStep } from "./child-projection.ts";
-import { held } from "./configure.ts";
+import { seated } from "./shell.ts";
 
 import {
 	byState,
@@ -299,7 +298,7 @@ export function createChildrenViews(
 	closeSeatedView = close;
 	return {
 		async open(ctx: ExtensionContext) {
-			if (!held(childOverlay)) {
+			if (!seated("child-session", "overlay")) {
 				ctx.ui.notify(
 					"Child session is not seated. Run /workflow:config.",
 					"error",

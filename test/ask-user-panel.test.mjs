@@ -10,7 +10,8 @@ import {
 } from "../extensions/ask-user-panel.ts";
 import { createFooterHints } from "../extensions/chrome.ts";
 import { createChildrenViews } from "../extensions/children-view.ts";
-import { capabilities, replaceSelection } from "../extensions/configure.ts";
+import { capabilities } from "../extensions/configure.ts";
+import { replaceSelection } from "../extensions/shell.ts";
 
 replaceSelection({
 	schemaVersion: 1,

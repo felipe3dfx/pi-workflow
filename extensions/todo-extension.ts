@@ -1,12 +1,15 @@
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-import { held, notifyPlace, occupants, paint } from "./configure.ts";
-import { paintAboveInput } from "./shell.ts";
+import {
+	notifyPlace,
+	occupyAboveInput,
+	paintAboveInput,
+	seated,
+} from "./shell.ts";
 import { offerTool } from "./tool-offer.ts";
 import {
 	renderTodoBox,
-	todoAboveInput,
 	type TodoBoxState,
 } from "./todo-header.ts";
 import { createTodoList, type Task } from "./todo-list.ts";
@@ -71,10 +74,10 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 		currentTui = tui;
 		return {
 			render(width: number) {
-				paint(todoAboveInput, (paintedWidth) =>
+				occupyAboveInput("todo", (paintedWidth) =>
 					renderTodoBox(theme, todoList.list(), boxState, paintedWidth),
 				);
-				if (occupants("above-input").includes("child-session")) return [];
+				if (seated("child-session", "above-input")) return [];
 				return paintAboveInput(width);
 			},
 			invalidate() {},
@@ -102,7 +105,7 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 	const registerTodo = pi.registerTool.bind(pi);
 	pi.registerTool = (tool) => {
 		if (tool.name === "todo") {
-			syncTodo = (api) => offerTool(api, tool, held(todoAboveInput));
+			syncTodo = (api) => offerTool(api, tool, seated("todo", "above-input"));
 		}
 		return registerTodo(tool);
 	};
@@ -118,7 +121,7 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 		],
 		parameters: TodoParams,
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			if (!held(todoAboveInput)) {
+			if (!seated("todo", "above-input")) {
 				return {
 					content: [
 						{

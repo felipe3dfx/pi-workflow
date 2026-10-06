@@ -12,11 +12,14 @@ import {
 	type Schedule,
 	scheduleTimer,
 } from "./child-sessions.ts";
-import { claim, held, paint, subscribePlace } from "./configure.ts";
-import { notifyHeader, paintAboveInput } from "./shell.ts";
+import {
+	notifyHeader,
+	occupyAboveInput,
+	paintAboveInput,
+	seated,
+	subscribePlace,
+} from "./shell.ts";
 import { sanitizeTaskText } from "./todo-header.ts";
-
-const childAboveInput = claim("child-session", "above-input");
 
 type Sessions = ReturnType<typeof createChildSessions>;
 export type ChildTheme = Pick<Theme, "fg" | "bg" | "bold">;
@@ -216,7 +219,7 @@ export function registerChildrenBox(
 				tui = widgetTui;
 				return {
 					render: (width: number) => {
-						paint(childAboveInput, (paintedWidth) =>
+						occupyAboveInput("child-session", (paintedWidth) =>
 							renderChildrenBox(
 								theme,
 								sessions.list(),
@@ -224,7 +227,7 @@ export function registerChildrenBox(
 								paintedWidth,
 							),
 						);
-						if (!held(childAboveInput)) return [];
+						if (!seated("child-session", "above-input")) return [];
 						return paintAboveInput(width);
 					},
 					invalidate() {},

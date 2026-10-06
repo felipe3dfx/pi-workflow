@@ -26,7 +26,7 @@ import type { createChildLauncher } from "./child-launcher.ts";
 import { createChildCodeGraphTool } from "./codegraph-tool.ts";
 import { answerCard } from "./child-result-card.ts";
 import { hidden, outputText } from "./compact-tools.ts";
-import { claim, held } from "./configure.ts";
+import { seated } from "./shell.ts";
 import {
 	type ChildResult,
 	childOutcome,
@@ -42,8 +42,6 @@ const packageVersion = (
 		readFileSync(new URL("../package.json", import.meta.url), "utf8"),
 	) as { version: string }
 ).version;
-
-export const childOverlay = claim("child-session", "overlay");
 
 interface ChildSpec {
 	cwd: string;
@@ -960,7 +958,7 @@ type Outcome = {
 const unseatedMessage = "Child session is not seated. Run /workflow:config.";
 
 function unseatedChild() {
-	if (held(childOverlay)) return undefined;
+	if (seated("child-session", "overlay")) return undefined;
 	return report([unseatedMessage], { status: "refused" });
 }
 
@@ -1277,7 +1275,7 @@ export function createChildQueryTools(
 			"Answer the question a child session is waiting on, naming the question number from its message. A reply to a question that is not waiting is refused.",
 		parameters: replyChildParameters,
 		async execute(_toolCallId, params) {
-			if (!held(childOverlay)) throw new Error(unseatedMessage);
+			if (!seated("child-session", "overlay")) throw new Error(unseatedMessage);
 			sessions.reply(params.id, params.question, params.answer);
 			return report([`Reply sent to child ${params.id}.`], {
 				id: params.id,

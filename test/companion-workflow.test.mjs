@@ -5,7 +5,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { capabilities, occupants, replaceSelection } from "../extensions/configure.ts";
+import { capabilities } from "../extensions/configure.ts";
+import { occupants, replaceSelection } from "../extensions/shell.ts";
 import {
 	createCompanionWorkflow,
 	getCompanionState,

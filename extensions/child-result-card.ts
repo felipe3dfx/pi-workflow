@@ -22,12 +22,9 @@ import type { ChildDetails, ChildRecord } from "./child-sessions.ts";
 import { childElapsed, spread } from "./children-box.ts";
 import { markCard } from "./chrome-groups.ts";
 import { assistantInset, edgeFor } from "./chrome-messages.ts";
-import { claim, held, paint } from "./configure.ts";
 import { childModelLine, resultFieldLines } from "./child-projection.ts";
-import { paintMessageStream } from "./shell.ts";
+import { seated } from "./shell.ts";
 import { sanitizeMultilineText, sanitizeTaskText } from "./todo-header.ts";
-
-const childStream = claim("child-session", "message-stream");
 
 const RESULT_TYPE = "pi-workflow-child-result";
 const QUESTION_TYPE = "pi-workflow-child-question";
@@ -131,10 +128,7 @@ function paintCard(
 	lines: (width: number) => string[],
 	plain: () => string,
 ) {
-	if (held(childStream)) {
-		paint(childStream, lines);
-		return paintMessageStream(outer);
-	}
+	if (seated("child-session", "message-stream")) return lines(outer);
 	fallback.update(plain());
 	return fallback.render(outer);
 }
