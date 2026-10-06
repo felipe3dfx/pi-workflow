@@ -10,6 +10,7 @@ import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { seated } from "./shell.ts";
 import { isPlainRecord, writeJsonAtomically } from "./agent-directory.ts";
 import { createModelProfilesEditor } from "./model-profiles-editor.ts";
+import { terminalSafeLine } from "./terminal-safe-text.ts";
 
 export const specialists = ["explorer", "worker", "verifier"] as const;
 const thinkingLevels: readonly ModelThinkingLevel[] = [
@@ -36,8 +37,6 @@ export type EditableProfiles = {
 export type ModelProfiles = { schemaVersion: 2 } & EditableProfiles;
 
 export const profileName = /^[a-z0-9-]{1,64}$/;
-
-export const UNSAFE_TERMINAL_CHARACTERS = /[\p{Cc}\p{Bidi_Control}]/gu;
 
 type CommandContext = Pick<
 	ExtensionCommandContext,
@@ -67,7 +66,7 @@ function isModelEntry(value: unknown): value is ModelEntry {
 		hasOnlyKeys(value, ["model", "thinking"]) &&
 		typeof value.model === "string" &&
 		value.model.includes("/") &&
-		value.model.search(UNSAFE_TERMINAL_CHARACTERS) === -1 &&
+		terminalSafeLine(value.model) === value.model &&
 		isOneOf(thinkingLevels, value.thinking)
 	);
 }

@@ -18,7 +18,7 @@ import {
 	seated,
 	subscribePlace,
 } from "./shell.ts";
-import { sanitizeTaskText } from "./todo-header.ts";
+import { terminalSafeLine } from "./terminal-safe-text.ts";
 import { spinnerMs, spread, workingFrames } from "./visual-language.ts";
 
 type Sessions = ReturnType<typeof createChildSessions>;
@@ -85,7 +85,7 @@ function renderChildRow(
 	active: boolean,
 	width: number,
 ) {
-	const step = sanitizeTaskText(childStep(child));
+	const step = terminalSafeLine(childStep(child));
 	const meta = childMeta(child, now);
 	const left = ` ${rowGlyph(theme, child, now)} ${theme.fg("accent", child.role)} ${child.id.slice(0, 4)} ${step}`;
 	const line = spread(left, theme.fg("dim", meta), width);
