@@ -24,6 +24,7 @@ import { assistantInset, edgeFor } from "./chrome-messages.ts";
 import {
 	childElapsed,
 	childModelLine,
+	needsNoReason,
 	resultFieldLines,
 } from "./child-projection.ts";
 import { seated } from "./shell.ts";
@@ -66,7 +67,7 @@ function reason(card: Card) {
 			.split("\n")
 			.map((line) => line.trim())
 			.find(Boolean);
-	if (card.verdict === "done" || card.verdict === "pass") return undefined;
+	if (needsNoReason(card.state, card.verdict)) return undefined;
 	return card.result?.reason;
 }
 

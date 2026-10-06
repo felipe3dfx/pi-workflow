@@ -7,10 +7,12 @@ import {
 	occupants,
 	occupyAboveInput,
 	paintAboveInput,
+	readHeader,
 	readPlace,
 	replaceSelection,
 	resetPlaces,
 	seated,
+	watchHeader,
 } from "../extensions/shell.ts";
 
 const packages = ["gentle-engram", "@gtrabanco/pi-nan-provider", "pi-web-access"];
@@ -80,4 +82,32 @@ test("a capability occupies the above-input place only where it is declared", ()
 		() => occupyAboveInput("codegraph", () => ["codegraph"]),
 		/codegraph is not declared at above-input/,
 	);
+});
+
+test("the header reading is zero while child session has no seat and follows the seating", (t) => {
+	t.after(() => {
+		replaceSelection(selectionWith({}));
+		resetPlaces();
+	});
+	contribute("child-session", "header", () => ({ count: 2 }));
+	replaceSelection(selectionWith({ "child-session": false }));
+	assert.equal(readHeader()?.count ?? 0, 0);
+	replaceSelection(selectionWith({}));
+	assert.equal(readHeader()?.count, 2);
+	replaceSelection(selectionWith({ "child-session": false }));
+	assert.equal(readHeader()?.count ?? 0, 0);
+});
+
+test("the header signal fires on every seating change until it is unsubscribed", (t) => {
+	t.after(() => replaceSelection(selectionWith({})));
+	let fired = 0;
+	const unwatch = watchHeader(() => {
+		fired += 1;
+	});
+	replaceSelection(selectionWith({ "child-session": false }));
+	replaceSelection(selectionWith({}));
+	assert.equal(fired, 2);
+	unwatch();
+	replaceSelection(selectionWith({ "child-session": false }));
+	assert.equal(fired, 2);
 });

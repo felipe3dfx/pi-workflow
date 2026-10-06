@@ -120,7 +120,7 @@ export function readSelection(
 }
 
 export function describePlan(
-	before: Selection,
+	before: Pick<Selection, "capabilities">,
 	after: Selection,
 	states: readonly CompanionState[],
 ): string[] {
