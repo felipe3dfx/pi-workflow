@@ -1,3 +1,5 @@
+import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
+
 import {
 	type Capability,
 	capabilities,
@@ -37,7 +39,11 @@ type Contribution = {
 
 const contributions = new Map<Capability, Contribution>();
 const placeListeners = new Map<Place, Set<() => void>>();
-const aboveInput = new Map<Capability, (width: number) => string[]>();
+const aboveInput = new Map<
+	Capability,
+	(width: number, theme: Theme) => string[]
+>();
+const ABOVE_INPUT_WIDGET = "pi-workflow-above-input";
 
 let seatedNow = Object.fromEntries(
 	capabilities.map((capability) => [capability, false]),
@@ -76,16 +82,39 @@ export function occupants(place: Place): Capability[] {
 
 export function occupyAboveInput(
 	capability: Capability,
-	draw: (width: number) => string[],
+	draw: (width: number, theme: Theme) => string[],
 ) {
 	declare(capability, "above-input");
 	aboveInput.set(capability, draw);
 }
 
-export function paintAboveInput(width: number) {
+export function paintAboveInput(width: number, theme: Theme) {
 	return occupants("above-input").flatMap(
-		(capability) => aboveInput.get(capability)?.(width) ?? [],
+		(capability) => aboveInput.get(capability)?.(width, theme) ?? [],
 	);
+}
+
+export function registerShell(pi: ExtensionAPI) {
+	let aboveInputTui: { requestRender(): void } | undefined;
+	pi.on("session_start", async (_event, ctx) => {
+		aboveInputTui = undefined;
+		if (ctx.mode !== "tui") return;
+		ctx.ui.setWidget(
+			ABOVE_INPUT_WIDGET,
+			(tui, theme) => {
+				aboveInputTui = tui;
+				return {
+					render: (width: number) => paintAboveInput(width, theme),
+					invalidate() {},
+				};
+			},
+			{ placement: "aboveEditor" },
+		);
+	});
+	pi.on("session_shutdown", async () => {
+		aboveInputTui = undefined;
+	});
+	return { requestAboveInputRender: () => aboveInputTui?.requestRender() };
 }
 
 export function contribute(
@@ -108,7 +137,7 @@ export function readPlace(place: Place): PlaceReading | undefined {
 	return undefined;
 }
 
-export function subscribePlace(place: Place, listener: () => void) {
+function subscribePlace(place: Place, listener: () => void) {
 	const listeners = placeListeners.get(place) ?? new Set();
 	listeners.add(listener);
 	placeListeners.set(place, listeners);

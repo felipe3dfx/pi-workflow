@@ -1,12 +1,7 @@
-import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-import {
-	notifyPlace,
-	occupyAboveInput,
-	paintAboveInput,
-	seated,
-} from "./shell.ts";
+import { occupyAboveInput, seated } from "./shell.ts";
 import { offerTool } from "./tool-offer.ts";
 import {
 	renderTodoBox,
@@ -62,44 +57,19 @@ function replayTasks(entries: ReturnType<ExtensionContext["sessionManager"]["get
 	return tasks.length > 0 && tasks.every((task) => task.done) ? [] : tasks;
 }
 
-const WIDGET_KEY = "session-todo";
-
-export function registerSessionTodo(pi: ExtensionAPI): void {
+export function registerSessionTodo(
+	pi: ExtensionAPI,
+	requestRender: () => void,
+): void {
 	const todoList = createTodoList();
 	const boxState: TodoBoxState = { collapsed: false, showDone: true };
-	let currentTui: { requestRender: (force?: boolean) => void } | undefined;
-	let widgetInstalled = false;
-
-	function widgetFactory(tui: { requestRender: (force?: boolean) => void }, theme: Theme) {
-		currentTui = tui;
-		return {
-			render(width: number) {
-				occupyAboveInput("todo", (paintedWidth) =>
-					renderTodoBox(theme, todoList.list(), boxState, paintedWidth),
-				);
-				if (seated("child-session", "above-input")) return [];
-				return paintAboveInput(width);
-			},
-			invalidate() {},
-		};
-	}
+	occupyAboveInput("todo", (width, theme) =>
+		renderTodoBox(theme, todoList.list(), boxState, width),
+	);
 
 	function reveal(): void {
 		boxState.collapsed = false;
-		currentTui?.requestRender();
-		notifyPlace("above-input");
-	}
-
-	function syncWidget(ctx: ExtensionContext): void {
-		if (ctx.mode !== "tui") return;
-		const hasTasks = todoList.list().length > 0;
-		if (hasTasks && !widgetInstalled) {
-			ctx.ui.setWidget(WIDGET_KEY, widgetFactory, { placement: "aboveEditor" });
-			widgetInstalled = true;
-		} else if (!hasTasks && widgetInstalled) {
-			ctx.ui.setWidget(WIDGET_KEY, undefined);
-			widgetInstalled = false;
-		}
+		requestRender();
 	}
 
 	const registerTodo = pi.registerTool.bind(pi);
@@ -139,7 +109,6 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 					}
 					const tasks = todoList.write(params.tasks);
 					reveal();
-					syncWidget(ctx);
 					return { content: [{ type: "text", text: summarize(tasks) }], details: { tasks } };
 				}
 				case "add": {
@@ -148,7 +117,6 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 					}
 					const task = todoList.add(params.text);
 					reveal();
-					syncWidget(ctx);
 					return {
 						content: [{ type: "text", text: `Added #${task.id}: ${task.text}` }],
 						details: { tasks: todoList.list() },
@@ -163,13 +131,11 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 						throw new Error(`task #${params.id} not found`);
 					}
 					reveal();
-					syncWidget(ctx);
 					return { content: [{ type: "text", text: `Updated #${task.id}` }], details: { tasks: todoList.list() } };
 				}
 				case "clear": {
 					todoList.clear();
 					reveal();
-					syncWidget(ctx);
 					return { content: [{ type: "text", text: "Cleared session tasks" }], details: { tasks: [] } };
 				}
 				case "list":
@@ -186,8 +152,7 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 		description: "Collapse or expand the session task box above the input",
 		handler: async (_ctx) => {
 			boxState.collapsed = !boxState.collapsed;
-			currentTui?.requestRender();
-			notifyPlace("above-input");
+			requestRender();
 		},
 	});
 
@@ -195,14 +160,13 @@ export function registerSessionTodo(pi: ExtensionAPI): void {
 		description: "Show or hide done session tasks above the input",
 		handler: async (_ctx) => {
 			boxState.showDone = !boxState.showDone;
-			currentTui?.requestRender();
-			notifyPlace("above-input");
+			requestRender();
 		},
 	});
 
 	async function restoreFromBranch(_event: unknown, ctx: ExtensionContext) {
 		todoList.restore(replayTasks(ctx.sessionManager.getBranch()));
-		syncWidget(ctx);
+		requestRender();
 	}
 
 	pi.on("session_start", restoreFromBranch);

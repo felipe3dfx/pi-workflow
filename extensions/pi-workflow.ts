@@ -21,7 +21,12 @@ import {
 } from "./companion-workflow.ts";
 import { guideSelection } from "./configure-guide.ts";
 import { readSelection } from "./configure.ts";
-import { contribute, replaceSelection, seated } from "./shell.ts";
+import {
+	contribute,
+	registerShell,
+	replaceSelection,
+	seated,
+} from "./shell.ts";
 import {
 	type CodeGraphAdapters,
 	createCodeGraphTool,
@@ -153,8 +158,14 @@ export default function piWorkflowExtension(
 	pi.on("turn_end", deliverResults);
 	pi.on("agent_settled", deliverResults);
 	const childrenViews = createChildrenViews(childSessions);
-	registerChildrenBox(pi, childSessions, options.childSessions?.refresh);
-	registerSessionTodo(pi);
+	const { requestAboveInputRender } = registerShell(pi);
+	registerChildrenBox(
+		pi,
+		childSessions,
+		requestAboveInputRender,
+		options.childSessions?.refresh,
+	);
+	registerSessionTodo(pi, requestAboveInputRender);
 	const footerHints = createFooterHints();
 	contribute("child-session", "header", () => ({
 		count: childSessions.list().filter((child) => isWorking(child.state))
