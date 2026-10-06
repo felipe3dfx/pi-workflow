@@ -90,7 +90,7 @@ export function registerSessionTodo(
 			"Prefer todo write to replace the whole plan when it changes, and todo update to move one task's status as work progresses.",
 		],
 		parameters: TodoParams,
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
 			if (!seated("todo", "above-input")) {
 				return {
 					content: [
