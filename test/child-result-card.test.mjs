@@ -520,6 +520,20 @@ test("with the child-session claim unseated every child card falls back to its h
 		"Subagent worker 5636 failed  1m 02s",
 		"Model refused.",
 	]);
+	for (const verdict of ["blocked", "partial", "fail"]) {
+		const structured = card({
+			customType: "pi-workflow-child-result",
+			details: {
+				...details,
+				verdict,
+				result: { verdict, reason: "Database access is missing" },
+			},
+		});
+		assert.deepEqual(text(structured), [
+			`Subagent worker 5636 ${verdict}  1m 02s`,
+			"Database access is missing",
+		]);
+	}
 	assert.deepEqual(text(asked), [
 		"Subagent worker 5636 asks · question 2",
 		"Which one?",
