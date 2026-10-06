@@ -314,3 +314,31 @@ test("session_tree rebuilds the list from the tree's branch, like session_start 
 	assert.match(listed.content[0].text, /on the tree branch/);
 	assert.doesNotMatch(listed.content[0].text, /on the old branch/);
 });
+
+test("the returned todo offer exposes the tool only while todo is seated", () => {
+	const { pi, tools } = fakePi();
+	const registerTool = pi.registerTool;
+	const offer = registerSessionTodo(pi, () => {});
+	assert.equal(pi.registerTool, registerTool);
+
+	offer();
+	assert.equal(tools.get("todo").exposure, "direct");
+
+	replaceSelection({
+		schemaVersion: 1,
+		capabilities: Object.fromEntries(capabilities.map((capability) => [capability, false])),
+		expectations: {},
+	});
+	try {
+		offer();
+		assert.equal(tools.get("todo").exposure, "hidden");
+	} finally {
+		replaceSelection({
+			schemaVersion: 1,
+			capabilities: Object.fromEntries(
+				capabilities.map((capability) => [capability, capability === "todo"]),
+			),
+			expectations: {},
+		});
+	}
+});
