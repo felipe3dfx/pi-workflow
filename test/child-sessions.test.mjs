@@ -2197,6 +2197,34 @@ test("continue_child refuses failed, cancelled, timed-out, working, and unknown 
 	});
 });
 
+test("continue_child refuses an unknown child without reading the shell settings", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		let reads = 0;
+
+		const result = await use(
+			extension,
+			"continue_child",
+			{ id: "nope", task: "Try again" },
+			{
+				...toolContext("tui", worktree),
+				isProjectTrusted: () => {
+					reads += 1;
+					return false;
+				},
+			},
+		);
+
+		assert.equal(result.details.status, "refused");
+		assert.match(text(result), /No child nope in this session/);
+		assert.equal(reads, 0);
+	});
+});
+
 test("a continued child whose session cannot be created is refused with no child id", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		let creates = 0;

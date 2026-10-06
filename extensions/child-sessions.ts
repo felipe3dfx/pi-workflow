@@ -637,7 +637,7 @@ export function createChildSessions(options: {
 			background: boolean;
 			signal?: AbortSignal;
 			modelRegistry: ExtensionContext["modelRegistry"];
-			shell: ChildShell;
+			shell: () => ChildShell;
 			onLaunch?: () => void;
 		},
 		from?: { id: string; conversation: Conversation },
@@ -660,7 +660,7 @@ export function createChildSessions(options: {
 				prompt: plan.contract.prompt,
 				tools: childTools(plan),
 				modelRegistry: launch.modelRegistry,
-				shell: launch.shell,
+				shell: launch.shell(),
 				onEvent: (event) => {
 					watch.event(event);
 					observe(event);
@@ -794,7 +794,7 @@ export function createChildSessions(options: {
 		launch: {
 			signal?: AbortSignal;
 			modelRegistry: ExtensionContext["modelRegistry"];
-			shell: ChildShell;
+			shell: () => ChildShell;
 		},
 	) {
 		const child = children.get(id);
@@ -1067,7 +1067,7 @@ export function createSpawnChildTool(
 				background,
 				signal,
 				modelRegistry: ctx.modelRegistry,
-				shell: childShell(ctx),
+				shell: () => childShell(ctx),
 				onLaunch: () => launcher.recordLaunch(userRequest?.id),
 			});
 			return launched(started, plan.warnings, {
@@ -1154,7 +1154,7 @@ export function createContinueChildTool(
 				await sessions.resume(params.id, params.task, {
 					signal,
 					modelRegistry: ctx.modelRegistry,
-					shell: childShell(ctx),
+					shell: () => childShell(ctx),
 				}),
 				[],
 			);
