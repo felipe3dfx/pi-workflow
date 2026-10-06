@@ -6,6 +6,8 @@ Acceptance: approval and merge of the introducing PR.
 
 Superseded by ADR 0012 for the command name and argumentless-command clauses.
 
+Amended by the deep harness modules feature (`docs/specs/deep-harness-modules.md`) to clarify what unseating stops.
+
 ## Decision
 
 `/workflow:configure` replaces `/workflow:setup`. The command is the operator's guided confirmation, for the current session, of which harness capabilities are seated and which companion catalog entries are expected. It takes no arguments.
@@ -18,7 +20,7 @@ One module applies the selection. It does not split `installMissing` into a new 
 
 The versioned companion catalog lists what can be expected. It is not the user switch. Local selection records which companion catalog entries are expected and which harness capabilities are seated. Configure seats or unseats child session, todo, operator question, model profile, CodeGraph access, and compact rendering. Status and doctor are not switches. They show a gap and do not install anything.
 
-Shell is always seated. It owns visual language, screen places, and Chrome. Chrome's patches stay in the Chrome module. A seated capability is painted through the screen place it declares. Shell does not name the capability. A contribution that is computed and then discarded does not satisfy this decision. Unseating a capability removes it from those places in the same session and stops its behavior.
+Shell is always seated. It owns visual language, screen places, and Chrome. Chrome's patches stay in the Chrome module. A seated capability is painted through the screen place it declares. Shell does not name the capability. A contribution that is computed and then discarded does not satisfy this decision. Unseating a capability removes it from those places in the same session and stops its behavior. It starts no new work: work it already accepted, such as a launched child, still finishes, and the parent can still answer that child's question.
 
 The place map is the seating contract. It does not move the surfaces the child-session specification already placed, except that the operator question moves to the overlay. The children list stays the above-input widget, above the task box. Child session also occupies the Pi header, the message stream, and the overlay. Todo stays the above-input task box, below the children widget. The header that reads `Subagents` and the count is the children widget's header, not the Pi header. Effort on Pi's footer stays. The footer is outside the four screen places, and this map does not remove that effort. CodeGraph access on the message stream means its tool results appear in the stream while it is seated, and it adds no painter. While CodeGraph access is unseated, the tool does not act. The model-profile overlay stays compatible with the `/workflow:models` modal. Only one overlay is open at a time, and opening the operator question closes the children view. The operator question does not replace the input. This decision supersedes two sentences of the child-session specification: the children view closes when a non-overlay such as the question panel takes focus, and a question panel replaces the input.
 
