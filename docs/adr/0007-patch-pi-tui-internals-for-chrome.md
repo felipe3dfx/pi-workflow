@@ -4,13 +4,15 @@
 
 Acceptance: approval and merge of the introducing PR.
 
+Amended by the deep harness modules feature (`docs/specs/deep-harness-modules.md`) to state when the patches are restored.
+
 ## Context
 
 Pi exposes no extension hooks for styling messages, menus, or the input editor. The harness wants the Grok Build-style chrome: restyled user and assistant messages, thinking lines, select lists, settings lists, Pi's selectors, and a rounded editor.
 
 ## Decision
 
-pi-workflow monkey-patches Pi's TUI prototypes for message and menu styling. The replacement logic is copied from the Pi version named in each patch module's source note. The patches are applied on `session_start` and restored on `session_shutdown`. They are idempotent. There is no Pi version guard.
+pi-workflow monkey-patches Pi's TUI prototypes for message and menu styling. The replacement logic is copied from the Pi version named in each patch module's source note. The patches are applied on `session_start` and restored only when the session quits; across a reload they stay, and their marks recognize the layer. They are idempotent. There is no Pi version guard.
 
 Where Pi does expose an API (header, footer, widgets, editor component, theme), the chrome uses it.
 

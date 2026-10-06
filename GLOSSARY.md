@@ -30,9 +30,21 @@ The operator's guided confirmation, for the current session, of seated harness c
 
 _Avoid_: setup, `/workflow:setup`, installer
 
+### Selection
+
+The local record of which harness capabilities are seated and which companion expectations are on. Configure changes it only when the operator confirms.
+
+_Avoid_: config, settings
+
 ### Default settings
 
 The versioned Pi settings in `assets/settings.json` that `/workflow:config` applies: `tuiMode`, `theme`, `quietStartup`, and `defaultTools` (`+codemode`).
+
+### Agent directory
+
+The user's Pi configuration directory. It holds the selection, Jev routing, model profiles, `mcp.json`, and the user's Pi `settings.json`.
+
+_Avoid_: home, config folder
 
 ### Colliding package
 
@@ -74,6 +86,12 @@ A pi-workflow behavior that is not a companion package: child session, todo, ope
 
 _Avoid_: bundled companion, absorbed package
 
+### Seating
+
+Making the selection current in the session: a seated harness capability occupies its screen places, offers its tools, and acts. An unseated one leaves its places and withdraws its tools in the same session, but work it already accepted, such as a launched child and that child's question, still finishes.
+
+_Avoid_: install, enable
+
 ### Child session
 
 A Pi session distinct from the parent session. It belongs to a harness capability, not to a companion package.
@@ -91,6 +109,12 @@ _Avoid_: status, verdict
 What the Specialist concludes about its task. A worker reports done, partial, or blocked. A verifier reports pass, fail, or blocked. An explorer reports no Verdict.
 
 _Avoid_: status, completed
+
+### Pending result
+
+A child result the parent session has not received yet. Receiving it in any way makes it a consumed result.
+
+_Avoid_: unread result, queued result
 
 ### Consumed result
 
