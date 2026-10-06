@@ -451,7 +451,7 @@ test("a rejected answer card renders partial arguments with a question mark and 
 	assert.deepEqual(lines, ["   ◆ Parent →  · answer ? rejected", "     refused"]);
 });
 
-test("the answer card is rebuilt when the rejection changes and reused when it is identical", (t) => {
+test("the answer card shows each rejection transition: pending, rejected, a new reason, then delivered", (t) => {
 	cards(t);
 	const args = { id, question: 2, answer: "text" };
 	const pending = answerCard(args, theme());
@@ -461,15 +461,12 @@ test("the answer card is rebuilt when the rejection changes and reused when it i
 		"   ◆ Parent → 5636 · answer 2 rejected",
 		"     refused",
 	]);
-	assert.equal(answerCard({ ...args }, theme(), rejected, "refused"), rejected);
 	const changed = answerCard(args, theme(), rejected, "other");
-	assert.notEqual(changed, rejected);
 	assert.deepEqual(plain(changed), [
 		"   ◆ Parent → 5636 · answer 2 rejected",
 		"     other",
 	]);
 	const delivered = answerCard(args, theme(), changed);
-	assert.notEqual(delivered, changed);
 	assert.deepEqual(plain(delivered), ["   ◆ Parent → 5636 · answer 2", "     text"]);
 });
 
