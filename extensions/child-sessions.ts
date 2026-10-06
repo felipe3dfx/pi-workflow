@@ -35,6 +35,7 @@ import {
 	projectChild,
 	reportsResult,
 	resultParameters,
+	verdictNeedsNoReason,
 } from "./child-projection.ts";
 import { shellOptions } from "./shell-settings.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
@@ -312,7 +313,7 @@ const createPiChildSession: ChildSessionFactory = async (spec) => {
 							async execute(_toolCallId: string, params: ChildResult) {
 								if (
 									!params.reason &&
-									!needsNoReason("completed", params.verdict)
+									!verdictNeedsNoReason(params.verdict)
 								) {
 									throw new Error(
 										`A ${params.verdict} Verdict needs a reason.`,

@@ -50,7 +50,6 @@ const foregroundCodes = new RegExp(
 	"g",
 );
 
-type Method = PatchMethod;
 type Frame = { first: string; rest: string; stamp?: string; trail?: number };
 type ThinkingTime = { timestamp: number; runIndex: number; ms: number };
 type HeaderParts = {
@@ -544,15 +543,15 @@ function foldChat(mode: unknown) {
 	return chat;
 }
 
-function wrapRenderSessionEntries(original: Method) {
+function wrapRenderSessionEntries(original: PatchMethod) {
 	return function (this: unknown, ...args: unknown[]) {
 		if (foldChat(this)?.children.length === 0)
 			shared.latestCollapsed = undefined;
 		return (original as (...args: unknown[]) => unknown).apply(this, args);
-	} as Method;
+	} as PatchMethod;
 }
 
-function wrapAddMessageToChat(original: Method) {
+function wrapAddMessageToChat(original: PatchMethod) {
 	return function (
 		this: unknown,
 		message: { role?: string; timestamp?: number },
@@ -569,22 +568,22 @@ function wrapAddMessageToChat(original: Method) {
 		} finally {
 			pendingUserStamp = undefined;
 		}
-	} as Method;
+	} as PatchMethod;
 }
 
-function guarded(replacement: Method) {
-	return (original: Method) =>
+function guarded(replacement: PatchMethod) {
+	return (original: PatchMethod) =>
 		function (this: unknown, ...args: never[]) {
 			try {
 				return replacement.apply(this, args);
 			} catch {
 				return original.apply(this, args);
 			}
-		} as Method;
+		} as PatchMethod;
 }
 
 type MouseEvent = { x: number; width: number };
-function wrapRowRender(original: Method) {
+function wrapRowRender(original: PatchMethod) {
 	return function (this: unknown, outer: number) {
 		const edge = edgeFor(assistantInset, outer);
 		const lines = (original as (width: number) => string[]).call(
@@ -598,10 +597,10 @@ function wrapRowRender(original: Method) {
 				? line
 				: truncateToWidth(margin + line, outer),
 		);
-	} as Method;
+	} as PatchMethod;
 }
 
-function wrapRowMouse(original: Method) {
+function wrapRowMouse(original: PatchMethod) {
 	return function (this: unknown, event: MouseEvent) {
 		const edge = edgeFor(assistantInset, event.width);
 		if (edge === 0)
@@ -613,20 +612,20 @@ function wrapRowMouse(original: Method) {
 			x,
 			width: event.width - edge * 2,
 		});
-	} as Method;
+	} as PatchMethod;
 }
 
 const targets: PatchTarget[] = [
 	{
 		proto: AssistantMessageComponent.prototype,
 		name: "updateContent",
-		create: guarded(updateContent as Method),
+		create: guarded(updateContent as PatchMethod),
 		replaces: true,
 	},
 	{
 		proto: UserMessageComponent.prototype,
 		name: "rebuild",
-		create: guarded(rebuild as Method),
+		create: guarded(rebuild as PatchMethod),
 		replaces: true,
 	},
 	{

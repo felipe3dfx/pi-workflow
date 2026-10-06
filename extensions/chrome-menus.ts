@@ -55,8 +55,6 @@ const MIN_DESCRIPTION_WIDTH = 10;
 const hintGap = "  |  ";
 const close = " [×] ";
 
-type Method = PatchMethod;
-
 type SelectListState = {
 	theme: SelectListTheme & { [NATIVE]?: true };
 	truncatePrimary(
@@ -245,7 +243,7 @@ const listTheme: SelectListTheme = {
 	noMatch: (text) => theme().fg("dim", text),
 };
 
-function wrapSelectRender(original: Method) {
+function wrapSelectRender(original: PatchMethod) {
 	return function (this: SelectListState, width: number) {
 		if (this.theme[NATIVE])
 			return (original as (width: number) => string[]).call(this, width);
@@ -258,10 +256,10 @@ function wrapSelectRender(original: Method) {
 		} finally {
 			this.theme = own;
 		}
-	} as Method;
+	} as PatchMethod;
 }
 
-function wrapRenderItem(original: Method) {
+function wrapRenderItem(original: PatchMethod) {
 	return function (
 		this: SelectListState & { layout: SelectListLayoutOptions },
 		item: SelectItem,
@@ -333,7 +331,7 @@ function wrapRenderItem(original: Method) {
 			maxWidth,
 		);
 		return row(`${mark}${label(truncatedValue)}`);
-	} as Method;
+	} as PatchMethod;
 }
 
 type Swap = [Record<string, unknown>, string, unknown];
@@ -611,7 +609,7 @@ function swapMarker(line: string, width: number) {
 }
 
 function wrapSelectorRender(
-	original: Method,
+	original: PatchMethod,
 	root: (self: unknown) => unknown,
 	dress: Dress,
 	margin: boolean,
@@ -634,7 +632,7 @@ function wrapSelectorRender(
 		} finally {
 			unswap(swaps);
 		}
-	} as Method;
+	} as PatchMethod;
 }
 
 type MouseHandler = (event: TuiMouseEvent) => TuiMouseEventResult | undefined;
@@ -643,14 +641,14 @@ function shifted(event: TuiMouseEvent, left: number, width: number) {
 	return { ...event, x: event.x - left, width };
 }
 
-function wrapMarginMouse(original: Method) {
+function wrapMarginMouse(original: PatchMethod) {
 	return function (this: unknown, event: TuiMouseEvent) {
 		const edge = marginFor(event.width);
 		return (original as MouseHandler).call(
 			this,
 			shifted(event, edge, event.width - edge * 2),
 		);
-	} as Method;
+	} as PatchMethod;
 }
 
 type SettingsSelectorState = {
@@ -732,7 +730,7 @@ function closeSettings(list: SettingsListState) {
 	if (!list.submenuComponent) list.onCancel();
 }
 
-function wrapSettingsMouse(original: Method) {
+function wrapSettingsMouse(original: PatchMethod) {
 	return function (this: SettingsSelectorState, event: TuiMouseEvent) {
 		const { edge, outer, left, inner } = settingsFrame(event.width);
 		const shut = modalMetrics(outer).close;
@@ -743,7 +741,7 @@ function wrapSettingsMouse(original: Method) {
 			return { handled: true };
 		}
 		return (original as MouseHandler).call(this, shifted(event, left, inner));
-	} as Method;
+	} as PatchMethod;
 }
 
 const selectors: [object, Dress][] = [
@@ -774,7 +772,7 @@ const targets: PatchTarget[] = [
 	{
 		proto: SettingsList.prototype,
 		name: "renderMainList",
-		create: () => renderMainList as Method,
+		create: () => renderMainList as PatchMethod,
 		replaces: true,
 	},
 	{
@@ -792,7 +790,7 @@ const targets: PatchTarget[] = [
 	{
 		proto: SettingsSelectorComponent.prototype,
 		name: "render",
-		create: () => renderSettings as Method,
+		create: () => renderSettings as PatchMethod,
 		replaces: false,
 	},
 	{
@@ -805,7 +803,7 @@ const targets: PatchTarget[] = [
 		{
 			proto,
 			name: "render",
-			create: (original: Method) =>
+			create: (original: PatchMethod) =>
 				wrapSelectorRender(original, (self) => self, dress, true),
 			replaces: false,
 		},

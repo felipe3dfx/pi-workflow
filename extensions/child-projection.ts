@@ -90,14 +90,15 @@ export function reportsResult(
 	return Object.hasOwn(resultParameters, role);
 }
 
+export function verdictNeedsNoReason(verdict: string | undefined) {
+	return verdict === undefined || verdict === "done" || verdict === "pass";
+}
+
 export function needsNoReason(
 	state: string | undefined,
 	verdict: string | undefined,
 ) {
-	return (
-		state === "completed" &&
-		(verdict === undefined || verdict === "done" || verdict === "pass")
-	);
+	return state === "completed" && verdictNeedsNoReason(verdict);
 }
 
 export function resultFieldLines({
