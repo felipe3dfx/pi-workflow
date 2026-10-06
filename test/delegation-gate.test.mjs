@@ -88,7 +88,16 @@ function gateContext(cwd, branch, jev) {
 	};
 }
 
+function seatEverything(on = true) {
+	replaceSelection({
+		schemaVersion: 1,
+		capabilities: Object.fromEntries(capabilities.map((capability) => [capability, on])),
+		expectations: {},
+	});
+}
+
 function launcherFor(options = {}) {
+	seatEverything();
 	return createChildLauncher({
 		modelProfiles: absentProfiles,
 		jevRouting,
@@ -353,7 +362,6 @@ test("a read of AGENTS.md does not call Jev or block, and the next grep asks onc
 	);
 	assert.equal(jev.requests.length, 1);
 
-	launcher.beginTurn();
 	const escaped = await launcher.gateToolCall(
 		{ toolName: "read", input: { path: "../AGENTS.md" } },
 		ctx,
@@ -529,42 +537,47 @@ test("a prepared launch stores the verdict so a later gated tool does not ask Je
 	});
 });
 
-test("beginTurn keeps the verdict, the next operator message asks again, and unseating lets the tool run", async () => {
-	const jev = fakeJev("explorer");
-	let seated = true;
-	const launcher = launcherFor({ childSessionSeated: () => seated });
-	const ctx = gateContext("/work", branchEnding("Map the launcher module"), jev);
-	await launcher.gateToolCall(
-		{ toolName: "find", input: { pattern: "judge" } },
-		ctx,
-	);
-	assert.equal(jev.requests.length, 1);
-	launcher.beginTurn();
-	const again = await launcher.gateToolCall(
-		{ toolName: "ls", input: { path: "extensions" } },
-		ctx,
-	);
-	assert.equal(again.allow, false);
-	assert.equal(jev.requests.length, 1);
-
-	seated = false;
-	assert.deepEqual(
-		await launcher.gateToolCall(
-			{ toolName: "grep", input: { pattern: "gate" } },
+test("the same message reuses the decision across a turn start, a new message asks Jev again, and unseated gated tools run without Jev", async () => {
+	await withWorkspace(async ({ worktree, agentDirectory }) => {
+		const jev = fakeJev("explorer");
+		const extension = await seatedExtension(
+			{ worktree, agentDirectory },
+			"Map the launcher module",
+		);
+		const ctx = gateContext(worktree, branchEnding("Map the launcher module"), jev);
+		const first = await extension.fire(
+			"tool_call",
+			{ type: "tool_call", toolCallId: "c1", toolName: "find", input: { pattern: "judge" } },
 			ctx,
-		),
-		{ allow: true },
-	);
-	assert.equal(jev.requests.length, 1);
+		);
+		await extension.fire("turn_start", { type: "turn_start", turnIndex: 1, timestamp: 1 }, ctx);
+		const again = await extension.fire(
+			"tool_call",
+			{ type: "tool_call", toolCallId: "c2", toolName: "ls", input: { path: "extensions" } },
+			ctx,
+		);
+		assert.equal(first.block, true);
+		assert.deepEqual(again, first);
+		assert.equal(jev.requests.length, 1);
 
-	seated = true;
-	const next = gateContext("/work", branchEnding("A later operator message"), jev);
-	const refreshed = await launcher.gateToolCall(
-		{ toolName: "grep", input: { pattern: "gate" } },
-		next,
-	);
-	assert.equal(refreshed.allow, false);
-	assert.equal(jev.requests.length, 2);
+		const next = gateContext(worktree, branchEnding("A later operator message"), jev);
+		const refreshed = await extension.fire(
+			"tool_call",
+			{ type: "tool_call", toolCallId: "c3", toolName: "grep", input: { pattern: "gate" } },
+			next,
+		);
+		assert.equal(refreshed.block, true);
+		assert.equal(jev.requests.length, 2);
+
+		seatEverything(false);
+		const unseated = await extension.fire(
+			"tool_call",
+			{ type: "tool_call", toolCallId: "c4", toolName: "grep", input: { pattern: "gate" } },
+			gateContext(worktree, branchEnding("An unseated operator message"), jev),
+		);
+		assert.equal(unseated, undefined);
+		assert.equal(jev.requests.length, 2);
+	});
 });
 
 test("a missing user message does not call Jev or block", async () => {
@@ -648,7 +661,7 @@ test("the parent registers the gate with spawn_child only when spawn tools are a
 		await allowed.fire("session_start", {}, session);
 		assert.equal(allowed.tools.filter((tool) => tool.name === "spawn_child").length, 1);
 		assert.equal(allowed.handlers.get("tool_call").length, 1);
-		assert.equal(allowed.handlers.get("turn_start").length, 1);
+		assert.equal(allowed.handlers.get("turn_start"), undefined);
 
 		const ctx = gateContext(worktree, branchEnding("Map the launcher module"), jev);
 		const first = await allowed.fire(
@@ -658,11 +671,6 @@ test("the parent registers the gate with spawn_child only when spawn tools are a
 		);
 		assert.equal(first.block, true);
 		assert.equal(jev.requests.length, 1);
-		await allowed.fire(
-			"turn_start",
-			{ type: "turn_start", turnIndex: 1, timestamp: 1 },
-			ctx,
-		);
 		await allowed.fire(
 			"tool_call",
 			{ type: "tool_call", toolCallId: "c2", toolName: "ls", input: { path: "." } },
@@ -677,7 +685,6 @@ test("the parent registers the gate with spawn_child only when spawn tools are a
 		await blocked.fire("session_start", {}, { ...session, ui: blocked.ui });
 		assert.equal(blocked.tools.some((tool) => tool.name === "spawn_child"), false);
 		assert.equal(blocked.handlers.get("tool_call"), undefined);
-		assert.equal(blocked.handlers.get("turn_start"), undefined);
 	});
 });
 
@@ -1028,11 +1035,7 @@ async function seatedExtension({ worktree, agentDirectory }, message) {
 	const extension = loadExtension({
 		agentDirectory,
 	});
-	replaceSelection({
-		schemaVersion: 1,
-		capabilities: Object.fromEntries(capabilities.map((capability) => [capability, true])),
-		expectations: {},
-	});
+	seatEverything();
 	await extension.fire("session_start", {}, {
 		mode: "print",
 		hasUI: true,

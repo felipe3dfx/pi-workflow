@@ -133,11 +133,7 @@ export default function piWorkflowExtension(
 			if (ctx.mode === "tui") await childrenViews.open(ctx);
 		},
 	});
-	const launcher = createChildLauncher({
-		modelProfiles,
-		jevRouting,
-		childSessionSeated: () => seated("child-session", "overlay"),
-	});
+	const launcher = createChildLauncher({ modelProfiles, jevRouting });
 
 	function companionPackages() {
 		return loadCompanionsFromPath(
@@ -158,43 +154,6 @@ export default function piWorkflowExtension(
 		createContinueChildTool(childSessions),
 		...createChildQueryTools(childSessions),
 	];
-	let childHooks = false;
-	let childOffered: boolean | undefined;
-
-	function registerChildTools(allowed: boolean) {
-		if (!allowed) return;
-		const on = seated("child-session", "overlay");
-		if (!childHooks && !on) return;
-		if (childHooks && childOffered === on) return;
-		childOffered = on;
-		for (const tool of childTools) {
-			pi.registerTool({
-			...tool,
-			exposure: on ? "direct" : "hidden",
-		} as typeof tool);
-		}
-		if (childHooks) return;
-		childHooks = true;
-		pi.on("turn_start", () => {
-			launcher.beginTurn();
-		});
-		pi.on("tool_call", async (event, toolCtx) => {
-			if (!seated("child-session", "overlay")) return;
-			const gate = await launcher.gateToolCall(event, toolCtx);
-			if (gate.allow) return;
-			if (event.parentToolCallId) {
-				pi.sendMessage(
-					{
-						customType: "pi-workflow-gate-block",
-						content: gate.reason,
-						display: true,
-					},
-					{ deliverAs: "steer" },
-				);
-			}
-			return { block: true, reason: gate.reason };
-		});
-	}
 
 	const seating = createSeating({
 		agentDirectory,
@@ -210,7 +169,12 @@ export default function piWorkflowExtension(
 			() => syncTodoTool(pi),
 			() => syncCodeGraphTool(pi, options.codegraph),
 			() => syncCompactTools(pi, currentCtx),
-			async () => registerChildTools((await workflow.checkSpawnTools()).allowed),
+			async () =>
+				launcher.offerChildTools(
+					pi,
+					childTools,
+					(await workflow.checkSpawnTools()).allowed,
+				),
 		],
 	});
 

@@ -12,6 +12,7 @@ import {
 	type ModelThinkingLevel,
 } from "@earendil-works/pi-ai";
 import type {
+	ExtensionAPI,
 	ExtensionContext,
 	ToolCallEvent,
 } from "@earendil-works/pi-coding-agent";
@@ -19,7 +20,13 @@ import type {
 import { latestUserRequest } from "./child-sessions.ts";
 import { gitEnvironment } from "./git-environment.ts";
 import type { JevRouting } from "./workflow-settings.ts";
-import type { ModelProfilesLoad, Specialist } from "./model-profiles.ts";
+import {
+	type ModelProfilesLoad,
+	type Specialist,
+	specialists,
+} from "./model-profiles.ts";
+import { seated } from "./shell.ts";
+import { offerTool } from "./tool-offer.ts";
 
 export interface LaunchRequest {
 	role?: string;
@@ -34,7 +41,6 @@ export interface ChildLauncherOptions {
 	modelProfiles: { load: () => ModelProfilesLoad };
 	jevRouting: Pick<JevRouting, "enabled">;
 	contractsDirectory?: string;
-	childSessionSeated?: () => boolean;
 }
 
 const roles = ["explore", "worker", "verify"] as const;
@@ -54,8 +60,6 @@ const roleBySpecialist: Record<Specialist, Role> = {
 };
 
 const reservedOperations = "mutating git or gh, publication";
-
-const specialists = ["explorer", "worker", "verifier"] as const;
 
 const specialistInstructions =
 	`Which specialist should carry out the requested action? Choose from the action in \`user_request\` and \`task\`. Reserved operations (${reservedOperations}) are never part of a child package and stay with the parent. \`suggested_specialist\` is a hint and does not decide the answer.`;
@@ -444,17 +448,11 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		return pending;
 	}
 
-	function beginTurn() {
-		// The shared verdict stays until the next operator message.
-	}
-
 	async function gateToolCall(
 		event: ToolCallEvent,
 		ctx: GateContext,
 	): Promise<{ allow: true } | { allow: false; reason: string }> {
-		if (options.childSessionSeated && !options.childSessionSeated()) {
-			return { allow: true };
-		}
+		if (!seated("child-session", "overlay")) return { allow: true };
 		if (!gatedTool(event, ctx.cwd)) return { allow: true };
 		const userRequest = latestUserRequest(ctx.sessionManager?.getBranch());
 		if (!userRequest) return { allow: true };
@@ -533,5 +531,44 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 	function recordLaunch(userMessageId: string | undefined) {
 		if (turn && turn.userMessageId === userMessageId) turn.launched = true;
 	}
-	return { prepareLaunch, recordLaunch, beginTurn, gateToolCall, classify };
+	let gateInstalled = false;
+	let childToolsOn: boolean | undefined;
+
+	function offerChildTools(
+		pi: ExtensionAPI,
+		tools: readonly object[],
+		allowed: boolean,
+	) {
+		if (!allowed) return;
+		const on = seated("child-session", "overlay");
+		if (!gateInstalled && !on) return;
+		if (gateInstalled && childToolsOn === on) return;
+		childToolsOn = on;
+		for (const tool of tools) offerTool(pi, tool, on);
+		if (gateInstalled) return;
+		gateInstalled = true;
+		pi.on("tool_call", async (event, toolCtx) => {
+			const gate = await gateToolCall(event, toolCtx);
+			if (gate.allow) return;
+			if (event.parentToolCallId) {
+				pi.sendMessage(
+					{
+						customType: "pi-workflow-gate-block",
+						content: gate.reason,
+						display: true,
+					},
+					{ deliverAs: "steer" },
+				);
+			}
+			return { block: true, reason: gate.reason };
+		});
+	}
+
+	return {
+		prepareLaunch,
+		recordLaunch,
+		gateToolCall,
+		classify,
+		offerChildTools,
+	};
 }
