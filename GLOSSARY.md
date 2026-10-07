@@ -18,7 +18,7 @@ The versioned list of companion packages in `assets/companions.json`. A companio
 
 ### MCP server catalog
 
-The versioned MCP server definitions in `assets/mcp-servers.json`. `/workflow:config` aligns Pi-native servers in `mcp.json` per catalog key and preserves keys the user or Pi manages. Each server has an exposure: `direct` or `deferred`.
+The versioned MCP server definitions in `assets/mcp-servers.json`. `/workflow:config` aligns Pi-native servers in `mcp.json` per catalog key and preserves keys the user or Pi manages. Each server has an exposure: `direct` or `codemode-deferred`.
 
 ### Degraded harness
 
@@ -97,6 +97,18 @@ _Avoid_: install, enable
 A Pi session distinct from the parent session. It belongs to a harness capability, not to a companion package.
 
 _Avoid_: subagent package, workflow run
+
+### Steer
+
+An instruction the operator sends to a running child session. The child receives it at its next turn and keeps working. It is not the steering message that delivers child results to the parent.
+
+_Avoid_: interrupt, follow-up, reply
+
+### Fleet view
+
+The overlay where the operator follows every child session of the parent, steers a running child, answers a waiting one, and sees what each child changed.
+
+_Avoid_: dashboard, children panel
 
 ### Run state
 
