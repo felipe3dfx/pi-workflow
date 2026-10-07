@@ -20,8 +20,7 @@ If the confirmed directory is absent, report the contradiction and propose `setu
 
 Create a file at `{{LOCAL_ISSUE_PATH_PATTERN}}` with:
 
-- Title: `{{ISSUE_TITLE_CONVENTION}}`
-- Specification and acceptance criteria: `{{ISSUE_DESCRIPTION_CONVENTION}}`
+- Title and body: defined by the publishing skill, `to-spec` for the specification and `to-tickets` for each ticket; the repository's issue templates do not apply
 - Status, owner, priority, labels, and relationships: `{{LOCAL_REQUIRED_FIELDS}}`
 
 Publication capability:

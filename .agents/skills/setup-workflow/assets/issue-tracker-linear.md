@@ -16,11 +16,10 @@ Linear access:
 
 ## When a Skill Says "Publish to the Issue Tracker"
 
-Create a Linear issue with these confirmed fields:
+Create a Linear issue with these fields:
 
 - Team: `{{LINEAR_TEAM}}`
-- Title: `{{ISSUE_TITLE_CONVENTION}}`
-- Description: `{{ISSUE_DESCRIPTION_CONVENTION}}`
+- Title and description: defined by the publishing skill, `to-spec` for the specification and `to-tickets` for each ticket; the team's issue templates do not apply
 - State, priority, labels, project, and parent: `{{LINEAR_REQUIRED_FIELDS}}`
 
 Publication capability:

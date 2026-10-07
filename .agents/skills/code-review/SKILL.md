@@ -4,7 +4,7 @@ description: "Trigger: review a ticket's diff inside the implementation loop, or
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "2.1.0"
+  version: "2.2.0"
   provenance: derived
 ---
 
@@ -42,7 +42,7 @@ Report requirements that are missing or partial, behavior the diff adds that the
 
 ### Valuable Tests brief
 
-Run each test file the diff adds or changes, whole, against the fixed point's production code, in a scratch checkout that leaves the reviewed tree untouched; a test that passes there does not test the change. Apply the rubric to every test the diff adds or changes: tautological tests, structure-sensitive tests, and mocks that hide failure or verify through a side channel. Also report a behavior the diff changes that has no test at its agreed seam, unless a no-valuable-test-seam exception is recorded. Name the failure mode for each finding. A finding is `hard` when a behavior agreed at a seam has no test, or its test cannot fail, including one that passes against the fixed point; every other rubric tell is `judgement`.
+Run each test file the diff adds or changes, whole, against the fixed point's production code, in a scratch checkout that leaves the reviewed tree untouched; a test that passes there does not test the change. Apply the rubric to every test the diff adds or changes: tautological tests, structure-sensitive tests, and mocks that hide failure or verify through a side channel. Also report a behavior the diff changes that has no test at its agreed seam, unless a no-valuable-test-seam exception is recorded. Name the failure mode for each finding. A finding is `hard` when a behavior agreed at a seam has no test, or its test cannot fail, including one that passes against the fixed point; every other rubric tell is `judgement`. A test skipped at an agreed seam never counts as passing: report it with its reason as that seam having no test, even where an exception is recorded.
 
 ## Output Contract
 

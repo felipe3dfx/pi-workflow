@@ -4,7 +4,7 @@ description: "Trigger: configure repository workflow playbooks or audit existing
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "2.4"
+  version: "2.5"
   provenance: derived
 ---
 
@@ -23,6 +23,7 @@ Configure repository-level playbooks. For every script step, invoke `python3` wi
 - `CHILD_INTEGRATION` is `pull-request` (each child ticket gets its own draft pull request into the parent integration branch) or `direct` (children merge locally into the parent integration branch; only the parent gets a pull request). It is a team decision: propose `pull-request`, ask once, record it. `implement-spec` requires `direct`.
 - `APPROVAL_POLICY` decides what later skills ask approval for: `every-step` (every effect; each ticket draft is approved before the next), `external-only` (only external effects; a local ADR is written without asking, publishing the comment citing it asks), or `autonomous` (none; the pull request opens without asking and the final report links it). A force-push, a remote deletion, and a direct write to the production base always ask. It is a project decision: explain each level with its example, propose `external-only`, and record only the user's explicit choice. It never replaces this skill's own per-file approval.
 - The contracts in [assets/pull-requests.md](assets/pull-requests.md) are fixed and never rediscovered or asked for: the commit template, the pull-request title, the ticket reference, and the pull-request source and destination rules. Resolve its remaining tokens normally.
+- Issue title and body belong to the publishing skill (`to-spec` for the specification, `to-tickets` per ticket); issue templates, issue forms, team templates, and past issues are never candidates or questions.
 - `docs/agents/coding-standards.md` holds the repository's own coding standards, read only by the review. It is consumer-owned: create it from [assets/coding-standards.md](assets/coding-standards.md) only when absent, with its own approval, and never diff, rewrite, or refuse over it afterward.
 
 ## Discover and Confirm
@@ -36,10 +37,10 @@ Configure repository-level playbooks. For every script step, invoke `python3` wi
 
 Every run, before any write, including the first:
 
-1. Run `python3 <absolute-installed-setup-workflow.py> diff`, feeding each token its recorded value where an existing playbook records one, else the run's confirmed value, never rediscovered wording. The script finds form drift only; whether the repository contradicts a recorded value is discovery's judgment.
+1. Run `python3 <absolute-installed-setup-workflow.py> diff`, feeding only the current assets' tokens, each its recorded value where a playbook records one, else the run's confirmed value, never rediscovered wording; a recorded value with no token is dropped in the diff. The script finds form drift only; whether the repository contradicts a recorded value is discovery's judgment.
 2. Present recorded values as confirmed — value, file, and evidence — and work only the delta: unresolved markers, contradicted values, and sections the contract defines and the file lacks. Present one proposal covering every file to create or update, with the preserved value beside each change, and take its exact diff from `update` without an approval, so the proposed bytes are the written ones. A difference is a contradiction, never an alternative; a rival candidate beside a recorded value is not one.
-3. Wait for the user's explicit approval for every file that will be written. A single verified candidate skips its question, never this approval. A run with nothing missing reports differences, writes nothing, and asks for no approval.
-4. Write missing files with `python3 <absolute-installed-setup-workflow.py> render --approve <file>`, keeping its values file in a temporary directory and never in the consumer repository; a confirmed absence selects `issue-tracker-none.md`. Update an existing playbook with `python3 <absolute-installed-setup-workflow.py> update --approve <file>`, which re-renders the current asset from the values already recorded. Where root `AGENTS.md` has no routing block, `python3 <absolute-installed-setup-workflow.py> routing --append --approve AGENTS.md` writes [assets/routing-block.md](assets/routing-block.md) byte for byte; add no policy text.
+3. Wait for explicit user approval of every file to be written. A single verified candidate skips its question, never this approval. A run with nothing missing reports differences, writes nothing, and asks for no approval.
+4. Write missing files with `python3 <absolute-installed-setup-workflow.py> render --approve <file>`, keeping its values file in a temporary directory, never the consumer repository; a confirmed absence selects `issue-tracker-none.md`. Update an existing playbook with `python3 <absolute-installed-setup-workflow.py> update --approve <file>`, which re-renders the current asset from those values. Where root `AGENTS.md` has no routing block, `python3 <absolute-installed-setup-workflow.py> routing --append --approve AGENTS.md` writes [assets/routing-block.md](assets/routing-block.md) byte for byte; add no policy text.
 
 The write guards, the domain withhold, the outside-path refusal, and the no-interpreter degraded path are [references/runtime-contract.md](references/runtime-contract.md).
 

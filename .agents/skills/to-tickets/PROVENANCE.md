@@ -74,6 +74,21 @@ It requires and verifies the parent in the handoff, hangs new, updated, and
 confirmed-moved tickets with read-back in GitHub and Linear, and treats another
 unconfirmed parent as a conflicting match.
 
+It gives every in-scope requirement one accountable child with an observable
+outcome and shows ownership boundaries and conceptual dependencies apart from
+native relationships, which only publication creates. It reuses a prior
+confirmation only within its exact scope; a material change invalidates
+authorization and only the confirmations it touches. It consumes each
+decision's resolver, source or authority, status, and accepted supersession
+with what it replaced, keeping them traceable by pointer in existing
+artifacts, with tickets citing implemented decisions' sources and verifying
+them through acceptance criteria. Coverage, demo, estimate, implementation, and
+QA remain separate evidence. A missing generated authority artifact alone does
+not block once decisions are closed and readiness otherwise holds, and the gap
+is reported; a present but malformed, stale, blocked, or conflicting one still
+blocks. Genuine semantic, functional, or technical conflicts escalate to the
+developer.
+
 The skill is limited to product-ticket breakdown, its tickets' parent relationship, and handoff. It does not
 rediscover or repair the upstream definition, impose owner policy, create
 capture IDs or propagated hashes, maintain distributed workflow state, or

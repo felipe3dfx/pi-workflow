@@ -16,10 +16,9 @@ GitHub issue access:
 
 ## When a Skill Says "Publish to the Issue Tracker"
 
-Create a GitHub issue in `felipe3dfx/pi-workflow` with these confirmed fields:
+Create a GitHub issue in `felipe3dfx/pi-workflow` with these fields:
 
-- Title: `none (confirmed absent)`
-- Body: `none (confirmed absent)`
+- Title and body: defined by the publishing skill, `to-spec` for the specification and `to-tickets` for each ticket; the repository's issue templates and issue forms do not apply
 - Labels, assignee, milestone, project, and linked issues: `labels, assignee, milestone, and project remain none (confirmed absent); linked issues use gh issue edit --add-blocked-by; parent and child use gh issue edit --parent`
 
 Publication capability:

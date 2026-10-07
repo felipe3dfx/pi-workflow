@@ -51,6 +51,7 @@ The review of a diff since a fixed point; separate axes run in parallel isolated
 5. Removed spec discovery from commit messages and file searches; the ticket or specification is a required input, and its absence blocks the review.
 6. Added stable per-axis finding IDs, the hard or judgement marking, `file:line` evidence, and blocked outcomes for an unresolved fixed point, an unreadable ticket or specification, and missing isolation. Removed harness-specific tool names and command lines.
 7. Stated the read-only stance: the skill never fixes, comments, commits, or publishes.
+8. The Valuable Tests axis reports a test skipped at an agreed seam as that seam having no test.
 
 ## Approval
 
