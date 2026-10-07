@@ -1,6 +1,6 @@
 # Revisión: capacidades de child session y Fleet view
 
-Paquete: el brief `docs/features/child-session-capabilities.md` (sha256 `a5c31123…`), con `GLOSSARY.md` (`a5e8153b…`).
+Paquete: el brief `docs/features/child-session-capabilities.md` (sha256 `048b0d37…`), con `GLOSSARY.md` (`a5e8153b…`).
 Handoff: revisión de autoridad de dominio renovada en cada ronda; la última es compatible con los ADR 0001 a 0013 y declara las desviaciones DV1 a DV5.
 Rondas: dos rondas completas con tres lentes independientes (completitud y coherencia, simplificación y alcance, viabilidad y coherencia transversal), una segunda revisión independiente por ronda y una reverificación enfocada de las secciones editadas.
 Veredicto: `READY WITH WARNINGS`.
@@ -44,6 +44,9 @@ Veredicto: `READY WITH WARNINGS`.
 24. W. DV3 cambia `docs/specs/routing-owner.md`, que no figuraba en las dependencias. Disposición del Owner (C2): se edita en la capa 3; `child-session-delegation.md` se edita en la capa 2. Resuelto y reverificado.
 25. Disposiciones del Owner (C3, C4): un lanzamiento cuenta para el launch limit desde su revisión; ante un destino sin decidir, decide el primer lanzamiento que consulta a Jev; el launch limit vale 10. Decisiones de la especificación.
 26. Disposiciones del Owner (C5): el Fleet view se titula `Fleet`; una instrucción pendiente se marca en la fila del hijo; el mensaje al padre por un hijo con timeout incluye su último resultado. Resuelto y reverificado sin contradicciones con el ADR 0010.
+27. B (hallazgo del análisis de `badlogic/pi-subagent` y de las fuentes de Pi). El brief excluía AGENTS.md de los hijos, mientras que el valor por defecto de Pi lo carga en toda sesión. Disposición del Owner (B1): los hijos worker y verifier cargan los mismos archivos de contexto que el padre; el explorer ninguno; los skills siguen desactivados para todos. El prefijo sigue determinista por Specialist, modelo y worktree. Resuelto y reverificado, con W-1 y W-2 aplicados.
+28. W. Hoy todo cierre de sesión, `/reload` incluido, descarta a todos los hijos, así que un `/reload` termina cada hijo en trabajo. Disposición del Owner (B2′): se acepta como R13 y se registra en el ADR 0014; en `session_shutdown` con motivo `reload` el harness avisa al operador cuántos hijos en trabajo terminaron y lo registra en el trace, sin afirmar nada en el Fleet view ni en la caja de hijos. V8 queda resuelta: Pi no tiene un gancho cancelable previo al reload. La supervivencia al reload corresponde a #204. Resuelto por la disposición B2′ y reverificado.
+29. Disposición del Owner (W-1 a W-5): los archivos de contexto se nombran explícitamente (agent directory global, ancestros, respaldo CLAUDE.md, AGENTS.override.md y el AGENTS.md del repositorio); todo contrato declara que prevalece sobre los archivos de contexto; el Owner renovó la confirmación del brief revisado (estado CONFIRMED); se corrige el conteo a R1 a R13; la edición de `child-session-delegation.md` nombra extensiones y archivos de contexto; el ADR 0014 lista los archivos de contexto en los hijos.
 
 ## Coherencia transversal
 
@@ -60,7 +63,7 @@ Veredicto: `READY WITH WARNINGS`.
 ## Decisions, Deviations and Accepted Risks
 
 - Desviaciones DV1 a DV5, aceptadas por el Owner: extensiones curadas en los hijos; el operador responde a un hijo; Specialist por lanzamiento; tools MCP que escriben al alcance de roles de solo lectura con guía en los contratos; superficies nuevas fuera de la política de child bash.
-- Riesgos R1 a R12, aceptados por el Owner y a registrar en el ADR 0014. Los riesgos R8 a R12 se aceptaron explícitamente en la disposición K-F.
+- Riesgos R1 a R13, aceptados por el Owner y a registrar en el ADR 0014. Los riesgos R8 a R12 se aceptaron explícitamente en la disposición K-F; R13 en la disposición B2.
 - Revisión requerida: el ADR 0014 y la edición de `docs/specs/child-session-delegation.md` se entregan con la capa 2.
 
 ## Pendientes para la especificación

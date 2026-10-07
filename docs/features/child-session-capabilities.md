@@ -19,7 +19,7 @@ A child session uses the tools the parent already has. Every Specialist can comp
 In scope, in delivery order. Each layer ships on its own:
 
 1. **`codemode` in children.** The first commit moves the harness to Pi 1.0.4. Every Specialist loads `codemode`, and contract `tools:` lines gain it.
-2. **MCP and web access.** Children load extensions through a lifecycle that starts them when the child runs and shuts them down on every end. Every Specialist receives the parent's MCP servers. Only the explorer loads the `pi-web-access` companion package. Every catalog MCP server gains a `description`. ADR 0014 records the risk model.
+2. **MCP and web access.** Children load extensions through a lifecycle that starts them when the child runs and shuts them down on every end. Worker and verifier children load the same context files as the parent. Every Specialist receives the parent's MCP servers. Only the explorer loads the `pi-web-access` companion package. Every catalog MCP server gains a `description`. ADR 0014 records the risk model.
 3. **Fan-out from `codemode`.** The parent can call `spawn_child` from a `codemode` script. Each launch gets its own Specialist decision. A launch limit bounds the children a parent has working.
 4. **Fleet view.**
    - 4a. The overlay opened with `alt+a` becomes the Fleet view, titled `Fleet`: per-row tokens and cost with a total, the operator steers a running child, and the operator answers a waiting child.
@@ -28,7 +28,7 @@ In scope, in delivery order. Each layer ships on its own:
 Out of scope:
 
 - An operating-system sandbox, child processes, RPC transport, and Pi Durable.
-- AGENTS.md and skills in children. The contract is the whole custom prompt; Pi adds its `cwd` and `mcp_servers` sections.
+- Skills in children. The contract is the custom prompt; Pi adds its `cwd` and `mcp_servers` sections and, for a worker and a verifier, the repository's context files.
 - Children that outlive the parent or resume from disk (#204). `continue_child` keeps its in-memory behavior (ADR 0010).
 - An orchestrator mode where the parent always delegates (#205).
 - Several models per Specialist with fallback (#206).
@@ -51,6 +51,7 @@ Out of scope:
 - **Extension lifecycle.** A queued child has no running extensions. When the child starts running, its extensions start; when it completes, fails, is cancelled, or times out, they shut down, and its MCP connections close. A `continue_child` continuation gets its own extensions under the same rule.
 - **MCP like the parent.** A child receives the servers of the user's global `mcp.json`, plus the parent's project `.pi/mcp.json` only when the parent trusts the project; a child never reads its own worktree's MCP configuration and never trusts a project the parent did not trust. Every MCP tool is available to the child the way it is to the parent, including `direct` tools such as context7 and the MCP resource tools. MCP connects and waits as in the parent: Pi waits up to 10 s for servers with `direct` tools before the first prompt, and a script waits for the servers it names; a server that connects later is declared then. Pi's "still connecting" notice goes to the child's trace. `codemode` is a contract tool checked at launch; MCP and web tools are not checked.
 - **Web for the explorer.** An explorer searches and fetches pages with `pi-web-access`, loaded from the user's local installation whether or not its companion expectation is on. A missing companion is never installed. When it is missing, the explorer launches without web tools and its trace names the package; web tools are optional in the explorer's contract. A worker or verifier has no web tool.
+- **Repository guidance.** A worker and a verifier load the same context files as the parent: Pi's context files (the global agent-directory AGENTS.md, the ancestor directories' files, the CLAUDE.md fallback, AGENTS.override.md, and the repository's AGENTS.md). They follow the repository's conventions. The explorer loads none. No child loads skills. All children of one worktree read the same files, so the prefix stays deterministic per Specialist, model, and worktree. Every contract states that the role contract takes precedence over context files, so instructions to commit or open pull requests do not apply to a child.
 - **Publishing through MCP.** The contracts tell every Specialist that publishing and writes to external services through MCP stay with the parent.
 - **No recursion.** A child's extensions are `codemode` and MCP, plus `pi-web-access` for the explorer. A child never loads the harness extension, so it never offers `spawn_child`, the parent's child tools, or the parent's screen places.
 - **Fan-out.** In tui and rpc modes, the parent's script launches several children and returns. The children run in the background, and their results reach the parent through ADR 0010: one message when every child of the session is done, or earlier when a result wakes the parent. Each child keeps `ask_parent`. Aborting or failing the script does not touch children it already launched.
@@ -58,6 +59,7 @@ Out of scope:
 - **Launch limit.** In tui and rpc modes, the launch limit is larger than the running limit, so the queue still holds children beyond the running limit. It counts working children: queued, running, or waiting. A launch, including a `continue_child` continuation, is refused while the parent already has the launch limit of working children, and the caller receives the refusal. The limit is checked before Jev and before the child session is created. It applies to direct calls and calls from scripts alike. `pending` is a possible launch outcome in a script. The specification sets the limit's value.
 - **Steering.** The operator types an instruction for a running child in the Fleet view. The child receives it at its next turn without being cancelled; several steers arrive in order, one per turn. A steer the child has not received yet is shown as pending on the child's row; a steer the child never received because it ended is shown as undelivered. Text beginning with `/` is refused. A queued, waiting, or finished child cannot be steered; the Fleet view says why. The parent is not told about steers; the child's result reflects them.
 - **Answering from the Fleet view.** In tui and rpc modes, a waiting child's question can be answered by the operator in the Fleet view or by the parent with `reply_child`. The first answer wins. A later `reply_child` is refused, and the refusal carries the operator's answer, which is how the parent learns it; the question message it already received is not withdrawn.
+- **Reload.** `/reload` ends every working child, as every session shutdown does today. On Pi's `session_shutdown` with reason `reload`, the harness notifies the operator how many working children ended and records it in the trace. Children do not survive the reload (#204).
 - **Fleet view.** The overlay lists every child with its Run state, tokens, and cost (including tool-result usage), plus a total. One input line in the detail pane sends a steer to a running child and an answer to a waiting child; any other state shows the refusal reason. The detail pane shows the thread and the files the child changed through its own successful `edit` and `write` calls, including calls from `codemode`. Children launched by one `codemode` call are grouped under that call with the number of children launched, how many are done, and their token total. A timed-out child shows the last result it reported, if it reported one, and the parent's message about that child carries the same result.
 - **Cache-first.** The harness only appends to a child session: it never rewrites the contract, the cwd, the declared tools, or messages already sent. Pi waits for `direct` MCP servers before the first prompt as in the parent; a `direct` server that connects later is declared then, and the `mcp_servers` section is refreshed when its summary changes. Both are inherited Pi behavior and cost one prefix re-send on Claude, as in the parent. Every catalog server carries a `description`, so the section does not change when a server connects. Two children of the same Specialist and model share a prefix when the same `direct` servers connected before their first prompt; the task and references go in the user message. Persisted harness data never enters the model context.
 
@@ -91,6 +93,7 @@ None.
 - Armin Ronacher, "Codemode" (2026-10-06), and the Pi Durable interview with Mario Zechner and Armin Ronacher.
 - gentle-shell (code and presentation), `nicobailon/pi-subagents`, `tintinweb/pi-subagents`, and a practitioner article comparing Pi subagent extensions.
 - `@anthropic-ai/sandbox-runtime`, nono, and Gondolin, evaluated and not adopted.
+- `badlogic/pi-subagent` and Pi's in-tree subagent example, analysed against the specification (owner dispositions B1 and B2).
 - `feature-review` rounds 1 and 2: domain reviews, three lenses per round, and a second review per round.
 
 ## Shared capabilities and invariants
@@ -110,8 +113,8 @@ Not recommended. The open items are platform facts, not product questions.
 
 - Pi 1.0.4: peer range, pins, and the version assertion in `tools/pi-sandbox.mjs` move to 1.0.4.
 - `assets/mcp-servers.json`: every server gains a `description`.
-- The contracts in `assets/contracts/`: `tools:` lines gain `codemode`; `worker.md` and `verify.md` no longer say the child has no MCP tools; the explorer's and verifier's read-only wording covers `codemode` and MCP; the explorer's web tools are optional; every contract states that publishing through MCP stays with the parent; contracts carry the `codemode` batching guideline, which Pi does not add to a custom prompt.
-- `docs/specs/child-session-delegation.md`: extensions in children (layer 2).
+- The contracts in `assets/contracts/`: `tools:` lines gain `codemode`; `worker.md` and `verify.md` no longer say the child has no MCP tools; the explorer's and verifier's read-only wording covers `codemode` and MCP; the explorer's web tools are optional; every contract states that publishing through MCP stays with the parent and that the role contract takes precedence over context files; contracts carry the `codemode` batching guideline, which Pi does not add to a custom prompt.
+- `docs/specs/child-session-delegation.md`: extensions and context files in children (layer 2).
 - `docs/specs/routing-owner.md`: the Specialist is decided per launch (layer 3).
 
 ## Deviations
@@ -138,6 +141,7 @@ Accepted, recorded in ADR 0014:
 - R10. The parent is not told when the operator steers a child.
 - R11. `direct` MCP servers the user adds to `mcp.json` change children's declarations and tool order; the harness does not normalize them.
 - R12. A locally installed `pi-web-access` loads in the explorer even when its companion expectation is off, so doctor does not report it missing; the explorer's trace does.
+- R13. `/reload` ends every working child, because every session shutdown, reload included, disposes all children. The harness only notifies the operator at `session_shutdown` with reason `reload` and records it in the trace. Survival across a reload belongs to #204.
 
 ## Evidence gaps
 
