@@ -4,7 +4,7 @@ description: "Trigger: implement one approved child ticket. Build it with TDD at
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "2.4"
+  version: "2.5"
   provenance: derived
 ---
 
@@ -41,11 +41,13 @@ Every scope expansion, deviation from binding authority or the prototype contrac
 
 On cancellation, preserve the work without stashing or discarding it and report the last verified point. Resume only after fresh validation.
 
+Re-entering as a child of `implement-spec` with a stop (a merge conflict, a red gate on the merged tree, or a stale branch), rebase the branch onto the current parent head, which becomes the ticket's base, never merging the parent into it, and sign the rebased commits with the repository's existing signing configuration. Resolve the stop on the rebased branch, editing sibling tickets' code where the stop requires it; anything beyond the stop is a scope expansion. Rerun steps 3–6, from step 1 when the resolution changes the agreed seams; the developer's answers in the previous handoff stand for identical findings.
+
 ## Output Contract
 
 A prose handoff with:
 
-- the ticket, the branch, and its base;
+- the ticket, the branch, and its base, plus the previous head on re-entry;
 - the commit SHAs, the last one being the head;
 - each seam with its RED and GREEN evidence, or its recorded no-valuable-test-seam exception, plus each test skipped at an agreed seam with its reason;
 - the checks run, with commands and results;
