@@ -1734,6 +1734,80 @@ class SetupWorkflowCliTests(unittest.TestCase):
                     self.assertIn(phrase, updated)
                 self.assertIn(f"{tracker.upper()}_COMMENT_POLICY value", updated)
 
+    def test_update_drops_a_recorded_issue_title_and_body_template(self) -> None:
+        self.use_real_assets()
+        for tracker in ("github", "linear", "gitlab", "local-markdown"):
+            with self.subTest(tracker=tracker):
+                values = self.write_values(f"{tracker}.txt", self.tracker_values(tracker))
+                playbook = self.repo / "docs" / "agents" / "issue-tracker.md"
+                playbook.unlink(missing_ok=True)
+                arguments = (
+                    "--assets",
+                    str(REAL_ASSETS),
+                    "--values",
+                    str(values),
+                    "--tracker",
+                    tracker,
+                    "--repo",
+                    str(self.repo),
+                    "--approve",
+                    "issue-tracker.md",
+                )
+                render = self.run_script("render", *arguments)
+                self.assertEqual(render.returncode, 0, render.stderr)
+                recorded = "".join(
+                    "- Title: `[Spec] <summary>`\n- Body: `## Context, ## Scope`\n"
+                    if line.startswith("- Title")
+                    else line
+                    for line in playbook.read_text(encoding="utf-8").splitlines(keepends=True)
+                )
+                playbook.write_text(recorded, encoding="utf-8")
+
+                proposal = self.run_script("update", *arguments[:-2])
+
+                self.assertEqual(proposal.returncode, 0, proposal.stderr)
+                self.assertEqual(playbook.read_text(encoding="utf-8"), recorded)
+                self.assertIn("-- Title: `[Spec] <summary>`", proposal.stdout)
+                self.assertIn("-- Body: `## Context, ## Scope`", proposal.stdout)
+                self.assertRegex(proposal.stdout, r"\n\+- Title and (body|description): defined by")
+
+                update = self.run_script("update", *arguments)
+
+                self.assertEqual(update.returncode, 0, update.stderr)
+                updated = playbook.read_text(encoding="utf-8")
+                self.assertNotIn("[Spec] <summary>", updated)
+                self.assertNotIn("## Context, ## Scope", updated)
+                self.assertIn(
+                    "`to-spec` for the specification and `to-tickets` for each ticket", updated
+                )
+                self.assertNotIn("{{", updated)
+
+    def test_values_file_supplying_a_retired_issue_template_token_is_rejected(self) -> None:
+        self.use_real_assets()
+        for token in ("ISSUE_TITLE_CONVENTION", "ISSUE_DESCRIPTION_CONVENTION"):
+            with self.subTest(token=token):
+                values = self.write_values(
+                    "github.txt", self.tracker_values("github") + f"{token} = [Spec] <summary>\n"
+                )
+
+                result = self.run_script(
+                    "update",
+                    "--assets",
+                    str(REAL_ASSETS),
+                    "--values",
+                    str(values),
+                    "--tracker",
+                    "github",
+                    "--repo",
+                    str(self.repo),
+                    "--approve",
+                    "issue-tracker.md",
+                )
+
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(f"unused token in values file: {token}", result.stderr)
+                self.assertFalse((self.repo / "docs" / "agents" / "issue-tracker.md").exists())
+
     def test_render_records_the_child_integration_mode_in_the_review_policy(self) -> None:
         self.use_real_assets()
         values = self.write_values(

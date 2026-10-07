@@ -16,10 +16,9 @@ GitLab issue access:
 
 ## When a Skill Says "Publish to the Issue Tracker"
 
-Create a GitLab issue in `{{GITLAB_PROJECT}}` with these confirmed fields:
+Create a GitLab issue in `{{GITLAB_PROJECT}}` with these fields:
 
-- Title: `{{ISSUE_TITLE_CONVENTION}}`
-- Description: `{{ISSUE_DESCRIPTION_CONVENTION}}`
+- Title and description: defined by the publishing skill, `to-spec` for the specification and `to-tickets` for each ticket; the project's description templates do not apply
 - Labels, assignee, milestone, iteration, epic, and linked issues: `{{GITLAB_REQUIRED_FIELDS}}`
 
 Publication capability:

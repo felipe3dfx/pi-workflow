@@ -52,6 +52,7 @@ The upstream loop at `d81f3a1`: `tdd` at pre-agreed seams, type checks and singl
 6. The commit uses the repository's existing signing configuration and the fixed commit template, with no AI attribution.
 7. Added developer-owned scope and risk, discretionary technical recommendations, selective prototype recovery, the developer-approved append-only Spanish issue comment, cancellation that preserves work, and the prose handoff to `create-pr` and `qa-impact`.
 8. Each context that executes `tdd`, `code-review`, or `review-critique` loads it by name, with no link and no harness tool named, including the second review's context.
+9. A test skipped at an agreed seam is neither RED nor GREEN evidence; the handoff reports each one with its reason.
 
 ## Approval
 

@@ -4,7 +4,7 @@ description: "Trigger: implement one approved child ticket. Build it with TDD at
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "2.3"
+  version: "2.4"
   provenance: derived
 ---
 
@@ -31,7 +31,7 @@ Propose the child branch from the recorded parent integration branch, never the 
 ## Execution Steps
 
 1. **Seams.** Propose the test seams before the first test and agree them with the developer where the approval policy asks. A behavior with no valuable test seam records the exception `tdd` defines.
-2. **Build.** Load the `tdd` skill and drive it at those seams. Run type checks and focused tests regularly, and the full suite before review. Recover from failed edits or checks until the candidate functions.
+2. **Build.** Load the `tdd` skill and drive it at those seams. Run type checks and focused tests regularly, and the full suite before review. Recover from failed edits or checks until the candidate functions. A test skipped at an agreed seam is neither RED nor GREEN evidence; never count it, and report it.
 3. **Review.** Open a context other than the implementer's that receives "Load the `code-review` skill" and reviews with the ticket's base as the fixed point.
 4. **Critique.** Load the `review-critique` skill and run it on the review report. Take every `user decision` finding to the developer, and show the developer the rejected findings; those need no answer.
 5. **Fix.** Apply only the accepted findings and the ones the developer accepted, in a fresh context that is not the implementer's, then rerun the checks. Run a second review, in a new context that receives "Load the `code-review` skill", only when a fix changes behavior; its findings return to the critique step, and only accepted findings are applied.
@@ -47,7 +47,7 @@ A prose handoff with:
 
 - the ticket, the branch, and its base;
 - the commit SHAs, the last one being the head;
-- each seam with its RED and GREEN evidence, or its recorded no-valuable-test-seam exception;
+- each seam with its RED and GREEN evidence, or its recorded no-valuable-test-seam exception, plus each test skipped at an agreed seam with its reason;
 - the checks run, with commands and results;
 - each finding ID with its verdict, the developer's answer where one was needed, and what was applied;
 - decisions, deviations, accepted risks, and the approved issue comment;
