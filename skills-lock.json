@@ -55,7 +55,7 @@
       "ref": "main",
       "sourceType": "git",
       "skillPath": "skills/engineering/implement/SKILL.md",
-      "computedHash": "2a2f346b4555bd3bc72c0aa0fb0d415528deaeb5dcf6892289981cbb865e4fb3"
+      "computedHash": "76b460b8c691d04957bfe56d77bd1b945990ebf0b493268f671c802c2f9256b6"
     },
     "mutation-testing": {
       "source": "git@github.com:grupo-ilao/skills.git",
