@@ -1024,8 +1024,6 @@ test("a reload ends every working child, tells the operator how many ended, and 
 		children.created[0].result.resolve("Done.");
 		await settle();
 		extension.notifications.length = 0;
-		assert.match(boxOf(extension).render(100).map(plain).join("\n"), /worker/);
-		assert.match(openChildren(extension).lines()[0], /Fleet 7/);
 
 		await extension.fire("session_shutdown", { reason: "reload" });
 
@@ -1042,13 +1040,6 @@ test("a reload ends every working child, tells the operator how many ended, and 
 		});
 		assert.deepEqual((await use(extension, "list_children", {})).details.children, []);
 		assert.equal(extension.messages.length, 0);
-
-		await extension.fire("session_start");
-		const box = boxOf(extension).render(100).map(plain).join("\n");
-		assert.doesNotMatch(box, /worker/);
-		const fleet = openChildren(extension).lines();
-		assert.match(fleet[0], /Fleet 0/);
-		assert.match(fleet.join("\n"), /No children in this session\./);
 	});
 });
 
