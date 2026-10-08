@@ -3,7 +3,7 @@
 Status: READY. The contradiction found during synthesis (C1) and the open items C2 to C5 are resolved by owner dispositions (under "Owner dispositions"). The owner also disposed B1 (worker and verifier children load the parent's context files) and B2 (R13: `/reload` ends every working child, with a notice at `session_shutdown`), after an analysis of `badlogic/pi-subagent` and Pi's sources.
 
 Package: `docs/features/child-session-capabilities.md`, CONFIRMED by the owner. Its sha256 prefix is `048b0d37`. The package also includes `GLOSSARY.md` (`a5e8153b`) and the accepted ADRs 0001 to 0013.
-Review handoff: the Domain Authority review, renewed each round and consistent with ADRs 0001 to 0013, with deviations DV1 to DV5 declared. It also includes the owner's dispositions R1 to R13 and K-A to K-F, and the focused reverification of W1 and I1.
+Review handoff: the Domain Authority review, renewed each round and consistent with ADRs 0001 to 0013, with deviations DV1 to DV5 declared. It also includes the owner's dispositions O1 to O13 and K-A to K-F, and the focused reverification of W1 and I1.
 Verdict: READY WITH WARNINGS (`docs/specs/child-session-capabilities-review.md`, which includes items 23 to 29).
 
 ## Problem
@@ -40,14 +40,8 @@ A child session uses the tools the parent already has. Five layers ship in order
 
 ## Vocabulary used by this specification
 
-These terms are not glossary entries. This specification uses them with the meanings below. Adding them to the glossary is a gap for `domain-modeling`, not a decision here.
+Tool gate, Contract, Trace, Working child, Launch limit, and Group are defined in `GLOSSARY.md`. This specification also uses these terms:
 
-- **Tool gate**: the parent's `tool_call` check that applies the routing decision for the current user message (ADR 0008, `docs/specs/routing-owner.md`).
-- **Contract**: the harness child contract file for a role. Its `tools:` line lists the tools a launch checks. Its body is the child's custom prompt.
-- **Trace**: the harness's record of a child's launch and run, which the operator reads in the Fleet view.
-- **Working child**: a child whose Run state is queued, running, or waiting.
-- **Launch limit**: the bound on a parent's working children (D12).
-- **Group**: the children launched by one parent `codemode` call.
 - **`pending` launch outcome**: the existing launch result for a model or thinking mismatch, "The work stays pending". It is not a Pending result.
 - **Jev answer**: what one Jev call returns, a destination and a Specialist. It is not a Verdict, which is the Specialist's conclusion.
 
@@ -290,7 +284,7 @@ The review lists these items as pending for the specification. Each is disposed 
 - A Steer not yet received is shown as pending on the child's row. Decided in layer 4a (C5).
 - Seating during a fan-out is decided in layer 3 from the Seating invariant.
 - The Fleet view's title is `Fleet`. Decided in layer 4a (C5).
-- The terms Tool gate, contract, trace, and group are defined under "Vocabulary" as specification terms and are a glossary gap.
+- The terms Tool gate, contract, trace, and group are defined in `GLOSSARY.md`.
 - The catalog descriptions reaching the user through Configure is decided in layer 2 from ADR 0001.
 
 ## Owner dispositions
