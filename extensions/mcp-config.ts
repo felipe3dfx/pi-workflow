@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { isPlainRecord, writeJsonAtomically } from "./agent-directory.ts";
+import { errorMessage } from "./error-message.ts";
 
 type McpServerDefinition = Record<string, unknown>;
 
@@ -95,7 +96,7 @@ function loadMcpServerCatalogFromPath(
 		};
 	} catch (error) {
 		return {
-			error: `Unable to load MCP server catalog at ${catalogPath}: ${error instanceof Error ? error.message : String(error)}`,
+			error: `Unable to load MCP server catalog at ${catalogPath}: ${errorMessage(error)}`,
 		};
 	}
 }
@@ -171,7 +172,7 @@ function readExistingMcpConfiguration(path: string): {
 				: undefined;
 		if (code === "ENOENT") return { root: {} };
 		return {
-			error: `Refusing to overwrite malformed JSON at ${path}: ${error instanceof Error ? error.message : String(error)}`,
+			error: `Refusing to overwrite malformed JSON at ${path}: ${errorMessage(error)}`,
 		};
 	}
 }
@@ -328,7 +329,7 @@ export function applyMcpConfiguration(
 	} catch (error) {
 		return {
 			status: "write-failed",
-			error: error instanceof Error ? error.message : String(error),
+			error: errorMessage(error),
 			latestPlan,
 		};
 	}

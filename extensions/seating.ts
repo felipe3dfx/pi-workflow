@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { writeJsonAtomically } from "./agent-directory.ts";
+import { errorMessage } from "./error-message.ts";
 import { readSelection, type Selection } from "./configure.ts";
 import { replaceSelection } from "./shell.ts";
 
@@ -35,7 +36,7 @@ export function createSeating({
 			if (code !== "ENOENT") {
 				return {
 					status: "refused",
-					reason: `Unable to read the selection: ${error instanceof Error ? error.message : String(error)}`,
+					reason: `Unable to read the selection: ${errorMessage(error)}`,
 				};
 			}
 		}

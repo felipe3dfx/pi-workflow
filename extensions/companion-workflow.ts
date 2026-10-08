@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { errorMessage } from "./error-message.ts";
 import {
 	applyMcpConfiguration,
 	legacyMcpAdapterNote,
@@ -173,7 +174,7 @@ export function loadCompanionsFromPath(
 	} catch (error) {
 		return {
 			companions: [],
-			error: `Unable to load companion metadata at ${metadataPath}: ${error instanceof Error ? error.message : String(error)}`,
+			error: `Unable to load companion metadata at ${metadataPath}: ${errorMessage(error)}`,
 		};
 	}
 }
@@ -221,7 +222,7 @@ function readPiCompanionPackageVersion(packageName: string): {
 					? (error as { code?: unknown }).code
 					: undefined;
 			if (code === "ENOENT") continue;
-			return { error: error instanceof Error ? error.message : String(error) };
+			return { error: errorMessage(error) };
 		}
 	}
 	return {};
@@ -245,7 +246,7 @@ function getInstalledCompanionVersion(packageName: string): {
 		if (code === "MODULE_NOT_FOUND" || code === "ERR_PACKAGE_PATH_NOT_EXPORTED") {
 			return {};
 		}
-		return { error: error instanceof Error ? error.message : String(error) };
+		return { error: errorMessage(error) };
 	}
 }
 
