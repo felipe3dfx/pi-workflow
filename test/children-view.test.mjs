@@ -823,3 +823,15 @@ test("a row marks its pending and undelivered Steers, and the detail lists their
 	assert.match(detail, /pending go.*on/);
 	assert.match(detail, /pending then rerun/);
 });
+
+test("a click on another row while typing stops typing, so Enter never sends the text to the newly selected child", () => {
+	const sessions = fakeSessions([record("5636"), record("1001")]);
+	const view = open(sessions, { rows: 30 });
+	const lines = view.lines(120);
+	const row = lines.findIndex((line) => line.includes("worker 1001"));
+	view.press("\r", "x");
+	view.mouse({ type: "click", x: 5, y: row });
+	view.press("\r");
+	assert.deepEqual(sessions.steers, []);
+	assert.match(view.lines(120).join("\n"), /▸ ◐ worker 1001/);
+});

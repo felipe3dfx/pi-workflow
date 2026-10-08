@@ -1122,6 +1122,7 @@ function createChildrenView(
 			}
 			const id = layout.ids.get(event.y);
 			if (!id || !sessions.get(id)) return undefined;
+			if (id !== selected) leave();
 			selected = id;
 			listFree = false;
 			focus = (event.clickCount ?? 1) >= 2 ? "detail" : "list";
