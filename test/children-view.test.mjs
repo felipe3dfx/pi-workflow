@@ -762,6 +762,15 @@ test("the detail's input line answers a waiting child, and its text and refusals
 	assert.equal(sessions.replies.length, 1);
 });
 
+test("a waiting child without a question number does not advertise an answer", () => {
+	const waiting = record("5636", { state: "waiting", step: "waiting" });
+	const view = open(fakeSessions([waiting]), { rows: 30 });
+
+	const text = view.lines(120).join("\n");
+	assert.doesNotMatch(text, /Enter answer/);
+	assert.match(text, /Enter input/);
+});
+
 test("the detail's input line shows why a queued child takes no Steer yet and an ended child takes neither a Steer nor an answer", () => {
 	for (const [state, reason] of [
 		["queued", "is queued; it takes a Steer once it runs."],

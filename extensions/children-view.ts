@@ -143,6 +143,13 @@ function spent(thread: Thread | undefined) {
 	return { tokens, cost };
 }
 
+function replyKind(child: ChildRecord) {
+	if (child.state === "waiting" && child.question !== undefined)
+		return "answer";
+	if (child.state === "running") return "steer";
+	return undefined;
+}
+
 function usage({ tokens, cost }: { tokens: number; cost: number }) {
 	return [
 		...(tokens > 0 ? [`${count(tokens)} tok`] : []),
@@ -489,9 +496,7 @@ function createChildrenView(
 	}
 
 	function refusal(child: ChildRecord) {
-		if (child.state === "running") return undefined;
-		if (child.state === "waiting" && child.question !== undefined)
-			return undefined;
+		if (replyKind(child)) return undefined;
 		if (child.state === "queued")
 			return `${childName(child)} is queued; it takes a Steer once it runs.`;
 		return `${childName(child)} is ${child.state}; an ended child takes no Steer or answer.`;
@@ -654,11 +659,7 @@ function createChildrenView(
 		const inputHint: [Hint, Action] = [
 			[
 				"Enter",
-				child?.state === "waiting"
-					? "answer"
-					: child?.state === "running"
-						? "steer"
-						: "input",
+				(child && replyKind(child)) ?? "input",
 			],
 			"type",
 		];
@@ -961,9 +962,9 @@ function createChildrenView(
 	function inputLine(child: ChildRecord, width: number) {
 		if (typing) return input.render(width)[0];
 		const hint =
-			child.state === "waiting" && child.question !== undefined
+			replyKind(child) === "answer"
 				? `Enter to answer question ${child.question}`
-				: child.state === "running"
+				: replyKind(child) === "steer"
 					? "Enter to steer"
 					: "";
 		return truncateToWidth(
