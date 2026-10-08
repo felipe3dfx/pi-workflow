@@ -200,9 +200,15 @@ _Avoid_: uninstall, catalog edit
 
 ### Todo
 
-The session's task list, seated as a harness capability.
+The session's task list, seated as a harness capability. A child session executes at most one of its tasks; a task may be executed by several children over time, and the latest one counts.
 
 _Avoid_: issue, ticket
+
+### Task state
+
+Where a Todo task stands: pending, in progress, done, or blocked. Blocked means the task needs the parent's attention, not that something external holds it. The parent can always change it, including for a task a child session executes.
+
+_Avoid_: status, Run state, Verdict
 
 ### Operator question
 
