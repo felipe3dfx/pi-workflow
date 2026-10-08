@@ -111,6 +111,15 @@ function wrap(text: string, width: number) {
 		.flatMap((line) => wrapTextWithAnsi(line, Math.max(1, width)));
 }
 
+function steerMarks(child: ChildRecord) {
+	const mark = (count: number, state: string) =>
+		count === 0 ? [] : [`${count} ${count === 1 ? "steer" : "steers"} ${state}`];
+	return [
+		...mark(child.steering?.length ?? 0, "pending"),
+		...mark(child.undelivered?.length ?? 0, "undelivered"),
+	];
+}
+
 function seconds(ms: number) {
 	return `${(Math.max(0, ms) / 1000).toFixed(1)}s`;
 }
@@ -477,9 +486,10 @@ function createChildrenView(
 	}
 
 	function refusal(child: ChildRecord) {
+		if (child.state === "running") return undefined;
 		if (child.state === "waiting" && child.question !== undefined)
 			return undefined;
-		return `${childName(child)} is ${child.state}; it has no question to answer.`;
+		return `${childName(child)} is ${child.state}; only a running child takes a Steer.`;
 	}
 
 	function leave() {
@@ -491,8 +501,16 @@ function createChildrenView(
 	function send(child: ChildRecord | undefined) {
 		const text = input.getValue().trim();
 		const number = answering;
-		if (!child || !text || number === undefined) return;
+		if (!child || !text) return;
 		leave();
+		if (number === undefined) {
+			notice = `Steer sent to ${childName(child)}.`;
+			sessions.steer(child.id, text).catch((error: unknown) => {
+				notice = error instanceof Error ? error.message : String(error);
+				tui.requestRender();
+			});
+			return;
+		}
 		try {
 			sessions.reply(child.id, number, text, "operator");
 			notice = `Answer sent to ${childName(child)}.`;
@@ -629,7 +647,14 @@ function createChildrenView(
 			] as [Hint, Action][];
 		const working = child ? isWorking(child.state) : true;
 		const inputHint: [Hint, Action] = [
-			["Enter", child?.state === "waiting" ? "answer" : "input"],
+			[
+				"Enter",
+				child?.state === "waiting"
+					? "answer"
+					: child?.state === "running"
+						? "steer"
+						: "input",
+			],
 			"type",
 		];
 		if (confirming)
@@ -747,25 +772,28 @@ function createChildrenView(
 			const head = `${mark}${childGlyph(theme, child)} ${theme.fg("accent", child.role)} ${theme.fg("dim", child.id.slice(0, 4))}`;
 			const state = runState(child, now);
 			const spend = usage(spent(sessions.thread(child.id)));
+			const marks = steerMarks(child);
+			const right = (rest: string[]) =>
+				[
+					...(marks.length > 0 ? [theme.fg("warning", marks.join(" · "))] : []),
+					...(rest.length > 0 ? [theme.fg("dim", rest.join(" · "))] : []),
+				].join(theme.fg("dim", " · "));
 			const shown = two
 				? [
 						spread(head, theme.fg("dim", state), width),
-						spread(
-							`    ${theme.fg(color, step)}`,
-							theme.fg("dim", spend.join(" · ")),
-							width,
-						),
+						spread(`    ${theme.fg(color, step)}`, right(spend), width),
 					]
 				: [
 						spread(
 							spend.length > 0 ? head : `${head} ${theme.fg(color, step)}`,
-							theme.fg(
-								"dim",
+							right(
 								spend.length > 0
-									? spend.join(" · ")
-									: child.state === "queued"
-										? "queued"
-										: childElapsed(child, now),
+									? spend
+									: [
+											child.state === "queued"
+												? "queued"
+												: childElapsed(child, now),
+										],
 							),
 							width,
 						),
@@ -863,6 +891,22 @@ function createChildrenView(
 				);
 			}
 		}
+		const steers = [
+			...(child.steering ?? []).map((text) => ["pending", text]),
+			...(child.undelivered ?? []).map((text) => ["undelivered", text]),
+		];
+		if (steers.length > 0) {
+			lines.push("", rule("Steers", width, focused));
+			for (const [state, text] of steers) {
+				lines.push(
+					truncateToWidth(
+						`${theme.fg("warning", state)} ${theme.fg("text", terminalSafeLine(text))}`,
+						width,
+						"…",
+					),
+				);
+			}
+		}
 		if (!isWorking(child.state)) {
 			const text = clean(child.text ?? "");
 			lines.push("", rule("Result", width, focused));
@@ -914,7 +958,9 @@ function createChildrenView(
 		const hint =
 			child.state === "waiting" && child.question !== undefined
 				? `Enter to answer question ${child.question}`
-				: "";
+				: child.state === "running"
+					? "Enter to steer"
+					: "";
 		return truncateToWidth(
 			`${theme.fg("accent", "❯ ")}${theme.fg("dim", hint)}`,
 			width,

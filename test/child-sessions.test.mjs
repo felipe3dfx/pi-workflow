@@ -4466,7 +4466,7 @@ test("Enter opens a live detail that follows the tail, collapses thinking with P
 		assert.match(body, /I should read the doctor module first\./);
 		assert.match(body, /The doctor checks three things\./);
 		assert.match(body, /◆ Run npm test/);
-		assert.match(body, /Esc back {2}\| {2}Enter input {2}\| {2}Ctrl\+J\/K scroll/);
+		assert.match(body, /Esc back {2}\| {2}Enter steer {2}\| {2}Ctrl\+J\/K scroll/);
 		assert.match(body, /s\/c cancel {2}\| {2}Ctrl\+T thinking/);
 
 		const renders = view.tui.renders;
@@ -5814,5 +5814,164 @@ test("the first answer wins: after the parent's reply_child, an operator answer 
 					),
 				),
 		);
+	});
+});
+
+async function steerable(worktree, agentDir) {
+	const children = fakeChildren();
+	const extension = await loadSpawnTool({
+		agentDir,
+		create: children.create,
+		schedule: manualClock().schedule,
+	});
+	const id = await spawnBackground(extension, worktree);
+	await settle();
+	return { children, extension, id, child: children.created[0] };
+}
+
+function shows(view, text) {
+	return view.lines(160).some((line) => line.includes(text));
+}
+
+test("the operator steers a running child from the Fleet view without cancelling it, the row shows each Steer pending until the child receives it, and the parent hears nothing", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const { extension, id, child } = await steerable(worktree, agentDir);
+		const tools = extension.tools.map((tool) => tool.name);
+		const view = openChildren(extension, { rows: 30 });
+
+		view.press("\r", "\r", ..."use tabs", "\r", "\r", ..."then rerun", "\r");
+		await settle();
+
+		assert.deepEqual(child.steered, ["use tabs", "then rerun"]);
+		assert.equal(child.aborts, 0);
+		assert.equal(await stateOf(extension, id), "running");
+		assert.ok(shows(view, "2 steers pending"));
+		child.deliver();
+		assert.ok(shows(view, "1 steer pending"));
+		child.deliver();
+		assert.equal(shows(view, "pending"), false);
+
+		child.result.resolve("Done with tabs.");
+		await settle();
+		assert.equal(shows(view, "undelivered"), false);
+		assert.deepEqual(
+			extension.messages.map((entry) => entry.message.customType),
+			["pi-workflow-child-result"],
+		);
+		assert.equal(JSON.stringify(extension.messages).includes("use tabs"), false);
+		assert.deepEqual(
+			extension.tools.map((tool) => tool.name),
+			tools,
+		);
+	});
+});
+
+test("a Steer the child has not received when it ends is shown as undelivered on its row and in its detail", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const { extension, child } = await steerable(worktree, agentDir);
+		const view = openChildren(extension, { rows: 30 });
+
+		view.press("\r", "\r", ..."use tabs", "\r", "\r", ..."then rerun", "\r");
+		await settle();
+		child.deliver();
+		child.result.resolve("Done.");
+		await settle();
+
+		assert.ok(shows(view, "1 steer undelivered"));
+		assert.equal(shows(view, "pending"), false);
+		assert.ok(shows(view, "undelivered then rerun"));
+		assert.equal(shows(view, "undelivered use tabs"), false);
+		assert.equal(JSON.stringify(extension.messages).includes("then rerun"), false);
+	});
+});
+
+test("a Steer sent while the child retries automatically is not undelivered once the retry ends", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const { extension, child } = await steerable(worktree, agentDir);
+		const view = openChildren(extension, { rows: 30 });
+
+		child.spec.onEvent({ type: "agent_end", messages: [], willRetry: true });
+		view.press("\r", "\r", ..."use tabs", "\r");
+		await settle();
+		assert.ok(shows(view, "1 steer pending"));
+		child.deliver();
+		child.spec.onEvent({ type: "agent_settled" });
+		child.result.resolve("Done with tabs.");
+		await settle();
+
+		assert.equal(shows(view, "undelivered"), false);
+	});
+});
+
+test("a Steer beginning with / is refused, and a child that turns waiting or ends before the Steer is sent refuses it with the reason", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const { extension, id, child } = await steerable(worktree, agentDir);
+		const view = openChildren(extension, { rows: 30 });
+
+		view.press("\r", "\r", ..."/mcp", "\r");
+		await settle();
+		assert.ok(shows(view, "A Steer cannot begin with /."));
+
+		view.press("\r", ..."use tabs");
+		const asked = child.spec.ask("Which file?");
+		view.press("\r");
+		await settle();
+		assert.ok(
+			shows(view, `Child ${id} is waiting; only a running child can be steered.`),
+		);
+
+		view.press("\r", ..."src/a.ts", "\r");
+		assert.equal(await asked, "src/a.ts");
+		view.press("\r", ..."use tabs");
+		child.result.resolve("Done.");
+		await settle();
+		view.press("\r");
+		await settle();
+		assert.ok(
+			shows(view, `Child ${id} is completed; only a running child can be steered.`),
+		);
+		assert.deepEqual(child.steered, []);
+	});
+});
+
+test("through Pi's SDK, two Steers reach a running child at its next turns, one per turn, after the tool results and without cancelling it", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const child = await realChild(agentDir, [
+			fauxAssistantMessage(fauxToolCall("bash", { command: "sleep 0.5" }), {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Using tabs."),
+			fauxAssistantMessage("Rerunning."),
+		]);
+		const id = (await spawnReal(child, worktree)).details.id;
+		await eventually(() => child.parent.requests.length === 1);
+		const view = openChildren(child.extension, { rows: 30 });
+
+		view.press("\r", "\r", ..."use tabs", "\r", "\r", ..."then rerun", "\r");
+		await eventually(() => shows(view, "2 steers pending"));
+		await eventually(() => child.parent.requests.length === 3);
+		for (let i = 0; i < 100; i++) {
+			if ((await stateOf(child.extension, id)) === "completed") break;
+			await delay(10);
+		}
+
+		const tail = (request) =>
+			request.messages
+				.slice(-2)
+				.map((message) =>
+					message.role === "user"
+						? `user: ${message.content.map((part) => part.text).join("")}`
+						: message.role,
+				);
+		assert.deepEqual(tail(child.parent.requests[1]), [
+			"toolResult",
+			"user: use tabs",
+		]);
+		assert.deepEqual(tail(child.parent.requests[2]), [
+			"assistant",
+			"user: then rerun",
+		]);
+		assert.equal(await stateOf(child.extension, id), "completed");
+		assert.equal(shows(view, "undelivered"), false);
 	});
 });

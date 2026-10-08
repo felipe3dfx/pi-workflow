@@ -178,6 +178,13 @@ function fakeSessions(records, threads = {}) {
 			found.state = "running";
 			found.question = undefined;
 		},
+		steers: [],
+		async steer(id, text) {
+			if (text.startsWith("/")) {
+				throw new Error("A Steer cannot begin with \x1b[31m/\x1b[39m.");
+			}
+			this.steers.push({ id, text });
+		},
 		changed() {
 			for (const listener of listeners) listener();
 		},
@@ -433,7 +440,7 @@ test("Tab moves the focus between panes, Ctrl+J/K and page keys scroll the focus
 	assert.match(view.lines(120).join("\n"), /Line 39\./);
 	assert.match(
 		view.lines(120).at(-3),
-		/j\/k move {2}\| {2}Tab focus {2}\| {2}Enter input {2}\| {2}Ctrl\+J\/K scroll {2}\| {2}f follow {2}\| {2}s\/c cancel {2}\| {2}Ctrl\+T thinking/,
+		/j\/k move {2}\| {2}Tab focus {2}\| {2}Enter steer {2}\| {2}Ctrl\+J\/K scroll {2}\| {2}f follow {2}\| {2}s\/c cancel {2}\| {2}Ctrl\+T thinking/,
 	);
 	const accent = "\x1b[1m\x1b[36mworker 5636";
 	assert.equal(
@@ -737,10 +744,9 @@ test("the detail's input line answers a waiting child, and its text and refusals
 	assert.equal(sessions.replies.length, 1);
 });
 
-test("the detail's input line shows why a queued, running, or ended child takes no answer", () => {
+test("the detail's input line shows why a queued or ended child takes no Steer", () => {
 	for (const state of [
 		"queued",
-		"running",
 		"completed",
 		"failed",
 		"cancelled",
@@ -756,14 +762,64 @@ test("the detail's input line shows why a queued, running, or ended child takes 
 			view
 				.lines(120)
 				.some((line) =>
-					line.includes(`worker 5636 is ${state}; it has no question to answer.`),
+					line.includes(`worker 5636 is ${state}; only a running child takes a Steer.`),
 				),
 			state,
 		);
 		assert.deepEqual(sessions.replies, [], state);
+		assert.deepEqual(sessions.steers, [], state);
 	}
 });
 
 function isWorkingState(state) {
 	return state === "queued" || state === "running";
 }
+
+test("the detail's input line steers a running child, and its text and refusals stay terminal-safe", async () => {
+	const running = record("5636", { step: "bash sleep 60" });
+	const sessions = fakeSessions([running]);
+	const view = open(sessions, { rows: 30 });
+
+	const lines = view.lines(120);
+	assert.ok(lines.some((line) => line.includes("❯ Enter to steer")));
+	assert.match(lines.join("\n"), /Enter steer/);
+	view.press("\r", "\x1b[200~use \x1b[31mtabs\u202e\x1b[201~", "\r");
+	await Promise.resolve();
+	assert.deepEqual(sessions.steers, [{ id: running.id, text: "use  [31mtabs" }]);
+	assert.ok(view.lines(120).some((line) => line.includes("Steer sent to worker 5636.")));
+
+	view.press("\r", ..."/mcp", "\r");
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.equal(view.raw(120).join("\n").includes("\x1b[31m/"), false);
+	assert.ok(
+		view.lines(120).some((line) => line.includes("A Steer cannot begin with  [31m/")),
+	);
+	assert.equal(sessions.steers.length, 1);
+});
+
+test("a row marks its pending and undelivered Steers, and the detail lists their text terminal-safe", () => {
+	const hostile = "go\x1b[2J\x1b]52;c;eA==\x07\x9b31m\u202eon";
+	const running = record("5636", {
+		step: "bash sleep 60",
+		steering: [hostile, "then rerun"],
+	});
+	const ended = record("a809", {
+		state: "completed",
+		endedAt: now,
+		text: "Done.",
+		undelivered: ["late"],
+	});
+	for (const rows of [40, 10]) {
+		const view = open(fakeSessions([running, ended]), { rows });
+		const raw = view.raw(120).join("\n");
+		for (const sequence of ["\x1b[2J", "\x1b]52;c;", "\x9b", "\x07", "\u202e"]) {
+			assert.equal(raw.includes(sequence), false, JSON.stringify(sequence));
+		}
+		const lines = view.lines(120).join("\n");
+		assert.match(lines, /2 steers pending/, `${rows}`);
+		assert.match(lines, /1 steer undelivered/, `${rows}`);
+	}
+	const detail = open(fakeSessions([running]), { rows: 40 }).lines(120).join("\n");
+	assert.match(detail, /pending go.*on/);
+	assert.match(detail, /pending then rerun/);
+});

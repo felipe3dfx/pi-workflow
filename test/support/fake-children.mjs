@@ -15,7 +15,23 @@ export function fakeChildren({ model, thinking, tools, run, dispose, onCreate } 
 			disposals: 0,
 			result: Promise.withResolvers(),
 			entries: [userEntry(`entry-${created.length}`, spec.prompt)],
+			steered: [],
+			queue: [],
+			deliver() {
+				const text = child.queue.shift();
+				queued();
+				spec.onEvent({
+					type: "message_start",
+					message: { role: "user", content: [{ type: "text", text }] },
+				});
+			},
 		};
+		const queued = () =>
+			spec.onEvent({
+				type: "queue_update",
+				steering: [...child.queue],
+				followUp: [],
+			});
 		created.push(child);
 		return {
 			sessionId: `session-${created.length - 1}`,
@@ -26,6 +42,17 @@ export function fakeChildren({ model, thinking, tools, run, dispose, onCreate } 
 			run: async (task) => {
 				child.tasks.push(task);
 				return run ? run(task, child.spec) : child.result.promise;
+			},
+			steer: async (text) => {
+				child.steered.push(text);
+				child.queue.push(text);
+				queued();
+			},
+			clearQueue: () => {
+				const steering = child.queue;
+				child.queue = [];
+				queued();
+				return steering;
 			},
 			abort: async () => {
 				child.aborts += 1;

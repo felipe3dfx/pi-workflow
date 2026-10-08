@@ -86,6 +86,8 @@ interface ChildHandle {
 	thinking: string;
 	tools: string[];
 	run(task: string): Promise<string>;
+	steer(text: string): Promise<void>;
+	clearQueue(): string[];
 	abort(): Promise<void>;
 	dispose(): Promise<void>;
 }
@@ -129,6 +131,8 @@ export interface ChildRecord {
 	group?: string;
 	step?: string;
 	question?: number;
+	steering?: string[];
+	undelivered?: string[];
 }
 
 export type Answerer = "parent" | "operator";
@@ -328,7 +332,7 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 	}
 	const slash = spec.model.indexOf("/");
 	const settingsManager = SettingsManager.inMemory(
-		{},
+		{ steeringMode: "one-at-a-time" },
 		{ projectTrusted: spec.project.trusted },
 	);
 	const resourceLoader = new DefaultResourceLoader({
@@ -432,6 +436,10 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 			}
 			return session.getLastAssistantText() ?? "";
 		},
+		async steer(text) {
+			await session.steer(text);
+		},
+		clearQueue: () => session.clearQueue().steering,
 		abort: () => {
 			stopped = true;
 			return session.abort();
@@ -538,6 +546,10 @@ export function createChildSessions(options: {
 
 	function track(child: Child, event: AgentSessionEvent) {
 		if (children.get(child.record.id) !== child) return;
+		if (event.type === "queue_update" && isWorking(child.record.state)) {
+			child.record.steering = [...event.steering];
+			changed();
+		}
 		if (event.type === "message_start" || event.type === "message_update") {
 			if (event.message.role === "assistant") child.streaming = event.message;
 		} else if (event.type === "message_end") {
@@ -633,6 +645,13 @@ export function createChildSessions(options: {
 					: `The child ${state}.`,
 			),
 		);
+		record.steering = undefined;
+		try {
+			const undelivered = child.handle.clearQueue();
+			if (undelivered.length > 0) record.undelivered = undelivered;
+		} catch (error) {
+			warn(`Child ${record.id}: ${errorMessage(error)}`);
+		}
 		try {
 			child.entries = child.handle.entries();
 			if (state === "completed") {
@@ -953,6 +972,20 @@ export function createChildSessions(options: {
 		answer(child, text);
 	}
 
+	async function steer(id: string, text: string) {
+		const child = children.get(id);
+		if (!child) throw new Error(`No child ${id} in this session.`);
+		if (child.record.state !== "running") {
+			throw new Error(
+				`Child ${id} is ${child.record.state}; only a running child can be steered.`,
+			);
+		}
+		if (text.startsWith("/")) {
+			throw new Error("A Steer cannot begin with /.");
+		}
+		await child.handle.steer(text);
+	}
+
 	function cancel(id: string, deliver: boolean) {
 		const child = children.get(id);
 		if (!child)
@@ -1072,6 +1105,7 @@ export function createChildSessions(options: {
 		resume,
 		reserve,
 		reply,
+		steer,
 		cancel,
 		consume,
 		atBoundary,
