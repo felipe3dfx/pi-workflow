@@ -53,7 +53,7 @@ import {
 import { shellOptions } from "./shell-settings.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
 import type { TodoClaim } from "./todo-extension.ts";
-import type { Task, TaskState } from "./todo-list.ts";
+import type { TaskState } from "./todo-list.ts";
 
 const packageVersion = (
 	JSON.parse(

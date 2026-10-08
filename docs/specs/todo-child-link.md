@@ -82,7 +82,7 @@ Every decision below was resolved by the developer in the #207 grilling session.
 ### Persistence
 
 - Task state changes made by the harness must be restored on `session_start` and `session_tree` exactly like changes made with the `todo` tool. Today the Todo is rebuilt only from `todo` tool results, so the harness's changes need a session entry the replay reads. Recommendation: one append-only session entry per harness change, carrying the full task list like a `todo` tool result, so that replay keeps a single rule (the latest list wins). Sessions only append; nothing already sent to the model is rewritten.
-- Known limitation: after a reload, task ids restart, so on a later `session_tree` move to a branch created in a different process, a child still linked to task #N may apply its Task state to a different task with the same id on that branch.
+- Known limitation: after a reload, task ids continue from the current branch's highest id, so on a later `session_tree` move to a branch created in a different process whose ids overlap, a child still linked to task #N may apply its Task state to a different task with the same id on that branch.
 
 ### Presentation
 

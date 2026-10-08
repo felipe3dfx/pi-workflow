@@ -7002,6 +7002,25 @@ test("a launch refused inside start does not take the task from the running chil
 	});
 });
 
+test("a launch refused after the child is created does not take the task from the running child", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren({ model: (index, spec) => (index === 1 ? "other/model" : spec.model) });
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const todo = todoTool(extension);
+		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
+		await spawnOnTask(extension, worktree, 1);
+		await settle();
+		const refused = await spawn(extension.tool, { role: "worker", task: "Again", todo: 1 }, toolContext("tui", worktree));
+		assert.equal(refused.details.status, "pending");
+		children.created[0].spec.report(workerResult("done"));
+		children.created[0].result.resolve("Finished.");
+		await settle();
+		const delivered = extension.messages.map(({ message }) => message.content).join("\n\n");
+		assert.match(delivered, /Task #1 is now done\./);
+		assert.equal(await todo.list(), "[done] #1: Fix the parser");
+	});
+});
+
 test("an open Fleet row follows a rename", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const extension = await loadSpawnTool({ agentDir, create: fakeChildren().create });
