@@ -43,6 +43,9 @@ Upgrade re-verification items, like the chrome in ADR 0007, because they depend 
 - The patch of the child's stream function that stops a run still preparing its request after cancellation.
 - The explorer's `pi-web-access` load. Each launch re-evaluates the package, about 40 ms on a cold transform cache and under 10 ms on a warm one for `pi-web-access` 0.37.0. The map of host modules duplicates the specifiers Pi's extension loader maps, limited to the harness's peers, and must follow Pi's list. It is verified on Node only: Pi's compiled binary and bundled Node distributions are unverified.
 - Pi's default MCP configuration loader reading the `session_start` context's `cwd` and the session's trust. If it reads anything else, the trust tests fail and the loader decision of V7 returns.
+- The Run state, which relies on Pi's `session.prompt()` resolving only after `agent_settled`. The harness does not subscribe to `agent_settled`.
+- Script groups, which rely on `codemode` giving a nested tool call the id `<id>/<n>`.
+- The explorer's allowlist, which names `pi-web-access` tools: `web_search`, `source_check`, `fetch_content`, and `get_search_content`.
 
 Accepted risks:
 
@@ -59,3 +62,4 @@ Accepted risks:
 - R11: `direct` MCP servers that the user adds to `mcp.json` change children's declarations and tool order. The harness does not normalize them.
 - R12: a locally installed `pi-web-access` loads in the explorer even when its companion expectation is off, so doctor does not report it missing. The explorer's trace does.
 - R13: `/reload` ends every working child, because every session shutdown, reload included, disposes all children. The harness notifies the operator at `session_shutdown` with reason `reload` and records it in the trace. Survival across a reload belongs to #204.
+- R14: a child's `ask_parent` inside a script that times out leaves the question waiting until the child ends, because `ask_parent` ignores the call's signal (V6).
