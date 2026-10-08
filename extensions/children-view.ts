@@ -495,6 +495,17 @@ function createChildrenView(
 		notice = result.cancelled ? `${name} cancelled.` : result.message;
 	}
 
+	function spentBy(children: ChildRecord[]) {
+		let tokens = 0;
+		let cost = 0;
+		for (const child of children) {
+			const item = spent(sessions.thread(child.id));
+			tokens += item.tokens;
+			cost += item.cost;
+		}
+		return { tokens, cost };
+	}
+
 	function refusal(child: ChildRecord) {
 		if (replyKind(child)) return undefined;
 		if (child.state === "queued")
@@ -749,10 +760,7 @@ function createChildrenView(
 				} else {
 					const members = list.filter((item) => item.group === group);
 					const done = members.filter((item) => !isWorking(item.state));
-					const tokens = members.reduce(
-						(sum, item) => sum + spent(sessions.thread(item.id)).tokens,
-						0,
-					);
+					const { tokens } = spentBy(members);
 					lines.push(
 						rule(groupLabel(group), width, false),
 						theme.fg(
@@ -1046,15 +1054,7 @@ function createChildrenView(
 					})),
 			};
 			const working = list.filter((item) => isWorking(item.state)).length;
-			const total = list
-				.map((item) => spent(sessions.thread(item.id)))
-				.reduce(
-					(sum, item) => ({
-						tokens: sum.tokens + item.tokens,
-						cost: sum.cost + item.cost,
-					}),
-					{ tokens: 0, cost: 0 },
-				);
+			const total = spentBy(list);
 			const title = [
 				`Fleet ${list.length}`,
 				...(working > 0 ? [`${working} active`] : []),
