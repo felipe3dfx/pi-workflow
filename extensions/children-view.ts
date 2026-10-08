@@ -489,7 +489,9 @@ function createChildrenView(
 		if (child.state === "running") return undefined;
 		if (child.state === "waiting" && child.question !== undefined)
 			return undefined;
-		return `${childName(child)} is ${child.state}; only a running child takes a Steer.`;
+		if (child.state === "queued")
+			return `${childName(child)} is queued; it takes a Steer once it runs.`;
+		return `${childName(child)} is ${child.state}; an ended child takes no Steer or answer.`;
 	}
 
 	function leave() {

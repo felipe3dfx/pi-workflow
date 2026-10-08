@@ -744,13 +744,13 @@ test("the detail's input line answers a waiting child, and its text and refusals
 	assert.equal(sessions.replies.length, 1);
 });
 
-test("the detail's input line shows why a queued or ended child takes no Steer", () => {
-	for (const state of [
-		"queued",
-		"completed",
-		"failed",
-		"cancelled",
-		"timed out",
+test("the detail's input line shows why a queued child takes no Steer yet and an ended child takes neither a Steer nor an answer", () => {
+	for (const [state, reason] of [
+		["queued", "is queued; it takes a Steer once it runs."],
+		...["completed", "failed", "cancelled", "timed out"].map((ended) => [
+			ended,
+			`is ${ended}; an ended child takes no Steer or answer.`,
+		]),
 	]) {
 		const sessions = fakeSessions([
 			record("5636", { state, endedAt: isWorkingState(state) ? undefined : now }),
@@ -762,7 +762,7 @@ test("the detail's input line shows why a queued or ended child takes no Steer",
 			view
 				.lines(120)
 				.some((line) =>
-					line.includes(`worker 5636 is ${state}; only a running child takes a Steer.`),
+					line.includes(`worker 5636 ${reason}`),
 				),
 			state,
 		);
