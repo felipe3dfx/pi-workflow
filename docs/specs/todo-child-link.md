@@ -69,7 +69,7 @@ Every decision below was resolved by the developer in the #207 grilling session.
 ### Transitions
 
 - Launch accepted, queued included: the task becomes `in progress`. A Launch blocked or a Launch limit refusal changes nothing. `waiting` changes nothing.
-- On consumption of the result, by any consumption path (reading it, automatic delivery, or continuing the child):
+- On consumption of the result, by any consumption path (reading it, automatic delivery, continuing the child, or cancelling it with `cancel_child`):
   - Verdict `done` or `pass`, or a completed explorer: `done`.
   - Verdict `blocked`, `fail`, or `partial`: `blocked`.
   - Run state `failed` or `timed out`: `blocked`, even if a timed-out child reported a last result.

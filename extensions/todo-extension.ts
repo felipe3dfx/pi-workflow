@@ -191,6 +191,10 @@ export function registerSessionTodo(
 		return todoList.list().some((task) => task.id === id);
 	}
 
+	function text(id: number): string | undefined {
+		return todoList.list().find((task) => task.id === id)?.text;
+	}
+
 	function set(id: number, state: TaskState): void {
 		if (!todoList.update(id, { state })) return;
 		pi.appendEntry(TODO_ENTRY, { tasks: todoList.list() });
@@ -201,6 +205,7 @@ export function registerSessionTodo(
 		offer: () => offerTool(pi, tool, seated("todo", "above-input")),
 		claim,
 		has,
+		text,
 		set,
 	};
 }

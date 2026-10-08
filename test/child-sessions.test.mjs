@@ -6542,6 +6542,22 @@ test("each spawn_child call of one codemode Group sets its own task in progress,
 	});
 });
 
+test("a Fleet row shows its task's current text after the task is renamed, and no task once the Todo is cleared", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const extension = await loadSpawnTool({ agentDir, create: fakeChildren().create });
+		const todo = todoTool(extension);
+		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
+		await spawnOnTask(extension, worktree, 1);
+		await todo.run("update", { id: 1, text: "Fix the lexer" });
+		const renamed = openChildren(extension, { rows: 40 }).lines(200).join("\n");
+		assert.match(renamed, /#1 Fix the lexer/);
+		assert.doesNotMatch(renamed, /Fix the parser/);
+
+		await todo.run("clear");
+		assert.doesNotMatch(openChildren(extension, { rows: 40 }).lines(200).join("\n"), /#1/);
+	});
+});
+
 test("a Task state the harness sets is restored on session_start and session_tree like one set with the todo tool", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const extension = await loadSpawnTool({ agentDir, create: fakeChildren().create });
@@ -6611,10 +6627,11 @@ test("a linked task keeps in progress until the parent reads the result, which a
 	});
 });
 
-test("automatic delivery applies done for done, pass, and a completed explorer, blocked for blocked, fail, partial, no Verdict, and failed, and states each", async () => {
+test("automatic delivery applies done for done, pass, and a completed explorer, blocked for blocked, fail, partial, no Verdict, failed, and timed out, explorer included, and states each", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
+		const clock = manualClock();
 		const children = fakeChildren();
-		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const extension = await loadSpawnTool({ agentDir, create: children.create, schedule: clock.schedule });
 		const todo = todoTool(extension);
 		const cases = [
 			{ role: "worker", report: workerResult("done"), state: "done" },
@@ -6626,17 +6643,20 @@ test("automatic delivery applies done for done, pass, and a completed explorer, 
 			{ role: "verify", report: verifyResult("fail"), state: "blocked" },
 			{ role: "worker", report: workerResult("partial"), state: "blocked" },
 			{ role: "worker", fail: true, state: "blocked" },
+			{ role: "explore", fail: true, state: "blocked" },
+			{ role: "explore", timeout: true, state: "blocked" },
 		];
 		await todo.run("write", { tasks: cases.map((_, i) => ({ text: `Task ${i + 1}` })) });
-		for (const [i, { role }] of cases.entries()) await spawnOnTask(extension, worktree, i + 1, role);
-		await settle();
-		for (const [i, { report, fail }] of cases.entries()) {
+		for (const [i, { role, report, fail, timeout }] of cases.entries()) {
+			await spawnOnTask(extension, worktree, i + 1, role);
+			await settle();
 			const child = children.created[i];
 			if (report) child.spec.report(report);
 			if (fail) child.result.reject(new Error("provider overloaded"));
+			else if (timeout) clock.fire(minutes(4));
 			else child.result.resolve("Finished.");
+			await settle();
 		}
-		await settle();
 
 		const delivered = extension.messages.map(({ message }) => message.content).join("\n\n");
 		for (const [i, { state }] of cases.entries()) {
@@ -6836,6 +6856,27 @@ test("a foreground child that fails or is aborted applies its Task state and the
 	});
 });
 
+test("in a foreground codemode Group, the child linked later to a task sets its Task state even when it finishes first", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const todo = todoTool(extension);
+		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
+		const ctx = toolContext("print", worktree);
+		const earlier = extension.tool.execute("script-1/1", { role: "worker", task: "Fix the parser", todo: 1 }, undefined, undefined, ctx);
+		await eventually(() => children.created[0]?.tasks.length === 1);
+		const later = extension.tool.execute("script-1/2", { role: "verify", task: "Check the parser", todo: 1 }, undefined, undefined, ctx);
+		await eventually(() => children.created[1]?.tasks.length === 1);
+		children.created[1].spec.report(verifyResult("pass"));
+		children.created[1].result.resolve("Verified.");
+		assert.match(text(await later), /Task #1 is now done\./);
+		children.created[0].spec.report(workerResult("partial"));
+		children.created[0].result.resolve("Half done.");
+		assert.match(text(await earlier), /Task #1 is linked to a later child, so no Task state was applied\./);
+		assert.equal(await todo.list(), "[done] #1: Fix the parser");
+	});
+});
+
 test("the Todo box names only a working child, so a finished child whose result is unread is not shown", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
@@ -6854,6 +6895,27 @@ test("the Todo box names only a working child, so a finished child whose result 
 		const box = boxOf(extension).render(100).map(plain).join("\n");
 		assert.match(box, /Fix the parser/);
 		assert.doesNotMatch(box, /←/);
+	});
+});
+
+test("the Todo box names only the latest child linked to a task, and nobody once that child finishes while an earlier one still works", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const todo = todoTool(extension);
+		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
+		extension.busy(true);
+		const earlier = await spawnOnTask(extension, worktree, 1);
+		const later = await spawnOnTask(extension, worktree, 1, "verify");
+		await settle();
+		const box = () => boxOf(extension).render(100).map(plain).join("\n");
+		assert.match(box(), new RegExp(`← verify ${later.slice(0, 4)}`));
+
+		children.created[1].spec.report(verifyResult("pass"));
+		children.created[1].result.resolve("Verified.");
+		await settle();
+		assert.equal(await stateOf(extension, earlier), "running");
+		assert.doesNotMatch(box(), /←/);
 	});
 });
 

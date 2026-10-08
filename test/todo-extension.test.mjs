@@ -359,6 +359,19 @@ test("session_start restores the latest list whether a todo tool result or a har
 	}
 });
 
+test("a Task state the harness sets redraws the box", async () => {
+	const { pi, tools } = fakePi();
+	pi.appendEntry = () => {};
+	let redraws = 0;
+	const { set } = registerSessionTodo(pi, () => redraws++, () => new Map());
+	await execute(tools, "add", { text: "Fix the parser" });
+	const before = redraws;
+
+	set(1, "blocked");
+	assert.equal(redraws, before + 1);
+	assert.ok(paintAboveInput(80, fakeTheme()).some((line) => line.includes("! Fix the parser")));
+});
+
 test("session_tree rebuilds the list from the tree's branch, like session_start does", async () => {
 	const { pi, tools, handlers } = fakePi();
 	registerSessionTodo(pi, () => {}, () => new Map());

@@ -216,13 +216,13 @@ function open(
 		rows = 40,
 		schedule = manualSchedule().schedule,
 		latest = false,
-		tasks = [3],
+		tasks = {},
 	} = {},
 ) {
 	let factory;
 	const views = createChildrenViews(
 		sessions,
-		{ has: (id) => tasks.includes(id) },
+		{ text: (id) => tasks[id] },
 		schedule,
 	);
 	void views.open({
@@ -876,11 +876,12 @@ test("a linked child's Fleet row shows its task number and text, truncated to th
 	const sessions = fakeSessions([
 		record("5636", {
 			step: "bash sleep 60",
-			todo: { id: 3, text: `Wire\x1b the parser ${"and more ".repeat(30)}` },
+			todo: { id: 3 },
 		}),
 	]);
+	const tasks = { 3: `Wire\x1b the parser ${"and more ".repeat(30)}` };
 	for (const [rows, width] of [[40, 200], [10, 64]]) {
-		const raw = open(sessions, { rows }).raw(width);
+		const raw = open(sessions, { rows, tasks }).raw(width);
 		const lines = raw.map(plain);
 		assert.ok(lines.some((line) => /#3 Wire {2}the/.test(line)), lines.join("\n"));
 		assert.equal(lines.some((line) => line.includes("in progress")), false);
@@ -893,10 +894,10 @@ test("a linked child's Fleet row stops naming its task once the task no longer e
 	const sessions = fakeSessions([
 		record("5636", {
 			step: "bash sleep 60",
-			todo: { id: 3, text: "Wire the parser" },
+			todo: { id: 3 },
 		}),
 	]);
-	const lines = open(sessions, { tasks: [] }).lines(200).join("\n");
+	const lines = open(sessions).lines(200).join("\n");
 	assert.doesNotMatch(lines, /#3|Wire the parser/);
 	assert.match(lines, /bash sleep 60/);
 });

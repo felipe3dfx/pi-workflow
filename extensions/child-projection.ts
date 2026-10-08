@@ -90,8 +90,12 @@ export function reportsResult(
 	return Object.hasOwn(resultParameters, role);
 }
 
+export function verdictSucceeded(verdict: string | undefined) {
+	return verdict === "done" || verdict === "pass";
+}
+
 export function verdictNeedsNoReason(verdict: string | undefined) {
-	return verdict === undefined || verdict === "done" || verdict === "pass";
+	return verdict === undefined || verdictSucceeded(verdict);
 }
 
 export function needsNoReason(
