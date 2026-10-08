@@ -35,7 +35,7 @@ For internal communication and publication-language requirements, see the [Langu
 
 ## Theme and chrome
 
-The package ships the `pi-workflow` theme and restyles Pi's terminal UI. The chrome patches Pi internals copied from Pi 1.0.3 without a version guard; re-verify them on every Pi upgrade. See [ADR 0007](docs/adr/0007-patch-pi-tui-internals-for-chrome.md).
+The package ships the `pi-workflow` theme and restyles Pi's terminal UI. The chrome patches Pi internals copied from Pi 1.0.4 without a version guard; re-verify them on every Pi upgrade. See [ADR 0007](docs/adr/0007-patch-pi-tui-internals-for-chrome.md).
 
 ## Colliding packages
 
@@ -64,4 +64,4 @@ The launcher isolates Pi home, configuration, packages, and sessions. It is not 
 ## Requirements
 
 - Node.js `>=22.19`
-- Pi CLI `>=1.0.3` available in the target environment
+- Pi CLI `>=1.0.4` available in the target environment
