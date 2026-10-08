@@ -158,6 +158,7 @@ function fakeSessions(records, threads = {}) {
 			return () => followers.set(id, followers.get(id) - 1);
 		},
 		thread: (id) => threads[id],
+		changedFiles: () => [],
 		cancel(id) {
 			const found = records.find((item) => item.id === id);
 			found.state = "cancelled";

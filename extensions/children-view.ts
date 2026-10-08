@@ -30,6 +30,7 @@ import {
 	childModelLine,
 	childName,
 	childStep,
+	lastReportedResult,
 } from "./child-projection.ts";
 import { type Schedule, scheduleTimer } from "./clock.ts";
 import { seated } from "./shell.ts";
@@ -140,6 +141,23 @@ function runState(child: ChildRecord, now: number) {
 	return child.state === "queued"
 		? "queued"
 		: `${child.state} · ${childElapsed(child, now)}`;
+}
+
+function fleetOrder(records: ChildRecord[]) {
+	const groups = new Set(records.flatMap((child) => child.group ?? []));
+	const sorted = [...records].sort(byState);
+	const direct = sorted.filter((child) => child.group === undefined);
+	return [
+		...direct.filter((child) => isWorking(child.state)),
+		...[...groups].flatMap((group) =>
+			sorted.filter((child) => child.group === group),
+		),
+		...direct.filter((child) => !isWorking(child.state)),
+	];
+}
+
+function groupLabel(group: string) {
+	return `script ${[...terminalSafeLine(group)].slice(-4).join("")}`;
 }
 
 function pad(line: string, width: number) {
@@ -413,7 +431,7 @@ function createChildrenView(
 	}
 
 	function children() {
-		const list = sessions.list().sort(byState);
+		const list = fleetOrder(sessions.list());
 		const found = list.findIndex((child) => child.id === selected);
 		if (found === -1 && focus === "detail" && !layout.split) focus = "list";
 		const index = Math.max(0, found);
@@ -615,13 +633,40 @@ function createChildrenView(
 		const two = rows >= twoLineRows;
 		const lines: string[] = [];
 		const ids: (string | undefined)[] = [];
-		let section = "";
+		let section: string | undefined;
 		list.forEach((child, i) => {
-			const name = isWorking(child.state) ? "Active" : "Finished";
+			const { group } = child;
+			const name =
+				group === undefined
+					? isWorking(child.state)
+						? "Active"
+						: "Finished"
+					: `group ${group}`;
 			if (name !== section) {
 				section = name;
-				lines.push(rule(name, width, false));
-				ids.push(undefined);
+				if (group === undefined) {
+					lines.push(rule(name, width, false));
+					ids.push(undefined);
+				} else {
+					const members = list.filter((item) => item.group === group);
+					const done = members.filter((item) => !isWorking(item.state));
+					const tokens = members.reduce(
+						(sum, item) => sum + spent(sessions.thread(item.id)).tokens,
+						0,
+					);
+					lines.push(
+						rule(groupLabel(group), width, false),
+						theme.fg(
+							"dim",
+							spread(
+								`${members.length} launched · ${done.length} done`,
+								`${count(tokens)} tok`,
+								width,
+							),
+						),
+					);
+					ids.push(undefined, undefined);
+				}
 			}
 			const active = i === index;
 			const mark = active
@@ -668,7 +713,8 @@ function createChildrenView(
 		}
 		const at = ids.indexOf(list[index]?.id);
 		if (!listFree && at >= 0) {
-			const start = at > 0 && ids[at - 1] === undefined ? at - 1 : at;
+			let start = at;
+			while (start > 0 && ids[start - 1] === undefined) start -= 1;
 			const end = at + (two ? 2 : 1);
 			if (start < listTop) listTop = start;
 			if (end > listTop + rows) listTop = end - rows;
@@ -740,6 +786,15 @@ function createChildrenView(
 				? threadLines
 				: [theme.fg("dim", "Waiting for the first event…")]),
 		);
+		const files = sessions.changedFiles(child.id);
+		if (files.length > 0) {
+			lines.push("", rule("Changed files", width, focused));
+			for (const file of files) {
+				lines.push(
+					theme.fg("text", truncateToWidth(terminalSafeLine(file), width, "…")),
+				);
+			}
+		}
 		if (!isWorking(child.state)) {
 			const text = clean(child.text ?? "");
 			lines.push("", rule("Result", width, focused));
@@ -750,6 +805,14 @@ function createChildrenView(
 			} else {
 				const color = child.state === "cancelled" ? "muted" : "error";
 				lines.push(...wrap(text, width).map((line) => theme.fg(color, line)));
+				if (child.state === "timed out" && child.result) {
+					lines.push(
+						"",
+						...wrap(clean(lastReportedResult(child.result)), width).map(
+							(line) => theme.fg("text", line),
+						),
+					);
+				}
 			}
 		}
 		return lines;

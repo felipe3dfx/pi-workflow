@@ -115,6 +115,7 @@ export interface ChildRecord {
 	text?: string;
 	result?: ChildResult;
 	continuedFrom?: string;
+	group?: string;
 	step?: string;
 }
 
@@ -127,6 +128,8 @@ interface Child {
 	entries?: SessionEntry[];
 	streaming?: AssistantMessage;
 	tools: Map<string, string>;
+	writes: Map<string, string>;
+	changed: Set<string>;
 	followers: Set<() => void>;
 	asked: number;
 	question?: {
@@ -471,8 +474,17 @@ export function createChildSessions(options: {
 				describeTool(event.toolName, event.args),
 			);
 			step = [...child.tools.values()].at(-1);
+			const path = (event.args as { path?: unknown } | undefined)?.path;
+			if (
+				(event.toolName === "edit" || event.toolName === "write") &&
+				typeof path === "string"
+			)
+				child.writes.set(event.toolCallId, path);
 		} else if (event.type === "tool_execution_end") {
 			child.tools.delete(event.toolCallId);
+			const path = child.writes.get(event.toolCallId);
+			child.writes.delete(event.toolCallId);
+			if (path !== undefined && !event.isError) child.changed.add(path);
 			step = [...child.tools.values()].at(-1);
 		} else if (event.type === "message_update" && child.tools.size === 0) {
 			const kind = event.assistantMessageEvent.type;
@@ -633,6 +645,7 @@ export function createChildSessions(options: {
 			modelRegistry: ExtensionContext["modelRegistry"];
 			shell: () => ChildShell;
 			onLaunch?: () => void;
+			group?: string;
 		},
 		from?: { id: string; conversation: Conversation },
 	) {
@@ -759,11 +772,14 @@ export function createChildSessions(options: {
 				state: "queued",
 				createdAt: Date.now(),
 				continuedFrom: from?.id,
+				...(launch.group === undefined ? {} : { group: launch.group }),
 			},
 			plan,
 			handle,
 			watch,
 			tools: new Map(),
+			writes: new Map(),
+			changed: new Set(),
 			followers: new Set(),
 			asked: 0,
 		};
@@ -899,6 +915,10 @@ export function createChildSessions(options: {
 		return [...children.values()].map((child) => ({ ...child.record }));
 	}
 
+	function changedFiles(id: string) {
+		return [...(children.get(id)?.changed ?? [])];
+	}
+
 	function working() {
 		return [...children.values()].filter((child) =>
 			isWorking(child.record.state),
@@ -962,6 +982,7 @@ export function createChildSessions(options: {
 		atBoundary,
 		get,
 		list,
+		changedFiles,
 		working,
 		waiting,
 		subscribe,
@@ -1083,7 +1104,7 @@ export function createSpawnChildTool(
 			"When Jev routing is on, the parent asks once per user turn before read, grep, find, ls, edit, write, bash, powershell, or codegraph query and explore. A block that names a role means call spawn_child and use that role. A block that says to ask the user one question means ask that one question and wait. Reads of AGENTS.md, GLOSSARY.md, and one docs/agents markdown file stay available, and so does codegraph init.",
 		],
 		parameters: spawnChildParameters,
-		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+		async execute(toolCallId, params, signal, _onUpdate, ctx) {
 			const unseated = unseatedChild();
 			if (unseated) return unseated;
 			const background = ctx.mode === "tui" || ctx.mode === "rpc";
@@ -1121,6 +1142,7 @@ export function createSpawnChildTool(
 					modelRegistry: ctx.modelRegistry,
 					shell: () => shellOptions(ctx),
 					onLaunch: () => launcher.recordLaunch(userRequest?.id),
+					group: /^([\s\S]+)\/\d+$/.exec(toolCallId)?.[1],
 				});
 				return launched(started, plan.warnings, {
 					role: plan.role,
