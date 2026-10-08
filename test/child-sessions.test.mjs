@@ -6282,21 +6282,56 @@ test("a Steer the child has not received when it ends is shown as undelivered on
 	});
 });
 
-test("a Steer sent while the child retries automatically is not undelivered once the retry ends", async () => {
+test("through Pi's SDK, a Steer sent while the child waits to retry automatically reaches the retried turn and is not undelivered", async () => {
+	initTheme("dark", false);
 	await withWorkspace(async ({ worktree, agentDir }) => {
-		const { extension, child } = await steerable(worktree, agentDir);
-		const view = openChildren(extension, { rows: 30 });
+		const child = await realChild(agentDir, [
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "overloaded_error: Overloaded",
+			}),
+			fauxAssistantMessage("Retried with tabs."),
+		]);
+		const id = (await spawnReal(child, worktree)).details.id;
+		await eventually(() => child.parent.requests.length === 1);
+		await delay(100);
+		assert.equal(child.parent.requests.length, 1);
+		const view = openChildren(child.extension, { rows: 30 });
 
-		child.spec.onEvent({ type: "agent_end", messages: [], willRetry: true });
 		view.press("\r", "\r", ..."use tabs", "\r");
-		await settle();
-		assert.ok(shows(view, "1 steer pending"));
-		child.deliver();
-		child.spec.onEvent({ type: "agent_settled" });
-		child.result.resolve("Done with tabs.");
-		await settle();
+		for (let i = 0; i < 500; i++) {
+			if ((await stateOf(child.extension, id)) === "completed") break;
+			await delay(10);
+		}
 
+		assert.equal(await stateOf(child.extension, id), "completed");
+		assert.equal(child.parent.requests.length, 2);
+		assert.ok(sent(child.parent.requests[1]).includes("use tabs"));
 		assert.equal(shows(view, "undelivered"), false);
+	});
+});
+
+test("through Pi's SDK, a Steer still queued when the child is cancelled mid-stream is shown as undelivered", async () => {
+	initTheme("dark", false);
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const child = await realChild(
+			agentDir,
+			fauxAssistantMessage("a very long answer ".repeat(400)),
+			{ tokensPerSecond: 200 },
+		);
+		const id = (await spawnReal(child, worktree)).details.id;
+		await eventually(() => child.parent.requests.length === 1);
+		const view = openChildren(child.extension, { rows: 30 });
+
+		view.press("\r", "\r", ..."use tabs", "\r");
+		await eventually(() => shows(view, "1 steer pending"));
+		await use(child.extension, "cancel_child", { id });
+		await delay(50);
+
+		assert.equal(await stateOf(child.extension, id), "cancelled");
+		assert.equal(child.parent.requests.length, 1);
+		assert.ok(shows(view, "1 steer undelivered"));
+		assert.ok(shows(view, "undelivered use tabs"));
 	});
 });
 
