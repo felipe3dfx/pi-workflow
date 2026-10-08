@@ -3819,6 +3819,43 @@ test("a background child asks through Pi's SDK, the parent model replies, and th
 	});
 });
 
+test("a question asked from a script that times out through Pi's SDK is withdrawn, the child runs again, and a later reply is refused as withdrawn", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const child = await realChild(agentDir, [
+			fauxAssistantMessage(
+				fauxToolCall("codemode", {
+					code: '// @options: {"timeout_ms": 300}\nreturn await tools.ask_parent({ question: "Which file?" });',
+				}),
+				{ stopReason: "toolUse" },
+			),
+			asking("Which module?"),
+			fauxAssistantMessage("Done."),
+		]);
+		const { extension } = child;
+		let id;
+		const unhandled = await collectUnhandled(async () => {
+			id = (await spawnReal(child, worktree)).details.id;
+			await eventually(() => extension.messages.length === 1);
+			assert.equal(await stateOf(extension, id), "waiting");
+			await eventually(() => extension.messages.length === 2);
+			assert.equal(extension.messages[1].message.details.question, 2);
+
+			await assert.rejects(
+				use(extension, "reply_child", { id, question: 1, answer: "src/a.ts" }),
+				{
+					message: `Question 1 of child ${id} was withdrawn: the call that asked it ended.`,
+				},
+			);
+			assert.equal(await stateOf(extension, id), "waiting");
+			await use(extension, "reply_child", { id, question: 2, answer: "parser" });
+			await eventually(() => extension.messages.length === 3);
+		});
+
+		assert.equal(await stateOf(extension, id), "completed");
+		assert.deepEqual(unhandled, []);
+	});
+});
+
 function reporting(result) {
 	return fauxAssistantMessage(fauxToolCall("report_result", result), {
 		stopReason: "toolUse",

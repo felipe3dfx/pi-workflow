@@ -70,7 +70,7 @@ interface ChildSpec {
 	shell: ChildShell;
 	onEvent(event: AgentSessionEvent): void;
 	notify(message: string): void;
-	ask(question: string): Promise<string>;
+	ask(question: string, signal?: AbortSignal): Promise<string>;
 	report(result: ChildResult): void;
 	entries?: SessionEntry[];
 	parentSession?: string;
@@ -153,6 +153,7 @@ interface Child {
 	followers: Set<() => void>;
 	asked: number;
 	answers: Map<number, { by: Answerer; text: string }>;
+	withdrawn: Set<number>;
 	question?: {
 		number: number;
 		resolve(answer: string): void;
@@ -300,7 +301,7 @@ const askParentParameters = Type.Object({
 });
 
 export function createAskParentTool(
-	ask: (question: string) => Promise<string>,
+	ask: (question: string, signal?: AbortSignal) => Promise<string>,
 ) {
 	return {
 		name: askParentTool,
@@ -311,9 +312,12 @@ export function createAskParentTool(
 		async execute(
 			_toolCallId: string,
 			params: Static<typeof askParentParameters>,
+			signal?: AbortSignal,
 		) {
 			return {
-				content: [{ type: "text" as const, text: await ask(params.question) }],
+				content: [
+					{ type: "text" as const, text: await ask(params.question, signal) },
+				],
 				details: {},
 			};
 		},
@@ -714,7 +718,10 @@ export function createChildSessions(options: {
 		else question.resolve(reply);
 	}
 
-	function ask(child: Child, question: string) {
+	function ask(child: Child, question: string, signal?: AbortSignal) {
+		if (signal?.aborted) {
+			return Promise.reject(new Error("The call was aborted."));
+		}
 		if (child.question) {
 			return Promise.reject(
 				new Error("A question is already waiting for the parent's reply."),
@@ -729,7 +736,23 @@ export function createChildSessions(options: {
 		child.asked += 1;
 		const number = child.asked;
 		return new Promise<string>((resolve, reject) => {
-			child.question = { number, resolve, reject };
+			const withdraw = () => {
+				if (child.question?.number !== number) return;
+				child.withdrawn.add(number);
+				answer(child, new Error("The call was aborted."));
+			};
+			signal?.addEventListener("abort", withdraw, { once: true });
+			child.question = {
+				number,
+				resolve(reply) {
+					signal?.removeEventListener("abort", withdraw);
+					resolve(reply);
+				},
+				reject(error) {
+					signal?.removeEventListener("abort", withdraw);
+					reject(error);
+				},
+			};
 			child.record.question = number;
 			child.record.state = "waiting";
 			child.record.step = `asks question ${number}`;
@@ -773,7 +796,7 @@ export function createChildSessions(options: {
 	) {
 		if (launch.signal?.aborted) return abortedBeforeLaunch;
 		let stall = (_reason: string) => {};
-		let asked = (_question: string) =>
+		let asked = (_question: string, _signal?: AbortSignal) =>
 			Promise.reject<string>(new Error("The child is not running."));
 		let observe = (_event: AgentSessionEvent) => {};
 		let reported = (_result: ChildResult) => {};
@@ -797,7 +820,7 @@ export function createChildSessions(options: {
 					observe(event);
 				},
 				notify: (message) => noticed(message),
-				ask: (question) => asked(question),
+				ask: (question, signal) => asked(question, signal),
 				report: (result) => reported(result),
 				entries: from?.conversation.entries,
 				parentSession: from?.conversation.sessionId,
@@ -910,9 +933,10 @@ export function createChildSessions(options: {
 			followers: new Set(),
 			asked: 0,
 			answers: new Map(),
+			withdrawn: new Set(),
 		};
 		stall = (reason) => finish(child, "timed out", reason);
-		asked = (question) => ask(child, question);
+		asked = (question, signal) => ask(child, question, signal);
 		reported = (result) => {
 			if (isWorking(child.record.state)) child.record.result = result;
 		};
@@ -980,6 +1004,11 @@ export function createChildSessions(options: {
 		if (first) {
 			throw new Error(
 				`Question ${number} of child ${id} was already answered by the ${first.by}: ${first.text}`,
+			);
+		}
+		if (child.withdrawn.has(number)) {
+			throw new Error(
+				`Question ${number} of child ${id} was withdrawn: the call that asked it ended.`,
 			);
 		}
 		if (!isWorking(child.record.state)) {

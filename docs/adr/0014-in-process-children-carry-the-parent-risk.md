@@ -37,6 +37,8 @@ Every Specialist reaches the parent's MCP servers and the repository's guidance 
 
 V1 was verified on Pi 1.0.4: ten credential stores refreshing one OAuth token at once, over twenty rounds each for `mcp-auth.json` and `auth.json`, refreshed it once per stale token and lost no other write. Pi's per-server refresh lock and its locked read-modify-write keep the stores consistent. Children also share the parent's model runtime, and with it one credential store. A2 holds.
 
+V6 is handled: `ask_parent` honors its call's signal. When a child's script that asked times out or is aborted while the question waits, the question is withdrawn, the child runs again, and a later answer to that question, from `reply_child` or the operator, is refused as withdrawn.
+
 Upgrade re-verification items, like the chrome in ADR 0007, because they depend on Pi internals:
 
 - The factory's private access to Pi's model runtime through the session's model registry.
@@ -62,4 +64,3 @@ Accepted risks:
 - R11: `direct` MCP servers that the user adds to `mcp.json` change children's declarations and tool order. The harness does not normalize them.
 - R12: a locally installed `pi-web-access` loads in the explorer even when its companion expectation is off, so doctor does not report it missing. The explorer's trace does.
 - R13: `/reload` ends every working child, because every session shutdown, reload included, disposes all children. The harness notifies the operator at `session_shutdown` with reason `reload` and records it in the trace. Survival across a reload belongs to #204.
-- R14: a child's `ask_parent` inside a script that times out leaves the question waiting until the child ends, because `ask_parent` ignores the call's signal (V6).
