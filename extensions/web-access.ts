@@ -2,7 +2,6 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import * as piAi from "@earendil-works/pi-ai/compat";
-import * as piAiOauth from "@earendil-works/pi-ai/oauth";
 import * as piCodingAgent from "@earendil-works/pi-coding-agent";
 import {
 	DefaultPackageManager,
@@ -12,7 +11,6 @@ import {
 import * as piTui from "@earendil-works/pi-tui";
 import { createJiti } from "jiti";
 import * as typebox from "typebox";
-import * as typeboxCompile from "typebox/compile";
 import * as typeboxValue from "typebox/value";
 
 import { errorMessage } from "./error-message.ts";
@@ -38,10 +36,8 @@ const hostModules = {
 	"@earendil-works/pi-coding-agent": piCodingAgent,
 	"@earendil-works/pi-ai": piAi,
 	"@earendil-works/pi-ai/compat": piAi,
-	"@earendil-works/pi-ai/oauth": piAiOauth,
 	"@earendil-works/pi-tui": piTui,
 	typebox,
-	"typebox/compile": typeboxCompile,
 	"typebox/value": typeboxValue,
 };
 
