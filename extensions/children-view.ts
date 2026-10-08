@@ -788,10 +788,10 @@ function createChildrenView(
 			const step = terminalSafeLine(childStep(child));
 			const color = child.state === "waiting" ? "warning" : "dim";
 			const head = `${mark}${childGlyph(theme, child)} ${theme.fg("accent", child.role)} ${theme.fg("dim", child.id.slice(0, 4))}`;
-			const task = child.todo && host.todo.text(child.todo.id);
+			const task = child.todo === undefined ? undefined : host.todo.text(child.todo);
 			const detail =
-				child.todo && task !== undefined
-					? `${theme.fg("text", `#${child.todo.id} ${terminalSafeLine(task)}`)} ${theme.fg(color, step)}`
+				child.todo !== undefined && task !== undefined
+					? `${theme.fg("text", `#${child.todo} ${terminalSafeLine(task)}`)} ${theme.fg(color, step)}`
 					: theme.fg(color, step);
 			const state = runState(child, now);
 			const spend = usage(spent(sessions.thread(child.id)));

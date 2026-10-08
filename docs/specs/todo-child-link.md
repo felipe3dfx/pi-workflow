@@ -82,10 +82,11 @@ Every decision below was resolved by the developer in the #207 grilling session.
 ### Persistence
 
 - Task state changes made by the harness must be restored on `session_start` and `session_tree` exactly like changes made with the `todo` tool. Today the Todo is rebuilt only from `todo` tool results, so the harness's changes need a session entry the replay reads. Recommendation: one append-only session entry per harness change, carrying the full task list like a `todo` tool result, so that replay keeps a single rule (the latest list wins). Sessions only append; nothing already sent to the model is rewritten.
+- Known limitation: after a reload, task ids restart, so on a later `session_tree` move to a branch created in a different process, a child still linked to task #N may apply its Task state to a different task with the same id on that branch.
 
 ### Presentation
 
-- Todo box: one distinct glyph per Task state, keeping the current `done` check and `pending` box. An `in progress` task linked to a working child appends the child's role and short id (`← worker a1b2`). The hide-done toggle hides only `done` tasks.
+- Todo box: one distinct glyph per Task state, keeping the current `done` check and `pending` box. An `in progress` task whose latest linked child is still a Working child appends the child's role and short id (`← worker a1b2`). The hide-done toggle hides only `done` tasks.
 - Fleet view: a linked child's row shows `#<id>` and the task text, truncated to the row. It does not show the Task state.
 
 ### Shared-capability invariants

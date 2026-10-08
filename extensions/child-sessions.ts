@@ -134,7 +134,7 @@ export interface ChildRecord {
 	result?: ChildResult;
 	continuedFrom?: string;
 	group?: string;
-	todo?: LinkedTask;
+	todo?: number;
 	step?: string;
 	question?: number;
 	steering?: string[];
@@ -496,8 +496,6 @@ interface ChildMessage {
 	details: unknown;
 }
 
-export type LinkedTask = Pick<Task, "id">;
-
 type TaskRun = Pick<ChildRecord, "state" | "role" | "result">;
 
 function finalTaskState({ state, role, result }: TaskRun): TaskState {
@@ -826,15 +824,15 @@ export function createChildSessions(options: {
 			shell: () => ChildShell;
 			onLaunch?: (id: string) => void;
 			group?: string;
-			todo?: LinkedTask;
+			todo?: number;
 		},
 		from?: { id: string; conversation: Conversation },
 	) {
 		const onLaunch = (id: string) => {
 			launch.onLaunch?.(id);
 			if (!launch.todo) return;
-			linked.set(launch.todo.id, id);
-			options.todo?.set(launch.todo.id, "in progress");
+			linked.set(launch.todo, id);
+			options.todo?.set(launch.todo, "in progress");
 		};
 		if (launch.signal?.aborted) return abortedBeforeLaunch;
 		let stall = (_reason: string) => {};
@@ -1023,15 +1021,15 @@ export function createChildSessions(options: {
 			const { todo } = child.record;
 			const started = await start(
 				{ ...child.plan, task },
-				{ ...launch, background: true, ...(todo ? { todo } : {}) },
+				{ ...launch, background: true, ...(todo === undefined ? {} : { todo }) },
 				{ id, conversation: child.conversation },
 			);
 			if (started.status !== "queued") return started;
 			consume(id);
-			if (!todo || !options.todo) return started;
+			if (todo === undefined || !options.todo) return started;
 			return {
 				...started,
-				note: taskChange(options.todo, todo.id, "in progress").note,
+				note: taskChange(options.todo, todo, "in progress").note,
 			};
 		} finally {
 			release();
@@ -1114,8 +1112,8 @@ export function createChildSessions(options: {
 
 	function settlement(id: string) {
 		const record = children.get(id)?.record;
-		if (!record?.todo || consumed.has(id)) return undefined;
-		return linkedSettlement(record.todo.id, id, record);
+		if (record?.todo === undefined || consumed.has(id)) return undefined;
+		return linkedSettlement(record.todo, id, record);
 	}
 
 	function settle(task: number, id: string, run: TaskRun) {
@@ -1433,7 +1431,7 @@ export function createSpawnChildTool(
 							launcher.recordLaunch(userRequest?.id);
 						},
 						group: /^([\s\S]+)\/\d+$/.exec(toolCallId)?.[1],
-						...(claim ? { todo: { id: claim.task.id } } : {}),
+						...(claim ? { todo: claim.task.id } : {}),
 					})
 					.catch((error: unknown) => {
 						const note = settle({

@@ -6981,3 +6981,36 @@ test("a Task state the harness sets does not reopen a collapsed Todo box, while 
 		assert.equal(collapsed(), false);
 	});
 });
+
+test("a launch refused inside start does not take the task from the running child", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		let calls = 0;
+		const children = fakeChildren({ onCreate: () => { if (calls++ === 1) throw new Error("no room"); } });
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const todo = todoTool(extension);
+		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
+		await spawnOnTask(extension, worktree, 1);
+		await settle();
+		const refused = await spawn(extension.tool, { role: "worker", task: "Again", todo: 1 }, toolContext("tui", worktree));
+		assert.equal(refused.details.status, "refused");
+		children.created[0].spec.report(workerResult("done"));
+		children.created[0].result.resolve("Finished.");
+		await settle();
+		const delivered = extension.messages.map(({ message }) => message.content).join("\n\n");
+		assert.match(delivered, /Task #1 is now done\./);
+		assert.equal(await todo.list(), "[done] #1: Fix the parser");
+	});
+});
+
+test("an open Fleet row follows a rename", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const extension = await loadSpawnTool({ agentDir, create: fakeChildren().create });
+		const todo = todoTool(extension);
+		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
+		await spawnOnTask(extension, worktree, 1);
+		const view = openChildren(extension, { rows: 40 });
+		assert.match(view.lines(200).join("\n"), /#1 Fix the parser/);
+		await todo.run("update", { id: 1, text: "Fix the lexer" });
+		assert.match(view.lines(200).join("\n"), /#1 Fix the lexer/);
+	});
+});

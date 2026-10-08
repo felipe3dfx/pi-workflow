@@ -105,11 +105,11 @@ export default function piWorkflowExtension(
 		const executors = new Map<number, TaskExecutor>();
 		for (const child of childSessions.list()) {
 			if (
-				child.todo &&
+				child.todo !== undefined &&
 				isWorking(child.state) &&
-				childSessions.latestLinked(child.todo.id) === child.id
+				childSessions.latestLinked(child.todo) === child.id
 			) {
-				executors.set(child.todo.id, { role: child.role, id: child.id });
+				executors.set(child.todo, { role: child.role, id: child.id });
 			}
 		}
 		return executors;

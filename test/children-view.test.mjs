@@ -876,7 +876,7 @@ test("a linked child's Fleet row shows its task number and text, truncated to th
 	const sessions = fakeSessions([
 		record("5636", {
 			step: "bash sleep 60",
-			todo: { id: 3 },
+			todo: 3,
 		}),
 	]);
 	const tasks = { 3: `Wire\x1b the parser ${"and more ".repeat(30)}` };
@@ -894,7 +894,7 @@ test("a linked child's Fleet row stops naming its task once the task no longer e
 	const sessions = fakeSessions([
 		record("5636", {
 			step: "bash sleep 60",
-			todo: { id: 3 },
+			todo: 3,
 		}),
 	]);
 	const lines = open(sessions).lines(200).join("\n");

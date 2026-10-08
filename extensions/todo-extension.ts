@@ -175,11 +175,15 @@ export function registerSessionTodo(
 	pi.on("session_start", restoreFromBranch);
 	pi.on("session_tree", restoreFromBranch);
 
+	function find(id: number): Task | undefined {
+		return todoList.list().find((task) => task.id === id);
+	}
+
 	function claim(id: number): TodoClaim {
 		if (!seated("todo", "above-input")) {
 			return { reason: `Todo is not seated, so task #${id} cannot be linked. Run /workflow:config.` };
 		}
-		const task = todoList.list().find((candidate) => candidate.id === id);
+		const task = find(id);
 		if (!task) return { reason: `Task #${id} does not exist in the Todo.` };
 		if (task.state === "done") {
 			return { reason: `Task #${id} is done. Change its Task state before executing it again.` };
@@ -188,11 +192,11 @@ export function registerSessionTodo(
 	}
 
 	function has(id: number): boolean {
-		return todoList.list().some((task) => task.id === id);
+		return find(id) !== undefined;
 	}
 
 	function text(id: number): string | undefined {
-		return todoList.list().find((task) => task.id === id)?.text;
+		return find(id)?.text;
 	}
 
 	function set(id: number, state: TaskState): void {
