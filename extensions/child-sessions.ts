@@ -10,6 +10,7 @@ import type {
 import {
 	type AgentSessionEvent,
 	createAgentSession,
+	createCodemodeExtension,
 	DefaultResourceLoader,
 	type ExtensionContext,
 	getAgentDir,
@@ -269,7 +270,7 @@ export function createAskParentTool(
 	};
 }
 
-const createPiChildSession: ChildSessionFactory = async (spec) => {
+export const createPiChildSession: ChildSessionFactory = async (spec) => {
 	const runtime = parentRuntime(spec.modelRegistry);
 	if (!runtime) {
 		throw new Error("The session's model runtime is not available.");
@@ -281,6 +282,7 @@ const createPiChildSession: ChildSessionFactory = async (spec) => {
 		agentDir: getAgentDir(),
 		settingsManager,
 		noExtensions: true,
+		extensionFactories: [createCodemodeExtension({ models: false })],
 		noSkills: true,
 		noPromptTemplates: true,
 		noThemes: true,

@@ -117,3 +117,22 @@ test("the explore and verify contracts offer codegraph and the worker contract d
 	}
 	assert.doesNotMatch(await contract("worker"), /codegraph/);
 });
+
+test("every contract offers codemode and asks to batch independent calls in one script", async () => {
+	for (const role of ["explore", "worker", "verify"]) {
+		const text = await contract(role);
+		assert.ok(parseContract(text).tools.includes("codemode"), role);
+		assert.match(
+			text,
+			/Use codemode to batch independent tool calls \(Promise\.allSettled\), chain them, or filter large output, instead of many separate calls\./,
+		);
+	}
+});
+
+test("the explore and verify read-only wording covers codemode scripts", async () => {
+	assert.match(await contract("explore"), /Do not edit files or run commands, directly or from codemode\./);
+	assert.match(
+		await contract("verify"),
+		/Do not edit or write worktree files, directly or from codemode, and do not run commands that rewrite tracked files/,
+	);
+});

@@ -59,7 +59,7 @@ const workerContract = await readFile(
 	fileURLToPath(new URL("../assets/contracts/worker.md", import.meta.url)),
 	"utf8",
 );
-const workerTools = ["read", "bash", "edit", "write", "grep", "find", "ls"];
+const workerTools = ["read", "bash", "edit", "write", "grep", "find", "ls", "codemode"];
 const spawnedTools = [...workerTools, "ask_parent", "report_result"];
 
 function workerResult(verdict, reason = `The work is ${verdict}.`) {
@@ -637,6 +637,11 @@ test("a child that would run another model or thinking stays pending, and one mi
 				child: { tools: workerTools.filter((tool) => tool !== "bash") },
 				status: "refused",
 				reason: /bash/,
+			},
+			{
+				child: { tools: workerTools.filter((tool) => tool !== "codemode") },
+				status: "refused",
+				reason: /lacks the contract tools codemode\./,
 			},
 		];
 		for (const { child, status, reason } of cases) {

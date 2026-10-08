@@ -221,7 +221,7 @@ test("a role Jev lets leave gets its contract prompt and tools", async () => {
 			{ role: "explore", task: "Map the launcher module" },
 			launcherContext(worktree),
 		);
-		assert.deepEqual(explore.contract.tools, ["read", "grep", "find", "ls", "codegraph"]);
+		assert.deepEqual(explore.contract.tools, ["read", "grep", "find", "ls", "codegraph", "codemode"]);
 	});
 });
 
