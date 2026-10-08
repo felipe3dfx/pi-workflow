@@ -1593,6 +1593,29 @@ test("a worker and a verifier load the parent's context files, an explorer loads
 	});
 });
 
+test("a worker loads the worktree's AGENTS.override.md in place of its AGENTS.md", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		await writeFile(join(worktree, "AGENTS.md"), "Repository rule: run npm run check.");
+		await writeFile(
+			join(worktree, "AGENTS.override.md"),
+			"Override rule: run npm test only.",
+		);
+		const parent = await fauxParent(agentDir, [fauxAssistantMessage("Done.")]);
+		const { tool } = await loadSpawnTool({ agentDir });
+
+		const result = await spawn(
+			tool,
+			{ role: "worker", task: "Check the parser" },
+			{ ...toolContext("print", worktree), ...parent.context },
+		);
+		assert.equal(result.details.status, "completed", text(result));
+
+		const system = JSON.stringify(parent.requests[0].messages[0]);
+		assert.match(system, /Override rule: run npm test only\./);
+		assert.doesNotMatch(system, /Repository rule/);
+	});
+});
+
 async function installWebAccess(agentDir, label = "local") {
 	const dir = join(agentDir, "npm", "node_modules", "pi-web-access");
 	await mkdir(join(dir, "dist"), { recursive: true });
