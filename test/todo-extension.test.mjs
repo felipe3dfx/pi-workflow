@@ -179,8 +179,8 @@ test("the todo summary shows each task's Task state", async () => {
 	const updated = await execute(tools, "update", { id: 1, state: "blocked" });
 	const listed = await execute(tools, "list", {});
 	assert.equal(written.content[0].text, "[pending] #1: alpha\n[in progress] #2: beta\n[done] #3: gamma");
-	assert.equal(added.content[0].text, "Added #4: delta\n[pending] #1: alpha\n[in progress] #2: beta\n[done] #3: gamma\n[pending] #4: delta");
-	assert.equal(updated.content[0].text, "Updated #1\n[blocked] #1: alpha\n[in progress] #2: beta\n[done] #3: gamma\n[pending] #4: delta");
+	assert.equal(added.content[0].text, "Added #4: delta");
+	assert.equal(updated.content[0].text, "Updated #1");
 	assert.equal(listed.content[0].text, "[blocked] #1: alpha\n[in progress] #2: beta\n[done] #3: gamma\n[pending] #4: delta");
 });
 

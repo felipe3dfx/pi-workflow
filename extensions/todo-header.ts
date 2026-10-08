@@ -11,7 +11,9 @@ export interface TodoBoxState {
 
 export type TodoTheme = Pick<Theme, "fg" | "bold">;
 
-export type TaskExecutors = ReadonlyMap<number, { role: string; id: string }>;
+export type TaskExecutor = { role: string; id: string };
+
+export type TaskExecutors = ReadonlyMap<number, TaskExecutor>;
 
 const CLOSE_HINT = "×";
 const CORNER_TOP = "┌";
@@ -31,7 +33,7 @@ export function renderTodoBox(
 	tasks: Task[],
 	state: TodoBoxState,
 	width: number,
-	executors: TaskExecutors = new Map(),
+	executors: TaskExecutors,
 ): string[] {
 	if (tasks.length === 0) return [];
 

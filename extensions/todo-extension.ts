@@ -45,14 +45,14 @@ function summarize(tasks: Task[]): string {
 	return tasks.map((task) => `[${task.state}] #${task.id}: ${task.text}`).join("\n");
 }
 
-const HARNESS_ENTRY = "pi-workflow-todo";
+const TODO_ENTRY = "pi-workflow-todo";
 
-export type TodoClaim = { reason: string } | { task: Task; start(): void };
+export type TodoClaim = { reason: string } | { task: Task };
 
 function replayTasks(entries: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>): Task[] {
 	let tasks: Task[] = [];
 	for (const entry of entries) {
-		if (entry.type === "custom" && entry.customType === HARNESS_ENTRY) {
+		if (entry.type === "custom" && entry.customType === TODO_ENTRY) {
 			const data = entry.data as { tasks?: Task[] } | undefined;
 			if (data && Array.isArray(data.tasks)) tasks = data.tasks;
 			continue;
@@ -121,7 +121,7 @@ export function registerSessionTodo(
 					const task = todoList.add(params.text, params.state);
 					reveal();
 					return {
-						content: [{ type: "text", text: `Added #${task.id}: ${task.text}\n${summarize(todoList.list())}` }],
+						content: [{ type: "text", text: `Added #${task.id}: ${task.text}` }],
 						details: { tasks: todoList.list() },
 					};
 				}
@@ -134,7 +134,7 @@ export function registerSessionTodo(
 						throw new Error(`task #${params.id} not found`);
 					}
 					reveal();
-					return { content: [{ type: "text", text: `Updated #${task.id}\n${summarize(todoList.list())}` }], details: { tasks: todoList.list() } };
+					return { content: [{ type: "text", text: `Updated #${task.id}` }], details: { tasks: todoList.list() } };
 				}
 				case "clear": {
 					todoList.clear();
@@ -184,7 +184,7 @@ export function registerSessionTodo(
 		if (task.state === "done") {
 			return { reason: `Task #${id} is done. Change its Task state before executing it again.` };
 		}
-		return { task, start: () => set(id, "in progress") };
+		return { task };
 	}
 
 	function has(id: number): boolean {
@@ -193,7 +193,7 @@ export function registerSessionTodo(
 
 	function set(id: number, state: TaskState): boolean {
 		if (!todoList.update(id, { state })) return false;
-		pi.appendEntry(HARNESS_ENTRY, { tasks: todoList.list() });
+		pi.appendEntry(TODO_ENTRY, { tasks: todoList.list() });
 		reveal();
 		return true;
 	}

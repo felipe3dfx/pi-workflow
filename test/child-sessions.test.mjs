@@ -6614,7 +6614,7 @@ test("a linked task keeps in progress until the parent reads the result, which a
 	});
 });
 
-test("automatic delivery applies done for done, pass, and a completed explorer, blocked for blocked, fail, partial, and failed, and states each", async () => {
+test("automatic delivery applies done for done, pass, no Verdict, and a completed explorer, blocked for blocked, fail, partial, and failed, and states each", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
 		const extension = await loadSpawnTool({ agentDir, create: children.create });
@@ -6622,6 +6622,7 @@ test("automatic delivery applies done for done, pass, and a completed explorer, 
 		const cases = [
 			{ role: "worker", report: workerResult("done"), state: "done" },
 			{ role: "verify", report: verifyResult("pass"), state: "done" },
+			{ role: "worker", state: "done" },
 			{ role: "explore", state: "done" },
 			{ role: "worker", report: workerResult("blocked"), state: "blocked" },
 			{ role: "verify", report: verifyResult("fail"), state: "blocked" },
@@ -6773,33 +6774,61 @@ test("a Todo unseated after the launch still receives the final Task state", asy
 	});
 });
 
-test("a foreground child's returned result applies the final Task state of its task", async () => {
+test("a foreground child's result applies the final Task state of its task and states it, or that the task no longer exists", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
-		const children = fakeChildren({
-			run: async (_task, spec) => {
+		let todo;
+		const runs = [
+			async (_task, spec) => {
 				spec.report(workerResult("partial"));
 				return "Half done.";
 			},
-		});
+			async () => "Finished without a Verdict.",
+			async () => {
+				await todo.run("clear");
+				return "Fixed.";
+			},
+		];
+		const children = fakeChildren({ run: (...args) => runs.shift()(...args) });
 		const extension = await loadSpawnTool({ agentDir, create: children.create });
-		const todo = todoTool(extension);
-		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
-		const result = await spawn(extension.tool, { role: "worker", task: "Fix the parser", todo: 1 }, toolContext("print", worktree));
-		assert.equal(result.details.status, "completed");
-		assert.match(text(result), /Task #1 is now blocked\./);
-		assert.match(await todo.list(), /\[blocked\] #1: Fix the parser/);
+		todo = todoTool(extension);
+		await todo.run("write", { tasks: [{ text: "Fix the parser" }, { text: "Map the module" }] });
+		const partial = await spawn(extension.tool, { role: "worker", task: "Fix the parser", todo: 1 }, toolContext("print", worktree));
+		assert.equal(partial.details.status, "completed");
+		assert.match(text(partial), /Task #1 is now blocked\./);
+		const silent = await spawn(extension.tool, { role: "worker", task: "Map the module", todo: 2 }, toolContext("print", worktree));
+		assert.match(text(silent), /Task #2 is now done\./);
+		assert.equal(await todo.list(), "[blocked] #1: Fix the parser\n[done] #2: Map the module");
 
 		await todo.run("update", { id: 1, state: "pending" });
-		const failing = await loadSpawnTool({
+		const gone = await spawn(extension.tool, { role: "worker", task: "Fix the parser", todo: 1 }, toolContext("print", worktree));
+		assert.match(text(gone), /Task #1 no longer exists, so no Task state was applied\./);
+	});
+});
+
+test("a foreground child that fails or is aborted applies its Task state and the error the parent sees states it", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const call = new AbortController();
+		const runs = [
+			async () => Promise.reject(new Error("provider overloaded")),
+			async () => {
+				call.abort();
+				return new Promise(() => {});
+			},
+		];
+		const extension = await loadSpawnTool({
 			agentDir,
-			create: fakeChildren({ run: async () => Promise.reject(new Error("provider overloaded")) }).create,
+			create: fakeChildren({ run: (...args) => runs.shift()(...args) }).create,
 		});
-		const failingTodo = todoTool(failing);
-		await failingTodo.run("write", { tasks: [{ text: "Fix the parser" }] });
+		const todo = todoTool(extension);
+		await todo.run("write", { tasks: [{ text: "Fix the parser" }, { text: "Map the module" }] });
 		await assert.rejects(
-			spawn(failing.tool, { role: "worker", task: "Fix the parser", todo: 1 }, toolContext("print", worktree)),
-			/provider overloaded/,
+			spawn(extension.tool, { role: "worker", task: "Fix the parser", todo: 1 }, toolContext("print", worktree)),
+			/provider overloaded[\s\S]*Task #1 is now blocked\./,
 		);
-		assert.match(await failingTodo.list(), /\[blocked\] #\d+: Fix the parser/);
+		await assert.rejects(
+			spawn(extension.tool, { role: "worker", task: "Map the module", todo: 2 }, toolContext("print", worktree), call.signal),
+			/aborted[\s\S]*Task #2 is now pending\./,
+		);
+		assert.equal(await todo.list(), "[blocked] #1: Fix the parser\n[pending] #2: Map the module");
 	});
 });
