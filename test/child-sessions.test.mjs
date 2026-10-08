@@ -48,7 +48,11 @@ import { compactToolRenderers } from "../extensions/compact-tools.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
-import { fakeChildren, userEntry } from "./support/fake-children.mjs";
+import {
+	fakeChildren,
+	recordingCore,
+	userEntry,
+} from "./support/fake-children.mjs";
 import { classifierRegistry } from "./support/fake-jev.mjs";
 import { turnJevRoutingOn } from "./support/jev-routing.mjs";
 
@@ -6234,4 +6238,11 @@ test("through Pi's SDK, two Steers reach a running child at its next turns, one 
 		assert.equal(await stateOf(child.extension, id), "completed");
 		assert.equal(shows(view, "undelivered"), false);
 	});
+});
+
+test("a Steer whose text begins with / after leading whitespace is refused", async () => {
+	const { core, launch } = recordingCore();
+	const { id, child } = await launch();
+	await assert.rejects(core.steer(id, "  /mcp"), /A Steer cannot begin with \//);
+	assert.deepEqual(child.steered, []);
 });

@@ -1015,7 +1015,7 @@ export function createChildSessions(options: {
 				`Child ${id} is ${child.record.state}; only a running child can be steered.`,
 			);
 		}
-		if (text.startsWith("/")) {
+		if (text.trim().startsWith("/")) {
 			throw new Error("A Steer cannot begin with /.");
 		}
 		await child.handle.steer(text);
