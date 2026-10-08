@@ -30,9 +30,9 @@ export function fakeChildren({ model, thinking, tools, run, dispose, onCreate } 
 			abort: async () => {
 				child.aborts += 1;
 			},
-			dispose: () => {
+			dispose: async () => {
 				child.disposals += 1;
-				dispose?.(child);
+				await dispose?.(child);
 			},
 		};
 	};
@@ -73,7 +73,12 @@ export function recordingCore({
 				chosenBy: "parent",
 				references: [],
 			},
-			{ background: true, modelRegistry: {}, shell: () => ({}) },
+			{
+				background: true,
+				modelRegistry: {},
+				project: () => ({ cwd: "/tmp", trusted: false }),
+				shell: () => ({}),
+			},
 		);
 		await new Promise((resolve) => setImmediate(resolve));
 		return { id: started.id, child: children.created.at(-1) };

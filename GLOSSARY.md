@@ -72,6 +72,12 @@ The warning when Jev routing is on and Jev gives no valid answer. No child launc
 
 _Avoid_: stay, worker fallback
 
+### Tool gate
+
+The parent's check of each of its gated tool calls against the routing decision for the current user message. It applies to the parent session only, never to a child session.
+
+_Avoid_: delegation hook, router
+
 ### Specialist
 
 One of `explorer`, `worker`, or `verifier`, mapped from the child roles `explore`, `worker`, and `verify`. The parent names the role while Jev routing is off, and Jev names the specialist while Jev routing is on.
@@ -133,6 +139,36 @@ _Avoid_: unread result, queued result
 A child result the parent session has already received, by reading it, by automatic delivery, or by continuing that child. A consumed result is never delivered again.
 
 _Avoid_: read result, acknowledged result
+
+### Contract
+
+The harness-owned definition of a child role: its `tools:` line lists the tools every launch checks, and its body is the child's system prompt. A child follows its contract over the repository's context files.
+
+_Avoid_: agent definition, persona, system prompt file
+
+### Trace
+
+The harness's record, in the parent session, of a child's launch and of each Run state it reaches, with the notices of its extensions. It never enters a model's context.
+
+_Avoid_: log, transcript
+
+### Working child
+
+A child session whose Run state is queued, running, or waiting.
+
+_Avoid_: active child, live child
+
+### Launch limit
+
+The fixed bound on a parent's working children. A launch beyond it is refused before Jev is asked or a child session is created.
+
+_Avoid_: running limit, concurrency limit
+
+### Group
+
+The children launched by one parent `codemode` call.
+
+_Avoid_: batch, fan-out, workflow
 
 ### Chrome
 

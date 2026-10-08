@@ -188,7 +188,7 @@ export default function piWorkflowExtension(
 	pi.on("session_shutdown", async (event, ctx) => {
 		currentCtx = undefined;
 		childrenViews.close();
-		const ended = childSessions.disposeAll();
+		const ended = await childSessions.disposeAll();
 		if (event.reason !== "reload" || ended === 0) return;
 		pi.appendEntry("pi-workflow-child-trace", { reason: "reload", ended });
 		report(

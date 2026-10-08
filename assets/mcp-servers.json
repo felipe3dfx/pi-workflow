@@ -9,15 +9,18 @@
         "--",
         "context7-mcp"
       ],
-      "exposure": "direct"
+      "exposure": "direct",
+      "description": "Current documentation and code examples for libraries and frameworks."
     },
     "sentry": {
       "url": "https://mcp.sentry.dev/mcp",
-      "exposure": "codemode-deferred"
+      "exposure": "codemode-deferred",
+      "description": "Sentry errors, issues, traces, and releases."
     },
     "linear": {
       "url": "https://mcp.linear.app/mcp",
-      "exposure": "codemode-deferred"
+      "exposure": "codemode-deferred",
+      "description": "Linear issues, projects, cycles, and comments."
     }
   }
 }

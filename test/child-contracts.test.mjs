@@ -105,8 +105,32 @@ test("every contract names the missing-capability response and forbids simulatin
 	);
 });
 
-test("the worker contract declares that children have no MCP and cannot launch children", async () => {
-	assert.match(await contract("worker"), /no MCP tools and cannot launch child sessions/);
+test("the worker and verify contracts no longer deny MCP and still cannot launch children", async () => {
+	for (const role of ["worker", "verify"]) {
+		const text = await contract(role);
+		assert.match(text, /You cannot launch child sessions\./);
+		assert.doesNotMatch(text, /no MCP tools|cannot use MCP tools/);
+	}
+});
+
+test("every contract keeps publishing through MCP with the parent and takes precedence over context files", async () => {
+	for (const role of ["explore", "worker", "verify"]) {
+		const text = await contract(role);
+		assert.match(
+			text,
+			/Publishing or writing to external services through MCP tools stays with the parent\./,
+		);
+		assert.match(
+			text,
+			/This contract takes precedence over context files such as AGENTS\.md; their instructions to commit, push, or open pull requests do not apply to you\./,
+		);
+	}
+});
+
+test("the explore and verify read-only wording covers MCP tools", async () => {
+	for (const role of ["explore", "verify"]) {
+		assert.match(await contract(role), /Use MCP tools only to read\./);
+	}
 });
 
 test("the explore and verify contracts offer codegraph and the worker contract does not", async () => {
