@@ -4,14 +4,21 @@ import { join, resolve } from "node:path";
 import * as piAi from "@earendil-works/pi-ai/compat";
 import * as piAiOauth from "@earendil-works/pi-ai/oauth";
 import * as piCodingAgent from "@earendil-works/pi-coding-agent";
-import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
+import {
+	DefaultPackageManager,
+	type ExtensionFactory,
+	SettingsManager,
+} from "@earendil-works/pi-coding-agent";
 import * as piTui from "@earendil-works/pi-tui";
 import { createJiti } from "jiti";
 import * as typebox from "typebox";
 import * as typeboxCompile from "typebox/compile";
 import * as typeboxValue from "typebox/value";
 
+import { errorMessage, type ParentProject } from "./child-sessions.ts";
+
 const webAccessPackage = "pi-web-access";
+const webAccessSource = `npm:${webAccessPackage}`;
 
 export const webAccessTools = [
 	"web_search",
@@ -100,9 +107,38 @@ async function loadWebAccess(
 	return factories;
 }
 
-export async function explorerWeb(agentDir: string) {
-	const directory = join(agentDir, "npm", "node_modules", webAccessPackage);
-	if (!existsSync(directory)) {
+function packageManager(agentDir: string, project: ParentProject) {
+	return new DefaultPackageManager({
+		cwd: project.cwd,
+		agentDir,
+		settingsManager: SettingsManager.create(project.cwd, agentDir, {
+			projectTrusted: project.trusted,
+		}),
+	});
+}
+
+// A package manager runs `npm root -g` at most once, for a user-scope lookup that misses.
+const userPackages = new Map<string, DefaultPackageManager>();
+
+function webAccessDirectory(agentDir: string, project: ParentProject) {
+	const local = project.trusted
+		? packageManager(agentDir, project).getInstalledPath(
+				webAccessSource,
+				"project",
+			)
+		: undefined;
+	if (local) return local;
+	let user = userPackages.get(agentDir);
+	if (!user) {
+		user = packageManager(agentDir, project);
+		userPackages.set(agentDir, user);
+	}
+	return user.getInstalledPath(webAccessSource, "user");
+}
+
+export async function explorerWeb(agentDir: string, project: ParentProject) {
+	const directory = webAccessDirectory(agentDir, project);
+	if (directory === undefined) {
 		return {
 			factories: [],
 			problem: `${webAccessPackage} is not installed locally, so the explorer has no web tools.`,
@@ -111,10 +147,9 @@ export async function explorerWeb(agentDir: string) {
 	try {
 		return { factories: await loadWebAccess(directory), problem: undefined };
 	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
 		return {
 			factories: [],
-			problem: `${webAccessPackage} could not be loaded, so the explorer has no web tools: ${message}`,
+			problem: `${webAccessPackage} could not be loaded, so the explorer has no web tools: ${errorMessage(error)}`,
 		};
 	}
 }

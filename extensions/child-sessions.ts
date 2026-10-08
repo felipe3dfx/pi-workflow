@@ -53,7 +53,7 @@ const packageVersion = (
 	) as { version: string }
 ).version;
 
-interface ParentProject {
+export interface ParentProject {
 	cwd: string;
 	trusted: boolean;
 }
@@ -256,7 +256,7 @@ export type ChildDetails = ReturnType<typeof childDetails> & {
 	question?: number;
 };
 
-function errorMessage(error: unknown): string {
+export function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
@@ -356,7 +356,7 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 	const agentDir = getAgentDir();
 	const web =
 		spec.role === "explore"
-			? await explorerWeb(agentDir)
+			? await explorerWeb(agentDir, spec.project)
 			: { factories: [], problem: undefined };
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: spec.cwd,

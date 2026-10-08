@@ -105,9 +105,11 @@ async function withWorkspace(run) {
 		await mkdir(agentDir);
 		execFileSync("git", ["init", "--quiet"], { cwd: worktree });
 		process.env.PI_CODING_AGENT_DIR = agentDir;
+		process.env.npm_config_prefix = join(dir, "global");
 		return await run({ worktree, agentDir, dir });
 	} finally {
 		delete process.env.PI_CODING_AGENT_DIR;
+		delete process.env.npm_config_prefix;
 		await rm(dir, { recursive: true, force: true });
 	}
 }
@@ -1606,8 +1608,14 @@ test("a worker loads the worktree's AGENTS.override.md in place of its AGENTS.md
 	});
 });
 
-async function installWebAccess(agentDir, label = "local") {
-	const dir = join(agentDir, "npm", "node_modules", "pi-web-access");
+function installWebAccess(agentDir, label = "local") {
+	return installWebAccessAt(
+		join(agentDir, "npm", "node_modules", "pi-web-access"),
+		label,
+	);
+}
+
+async function installWebAccessAt(dir, label) {
 	await mkdir(join(dir, "dist"), { recursive: true });
 	await writeFile(
 		join(dir, "package.json"),
@@ -1776,6 +1784,70 @@ test("an explorer loads pi-web-access from Pi's agent directory under both agent
 				else process.env[name] = value;
 			}
 		}
+	});
+});
+
+async function explorerSearch(agentDir, worktree, project) {
+	const parent = await fauxParent(agentDir, fauxAssistantMessage("Done."));
+	const handle = await piChildSession({
+		cwd: worktree,
+		project,
+		modelRegistry: parent.context.modelRegistry,
+	});
+	try {
+		await handle.run("Look it up.");
+	} finally {
+		await handle.dispose();
+	}
+	return parent.requests[0].messages[0].toolsAdded.find(
+		(added) => added.name === "web_search",
+	)?.description;
+}
+
+test("an explorer loads pi-web-access from the parent's project when the parent trusts it, and from Pi's agent directory otherwise", async () => {
+	await withWorkspace(async ({ worktree, agentDir, dir }) => {
+		const project = join(dir, "parent");
+		await installWebAccess(join(project, ".pi"), "the project");
+		await installWebAccess(agentDir, "the agent directory");
+
+		assert.equal(
+			await explorerSearch(agentDir, worktree, { cwd: project, trusted: true }),
+			"Web from the project.",
+		);
+		assert.equal(
+			await explorerSearch(agentDir, worktree, { cwd: project, trusted: false }),
+			"Web from the agent directory.",
+		);
+	});
+});
+
+test("an explorer loads a trusted project's pi-web-access with nothing in Pi's agent directory, and an untrusted one's not at all", async () => {
+	await withWorkspace(async ({ worktree, agentDir, dir }) => {
+		const project = join(dir, "parent");
+		await installWebAccess(join(project, ".pi"), "the project");
+
+		assert.equal(
+			await explorerSearch(agentDir, worktree, { cwd: project, trusted: true }),
+			"Web from the project.",
+		);
+		assert.equal(
+			await explorerSearch(agentDir, worktree, { cwd: project, trusted: false }),
+			undefined,
+		);
+	});
+});
+
+test("an explorer loads a legacy global pi-web-access when Pi's agent directory has none", async () => {
+	await withWorkspace(async ({ worktree, agentDir, dir }) => {
+		await installWebAccessAt(
+			join(dir, "global", "lib", "node_modules", "pi-web-access"),
+			"the global install",
+		);
+
+		assert.equal(
+			await explorerSearch(agentDir, worktree, { cwd: worktree, trusted: false }),
+			"Web from the global install.",
+		);
 	});
 });
 
