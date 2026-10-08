@@ -11,8 +11,12 @@ import {
 	type AgentSessionEvent,
 	createAgentSession,
 	createCodemodeExtension,
+	createMcpExtension,
 	DefaultResourceLoader,
+	type ExtensionAPI,
 	type ExtensionContext,
+	type ExtensionFactory,
+	type ExtensionHandler,
 	getAgentDir,
 	type ModelRuntime,
 	type SessionEntry,
@@ -47,8 +51,14 @@ const packageVersion = (
 	) as { version: string }
 ).version;
 
+interface ParentProject {
+	cwd: string;
+	trusted: boolean;
+}
+
 interface ChildSpec {
 	cwd: string;
+	project: ParentProject;
 	role: string;
 	model: string;
 	thinking: ModelThinkingLevel;
@@ -57,6 +67,7 @@ interface ChildSpec {
 	modelRegistry: ExtensionContext["modelRegistry"];
 	shell: ChildShell;
 	onEvent(event: AgentSessionEvent): void;
+	notify(message: string): void;
 	ask(question: string): Promise<string>;
 	report(result: ChildResult): void;
 	entries?: SessionEntry[];
@@ -76,7 +87,7 @@ interface ChildHandle {
 	tools: string[];
 	run(task: string): Promise<string>;
 	abort(): Promise<void>;
-	dispose(): void;
+	dispose(): Promise<void>;
 }
 
 export type ChildSessionFactory = (spec: ChildSpec) => Promise<ChildHandle>;
@@ -145,6 +156,7 @@ export interface ChildTrace {
 	state: ChildState;
 	verdict?: string;
 	reason?: string;
+	notice?: string;
 	version: string;
 }
 
@@ -234,12 +246,24 @@ function parentRuntime(
 		: undefined;
 }
 
+function parentProject(ctx: ExtensionContext): ParentProject {
+	return { cwd: ctx.cwd, trusted: ctx.isProjectTrusted() };
+}
+
 const askParentTool = "ask_parent";
 const reportResultTool = "report_result";
+
+const mcpTools = [
+	"mcp__*",
+	"list_mcp_resources",
+	"list_mcp_resource_templates",
+	"read_mcp_resource",
+];
 
 function childTools(plan: Plan) {
 	return [
 		...plan.contract.tools,
+		...mcpTools,
 		askParentTool,
 		...(reportsResult(plan.role) ? [reportResultTool] : []),
 	];
@@ -270,23 +294,48 @@ export function createAskParentTool(
 	};
 }
 
+function parentMcp(project: ParentProject): ExtensionFactory {
+	const mcp = createMcpExtension();
+	// Pi does not export its MCP config loader, and its default loader reads the session's cwd,
+	// which for a child is the worktree.
+	const atParentProject = (ctx: ExtensionContext): ExtensionContext =>
+		Object.create(ctx, { cwd: { value: project.cwd } });
+	return (pi) =>
+		mcp({
+			...pi,
+			on: (event: string, handler: ExtensionHandler<unknown>) =>
+				pi.on(
+					event as "session_start",
+					event === "session_start"
+						? (payload, ctx) => handler(payload, atParentProject(ctx))
+						: handler,
+				),
+		} as ExtensionAPI);
+}
+
 export const createPiChildSession: ChildSessionFactory = async (spec) => {
 	const runtime = parentRuntime(spec.modelRegistry);
 	if (!runtime) {
 		throw new Error("The session's model runtime is not available.");
 	}
 	const slash = spec.model.indexOf("/");
-	const settingsManager = SettingsManager.inMemory();
+	const settingsManager = SettingsManager.inMemory(
+		{},
+		{ projectTrusted: spec.project.trusted },
+	);
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: spec.cwd,
 		agentDir: getAgentDir(),
 		settingsManager,
 		noExtensions: true,
-		extensionFactories: [createCodemodeExtension({ models: false })],
+		extensionFactories: [
+			createCodemodeExtension({ models: false }),
+			parentMcp(spec.project),
+		],
 		noSkills: true,
 		noPromptTemplates: true,
 		noThemes: true,
-		noContextFiles: true,
+		noContextFiles: spec.role === "explore",
 		systemPromptOverride: () => spec.prompt,
 		appendSystemPromptOverride: () => [],
 	});
@@ -357,6 +406,12 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 		thinking: session.thinkingLevel,
 		tools: session.getActiveToolNames(),
 		async run(task) {
+			await session.bindExtensions({
+				uiContext: {
+					...session.extensionRunner.getUIContext(),
+					notify: (message) => spec.notify(message),
+				},
+			});
 			await session.prompt(task);
 			const last = session.messages.at(-1);
 			if (
@@ -373,9 +428,16 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 			stopped = true;
 			return session.abort();
 		},
-		dispose: () => {
+		async dispose() {
 			stopped = true;
-			session.dispose();
+			try {
+				const runner = session.extensionRunner;
+				if (runner.hasHandlers("session_shutdown")) {
+					await runner.emit({ type: "session_shutdown", reason: "quit" });
+				}
+			} finally {
+				session.dispose();
+			}
 		},
 	};
 };
@@ -416,6 +478,14 @@ export function createChildSessions(options: {
 		} catch {}
 	}
 
+	function shutDown(handle: ChildHandle, id?: string) {
+		return handle
+			.dispose()
+			.catch((error: unknown) =>
+				warn(id ? `Child ${id}: ${errorMessage(error)}` : errorMessage(error)),
+			);
+	}
+
 	function trace(child: Child) {
 		const { record, plan } = child;
 		traceRun(record.id, plan, record.state, record.result);
@@ -426,6 +496,7 @@ export function createChildSessions(options: {
 		plan: Plan,
 		state: ChildState,
 		result?: ChildResult,
+		notice?: string,
 	) {
 		const completed = state === "completed" ? result : undefined;
 		try {
@@ -438,6 +509,7 @@ export function createChildSessions(options: {
 				state,
 				...(completed ? { verdict: completed.verdict } : {}),
 				...(completed?.reason ? { reason: completed.reason } : {}),
+				...(notice ? { notice } : {}),
 				version: packageVersion,
 			});
 		} catch (error) {
@@ -551,10 +623,10 @@ export function createChildSessions(options: {
 					entries: child.entries,
 				};
 			}
-			child.handle.dispose();
 		} catch (error) {
 			warn(`Child ${record.id}: ${errorMessage(error)}`);
 		}
+		void shutDown(child.handle, record.id);
 		pump();
 		changed();
 		if (!deliver || consumed.has(record.id)) return;
@@ -629,6 +701,7 @@ export function createChildSessions(options: {
 			background: boolean;
 			signal?: AbortSignal;
 			modelRegistry: ExtensionContext["modelRegistry"];
+			project: () => ParentProject;
 			shell: () => ChildShell;
 			onLaunch?: () => void;
 		},
@@ -640,12 +713,14 @@ export function createChildSessions(options: {
 			Promise.reject<string>(new Error("The child is not running."));
 		let observe = (_event: AgentSessionEvent) => {};
 		let reported = (_result: ChildResult) => {};
+		let noticed = (_message: string) => {};
 		const watch = createWatch(schedule, (reason) => stall(reason));
 		const launchedIn = generation;
 		let handle: ChildHandle;
 		try {
 			handle = await create({
 				cwd: plan.worktree,
+				project: launch.project(),
 				role: plan.role,
 				model: plan.model,
 				thinking: plan.thinking,
@@ -657,6 +732,7 @@ export function createChildSessions(options: {
 					watch.event(event);
 					observe(event);
 				},
+				notify: (message) => noticed(message),
 				ask: (question) => asked(question),
 				report: (result) => reported(result),
 				entries: from?.conversation.entries,
@@ -670,7 +746,7 @@ export function createChildSessions(options: {
 			};
 		}
 		if (handle.model !== plan.model || handle.thinking !== plan.thinking) {
-			handle.dispose();
+			void shutDown(handle);
 			return {
 				status: "pending" as const,
 				warning: "The work stays pending. No child was launched.",
@@ -681,7 +757,7 @@ export function createChildSessions(options: {
 			(tool) => !handle.tools.includes(tool),
 		);
 		if (missing.length > 0) {
-			handle.dispose();
+			void shutDown(handle);
 			return {
 				status: "refused" as const,
 				warning: "Launch refused. No child was launched.",
@@ -689,11 +765,11 @@ export function createChildSessions(options: {
 			};
 		}
 		if (launch.signal?.aborted) {
-			handle.dispose();
+			void shutDown(handle);
 			return abortedBeforeLaunch;
 		}
 		if (launchedIn !== generation) {
-			handle.dispose();
+			void shutDown(handle);
 			return {
 				status: "refused" as const,
 				warning: "Launch refused. No child was launched.",
@@ -727,6 +803,8 @@ export function createChildSessions(options: {
 			reported = (value) => {
 				result = value;
 			};
+			noticed = (message) =>
+				traceRun(id, plan, "running", undefined, message);
 			watch.start();
 			launch.onLaunch?.();
 			traceRun(id, plan, "running");
@@ -743,7 +821,7 @@ export function createChildSessions(options: {
 			} finally {
 				watch.stop();
 				launch.signal?.removeEventListener("abort", abort);
-				handle.dispose();
+				void shutDown(handle, id);
 			}
 		}
 		const child: Child = {
@@ -771,6 +849,8 @@ export function createChildSessions(options: {
 			if (isWorking(child.record.state)) child.record.result = result;
 		};
 		observe = (event) => track(child, event);
+		noticed = (message) =>
+			traceRun(child.record.id, plan, child.record.state, undefined, message);
 		children.set(child.record.id, child);
 		queue.push(child);
 		launch.onLaunch?.();
@@ -786,6 +866,7 @@ export function createChildSessions(options: {
 		launch: {
 			signal?: AbortSignal;
 			modelRegistry: ExtensionContext["modelRegistry"];
+			project: () => ParentProject;
 			shell: () => ChildShell;
 		},
 	) {
@@ -917,7 +998,7 @@ export function createChildSessions(options: {
 		return { entries: child.handle.entries(), streaming: child.streaming };
 	}
 
-	function disposeAll() {
+	async function disposeAll() {
 		generation += 1;
 		const working = [...children.values()].filter((child) =>
 			isWorking(child.record.state),
@@ -928,11 +1009,11 @@ export function createChildSessions(options: {
 		for (const child of working) {
 			child.watch.stop();
 			answer(child, new Error("The session ended."));
-			try {
-				child.handle.dispose();
-			} catch {}
 		}
 		changed();
+		await Promise.all(
+			working.map((child) => shutDown(child.handle, child.record.id)),
+		);
 	}
 
 	return {
@@ -1090,6 +1171,7 @@ export function createSpawnChildTool(
 				background,
 				signal,
 				modelRegistry: ctx.modelRegistry,
+				project: () => parentProject(ctx),
 				shell: () => shellOptions(ctx),
 				onLaunch: () => launcher.recordLaunch(userRequest?.id),
 			});
@@ -1177,6 +1259,7 @@ export function createContinueChildTool(
 				await sessions.resume(params.id, params.task, {
 					signal,
 					modelRegistry: ctx.modelRegistry,
+					project: () => parentProject(ctx),
 					shell: () => shellOptions(ctx),
 				}),
 				[],

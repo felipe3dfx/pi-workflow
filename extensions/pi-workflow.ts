@@ -188,7 +188,7 @@ export default function piWorkflowExtension(
 	pi.on("session_shutdown", async () => {
 		currentCtx = undefined;
 		childrenViews.close();
-		childSessions.disposeAll();
+		await childSessions.disposeAll();
 	});
 
 	async function runCatalogCommand(

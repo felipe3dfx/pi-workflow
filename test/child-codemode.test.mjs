@@ -15,6 +15,8 @@ import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 
 import { createPiChildSession } from "../extensions/child-sessions.ts";
 
+process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), "pi-workflow-codemode-agent-"));
+
 function worktree(t) {
 	const dir = mkdtempSync(join(tmpdir(), "pi-workflow-codemode-"));
 	t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -57,6 +59,7 @@ async function child(t, role, tools, code) {
 	const events = [];
 	const handle = await createPiChildSession({
 		cwd: dir,
+		project: { cwd: dir, trusted: false },
 		role,
 		model: "faux/faux",
 		thinking: "off",
@@ -65,6 +68,7 @@ async function child(t, role, tools, code) {
 		modelRegistry: new ModelRegistry(runtime),
 		shell: {},
 		onEvent: (event) => events.push(event),
+		notify: () => {},
 		ask: async () => "answer",
 		report: () => {},
 	});

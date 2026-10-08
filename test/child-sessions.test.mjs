@@ -34,7 +34,10 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 
-import { createAskParentTool } from "../extensions/child-sessions.ts";
+import {
+	createAskParentTool,
+	createPiChildSession,
+} from "../extensions/child-sessions.ts";
 import { compactToolRenderers } from "../extensions/compact-tools.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
@@ -61,6 +64,15 @@ const workerContract = await readFile(
 );
 const workerTools = ["read", "bash", "edit", "write", "grep", "find", "ls", "codemode"];
 const spawnedTools = [...workerTools, "ask_parent", "report_result"];
+const workerAllowlist = [
+	...workerTools,
+	"mcp__*",
+	"list_mcp_resources",
+	"list_mcp_resource_templates",
+	"read_mcp_resource",
+	"ask_parent",
+	"report_result",
+];
 
 function workerResult(verdict, reason = `The work is ${verdict}.`) {
 	return {
@@ -82,8 +94,10 @@ async function withWorkspace(run) {
 		await mkdir(worktree);
 		await mkdir(agentDir);
 		execFileSync("git", ["init", "--quiet"], { cwd: worktree });
-		return await run({ worktree, agentDir });
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		return await run({ worktree, agentDir, dir });
 	} finally {
+		delete process.env.PI_CODING_AGENT_DIR;
 		await rm(dir, { recursive: true, force: true });
 	}
 }
@@ -346,7 +360,7 @@ for (const mode of ["tui", "rpc"]) {
 			assert.equal(child.spec.cwd, worktree);
 			assert.equal(child.spec.model, "session/model");
 			assert.equal(child.spec.thinking, "medium");
-			assert.deepEqual(child.spec.tools, spawnedTools);
+			assert.deepEqual(child.spec.tools, workerAllowlist);
 			assert.ok(workerContract.includes(child.spec.prompt));
 			assert.equal(messages.length, 0);
 
@@ -760,7 +774,7 @@ test("each Run state transition of a child is appended to the parent session as 
 			assert.equal(data.id, result.details.id);
 			assert.equal(data.role, "worker");
 			assert.equal(data.chosenBy, "jev");
-			assert.deepEqual(data.tools, spawnedTools);
+			assert.deepEqual(data.tools, workerAllowlist);
 			assert.deepEqual(data.references, ["AGENTS.md"]);
 			assert.equal(data.version, packageVersion);
 			assert.ok(!JSON.stringify(data).includes("Secret task text"));
@@ -1002,7 +1016,7 @@ test("a null role is missing and does not warn that worker was assumed", async (
 		assert.equal(result.details.status, "completed");
 		assert.equal(result.details.role, "worker");
 		assert.doesNotMatch(text(result), /No role was named/);
-		assert.deepEqual(children.created[0].spec.tools, spawnedTools);
+		assert.deepEqual(children.created[0].spec.tools, workerAllowlist);
 	});
 });
 
@@ -1257,6 +1271,293 @@ test("the default child factory runs a trusted project's shell prefix in the chi
 			.filter((message) => message.role === "toolResult")
 			.map((message) => message.content.map((part) => part.text).join(""));
 		assert.deepEqual(outputs, ["[project]\n", "[]\n"]);
+	});
+});
+
+const mcpFixture = fileURLToPath(
+	new URL("./support/mcp-fixture-server.mjs", import.meta.url),
+);
+
+async function writeMcpConfig(dir, pids, servers) {
+	await mkdir(dir, { recursive: true });
+	await mkdir(pids, { recursive: true });
+	await writeFile(
+		join(dir, "mcp.json"),
+		JSON.stringify({
+			mcpServers: Object.fromEntries(
+				Object.entries(servers).map(([name, config]) => [
+					name,
+					{ command: process.execPath, args: [mcpFixture, name, pids], ...config },
+				]),
+			),
+		}),
+	);
+}
+
+function processRuns(pid) {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+async function fixturePid(pids, name) {
+	return Number(await readFile(join(pids, `${name}.pid`), "utf8"));
+}
+
+function declared(request) {
+	return request.messages[0].toolsAdded.map((added) => added.name);
+}
+
+function toolOutputs(requests) {
+	return requests
+		.flatMap((request) => request.messages)
+		.filter((message) => message.role === "toolResult")
+		.map((message) => message.content.map((part) => part.text ?? "").join(""));
+}
+
+const mcpScript = [
+	'const echoed = await tools.mcp__tracker__echo({ text: "hi" });',
+	"return { echoed: echoed.content[0].text, models: typeof models, mcp: Object.keys(tools).filter((name) => name.includes(\"mcp\")).sort() };",
+].join("\n");
+
+test("every Specialist reaches the parent's direct and codemode-only MCP tools and the resource tools, and nothing of the parent", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const pids = join(agentDir, "pids");
+		await writeMcpConfig(agentDir, pids, {
+			docs: { exposure: "direct", description: "Library docs." },
+			tracker: { description: "Issue tracker." },
+		});
+		const roles = { explore: [], worker: ["report_result"], verify: ["report_result"] };
+		for (const [role, extra] of Object.entries(roles)) {
+			const parent = await fauxParent(agentDir, [
+				fauxAssistantMessage(fauxToolCall("codemode", { code: mcpScript }), {
+					stopReason: "toolUse",
+				}),
+				fauxAssistantMessage("Done."),
+			]);
+			const { tool } = await loadSpawnTool({ agentDir });
+			const contract = await readFile(
+				fileURLToPath(new URL(`../assets/contracts/${role}.md`, import.meta.url)),
+				"utf8",
+			);
+			const contractTools = contract
+				.match(/^tools: (.*)$/m)[1]
+				.split(", ");
+
+			const result = await spawn(
+				tool,
+				{ role, task: "Use the trackers" },
+				{ ...toolContext("print", worktree), ...parent.context },
+			);
+
+			assert.equal(result.details.status, "completed", text(result));
+			const names = declared(parent.requests[0]);
+			for (const name of [
+				...contractTools,
+				"ask_parent",
+				...extra,
+				"mcp__docs__echo",
+				"list_mcp_resources",
+				"list_mcp_resource_templates",
+				"read_mcp_resource",
+			]) {
+				assert.ok(names.includes(name), `${role} lacks ${name}: ${names}`);
+			}
+			for (const name of [
+				"spawn_child",
+				"mcp__tracker__echo",
+				...childTools,
+			]) {
+				assert.ok(!names.includes(name), `${role} declares ${name}`);
+			}
+			assert.ok(!names.some((name) => /web|fetch/.test(name)), `${role}: ${names}`);
+			const [output] = toolOutputs(parent.requests);
+			assert.match(output, /"echoed":"tracker echoes hi"/);
+			assert.match(output, /"models":"undefined"/);
+			assert.match(output, /mcp__docs__echo/);
+			assert.match(output, /mcp__tracker__echo/);
+		}
+	});
+});
+
+test("a child session starts its MCP servers only when it runs and closes them when it is disposed", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const pids = join(agentDir, "pids");
+		await writeMcpConfig(agentDir, pids, {
+			docs: { exposure: "direct", description: "Library docs." },
+		});
+		const parent = await fauxParent(agentDir, fauxAssistantMessage("Done."));
+		const handle = await createPiChildSession({
+			cwd: worktree,
+			project: { cwd: worktree, trusted: false },
+			role: "explore",
+			model: "faux/child",
+			thinking: "high",
+			prompt: "You are a child session.",
+			tools: ["read", "codemode", "mcp__*", "ask_parent"],
+			modelRegistry: parent.context.modelRegistry,
+			shell: {},
+			onEvent: () => {},
+			notify: () => {},
+			ask: async () => "answer",
+			report: () => {},
+		});
+
+		await delay(100);
+		assert.deepEqual(await readdir(pids), []);
+
+		assert.equal(await handle.run("Look it up."), "Done.");
+		const pid = await fixturePid(pids, "docs");
+		assert.ok(processRuns(pid));
+		assert.ok(declared(parent.requests[0]).includes("mcp__docs__echo"));
+
+		await handle.dispose();
+		await eventually(() => !processRuns(pid));
+	});
+});
+
+test("a child's MCP notices reach its trace", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		await writeFile(
+			join(agentDir, "mcp.json"),
+			JSON.stringify({
+				mcpServers: {
+					broken: { command: join(agentDir, "missing-server"), exposure: "direct" },
+				},
+			}),
+		);
+		const parent = await fauxParent(agentDir, fauxAssistantMessage("Done."));
+		const { tool, entries } = await loadSpawnTool({ agentDir });
+
+		const result = await spawn(
+			tool,
+			{ role: "explore", task: "Look it up" },
+			{ ...toolContext("print", worktree), ...parent.context },
+		);
+
+		assert.equal(result.details.status, "completed", text(result));
+		const notices = entries
+			.filter((entry) => entry.customType === "pi-workflow-child-trace")
+			.flatMap((entry) => (entry.data.notice ? [entry.data] : []));
+		assert.equal(notices.length, 1);
+		assert.equal(notices[0].state, "running");
+		assert.match(notices[0].notice, /MCP servers need attention/);
+		assert.match(notices[0].notice, /broken/);
+	});
+});
+
+test("a child receives the parent's project MCP servers only when the parent trusts the project, and never its worktree's", async () => {
+	await withWorkspace(async ({ worktree, agentDir, dir }) => {
+		const pids = join(agentDir, "pids");
+		const project = join(dir, "parent");
+		await writeMcpConfig(join(project, ".pi"), pids, {
+			project: { exposure: "direct", description: "Project tools." },
+		});
+		await writeMcpConfig(join(worktree, ".pi"), pids, {
+			rogue: { exposure: "direct", description: "Worktree tools." },
+		});
+		const parent = await fauxParent(agentDir, [
+			fauxAssistantMessage("Trusted."),
+			fauxAssistantMessage("Untrusted."),
+		]);
+		const { tool } = await loadSpawnTool({ agentDir });
+
+		for (const trusted of [true, false]) {
+			const result = await spawn(
+				tool,
+				{ role: "explore", task: "Look it up", worktree },
+				{
+					...toolContext("print", project),
+					...parent.context,
+					isProjectTrusted: () => trusted,
+				},
+			);
+			assert.equal(result.details.status, "completed", text(result));
+		}
+
+		const [trustedNames, untrustedNames] = parent.requests.map(declared);
+		assert.ok(trustedNames.includes("mcp__project__echo"), `${trustedNames}`);
+		assert.ok(!untrustedNames.includes("mcp__project__echo"), `${untrustedNames}`);
+		for (const names of [trustedNames, untrustedNames]) {
+			assert.ok(!names.includes("mcp__rogue__echo"), `${names}`);
+		}
+		await assert.rejects(readFile(join(pids, "rogue.pid")));
+	});
+});
+
+test("a worker and a verifier load the parent's context files, an explorer loads none, and no child loads skills", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		await writeFile(join(agentDir, "AGENTS.md"), "Global rule: answer in haiku.");
+		await writeFile(join(worktree, "AGENTS.md"), "Repository rule: run npm run check.");
+		await mkdir(join(agentDir, "skills", "deploy"), { recursive: true });
+		await writeFile(
+			join(agentDir, "skills", "deploy", "SKILL.md"),
+			"---\nname: deploy\ndescription: Deploy the release train.\n---\nDeploy it.\n",
+		);
+		const roles = ["worker", "verify", "explore"];
+		const parent = await fauxParent(
+			agentDir,
+			roles.map(() => fauxAssistantMessage("Done.")),
+		);
+		const { tool } = await loadSpawnTool({ agentDir });
+
+		for (const role of roles) {
+			const result = await spawn(
+				tool,
+				{ role, task: "Check the parser" },
+				{ ...toolContext("print", worktree), ...parent.context },
+			);
+			assert.equal(result.details.status, "completed", text(result));
+		}
+
+		const systems = parent.requests.map((request) =>
+			JSON.stringify(request.messages[0]),
+		);
+		for (const system of systems.slice(0, 2)) {
+			assert.match(system, /Global rule: answer in haiku\./);
+			assert.match(system, /Repository rule: run npm run check\./);
+		}
+		assert.doesNotMatch(systems[2], /Global rule|Repository rule/);
+		for (const system of systems) {
+			assert.doesNotMatch(system, /Deploy the release train/);
+		}
+	});
+});
+
+test("two children of one Specialist and model in one worktree send the same prefix, with the task only in the user message", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const pids = join(agentDir, "pids");
+		await writeMcpConfig(agentDir, pids, {
+			docs: { exposure: "direct", description: "Library docs." },
+			tracker: { description: "Issue tracker." },
+		});
+		await writeFile(join(worktree, "AGENTS.md"), "Repository rule: run npm run check.");
+		const parent = await fauxParent(agentDir, [
+			fauxAssistantMessage("First."),
+			fauxAssistantMessage("Second."),
+		]);
+		const { tool } = await loadSpawnTool({ agentDir });
+
+		for (const task of ["Fix the parser", "Fix the lexer"]) {
+			const result = await spawn(
+				tool,
+				{ role: "worker", task },
+				{ ...toolContext("print", worktree), ...parent.context },
+			);
+			assert.equal(result.details.status, "completed", text(result));
+		}
+
+		const [first, second] = parent.requests;
+		const prefix = ({ timestamp: _sent, ...system }) => system;
+		assert.deepEqual(prefix(first.messages[0]), prefix(second.messages[0]));
+		assert.ok(declared(first).includes("mcp__docs__echo"));
+		assert.match(JSON.stringify(first.messages[0]), /Repository rule/);
+		assert.doesNotMatch(JSON.stringify(first.messages[0]), /Fix the/);
+		assert.match(JSON.stringify(first.messages.slice(1)), /Fix the parser/);
+		assert.match(JSON.stringify(second.messages.slice(1)), /Fix the lexer/);
 	});
 });
 
@@ -1620,6 +1921,81 @@ test("session shutdown disposes every background child even when one dispose thr
 			[1, 1],
 		);
 		assert.equal(messages.length, 0);
+	});
+});
+
+test("a finished child's result is delivered while its session is still shutting down", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren({ dispose: () => new Promise(() => {}) });
+		const { tool, messages } = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		await spawn(
+			tool,
+			{ role: "explore", task: "Map the parser" },
+			toolContext("tui", worktree),
+		);
+
+		children.created[0].result.resolve("Mapped.");
+		await settle();
+		await settle();
+
+		assert.equal(children.created[0].disposals, 1);
+		assert.equal(messages.length, 1);
+		assert.match(messages[0].message.content, /Mapped\./);
+	});
+});
+
+test("a child session that fails to shut down is reported and leaves nothing unhandled", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren({
+			dispose: async () => {
+				throw new Error("cleanup failed");
+			},
+		});
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		const unhandled = await collectUnhandled(async () => {
+			await spawn(
+				extension.tool,
+				{ role: "explore", task: "Map the parser" },
+				toolContext("tui", worktree),
+			);
+			children.created[0].result.resolve("Mapped.");
+			await settle();
+		});
+
+		assert.deepEqual(unhandled, []);
+		assert.equal(extension.messages.length, 1);
+		assert.ok(
+			extension.notifications.some(({ message }) =>
+				/cleanup failed/.test(message),
+			),
+		);
+	});
+});
+
+test("the parent session's end waits for its children to shut down", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const shutdown = Promise.withResolvers();
+		const children = fakeChildren({ dispose: () => shutdown.promise });
+		const { tool, fire } = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		await spawn(
+			tool,
+			{ role: "worker", task: "Fix the failing test" },
+			toolContext("tui", worktree),
+		);
+
+		const ended = outcome(fire("session_shutdown", { reason: "quit" }));
+		assert.equal(await ended(), "still pending");
+		shutdown.resolve();
+		assert.equal(await ended(), "resolved");
 	});
 });
 
