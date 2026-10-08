@@ -6246,3 +6246,18 @@ test("a Steer whose text begins with / after leading whitespace is refused", asy
 	await assert.rejects(core.steer(id, "  /mcp"), /A Steer cannot begin with \//);
 	assert.deepEqual(child.steered, []);
 });
+
+test("a file a child edits by a relative and an absolute path is one changed file, shown relative to the child's worktree, and a file outside it keeps its absolute path", async () => {
+	const { core, launch } = recordingCore();
+	const { id, child } = await launch();
+	const write = (toolCallId, path) => {
+		const call = { toolCallId, toolName: "write" };
+		child.spec.onEvent({ type: "tool_execution_start", ...call, args: { path } });
+		child.spec.onEvent({ type: "tool_execution_end", ...call, result: {}, isError: false });
+	};
+	write("t1", "src/a.ts");
+	write("t2", "/tmp/src/a.ts");
+	write("t3", "./src/../src/a.ts");
+	write("t4", "/etc/hosts");
+	assert.deepEqual(core.changedFiles(id), ["src/a.ts", "/etc/hosts"]);
+});

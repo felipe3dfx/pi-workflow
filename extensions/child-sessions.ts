@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import type {
 	AssistantMessage,
@@ -218,6 +218,17 @@ function describeTool(name: string, args: unknown) {
 	return terminalSafeLine(
 		detail === undefined ? name : `${name} ${detail.split("\n")[0]}`,
 	);
+}
+
+function changedPath(worktree: string, path: string) {
+	const file = resolve(worktree, path);
+	const inside = relative(worktree, file);
+	return inside === "" ||
+		inside === ".." ||
+		inside.startsWith(`..${sep}`) ||
+		isAbsolute(inside)
+		? file
+		: inside;
 }
 
 export function isWorking(state: ChildState) {
@@ -602,7 +613,10 @@ export function createChildSessions(options: {
 				(event.toolName === "edit" || event.toolName === "write") &&
 				typeof path === "string"
 			)
-				child.writes.set(event.toolCallId, path);
+				child.writes.set(
+					event.toolCallId,
+					changedPath(child.record.worktree, path),
+				);
 		} else if (event.type === "tool_execution_end") {
 			child.tools.delete(event.toolCallId);
 			const path = child.writes.get(event.toolCallId);
