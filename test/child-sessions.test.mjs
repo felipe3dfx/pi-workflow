@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import {
 	mkdir,
 	mkdtemp,
@@ -1482,6 +1483,30 @@ test("a child session starts its MCP servers only when it runs and closes them w
 
 		await handle.dispose();
 		await eventually(() => !processRuns(pid));
+	});
+});
+
+test("a child's first prompt does not wait for a slow MCP server whose tools are not direct", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const pids = join(agentDir, "pids");
+		await writeMcpConfig(agentDir, pids, {
+			slow: { args: [mcpFixture, "slow", pids, "3000"], description: "Slow tools." },
+		});
+		const parent = await fauxParent(agentDir, fauxAssistantMessage("Done."));
+		const handle = await piChildSession({
+			cwd: worktree,
+			tools: ["read", "codemode", "mcp__*", "ask_parent"],
+			modelRegistry: parent.context.modelRegistry,
+		});
+
+		const started = Date.now();
+		try {
+			assert.equal(await handle.run("Look it up."), "Done.");
+			assert.ok(Date.now() - started < 1500, `${Date.now() - started} ms`);
+			await eventually(() => existsSync(join(pids, "slow.pid")));
+		} finally {
+			await handle.dispose();
+		}
 	});
 });
 

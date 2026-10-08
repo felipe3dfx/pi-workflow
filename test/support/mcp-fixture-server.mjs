@@ -1,8 +1,9 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
+import { setTimeout as delay } from "node:timers/promises";
 
-const [name, pidDir] = process.argv.slice(2);
+const [name, pidDir, delayMs = "0"] = process.argv.slice(2);
 writeFileSync(join(pidDir, `${name}.pid`), String(process.pid));
 
 const results = {
@@ -37,9 +38,10 @@ const results = {
 	}),
 };
 
-createInterface({ input: process.stdin }).on("line", (line) => {
+createInterface({ input: process.stdin }).on("line", async (line) => {
 	const message = JSON.parse(line);
 	if (message.id === undefined) return;
+	if (message.method === "initialize") await delay(Number(delayMs));
 	const result = results[message.method];
 	process.stdout.write(
 		`${JSON.stringify(
