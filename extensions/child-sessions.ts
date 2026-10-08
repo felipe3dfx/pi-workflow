@@ -350,7 +350,7 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 	}
 	const slash = spec.model.indexOf("/");
 	const settingsManager = SettingsManager.inMemory(
-		{ steeringMode: "one-at-a-time" },
+		{},
 		{ projectTrusted: spec.project.trusted },
 	);
 	const agentDir = getAgentDir();
