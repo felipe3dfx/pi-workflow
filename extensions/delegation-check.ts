@@ -8,17 +8,20 @@ import {
 
 type DelegationAction = "launch" | "stay" | "decide" | "block";
 
+interface Expectation {
+	action: DelegationAction;
+	role?: "explore" | "worker" | "verify";
+	destinationAsked: boolean;
+}
+
 interface DelegationCase {
 	name: string;
 	live?: boolean;
 	task: string;
 	userRequest: string;
 	suggestedRole?: "explore" | "worker" | "verify";
-	expected: {
-		action: DelegationAction;
-		role?: "explore" | "worker" | "verify";
-		destinationAsked: boolean;
-	};
+	expected: Expectation;
+	orchestrator?: Expectation;
 }
 
 export const delegationCases: readonly DelegationCase[] = [
@@ -132,6 +135,13 @@ export const delegationCases: readonly DelegationCase[] = [
 		userRequest:
 			"Esto ya está entendido y es pequeño. Dime aquí, en una frase, qué dice el warning de quedarse en la sesión.",
 		expected: { action: "stay", destinationAsked: true },
+		orchestrator: { action: "launch", destinationAsked: true },
+	},
+	{
+		name: "reserved commit and push",
+		task: "Commit and push the changes.",
+		userRequest: "Haz commit y push de los cambios.",
+		expected: { action: "stay", destinationAsked: true },
 	},
 	{
 		name: "implement skill",
@@ -182,22 +192,26 @@ function evidence(verdict: Verdict): string {
 	return parts.length > 0 ? `; ${parts.join("; ")}` : "";
 }
 
-function scoreLine(item: DelegationCase, verdict: Verdict): string {
+function scoreLine(
+	item: DelegationCase,
+	expected: Expectation,
+	verdict: Verdict,
+): string {
 	const action = actionOf(verdict);
 	const destinationAsked = verdict.jev?.answers.destination !== undefined;
 	const role = verdict.kind === "launch" ? verdict.role : undefined;
 	const mismatches: string[] = [];
-	if (action !== item.expected.action) {
-		mismatches.push(`action expected ${item.expected.action}, got ${action}`);
+	if (action !== expected.action) {
+		mismatches.push(`action expected ${expected.action}, got ${action}`);
 	}
-	if (item.expected.role && role !== item.expected.role) {
+	if (expected.role && role !== expected.role) {
 		mismatches.push(
-			`specialist expected ${item.expected.role}, got ${role ?? "none"}`,
+			`specialist expected ${expected.role}, got ${role ?? "none"}`,
 		);
 	}
-	if (destinationAsked !== item.expected.destinationAsked) {
+	if (destinationAsked !== expected.destinationAsked) {
 		mismatches.push(
-			`destination question expected ${item.expected.destinationAsked ? "yes" : "no"}, got ${destinationAsked ? "yes" : "no"}`,
+			`destination question expected ${expected.destinationAsked ? "yes" : "no"}, got ${destinationAsked ? "yes" : "no"}`,
 		);
 	}
 	const detail = evidence(verdict);
@@ -211,12 +225,17 @@ function scoreLine(item: DelegationCase, verdict: Verdict): string {
 
 export async function runDelegationCheck(
 	ctx: CheckContext,
-	options: Pick<ChildLauncherOptions, "modelProfiles" | "jevRouting">,
+	options: Pick<
+		ChildLauncherOptions,
+		"modelProfiles" | "jevRouting" | "delegationMode"
+	>,
 ): Promise<{ lines: string[]; failed: boolean }> {
 	const launcher = createChildLauncher({
 		modelProfiles: options.modelProfiles,
 		jevRouting: options.jevRouting,
+		delegationMode: options.delegationMode,
 	});
+	const orchestrator = options.delegationMode?.current() === "orchestrator";
 	const lines: string[] = [];
 	const routingOn = options.jevRouting.enabled();
 	for (const item of delegationCases) {
@@ -235,7 +254,13 @@ export async function runDelegationCheck(
 				},
 				ctx,
 			);
-			lines.push(scoreLine(item, verdict));
+			lines.push(
+				scoreLine(
+					item,
+					(orchestrator && item.orchestrator) || item.expected,
+					verdict,
+				),
+			);
 		} catch (error) {
 			const message = errorMessage(error);
 			lines.push(`fail: ${item.name}: ${message}`);

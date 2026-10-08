@@ -9,6 +9,7 @@ import {
 	type Selection,
 } from "./configure.ts";
 import { report } from "./model-profiles.ts";
+import type { DelegationModeName } from "./workflow-settings.ts";
 
 const capabilityLabels: Record<Capability, string> = {
 	"child-session": "Child session",
@@ -28,14 +29,23 @@ export async function guideSelection(
 		status: "missing" | "installed" | "error";
 	}[],
 	jevRouting: boolean,
+	delegationMode: DelegationModeName,
 	seated: Pick<Selection, "capabilities">,
-): Promise<{ selection: Selection; jevRouting: boolean } | undefined> {
+): Promise<
+	| {
+			selection: Selection;
+			jevRouting: boolean;
+			delegationMode: DelegationModeName;
+	  }
+	| undefined
+> {
 	if (!ctx.hasUI || ctx.mode !== "tui") {
 		report(ctx, "Configure needs the TUI.", "error");
 		return undefined;
 	}
 	const draft: Selection = structuredClone(selection);
 	let draftRouting = jevRouting;
+	let draftMode = delegationMode;
 	let confirmed = false;
 	await ctx.ui.custom(
 		(_tui, _theme, _keybindings, done) => {
@@ -53,6 +63,14 @@ export async function guideSelection(
 					description: "Ask Jev before routing a turn",
 					currentValue: draftRouting ? "on" : "off",
 					values: ["on", "off"],
+				},
+				{
+					id: "delegation-mode",
+					label: "Delegation mode",
+					description:
+						"Orchestrator tells the parent to delegate all work to child sessions",
+					currentValue: draftMode,
+					values: ["opportunistic", "orchestrator"],
 				},
 				...packages.map((name) => ({
 					id: `expectation:${name}`,
@@ -75,6 +93,9 @@ export async function guideSelection(
 										: [
 												`Jev routing: ${jevRouting ? "on" : "off"} -> ${draftRouting ? "on" : "off"}`,
 											]),
+									...(draftMode === delegationMode
+										? []
+										: [`Delegation mode: ${delegationMode} -> ${draftMode}`]),
 									...describePlan(seated, draft, states),
 								].map((line, index) => ({
 									id: `plan-${index}`,
@@ -111,6 +132,8 @@ export async function guideSelection(
 						draft.capabilities[capability] = on;
 					} else if (id === "jev-routing") {
 						draftRouting = on;
+					} else if (id === "delegation-mode") {
+						draftMode = value as DelegationModeName;
 					} else if (id.startsWith("expectation:")) {
 						draft.expectations[id.slice("expectation:".length)] = on;
 					}
@@ -129,6 +152,6 @@ export async function guideSelection(
 		},
 	);
 	return confirmed
-		? { selection: draft, jevRouting: draftRouting }
+		? { selection: draft, jevRouting: draftRouting, delegationMode: draftMode }
 		: undefined;
 }

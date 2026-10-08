@@ -32,6 +32,7 @@ import {
 } from "./codegraph-tool.ts";
 import { createChildLauncher } from "./child-launcher.ts";
 import { runDelegationCheck } from "./delegation-check.ts";
+import { registerDelegationMode } from "./delegation-mode.ts";
 import { registerChildResultCards } from "./child-result-card.ts";
 import {
 	type ChildSessionFactory,
@@ -50,7 +51,10 @@ import { registerSessionTodo } from "./todo-extension.ts";
 import type { TaskExecutor } from "./todo-header.ts";
 import { registerCompactTools, syncCompactTools } from "./compact-tools.ts";
 import { resolveAgentDirectory } from "./agent-directory.ts";
-import { createJevRouting } from "./workflow-settings.ts";
+import {
+	createDelegationMode,
+	createJevRouting,
+} from "./workflow-settings.ts";
 
 const usage =
 	"Usage: /workflow:status | /workflow:doctor | /workflow:config | /workflow:models | /workflow:subagents | /workflow:delegation-check";
@@ -100,6 +104,7 @@ export default function piWorkflowExtension(
 	registerChildResultCards(pi);
 	const modelProfiles = createModelProfiles(agentDirectory);
 	const jevRouting = createJevRouting(agentDirectory);
+	const delegationMode = createDelegationMode(agentDirectory);
 	const { requestAboveInputRender } = registerShell(pi);
 	const todo = registerSessionTodo(pi, requestAboveInputRender, () => {
 		const executors = new Map<number, TaskExecutor>();
@@ -145,7 +150,11 @@ export default function piWorkflowExtension(
 			if (ctx.mode === "tui") await childrenViews.open(ctx);
 		},
 	});
-	const launcher = createChildLauncher({ modelProfiles, jevRouting });
+	const launcher = createChildLauncher({
+		modelProfiles,
+		jevRouting,
+		delegationMode,
+	});
 
 	function companionPackages() {
 		return loadCompanionsFromPath(
@@ -190,6 +199,7 @@ export default function piWorkflowExtension(
 		],
 	});
 	childSessions.subscribe(childTools.refresh);
+	registerDelegationMode(pi, delegationMode, childTools.offered);
 
 	pi.on("session_start", async (_event, ctx) => {
 		currentCtx = ctx;
@@ -240,7 +250,7 @@ export default function piWorkflowExtension(
 	});
 	pi.registerCommand("workflow:config", {
 		description:
-			"Configure companions, harness capabilities, and Jev routing",
+			"Configure companions, harness capabilities, Jev routing, and Delegation mode",
 		handler: async (args, ctx) => {
 			if (args.trim()) {
 				report(ctx, usage, "error");
@@ -265,18 +275,25 @@ export default function piWorkflowExtension(
 				),
 			);
 			const routing = jevRouting.enabled();
+			const mode = delegationMode.current();
 			const guided = await guideSelection(
 				ctx,
 				read.selection,
 				packages,
 				states,
 				routing,
+				mode,
 				seatedCapabilities(),
 			);
 			if (!guided) return;
-			const { selection: chosen, jevRouting: chosenRouting } = guided;
+			const {
+				selection: chosen,
+				jevRouting: chosenRouting,
+				delegationMode: chosenMode,
+			} = guided;
 			seating.save(chosen);
 			if (chosenRouting !== routing) jevRouting.set(chosenRouting);
+			if (chosenMode !== mode) delegationMode.set(chosenMode);
 			await seating.seat(chosen);
 			const expected = Object.entries(chosen.expectations)
 				.filter(([, on]) => on)
@@ -335,6 +352,7 @@ export default function piWorkflowExtension(
 			const { lines, failed } = await runDelegationCheck(ctx, {
 				modelProfiles,
 				jevRouting,
+				delegationMode,
 			});
 			report(ctx, lines.join("\n"), failed ? "error" : "info");
 		},
