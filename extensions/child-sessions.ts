@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { readFileSync } from "node:fs";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 
 import type {
 	AssistantMessage,
@@ -34,7 +34,7 @@ import { answerCard } from "./child-result-card.ts";
 import { hidden, outputText } from "./compact-tools.ts";
 import { type Schedule, scheduleTimer } from "./clock.ts";
 import { seated } from "./shell.ts";
-import { loadWebAccess, webAccessPackage } from "./web-access.ts";
+import { explorerWeb, webAccessTools } from "./web-access.ts";
 import {
 	type ChildResult,
 	childOutcome,
@@ -285,18 +285,11 @@ const mcpTools = [
 	"read_mcp_resource",
 ];
 
-const webTools = [
-	"web_search",
-	"source_check",
-	"fetch_content",
-	"get_search_content",
-];
-
 function childTools(plan: Plan) {
 	return [
 		...plan.contract.tools,
 		...mcpTools,
-		...(plan.role === "explore" ? webTools : []),
+		...(plan.role === "explore" ? webAccessTools : []),
 		askParentTool,
 		...(reportsResult(plan.role) ? [reportResultTool] : []),
 	];
@@ -344,24 +337,6 @@ function parentMcp(project: ParentProject): ExtensionFactory {
 						: handler,
 				),
 		} as ExtensionAPI);
-}
-
-async function explorerWeb(agentDir: string) {
-	const directory = join(agentDir, "npm", "node_modules", webAccessPackage);
-	if (!existsSync(directory)) {
-		return {
-			factories: [],
-			problem: `${webAccessPackage} is not installed locally, so the explorer has no web tools.`,
-		};
-	}
-	try {
-		return { factories: await loadWebAccess(directory), problem: undefined };
-	} catch (error) {
-		return {
-			factories: [],
-			problem: `${webAccessPackage} could not be loaded, so the explorer has no web tools: ${errorMessage(error)}`,
-		};
-	}
 }
 
 export const createPiChildSession: ChildSessionFactory = async (spec) => {

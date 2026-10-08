@@ -11,7 +11,14 @@ import * as typebox from "typebox";
 import * as typeboxCompile from "typebox/compile";
 import * as typeboxValue from "typebox/value";
 
-export const webAccessPackage = "pi-web-access";
+const webAccessPackage = "pi-web-access";
+
+export const webAccessTools = [
+	"web_search",
+	"source_check",
+	"fetch_content",
+	"get_search_content",
+];
 
 // The specifiers Pi's extension loader maps to its own modules, limited to the harness's peers.
 // Re-verify against Pi's loader on every Pi upgrade.
@@ -65,7 +72,7 @@ function entries(directory: string): string[] {
 // Each call evaluates the package again, so no explorer shares module state with the
 // parent's instance or another explorer's. jiti.import would load an ES module package
 // natively, through Node's shared module cache and without the host modules.
-export async function loadWebAccess(
+async function loadWebAccess(
 	directory: string,
 ): Promise<ExtensionFactory[]> {
 	const paths = entries(directory);
@@ -91,4 +98,23 @@ export async function loadWebAccess(
 		factories.push(factory as ExtensionFactory);
 	}
 	return factories;
+}
+
+export async function explorerWeb(agentDir: string) {
+	const directory = join(agentDir, "npm", "node_modules", webAccessPackage);
+	if (!existsSync(directory)) {
+		return {
+			factories: [],
+			problem: `${webAccessPackage} is not installed locally, so the explorer has no web tools.`,
+		};
+	}
+	try {
+		return { factories: await loadWebAccess(directory), problem: undefined };
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return {
+			factories: [],
+			problem: `${webAccessPackage} could not be loaded, so the explorer has no web tools: ${message}`,
+		};
+	}
 }
