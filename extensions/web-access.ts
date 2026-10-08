@@ -110,7 +110,8 @@ function packageManager(agentDir: string, project: ParentProject) {
 	});
 }
 
-// A package manager runs `npm root -g` at most once, for a user-scope lookup that misses.
+// A reused package manager keeps the global root it resolves, so npm and bun resolve it once per
+// agent directory; under pnpm, every user-scope lookup that misses runs `pnpm list -g`.
 const userPackages = new Map<string, DefaultPackageManager>();
 
 function webAccessDirectory(agentDir: string, project: ParentProject) {
