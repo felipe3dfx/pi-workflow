@@ -278,14 +278,14 @@ test("from 65 columns the view splits into a list and a detail pane; below that 
 	const view = open(sessions, { rows: 40 });
 
 	const wide = view.lines(120);
-	assert.match(wide[0], /^ ┌─ Subagents 3 · 1 active ─+ \[×\] ─┐$/);
+	assert.match(wide[0], /^ ┌─ Fleet 3 · 1 active · 6\.2k tok · \$0\.01 ─+ \[×\] ─┐$/);
 	assert.equal(wide[1].indexOf("│", 2), 1 + 1 + 2 + 34 + 1);
 	assert.match(wide[1], /Active ─+ │ ◐ worker 5636 +running · 1m 0\ds {2}│$/);
 	assert.match(
 		wide[2],
-		/▸ ◐ worker 5636 +1m 0\ds │ gpt-6-luna \(high\) · 6\.2k tok · \$0\.01 · wt: pi-workflow/,
+		/▸ ◐ worker 5636 +running · 1m 0\ds │ gpt-6-luna \(high\) · 6\.2k tok · \$0\.01 · wt: pi-workflow/,
 	);
-	assert.match(wide[3], /^ │ {6}bash sleep 60 +│ Run sleep 60 /);
+	assert.match(wide[3], /^ │ {6}bash sleep 60 6\.2k tok · \$0\.01 │ Run sleep 60 /);
 
 	const narrow = view.lines(80);
 	assert.equal(narrow[1].indexOf("│", 2), 1 + 1 + 2 + 23 + 1);
@@ -301,12 +301,12 @@ test("list rows take two lines under Active and Finished rules, and the selected
 	const raw = view.raw(120);
 	const lines = raw.map(plain);
 	assert.match(lines[1], /│ {2} Active ─/);
-	assert.match(lines[2], /▸ ◐ worker 5636 +1m 0\ds/);
-	assert.match(lines[3], /│ {6}bash sleep 60/);
+	assert.match(lines[2], /▸ ◐ worker 5636 +running · 1m 0\ds/);
+	assert.match(lines[3], /│ {6}bash sleep 60 +6\.2k tok · \$0\.01 │/);
 	assert.match(lines[4], /│ {2} Finished ─/);
-	assert.match(lines[5], /│ {4}✓ worker a809 +1m 04s/);
+	assert.match(lines[5], /│ {4}✓ worker a809 +completed · 1m 04s/);
 	assert.match(lines[6], /│ {6}Run sleep 60/);
-	assert.match(lines[7], /│ {4}✗ reviewer 27c1 +4m 00s/);
+	assert.match(lines[7], /│ {4}✗ reviewer 27c1 +failed · 4m 00s/);
 	assert.ok(raw[2].includes("\x1b[48;5;236m"));
 	assert.ok(raw[3].includes("\x1b[48;5;236m"));
 	assert.equal(raw[5].includes("\x1b[48;5;236m"), false);
@@ -593,4 +593,93 @@ test("the final assistant text and the error appear once, in the Result section,
 	view.press("k");
 	text = view.lines(120).join("\n");
 	assert.equal(text.match(/provider error/g)?.length, 1);
+});
+
+function scripted(id, totalTokens, total) {
+	return {
+		type: "message",
+		id,
+		message: {
+			role: "toolResult",
+			toolCallId: `${id}-call`,
+			toolName: "codemode",
+			content: [{ type: "text", text: "ok" }],
+			usage: { totalTokens, cost: { total } },
+			isError: false,
+		},
+	};
+}
+
+function fleet() {
+	const running = record("5636", { step: "bash sleep 60" });
+	const done = record("a809", {
+		state: "completed",
+		endedAt: now - 1_000,
+		startedAt: now - 65_000,
+		text: "Waited 60 seconds.",
+	});
+	const failed = record("27c1", {
+		state: "failed",
+		role: "reviewer",
+		endedAt: now - 2_000,
+		startedAt: now - 242_000,
+		text: "no activity for 4 minutes",
+	});
+	const busy = busyThread();
+	return fakeSessions([done, running, failed], {
+		[running.id]: { entries: [...busy.entries, scripted("s1", 1800, 0.005)] },
+		[done.id]: {
+			entries: [
+				assistant("d1", [{ type: "text", text: "Done." }], {
+					usage: { totalTokens: 3000, cost: { total: 0.01 } },
+				}),
+				scripted("s2", 1000, 0.004),
+			],
+		},
+		[failed.id]: { entries: [] },
+	});
+}
+
+test("the Fleet view is titled Fleet with the total of every child, and each row shows its Run state, tokens, and cost including tool-result usage", () => {
+	const view = open(fleet(), { rows: 40 });
+	const lines = view.lines(120);
+	assert.match(
+		lines[0],
+		/^ ┌─ Fleet 3 · 1 active · 12\.0k tok · \$0\.03 ─+ \[×\] ─┐$/,
+	);
+	assert.match(lines[2], /▸ ◐ worker 5636 +running · 1m 0\ds │/);
+	assert.match(lines[3], /│ {6}bash sleep 60 +8\.0k tok · \$0\.02 │/);
+	assert.match(lines[5], /✓ worker a809 +completed · 1m 04s │/);
+	assert.match(lines[6], /│ {6}Run sleep.* 4\.0k tok · \$0\.01 │/);
+	assert.match(lines[7], /✗ reviewer 27c1 +failed · 4m 00s │/);
+	assert.match(
+		lines[2],
+		/│ gpt-6-luna \(high\) · 8\.0k tok · \$0\.02 · wt: pi-workflow/,
+	);
+
+	const short = open(fleet(), { rows: 10 }).lines(120);
+	assert.match(short[2], /▸ ◐ worker 5636 +8\.0k tok · \$0\.02 │/);
+	assert.match(short[4], /✓ worker a809 +4\.0k tok · \$0\.01 │/);
+	assert.match(short[5], /✗ reviewer 27c1 Run.* 4m 00s │/);
+});
+
+test("hostile text in a child's step, task, or model never reaches the terminal from the Fleet rows", () => {
+	const bytes = ["\x1b[2J", "\x1b]52;c;", "\x9b", "\x07", "‮", "⁦"];
+	const hostile = (label) =>
+		`${label}\x1b[2J\x1b]52;c;eA==\x07\x9b31m‮⁦end`;
+	const sessions = fakeSessions([
+		record("5636", { step: hostile("step"), model: hostile("model") }),
+		record("a809", {
+			state: "failed",
+			endedAt: now,
+			task: hostile("task"),
+			text: hostile("text"),
+		}),
+	]);
+	for (const rows of [40, 10]) {
+		const raw = open(sessions, { rows }).raw(120).join("\n");
+		for (const sequence of bytes) {
+			assert.equal(raw.includes(sequence), false, JSON.stringify(sequence));
+		}
+	}
 });
