@@ -780,6 +780,12 @@ function createChildrenView(
 					...(marks.length > 0 ? [theme.fg("warning", marks.join(" · "))] : []),
 					...(rest.length > 0 ? [theme.fg("dim", rest.join(" · "))] : []),
 				].join(theme.fg("dim", " · "));
+			const tail =
+				[[state, ...spend], [state], []]
+					.map(right)
+					.find((text) => visibleWidth(head) + 1 + visibleWidth(text) <= width) ??
+				right([]);
+			const room = width - visibleWidth(head) - visibleWidth(tail) - 2;
 			const shown = two
 				? [
 						spread(head, theme.fg("dim", state), width),
@@ -787,16 +793,10 @@ function createChildrenView(
 					]
 				: [
 						spread(
-							spend.length > 0 ? head : `${head} ${theme.fg(color, step)}`,
-							right(
-								spend.length > 0
-									? spend
-									: [
-											child.state === "queued"
-												? "queued"
-												: childElapsed(child, now),
-										],
-							),
+							room > 1
+								? `${head} ${theme.fg(color, truncateToWidth(step, room, "…"))}`
+								: head,
+							tail,
 							width,
 						),
 					];

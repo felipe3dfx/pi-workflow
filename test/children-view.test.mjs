@@ -352,7 +352,7 @@ test("the list keeps the selected child in view and falls back to one line per c
 		.lines(120)
 		.map((line) => line.slice(0, 40))
 		.filter((line) => /◐ worker/.test(line));
-	assert.match(rows[0], /▸ ◐ worker 1000 Task 0/);
+	assert.match(rows[0], /▸ ◐ worker 1000 +running/);
 	assert.ok(rows.length >= 4);
 });
 
@@ -677,10 +677,24 @@ test("the Fleet view is titled Fleet with the total of every child, and each row
 		/│ gpt-6-luna \(high\) · 8\.0k tok · \$0\.02 · wt: pi-workflow/,
 	);
 
-	const short = open(fleet(), { rows: 10 }).lines(120);
-	assert.match(short[2], /▸ ◐ worker 5636 +8\.0k tok · \$0\.02 │/);
-	assert.match(short[4], /✓ worker a809 +4\.0k tok · \$0\.01 │/);
-	assert.match(short[5], /✗ reviewer 27c1 Run.* 4m 00s │/);
+});
+
+test("one-line rows show the Run state, then tokens, cost, and the step as the pane has room", () => {
+	const split = open(fleet(), { rows: 10 }).lines(120);
+	assert.match(split[2], /▸ ◐ worker 5636 +running · 1m 0\ds │/);
+	assert.match(split[4], /✓ worker a809 +completed · 1m 04s │/);
+	assert.match(split[5], /✗ reviewer 27c1 +failed · 4m 00s │/);
+
+	const single = open(fleet(), { rows: 10 }).lines(64);
+	assert.match(
+		single[2],
+		/▸ ◐ worker 5636 bas… running · 1m 0\ds · 8\.0k tok · \$0\.02 +│$/,
+	);
+	assert.match(
+		single[4],
+		/✓ worker a809 R.* completed · 1m 04s · 4\.0k tok · \$0\.01 +│$/,
+	);
+	assert.match(single[5], /✗ reviewer 27c1 Run sleep.* failed · 4m 00s +│$/);
 });
 
 test("hostile text in a child's step, task, or model never reaches the terminal from the Fleet rows", () => {
