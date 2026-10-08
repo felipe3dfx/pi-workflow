@@ -785,6 +785,9 @@ function createChildrenView(
 			const step = terminalSafeLine(childStep(child));
 			const color = child.state === "waiting" ? "warning" : "dim";
 			const head = `${mark}${childGlyph(theme, child)} ${theme.fg("accent", child.role)} ${theme.fg("dim", child.id.slice(0, 4))}`;
+			const detail = child.todo
+				? `${theme.fg("text", `#${child.todo.id} ${terminalSafeLine(child.todo.text)}`)} ${theme.fg(color, step)}`
+				: theme.fg(color, step);
 			const state = runState(child, now);
 			const spend = usage(spent(sessions.thread(child.id)));
 			const marks = steerMarks(child);
@@ -802,12 +805,12 @@ function createChildrenView(
 			const shown = two
 				? [
 						spread(head, theme.fg("dim", state), width),
-						spread(`    ${theme.fg(color, step)}`, right(spend), width),
+						spread(`    ${detail}`, right(spend), width),
 					]
 				: [
 						spread(
 							room > 1
-								? `${head} ${theme.fg(color, truncateToWidth(step, room, "…"))}`
+								? `${head} ${truncateToWidth(detail, room, "…")}`
 								: head,
 							tail,
 							width,

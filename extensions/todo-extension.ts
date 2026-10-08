@@ -5,6 +5,7 @@ import { occupyAboveInput, seated } from "./shell.ts";
 import { offerTool } from "./tool-offer.ts";
 import {
 	renderTodoBox,
+	type TaskExecutors,
 	type TodoBoxState,
 } from "./todo-header.ts";
 import { createTodoList, TASK_STATES, type Task } from "./todo-list.ts";
@@ -44,9 +45,18 @@ function summarize(tasks: Task[]): string {
 	return tasks.map((task) => `[${task.state}] #${task.id}: ${task.text}`).join("\n");
 }
 
+const HARNESS_ENTRY = "pi-workflow-todo";
+
+export type TodoClaim = { reason: string } | { task: Task; start(): void };
+
 function replayTasks(entries: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>): Task[] {
 	let tasks: Task[] = [];
 	for (const entry of entries) {
+		if (entry.type === "custom" && entry.customType === HARNESS_ENTRY) {
+			const data = entry.data as { tasks?: Task[] } | undefined;
+			if (data && Array.isArray(data.tasks)) tasks = data.tasks;
+			continue;
+		}
 		if (entry.type !== "message") continue;
 		const message = entry.message;
 		if (message.role !== "toolResult" || message.toolName !== "todo" || message.isError) continue;
@@ -59,11 +69,12 @@ function replayTasks(entries: ReturnType<ExtensionContext["sessionManager"]["get
 export function registerSessionTodo(
 	pi: ExtensionAPI,
 	requestRender: () => void,
-): () => void {
+	executors: () => TaskExecutors,
+) {
 	const todoList = createTodoList();
 	const boxState: TodoBoxState = { collapsed: false, showDone: true };
 	occupyAboveInput("todo", (width, theme) =>
-		renderTodoBox(theme, todoList.list(), boxState, width),
+		renderTodoBox(theme, todoList.list(), boxState, width, executors()),
 	);
 
 	function reveal(): void {
@@ -164,5 +175,27 @@ export function registerSessionTodo(
 	pi.on("session_start", restoreFromBranch);
 	pi.on("session_tree", restoreFromBranch);
 
-	return () => offerTool(pi, tool, seated("todo", "above-input"));
+	function claim(id: number): TodoClaim {
+		if (!seated("todo", "above-input")) {
+			return { reason: `Todo is not seated, so task #${id} cannot be linked. Run /workflow:config.` };
+		}
+		const task = todoList.list().find((candidate) => candidate.id === id);
+		if (!task) return { reason: `Task #${id} does not exist in the Todo.` };
+		if (task.state === "done") {
+			return { reason: `Task #${id} is done. Change its Task state before executing it again.` };
+		}
+		return {
+			task,
+			start() {
+				if (!todoList.update(id, { state: "in progress" })) return;
+				pi.appendEntry(HARNESS_ENTRY, { tasks: todoList.list() });
+				reveal();
+			},
+		};
+	}
+
+	return {
+		offer: () => offerTool(pi, tool, seated("todo", "above-input")),
+		claim,
+	};
 }

@@ -862,3 +862,20 @@ test("a click on another row while typing stops typing, so Enter never sends the
 	assert.deepEqual(sessions.steers, []);
 	assert.match(view.lines(120).join("\n"), /▸ ◐ worker 1001/);
 });
+
+test("a linked child's Fleet row shows its task number and text, truncated to the row and terminal-safe, without the Task state", () => {
+	const sessions = fakeSessions([
+		record("5636", {
+			step: "bash sleep 60",
+			todo: { id: 3, text: `Wire\x1b the parser ${"and more ".repeat(30)}` },
+		}),
+	]);
+	for (const [rows, width] of [[40, 200], [10, 64]]) {
+		const raw = open(sessions, { rows }).raw(width);
+		const lines = raw.map(plain);
+		assert.ok(lines.some((line) => /#3 Wire {2}the/.test(line)), lines.join("\n"));
+		assert.equal(lines.some((line) => line.includes("in progress")), false);
+		assert.equal(raw.join("\n").includes("\x1b the"), false);
+		for (const line of raw) assert.ok(visibleWidth(line) <= width);
+	}
+});

@@ -6425,3 +6425,154 @@ test("a file a child edits by a relative and an absolute path is one changed fil
 	write("t4", "/etc/hosts");
 	assert.deepEqual(core.changedFiles(id), ["src/a.ts", "/etc/hosts"]);
 });
+
+function todoTool(extension) {
+	return {
+		run: (action, params = {}) =>
+			extension.named("todo").execute("todo-call", { action, ...params }, undefined, undefined, {}),
+		list: async () =>
+			text(await extension.named("todo").execute("todo-call", { action: "list" }, undefined, undefined, {})),
+	};
+}
+
+function seatAll(overrides = {}) {
+	replaceSelection({
+		schemaVersion: 1,
+		capabilities: Object.fromEntries(
+			capabilities.map((capability) => [capability, overrides[capability] ?? true]),
+		),
+		expectations: {},
+	});
+}
+
+test("a launch naming a missing task, a done task, or a task while the Todo is not seated is refused before Jev is asked or a child is created", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const todo = todoTool(extension);
+		await todo.run("write", {
+			tasks: [{ text: "Fix the parser" }, { text: "Ship it", state: "done" }],
+		});
+		const jev = fakeJev();
+		const cases = [
+			{ todo: 9, reason: /Task #9 does not exist/ },
+			{ todo: 2, reason: /Task #2 is done/ },
+			{ todo: 1, unseat: true, reason: /Todo is not seated/ },
+		];
+		try {
+			for (const { todo: id, unseat, reason } of cases) {
+				if (unseat) seatAll({ todo: false });
+				const result = await spawn(
+					extension.tool,
+					{ role: "worker", task: "Fix the parser", todo: id },
+					toolContext("tui", worktree, jev),
+				);
+				assert.equal(result.details.status, "refused");
+				assert.match(result.details.reason, reason);
+				assert.match(text(result), /No child was launched/);
+			}
+		} finally {
+			seatAll();
+		}
+		assert.equal(jev.requests.length, 0);
+		assert.equal(children.created.length, 0);
+		assert.match(await todo.list(), /\[pending\] #1: Fix the parser/);
+	});
+});
+
+test("an accepted launch, even queued, sets its task in progress and the Todo box names the child, while a blocked or limited launch changes nothing", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const extension = await loadSpawnTool({ agentDir, create: fakeChildren().create });
+		const todo = todoTool(extension);
+		await todo.run("write", {
+			tasks: [{ text: "Fix the parser" }, { text: "Decide the architecture" }, { text: "Map the module" }],
+		});
+
+		const blocked = await spawn(
+			extension.tool,
+			{ role: "worker", task: "Decide the architecture", todo: 2 },
+			toolContext("tui", worktree, fakeJev({ choice: "stay" })),
+		);
+		assert.equal(blocked.details.status, "refused");
+
+		const queued = await spawn(
+			extension.tool,
+			{ role: "worker", task: "Fix the parser", todo: 1 },
+			toolContext("tui", worktree),
+		);
+		assert.equal(queued.details.status, "queued");
+
+		for (let i = 0; i < 9; i++) {
+			await spawn(extension.tool, { role: "worker", task: `Busy ${i}` }, toolContext("tui", worktree));
+		}
+		const limited = await spawn(
+			extension.tool,
+			{ role: "worker", task: "Map the module", todo: 3 },
+			toolContext("tui", worktree),
+		);
+		assert.match(limited.details.reason, /already has 10 working children/);
+
+		assert.match(
+			await todo.list(),
+			/\[in progress\] #1: Fix the parser\n\[pending\] #2: Decide the architecture\n\[pending\] #3: Map the module/,
+		);
+		const box = boxOf(extension).render(100).map(plain).join("\n");
+		assert.match(box, new RegExp(`Fix the parser ← worker ${queued.details.id.slice(0, 4)}`));
+	});
+});
+
+test("each spawn_child call of one codemode Group sets its own task in progress, and the Fleet rows name each task", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const extension = await loadSpawnTool({ agentDir, create: fakeChildren().create });
+		const todo = todoTool(extension);
+		await todo.run("write", {
+			tasks: [{ text: "Map the parser" }, { text: "Map the renderer" }, { text: "Ship it" }],
+		});
+		const ctx = toolContext("tui", worktree);
+		await extension.tool.execute("script-1/1", { role: "explore", task: "Map the parser", todo: 1 }, undefined, undefined, ctx);
+		await extension.tool.execute("script-1/2", { role: "explore", task: "Map the renderer", todo: 2 }, undefined, undefined, ctx);
+
+		assert.match(
+			await todo.list(),
+			/\[in progress\] #1: Map the parser\n\[in progress\] #2: Map the renderer\n\[pending\] #3: Ship it/,
+		);
+		const fleet = openChildren(extension, { rows: 40 }).lines(200).join("\n");
+		assert.match(fleet, /#1 Map the parser/);
+		assert.match(fleet, /#2 Map the renderer/);
+	});
+});
+
+test("a Task state the harness sets is restored on session_start and session_tree like one set with the todo tool, and the session only grows", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const extension = await loadSpawnTool({ agentDir, create: fakeChildren().create });
+		const todo = todoTool(extension);
+		const written = await todo.run("write", {
+			tasks: [{ text: "Fix the parser" }, { text: "Ship it" }],
+		});
+		const before = structuredClone(extension.entries);
+		await spawn(
+			extension.tool,
+			{ role: "worker", task: "Fix the parser", todo: 1 },
+			toolContext("tui", worktree),
+		);
+		assert.deepEqual(extension.entries.slice(0, before.length), before);
+		assert.ok(extension.entries.length > before.length);
+
+		const branch = [
+			{
+				type: "message",
+				message: { role: "toolResult", toolName: "todo", isError: false, details: written.details },
+			},
+			...extension.entries.map(({ customType, data }) => ({ type: "custom", customType, data })),
+		];
+		const started = await loadSpawnTool({ agentDir, create: fakeChildren().create, branch });
+		assert.match(await todoTool(started).list(), /\[in progress\] #1: Fix the parser\n\[pending\] #2: Ship it/);
+
+		const moving = [];
+		const toured = await loadSpawnTool({ agentDir, create: fakeChildren().create, branch: moving });
+		assert.match(await todoTool(toured).list(), /No session tasks/);
+		moving.push(...branch);
+		await toured.fire("session_tree");
+		assert.match(await todoTool(toured).list(), /\[in progress\] #1: Fix the parser\n\[pending\] #2: Ship it/);
+	});
+});

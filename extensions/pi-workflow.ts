@@ -39,6 +39,7 @@ import {
 	createChildSessions,
 	createContinueChildTool,
 	createSpawnChildTool,
+	isWorking,
 } from "./child-sessions.ts";
 import type { Schedule } from "./clock.ts";
 import { registerChildrenBox } from "./children-box.ts";
@@ -119,7 +120,15 @@ export default function piWorkflowExtension(
 		requestAboveInputRender,
 		options.childSessions?.refresh,
 	);
-	const offerTodoTool = registerSessionTodo(pi, requestAboveInputRender);
+	const todo = registerSessionTodo(pi, requestAboveInputRender, () => {
+		const executors = new Map<number, { role: string; id: string }>();
+		for (const child of childSessions.list()) {
+			if (child.todo && isWorking(child.state)) {
+				executors.set(child.todo.id, { role: child.role, id: child.id });
+			}
+		}
+		return executors;
+	});
 	const footerHints = createFooterHints();
 	occupyHeader("child-session", childSessions.working);
 	childSessions.subscribe(notifyHeader);
@@ -149,7 +158,7 @@ export default function piWorkflowExtension(
 	const childTools = launcher.childToolsOffer(
 		pi,
 		[
-			createSpawnChildTool(launcher, childSessions),
+			createSpawnChildTool(launcher, childSessions, todo),
 			createContinueChildTool(childSessions),
 			...createChildQueryTools(childSessions),
 		],
@@ -168,7 +177,7 @@ export default function piWorkflowExtension(
 		},
 		offers: [
 			() => syncAskUserTools(pi, footerHints),
-			offerTodoTool,
+			todo.offer,
 			() => syncCodeGraphTool(pi, options.codegraph),
 			() => syncCompactTools(pi, currentCtx),
 			childTools.offer,

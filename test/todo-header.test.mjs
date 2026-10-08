@@ -140,3 +140,19 @@ test("a ZWJ family emoji keeps its full width instead of being stripped", () => 
 	assert.ok(row);
 	assert.ok(row.includes(family));
 });
+
+test("an in progress task linked to a working child shows the child's role and short id", () => {
+	const tasks = [
+		{ id: 1, text: "Fix the parser", state: "in progress" },
+		{ id: 2, text: "Review the parser", state: "pending" },
+		{ id: 3, text: "Write the notes", state: "in progress" },
+	];
+	const executors = new Map([
+		[1, { role: "worker", id: "a1b2c3d4-0000-0000-0000-000000000000" }],
+		[2, { role: "verify", id: "e5f6a7b8-0000-0000-0000-000000000000" }],
+	]);
+	const lines = renderTodoBox(fakeTheme(), tasks, { collapsed: false, showDone: true }, 80, executors);
+	assert.match(lines[2], /◐ Fix the parser ← worker a1b2 +│$/);
+	assert.doesNotMatch(lines[3], /←/);
+	assert.doesNotMatch(lines[4], /←/);
+});

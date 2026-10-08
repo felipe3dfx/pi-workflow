@@ -11,6 +11,8 @@ export interface TodoBoxState {
 
 export type TodoTheme = Pick<Theme, "fg" | "bold">;
 
+export type TaskExecutors = ReadonlyMap<number, { role: string; id: string }>;
+
 const CLOSE_HINT = "×";
 const CORNER_TOP = "┌";
 const CORNER_BOTTOM = "└";
@@ -29,6 +31,7 @@ export function renderTodoBox(
 	tasks: Task[],
 	state: TodoBoxState,
 	width: number,
+	executors: TaskExecutors = new Map(),
 ): string[] {
 	if (tasks.length === 0) return [];
 
@@ -49,7 +52,10 @@ export function renderTodoBox(
 	const rows = visible.map((task) => {
 		const text = terminalSafeLine(task.text);
 		const mark = STATE_MARKS[task.state];
-		const content = `${theme.fg(mark.color, mark.glyph)} ${theme.fg(task.state === "done" ? "muted" : "text", text)}`;
+		const executor = task.state === "in progress" ? executors.get(task.id) : undefined;
+		const content = `${theme.fg(mark.color, mark.glyph)} ${theme.fg(task.state === "done" ? "muted" : "text", text)}${
+			executor ? theme.fg("dim", ` ← ${executor.role} ${executor.id.slice(0, 4)}`) : ""
+		}`;
 		const inner = truncateToWidth(` ${content}`, Math.max(0, safeWidth - 2), "…", true);
 		return theme.fg("borderMuted", SIDE) + inner + theme.fg("borderMuted", SIDE);
 	});

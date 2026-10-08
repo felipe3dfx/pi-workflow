@@ -51,6 +51,7 @@ import {
 } from "./child-projection.ts";
 import { shellOptions } from "./shell-settings.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
+import type { TodoClaim } from "./todo-extension.ts";
 
 const packageVersion = (
 	JSON.parse(
@@ -131,6 +132,7 @@ export interface ChildRecord {
 	result?: ChildResult;
 	continuedFrom?: string;
 	group?: string;
+	todo?: { id: number; text: string };
 	step?: string;
 	question?: number;
 	steering?: string[];
@@ -787,6 +789,7 @@ export function createChildSessions(options: {
 			shell: () => ChildShell;
 			onLaunch?: () => void;
 			group?: string;
+			todo?: { id: number; text: string };
 		},
 		from?: { id: string; conversation: Conversation },
 	) {
@@ -919,6 +922,7 @@ export function createChildSessions(options: {
 				createdAt: Date.now(),
 				continuedFrom: from?.id,
 				...(launch.group === undefined ? {} : { group: launch.group }),
+				...(launch.todo === undefined ? {} : { todo: launch.todo }),
 			},
 			plan,
 			handle,
@@ -1193,6 +1197,12 @@ const spawnChildParameters = Type.Object({
 				"Paths under the current directory the child must read. The launch is refused when one does not exist or resolves outside it.",
 		}),
 	),
+	todo: Type.Optional(
+		Type.Integer({
+			description:
+				"The id of the Todo task this child executes. The task becomes in progress when the launch is accepted. The launch is refused when the task does not exist, is done, or the Todo is not seated.",
+		}),
+	),
 	background: Type.Optional(
 		Type.Literal(true, {
 			description:
@@ -1265,6 +1275,7 @@ function sessionBranch(ctx: {
 export function createSpawnChildTool(
 	launcher: ReturnType<typeof createChildLauncher>,
 	sessions: ReturnType<typeof createChildSessions>,
+	todo: { claim(id: number): TodoClaim },
 ): ToolDefinition<typeof spawnChildParameters, Record<string, unknown>> {
 	return {
 		name: "spawn_child",
@@ -1285,6 +1296,13 @@ export function createSpawnChildTool(
 		async execute(toolCallId, params, signal, _onUpdate, ctx) {
 			const unseated = unseatedChild();
 			if (unseated) return unseated;
+			const claim = params.todo === undefined ? undefined : todo.claim(params.todo);
+			if (claim && "reason" in claim) {
+				return notLaunched("refused", {
+					warning: "Launch refused. No child was launched.",
+					reason: claim.reason,
+				});
+			}
 			const background = ctx.mode === "tui" || ctx.mode === "rpc";
 			if (params.background && !background) {
 				return notLaunched("refused", {
@@ -1320,8 +1338,12 @@ export function createSpawnChildTool(
 					modelRegistry: ctx.modelRegistry,
 					project: () => parentProject(ctx),
 					shell: () => shellOptions(ctx),
-					onLaunch: () => launcher.recordLaunch(userRequest?.id),
+					onLaunch: () => {
+						launcher.recordLaunch(userRequest?.id);
+						claim?.start();
+					},
 					group: /^([\s\S]+)\/\d+$/.exec(toolCallId)?.[1],
+					...(claim ? { todo: { id: claim.task.id, text: claim.task.text } } : {}),
 				});
 				return launched(started, plan.warnings, {
 					role: plan.role,
