@@ -109,6 +109,10 @@ export default function piWorkflowExtension(
 		report: (message) => {
 			if (currentCtx) report(currentCtx, message, "error");
 		},
+		todo: {
+			has: (id) => todo.has(id),
+			set: (id, state) => todo.set(id, state),
+		},
 	});
 	pi.on("turn_end", () => childSessions.atBoundary());
 	pi.on("agent_settled", () => childSessions.atBoundary());

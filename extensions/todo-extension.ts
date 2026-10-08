@@ -8,7 +8,7 @@ import {
 	type TaskExecutors,
 	type TodoBoxState,
 } from "./todo-header.ts";
-import { createTodoList, TASK_STATES, type Task } from "./todo-list.ts";
+import { createTodoList, TASK_STATES, type Task, type TaskState } from "./todo-list.ts";
 
 const TodoTaskState = Type.Union(
 	TASK_STATES.map((state) => Type.Literal(state)),
@@ -184,18 +184,24 @@ export function registerSessionTodo(
 		if (task.state === "done") {
 			return { reason: `Task #${id} is done. Change its Task state before executing it again.` };
 		}
-		return {
-			task,
-			start() {
-				if (!todoList.update(id, { state: "in progress" })) return;
-				pi.appendEntry(HARNESS_ENTRY, { tasks: todoList.list() });
-				reveal();
-			},
-		};
+		return { task, start: () => set(id, "in progress") };
+	}
+
+	function has(id: number): boolean {
+		return todoList.list().some((task) => task.id === id);
+	}
+
+	function set(id: number, state: TaskState): boolean {
+		if (!todoList.update(id, { state })) return false;
+		pi.appendEntry(HARNESS_ENTRY, { tasks: todoList.list() });
+		reveal();
+		return true;
 	}
 
 	return {
 		offer: () => offerTool(pi, tool, seated("todo", "above-input")),
 		claim,
+		has,
+		set,
 	};
 }

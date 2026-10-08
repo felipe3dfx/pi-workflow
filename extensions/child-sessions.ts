@@ -52,6 +52,7 @@ import {
 import { shellOptions } from "./shell-settings.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
 import type { TodoClaim } from "./todo-extension.ts";
+import type { TaskState } from "./todo-list.ts";
 
 const packageVersion = (
 	JSON.parse(
@@ -494,6 +495,32 @@ interface ChildMessage {
 	details: unknown;
 }
 
+function finalTaskState(child: {
+	state: string;
+	role: string;
+	result?: ChildResult;
+}): TaskState {
+	if (child.state === "cancelled") return "pending";
+	if (child.state !== "completed") return "blocked";
+	if (!reportsResult(child.role)) return "done";
+	return child.result?.verdict === "done" || child.result?.verdict === "pass"
+		? "done"
+		: "blocked";
+}
+
+function appliedNote(id: number, state: TaskState) {
+	return `Task #${id} is now ${state}.`;
+}
+
+function withNote(outcome: string, note: string | undefined) {
+	return note ? `${outcome}\n\n${note}` : outcome;
+}
+
+type TodoLink = {
+	has(id: number): boolean;
+	set(id: number, state: TaskState): boolean;
+};
+
 export function createChildSessions(options: {
 	create?: ChildSessionFactory;
 	send: (message: ChildMessage) => void;
@@ -501,6 +528,7 @@ export function createChildSessions(options: {
 	trace: (entry: ChildTrace) => void;
 	report: (message: string) => void;
 	schedule?: Schedule;
+	todo?: TodoLink;
 }) {
 	const create = options.create ?? createPiChildSession;
 	const schedule = options.schedule ?? scheduleTimer;
@@ -977,9 +1005,19 @@ export function createChildSessions(options: {
 		const release = reserve();
 		if (!release) return refuse(launchLimitReason);
 		try {
+			const { todo } = child.record;
 			const started = await start(
 				{ ...child.plan, task },
-				{ ...launch, background: true },
+				{
+					...launch,
+					background: true,
+					...(todo
+						? {
+								todo,
+								onLaunch: () => options.todo?.set(todo.id, "in progress"),
+							}
+						: {}),
+				},
 				{ id, conversation: child.conversation },
 			);
 			if (started.status === "queued") consume(id);
@@ -1053,9 +1091,36 @@ export function createChildSessions(options: {
 		return { cancelled: true, message: `Child ${id} cancelled.` };
 	}
 
+	function settlement(record: ChildRecord) {
+		const { todo } = record;
+		if (!todo || consumed.has(record.id)) return undefined;
+		const latest = [...children.values()].findLast(
+			(child) => child.record.todo?.id === todo.id,
+		);
+		if (latest?.record.id !== record.id) {
+			return {
+				note: `Task #${todo.id} is linked to a later child, so no Task state was applied.`,
+			};
+		}
+		if (!options.todo?.has(todo.id)) {
+			return {
+				note: `Task #${todo.id} no longer exists, so no Task state was applied.`,
+			};
+		}
+		const state = finalTaskState(record);
+		return {
+			note: appliedNote(todo.id, state),
+			apply: () => options.todo?.set(todo.id, state),
+		};
+	}
+
 	function consume(id: string) {
+		const child = children.get(id);
+		const settled = child && settlement(child.record);
 		consumed.add(id);
 		pending = pending.filter((record) => record.id !== id);
+		settled?.apply?.();
+		return settled?.note;
 	}
 
 	function atBoundary() {
@@ -1074,7 +1139,11 @@ export function createChildSessions(options: {
 		try {
 			options.send({
 				customType: "pi-workflow-child-result",
-				content: results.map(childOutcome).join("\n\n"),
+				content: results
+					.map((record) =>
+						withNote(childOutcome(record), settlement(record)?.note),
+					)
+					.join("\n\n"),
 				display: true,
 				details:
 					results.length === 1
@@ -1275,7 +1344,7 @@ function sessionBranch(ctx: {
 export function createSpawnChildTool(
 	launcher: ReturnType<typeof createChildLauncher>,
 	sessions: ReturnType<typeof createChildSessions>,
-	todo: { claim(id: number): TodoClaim },
+	todo: { claim(id: number): TodoClaim } & Pick<TodoLink, "set">,
 ): ToolDefinition<typeof spawnChildParameters, Record<string, unknown>> {
 	return {
 		name: "spawn_child",
@@ -1332,23 +1401,48 @@ export function createSpawnChildTool(
 					ctx,
 				);
 				if (plan.kind !== "ready") return notLaunched("refused", plan);
-				const started = await sessions.start(plan, {
-					background,
-					signal,
-					modelRegistry: ctx.modelRegistry,
-					project: () => parentProject(ctx),
-					shell: () => shellOptions(ctx),
-					onLaunch: () => {
-						launcher.recordLaunch(userRequest?.id);
-						claim?.start();
+				const started = await sessions
+					.start(plan, {
+						background,
+						signal,
+						modelRegistry: ctx.modelRegistry,
+						project: () => parentProject(ctx),
+						shell: () => shellOptions(ctx),
+						onLaunch: () => {
+							launcher.recordLaunch(userRequest?.id);
+							claim?.start();
+						},
+						group: /^([\s\S]+)\/\d+$/.exec(toolCallId)?.[1],
+						...(claim
+							? { todo: { id: claim.task.id, text: claim.task.text } }
+							: {}),
+					})
+					.catch((error: unknown) => {
+						if (claim)
+							todo.set(claim.task.id, signal?.aborted ? "pending" : "blocked");
+						throw error;
+					});
+				const state =
+					claim && started.status === "completed"
+						? finalTaskState({
+								state: "completed",
+								role: plan.role,
+								result: started.result,
+							})
+						: undefined;
+				const note =
+					claim && state && todo.set(claim.task.id, state)
+						? appliedNote(claim.task.id, state)
+						: undefined;
+				return launched(
+					started,
+					plan.warnings,
+					{
+						role: plan.role,
+						...(plan.jev ? { jev: plan.jev } : {}),
 					},
-					group: /^([\s\S]+)\/\d+$/.exec(toolCallId)?.[1],
-					...(claim ? { todo: { id: claim.task.id, text: claim.task.text } } : {}),
-				});
-				return launched(started, plan.warnings, {
-					role: plan.role,
-					...(plan.jev ? { jev: plan.jev } : {}),
-				});
+					note,
+				);
 			} finally {
 				release();
 			}
@@ -1360,6 +1454,7 @@ function launched(
 	started: Awaited<ReturnType<ReturnType<typeof createChildSessions>["start"]>>,
 	warnings: string[],
 	selection?: { role: string; jev?: ClassifierResult },
+	note?: string,
 ) {
 	if (started.status === "refused" || started.status === "pending") {
 		return notLaunched(started.status, {
@@ -1388,7 +1483,7 @@ function launched(
 					result: started.result,
 				})
 			: started.text;
-		return report([...warnings, outcome], {
+		return report([...warnings, withNote(outcome, note)], {
 			status: "completed",
 			...(selection
 				? { verdict: started.result?.verdict, result: started.result }
@@ -1533,12 +1628,11 @@ export function createChildQueryTools(
 					{ id: child.id, state: child.state },
 				);
 			}
-			const outcome = report([childOutcome(child)], {
+			const outcome = childOutcome(child);
+			return report([withNote(outcome, sessions.consume(child.id))], {
 				id: child.id,
 				state: child.state,
 			});
-			sessions.consume(child.id);
-			return outcome;
 		},
 	};
 	const cancelChild: ToolDefinition<
@@ -1552,9 +1646,13 @@ export function createChildQueryTools(
 		async execute(_toolCallId, params) {
 			const unseated = unseatedChild();
 			if (unseated) return unseated;
-			const { message } = sessions.cancel(params.id, false);
+			const { cancelled, message } = sessions.cancel(params.id, false);
+			const note = cancelled ? sessions.consume(params.id) : undefined;
 			const child = sessions.get(params.id);
-			return report([message], { id: params.id, state: child?.state });
+			return report([withNote(message, note)], {
+				id: params.id,
+				state: child?.state,
+			});
 		},
 	};
 	const replyChild: ToolDefinition<
