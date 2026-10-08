@@ -40,10 +40,7 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 
-import {
-	createAskParentTool,
-	createPiChildSession,
-} from "../extensions/child-sessions.ts";
+import { createAskParentTool } from "../extensions/child-sessions.ts";
 import { compactToolRenderers } from "../extensions/compact-tools.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
@@ -53,6 +50,11 @@ import {
 	recordingCore,
 	userEntry,
 } from "./support/fake-children.mjs";
+import {
+	piChildSession,
+	spawnedTools,
+	workerTools,
+} from "./support/child-session.mjs";
 import { classifierRegistry } from "./support/fake-jev.mjs";
 import { turnJevRoutingOn } from "./support/jev-routing.mjs";
 
@@ -72,8 +74,6 @@ const workerContract = await readFile(
 	fileURLToPath(new URL("../assets/contracts/worker.md", import.meta.url)),
 	"utf8",
 );
-const workerTools = ["read", "bash", "edit", "write", "grep", "find", "ls", "codemode"];
-const spawnedTools = [...workerTools, "ask_parent", "report_result"];
 const workerAllowlist = [
 	...workerTools,
 	"mcp__*",
@@ -1455,20 +1455,10 @@ test("a child session starts its MCP servers only when it runs and closes them w
 			docs: { exposure: "direct", description: "Library docs." },
 		});
 		const parent = await fauxParent(agentDir, fauxAssistantMessage("Done."));
-		const handle = await createPiChildSession({
+		const handle = await piChildSession({
 			cwd: worktree,
-			project: { cwd: worktree, trusted: false },
-			role: "explore",
-			model: "faux/child",
-			thinking: "high",
-			prompt: "You are a child session.",
 			tools: ["read", "codemode", "mcp__*", "ask_parent"],
 			modelRegistry: parent.context.modelRegistry,
-			shell: {},
-			onEvent: () => {},
-			notify: () => {},
-			ask: async () => "answer",
-			report: () => {},
 		});
 
 		await delay(100);
@@ -1762,20 +1752,9 @@ test("an explorer loads pi-web-access from Pi's agent directory under both agent
 					agentDir: getAgentDir(),
 					settingsManager: SettingsManager.inMemory(),
 				}).getInstalledPath("npm:pi-web-access", "user");
-				const handle = await createPiChildSession({
+				const handle = await piChildSession({
 					cwd: worktree,
-					project: { cwd: worktree, trusted: false },
-					role: "explore",
-					model: "faux/child",
-					thinking: "high",
-					prompt: "You are a child session.",
-					tools: ["read", "web_search"],
 					modelRegistry: parent.context.modelRegistry,
-					shell: {},
-					onEvent: () => {},
-					notify: () => {},
-					ask: async () => "answer",
-					report: () => {},
 				});
 				try {
 					await handle.run("Look it up.");
@@ -1838,20 +1817,10 @@ test("an explorer ending, in the parent's worktree or another, leaves the parent
 			assert.deepEqual([...parentState.fetches], ["fetch"]);
 
 			for (const cwd of [worktree, other]) {
-				const handle = await createPiChildSession({
+				const handle = await piChildSession({
 					cwd,
 					project: { cwd: worktree, trusted: false },
-					role: "explore",
-					model: "faux/child",
-					thinking: "high",
-					prompt: "You are a child session.",
-					tools: ["read", "web_search"],
 					modelRegistry: parent.context.modelRegistry,
-					shell: {},
-					onEvent: () => {},
-					notify: () => {},
-					ask: async () => "answer",
-					report: () => {},
 				});
 				await handle.run("Look it up.");
 				const explorerState = states.at(-1);

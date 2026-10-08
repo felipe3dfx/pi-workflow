@@ -13,7 +13,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 
-import { createPiChildSession } from "../extensions/child-sessions.ts";
+import { piChildSession, spawnedTools } from "./support/child-session.mjs";
 
 process.env.PI_CODING_AGENT_DIR = mkdtempSync(join(tmpdir(), "pi-workflow-codemode-agent-"));
 
@@ -57,20 +57,14 @@ async function child(t, role, tools, code) {
 		},
 	]);
 	const events = [];
-	const handle = await createPiChildSession({
+	const handle = await piChildSession({
 		cwd: dir,
-		project: { cwd: dir, trusted: false },
 		role,
 		model: "faux/faux",
 		thinking: "off",
-		prompt: "You are a child session.",
 		tools,
 		modelRegistry: new ModelRegistry(runtime),
-		shell: {},
 		onEvent: (event) => events.push(event),
-		notify: () => {},
-		ask: async () => "answer",
-		report: () => {},
 	});
 	t.after(() => handle.dispose());
 	return { dir, handle, events, requests };
@@ -83,24 +77,12 @@ function scriptResult(requests) {
 	return result.content.map((part) => part.text ?? "").join("");
 }
 
-const workerTools = [
-	"read",
-	"bash",
-	"edit",
-	"write",
-	"grep",
-	"find",
-	"ls",
-	"codemode",
-	"ask_parent",
-	"report_result",
-];
 
 test("a worker's codemode script reads in parallel, edits one file in order, and meets the child bash guard", async (t) => {
 	const { dir, handle, events, requests } = await child(
 		t,
 		"worker",
-		workerTools,
+		spawnedTools,
 		[
 			'const reads = await Promise.all(["a.txt", "b.txt", "c.txt"].map((path) => tools.read({ path })));',
 			'await Promise.all([tools.edit({ path: "a.txt", edits: [{ oldText: "a one", newText: "a uno" }] }), tools.edit({ path: "a.txt", edits: [{ oldText: "a two", newText: "a dos" }] })]);',
