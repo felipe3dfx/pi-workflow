@@ -121,6 +121,10 @@ function resultLines(result: ChildResult) {
 	);
 }
 
+export function lastReportedResult(result: ChildResult) {
+	return `Last reported result:\n${resultLines(result)}`;
+}
+
 export function childOutcome(child: {
 	id?: string;
 	state: string;
@@ -138,7 +142,11 @@ export function childOutcome(child: {
 		return `${name} completed.${verdict}\n\n${child.text ?? ""}`;
 	}
 	if (child.state === "cancelled") return `${name} cancelled.`;
-	return `${name} ${child.state}: ${child.text ?? ""}`;
+	const last =
+		child.state === "timed out" && child.result
+			? `\n\n${lastReportedResult(child.result)}`
+			: "";
+	return `${name} ${child.state}: ${child.text ?? ""}${last}`;
 }
 
 export function projectChild(
