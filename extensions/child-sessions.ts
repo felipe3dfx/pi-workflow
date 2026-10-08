@@ -34,7 +34,12 @@ import { answerCard } from "./child-result-card.ts";
 import { hidden, outputText } from "./compact-tools.ts";
 import { type Schedule, scheduleTimer } from "./clock.ts";
 import { seated } from "./shell.ts";
-import { explorerWeb, webAccessTools } from "./web-access.ts";
+import { errorMessage } from "./error-message.ts";
+import {
+	explorerWeb,
+	type ParentProject,
+	webAccessTools,
+} from "./web-access.ts";
 import {
 	type ChildResult,
 	childOutcome,
@@ -52,11 +57,6 @@ const packageVersion = (
 		readFileSync(new URL("../package.json", import.meta.url), "utf8"),
 	) as { version: string }
 ).version;
-
-export interface ParentProject {
-	cwd: string;
-	trusted: boolean;
-}
 
 interface ChildSpec {
 	cwd: string;
@@ -255,10 +255,6 @@ function childDetails(record: ChildRecord, now = Date.now()) {
 export type ChildDetails = ReturnType<typeof childDetails> & {
 	question?: number;
 };
-
-export function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
-}
 
 function parentRuntime(
 	registry: ExtensionContext["modelRegistry"],

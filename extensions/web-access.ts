@@ -15,7 +15,12 @@ import * as typebox from "typebox";
 import * as typeboxCompile from "typebox/compile";
 import * as typeboxValue from "typebox/value";
 
-import { errorMessage, type ParentProject } from "./child-sessions.ts";
+import { errorMessage } from "./error-message.ts";
+
+export interface ParentProject {
+	cwd: string;
+	trusted: boolean;
+}
 
 const webAccessPackage = "pi-web-access";
 const webAccessSource = `npm:${webAccessPackage}`;

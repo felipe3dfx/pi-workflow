@@ -24,9 +24,9 @@ import {
 import {
 	type ChildRecord,
 	type createChildSessions,
-	errorMessage,
 	isWorking,
 } from "./child-sessions.ts";
+import { errorMessage } from "./error-message.ts";
 import {
 	childElapsed,
 	childModelLine,
