@@ -33,7 +33,7 @@ initTheme("dark", false);
 const DOWN = "\x1b[B";
 const ESC = "\x1b";
 
-function configExtension(agentDirectory) {
+function extensionCommand(agentDirectory, name) {
 	const commands = new Map();
 	piWorkflowExtension(
 		{
@@ -49,7 +49,7 @@ function configExtension(agentDirectory) {
 		},
 		{ agentDirectory },
 	);
-	return commands.get("workflow:config");
+	return commands.get(name);
 }
 
 async function driveConfig(command, drive) {
@@ -91,7 +91,7 @@ async function stored(dir, name) {
 test("the /workflow:config menu shows the Delegation mode beside Jev routing, opportunistic by default", async (t) => {
 	const dir = withAgentDirectory(t);
 	let lines;
-	await driveConfig(configExtension(dir), (panel) => {
+	await driveConfig(extensionCommand(dir, "workflow:config"), (panel) => {
 		lines = shown(panel);
 		panel.handleInput(ESC);
 	});
@@ -105,7 +105,7 @@ test("orchestrator with the child tools off is accepted by Apply and reports no 
 	const dir = withAgentDirectory(t);
 	const notifications = [];
 	let review;
-	await configExtension(dir).handler("", {
+	await extensionCommand(dir, "workflow:config").handler("", {
 		hasUI: true,
 		mode: "tui",
 		ui: {
@@ -136,7 +136,7 @@ test("orchestrator with the child tools off is accepted by Apply and reports no 
 test("choosing orchestrator and confirming Apply names the change and persists it for a new process without touching Jev routing", async (t) => {
 	const dir = withAgentDirectory(t);
 	let review;
-	await driveConfig(configExtension(dir), (panel) => {
+	await driveConfig(extensionCommand(dir, "workflow:config"), (panel) => {
 		focus(panel, "Delegation mode");
 		panel.handleInput(" ");
 		assert.ok(shown(panel).some((line) => /Delegation mode\s+orchestrator\s*$/.test(line)));
@@ -199,7 +199,7 @@ test("choosing orchestrator and confirming Apply names the change and persists i
 
 test("choosing orchestrator and cancelling with Esc writes nothing", async (t) => {
 	const dir = withAgentDirectory(t);
-	await driveConfig(configExtension(dir), (panel) => {
+	await driveConfig(extensionCommand(dir, "workflow:config"), (panel) => {
 		focus(panel, "Delegation mode");
 		panel.handleInput(" ");
 		assert.ok(shown(panel).some((line) => /Delegation mode\s+orchestrator\s*$/.test(line)));
@@ -214,7 +214,7 @@ test("saving Jev routing keeps the Delegation mode, and saving the Delegation mo
 		join(dir, "pi-workflow-delegation.json"),
 		JSON.stringify({ schemaVersion: 1, delegationMode: "orchestrator" }),
 	);
-	const command = configExtension(dir);
+	const command = extensionCommand(dir, "workflow:config");
 	let review;
 	await driveConfig(command, (panel) => {
 		focus(panel, "Jev routing");
@@ -489,25 +489,7 @@ async function jevRequestFor(mode, t) {
 	await session.fire(
 		"tool_call",
 		{ type: "tool_call", toolCallId: "c1", toolName: "read", input: { path: "README.md" } },
-		{
-			cwd: dir,
-			model: { provider: "session", id: "model", reasoning: true },
-			thinkingLevel: "medium",
-			modelRegistry: {
-				getApiKeyForProvider: async () => "typesafe-key",
-				getAvailable: () => [],
-				...jev.registry,
-			},
-			sessionManager: {
-				getBranch: () => [
-					{
-						id: "m1",
-						type: "message",
-						message: { role: "user", content: "Read README.md and tell me what it installs" },
-					},
-				],
-			},
-		},
+		spawnContext(dir, jev),
 	);
 	assert.equal(jev.requests.length, 1);
 	return jev.requests[0];
@@ -622,29 +604,10 @@ for (const mode of ["opportunistic", "orchestrator"]) {
 	});
 }
 
-function delegationCheckCommand(agentDirectory) {
-	const commands = new Map();
-	piWorkflowExtension(
-		{
-			on() {},
-			exec: async () => ({ code: 0 }),
-			registerCommand: (name, command) => commands.set(name, command),
-			registerTool() {},
-			registerShortcut() {},
-			registerMessageRenderer() {},
-			registerToolRenderer() {},
-			registerProvider() {},
-			sendMessage() {},
-		},
-		{ agentDirectory },
-	);
-	return commands.get("workflow:delegation-check");
-}
-
 function orchestratingJev() {
 	return classifierRegistry((context) => {
 		const request = context.state.user_request;
-		const reserved = /commit/.test(request) && /push/.test(request);
+		const reserved = /commit/i.test(request) && /push/i.test(request);
 		const item = delegationCases.find((candidate) => candidate.userRequest === request);
 		const destination =
 			reserved
@@ -674,7 +637,7 @@ async function runCheck(mode, t) {
 	seat();
 	const jev = orchestratingJev();
 	const notifications = [];
-	await delegationCheckCommand(dir).handler("", {
+	await extensionCommand(dir, "workflow:delegation-check").handler("", {
 		hasUI: true,
 		mode: "tui",
 		ui: { notify: (message, level) => notifications.push({ message, level }) },
@@ -701,7 +664,7 @@ test("/workflow:delegation-check in orchestrator expects a launch for the small 
 		/action launch/,
 	);
 	const reserved = jev.requests.find(
-		(request) => /commit/.test(request.state.user_request) && /push/.test(request.state.user_request),
+		(request) => /commit/i.test(request.state.user_request) && /push/i.test(request.state.user_request),
 	);
 	assert.ok(reserved);
 	assert.ok(lines.some((line) => /^pass: .*action stay, destination asked yes/.test(line)));

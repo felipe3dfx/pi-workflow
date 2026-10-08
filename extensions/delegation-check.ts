@@ -140,7 +140,7 @@ export const delegationCases: readonly DelegationCase[] = [
 	{
 		name: "reserved commit and push",
 		task: "Commit and push the changes.",
-		userRequest: "Haz commit y push de los cambios.",
+		userRequest: "Commit and push the changes.",
 		expected: { action: "stay", destinationAsked: true },
 	},
 	{
