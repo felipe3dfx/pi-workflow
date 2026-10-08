@@ -116,19 +116,30 @@ function count(tokens: number) {
 	return `${(tokens / 1_000_000).toFixed(1)}M`;
 }
 
-function usage(thread: Thread | undefined) {
+function spent(thread: Thread | undefined) {
 	let tokens = 0;
 	let cost = 0;
 	for (const entry of thread?.entries ?? []) {
-		if (entry.type !== "message" || entry.message.role !== "assistant")
-			continue;
-		tokens += entry.message.usage?.totalTokens ?? 0;
-		cost += entry.message.usage?.cost?.total ?? 0;
+		if (entry.type !== "message") continue;
+		const { message } = entry;
+		if (message.role !== "assistant" && message.role !== "toolResult") continue;
+		tokens += message.usage?.totalTokens ?? 0;
+		cost += message.usage?.cost?.total ?? 0;
 	}
+	return { tokens, cost };
+}
+
+function usage({ tokens, cost }: { tokens: number; cost: number }) {
 	return [
 		...(tokens > 0 ? [`${count(tokens)} tok`] : []),
 		...(cost > 0 ? [`$${cost.toFixed(2)}`] : []),
 	];
+}
+
+function runState(child: ChildRecord, now: number) {
+	return child.state === "queued"
+		? "queued"
+		: `${child.state} · ${childElapsed(child, now)}`;
 }
 
 function pad(line: string, width: number) {
@@ -621,16 +632,31 @@ function createChildrenView(
 			const step = terminalSafeLine(childStep(child));
 			const color = child.state === "waiting" ? "warning" : "dim";
 			const head = `${mark}${childGlyph(theme, child)} ${theme.fg("accent", child.role)} ${theme.fg("dim", child.id.slice(0, 4))}`;
-			const right = theme.fg(
-				"dim",
-				child.state === "queued" ? "queued" : childElapsed(child, now),
-			);
+			const state = runState(child, now);
+			const spend = usage(spent(sessions.thread(child.id)));
 			const shown = two
 				? [
-						spread(head, right, width),
-						`    ${theme.fg(color, truncateToWidth(step, Math.max(0, width - 4), "…"))}`,
+						spread(head, theme.fg("dim", state), width),
+						spread(
+							`    ${theme.fg(color, step)}`,
+							theme.fg("dim", spend.join(" · ")),
+							width,
+						),
 					]
-				: [spread(`${head} ${theme.fg(color, step)}`, right, width)];
+				: [
+						spread(
+							spend.length > 0 ? head : `${head} ${theme.fg(color, step)}`,
+							theme.fg(
+								"dim",
+								spend.length > 0
+									? spend.join(" · ")
+									: child.state === "queued"
+										? "queued"
+										: childElapsed(child, now),
+							),
+							width,
+						),
+					];
 			for (const line of shown) {
 				lines.push(active ? selectedRow(theme, line, width) : line);
 				ids.push(child.id);
@@ -660,13 +686,10 @@ function createChildrenView(
 		width: number,
 		focused: boolean,
 	) {
-		const state =
-			child.state === "queued"
-				? "queued"
-				: `${child.state} · ${childElapsed(child, Date.now())}`;
+		const state = runState(child, Date.now());
 		const meta = [
 			childModelLine(child),
-			...usage(content),
+			...usage(spent(content)),
 			`wt: ${basename(child.worktree)}`,
 		].join(" · ");
 		return [
@@ -819,7 +842,20 @@ function createChildrenView(
 					})),
 			};
 			const working = list.filter((item) => isWorking(item.state)).length;
-			const title = `Subagents ${list.length}${working > 0 ? ` · ${working} active` : ""}`;
+			const total = list
+				.map((item) => spent(sessions.thread(item.id)))
+				.reduce(
+					(sum, item) => ({
+						tokens: sum.tokens + item.tokens,
+						cost: sum.cost + item.cost,
+					}),
+					{ tokens: 0, cost: 0 },
+				);
+			const title = [
+				`Fleet ${list.length}`,
+				...(working > 0 ? [`${working} active`] : []),
+				...usage(total),
+			].join(" · ");
 			const margin = " ".repeat(edge);
 			return modalFrame(
 				theme,

@@ -3877,7 +3877,7 @@ test("the empty subagents modal is sized to its content instead of filling the t
 		});
 		const lines = openChildren(extension, { rows: 40 }).lines();
 		assert.equal(lines.length, 8);
-		assert.match(lines[0], /^ ┌─ Subagents 0 ─+ \[×\] ─┐$/);
+		assert.match(lines[0], /^ ┌─ Fleet 0 ─+ \[×\] ─┐$/);
 		assert.match(lines[1], /No children in this session\./);
 		assert.match(lines.at(-1), /^ └─+┘$/);
 	});
@@ -3902,7 +3902,7 @@ test("alt+a and /workflow:subagents open a full-screen overlay of every child; j
 		assert.equal(view.view.options.overlayOptions.maxHeight, "100%");
 		const lines = view.lines();
 		assert.equal(lines.length, 12);
-		assert.match(lines[0], /^ ┌─ Subagents 2 · 1 active ─+ \[×\] ─┐$/);
+		assert.match(lines[0], /^ ┌─ Fleet 2 · 1 active ─+ \[×\] ─┐$/);
 		assert.match(
 			lines[1],
 			/^ │ {3}Active ─+ │ ◐ worker [0-9a-f]{4} +running · \d+s {2}│$/,
@@ -3935,7 +3935,7 @@ test("alt+a and /workflow:subagents open a full-screen overlay of every child; j
 		await view.opened;
 
 		const byCommand = openChildren(extension, { via: "command" });
-		assert.match(byCommand.lines()[0], /Subagents 2/);
+		assert.match(byCommand.lines()[0], /Fleet 2/);
 		byCommand.press("\x1b");
 		assert.equal(byCommand.closed(), true);
 
@@ -3947,6 +3947,37 @@ test("alt+a and /workflow:subagents open a full-screen overlay of every child; j
 		assert.equal(extension.notifications.at(-1).level, "error");
 		assert.equal(extension.commands.has("pi-workflow-child-cancel"), false);
 		assert.doesNotMatch(extension.notifications.at(-2).message, /child-cancel/);
+	});
+});
+
+test("the Fleet view keeps a child running after agent_end while Pi retries automatically, and shows it completed once Pi settles", async () => {
+	initTheme("dark", false);
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const parent = await fauxParent(agentDir, [
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "overloaded_error: Overloaded",
+			}),
+			fauxAssistantMessage("Retried answer."),
+		]);
+		const extension = await loadSpawnTool({ agentDir });
+		const result = await spawn(
+			extension.tool,
+			{ role: "worker", task: "Fix the failing test" },
+			{ ...toolContext("tui", worktree), ...parent.context },
+		);
+		const { id } = result.details;
+		await eventually(() => parent.requests.length === 1);
+		await delay(300);
+		assert.equal(parent.requests.length, 1);
+		assert.equal(await stateOf(extension, id), "running");
+		const view = openChildren(extension, { rows: 20 });
+		assert.match(view.lines().join("\n"), /◐ worker [0-9a-f]{4} +running/);
+
+		await eventually(() => view.lines().join("\n").includes("completed"));
+		assert.equal(parent.requests.length, 2);
+		assert.equal(await stateOf(extension, id), "completed");
+		assert.match(view.lines().join("\n"), /✓ worker [0-9a-f]{4} +completed/);
 	});
 });
 
@@ -4049,7 +4080,7 @@ test("Enter opens a live detail that follows the tail, collapses thinking with P
 		view.press("\r");
 		let lines = view.lines(60);
 		let body = lines.join("\n");
-		assert.match(lines[0], /^ ┌─ Subagents 1 · 1 active ─+ \[×\] ─┐$/);
+		assert.match(lines[0], /^ ┌─ Fleet 1 · 1 active ─+ \[×\] ─┐$/);
 		assert.match(lines[1], /^ │ {2}◐ worker [0-9a-f]{4} +running · \d+s {2}│$/);
 		assert.match(body, /❯ Review the doctor/);
 		assert.match(body, /I should read the doctor module first\./);
@@ -4103,7 +4134,7 @@ test("Enter opens a live detail that follows the tail, collapses thinking with P
 		assert.doesNotMatch(lines.join("\n"), /s\/c cancel/);
 
 		view.press("\x1b");
-		assert.match(view.lines()[0], /Subagents 1/);
+		assert.match(view.lines()[0], /Fleet 1/);
 		assert.equal(view.closed(), false);
 		view.press("\r", "q");
 		assert.equal(view.closed(), true);
