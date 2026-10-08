@@ -4452,7 +4452,7 @@ const todoBranch = [
 			role: "toolResult",
 			toolName: "todo",
 			isError: false,
-			details: { tasks: [{ id: 1, text: "Review the doctor", done: false }] },
+			details: { tasks: [{ id: 1, text: "Review the doctor", state: "pending" }] },
 		},
 	},
 ];

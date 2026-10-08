@@ -2,7 +2,7 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 
 import { terminalSafeLine } from "./terminal-safe-text.ts";
-import type { Task } from "./todo-list.ts";
+import type { Task, TaskState } from "./todo-list.ts";
 
 export interface TodoBoxState {
 	collapsed: boolean;
@@ -16,6 +16,13 @@ const CORNER_TOP = "┌";
 const CORNER_BOTTOM = "└";
 const CORNER_BOTTOM_RIGHT = "┘";
 const SIDE = "│";
+
+const STATE_MARKS: Record<TaskState, { color: Parameters<TodoTheme["fg"]>[0]; glyph: string }> = {
+	pending: { color: "text", glyph: "□" },
+	"in progress": { color: "accent", glyph: "◐" },
+	done: { color: "success", glyph: "✓" },
+	blocked: { color: "warning", glyph: "!" },
+};
 
 export function renderTodoBox(
 	theme: TodoTheme,
@@ -31,7 +38,7 @@ export function renderTodoBox(
 		return [truncateToWidth(theme.fg("dim", "session tasks collapsed"), safeWidth)];
 	}
 
-	const visible = tasks.filter((task) => state.showDone || !task.done);
+	const visible = tasks.filter((task) => state.showDone || task.state !== "done");
 	const fillerWidth = Math.max(0, safeWidth - CORNER_TOP.length - CLOSE_HINT.length);
 	const top = theme.fg("borderMuted", CORNER_TOP) + " ".repeat(fillerWidth) + theme.fg("dim", CLOSE_HINT);
 	const bottom =
@@ -41,9 +48,8 @@ export function renderTodoBox(
 
 	const rows = visible.map((task) => {
 		const text = terminalSafeLine(task.text);
-		const content = task.done
-			? `${theme.fg("success", "✓")} ${theme.fg("muted", text)}`
-			: `${theme.fg("text", "□")} ${theme.fg("text", text)}`;
+		const mark = STATE_MARKS[task.state];
+		const content = `${theme.fg(mark.color, mark.glyph)} ${theme.fg(task.state === "done" ? "muted" : "text", text)}`;
 		const inner = truncateToWidth(` ${content}`, Math.max(0, safeWidth - 2), "…", true);
 		return theme.fg("borderMuted", SIDE) + inner + theme.fg("borderMuted", SIDE);
 	});

@@ -1,23 +1,27 @@
+export const TASK_STATES = ["pending", "in progress", "done", "blocked"] as const;
+
+export type TaskState = (typeof TASK_STATES)[number];
+
 export interface Task {
 	id: number;
 	text: string;
-	done: boolean;
+	state: TaskState;
 }
 
 interface TodoWriteInput {
 	text: string;
-	done?: boolean;
+	state?: TaskState;
 }
 
 interface TodoUpdateInput {
 	text?: string;
-	done?: boolean;
+	state?: TaskState;
 }
 
 export interface TodoList {
 	list(): Task[];
 	write(tasks: TodoWriteInput[]): Task[];
-	add(text: string): Task;
+	add(text: string, state?: TaskState): Task;
 	update(id: number, changes: TodoUpdateInput): Task | undefined;
 	clear(): void;
 	restore(tasks: Task[]): void;
@@ -35,12 +39,12 @@ export function createTodoList(): TodoList {
 			tasks = input.map((entry) => ({
 				id: nextId++,
 				text: entry.text,
-				done: entry.done ?? false,
+				state: entry.state ?? "pending",
 			}));
 			return list();
 		},
-		add(text) {
-			const task: Task = { id: nextId++, text, done: false };
+		add(text, state = "pending") {
+			const task: Task = { id: nextId++, text, state };
 			tasks.push(task);
 			return { ...task };
 		},
@@ -48,7 +52,7 @@ export function createTodoList(): TodoList {
 			const task = tasks.find((candidate) => candidate.id === id);
 			if (!task) return undefined;
 			if (changes.text !== undefined) task.text = changes.text;
-			if (changes.done !== undefined) task.done = changes.done;
+			if (changes.state !== undefined) task.state = changes.state;
 			return { ...task };
 		},
 		clear() {
