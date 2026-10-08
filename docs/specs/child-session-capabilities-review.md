@@ -7,7 +7,7 @@ Veredicto: `READY WITH WARNINGS`.
 
 ## Hallazgos dispuestos
 
-Las disposiciones del Owner de la ronda 1 se etiquetan O1 a O13 y las de la ronda 2, K-A a K-F. Las etiquetas R1 a R13 nombran solo los riesgos aceptados.
+Las disposiciones del Owner de la ronda 1 se etiquetan O1 a O13 y las de la ronda 2, K-A a K-F. Las etiquetas R1 a R14 nombran solo los riesgos aceptados.
 
 ### Ronda 1
 
@@ -65,7 +65,7 @@ Las disposiciones del Owner de la ronda 1 se etiquetan O1 a O13 y las de la rond
 ## Decisions, Deviations and Accepted Risks
 
 - Desviaciones DV1 a DV5, aceptadas por el Owner: extensiones curadas en los hijos; el operador responde a un hijo; Specialist por lanzamiento; tools MCP que escriben al alcance de roles de solo lectura con guía en los contratos; superficies nuevas fuera de la política de child bash.
-- Riesgos R1 a R13, aceptados por el Owner y a registrar en el ADR 0014. Los riesgos R8 a R12 se aceptaron explícitamente en la disposición K-F; R13 en la disposición B2.
+- Riesgos R1 a R14, aceptados por el Owner y a registrar en el ADR 0014. Los riesgos R8 a R12 se aceptaron explícitamente en la disposición K-F; R13 en la disposición B2; R14, en la decisión del Owner sobre V7 en la revisión de la integración: los servidores MCP stdio del hijo arrancan en el proyecto del padre y sus raíces MCP anuncian el proyecto del padre.
 - Revisión requerida: el ADR 0014 y la edición de `docs/specs/child-session-delegation.md` se entregan con la capa 2.
 
 ## Pendientes para la especificación
