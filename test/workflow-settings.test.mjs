@@ -274,6 +274,7 @@ test("turning Jev routing off in the menu gates a launch on the stored choice", 
 	const launcher = createChildLauncher({
 		modelProfiles: { load: () => ({ status: "absent" }) },
 		jevRouting: createJevRouting(dir),
+		delegationMode: { current: () => "opportunistic" },
 	});
 	const ctx = launcherContext(worktree, jev);
 	assert.deepEqual(
@@ -301,6 +302,7 @@ test("with Jev routing off, a message naming implement neither calls Jev nor lau
 	const launcher = createChildLauncher({
 		modelProfiles: { load: () => ({ status: "absent" }) },
 		jevRouting: createJevRouting(dir),
+		delegationMode: { current: () => "opportunistic" },
 	});
 	const message = "implement the toggle";
 	const ctx = {
@@ -353,6 +355,7 @@ for (const [label, write] of [
 		const launcher = createChildLauncher({
 			modelProfiles: { load: () => ({ status: "absent" }) },
 			jevRouting: createJevRouting(dir),
+			delegationMode: { current: () => "opportunistic" },
 		});
 		const ctx = launcherContext(worktree, jev);
 

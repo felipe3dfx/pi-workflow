@@ -20,7 +20,7 @@ import type {
 import { latestUserRequest } from "./child-sessions.ts";
 import { errorMessage } from "./error-message.ts";
 import { gitEnvironment } from "./git-environment.ts";
-import type { JevRouting } from "./workflow-settings.ts";
+import type { DelegationMode, JevRouting } from "./workflow-settings.ts";
 import {
 	type ModelProfilesLoad,
 	type Specialist,
@@ -41,6 +41,7 @@ export interface LaunchRequest {
 export interface ChildLauncherOptions {
 	modelProfiles: { load: () => ModelProfilesLoad };
 	jevRouting: Pick<JevRouting, "enabled">;
+	delegationMode: Pick<DelegationMode, "current">;
 	contractsDirectory?: string;
 }
 
@@ -83,6 +84,8 @@ const destinationCriteria = {
 	leave:
 		`A bounded package a child session can finish on its own, or the user explicitly asks to delegate to child sessions or subagents, in any language or wording, or the user asks for an independent review or check of work, which must run in a session other than the parent. A reserved operation (${reservedOperations}) in the request stays with the parent, but only that part: the rest of the package is judged on its own. Investigating an architecture can leave.`,
 };
+
+const orchestratorStay = `The package needs no work: conversation, an opinion, or a question about what was already said. Or it asks only for reserved operations (${reservedOperations}), such as a commit, a push, or opening a pull request, which stay with the parent. Any other work does not stay, however small.`;
 
 type Contract = { prompt: string; tools: string[] };
 
@@ -362,7 +365,10 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			destination: {
 				type: "choice",
 				instructions: destinationInstructions,
-				criteria: destinationCriteria,
+				criteria:
+					options.delegationMode.current() === "orchestrator"
+						? { ...destinationCriteria, stay: orchestratorStay }
+						: destinationCriteria,
 			},
 		};
 		const model = ctx.modelRegistry.findOfType(
@@ -623,6 +629,7 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 				refresh();
 			},
 			refresh,
+			offered: () => tools.every((tool) => childToolsOn.get(tool.name) === true),
 		};
 	}
 

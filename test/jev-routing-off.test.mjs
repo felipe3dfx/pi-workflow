@@ -17,6 +17,7 @@ function offLauncher(t) {
 	const launcher = createChildLauncher({
 		modelProfiles: { load: () => ({ status: "absent" }) },
 		jevRouting: createJevRouting(dir),
+		delegationMode: { current: () => "opportunistic" },
 	});
 	return { dir, launcher, jev };
 }
