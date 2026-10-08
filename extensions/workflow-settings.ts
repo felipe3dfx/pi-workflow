@@ -39,7 +39,7 @@ export function createJevRouting(agentDirectory: string) {
 
 export type JevRouting = ReturnType<typeof createJevRouting>;
 
-const delegationModes = ["opportunistic", "orchestrator"] as const;
+export const delegationModes = ["opportunistic", "orchestrator"] as const;
 
 export type DelegationModeName = (typeof delegationModes)[number];
 

@@ -13,6 +13,7 @@ import { delegationCases } from "../extensions/delegation-check.ts";
 import { turnJevRoutingOn } from "./support/jev-routing.mjs";
 
 const jevRouting = turnJevRoutingOn();
+const delegationMode = { current: () => "opportunistic" };
 
 const enabled =
 	process.env.PI_WORKFLOW_JEV_LIVE === "1" &&
@@ -51,6 +52,7 @@ test(
 			createChildLauncher({
 				modelProfiles: absentProfiles,
 				jevRouting,
+				delegationMode,
 			}).prepareLaunch(
 				request,
 				{

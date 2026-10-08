@@ -9,7 +9,7 @@ import {
 	type Selection,
 } from "./configure.ts";
 import { report } from "./model-profiles.ts";
-import type { DelegationModeName } from "./workflow-settings.ts";
+import { type DelegationModeName, delegationModes } from "./workflow-settings.ts";
 
 const capabilityLabels: Record<Capability, string> = {
 	"child-session": "Child session",
@@ -70,7 +70,7 @@ export async function guideSelection(
 					description:
 						"Orchestrator tells the parent to delegate all work to child sessions",
 					currentValue: draftMode,
-					values: ["opportunistic", "orchestrator"],
+					values: [...delegationModes],
 				},
 				...packages.map((name) => ({
 					id: `expectation:${name}`,

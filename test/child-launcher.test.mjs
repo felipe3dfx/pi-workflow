@@ -22,6 +22,7 @@ import { classifierRegistry } from "./support/fake-jev.mjs";
 import { turnJevRoutingOn } from "./support/jev-routing.mjs";
 
 const jevRouting = turnJevRoutingOn();
+const delegationMode = { current: () => "opportunistic" };
 
 const realContracts = fileURLToPath(
 	new URL("../assets/contracts/", import.meta.url),
@@ -132,6 +133,7 @@ test("work Jev keeps in the session is refused with a warning and no child id", 
 		const jev = fakeJev(() => "stay");
 		const launcher = createChildLauncher({
 			jevRouting,
+			delegationMode,
 			modelProfiles: absentProfiles,
 		});
 
@@ -165,7 +167,7 @@ test("a missing Jev answer blocks the launch and does not decide to stay", async
 			],
 		];
 		for (const [jev, reason] of failures) {
-			const launcher = createChildLauncher({ jevRouting, modelProfiles: absentProfiles });
+			const launcher = createChildLauncher({ jevRouting, delegationMode, modelProfiles: absentProfiles });
 			const result = await launcher.prepareLaunch(
 				{ role: "worker", task: "Fix the failing test" },
 				launcherContext(worktree, { jev }),
@@ -175,7 +177,7 @@ test("a missing Jev answer blocks the launch and does not decide to stay", async
 			assert.doesNotMatch(result.warning, /stays/);
 		}
 
-		const noKey = createChildLauncher({ jevRouting, modelProfiles: absentProfiles });
+		const noKey = createChildLauncher({ jevRouting, delegationMode, modelProfiles: absentProfiles });
 		assertRefused(
 			await noKey.prepareLaunch(
 				{ role: "worker", task: "Fix the failing test" },
@@ -202,6 +204,7 @@ test("a role Jev lets leave gets its contract prompt and tools", async () => {
 	await withWorkspace(async ({ worktree }) => {
 		const launcher = createChildLauncher({
 			jevRouting,
+			delegationMode,
 			modelProfiles: absentProfiles,
 		});
 		for (const role of ["explore", "worker", "verify"]) {
@@ -227,7 +230,7 @@ test("a role Jev lets leave gets its contract prompt and tools", async () => {
 
 test("a missing role launches the specialist Jev chooses and does not assume worker", async () => {
 	await withWorkspace(async ({ worktree }) => {
-		const launcher = createChildLauncher({ jevRouting, modelProfiles: absentProfiles });
+		const launcher = createChildLauncher({ jevRouting, delegationMode, modelProfiles: absentProfiles });
 
 		const result = await launcher.prepareLaunch(
 			{ task: "Compare the two sources" },
@@ -254,6 +257,7 @@ test("an unknown role is refused even when a contract file has its name", async 
 		);
 		const launcher = createChildLauncher({
 			jevRouting,
+			delegationMode,
 			modelProfiles: absentProfiles,
 			contractsDirectory,
 		});
@@ -273,6 +277,7 @@ test("a missing or unreadable contract is refused and never falls back to worker
 		const contractsDirectory = await copyContracts(dir, ["explore", "verify"]);
 		const launcher = createChildLauncher({
 			jevRouting,
+			delegationMode,
 			modelProfiles: absentProfiles,
 			contractsDirectory,
 		});
@@ -308,7 +313,7 @@ test("an invalid, schema version 1, or unreadable model profiles file is refused
 	await withWorkspace(async ({ dir, worktree }) => {
 		const path = join(dir, "pi-workflow-models.json");
 		const decide = (modelProfiles) =>
-			createChildLauncher({ jevRouting, modelProfiles }).prepareLaunch(
+			createChildLauncher({ jevRouting, delegationMode, modelProfiles }).prepareLaunch(
 				{ role: "worker", task: "Fix the failing test" },
 				launcherContext(worktree),
 			);
@@ -357,6 +362,7 @@ test("a model profiles file created in this turn is not read and is not a refusa
 
 		const result = await createChildLauncher({
 			jevRouting,
+			delegationMode,
 			modelProfiles,
 		}).prepareLaunch(
 			{ role: "worker", task: "Fix the failing test" },
@@ -381,6 +387,7 @@ test("an invalid worktree is refused before any child would be created", async (
 		await writeFile(file, "not a directory", "utf8");
 		const launcher = createChildLauncher({
 			jevRouting,
+			delegationMode,
 			modelProfiles: absentProfiles,
 		});
 
@@ -407,6 +414,7 @@ test("a Git root worktree is the launch root", async () => {
 	await withWorkspace(async ({ dir, worktree }) => {
 		const launcher = createChildLauncher({
 			jevRouting,
+			delegationMode,
 			modelProfiles: absentProfiles,
 		});
 
@@ -462,6 +470,7 @@ test("a request refused by a local check never asks Jev", async () => {
 			const jev = fakeJev(() => "leave");
 			const result = await createChildLauncher({
 				jevRouting,
+				delegationMode,
 				modelProfiles: absentProfiles,
 				...options,
 			}).prepareLaunch(
@@ -483,6 +492,7 @@ test("a contract saved with CRLF line endings reads like the LF one", async () =
 		const decide = (directory) =>
 			createChildLauncher({
 				jevRouting,
+				delegationMode,
 				modelProfiles: absentProfiles,
 				contractsDirectory: directory,
 			}).prepareLaunch(
@@ -506,6 +516,7 @@ test("git location variables in the environment cannot make a false worktree roo
 		await mkdir(nested);
 		const launcher = createChildLauncher({
 			jevRouting,
+			delegationMode,
 			modelProfiles: absentProfiles,
 		});
 		const cases = [
@@ -559,6 +570,7 @@ test("each specialist Jev chooses runs the model and thinking of that entry in t
 			const jev = fakeJev(() => "leave");
 			const result = await createChildLauncher({
 				jevRouting,
+				delegationMode,
 				modelProfiles: profiles,
 			}).prepareLaunch(
 				{ role, task: "Add the export command" },
@@ -588,6 +600,7 @@ test("a specialist missing from the active profile, or no profiles file, inherit
 		for (const [modelProfiles, role] of cases) {
 			const result = await createChildLauncher({
 				jevRouting,
+				delegationMode,
 				modelProfiles,
 			}).prepareLaunch(
 				{ role, task: "Add the export command" },
@@ -619,6 +632,7 @@ test("a configured model Pi cannot run is refused with the profile, specialist, 
 		for (const [profile, available, reason] of cases) {
 			const result = await createChildLauncher({
 				jevRouting,
+				delegationMode,
 				modelProfiles: loadedProfiles({ main: profile }, "main"),
 			}).prepareLaunch(
 				{ role: "worker", task: "Add the export command" },
@@ -636,6 +650,7 @@ test("a misconfigured profile is refused after Jev selects that specialist", asy
 		const jev = fakeJev(() => "leave");
 		const result = await createChildLauncher({
 			jevRouting,
+			delegationMode,
 			modelProfiles: loadedProfiles({
 				default: { worker: { model: "gone/model", thinking: "low" } },
 			}),
@@ -654,6 +669,7 @@ test("a session without a model or thinking is refused when the session pair is 
 	await withWorkspace(async ({ worktree }) => {
 		const result = await createChildLauncher({
 			jevRouting,
+			delegationMode,
 			modelProfiles: absentProfiles,
 		}).prepareLaunch(
 			{ role: "worker", task: "Add the export command" },
@@ -669,6 +685,7 @@ test("an explicit child request asks Jev for destination and specialist and laun
 		const jev = fakeJev(() => "explorer");
 		const result = await createChildLauncher({
 			jevRouting,
+			delegationMode,
 			modelProfiles: absentProfiles,
 		}).prepareLaunch(
 			{
@@ -701,6 +718,7 @@ test("Jev's destination criteria cover an explicit child or subagent request und
 		const jev = fakeJev(() => "leave");
 		const result = await createChildLauncher({
 			jevRouting,
+			delegationMode,
 			modelProfiles: absentProfiles,
 		}).prepareLaunch(
 			{
@@ -729,6 +747,7 @@ test("the parent's task cannot turn a user request into an explicit child", asyn
 		const jev = fakeJev(() => "stay");
 		const result = await createChildLauncher({
 			jevRouting,
+			delegationMode,
 			modelProfiles: absentProfiles,
 		}).prepareLaunch(
 			{
@@ -752,6 +771,7 @@ test("Jev can choose explorer when the suggested role is worker", async () => {
 	await withWorkspace(async ({ worktree }) => {
 		const result = await createChildLauncher({
 			jevRouting,
+			delegationMode,
 			modelProfiles: absentProfiles,
 		}).prepareLaunch(
 			{
@@ -772,6 +792,7 @@ test("an implementation package and an independent check take the specialist Jev
 		const launch = (specialist, userRequest) =>
 			createChildLauncher({
 				jevRouting,
+				delegationMode,
 				modelProfiles: absentProfiles,
 			}).prepareLaunch(
 				{ task: userRequest, userRequest },
@@ -802,7 +823,7 @@ test("the verifier criterion covers review of finished work and the explorer cri
 			instructions = body.questions.specialist.instructions;
 			return "verifier";
 		});
-		await createChildLauncher({ jevRouting, modelProfiles: absentProfiles }).prepareLaunch(
+		await createChildLauncher({ jevRouting, delegationMode, modelProfiles: absentProfiles }).prepareLaunch(
 			{ task: "Review PR 12", userRequest: "Review PR 12" },
 			launcherContext(worktree, { jev }),
 		);
@@ -826,6 +847,7 @@ test("a reserved request stays with the parent instead of blocking the launch", 
 		}));
 		const result = await createChildLauncher({
 			jevRouting,
+			delegationMode,
 			modelProfiles: absentProfiles,
 		}).prepareLaunch(
 			{ task: "Commit and push this", userRequest: "commit and push this" },
@@ -857,6 +879,7 @@ test("an invalid Jev selection blocks the launch and keeps the returned signals"
 		}));
 		const result = await createChildLauncher({
 			jevRouting,
+			delegationMode,
 			modelProfiles: absentProfiles,
 		}).prepareLaunch(
 			{ role: "worker", task: "Compare the cited sources" },
@@ -875,6 +898,7 @@ test("a session with a model but no thinking is refused when the session pair is
 	await withWorkspace(async ({ worktree }) => {
 		const result = await createChildLauncher({
 			jevRouting,
+			delegationMode,
 			modelProfiles: absentProfiles,
 		}).prepareLaunch(
 			{ role: "worker", task: "Add the export command" },
@@ -890,6 +914,7 @@ test("while Jev routing is on, git and gh in a named role's task go to Jev like 
 		const jev = fakeJev(() => "leave");
 		const launcher = createChildLauncher({
 			jevRouting,
+			delegationMode,
 			modelProfiles: absentProfiles,
 		});
 		const result = await launcher.prepareLaunch(
@@ -906,7 +931,7 @@ test("references that exist under cwd are listed in the child's task", async () 
 		await mkdir(join(worktree, "docs"));
 		await writeFile(join(worktree, "docs", "policy.md"), "policy");
 		await writeFile(join(worktree, "AGENTS.md"), "agents");
-		const launcher = createChildLauncher({ jevRouting, modelProfiles: absentProfiles });
+		const launcher = createChildLauncher({ jevRouting, delegationMode, modelProfiles: absentProfiles });
 
 		const result = await launcher.prepareLaunch(
 			{
@@ -930,7 +955,7 @@ test("references checked from a subdirectory reach the child as absolute paths",
 	await withWorkspace(async ({ worktree }) => {
 		await mkdir(join(worktree, "docs"));
 		await writeFile(join(worktree, "docs", "policy.md"), "policy");
-		const launcher = createChildLauncher({ jevRouting, modelProfiles: absentProfiles });
+		const launcher = createChildLauncher({ jevRouting, delegationMode, modelProfiles: absentProfiles });
 
 		const result = await launcher.prepareLaunch(
 			{
@@ -953,7 +978,7 @@ test("references checked from a subdirectory reach the child as absolute paths",
 
 test("a launch without references keeps the task unchanged", async () => {
 	await withWorkspace(async ({ worktree }) => {
-		const launcher = createChildLauncher({ jevRouting, modelProfiles: absentProfiles });
+		const launcher = createChildLauncher({ jevRouting, delegationMode, modelProfiles: absentProfiles });
 
 		const result = await launcher.prepareLaunch(
 			{ role: "worker", task: "Apply the policy" },
@@ -967,7 +992,7 @@ test("a launch without references keeps the task unchanged", async () => {
 
 test("a reference that does not exist refuses the launch and names the path", async () => {
 	await withWorkspace(async ({ worktree }) => {
-		const launcher = createChildLauncher({ jevRouting, modelProfiles: absentProfiles });
+		const launcher = createChildLauncher({ jevRouting, delegationMode, modelProfiles: absentProfiles });
 
 		const result = await launcher.prepareLaunch(
 			{ role: "worker", task: "Apply the policy", references: ["docs/missing.md"] },
@@ -982,7 +1007,7 @@ test("a reference outside cwd, directly or through a symlink, refuses the launch
 	await withWorkspace(async ({ dir, worktree }) => {
 		await writeFile(join(dir, "outside.md"), "outside");
 		await symlink(join(dir, "outside.md"), join(worktree, "link.md"));
-		const launcher = createChildLauncher({ jevRouting, modelProfiles: absentProfiles });
+		const launcher = createChildLauncher({ jevRouting, delegationMode, modelProfiles: absentProfiles });
 
 		for (const reference of ["../outside.md", join(dir, "outside.md"), "link.md"]) {
 			const result = await launcher.prepareLaunch(

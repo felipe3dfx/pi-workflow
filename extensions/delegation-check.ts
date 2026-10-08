@@ -235,7 +235,7 @@ export async function runDelegationCheck(
 		jevRouting: options.jevRouting,
 		delegationMode: options.delegationMode,
 	});
-	const orchestrator = options.delegationMode?.current() === "orchestrator";
+	const orchestrator = options.delegationMode.current() === "orchestrator";
 	const lines: string[] = [];
 	const routingOn = options.jevRouting.enabled();
 	for (const item of delegationCases) {

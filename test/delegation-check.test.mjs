@@ -10,6 +10,7 @@ import { createJevRouting } from "../extensions/workflow-settings.ts";
 import { turnJevRoutingOn, withAgentDirectory } from "./support/jev-routing.mjs";
 
 const jevRouting = turnJevRoutingOn();
+const delegationMode = { current: () => "opportunistic" };
 
 const absentProfiles = { load: () => ({ status: "absent" }) };
 
@@ -80,6 +81,7 @@ test("delegation check scores the fixed cases against Jev answers and sends a na
 	const { lines, failed } = await runDelegationCheck(context(jev), {
 		modelProfiles: absentProfiles,
 		jevRouting,
+		delegationMode,
 	});
 
 	assert.equal(failed, false);
@@ -142,6 +144,7 @@ test("delegation check names the mismatched specialist and does not launch a chi
 	const { lines, failed } = await runDelegationCheck(context(jev), {
 		modelProfiles: absentProfiles,
 		jevRouting,
+		delegationMode,
 	});
 
 	assert.equal(failed, true);
@@ -161,6 +164,7 @@ test("a missing TypeSafe key is a fail line for every case, including a named sk
 	const { lines, failed } = await runDelegationCheck(context(jev, null), {
 		modelProfiles: absentProfiles,
 		jevRouting,
+		delegationMode,
 	});
 
 	assert.equal(failed, true);
@@ -179,6 +183,7 @@ test("Jev routing off fails every case, including a named skill, without calling
 	const { lines, failed } = await runDelegationCheck(context(jev), {
 		modelProfiles: absentProfiles,
 		jevRouting: createJevRouting(withAgentDirectory(t)),
+		delegationMode,
 	});
 
 	assert.equal(failed, true);

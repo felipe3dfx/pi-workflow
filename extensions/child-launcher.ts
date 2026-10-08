@@ -41,7 +41,7 @@ export interface LaunchRequest {
 export interface ChildLauncherOptions {
 	modelProfiles: { load: () => ModelProfilesLoad };
 	jevRouting: Pick<JevRouting, "enabled">;
-	delegationMode?: Pick<DelegationMode, "current">;
+	delegationMode: Pick<DelegationMode, "current">;
 	contractsDirectory?: string;
 }
 
@@ -366,7 +366,7 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 				type: "choice",
 				instructions: destinationInstructions,
 				criteria:
-					options.delegationMode?.current() === "orchestrator"
+					options.delegationMode.current() === "orchestrator"
 						? { ...destinationCriteria, stay: orchestratorStay }
 						: destinationCriteria,
 			},

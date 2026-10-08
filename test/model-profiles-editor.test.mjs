@@ -581,6 +581,7 @@ test("a launch right after a panel save uses the saved profile", async () => {
 		const result = await createChildLauncher({
 			modelProfiles: profiles,
 			jevRouting: createJevRouting(dirname(path)),
+			delegationMode: { current: () => "opportunistic" },
 		}).prepareLaunch(
 			{ role: "worker", task: "Add the export command" },
 			{

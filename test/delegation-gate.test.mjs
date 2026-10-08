@@ -15,6 +15,7 @@ import { classifierRegistry } from "./support/fake-jev.mjs";
 import { turnJevRoutingOn } from "./support/jev-routing.mjs";
 
 const jevRouting = turnJevRoutingOn();
+const delegationMode = { current: () => "opportunistic" };
 
 const absentProfiles = { load: () => ({ status: "absent" }) };
 const specialists = ["explorer", "worker", "verifier"];
@@ -102,6 +103,7 @@ function launcherFor(options = {}) {
 	return createChildLauncher({
 		modelProfiles: absentProfiles,
 		jevRouting,
+		delegationMode,
 		...options,
 	});
 }

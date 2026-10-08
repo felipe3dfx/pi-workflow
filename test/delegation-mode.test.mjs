@@ -101,6 +101,38 @@ test("the /workflow:config menu shows the Delegation mode beside Jev routing, op
 	assert.equal(mode, routing + 1);
 });
 
+test("orchestrator with the child tools off is accepted by Apply and reports no error", async (t) => {
+	const dir = withAgentDirectory(t);
+	const notifications = [];
+	let review;
+	await configExtension(dir).handler("", {
+		hasUI: true,
+		mode: "tui",
+		ui: {
+			notify: (message, level) => notifications.push({ message, level }),
+			custom: (factory) =>
+				new Promise((resolve) => {
+					const panel = factory(undefined, undefined, undefined, () => resolve());
+					focus(panel, "Child session");
+					panel.handleInput(" ");
+					focus(panel, "Delegation mode");
+					panel.handleInput(" ");
+					openApply(panel);
+					review = shown(panel);
+					focus(panel, "Confirm apply");
+					panel.handleInput("\r");
+				}),
+		},
+	});
+	assert.ok(review.some((line) => /Delegation mode: opportunistic -> orchestrator/.test(line)));
+	assert.deepEqual(await stored(dir, "pi-workflow-delegation.json"), {
+		schemaVersion: 1,
+		delegationMode: "orchestrator",
+	});
+	assert.equal((await stored(dir, "pi-workflow-selection.json")).capabilities["child-session"], false);
+	assert.ok(notifications.every((entry) => entry.level !== "error"));
+});
+
 test("choosing orchestrator and confirming Apply names the change and persists it for a new process without touching Jev routing", async (t) => {
 	const dir = withAgentDirectory(t);
 	let review;
@@ -332,7 +364,7 @@ const systemMessage = {
 };
 const userMessage = {
 	role: "user",
-	content: [{ type: "text", text: "Lee README.md y dime qué instala" }],
+	content: [{ type: "text", text: "Read README.md and tell me what it installs" }],
 	timestamp: 2,
 };
 
@@ -471,7 +503,7 @@ async function jevRequestFor(mode, t) {
 					{
 						id: "m1",
 						type: "message",
-						message: { role: "user", content: "Lee README.md y dime qué instala" },
+						message: { role: "user", content: "Read README.md and tell me what it installs" },
 					},
 				],
 			},
@@ -525,7 +557,7 @@ function spawnContext(cwd, jev) {
 				{
 					id: "m1",
 					type: "message",
-					message: { role: "user", content: "Lee README.md y dime qué instala" },
+					message: { role: "user", content: "Read README.md and tell me what it installs" },
 				},
 			],
 		},
@@ -609,9 +641,6 @@ function delegationCheckCommand(agentDirectory) {
 	return commands.get("workflow:delegation-check");
 }
 
-const smallAnswer =
-	"Esto ya está entendido y es pequeño. Dime aquí, en una frase, qué dice el warning de quedarse en la sesión.";
-
 function orchestratingJev() {
 	return classifierRegistry((context) => {
 		const request = context.state.user_request;
@@ -620,11 +649,9 @@ function orchestratingJev() {
 		const destination =
 			reserved
 				? "stay"
-				: request === smallAnswer
-					? "leave"
-					: item.expected.action === "decide"
-						? "decide"
-						: "leave";
+				: item.expected.action === "decide"
+					? "decide"
+					: "leave";
 		const specialist =
 			item?.expected.role === "explore"
 				? "explorer"
@@ -759,7 +786,7 @@ test("in a real Pi session, the run that a child result starts carries the instr
 	t.after(() => session.dispose());
 	await session.bindExtensions({ mode: "rpc" });
 
-	await session.prompt("Lee README.md y dime qué instala");
+	await session.prompt("Read README.md and tell me what it installs");
 	assert.equal(requests.length, 2);
 	assert.equal(children.created.length, 1);
 	children.created[0].result.resolve("README.md installs the harness.");
