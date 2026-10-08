@@ -14,6 +14,8 @@ A worker and a verifier load the parent's context files: Pi's AGENTS.md or CLAUD
 
 A child inherits MCP with the parent's trust. It receives the servers of the user's global `mcp.json` and, only when the parent trusts the project, the servers of the parent project's `.pi/mcp.json`. It never reads its own worktree's MCP configuration. The child's in-memory settings carry the parent's trust decision explicitly. Pi does not export its MCP configuration loader (V7), so the child's MCP extension is Pi's own, created with `createMcpExtension`, and its `session_start` handler receives the child's context with `cwd` set to the parent's project directory. Pi's own loader then reads, validates, and merges the configuration exactly as it does for the parent. This was chosen over a reimplementation of the loader, which would duplicate Pi's validation, exposure aliases, and project override rules and drift from them, and over waiting for an upstream export, which would hold layer 2.
 
+The explorer loads `pi-web-access` from Pi's agent directory, `npm/node_modules/pi-web-access`, the directory Pi installs it in for the parent (V4). The harness never installs it. Each explorer evaluates the package again with `jiti`, a runtime dependency pinned to the version Pi uses, with module caching and native loading off, and with Pi's packages, `typebox`, and their aliases mapped to the harness's own imports of them. The explorer therefore runs its own module instance on the parent's Pi instances: its `session_shutdown` handler clears only its own fetches and stored results (V2).
+
 The contracts keep publishing and writes to external services through MCP with the parent, and the explorer and verifier use MCP tools only to read. ADR 0013's R1 extends to `codemode`, MCP, and web tools (DV5): those in-process surfaces do not go through the child bash guard, and the contracts guide them; they are not a security boundary.
 
 Supersedes: none.
@@ -26,6 +28,7 @@ Supersedes: none.
 - Filtering MCP tools by read-only hints for the explorer and verifier. Not adopted (DV4): it would also remove documentation tools such as context7, so the contracts guide them instead (R3).
 - A secret-path refusal for the explorer. Not adopted: it contradicts R1 and recursive searches evade it.
 - A harness MCP wait, or a tool set frozen at the first prompt. Not adopted: a child connects and waits as Pi does in the parent, and late declaration is inherited Pi behavior (R9).
+- Loading `pi-web-access` through Pi's resource loader, as the parent does. Not adopted (V2): Pi caches an extension's factory by path while the working directory is unchanged, and `jiti` imports an ES module package natively through Node's shared module cache, so an explorer would share the parent's module state, and its shutdown would abort the parent's fetches and clear its stored results.
 - Reimplementing Pi's MCP configuration loader from public exports, or asking Pi to export it (V7). Not adopted, as the Decision explains.
 
 ## Consequences
@@ -38,6 +41,7 @@ Upgrade re-verification items, like the chrome in ADR 0007, because they depend 
 
 - The factory's private access to Pi's model runtime through the session's model registry.
 - The patch of the child's stream function that stops a run still preparing its request after cancellation.
+- The explorer's `pi-web-access` load. Each launch re-evaluates the package, about 40 ms on a cold transform cache and under 10 ms on a warm one for `pi-web-access` 0.37.0. The map of host modules duplicates the specifiers Pi's extension loader maps, limited to the harness's peers, and must follow Pi's list. It is verified on Node only: Pi's compiled binary and bundled Node distributions are unverified.
 - Pi's default MCP configuration loader reading the `session_start` context's `cwd` and the session's trust. If it reads anything else, the trust tests fail and the loader decision of V7 returns.
 
 Accepted risks:

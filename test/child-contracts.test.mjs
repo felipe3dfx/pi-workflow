@@ -133,6 +133,16 @@ test("the explore and verify read-only wording covers MCP tools", async () => {
 	}
 });
 
+test("only the explore contract offers web tools, and marks them optional", async () => {
+	assert.match(
+		await contract("explore"),
+		/Web tools are optional: when present, use them only to search and read pages; when absent, continue without them\./,
+	);
+	for (const role of ["worker", "verify"]) {
+		assert.doesNotMatch(await contract(role), /[Ww]eb tools/);
+	}
+});
+
 test("the explore and verify contracts offer codegraph and the worker contract does not", async () => {
 	for (const role of ["explore", "verify"]) {
 		const text = await contract(role);

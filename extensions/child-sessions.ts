@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import type {
 	AssistantMessage,
@@ -33,6 +34,7 @@ import { answerCard } from "./child-result-card.ts";
 import { hidden, outputText } from "./compact-tools.ts";
 import { type Schedule, scheduleTimer } from "./clock.ts";
 import { seated } from "./shell.ts";
+import { loadWebAccess, webAccessPackage } from "./web-access.ts";
 import {
 	type ChildResult,
 	childOutcome,
@@ -272,10 +274,18 @@ const mcpTools = [
 	"read_mcp_resource",
 ];
 
+const webTools = [
+	"web_search",
+	"source_check",
+	"fetch_content",
+	"get_search_content",
+];
+
 function childTools(plan: Plan) {
 	return [
 		...plan.contract.tools,
 		...mcpTools,
+		...(plan.role === "explore" ? webTools : []),
 		askParentTool,
 		...(reportsResult(plan.role) ? [reportResultTool] : []),
 	];
@@ -325,6 +335,24 @@ function parentMcp(project: ParentProject): ExtensionFactory {
 		} as ExtensionAPI);
 }
 
+async function explorerWeb(agentDir: string) {
+	const directory = join(agentDir, "npm", "node_modules", webAccessPackage);
+	if (!existsSync(directory)) {
+		return {
+			factories: [],
+			problem: `${webAccessPackage} is not installed locally, so the explorer has no web tools.`,
+		};
+	}
+	try {
+		return { factories: await loadWebAccess(directory), problem: undefined };
+	} catch (error) {
+		return {
+			factories: [],
+			problem: `${webAccessPackage} could not be loaded, so the explorer has no web tools: ${errorMessage(error)}`,
+		};
+	}
+}
+
 export const createPiChildSession: ChildSessionFactory = async (spec) => {
 	const runtime = parentRuntime(spec.modelRegistry);
 	if (!runtime) {
@@ -335,14 +363,20 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 		{ steeringMode: "one-at-a-time" },
 		{ projectTrusted: spec.project.trusted },
 	);
+	const agentDir = getAgentDir();
+	const web =
+		spec.role === "explore"
+			? await explorerWeb(agentDir)
+			: { factories: [], problem: undefined };
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: spec.cwd,
-		agentDir: getAgentDir(),
+		agentDir,
 		settingsManager,
 		noExtensions: true,
 		extensionFactories: [
 			createCodemodeExtension({ models: false }),
 			parentMcp(spec.project),
+			...web.factories,
 		],
 		noSkills: true,
 		noPromptTemplates: true,
@@ -418,6 +452,7 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 		thinking: session.thinkingLevel,
 		tools: session.getActiveToolNames(),
 		async run(task) {
+			if (web.problem) spec.notify(web.problem);
 			await session.bindExtensions({
 				uiContext: {
 					...session.extensionRunner.getUIContext(),

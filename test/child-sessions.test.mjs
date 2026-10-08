@@ -23,9 +23,15 @@ import {
 	fauxToolCall,
 } from "@earendil-works/pi-ai";
 import {
+	createAgentSession,
+	DefaultPackageManager,
+	DefaultResourceLoader,
+	getAgentDir,
 	initTheme,
 	ModelRegistry,
 	ModelRuntime,
+	SessionManager,
+	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import {
 	KeybindingsManager,
@@ -1496,7 +1502,8 @@ test("a child's MCP notices reach its trace", async () => {
 		assert.equal(result.details.status, "completed", text(result));
 		const notices = entries
 			.filter((entry) => entry.customType === "pi-workflow-child-trace")
-			.flatMap((entry) => (entry.data.notice ? [entry.data] : []));
+			.flatMap((entry) => (entry.data.notice ? [entry.data] : []))
+			.filter((trace) => !trace.notice.includes("pi-web-access"));
 		assert.equal(notices.length, 1);
 		assert.equal(notices[0].state, "running");
 		assert.match(notices[0].notice, /MCP servers need attention/);
@@ -1578,6 +1585,259 @@ test("a worker and a verifier load the parent's context files, an explorer loads
 		assert.doesNotMatch(systems[2], /Global rule|Repository rule/);
 		for (const system of systems) {
 			assert.doesNotMatch(system, /Deploy the release train/);
+		}
+	});
+});
+
+async function installWebAccess(agentDir, label = "local") {
+	const dir = join(agentDir, "npm", "node_modules", "pi-web-access");
+	await mkdir(join(dir, "dist"), { recursive: true });
+	await writeFile(
+		join(dir, "package.json"),
+		JSON.stringify({
+			name: "pi-web-access",
+			type: "module",
+			pi: { extensions: ["./dist"] },
+		}),
+	);
+	await writeFile(
+		join(dir, "dist", "index.js"),
+		[
+			"const state = { fetches: new Set() };",
+			"(globalThis.webAccessStates ??= []).push(state);",
+			"export default function (pi) {",
+			'\tpi.on("session_start", () => state.fetches.add("fetch"));',
+			'\tpi.on("session_shutdown", () => state.fetches.clear());',
+			'\tfor (const name of ["web_search", "fetch_content"]) {',
+			"\t\tpi.registerTool({",
+			"\t\t\tname,",
+			"\t\t\tlabel: name,",
+			`\t\t\tdescription: ${JSON.stringify(`Web from ${label}.`)},`,
+			'\t\t\tparameters: { type: "object", properties: {} },',
+			'\t\t\texecute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),',
+			"\t\t});",
+			"\t}",
+			"}",
+			"",
+		].join("\n"),
+	);
+	return dir;
+}
+
+function childTraces(entries) {
+	return entries
+		.filter((entry) => entry.customType === "pi-workflow-child-trace")
+		.map((entry) => entry.data);
+}
+
+test("an explorer has the local pi-web-access tools whether or not its expectation is on, and a worker and a verifier have none", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		await installWebAccess(agentDir);
+		const roles = ["explore", "worker", "verify"];
+		const launches = [false, true].flatMap((expected) =>
+			roles.map((role) => ({ expected, role })),
+		);
+		const parent = await fauxParent(
+			agentDir,
+			launches.map(() => fauxAssistantMessage("Done.")),
+		);
+
+		try {
+			for (const { expected, role } of launches) {
+				replaceSelection({
+					schemaVersion: 1,
+					capabilities: Object.fromEntries(
+						capabilities.map((capability) => [capability, true]),
+					),
+					expectations: { "pi-web-access": expected },
+				});
+				const { tool, entries } = await loadSpawnTool({ agentDir });
+				const result = await spawn(
+					tool,
+					{ role, task: "Research the parser" },
+					{ ...toolContext("print", worktree), ...parent.context },
+				);
+				assert.equal(result.details.status, "completed", text(result));
+				assert.ok(
+					childTraces(entries).every((trace) => trace.notice === undefined),
+					`${role}: ${JSON.stringify(childTraces(entries))}`,
+				);
+			}
+		} finally {
+			replaceSelection({
+				schemaVersion: 1,
+				capabilities: Object.fromEntries(
+					capabilities.map((capability) => [capability, true]),
+				),
+				expectations: {},
+			});
+		}
+
+		parent.requests.forEach((request, index) => {
+			const { role } = launches[index];
+			const web = declared(request).filter((name) =>
+				["web_search", "fetch_content"].includes(name),
+			);
+			assert.deepEqual(web, role === "explore" ? ["web_search", "fetch_content"] : [], role);
+		});
+	});
+});
+
+test("an explorer without a local pi-web-access launches without web tools, its trace names the package, and nothing is installed", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const parent = await fauxParent(agentDir, fauxAssistantMessage("Done."));
+		const { tool, entries } = await loadSpawnTool({ agentDir });
+
+		const result = await spawn(
+			tool,
+			{ role: "explore", task: "Research the parser" },
+			{ ...toolContext("print", worktree), ...parent.context },
+		);
+
+		assert.equal(result.details.status, "completed", text(result));
+		const names = declared(parent.requests[0]);
+		assert.ok(!names.some((name) => /web|fetch/.test(name)), `${names}`);
+		const notices = childTraces(entries).filter((trace) => trace.notice);
+		assert.equal(notices.length, 1);
+		assert.match(notices[0].notice, /pi-web-access/);
+		await assert.rejects(readdir(join(agentDir, "npm")));
+	});
+});
+
+test("an explorer loads pi-web-access from Pi's agent directory under both agent-directory variables", async () => {
+	await withWorkspace(async ({ worktree, agentDir, dir }) => {
+		const home = join(dir, "home");
+		const piDefault = join(home, ".pi", "agent");
+		const agentHome = join(dir, "agent-home");
+		await installWebAccess(agentDir, "PI_CODING_AGENT_DIR");
+		await installWebAccess(piDefault, "the default agent directory");
+		await installWebAccess(agentHome, "PI_AGENT_HOME");
+		const cases = [
+			{ codingAgentDir: agentDir, agentHome: undefined, loads: "PI_CODING_AGENT_DIR" },
+			{ codingAgentDir: agentDir, agentHome, loads: "PI_CODING_AGENT_DIR" },
+			{ codingAgentDir: undefined, agentHome, loads: "the default agent directory" },
+			{ codingAgentDir: undefined, agentHome: undefined, loads: "the default agent directory" },
+		];
+		const saved = { HOME: process.env.HOME, PI_AGENT_HOME: process.env.PI_AGENT_HOME };
+		try {
+			for (const variables of cases) {
+				const parent = await fauxParent(agentDir, fauxAssistantMessage("Done."));
+				process.env.HOME = home;
+				for (const [name, value] of [
+					["PI_CODING_AGENT_DIR", variables.codingAgentDir],
+					["PI_AGENT_HOME", variables.agentHome],
+				]) {
+					if (value === undefined) delete process.env[name];
+					else process.env[name] = value;
+				}
+				const parentPackage = new DefaultPackageManager({
+					cwd: worktree,
+					agentDir: getAgentDir(),
+					settingsManager: SettingsManager.inMemory(),
+				}).getInstalledPath("npm:pi-web-access", "user");
+				const handle = await createPiChildSession({
+					cwd: worktree,
+					project: { cwd: worktree, trusted: false },
+					role: "explore",
+					model: "faux/child",
+					thinking: "high",
+					prompt: "You are a child session.",
+					tools: ["read", "web_search"],
+					modelRegistry: parent.context.modelRegistry,
+					shell: {},
+					onEvent: () => {},
+					notify: () => {},
+					ask: async () => "answer",
+					report: () => {},
+				});
+				try {
+					await handle.run("Look it up.");
+				} finally {
+					await handle.dispose();
+				}
+				const search = parent.requests[0].messages[0].toolsAdded.find(
+					(added) => added.name === "web_search",
+				);
+				assert.equal(search?.description, `Web from ${variables.loads}.`, JSON.stringify(variables));
+				assert.equal(
+					parentPackage,
+					join(variables.codingAgentDir ?? piDefault, "npm", "node_modules", "pi-web-access"),
+				);
+			}
+		} finally {
+			for (const [name, value] of Object.entries(saved)) {
+				if (value === undefined) delete process.env[name];
+				else process.env[name] = value;
+			}
+		}
+	});
+});
+
+test("an explorer ending, in the parent's worktree or another, leaves the parent's pi-web-access state alone", async () => {
+	await withWorkspace(async ({ worktree, agentDir, dir }) => {
+		const directory = await installWebAccess(agentDir);
+		const other = join(dir, "other");
+		await mkdir(other);
+		execFileSync("git", ["init", "--quiet"], { cwd: other });
+		const parent = await fauxParent(agentDir, [
+			fauxAssistantMessage("Same."),
+			fauxAssistantMessage("Other."),
+		]);
+		const states = [];
+		globalThis.webAccessStates = states;
+		const settingsManager = SettingsManager.inMemory();
+		const resourceLoader = new DefaultResourceLoader({
+			cwd: worktree,
+			agentDir,
+			settingsManager,
+			noSkills: true,
+			noContextFiles: true,
+			additionalExtensionPaths: [directory],
+		});
+		await resourceLoader.reload();
+		const { session } = await createAgentSession({
+			cwd: worktree,
+			agentDir,
+			modelRuntime: parent.runtime,
+			model: parent.context.model,
+			resourceLoader,
+			settingsManager,
+			sessionManager: SessionManager.inMemory(worktree),
+		});
+		await session.bindExtensions({});
+		try {
+			assert.equal(states.length, 1);
+			const [parentState] = states;
+			assert.deepEqual([...parentState.fetches], ["fetch"]);
+
+			for (const cwd of [worktree, other]) {
+				const handle = await createPiChildSession({
+					cwd,
+					project: { cwd: worktree, trusted: false },
+					role: "explore",
+					model: "faux/child",
+					thinking: "high",
+					prompt: "You are a child session.",
+					tools: ["read", "web_search"],
+					modelRegistry: parent.context.modelRegistry,
+					shell: {},
+					onEvent: () => {},
+					notify: () => {},
+					ask: async () => "answer",
+					report: () => {},
+				});
+				await handle.run("Look it up.");
+				const explorerState = states.at(-1);
+				assert.notEqual(explorerState, parentState);
+				assert.deepEqual([...explorerState.fetches], ["fetch"]);
+				await handle.dispose();
+				assert.deepEqual([...explorerState.fetches], []);
+				assert.deepEqual([...parentState.fetches], ["fetch"], cwd);
+			}
+			assert.equal(states.length, 3);
+		} finally {
+			session.dispose();
+			delete globalThis.webAccessStates;
 		}
 	});
 });
