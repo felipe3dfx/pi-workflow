@@ -36,7 +36,7 @@ export function fakeChildren({ model, thinking, tools, run, dispose, onCreate } 
 		return {
 			sessionId: `session-${created.length - 1}`,
 			entries: () => child.entries,
-			model: model ?? spec.model,
+			model: typeof model === "function" ? model(created.length - 1, spec) : (model ?? spec.model),
 			thinking: thinking ?? spec.thinking,
 			tools: tools ?? spec.tools,
 			run: async (task) => {

@@ -4452,7 +4452,7 @@ const todoBranch = [
 			role: "toolResult",
 			toolName: "todo",
 			isError: false,
-			details: { tasks: [{ id: 1, text: "Review the doctor", done: false }] },
+			details: { tasks: [{ id: 1, text: "Review the doctor", state: "pending" }] },
 		},
 	},
 ];
@@ -6424,4 +6424,612 @@ test("a file a child edits by a relative and an absolute path is one changed fil
 	write("t3", "./src/../src/a.ts");
 	write("t4", "/etc/hosts");
 	assert.deepEqual(core.changedFiles(id), ["src/a.ts", "/etc/hosts"]);
+});
+
+function todoTool(extension) {
+	return {
+		run: (action, params = {}) =>
+			extension.named("todo").execute("todo-call", { action, ...params }, undefined, undefined, {}),
+		list: async () =>
+			text(await extension.named("todo").execute("todo-call", { action: "list" }, undefined, undefined, {})),
+	};
+}
+
+function seatAll(overrides = {}) {
+	replaceSelection({
+		schemaVersion: 1,
+		capabilities: Object.fromEntries(
+			capabilities.map((capability) => [capability, overrides[capability] ?? true]),
+		),
+		expectations: {},
+	});
+}
+
+test("a launch naming a missing task, a done task, or a task while the Todo is not seated is refused before Jev is asked or a child is created", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const todo = todoTool(extension);
+		await todo.run("write", {
+			tasks: [{ text: "Fix the parser" }, { text: "Ship it", state: "done" }],
+		});
+		const jev = fakeJev();
+		const cases = [
+			{ todo: 9, reason: /Task #9 does not exist/ },
+			{ todo: 2, reason: /Task #2 is done/ },
+			{ todo: 1, unseat: true, reason: /Todo is not seated/ },
+		];
+		try {
+			for (const { todo: id, unseat, reason } of cases) {
+				if (unseat) seatAll({ todo: false });
+				const result = await spawn(
+					extension.tool,
+					{ role: "worker", task: "Fix the parser", todo: id },
+					toolContext("tui", worktree, jev),
+				);
+				assert.equal(result.details.status, "refused");
+				assert.match(result.details.reason, reason);
+				assert.match(text(result), /No child was launched/);
+			}
+		} finally {
+			seatAll();
+		}
+		assert.equal(jev.requests.length, 0);
+		assert.equal(children.created.length, 0);
+		assert.match(await todo.list(), /\[pending\] #1: Fix the parser/);
+	});
+});
+
+test("an accepted launch, even queued, sets its task in progress and the Todo box names the child, while a blocked or limited launch changes nothing", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const extension = await loadSpawnTool({ agentDir, create: fakeChildren().create });
+		const todo = todoTool(extension);
+		await todo.run("write", {
+			tasks: [{ text: "Fix the parser" }, { text: "Decide the architecture" }, { text: "Map the module" }],
+		});
+
+		const blocked = await spawn(
+			extension.tool,
+			{ role: "worker", task: "Decide the architecture", todo: 2 },
+			toolContext("tui", worktree, fakeJev({ choice: "stay" })),
+		);
+		assert.equal(blocked.details.status, "refused");
+
+		const queued = await spawn(
+			extension.tool,
+			{ role: "worker", task: "Fix the parser", todo: 1 },
+			toolContext("tui", worktree),
+		);
+		assert.equal(queued.details.status, "queued");
+
+		for (let i = 0; i < 9; i++) {
+			await spawn(extension.tool, { role: "worker", task: `Busy ${i}` }, toolContext("tui", worktree));
+		}
+		const limited = await spawn(
+			extension.tool,
+			{ role: "worker", task: "Map the module", todo: 3 },
+			toolContext("tui", worktree),
+		);
+		assert.match(limited.details.reason, /already has 10 working children/);
+
+		assert.match(
+			await todo.list(),
+			/\[in progress\] #1: Fix the parser\n\[pending\] #2: Decide the architecture\n\[pending\] #3: Map the module/,
+		);
+		const box = boxOf(extension).render(100).map(plain).join("\n");
+		assert.match(box, new RegExp(`Fix the parser ← worker ${queued.details.id.slice(0, 4)}`));
+	});
+});
+
+test("each spawn_child call of one codemode Group sets its own task in progress, and the Fleet rows name each task", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const extension = await loadSpawnTool({ agentDir, create: fakeChildren().create });
+		const todo = todoTool(extension);
+		await todo.run("write", {
+			tasks: [{ text: "Map the parser" }, { text: "Map the renderer" }, { text: "Ship it" }],
+		});
+		const ctx = toolContext("tui", worktree);
+		await extension.tool.execute("script-1/1", { role: "explore", task: "Map the parser", todo: 1 }, undefined, undefined, ctx);
+		await extension.tool.execute("script-1/2", { role: "explore", task: "Map the renderer", todo: 2 }, undefined, undefined, ctx);
+
+		assert.match(
+			await todo.list(),
+			/\[in progress\] #1: Map the parser\n\[in progress\] #2: Map the renderer\n\[pending\] #3: Ship it/,
+		);
+		const fleet = openChildren(extension, { rows: 40 }).lines(200).join("\n");
+		assert.match(fleet, /#1 Map the parser/);
+		assert.match(fleet, /#2 Map the renderer/);
+	});
+});
+
+test("a Fleet row shows its task's current text after the task is renamed, and no task once the Todo is cleared", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const extension = await loadSpawnTool({ agentDir, create: fakeChildren().create });
+		const todo = todoTool(extension);
+		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
+		await spawnOnTask(extension, worktree, 1);
+		await todo.run("update", { id: 1, text: "Fix the lexer" });
+		const renamed = openChildren(extension, { rows: 40 }).lines(200).join("\n");
+		assert.match(renamed, /#1 Fix the lexer/);
+		assert.doesNotMatch(renamed, /Fix the parser/);
+
+		await todo.run("clear");
+		assert.doesNotMatch(openChildren(extension, { rows: 40 }).lines(200).join("\n"), /#1/);
+	});
+});
+
+test("a Task state the harness sets is restored on session_start and session_tree like one set with the todo tool", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const extension = await loadSpawnTool({ agentDir, create: fakeChildren().create });
+		const todo = todoTool(extension);
+		const written = await todo.run("write", {
+			tasks: [{ text: "Fix the parser" }, { text: "Ship it" }],
+		});
+		await spawn(
+			extension.tool,
+			{ role: "worker", task: "Fix the parser", todo: 1 },
+			toolContext("tui", worktree),
+		);
+
+		const branch = [
+			{
+				type: "message",
+				message: { role: "toolResult", toolName: "todo", isError: false, details: written.details },
+			},
+			...extension.entries.map(({ customType, data }) => ({ type: "custom", customType, data })),
+		];
+		const started = await loadSpawnTool({ agentDir, create: fakeChildren().create, branch });
+		assert.match(await todoTool(started).list(), /\[in progress\] #1: Fix the parser\n\[pending\] #2: Ship it/);
+
+		const moving = [];
+		const toured = await loadSpawnTool({ agentDir, create: fakeChildren().create, branch: moving });
+		assert.match(await todoTool(toured).list(), /No session tasks/);
+		moving.push(...branch);
+		await toured.fire("session_tree");
+		assert.match(await todoTool(toured).list(), /\[in progress\] #1: Fix the parser\n\[pending\] #2: Ship it/);
+	});
+});
+
+function verifyResult(verdict) {
+	return { verdict, reason: `The check is ${verdict}.`, findings: [], unverified: [] };
+}
+
+async function spawnOnTask(extension, worktree, todo, role = "worker", task = `Task ${todo}`) {
+	const result = await spawn(extension.tool, { role, task, todo }, toolContext("tui", worktree));
+	return result.details.id;
+}
+
+test("a linked task keeps in progress until the parent reads the result, which applies the final Task state once and says which", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const todo = todoTool(extension);
+		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
+		extension.busy(true);
+		const id = await spawnOnTask(extension, worktree, 1);
+		await settle();
+		children.created[0].spec.report(workerResult("done"));
+		children.created[0].result.resolve("Fixed.");
+		await settle();
+		assert.match(await todo.list(), /\[in progress\] #1: Fix the parser/);
+
+		const read = await use(extension, "child_result", { id });
+		assert.match(text(read), /Task #1 is now done\./);
+		assert.match(await todo.list(), /\[done\] #1: Fix the parser/);
+
+		await todo.run("update", { id: 1, state: "pending" });
+		const again = await use(extension, "child_result", { id });
+		assert.doesNotMatch(text(again), /Task #1/);
+		assert.match(await todo.list(), /\[pending\] #1: Fix the parser/);
+		extension.busy(false);
+		await extension.fire("agent_settled");
+		assert.equal(extension.messages.length, 0);
+	});
+});
+
+test("automatic delivery applies done for done, pass, and a completed explorer, blocked for blocked, fail, partial, no Verdict, failed, and timed out, explorer included, and states each", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const clock = manualClock();
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({ agentDir, create: children.create, schedule: clock.schedule });
+		const todo = todoTool(extension);
+		const cases = [
+			{ role: "worker", report: workerResult("done"), state: "done" },
+			{ role: "verify", report: verifyResult("pass"), state: "done" },
+			{ role: "explore", state: "done" },
+			{ role: "worker", state: "blocked" },
+			{ role: "verify", state: "blocked" },
+			{ role: "worker", report: workerResult("blocked"), state: "blocked" },
+			{ role: "verify", report: verifyResult("fail"), state: "blocked" },
+			{ role: "worker", report: workerResult("partial"), state: "blocked" },
+			{ role: "worker", fail: true, state: "blocked" },
+			{ role: "explore", fail: true, state: "blocked" },
+			{ role: "explore", timeout: true, state: "blocked" },
+		];
+		await todo.run("write", { tasks: cases.map((_, i) => ({ text: `Task ${i + 1}` })) });
+		for (const [i, { role, report, fail, timeout }] of cases.entries()) {
+			await spawnOnTask(extension, worktree, i + 1, role);
+			await settle();
+			const child = children.created[i];
+			if (report) child.spec.report(report);
+			if (fail) child.result.reject(new Error("provider overloaded"));
+			else if (timeout) clock.fire(minutes(4));
+			else child.result.resolve("Finished.");
+			await settle();
+		}
+
+		const delivered = extension.messages.map(({ message }) => message.content).join("\n\n");
+		for (const [i, { state }] of cases.entries()) {
+			assert.match(delivered, new RegExp(`Task #${i + 1} is now ${state}\\.`));
+		}
+		assert.equal(
+			await todo.list(),
+			cases.map(({ state }, i) => `[${state}] #${i + 1}: Task ${i + 1}`).join("\n"),
+		);
+	});
+});
+
+test("a timed-out child blocks its task even after reporting a last result, and a cancelled child returns its task to pending", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const clock = manualClock();
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({ agentDir, create: children.create, schedule: clock.schedule });
+		const todo = todoTool(extension);
+		await todo.run("write", { tasks: [{ text: "Fix the parser" }, { text: "Map the module" }] });
+		await spawnOnTask(extension, worktree, 1);
+		await settle();
+		children.created[0].spec.report(workerResult("done"));
+		clock.fire(minutes(4));
+		await settle();
+		assert.match(extension.messages.at(-1).message.content, /timed out[\s\S]*Task #1 is now blocked\./);
+
+		const cancelled = await spawnOnTask(extension, worktree, 2);
+		const cancel = await use(extension, "cancel_child", { id: cancelled });
+		assert.match(text(cancel), /Task #2 is now pending\./);
+		assert.equal(await todo.list(), "[blocked] #1: Fix the parser\n[pending] #2: Map the module");
+		const read = await use(extension, "child_result", { id: cancelled });
+		assert.doesNotMatch(text(read), /Task #2/);
+	});
+});
+
+test("the latest consumed change wins between the parent and a result, and only the latest child linked to a task sets its Task state", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const todo = todoTool(extension);
+		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
+		extension.busy(true);
+		const earlier = await spawnOnTask(extension, worktree, 1);
+		const later = await spawnOnTask(extension, worktree, 1, "verify");
+		await settle();
+		await todo.run("update", { id: 1, state: "blocked" });
+		children.created[1].spec.report(verifyResult("pass"));
+		children.created[1].result.resolve("Verified.");
+		children.created[0].spec.report(workerResult("partial"));
+		children.created[0].result.resolve("Half done.");
+		await settle();
+
+		assert.match(text(await use(extension, "child_result", { id: later })), /Task #1 is now done\./);
+		const stale = await use(extension, "child_result", { id: earlier });
+		assert.match(text(stale), /Task #1 is linked to a later child, so no Task state was applied\./);
+		assert.match(await todo.list(), /\[done\] #1: Fix the parser/);
+	});
+});
+
+test("continue_child keeps the continued child's task and sets it in progress, and the continuation's result sets the final Task state", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const todo = todoTool(extension);
+		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
+		extension.busy(true);
+		const first = await spawnOnTask(extension, worktree, 1);
+		await settle();
+		children.created[0].spec.report(workerResult("blocked"));
+		children.created[0].result.resolve("Need the schema.");
+		await settle();
+
+		const continued = await use(extension, "continue_child", { id: first, task: "Use the schema" }, toolContext("tui", worktree));
+		assert.equal(continued.details.status, "queued");
+		assert.match(text(continued), /Task #1 is now in progress\./);
+		assert.match(await todo.list(), /\[in progress\] #1: Fix the parser/);
+		assert.doesNotMatch(text(await use(extension, "child_result", { id: first })), /no Task state|is now/);
+		await settle();
+		children.created[1].spec.report(workerResult("done"));
+		children.created[1].result.resolve("Fixed.");
+		await settle();
+		assert.match(text(await use(extension, "child_result", { id: continued.details.id })), /Task #1 is now done\./);
+		assert.match(await todo.list(), /\[done\] #1: Fix the parser/);
+
+		await todo.run("clear");
+		const orphaned = await use(extension, "continue_child", { id: continued.details.id, task: "Polish it" }, toolContext("tui", worktree));
+		assert.match(text(orphaned), /Task #1 no longer exists, so no Task state was applied\./);
+	});
+});
+
+test("rewriting or clearing the Todo while the child works drops the link, and the result says the task no longer exists", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const todo = todoTool(extension);
+		await todo.run("write", { tasks: [{ text: "Fix the parser" }, { text: "Ship it" }] });
+		extension.busy(true);
+		const rewritten = await spawnOnTask(extension, worktree, 1);
+		const cleared = await spawnOnTask(extension, worktree, 2);
+		await settle();
+		await todo.run("write", { tasks: [{ text: "New plan" }] });
+		children.created[0].spec.report(workerResult("done"));
+		children.created[0].result.resolve("Fixed.");
+		await settle();
+		assert.match(
+			text(await use(extension, "child_result", { id: rewritten })),
+			/Task #1 no longer exists, so no Task state was applied\./,
+		);
+		assert.equal(await todo.list(), "[pending] #3: New plan");
+
+		await todo.run("clear");
+		children.created[1].spec.report(workerResult("done"));
+		children.created[1].result.resolve("Shipped.");
+		await settle();
+		assert.match(text(await use(extension, "child_result", { id: cleared })), /Task #2 no longer exists/);
+		assert.match(await todo.list(), /No session tasks/);
+	});
+});
+
+test("a Todo unseated after the launch still receives the final Task state", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const todo = todoTool(extension);
+		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
+		await spawnOnTask(extension, worktree, 1);
+		await settle();
+		try {
+			seatAll({ todo: false });
+			children.created[0].spec.report(workerResult("done"));
+			children.created[0].result.resolve("Fixed.");
+			await settle();
+			assert.match(extension.messages.at(-1).message.content, /Task #1 is now done\./);
+		} finally {
+			seatAll();
+		}
+		assert.match(await todo.list(), /\[done\] #1: Fix the parser/);
+	});
+});
+
+test("a foreground child's result applies the final Task state of its task and states it, or that the task no longer exists", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		let todo;
+		const runs = [
+			async (_task, spec) => {
+				spec.report(workerResult("partial"));
+				return "Half done.";
+			},
+			async () => "Finished without a Verdict.",
+			async () => {
+				await todo.run("clear");
+				return "Fixed.";
+			},
+		];
+		const children = fakeChildren({ run: (...args) => runs.shift()(...args) });
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		todo = todoTool(extension);
+		await todo.run("write", { tasks: [{ text: "Fix the parser" }, { text: "Map the module" }] });
+		const partial = await spawn(extension.tool, { role: "worker", task: "Fix the parser", todo: 1 }, toolContext("print", worktree));
+		assert.equal(partial.details.status, "completed");
+		assert.match(text(partial), /Task #1 is now blocked\./);
+		const silent = await spawn(extension.tool, { role: "worker", task: "Map the module", todo: 2 }, toolContext("print", worktree));
+		assert.match(text(silent), /Task #2 is now blocked\./);
+		assert.equal(await todo.list(), "[blocked] #1: Fix the parser\n[blocked] #2: Map the module");
+
+		await todo.run("update", { id: 1, state: "pending" });
+		const gone = await spawn(extension.tool, { role: "worker", task: "Fix the parser", todo: 1 }, toolContext("print", worktree));
+		assert.match(text(gone), /Task #1 no longer exists, so no Task state was applied\./);
+	});
+});
+
+test("a foreground child that fails or is aborted applies its Task state and the error the parent sees states it", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const call = new AbortController();
+		const runs = [
+			async () => Promise.reject(new Error("provider overloaded")),
+			async () => {
+				call.abort();
+				return new Promise(() => {});
+			},
+		];
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: fakeChildren({ run: (...args) => runs.shift()(...args) }).create,
+		});
+		const todo = todoTool(extension);
+		await todo.run("write", { tasks: [{ text: "Fix the parser" }, { text: "Map the module" }] });
+		await assert.rejects(
+			spawn(extension.tool, { role: "worker", task: "Fix the parser", todo: 1 }, toolContext("print", worktree)),
+			/provider overloaded[\s\S]*Task #1 is now blocked\./,
+		);
+		await assert.rejects(
+			spawn(extension.tool, { role: "worker", task: "Map the module", todo: 2 }, toolContext("print", worktree), call.signal),
+			/aborted[\s\S]*Task #2 is now pending\./,
+		);
+		assert.equal(await todo.list(), "[blocked] #1: Fix the parser\n[pending] #2: Map the module");
+	});
+});
+
+test("in a foreground codemode Group, the child linked later to a task sets its Task state even when it finishes first", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const todo = todoTool(extension);
+		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
+		const ctx = toolContext("print", worktree);
+		const earlier = extension.tool.execute("script-1/1", { role: "worker", task: "Fix the parser", todo: 1 }, undefined, undefined, ctx);
+		await eventually(() => children.created[0]?.tasks.length === 1);
+		const later = extension.tool.execute("script-1/2", { role: "verify", task: "Check the parser", todo: 1 }, undefined, undefined, ctx);
+		await eventually(() => children.created[1]?.tasks.length === 1);
+		children.created[1].spec.report(verifyResult("pass"));
+		children.created[1].result.resolve("Verified.");
+		assert.match(text(await later), /Task #1 is now done\./);
+		children.created[0].spec.report(workerResult("partial"));
+		children.created[0].result.resolve("Half done.");
+		assert.match(text(await earlier), /Task #1 is linked to a later child, so no Task state was applied\./);
+		assert.equal(await todo.list(), "[done] #1: Fix the parser");
+	});
+});
+
+test("the Todo box names only a working child, so a finished child whose result is unread is not shown", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const todo = todoTool(extension);
+		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
+		extension.busy(true);
+		const id = await spawnOnTask(extension, worktree, 1);
+		await settle();
+		assert.match(boxOf(extension).render(100).map(plain).join("\n"), new RegExp(`← worker ${id.slice(0, 4)}`));
+		children.created[0].spec.report(workerResult("done"));
+		children.created[0].result.resolve("Fixed.");
+		await settle();
+
+		assert.match(await todo.list(), /\[in progress\] #1: Fix the parser/);
+		const box = boxOf(extension).render(100).map(plain).join("\n");
+		assert.match(box, /Fix the parser/);
+		assert.doesNotMatch(box, /←/);
+	});
+});
+
+test("the Todo box names only the latest child linked to a task, and nobody once that child finishes while an earlier one still works", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const todo = todoTool(extension);
+		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
+		extension.busy(true);
+		const earlier = await spawnOnTask(extension, worktree, 1);
+		const later = await spawnOnTask(extension, worktree, 1, "verify");
+		await settle();
+		const box = () => boxOf(extension).render(100).map(plain).join("\n");
+		assert.match(box(), new RegExp(`← verify ${later.slice(0, 4)}`));
+
+		children.created[1].spec.report(verifyResult("pass"));
+		children.created[1].result.resolve("Verified.");
+		await settle();
+		assert.equal(await stateOf(extension, earlier), "running");
+		assert.doesNotMatch(box(), /←/);
+	});
+});
+
+test("a child waiting on a question leaves its task in progress and still named in the Todo box", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const todo = todoTool(extension);
+		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
+		const id = await spawnOnTask(extension, worktree, 1);
+		await settle();
+		void children.created[0].spec.ask("Which file?");
+		await settle();
+
+		assert.equal(await stateOf(extension, id), "waiting");
+		assert.equal(await todo.list(), "[in progress] #1: Fix the parser");
+		assert.match(boxOf(extension).render(100).map(plain).join("\n"), new RegExp(`Fix the parser ← worker ${id.slice(0, 4)}`));
+	});
+});
+
+test("a refused continue_child leaves the task's Task state untouched", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const todo = todoTool(extension);
+		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
+		extension.busy(true);
+		const first = await spawnOnTask(extension, worktree, 1);
+		await settle();
+		children.created[0].spec.report(workerResult("blocked"));
+		children.created[0].result.resolve("Need the schema.");
+		await settle();
+		await use(extension, "child_result", { id: first });
+		for (let i = 0; i < 10; i++) {
+			await spawn(extension.tool, { role: "worker", task: `Busy ${i}` }, toolContext("tui", worktree));
+		}
+
+		const continued = await use(extension, "continue_child", { id: first, task: "Use the schema" }, toolContext("tui", worktree));
+		assert.equal(continued.details.status, "refused");
+		assert.equal(await todo.list(), "[blocked] #1: Fix the parser");
+	});
+});
+
+test("a Task state the harness sets does not reopen a collapsed Todo box, while a todo tool change does", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const todo = todoTool(extension);
+		await todo.run("write", { tasks: [{ text: "Fix the parser" }, { text: "Ship it" }] });
+		const collapsed = () => boxOf(extension).render(100).map(plain).join("\n").includes("session tasks collapsed");
+		await extension.shortcuts.get("alt+shift+t").handler({});
+		assert.equal(collapsed(), true);
+
+		await spawnOnTask(extension, worktree, 1);
+		await settle();
+		children.created[0].spec.report(workerResult("done"));
+		children.created[0].result.resolve("Fixed.");
+		await settle();
+		assert.match(await todo.list(), /\[done\] #1: Fix the parser/);
+		assert.equal(collapsed(), true);
+
+		await todo.run("update", { id: 2, state: "in progress" });
+		assert.equal(collapsed(), false);
+	});
+});
+
+test("a launch refused inside start does not take the task from the running child", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		let calls = 0;
+		const children = fakeChildren({ onCreate: () => { if (calls++ === 1) throw new Error("no room"); } });
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const todo = todoTool(extension);
+		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
+		await spawnOnTask(extension, worktree, 1);
+		await settle();
+		const refused = await spawn(extension.tool, { role: "worker", task: "Again", todo: 1 }, toolContext("tui", worktree));
+		assert.equal(refused.details.status, "refused");
+		children.created[0].spec.report(workerResult("done"));
+		children.created[0].result.resolve("Finished.");
+		await settle();
+		const delivered = extension.messages.map(({ message }) => message.content).join("\n\n");
+		assert.match(delivered, /Task #1 is now done\./);
+		assert.equal(await todo.list(), "[done] #1: Fix the parser");
+	});
+});
+
+test("a launch refused after the child is created does not take the task from the running child", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren({ model: (index, spec) => (index === 1 ? "other/model" : spec.model) });
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const todo = todoTool(extension);
+		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
+		await spawnOnTask(extension, worktree, 1);
+		await settle();
+		const refused = await spawn(extension.tool, { role: "worker", task: "Again", todo: 1 }, toolContext("tui", worktree));
+		assert.equal(refused.details.status, "pending");
+		children.created[0].spec.report(workerResult("done"));
+		children.created[0].result.resolve("Finished.");
+		await settle();
+		const delivered = extension.messages.map(({ message }) => message.content).join("\n\n");
+		assert.match(delivered, /Task #1 is now done\./);
+		assert.equal(await todo.list(), "[done] #1: Fix the parser");
+	});
+});
+
+test("an open Fleet row follows a rename", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const extension = await loadSpawnTool({ agentDir, create: fakeChildren().create });
+		const todo = todoTool(extension);
+		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
+		await spawnOnTask(extension, worktree, 1);
+		const view = openChildren(extension, { rows: 40 });
+		assert.match(view.lines(200).join("\n"), /#1 Fix the parser/);
+		await todo.run("update", { id: 1, text: "Fix the lexer" });
+		assert.match(view.lines(200).join("\n"), /#1 Fix the lexer/);
+	});
 });

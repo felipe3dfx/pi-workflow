@@ -344,6 +344,7 @@ function createThread(theme: ChildTheme) {
 
 export function createChildrenViews(
 	sessions: Sessions,
+	todo: { text(id: number): string | undefined },
 	schedule: Schedule = scheduleTimer,
 ) {
 	const open = new Set<() => void>();
@@ -367,6 +368,7 @@ export function createChildrenViews(
 						done,
 						open,
 						schedule,
+						todo,
 						focused: () =>
 							handle?.isFocused() !== false ||
 							// pi-tui types isOverlayFocused as protected; it is public at runtime.
@@ -401,6 +403,7 @@ function createChildrenView(
 		done(): void;
 		open: Set<() => void>;
 		schedule: Schedule;
+		todo: { text(id: number): string | undefined };
 		focused(): boolean;
 	},
 ) {
@@ -785,6 +788,11 @@ function createChildrenView(
 			const step = terminalSafeLine(childStep(child));
 			const color = child.state === "waiting" ? "warning" : "dim";
 			const head = `${mark}${childGlyph(theme, child)} ${theme.fg("accent", child.role)} ${theme.fg("dim", child.id.slice(0, 4))}`;
+			const task = child.todo === undefined ? undefined : host.todo.text(child.todo);
+			const detail =
+				child.todo !== undefined && task !== undefined
+					? `${theme.fg("text", `#${child.todo} ${terminalSafeLine(task)}`)} ${theme.fg(color, step)}`
+					: theme.fg(color, step);
 			const state = runState(child, now);
 			const spend = usage(spent(sessions.thread(child.id)));
 			const marks = steerMarks(child);
@@ -802,12 +810,12 @@ function createChildrenView(
 			const shown = two
 				? [
 						spread(head, theme.fg("dim", state), width),
-						spread(`    ${theme.fg(color, step)}`, right(spend), width),
+						spread(`    ${detail}`, right(spend), width),
 					]
 				: [
 						spread(
 							room > 1
-								? `${head} ${theme.fg(color, truncateToWidth(step, room, "…"))}`
+								? `${head} ${truncateToWidth(detail, room, "…")}`
 								: head,
 							tail,
 							width,

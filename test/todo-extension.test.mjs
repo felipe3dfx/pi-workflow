@@ -80,7 +80,7 @@ async function fireEvent(handlers, event, ctx) {
 
 test("the todo tool advertises itself in the system prompt so the model finds it", () => {
 	const { pi, tools } = fakePi();
-	registerSessionTodo(pi, () => {});
+	registerSessionTodo(pi, () => {}, () => new Map());
 	const tool = tools.get("todo");
 	assert.match(tool.promptSnippet, /todo/i);
 	assert.ok(Array.isArray(tool.promptGuidelines) && tool.promptGuidelines.length > 0);
@@ -89,27 +89,27 @@ test("the todo tool advertises itself in the system prompt so the model finds it
 
 test("add appends a pending task and reports it", async () => {
 	const { pi, tools } = fakePi();
-	registerSessionTodo(pi, () => {});
+	registerSessionTodo(pi, () => {}, () => new Map());
 	const result = await execute(tools, "add", { text: "Review the doctor output" });
 	assert.match(result.content[0].text, /Added #1: Review the doctor output/);
-	assert.deepEqual(result.details.tasks, [{ id: 1, text: "Review the doctor output", done: false }]);
+	assert.deepEqual(result.details.tasks, [{ id: 1, text: "Review the doctor output", state: "pending" }]);
 });
 
 test("write replaces the whole list", async () => {
 	const { pi, tools } = fakePi();
-	registerSessionTodo(pi, () => {});
+	registerSessionTodo(pi, () => {}, () => new Map());
 	await execute(tools, "add", { text: "stale" });
-	const result = await execute(tools, "write", { tasks: [{ text: "alpha" }, { text: "beta", done: true }] });
+	const result = await execute(tools, "write", { tasks: [{ text: "alpha" }, { text: "beta", state: "done" }] });
 	assert.deepEqual(
 		result.details.tasks.map((task) => task.text),
 		["alpha", "beta"],
 	);
-	assert.equal(result.details.tasks[1].done, true);
+	assert.equal(result.details.tasks[1].state, "done");
 });
 
 test("write with an explicit empty tasks array clears the list", async () => {
 	const { pi, tools } = fakePi();
-	registerSessionTodo(pi, () => {});
+	registerSessionTodo(pi, () => {}, () => new Map());
 	await execute(tools, "add", { text: "stale" });
 	const result = await execute(tools, "write", { tasks: [] });
 	assert.deepEqual(result.details.tasks, []);
@@ -117,48 +117,76 @@ test("write with an explicit empty tasks array clears the list", async () => {
 
 test("write without tasks throws and does not mutate the list", async () => {
 	const { pi, tools } = fakePi();
-	registerSessionTodo(pi, () => {});
+	registerSessionTodo(pi, () => {}, () => new Map());
 	await execute(tools, "add", { text: "stale" });
 	await assert.rejects(() => execute(tools, "write", {}), /tasks is required for write/);
 	const result = await execute(tools, "list", {});
-	assert.deepEqual(result.details.tasks, [{ id: 1, text: "stale", done: false }]);
+	assert.deepEqual(result.details.tasks, [{ id: 1, text: "stale", state: "pending" }]);
 });
 
 test("session_start does not replay a write that failed because tasks was omitted", async () => {
 	const { pi, tools, handlers } = fakePi();
-	registerSessionTodo(pi, () => {});
+	registerSessionTodo(pi, () => {}, () => new Map());
 	const branch = [
-		todoResultEntry([{ id: 1, text: "kept", done: false }]),
+		todoResultEntry([{ id: 1, text: "kept", state: "pending" }]),
 		{ type: "message", message: { role: "toolResult", toolName: "todo", isError: true, details: undefined } },
 	];
 	const { ctx } = fakeCtx({ mode: "tui", branch });
 	await fireEvent(handlers, "session_start", ctx);
 
 	const listed = await execute(tools, "list", {}, ctx);
-	assert.deepEqual(listed.details.tasks, [{ id: 1, text: "kept", done: false }]);
+	assert.deepEqual(listed.details.tasks, [{ id: 1, text: "kept", state: "pending" }]);
 });
 
 test("list reports the current tasks without mutating them", async () => {
 	const { pi, tools } = fakePi();
-	registerSessionTodo(pi, () => {});
+	registerSessionTodo(pi, () => {}, () => new Map());
 	await execute(tools, "add", { text: "alpha" });
 	const result = await execute(tools, "list", {});
 	assert.match(result.content[0].text, /alpha/);
 	assert.equal(result.details.tasks.length, 1);
 });
 
-test("update changes an existing task's done flag", async () => {
+test("update changes an existing task's Task state", async () => {
 	const { pi, tools } = fakePi();
-	registerSessionTodo(pi, () => {});
+	registerSessionTodo(pi, () => {}, () => new Map());
 	await execute(tools, "add", { text: "alpha" });
-	const result = await execute(tools, "update", { id: 1, done: true });
+	const result = await execute(tools, "update", { id: 1, state: "done" });
 	assert.match(result.content[0].text, /Updated #1/);
-	assert.equal(result.details.tasks[0].done, true);
+	assert.equal(result.details.tasks[0].state, "done");
+});
+
+test("add, write, and update set any Task state, and a task without one is pending", async () => {
+	const { pi, tools } = fakePi();
+	registerSessionTodo(pi, () => {}, () => new Map());
+	await execute(tools, "write", { tasks: [{ text: "alpha" }, { text: "beta", state: "in progress" }] });
+	const added = await execute(tools, "add", { text: "gamma", state: "blocked" });
+	const result = await execute(tools, "update", { id: 1, state: "blocked" });
+	assert.deepEqual(added.details.tasks.at(-1), { id: 3, text: "gamma", state: "blocked" });
+	assert.deepEqual(
+		result.details.tasks.map((task) => task.state),
+		["blocked", "in progress", "blocked"],
+	);
+});
+
+test("the todo summary shows each task's Task state", async () => {
+	const { pi, tools } = fakePi();
+	registerSessionTodo(pi, () => {}, () => new Map());
+	const written = await execute(tools, "write", {
+		tasks: [{ text: "alpha" }, { text: "beta", state: "in progress" }, { text: "gamma", state: "done" }],
+	});
+	const added = await execute(tools, "add", { text: "delta" });
+	const updated = await execute(tools, "update", { id: 1, state: "blocked" });
+	const listed = await execute(tools, "list", {});
+	assert.equal(written.content[0].text, "[pending] #1: alpha\n[in progress] #2: beta\n[done] #3: gamma");
+	assert.equal(added.content[0].text, "Added #4: delta\n[pending] #1: alpha\n[in progress] #2: beta\n[done] #3: gamma\n[pending] #4: delta");
+	assert.equal(updated.content[0].text, "Updated #1\n[blocked] #1: alpha\n[in progress] #2: beta\n[done] #3: gamma\n[pending] #4: delta");
+	assert.equal(listed.content[0].text, "[blocked] #1: alpha\n[in progress] #2: beta\n[done] #3: gamma\n[pending] #4: delta");
 });
 
 test("clear empties the list and the box", async () => {
 	const { pi, tools } = fakePi();
-	registerSessionTodo(pi, () => {});
+	registerSessionTodo(pi, () => {}, () => new Map());
 	await execute(tools, "add", { text: "alpha" });
 	assert.ok(paintAboveInput(80, fakeTheme()).some((line) => line.includes("alpha")));
 	const result = await execute(tools, "clear", {});
@@ -169,20 +197,20 @@ test("clear empties the list and the box", async () => {
 
 test("add without text throws instead of returning a disguised error", async () => {
 	const { pi, tools } = fakePi();
-	registerSessionTodo(pi, () => {});
+	registerSessionTodo(pi, () => {}, () => new Map());
 	await assert.rejects(() => execute(tools, "add", {}), /text is required for add/);
 });
 
 test("update without an id throws instead of returning a disguised error", async () => {
 	const { pi, tools } = fakePi();
-	registerSessionTodo(pi, () => {});
-	await assert.rejects(() => execute(tools, "update", { done: true }), /id is required for update/);
+	registerSessionTodo(pi, () => {}, () => new Map());
+	await assert.rejects(() => execute(tools, "update", { state: "done" }), /id is required for update/);
 });
 
 test("update with an unknown id throws instead of silently doing nothing", async () => {
 	const { pi, tools } = fakePi();
-	registerSessionTodo(pi, () => {});
-	await assert.rejects(() => execute(tools, "update", { id: 9999, done: true }), /#9999 not found/);
+	registerSessionTodo(pi, () => {}, () => new Map());
+	await assert.rejects(() => execute(tools, "update", { id: 9999, state: "done" }), /#9999 not found/);
 });
 
 test("the todo tool never writes into the process working directory", async () => {
@@ -192,10 +220,10 @@ test("the todo tool never writes into the process working directory", async () =
 		process.chdir(dir);
 		const before = await readdir(dir);
 		const { pi, tools } = fakePi();
-		registerSessionTodo(pi, () => {});
+		registerSessionTodo(pi, () => {}, () => new Map());
 		await execute(tools, "add", { text: "one" });
 		await execute(tools, "write", { tasks: [{ text: "two" }] });
-		await execute(tools, "update", { id: 2, done: true });
+		await execute(tools, "update", { id: 2, state: "done" });
 		await execute(tools, "clear", {});
 		const after = await readdir(dir);
 		assert.deepEqual(after, before);
@@ -207,7 +235,7 @@ test("the todo tool never writes into the process working directory", async () =
 
 test("alt+shift+t toggles the box open and closed", async () => {
 	const { pi, tools, shortcuts } = fakePi();
-	registerSessionTodo(pi, () => {});
+	registerSessionTodo(pi, () => {}, () => new Map());
 	const { ctx } = fakeCtx({ mode: "tui" });
 	await execute(tools, "add", { text: "Review the doctor output" }, ctx);
 
@@ -223,7 +251,7 @@ test("alt+shift+t toggles the box open and closed", async () => {
 
 test("adding a task after collapsing reopens the box", async () => {
 	const { pi, tools, shortcuts } = fakePi();
-	registerSessionTodo(pi, () => {});
+	registerSessionTodo(pi, () => {}, () => new Map());
 	const { ctx } = fakeCtx({ mode: "tui" });
 	await execute(tools, "add", { text: "Review the doctor output" }, ctx);
 	await shortcuts.get("alt+shift+t").handler(ctx);
@@ -236,9 +264,9 @@ test("adding a task after collapsing reopens the box", async () => {
 
 test("alt+shift+h hides and re-shows done tasks", async () => {
 	const { pi, tools, shortcuts } = fakePi();
-	registerSessionTodo(pi, () => {});
+	registerSessionTodo(pi, () => {}, () => new Map());
 	const { ctx } = fakeCtx({ mode: "tui" });
-	await execute(tools, "write", { tasks: [{ text: "pending" }, { text: "finished", done: true }] }, ctx);
+	await execute(tools, "write", { tasks: [{ text: "pending" }, { text: "finished", state: "done" }] }, ctx);
 
 	const component = { render: (width) => paintAboveInput(width, fakeTheme()) };
 	assert.ok(component.render(80).some((line) => line.includes("finished")));
@@ -252,12 +280,12 @@ test("alt+shift+h hides and re-shows done tasks", async () => {
 
 test("session_start rebuilds the list from the last todo tool result on the branch", async () => {
 	const { pi, tools, handlers } = fakePi();
-	registerSessionTodo(pi, () => {});
+	registerSessionTodo(pi, () => {}, () => new Map());
 	const branch = [
-		todoResultEntry([{ id: 1, text: "old", done: false }]),
+		todoResultEntry([{ id: 1, text: "old", state: "pending" }]),
 		todoResultEntry([
-			{ id: 1, text: "old", done: false },
-			{ id: 2, text: "recent", done: false },
+			{ id: 1, text: "old", state: "pending" },
+			{ id: 2, text: "recent", state: "pending" },
 		]),
 	];
 	const { ctx } = fakeCtx({ mode: "tui", branch });
@@ -273,10 +301,10 @@ test("session_start rebuilds the list from the last todo tool result on the bran
 
 test("session_start ignores a failed todo tool result", async () => {
 	const { pi, handlers } = fakePi();
-	registerSessionTodo(pi, () => {});
+	registerSessionTodo(pi, () => {}, () => new Map());
 	const branch = [
-		todoResultEntry([{ id: 1, text: "kept", done: false }]),
-		todoResultEntry([{ id: 2, text: "should be ignored", done: false }], { isError: true }),
+		todoResultEntry([{ id: 1, text: "kept", state: "pending" }]),
+		todoResultEntry([{ id: 2, text: "should be ignored", state: "pending" }], { isError: true }),
 	];
 	const { ctx } = fakeCtx({ mode: "tui", branch });
 	await fireEvent(handlers, "session_start", ctx);
@@ -288,24 +316,72 @@ test("session_start ignores a failed todo tool result", async () => {
 
 test("session_start starts empty when the restored list has no open tasks", async () => {
 	const { pi, handlers } = fakePi();
-	registerSessionTodo(pi, () => {});
-	const branch = [todoResultEntry([{ id: 1, text: "finished", done: true }])];
+	registerSessionTodo(pi, () => {}, () => new Map());
+	const branch = [todoResultEntry([{ id: 1, text: "finished", state: "done" }])];
 	const { ctx } = fakeCtx({ mode: "tui", branch });
 	await fireEvent(handlers, "session_start", ctx);
 
 	assert.deepEqual(paintAboveInput(80, fakeTheme()), []);
 });
 
+test("session_start restores each task's Task state when the list still has unfinished tasks", async () => {
+	const { pi, tools, handlers } = fakePi();
+	registerSessionTodo(pi, () => {}, () => new Map());
+	const restored = [
+		{ id: 1, text: "finished", state: "done" },
+		{ id: 2, text: "stuck", state: "blocked" },
+		{ id: 3, text: "working", state: "in progress" },
+	];
+	const { ctx } = fakeCtx({ mode: "tui", branch: [todoResultEntry(restored)] });
+	await fireEvent(handlers, "session_start", ctx);
+
+	const listed = await execute(tools, "list", {}, ctx);
+	assert.equal(listed.content[0].text, "[done] #1: finished\n[blocked] #2: stuck\n[in progress] #3: working");
+	const row = (text) => paintAboveInput(80, fakeTheme()).find((line) => line.includes(text));
+	assert.ok(row("stuck").includes("! stuck"));
+	assert.ok(row("working").includes("◐ working"));
+});
+
+test("session_start restores the latest list whether a todo tool result or a harness entry wrote it", async () => {
+	const harness = (tasks) => ({ type: "custom", customType: "pi-workflow-todo", data: { tasks } });
+	const fromTool = [{ id: 1, text: "from the tool", state: "pending" }];
+	const fromHarness = [{ id: 1, text: "from the harness", state: "in progress" }];
+	for (const [branch, expected] of [
+		[[todoResultEntry(fromTool), harness(fromHarness)], "[in progress] #1: from the harness"],
+		[[harness(fromHarness), todoResultEntry(fromTool)], "[pending] #1: from the tool"],
+	]) {
+		const { pi, tools, handlers } = fakePi();
+		registerSessionTodo(pi, () => {}, () => new Map());
+		const { ctx } = fakeCtx({ mode: "tui", branch });
+		await fireEvent(handlers, "session_start", ctx);
+
+		assert.equal((await execute(tools, "list", {}, ctx)).content[0].text, expected);
+	}
+});
+
+test("a Task state the harness sets redraws the box", async () => {
+	const { pi, tools } = fakePi();
+	pi.appendEntry = () => {};
+	let redraws = 0;
+	const { set } = registerSessionTodo(pi, () => redraws++, () => new Map());
+	await execute(tools, "add", { text: "Fix the parser" });
+	const before = redraws;
+
+	set(1, "blocked");
+	assert.equal(redraws, before + 1);
+	assert.ok(paintAboveInput(80, fakeTheme()).some((line) => line.includes("! Fix the parser")));
+});
+
 test("session_tree rebuilds the list from the tree's branch, like session_start does", async () => {
 	const { pi, tools, handlers } = fakePi();
-	registerSessionTodo(pi, () => {});
+	registerSessionTodo(pi, () => {}, () => new Map());
 	const { ctx, setBranch } = fakeCtx({
 		mode: "tui",
-		branch: [todoResultEntry([{ id: 1, text: "on the old branch", done: false }])],
+		branch: [todoResultEntry([{ id: 1, text: "on the old branch", state: "pending" }])],
 	});
 	await fireEvent(handlers, "session_start", ctx);
 
-	setBranch([todoResultEntry([{ id: 7, text: "on the tree branch", done: false }])]);
+	setBranch([todoResultEntry([{ id: 7, text: "on the tree branch", state: "pending" }])]);
 	await fireEvent(handlers, "session_tree", ctx);
 
 	const lines = paintAboveInput(80, fakeTheme());
@@ -319,7 +395,7 @@ test("session_tree rebuilds the list from the tree's branch, like session_start 
 
 test("the returned todo offer exposes the tool only while todo is seated", () => {
 	const { pi, tools } = fakePi();
-	const offer = registerSessionTodo(pi, () => {});
+	const { offer } = registerSessionTodo(pi, () => {}, () => new Map());
 
 	offer();
 	assert.equal(tools.get("todo").exposure, "direct");

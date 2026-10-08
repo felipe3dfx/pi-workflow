@@ -12,20 +12,20 @@ function fakeTheme() {
 }
 
 test("an empty task list omits the box entirely", () => {
-	const lines = renderTodoBox(fakeTheme(), [], { collapsed: false, showDone: true }, 80);
+	const lines = renderTodoBox(fakeTheme(), [], { collapsed: false, showDone: true }, 80, new Map());
 	assert.deepEqual(lines, []);
 });
 
 test("a collapsed box renders a single closed line and no task rows", () => {
-	const tasks = [{ id: 1, text: "Review the doctor output", done: false }];
-	const lines = renderTodoBox(fakeTheme(), tasks, { collapsed: true, showDone: true }, 80);
+	const tasks = [{ id: 1, text: "Review the doctor output", state: "pending" }];
+	const lines = renderTodoBox(fakeTheme(), tasks, { collapsed: true, showDone: true }, 80, new Map());
 	assert.equal(lines.length, 1);
 	assert.doesNotMatch(lines[0], /Review the doctor output/);
 });
 
 test("an expanded box has margin above and below, and brackets outside the indented text column", () => {
-	const tasks = [{ id: 1, text: "Review the doctor output", done: false }];
-	const lines = renderTodoBox(fakeTheme(), tasks, { collapsed: false, showDone: true }, 80);
+	const tasks = [{ id: 1, text: "Review the doctor output", state: "pending" }];
+	const lines = renderTodoBox(fakeTheme(), tasks, { collapsed: false, showDone: true }, 80, new Map());
 	assert.equal(lines[0], "");
 	assert.equal(lines[lines.length - 1], "");
 	const top = lines[1];
@@ -40,10 +40,10 @@ test("an expanded box has margin above and below, and brackets outside the inden
 
 test("a pending row and a done row render distinctly, with a green check on the done row", () => {
 	const tasks = [
-		{ id: 1, text: "pending task", done: false },
-		{ id: 2, text: "finished task", done: true },
+		{ id: 1, text: "pending task", state: "pending" },
+		{ id: 2, text: "finished task", state: "done" },
 	];
-	const lines = renderTodoBox(fakeTheme(), tasks, { collapsed: false, showDone: true }, 80);
+	const lines = renderTodoBox(fakeTheme(), tasks, { collapsed: false, showDone: true }, 80, new Map());
 	const pendingRow = lines.find((line) => line.includes("pending task"));
 	const doneRow = lines.find((line) => line.includes("finished task"));
 	assert.ok(pendingRow);
@@ -52,19 +52,38 @@ test("a pending row and a done row render distinctly, with a green check on the 
 	assert.notEqual(pendingRow, doneRow.replace("finished task", "pending task"));
 });
 
-test("hiding done tasks removes done rows but keeps pending rows", () => {
+test("each Task state renders its own glyph, keeping the pending box and the done check", () => {
 	const tasks = [
-		{ id: 1, text: "pending task", done: false },
-		{ id: 2, text: "finished task", done: true },
+		{ id: 1, text: "pending task", state: "pending" },
+		{ id: 2, text: "working task", state: "in progress" },
+		{ id: 3, text: "finished task", state: "done" },
+		{ id: 4, text: "stuck task", state: "blocked" },
 	];
-	const lines = renderTodoBox(fakeTheme(), tasks, { collapsed: false, showDone: false }, 80);
+	const lines = renderTodoBox(fakeTheme(), tasks, { collapsed: false, showDone: true }, 80, new Map());
+	const row = (text) => lines.find((line) => line.includes(text));
+	assert.ok(row("pending task").includes("□ pending task"));
+	assert.ok(row("working task").includes("◐ working task"));
+	assert.ok(row("finished task").includes("✓ finished task"));
+	assert.ok(row("stuck task").includes("! stuck task"));
+});
+
+test("hiding done tasks removes only done rows", () => {
+	const tasks = [
+		{ id: 1, text: "pending task", state: "pending" },
+		{ id: 2, text: "finished task", state: "done" },
+		{ id: 3, text: "working task", state: "in progress" },
+		{ id: 4, text: "stuck task", state: "blocked" },
+	];
+	const lines = renderTodoBox(fakeTheme(), tasks, { collapsed: false, showDone: false }, 80, new Map());
 	assert.ok(lines.some((line) => line.includes("pending task")));
+	assert.ok(lines.some((line) => line.includes("working task")));
+	assert.ok(lines.some((line) => line.includes("stuck task")));
 	assert.ok(!lines.some((line) => line.includes("finished task")));
 });
 
 test("the close hint sits at the right edge, outside the text column", () => {
-	const tasks = [{ id: 1, text: "x", done: false }];
-	const lines = renderTodoBox(fakeTheme(), tasks, { collapsed: false, showDone: true }, 40);
+	const tasks = [{ id: 1, text: "x", state: "pending" }];
+	const lines = renderTodoBox(fakeTheme(), tasks, { collapsed: false, showDone: true }, 40, new Map());
 	const top = lines[1];
 	assert.ok(top.endsWith("×"));
 	assert.equal(top.length, 40);
@@ -72,16 +91,16 @@ test("the close hint sits at the right edge, outside the text column", () => {
 
 test("every rendered line respects a narrow terminal width, even with a long task", () => {
 	const longText = "x".repeat(200);
-	const tasks = [{ id: 1, text: longText, done: false }];
-	const lines = renderTodoBox(fakeTheme(), tasks, { collapsed: false, showDone: true }, 20);
+	const tasks = [{ id: 1, text: longText, state: "pending" }];
+	const lines = renderTodoBox(fakeTheme(), tasks, { collapsed: false, showDone: true }, 20, new Map());
 	for (const line of lines) {
 		assert.ok(visibleWidth(line) <= 20, `line exceeds width 20: ${JSON.stringify(line)}`);
 	}
 });
 
 test("a newline embedded in task text is normalised to a space instead of breaking the layout", () => {
-	const tasks = [{ id: 1, text: "line one\nline two", done: false }];
-	const lines = renderTodoBox(fakeTheme(), tasks, { collapsed: false, showDone: true }, 80);
+	const tasks = [{ id: 1, text: "line one\nline two", state: "pending" }];
+	const lines = renderTodoBox(fakeTheme(), tasks, { collapsed: false, showDone: true }, 80, new Map());
 	const row = lines.find((line) => line.includes("line one"));
 	assert.ok(row);
 	assert.ok(row.includes("line two"));
@@ -89,8 +108,8 @@ test("a newline embedded in task text is normalised to a space instead of breaki
 });
 
 test("a CRLF embedded in task text is normalised, not just the LF", () => {
-	const tasks = [{ id: 1, text: "line one\r\nline two", done: false }];
-	const lines = renderTodoBox(fakeTheme(), tasks, { collapsed: false, showDone: true }, 80);
+	const tasks = [{ id: 1, text: "line one\r\nline two", state: "pending" }];
+	const lines = renderTodoBox(fakeTheme(), tasks, { collapsed: false, showDone: true }, 80, new Map());
 	const row = lines.find((line) => line.includes("line one"));
 	assert.ok(row);
 	assert.ok(row.includes("line two"));
@@ -99,16 +118,16 @@ test("a CRLF embedded in task text is normalised, not just the LF", () => {
 });
 
 test("a CSI escape sequence in task text is neutralised before styling", () => {
-	const tasks = [{ id: 1, text: "clear \x1b[2J the screen", done: false }];
-	const lines = renderTodoBox(fakeTheme(), tasks, { collapsed: false, showDone: true }, 80);
+	const tasks = [{ id: 1, text: "clear \x1b[2J the screen", state: "pending" }];
+	const lines = renderTodoBox(fakeTheme(), tasks, { collapsed: false, showDone: true }, 80, new Map());
 	for (const line of lines) {
 		assert.equal(line.includes("\x1b"), false, `line contains ESC: ${JSON.stringify(line)}`);
 	}
 });
 
 test("a right-to-left override character is blanked", () => {
-	const tasks = [{ id: 1, text: "before ‮after", done: false }];
-	const lines = renderTodoBox(fakeTheme(), tasks, { collapsed: false, showDone: true }, 80);
+	const tasks = [{ id: 1, text: "before ‮after", state: "pending" }];
+	const lines = renderTodoBox(fakeTheme(), tasks, { collapsed: false, showDone: true }, 80, new Map());
 	for (const line of lines) {
 		assert.equal(line.includes("‮"), false, `line contains U+202E: ${JSON.stringify(line)}`);
 	}
@@ -116,9 +135,26 @@ test("a right-to-left override character is blanked", () => {
 
 test("a ZWJ family emoji keeps its full width instead of being stripped", () => {
 	const family = "\u{1F468}‍\u{1F469}‍\u{1F467}‍\u{1F466}";
-	const tasks = [{ id: 1, text: family, done: false }];
-	const lines = renderTodoBox(fakeTheme(), tasks, { collapsed: false, showDone: true }, 80);
+	const tasks = [{ id: 1, text: family, state: "pending" }];
+	const lines = renderTodoBox(fakeTheme(), tasks, { collapsed: false, showDone: true }, 80, new Map());
 	const row = lines.find((line) => line.includes("\u{1F468}"));
 	assert.ok(row);
 	assert.ok(row.includes(family));
+});
+
+test("an in progress task linked to a working child shows the child's role and short id", () => {
+	const tasks = [
+		{ id: 1, text: "Fix the parser", state: "in progress" },
+		{ id: 2, text: "Review the parser", state: "pending" },
+		{ id: 3, text: "Write the notes", state: "in progress" },
+	];
+	const executors = new Map([
+		[1, { role: "worker", id: "a1b2c3d4-0000-0000-0000-000000000000" }],
+		[2, { role: "verify", id: "e5f6a7b8-0000-0000-0000-000000000000" }],
+	]);
+	const lines = renderTodoBox(fakeTheme(), tasks, { collapsed: false, showDone: true }, 80, executors);
+	const row = (text) => lines.find((line) => line.includes(text));
+	assert.match(row("Fix the parser"), /◐ Fix the parser ← worker a1b2 +│$/);
+	assert.doesNotMatch(row("Review the parser"), /←/);
+	assert.doesNotMatch(row("Write the notes"), /←/);
 });

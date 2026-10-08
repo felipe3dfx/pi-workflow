@@ -107,7 +107,7 @@ test("the operator question opens as a bottom overlay and closes the children vi
 		thread: () => undefined,
 		cancel: () => ({ cancelled: false, message: "" }),
 	};
-	const views = createChildrenViews(sessions, () => () => {});
+	const views = createChildrenViews(sessions, { text: () => undefined }, () => () => {});
 	let factory;
 	void views.open({
 		hasUI: true,

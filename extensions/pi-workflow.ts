@@ -39,6 +39,7 @@ import {
 	createChildSessions,
 	createContinueChildTool,
 	createSpawnChildTool,
+	isWorking,
 } from "./child-sessions.ts";
 import type { Schedule } from "./clock.ts";
 import { registerChildrenBox } from "./children-box.ts";
@@ -46,6 +47,7 @@ import { createFooterHints, registerChrome } from "./chrome.ts";
 import { createChildrenViews } from "./children-view.ts";
 import { createModelProfiles, report } from "./model-profiles.ts";
 import { registerSessionTodo } from "./todo-extension.ts";
+import type { TaskExecutor } from "./todo-header.ts";
 import { registerCompactTools, syncCompactTools } from "./compact-tools.ts";
 import { resolveAgentDirectory } from "./agent-directory.ts";
 import { createJevRouting } from "./workflow-settings.ts";
@@ -98,6 +100,20 @@ export default function piWorkflowExtension(
 	registerChildResultCards(pi);
 	const modelProfiles = createModelProfiles(agentDirectory);
 	const jevRouting = createJevRouting(agentDirectory);
+	const { requestAboveInputRender } = registerShell(pi);
+	const todo = registerSessionTodo(pi, requestAboveInputRender, () => {
+		const executors = new Map<number, TaskExecutor>();
+		for (const child of childSessions.list()) {
+			if (
+				child.todo !== undefined &&
+				isWorking(child.state) &&
+				childSessions.latestLinked(child.todo) === child.id
+			) {
+				executors.set(child.todo, { role: child.role, id: child.id });
+			}
+		}
+		return executors;
+	});
 	const childSessions = createChildSessions({
 		create: options.childSessions?.create,
 		schedule: options.childSessions?.schedule,
@@ -108,18 +124,17 @@ export default function piWorkflowExtension(
 		report: (message) => {
 			if (currentCtx) report(currentCtx, message, "error");
 		},
+		todo,
 	});
 	pi.on("turn_end", () => childSessions.atBoundary());
 	pi.on("agent_settled", () => childSessions.atBoundary());
-	const childrenViews = createChildrenViews(childSessions);
-	const { requestAboveInputRender } = registerShell(pi);
+	const childrenViews = createChildrenViews(childSessions, todo);
 	registerChildrenBox(
 		pi,
 		childSessions,
 		requestAboveInputRender,
 		options.childSessions?.refresh,
 	);
-	const offerTodoTool = registerSessionTodo(pi, requestAboveInputRender);
 	const footerHints = createFooterHints();
 	occupyHeader("child-session", childSessions.working);
 	childSessions.subscribe(notifyHeader);
@@ -149,7 +164,7 @@ export default function piWorkflowExtension(
 	const childTools = launcher.childToolsOffer(
 		pi,
 		[
-			createSpawnChildTool(launcher, childSessions),
+			createSpawnChildTool(launcher, childSessions, todo),
 			createContinueChildTool(childSessions),
 			...createChildQueryTools(childSessions),
 		],
@@ -168,7 +183,7 @@ export default function piWorkflowExtension(
 		},
 		offers: [
 			() => syncAskUserTools(pi, footerHints),
-			offerTodoTool,
+			todo.offer,
 			() => syncCodeGraphTool(pi, options.codegraph),
 			() => syncCompactTools(pi, currentCtx),
 			childTools.offer,

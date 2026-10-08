@@ -5,13 +5,19 @@ import { occupyAboveInput, seated } from "./shell.ts";
 import { offerTool } from "./tool-offer.ts";
 import {
 	renderTodoBox,
+	type TaskExecutors,
 	type TodoBoxState,
 } from "./todo-header.ts";
-import { createTodoList, type Task } from "./todo-list.ts";
+import { createTodoList, TASK_STATES, type Task, type TaskState } from "./todo-list.ts";
+
+const TodoTaskState = Type.Union(
+	TASK_STATES.map((state) => Type.Literal(state)),
+	{ description: "Task state; blocked means the task needs the parent's attention" },
+);
 
 const TodoWriteTask = Type.Object({
 	text: Type.String({ description: "Task text" }),
-	done: Type.Optional(Type.Boolean({ description: "Whether the task is already done" })),
+	state: Type.Optional(TodoTaskState),
 });
 
 const TodoParams = Type.Object({
@@ -31,34 +37,44 @@ const TodoParams = Type.Object({
 	tasks: Type.Optional(Type.Array(TodoWriteTask, { description: "The whole list, for action write" })),
 	text: Type.Optional(Type.String({ description: "Task text, for action add or update" })),
 	id: Type.Optional(Type.Number({ description: "Task id, for action update" })),
-	done: Type.Optional(Type.Boolean({ description: "Done flag, for action update" })),
+	state: Type.Optional(TodoTaskState),
 });
 
 function summarize(tasks: Task[]): string {
 	if (tasks.length === 0) return "No session tasks";
-	return tasks.map((task) => `[${task.done ? "x" : " "}] #${task.id}: ${task.text}`).join("\n");
+	return tasks.map((task) => `[${task.state}] #${task.id}: ${task.text}`).join("\n");
 }
+
+const TODO_ENTRY = "pi-workflow-todo";
+
+export type TodoClaim = { reason: string } | { task: Task };
 
 function replayTasks(entries: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>): Task[] {
 	let tasks: Task[] = [];
 	for (const entry of entries) {
+		if (entry.type === "custom" && entry.customType === TODO_ENTRY) {
+			const data = entry.data as { tasks?: Task[] } | undefined;
+			if (data && Array.isArray(data.tasks)) tasks = data.tasks;
+			continue;
+		}
 		if (entry.type !== "message") continue;
 		const message = entry.message;
 		if (message.role !== "toolResult" || message.toolName !== "todo" || message.isError) continue;
 		const details = message.details as { tasks?: Task[] } | undefined;
 		if (details && Array.isArray(details.tasks)) tasks = details.tasks;
 	}
-	return tasks.length > 0 && tasks.every((task) => task.done) ? [] : tasks;
+	return tasks.length > 0 && tasks.every((task) => task.state === "done") ? [] : tasks;
 }
 
 export function registerSessionTodo(
 	pi: ExtensionAPI,
 	requestRender: () => void,
-): () => void {
+	executors: () => TaskExecutors,
+) {
 	const todoList = createTodoList();
 	const boxState: TodoBoxState = { collapsed: false, showDone: true };
 	occupyAboveInput("todo", (width, theme) =>
-		renderTodoBox(theme, todoList.list(), boxState, width),
+		renderTodoBox(theme, todoList.list(), boxState, width, executors()),
 	);
 
 	function reveal(): void {
@@ -74,7 +90,7 @@ export function registerSessionTodo(
 		promptSnippet: "Track the session's todo list, shown above the input, with write/add/update/clear/list",
 		promptGuidelines: [
 			"Use todo, not a markdown or TODO file, whenever the user asks for a task list or to track work for this session, unless the user explicitly asks for a file; todo never creates a file.",
-			"Prefer todo write to replace the whole plan when it changes, and todo update to move one task's status as work progresses.",
+			"Prefer todo write to replace the whole plan when it changes, and todo update to move one task's Task state as work progresses.",
 		],
 		parameters: TodoParams,
 		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
@@ -102,10 +118,10 @@ export function registerSessionTodo(
 					if (!params.text) {
 						throw new Error("text is required for add");
 					}
-					const task = todoList.add(params.text);
+					const task = todoList.add(params.text, params.state);
 					reveal();
 					return {
-						content: [{ type: "text", text: `Added #${task.id}: ${task.text}` }],
+						content: [{ type: "text", text: `Added #${task.id}: ${task.text}\n${summarize(todoList.list())}` }],
 						details: { tasks: todoList.list() },
 					};
 				}
@@ -113,12 +129,12 @@ export function registerSessionTodo(
 					if (params.id === undefined) {
 						throw new Error("id is required for update");
 					}
-					const task = todoList.update(params.id, { text: params.text, done: params.done });
+					const task = todoList.update(params.id, { text: params.text, state: params.state });
 					if (!task) {
 						throw new Error(`task #${params.id} not found`);
 					}
 					reveal();
-					return { content: [{ type: "text", text: `Updated #${task.id}` }], details: { tasks: todoList.list() } };
+					return { content: [{ type: "text", text: `Updated #${task.id}\n${summarize(todoList.list())}` }], details: { tasks: todoList.list() } };
 				}
 				case "clear": {
 					todoList.clear();
@@ -159,5 +175,41 @@ export function registerSessionTodo(
 	pi.on("session_start", restoreFromBranch);
 	pi.on("session_tree", restoreFromBranch);
 
-	return () => offerTool(pi, tool, seated("todo", "above-input"));
+	function find(id: number): Task | undefined {
+		return todoList.list().find((task) => task.id === id);
+	}
+
+	function claim(id: number): TodoClaim {
+		if (!seated("todo", "above-input")) {
+			return { reason: `Todo is not seated, so task #${id} cannot be linked. Run /workflow:config.` };
+		}
+		const task = find(id);
+		if (!task) return { reason: `Task #${id} does not exist in the Todo.` };
+		if (task.state === "done") {
+			return { reason: `Task #${id} is done. Change its Task state before executing it again.` };
+		}
+		return { task };
+	}
+
+	function has(id: number): boolean {
+		return find(id) !== undefined;
+	}
+
+	function text(id: number): string | undefined {
+		return find(id)?.text;
+	}
+
+	function set(id: number, state: TaskState): void {
+		if (!todoList.update(id, { state })) return;
+		pi.appendEntry(TODO_ENTRY, { tasks: todoList.list() });
+		requestRender();
+	}
+
+	return {
+		offer: () => offerTool(pi, tool, seated("todo", "above-input")),
+		claim,
+		has,
+		text,
+		set,
+	};
 }
