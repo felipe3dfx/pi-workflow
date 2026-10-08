@@ -3821,6 +3821,38 @@ test("continue_child through Pi's SDK sends the completed child's conversation p
 	});
 });
 
+test("continue_child through Pi's SDK starts its own MCP servers for the continued run and shuts them down when it ends", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const pids = join(agentDir, "pids");
+		await writeMcpConfig(agentDir, pids, {
+			docs: { exposure: "direct", description: "Library docs." },
+		});
+		const child = await realChild(agentDir, [
+			fauxAssistantMessage("First answer."),
+			fauxAssistantMessage(fauxToolCall("mcp__docs__echo", { text: "again" }), {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Second answer."),
+		]);
+		const { extension, parent } = child;
+		const ctx = { ...toolContext("tui", worktree), ...parent.context };
+		const unhandled = await collectUnhandled(async () => {
+			const done = (await spawnReal(child, worktree)).details.id;
+			await eventually(() => extension.messages.length === 1);
+			const first = await fixturePid(pids, "docs");
+			await eventually(() => !processRuns(first));
+
+			await use(extension, "continue_child", { id: done, task: "Once more" }, ctx);
+			await eventually(() => extension.messages.length === 2);
+		});
+
+		assert.deepEqual(toolOutputs(parent.requests), ["docs echoes again"]);
+		const continued = await fixturePid(pids, "docs");
+		await eventually(() => !processRuns(continued));
+		assert.deepEqual(unhandled, []);
+	});
+});
+
 test("a background child asks through Pi's SDK, the parent model replies, and the child finishes with the answer", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const child = await realChild(agentDir, [
