@@ -35,17 +35,9 @@ const hostModules = {
 	"@earendil-works/pi-ai/compat": piAi,
 	"@earendil-works/pi-ai/oauth": piAiOauth,
 	"@earendil-works/pi-tui": piTui,
-	"@mariozechner/pi-coding-agent": piCodingAgent,
-	"@mariozechner/pi-ai": piAi,
-	"@mariozechner/pi-ai/compat": piAi,
-	"@mariozechner/pi-ai/oauth": piAiOauth,
-	"@mariozechner/pi-tui": piTui,
 	typebox,
 	"typebox/compile": typeboxCompile,
 	"typebox/value": typeboxValue,
-	"@sinclair/typebox": typebox,
-	"@sinclair/typebox/compile": typeboxCompile,
-	"@sinclair/typebox/value": typeboxValue,
 };
 
 function moduleFile(path: string): string | undefined {
