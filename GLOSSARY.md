@@ -66,6 +66,12 @@ The persistent choice, stored with the user's Pi configuration, of whether Jev o
 
 _Avoid_: process switch, repository setting, Jev router, virtual model routing
 
+### Delegation mode
+
+The persistent choice, stored beside Jev routing, of whether work may stay in the parent session: `opportunistic` or `orchestrator`. In `orchestrator`, the parent is told to delegate all work to child sessions and to keep to conversing, planning, asking, and directing them; nothing blocks its tools beyond what already applies. It is independent of who owns routing.
+
+_Avoid_: orchestrator routing, parent mode, routing mode
+
 ### Launch blocked
 
 The warning when Jev routing is on and Jev gives no valid answer. No child launches and the gated parent tool does not run. It is not kept as the verdict for the user message.
