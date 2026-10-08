@@ -24,6 +24,7 @@ import {
 import {
 	type ChildRecord,
 	type createChildSessions,
+	errorMessage,
 	isWorking,
 } from "./child-sessions.ts";
 import {
@@ -527,7 +528,7 @@ function createChildrenView(
 		if (number === undefined) {
 			notice = `Steer sent to ${childName(child)}.`;
 			sessions.steer(child.id, text).catch((error: unknown) => {
-				notice = error instanceof Error ? error.message : String(error);
+				notice = errorMessage(error);
 				tui.requestRender();
 			});
 			return;
@@ -536,7 +537,7 @@ function createChildrenView(
 			sessions.reply(child.id, number, text, "operator");
 			notice = `Answer sent to ${childName(child)}.`;
 		} catch (error) {
-			notice = error instanceof Error ? error.message : String(error);
+			notice = errorMessage(error);
 		}
 	}
 
