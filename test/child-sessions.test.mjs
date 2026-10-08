@@ -4576,10 +4576,10 @@ test("alt+a and /workflow:subagents open a full-screen overlay of every child; j
 		);
 		assert.match(
 			lines[2],
-			/^ │ {2}▸ ◐ worker [0-9a-f]{4} Run the\.\.\. \d+s │ model \(medium\) · wt: repo/,
+			/^ │ {2}▸ ◐ worker [0-9a-f]{4} +running · \d+s │ model \(medium\) · wt: repo/,
 		);
 		assert.match(lines[3], /^ │ {3}Finished ─+ │ Run the tests/);
-		assert.match(lines[4], /^ │ {4}✓ worker [0-9a-f]{4} Map the\.\.\. \d+s │/);
+		assert.match(lines[4], /^ │ {4}✓ worker [0-9a-f]{4} Map the.* \d+s │/);
 		assert.match(
 			view.lines(60).at(-2),
 			/j\/k move {2}\| {2}Enter detail {2}\| {2}s\/c cancel {2}\| {2}q close/,

@@ -150,10 +150,13 @@ function usage({ tokens, cost }: { tokens: number; cost: number }) {
 	];
 }
 
+function runTime(child: ChildRecord, now: number) {
+	return child.state === "queued" ? "queued" : childElapsed(child, now);
+}
+
 function runState(child: ChildRecord, now: number) {
-	return child.state === "queued"
-		? "queued"
-		: `${child.state} · ${childElapsed(child, now)}`;
+	const time = runTime(child, now);
+	return child.state === "queued" ? time : `${child.state} · ${time}`;
 }
 
 function fleetOrder(records: ChildRecord[]) {
@@ -781,10 +784,10 @@ function createChildrenView(
 					...(rest.length > 0 ? [theme.fg("dim", rest.join(" · "))] : []),
 				].join(theme.fg("dim", " · "));
 			const tail =
-				[[state, ...spend], [state], []]
+				[[state, ...spend], [state], [runTime(child, now)]]
 					.map(right)
 					.find((text) => visibleWidth(head) + 1 + visibleWidth(text) <= width) ??
-				right([]);
+				right([runTime(child, now)]);
 			const room = width - visibleWidth(head) - visibleWidth(tail) - 2;
 			const shown = two
 				? [

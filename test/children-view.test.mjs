@@ -679,11 +679,15 @@ test("the Fleet view is titled Fleet with the total of every child, and each row
 
 });
 
-test("one-line rows show the Run state, then tokens, cost, and the step as the pane has room", () => {
+test("one-line rows show the Run state, or only its time in the narrowest pane, then tokens, cost, and the step as the pane has room", () => {
 	const split = open(fleet(), { rows: 10 }).lines(120);
 	assert.match(split[2], /▸ ◐ worker 5636 +running · 1m 0\ds │/);
 	assert.match(split[4], /✓ worker a809 +completed · 1m 04s │/);
 	assert.match(split[5], /✗ reviewer 27c1 +failed · 4m 00s │/);
+
+	const narrow = open(fleet(), { rows: 10 }).lines(80);
+	assert.match(narrow[2], /▸ ◐ worker 5636 +1m 0\ds │/);
+	assert.match(narrow[4], /✓ worker a809 +1m 04s │/);
 
 	const single = open(fleet(), { rows: 10 }).lines(64);
 	assert.match(
