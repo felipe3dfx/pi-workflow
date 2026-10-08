@@ -212,10 +212,19 @@ function manualSchedule() {
 
 function open(
 	sessions,
-	{ rows = 40, schedule = manualSchedule().schedule, latest = false } = {},
+	{
+		rows = 40,
+		schedule = manualSchedule().schedule,
+		latest = false,
+		tasks = [3],
+	} = {},
 ) {
 	let factory;
-	const views = createChildrenViews(sessions, schedule);
+	const views = createChildrenViews(
+		sessions,
+		{ has: (id) => tasks.includes(id) },
+		schedule,
+	);
 	void views.open({
 		ui: {
 			custom(make) {
@@ -878,4 +887,16 @@ test("a linked child's Fleet row shows its task number and text, truncated to th
 		assert.equal(raw.join("\n").includes("\x1b the"), false);
 		for (const line of raw) assert.ok(visibleWidth(line) <= width);
 	}
+});
+
+test("a linked child's Fleet row stops naming its task once the task no longer exists", () => {
+	const sessions = fakeSessions([
+		record("5636", {
+			step: "bash sleep 60",
+			todo: { id: 3, text: "Wire the parser" },
+		}),
+	]);
+	const lines = open(sessions, { tasks: [] }).lines(200).join("\n");
+	assert.doesNotMatch(lines, /#3|Wire the parser/);
+	assert.match(lines, /bash sleep 60/);
 });

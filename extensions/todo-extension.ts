@@ -121,7 +121,7 @@ export function registerSessionTodo(
 					const task = todoList.add(params.text, params.state);
 					reveal();
 					return {
-						content: [{ type: "text", text: `Added #${task.id}: ${task.text}` }],
+						content: [{ type: "text", text: `Added #${task.id}: ${task.text}\n${summarize(todoList.list())}` }],
 						details: { tasks: todoList.list() },
 					};
 				}
@@ -134,7 +134,7 @@ export function registerSessionTodo(
 						throw new Error(`task #${params.id} not found`);
 					}
 					reveal();
-					return { content: [{ type: "text", text: `Updated #${task.id}` }], details: { tasks: todoList.list() } };
+					return { content: [{ type: "text", text: `Updated #${task.id}\n${summarize(todoList.list())}` }], details: { tasks: todoList.list() } };
 				}
 				case "clear": {
 					todoList.clear();
@@ -191,11 +191,10 @@ export function registerSessionTodo(
 		return todoList.list().some((task) => task.id === id);
 	}
 
-	function set(id: number, state: TaskState): boolean {
-		if (!todoList.update(id, { state })) return false;
+	function set(id: number, state: TaskState): void {
+		if (!todoList.update(id, { state })) return;
 		pi.appendEntry(TODO_ENTRY, { tasks: todoList.list() });
-		reveal();
-		return true;
+		requestRender();
 	}
 
 	return {

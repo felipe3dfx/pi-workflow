@@ -344,6 +344,7 @@ function createThread(theme: ChildTheme) {
 
 export function createChildrenViews(
 	sessions: Sessions,
+	todo: { has(id: number): boolean },
 	schedule: Schedule = scheduleTimer,
 ) {
 	const open = new Set<() => void>();
@@ -367,6 +368,7 @@ export function createChildrenViews(
 						done,
 						open,
 						schedule,
+						todo,
 						focused: () =>
 							handle?.isFocused() !== false ||
 							// pi-tui types isOverlayFocused as protected; it is public at runtime.
@@ -401,6 +403,7 @@ function createChildrenView(
 		done(): void;
 		open: Set<() => void>;
 		schedule: Schedule;
+		todo: { has(id: number): boolean };
 		focused(): boolean;
 	},
 ) {
@@ -785,9 +788,10 @@ function createChildrenView(
 			const step = terminalSafeLine(childStep(child));
 			const color = child.state === "waiting" ? "warning" : "dim";
 			const head = `${mark}${childGlyph(theme, child)} ${theme.fg("accent", child.role)} ${theme.fg("dim", child.id.slice(0, 4))}`;
-			const detail = child.todo
-				? `${theme.fg("text", `#${child.todo.id} ${terminalSafeLine(child.todo.text)}`)} ${theme.fg(color, step)}`
-				: theme.fg(color, step);
+			const detail =
+				child.todo && host.todo.has(child.todo.id)
+					? `${theme.fg("text", `#${child.todo.id} ${terminalSafeLine(child.todo.text)}`)} ${theme.fg(color, step)}`
+					: theme.fg(color, step);
 			const state = runState(child, now);
 			const spend = usage(spent(sessions.thread(child.id)));
 			const marks = steerMarks(child);

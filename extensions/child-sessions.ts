@@ -52,7 +52,7 @@ import {
 import { shellOptions } from "./shell-settings.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
 import type { TodoClaim } from "./todo-extension.ts";
-import type { TaskState } from "./todo-list.ts";
+import type { Task, TaskState } from "./todo-list.ts";
 
 const packageVersion = (
 	JSON.parse(
@@ -495,11 +495,15 @@ interface ChildMessage {
 	details: unknown;
 }
 
-export type LinkedTask = { id: number; text: string };
+export type LinkedTask = Pick<Task, "id" | "text">;
 
-function finalTaskState(state: string, verdict?: string): TaskState {
+type TaskRun = Pick<ChildRecord, "state" | "role" | "result">;
+
+function finalTaskState({ state, role, result }: TaskRun): TaskState {
 	if (state === "cancelled") return "pending";
-	return state === "completed" && verdictNeedsNoReason(verdict)
+	if (state !== "completed") return "blocked";
+	const verdict = result?.verdict;
+	return verdict === "done" || verdict === "pass" || role === "explore"
 		? "done"
 		: "blocked";
 }
@@ -510,13 +514,19 @@ function taskNote(id: number, applied?: TaskState) {
 		: `Task #${id} no longer exists, so no Task state was applied.`;
 }
 
+function taskSettlement(todo: TodoLink, id: number, run: TaskRun) {
+	if (!todo.has(id)) return { note: taskNote(id) };
+	const state = finalTaskState(run);
+	return { note: taskNote(id, state), apply: () => todo.set(id, state) };
+}
+
 function withNote(outcome: string, note: string | undefined) {
 	return note ? `${outcome}\n\n${note}` : outcome;
 }
 
 type TodoLink = {
 	has(id: number): boolean;
-	set(id: number, state: TaskState): boolean;
+	set(id: number, state: TaskState): void;
 };
 
 export function createChildSessions(options: {
@@ -1013,8 +1023,16 @@ export function createChildSessions(options: {
 				{ ...launch, background: true, ...(todo ? { todo } : {}) },
 				{ id, conversation: child.conversation },
 			);
-			if (started.status === "queued") consume(id);
-			return started;
+			if (started.status !== "queued") return started;
+			consume(id);
+			if (!todo || !options.todo) return started;
+			return {
+				...started,
+				note: taskNote(
+					todo.id,
+					options.todo.has(todo.id) ? "in progress" : undefined,
+				),
+			};
 		} finally {
 			release();
 		}
@@ -1084,28 +1102,22 @@ export function createChildSessions(options: {
 		return { cancelled: true, message: `Child ${id} cancelled.` };
 	}
 
-	function settlement(record: ChildRecord) {
-		const { todo } = record;
-		if (!todo || consumed.has(record.id)) return undefined;
+	function settlement(id: string) {
+		const record = children.get(id)?.record;
+		const todo = record?.todo;
+		if (!todo || !options.todo || consumed.has(id)) return undefined;
 		const latest = [...children.values()].findLast(
 			(child) => child.record.todo?.id === todo.id,
 		);
-		if (latest?.record.id !== record.id) {
+		if (latest?.record.id !== id) {
 			return {
 				note: `Task #${todo.id} is linked to a later child, so no Task state was applied.`,
 			};
 		}
-		if (!options.todo?.has(todo.id)) return { note: taskNote(todo.id) };
-		const state = finalTaskState(record.state, record.result?.verdict);
-		return {
-			note: taskNote(todo.id, state),
-			apply: () => options.todo?.set(todo.id, state),
-		};
+		return taskSettlement(options.todo, todo.id, record);
 	}
 
-	function consume(id: string) {
-		const child = children.get(id);
-		const settled = child && settlement(child.record);
+	function consume(id: string, settled = settlement(id)) {
 		consumed.add(id);
 		pending = pending.filter((record) => record.id !== id);
 		settled?.apply?.();
@@ -1125,12 +1137,13 @@ export function createChildSessions(options: {
 	function flush() {
 		const results = [...pending];
 		if (results.length === 0) return;
+		const settled = results.map((record) => settlement(record.id));
 		try {
 			options.send({
 				customType: "pi-workflow-child-result",
 				content: results
-					.map((record) =>
-						withNote(childOutcome(record), settlement(record)?.note),
+					.map((record, index) =>
+						withNote(childOutcome(record), settled[index]?.note),
 					)
 					.join("\n\n"),
 				display: true,
@@ -1139,7 +1152,9 @@ export function createChildSessions(options: {
 						? childDetails(results[0])
 						: { results: results.map((child) => childDetails(child)) },
 			});
-			for (const child of results) consume(child.id);
+			for (const [index, child] of results.entries()) {
+				consume(child.id, settled[index]);
+			}
 		} catch (error) {
 			warn(`Child results could not be delivered: ${errorMessage(error)}`);
 		}
@@ -1333,7 +1348,7 @@ function sessionBranch(ctx: {
 export function createSpawnChildTool(
 	launcher: ReturnType<typeof createChildLauncher>,
 	sessions: ReturnType<typeof createChildSessions>,
-	todo: { claim(id: number): TodoClaim } & Pick<TodoLink, "set">,
+	todo: { claim(id: number): TodoClaim } & TodoLink,
 ): ToolDefinition<typeof spawnChildParameters, Record<string, unknown>> {
 	return {
 		name: "spawn_child",
@@ -1362,12 +1377,12 @@ export function createSpawnChildTool(
 					reason: claim.reason,
 				});
 			}
-			const settle = (state: TaskState) =>
-				claim &&
-				taskNote(
-					claim.task.id,
-					todo.set(claim.task.id, state) ? state : undefined,
-				);
+			const settle = (run: TaskRun) => {
+				if (!claim) return undefined;
+				const settled = taskSettlement(todo, claim.task.id, run);
+				settled.apply?.();
+				return settled.note;
+			};
 			const background = ctx.mode === "tui" || ctx.mode === "rpc";
 			if (params.background && !background) {
 				return notLaunched("refused", {
@@ -1411,9 +1426,10 @@ export function createSpawnChildTool(
 							: {}),
 					})
 					.catch((error: unknown) => {
-						const note = settle(
-							finalTaskState(signal?.aborted ? "cancelled" : "failed"),
-						);
+						const note = settle({
+							state: signal?.aborted ? "cancelled" : "failed",
+							role: plan.role,
+						});
 						if (!note) throw error;
 						throw new Error(withNote(errorMessage(error), note), {
 							cause: error,
@@ -1421,7 +1437,11 @@ export function createSpawnChildTool(
 					});
 				const note =
 					started.status === "completed"
-						? settle(finalTaskState("completed", started.result?.verdict))
+						? settle({
+								state: "completed",
+								role: plan.role,
+								result: started.result,
+							})
 						: undefined;
 				return launched(
 					started,
@@ -1485,6 +1505,7 @@ function launched(
 			...warnings,
 			`Child ${started.id} is queued in the background. Its result arrives later as a message. End your turn and do not poll; the result wakes you.`,
 			...(selectionLine ? [selectionLine] : []),
+			...(note ? [note] : []),
 		],
 		{ status: started.status, id: started.id, ...selected },
 	);
@@ -1512,14 +1533,17 @@ export function createContinueChildTool(
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			const unseated = unseatedChild();
 			if (unseated) return unseated;
+			const started = await sessions.resume(params.id, params.task, {
+				signal,
+				modelRegistry: ctx.modelRegistry,
+				project: () => parentProject(ctx),
+				shell: () => shellOptions(ctx),
+			});
 			return launched(
-				await sessions.resume(params.id, params.task, {
-					signal,
-					modelRegistry: ctx.modelRegistry,
-					project: () => parentProject(ctx),
-					shell: () => shellOptions(ctx),
-				}),
+				started,
 				[],
+				undefined,
+				"note" in started ? started.note : undefined,
 			);
 		},
 	};

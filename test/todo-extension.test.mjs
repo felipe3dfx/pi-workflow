@@ -179,8 +179,8 @@ test("the todo summary shows each task's Task state", async () => {
 	const updated = await execute(tools, "update", { id: 1, state: "blocked" });
 	const listed = await execute(tools, "list", {});
 	assert.equal(written.content[0].text, "[pending] #1: alpha\n[in progress] #2: beta\n[done] #3: gamma");
-	assert.equal(added.content[0].text, "Added #4: delta");
-	assert.equal(updated.content[0].text, "Updated #1");
+	assert.equal(added.content[0].text, "Added #4: delta\n[pending] #1: alpha\n[in progress] #2: beta\n[done] #3: gamma\n[pending] #4: delta");
+	assert.equal(updated.content[0].text, "Updated #1\n[blocked] #1: alpha\n[in progress] #2: beta\n[done] #3: gamma\n[pending] #4: delta");
 	assert.equal(listed.content[0].text, "[blocked] #1: alpha\n[in progress] #2: beta\n[done] #3: gamma\n[pending] #4: delta");
 });
 
@@ -336,7 +336,27 @@ test("session_start restores each task's Task state when the list still has unfi
 	await fireEvent(handlers, "session_start", ctx);
 
 	const listed = await execute(tools, "list", {}, ctx);
-	assert.deepEqual(listed.details.tasks, restored);
+	assert.equal(listed.content[0].text, "[done] #1: finished\n[blocked] #2: stuck\n[in progress] #3: working");
+	const row = (text) => paintAboveInput(80, fakeTheme()).find((line) => line.includes(text));
+	assert.ok(row("stuck").includes("! stuck"));
+	assert.ok(row("working").includes("◐ working"));
+});
+
+test("session_start restores the latest list whether a todo tool result or a harness entry wrote it", async () => {
+	const harness = (tasks) => ({ type: "custom", customType: "pi-workflow-todo", data: { tasks } });
+	const fromTool = [{ id: 1, text: "from the tool", state: "pending" }];
+	const fromHarness = [{ id: 1, text: "from the harness", state: "in progress" }];
+	for (const [branch, expected] of [
+		[[todoResultEntry(fromTool), harness(fromHarness)], "[in progress] #1: from the harness"],
+		[[harness(fromHarness), todoResultEntry(fromTool)], "[pending] #1: from the tool"],
+	]) {
+		const { pi, tools, handlers } = fakePi();
+		registerSessionTodo(pi, () => {}, () => new Map());
+		const { ctx } = fakeCtx({ mode: "tui", branch });
+		await fireEvent(handlers, "session_start", ctx);
+
+		assert.equal((await execute(tools, "list", {}, ctx)).content[0].text, expected);
+	}
 });
 
 test("session_tree rebuilds the list from the tree's branch, like session_start does", async () => {

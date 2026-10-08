@@ -60,10 +60,11 @@ test("each Task state renders its own glyph, keeping the pending box and the don
 		{ id: 4, text: "stuck task", state: "blocked" },
 	];
 	const lines = renderTodoBox(fakeTheme(), tasks, { collapsed: false, showDone: true }, 80, new Map());
-	const glyphs = tasks.map((task) => lines.find((line) => line.includes(task.text)).slice(2, 3));
-	assert.equal(glyphs[0], "□");
-	assert.equal(glyphs[2], "✓");
-	assert.equal(new Set(glyphs).size, 4);
+	const row = (text) => lines.find((line) => line.includes(text));
+	assert.ok(row("pending task").includes("□ pending task"));
+	assert.ok(row("working task").includes("◐ working task"));
+	assert.ok(row("finished task").includes("✓ finished task"));
+	assert.ok(row("stuck task").includes("! stuck task"));
 });
 
 test("hiding done tasks removes only done rows", () => {
@@ -152,7 +153,8 @@ test("an in progress task linked to a working child shows the child's role and s
 		[2, { role: "verify", id: "e5f6a7b8-0000-0000-0000-000000000000" }],
 	]);
 	const lines = renderTodoBox(fakeTheme(), tasks, { collapsed: false, showDone: true }, 80, executors);
-	assert.match(lines[2], /◐ Fix the parser ← worker a1b2 +│$/);
-	assert.doesNotMatch(lines[3], /←/);
-	assert.doesNotMatch(lines[4], /←/);
+	const row = (text) => lines.find((line) => line.includes(text));
+	assert.match(row("Fix the parser"), /◐ Fix the parser ← worker a1b2 +│$/);
+	assert.doesNotMatch(row("Review the parser"), /←/);
+	assert.doesNotMatch(row("Write the notes"), /←/);
 });
