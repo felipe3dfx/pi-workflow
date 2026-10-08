@@ -149,6 +149,7 @@ export interface ChildTrace {
 }
 
 const runningLimit = 5;
+const launchLimit = 10;
 const stallMs = 4 * 60_000;
 const toolStallMs = 30 * 60_000;
 
@@ -409,6 +410,7 @@ export function createChildSessions(options: {
 	let pending: ChildRecord[] = [];
 	const listeners = new Set<() => void>();
 	let generation = 0;
+	let reserved = 0;
 
 	function warn(message: string) {
 		try {
@@ -801,13 +803,27 @@ export function createChildSessions(options: {
 				`Child ${id} is ${child.record.state}; only a completed child can be continued.`,
 			);
 		}
-		const started = await start(
-			{ ...child.plan, task },
-			{ ...launch, background: true },
-			{ id, conversation: child.conversation },
-		);
-		if (started.status === "queued") consume(id);
-		return started;
+		const release = reserve();
+		if (!release) return refuse(launchLimitReason);
+		try {
+			const started = await start(
+				{ ...child.plan, task },
+				{ ...launch, background: true },
+				{ id, conversation: child.conversation },
+			);
+			if (started.status === "queued") consume(id);
+			return started;
+		} finally {
+			release();
+		}
+	}
+
+	function reserve() {
+		if (working() + reserved >= launchLimit) return undefined;
+		reserved += 1;
+		return () => {
+			reserved -= 1;
+		};
 	}
 
 	function reply(id: string, number: number, text: string) {
@@ -933,11 +949,13 @@ export function createChildSessions(options: {
 			} catch {}
 		}
 		changed();
+		return working.length;
 	}
 
 	return {
 		start,
 		resume,
+		reserve,
 		reply,
 		cancel,
 		consume,
@@ -990,6 +1008,8 @@ type Outcome = {
 	warnings?: string[];
 	jev?: ClassifierResult;
 };
+
+const launchLimitReason = `The parent already has ${launchLimit} working children (queued, running, or waiting). Launch more after some of them end.`;
 
 const unseatedMessage = "Child session is not seated. Run /workflow:config.";
 
@@ -1058,6 +1078,7 @@ export function createSpawnChildTool(
 			"Children communicate only with the parent, never directly with the user.",
 			"Do not delegate mutating git or gh commands or publication: they are reserved for the parent and stay with it. Do not ask the child for intermediate progress reports. Copy evidence you already have into the task; references accept only paths inside the cwd. There is no channel to a running child; use reply_child only when the child asks.",
 			"A refusal or a queued id is not a completed result and is not retried. After a background child is queued, end your turn: its result wakes you. Do not poll with sleep, list_children, child_status, or child_result.",
+			`One codemode script can launch several children: each spawn_child call returns at once without awaiting the child. Their results arrive in one message when every child is done, or earlier when a result needs you. In print and json modes each call waits for its child instead. At most ${launchLimit} children can be queued, running, or waiting at once; a launch beyond that is refused.`,
 			"Do not declare work done without a worker Verdict of done and its files_changed, validation, and left_undone fields. Do not declare work verified without a verifier Verdict of pass and its findings and unverified fields; partial, fail, and blocked are not success.",
 			"When Jev routing is on, the parent asks once per user turn before read, grep, find, ls, edit, write, bash, powershell, or codegraph query and explore. A block that names a role means call spawn_child and use that role. A block that says to ask the user one question means ask that one question and wait. Reads of AGENTS.md, GLOSSARY.md, and one docs/agents markdown file stay available, and so does codegraph init.",
 		],
@@ -1072,31 +1093,42 @@ export function createSpawnChildTool(
 					reason: `${ctx.mode} mode runs the child in the foreground and cannot run it in the background.`,
 				});
 			}
-			const userRequest = latestUserRequest(sessionBranch(ctx));
-			const plan = await launcher.prepareLaunch(
-				{
-					role: params.role ?? undefined,
-					task: params.task,
-					worktree: params.worktree,
-					references: params.references,
-					...(userRequest
-						? { userRequest: userRequest.text, userMessageId: userRequest.id }
-						: {}),
-				},
-				ctx,
-			);
-			if (plan.kind !== "ready") return notLaunched("refused", plan);
-			const started = await sessions.start(plan, {
-				background,
-				signal,
-				modelRegistry: ctx.modelRegistry,
-				shell: () => shellOptions(ctx),
-				onLaunch: () => launcher.recordLaunch(userRequest?.id),
-			});
-			return launched(started, plan.warnings, {
-				role: plan.role,
-				...(plan.jev ? { jev: plan.jev } : {}),
-			});
+			const release = background ? sessions.reserve() : () => {};
+			if (!release) {
+				return notLaunched("refused", {
+					warning: "Launch refused. No child was launched.",
+					reason: launchLimitReason,
+				});
+			}
+			try {
+				const userRequest = latestUserRequest(sessionBranch(ctx));
+				const plan = await launcher.prepareLaunch(
+					{
+						role: params.role ?? undefined,
+						task: params.task,
+						worktree: params.worktree,
+						references: params.references,
+						...(userRequest
+							? { userRequest: userRequest.text, userMessageId: userRequest.id }
+							: {}),
+					},
+					ctx,
+				);
+				if (plan.kind !== "ready") return notLaunched("refused", plan);
+				const started = await sessions.start(plan, {
+					background,
+					signal,
+					modelRegistry: ctx.modelRegistry,
+					shell: () => shellOptions(ctx),
+					onLaunch: () => launcher.recordLaunch(userRequest?.id),
+				});
+				return launched(started, plan.warnings, {
+					role: plan.role,
+					...(plan.jev ? { jev: plan.jev } : {}),
+				});
+			} finally {
+				release();
+			}
 		},
 	};
 }
