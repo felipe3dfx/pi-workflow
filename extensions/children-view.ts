@@ -143,6 +143,13 @@ function spent(thread: Thread | undefined) {
 	return { tokens, cost };
 }
 
+function replyKind(child: ChildRecord) {
+	if (child.state === "waiting" && child.question !== undefined)
+		return "answer";
+	if (child.state === "running") return "steer";
+	return undefined;
+}
+
 function usage({ tokens, cost }: { tokens: number; cost: number }) {
 	return [
 		...(tokens > 0 ? [`${count(tokens)} tok`] : []),
@@ -488,10 +495,19 @@ function createChildrenView(
 		notice = result.cancelled ? `${name} cancelled.` : result.message;
 	}
 
+	function spentBy(children: ChildRecord[]) {
+		let tokens = 0;
+		let cost = 0;
+		for (const child of children) {
+			const item = spent(sessions.thread(child.id));
+			tokens += item.tokens;
+			cost += item.cost;
+		}
+		return { tokens, cost };
+	}
+
 	function refusal(child: ChildRecord) {
-		if (child.state === "running") return undefined;
-		if (child.state === "waiting" && child.question !== undefined)
-			return undefined;
+		if (replyKind(child)) return undefined;
 		if (child.state === "queued")
 			return `${childName(child)} is queued; it takes a Steer once it runs.`;
 		return `${childName(child)} is ${child.state}; an ended child takes no Steer or answer.`;
@@ -654,11 +670,7 @@ function createChildrenView(
 		const inputHint: [Hint, Action] = [
 			[
 				"Enter",
-				child?.state === "waiting"
-					? "answer"
-					: child?.state === "running"
-						? "steer"
-						: "input",
+				(child && replyKind(child)) ?? "input",
 			],
 			"type",
 		];
@@ -748,10 +760,7 @@ function createChildrenView(
 				} else {
 					const members = list.filter((item) => item.group === group);
 					const done = members.filter((item) => !isWorking(item.state));
-					const tokens = members.reduce(
-						(sum, item) => sum + spent(sessions.thread(item.id)).tokens,
-						0,
-					);
+					const { tokens } = spentBy(members);
 					lines.push(
 						rule(groupLabel(group), width, false),
 						theme.fg(
@@ -961,9 +970,9 @@ function createChildrenView(
 	function inputLine(child: ChildRecord, width: number) {
 		if (typing) return input.render(width)[0];
 		const hint =
-			child.state === "waiting" && child.question !== undefined
+			replyKind(child) === "answer"
 				? `Enter to answer question ${child.question}`
-				: child.state === "running"
+				: replyKind(child) === "steer"
 					? "Enter to steer"
 					: "";
 		return truncateToWidth(
@@ -1045,15 +1054,7 @@ function createChildrenView(
 					})),
 			};
 			const working = list.filter((item) => isWorking(item.state)).length;
-			const total = list
-				.map((item) => spent(sessions.thread(item.id)))
-				.reduce(
-					(sum, item) => ({
-						tokens: sum.tokens + item.tokens,
-						cost: sum.cost + item.cost,
-					}),
-					{ tokens: 0, cost: 0 },
-				);
+			const total = spentBy(list);
 			const title = [
 				`Fleet ${list.length}`,
 				...(working > 0 ? [`${working} active`] : []),
