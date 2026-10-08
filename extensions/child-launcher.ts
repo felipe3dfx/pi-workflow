@@ -18,6 +18,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import { latestUserRequest } from "./child-sessions.ts";
+import { errorMessage } from "./error-message.ts";
 import { gitEnvironment } from "./git-environment.ts";
 import type { JevRouting } from "./workflow-settings.ts";
 import {
@@ -134,10 +135,6 @@ type Ready = {
 };
 
 type Pair = { model: string; thinking: ModelThinkingLevel };
-
-function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
-}
 
 const warningFor = {
 	stay: "The work stays in this session. No child was launched.",
