@@ -2310,7 +2310,9 @@ test("a child that asks waits for the parent model's reply_child answer, still h
 
 		await assert.rejects(
 			use(extension, "reply_child", { id, question: 1, answer: "x" }),
-			{ message: `Question 1 of child ${id} is not waiting for a reply.` },
+			{
+				message: `Question 1 of child ${id} was already answered by the parent: src/parser.ts`,
+			},
 		);
 		await assert.rejects(
 			use(extension, "reply_child", { id: "nope", question: 1, answer: "x" }),
@@ -2590,7 +2592,9 @@ test("a repeated reply to an answered question never answers the child's next qu
 				question: 1,
 				answer: "Yes, delete it.",
 			}),
-			{ message: `Question 1 of child ${id} is not waiting for a reply.` },
+			{
+				message: `Question 1 of child ${id} was already answered by the parent: Yes, delete it.`,
+			},
 		);
 		assert.equal(await stateOf(extension, id), "waiting");
 		const reply = await use(extension, "reply_child", {
@@ -3871,7 +3875,7 @@ test("Enter opens a live detail that follows the tail, collapses thinking with P
 		assert.match(body, /I should read the doctor module first\./);
 		assert.match(body, /The doctor checks three things\./);
 		assert.match(body, /◆ Run npm test/);
-		assert.match(body, /Esc back {2}\| {2}Ctrl\+J\/K scroll/);
+		assert.match(body, /Esc back {2}\| {2}Enter input {2}\| {2}Ctrl\+J\/K scroll/);
 		assert.match(body, /s\/c cancel {2}\| {2}Ctrl\+T thinking/);
 
 		const renders = view.tui.renders;
@@ -3886,7 +3890,7 @@ test("Enter opens a live detail that follows the tail, collapses thinking with P
 		assert.ok(view.tui.renders > renders);
 		lines = view.lines(60);
 		const threadLines = lines
-			.slice(2, lines.findIndex((line) => /Esc back/.test(line)) - 1)
+			.slice(2, lines.findIndex((line) => /Esc back/.test(line)) - 2)
 			.map((line) => line.slice(2, -1));
 		assert.match(
 			threadLines.findLast((line) => line.trim() !== ""),
@@ -4808,3 +4812,65 @@ for (const [trigger, event] of [
 		});
 	});
 }
+
+test("the first answer wins: an operator answer in the Fleet view resolves the question, and a later reply_child is refused with it", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			schedule: manualClock().schedule,
+		});
+		const id = await spawnBackground(extension, worktree);
+		await settle();
+		const asked = children.created[0].spec.ask("Which file holds the parser?");
+		const view = openChildren(extension);
+
+		view.press("\r", "\r", ..."queso cancel", "\r");
+
+		assert.equal(await asked, "queso cancel");
+		assert.equal(await stateOf(extension, id), "running");
+		assert.equal(view.closed(), false);
+		assert.deepEqual(
+			extension.messages.map((entry) => entry.message.customType),
+			["pi-workflow-child-question"],
+		);
+		await assert.rejects(
+			use(extension, "reply_child", { id, question: 1, answer: "src/a.ts" }),
+			{
+				message: `Question 1 of child ${id} was already answered by the operator: queso cancel`,
+			},
+		);
+		assert.equal(extension.messages.length, 1);
+	});
+});
+
+test("the first answer wins: after the parent's reply_child, an operator answer is refused with its reason", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			schedule: manualClock().schedule,
+		});
+		const id = await spawnBackground(extension, worktree);
+		await settle();
+		const asked = children.created[0].spec.ask("Which file holds the parser?");
+		const view = openChildren(extension);
+		view.press("\r", "\r", ..."src/b.ts");
+
+		await use(extension, "reply_child", { id, question: 1, answer: "src/a.ts" });
+		view.press("\r");
+
+		assert.equal(await asked, "src/a.ts");
+		assert.ok(
+			view
+				.lines(160)
+				.some((line) =>
+					line.includes(
+						`Question 1 of child ${id} was already answered by the parent: src/a.ts`,
+					),
+				),
+		);
+	});
+});

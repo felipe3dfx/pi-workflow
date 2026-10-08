@@ -165,6 +165,18 @@ function fakeSessions(records, threads = {}) {
 			found.text = "The child was cancelled.";
 			return { cancelled: true, message: "" };
 		},
+		replies: [],
+		reply(id, number, text, by) {
+			const found = records.find((item) => item.id === id);
+			if (found.question !== number) {
+				throw new Error(
+					`Question ${number} of child ${id} was already answered by the parent: \x1b[31mred\x1b[39m`,
+				);
+			}
+			this.replies.push({ id, number, text, by });
+			found.state = "running";
+			found.question = undefined;
+		},
 		changed() {
 			for (const listener of listeners) listener();
 		},
@@ -419,8 +431,8 @@ test("Tab moves the focus between panes, Ctrl+J/K and page keys scroll the focus
 	const view = open(sessions, { rows: 20 });
 	assert.match(view.lines(120).join("\n"), /Line 39\./);
 	assert.match(
-		view.lines(120).at(-2),
-		/j\/k move {2}\| {2}Tab focus {2}\| {2}Ctrl\+J\/K scroll {2}\| {2}f follow {2}\| {2}s\/c cancel {2}\| {2}Ctrl\+T thinking/,
+		view.lines(120).at(-3),
+		/j\/k move {2}\| {2}Tab focus {2}\| {2}Enter input {2}\| {2}Ctrl\+J\/K scroll {2}\| {2}f follow {2}\| {2}s\/c cancel {2}\| {2}Ctrl\+T thinking/,
 	);
 	const accent = "\x1b[1m\x1b[36mworker 5636";
 	assert.equal(
@@ -524,7 +536,7 @@ test("a click selects a list row, a double click focuses the detail, the wheel s
 	assert.notEqual(view.lines(120)[2], before);
 
 	lines = view.lines(120);
-	const footer = lines.length - 2;
+	const footer = lines.findIndex((line) => line.includes("f follow"));
 	view.mouse({
 		type: "click",
 		x: lines[footer].indexOf("f follow") + 1,
@@ -683,3 +695,74 @@ test("hostile text in a child's step, task, or model never reaches the terminal 
 		}
 	}
 });
+
+test("the detail's input line answers a waiting child, and its text and refusals stay terminal-safe", () => {
+	const waiting = record("5636", {
+		state: "waiting",
+		question: 2,
+		step: "asks question 2",
+	});
+	const sessions = fakeSessions([waiting]);
+	const view = open(sessions, { rows: 30 });
+
+	const lines = view.lines(120);
+	assert.ok(lines.some((line) => line.includes("❯ Enter to answer question 2")));
+	assert.match(lines.join("\n"), /Enter answer/);
+	view.press("\r", "\x1b[200~qs \x1b[31mc\u202e\x1b[201~", "\x7f", "a");
+	const typed = view.raw(120).join("\n");
+	assert.match(view.lines(120).join("\n"), /Enter send {2}\| {2}Esc stop typing/);
+	assert.equal(typed.includes("\x1b[31mc"), false);
+	assert.equal(typed.includes("\u202e"), false);
+	view.press("\r");
+	assert.deepEqual(sessions.replies, [
+		{ id: waiting.id, number: 2, text: "qs  [31mca", by: "operator" },
+	]);
+	assert.ok(
+		view.lines(120).some((line) => line.includes("Answer sent to worker 5636.")),
+	);
+	assert.equal(view.closed(), false);
+
+	waiting.state = "waiting";
+	waiting.question = 3;
+	view.press("\r", "x");
+	waiting.question = 4;
+	view.press("\r");
+	const refused = view.raw(160).join("\n");
+	assert.equal(refused.includes("\x1b[31mred"), false);
+	assert.match(
+		view.lines(160).join("\n"),
+		/Question 3 of child 5636[-0]+ was already answered by the parent:  \[31mred/,
+	);
+	assert.equal(sessions.replies.length, 1);
+});
+
+test("the detail's input line shows why a queued, running, or ended child takes no answer", () => {
+	for (const state of [
+		"queued",
+		"running",
+		"completed",
+		"failed",
+		"cancelled",
+		"timed out",
+	]) {
+		const sessions = fakeSessions([
+			record("5636", { state, endedAt: isWorkingState(state) ? undefined : now }),
+		]);
+		const view = open(sessions, { rows: 30 });
+		view.lines(120);
+		view.press("\r");
+		assert.ok(
+			view
+				.lines(120)
+				.some((line) =>
+					line.includes(`worker 5636 is ${state}; it has no question to answer.`),
+				),
+			state,
+		);
+		assert.deepEqual(sessions.replies, [], state);
+	}
+});
+
+function isWorkingState(state) {
+	return state === "queued" || state === "running";
+}

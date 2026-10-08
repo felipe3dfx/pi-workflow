@@ -10,6 +10,7 @@ import {
 	type ThemeColor,
 } from "@earendil-works/pi-coding-agent";
 import {
+	Input,
 	Key,
 	Markdown,
 	matchesKey,
@@ -86,7 +87,10 @@ type Action =
 	| "close"
 	| "thinking"
 	| "yes"
-	| "no";
+	| "no"
+	| "type"
+	| "send"
+	| "leave";
 
 function clean(text: string) {
 	return terminalSafeBlock(text).trim();
@@ -377,6 +381,9 @@ function createChildrenView(
 	let listRoom = 1;
 	let follow = true;
 	let promptOpen = false;
+	let typing = false;
+	let answering: number | undefined;
+	const input = new Input({ prompt: "❯ " });
 	let followed: string | undefined;
 	let unfollow: (() => void) | undefined;
 	let tick: (() => void) | undefined;
@@ -428,6 +435,7 @@ function createChildrenView(
 		follow = true;
 		detailTop = 0;
 		promptOpen = false;
+		leave();
 		thread.forget();
 	}
 
@@ -448,6 +456,31 @@ function createChildrenView(
 	function cancel(id: string, name: string) {
 		const result = sessions.cancel(id, true);
 		notice = result.cancelled ? `${name} cancelled.` : result.message;
+	}
+
+	function refusal(child: ChildRecord) {
+		if (child.state === "waiting" && child.question !== undefined)
+			return undefined;
+		return `${childName(child)} is ${child.state}; it has no question to answer.`;
+	}
+
+	function leave() {
+		typing = false;
+		answering = undefined;
+		input.setValue("");
+	}
+
+	function send(child: ChildRecord | undefined) {
+		const text = input.getValue().trim();
+		const number = answering;
+		if (!child || !text || number === undefined) return;
+		leave();
+		try {
+			sessions.reply(child.id, number, text, "operator");
+			notice = `Answer sent to ${childName(child)}.`;
+		} catch (error) {
+			notice = error instanceof Error ? error.message : String(error);
+		}
 	}
 
 	function scrollDetail(delta: number) {
@@ -504,6 +537,19 @@ function createChildrenView(
 			close();
 		} else if (action === "thinking") {
 			thread.toggleThinking();
+		} else if (action === "type" && child) {
+			selected = child.id;
+			focus = "detail";
+			const reason = refusal(child);
+			if (reason) notice = reason;
+			else {
+				typing = true;
+				answering = child.question;
+			}
+		} else if (action === "send") {
+			send(child);
+		} else if (action === "leave") {
+			leave();
 		} else if (action === "cancel" && child) {
 			if (!isWorking(child.state)) {
 				notice = `${name} already ended; it cannot be cancelled.`;
@@ -517,6 +563,11 @@ function createChildrenView(
 	}
 
 	function actionFor(data: string): Action | undefined {
+		if (typing) {
+			if (matchesKey(data, Key.escape)) return "leave";
+			if (matchesKey(data, Key.enter)) return "send";
+			return undefined;
+		}
 		if (confirming) {
 			if (data === "y") return "yes";
 			if (data === "n" || matchesKey(data, Key.escape)) return "no";
@@ -537,7 +588,8 @@ function createChildrenView(
 		if (matchesKey(data, Key.escape)) {
 			return focus === "detail" && !layout.split ? "back" : "close";
 		}
-		if (matchesKey(data, Key.enter)) return "open";
+		if (matchesKey(data, Key.enter))
+			return focus === "detail" || layout.split ? "type" : "open";
 		if (data === "j" || keybindings.matches(data, "tui.select.down")) {
 			return "down";
 		}
@@ -547,7 +599,21 @@ function createChildrenView(
 		return undefined;
 	}
 
-	function footer(split: boolean, detail: boolean, working: boolean) {
+	function footer(
+		split: boolean,
+		detail: boolean,
+		child: ChildRecord | undefined,
+	) {
+		if (typing)
+			return [
+				[["Enter", "send"], "send"],
+				[["Esc", "stop typing"], "leave"],
+			] as [Hint, Action][];
+		const working = child ? isWorking(child.state) : true;
+		const inputHint: [Hint, Action] = [
+			["Enter", child?.state === "waiting" ? "answer" : "input"],
+			"type",
+		];
 		if (confirming)
 			return [
 				[["y", "yes"], "yes"],
@@ -565,6 +631,7 @@ function createChildrenView(
 			return [
 				[["j/k", "move"], "down"],
 				[["Tab", "focus"], "focus"],
+				inputHint,
 				...scroll,
 				...cancelHint,
 				thinking,
@@ -573,6 +640,7 @@ function createChildrenView(
 		if (detail)
 			return [
 				[["Esc", "back"], "back"],
+				inputHint,
 				...scroll,
 				...cancelHint,
 				thinking,
@@ -592,7 +660,7 @@ function createChildrenView(
 		if (pending) {
 			return theme.fg("warning", `Cancel ${childName(pending)}? y/n`);
 		}
-		return theme.fg("dim", notice);
+		return theme.fg("dim", terminalSafeLine(notice));
 	}
 
 	function rule(label: string, width: number, focused: boolean) {
@@ -763,11 +831,32 @@ function createChildrenView(
 	) {
 		const content = sessions.thread(child.id);
 		const top = header(child, content, width, focused).slice(0, rows);
-		detailRoom = Math.max(1, rows - top.length);
+		detailRoom = Math.max(1, rows - top.length - 1);
 		const body = detailBody(child, content, width, focused);
 		detailMax = Math.max(0, body.length - detailRoom);
 		detailTop = follow ? detailMax : Math.min(detailTop, detailMax);
-		return [...top, ...body.slice(detailTop, detailTop + detailRoom)];
+		const shown = body.slice(detailTop, detailTop + detailRoom);
+		const empty = Array.from(
+			{ length: detailRoom - shown.length },
+			() => "",
+		);
+		return [...top, ...shown, ...empty, inputLine(child, width)].slice(
+			0,
+			rows,
+		);
+	}
+
+	function inputLine(child: ChildRecord, width: number) {
+		if (typing) return input.render(width)[0];
+		const hint =
+			child.state === "waiting" && child.question !== undefined
+				? `Enter to answer question ${child.question}`
+				: "";
+		return truncateToWidth(
+			`${theme.fg("accent", "❯ ")}${theme.fg("dim", hint)}`,
+			width,
+			"…",
+		);
 	}
 
 	return {
@@ -786,7 +875,7 @@ function createChildrenView(
 			track(child?.id);
 			const split = inner >= splitWidth && child !== undefined;
 			const detail = child !== undefined && (split || focus === "detail");
-			const keys = footer(split, detail, child ? isWorking(child.state) : true);
+			const keys = footer(split, detail, child);
 			const hints = hintRows(
 				theme,
 				keys.map(([hint]) => hint),
@@ -868,6 +957,12 @@ function createChildrenView(
 		handleInput(data: string) {
 			const action = actionFor(data);
 			if (action) press(action);
+			else if (typing) {
+				input.handleInput(data);
+				const safe = terminalSafeLine(input.getValue());
+				if (safe !== input.getValue()) input.setValue(safe);
+				tui.requestRender();
+			}
 		},
 		handleMouse(event: TuiMouseEvent) {
 			const click = event.type === "click" && event.button === "left";

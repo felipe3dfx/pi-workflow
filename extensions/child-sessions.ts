@@ -116,7 +116,10 @@ export interface ChildRecord {
 	result?: ChildResult;
 	continuedFrom?: string;
 	step?: string;
+	question?: number;
 }
+
+export type Answerer = "parent" | "operator";
 
 interface Child {
 	record: ChildRecord;
@@ -129,6 +132,7 @@ interface Child {
 	tools: Map<string, string>;
 	followers: Set<() => void>;
 	asked: number;
+	answers: Map<number, { by: Answerer; text: string }>;
 	question?: {
 		number: number;
 		resolve(answer: string): void;
@@ -570,6 +574,7 @@ export function createChildSessions(options: {
 		const { question } = child;
 		if (!question) return;
 		child.question = undefined;
+		child.record.question = undefined;
 		if (child.record.state === "waiting") {
 			child.record.state = "running";
 			child.record.step = undefined;
@@ -596,6 +601,7 @@ export function createChildSessions(options: {
 		const number = child.asked;
 		return new Promise<string>((resolve, reject) => {
 			child.question = { number, resolve, reject };
+			child.record.question = number;
 			child.record.state = "waiting";
 			child.record.step = `asks question ${number}`;
 			trace(child);
@@ -764,6 +770,7 @@ export function createChildSessions(options: {
 			tools: new Map(),
 			followers: new Set(),
 			asked: 0,
+			answers: new Map(),
 		};
 		stall = (reason) => finish(child, "timed out", reason);
 		asked = (question) => ask(child, question);
@@ -810,9 +817,15 @@ export function createChildSessions(options: {
 		return started;
 	}
 
-	function reply(id: string, number: number, text: string) {
+	function reply(id: string, number: number, text: string, by: Answerer) {
 		const child = children.get(id);
 		if (!child) throw new Error(`No child ${id} in this session.`);
+		const first = child.answers.get(number);
+		if (first) {
+			throw new Error(
+				`Question ${number} of child ${id} was already answered by the ${first.by}: ${first.text}`,
+			);
+		}
 		if (!isWorking(child.record.state)) {
 			throw new Error(
 				`Child ${id} is ${child.record.state}; question ${number} can no longer be answered.`,
@@ -823,6 +836,7 @@ export function createChildSessions(options: {
 				`Question ${number} of child ${id} is not waiting for a reply.`,
 			);
 		}
+		child.answers.set(number, { by, text });
 		answer(child, text);
 	}
 
@@ -1311,7 +1325,7 @@ export function createChildQueryTools(
 			"Answer the question a child session is waiting on, naming the question number from its message. A reply to a question that is not waiting is refused.",
 		parameters: replyChildParameters,
 		async execute(_toolCallId, params) {
-			sessions.reply(params.id, params.question, params.answer);
+			sessions.reply(params.id, params.question, params.answer, "parent");
 			return report([`Reply sent to child ${params.id}.`], {
 				id: params.id,
 				question: params.question,
