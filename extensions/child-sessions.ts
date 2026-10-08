@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 
 import type {
 	AssistantMessage,
@@ -10,8 +11,13 @@ import type {
 import {
 	type AgentSessionEvent,
 	createAgentSession,
+	createCodemodeExtension,
+	createMcpExtension,
 	DefaultResourceLoader,
+	type ExtensionAPI,
 	type ExtensionContext,
+	type ExtensionFactory,
+	type ExtensionHandler,
 	getAgentDir,
 	type ModelRuntime,
 	type SessionEntry,
@@ -28,6 +34,12 @@ import { answerCard } from "./child-result-card.ts";
 import { hidden, outputText } from "./compact-tools.ts";
 import { type Schedule, scheduleTimer } from "./clock.ts";
 import { seated } from "./shell.ts";
+import { errorMessage } from "./error-message.ts";
+import {
+	explorerWeb,
+	type ParentProject,
+	webAccessTools,
+} from "./web-access.ts";
 import {
 	type ChildResult,
 	childOutcome,
@@ -48,6 +60,7 @@ const packageVersion = (
 
 interface ChildSpec {
 	cwd: string;
+	project: ParentProject;
 	role: string;
 	model: string;
 	thinking: ModelThinkingLevel;
@@ -56,7 +69,8 @@ interface ChildSpec {
 	modelRegistry: ExtensionContext["modelRegistry"];
 	shell: ChildShell;
 	onEvent(event: AgentSessionEvent): void;
-	ask(question: string): Promise<string>;
+	notify(message: string): void;
+	ask(question: string, signal?: AbortSignal): Promise<string>;
 	report(result: ChildResult): void;
 	entries?: SessionEntry[];
 	parentSession?: string;
@@ -74,8 +88,10 @@ interface ChildHandle {
 	thinking: string;
 	tools: string[];
 	run(task: string): Promise<string>;
+	steer(text: string): Promise<void>;
+	clearQueue(): string[];
 	abort(): Promise<void>;
-	dispose(): void;
+	dispose(): Promise<void>;
 }
 
 export type ChildSessionFactory = (spec: ChildSpec) => Promise<ChildHandle>;
@@ -114,8 +130,14 @@ export interface ChildRecord {
 	text?: string;
 	result?: ChildResult;
 	continuedFrom?: string;
+	group?: string;
 	step?: string;
+	question?: number;
+	steering?: string[];
+	undelivered?: string[];
 }
+
+export type Answerer = "parent" | "operator";
 
 interface Child {
 	record: ChildRecord;
@@ -126,8 +148,12 @@ interface Child {
 	entries?: SessionEntry[];
 	streaming?: AssistantMessage;
 	tools: Map<string, string>;
+	writes: Map<string, string>;
+	changed: Set<string>;
 	followers: Set<() => void>;
 	asked: number;
+	answers: Map<number, { by: Answerer; text: string }>;
+	withdrawn: Set<number>;
 	question?: {
 		number: number;
 		resolve(answer: string): void;
@@ -144,10 +170,12 @@ export interface ChildTrace {
 	state: ChildState;
 	verdict?: string;
 	reason?: string;
+	notice?: string;
 	version: string;
 }
 
 const runningLimit = 5;
+const launchLimit = 10;
 const stallMs = 4 * 60_000;
 const toolStallMs = 30 * 60_000;
 
@@ -193,6 +221,17 @@ function describeTool(name: string, args: unknown) {
 	);
 }
 
+function changedPath(worktree: string, path: string) {
+	const file = resolve(worktree, path);
+	const inside = relative(worktree, file);
+	return inside === "" ||
+		inside === ".." ||
+		inside.startsWith(`..${sep}`) ||
+		isAbsolute(inside)
+		? file
+		: inside;
+}
+
 export function isWorking(state: ChildState) {
 	return state === "queued" || state === "running" || state === "waiting";
 }
@@ -217,10 +256,6 @@ export type ChildDetails = ReturnType<typeof childDetails> & {
 	question?: number;
 };
 
-function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
-}
-
 function parentRuntime(
 	registry: ExtensionContext["modelRegistry"],
 ): ModelRuntime | undefined {
@@ -233,12 +268,25 @@ function parentRuntime(
 		: undefined;
 }
 
+function parentProject(ctx: ExtensionContext): ParentProject {
+	return { cwd: ctx.cwd, trusted: ctx.isProjectTrusted() };
+}
+
 const askParentTool = "ask_parent";
 const reportResultTool = "report_result";
+
+const mcpTools = [
+	"mcp__*",
+	"list_mcp_resources",
+	"list_mcp_resource_templates",
+	"read_mcp_resource",
+];
 
 function childTools(plan: Plan) {
 	return [
 		...plan.contract.tools,
+		...mcpTools,
+		...(plan.role === "explore" ? webAccessTools : []),
 		askParentTool,
 		...(reportsResult(plan.role) ? [reportResultTool] : []),
 	];
@@ -249,7 +297,7 @@ const askParentParameters = Type.Object({
 });
 
 export function createAskParentTool(
-	ask: (question: string) => Promise<string>,
+	ask: (question: string, signal?: AbortSignal) => Promise<string>,
 ) {
 	return {
 		name: askParentTool,
@@ -260,31 +308,66 @@ export function createAskParentTool(
 		async execute(
 			_toolCallId: string,
 			params: Static<typeof askParentParameters>,
+			signal?: AbortSignal,
 		) {
 			return {
-				content: [{ type: "text" as const, text: await ask(params.question) }],
+				content: [
+					{ type: "text" as const, text: await ask(params.question, signal) },
+				],
 				details: {},
 			};
 		},
 	};
 }
 
-const createPiChildSession: ChildSessionFactory = async (spec) => {
+function parentMcp(project: ParentProject): ExtensionFactory {
+	const mcp = createMcpExtension();
+	// Pi does not export its MCP config loader, and its default loader reads the session's cwd,
+	// which for a child is the worktree.
+	const atParentProject = (ctx: ExtensionContext): ExtensionContext =>
+		Object.create(ctx, { cwd: { value: project.cwd } });
+	return (pi) =>
+		mcp({
+			...pi,
+			on: (event: string, handler: ExtensionHandler<unknown>) =>
+				pi.on(
+					event as "session_start",
+					event === "session_start"
+						? (payload, ctx) => handler(payload, atParentProject(ctx))
+						: handler,
+				),
+		} as ExtensionAPI);
+}
+
+export const createPiChildSession: ChildSessionFactory = async (spec) => {
 	const runtime = parentRuntime(spec.modelRegistry);
 	if (!runtime) {
 		throw new Error("The session's model runtime is not available.");
 	}
 	const slash = spec.model.indexOf("/");
-	const settingsManager = SettingsManager.inMemory();
+	const settingsManager = SettingsManager.inMemory(
+		{},
+		{ projectTrusted: spec.project.trusted },
+	);
+	const agentDir = getAgentDir();
+	const web =
+		spec.role === "explore"
+			? await explorerWeb(agentDir, spec.project)
+			: { factories: [], problem: undefined };
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: spec.cwd,
-		agentDir: getAgentDir(),
+		agentDir,
 		settingsManager,
 		noExtensions: true,
+		extensionFactories: [
+			createCodemodeExtension({ models: false }),
+			parentMcp(spec.project),
+			...web.factories,
+		],
 		noSkills: true,
 		noPromptTemplates: true,
 		noThemes: true,
-		noContextFiles: true,
+		noContextFiles: spec.role === "explore",
 		systemPromptOverride: () => spec.prompt,
 		appendSystemPromptOverride: () => [],
 	});
@@ -355,6 +438,13 @@ const createPiChildSession: ChildSessionFactory = async (spec) => {
 		thinking: session.thinkingLevel,
 		tools: session.getActiveToolNames(),
 		async run(task) {
+			if (web.problem) spec.notify(web.problem);
+			await session.bindExtensions({
+				uiContext: {
+					...session.extensionRunner.getUIContext(),
+					notify: (message) => spec.notify(message),
+				},
+			});
 			await session.prompt(task);
 			const last = session.messages.at(-1);
 			if (
@@ -367,13 +457,24 @@ const createPiChildSession: ChildSessionFactory = async (spec) => {
 			}
 			return session.getLastAssistantText() ?? "";
 		},
+		async steer(text) {
+			await session.steer(text);
+		},
+		clearQueue: () => session.clearQueue().steering,
 		abort: () => {
 			stopped = true;
 			return session.abort();
 		},
-		dispose: () => {
+		async dispose() {
 			stopped = true;
-			session.dispose();
+			try {
+				const runner = session.extensionRunner;
+				if (runner.hasHandlers("session_shutdown")) {
+					await runner.emit({ type: "session_shutdown", reason: "quit" });
+				}
+			} finally {
+				session.dispose();
+			}
 		},
 	};
 };
@@ -407,11 +508,20 @@ export function createChildSessions(options: {
 	let pending: ChildRecord[] = [];
 	const listeners = new Set<() => void>();
 	let generation = 0;
+	let reserved = 0;
 
 	function warn(message: string) {
 		try {
 			options.report(message);
 		} catch {}
+	}
+
+	function shutDown(handle: ChildHandle, id?: string) {
+		return handle
+			.dispose()
+			.catch((error: unknown) =>
+				warn(id ? `Child ${id}: ${errorMessage(error)}` : errorMessage(error)),
+			);
 	}
 
 	function trace(child: Child) {
@@ -424,6 +534,7 @@ export function createChildSessions(options: {
 		plan: Plan,
 		state: ChildState,
 		result?: ChildResult,
+		notice?: string,
 	) {
 		const completed = state === "completed" ? result : undefined;
 		try {
@@ -436,6 +547,7 @@ export function createChildSessions(options: {
 				state,
 				...(completed ? { verdict: completed.verdict } : {}),
 				...(completed?.reason ? { reason: completed.reason } : {}),
+				...(notice ? { notice } : {}),
 				version: packageVersion,
 			});
 		} catch (error) {
@@ -455,6 +567,10 @@ export function createChildSessions(options: {
 
 	function track(child: Child, event: AgentSessionEvent) {
 		if (children.get(child.record.id) !== child) return;
+		if (event.type === "queue_update" && isWorking(child.record.state)) {
+			child.record.steering = [...event.steering];
+			changed();
+		}
 		if (event.type === "message_start" || event.type === "message_update") {
 			if (event.message.role === "assistant") child.streaming = event.message;
 		} else if (event.type === "message_end") {
@@ -467,8 +583,20 @@ export function createChildSessions(options: {
 				describeTool(event.toolName, event.args),
 			);
 			step = [...child.tools.values()].at(-1);
+			const path = (event.args as { path?: unknown } | undefined)?.path;
+			if (
+				(event.toolName === "edit" || event.toolName === "write") &&
+				typeof path === "string"
+			)
+				child.writes.set(
+					event.toolCallId,
+					changedPath(child.record.worktree, path),
+				);
 		} else if (event.type === "tool_execution_end") {
 			child.tools.delete(event.toolCallId);
+			const path = child.writes.get(event.toolCallId);
+			child.writes.delete(event.toolCallId);
+			if (path !== undefined && !event.isError) child.changed.add(path);
 			step = [...child.tools.values()].at(-1);
 		} else if (event.type === "message_update" && child.tools.size === 0) {
 			const kind = event.assistantMessageEvent.type;
@@ -541,6 +669,13 @@ export function createChildSessions(options: {
 					: `The child ${state}.`,
 			),
 		);
+		record.steering = undefined;
+		try {
+			const undelivered = child.handle.clearQueue();
+			if (undelivered.length > 0) record.undelivered = undelivered;
+		} catch (error) {
+			warn(`Child ${record.id}: ${errorMessage(error)}`);
+		}
 		try {
 			child.entries = child.handle.entries();
 			if (state === "completed") {
@@ -549,10 +684,10 @@ export function createChildSessions(options: {
 					entries: child.entries,
 				};
 			}
-			child.handle.dispose();
 		} catch (error) {
 			warn(`Child ${record.id}: ${errorMessage(error)}`);
 		}
+		void shutDown(child.handle, record.id);
 		pump();
 		changed();
 		if (!deliver || consumed.has(record.id)) return;
@@ -568,6 +703,7 @@ export function createChildSessions(options: {
 		const { question } = child;
 		if (!question) return;
 		child.question = undefined;
+		child.record.question = undefined;
 		if (child.record.state === "waiting") {
 			child.record.state = "running";
 			child.record.step = undefined;
@@ -578,7 +714,10 @@ export function createChildSessions(options: {
 		else question.resolve(reply);
 	}
 
-	function ask(child: Child, question: string) {
+	function ask(child: Child, question: string, signal?: AbortSignal) {
+		if (signal?.aborted) {
+			return Promise.reject(new Error("The call was aborted."));
+		}
 		if (child.question) {
 			return Promise.reject(
 				new Error("A question is already waiting for the parent's reply."),
@@ -593,7 +732,24 @@ export function createChildSessions(options: {
 		child.asked += 1;
 		const number = child.asked;
 		return new Promise<string>((resolve, reject) => {
-			child.question = { number, resolve, reject };
+			const withdraw = () => {
+				if (child.question?.number !== number) return;
+				child.withdrawn.add(number);
+				answer(child, new Error("The call was aborted."));
+			};
+			signal?.addEventListener("abort", withdraw, { once: true });
+			child.question = {
+				number,
+				resolve(reply) {
+					signal?.removeEventListener("abort", withdraw);
+					resolve(reply);
+				},
+				reject(error) {
+					signal?.removeEventListener("abort", withdraw);
+					reject(error);
+				},
+			};
+			child.record.question = number;
 			child.record.state = "waiting";
 			child.record.step = `asks question ${number}`;
 			trace(child);
@@ -627,23 +783,27 @@ export function createChildSessions(options: {
 			background: boolean;
 			signal?: AbortSignal;
 			modelRegistry: ExtensionContext["modelRegistry"];
+			project: () => ParentProject;
 			shell: () => ChildShell;
 			onLaunch?: () => void;
+			group?: string;
 		},
 		from?: { id: string; conversation: Conversation },
 	) {
 		if (launch.signal?.aborted) return abortedBeforeLaunch;
 		let stall = (_reason: string) => {};
-		let asked = (_question: string) =>
+		let asked = (_question: string, _signal?: AbortSignal) =>
 			Promise.reject<string>(new Error("The child is not running."));
 		let observe = (_event: AgentSessionEvent) => {};
 		let reported = (_result: ChildResult) => {};
+		let noticed = (_message: string) => {};
 		const watch = createWatch(schedule, (reason) => stall(reason));
 		const launchedIn = generation;
 		let handle: ChildHandle;
 		try {
 			handle = await create({
 				cwd: plan.worktree,
+				project: launch.project(),
 				role: plan.role,
 				model: plan.model,
 				thinking: plan.thinking,
@@ -655,7 +815,8 @@ export function createChildSessions(options: {
 					watch.event(event);
 					observe(event);
 				},
-				ask: (question) => asked(question),
+				notify: (message) => noticed(message),
+				ask: (question, signal) => asked(question, signal),
 				report: (result) => reported(result),
 				entries: from?.conversation.entries,
 				parentSession: from?.conversation.sessionId,
@@ -668,7 +829,7 @@ export function createChildSessions(options: {
 			};
 		}
 		if (handle.model !== plan.model || handle.thinking !== plan.thinking) {
-			handle.dispose();
+			void shutDown(handle);
 			return {
 				status: "pending" as const,
 				warning: "The work stays pending. No child was launched.",
@@ -679,7 +840,7 @@ export function createChildSessions(options: {
 			(tool) => !handle.tools.includes(tool),
 		);
 		if (missing.length > 0) {
-			handle.dispose();
+			void shutDown(handle);
 			return {
 				status: "refused" as const,
 				warning: "Launch refused. No child was launched.",
@@ -687,11 +848,11 @@ export function createChildSessions(options: {
 			};
 		}
 		if (launch.signal?.aborted) {
-			handle.dispose();
+			void shutDown(handle);
 			return abortedBeforeLaunch;
 		}
 		if (launchedIn !== generation) {
-			handle.dispose();
+			void shutDown(handle);
 			return {
 				status: "refused" as const,
 				warning: "Launch refused. No child was launched.",
@@ -725,6 +886,8 @@ export function createChildSessions(options: {
 			reported = (value) => {
 				result = value;
 			};
+			noticed = (message) =>
+				traceRun(id, plan, "running", undefined, message);
 			watch.start();
 			launch.onLaunch?.();
 			traceRun(id, plan, "running");
@@ -741,7 +904,7 @@ export function createChildSessions(options: {
 			} finally {
 				watch.stop();
 				launch.signal?.removeEventListener("abort", abort);
-				handle.dispose();
+				void shutDown(handle, id);
 			}
 		}
 		const child: Child = {
@@ -755,20 +918,27 @@ export function createChildSessions(options: {
 				state: "queued",
 				createdAt: Date.now(),
 				continuedFrom: from?.id,
+				...(launch.group === undefined ? {} : { group: launch.group }),
 			},
 			plan,
 			handle,
 			watch,
 			tools: new Map(),
+			writes: new Map(),
+			changed: new Set(),
 			followers: new Set(),
 			asked: 0,
+			answers: new Map(),
+			withdrawn: new Set(),
 		};
 		stall = (reason) => finish(child, "timed out", reason);
-		asked = (question) => ask(child, question);
+		asked = (question, signal) => ask(child, question, signal);
 		reported = (result) => {
 			if (isWorking(child.record.state)) child.record.result = result;
 		};
 		observe = (event) => track(child, event);
+		noticed = (message) =>
+			traceRun(child.record.id, plan, child.record.state, undefined, message);
 		children.set(child.record.id, child);
 		queue.push(child);
 		launch.onLaunch?.();
@@ -784,6 +954,7 @@ export function createChildSessions(options: {
 		launch: {
 			signal?: AbortSignal;
 			modelRegistry: ExtensionContext["modelRegistry"];
+			project: () => ParentProject;
 			shell: () => ChildShell;
 		},
 	) {
@@ -799,18 +970,43 @@ export function createChildSessions(options: {
 				`Child ${id} is ${child.record.state}; only a completed child can be continued.`,
 			);
 		}
-		const started = await start(
-			{ ...child.plan, task },
-			{ ...launch, background: true },
-			{ id, conversation: child.conversation },
-		);
-		if (started.status === "queued") consume(id);
-		return started;
+		const release = reserve();
+		if (!release) return refuse(launchLimitReason);
+		try {
+			const started = await start(
+				{ ...child.plan, task },
+				{ ...launch, background: true },
+				{ id, conversation: child.conversation },
+			);
+			if (started.status === "queued") consume(id);
+			return started;
+		} finally {
+			release();
+		}
 	}
 
-	function reply(id: string, number: number, text: string) {
+	function reserve() {
+		if (working() + reserved >= launchLimit) return undefined;
+		reserved += 1;
+		return () => {
+			reserved -= 1;
+		};
+	}
+
+	function reply(id: string, number: number, text: string, by: Answerer) {
 		const child = children.get(id);
 		if (!child) throw new Error(`No child ${id} in this session.`);
+		const first = child.answers.get(number);
+		if (first) {
+			throw new Error(
+				`Question ${number} of child ${id} was already answered by the ${first.by}: ${first.text}`,
+			);
+		}
+		if (child.withdrawn.has(number)) {
+			throw new Error(
+				`Question ${number} of child ${id} was withdrawn: the call that asked it ended.`,
+			);
+		}
 		if (!isWorking(child.record.state)) {
 			throw new Error(
 				`Child ${id} is ${child.record.state}; question ${number} can no longer be answered.`,
@@ -821,7 +1017,22 @@ export function createChildSessions(options: {
 				`Question ${number} of child ${id} is not waiting for a reply.`,
 			);
 		}
+		child.answers.set(number, { by, text });
 		answer(child, text);
+	}
+
+	async function steer(id: string, text: string) {
+		const child = children.get(id);
+		if (!child) throw new Error(`No child ${id} in this session.`);
+		if (child.record.state !== "running") {
+			throw new Error(
+				`Child ${id} is ${child.record.state}; only a running child can be steered.`,
+			);
+		}
+		if (text.trim().startsWith("/")) {
+			throw new Error("A Steer cannot begin with /.");
+		}
+		await child.handle.steer(text);
 	}
 
 	function cancel(id: string, deliver: boolean) {
@@ -881,6 +1092,10 @@ export function createChildSessions(options: {
 		return [...children.values()].map((child) => ({ ...child.record }));
 	}
 
+	function changedFiles(id: string) {
+		return [...(children.get(id)?.changed ?? [])];
+	}
+
 	function working() {
 		return [...children.values()].filter((child) =>
 			isWorking(child.record.state),
@@ -915,7 +1130,7 @@ export function createChildSessions(options: {
 		return { entries: child.handle.entries(), streaming: child.streaming };
 	}
 
-	function disposeAll() {
+	async function disposeAll() {
 		generation += 1;
 		const working = [...children.values()].filter((child) =>
 			isWorking(child.record.state),
@@ -926,22 +1141,26 @@ export function createChildSessions(options: {
 		for (const child of working) {
 			child.watch.stop();
 			answer(child, new Error("The session ended."));
-			try {
-				child.handle.dispose();
-			} catch {}
 		}
 		changed();
+		await Promise.all(
+			working.map((child) => shutDown(child.handle, child.record.id)),
+		);
+		return working.length;
 	}
 
 	return {
 		start,
 		resume,
+		reserve,
 		reply,
+		steer,
 		cancel,
 		consume,
 		atBoundary,
 		get,
 		list,
+		changedFiles,
 		working,
 		waiting,
 		subscribe,
@@ -988,6 +1207,8 @@ type Outcome = {
 	warnings?: string[];
 	jev?: ClassifierResult;
 };
+
+const launchLimitReason = `The parent already has ${launchLimit} working children (queued, running, or waiting). Launch more after some of them end.`;
 
 const unseatedMessage = "Child session is not seated. Run /workflow:config.";
 
@@ -1056,11 +1277,12 @@ export function createSpawnChildTool(
 			"Children communicate only with the parent, never directly with the user.",
 			"Do not delegate mutating git or gh commands or publication: they are reserved for the parent and stay with it. Do not ask the child for intermediate progress reports. Copy evidence you already have into the task; references accept only paths inside the cwd. There is no channel to a running child; use reply_child only when the child asks.",
 			"A refusal or a queued id is not a completed result and is not retried. After a background child is queued, end your turn: its result wakes you. Do not poll with sleep, list_children, child_status, or child_result.",
+			`One codemode script can launch several children: each spawn_child call returns at once without awaiting the child. Their results arrive in one message when every child is done, or earlier when a result needs you. In print and json modes each call waits for its child instead. At most ${launchLimit} children can be queued, running, or waiting at once; a launch beyond that is refused.`,
 			"Do not declare work done without a worker Verdict of done and its files_changed, validation, and left_undone fields. Do not declare work verified without a verifier Verdict of pass and its findings and unverified fields; partial, fail, and blocked are not success.",
 			"When Jev routing is on, the parent asks once per user turn before read, grep, find, ls, edit, write, bash, powershell, or codegraph query and explore. A block that names a role means call spawn_child and use that role. A block that says to ask the user one question means ask that one question and wait. Reads of AGENTS.md, GLOSSARY.md, and one docs/agents markdown file stay available, and so does codegraph init.",
 		],
 		parameters: spawnChildParameters,
-		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+		async execute(toolCallId, params, signal, _onUpdate, ctx) {
 			const unseated = unseatedChild();
 			if (unseated) return unseated;
 			const background = ctx.mode === "tui" || ctx.mode === "rpc";
@@ -1070,31 +1292,44 @@ export function createSpawnChildTool(
 					reason: `${ctx.mode} mode runs the child in the foreground and cannot run it in the background.`,
 				});
 			}
-			const userRequest = latestUserRequest(sessionBranch(ctx));
-			const plan = await launcher.prepareLaunch(
-				{
-					role: params.role ?? undefined,
-					task: params.task,
-					worktree: params.worktree,
-					references: params.references,
-					...(userRequest
-						? { userRequest: userRequest.text, userMessageId: userRequest.id }
-						: {}),
-				},
-				ctx,
-			);
-			if (plan.kind !== "ready") return notLaunched("refused", plan);
-			const started = await sessions.start(plan, {
-				background,
-				signal,
-				modelRegistry: ctx.modelRegistry,
-				shell: () => shellOptions(ctx),
-				onLaunch: () => launcher.recordLaunch(userRequest?.id),
-			});
-			return launched(started, plan.warnings, {
-				role: plan.role,
-				...(plan.jev ? { jev: plan.jev } : {}),
-			});
+			const release = background ? sessions.reserve() : () => {};
+			if (!release) {
+				return notLaunched("refused", {
+					warning: "Launch refused. No child was launched.",
+					reason: launchLimitReason,
+				});
+			}
+			try {
+				const userRequest = latestUserRequest(sessionBranch(ctx));
+				const plan = await launcher.prepareLaunch(
+					{
+						role: params.role ?? undefined,
+						task: params.task,
+						worktree: params.worktree,
+						references: params.references,
+						...(userRequest
+							? { userRequest: userRequest.text, userMessageId: userRequest.id }
+							: {}),
+					},
+					ctx,
+				);
+				if (plan.kind !== "ready") return notLaunched("refused", plan);
+				const started = await sessions.start(plan, {
+					background,
+					signal,
+					modelRegistry: ctx.modelRegistry,
+					project: () => parentProject(ctx),
+					shell: () => shellOptions(ctx),
+					onLaunch: () => launcher.recordLaunch(userRequest?.id),
+					group: /^([\s\S]+)\/\d+$/.exec(toolCallId)?.[1],
+				});
+				return launched(started, plan.warnings, {
+					role: plan.role,
+					...(plan.jev ? { jev: plan.jev } : {}),
+				});
+			} finally {
+				release();
+			}
 		},
 	};
 }
@@ -1175,6 +1410,7 @@ export function createContinueChildTool(
 				await sessions.resume(params.id, params.task, {
 					signal,
 					modelRegistry: ctx.modelRegistry,
+					project: () => parentProject(ctx),
 					shell: () => shellOptions(ctx),
 				}),
 				[],
@@ -1309,7 +1545,7 @@ export function createChildQueryTools(
 			"Answer the question a child session is waiting on, naming the question number from its message. A reply to a question that is not waiting is refused.",
 		parameters: replyChildParameters,
 		async execute(_toolCallId, params) {
-			sessions.reply(params.id, params.question, params.answer);
+			sessions.reply(params.id, params.question, params.answer, "parent");
 			return report([`Reply sent to child ${params.id}.`], {
 				id: params.id,
 				question: params.question,

@@ -18,6 +18,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import { latestUserRequest } from "./child-sessions.ts";
+import { errorMessage } from "./error-message.ts";
 import { gitEnvironment } from "./git-environment.ts";
 import type { JevRouting } from "./workflow-settings.ts";
 import {
@@ -103,6 +104,15 @@ type Assessment =
 	| { kind: "launch"; role: Role; jev?: ClassifierResult }
 	| { kind: "stay" | "decide" | "blocked"; reason: string; jev?: ClassifierResult };
 
+type JevAnswer =
+	| { kind: "blocked"; reason: string; jev?: ClassifierResult }
+	| {
+			kind: "answer";
+			destination: "stay" | "decide" | "leave";
+			role: Role;
+			jev: ClassifierResult;
+	  };
+
 type Outcome = {
 	kind: "stay" | "decide" | "blocked" | "refused";
 	warning: string;
@@ -125,10 +135,6 @@ type Ready = {
 };
 
 type Pair = { model: string; thinking: ModelThinkingLevel };
-
-function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
-}
 
 const warningFor = {
 	stay: "The work stays in this session. No child was launched.",
@@ -333,16 +339,10 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		}
 	}
 
-	async function judge(
+	async function ask(
 		request: LaunchRequest,
 		ctx: LauncherContext,
-	): Promise<Assessment> {
-		if (!options.jevRouting.enabled()) {
-			if (request.role !== undefined && isRole(request.role)) {
-				return { kind: "launch", role: request.role };
-			}
-			return { kind: "stay", reason: "Jev routing is off." };
-		}
+	): Promise<JevAnswer> {
 		const suggested =
 			request.role !== undefined && isRole(request.role)
 				? specialistByRole[request.role]
@@ -409,17 +409,38 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		) {
 			return { kind: "blocked", reason: "Jev returned an invalid selection.", jev };
 		}
-		if (choiceIn(destination, ["decide"] as const)) {
+		return {
+			kind: "answer",
+			destination: destination.choice,
+			role: roleBySpecialist[specialist.choice],
+			jev,
+		};
+	}
+
+	async function judge(
+		request: LaunchRequest,
+		ctx: LauncherContext,
+	): Promise<Assessment> {
+		if (!options.jevRouting.enabled()) {
+			if (request.role !== undefined && isRole(request.role)) {
+				return { kind: "launch", role: request.role };
+			}
+			return { kind: "stay", reason: "Jev routing is off." };
+		}
+		const answer = await ask(request, ctx);
+		if (answer.kind === "blocked") return answer;
+		const { jev } = answer;
+		if (answer.destination === "decide") {
 			return {
 				kind: "decide",
 				reason: "Jev answered that a decision is still open.",
 				jev,
 			};
 		}
-		if (choiceIn(destination, ["stay"] as const)) {
+		if (answer.destination === "stay") {
 			return { kind: "stay", reason: "Jev answered that the work stays.", jev };
 		}
-		return { kind: "launch", role: roleBySpecialist[specialist.choice], jev };
+		return { kind: "launch", role: answer.role, jev };
 	}
 
 	let turn:
@@ -446,6 +467,25 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		});
 		if (!bypass && userMessageId) turn = { userMessageId, pending };
 		return pending;
+	}
+
+	async function launchVerdict(
+		request: LaunchRequest,
+		ctx: LauncherContext,
+	): Promise<Assessment> {
+		const userMessageId = request.userMessageId;
+		if (!options.jevRouting.enabled() || !userMessageId) {
+			return verdictFor(request, ctx);
+		}
+		for (;;) {
+			if (turn?.userMessageId !== userMessageId) return verdictFor(request, ctx);
+			const decided = await turn.pending;
+			if (decided.kind === "blocked") continue;
+			if (decided.kind !== "launch") return decided;
+			const answer = await ask(request, ctx);
+			if (answer.kind === "blocked") return answer;
+			return { kind: "launch", role: answer.role, jev: answer.jev };
+		}
 	}
 
 	async function gateToolCall(
@@ -504,7 +544,7 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		}
 		const worktree = await gitRoot(resolve(ctx.cwd, request.worktree ?? "."));
 		if (typeof worktree !== "string") return worktree;
-		const verdict = await verdictFor(request, ctx);
+		const verdict = await launchVerdict(request, ctx);
 		if (verdict.kind !== "launch") return show(verdict);
 		const contract = readContract(verdict.role);
 		const jev = verdict.jev ? { jev: verdict.jev } : {};
@@ -555,10 +595,15 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			}
 			if (gateInstalled) return;
 			gateInstalled = true;
+			let gateMessageSent = false;
+			pi.on("turn_start", () => {
+				gateMessageSent = false;
+			});
 			pi.on("tool_call", async (event, toolCtx) => {
 				const gate = await gateToolCall(event, toolCtx);
 				if (gate.allow) return;
-				if (event.parentToolCallId) {
+				if (event.parentToolCallId && !gateMessageSent) {
+					gateMessageSent = true;
 					pi.sendMessage(
 						{
 							customType: "pi-workflow-gate-block",

@@ -470,3 +470,27 @@ test("manualMcpConfigurationInstructions omits the conflict warning when there a
 		assert.doesNotMatch(instructions, /Set only the differing keys below/);
 	});
 });
+
+test("every shipped catalog server has a description, and Configure's plan adds it to a user server without one", async () => {
+	const { catalog: shipped } = loadMcpServerCatalog();
+	for (const [name, definition] of Object.entries(shipped.mcpServers)) {
+		assert.equal(typeof definition.description, "string", name);
+		assert.ok(definition.description.trim(), name);
+	}
+	await withAgentDirectory(async ({ agentDirectory }) => {
+		const { description: _description, ...undescribed } =
+			shipped.mcpServers.context7;
+		await writeFile(
+			join(agentDirectory, "mcp.json"),
+			`${JSON.stringify({ mcpServers: { ...shipped.mcpServers, context7: undescribed } }, null, 2)}\n`,
+			"utf8",
+		);
+
+		const plan = planMcpConfiguration(shipped, agentDirectory);
+
+		assert.deepEqual(
+			plan.replacements.map(({ name, keys }) => ({ name, keys })),
+			[{ name: "context7", keys: ["description"] }],
+		);
+	});
+});

@@ -10,6 +10,7 @@ import {
 	type ThemeColor,
 } from "@earendil-works/pi-coding-agent";
 import {
+	Input,
 	Key,
 	Markdown,
 	matchesKey,
@@ -25,11 +26,13 @@ import {
 	type createChildSessions,
 	isWorking,
 } from "./child-sessions.ts";
+import { errorMessage } from "./error-message.ts";
 import {
 	childElapsed,
 	childModelLine,
 	childName,
 	childStep,
+	lastReportedResult,
 } from "./child-projection.ts";
 import { type Schedule, scheduleTimer } from "./clock.ts";
 import { seated } from "./shell.ts";
@@ -86,7 +89,10 @@ type Action =
 	| "close"
 	| "thinking"
 	| "yes"
-	| "no";
+	| "no"
+	| "type"
+	| "send"
+	| "leave";
 
 function clean(text: string) {
 	return terminalSafeBlock(text).trim();
@@ -106,6 +112,15 @@ function wrap(text: string, width: number) {
 		.flatMap((line) => wrapTextWithAnsi(line, Math.max(1, width)));
 }
 
+function steerMarks(child: ChildRecord) {
+	const mark = (count: number, state: string) =>
+		count === 0 ? [] : [`${count} ${count === 1 ? "steer" : "steers"} ${state}`];
+	return [
+		...mark(child.steering?.length ?? 0, "pending"),
+		...mark(child.undelivered?.length ?? 0, "undelivered"),
+	];
+}
+
 function seconds(ms: number) {
 	return `${(Math.max(0, ms) / 1000).toFixed(1)}s`;
 }
@@ -116,19 +131,57 @@ function count(tokens: number) {
 	return `${(tokens / 1_000_000).toFixed(1)}M`;
 }
 
-function usage(thread: Thread | undefined) {
+function spent(thread: Thread | undefined) {
 	let tokens = 0;
 	let cost = 0;
 	for (const entry of thread?.entries ?? []) {
-		if (entry.type !== "message" || entry.message.role !== "assistant")
-			continue;
-		tokens += entry.message.usage?.totalTokens ?? 0;
-		cost += entry.message.usage?.cost?.total ?? 0;
+		if (entry.type !== "message") continue;
+		const { message } = entry;
+		if (message.role !== "assistant" && message.role !== "toolResult") continue;
+		tokens += message.usage?.totalTokens ?? 0;
+		cost += message.usage?.cost?.total ?? 0;
 	}
+	return { tokens, cost };
+}
+
+function replyKind(child: ChildRecord) {
+	if (child.state === "waiting" && child.question !== undefined)
+		return "answer";
+	if (child.state === "running") return "steer";
+	return undefined;
+}
+
+function usage({ tokens, cost }: { tokens: number; cost: number }) {
 	return [
 		...(tokens > 0 ? [`${count(tokens)} tok`] : []),
 		...(cost > 0 ? [`$${cost.toFixed(2)}`] : []),
 	];
+}
+
+function runTime(child: ChildRecord, now: number) {
+	return child.state === "queued" ? "queued" : childElapsed(child, now);
+}
+
+function runState(child: ChildRecord, now: number) {
+	const time = runTime(child, now);
+	return child.state === "queued" ? time : `${child.state} · ${time}`;
+}
+
+function fleetOrder(records: ChildRecord[]) {
+	const groups = new Set(records.flatMap((child) => child.group ?? []));
+	const sorted = [...records].sort(byState);
+	const direct = sorted.filter((child) => child.group === undefined);
+	return [
+		...direct.filter((child) => isWorking(child.state)),
+		...[...groups].flatMap((group) =>
+			sorted.filter((child) => child.group === group),
+		),
+		...direct.filter((child) => !isWorking(child.state)),
+	];
+}
+
+function groupLabel(group: string) {
+	return `script ${[...terminalSafeLine(group)].slice(-4).join("")}`;
 }
 
 function pad(line: string, width: number) {
@@ -366,6 +419,9 @@ function createChildrenView(
 	let listRoom = 1;
 	let follow = true;
 	let promptOpen = false;
+	let typing = false;
+	let answering: number | undefined;
+	const input = new Input({ prompt: "❯ " });
 	let followed: string | undefined;
 	let unfollow: (() => void) | undefined;
 	let tick: (() => void) | undefined;
@@ -402,7 +458,7 @@ function createChildrenView(
 	}
 
 	function children() {
-		const list = sessions.list().sort(byState);
+		const list = fleetOrder(sessions.list());
 		const found = list.findIndex((child) => child.id === selected);
 		if (found === -1 && focus === "detail" && !layout.split) focus = "list";
 		const index = Math.max(0, found);
@@ -417,6 +473,7 @@ function createChildrenView(
 		follow = true;
 		detailTop = 0;
 		promptOpen = false;
+		leave();
 		thread.forget();
 	}
 
@@ -437,6 +494,51 @@ function createChildrenView(
 	function cancel(id: string, name: string) {
 		const result = sessions.cancel(id, true);
 		notice = result.cancelled ? `${name} cancelled.` : result.message;
+	}
+
+	function spentBy(children: ChildRecord[]) {
+		let tokens = 0;
+		let cost = 0;
+		for (const child of children) {
+			const item = spent(sessions.thread(child.id));
+			tokens += item.tokens;
+			cost += item.cost;
+		}
+		return { tokens, cost };
+	}
+
+	function refusal(child: ChildRecord) {
+		if (replyKind(child)) return undefined;
+		if (child.state === "queued")
+			return `${childName(child)} is queued; it takes a Steer once it runs.`;
+		return `${childName(child)} is ${child.state}; an ended child takes no Steer or answer.`;
+	}
+
+	function leave() {
+		typing = false;
+		answering = undefined;
+		input.setValue("");
+	}
+
+	function send(child: ChildRecord | undefined) {
+		const text = input.getValue().trim();
+		const number = answering;
+		if (!child || !text) return;
+		leave();
+		if (number === undefined) {
+			notice = `Steer sent to ${childName(child)}.`;
+			sessions.steer(child.id, text).catch((error: unknown) => {
+				notice = errorMessage(error);
+				tui.requestRender();
+			});
+			return;
+		}
+		try {
+			sessions.reply(child.id, number, text, "operator");
+			notice = `Answer sent to ${childName(child)}.`;
+		} catch (error) {
+			notice = errorMessage(error);
+		}
 	}
 
 	function scrollDetail(delta: number) {
@@ -493,6 +595,19 @@ function createChildrenView(
 			close();
 		} else if (action === "thinking") {
 			thread.toggleThinking();
+		} else if (action === "type" && child) {
+			selected = child.id;
+			focus = "detail";
+			const reason = refusal(child);
+			if (reason) notice = reason;
+			else {
+				typing = true;
+				answering = child.question;
+			}
+		} else if (action === "send") {
+			send(child);
+		} else if (action === "leave") {
+			leave();
 		} else if (action === "cancel" && child) {
 			if (!isWorking(child.state)) {
 				notice = `${name} already ended; it cannot be cancelled.`;
@@ -506,6 +621,11 @@ function createChildrenView(
 	}
 
 	function actionFor(data: string): Action | undefined {
+		if (typing) {
+			if (matchesKey(data, Key.escape)) return "leave";
+			if (matchesKey(data, Key.enter)) return "send";
+			return undefined;
+		}
 		if (confirming) {
 			if (data === "y") return "yes";
 			if (data === "n" || matchesKey(data, Key.escape)) return "no";
@@ -526,7 +646,8 @@ function createChildrenView(
 		if (matchesKey(data, Key.escape)) {
 			return focus === "detail" && !layout.split ? "back" : "close";
 		}
-		if (matchesKey(data, Key.enter)) return "open";
+		if (matchesKey(data, Key.enter))
+			return focus === "detail" || layout.split ? "type" : "open";
 		if (data === "j" || keybindings.matches(data, "tui.select.down")) {
 			return "down";
 		}
@@ -536,7 +657,24 @@ function createChildrenView(
 		return undefined;
 	}
 
-	function footer(split: boolean, detail: boolean, working: boolean) {
+	function footer(
+		split: boolean,
+		detail: boolean,
+		child: ChildRecord | undefined,
+	) {
+		if (typing)
+			return [
+				[["Enter", "send"], "send"],
+				[["Esc", "stop typing"], "leave"],
+			] as [Hint, Action][];
+		const working = child ? isWorking(child.state) : true;
+		const inputHint: [Hint, Action] = [
+			[
+				"Enter",
+				(child && replyKind(child)) ?? "input",
+			],
+			"type",
+		];
 		if (confirming)
 			return [
 				[["y", "yes"], "yes"],
@@ -554,6 +692,7 @@ function createChildrenView(
 			return [
 				[["j/k", "move"], "down"],
 				[["Tab", "focus"], "focus"],
+				inputHint,
 				...scroll,
 				...cancelHint,
 				thinking,
@@ -562,6 +701,7 @@ function createChildrenView(
 		if (detail)
 			return [
 				[["Esc", "back"], "back"],
+				inputHint,
 				...scroll,
 				...cancelHint,
 				thinking,
@@ -581,7 +721,7 @@ function createChildrenView(
 		if (pending) {
 			return theme.fg("warning", `Cancel ${childName(pending)}? y/n`);
 		}
-		return theme.fg("dim", notice);
+		return theme.fg("dim", terminalSafeLine(notice));
 	}
 
 	function rule(label: string, width: number, focused: boolean) {
@@ -604,13 +744,37 @@ function createChildrenView(
 		const two = rows >= twoLineRows;
 		const lines: string[] = [];
 		const ids: (string | undefined)[] = [];
-		let section = "";
+		let section: string | undefined;
 		list.forEach((child, i) => {
-			const name = isWorking(child.state) ? "Active" : "Finished";
+			const { group } = child;
+			const name =
+				group === undefined
+					? isWorking(child.state)
+						? "Active"
+						: "Finished"
+					: `group ${group}`;
 			if (name !== section) {
 				section = name;
-				lines.push(rule(name, width, false));
-				ids.push(undefined);
+				if (group === undefined) {
+					lines.push(rule(name, width, false));
+					ids.push(undefined);
+				} else {
+					const members = list.filter((item) => item.group === group);
+					const done = members.filter((item) => !isWorking(item.state));
+					const { tokens } = spentBy(members);
+					lines.push(
+						rule(groupLabel(group), width, false),
+						theme.fg(
+							"dim",
+							spread(
+								`${members.length} launched · ${done.length} done`,
+								`${count(tokens)} tok`,
+								width,
+							),
+						),
+					);
+					ids.push(undefined, undefined);
+				}
 			}
 			const active = i === index;
 			const mark = active
@@ -621,16 +785,34 @@ function createChildrenView(
 			const step = terminalSafeLine(childStep(child));
 			const color = child.state === "waiting" ? "warning" : "dim";
 			const head = `${mark}${childGlyph(theme, child)} ${theme.fg("accent", child.role)} ${theme.fg("dim", child.id.slice(0, 4))}`;
-			const right = theme.fg(
-				"dim",
-				child.state === "queued" ? "queued" : childElapsed(child, now),
-			);
+			const state = runState(child, now);
+			const spend = usage(spent(sessions.thread(child.id)));
+			const marks = steerMarks(child);
+			const right = (rest: string[]) =>
+				[
+					...(marks.length > 0 ? [theme.fg("warning", marks.join(" · "))] : []),
+					...(rest.length > 0 ? [theme.fg("dim", rest.join(" · "))] : []),
+				].join(theme.fg("dim", " · "));
+			const tail =
+				[[state, ...spend], [state], [runTime(child, now)]]
+					.map(right)
+					.find((text) => visibleWidth(head) + 1 + visibleWidth(text) <= width) ??
+				right([runTime(child, now)]);
+			const room = width - visibleWidth(head) - visibleWidth(tail) - 2;
 			const shown = two
 				? [
-						spread(head, right, width),
-						`    ${theme.fg(color, truncateToWidth(step, Math.max(0, width - 4), "…"))}`,
+						spread(head, theme.fg("dim", state), width),
+						spread(`    ${theme.fg(color, step)}`, right(spend), width),
 					]
-				: [spread(`${head} ${theme.fg(color, step)}`, right, width)];
+				: [
+						spread(
+							room > 1
+								? `${head} ${theme.fg(color, truncateToWidth(step, room, "…"))}`
+								: head,
+							tail,
+							width,
+						),
+					];
 			for (const line of shown) {
 				lines.push(active ? selectedRow(theme, line, width) : line);
 				ids.push(child.id);
@@ -642,7 +824,8 @@ function createChildrenView(
 		}
 		const at = ids.indexOf(list[index]?.id);
 		if (!listFree && at >= 0) {
-			const start = at > 0 && ids[at - 1] === undefined ? at - 1 : at;
+			let start = at;
+			while (start > 0 && ids[start - 1] === undefined) start -= 1;
 			const end = at + (two ? 2 : 1);
 			if (start < listTop) listTop = start;
 			if (end > listTop + rows) listTop = end - rows;
@@ -660,13 +843,10 @@ function createChildrenView(
 		width: number,
 		focused: boolean,
 	) {
-		const state =
-			child.state === "queued"
-				? "queued"
-				: `${child.state} · ${childElapsed(child, Date.now())}`;
+		const state = runState(child, Date.now());
 		const meta = [
 			childModelLine(child),
-			...usage(content),
+			...usage(spent(content)),
 			`wt: ${basename(child.worktree)}`,
 		].join(" · ");
 		return [
@@ -717,6 +897,31 @@ function createChildrenView(
 				? threadLines
 				: [theme.fg("dim", "Waiting for the first event…")]),
 		);
+		const files = sessions.changedFiles(child.id);
+		if (files.length > 0) {
+			lines.push("", rule("Changed files", width, focused));
+			for (const file of files) {
+				lines.push(
+					theme.fg("text", truncateToWidth(terminalSafeLine(file), width, "…")),
+				);
+			}
+		}
+		const steers = [
+			...(child.steering ?? []).map((text) => ["pending", text]),
+			...(child.undelivered ?? []).map((text) => ["undelivered", text]),
+		];
+		if (steers.length > 0) {
+			lines.push("", rule("Steers", width, focused));
+			for (const [state, text] of steers) {
+				lines.push(
+					truncateToWidth(
+						`${theme.fg("warning", state)} ${theme.fg("text", terminalSafeLine(text))}`,
+						width,
+						"…",
+					),
+				);
+			}
+		}
 		if (!isWorking(child.state)) {
 			const text = clean(child.text ?? "");
 			lines.push("", rule("Result", width, focused));
@@ -727,6 +932,14 @@ function createChildrenView(
 			} else {
 				const color = child.state === "cancelled" ? "muted" : "error";
 				lines.push(...wrap(text, width).map((line) => theme.fg(color, line)));
+				if (child.state === "timed out" && child.result) {
+					lines.push(
+						"",
+						...wrap(clean(lastReportedResult(child.result)), width).map(
+							(line) => theme.fg("text", line),
+						),
+					);
+				}
 			}
 		}
 		return lines;
@@ -740,11 +953,34 @@ function createChildrenView(
 	) {
 		const content = sessions.thread(child.id);
 		const top = header(child, content, width, focused).slice(0, rows);
-		detailRoom = Math.max(1, rows - top.length);
+		detailRoom = Math.max(1, rows - top.length - 1);
 		const body = detailBody(child, content, width, focused);
 		detailMax = Math.max(0, body.length - detailRoom);
 		detailTop = follow ? detailMax : Math.min(detailTop, detailMax);
-		return [...top, ...body.slice(detailTop, detailTop + detailRoom)];
+		const shown = body.slice(detailTop, detailTop + detailRoom);
+		const empty = Array.from(
+			{ length: detailRoom - shown.length },
+			() => "",
+		);
+		return [...top, ...shown, ...empty, inputLine(child, width)].slice(
+			0,
+			rows,
+		);
+	}
+
+	function inputLine(child: ChildRecord, width: number) {
+		if (typing) return input.render(width)[0];
+		const hint =
+			replyKind(child) === "answer"
+				? `Enter to answer question ${child.question}`
+				: replyKind(child) === "steer"
+					? "Enter to steer"
+					: "";
+		return truncateToWidth(
+			`${theme.fg("accent", "❯ ")}${theme.fg("dim", hint)}`,
+			width,
+			"…",
+		);
 	}
 
 	return {
@@ -763,7 +999,7 @@ function createChildrenView(
 			track(child?.id);
 			const split = inner >= splitWidth && child !== undefined;
 			const detail = child !== undefined && (split || focus === "detail");
-			const keys = footer(split, detail, child ? isWorking(child.state) : true);
+			const keys = footer(split, detail, child);
 			const hints = hintRows(
 				theme,
 				keys.map(([hint]) => hint),
@@ -819,7 +1055,12 @@ function createChildrenView(
 					})),
 			};
 			const working = list.filter((item) => isWorking(item.state)).length;
-			const title = `Subagents ${list.length}${working > 0 ? ` · ${working} active` : ""}`;
+			const total = spentBy(list);
+			const title = [
+				`Fleet ${list.length}`,
+				...(working > 0 ? [`${working} active`] : []),
+				...usage(total),
+			].join(" · ");
 			const margin = " ".repeat(edge);
 			return modalFrame(
 				theme,
@@ -832,6 +1073,12 @@ function createChildrenView(
 		handleInput(data: string) {
 			const action = actionFor(data);
 			if (action) press(action);
+			else if (typing) {
+				input.handleInput(data);
+				const safe = terminalSafeLine(input.getValue());
+				if (safe !== input.getValue()) input.setValue(safe);
+				tui.requestRender();
+			}
 		},
 		handleMouse(event: TuiMouseEvent) {
 			const click = event.type === "click" && event.button === "left";
@@ -882,6 +1129,7 @@ function createChildrenView(
 			}
 			const id = layout.ids.get(event.y);
 			if (!id || !sessions.get(id)) return undefined;
+			if (id !== selected) leave();
 			selected = id;
 			listFree = false;
 			focus = (event.clickCount ?? 1) >= 2 ? "detail" : "list";

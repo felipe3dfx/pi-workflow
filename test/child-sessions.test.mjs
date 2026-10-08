@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import {
 	mkdir,
 	mkdtemp,
@@ -23,9 +24,15 @@ import {
 	fauxToolCall,
 } from "@earendil-works/pi-ai";
 import {
+	createAgentSession,
+	DefaultPackageManager,
+	DefaultResourceLoader,
+	getAgentDir,
 	initTheme,
 	ModelRegistry,
 	ModelRuntime,
+	SessionManager,
+	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import {
 	KeybindingsManager,
@@ -39,7 +46,16 @@ import { compactToolRenderers } from "../extensions/compact-tools.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
-import { fakeChildren, userEntry } from "./support/fake-children.mjs";
+import {
+	fakeChildren,
+	recordingCore,
+	userEntry,
+} from "./support/fake-children.mjs";
+import {
+	piChildSession,
+	spawnedTools,
+	workerTools,
+} from "./support/child-session.mjs";
 import { classifierRegistry } from "./support/fake-jev.mjs";
 import { turnJevRoutingOn } from "./support/jev-routing.mjs";
 
@@ -59,8 +75,15 @@ const workerContract = await readFile(
 	fileURLToPath(new URL("../assets/contracts/worker.md", import.meta.url)),
 	"utf8",
 );
-const workerTools = ["read", "bash", "edit", "write", "grep", "find", "ls"];
-const spawnedTools = [...workerTools, "ask_parent", "report_result"];
+const workerAllowlist = [
+	...workerTools,
+	"mcp__*",
+	"list_mcp_resources",
+	"list_mcp_resource_templates",
+	"read_mcp_resource",
+	"ask_parent",
+	"report_result",
+];
 
 function workerResult(verdict, reason = `The work is ${verdict}.`) {
 	return {
@@ -82,8 +105,12 @@ async function withWorkspace(run) {
 		await mkdir(worktree);
 		await mkdir(agentDir);
 		execFileSync("git", ["init", "--quiet"], { cwd: worktree });
-		return await run({ worktree, agentDir });
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		process.env.npm_config_prefix = join(dir, "global");
+		return await run({ worktree, agentDir, dir });
 	} finally {
+		delete process.env.PI_CODING_AGENT_DIR;
+		delete process.env.npm_config_prefix;
 		await rm(dir, { recursive: true, force: true });
 	}
 }
@@ -346,7 +373,7 @@ for (const mode of ["tui", "rpc"]) {
 			assert.equal(child.spec.cwd, worktree);
 			assert.equal(child.spec.model, "session/model");
 			assert.equal(child.spec.thinking, "medium");
-			assert.deepEqual(child.spec.tools, spawnedTools);
+			assert.deepEqual(child.spec.tools, workerAllowlist);
 			assert.ok(workerContract.includes(child.spec.prompt));
 			assert.equal(messages.length, 0);
 
@@ -638,6 +665,11 @@ test("a child that would run another model or thinking stays pending, and one mi
 				status: "refused",
 				reason: /bash/,
 			},
+			{
+				child: { tools: workerTools.filter((tool) => tool !== "codemode") },
+				status: "refused",
+				reason: /lacks the contract tools codemode\./,
+			},
 		];
 		for (const { child, status, reason } of cases) {
 			const children = fakeChildren(child);
@@ -755,7 +787,7 @@ test("each Run state transition of a child is appended to the parent session as 
 			assert.equal(data.id, result.details.id);
 			assert.equal(data.role, "worker");
 			assert.equal(data.chosenBy, "jev");
-			assert.deepEqual(data.tools, spawnedTools);
+			assert.deepEqual(data.tools, workerAllowlist);
 			assert.deepEqual(data.references, ["AGENTS.md"]);
 			assert.equal(data.version, packageVersion);
 			assert.ok(!JSON.stringify(data).includes("Secret task text"));
@@ -980,6 +1012,61 @@ test("session shutdown disposes running background children, which then deliver 
 	});
 });
 
+test("a reload ends every working child, tells the operator how many ended, and records it in the trace", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		for (let i = 0; i < 7; i++) await spawnBackground(extension, worktree);
+		await settle();
+		children.created[0].result.resolve("Done.");
+		await settle();
+		extension.notifications.length = 0;
+
+		await extension.fire("session_shutdown", { reason: "reload" });
+
+		assert.deepEqual(
+			children.created.map((child) => child.disposals),
+			Array(7).fill(1),
+		);
+		assert.deepEqual(extension.notifications, [
+			{ message: "/reload ended 6 working children.", level: "warning" },
+		]);
+		assert.deepEqual(extension.entries.at(-1), {
+			customType: "pi-workflow-child-trace",
+			data: { reason: "reload", ended: 6 },
+		});
+		assert.deepEqual((await use(extension, "list_children", {})).details.children, []);
+		assert.equal(extension.messages.length, 0);
+	});
+});
+
+test("a shutdown for another reason, or a reload with no working child, gives no notice", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		for (const [reason, launches] of [
+			["new", 1],
+			["quit", 1],
+			["reload", 0],
+		]) {
+			const extension = await loadSpawnTool({
+				agentDir,
+				create: fakeChildren().create,
+			});
+			for (let i = 0; i < launches; i++)
+				await spawnBackground(extension, worktree);
+			extension.notifications.length = 0;
+			const entries = extension.entries.length;
+
+			await extension.fire("session_shutdown", { reason });
+
+			assert.deepEqual(extension.notifications, [], reason);
+			assert.equal(extension.entries.length, entries, reason);
+		}
+	});
+});
+
 test("a null role is missing and does not warn that worker was assumed", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren({ run: async () => "Done." });
@@ -997,7 +1084,7 @@ test("a null role is missing and does not warn that worker was assumed", async (
 		assert.equal(result.details.status, "completed");
 		assert.equal(result.details.role, "worker");
 		assert.doesNotMatch(text(result), /No role was named/);
-		assert.deepEqual(children.created[0].spec.tools, spawnedTools);
+		assert.deepEqual(children.created[0].spec.tools, workerAllowlist);
 	});
 });
 
@@ -1255,6 +1342,633 @@ test("the default child factory runs a trusted project's shell prefix in the chi
 	});
 });
 
+const mcpFixture = fileURLToPath(
+	new URL("./support/mcp-fixture-server.mjs", import.meta.url),
+);
+
+async function writeMcpConfig(dir, pids, servers) {
+	await mkdir(dir, { recursive: true });
+	await mkdir(pids, { recursive: true });
+	await writeFile(
+		join(dir, "mcp.json"),
+		JSON.stringify({
+			mcpServers: Object.fromEntries(
+				Object.entries(servers).map(([name, config]) => [
+					name,
+					{ command: process.execPath, args: [mcpFixture, name, pids], ...config },
+				]),
+			),
+		}),
+	);
+}
+
+function processRuns(pid) {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+async function fixturePid(pids, name) {
+	return Number(await readFile(join(pids, `${name}.pid`), "utf8"));
+}
+
+function declared(request) {
+	return request.messages[0].toolsAdded.map((added) => added.name);
+}
+
+function toolOutputs(requests) {
+	return requests
+		.flatMap((request) => request.messages)
+		.filter((message) => message.role === "toolResult")
+		.map((message) => message.content.map((part) => part.text ?? "").join(""));
+}
+
+const mcpScript = [
+	'const echoed = await tools.mcp__tracker__echo({ text: "hi" });',
+	"return { echoed: echoed.content[0].text, models: typeof models, mcp: Object.keys(tools).filter((name) => name.includes(\"mcp\")).sort() };",
+].join("\n");
+
+test("every Specialist reaches the parent's direct and codemode-only MCP tools and the resource tools, and nothing of the parent", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const pids = join(agentDir, "pids");
+		await writeMcpConfig(agentDir, pids, {
+			docs: { exposure: "direct", description: "Library docs." },
+			tracker: { description: "Issue tracker." },
+		});
+		const roles = { explore: [], worker: ["report_result"], verify: ["report_result"] };
+		for (const [role, extra] of Object.entries(roles)) {
+			const parent = await fauxParent(agentDir, [
+				fauxAssistantMessage(fauxToolCall("codemode", { code: mcpScript }), {
+					stopReason: "toolUse",
+				}),
+				fauxAssistantMessage("Done."),
+			]);
+			const { tool } = await loadSpawnTool({ agentDir });
+			const contract = await readFile(
+				fileURLToPath(new URL(`../assets/contracts/${role}.md`, import.meta.url)),
+				"utf8",
+			);
+			const contractTools = contract
+				.match(/^tools: (.*)$/m)[1]
+				.split(", ");
+
+			const result = await spawn(
+				tool,
+				{ role, task: "Use the trackers" },
+				{ ...toolContext("print", worktree), ...parent.context },
+			);
+
+			assert.equal(result.details.status, "completed", text(result));
+			const names = declared(parent.requests[0]);
+			for (const name of [
+				...contractTools,
+				"ask_parent",
+				...extra,
+				"mcp__docs__echo",
+				"list_mcp_resources",
+				"list_mcp_resource_templates",
+				"read_mcp_resource",
+			]) {
+				assert.ok(names.includes(name), `${role} lacks ${name}: ${names}`);
+			}
+			for (const name of [
+				"spawn_child",
+				"mcp__tracker__echo",
+				...childTools,
+			]) {
+				assert.ok(!names.includes(name), `${role} declares ${name}`);
+			}
+			assert.ok(!names.some((name) => /web|fetch/.test(name)), `${role}: ${names}`);
+			const [output] = toolOutputs(parent.requests);
+			assert.match(output, /"echoed":"tracker echoes hi"/);
+			assert.match(output, /"models":"undefined"/);
+			assert.match(output, /mcp__docs__echo/);
+			assert.match(output, /mcp__tracker__echo/);
+		}
+	});
+});
+
+test("a child session starts its MCP servers only when it runs and closes them when it is disposed", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const pids = join(agentDir, "pids");
+		await writeMcpConfig(agentDir, pids, {
+			docs: { exposure: "direct", description: "Library docs." },
+		});
+		const parent = await fauxParent(agentDir, fauxAssistantMessage("Done."));
+		const handle = await piChildSession({
+			cwd: worktree,
+			tools: ["read", "codemode", "mcp__*", "ask_parent"],
+			modelRegistry: parent.context.modelRegistry,
+		});
+
+		await delay(100);
+		assert.deepEqual(await readdir(pids), []);
+
+		assert.equal(await handle.run("Look it up."), "Done.");
+		const pid = await fixturePid(pids, "docs");
+		assert.ok(processRuns(pid));
+		assert.ok(declared(parent.requests[0]).includes("mcp__docs__echo"));
+
+		await handle.dispose();
+		await eventually(() => !processRuns(pid));
+	});
+});
+
+test("a child's first prompt does not wait for a slow MCP server whose tools are not direct", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const pids = join(agentDir, "pids");
+		await writeMcpConfig(agentDir, pids, {
+			slow: { args: [mcpFixture, "slow", pids, "3000"], description: "Slow tools." },
+		});
+		const parent = await fauxParent(agentDir, fauxAssistantMessage("Done."));
+		const handle = await piChildSession({
+			cwd: worktree,
+			tools: ["read", "codemode", "mcp__*", "ask_parent"],
+			modelRegistry: parent.context.modelRegistry,
+		});
+
+		const started = Date.now();
+		try {
+			assert.equal(await handle.run("Look it up."), "Done.");
+			assert.ok(Date.now() - started < 1500, `${Date.now() - started} ms`);
+			await eventually(() => existsSync(join(pids, "slow.pid")));
+		} finally {
+			await handle.dispose();
+		}
+	});
+});
+
+test("a child's MCP notices reach its trace", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		await writeFile(
+			join(agentDir, "mcp.json"),
+			JSON.stringify({
+				mcpServers: {
+					broken: { command: join(agentDir, "missing-server"), exposure: "direct" },
+				},
+			}),
+		);
+		const parent = await fauxParent(agentDir, fauxAssistantMessage("Done."));
+		const { tool, entries } = await loadSpawnTool({ agentDir });
+
+		const result = await spawn(
+			tool,
+			{ role: "explore", task: "Look it up" },
+			{ ...toolContext("print", worktree), ...parent.context },
+		);
+
+		assert.equal(result.details.status, "completed", text(result));
+		const notices = entries
+			.filter((entry) => entry.customType === "pi-workflow-child-trace")
+			.flatMap((entry) => (entry.data.notice ? [entry.data] : []))
+			.filter((trace) => !trace.notice.includes("pi-web-access"));
+		assert.equal(notices.length, 1);
+		assert.equal(notices[0].state, "running");
+		assert.match(notices[0].notice, /MCP servers need attention/);
+		assert.match(notices[0].notice, /broken/);
+	});
+});
+
+test("a child receives the parent's project MCP servers only when the parent trusts the project, and never its worktree's", async () => {
+	await withWorkspace(async ({ worktree, agentDir, dir }) => {
+		const pids = join(agentDir, "pids");
+		const project = join(dir, "parent");
+		await writeMcpConfig(join(project, ".pi"), pids, {
+			project: { exposure: "direct", description: "Project tools." },
+		});
+		await writeMcpConfig(join(worktree, ".pi"), pids, {
+			rogue: { exposure: "direct", description: "Worktree tools." },
+		});
+		const parent = await fauxParent(agentDir, [
+			fauxAssistantMessage("Trusted."),
+			fauxAssistantMessage("Untrusted."),
+		]);
+		const { tool } = await loadSpawnTool({ agentDir });
+
+		for (const trusted of [true, false]) {
+			const result = await spawn(
+				tool,
+				{ role: "explore", task: "Look it up", worktree },
+				{
+					...toolContext("print", project),
+					...parent.context,
+					isProjectTrusted: () => trusted,
+				},
+			);
+			assert.equal(result.details.status, "completed", text(result));
+		}
+
+		const [trustedNames, untrustedNames] = parent.requests.map(declared);
+		assert.ok(trustedNames.includes("mcp__project__echo"), `${trustedNames}`);
+		assert.ok(!untrustedNames.includes("mcp__project__echo"), `${untrustedNames}`);
+		for (const names of [trustedNames, untrustedNames]) {
+			assert.ok(!names.includes("mcp__rogue__echo"), `${names}`);
+		}
+		await assert.rejects(readFile(join(pids, "rogue.pid")));
+	});
+});
+
+test("a worker and a verifier load the parent's context files, an explorer loads none, and no child loads skills", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		await writeFile(join(agentDir, "AGENTS.md"), "Global rule: answer in haiku.");
+		await writeFile(join(worktree, "AGENTS.md"), "Repository rule: run npm run check.");
+		await mkdir(join(agentDir, "skills", "deploy"), { recursive: true });
+		await writeFile(
+			join(agentDir, "skills", "deploy", "SKILL.md"),
+			"---\nname: deploy\ndescription: Deploy the release train.\n---\nDeploy it.\n",
+		);
+		const roles = ["worker", "verify", "explore"];
+		const parent = await fauxParent(
+			agentDir,
+			roles.map(() => fauxAssistantMessage("Done.")),
+		);
+		const { tool } = await loadSpawnTool({ agentDir });
+
+		for (const role of roles) {
+			const result = await spawn(
+				tool,
+				{ role, task: "Check the parser" },
+				{ ...toolContext("print", worktree), ...parent.context },
+			);
+			assert.equal(result.details.status, "completed", text(result));
+		}
+
+		const systems = parent.requests.map((request) =>
+			JSON.stringify(request.messages[0]),
+		);
+		for (const system of systems.slice(0, 2)) {
+			assert.match(system, /Global rule: answer in haiku\./);
+			assert.match(system, /Repository rule: run npm run check\./);
+		}
+		assert.doesNotMatch(systems[2], /Global rule|Repository rule/);
+		for (const system of systems) {
+			assert.doesNotMatch(system, /Deploy the release train/);
+		}
+	});
+});
+
+test("a worker loads the worktree's AGENTS.override.md in place of its AGENTS.md", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		await writeFile(join(worktree, "AGENTS.md"), "Repository rule: run npm run check.");
+		await writeFile(
+			join(worktree, "AGENTS.override.md"),
+			"Override rule: run npm test only.",
+		);
+		const parent = await fauxParent(agentDir, [fauxAssistantMessage("Done.")]);
+		const { tool } = await loadSpawnTool({ agentDir });
+
+		const result = await spawn(
+			tool,
+			{ role: "worker", task: "Check the parser" },
+			{ ...toolContext("print", worktree), ...parent.context },
+		);
+		assert.equal(result.details.status, "completed", text(result));
+
+		const system = JSON.stringify(parent.requests[0].messages[0]);
+		assert.match(system, /Override rule: run npm test only\./);
+		assert.doesNotMatch(system, /Repository rule/);
+	});
+});
+
+function installWebAccess(agentDir, label = "local") {
+	return installWebAccessAt(
+		join(agentDir, "npm", "node_modules", "pi-web-access"),
+		label,
+	);
+}
+
+async function installWebAccessAt(dir, label) {
+	await mkdir(join(dir, "dist"), { recursive: true });
+	await writeFile(
+		join(dir, "package.json"),
+		JSON.stringify({
+			name: "pi-web-access",
+			type: "module",
+			pi: { extensions: ["./dist"] },
+		}),
+	);
+	await writeFile(
+		join(dir, "dist", "index.js"),
+		[
+			"const state = { fetches: new Set() };",
+			"(globalThis.webAccessStates ??= []).push(state);",
+			"export default function (pi) {",
+			'\tpi.on("session_start", () => state.fetches.add("fetch"));',
+			'\tpi.on("session_shutdown", () => state.fetches.clear());',
+			'\tfor (const name of ["web_search", "fetch_content"]) {',
+			"\t\tpi.registerTool({",
+			"\t\t\tname,",
+			"\t\t\tlabel: name,",
+			`\t\t\tdescription: ${JSON.stringify(`Web from ${label}.`)},`,
+			'\t\t\tparameters: { type: "object", properties: {} },',
+			'\t\t\texecute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),',
+			"\t\t});",
+			"\t}",
+			"}",
+			"",
+		].join("\n"),
+	);
+	return dir;
+}
+
+function childTraces(entries) {
+	return entries
+		.filter((entry) => entry.customType === "pi-workflow-child-trace")
+		.map((entry) => entry.data);
+}
+
+test("an explorer has the local pi-web-access tools whether or not its expectation is on, and a worker and a verifier have none", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		await installWebAccess(agentDir);
+		const roles = ["explore", "worker", "verify"];
+		const launches = [false, true].flatMap((expected) =>
+			roles.map((role) => ({ expected, role })),
+		);
+		const parent = await fauxParent(
+			agentDir,
+			launches.map(() => fauxAssistantMessage("Done.")),
+		);
+
+		try {
+			for (const { expected, role } of launches) {
+				replaceSelection({
+					schemaVersion: 1,
+					capabilities: Object.fromEntries(
+						capabilities.map((capability) => [capability, true]),
+					),
+					expectations: { "pi-web-access": expected },
+				});
+				const { tool, entries } = await loadSpawnTool({ agentDir });
+				const result = await spawn(
+					tool,
+					{ role, task: "Research the parser" },
+					{ ...toolContext("print", worktree), ...parent.context },
+				);
+				assert.equal(result.details.status, "completed", text(result));
+				assert.ok(
+					childTraces(entries).every((trace) => trace.notice === undefined),
+					`${role}: ${JSON.stringify(childTraces(entries))}`,
+				);
+			}
+		} finally {
+			replaceSelection({
+				schemaVersion: 1,
+				capabilities: Object.fromEntries(
+					capabilities.map((capability) => [capability, true]),
+				),
+				expectations: {},
+			});
+		}
+
+		parent.requests.forEach((request, index) => {
+			const { role } = launches[index];
+			const web = declared(request).filter((name) =>
+				["web_search", "fetch_content"].includes(name),
+			);
+			assert.deepEqual(web, role === "explore" ? ["web_search", "fetch_content"] : [], role);
+		});
+	});
+});
+
+test("an explorer without a local pi-web-access launches without web tools, its trace names the package, and nothing is installed", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const parent = await fauxParent(agentDir, fauxAssistantMessage("Done."));
+		const { tool, entries } = await loadSpawnTool({ agentDir });
+
+		const result = await spawn(
+			tool,
+			{ role: "explore", task: "Research the parser" },
+			{ ...toolContext("print", worktree), ...parent.context },
+		);
+
+		assert.equal(result.details.status, "completed", text(result));
+		const names = declared(parent.requests[0]);
+		assert.ok(!names.some((name) => /web|fetch/.test(name)), `${names}`);
+		const notices = childTraces(entries).filter((trace) => trace.notice);
+		assert.equal(notices.length, 1);
+		assert.match(notices[0].notice, /pi-web-access/);
+		await assert.rejects(readdir(join(agentDir, "npm")));
+	});
+});
+
+test("an explorer loads pi-web-access from Pi's agent directory under both agent-directory variables", async () => {
+	await withWorkspace(async ({ worktree, agentDir, dir }) => {
+		const home = join(dir, "home");
+		const piDefault = join(home, ".pi", "agent");
+		const agentHome = join(dir, "agent-home");
+		await installWebAccess(agentDir, "PI_CODING_AGENT_DIR");
+		await installWebAccess(piDefault, "the default agent directory");
+		await installWebAccess(agentHome, "PI_AGENT_HOME");
+		const cases = [
+			{ codingAgentDir: agentDir, agentHome: undefined, loads: "PI_CODING_AGENT_DIR" },
+			{ codingAgentDir: agentDir, agentHome, loads: "PI_CODING_AGENT_DIR" },
+			{ codingAgentDir: undefined, agentHome, loads: "the default agent directory" },
+			{ codingAgentDir: undefined, agentHome: undefined, loads: "the default agent directory" },
+		];
+		const saved = { HOME: process.env.HOME, PI_AGENT_HOME: process.env.PI_AGENT_HOME };
+		try {
+			for (const variables of cases) {
+				const parent = await fauxParent(agentDir, fauxAssistantMessage("Done."));
+				process.env.HOME = home;
+				for (const [name, value] of [
+					["PI_CODING_AGENT_DIR", variables.codingAgentDir],
+					["PI_AGENT_HOME", variables.agentHome],
+				]) {
+					if (value === undefined) delete process.env[name];
+					else process.env[name] = value;
+				}
+				const parentPackage = new DefaultPackageManager({
+					cwd: worktree,
+					agentDir: getAgentDir(),
+					settingsManager: SettingsManager.inMemory(),
+				}).getInstalledPath("npm:pi-web-access", "user");
+				const handle = await piChildSession({
+					cwd: worktree,
+					modelRegistry: parent.context.modelRegistry,
+				});
+				try {
+					await handle.run("Look it up.");
+				} finally {
+					await handle.dispose();
+				}
+				const search = parent.requests[0].messages[0].toolsAdded.find(
+					(added) => added.name === "web_search",
+				);
+				assert.equal(search?.description, `Web from ${variables.loads}.`, JSON.stringify(variables));
+				assert.equal(
+					parentPackage,
+					join(variables.codingAgentDir ?? piDefault, "npm", "node_modules", "pi-web-access"),
+				);
+			}
+		} finally {
+			for (const [name, value] of Object.entries(saved)) {
+				if (value === undefined) delete process.env[name];
+				else process.env[name] = value;
+			}
+		}
+	});
+});
+
+async function explorerSearch(agentDir, worktree, project) {
+	const parent = await fauxParent(agentDir, fauxAssistantMessage("Done."));
+	const handle = await piChildSession({
+		cwd: worktree,
+		project,
+		modelRegistry: parent.context.modelRegistry,
+	});
+	try {
+		await handle.run("Look it up.");
+	} finally {
+		await handle.dispose();
+	}
+	return parent.requests[0].messages[0].toolsAdded.find(
+		(added) => added.name === "web_search",
+	)?.description;
+}
+
+test("an explorer loads pi-web-access from the parent's project when the parent trusts it, and from Pi's agent directory otherwise", async () => {
+	await withWorkspace(async ({ worktree, agentDir, dir }) => {
+		const project = join(dir, "parent");
+		await installWebAccess(join(project, ".pi"), "the project");
+		await installWebAccess(agentDir, "the agent directory");
+
+		assert.equal(
+			await explorerSearch(agentDir, worktree, { cwd: project, trusted: true }),
+			"Web from the project.",
+		);
+		assert.equal(
+			await explorerSearch(agentDir, worktree, { cwd: project, trusted: false }),
+			"Web from the agent directory.",
+		);
+	});
+});
+
+test("an explorer loads a trusted project's pi-web-access with nothing in Pi's agent directory, and an untrusted one's not at all", async () => {
+	await withWorkspace(async ({ worktree, agentDir, dir }) => {
+		const project = join(dir, "parent");
+		await installWebAccess(join(project, ".pi"), "the project");
+
+		assert.equal(
+			await explorerSearch(agentDir, worktree, { cwd: project, trusted: true }),
+			"Web from the project.",
+		);
+		assert.equal(
+			await explorerSearch(agentDir, worktree, { cwd: project, trusted: false }),
+			undefined,
+		);
+	});
+});
+
+test("an explorer loads a legacy global pi-web-access when Pi's agent directory has none", async () => {
+	await withWorkspace(async ({ worktree, agentDir, dir }) => {
+		await installWebAccessAt(
+			join(dir, "global", "lib", "node_modules", "pi-web-access"),
+			"the global install",
+		);
+
+		assert.equal(
+			await explorerSearch(agentDir, worktree, { cwd: worktree, trusted: false }),
+			"Web from the global install.",
+		);
+	});
+});
+
+test("an explorer ending, in the parent's worktree or another, leaves the parent's pi-web-access state alone", async () => {
+	await withWorkspace(async ({ worktree, agentDir, dir }) => {
+		const directory = await installWebAccess(agentDir);
+		const other = join(dir, "other");
+		await mkdir(other);
+		execFileSync("git", ["init", "--quiet"], { cwd: other });
+		const parent = await fauxParent(agentDir, [
+			fauxAssistantMessage("Same."),
+			fauxAssistantMessage("Other."),
+		]);
+		const states = [];
+		globalThis.webAccessStates = states;
+		const settingsManager = SettingsManager.inMemory();
+		const resourceLoader = new DefaultResourceLoader({
+			cwd: worktree,
+			agentDir,
+			settingsManager,
+			noSkills: true,
+			noContextFiles: true,
+			additionalExtensionPaths: [directory],
+		});
+		await resourceLoader.reload();
+		const { session } = await createAgentSession({
+			cwd: worktree,
+			agentDir,
+			modelRuntime: parent.runtime,
+			model: parent.context.model,
+			resourceLoader,
+			settingsManager,
+			sessionManager: SessionManager.inMemory(worktree),
+		});
+		await session.bindExtensions({});
+		try {
+			assert.equal(states.length, 1);
+			const [parentState] = states;
+			assert.deepEqual([...parentState.fetches], ["fetch"]);
+
+			for (const cwd of [worktree, other]) {
+				const handle = await piChildSession({
+					cwd,
+					project: { cwd: worktree, trusted: false },
+					modelRegistry: parent.context.modelRegistry,
+				});
+				await handle.run("Look it up.");
+				const explorerState = states.at(-1);
+				assert.notEqual(explorerState, parentState);
+				assert.deepEqual([...explorerState.fetches], ["fetch"]);
+				await handle.dispose();
+				assert.deepEqual([...explorerState.fetches], []);
+				assert.deepEqual([...parentState.fetches], ["fetch"], cwd);
+			}
+			assert.equal(states.length, 3);
+		} finally {
+			session.dispose();
+			delete globalThis.webAccessStates;
+		}
+	});
+});
+
+test("two children of one Specialist and model in one worktree send the same prefix, with the task only in the user message", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const pids = join(agentDir, "pids");
+		await writeMcpConfig(agentDir, pids, {
+			docs: { exposure: "direct", description: "Library docs." },
+			tracker: { description: "Issue tracker." },
+		});
+		await writeFile(join(worktree, "AGENTS.md"), "Repository rule: run npm run check.");
+		const parent = await fauxParent(agentDir, [
+			fauxAssistantMessage("First."),
+			fauxAssistantMessage("Second."),
+		]);
+		const { tool } = await loadSpawnTool({ agentDir });
+
+		for (const task of ["Fix the parser", "Fix the lexer"]) {
+			const result = await spawn(
+				tool,
+				{ role: "worker", task },
+				{ ...toolContext("print", worktree), ...parent.context },
+			);
+			assert.equal(result.details.status, "completed", text(result));
+		}
+
+		const [first, second] = parent.requests;
+		const prefix = ({ timestamp: _sent, ...system }) => system;
+		assert.deepEqual(prefix(first.messages[0]), prefix(second.messages[0]));
+		assert.ok(declared(first).includes("mcp__docs__echo"));
+		assert.match(JSON.stringify(first.messages[0]), /Repository rule/);
+		assert.doesNotMatch(JSON.stringify(first.messages[0]), /Fix the/);
+		assert.match(JSON.stringify(first.messages.slice(1)), /Fix the parser/);
+		assert.match(JSON.stringify(second.messages.slice(1)), /Fix the lexer/);
+	});
+});
+
 test("launching a child keeps the parent's model and thinking, and a profile naming a virtual model runs the child on it", async () => {
 	await assertLaunchKeepsParentModel(fakeJev());
 });
@@ -1300,6 +2014,11 @@ test("spawn_child tells the parent to end its turn instead of polling", async ()
 		assert.match(guidance, /Do not declare work done without a worker Verdict of done/);
 		assert.match(guidance, /Do not declare work verified without a verifier Verdict of pass/);
 		assert.match(guidance, /partial, fail, and blocked are not success/);
+		assert.match(
+			guidance,
+			/One codemode script can launch several children: each spawn_child call returns at once without awaiting the child\. Their results arrive in one message when every child is done, or earlier when a result needs you\./,
+		);
+		assert.match(guidance, /At most 10 children can be queued, running, or waiting/);
 
 		const result = await spawn(
 			tool,
@@ -1618,6 +2337,81 @@ test("session shutdown disposes every background child even when one dispose thr
 	});
 });
 
+test("a finished child's result is delivered while its session is still shutting down", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren({ dispose: () => new Promise(() => {}) });
+		const { tool, messages } = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		await spawn(
+			tool,
+			{ role: "explore", task: "Map the parser" },
+			toolContext("tui", worktree),
+		);
+
+		children.created[0].result.resolve("Mapped.");
+		await settle();
+		await settle();
+
+		assert.equal(children.created[0].disposals, 1);
+		assert.equal(messages.length, 1);
+		assert.match(messages[0].message.content, /Mapped\./);
+	});
+});
+
+test("a child session that fails to shut down is reported and leaves nothing unhandled", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren({
+			dispose: async () => {
+				throw new Error("cleanup failed");
+			},
+		});
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		const unhandled = await collectUnhandled(async () => {
+			await spawn(
+				extension.tool,
+				{ role: "explore", task: "Map the parser" },
+				toolContext("tui", worktree),
+			);
+			children.created[0].result.resolve("Mapped.");
+			await settle();
+		});
+
+		assert.deepEqual(unhandled, []);
+		assert.equal(extension.messages.length, 1);
+		assert.ok(
+			extension.notifications.some(({ message }) =>
+				/cleanup failed/.test(message),
+			),
+		);
+	});
+});
+
+test("the parent session's end waits for its children to shut down", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const shutdown = Promise.withResolvers();
+		const children = fakeChildren({ dispose: () => shutdown.promise });
+		const { tool, fire } = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		await spawn(
+			tool,
+			{ role: "worker", task: "Fix the failing test" },
+			toolContext("tui", worktree),
+		);
+
+		const ended = outcome(fire("session_shutdown", { reason: "quit" }));
+		assert.equal(await ended(), "still pending");
+		shutdown.resolve();
+		assert.equal(await ended(), "resolved");
+	});
+});
+
 test("a call aborted before launch is refused with a reason and runs no child, in the foreground and the background", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		for (const mode of ["print", "tui"]) {
@@ -1736,6 +2530,161 @@ test("at most five children run at once; the others wait queued and start first 
 		assert.equal(await stateOf(extension, ids[2]), "completed");
 		assert.equal(await stateOf(extension, ids[5]), "running");
 		assert.equal(await stateOf(extension, ids[6]), "queued");
+	});
+});
+
+test("with ten working children, spawn_child and continue_child are refused before Jev and before a session is created", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const jev = fakeJev();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			branch: [userEntry("request", "Fix the parser")],
+		});
+		const done = await spawnBackground(extension, worktree);
+		await settle();
+		children.created[0].result.resolve("First answer.");
+		await settle();
+		for (let i = 0; i < 10; i++) await spawnBackground(extension, worktree);
+		await settle();
+		const created = children.created.length;
+		const jevRequests = jev.requests.length;
+
+		const spawned = await spawn(
+			extension.tool,
+			{ role: "worker", task: "One more" },
+			toolContext("tui", worktree, jev),
+		);
+		const continued = await use(
+			extension,
+			"continue_child",
+			{ id: done, task: "Now add a test" },
+			toolContext("tui", worktree, jev),
+		);
+
+		for (const [result, warning] of [
+			[spawned, /Launch refused\. No child was launched\./],
+			[continued, /Continue refused\. No child was launched\./],
+		]) {
+			assert.equal(result.details.status, "refused");
+			assert.match(text(result), warning);
+			assert.match(result.details.reason, /10 working children/);
+		}
+		assert.equal(children.created.length, created);
+		assert.equal(jev.requests.length, jevRequests);
+
+		children.created[1].result.resolve("Done.");
+		await settle();
+		const freed = await spawn(
+			extension.tool,
+			{ role: "worker", task: "One more" },
+			toolContext("tui", worktree, jev),
+		);
+		assert.equal(freed.details.status, "queued");
+		assert.equal(jev.requests.length, jevRequests + 1);
+	});
+});
+
+test("a script that launches twelve children at once gets ten launches and two refusals, and returns without awaiting them", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren({ onCreate: () => delay(5) });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+
+		const results = await Promise.all(
+			Array.from({ length: 12 }, (_, i) =>
+				extension.tool.execute(
+					`script/${i + 1}`,
+					{ role: "worker", task: `Task ${i}` },
+					undefined,
+					undefined,
+					toolContext("tui", worktree),
+				),
+			),
+		);
+
+		const statuses = results.map((result) => result.details.status);
+		assert.equal(statuses.filter((status) => status === "queued").length, 10);
+		assert.equal(statuses.filter((status) => status === "refused").length, 2);
+		assert.equal(children.created.length, 10);
+		await settle();
+		assert.equal(
+			children.created.filter((child) => child.tasks.length === 1).length,
+			5,
+		);
+	});
+});
+
+test("print and json launches from a script run in the foreground outside the launch limit", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren({
+			onCreate: () => delay(5),
+			run: async (task) => `${task} done.`,
+		});
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+
+		for (const mode of ["print", "json"]) {
+			const results = await Promise.all(
+				Array.from({ length: 12 }, (_, i) =>
+					spawn(
+						extension.tool,
+						{ role: "worker", task: `Task ${i}` },
+						toolContext(mode, worktree),
+					),
+				),
+			);
+			assert.deepEqual(
+				results.map((result) => result.details.status),
+				Array(12).fill("completed"),
+			);
+		}
+		assert.equal(children.created.length, 24);
+		assert.equal((await use(extension, "list_children", {})).details.children.length, 0);
+	});
+});
+
+test("a pending launch from a script is no launched child and holds no place under the launch limit", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const mismatched = fakeChildren({ model: "other/model", onCreate: () => delay(5) });
+		const children = fakeChildren({ onCreate: () => delay(5) });
+		let pending = true;
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: (spec) =>
+				pending ? mismatched.create(spec) : children.create(spec),
+		});
+		const script = () =>
+			Promise.all(
+				Array.from({ length: 10 }, (_, i) =>
+					extension.tool.execute(
+						`script/${i + 1}`,
+						{ role: "worker", task: `Task ${i}` },
+						undefined,
+						undefined,
+						toolContext("tui", worktree),
+					),
+				),
+			);
+
+		const held = await script();
+		assert.deepEqual(
+			held.map((result) => result.details.status),
+			Array(10).fill("pending"),
+		);
+		assert.equal((await use(extension, "list_children", {})).details.children.length, 0);
+
+		pending = false;
+		const launched = await script();
+		assert.deepEqual(
+			launched.map((result) => result.details.status),
+			Array(10).fill("queued"),
+		);
 	});
 });
 
@@ -2305,7 +3254,9 @@ test("a child that asks waits for the parent model's reply_child answer, still h
 
 		await assert.rejects(
 			use(extension, "reply_child", { id, question: 1, answer: "x" }),
-			{ message: `Question 1 of child ${id} is not waiting for a reply.` },
+			{
+				message: `Question 1 of child ${id} was already answered by the parent: src/parser.ts`,
+			},
 		);
 		await assert.rejects(
 			use(extension, "reply_child", { id: "nope", question: 1, answer: "x" }),
@@ -2585,7 +3536,9 @@ test("a repeated reply to an answered question never answers the child's next qu
 				question: 1,
 				answer: "Yes, delete it.",
 			}),
-			{ message: `Question 1 of child ${id} is not waiting for a reply.` },
+			{
+				message: `Question 1 of child ${id} was already answered by the parent: Yes, delete it.`,
+			},
 		);
 		assert.equal(await stateOf(extension, id), "waiting");
 		const reply = await use(extension, "reply_child", {
@@ -2893,6 +3846,38 @@ test("continue_child through Pi's SDK sends the completed child's conversation p
 	});
 });
 
+test("continue_child through Pi's SDK starts its own MCP servers for the continued run and shuts them down when it ends", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const pids = join(agentDir, "pids");
+		await writeMcpConfig(agentDir, pids, {
+			docs: { exposure: "direct", description: "Library docs." },
+		});
+		const child = await realChild(agentDir, [
+			fauxAssistantMessage("First answer."),
+			fauxAssistantMessage(fauxToolCall("mcp__docs__echo", { text: "again" }), {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Second answer."),
+		]);
+		const { extension, parent } = child;
+		const ctx = { ...toolContext("tui", worktree), ...parent.context };
+		const unhandled = await collectUnhandled(async () => {
+			const done = (await spawnReal(child, worktree)).details.id;
+			await eventually(() => extension.messages.length === 1);
+			const first = await fixturePid(pids, "docs");
+			await eventually(() => !processRuns(first));
+
+			await use(extension, "continue_child", { id: done, task: "Once more" }, ctx);
+			await eventually(() => extension.messages.length === 2);
+		});
+
+		assert.deepEqual(toolOutputs(parent.requests), ["docs echoes again"]);
+		const continued = await fixturePid(pids, "docs");
+		await eventually(() => !processRuns(continued));
+		assert.deepEqual(unhandled, []);
+	});
+});
+
 test("a background child asks through Pi's SDK, the parent model replies, and the child finishes with the answer", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const child = await realChild(agentDir, [
@@ -2927,6 +3912,43 @@ test("a background child asks through Pi's SDK, the parent model replies, and th
 			/completed\. Verdict: absent\.\n\nFixed src\/parser\.ts\./,
 		);
 		assert.ok(sent(parent.requests[1]).includes("src/parser.ts"));
+		assert.equal(await stateOf(extension, id), "completed");
+		assert.deepEqual(unhandled, []);
+	});
+});
+
+test("a question asked from a script that times out through Pi's SDK is withdrawn, the child runs again, and a later reply is refused as withdrawn", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const child = await realChild(agentDir, [
+			fauxAssistantMessage(
+				fauxToolCall("codemode", {
+					code: '// @options: {"timeout_ms": 300}\nreturn await tools.ask_parent({ question: "Which file?" });',
+				}),
+				{ stopReason: "toolUse" },
+			),
+			asking("Which module?"),
+			fauxAssistantMessage("Done."),
+		]);
+		const { extension } = child;
+		let id;
+		const unhandled = await collectUnhandled(async () => {
+			id = (await spawnReal(child, worktree)).details.id;
+			await eventually(() => extension.messages.length === 1);
+			assert.equal(await stateOf(extension, id), "waiting");
+			await eventually(() => extension.messages.length === 2);
+			assert.equal(extension.messages[1].message.details.question, 2);
+
+			await assert.rejects(
+				use(extension, "reply_child", { id, question: 1, answer: "src/a.ts" }),
+				{
+					message: `Question 1 of child ${id} was withdrawn: the call that asked it ended.`,
+				},
+			);
+			assert.equal(await stateOf(extension, id), "waiting");
+			await use(extension, "reply_child", { id, question: 2, answer: "parser" });
+			await eventually(() => extension.messages.length === 3);
+		});
+
 		assert.equal(await stateOf(extension, id), "completed");
 		assert.deepEqual(unhandled, []);
 	});
@@ -3657,7 +4679,7 @@ test("the empty subagents modal is sized to its content instead of filling the t
 		});
 		const lines = openChildren(extension, { rows: 40 }).lines();
 		assert.equal(lines.length, 8);
-		assert.match(lines[0], /^ ┌─ Subagents 0 ─+ \[×\] ─┐$/);
+		assert.match(lines[0], /^ ┌─ Fleet 0 ─+ \[×\] ─┐$/);
 		assert.match(lines[1], /No children in this session\./);
 		assert.match(lines.at(-1), /^ └─+┘$/);
 	});
@@ -3682,17 +4704,17 @@ test("alt+a and /workflow:subagents open a full-screen overlay of every child; j
 		assert.equal(view.view.options.overlayOptions.maxHeight, "100%");
 		const lines = view.lines();
 		assert.equal(lines.length, 12);
-		assert.match(lines[0], /^ ┌─ Subagents 2 · 1 active ─+ \[×\] ─┐$/);
+		assert.match(lines[0], /^ ┌─ Fleet 2 · 1 active ─+ \[×\] ─┐$/);
 		assert.match(
 			lines[1],
 			/^ │ {3}Active ─+ │ ◐ worker [0-9a-f]{4} +running · \d+s {2}│$/,
 		);
 		assert.match(
 			lines[2],
-			/^ │ {2}▸ ◐ worker [0-9a-f]{4} Run the\.\.\. \d+s │ model \(medium\) · wt: repo/,
+			/^ │ {2}▸ ◐ worker [0-9a-f]{4} +running · \d+s │ model \(medium\) · wt: repo/,
 		);
 		assert.match(lines[3], /^ │ {3}Finished ─+ │ Run the tests/);
-		assert.match(lines[4], /^ │ {4}✓ worker [0-9a-f]{4} Map the\.\.\. \d+s │/);
+		assert.match(lines[4], /^ │ {4}✓ worker [0-9a-f]{4} Map the.* \d+s │/);
 		assert.match(
 			view.lines(60).at(-2),
 			/j\/k move {2}\| {2}Enter detail {2}\| {2}s\/c cancel {2}\| {2}q close/,
@@ -3715,7 +4737,7 @@ test("alt+a and /workflow:subagents open a full-screen overlay of every child; j
 		await view.opened;
 
 		const byCommand = openChildren(extension, { via: "command" });
-		assert.match(byCommand.lines()[0], /Subagents 2/);
+		assert.match(byCommand.lines()[0], /Fleet 2/);
 		byCommand.press("\x1b");
 		assert.equal(byCommand.closed(), true);
 
@@ -3727,6 +4749,37 @@ test("alt+a and /workflow:subagents open a full-screen overlay of every child; j
 		assert.equal(extension.notifications.at(-1).level, "error");
 		assert.equal(extension.commands.has("pi-workflow-child-cancel"), false);
 		assert.doesNotMatch(extension.notifications.at(-2).message, /child-cancel/);
+	});
+});
+
+test("the Fleet view keeps a child running after agent_end while Pi retries automatically, and shows it completed once Pi settles", async () => {
+	initTheme("dark", false);
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const parent = await fauxParent(agentDir, [
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "overloaded_error: Overloaded",
+			}),
+			fauxAssistantMessage("Retried answer."),
+		]);
+		const extension = await loadSpawnTool({ agentDir });
+		const result = await spawn(
+			extension.tool,
+			{ role: "worker", task: "Fix the failing test" },
+			{ ...toolContext("tui", worktree), ...parent.context },
+		);
+		const { id } = result.details;
+		await eventually(() => parent.requests.length === 1);
+		await delay(300);
+		assert.equal(parent.requests.length, 1);
+		assert.equal(await stateOf(extension, id), "running");
+		const view = openChildren(extension, { rows: 20 });
+		assert.match(view.lines().join("\n"), /◐ worker [0-9a-f]{4} +running/);
+
+		await eventually(() => view.lines().join("\n").includes("completed"));
+		assert.equal(parent.requests.length, 2);
+		assert.equal(await stateOf(extension, id), "completed");
+		assert.match(view.lines().join("\n"), /✓ worker [0-9a-f]{4} +completed/);
 	});
 });
 
@@ -3829,13 +4882,13 @@ test("Enter opens a live detail that follows the tail, collapses thinking with P
 		view.press("\r");
 		let lines = view.lines(60);
 		let body = lines.join("\n");
-		assert.match(lines[0], /^ ┌─ Subagents 1 · 1 active ─+ \[×\] ─┐$/);
+		assert.match(lines[0], /^ ┌─ Fleet 1 · 1 active ─+ \[×\] ─┐$/);
 		assert.match(lines[1], /^ │ {2}◐ worker [0-9a-f]{4} +running · \d+s {2}│$/);
 		assert.match(body, /❯ Review the doctor/);
 		assert.match(body, /I should read the doctor module first\./);
 		assert.match(body, /The doctor checks three things\./);
 		assert.match(body, /◆ Run npm test/);
-		assert.match(body, /Esc back {2}\| {2}Ctrl\+J\/K scroll/);
+		assert.match(body, /Esc back {2}\| {2}Enter steer {2}\| {2}Ctrl\+J\/K scroll/);
 		assert.match(body, /s\/c cancel {2}\| {2}Ctrl\+T thinking/);
 
 		const renders = view.tui.renders;
@@ -3850,7 +4903,7 @@ test("Enter opens a live detail that follows the tail, collapses thinking with P
 		assert.ok(view.tui.renders > renders);
 		lines = view.lines(60);
 		const threadLines = lines
-			.slice(2, lines.findIndex((line) => /Esc back/.test(line)) - 1)
+			.slice(2, lines.findIndex((line) => /Esc back/.test(line)) - 2)
 			.map((line) => line.slice(2, -1));
 		assert.match(
 			threadLines.findLast((line) => line.trim() !== ""),
@@ -3883,7 +4936,7 @@ test("Enter opens a live detail that follows the tail, collapses thinking with P
 		assert.doesNotMatch(lines.join("\n"), /s\/c cancel/);
 
 		view.press("\x1b");
-		assert.match(view.lines()[0], /Subagents 1/);
+		assert.match(view.lines()[0], /Fleet 1/);
 		assert.equal(view.closed(), false);
 		view.press("\r", "q");
 		assert.equal(view.closed(), true);
@@ -4349,6 +5402,247 @@ test("control sequences in a child's task, text, thinking, and streaming updates
 	});
 });
 
+test("the detail lists the files a child changed through its own successful edit and write calls, nested codemode calls included, and not a failed edit or a bash write", async () => {
+	initTheme("dark", false);
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		await spawnBackground(extension, worktree);
+		await settle();
+		const emit = (event) => children.created[0].spec.onEvent(event);
+		const call = (toolCallId, toolName, args, isError, parent) => {
+			const nested = parent ? { parentToolCallId: parent } : {};
+			emit({ type: "tool_execution_start", toolCallId, toolName, args, ...nested });
+			return () =>
+				emit({ type: "tool_execution_end", toolCallId, toolName, result: {}, isError, ...nested });
+		};
+		const script = call("cm1", "codemode", { code: "..." }, true);
+		const nestedWrite = call("cm1/1", "write", { path: "src/b.ts", content: "b" }, false, "cm1");
+		const nestedEdit = call("cm1/2", "edit", { path: "src/c.ts", edits: [] }, true, "cm1");
+		call("t1", "edit", { path: "src/a.ts", edits: [] }, false)();
+		call("t2", "bash", { command: "echo d > src/d.ts" }, false)();
+		call("t3", "write", { path: "src/pending.ts", content: "e" }, false);
+		nestedEdit();
+		nestedWrite();
+		script();
+		call("t4", "edit", { path: "src/a.ts", edits: [] }, false)();
+
+		const view = openChildren(extension, { rows: 80 });
+		view.press("\r");
+		const body = view.lines(100).join("\n");
+		const files = body.slice(body.indexOf("Changed files"));
+		assert.match(files, /src\/a\.ts[\s\S]*src\/b\.ts/);
+		assert.equal(files.match(/src\/a\.ts/g)?.length, 1);
+		for (const path of ["src/c.ts", "src/d.ts", "src/pending.ts"]) {
+			assert.equal(files.includes(path), false, path);
+		}
+	});
+});
+
+test("a hostile changed path never reaches the rendered detail", async () => {
+	initTheme("dark", false);
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		await spawnBackground(extension, worktree);
+		await settle();
+		const emit = (event) => children.created[0].spec.onEvent(event);
+		const call = { toolCallId: "t1", toolName: "write" };
+		emit({
+			type: "tool_execution_start",
+			...call,
+			args: { path: hostile("path"), content: "x" },
+		});
+		emit({ type: "tool_execution_end", ...call, result: {}, isError: false });
+		const view = openChildren(extension, { rows: 80 });
+		view.press("\r");
+		const emitted = view.component.render(100).join("\n");
+		for (const bytes of hostileBytes) {
+			assert.equal(emitted.includes(bytes), false, JSON.stringify(bytes));
+		}
+		assert.match(plain(emitted), /Changed files[\s\S]*path/);
+	});
+});
+
+test("children launched by one codemode call are grouped under it with the number launched, the number done, and their token total, and a direct launch has no group", async () => {
+	initTheme("dark", false);
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		const launch = async (toolCallId) =>
+			(
+				await extension.tool.execute(
+					toolCallId,
+					{ role: "worker", task: "Fix the failing test" },
+					undefined,
+					undefined,
+					toolContext("tui", worktree),
+				)
+			).details.id;
+		const direct = await launch("call-1");
+		const first = await launch("toolu_script7/1");
+		const second = await launch("toolu_script7/2");
+		await settle();
+		const spend = (child, totalTokens) => {
+			child.entries.push(
+				assistantEntry(`a-${totalTokens}`, [{ type: "text", text: "Done." }]),
+			);
+			child.entries.at(-1).message.usage = { totalTokens, cost: { total: 0 } };
+		};
+		spend(children.created[1], 2000);
+		spend(children.created[2], 1000);
+		children.created[1].result.resolve("Done.");
+		await settle();
+
+		const records = (await use(extension, "list_children", {})).details.children;
+		const group = (id) => records.find((child) => child.id === id)?.group;
+		assert.equal(group(direct), undefined);
+		assert.equal(group(first), "toolu_script7");
+		assert.equal(group(second), "toolu_script7");
+
+		const lines = openChildren(extension, { rows: 40 }).lines(100);
+		const at = lines.findIndex((line) => / script ipt7 ─/.test(line));
+		assert.ok(at > 0, lines.join("\n"));
+		assert.match(lines[at + 1], /2 launched · 1 done +3\.0k tok/);
+		const rows = lines.map((line) => line.split("│")[1] ?? "");
+		const row = (id) => rows.findIndex((line) => line.includes(`worker ${id.slice(0, 4)}`));
+		assert.ok(row(direct) < at);
+		assert.match(rows[at + 2], new RegExp(`◐ worker ${second.slice(0, 4)}`));
+		assert.match(rows[at + 4], /✓ worker .*completed/);
+	});
+});
+
+test("a hostile group label never reaches the rendered list", async () => {
+	initTheme("dark", false);
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		await extension.tool.execute(
+			`${hostile("group")}\x1b[2J/1`,
+			{ role: "worker", task: "Fix the failing test" },
+			undefined,
+			undefined,
+			toolContext("tui", worktree),
+		);
+		await settle();
+		const emitted = openChildren(extension, { rows: 40 }).component.render(100).join("\n");
+		for (const bytes of hostileBytes) {
+			assert.equal(emitted.includes(bytes), false, JSON.stringify(bytes));
+		}
+		assert.match(plain(emitted), /1 launched · 0 done/);
+	});
+});
+
+test("a child that times out after reporting shows its last result in the Fleet view, and the parent's message about it carries the same result", async () => {
+	initTheme("dark", false);
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const clock = manualClock();
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			schedule: clock.schedule,
+		});
+		const id = await spawnBackground(extension, worktree);
+		await settle();
+		children.created[0].spec.report(workerResult("partial", "The parser half is fixed."));
+		clock.fire(minutes(4));
+		await settle();
+
+		assert.equal(await stateOf(extension, id), "timed out");
+		const last = [
+			"Last reported result:",
+			"Verdict: partial.",
+			"Reason: The parser half is fixed.",
+			"files_changed:",
+			"- src/a.ts: fixed the parser",
+			"validation:",
+			"- npm test: 12 passed",
+			"left_undone:",
+			"- none",
+		];
+		assert.equal(extension.messages.length, 1);
+		assert.equal(
+			extension.messages[0].message.content,
+			`Child ${id} timed out: no activity for 4 minutes.\n\n${last.join("\n")}`,
+		);
+
+		const view = openChildren(extension, { rows: 80 });
+		view.press("\r");
+		const lines = view.lines(100).map((line) => line.split("│")[2]?.trim() ?? "");
+		const at = lines.findIndex((line) => /^Result ─/.test(line));
+		assert.ok(at > 0, view.lines(100).join("\n"));
+		assert.deepEqual(lines.slice(at + 1, at + 3 + last.length), [
+			"no activity for 4 minutes.",
+			"",
+			...last,
+		]);
+	});
+});
+
+test("a timed-out child that reported nothing keeps only its reason, in the view and in the parent's message", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const clock = manualClock();
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			schedule: clock.schedule,
+		});
+		const id = await spawnBackground(extension, worktree);
+		await settle();
+		clock.fire(minutes(4));
+		await settle();
+		assert.equal(
+			extension.messages[0].message.content,
+			`Child ${id} timed out: no activity for 4 minutes.`,
+		);
+		const view = openChildren(extension, { rows: 80 });
+		view.press("\r");
+		assert.doesNotMatch(view.lines(100).join("\n"), /Last reported result/);
+	});
+});
+
+test("a hostile last result never reaches the rendered detail", async () => {
+	initTheme("dark", false);
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const clock = manualClock();
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			schedule: clock.schedule,
+		});
+		await spawnBackground(extension, worktree);
+		await settle();
+		children.created[0].spec.report({
+			...workerResult("partial", hostile("reason")),
+			left_undone: [hostile("undone")],
+		});
+		clock.fire(minutes(4));
+		await settle();
+		const view = openChildren(extension, { rows: 80 });
+		view.press("\r");
+		const emitted = view.component.render(100).join("\n");
+		for (const bytes of hostileBytes) {
+			assert.equal(emitted.includes(bytes), false, JSON.stringify(bytes));
+		}
+		assert.match(plain(emitted), /next undone/);
+	});
+});
+
 test("a double click opens the child painted on that row even if the order changed before the next redraw, and a vanished child does nothing", async () => {
 	initTheme("dark", false);
 	await withWorkspace(async ({ worktree, agentDir }) => {
@@ -4659,6 +5953,116 @@ test("an idle parent receives results that end together in one message that star
 	});
 });
 
+test("children launched by an aborted script keep running and asking, and reach the parent in one delivery when all are done", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		const script = new AbortController();
+		const ids = (
+			await Promise.all(
+				[0, 1, 2].map((i) =>
+					extension.tool.execute(
+						`script/${i + 1}`,
+						{ role: "worker", task: `Task ${i}` },
+						script.signal,
+						undefined,
+						toolContext("tui", worktree),
+					),
+				),
+			)
+		).map((result) => result.details.id);
+		script.abort();
+		await settle();
+
+		assert.deepEqual(
+			children.created.map((child) => child.aborts),
+			[0, 0, 0],
+		);
+		const answer = children.created[1].spec.ask("Which file?");
+		assert.equal(extension.messages.length, 1);
+		assert.equal(
+			extension.messages[0].message.customType,
+			"pi-workflow-child-question",
+		);
+		const asking = extension.messages[0].message.details.id;
+		assert.ok(ids.includes(asking));
+		await use(extension, "reply_child", { id: asking, question: 1, answer: "a.ts" });
+		assert.equal(await answer, "a.ts");
+
+		for (const [i, child] of children.created.entries()) {
+			child.spec.report(workerResult("done"));
+			child.result.resolve(`Answer ${i}.`);
+			await settle();
+			await extension.fire("turn_end");
+			await extension.fire("agent_settled");
+		}
+
+		assert.equal(extension.messages.length, 2);
+		assert.deepEqual(
+			extension.messages[1].message.details.results
+				.map(stateOfDetails)
+				.sort((a, b) => a.id.localeCompare(b.id)),
+			ids
+				.map((id) => ({ id, state: "completed" }))
+				.sort((a, b) => a.id.localeCompare(b.id)),
+		);
+	});
+});
+
+test("after child session is unseated, a launch is refused while a fan-out's children still start, finish, and deliver", async (t) => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		const ids = [];
+		for (let i = 0; i < 6; i++)
+			ids.push(await spawnBackground(extension, worktree, `Task ${i}`));
+		await settle();
+		const seated = Object.fromEntries(
+			capabilities.map((capability) => [capability, true]),
+		);
+		t.after(() =>
+			replaceSelection({
+				schemaVersion: 1,
+				capabilities: seated,
+				expectations: {},
+			}),
+		);
+		replaceSelection({
+			schemaVersion: 1,
+			capabilities: { ...seated, "child-session": false },
+			expectations: {},
+		});
+
+		const refused = await spawn(
+			extension.tool,
+			{ role: "worker", task: "One more" },
+			toolContext("tui", worktree),
+		);
+		assert.equal(refused.details.status, "refused");
+		assert.equal(text(refused), "Child session is not seated. Run /workflow:config.");
+		assert.equal(children.created.length, 6);
+
+		for (const [i, child] of children.created.entries()) {
+			child.result.resolve(`Answer ${i}.`);
+			await settle();
+			await extension.fire("turn_end");
+		}
+
+		assert.deepEqual(children.created[5].tasks, ["Task 5"]);
+		assert.equal(extension.messages.length, 1);
+		assert.deepEqual(
+			extension.messages[0].message.details.results.map(stateOfDetails),
+			ids.map((id) => ({ id, state: "completed" })),
+		);
+	});
+});
+
 test("five children that end at different times reach the parent in one delivery that starts one turn", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
@@ -4772,3 +6176,252 @@ for (const [trigger, event] of [
 		});
 	});
 }
+
+test("the first answer wins: an operator answer in the Fleet view resolves the question, and a later reply_child is refused with it", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			schedule: manualClock().schedule,
+		});
+		const id = await spawnBackground(extension, worktree);
+		await settle();
+		const asked = children.created[0].spec.ask("Which file holds the parser?");
+		const view = openChildren(extension);
+
+		view.press("\r", "\r", ..."queso cancel", "\r");
+
+		assert.equal(await asked, "queso cancel");
+		assert.equal(await stateOf(extension, id), "running");
+		assert.equal(view.closed(), false);
+		assert.deepEqual(
+			extension.messages.map((entry) => entry.message.customType),
+			["pi-workflow-child-question"],
+		);
+		await assert.rejects(
+			use(extension, "reply_child", { id, question: 1, answer: "src/a.ts" }),
+			{
+				message: `Question 1 of child ${id} was already answered by the operator: queso cancel`,
+			},
+		);
+		assert.equal(extension.messages.length, 1);
+	});
+});
+
+test("the first answer wins: after the parent's reply_child, an operator answer is refused with its reason", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			schedule: manualClock().schedule,
+		});
+		const id = await spawnBackground(extension, worktree);
+		await settle();
+		const asked = children.created[0].spec.ask("Which file holds the parser?");
+		const view = openChildren(extension);
+		view.press("\r", "\r", ..."src/b.ts");
+
+		await use(extension, "reply_child", { id, question: 1, answer: "src/a.ts" });
+		view.press("\r");
+
+		assert.equal(await asked, "src/a.ts");
+		assert.ok(
+			view
+				.lines(160)
+				.some((line) =>
+					line.includes(
+						`Question 1 of child ${id} was already answered by the parent: src/a.ts`,
+					),
+				),
+		);
+	});
+});
+
+async function steerable(worktree, agentDir) {
+	const children = fakeChildren();
+	const extension = await loadSpawnTool({
+		agentDir,
+		create: children.create,
+		schedule: manualClock().schedule,
+	});
+	const id = await spawnBackground(extension, worktree);
+	await settle();
+	return { children, extension, id, child: children.created[0] };
+}
+
+function shows(view, text) {
+	return view.lines(160).some((line) => line.includes(text));
+}
+
+test("the operator steers a running child from the Fleet view without cancelling it, the row shows each Steer pending until the child receives it, and the parent hears nothing", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const { extension, id, child } = await steerable(worktree, agentDir);
+		const tools = extension.tools.map((tool) => tool.name);
+		const view = openChildren(extension, { rows: 30 });
+
+		view.press("\r", "\r", ..."use tabs", "\r", "\r", ..."then rerun", "\r");
+		await settle();
+
+		assert.deepEqual(child.steered, ["use tabs", "then rerun"]);
+		assert.equal(child.aborts, 0);
+		assert.equal(await stateOf(extension, id), "running");
+		assert.ok(shows(view, "2 steers pending"));
+		child.deliver();
+		assert.ok(shows(view, "1 steer pending"));
+		child.deliver();
+		assert.equal(shows(view, "pending"), false);
+
+		child.result.resolve("Done with tabs.");
+		await settle();
+		assert.equal(shows(view, "undelivered"), false);
+		assert.deepEqual(
+			extension.messages.map((entry) => entry.message.customType),
+			["pi-workflow-child-result"],
+		);
+		assert.equal(JSON.stringify(extension.messages).includes("use tabs"), false);
+		assert.deepEqual(
+			extension.tools.map((tool) => tool.name),
+			tools,
+		);
+	});
+});
+
+test("a Steer the child has not received when it ends is shown as undelivered on its row and in its detail", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const { extension, child } = await steerable(worktree, agentDir);
+		const view = openChildren(extension, { rows: 30 });
+
+		view.press("\r", "\r", ..."use tabs", "\r", "\r", ..."then rerun", "\r");
+		await settle();
+		child.deliver();
+		child.result.resolve("Done.");
+		await settle();
+
+		assert.ok(shows(view, "1 steer undelivered"));
+		assert.equal(shows(view, "pending"), false);
+		assert.ok(shows(view, "undelivered then rerun"));
+		assert.equal(shows(view, "undelivered use tabs"), false);
+		assert.equal(JSON.stringify(extension.messages).includes("then rerun"), false);
+	});
+});
+
+test("through Pi's SDK, a Steer still queued when the child is cancelled mid-stream is shown as undelivered", async () => {
+	initTheme("dark", false);
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const child = await realChild(
+			agentDir,
+			fauxAssistantMessage("a very long answer ".repeat(400)),
+			{ tokensPerSecond: 200 },
+		);
+		const id = (await spawnReal(child, worktree)).details.id;
+		await eventually(() => child.parent.requests.length === 1);
+		const view = openChildren(child.extension, { rows: 30 });
+
+		view.press("\r", "\r", ..."use tabs", "\r");
+		await eventually(() => shows(view, "1 steer pending"));
+		await use(child.extension, "cancel_child", { id });
+		await delay(50);
+
+		assert.equal(await stateOf(child.extension, id), "cancelled");
+		assert.equal(child.parent.requests.length, 1);
+		assert.ok(shows(view, "1 steer undelivered"));
+		assert.ok(shows(view, "undelivered use tabs"));
+	});
+});
+
+test("a Steer beginning with / is refused, and a child that turns waiting or ends before the Steer is sent refuses it with the reason", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const { extension, id, child } = await steerable(worktree, agentDir);
+		const view = openChildren(extension, { rows: 30 });
+
+		view.press("\r", "\r", ..."/mcp", "\r");
+		await settle();
+		assert.ok(shows(view, "A Steer cannot begin with /."));
+
+		view.press("\r", ..."use tabs");
+		const asked = child.spec.ask("Which file?");
+		view.press("\r");
+		await settle();
+		assert.ok(
+			shows(view, `Child ${id} is waiting; only a running child can be steered.`),
+		);
+
+		view.press("\r", ..."src/a.ts", "\r");
+		assert.equal(await asked, "src/a.ts");
+		view.press("\r", ..."use tabs");
+		child.result.resolve("Done.");
+		await settle();
+		view.press("\r");
+		await settle();
+		assert.ok(
+			shows(view, `Child ${id} is completed; only a running child can be steered.`),
+		);
+		assert.deepEqual(child.steered, []);
+	});
+});
+
+test("through Pi's SDK, two Steers reach a running child at its next turns, one per turn, after the tool results and without cancelling it", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const child = await realChild(agentDir, [
+			fauxAssistantMessage(fauxToolCall("bash", { command: "sleep 0.5" }), {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("Using tabs."),
+			fauxAssistantMessage("Rerunning."),
+		]);
+		const id = (await spawnReal(child, worktree)).details.id;
+		await eventually(() => child.parent.requests.length === 1);
+		const view = openChildren(child.extension, { rows: 30 });
+
+		view.press("\r", "\r", ..."use tabs", "\r", "\r", ..."then rerun", "\r");
+		await eventually(() => shows(view, "2 steers pending"));
+		await eventually(() => child.parent.requests.length === 3);
+		for (let i = 0; i < 100; i++) {
+			if ((await stateOf(child.extension, id)) === "completed") break;
+			await delay(10);
+		}
+
+		const tail = (request) =>
+			request.messages
+				.slice(-2)
+				.map((message) =>
+					message.role === "user"
+						? `user: ${message.content.map((part) => part.text).join("")}`
+						: message.role,
+				);
+		assert.deepEqual(tail(child.parent.requests[1]), [
+			"toolResult",
+			"user: use tabs",
+		]);
+		assert.deepEqual(tail(child.parent.requests[2]), [
+			"assistant",
+			"user: then rerun",
+		]);
+		assert.equal(await stateOf(child.extension, id), "completed");
+		assert.equal(shows(view, "undelivered"), false);
+	});
+});
+
+test("a Steer whose text begins with / after leading whitespace is refused", async () => {
+	const { core, launch } = recordingCore();
+	const { id, child } = await launch();
+	await assert.rejects(core.steer(id, "  /mcp"), /A Steer cannot begin with \//);
+	assert.deepEqual(child.steered, []);
+});
+
+test("a file a child edits by a relative and an absolute path is one changed file, shown relative to the child's worktree, and a file outside it keeps its absolute path", async () => {
+	const { core, launch } = recordingCore();
+	const { id, child } = await launch();
+	const write = (toolCallId, path) => {
+		const call = { toolCallId, toolName: "write" };
+		child.spec.onEvent({ type: "tool_execution_start", ...call, args: { path } });
+		child.spec.onEvent({ type: "tool_execution_end", ...call, result: {}, isError: false });
+	};
+	write("t1", "src/a.ts");
+	write("t2", "/tmp/src/a.ts");
+	write("t3", "./src/../src/a.ts");
+	write("t4", "/etc/hosts");
+	assert.deepEqual(core.changedFiles(id), ["src/a.ts", "/etc/hosts"]);
+});

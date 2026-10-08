@@ -132,6 +132,27 @@ test("status degrades a missing companion only when an expectation names it", as
 	);
 });
 
+test("doctor does not report a missing pi-web-access while its expectation is off", async () => {
+	const result = await createCompanionWorkflow({
+		...aligned,
+		catalog: {
+			resolveInstalledVersion: (name) =>
+				isColliding(name) ||
+				name === "@tintinweb/pi-subagents" ||
+				name === "pi-web-access"
+					? {}
+					: { version: "1.0.0" },
+		},
+		expectedPackages: () => [],
+		interaction: {},
+	}).diagnose();
+
+	assert.equal(result.level, "info");
+	assert.deepEqual(result.actionable, []);
+	assert.doesNotMatch(result.message, /pi install npm:pi-web-access/);
+	assert.match(result.message, /All configured companions are installed\./);
+});
+
 test("inspect reports missing companions without installing them", async () => {
 	await withMetadataFile([{ package: "alpha" }], async ({ metadataPath }) => {
 		const notifications = [];

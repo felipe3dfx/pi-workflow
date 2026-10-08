@@ -3,7 +3,7 @@
 Status: READY. The contradiction found during synthesis (C1) and the open items C2 to C5 are resolved by owner dispositions (under "Owner dispositions"). The owner also disposed B1 (worker and verifier children load the parent's context files) and B2 (R13: `/reload` ends every working child, with a notice at `session_shutdown`), after an analysis of `badlogic/pi-subagent` and Pi's sources.
 
 Package: `docs/features/child-session-capabilities.md`, CONFIRMED by the owner. Its sha256 prefix is `048b0d37`. The package also includes `GLOSSARY.md` (`a5e8153b`) and the accepted ADRs 0001 to 0013.
-Review handoff: the Domain Authority review, renewed each round and consistent with ADRs 0001 to 0013, with deviations DV1 to DV5 declared. It also includes the owner's dispositions R1 to R13 and K-A to K-F, and the focused reverification of W1 and I1.
+Review handoff: the Domain Authority review, renewed each round and consistent with ADRs 0001 to 0013, with deviations DV1 to DV5 declared. It also includes the owner's dispositions O1 to O13 and K-A to K-F, and the focused reverification of W1 and I1.
 Verdict: READY WITH WARNINGS (`docs/specs/child-session-capabilities-review.md`, which includes items 23 to 29).
 
 ## Problem
@@ -40,14 +40,8 @@ A child session uses the tools the parent already has. Five layers ship in order
 
 ## Vocabulary used by this specification
 
-These terms are not glossary entries. This specification uses them with the meanings below. Adding them to the glossary is a gap for `domain-modeling`, not a decision here.
+Tool gate, Contract, Trace, Working child, Launch limit, and Group are defined in `GLOSSARY.md`. This specification also uses these terms:
 
-- **Tool gate**: the parent's `tool_call` check that applies the routing decision for the current user message (ADR 0008, `docs/specs/routing-owner.md`).
-- **Contract**: the harness child contract file for a role. Its `tools:` line lists the tools a launch checks. Its body is the child's custom prompt.
-- **Trace**: the harness's record of a child's launch and run, which the operator reads in the Fleet view.
-- **Working child**: a child whose Run state is queued, running, or waiting.
-- **Launch limit**: the bound on a parent's working children (D12).
-- **Group**: the children launched by one parent `codemode` call.
 - **`pending` launch outcome**: the existing launch result for a model or thinking mismatch, "The work stays pending". It is not a Pending result.
 - **Jev answer**: what one Jev call returns, a destination and a Specialist. It is not a Verdict, which is the Specialist's conclusion.
 
@@ -91,9 +85,9 @@ Evidence: the child-session core creates a child's session before it queues the 
 - **Mandatory.** MCP connects and waits as in the parent. Pi waits up to 10 s for servers with `direct` tools before the first prompt, and a script waits for the servers it names. A server that connects later is declared then. Pi's "still connecting" notice goes to the child's trace. The harness adds no MCP wait and does not freeze the tool set. MCP and web tools are not checked at launch. Source: the MCP scenario, D14, and the out-of-scope list. Necessity: approved behavior. Late declaration is inherited Pi behavior (R9).
 - **Mandatory.** Every server in the MCP server catalog gains a `description`, so Pi's `mcp_servers` section does not change when a server connects. The description reaches the user's `mcp.json` only through Configure's existing plan and apply. Until then, and for user servers without a description, R9 applies. Source: Scope 2, Dependencies, the Cache-first scenario, ADR 0001, and ADR 0009. Necessity: ADR 0001 forbids changing the user's Pi environment outside the explicit command.
 - **Mandatory.** The explorer loads `pi-web-access` from the user's local installation, whether or not its companion expectation is on. The harness passes only a resolved local directory, never a package source that can install. A missing companion is never installed. When it is missing, the explorer launches without web tools, and its trace names the package. Doctor does not report it while its expectation is off (R12). A worker or verifier has no web tool. Source: the Web scenario, D5, D10, ADR 0001, ADR 0005, and R12. Necessity: approved behavior and the never-installed invariant.
-- **Recommendation.** The explorer resolves the local installation with Pi's agent directory, the same directory the child's resource loader already uses. Evidence: the harness's companion lookup and Pi's package directory can differ. Need: the explorer has web tools whenever the parent's Pi loads `pi-web-access`.
+- **Recommendation.** The explorer resolves the installation as Pi does for the parent, with Pi's package manager: the parent project when the parent trusts it, then Pi's agent directory, then the legacy global install. Evidence: the harness's companion lookup and Pi's package directory can differ. Need: the explorer has web tools whenever the parent's Pi loads `pi-web-access`.
 - **Mandatory.** The contracts change as follows. `worker.md` and `verify.md` no longer say the child has no MCP tools, and they still say it cannot launch child sessions. The explorer's and verifier's read-only wording covers MCP. The explorer's web tools are optional. Every contract states that publishing and writes to external services through MCP stay with the parent. Every contract states that the role contract takes precedence over context files, so instructions to commit or open pull requests do not apply to a child. Source: Dependencies, the Publishing scenario, DV4, R3, and the context files decision. Necessity: the contracts are the only guard that DV4 accepts, and the parent-reserved commands of ADR 0011 and ADR 0013 must win over repository guidance. A contract test asserts the statement.
-- **Mandatory.** ADR 0014 ships with layer 2. It records D1 and the accepted risks R1 to R13, and it extends ADR 0013's R1 to the `codemode`, MCP, and web surfaces (DV5). Source: D1, DV5, the Risks section, and the review report's required revision. Necessity: accepted decision. The outline is under "Accepted risks".
+- **Mandatory.** ADR 0014 ships with layer 2. It records D1 and the accepted risks R1 to R14, and it extends ADR 0013's R1 to the `codemode`, MCP, and web surfaces (DV5). Source: D1, DV5, the Risks section, and the review report's required revision. Necessity: accepted decision. The outline is under "Accepted risks".
 - **Mandatory.** `docs/specs/child-session-delegation.md` is edited with layer 2 to describe the curated extensions and the context files in children. Children still never load the harness extension, so the parent's `tool_call` hook still does not reach them. Source: Dependencies, DV1, and the review report's required revision. Necessity: that specification states that children are extension-free.
 
 ### Layer 3. Fan-out from `codemode`, a Specialist per launch, the launch limit
@@ -102,6 +96,7 @@ Evidence: `spawn_child` is a parent tool that is already callable from `codemode
 
 - **Mandatory.** The parent can call `spawn_child` from a `codemode` script. There is no separate workflow tool. In tui and rpc modes, the script launches children and returns without awaiting them. The children run in the background, and their results reach the parent through ADR 0010: one message when every child of the session is done, or earlier when a result wakes the parent. Each child keeps `ask_parent`. Aborting or failing the script does not touch children it already launched. Source: D3, the Fan-out scenario, and ADR 0010. Necessity: accepted decision and consumer contract.
 - **Mandatory.** In print and json modes, a child launched from a script runs in the foreground. The script awaits it. It is outside the launch and running limits and outside the Fleet view. Its `ask_parent` is refused, and aborting the script stops it. Source: R8. Necessity: accepted risk.
+- **Mandatory.** A child's `ask_parent` follows its call's cancellation signal. When the asking call ends while the question waits, for example because the child's script times out, the question is withdrawn, the child returns to running, and a later `reply_child` is refused with the reason. Source: owner disposition on V6 (#215). Necessity: owner decision; a waiting question must not outlive the call that asked it.
 - **Mandatory.** The destination (stay, decide, or leave) is decided once per user message, by the tool gate or by the first launch. While Jev routing is on, each launch asks Jev for its Specialist. On every launch after the destination is decided, Jev's destination answer is ignored. A launch whose Jev call gives no valid answer is Launch blocked, and Launch blocked is never kept as the message's decision. The first launch of a message may cost two Jev calls. Source: the Routing scenario, D11, DV3, ADR 0008, and `docs/specs/routing-owner.md`. Necessity: accepted decision and approved deviation. Resolved by owner disposition C1.
 - **Mandatory.** While Jev routing is off, the parent names each launch's role and Jev is not called. While it is on, an explicit child request is answered by Jev like any other message, as `docs/specs/routing-owner.md` defines. Source: the Routing scenario (owner disposition C1), ADR 0008, and `docs/specs/routing-owner.md`. Necessity: approved behavior and consumer contract. A skill name selects neither a destination nor a Specialist.
 - **Mandatory.** When a script launches several children at once and the message's destination is undecided, the first launch to ask Jev decides it (owner-confirmed, C3). Launches of the same message that run concurrently wait for that decision, and their own destination answers are ignored. When that first call is Launch blocked, the next launch decides. Source: the Routing scenario ("decided once per user message ... by the first launch") and D11. Necessity: with concurrent launches, "first" needs a definition, or one message can receive several destinations. Owner-confirmed (C3).
@@ -131,7 +126,7 @@ Evidence: `alt+a` and `/workflow:subagents` open the children overlay, titled `S
 - **Mandatory.** In tui and rpc modes, a waiting child's question can be answered by the operator in the Fleet view or by the parent with `reply_child`. The first answer wins. A later `reply_child` is refused, and the refusal carries the operator's answer, which is how the parent learns it. The question message that the parent already received is not withdrawn. An operator answer after the parent's answer is refused with the reason. Source: the Answering scenario and DV2. Necessity: approved deviation.
 - **Mandatory.** The `reply_child` offer rules do not change. Source: the Seating invariant and `docs/specs/deep-harness-modules.md` (D10 window). Necessity: invariant.
 - **Recommendation.** The child-session core owns first-answer-wins. It keeps the answer for each question number and the source of that answer. It exposes an operator answer next to the existing reply, and both pass the same waiting check. Evidence: the reply already checks the question number and the waiting state, and both answers resolve the same waiting question. Need: one rule, testable through the core with the fake factory.
-- **Recommendation.** The child session handle gains a steer operation. The Pi adapter calls Pi's session `steer` and sets `steeringMode` to one-at-a-time explicitly in the child's in-memory settings. A pending Steer comes from Pi's `queue_update` event, and the Steers a child never received come from `clearQueue` before the session is disposed. The core tracks delivery from the child's own session events, not from elapsed time. Evidence: the factory seam already has a production adapter and a fake adapter, and Pi exposes the steering queue. Need: the undelivered state is observed, not guessed.
+- **Recommendation.** The child session handle gains a steer operation. The Pi adapter calls Pi's session `steer` and relies on Pi's default one-at-a-time `steeringMode`, which the child's in-memory settings leave unchanged. A pending Steer comes from Pi's `queue_update` event, and the Steers a child never received come from `clearQueue` before the session is disposed. The core tracks delivery from the child's own session events, not from elapsed time. Evidence: the factory seam already has a production adapter and a fake adapter, and Pi exposes the steering queue. Need: the undelivered state is observed, not guessed.
 - **Mandatory.** The Run state that the Fleet view shows follows Pi's `agent_settled`, never `agent_end`, because queued work or an automatic retry can still follow `agent_end`. Source: Pi's SDK documentation of the two events and the Steering scenario. Necessity: a steer that arrives during a retry would otherwise be reported undelivered.
 
 ### Layer 4b. Changed files, grouping, and the last result
@@ -261,13 +256,14 @@ Accepted by the owner and recorded in ADR 0014:
 - R11. `direct` MCP servers that the user adds to `mcp.json` change children's declarations and tool order. The harness does not normalize them.
 - R12. A locally installed `pi-web-access` loads in the explorer even when its companion expectation is off, so doctor does not report it missing. The explorer's trace does.
 - R13. `/reload` ends every working child, because every session shutdown, reload included, disposes all children. The harness only notifies the operator at `session_shutdown` with reason `reload` and records it in the trace. Survival across a reload belongs to #204.
+- R14. A child's stdio MCP servers start in the parent's project directory, and its MCP roots announce the parent's project, not the child's worktree, as for the parent session. Pi 1.0.4 exports no loader for `createMcpExtension`'s `loadConfig` option (V7).
 
 ADR 0014 outline (ships with layer 2):
 
 - Title: in-process child sessions carry the parent's risk.
 - Decision: children run in the parent's process with no operating-system boundary (D1). They load `codemode` and MCP, plus `pi-web-access` for the explorer, and never the harness extension. A worker and a verifier also load the parent's context files. They inherit MCP with the parent's trust. The contracts keep publishing with the parent. ADR 0013's R1 extends to `codemode`, MCP, and web tools (DV5). Supersedes: none.
 - Considered options: child processes over RPC; an operating-system sandbox (`@anthropic-ai/sandbox-runtime`, nono, Gondolin); filtering MCP tools by read-only hints; a secret-path refusal; a harness MCP wait or a frozen tool set; subprocess designs (Pi's subagent example, `badlogic/pi-subagent`, gentle-shell). Each option names why it was not adopted, from the brief's Problem, Decisions, and Out of scope sections. The subprocess options also name what in-process children cost (the private model-runtime access, the cancellation stream patch, the manual extension lifecycle, trust plumbing, and R13) and what they gain (Pi's file mutation queue serializes edits of one file across children and the parent, which D7 relies on).
-- Consequences: R1 to R13 as accepted risks. Two Pi-internal dependencies are upgrade re-verification items, like the chrome in ADR 0007: the factory's private access to Pi's model runtime, and the patch of the child's stream function that makes cancellation work.
+- Consequences: R1 to R14 as accepted risks. Two Pi-internal dependencies are upgrade re-verification items, like the chrome in ADR 0007: the factory's private access to Pi's model runtime, and the patch of the child's stream function that makes cancellation work.
 
 ## Evidence gaps and verification tasks
 
@@ -277,20 +273,20 @@ Each task runs before the layer it names ships. A failure that the brief does no
 - V2 (E4, layer 2, web part). The task verifies whether `pi-web-access` loaded in an explorer shares module state with the parent. A parent fetch must survive an explorer ending, and an explorer in another worktree must not clear the parent's extension state.
 - V3 (layer 1). `codemode` runs in a child before the layer-2 lifecycle exists. If the extension needs a started session, the start half of the lifecycle has to move into layer 1, and that delivery-order change goes back to the owner.
 - V4 (layer 2). The explorer's resolved `pi-web-access` directory is the one Pi loads for the parent. This covers both of Pi's agent-directory variables.
-- V6 (layer 3). A child calls `ask_parent` inside its own script, and the script ends while the question waits. This happens only with an explicit script timeout. The task observes whether the question stays waiting until the stall watch.
-- V7 (layer 2). Pi does not export its MCP config loader. The trust-bound loader (the parent's project trust through the parent's `isProjectTrusted`, global plus trusted project configuration) needs a reimplementation from public exports or an upstream export. The task decides which before layer 2 ships.
+- V6 (layer 3), resolved. A child calls `ask_parent` inside its own script, and the script ends while the question waits. The owner did not accept it as a risk (#215): `ask_parent` follows its call's cancellation signal, so the question is withdrawn, the child returns to running, and a later `reply_child` is refused with the reason. Layer 3 records it as a mandatory decision.
+- V7 (layer 2), resolved. Pi 1.0.4 does not export its MCP config loader, so `createMcpExtension`'s `loadConfig` option has nothing to call. The owner chose neither a reimplementation nor an upstream export (#213): the child's MCP extension is Pi's own, and its `session_start` handler receives the child's context with `cwd` set to the parent's project, so Pi's loader reads the global and trusted-project configuration under the parent's trust. The consequence is accepted as R14.
 - V8 (layer 2), resolved. Pi has no cancellable pre-reload hook; the only signal is `session_shutdown` with reason `reload`, which fires before teardown and can notify but not confirm or prevent. The harness notifies there.
 
 The review lists these items as pending for the specification. Each is disposed as follows:
 
 - E2 and E4 are V1 and V2.
-- `ask_parent` inside a child's script is V6.
+- `ask_parent` inside a child's script is V6, resolved by the owner (#215).
 - The parent's message for a timed-out child carries its last result. Decided in layer 4b (C5).
-- Locating companions with Pi's agent directory is the layer-2 recommendation and V4.
+- The explorer locates `pi-web-access` with Pi's `DefaultPackageManager.getInstalledPath`: the project scope only when the parent trusts the project, then the user scope, then the legacy global install. It is the layer-2 recommendation and V4.
 - A Steer not yet received is shown as pending on the child's row. Decided in layer 4a (C5).
 - Seating during a fan-out is decided in layer 3 from the Seating invariant.
 - The Fleet view's title is `Fleet`. Decided in layer 4a (C5).
-- The terms Tool gate, contract, trace, and group are defined under "Vocabulary" as specification terms and are a glossary gap.
+- The terms Tool gate, contract, trace, and group are defined in `GLOSSARY.md`.
 - The catalog descriptions reaching the user through Configure is decided in layer 2 from ADR 0001.
 
 ## Owner dispositions
@@ -338,4 +334,4 @@ Native relationships between layers. Ticket slicing must respect each one. They 
 
 ## Feature review
 
-Final verdict: READY WITH WARNINGS. The consolidated report is `docs/specs/child-session-capabilities-review.md`. The owner accepted every remaining warning as DV1 to DV5 and R1 to R13. C1 to C5 came up during synthesis, and B1, B2 (R13) after the analysis of `badlogic/pi-subagent`. The owner's dispositions are recorded above, and the report's items 23 to 29 cover them.
+Final verdict: READY WITH WARNINGS. The consolidated report is `docs/specs/child-session-capabilities-review.md`. The owner accepted every remaining warning as DV1 to DV5 and R1 to R14. C1 to C5 came up during synthesis, and B1, B2 (R13) after the analysis of `badlogic/pi-subagent`. The owner's dispositions are recorded above, and the report's items 23 to 29 cover them.

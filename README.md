@@ -26,6 +26,7 @@ For configuration decisions and behavior, see [ADR 0009](docs/adr/0009-guided-co
 - Workflow choices are stored in the Pi agent directory: `pi-workflow-selection.json`, `pi-workflow-models.json`, and `pi-workflow-routing.json`.
 - Legacy `mcp-adapter.json` configuration is not read; the built-in Pi MCP settings are used. See the warning about `pi-mcp-adapter` below.
 - Child sessions read `git` and GitHub state on their own; inside the child's worktree only listed `git` reads run, only listed `gh` reads run anywhere, and everything else, including `gh auth` and `git credential`, stays with the parent, whether Jev routing is on or off. The child shell's guard covers only the model's own command line, so npm scripts, hooks, and tests it starts run the real `git` and `gh`. It is a policy boundary, not a security boundary: absolute paths, `command git`, `exec git`, `env git`, `gh` aliases, `GIT_*` overrides, descendant processes such as `sh -c`, or running `git -C <repo>` from outside the worktree can bypass it. See [ADR 0013](docs/adr/0013-child-command-policy-for-git-and-gh.md).
+- Child sessions run in the parent's process and carry its risk. Every child reaches the parent's MCP servers with the parent's project trust, and workers and verifiers follow the repository's AGENTS.md; a child's contract still keeps commits, pull requests, and publishing with the parent. See [ADR 0014](docs/adr/0014-in-process-children-carry-the-parent-risk.md).
 
 For internal communication and publication-language requirements, see the [Language Contract in `AGENTS.md`](AGENTS.md#language-contract).
 
@@ -35,7 +36,7 @@ For internal communication and publication-language requirements, see the [Langu
 
 ## Theme and chrome
 
-The package ships the `pi-workflow` theme and restyles Pi's terminal UI. The chrome patches Pi internals copied from Pi 1.0.3 without a version guard; re-verify them on every Pi upgrade. See [ADR 0007](docs/adr/0007-patch-pi-tui-internals-for-chrome.md).
+The package ships the `pi-workflow` theme and restyles Pi's terminal UI. The chrome patches Pi internals copied from Pi 1.0.4 without a version guard; re-verify them on every Pi upgrade. See [ADR 0007](docs/adr/0007-patch-pi-tui-internals-for-chrome.md).
 
 ## Colliding packages
 
@@ -64,4 +65,4 @@ The launcher isolates Pi home, configuration, packages, and sessions. It is not 
 ## Requirements
 
 - Node.js `>=22.19`
-- Pi CLI `>=1.0.3` available in the target environment
+- Pi CLI `>=1.0.4` available in the target environment

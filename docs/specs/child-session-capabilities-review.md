@@ -7,20 +7,22 @@ Veredicto: `READY WITH WARNINGS`.
 
 ## Hallazgos dispuestos
 
+Las disposiciones del Owner de la ronda 1 se etiquetan O1 a O13 y las de la ronda 2, K-A a K-F. Las etiquetas R1 a R14 nombran solo los riesgos aceptados.
+
 ### Ronda 1
 
-1. B1. El brief decía que un script de `codemode` esperaba los resultados de sus hijos sin definir cómo, ni qué pasaba con los hijos al abortarse el script. Disposición del Owner (R1): el script solo lanza; los hijos corren en segundo plano y sus resultados llegan por el ADR 0010; abortar el script no toca a los hijos lanzados. Resuelto y reverificado. La premisa de un límite de 300 s del script era incorrecta: `codemode` no tiene límite por defecto.
+1. B1. El brief decía que un script de `codemode` esperaba los resultados de sus hijos sin definir cómo, ni qué pasaba con los hijos al abortarse el script. Disposición del Owner (O1): el script solo lanza; los hijos corren en segundo plano y sus resultados llegan por el ADR 0010; abortar el script no toca a los hijos lanzados. Resuelto y reverificado. La premisa de un límite de 300 s del script era incorrecta: `codemode` no tiene límite por defecto.
 2. B2. Con Pi 1.0.4, una allowlist sin entrada `mcp__` dejaba sin activar las tools MCP `direct`, como context7. Corrección obligatoria: la allowlist del hijo lleva `mcp__*` y un test sobre Pi 1.0.4 verifica el conjunto invocable. Resuelto y reverificado.
-3. W. Jev decidía una sola vez por mensaje, así que todos los hijos de un script recibían el mismo Specialist. Disposición del Owner (R2): Specialist por lanzamiento; un solo mensaje del gate por turno. Resuelto (DV3).
-4. W. Bloqueo de rutas con secretos del explorer: incoherente con el riesgo ya aceptado y evadible por búsquedas recursivas. Disposición del Owner (R3): se retira y queda como riesgo del ADR 0014. Resuelto.
-5. W. Cierre ordenado antes del timeout: no alcanza un stream colgado. Disposición del Owner (R4): se retira; el Fleet view muestra el último resultado reportado. Resuelto.
-6. W. Tope de hijos por script: dejaba abiertas las llamadas directas. Disposición del Owner (R5): un único launch limit por padre. Resuelto.
-7. W. File claim revisado al lanzar: no protegía nada al escribir. Disposición del Owner (R6): se retira; el reparto va en el texto de la tarea y el Fleet view muestra cruces. Término retirado del glosario. Resuelto.
-8. W. Espera de MCP con fallo cerrado: más estricta que el padre. Disposición del Owner (R7): se retira. Resuelto.
-9. W. Tools MCP que escriben al alcance de Specialists de solo lectura. Disposición del Owner (R8): guía en los contratos y riesgo del ADR 0014 (DV4). Aceptado.
-10. W. Instrucciones del padre a un hijo en curso. Disposición del Owner (R9): solo el operador; el rechazo de `reply_child` lleva la respuesta del operador. Resuelto.
+3. W. Jev decidía una sola vez por mensaje, así que todos los hijos de un script recibían el mismo Specialist. Disposición del Owner (O2): Specialist por lanzamiento; un solo mensaje del gate por turno. Resuelto (DV3).
+4. W. Bloqueo de rutas con secretos del explorer: incoherente con el riesgo ya aceptado y evadible por búsquedas recursivas. Disposición del Owner (O3): se retira y queda como riesgo del ADR 0014. Resuelto.
+5. W. Cierre ordenado antes del timeout: no alcanza un stream colgado. Disposición del Owner (O4): se retira; el Fleet view muestra el último resultado reportado. Resuelto.
+6. W. Tope de hijos por script: dejaba abiertas las llamadas directas. Disposición del Owner (O5): un único launch limit por padre. Resuelto.
+7. W. File claim revisado al lanzar: no protegía nada al escribir. Disposición del Owner (O6): se retira; el reparto va en el texto de la tarea y el Fleet view muestra cruces. Término retirado del glosario. Resuelto.
+8. W. Espera de MCP con fallo cerrado: más estricta que el padre. Disposición del Owner (O7): se retira. Resuelto.
+9. W. Tools MCP que escriben al alcance de Specialists de solo lectura. Disposición del Owner (O8): guía en los contratos y riesgo del ADR 0014 (DV4). Aceptado.
+10. W. Instrucciones del padre a un hijo en curso. Disposición del Owner (O9): solo el operador; el rechazo de `reply_child` lleva la respuesta del operador. Resuelto.
 11. W. Confianza del proyecto en el hijo por defecto abierta, conexiones MCP sin cierre, instalación de `pi-web-access` vía `npm:`. Correcciones obligatorias: confianza heredada del padre, ciclo de vida de extensiones al correr y al terminar, carga solo desde la instalación local. Resueltas.
-12. Invariante cache-first incorporada (R13). Resultados persistidos fuera de alcance como feature aparte (R11′, #204).
+12. Invariante cache-first incorporada (O13). Resultados persistidos fuera de alcance como feature aparte (O11′, #204).
 
 ### Ronda 2
 
@@ -63,7 +65,7 @@ Veredicto: `READY WITH WARNINGS`.
 ## Decisions, Deviations and Accepted Risks
 
 - Desviaciones DV1 a DV5, aceptadas por el Owner: extensiones curadas en los hijos; el operador responde a un hijo; Specialist por lanzamiento; tools MCP que escriben al alcance de roles de solo lectura con guía en los contratos; superficies nuevas fuera de la política de child bash.
-- Riesgos R1 a R13, aceptados por el Owner y a registrar en el ADR 0014. Los riesgos R8 a R12 se aceptaron explícitamente en la disposición K-F; R13 en la disposición B2.
+- Riesgos R1 a R14, aceptados por el Owner y a registrar en el ADR 0014. Los riesgos R8 a R12 se aceptaron explícitamente en la disposición K-F; R13 en la disposición B2; R14, en la decisión del Owner sobre V7 en la revisión de la integración: los servidores MCP stdio del hijo arrancan en el proyecto del padre y sus raíces MCP anuncian el proyecto del padre.
 - Revisión requerida: el ADR 0014 y la edición de `docs/specs/child-session-delegation.md` se entregan con la capa 2.
 
 ## Pendientes para la especificación

@@ -9,6 +9,7 @@ import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 import { seated } from "./shell.ts";
 import { isPlainRecord, writeJsonAtomically } from "./agent-directory.ts";
+import { errorMessage } from "./error-message.ts";
 import { createModelProfilesEditor } from "./model-profiles-editor.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
 
@@ -54,10 +55,6 @@ function isOneOf<T extends string>(
 
 function hasOnlyKeys(value: Record<string, unknown>, keys: readonly string[]) {
 	return Object.keys(value).every((key) => keys.includes(key));
-}
-
-function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
 }
 
 function isModelEntry(value: unknown): value is ModelEntry {

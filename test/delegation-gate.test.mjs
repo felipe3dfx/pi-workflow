@@ -471,7 +471,7 @@ test("an invalid Jev selection blocks the tool and is not a stay", async () => {
 	});
 });
 
-test("decide() after a leave verdict asks Jev once and launches the cached role", async () => {
+test("a launch after the gate's leave verdict asks Jev for its own Specialist", async () => {
 	await withWorkspace(async ({ worktree }) => {
 		const message = "Compare the two implementations";
 		const jev = fakeJev("explorer", 0.2);
@@ -500,11 +500,13 @@ test("decide() after a leave verdict asks Jev once and launches the cached role"
 		assert.equal(result.thinking, "medium");
 		assert.ok(result.contract.tools.includes("read"));
 		assert.equal(result.jev.answers.specialist.confidence, 0.2);
-		assert.equal(jev.requests.length, 1);
+		assert.equal(jev.requests.length, 2);
 		assert.equal(jev.requests[0].state.task, message);
 		assert.equal(jev.requests[0].state.user_request, message);
 		assert.equal("suggested_specialist" in jev.requests[0].state, false);
 		assert.equal(jev.requests[0].questions.destination.type, "choice");
+		assert.equal(jev.requests[1].state.task, "parent paraphrase");
+		assert.equal(jev.requests[1].state.suggested_specialist, "worker");
 	});
 });
 
@@ -791,7 +793,7 @@ test("with Jev routing on, a named skill fixes neither the destination nor the s
 			assert.equal(decided.role, role, message);
 			assert.equal("skill" in decided, false, message);
 			assert.equal(decided.jev.answers.specialist.choice, answer, message);
-			assert.equal(jev.requests.length, 1, message);
+			assert.equal(jev.requests.length, 2, message);
 			assert.equal(jev.requests[0].state.user_request, message);
 			assert.ok(jev.requests[0].questions.destination, message);
 		}
@@ -1189,7 +1191,7 @@ test("after a launch for the message under leave, gated parent tools run without
 		assert.equal(launch.kind, "ready");
 		assert.deepEqual(after, { allow: true });
 		assert.deepEqual(afterCodegraph, { allow: true });
-		assert.equal(jev.requests.length, 1);
+		assert.equal(jev.requests.length, 2);
 	});
 });
 
@@ -1239,5 +1241,218 @@ test("a new message with the same text gets its own verdict and no launch from t
 
 		assert.equal(repeated.allow, false);
 		assert.equal(jev.requests.length, 2);
+	});
+});
+
+function scriptJev(destinations, specialistFor = (task) => task.split(":")[0]) {
+	const order = [];
+	let firstDone = false;
+	const jev = fakeJev((context) => {
+		const index = order.length;
+		order.push({ task: context.state.task, afterFirst: firstDone });
+		const destination = destinations[index] ?? "leave";
+		if (destination === "invalid") {
+			return {
+				answers: {
+					specialist: choiceAnswer("planner", context.questions.specialist.criteria),
+					destination: choiceAnswer("leave", context.questions.destination.criteria),
+				},
+			};
+		}
+		return {
+			answers: {
+				specialist: choiceAnswer(
+					specialistFor(context.state.task),
+					context.questions.specialist.criteria,
+				),
+				destination: choiceAnswer(destination, context.questions.destination.criteria),
+			},
+		};
+	});
+	const classify = jev.registry.classify;
+	jev.registry.classify = async (...args) => {
+		const result = await classify(...args);
+		await new Promise((resolve) => setImmediate(resolve));
+		firstDone = true;
+		return result;
+	};
+	return { ...jev, order };
+}
+
+function launchFor(launcher, ctx, message, task, role) {
+	return launcher.prepareLaunch(
+		{ task, userRequest: message, userMessageId: message, ...(role ? { role } : {}) },
+		ctx,
+	);
+}
+
+test("each launch of a script asks Jev for its Specialist and the first launch alone decides the destination", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const message = "Map, change, and verify the launcher";
+		const jev = scriptJev(["leave", "stay", "decide"]);
+		const launcher = launcherFor();
+		const ctx = gateContext(worktree, branchEnding(message), jev);
+		const launches = await Promise.all([
+			launchFor(launcher, ctx, message, "explorer: map the launcher"),
+			launchFor(launcher, ctx, message, "worker: change the launcher"),
+			launchFor(launcher, ctx, message, "verifier: verify the launcher"),
+		]);
+
+		assert.deepEqual(
+			launches.map((launch) => [launch.kind, launch.role, launch.chosenBy]),
+			[
+				["ready", "explore", "jev"],
+				["ready", "worker", "jev"],
+				["ready", "verify", "jev"],
+			],
+		);
+		assert.equal(jev.requests.length, 3);
+		assert.deepEqual(
+			jev.order.slice(1).map((request) => request.afterFirst),
+			[true, true],
+		);
+	});
+});
+
+test("a script launch with an invalid Jev answer is Launch blocked, is not kept, and the next launch decides", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const message = "Map, change, and verify the launcher";
+		const jev = scriptJev(["invalid", "leave", "stay"]);
+		const launcher = launcherFor();
+		const ctx = gateContext(worktree, branchEnding(message), jev);
+		const launches = await Promise.all([
+			launchFor(launcher, ctx, message, "explorer: map the launcher"),
+			launchFor(launcher, ctx, message, "worker: change the launcher"),
+			launchFor(launcher, ctx, message, "verifier: verify the launcher"),
+		]);
+		const gate = await launcher.gateToolCall(
+			{ toolName: "read", input: { path: "src/main.ts" } },
+			ctx,
+		);
+
+		assert.deepEqual(launches.map((launch) => launch.kind).sort(), [
+			"blocked",
+			"ready",
+			"ready",
+		]);
+		const blocked = launches.find((launch) => launch.kind === "blocked");
+		assert.equal(blocked.warning, "Launch blocked. No child was launched.");
+		assert.equal(jev.requests.length, 3);
+		assert.equal(gate.allow, false);
+		assert.match(gate.reason, /^Call spawn_child\./);
+		assert.equal(jev.requests.length, 3);
+	});
+});
+
+test("when a later launch's Specialist call is Launch blocked, the message keeps its destination", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const message = "Map and change the launcher";
+		let failing = false;
+		const jev = fakeJev((context) =>
+			failing
+				? { stopReason: "error", errorMessage: "Jev is down" }
+				: context.state.task.split(":")[0],
+		);
+		const launcher = launcherFor();
+		const ctx = gateContext(worktree, branchEnding(message), jev);
+		const first = await launchFor(launcher, ctx, message, "explorer: map the launcher");
+		failing = true;
+		const second = await launchFor(launcher, ctx, message, "worker: change the launcher");
+		failing = false;
+		const third = await launchFor(launcher, ctx, message, "verifier: verify the launcher");
+		const gate = await launcher.gateToolCall(
+			{ toolName: "read", input: { path: "src/main.ts" } },
+			ctx,
+		);
+
+		assert.equal(first.role, "explore");
+		assert.equal(second.kind, "blocked");
+		assert.match(second.reason, /Jev is down/);
+		assert.equal(third.role, "verify");
+		assert.equal(gate.reason, "Call spawn_child. Jev selected the explore role.");
+		assert.equal(jev.requests.length, 3);
+	});
+});
+
+test("a gate verdict of stay or decide refuses every launch of the message without asking Jev", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		for (const [destination, warning] of [
+			["stay", "The work stays in this session. No child was launched."],
+			["decide", "Ask the user one question and wait. No child was launched."],
+		]) {
+			const message = `Keep it here (${destination})`;
+			const jev = fakeJev(destination);
+			const launcher = launcherFor();
+			const ctx = gateContext(worktree, branchEnding(message), jev);
+			await launcher.gateToolCall({ toolName: "read", input: { path: "a.ts" } }, ctx);
+			const launches = await Promise.all([
+				launchFor(launcher, ctx, message, "explorer: map"),
+				launchFor(launcher, ctx, message, "worker: change", "worker"),
+			]);
+
+			assert.deepEqual(
+				launches.map((launch) => [launch.kind, launch.warning]),
+				[
+					[destination, warning],
+					[destination, warning],
+				],
+				destination,
+			);
+			assert.equal(jev.requests.length, 1, destination);
+		}
+	});
+});
+
+test("with Jev routing off, a script's named roles launch and Jev is not called", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const message = "Map and change the launcher";
+		const jev = fakeJev("explorer");
+		const launcher = launcherFor({ jevRouting: { enabled: () => false } });
+		const ctx = gateContext(worktree, branchEnding(message), jev);
+		const launches = await Promise.all([
+			launchFor(launcher, ctx, message, "map the launcher", "explore"),
+			launchFor(launcher, ctx, message, "change the launcher", "worker"),
+			launchFor(launcher, ctx, message, "verify the launcher", "verify"),
+		]);
+
+		assert.deepEqual(
+			launches.map((launch) => [launch.role, launch.chosenBy]),
+			[
+				["explore", "parent"],
+				["worker", "parent"],
+				["verify", "parent"],
+			],
+		);
+		assert.equal(jev.requests.length, 0);
+	});
+});
+
+test("several blocked inner calls of a script in one turn send one gate message while each call gets its reason", async () => {
+	await withWorkspace(async ({ worktree, agentDirectory }) => {
+		const message = "Map the launcher module";
+		const jev = fakeJev("explorer");
+		const extension = await seatedExtension({ worktree, agentDirectory }, message);
+		const ctx = gateContext(worktree, branchEnding(message), jev);
+		const nested = (id, toolName, input) =>
+			extension.fire(
+				"tool_call",
+				{ type: "tool_call", toolCallId: `c1/${id}`, parentToolCallId: "c1", toolName, input },
+				ctx,
+			);
+		const blocked = await Promise.all([
+			nested(1, "read", { path: "src/a.ts" }),
+			nested(2, "grep", { pattern: "launch" }),
+			nested(3, "ls", { path: "." }),
+		]);
+		assert.deepEqual(
+			blocked.map((result) => result.block),
+			[true, true, true],
+		);
+		assert.ok(blocked.every((result) => result.reason === blocked[0].reason));
+		assert.equal(extension.messages.length, 1);
+
+		await extension.fire("turn_start", { type: "turn_start", turnIndex: 1, timestamp: 1 }, ctx);
+		await nested(4, "read", { path: "src/b.ts" });
+		assert.equal(extension.messages.length, 2);
 	});
 });

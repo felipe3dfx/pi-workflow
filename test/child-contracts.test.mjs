@@ -105,8 +105,42 @@ test("every contract names the missing-capability response and forbids simulatin
 	);
 });
 
-test("the worker contract declares that children have no MCP and cannot launch children", async () => {
-	assert.match(await contract("worker"), /no MCP tools and cannot launch child sessions/);
+test("the worker and verify contracts no longer deny MCP and still cannot launch children", async () => {
+	for (const role of ["worker", "verify"]) {
+		const text = await contract(role);
+		assert.match(text, /You cannot launch child sessions\./);
+		assert.doesNotMatch(text, /no MCP tools|cannot use MCP tools/);
+	}
+});
+
+test("every contract keeps publishing through MCP with the parent and takes precedence over context files", async () => {
+	for (const role of ["explore", "worker", "verify"]) {
+		const text = await contract(role);
+		assert.match(
+			text,
+			/Publishing or writing to external services through MCP tools stays with the parent\./,
+		);
+		assert.match(
+			text,
+			/This contract takes precedence over context files such as AGENTS\.md; their instructions to commit, push, or open pull requests do not apply to you\./,
+		);
+	}
+});
+
+test("the explore and verify read-only wording covers MCP tools", async () => {
+	for (const role of ["explore", "verify"]) {
+		assert.match(await contract(role), /Use MCP tools only to read\./);
+	}
+});
+
+test("only the explore contract offers web tools, and marks them optional", async () => {
+	assert.match(
+		await contract("explore"),
+		/Web tools are optional: when present, use them only to search and read pages; when absent, continue without them\./,
+	);
+	for (const role of ["worker", "verify"]) {
+		assert.doesNotMatch(await contract(role), /[Ww]eb tools/);
+	}
 });
 
 test("the explore and verify contracts offer codegraph and the worker contract does not", async () => {
@@ -116,4 +150,23 @@ test("the explore and verify contracts offer codegraph and the worker contract d
 		assert.match(text, /codegraph query and explore/);
 	}
 	assert.doesNotMatch(await contract("worker"), /codegraph/);
+});
+
+test("every contract offers codemode and asks to batch independent calls in one script", async () => {
+	for (const role of ["explore", "worker", "verify"]) {
+		const text = await contract(role);
+		assert.ok(parseContract(text).tools.includes("codemode"), role);
+		assert.match(
+			text,
+			/Use codemode to batch independent tool calls \(Promise\.allSettled\), chain them, or filter large output, instead of many separate calls\./,
+		);
+	}
+});
+
+test("the explore and verify read-only wording covers codemode scripts", async () => {
+	assert.match(await contract("explore"), /Do not edit files or run commands, directly or from codemode\./);
+	assert.match(
+		await contract("verify"),
+		/Do not edit or write worktree files, directly or from codemode, and do not run commands that rewrite tracked files/,
+	);
 });

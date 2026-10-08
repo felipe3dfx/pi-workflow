@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { isPlainRecord, writeJsonAtomically } from "./agent-directory.ts";
+import { errorMessage } from "./error-message.ts";
 import { definitionsEqual } from "./mcp-config.ts";
 
 export type PiSettingsCatalog = {
@@ -27,10 +28,6 @@ const defaultSettingsCatalogPath = resolve(
 	dirname(fileURLToPath(import.meta.url)),
 	"../assets/settings.json",
 );
-
-function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
-}
 
 export function loadPiSettingsCatalog(options: PiSettingsAdapters = {}): {
 	catalog?: PiSettingsCatalog;

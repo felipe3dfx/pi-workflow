@@ -1,5 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+import { errorMessage } from "./error-message.ts";
 import {
 	type ChildLauncherOptions,
 	createChildLauncher,
@@ -236,7 +237,7 @@ export async function runDelegationCheck(
 			);
 			lines.push(scoreLine(item, verdict));
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = errorMessage(error);
 			lines.push(`fail: ${item.name}: ${message}`);
 		}
 	}

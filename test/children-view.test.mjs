@@ -158,12 +158,32 @@ function fakeSessions(records, threads = {}) {
 			return () => followers.set(id, followers.get(id) - 1);
 		},
 		thread: (id) => threads[id],
+		changedFiles: () => [],
 		cancel(id) {
 			const found = records.find((item) => item.id === id);
 			found.state = "cancelled";
 			found.endedAt = Date.now();
 			found.text = "The child was cancelled.";
 			return { cancelled: true, message: "" };
+		},
+		replies: [],
+		reply(id, number, text, by) {
+			const found = records.find((item) => item.id === id);
+			if (found.question !== number) {
+				throw new Error(
+					`Question ${number} of child ${id} was already answered by the parent: \x1b[31mred\x1b[39m`,
+				);
+			}
+			this.replies.push({ id, number, text, by });
+			found.state = "running";
+			found.question = undefined;
+		},
+		steers: [],
+		async steer(id, text) {
+			if (text.startsWith("/")) {
+				throw new Error("A Steer cannot begin with \x1b[31m/\x1b[39m.");
+			}
+			this.steers.push({ id, text });
 		},
 		changed() {
 			for (const listener of listeners) listener();
@@ -278,14 +298,14 @@ test("from 65 columns the view splits into a list and a detail pane; below that 
 	const view = open(sessions, { rows: 40 });
 
 	const wide = view.lines(120);
-	assert.match(wide[0], /^ ┌─ Subagents 3 · 1 active ─+ \[×\] ─┐$/);
+	assert.match(wide[0], /^ ┌─ Fleet 3 · 1 active · 6\.2k tok · \$0\.01 ─+ \[×\] ─┐$/);
 	assert.equal(wide[1].indexOf("│", 2), 1 + 1 + 2 + 34 + 1);
 	assert.match(wide[1], /Active ─+ │ ◐ worker 5636 +running · 1m 0\ds {2}│$/);
 	assert.match(
 		wide[2],
-		/▸ ◐ worker 5636 +1m 0\ds │ gpt-6-luna \(high\) · 6\.2k tok · \$0\.01 · wt: pi-workflow/,
+		/▸ ◐ worker 5636 +running · 1m 0\ds │ gpt-6-luna \(high\) · 6\.2k tok · \$0\.01 · wt: pi-workflow/,
 	);
-	assert.match(wide[3], /^ │ {6}bash sleep 60 +│ Run sleep 60 /);
+	assert.match(wide[3], /^ │ {6}bash sleep 60 6\.2k tok · \$0\.01 │ Run sleep 60 /);
 
 	const narrow = view.lines(80);
 	assert.equal(narrow[1].indexOf("│", 2), 1 + 1 + 2 + 23 + 1);
@@ -301,12 +321,12 @@ test("list rows take two lines under Active and Finished rules, and the selected
 	const raw = view.raw(120);
 	const lines = raw.map(plain);
 	assert.match(lines[1], /│ {2} Active ─/);
-	assert.match(lines[2], /▸ ◐ worker 5636 +1m 0\ds/);
-	assert.match(lines[3], /│ {6}bash sleep 60/);
+	assert.match(lines[2], /▸ ◐ worker 5636 +running · 1m 0\ds/);
+	assert.match(lines[3], /│ {6}bash sleep 60 +6\.2k tok · \$0\.01 │/);
 	assert.match(lines[4], /│ {2} Finished ─/);
-	assert.match(lines[5], /│ {4}✓ worker a809 +1m 04s/);
+	assert.match(lines[5], /│ {4}✓ worker a809 +completed · 1m 04s/);
 	assert.match(lines[6], /│ {6}Run sleep 60/);
-	assert.match(lines[7], /│ {4}✗ reviewer 27c1 +4m 00s/);
+	assert.match(lines[7], /│ {4}✗ reviewer 27c1 +failed · 4m 00s/);
 	assert.ok(raw[2].includes("\x1b[48;5;236m"));
 	assert.ok(raw[3].includes("\x1b[48;5;236m"));
 	assert.equal(raw[5].includes("\x1b[48;5;236m"), false);
@@ -332,7 +352,7 @@ test("the list keeps the selected child in view and falls back to one line per c
 		.lines(120)
 		.map((line) => line.slice(0, 40))
 		.filter((line) => /◐ worker/.test(line));
-	assert.match(rows[0], /▸ ◐ worker 1000 Task 0/);
+	assert.match(rows[0], /▸ ◐ worker 1000 +running/);
 	assert.ok(rows.length >= 4);
 });
 
@@ -419,8 +439,8 @@ test("Tab moves the focus between panes, Ctrl+J/K and page keys scroll the focus
 	const view = open(sessions, { rows: 20 });
 	assert.match(view.lines(120).join("\n"), /Line 39\./);
 	assert.match(
-		view.lines(120).at(-2),
-		/j\/k move {2}\| {2}Tab focus {2}\| {2}Ctrl\+J\/K scroll {2}\| {2}f follow {2}\| {2}s\/c cancel {2}\| {2}Ctrl\+T thinking/,
+		view.lines(120).at(-3),
+		/j\/k move {2}\| {2}Tab focus {2}\| {2}Enter steer {2}\| {2}Ctrl\+J\/K scroll {2}\| {2}f follow {2}\| {2}s\/c cancel {2}\| {2}Ctrl\+T thinking/,
 	);
 	const accent = "\x1b[1m\x1b[36mworker 5636";
 	assert.equal(
@@ -524,7 +544,7 @@ test("a click selects a list row, a double click focuses the detail, the wheel s
 	assert.notEqual(view.lines(120)[2], before);
 
 	lines = view.lines(120);
-	const footer = lines.length - 2;
+	const footer = lines.findIndex((line) => line.includes("f follow"));
 	view.mouse({
 		type: "click",
 		x: lines[footer].indexOf("f follow") + 1,
@@ -593,4 +613,252 @@ test("the final assistant text and the error appear once, in the Result section,
 	view.press("k");
 	text = view.lines(120).join("\n");
 	assert.equal(text.match(/provider error/g)?.length, 1);
+});
+
+function scripted(id, totalTokens, total) {
+	return {
+		type: "message",
+		id,
+		message: {
+			role: "toolResult",
+			toolCallId: `${id}-call`,
+			toolName: "codemode",
+			content: [{ type: "text", text: "ok" }],
+			usage: { totalTokens, cost: { total } },
+			isError: false,
+		},
+	};
+}
+
+function fleet() {
+	const running = record("5636", { step: "bash sleep 60" });
+	const done = record("a809", {
+		state: "completed",
+		endedAt: now - 1_000,
+		startedAt: now - 65_000,
+		text: "Waited 60 seconds.",
+	});
+	const failed = record("27c1", {
+		state: "failed",
+		role: "reviewer",
+		endedAt: now - 2_000,
+		startedAt: now - 242_000,
+		text: "no activity for 4 minutes",
+	});
+	const busy = busyThread();
+	return fakeSessions([done, running, failed], {
+		[running.id]: { entries: [...busy.entries, scripted("s1", 1800, 0.005)] },
+		[done.id]: {
+			entries: [
+				assistant("d1", [{ type: "text", text: "Done." }], {
+					usage: { totalTokens: 3000, cost: { total: 0.01 } },
+				}),
+				scripted("s2", 1000, 0.004),
+			],
+		},
+		[failed.id]: { entries: [] },
+	});
+}
+
+test("the Fleet view is titled Fleet with the total of every child, and each row shows its Run state, tokens, and cost including tool-result usage", () => {
+	const view = open(fleet(), { rows: 40 });
+	const lines = view.lines(120);
+	assert.match(
+		lines[0],
+		/^ ┌─ Fleet 3 · 1 active · 12\.0k tok · \$0\.03 ─+ \[×\] ─┐$/,
+	);
+	assert.match(lines[2], /▸ ◐ worker 5636 +running · 1m 0\ds │/);
+	assert.match(lines[3], /│ {6}bash sleep 60 +8\.0k tok · \$0\.02 │/);
+	assert.match(lines[5], /✓ worker a809 +completed · 1m 04s │/);
+	assert.match(lines[6], /│ {6}Run sleep.* 4\.0k tok · \$0\.01 │/);
+	assert.match(lines[7], /✗ reviewer 27c1 +failed · 4m 00s │/);
+	assert.match(
+		lines[2],
+		/│ gpt-6-luna \(high\) · 8\.0k tok · \$0\.02 · wt: pi-workflow/,
+	);
+
+});
+
+test("one-line rows show the Run state, or only its time in the narrowest pane, then tokens, cost, and the step as the pane has room", () => {
+	const split = open(fleet(), { rows: 10 }).lines(120);
+	assert.match(split[2], /▸ ◐ worker 5636 +running · 1m 0\ds │/);
+	assert.match(split[4], /✓ worker a809 +completed · 1m 04s │/);
+	assert.match(split[5], /✗ reviewer 27c1 +failed · 4m 00s │/);
+
+	const narrow = open(fleet(), { rows: 10 }).lines(80);
+	assert.match(narrow[2], /▸ ◐ worker 5636 +1m 0\ds │/);
+	assert.match(narrow[4], /✓ worker a809 +1m 04s │/);
+
+	const single = open(fleet(), { rows: 10 }).lines(64);
+	assert.match(
+		single[2],
+		/▸ ◐ worker 5636 bas… running · 1m 0\ds · 8\.0k tok · \$0\.02 +│$/,
+	);
+	assert.match(
+		single[4],
+		/✓ worker a809 R.* completed · 1m 04s · 4\.0k tok · \$0\.01 +│$/,
+	);
+	assert.match(single[5], /✗ reviewer 27c1 Run sleep.* failed · 4m 00s +│$/);
+});
+
+test("hostile text in a child's step, task, or model never reaches the terminal from the Fleet rows", () => {
+	const bytes = ["\x1b[2J", "\x1b]52;c;", "\x9b", "\x07", "‮", "⁦"];
+	const hostile = (label) =>
+		`${label}\x1b[2J\x1b]52;c;eA==\x07\x9b31m‮⁦end`;
+	const sessions = fakeSessions([
+		record("5636", { step: hostile("step"), model: hostile("model") }),
+		record("a809", {
+			state: "failed",
+			endedAt: now,
+			task: hostile("task"),
+			text: hostile("text"),
+		}),
+	]);
+	for (const rows of [40, 10]) {
+		const raw = open(sessions, { rows }).raw(120).join("\n");
+		for (const sequence of bytes) {
+			assert.equal(raw.includes(sequence), false, JSON.stringify(sequence));
+		}
+	}
+});
+
+test("the detail's input line answers a waiting child, and its text and refusals stay terminal-safe", () => {
+	const waiting = record("5636", {
+		state: "waiting",
+		question: 2,
+		step: "asks question 2",
+	});
+	const sessions = fakeSessions([waiting]);
+	const view = open(sessions, { rows: 30 });
+
+	const lines = view.lines(120);
+	assert.ok(lines.some((line) => line.includes("❯ Enter to answer question 2")));
+	assert.match(lines.join("\n"), /Enter answer/);
+	view.press("\r", "\x1b[200~qs \x1b[31mc\u202e\x1b[201~", "\x7f", "a");
+	const typed = view.raw(120).join("\n");
+	assert.match(view.lines(120).join("\n"), /Enter send {2}\| {2}Esc stop typing/);
+	assert.equal(typed.includes("\x1b[31mc"), false);
+	assert.equal(typed.includes("\u202e"), false);
+	view.press("\r");
+	assert.deepEqual(sessions.replies, [
+		{ id: waiting.id, number: 2, text: "qs  [31mca", by: "operator" },
+	]);
+	assert.ok(
+		view.lines(120).some((line) => line.includes("Answer sent to worker 5636.")),
+	);
+	assert.equal(view.closed(), false);
+
+	waiting.state = "waiting";
+	waiting.question = 3;
+	view.press("\r", "x");
+	waiting.question = 4;
+	view.press("\r");
+	const refused = view.raw(160).join("\n");
+	assert.equal(refused.includes("\x1b[31mred"), false);
+	assert.match(
+		view.lines(160).join("\n"),
+		/Question 3 of child 5636[-0]+ was already answered by the parent:  \[31mred/,
+	);
+	assert.equal(sessions.replies.length, 1);
+});
+
+test("a waiting child without a question number does not advertise an answer", () => {
+	const waiting = record("5636", { state: "waiting", step: "waiting" });
+	const view = open(fakeSessions([waiting]), { rows: 30 });
+
+	const text = view.lines(120).join("\n");
+	assert.doesNotMatch(text, /Enter answer/);
+	assert.match(text, /Enter input/);
+});
+
+test("the detail's input line shows why a queued child takes no Steer yet and an ended child takes neither a Steer nor an answer", () => {
+	for (const [state, reason] of [
+		["queued", "is queued; it takes a Steer once it runs."],
+		...["completed", "failed", "cancelled", "timed out"].map((ended) => [
+			ended,
+			`is ${ended}; an ended child takes no Steer or answer.`,
+		]),
+	]) {
+		const sessions = fakeSessions([
+			record("5636", { state, endedAt: isWorkingState(state) ? undefined : now }),
+		]);
+		const view = open(sessions, { rows: 30 });
+		view.lines(120);
+		view.press("\r");
+		assert.ok(
+			view
+				.lines(120)
+				.some((line) =>
+					line.includes(`worker 5636 ${reason}`),
+				),
+			state,
+		);
+		assert.deepEqual(sessions.replies, [], state);
+		assert.deepEqual(sessions.steers, [], state);
+	}
+});
+
+function isWorkingState(state) {
+	return state === "queued" || state === "running";
+}
+
+test("the detail's input line steers a running child, and its text and refusals stay terminal-safe", async () => {
+	const running = record("5636", { step: "bash sleep 60" });
+	const sessions = fakeSessions([running]);
+	const view = open(sessions, { rows: 30 });
+
+	const lines = view.lines(120);
+	assert.ok(lines.some((line) => line.includes("❯ Enter to steer")));
+	assert.match(lines.join("\n"), /Enter steer/);
+	view.press("\r", "\x1b[200~use \x1b[31mtabs\u202e\x1b[201~", "\r");
+	await Promise.resolve();
+	assert.deepEqual(sessions.steers, [{ id: running.id, text: "use  [31mtabs" }]);
+	assert.ok(view.lines(120).some((line) => line.includes("Steer sent to worker 5636.")));
+
+	view.press("\r", ..."/mcp", "\r");
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.equal(view.raw(120).join("\n").includes("\x1b[31m/"), false);
+	assert.ok(
+		view.lines(120).some((line) => line.includes("A Steer cannot begin with  [31m/")),
+	);
+	assert.equal(sessions.steers.length, 1);
+});
+
+test("a row marks its pending and undelivered Steers, and the detail lists their text terminal-safe", () => {
+	const hostile = "go\x1b[2J\x1b]52;c;eA==\x07\x9b31m\u202eon";
+	const running = record("5636", {
+		step: "bash sleep 60",
+		steering: [hostile, "then rerun"],
+	});
+	const ended = record("a809", {
+		state: "completed",
+		endedAt: now,
+		text: "Done.",
+		undelivered: ["late"],
+	});
+	for (const rows of [40, 10]) {
+		const view = open(fakeSessions([running, ended]), { rows });
+		const raw = view.raw(120).join("\n");
+		for (const sequence of ["\x1b[2J", "\x1b]52;c;", "\x9b", "\x07", "\u202e"]) {
+			assert.equal(raw.includes(sequence), false, JSON.stringify(sequence));
+		}
+		const lines = view.lines(120).join("\n");
+		assert.match(lines, /2 steers pending/, `${rows}`);
+		assert.match(lines, /1 steer undelivered/, `${rows}`);
+	}
+	const detail = open(fakeSessions([running]), { rows: 40 }).lines(120).join("\n");
+	assert.match(detail, /pending go.*on/);
+	assert.match(detail, /pending then rerun/);
+});
+
+test("a click on another row while typing stops typing, so Enter never sends the text to the newly selected child", () => {
+	const sessions = fakeSessions([record("5636"), record("1001")]);
+	const view = open(sessions, { rows: 30 });
+	const lines = view.lines(120);
+	const row = lines.findIndex((line) => line.includes("worker 1001"));
+	view.press("\r", "x");
+	view.mouse({ type: "click", x: 5, y: row });
+	view.press("\r");
+	assert.deepEqual(sessions.steers, []);
+	assert.match(view.lines(120).join("\n"), /▸ ◐ worker 1001/);
 });
