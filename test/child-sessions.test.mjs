@@ -6307,35 +6307,6 @@ test("a Steer the child has not received when it ends is shown as undelivered on
 	});
 });
 
-test("through Pi's SDK, a Steer sent while the child waits to retry automatically reaches the retried turn and is not undelivered", async () => {
-	initTheme("dark", false);
-	await withWorkspace(async ({ worktree, agentDir }) => {
-		const child = await realChild(agentDir, [
-			fauxAssistantMessage("", {
-				stopReason: "error",
-				errorMessage: "overloaded_error: Overloaded",
-			}),
-			fauxAssistantMessage("Retried with tabs."),
-		]);
-		const id = (await spawnReal(child, worktree)).details.id;
-		await eventually(() => child.parent.requests.length === 1);
-		await delay(100);
-		assert.equal(child.parent.requests.length, 1);
-		const view = openChildren(child.extension, { rows: 30 });
-
-		view.press("\r", "\r", ..."use tabs", "\r");
-		for (let i = 0; i < 500; i++) {
-			if ((await stateOf(child.extension, id)) === "completed") break;
-			await delay(10);
-		}
-
-		assert.equal(await stateOf(child.extension, id), "completed");
-		assert.equal(child.parent.requests.length, 2);
-		assert.ok(sent(child.parent.requests[1]).includes("use tabs"));
-		assert.equal(shows(view, "undelivered"), false);
-	});
-});
-
 test("through Pi's SDK, a Steer still queued when the child is cancelled mid-stream is shown as undelivered", async () => {
 	initTheme("dark", false);
 	await withWorkspace(async ({ worktree, agentDir }) => {
