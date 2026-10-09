@@ -52,6 +52,8 @@ The review of a diff since a fixed point; separate axes run in parallel isolated
 6. Added stable per-axis finding IDs, the hard or judgement marking, `file:line` evidence, and blocked outcomes for an unresolved fixed point, an unreadable ticket or specification, and missing isolation. Removed harness-specific tool names and command lines.
 7. Stated the read-only stance: the skill never fixes, comments, commits, or publishes.
 8. The Valuable Tests axis reports a test skipped at an agreed seam as that seam having no test.
+9. The Valuable Tests axis reads the seams and coverage lines from the requirement-tracing table or coverage lines its caller hands over; a pertinent case agreed in a coverage line with no test, or only a skipped one, and a ticket requirement with no line in that table are `hard` findings.
+10. Added `references/scratch-evidence.md`: the Valuable Tests axis prepares scratch under the consumer's commands and limits, records the candidate's identity before and after, runs each file whole, lifting only the consumer command's stop at the first failure, isolates state shared across checkouts as the consumer's quality playbook records, classifies each test as setup, module-load or missing-name, or assertion failure, or pass, and blocks on missing evidence, including a run without recorded isolation, without a recorded degraded path.
 
 ## Approval
 

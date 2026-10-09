@@ -1670,6 +1670,19 @@ class SetupWorkflowCliTests(unittest.TestCase):
         self.assertNotIn("{{PULL_REQUEST_BRANCH_RULES}}", playbook)
         self.assertTrue((self.repo / "docs" / "agents" / "coding-standards.md").is_file())
 
+    def test_render_ships_the_scratch_evidence_isolation(self) -> None:
+        self.use_real_assets()
+        values = self.write_values(
+            "values.txt", self.real_assets_values(SCRATCH_ISOLATION="TEST_DB_NAME per worktree")
+        )
+
+        result = self.run_render_with(values, (*TARGET_NAMES, "coding-standards.md"))
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        quality = (self.repo / "docs" / "agents" / "quality.md").read_text(encoding="utf-8")
+        self.assertIn("## Scratch Evidence", quality)
+        self.assertIn("`TEST_DB_NAME per worktree`", quality)
+
     def tracker_values(self, tracker: str) -> str:
         lines = self.asset_values(REAL_ASSETS / f"issue-tracker-{tracker}.md")
         return self.real_assets_values() + "".join(

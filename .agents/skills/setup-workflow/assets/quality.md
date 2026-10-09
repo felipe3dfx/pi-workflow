@@ -28,6 +28,15 @@ Before the confirmed handoff point, run `{{FULL_VALIDATION_COMMANDS}}`. If the c
 
 Follow `{{TEST_CONVENTIONS}}`. Required fixtures, services, environments, and time budgets are `{{TEST_EXECUTION_CONSTRAINTS}}`.
 
+## Scratch Evidence
+
+Scratch runs isolate state shared across checkouts by `{{SCRATCH_ISOLATION}}`.
+
+- state: {{SCRATCH_EVIDENCE_CAPABILITY_STATE}}
+- evidence: {{SCRATCH_EVIDENCE_CAPABILITY_EVIDENCE}}
+- degraded: {{SCRATCH_EVIDENCE_CAPABILITY_DEGRADED}}
+- blocked when: {{SCRATCH_EVIDENCE_CAPABILITY_BLOCKED_WHEN}}
+
 ## Quality Tools
 
 ### Static Analysis
