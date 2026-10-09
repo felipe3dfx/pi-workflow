@@ -342,6 +342,23 @@ test("session_start restores each task's Task state when the list still has unfi
 	assert.ok(row("working").includes("◐ working"));
 });
 
+test("session_start drops restored tasks without a known Task state instead of crashing the box", async () => {
+	const { pi, tools, handlers } = fakePi();
+	registerSessionTodo(pi, () => {}, () => new Map());
+	const restored = [
+		{ id: 1, text: "legacy", done: false },
+		{ id: 2, text: "current", state: "pending" },
+	];
+	const { ctx } = fakeCtx({ mode: "tui", branch: [todoResultEntry(restored)] });
+	await fireEvent(handlers, "session_start", ctx);
+
+	const listed = await execute(tools, "list", {}, ctx);
+	assert.equal(listed.content[0].text, "[pending] #2: current");
+	const painted = paintAboveInput(80, fakeTheme());
+	assert.ok(painted.some((line) => line.includes("□ current")));
+	assert.ok(!painted.some((line) => line.includes("legacy")));
+});
+
 test("session_start restores the latest list whether a todo tool result or a harness entry wrote it", async () => {
 	const harness = (tasks) => ({ type: "custom", customType: "pi-workflow-todo", data: { tasks } });
 	const fromTool = [{ id: 1, text: "from the tool", state: "pending" }];
