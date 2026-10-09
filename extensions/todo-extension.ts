@@ -63,6 +63,7 @@ function replayTasks(entries: ReturnType<ExtensionContext["sessionManager"]["get
 		const details = message.details as { tasks?: Task[] } | undefined;
 		if (details && Array.isArray(details.tasks)) tasks = details.tasks;
 	}
+	tasks = tasks.filter((task) => TASK_STATES.includes(task.state));
 	return tasks.length > 0 && tasks.every((task) => task.state === "done") ? [] : tasks;
 }
 
