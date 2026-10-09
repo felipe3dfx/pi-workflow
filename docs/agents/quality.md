@@ -28,6 +28,15 @@ Before the confirmed handoff point, run `npm run check`. If the command is absen
 
 Follow `node --test test/*.test.mjs`. Required fixtures, services, environments, and time budgets are `none (confirmed absent)`.
 
+## Scratch Evidence
+
+Scratch runs isolate state shared across checkouts by `withAgentDirectory`.
+
+- state: supported
+- evidence: test/*.test.mjs keep files under per-test mkdtemp directories in os.tmpdir() and set PI_CODING_AGENT_DIR to them; no test opens a port, database, or service; CI job test passed on pull request 60
+- degraded: none (confirmed absent)
+- blocked when: Node dependencies are missing or a test writes outside its temporary directory
+
 ## Quality Tools
 
 ### Static Analysis
