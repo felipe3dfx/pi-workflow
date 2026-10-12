@@ -3,7 +3,7 @@
 Paquete: `claude-bridge-support/definition-1`.
 Handoff: `claude-bridge-support/feature-review-1`.
 Resultado funcional: **READY WITH WARNINGS**.
-Estado de publicación: **CANDIDATE — PUBLICATION IN PROGRESS**.
+Estado: **revisión final**; verificación de publicación registrada en el parent.
 Parent: [#238](https://github.com/felipe3dfx/pi-workflow/issues/238).
 
 ## Revisión y preparación
@@ -46,18 +46,20 @@ No se presenta el script original como aprobado.
 Evidencia: `/tmp/pi-claude-bridge-prototype.YmrJ75/`.
 
 ## Calidad y preparación de publicación
-El último resultado completo registrado fue 823 aprobados, 31 fallidos y 1 omitido,
-con fallos del agente de firma 1Password en commits de fixtures.
-La ejecución actual de `npm run check` repitió esos errores y agotó 120 segundos
-sin resumen completo. No hubo cambios de configuración de firma ni bypass.
+El resultado histórico completo fue 823 aprobados, 31 fallidos y 1 omitido;
+un intento posterior agotó 120 segundos con errores de firma de 1Password.
+La validación de publicación posterior aprobó `npm run check` en 16.1 segundos:
+855 tests, 854 aprobados, 0 fallidos y 1 omitido; distribución aprobada.
+No hubo cambios de configuración de firma ni bypass. El gate documental
+no demuestra implementación ni integración de producción.
 El paquete documental candidato está preparado en estos cuatro artefactos:
 - Brief de definición: [docs/features/claude-bridge-support.md](../features/claude-bridge-support.md).
 - Revisión de feature-review: [docs/features/claude-bridge-support-review.md](../features/claude-bridge-support-review.md).
 - Especificación: [docs/specs/claude-bridge-support.md](claude-bridge-support.md).
 - Informe consolidado: [docs/specs/claude-bridge-support-review.md](claude-bridge-support-review.md).
 El issue padre [#238](https://github.com/felipe3dfx/pi-workflow/issues/238)
-existe y su lectura de vuelta está verificada. La preparación de publicación sigue
-en curso; no se afirma publicación remota ni aprobación del quality gate.
+existe y su lectura de vuelta está verificada. La verificación de publicación
+remota y handoff se registra allí. El quality gate documental está aprobado.
 
 ## Handoff
 La revisión permite preparar la publicación; no constituye publicación.

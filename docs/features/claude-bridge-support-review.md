@@ -59,9 +59,11 @@ No se garantiza aislamiento universal ni limpieza de procesos en todo caso.
 ## Condiciones de entrega
 Validar gestor, padre completo, MCP/web, confianza y cobertura de versiones/modelos;
 aceptar la enmienda de ADR 0014 y completar el quality gate.
-La última ejecución completa registrada falló en firmas de fixtures;
-la ejecución posterior agotó 120 segundos con errores de 1Password.
-No se cambió configuración ni se declara un gate aprobado.
+Los intentos históricos fallaron en firmas de fixtures o agotaron 120 segundos.
+La validación de publicación posterior aprobó `npm run check` en 16.1 segundos:
+855 tests, 854 aprobados, 0 fallidos y 1 omitido; distribución aprobada.
+No se cambió ni omitió la configuración de firma. Esta validación documental
+no sustituye las pruebas de integración de producción.
 
 ## Handoff
 Brief y reporte son el par de feature-review; no son sustituidos por el par

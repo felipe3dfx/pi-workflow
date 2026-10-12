@@ -1,6 +1,6 @@
 # Claude Bridge support
 
-**Status:** Prepared English technical specification; **READY WITH WARNINGS**; candidate publication in progress, not yet published. No implementation is authorized by this artifact.
+**Status:** English technical specification; **READY WITH WARNINGS**. Publication verification is tracked by the parent issue. No implementation is authorized by this artifact.
 **Definition:** `claude-bridge-support/definition-1`
 **Review:** `claude-bridge-support/feature-review-1`; **READY WITH WARNINGS**.
 **Parent:** [#238](https://github.com/felipe3dfx/pi-workflow/issues/238).
@@ -100,17 +100,17 @@ Supported Pi/model/version coverage is a delivery criterion; do not change the p
 - Existing upstream prompt/cache behavior remains; up to 256 lookup keys and possible retained inheritance references are accepted. No unbounded leak was demonstrated. No private cleanup.
 - Children share the parent’s in-process access; fixture/runtime security and cancellation limits remain. No OS isolation.
 - Prototype evidence is limited to Pi 1.1.0, Bridge 0.9.2, Claude Code 2.1.296, Haiku 4.5-low and scratch adaptation. Production integration and broader model/version support remain unproven.
-- Last completed recorded `npm run check`: 823 passed, 31 failed, 1 skipped due to fixture commits through the 1Password signing agent. The orchestrator's current to-spec run again reported 1Password fixture-commit errors and timed out after 120 seconds, without a complete test summary. Static checks preceding tests completed; this is not a full-gate pass. Signing configuration was not changed.
+- Historical quality evidence: a completed `npm run check` recorded 823 passed, 31 failed, and 1 skipped after 1Password fixture-commit errors; a later attempt timed out after 120 seconds. Publication validation subsequently passed the complete `npm run check` in 16.1 seconds: 855 tests, 854 passed, 0 failed, 1 skipped, and packed distribution validation passed. Signing configuration was not changed or bypassed. This validates the documentation candidate, not production Bridge support.
 
 Prototype disposition: **reference-only, confirmed**. No durable prototype branch/commit. No UI contract.
 
 ## Publication package and current inventory
 
-The stable brief for joint feature-review publication remains the exact approved English capture. It is paired with a Spanish feature-review report. The English specification is paired with a Spanish consolidated readiness/review report. These are two separate publication pairs; the four candidate artifacts are:
+The stable brief for joint feature-review publication remains the exact approved English capture. It is paired with a Spanish feature-review report. The English specification is paired with a Spanish consolidated readiness/review report. These are two separate publication pairs; the four package artifacts are:
 
 - Joint feature-review brief: [docs/features/claude-bridge-support.md](../features/claude-bridge-support.md).
 - Joint feature-review report: [docs/features/claude-bridge-support-review.md](../features/claude-bridge-support-review.md).
 - English specification: [docs/specs/claude-bridge-support.md](claude-bridge-support.md).
 - Consolidated report: [docs/specs/claude-bridge-support-review.md](claude-bridge-support-review.md).
 
-Parent issue: [#238](https://github.com/felipe3dfx/pi-workflow/issues/238); it exists and its read-back is verified. Candidate publication preparation is in progress. These local artifacts do not claim remote publication or implementation, and no full quality-gate pass is claimed.
+Parent issue: [#238](https://github.com/felipe3dfx/pi-workflow/issues/238); its identity and read-back are verified. Remote publication and handoff verification are recorded there. The documentation quality gate passed; this does not establish production implementation or companion adoption.
