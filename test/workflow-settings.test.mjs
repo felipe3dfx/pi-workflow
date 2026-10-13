@@ -2,11 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 
-import { initTheme } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, initTheme } from "@earendil-works/pi-coding-agent";
 
 import { createChildLauncher } from "../extensions/child-launcher.ts";
 import {
@@ -18,15 +18,16 @@ import { createJevRouting } from "../extensions/workflow-settings.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 import { occupants, replaceSelection, seated } from "../extensions/shell.ts";
 import { classifierRegistry } from "./support/fake-jev.mjs";
+import { installedPackagePath } from "./support/child-session.mjs";
 import { withAgentDirectory } from "./support/jev-routing.mjs";
 
 initTheme("dark", false);
 
-function extension(commands, notifications, agentDirectory) {
+function extension(commands, notifications, agentDirectory, catalog, exec = async () => ({ code: 0 })) {
 	piWorkflowExtension(
 		{
 			on() {},
-			exec: async () => ({ code: 0 }),
+			exec,
 			registerCommand: (name, command) => commands.set(name, command),
 			registerTool() {},
 			registerShortcut() {},
@@ -35,7 +36,7 @@ function extension(commands, notifications, agentDirectory) {
 			registerProvider() {},
 			sendMessage() {},
 		},
-		{ agentDirectory },
+		{ agentDirectory, catalog },
 	);
 	return {
 		command: commands.get("workflow:config"),
@@ -73,6 +74,8 @@ async function driveConfig(command, notify, drive) {
 	await command.handler("", {
 		hasUI: true,
 		mode: "tui",
+		cwd: process.cwd(),
+		isProjectTrusted: () => false,
 		ui: {
 			notify,
 			custom: (factory) =>
@@ -440,6 +443,218 @@ function seatOnly(t, on) {
 }
 
 const selectionFile = (dir) => join(dir, "pi-workflow-selection.json");
+
+test("status and doctor recognize the official installed Bridge from the parent package source", async (t) => {
+	const installed = installedPackagePath(getAgentDir(), "npm:pi-claude-bridge");
+	if (!installed) {
+		t.skip("pi-claude-bridge is not installed in the Pi agent directory");
+		return;
+	}
+	const version = JSON.parse(await readFile(join(installed, "package.json"), "utf8")).version;
+	for (const [source, install] of [
+		["npm:pi-claude-bridge", async (dir) => {
+			await mkdir(join(dir, "npm", "node_modules"), { recursive: true });
+			await symlink(installed, join(dir, "npm", "node_modules", "pi-claude-bridge"), "dir");
+		}],
+		["git:github.com/elidickinson/pi-claude-bridge@feature/branch", async (dir) => {
+			const root = join(dir, "git", "github.com", "elidickinson");
+			await mkdir(root, { recursive: true });
+			await symlink(installed, join(root, "pi-claude-bridge"), "dir");
+		}],
+		[installed, async () => {}],
+	]) {
+		const dir = withAgentDirectory(t);
+		await install(dir);
+		await writeFile(join(dir, "settings.json"), JSON.stringify({ packages: [source] }));
+		await writeFile(selectionFile(dir), JSON.stringify(selectionWith(["codegraph"])));
+		const commands = new Map();
+		const notifications = [];
+		extension(commands, notifications, dir);
+		const context = {
+			cwd: dir,
+			isProjectTrusted: () => false,
+			ui: { notify: (message, level) => notifications.push({ message, level }) },
+		};
+		for (const name of ["workflow:status", "workflow:doctor"]) {
+			await commands.get(name).handler("", context);
+			assert.ok(notifications.at(-1).message.includes(`✓ pi-claude-bridge — installed ${version}, installed`), source);
+			assert.doesNotMatch(notifications.at(-1).message, /pi install npm:pi-claude-bridge/, source);
+		}
+		const settingsBefore = await readFile(join(dir, "settings.json"), "utf8");
+		const off = selectionWith(["codegraph"]);
+		off.expectations["pi-claude-bridge"] = false;
+		await writeFile(selectionFile(dir), JSON.stringify(off));
+		for (const name of ["workflow:status", "workflow:doctor"]) {
+			await commands.get(name).handler("", context);
+			assert.ok(notifications.at(-1).message.includes(`✓ pi-claude-bridge — installed ${version}, installed`), source);
+			assert.doesNotMatch(notifications.at(-1).message, /pi install npm:pi-claude-bridge/, source);
+		}
+		assert.equal(await readFile(join(dir, "settings.json"), "utf8"), settingsBefore, source);
+	}
+});
+
+test("status and doctor show a missing expected Bridge without invoking installation", async (t) => {
+	const dir = withAgentDirectory(t);
+	await writeFile(selectionFile(dir), JSON.stringify(selectionWith(["codegraph"])));
+	const commands = new Map();
+	const notifications = [];
+	const installs = [];
+	extension(commands, notifications, dir, undefined, async (command, args) => {
+		installs.push([command, args]);
+		return { code: 0 };
+	});
+	const context = {
+		cwd: dir,
+		isProjectTrusted: () => false,
+		ui: { notify: (message, level) => notifications.push({ message, level }) },
+	};
+	for (const name of ["workflow:status", "workflow:doctor"]) {
+		await commands.get(name).handler("", context);
+		assert.equal(notifications.at(-1).level, "warning");
+		assert.match(notifications.at(-1).message, /pi install npm:pi-claude-bridge/);
+	}
+	assert.deepEqual(installs, []);
+});
+
+test("status and doctor expose configured Bridge validation failures without installing or changing settings", async (t) => {
+	const cases = [
+		["malformed manifest", "{"],
+		["wrong package identity", JSON.stringify({ name: "not-pi-claude-bridge", version: "1.0.0", repository: "https://github.com/elidickinson/pi-claude-bridge" })],
+		["unreadable manifest", undefined],
+	];
+	for (const [label, manifest] of cases) {
+		const dir = withAgentDirectory(t);
+		const project = join(dir, "project");
+		const root = join(dir, "npm", "node_modules", "pi-claude-bridge");
+		await mkdir(project, { recursive: true });
+		await mkdir(root, { recursive: true });
+		if (manifest !== undefined) await writeFile(join(root, "package.json"), manifest);
+		else await symlink(join(root, "missing-manifest"), join(root, "package.json"));
+		await writeFile(join(dir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+		await writeFile(selectionFile(dir), JSON.stringify(selectionWith(["codegraph"])));
+		const settingsBefore = await readFile(join(dir, "settings.json"), "utf8");
+		const commands = new Map();
+		const notifications = [];
+		const installs = [];
+		extension(commands, notifications, dir, undefined, async (command, args) => {
+			installs.push([command, args]);
+			return { code: 0 };
+		});
+		const context = {
+			cwd: project,
+			isProjectTrusted: () => false,
+			ui: { notify: (message, level) => notifications.push({ message, level }) },
+		};
+		for (const name of ["workflow:status", "workflow:doctor"]) {
+			await commands.get(name).handler("", context);
+			assert.equal(notifications.at(-1).level, "warning", label);
+			assert.match(notifications.at(-1).message, /✗ pi-claude-bridge — error \(/, label);
+			assert.doesNotMatch(notifications.at(-1).message, /✓ pi-claude-bridge — installed/, label);
+		}
+		assert.deepEqual(installs, [], label);
+		assert.equal(await readFile(join(dir, "settings.json"), "utf8"), settingsBefore, label);
+	}
+});
+
+test("status and doctor report a true configured-source ambiguity without installing", async (t) => {
+	const dir = withAgentDirectory(t);
+	const project = join(dir, "project");
+	const user = join(dir, "npm", "node_modules", "pi-claude-bridge");
+	const projectPackage = join(project, "project-bridge");
+	const manifest = JSON.stringify({
+		name: "pi-claude-bridge",
+		version: "1.0.0",
+		repository: "https://github.com/elidickinson/pi-claude-bridge",
+		pi: { extensions: ["./index.ts"] },
+	});
+	await mkdir(user, { recursive: true });
+	await mkdir(projectPackage, { recursive: true });
+	for (const root of [user, projectPackage]) {
+		await writeFile(join(root, "package.json"), manifest);
+		await writeFile(join(root, "index.ts"), "export default () => ({})");
+	}
+	await mkdir(join(project, ".pi"), { recursive: true });
+	await writeFile(join(project, ".pi", "settings.json"), JSON.stringify({ packages: [projectPackage] }));
+	await writeFile(join(dir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+	await writeFile(selectionFile(dir), JSON.stringify(selectionWith(["codegraph"])));
+	const settingsBefore = await readFile(join(dir, "settings.json"), "utf8");
+	const commands = new Map();
+	const notifications = [];
+	const installs = [];
+	extension(commands, notifications, dir, undefined, async (command, args) => {
+		installs.push([command, args]);
+		return { code: 0 };
+	});
+	const context = {
+		cwd: project,
+		isProjectTrusted: () => true,
+		ui: { notify: (message, level) => notifications.push({ message, level }) },
+	};
+	for (const name of ["workflow:status", "workflow:doctor"]) {
+		await commands.get(name).handler("", context);
+		assert.equal(notifications.at(-1).level, "warning");
+		assert.match(notifications.at(-1).message, /✗ pi-claude-bridge — error \(The official Claude Bridge package is configured from multiple effective sources\./);
+		assert.doesNotMatch(notifications.at(-1).message, /✓ pi-claude-bridge — installed/);
+	}
+	assert.deepEqual(installs, []);
+	assert.equal(await readFile(join(dir, "settings.json"), "utf8"), settingsBefore);
+});
+
+test("Configure presents Bridge as a separate expectation and cancellation writes nothing", async (t) => {
+	const dir = withAgentDirectory(t);
+	const selection = selectionWith(["codegraph"]);
+	selection.expectations["pi-claude-bridge"] = false;
+	const original = `${JSON.stringify(selection)}\n`;
+	await writeFile(selectionFile(dir), original);
+	seatOnly(t, ["codegraph"]);
+	const installs = [];
+	const catalog = {
+		resolveInstalledVersion: () => ({ version: "1.0.0" }),
+		resolveInstalledVersionAsync: async (name) => name === "pi-claude-bridge" ? { version: "0.9.2" } : undefined,
+	};
+	const { command, notify } = extension(
+		new Map(), [], dir, catalog,
+		async (command, args) => { installs.push([command, args]); return { code: 0 }; },
+	);
+	let menu;
+	await driveConfig(command, notify, (panel) => {
+		menu = shown(panel);
+		assert.ok(menu.some((line) => /pi-claude-bridge\s+off\s*$/.test(line)));
+		focus(panel, "pi-claude-bridge");
+		panel.handleInput(" ");
+		assert.ok(shown(panel).some((line) => /pi-claude-bridge\s+on\s*$/.test(line)));
+		panel.handleInput(ESC);
+	});
+	assert.ok(menu.some((line) => /Compact rendering/.test(line)));
+	assert.equal(await readFile(selectionFile(dir), "utf8"), original);
+	assert.deepEqual(installs, []);
+});
+
+test("Configure confirmation uses the generic unpinned npm package action for an expected missing Bridge", async (t) => {
+	const dir = withAgentDirectory(t);
+	await writeFile(selectionFile(dir), JSON.stringify(selectionWith([])));
+	seatOnly(t, []);
+	const installs = [];
+	const catalog = {
+		resolveInstalledVersion: () => ({ version: "1.0.0" }),
+		resolveInstalledVersionAsync: async (name) => name === "pi-claude-bridge" ? {} : undefined,
+	};
+	const { command, notify } = extension(
+		new Map(), [], dir, catalog,
+		async (command, args) => { installs.push([command, args]); return { code: 0 }; },
+	);
+	let review;
+	await driveConfig(command, notify, (panel) => {
+		openApply(panel);
+		review = shown(panel);
+		assert.ok(review.some((line) => /Install pi-claude-bridge/.test(line)));
+		confirmApply(panel);
+	});
+	assert.deepEqual(installs, [["pi", ["install", "npm:pi-claude-bridge"]]]);
+	const saved = JSON.parse(await readFile(selectionFile(dir), "utf8"));
+	assert.equal(saved.expectations["pi-claude-bridge"], true);
+	assert.ok(Object.values(saved.capabilities).every((on) => on === false));
+});
 
 test("closing /workflow:config without confirming changes neither the seating nor the disk", async (t) => {
 	const dir = withAgentDirectory(t);

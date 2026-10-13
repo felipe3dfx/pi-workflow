@@ -204,6 +204,31 @@ function bridgeSourceIdentity(source: string, manifest: Record<string, unknown>)
 	return officialManifest;
 }
 
+function effectiveConfiguredBridgePackages(manager: DefaultPackageManager, project: ParentProject) {
+	const configured = manager.listConfiguredPackages().flatMap((pkg) => {
+		if (pkg.scope === "project" && !project.trusted) return [];
+		const sourceIdentity = officialBridgeSourceIdentity(pkg.source);
+		if (sourceIdentity === false) return [];
+		const identity = sourceIdentity ?? (pkg.installedPath
+			? `local:${realpathSync(pkg.installedPath)}`
+			: undefined);
+		return identity === undefined ? [] : [{ ...pkg, identity, sourceIdentity }];
+	});
+	const projectIdentities = new Set(
+		configured.filter(({ scope }) => scope === "project").map(({ identity }) => identity),
+	);
+	const selected = configured.filter(({ scope, identity }) =>
+		scope === "project" || !projectIdentities.has(identity),
+	);
+	const unique = new Map<string, (typeof selected)[number]>();
+	for (const pkg of selected) {
+		const root = pkg.installedPath ? realpathSync(pkg.installedPath) : "";
+		const key = `${pkg.identity}\0${pkg.scope}\0${root}`;
+		if (!unique.has(key)) unique.set(key, pkg);
+	}
+	return [...unique.values()];
+}
+
 function packageManifest(path: string): Record<string, unknown> {
 	let parsed: unknown;
 	try {
@@ -233,40 +258,40 @@ export async function resolveClaudeBridgeExtension(
 	} catch (error) {
 		throw new Error(`Unable to resolve the configured Claude Bridge package: ${errorMessage(error)}`);
 	}
-	const officialCandidates = resolved.extensions.filter((resource) => {
-		const sourceIdentity = officialBridgeSourceIdentity(resource.metadata.source);
-		if (sourceIdentity === false) return false;
+	const effective = effectiveConfiguredBridgePackages(manager, project);
+	const officialCandidatesBySource = new Map<string, (typeof resolved.extensions)[number]>();
+	for (const resource of resolved.extensions) {
 		const packageRoot = resource.metadata.packageRoot ?? resource.metadata.baseDir;
-		if (!packageRoot) return false;
+		if (!packageRoot) continue;
+		const sourceIdentity = officialBridgeSourceIdentity(resource.metadata.source);
+		if (sourceIdentity === false) continue;
+		const root = realpathSync(packageRoot);
+		const identity = sourceIdentity ?? `local:${root}`;
+		const selectedSource = effective.some((pkg) =>
+			pkg.identity === identity && pkg.scope === resource.metadata.scope &&
+				(!pkg.installedPath || realpathSync(pkg.installedPath) === root),
+		);
+		if (!selectedSource) continue;
 		// Local index.ts packages need not have a manifest. Only inspect installed candidates.
-		if (sourceIdentity === undefined && !existsSync(join(packageRoot, "package.json"))) return false;
+		if (sourceIdentity === undefined && !existsSync(join(packageRoot, "package.json"))) continue;
 		const manifest = packageManifest(packageRoot);
-		return bridgeSourceIdentity(resource.metadata.source, manifest);
-	});
+		if (!bridgeSourceIdentity(resource.metadata.source, manifest)) continue;
+		const key = `${identity}\0${resource.metadata.scope}\0${root}`;
+		if (!officialCandidatesBySource.has(key)) officialCandidatesBySource.set(key, resource);
+	}
+	const officialCandidates = [...officialCandidatesBySource.values()];
 	const enabled = officialCandidates.filter((resource) => resource.enabled);
 	if (enabled.length !== 1) {
 		if (enabled.length === 0 && officialCandidates.length === 0) {
-			const configuredBridge = manager.listConfiguredPackages().flatMap((pkg) => {
-				const identity = officialBridgeSourceIdentity(pkg.source);
-				return typeof identity === "string" &&
-					(pkg.scope !== "project" || project.trusted)
-					? [{ pkg, identity }]
-					: [];
-			});
-			const projectIdentities = new Set(
-				configuredBridge.filter(({ pkg }) => pkg.scope === "project")
-					.map(({ identity }) => identity),
-			);
-			const effective = configuredBridge.filter(({ pkg, identity }) =>
-				(pkg.scope === "project" || !projectIdentities.has(identity)) &&
-				pkg.installedPath !== undefined,
-			);
-			if (effective.length === 0) {
+			const installedEffective = effective.filter(({ installedPath }) => installedPath !== undefined);
+			if (installedEffective.length === 0) {
 				throw new Error(
 					`Claude Bridge was selected, but the official ${claudeBridgePackage} package is not installed and configured for the parent project or user scope.`,
 				);
 			}
-			for (const { pkg } of effective) packageManifest(pkg.installedPath!);
+			for (const pkg of installedEffective) {
+				if (pkg.installedPath) packageManifest(pkg.installedPath);
+			}
 		}
 		const state = enabled.length === 0
 			? officialCandidates.length > 0 ? "filtered out or disabled" : "missing, filtered out, or disabled"
@@ -309,4 +334,33 @@ export async function resolveClaudeBridgeExtension(
 		throw new Error("The resolved resource does not match the official package's declared extension.");
 	}
 	return extension;
+}
+
+export async function inspectClaudeBridgeCompanion(
+	agentDir: string,
+	project: ParentProject,
+): Promise<{ version?: string; error?: string }> {
+	try {
+		const manager = packageManager(agentDir, project);
+		await manager.resolve(async () => "skip");
+		const effective = effectiveConfiguredBridgePackages(manager, project);
+		const official = effective.flatMap((pkg) => {
+			const installedPath = pkg.installedPath;
+			if (!installedPath) return [];
+			if (pkg.sourceIdentity === undefined && !existsSync(join(installedPath, "package.json"))) return [];
+			const manifest = packageManifest(installedPath);
+			if (!bridgeSourceIdentity(pkg.source, manifest)) return [];
+			if (typeof manifest.version !== "string" || manifest.version.length === 0) {
+				throw new Error("The official Claude Bridge manifest does not define a package version.");
+			}
+			return [{ identity: pkg.identity, scope: pkg.scope, version: manifest.version }];
+		});
+		if (official.length === 0) return {};
+		if (official.length !== 1) {
+			return { error: "The official Claude Bridge package is configured from multiple effective sources." };
+		}
+		return { version: official[0].version };
+	} catch (error) {
+		return { error: errorMessage(error) };
+	}
 }

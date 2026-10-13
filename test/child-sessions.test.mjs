@@ -59,7 +59,10 @@ import {
 	spawnedTools,
 	workerTools,
 } from "./support/child-session.mjs";
-import { resolveClaudeBridgeExtension } from "../extensions/web-access.ts";
+import {
+	inspectClaudeBridgeCompanion,
+	resolveClaudeBridgeExtension,
+} from "../extensions/web-access.ts";
 import { createBridgeParentSession } from "./support/bridge-parent.mjs";
 import { classifierRegistry } from "./support/fake-jev.mjs";
 import { turnJevRoutingOn } from "./support/jev-routing.mjs";
@@ -125,11 +128,11 @@ test("Claude Bridge discovery maps an installed package to git-shaped and local 
 				join(agentDir, "settings.json"),
 				JSON.stringify({ packages: [source] }),
 			);
-			const selected = await resolveClaudeBridgeExtension(agentDir, {
-				cwd: worktree,
-				trusted: false,
-			});
+			const project = { cwd: worktree, trusted: false };
+			const selected = await resolveClaudeBridgeExtension(agentDir, project);
 			assert.equal(selected, await realpath(join(installed, "src", "index.ts")));
+			const companion = await inspectClaudeBridgeCompanion(agentDir, project);
+			assert.equal(companion.version, (await officialManifest(installed)).version, kind);
 		});
 	}
 });
@@ -198,6 +201,26 @@ test("an untrusted project package cannot shadow the configured user Bridge pack
 			await resolveClaudeBridgeExtension(agentDir, { cwd: worktree, trusted: false }),
 			await realpath(join(installed, "src", "index.ts")),
 		);
+	});
+});
+
+test("a missing trusted project source shadows a valid user Bridge source", async (t) => {
+	const installed = installedPackagePath(getAgentDir(), "npm:pi-claude-bridge");
+	if (!installed) {
+		t.skip("pi-claude-bridge is not installed in the Pi agent directory");
+		return;
+	}
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		await mkdir(join(agentDir, "npm", "node_modules"), { recursive: true });
+		await symlink(installed, join(agentDir, "npm", "node_modules", "pi-claude-bridge"), "dir");
+		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+		await mkdir(join(worktree, ".pi"), { recursive: true });
+		await writeFile(join(worktree, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+		const project = { cwd: worktree, trusted: true };
+		const companion = await inspectClaudeBridgeCompanion(agentDir, project);
+		assert.equal(companion.version, undefined);
+		assert.equal(companion.error, undefined);
+		await assert.rejects(resolveClaudeBridgeExtension(agentDir, project), /not installed and configured/);
 	});
 });
 
@@ -366,6 +389,28 @@ test("parent project resolution ignores a poisoned child cwd and unrelated child
 	});
 });
 
+test("duplicate configured Bridge sources at the same effective scope and root are not ambiguous", async (t) => {
+	const installed = installedPackagePath(getAgentDir(), "npm:pi-claude-bridge");
+	if (!installed) {
+		t.skip("pi-claude-bridge is not installed in the Pi agent directory");
+		return;
+	}
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		await mkdir(join(agentDir, "npm", "node_modules"), { recursive: true });
+		await symlink(installed, join(agentDir, "npm", "node_modules", "pi-claude-bridge"), "dir");
+		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge", "npm:pi-claude-bridge"] }));
+		const project = { cwd: worktree, trusted: false };
+		assert.equal(
+			await resolveClaudeBridgeExtension(agentDir, project),
+			await realpath(join(installed, "src", "index.ts")),
+		);
+		assert.equal(
+			(await inspectClaudeBridgeCompanion(agentDir, project)).version,
+			(await officialManifest(installed)).version,
+		);
+	});
+});
+
 test("two effective official resources are rejected as ambiguous", async (t) => {
 	const installed = installedPackagePath(getAgentDir(), "npm:pi-claude-bridge");
 	if (!installed) {
@@ -412,6 +457,11 @@ test("a trusted project Bridge package wins before a malformed shadowed user pac
 			await resolveClaudeBridgeExtension(agentDir, { cwd: worktree, trusted: true }),
 			await realpath(join(projectPackage, "src", "index.ts")),
 		);
+		assert.equal(
+			(await inspectClaudeBridgeCompanion(agentDir, { cwd: worktree, trusted: true })).version,
+			(await officialManifest(installed)).version,
+			"trusted project package supersedes malformed user package",
+		);
 	});
 });
 
@@ -437,6 +487,11 @@ test("a filtered trusted project source does not validate its shadowed malformed
 		await assert.rejects(
 			resolveClaudeBridgeExtension(agentDir, { cwd: worktree, trusted: true }),
 			/filtered out|disabled/,
+		);
+		assert.equal(
+			(await inspectClaudeBridgeCompanion(agentDir, { cwd: worktree, trusted: true })).version,
+			(await officialManifest(installed)).version,
+			"configured source filters do not turn an installed companion into a duplicate-install gap",
 		);
 	});
 });
@@ -471,6 +526,16 @@ test("Claude Bridge discovery follows parent trust and project package filters",
 		assert.equal(
 			await resolveClaudeBridgeExtension(agentDir, { cwd: worktree, trusted: false }),
 			await realpath(join(installed, "src", "index.ts")),
+		);
+		assert.equal(
+			(await inspectClaudeBridgeCompanion(agentDir, { cwd: worktree, trusted: true })).version,
+			(await officialManifest(installed)).version,
+			"the expected companion is independent of the selected provider resource filter",
+		);
+		assert.equal(
+			(await inspectClaudeBridgeCompanion(agentDir, { cwd: worktree, trusted: false })).version,
+			(await officialManifest(installed)).version,
+			"the untrusted project does not shadow the configured user package",
 		);
 	});
 });

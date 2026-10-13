@@ -12,6 +12,10 @@
     {
       "package": "pi-web-access",
       "description": "Web access extension and skills for Pi."
+    },
+    {
+      "package": "pi-claude-bridge",
+      "description": "Official Claude Bridge model provider for Pi."
     }
   ]
 }
