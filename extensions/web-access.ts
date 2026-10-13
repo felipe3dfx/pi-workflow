@@ -224,6 +224,9 @@ function effectiveConfiguredBridgePackages(manager: DefaultPackageManager, proje
 			: undefined);
 		return identity === undefined ? [] : [{ ...pkg, identity, sourceIdentity }];
 	});
+	const userIdentities = new Set(
+		configured.filter(({ scope }) => scope === "user").map(({ identity }) => identity),
+	);
 	const projectIdentities = new Set(
 		configured.filter(({ scope, source }) =>
 			scope === "project" && !autoloadDisabledProjectSources.has(
@@ -231,9 +234,13 @@ function effectiveConfiguredBridgePackages(manager: DefaultPackageManager, proje
 			),
 		).map(({ identity }) => identity),
 	);
-	const selected = configured.filter(({ scope, identity }) =>
-		scope === "project" || !projectIdentities.has(identity),
-	);
+	const selected = configured.filter(({ scope, source, identity }) => {
+		if (scope !== "project") return !projectIdentities.has(identity);
+		const isDisabledUserTemplate = autoloadDisabledProjectSources.has(
+			officialBridgeSourceIdentity(source) ?? source,
+		) && userIdentities.has(identity);
+		return !isDisabledUserTemplate;
+	});
 	const unique = new Map<string, (typeof selected)[number]>();
 	for (const pkg of selected) {
 		const root = pkg.installedPath ? realpathSync(pkg.installedPath) : "";

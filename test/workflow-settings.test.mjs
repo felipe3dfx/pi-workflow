@@ -493,6 +493,84 @@ test("status and doctor recognize the official installed Bridge from the parent 
 	}
 });
 
+test("status and doctor follow configured Bridge source scenarios without writes or installation", async (t) => {
+	const cases = [
+		{ name: "bare autoload:false user delta", user: true, projectPackage: { source: "npm:pi-claude-bridge", autoload: false }, version: "1.1.1" },
+		{ name: "enabled delta retains user companion", user: true, projectPackage: { source: "npm:pi-claude-bridge", autoload: false, extensions: ["src/index.ts"] }, version: "1.1.1" },
+		{ name: "filtered delta retains installed user companion", user: true, projectPackage: { source: "npm:pi-claude-bridge", autoload: false, extensions: ["!src/index.ts"] }, version: "1.1.1" },
+		{ name: "ordinary project shadow", user: true, projectPackage: "npm:pi-claude-bridge", version: "2.2.2" },
+		{ name: "missing configured user is a gap despite project cache", user: false, configuredUser: true, projectPackage: { source: "npm:pi-claude-bridge", autoload: false }, missing: true },
+		{ name: "no configured user match preserves project companion behavior", user: false, projectPackage: { source: "npm:pi-claude-bridge", autoload: false }, version: "2.2.2" },
+	];
+	for (const scenario of cases) {
+		const dir = withAgentDirectory(t);
+		const project = join(dir, "project");
+		const userRoot = join(dir, "npm", "node_modules", "pi-claude-bridge");
+		const projectRoot = join(project, ".pi", "npm", "node_modules", "pi-claude-bridge");
+		await mkdir(project, { recursive: true });
+		const manifest = (version) => JSON.stringify({
+			name: "pi-claude-bridge", version,
+			repository: "https://github.com/elidickinson/pi-claude-bridge",
+			pi: { extensions: ["./src/index.ts"] },
+		});
+		for (const [root, version, present] of [[userRoot, "1.1.1", scenario.user], [projectRoot, "2.2.2", true]]) {
+			if (!present) continue;
+			await mkdir(join(root, "src"), { recursive: true });
+			await writeFile(join(root, "package.json"), manifest(version));
+			await writeFile(join(root, "src", "index.ts"), "export default () => ({})");
+		}
+		const userSettings = { packages: scenario.user || scenario.configuredUser ? ["npm:pi-claude-bridge"] : [] };
+		const projectSettings = { packages: [scenario.projectPackage] };
+		await writeFile(join(dir, "settings.json"), JSON.stringify(userSettings));
+		await mkdir(join(project, ".pi"), { recursive: true });
+		await writeFile(join(project, ".pi", "settings.json"), JSON.stringify(projectSettings));
+		const beforeSettings = await readFile(join(dir, "settings.json"), "utf8");
+		const beforeProjectSettings = await readFile(join(project, ".pi", "settings.json"), "utf8");
+		const selection = selectionWith(["codegraph"]);
+		selection.expectations["pi-claude-bridge"] = true;
+		await writeFile(selectionFile(dir), JSON.stringify(selection));
+		const commands = new Map();
+		const notifications = [];
+		const invocations = [];
+		extension(commands, notifications, dir, undefined, async (command, args) => {
+			invocations.push([command, args]);
+			return { code: 0 };
+		});
+		const context = {
+			cwd: project,
+			isProjectTrusted: () => true,
+			ui: { notify: (message, level) => notifications.push({ message, level }) },
+		};
+		for (const expectation of [true, false]) {
+			selection.expectations["pi-claude-bridge"] = expectation;
+			await writeFile(selectionFile(dir), JSON.stringify(selection));
+			const selectionBytes = await readFile(selectionFile(dir), "utf8");
+			for (const name of ["workflow:status", "workflow:doctor"]) {
+				await commands.get(name).handler("", context);
+				const { message } = notifications.at(-1);
+				if (scenario.missing) {
+					assert.match(message, /pi-claude-bridge — missing/, `${scenario.name} ${name} expected=${expectation}`);
+					if (!expectation) assert.match(message, /All configured companions are installed\./, `${scenario.name} ${name}: off expectation is not degraded`);
+					if (expectation) assert.match(message, /pi install npm:pi-claude-bridge/, `${scenario.name} ${name}`);
+					else assert.doesNotMatch(message, /pi install npm:pi-claude-bridge/, `${scenario.name} ${name}`);
+				} else {
+					assert.match(message, new RegExp(`✓ pi-claude-bridge — installed ${scenario.version.replaceAll(".", "\\.")}, installed`), `${scenario.name} ${name} expected=${expectation}`);
+					assert.doesNotMatch(message, /multiple effective sources|pi install npm:pi-claude-bridge/,
+						`${scenario.name} ${name} expected=${expectation}`);
+				}
+			}
+			assert.equal(await readFile(selectionFile(dir), "utf8"), selectionBytes, scenario.name);
+		}
+		assert.deepEqual(invocations, [], scenario.name);
+		assert.equal(await readFile(join(dir, "settings.json"), "utf8"), beforeSettings, scenario.name);
+		assert.equal(await readFile(join(project, ".pi", "settings.json"), "utf8"), beforeProjectSettings, scenario.name);
+		for (const packageRoot of [userRoot, projectRoot]) {
+			if (!await readFile(join(packageRoot, "package.json"), "utf8").then(() => true, () => false)) continue;
+			assert.equal(await readFile(join(packageRoot, "package.json"), "utf8"), manifest(packageRoot === userRoot ? "1.1.1" : "2.2.2"), scenario.name);
+		}
+	}
+});
+
 test("status and doctor show a missing expected Bridge without invoking installation", async (t) => {
 	const dir = withAgentDirectory(t);
 	await writeFile(selectionFile(dir), JSON.stringify(selectionWith(["codegraph"])));

@@ -178,6 +178,72 @@ test("Pi's public autoload:false resource metadata selects the Bridge runtime an
 	});
 });
 
+test("Bridge inventory follows Pi's public resolution across project delta and shadow cases", async (t) => {
+	const cases = [
+		{ name: "bare autoload:false", projectPackage: { source: "npm:pi-claude-bridge", autoload: false }, expectedScope: "user", expectedRoot: "user", expectedVersion: "1.1.1" },
+		{ name: "delta enables src/index.ts", projectPackage: { source: "npm:pi-claude-bridge", autoload: false, extensions: ["src/index.ts"] }, expectedScope: "project", expectedRoot: "user", expectedVersion: "1.1.1" },
+		{ name: "delta disables !src/index.ts", projectPackage: { source: "npm:pi-claude-bridge", autoload: false, extensions: ["!src/index.ts"] }, expectedScope: "user", expectedRoot: "user", expectedVersion: "1.1.1", filtered: true },
+		{ name: "ordinary project shadow", projectPackage: "npm:pi-claude-bridge", expectedScope: "project", expectedRoot: "project", expectedVersion: "2.2.2" },
+		{ name: "missing configured user is not replaced by project cache", projectPackage: { source: "npm:pi-claude-bridge", autoload: false }, expectedVersion: undefined, missingUser: true, noRuntime: true },
+		{ name: "no configured user preserves Pi project behavior", projectPackage: { source: "npm:pi-claude-bridge", autoload: false }, expectedVersion: "2.2.2", noUser: true, noRuntime: true },
+	];
+	for (const scenario of cases) {
+		await withWorkspace(async ({ worktree, agentDir }) => {
+			const user = join(agentDir, "npm", "node_modules", "pi-claude-bridge");
+			const projectRoot = join(worktree, ".pi", "npm", "node_modules", "pi-claude-bridge");
+			const manifest = (version) => JSON.stringify({
+				name: "pi-claude-bridge", version,
+				repository: "https://github.com/elidickinson/pi-claude-bridge",
+				pi: { extensions: ["./src/index.ts"] },
+			});
+			if (!scenario.missingUser) {
+				await mkdir(user, { recursive: true });
+				await writeFile(join(user, "package.json"), manifest("1.1.1"));
+				await mkdir(join(user, "src"), { recursive: true });
+				await writeFile(join(user, "src", "index.ts"), "export default () => ({})");
+			}
+			await mkdir(projectRoot, { recursive: true });
+			await writeFile(join(projectRoot, "package.json"), manifest("2.2.2"));
+			await mkdir(join(projectRoot, "src"), { recursive: true });
+			await writeFile(join(projectRoot, "src", "index.ts"), "export default () => ({})");
+			const userPackages = scenario.noUser ? [] : ["npm:pi-claude-bridge"];
+			await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: userPackages }));
+			await mkdir(join(worktree, ".pi"), { recursive: true });
+			await writeFile(join(worktree, ".pi", "settings.json"), JSON.stringify({ packages: [scenario.projectPackage] }));
+			const project = { cwd: worktree, trusted: true };
+			const manager = new DefaultPackageManager({
+				cwd: worktree, agentDir,
+				settingsManager: SettingsManager.create(worktree, agentDir, { projectTrusted: true }),
+			});
+			const resolved = await manager.resolve(async () => "skip");
+			const resources = resolved.extensions.filter((resource) => resource.metadata.source === "npm:pi-claude-bridge");
+			const publicSelected = resources.filter((resource) => resource.enabled);
+			if (scenario.filtered || scenario.noRuntime) {
+				assert.equal(publicSelected.length, 0, scenario.name);
+				if (scenario.noRuntime) {
+					await assert.rejects(resolveClaudeBridgeExtension(agentDir, project), /not installed and configured|missing, filtered out, or disabled/);
+					const companion = await inspectClaudeBridgeCompanion(agentDir, project);
+					assert.equal(companion.version, scenario.expectedVersion, scenario.name);
+				} else {
+					await assert.rejects(resolveClaudeBridgeExtension(agentDir, project), /filtered out|disabled/);
+					assert.deepEqual(await inspectClaudeBridgeCompanion(agentDir, project), { version: "1.1.1" }, scenario.name);
+				}
+			} else {
+				assert.equal(publicSelected.length, 1, scenario.name);
+				const oracle = publicSelected[0];
+				assert.equal(oracle.metadata.scope, scenario.expectedScope, scenario.name);
+				assert.equal(await realpath(oracle.metadata.packageRoot), await realpath(scenario.expectedRoot === "user" ? user : projectRoot), scenario.name);
+				assert.equal(await resolveClaudeBridgeExtension(agentDir, project), await realpath(oracle.path), scenario.name);
+				if (scenario.expectedVersion === undefined) {
+					assert.match((await inspectClaudeBridgeCompanion(agentDir, project)).error, /not installed and configured|multiple effective sources/, scenario.name);
+				} else {
+					assert.deepEqual(await inspectClaudeBridgeCompanion(agentDir, project), { version: scenario.expectedVersion }, scenario.name);
+				}
+			}
+		});
+	}
+});
+
 test("an autoload:false Bridge resource filter blocks runtime loading but not the installed companion", async (t) => {
 	const installed = installedPackagePath(getAgentDir(), "npm:pi-claude-bridge");
 	if (!installed) {
