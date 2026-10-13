@@ -238,23 +238,6 @@ test("toggling Jev routing and cancelling with Esc writes nothing", async (t) =>
 	assert.equal(await storedRouting(dir), undefined);
 });
 
-test("the Apply review omits Jev routing when it is unchanged", async (t) => {
-	const dir = withAgentDirectory(t);
-	const { command, notify } = extension(new Map(), [], dir);
-	let review;
-	await driveConfig(command, notify, (panel) => {
-		focusRouting(panel);
-		panel.handleInput(" ");
-		panel.handleInput(" ");
-		openApply(panel);
-		review = shown(panel);
-		panel.handleInput(ESC);
-		panel.handleInput(ESC);
-	});
-	assert.ok(review.some((line) => /Does not uninstall packages/.test(line)));
-	assert.ok(review.every((line) => !/Jev routing:/.test(line)));
-});
-
 test("turning Jev routing off in the menu gates a launch on the stored choice", async (t) => {
 	const dir = withAgentDirectory(t);
 	await writeFile(
@@ -481,7 +464,8 @@ test("status and doctor recognize the official installed Bridge from the parent 
 			assert.doesNotMatch(notifications.at(-1).message, /pi install npm:pi-claude-bridge/, source);
 		}
 		const settingsBefore = await readFile(join(dir, "settings.json"), "utf8");
-		const off = selectionWith(["codegraph"]);
+		const off = readSelection(undefined, ["pi-claude-bridge"]).selection;
+		off.capabilities.codegraph = true;
 		off.expectations["pi-claude-bridge"] = false;
 		await writeFile(selectionFile(dir), JSON.stringify(off));
 		for (const name of ["workflow:status", "workflow:doctor"]) {
@@ -526,13 +510,16 @@ test("status and doctor follow configured Bridge source scenarios without writes
 		await writeFile(join(project, ".pi", "settings.json"), JSON.stringify(projectSettings));
 		const beforeSettings = await readFile(join(dir, "settings.json"), "utf8");
 		const beforeProjectSettings = await readFile(join(project, ".pi", "settings.json"), "utf8");
-		const selection = selectionWith(["codegraph"]);
+		const selection = readSelection(undefined, ["pi-claude-bridge"]).selection;
+		selection.capabilities.codegraph = true;
 		selection.expectations["pi-claude-bridge"] = true;
 		await writeFile(selectionFile(dir), JSON.stringify(selection));
+		const metadataPath = join(dir, "companions.json");
+		await writeFile(metadataPath, JSON.stringify({ schemaVersion: 1, companions: [{ package: "pi-claude-bridge", description: "Claude Bridge" }] }));
 		const commands = new Map();
 		const notifications = [];
 		const invocations = [];
-		extension(commands, notifications, dir, undefined, async (command, args) => {
+		extension(commands, notifications, dir, { metadataPath }, async (command, args) => {
 			invocations.push([command, args]);
 			return { code: 0 };
 		});
@@ -759,6 +746,27 @@ test("the /workflow:config guide opens from the selection on disk, not the seate
 	});
 	assert.ok(lines.some((line) => /CodeGraph\s+on\s*$/.test(line)));
 	assert.ok(lines.some((line) => /Todo\s+off\s*$/.test(line)));
+});
+
+test("the Apply review omits Jev routing when it is unchanged", async (t) => {
+	const dir = withAgentDirectory(t);
+	const selection = selectionWith([]);
+	selection.expectations["pi-claude-bridge"] = false;
+	await writeFile(selectionFile(dir), JSON.stringify(selection));
+	seatOnly(t, []);
+	const { command, notify } = extension(new Map(), [], dir, {
+		resolveInstalledVersion: () => ({ version: "1.0.0" }),
+	});
+	let review;
+	await driveConfig(command, notify, (panel) => {
+		openApply(panel);
+		review = shown(panel);
+		panel.handleInput(ESC);
+		panel.handleInput(ESC);
+	});
+	assert.ok(review.some((line) => /Leave installed pi-claude-bridge/.test(line)));
+	assert.ok(review.some((line) => /Does not uninstall packages/.test(line)));
+	assert.ok(review.every((line) => !/Jev routing:/.test(line)));
 });
 
 test("the Apply plan compares against the seated selection", async (t) => {
