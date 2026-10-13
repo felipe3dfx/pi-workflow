@@ -3,12 +3,14 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import {
+	cp,
 	mkdir,
 	mkdtemp,
 	readdir,
 	readFile,
 	realpath,
 	rm,
+	symlink,
 	writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
@@ -41,7 +43,7 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 
-import { createAskParentTool } from "../extensions/child-sessions.ts";
+import { createAskParentTool, createPiChildSession } from "../extensions/child-sessions.ts";
 import { compactToolRenderers } from "../extensions/compact-tools.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
@@ -52,10 +54,13 @@ import {
 	userEntry,
 } from "./support/fake-children.mjs";
 import {
+	installedPackagePath,
 	piChildSession,
 	spawnedTools,
 	workerTools,
 } from "./support/child-session.mjs";
+import { resolveClaudeBridgeExtension } from "../extensions/web-access.ts";
+import { createBridgeParentSession } from "./support/bridge-parent.mjs";
 import { classifierRegistry } from "./support/fake-jev.mjs";
 import { turnJevRoutingOn } from "./support/jev-routing.mjs";
 
@@ -70,6 +75,433 @@ const packageVersion = JSON.parse(
 ).version;
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+async function officialManifest(installed) {
+	return JSON.parse(await readFile(join(installed, "package.json"), "utf8"));
+}
+
+test("the installed Claude Bridge npm package resolves to its declared official extension", async (t) => {
+	const installed = installedPackagePath(getAgentDir(), "npm:pi-claude-bridge");
+	if (!installed) {
+		t.skip("pi-claude-bridge is not installed in the Pi agent directory");
+		return;
+	}
+	await withWorkspace(async ({ worktree, agentDir, dir }) => {
+		const source = join(agentDir, "npm", "node_modules", "pi-claude-bridge");
+		await mkdir(join(agentDir, "npm", "node_modules"), { recursive: true });
+		await symlink(installed, source, "dir");
+		await writeFile(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ packages: ["npm:pi-claude-bridge"] }),
+		);
+		const actual = await resolveClaudeBridgeExtension(agentDir, {
+			cwd: worktree,
+			trusted: false,
+		});
+		assert.equal(actual, await realpath(join(installed, "src", "index.ts")));
+		assert.equal(dir.startsWith(tmpdir()), true);
+	});
+});
+
+test("Claude Bridge discovery maps an installed package to git-shaped and local source identities (fixtures only)", async (t) => {
+	const sourceAgentDir = getAgentDir();
+	const installed = installedPackagePath(sourceAgentDir, "npm:pi-claude-bridge");
+	if (!installed) {
+		t.skip("pi-claude-bridge is not installed in the Pi agent directory");
+		return;
+	}
+	for (const kind of ["git-shaped-fixture", "local"]) {
+		await withWorkspace(async ({ worktree, agentDir }) => {
+			let source;
+			if (kind === "git-shaped-fixture") {
+				source = "git:github.com/elidickinson/pi-claude-bridge@feature/branch";
+				const root = join(agentDir, "git", "github.com", "elidickinson");
+				await mkdir(root, { recursive: true });
+				await symlink(installed, join(root, "pi-claude-bridge"), "dir");
+			} else {
+				source = installed;
+			}
+			await writeFile(
+				join(agentDir, "settings.json"),
+				JSON.stringify({ packages: [source] }),
+			);
+			const selected = await resolveClaudeBridgeExtension(agentDir, {
+				cwd: worktree,
+				trusted: false,
+			});
+			assert.equal(selected, await realpath(join(installed, "src", "index.ts")));
+		});
+	}
+});
+
+test("Claude Bridge reports malformed, null, primitive, and array manifests contextually", async () => {
+	for (const [contents, expected] of [
+		["{", /Unable to read the configured Claude Bridge package manifest/],
+		["null", /manifest at .* must contain a JSON object/],
+		["17", /manifest at .* must contain a JSON object/],
+		["[]", /manifest at .* must contain a JSON object/],
+	]) {
+		await withWorkspace(async ({ worktree, agentDir }) => {
+			const root = join(agentDir, "npm", "node_modules", "pi-claude-bridge");
+			await mkdir(root, { recursive: true });
+			await writeFile(join(root, "package.json"), contents);
+			await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+			await assert.rejects(
+				resolveClaudeBridgeExtension(agentDir, { cwd: worktree, trusted: false }),
+				expected,
+			);
+		});
+	}
+});
+
+test("an unreadable configured official manifest fails visibly", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const root = join(agentDir, "npm", "node_modules", "pi-claude-bridge");
+		await mkdir(root, { recursive: true });
+		await symlink(join(root, "absent-manifest"), join(root, "package.json"));
+		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+		await assert.rejects(
+			resolveClaudeBridgeExtension(agentDir, { cwd: worktree, trusted: false }),
+			/Unable to read the configured Claude Bridge package manifest/,
+		);
+	});
+});
+
+test("an unavailable configured package version is not installed or replaced by another source", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge@999.0.0"] }));
+		await assert.rejects(
+			resolveClaudeBridgeExtension(agentDir, { cwd: worktree, trusted: false }),
+			/official pi-claude-bridge package is not installed|resolve the configured Claude Bridge package/,
+		);
+		await assert.rejects(readdir(join(agentDir, "npm")));
+	});
+});
+
+test("an untrusted project package cannot shadow the configured user Bridge package", async (t) => {
+	const installed = installedPackagePath(getAgentDir(), "npm:pi-claude-bridge");
+	if (!installed) {
+		t.skip("pi-claude-bridge is not installed in the Pi agent directory");
+		return;
+	}
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const userPackage = join(agentDir, "npm", "node_modules", "pi-claude-bridge");
+		const projectPackage = join(worktree, "untrusted-project-bridge");
+		await mkdir(join(agentDir, "npm", "node_modules"), { recursive: true });
+		await symlink(installed, userPackage, "dir");
+		await mkdir(projectPackage, { recursive: true });
+		await writeFile(join(projectPackage, "package.json"), "null");
+		await mkdir(join(worktree, ".pi"), { recursive: true });
+		await writeFile(join(worktree, ".pi", "settings.json"), JSON.stringify({ packages: [projectPackage] }));
+		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+		assert.equal(
+			await resolveClaudeBridgeExtension(agentDir, { cwd: worktree, trusted: false }),
+			await realpath(join(installed, "src", "index.ts")),
+		);
+	});
+});
+
+test("an unrelated configured local index.ts package does not block Bridge resolution", async (t) => {
+	const installed = installedPackagePath(getAgentDir(), "npm:pi-claude-bridge");
+	if (!installed) {
+		t.skip("pi-claude-bridge is not installed in the Pi agent directory");
+		return;
+	}
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const source = join(agentDir, "npm", "node_modules", "pi-claude-bridge");
+		const unrelated = join(worktree, "local-extension");
+		await mkdir(join(agentDir, "npm", "node_modules"), { recursive: true });
+		await symlink(installed, source, "dir");
+		await mkdir(unrelated);
+		await writeFile(join(unrelated, "index.ts"), "export default () => ({})");
+		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge", unrelated] }));
+		assert.equal(
+			await resolveClaudeBridgeExtension(agentDir, { cwd: worktree, trusted: false }),
+			await realpath(join(installed, "src", "index.ts")),
+		);
+	});
+});
+
+test("a configured missing Bridge package uses a no-install policy", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+		await assert.rejects(
+			resolveClaudeBridgeExtension(agentDir, { cwd: worktree, trusted: false }),
+			/official pi-claude-bridge package is not installed/,
+		);
+		await assert.rejects(readdir(join(agentDir, "npm")));
+	});
+});
+
+test("an official manifest pointing outside its package is rejected as an invalid resource", async (t) => {
+	const installed = installedPackagePath(getAgentDir(), "npm:pi-claude-bridge");
+	if (!installed) {
+		t.skip("pi-claude-bridge is not installed in the Pi agent directory");
+		return;
+	}
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const root = join(agentDir, "npm", "node_modules", "pi-claude-bridge");
+		await mkdir(root, { recursive: true });
+		const manifest = await officialManifest(installed);
+		manifest.pi.extensions = ["../outside.ts"];
+		await writeFile(join(root, "package.json"), JSON.stringify(manifest));
+		await writeFile(join(agentDir, "npm", "node_modules", "outside.ts"), "export default () => ({})");
+		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+		await assert.rejects(
+			resolveClaudeBridgeExtension(agentDir, { cwd: worktree, trusted: false }),
+			/inside its installed package|does not match the official package's declared extension/,
+		);
+	});
+});
+
+test("a configured but missing extension file fails visibly without fallback", async (t) => {
+	const installed = installedPackagePath(getAgentDir(), "npm:pi-claude-bridge");
+	if (!installed) {
+		t.skip("pi-claude-bridge is not installed in the Pi agent directory");
+		return;
+	}
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const root = join(agentDir, "npm", "node_modules", "pi-claude-bridge");
+		await mkdir(root, { recursive: true });
+		const manifest = await officialManifest(installed);
+		manifest.pi.extensions = ["./missing-extension.ts"];
+		await writeFile(join(root, "package.json"), JSON.stringify(manifest));
+		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+		await assert.rejects(
+			resolveClaudeBridgeExtension(agentDir, { cwd: worktree, trusted: false }),
+			/unreadable|missing, filtered out, or disabled/,
+		);
+	});
+});
+
+test("an official package source with a mismatched package identity is rejected", async (t) => {
+	const installed = installedPackagePath(getAgentDir(), "npm:pi-claude-bridge");
+	if (!installed) {
+		t.skip("pi-claude-bridge is not installed in the Pi agent directory");
+		return;
+	}
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const root = join(agentDir, "npm", "node_modules", "pi-claude-bridge");
+		await mkdir(root, { recursive: true });
+		const manifest = await officialManifest(installed);
+		manifest.name = "not-the-official-package";
+		await writeFile(join(root, "package.json"), JSON.stringify(manifest));
+		await mkdir(join(root, "src"), { recursive: true });
+		await writeFile(join(root, "src", "index.ts"), "export default () => ({})");
+		const unrelated = join(worktree, "unrelated-local-extension");
+		await mkdir(unrelated, { recursive: true });
+		await writeFile(join(unrelated, "index.ts"), "export default () => ({})");
+		await writeFile(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ packages: ["npm:pi-claude-bridge", unrelated] }),
+		);
+		await assert.rejects(
+			resolveClaudeBridgeExtension(agentDir, { cwd: worktree, trusted: false }),
+			/does not identify the official Claude Bridge package/,
+		);
+	});
+});
+
+test("child factory reports an official extension module load failure", async (t) => {
+	const installed = installedPackagePath(getAgentDir(), "npm:pi-claude-bridge");
+	if (!installed) {
+		t.skip("pi-claude-bridge is not installed in the Pi agent directory");
+		return;
+	}
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const root = join(agentDir, "npm", "node_modules", "pi-claude-bridge");
+		await mkdir(join(root, "src"), { recursive: true });
+		const manifest = await officialManifest(installed);
+		manifest.pi.extensions = ["./src/broken.ts"];
+		await writeFile(join(root, "package.json"), JSON.stringify(manifest));
+		await writeFile(join(root, "src", "broken.ts"), "export default (\n");
+		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+		const parent = await fauxParent(agentDir, fauxAssistantMessage("unused"));
+		const provider = fauxProvider({ provider: "claude-bridge", models: [{ id: "child", reasoning: true }] });
+		parent.runtime.registerNativeProvider(provider.provider);
+		await assert.rejects(
+			createPiChildSession({
+				cwd: worktree,
+				project: { cwd: worktree, trusted: false },
+				role: "explore",
+				model: "claude-bridge/child",
+				thinking: "low",
+				prompt: "test",
+				tools: ["read"],
+				modelRegistry: parent.context.modelRegistry,
+				shell: {},
+				onEvent() {},
+				notify() {},
+				async ask() { return ""; },
+				report() {},
+			}),
+			/Claude Bridge extension failed to load/,
+		);
+	});
+});
+
+test("parent project resolution ignores a poisoned child cwd and unrelated child resource", async (t) => {
+	const installed = installedPackagePath(getAgentDir(), "npm:pi-claude-bridge");
+	if (!installed) {
+		t.skip("pi-claude-bridge is not installed in the Pi agent directory");
+		return;
+	}
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const parentCwd = join(worktree, "parent");
+		const childCwd = join(worktree, "child");
+		const parentNpm = join(parentCwd, ".pi", "npm", "node_modules");
+		const parentPackage = join(parentNpm, "pi-claude-bridge");
+		const childPackage = join(childCwd, "unrelated-package");
+		await mkdir(parentNpm, { recursive: true });
+		await mkdir(join(childCwd, ".pi"), { recursive: true });
+		await cp(installed, parentPackage, { recursive: true });
+		await mkdir(childPackage, { recursive: true });
+		await writeFile(join(childPackage, "index.ts"), "export default () => ({})");
+		await writeFile(join(parentCwd, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+		await writeFile(join(childCwd, ".pi", "settings.json"), JSON.stringify({ packages: [childPackage] }));
+		assert.equal(
+			await resolveClaudeBridgeExtension(agentDir, { cwd: parentCwd, trusted: true }),
+			await realpath(join(parentPackage, "src", "index.ts")),
+		);
+	});
+});
+
+test("two effective official resources are rejected as ambiguous", async (t) => {
+	const installed = installedPackagePath(getAgentDir(), "npm:pi-claude-bridge");
+	if (!installed) {
+		t.skip("pi-claude-bridge is not installed in the Pi agent directory");
+		return;
+	}
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const userPackage = join(agentDir, "npm", "node_modules", "pi-claude-bridge");
+		const projectPackage = join(worktree, "project-bridge");
+		await mkdir(join(agentDir, "npm", "node_modules"), { recursive: true });
+		await cp(installed, userPackage, { recursive: true });
+		await cp(installed, projectPackage, { recursive: true });
+		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+		await mkdir(join(worktree, ".pi"), { recursive: true });
+		await writeFile(
+			join(worktree, ".pi", "settings.json"),
+			JSON.stringify({ packages: [projectPackage] }),
+		);
+		await assert.rejects(
+			resolveClaudeBridgeExtension(agentDir, { cwd: worktree, trusted: true }),
+			/ambiguous/,
+		);
+	});
+});
+
+test("a trusted project Bridge package wins before a malformed shadowed user package is validated", async (t) => {
+	const installed = installedPackagePath(getAgentDir(), "npm:pi-claude-bridge");
+	if (!installed) {
+		t.skip("pi-claude-bridge is not installed in the Pi agent directory");
+		return;
+	}
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const userPackage = join(agentDir, "npm", "node_modules", "pi-claude-bridge");
+		const projectNpm = join(worktree, ".pi", "npm", "node_modules");
+		const projectPackage = join(projectNpm, "pi-claude-bridge");
+		await mkdir(userPackage, { recursive: true });
+		await writeFile(join(userPackage, "package.json"), "null");
+		await mkdir(projectNpm, { recursive: true });
+		await cp(installed, projectPackage, { recursive: true });
+		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+		await mkdir(join(worktree, ".pi"), { recursive: true });
+		await writeFile(join(worktree, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+		assert.equal(
+			await resolveClaudeBridgeExtension(agentDir, { cwd: worktree, trusted: true }),
+			await realpath(join(projectPackage, "src", "index.ts")),
+		);
+	});
+});
+
+test("a filtered trusted project source does not validate its shadowed malformed user package", async (t) => {
+	const installed = installedPackagePath(getAgentDir(), "npm:pi-claude-bridge");
+	if (!installed) {
+		t.skip("pi-claude-bridge is not installed in the Pi agent directory");
+		return;
+	}
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const userPackage = join(agentDir, "npm", "node_modules", "pi-claude-bridge");
+		const projectNpm = join(worktree, ".pi", "npm", "node_modules");
+		await mkdir(userPackage, { recursive: true });
+		await writeFile(join(userPackage, "package.json"), "null");
+		await mkdir(projectNpm, { recursive: true });
+		await cp(installed, join(projectNpm, "pi-claude-bridge"), { recursive: true });
+		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+		await mkdir(join(worktree, ".pi"), { recursive: true });
+		await writeFile(
+			join(worktree, ".pi", "settings.json"),
+			JSON.stringify({ packages: [{ source: "npm:pi-claude-bridge", extensions: [] }] }),
+		);
+		await assert.rejects(
+			resolveClaudeBridgeExtension(agentDir, { cwd: worktree, trusted: true }),
+			/filtered out|disabled/,
+		);
+	});
+});
+
+test("Claude Bridge discovery follows parent trust and project package filters", async (t) => {
+	const installed = installedPackagePath(getAgentDir(), "npm:pi-claude-bridge");
+	if (!installed) {
+		t.skip("pi-claude-bridge is not installed in the Pi agent directory");
+		return;
+	}
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const userPackage = join(agentDir, "npm", "node_modules", "pi-claude-bridge");
+		const projectNpm = join(worktree, ".pi", "npm", "node_modules");
+		const projectPackage = join(projectNpm, "pi-claude-bridge");
+		await mkdir(join(agentDir, "npm", "node_modules"), { recursive: true });
+		await mkdir(projectNpm, { recursive: true });
+		await symlink(installed, userPackage, "dir");
+		await symlink(installed, projectPackage, "dir");
+		await writeFile(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ packages: ["npm:pi-claude-bridge"] }),
+		);
+		await mkdir(join(worktree, ".pi"), { recursive: true });
+		await writeFile(
+			join(worktree, ".pi", "settings.json"),
+			JSON.stringify({ packages: [{ source: "npm:pi-claude-bridge", extensions: [] }] }),
+		);
+		await assert.rejects(
+			resolveClaudeBridgeExtension(agentDir, { cwd: worktree, trusted: true }),
+			/filtered out/,
+		);
+		assert.equal(
+			await resolveClaudeBridgeExtension(agentDir, { cwd: worktree, trusted: false }),
+			await realpath(join(installed, "src", "index.ts")),
+		);
+	});
+});
+
+test("the faux-provider public seam leaves a native child without Bridge resources (not live native-provider evidence)", async (t) => {
+	const sourceAgentDir = getAgentDir();
+	const installed = installedPackagePath(sourceAgentDir, "npm:pi-claude-bridge");
+	if (!installed) {
+		t.skip("pi-claude-bridge is not installed in the Pi agent directory");
+		return;
+	}
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		await mkdir(join(agentDir, "npm"), { recursive: true });
+		await symlink(join(sourceAgentDir, "npm", "node_modules"), join(agentDir, "npm", "node_modules"), "dir");
+		await writeFile(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ packages: ["npm:pi-claude-bridge"] }),
+		);
+		const parent = await fauxParent(agentDir, fauxAssistantMessage("Native child."));
+		const child = await piChildSession({
+			cwd: worktree,
+			modelRegistry: parent.context.modelRegistry,
+		});
+		try {
+			assert.equal(child.model, "faux/child");
+			assert.equal(parent.runtime.getModel("claude-bridge", "claude-haiku-4-5"), undefined);
+		} finally {
+			await child.dispose();
+		}
+	});
+});
 
 const workerContract = await readFile(
 	fileURLToPath(new URL("../assets/contracts/worker.md", import.meta.url)),
@@ -3787,6 +4219,437 @@ test("a child that times out through Pi's SDK while its prompt is still preparin
 		assert.equal(await stateOf(child.extension, id), "timed out");
 		assert.equal(child.parent.requests.length, 0);
 		assert.deepEqual(unhandled, []);
+	});
+});
+
+test("the real Claude Bridge child manager records a completed result and requested parent wake, then continues saved history", {
+	skip: process.env.PI_WORKFLOW_BRIDGE_LIVE !== "1" && "Set PI_WORKFLOW_BRIDGE_LIVE=1 to run real Claude Bridge manager lifecycle checks.",
+	timeout: 110_000,
+}, async () => {
+	const installed = installedPackagePath(getAgentDir(), "npm:pi-claude-bridge");
+	if (!installed) {
+		t.skip("pi-claude-bridge is not installed in the Pi agent directory");
+		return;
+	}
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		await mkdir(join(agentDir, "npm", "node_modules"), { recursive: true });
+		await symlink(installed, join(agentDir, "npm", "node_modules", "pi-claude-bridge"), "dir");
+		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+		const project = { cwd: worktree, trusted: false };
+		const bridgePath = await resolveClaudeBridgeExtension(agentDir, project);
+		const native = fauxProvider({ provider: "faux", models: [{ id: "child", reasoning: true }] });
+		const created = await createBridgeParentSession({
+			cwd: worktree, agentDir, extensionPath: bridgePath, model: native.getModel(),
+			nativeProvider: native.provider,
+		});
+		assert.equal(created.loader.getExtensions().errors.length, 0);
+		const runtime = created.runtime;
+		const parent = created.session;
+		const extensionChildren = [];
+		let extension;
+		try {
+			await parent.bindExtensions({});
+			const bridgeModel = runtime.getModel("claude-bridge", "claude-haiku-4-5");
+			assert.ok(bridgeModel, "the installed Bridge extension registered its model in Pi's runtime");
+			const registry = new ModelRegistry(runtime);
+			extension = await loadSpawnTool({
+				agentDir,
+				create: async (spec) => {
+					const child = await createPiChildSession(spec);
+					extensionChildren.push(child);
+					return child;
+				},
+				jevRouting: "off",
+			});
+			const ctx = {
+				...toolContext("tui", worktree),
+				model: bridgeModel,
+				modelRegistry: registry,
+			};
+			const launched = await use(extension, "spawn_child", {
+				role: "worker",
+				task: "Reply with BRIDGE_MANAGER_FIRST_MARKER and report a done result.",
+			}, ctx);
+			const firstId = launched.details.id;
+			assert.ok(firstId, "manager accepted the real Bridge child");
+			for (
+				let attempt = 0;
+				attempt < 3000 &&
+				!(await stateOf(extension, firstId) &&
+					["completed", "failed", "cancelled", "timed out"].includes(await stateOf(extension, firstId)));
+				attempt++
+			) await delay(10);
+			const firstStatus = await use(extension, "child_status", { id: firstId }, ctx);
+			assert.ok(extension.messages.length > 0, `the manager did not invoke its injected parent-send callback: ${JSON.stringify(firstStatus.details.child)}`);
+			assert.equal(firstStatus.details.child.state, "completed");
+			assert.ok(extension.messages.some(({ message, options }) =>
+				message.details?.id === firstId && message.details?.state === "completed" &&
+				options?.deliverAs === "steer" && options?.triggerTurn === true),
+			"manager requested steer/triggerTurn delivery from its injected send callback; this is not evidence a real parent session received or resumed");
+			const original = extensionChildren[0].entries();
+			assert.match(JSON.stringify(original), /BRIDGE_MANAGER_FIRST_MARKER/);
+			const continued = await use(extension, "continue_child", {
+				id: firstId,
+				task: "Return the prior marker you remember and include BRIDGE_MANAGER_CONTINUED_MARKER.",
+			}, ctx);
+			assert.equal(continued.details.status, "queued");
+			for (
+				let attempt = 0;
+				attempt < 3000 && (await stateOf(extension, continued.details.id)) !== "completed";
+				attempt++
+			) await delay(10);
+			assert.equal(await stateOf(extension, continued.details.id), "completed");
+			const childStatus = await use(extension, "child_status", { id: continued.details.id }, ctx);
+			assert.equal(childStatus.details.child.continuedFrom, firstId);
+			assert.match(childStatus.details.child.text ?? "", /BRIDGE_MANAGER_FIRST_MARKER/, "the continuation's returned assistant text recalls the prior marker without repeating it in the continuation task");
+			assert.match(JSON.stringify(extensionChildren[1].entries()), /BRIDGE_MANAGER_FIRST_MARKER/);
+			assert.match(JSON.stringify(extensionChildren[1].entries()), /BRIDGE_MANAGER_CONTINUED_MARKER/);
+			assert.deepEqual(extensionChildren[0].entries(), original, "continuation used a distinct session and left the saved conversation unchanged");
+		} finally {
+			if (extension) await extension.fire("session_shutdown", { reason: "quit" });
+			for (const child of extensionChildren) await child.dispose();
+			try {
+				const runner = parent.extensionRunner;
+				if (runner.hasHandlers("session_shutdown")) await runner.emit({ type: "session_shutdown", reason: "quit" });
+			} finally {
+				parent.dispose();
+			}
+		}
+	});
+});
+
+test("the real Claude Bridge manager records a public runtime stream failure and refuses continuation", {
+	skip: process.env.PI_WORKFLOW_BRIDGE_LIVE !== "1" && "Set PI_WORKFLOW_BRIDGE_LIVE=1 to run real Claude Bridge manager lifecycle checks.",
+	timeout: 110_000,
+}, async () => {
+	const installed = installedPackagePath(getAgentDir(), "npm:pi-claude-bridge");
+	if (!installed) {
+		t.skip("pi-claude-bridge is not installed in the Pi agent directory");
+		return;
+	}
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		await mkdir(join(agentDir, "npm", "node_modules"), { recursive: true });
+		await symlink(installed, join(agentDir, "npm", "node_modules", "pi-claude-bridge"), "dir");
+		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+		const project = { cwd: worktree, trusted: false };
+		const bridgePath = await resolveClaudeBridgeExtension(agentDir, project);
+		const native = fauxProvider({ provider: "faux", models: [{ id: "child", reasoning: true }] });
+		const created = await createBridgeParentSession({
+			cwd: worktree, agentDir, extensionPath: bridgePath, model: native.getModel(),
+			nativeProvider: native.provider,
+		});
+		assert.equal(created.loader.getExtensions().errors.length, 0);
+		const runtime = created.runtime;
+		const parent = created.session;
+		const extensionChildren = [];
+		let extension;
+		const observed = [];
+		const fail = new Error("BRIDGE_PUBLIC_PROVIDER_BOUNDARY_FAILURE");
+		const originalStream = runtime.stream;
+		const originalStreamSimple = runtime.streamSimple;
+		let delegatedProviderCalls = 0;
+		runtime.stream = function (model, context, options) {
+			observed.push({ method: "stream", model, context });
+			if (model.provider === "claude-bridge") throw fail;
+			delegatedProviderCalls++;
+			return originalStream.call(this, model, context, options);
+		};
+		runtime.streamSimple = function (model, context, options) {
+			observed.push({ method: "streamSimple", model, context });
+			if (model.provider === "claude-bridge") throw fail;
+			delegatedProviderCalls++;
+			return originalStreamSimple.call(this, model, context, options);
+		};
+		try {
+			await parent.bindExtensions({});
+			const bridgeModel = runtime.getModel("claude-bridge", "claude-haiku-4-5");
+			assert.ok(bridgeModel, "the official installed extension registered its model");
+			const registry = new ModelRegistry(runtime);
+			extension = await loadSpawnTool({
+				agentDir,
+				create: async (spec) => {
+					const child = await createPiChildSession(spec);
+					extensionChildren.push(child);
+					return child;
+				},
+				jevRouting: "off",
+			});
+			const ctx = {
+				...toolContext("tui", worktree),
+				model: bridgeModel,
+				modelRegistry: registry,
+			};
+			const launched = await use(extension, "spawn_child", {
+				role: "worker",
+				task: "Reach the model stream and finish.",
+			}, ctx);
+			const id = launched.details.id;
+			assert.ok(id, "manager accepted the actual Bridge-backed child session");
+			for (let attempt = 0; attempt < 3000; attempt++) {
+				const status = await use(extension, "child_status", { id }, ctx);
+				if (["completed", "failed", "cancelled", "timed out"].includes(status.details.child?.state)) break;
+				await delay(10);
+			}
+			const status = await use(extension, "child_status", { id }, ctx);
+			assert.equal(status.details.child.state, "failed", "the manager recorded the injected boundary failure as terminal FAILED");
+			assert.ok(observed.length > 0, "the actual child's selected model reached a documented public ModelRuntime stream method");
+			assert.ok(observed.every(({ model }) => model.provider === "claude-bridge"), "no alternate provider or fallback model was selected");
+			assert.ok(observed.every(({ context }) => context && typeof context === "object"), "the public stream seam received the provider context");
+			assert.equal(delegatedProviderCalls, 0, "the injected failure occurred before any provider implementation was called");
+			const result = await use(extension, "child_result", { id }, ctx);
+			assert.match(text(result), /BRIDGE_PUBLIC_PROVIDER_BOUNDARY_FAILURE/);
+			assert.doesNotMatch(text(result), /external provider auth denial/i, "this injected pre-provider failure is not external authentication evidence");
+			assert.equal(extensionChildren.length, 1, "the failure did not launch an alternate model, provider, or fallback child");
+			const refused = await use(extension, "continue_child", {
+				id,
+				task: "This failed continuation must not launch.",
+			}, ctx);
+			assert.equal(refused.details.status, "refused");
+			assert.match(text(refused), /Continue refused\. No child was launched\./);
+			assert.match(text(refused), /failed; only a completed child can be continued/);
+			assert.equal(extensionChildren.length, 1, "continue_child refused without creating a second session");
+		} finally {
+			delete runtime.stream;
+			delete runtime.streamSimple;
+			if (extension) await extension.fire("session_shutdown", { reason: "quit" });
+			for (const child of extensionChildren) await child.dispose();
+			try {
+				const runner = parent.extensionRunner;
+				if (runner.hasHandlers("session_shutdown")) await runner.emit({ type: "session_shutdown", reason: "quit" });
+			} finally {
+				parent.dispose();
+			}
+		}
+	});
+});
+
+test("the real Claude Bridge manager cancels a child blocked in ask_parent and refuses its continuation", {
+	skip: process.env.PI_WORKFLOW_BRIDGE_LIVE !== "1" && "Set PI_WORKFLOW_BRIDGE_LIVE=1 to run real Claude Bridge manager lifecycle checks.",
+	timeout: 110_000,
+}, async (t) => {
+	const installed = installedPackagePath(getAgentDir(), "npm:pi-claude-bridge");
+	if (!installed) {
+		t.skip("pi-claude-bridge is not installed in the Pi agent directory");
+		return;
+	}
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		await mkdir(join(agentDir, "npm", "node_modules"), { recursive: true });
+		await symlink(installed, join(agentDir, "npm", "node_modules", "pi-claude-bridge"), "dir");
+		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+		const project = { cwd: worktree, trusted: false };
+		const bridgePath = await resolveClaudeBridgeExtension(agentDir, project);
+		const native = fauxProvider({ provider: "faux", models: [{ id: "child", reasoning: true }] });
+		const created = await createBridgeParentSession({
+			cwd: worktree, agentDir, extensionPath: bridgePath, model: native.getModel(),
+			nativeProvider: native.provider,
+		});
+		assert.equal(created.loader.getExtensions().errors.length, 0);
+		const runtime = created.runtime;
+		const parent = created.session;
+		const extensionChildren = [];
+		let extension;
+		try {
+			await parent.bindExtensions({});
+			const bridgeModel = runtime.getModel("claude-bridge", "claude-haiku-4-5");
+			assert.ok(bridgeModel, "the installed Bridge extension registered its model in Pi's runtime");
+			const registry = new ModelRegistry(runtime);
+			extension = await loadSpawnTool({
+				agentDir,
+				create: async (spec) => {
+					const child = await createPiChildSession(spec);
+					extensionChildren.push(child);
+					return child;
+				},
+				jevRouting: "off",
+			});
+			const ctx = {
+				...toolContext("tui", worktree),
+				model: bridgeModel,
+				modelRegistry: registry,
+			};
+			const launched = await use(extension, "spawn_child", {
+				role: "worker",
+				task: "Call ask_parent with the exact question BRIDGE_CANCEL_ASK_PARENT_BARRIER and wait for the parent's answer. Do not finish or report a result before the answer.",
+			}, ctx);
+			const id = launched.details.id;
+			assert.ok(id, "manager accepted the real Bridge child");
+			for (let attempt = 0; attempt < 6000; attempt++) {
+				const status = await use(extension, "child_status", { id }, ctx);
+				if (status.details.child?.state === "waiting") break;
+				if (["completed", "failed", "cancelled", "timed out"].includes(status.details.child?.state)) {
+					assert.fail(`child ended before the public ask_parent barrier: ${JSON.stringify(status.details.child)}`);
+				}
+				await delay(10);
+			}
+			const waiting = await use(extension, "child_status", { id }, ctx);
+			assert.equal(waiting.details.child.state, "waiting", "manager observed the child's pending ask_parent callback");
+			assert.ok(extension.messages.some(({ message }) =>
+				message.customType === "pi-workflow-child-question" &&
+				message.details?.id === id &&
+				message.details?.text === "BRIDGE_CANCEL_ASK_PARENT_BARRIER"),
+			"the real Bridge tool invocation reached the manager's public ask_parent callback");
+
+			const cancelled = await use(extension, "cancel_child", { id }, ctx);
+			assert.equal(cancelled.details.state, "cancelled");
+			assert.equal(await stateOf(extension, id), "cancelled");
+			const refused = await use(extension, "continue_child", {
+				id,
+				task: "This cancelled continuation must not launch.",
+			}, ctx);
+			assert.equal(refused.details.status, "refused");
+			assert.match(text(refused), /Continue refused\. No child was launched\./);
+			assert.match(text(refused), /cancelled; only a completed child can be continued/);
+			assert.equal(extensionChildren.length, 1, "cancelled-child continuation created no new session");
+
+			const steerLaunch = await use(extension, "spawn_child", {
+				role: "worker",
+				task: "Call ask_parent with the exact question BRIDGE_STEER_ASK_PARENT_BARRIER and wait for the parent's answer. After receiving it, incorporate the parent's next Steer and finish with a concise confirmation of what it asked you to do.",
+			}, ctx);
+			const steerId = steerLaunch.details.id;
+			assert.ok(steerId, "manager accepted the second real Bridge child");
+			for (let attempt = 0; attempt < 6000; attempt++) {
+				const status = await use(extension, "child_status", { id: steerId }, ctx);
+				if (status.details.child?.state === "waiting") break;
+				if (["completed", "failed", "cancelled", "timed out"].includes(status.details.child?.state)) {
+					assert.fail(`Steer child ended before the public ask_parent barrier: ${JSON.stringify(status.details.child)}`);
+				}
+				await delay(10);
+			}
+			const steerWaiting = await use(extension, "child_status", { id: steerId }, ctx);
+			assert.equal(steerWaiting.details.child.state, "waiting", "the real Bridge child reached the public question barrier");
+			const questionMessage = extension.messages.find(({ message }) =>
+				message.customType === "pi-workflow-child-question" && message.details?.id === steerId,
+			);
+			assert.ok(questionMessage, "the manager published the actual Bridge ask_parent call");
+			await use(extension, "reply_child", {
+				id: steerId,
+				question: questionMessage.message.details.question,
+				answer: "Continue and apply the operator's next instruction.",
+			}, ctx);
+
+			const fleet = openChildren(extension, { rows: 30 });
+			fleet.press("\r", "\r", ..."Include the marker BRIDGE_STEER_DELIVERED in your confirmation.", "\r");
+			assert.ok(fleet.lines(120).some((line) => line.includes(`Steer sent to worker ${steerId.slice(0, 4)}.`)) || fleet.lines(120).some((line) => line.includes("Steer sent to worker")), "the Fleet caller observed successful Steer delivery");
+			for (let attempt = 0; attempt < 6000; attempt++) {
+				const status = await use(extension, "child_status", { id: steerId }, ctx);
+				if (["completed", "failed", "cancelled", "timed out"].includes(status.details.child?.state)) break;
+				await delay(10);
+			}
+			const steered = await use(extension, "child_status", { id: steerId }, ctx);
+			assert.equal(steered.details.child.state, "completed", "real Bridge child completed after the Steer");
+			const result = await use(extension, "child_result", { id: steerId }, ctx);
+			assert.match(text(result), /BRIDGE_STEER_DELIVERED/, "caller observed the child's steer-responsive result without coupling to natural prose");
+			assert.equal(extensionChildren.length, 2, "the Steer scenario did not create an extra continuation child");
+		} finally {
+			if (extension) await extension.fire("session_shutdown", { reason: "quit" });
+			for (const child of extensionChildren) await child.dispose();
+			try {
+				const runner = parent.extensionRunner;
+				if (runner.hasHandlers("session_shutdown")) await runner.emit({ type: "session_shutdown", reason: "quit" });
+			} finally {
+				parent.dispose();
+			}
+		}
+	});
+});
+
+test("the real Claude Bridge manager times out a child stalled in ask_parent and refuses its continuation", {
+	skip: process.env.PI_WORKFLOW_BRIDGE_LIVE !== "1" && "Set PI_WORKFLOW_BRIDGE_LIVE=1 to run real Claude Bridge manager lifecycle checks.",
+	timeout: 110_000,
+}, async (t) => {
+	const installed = installedPackagePath(getAgentDir(), "npm:pi-claude-bridge");
+	if (!installed) {
+		t.skip("pi-claude-bridge is not installed in the Pi agent directory");
+		return;
+	}
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		await mkdir(join(agentDir, "npm", "node_modules"), { recursive: true });
+		await symlink(installed, join(agentDir, "npm", "node_modules", "pi-claude-bridge"), "dir");
+		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+		const project = { cwd: worktree, trusted: false };
+		const bridgePath = await resolveClaudeBridgeExtension(agentDir, project);
+		const native = fauxProvider({ provider: "faux", models: [{ id: "child", reasoning: true }] });
+		const created = await createBridgeParentSession({
+			cwd: worktree, agentDir, extensionPath: bridgePath, model: native.getModel(),
+			nativeProvider: native.provider,
+		});
+		assert.equal(created.loader.getExtensions().errors.length, 0);
+		const runtime = created.runtime;
+		const parent = created.session;
+		const extensionChildren = [];
+		const clock = manualClock();
+		let extension;
+		try {
+			await parent.bindExtensions({});
+			const bridgeModel = runtime.getModel("claude-bridge", "claude-haiku-4-5");
+			assert.ok(bridgeModel, "the installed Bridge extension registered its model in Pi's runtime");
+			const registry = new ModelRegistry(runtime);
+			extension = await loadSpawnTool({
+				agentDir,
+				create: async (spec) => {
+					const child = await createPiChildSession(spec);
+					extensionChildren.push(child);
+					return child;
+				},
+				jevRouting: "off",
+				schedule: clock.schedule,
+			});
+			const ctx = {
+				...toolContext("tui", worktree),
+				model: bridgeModel,
+				modelRegistry: registry,
+			};
+			const launched = await use(extension, "spawn_child", {
+				role: "worker",
+				task: "Call ask_parent with the exact question BRIDGE_TIMEOUT_ASK_PARENT_BARRIER and wait for the parent's answer. Do not finish or report a result before the answer.",
+			}, ctx);
+			const id = launched.details.id;
+			assert.ok(id, "manager accepted the real Bridge child");
+			for (let attempt = 0; attempt < 6000; attempt++) {
+				const status = await use(extension, "child_status", { id }, ctx);
+				if (status.details.child?.state === "waiting") break;
+				if (["completed", "failed", "cancelled", "timed out"].includes(status.details.child?.state)) {
+					assert.fail(`child ended before the public ask_parent barrier: ${JSON.stringify(status.details.child)}`);
+				}
+				await delay(10);
+			}
+			const waiting = await use(extension, "child_status", { id }, ctx);
+			assert.equal(waiting.details.child.state, "waiting", "manager observed the child's pending ask_parent callback");
+			assert.ok(extension.messages.some(({ message }) =>
+				message.customType === "pi-workflow-child-question" &&
+				message.details?.id === id &&
+				message.details?.text === "BRIDGE_TIMEOUT_ASK_PARENT_BARRIER"),
+			"the real Bridge tool invocation reached the manager's public ask_parent callback");
+			assert.deepEqual(clock.pending(), [minutes(30)], "pending ask_parent has the public tool-stall timeout");
+
+			clock.fire(minutes(30));
+			for (let attempt = 0; attempt < 6000; attempt++) {
+				if (await stateOf(extension, id) === "timed out") break;
+				await delay(10);
+			}
+			const timedOut = await use(extension, "child_status", { id }, ctx);
+			assert.equal(timedOut.details.child.state, "timed out");
+			const result = await use(extension, "child_result", { id }, ctx);
+			assert.match(text(result), /timed out: the tool ask_parent ran for 30 minutes without finishing/);
+			const refused = await use(extension, "continue_child", {
+				id,
+				task: "This timed-out continuation must not launch.",
+			}, ctx);
+			assert.equal(refused.details.status, "refused");
+			assert.match(text(refused), /Continue refused\. No child was launched\./);
+			assert.match(text(refused), /timed out; only a completed child can be continued/);
+			assert.equal(extensionChildren.length, 1, "timed-out-child continuation created no new session");
+			assert.deepEqual(clock.pending(), []);
+		} finally {
+			if (extension) await extension.fire("session_shutdown", { reason: "quit" });
+			for (const child of extensionChildren) await child.dispose();
+			try {
+				const runner = parent.extensionRunner;
+				if (runner.hasHandlers("session_shutdown")) await runner.emit({ type: "session_shutdown", reason: "quit" });
+			} finally {
+				parent.dispose();
+			}
+		}
 	});
 });
 

@@ -80,18 +80,18 @@ Tests should exercise real public seams and the actual installed provider resour
 | Four roles | Bridge works in parent and each of Explorer, Worker, Verifier; role Contract/context/tools and model/thinking are correct. |
 | Native-profile regressions | Non-Bridge children do not load Bridge and retain current extension/tool behavior. Mixed Bridge/native parent and child profiles select the correct provider per session. |
 | Model availability | Explicit unavailable model refuses before launch with no fallback; existing profile validation and inheritance remain unchanged. |
-| Package resolution | Actual official package identity/resource is recognized for npm, git, and local configured installs where supported; user/project precedence, project trust, source filters, and parent cwd are honored. No child-worktree config or unrelated extension is loaded. |
+| Package resolution | Actual installed-source coverage for this delivery is limited to the developer's configured user npm package `pi-claude-bridge` without a version pin. Verify its official identity/resource and preserve user/project precedence, project trust, source filters, and parent cwd. Keep source-recognition fixtures for git-shaped and local identities as fixture coverage only; they do not establish real installation support for those sources. No child-worktree config or unrelated extension is loaded. |
 | Failure paths | Missing, unreadable, ambiguous, filtered, unresolvable, and invalid extension resource produce visible failures without install or fallback. Provider/auth/prompt failures are honest. |
 | Lifecycle/module cache | Extension load and bind precede first request; shutdown/reload and same-CWD/cross-worktree behavior use the accepted official path. No unintended history mixing/errors in tested flows. |
 | F1 accepted cost | Idle-parent history rebuild and concurrent parent/sibling/target-child behavior preserve the tested session markers and avoid observed mixing/errors. A history rebuild is acceptable; tests must not require preventing it. The accepted, unquantified replay/cache cost remains documented. |
 | Shared child behavior | Results, full-parent result wake/delivery behavior, Steer, cooperative cancellation, terminal states, and completed-child continuation with saved conversation remain unchanged; failed/cancelled/timed-out continuation remains refused. |
 | Existing integrations | Late MCP declaration/refreshed tool section and optional web behavior preserve current Pi/harness behavior and do not broaden trust. Missing optional web installation remains nonfatal and Explorer-only. |
 
-Supported Pi/model/version coverage is a delivery criterion; do not change the peer range to meet it without a separate decision. Production integration and actual installed-provider resolution are not proven by the scratch prototype. ADR 0014 amendment is required before delivery; catalog adoption waits for production proof.
+Supported Pi/model/version coverage is a delivery criterion; do not change the peer range to meet it without a separate decision. For issue #240, real installed-source coverage is approved for npm without a version pin only; Git installation coverage remains unverified and is a documented limitation. Git-shaped and local source-identity fixtures remain useful recognition coverage, not evidence of real installed packages. No install or fallback is authorized. ADR 0014 amendment is required before delivery; catalog adoption waits for production proof.
 
 ## Dependencies, risks, and prototype
 
-**Dependencies:** official Bridge provider independently installed and registered; Pi’s public child resource-loader/package-manager APIs; existing child-session factory, launcher, profiles, Contracts, and lifecycle.
+**Dependencies:** the developer's independently installed, configured user npm `pi-claude-bridge` package (no version pin) for this delivery's real-source evidence; Pi’s public child resource-loader/package-manager APIs; existing child-session factory, launcher, profiles, Contracts, and lifecycle. A real Git installation is not verified.
 
 **Accepted risks/evidence:**
 

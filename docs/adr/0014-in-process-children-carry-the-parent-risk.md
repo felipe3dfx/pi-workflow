@@ -3,6 +3,7 @@
 ## Status
 
 Acceptance: approval and merge of the introducing PR.
+Superseded by [ADR 0016](0016-claude-bridge-for-child-sessions.md).
 
 ## Decision
 
