@@ -37,6 +37,7 @@ import { seated } from "./shell.ts";
 import { errorMessage } from "./error-message.ts";
 import {
 	explorerWeb,
+	resolveClaudeBridgeExtension,
 	type ParentProject,
 	webAccessTools,
 } from "./web-access.ts";
@@ -349,6 +350,19 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 		throw new Error("The session's model runtime is not available.");
 	}
 	const slash = spec.model.indexOf("/");
+	if (slash < 1 || slash === spec.model.length - 1) {
+		throw new Error(`The selected model ${spec.model} is not available in Pi.`);
+	}
+	const model = runtime.getModel(
+		spec.model.slice(0, slash),
+		spec.model.slice(slash + 1),
+	);
+	if (!model) {
+		throw new Error(`The selected model ${spec.model} is not available in Pi.`);
+	}
+	const bridgeExtension = spec.model.slice(0, slash) === "claude-bridge"
+		? await resolveClaudeBridgeExtension(getAgentDir(), spec.project)
+		: undefined;
 	const settingsManager = SettingsManager.inMemory(
 		{},
 		{ projectTrusted: spec.project.trusted },
@@ -363,6 +377,7 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 		agentDir,
 		settingsManager,
 		noExtensions: true,
+		...(bridgeExtension ? { additionalExtensionPaths: [bridgeExtension] } : {}),
 		extensionFactories: [
 			createCodemodeExtension({ models: false }),
 			parentMcp(spec.project),
@@ -376,13 +391,22 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 		appendSystemPromptOverride: () => [],
 	});
 	await resourceLoader.reload();
+	if (bridgeExtension) {
+		const loaded = resourceLoader.getExtensions();
+		const loadError = loaded.errors.find(
+			(entry) => resolve(entry.path) === bridgeExtension,
+		);
+		if (loadError) {
+			throw new Error(`Claude Bridge extension failed to load: ${loadError.error}`);
+		}
+		if (!loaded.extensions.some((entry) => resolve(entry.path) === bridgeExtension)) {
+			throw new Error("The resolved Claude Bridge extension was not loaded.");
+		}
+	}
 	const { session } = await createAgentSession({
 		cwd: spec.cwd,
 		modelRuntime: runtime,
-		model: runtime.getModel(
-			spec.model.slice(0, slash),
-			spec.model.slice(slash + 1),
-		),
+		model,
 		thinkingLevel: spec.thinking,
 		tools: spec.tools,
 		customTools: [

@@ -5,9 +5,10 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { capabilities } from "../extensions/configure.ts";
+import { capabilities, planApply, readSelection } from "../extensions/configure.ts";
 import { occupants, replaceSelection } from "../extensions/shell.ts";
 import {
+	companionMetadataPath,
 	createCompanionWorkflow,
 	getCompanionState,
 	loadCompanionsFromPath,
@@ -82,6 +83,21 @@ const aligned = {
 	agentDirectory: alignedDir,
 };
 
+test("Claude Bridge is an independent companion expectation and follows existing Configure plans", async () => {
+	const loaded = loadCompanionsFromPath(companionMetadataPath);
+	assert.ok(loaded.companions.some(({ package: name }) => name === "pi-claude-bridge"));
+	const packages = loaded.companions.map(({ package: name }) => name);
+	const selected = readSelection(undefined, packages);
+	assert.equal(selected.status, "ready");
+	if (selected.status !== "ready") return;
+	selected.selection.expectations["pi-claude-bridge"] = false;
+	const plan = planApply(selected.selection, [
+		...loaded.companions.map(({ package: name }) => ({ package: name, status: "installed" })),
+	]);
+	assert.deepEqual(plan.install, []);
+	assert.deepEqual(plan.leaveInstalled, ["pi-claude-bridge"]);
+});
+
 async function withMetadataFile(companions, run) {
 	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-companion-"));
 	try {
@@ -92,6 +108,97 @@ async function withMetadataFile(companions, run) {
 		await rm(dir, { recursive: true, force: true });
 	}
 }
+
+test("status and doctor preserve synchronous companion resolver exceptions", async () => {
+	await withMetadataFile([{ package: "pi-claude-bridge" }], async ({ metadataPath }) => {
+		const baselineError = new Error("SYNC_BASELINE_THROW");
+		const workflow = createCompanionWorkflow({
+			...aligned,
+			catalog: {
+				metadataPath,
+				resolveInstalledVersion: (name) => {
+					if (name === "pi-claude-bridge") throw baselineError;
+					if (isColliding(name)) return {};
+					return {};
+				},
+				resolveInstalledVersionAsync: async () => undefined,
+			},
+		});
+		for (const mode of ["inspect", "diagnose"]) {
+			await assert.rejects(workflow[mode](), (error) =>
+				error === baselineError && error.message === "SYNC_BASELINE_THROW",
+			);
+		}
+	});
+});
+
+test("status and doctor use the validated configured Bridge source snapshot instead of npm-only lookup", async () => {
+	for (const source of ["npm:pi-claude-bridge", "git:github.com/elidickinson/pi-claude-bridge@feature/branch", "local:/fixtures/pi-claude-bridge"]) {
+		for (const mode of ["inspect", "diagnose"]) {
+			const workflow = createCompanionWorkflow({
+				...aligned,
+				catalog: {
+					resolveInstalledVersion: (name) => isColliding(name) || name === "@tintinweb/pi-subagents" ? {} : { version: "1.0.0" },
+					resolveInstalledVersionAsync: async (name) => name === "pi-claude-bridge" ? { version: "0.9.2" } : undefined,
+				},
+				expectedPackages: () => ["pi-claude-bridge"],
+			});
+			const result = await workflow[mode]();
+			assert.equal(result.level, "info", source);
+			assert.equal(result.states.find(({ package: name }) => name === "pi-claude-bridge")?.status, "installed", source);
+			assert.equal(result.states.find(({ package: name }) => name === "pi-claude-bridge")?.installedVersion, "0.9.2", source);
+			assert.deepEqual(result.actionable, [], source);
+		}
+	}
+});
+
+test("async companion inspection failures remain visible without hiding sibling states", async () => {
+	for (const mode of ["inspect", "diagnose"]) {
+		const workflow = createCompanionWorkflow({
+			...aligned,
+			catalog: {
+				resolveInstalledVersion: (name) => isColliding(name) ? {} : { version: "1.0.0" },
+				resolveInstalledVersionAsync: async (name) => {
+					if (name === "pi-claude-bridge") throw new Error("configured source failed");
+					return undefined;
+				},
+			},
+			expectedPackages: () => ["pi-claude-bridge"],
+		});
+		const result = await workflow[mode]();
+		const bridge = result.states.find(({ package: name }) => name === "pi-claude-bridge");
+		assert.equal(bridge?.status, "error");
+		assert.match(bridge.error, /configured source failed/);
+		assert.equal(result.states.find(({ package: name }) => name === "pi-web-access")?.status, "installed");
+		assert.ok(result.actionable.some(({ package: name }) => name === "pi-claude-bridge"));
+	}
+});
+
+test("Claude Bridge expectation is reported by status and doctor only while expected", async () => {
+	const resolver = (name) => name === "pi-claude-bridge" || isColliding(name) || name === "@tintinweb/pi-subagents"
+		? {}
+		: { version: "1.0.0" };
+	for (const mode of ["inspect", "diagnose"]) {
+		const expectedWorkflow = createCompanionWorkflow({
+			...aligned,
+			catalog: { resolveInstalledVersion: resolver },
+			expectedPackages: () => ["pi-claude-bridge"],
+		});
+		const result = await expectedWorkflow[mode]();
+		assert.equal(result.level, "warning");
+		assert.ok(result.actionable.some(({ package: name }) => name === "pi-claude-bridge"));
+		assert.match(result.message, /pi install npm:pi-claude-bridge/);
+		assert.match(result.message, /gentle-engram/);
+		const off = await createCompanionWorkflow({
+			...aligned,
+			catalog: { resolveInstalledVersion: resolver },
+			expectedPackages: () => [],
+		})[mode]();
+		assert.equal(off.level, "info");
+		assert.deepEqual(off.actionable, []);
+		assert.doesNotMatch(off.message, /pi install npm:pi-claude-bridge/);
+	}
+});
 
 test("catalog helpers fail closed on invalid metadata and format manual install lines", async () => {
 	const loaded = loadCompanionsFromPath(join(tmpdir(), "missing-companions.json"));

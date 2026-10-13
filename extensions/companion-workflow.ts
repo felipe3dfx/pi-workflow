@@ -59,6 +59,7 @@ export type InstallPackage = (
 interface CompanionCatalogAdapters {
 	metadataPath?: string;
 	resolveInstalledVersion?: ResolveInstalledVersion;
+	resolveInstalledVersionAsync?: (packageName: string) => Promise<{ version?: string; error?: string } | undefined>;
 }
 
 type ExecCapability = (
@@ -288,16 +289,35 @@ export function getCompanionState(
 	};
 }
 
-function resolveCompanionCatalog(
+export async function resolveCompanionStates(
+	companions: readonly CompanionPackage[],
 	catalogOptions: CompanionCatalogAdapters = {},
-): ResolvedCompanionCatalog {
+): Promise<CompanionState[]> {
+	const resolveInstalledVersion =
+		catalogOptions.resolveInstalledVersion ?? getInstalledCompanionVersion;
+	return Promise.all(companions.map(async (companion) => {
+		let resolved: { version?: string; error?: string } | undefined;
+		try {
+			resolved = await catalogOptions.resolveInstalledVersionAsync?.(companion.package);
+		} catch (error) {
+			resolved = { error: errorMessage(error) };
+		}
+		return getCompanionState(companion, (name) =>
+			name === companion.package && resolved !== undefined
+				? resolved
+				: resolveInstalledVersion(name),
+		);
+	}));
+}
+
+async function resolveCompanionCatalog(
+	catalogOptions: CompanionCatalogAdapters = {},
+): Promise<ResolvedCompanionCatalog> {
 	const metadataPath = catalogOptions.metadataPath ?? companionMetadataPath;
 	const loaded = loadCompanionsFromPath(metadataPath);
 	const resolveInstalledVersion =
 		catalogOptions.resolveInstalledVersion ?? getInstalledCompanionVersion;
-	const states = loaded.companions.map((companion) =>
-		getCompanionState(companion, resolveInstalledVersion),
-	);
+	const states = await resolveCompanionStates(loaded.companions, catalogOptions);
 	const legacySpawnPackageState = resolveInstalledVersion(legacySpawnPackage);
 	return {
 		metadataPath,
@@ -536,7 +556,7 @@ export function createCompanionWorkflow(options: CompanionWorkflowOptions) {
 	const { agentDirectory } = options;
 
 	async function reportStatus(heading: string): Promise<InspectResult> {
-		const catalog = resolveCompanionCatalog(options.catalog);
+		const catalog = await resolveCompanionCatalog(options.catalog);
 		const expected = new Set(options.expectedPackages?.() ?? []);
 		const degraded = catalog.actionable.filter((companion) =>
 			expected.has(companion.package),
@@ -582,7 +602,7 @@ export function createCompanionWorkflow(options: CompanionWorkflowOptions) {
 		diagnose: () => reportStatus("pi-workflow companion doctor"),
 
 		async setup(expectedPackages?: readonly string[]): Promise<SetupResult> {
-			const catalog = resolveCompanionCatalog(options.catalog);
+			const catalog = await resolveCompanionCatalog(options.catalog);
 			if (catalog.loadError) {
 				notify(interaction, catalog.loadError, "error");
 				return emptyInstallResult("metadata-error", {
