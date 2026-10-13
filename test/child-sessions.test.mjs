@@ -137,6 +137,84 @@ test("Claude Bridge discovery maps an installed package to git-shaped and local 
 	}
 });
 
+test("Pi's public autoload:false resource metadata selects the Bridge runtime and companion package root", async (t) => {
+	const installed = installedPackagePath(getAgentDir(), "npm:pi-claude-bridge");
+	if (!installed) {
+		t.skip("pi-claude-bridge is not installed in the Pi agent directory");
+		return;
+	}
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const userNodeModules = join(agentDir, "npm", "node_modules");
+		await mkdir(userNodeModules, { recursive: true });
+		await symlink(installed, join(userNodeModules, "pi-claude-bridge"), "dir");
+		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+		await mkdir(join(worktree, ".pi"), { recursive: true });
+		await writeFile(join(worktree, ".pi", "settings.json"), JSON.stringify({
+			packages: [{ source: "npm:pi-claude-bridge", autoload: false }],
+		}));
+		const project = { cwd: worktree, trusted: true };
+		const manager = new DefaultPackageManager({
+			cwd: worktree,
+			agentDir,
+			settingsManager: SettingsManager.create(worktree, agentDir, { projectTrusted: true }),
+		});
+		const resolved = await manager.resolve(async () => "skip");
+		const effective = resolved.extensions.find((resource) =>
+			resource.metadata.source === "npm:pi-claude-bridge",
+		);
+		assert.ok(effective, "public Pi resolution exposes the autoload:false delta's selected provider resource");
+		assert.equal(effective.enabled, true);
+		assert.equal(effective.metadata.scope, "user", "autoload:false resolves through the user's effective installed package");
+		assert.equal(
+			await resolveClaudeBridgeExtension(agentDir, project),
+			await realpath(join(installed, "src", "index.ts")),
+		);
+		assert.equal(
+			(await inspectClaudeBridgeCompanion(agentDir, project)).version,
+			(await officialManifest(installed)).version,
+		);
+		assert.equal(await readdir(join(worktree, ".pi", "npm")).then(() => true, () => false), false,
+			"the configured-package resolution does not install a project package");
+	});
+});
+
+test("an autoload:false Bridge resource filter blocks runtime loading but not the installed companion", async (t) => {
+	const installed = installedPackagePath(getAgentDir(), "npm:pi-claude-bridge");
+	if (!installed) {
+		t.skip("pi-claude-bridge is not installed in the Pi agent directory");
+		return;
+	}
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		await mkdir(join(agentDir, "npm", "node_modules"), { recursive: true });
+		await symlink(installed, join(agentDir, "npm", "node_modules", "pi-claude-bridge"), "dir");
+		const userSettings = { packages: [{ source: "npm:pi-claude-bridge", extensions: [] }] };
+		const projectSettings = { packages: [{ source: "npm:pi-claude-bridge", autoload: false }] };
+		await writeFile(join(agentDir, "settings.json"), JSON.stringify(userSettings));
+		await mkdir(join(worktree, ".pi"), { recursive: true });
+		await writeFile(join(worktree, ".pi", "settings.json"), JSON.stringify(projectSettings));
+		const beforeUser = await readFile(join(agentDir, "settings.json"), "utf8");
+		const beforeProject = await readFile(join(worktree, ".pi", "settings.json"), "utf8");
+		const project = { cwd: worktree, trusted: true };
+		const manager = new DefaultPackageManager({
+			cwd: worktree,
+			agentDir,
+			settingsManager: SettingsManager.create(worktree, agentDir, { projectTrusted: true }),
+		});
+		const resolved = await manager.resolve(async () => "skip");
+		assert.ok(!resolved.extensions.some((resource) =>
+			resource.metadata.source === "npm:pi-claude-bridge" && resource.enabled,
+		), "Pi public resource filtering exposes no enabled official Bridge resource");
+		await assert.rejects(resolveClaudeBridgeExtension(agentDir, project), /filtered out or disabled|missing, filtered out, or disabled/);
+		assert.equal(
+			(await inspectClaudeBridgeCompanion(agentDir, project)).version,
+			(await officialManifest(installed)).version,
+		);
+		assert.equal(await readFile(join(agentDir, "settings.json"), "utf8"), beforeUser);
+		assert.equal(await readFile(join(worktree, ".pi", "settings.json"), "utf8"), beforeProject);
+		await assert.rejects(readdir(join(worktree, ".pi", "npm")));
+	});
+});
+
 test("Claude Bridge reports malformed, null, primitive, and array manifests contextually", async () => {
 	for (const [contents, expected] of [
 		["{", /Unable to read the configured Claude Bridge package manifest/],

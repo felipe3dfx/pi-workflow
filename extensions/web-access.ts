@@ -204,7 +204,17 @@ function bridgeSourceIdentity(source: string, manifest: Record<string, unknown>)
 	return officialManifest;
 }
 
-function effectiveConfiguredBridgePackages(manager: DefaultPackageManager, project: ParentProject) {
+function effectiveConfiguredBridgePackages(manager: DefaultPackageManager, project: ParentProject, agentDir: string) {
+	const projectSettings = SettingsManager.create(project.cwd, agentDir, {
+		projectTrusted: project.trusted,
+	}).getProjectSettings();
+	const autoloadDisabledProjectSources = new Set(
+		(projectSettings.packages ?? []).flatMap((pkg) =>
+			typeof pkg === "object" && pkg.autoload === false
+				? [officialBridgeSourceIdentity(pkg.source) ?? pkg.source]
+				: [],
+		),
+	);
 	const configured = manager.listConfiguredPackages().flatMap((pkg) => {
 		if (pkg.scope === "project" && !project.trusted) return [];
 		const sourceIdentity = officialBridgeSourceIdentity(pkg.source);
@@ -215,7 +225,11 @@ function effectiveConfiguredBridgePackages(manager: DefaultPackageManager, proje
 		return identity === undefined ? [] : [{ ...pkg, identity, sourceIdentity }];
 	});
 	const projectIdentities = new Set(
-		configured.filter(({ scope }) => scope === "project").map(({ identity }) => identity),
+		configured.filter(({ scope, source }) =>
+			scope === "project" && !autoloadDisabledProjectSources.has(
+				officialBridgeSourceIdentity(source) ?? source,
+			),
+		).map(({ identity }) => identity),
 	);
 	const selected = configured.filter(({ scope, identity }) =>
 		scope === "project" || !projectIdentities.has(identity),
@@ -252,13 +266,13 @@ export async function resolveClaudeBridgeExtension(
 	project: ParentProject,
 ): Promise<string> {
 	const manager = packageManager(agentDir, project);
+	const effective = effectiveConfiguredBridgePackages(manager, project, agentDir);
 	let resolved: Awaited<ReturnType<typeof manager.resolve>>;
 	try {
 		resolved = await manager.resolve(async () => "skip");
 	} catch (error) {
 		throw new Error(`Unable to resolve the configured Claude Bridge package: ${errorMessage(error)}`);
 	}
-	const effective = effectiveConfiguredBridgePackages(manager, project);
 	const officialCandidatesBySource = new Map<string, (typeof resolved.extensions)[number]>();
 	for (const resource of resolved.extensions) {
 		const packageRoot = resource.metadata.packageRoot ?? resource.metadata.baseDir;
@@ -267,11 +281,6 @@ export async function resolveClaudeBridgeExtension(
 		if (sourceIdentity === false) continue;
 		const root = realpathSync(packageRoot);
 		const identity = sourceIdentity ?? `local:${root}`;
-		const selectedSource = effective.some((pkg) =>
-			pkg.identity === identity && pkg.scope === resource.metadata.scope &&
-				(!pkg.installedPath || realpathSync(pkg.installedPath) === root),
-		);
-		if (!selectedSource) continue;
 		// Local index.ts packages need not have a manifest. Only inspect installed candidates.
 		if (sourceIdentity === undefined && !existsSync(join(packageRoot, "package.json"))) continue;
 		const manifest = packageManifest(packageRoot);
@@ -343,7 +352,7 @@ export async function inspectClaudeBridgeCompanion(
 	try {
 		const manager = packageManager(agentDir, project);
 		await manager.resolve(async () => "skip");
-		const effective = effectiveConfiguredBridgePackages(manager, project);
+		const effective = effectiveConfiguredBridgePackages(manager, project, agentDir);
 		const official = effective.flatMap((pkg) => {
 			const installedPath = pkg.installedPath;
 			if (!installedPath) return [];
