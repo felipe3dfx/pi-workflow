@@ -130,6 +130,10 @@ test("the context meter rounds the percentage, fills eight cells, and colors bot
 		);
 		assert.equal(styleOf(line, bar), color, bar);
 		assert.equal(styleOf(line, `${pct}%`), color, `${pct}%`);
+		const all = cells(line);
+		const at = all.map(({ char }) => char).join("").indexOf(bar);
+		for (const cell of all.slice(at + 8, at + 10))
+			assert.deepEqual(cell, { char: " ", color: undefined, bold: false });
 	};
 	meter(0, "▱▱▱▱▱▱▱▱", 0, "text");
 	meter(6_000, "▱▱▱▱▱▱▱▱", 6, "text");
