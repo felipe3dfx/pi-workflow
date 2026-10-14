@@ -117,33 +117,89 @@ function indented(lines: string[], width: number, extra = 0) {
 	return lines.map((line) => pad + line);
 }
 
+type Color = Parameters<ChromeTheme["fg"]>[0];
+type Segment = [Color, string][];
+
+const brand = "π-workflow";
+const meterCells = 8;
+
+function paintSegments(theme: ChromeTheme, segments: Segment[]) {
+	return segments
+		.map((segment) =>
+			segment.map(([color, text]) => theme.fg(color, text)).join(" "),
+		)
+		.join(theme.fg("borderAccent", " · "));
+}
+
+function contextSegments(usage: HeaderData["usage"], bar: boolean): Segment[] {
+	const { tokens, contextWindow } = usage ?? {};
+	if (!contextWindow || contextWindow <= 0) return [];
+	const window: Segment = [["dim", formatContextTokens(contextWindow)]];
+	if (tokens == null)
+		return [
+			[
+				["dim", "ctx"],
+				["dim", "?"],
+			],
+			window,
+		];
+	const percent = Math.round((tokens / contextWindow) * 100);
+	const color = usageColor(percent);
+	const filled = Math.min(
+		meterCells,
+		Math.max(0, Math.round((percent / 100) * meterCells)),
+	);
+	const meter: Segment = [["dim", "ctx"]];
+	if (bar)
+		meter.push([color, "▰".repeat(filled) + "▱".repeat(meterCells - filled)]);
+	meter.push([color, `${percent}%`]);
+	return [meter, window];
+}
+
+function keepEnd(text: string, width: number) {
+	const chars = [...text];
+	while (chars.length > 0 && visibleWidth(`…${chars.join("")}`) > width)
+		chars.shift();
+	return `…${chars.join("")}`;
+}
+
 export function renderHeader(
 	theme: ChromeTheme,
 	data: HeaderData,
 	width: number,
 ) {
 	const room = width - marginFor(width) * 2;
-	const right: string[] = [];
-	if (data.working > 0) right.push(theme.fg("accent", `◆ ${data.working}`));
-	const { tokens, contextWindow } = data.usage ?? {};
-	if (tokens != null && contextWindow) {
-		right.push(
-			theme.fg(
-				usageColor((tokens / contextWindow) * 100),
-				`${formatContextTokens(tokens)} / ${formatContextTokens(contextWindow)}`,
-			),
-		);
-	}
+	const cwd = shortenPath(data.cwd, data.home);
 	const branch = data.branch ? terminalSafeLine(data.branch) : "";
-	const location = [
-		branch && theme.fg("dim", branch),
-		theme.fg("text", shortenPath(data.cwd, data.home)),
-	]
-		.filter(Boolean)
-		.join(" ");
-	const rightText = right.join(theme.fg("borderAccent", " │ "));
-	if (!rightText) return indented([truncateToWidth(location, room)], width);
-	return indented([spread(location, rightText, room)], width);
+	const left = (withBrand: boolean, path: string): Segment[] => [
+		...(withBrand ? [[["accent", brand]] as Segment] : []),
+		[["text", path]],
+		...(branch ? [[["dim", branch]] as Segment] : []),
+	];
+	const right = (bar: boolean): Segment[] => [
+		...(data.working > 0 ? [[["accent", `◆ ${data.working}`]] as Segment] : []),
+		...contextSegments(data.usage, bar),
+	];
+	const needed = (l: Segment[], r: Segment[]) =>
+		visibleWidth(paintSegments(theme, l)) +
+		(r.length ? 1 + visibleWidth(paintSegments(theme, r)) : 0);
+	const line = (l: Segment[], r: Segment[]) => {
+		if (!r.length) return paintSegments(theme, l);
+		const gap = Math.max(1, room - needed(l, r) + 1);
+		return `${paintSegments(theme, l)}${" ".repeat(gap)}${paintSegments(theme, r)}`;
+	};
+	for (const [withBrand, bar] of [
+		[true, true],
+		[false, true],
+		[false, false],
+	]) {
+		const l = left(withBrand, cwd);
+		const r = right(bar);
+		if (needed(l, r) <= room) return indented([line(l, r)], width);
+	}
+	const r = right(false);
+	const path = keepEnd(cwd, room - needed(left(false, ""), r));
+	return indented([truncateToWidth(line(left(false, path), r), room)], width);
 }
 
 export interface StatusData {
