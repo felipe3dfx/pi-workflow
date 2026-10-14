@@ -1,6 +1,6 @@
 # Workflow config guide
 
-Status: SPECIFIED (#248).
+Status: IMPLEMENTED (#248).
 
 Package: `workflow-config-guide/definition-1`, the approved brief `docs/features/workflow-config-guide.md`.
 Review handoff: `workflow-config-guide/feature-review-1`, `docs/features/workflow-config-guide-review.md`, verdict `READY`.

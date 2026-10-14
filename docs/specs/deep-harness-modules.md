@@ -1,6 +1,6 @@
 # Deep harness modules
 
-Status: PUBLISHED (#188).
+Status: IMPLEMENTED (#188).
 
 Package: `docs/features/deep-harness-modules.md` (sha256 `8c168ea3…`), CONFIRMED by the owner, with `GLOSSARY.md` (`e950ed8d…`), ADR 0007 as amended (`cf5a7dba…`), and ADR 0009 as amended (`c5f91466…`).
 Review handoff: the Domain Authority review, renewed twice, consistent with notes and with no conflict or warning, plus the owner's dispositions W1 to W10, D10, A1, and A2, and the reverification of the D10 legacy exception and D11 with no blocker or warning.

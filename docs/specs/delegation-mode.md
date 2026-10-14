@@ -1,6 +1,6 @@
 # Delegation mode
 
-Status: SPECIFIED (#205).
+Status: IMPLEMENTED (#205).
 
 Package: the decisions confirmed in the #205 grilling session (2026-10-08), recorded in GLOSSARY.md (Delegation mode) and ADR 0015, and corrected by the dispositions of the review.
 Review handoff: `docs/specs/delegation-mode-review.md`, run after the first publication of this specification.

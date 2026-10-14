@@ -1,6 +1,6 @@
 # Chrome header with subtle identity
 
-Status: SPECIFIED (#243).
+Status: IMPLEMENTED (#243).
 
 Package: `header-identity/definition-1`, the approved brief `docs/features/header-identity.md` (v6).
 Review handoff: `header-identity/feature-review-1`, `docs/features/header-identity-review.md`, verdict `READY`.

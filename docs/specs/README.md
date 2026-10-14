@@ -4,7 +4,7 @@ Each specification pairs with its review and the feature brief it came from. The
 
 | Spec | Review | Feature brief | Tracker |
 | --- | --- | --- | --- |
-| [child-session-capabilities](child-session-capabilities.md) | [review](child-session-capabilities-review.md) | [brief](../features/child-session-capabilities.md) | — |
+| [child-session-capabilities](child-session-capabilities.md) | [review](child-session-capabilities-review.md) | [brief](../features/child-session-capabilities.md) | #209 |
 | [child-session-delegation](child-session-delegation.md) | [review](child-session-delegation-review.md) | [brief](../features/child-session-delegation.md), [authority review](../features/child-session-delegation-authority-review.md) | #77; result contract superseded by #150 |
 | [claude-bridge-support](claude-bridge-support.md), [delivery matrix](claude-bridge-delivery-matrix.md) | [review](claude-bridge-support-review.md) | [brief](../features/claude-bridge-support.md), [review](../features/claude-bridge-support-review.md) | #238, #240 |
 | [deep-harness-modules](deep-harness-modules.md) | [review](deep-harness-modules-review.md) | [brief](../features/deep-harness-modules.md) | #188 |
