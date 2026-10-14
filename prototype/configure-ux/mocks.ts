@@ -43,6 +43,7 @@ export type Scenario = {
 	delegationMode?: "opportunistic" | "orchestrator";
 	expectationsOff?: string[];
 	status?: Record<string, CompanionStatus>;
+	catalogError?: string;
 };
 
 export const scenarios: Record<string, Scenario> = {
@@ -54,6 +55,10 @@ export const scenarios: Record<string, Scenario> = {
 		jevRouting: true,
 		expectationsOff: ["@gtrabanco/pi-nan-provider"],
 		status: { "pi-claude-bridge": "missing", "gentle-engram": "error" },
+	},
+	broken: {
+		catalogError:
+			"Unable to load companion metadata at assets/companions.json: Unexpected token } in JSON.",
 	},
 };
 
@@ -105,15 +110,18 @@ export function buildModel(scenario: Scenario): GuideModel {
 			},
 			{
 				title: "Companions",
-				rows: companions.map(([name, description]) => ({
-					kind: "toggle" as const,
-					id: `expectation:${name}`,
-					label: name,
-					description: `${description} Off stops expecting it; it is never uninstalled.`,
-					on: !notExpected.has(name),
-					was: !notExpected.has(name),
-					status: scenario.status?.[name] ?? "installed",
-				})),
+				error: scenario.catalogError,
+				rows: (scenario.catalogError ? [] : companions).map(
+					([name, description]) => ({
+						kind: "toggle" as const,
+						id: `expectation:${name}`,
+						label: name,
+						description: `${description} Off stops expecting it; it is never uninstalled.`,
+						on: !notExpected.has(name),
+						was: !notExpected.has(name),
+						status: scenario.status?.[name] ?? "installed",
+					}),
+				),
 			},
 		],
 		alwaysOnApply: [
@@ -121,5 +129,6 @@ export function buildModel(scenario: Scenario): GuideModel {
 			"Apply default Pi settings",
 			"Nothing is uninstalled",
 		],
+		catalogError: scenario.catalogError,
 	};
 }

@@ -2,6 +2,7 @@
 import {
 	type Component,
 	Key,
+	type TuiMouseEvent,
 	matchesKey,
 	truncateToWidth,
 	visibleWidth,
@@ -42,11 +43,12 @@ export type ChoiceRow = {
 
 type Row = ToggleRow | ChoiceRow;
 
-export type GuideSection = { title: string; rows: Row[] };
+export type GuideSection = { title: string; rows: Row[]; error?: string };
 
 export type GuideModel = {
 	sections: GuideSection[];
 	alwaysOnApply: string[];
+	catalogError?: string;
 };
 
 export type GuideResult =
@@ -194,23 +196,39 @@ export function createConfigGuide(
 		return hints;
 	}
 
-	function renderEdit(inner: number): { body: string[]; hints: Hint[] } {
+	type Target = { row: number } | "action" | "apply";
+	type View = {
+		body: string[];
+		targets: (Target | undefined)[];
+		hints: Hint[];
+	};
+
+	function renderEdit(inner: number): View {
 		const list: string[] = [];
+		const listTargets: (Target | undefined)[] = [];
+		const push = (line: string, target?: Target) => {
+			list.push(line);
+			listTargets.push(target);
+		};
 		let selectedAt = 0;
 		let index = 0;
 		model.sections.forEach((section, s) => {
-			if (s > 0) list.push("");
-			list.push(sectionRule(t, section.title, inner));
+			if (s > 0) push("");
+			push(sectionRule(t, section.title, inner));
+			if (section.error) {
+				for (const line of wrapTextWithAnsi(section.error, inner - 4))
+					push(`    ${t.fg("error", line)}`);
+			}
 			for (const row of section.rows) {
 				if (index === focus) selectedAt = list.length;
-				list.push(rowLine(row, index === focus, inner));
+				push(rowLine(row, index === focus, inner), { row: index });
 				index++;
 			}
 		});
-		list.push("");
-		list.push(t.fg("border", "─".repeat(inner)));
+		push("");
+		push(t.fg("border", "─".repeat(inner)));
 		if (focus === actionIndex) selectedAt = list.length;
-		list.push(actionLine(focus === actionIndex, inner));
+		push(actionLine(focus === actionIndex, inner), "action");
 		const detail = ["", ...describe(inner - 2).map((line) => `  ${line}`)];
 		const notice = confirmDiscard
 			? [
@@ -225,15 +243,26 @@ export function createConfigGuide(
 			6,
 			terminalRows() - 6 - detail.length - notice.length,
 		);
-		const start = Math.max(
-			0,
-			Math.min(selectedAt - Math.floor(room / 2), list.length - room),
-		);
-		const shown = list.length > room ? list.slice(start, start + room) : list;
-		return { body: [...shown, ...detail, ...notice], hints: editHints() };
+		const start =
+			list.length > room
+				? Math.max(
+						0,
+						Math.min(selectedAt - Math.floor(room / 2), list.length - room),
+					)
+				: 0;
+		const end = list.length > room ? start + room : list.length;
+		const extra = [...detail, ...notice];
+		return {
+			body: [...list.slice(start, end), ...extra],
+			targets: [
+				...listTargets.slice(start, end),
+				...extra.map(() => undefined),
+			],
+			hints: editHints(),
+		};
 	}
 
-	function renderReview(inner: number): { body: string[]; hints: Hint[] } {
+	function reviewLines(inner: number): string[] {
 		const body: string[] = [];
 		const changes = pending();
 		body.push(sectionRule(t, "Changes", inner));
@@ -280,22 +309,78 @@ export function createConfigGuide(
 				);
 		}
 		body.push("");
-		body.push(sectionRule(t, "Always on apply", inner));
-		for (const line of model.alwaysOnApply)
-			body.push(`  ${t.fg("dim", "·")} ${t.fg("text", line)}`);
-		body.push("");
-		body.push(selectedRow(t, `${t.bold(t.fg("text", "▸ Apply now"))}`, inner));
+		if (model.catalogError) {
+			body.push(sectionRule(t, "Not applied", inner));
+			for (const line of wrapTextWithAnsi(
+				"The companion catalog could not be loaded, so MCP servers and default Pi settings will not be aligned. Your selection is still saved.",
+				inner - 4,
+			))
+				body.push(`  ${t.fg("warning", line)}`);
+		} else {
+			body.push(sectionRule(t, "Always on apply", inner));
+			for (const line of model.alwaysOnApply)
+				body.push(`  ${t.fg("dim", "·")} ${t.fg("text", line)}`);
+		}
+		return body;
+	}
+
+	function renderReview(inner: number): View {
+		const all = reviewLines(inner);
+		const room = Math.max(3, terminalRows() - 9);
+		reviewOffset = Math.max(0, Math.min(reviewOffset, all.length - room));
+		const scrolls = all.length > room;
+		const shown = scrolls ? all.slice(reviewOffset, reviewOffset + room) : all;
+		const more = scrolls
+			? [
+					t.fg(
+						"dim",
+						`  ${reviewOffset > 0 ? "↑" : " "}${reviewOffset + room < all.length ? "↓" : " "} more`,
+					),
+				]
+			: [];
+		const body = [
+			...shown,
+			...more,
+			"",
+			selectedRow(t, `${t.bold(t.fg("text", "▸ Apply now"))}`, inner),
+		];
 		return {
 			body,
+			targets: body.map((_, i) =>
+				i === body.length - 1 ? "apply" : undefined,
+			),
 			hints: [
+				...(scrolls ? ([["↑/↓", "scroll"]] as Hint[]) : []),
 				["Enter", "apply"],
 				["Esc", "back to edit"],
 			],
 		};
 	}
 
+	function activate(row: Row) {
+		toggleOrCycle(row, 1);
+	}
+
+	function cancel() {
+		if (screen === "review") {
+			screen = "edit";
+			focus = actionIndex;
+		} else if (confirmDiscard) {
+			done({ status: "closed" });
+		} else if (pending().length) {
+			confirmDiscard = true;
+		} else {
+			done({ status: "closed" });
+		}
+	}
+
+	let lastTargets: (Target | undefined)[] = [];
+	let frameWidth = 0;
+	let reviewOffset = 0;
+
 	return {
 		render(width) {
+			frameWidth = width;
 			const inner = Math.max(1, modalMetrics(width).inner);
 			const view = screen === "edit" ? renderEdit(inner) : renderReview(inner);
 			const title =
@@ -303,18 +388,58 @@ export function createConfigGuide(
 					? `Workflow config${pending().length ? ` · ${countLabel(pending().length)}` : ""}`
 					: "Workflow config › Review";
 			const tail = ["", ...hintRows(t, view.hints, inner).lines];
+			lastTargets = [undefined, ...view.targets];
 			return modalFrame(t, title, ["", ...view.body, ...tail], width);
 		},
 		invalidate() {},
+		handleMouse(event: TuiMouseEvent) {
+			if (event.type === "wheel" && event.wheelDelta) {
+				const delta = event.wheelDelta < 0 ? -1 : 1;
+				if (screen === "review")
+					reviewOffset = Math.max(0, reviewOffset + delta);
+				else focus = Math.max(0, Math.min(actionIndex, focus + delta));
+				confirmDiscard = false;
+				return { handled: true };
+			}
+			if (event.type !== "click" || event.button !== "left") return undefined;
+			const shut = modalMetrics(frameWidth).close;
+			if (
+				event.y === 0 &&
+				shut &&
+				event.x >= shut.start &&
+				event.x < shut.end
+			) {
+				cancel();
+				return { handled: true };
+			}
+			const target = lastTargets[event.y - 1];
+			if (!target) return undefined;
+			confirmDiscard = false;
+			if (target === "apply") done({ status: "applied", model });
+			else if (target === "action") {
+				focus = actionIndex;
+				screen = "review";
+				reviewOffset = 0;
+			} else {
+				focus = target.row;
+				activate(rows[target.row]);
+			}
+			return { handled: true };
+		},
 		handleInput(data) {
+			if (keys.matches(data, "tui.select.cancel")) {
+				cancel();
+				return;
+			}
 			if (screen === "review") {
 				if (matchesKey(data, Key.enter)) done({ status: "applied", model });
-				else if (keys.matches(data, "tui.select.cancel")) screen = "edit";
+				else if (keys.matches(data, "tui.select.up"))
+					reviewOffset = Math.max(0, reviewOffset - 1);
+				else if (keys.matches(data, "tui.select.down")) reviewOffset++;
 				return;
 			}
 			if (confirmDiscard) {
 				confirmDiscard = false;
-				if (keys.matches(data, "tui.select.cancel")) done({ status: "closed" });
 				return;
 			}
 			const count = rows.length + 1;
@@ -324,18 +449,18 @@ export function createConfigGuide(
 				focus = (focus + 1) % count;
 			} else if (matchesKey(data, Key.tab)) {
 				focus = actionIndex;
-			} else if (keys.matches(data, "tui.select.cancel")) {
-				if (pending().length) confirmDiscard = true;
-				else done({ status: "closed" });
 			} else if (focus === actionIndex) {
-				if (matchesKey(data, Key.enter)) screen = "review";
+				if (matchesKey(data, Key.enter)) {
+					screen = "review";
+					reviewOffset = 0;
+				}
 			} else {
 				const row = rows[focus];
 				if (
 					row.kind === "toggle" &&
 					(matchesKey(data, Key.space) || matchesKey(data, Key.enter))
 				) {
-					toggleOrCycle(row, 1);
+					activate(row);
 				} else if (row.kind === "choice") {
 					if (matchesKey(data, Key.left)) toggleOrCycle(row, -1);
 					else if (
@@ -343,7 +468,7 @@ export function createConfigGuide(
 						matchesKey(data, Key.space) ||
 						matchesKey(data, Key.enter)
 					)
-						toggleOrCycle(row, 1);
+						activate(row);
 				}
 			}
 		},
