@@ -5,7 +5,7 @@ Status: SPECIFIED (#248).
 Package: `workflow-config-guide/definition-1`, the approved brief `docs/features/workflow-config-guide.md`.
 Review handoff: `workflow-config-guide/feature-review-1`, `docs/features/workflow-config-guide-review.md`, verdict `READY`.
 Consolidated report: `docs/specs/workflow-config-guide-review.md`.
-Prototype: branch `prototype/configure-ux`, commit `c2c2963`, Approved Prototype UI Contract v4 (`prototype/configure-ux/approved-config-guide-v4.md`), disposition `reference-only`.
+Prototype: archive `prototype/configure-ux-v4`, commit `c2c2963bd45fa3eed40f902d8fcf3713a73df76e`, [Approved Prototype UI Contract v4](https://github.com/felipe3dfx/pi-workflow/blob/c2c2963bd45fa3eed40f902d8fcf3713a73df76e/prototype/configure-ux/approved-config-guide-v4.md), disposition `reference-only`.
 
 ## Problem
 
@@ -55,7 +55,7 @@ Every functional decision below was resolved by the developer during the definit
 
 ### Descriptions
 
-- The focused row's description appears below the list. Each capability, Jev routing, and Delegation mode has its own copy; the prototype's copy in `prototype/configure-ux/mocks.ts` is the reference. Delegation mode lists both values, and `orchestrator` reads "the parent is told to delegate all work to child sessions and keep to conversing, planning, asking, and directing children" (Delegation mode specification). Source: review F11.
+- The focused row's description appears below the list. Each capability, Jev routing, and Delegation mode has its own copy; the prototype's copy in [`mocks.ts`](https://github.com/felipe3dfx/pi-workflow/blob/c2c2963bd45fa3eed40f902d8fcf3713a73df76e/prototype/configure-ux/mocks.ts) is the reference. Delegation mode lists both values, and `orchestrator` reads "the parent is told to delegate all work to child sessions and keep to conversing, planning, asking, and directing children" (Delegation mode specification). Source: review F11.
 - The `Review and apply` action's description is "Opens a summary of every change. Nothing is applied until you confirm there." Source: contract v4 (every row has its own description); snapshot 7.
 - A companion's description is its catalog `description` followed by "Off stops expecting it; it is never uninstalled." Mandatory: the handler passes the catalog descriptions it already loads (`companionPackages()`) into the guide; today the guide receives only package names. Source: review F7.
 - Choosing `orchestrator` while the draft has Child session off adds a warning below the description: "No effect while Child session is off: the parent has no child tools to delegate with." The choice is allowed. Source: Delegation mode specification (no refusal); contract v4.
@@ -107,7 +107,7 @@ Each companion row shows, at the right, a state derived from the resolved compan
 
 - Mandatory: `guideSelection` remains the module the handler calls and keeps returning the confirmed selection, Jev routing, and Delegation mode, or nothing when closed. Its input grows only with the companion descriptions. Reason: the handler applies the outcome set (ADR 0009: one module applies; the guide does not).
 - Mandatory: reuse `modalFrame`, `modalMetrics`, `sectionRule`, `selectedRow`, and `hintRows` from `extensions/chrome-menus.ts`; do not change the global `SettingsList` patches (`renderMainList` and the selector wrappers). Source: brief, shared capabilities (chrome-menus reused, `SettingsList` replaced for this guide only); ADR 0009, Shell owns visual language. Reason: the frame, close span, and hints are the visual language other menus share, and every other menu depends on the `SettingsList` patches.
-- Recommendation: build the guide as one component inside `extensions/configure-guide.ts`, receiving the theme and keybindings from `ctx.ui.custom`, with its row model private. `prototype/configure-ux/guide.ts` shows one workable shape; it is evidence, not a base to copy.
+- Recommendation: build the guide as one component inside `extensions/configure-guide.ts`, receiving the theme and keybindings from `ctx.ui.custom`, with its row model private. The archived prototype's [`guide.ts`](https://github.com/felipe3dfx/pi-workflow/blob/c2c2963bd45fa3eed40f902d8fcf3713a73df76e/prototype/configure-ux/guide.ts) shows one workable shape; it is evidence, not a base to copy.
 - Recommendation: derive companion states and the install and kept sets from `planApply` rather than recomputing them in the guide.
 
 ### Shared-capability invariants
