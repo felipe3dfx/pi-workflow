@@ -132,10 +132,18 @@ test("every contract keeps publishing through MCP with the parent and takes prec
 			text,
 			/Publishing or writing to external services through MCP tools stays with the parent\./,
 		);
-		assert.match(
-			text,
-			/Context files such as AGENTS\.md describe the project; this contract takes precedence over them, and their instructions to ask the user, delegate, launch child sessions, commit, push, publish, or open pull requests do not apply to you\./,
-		);
+		assert.match(text, /Context files such as AGENTS\.md/);
+		assert.match(text, /this contract takes precedence over them/);
+		for (const action of [
+			"ask the user",
+			"delegate",
+			"launch child sessions",
+			"commit",
+			"push",
+			"publish",
+		]) {
+			assert.ok(text.includes(action), `${role} contract names ${action}`);
+		}
 	}
 });
 

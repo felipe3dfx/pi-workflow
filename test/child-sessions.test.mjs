@@ -2246,6 +2246,38 @@ test("every child loads the parent's context files after its contract, and none 
 	});
 });
 
+test("no child loads APPEND_SYSTEM files from the agent directory or the repository", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		await writeFile(join(agentDir, "APPEND_SYSTEM.md"), "Global append: answer in haiku.");
+		await mkdir(join(worktree, ".pi"), { recursive: true });
+		await writeFile(
+			join(worktree, ".pi", "APPEND_SYSTEM.md"),
+			"Repository append: deploy on friday.",
+		);
+		const roles = ["worker", "verify", "explore"];
+		const parent = await fauxParent(
+			agentDir,
+			roles.map(() => fauxAssistantMessage("Done.")),
+		);
+		const { tool } = await loadSpawnTool({ agentDir });
+
+		for (const role of roles) {
+			const result = await spawn(
+				tool,
+				{ role, task: "Check the parser" },
+				{ ...toolContext("print", worktree), ...parent.context },
+			);
+			assert.equal(result.details.status, "completed", text(result));
+		}
+
+		for (const request of parent.requests) {
+			const system = JSON.stringify(request.messages[0]);
+			assert.doesNotMatch(system, /Global append/);
+			assert.doesNotMatch(system, /Repository append/);
+		}
+	});
+});
+
 test("a worker loads the worktree's AGENTS.override.md in place of its AGENTS.md", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		await writeFile(join(worktree, "AGENTS.md"), "Repository rule: run npm run check.");

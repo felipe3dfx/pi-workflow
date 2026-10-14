@@ -492,10 +492,8 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 				`unknown role ${role}; expected ${roles.join(", ")}`,
 			);
 		}
-		if (role === undefined) {
-			return options.jevRouting.enabled()
-				? outcome("refused", `spawn_child needs a role: ${roles.join(", ")}`)
-				: outcome("stay", "Jev routing is off.");
+		if (role === undefined && options.jevRouting.enabled()) {
+			return outcome("refused", `spawn_child needs a role: ${roles.join(", ")}`);
 		}
 		const profiles = options.modelProfiles.load();
 		if (profiles.status === "refused") return outcome("refused", profiles.reason);
@@ -511,6 +509,7 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		if (typeof worktree !== "string") return worktree;
 		const verdict = await launchVerdict(request, ctx);
 		if (verdict.kind !== "leave") return show(verdict);
+		if (role === undefined) return outcome("stay", "Jev routing is off.");
 		const contract = readContract(role);
 		const jev = verdict.jev ? { jev: verdict.jev } : {};
 		if ("kind" in contract) return { ...contract, ...jev };

@@ -297,6 +297,29 @@ test("with Jev routing off, a message naming implement neither calls Jev nor lau
 	assert.equal(jev.requests.length, 0);
 });
 
+test("with Jev routing off and no role, a refused model profile is reported before the routing stay", async (t) => {
+	const dir = withAgentDirectory(t);
+	const worktree = join(dir, "repo");
+	await mkdir(worktree);
+	execFileSync("git", ["init", "--quiet"], { cwd: worktree });
+	const jev = classifierRegistry(() => ({}));
+	const launcher = createChildLauncher({
+		modelProfiles: {
+			load: () => ({ status: "refused", reason: "Profiles file is broken." }),
+		},
+		jevRouting: createJevRouting(dir),
+		delegationMode: { current: () => "opportunistic" },
+	});
+
+	const launch = await launcher.prepareLaunch(
+		{ task: "Map the source", userRequest: "Map the source" },
+		launcherContext(worktree, jev),
+	);
+	assert.equal(launch.kind, "refused");
+	assert.equal(launch.reason, "Profiles file is broken.");
+	assert.equal(jev.requests.length, 0);
+});
+
 for (const [label, write] of [
 	["absent", async () => {}],
 	["unreadable", (path) => mkdir(path)],
