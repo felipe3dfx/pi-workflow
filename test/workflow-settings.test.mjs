@@ -4,7 +4,6 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { stripVTControlCharacters } from "node:util";
 
 import { getAgentDir, initTheme } from "@earendil-works/pi-coding-agent";
 
@@ -19,6 +18,13 @@ import piWorkflowExtension from "../extensions/pi-workflow.ts";
 import { occupants, replaceSelection, seated } from "../extensions/shell.ts";
 import { classifierRegistry } from "./support/fake-jev.mjs";
 import { installedPackagePath } from "./support/child-session.mjs";
+import {
+	body,
+	driveConfig as drive_,
+	focusOn,
+	keys,
+	press,
+} from "./support/config-guide.mjs";
 import { withAgentDirectory } from "./support/jev-routing.mjs";
 
 initTheme("dark", false);
@@ -66,50 +72,26 @@ function launcherContext(cwd, jev) {
 	};
 }
 
-const DOWN = "\x1b[B";
 const ESC = "\x1b";
 
-async function driveConfig(command, notify, drive) {
-	let panel;
-	await command.handler("", {
-		hasUI: true,
-		mode: "tui",
-		cwd: process.cwd(),
-		isProjectTrusted: () => false,
-		ui: {
-			notify,
-			custom: (factory) =>
-				new Promise((resolve) => {
-					panel = factory(undefined, undefined, undefined, () => resolve());
-					drive(panel);
-				}),
-		},
-	});
-	return panel;
-}
+const driveConfig = (command, notify, drive) =>
+	drive_(command, drive, { notify });
 
-const shown = (panel) =>
-	panel.render(60).map((line) => stripVTControlCharacters(line));
+const shown = (panel) => body(panel);
 
 function focusRouting(panel) {
-	for (let i = 0; i < capabilities.length; i++) panel.handleInput(DOWN);
+	focusOn(panel, "Jev routing");
 }
 
-function focus(panel, label) {
-	for (let i = 0; i < 20 && !shown(panel).some((line) => line.startsWith(`→ ${label}`)); i++) {
-		panel.handleInput(DOWN);
-	}
-}
+const focus = focusOn;
 
 function openApply(panel) {
-	focus(panel, "Apply");
-	panel.handleInput("\r");
+	press(panel, keys.tab, keys.enter);
 }
 
 function confirmApply(panel) {
 	openApply(panel);
-	focus(panel, "Confirm apply");
-	panel.handleInput("\r");
+	press(panel, keys.enter);
 }
 
 async function storedRouting(dir) {
@@ -152,7 +134,7 @@ test("the /workflow:config menu shows the stored Jev routing after the capabilit
 		lines = shown(panel);
 		panel.handleInput(ESC);
 	});
-	const routing = lines.findIndex((line) => /Jev routing\s+on\s*$/.test(line));
+	const routing = lines.findIndex((line) => /^\[x\] Jev routing$/.test(line));
 	assert.ok(routing > 0);
 	assert.ok(lines.findIndex((line) => /Compact rendering/.test(line)) < routing);
 });
@@ -167,18 +149,15 @@ test("toggling Jev routing and confirming Apply persists it for a new process an
 	let review;
 	await driveConfig(command, notify, (panel) => {
 		focusRouting(panel);
-		assert.ok(shown(panel).some((line) => /Jev routing\s+off\s*$/.test(line)));
+		assert.ok(shown(panel).some((line) => /^(▸ )?\[ \] Jev routing\s*$/.test(line)));
 		panel.handleInput(" ");
-		assert.ok(shown(panel).some((line) => /Jev routing\s+on\s*$/.test(line)));
+		assert.ok(shown(panel).some((line) => /^(▸ )?\[x\] Jev routing\s+•$/.test(line)));
 		openApply(panel);
 		review = shown(panel);
 		focus(panel, "Confirm apply");
 		panel.handleInput("\r");
 	});
-	assert.equal(
-		review.findIndex((line) => /Jev routing: off -> on/.test(line)),
-		0,
-	);
+	assert.ok(review.some((line) => /^Jev routing\s+off → on$/.test(line)));
 	assert.deepEqual(await storedRouting(dir), { schemaVersion: 1, jevRouting: "on" });
 	assert.equal(await readFile(profilesPath, "utf8"), profiles);
 
@@ -189,8 +168,9 @@ test("toggling Jev routing and confirming Apply persists it for a new process an
 			"--eval",
 			`
 			import { initTheme } from "@earendil-works/pi-coding-agent";
+			import { KeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 			import { stripVTControlCharacters } from "node:util";
-import piWorkflowExtension from ${JSON.stringify(new URL("../extensions/pi-workflow.ts", import.meta.url).href)};
+			import piWorkflowExtension from ${JSON.stringify(new URL("../extensions/pi-workflow.ts", import.meta.url).href)};
 			initTheme("dark", false);
 			const commands = new Map();
 			piWorkflowExtension({
@@ -210,7 +190,8 @@ import piWorkflowExtension from ${JSON.stringify(new URL("../extensions/pi-workf
 				ui: {
 					notify() {},
 					custom: async (factory) => {
-						const panel = factory(undefined, undefined, undefined, () => {});
+						const plain = { fg: (_c, text) => text, bg: (_c, text) => text, bold: (text) => text };
+						const panel = factory({ terminal: { rows: 40 } }, plain, new KeybindingsManager(TUI_KEYBINDINGS), () => {});
 						for (const line of panel.render(60)) console.log(stripVTControlCharacters(line));
 					},
 				},
@@ -223,7 +204,7 @@ import piWorkflowExtension from ${JSON.stringify(new URL("../extensions/pi-workf
 			encoding: "utf8",
 		},
 	);
-	assert.match(restarted, /Jev routing\s+on\s*$/m);
+	assert.match(restarted, /\[x\] Jev routing\s+│$/m);
 });
 
 test("toggling Jev routing and cancelling with Esc writes nothing", async (t) => {
@@ -232,7 +213,8 @@ test("toggling Jev routing and cancelling with Esc writes nothing", async (t) =>
 	await driveConfig(command, notify, (panel) => {
 		focusRouting(panel);
 		panel.handleInput(" ");
-		assert.ok(shown(panel).some((line) => /Jev routing\s+on\s*$/.test(line)));
+		assert.ok(shown(panel).some((line) => /^(▸ )?\[x\] Jev routing\s+•$/.test(line)));
+		panel.handleInput(ESC);
 		panel.handleInput(ESC);
 	});
 	assert.equal(await storedRouting(dir), undefined);
@@ -251,7 +233,7 @@ test("turning Jev routing off in the menu gates a launch on the stored choice", 
 	await driveConfig(command, notify, (p) => {
 		focusRouting(p);
 		p.handleInput(" ");
-		assert.ok(shown(p).some((line) => /Jev routing\s+off\s*$/.test(line)));
+		assert.ok(shown(p).some((line) => /^▸ \[ \] Jev routing\s+•$/.test(line)));
 		confirmApply(p);
 	});
 	assert.deepEqual(await storedRouting(dir), { schemaVersion: 1, jevRouting: "off" });
@@ -684,10 +666,11 @@ test("Configure presents Bridge as a separate expectation and cancellation write
 	let menu;
 	await driveConfig(command, notify, (panel) => {
 		menu = shown(panel);
-		assert.ok(menu.some((line) => /pi-claude-bridge\s+off\s*$/.test(line)));
+		assert.ok(menu.some((line) => /^\[ \] pi-claude-bridge\b/.test(line)));
 		focus(panel, "pi-claude-bridge");
 		panel.handleInput(" ");
-		assert.ok(shown(panel).some((line) => /pi-claude-bridge\s+on\s*$/.test(line)));
+		assert.ok(shown(panel).some((line) => /^▸ \[x\] pi-claude-bridge\b.*•$/.test(line)));
+		panel.handleInput(ESC);
 		panel.handleInput(ESC);
 	});
 	assert.ok(menu.some((line) => /Compact rendering/.test(line)));
@@ -744,11 +727,11 @@ test("the /workflow:config guide opens from the selection on disk, not the seate
 		lines = shown(panel);
 		panel.handleInput(ESC);
 	});
-	assert.ok(lines.some((line) => /CodeGraph\s+on\s*$/.test(line)));
-	assert.ok(lines.some((line) => /Todo\s+off\s*$/.test(line)));
+	assert.ok(lines.some((line) => /^\[x\] CodeGraph$/.test(line)));
+	assert.ok(lines.some((line) => /^\[ \] Todo$/.test(line)));
 });
 
-test("the Apply review omits Jev routing when it is unchanged", async (t) => {
+test("the review omits Jev routing when it is unchanged", async (t) => {
 	const dir = withAgentDirectory(t);
 	const selection = selectionWith([]);
 	selection.expectations["pi-claude-bridge"] = false;
@@ -764,42 +747,31 @@ test("the Apply review omits Jev routing when it is unchanged", async (t) => {
 		panel.handleInput(ESC);
 		panel.handleInput(ESC);
 	});
-	assert.ok(review.some((line) => /Leave installed pi-claude-bridge/.test(line)));
-	assert.ok(review.some((line) => /Does not uninstall packages/.test(line)));
-	assert.ok(review.every((line) => !/Jev routing:/.test(line)));
+	assert.ok(review.some((line) => /Keep pi-claude-bridge installed \(not uninstalled\)/.test(line)));
+	assert.ok(review.some((line) => /Nothing is uninstalled/.test(line)));
+	assert.ok(review.every((line) => !/Jev routing/.test(line)));
 });
 
-test("the Apply plan compares against the seated selection", async (t) => {
-	const dir = withAgentDirectory(t);
-	await writeFile(selectionFile(dir), JSON.stringify(selectionWith(["codegraph", "todo"])));
-	seatOnly(t, ["todo"]);
-	const { command, notify } = extension(new Map(), [], dir);
-	let review;
-	await driveConfig(command, notify, (panel) => {
-		openApply(panel);
-		review = shown(panel);
-		panel.handleInput(ESC);
-		panel.handleInput(ESC);
+for (const [label, seatedOn] of [
+	["a partly seated harness", ["todo"]],
+	["a fresh installation", []],
+]) {
+	test(`the review compares against the selection on disk, not the seated one, on ${label}`, async (t) => {
+		const dir = withAgentDirectory(t);
+		await writeFile(selectionFile(dir), JSON.stringify(selectionWith(["codegraph", "todo"])));
+		seatOnly(t, seatedOn);
+		const { command, notify } = extension(new Map(), [], dir);
+		let review;
+		await driveConfig(command, notify, (panel) => {
+			openApply(panel);
+			review = shown(panel);
+			panel.handleInput(ESC);
+			panel.handleInput(ESC);
+		});
+		assert.ok(review.includes("No changes to your selection."));
+		assert.ok(review.every((line) => !/(Seat|Unseat) /.test(line)));
 	});
-	assert.ok(review.some((line) => /Seat codegraph/.test(line)));
-	assert.ok(review.every((line) => !/(Seat|Unseat) todo/.test(line)));
-});
-
-test("on a fresh installation the first plan seats each capability that is on", async (t) => {
-	const dir = withAgentDirectory(t);
-	await writeFile(selectionFile(dir), JSON.stringify(selectionWith(["codegraph"])));
-	seatOnly(t, []);
-	const { command, notify } = extension(new Map(), [], dir);
-	let review;
-	await driveConfig(command, notify, (panel) => {
-		openApply(panel);
-		review = shown(panel);
-		panel.handleInput(ESC);
-		panel.handleInput(ESC);
-	});
-	assert.ok(review.some((line) => /Seat codegraph/.test(line)));
-	assert.ok(review.every((line) => !/Seat todo/.test(line)));
-});
+}
 
 test("an unreadable selection reports the error and does not open the guide", async (t) => {
 	const dir = withAgentDirectory(t);

@@ -23,7 +23,6 @@ import {
 	occupyHeader,
 	registerShell,
 	seated,
-	seatedCapabilities,
 } from "./shell.ts";
 import {
 	type CodeGraphAdapters,
@@ -52,15 +51,10 @@ import type { TaskExecutor } from "./todo-header.ts";
 import { registerCompactTools, syncCompactTools } from "./compact-tools.ts";
 import { resolveAgentDirectory } from "./agent-directory.ts";
 import { inspectClaudeBridgeCompanion } from "./web-access.ts";
-import {
-	createDelegationMode,
-	createJevRouting,
-} from "./workflow-settings.ts";
+import { createDelegationMode, createJevRouting } from "./workflow-settings.ts";
 
 const usage =
 	"Usage: /workflow:status | /workflow:doctor | /workflow:config | /workflow:models | /workflow:subagents | /workflow:delegation-check";
-
-
 
 function createWorkflow(
 	pi: ExtensionAPI,
@@ -103,20 +97,20 @@ export default function piWorkflowExtension(
 			(options.catalog?.resolveInstalledVersion
 				? undefined
 				: async (packageName: string) => {
-					if (packageName !== "pi-claude-bridge") return undefined;
-					const project = currentCtx;
-					if (
-						!project ||
-						typeof project.cwd !== "string" ||
-						typeof project.isProjectTrusted !== "function"
-					) {
-						return { error: "The parent project context is unavailable." };
-					}
-					return inspectClaudeBridgeCompanion(agentDirectory, {
-						cwd: project.cwd,
-						trusted: project.isProjectTrusted(),
-					});
-				}),
+						if (packageName !== "pi-claude-bridge") return undefined;
+						const project = currentCtx;
+						if (
+							!project ||
+							typeof project.cwd !== "string" ||
+							typeof project.isProjectTrusted !== "function"
+						) {
+							return { error: "The parent project context is unavailable." };
+						}
+						return inspectClaudeBridgeCompanion(agentDirectory, {
+							cwd: project.cwd,
+							trusted: project.isProjectTrusted(),
+						});
+					}),
 	};
 	const workflow = createWorkflow(pi, context, {
 		...options,
@@ -291,18 +285,16 @@ export default function piWorkflowExtension(
 				return;
 			}
 			const loaded = companionPackages();
-			const packages = loaded.companions.map((companion) => companion.package);
 			const states = await resolveCompanionStates(loaded.companions, catalog);
 			const routing = jevRouting.enabled();
 			const mode = delegationMode.current();
 			const guided = await guideSelection(
 				ctx,
 				read.selection,
-				packages,
+				loaded.companions,
 				states,
 				routing,
 				mode,
-				seatedCapabilities(),
 			);
 			if (!guided) return;
 			const {

@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { stripVTControlCharacters } from "node:util";
 
 import {
 	fauxAssistantMessage,
@@ -26,11 +25,19 @@ import { createDelegationMode } from "../extensions/workflow-settings.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 import { classifierRegistry } from "./support/fake-jev.mjs";
 import { fakeChildren } from "./support/fake-children.mjs";
+import {
+	body,
+	driveConfig as drive_,
+	focusOn,
+	keys,
+	newKeybindings,
+	plainTheme,
+	press,
+} from "./support/config-guide.mjs";
 import { turnJevRoutingOn, withAgentDirectory } from "./support/jev-routing.mjs";
 
 initTheme("dark", false);
 
-const DOWN = "\x1b[B";
 const ESC = "\x1b";
 
 function extensionCommand(agentDirectory, name) {
@@ -52,32 +59,14 @@ function extensionCommand(agentDirectory, name) {
 	return commands.get(name);
 }
 
-async function driveConfig(command, drive) {
-	await command.handler("", {
-		hasUI: true,
-		mode: "tui",
-		ui: {
-			notify() {},
-			custom: (factory) =>
-				new Promise((resolve) => {
-					drive(factory(undefined, undefined, undefined, () => resolve()));
-				}),
-		},
-	});
-}
+const driveConfig = (command, drive) => drive_(command, drive);
 
-const shown = (panel) =>
-	panel.render(80).map((line) => stripVTControlCharacters(line));
+const shown = (panel) => body(panel);
 
-function focus(panel, label) {
-	for (let i = 0; i < 30 && !shown(panel).some((line) => line.startsWith(`→ ${label}`)); i++) {
-		panel.handleInput(DOWN);
-	}
-}
+const focus = focusOn;
 
 function openApply(panel) {
-	focus(panel, "Apply");
-	panel.handleInput("\r");
+	press(panel, keys.tab, keys.enter);
 }
 
 async function stored(dir, name) {
@@ -95,8 +84,8 @@ test("the /workflow:config menu shows the Delegation mode beside Jev routing, op
 		lines = shown(panel);
 		panel.handleInput(ESC);
 	});
-	const routing = lines.findIndex((line) => /Jev routing\s+off\s*$/.test(line));
-	const mode = lines.findIndex((line) => /Delegation mode\s+opportunistic\s*$/.test(line));
+	const routing = lines.findIndex((line) => /^\[ \] Jev routing$/.test(line));
+	const mode = lines.findIndex((line) => /^Delegation mode\s+‹ opportunistic ›$/.test(line));
 	assert.ok(routing > 0);
 	assert.equal(mode, routing + 1);
 });
@@ -112,19 +101,18 @@ test("orchestrator with the child tools off is accepted by Apply and reports no 
 			notify: (message, level) => notifications.push({ message, level }),
 			custom: (factory) =>
 				new Promise((resolve) => {
-					const panel = factory(undefined, undefined, undefined, () => resolve());
+					const panel = factory({ requestRender() {}, terminal: { rows: 40 } }, plainTheme, newKeybindings(), () => resolve());
 					focus(panel, "Child session");
 					panel.handleInput(" ");
 					focus(panel, "Delegation mode");
 					panel.handleInput(" ");
 					openApply(panel);
 					review = shown(panel);
-					focus(panel, "Confirm apply");
 					panel.handleInput("\r");
 				}),
 		},
 	});
-	assert.ok(review.some((line) => /Delegation mode: opportunistic -> orchestrator/.test(line)));
+	assert.ok(review.some((line) => /^Delegation mode\s+opportunistic → orchestrator$/.test(line)));
 	assert.deepEqual(await stored(dir, "pi-workflow-delegation.json"), {
 		schemaVersion: 1,
 		delegationMode: "orchestrator",
@@ -139,14 +127,13 @@ test("choosing orchestrator and confirming Apply names the change and persists i
 	await driveConfig(extensionCommand(dir, "workflow:config"), (panel) => {
 		focus(panel, "Delegation mode");
 		panel.handleInput(" ");
-		assert.ok(shown(panel).some((line) => /Delegation mode\s+orchestrator\s*$/.test(line)));
+		assert.ok(shown(panel).some((line) => /^▸\s+Delegation mode\s+‹ orchestrator ›\s+•$/.test(line)));
 		openApply(panel);
 		review = shown(panel);
-		focus(panel, "Confirm apply");
 		panel.handleInput("\r");
 	});
-	assert.ok(review.some((line) => /Delegation mode: opportunistic -> orchestrator/.test(line)));
-	assert.ok(review.every((line) => !/Jev routing:/.test(line)));
+	assert.ok(review.some((line) => /^Delegation mode\s+opportunistic → orchestrator$/.test(line)));
+	assert.ok(review.every((line) => !/^Jev routing\s+\S+ → /.test(line)));
 	assert.deepEqual(await stored(dir, "pi-workflow-delegation.json"), {
 		schemaVersion: 1,
 		delegationMode: "orchestrator",
@@ -160,6 +147,7 @@ test("choosing orchestrator and confirming Apply names the change and persists i
 			"--eval",
 			`
 			import { initTheme } from "@earendil-works/pi-coding-agent";
+			import { KeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 			import { stripVTControlCharacters } from "node:util";
 			import piWorkflowExtension from ${JSON.stringify(new URL("../extensions/pi-workflow.ts", import.meta.url).href)};
 			initTheme("dark", false);
@@ -181,7 +169,8 @@ test("choosing orchestrator and confirming Apply names the change and persists i
 				ui: {
 					notify() {},
 					custom: async (factory) => {
-						const panel = factory(undefined, undefined, undefined, () => {});
+						const plain = { fg: (_c, text) => text, bg: (_c, text) => text, bold: (text) => text };
+						const panel = factory({ terminal: { rows: 40 } }, plain, new KeybindingsManager(TUI_KEYBINDINGS), () => {});
 						for (const line of panel.render(80)) console.log(stripVTControlCharacters(line));
 					},
 				},
@@ -194,7 +183,7 @@ test("choosing orchestrator and confirming Apply names the change and persists i
 			encoding: "utf8",
 		},
 	);
-	assert.match(restarted, /Delegation mode\s+orchestrator\s*$/m);
+	assert.match(restarted, /Delegation mode\s+‹ orchestrator ›\s+│$/m);
 });
 
 test("choosing orchestrator and cancelling with Esc writes nothing", async (t) => {
@@ -202,7 +191,8 @@ test("choosing orchestrator and cancelling with Esc writes nothing", async (t) =
 	await driveConfig(extensionCommand(dir, "workflow:config"), (panel) => {
 		focus(panel, "Delegation mode");
 		panel.handleInput(" ");
-		assert.ok(shown(panel).some((line) => /Delegation mode\s+orchestrator\s*$/.test(line)));
+		assert.ok(shown(panel).some((line) => /^▸\s+Delegation mode\s+‹ orchestrator ›\s+•$/.test(line)));
+		panel.handleInput(ESC);
 		panel.handleInput(ESC);
 	});
 	assert.equal(await stored(dir, "pi-workflow-delegation.json"), undefined);
@@ -221,10 +211,9 @@ test("saving Jev routing keeps the Delegation mode, and saving the Delegation mo
 		panel.handleInput(" ");
 		openApply(panel);
 		review = shown(panel);
-		focus(panel, "Confirm apply");
 		panel.handleInput("\r");
 	});
-	assert.ok(review.every((line) => !/Delegation mode:/.test(line)));
+	assert.ok(review.every((line) => !/^Delegation mode\s+\S+ → /.test(line)));
 	assert.deepEqual(await stored(dir, "pi-workflow-routing.json"), {
 		schemaVersion: 1,
 		jevRouting: "on",
@@ -238,7 +227,6 @@ test("saving Jev routing keeps the Delegation mode, and saving the Delegation mo
 		focus(panel, "Delegation mode");
 		panel.handleInput(" ");
 		openApply(panel);
-		focus(panel, "Confirm apply");
 		panel.handleInput("\r");
 	});
 	assert.deepEqual(await stored(dir, "pi-workflow-delegation.json"), {
