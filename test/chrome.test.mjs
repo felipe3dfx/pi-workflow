@@ -92,7 +92,7 @@ test("the header shows the brand, cwd, and branch on the left and the working ch
 	const [line] = renderHeader(painted, half, 80);
 	assert.equal(
 		stripVTControlCharacters(line),
-		` π-workflow · ~/D/repos/pi-workflow · main${" ".repeat(8)}◆ 2 · ctx ▰▰▰▰▱▱▱▱ 50% · 256K`,
+		` π-workflow · ~/D/repos/pi-workflow · main${" ".repeat(7)}◆ 2 · ctx ▰▰▰▰▱▱▱▱  50% · 256K`,
 	);
 	assert.equal(visibleWidth(line), 79);
 	for (const [text, style] of [
@@ -112,7 +112,7 @@ test("the header shows the brand, cwd, and branch on the left and the working ch
 	assert.deepEqual(
 		plain(renderHeader(theme, { ...half, branch: null, working: 0 }, 80)),
 		[
-			` π-workflow · ~/D/repos/pi-workflow${" ".repeat(21)}ctx ▰▰▰▰▱▱▱▱ 50% · 256K`,
+			` π-workflow · ~/D/repos/pi-workflow${" ".repeat(20)}ctx ▰▰▰▰▱▱▱▱  50% · 256K`,
 		],
 	);
 });
@@ -126,7 +126,7 @@ test("the context meter rounds the percentage, fills eight cells, and colors bot
 		);
 		assert.match(
 			stripVTControlCharacters(line),
-			new RegExp(`ctx ${bar} ${pct}% · 100K$`),
+			new RegExp(`ctx ${bar}  ${pct}% · 100K$`),
 		);
 		assert.equal(styleOf(line, bar), color, bar);
 		assert.equal(styleOf(line, `${pct}%`), color, `${pct}%`);
@@ -168,16 +168,20 @@ test("the header shows ctx ? with the window when tokens are unknown and drops t
 test("on a narrow terminal the header drops the brand, then the bar, then truncates the cwd from its start", () => {
 	const at = (width) => plain(renderHeader(theme, half, width))[0];
 	assert.equal(
-		at(73),
-		" π-workflow · ~/D/repos/pi-workflow · main ◆ 2 · ctx ▰▰▰▰▱▱▱▱ 50% · 256K",
+		at(74),
+		" π-workflow · ~/D/repos/pi-workflow · main ◆ 2 · ctx ▰▰▰▰▱▱▱▱  50% · 256K",
 	);
 	assert.equal(
-		at(72),
-		` ~/D/repos/pi-workflow · main${" ".repeat(13)}◆ 2 · ctx ▰▰▰▰▱▱▱▱ 50% · 256K`,
+		at(73),
+		` ~/D/repos/pi-workflow · main${" ".repeat(13)}◆ 2 · ctx ▰▰▰▰▱▱▱▱  50% · 256K`,
+	);
+	assert.equal(
+		at(61),
+		" ~/D/repos/pi-workflow · main ◆ 2 · ctx ▰▰▰▰▱▱▱▱  50% · 256K",
 	);
 	assert.equal(
 		at(60),
-		" ~/D/repos/pi-workflow · main ◆ 2 · ctx ▰▰▰▰▱▱▱▱ 50% · 256K",
+		` ~/D/repos/pi-workflow · main${" ".repeat(10)}◆ 2 · ctx 50% · 256K`,
 	);
 	assert.equal(
 		at(59),

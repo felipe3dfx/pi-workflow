@@ -118,7 +118,7 @@ function indented(lines: string[], width: number, extra = 0) {
 }
 
 type Color = Parameters<ChromeTheme["fg"]>[0];
-type Segment = [Color, string][];
+type Segment = [Color | null, string][];
 
 const brand = "π-workflow";
 const meterCells = 8;
@@ -126,7 +126,9 @@ const meterCells = 8;
 function paintSegments(theme: ChromeTheme, segments: Segment[]) {
 	return segments
 		.map((segment) =>
-			segment.map(([color, text]) => theme.fg(color, text)).join(" "),
+			segment
+				.map(([color, text]) => (color ? theme.fg(color, text) : text))
+				.join(" "),
 		)
 		.join(theme.fg("borderAccent", " · "));
 }
@@ -151,7 +153,10 @@ function contextSegments(usage: HeaderData["usage"], bar: boolean): Segment[] {
 	);
 	const meter: Segment = [["dim", "ctx"]];
 	if (bar)
-		meter.push([color, "▰".repeat(filled) + "▱".repeat(meterCells - filled)]);
+		meter.push(
+			[color, "▰".repeat(filled) + "▱".repeat(meterCells - filled)],
+			[null, ""],
+		);
 	meter.push([color, `${percent}%`]);
 	return [meter, window];
 }
