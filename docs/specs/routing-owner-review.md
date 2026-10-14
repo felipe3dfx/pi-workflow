@@ -4,6 +4,8 @@ Paquete: el paquete de routing confirmado, con los cierres de `git`/`gh` y de la
 Handoff: `READY WITH WARNINGS`. El ADR 0008 es un registro local, no autoridad aceptada.
 Veredicto: `READY WITH WARNINGS`.
 
+Reemplazo: esta revisión cubre solo su paquete original. ADR 0017 y [destination-only-jev-routing-and-uniform-child-context.md](destination-only-jev-routing-and-uniform-child-context.md) reemplazan lo que aquí se revisó sobre la selección del rol por Jev y el contexto de los hijos.
+
 ## Hallazgos dispuestos
 
 1. El spec histórico no tiene modo apagado. Disposición: `to-spec` escribe los dos modos. Aceptado.

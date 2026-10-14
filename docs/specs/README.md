@@ -8,6 +8,7 @@ Each specification pairs with its review and the feature brief it came from. The
 | [child-session-delegation](child-session-delegation.md) | [review](child-session-delegation-review.md) | [brief](../features/child-session-delegation.md), [authority review](../features/child-session-delegation-authority-review.md) | #77; result contract superseded by #150 |
 | [claude-bridge-support](claude-bridge-support.md), [delivery matrix](claude-bridge-delivery-matrix.md) | [review](claude-bridge-support-review.md) | [brief](../features/claude-bridge-support.md), [review](../features/claude-bridge-support-review.md) | #238, #240 |
 | [deep-harness-modules](deep-harness-modules.md) | [review](deep-harness-modules-review.md) | [brief](../features/deep-harness-modules.md) | #188 |
+| [destination-only-jev-routing-and-uniform-child-context](destination-only-jev-routing-and-uniform-child-context.md) | [review](destination-only-jev-routing-and-uniform-child-context-review.md) | [brief](../features/destination-only-jev-routing-and-uniform-child-context.md), [review](../features/destination-only-jev-routing-and-uniform-child-context-review.md) | #257 |
 | [delegation-mode](delegation-mode.md) | [review](delegation-mode-review.md) | — | #205 |
 | [header-identity](header-identity.md) | [review](header-identity-review.md) | [brief](../features/header-identity.md), [review](../features/header-identity-review.md) | #243 |
 | [routing-owner](routing-owner.md) | [review](routing-owner-review.md) | — | #118, #119, #124, #125 |

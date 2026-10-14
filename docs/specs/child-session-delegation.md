@@ -6,6 +6,8 @@ Superseded for routing by [routing-owner.md](routing-owner.md): skill routes and
 
 Superseded for the child result by #150: workers and verifiers report their Verdict through the `report_result` tool instead of a text block.
 
+Superseded for Jev role selection and child context by ADR 0017 and [destination-only-jev-routing-and-uniform-child-context.md](destination-only-jev-routing-and-uniform-child-context.md): Jev decides the destination only, the parent supplies each launch's role, and every role, `explore` included, loads Pi context files after its Contract.
+
 Package: delegation brief confirmed in the originating session.
 Review handoff: `origin/main` `0e460e0`, ADR 0005 accepted.
 Verdict: `READY`.
