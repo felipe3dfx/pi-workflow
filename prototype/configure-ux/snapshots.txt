@@ -1,0 +1,248 @@
+### 1. Fresh open (absent selection file)
+keys: (none) → open
+
+┌─ Workflow config ────────────────────────────────────────────────────────── [×] ─┐
+│                                                                                  │
+│   Capabilities ────────────────────────────────────────────────────────────────  │
+│  ▸ [x] Child session                                                             │
+│    [x] Todo                                                                      │
+│    [x] Operator questions                                                        │
+│    [x] Model profiles                                                            │
+│    [x] CodeGraph                                                                 │
+│    [x] Compact rendering                                                         │
+│                                                                                  │
+│   Routing and delegation ──────────────────────────────────────────────────────  │
+│    [ ] Jev routing                                                               │
+│        Delegation mode                                      ‹ opportunistic ›    │
+│                                                                                  │
+│   Companions ──────────────────────────────────────────────────────────────────  │
+│    [x] gentle-engram                                                installed    │
+│    [x] @gtrabanco/pi-nan-provider                                   installed    │
+│    [x] pi-web-access                                             will install    │
+│    [x] pi-claude-bridge                                          will install    │
+│                                                                                  │
+│  ──────────────────────────────────────────────────────────────────────────────  │
+│    Review and apply                                              no changes ›    │
+│                                                                                  │
+│    Delegate bounded work to child sessions; shows them above the input and       │
+│    offers spawn_child.                                                           │
+│                                                                                  │
+│           ↑/↓ move  |  Space toggle  |  Tab go to apply  |  Esc close            │
+└──────────────────────────────────────────────────────────────────────────────────┘
+
+### 2. Toggle focused: Child session off
+keys: space → open
+
+┌─ Workflow config · 1 change ─────────────────────────────────────────────── [×] ─┐
+│                                                                                  │
+│   Capabilities ────────────────────────────────────────────────────────────────  │
+│  ▸ [ ] Child session                                                          •  │
+│    [x] Todo                                                                      │
+│    [x] Operator questions                                                        │
+│    [x] Model profiles                                                            │
+│    [x] CodeGraph                                                                 │
+│    [x] Compact rendering                                                         │
+│                                                                                  │
+│   Routing and delegation ──────────────────────────────────────────────────────  │
+│    [ ] Jev routing                                                               │
+│        Delegation mode                                      ‹ opportunistic ›    │
+│                                                                                  │
+│   Companions ──────────────────────────────────────────────────────────────────  │
+│    [x] gentle-engram                                                installed    │
+│    [x] @gtrabanco/pi-nan-provider                                   installed    │
+│    [x] pi-web-access                                             will install    │
+│    [x] pi-claude-bridge                                          will install    │
+│                                                                                  │
+│  ──────────────────────────────────────────────────────────────────────────────  │
+│    Review and apply                                                1 change ›    │
+│                                                                                  │
+│    Delegate bounded work to child sessions; shows them above the input and       │
+│    offers spawn_child.                                                           │
+│                                                                                  │
+│      ↑/↓ move  |  Space toggle  |  Tab go to apply  |  Esc discard changes       │
+└──────────────────────────────────────────────────────────────────────────────────┘
+
+### 3. Choice focused: Delegation mode → orchestrator while Child session off
+keys: space down down down down down down down right → open
+
+┌─ Workflow config · 2 changes ────────────────────────────────────────────── [×] ─┐
+│                                                                                  │
+│   Capabilities ────────────────────────────────────────────────────────────────  │
+│    [ ] Child session                                                          •  │
+│    [x] Todo                                                                      │
+│    [x] Operator questions                                                        │
+│    [x] Model profiles                                                            │
+│    [x] CodeGraph                                                                 │
+│    [x] Compact rendering                                                         │
+│                                                                                  │
+│   Routing and delegation ──────────────────────────────────────────────────────  │
+│    [ ] Jev routing                                                               │
+│  ▸     Delegation mode                                       ‹ orchestrator › •  │
+│                                                                                  │
+│   Companions ──────────────────────────────────────────────────────────────────  │
+│    [x] gentle-engram                                                installed    │
+│    [x] @gtrabanco/pi-nan-provider                                   installed    │
+│    [x] pi-web-access                                             will install    │
+│    [x] pi-claude-bridge                                          will install    │
+│                                                                                  │
+│  ──────────────────────────────────────────────────────────────────────────────  │
+│    Review and apply                                               2 changes ›    │
+│                                                                                  │
+│    opportunistic: the parent decides per message whether to delegate (default).  │
+│    orchestrator: the parent is told to delegate all work and keep to planning    │
+│    and conversation.                                                             │
+│    No effect while Child session is off: the parent has no child tools to        │
+│    delegate with.                                                                │
+│                                                                                  │
+│       ↑/↓ move  |  ←/→ change  |  Tab go to apply  |  Esc discard changes        │
+└──────────────────────────────────────────────────────────────────────────────────┘
+
+### 4. Companion focused, mixed statuses
+keys: up up up up → open
+
+┌─ Workflow config ────────────────────────────────────────────────────────── [×] ─┐
+│                                                                                  │
+│   Capabilities ────────────────────────────────────────────────────────────────  │
+│    [x] Child session                                                             │
+│    [x] Todo                                                                      │
+│    [x] Operator questions                                                        │
+│    [x] Model profiles                                                            │
+│    [ ] CodeGraph                                                                 │
+│    [x] Compact rendering                                                         │
+│                                                                                  │
+│   Routing and delegation ──────────────────────────────────────────────────────  │
+│    [x] Jev routing                                                               │
+│        Delegation mode                                      ‹ opportunistic ›    │
+│                                                                                  │
+│   Companions ──────────────────────────────────────────────────────────────────  │
+│    [x] gentle-engram                                               unreadable    │
+│  ▸ [ ] @gtrabanco/pi-nan-provider                            installed · kept    │
+│    [x] pi-web-access                                                installed    │
+│    [x] pi-claude-bridge                                          will install    │
+│                                                                                  │
+│  ──────────────────────────────────────────────────────────────────────────────  │
+│    Review and apply                                              no changes ›    │
+│                                                                                  │
+│    NaN model provider for Pi. Off stops expecting it; it is never uninstalled.   │
+│                                                                                  │
+│           ↑/↓ move  |  Space toggle  |  Tab go to apply  |  Esc close            │
+└──────────────────────────────────────────────────────────────────────────────────┘
+
+### 5. Esc with pending changes asks before discarding
+keys: space esc → open
+
+┌─ Workflow config · 1 change ─────────────────────────────────────────────── [×] ─┐
+│                                                                                  │
+│   Capabilities ────────────────────────────────────────────────────────────────  │
+│  ▸ [ ] Child session                                                          •  │
+│    [x] Todo                                                                      │
+│    [x] Operator questions                                                        │
+│    [x] Model profiles                                                            │
+│    [x] CodeGraph                                                                 │
+│    [x] Compact rendering                                                         │
+│                                                                                  │
+│   Routing and delegation ──────────────────────────────────────────────────────  │
+│    [ ] Jev routing                                                               │
+│        Delegation mode                                      ‹ opportunistic ›    │
+│                                                                                  │
+│   Companions ──────────────────────────────────────────────────────────────────  │
+│    [x] gentle-engram                                                installed    │
+│    [x] @gtrabanco/pi-nan-provider                                   installed    │
+│    [x] pi-web-access                                             will install    │
+│    [x] pi-claude-bridge                                          will install    │
+│                                                                                  │
+│  ──────────────────────────────────────────────────────────────────────────────  │
+│    Review and apply                                                1 change ›    │
+│                                                                                  │
+│    Delegate bounded work to child sessions; shows them above the input and       │
+│    offers spawn_child.                                                           │
+│                                                                                  │
+│  Discard 1 change? Esc again discards and closes; any other key keeps editing.   │
+│                                                                                  │
+│      ↑/↓ move  |  Space toggle  |  Tab go to apply  |  Esc discard changes       │
+└──────────────────────────────────────────────────────────────────────────────────┘
+
+### 6. Second Esc discards and closes
+keys: space esc esc → closed
+
+
+### 7. Tab jumps to Review and apply
+keys: down space tab → open
+
+┌─ Workflow config · 1 change ─────────────────────────────────────────────── [×] ─┐
+│                                                                                  │
+│   Capabilities ────────────────────────────────────────────────────────────────  │
+│    [x] Child session                                                             │
+│    [ ] Todo                                                                   •  │
+│    [x] Operator questions                                                        │
+│    [x] Model profiles                                                            │
+│    [ ] CodeGraph                                                                 │
+│    [x] Compact rendering                                                         │
+│                                                                                  │
+│   Routing and delegation ──────────────────────────────────────────────────────  │
+│    [x] Jev routing                                                               │
+│        Delegation mode                                      ‹ opportunistic ›    │
+│                                                                                  │
+│   Companions ──────────────────────────────────────────────────────────────────  │
+│    [x] gentle-engram                                               unreadable    │
+│    [ ] @gtrabanco/pi-nan-provider                            installed · kept    │
+│    [x] pi-web-access                                                installed    │
+│    [x] pi-claude-bridge                                          will install    │
+│                                                                                  │
+│  ──────────────────────────────────────────────────────────────────────────────  │
+│  ▸ Review and apply                                                1 change ›    │
+│                                                                                  │
+│    Opens a summary of every change. Nothing is applied until you confirm there.  │
+│                                                                                  │
+│      ↑/↓ move  |  Enter review  |  Tab go to apply  |  Esc discard changes       │
+└──────────────────────────────────────────────────────────────────────────────────┘
+
+### 8. Review screen
+keys: down space tab enter → open
+
+┌─ Workflow config › Review ───────────────────────────────────────────────── [×] ─┐
+│                                                                                  │
+│   Changes ─────────────────────────────────────────────────────────────────────  │
+│    Todo                                                              on → off    │
+│                                                                                  │
+│   Packages ────────────────────────────────────────────────────────────────────  │
+│    + Install pi-claude-bridge                                                    │
+│    ! gentle-engram is unreadable (not reinstalled; see /workflow:doctor)         │
+│    = Keep @gtrabanco/pi-nan-provider installed (not uninstalled)                 │
+│                                                                                  │
+│   Always on apply ─────────────────────────────────────────────────────────────  │
+│    · Align MCP servers (mcp.json)                                                │
+│    · Apply default Pi settings                                                   │
+│    · Nothing is uninstalled                                                      │
+│                                                                                  │
+│  ▸ Apply now                                                                     │
+│                                                                                  │
+│                         Enter apply  |  Esc back to edit                         │
+└──────────────────────────────────────────────────────────────────────────────────┘
+
+### 9. Review with no changes
+keys: tab enter → open
+
+┌─ Workflow config › Review ───────────────────────────────────────────────── [×] ─┐
+│                                                                                  │
+│   Changes ─────────────────────────────────────────────────────────────────────  │
+│    No changes to your selection.                                                 │
+│                                                                                  │
+│   Packages ────────────────────────────────────────────────────────────────────  │
+│    + Install pi-web-access                                                       │
+│    + Install pi-claude-bridge                                                    │
+│                                                                                  │
+│   Always on apply ─────────────────────────────────────────────────────────────  │
+│    · Align MCP servers (mcp.json)                                                │
+│    · Apply default Pi settings                                                   │
+│    · Nothing is uninstalled                                                      │
+│                                                                                  │
+│  ▸ Apply now                                                                     │
+│                                                                                  │
+│                         Enter apply  |  Esc back to edit                         │
+└──────────────────────────────────────────────────────────────────────────────────┘
+
+### 10. Enter on review applies
+keys: tab enter enter → applied
+
+
