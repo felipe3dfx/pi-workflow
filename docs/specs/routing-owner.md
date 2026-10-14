@@ -2,6 +2,8 @@
 
 Status: IMPLEMENTED (#118, #119, #124, #125).
 
+Superseded for Jev role selection and child context by ADR 0017 and [destination-only-jev-routing-and-uniform-child-context.md](destination-only-jev-routing-and-uniform-child-context.md): Jev decides the destination only, the parent supplies each launch's role, and every role, `explore` included, loads Pi context files after its Contract.
+
 Package: the confirmed routing package after the renewed feature review.
 Review handoff: ADR 0008 accepted on the merge of its introducing PR.
 Verdict: READY WITH WARNINGS.

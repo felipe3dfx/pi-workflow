@@ -6,6 +6,8 @@ Paquete: `docs/features/child-session-delegation.md` y el prototipo `prototype/c
 Handoff: `present (root-selected)`, `CONTEXT.md`, ADR 0005 aceptado.
 Veredicto: `READY WITH WARNINGS`.
 
+Reemplazo: esta revisión cubre solo su paquete original. ADR 0017 y [destination-only-jev-routing-and-uniform-child-context.md](destination-only-jev-routing-and-uniform-child-context.md) reemplazan lo que aquí se revisó sobre la selección del rol por Jev y el contexto de los hijos.
+
 ## Resultado
 
 La revisión del paquete nuevo usó tres lentes en `openai-codex/gpt-6-sol` con `medium`. El usuario dispuso los hallazgos.

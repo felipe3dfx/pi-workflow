@@ -5,6 +5,8 @@ Handoff: revisión de autoridad de dominio renovada en cada ronda; la última es
 Rondas: dos rondas completas con tres lentes independientes (completitud y coherencia, simplificación y alcance, viabilidad y coherencia transversal), una segunda revisión independiente por ronda y una reverificación enfocada de las secciones editadas.
 Veredicto: `READY WITH WARNINGS`.
 
+Reemplazo: esta revisión cubre solo su paquete original. ADR 0017 y [destination-only-jev-routing-and-uniform-child-context.md](destination-only-jev-routing-and-uniform-child-context.md) reemplazan lo que aquí se revisó sobre la selección del rol por Jev y el contexto de los hijos.
+
 ## Hallazgos dispuestos
 
 Las disposiciones del Owner de la ronda 1 se etiquetan O1 a O13 y las de la ronda 2, K-A a K-F. Las etiquetas R1 a R14 nombran solo los riesgos aceptados.
