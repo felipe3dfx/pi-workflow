@@ -62,7 +62,7 @@ _Avoid_: engineering skill, TypeSafe key, another provider's Jev
 
 ### Jev routing
 
-The persistent choice, stored with the user's Pi configuration, of whether Jev owns routing. It is off until the user turns it on. While it is on, Jev chooses the destination and the Specialist, never a model.
+The persistent choice, stored with the user's Pi configuration, of whether Jev decides the destination for each user message. When on, Jev decides only whether work stays, leaves for a child, or cannot be decided; it does not select a Specialist or child role.
 
 _Avoid_: process switch, repository setting, Jev router, virtual model routing
 
@@ -86,7 +86,7 @@ _Avoid_: delegation hook, router
 
 ### Specialist
 
-One of `explorer`, `worker`, or `verifier`, mapped from the child roles `explore`, `worker`, and `verify`. The parent names the role while Jev routing is off, and Jev names the specialist while Jev routing is on.
+One of `explorer`, `worker`, or `verifier`, mapped from the child roles `explore`, `worker`, and `verify`. The parent supplies a role for each child launch, regardless of Jev routing.
 
 ### Engineering skills
 
@@ -148,7 +148,7 @@ _Avoid_: read result, acknowledged result
 
 ### Contract
 
-The harness-owned definition of a child role: its `tools:` line lists the tools every launch checks, and its body is the child's system prompt. A child follows its contract over the repository's context files.
+The harness-owned definition of a child role: its `tools:` line lists the tools every launch checks, and its body is the child's system prompt. A child follows its Contract over project context files, including when those files instruct it to ask the user, delegate, launch children, commit, push, or publish.
 
 _Avoid_: agent definition, persona, system prompt file
 
