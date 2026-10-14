@@ -2202,7 +2202,7 @@ test("a child receives the parent's project MCP servers only when the parent tru
 	});
 });
 
-test("a worker and a verifier load the parent's context files, an explorer loads none, and no child loads skills", async () => {
+test("every child loads the parent's context files after its contract, and none loads skills", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		await writeFile(join(agentDir, "AGENTS.md"), "Global rule: answer in haiku.");
 		await writeFile(join(worktree, "AGENTS.md"), "Repository rule: run npm run check.");
@@ -2230,11 +2230,16 @@ test("a worker and a verifier load the parent's context files, an explorer loads
 		const systems = parent.requests.map((request) =>
 			JSON.stringify(request.messages[0]),
 		);
-		for (const system of systems.slice(0, 2)) {
+		for (const system of systems) {
 			assert.match(system, /Global rule: answer in haiku\./);
 			assert.match(system, /Repository rule: run npm run check\./);
 		}
-		assert.doesNotMatch(systems[2], /Global rule|Repository rule/);
+		for (const request of parent.requests) {
+			assert.deepEqual(
+				Object.keys(request.messages[0].sections).slice(0, 2),
+				["preamble", "project_context"],
+			);
+		}
 		for (const system of systems) {
 			assert.doesNotMatch(system, /Deploy the release train/);
 		}

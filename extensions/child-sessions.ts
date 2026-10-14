@@ -386,7 +386,6 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 		noSkills: true,
 		noPromptTemplates: true,
 		noThemes: true,
-		noContextFiles: spec.role === "explore",
 		systemPromptOverride: () => spec.prompt,
 		appendSystemPromptOverride: () => [],
 	});
