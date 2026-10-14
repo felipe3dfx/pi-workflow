@@ -96,7 +96,7 @@ export function buildModel(scenario: Scenario): GuideModel {
 							opportunistic:
 								"the parent decides per message whether to delegate (default).",
 							orchestrator:
-								"the parent is told to delegate all work and keep to planning and conversation.",
+								"the parent is told to delegate all work to child sessions and keep to conversing, planning, asking, and directing children.",
 						},
 						value: mode,
 						was: mode,

@@ -201,7 +201,7 @@ export function createConfigGuide(
 		const hints: Hint[] = [["↑/↓", "move"]];
 		if (focus === actionIndex) hints.push(["Enter", "review"]);
 		else if (rows[focus].kind === "toggle") hints.push(["Space", "toggle"]);
-		else hints.push(["←/→", "change"]);
+		else hints.push(["←/→/Space", "change"]);
 		hints.push(["Tab", "go to apply"]);
 		hints.push(["Esc", pending().length ? "discard changes" : "close"]);
 		return hints;
@@ -381,10 +381,14 @@ export function createConfigGuide(
 			frameWidth = width;
 			const inner = Math.max(1, modalMetrics(width).inner);
 			const view = screen === "edit" ? renderEdit(inner) : renderReview(inner);
+			const titleRoom = width - 6 - (modalMetrics(width).close ? 5 : 0);
+			const full = `Workflow config${pending().length || toInstall() ? ` · ${summary()}` : ""}`;
 			const title =
-				screen === "edit"
-					? `Workflow config${pending().length || toInstall() ? ` · ${summary()}` : ""}`
-					: "Workflow config › Review";
+				screen === "review"
+					? "Workflow config › Review"
+					: visibleWidth(full) > titleRoom
+						? summary()
+						: full;
 			const tail = ["", ...hintRows(t, view.hints, inner).lines];
 			lastTargets = [undefined, ...view.targets];
 			return modalFrame(t, title, ["", ...view.body, ...tail], width);

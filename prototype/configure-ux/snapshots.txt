@@ -89,12 +89,12 @@ input: space down down down down down down down right · terminal rows 40 → op
 │    Review and apply                                2 changes · 2 to install ›    │
 │                                                                                  │
 │    opportunistic: the parent decides per message whether to delegate (default).  │
-│    orchestrator: the parent is told to delegate all work and keep to planning    │
-│    and conversation.                                                             │
+│    orchestrator: the parent is told to delegate all work to child sessions and   │
+│    keep to conversing, planning, asking, and directing children.                 │
 │    No effect while Child session is off: the parent has no child tools to        │
 │    delegate with.                                                                │
 │                                                                                  │
-│       ↑/↓ move  |  ←/→ change  |  Tab go to apply  |  Esc discard changes        │
+│    ↑/↓ move  |  ←/→/Space change  |  Tab go to apply  |  Esc discard changes     │
 └──────────────────────────────────────────────────────────────────────────────────┘
 
 ### 4. Companion focused, mixed statuses
@@ -397,4 +397,38 @@ input: space click@78,0 · terminal rows 40 → open
 ### 16. Click Review and apply, then Apply now
 input: click@10,21 click@10,14 · terminal rows 40 → applied
 
+
+### 17. Narrow overlay keeps the summary in the title
+input: space · terminal rows 40 → open
+
+┌─ 1 change · 2 to install ────────────── [×] ─┐
+│                                              │
+│   Capabilities ────────────────────────────  │
+│  ▸ [ ] Child session                      •  │
+│    [x] Todo                                  │
+│    [x] Operator questions                    │
+│    [x] Model profiles                        │
+│    [x] CodeGraph                             │
+│    [x] Compact rendering                     │
+│                                              │
+│   Routing and delegation ──────────────────  │
+│    [ ] Jev routing                           │
+│        Delegation mode  ‹ opportunistic ›    │
+│                                              │
+│   Companions ──────────────────────────────  │
+│    [x] gentle-engram            installed    │
+│    [x] @gtrabanco/pi-nan-prov[0m…[0m  installed    │
+│    [x] pi-web-access         will install    │
+│    [x] pi-claude-bridge      will install    │
+│                                              │
+│  ──────────────────────────────────────────  │
+│    Review and[0m…[0m  1 change · 2 to install ›    │
+│                                              │
+│    Delegate bounded work to child sessions;  │
+│    shows them above the input and offers     │
+│    spawn_child.                              │
+│                                              │
+│          ↑/↓ move  |  Space toggle           │
+│   Tab go to apply  |  Esc discard changes    │
+└──────────────────────────────────────────────┘
 

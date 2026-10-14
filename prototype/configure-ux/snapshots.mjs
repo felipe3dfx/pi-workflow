@@ -21,7 +21,7 @@ const K = {
 };
 const WIDTH = 84;
 
-function run(title, scenario, steps, rows = 40) {
+function run(title, scenario, steps, rows = 40, width = WIDTH) {
 	let outcome = "open";
 	const guide = createConfigGuide(
 		buildModel(scenario),
@@ -32,12 +32,12 @@ function run(title, scenario, steps, rows = 40) {
 			outcome = r.status;
 		},
 	);
-	guide.render(WIDTH);
+	guide.render(width);
 	for (const step of steps) {
 		if (typeof step === "object")
-			guide.handleMouse({ button: "left", width: WIDTH, ...step });
+			guide.handleMouse({ button: "left", width, ...step });
 		else guide.handleInput(K[step] ?? step);
-		guide.render(WIDTH);
+		guide.render(width);
 	}
 	console.log(`### ${title}`);
 	const shown = steps.map((s) =>
@@ -46,7 +46,7 @@ function run(title, scenario, steps, rows = 40) {
 	console.log(
 		`input: ${shown.join(" ") || "(none)"} · terminal rows ${rows} → ${outcome}\n`,
 	);
-	if (outcome === "open") console.log(guide.render(WIDTH).join("\n"));
+	if (outcome === "open") console.log(guide.render(width).join("\n"));
 	console.log("");
 }
 
@@ -109,3 +109,10 @@ run("16. Click Review and apply, then Apply now", scenarios.fresh, [
 	{ type: "click", x: 10, y: 21 },
 	{ type: "click", x: 10, y: 14 },
 ]);
+run(
+	"17. Narrow overlay keeps the summary in the title",
+	scenarios.fresh,
+	["space"],
+	40,
+	48,
+);
