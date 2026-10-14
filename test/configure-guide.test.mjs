@@ -463,7 +463,7 @@ test("every rendered line stays within the width in the list", async (t) => {
 		press(panel, keys.space);
 		for (const width of widths) {
 			for (const line of panel.render(width)) {
-				lengths.push([width, visible(line)]);
+				lengths.push([width, visibleWidth(line)]);
 			}
 		}
 		rows = body(panel, 56);
@@ -479,7 +479,6 @@ test("every rendered line stays within the width in the list", async (t) => {
 	);
 });
 
-const visible = (line) => visibleWidth(line);
 
 test("Tab then Enter opens the review with the changes as from → to", async (t) => {
 	let head;
@@ -810,7 +809,7 @@ test("every rendered line stays within the width in the review", async (t) => {
 			openReview(panel);
 			for (const width of [30, 40, 56, 80, 120]) {
 				for (const line of panel.render(width))
-					lengths.push([width, visible(line)]);
+					lengths.push([width, visibleWidth(line)]);
 			}
 			press(panel, keys.enter);
 		},

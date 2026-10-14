@@ -24,6 +24,7 @@ import {
 	focusOn,
 	keys,
 	press,
+	title,
 } from "./support/config-guide.mjs";
 import { withAgentDirectory } from "./support/jev-routing.mjs";
 
@@ -807,13 +808,18 @@ test("the review has no Seating section when the seated capabilities equal the d
 	await writeFile(selectionFile(dir), JSON.stringify(selectionWith(["todo"])));
 	seatOnly(t, ["todo"]);
 	const { command, notify } = extension(new Map(), [], dir);
+	let heading;
 	let review;
 	await driveConfig(command, notify, (panel) => {
 		openApply(panel);
+		heading = title(panel);
 		review = shown(panel);
 		panel.handleInput(ESC);
 		panel.handleInput(ESC);
 	});
+	assert.equal(heading, "Workflow config › Review");
+	assert.ok(review.includes("No changes to your selection."));
+	assert.ok(review.some((line) => line.startsWith("Always on apply")));
 	assert.ok(review.every((line) => !line.startsWith("Seating")));
 });
 
