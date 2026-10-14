@@ -572,7 +572,10 @@ test("a second session_start replaces the subscriptions instead of duplicating t
 	chrome.tui.requestRender = () => chrome.calls.push(["render"]);
 	const { notifyHeader } = await import("../extensions/shell.ts");
 	notifyHeader();
-	assert.equal(chrome.calls.filter((call) => call[0] === "render").length, 1);
+	assert.equal(
+		chrome.calls.filter((call) => call[0] === "render").length,
+		1,
+	);
 });
 
 test("the status row keeps showing a tool that is still running when a later parallel tool ends", async () => {
@@ -604,10 +607,7 @@ test("the status row renders only while the parent works and hides the step time
 	assert.deepEqual(widget.render(70), []);
 	await chrome.emit("agent_start");
 	t.mock.timers.tick(4_500);
-	assert.match(
-		plain(widget.render(70))[0],
-		/^ {3}\S Waiting for response… +4\.5s$/,
-	);
+	assert.match(plain(widget.render(70))[0], /^ {3}\S Waiting for response… +4\.5s$/);
 	await chrome.emit("tool_execution_start", {
 		toolCallId: "a",
 		toolName: "bash",
