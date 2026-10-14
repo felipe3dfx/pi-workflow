@@ -214,6 +214,7 @@ function createConfigGuide(
 	let confirmDiscard = false;
 	let reviewOffset = 0;
 	let descriptionOffset = 0;
+	let frameSpacer = true;
 	let descriptionPage = 1;
 	let descriptionMax = 0;
 	let frameWidth = 0;
@@ -347,7 +348,7 @@ function createConfigGuide(
 		const described = describe(inner - 2);
 		const detail = ["", ...described.copy.map((line) => `  ${line}`)];
 		const warning = described.warning.map((line) => `  ${line}`);
-		const notice = confirmDiscard
+		let notice = confirmDiscard
 			? [
 					"",
 					...wrapTextWithAnsi(
@@ -370,20 +371,34 @@ function createConfigGuide(
 				inner,
 			).lines;
 			spare = terminalRows() - 3 - warning.length - notice.length - tail.length;
-			descriptionPage = Math.max(1, spare - 2);
+			if (spare < 3) {
+				frameSpacer = false;
+				spare++;
+			}
+			if (spare < 3 && notice[0] === "") {
+				notice = notice.slice(1);
+				spare++;
+			}
+			const foldIndicator = spare < 3;
+			descriptionPage = Math.max(1, spare - (foldIndicator ? 1 : 2));
 			descriptionMax = Math.max(0, described.copy.length - descriptionPage);
 			descriptionOffset = Math.max(
 				0,
 				Math.min(descriptionOffset, descriptionMax),
 			);
+			const indicator = `${descriptionOffset > 0 ? "↑" : ""}${descriptionOffset < descriptionMax ? "↓" : ""} more`;
+			if (foldIndicator) {
+				tail = hintRows(
+					t,
+					[...editHints(), ["PgUp/PgDn", `description ${indicator}`]],
+					inner,
+				).lines;
+			}
 			shownDetail = [
 				...described.copy
 					.slice(descriptionOffset, descriptionOffset + descriptionPage)
 					.map((line) => `  ${line}`),
-				t.fg(
-					"dim",
-					`  ${descriptionOffset > 0 ? "↑" : ""}${descriptionOffset < descriptionMax ? "↓" : ""} more`,
-				),
+				...(foldIndicator ? [] : [t.fg("dim", `  ${indicator}`)]),
 			];
 		}
 		const room = Math.max(1, spare - shownDetail.length);
@@ -532,6 +547,7 @@ function createConfigGuide(
 	return {
 		render(width) {
 			frameWidth = width;
+			frameSpacer = true;
 			const inner = Math.max(1, modalMetrics(width).inner);
 			const view = screen === "edit" ? renderEdit(inner) : renderReview(inner);
 			const titleRoom = width - 6 - (modalMetrics(width).close ? 5 : 0);
@@ -542,8 +558,8 @@ function createConfigGuide(
 					: visibleWidth(full) > titleRoom
 						? summary()
 						: full;
-			targets = [undefined, ...view.targets];
-			return modalFrame(t, title, ["", ...view.lines], width);
+			targets = [...(frameSpacer ? [undefined] : []), ...view.targets];
+			return modalFrame(t, title, [...(frameSpacer ? [""] : []), ...view.lines], width);
 		},
 		invalidate() {},
 		handleMouse(event: TuiMouseEvent) {
