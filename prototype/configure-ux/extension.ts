@@ -1,4 +1,4 @@
-// Prototype only. Run: pi -e prototype/configure-ux/extension.ts, then /proto:config [fresh|mixed|broken].
+// Prototype only. Run: pi -e prototype/configure-ux/extension.ts, then /proto:config [fresh|mixed].
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { createConfigGuide, type GuideResult } from "./guide.ts";

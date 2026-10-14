@@ -27,7 +27,7 @@ Out of scope: the Selection format and validation (`extensions/configure.ts` `re
 
 ## Accepted direction
 
-The Approved Prototype UI Contract v2 (`prototype/configure-ux/approved-config-guide-v2.md`, superseding v1, disposition reference-only) defines the target interaction. Evidence: `prototype/configure-ux/snapshots.txt`, `guide.ts`, `mocks.ts`, `extension.ts`.
+The Approved Prototype UI Contract v3 (`prototype/configure-ux/approved-config-guide-v3.md`, superseding v2 and v1, disposition reference-only) defines the target interaction. Evidence: `prototype/configure-ux/snapshots.txt`, `guide.ts`, `mocks.ts`, `extension.ts`.
 
 ## Scenarios, states, actions, errors
 
@@ -40,7 +40,7 @@ The Approved Prototype UI Contract v2 (`prototype/configure-ux/approved-config-g
 7. Review (Esc returns focus to `Review and apply`; body scrolls on short terminals with `Apply now` and hints pinned): Changes (from → to, or "No changes to your selection."), Packages (+ install, ! unreadable with pointer to /workflow:doctor, only while still expected, = kept installed), Always on apply (align MCP servers, apply default Pi settings, nothing is uninstalled). Enter applies the existing outcome set; Esc returns to editing with the draft intact.
 8. Esc with no pending changes closes; with pending changes the first Esc asks to discard and the second closes without writing; any other key keeps editing.
 9. Applying with no selection changes is allowed (still aligns MCP and default settings), as today.
-10. Companion catalog cannot be loaded: Companions shows the load error; review shows Not applied (MCP servers and default settings will not be aligned; selection still saved). Apply behavior unchanged.
+10. Companion catalog cannot be loaded: unchanged from today; `/workflow:config` reports the load error and does not open the guide (`extensions/seating.ts:29`, `extensions/pi-workflow.ts:288-291`).
 11. Mouse: wheel moves focus or scrolls the review; click flips a toggle, advances a choice, opens the review, or applies; `[×]` behaves like Esc.
 12. Unreadable/invalid selection, no TUI, or arguments: unchanged from today (error, guide not opened).
 
@@ -58,11 +58,12 @@ The Approved Prototype UI Contract v2 (`prototype/configure-ux/approved-config-g
 | Unreadable companion listed in review | user | prototype contract v1 | accepted |
 | Disposition reference-only | user | prototype contract v1 | accepted |
 | Mouse parity; `[×]` behaves like Esc (F1) | user | feature-review 2026-10-14; contract v2 | accepted |
-| Catalog load error shown; review says MCP/settings not aligned (F2) | user | feature-review 2026-10-14; contract v2 | accepted |
+| Catalog load error shown; review says MCP/settings not aligned (F2) | user | feature-review 2026-10-14; contract v2 | superseded by F6 |
+| Revert F2: keep today's catalog-error refusal; no catalog-error screen (F6) | user | second feature-review 2026-10-14; seating.ts:29; contract v3 | accepted |
 | `! unreadable` only while expected (F3) | user | feature-review 2026-10-14; GLOSSARY degraded harness; contract v2 | accepted |
 | Review scrolls with pinned Apply now and hints; Esc focuses Review and apply (F4) | user | feature-review 2026-10-14; contract v2 | accepted |
 | Accept test-migration risk; spec defines coverage (F5) | user | feature-review 2026-10-14 | accepted risk |
-| Companion descriptions passed from `loaded.companions[].description` | feature-review | pi-workflow.ts:293-295 | informative |
+| Spec must pass companion catalog descriptions into the guide and test them against the real catalog (F7) | user | second feature-review 2026-10-14; pi-workflow.ts:293-300 | accepted constraint for to-spec |
 
 ## Assumptions
 
@@ -81,7 +82,7 @@ ADR 0009 (guided configure), ADR 0012 (command entrypoint), Delegation mode spec
 ## Risks
 
 - Tests that drive the guide as a `SettingsList` (`test/workflow-settings.test.mjs`, `test/delegation-mode.test.mjs`, `test/configure.test.mjs`) must be rewritten.
-- Accepted (F5): the spec must define guide coverage for control-specific keys, Tab, pending count, statuses, review, both Esc paths, mouse, catalog error, cancel without writes, and apply with no changes.
+- Accepted (F5): the spec must define guide coverage for control-specific keys, Tab, pending count, statuses, review, both Esc paths, mouse, cancel without writes, and apply with no changes.
 
 ## Evidence gaps
 

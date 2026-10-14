@@ -80,34 +80,32 @@ run("7. Tab jumps to Review and apply", scenarios.mixed, [
 run("8. Review screen", scenarios.mixed, ["down", "space", "tab", "enter"]);
 run("9. Review with no changes", scenarios.fresh, ["tab", "enter"]);
 run("10. Enter on review applies", scenarios.fresh, ["tab", "enter", "enter"]);
-run("11. Broken companion catalog", scenarios.broken, []);
-run("12. Review with broken catalog", scenarios.broken, ["tab", "enter"]);
 run(
-	"13. Review on a short terminal scrolls; Apply now and hints stay",
+	"11. Review on a short terminal scrolls; Apply now and hints stay",
 	scenarios.mixed,
 	["down", "space", "tab", "enter"],
 	18,
 );
-run("14. Esc from review returns focus to Review and apply", scenarios.mixed, [
+run("12. Esc from review returns focus to Review and apply", scenarios.mixed, [
 	"down",
 	"space",
 	"tab",
 	"enter",
 	"esc",
 ]);
-run("15. Mouse click on the Todo row toggles it", scenarios.fresh, [
+run("13. Mouse click on the Todo row toggles it", scenarios.fresh, [
 	{ type: "click", x: 10, y: 4 },
 ]);
-run("16. Mouse wheel moves focus", scenarios.fresh, [
+run("14. Mouse wheel moves focus", scenarios.fresh, [
 	{ type: "wheel", wheelDelta: 1, x: 10, y: 4 },
 	{ type: "wheel", wheelDelta: 1, x: 10, y: 4 },
 ]);
 run(
-	"17. Click [×] with pending changes asks before discarding",
+	"15. Click [×] with pending changes asks before discarding",
 	scenarios.fresh,
 	["space", { type: "click", x: 78, y: 0 }],
 );
-run("18. Click Review and apply, then Apply now", scenarios.fresh, [
+run("16. Click Review and apply, then Apply now", scenarios.fresh, [
 	{ type: "click", x: 10, y: 21 },
 	{ type: "click", x: 10, y: 14 },
 ]);

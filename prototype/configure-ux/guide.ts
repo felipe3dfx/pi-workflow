@@ -43,12 +43,11 @@ export type ChoiceRow = {
 
 type Row = ToggleRow | ChoiceRow;
 
-export type GuideSection = { title: string; rows: Row[]; error?: string };
+export type GuideSection = { title: string; rows: Row[] };
 
 export type GuideModel = {
 	sections: GuideSection[];
 	alwaysOnApply: string[];
-	catalogError?: string;
 };
 
 export type GuideResult =
@@ -215,10 +214,6 @@ export function createConfigGuide(
 		model.sections.forEach((section, s) => {
 			if (s > 0) push("");
 			push(sectionRule(t, section.title, inner));
-			if (section.error) {
-				for (const line of wrapTextWithAnsi(section.error, inner - 4))
-					push(`    ${t.fg("error", line)}`);
-			}
 			for (const row of section.rows) {
 				if (index === focus) selectedAt = list.length;
 				push(rowLine(row, index === focus, inner), { row: index });
@@ -309,18 +304,9 @@ export function createConfigGuide(
 				);
 		}
 		body.push("");
-		if (model.catalogError) {
-			body.push(sectionRule(t, "Not applied", inner));
-			for (const line of wrapTextWithAnsi(
-				"The companion catalog could not be loaded, so MCP servers and default Pi settings will not be aligned. Your selection is still saved.",
-				inner - 4,
-			))
-				body.push(`  ${t.fg("warning", line)}`);
-		} else {
-			body.push(sectionRule(t, "Always on apply", inner));
-			for (const line of model.alwaysOnApply)
-				body.push(`  ${t.fg("dim", "·")} ${t.fg("text", line)}`);
-		}
+		body.push(sectionRule(t, "Always on apply", inner));
+		for (const line of model.alwaysOnApply)
+			body.push(`  ${t.fg("dim", "·")} ${t.fg("text", line)}`);
 		return body;
 	}
 

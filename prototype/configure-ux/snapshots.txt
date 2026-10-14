@@ -246,54 +246,7 @@ input: tab enter · terminal rows 40 → open
 input: tab enter enter · terminal rows 40 → applied
 
 
-### 11. Broken companion catalog
-input: (none) · terminal rows 40 → open
-
-┌─ Workflow config ────────────────────────────────────────────────────────── [×] ─┐
-│                                                                                  │
-│   Capabilities ────────────────────────────────────────────────────────────────  │
-│  ▸ [x] Child session                                                             │
-│    [x] Todo                                                                      │
-│    [x] Operator questions                                                        │
-│    [x] Model profiles                                                            │
-│    [x] CodeGraph                                                                 │
-│    [x] Compact rendering                                                         │
-│                                                                                  │
-│   Routing and delegation ──────────────────────────────────────────────────────  │
-│    [ ] Jev routing                                                               │
-│        Delegation mode                                      ‹ opportunistic ›    │
-│                                                                                  │
-│   Companions ──────────────────────────────────────────────────────────────────  │
-│      Unable to load companion metadata at assets/companions.json: Unexpected     │
-│      token } in JSON.                                                            │
-│                                                                                  │
-│  ──────────────────────────────────────────────────────────────────────────────  │
-│    Review and apply                                              no changes ›    │
-│                                                                                  │
-│    Delegate bounded work to child sessions; shows them above the input and       │
-│    offers spawn_child.                                                           │
-│                                                                                  │
-│           ↑/↓ move  |  Space toggle  |  Tab go to apply  |  Esc close            │
-└──────────────────────────────────────────────────────────────────────────────────┘
-
-### 12. Review with broken catalog
-input: tab enter · terminal rows 40 → open
-
-┌─ Workflow config › Review ───────────────────────────────────────────────── [×] ─┐
-│                                                                                  │
-│   Changes ─────────────────────────────────────────────────────────────────────  │
-│    No changes to your selection.                                                 │
-│                                                                                  │
-│   Not applied ─────────────────────────────────────────────────────────────────  │
-│    The companion catalog could not be loaded, so MCP servers and default Pi      │
-│    settings will not be aligned. Your selection is still saved.                  │
-│                                                                                  │
-│  ▸ Apply now                                                                     │
-│                                                                                  │
-│                         Enter apply  |  Esc back to edit                         │
-└──────────────────────────────────────────────────────────────────────────────────┘
-
-### 13. Review on a short terminal scrolls; Apply now and hints stay
+### 11. Review on a short terminal scrolls; Apply now and hints stay
 input: down space tab enter · terminal rows 18 → open
 
 ┌─ Workflow config › Review ───────────────────────────────────────────────── [×] ─┐
@@ -314,7 +267,7 @@ input: down space tab enter · terminal rows 18 → open
 │                 ↑/↓ scroll  |  Enter apply  |  Esc back to edit                  │
 └──────────────────────────────────────────────────────────────────────────────────┘
 
-### 14. Esc from review returns focus to Review and apply
+### 12. Esc from review returns focus to Review and apply
 input: down space tab enter esc · terminal rows 40 → open
 
 ┌─ Workflow config · 1 change ─────────────────────────────────────────────── [×] ─┐
@@ -345,7 +298,7 @@ input: down space tab enter esc · terminal rows 40 → open
 │      ↑/↓ move  |  Enter review  |  Tab go to apply  |  Esc discard changes       │
 └──────────────────────────────────────────────────────────────────────────────────┘
 
-### 15. Mouse click on the Todo row toggles it
+### 13. Mouse click on the Todo row toggles it
 input: click@10,4 · terminal rows 40 → open
 
 ┌─ Workflow config · 1 change ─────────────────────────────────────────────── [×] ─┐
@@ -376,7 +329,7 @@ input: click@10,4 · terminal rows 40 → open
 │      ↑/↓ move  |  Space toggle  |  Tab go to apply  |  Esc discard changes       │
 └──────────────────────────────────────────────────────────────────────────────────┘
 
-### 16. Mouse wheel moves focus
+### 14. Mouse wheel moves focus
 input: wheel@10,4 wheel@10,4 · terminal rows 40 → open
 
 ┌─ Workflow config ────────────────────────────────────────────────────────── [×] ─┐
@@ -407,7 +360,7 @@ input: wheel@10,4 wheel@10,4 · terminal rows 40 → open
 │           ↑/↓ move  |  Space toggle  |  Tab go to apply  |  Esc close            │
 └──────────────────────────────────────────────────────────────────────────────────┘
 
-### 17. Click [×] with pending changes asks before discarding
+### 15. Click [×] with pending changes asks before discarding
 input: space click@78,0 · terminal rows 40 → open
 
 ┌─ Workflow config · 1 change ─────────────────────────────────────────────── [×] ─┐
@@ -441,7 +394,7 @@ input: space click@78,0 · terminal rows 40 → open
 │      ↑/↓ move  |  Space toggle  |  Tab go to apply  |  Esc discard changes       │
 └──────────────────────────────────────────────────────────────────────────────────┘
 
-### 18. Click Review and apply, then Apply now
+### 16. Click Review and apply, then Apply now
 input: click@10,21 click@10,14 · terminal rows 40 → applied
 
 
