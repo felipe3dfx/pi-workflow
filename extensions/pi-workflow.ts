@@ -291,14 +291,13 @@ export default function piWorkflowExtension(
 				return;
 			}
 			const loaded = companionPackages();
-			const packages = loaded.companions.map((companion) => companion.package);
 			const states = await resolveCompanionStates(loaded.companions, catalog);
 			const routing = jevRouting.enabled();
 			const mode = delegationMode.current();
 			const guided = await guideSelection(
 				ctx,
 				read.selection,
-				packages,
+				loaded.companions,
 				states,
 				routing,
 				mode,
