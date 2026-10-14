@@ -19,7 +19,7 @@ import { occupants, replaceSelection, seated } from "../extensions/shell.ts";
 import { classifierRegistry } from "./support/fake-jev.mjs";
 import { installedPackagePath } from "./support/child-session.mjs";
 import {
-	body,
+	body as shown,
 	driveConfig as drive_,
 	focusOn,
 	keys,
@@ -76,8 +76,6 @@ const ESC = "\x1b";
 
 const driveConfig = (command, notify, drive) =>
 	drive_(command, drive, { notify });
-
-const shown = (panel) => body(panel);
 
 function focusRouting(panel) {
 	focusOn(panel, "Jev routing");
@@ -752,11 +750,17 @@ test("the review omits Jev routing when it is unchanged", async (t) => {
 	assert.ok(review.every((line) => !/Jev routing/.test(line)));
 });
 
-for (const [label, seatedOn] of [
-	["a partly seated harness", ["todo"]],
-	["a fresh installation", []],
+const changesSection = (review) =>
+	review.slice(
+		review.findIndex((line) => line.startsWith("Changes")) + 1,
+		review.findIndex((line) => line.startsWith("Seating") || line.startsWith("Always on apply")),
+	);
+
+for (const [label, seatedOn, expected] of [
+	["a partly seated harness", ["todo"], ["Seat CodeGraph"]],
+	["a fresh installation", [], ["Seat Todo", "Seat CodeGraph"]],
 ]) {
-	test(`the review compares against the selection on disk, not the seated one, on ${label}`, async (t) => {
+	test(`the review compares changes against the selection on disk and lists seating against the seated one, on ${label}`, async (t) => {
 		const dir = withAgentDirectory(t);
 		await writeFile(selectionFile(dir), JSON.stringify(selectionWith(["codegraph", "todo"])));
 		seatOnly(t, seatedOn);
@@ -768,10 +772,50 @@ for (const [label, seatedOn] of [
 			panel.handleInput(ESC);
 			panel.handleInput(ESC);
 		});
-		assert.ok(review.includes("No changes to your selection."));
-		assert.ok(review.every((line) => !/(Seat|Unseat) /.test(line)));
+		assert.ok(changesSection(review).includes("No changes to your selection."));
+		assert.ok(changesSection(review).every((line) => !/(Seat|Unseat) /.test(line)));
+		const seating = review.findIndex((line) => line.startsWith("Seating"));
+		assert.ok(seating > review.findIndex((line) => line.startsWith("Changes")));
+		assert.deepEqual(review.slice(seating + 1, seating + 1 + expected.length), expected);
+		assert.ok(seating < review.findIndex((line) => line.startsWith("Always on apply")));
 	});
 }
+
+test("a draft edit that unseats a seated capability lists Unseat in the review", async (t) => {
+	const dir = withAgentDirectory(t);
+	await writeFile(selectionFile(dir), JSON.stringify(selectionWith(["todo"])));
+	seatOnly(t, ["todo"]);
+	const { command, notify } = extension(new Map(), [], dir);
+	let review;
+	await driveConfig(command, notify, (panel) => {
+		focus(panel, "Todo");
+		press(panel, keys.space);
+		openApply(panel);
+		review = shown(panel);
+		panel.handleInput(ESC);
+		panel.handleInput(ESC);
+		panel.handleInput(ESC);
+	});
+	const seating = review.findIndex((line) => line.startsWith("Seating"));
+	assert.ok(seating > 0);
+	assert.equal(review[seating + 1], "Unseat Todo");
+	assert.ok(changesSection(review).some((line) => /Todo\s+on → off/.test(line)));
+});
+
+test("the review has no Seating section when the seated capabilities equal the draft", async (t) => {
+	const dir = withAgentDirectory(t);
+	await writeFile(selectionFile(dir), JSON.stringify(selectionWith(["todo"])));
+	seatOnly(t, ["todo"]);
+	const { command, notify } = extension(new Map(), [], dir);
+	let review;
+	await driveConfig(command, notify, (panel) => {
+		openApply(panel);
+		review = shown(panel);
+		panel.handleInput(ESC);
+		panel.handleInput(ESC);
+	});
+	assert.ok(review.every((line) => !line.startsWith("Seating")));
+});
 
 test("an unreadable selection reports the error and does not open the guide", async (t) => {
 	const dir = withAgentDirectory(t);

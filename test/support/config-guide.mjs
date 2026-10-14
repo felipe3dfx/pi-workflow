@@ -27,8 +27,6 @@ export const taggedTheme = {
 
 export const newKeybindings = () => new KeybindingsManager(TUI_KEYBINDINGS);
 
-// Runs /workflow:config with a fake overlay. `drive` receives the panel and a
-// session whose `closed` flag turns true once the guide calls done.
 export async function driveConfig(
 	command,
 	drive,
@@ -71,7 +69,6 @@ export function title(panel, width = WIDTH) {
 		.replace(/ ─+( \[×\] )?─┐$/, "");
 }
 
-// Frame removed and padding trimmed: a row reads `▸ [x] Label   value`.
 export const body = (panel, width = WIDTH) =>
 	plain(panel, width)
 		.slice(1, -1)

@@ -127,6 +127,7 @@ function createConfigGuide(
 	draftState: { routing: boolean; mode: DelegationModeName },
 	companions: readonly { package: string; description?: string }[],
 	states: readonly GuideState[],
+	seated: Pick<Selection, "capabilities">,
 	theme: MenuTheme,
 	keys: Keys,
 	terminalRows: () => number,
@@ -278,7 +279,7 @@ function createConfigGuide(
 			.flatMap((part) => wrapTextWithAnsi(part, width))
 			.map((line) => t.fg("dim", line));
 		const warns =
-			row.label === "Delegation mode" &&
+			row.kind === "choice" &&
 			draftState.mode === "orchestrator" &&
 			!draft.capabilities["child-session"];
 		if (warns) {
@@ -370,6 +371,21 @@ function createConfigGuide(
 					inner,
 				),
 			);
+		}
+		const seating = capabilities
+			.filter(
+				(capability) =>
+					seated.capabilities[capability] !== draft.capabilities[capability],
+			)
+			.map(
+				(capability) =>
+					`${draft.capabilities[capability] ? "Seat" : "Unseat"} ${capabilityCopy[capability][0]}`,
+			);
+		if (seating.length) {
+			lines.push("", sectionRule(t, "Seating", inner));
+			for (const line of seating) {
+				lines.push(`  ${t.fg("text", line)}`);
+			}
 		}
 		const plan = planApply(draft, states);
 		const broken = states
@@ -558,6 +574,7 @@ export async function guideSelection(
 	states: readonly GuideState[],
 	jevRouting: boolean,
 	delegationMode: DelegationModeName,
+	seated: Pick<Selection, "capabilities">,
 ): Promise<GuideOutcome | undefined> {
 	if (!ctx.hasUI || ctx.mode !== "tui") {
 		report(ctx, "Configure needs the TUI.", "error");
@@ -573,6 +590,7 @@ export async function guideSelection(
 				draftState,
 				companions,
 				states,
+				seated,
 				theme,
 				keybindings,
 				() => tui.terminal.rows,

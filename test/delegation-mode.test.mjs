@@ -26,8 +26,8 @@ import piWorkflowExtension from "../extensions/pi-workflow.ts";
 import { classifierRegistry } from "./support/fake-jev.mjs";
 import { fakeChildren } from "./support/fake-children.mjs";
 import {
-	body,
-	driveConfig as drive_,
+	body as shown,
+	driveConfig,
 	focusOn,
 	keys,
 	newKeybindings,
@@ -58,10 +58,6 @@ function extensionCommand(agentDirectory, name) {
 	);
 	return commands.get(name);
 }
-
-const driveConfig = (command, drive) => drive_(command, drive);
-
-const shown = (panel) => body(panel);
 
 const focus = focusOn;
 

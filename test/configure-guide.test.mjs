@@ -330,6 +330,15 @@ test("the focused row's description shows below the list, a companion's from the
 		copy.child = descriptionOf();
 		focusOn(panel, "Todo");
 		copy.todo = descriptionOf();
+		for (const [key, label] of [
+			["questions", "Operator questions"],
+			["profiles", "Model profiles"],
+			["codegraph", "CodeGraph"],
+			["compact", "Compact rendering"],
+		]) {
+			focusOn(panel, label);
+			copy[key] = descriptionOf();
+		}
 		focusOn(panel, "Jev routing");
 		copy.jev = descriptionOf();
 		focusOn(panel, "Delegation mode");
@@ -347,6 +356,19 @@ test("the focused row's description shows below the list, a companion's from the
 		/Delegate bounded work to child sessions; shows them above the input and offers spawn_child\./,
 	);
 	assert.match(copy.todo, /Session task list pinned above the input\./);
+	assert.match(
+		copy.questions,
+		/Lets the agent ask you choices or open questions in a panel\./,
+	);
+	assert.match(copy.profiles, /Pick a model per role with \/workflow:models\./);
+	assert.match(
+		copy.codegraph,
+		/Offers the codegraph tool for structural code search\./,
+	);
+	assert.match(
+		copy.compact,
+		/Shows Pi's built-in tool calls in compact form\. Off restores native rendering\./,
+	);
 	assert.match(
 		copy.jev,
 		/Ask Jev on each message whether the work stays in the parent or goes to a child session\. Needs a TypeSafe key\./,
@@ -436,6 +458,7 @@ test("the hints follow the focused control and the pending changes", async (t) =
 test("every rendered line stays within the width in the list", async (t) => {
 	const widths = [30, 40, 56, 80, 120];
 	const lengths = [];
+	let rows;
 	await open(t, { states: { [web]: "missing" } }, (panel) => {
 		press(panel, keys.space);
 		for (const width of widths) {
@@ -443,11 +466,17 @@ test("every rendered line stays within the width in the list", async (t) => {
 				lengths.push([width, visible(line)]);
 			}
 		}
+		rows = body(panel, 56);
 		closeGuide(panel);
 		closeGuide(panel);
 	});
 	assert.ok(lengths.length > 0);
 	assert.ok(lengths.every(([width, length]) => length <= width));
+	assert.ok(rows.some((line) => /^▸ \[ \] Child session/.test(line)));
+	assert.ok(rows.some((line) => /^\[x\] Todo/.test(line)));
+	assert.ok(
+		rows.some((line) => /^Delegation mode\s+‹ opportunistic ›/.test(line)),
+	);
 });
 
 const visible = (line) => visibleWidth(line);
@@ -603,9 +632,12 @@ test("Esc from the review keeps the draft and focuses Review and apply", async (
 
 test("Esc without changes closes the guide and writes nothing", async (t) => {
 	const setup = guide(t);
-	const session = await driveConfig(setup.command, (panel) =>
-		press(panel, keys.escape),
-	);
+	let hint;
+	const session = await driveConfig(setup.command, (panel) => {
+		hint = body(panel).join(" ").replace(/\s+/g, " ");
+		press(panel, keys.escape);
+	});
+	assert.ok(hint.includes("Esc close"));
 	assert.equal(session.closed, true);
 	assert.equal(await storedSelection(setup.dir), undefined);
 });
