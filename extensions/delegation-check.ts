@@ -10,7 +10,6 @@ type DelegationAction = "launch" | "stay" | "decide" | "block";
 
 interface Expectation {
 	action: DelegationAction;
-	role?: "explore" | "worker" | "verify";
 	destinationAsked: boolean;
 }
 
@@ -19,7 +18,6 @@ interface DelegationCase {
 	live?: boolean;
 	task: string;
 	userRequest: string;
-	suggestedRole?: "explore" | "worker" | "verify";
 	expected: Expectation;
 	orchestrator?: Expectation;
 }
@@ -33,7 +31,6 @@ export const delegationCases: readonly DelegationCase[] = [
 			"Investiga con un hijo la arquitectura de estas dos implementaciones y cómo encajan.",
 		expected: {
 			action: "launch",
-			role: "explore",
 			destinationAsked: true,
 		},
 	},
@@ -42,10 +39,8 @@ export const delegationCases: readonly DelegationCase[] = [
 		live: true,
 		task: "Wait 10 seconds and report.",
 		userRequest: "Lanza 5 subagentes que esperen 10 segundos",
-		suggestedRole: "worker",
 		expected: {
 			action: "launch",
-			role: "worker",
 			destinationAsked: true,
 		},
 	},
@@ -54,23 +49,19 @@ export const delegationCases: readonly DelegationCase[] = [
 		live: true,
 		task: "Wait 10 seconds and report.",
 		userRequest: "Spawn three subagents to wait 10 seconds each",
-		suggestedRole: "worker",
 		expected: {
 			action: "launch",
-			role: "worker",
 			destinationAsked: true,
 		},
 	},
 	{
-		name: "suggested worker plus source comparison",
+		name: "bounded source comparison",
 		live: true,
 		task: "Compare the two cited source files and report how they differ.",
 		userRequest:
 			"Compare the two cited source implementations and report how they differ. The comparison is bounded and can be finished alone.",
-		suggestedRole: "worker",
 		expected: {
 			action: "launch",
-			role: "explore",
 			destinationAsked: true,
 		},
 	},
@@ -82,7 +73,6 @@ export const delegationCases: readonly DelegationCase[] = [
 			"Add the missing export and a unit test that covers it. The change is bounded and can be finished alone.",
 		expected: {
 			action: "launch",
-			role: "worker",
 			destinationAsked: true,
 		},
 	},
@@ -94,7 +84,6 @@ export const delegationCases: readonly DelegationCase[] = [
 			"Haz una comprobación independiente del cambio que ya está hecho. La revisión está acotada y se puede terminar sola.",
 		expected: {
 			action: "launch",
-			role: "verify",
 			destinationAsked: true,
 		},
 	},
@@ -106,7 +95,6 @@ export const delegationCases: readonly DelegationCase[] = [
 			"Revisa de forma independiente si docs/adr/0011-git-and-gh-guard-in-child-bash.md describe correctamente lo que hace extensions/child-bash.ts. Quiero un veredicto claro.",
 		expected: {
 			action: "launch",
-			role: "verify",
 			destinationAsked: true,
 		},
 	},
@@ -118,7 +106,6 @@ export const delegationCases: readonly DelegationCase[] = [
 			"Verifica de forma independiente que la rama feature-inexistente pasa todos los tests de este repo",
 		expected: {
 			action: "launch",
-			role: "verify",
 			destinationAsked: true,
 		},
 	},
@@ -149,7 +136,6 @@ export const delegationCases: readonly DelegationCase[] = [
 		userRequest: "Usa la skill implement para este ticket.",
 		expected: {
 			action: "launch",
-			role: "worker",
 			destinationAsked: true,
 		},
 	},
@@ -165,7 +151,7 @@ type Verdict = Awaited<
 >;
 
 function actionOf(verdict: Verdict): DelegationAction {
-	if (verdict.kind === "launch") return "launch";
+	if (verdict.kind === "leave") return "launch";
 	if (verdict.kind === "stay") return "stay";
 	if (verdict.kind === "decide") return "decide";
 	return "block";
@@ -174,20 +160,12 @@ function actionOf(verdict: Verdict): DelegationAction {
 function evidence(verdict: Verdict): string {
 	const jev = verdict.jev;
 	if (!jev) return "";
-	const specialist = jev.answers.specialist;
 	const destination = jev.answers.destination;
-	const primary =
-		verdict.kind === "launch" ? specialist : (destination ?? specialist);
 	const parts: string[] = [];
-	if (specialist?.type === "choice") {
-		parts.push(`specialist choice ${specialist.choice}`);
-	}
 	if (destination?.type === "choice") {
 		parts.push(`destination choice ${destination.choice}`);
-	}
-	if (primary?.type === "choice") {
-		parts.push(`confidence ${primary.confidence}`);
-		parts.push(`probabilities ${JSON.stringify(primary.probabilities)}`);
+		parts.push(`confidence ${destination.confidence}`);
+		parts.push(`probabilities ${JSON.stringify(destination.probabilities)}`);
 	}
 	return parts.length > 0 ? `; ${parts.join("; ")}` : "";
 }
@@ -199,15 +177,9 @@ function scoreLine(
 ): string {
 	const action = actionOf(verdict);
 	const destinationAsked = verdict.jev?.answers.destination !== undefined;
-	const role = verdict.kind === "launch" ? verdict.role : undefined;
 	const mismatches: string[] = [];
 	if (action !== expected.action) {
 		mismatches.push(`action expected ${expected.action}, got ${action}`);
-	}
-	if (expected.role && role !== expected.role) {
-		mismatches.push(
-			`specialist expected ${expected.role}, got ${role ?? "none"}`,
-		);
 	}
 	if (destinationAsked !== expected.destinationAsked) {
 		mismatches.push(
@@ -216,11 +188,10 @@ function scoreLine(
 	}
 	const detail = evidence(verdict);
 	if (mismatches.length > 0) {
-		const reason = verdict.kind === "launch" ? "" : `; ${verdict.reason}`;
+		const reason = verdict.kind === "leave" ? "" : `; ${verdict.reason}`;
 		return `fail: ${item.name}: ${mismatches.join("; ")}${detail}${reason}`;
 	}
-	const specialist = role ? `, specialist ${role}` : "";
-	return `pass: ${item.name}: action ${action}${specialist}, destination asked ${destinationAsked ? "yes" : "no"}${detail}`;
+	return `pass: ${item.name}: action ${action}, destination asked ${destinationAsked ? "yes" : "no"}${detail}`;
 }
 
 export async function runDelegationCheck(
@@ -247,11 +218,7 @@ export async function runDelegationCheck(
 		}
 		try {
 			const verdict = await launcher.classify(
-				{
-					task: item.task,
-					userRequest: item.userRequest,
-					...(item.suggestedRole ? { role: item.suggestedRole } : {}),
-				},
+				{ task: item.task, userRequest: item.userRequest },
 				ctx,
 			);
 			lines.push(

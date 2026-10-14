@@ -41,7 +41,7 @@ async function recordingRegistry(dir, requests) {
 }
 
 test(
-	"live Jev selects the specialist for every live delegation case",
+	"live Jev lets every live delegation case leave with the parent's role",
 	{ skip, timeout: 120_000 },
 	async (t) => {
 		const dir = await mkdtemp(join(tmpdir(), "pi-workflow-jev-live-"));
@@ -62,34 +62,22 @@ test(
 					modelRegistry,
 				},
 			);
-		const specialists = {
-			explore: "explorer",
-			worker: "worker",
-			verify: "verifier",
-		};
 		for (const item of delegationCases.filter((candidate) => candidate.live)) {
 			const before = requests.length;
 			const result = await decide({
+				role: "worker",
 				task: item.task,
 				userRequest: item.userRequest,
-				...(item.suggestedRole ? { role: item.suggestedRole } : {}),
 			});
 			assert.equal(
 				result.kind,
 				"ready",
 				`${item.name}: ${result.reason ?? result.warning ?? ""}`,
 			);
-			assert.equal(result.role, item.expected.role, item.name);
+			assert.equal(result.role, "worker", item.name);
 			const body = requests[before];
 			assert.equal(body.state.user_request, item.userRequest, item.name);
-			if (item.suggestedRole) {
-				assert.equal(
-					body.state.suggested_specialist,
-					specialists[item.suggestedRole],
-					item.name,
-				);
-				assert.equal(body.questions.destination.type, "choice", item.name);
-			}
+			assert.deepEqual(Object.keys(body.questions), ["destination"], item.name);
 		}
 	},
 );

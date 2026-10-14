@@ -57,24 +57,9 @@ function fakeJev(answer) {
 		if (answered && typeof answered === "object") return answered;
 		const questions = body.questions ?? {};
 		const answers = {};
-		const specialists = ["explorer", "worker", "verifier"];
 		const text = typeof answered === "string" ? answered : "leave";
-		const named = specialists.includes(text);
-		const destinations = ["stay", "leave", "decide"];
-		const suggested = body.state?.suggested_specialist;
-		if (questions.specialist) {
-			const picked = named
-				? text
-				: specialists.includes(suggested)
-					? suggested
-					: destinations.includes(text)
-						? "worker"
-						: text;
-			answers.specialist = choiceAnswer(picked, questions.specialist.criteria);
-		}
 		if (questions.destination) {
-			const picked = destinations.includes(text) ? text : named ? "leave" : text;
-			answers.destination = choiceAnswer(picked, questions.destination.criteria);
+			answers.destination = choiceAnswer(text, questions.destination.criteria);
 		}
 		return { answers };
 	});
@@ -228,19 +213,19 @@ test("a role Jev lets leave gets its contract prompt and tools", async () => {
 	});
 });
 
-test("a missing role launches the specialist Jev chooses and does not assume worker", async () => {
+test("with Jev routing on, a launch without a role is refused and never assumes worker", async () => {
 	await withWorkspace(async ({ worktree }) => {
+		const jev = fakeJev(() => "leave");
 		const launcher = createChildLauncher({ jevRouting, delegationMode, modelProfiles: absentProfiles });
 
 		const result = await launcher.prepareLaunch(
 			{ task: "Compare the two sources" },
-			launcherContext(worktree, { jev: fakeJev(() => "explorer") }),
+			launcherContext(worktree, { jev }),
 		);
 
-		assert.equal(result.kind, "ready");
-		assert.equal(result.role, "explore");
-		assert.match(result.contract.prompt, /You are an explore/);
-		assert.deepEqual(result.warnings, []);
+		assertRefused(result, /needs a role/);
+		assert.equal("role" in result, false);
+		assert.equal(jev.requests.length, 0);
 	});
 });
 
@@ -300,12 +285,6 @@ test("a missing or unreadable contract is refused and never falls back to worker
 			assertRefused(unreadable, new RegExp(`contract for ${role}`));
 			assert.equal("role" in unreadable, false);
 		}
-
-		const noRole = await launcher.prepareLaunch(
-			{ task: "Fix the failing test" },
-			launcherContext(worktree),
-		);
-		assertRefused(noRole, /contract for worker/);
 	});
 });
 
@@ -555,7 +534,7 @@ const everyModel = [
 	catalogModel("session/model"),
 ];
 
-test("each specialist Jev chooses runs the model and thinking of that entry in the active profile", async () => {
+test("each role the parent chooses runs the model and thinking of that entry in the active profile", async () => {
 	await withWorkspace(async ({ worktree }) => {
 		const profiles = loadedProfiles(
 			{ other: {}, main: everyRole, unused: { worker: everyRole.verifier } },
@@ -580,10 +559,7 @@ test("each specialist Jev chooses runs the model and thinking of that entry in t
 			assert.deepEqual({ model: result.model, thinking: result.thinking }, pair);
 			assert.deepEqual(result.warnings, []);
 			assert.equal(jev.requests.length, 1);
-			assert.deepEqual(Object.keys(jev.requests[0].questions).sort(), [
-				"destination",
-				"specialist",
-			]);
+			assert.deepEqual(Object.keys(jev.requests[0].questions), ["destination"]);
 		}
 	});
 });
@@ -645,7 +621,7 @@ test("a configured model Pi cannot run is refused with the profile, specialist, 
 	});
 });
 
-test("a misconfigured profile is refused after Jev selects that specialist", async () => {
+test("a misconfigured profile is refused after Jev lets the parent's role leave", async () => {
 	await withWorkspace(async ({ worktree }) => {
 		const jev = fakeJev(() => "leave");
 		const result = await createChildLauncher({
@@ -680,9 +656,9 @@ test("a session without a model or thinking is refused when the session pair is 
 	});
 });
 
-test("an explicit child request asks Jev for destination and specialist and launches the specialist Jev chooses", async () => {
+test("Jev decides only the destination and the parent's role launches", async () => {
 	await withWorkspace(async ({ worktree }) => {
-		const jev = fakeJev(() => "explorer");
+		const jev = fakeJev(() => "leave");
 		const result = await createChildLauncher({
 			jevRouting,
 			delegationMode,
@@ -690,26 +666,26 @@ test("an explicit child request asks Jev for destination and specialist and laun
 		}).prepareLaunch(
 			{
 				role: "worker",
-				task: "Decide the storage architecture",
+				task: "Read the two implementations and summarize them",
 				userRequest: "Explora con un hijo la arquitectura de estas dos implementaciones",
 			},
 			launcherContext(worktree, { jev }),
 		);
 
 		assert.equal(result.kind, "ready");
-		assert.equal(result.role, "explore");
-		assert.deepEqual(result.warnings, []);
-		assert.equal(jev.requests[0].questions.destination.type, "choice");
+		assert.equal(result.role, "worker");
+		assert.equal(result.chosenBy, "parent");
+		assert.ok(result.contract.tools.includes("bash"));
+		assert.equal(jev.requests.length, 1);
+		assert.deepEqual(Object.keys(jev.requests[0].questions), ["destination"]);
 		assert.equal(
 			jev.requests[0].state.user_request,
 			"Explora con un hijo la arquitectura de estas dos implementaciones",
 		);
-		assert.equal(jev.requests[0].state.suggested_specialist, "worker");
-		assert.equal(jev.requests[0].state.task, "Decide the storage architecture");
-		assert.equal(result.jev.answers.specialist.choice, "explorer");
+		assert.equal(jev.requests[0].state.task, "Read the two implementations and summarize them");
+		assert.equal(result.jev.answers.destination.choice, "leave");
 		assert.equal(result.jev.provider, "typesafe");
 		assert.equal(result.jev.model, "jev-latest");
-		assert.equal(result.jev.answers.specialist.confidence, 0.91);
 	});
 });
 
@@ -767,90 +743,50 @@ test("the parent's task cannot turn a user request into an explicit child", asyn
 	});
 });
 
-test("Jev can choose explorer when the suggested role is worker", async () => {
+test("sibling launches of one message keep each parent role and Jev classifies the destination once", async () => {
 	await withWorkspace(async ({ worktree }) => {
-		const result = await createChildLauncher({
+		const jev = fakeJev(() => "leave");
+		const launcher = createChildLauncher({
 			jevRouting,
 			delegationMode,
 			modelProfiles: absentProfiles,
-		}).prepareLaunch(
-			{
-				role: "worker",
-				task: "Compare the cited sources",
-				userRequest: "Usa un hijo para comparar estas fuentes",
-			},
-			launcherContext(worktree, { jev: fakeJev(() => "explorer") }),
-		);
-
-		assert.equal(result.kind, "ready");
-		assert.equal(result.role, "explore");
-	});
-});
-
-test("an implementation package and an independent check take the specialist Jev names", async () => {
-	await withWorkspace(async ({ worktree }) => {
-		const launch = (specialist, userRequest) =>
-			createChildLauncher({
-				jevRouting,
-				delegationMode,
-				modelProfiles: absentProfiles,
-			}).prepareLaunch(
-				{ task: userRequest, userRequest },
-				launcherContext(worktree, { jev: fakeJev(() => specialist) }),
-			);
-		const implementation = await launch(
-			"worker",
-			"Add the missing export and its test",
-		);
-		const check = await launch(
-			"verifier",
-			"Haz una comprobación independiente del cambio ya hecho",
-		);
-
-		assert.equal(implementation.kind, "ready");
-		assert.equal(implementation.role, "worker");
-		assert.equal(check.kind, "ready");
-		assert.equal(check.role, "verify");
-	});
-});
-
-test("the verifier criterion covers review of finished work and the explorer criterion excludes it", async () => {
-	await withWorkspace(async ({ worktree }) => {
-		let criteria;
-		let instructions;
-		const jev = fakeJev((body) => {
-			criteria = body.questions.specialist.criteria;
-			instructions = body.questions.specialist.instructions;
-			return "verifier";
 		});
-		await createChildLauncher({ jevRouting, delegationMode, modelProfiles: absentProfiles }).prepareLaunch(
-			{ task: "Review PR 12", userRequest: "Review PR 12" },
-			launcherContext(worktree, { jev }),
-		);
+		const launch = (role) =>
+			launcher.prepareLaunch(
+				{
+					role,
+					task: `${role} the change`,
+					userRequest: "Delegate this to three children",
+					userMessageId: "m1",
+				},
+				launcherContext(worktree, { jev }),
+			);
 
-		assert.match(instructions, /Reserved operations \(mutating git or gh, publication\) are never part of a child package and stay with the parent/);
-		assert.doesNotMatch(instructions, /never choose/);
-		assert.match(criteria.verifier, /review or check of work that is already done/);
-		assert.match(criteria.verifier, /pull request/);
-		assert.match(criteria.worker, /excluding reserved operations \(mutating git or gh, publication\), which stay with the parent/);
-		assert.match(criteria.explorer, /Not a review of a pull request or of work that is already done/);
+		const results = await Promise.all(["explore", "worker", "verify"].map(launch));
+		const again = await launch("explore");
+
+		assert.deepEqual(
+			[...results, again].map((result) => [result.kind, result.role, result.chosenBy]),
+			[
+				["ready", "explore", "parent"],
+				["ready", "worker", "parent"],
+				["ready", "verify", "parent"],
+				["ready", "explore", "parent"],
+			],
+		);
+		assert.equal(jev.requests.length, 1);
 	});
 });
 
 test("a reserved request stays with the parent instead of blocking the launch", async () => {
 	await withWorkspace(async ({ worktree }) => {
-		const jev = fakeJev((body) => ({
-			answers: {
-				specialist: choiceAnswer("worker", body.questions.specialist.criteria),
-				destination: choiceAnswer("stay", body.questions.destination.criteria),
-			},
-		}));
+		const jev = fakeJev(() => "stay");
 		const result = await createChildLauncher({
 			jevRouting,
 			delegationMode,
 			modelProfiles: absentProfiles,
 		}).prepareLaunch(
-			{ task: "Commit and push this", userRequest: "commit and push this" },
+			{ role: "worker", task: "Commit and push this", userRequest: "commit and push this" },
 			launcherContext(worktree, { jev }),
 		);
 
@@ -863,17 +799,11 @@ test("an invalid Jev selection blocks the launch and keeps the returned signals"
 	await withWorkspace(async ({ worktree }) => {
 		const jev = fakeJev(() => ({
 			answers: {
-				specialist: {
-					type: "choice",
-					choice: "architect",
-					confidence: 0.2,
-					probabilities: { explorer: 0.4, worker: 0.4, verifier: 0.2 },
-				},
 				destination: {
 					type: "choice",
-					choice: "leave",
-					confidence: 0.8,
-					probabilities: { stay: 0.1, leave: 0.9 },
+					choice: "elsewhere",
+					confidence: 0.2,
+					probabilities: { stay: 0.4, leave: 0.4, decide: 0.2 },
 				},
 			},
 		}));
@@ -889,8 +819,8 @@ test("an invalid Jev selection blocks the launch and keeps the returned signals"
 		assertRefused(result, /invalid selection/);
 		assert.match(result.warning, /Launch blocked/);
 		assert.doesNotMatch(result.warning, /stays/);
-		assert.equal(result.jev.answers.specialist.choice, "architect");
-		assert.equal(result.jev.answers.specialist.probabilities.explorer, 0.4);
+		assert.equal(result.jev.answers.destination.choice, "elsewhere");
+		assert.equal(result.jev.answers.destination.probabilities.stay, 0.4);
 	});
 });
 
@@ -947,7 +877,7 @@ test("references that exist under cwd are listed in the child's task", async () 
 		assert.match(result.task, /docs\/policy\.md/);
 		assert.match(result.task, /AGENTS\.md/);
 		assert.deepEqual(result.references, ["docs/policy.md", "AGENTS.md"]);
-		assert.equal(result.chosenBy, "jev");
+		assert.equal(result.chosenBy, "parent");
 	});
 });
 

@@ -25,12 +25,6 @@ function choiceAnswer(choice, criteria, confidence = 0.91) {
 	};
 }
 
-function specialistFor(item) {
-	if (item.expected.role === "explore") return "explorer";
-	if (item.expected.role === "verify") return "verifier";
-	return "worker";
-}
-
 function destinationFor(item) {
 	if (item.expected.action === "stay") return "stay";
 	if (item.expected.action === "decide") return "decide";
@@ -46,12 +40,6 @@ function answeringJev(fixed) {
 			);
 		const questions = body.questions ?? {};
 		const answers = {};
-		if (questions.specialist) {
-			answers.specialist = choiceAnswer(
-				specialistFor(item),
-				questions.specialist.criteria,
-			);
-		}
 		if (questions.destination) {
 			answers.destination = choiceAnswer(
 				destinationFor(item),
@@ -76,7 +64,7 @@ function context(jev, apiKey = "typesafe-key") {
 	};
 }
 
-test("delegation check scores the fixed cases against Jev answers and sends a named skill to Jev", async () => {
+test("delegation check scores only the destination of the fixed cases and sends a named skill to Jev", async () => {
 	const jev = answeringJev();
 	const { lines, failed } = await runDelegationCheck(context(jev), {
 		modelProfiles: absentProfiles,
@@ -89,11 +77,7 @@ test("delegation check scores the fixed cases against Jev answers and sends a na
 	assert.equal(lines.filter((line) => line.startsWith("pass:")).length, lines.length);
 	assert.match(
 		lines.find((line) => line.startsWith("pass: bounded implementation")),
-		/action launch, specialist worker, destination asked yes/,
-	);
-	assert.match(
-		lines.find((line) => line.startsWith("pass: bounded implementation")),
-		/specialist choice worker/,
+		/action launch, destination asked yes; destination choice leave/,
 	);
 	assert.match(
 		lines.find((line) => line.startsWith("pass: bounded implementation")),
@@ -122,12 +106,16 @@ test("delegation check scores the fixed cases against Jev answers and sends a na
 	for (const name of ["independent review request", "independent verification request"]) {
 		assert.match(
 			lines.find((line) => line.startsWith(`pass: ${name}`)),
-			/action launch, specialist verify, destination asked yes/,
+			/action launch, destination asked yes/,
 		);
 	}
 	const skill = lines.find((line) => line.startsWith("pass: implement skill"));
-	assert.match(skill, /action launch, specialist worker, destination asked yes/);
-	assert.match(skill, /specialist choice worker/);
+	assert.match(skill, /action launch, destination asked yes/);
+	assert.equal(lines.some((line) => /specialist/.test(line)), false);
+	assert.equal(
+		jev.requests.every((body) => Object.keys(body.questions).join() === "destination"),
+		true,
+	);
 	assert.equal(
 		jev.requests.some(
 			(body) => body.state.user_request === "Usa la skill implement para este ticket.",
@@ -137,10 +125,8 @@ test("delegation check scores the fixed cases against Jev answers and sends a na
 	assert.equal(jev.requests.length, delegationCases.length);
 });
 
-test("delegation check names the mismatched specialist and does not launch a child", async () => {
-	const jev = answeringJev({
-		expected: { action: "launch", role: "explore" },
-	});
+test("delegation check names the mismatched destination and does not launch a child", async () => {
+	const jev = answeringJev({ expected: { action: "launch" } });
 	const { lines, failed } = await runDelegationCheck(context(jev), {
 		modelProfiles: absentProfiles,
 		jevRouting,
@@ -149,8 +135,8 @@ test("delegation check names the mismatched specialist and does not launch a chi
 
 	assert.equal(failed, true);
 	assert.match(
-		lines.find((line) => line.startsWith("fail: bounded implementation")),
-		/specialist expected worker, got explore/,
+		lines.find((line) => line.startsWith("pass: bounded implementation")),
+		/action launch/,
 	);
 	assert.match(
 		lines.find((line) => line.startsWith("fail: open product decision")),

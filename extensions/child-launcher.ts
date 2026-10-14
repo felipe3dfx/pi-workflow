@@ -21,11 +21,7 @@ import { latestUserRequest } from "./child-sessions.ts";
 import { errorMessage } from "./error-message.ts";
 import { gitEnvironment } from "./git-environment.ts";
 import type { DelegationMode, JevRouting } from "./workflow-settings.ts";
-import {
-	type ModelProfilesLoad,
-	type Specialist,
-	specialists,
-} from "./model-profiles.ts";
+import type { ModelProfilesLoad, Specialist } from "./model-profiles.ts";
 import { seated } from "./shell.ts";
 import { offerTool } from "./tool-offer.ts";
 
@@ -55,25 +51,7 @@ const specialistByRole: Record<Role, Specialist> = {
 	verify: "verifier",
 };
 
-const roleBySpecialist: Record<Specialist, Role> = {
-	explorer: "explore",
-	worker: "worker",
-	verifier: "verify",
-};
-
 const reservedOperations = "mutating git or gh, publication";
-
-const specialistInstructions =
-	`Which specialist should carry out the requested action? Choose from the action in \`user_request\` and \`task\`. Reserved operations (${reservedOperations}) are never part of a child package and stay with the parent. \`suggested_specialist\` is a hint and does not decide the answer.`;
-
-const specialistCriteria: Record<Specialist, string> = {
-	explorer:
-		"Read-only investigation, source comparison, or mapping how something works, including an architecture investigation. Not a review of a pull request or of work that is already done.",
-	worker:
-		`Implementation, a fix, or another change a child can finish under its contract, excluding reserved operations (${reservedOperations}), which stay with the parent.`,
-	verifier:
-		"An independent review or check of work that is already done, including a pull request, a diff, or finished changes.",
-};
 
 const destinationInstructions = "Where should this package go?";
 
@@ -104,7 +82,7 @@ type GateContext = LauncherContext & {
 };
 
 type Assessment =
-	| { kind: "launch"; role: Role; jev?: ClassifierResult }
+	| { kind: "leave"; jev?: ClassifierResult }
 	| { kind: "stay" | "decide" | "blocked"; reason: string; jev?: ClassifierResult };
 
 type JevAnswer =
@@ -112,7 +90,6 @@ type JevAnswer =
 	| {
 			kind: "answer";
 			destination: "stay" | "decide" | "leave";
-			role: Role;
 			jev: ClassifierResult;
 	  };
 
@@ -132,7 +109,7 @@ type Ready = {
 	warnings: string[];
 	model: string;
 	thinking: ModelThinkingLevel;
-	chosenBy: "parent" | "jev";
+	chosenBy: "parent";
 	references: string[];
 	jev?: ClassifierResult;
 };
@@ -154,7 +131,7 @@ function outcome(
 	return { kind, warning: warningFor[kind], reason, ...(jev ? { jev } : {}) };
 }
 
-function show(assessment: Exclude<Assessment, { kind: "launch" }>): Outcome {
+function show(assessment: Exclude<Assessment, { kind: "leave" }>): Outcome {
 	return outcome(assessment.kind, assessment.reason, assessment.jev);
 }
 
@@ -346,22 +323,11 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		request: LaunchRequest,
 		ctx: LauncherContext,
 	): Promise<JevAnswer> {
-		const suggested =
-			request.role !== undefined && isRole(request.role)
-				? specialistByRole[request.role]
-				: undefined;
 		const state: ClassifierContext["state"] = {
 			...(request.userRequest ? { user_request: request.userRequest } : {}),
 			task: request.task,
-			...(suggested ? { suggested_specialist: suggested } : {}),
-			available_specialists: [...specialists],
 		};
 		const questions: ClassifierContext["questions"] = {
-			specialist: {
-				type: "choice",
-				instructions: specialistInstructions,
-				criteria: specialistCriteria,
-			},
 			destination: {
 				type: "choice",
 				instructions: destinationInstructions,
@@ -407,20 +373,11 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 				reason: `Jev did not answer: ${jev.errorMessage ?? `stop reason ${jev.stopReason}`}`,
 			};
 		}
-		const specialist = jev.answers.specialist;
 		const destination = jev.answers.destination;
-		if (
-			!choiceIn(specialist, specialists) ||
-			!choiceIn(destination, ["decide", "stay", "leave"] as const)
-		) {
+		if (!choiceIn(destination, ["decide", "stay", "leave"] as const)) {
 			return { kind: "blocked", reason: "Jev returned an invalid selection.", jev };
 		}
-		return {
-			kind: "answer",
-			destination: destination.choice,
-			role: roleBySpecialist[specialist.choice],
-			jev,
-		};
+		return { kind: "answer", destination: destination.choice, jev };
 	}
 
 	async function judge(
@@ -429,7 +386,7 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 	): Promise<Assessment> {
 		if (!options.jevRouting.enabled()) {
 			if (request.role !== undefined && isRole(request.role)) {
-				return { kind: "launch", role: request.role };
+				return { kind: "leave" };
 			}
 			return { kind: "stay", reason: "Jev routing is off." };
 		}
@@ -446,7 +403,7 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		if (answer.destination === "stay") {
 			return { kind: "stay", reason: "Jev answered that the work stays.", jev };
 		}
-		return { kind: "launch", role: answer.role, jev };
+		return { kind: "leave", jev };
 	}
 
 	let turn:
@@ -486,11 +443,7 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		for (;;) {
 			if (turn?.userMessageId !== userMessageId) return verdictFor(request, ctx);
 			const decided = await turn.pending;
-			if (decided.kind === "blocked") continue;
-			if (decided.kind !== "launch") return decided;
-			const answer = await ask(request, ctx);
-			if (answer.kind === "blocked") return answer;
-			return { kind: "launch", role: answer.role, jev: answer.jev };
+			if (decided.kind !== "blocked") return decided;
 		}
 	}
 
@@ -511,20 +464,20 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			ctx,
 		);
 		if (verdict.kind === "stay") return { allow: true };
-		if (verdict.kind === "launch" && turn?.launched) return { allow: true };
-		if (verdict.kind !== "launch") {
+		if (verdict.kind === "leave" && turn?.launched) return { allow: true };
+		if (verdict.kind !== "leave") {
 			const shown = show(verdict);
 			return { allow: false, reason: `${shown.warning}\n${shown.reason}` };
 		}
 		return {
 			allow: false,
-			reason: `Call spawn_child. Jev selected the ${verdict.role} role.`,
+			reason: "Call spawn_child with the role whose tools cover the task.",
 		};
 	}
 
 	function classify(request: LaunchRequest, ctx: LauncherContext) {
 		return verdictFor(request, ctx).then((assessment) =>
-			assessment.kind === "launch" ? assessment : show(assessment),
+			assessment.kind === "leave" ? assessment : show(assessment),
 		);
 	}
 
@@ -532,11 +485,15 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		request: LaunchRequest,
 		ctx: LauncherContext,
 	): Promise<Ready | Outcome> {
-		if (request.role !== undefined && !isRole(request.role)) {
+		const role = request.role;
+		if (role !== undefined && !isRole(role)) {
 			return outcome(
 				"refused",
-				`unknown role ${request.role}; expected ${roles.join(", ")}`,
+				`unknown role ${role}; expected ${roles.join(", ")}`,
 			);
+		}
+		if (role === undefined && options.jevRouting.enabled()) {
+			return outcome("refused", `spawn_child needs a role: ${roles.join(", ")}`);
 		}
 		const profiles = options.modelProfiles.load();
 		if (profiles.status === "refused") return outcome("refused", profiles.reason);
@@ -551,15 +508,16 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		const worktree = await gitRoot(resolve(ctx.cwd, request.worktree ?? "."));
 		if (typeof worktree !== "string") return worktree;
 		const verdict = await launchVerdict(request, ctx);
-		if (verdict.kind !== "launch") return show(verdict);
-		const contract = readContract(verdict.role);
+		if (verdict.kind !== "leave") return show(verdict);
+		if (role === undefined) return outcome("stay", "Jev routing is off.");
+		const contract = readContract(role);
 		const jev = verdict.jev ? { jev: verdict.jev } : {};
 		if ("kind" in contract) return { ...contract, ...jev };
-		const pair = profilePair(verdict.role, profiles, ctx);
+		const pair = profilePair(role, profiles, ctx);
 		if ("kind" in pair) return { ...pair, ...jev };
 		return {
 			kind: "ready",
-			role: verdict.role,
+			role,
 			contract,
 			task:
 				references.length > 0
@@ -569,7 +527,7 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			warnings: [],
 			model: pair.model,
 			thinking: pair.thinking,
-			chosenBy: verdict.jev ? "jev" : "parent",
+			chosenBy: "parent",
 			references,
 			...jev,
 		};
