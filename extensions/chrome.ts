@@ -154,7 +154,7 @@ function contextSegments(usage: HeaderData["usage"], bar: boolean): Segment[] {
 	const meter: Segment = [["dim", "ctx"]];
 	if (bar)
 		meter.push(
-			[color, "▰".repeat(filled) + "▱".repeat(meterCells - filled)],
+			[color, [...("▰".repeat(filled) + "▱".repeat(meterCells - filled))].join(" ")],
 			[null, ""],
 		);
 	meter.push([color, `${percent}%`]);

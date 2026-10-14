@@ -12,10 +12,12 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import { theme } from "./visual-language.ts";
+import { routingBlock } from "./routing-blocks.ts";
 
 const maxVisible = 10;
 
 type Kind =
+	| "routing"
 	| "file"
 	| "skill"
 	| "search"
@@ -30,6 +32,7 @@ type Kind =
 	| "tool";
 
 const words: Record<Kind, [string, string, string, string]> = {
+	routing: ["Routed", "Routing", "tool", "tools"],
 	file: ["Read", "Reading", "file", "files"],
 	skill: ["Read", "Reading", "skill", "skills"],
 	search: ["Searched", "Searching", "pattern", "patterns"],
@@ -45,6 +48,7 @@ const words: Record<Kind, [string, string, string, string]> = {
 };
 
 const folding = new Set<Kind>([
+	"routing",
 	"file",
 	"skill",
 	"search",
@@ -55,6 +59,7 @@ const folding = new Set<Kind>([
 
 type ToolState = {
 	toolName: string;
+	toolCallId: string;
 	args: unknown;
 	expanded: boolean;
 	isPartial: boolean;
@@ -143,12 +148,13 @@ type MouseLayout = {
 function rowOf(child: Component) {
 	if (child instanceof ToolExecutionComponent) {
 		const tool = child as unknown as ToolState;
+		const routed = tool.result?.isError === true && routingBlock(tool.toolCallId) !== undefined;
 		return {
 			role: "tool" as const,
 			open: tool.expanded,
 			running: tool.isPartial,
-			failed: tool.result?.isError === true,
-			kind: toolKind(tool.toolName, tool.args),
+			failed: tool.result?.isError === true && !routed,
+			kind: routed ? "routing" as const : toolKind(tool.toolName, tool.args),
 		};
 	}
 	if (child instanceof CustomMessageComponent) {

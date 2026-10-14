@@ -89,19 +89,19 @@ const styleOf = (line, text) => {
 const half = { ...header, usage: { tokens: 128_000, contextWindow: 256_000 } };
 
 test("the header shows the brand, cwd, and branch on the left and the working children and a context meter on the right", () => {
-	const [line] = renderHeader(painted, half, 80);
+	const [line] = renderHeader(painted, half, 87);
 	assert.equal(
 		stripVTControlCharacters(line),
-		` π-workflow · ~/D/repos/pi-workflow · main${" ".repeat(7)}◆ 2 · ctx ▰▰▰▰▱▱▱▱  50% · 256K`,
+		` π-workflow · ~/D/repos/pi-workflow · main${" ".repeat(7)}◆ 2 · ctx ▰ ▰ ▰ ▰ ▱ ▱ ▱ ▱  50% · 256K`,
 	);
-	assert.equal(visibleWidth(line), 79);
+	assert.equal(visibleWidth(line), 86);
 	for (const [text, style] of [
 		["π-workflow", "accent"],
 		["~/D/repos/pi-workflow", "text"],
 		["main", "dim"],
 		["◆ 2", "accent"],
 		["ctx", "dim"],
-		["▰▰▰▰▱▱▱▱", "text"],
+		["▰ ▰ ▰ ▰ ▱ ▱ ▱ ▱", "text"],
 		["50%", "text"],
 		["256K", "dim"],
 	])
@@ -110,11 +110,25 @@ test("the header shows the brand, cwd, and branch on the left and the working ch
 	assert.equal(separators.length, 4);
 	for (const cell of separators) assert.equal(cell.color, "borderAccent");
 	assert.deepEqual(
-		plain(renderHeader(theme, { ...half, branch: null, working: 0 }, 80)),
+		plain(renderHeader(theme, { ...half, branch: null, working: 0 }, 87)),
 		[
-			` π-workflow · ~/D/repos/pi-workflow${" ".repeat(20)}ctx ▰▰▰▰▱▱▱▱  50% · 256K`,
+			` π-workflow · ~/D/repos/pi-workflow${" ".repeat(20)}ctx ▰ ▰ ▰ ▰ ▱ ▱ ▱ ▱  50% · 256K`,
 		],
 	);
+});
+
+test("the context meter keeps its geometric glyphs separated at every width that shows the bar", () => {
+	const data = { ...header, usage: { tokens: 34_000, contextWindow: 100_000 } };
+	for (let width = 31; width <= 120; width++) {
+		const [line] = plain(renderHeader(theme, data, width));
+		assert.ok(visibleWidth(line) <= width);
+		assert.match(line, /ctx .*34%/);
+		if (/[▰▱]/.test(line)) {
+			assert.match(line, /ctx ▰ ▰ ▰ ▱ ▱ ▱ ▱ ▱  34%/);
+			assert.doesNotMatch(line, /[▰▱]{2}/);
+		}
+	}
+	assert.match(plain(renderHeader(theme, data, 120))[0], /▰ ▰ ▰ ▱ ▱ ▱ ▱ ▱/);
 });
 
 test("the context meter rounds the percentage, fills eight cells, and colors both by the usage thresholds", () => {
@@ -132,16 +146,16 @@ test("the context meter rounds the percentage, fills eight cells, and colors bot
 		assert.equal(styleOf(line, `${pct}%`), color, `${pct}%`);
 		const all = cells(line);
 		const at = all.map(({ char }) => char).join("").indexOf(bar);
-		for (const cell of all.slice(at + 8, at + 10))
+		for (const cell of all.slice(at + 15, at + 17))
 			assert.deepEqual(cell, { char: " ", color: undefined, bold: false });
 	};
-	meter(0, "▱▱▱▱▱▱▱▱", 0, "text");
-	meter(6_000, "▱▱▱▱▱▱▱▱", 6, "text");
-	meter(7_000, "▰▱▱▱▱▱▱▱", 7, "text");
-	meter(74_400, "▰▰▰▰▰▰▱▱", 74, "text");
-	meter(74_600, "▰▰▰▰▰▰▱▱", 75, "warning");
-	meter(95_000, "▰▰▰▰▰▰▰▰", 95, "error");
-	meter(103_000, "▰▰▰▰▰▰▰▰", 103, "error");
+	meter(0, "▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱", 0, "text");
+	meter(6_000, "▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱", 6, "text");
+	meter(7_000, "▰ ▱ ▱ ▱ ▱ ▱ ▱ ▱", 7, "text");
+	meter(74_400, "▰ ▰ ▰ ▰ ▰ ▰ ▱ ▱", 74, "text");
+	meter(74_600, "▰ ▰ ▰ ▰ ▰ ▰ ▱ ▱", 75, "warning");
+	meter(95_000, "▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰", 95, "error");
+	meter(103_000, "▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰", 103, "error");
 });
 
 test("the header shows ctx ? with the window when tokens are unknown and drops the context block without a window", () => {
@@ -172,20 +186,20 @@ test("the header shows ctx ? with the window when tokens are unknown and drops t
 test("on a narrow terminal the header drops the brand, then the bar, then truncates the cwd from its start", () => {
 	const at = (width) => plain(renderHeader(theme, half, width))[0];
 	assert.equal(
-		at(74),
-		" π-workflow · ~/D/repos/pi-workflow · main ◆ 2 · ctx ▰▰▰▰▱▱▱▱  50% · 256K",
+		at(81),
+		" π-workflow · ~/D/repos/pi-workflow · main ◆ 2 · ctx ▰ ▰ ▰ ▰ ▱ ▱ ▱ ▱  50% · 256K",
 	);
 	assert.equal(
-		at(73),
-		` ~/D/repos/pi-workflow · main${" ".repeat(13)}◆ 2 · ctx ▰▰▰▰▱▱▱▱  50% · 256K`,
+		at(80),
+		` ~/D/repos/pi-workflow · main${" ".repeat(13)}◆ 2 · ctx ▰ ▰ ▰ ▰ ▱ ▱ ▱ ▱  50% · 256K`,
 	);
 	assert.equal(
-		at(61),
-		" ~/D/repos/pi-workflow · main ◆ 2 · ctx ▰▰▰▰▱▱▱▱  50% · 256K",
+		at(68),
+		" ~/D/repos/pi-workflow · main ◆ 2 · ctx ▰ ▰ ▰ ▰ ▱ ▱ ▱ ▱  50% · 256K",
 	);
 	assert.equal(
-		at(60),
-		` ~/D/repos/pi-workflow · main${" ".repeat(10)}◆ 2 · ctx 50% · 256K`,
+		at(67),
+		` ~/D/repos/pi-workflow · main${" ".repeat(17)}◆ 2 · ctx 50% · 256K`,
 	);
 	assert.equal(
 		at(59),

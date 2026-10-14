@@ -11,6 +11,7 @@ import {
 import { Container, visibleWidth } from "@earendil-works/pi-tui";
 
 import { toolKind } from "../extensions/chrome-groups.ts";
+import { registerRoutingBlocks } from "../extensions/routing-blocks.ts";
 import {
 	patchMessages,
 	restoreMessages,
@@ -157,6 +158,26 @@ test("Pi tool names map onto Grok's verb buckets", () => {
 	assert.equal(toolKind("ask_user_choice", {}), "question");
 	assert.equal(toolKind("codemode", {}), "script");
 	assert.equal(toolKind("codegraph", {}), "tool");
+});
+
+test("routing blocks have their own count without hiding a real tool failure", (t) => {
+	const { tool, render } = chat(t);
+	const handlers = new Map();
+	const record = registerRoutingBlocks({
+		on: (event, handler) => handlers.set(event, handler),
+		appendEntry() {},
+	});
+	t.after(() => handlers.get("session_tree")({}, { sessionManager: { getBranch: () => [] } }));
+	const delegated = tool("read", { path: "SKILL.md" }, { isError: true });
+	const undecided = tool("read", { path: "a.ts" }, { isError: true });
+	record(delegated.toolCallId, "leave");
+	record(undecided.toolCallId, "decide");
+	tool("grep", { pattern: "x" }, { isError: true });
+	const output = render(160).join("\n");
+	assert.match(output, /Routed 2 tools/);
+	assert.match(output, /1 failed/);
+	assert.doesNotMatch(output, /3 failed/);
+	assert.doesNotMatch(output, /Read 1 skill/);
 });
 
 test("read-only tools and the thoughts between them fold into one ◈ row while commands and MCP calls stay contiguous rows", (t) => {

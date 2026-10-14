@@ -7,6 +7,9 @@ import { join } from "node:path";
 import { setImmediate } from "node:timers";
 
 import { createChildLauncher } from "../extensions/child-launcher.ts";
+import { syncCompactTools } from "../extensions/compact-tools.ts";
+import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
+import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
@@ -123,6 +126,7 @@ function loadExtension({ legacy = false, agentDirectory }) {
 	const tools = [];
 	const notifications = [];
 	const messages = [];
+	const entries = [];
 	const ui = {
 		notify: (message, level) => notifications.push({ message, level }),
 		setWidget() {},
@@ -139,6 +143,7 @@ function loadExtension({ legacy = false, agentDirectory }) {
 			on(event, handler) {
 				handlers.set(event, [...(handlers.get(event) ?? []), handler]);
 			},
+			appendEntry: (customType, data) => entries.push({ type: "custom", customType, data }),
 			registerCommand() {},
 			registerShortcut() {},
 			registerMessageRenderer() {},
@@ -167,7 +172,7 @@ function loadExtension({ legacy = false, agentDirectory }) {
 		}
 		return result;
 	};
-	return { handlers, tools, fire, notifications, messages, ui };
+	return { handlers, tools, fire, notifications, messages, entries, ui };
 }
 
 test("the first grep blocks when Jev says leave, names no role, and asks only the destination", async () => {
@@ -1027,6 +1032,101 @@ async function seatedExtension({ worktree, agentDirectory }, message) {
 	});
 	return extension;
 }
+
+test("a Jev delegation blocks execution without painting the tool as failed, including after resume", async () => {
+	await withWorkspace(async ({ worktree, agentDirectory }) => {
+		const message = "Review the PR";
+		const extension = await seatedExtension({ worktree, agentDirectory }, message);
+		const ctx = gateContext(worktree, branchEnding(message), fakeJev("leave"));
+		const call = { type: "toolCall", id: "routing-read", name: "read", arguments: { path: "src/main.ts" } };
+		let executions = 0;
+		const tools = [];
+		syncCompactTools({ registerTool: (tool) => tools.push(tool) }, {
+			cwd: worktree, isProjectTrusted: () => false,
+		});
+		const read = tools.find((tool) => tool.name === "read");
+		const runtime = await ModelRuntime.create({
+			authPath: join(agentDirectory, "auth.json"), modelsPath: null, refreshOnCreate: false,
+		});
+		const faux = fauxProvider({ provider: "faux", models: [{ id: "parent", reasoning: true }] });
+		runtime.registerNativeProvider(faux.provider);
+		await runtime.setRuntimeApiKey("faux", "key");
+		faux.setResponses([
+			fauxAssistantMessage(fauxToolCall(call.name, call.arguments, { id: call.id }), { stopReason: "toolUse" }),
+			fauxAssistantMessage("Delegating."),
+		]);
+		const settingsManager = SettingsManager.inMemory();
+		const resourceLoader = new DefaultResourceLoader({
+			cwd: worktree, agentDir: agentDirectory, settingsManager,
+			noExtensions: true, noSkills: true, noContextFiles: true,
+			extensionFactories: [(pi) => {
+				pi.registerTool({ ...read, execute: async () => { executions++; return { content: [], details: {} }; } });
+				pi.on("tool_call", (event) => extension.fire("tool_call", event, ctx));
+			}],
+		});
+		await resourceLoader.reload();
+		const { session } = await createAgentSession({
+			cwd: worktree, agentDir: agentDirectory, modelRuntime: runtime, model: faux.getModel(),
+			resourceLoader, settingsManager, sessionManager: SessionManager.inMemory(worktree),
+		});
+		try {
+			await session.bindExtensions({ mode: "rpc" });
+			await session.prompt(message);
+		} finally {
+			session.dispose();
+		}
+		const result = session.messages.find((entry) => entry.role === "toolResult");
+		assert.equal(executions, 0);
+		assert.equal(result.isError, true);
+		const theme = { fg: (color, text) => `<${color}>${text}</${color}>`, bold: (text) => text };
+		const render = () => read.renderCall(call.arguments, theme, {
+			toolCallId: call.id, isError: result.isError, isPartial: false,
+			expanded: false, state: {},
+		}).render(160).join("\n");
+		assert.match(render(), /Delegated by Jev/);
+		assert.doesNotMatch(render(), /<error>/);
+		const entries = structuredClone(extension.entries);
+		await extension.fire("session_tree", {}, { sessionManager: { getBranch: () => [] } });
+		assert.match(render(), /<error>/);
+		await extension.fire("session_tree", {}, { sessionManager: { getBranch: () => entries } });
+		assert.match(render(), /Delegated by Jev/);
+		assert.doesNotMatch(render(), /<error>/);
+	});
+});
+
+test("only valid routing blocks get neutral presentation; classifier and tool errors remain errors", async () => {
+	await withWorkspace(async ({ worktree, agentDirectory }) => {
+		for (const [destination, isError, label] of [
+			["decide", true, "Decision needed"],
+			["invalid", true, undefined],
+			["stay", true, undefined],
+			["stay", false, undefined],
+		]) {
+			const message = `Route ${destination} ${isError}`;
+			const extension = await seatedExtension({ worktree, agentDirectory }, message);
+			const id = `call-${destination}-${isError}`;
+			const args = { path: "src/main.ts" };
+			const gate = await extension.fire("tool_call", {
+				type: "tool_call", toolCallId: id, toolName: "read", input: args,
+			}, gateContext(worktree, branchEnding(message), fakeJev(destination)));
+			assert.equal(gate?.block, destination === "stay" ? undefined : true);
+			const tools = [];
+			syncCompactTools({ registerTool: (tool) => tools.push(tool) }, {
+				cwd: worktree, isProjectTrusted: () => false,
+			});
+			const read = tools.find((tool) => tool.name === "read");
+			const theme = { fg: (color, text) => `<${color}>${text}</${color}>`, bold: (text) => text };
+			for (const expanded of [false, true]) {
+				const output = read.renderCall(args, theme, {
+					toolCallId: id, isError, isPartial: false, expanded, state: {},
+				}).render(160).join("\n");
+				if (label) assert.ok(output.includes(label));
+				if (!expanded || label) assert.equal(output.includes("<error>"), isError && !label);
+			}
+			assert.equal(extension.entries.filter((entry) => entry.customType === "pi-workflow-routing-block").length, label ? 1 : 0);
+		}
+	});
+});
 
 test("a gated tool called from a codemode script follows the direct verdict and its block also reaches the parent model", async () => {
 	await withWorkspace(async ({ worktree, agentDirectory }) => {
