@@ -1,6 +1,6 @@
 # Todo and child session link
 
-Status: SPECIFIED (#207).
+Status: IMPLEMENTED (#207).
 
 Package: the decisions confirmed in the #207 grilling session (2026-10-08).
 Review handoff: none. This specification was synthesized from the grilling session without a `feature-review` report.

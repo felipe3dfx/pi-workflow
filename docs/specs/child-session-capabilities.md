@@ -1,6 +1,6 @@
 # Child session capabilities and Fleet view
 
-Status: READY. The contradiction found during synthesis (C1) and the open items C2 to C5 are resolved by owner dispositions (under "Owner dispositions"). The owner also disposed B1 (worker and verifier children load the parent's context files) and B2 (R13: `/reload` ends every working child, with a notice at `session_shutdown`), after an analysis of `badlogic/pi-subagent` and Pi's sources.
+Status: IMPLEMENTED (#209). The contradiction found during synthesis (C1) and the open items C2 to C5 are resolved by owner dispositions (under "Owner dispositions"). The owner also disposed B1 (worker and verifier children load the parent's context files) and B2 (R13: `/reload` ends every working child, with a notice at `session_shutdown`), after an analysis of `badlogic/pi-subagent` and Pi's sources.
 
 Package: `docs/features/child-session-capabilities.md`, CONFIRMED by the owner. Its sha256 prefix is `048b0d37`. The package also includes `GLOSSARY.md` (`a5e8153b`) and the accepted ADRs 0001 to 0013.
 Review handoff: the Domain Authority review, renewed each round and consistent with ADRs 0001 to 0013, with deviations DV1 to DV5 declared. It also includes the owner's dispositions O1 to O13 and K-A to K-F, and the focused reverification of W1 and I1.
