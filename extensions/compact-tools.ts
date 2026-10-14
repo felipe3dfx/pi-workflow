@@ -15,6 +15,7 @@ import { type Component, Text, TruncatedText } from "@earendil-works/pi-tui";
 
 import { seated } from "./shell.ts";
 import { settings, shellOptions } from "./shell-settings.ts";
+import { routingBlock, routingLabel } from "./routing-blocks.ts";
 
 type Theme = Parameters<NonNullable<ToolDefinition["renderCall"]>>[1];
 type RenderContext = Parameters<NonNullable<ToolDefinition["renderCall"]>>[2];
@@ -55,14 +56,15 @@ const verbs: Record<string, string> = {
 	write: "Write",
 };
 
-type Status = { isError: boolean; isPartial: boolean };
+type Status = { isError: boolean; isPartial: boolean; toolCallId?: string };
 
 function toolRow(theme: Theme, status: Status, label: string, detail = "") {
+	const routing = status.isError ? routingBlock(status.toolCallId) : undefined;
 	const glyph = theme.fg(
-		status.isError ? "error" : status.isPartial ? "dim" : "toolTitle",
+		routing ? "dim" : status.isError ? "error" : status.isPartial ? "dim" : "toolTitle",
 		"◆",
 	);
-	const head = theme.bold(theme.fg("muted", label));
+	const head = theme.bold(theme.fg("muted", routing ? routingLabel(routing) : label));
 	return detail
 		? `${glyph} ${head} ${theme.fg("dim", detail)}`
 		: `${glyph} ${head}`;
@@ -133,6 +135,9 @@ function compact<
 			if (!seated("compact-rendering", "message-stream")) {
 				return builtIn.renderCall?.(args, theme, context) ?? hidden;
 			}
+			if (context.isError && routingBlock(context.toolCallId)) {
+				return new TruncatedText(title(name, args, theme, context));
+			}
 			const previous =
 				context.lastComponent instanceof View
 					? context.lastComponent.own
@@ -153,6 +158,11 @@ function compact<
 				return (
 					builtIn.renderResult?.(result, options, theme, context) ?? hidden
 				);
+			}
+			if (context.isError && routingBlock(context.toolCallId)) {
+				return context.expanded
+					? new Text(theme.fg("dim", outputText(result)), 0, 0)
+					: hidden;
 			}
 			const previous =
 				context.lastComponent instanceof View

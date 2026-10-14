@@ -24,6 +24,7 @@ import type { DelegationMode, JevRouting } from "./workflow-settings.ts";
 import type { ModelProfilesLoad, Specialist } from "./model-profiles.ts";
 import { seated } from "./shell.ts";
 import { offerTool } from "./tool-offer.ts";
+import { registerRoutingBlocks } from "./routing-blocks.ts";
 
 export interface LaunchRequest {
 	role?: string;
@@ -450,7 +451,7 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 	async function gateToolCall(
 		event: ToolCallEvent,
 		ctx: GateContext,
-	): Promise<{ allow: true } | { allow: false; reason: string }> {
+	): Promise<{ allow: true } | { allow: false; reason: string; destination?: "leave" | "decide" }> {
 		if (!seated("child-session", "overlay")) return { allow: true };
 		if (!gatedTool(event, ctx.cwd)) return { allow: true };
 		const userRequest = latestUserRequest(ctx.sessionManager?.getBranch());
@@ -467,11 +468,16 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		if (verdict.kind === "leave" && turn?.launched) return { allow: true };
 		if (verdict.kind !== "leave") {
 			const shown = show(verdict);
-			return { allow: false, reason: `${shown.warning}\n${shown.reason}` };
+			return {
+				allow: false,
+				reason: `${shown.warning}\n${shown.reason}`,
+				...(verdict.kind === "decide" ? { destination: "decide" as const } : {}),
+			};
 		}
 		return {
 			allow: false,
 			reason: "Call spawn_child with the role whose tools cover the task.",
+			destination: "leave",
 		};
 	}
 
@@ -545,6 +551,7 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		checkSpawnTools: () => Promise<{ allowed: boolean }>,
 	) {
 		let allowed = false;
+		const recordRoutingBlock = registerRoutingBlocks(pi);
 
 		function refresh() {
 			if (!allowed) return;
@@ -566,6 +573,7 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			pi.on("tool_call", async (event, toolCtx) => {
 				const gate = await gateToolCall(event, toolCtx);
 				if (gate.allow) return;
+				if (gate.destination) recordRoutingBlock(event.toolCallId, gate.destination);
 				if (event.parentToolCallId && !gateMessageSent) {
 					gateMessageSent = true;
 					pi.sendMessage(
