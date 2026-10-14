@@ -50,31 +50,134 @@ test("the cwd keeps its last two segments whole and shortens each parent to its 
 	assert.equal(shortenPath("/home/ana/re\x1bpo", "/home/ana"), "~/re po");
 });
 
-test("the header shows the branch and cwd on the left and the working children and context usage on the right", () => {
-	assert.deepEqual(plain(renderHeader(theme, header, 60)), [
-		` main ~/D/repos/pi-workflow${" ".repeat(16)}◆ 2 │ 34K / 256K`,
-	]);
-	assert.deepEqual(plain(renderHeader(theme, { ...header, working: 0 }, 40)), [
-		` main ~/D/repos/pi-workflow${" ".repeat(2)}34K / 256K`,
+const colors = ["accent", "text", "dim", "borderAccent", "warning", "error"];
+const painted = {
+	fg: (color, text) => `\x1b[${30 + colors.indexOf(color)}m${text}\x1b[39m`,
+	bold: (text) => text,
+	bg: (_color, text) => text,
+};
+const runs = (line) =>
+	line
+		.split("\x1b[3")
+		.filter((part) => /^[0-8]m/.test(part))
+		.map((part) => `${colors[part[0]]}:${part.slice(2)}`);
+const half = { ...header, usage: { tokens: 128_000, contextWindow: 256_000 } };
+
+test("the header shows the brand, cwd, and branch on the left and the working children and a context meter on the right", () => {
+	const [line] = renderHeader(painted, half, 80);
+	assert.equal(
+		stripVTControlCharacters(line),
+		` π-workflow · ~/D/repos/pi-workflow · main${" ".repeat(8)}◆ 2 · ctx ▰▰▰▰▱▱▱▱ 50% · 256K`,
+	);
+	assert.equal(visibleWidth(line), 79);
+	assert.deepEqual(runs(line), [
+		"accent:π-workflow",
+		"borderAccent: · ",
+		"text:~/D/repos/pi-workflow",
+		"borderAccent: · ",
+		"dim:main",
+		"accent:◆ 2",
+		"borderAccent: · ",
+		"dim:ctx",
+		"text:▰▰▰▰▱▱▱▱",
+		"text:50%",
+		"borderAccent: · ",
+		"dim:256K",
 	]);
 	assert.deepEqual(
-		plain(
-			renderHeader(
-				theme,
-				{ ...header, working: 0, usage: { tokens: null, contextWindow: 1 } },
-				40,
-			),
-		),
-		[" main ~/D/repos/pi-workflow"],
+		plain(renderHeader(theme, { ...half, branch: null, working: 0 }, 80)),
+		[
+			` π-workflow · ~/D/repos/pi-workflow${" ".repeat(21)}ctx ▰▰▰▰▱▱▱▱ 50% · 256K`,
+		],
 	);
 });
 
-test("on a narrow terminal the header truncates the location first and never overflows", () => {
-	for (const width of [30, 20, 12, 5, 1]) {
-		const [line] = renderHeader(theme, header, width);
-		assert.ok(visibleWidth(line) <= width, `width ${width}`);
+test("the context meter rounds the percentage, fills eight cells, and colors both by the usage thresholds", () => {
+	const meter = (tokens) => {
+		const [line] = renderHeader(
+			painted,
+			{ ...header, working: 0, usage: { tokens, contextWindow: 100_000 } },
+			80,
+		);
+		return runs(line).slice(-4, -2);
+	};
+	assert.deepEqual(meter(0), ["text:▱▱▱▱▱▱▱▱", "text:0%"]);
+	assert.deepEqual(meter(6_000), ["text:▱▱▱▱▱▱▱▱", "text:6%"]);
+	assert.deepEqual(meter(7_000), ["text:▰▱▱▱▱▱▱▱", "text:7%"]);
+	assert.deepEqual(meter(74_400), ["text:▰▰▰▰▰▰▱▱", "text:74%"]);
+	assert.deepEqual(meter(74_600), ["warning:▰▰▰▰▰▰▱▱", "warning:75%"]);
+	assert.deepEqual(meter(95_000), ["error:▰▰▰▰▰▰▰▰", "error:95%"]);
+	assert.deepEqual(meter(103_000), ["error:▰▰▰▰▰▰▰▰", "error:103%"]);
+});
+
+test("the header shows ctx ? with the window when tokens are unknown and drops the context block without a window", () => {
+	const unknown = {
+		...header,
+		usage: { tokens: null, contextWindow: 256_000 },
+	};
+	const [line] = renderHeader(painted, unknown, 80);
+	assert.match(stripVTControlCharacters(line), /◆ 2 · ctx \? · 256K$/);
+	assert.deepEqual(runs(line).slice(-5), [
+		"borderAccent: · ",
+		"dim:ctx",
+		"dim:?",
+		"borderAccent: · ",
+		"dim:256K",
+	]);
+	for (const usage of [{ tokens: 1_000, contextWindow: 0 }, undefined]) {
+		assert.deepEqual(plain(renderHeader(theme, { ...header, usage }, 80)), [
+			` π-workflow · ~/D/repos/pi-workflow · main${" ".repeat(34)}◆ 2`,
+		]);
+		assert.deepEqual(
+			plain(renderHeader(theme, { ...header, working: 0, usage }, 80)),
+			[" π-workflow · ~/D/repos/pi-workflow · main"],
+		);
 	}
-	assert.match(plain(renderHeader(theme, header, 30))[0], /◆ 2 │ 34K \/ 256K$/);
+	assert.deepEqual(
+		plain(renderHeader(theme, { ...header, working: 0, usage: undefined }, 30)),
+		[" ~/D/repos/pi-workflow · main"],
+	);
+});
+
+test("on a narrow terminal the header drops the brand, then the bar, then truncates the cwd from its start", () => {
+	const at = (width) => plain(renderHeader(theme, half, width))[0];
+	assert.equal(
+		at(73),
+		" π-workflow · ~/D/repos/pi-workflow · main ◆ 2 · ctx ▰▰▰▰▱▱▱▱ 50% · 256K",
+	);
+	assert.equal(
+		at(72),
+		` ~/D/repos/pi-workflow · main${" ".repeat(13)}◆ 2 · ctx ▰▰▰▰▱▱▱▱ 50% · 256K`,
+	);
+	assert.equal(
+		at(60),
+		" ~/D/repos/pi-workflow · main ◆ 2 · ctx ▰▰▰▰▱▱▱▱ 50% · 256K",
+	);
+	assert.equal(
+		at(59),
+		` ~/D/repos/pi-workflow · main${" ".repeat(9)}◆ 2 · ctx 50% · 256K`,
+	);
+	assert.equal(at(51), " ~/D/repos/pi-workflow · main ◆ 2 · ctx 50% · 256K");
+	assert.equal(at(50), " …D/repos/pi-workflow · main ◆ 2 · ctx 50% · 256K");
+	assert.equal(at(31), " … · main ◆ 2 · ctx 50% · 256K");
+});
+
+test("below the width its protected parts need the header truncates the whole line and never overflows", () => {
+	assert.equal(
+		plain(renderHeader(theme, half, 30))[0],
+		" … · main ◆ 2 · ctx 50% · ...",
+	);
+	for (const data of [
+		half,
+		header,
+		{ ...half, branch: null, working: 0 },
+		{ ...half, usage: { tokens: null, contextWindow: 256_000 } },
+		{ ...half, working: 0, usage: undefined },
+	])
+		for (let width = 1; width <= 90; width++) {
+			const [line] = renderHeader(theme, data, width);
+			assert.ok(visibleWidth(line) <= width, `width ${width}: ${line}`);
+		}
 });
 
 test("token counts and durations use the compact formats", () => {
@@ -443,10 +546,7 @@ test("a second session_start replaces the subscriptions instead of duplicating t
 	chrome.tui.requestRender = () => chrome.calls.push(["render"]);
 	const { notifyHeader } = await import("../extensions/shell.ts");
 	notifyHeader();
-	assert.equal(
-		chrome.calls.filter((call) => call[0] === "render").length,
-		1,
-	);
+	assert.equal(chrome.calls.filter((call) => call[0] === "render").length, 1);
 });
 
 test("the status row keeps showing a tool that is still running when a later parallel tool ends", async () => {
@@ -478,7 +578,10 @@ test("the status row renders only while the parent works and hides the step time
 	assert.deepEqual(widget.render(70), []);
 	await chrome.emit("agent_start");
 	t.mock.timers.tick(4_500);
-	assert.match(plain(widget.render(70))[0], /^ {3}\S Waiting for response… +4\.5s$/);
+	assert.match(
+		plain(widget.render(70))[0],
+		/^ {3}\S Waiting for response… +4\.5s$/,
+	);
 	await chrome.emit("tool_execution_start", {
 		toolCallId: "a",
 		toolName: "bash",
