@@ -6,7 +6,7 @@ Resultado: **READY**.
 Parent: [#248](https://github.com/felipe3dfx/pi-workflow/issues/248).
 Brief: [workflow-config-guide.md](workflow-config-guide.md).
 
-Fecha: 2026-10-14. Captura revisada: el brief de trabajo y el Approved Prototype UI Contract v4 (`approved-config-guide-v4.md`), con su evidencia en `snapshots.txt`, `guide.ts` y `mocks.ts`, en la rama `prototype/configure-ux` (último commit `c2c2963`).
+Fecha: 2026-10-14. Captura revisada: el brief de trabajo y el Approved Prototype UI Contract v4 (`approved-config-guide-v4.md`), con su evidencia en `snapshots.txt`, `guide.ts` y `mocks.ts`, en el [archivo `prototype/configure-ux-v4`](https://github.com/felipe3dfx/pi-workflow/tree/c2c2963bd45fa3eed40f902d8fcf3713a73df76e/prototype/configure-ux) (commit `c2c2963bd45fa3eed40f902d8fcf3713a73df76e`).
 
 ## Veredicto
 

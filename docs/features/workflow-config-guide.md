@@ -4,7 +4,7 @@ Estado: aprobado por el desarrollador (contrato de UI v4).
 Paquete: `workflow-config-guide/definition-1`.
 Parent: [#248](https://github.com/felipe3dfx/pi-workflow/issues/248).
 Revisión: [workflow-config-guide-review.md](workflow-config-guide-review.md).
-Prototipo: rama `prototype/configure-ux`, commit `c2c2963`, contrato `prototype/configure-ux/approved-config-guide-v4.md`, disposición `reference-only`.
+Prototipo: archivo `prototype/configure-ux-v4`, commit `c2c2963bd45fa3eed40f902d8fcf3713a73df76e`, [contrato de UI v4](https://github.com/felipe3dfx/pi-workflow/blob/c2c2963bd45fa3eed40f902d8fcf3713a73df76e/prototype/configure-ux/approved-config-guide-v4.md), disposición `reference-only`.
 
 ## Problema y usuario
 
@@ -31,7 +31,7 @@ Fuera: el formato y la validación de la Selection (`readSelection`), el plan (`
 
 ## Dirección aceptada
 
-El contrato de UI aprobado v4 define la interacción. Reemplaza a v3, v2 y v1, que se conservan en la rama del prototipo. Evidencia: `snapshots.txt` (escenarios 1–17), `guide.ts`, `mocks.ts` y `extension.ts` en la misma rama.
+El contrato de UI aprobado v4 define la interacción. Reemplaza a v3, v2 y v1, que se conservan en el [archivo del prototipo](https://github.com/felipe3dfx/pi-workflow/tree/c2c2963bd45fa3eed40f902d8fcf3713a73df76e/prototype/configure-ux). Evidencia: `snapshots.txt` (escenarios 1–17), `guide.ts`, `mocks.ts` y `extension.ts` en el mismo archivo.
 
 ## Escenarios, estados, acciones y errores
 
