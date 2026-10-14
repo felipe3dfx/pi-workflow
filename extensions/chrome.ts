@@ -123,12 +123,6 @@ type Segment = [Color, string][];
 const brand = "π-workflow";
 const meterCells = 8;
 
-function segmentsText(segments: Segment[]) {
-	return segments
-		.map((segment) => segment.map(([, text]) => text).join(" "))
-		.join(" · ");
-}
-
 function paintSegments(theme: ChromeTheme, segments: Segment[]) {
 	return segments
 		.map((segment) =>
@@ -187,8 +181,8 @@ export function renderHeader(
 		...contextSegments(data.usage, bar),
 	];
 	const needed = (l: Segment[], r: Segment[]) =>
-		visibleWidth(segmentsText(l)) +
-		(r.length ? 1 + visibleWidth(segmentsText(r)) : 0);
+		visibleWidth(paintSegments(theme, l)) +
+		(r.length ? 1 + visibleWidth(paintSegments(theme, r)) : 0);
 	const line = (l: Segment[], r: Segment[]) => {
 		if (!r.length) return paintSegments(theme, l);
 		const gap = Math.max(1, room - needed(l, r) + 1);
