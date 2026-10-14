@@ -111,6 +111,16 @@ export function createConfigGuide(
 	const pending = () => rows.filter(changed);
 	const countLabel = (n: number) =>
 		n === 0 ? "no changes" : n === 1 ? "1 change" : `${n} changes`;
+	const toInstall = () =>
+		rows.filter(
+			(row) => row.kind === "toggle" && row.status === "missing" && row.on,
+		).length;
+	const summary = () => {
+		const installs = toInstall();
+		return installs
+			? `${countLabel(pending().length)} · ${installs} to install`
+			: countLabel(pending().length);
+	};
 
 	function toggleOrCycle(row: Row, step: 1 | -1) {
 		if (row.kind === "toggle") {
@@ -150,7 +160,9 @@ export function createConfigGuide(
 			? t.bold(t.fg("text", "Review and apply"))
 			: t.fg("text", "Review and apply");
 		const count =
-			n === 0 ? t.fg("dim", "no changes") : t.fg("accent", countLabel(n));
+			n === 0 && toInstall() === 0
+				? t.fg("dim", summary())
+				: t.fg("accent", summary());
 		const line = spreadRow(
 			`${pointer}${label}`,
 			`${count} ${t.fg("dim", "›")}  `,
@@ -371,7 +383,7 @@ export function createConfigGuide(
 			const view = screen === "edit" ? renderEdit(inner) : renderReview(inner);
 			const title =
 				screen === "edit"
-					? `Workflow config${pending().length ? ` · ${countLabel(pending().length)}` : ""}`
+					? `Workflow config${pending().length || toInstall() ? ` · ${summary()}` : ""}`
 					: "Workflow config › Review";
 			const tail = ["", ...hintRows(t, view.hints, inner).lines];
 			lastTargets = [undefined, ...view.targets];

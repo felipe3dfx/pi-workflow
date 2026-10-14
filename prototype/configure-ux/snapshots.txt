@@ -1,7 +1,7 @@
 ### 1. Fresh open (absent selection file)
 input: (none) · terminal rows 40 → open
 
-┌─ Workflow config ────────────────────────────────────────────────────────── [×] ─┐
+┌─ Workflow config · no changes · 2 to install ────────────────────────────── [×] ─┐
 │                                                                                  │
 │   Capabilities ────────────────────────────────────────────────────────────────  │
 │  ▸ [x] Child session                                                             │
@@ -22,7 +22,7 @@ input: (none) · terminal rows 40 → open
 │    [x] pi-claude-bridge                                          will install    │
 │                                                                                  │
 │  ──────────────────────────────────────────────────────────────────────────────  │
-│    Review and apply                                              no changes ›    │
+│    Review and apply                               no changes · 2 to install ›    │
 │                                                                                  │
 │    Delegate bounded work to child sessions; shows them above the input and       │
 │    offers spawn_child.                                                           │
@@ -33,7 +33,7 @@ input: (none) · terminal rows 40 → open
 ### 2. Toggle focused: Child session off
 input: space · terminal rows 40 → open
 
-┌─ Workflow config · 1 change ─────────────────────────────────────────────── [×] ─┐
+┌─ Workflow config · 1 change · 2 to install ──────────────────────────────── [×] ─┐
 │                                                                                  │
 │   Capabilities ────────────────────────────────────────────────────────────────  │
 │  ▸ [ ] Child session                                                          •  │
@@ -54,7 +54,7 @@ input: space · terminal rows 40 → open
 │    [x] pi-claude-bridge                                          will install    │
 │                                                                                  │
 │  ──────────────────────────────────────────────────────────────────────────────  │
-│    Review and apply                                                1 change ›    │
+│    Review and apply                                 1 change · 2 to install ›    │
 │                                                                                  │
 │    Delegate bounded work to child sessions; shows them above the input and       │
 │    offers spawn_child.                                                           │
@@ -65,7 +65,7 @@ input: space · terminal rows 40 → open
 ### 3. Choice focused: Delegation mode → orchestrator while Child session off
 input: space down down down down down down down right · terminal rows 40 → open
 
-┌─ Workflow config · 2 changes ────────────────────────────────────────────── [×] ─┐
+┌─ Workflow config · 2 changes · 2 to install ─────────────────────────────── [×] ─┐
 │                                                                                  │
 │   Capabilities ────────────────────────────────────────────────────────────────  │
 │    [ ] Child session                                                          •  │
@@ -86,7 +86,7 @@ input: space down down down down down down down right · terminal rows 40 → op
 │    [x] pi-claude-bridge                                          will install    │
 │                                                                                  │
 │  ──────────────────────────────────────────────────────────────────────────────  │
-│    Review and apply                                               2 changes ›    │
+│    Review and apply                                2 changes · 2 to install ›    │
 │                                                                                  │
 │    opportunistic: the parent decides per message whether to delegate (default).  │
 │    orchestrator: the parent is told to delegate all work and keep to planning    │
@@ -100,7 +100,7 @@ input: space down down down down down down down right · terminal rows 40 → op
 ### 4. Companion focused, mixed statuses
 input: up up up up · terminal rows 40 → open
 
-┌─ Workflow config ────────────────────────────────────────────────────────── [×] ─┐
+┌─ Workflow config · no changes · 1 to install ────────────────────────────── [×] ─┐
 │                                                                                  │
 │   Capabilities ────────────────────────────────────────────────────────────────  │
 │    [x] Child session                                                             │
@@ -121,7 +121,7 @@ input: up up up up · terminal rows 40 → open
 │    [x] pi-claude-bridge                                          will install    │
 │                                                                                  │
 │  ──────────────────────────────────────────────────────────────────────────────  │
-│    Review and apply                                              no changes ›    │
+│    Review and apply                               no changes · 1 to install ›    │
 │                                                                                  │
 │    NaN model provider for Pi. Off stops expecting it; it is never uninstalled.   │
 │                                                                                  │
@@ -131,7 +131,7 @@ input: up up up up · terminal rows 40 → open
 ### 5. Esc with pending changes asks before discarding
 input: space esc · terminal rows 40 → open
 
-┌─ Workflow config · 1 change ─────────────────────────────────────────────── [×] ─┐
+┌─ Workflow config · 1 change · 2 to install ──────────────────────────────── [×] ─┐
 │                                                                                  │
 │   Capabilities ────────────────────────────────────────────────────────────────  │
 │  ▸ [ ] Child session                                                          •  │
@@ -152,7 +152,7 @@ input: space esc · terminal rows 40 → open
 │    [x] pi-claude-bridge                                          will install    │
 │                                                                                  │
 │  ──────────────────────────────────────────────────────────────────────────────  │
-│    Review and apply                                                1 change ›    │
+│    Review and apply                                 1 change · 2 to install ›    │
 │                                                                                  │
 │    Delegate bounded work to child sessions; shows them above the input and       │
 │    offers spawn_child.                                                           │
@@ -169,7 +169,7 @@ input: space esc esc · terminal rows 40 → closed
 ### 7. Tab jumps to Review and apply
 input: down space tab · terminal rows 40 → open
 
-┌─ Workflow config · 1 change ─────────────────────────────────────────────── [×] ─┐
+┌─ Workflow config · 1 change · 1 to install ──────────────────────────────── [×] ─┐
 │                                                                                  │
 │   Capabilities ────────────────────────────────────────────────────────────────  │
 │    [x] Child session                                                             │
@@ -190,7 +190,7 @@ input: down space tab · terminal rows 40 → open
 │    [x] pi-claude-bridge                                          will install    │
 │                                                                                  │
 │  ──────────────────────────────────────────────────────────────────────────────  │
-│  ▸ Review and apply                                                1 change ›    │
+│  ▸ Review and apply                                 1 change · 1 to install ›    │
 │                                                                                  │
 │    Opens a summary of every change. Nothing is applied until you confirm there.  │
 │                                                                                  │
@@ -270,7 +270,7 @@ input: down space tab enter · terminal rows 18 → open
 ### 12. Esc from review returns focus to Review and apply
 input: down space tab enter esc · terminal rows 40 → open
 
-┌─ Workflow config · 1 change ─────────────────────────────────────────────── [×] ─┐
+┌─ Workflow config · 1 change · 1 to install ──────────────────────────────── [×] ─┐
 │                                                                                  │
 │   Capabilities ────────────────────────────────────────────────────────────────  │
 │    [x] Child session                                                             │
@@ -291,7 +291,7 @@ input: down space tab enter esc · terminal rows 40 → open
 │    [x] pi-claude-bridge                                          will install    │
 │                                                                                  │
 │  ──────────────────────────────────────────────────────────────────────────────  │
-│  ▸ Review and apply                                                1 change ›    │
+│  ▸ Review and apply                                 1 change · 1 to install ›    │
 │                                                                                  │
 │    Opens a summary of every change. Nothing is applied until you confirm there.  │
 │                                                                                  │
@@ -301,7 +301,7 @@ input: down space tab enter esc · terminal rows 40 → open
 ### 13. Mouse click on the Todo row toggles it
 input: click@10,4 · terminal rows 40 → open
 
-┌─ Workflow config · 1 change ─────────────────────────────────────────────── [×] ─┐
+┌─ Workflow config · 1 change · 2 to install ──────────────────────────────── [×] ─┐
 │                                                                                  │
 │   Capabilities ────────────────────────────────────────────────────────────────  │
 │    [x] Child session                                                             │
@@ -322,7 +322,7 @@ input: click@10,4 · terminal rows 40 → open
 │    [x] pi-claude-bridge                                          will install    │
 │                                                                                  │
 │  ──────────────────────────────────────────────────────────────────────────────  │
-│    Review and apply                                                1 change ›    │
+│    Review and apply                                 1 change · 2 to install ›    │
 │                                                                                  │
 │    Session task list pinned above the input.                                     │
 │                                                                                  │
@@ -332,7 +332,7 @@ input: click@10,4 · terminal rows 40 → open
 ### 14. Mouse wheel moves focus
 input: wheel@10,4 wheel@10,4 · terminal rows 40 → open
 
-┌─ Workflow config ────────────────────────────────────────────────────────── [×] ─┐
+┌─ Workflow config · no changes · 2 to install ────────────────────────────── [×] ─┐
 │                                                                                  │
 │   Capabilities ────────────────────────────────────────────────────────────────  │
 │    [x] Child session                                                             │
@@ -353,7 +353,7 @@ input: wheel@10,4 wheel@10,4 · terminal rows 40 → open
 │    [x] pi-claude-bridge                                          will install    │
 │                                                                                  │
 │  ──────────────────────────────────────────────────────────────────────────────  │
-│    Review and apply                                              no changes ›    │
+│    Review and apply                               no changes · 2 to install ›    │
 │                                                                                  │
 │    Lets the agent ask you choices or open questions in a panel.                  │
 │                                                                                  │
@@ -363,7 +363,7 @@ input: wheel@10,4 wheel@10,4 · terminal rows 40 → open
 ### 15. Click [×] with pending changes asks before discarding
 input: space click@78,0 · terminal rows 40 → open
 
-┌─ Workflow config · 1 change ─────────────────────────────────────────────── [×] ─┐
+┌─ Workflow config · 1 change · 2 to install ──────────────────────────────── [×] ─┐
 │                                                                                  │
 │   Capabilities ────────────────────────────────────────────────────────────────  │
 │  ▸ [ ] Child session                                                          •  │
@@ -384,7 +384,7 @@ input: space click@78,0 · terminal rows 40 → open
 │    [x] pi-claude-bridge                                          will install    │
 │                                                                                  │
 │  ──────────────────────────────────────────────────────────────────────────────  │
-│    Review and apply                                                1 change ›    │
+│    Review and apply                                 1 change · 2 to install ›    │
 │                                                                                  │
 │    Delegate bounded work to child sessions; shows them above the input and       │
 │    offers spawn_child.                                                           │

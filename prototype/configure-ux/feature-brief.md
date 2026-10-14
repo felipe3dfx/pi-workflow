@@ -27,12 +27,12 @@ Out of scope: the Selection format and validation (`extensions/configure.ts` `re
 
 ## Accepted direction
 
-The Approved Prototype UI Contract v3 (`prototype/configure-ux/approved-config-guide-v3.md`, superseding v2 and v1, disposition reference-only) defines the target interaction. Evidence: `prototype/configure-ux/snapshots.txt`, `guide.ts`, `mocks.ts`, `extension.ts`.
+The Approved Prototype UI Contract v4 (`prototype/configure-ux/approved-config-guide-v4.md`, superseding v3, v2 and v1, disposition reference-only) defines the target interaction. Evidence: `prototype/configure-ux/snapshots.txt`, `guide.ts`, `mocks.ts`, `extension.ts`.
 
 ## Scenarios, states, actions, errors
 
 1. Open with absent selection file: defaults (all capabilities on, all companions expected), no pending changes, focus on first row.
-2. Toggle a capability, Jev routing, or a companion with Space/Enter: row shows `•`, count updates in title and action.
+2. Toggle a capability, Jev routing, or a companion with Space/Enter: row shows `•`, count updates in title and action. When expected companions are missing, title and action also show `N to install`, even with no changes.
 3. Change Delegation mode with ←/→ (Space/Enter advance): same pending marker.
 4. Choose `orchestrator` while Child session is off: informational warning, choice allowed.
 5. Companion status per row: installed, will install (missing and expected), not installed (missing, not expected), installed · kept (installed, not expected), unreadable (error).
@@ -63,6 +63,7 @@ The Approved Prototype UI Contract v3 (`prototype/configure-ux/approved-config-g
 | `! unreadable` only while expected (F3) | user | feature-review 2026-10-14; GLOSSARY degraded harness; contract v2 | accepted |
 | Review scrolls with pinned Apply now and hints; Esc focuses Review and apply (F4) | user | feature-review 2026-10-14; contract v2 | accepted |
 | Accept test-migration risk; spec defines coverage (F5) | user | feature-review 2026-10-14 | accepted risk |
+| Title and action count pending installs beside selection changes (F8) | user | third feature-review 2026-10-14; contract v4 | accepted |
 | Spec must pass companion catalog descriptions into the guide and test them against the real catalog (F7) | user | second feature-review 2026-10-14; pi-workflow.ts:293-300 | accepted constraint for to-spec |
 
 ## Assumptions
