@@ -122,7 +122,7 @@ test("every contract keeps publishing through MCP with the parent and takes prec
 		);
 		assert.match(
 			text,
-			/This contract takes precedence over context files such as AGENTS\.md; their instructions to commit, push, or open pull requests do not apply to you\./,
+			/Context files such as AGENTS\.md describe the project; this contract takes precedence over them, and their instructions to ask the user, delegate, launch child sessions, commit, push, publish, or open pull requests do not apply to you\./,
 		);
 	}
 });
