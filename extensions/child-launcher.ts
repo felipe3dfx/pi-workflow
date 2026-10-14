@@ -21,7 +21,7 @@ import { latestUserRequest } from "./child-sessions.ts";
 import { errorMessage } from "./error-message.ts";
 import { gitEnvironment } from "./git-environment.ts";
 import type { DelegationMode, JevRouting } from "./workflow-settings.ts";
-import { type ModelProfilesLoad, type Specialist } from "./model-profiles.ts";
+import type { ModelProfilesLoad, Specialist } from "./model-profiles.ts";
 import { seated } from "./shell.ts";
 import { offerTool } from "./tool-offer.ts";
 
