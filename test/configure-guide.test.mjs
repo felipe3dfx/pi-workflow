@@ -83,10 +83,16 @@ const storedSelection = async (dir) => {
 		return JSON.parse(
 			await readFile(join(dir, "pi-workflow-selection.json"), "utf8"),
 		);
-	} catch {
-		return undefined;
+	} catch (error) {
+		if (error.code === "ENOENT") return undefined;
+		throw error;
 	}
 };
+
+const assertNothingWritten = (dir) =>
+	assert.rejects(readFile(join(dir, "pi-workflow-selection.json")), {
+		code: "ENOENT",
+	});
 
 const openReview = (panel) => press(panel, keys.tab, keys.enter);
 const closeGuide = (panel) => press(panel, keys.escape, keys.escape);
@@ -479,7 +485,6 @@ test("every rendered line stays within the width in the list", async (t) => {
 	);
 });
 
-
 test("Tab then Enter opens the review with the changes as from → to", async (t) => {
 	let head;
 	let lines;
@@ -638,7 +643,7 @@ test("Esc without changes closes the guide and writes nothing", async (t) => {
 	});
 	assert.ok(hint.includes("Esc close"));
 	assert.equal(session.closed, true);
-	assert.equal(await storedSelection(setup.dir), undefined);
+	await assertNothingWritten(setup.dir);
 });
 
 test("with changes the first Esc asks to discard and a second Esc closes without writing", async (t) => {
@@ -659,7 +664,41 @@ test("with changes the first Esc asks to discard and a second Esc closes without
 		),
 	);
 	assert.equal(session.closed, true);
-	assert.equal(await storedSelection(setup.dir), undefined);
+	await assertNothingWritten(setup.dir);
+});
+
+test("discarding edits with double Esc preserves an existing valid selection byte for byte", async (t) => {
+	const setup = guide(t);
+	const path = join(setup.dir, "pi-workflow-selection.json");
+	const original = Buffer.from(` \n{
+  "expectations" : ${JSON.stringify(Object.fromEntries(companions.map(({ package: name }) => [name, true])))},
+  "capabilities" : {
+    "todo" : false,
+    "child-session" : true,
+    "operator-questions" : true,
+    "model-profiles" : true,
+    "codegraph" : true,
+    "compact-rendering" : true
+  },
+  "schemaVersion" : 1
+}\n\t`);
+	await writeFile(path, original);
+	const seen = {};
+	const session = await driveConfig(setup.command, (panel, running) => {
+		seen.openedTodo = rowOf(panel, "Todo");
+		press(panel, keys.space);
+		seen.edited = rowOf(panel, "Child session");
+		press(panel, keys.escape);
+		seen.closedAfterFirst = running.closed;
+		seen.warning = body(panel).join(" ").includes("Discard 1 change?");
+		press(panel, keys.escape);
+	});
+	assert.match(seen.openedTodo, /^\[ \] Todo$/);
+	assert.match(seen.edited, /^▸ \[ \] Child session\s+•$/);
+	assert.equal(seen.closedAfterFirst, false);
+	assert.equal(seen.warning, true);
+	assert.equal(session.closed, true);
+	assert.deepEqual(await readFile(path), original);
 });
 
 test("any other key after the first Esc dismisses the warning and keeps the draft", async (t) => {
@@ -777,7 +816,7 @@ test("[×] closes without changes, asks to discard with changes, and returns fro
 	assert.equal(seen.back, "Workflow config · 1 change");
 	assert.match(seen.focused, /^▸ Review and apply/);
 	assert.equal(session.closed, true);
-	assert.equal(await storedSelection(some.dir), undefined);
+	await assertNothingWritten(some.dir);
 });
 
 test("applying with no changes still saves the selection and runs setup for the expected companions", async (t) => {
@@ -816,4 +855,137 @@ test("every rendered line stays within the width in the review", async (t) => {
 		{ rows: 14 },
 	);
 	assert.ok(lengths.every(([width, length]) => length <= width));
+});
+
+test("a short terminal keeps the focused row, the warning and the hints in the list", async (t) => {
+	const rows = 12;
+	const width = 48;
+	const seen = [];
+	const snap = (panel, label) => {
+		const lines = plain(panel, width);
+		seen.push({
+			label,
+			height: lines.length,
+			widest: Math.max(...lines.map((line) => visibleWidth(line))),
+			focused: body(panel, width).find((line) => line.startsWith("▸")),
+			text: body(panel, width).join(" ").replace(/\s+/g, " "),
+		});
+	};
+	await open(
+		t,
+		{},
+		(panel) => {
+			press(panel, keys.space);
+			focusOn(panel, "Delegation mode");
+			press(panel, keys.right);
+			snap(panel, "orchestrator");
+			press(panel, keys.up);
+			snap(panel, "up");
+			press(panel, keys.down);
+			snap(panel, "down");
+			focusOn(panel, "Review and apply");
+			snap(panel, "action");
+			press(panel, keys.up);
+			snap(panel, "companion");
+			closeGuide(panel);
+			closeGuide(panel);
+		},
+		{ rows },
+	);
+	const [orchestrator, up, down, action, companion] = seen;
+	assert.match(orchestrator.focused, /^▸\s+Delegation mode\s+‹ orchestrator ›/);
+	assert.ok(
+		orchestrator.text.includes(
+			"No effect while Child session is off: the parent has no child tools to delegate with.",
+		),
+	);
+	assert.match(up.focused, /^▸\s+\[.\] Jev routing/);
+	assert.match(down.focused, /^▸\s+Delegation mode/);
+	assert.match(action.focused, /^▸\s+Review and apply/);
+	assert.match(companion.focused, /^▸\s+\[.\] \S+\s+\S+/);
+	assert.ok(!companion.focused.includes("Review and apply"));
+	for (const frame of seen) {
+		assert.ok(frame.height <= rows, `${frame.label}: ${frame.height} rows`);
+		assert.ok(frame.widest <= width, frame.label);
+		assert.ok(frame.text.includes("↑/↓ move"), frame.label);
+		assert.ok(frame.text.includes("Esc"), frame.label);
+	}
+});
+
+test("PageUp and PageDown expose the full focused description at 12x48 without moving focus", async (t) => {
+	await open(t, {}, (panel) => {
+		press(panel, keys.space);
+		focusOn(panel, "Delegation mode");
+		press(panel, keys.right);
+		const frames = [];
+		for (let i = 0; i < 20; i++) {
+			frames.push(body(panel, 48));
+			press(panel, "\x1b[6~");
+		}
+		const first = frames[0].join(" ");
+		assert.ok(first.includes("PgUp/PgDn description"));
+		assert.ok(first.includes("↓ more"));
+		const copy = frames.flatMap((lines) => lines.slice(
+			lines.findIndex((line) => line.startsWith("▸")) + 1,
+			lines.findIndex((line) => line.includes("more")),
+		));
+		const unique = [...new Set(copy)].join(" ").replace(/\s+/g, " ");
+		assert.ok(unique.includes("opportunistic: the parent decides per message whether to delegate (default)."), unique);
+		assert.ok(unique.includes("orchestrator: the parent is told to delegate all work to child sessions and keep to conversing, planning, asking, and directing children."), unique);
+		assert.ok(frames.at(-1).join(" ").includes("↑ more"));
+		for (const lines of frames) {
+			const text = lines.join(" ").replace(/\s+/g, " ");
+			assert.ok(lines.length + 2 <= 12);
+			assert.ok(lines.every((line) => visibleWidth(line) <= 48));
+			assert.ok(lines.some((line) => /^▸\s+Delegation mode/.test(line)));
+			assert.ok(text.includes("No effect while Child session is off: the parent has no child tools to delegate with."));
+			assert.ok(text.includes("↑/↓ move"));
+			assert.ok(text.includes("Esc"));
+		}
+		for (let i = 0; i < 20; i++) press(panel, "\x1b[5~");
+		assert.deepEqual(body(panel, 48), frames[0]);
+		closeGuide(panel);
+	}, { rows: 12 });
+});
+
+test("focus navigation resets description scrolling and normal-height descriptions need no scroll hint", async (t) => {
+	await open(t, {}, (panel) => {
+		press(panel, keys.space);
+		focusOn(panel, "Delegation mode");
+		press(panel, keys.right);
+		const first = body(panel, 48);
+		const navigate = [
+			() => press(panel, keys.up, keys.down),
+			() => { wheel(panel, -1); wheel(panel, 1); },
+			() => {
+				click(panel, 10, lineIndex(panel, "Jev routing", 120));
+				press(panel, keys.down);
+				click(panel, 10, lineIndex(panel, "Jev routing", 120));
+				press(panel, keys.down);
+			},
+			() => {
+				press(panel, keys.tab);
+				for (let i = 0; i < companions.length + 1; i++) press(panel, keys.up);
+			},
+		];
+		for (const move of navigate) {
+			for (let i = 0; i < 20; i++) {
+				press(panel, "\x1b[6~");
+				body(panel, 48);
+			}
+			assert.notDeepEqual(body(panel, 48), first);
+			move();
+			assert.deepEqual(body(panel, 48), first);
+		}
+		closeGuide(panel);
+	}, { rows: 12 });
+	await open(t, {}, (panel) => {
+		focusOn(panel, "Delegation mode");
+		const before = body(panel, 48);
+		assert.ok(!before.join(" ").includes("PgUp/PgDn"));
+		assert.ok(!before.join(" ").includes("more"));
+		press(panel, "\x1b[6~", "\x1b[5~");
+		assert.deepEqual(body(panel, 48), before);
+		closeGuide(panel);
+	});
 });

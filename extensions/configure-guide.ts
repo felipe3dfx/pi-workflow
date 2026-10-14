@@ -122,6 +122,24 @@ function spreadRow(left: string, right: string, width: number) {
 	return truncateToWidth(`${shown}${gap}${right}`, width, "");
 }
 
+function toggleRow(
+	label: string,
+	description: string,
+	get: () => boolean,
+	set: (on: boolean) => void,
+): Row {
+	const asValue = (on: boolean) => (on ? "on" : "off");
+	return {
+		kind: "toggle",
+		label,
+		description,
+		values: ["on", "off"],
+		opened: asValue(get()),
+		read: () => asValue(get()),
+		write: (value) => set(value === "on"),
+	};
+}
+
 function createConfigGuide(
 	draft: Selection,
 	draftState: { routing: boolean; mode: DelegationModeName },
@@ -137,32 +155,28 @@ function createConfigGuide(
 	const sections: { title: string; rows: Row[] }[] = [
 		{
 			title: "Capabilities",
-			rows: capabilities.map((capability) => ({
-				kind: "toggle",
-				label: capabilityCopy[capability][0],
-				description: capabilityCopy[capability][1],
-				values: ["on", "off"],
-				opened: draft.capabilities[capability] ? "on" : "off",
-				read: () => (draft.capabilities[capability] ? "on" : "off"),
-				write: (value) => {
-					draft.capabilities[capability] = value === "on";
-				},
-			})),
+			rows: capabilities.map((capability) =>
+				toggleRow(
+					capabilityCopy[capability][0],
+					capabilityCopy[capability][1],
+					() => draft.capabilities[capability],
+					(on) => {
+						draft.capabilities[capability] = on;
+					},
+				),
+			),
 		},
 		{
 			title: "Routing and delegation",
 			rows: [
-				{
-					kind: "toggle",
-					label: "Jev routing",
-					description: routingCopy,
-					values: ["on", "off"],
-					opened: draftState.routing ? "on" : "off",
-					read: () => (draftState.routing ? "on" : "off"),
-					write: (value) => {
-						draftState.routing = value === "on";
+				toggleRow(
+					"Jev routing",
+					routingCopy,
+					() => draftState.routing,
+					(on) => {
+						draftState.routing = on;
 					},
-				},
+				),
 				{
 					kind: "choice",
 					label: "Delegation mode",
@@ -181,17 +195,14 @@ function createConfigGuide(
 		{
 			title: "Companions",
 			rows: companions.map((companion) => ({
-				kind: "toggle",
-				label: companion.package,
-				description: [companion.description, companionNote]
-					.filter(Boolean)
-					.join(" "),
-				values: ["on", "off"],
-				opened: draft.expectations[companion.package] ? "on" : "off",
-				read: () => (draft.expectations[companion.package] ? "on" : "off"),
-				write: (value) => {
-					draft.expectations[companion.package] = value === "on";
-				},
+				...toggleRow(
+					companion.package,
+					[companion.description, companionNote].filter(Boolean).join(" "),
+					() => draft.expectations[companion.package],
+					(on) => {
+						draft.expectations[companion.package] = on;
+					},
+				),
 				companion: companion.package,
 			})),
 		},
@@ -202,8 +213,16 @@ function createConfigGuide(
 	let screen: "edit" | "review" = "edit";
 	let confirmDiscard = false;
 	let reviewOffset = 0;
+	let descriptionOffset = 0;
+	let descriptionPage = 1;
+	let descriptionMax = 0;
 	let frameWidth = 0;
 	let targets: (Target | undefined)[] = [];
+
+	function setFocus(next: number) {
+		if (focus !== next) descriptionOffset = 0;
+		focus = next;
+	}
 
 	const changed = (row: Row) => row.read() !== row.opened;
 	const pending = () => rows.filter(changed).length;
@@ -267,14 +286,17 @@ function createConfigGuide(
 		return selected ? selectedRow(t, line, width) : line;
 	}
 
-	function describe(width: number): string[] {
+	function describe(width: number): { copy: string[]; warning: string[] } {
 		if (focus === actionIndex) {
-			return wrapTextWithAnsi(actionCopy, width).map((line) =>
-				t.fg("dim", line),
-			);
+			return {
+				copy: wrapTextWithAnsi(actionCopy, width).map((line) =>
+					t.fg("dim", line),
+				),
+				warning: [],
+			};
 		}
 		const row = rows[focus];
-		const lines = row.description
+		const copy = row.description
 			.split("\n")
 			.flatMap((part) => wrapTextWithAnsi(part, width))
 			.map((line) => t.fg("dim", line));
@@ -282,14 +304,12 @@ function createConfigGuide(
 			row.kind === "choice" &&
 			draftState.mode === "orchestrator" &&
 			!draft.capabilities["child-session"];
-		if (warns) {
-			lines.push(
-				...wrapTextWithAnsi(orchestratorWarning, width).map((line) =>
+		const warning = warns
+			? wrapTextWithAnsi(orchestratorWarning, width).map((line) =>
 					t.fg("warning", line),
-				),
-			);
-		}
-		return lines;
+				)
+			: [];
+		return { copy, warning };
 	}
 
 	function editHints(): Hint[] {
@@ -324,7 +344,9 @@ function createConfigGuide(
 		push(t.fg("border", "─".repeat(inner)));
 		if (focus === actionIndex) selectedAt = list.length;
 		push(actionLine(focus === actionIndex, inner), "action");
-		const detail = ["", ...describe(inner - 2).map((line) => `  ${line}`)];
+		const described = describe(inner - 2);
+		const detail = ["", ...described.copy.map((line) => `  ${line}`)];
+		const warning = described.warning.map((line) => `  ${line}`);
 		const notice = confirmDiscard
 			? [
 					"",
@@ -334,11 +356,37 @@ function createConfigGuide(
 					).map((line) => t.fg("warning", line)),
 				]
 			: [];
-		const tail = ["", ...hintRows(t, editHints(), inner).lines];
-		const room = Math.max(
-			3,
-			terminalRows() - 3 - detail.length - notice.length - tail.length,
-		);
+		let tail = ["", ...hintRows(t, editHints(), inner).lines];
+		let spare =
+			terminalRows() - 3 - warning.length - notice.length - tail.length;
+		let shownDetail = detail;
+		descriptionMax = 0;
+		if (detail.length > spare - 1 && described.copy.length <= spare - 1) {
+			shownDetail = detail.slice(1);
+		} else if (described.copy.length > spare - 1) {
+			tail = hintRows(
+				t,
+				[...editHints(), ["PgUp/PgDn", "description"]],
+				inner,
+			).lines;
+			spare = terminalRows() - 3 - warning.length - notice.length - tail.length;
+			descriptionPage = Math.max(1, spare - 2);
+			descriptionMax = Math.max(0, described.copy.length - descriptionPage);
+			descriptionOffset = Math.max(
+				0,
+				Math.min(descriptionOffset, descriptionMax),
+			);
+			shownDetail = [
+				...described.copy
+					.slice(descriptionOffset, descriptionOffset + descriptionPage)
+					.map((line) => `  ${line}`),
+				t.fg(
+					"dim",
+					`  ${descriptionOffset > 0 ? "↑" : ""}${descriptionOffset < descriptionMax ? "↓" : ""} more`,
+				),
+			];
+		}
+		const room = Math.max(1, spare - shownDetail.length);
 		const start =
 			list.length > room
 				? Math.max(
@@ -346,7 +394,7 @@ function createConfigGuide(
 						Math.min(selectedAt - Math.floor(room / 2), list.length - room),
 					)
 				: 0;
-		const rest = [...detail, ...notice, ...tail];
+		const rest = [...shownDetail, ...warning, ...notice, ...tail];
 		return {
 			lines: [...list.slice(start, start + room), ...rest],
 			targets: [
@@ -467,7 +515,7 @@ function createConfigGuide(
 	function cancel() {
 		if (screen === "review") {
 			screen = "edit";
-			focus = actionIndex;
+			setFocus(actionIndex);
 		} else if (confirmDiscard || pending() === 0) {
 			done(false);
 		} else {
@@ -476,7 +524,7 @@ function createConfigGuide(
 	}
 
 	function openReview() {
-		focus = actionIndex;
+		setFocus(actionIndex);
 		screen = "review";
 		reviewOffset = 0;
 	}
@@ -502,7 +550,7 @@ function createConfigGuide(
 			if (event.type === "wheel" && event.wheelDelta) {
 				const delta = event.wheelDelta < 0 ? -1 : 1;
 				if (screen === "review") reviewOffset += delta;
-				else focus = Math.max(0, Math.min(actionIndex, focus + delta));
+				else setFocus(Math.max(0, Math.min(actionIndex, focus + delta)));
 				confirmDiscard = false;
 				return { handled: true };
 			}
@@ -523,7 +571,7 @@ function createConfigGuide(
 			if (target === "apply") done(true);
 			else if (target === "action") openReview();
 			else {
-				focus = target.row;
+				setFocus(target.row);
 				step(rows[target.row], 1);
 			}
 			return { handled: true };
@@ -544,13 +592,24 @@ function createConfigGuide(
 				confirmDiscard = false;
 				return;
 			}
+			if (matchesKey(data, Key.pageUp) || matchesKey(data, Key.pageDown)) {
+				descriptionOffset = Math.max(
+					0,
+					Math.min(
+						descriptionMax,
+						descriptionOffset +
+							(matchesKey(data, Key.pageUp) ? -descriptionPage : descriptionPage),
+					),
+				);
+				return;
+			}
 			const count = rows.length + 1;
 			if (keys.matches(data, "tui.select.up")) {
-				focus = (focus - 1 + count) % count;
+				setFocus((focus - 1 + count) % count);
 			} else if (keys.matches(data, "tui.select.down")) {
-				focus = (focus + 1) % count;
+				setFocus((focus + 1) % count);
 			} else if (matchesKey(data, Key.tab)) {
-				focus = actionIndex;
+				setFocus(actionIndex);
 			} else if (focus === actionIndex) {
 				if (matchesKey(data, Key.enter)) openReview();
 			} else {
