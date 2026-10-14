@@ -64,6 +64,11 @@ This repository does not currently require:
 
 Project-owned skills may define product or workflow behavior within their documented scope.
 Global skills may provide methodology or implementation assistance, but they must not introduce new project requirements, mutate project policy, or override repository-owned instructions.
+## Navigation
+
+- `docs/specs/README.md`: specifications with their reviews, feature briefs, and tracker issues.
+- `test/support/README.md`: shared test helpers; check it before writing a helper.
+
 <!-- setup-workflow-routing:start -->
 
 ## Workflow Contracts
