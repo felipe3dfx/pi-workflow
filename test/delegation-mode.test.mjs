@@ -448,7 +448,6 @@ test("a Delegation mode change applies from the next model call of the same sess
 function destinationJev(destination) {
 	return classifierRegistry((context) => ({
 		answers: {
-			specialist: { type: "choice", choice: "explorer", confidence: 0.9, probabilities: {} },
 			...(context.questions.destination
 				? {
 						destination: {
@@ -495,7 +494,7 @@ test("with Jev routing on, orchestrator gives Jev a stay criterion only for no w
 	assert.match(stay, /commit, a push, or opening a pull request/);
 
 	assert.deepEqual(orchestrator.state, opportunistic.state);
-	assert.deepEqual(orchestrator.questions.specialist, opportunistic.questions.specialist);
+	assert.deepEqual(Object.keys(orchestrator.questions), ["destination"]);
 	const { stay: _o, ...otherOpportunistic } = opportunistic.questions.destination.criteria;
 	const { stay: _r, ...otherOrchestrator } = orchestrator.questions.destination.criteria;
 	assert.deepEqual(otherOrchestrator, otherOpportunistic);
@@ -599,15 +598,8 @@ function orchestratingJev() {
 				: item.expected.action === "decide"
 					? "decide"
 					: "leave";
-		const specialist =
-			item?.expected.role === "explore"
-				? "explorer"
-				: item?.expected.role === "verify"
-					? "verifier"
-					: "worker";
 		return {
 			answers: {
-				specialist: { type: "choice", choice: specialist, confidence: 0.9, probabilities: {} },
 				destination: { type: "choice", choice: destination, confidence: 0.9, probabilities: {} },
 			},
 		};

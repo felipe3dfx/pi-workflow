@@ -107,7 +107,7 @@ type Plan = {
 	worktree: string;
 	model: string;
 	thinking: ModelThinkingLevel;
-	chosenBy: "parent" | "jev";
+	chosenBy: "parent";
 	references: string[];
 };
 
@@ -169,7 +169,7 @@ interface Child {
 export interface ChildTrace {
 	id: string;
 	role: string;
-	chosenBy: "parent" | "jev";
+	chosenBy: "parent";
 	tools: string[];
 	references: string[];
 	state: ChildState;
@@ -1510,11 +1510,7 @@ function launched(
 				...(selection.jev ? { jev: selection.jev } : {}),
 			}
 		: {};
-	const selectionLine = selection
-		? selection.jev
-			? `Jev selected ${selection.role}.`
-			: `Launched as ${selection.role}.`
-		: undefined;
+	const selectionLine = selection ? `Launched as ${selection.role}.` : undefined;
 	if (started.status === "completed") {
 		const outcome = selection
 			? childOutcome({
