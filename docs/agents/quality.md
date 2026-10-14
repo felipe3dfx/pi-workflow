@@ -44,7 +44,7 @@ Scratch runs isolate state shared across checkouts by `withAgentDirectory`.
 Tools: `biome`
 
 - state: supported
-- evidence: package.json check:biome runs biome check; biome 2.5.3 is installed
+- evidence: package.json check:biome runs biome check; biome is declared in package.json devDependencies
 - provider: biome
 - limits: included in npm run check
 - effects/approval: read-only check
@@ -56,7 +56,7 @@ Tools: `biome`
 Tools: `biome`
 
 - state: supported
-- evidence: package.json format runs biome format --write .; biome 2.5.3 is installed
+- evidence: package.json format runs biome format --write .; biome is declared in package.json devDependencies
 - provider: biome
 - limits: npm run check disables the formatter
 - effects/approval: npm run format writes files and requires explicit approval
