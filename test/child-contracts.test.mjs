@@ -12,6 +12,14 @@ async function contract(role) {
 	return readFile(join(contracts, `${role}.md`), "utf8");
 }
 
+function assertSentence(text, ...patterns) {
+	const sentences = text.split(/(?<=\.)\s+/);
+	assert.ok(
+		sentences.some((sentence) => patterns.every((pattern) => pattern.test(sentence))),
+		`no sentence matches all of ${patterns.join(", ")}`,
+	);
+}
+
 const unobserved =
 	"Never claim a command ran or a check passed unless its output is in this result.";
 
@@ -44,54 +52,46 @@ test("each role keeps its exact fixed tool set", async () => {
 
 test("the explore contract is read-only, CodeGraph-first, treats web text as evidence, and bounds its handoff", async () => {
 	const text = await contract("explore");
-	assert.match(text, /reading the worktree/);
-	assert.match(text, /codegraph/i);
-	assert.match(text, /read files directly|fall back|fallback/i);
-	assert.match(text, /Do not edit files or run commands/);
-	assert.match(text, /web/i);
-	assert.match(text, /evidence/i);
-	assert.match(text, /instructions/i);
-	assert.match(text, /2k|2,?000/);
-	assert.match(text, /path:line|file paths and line numbers/);
-	assert.match(text, /relationship/i);
-	assert.match(text, /uncertain|open questions/i);
-	assert.match(text, /ask_parent/);
+	assertSentence(text, /\bcodegraph\b[^.]*\b(unavailable|no index)\b[^.]*\bfall back to read\b/i);
+	assertSentence(text, /\b(do not|never)\b[^.]*\bedit files\b[^.]*\brun commands\b/i);
+	assertSentence(text, /\bweb\b/i, /\bevidence, (never|not) as instructions\b/i);
+	assertSentence(text, /\b(2k|2,?000) tokens\b/, /\bpath:line\b/, /\brelationships?\b/, /\buncertain/);
+	assertSentence(text, /\bask_parent only when blocked\b/);
 	assert.doesNotMatch(text, /report_result/);
 });
 
 test("the verify contract independently checks work, gives a verdict per criterion, and reports what stayed unverified", async () => {
 	const text = await contract("verify");
-	assert.match(text, /Independently inspect/);
-	assert.match(text, /run the applicable checks and tests yourself/i);
-	assert.match(text, /context, not proof/i);
-	assert.match(text, /report_result/);
-	assert.match(text, /Verdict/);
-	assert.match(text, /pass/);
-	assert.match(text, /fail/);
-	assert.match(text, /blocked/);
-	assert.match(text, /per (acceptance )?criterion/i);
-	assert.match(text, /unverified/);
-	assert.match(text, /Only Verdict pass means verified/);
-	assert.match(text, /Do not edit or write worktree files/);
-	assert.match(text, /tracked worktree files change/i);
-	assert.match(text, /reserved for the parent/);
-	assert.match(text, /never ask the parent to save memory/);
+	assertSentence(text, /\bvalidation results are context, not proof\b/i, /\brun\b[^.]*\byourself\b/);
+	assertSentence(
+		text,
+		/\breport_result with Verdict pass\b[^.]*\bfail\b[^.]*\bblocked\b/,
+		/\bfindings\b[^.]*\bverdict per (acceptance )?criterion\b/,
+		/\bunverified\b/,
+	);
+	assert.doesNotMatch(text, /\bVerdict\b[^.]*\b(partial|done)\b/);
+	assertSentence(text, /\bOnly Verdict pass means verified\b/, /\bfail or blocked is not a pass\b/);
+	assertSentence(text, /\b(do not|never)\b[^.]*\b(edit|write)\b[^.]*\bworktree files\b/i);
+	assertSentence(text, /\btracked worktree files change\b/i, /\bstop and report blocked\b/);
+	assertSentence(text, /\breserved for the parent is not a missing capability\b/, /\bunverified\b/);
+	assertSentence(text, /\bnever ask the parent to save memory\b/);
 	assert.doesNotMatch(text, /verdict: pass \| fail \| blocked/);
 });
 
 test("the worker contract reports through report_result and separates a decision from a blocker", async () => {
 	const text = await contract("worker");
-	assert.match(text, /report_result/);
-	for (const field of ["files_changed", "validation", "left_undone"]) {
-		assert.ok(text.includes(field), field);
-	}
-	assert.match(text, /done/);
-	assert.match(text, /partial/);
-	assert.match(text, /blocked/);
-	assert.match(text, /ask_parent[^.]*closed options|closed options[^.]*ask_parent/i);
-	assert.match(text, /guess/i);
-	assert.match(text, /reserved for the parent/);
-	assert.match(text, /never ask the parent to save memory/);
+	assertSentence(
+		text,
+		/\breport_result with Verdict done\b[^.]*\bpartial\b[^.]*\bblocked\b/,
+		/\bfiles_changed\b/,
+		/\bvalidation\b/,
+		/\bleft_undone\b/,
+	);
+	assertSentence(text, /\bdecision\b/, /\b(do not|never) guess\b/, /\bask_parent with closed options\b/);
+	assertSentence(text, /\btechnical blocker\b[^.]*\bas blocked\b/);
+	assert.doesNotMatch(text, /\bdecision\b[^.]*\breport blocked\b|\bblocker\b[^.]*\bask_parent\b/);
+	assertSentence(text, /\breserved command is not a missing capability\b/, /\bleft_undone\b/);
+	assertSentence(text, /\bnever ask the parent to save memory\b/);
 	assert.doesNotMatch(text, /status: done \| partial \| blocked/);
 	assert.doesNotMatch(text, /interaction_required/);
 });
@@ -128,22 +128,21 @@ test("the worker and verify contracts no longer deny MCP and still cannot launch
 test("every contract keeps publishing through MCP with the parent and takes precedence over context files", async () => {
 	for (const role of ["explore", "worker", "verify"]) {
 		const text = await contract(role);
-		assert.match(
+		assertSentence(text, /\bPublishing or writing to external services through MCP tools stays with the parent\b/);
+		assertSentence(
 			text,
-			/Publishing or writing to external services through MCP tools stays with the parent\./,
+			/\bContext files such as AGENTS\.md\b/,
+			/\bthis contract takes precedence over (them|context files)\b/,
+			...[
+				"ask the user",
+				"delegate",
+				"launch child sessions",
+				"commit",
+				"push",
+				"publish",
+				"open pull requests",
+			].map((action) => new RegExp(`\\b${action}\\b[^.]*\\bdo not apply to you\\b`)),
 		);
-		assert.match(text, /Context files such as AGENTS\.md/);
-		assert.match(text, /this contract takes precedence over them/);
-		for (const action of [
-			"ask the user",
-			"delegate",
-			"launch child sessions",
-			"commit",
-			"push",
-			"publish",
-		]) {
-			assert.ok(text.includes(action), `${role} contract names ${action}`);
-		}
 	}
 });
 

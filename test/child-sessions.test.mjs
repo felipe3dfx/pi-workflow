@@ -2203,8 +2203,9 @@ test("a child receives the parent's project MCP servers only when the parent tru
 });
 
 test("every child loads the parent's context files after its contract, and none loads skills", async () => {
-	await withWorkspace(async ({ worktree, agentDir }) => {
+	await withWorkspace(async ({ worktree, agentDir, dir }) => {
 		await writeFile(join(agentDir, "AGENTS.md"), "Global rule: answer in haiku.");
+		await writeFile(join(dir, "AGENTS.md"), "Ancestor rule: keep modules small.");
 		await writeFile(join(worktree, "AGENTS.md"), "Repository rule: run npm run check.");
 		await mkdir(join(agentDir, "skills", "deploy"), { recursive: true });
 		await writeFile(
@@ -2230,10 +2231,17 @@ test("every child loads the parent's context files after its contract, and none 
 		const systems = parent.requests.map((request) =>
 			JSON.stringify(request.messages[0]),
 		);
-		for (const system of systems) {
-			assert.match(system, /Global rule: answer in haiku\./);
-			assert.match(system, /Repository rule: run npm run check\./);
-		}
+		systems.forEach((system, index) => {
+			const contract = system.indexOf(`${roles[index]} child session.`);
+			assert.ok(contract >= 0, roles[index]);
+			for (const rule of [
+				"Global rule: answer in haiku.",
+				"Ancestor rule: keep modules small.",
+				"Repository rule: run npm run check.",
+			]) {
+				assert.ok(system.indexOf(rule, contract) > contract, `${roles[index]}: ${rule}`);
+			}
+		});
 		for (const request of parent.requests) {
 			assert.deepEqual(
 				Object.keys(request.messages[0].sections).slice(0, 2),

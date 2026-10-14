@@ -756,7 +756,7 @@ test("sibling launches of one message keep each parent role and Jev classifies t
 				{
 					role,
 					task: `${role} the change`,
-					userRequest: "Delega esto en tres hijos",
+					userRequest: "Delegate this to three children",
 					userMessageId: "m1",
 				},
 				launcherContext(worktree, { jev }),
