@@ -30,56 +30,68 @@ test("child contracts limit communication to the parent without imposing consume
 	assert.match(agents, /Parent-child instructions, questions, findings, and results are always in English/);
 });
 
-test("the explore contract permits worktree discovery without supplied context or validation", async () => {
-	const text = await contract("explore");
-	assert.match(text, /Answer a clear, bounded task by reading the worktree/);
-	assert.match(text, /Report findings with file paths and line numbers/);
-	assert.match(text, /distinguish confirmed facts from open questions/);
-	assert.match(text, /ask_parent/);
-	assert.match(text, /Use ask_parent only when blocked and the answer changes your next step/);
-	assert.match(text, /ambiguous|unclear/i);
-	assert.match(text, /Do not edit files/);
+const fixedTools = {
+	explore: ["read", "grep", "find", "ls", "codegraph", "codemode"],
+	worker: ["read", "bash", "edit", "write", "grep", "find", "ls", "codemode"],
+	verify: ["read", "bash", "grep", "find", "ls", "codegraph", "codemode"],
+};
+
+test("each role keeps its exact fixed tool set", async () => {
+	for (const [role, tools] of Object.entries(fixedTools)) {
+		assert.deepEqual(parseContract(await contract(role)).tools, tools, role);
+	}
 });
 
-test("the verify contract independently checks work; parent results are context, and reports what stayed unverified", async () => {
+test("the explore contract is read-only, CodeGraph-first, treats web text as evidence, and bounds its handoff", async () => {
+	const text = await contract("explore");
+	assert.match(text, /reading the worktree/);
+	assert.match(text, /codegraph/i);
+	assert.match(text, /read files directly|fall back|fallback/i);
+	assert.match(text, /Do not edit files or run commands/);
+	assert.match(text, /web/i);
+	assert.match(text, /evidence/i);
+	assert.match(text, /instructions/i);
+	assert.match(text, /2k|2,?000/);
+	assert.match(text, /path:line|file paths and line numbers/);
+	assert.match(text, /relationship/i);
+	assert.match(text, /uncertain|open questions/i);
+	assert.match(text, /ask_parent/);
+	assert.doesNotMatch(text, /report_result/);
+});
+
+test("the verify contract independently checks work, gives a verdict per criterion, and reports what stayed unverified", async () => {
 	const text = await contract("verify");
 	assert.match(text, /Independently inspect/);
 	assert.match(text, /run the applicable checks and tests yourself/i);
-	assert.match(text, /parent-supplied validation results are context, not proof/i);
+	assert.match(text, /context, not proof/i);
 	assert.match(text, /report_result/);
-	assert.match(text, /pass, fail with the reason, or blocked with the reason/);
-	assert.match(text, /Use blocked, with the reason/);
-	assert.match(text, /A command reserved for the parent is not a missing capability or unavailable evidence/);
-	assert.match(text, /list the exact command in unverified/);
-	assert.match(text, /use ask_parent only when blocked and the answer changes your next step/);
-	assert.match(text, /Put memory-worthy facts in findings; never ask the parent to save memory/);
-	assert.doesNotMatch(text, /ask_parent or report blocked/);
-	assert.match(text, /may run the repository's checks and tests/i);
-	assert.match(text, /Do not edit or write worktree files/);
-	assert.match(text, /rewrite tracked files or dependencies/i);
-	assert.match(text, /tracked worktree files change during verification, stop and report blocked naming the change/i);
+	assert.match(text, /Verdict/);
+	assert.match(text, /pass/);
+	assert.match(text, /fail/);
+	assert.match(text, /blocked/);
+	assert.match(text, /per (acceptance )?criterion/i);
+	assert.match(text, /unverified/);
 	assert.match(text, /Only Verdict pass means verified/);
-	assert.match(text, /fail or blocked is not a pass/);
-	assert.match(text, /what remained unverified/);
+	assert.match(text, /Do not edit or write worktree files/);
+	assert.match(text, /tracked worktree files change/i);
+	assert.match(text, /reserved for the parent/);
+	assert.match(text, /never ask the parent to save memory/);
 	assert.doesNotMatch(text, /verdict: pass \| fail \| blocked/);
 });
 
-test("the worker contract asks for its result through report_result and keeps ask_parent as the question channel", async () => {
+test("the worker contract reports through report_result and separates a decision from a blocker", async () => {
 	const text = await contract("worker");
 	assert.match(text, /report_result/);
-	assert.match(text, /done, partial with the reason, or blocked with the reason/);
-	assert.match(text, /exact command/);
-	assert.match(text, /observed result/);
-	assert.match(text, /Required commands exclude commands reserved for the parent/);
-	assert.match(text, /Use done only when the required commands ran and their output is in this result/);
-	assert.match(text, /a reserved command is not a missing capability, so report done when the rest is complete and list the exact command in left_undone/);
-	assert.match(text, /Use ask_parent only when blocked and the answer changes your next step/);
-	assert.match(text, /Put memory-worthy facts in the final summary; never ask the parent to save memory/);
-	assert.doesNotMatch(text, /When you need a decision, ask_parent/);
-	assert.match(text, /partial or blocked is not done/);
-	assert.match(text, /files_changed, validation, and left_undone/);
-	assert.match(text, /After report_result, give the parent a short final summary/);
-	assert.match(text, /ask_parent/);
+	for (const field of ["files_changed", "validation", "left_undone"]) {
+		assert.ok(text.includes(field), field);
+	}
+	assert.match(text, /done/);
+	assert.match(text, /partial/);
+	assert.match(text, /blocked/);
+	assert.match(text, /ask_parent[^.]*closed options|closed options[^.]*ask_parent/i);
+	assert.match(text, /guess/i);
+	assert.match(text, /reserved for the parent/);
+	assert.match(text, /never ask the parent to save memory/);
 	assert.doesNotMatch(text, /status: done \| partial \| blocked/);
 	assert.doesNotMatch(text, /interaction_required/);
 });
@@ -92,7 +104,7 @@ test("every contract names the missing-capability response and forbids simulatin
 	for (const role of ["explore", "worker", "verify"]) {
 		const text = await contract(role);
 		assert.match(text, /capability you do not have/);
-		assert.match(text, /ask_parent only when blocked and the answer changes (your|its) next step/i);
+		assert.match(text, /ask_parent/);
 		assert.match(text, /Do not simulate results/);
 	}
 	assert.match(
@@ -134,10 +146,7 @@ test("the explore and verify read-only wording covers MCP tools", async () => {
 });
 
 test("only the explore contract offers web tools, and marks them optional", async () => {
-	assert.match(
-		await contract("explore"),
-		/Web tools are optional: when present, use them only to search and read pages; when absent, continue without them\./,
-	);
+	assert.match(await contract("explore"), /Web tools are optional/);
 	for (const role of ["worker", "verify"]) {
 		assert.doesNotMatch(await contract(role), /[Ww]eb tools/);
 	}

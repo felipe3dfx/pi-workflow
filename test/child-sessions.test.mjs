@@ -2674,26 +2674,32 @@ test("spawn_child describes who decides the role and what each role can do", asy
 		});
 		const role = tool.parameters.properties.role.description;
 		assert.match(role, /Jev routing is off, the role you pass decides/);
-		assert.match(role, /on, it is a suggestion/);
+		assert.doesNotMatch(role, /suggestion|specialist/i);
 		const guidance = tool.promptGuidelines.join("\n");
 		const taskDescription = tool.parameters.properties.task.description;
 		assert.match(taskDescription, /acceptance criteria and changed-file\/diff context/);
 		assert.match(taskDescription, /known validation commands\/results as context/);
 		assert.match(taskDescription, /Exploration may discover context directly from the worktree/);
-		assert.doesNotMatch(guidance, /acceptance criteria|changed-file diff|validation commands\/results/);
-		assert.match(guidance, /Explore reads and queries CodeGraph without editing or commands/);
 		assert.match(guidance, /Pass the task and the role \(explore, worker, or verify\)\./);
-		assert.match(guidance, /verify independently checks completed work and may run checks and tests without editing/);
-		assert.match(guidance, /worker implements and runs commands/);
-		assert.match(
-			guidance,
-			/When Jev routing is on, the parent asks once per user turn/,
-		);
-		assert.doesNotMatch(guidance, /(^|\. )Jev selects the specialist/m);
-		assert.match(
-			guidance,
-			/When Jev routing is on, the role is a suggestion and Jev selects the specialist/,
-		);
+		for (const line of [
+			"explore: read, grep, find, ls, codegraph, codemode",
+			"worker: read, bash, edit, write, grep, find, ls, codemode",
+			"verify: read, bash, grep, find, ls, codegraph, codemode",
+		]) {
+			assert.ok(guidance.includes(line), line);
+		}
+		assert.match(guidance, /MCP and web tools/i);
+		assert.match(guidance, /explore[^.]*cannot run commands/i);
+		assert.match(guidance, /skill[^.]*hint/i);
+		assert.match(guidance, /scope/i);
+		assert.match(guidance, /acceptance criteria/i);
+		assert.match(guidance, /edit surface/i);
+		assert.match(guidance, /read[^.]*before[^.]*write[^.]*worker|worker[^.]*read[^.]*write/i);
+		assert.match(guidance, /When Jev routing is on, the parent asks once per user turn/);
+		assert.doesNotMatch(guidance, /specialist/i);
+		assert.doesNotMatch(guidance, /names a role|use that role/i);
+		assert.match(guidance, /parent chooses the role/i);
+		assert.match(guidance, /Jev decides only the destination/i);
 		assert.match(
 			tool.description,
 			/When Jev routing is on, the harness decides whether the work leaves/,

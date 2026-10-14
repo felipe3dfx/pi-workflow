@@ -1286,7 +1286,7 @@ const spawnChildParameters = Type.Object({
 	role: Type.Optional(
 		Type.String({
 			description:
-				"explore, worker, or verify. When Jev routing is off, the role you pass decides and omitting it does not choose worker. When on, it is a suggestion and Jev selects the specialist.",
+				"explore, worker, or verify. When Jev routing is off, the role you pass decides and omitting it does not choose worker. When on, the role is still required and the parent chooses it; Jev does not.",
 		}),
 	),
 	worktree: Type.Optional(
@@ -1388,13 +1388,13 @@ export function createSpawnChildTool(
 			"Delegate a bounded task to a child session that runs under a harness contract. When Jev routing is on, the harness decides whether the work leaves this session. The active profile picks the model for the role. In an interactive session the call returns the child id at once and the result arrives later as a message; in print and json modes the result returns in the same call.",
 		promptSnippet: "Delegate a bounded task to a child session",
 		promptGuidelines: [
-			"Pass the task and the role (explore, worker, or verify). When Jev routing is on, the role is a suggestion and Jev selects the specialist; otherwise the role determines the contract. Explore reads and queries CodeGraph without editing or commands; verify independently checks completed work and may run checks and tests without editing; worker implements and runs commands.",
+			"Pass the task and the role (explore, worker, or verify). The parent chooses the role and it determines the contract; Jev decides only the destination. Choose the role whose tools cover the task; a role named by a skill is a hint. Fixed tools per role (explore: read, grep, find, ls, codegraph, codemode; worker: read, bash, edit, write, grep, find, ls, codemode; verify: read, bash, grep, find, ls, codegraph, codemode), plus MCP and web tools added at runtime. Explore reads and queries CodeGraph and cannot run commands; verify independently checks completed work and may run checks and tests without editing; worker implements and runs commands. Give a brief with the scope, acceptance criteria, and edit surface; assign any reading needed before a write to the worker.",
 			"Children communicate only with the parent, never directly with the user.",
 			"Do not delegate mutating git or gh commands or publication: they are reserved for the parent and stay with it. Do not ask the child for intermediate progress reports. Copy evidence you already have into the task; references accept only paths inside the cwd. There is no channel to a running child; use reply_child only when the child asks.",
 			"A refusal or a queued id is not a completed result and is not retried. After a background child is queued, end your turn: its result wakes you. Do not poll with sleep, list_children, child_status, or child_result.",
 			`One codemode script can launch several children: each spawn_child call returns at once without awaiting the child. Their results arrive in one message when every child is done, or earlier when a result needs you. In print and json modes each call waits for its child instead. At most ${launchLimit} children can be queued, running, or waiting at once; a launch beyond that is refused.`,
 			"Do not declare work done without a worker Verdict of done and its files_changed, validation, and left_undone fields. Do not declare work verified without a verifier Verdict of pass and its findings and unverified fields; partial, fail, and blocked are not success.",
-			"When Jev routing is on, the parent asks once per user turn before read, grep, find, ls, edit, write, bash, powershell, or codegraph query and explore. A block that names a role means call spawn_child and use that role. A block that says to ask the user one question means ask that one question and wait. Reads of AGENTS.md, GLOSSARY.md, and one docs/agents markdown file stay available, and so does codegraph init.",
+			"When Jev routing is on, the parent asks once per user turn before read, grep, find, ls, edit, write, bash, powershell, or codegraph query and explore. A block that says to delegate means call spawn_child with the role you choose. A block that says to ask the user one question means ask that one question and wait. Reads of AGENTS.md, GLOSSARY.md, and one docs/agents markdown file stay available, and so does codegraph init.",
 		],
 		parameters: spawnChildParameters,
 		async execute(toolCallId, params, signal, _onUpdate, ctx) {
