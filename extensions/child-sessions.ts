@@ -27,6 +27,11 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 
+import {
+	askParentTool,
+	type ChildAudit,
+	type ChildCapture,
+} from "./child-audit.ts";
 import { type ChildShell, createChildBashTool } from "./child-bash.ts";
 import type { createChildLauncher } from "./child-launcher.ts";
 import { createChildCodeGraphTool } from "./codegraph-tool.ts";
@@ -149,6 +154,7 @@ interface Child {
 	plan: Plan;
 	handle: ChildHandle;
 	watch: ReturnType<typeof createWatch>;
+	capture?: ChildCapture;
 	conversation?: Conversation;
 	entries?: SessionEntry[];
 	streaming?: AssistantMessage;
@@ -277,7 +283,6 @@ function parentProject(ctx: ExtensionContext): ParentProject {
 	return { cwd: ctx.cwd, trusted: ctx.isProjectTrusted() };
 }
 
-const askParentTool = "ask_parent";
 const reportResultTool = "report_result";
 
 const mcpTools = [
@@ -558,6 +563,7 @@ export function createChildSessions(options: {
 	report: (message: string) => void;
 	schedule?: Schedule;
 	todo?: TodoLink;
+	audit?: ChildAudit;
 }) {
 	const create = options.create ?? createPiChildSession;
 	const schedule = options.schedule ?? scheduleTimer;
@@ -862,6 +868,7 @@ export function createChildSessions(options: {
 		let asked = (_question: string, _signal?: AbortSignal) =>
 			Promise.reject<string>(new Error("The child is not running."));
 		let observe = (_event: AgentSessionEvent) => {};
+		let audited = (_event: AgentSessionEvent) => {};
 		let reported = (_result: ChildResult) => {};
 		let noticed = (_message: string) => {};
 		const watch = createWatch(schedule, (reason) => stall(reason));
@@ -879,6 +886,7 @@ export function createChildSessions(options: {
 				modelRegistry: launch.modelRegistry,
 				shell: launch.shell(),
 				onEvent: (event) => {
+					audited(event);
 					watch.event(event);
 					observe(event);
 				},
@@ -926,8 +934,25 @@ export function createChildSessions(options: {
 				reason: "The session ended before the child launched.",
 			};
 		}
+		const id = randomUUID();
+		const createdAt = Date.now();
+		const capture = options.audit?.begin({
+			child: id,
+			sdkSession: handle.sessionId,
+			role: plan.role,
+			task: plan.task,
+			references: plan.references,
+			instructions: plan.contract.prompt,
+			tools: handle.tools,
+			model: plan.model,
+			thinking: plan.thinking,
+			worktree: plan.worktree,
+			createdAt,
+			...(launch.group === undefined ? {} : { group: launch.group }),
+			...(from ? { continuedFrom: from.id } : {}),
+		});
+		if (capture) audited = (event) => capture.event(event);
 		if (!launch.background) {
-			const id = randomUUID();
 			let ended: ChildState = "failed";
 			const stopped = Promise.withResolvers<never>();
 			const stop = (state: ChildState, error: Error) => {
@@ -976,14 +1001,14 @@ export function createChildSessions(options: {
 		}
 		const child: Child = {
 			record: {
-				id: randomUUID(),
+				id,
 				role: plan.role,
 				task: plan.task,
 				worktree: plan.worktree,
 				model: plan.model,
 				thinking: plan.thinking,
 				state: "queued",
-				createdAt: Date.now(),
+				createdAt,
 				continuedFrom: from?.id,
 				...(launch.group === undefined ? {} : { group: launch.group }),
 				...(launch.todo === undefined ? {} : { todo: launch.todo }),
@@ -991,6 +1016,7 @@ export function createChildSessions(options: {
 			plan,
 			handle,
 			watch,
+			capture,
 			tools: new Map(),
 			writes: new Map(),
 			changed: new Set(),
@@ -1092,6 +1118,7 @@ export function createChildSessions(options: {
 			);
 		}
 		child.answers.set(number, { by, text });
+		child.capture?.answered(number, text);
 		answer(child, text);
 	}
 

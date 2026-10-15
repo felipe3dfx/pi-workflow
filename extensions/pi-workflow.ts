@@ -1,3 +1,5 @@
+import { join } from "node:path";
+
 import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
@@ -30,6 +32,7 @@ import {
 	createCodeGraphTool,
 	syncCodeGraphTool,
 } from "./codegraph-tool.ts";
+import { createChildAudit } from "./child-audit.ts";
 import { createChildLauncher } from "./child-launcher.ts";
 import { runDelegationCheck } from "./delegation-check.ts";
 import { registerDelegationMode } from "./delegation-mode.ts";
@@ -154,6 +157,10 @@ export default function piWorkflowExtension(
 			if (currentCtx) report(currentCtx, message, "error");
 		},
 		todo,
+		audit: createChildAudit({
+			root: join(agentDirectory, "pi-workflow-audit"),
+			parent: () => currentCtx?.sessionManager.getSessionId(),
+		}),
 	});
 	pi.on("turn_end", () => childSessions.atBoundary());
 	pi.on("agent_settled", () => childSessions.atBoundary());
