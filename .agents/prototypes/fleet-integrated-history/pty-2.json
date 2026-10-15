@@ -1,0 +1,3413 @@
+{
+  "harness": "Pi TuiMainScreen/ProcessTerminal + Linux PTY; same bounded capture/read/render policy SDK/RPC; simplified renderer",
+  "samples": [
+    {
+      "repeat": 0,
+      "mode": "sdk",
+      "result": {
+        "mode": "sdk",
+        "checkpoint": "pty",
+        "build": {
+          "messages": 2000,
+          "ms": 360.506261,
+          "kind": "synthetic retained user messages through same raw/index writer; before runtime timer"
+        },
+        "receivedChars": 69632,
+        "ackChars": 69632,
+        "ackOffset": 896293,
+        "ackDigest": "7cb68e4d206c468d9b5232cf42bc9aa0bc5ca2468448db790926e7c28e81e2ca",
+        "metrics": {
+          "received": 2092,
+          "queued": 2092,
+          "written": 2092,
+          "synced": 0,
+          "maxQueuedBytes": 78484,
+          "maxWriteAckMs": 3.239292999999975
+        },
+        "queue": {
+          "received": 2091,
+          "refused": 0,
+          "maxQueueBytes": 302426,
+          "maxQueueEntries": 12,
+          "publishMs": 337.08642999999455
+        },
+        "kinds": {
+          "message_start": 5,
+          "message_end": 5,
+          "thinking_start": 1,
+          "thinking_delta": 2,
+          "thinking_end": 1,
+          "toolcall_start": 1,
+          "toolcall_delta": 1,
+          "toolcall_end": 1,
+          "tool_execution_start": 1,
+          "tool_execution_end": 1,
+          "text_start": 1,
+          "text_delta": 68,
+          "text_end": 1,
+          "agent_settled": 1
+        },
+        "lagP99Ms": 1.692671,
+        "runMs": 3665.6153980000004
+      },
+      "probes": [
+        {
+          "action": "reopen",
+          "inputToWriteMs": 16.966004,
+          "inputToPtyReadMs": 16.992615
+        },
+        {
+          "action": "older-detach",
+          "inputToWriteMs": 16.555876,
+          "inputToPtyReadMs": 16.565394
+        },
+        {
+          "action": "collapse-expand",
+          "inputToWriteMs": 15.663615,
+          "inputToPtyReadMs": 15.662513
+        },
+        {
+          "action": "newer-detached",
+          "inputToWriteMs": 16.675052,
+          "inputToPtyReadMs": 16.690422
+        },
+        {
+          "action": "expand-collapse",
+          "inputToWriteMs": 15.683411,
+          "inputToPtyReadMs": 15.706335
+        },
+        {
+          "action": "follow",
+          "inputToWriteMs": 15.575658,
+          "inputToPtyReadMs": 15.576079
+        }
+      ],
+      "actions": [
+        {
+          "type": "action",
+          "seq": 1,
+          "follow": true,
+          "anchor": 1997,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4112938370643"
+        },
+        {
+          "type": "action",
+          "seq": 2,
+          "follow": false,
+          "anchor": 1995,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4113122262624"
+        },
+        {
+          "type": "action",
+          "seq": 3,
+          "follow": false,
+          "anchor": 1995,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4113301701781"
+        },
+        {
+          "type": "action",
+          "seq": 4,
+          "follow": false,
+          "anchor": 1996,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4113486491244"
+        },
+        {
+          "type": "action",
+          "seq": 5,
+          "follow": false,
+          "anchor": 1996,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4113669578339"
+        },
+        {
+          "type": "action",
+          "seq": 6,
+          "follow": true,
+          "anchor": 1997,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4113853327539"
+        }
+      ],
+      "renders": [
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.05864099999996597,
+          "entries": 0,
+          "residentBytes": 1928,
+          "ns": "4112805632890"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.04903300000000854,
+          "entries": 8,
+          "residentBytes": 4027,
+          "ns": "4112820075369"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.070863999999915,
+          "entries": 8,
+          "residentBytes": 4347,
+          "ns": "4112857342552"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.0201279999999997,
+          "entries": 0,
+          "residentBytes": 4347,
+          "ns": "4112882063002"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.04944399999999405,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4112897964868"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.14296100000001388,
+          "entries": 8,
+          "residentBytes": 13339,
+          "ns": "4112935167889"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.059381999999914115,
+          "entries": 8,
+          "residentBytes": 13339,
+          "ns": "4112937103820"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.07860899999991489,
+          "entries": 8,
+          "residentBytes": 13339,
+          "ns": "4112952227561"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.11775299999999334,
+          "entries": 8,
+          "residentBytes": 14483,
+          "ns": "4112986366903"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.14135800000008203,
+          "entries": 8,
+          "residentBytes": 15627,
+          "ns": "4113037739425"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.14404300000001058,
+          "entries": 8,
+          "residentBytes": 16771,
+          "ns": "4113089492679"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.15685800000005656,
+          "entries": 8,
+          "residentBytes": 16771,
+          "ns": "4113120883839"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.045055000000047585,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4113136344639"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.05817000000001826,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4113152117180"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.053481000000147105,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4113189258314"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.05147799999986091,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4113240197334"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.04732999999987442,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4113291076621"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.03474600000004102,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4113301578828"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.07916999999997643,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4113316663154"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.05749900000000707,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4113342390352"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.05758900000000722,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4113393202161"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.06182699999999386,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4113444083913"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.09525100000018938,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4113485058918"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.109958000000006,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4113501125356"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.1164810000000216,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4113546901575"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.11811400000010508,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4113597852549"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.11943700000006174,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4113648851452"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.11688099999992119,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4113669473750"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.11230299999988347,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4113684587632"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.10714299999995092,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4113699822373"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.10868599999980688,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4113750779758"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.06550399999991896,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4113801384835"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.06041499999992084,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4113851869654"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.048100999999860505,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4113852080784"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.2360479999999825,
+          "entries": 8,
+          "residentBytes": 33939,
+          "ns": "4113867318251"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.14208000000007814,
+          "entries": 8,
+          "residentBytes": 35083,
+          "ns": "4113904450468"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.30051000000003114,
+          "entries": 8,
+          "residentBytes": 36227,
+          "ns": "4113956482661"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.28636299999971015,
+          "entries": 8,
+          "residentBytes": 37373,
+          "ns": "4114007748742"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3018419999998514,
+          "entries": 8,
+          "residentBytes": 38517,
+          "ns": "4114058990536"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3087949999999182,
+          "entries": 8,
+          "residentBytes": 39661,
+          "ns": "4114110269902"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3093669999998383,
+          "entries": 8,
+          "residentBytes": 40805,
+          "ns": "4114161341915"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3374100000000908,
+          "entries": 8,
+          "residentBytes": 41951,
+          "ns": "4114212666746"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3650420000003578,
+          "entries": 8,
+          "residentBytes": 43095,
+          "ns": "4114264060228"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3463769999998476,
+          "entries": 8,
+          "residentBytes": 44239,
+          "ns": "4114315558710"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3686290000000554,
+          "entries": 8,
+          "residentBytes": 45383,
+          "ns": "4114366095818"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.19537099999979546,
+          "entries": 8,
+          "residentBytes": 46529,
+          "ns": "4114416117428"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6022820000002866,
+          "entries": 8,
+          "residentBytes": 47673,
+          "ns": "4114468788994"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3786079999999856,
+          "entries": 8,
+          "residentBytes": 48817,
+          "ns": "4114519045040"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.649152000000413,
+          "entries": 8,
+          "residentBytes": 49961,
+          "ns": "4114569757229"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3987859999997454,
+          "entries": 8,
+          "residentBytes": 51107,
+          "ns": "4114624203751"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3924449999999524,
+          "entries": 8,
+          "residentBytes": 52251,
+          "ns": "4114672601833"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.40579899999966074,
+          "entries": 8,
+          "residentBytes": 53395,
+          "ns": "4114722881243"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5156080000001566,
+          "entries": 8,
+          "residentBytes": 54539,
+          "ns": "4114774854715"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.4233519999997952,
+          "entries": 8,
+          "residentBytes": 55683,
+          "ns": "4114825368017"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.24258999999983644,
+          "entries": 8,
+          "residentBytes": 56829,
+          "ns": "4114875239072"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.4088360000000648,
+          "entries": 8,
+          "residentBytes": 57973,
+          "ns": "4114928149421"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6736479999999574,
+          "entries": 8,
+          "residentBytes": 59117,
+          "ns": "4114980818482"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.7181419999997161,
+          "entries": 8,
+          "residentBytes": 60261,
+          "ns": "4115033948067"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.46388900000010835,
+          "entries": 8,
+          "residentBytes": 61407,
+          "ns": "4115083490929"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.40573900000026697,
+          "entries": 8,
+          "residentBytes": 62551,
+          "ns": "4115132832320"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.2775169999999889,
+          "entries": 8,
+          "residentBytes": 63695,
+          "ns": "4115185174982"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.2923350000000937,
+          "entries": 8,
+          "residentBytes": 64839,
+          "ns": "4115235707040"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.4069119999999202,
+          "entries": 8,
+          "residentBytes": 65985,
+          "ns": "4115286435501"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5265289999997549,
+          "entries": 8,
+          "residentBytes": 67129,
+          "ns": "4115337517763"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.522841999999855,
+          "entries": 8,
+          "residentBytes": 68273,
+          "ns": "4115389355698"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5303560000002108,
+          "entries": 8,
+          "residentBytes": 69417,
+          "ns": "4115440760892"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5235120000002098,
+          "entries": 8,
+          "residentBytes": 70563,
+          "ns": "4115493306119"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.2847999999999047,
+          "entries": 8,
+          "residentBytes": 71707,
+          "ns": "4115541473222"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.29313600000023143,
+          "entries": 8,
+          "residentBytes": 72851,
+          "ns": "4115591585725"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5531889999997475,
+          "entries": 8,
+          "residentBytes": 73995,
+          "ns": "4115644234608"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.559161000000131,
+          "entries": 8,
+          "residentBytes": 75139,
+          "ns": "4115696135462"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5538610000003246,
+          "entries": 8,
+          "residentBytes": 76285,
+          "ns": "4115747995860"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6961200000000645,
+          "entries": 8,
+          "residentBytes": 77429,
+          "ns": "4115799100835"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5967220000002271,
+          "entries": 8,
+          "residentBytes": 78573,
+          "ns": "4115850046588"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.601600999999846,
+          "entries": 8,
+          "residentBytes": 79717,
+          "ns": "4115901187912"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6043359999998756,
+          "entries": 8,
+          "residentBytes": 80863,
+          "ns": "4115951592879"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6256669999993392,
+          "entries": 8,
+          "residentBytes": 82007,
+          "ns": "4116001656079"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6149359999999433,
+          "entries": 8,
+          "residentBytes": 83151,
+          "ns": "4116053424853"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6249250000000757,
+          "entries": 8,
+          "residentBytes": 84295,
+          "ns": "4116105509034"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 1.6678240000001097,
+          "entries": 8,
+          "residentBytes": 85441,
+          "ns": "4116156700033"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.635324999999284,
+          "entries": 8,
+          "residentBytes": 86585,
+          "ns": "4116207794898"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.7103070000002845,
+          "entries": 8,
+          "residentBytes": 87729,
+          "ns": "4116259098780"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6434300000000803,
+          "entries": 8,
+          "residentBytes": 88873,
+          "ns": "4116310288466"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.7060989999999947,
+          "entries": 8,
+          "residentBytes": 90019,
+          "ns": "4116366015126"
+        }
+      ]
+    },
+    {
+      "repeat": 0,
+      "mode": "rpc",
+      "result": {
+        "mode": "rpc",
+        "checkpoint": "pty",
+        "build": {
+          "messages": 2000,
+          "ms": 350.44344700000005,
+          "kind": "synthetic retained user messages through same raw/index writer; before runtime timer"
+        },
+        "receivedChars": 69632,
+        "ackChars": 69632,
+        "ackOffset": 896293,
+        "ackDigest": "c42ca90aab737bdce047704ccb9a5365c011ea8ebc0244d2d3fa5877f3e60389",
+        "metrics": {
+          "received": 2092,
+          "queued": 2092,
+          "written": 2092,
+          "synced": 0,
+          "maxQueuedBytes": 78484,
+          "maxWriteAckMs": 2.9770560000000614
+        },
+        "queue": {
+          "received": 2091,
+          "refused": 0,
+          "maxQueueBytes": 302426,
+          "maxQueueEntries": 6,
+          "publishMs": 322.9739880000014
+        },
+        "kinds": {
+          "message_start": 5,
+          "message_end": 5,
+          "thinking_start": 1,
+          "thinking_delta": 2,
+          "thinking_end": 1,
+          "toolcall_start": 1,
+          "toolcall_delta": 1,
+          "toolcall_end": 1,
+          "tool_execution_start": 1,
+          "tool_execution_end": 1,
+          "text_start": 1,
+          "text_delta": 68,
+          "text_end": 1,
+          "agent_settled": 1
+        },
+        "lagP99Ms": 1.753087,
+        "runMs": 3669.817143
+      },
+      "probes": [
+        {
+          "action": "reopen",
+          "inputToWriteMs": 18.267342,
+          "inputToPtyReadMs": 18.29239
+        },
+        {
+          "action": "older-detach",
+          "inputToWriteMs": 16.418426,
+          "inputToPtyReadMs": 16.417183
+        },
+        {
+          "action": "collapse-expand",
+          "inputToWriteMs": 15.536384,
+          "inputToPtyReadMs": 15.529781
+        },
+        {
+          "action": "newer-detached",
+          "inputToWriteMs": 16.067611,
+          "inputToPtyReadMs": 16.153444
+        },
+        {
+          "action": "expand-collapse",
+          "inputToWriteMs": 15.677871,
+          "inputToPtyReadMs": 15.718138
+        },
+        {
+          "action": "follow",
+          "inputToWriteMs": 16.523885,
+          "inputToPtyReadMs": 16.556708
+        }
+      ],
+      "actions": [
+        {
+          "type": "action",
+          "seq": 1,
+          "follow": true,
+          "anchor": 1997,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4118080316299"
+        },
+        {
+          "type": "action",
+          "seq": 2,
+          "follow": false,
+          "anchor": 1995,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4118260953638"
+        },
+        {
+          "type": "action",
+          "seq": 3,
+          "follow": false,
+          "anchor": 1995,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4118444950738"
+        },
+        {
+          "type": "action",
+          "seq": 4,
+          "follow": false,
+          "anchor": 1996,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4118627445079"
+        },
+        {
+          "type": "action",
+          "seq": 5,
+          "follow": false,
+          "anchor": 1996,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4118808861385"
+        },
+        {
+          "type": "action",
+          "seq": 6,
+          "follow": true,
+          "anchor": 1997,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4118995187632"
+        }
+      ],
+      "renders": [
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.22195099999999002,
+          "entries": 8,
+          "residentBytes": 1928,
+          "ns": "4117941476495"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.13846200000011777,
+          "entries": 8,
+          "residentBytes": 4027,
+          "ns": "4117956125375"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.07320900000013353,
+          "entries": 8,
+          "residentBytes": 4347,
+          "ns": "4117998806345"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.03300300000000789,
+          "entries": 0,
+          "residentBytes": 4347,
+          "ns": "4118021112867"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.36633499999993546,
+          "entries": 8,
+          "residentBytes": 11865,
+          "ns": "4118037407688"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.26795800000013514,
+          "entries": 8,
+          "residentBytes": 13339,
+          "ns": "4118074810528"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.3975639999998748,
+          "entries": 8,
+          "residentBytes": 13339,
+          "ns": "4118078189947"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.1632590000001528,
+          "entries": 8,
+          "residentBytes": 13339,
+          "ns": "4118093258713"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.1524090000000342,
+          "entries": 8,
+          "residentBytes": 14483,
+          "ns": "4118125108112"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.30954700000006596,
+          "entries": 8,
+          "residentBytes": 15627,
+          "ns": "4118177116641"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.31022900000016307,
+          "entries": 8,
+          "residentBytes": 16771,
+          "ns": "4118228250470"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.3115410000000338,
+          "entries": 8,
+          "residentBytes": 16771,
+          "ns": "4118259608077"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.050805999999965934,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4118274803323"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.05977300000017749,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4118290276686"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.056075999999848136,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4118328686556"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.10691300000007686,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4118380054790"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.04486500000007254,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4118434344335"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.03872300000011819,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4118444801405"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.05340099999989434,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4118459858209"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.04937399999994341,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4118482198925"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.07069400000000314,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4118534059994"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.09419900000011694,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4118585149159"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.03438600000026781,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4118626160012"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.09402799999998024,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4118641734197"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.08355799999981173,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4118686772627"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.06605499999977837,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4118737832727"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.07048399999985122,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4118788045800"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.07366000000001804,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4118808776995"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.13459499999999025,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4118823892039"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.1085760000000846,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4118839695468"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.1145369999999275,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4118891100963"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.10196300000006886,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4118942422329"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.10464900000033595,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4118993437784"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.14946400000007998,
+          "entries": 8,
+          "residentBytes": 33939,
+          "ns": "4119009539819"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.26257799999984854,
+          "entries": 8,
+          "residentBytes": 35083,
+          "ns": "4119046168381"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.14969399999972666,
+          "entries": 8,
+          "residentBytes": 36227,
+          "ns": "4119096970302"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.15085599999974875,
+          "entries": 8,
+          "residentBytes": 37373,
+          "ns": "4119147274318"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.15079600000035498,
+          "entries": 8,
+          "residentBytes": 38517,
+          "ns": "4119198647020"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.31185199999981705,
+          "entries": 8,
+          "residentBytes": 39661,
+          "ns": "4119250345842"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.17627400000037596,
+          "entries": 8,
+          "residentBytes": 40805,
+          "ns": "4119301204990"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3892180000002554,
+          "entries": 8,
+          "residentBytes": 41951,
+          "ns": "4119354167728"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.17668499999990672,
+          "entries": 8,
+          "residentBytes": 43095,
+          "ns": "4119404019286"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3423889999999119,
+          "entries": 8,
+          "residentBytes": 44239,
+          "ns": "4119456914747"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5352450000000317,
+          "entries": 8,
+          "residentBytes": 45383,
+          "ns": "4119508105174"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.35875999999962005,
+          "entries": 8,
+          "residentBytes": 46529,
+          "ns": "4119557939900"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3703930000001492,
+          "entries": 8,
+          "residentBytes": 47673,
+          "ns": "4119609517010"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.39089100000001054,
+          "entries": 8,
+          "residentBytes": 48817,
+          "ns": "4119660371570"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3989259999998467,
+          "entries": 8,
+          "residentBytes": 49961,
+          "ns": "4119712243139"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.41386499999998705,
+          "entries": 8,
+          "residentBytes": 51107,
+          "ns": "4119763518627"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.40537899999981164,
+          "entries": 8,
+          "residentBytes": 52251,
+          "ns": "4119814910787"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.4854800000002797,
+          "entries": 8,
+          "residentBytes": 53395,
+          "ns": "4119866429356"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.4200559999999314,
+          "entries": 8,
+          "residentBytes": 54539,
+          "ns": "4119917318993"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 1.0690569999997024,
+          "entries": 8,
+          "residentBytes": 55683,
+          "ns": "4119969616269"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.22839299999986906,
+          "entries": 8,
+          "residentBytes": 56829,
+          "ns": "4120018654324"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.24937299999965035,
+          "entries": 8,
+          "residentBytes": 57973,
+          "ns": "4120070742152"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.45343000000002576,
+          "entries": 8,
+          "residentBytes": 59117,
+          "ns": "4120122672673"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.46956100000033985,
+          "entries": 8,
+          "residentBytes": 60261,
+          "ns": "4120173146821"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.471824999999626,
+          "entries": 8,
+          "residentBytes": 61407,
+          "ns": "4120223848492"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.48971899999969537,
+          "entries": 8,
+          "residentBytes": 62551,
+          "ns": "4120276032884"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.4867030000000341,
+          "entries": 8,
+          "residentBytes": 63695,
+          "ns": "4120327183295"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.53861199999983,
+          "entries": 8,
+          "residentBytes": 64839,
+          "ns": "4120378133416"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5228409999999712,
+          "entries": 8,
+          "residentBytes": 65985,
+          "ns": "4120429245434"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.556536000000051,
+          "entries": 8,
+          "residentBytes": 67129,
+          "ns": "4120480106797"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5307269999998425,
+          "entries": 8,
+          "residentBytes": 68273,
+          "ns": "4120531503926"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5280520000001161,
+          "entries": 8,
+          "residentBytes": 69417,
+          "ns": "4120582559317"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5394729999998162,
+          "entries": 8,
+          "residentBytes": 70563,
+          "ns": "4120633562810"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.28989999999976135,
+          "entries": 8,
+          "residentBytes": 71707,
+          "ns": "4120683585683"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5685979999998381,
+          "entries": 8,
+          "residentBytes": 72851,
+          "ns": "4120735568282"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 1.4184500000001208,
+          "entries": 8,
+          "residentBytes": 73995,
+          "ns": "4120787642765"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5730169999997088,
+          "entries": 8,
+          "residentBytes": 75139,
+          "ns": "4120839750362"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6975629999997182,
+          "entries": 8,
+          "residentBytes": 76285,
+          "ns": "4120889573406"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.640505000000303,
+          "entries": 8,
+          "residentBytes": 77429,
+          "ns": "4120940842081"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5874839999996766,
+          "entries": 8,
+          "residentBytes": 78573,
+          "ns": "4120991969829"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6133540000000721,
+          "entries": 8,
+          "residentBytes": 79717,
+          "ns": "4121043366036"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6168100000004415,
+          "entries": 8,
+          "residentBytes": 80863,
+          "ns": "4121094453678"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.32536700000036944,
+          "entries": 8,
+          "residentBytes": 82007,
+          "ns": "4121142784382"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6682469999996101,
+          "entries": 8,
+          "residentBytes": 83151,
+          "ns": "4121195643283"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6375690000004397,
+          "entries": 8,
+          "residentBytes": 84295,
+          "ns": "4121247281069"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3274910000000091,
+          "entries": 8,
+          "residentBytes": 85441,
+          "ns": "4121296208554"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.7109680000003209,
+          "entries": 8,
+          "residentBytes": 86585,
+          "ns": "4121349399144"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6723849999998492,
+          "entries": 8,
+          "residentBytes": 87729,
+          "ns": "4121400489011"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.707180999999764,
+          "entries": 8,
+          "residentBytes": 88873,
+          "ns": "4121451459691"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.7384499999998297,
+          "entries": 8,
+          "residentBytes": 90019,
+          "ns": "4121509681292"
+        }
+      ]
+    },
+    {
+      "repeat": 1,
+      "mode": "sdk",
+      "result": {
+        "mode": "sdk",
+        "checkpoint": "pty",
+        "build": {
+          "messages": 2000,
+          "ms": 318.814817,
+          "kind": "synthetic retained user messages through same raw/index writer; before runtime timer"
+        },
+        "receivedChars": 69632,
+        "ackChars": 69632,
+        "ackOffset": 896288,
+        "ackDigest": "94e1a2e3202fb7933f458f53a1a998c6ff7631fa7f58e6a127c7152f6f635a63",
+        "metrics": {
+          "received": 2092,
+          "queued": 2092,
+          "written": 2092,
+          "synced": 0,
+          "maxQueuedBytes": 78484,
+          "maxWriteAckMs": 3.21842300000003
+        },
+        "queue": {
+          "received": 2091,
+          "refused": 0,
+          "maxQueueBytes": 302426,
+          "maxQueueEntries": 12,
+          "publishMs": 290.65778200000136
+        },
+        "kinds": {
+          "message_start": 5,
+          "message_end": 5,
+          "thinking_start": 1,
+          "thinking_delta": 2,
+          "thinking_end": 1,
+          "toolcall_start": 1,
+          "toolcall_delta": 1,
+          "toolcall_end": 1,
+          "tool_execution_start": 1,
+          "tool_execution_end": 1,
+          "text_start": 1,
+          "text_delta": 68,
+          "text_end": 1,
+          "agent_settled": 1
+        },
+        "lagP99Ms": 1.725439,
+        "runMs": 3669.473949
+      },
+      "probes": [
+        {
+          "action": "reopen",
+          "inputToWriteMs": 19.361196,
+          "inputToPtyReadMs": 19.407875
+        },
+        {
+          "action": "older-detach",
+          "inputToWriteMs": 16.656407,
+          "inputToPtyReadMs": 16.600321
+        },
+        {
+          "action": "collapse-expand",
+          "inputToWriteMs": 16.571707,
+          "inputToPtyReadMs": 16.585903
+        },
+        {
+          "action": "newer-detached",
+          "inputToWriteMs": 16.101074,
+          "inputToPtyReadMs": 16.117495
+        },
+        {
+          "action": "expand-collapse",
+          "inputToWriteMs": 15.268905,
+          "inputToPtyReadMs": 15.315654
+        },
+        {
+          "action": "follow",
+          "inputToWriteMs": 16.28881,
+          "inputToPtyReadMs": 16.342342
+        }
+      ],
+      "actions": [
+        {
+          "type": "action",
+          "seq": 1,
+          "follow": true,
+          "anchor": 1997,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4122701258405"
+        },
+        {
+          "type": "action",
+          "seq": 2,
+          "follow": false,
+          "anchor": 1995,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4122882405110"
+        },
+        {
+          "type": "action",
+          "seq": 3,
+          "follow": false,
+          "anchor": 1995,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4123063104977"
+        },
+        {
+          "type": "action",
+          "seq": 4,
+          "follow": false,
+          "anchor": 1996,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4123248156156"
+        },
+        {
+          "type": "action",
+          "seq": 5,
+          "follow": false,
+          "anchor": 1996,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4123431568127"
+        },
+        {
+          "type": "action",
+          "seq": 6,
+          "follow": true,
+          "anchor": 1997,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4123616399359"
+        }
+      ],
+      "renders": [
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.05226900000002388,
+          "entries": 0,
+          "residentBytes": 1928,
+          "ns": "4122567630385"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.07471099999997932,
+          "entries": 8,
+          "residentBytes": 4027,
+          "ns": "4122582305444"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.06577500000003056,
+          "entries": 8,
+          "residentBytes": 4347,
+          "ns": "4122619637320"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.028815000000008695,
+          "entries": 3,
+          "residentBytes": 4347,
+          "ns": "4122643066280"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.02391499999998814,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4122658657878"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.2553139999999985,
+          "entries": 8,
+          "residentBytes": 13337,
+          "ns": "4122695554559"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.20997800000009192,
+          "entries": 8,
+          "residentBytes": 13337,
+          "ns": "4122699182419"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.14758000000006177,
+          "entries": 8,
+          "residentBytes": 13337,
+          "ns": "4122715206456"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.06374000000005253,
+          "entries": 8,
+          "residentBytes": 14481,
+          "ns": "4122746765905"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.1404459999998835,
+          "entries": 8,
+          "residentBytes": 15625,
+          "ns": "4122798159327"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.13670999999999367,
+          "entries": 8,
+          "residentBytes": 16769,
+          "ns": "4122849389389"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.15553499999987253,
+          "entries": 8,
+          "residentBytes": 16769,
+          "ns": "4122880916798"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.05765900000005786,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4122896287877"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.04882199999997283,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4122911264178"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.04815099999996164,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4122950449208"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.0510469999999259,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4123001679771"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.05169799999998759,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4123052494105"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.03617899999994734,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4123062954331"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.053601999999955297,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4123079082778"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.03620900000009897,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4123103276829"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.035116000000016356,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4123154070473"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.061084999999820866,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4123205985224"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.10653200000001561,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4123247051882"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.11101000000007843,
+          "entries": 8,
+          "residentBytes": 11864,
+          "ns": "4123262490349"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.1195470000000114,
+          "entries": 8,
+          "residentBytes": 11864,
+          "ns": "4123307232668"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.07559300000002622,
+          "entries": 8,
+          "residentBytes": 11864,
+          "ns": "4123359028002"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.06554399999981797,
+          "entries": 8,
+          "residentBytes": 11864,
+          "ns": "4123410869875"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.07066400000007889,
+          "entries": 8,
+          "residentBytes": 11864,
+          "ns": "4123431486272"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.04617800000005445,
+          "entries": 8,
+          "residentBytes": 11864,
+          "ns": "4123446390285"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.09554200000002311,
+          "entries": 8,
+          "residentBytes": 11864,
+          "ns": "4123462259409"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.10823600000003353,
+          "entries": 8,
+          "residentBytes": 11864,
+          "ns": "4123513212797"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.11052999999992608,
+          "entries": 8,
+          "residentBytes": 11864,
+          "ns": "4123564138762"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.0536219999999048,
+          "entries": 8,
+          "residentBytes": 11864,
+          "ns": "4123614949679"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.15491399999996247,
+          "entries": 8,
+          "residentBytes": 33937,
+          "ns": "4123630928331"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.1615759999999682,
+          "entries": 8,
+          "residentBytes": 35081,
+          "ns": "4123669875360"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.1676479999998719,
+          "entries": 8,
+          "residentBytes": 36225,
+          "ns": "4123720722125"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.1721269999998185,
+          "entries": 8,
+          "residentBytes": 37371,
+          "ns": "4123771456297"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.16861999999991895,
+          "entries": 8,
+          "residentBytes": 38515,
+          "ns": "4123822186872"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3459259999999631,
+          "entries": 8,
+          "residentBytes": 39659,
+          "ns": "4123875369316"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.384548999999879,
+          "entries": 8,
+          "residentBytes": 40803,
+          "ns": "4123925541061"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.38245499999993626,
+          "entries": 8,
+          "residentBytes": 41949,
+          "ns": "4123976892895"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3800700000001598,
+          "entries": 8,
+          "residentBytes": 43093,
+          "ns": "4124027916094"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3955700000001343,
+          "entries": 8,
+          "residentBytes": 44237,
+          "ns": "4124079202123"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.40733200000022407,
+          "entries": 8,
+          "residentBytes": 45381,
+          "ns": "4124130353225"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.21421600000030594,
+          "entries": 8,
+          "residentBytes": 46527,
+          "ns": "4124181238033"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.42127899999968577,
+          "entries": 8,
+          "residentBytes": 47671,
+          "ns": "4124233375505"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.22107899999991787,
+          "entries": 8,
+          "residentBytes": 48815,
+          "ns": "4124283891623"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.7220890000003237,
+          "entries": 8,
+          "residentBytes": 49959,
+          "ns": "4124336750154"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 1.2714519999999538,
+          "entries": 8,
+          "residentBytes": 51105,
+          "ns": "4124392351866"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.8956279999997605,
+          "entries": 8,
+          "residentBytes": 52249,
+          "ns": "4124438268763"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.41925499999979365,
+          "entries": 8,
+          "residentBytes": 53393,
+          "ns": "4124489415176"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3956700000003366,
+          "entries": 8,
+          "residentBytes": 54537,
+          "ns": "4124540502397"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.43359200000031706,
+          "entries": 8,
+          "residentBytes": 55681,
+          "ns": "4124591729704"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.4480199999998149,
+          "entries": 8,
+          "residentBytes": 56827,
+          "ns": "4124643248063"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5521570000000793,
+          "entries": 8,
+          "residentBytes": 57971,
+          "ns": "4124694537798"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6003489999998237,
+          "entries": 8,
+          "residentBytes": 59115,
+          "ns": "4124746052430"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5795600000001286,
+          "entries": 8,
+          "residentBytes": 60259,
+          "ns": "4124797560219"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6026729999998679,
+          "entries": 8,
+          "residentBytes": 61405,
+          "ns": "4124848129488"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.29182300000002215,
+          "entries": 8,
+          "residentBytes": 62549,
+          "ns": "4124898459503"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5694000000003143,
+          "entries": 8,
+          "residentBytes": 63693,
+          "ns": "4124950684522"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6307869999996001,
+          "entries": 8,
+          "residentBytes": 64837,
+          "ns": "4125002526334"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.30905600000005506,
+          "entries": 8,
+          "residentBytes": 65983,
+          "ns": "4125051622219"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.31279300000005605,
+          "entries": 8,
+          "residentBytes": 67127,
+          "ns": "4125102737634"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3186539999996967,
+          "entries": 8,
+          "residentBytes": 68271,
+          "ns": "4125153852778"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6253150000002279,
+          "entries": 8,
+          "residentBytes": 69415,
+          "ns": "4125206277746"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.743970999999874,
+          "entries": 8,
+          "residentBytes": 70561,
+          "ns": "4125257559627"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3348350000001119,
+          "entries": 8,
+          "residentBytes": 71705,
+          "ns": "4125307358905"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.32653899999968417,
+          "entries": 8,
+          "residentBytes": 72849,
+          "ns": "4125358450054"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.344253000000208,
+          "entries": 8,
+          "residentBytes": 73993,
+          "ns": "4125410569373"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6717240000002676,
+          "entries": 8,
+          "residentBytes": 75137,
+          "ns": "4125463138644"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3608439999998154,
+          "entries": 8,
+          "residentBytes": 76283,
+          "ns": "4125513327442"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.7477890000000116,
+          "entries": 8,
+          "residentBytes": 77427,
+          "ns": "4125566139504"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3725859999999557,
+          "entries": 8,
+          "residentBytes": 78571,
+          "ns": "4125614397279"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3692000000000917,
+          "entries": 8,
+          "residentBytes": 79715,
+          "ns": "4125666664829"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.7772140000001855,
+          "entries": 8,
+          "residentBytes": 80861,
+          "ns": "4125719684215"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.7277000000003682,
+          "entries": 8,
+          "residentBytes": 82005,
+          "ns": "4125770471236"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.7803499999999985,
+          "entries": 8,
+          "residentBytes": 83149,
+          "ns": "4125821807169"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 1.0677949999999328,
+          "entries": 8,
+          "residentBytes": 84293,
+          "ns": "4125874582321"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.779819000000316,
+          "entries": 8,
+          "residentBytes": 85439,
+          "ns": "4125923829243"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.9400529999993523,
+          "entries": 8,
+          "residentBytes": 86583,
+          "ns": "4125973958938"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.4115609999998924,
+          "entries": 8,
+          "residentBytes": 87727,
+          "ns": "4126023671563"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.4399040000007517,
+          "entries": 8,
+          "residentBytes": 88871,
+          "ns": "4126074758794"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.7965799999992669,
+          "entries": 8,
+          "residentBytes": 90017,
+          "ns": "4126130824576"
+        }
+      ]
+    },
+    {
+      "repeat": 1,
+      "mode": "rpc",
+      "result": {
+        "mode": "rpc",
+        "checkpoint": "pty",
+        "build": {
+          "messages": 2000,
+          "ms": 351.79600200000004,
+          "kind": "synthetic retained user messages through same raw/index writer; before runtime timer"
+        },
+        "receivedChars": 69632,
+        "ackChars": 69632,
+        "ackOffset": 896284,
+        "ackDigest": "c0f73d78b82c693d3c5655584765cdc334172ac8d89caba155d45a9c4b8b8843",
+        "metrics": {
+          "received": 2092,
+          "queued": 2092,
+          "written": 2092,
+          "synced": 0,
+          "maxQueuedBytes": 78483,
+          "maxWriteAckMs": 1.1862999999993917
+        },
+        "queue": {
+          "received": 2091,
+          "refused": 0,
+          "maxQueueBytes": 301352,
+          "maxQueueEntries": 6,
+          "publishMs": 330.23408700000164
+        },
+        "kinds": {
+          "message_start": 5,
+          "message_end": 5,
+          "thinking_start": 1,
+          "thinking_delta": 2,
+          "thinking_end": 1,
+          "toolcall_start": 1,
+          "toolcall_delta": 1,
+          "toolcall_end": 1,
+          "tool_execution_start": 1,
+          "tool_execution_end": 1,
+          "text_start": 1,
+          "text_delta": 68,
+          "text_end": 1,
+          "agent_settled": 1
+        },
+        "lagP99Ms": 1.778687,
+        "runMs": 3665.227523
+      },
+      "probes": [
+        {
+          "action": "reopen",
+          "inputToWriteMs": 18.532094,
+          "inputToPtyReadMs": 18.554997
+        },
+        {
+          "action": "older-detach",
+          "inputToWriteMs": 16.405742,
+          "inputToPtyReadMs": 16.384491
+        },
+        {
+          "action": "collapse-expand",
+          "inputToWriteMs": 15.590245,
+          "inputToPtyReadMs": 15.599062
+        },
+        {
+          "action": "newer-detached",
+          "inputToWriteMs": 16.095494,
+          "inputToPtyReadMs": 16.109681
+        },
+        {
+          "action": "expand-collapse",
+          "inputToWriteMs": 15.596477,
+          "inputToPtyReadMs": 15.61894
+        },
+        {
+          "action": "follow",
+          "inputToWriteMs": 16.946968,
+          "inputToPtyReadMs": 16.940666
+        }
+      ],
+      "actions": [
+        {
+          "type": "action",
+          "seq": 1,
+          "follow": true,
+          "anchor": 1997,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4127856432198"
+        },
+        {
+          "type": "action",
+          "seq": 2,
+          "follow": false,
+          "anchor": 1995,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4128037905533"
+        },
+        {
+          "type": "action",
+          "seq": 3,
+          "follow": false,
+          "anchor": 1995,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4128219395598"
+        },
+        {
+          "type": "action",
+          "seq": 4,
+          "follow": false,
+          "anchor": 1996,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4128404930695"
+        },
+        {
+          "type": "action",
+          "seq": 5,
+          "follow": false,
+          "anchor": 1996,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4128588700804"
+        },
+        {
+          "type": "action",
+          "seq": 6,
+          "follow": true,
+          "anchor": 1997,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4128774069024"
+        }
+      ],
+      "renders": [
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.18145400000003065,
+          "entries": 8,
+          "residentBytes": 1928,
+          "ns": "4127717368360"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.11014899999986483,
+          "entries": 8,
+          "residentBytes": 4027,
+          "ns": "4127731335527"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.05925200000001496,
+          "entries": 8,
+          "residentBytes": 4346,
+          "ns": "4127775521581"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.05060600000001614,
+          "entries": 8,
+          "residentBytes": 4346,
+          "ns": "4127795506279"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.062128000000029715,
+          "entries": 8,
+          "residentBytes": 6124,
+          "ns": "4127810244078"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.26305900000011206,
+          "entries": 8,
+          "residentBytes": 13335,
+          "ns": "4127854196609"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.1600029999999606,
+          "entries": 8,
+          "residentBytes": 13335,
+          "ns": "4127869366768"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.23182900000006157,
+          "entries": 8,
+          "residentBytes": 14479,
+          "ns": "4127903602392"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.12965600000006816,
+          "entries": 8,
+          "residentBytes": 15623,
+          "ns": "4127954913207"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.1446049999999559,
+          "entries": 8,
+          "residentBytes": 16767,
+          "ns": "4128005180293"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.1445850000000064,
+          "entries": 8,
+          "residentBytes": 16767,
+          "ns": "4128036429273"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.04092799999989438,
+          "entries": 8,
+          "residentBytes": 6124,
+          "ns": "4128051781958"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.041888999999855514,
+          "entries": 8,
+          "residentBytes": 6124,
+          "ns": "4128067189165"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.04611700000009478,
+          "entries": 8,
+          "residentBytes": 6124,
+          "ns": "4128105951414"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.04920300000003408,
+          "entries": 8,
+          "residentBytes": 6124,
+          "ns": "4128157379021"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.04764999999997599,
+          "entries": 8,
+          "residentBytes": 6124,
+          "ns": "4128208740512"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.04272100000002865,
+          "entries": 8,
+          "residentBytes": 6124,
+          "ns": "4128219238230"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.06323999999995067,
+          "entries": 8,
+          "residentBytes": 6124,
+          "ns": "4128234326393"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.05431300000009287,
+          "entries": 8,
+          "residentBytes": 6124,
+          "ns": "4128259848533"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.06112600000005841,
+          "entries": 8,
+          "residentBytes": 6124,
+          "ns": "4128311252304"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.06664600000021892,
+          "entries": 8,
+          "residentBytes": 6124,
+          "ns": "4128362655174"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.07724699999971563,
+          "entries": 8,
+          "residentBytes": 6124,
+          "ns": "4128403579262"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.1202779999998711,
+          "entries": 8,
+          "residentBytes": 11863,
+          "ns": "4128419106037"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.11010900000019319,
+          "entries": 8,
+          "residentBytes": 11863,
+          "ns": "4128465236748"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.11839400000008027,
+          "entries": 8,
+          "residentBytes": 11863,
+          "ns": "4128516544538"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.11844500000006519,
+          "entries": 8,
+          "residentBytes": 11863,
+          "ns": "4128567878036"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.11675100000002203,
+          "entries": 8,
+          "residentBytes": 11863,
+          "ns": "4128588584343"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.10373600000002625,
+          "entries": 8,
+          "residentBytes": 11863,
+          "ns": "4128603659311"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.09737399999994523,
+          "entries": 8,
+          "residentBytes": 11863,
+          "ns": "4128618126476"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.15741800000023431,
+          "entries": 8,
+          "residentBytes": 11863,
+          "ns": "4128669766576"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.10815499999989697,
+          "entries": 8,
+          "residentBytes": 11863,
+          "ns": "4128720777312"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.15930200000002515,
+          "entries": 8,
+          "residentBytes": 11863,
+          "ns": "4128771828866"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.2781479999998737,
+          "entries": 8,
+          "residentBytes": 33935,
+          "ns": "4128788205372"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.26834899999994377,
+          "entries": 8,
+          "residentBytes": 35079,
+          "ns": "4128824398929"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.47427899999956935,
+          "entries": 8,
+          "residentBytes": 36223,
+          "ns": "4128876142685"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3965920000000551,
+          "entries": 8,
+          "residentBytes": 37369,
+          "ns": "4128927243172"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.44332100000019636,
+          "entries": 8,
+          "residentBytes": 38513,
+          "ns": "4128978114263"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3743000000004031,
+          "entries": 8,
+          "residentBytes": 39657,
+          "ns": "4129029208798"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.37783699999999953,
+          "entries": 8,
+          "residentBytes": 40801,
+          "ns": "4129080957975"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.40247299999964525,
+          "entries": 8,
+          "residentBytes": 41947,
+          "ns": "4129131158815"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.39749399999982415,
+          "entries": 8,
+          "residentBytes": 43091,
+          "ns": "4129182730775"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.4099679999999353,
+          "entries": 8,
+          "residentBytes": 44235,
+          "ns": "4129233455689"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.4149969999998575,
+          "entries": 8,
+          "residentBytes": 45379,
+          "ns": "4129283847382"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.9279400000000351,
+          "entries": 8,
+          "residentBytes": 46525,
+          "ns": "4129335805074"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6832660000000033,
+          "entries": 8,
+          "residentBytes": 47669,
+          "ns": "4129386856878"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 1.0107069999999112,
+          "entries": 8,
+          "residentBytes": 48813,
+          "ns": "4129437929712"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.7193349999997736,
+          "entries": 8,
+          "residentBytes": 49957,
+          "ns": "4129488579153"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 1.074217999999746,
+          "entries": 8,
+          "residentBytes": 51103,
+          "ns": "4129540922456"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.20359599999983402,
+          "entries": 8,
+          "residentBytes": 52247,
+          "ns": "4129588711192"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5581179999999222,
+          "entries": 8,
+          "residentBytes": 53391,
+          "ns": "4129641960684"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.39217399999961344,
+          "entries": 8,
+          "residentBytes": 54535,
+          "ns": "4129692519903"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5852899999999863,
+          "entries": 8,
+          "residentBytes": 55679,
+          "ns": "4129743620460"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.45281800000020667,
+          "entries": 8,
+          "residentBytes": 56825,
+          "ns": "4129794123503"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.22835299999997005,
+          "entries": 8,
+          "residentBytes": 57969,
+          "ns": "4129844334593"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.23491500000000087,
+          "entries": 8,
+          "residentBytes": 59113,
+          "ns": "4129894837155"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.4498429999998734,
+          "entries": 8,
+          "residentBytes": 60257,
+          "ns": "4129947858334"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.558027999999922,
+          "entries": 8,
+          "residentBytes": 61403,
+          "ns": "4129999048621"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.4751009999999951,
+          "entries": 8,
+          "residentBytes": 62547,
+          "ns": "4130049294566"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.4812229999997726,
+          "entries": 8,
+          "residentBytes": 63691,
+          "ns": "4130100515641"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.47989000000006854,
+          "entries": 8,
+          "residentBytes": 64835,
+          "ns": "4130151721407"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.7836659999998119,
+          "entries": 8,
+          "residentBytes": 65981,
+          "ns": "4130202329410"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5038249999997788,
+          "entries": 8,
+          "residentBytes": 67125,
+          "ns": "4130253431499"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.27423999999973603,
+          "entries": 8,
+          "residentBytes": 68269,
+          "ns": "4130306142159"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.29776499999979933,
+          "entries": 8,
+          "residentBytes": 69413,
+          "ns": "4130354704112"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.28242599999975937,
+          "entries": 8,
+          "residentBytes": 70559,
+          "ns": "4130406024515"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6814919999997073,
+          "entries": 8,
+          "residentBytes": 71703,
+          "ns": "4130458703855"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5445929999996224,
+          "entries": 8,
+          "residentBytes": 72847,
+          "ns": "4130510140820"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5484900000001289,
+          "entries": 8,
+          "residentBytes": 73991,
+          "ns": "4130560153633"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5558440000004339,
+          "entries": 8,
+          "residentBytes": 75135,
+          "ns": "4130611870429"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5686390000000756,
+          "entries": 8,
+          "residentBytes": 76281,
+          "ns": "4130663163630"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5763529999994716,
+          "entries": 8,
+          "residentBytes": 77425,
+          "ns": "4130713602542"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.643090000000484,
+          "entries": 8,
+          "residentBytes": 78569,
+          "ns": "4130764964224"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6160079999999653,
+          "entries": 8,
+          "residentBytes": 79713,
+          "ns": "4130816348849"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6044659999997748,
+          "entries": 8,
+          "residentBytes": 80859,
+          "ns": "4130866555640"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6381499999997686,
+          "entries": 8,
+          "residentBytes": 82003,
+          "ns": "4130918564760"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 1.3043139999999767,
+          "entries": 8,
+          "residentBytes": 83147,
+          "ns": "4130969803849"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6150260000003982,
+          "entries": 8,
+          "residentBytes": 84291,
+          "ns": "4131022118107"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6158779999996113,
+          "entries": 8,
+          "residentBytes": 85437,
+          "ns": "4131071760619"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6693500000001222,
+          "entries": 8,
+          "residentBytes": 86581,
+          "ns": "4131123156836"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6450729999996838,
+          "entries": 8,
+          "residentBytes": 87725,
+          "ns": "4131174679192"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6424879999995028,
+          "entries": 8,
+          "residentBytes": 88869,
+          "ns": "4131224747421"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6819130000003497,
+          "entries": 8,
+          "residentBytes": 90015,
+          "ns": "4131281042198"
+        }
+      ]
+    }
+  ]
+}

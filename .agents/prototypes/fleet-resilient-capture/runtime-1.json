@@ -1,0 +1,1979 @@
+{
+  "assertions": "passed SDK/RPC normal result despite actual fixture filesystem failures; exact large text/tool on healthy and short-write runs; bounded access, readable prefix, durable vs live-only warnings, explicit loss, zero capture lifecycle controls",
+  "limits": {
+    "chunk": 16384,
+    "frame": 24576,
+    "metadata": 8192,
+    "prefixFrames": 8
+  },
+  "samples": [
+    {
+      "mode": "sdk",
+      "scenario": "success",
+      "normalResult": {
+        "assistantChars": 180000,
+        "toolChars": 300000,
+        "stopReason": "stop",
+        "settled": true,
+        "controls": {
+          "abort": 0,
+          "steer": 0,
+          "followUp": 0
+        }
+      },
+      "normalized": 32,
+      "kinds": {
+        "message_start": 5,
+        "message_end": 5,
+        "unsupported_partial": 6,
+        "tool_execution_start": 1,
+        "tool_execution_end": 1,
+        "message_update": 13,
+        "agent_settled": 1
+      },
+      "runMs": 474.09553400000004,
+      "health": {
+        "state": "healthy",
+        "observed": 35,
+        "persistedEvents": 35,
+        "droppedEvents": 0,
+        "droppedEncodedBytes": 0,
+        "firstLostEvent": null,
+        "cause": null,
+        "durableMarker": false
+      },
+      "metrics": {
+        "maxQueuedBytes": 0,
+        "maxQueuedEntries": 0,
+        "maxChunkBytes": 16384,
+        "maxFrameBytes": 22085,
+        "maxEventJSONBytes": 300236,
+        "maxEncodeMs": 0.5475700000000643,
+        "maxAppendMs": 4.350072999999952,
+        "appendMs": 19.731848999999954,
+        "encodedEvents": 35,
+        "maxEncodeHeapDelta": 600992
+      },
+      "io": {
+        "shortWrites": 0,
+        "injected": 0,
+        "rawWrites": 120
+      },
+      "reopen": {
+        "ms": 0.3531110000000126,
+        "bytes": 936,
+        "reads": 4,
+        "maxReadBytes": 416,
+        "warnings": []
+      },
+      "prefix": {
+        "events": 8,
+        "bytes": 8764,
+        "reads": 16,
+        "maxReadBytes": 3116,
+        "warnings": [
+          "INCOMPLETE: bounded prefix only; more retained bytes require explicit scan",
+          "INCOMPLETE: unfinished message",
+          "INCOMPLETE: no reconciled terminal state"
+        ]
+      },
+      "reconciliation": {
+        "ms": 9.985937000000035,
+        "events": 35,
+        "frames": 120,
+        "bytes": 1960250,
+        "reads": 240,
+        "maxReadBytes": 22081,
+        "maxEventBytes": 300236,
+        "assistantChars": 180000,
+        "toolChars": 300000,
+        "warnings": []
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      },
+      "afterWriterExit": {
+        "warnings": [],
+        "identityPresent": true,
+        "events": 35,
+        "completed": true,
+        "readOnly": true,
+        "executable": false
+      }
+    },
+    {
+      "mode": "sdk",
+      "scenario": "short",
+      "normalResult": {
+        "assistantChars": 180000,
+        "toolChars": 300000,
+        "stopReason": "stop",
+        "settled": true,
+        "controls": {
+          "abort": 0,
+          "steer": 0,
+          "followUp": 0
+        }
+      },
+      "normalized": 32,
+      "kinds": {
+        "message_start": 5,
+        "message_end": 5,
+        "unsupported_partial": 6,
+        "tool_execution_start": 1,
+        "tool_execution_end": 1,
+        "message_update": 13,
+        "agent_settled": 1
+      },
+      "runMs": 473.65046599999994,
+      "health": {
+        "state": "healthy",
+        "observed": 35,
+        "persistedEvents": 35,
+        "droppedEvents": 0,
+        "droppedEncodedBytes": 0,
+        "firstLostEvent": null,
+        "cause": null,
+        "durableMarker": false
+      },
+      "metrics": {
+        "maxQueuedBytes": 0,
+        "maxQueuedEntries": 0,
+        "maxChunkBytes": 16384,
+        "maxFrameBytes": 22085,
+        "maxEventJSONBytes": 300237,
+        "maxEncodeMs": 0.5771160000000464,
+        "maxAppendMs": 2.6596819999999752,
+        "appendMs": 17.26832999999999,
+        "encodedEvents": 35,
+        "maxEncodeHeapDelta": 600992
+      },
+      "io": {
+        "shortWrites": 1623,
+        "injected": 0,
+        "rawWrites": 1743
+      },
+      "reopen": {
+        "ms": 0.3288749999999254,
+        "bytes": 936,
+        "reads": 4,
+        "maxReadBytes": 416,
+        "warnings": []
+      },
+      "prefix": {
+        "events": 8,
+        "bytes": 8752,
+        "reads": 16,
+        "maxReadBytes": 3112,
+        "warnings": [
+          "INCOMPLETE: bounded prefix only; more retained bytes require explicit scan",
+          "INCOMPLETE: unfinished message",
+          "INCOMPLETE: no reconciled terminal state"
+        ]
+      },
+      "reconciliation": {
+        "ms": 8.937937000000147,
+        "events": 35,
+        "frames": 120,
+        "bytes": 1960242,
+        "reads": 240,
+        "maxReadBytes": 22081,
+        "maxEventBytes": 300237,
+        "assistantChars": 180000,
+        "toolChars": 300000,
+        "warnings": []
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      },
+      "afterWriterExit": {
+        "warnings": [],
+        "identityPresent": true,
+        "events": 35,
+        "completed": true,
+        "readOnly": true,
+        "executable": false
+      }
+    },
+    {
+      "mode": "sdk",
+      "scenario": "reject",
+      "normalResult": {
+        "assistantChars": 180000,
+        "toolChars": 300000,
+        "stopReason": "stop",
+        "settled": true,
+        "controls": {
+          "abort": 0,
+          "steer": 0,
+          "followUp": 0
+        }
+      },
+      "normalized": 32,
+      "kinds": {
+        "message_start": 5,
+        "message_end": 5,
+        "unsupported_partial": 6,
+        "tool_execution_start": 1,
+        "tool_execution_end": 1,
+        "message_update": 13,
+        "agent_settled": 1
+      },
+      "runMs": 469.00253699999996,
+      "health": {
+        "state": "incomplete",
+        "observed": 35,
+        "persistedEvents": 20,
+        "droppedEvents": 15,
+        "droppedEncodedBytes": 541654,
+        "firstLostEvent": 21,
+        "cause": "ENOSPC: fixture: no space left on device",
+        "durableMarker": true
+      },
+      "firstLiveFailure": {
+        "state": "incomplete",
+        "observed": 21,
+        "persistedEvents": 20,
+        "droppedEvents": 1,
+        "droppedEncodedBytes": 16483,
+        "firstLostEvent": 21,
+        "cause": "ENOSPC: fixture: no space left on device",
+        "durableMarker": true
+      },
+      "metrics": {
+        "maxQueuedBytes": 0,
+        "maxQueuedEntries": 0,
+        "maxChunkBytes": 16384,
+        "maxFrameBytes": 22084,
+        "maxEventJSONBytes": 300237,
+        "maxEncodeMs": 0.6003399999999601,
+        "maxAppendMs": 4.436135000000036,
+        "appendMs": 12.777008000000194,
+        "encodedEvents": 35,
+        "maxEncodeHeapDelta": 600992
+      },
+      "io": {
+        "shortWrites": 0,
+        "injected": 1,
+        "rawWrites": 75,
+        "firstFailureRawWrites": 75
+      },
+      "reopen": {
+        "ms": 0.6176440000000412,
+        "bytes": 1312,
+        "reads": 5,
+        "maxReadBytes": 416,
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: ENOSPC: fixture: no space left on device; dropped observed events=15, encoded bytes=541654"
+        ],
+        "durableFailure": {
+          "state": "incomplete",
+          "observed": 35,
+          "persistedEvents": 20,
+          "droppedEvents": 15,
+          "droppedEncodedBytes": 541654,
+          "firstLostEvent": 21,
+          "cause": "ENOSPC: fixture: no space left on device",
+          "durableMarker": true
+        }
+      },
+      "prefix": {
+        "events": 8,
+        "bytes": 8760,
+        "reads": 16,
+        "maxReadBytes": 3112,
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: ENOSPC: fixture: no space left on device; dropped observed events=15, encoded bytes=541654",
+          "INCOMPLETE: bounded prefix only; more retained bytes require explicit scan",
+          "INCOMPLETE: unfinished message",
+          "INCOMPLETE: no reconciled terminal state"
+        ]
+      },
+      "reconciliation": {
+        "ms": 11.410892999999987,
+        "events": 20,
+        "frames": 74,
+        "bytes": 1227147,
+        "reads": 148,
+        "maxReadBytes": 22080,
+        "maxEventBytes": 300237,
+        "assistantChars": 0,
+        "toolChars": 300000,
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: ENOSPC: fixture: no space left on device; dropped observed events=15, encoded bytes=541654",
+          "INCOMPLETE: unfinished message",
+          "INCOMPLETE: no reconciled terminal state"
+        ]
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      },
+      "afterWriterExit": {
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: ENOSPC: fixture: no space left on device; dropped observed events=15, encoded bytes=541654"
+        ],
+        "identityPresent": true,
+        "durableFailure": {
+          "state": "incomplete",
+          "observed": 35,
+          "persistedEvents": 20,
+          "droppedEvents": 15,
+          "droppedEncodedBytes": 541654,
+          "firstLostEvent": 21,
+          "cause": "ENOSPC: fixture: no space left on device",
+          "durableMarker": true
+        },
+        "events": 20,
+        "completed": false,
+        "readOnly": true,
+        "executable": false
+      }
+    },
+    {
+      "mode": "sdk",
+      "scenario": "partial",
+      "normalResult": {
+        "assistantChars": 180000,
+        "toolChars": 300000,
+        "stopReason": "stop",
+        "settled": true,
+        "controls": {
+          "abort": 0,
+          "steer": 0,
+          "followUp": 0
+        }
+      },
+      "normalized": 32,
+      "kinds": {
+        "message_start": 5,
+        "message_end": 5,
+        "unsupported_partial": 6,
+        "tool_execution_start": 1,
+        "tool_execution_end": 1,
+        "message_update": 13,
+        "agent_settled": 1
+      },
+      "runMs": 467.78910999999994,
+      "health": {
+        "state": "incomplete",
+        "observed": 35,
+        "persistedEvents": 20,
+        "droppedEvents": 15,
+        "droppedEncodedBytes": 541652,
+        "firstLostEvent": 21,
+        "cause": "ENOSPC: fixture: no space left on device",
+        "durableMarker": true
+      },
+      "firstLiveFailure": {
+        "state": "incomplete",
+        "observed": 21,
+        "persistedEvents": 20,
+        "droppedEvents": 1,
+        "droppedEncodedBytes": 16483,
+        "firstLostEvent": 21,
+        "cause": "ENOSPC: fixture: no space left on device",
+        "durableMarker": true
+      },
+      "metrics": {
+        "maxQueuedBytes": 0,
+        "maxQueuedEntries": 0,
+        "maxChunkBytes": 16384,
+        "maxFrameBytes": 22084,
+        "maxEventJSONBytes": 300236,
+        "maxEncodeMs": 0.5675280000000384,
+        "maxAppendMs": 5.046305000000075,
+        "appendMs": 14.393437000000176,
+        "encodedEvents": 35,
+        "maxEncodeHeapDelta": 600992
+      },
+      "io": {
+        "shortWrites": 1,
+        "injected": 1,
+        "rawWrites": 76,
+        "firstFailureRawWrites": 76
+      },
+      "reopen": {
+        "ms": 0.5545529999999417,
+        "bytes": 1312,
+        "reads": 5,
+        "maxReadBytes": 416,
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: raw/index high-water mismatch",
+          "INCOMPLETE: ENOSPC: fixture: no space left on device; dropped observed events=15, encoded bytes=541652"
+        ],
+        "durableFailure": {
+          "state": "incomplete",
+          "observed": 35,
+          "persistedEvents": 20,
+          "droppedEvents": 15,
+          "droppedEncodedBytes": 541652,
+          "firstLostEvent": 21,
+          "cause": "ENOSPC: fixture: no space left on device",
+          "durableMarker": true
+        }
+      },
+      "prefix": {
+        "events": 8,
+        "bytes": 8760,
+        "reads": 16,
+        "maxReadBytes": 3116,
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: raw/index high-water mismatch",
+          "INCOMPLETE: ENOSPC: fixture: no space left on device; dropped observed events=15, encoded bytes=541652",
+          "INCOMPLETE: bounded prefix only; more retained bytes require explicit scan",
+          "INCOMPLETE: unfinished message",
+          "INCOMPLETE: no reconciled terminal state"
+        ]
+      },
+      "reconciliation": {
+        "ms": 9.980666999999812,
+        "events": 20,
+        "frames": 74,
+        "bytes": 1227228,
+        "reads": 151,
+        "maxReadBytes": 22080,
+        "maxEventBytes": 300236,
+        "assistantChars": 0,
+        "toolChars": 300000,
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: raw/index high-water mismatch",
+          "INCOMPLETE: ENOSPC: fixture: no space left on device; dropped observed events=15, encoded bytes=541652",
+          "INCOMPLETE: partial chunk/frame; verified prefix retained",
+          "INCOMPLETE: unfinished message",
+          "INCOMPLETE: no reconciled terminal state"
+        ]
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      },
+      "afterWriterExit": {
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: raw/index high-water mismatch",
+          "INCOMPLETE: ENOSPC: fixture: no space left on device; dropped observed events=15, encoded bytes=541652"
+        ],
+        "identityPresent": true,
+        "durableFailure": {
+          "state": "incomplete",
+          "observed": 35,
+          "persistedEvents": 20,
+          "droppedEvents": 15,
+          "droppedEncodedBytes": 541652,
+          "firstLostEvent": 21,
+          "cause": "ENOSPC: fixture: no space left on device",
+          "durableMarker": true
+        },
+        "events": 20,
+        "completed": false,
+        "readOnly": true,
+        "executable": false
+      }
+    },
+    {
+      "mode": "sdk",
+      "scenario": "zero",
+      "normalResult": {
+        "assistantChars": 180000,
+        "toolChars": 300000,
+        "stopReason": "stop",
+        "settled": true,
+        "controls": {
+          "abort": 0,
+          "steer": 0,
+          "followUp": 0
+        }
+      },
+      "normalized": 32,
+      "kinds": {
+        "message_start": 5,
+        "message_end": 5,
+        "unsupported_partial": 6,
+        "tool_execution_start": 1,
+        "tool_execution_end": 1,
+        "message_update": 13,
+        "agent_settled": 1
+      },
+      "runMs": 466.72172,
+      "health": {
+        "state": "incomplete",
+        "observed": 35,
+        "persistedEvents": 20,
+        "droppedEvents": 15,
+        "droppedEncodedBytes": 541652,
+        "firstLostEvent": 21,
+        "cause": "I/O: zero/invalid short write",
+        "durableMarker": true
+      },
+      "firstLiveFailure": {
+        "state": "incomplete",
+        "observed": 21,
+        "persistedEvents": 20,
+        "droppedEvents": 1,
+        "droppedEncodedBytes": 16483,
+        "firstLostEvent": 21,
+        "cause": "I/O: zero/invalid short write",
+        "durableMarker": true
+      },
+      "metrics": {
+        "maxQueuedBytes": 0,
+        "maxQueuedEntries": 0,
+        "maxChunkBytes": 16384,
+        "maxFrameBytes": 22084,
+        "maxEventJSONBytes": 300237,
+        "maxEncodeMs": 0.5551150000000007,
+        "maxAppendMs": 4.341947000000005,
+        "appendMs": 11.33467899999954,
+        "encodedEvents": 35,
+        "maxEncodeHeapDelta": 600992
+      },
+      "io": {
+        "shortWrites": 0,
+        "injected": 1,
+        "rawWrites": 75,
+        "firstFailureRawWrites": 75
+      },
+      "reopen": {
+        "ms": 0.28594299999997475,
+        "bytes": 1301,
+        "reads": 5,
+        "maxReadBytes": 416,
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: I/O: zero/invalid short write; dropped observed events=15, encoded bytes=541652"
+        ],
+        "durableFailure": {
+          "state": "incomplete",
+          "observed": 35,
+          "persistedEvents": 20,
+          "droppedEvents": 15,
+          "droppedEncodedBytes": 541652,
+          "firstLostEvent": 21,
+          "cause": "I/O: zero/invalid short write",
+          "durableMarker": true
+        }
+      },
+      "prefix": {
+        "events": 8,
+        "bytes": 8752,
+        "reads": 16,
+        "maxReadBytes": 3112,
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: I/O: zero/invalid short write; dropped observed events=15, encoded bytes=541652",
+          "INCOMPLETE: bounded prefix only; more retained bytes require explicit scan",
+          "INCOMPLETE: unfinished message",
+          "INCOMPLETE: no reconciled terminal state"
+        ]
+      },
+      "reconciliation": {
+        "ms": 7.159798999999907,
+        "events": 20,
+        "frames": 74,
+        "bytes": 1227135,
+        "reads": 148,
+        "maxReadBytes": 22080,
+        "maxEventBytes": 300237,
+        "assistantChars": 0,
+        "toolChars": 300000,
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: I/O: zero/invalid short write; dropped observed events=15, encoded bytes=541652",
+          "INCOMPLETE: unfinished message",
+          "INCOMPLETE: no reconciled terminal state"
+        ]
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      },
+      "afterWriterExit": {
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: I/O: zero/invalid short write; dropped observed events=15, encoded bytes=541652"
+        ],
+        "identityPresent": true,
+        "durableFailure": {
+          "state": "incomplete",
+          "observed": 35,
+          "persistedEvents": 20,
+          "droppedEvents": 15,
+          "droppedEncodedBytes": 541652,
+          "firstLostEvent": 21,
+          "cause": "I/O: zero/invalid short write",
+          "durableMarker": true
+        },
+        "events": 20,
+        "completed": false,
+        "readOnly": true,
+        "executable": false
+      }
+    },
+    {
+      "mode": "sdk",
+      "scenario": "index",
+      "normalResult": {
+        "assistantChars": 180000,
+        "toolChars": 300000,
+        "stopReason": "stop",
+        "settled": true,
+        "controls": {
+          "abort": 0,
+          "steer": 0,
+          "followUp": 0
+        }
+      },
+      "normalized": 32,
+      "kinds": {
+        "message_start": 5,
+        "message_end": 5,
+        "unsupported_partial": 6,
+        "tool_execution_start": 1,
+        "tool_execution_end": 1,
+        "message_update": 13,
+        "agent_settled": 1
+      },
+      "runMs": 469.17771300000004,
+      "health": {
+        "state": "incomplete",
+        "observed": 35,
+        "persistedEvents": 21,
+        "droppedEvents": 14,
+        "droppedEncodedBytes": 525170,
+        "firstLostEvent": 22,
+        "cause": "EIO: fixture: index publication rejected",
+        "durableMarker": true
+      },
+      "firstLiveFailure": {
+        "state": "incomplete",
+        "observed": 21,
+        "persistedEvents": 21,
+        "droppedEvents": 0,
+        "droppedEncodedBytes": 0,
+        "firstLostEvent": null,
+        "cause": "EIO: fixture: index publication rejected",
+        "durableMarker": true
+      },
+      "metrics": {
+        "maxQueuedBytes": 0,
+        "maxQueuedEntries": 0,
+        "maxChunkBytes": 16384,
+        "maxFrameBytes": 22084,
+        "maxEventJSONBytes": 300237,
+        "maxEncodeMs": 1.1720759999999473,
+        "maxAppendMs": 5.039331000000061,
+        "appendMs": 13.639659000000165,
+        "encodedEvents": 35,
+        "maxEncodeHeapDelta": 600992
+      },
+      "io": {
+        "shortWrites": 0,
+        "injected": 1,
+        "rawWrites": 76,
+        "firstFailureRawWrites": 76
+      },
+      "reopen": {
+        "ms": 0.6350469999999859,
+        "bytes": 1312,
+        "reads": 5,
+        "maxReadBytes": 416,
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: raw/index high-water mismatch",
+          "INCOMPLETE: EIO: fixture: index publication rejected; dropped observed events=14, encoded bytes=525170"
+        ],
+        "durableFailure": {
+          "state": "incomplete",
+          "observed": 35,
+          "persistedEvents": 21,
+          "droppedEvents": 14,
+          "droppedEncodedBytes": 525170,
+          "firstLostEvent": 22,
+          "cause": "EIO: fixture: index publication rejected",
+          "durableMarker": true
+        }
+      },
+      "prefix": {
+        "events": 8,
+        "bytes": 8756,
+        "reads": 16,
+        "maxReadBytes": 3112,
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: raw/index high-water mismatch",
+          "INCOMPLETE: EIO: fixture: index publication rejected; dropped observed events=14, encoded bytes=525170",
+          "INCOMPLETE: bounded prefix only; more retained bytes require explicit scan",
+          "INCOMPLETE: unfinished message",
+          "INCOMPLETE: no reconciled terminal state"
+        ]
+      },
+      "reconciliation": {
+        "ms": 8.754257000000052,
+        "events": 21,
+        "frames": 76,
+        "bytes": 1249588,
+        "reads": 152,
+        "maxReadBytes": 22080,
+        "maxEventBytes": 300237,
+        "assistantChars": 16384,
+        "toolChars": 300000,
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: raw/index high-water mismatch",
+          "INCOMPLETE: EIO: fixture: index publication rejected; dropped observed events=14, encoded bytes=525170",
+          "INCOMPLETE: unfinished message",
+          "INCOMPLETE: no reconciled terminal state"
+        ]
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      },
+      "afterWriterExit": {
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: raw/index high-water mismatch",
+          "INCOMPLETE: EIO: fixture: index publication rejected; dropped observed events=14, encoded bytes=525170"
+        ],
+        "identityPresent": true,
+        "durableFailure": {
+          "state": "incomplete",
+          "observed": 35,
+          "persistedEvents": 21,
+          "droppedEvents": 14,
+          "droppedEncodedBytes": 525170,
+          "firstLostEvent": 22,
+          "cause": "EIO: fixture: index publication rejected",
+          "durableMarker": true
+        },
+        "events": 21,
+        "completed": false,
+        "readOnly": true,
+        "executable": false
+      }
+    },
+    {
+      "mode": "sdk",
+      "scenario": "all-block",
+      "normalResult": {
+        "assistantChars": 180000,
+        "toolChars": 300000,
+        "stopReason": "stop",
+        "settled": true,
+        "controls": {
+          "abort": 0,
+          "steer": 0,
+          "followUp": 0
+        }
+      },
+      "normalized": 32,
+      "kinds": {
+        "message_start": 5,
+        "message_end": 5,
+        "unsupported_partial": 6,
+        "tool_execution_start": 1,
+        "tool_execution_end": 1,
+        "message_update": 13,
+        "agent_settled": 1
+      },
+      "runMs": 479.30185900000004,
+      "health": {
+        "state": "incomplete",
+        "observed": 35,
+        "persistedEvents": 20,
+        "droppedEvents": 15,
+        "droppedEncodedBytes": 541652,
+        "firstLostEvent": 21,
+        "cause": "ENOSPC: fixture: no space left on device",
+        "durableMarker": false
+      },
+      "firstLiveFailure": {
+        "state": "incomplete",
+        "observed": 21,
+        "persistedEvents": 20,
+        "droppedEvents": 1,
+        "droppedEncodedBytes": 16483,
+        "firstLostEvent": 21,
+        "cause": "ENOSPC: fixture: no space left on device",
+        "durableMarker": false
+      },
+      "metrics": {
+        "maxQueuedBytes": 0,
+        "maxQueuedEntries": 0,
+        "maxChunkBytes": 16384,
+        "maxFrameBytes": 22084,
+        "maxEventJSONBytes": 300237,
+        "maxEncodeMs": 0.8041170000000193,
+        "maxAppendMs": 2.921469000000002,
+        "appendMs": 14.535258000000113,
+        "encodedEvents": 35,
+        "maxEncodeHeapDelta": 600992
+      },
+      "io": {
+        "shortWrites": 0,
+        "injected": 3,
+        "rawWrites": 75,
+        "firstFailureRawWrites": 75
+      },
+      "reopen": {
+        "ms": 0.6665259999999762,
+        "bytes": 1007,
+        "reads": 4,
+        "maxReadBytes": 416,
+        "warnings": [
+          "INCOMPLETE: no durable completed capture"
+        ]
+      },
+      "prefix": {
+        "events": 8,
+        "bytes": 8764,
+        "reads": 16,
+        "maxReadBytes": 3116,
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: bounded prefix only; more retained bytes require explicit scan",
+          "INCOMPLETE: unfinished message",
+          "INCOMPLETE: no reconciled terminal state"
+        ]
+      },
+      "reconciliation": {
+        "ms": 12.65627799999993,
+        "events": 20,
+        "frames": 74,
+        "bytes": 1227147,
+        "reads": 148,
+        "maxReadBytes": 22080,
+        "maxEventBytes": 300237,
+        "assistantChars": 0,
+        "toolChars": 300000,
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: unfinished message",
+          "INCOMPLETE: no reconciled terminal state"
+        ]
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      },
+      "afterWriterExit": {
+        "warnings": [
+          "INCOMPLETE: no durable completed capture"
+        ],
+        "identityPresent": true,
+        "events": 20,
+        "completed": false,
+        "readOnly": true,
+        "executable": false
+      }
+    },
+    {
+      "mode": "sdk",
+      "scenario": "no-storage",
+      "normalResult": {
+        "assistantChars": 180000,
+        "toolChars": 300000,
+        "stopReason": "stop",
+        "settled": true,
+        "controls": {
+          "abort": 0,
+          "steer": 0,
+          "followUp": 0
+        }
+      },
+      "normalized": 32,
+      "kinds": {
+        "message_start": 5,
+        "message_end": 5,
+        "unsupported_partial": 6,
+        "tool_execution_start": 1,
+        "tool_execution_end": 1,
+        "message_update": 13,
+        "agent_settled": 1
+      },
+      "runMs": 461.942627,
+      "health": {
+        "state": "incomplete",
+        "observed": 34,
+        "persistedEvents": 0,
+        "droppedEvents": 34,
+        "droppedEncodedBytes": 1448747,
+        "firstLostEvent": 1,
+        "cause": "ENOSPC: fixture: all storage unavailable",
+        "durableMarker": false
+      },
+      "firstLiveFailure": {
+        "state": "incomplete",
+        "observed": 2,
+        "persistedEvents": 0,
+        "droppedEvents": 2,
+        "droppedEncodedBytes": 2258,
+        "firstLostEvent": 1,
+        "cause": "ENOSPC: fixture: all storage unavailable",
+        "durableMarker": false
+      },
+      "metrics": {
+        "maxQueuedBytes": 0,
+        "maxQueuedEntries": 0,
+        "maxChunkBytes": 0,
+        "maxFrameBytes": 0,
+        "maxEventJSONBytes": 300236,
+        "maxEncodeMs": 0.4747019999999793,
+        "maxAppendMs": 0.5082850000000008,
+        "appendMs": 4.199837000000173,
+        "encodedEvents": 34,
+        "maxEncodeHeapDelta": 600992
+      },
+      "io": {
+        "shortWrites": 0,
+        "injected": 3,
+        "rawWrites": 0,
+        "firstFailureRawWrites": 0
+      },
+      "reopen": {
+        "ms": 0.061015999999995074,
+        "bytes": 0,
+        "reads": 0,
+        "maxReadBytes": 0,
+        "warnings": [
+          "INCOMPLETE: ENOENT: no such file or directory, stat '/tmp/fleet-resilient-runtime-5GeeRJ/sdk-no-storage/store/identity.json'"
+        ]
+      },
+      "prefix": {
+        "events": 0,
+        "bytes": 0,
+        "reads": 0,
+        "maxReadBytes": 0,
+        "warnings": [
+          "INCOMPLETE: ENOENT: no such file or directory, stat '/tmp/fleet-resilient-runtime-5GeeRJ/sdk-no-storage/store/identity.json'",
+          "INCOMPLETE: ENOENT: no such file or directory, open '/tmp/fleet-resilient-runtime-5GeeRJ/sdk-no-storage/store/raw.chunks'; verified prefix retained",
+          "INCOMPLETE: no reconciled terminal state"
+        ]
+      },
+      "reconciliation": {
+        "ms": 0.016672000000085063,
+        "events": 0,
+        "frames": 0,
+        "bytes": 0,
+        "reads": 0,
+        "maxReadBytes": 0,
+        "maxEventBytes": 0,
+        "assistantChars": 0,
+        "toolChars": 0,
+        "warnings": [
+          "INCOMPLETE: ENOENT: no such file or directory, stat '/tmp/fleet-resilient-runtime-5GeeRJ/sdk-no-storage/store/identity.json'",
+          "INCOMPLETE: ENOENT: no such file or directory, open '/tmp/fleet-resilient-runtime-5GeeRJ/sdk-no-storage/store/raw.chunks'; verified prefix retained",
+          "INCOMPLETE: no reconciled terminal state"
+        ]
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      },
+      "afterWriterExit": {
+        "warnings": [
+          "INCOMPLETE: ENOENT: no such file or directory, stat '/tmp/fleet-resilient-runtime-5GeeRJ/sdk-no-storage/store/identity.json'"
+        ],
+        "identityPresent": false,
+        "events": 0,
+        "completed": false,
+        "readOnly": true,
+        "executable": false
+      }
+    },
+    {
+      "mode": "rpc",
+      "scenario": "success",
+      "normalResult": {
+        "assistantChars": 180000,
+        "toolChars": 300000,
+        "stopReason": "stop",
+        "settled": true,
+        "controls": {
+          "abort": 0,
+          "steer": 0,
+          "followUp": 0
+        }
+      },
+      "normalized": 32,
+      "kinds": {
+        "message_start": 5,
+        "message_end": 5,
+        "unsupported_partial": 6,
+        "tool_execution_start": 1,
+        "tool_execution_end": 1,
+        "message_update": 13,
+        "agent_settled": 1
+      },
+      "runMs": 484.8608509999999,
+      "health": {
+        "state": "healthy",
+        "observed": 35,
+        "persistedEvents": 35,
+        "droppedEvents": 0,
+        "droppedEncodedBytes": 0,
+        "firstLostEvent": null,
+        "cause": null,
+        "durableMarker": false
+      },
+      "metrics": {
+        "maxQueuedBytes": 0,
+        "maxQueuedEntries": 0,
+        "maxChunkBytes": 16384,
+        "maxFrameBytes": 22085,
+        "maxEventJSONBytes": 300237,
+        "maxEncodeMs": 0.5123929999999746,
+        "maxAppendMs": 2.5285030000000006,
+        "appendMs": 19.139512000000877,
+        "encodedEvents": 35,
+        "maxEncodeHeapDelta": 301016
+      },
+      "io": {
+        "shortWrites": 0,
+        "injected": 0,
+        "rawWrites": 120
+      },
+      "reopen": {
+        "ms": 0.5956610000000637,
+        "bytes": 936,
+        "reads": 4,
+        "maxReadBytes": 416,
+        "warnings": []
+      },
+      "prefix": {
+        "events": 8,
+        "bytes": 8764,
+        "reads": 16,
+        "maxReadBytes": 3116,
+        "warnings": [
+          "INCOMPLETE: bounded prefix only; more retained bytes require explicit scan",
+          "INCOMPLETE: unfinished message",
+          "INCOMPLETE: no reconciled terminal state"
+        ]
+      },
+      "reconciliation": {
+        "ms": 16.491021000000046,
+        "events": 35,
+        "frames": 120,
+        "bytes": 1960258,
+        "reads": 240,
+        "maxReadBytes": 22081,
+        "maxEventBytes": 300237,
+        "assistantChars": 180000,
+        "toolChars": 300000,
+        "warnings": []
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      },
+      "afterWriterExit": {
+        "warnings": [],
+        "identityPresent": true,
+        "events": 35,
+        "completed": true,
+        "readOnly": true,
+        "executable": false
+      }
+    },
+    {
+      "mode": "rpc",
+      "scenario": "short",
+      "normalResult": {
+        "assistantChars": 180000,
+        "toolChars": 300000,
+        "stopReason": "stop",
+        "settled": true,
+        "controls": {
+          "abort": 0,
+          "steer": 0,
+          "followUp": 0
+        }
+      },
+      "normalized": 32,
+      "kinds": {
+        "message_start": 5,
+        "message_end": 5,
+        "unsupported_partial": 6,
+        "tool_execution_start": 1,
+        "tool_execution_end": 1,
+        "message_update": 13,
+        "agent_settled": 1
+      },
+      "runMs": 488.37178500000005,
+      "health": {
+        "state": "healthy",
+        "observed": 35,
+        "persistedEvents": 35,
+        "droppedEvents": 0,
+        "droppedEncodedBytes": 0,
+        "firstLostEvent": null,
+        "cause": null,
+        "durableMarker": false
+      },
+      "metrics": {
+        "maxQueuedBytes": 0,
+        "maxQueuedEntries": 0,
+        "maxChunkBytes": 16384,
+        "maxFrameBytes": 22085,
+        "maxEventJSONBytes": 300236,
+        "maxEncodeMs": 0.6506550000001425,
+        "maxAppendMs": 4.127739999999903,
+        "appendMs": 26.90146300000015,
+        "encodedEvents": 35,
+        "maxEncodeHeapDelta": 301016
+      },
+      "io": {
+        "shortWrites": 1623,
+        "injected": 0,
+        "rawWrites": 1743
+      },
+      "reopen": {
+        "ms": 0.5810730000000603,
+        "bytes": 936,
+        "reads": 4,
+        "maxReadBytes": 416,
+        "warnings": []
+      },
+      "prefix": {
+        "events": 8,
+        "bytes": 8756,
+        "reads": 16,
+        "maxReadBytes": 3112,
+        "warnings": [
+          "INCOMPLETE: bounded prefix only; more retained bytes require explicit scan",
+          "INCOMPLETE: unfinished message",
+          "INCOMPLETE: no reconciled terminal state"
+        ]
+      },
+      "reconciliation": {
+        "ms": 20.064098000000058,
+        "events": 35,
+        "frames": 120,
+        "bytes": 1960242,
+        "reads": 240,
+        "maxReadBytes": 22081,
+        "maxEventBytes": 300236,
+        "assistantChars": 180000,
+        "toolChars": 300000,
+        "warnings": []
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      },
+      "afterWriterExit": {
+        "warnings": [],
+        "identityPresent": true,
+        "events": 35,
+        "completed": true,
+        "readOnly": true,
+        "executable": false
+      }
+    },
+    {
+      "mode": "rpc",
+      "scenario": "reject",
+      "normalResult": {
+        "assistantChars": 180000,
+        "toolChars": 300000,
+        "stopReason": "stop",
+        "settled": true,
+        "controls": {
+          "abort": 0,
+          "steer": 0,
+          "followUp": 0
+        }
+      },
+      "normalized": 32,
+      "kinds": {
+        "message_start": 5,
+        "message_end": 5,
+        "unsupported_partial": 6,
+        "tool_execution_start": 1,
+        "tool_execution_end": 1,
+        "message_update": 13,
+        "agent_settled": 1
+      },
+      "runMs": 484.63019600000007,
+      "health": {
+        "state": "incomplete",
+        "observed": 35,
+        "persistedEvents": 20,
+        "droppedEvents": 15,
+        "droppedEncodedBytes": 541653,
+        "firstLostEvent": 21,
+        "cause": "ENOSPC: fixture: no space left on device",
+        "durableMarker": true
+      },
+      "firstLiveFailure": {
+        "state": "incomplete",
+        "observed": 21,
+        "persistedEvents": 20,
+        "droppedEvents": 1,
+        "droppedEncodedBytes": 16483,
+        "firstLostEvent": 21,
+        "cause": "ENOSPC: fixture: no space left on device",
+        "durableMarker": true
+      },
+      "metrics": {
+        "maxQueuedBytes": 0,
+        "maxQueuedEntries": 0,
+        "maxChunkBytes": 16384,
+        "maxFrameBytes": 22084,
+        "maxEventJSONBytes": 300237,
+        "maxEncodeMs": 0.7961420000001453,
+        "maxAppendMs": 4.031126000000086,
+        "appendMs": 17.65568100000064,
+        "encodedEvents": 35,
+        "maxEncodeHeapDelta": 301016
+      },
+      "io": {
+        "shortWrites": 0,
+        "injected": 1,
+        "rawWrites": 75,
+        "firstFailureRawWrites": 75
+      },
+      "reopen": {
+        "ms": 0.5926650000001246,
+        "bytes": 1312,
+        "reads": 5,
+        "maxReadBytes": 416,
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: ENOSPC: fixture: no space left on device; dropped observed events=15, encoded bytes=541653"
+        ],
+        "durableFailure": {
+          "state": "incomplete",
+          "observed": 35,
+          "persistedEvents": 20,
+          "droppedEvents": 15,
+          "droppedEncodedBytes": 541653,
+          "firstLostEvent": 21,
+          "cause": "ENOSPC: fixture: no space left on device",
+          "durableMarker": true
+        }
+      },
+      "prefix": {
+        "events": 8,
+        "bytes": 8760,
+        "reads": 16,
+        "maxReadBytes": 3112,
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: ENOSPC: fixture: no space left on device; dropped observed events=15, encoded bytes=541653",
+          "INCOMPLETE: bounded prefix only; more retained bytes require explicit scan",
+          "INCOMPLETE: unfinished message",
+          "INCOMPLETE: no reconciled terminal state"
+        ]
+      },
+      "reconciliation": {
+        "ms": 9.89444299999991,
+        "events": 20,
+        "frames": 74,
+        "bytes": 1227143,
+        "reads": 148,
+        "maxReadBytes": 22080,
+        "maxEventBytes": 300237,
+        "assistantChars": 0,
+        "toolChars": 300000,
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: ENOSPC: fixture: no space left on device; dropped observed events=15, encoded bytes=541653",
+          "INCOMPLETE: unfinished message",
+          "INCOMPLETE: no reconciled terminal state"
+        ]
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      },
+      "afterWriterExit": {
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: ENOSPC: fixture: no space left on device; dropped observed events=15, encoded bytes=541653"
+        ],
+        "identityPresent": true,
+        "durableFailure": {
+          "state": "incomplete",
+          "observed": 35,
+          "persistedEvents": 20,
+          "droppedEvents": 15,
+          "droppedEncodedBytes": 541653,
+          "firstLostEvent": 21,
+          "cause": "ENOSPC: fixture: no space left on device",
+          "durableMarker": true
+        },
+        "events": 20,
+        "completed": false,
+        "readOnly": true,
+        "executable": false
+      }
+    },
+    {
+      "mode": "rpc",
+      "scenario": "partial",
+      "normalResult": {
+        "assistantChars": 180000,
+        "toolChars": 300000,
+        "stopReason": "stop",
+        "settled": true,
+        "controls": {
+          "abort": 0,
+          "steer": 0,
+          "followUp": 0
+        }
+      },
+      "normalized": 32,
+      "kinds": {
+        "message_start": 5,
+        "message_end": 5,
+        "unsupported_partial": 6,
+        "tool_execution_start": 1,
+        "tool_execution_end": 1,
+        "message_update": 13,
+        "agent_settled": 1
+      },
+      "runMs": 489.20813599999997,
+      "health": {
+        "state": "incomplete",
+        "observed": 35,
+        "persistedEvents": 20,
+        "droppedEvents": 15,
+        "droppedEncodedBytes": 541652,
+        "firstLostEvent": 21,
+        "cause": "ENOSPC: fixture: no space left on device",
+        "durableMarker": true
+      },
+      "firstLiveFailure": {
+        "state": "incomplete",
+        "observed": 21,
+        "persistedEvents": 20,
+        "droppedEvents": 1,
+        "droppedEncodedBytes": 16483,
+        "firstLostEvent": 21,
+        "cause": "ENOSPC: fixture: no space left on device",
+        "durableMarker": true
+      },
+      "metrics": {
+        "maxQueuedBytes": 0,
+        "maxQueuedEntries": 0,
+        "maxChunkBytes": 16384,
+        "maxFrameBytes": 22084,
+        "maxEventJSONBytes": 300237,
+        "maxEncodeMs": 0.7410879999999906,
+        "maxAppendMs": 3.986180000000104,
+        "appendMs": 18.720334999999068,
+        "encodedEvents": 35,
+        "maxEncodeHeapDelta": 454440
+      },
+      "io": {
+        "shortWrites": 1,
+        "injected": 1,
+        "rawWrites": 76,
+        "firstFailureRawWrites": 76
+      },
+      "reopen": {
+        "ms": 0.776444999999967,
+        "bytes": 1312,
+        "reads": 5,
+        "maxReadBytes": 416,
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: raw/index high-water mismatch",
+          "INCOMPLETE: ENOSPC: fixture: no space left on device; dropped observed events=15, encoded bytes=541652"
+        ],
+        "durableFailure": {
+          "state": "incomplete",
+          "observed": 35,
+          "persistedEvents": 20,
+          "droppedEvents": 15,
+          "droppedEncodedBytes": 541652,
+          "firstLostEvent": 21,
+          "cause": "ENOSPC: fixture: no space left on device",
+          "durableMarker": true
+        }
+      },
+      "prefix": {
+        "events": 8,
+        "bytes": 8760,
+        "reads": 16,
+        "maxReadBytes": 3116,
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: raw/index high-water mismatch",
+          "INCOMPLETE: ENOSPC: fixture: no space left on device; dropped observed events=15, encoded bytes=541652",
+          "INCOMPLETE: bounded prefix only; more retained bytes require explicit scan",
+          "INCOMPLETE: unfinished message",
+          "INCOMPLETE: no reconciled terminal state"
+        ]
+      },
+      "reconciliation": {
+        "ms": 8.889544000000114,
+        "events": 20,
+        "frames": 74,
+        "bytes": 1227240,
+        "reads": 151,
+        "maxReadBytes": 22080,
+        "maxEventBytes": 300237,
+        "assistantChars": 0,
+        "toolChars": 300000,
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: raw/index high-water mismatch",
+          "INCOMPLETE: ENOSPC: fixture: no space left on device; dropped observed events=15, encoded bytes=541652",
+          "INCOMPLETE: partial chunk/frame; verified prefix retained",
+          "INCOMPLETE: unfinished message",
+          "INCOMPLETE: no reconciled terminal state"
+        ]
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      },
+      "afterWriterExit": {
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: raw/index high-water mismatch",
+          "INCOMPLETE: ENOSPC: fixture: no space left on device; dropped observed events=15, encoded bytes=541652"
+        ],
+        "identityPresent": true,
+        "durableFailure": {
+          "state": "incomplete",
+          "observed": 35,
+          "persistedEvents": 20,
+          "droppedEvents": 15,
+          "droppedEncodedBytes": 541652,
+          "firstLostEvent": 21,
+          "cause": "ENOSPC: fixture: no space left on device",
+          "durableMarker": true
+        },
+        "events": 20,
+        "completed": false,
+        "readOnly": true,
+        "executable": false
+      }
+    },
+    {
+      "mode": "rpc",
+      "scenario": "zero",
+      "normalResult": {
+        "assistantChars": 180000,
+        "toolChars": 300000,
+        "stopReason": "stop",
+        "settled": true,
+        "controls": {
+          "abort": 0,
+          "steer": 0,
+          "followUp": 0
+        }
+      },
+      "normalized": 32,
+      "kinds": {
+        "message_start": 5,
+        "message_end": 5,
+        "unsupported_partial": 6,
+        "tool_execution_start": 1,
+        "tool_execution_end": 1,
+        "message_update": 13,
+        "agent_settled": 1
+      },
+      "runMs": 475.63912200000004,
+      "health": {
+        "state": "incomplete",
+        "observed": 35,
+        "persistedEvents": 20,
+        "droppedEvents": 15,
+        "droppedEncodedBytes": 541653,
+        "firstLostEvent": 21,
+        "cause": "I/O: zero/invalid short write",
+        "durableMarker": true
+      },
+      "firstLiveFailure": {
+        "state": "incomplete",
+        "observed": 21,
+        "persistedEvents": 20,
+        "droppedEvents": 1,
+        "droppedEncodedBytes": 16483,
+        "firstLostEvent": 21,
+        "cause": "I/O: zero/invalid short write",
+        "durableMarker": true
+      },
+      "metrics": {
+        "maxQueuedBytes": 0,
+        "maxQueuedEntries": 0,
+        "maxChunkBytes": 16384,
+        "maxFrameBytes": 22084,
+        "maxEventJSONBytes": 300237,
+        "maxEncodeMs": 0.5690710000001218,
+        "maxAppendMs": 3.6399739999999383,
+        "appendMs": 12.37621699999886,
+        "encodedEvents": 35,
+        "maxEncodeHeapDelta": 301016
+      },
+      "io": {
+        "shortWrites": 0,
+        "injected": 1,
+        "rawWrites": 75,
+        "firstFailureRawWrites": 75
+      },
+      "reopen": {
+        "ms": 0.3251470000000154,
+        "bytes": 1301,
+        "reads": 5,
+        "maxReadBytes": 416,
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: I/O: zero/invalid short write; dropped observed events=15, encoded bytes=541653"
+        ],
+        "durableFailure": {
+          "state": "incomplete",
+          "observed": 35,
+          "persistedEvents": 20,
+          "droppedEvents": 15,
+          "droppedEncodedBytes": 541653,
+          "firstLostEvent": 21,
+          "cause": "I/O: zero/invalid short write",
+          "durableMarker": true
+        }
+      },
+      "prefix": {
+        "events": 8,
+        "bytes": 8756,
+        "reads": 16,
+        "maxReadBytes": 3112,
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: I/O: zero/invalid short write; dropped observed events=15, encoded bytes=541653",
+          "INCOMPLETE: bounded prefix only; more retained bytes require explicit scan",
+          "INCOMPLETE: unfinished message",
+          "INCOMPLETE: no reconciled terminal state"
+        ]
+      },
+      "reconciliation": {
+        "ms": 5.062284999999974,
+        "events": 20,
+        "frames": 74,
+        "bytes": 1227139,
+        "reads": 148,
+        "maxReadBytes": 22080,
+        "maxEventBytes": 300237,
+        "assistantChars": 0,
+        "toolChars": 300000,
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: I/O: zero/invalid short write; dropped observed events=15, encoded bytes=541653",
+          "INCOMPLETE: unfinished message",
+          "INCOMPLETE: no reconciled terminal state"
+        ]
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      },
+      "afterWriterExit": {
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: I/O: zero/invalid short write; dropped observed events=15, encoded bytes=541653"
+        ],
+        "identityPresent": true,
+        "durableFailure": {
+          "state": "incomplete",
+          "observed": 35,
+          "persistedEvents": 20,
+          "droppedEvents": 15,
+          "droppedEncodedBytes": 541653,
+          "firstLostEvent": 21,
+          "cause": "I/O: zero/invalid short write",
+          "durableMarker": true
+        },
+        "events": 20,
+        "completed": false,
+        "readOnly": true,
+        "executable": false
+      }
+    },
+    {
+      "mode": "rpc",
+      "scenario": "index",
+      "normalResult": {
+        "assistantChars": 180000,
+        "toolChars": 300000,
+        "stopReason": "stop",
+        "settled": true,
+        "controls": {
+          "abort": 0,
+          "steer": 0,
+          "followUp": 0
+        }
+      },
+      "normalized": 32,
+      "kinds": {
+        "message_start": 5,
+        "message_end": 5,
+        "unsupported_partial": 6,
+        "tool_execution_start": 1,
+        "tool_execution_end": 1,
+        "message_update": 13,
+        "agent_settled": 1
+      },
+      "runMs": 479.14434500000016,
+      "health": {
+        "state": "incomplete",
+        "observed": 35,
+        "persistedEvents": 21,
+        "droppedEvents": 14,
+        "droppedEncodedBytes": 525170,
+        "firstLostEvent": 22,
+        "cause": "EIO: fixture: index publication rejected",
+        "durableMarker": true
+      },
+      "firstLiveFailure": {
+        "state": "incomplete",
+        "observed": 21,
+        "persistedEvents": 21,
+        "droppedEvents": 0,
+        "droppedEncodedBytes": 0,
+        "firstLostEvent": null,
+        "cause": "EIO: fixture: index publication rejected",
+        "durableMarker": true
+      },
+      "metrics": {
+        "maxQueuedBytes": 0,
+        "maxQueuedEntries": 0,
+        "maxChunkBytes": 16384,
+        "maxFrameBytes": 22084,
+        "maxEventJSONBytes": 300236,
+        "maxEncodeMs": 0.5720970000002126,
+        "maxAppendMs": 3.232770000000073,
+        "appendMs": 14.105949000000976,
+        "encodedEvents": 35,
+        "maxEncodeHeapDelta": 301016
+      },
+      "io": {
+        "shortWrites": 0,
+        "injected": 1,
+        "rawWrites": 76,
+        "firstFailureRawWrites": 76
+      },
+      "reopen": {
+        "ms": 0.5933669999999438,
+        "bytes": 1312,
+        "reads": 5,
+        "maxReadBytes": 416,
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: raw/index high-water mismatch",
+          "INCOMPLETE: EIO: fixture: index publication rejected; dropped observed events=14, encoded bytes=525170"
+        ],
+        "durableFailure": {
+          "state": "incomplete",
+          "observed": 35,
+          "persistedEvents": 21,
+          "droppedEvents": 14,
+          "droppedEncodedBytes": 525170,
+          "firstLostEvent": 22,
+          "cause": "EIO: fixture: index publication rejected",
+          "durableMarker": true
+        }
+      },
+      "prefix": {
+        "events": 8,
+        "bytes": 8756,
+        "reads": 16,
+        "maxReadBytes": 3112,
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: raw/index high-water mismatch",
+          "INCOMPLETE: EIO: fixture: index publication rejected; dropped observed events=14, encoded bytes=525170",
+          "INCOMPLETE: bounded prefix only; more retained bytes require explicit scan",
+          "INCOMPLETE: unfinished message",
+          "INCOMPLETE: no reconciled terminal state"
+        ]
+      },
+      "reconciliation": {
+        "ms": 9.261030000000119,
+        "events": 21,
+        "frames": 76,
+        "bytes": 1249580,
+        "reads": 152,
+        "maxReadBytes": 22080,
+        "maxEventBytes": 300236,
+        "assistantChars": 16384,
+        "toolChars": 300000,
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: raw/index high-water mismatch",
+          "INCOMPLETE: EIO: fixture: index publication rejected; dropped observed events=14, encoded bytes=525170",
+          "INCOMPLETE: unfinished message",
+          "INCOMPLETE: no reconciled terminal state"
+        ]
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      },
+      "afterWriterExit": {
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: raw/index high-water mismatch",
+          "INCOMPLETE: EIO: fixture: index publication rejected; dropped observed events=14, encoded bytes=525170"
+        ],
+        "identityPresent": true,
+        "durableFailure": {
+          "state": "incomplete",
+          "observed": 35,
+          "persistedEvents": 21,
+          "droppedEvents": 14,
+          "droppedEncodedBytes": 525170,
+          "firstLostEvent": 22,
+          "cause": "EIO: fixture: index publication rejected",
+          "durableMarker": true
+        },
+        "events": 21,
+        "completed": false,
+        "readOnly": true,
+        "executable": false
+      }
+    },
+    {
+      "mode": "rpc",
+      "scenario": "all-block",
+      "normalResult": {
+        "assistantChars": 180000,
+        "toolChars": 300000,
+        "stopReason": "stop",
+        "settled": true,
+        "controls": {
+          "abort": 0,
+          "steer": 0,
+          "followUp": 0
+        }
+      },
+      "normalized": 32,
+      "kinds": {
+        "message_start": 5,
+        "message_end": 5,
+        "unsupported_partial": 6,
+        "tool_execution_start": 1,
+        "tool_execution_end": 1,
+        "message_update": 13,
+        "agent_settled": 1
+      },
+      "runMs": 489.59065199999986,
+      "health": {
+        "state": "incomplete",
+        "observed": 35,
+        "persistedEvents": 20,
+        "droppedEvents": 15,
+        "droppedEncodedBytes": 541653,
+        "firstLostEvent": 21,
+        "cause": "ENOSPC: fixture: no space left on device",
+        "durableMarker": false
+      },
+      "firstLiveFailure": {
+        "state": "incomplete",
+        "observed": 21,
+        "persistedEvents": 20,
+        "droppedEvents": 1,
+        "droppedEncodedBytes": 16483,
+        "firstLostEvent": 21,
+        "cause": "ENOSPC: fixture: no space left on device",
+        "durableMarker": false
+      },
+      "metrics": {
+        "maxQueuedBytes": 0,
+        "maxQueuedEntries": 0,
+        "maxChunkBytes": 16384,
+        "maxFrameBytes": 22084,
+        "maxEventJSONBytes": 300237,
+        "maxEncodeMs": 0.7457870000000639,
+        "maxAppendMs": 3.564881000000014,
+        "appendMs": 15.801481000000194,
+        "encodedEvents": 35,
+        "maxEncodeHeapDelta": 309400
+      },
+      "io": {
+        "shortWrites": 0,
+        "injected": 3,
+        "rawWrites": 75,
+        "firstFailureRawWrites": 75
+      },
+      "reopen": {
+        "ms": 0.5458869999999933,
+        "bytes": 1007,
+        "reads": 4,
+        "maxReadBytes": 416,
+        "warnings": [
+          "INCOMPLETE: no durable completed capture"
+        ]
+      },
+      "prefix": {
+        "events": 8,
+        "bytes": 8768,
+        "reads": 16,
+        "maxReadBytes": 3116,
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: bounded prefix only; more retained bytes require explicit scan",
+          "INCOMPLETE: unfinished message",
+          "INCOMPLETE: no reconciled terminal state"
+        ]
+      },
+      "reconciliation": {
+        "ms": 11.10719599999993,
+        "events": 20,
+        "frames": 74,
+        "bytes": 1227151,
+        "reads": 148,
+        "maxReadBytes": 22080,
+        "maxEventBytes": 300237,
+        "assistantChars": 0,
+        "toolChars": 300000,
+        "warnings": [
+          "INCOMPLETE: no durable completed capture",
+          "INCOMPLETE: unfinished message",
+          "INCOMPLETE: no reconciled terminal state"
+        ]
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      },
+      "afterWriterExit": {
+        "warnings": [
+          "INCOMPLETE: no durable completed capture"
+        ],
+        "identityPresent": true,
+        "events": 20,
+        "completed": false,
+        "readOnly": true,
+        "executable": false
+      }
+    },
+    {
+      "mode": "rpc",
+      "scenario": "no-storage",
+      "normalResult": {
+        "assistantChars": 180000,
+        "toolChars": 300000,
+        "stopReason": "stop",
+        "settled": true,
+        "controls": {
+          "abort": 0,
+          "steer": 0,
+          "followUp": 0
+        }
+      },
+      "normalized": 32,
+      "kinds": {
+        "message_start": 5,
+        "message_end": 5,
+        "unsupported_partial": 6,
+        "tool_execution_start": 1,
+        "tool_execution_end": 1,
+        "message_update": 13,
+        "agent_settled": 1
+      },
+      "runMs": 474.093175,
+      "health": {
+        "state": "incomplete",
+        "observed": 34,
+        "persistedEvents": 0,
+        "droppedEvents": 34,
+        "droppedEncodedBytes": 1448756,
+        "firstLostEvent": 1,
+        "cause": "ENOSPC: fixture: all storage unavailable",
+        "durableMarker": false
+      },
+      "firstLiveFailure": {
+        "state": "incomplete",
+        "observed": 2,
+        "persistedEvents": 0,
+        "droppedEvents": 2,
+        "droppedEncodedBytes": 2258,
+        "firstLostEvent": 1,
+        "cause": "ENOSPC: fixture: all storage unavailable",
+        "durableMarker": false
+      },
+      "metrics": {
+        "maxQueuedBytes": 0,
+        "maxQueuedEntries": 0,
+        "maxChunkBytes": 0,
+        "maxFrameBytes": 0,
+        "maxEventJSONBytes": 300237,
+        "maxEncodeMs": 0.7684999999999036,
+        "maxAppendMs": 0.8326409999999669,
+        "appendMs": 4.933818999999858,
+        "encodedEvents": 34,
+        "maxEncodeHeapDelta": 301016
+      },
+      "io": {
+        "shortWrites": 0,
+        "injected": 3,
+        "rawWrites": 0,
+        "firstFailureRawWrites": 0
+      },
+      "reopen": {
+        "ms": 0.11907599999995,
+        "bytes": 0,
+        "reads": 0,
+        "maxReadBytes": 0,
+        "warnings": [
+          "INCOMPLETE: ENOENT: no such file or directory, stat '/tmp/fleet-resilient-runtime-5GeeRJ/rpc-no-storage/store/identity.json'"
+        ]
+      },
+      "prefix": {
+        "events": 0,
+        "bytes": 0,
+        "reads": 0,
+        "maxReadBytes": 0,
+        "warnings": [
+          "INCOMPLETE: ENOENT: no such file or directory, stat '/tmp/fleet-resilient-runtime-5GeeRJ/rpc-no-storage/store/identity.json'",
+          "INCOMPLETE: ENOENT: no such file or directory, open '/tmp/fleet-resilient-runtime-5GeeRJ/rpc-no-storage/store/raw.chunks'; verified prefix retained",
+          "INCOMPLETE: no reconciled terminal state"
+        ]
+      },
+      "reconciliation": {
+        "ms": 0.03674000000000888,
+        "events": 0,
+        "frames": 0,
+        "bytes": 0,
+        "reads": 0,
+        "maxReadBytes": 0,
+        "maxEventBytes": 0,
+        "assistantChars": 0,
+        "toolChars": 0,
+        "warnings": [
+          "INCOMPLETE: ENOENT: no such file or directory, stat '/tmp/fleet-resilient-runtime-5GeeRJ/rpc-no-storage/store/identity.json'",
+          "INCOMPLETE: ENOENT: no such file or directory, open '/tmp/fleet-resilient-runtime-5GeeRJ/rpc-no-storage/store/raw.chunks'; verified prefix retained",
+          "INCOMPLETE: no reconciled terminal state"
+        ]
+      },
+      "exit": {
+        "code": 0,
+        "signal": null
+      },
+      "afterWriterExit": {
+        "warnings": [
+          "INCOMPLETE: ENOENT: no such file or directory, stat '/tmp/fleet-resilient-runtime-5GeeRJ/rpc-no-storage/store/identity.json'"
+        ],
+        "identityPresent": false,
+        "events": 0,
+        "completed": false,
+        "readOnly": true,
+        "executable": false
+      }
+    }
+  ]
+}

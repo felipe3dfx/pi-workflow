@@ -1,0 +1,151 @@
+{
+  "queue": {
+    "inProcess": 2,
+    "crossProcess": 1,
+    "barrierReads": [
+      {
+        "read": 0
+      },
+      {
+        "read": 0
+      }
+    ],
+    "expectedWithoutLostUpdate": 2
+  },
+  "rpc": {
+    "normalToolResults": [
+      {
+        "toolName": "ask_parent",
+        "isError": false,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "fixture-parent-reply"
+            }
+          ],
+          "details": {}
+        }
+      },
+      {
+        "toolName": "bash",
+        "isError": false,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "fixture bash\n"
+            }
+          ],
+          "structuredContent": {
+            "output": "fixture bash\n",
+            "truncated": false,
+            "exit_code": 0,
+            "wall_time_seconds": 0
+          }
+        }
+      },
+      {
+        "toolName": "codegraph",
+        "isError": true,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "CodeGraph is not available to this child. Use read, grep, and find instead."
+            }
+          ],
+          "details": {}
+        }
+      },
+      {
+        "toolName": "report_result",
+        "isError": false,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "Result recorded."
+            }
+          ],
+          "details": {}
+        }
+      },
+      {
+        "toolName": "report_result",
+        "isError": false,
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "Result recorded."
+            }
+          ],
+          "details": {}
+        }
+      }
+    ],
+    "reports": [
+      {
+        "verdict": "partial",
+        "reason": "first report",
+        "files_changed": [],
+        "validation": [],
+        "left_undone": [
+          "fixture pending"
+        ]
+      },
+      {
+        "verdict": "done",
+        "files_changed": [],
+        "validation": [],
+        "left_undone": []
+      }
+    ],
+    "lastReport": {
+      "verdict": "done",
+      "files_changed": [],
+      "validation": [],
+      "left_undone": []
+    },
+    "cleared": {
+      "steering": [
+        "fixture pending steer"
+      ],
+      "followUp": []
+    },
+    "cancellation": "pending question aborted; no provider continuation",
+    "recordTypes": [
+      "response",
+      "agent_start",
+      "turn_start",
+      "message_start",
+      "message_end",
+      "message_start",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_update",
+      "message_end",
+      "tool_execution_start",
+      "extension_ui_request",
+      "queue_update",
+      "response",
+      "queue_update",
+      "response",
+      "tool_execution_end",
+      "message_start",
+      "message_end",
+      "turn_end",
+      "turn_start",
+      "message_start",
+      "message_end",
+      "turn_end",
+      "agent_end",
+      "agent_settled",
+      "response"
+    ],
+    "stderr": ""
+  }
+}

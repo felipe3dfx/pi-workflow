@@ -1,0 +1,894 @@
+{
+  "assertions": "passed: real SDK/RPC observed text events, identity, filtering, SIGKILL checkpoints, acknowledged prefix, final reconciliation, damage, read-only replay",
+  "acknowledgment": "completed async OS write only; synced=0; no fsync/power-loss guarantee",
+  "samples": [
+    {
+      "repeat": 0,
+      "mode": "sdk",
+      "checkpoint": "queued",
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL"
+      },
+      "receivedChars": 8192,
+      "ackChars": 7168,
+      "recoveredChars": 8192,
+      "unacknowledgedChars": 1024,
+      "observedLostChars": 0,
+      "metrics": {
+        "received": 15,
+        "queued": 15,
+        "written": 14,
+        "synced": 0,
+        "maxQueuedBytes": 6100,
+        "maxWriteAckMs": 6.677505999999994
+      },
+      "recovery": {
+        "state": "interrupted/incomplete",
+        "verifiedRecords": 15,
+        "recoverMs": 1.1394530000000032,
+        "bytes": 17982,
+        "warnings": [
+          "unfinished message"
+        ]
+      },
+      "damage": [
+        {
+          "kind": "truncated",
+          "verifiedRecords": 15,
+          "warnings": [
+            "truncated tail",
+            "unfinished message"
+          ]
+        },
+        {
+          "kind": "missing",
+          "verifiedRecords": 7,
+          "warnings": [
+            "corrupt/missing record 8; stopped at verified prefix",
+            "unfinished message"
+          ]
+        },
+        {
+          "kind": "corrupt",
+          "verifiedRecords": 7,
+          "warnings": [
+            "corrupt/missing record 8; stopped at verified prefix",
+            "unfinished message"
+          ]
+        }
+      ]
+    },
+    {
+      "repeat": 0,
+      "mode": "sdk",
+      "checkpoint": "ack",
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL"
+      },
+      "receivedChars": 8192,
+      "ackChars": 8192,
+      "recoveredChars": 8192,
+      "unacknowledgedChars": 0,
+      "observedLostChars": 0,
+      "metrics": {
+        "received": 15,
+        "queued": 15,
+        "written": 15,
+        "synced": 0,
+        "maxQueuedBytes": 6093,
+        "maxWriteAckMs": 6.921177999999941
+      },
+      "recovery": {
+        "state": "interrupted/incomplete",
+        "verifiedRecords": 15,
+        "recoverMs": 0.31635099999994054,
+        "bytes": 17975,
+        "warnings": [
+          "unfinished message"
+        ]
+      },
+      "damage": [
+        {
+          "kind": "truncated",
+          "verifiedRecords": 15,
+          "warnings": [
+            "truncated tail",
+            "unfinished message"
+          ]
+        },
+        {
+          "kind": "missing",
+          "verifiedRecords": 7,
+          "warnings": [
+            "corrupt/missing record 8; stopped at verified prefix",
+            "unfinished message"
+          ]
+        },
+        {
+          "kind": "corrupt",
+          "verifiedRecords": 7,
+          "warnings": [
+            "corrupt/missing record 8; stopped at verified prefix",
+            "unfinished message"
+          ]
+        }
+      ]
+    },
+    {
+      "repeat": 0,
+      "mode": "sdk",
+      "checkpoint": "final",
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL"
+      },
+      "receivedChars": 69632,
+      "ackChars": 69632,
+      "recoveredChars": 69632,
+      "unacknowledgedChars": 0,
+      "observedLostChars": 0,
+      "metrics": {
+        "received": 78,
+        "queued": 78,
+        "written": 78,
+        "synced": 0,
+        "maxQueuedBytes": 158276,
+        "maxWriteAckMs": 6.361616000000026
+      },
+      "recovery": {
+        "state": "interrupted/incomplete",
+        "verifiedRecords": 78,
+        "recoverMs": 3.4839930000002823,
+        "bytes": 261775,
+        "warnings": []
+      },
+      "damage": [
+        {
+          "kind": "truncated",
+          "verifiedRecords": 78,
+          "warnings": [
+            "truncated tail"
+          ]
+        },
+        {
+          "kind": "missing",
+          "verifiedRecords": 39,
+          "warnings": [
+            "corrupt/missing record 40; stopped at verified prefix",
+            "unfinished message"
+          ]
+        },
+        {
+          "kind": "corrupt",
+          "verifiedRecords": 39,
+          "warnings": [
+            "corrupt/missing record 40; stopped at verified prefix",
+            "unfinished message"
+          ]
+        }
+      ]
+    },
+    {
+      "repeat": 0,
+      "mode": "sdk",
+      "checkpoint": "complete",
+      "exit": {
+        "code": 0,
+        "signal": null
+      },
+      "receivedChars": 69632,
+      "ackChars": 69632,
+      "recoveredChars": 69632,
+      "unacknowledgedChars": 0,
+      "observedLostChars": 0,
+      "metrics": {
+        "received": 79,
+        "queued": 79,
+        "written": 79,
+        "synced": 0,
+        "maxQueuedBytes": 158276,
+        "maxWriteAckMs": 6.735766000000012
+      },
+      "recovery": {
+        "state": "completed",
+        "verifiedRecords": 79,
+        "recoverMs": 2.934921000000031,
+        "bytes": 262015,
+        "warnings": []
+      },
+      "damage": [
+        {
+          "kind": "truncated",
+          "verifiedRecords": 79,
+          "warnings": [
+            "truncated tail"
+          ]
+        },
+        {
+          "kind": "missing",
+          "verifiedRecords": 39,
+          "warnings": [
+            "corrupt/missing record 40; stopped at verified prefix",
+            "unfinished message"
+          ]
+        },
+        {
+          "kind": "corrupt",
+          "verifiedRecords": 39,
+          "warnings": [
+            "corrupt/missing record 40; stopped at verified prefix",
+            "unfinished message"
+          ]
+        }
+      ]
+    },
+    {
+      "repeat": 0,
+      "mode": "rpc",
+      "checkpoint": "queued",
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL"
+      },
+      "receivedChars": 8192,
+      "ackChars": 7168,
+      "recoveredChars": 7168,
+      "unacknowledgedChars": 1024,
+      "observedLostChars": 1024,
+      "metrics": {
+        "received": 15,
+        "queued": 15,
+        "written": 14,
+        "synced": 0,
+        "maxQueuedBytes": 4878,
+        "maxWriteAckMs": 0.46997200000004113
+      },
+      "recovery": {
+        "state": "interrupted/incomplete",
+        "verifiedRecords": 14,
+        "recoverMs": 0.37055400000008376,
+        "bytes": 16533,
+        "warnings": [
+          "unfinished message"
+        ]
+      },
+      "damage": [
+        {
+          "kind": "truncated",
+          "verifiedRecords": 14,
+          "warnings": [
+            "truncated tail",
+            "unfinished message"
+          ]
+        },
+        {
+          "kind": "missing",
+          "verifiedRecords": 7,
+          "warnings": [
+            "corrupt/missing record 8; stopped at verified prefix",
+            "unfinished message"
+          ]
+        },
+        {
+          "kind": "corrupt",
+          "verifiedRecords": 7,
+          "warnings": [
+            "corrupt/missing record 8; stopped at verified prefix",
+            "unfinished message"
+          ]
+        }
+      ]
+    },
+    {
+      "repeat": 0,
+      "mode": "rpc",
+      "checkpoint": "ack",
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL"
+      },
+      "receivedChars": 8192,
+      "ackChars": 8192,
+      "recoveredChars": 8192,
+      "unacknowledgedChars": 0,
+      "observedLostChars": 0,
+      "metrics": {
+        "received": 15,
+        "queued": 15,
+        "written": 15,
+        "synced": 0,
+        "maxQueuedBytes": 5206,
+        "maxWriteAckMs": 0.495029000000045
+      },
+      "recovery": {
+        "state": "interrupted/incomplete",
+        "verifiedRecords": 15,
+        "recoverMs": 0.5141060000005382,
+        "bytes": 17976,
+        "warnings": [
+          "unfinished message"
+        ]
+      },
+      "damage": [
+        {
+          "kind": "truncated",
+          "verifiedRecords": 15,
+          "warnings": [
+            "truncated tail",
+            "unfinished message"
+          ]
+        },
+        {
+          "kind": "missing",
+          "verifiedRecords": 7,
+          "warnings": [
+            "corrupt/missing record 8; stopped at verified prefix",
+            "unfinished message"
+          ]
+        },
+        {
+          "kind": "corrupt",
+          "verifiedRecords": 7,
+          "warnings": [
+            "corrupt/missing record 8; stopped at verified prefix",
+            "unfinished message"
+          ]
+        }
+      ]
+    },
+    {
+      "repeat": 0,
+      "mode": "rpc",
+      "checkpoint": "final",
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL"
+      },
+      "receivedChars": 69632,
+      "ackChars": 69632,
+      "recoveredChars": 69632,
+      "unacknowledgedChars": 0,
+      "observedLostChars": 0,
+      "metrics": {
+        "received": 78,
+        "queued": 78,
+        "written": 78,
+        "synced": 0,
+        "maxQueuedBytes": 156607,
+        "maxWriteAckMs": 1.8482589999998709
+      },
+      "recovery": {
+        "state": "interrupted/incomplete",
+        "verifiedRecords": 78,
+        "recoverMs": 1.2912209999994957,
+        "bytes": 261775,
+        "warnings": []
+      },
+      "damage": [
+        {
+          "kind": "truncated",
+          "verifiedRecords": 78,
+          "warnings": [
+            "truncated tail"
+          ]
+        },
+        {
+          "kind": "missing",
+          "verifiedRecords": 39,
+          "warnings": [
+            "corrupt/missing record 40; stopped at verified prefix",
+            "unfinished message"
+          ]
+        },
+        {
+          "kind": "corrupt",
+          "verifiedRecords": 39,
+          "warnings": [
+            "corrupt/missing record 40; stopped at verified prefix",
+            "unfinished message"
+          ]
+        }
+      ]
+    },
+    {
+      "repeat": 0,
+      "mode": "rpc",
+      "checkpoint": "complete",
+      "exit": {
+        "code": 0,
+        "signal": null
+      },
+      "receivedChars": 69632,
+      "ackChars": 69632,
+      "recoveredChars": 69632,
+      "unacknowledgedChars": 0,
+      "observedLostChars": 0,
+      "metrics": {
+        "received": 79,
+        "queued": 79,
+        "written": 79,
+        "synced": 0,
+        "maxQueuedBytes": 156607,
+        "maxWriteAckMs": 0.566045000000031
+      },
+      "recovery": {
+        "state": "completed",
+        "verifiedRecords": 79,
+        "recoverMs": 2.183434999999008,
+        "bytes": 262015,
+        "warnings": []
+      },
+      "damage": [
+        {
+          "kind": "truncated",
+          "verifiedRecords": 79,
+          "warnings": [
+            "truncated tail"
+          ]
+        },
+        {
+          "kind": "missing",
+          "verifiedRecords": 39,
+          "warnings": [
+            "corrupt/missing record 40; stopped at verified prefix",
+            "unfinished message"
+          ]
+        },
+        {
+          "kind": "corrupt",
+          "verifiedRecords": 39,
+          "warnings": [
+            "corrupt/missing record 40; stopped at verified prefix",
+            "unfinished message"
+          ]
+        }
+      ]
+    },
+    {
+      "repeat": 1,
+      "mode": "sdk",
+      "checkpoint": "queued",
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL"
+      },
+      "receivedChars": 8192,
+      "ackChars": 7168,
+      "recoveredChars": 8192,
+      "unacknowledgedChars": 1024,
+      "observedLostChars": 0,
+      "metrics": {
+        "received": 15,
+        "queued": 15,
+        "written": 14,
+        "synced": 0,
+        "maxQueuedBytes": 6100,
+        "maxWriteAckMs": 3.7656279999999924
+      },
+      "recovery": {
+        "state": "interrupted/incomplete",
+        "verifiedRecords": 15,
+        "recoverMs": 0.5790390000001935,
+        "bytes": 17982,
+        "warnings": [
+          "unfinished message"
+        ]
+      },
+      "damage": [
+        {
+          "kind": "truncated",
+          "verifiedRecords": 15,
+          "warnings": [
+            "truncated tail",
+            "unfinished message"
+          ]
+        },
+        {
+          "kind": "missing",
+          "verifiedRecords": 7,
+          "warnings": [
+            "corrupt/missing record 8; stopped at verified prefix",
+            "unfinished message"
+          ]
+        },
+        {
+          "kind": "corrupt",
+          "verifiedRecords": 7,
+          "warnings": [
+            "corrupt/missing record 8; stopped at verified prefix",
+            "unfinished message"
+          ]
+        }
+      ]
+    },
+    {
+      "repeat": 1,
+      "mode": "sdk",
+      "checkpoint": "ack",
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL"
+      },
+      "receivedChars": 8192,
+      "ackChars": 8192,
+      "recoveredChars": 8192,
+      "unacknowledgedChars": 0,
+      "observedLostChars": 0,
+      "metrics": {
+        "received": 15,
+        "queued": 15,
+        "written": 15,
+        "synced": 0,
+        "maxQueuedBytes": 6093,
+        "maxWriteAckMs": 6.041797999999972
+      },
+      "recovery": {
+        "state": "interrupted/incomplete",
+        "verifiedRecords": 15,
+        "recoverMs": 0.41504799999893294,
+        "bytes": 17975,
+        "warnings": [
+          "unfinished message"
+        ]
+      },
+      "damage": [
+        {
+          "kind": "truncated",
+          "verifiedRecords": 15,
+          "warnings": [
+            "truncated tail",
+            "unfinished message"
+          ]
+        },
+        {
+          "kind": "missing",
+          "verifiedRecords": 7,
+          "warnings": [
+            "corrupt/missing record 8; stopped at verified prefix",
+            "unfinished message"
+          ]
+        },
+        {
+          "kind": "corrupt",
+          "verifiedRecords": 7,
+          "warnings": [
+            "corrupt/missing record 8; stopped at verified prefix",
+            "unfinished message"
+          ]
+        }
+      ]
+    },
+    {
+      "repeat": 1,
+      "mode": "sdk",
+      "checkpoint": "final",
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL"
+      },
+      "receivedChars": 69632,
+      "ackChars": 69632,
+      "recoveredChars": 69632,
+      "unacknowledgedChars": 0,
+      "observedLostChars": 0,
+      "metrics": {
+        "received": 78,
+        "queued": 78,
+        "written": 78,
+        "synced": 0,
+        "maxQueuedBytes": 158275,
+        "maxWriteAckMs": 6.626037999999994
+      },
+      "recovery": {
+        "state": "interrupted/incomplete",
+        "verifiedRecords": 78,
+        "recoverMs": 2.2833239999999932,
+        "bytes": 261773,
+        "warnings": []
+      },
+      "damage": [
+        {
+          "kind": "truncated",
+          "verifiedRecords": 78,
+          "warnings": [
+            "truncated tail"
+          ]
+        },
+        {
+          "kind": "missing",
+          "verifiedRecords": 39,
+          "warnings": [
+            "corrupt/missing record 40; stopped at verified prefix",
+            "unfinished message"
+          ]
+        },
+        {
+          "kind": "corrupt",
+          "verifiedRecords": 39,
+          "warnings": [
+            "corrupt/missing record 40; stopped at verified prefix",
+            "unfinished message"
+          ]
+        }
+      ]
+    },
+    {
+      "repeat": 1,
+      "mode": "sdk",
+      "checkpoint": "complete",
+      "exit": {
+        "code": 0,
+        "signal": null
+      },
+      "receivedChars": 69632,
+      "ackChars": 69632,
+      "recoveredChars": 69632,
+      "unacknowledgedChars": 0,
+      "observedLostChars": 0,
+      "metrics": {
+        "received": 79,
+        "queued": 79,
+        "written": 79,
+        "synced": 0,
+        "maxQueuedBytes": 158275,
+        "maxWriteAckMs": 6.075752999999963
+      },
+      "recovery": {
+        "state": "completed",
+        "verifiedRecords": 79,
+        "recoverMs": 2.7437079999999696,
+        "bytes": 262013,
+        "warnings": []
+      },
+      "damage": [
+        {
+          "kind": "truncated",
+          "verifiedRecords": 79,
+          "warnings": [
+            "truncated tail"
+          ]
+        },
+        {
+          "kind": "missing",
+          "verifiedRecords": 39,
+          "warnings": [
+            "corrupt/missing record 40; stopped at verified prefix",
+            "unfinished message"
+          ]
+        },
+        {
+          "kind": "corrupt",
+          "verifiedRecords": 39,
+          "warnings": [
+            "corrupt/missing record 40; stopped at verified prefix",
+            "unfinished message"
+          ]
+        }
+      ]
+    },
+    {
+      "repeat": 1,
+      "mode": "rpc",
+      "checkpoint": "queued",
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL"
+      },
+      "receivedChars": 8192,
+      "ackChars": 7168,
+      "recoveredChars": 7168,
+      "unacknowledgedChars": 1024,
+      "observedLostChars": 1024,
+      "metrics": {
+        "received": 15,
+        "queued": 15,
+        "written": 14,
+        "synced": 0,
+        "maxQueuedBytes": 4878,
+        "maxWriteAckMs": 0.8311469999999872
+      },
+      "recovery": {
+        "state": "interrupted/incomplete",
+        "verifiedRecords": 14,
+        "recoverMs": 0.4126429999996617,
+        "bytes": 16532,
+        "warnings": [
+          "unfinished message"
+        ]
+      },
+      "damage": [
+        {
+          "kind": "truncated",
+          "verifiedRecords": 14,
+          "warnings": [
+            "truncated tail",
+            "unfinished message"
+          ]
+        },
+        {
+          "kind": "missing",
+          "verifiedRecords": 7,
+          "warnings": [
+            "corrupt/missing record 8; stopped at verified prefix",
+            "unfinished message"
+          ]
+        },
+        {
+          "kind": "corrupt",
+          "verifiedRecords": 7,
+          "warnings": [
+            "corrupt/missing record 8; stopped at verified prefix",
+            "unfinished message"
+          ]
+        }
+      ]
+    },
+    {
+      "repeat": 1,
+      "mode": "rpc",
+      "checkpoint": "ack",
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL"
+      },
+      "receivedChars": 8192,
+      "ackChars": 8192,
+      "recoveredChars": 8192,
+      "unacknowledgedChars": 0,
+      "observedLostChars": 0,
+      "metrics": {
+        "received": 15,
+        "queued": 15,
+        "written": 15,
+        "synced": 0,
+        "maxQueuedBytes": 5206,
+        "maxWriteAckMs": 0.6695510000000127
+      },
+      "recovery": {
+        "state": "interrupted/incomplete",
+        "verifiedRecords": 15,
+        "recoverMs": 0.4781669999974838,
+        "bytes": 17976,
+        "warnings": [
+          "unfinished message"
+        ]
+      },
+      "damage": [
+        {
+          "kind": "truncated",
+          "verifiedRecords": 15,
+          "warnings": [
+            "truncated tail",
+            "unfinished message"
+          ]
+        },
+        {
+          "kind": "missing",
+          "verifiedRecords": 7,
+          "warnings": [
+            "corrupt/missing record 8; stopped at verified prefix",
+            "unfinished message"
+          ]
+        },
+        {
+          "kind": "corrupt",
+          "verifiedRecords": 7,
+          "warnings": [
+            "corrupt/missing record 8; stopped at verified prefix",
+            "unfinished message"
+          ]
+        }
+      ]
+    },
+    {
+      "repeat": 1,
+      "mode": "rpc",
+      "checkpoint": "final",
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL"
+      },
+      "receivedChars": 69632,
+      "ackChars": 69632,
+      "recoveredChars": 69632,
+      "unacknowledgedChars": 0,
+      "observedLostChars": 0,
+      "metrics": {
+        "received": 78,
+        "queued": 78,
+        "written": 78,
+        "synced": 0,
+        "maxQueuedBytes": 156607,
+        "maxWriteAckMs": 1.2003490000001875
+      },
+      "recovery": {
+        "state": "interrupted/incomplete",
+        "verifiedRecords": 78,
+        "recoverMs": 2.411377000000357,
+        "bytes": 261775,
+        "warnings": []
+      },
+      "damage": [
+        {
+          "kind": "truncated",
+          "verifiedRecords": 78,
+          "warnings": [
+            "truncated tail"
+          ]
+        },
+        {
+          "kind": "missing",
+          "verifiedRecords": 39,
+          "warnings": [
+            "corrupt/missing record 40; stopped at verified prefix",
+            "unfinished message"
+          ]
+        },
+        {
+          "kind": "corrupt",
+          "verifiedRecords": 39,
+          "warnings": [
+            "corrupt/missing record 40; stopped at verified prefix",
+            "unfinished message"
+          ]
+        }
+      ]
+    },
+    {
+      "repeat": 1,
+      "mode": "rpc",
+      "checkpoint": "complete",
+      "exit": {
+        "code": 0,
+        "signal": null
+      },
+      "receivedChars": 69632,
+      "ackChars": 69632,
+      "recoveredChars": 69632,
+      "unacknowledgedChars": 0,
+      "observedLostChars": 0,
+      "metrics": {
+        "received": 79,
+        "queued": 79,
+        "written": 79,
+        "synced": 0,
+        "maxQueuedBytes": 158057,
+        "maxWriteAckMs": 1.4893980000001648
+      },
+      "recovery": {
+        "state": "completed",
+        "verifiedRecords": 79,
+        "recoverMs": 3.5702870000022813,
+        "bytes": 262013,
+        "warnings": []
+      },
+      "damage": [
+        {
+          "kind": "truncated",
+          "verifiedRecords": 79,
+          "warnings": [
+            "truncated tail"
+          ]
+        },
+        {
+          "kind": "missing",
+          "verifiedRecords": 39,
+          "warnings": [
+            "corrupt/missing record 40; stopped at verified prefix",
+            "unfinished message"
+          ]
+        },
+        {
+          "kind": "corrupt",
+          "verifiedRecords": 39,
+          "warnings": [
+            "corrupt/missing record 40; stopped at verified prefix",
+            "unfinished message"
+          ]
+        }
+      ]
+    }
+  ]
+}

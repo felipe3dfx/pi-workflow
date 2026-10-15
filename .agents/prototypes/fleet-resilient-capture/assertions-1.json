@@ -1,0 +1,54 @@
+{
+  "assertions": "passed admission, exact larger UTF-8 final replacement, parent/identity, bounded open/prefix/frame reads, partial/corrupt chunks, rejected oversized header, read-only recovery",
+  "largerPayload": {
+    "chars": 480000,
+    "utf8Bytes": 1120000
+  },
+  "metrics": {
+    "maxQueuedBytes": 0,
+    "maxQueuedEntries": 0,
+    "maxChunkBytes": 16384,
+    "maxFrameBytes": 22083,
+    "maxEventJSONBytes": 1120091,
+    "maxEncodeMs": 4.852026000000002,
+    "maxAppendMs": 11.042402999999997,
+    "appendMs": 12.285274999999995,
+    "encodedEvents": 8,
+    "maxEncodeHeapDelta": 1836968
+  },
+  "open": {
+    "bytes": 866,
+    "reads": 4,
+    "maxReadBytes": 381
+  },
+  "reconciliation": {
+    "ms": 6.746673999999999,
+    "bytes": 1512174,
+    "reads": 152,
+    "maxReadBytes": 22079,
+    "maxEventBytes": 1120091
+  },
+  "damage": {
+    "corrupt": [
+      "INCOMPLETE: checksum; verified prefix retained",
+      "INCOMPLETE: partial event chunks; only verified complete events projected",
+      "INCOMPLETE: unfinished message",
+      "INCOMPLETE: no reconciled terminal state"
+    ],
+    "partial": [
+      "INCOMPLETE: raw/index high-water mismatch",
+      "INCOMPLETE: partial chunk/frame",
+      "INCOMPLETE: partial chunk/frame; verified prefix retained",
+      "INCOMPLETE: partial event chunks; only verified complete events projected",
+      "INCOMPLETE: unfinished message",
+      "INCOMPLETE: no reconciled terminal state"
+    ],
+    "oversized": [
+      "INCOMPLETE: frame byte bound/corruption; verified prefix retained",
+      "INCOMPLETE: no reconciled terminal state"
+    ],
+    "identity": [
+      "INCOMPLETE: identity mismatch"
+    ]
+  }
+}

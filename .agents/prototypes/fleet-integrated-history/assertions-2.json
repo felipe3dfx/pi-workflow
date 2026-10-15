@@ -1,0 +1,95 @@
+{
+  "assertions": "passed bounded large-history open, measured build and full scan, missing head, cross-process one-writer refusal, cumulative overlarge display refusal, oversized text/tool raw-event refusal, explicit queue entry AND byte refusal, final replacement",
+  "limits": {
+    "event": 225280,
+    "queueBytes": 524288,
+    "queueEntries": 64,
+    "message": 98304,
+    "windowEntries": 8,
+    "windowBytes": 196608,
+    "head": 8192
+  },
+  "samples": [
+    {
+      "count": 0,
+      "buildMs": 2.066528999999999,
+      "normalOpen": {
+        "ms": 0.8266269999999984,
+        "bytes": 724,
+        "reads": 3
+      },
+      "fullScan": {
+        "ms": 0.22226200000000063,
+        "bytes": 221
+      },
+      "concurrentWriter": "cross-process EEXIST, raw unchanged",
+      "missingHead": [
+        "INCOMPLETE: ENOENT: no such file or directory, stat '/tmp/fleet-integrated-assert-j5k9WI/0/head.json'; explicit recovery required (no scan performed)"
+      ]
+    },
+    {
+      "count": 2000,
+      "buildMs": 335.722735,
+      "normalOpen": {
+        "ms": 1.0621940000000336,
+        "bytes": 2891,
+        "reads": 11
+      },
+      "fullScan": {
+        "ms": 13.530017999999984,
+        "bytes": 644007
+      },
+      "concurrentWriter": "cross-process EEXIST, raw unchanged",
+      "missingHead": [
+        "INCOMPLETE: ENOENT: no such file or directory, stat '/tmp/fleet-integrated-assert-j5k9WI/2000/head.json'; explicit recovery required (no scan performed)"
+      ]
+    },
+    {
+      "count": 10000,
+      "buildMs": 1834.013324,
+      "normalOpen": {
+        "ms": 0.8908200000000761,
+        "bytes": 2897,
+        "reads": 11
+      },
+      "fullScan": {
+        "ms": 57.33686399999988,
+        "bytes": 3228009
+      },
+      "concurrentWriter": "cross-process EEXIST, raw unchanged",
+      "missingHead": [
+        "INCOMPLETE: ENOENT: no such file or directory, stat '/tmp/fleet-integrated-assert-j5k9WI/10000/head.json'; explicit recovery required (no scan performed)"
+      ]
+    }
+  ],
+  "queues": [
+    {
+      "received": 65,
+      "refused": 1,
+      "maxQueueBytes": 68460,
+      "maxQueueEntries": 64,
+      "publishMs": 4.5260150000003705
+    },
+    {
+      "received": 5,
+      "refused": 1,
+      "maxQueueBytes": 484304,
+      "maxQueueEntries": 4,
+      "publishMs": 0.34896100000014485
+    }
+  ],
+  "oversize": {
+    "rawBytes": 146686,
+    "display": [
+      {
+        "ordinal": 0,
+        "incomplete": true,
+        "unsupported": "single-message display bound exceeded; raw retained"
+      }
+    ],
+    "warnings": [
+      "INCOMPLETE: producer admission refused; raw retained prefix only",
+      "INCOMPLETE: terminal metadata absent"
+    ]
+  }
+}
