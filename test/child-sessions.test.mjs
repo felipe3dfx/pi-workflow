@@ -1153,7 +1153,7 @@ test("refused and pending launches return a warning and reason with no child id 
 				params: { role: "worker", task: "Decide the architecture" },
 				jev: { choice: "stay" },
 				status: "refused",
-				reason: /Jev answered that the work stays/,
+				reason: /Jev answered that the work for this user message stays/,
 			},
 		];
 		for (const { params, jev, status, reason } of cases) {

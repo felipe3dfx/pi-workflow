@@ -59,7 +59,7 @@ const destinationInstructions = "Where should this package go?";
 const destinationCriteria = {
 	decide:
 		`A product decision is still open. The parent must ask the user one question and wait. Choosing an architecture with the user is a decision. A reserved operation (${reservedOperations}) is not an open product decision by itself and stays with the parent.`,
-	stay: `The package is small and already understood, so the parent can finish it in this session, and the user did not ask for a child session or subagent, nor for an independent review or check of work. A reserved operation (${reservedOperations}) in the request stays with the parent, but only that part: the rest of the package is judged on its own.`,
+	stay: `The package is small and already understood, so the parent can finish it in this session, and the user did not ask for a child session or subagent, nor for an independent review or check of work; or the user explicitly asks the parent to do the work itself in this session, in any language or wording, which takes precedence over the review rule. A reserved operation (${reservedOperations}) in the request stays with the parent, but only that part: the rest of the package is judged on its own.`,
 	leave:
 		`A bounded package a child session can finish on its own, or the user explicitly asks to delegate to child sessions or subagents, in any language or wording, or the user asks for an independent review or check of work, which must run in a session other than the parent. A reserved operation (${reservedOperations}) in the request stays with the parent, but only that part: the rest of the package is judged on its own. Investigating an architecture can leave.`,
 };
@@ -402,7 +402,12 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			};
 		}
 		if (answer.destination === "stay") {
-			return { kind: "stay", reason: "Jev answered that the work stays.", jev };
+			return {
+				kind: "stay",
+				reason:
+					"Jev answered that the work for this user message stays. Do it in this session with your own tools.",
+				jev,
+			};
 		}
 		return { kind: "leave", jev };
 	}
@@ -476,7 +481,8 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		}
 		return {
 			allow: false,
-			reason: "Call spawn_child with the role whose tools cover the task.",
+			reason:
+				"Jev answered that the work for the latest user message leaves this session; a verdict for an earlier message does not carry over. Call spawn_child with the role whose tools cover the task; this message's verdict allows the launch.",
 			destination: "leave",
 		};
 	}
