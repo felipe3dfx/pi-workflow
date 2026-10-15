@@ -1480,3 +1480,45 @@ test("several blocked inner calls of a script in one turn send one gate message 
 		assert.equal(extension.messages.length, 2);
 	});
 });
+
+test("after a stay, a direct read on the next message names its own verdict and a launch for it proceeds", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const jev = scriptJev(["stay", "leave"]);
+		const launcher = launcherFor();
+		const branch = branchEnding("Revisa de nuevo el PR 941", undefined, "review");
+		const ctx = gateContext(worktree, branch, jev);
+		const declined = [];
+		for (const task of ["Standards", "Spec", "Valuable Tests"]) {
+			declined.push(await launchFor(launcher, ctx, "review", task, "verify"));
+		}
+		branch.push({
+			id: "direct",
+			type: "message",
+			message: { role: "user", content: "Revísalo tú directamente" },
+		});
+		const gated = await launcher.gateToolCall(
+			{
+				toolName: "bash",
+				input: { command: "gh pr view 941 --json headRefOid && git diff c7db f674 --" },
+			},
+			ctx,
+		);
+		const launched = await launchFor(launcher, ctx, "direct", "Standards", "verify");
+
+		assert.deepEqual(
+			declined.map(({ kind, reason }) => [kind, reason]),
+			Array(3).fill([
+				"stay",
+				"Jev answered that the work for this user message stays. Do it in this session with your own tools.",
+			]),
+		);
+		assert.equal(gated.allow, false);
+		assert.equal(
+			gated.reason,
+			"Jev answered that the work for the latest user message leaves this session; a verdict for an earlier message does not carry over. Call spawn_child with the role whose tools cover the task; this message's verdict allows the launch.",
+		);
+		assertDelegatesWithoutRole(gated.reason);
+		assert.equal(launched.kind, "ready");
+		assert.equal(jev.order.length, 2);
+	});
+});
