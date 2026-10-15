@@ -603,6 +603,7 @@ export function createChildSessions(options: {
 		notice?: string,
 	) {
 		const completed = state === "completed" ? result : undefined;
+		if (!notice) options.audit?.execution(id, state, completed?.verdict);
 		try {
 			options.trace({
 				id,
@@ -869,6 +870,7 @@ export function createChildSessions(options: {
 			Promise.reject<string>(new Error("The child is not running."));
 		let observe = (_event: AgentSessionEvent) => {};
 		let audited = (_event: AgentSessionEvent) => {};
+		let auditReport = (_result: ChildResult) => {};
 		let reported = (_result: ChildResult) => {};
 		let noticed = (_message: string) => {};
 		const watch = createWatch(schedule, (reason) => stall(reason));
@@ -892,7 +894,10 @@ export function createChildSessions(options: {
 				},
 				notify: (message) => noticed(message),
 				ask: (question, signal) => asked(question, signal),
-				report: (result) => reported(result),
+				report: (result) => {
+					auditReport(result);
+					reported(result);
+				},
 				entries: from?.conversation.entries,
 				parentSession: from?.conversation.sessionId,
 			});
@@ -951,7 +956,10 @@ export function createChildSessions(options: {
 			...(launch.group === undefined ? {} : { group: launch.group }),
 			...(from ? { continuedFrom: from.id } : {}),
 		});
-		if (capture) audited = (event) => capture.event(event);
+		if (capture) {
+			audited = (event) => capture.event(event);
+			auditReport = (result) => capture.reported(result);
+		}
 		if (!launch.background) {
 			let ended: ChildState = "failed";
 			const stopped = Promise.withResolvers<never>();

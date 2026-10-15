@@ -89,7 +89,7 @@ test("an accepted child's identity is inspectable at once and then durably writt
 });
 
 const inputs = (window) =>
-	window.observations.map(({ ordinal, kind, source, delivery, text }) => ({
+	window.observations.filter((entry) => entry.kind === "input").map(({ ordinal, kind, source, delivery, text }) => ({
 		ordinal,
 		kind,
 		source,
@@ -116,9 +116,9 @@ test("the subscription precedes the first prompt, and a Steer is recorded queued
 
 	const window = await eventually(() => audit.read(id), allWritten);
 	assert.deepEqual(inputs(window), [
-		{ ordinal: 1, kind: "input", source: "user", delivery: "delivered", text: "Fix the failing test" },
-		{ ordinal: 2, kind: "input", source: "steer", delivery: "queued", text: "Also update the README" },
-		{ ordinal: 3, kind: "input", source: "steer", delivery: "delivered", text: "Also update the README" },
+		{ ordinal: 3, kind: "input", source: "user", delivery: "delivered", text: "Fix the failing test" },
+		{ ordinal: 4, kind: "input", source: "steer", delivery: "queued", text: "Also update the README" },
+		{ ordinal: 5, kind: "input", source: "steer", delivery: "delivered", text: "Also update the README" },
 	]);
 });
 
@@ -141,7 +141,9 @@ test("an answer is recorded when the parent replies and again when the child rec
 
 	const window = await eventually(() => audit.read(id), allWritten);
 	assert.deepEqual(
-		window.observations.map(({ source, delivery, question, text }) => ({ source, delivery, question, text })),
+		window.observations
+			.filter((entry) => entry.kind === "input")
+			.map(({ source, delivery, question, text }) => ({ source, delivery, question, text })),
 		[
 			{ source: "answer", delivery: "queued", question: 1, text: "src/a.ts" },
 			{ source: "answer", delivery: "delivered", question: undefined, text: "src/a.ts" },
@@ -156,8 +158,10 @@ test("an instruction loadout change exposed by Pi is recorded", async (t) => {
 
 	const window = await eventually(() => audit.read(id), allWritten);
 	assert.deepEqual(
-		window.observations.map(({ ordinal, kind, thinking }) => ({ ordinal, kind, thinking })),
-		[{ ordinal: 1, kind: "loadout", thinking: "high" }],
+		window.observations
+			.filter((entry) => entry.kind === "loadout")
+			.map(({ ordinal, kind, thinking }) => ({ ordinal, kind, thinking })),
+		[{ ordinal: 3, kind: "loadout", thinking: "high" }],
 	);
 });
 
@@ -215,7 +219,7 @@ test("without a parent session identity the child runs and live inspection warns
 
 test("an exhausted capture budget marks the record incomplete without stopping, steering, or failing the child", async (t) => {
 	const { audit, core, launch, children } = auditedCore(t, {
-		limits: { entries: 2 },
+		limits: { entries: 4 },
 	});
 	const { id, child } = await launch();
 	for (const text of ["one", "two", "three"]) {
@@ -257,10 +261,339 @@ test("a read returns one bounded window of the child's observations at a time", 
 	const { audit, launch } = auditedCore(t, { limits: { window: 2 } });
 	const { id, child } = await launch();
 	for (const text of ["one", "two", "three"]) child.spec.onEvent(userMessage(text));
-	await eventually(() => audit.read(id, 3), allWritten);
+	await eventually(() => audit.read(id, 5), allWritten);
 
 	const texts = async (from) =>
 		inputs(await audit.read(id, from)).map(({ ordinal, text }) => [ordinal, text]);
-	assert.deepEqual(await texts(1), [[1, "one"], [2, "two"]]);
-	assert.deepEqual(await texts(3), [[3, "three"]]);
+	assert.deepEqual(await texts(3), [[3, "one"], [4, "two"]]);
+	assert.deepEqual(await texts(5), [[5, "three"]]);
+});
+
+const toolEvent = (type, toolCallId, fields = {}) => ({
+	type: `tool_execution_${type}`,
+	toolCallId,
+	toolName: fields.toolName ?? "read",
+	...fields,
+});
+
+const events = (window) =>
+	window.observations
+		.filter((entry) => entry.event)
+		.map((entry) => entry.event);
+
+test("nested tool calls are captured live with their arguments, updates, and results correlated to the outer call", async (t) => {
+	const { audit, launch } = auditedCore(t, {
+		run: () => new Promise(() => {}),
+	});
+	const { id, child } = await launch();
+	const emit = (event) => child.spec.onEvent(event);
+	const nestedEnd = toolEvent("end", "c1/1", {
+		parentToolCallId: "c1",
+		result: {
+			content: [{ type: "text", text: "full text" }],
+			details: { fullOutputPath: "/tmp/full-output.txt" },
+			usage: { input: 5, output: 1 },
+		},
+		isError: false,
+	});
+	emit(
+		toolEvent("start", "c1", {
+			toolName: "codemode",
+			args: { script: "read('a')" },
+		}),
+	);
+	emit(
+		toolEvent("start", "c1/1", { parentToolCallId: "c1", args: { path: "a" } }),
+	);
+	emit(
+		toolEvent("update", "c1/1", {
+			parentToolCallId: "c1",
+			args: { path: "a" },
+			partialResult: { content: [{ type: "text", text: "full" }] },
+		}),
+	);
+	emit(nestedEnd);
+	emit(nestedEnd);
+	emit(
+		toolEvent("end", "c1", {
+			toolName: "codemode",
+			result: { content: [{ type: "text", text: "script done" }] },
+			isError: false,
+		}),
+	);
+	const toolResult = {
+		role: "toolResult",
+		toolCallId: "c1",
+		toolName: "codemode",
+		content: [{ type: "text", text: "script done" }],
+		nestedCalls: { calls: [], complete: true },
+		usage: { input: 5, output: 1 },
+		isError: false,
+	};
+	emit({ type: "message_start", message: toolResult });
+	emit({ type: "message_end", message: toolResult });
+
+	const window = await eventually(() => audit.read(id), allWritten);
+	assert.deepEqual(events(window), [
+		"tool:c1:start",
+		"tool:c1/1:start",
+		"tool:c1/1:update:1",
+		"tool:c1/1:end",
+		"tool:c1:end",
+	]);
+	assert.deepEqual(window.transcript, [
+		{
+			type: "tool",
+			call: "c1",
+			name: "codemode",
+			args: { script: "read('a')" },
+			result: { content: [{ type: "text", text: "script done" }] },
+			error: false,
+			final: true,
+		},
+		{
+			type: "tool",
+			call: "c1/1",
+			parent: "c1",
+			name: "read",
+			args: { path: "a" },
+			result: {
+				content: [{ type: "text", text: "full text" }],
+				details: { fullOutputPath: "/tmp/full-output.txt" },
+				usage: { input: 5, output: 1 },
+			},
+			error: false,
+			final: true,
+		},
+	]);
+});
+
+const delta = (message, type, contentIndex, text) => ({
+	type: "message_update",
+	message,
+	assistantMessageEvent: { type, contentIndex, delta: text, partial: message },
+});
+
+test("an authoritative final replaces its streamed partials once, while the partials stay auditable", async (t) => {
+	const { audit, launch } = auditedCore(t, {
+		run: () => new Promise(() => {}),
+	});
+	const { id, child } = await launch();
+	const emit = (event) => child.spec.onEvent(event);
+	const streaming = { role: "assistant", content: [] };
+	const final = {
+		role: "assistant",
+		content: [
+			{ type: "thinking", thinking: "plan" },
+			{ type: "text", text: "\u{1F44D} ok" },
+		],
+		usage: { input: 10, output: 4 },
+		stopReason: "stop",
+	};
+	emit({ type: "message_start", message: streaming });
+	emit(delta(streaming, "thinking_delta", 0, "plan"));
+	emit(delta(streaming, "text_delta", 1, "\ud83d"));
+	emit(delta(streaming, "text_delta", 1, "\udc4d ok"));
+	emit({ type: "message_end", message: final });
+	emit({ type: "message_end", message: final });
+	emit(delta(streaming, "text_delta", 1, " late"));
+	final.content[1].text = "rewritten after the event";
+
+	const live = await audit.read(id);
+	assert.deepEqual(live.transcript, [
+		{
+			type: "message",
+			message: "m1",
+			role: "assistant",
+			content: [
+				{ type: "thinking", thinking: "plan" },
+				{ type: "text", text: "\u{1F44D} ok" },
+			],
+			usage: { input: 10, output: 4 },
+			stopReason: "stop",
+			final: true,
+		},
+	]);
+
+	const window = await eventually(() => audit.read(id), allWritten);
+	assert.deepEqual(events(window), [
+		"m1:start",
+		"m1:update:1",
+		"m1:update:2",
+		"m1:update:3",
+		"m1:end",
+		"m1:update:4",
+	]);
+	assert.deepEqual(window.transcript, live.transcript);
+	assert.deepEqual(
+		window.observations
+			.filter((entry) => entry.phase === "update")
+			.map((entry) => entry.delta)
+			.join(""),
+		"plan\u{1F44D} ok late",
+	);
+});
+
+test("a streaming message shows one current partial joined across Unicode-split deltas", async (t) => {
+	const { audit, launch } = auditedCore(t, {
+		run: () => new Promise(() => {}),
+	});
+	const { id, child } = await launch();
+	const streaming = { role: "assistant", content: [] };
+	child.spec.onEvent({ type: "message_start", message: streaming });
+	child.spec.onEvent(delta(streaming, "text_delta", 0, "cafe"));
+	child.spec.onEvent(delta(streaming, "text_delta", 0, "́ \ud83d"));
+	child.spec.onEvent(delta(streaming, "text_delta", 0, "\ude00"));
+
+	const window = await eventually(() => audit.read(id), allWritten);
+	assert.deepEqual(window.transcript, [
+		{
+			type: "message",
+			message: "m1",
+			role: "assistant",
+			content: [{ type: "text", text: "café \u{1F600}" }],
+			final: false,
+		},
+	]);
+});
+
+test("execution transitions and each corrected Verdict report are recorded apart from capture health", async (t) => {
+	const { audit, core, launch } = auditedCore(t);
+	const { id, child } = await launch();
+	await eventually(
+		async () => core.get(id).state,
+		(state) => state === "running",
+	);
+	const blocked = {
+		verdict: "blocked",
+		reason: "Missing fixture",
+		files_changed: [],
+		validation: [],
+		left_undone: ["tests"],
+	};
+	const done = {
+		verdict: "done",
+		files_changed: ["a.ts: fixed"],
+		validation: ["npm test: pass"],
+		left_undone: [],
+	};
+	child.spec.report(blocked);
+	child.spec.report(done);
+	child.result.resolve("Done.");
+	await eventually(
+		async () => core.get(id).state,
+		(state) => state === "completed",
+	);
+
+	const window = await eventually(() => audit.read(id), allWritten);
+	assert.deepEqual(
+		window.observations.map(({ kind, state, verdict, result }) => ({
+			kind,
+			state,
+			verdict,
+			result,
+		})),
+		[
+			{
+				kind: "execution",
+				state: "queued",
+				verdict: undefined,
+				result: undefined,
+			},
+			{
+				kind: "execution",
+				state: "running",
+				verdict: undefined,
+				result: undefined,
+			},
+			{ kind: "report", state: undefined, verdict: undefined, result: blocked },
+			{ kind: "report", state: undefined, verdict: undefined, result: done },
+			{
+				kind: "execution",
+				state: "completed",
+				verdict: "done",
+				result: undefined,
+			},
+		],
+	);
+	assert.deepEqual(window.health, { complete: true, lost: 0 });
+});
+
+test("concurrent children keep their own order and correlation, and identical text from distinct events stays distinct", async (t) => {
+	const { audit, launch } = auditedCore(t, {
+		run: () => new Promise(() => {}),
+	});
+	const first = await launch();
+	const second = await launch();
+	const say = (child, text) => {
+		const message = {
+			role: "assistant",
+			content: [{ type: "text", text }],
+			stopReason: "stop",
+		};
+		child.spec.onEvent({ type: "message_start", message });
+		child.spec.onEvent({ type: "message_end", message });
+	};
+	for (const { child } of [first, second]) {
+		child.spec.onEvent(toolEvent("start", "c1", { args: { path: "a" } }));
+	}
+	say(first.child, "same");
+	say(second.child, "same");
+	say(first.child, "same");
+	for (const { child } of [second, first]) {
+		child.spec.onEvent(
+			toolEvent("end", "c1", { result: { content: [] }, isError: false }),
+		);
+	}
+
+	const summary = (window) =>
+		window.transcript.map((entry) =>
+			entry.type === "tool"
+				? `${entry.call} final=${entry.final}`
+				: `${entry.message} ${entry.content[0].text}`,
+		);
+	const one = await eventually(() => audit.read(first.id), allWritten);
+	const two = await eventually(() => audit.read(second.id), allWritten);
+	assert.deepEqual(summary(one), ["c1 final=true", "m1 same", "m2 same"]);
+	assert.deepEqual(summary(two), ["c1 final=true", "m1 same"]);
+	for (const window of [one, two]) {
+		const ordinals = window.observations.map((entry) => entry.ordinal);
+		assert.deepEqual(
+			ordinals,
+			ordinals.map((_, index) => index + 1),
+		);
+	}
+});
+
+test("a final the capture could not retain never appears authoritative", async (t) => {
+	const { audit, core, launch } = auditedCore(t, {
+		limits: { entries: 5 },
+		run: () => new Promise(() => {}),
+	});
+	const { id, child } = await launch();
+	const streaming = { role: "assistant", content: [] };
+	child.spec.onEvent({ type: "message_start", message: streaming });
+	child.spec.onEvent(delta(streaming, "text_delta", 0, "half"));
+	child.spec.onEvent({
+		type: "message_end",
+		message: {
+			role: "assistant",
+			content: [{ type: "text", text: "half and whole" }],
+			stopReason: "stop",
+		},
+	});
+
+	const window = await eventually(() => audit.read(id), allWritten);
+	assert.deepEqual(window.transcript, [
+		{
+			type: "message",
+			message: "m1",
+			role: "assistant",
+			content: [{ type: "text", text: "half" }],
+			final: false,
+		},
+	]);
+	assert.equal(window.health.complete, false);
+	assert.equal(window.health.lost, 1);
+	assert.equal(core.get(id).state, "running");
 });
