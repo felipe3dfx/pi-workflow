@@ -164,6 +164,14 @@ A child session whose Run state is queued, running, or waiting.
 
 _Avoid_: active child, live child
 
+### Interrupted child record
+
+A historical record of a previously working child whose terminal Run state is unavailable after reopening or reloading the parent session. It represents an unknown terminal outcome, not active or resumable execution.
+
+### Incomplete transcript
+
+A child's audit transcript whose completeness cannot be established because captured evidence is missing, damaged, or unavailable. It does not determine the child's Run state or Verdict.
+
 ### Launch limit
 
 The fixed bound on a parent's working children. A launch beyond it is refused before Jev is asked or a child session is created.

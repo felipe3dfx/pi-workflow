@@ -1,0 +1,3421 @@
+{
+  "harness": "Pi TuiMainScreen/ProcessTerminal + Linux PTY; same bounded capture/read/render policy SDK/RPC; simplified renderer",
+  "samples": [
+    {
+      "repeat": 0,
+      "mode": "sdk",
+      "result": {
+        "mode": "sdk",
+        "checkpoint": "pty",
+        "build": {
+          "messages": 2000,
+          "ms": 356.53087100000005,
+          "kind": "synthetic retained user messages through same raw/index writer; before runtime timer"
+        },
+        "receivedChars": 69632,
+        "ackChars": 69632,
+        "ackOffset": 896293,
+        "ackDigest": "654391c8710fb12cb4cec985f4b1c2686252a303ef3d04d42501c36980984daf",
+        "metrics": {
+          "received": 2092,
+          "queued": 2092,
+          "written": 2092,
+          "synced": 0,
+          "maxQueuedBytes": 78484,
+          "maxWriteAckMs": 7.573315999999977
+        },
+        "queue": {
+          "received": 2091,
+          "refused": 0,
+          "maxQueueBytes": 302426,
+          "maxQueueEntries": 10,
+          "publishMs": 324.6815070000045
+        },
+        "kinds": {
+          "message_start": 5,
+          "message_end": 5,
+          "thinking_start": 1,
+          "thinking_delta": 2,
+          "thinking_end": 1,
+          "toolcall_start": 1,
+          "toolcall_delta": 1,
+          "toolcall_end": 1,
+          "tool_execution_start": 1,
+          "tool_execution_end": 1,
+          "text_start": 1,
+          "text_delta": 68,
+          "text_end": 1,
+          "agent_settled": 1
+        },
+        "lagP99Ms": 1.685503,
+        "runMs": 3666.6749680000003
+      },
+      "probes": [
+        {
+          "action": "reopen",
+          "inputToWriteMs": 18.274172,
+          "inputToPtyReadMs": 18.300912
+        },
+        {
+          "action": "older-detach",
+          "inputToWriteMs": 15.512759,
+          "inputToPtyReadMs": 15.528759
+        },
+        {
+          "action": "collapse-expand",
+          "inputToWriteMs": 15.892069,
+          "inputToPtyReadMs": 15.90275
+        },
+        {
+          "action": "newer-detached",
+          "inputToWriteMs": 15.632406,
+          "inputToPtyReadMs": 15.628529
+        },
+        {
+          "action": "expand-collapse",
+          "inputToWriteMs": 15.483643,
+          "inputToPtyReadMs": 15.499864
+        },
+        {
+          "action": "follow",
+          "inputToWriteMs": 15.544219,
+          "inputToPtyReadMs": 15.564357
+        }
+      ],
+      "actions": [
+        {
+          "type": "action",
+          "seq": 1,
+          "follow": true,
+          "anchor": 1997,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4319279796013"
+        },
+        {
+          "type": "action",
+          "seq": 2,
+          "follow": false,
+          "anchor": 1995,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4319461315947"
+        },
+        {
+          "type": "action",
+          "seq": 3,
+          "follow": false,
+          "anchor": 1995,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4319642925971"
+        },
+        {
+          "type": "action",
+          "seq": 4,
+          "follow": false,
+          "anchor": 1996,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4319827778511"
+        },
+        {
+          "type": "action",
+          "seq": 5,
+          "follow": false,
+          "anchor": 1996,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4320010684305"
+        },
+        {
+          "type": "action",
+          "seq": 6,
+          "follow": true,
+          "anchor": 1997,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4320196335031"
+        }
+      ],
+      "renders": [
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.11063999999998941,
+          "entries": 8,
+          "residentBytes": 1928,
+          "ns": "4319148630872"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.1118820000000369,
+          "entries": 8,
+          "residentBytes": 4027,
+          "ns": "4319163476485"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.034074999999916145,
+          "entries": 8,
+          "residentBytes": 4347,
+          "ns": "4319198645920"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.015590000000088367,
+          "entries": 0,
+          "residentBytes": 4347,
+          "ns": "4319222041373"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.057579000000032465,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4319238126449"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.24761000000012245,
+          "entries": 8,
+          "residentBytes": 13339,
+          "ns": "4319274273479"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.15958299999988412,
+          "entries": 8,
+          "residentBytes": 13339,
+          "ns": "4319277850039"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.14147800000000643,
+          "entries": 8,
+          "residentBytes": 13339,
+          "ns": "4319292763671"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.06670600000006743,
+          "entries": 8,
+          "residentBytes": 14483,
+          "ns": "4319326085759"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.20847600000001876,
+          "entries": 8,
+          "residentBytes": 15627,
+          "ns": "4319377706434"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.0749430000000757,
+          "entries": 8,
+          "residentBytes": 16771,
+          "ns": "4319429304898"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.08597400000007838,
+          "entries": 8,
+          "residentBytes": 16771,
+          "ns": "4319460349863"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.021170000000211076,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4319475103300"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.043432000000166227,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4319491979708"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.028414000000111628,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4319528731166"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.0294859999999062,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4319580290105"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.08262700000000223,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4319632065013"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.05361199999993005,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4319642698910"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.08630399999992733,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4319657941937"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.03671000000008462,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4319683376361"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.03495699999984936,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4319733883643"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.06333100000006198,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4319785717664"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.041829000000007,
+          "entries": 8,
+          "residentBytes": 6126,
+          "ns": "4319826576670"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.20452800000020943,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4319841585001"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.06761800000003859,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4319887353918"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.12940600000001723,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4319938166048"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.06469300000003386,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4319990081644"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.0642720000000736,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4320010624873"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.12012800000002244,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4320025634737"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.061798000000180764,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4320041864728"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.11511900000004971,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4320092628236"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.060825999999906344,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4320143413436"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.059983999999985826,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4320193958399"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.09923800000001393,
+          "entries": 8,
+          "residentBytes": 11866,
+          "ns": "4320194334774"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.2878960000000461,
+          "entries": 8,
+          "residentBytes": 33939,
+          "ns": "4320209402768"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.47884899999985464,
+          "entries": 8,
+          "residentBytes": 35083,
+          "ns": "4320248678027"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.16909100000020771,
+          "entries": 8,
+          "residentBytes": 36227,
+          "ns": "4320297592045"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.17683499999975538,
+          "entries": 8,
+          "residentBytes": 37373,
+          "ns": "4320349734190"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.17804800000021714,
+          "entries": 8,
+          "residentBytes": 38517,
+          "ns": "4320399627917"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.18152499999996508,
+          "entries": 8,
+          "residentBytes": 39661,
+          "ns": "4320450336511"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.1878870000000461,
+          "entries": 8,
+          "residentBytes": 40805,
+          "ns": "4320501402903"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.2155790000001616,
+          "entries": 8,
+          "residentBytes": 41951,
+          "ns": "4320553118349"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.19826599999987593,
+          "entries": 8,
+          "residentBytes": 43095,
+          "ns": "4320604248293"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.20556100000021615,
+          "entries": 8,
+          "residentBytes": 44239,
+          "ns": "4320655445554"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.2733889999999519,
+          "entries": 8,
+          "residentBytes": 45383,
+          "ns": "4320706729510"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.20620199999984834,
+          "entries": 8,
+          "residentBytes": 46529,
+          "ns": "4320757619348"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.38058200000023135,
+          "entries": 8,
+          "residentBytes": 47673,
+          "ns": "4320809213513"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.4863439999999173,
+          "entries": 8,
+          "residentBytes": 48817,
+          "ns": "4320861377079"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.2279329999996662,
+          "entries": 8,
+          "residentBytes": 49961,
+          "ns": "4320911708808"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 1.1280020000003788,
+          "entries": 8,
+          "residentBytes": 51107,
+          "ns": "4320964156844"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5145270000002711,
+          "entries": 8,
+          "residentBytes": 52251,
+          "ns": "4321015071930"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.23928399999977046,
+          "entries": 8,
+          "residentBytes": 53395,
+          "ns": "4321065781856"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.2465780000002269,
+          "entries": 8,
+          "residentBytes": 54539,
+          "ns": "4321115586243"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.2418790000001536,
+          "entries": 8,
+          "residentBytes": 55683,
+          "ns": "4321166486120"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5623279999999795,
+          "entries": 8,
+          "residentBytes": 56829,
+          "ns": "4321219102366"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.2642719999998917,
+          "entries": 8,
+          "residentBytes": 57973,
+          "ns": "4321269183238"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.2959519999999429,
+          "entries": 8,
+          "residentBytes": 59117,
+          "ns": "4321320249450"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.284610000000157,
+          "entries": 8,
+          "residentBytes": 60261,
+          "ns": "4321371274675"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.2893290000001798,
+          "entries": 8,
+          "residentBytes": 61407,
+          "ns": "4321424440193"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.2778480000001764,
+          "entries": 8,
+          "residentBytes": 62551,
+          "ns": "4321474420294"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.29168399999980466,
+          "entries": 8,
+          "residentBytes": 63695,
+          "ns": "4321525439738"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.30593099999987317,
+          "entries": 8,
+          "residentBytes": 64839,
+          "ns": "4321576863279"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.30528000000003885,
+          "entries": 8,
+          "residentBytes": 65985,
+          "ns": "4321627806758"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.31261399999993955,
+          "entries": 8,
+          "residentBytes": 67129,
+          "ns": "4321679882918"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.31098999999994703,
+          "entries": 8,
+          "residentBytes": 68273,
+          "ns": "4321730979959"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6427910000002157,
+          "entries": 8,
+          "residentBytes": 69417,
+          "ns": "4321782514711"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.7545820000000276,
+          "entries": 8,
+          "residentBytes": 70563,
+          "ns": "4321832776357"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.7763740000000325,
+          "entries": 8,
+          "residentBytes": 71707,
+          "ns": "4321884460753"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6555239999997866,
+          "entries": 8,
+          "residentBytes": 72851,
+          "ns": "4321935273945"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.807463000000098,
+          "entries": 8,
+          "residentBytes": 73995,
+          "ns": "4321987592305"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6772860000000946,
+          "entries": 8,
+          "residentBytes": 75139,
+          "ns": "4322038439351"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.7248460000000705,
+          "entries": 8,
+          "residentBytes": 76285,
+          "ns": "4322089377791"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6929150000000845,
+          "entries": 8,
+          "residentBytes": 77429,
+          "ns": "4322140213446"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.7057789999998931,
+          "entries": 8,
+          "residentBytes": 78573,
+          "ns": "4322192372954"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.7291840000002594,
+          "entries": 8,
+          "residentBytes": 79717,
+          "ns": "4322243147894"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.7140150000000176,
+          "entries": 8,
+          "residentBytes": 80863,
+          "ns": "4322294963779"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.7953299999999217,
+          "entries": 8,
+          "residentBytes": 82007,
+          "ns": "4322345685127"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.7433009999995193,
+          "entries": 8,
+          "residentBytes": 83151,
+          "ns": "4322396642523"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.7471779999996215,
+          "entries": 8,
+          "residentBytes": 84295,
+          "ns": "4322447716971"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.7619260000001304,
+          "entries": 8,
+          "residentBytes": 85441,
+          "ns": "4322498554419"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.7739789999995992,
+          "entries": 8,
+          "residentBytes": 86585,
+          "ns": "4322551416010"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.8010910000002696,
+          "entries": 8,
+          "residentBytes": 87729,
+          "ns": "4322601329344"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.8104479999992691,
+          "entries": 8,
+          "residentBytes": 88873,
+          "ns": "4322652520534"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.8176330000005692,
+          "entries": 8,
+          "residentBytes": 90019,
+          "ns": "4322708025653"
+        }
+      ]
+    },
+    {
+      "repeat": 0,
+      "mode": "rpc",
+      "result": {
+        "mode": "rpc",
+        "checkpoint": "pty",
+        "build": {
+          "messages": 2000,
+          "ms": 343.824964,
+          "kind": "synthetic retained user messages through same raw/index writer; before runtime timer"
+        },
+        "receivedChars": 69632,
+        "ackChars": 69632,
+        "ackOffset": 896284,
+        "ackDigest": "56002ff0603413bc9cc897236b55841b2720a826cc3be835d79a563b614e35bb",
+        "metrics": {
+          "received": 2092,
+          "queued": 2092,
+          "written": 2092,
+          "synced": 0,
+          "maxQueuedBytes": 78483,
+          "maxWriteAckMs": 0.9731670000001031
+        },
+        "queue": {
+          "received": 2091,
+          "refused": 0,
+          "maxQueueBytes": 302424,
+          "maxQueueEntries": 7,
+          "publishMs": 328.43118300000674
+        },
+        "kinds": {
+          "message_start": 5,
+          "message_end": 5,
+          "thinking_start": 1,
+          "thinking_delta": 2,
+          "thinking_end": 1,
+          "toolcall_start": 1,
+          "toolcall_delta": 1,
+          "toolcall_end": 1,
+          "tool_execution_start": 1,
+          "tool_execution_end": 1,
+          "text_start": 1,
+          "text_delta": 68,
+          "text_end": 1,
+          "agent_settled": 1
+        },
+        "lagP99Ms": 1.719295,
+        "runMs": 3678.1134270000002
+      },
+      "probes": [
+        {
+          "action": "reopen",
+          "inputToWriteMs": 19.811459,
+          "inputToPtyReadMs": 19.846877
+        },
+        {
+          "action": "older-detach",
+          "inputToWriteMs": 15.840431,
+          "inputToPtyReadMs": 15.785587
+        },
+        {
+          "action": "collapse-expand",
+          "inputToWriteMs": 15.943136,
+          "inputToPtyReadMs": 15.961791
+        },
+        {
+          "action": "newer-detached",
+          "inputToWriteMs": 15.372583,
+          "inputToPtyReadMs": 15.39752
+        },
+        {
+          "action": "expand-collapse",
+          "inputToWriteMs": 15.591979,
+          "inputToPtyReadMs": 15.639109
+        },
+        {
+          "action": "follow",
+          "inputToWriteMs": 15.38714,
+          "inputToPtyReadMs": 15.435792
+        }
+      ],
+      "actions": [
+        {
+          "type": "action",
+          "seq": 1,
+          "follow": true,
+          "anchor": 1997,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4324462044079"
+        },
+        {
+          "type": "action",
+          "seq": 2,
+          "follow": false,
+          "anchor": 1995,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4324642384680"
+        },
+        {
+          "type": "action",
+          "seq": 3,
+          "follow": false,
+          "anchor": 1995,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4324822197921"
+        },
+        {
+          "type": "action",
+          "seq": 4,
+          "follow": false,
+          "anchor": 1996,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4325007578690"
+        },
+        {
+          "type": "action",
+          "seq": 5,
+          "follow": false,
+          "anchor": 1996,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4325191404538"
+        },
+        {
+          "type": "action",
+          "seq": 6,
+          "follow": true,
+          "anchor": 1997,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4325377711756"
+        }
+      ],
+      "renders": [
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.1739300000001549,
+          "entries": 8,
+          "residentBytes": 1928,
+          "ns": "4324320701921"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.10975799999982883,
+          "entries": 8,
+          "residentBytes": 4027,
+          "ns": "4324334275378"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.0758539999999357,
+          "entries": 8,
+          "residentBytes": 4346,
+          "ns": "4324379478600"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.02772200000003977,
+          "entries": 0,
+          "residentBytes": 4346,
+          "ns": "4324401152775"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.10222399999997833,
+          "entries": 8,
+          "residentBytes": 6124,
+          "ns": "4324418068437"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.34608699999989767,
+          "entries": 8,
+          "residentBytes": 13335,
+          "ns": "4324456151723"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.3300560000000132,
+          "entries": 8,
+          "residentBytes": 13335,
+          "ns": "4324459636138"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.3191759999999704,
+          "entries": 8,
+          "residentBytes": 13335,
+          "ns": "4324476211764"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.3178130000001147,
+          "entries": 8,
+          "residentBytes": 14479,
+          "ns": "4324506366980"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.30883600000015576,
+          "entries": 8,
+          "residentBytes": 15623,
+          "ns": "4324557616019"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.330808000000161,
+          "entries": 8,
+          "residentBytes": 16767,
+          "ns": "4324609256912"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.307414000000108,
+          "entries": 8,
+          "residentBytes": 16767,
+          "ns": "4324640681267"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.08001199999989694,
+          "entries": 8,
+          "residentBytes": 6124,
+          "ns": "4324655241016"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.0899810000000798,
+          "entries": 8,
+          "residentBytes": 6124,
+          "ns": "4324672080734"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.0741809999999532,
+          "entries": 8,
+          "residentBytes": 6124,
+          "ns": "4324708653572"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.040046000000074855,
+          "entries": 8,
+          "residentBytes": 6124,
+          "ns": "4324759953338"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.06623599999988983,
+          "entries": 8,
+          "residentBytes": 6124,
+          "ns": "4324811392017"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.0674180000000888,
+          "entries": 8,
+          "residentBytes": 6124,
+          "ns": "4324822013300"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.1720860000000357,
+          "entries": 8,
+          "residentBytes": 6124,
+          "ns": "4324837297255"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.08915999999999258,
+          "entries": 8,
+          "residentBytes": 6124,
+          "ns": "4324862652799"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.09750499999995554,
+          "entries": 8,
+          "residentBytes": 6124,
+          "ns": "4324914060860"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.14936299999999392,
+          "entries": 8,
+          "residentBytes": 6124,
+          "ns": "4324965627762"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.04832200000009834,
+          "entries": 8,
+          "residentBytes": 6124,
+          "ns": "4325006539548"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.1374909999999545,
+          "entries": 8,
+          "residentBytes": 11863,
+          "ns": "4325021510237"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.234375,
+          "entries": 8,
+          "residentBytes": 11863,
+          "ns": "4325068226522"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.2679990000001453,
+          "entries": 8,
+          "residentBytes": 11863,
+          "ns": "4325119777604"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.11380599999984042,
+          "entries": 8,
+          "residentBytes": 11863,
+          "ns": "4325170732475"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.06267899999966176,
+          "entries": 8,
+          "residentBytes": 11863,
+          "ns": "4325191330537"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.12297300000000178,
+          "entries": 8,
+          "residentBytes": 11863,
+          "ns": "4325206423108"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.10885700000017096,
+          "entries": 8,
+          "residentBytes": 11863,
+          "ns": "4325222085451"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.10010000000011132,
+          "entries": 8,
+          "residentBytes": 11863,
+          "ns": "4325273457444"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.057699999999840657,
+          "entries": 8,
+          "residentBytes": 11863,
+          "ns": "4325324376186"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.10430800000040108,
+          "entries": 8,
+          "residentBytes": 11863,
+          "ns": "4325375558909"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.13677899999993315,
+          "entries": 8,
+          "residentBytes": 33935,
+          "ns": "4325390568162"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.288387000000057,
+          "entries": 8,
+          "residentBytes": 35079,
+          "ns": "4325429399007"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.33690000000024156,
+          "entries": 8,
+          "residentBytes": 36223,
+          "ns": "4325481104973"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3057909999997719,
+          "entries": 8,
+          "residentBytes": 37369,
+          "ns": "4325532423474"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3099280000001272,
+          "entries": 8,
+          "residentBytes": 38513,
+          "ns": "4325583418180"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3909120000002986,
+          "entries": 8,
+          "residentBytes": 39657,
+          "ns": "4325635312424"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3412180000000262,
+          "entries": 8,
+          "residentBytes": 40801,
+          "ns": "4325686299465"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.34421400000019275,
+          "entries": 8,
+          "residentBytes": 41947,
+          "ns": "4325737707115"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3665559999999459,
+          "entries": 8,
+          "residentBytes": 43091,
+          "ns": "4325789080921"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.36429099999986647,
+          "entries": 8,
+          "residentBytes": 44235,
+          "ns": "4325840402047"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.37781700000005003,
+          "entries": 8,
+          "residentBytes": 45379,
+          "ns": "4325891659091"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3718159999998534,
+          "entries": 8,
+          "residentBytes": 46525,
+          "ns": "4325943506145"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.40196300000025076,
+          "entries": 8,
+          "residentBytes": 47669,
+          "ns": "4325994034346"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.40254400000003443,
+          "entries": 8,
+          "residentBytes": 48813,
+          "ns": "4326046031425"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.41370599999982005,
+          "entries": 8,
+          "residentBytes": 49957,
+          "ns": "4326096146211"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.41189200000007986,
+          "entries": 8,
+          "residentBytes": 51103,
+          "ns": "4326147593486"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.420238000000154,
+          "entries": 8,
+          "residentBytes": 52247,
+          "ns": "4326198820193"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.4337729999997464,
+          "entries": 8,
+          "residentBytes": 53391,
+          "ns": "4326249223246"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5110300000001189,
+          "entries": 8,
+          "residentBytes": 54535,
+          "ns": "4326300679297"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.45694800000001123,
+          "entries": 8,
+          "residentBytes": 55679,
+          "ns": "4326352047542"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 1.0940369999998438,
+          "entries": 8,
+          "residentBytes": 56825,
+          "ns": "4326404020636"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.4652029999997467,
+          "entries": 8,
+          "residentBytes": 57969,
+          "ns": "4326454799031"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.4689100000000508,
+          "entries": 8,
+          "residentBytes": 59113,
+          "ns": "4326505596864"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.48348799999985204,
+          "entries": 8,
+          "residentBytes": 60257,
+          "ns": "4326556853667"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5235139999999774,
+          "entries": 8,
+          "residentBytes": 61403,
+          "ns": "4326607741640"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5213690000000497,
+          "entries": 8,
+          "residentBytes": 62547,
+          "ns": "4326658946555"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.41134999999985666,
+          "entries": 8,
+          "residentBytes": 63691,
+          "ns": "4326709284935"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6127329999999347,
+          "entries": 8,
+          "residentBytes": 64835,
+          "ns": "4326761165192"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.8402650000002723,
+          "entries": 8,
+          "residentBytes": 65981,
+          "ns": "4326813159637"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6462970000002315,
+          "entries": 8,
+          "residentBytes": 67125,
+          "ns": "4326862894341"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5618960000001607,
+          "entries": 8,
+          "residentBytes": 68269,
+          "ns": "4326913723633"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5844799999995303,
+          "entries": 8,
+          "residentBytes": 69413,
+          "ns": "4326965172861"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.670483000000786,
+          "entries": 8,
+          "residentBytes": 70559,
+          "ns": "4327017097883"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5736489999999321,
+          "entries": 8,
+          "residentBytes": 71703,
+          "ns": "4327067350631"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5930459999999584,
+          "entries": 8,
+          "residentBytes": 72847,
+          "ns": "4327119231419"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5951399999994464,
+          "entries": 8,
+          "residentBytes": 73991,
+          "ns": "4327169883154"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 1.4702610000003915,
+          "entries": 8,
+          "residentBytes": 75135,
+          "ns": "4327221323155"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6218309999994744,
+          "entries": 8,
+          "residentBytes": 76281,
+          "ns": "4327271257588"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6132139999999708,
+          "entries": 8,
+          "residentBytes": 77425,
+          "ns": "4327322764306"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6541019999995115,
+          "entries": 8,
+          "residentBytes": 78569,
+          "ns": "4327374222692"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.636157999999341,
+          "entries": 8,
+          "residentBytes": 79713,
+          "ns": "4327424449631"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6403260000006412,
+          "entries": 8,
+          "residentBytes": 80859,
+          "ns": "4327475412996"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.7602230000002237,
+          "entries": 8,
+          "residentBytes": 82003,
+          "ns": "4327527545492"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6632689999996728,
+          "entries": 8,
+          "residentBytes": 83147,
+          "ns": "4327578360898"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6898099999998522,
+          "entries": 8,
+          "residentBytes": 84291,
+          "ns": "4327629722891"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.7423500000004424,
+          "entries": 8,
+          "residentBytes": 85437,
+          "ns": "4327681141171"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.725376999999753,
+          "entries": 8,
+          "residentBytes": 86581,
+          "ns": "4327732516479"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5633990000005724,
+          "entries": 8,
+          "residentBytes": 87725,
+          "ns": "4327783283152"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.7860020000007353,
+          "entries": 8,
+          "residentBytes": 88869,
+          "ns": "4327835273688"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.9005999999999403,
+          "entries": 8,
+          "residentBytes": 90015,
+          "ns": "4327897524522"
+        }
+      ]
+    },
+    {
+      "repeat": 1,
+      "mode": "sdk",
+      "result": {
+        "mode": "sdk",
+        "checkpoint": "pty",
+        "build": {
+          "messages": 2000,
+          "ms": 362.915389,
+          "kind": "synthetic retained user messages through same raw/index writer; before runtime timer"
+        },
+        "receivedChars": 69632,
+        "ackChars": 69632,
+        "ackOffset": 896289,
+        "ackDigest": "ec5720627cf4e053b3c7eee6e061e6abf2c19f3070a20520b89e1737f5b4756f",
+        "metrics": {
+          "received": 2092,
+          "queued": 2092,
+          "written": 2092,
+          "synced": 0,
+          "maxQueuedBytes": 78483,
+          "maxWriteAckMs": 3.4516219999999294
+        },
+        "queue": {
+          "received": 2091,
+          "refused": 0,
+          "maxQueueBytes": 302424,
+          "maxQueueEntries": 10,
+          "publishMs": 322.9513570000008
+        },
+        "kinds": {
+          "message_start": 5,
+          "message_end": 5,
+          "thinking_start": 1,
+          "thinking_delta": 2,
+          "thinking_end": 1,
+          "toolcall_start": 1,
+          "toolcall_delta": 1,
+          "toolcall_end": 1,
+          "tool_execution_start": 1,
+          "tool_execution_end": 1,
+          "text_start": 1,
+          "text_delta": 68,
+          "text_end": 1,
+          "agent_settled": 1
+        },
+        "lagP99Ms": 1.673215,
+        "runMs": 3662.329406
+      },
+      "probes": [
+        {
+          "action": "reopen",
+          "inputToWriteMs": 19.85419,
+          "inputToPtyReadMs": 19.896501
+        },
+        {
+          "action": "older-detach",
+          "inputToWriteMs": 17.636921,
+          "inputToPtyReadMs": 17.61005
+        },
+        {
+          "action": "collapse-expand",
+          "inputToWriteMs": 15.724882,
+          "inputToPtyReadMs": 15.714733
+        },
+        {
+          "action": "newer-detached",
+          "inputToWriteMs": 16.958292,
+          "inputToPtyReadMs": 16.973671
+        },
+        {
+          "action": "expand-collapse",
+          "inputToWriteMs": 15.362493,
+          "inputToPtyReadMs": 15.406306
+        },
+        {
+          "action": "follow",
+          "inputToWriteMs": 15.579074,
+          "inputToPtyReadMs": 15.584935
+        }
+      ],
+      "actions": [
+        {
+          "type": "action",
+          "seq": 1,
+          "follow": true,
+          "anchor": 1997,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4329153125490"
+        },
+        {
+          "type": "action",
+          "seq": 2,
+          "follow": false,
+          "anchor": 1995,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4329334132303"
+        },
+        {
+          "type": "action",
+          "seq": 3,
+          "follow": false,
+          "anchor": 1995,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4329515884000"
+        },
+        {
+          "type": "action",
+          "seq": 4,
+          "follow": false,
+          "anchor": 1996,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4329701193381"
+        },
+        {
+          "type": "action",
+          "seq": 5,
+          "follow": false,
+          "anchor": 1996,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4329882899913"
+        },
+        {
+          "type": "action",
+          "seq": 6,
+          "follow": true,
+          "anchor": 1997,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4330068445151"
+        }
+      ],
+      "renders": [
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.08890899999994417,
+          "entries": 8,
+          "residentBytes": 1928,
+          "ns": "4329019637593"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.07088399999997819,
+          "entries": 8,
+          "residentBytes": 4027,
+          "ns": "4329034161034"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.0333739999999807,
+          "entries": 8,
+          "residentBytes": 4346,
+          "ns": "4329072061322"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.021529999999984284,
+          "entries": 4,
+          "residentBytes": 4346,
+          "ns": "4329095060963"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.023013999999875523,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4329110377629"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.24243000000001302,
+          "entries": 8,
+          "residentBytes": 13337,
+          "ns": "4329147178150"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.16944100000000617,
+          "entries": 8,
+          "residentBytes": 13337,
+          "ns": "4329150838899"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.22509800000011637,
+          "entries": 8,
+          "residentBytes": 13337,
+          "ns": "4329167213674"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.11967699999991055,
+          "entries": 8,
+          "residentBytes": 14481,
+          "ns": "4329198764959"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.13510599999995065,
+          "entries": 8,
+          "residentBytes": 15625,
+          "ns": "4329250569692"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.13584799999989627,
+          "entries": 8,
+          "residentBytes": 16769,
+          "ns": "4329301354950"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.13978499999984706,
+          "entries": 8,
+          "residentBytes": 16769,
+          "ns": "4329332745470"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.0507559999998648,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4329349259440"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.050807000000077096,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4329366075823"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.057088000000021566,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4329402087686"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.028062999999974636,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4329453628879"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.0410180000001219,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4329505215267"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.04214999999999236,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4329515724848"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.09085300000015195,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4329530879577"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.05516400000010435,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4329556514421"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.025098000000070897,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4329606704799"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.08077300000013565,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4329658567142"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.07171599999992395,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4329699599065"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.16851999999994405,
+          "entries": 8,
+          "residentBytes": 11865,
+          "ns": "4329715879881"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.12323399999991125,
+          "entries": 8,
+          "residentBytes": 11865,
+          "ns": "4329760548497"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.11915600000020277,
+          "entries": 8,
+          "residentBytes": 11865,
+          "ns": "4329811566457"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.1172119999998813,
+          "entries": 8,
+          "residentBytes": 11865,
+          "ns": "4329862237298"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.08678499999996347,
+          "entries": 8,
+          "residentBytes": 11865,
+          "ns": "4329882827605"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.0698930000000928,
+          "entries": 8,
+          "residentBytes": 11865,
+          "ns": "4329897816990"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.10712300000000141,
+          "entries": 8,
+          "residentBytes": 11865,
+          "ns": "4329913896835"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.11469799999986208,
+          "entries": 8,
+          "residentBytes": 11865,
+          "ns": "4329964879348"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.11544900000012603,
+          "entries": 8,
+          "residentBytes": 11865,
+          "ns": "4330015575556"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.10167299999989154,
+          "entries": 8,
+          "residentBytes": 11865,
+          "ns": "4330066477005"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.2980259999999362,
+          "entries": 8,
+          "residentBytes": 33937,
+          "ns": "4330081539478"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.2918539999998302,
+          "entries": 8,
+          "residentBytes": 35081,
+          "ns": "4330119978990"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.2771060000000034,
+          "entries": 8,
+          "residentBytes": 36225,
+          "ns": "4330170807280"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3006510000000162,
+          "entries": 8,
+          "residentBytes": 37371,
+          "ns": "4330221759274"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.2848809999995865,
+          "entries": 8,
+          "residentBytes": 38515,
+          "ns": "4330272599235"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.2952900000000227,
+          "entries": 8,
+          "residentBytes": 39659,
+          "ns": "4330323253434"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.15297000000009575,
+          "entries": 8,
+          "residentBytes": 40803,
+          "ns": "4330372175024"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.15776899999991656,
+          "entries": 8,
+          "residentBytes": 41949,
+          "ns": "4330424814762"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3376509999998234,
+          "entries": 8,
+          "residentBytes": 43093,
+          "ns": "4330477185921"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3370100000001912,
+          "entries": 8,
+          "residentBytes": 44237,
+          "ns": "4330528279012"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.34030600000005506,
+          "entries": 8,
+          "residentBytes": 45381,
+          "ns": "4330578498496"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.35512500000004366,
+          "entries": 8,
+          "residentBytes": 46527,
+          "ns": "4330631079714"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3912219999997433,
+          "entries": 8,
+          "residentBytes": 47671,
+          "ns": "4330682374739"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3567880000000514,
+          "entries": 8,
+          "residentBytes": 48815,
+          "ns": "4330732389043"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.4108499999997548,
+          "entries": 8,
+          "residentBytes": 49959,
+          "ns": "4330784077465"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.7313380000000507,
+          "entries": 8,
+          "residentBytes": 51105,
+          "ns": "4330835574043"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.63479499999994,
+          "entries": 8,
+          "residentBytes": 52249,
+          "ns": "4330886511490"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.41151099999979124,
+          "entries": 8,
+          "residentBytes": 53393,
+          "ns": "4330936922086"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.4053700000004028,
+          "entries": 8,
+          "residentBytes": 54537,
+          "ns": "4330988298426"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.46269800000027317,
+          "entries": 8,
+          "residentBytes": 55681,
+          "ns": "4331039954958"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.2398560000001453,
+          "entries": 8,
+          "residentBytes": 56827,
+          "ns": "4331090036419"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.44499500000029,
+          "entries": 8,
+          "residentBytes": 57971,
+          "ns": "4331141176260"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.4396550000001298,
+          "entries": 8,
+          "residentBytes": 59115,
+          "ns": "4331193617672"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.47773700000016106,
+          "entries": 8,
+          "residentBytes": 60259,
+          "ns": "4331242705447"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.4549739999997655,
+          "entries": 8,
+          "residentBytes": 61405,
+          "ns": "4331294887216"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.24182900000005247,
+          "entries": 8,
+          "residentBytes": 62549,
+          "ns": "4331344988685"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.23682000000007974,
+          "entries": 8,
+          "residentBytes": 63693,
+          "ns": "4331395777219"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.2445039999997789,
+          "entries": 8,
+          "residentBytes": 64837,
+          "ns": "4331448096168"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.24078700000018216,
+          "entries": 8,
+          "residentBytes": 65983,
+          "ns": "4331497947192"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5707429999997657,
+          "entries": 8,
+          "residentBytes": 67127,
+          "ns": "4331551375046"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5039460000002691,
+          "entries": 8,
+          "residentBytes": 68271,
+          "ns": "4331600881165"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.505931000000146,
+          "entries": 8,
+          "residentBytes": 69415,
+          "ns": "4331652299705"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3147479999997813,
+          "entries": 8,
+          "residentBytes": 70561,
+          "ns": "4331702512706"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5389129999998659,
+          "entries": 8,
+          "residentBytes": 71705,
+          "ns": "4331754459438"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.7845790000001216,
+          "entries": 8,
+          "residentBytes": 72849,
+          "ns": "4331805435408"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.27161599999999453,
+          "entries": 8,
+          "residentBytes": 73993,
+          "ns": "4331855762306"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5552739999998266,
+          "entries": 8,
+          "residentBytes": 75137,
+          "ns": "4331908539835"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6040469999998095,
+          "entries": 8,
+          "residentBytes": 76283,
+          "ns": "4331959406547"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.2868049999997311,
+          "entries": 8,
+          "residentBytes": 77427,
+          "ns": "4332008467010"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.29305599999997867,
+          "entries": 8,
+          "residentBytes": 78571,
+          "ns": "4332060459089"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.30272400000012567,
+          "entries": 8,
+          "residentBytes": 79715,
+          "ns": "4332111514970"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.30759400000033565,
+          "entries": 8,
+          "residentBytes": 80861,
+          "ns": "4332162540223"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.4985259999994014,
+          "entries": 8,
+          "residentBytes": 82005,
+          "ns": "4332214526992"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3015720000003057,
+          "entries": 8,
+          "residentBytes": 83149,
+          "ns": "4332264681762"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6493719999998575,
+          "entries": 8,
+          "residentBytes": 84293,
+          "ns": "4332317536348"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.7192159999995056,
+          "entries": 8,
+          "residentBytes": 85439,
+          "ns": "4332369159185"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.8420180000002802,
+          "entries": 8,
+          "residentBytes": 86583,
+          "ns": "4332419336238"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.31190199999946344,
+          "entries": 8,
+          "residentBytes": 87727,
+          "ns": "4332468676372"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6635000000005675,
+          "entries": 8,
+          "residentBytes": 88871,
+          "ns": "4332521219897"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.699717999999848,
+          "entries": 8,
+          "residentBytes": 90017,
+          "ns": "4332576734502"
+        }
+      ]
+    },
+    {
+      "repeat": 1,
+      "mode": "rpc",
+      "result": {
+        "mode": "rpc",
+        "checkpoint": "pty",
+        "build": {
+          "messages": 2000,
+          "ms": 362.84898699999997,
+          "kind": "synthetic retained user messages through same raw/index writer; before runtime timer"
+        },
+        "receivedChars": 69632,
+        "ackChars": 69632,
+        "ackOffset": 896289,
+        "ackDigest": "c51b25cde054586e7ba82e8edcaf6401f02daa5d7b42a25cfd233c4ce4dae0d5",
+        "metrics": {
+          "received": 2092,
+          "queued": 2092,
+          "written": 2092,
+          "synced": 0,
+          "maxQueuedBytes": 78483,
+          "maxWriteAckMs": 2.904532999999901
+        },
+        "queue": {
+          "received": 2091,
+          "refused": 0,
+          "maxQueueBytes": 301352,
+          "maxQueueEntries": 5,
+          "publishMs": 323.39360900000037
+        },
+        "kinds": {
+          "message_start": 5,
+          "message_end": 5,
+          "thinking_start": 1,
+          "thinking_delta": 2,
+          "thinking_end": 1,
+          "toolcall_start": 1,
+          "toolcall_delta": 1,
+          "toolcall_end": 1,
+          "tool_execution_start": 1,
+          "tool_execution_end": 1,
+          "text_start": 1,
+          "text_delta": 68,
+          "text_end": 1,
+          "agent_settled": 1
+        },
+        "lagP99Ms": 1.653759,
+        "runMs": 3664.019711
+      },
+      "probes": [
+        {
+          "action": "reopen",
+          "inputToWriteMs": 18.324085,
+          "inputToPtyReadMs": 18.35304
+        },
+        {
+          "action": "older-detach",
+          "inputToWriteMs": 16.280104,
+          "inputToPtyReadMs": 16.271809
+        },
+        {
+          "action": "collapse-expand",
+          "inputToWriteMs": 15.390346,
+          "inputToPtyReadMs": 15.372202
+        },
+        {
+          "action": "newer-detached",
+          "inputToWriteMs": 16.022986,
+          "inputToPtyReadMs": 16.041251
+        },
+        {
+          "action": "expand-collapse",
+          "inputToWriteMs": 15.68793,
+          "inputToPtyReadMs": 15.66139
+        },
+        {
+          "action": "follow",
+          "inputToWriteMs": 15.57692,
+          "inputToPtyReadMs": 15.58242
+        }
+      ],
+      "actions": [
+        {
+          "type": "action",
+          "seq": 1,
+          "follow": true,
+          "anchor": 1997,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4334288578549"
+        },
+        {
+          "type": "action",
+          "seq": 2,
+          "follow": false,
+          "anchor": 1995,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4334469926146"
+        },
+        {
+          "type": "action",
+          "seq": 3,
+          "follow": false,
+          "anchor": 1995,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4334650387712"
+        },
+        {
+          "type": "action",
+          "seq": 4,
+          "follow": false,
+          "anchor": 1996,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4334834251245"
+        },
+        {
+          "type": "action",
+          "seq": 5,
+          "follow": false,
+          "anchor": 1996,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4335018693486"
+        },
+        {
+          "type": "action",
+          "seq": 6,
+          "follow": true,
+          "anchor": 1997,
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent"
+          ],
+          "entries": 8,
+          "ns": "4335203836478"
+        }
+      ],
+      "renders": [
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.12948600000004262,
+          "entries": 8,
+          "residentBytes": 1928,
+          "ns": "4334149757431"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.09654399999999441,
+          "entries": 8,
+          "residentBytes": 4027,
+          "ns": "4334165162425"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.032962999999881504,
+          "entries": 8,
+          "residentBytes": 4346,
+          "ns": "4334207596710"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.01379599999995662,
+          "entries": 0,
+          "residentBytes": 4346,
+          "ns": "4334229045657"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.04535699999996723,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4334244397950"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.24393299999996998,
+          "entries": 8,
+          "residentBytes": 13337,
+          "ns": "4334283815297"
+        },
+        {
+          "type": "render",
+          "seq": 0,
+          "ms": 0.06594499999982872,
+          "entries": 8,
+          "residentBytes": 13337,
+          "ns": "4334287027164"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.05771999999979016,
+          "entries": 8,
+          "residentBytes": 13337,
+          "ns": "4334302425445"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.1447650000000067,
+          "entries": 8,
+          "residentBytes": 14481,
+          "ns": "4334335137924"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.07228700000018762,
+          "entries": 8,
+          "residentBytes": 15625,
+          "ns": "4334386802450"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.18415900000013607,
+          "entries": 8,
+          "residentBytes": 16769,
+          "ns": "4334437390613"
+        },
+        {
+          "type": "render",
+          "seq": 1,
+          "ms": 0.15760900000009315,
+          "entries": 8,
+          "residentBytes": 16769,
+          "ns": "4334468761025"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.06231800000000476,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4334483834248"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.06806900000015048,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4334499491962"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.05431399999997666,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4334538170937"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.04849199999989651,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4334588332561"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.052719999999908396,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4334639851731"
+        },
+        {
+          "type": "render",
+          "seq": 2,
+          "ms": 0.01883599999996477,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4334650293142"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.06542399999989357,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4334665281004"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.06272899999999026,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4334691099165"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.040858000000071115,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4334741010303"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.05202800000006391,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4334792383306"
+        },
+        {
+          "type": "render",
+          "seq": 3,
+          "ms": 0.03720999999995911,
+          "entries": 8,
+          "residentBytes": 6125,
+          "ns": "4334833075683"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.05706899999995585,
+          "entries": 8,
+          "residentBytes": 11865,
+          "ns": "4334848688251"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.13186099999984435,
+          "entries": 8,
+          "residentBytes": 11865,
+          "ns": "4334895258637"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.12365399999998772,
+          "entries": 8,
+          "residentBytes": 11865,
+          "ns": "4334946385031"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.17873000000008687,
+          "entries": 8,
+          "residentBytes": 11865,
+          "ns": "4334997978031"
+        },
+        {
+          "type": "render",
+          "seq": 4,
+          "ms": 0.09797600000001694,
+          "entries": 8,
+          "residentBytes": 11865,
+          "ns": "4335018603726"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.12275300000010247,
+          "entries": 8,
+          "residentBytes": 11865,
+          "ns": "4335033697188"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.05465300000014395,
+          "entries": 8,
+          "residentBytes": 11865,
+          "ns": "4335048820126"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.07033300000011877,
+          "entries": 8,
+          "residentBytes": 11865,
+          "ns": "4335100054346"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.12330400000018926,
+          "entries": 8,
+          "residentBytes": 11865,
+          "ns": "4335151783254"
+        },
+        {
+          "type": "render",
+          "seq": 5,
+          "ms": 0.05845099999987724,
+          "entries": 8,
+          "residentBytes": 11865,
+          "ns": "4335202513937"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.16330000000016298,
+          "entries": 8,
+          "residentBytes": 33937,
+          "ns": "4335217790908"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.17090400000006412,
+          "entries": 8,
+          "residentBytes": 35081,
+          "ns": "4335255575465"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.1584709999997358,
+          "entries": 8,
+          "residentBytes": 36225,
+          "ns": "4335306286381"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.14765999999963242,
+          "entries": 8,
+          "residentBytes": 37371,
+          "ns": "4335357519608"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.1522490000002108,
+          "entries": 8,
+          "residentBytes": 38515,
+          "ns": "4335408691649"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3098780000000261,
+          "entries": 8,
+          "residentBytes": 39659,
+          "ns": "4335459564272"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.15967300000011164,
+          "entries": 8,
+          "residentBytes": 40803,
+          "ns": "4335510692139"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.33712999999988824,
+          "entries": 8,
+          "residentBytes": 41949,
+          "ns": "4335562732499"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3374309999999241,
+          "entries": 8,
+          "residentBytes": 43093,
+          "ns": "4335613743514"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.17048399999976027,
+          "entries": 8,
+          "residentBytes": 44237,
+          "ns": "4335663624684"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.36912100000017745,
+          "entries": 8,
+          "residentBytes": 45381,
+          "ns": "4335715153914"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5091770000003635,
+          "entries": 8,
+          "residentBytes": 46527,
+          "ns": "4335766802950"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3617370000001756,
+          "entries": 8,
+          "residentBytes": 47671,
+          "ns": "4335816734156"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3659050000001116,
+          "entries": 8,
+          "residentBytes": 48815,
+          "ns": "4335868189144"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.37713599999960934,
+          "entries": 8,
+          "residentBytes": 49959,
+          "ns": "4335919407022"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3817949999997836,
+          "entries": 8,
+          "residentBytes": 51105,
+          "ns": "4335970626523"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.2135960000000523,
+          "entries": 8,
+          "residentBytes": 52249,
+          "ns": "4336022212210"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.21485800000027666,
+          "entries": 8,
+          "residentBytes": 53393,
+          "ns": "4336072952912"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.22090899999966496,
+          "entries": 8,
+          "residentBytes": 54537,
+          "ns": "4336124594855"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.2359280000000581,
+          "entries": 8,
+          "residentBytes": 55681,
+          "ns": "4336175562538"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5423899999996138,
+          "entries": 8,
+          "residentBytes": 56827,
+          "ns": "4336227464174"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.2286739999999554,
+          "entries": 8,
+          "residentBytes": 57971,
+          "ns": "4336277837339"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.4314889999996012,
+          "entries": 8,
+          "residentBytes": 59115,
+          "ns": "4336329179713"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.2599040000000059,
+          "entries": 8,
+          "residentBytes": 60259,
+          "ns": "4336380532226"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.24591700000019046,
+          "entries": 8,
+          "residentBytes": 61405,
+          "ns": "4336431791252"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.33297200000015437,
+          "entries": 8,
+          "residentBytes": 62549,
+          "ns": "4336484291224"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.4831280000003062,
+          "entries": 8,
+          "residentBytes": 63693,
+          "ns": "4336535509904"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5170820000003005,
+          "entries": 8,
+          "residentBytes": 64837,
+          "ns": "4336586378268"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5519970000000285,
+          "entries": 8,
+          "residentBytes": 65983,
+          "ns": "4336637344358"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.28036199999996825,
+          "entries": 8,
+          "residentBytes": 67127,
+          "ns": "4336688787243"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.26271900000028836,
+          "entries": 8,
+          "residentBytes": 68271,
+          "ns": "4336738796927"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.25868099999979677,
+          "entries": 8,
+          "residentBytes": 69415,
+          "ns": "4336788987425"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.26635499999974854,
+          "entries": 8,
+          "residentBytes": 70561,
+          "ns": "4336840727234"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.5807819999999992,
+          "entries": 8,
+          "residentBytes": 71705,
+          "ns": "4336891620536"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 1.0376299999998082,
+          "entries": 8,
+          "residentBytes": 72849,
+          "ns": "4336944625717"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3384829999995418,
+          "entries": 8,
+          "residentBytes": 73993,
+          "ns": "4336993090648"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.30761399999937566,
+          "entries": 8,
+          "residentBytes": 75137,
+          "ns": "4337044419296"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.31258299999990413,
+          "entries": 8,
+          "residentBytes": 76283,
+          "ns": "4337096122045"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.29875799999990704,
+          "entries": 8,
+          "residentBytes": 77427,
+          "ns": "4337147404906"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.2988569999997708,
+          "entries": 8,
+          "residentBytes": 78571,
+          "ns": "4337197322446"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.30338599999959115,
+          "entries": 8,
+          "residentBytes": 79715,
+          "ns": "4337250613329"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6689500000002226,
+          "entries": 8,
+          "residentBytes": 80861,
+          "ns": "4337302242237"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.31631000000015774,
+          "entries": 8,
+          "residentBytes": 82005,
+          "ns": "4337352246280"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.6125220000003537,
+          "entries": 8,
+          "residentBytes": 83149,
+          "ns": "4337404597720"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.32261300000027404,
+          "entries": 8,
+          "residentBytes": 84293,
+          "ns": "4337457316717"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.32451599999967584,
+          "entries": 8,
+          "residentBytes": 85439,
+          "ns": "4337505775517"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3311789999997927,
+          "entries": 8,
+          "residentBytes": 86583,
+          "ns": "4337556347980"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.3261790000005931,
+          "entries": 8,
+          "residentBytes": 87727,
+          "ns": "4337609006503"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.337069999999585,
+          "entries": 8,
+          "residentBytes": 88871,
+          "ns": "4337659584987"
+        },
+        {
+          "type": "render",
+          "seq": 6,
+          "ms": 0.4631290000006629,
+          "entries": 8,
+          "residentBytes": 90017,
+          "ns": "4337712326717"
+        }
+      ]
+    }
+  ]
+}

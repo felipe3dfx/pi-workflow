@@ -1,0 +1,7 @@
+5e046f349e313d9d32f0f3a5b82162034c2b5b1713c6040f86e7bc291443934a  .agents/prototypes/fleet-integrated-history/assert.mjs
+64519f72ebc36a7485386089e780a8aab9b3a80efc80891957b231ae311f4dc5  .agents/prototypes/fleet-integrated-history/case.mjs
+1633ce4a483fa303e7107206c01edb3fb7973262b1a8dbc807785dfb3e59b0cc  .agents/prototypes/fleet-integrated-history/provider.mjs
+2a918a752cdf6efc19086b61fce45a4a89b33d70168d19f1a42363b8907fe8de  .agents/prototypes/fleet-integrated-history/pty-run.py
+7e6cdc2e2d11d16d371c1ba42f90587a49b06fb4a3fd9ae1f8d4390b99b22578  .agents/prototypes/fleet-integrated-history/run.mjs
+b28accb843cbe8c4ec9f3f07a418a40baaafc8b699c6f653c60dd540cabb1f1b  .agents/prototypes/fleet-integrated-history/store.mjs
+1b50e37512f059a6233ee865b0209a8be8da612f3406c650c6149bdd74eaa19a  .agents/prototypes/fleet-integrated-history/ui.mjs

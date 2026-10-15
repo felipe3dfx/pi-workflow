@@ -1,0 +1,456 @@
+{
+  "environment": {
+    "node": "v26.11.1",
+    "platform": "linux",
+    "release": "7.2.5-3-omarchy",
+    "cpu": "AMD Ryzen 9 3900XT 12-Core Processor",
+    "logicalCpus": 24,
+    "pi": "1.0.4"
+  },
+  "samples": [
+    {
+      "repeat": 0,
+      "mode": "sdk",
+      "history": 0,
+      "concurrency": 4,
+      "startupMs": 46.246028000000024,
+      "runMs": 973.2899319999999,
+      "firstFrameMs": 20.574990999999955,
+      "rendering": {
+        "frames": 31,
+        "renderTotalMs": 235.45342899999912,
+        "renderMaxMs": 20.560051999999928,
+        "outputLines": 40
+      },
+      "events": 324,
+      "deltas": 272,
+      "selectedChars": 69632,
+      "hostLagP99Ms": 11.370495,
+      "hostLagMaxMs": 14.442495,
+      "hostRssMiB": 194.13671875,
+      "readAllHistoryMs": 1.696822000000111,
+      "entriesPerChild": [
+        5,
+        5,
+        5,
+        5
+      ],
+      "node": "v26.11.1",
+      "platform": "linux"
+    },
+    {
+      "repeat": 0,
+      "mode": "rpc",
+      "history": 0,
+      "concurrency": 4,
+      "startupMs": 2312.9264980000003,
+      "runMs": 843.4316960000001,
+      "firstFrameMs": 37.598487000000205,
+      "rendering": {
+        "frames": 27,
+        "renderTotalMs": 217.69992499999944,
+        "renderMaxMs": 37.570944000000054,
+        "outputLines": 40
+      },
+      "events": 324,
+      "deltas": 272,
+      "selectedChars": 69632,
+      "hostLagP99Ms": 10.141695,
+      "hostLagMaxMs": 14.098431,
+      "hostRssMiB": 193.5,
+      "readAllHistoryMs": 0.8740899999997964,
+      "entriesPerChild": [
+        5,
+        5,
+        5,
+        5
+      ],
+      "node": "v26.11.1",
+      "platform": "linux"
+    },
+    {
+      "repeat": 1,
+      "mode": "rpc",
+      "history": 0,
+      "concurrency": 4,
+      "startupMs": 2422.2665939999997,
+      "runMs": 835.946708,
+      "firstFrameMs": 37.01541900000029,
+      "rendering": {
+        "frames": 27,
+        "renderTotalMs": 182.76772999999957,
+        "renderMaxMs": 36.98849800000016,
+        "outputLines": 40
+      },
+      "events": 324,
+      "deltas": 272,
+      "selectedChars": 69632,
+      "hostLagP99Ms": 7.692287,
+      "hostLagMaxMs": 15.532031,
+      "hostRssMiB": 195.02734375,
+      "readAllHistoryMs": 0.937170000000151,
+      "entriesPerChild": [
+        5,
+        5,
+        5,
+        5
+      ],
+      "node": "v26.11.1",
+      "platform": "linux"
+    },
+    {
+      "repeat": 1,
+      "mode": "sdk",
+      "history": 0,
+      "concurrency": 4,
+      "startupMs": 49.50499500000001,
+      "runMs": 984.5719220000001,
+      "firstFrameMs": 21.589755999999966,
+      "rendering": {
+        "frames": 31,
+        "renderTotalMs": 250.96537200000046,
+        "renderMaxMs": 21.573996999999963,
+        "outputLines": 40
+      },
+      "events": 324,
+      "deltas": 272,
+      "selectedChars": 69632,
+      "hostLagP99Ms": 11.354111,
+      "hostLagMaxMs": 14.196735,
+      "hostRssMiB": 191.93359375,
+      "readAllHistoryMs": 0.9790290000000823,
+      "entriesPerChild": [
+        5,
+        5,
+        5,
+        5
+      ],
+      "node": "v26.11.1",
+      "platform": "linux"
+    },
+    {
+      "repeat": 2,
+      "mode": "sdk",
+      "history": 0,
+      "concurrency": 4,
+      "startupMs": 42.77943400000004,
+      "runMs": 971.266584,
+      "firstFrameMs": 21.591199999999958,
+      "rendering": {
+        "frames": 31,
+        "renderTotalMs": 247.83387000000005,
+        "renderMaxMs": 21.57297499999993,
+        "outputLines": 40
+      },
+      "events": 324,
+      "deltas": 272,
+      "selectedChars": 69632,
+      "hostLagP99Ms": 11.288575,
+      "hostLagMaxMs": 15.081471,
+      "hostRssMiB": 193.34375,
+      "readAllHistoryMs": 1.595058999999992,
+      "entriesPerChild": [
+        5,
+        5,
+        5,
+        5
+      ],
+      "node": "v26.11.1",
+      "platform": "linux"
+    },
+    {
+      "repeat": 2,
+      "mode": "rpc",
+      "history": 0,
+      "concurrency": 4,
+      "startupMs": 2324.948792,
+      "runMs": 844.5252500000001,
+      "firstFrameMs": 23.62335800000028,
+      "rendering": {
+        "frames": 27,
+        "renderTotalMs": 218.48043599999892,
+        "renderMaxMs": 27.723504000000048,
+        "outputLines": 40
+      },
+      "events": 324,
+      "deltas": 272,
+      "selectedChars": 69632,
+      "hostLagP99Ms": 10.469375,
+      "hostLagMaxMs": 28.950527,
+      "hostRssMiB": 195.9453125,
+      "readAllHistoryMs": 1.5856509999998707,
+      "entriesPerChild": [
+        5,
+        5,
+        5,
+        5
+      ],
+      "node": "v26.11.1",
+      "platform": "linux"
+    },
+    {
+      "repeat": 0,
+      "mode": "sdk",
+      "history": 2000,
+      "concurrency": 4,
+      "startupMs": 86.33284700000002,
+      "runMs": 1017.2531890000002,
+      "firstFrameMs": 201.12789099999998,
+      "rendering": {
+        "frames": 32,
+        "renderTotalMs": 444.3731229999996,
+        "renderMaxMs": 201.10768400000006,
+        "outputLines": 40
+      },
+      "events": 324,
+      "deltas": 272,
+      "selectedChars": 69632,
+      "hostLagP99Ms": 11.886591,
+      "hostLagMaxMs": 14.827519,
+      "hostRssMiB": 244.95703125,
+      "readAllHistoryMs": 33.76730099999986,
+      "entriesPerChild": [
+        2005,
+        2005,
+        2005,
+        2005
+      ],
+      "node": "v26.11.1",
+      "platform": "linux"
+    },
+    {
+      "repeat": 0,
+      "mode": "rpc",
+      "history": 2000,
+      "concurrency": 4,
+      "startupMs": 2424.713785,
+      "runMs": 871.7732530000003,
+      "firstFrameMs": 213.98822100000007,
+      "rendering": {
+        "frames": 28,
+        "renderTotalMs": 426.56621100000166,
+        "renderMaxMs": 213.96967600000016,
+        "outputLines": 40
+      },
+      "events": 324,
+      "deltas": 272,
+      "selectedChars": 69632,
+      "hostLagP99Ms": 10.452991,
+      "hostLagMaxMs": 14.344191,
+      "hostRssMiB": 221.328125,
+      "readAllHistoryMs": 28.298235000000204,
+      "entriesPerChild": [
+        2005,
+        2005,
+        2005,
+        2005
+      ],
+      "node": "v26.11.1",
+      "platform": "linux"
+    },
+    {
+      "repeat": 1,
+      "mode": "rpc",
+      "history": 2000,
+      "concurrency": 4,
+      "startupMs": 2447.557579,
+      "runMs": 852.2333339999996,
+      "firstFrameMs": 204.441781,
+      "rendering": {
+        "frames": 27,
+        "renderTotalMs": 412.77016399999957,
+        "renderMaxMs": 204.41435899999988,
+        "outputLines": 40
+      },
+      "events": 324,
+      "deltas": 272,
+      "selectedChars": 69632,
+      "hostLagP99Ms": 9.445375,
+      "hostLagMaxMs": 18.055167,
+      "hostRssMiB": 221.42578125,
+      "readAllHistoryMs": 36.0946100000001,
+      "entriesPerChild": [
+        2005,
+        2005,
+        2005,
+        2005
+      ],
+      "node": "v26.11.1",
+      "platform": "linux"
+    },
+    {
+      "repeat": 1,
+      "mode": "sdk",
+      "history": 2000,
+      "concurrency": 4,
+      "startupMs": 79.59975999999995,
+      "runMs": 997.4740769999999,
+      "firstFrameMs": 181.979067,
+      "rendering": {
+        "frames": 31,
+        "renderTotalMs": 437.63881400000025,
+        "renderMaxMs": 181.95745599999998,
+        "outputLines": 40
+      },
+      "events": 324,
+      "deltas": 272,
+      "selectedChars": 69632,
+      "hostLagP99Ms": 12.713983,
+      "hostLagMaxMs": 17.989631,
+      "hostRssMiB": 246.41015625,
+      "readAllHistoryMs": 38.105577999999696,
+      "entriesPerChild": [
+        2005,
+        2005,
+        2005,
+        2005
+      ],
+      "node": "v26.11.1",
+      "platform": "linux"
+    },
+    {
+      "repeat": 2,
+      "mode": "sdk",
+      "history": 2000,
+      "concurrency": 4,
+      "startupMs": 87.86438400000009,
+      "runMs": 1000.160656,
+      "firstFrameMs": 201.78200099999992,
+      "rendering": {
+        "frames": 31,
+        "renderTotalMs": 429.7150010000007,
+        "renderMaxMs": 201.763686,
+        "outputLines": 40
+      },
+      "events": 324,
+      "deltas": 272,
+      "selectedChars": 69632,
+      "hostLagP99Ms": 10.534911,
+      "hostLagMaxMs": 16.228351,
+      "hostRssMiB": 249.875,
+      "readAllHistoryMs": 42.130109999999604,
+      "entriesPerChild": [
+        2005,
+        2005,
+        2005,
+        2005
+      ],
+      "node": "v26.11.1",
+      "platform": "linux"
+    },
+    {
+      "repeat": 2,
+      "mode": "rpc",
+      "history": 2000,
+      "concurrency": 4,
+      "startupMs": 2388.217401,
+      "runMs": 852.4969249999999,
+      "firstFrameMs": 210.3681730000003,
+      "rendering": {
+        "frames": 27,
+        "renderTotalMs": 409.2157610000004,
+        "renderMaxMs": 210.33728399999973,
+        "outputLines": 40
+      },
+      "events": 324,
+      "deltas": 272,
+      "selectedChars": 69632,
+      "hostLagP99Ms": 10.649599,
+      "hostLagMaxMs": 13.852671,
+      "hostRssMiB": 219.62890625,
+      "readAllHistoryMs": 35.76432199999999,
+      "entriesPerChild": [
+        2005,
+        2005,
+        2005,
+        2005
+      ],
+      "node": "v26.11.1",
+      "platform": "linux"
+    }
+  ],
+  "recovery": [
+    {
+      "mode": "sdk",
+      "checkpoint": {
+        "checkpoint": "stream",
+        "deltas": 8
+      },
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL"
+      },
+      "metadataState": "running",
+      "projectedHistoryState": "interrupted",
+      "persistedRoles": [
+        "user",
+        "system",
+        "user"
+      ],
+      "assistantChars": 0,
+      "malformedTrailingLineSkipped": true
+    },
+    {
+      "mode": "sdk",
+      "checkpoint": {
+        "checkpoint": "settled",
+        "deltas": 68
+      },
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL"
+      },
+      "metadataState": "running",
+      "projectedHistoryState": "interrupted",
+      "persistedRoles": [
+        "user",
+        "system",
+        "user",
+        "assistant"
+      ],
+      "assistantChars": 69632,
+      "malformedTrailingLineSkipped": true
+    },
+    {
+      "mode": "rpc",
+      "checkpoint": {
+        "checkpoint": "stream",
+        "deltas": 8
+      },
+      "exit": {
+        "code": 1,
+        "signal": null
+      },
+      "metadataState": "running",
+      "projectedHistoryState": "interrupted",
+      "persistedRoles": [
+        "user",
+        "system",
+        "user"
+      ],
+      "assistantChars": 0,
+      "malformedTrailingLineSkipped": true
+    },
+    {
+      "mode": "rpc",
+      "checkpoint": {
+        "checkpoint": "settled",
+        "deltas": 68
+      },
+      "exit": {
+        "code": 1,
+        "signal": null
+      },
+      "metadataState": "running",
+      "projectedHistoryState": "interrupted",
+      "persistedRoles": [
+        "user",
+        "system",
+        "user",
+        "assistant"
+      ],
+      "assistantChars": 69632,
+      "malformedTrailingLineSkipped": true
+    }
+  ]
+}

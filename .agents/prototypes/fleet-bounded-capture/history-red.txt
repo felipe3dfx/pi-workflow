@@ -1,0 +1,18 @@
+node:internal/modules/run_main:111
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: The input did not match the regular expression /INCOMPLETE/. Input:
+
+'[m-1968]'
+
+    at file:///home/felipe3dfx/Documents/repos/pi-workflow/.agents/prototypes/fleet-bounded-capture/assert-history.mjs:28:66 {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: '[m-1968]',
+  expected: /INCOMPLETE/,
+  operator: 'match',
+  diff: 'simple'
+}
+
+Node.js v26.11.1

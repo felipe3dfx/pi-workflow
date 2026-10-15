@@ -1,0 +1,21 @@
+node:internal/modules/run_main:111
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: Got unwanted rejection: audit event size must not refuse the producer
+Actual message: "REFUSED: event/queue byte or entry bound; producer must stop"
+    at async file:///home/felipe3dfx/Documents/repos/pi-workflow/.agents/prototypes/fleet-resilient-capture/baseline-red.mjs:10:3 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: Error: REFUSED: event/queue byte or entry bound; producer must stop
+      at Store.append (file:///home/felipe3dfx/Documents/repos/pi-workflow/.agents/prototypes/fleet-integrated-history/store.mjs:30:10)
+      at file:///home/felipe3dfx/Documents/repos/pi-workflow/.agents/prototypes/fleet-resilient-capture/baseline-red.mjs:10:48
+      at waitForActual (node:assert:601:21)
+      at strict.doesNotReject (node:assert:758:39)
+      at file:///home/felipe3dfx/Documents/repos/pi-workflow/.agents/prototypes/fleet-resilient-capture/baseline-red.mjs:10:16,
+  expected: undefined,
+  operator: 'doesNotReject',
+  diff: 'simple'
+}
+
+Node.js v26.12.0

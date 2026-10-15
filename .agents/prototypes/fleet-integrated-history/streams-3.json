@@ -1,0 +1,1278 @@
+{
+  "assertions": "passed real SDK/RPC capture -> bounded reopen, tools/thinking finals, explicit unsupported partials, SIGKILL ack/head gap, queued stream, final/terminal gap, corruption, torn tail, identity/filtering",
+  "limits": {
+    "event": 225280,
+    "queueBytes": 524288,
+    "queueEntries": 64,
+    "message": 98304,
+    "windowEntries": 8,
+    "windowBytes": 196608,
+    "head": 8192
+  },
+  "samples": [
+    {
+      "mode": "sdk",
+      "checkpoint": "complete",
+      "build": {
+        "messages": 2000,
+        "ms": 336.67384699999997,
+        "kind": "synthetic retained user messages through same raw/index writer; before runtime timer"
+      },
+      "receivedChars": 69632,
+      "ackChars": 69632,
+      "ackOffset": 896303,
+      "ackDigest": "78bc3cf96f140c4ce8a89879d8c5efb3cb2a11c00a68db275e1d801da8e783af",
+      "metrics": {
+        "received": 2092,
+        "queued": 2092,
+        "written": 2092,
+        "synced": 0,
+        "maxQueuedBytes": 78483,
+        "maxWriteAckMs": 5.4241799999999785
+      },
+      "queue": {
+        "received": 2091,
+        "refused": 0,
+        "maxQueueBytes": 302424,
+        "maxQueueEntries": 11,
+        "publishMs": 306.5600280000049
+      },
+      "kinds": {
+        "message_start": 5,
+        "message_end": 5,
+        "thinking_start": 1,
+        "thinking_delta": 2,
+        "thinking_end": 1,
+        "toolcall_start": 1,
+        "toolcall_delta": 1,
+        "toolcall_end": 1,
+        "tool_execution_start": 1,
+        "tool_execution_end": 1,
+        "text_start": 1,
+        "text_delta": 68,
+        "text_end": 1,
+        "agent_settled": 1
+      },
+      "lagP99Ms": 1.364991,
+      "runMs": 3672.6343640000005,
+      "exit": {
+        "code": 0,
+        "signal": null
+      },
+      "open": {
+        "ms": 3.7180799999996452,
+        "bytes": 91168,
+        "reads": 11,
+        "entries": 8,
+        "warnings": [
+          "unsupported partial: thinking_start",
+          "unsupported partial: thinking_delta",
+          "unsupported partial: thinking_end",
+          "unsupported partial: toolcall_start",
+          "unsupported partial: toolcall_delta",
+          "unsupported partial: toolcall_end"
+        ]
+      },
+      "scan": {
+        "ms": 30.494975000000522,
+        "bytes": 896303,
+        "records": 2092,
+        "warnings": [
+          "partial thinking_start not reconstructed",
+          "partial thinking_delta not reconstructed",
+          "partial thinking_delta not reconstructed",
+          "partial thinking_end not reconstructed",
+          "partial toolcall_start not reconstructed",
+          "partial toolcall_delta not reconstructed",
+          "partial toolcall_end not reconstructed"
+        ]
+      },
+      "recoveredChars": 69632,
+      "lostChars": 0,
+      "damage": [
+        {
+          "target": "head.json",
+          "warnings": [
+            "INCOMPLETE: Unexpected token 'c', \"corrupt\" is not valid JSON; bounded prefix fallback, not an ordinary open or full repair",
+            "INCOMPLETE: validated earliest raw prefix only (64 KiB / 8 entries); newer retained bytes may exist; explicit full diagnostic required"
+          ],
+          "bytes": 65770
+        },
+        {
+          "target": "m-2004.json",
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: m-2004.json: Unexpected token 'c', \"corrupt\" is not valid JSON"
+          ],
+          "bytes": 1127
+        }
+      ]
+    },
+    {
+      "mode": "sdk",
+      "checkpoint": "ack-gap",
+      "build": {
+        "messages": 2000,
+        "ms": 339.13128600000005,
+        "kind": "synthetic retained user messages through same raw/index writer; before runtime timer"
+      },
+      "receivedChars": 8192,
+      "ackChars": 8192,
+      "ackOffset": 652144,
+      "ackDigest": "7f7f0552214f212cbb854972d81344e86939a44a78f2cea7d3178c6fbc6114cc",
+      "metrics": {
+        "received": 2028,
+        "queued": 2028,
+        "written": 2028,
+        "synced": 0,
+        "maxQueuedBytes": 6049,
+        "maxWriteAckMs": 5.381017000000043
+      },
+      "queue": {
+        "received": 2027,
+        "refused": 0,
+        "maxQueueBytes": 48182,
+        "maxQueueEntries": 10,
+        "publishMs": 273.27770299999753
+      },
+      "kinds": {
+        "message_start": 5,
+        "message_end": 4,
+        "thinking_start": 1,
+        "thinking_delta": 2,
+        "thinking_end": 1,
+        "toolcall_start": 1,
+        "toolcall_delta": 1,
+        "toolcall_end": 1,
+        "tool_execution_start": 1,
+        "tool_execution_end": 1,
+        "text_start": 1,
+        "text_delta": 8
+      },
+      "lagP99Ms": 1.533951,
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL"
+      },
+      "open": {
+        "ms": 2.0797690000008515,
+        "bytes": 22576,
+        "reads": 11,
+        "entries": 8,
+        "warnings": [
+          "unsupported partial: thinking_start",
+          "unsupported partial: thinking_delta",
+          "unsupported partial: thinking_end",
+          "unsupported partial: toolcall_start",
+          "unsupported partial: toolcall_delta",
+          "unsupported partial: toolcall_end",
+          "INCOMPLETE: terminal metadata absent",
+          "INCOMPLETE: raw/index high-water mismatch; explicit recovery required"
+        ]
+      },
+      "scan": {
+        "ms": 15.853893999999855,
+        "bytes": 652144,
+        "records": 2028,
+        "warnings": [
+          "partial thinking_start not reconstructed",
+          "partial thinking_delta not reconstructed",
+          "partial thinking_delta not reconstructed",
+          "partial thinking_end not reconstructed",
+          "partial toolcall_start not reconstructed",
+          "partial toolcall_delta not reconstructed",
+          "partial toolcall_end not reconstructed",
+          "unfinished message"
+        ]
+      },
+      "recoveredChars": 8192,
+      "lostChars": 0,
+      "damage": [
+        {
+          "target": "head.json",
+          "warnings": [
+            "INCOMPLETE: Unexpected token 'c', \"corrupt\" is not valid JSON; bounded prefix fallback, not an ordinary open or full repair",
+            "INCOMPLETE: validated earliest raw prefix only (64 KiB / 8 entries); newer retained bytes may exist; explicit full diagnostic required"
+          ],
+          "bytes": 65770
+        },
+        {
+          "target": "m-2003.json",
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent",
+            "INCOMPLETE: raw/index high-water mismatch; explicit recovery required",
+            "INCOMPLETE: m-2003.json: Unexpected token 'c', \"corrupt\" is not valid JSON"
+          ],
+          "bytes": 10952
+        }
+      ]
+    },
+    {
+      "mode": "sdk",
+      "checkpoint": "queued",
+      "build": {
+        "messages": 2000,
+        "ms": 378.56467100000003,
+        "kind": "synthetic retained user messages through same raw/index writer; before runtime timer"
+      },
+      "receivedChars": 8192,
+      "ackChars": 7168,
+      "ackOffset": 650691,
+      "ackDigest": "d04357fb07c3b97c895ea4dcefb691b8dd716331db06826a8356f742b5a5b8c5",
+      "metrics": {
+        "received": 2027,
+        "queued": 2027,
+        "written": 2027,
+        "synced": 0,
+        "maxQueuedBytes": 6049,
+        "maxWriteAckMs": 5.508168000000069
+      },
+      "queue": {
+        "received": 2027,
+        "refused": 0,
+        "maxQueueBytes": 50442,
+        "maxQueueEntries": 12,
+        "publishMs": 303.66511999999426
+      },
+      "kinds": {
+        "message_start": 5,
+        "message_end": 4,
+        "thinking_start": 1,
+        "thinking_delta": 2,
+        "thinking_end": 1,
+        "toolcall_start": 1,
+        "toolcall_delta": 1,
+        "toolcall_end": 1,
+        "tool_execution_start": 1,
+        "tool_execution_end": 1,
+        "text_start": 1,
+        "text_delta": 8
+      },
+      "lagP99Ms": 1.515519,
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL"
+      },
+      "open": {
+        "ms": 2.444672000000537,
+        "bytes": 22575,
+        "reads": 11,
+        "entries": 8,
+        "warnings": [
+          "unsupported partial: thinking_start",
+          "unsupported partial: thinking_delta",
+          "unsupported partial: thinking_end",
+          "unsupported partial: toolcall_start",
+          "unsupported partial: toolcall_delta",
+          "unsupported partial: toolcall_end",
+          "INCOMPLETE: terminal metadata absent",
+          "INCOMPLETE: raw/index high-water mismatch; explicit recovery required"
+        ]
+      },
+      "scan": {
+        "ms": 24.210301000000072,
+        "bytes": 652142,
+        "records": 2028,
+        "warnings": [
+          "partial thinking_start not reconstructed",
+          "partial thinking_delta not reconstructed",
+          "partial thinking_delta not reconstructed",
+          "partial thinking_end not reconstructed",
+          "partial toolcall_start not reconstructed",
+          "partial toolcall_delta not reconstructed",
+          "partial toolcall_end not reconstructed",
+          "unfinished message"
+        ]
+      },
+      "recoveredChars": 8192,
+      "lostChars": 0,
+      "damage": [
+        {
+          "target": "head.json",
+          "warnings": [
+            "INCOMPLETE: Unexpected token 'c', \"corrupt\" is not valid JSON; bounded prefix fallback, not an ordinary open or full repair",
+            "INCOMPLETE: validated earliest raw prefix only (64 KiB / 8 entries); newer retained bytes may exist; explicit full diagnostic required"
+          ],
+          "bytes": 65770
+        },
+        {
+          "target": "m-2003.json",
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent",
+            "INCOMPLETE: raw/index high-water mismatch; explicit recovery required",
+            "INCOMPLETE: m-2003.json: Unexpected token 'c', \"corrupt\" is not valid JSON"
+          ],
+          "bytes": 10952
+        }
+      ]
+    },
+    {
+      "mode": "sdk",
+      "checkpoint": "final",
+      "build": {
+        "messages": 2000,
+        "ms": 352.441104,
+        "kind": "synthetic retained user messages through same raw/index writer; before runtime timer"
+      },
+      "receivedChars": 69632,
+      "ackChars": 69632,
+      "ackOffset": 896065,
+      "ackDigest": "ba0bf1efd6d90c3f0a86fbe5430b8ada1e936f44267d779056423e6d7ebbce76",
+      "metrics": {
+        "received": 2091,
+        "queued": 2091,
+        "written": 2091,
+        "synced": 0,
+        "maxQueuedBytes": 78484,
+        "maxWriteAckMs": 7.002676999999949
+      },
+      "queue": {
+        "received": 2090,
+        "refused": 0,
+        "maxQueueBytes": 302426,
+        "maxQueueEntries": 9,
+        "publishMs": 319.5837240000029
+      },
+      "kinds": {
+        "message_start": 5,
+        "message_end": 5,
+        "thinking_start": 1,
+        "thinking_delta": 2,
+        "thinking_end": 1,
+        "toolcall_start": 1,
+        "toolcall_delta": 1,
+        "toolcall_end": 1,
+        "tool_execution_start": 1,
+        "tool_execution_end": 1,
+        "text_start": 1,
+        "text_delta": 68,
+        "text_end": 1,
+        "agent_settled": 1
+      },
+      "lagP99Ms": 1.440767,
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL"
+      },
+      "open": {
+        "ms": 3.1838859999988927,
+        "bytes": 169418,
+        "reads": 11,
+        "entries": 8,
+        "warnings": [
+          "unsupported partial: thinking_start",
+          "unsupported partial: thinking_delta",
+          "unsupported partial: thinking_end",
+          "unsupported partial: toolcall_start",
+          "unsupported partial: toolcall_delta",
+          "unsupported partial: toolcall_end",
+          "INCOMPLETE: terminal metadata absent",
+          "INCOMPLETE: raw/index high-water mismatch; explicit recovery required"
+        ]
+      },
+      "scan": {
+        "ms": 11.321357000000717,
+        "bytes": 896065,
+        "records": 2091,
+        "warnings": [
+          "partial thinking_start not reconstructed",
+          "partial thinking_delta not reconstructed",
+          "partial thinking_delta not reconstructed",
+          "partial thinking_end not reconstructed",
+          "partial toolcall_start not reconstructed",
+          "partial toolcall_delta not reconstructed",
+          "partial toolcall_end not reconstructed"
+        ]
+      },
+      "recoveredChars": 69632,
+      "lostChars": 0,
+      "damage": [
+        {
+          "target": "head.json",
+          "warnings": [
+            "INCOMPLETE: Unexpected token 'c', \"corrupt\" is not valid JSON; bounded prefix fallback, not an ordinary open or full repair",
+            "INCOMPLETE: validated earliest raw prefix only (64 KiB / 8 entries); newer retained bytes may exist; explicit full diagnostic required"
+          ],
+          "bytes": 65770
+        },
+        {
+          "target": "m-2004.json",
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent",
+            "INCOMPLETE: raw/index high-water mismatch; explicit recovery required",
+            "INCOMPLETE: m-2004.json: Unexpected token 'c', \"corrupt\" is not valid JSON"
+          ],
+          "bytes": 79378
+        }
+      ]
+    },
+    {
+      "mode": "sdk",
+      "checkpoint": "large-text",
+      "build": {
+        "messages": 2000,
+        "ms": 318.08133599999996,
+        "kind": "synthetic retained user messages through same raw/index writer; before runtime timer"
+      },
+      "receivedChars": 180000,
+      "ackChars": 180000,
+      "ackOffset": 874572,
+      "ackDigest": "241ac1d32568253bcea82ca8dd5990d2cbfa58064f9fb0a4a1c84c39cf46367a",
+      "metrics": {
+        "received": 2196,
+        "queued": 2196,
+        "written": 2196,
+        "synced": 0,
+        "maxQueuedBytes": 6049,
+        "maxWriteAckMs": 3.407369000000017
+      },
+      "queue": {
+        "received": 2196,
+        "refused": 1,
+        "maxQueueBytes": 50442,
+        "maxQueueEntries": 12,
+        "publishMs": 331.40776200000084
+      },
+      "kinds": {
+        "message_start": 5,
+        "message_end": 4,
+        "thinking_start": 1,
+        "thinking_delta": 2,
+        "thinking_end": 1,
+        "toolcall_start": 1,
+        "toolcall_delta": 1,
+        "toolcall_end": 1,
+        "tool_execution_start": 1,
+        "tool_execution_end": 1,
+        "text_start": 1,
+        "text_delta": 176,
+        "text_end": 1
+      },
+      "lagP99Ms": 1.415167,
+      "runMs": 9178.177692,
+      "refused": "REFUSED: event/queue byte or entry bound; producer must stop",
+      "exit": {
+        "code": 0,
+        "signal": null
+      },
+      "open": {
+        "ms": 2.0146850000019185,
+        "bytes": 13961,
+        "reads": 11,
+        "entries": 8,
+        "warnings": [
+          "unsupported partial: thinking_start",
+          "unsupported partial: thinking_delta",
+          "unsupported partial: thinking_end",
+          "unsupported partial: toolcall_start",
+          "unsupported partial: toolcall_delta",
+          "unsupported partial: toolcall_end",
+          "producer refused: capture incomplete; stop producer, no retry/resume guarantee",
+          "INCOMPLETE: producer admission refused; raw retained prefix only",
+          "INCOMPLETE: terminal metadata absent"
+        ]
+      },
+      "scan": {
+        "ms": 23.71218399999998,
+        "bytes": 874572,
+        "records": 2196,
+        "warnings": [
+          "partial thinking_start not reconstructed",
+          "partial thinking_delta not reconstructed",
+          "partial thinking_delta not reconstructed",
+          "partial thinking_end not reconstructed",
+          "partial toolcall_start not reconstructed",
+          "partial toolcall_delta not reconstructed",
+          "partial toolcall_end not reconstructed",
+          "unfinished message"
+        ]
+      },
+      "recoveredChars": 180000,
+      "lostChars": 0,
+      "damage": [
+        {
+          "target": "head.json",
+          "warnings": [
+            "INCOMPLETE: Unexpected token 'c', \"corrupt\" is not valid JSON; bounded prefix fallback, not an ordinary open or full repair",
+            "INCOMPLETE: validated earliest raw prefix only (64 KiB / 8 entries); newer retained bytes may exist; explicit full diagnostic required"
+          ],
+          "bytes": 65770
+        },
+        {
+          "target": "m-2003.json",
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "producer refused: capture incomplete; stop producer, no retry/resume guarantee",
+            "INCOMPLETE: producer admission refused; raw retained prefix only",
+            "INCOMPLETE: terminal metadata absent",
+            "INCOMPLETE: m-2003.json: Unexpected token 'c', \"corrupt\" is not valid JSON"
+          ],
+          "bytes": 2334
+        }
+      ]
+    },
+    {
+      "mode": "sdk",
+      "checkpoint": "large-tool",
+      "build": {
+        "messages": 2000,
+        "ms": 306.432514,
+        "kind": "synthetic retained user messages through same raw/index writer; before runtime timer"
+      },
+      "receivedChars": 0,
+      "ackChars": 0,
+      "ackOffset": 621543,
+      "ackDigest": "b5d18a552a0c69f0961d1856f2077e0a5b5cf88e990d97f8a3a95a21209959a2",
+      "metrics": {
+        "received": 2015,
+        "queued": 2015,
+        "written": 2015,
+        "synced": 0,
+        "maxQueuedBytes": 2418,
+        "maxWriteAckMs": 3.168325999999979
+      },
+      "queue": {
+        "received": 2015,
+        "refused": 1,
+        "maxQueueBytes": 16058,
+        "maxQueueEntries": 6,
+        "publishMs": 241.87944800000207
+      },
+      "kinds": {
+        "message_start": 3,
+        "message_end": 3,
+        "thinking_start": 1,
+        "thinking_delta": 2,
+        "thinking_end": 1,
+        "toolcall_start": 1,
+        "toolcall_delta": 1,
+        "toolcall_end": 1,
+        "tool_execution_start": 1,
+        "tool_execution_end": 1
+      },
+      "lagP99Ms": 1.709055,
+      "runMs": 238.50623699999994,
+      "refused": "REFUSED: event/queue byte or entry bound; producer must stop",
+      "exit": {
+        "code": 0,
+        "signal": null
+      },
+      "open": {
+        "ms": 2.1999869999999646,
+        "bytes": 7422,
+        "reads": 11,
+        "entries": 8,
+        "warnings": [
+          "unsupported partial: thinking_start",
+          "unsupported partial: thinking_delta",
+          "unsupported partial: thinking_end",
+          "producer refused: capture incomplete; stop producer, no retry/resume guarantee",
+          "unsupported partial: toolcall_start",
+          "unsupported partial: toolcall_delta",
+          "unsupported partial: toolcall_end",
+          "INCOMPLETE: producer admission refused; raw retained prefix only",
+          "INCOMPLETE: terminal metadata absent"
+        ]
+      },
+      "scan": {
+        "ms": 17.573637999998027,
+        "bytes": 621543,
+        "records": 2015,
+        "warnings": [
+          "partial thinking_start not reconstructed",
+          "partial thinking_delta not reconstructed",
+          "partial thinking_delta not reconstructed",
+          "partial thinking_end not reconstructed",
+          "partial toolcall_start not reconstructed",
+          "partial toolcall_delta not reconstructed",
+          "partial toolcall_end not reconstructed"
+        ]
+      },
+      "recoveredChars": 0,
+      "lostChars": 0,
+      "damage": [
+        {
+          "target": "head.json",
+          "warnings": [
+            "INCOMPLETE: Unexpected token 'c', \"corrupt\" is not valid JSON; bounded prefix fallback, not an ordinary open or full repair",
+            "INCOMPLETE: validated earliest raw prefix only (64 KiB / 8 entries); newer retained bytes may exist; explicit full diagnostic required"
+          ],
+          "bytes": 65770
+        },
+        {
+          "target": "m-2002.json",
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "producer refused: capture incomplete; stop producer, no retry/resume guarantee",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: producer admission refused; raw retained prefix only",
+            "INCOMPLETE: terminal metadata absent",
+            "INCOMPLETE: m-2002.json: Unexpected token 'c', \"corrupt\" is not valid JSON"
+          ],
+          "bytes": 1295
+        }
+      ]
+    },
+    {
+      "mode": "rpc",
+      "checkpoint": "complete",
+      "build": {
+        "messages": 2000,
+        "ms": 355.20855600000004,
+        "kind": "synthetic retained user messages through same raw/index writer; before runtime timer"
+      },
+      "receivedChars": 69632,
+      "ackChars": 69632,
+      "ackOffset": 896302,
+      "ackDigest": "9985845de8f075f43c362326d9ba69d27db25ecc89fbc5694dc8abce9fbcecc1",
+      "metrics": {
+        "received": 2092,
+        "queued": 2092,
+        "written": 2092,
+        "synced": 0,
+        "maxQueuedBytes": 78484,
+        "maxWriteAckMs": 2.7548309999999674
+      },
+      "queue": {
+        "received": 2091,
+        "refused": 0,
+        "maxQueueBytes": 301354,
+        "maxQueueEntries": 4,
+        "publishMs": 327.6933319999908
+      },
+      "kinds": {
+        "message_start": 5,
+        "message_end": 5,
+        "thinking_start": 1,
+        "thinking_delta": 2,
+        "thinking_end": 1,
+        "toolcall_start": 1,
+        "toolcall_delta": 1,
+        "toolcall_end": 1,
+        "tool_execution_start": 1,
+        "tool_execution_end": 1,
+        "text_start": 1,
+        "text_delta": 68,
+        "text_end": 1,
+        "agent_settled": 1
+      },
+      "lagP99Ms": 1.386495,
+      "runMs": 3668.686823,
+      "exit": {
+        "code": 0,
+        "signal": null
+      },
+      "open": {
+        "ms": 1.7946979999978794,
+        "bytes": 91168,
+        "reads": 11,
+        "entries": 8,
+        "warnings": [
+          "unsupported partial: thinking_start",
+          "unsupported partial: thinking_delta",
+          "unsupported partial: thinking_end",
+          "unsupported partial: toolcall_start",
+          "unsupported partial: toolcall_delta",
+          "unsupported partial: toolcall_end"
+        ]
+      },
+      "scan": {
+        "ms": 12.84545999999682,
+        "bytes": 896302,
+        "records": 2092,
+        "warnings": [
+          "partial thinking_start not reconstructed",
+          "partial thinking_delta not reconstructed",
+          "partial thinking_delta not reconstructed",
+          "partial thinking_end not reconstructed",
+          "partial toolcall_start not reconstructed",
+          "partial toolcall_delta not reconstructed",
+          "partial toolcall_end not reconstructed"
+        ]
+      },
+      "recoveredChars": 69632,
+      "lostChars": 0,
+      "damage": [
+        {
+          "target": "head.json",
+          "warnings": [
+            "INCOMPLETE: Unexpected token 'c', \"corrupt\" is not valid JSON; bounded prefix fallback, not an ordinary open or full repair",
+            "INCOMPLETE: validated earliest raw prefix only (64 KiB / 8 entries); newer retained bytes may exist; explicit full diagnostic required"
+          ],
+          "bytes": 65770
+        },
+        {
+          "target": "m-2004.json",
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: m-2004.json: Unexpected token 'c', \"corrupt\" is not valid JSON"
+          ],
+          "bytes": 1127
+        }
+      ]
+    },
+    {
+      "mode": "rpc",
+      "checkpoint": "ack-gap",
+      "build": {
+        "messages": 2000,
+        "ms": 307.5606460000001,
+        "kind": "synthetic retained user messages through same raw/index writer; before runtime timer"
+      },
+      "receivedChars": 8192,
+      "ackChars": 8192,
+      "ackOffset": 652144,
+      "ackDigest": "bc51b1bc1586e9f33bcd197dd239b6e47a0342f07b308e7e9beae5f312f59923",
+      "metrics": {
+        "received": 2028,
+        "queued": 2028,
+        "written": 2028,
+        "synced": 0,
+        "maxQueuedBytes": 6049,
+        "maxWriteAckMs": 0.3967539999999872
+      },
+      "queue": {
+        "received": 2027,
+        "refused": 0,
+        "maxQueueBytes": 44106,
+        "maxQueueEntries": 7,
+        "publishMs": 239.0033809999979
+      },
+      "kinds": {
+        "message_start": 5,
+        "message_end": 4,
+        "thinking_start": 1,
+        "thinking_delta": 2,
+        "thinking_end": 1,
+        "toolcall_start": 1,
+        "toolcall_delta": 1,
+        "toolcall_end": 1,
+        "tool_execution_start": 1,
+        "tool_execution_end": 1,
+        "text_start": 1,
+        "text_delta": 8
+      },
+      "lagP99Ms": 1.470463,
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL"
+      },
+      "open": {
+        "ms": 1.7343629999995755,
+        "bytes": 22576,
+        "reads": 11,
+        "entries": 8,
+        "warnings": [
+          "unsupported partial: thinking_start",
+          "unsupported partial: thinking_delta",
+          "unsupported partial: thinking_end",
+          "unsupported partial: toolcall_start",
+          "unsupported partial: toolcall_delta",
+          "unsupported partial: toolcall_end",
+          "INCOMPLETE: terminal metadata absent",
+          "INCOMPLETE: raw/index high-water mismatch; explicit recovery required"
+        ]
+      },
+      "scan": {
+        "ms": 19.065419999998994,
+        "bytes": 652144,
+        "records": 2028,
+        "warnings": [
+          "partial thinking_start not reconstructed",
+          "partial thinking_delta not reconstructed",
+          "partial thinking_delta not reconstructed",
+          "partial thinking_end not reconstructed",
+          "partial toolcall_start not reconstructed",
+          "partial toolcall_delta not reconstructed",
+          "partial toolcall_end not reconstructed",
+          "unfinished message"
+        ]
+      },
+      "recoveredChars": 8192,
+      "lostChars": 0,
+      "damage": [
+        {
+          "target": "head.json",
+          "warnings": [
+            "INCOMPLETE: Unexpected token 'c', \"corrupt\" is not valid JSON; bounded prefix fallback, not an ordinary open or full repair",
+            "INCOMPLETE: validated earliest raw prefix only (64 KiB / 8 entries); newer retained bytes may exist; explicit full diagnostic required"
+          ],
+          "bytes": 65770
+        },
+        {
+          "target": "m-2003.json",
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent",
+            "INCOMPLETE: raw/index high-water mismatch; explicit recovery required",
+            "INCOMPLETE: m-2003.json: Unexpected token 'c', \"corrupt\" is not valid JSON"
+          ],
+          "bytes": 10952
+        }
+      ]
+    },
+    {
+      "mode": "rpc",
+      "checkpoint": "queued",
+      "build": {
+        "messages": 2000,
+        "ms": 367.2298,
+        "kind": "synthetic retained user messages through same raw/index writer; before runtime timer"
+      },
+      "receivedChars": 8192,
+      "ackChars": 7168,
+      "ackOffset": 650686,
+      "ackDigest": "3d9534611219129599614c5c9b2bb34d86d7e746a7c6c69ce8278c61eeed502c",
+      "metrics": {
+        "received": 2027,
+        "queued": 2027,
+        "written": 2027,
+        "synced": 0,
+        "maxQueuedBytes": 6048,
+        "maxWriteAckMs": 0.431790000000035
+      },
+      "queue": {
+        "received": 2027,
+        "refused": 0,
+        "maxQueueBytes": 35516,
+        "maxQueueEntries": 4,
+        "publishMs": 290.2709680000004
+      },
+      "kinds": {
+        "message_start": 5,
+        "message_end": 4,
+        "thinking_start": 1,
+        "thinking_delta": 2,
+        "thinking_end": 1,
+        "toolcall_start": 1,
+        "toolcall_delta": 1,
+        "toolcall_end": 1,
+        "tool_execution_start": 1,
+        "tool_execution_end": 1,
+        "text_start": 1,
+        "text_delta": 8
+      },
+      "lagP99Ms": 1.564671,
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL"
+      },
+      "open": {
+        "ms": 1.7437410000020463,
+        "bytes": 22573,
+        "reads": 11,
+        "entries": 8,
+        "warnings": [
+          "unsupported partial: thinking_start",
+          "unsupported partial: thinking_delta",
+          "unsupported partial: thinking_end",
+          "unsupported partial: toolcall_start",
+          "unsupported partial: toolcall_delta",
+          "unsupported partial: toolcall_end",
+          "INCOMPLETE: terminal metadata absent"
+        ]
+      },
+      "scan": {
+        "ms": 18.297991999999795,
+        "bytes": 650686,
+        "records": 2027,
+        "warnings": [
+          "partial thinking_start not reconstructed",
+          "partial thinking_delta not reconstructed",
+          "partial thinking_delta not reconstructed",
+          "partial thinking_end not reconstructed",
+          "partial toolcall_start not reconstructed",
+          "partial toolcall_delta not reconstructed",
+          "partial toolcall_end not reconstructed",
+          "unfinished message"
+        ]
+      },
+      "recoveredChars": 7168,
+      "lostChars": 1024,
+      "damage": [
+        {
+          "target": "head.json",
+          "warnings": [
+            "INCOMPLETE: Unexpected token 'c', \"corrupt\" is not valid JSON; bounded prefix fallback, not an ordinary open or full repair",
+            "INCOMPLETE: validated earliest raw prefix only (64 KiB / 8 entries); newer retained bytes may exist; explicit full diagnostic required"
+          ],
+          "bytes": 65770
+        },
+        {
+          "target": "m-2003.json",
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent",
+            "INCOMPLETE: m-2003.json: Unexpected token 'c', \"corrupt\" is not valid JSON"
+          ],
+          "bytes": 10952
+        }
+      ]
+    },
+    {
+      "mode": "rpc",
+      "checkpoint": "final",
+      "build": {
+        "messages": 2000,
+        "ms": 312.65650800000003,
+        "kind": "synthetic retained user messages through same raw/index writer; before runtime timer"
+      },
+      "receivedChars": 69632,
+      "ackChars": 69632,
+      "ackOffset": 896065,
+      "ackDigest": "64b6eb5a3832b0dc1813cf8a1826a6633a09fdfaa61b732a05c756a992527c93",
+      "metrics": {
+        "received": 2091,
+        "queued": 2091,
+        "written": 2091,
+        "synced": 0,
+        "maxQueuedBytes": 78484,
+        "maxWriteAckMs": 0.374400999999807
+      },
+      "queue": {
+        "received": 2090,
+        "refused": 0,
+        "maxQueueBytes": 301354,
+        "maxQueueEntries": 4,
+        "publishMs": 284.48766199999966
+      },
+      "kinds": {
+        "message_start": 5,
+        "message_end": 5,
+        "thinking_start": 1,
+        "thinking_delta": 2,
+        "thinking_end": 1,
+        "toolcall_start": 1,
+        "toolcall_delta": 1,
+        "toolcall_end": 1,
+        "tool_execution_start": 1,
+        "tool_execution_end": 1,
+        "text_start": 1,
+        "text_delta": 68,
+        "text_end": 1,
+        "agent_settled": 1
+      },
+      "lagP99Ms": 1.358847,
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL"
+      },
+      "open": {
+        "ms": 1.6484100000016042,
+        "bytes": 169418,
+        "reads": 11,
+        "entries": 8,
+        "warnings": [
+          "unsupported partial: thinking_start",
+          "unsupported partial: thinking_delta",
+          "unsupported partial: thinking_end",
+          "unsupported partial: toolcall_start",
+          "unsupported partial: toolcall_delta",
+          "unsupported partial: toolcall_end",
+          "INCOMPLETE: terminal metadata absent",
+          "INCOMPLETE: raw/index high-water mismatch; explicit recovery required"
+        ]
+      },
+      "scan": {
+        "ms": 10.438269999998738,
+        "bytes": 896065,
+        "records": 2091,
+        "warnings": [
+          "partial thinking_start not reconstructed",
+          "partial thinking_delta not reconstructed",
+          "partial thinking_delta not reconstructed",
+          "partial thinking_end not reconstructed",
+          "partial toolcall_start not reconstructed",
+          "partial toolcall_delta not reconstructed",
+          "partial toolcall_end not reconstructed"
+        ]
+      },
+      "recoveredChars": 69632,
+      "lostChars": 0,
+      "damage": [
+        {
+          "target": "head.json",
+          "warnings": [
+            "INCOMPLETE: Unexpected token 'c', \"corrupt\" is not valid JSON; bounded prefix fallback, not an ordinary open or full repair",
+            "INCOMPLETE: validated earliest raw prefix only (64 KiB / 8 entries); newer retained bytes may exist; explicit full diagnostic required"
+          ],
+          "bytes": 65770
+        },
+        {
+          "target": "m-2004.json",
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: terminal metadata absent",
+            "INCOMPLETE: raw/index high-water mismatch; explicit recovery required",
+            "INCOMPLETE: m-2004.json: Unexpected token 'c', \"corrupt\" is not valid JSON"
+          ],
+          "bytes": 79378
+        }
+      ]
+    },
+    {
+      "mode": "rpc",
+      "checkpoint": "large-text",
+      "build": {
+        "messages": 2000,
+        "ms": 312.46065899999996,
+        "kind": "synthetic retained user messages through same raw/index writer; before runtime timer"
+      },
+      "receivedChars": 180000,
+      "ackChars": 180000,
+      "ackOffset": 874572,
+      "ackDigest": "7e67b9ae3c96783ffa0a25dca1c6be76d1dd4ec44800a4d8b923268d183acf04",
+      "metrics": {
+        "received": 2196,
+        "queued": 2196,
+        "written": 2196,
+        "synced": 0,
+        "maxQueuedBytes": 6049,
+        "maxWriteAckMs": 2.580018999999993
+      },
+      "queue": {
+        "received": 2196,
+        "refused": 1,
+        "maxQueueBytes": 35522,
+        "maxQueueEntries": 4,
+        "publishMs": 315.4175109999884
+      },
+      "kinds": {
+        "message_start": 5,
+        "message_end": 4,
+        "thinking_start": 1,
+        "thinking_delta": 2,
+        "thinking_end": 1,
+        "toolcall_start": 1,
+        "toolcall_delta": 1,
+        "toolcall_end": 1,
+        "tool_execution_start": 1,
+        "tool_execution_end": 1,
+        "text_start": 1,
+        "text_delta": 176,
+        "text_end": 1
+      },
+      "lagP99Ms": 1.371135,
+      "runMs": 9186.652065999999,
+      "refused": "REFUSED: event/queue byte or entry bound; producer must stop",
+      "exit": {
+        "code": 0,
+        "signal": null
+      },
+      "open": {
+        "ms": 1.6805009999952745,
+        "bytes": 13878,
+        "reads": 11,
+        "entries": 8,
+        "warnings": [
+          "unsupported partial: thinking_start",
+          "unsupported partial: thinking_delta",
+          "unsupported partial: thinking_end",
+          "unsupported partial: toolcall_start",
+          "unsupported partial: toolcall_delta",
+          "unsupported partial: toolcall_end",
+          "INCOMPLETE: producer admission refused; raw retained prefix only",
+          "INCOMPLETE: terminal metadata absent"
+        ]
+      },
+      "scan": {
+        "ms": 19.114151000001584,
+        "bytes": 874572,
+        "records": 2196,
+        "warnings": [
+          "partial thinking_start not reconstructed",
+          "partial thinking_delta not reconstructed",
+          "partial thinking_delta not reconstructed",
+          "partial thinking_end not reconstructed",
+          "partial toolcall_start not reconstructed",
+          "partial toolcall_delta not reconstructed",
+          "partial toolcall_end not reconstructed",
+          "unfinished message"
+        ]
+      },
+      "recoveredChars": 180000,
+      "lostChars": 0,
+      "damage": [
+        {
+          "target": "head.json",
+          "warnings": [
+            "INCOMPLETE: Unexpected token 'c', \"corrupt\" is not valid JSON; bounded prefix fallback, not an ordinary open or full repair",
+            "INCOMPLETE: validated earliest raw prefix only (64 KiB / 8 entries); newer retained bytes may exist; explicit full diagnostic required"
+          ],
+          "bytes": 65770
+        },
+        {
+          "target": "m-2003.json",
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: producer admission refused; raw retained prefix only",
+            "INCOMPLETE: terminal metadata absent",
+            "INCOMPLETE: m-2003.json: Unexpected token 'c', \"corrupt\" is not valid JSON"
+          ],
+          "bytes": 2251
+        }
+      ]
+    },
+    {
+      "mode": "rpc",
+      "checkpoint": "large-tool",
+      "build": {
+        "messages": 2000,
+        "ms": 372.06223900000003,
+        "kind": "synthetic retained user messages through same raw/index writer; before runtime timer"
+      },
+      "receivedChars": 0,
+      "ackChars": 0,
+      "ackOffset": 621541,
+      "ackDigest": "0f4885af551a239073f97340afecb01eeb21e13ec25dfa3c409a4beb643a2168",
+      "metrics": {
+        "received": 2015,
+        "queued": 2015,
+        "written": 2015,
+        "synced": 0,
+        "maxQueuedBytes": 2418,
+        "maxWriteAckMs": 0.40046000000006643
+      },
+      "queue": {
+        "received": 2015,
+        "refused": 1,
+        "maxQueueBytes": 13196,
+        "maxQueueEntries": 6,
+        "publishMs": 294.6429510000017
+      },
+      "kinds": {
+        "message_start": 3,
+        "message_end": 3,
+        "thinking_start": 1,
+        "thinking_delta": 2,
+        "thinking_end": 1,
+        "toolcall_start": 1,
+        "toolcall_delta": 1,
+        "toolcall_end": 1,
+        "tool_execution_start": 1,
+        "tool_execution_end": 1
+      },
+      "lagP99Ms": 1.784831,
+      "runMs": 190.19035599999984,
+      "refused": "REFUSED: event/queue byte or entry bound; producer must stop",
+      "exit": {
+        "code": 0,
+        "signal": null
+      },
+      "open": {
+        "ms": 1.5286229999983334,
+        "bytes": 7338,
+        "reads": 11,
+        "entries": 8,
+        "warnings": [
+          "unsupported partial: thinking_start",
+          "unsupported partial: thinking_delta",
+          "unsupported partial: thinking_end",
+          "unsupported partial: toolcall_start",
+          "unsupported partial: toolcall_delta",
+          "unsupported partial: toolcall_end",
+          "INCOMPLETE: producer admission refused; raw retained prefix only",
+          "INCOMPLETE: terminal metadata absent"
+        ]
+      },
+      "scan": {
+        "ms": 20.71267600000283,
+        "bytes": 621541,
+        "records": 2015,
+        "warnings": [
+          "partial thinking_start not reconstructed",
+          "partial thinking_delta not reconstructed",
+          "partial thinking_delta not reconstructed",
+          "partial thinking_end not reconstructed",
+          "partial toolcall_start not reconstructed",
+          "partial toolcall_delta not reconstructed",
+          "partial toolcall_end not reconstructed"
+        ]
+      },
+      "recoveredChars": 0,
+      "lostChars": 0,
+      "damage": [
+        {
+          "target": "head.json",
+          "warnings": [
+            "INCOMPLETE: Unexpected token 'c', \"corrupt\" is not valid JSON; bounded prefix fallback, not an ordinary open or full repair",
+            "INCOMPLETE: validated earliest raw prefix only (64 KiB / 8 entries); newer retained bytes may exist; explicit full diagnostic required"
+          ],
+          "bytes": 65770
+        },
+        {
+          "target": "m-2002.json",
+          "warnings": [
+            "unsupported partial: thinking_start",
+            "unsupported partial: thinking_delta",
+            "unsupported partial: thinking_end",
+            "unsupported partial: toolcall_start",
+            "unsupported partial: toolcall_delta",
+            "unsupported partial: toolcall_end",
+            "INCOMPLETE: producer admission refused; raw retained prefix only",
+            "INCOMPLETE: terminal metadata absent",
+            "INCOMPLETE: m-2002.json: Unexpected token 'c', \"corrupt\" is not valid JSON"
+          ],
+          "bytes": 1212
+        }
+      ]
+    }
+  ]
+}

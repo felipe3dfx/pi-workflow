@@ -1,0 +1,113 @@
+{
+  "assertions": "passed bounded large-history open, measured build and full scan, missing head, cross-process one-writer refusal, cumulative overlarge display refusal, oversized text/tool raw-event refusal, explicit queue entry AND byte refusal, final replacement",
+  "limits": {
+    "event": 225280,
+    "queueBytes": 524288,
+    "queueEntries": 64,
+    "message": 98304,
+    "windowEntries": 8,
+    "windowBytes": 196608,
+    "head": 8192
+  },
+  "samples": [
+    {
+      "count": 0,
+      "buildMs": 2.288996000000001,
+      "normalOpen": {
+        "ms": 0.9684889999999982,
+        "bytes": 724,
+        "reads": 3
+      },
+      "fullScan": {
+        "ms": 0.28823799999999977,
+        "bytes": 221
+      },
+      "concurrentWriter": "cross-process EEXIST, raw unchanged",
+      "missingHead": {
+        "warnings": [
+          "INCOMPLETE: ENOENT: no such file or directory, stat '/tmp/fleet-integrated-assert-Dvv4nt/0/head.json'; bounded prefix fallback, not an ordinary open or full repair",
+          "INCOMPLETE: validated earliest raw prefix only (64 KiB / 8 entries); newer retained bytes may exist; explicit full diagnostic required"
+        ],
+        "prefixRecoveryMs": 0.19017099999999942,
+        "bytes": 379,
+        "entries": 0
+      }
+    },
+    {
+      "count": 2000,
+      "buildMs": 323.35377800000003,
+      "normalOpen": {
+        "ms": 1.999967999999967,
+        "bytes": 2891,
+        "reads": 11
+      },
+      "fullScan": {
+        "ms": 12.781491000000017,
+        "bytes": 644007
+      },
+      "concurrentWriter": "cross-process EEXIST, raw unchanged",
+      "missingHead": {
+        "warnings": [
+          "INCOMPLETE: ENOENT: no such file or directory, stat '/tmp/fleet-integrated-assert-Dvv4nt/2000/head.json'; bounded prefix fallback, not an ordinary open or full repair",
+          "INCOMPLETE: validated earliest raw prefix only (64 KiB / 8 entries); newer retained bytes may exist; explicit full diagnostic required"
+        ],
+        "prefixRecoveryMs": 0.2507659999999987,
+        "bytes": 65694,
+        "entries": 8
+      }
+    },
+    {
+      "count": 10000,
+      "buildMs": 1495.4312400000001,
+      "normalOpen": {
+        "ms": 0.730286999999862,
+        "bytes": 2897,
+        "reads": 11
+      },
+      "fullScan": {
+        "ms": 56.14408000000003,
+        "bytes": 3228009
+      },
+      "concurrentWriter": "cross-process EEXIST, raw unchanged",
+      "missingHead": {
+        "warnings": [
+          "INCOMPLETE: ENOENT: no such file or directory, stat '/tmp/fleet-integrated-assert-Dvv4nt/10000/head.json'; bounded prefix fallback, not an ordinary open or full repair",
+          "INCOMPLETE: validated earliest raw prefix only (64 KiB / 8 entries); newer retained bytes may exist; explicit full diagnostic required"
+        ],
+        "prefixRecoveryMs": 0.21747300000015457,
+        "bytes": 65694,
+        "entries": 8
+      }
+    }
+  ],
+  "queues": [
+    {
+      "received": 65,
+      "refused": 1,
+      "maxQueueBytes": 68460,
+      "maxQueueEntries": 64,
+      "publishMs": 4.760981999999785
+    },
+    {
+      "received": 5,
+      "refused": 1,
+      "maxQueueBytes": 484304,
+      "maxQueueEntries": 4,
+      "publishMs": 0.3644530000001396
+    }
+  ],
+  "oversize": {
+    "rawBytes": 146686,
+    "display": [
+      {
+        "ordinal": 0,
+        "incomplete": true,
+        "unsupported": "single-message display bound exceeded; raw retained"
+      }
+    ],
+    "warnings": [
+      "INCOMPLETE: producer admission refused; raw retained prefix only",
+      "INCOMPLETE: terminal metadata absent"
+    ]
+  }
+}

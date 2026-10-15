@@ -10,6 +10,7 @@ Each specification pairs with its review and the feature brief it came from. The
 | [deep-harness-modules](deep-harness-modules.md) | [review](deep-harness-modules-review.md) | [brief](../features/deep-harness-modules.md) | #188 |
 | [destination-only-jev-routing-and-uniform-child-context](destination-only-jev-routing-and-uniform-child-context.md) | [review](destination-only-jev-routing-and-uniform-child-context-review.md) | [brief](../features/destination-only-jev-routing-and-uniform-child-context.md), [review](../features/destination-only-jev-routing-and-uniform-child-context-review.md) | #257 |
 | [delegation-mode](delegation-mode.md) | [review](delegation-mode-review.md) | — | #205 |
+| [fleet-transcript-history](fleet-transcript-history.md) | [review](fleet-transcript-history-review.md) | [brief](../features/fleet-transcript-history.md), [review](../features/fleet-transcript-history-review.md) | #265 |
 | [header-identity](header-identity.md) | [review](header-identity-review.md) | [brief](../features/header-identity.md), [review](../features/header-identity-review.md) | #243 |
 | [routing-owner](routing-owner.md) | [review](routing-owner-review.md) | — | #118, #119, #124, #125 |
 | [todo-child-link](todo-child-link.md) | — | — | #207 |

@@ -1,0 +1,42 @@
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { Store, Reader, fixtureIO, LIMIT } from './store.mjs';
+const root=mkdtempSync(join(tmpdir(),'fleet-resilient-assert-'));
+try {
+ const identity={parent:'parent-1',child:'large-unicode',group:'launch-2',role:'worker',launchOrdinal:1};
+ const path=join(root,'source');const s=Store.create(path,identity);
+ s.append({type:'message_end',message:{role:'user',content:'readable prefix'}});
+ s.append({type:'message_start',message:{role:'assistant',content:[{type:'text',text:''}]}});
+ s.append({type:'message_update',assistantMessageEvent:{type:'text_delta',contentIndex:0,delta:'replace this partial'}});
+ s.append({type:'message_update',assistantMessageEvent:{type:'text_end',contentIndex:0,content:'also replace'}});
+ const text='🧪漢'.repeat(160000);
+ s.append({type:'message_end',message:{role:'assistant',content:[{type:'text',text}]}});
+ s.append({type:'agent_settled'});s.append({type:'state',state:'completed'});s.close();
+ const reader=new Reader(path,'parent-1').open();const initialStats={...reader.stats};const r=reader.reconcile();
+ assert.equal(r.messages.length,2);assert.equal(r.messages[1].content[0].text,text);assert.equal(text.length,480000);assert.equal(Buffer.byteLength(text),1120000);
+ assert.equal(r.completed,true);assert.equal(s.health.droppedEvents,0);assert.equal(s.stats.maxQueuedBytes,0);assert.ok(s.stats.maxEventJSONBytes>1120000);
+ assert.ok(r.stats.maxReadBytes<=LIMIT.frame);assert.ok(initialStats.bytes<=LIMIT.metadata*3+LIMIT.frame+4);
+ assert.deepEqual(reader.identity,identity);assert.ok(new Reader(path,'foreign').open().filtered);
+ assert.equal(new Reader(path,'foreign').open().reconcile().messages.length,0);
+ const prefix=reader.prefix();assert.ok(prefix.stats.bytes<=LIMIT.prefixFrames*(LIMIT.frame+4));assert.ok(prefix.warnings.some(w=>w.includes('partial event')));
+ const raw=readFileSync(join(path,'raw.chunks'));const files=['identity.json','head.json'];
+ function damaged(name,bytes){const dir=join(root,name);mkdirSync(dir);for(const f of files)writeFileSync(join(dir,f),readFileSync(join(path,f)));writeFileSync(join(dir,'raw.chunks'),bytes);return new Reader(dir,'parent-1').open();}
+ const corrupt=Buffer.from(raw);corrupt[Math.floor(raw.length/2)]^=1;
+ const c=damaged('corrupt',corrupt);const cr=c.reconcile();assert.ok(cr.warnings.some(w=>/checksum|Unexpected|JSON/.test(w)));assert.equal(cr.messages[0].content,'readable prefix');assert.equal(cr.completed,false);
+ const t=damaged('partial-chunk',raw.subarray(0,Math.floor(raw.length/2)));const tr=t.reconcile();assert.ok(tr.warnings.some(w=>w.includes('partial chunk/frame')));assert.equal(tr.messages[0].content,'readable prefix');assert.ok(tr.warnings.some(w=>w.includes('partial event')));
+ const oversized=Buffer.from(raw);oversized.writeUInt32BE(LIMIT.frame+1,0);const over=damaged('oversized-header',oversized).reconcile();assert.ok(over.warnings.some(w=>w.includes('byte bound')));assert.ok(over.stats.maxReadBytes<=LIMIT.frame);
+ const wrong=join(root,'wrong-identity');mkdirSync(wrong);for(const f of files)writeFileSync(join(wrong,f),readFileSync(join(path,f)));writeFileSync(join(wrong,'raw.chunks'),raw);
+ const other=Store.create(join(root,'other'),{...identity,child:'forged'});other.close();
+ writeFileSync(join(wrong,'identity.json'),readFileSync(join(root,'other','identity.json')));
+ const mismatch=new Reader(wrong,'parent-1').open();assert.ok(mismatch.warnings.some(w=>w.includes('identity mismatch')));assert.ok(mismatch.reconcile().warnings.some(w=>w.includes('identity mismatch')));
+ const green=Store.create(join(root,'green'),identity,fixtureIO());assert.doesNotThrow(()=>green.append({type:'message_end',message:{role:'toolResult',content:[{type:'text',text:'T'.repeat(300000)}]}}));green.close();
+ assert.equal(new Reader(join(root,'green'),'parent-1').open().reconcile().messages[0].content[0].text,'T'.repeat(300000));
+ writeFileSync(join(root,'not-a-directory'),'fixture');
+ let unavailable;assert.doesNotThrow(()=>{unavailable=Store.create(join(root,'not-a-directory','store'),identity);});
+ assert.equal(unavailable.health.state,'incomplete');assert.equal(unavailable.health.durableMarker,false);
+ assert.doesNotThrow(()=>unavailable.append({type:'message_end',message:{role:'user',content:'agent continues'}}));unavailable.close();
+ assert.equal(unavailable.health.droppedEvents,1);assert.ok(unavailable.health.cause.includes('ENOTDIR'));
+ console.log(JSON.stringify({assertions:'passed admission, exact larger UTF-8 final replacement, parent/identity, bounded open/prefix/frame reads, partial/corrupt chunks, rejected oversized header, read-only recovery',largerPayload:{chars:text.length,utf8Bytes:Buffer.byteLength(text)},metrics:s.stats,open:initialStats,reconciliation:{ms:r.ms,...r.stats,maxEventBytes:r.maxEventBytes},damage:{corrupt:cr.warnings,partial:tr.warnings,oversized:over.warnings,identity:mismatch.warnings}},null,2));
+}finally{rmSync(root,{recursive:true,force:true});}
