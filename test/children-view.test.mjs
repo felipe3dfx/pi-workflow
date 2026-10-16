@@ -1399,7 +1399,15 @@ test("a message streamed far before the resident windows is revealed contiguousl
 		if (i % 100 === 99) await written(capture.audit, child.id);
 	}
 	await written(capture.audit, child.id);
-	const transcript = createTranscript({ audit: capture.audit, child: child.id, changed() {} });
+	const fromStart = [];
+	const audit = {
+		read(id, cursor) {
+			if (cursor?.from === 1) fromStart.push(cursor);
+			return capture.audit.read(id, cursor);
+		},
+		segment: capture.audit.segment,
+	};
+	const transcript = createTranscript({ audit, child: child.id, changed() {} });
 	const draw = () => {
 		const pieces = [];
 		transcript.layout(
@@ -1449,6 +1457,7 @@ test("a message streamed far before the resident windows is revealed contiguousl
 	const slid = await step((pieces) => pieces.length === 1 && reached.size === 900);
 	assert.notEqual(slid[0].earlier, undefined);
 	assert.match(slid[0].text, / w899 $/);
+	assert.equal(fromStart.length, 1);
 
 	let redraws = 0;
 	await step(() => ++redraws > 300);

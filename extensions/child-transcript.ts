@@ -492,7 +492,7 @@ export function createTranscript(options: {
 				if (block.load && "earlier" in block.load && !wanted) {
 					const { key } = block;
 					const { earlier } = block.load;
-					if (!attached.get(key)?.tried.has(earlier)) {
+					if (!key.endsWith(earlierKey("")) && !attached.get(key)?.tried.has(earlier)) {
 						wanted = () => attach(key, earlier);
 					}
 				} else if (block.load && "slot" in block.load && !wanted) {
