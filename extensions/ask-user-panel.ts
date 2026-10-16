@@ -31,10 +31,10 @@ export type AskUserAnswer =
 	| { status: "answered"; kind: "text"; text: string }
 	| { status: "refused"; reason: string };
 
-const ACCENT_BAR = "┃";
-const RESET = "\x1b[0m";
-const padLeft = 3;
-const padRight = 2;
+const CAPTION = " question ";
+const minFrame = 12;
+const minLabel = 4;
+const WAIT_WIDGET = "pi-workflow-question-wait";
 
 function normalizeSingleLine(text: string): string {
 	return terminalSafeLine(text.replace(/\r\n/g, " "));
@@ -74,6 +74,36 @@ function describeAnswer(answer: AskUserAnswer): string {
 	return `Free-text answer: ${answer.text}`;
 }
 
+function overlayClosed(ctx: ExtensionContext, signal: AbortSignal | undefined): Promise<boolean> | undefined {
+	let open = false;
+	let settle = (_closed: boolean) => {};
+	ctx.ui.setWidget(WAIT_WIDGET, (tui) => {
+		open = tui.hasOverlay();
+		return {
+			render() {
+				if (!tui.hasOverlay()) queueMicrotask(() => settle(true));
+				return [];
+			},
+			invalidate() {},
+		};
+	});
+	if (!open) {
+		ctx.ui.setWidget(WAIT_WIDGET, undefined);
+		return undefined;
+	}
+	ctx.ui.notify("A question is waiting. Close this panel to answer it.", "info");
+	return new Promise((resolve) => {
+		const onAbort = () => settle(false);
+		settle = (closed) => {
+			settle = () => {};
+			signal?.removeEventListener("abort", onAbort);
+			ctx.ui.setWidget(WAIT_WIDGET, undefined);
+			resolve(closed);
+		};
+		signal?.addEventListener("abort", onAbort, { once: true });
+	});
+}
+
 async function askPanel(
 	ctx: ExtensionContext,
 	hints: FooterHints,
@@ -90,10 +120,14 @@ async function askPanel(
 	}
 
 	closeChildrenView();
-	const answer = await ctx.ui.custom<AskUserAnswer>((_tui, theme, keybindings, done) => {
+	const waiting = overlayClosed(ctx, signal);
+	if ((waiting && !(await waiting)) || signal?.aborted) {
+		return refusal(ABORTED_REASON);
+	}
+	const answer = await ctx.ui.custom<AskUserAnswer>((tui, theme, keybindings, done) => {
 		const freeTextIndex = options.length;
 		const rowCount = options.length + 1;
-		const input = new Input();
+		const input = new Input({ prompt: "" });
 		const marked = new Set<number>();
 		let index = 0;
 		let mode: "browse" | "edit" = options.length === 0 ? "edit" : "browse";
@@ -141,26 +175,24 @@ async function askPanel(
 			finish({ status: "answered", kind: "option", index, label: option.label });
 		};
 
-		const rowMarker = (checked: boolean, active: boolean, checkable = true) =>
-			multiple && checkable ? (checked ? "[x]" : "[ ]") : active ? "(●)" : "(○)";
-
 		const component: Component = {
 			render(width) {
-				const margin = " ".repeat(marginFor(width));
-				const bodyWidth = Math.max(0, width - margin.length * 2 - 1);
-				const contentWidth = Math.max(1, bodyWidth - padLeft - padRight);
-				const block = (content: string, selected = false) =>
-					margin +
-					theme.fg("text", ACCENT_BAR) +
-					truncateToWidth(`${" ".repeat(padLeft)}${content}`, bodyWidth, "", true)
-						.split(RESET)
-						.map((part) => theme.bg(selected ? "selectedBg" : "customMessageBg", part))
-						.join(RESET) +
-					margin;
-				const marker = (glyph: string, on: boolean) =>
-					on ? theme.bold(theme.fg("text", glyph)) : theme.fg("dim", glyph);
+				const edge = marginFor(width);
+				const frameWidth = width - edge * 2;
+				const framed = frameWidth >= minFrame;
+				const contentWidth = Math.max(1, framed ? frameWidth - 4 : frameWidth);
+				const border = (text: string) => theme.fg("borderAccent", text);
+				const row = (content: string) => {
+					if (!framed) return content;
+					const clipped = truncateToWidth(content, contentWidth, "");
+					const pad = " ".repeat(Math.max(0, contentWidth - visibleWidth(clipped)));
+					return `${border("│")} ${clipped}${pad} ${border("│")}`;
+				};
+				const strong = (text: string) => theme.bold(theme.fg("text", text));
 				const numberWidth = String(Math.max(options.length, 1)).length;
-				const prefixWidth = numberWidth + 5;
+				const markWidth = multiple ? 4 : 0;
+				const prefixWidth = 2 + markWidth + numberWidth + 2;
+				const pointer = (active: boolean) => (active ? strong("❯ ") : "  ");
 				const labels = options.map((option) => normalizeSingleLine(option.label));
 				const labelRoom = Math.max(0, contentWidth - prefixWidth);
 				const labelWidth = Math.min(
@@ -168,43 +200,89 @@ async function askPanel(
 					options.some((option) => option.description) ? Math.floor(0.45 * labelRoom) : labelRoom,
 				);
 				const descriptionWidth = contentWidth - prefixWidth - labelWidth - 2;
-				const lines = [
-					block(""),
-					...wrapTextWithAnsi(
-						theme.bold(theme.fg("text", normalizeQuestionText(question))),
-						contentWidth,
-					).map((line) => block(line)),
-					block(""),
-				];
-				options.forEach((option, i) => {
+				const optionRows = (i: number, limit = Number.POSITIVE_INFINITY) => {
 					const active = i === index;
-					const glyph = rowMarker(marked.has(i), active);
-					const description = option.description ? normalizeSingleLine(option.description) : "";
-					const head = `${theme.fg("text", String(i + 1).padStart(numberWidth))} ${marker(glyph, multiple ? marked.has(i) : active)} `;
+					const description = options[i].description ? normalizeSingleLine(options[i].description) : "";
+					const mark = multiple
+						? marked.has(i)
+							? strong("[x] ")
+							: theme.fg("dim", "[ ] ")
+						: "";
+					const number = String(i + 1).padStart(numberWidth);
+					const head = `${pointer(active)}${mark}${active ? strong(number) : theme.fg("muted", number)}  `;
 					const shown = description && descriptionWidth >= 4;
-					if (!active) {
+					if (!active || labelWidth < minLabel || limit < 2) {
 						const label = truncateToWidth(labels[i], labelWidth, "…", true);
 						const tail = shown ? `  ${theme.fg("dim", truncateToWidth(description, descriptionWidth, "…"))}` : "";
-						lines.push(block(`${head}${theme.fg("text", label)}${tail}`));
-						return;
+						return [`${head}${active ? strong(label) : theme.fg("text", label)}${tail}`];
 					}
-					const labelLines = wrapTextWithAnsi(labels[i], Math.max(1, labelWidth));
-					const descriptionLines = shown ? wrapTextWithAnsi(description, descriptionWidth) : [];
-					for (let k = 0; k < Math.max(labelLines.length, descriptionLines.length); k++) {
-						const label = theme.fg("text", theme.bold(truncateToWidth(labelLines[k] ?? "", labelWidth, "", true)));
+					const cut = (lines: string[], width: number) =>
+						lines.length > limit
+							? [...lines.slice(0, limit - 1), truncateToWidth(`${lines[limit - 1]}…`, width, "…")]
+							: lines;
+					const labelLines = cut(wrapTextWithAnsi(labels[i], labelWidth), labelWidth);
+					const descriptionLines = shown ? cut(wrapTextWithAnsi(description, descriptionWidth), descriptionWidth) : [];
+					return Array.from({ length: Math.max(labelLines.length, descriptionLines.length) }, (_, k) => {
+						const label = strong(truncateToWidth(labelLines[k] ?? "", labelWidth, "", true));
 						const tail = descriptionLines[k] ? `  ${theme.fg("dim", descriptionLines[k])}` : "";
-						lines.push(block(`${k === 0 ? head : " ".repeat(prefixWidth)}${label}${tail}`, true));
-					}
-				});
+						return `${k === 0 ? head : " ".repeat(prefixWidth)}${label}${tail}`;
+					});
+				};
+				const questionLines = wrapTextWithAnsi(strong(normalizeQuestionText(question)), contentWidth);
 				const active = isFreeTextRow(index);
 				input.focused = active && mode === "edit";
-				const glyph = rowMarker(false, active, false);
-				const prefix = `${theme.fg("text", "z".padStart(numberWidth))} ${marker(glyph, active && !multiple)} `;
-				const row = input.focused
-					? prefix + (input.render(Math.max(contentWidth - prefixWidth, 1))[0] ?? "")
-					: prefix + (input.getValue() ? theme.fg("text", input.getValue()) : theme.fg("dim", "Type your answer"));
-				lines.push(block(row, active));
-				lines.push(block(""));
+				const freeHead =
+					options.length > 0
+						? `${pointer(active)}${" ".repeat(markWidth)}${active ? strong("z".padStart(numberWidth)) : theme.fg("muted", "z".padStart(numberWidth))}  `
+						: pointer(active);
+				const freeRow = input.focused
+					? freeHead + (input.render(Math.max(contentWidth - visibleWidth(freeHead), 1))[0] ?? "")
+					: freeHead + (input.getValue() ? theme.fg("text", input.getValue()) : theme.fg("dim", "Type your answer"));
+				const body = [...questionLines];
+				if (options.length > 0) {
+					const budget = Math.max(
+						1,
+						Math.floor(tui.terminal.rows / 2) - (framed ? 2 : 0) - questionLines.length - 3,
+					);
+					const focus = Math.min(index, options.length - 1);
+					const span = (visible: number) => {
+						const first = Math.min(Math.max(0, focus - Math.floor(visible / 2)), options.length - visible);
+						return [first, first + visible];
+					};
+					const height = (visible: number, tall: number) => {
+						const [first, last] = span(visible);
+						return visible - 1 + tall + (first > 0 ? 1 : 0) + (last < options.length ? 1 : 0);
+					};
+					const tall = active ? 1 : optionRows(index).length;
+					let visible = options.length;
+					while (visible > 1 && height(visible, tall) > budget) visible--;
+					const withMarks = height(visible, 1);
+					const marks = withMarks <= budget && options.length > Math.min(budget, withMarks);
+					if (!marks) visible = Math.min(options.length, budget);
+					const activeRows = active ? [] : optionRows(index, Math.max(1, budget - (marks ? withMarks : visible) + 1));
+					const [first, last] = span(visible);
+					const more = (arrow: string, count: number) => {
+						const text = `${arrow} ${count} more`;
+						const indent = prefixWidth + visibleWidth(text) <= contentWidth ? prefixWidth : 0;
+						return theme.fg("dim", `${" ".repeat(indent)}${text}`);
+					};
+					body.push("");
+					if (marks && first > 0) body.push(more("↑", first));
+					for (let i = first; i < last; i++) body.push(...(i === index ? activeRows : optionRows(i)));
+					if (marks && last < options.length) body.push(more("↓", options.length - last));
+					body.push("");
+				}
+				body.push(freeRow);
+				const lines = body.map(row);
+				if (framed) {
+					const caption = frameWidth - 4 >= 6 ? truncateToWidth(CAPTION, frameWidth - 4) : "";
+					lines.unshift(border(`╭${"─".repeat(frameWidth - 2)}╮`));
+					lines.push(
+						border(`╰${"─".repeat(frameWidth - 3 - visibleWidth(caption))}`) +
+							theme.fg("dim", caption) +
+							border("─╯"),
+					);
+				}
 				const hasAnyMarked = marked.size > 0;
 				const enterHint = isFreeTextRow(index)
 					? "Enter:edit free text"
@@ -224,7 +302,7 @@ async function askPanel(
 						return { key: part.slice(0, split), action: part.slice(split + 1) };
 					}),
 				);
-				return lines.map((line) => truncateToWidth(line, width));
+				return lines.map((line) => truncateToWidth(" ".repeat(edge) + line, width));
 			},
 			invalidate() {},
 			handleInput(data: string) {
@@ -289,7 +367,7 @@ async function askPanel(
 		};
 
 		return component;
-	}, { overlay: true, overlayOptions: { anchor: "bottom-center" } }).finally(() => hints.set(undefined));
+	}).finally(() => hints.set(undefined));
 
 	return { content: [{ type: "text", text: describeAnswer(answer) }], details: answer };
 }
@@ -348,8 +426,8 @@ export function createAskUserChoiceTool(hints: FooterHints): ToolDefinition<type
 		name: "ask_user_choice",
 		label: "Ask User Choice",
 		description:
-			"Ask the operator to pick one of several numbered options, or several with multiple: true, from the overlay. Refuses in print mode or when no TUI session is available, and never launches a child session.",
-		promptSnippet: "Ask the operator to choose among numbered options in the overlay",
+			"Ask the operator to pick one of several numbered options, or several with multiple: true, in the input. Refuses in print mode or when no TUI session is available, and never launches a child session.",
+		promptSnippet: "Ask the operator to choose among numbered options in the input",
 		promptGuidelines: [
 			"Use ask_user_choice for a closed decision with a short list of named options.",
 			"Set multiple: true on ask_user_choice only when the options are not mutually exclusive.",
@@ -359,7 +437,7 @@ export function createAskUserChoiceTool(hints: FooterHints): ToolDefinition<type
 		executionMode: "sequential",
 		...askRenderers(),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			if (!seated("operator-questions", "overlay")) {
+			if (!seated("operator-questions", "input")) {
 				return {
 					content: [
 						{
@@ -387,8 +465,8 @@ export function createAskUserQuestionTool(hints: FooterHints): ToolDefinition<ty
 		name: "ask_user_question",
 		label: "Ask User Question",
 		description:
-			"Ask the operator an open question and collect a free-text answer from the overlay. Refuses in print mode or when no TUI session is available, and never launches a child session.",
-		promptSnippet: "Ask the operator an open question in the overlay",
+			"Ask the operator an open question and collect a free-text answer in the input. Refuses in print mode or when no TUI session is available, and never launches a child session.",
+		promptSnippet: "Ask the operator an open question in the input",
 		promptGuidelines: [
 			"Use ask_user_question for an open question with no fixed set of options.",
 			"ask_user_question never launches a child session and never invents an answer when the operator dismisses or is unavailable.",
@@ -397,7 +475,7 @@ export function createAskUserQuestionTool(hints: FooterHints): ToolDefinition<ty
 		executionMode: "sequential",
 		...askRenderers(),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			if (!seated("operator-questions", "overlay")) {
+			if (!seated("operator-questions", "input")) {
 				return {
 					content: [
 						{
@@ -417,7 +495,7 @@ export function createAskUserQuestionTool(hints: FooterHints): ToolDefinition<ty
 }
 
 export function syncAskUserTools(pi: ExtensionAPI, hints: FooterHints) {
-	const on = seated("operator-questions", "overlay");
+	const on = seated("operator-questions", "input");
 	offerTool(pi, createAskUserChoiceTool(hints), on);
 	offerTool(pi, createAskUserQuestionTool(hints), on);
 }

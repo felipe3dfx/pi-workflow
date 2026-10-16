@@ -1,0 +1,681 @@
+<title>Pregunta del operador</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:ital,wght@0,400;0,700;1,400&display=swap">
+<style>
+/* Layout: one column, controls above a simulated Pi terminal, notes and live state below. Terminal colors come from themes/pi-workflow.json. */
+:root {
+  color-scheme: dark;
+  --page: #18181b;
+  --panel: #1f1f23;
+  --rule: #2e2e34;
+  --ink: #e1e1e1;
+  --soft: #a3a3ab;
+  --accent: #bb9af7;
+  --term-bg: #141414;
+  --t-text: #c8c8c8;
+  --t-bright: #e1e1e1;
+  --t-muted: #787878;
+  --t-dim: #6c6c6c;
+  --t-thought: #9c9b9b;
+  --t-olive: #5e7543;
+  --t-edge: #323237;
+  --t-edge-active: #505058;
+  --t-block: #242424;
+  --t-selected: #363636;
+  --t-blue: #7aa2f7;
+  --t-warn: #e0af68;
+  --sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+body { background: var(--page); color: var(--ink); font: 15px/1.55 var(--sans); }
+.wrap { max-width: 1440px; margin: 0 auto; padding-block: 28px 48px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 20px; }
+.eyebrow { margin: 0; color: var(--soft); font: 500 12px/1.4 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
+h1 { margin: 4px 0 6px; font: 600 clamp(22px, 3vw, 30px)/1.2 var(--sans); text-wrap: balance; }
+.lead { margin: 0; max-width: 72ch; color: var(--soft); }
+.controls { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: end; }
+.group { display: grid; gap: 6px; }
+.group > span { color: var(--soft); font: 500 11px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
+.seg { display: flex; flex-wrap: wrap; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
+.seg button, .reset, .pad button { font: 500 13px/1 var(--sans); color: var(--ink); background: var(--panel); border: 0; padding: 9px 12px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--rule); }
+.seg button[aria-pressed="true"] { background: #2b2633; color: var(--accent); }
+.reset { border: 1px solid var(--rule); border-radius: 6px; }
+button:focus-visible, .term:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.stage { overflow-x: auto; border: 1px solid var(--rule); border-radius: 8px; background: var(--term-bg); }
+.term {
+  --cols: 200;
+  width: max-content; padding: 10px 0; background: var(--term-bg); color: var(--t-text);
+  font-family: var(--mono); line-height: 1.22; white-space: pre; cursor: text;
+  font-size: clamp(7px, calc((min(100vw, 1440px) - 40px) / (var(--cols) * 0.6)), 14px);
+}
+.term .ln { height: 1.22em; }
+.focus-hint { margin: 0; color: var(--soft); font-size: 13px; }
+.focus-hint kbd, .keys kbd { font: 500 12px var(--mono); color: var(--ink); background: var(--panel); border: 1px solid var(--rule); border-radius: 4px; padding: 1px 5px; }
+.pad { display: flex; flex-wrap: wrap; gap: 6px; }
+.pad button { border: 1px solid var(--rule); border-radius: 5px; font-family: var(--mono); font-size: 12px; padding: 7px 10px; }
+.below { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 20px; }
+@media (max-width: 860px) { .below { grid-template-columns: minmax(0, 1fr); } }
+.card { background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 16px 18px; min-width: 0; }
+.card h2 { margin: 0 0 8px; font: 600 15px/1.3 var(--sans); }
+.card p, .card li { color: var(--soft); max-width: 70ch; }
+.card ul { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 4px; }
+.card strong { color: var(--ink); font-weight: 500; }
+.verdict { display: inline-block; font: 500 11px/1 var(--mono); letter-spacing: 0.04em; text-transform: uppercase; padding: 4px 6px; border-radius: 4px; margin-bottom: 8px; }
+.verdict.base { background: #3a2a2e; color: #f7768e; }
+.verdict.pick { background: #2b2633; color: var(--accent); }
+.verdict.min { background: #2e2c22; color: var(--t-warn); }
+pre.state { margin: 0; overflow-x: auto; font: 12px/1.5 var(--mono); color: var(--t-text); }
+.note-line { min-height: 1.5em; margin: 8px 0 0; font: 13px var(--mono); color: var(--t-warn); }
+.text { color: var(--t-text); } .bright { color: var(--t-bright); } .muted { color: var(--t-muted); } .dim { color: var(--t-dim); }
+.thought { color: var(--t-thought); font-style: italic; } .olive { color: var(--t-olive); } .blue { color: var(--t-blue); }
+.edge { color: var(--t-edge); } .edgeA { color: var(--t-edge-active); }
+.b { font-weight: 700; }
+.bg-block { background: var(--t-block); } .bg-sel { background: var(--t-selected); }
+.cursor { background: var(--t-text); color: var(--term-bg); }
+@media (prefers-reduced-motion: no-preference) { .term { transition: font-size 120ms ease; } }
+</style>
+
+<main class="wrap">
+  <header>
+    <p class="eyebrow">pi-workflow · prototipo desechable · extensions/ask-user-panel.ts</p>
+    <h1>La pregunta en el lugar del input</h1>
+    <p class="lead">Compara cómo se ve y se opera la pregunta del operador. "Hoy" reproduce el overlay actual; V1, V2 y V3 ocupan el lugar del input a todo el ancho. Haz clic en la terminal y responde con el teclado.</p>
+  </header>
+
+  <div class="controls">
+    <div class="group"><span>Variante</span><div class="seg" id="variant"></div></div>
+    <div class="group"><span>Caso</span><div class="seg" id="case"></div></div>
+    <div class="group"><span>Ancho</span><div class="seg" id="width"></div></div>
+    <button class="reset" id="reset" type="button">Reiniciar</button>
+  </div>
+
+  <div class="stage"><div class="term" id="term" role="application" aria-label="Terminal simulada de Pi"></div></div>
+
+  <p class="focus-hint" id="focusHint">Teclas: <kbd>↑</kbd> <kbd>↓</kbd> <kbd>1–9</kbd> <kbd>Enter</kbd> <kbd>Space</kbd> <kbd>z</kbd> <kbd>Esc</kbd> <kbd>Shift+X</kbd> y texto libre. En el teléfono, usa los botones:</p>
+  <div class="pad" id="pad"></div>
+
+  <div class="below">
+    <section class="card" id="notes"></section>
+    <section class="card">
+      <h2>Estado</h2>
+      <pre class="state" id="state"></pre>
+      <p class="note-line" id="note"></p>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>Qué mirar</h2>
+    <ul>
+      <li><strong>Ancho 200 con "Hoy":</strong> el overlay de 80 columnas queda centrado y tapa las últimas líneas del transcript.</li>
+      <li><strong>Caso "Muchas opciones":</strong> en V1, V2 y V3 el panel no pasa de media pantalla; la lista hace scroll con <code>↑ n more</code> / <code>↓ n more</code>.</li>
+      <li><strong>Responde:</strong> el panel se cierra, vuelve el input y el transcript muestra <code>◆ Asked … ↳ respuesta</code>, el mismo renderer que hoy.</li>
+      <li><strong>V2 con texto:</strong> escribe <code>7 días</code> en el caso única. El 7 no existe como opción, así que empieza texto libre y el menú se atenúa.</li>
+    </ul>
+  </section>
+</main>
+
+<script>
+const VARIANTS = [
+  { key: "hoy", label: "Hoy" },
+  { key: "v1", label: "V1 · input en modo pregunta" },
+  { key: "v2", label: "V2 · menú sobre el input" },
+  { key: "v3", label: "V3 · estilo actual acoplado" },
+];
+const CASES = {
+  single: {
+    label: "Única",
+    multiple: false,
+    question: "¿Dónde debe aparecer la pregunta del operador cuando la pantalla es ancha?",
+    options: [
+      { label: "En lugar del input", description: "El input se convierte en la pregunta y el transcript queda arriba" },
+      { label: "Overlay a todo el ancho", description: "Sigue flotando, alineado con los márgenes del shell" },
+      { label: "Encima del input", description: "El editor queda visible pero inactivo mientras respondes" },
+      { label: "Dejarlo como está", description: "Overlay de 80 columnas centrado abajo" },
+    ],
+  },
+  multiple: {
+    label: "Múltiple",
+    multiple: true,
+    question: "¿Qué casos debe cubrir el prototipo?",
+    options: [
+      { label: "Selección única", description: "Una opción entre varias" },
+      { label: "Selección múltiple", description: "Varias opciones marcadas con Space" },
+      { label: "Pregunta abierta", description: "Solo texto libre" },
+      { label: "Muchas opciones", description: "Más filas de las que caben en media pantalla" },
+    ],
+  },
+  open: {
+    label: "Abierta",
+    multiple: false,
+    question: "¿Cómo llamamos en el glosario al lugar donde escribe el operador?",
+    options: [],
+  },
+  many: {
+    label: "Muchas opciones",
+    multiple: false,
+    question: "¿Qué archivo revisamos primero antes de mover el panel?",
+    options: [
+      ["extensions/ask-user-panel.ts", "El panel de preguntas y sus teclas"],
+      ["extensions/chrome-editor.ts", "El marco redondeado del input"],
+      ["extensions/chrome.ts", "El footer y las pistas de teclado"],
+      ["extensions/shell.ts", "Dónde se asienta cada capacidad"],
+      ["extensions/children-view.ts", "La vista de hijos que el panel cierra"],
+      ["extensions/child-result-card.ts", "Las tarjetas del stream"],
+      ["extensions/compact-tools.ts", "El componente hidden compartido"],
+      ["extensions/tool-offer.ts", "Cómo se ofrecen las tools"],
+      ["extensions/terminal-safe-text.ts", "Limpieza de texto de terminal"],
+      ["extensions/child-sessions.ts", "Preguntas de hijos al padre"],
+      ["extensions/pi-workflow.ts", "El punto de entrada de la extensión"],
+      ["test/ask-user-panel.test.mjs", "Las pruebas del panel"],
+      ["GLOSSARY.md", "Screen place y Operator question"],
+      ["themes/pi-workflow.json", "Los colores del tema"],
+    ].map(([label, description]) => ({ label, description })),
+  },
+};
+const WIDTHS = [
+  { key: 200, label: "200 columnas", rows: 40 },
+  { key: 80, label: "80 columnas", rows: 34 },
+];
+const NOTES = {
+  hoy: ["base", "Referencia", "Overlay con <code>anchor: \"bottom-center\"</code> y sin <code>width</code>, así que Pi usa <code>min(80, ancho)</code>. A 200 columnas flota en el centro, tapa el transcript y queda encima del input y del footer. Usa su propio lenguaje: barra <code>┃</code>, fondo y radios <code>(●)</code>.", ["A 80 columnas casi no se nota el problema; a 200 es evidente.", "El fondo y los radios no aparecen en ningún otro lugar del shell."]],
+  v1: ["pick", "Opción", "El input se transforma: mismo marco redondeado, borde activo y etiqueta <code>question</code> en el borde inferior. La pregunta, las opciones y el texto libre viven dentro del recuadro. Conserva <code>z</code> y el modo edición de hoy.", ["Lectura inmediata: el operador mira donde siempre escribe.", "El recuadro crece; con muchas opciones el tope a media altura lo contiene.", "El texto libre sigue necesitando <code>z</code> o bajar a la última fila."]],
+  v2: ["pick", "Recomendada", "La pregunta y las opciones aparecen encima del recuadro, igual que el menú de <code>/comandos</code>. El recuadro queda como campo de texto libre con el mismo marco de siempre. Sin tecla <code>z</code>: escribir ya es responder.", ["Reutiliza dos patrones que el operador ya conoce: menú arriba, input abajo.", "Con el recuadro vacío, los dígitos eligen; al escribir otra cosa, todo es texto y el menú se atenúa.", "<code>◆</code> en la pregunta enlaza con el <code>◆ Asked</code> que queda en el transcript."]],
+  v3: ["min", "Línea base", "El estilo actual (<code>┃</code>, fondo y radios) acoplado en el lugar del input a todo el ancho. Corrige la posición pero no la coherencia visual.", ["Es el cambio más pequeño en código.", "Sigue viéndose como un componente ajeno al shell."]],
+};
+
+const st = { variant: "v2", caseKey: "single", cols: 200 };
+let s;
+
+function resetInteraction() {
+  const cs = CASES[st.caseKey];
+  s = { index: 0, marked: new Set(), text: "", mode: cs.options.length === 0 ? "edit" : "browse", answer: null, note: "" };
+  if (st.variant === "v2") s.mode = "browse";
+}
+
+const C = (t, c = "") => [...t].map((ch) => ({ ch, c }));
+const cat = (...parts) => parts.flat();
+const pad = (cells, w, c = "") => (cells.length >= w ? cells.slice(0, Math.max(0, w)) : cells.concat(C(" ".repeat(w - cells.length), c)));
+const cut = (cells, w) => (cells.length <= w ? cells : w <= 0 ? [] : cells.slice(0, w - 1).concat(C("…", cells[w - 2] ? cells[w - 2].c : "")));
+const withBg = (cells, bg) => cells.map((x) => ({ ch: x.ch, c: `${x.c} ${bg}`.trim() }));
+const cursor = () => [{ ch: " ", c: "cursor" }];
+
+function wrap(text, w) {
+  const out = [];
+  let line = "";
+  for (const word of text.split(/\s+/)) {
+    if (!word) continue;
+    let rest = word;
+    while ([...rest].length > w) {
+      if (line) { out.push(line); line = ""; }
+      out.push([...rest].slice(0, w).join(""));
+      rest = [...rest].slice(w).join("");
+    }
+    if (!line) line = rest;
+    else if ([...line].length + 1 + [...rest].length <= w) line += ` ${rest}`;
+    else { out.push(line); line = rest; }
+  }
+  if (line) out.push(line);
+  return out.length ? out : [""];
+}
+
+function windowFor(n, index, cap) {
+  if (n <= cap) return [0, n];
+  const start = Math.min(Math.max(0, index - Math.floor(cap / 2)), n - cap);
+  return [start, start + cap];
+}
+
+function answerText(a) {
+  if (!a) return "";
+  if (a.status === "refused") return "Dismissed";
+  if (a.kind === "option") return a.label;
+  if (a.kind === "text") return a.text;
+  return [...a.labels, ...(a.text ? [a.text] : [])].join(", ");
+}
+
+const TRANSCRIPT = [
+  { k: "user", t: "Revisa por qué el resultado del hijo no se ve en el stream cuando la sesión está en modo compacto." },
+  { k: "tool", name: "read", arg: "extensions/child-result-card.ts" },
+  { k: "tool", name: "grep", arg: "seated(\"child-session\" extensions/" },
+  { k: "text", t: "La tarjeta solo se pinta cuando child-session está asentada en el message stream; en otro caso cae al texto plano. Ya quedó corregido en la rama 191." },
+  { k: "user", t: "Quiero mejorar la extensión de preguntas: en pantalla grande flota en el centro y tapa el transcript. Además no se ve coherente con el resto de Pi." },
+  { k: "think", t: "Thought for 3.2s" },
+  { k: "tool", name: "read", arg: "extensions/ask-user-panel.ts" },
+  { k: "tool", name: "grep", arg: "marginFor extensions/" },
+  { k: "tool", name: "read", arg: "extensions/chrome-editor.ts" },
+  { k: "text", t: "El panel abre con overlay: true y anchor bottom-center, sin width. Pi usa entonces min(80, ancho): en 200 columnas quedan 60 columnas vacías a cada lado y el transcript queda detrás." },
+  { k: "text", t: "Además, el panel usa la barra ┃ y un fondo propio, mientras que el input del shell usa un marco redondeado y el menú de comandos marca la fila activa con ❯." },
+  { k: "tool", name: "read", arg: "prototype/child-session-operator/approved-questions-v1.md" },
+  { k: "text", t: "El diseño aprobado en septiembre ya decía que el panel va en lugar del input y que el transcript queda arriba. Antes de tocar el código necesito una decisión tuya." },
+];
+
+function transcriptLines(cols) {
+  const w = cols - 2;
+  const lines = [];
+  const items = s.answer ? [...TRANSCRIPT, { k: "asked" }] : TRANSCRIPT;
+  for (const item of items) {
+    if (item.k === "user") {
+      lines.push([]);
+      lines.push(cat(C(" "), withBg(C(" ".repeat(w)), "bg-block")));
+      for (const l of wrap(item.t, w - 2)) lines.push(cat(C(" "), withBg(pad(cat(C(" "), C(l, "bright")), w), "bg-block")));
+      lines.push(cat(C(" "), withBg(C(" ".repeat(w)), "bg-block")));
+      lines.push([]);
+    } else if (item.k === "think") {
+      lines.push(cat(C(" "), C("◆ ", "olive"), C(item.t, "thought")));
+    } else if (item.k === "tool") {
+      lines.push(cat(C(" "), C("◆ ", "olive"), C(item.name, "text b"), C("  "), C(item.arg, "muted")));
+    } else if (item.k === "text") {
+      lines.push([]);
+      for (const l of wrap(item.t, w)) lines.push(cat(C(" "), C(l, "text")));
+      lines.push([]);
+    } else if (item.k === "asked") {
+      const q = CASES[st.caseKey].question;
+      lines.push(cat(C(" "), C("◆ ", "olive"), C("Asked", "muted b"), C(" "), cut(C(q, "dim"), w - 8)));
+      const a = answerText(s.answer);
+      if (a) lines.push(cat(C("   "), cut(C(`↳ ${a}`, "dim"), w - 2)));
+      lines.push([]);
+    }
+  }
+  return lines;
+}
+
+function editorLines(cols, focused) {
+  const W = cols - 2;
+  const f = focused ? "edgeA" : "edge";
+  const inner = W - 5;
+  const caption = " opus-5.5 · high ";
+  return [
+    cat(C(" "), C(`╭${"─".repeat(W - 2)}╮`, f)),
+    cat(C(" "), C("│", f), C(" "), C("❯ ", "text"), pad(cat(cursor(), C("What should we build together?", "dim")), inner), C("│", f)),
+    cat(C(" "), C(`╰${"─".repeat(W - 3 - caption.length)}`, f), C(caption, "dim"), C("─╯", f)),
+  ];
+}
+
+function boxLines(cols, body, caption) {
+  const W = cols - 2;
+  const f = "edgeA";
+  const inner = W - 5;
+  return [
+    cat(C(" "), C(`╭${"─".repeat(W - 2)}╮`, f)),
+    ...body.map((row, i) => cat(C(" "), C("│", f), C(" "), i === 0 ? C("❯ ", "text") : C("  "), pad(cut(row, inner), inner), C("│", f))),
+    cat(C(" "), C(`╰${"─".repeat(W - 3 - caption.length)}`, f), C(caption, "dim"), C("─╯", f)),
+  ];
+}
+
+function statusLine(cols) {
+  const left = C(" ~/Documents/repos/pi-workflow (277)", "muted");
+  const right = C("↑66k ↓4.1k · 132k/1M  opus-5.5 · high ", "dim");
+  return cat(left, C(" ".repeat(Math.max(1, cols - left.length - right.length))), right);
+}
+
+function hintsLine(cols, hints) {
+  const cells = [C(" ")];
+  hints.forEach(([k, a], i) => {
+    if (i) cells.push(C("  "));
+    cells.push(C(k, "text"), C(" ", ""), C(a, "dim"));
+  });
+  return cut(cat(...cells), cols);
+}
+
+function legacyHints(cs) {
+  const multiple = cs.multiple;
+  const n = cs.options.length;
+  const marked = s.marked.size > 0;
+  if (s.mode === "edit") return [["Enter", multiple ? (marked ? "submit marked" : "select at least one") : "submit"], ["↑/↓", "leave & move"], ["Esc", "back to browse"]];
+  const enter = s.index === n ? "edit free text" : multiple ? (marked ? "submit marked" : "select at least one") : "select";
+  return [["↑/↓", "move"], ...(multiple ? [["Space", "mark"]] : []), ["Enter", enter], ["z", "edit free text"], ["Esc", "panel stays open"], ["Shift+X", "dismiss"]];
+}
+
+function legacyPanel(width, cap) {
+  const cs = CASES[st.caseKey];
+  const opts = cs.options;
+  const n = opts.length;
+  const multiple = cs.multiple;
+  const m = width >= 16 ? 1 : 0;
+  const bodyW = width - 2 * m - 1;
+  const cw = bodyW - 5;
+  const block = (content, sel) => cat(C(" ".repeat(m)), C("┃", "text"), withBg(pad(cut(cat(C("   "), content), bodyW), bodyW), sel ? "bg-sel" : "bg-block"), C(" ".repeat(m)));
+  const nw = String(Math.max(n, 1)).length;
+  const prefixW = nw + 5;
+  const labelRoom = Math.max(0, cw - prefixW);
+  const hasDesc = opts.some((o) => o.description);
+  const labelW = Math.min(Math.max(0, ...opts.map((o) => o.label.length)), hasDesc ? Math.floor(0.45 * labelRoom) : labelRoom);
+  const descW = cw - prefixW - labelW - 2;
+  const lines = [block([]), ...wrap(cs.question, cw).map((l) => block(C(l, "text b"))), block([])];
+  const [a, b] = windowFor(n, Math.min(s.index, n - 1), cap);
+  if (a > 0) lines.push(block(C(`${" ".repeat(prefixW)}↑ ${a} more`, "dim")));
+  for (let i = a; i < b; i++) {
+    const o = opts[i];
+    const active = i === s.index;
+    const on = multiple ? s.marked.has(i) : active;
+    const glyph = multiple ? (s.marked.has(i) ? "[x]" : "[ ]") : active ? "(●)" : "(○)";
+    const head = cat(C(String(i + 1).padStart(nw), "text"), C(" "), C(glyph, on ? "text b" : "dim"), C(" "));
+    const label = pad(cut(C(o.label, active ? "text b" : "text"), labelW), labelW);
+    const tail = o.description && descW >= 4 ? cat(C("  "), cut(C(o.description, "dim"), descW)) : [];
+    lines.push(block(cat(head, label, tail), active));
+  }
+  if (b < n) lines.push(block(C(`${" ".repeat(prefixW)}↓ ${n - b} more`, "dim")));
+  const active = s.index === n;
+  const editing = active && s.mode === "edit";
+  const prefix = cat(C("z".padStart(nw), "text"), C(" "), C(active ? "(●)" : "(○)", active && !multiple ? "text b" : "dim"), C(" "));
+  const row = editing ? cat(C(s.text, "text"), cursor()) : s.text ? C(s.text, "text") : C("Type your answer", "dim");
+  lines.push(block(cat(prefix, row), active));
+  lines.push(block([]));
+  return { lines, hints: legacyHints(cs) };
+}
+
+function v1Panel(cols, cap) {
+  const cs = CASES[st.caseKey];
+  const opts = cs.options;
+  const n = opts.length;
+  const multiple = cs.multiple;
+  const W = cols - 2;
+  const cw = W - 4;
+  const f = "edgeA";
+  const row = (content) => cat(C(" "), C("│ ", f), pad(cut(content, cw), cw), C(" │", f));
+  const nw = String(Math.max(n, 1)).length;
+  const prefixW = 2 + (multiple ? 4 : 0) + nw + 2;
+  const labelRoom = Math.max(0, cw - prefixW);
+  const labelW = Math.min(Math.max(0, ...opts.map((o) => o.label.length)), Math.floor(0.45 * labelRoom));
+  const descW = cw - prefixW - labelW - 2;
+  const caption = " question ";
+  const lines = [cat(C(" "), C(`╭${"─".repeat(W - 2)}╮`, f))];
+  for (const l of wrap(cs.question, cw)) lines.push(row(C(l, "text b")));
+  lines.push(row([]));
+  const [a, b] = windowFor(n, Math.min(s.index, n - 1), cap);
+  if (a > 0) lines.push(row(C(`${" ".repeat(prefixW)}↑ ${a} more`, "dim")));
+  for (let i = a; i < b; i++) {
+    const o = opts[i];
+    const active = i === s.index;
+    const mark = multiple ? C(s.marked.has(i) ? "[x] " : "[ ] ", s.marked.has(i) ? "text b" : "dim") : [];
+    const head = cat(active ? C("❯ ", "text b") : C("  "), mark, C(String(i + 1).padStart(nw), active ? "text b" : "muted"), C("  "));
+    const label = pad(cut(C(o.label, active ? "text b" : "text"), labelW), labelW);
+    const tail = o.description && descW >= 4 ? cat(C("  "), cut(C(o.description, "dim"), descW)) : [];
+    lines.push(row(cat(head, label, tail)));
+  }
+  if (b < n) lines.push(row(C(`${" ".repeat(prefixW)}↓ ${n - b} more`, "dim")));
+  const active = s.index === n;
+  const editing = active && s.mode === "edit";
+  if (n > 0) lines.push(row([]));
+  const head = cat(active ? C("❯ ", "text b") : C("  "), multiple ? C("    ") : [], n > 0 ? C("z".padStart(nw), active ? "text b" : "muted") : [], n > 0 ? C("  ") : []);
+  const free = editing ? cat(C(s.text, "text"), cursor()) : s.text ? C(s.text, "text") : C("Type your answer", "dim");
+  lines.push(row(cat(head, free)));
+  lines.push(cat(C(" "), C(`╰${"─".repeat(W - 3 - caption.length)}`, f), C(caption, "dim"), C("─╯", f)));
+  return { lines, hints: legacyHints(cs) };
+}
+
+function v2Hints(cs) {
+  const n = cs.options.length;
+  if (n === 0) return [["Enter", "send"], ["Esc", "panel stays open"], ["Shift+X", "dismiss"]];
+  if (s.text) return [["Enter", cs.multiple ? (s.marked.size ? "submit marked + note" : "select at least one") : "send text"], ["Backspace", "edit"], ["Shift+X", "dismiss"]];
+  if (cs.multiple) return [["↑/↓", "move"], ["Space", "mark"], ["Enter", s.marked.size ? "submit marked" : "select at least one"], ["type", "add a note"], ["Shift+X", "dismiss"]];
+  return [["↑/↓", "move"], [`1–${n}`, "pick"], ["Enter", "select"], ["type", "answer in your words"], ["Shift+X", "dismiss"]];
+}
+
+function v2Panel(cols, cap) {
+  const cs = CASES[st.caseKey];
+  const opts = cs.options;
+  const n = opts.length;
+  const multiple = cs.multiple;
+  const W = cols - 2;
+  const typing = s.text.length > 0;
+  const nw = String(Math.max(n, 1)).length;
+  const prefixW = 2 + 2 + (multiple ? 4 : 0) + nw + 2;
+  const room = W - prefixW;
+  const labelW = Math.min(Math.max(0, ...opts.map((o) => o.label.length)), Math.floor(0.45 * room));
+  const descW = W - prefixW - labelW - 2;
+  const lines = [];
+  wrap(cs.question, W - 6).forEach((l, i) => {
+    lines.push(cat(C(" "), C("  "), i === 0 ? C("◆ ", "olive") : C("  "), C(l, "text b")));
+  });
+  if (n > 0) lines.push([]);
+  const [a, b] = windowFor(n, s.index, cap);
+  if (a > 0) lines.push(cat(C(" "), C(`${" ".repeat(prefixW)}↑ ${a} more`, "dim")));
+  for (let i = a; i < b; i++) {
+    const o = opts[i];
+    const active = i === s.index && !typing;
+    const marked = s.marked.has(i);
+    const base = typing ? "dim" : active ? "text b" : "text";
+    const mark = multiple ? C(marked ? "[x] " : "[ ] ", marked ? "text b" : "dim") : [];
+    const head = cat(C("  "), active ? C("❯ ", "text b") : C("  "), mark, C(String(i + 1).padStart(nw), typing ? "dim" : active ? "text b" : "muted"), C("  "));
+    const label = pad(cut(C(o.label, base), labelW), labelW);
+    const tail = o.description && descW >= 4 ? cat(C("  "), cut(C(o.description, "dim"), descW)) : [];
+    lines.push(cat(C(" "), head, label, tail));
+  }
+  if (b < n) lines.push(cat(C(" "), C(`${" ".repeat(prefixW)}↓ ${n - b} more`, "dim")));
+  const placeholder = n === 0 ? "Type your answer" : multiple ? "Space marks · type to add a note" : `Type an answer, or pick 1–${n}`;
+  const body = typing ? cat(C(s.text, "text"), cursor()) : cat(cursor(), C(placeholder, "dim"));
+  lines.push(...boxLines(cols, [body], " question "));
+  return { lines, hints: v2Hints(cs) };
+}
+
+function panelFixed(cols) {
+  const cs = CASES[st.caseKey];
+  const q = wrap(cs.question, cols - 8).length;
+  if (st.variant === "v2") return q + 1 + 3 + 2;
+  return q + 6;
+}
+
+function screen() {
+  const width = WIDTHS.find((w) => w.key === st.cols);
+  const cols = width.key;
+  const rows = width.rows;
+  const cap = Math.max(3, Math.floor(rows / 2) - panelFixed(cols));
+  const status = statusLine(cols);
+  let bottom;
+  let hints = null;
+  if (s.answer || st.variant === "hoy") {
+    bottom = editorLines(cols, s.answer !== null);
+  } else {
+    const panel = st.variant === "v1" ? v1Panel(cols, cap) : st.variant === "v2" ? v2Panel(cols, cap) : legacyPanel(cols, cap);
+    bottom = panel.lines;
+    hints = panel.hints;
+  }
+  let overlay = null;
+  if (st.variant === "hoy" && !s.answer) {
+    const ow = Math.min(80, cols);
+    const panel = legacyPanel(ow, Infinity);
+    overlay = { lines: panel.lines, col: Math.floor((cols - ow) / 2) };
+    hints = panel.hints;
+  }
+  const footer = hints ? [hintsLine(cols, hints), status] : [status];
+  const room = rows - bottom.length - footer.length;
+  const tl = transcriptLines(cols);
+  const shown = tl.slice(Math.max(0, tl.length - room));
+  while (shown.length < room) shown.unshift([]);
+  const lines = [...shown, ...bottom, ...footer].map((l) => pad(l, cols));
+  if (overlay) {
+    const top = rows - overlay.lines.length;
+    overlay.lines.forEach((ol, i) => {
+      const r = top + i;
+      if (r < 0) return;
+      lines[r] = cat(lines[r].slice(0, overlay.col), ol, lines[r].slice(overlay.col + ol.length));
+    });
+  }
+  return lines;
+}
+
+const esc = (t) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+function toHtml(line) {
+  let out = "";
+  let cls = null;
+  let buf = "";
+  for (const cell of line) {
+    if (cell.c !== cls) {
+      if (buf) out += cls ? `<span class="${cls}">${esc(buf)}</span>` : esc(buf);
+      cls = cell.c;
+      buf = "";
+    }
+    buf += cell.ch;
+  }
+  if (buf) out += cls ? `<span class="${cls}">${esc(buf)}</span>` : esc(buf);
+  return `<div class="ln">${out}</div>`;
+}
+
+function finish(answer) {
+  s.answer = answer;
+  s.note = "";
+}
+function submitCurrent() {
+  const o = CASES[st.caseKey].options[s.index];
+  finish({ status: "answered", kind: "option", index: s.index, label: o.label });
+}
+function submitMarked() {
+  const opts = CASES[st.caseKey].options;
+  const indices = [...s.marked].sort((x, y) => x - y);
+  if (!indices.length) { s.note = "Select at least one option."; return; }
+  const text = s.text.trim();
+  finish({ status: "answered", kind: "options", indices, labels: indices.map((i) => opts[i].label), ...(text ? { text } : {}) });
+}
+function dismiss() {
+  finish({ status: "refused", reason: "The operator dismissed the question with Shift+X." });
+}
+function toggle(i) {
+  if (s.marked.has(i)) s.marked.delete(i);
+  else s.marked.add(i);
+}
+
+function legacyKey(k, ch) {
+  const cs = CASES[st.caseKey];
+  const n = cs.options.length;
+  const rc = n + 1;
+  if (s.mode === "edit") {
+    if (k === "up") { s.mode = "browse"; s.index = (s.index - 1 + rc) % rc; return; }
+    if (k === "down") { s.mode = "browse"; s.index = (s.index + 1) % rc; return; }
+    if (k === "esc") { s.mode = "browse"; return; }
+    if (k === "enter") {
+      if (cs.multiple) submitMarked();
+      else if (s.text.trim()) finish({ status: "answered", kind: "text", text: s.text });
+      return;
+    }
+    if (k === "back") { s.text = s.text.slice(0, -1); return; }
+    if (ch) s.text += ch;
+    return;
+  }
+  if (k === "up") { s.index = (s.index - 1 + rc) % rc; return; }
+  if (k === "down") { s.index = (s.index + 1) % rc; return; }
+  if (k === "shiftX") { dismiss(); return; }
+  if (k === "esc") { s.note = "Esc: the panel stays open."; return; }
+  if (cs.multiple && k === "space" && s.index < n) { toggle(s.index); return; }
+  if (k === "enter") {
+    if (s.index === n) { s.mode = "edit"; return; }
+    if (cs.multiple) submitMarked();
+    else submitCurrent();
+    return;
+  }
+  if (!ch) return;
+  const d = Number.parseInt(ch, 10);
+  if (!Number.isNaN(d) && d >= 1 && d <= n) { s.index = d - 1; return; }
+  if (ch === "z" || ch === "Z") { s.index = n; s.mode = "edit"; }
+}
+
+function v2Key(k, ch) {
+  const cs = CASES[st.caseKey];
+  const n = cs.options.length;
+  if (k === "shiftX") { dismiss(); return; }
+  if (k === "esc") { s.note = "Esc: the panel stays open."; return; }
+  if (s.text) {
+    if (k === "back") { s.text = s.text.slice(0, -1); return; }
+    if (k === "enter") {
+      if (cs.multiple) submitMarked();
+      else finish({ status: "answered", kind: "text", text: s.text });
+      return;
+    }
+    if (k === "space") { s.text += " "; return; }
+    if (ch) s.text += ch;
+    return;
+  }
+  if (k === "up" && n) { s.index = (s.index - 1 + n) % n; return; }
+  if (k === "down" && n) { s.index = (s.index + 1) % n; return; }
+  if (k === "space") { if (cs.multiple && n) toggle(s.index); return; }
+  if (k === "enter") {
+    if (!n) return;
+    if (cs.multiple) submitMarked();
+    else submitCurrent();
+    return;
+  }
+  if (!ch) return;
+  const d = Number.parseInt(ch, 10);
+  if (!Number.isNaN(d) && d >= 1 && d <= n) { s.index = d - 1; return; }
+  s.text += ch;
+}
+
+function press(k, ch) {
+  if (s.answer) { s.note = "Answered. Press Reiniciar to ask again."; render(); return; }
+  s.note = "";
+  if (st.variant === "v2") v2Key(k, ch);
+  else legacyKey(k, ch);
+  render();
+}
+
+const term = document.getElementById("term");
+term.tabIndex = 0;
+term.addEventListener("keydown", (e) => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const map = { ArrowUp: "up", ArrowDown: "down", Enter: "enter", Escape: "esc", Backspace: "back", " ": "space" };
+  if (e.key === "X" && e.shiftKey) { e.preventDefault(); press("shiftX"); return; }
+  if (map[e.key]) { e.preventDefault(); press(map[e.key]); return; }
+  if (e.key.length === 1) { e.preventDefault(); press("char", e.key); }
+});
+term.addEventListener("click", () => term.focus());
+
+const PAD = [["↑", "up"], ["↓", "down"], ["1", "char", "1"], ["2", "char", "2"], ["Space", "space"], ["Enter", "enter"], ["z", "char", "z"], ["Esc", "esc"], ["Shift+X", "shiftX"], ["escribir \"7 días\"", "type", "7 días"]];
+const padEl = document.getElementById("pad");
+for (const [label, k, ch] of PAD) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.textContent = label;
+  b.addEventListener("click", () => {
+    if (k === "type") for (const c of ch) press(c === " " ? "space" : "char", c === " " ? undefined : c);
+    else press(k, ch);
+  });
+  padEl.appendChild(b);
+}
+
+function segmented(id, items, current, set) {
+  const el = document.getElementById(id);
+  el.innerHTML = "";
+  for (const item of items) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = item.label;
+    b.setAttribute("aria-pressed", String(item.key === current()));
+    b.addEventListener("click", () => { set(item.key); resetInteraction(); renderAll(); });
+    el.appendChild(b);
+  }
+}
+
+function renderControls() {
+  segmented("variant", VARIANTS, () => st.variant, (v) => { st.variant = v; try { location.hash = v; } catch {} });
+  segmented("case", Object.entries(CASES).map(([key, c]) => ({ key, label: c.label })), () => st.caseKey, (v) => { st.caseKey = v; });
+  segmented("width", WIDTHS, () => st.cols, (v) => { st.cols = v; });
+}
+
+function renderNotes() {
+  const [kind, tag, body, points] = NOTES[st.variant];
+  const v = VARIANTS.find((x) => x.key === st.variant);
+  document.getElementById("notes").innerHTML = `<span class="verdict ${kind}">${tag}</span><h2>${v.label}</h2><p>${body}</p><ul>${points.map((p) => `<li>${p}</li>`).join("")}</ul>`;
+}
+
+function render() {
+  term.style.setProperty("--cols", st.cols);
+  term.innerHTML = screen().map(toHtml).join("");
+  const view = { variant: st.variant, case: st.caseKey, cols: st.cols, mode: st.variant === "v2" ? (s.text ? "typing" : "menu") : s.mode, index: s.index, marked: [...s.marked].sort((a, b) => a - b), text: s.text };
+  document.getElementById("state").textContent = `${JSON.stringify(view, null, 2)}\n\nAskUserAnswer: ${s.answer ? JSON.stringify(s.answer, null, 2) : "(waiting)"}`;
+  document.getElementById("note").textContent = s.note;
+}
+
+function renderAll() {
+  renderControls();
+  renderNotes();
+  render();
+}
+
+document.getElementById("reset").addEventListener("click", () => { resetInteraction(); render(); term.focus(); });
+try {
+  const h = location.hash.slice(1);
+  if (VARIANTS.some((v) => v.key === h)) st.variant = h;
+} catch {}
+resetInteraction();
+renderAll();
+</script>

@@ -960,7 +960,7 @@ function clearedSelection() {
 
 function seatedNames() {
 	const names = new Set();
-	for (const place of ["header", "above-input", "overlay", "message-stream"]) {
+	for (const place of ["header", "above-input", "input", "overlay", "message-stream"]) {
 		for (const capability of occupants(place)) names.add(capability);
 	}
 	return [...names].sort();

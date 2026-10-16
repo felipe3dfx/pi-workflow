@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { initTheme } from "@earendil-works/pi-coding-agent";
-import { CURSOR_MARKER, KeybindingsManager, TUI_KEYBINDINGS, visibleWidth } from "@earendil-works/pi-tui";
+import { CURSOR_MARKER, KeybindingsManager, stripTerminalSequences, TUI_KEYBINDINGS, visibleWidth } from "@earendil-works/pi-tui";
 
 import {
 	createAskUserChoiceTool,
@@ -43,8 +43,12 @@ const UP = "\x1b[A";
 const DOWN = "\x1b[B";
 const SPACE = " ";
 
-function tuiContext() {
+function tuiContext(rows = 40, overlay = false) {
 	let component;
+	let customCalls = 0;
+	const widgets = new Map();
+	const notices = [];
+	const host = { terminal: { rows }, hasOverlay: () => overlay };
 	let resolveDone;
 	const donePromise = new Promise((resolve) => {
 		resolveDone = resolve;
@@ -54,9 +58,15 @@ function tuiContext() {
 		hasUI: true,
 		mode: "tui",
 		ui: {
+			setWidget: (key, factory) => {
+				if (factory) widgets.set(key, factory(host, fakeTheme));
+				else widgets.delete(key);
+			},
+			notify: (message, type) => notices.push({ message, type }),
 			custom: (factory, options) => {
+				customCalls++;
 				customOptions = options;
-				component = factory({}, fakeTheme, fakeKeybindings, (result) => resolveDone(result));
+				component = factory(host, fakeTheme, fakeKeybindings, (result) => resolveDone(result));
 				return donePromise;
 			},
 		},
@@ -65,8 +75,21 @@ function tuiContext() {
 	return {
 		ctx,
 		options: () => customOptions,
+		customCalls: () => customCalls,
+		widgets,
+		notices,
+		closeOverlay: () => {
+			overlay = false;
+		},
+		paint: () => {
+			for (const widget of widgets.values()) widget.render(80);
+		},
 		send: (data) => component.handleInput(data),
-		render: (width = 80) => component.render(width).map((line) => line.replace(/^ ?┃ {3}/, "").trimEnd()),
+		render: (width = 80) =>
+			component
+				.render(width)
+				.slice(1, -1)
+				.map((line) => line.replace(/^ ?│ /, "").replace(/ │$/, "").trimEnd()),
 		renderRaw: (width = 80) => component.render(width),
 	};
 }
@@ -90,7 +113,7 @@ test("a session with hasUI but no TUI mode refuses ask_user_question the same wa
 	assert.equal(result.details.status, "refused");
 });
 
-test("the operator question opens as a bottom overlay and closes the children view", async () => {
+test("the operator question takes over the input and closes the children view", async () => {
 	initTheme("dark", false);
 	const keys = new KeybindingsManager({
 		...TUI_KEYBINDINGS,
@@ -142,7 +165,7 @@ test("the operator question opens as a bottom overlay and closes the children vi
 		ctx,
 	);
 	assert.equal(closed, true);
-	assert.deepEqual(options(), { overlay: true, overlayOptions: { anchor: "bottom-center" } });
+	assert.equal(options(), undefined);
 	send("\r");
 	const result = await pending;
 	assert.equal(result.details.status, "answered");
@@ -274,7 +297,7 @@ test("render truncates every line to the requested width even with wide characte
 	await pending;
 });
 
-test("the panel has no waiting-count header: it opens on a blank block row before the question", async () => {
+test("the panel has no waiting-count header: it opens on the question inside the frame", async () => {
 	const tool = createAskUserChoiceTool(createFooterHints());
 	const { ctx, send, render } = tuiContext();
 	const pending = tool.execute(
@@ -285,16 +308,14 @@ test("the panel has no waiting-count header: it opens on a blank block row befor
 		ctx,
 	);
 	const lines = render(80);
-	assert.equal(lines[0], "");
-	assert.equal(lines[1], "Deploy now?");
-	assert.equal(lines[2], "");
+	assert.equal(lines[0], "Deploy now?");
+	assert.equal(lines[1], "");
 	assert.doesNotMatch(lines.join("\n"), /waiting|tokens/);
-	assert.equal(lines.at(-1), "");
 	send("X");
 	await pending;
 });
 
-test("options render numbered with a radio and their description, and z is the free-text row", async () => {
+test("options render numbered with ❯ on the active row and their description, and z is the free-text row", async () => {
 	const hints = createFooterHints();
 	const tool = createAskUserChoiceTool(hints);
 	const { ctx, send, render } = tuiContext();
@@ -312,10 +333,10 @@ test("options render numbered with a radio and their description, and z is the f
 		ctx,
 	);
 	const lines = render(80);
-	assert.equal(lines[3], "1 (●) Yes  Ship it");
-	assert.equal(lines[4], "2 (○) No");
-	assert.equal(lines[5], "z (○) Type your answer");
-	assert.equal(lines[6], "");
+	assert.equal(lines[2], "❯ 1  Yes  Ship it");
+	assert.equal(lines[3], "  2  No");
+	assert.equal(lines[4], "");
+	assert.equal(lines[5], "  z  Type your answer");
 	send(DOWN);
 	send(DOWN);
 	render(80);
@@ -336,7 +357,7 @@ test("the z row and its hint always render, even if a caller passes allowFreeTex
 		ctx,
 	);
 	const lines = render(80);
-	assert.ok(lines.some((line) => line.startsWith("z ")), "expected the free-text row to render");
+	assert.ok(lines.some((line) => line.startsWith("  z  ")), "expected the free-text row to render");
 	assert.ok(hints.get()?.some((hint) => hint.key === "z" && hint.action === "edit free text"));
 	send("X");
 	await pending;
@@ -434,7 +455,8 @@ test("the active free-text row scrolls to keep the cursor and the answer's end v
 	const longAnswer = "x".repeat(80);
 	for (const char of longAnswer) send(char);
 	const lines = render(30);
-	const freeTextLine = lines.find((line) => line.startsWith("z ("));
+	const freeTextLine = lines.at(-1);
+	assert.ok(freeTextLine.startsWith("❯ "));
 	assert.ok(freeTextLine.includes("\x1b[7m"), "expected an inverse-video cursor marker");
 	assert.ok(freeTextLine.includes(longAnswer.slice(-5)), "expected the tail of the long answer to stay visible");
 	send("\r");
@@ -583,10 +605,10 @@ test("the free-text row is only IME-focused while actively in edit mode", async 
 	const tool = createAskUserQuestionTool(createFooterHints());
 	const { ctx, send, render } = tuiContext();
 	const pending = tool.execute("call-r15-focus", { question: "Favorite instrument?" }, undefined, undefined, ctx);
-	const editLine = render(80).find((line) => line.startsWith("z ("));
+	const editLine = render(80).at(-1);
 	assert.ok(editLine.includes(CURSOR_MARKER), "expected the marker while in edit mode");
 	send("\x1b");
-	const browseLine = render(80).find((line) => line.startsWith("z ("));
+	const browseLine = render(80).at(-1);
 	assert.ok(!browseLine.includes(CURSOR_MARKER), "did not expect the marker while in browse mode");
 	send("X");
 	await pending;
@@ -609,7 +631,7 @@ test("a question with embedded newlines wraps into separate one-line render entr
 		assert.ok(!line.includes("\n"), `line contains an embedded newline: ${JSON.stringify(line)}`);
 		assert.ok(visibleWidth(line) <= width, `line exceeds width ${width}: ${JSON.stringify(line)}`);
 	}
-	assert.equal(lines.length, 8, "expected 3 blank rows + 3 question lines + option + free-text");
+	assert.equal(lines.length, 7, "expected 3 question lines + option + free-text and the two blank rows between them");
 	assert.ok(lines.some((line) => line.includes("Deploy now?")));
 	assert.ok(lines.some((line) => line.includes("Restart workers?")));
 	assert.ok(lines.some((line) => line.includes("Continue?")));
@@ -662,7 +684,7 @@ test("CR and CRLF line endings in the question normalize like LF before wrapping
 		assert.ok(!line.includes("\n"), `line contains an embedded newline: ${JSON.stringify(line)}`);
 		assert.ok(visibleWidth(line) <= width, `line exceeds width ${width}: ${JSON.stringify(line)}`);
 	}
-	assert.equal(lines.length, 9, "expected 3 blank rows + 3 question lines + option + free-text");
+	assert.equal(lines.length, 8, "expected 4 question lines + option + free-text and the two blank rows between them");
 	send("X");
 	await pending;
 });
@@ -767,7 +789,7 @@ test("a ZWJ emoji sequence in an option label keeps its visible width unchanged"
 	const lines = render(width);
 	const optionLine = lines.find((line) => line.includes(family));
 	assert.ok(optionLine, "expected the ZWJ emoji sequence to survive normalization intact");
-	assert.equal(visibleWidth(optionLine), visibleWidth(`1 (●) ${family}`));
+	assert.equal(visibleWidth(optionLine), visibleWidth(`❯ 1  ${family}`));
 	send("X");
 	await pending;
 });
@@ -788,7 +810,7 @@ test("Down and Up move the active row in browse mode, and Enter answers the acti
 	send(DOWN);
 	send(DOWN);
 	send(UP);
-	assert.ok(render(80).some((line) => line === "2 (●) B"));
+	assert.ok(render(80).some((line) => line === "❯ 2  B"));
 	send("\r");
 	const result = await pending;
 	assert.deepEqual(result.details, { status: "answered", kind: "option", index: 1, label: "B" });
@@ -805,7 +827,7 @@ test("Tab no longer moves the active row", async () => {
 		ctx,
 	);
 	send("\t");
-	assert.ok(render(80).some((line) => line === "1 (●) A"));
+	assert.ok(render(80).some((line) => line === "❯ 1  A"));
 	send("X");
 	await pending;
 });
@@ -823,13 +845,13 @@ test("Up/Down from edit mode leave edit mode and move the active row", async () 
 	send("z");
 	send("hi");
 	send(DOWN);
-	assert.ok(render(80).some((line) => line === "1 (●) A"));
+	assert.ok(render(80).some((line) => line === "❯ 1  A"));
 	send("\r");
 	const result = await pending;
 	assert.deepEqual(result.details, { status: "answered", kind: "option", index: 0, label: "A" });
 });
 
-test("multiple mode renders checkboxes instead of radios", async () => {
+test("multiple mode renders checkboxes", async () => {
 	const tool = createAskUserChoiceTool(createFooterHints());
 	const { ctx, send, render } = tuiContext();
 	const pending = tool.execute(
@@ -840,11 +862,11 @@ test("multiple mode renders checkboxes instead of radios", async () => {
 		ctx,
 	);
 	let lines = render(80);
-	assert.ok(lines.some((line) => line === "1 [ ] A"));
-	assert.ok(lines.some((line) => line === "2 [ ] B"));
+	assert.ok(lines.some((line) => line === "❯ [ ] 1  A"));
+	assert.ok(lines.some((line) => line === "  [ ] 2  B"));
 	send(SPACE);
 	lines = render(80);
-	assert.ok(lines.some((line) => line === "1 [x] A"));
+	assert.ok(lines.some((line) => line === "❯ [x] 1  A"));
 	send("\r");
 	await pending;
 });
@@ -863,8 +885,8 @@ test("multiple mode: the free-text row is never rendered as a checkbox, since Sp
 	send("z");
 	send("x");
 	const lines = render(80);
-	const freeTextLine = lines.find((line) => line.startsWith("z "));
-	assert.ok(freeTextLine.startsWith("z (") && !freeTextLine.startsWith("z ["));
+	const freeTextLine = lines.at(-1);
+	assert.ok(freeTextLine.startsWith("❯     z  x") && !/\[[ x]\]/.test(freeTextLine));
 	send(UP);
 	send(SPACE);
 	send("\r");
@@ -889,9 +911,9 @@ test("multiple mode: Space toggles the active option", async () => {
 		ctx,
 	);
 	send(SPACE);
-	assert.ok(render(80).some((line) => line === "1 [x] A"));
+	assert.ok(render(80).some((line) => line === "❯ [x] 1  A"));
 	send(SPACE);
-	assert.ok(render(80).some((line) => line === "1 [ ] A"));
+	assert.ok(render(80).some((line) => line === "❯ [ ] 1  A"));
 	send(SPACE);
 	send("\r");
 	const result = await pending;
@@ -914,10 +936,10 @@ test("multiple mode: digits jump without marking", async () => {
 	);
 	send("2");
 	let lines = render(80);
-	assert.ok(lines.some((line) => line === "2 [ ] B"), "digit alone must not mark the option");
+	assert.ok(lines.some((line) => line === "❯ [ ] 2  B"), "digit alone must not mark the option");
 	send(SPACE);
 	lines = render(80);
-	assert.ok(lines.some((line) => line === "2 [x] B"));
+	assert.ok(lines.some((line) => line === "❯ [x] 2  B"));
 	send("\r");
 	const result = await pending;
 	assert.deepEqual(result.details, { status: "answered", kind: "options", indices: [1], labels: ["B"] });
@@ -1029,7 +1051,7 @@ test("multiple mode: the edit-mode hint reflects whether anything is marked", as
 	await pending;
 });
 
-test("without multiple, ask_user_choice behaviour and result stay exactly as a single radio choice", async () => {
+test("without multiple, ask_user_choice behaviour and result stay exactly as a single choice without checkboxes", async () => {
 	const tool = createAskUserChoiceTool(createFooterHints());
 	const { ctx, send, render } = tuiContext();
 	const pending = tool.execute(
@@ -1040,24 +1062,35 @@ test("without multiple, ask_user_choice behaviour and result stay exactly as a s
 		ctx,
 	);
 	const lines = render(80);
-	assert.ok(lines.some((line) => line === "1 (●) A"));
-	assert.ok(lines.some((line) => line === "2 (○) B"));
+	assert.ok(lines.some((line) => line === "❯ 1  A"));
+	assert.ok(lines.some((line) => line === "  2  B"));
+	assert.ok(!lines.some((line) => line.includes("[")));
 	send(DOWN);
 	send("\r");
 	const result = await pending;
 	assert.deepEqual(result.details, { status: "answered", kind: "option", index: 1, label: "B" });
 });
 
-test("the panel is a block with an accent bar, the selected row on selectedBg, and dim secondary text", async () => {
+test("the panel spans the full width inside the input frame with a question caption on the bottom border", async () => {
+	const tool = createAskUserChoiceTool(createFooterHints());
+	const { ctx, send, renderRaw } = tuiContext();
+	const pending = tool.execute("call-frame", { question: "Deploy now?", options: [{ label: "Yes" }] }, undefined, undefined, ctx);
+	const lines = renderRaw(120);
+	for (const line of lines) assert.equal(visibleWidth(line), 119);
+	assert.equal(lines[0], ` ╭${"─".repeat(116)}╮`);
+	assert.equal(lines.at(-1), ` ╰${"─".repeat(105)} question ─╯`);
+	for (const line of lines.slice(1, -1)) assert.match(line, /^ │ .* │$/);
+	send("X");
+	await pending;
+});
+
+test("rows use ❯ and bold for the active option, muted numbers, dim descriptions, and no radios or fills", async () => {
 	const tagged = {
 		fg: (color, text) => `<${color}>${text}</${color}>`,
 		bg: (color, text) => `[${color}]${text}[/${color}]`,
 		bold: (text) => `<b>${text}</b>`,
 	};
-	const { ctx, send, renderRaw } = (() => {
-		const context = tuiContext();
-		return context;
-	})();
+	const { ctx, send, renderRaw } = tuiContext();
 	const tool = createAskUserChoiceTool(createFooterHints());
 	const original = ctx.ui.custom;
 	ctx.ui.custom = (factory) => original((tui, _theme, keys, done) => factory(tui, tagged, keys, done));
@@ -1069,16 +1102,47 @@ test("the panel is a block with an accent bar, the selected row on selectedBg, a
 		ctx,
 	);
 	const lines = renderRaw(300);
-	for (const line of lines) {
-		assert.ok(line.startsWith(" <text>┃</text>"), `missing accent bar: ${line}`);
-		assert.ok(visibleWidth(line) <= 300);
-	}
-	assert.match(lines[1], /\[customMessageBg\].*<b><text>Deploy now\?<\/text><\/b>/);
-	assert.match(lines[3], /^ <text>┃<\/text>\[selectedBg\]/);
-	assert.match(lines[3], /<b><text>\(●\)<\/text><\/b>/);
-	assert.match(lines[3], /<dim>Ship it<\/dim>/);
-	assert.match(lines[4], /\[customMessageBg\]/);
-	assert.match(lines[4], /<dim>\(○\)<\/dim>/);
+	assert.match(lines[0], /^ <borderAccent>╭─/);
+	assert.match(lines[1], /^ <borderAccent>│<\/borderAccent> <b><text>Deploy now\?<\/text><\/b>/);
+	assert.match(lines[3], /<b><text>❯ <\/text><\/b><b><text>1<\/text><\/b> {2}<b><text>Yes<\/text><\/b> {2}<dim>Ship it<\/dim>/);
+	assert.match(lines[4], /^ <borderAccent>│<\/borderAccent> {3}<muted>2<\/muted> {2}<text>No /);
+	assert.doesNotMatch(lines.join("\n"), /[●○]|\[(customMessageBg|selectedBg)\]/);
+	send("X");
+	await pending;
+});
+
+test("the panel stays within half the terminal height and scrolls the options with more rows", async () => {
+	const tool = createAskUserChoiceTool(createFooterHints());
+	const { ctx, send, render, renderRaw } = tuiContext(24);
+	const pending = tool.execute(
+		"call-cap",
+		{ question: "Pick", options: Array.from({ length: 10 }, (_, i) => ({ label: `Option ${i + 1}` })) },
+		undefined,
+		undefined,
+		ctx,
+	);
+	assert.ok(renderRaw(80).length <= 12);
+	let lines = render(80);
+	assert.ok(!lines.some((line) => line.includes("↑")));
+	assert.ok(lines.some((line) => line.trim() === "↓ 5 more"));
+	send("5");
+	assert.ok(renderRaw(80).length <= 12);
+	lines = render(80);
+	assert.ok(lines.some((line) => line.trim() === "↑ 2 more"));
+	assert.ok(lines.includes("❯  5  Option 5"));
+	assert.ok(lines.some((line) => line.trim() === "↓ 4 more"));
+	send("X");
+	await pending;
+});
+
+test("a terminal too narrow for the frame renders unframed rows", async () => {
+	const tool = createAskUserChoiceTool(createFooterHints());
+	const { ctx, send, renderRaw } = tuiContext();
+	const pending = tool.execute("call-narrow", { question: "Go?", options: [{ label: "Yes" }] }, undefined, undefined, ctx);
+	const lines = renderRaw(10);
+	assert.ok(!lines.some((line) => /[╭╰│]/.test(line)));
+	assert.equal(lines[0].trimEnd(), "Go?");
+	for (const line of lines) assert.ok(visibleWidth(line) <= 10);
 	send("X");
 	await pending;
 });
@@ -1163,13 +1227,16 @@ test("option rows pad labels to a shared column, truncate unfocused descriptions
 		ctx,
 	);
 	const lines = render(50);
-	const column = lines[3].indexOf("alpha");
+	const first = lines.findIndex((line) => line.startsWith("❯ 1  "));
+	const second = lines.findIndex((line) => line.startsWith("  2  "));
+	const column = lines[first].indexOf("alpha");
 	assert.ok(column > 0);
-	assert.equal(lines[6].indexOf("alpha"), column);
-	assert.ok(lines[3].startsWith("1 (●) Short       "));
-	assert.ok(lines[6].startsWith("2 (○) Longer label"));
-	assert.ok(lines[6].includes("…"));
-	assert.ok(lines[4].startsWith(" ".repeat(column)) && lines[4].trim().length > 0);
+	assert.equal(lines[second].indexOf("alpha"), column);
+	assert.ok(lines[first].startsWith("❯ 1  Short       "));
+	assert.ok(lines[second].startsWith("  2  Longer label"));
+	assert.ok(lines[second].includes("…"));
+	assert.ok(second - first > 1);
+	assert.ok(lines[first + 1].startsWith(" ".repeat(column)) && lines[first + 1].trim().length > 0);
 	send("X");
 	await pending;
 });
@@ -1197,19 +1264,19 @@ test("at 80 columns the focused row wraps its long label and description in thei
 		ctx,
 	);
 	const focused = render(80);
-	const first = focused.findIndex((line) => line.startsWith("1 (●)"));
-	const second = focused.findIndex((line) => line.startsWith("2 (○)"));
+	const first = focused.findIndex((line) => line.startsWith("❯ 1  "));
+	const second = focused.findIndex((line) => line.startsWith("  2  "));
 	const column = focused[first].indexOf("Registrar");
 	const rows = focused.slice(first, second);
 	assert.ok(rows.length > 1);
-	assert.equal(rows.map((line) => line.slice(6, column).trim()).filter(Boolean).join(" "), "Guardar observación en Engram (memoria)");
+	assert.equal(rows.map((line) => line.slice(5, column).trim()).filter(Boolean).join(" "), "Guardar observación en Engram (memoria)");
 	assert.equal(rows.map((line) => line.slice(column).trim()).filter(Boolean).join(" "), "Registrar el defecto como memoria en el store de Engram vía CLI (scope project/global). No toca GitHub.");
 	assert.ok(focused[second].includes("…"));
 	send(DOWN);
 	const moved = render(80);
-	const next = moved.findIndex((line) => line.startsWith("2 (●)"));
-	assert.ok(moved[next - 1].startsWith("1 (○) Guardar") && moved[next - 1].includes("…"));
-	assert.ok(moved[next + 1].startsWith("      ") && moved[next + 1].trim().length > 0);
+	const next = moved.findIndex((line) => line.startsWith("❯ 2  "));
+	assert.ok(moved[next - 1].startsWith("  1  Guardar") && moved[next - 1].includes("…"));
+	assert.ok(moved[next + 1].startsWith("     ") && moved[next + 1].trim().length > 0);
 	for (const line of renderRaw(80)) assert.ok(visibleWidth(line) <= 80);
 	send("X");
 	await pending;
@@ -1227,8 +1294,8 @@ test("labels take the full row when no option has a description", async () => {
 		ctx,
 	);
 	const lines = render(80);
-	assert.ok(lines.includes(`1 (●) ${label}`));
-	const second = lines.find((line) => line.startsWith("2 (○)"));
+	assert.ok(lines.includes(`❯ 1  ${label}`));
+	const second = lines.find((line) => line.startsWith("  2  "));
 	assert.ok(second.includes("…") && visibleWidth(second) > 70);
 	send("X");
 	await pending;
@@ -1277,4 +1344,190 @@ test("renderResult strips control and bidi characters from the answer", () => {
 	const details = { status: "answered", kind: "text", text: "a\u0007b\u202Ec" };
 	const lines = tool.renderResult({ content: [], details }, { isPartial: false }, fakeTheme, context).render(80);
 	assert.deepEqual(lines.map((line) => line.trimEnd()), ["◆ Asked Why?", "  ↳ a b c"]);
+});
+
+test("a question waits while an overlay is open, tells the operator once, and takes over the input once it closes", async () => {
+	const tool = createAskUserChoiceTool(createFooterHints());
+	const context = tuiContext(40, true);
+	const pending = tool.execute(
+		"call-wait",
+		{ question: "Deploy now?", options: [{ label: "Yes" }, { label: "No" }] },
+		undefined,
+		undefined,
+		context.ctx,
+	);
+	context.paint();
+	context.paint();
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.equal(context.customCalls(), 0);
+	assert.equal(context.notices.length, 1);
+	assert.equal(context.notices[0].type, "info");
+	assert.equal(context.widgets.size, 1);
+	context.closeOverlay();
+	context.paint();
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.equal(context.customCalls(), 1);
+	assert.equal(context.widgets.size, 0);
+	context.send("\r");
+	const result = await pending;
+	assert.deepEqual(result.details, { status: "answered", kind: "option", index: 0, label: "Yes" });
+	assert.equal(context.notices.length, 1);
+});
+
+test("a question opens at once and leaves no widget when no overlay is open", async () => {
+	const tool = createAskUserChoiceTool(createFooterHints());
+	const context = tuiContext();
+	const pending = tool.execute("call-no-wait", { question: "Go?", options: [{ label: "Yes" }] }, undefined, undefined, context.ctx);
+	assert.equal(context.customCalls(), 1);
+	assert.equal(context.widgets.size, 0);
+	assert.equal(context.notices.length, 0);
+	context.send("X");
+	await pending;
+});
+
+test("aborting while a question waits behind an overlay refuses and stops waiting", async () => {
+	const tool = createAskUserChoiceTool(createFooterHints());
+	const context = tuiContext(40, true);
+	const controller = new AbortController();
+	const pending = tool.execute(
+		"call-wait-abort",
+		{ question: "Deploy now?", options: [{ label: "Yes" }] },
+		controller.signal,
+		undefined,
+		context.ctx,
+	);
+	controller.abort();
+	const result = await pending;
+	assert.equal(result.details.status, "refused");
+	assert.match(result.details.reason, /aborted/i);
+	assert.equal(context.widgets.size, 0);
+	context.closeOverlay();
+	context.paint();
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.equal(context.customCalls(), 0);
+});
+
+test("a long active row is cut to the half-height cap and ends with an ellipsis", async () => {
+	const tool = createAskUserChoiceTool(createFooterHints());
+	const { ctx, send, render, renderRaw } = tuiContext(24);
+	const description = "word ".repeat(72).trim();
+	const pending = tool.execute(
+		"call-cap-active",
+		{ question: "Pick", options: Array.from({ length: 6 }, (_, i) => ({ label: `Option ${i + 1}`, description })) },
+		undefined,
+		undefined,
+		ctx,
+	);
+	assert.ok(renderRaw(80).length <= 12);
+	const lines = render(80);
+	const first = lines.findIndex((line) => line.startsWith("❯ 1  "));
+	const next = lines.findIndex((line) => line.trim().startsWith("↓"));
+	assert.ok(next - first > 1);
+	assert.ok(stripTerminalSequences(lines[next - 1]).endsWith("…"));
+	send("X");
+	await pending;
+});
+
+test("a question taller than the cap is shown in full with one option", async () => {
+	const tool = createAskUserChoiceTool(createFooterHints());
+	const { ctx, send, render } = tuiContext(24);
+	const question = Array.from({ length: 14 }, (_, i) => `Line ${i + 1}`).join("\n");
+	const pending = tool.execute(
+		"call-cap-question",
+		{ question, options: [{ label: "A" }, { label: "B" }, { label: "C" }] },
+		undefined,
+		undefined,
+		ctx,
+	);
+	const lines = render(80);
+	for (let i = 1; i <= 14; i++) assert.ok(lines.includes(`Line ${i}`));
+	assert.deepEqual(
+		lines.filter((line) => /^(❯ | {2})\d {2}/.test(line)),
+		["❯ 1  A"],
+	);
+	send("X");
+	await pending;
+});
+
+test("narrow frames in multiple mode never wrap the label into a one-column stack", async () => {
+	const tool = createAskUserChoiceTool(createFooterHints());
+	const { ctx, send, renderRaw } = tuiContext(24);
+	const pending = tool.execute(
+		"call-cap-narrow",
+		{ question: "Pick", options: [{ label: "Deploy the service to production now" }, { label: "Wait" }], multiple: true },
+		undefined,
+		undefined,
+		ctx,
+	);
+	for (let width = 12; width <= 16; width++) {
+		const lines = renderRaw(width);
+		assert.ok(lines.length <= 12, `width ${width} rendered ${lines.length} lines`);
+		for (const line of lines) assert.ok(visibleWidth(line) <= width);
+	}
+	send("X");
+	await pending;
+});
+
+test("unframed rows keep the more counts visible", async () => {
+	const tool = createAskUserChoiceTool(createFooterHints());
+	const { ctx, send, renderRaw } = tuiContext(24);
+	const pending = tool.execute(
+		"call-narrow-more",
+		{ question: "Go?", options: Array.from({ length: 10 }, (_, i) => ({ label: `O${i + 1}` })) },
+		undefined,
+		undefined,
+		ctx,
+	);
+	send("9");
+	const lines = renderRaw(10).map((line) => line.trimEnd());
+	assert.ok(lines.includes("↑ 3 more"), JSON.stringify(lines));
+	send("1");
+	assert.ok(renderRaw(10).some((line) => line.trimEnd() === "↓ 3 more"));
+	send("X");
+	await pending;
+});
+
+test("framed narrow multiple mode keeps the whole more count", async () => {
+	const tool = createAskUserChoiceTool(createFooterHints());
+	for (const [width, count, hidden] of [
+		[16, 10, 5],
+		[21, 120, 115],
+	]) {
+		const { ctx, send, render } = tuiContext(24);
+		const pending = tool.execute(
+			"call-narrow-count",
+			{ question: "Pick", options: Array.from({ length: count }, (_, i) => ({ label: `O${i + 1}` })), multiple: true },
+			undefined,
+			undefined,
+			ctx,
+		);
+		const lines = render(width);
+		assert.ok(lines.includes(`↓ ${hidden} more`), JSON.stringify(lines));
+		send("X");
+		await pending;
+	}
+});
+
+test("options that fit without the more rows are shown instead of being hidden unmarked", async () => {
+	const tool = createAskUserChoiceTool(createFooterHints());
+	for (const [rows, question] of [
+		[16, "Pick"],
+		[24, "One\nTwo\nThree\nFour\nFive"],
+	]) {
+		const options = rows === 16 ? ["A", "B", "C"] : ["A", "B", "C", "D"];
+		const { ctx, send, render } = tuiContext(rows);
+		const pending = tool.execute(
+			"call-no-marks",
+			{ question, options: options.map((label) => ({ label })) },
+			undefined,
+			undefined,
+			ctx,
+		);
+		send(DOWN);
+		const lines = render(80);
+		assert.ok(lines.includes("  1  A") && lines.includes("❯ 2  B"), JSON.stringify(lines));
+		assert.ok(!lines.some((line) => line.includes("more")));
+		send("X");
+		await pending;
+	}
 });

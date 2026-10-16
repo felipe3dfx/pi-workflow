@@ -8,6 +8,8 @@ Superseded by ADR 0012 for the command name and argumentless-command clauses.
 
 Amended by the deep harness modules feature (`docs/specs/deep-harness-modules.md`) to clarify what unseating stops.
 
+Superseded by ADR 0019 for where the operator question is placed.
+
 ## Decision
 
 `/workflow:configure` replaces `/workflow:setup`. The command is the operator's guided confirmation, for the current session, of which harness capabilities are seated and which companion catalog entries are expected. It takes no arguments.

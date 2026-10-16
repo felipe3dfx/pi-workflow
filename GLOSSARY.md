@@ -202,7 +202,7 @@ _Avoid_: design system
 
 ### Screen place
 
-A region of the shell: the header, above the input, an overlay, or the message stream. The seated capability declares which place it occupies.
+A region of the shell: the header, above the input, the input, an overlay, or the message stream. The seated capability declares which place it occupies. A seated capability may take over the input, where the operator types, for one interaction.
 
 _Avoid_: feature slot
 
