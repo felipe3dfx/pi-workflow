@@ -65,6 +65,7 @@ import {
 	resolveClaudeBridgeExtension,
 } from "../extensions/web-access.ts";
 import { createBridgeParentSession } from "./support/bridge-parent.mjs";
+import { eventually } from "./support/eventually.mjs";
 import { classifierRegistry } from "./support/fake-jev.mjs";
 import { turnJevRoutingOn } from "./support/jev-routing.mjs";
 
@@ -933,11 +934,6 @@ function text(result) {
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 const stateOfDetails = ({ id, state }) => ({ id, state });
-
-async function eventually(condition) {
-	for (let i = 0; i < 500 && !condition(); i++) await delay(10);
-	assert.ok(condition());
-}
 
 const childTools = [
 	"cancel_child",
