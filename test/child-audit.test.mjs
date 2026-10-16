@@ -1888,11 +1888,57 @@ test("when the drain deadline expires the close returns, frees the budget, and a
 	assert.equal(fresh.health.complete, true);
 });
 
+test("listing a page of the catalog costs the same however much history the parent holds", async (t) => {
+	let enumerated = 0;
+	const files = {
+		...faultyFiles(),
+		async readdir(path) {
+			const names = await readdir(path);
+			enumerated += names.length;
+			return names;
+		},
+	};
+	const { audit, launch, root } = auditedCore(t, { files, limits: { catalog: 2 } });
+	const ids = [];
+	for (let i = 0; i < 3; i++) {
+		const { id } = await launch();
+		await flushed(audit, id);
+		ids.push(id);
+	}
+	await audit.close();
+	await Promise.all(
+		Array.from({ length: 500 }, (_, i) => writeFile(join(root, "parent-1", `other-${i}.jsonl`), "")),
+	);
+
+	const later = reopen(root, "parent-1", { files, limits: { catalog: 2 } });
+	const first = await later.list();
+	const second = await later.list(first.next);
+	assert.deepEqual([...first.records, ...second.records].map(({ child }) => child), ids);
+	assert.ok(enumerated < 10, `${enumerated} directory entries were enumerated`);
+});
+
+test("a child the catalog could not record stays listed live with a warning that rediscovery is not guaranteed", async (t) => {
+	const files = faultyFiles({
+		open: (path) => {
+			if (path.endsWith(".catalog")) throw new Error("catalog unavailable");
+		},
+	});
+	const { audit, launch } = auditedCore(t, { files, run: () => new Promise(() => {}) });
+	const { id } = await launch();
+	await flushed(audit, id);
+
+	const [record] = (await audit.list()).records;
+	assert.equal(record.child, id);
+	assert.equal(record.health.complete, true);
+	assert.match(record.health.warning, /could not be added to the audit catalog.*not guaranteed/);
+});
+
 test("the parent's records are listed in bounded pages, live working children in the working section", async (t) => {
 	const { audit, core, launch, root } = auditedCore(t, { limits: { catalog: 2 } });
 	const ids = [];
 	for (let i = 0; i < 3; i++) ids.push((await launch()).id);
 	await eventually(async () => core.get(ids[2]).state, (state) => state === "running");
+	for (const id of ids) await flushed(audit, id);
 
 	const first = await audit.list();
 	assert.equal(first.records.length, 2);
@@ -1900,7 +1946,7 @@ test("the parent's records are listed in bounded pages, live working children in
 	const second = await audit.list(first.next);
 	assert.equal(second.next, undefined);
 	const all = [...first.records, ...second.records];
-	assert.deepEqual(all.map(({ child }) => child), [...ids].sort());
+	assert.deepEqual(all.map(({ child }) => child), ids);
 	assert.ok(all.every(({ section, state }) => section === "working" && state === "running"));
 
 	await audit.close();

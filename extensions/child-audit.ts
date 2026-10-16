@@ -1,5 +1,5 @@
-import { mkdir, open, readdir, rename, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, open, rename, stat } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { crc32 } from "node:zlib";
 
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
@@ -154,7 +154,6 @@ interface AuditFiles {
 	): Promise<unknown>;
 	open(path: string, flags: string, mode?: number): Promise<AuditFile>;
 	rename(from: string, to: string): Promise<void>;
-	readdir(path: string): Promise<string[]>;
 	stat(path: string): Promise<{ size: number }>;
 }
 
@@ -199,6 +198,8 @@ interface Capture {
 	fenced: boolean;
 	durable?: Health;
 	cause?: string;
+	listed?: true;
+	unlisted?: string;
 	lost: number;
 	lostFrom?: number;
 	uncertain?: number;
@@ -220,6 +221,8 @@ const defaultLimits = {
 };
 
 const version = 1;
+const catalogFile = ".catalog";
+const catalogLine = 192;
 // A line adds a checksum, a header of at most this size and separators to its chunk; the loss marker is written outside the payload budget.
 const headerAllowance = 512;
 const metaAllowance = 256;
@@ -281,7 +284,6 @@ export function createChildAudit(options: {
 		mkdir,
 		open,
 		rename,
-		readdir,
 		stat,
 	};
 	const schedule = options.schedule ?? setImmediate;
@@ -304,6 +306,7 @@ export function createChildAudit(options: {
 		entries: Math.max(1, Math.floor(limits.entries / 16)),
 	};
 	const live = new Set<Capture>();
+	const cataloguing = new Map<string, Promise<void>>();
 	let admittedBytes = 0;
 	let admittedEntries = 0;
 
@@ -411,12 +414,14 @@ export function createChildAudit(options: {
 						recursive: true,
 						mode: 0o700,
 					});
+					const owned = !record.created;
 					file = await files.open(
 						record.path as string,
 						record.created ? "a" : "wx",
 						0o600,
 					);
 					record.created = true;
+					if (owned) await catalogue(record);
 				}
 				const start = record.size;
 				await store(record, file, item);
@@ -453,6 +458,31 @@ export function createChildAudit(options: {
 		record.held.bytes -= maxLine;
 		record.slot = false;
 		record.draining = false;
+	}
+
+	async function catalogue(record: Capture) {
+		const path = join(dirname(record.path as string), catalogFile);
+		const entry = JSON.stringify({ child: record.identity.child });
+		const previous = cataloguing.get(path) ?? Promise.resolve();
+		const appended = previous.then(async () => {
+			if (entry.length + 11 > catalogLine) throw new Error("the child ID is too long");
+			const file = await files.open(path, "a", 0o600);
+			try {
+				await writeAll(file, Buffer.from(`\n${checksum(entry)}\t${entry}\n`));
+			} finally {
+				await file.close();
+			}
+		});
+		const settled = appended.catch(() => {});
+		cataloguing.set(path, settled);
+		try {
+			await appended;
+			record.listed = true;
+		} catch (error) {
+			record.unlisted = `The child could not be added to the audit catalog: ${errorMessage(error)}. ${unrecoverable}`;
+		} finally {
+			if (cataloguing.get(path) === settled) cataloguing.delete(path);
+		}
 	}
 
 	async function store(record: Capture, file: AuditFile, item: Pending) {
@@ -1517,6 +1547,12 @@ export function createChildAudit(options: {
 	function healthOf(record: Capture): Health {
 		if (record.durable) return record.durable;
 		const identityWritten = record.written > 0;
+		const warning = record.cause
+			? identityWritten
+				? record.cause
+				: `${record.cause} ${unrecoverable}`
+			: undefined;
+		const warnings = [warning, record.unlisted].filter((note) => note !== undefined);
 		return {
 			complete: !record.cause,
 			received: record.next,
@@ -1528,13 +1564,7 @@ export function createChildAudit(options: {
 				? {}
 				: { uncertain: record.uncertain }),
 			...(record.marker ? { marker: record.marker } : {}),
-			...(record.cause
-				? {
-						warning: identityWritten
-							? record.cause
-							: `${record.cause} ${unrecoverable}`,
-					}
-				: {}),
+			...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}),
 		};
 	}
 
@@ -1559,30 +1589,45 @@ export function createChildAudit(options: {
 
 	async function list(after?: string) {
 		const parent = currentParent();
+		const listed: ReturnType<typeof summary>[] = [];
 		const names = new Set<string>();
-		for (const record of records.values()) {
-			if (record.identity.parent === parent) names.add(record.identity.child);
-		}
-		if (parent) {
-			try {
-				for (const name of await files.readdir(join(options.root, parent))) {
-					if (name.endsWith(".jsonl")) names.add(name.slice(0, -".jsonl".length));
+		if (after === undefined) {
+			for (const record of records.values()) {
+				if (record.identity.parent === parent && !record.listed) {
+					names.add(record.identity.child);
 				}
+			}
+		}
+		const from = Number(after ?? 0);
+		let next: string | undefined;
+		if (parent && Number.isSafeInteger(from) && from >= 0) {
+			const path = join(options.root, parent, catalogFile);
+			try {
+				const bound = limits.catalog * catalogLine;
+				const buffer = await readAt(path, from, bound);
+				let at = 0;
+				let count = 0;
+				for (let end = buffer.indexOf(10); end >= 0 && count < limits.catalog; end = buffer.indexOf(10, at)) {
+					const text = buffer.toString("utf8", at, end);
+					at = end + 1;
+					const entry = text.slice(9);
+					if (text.charCodeAt(8) !== 9 || checksum(entry) !== text.slice(0, 8)) continue;
+					try {
+						const child = JSON.parse(entry)?.child;
+						if (typeof child !== "string") continue;
+						names.add(child);
+						count += 1;
+					} catch {}
+				}
+				if (at === 0 && buffer.length >= bound) at = buffer.length;
+				if (at > 0 && from + at < (await files.stat(path)).size) next = String(from + at);
 			} catch {}
 		}
-		const sorted = [...names].sort();
-		const from =
-			after === undefined ? 0 : sorted.filter((name) => name <= after).length;
-		const page = sorted.slice(from, from + limits.catalog);
-		const listed: ReturnType<typeof summary>[] = [];
-		for (const child of page) {
+		for (const child of names) {
 			const record = await lookup(child);
 			if (record) listed.push(summary(record));
 		}
-		return {
-			records: listed,
-			...(from + page.length < sorted.length ? { next: page.at(-1) } : {}),
-		};
+		return { records: listed, ...(next === undefined ? {} : { next }) };
 	}
 
 	async function read(child: string, cursor?: WindowCursor) {
