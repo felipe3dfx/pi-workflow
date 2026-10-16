@@ -356,22 +356,20 @@ export function createTranscript(options: {
 			const key = keyOf(observation);
 			if (key === undefined) continue;
 			const held = merged.has(key) ? undefined : attached.get(key);
+			const gap =
+				observation.kind === "message" &&
+				held?.next !== undefined &&
+				held.next < windows[0].cursor.from;
 			for (const early of held?.observations ?? []) {
 				if (seen.has(early.ordinal)) continue;
 				seen.add(early.ordinal);
-				project(merged, key, early);
+				project(merged, gap ? earlierKey(key) : key, early);
 			}
 			project(merged, key, observation);
 			const item = merged.get(key);
-			if (
-				held?.next !== undefined &&
-				held.observations.length > 0 &&
-				item?.kind === "message" &&
-				!item.entry.final
-			) {
-				if (held.next < windows[0].cursor.from) item.entry.earlier = held.next;
-				else delete item.entry.earlier;
-			}
+			if (!gap || item?.kind !== "message") continue;
+			if (item.entry.final) merged.delete(earlierKey(key));
+			else item.entry.earlier = held.next;
 		}
 		return [...merged.values()];
 	}
@@ -493,11 +491,7 @@ export function createTranscript(options: {
 				if (block.load && "earlier" in block.load && !wanted) {
 					const { key } = block;
 					const { earlier } = block.load;
-					const held = attached.get(key);
-					if (
-						!held?.tried.has(earlier) &&
-						(held?.observations.length ?? 0) < residentObservations
-					) {
+					if (!attached.get(key)?.tried.has(earlier)) {
 						wanted = () => attach(key, earlier);
 					}
 				} else if (block.load && "slot" in block.load && !wanted) {
@@ -529,7 +523,7 @@ export function createTranscript(options: {
 				if (!shown.has(name.slice(0, name.indexOf("\n")))) slots.delete(name);
 			}
 			for (const key of attached.keys()) {
-				if (!shown.has(key)) attached.delete(key);
+				if (!shown.has(key) && !shown.has(earlierKey(key))) attached.delete(key);
 			}
 			pump();
 			return rows;
@@ -567,6 +561,10 @@ export function createTranscript(options: {
 			cache.clear();
 		},
 	};
+}
+
+function earlierKey(key: string) {
+	return `${key}:earlier`;
 }
 
 function isSettled(item: Item) {

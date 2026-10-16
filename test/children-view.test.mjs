@@ -11,6 +11,7 @@ import {
 } from "@earendil-works/pi-tui";
 
 import { createChildAudit } from "../extensions/child-audit.ts";
+import { createTranscript } from "../extensions/child-transcript.ts";
 import { createChildrenViews } from "../extensions/children-view.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
@@ -1382,6 +1383,60 @@ test("a tool or message that began before the resident windows says so, and expa
 	assert.match(expanded, /Opening words\. Closing words\./);
 	assert.match(expanded, /early\/start\.ts/);
 	assert.doesNotMatch(expanded, /continues from earlier evidence/);
+});
+
+test("a message streamed far before the resident windows is revealed contiguously, its gap marked where it lies", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	const streaming = { role: "assistant", content: [] };
+	capture.emit(child.id, { type: "message_start", message: streaming });
+	for (let i = 0; i < 900; i++) {
+		capture.emit(child.id, {
+			type: "message_update",
+			message: streaming,
+			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: `w${i} ` },
+		});
+		if (i % 100 === 99) await written(capture.audit, child.id);
+	}
+	await written(capture.audit, child.id);
+	const transcript = createTranscript({ audit: capture.audit, child: child.id, changed() {} });
+	const draw = () => {
+		const pieces = [];
+		transcript.layout(
+			80,
+			10_000,
+			"",
+			(item) => {
+				if (item.kind !== "message") return [];
+				pieces.push({ text: item.entry.content[0]?.text ?? "", earlier: item.entry.earlier });
+				return [
+					{
+						sub: "body",
+						rows: ["row"],
+						...(item.entry.earlier === undefined ? {} : { load: { earlier: item.entry.earlier } }),
+					},
+				];
+			},
+			{ head: [], tail: [] },
+		);
+		return pieces;
+	};
+	const contiguous = (text) => {
+		const numbers = text.trim().split(" ").map((word) => Number(word.slice(1)));
+		return numbers.every((n, i) => i === 0 || n === numbers[i - 1] + 1);
+	};
+	let pieces = [];
+	for (let i = 0; i < 400; i++) {
+		pieces = draw();
+		for (const piece of pieces) assert.ok(contiguous(piece.text), piece.text);
+		assert.ok(pieces.slice(0, -1).every((piece) => piece.earlier === undefined));
+		if (pieces.length === 1 && pieces[0].earlier === undefined && pieces[0].text.startsWith("w0 ")) break;
+		await delay(5);
+	}
+	transcript.dispose();
+	assert.deepEqual(pieces, [
+		{ text: Array.from({ length: 900 }, (_, i) => `w${i} `).join(""), earlier: undefined },
+	]);
 });
 
 test("a detached view keeps its row when a streamed message is replaced by its final", async (t) => {
