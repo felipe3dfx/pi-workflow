@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import {
 	cp,
 	mkdir,
@@ -43,6 +43,7 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 
+import { createChildAudit } from "../extensions/child-audit.ts";
 import { createAskParentTool, createPiChildSession } from "../extensions/child-sessions.ts";
 import { compactToolRenderers } from "../extensions/compact-tools.ts";
 import { capabilities } from "../extensions/configure.ts";
@@ -64,6 +65,7 @@ import {
 	resolveClaudeBridgeExtension,
 } from "../extensions/web-access.ts";
 import { createBridgeParentSession } from "./support/bridge-parent.mjs";
+import { eventually } from "./support/eventually.mjs";
 import { classifierRegistry } from "./support/fake-jev.mjs";
 import { turnJevRoutingOn } from "./support/jev-routing.mjs";
 
@@ -791,6 +793,7 @@ function loadExtension({
 	refresh,
 	branch = [],
 	jevRouting = "on",
+	session = {},
 }) {
 	if (jevRouting === "on") turnJevRoutingOn(agentDir);
 	const handlers = new Map();
@@ -863,7 +866,11 @@ function loadExtension({
 				cwd: "/tmp",
 				getContextUsage: () => undefined,
 				isIdle: () => idle,
-				sessionManager: { getBranch: () => branch, getEntries: () => [] },
+				sessionManager: {
+					getBranch: () => branch,
+					getEntries: () => [],
+					...session,
+				},
 			});
 		}
 	};
@@ -927,11 +934,6 @@ function text(result) {
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 const stateOfDetails = ({ id, state }) => ({ id, state });
-
-async function eventually(condition) {
-	for (let i = 0; i < 500 && !condition(); i++) await delay(10);
-	assert.ok(condition());
-}
 
 const childTools = [
 	"cancel_child",
@@ -1671,6 +1673,71 @@ test("a reload ends every working child, tells the operator how many ended, and 
 		});
 		assert.deepEqual((await use(extension, "list_children", {})).details.children, []);
 		assert.equal(extension.messages.length, 0);
+	});
+});
+
+test("a reload closes a persisted parent's audit records for reopening, while an ephemeral parent writes none", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const root = join(agentDir, "pi-workflow-audit");
+		for (const persisted of [true, false]) {
+			const extension = await loadSpawnTool({
+				agentDir,
+				create: fakeChildren().create,
+				session: {
+					getSessionId: () => `parent-${persisted}`,
+					getSessionFile: () => (persisted ? "/sessions/parent.jsonl" : undefined),
+				},
+			});
+			const id = await spawnBackground(extension, worktree);
+			await settle();
+
+			await extension.fire("session_shutdown", { reason: "reload" });
+
+			const { records } = await createChildAudit({
+				root,
+				parent: () => `parent-${persisted}`,
+			}).list();
+			if (!persisted) {
+				assert.deepEqual(records, []);
+				continue;
+			}
+			assert.deepEqual(
+				records.map(({ child, interrupted, health }) => ({
+					child,
+					interrupted,
+					closed: health.closed,
+				})),
+				[{ child: id, interrupted: true, closed: true }],
+			);
+		}
+	});
+});
+
+test("the reload notice does not wait for the audit drain", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: fakeChildren().create,
+			session: {
+				getSessionId: () => "parent-1",
+				getSessionFile: () => "/sessions/parent.jsonl",
+			},
+		});
+		const id = await spawnBackground(extension, worktree);
+		await settle();
+		const journal = join(agentDir, "pi-workflow-audit", "parent-1", `${id}.jsonl`);
+		await eventually(() => existsSync(journal));
+		let sealed;
+		extension.notifications.push = (...items) => {
+			sealed = readFileSync(journal, "utf8").includes('"close":');
+			return Array.prototype.push.apply(extension.notifications, items);
+		};
+
+		await extension.fire("session_shutdown", { reason: "reload" });
+
+		assert.match(extension.notifications.at(-1).message, /\/reload ended 1 working child\./);
+		assert.equal(sealed, false);
+		assert.match(readFileSync(journal, "utf8"), /"close":/);
 	});
 });
 
@@ -5820,13 +5887,13 @@ test("alt+a and /workflow:subagents open a full-screen overlay of every child; j
 		assert.match(lines[0], /^ ┌─ Fleet 2 · 1 active ─+ \[×\] ─┐$/);
 		assert.match(
 			lines[1],
-			/^ │ {3}Active ─+ │ ◐ worker [0-9a-f]{4} +running · \d+s {2}│$/,
+			/^ │ {3}Working ─+ │ ◐ worker [0-9a-f]{4} +running · \d+s {2}│$/,
 		);
 		assert.match(
 			lines[2],
 			/^ │ {2}▸ ◐ worker [0-9a-f]{4} +running · \d+s │ model \(medium\) · wt: repo/,
 		);
-		assert.match(lines[3], /^ │ {3}Finished ─+ │ Run the tests/);
+		assert.match(lines[3], /^ │ {3}History ─+ │ Run the tests/);
 		assert.match(lines[4], /^ │ {4}✓ worker [0-9a-f]{4} Map the.* \d+s │/);
 		assert.match(
 			view.lines(60).at(-2),
@@ -6002,7 +6069,7 @@ test("Enter opens a live detail that follows the tail, collapses thinking with P
 		assert.match(body, /The doctor checks three things\./);
 		assert.match(body, /◆ Run npm test/);
 		assert.match(body, /Esc back {2}\| {2}Enter steer {2}\| {2}Ctrl\+J\/K scroll/);
-		assert.match(body, /s\/c cancel {2}\| {2}Ctrl\+T thinking/);
+		assert.match(body, /s\/c cancel {2}\| {2}Ctrl\+O expand\s[\s\S]*Ctrl\+T thinking/);
 
 		const renders = view.tui.renders;
 		child.spec.onEvent({
@@ -6132,7 +6199,7 @@ test("in fullscreen a click selects a row, a double click opens it, and each foo
 		assert.match(lines[1], /◐ worker [0-9a-f]{4} +running · \d+s/);
 		const at = lines.findIndex((line) => line.includes("Esc back"));
 		click(lines[at].indexOf("Esc back") + 1, at);
-		assert.match(view.lines(60)[1], /Active ─/);
+		assert.match(view.lines(60)[1], /Working ─/);
 		const footer = view.lines(60).at(-2);
 		click(footer.indexOf("s/c cancel") + 1, 10);
 		assert.match(view.lines(60).join("\n"), /Cancel worker [0-9a-f]{4}\? y\/n/);
@@ -6312,7 +6379,7 @@ test("the view lists waiting, running, queued, then finished children, and a cli
 		);
 		assert.equal(view.active(60), 2);
 		assert.match(view.lines(60)[2], /\? worker [0-9a-f]{4} asks question 1/);
-		assert.match(view.lines(60)[8], /Finished ─/);
+		assert.match(view.lines(60)[8], /History ─/);
 
 		view.component.handleMouse({
 			type: "click",
@@ -6630,7 +6697,11 @@ test("children launched by one codemode call are grouped under it with the numbe
 		const row = (id) => rows.findIndex((line) => line.includes(`worker ${id.slice(0, 4)}`));
 		assert.ok(row(direct) < at);
 		assert.match(rows[at + 2], new RegExp(`◐ worker ${second.slice(0, 4)}`));
-		assert.match(rows[at + 4], /✓ worker .*completed/);
+		const history = rows.findIndex((line) => /History ─/.test(line));
+		const again = lines.findIndex((line, i) => i > history && / script ipt7 ─/.test(line));
+		assert.ok(at < history && history < again, lines.join("\n"));
+		assert.match(lines[again + 1], /2 launched · 1 done +3\.0k tok/);
+		assert.match(rows[again + 2], /✓ worker .*completed/);
 	});
 });
 
@@ -6821,7 +6892,7 @@ test("a click after leaving the detail and before the next redraw opens nothing"
 			clickCount: 2,
 		});
 		assert.equal(click, undefined);
-		assert.match(view.lines(60)[1], /Active ─/);
+		assert.match(view.lines(60)[1], /Working ─/);
 	});
 });
 

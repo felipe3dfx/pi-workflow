@@ -27,6 +27,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 
+import type { ChildAudit, ChildCapture } from "./child-audit.ts";
 import { type ChildShell, createChildBashTool } from "./child-bash.ts";
 import type { createChildLauncher } from "./child-launcher.ts";
 import { createChildCodeGraphTool } from "./codegraph-tool.ts";
@@ -149,6 +150,7 @@ interface Child {
 	plan: Plan;
 	handle: ChildHandle;
 	watch: ReturnType<typeof createWatch>;
+	capture: ChildCapture;
 	conversation?: Conversation;
 	entries?: SessionEntry[];
 	streaming?: AssistantMessage;
@@ -181,6 +183,7 @@ export interface ChildTrace {
 
 const runningLimit = 5;
 const launchLimit = 10;
+export const shutdownDeadline = 1000;
 const stallMs = 4 * 60_000;
 const toolStallMs = 30 * 60_000;
 
@@ -277,7 +280,7 @@ function parentProject(ctx: ExtensionContext): ParentProject {
 	return { cwd: ctx.cwd, trusted: ctx.isProjectTrusted() };
 }
 
-const askParentTool = "ask_parent";
+export const askParentTool = "ask_parent";
 const reportResultTool = "report_result";
 
 const mcpTools = [
@@ -558,6 +561,7 @@ export function createChildSessions(options: {
 	report: (message: string) => void;
 	schedule?: Schedule;
 	todo?: TodoLink;
+	audit: ChildAudit;
 }) {
 	const create = options.create ?? createPiChildSession;
 	const schedule = options.schedule ?? scheduleTimer;
@@ -569,6 +573,7 @@ export function createChildSessions(options: {
 	const listeners = new Set<() => void>();
 	let generation = 0;
 	let reserved = 0;
+	const disposing = new Set<Promise<void>>();
 
 	function warn(message: string) {
 		try {
@@ -576,12 +581,18 @@ export function createChildSessions(options: {
 		} catch {}
 	}
 
-	function shutDown(handle: ChildHandle, id?: string) {
-		return handle
+	function shutDown(handle: ChildHandle, id?: string, capture?: ChildCapture) {
+		const done = handle
 			.dispose()
 			.catch((error: unknown) =>
 				warn(id ? `Child ${id}: ${errorMessage(error)}` : errorMessage(error)),
-			);
+			)
+			.finally(() => {
+				capture?.disposed();
+				disposing.delete(done);
+			});
+		disposing.add(done);
+		return done;
 	}
 
 	function trace(child: Child) {
@@ -597,6 +608,7 @@ export function createChildSessions(options: {
 		notice?: string,
 	) {
 		const completed = state === "completed" ? result : undefined;
+		if (!notice) options.audit.execution(id, state, completed?.verdict);
 		try {
 			options.trace({
 				id,
@@ -747,7 +759,7 @@ export function createChildSessions(options: {
 		} catch (error) {
 			warn(`Child ${record.id}: ${errorMessage(error)}`);
 		}
-		void shutDown(child.handle, record.id);
+		void shutDown(child.handle, record.id, child.capture);
 		pump();
 		changed();
 		if (!deliver || consumed.has(record.id)) return;
@@ -862,6 +874,8 @@ export function createChildSessions(options: {
 		let asked = (_question: string, _signal?: AbortSignal) =>
 			Promise.reject<string>(new Error("The child is not running."));
 		let observe = (_event: AgentSessionEvent) => {};
+		let audited = (_event: AgentSessionEvent) => {};
+		let auditReport = (_result: ChildResult) => {};
 		let reported = (_result: ChildResult) => {};
 		let noticed = (_message: string) => {};
 		const watch = createWatch(schedule, (reason) => stall(reason));
@@ -879,12 +893,16 @@ export function createChildSessions(options: {
 				modelRegistry: launch.modelRegistry,
 				shell: launch.shell(),
 				onEvent: (event) => {
+					audited(event);
 					watch.event(event);
 					observe(event);
 				},
 				notify: (message) => noticed(message),
 				ask: (question, signal) => asked(question, signal),
-				report: (result) => reported(result),
+				report: (result) => {
+					auditReport(result);
+					reported(result);
+				},
 				entries: from?.conversation.entries,
 				parentSession: from?.conversation.sessionId,
 			});
@@ -926,8 +944,26 @@ export function createChildSessions(options: {
 				reason: "The session ended before the child launched.",
 			};
 		}
+		const id = randomUUID();
+		const createdAt = Date.now();
+		const capture = options.audit.begin({
+			child: id,
+			sdkSession: handle.sessionId,
+			role: plan.role,
+			task: plan.task,
+			references: plan.references,
+			instructions: plan.contract.prompt,
+			tools: handle.tools,
+			model: plan.model,
+			thinking: plan.thinking,
+			worktree: plan.worktree,
+			createdAt,
+			...(launch.group === undefined ? {} : { group: launch.group }),
+			...(from ? { continuedFrom: from.id } : {}),
+		});
+		audited = (event) => capture.event(event);
+		auditReport = (result) => capture.reported(result);
 		if (!launch.background) {
-			const id = randomUUID();
 			let ended: ChildState = "failed";
 			const stopped = Promise.withResolvers<never>();
 			const stop = (state: ChildState, error: Error) => {
@@ -971,19 +1007,19 @@ export function createChildSessions(options: {
 			} finally {
 				watch.stop();
 				launch.signal?.removeEventListener("abort", abort);
-				void shutDown(handle, id);
+				void shutDown(handle, id, capture);
 			}
 		}
 		const child: Child = {
 			record: {
-				id: randomUUID(),
+				id,
 				role: plan.role,
 				task: plan.task,
 				worktree: plan.worktree,
 				model: plan.model,
 				thinking: plan.thinking,
 				state: "queued",
-				createdAt: Date.now(),
+				createdAt,
 				continuedFrom: from?.id,
 				...(launch.group === undefined ? {} : { group: launch.group }),
 				...(launch.todo === undefined ? {} : { todo: launch.todo }),
@@ -991,6 +1027,7 @@ export function createChildSessions(options: {
 			plan,
 			handle,
 			watch,
+			capture,
 			tools: new Map(),
 			writes: new Map(),
 			changed: new Set(),
@@ -1092,6 +1129,7 @@ export function createChildSessions(options: {
 			);
 		}
 		child.answers.set(number, { by, text });
+		child.capture.answered(number, text);
 		answer(child, text);
 	}
 
@@ -1249,9 +1287,20 @@ export function createChildSessions(options: {
 			answer(child, new Error("The session ended."));
 		}
 		changed();
+		const finishing = Promise.all(disposing);
 		await Promise.all(
-			working.map((child) => shutDown(child.handle, child.record.id)),
+			working.map((child) =>
+				shutDown(child.handle, child.record.id, child.capture),
+			),
 		);
+		let cancel = () => {};
+		await Promise.race([
+			finishing,
+			new Promise<void>((resolve) => {
+				cancel = schedule(resolve, shutdownDeadline);
+			}),
+		]);
+		cancel();
 		return working.length;
 	}
 

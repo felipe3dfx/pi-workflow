@@ -1,3 +1,5 @@
+import { join } from "node:path";
+
 import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
@@ -30,6 +32,7 @@ import {
 	createCodeGraphTool,
 	syncCodeGraphTool,
 } from "./codegraph-tool.ts";
+import { createChildAudit } from "./child-audit.ts";
 import { createChildLauncher } from "./child-launcher.ts";
 import { runDelegationCheck } from "./delegation-check.ts";
 import { registerDelegationMode } from "./delegation-mode.ts";
@@ -143,6 +146,13 @@ export default function piWorkflowExtension(
 		}
 		return executors;
 	});
+	const audit = createChildAudit({
+		root: join(agentDirectory, "pi-workflow-audit"),
+		parent: () => {
+			const session = currentCtx?.sessionManager;
+			return session?.getSessionFile() ? session.getSessionId() : undefined;
+		},
+	});
 	const childSessions = createChildSessions({
 		create: options.childSessions?.create,
 		schedule: options.childSessions?.schedule,
@@ -154,10 +164,11 @@ export default function piWorkflowExtension(
 			if (currentCtx) report(currentCtx, message, "error");
 		},
 		todo,
+		audit,
 	});
 	pi.on("turn_end", () => childSessions.atBoundary());
 	pi.on("agent_settled", () => childSessions.atBoundary());
-	const childrenViews = createChildrenViews(childSessions, todo);
+	const childrenViews = createChildrenViews(childSessions, audit, todo);
 	registerChildrenBox(
 		pi,
 		childSessions,
@@ -238,13 +249,16 @@ export default function piWorkflowExtension(
 		currentCtx = undefined;
 		childrenViews.close();
 		const ended = await childSessions.disposeAll();
-		if (event.reason !== "reload" || ended === 0) return;
-		pi.appendEntry("pi-workflow-child-trace", { reason: "reload", ended });
-		report(
-			ctx,
-			`/reload ended ${ended} working ${ended === 1 ? "child" : "children"}.`,
-			"warning",
-		);
+		const closed = audit.close();
+		if (event.reason === "reload" && ended > 0) {
+			pi.appendEntry("pi-workflow-child-trace", { reason: "reload", ended });
+			report(
+				ctx,
+				`/reload ended ${ended} working ${ended === 1 ? "child" : "children"}.`,
+				"warning",
+			);
+		}
+		await closed;
 	});
 
 	async function runCatalogCommand(
