@@ -222,10 +222,12 @@ interface Capture {
 	marker?: "written" | "failed";
 }
 
+export const windowSize = 128;
+
 const defaultLimits = {
 	bytes: 4 * 1024 * 1024,
 	entries: 256,
-	window: 128,
+	window: windowSize,
 	windowBytes: 256 * 1024,
 	chunk: 64 * 1024,
 	cacheBytes: 16 * 1024 * 1024,
@@ -306,8 +308,7 @@ export function createChildAudit(options: {
 			const timeout = setTimeout(task, ms);
 			return () => clearTimeout(timeout);
 		});
-	const writer = limits.chunk + headerAllowance;
-	const maxLine = writer;
+	const maxLine = limits.chunk + headerAllowance;
 	const size = limits.window;
 	const cache = new Map<string, { entries: (Extent | null)[]; bytes: number }>();
 	let cached = 0;
@@ -342,8 +343,8 @@ export function createChildAudit(options: {
 	function start(record: Capture) {
 		record.draining = true;
 		record.slot = true;
-		admittedBytes += writer;
-		record.held.bytes += writer;
+		admittedBytes += maxLine;
+		record.held.bytes += maxLine;
 		record.work = new Promise((resolve) =>
 			schedule(() => void drain(record).finally(resolve)),
 		);
@@ -379,7 +380,7 @@ export function createChildAudit(options: {
 			lose(record, ordinal);
 			return false;
 		}
-		const whole = limits.bytes - writer - share.bytes;
+		const whole = limits.bytes - maxLine - share.bytes;
 		let taken: { value: unknown; bytes: number };
 		try {
 			taken = snapshot(
@@ -399,7 +400,7 @@ export function createChildAudit(options: {
 			);
 			return false;
 		}
-		if (!fits(record, taken.bytes + (record.draining ? 0 : writer))) {
+		if (!fits(record, taken.bytes + (record.draining ? 0 : maxLine))) {
 			lose(record, ordinal);
 			fail(record, "The audit capture budget is exhausted.");
 			return false;
@@ -461,8 +462,8 @@ export function createChildAudit(options: {
 		}
 		record.pending = [];
 		if (record.cause && !record.marker) await mark(record);
-		admittedBytes -= writer;
-		record.held.bytes -= writer;
+		admittedBytes -= maxLine;
+		record.held.bytes -= maxLine;
 		record.slot = false;
 		record.draining = false;
 	}
@@ -645,8 +646,8 @@ export function createChildAudit(options: {
 		}
 		record.pending = [];
 		if (record.slot) {
-			admittedBytes -= writer;
-			record.held.bytes -= writer;
+			admittedBytes -= maxLine;
+			record.held.bytes -= maxLine;
 			record.slot = false;
 		}
 		record.cause ??= expired;

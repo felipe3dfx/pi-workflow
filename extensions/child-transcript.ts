@@ -1,4 +1,9 @@
-import type { ChildAudit, SegmentCursor, WindowCursor } from "./child-audit.ts";
+import {
+	type ChildAudit,
+	type SegmentCursor,
+	type WindowCursor,
+	windowSize,
+} from "./child-audit.ts";
 
 type Opened = Exclude<
 	NonNullable<Awaited<ReturnType<ChildAudit["read"]>>>,
@@ -64,7 +69,6 @@ type Anchor = {
 type Placed = Block & { key: string };
 type At = { index: number; row: number };
 
-const windowSize = 128;
 const residentObservations = windowSize * 3;
 const residentParts = 4;
 
