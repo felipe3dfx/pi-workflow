@@ -842,6 +842,40 @@ test("a final the capture could not retain never appears authoritative", async (
 	assert.equal(core.get(id).state, "running");
 });
 
+test("a large final cut off by an unexpected close never replaces its streamed partials", async (t) => {
+	const { audit, launch, root } = auditedCore(t, {
+		limits: { chunk: 1024, windowBytes: 4096 },
+		run: () => new Promise(() => {}),
+	});
+	const { id, child } = await launch();
+	const streaming = { role: "assistant", content: [] };
+	child.spec.onEvent({ type: "message_start", message: streaming });
+	child.spec.onEvent(delta(streaming, "text_delta", 0, "half"));
+	child.spec.onEvent({
+		type: "message_end",
+		message: { role: "assistant", content: [{ type: "text", text: unicodeText(20_000) }] },
+	});
+	await flushed(audit, id);
+	await audit.close();
+	const lines = (await readFile(journalOf(root, id), "utf8")).split("\n");
+	const final = lines.findLastIndex((text) => text.includes('"parts":'));
+	await writeFile(journalOf(root, id), `${lines.slice(0, final).join("\n")}\n`);
+	await rm(indexOf(root, id), { recursive: true });
+
+	await projects(
+		reopen(root),
+		id,
+		[{ message: "m1", final: false, content: [{ type: "text", text: "half" }], parts: true }],
+		(entries) =>
+			entries.map(({ message, final, content, segment }) => ({
+				message,
+				final,
+				content,
+				parts: segment !== undefined,
+			})),
+	);
+});
+
 function faultyFiles(fault = {}) {
 	const writes = [];
 	const reads = [];

@@ -70,6 +70,7 @@ type Evidence =
 
 type Large = {
 	bytes?: number;
+	partial?: true;
 	segment: SegmentCursor;
 	meta: Record<string, unknown>;
 };
@@ -1087,7 +1088,7 @@ export function createChildAudit(options: {
 			ordinal,
 			written: true,
 			large: {
-				...(bytes === undefined ? {} : { bytes }),
+				...(bytes === undefined ? { partial: true as const } : { bytes }),
 				meta: header?.meta ?? {},
 				segment: {
 					child: record.identity.child,

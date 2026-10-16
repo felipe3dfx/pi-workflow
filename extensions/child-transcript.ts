@@ -621,7 +621,19 @@ function project(items: Map<string, Item>, key: string, observation: Observation
 			error?: boolean;
 			start?: number;
 		};
-		const { segment } = observation.large;
+		const { segment, partial } = observation.large;
+		if (partial) {
+			if (known?.kind === "message" && !known.entry.final) {
+				items.set(key, { key, kind: "message", entry: { ...known.entry, segment } });
+				return;
+			}
+			if (known?.kind === "tool" && !known.entry.final) {
+				const slot = meta.phase === "start" ? "argsSegment" : "resultSegment";
+				items.set(key, { key, kind: "tool", entry: { ...known.entry, [slot]: segment } });
+				return;
+			}
+			if (known) return;
+		}
 		if (meta.kind === "message") {
 			items.set(key, {
 				key,
@@ -632,7 +644,7 @@ function project(items: Map<string, Item>, key: string, observation: Observation
 					role: meta.role ?? "assistant",
 					content: [],
 					segment,
-					final: true,
+					final: !partial,
 				},
 			});
 			return;
@@ -655,7 +667,7 @@ function project(items: Map<string, Item>, key: string, observation: Observation
 			delete entry.partial;
 			entry.resultSegment = segment;
 			if (meta.error !== undefined) entry.error = meta.error;
-			entry.final = true;
+			entry.final = !partial;
 		}
 		items.set(key, { key, kind: "tool", entry });
 		return;
