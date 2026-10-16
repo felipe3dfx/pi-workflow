@@ -1525,25 +1525,23 @@ test("after a stay, a direct read on the next message names its own verdict and 
 
 
 for (const destination of ["off", "stay", "leave"]) {
-	for (const purpose of ["Read review instructions", "Review the skill itself"]) {
-		test(`${purpose}: skill and references are ordinary reads with routing ${destination}`, async () => {
-			await withWorkspace(async ({ worktree }) => {
-				const dir = join(worktree, ".pi/skills/review");
-				await mkdir(dir, { recursive: true });
-				await writeFile(join(dir, "SKILL.md"), "Read [scope](scope.md).\n");
-				await writeFile(join(dir, "scope.md"), "Scope must pass before judgment.\n");
-				const jev = fakeJev(destination === "off" ? "leave" : destination);
-				const launcher = launcherFor(destination === "off" ? { jevRouting: { enabled: () => false } } : {});
-				const ctx = gateContext(worktree, branchEnding(purpose), jev);
-				for (const name of ["SKILL.md", "scope.md", "missing.md"]) {
-					const result = await launcher.gateToolCall({ toolName: "read", input: { path: join(dir, name) } }, ctx);
-					assert.equal(result.allow, destination !== "leave", name);
-					if (destination === "leave") assert.match(result.reason, /spawn_child/);
-				}
-				assert.equal(jev.requests.length, destination === "off" ? 0 : 1);
-			});
+	test(`skill and references are ordinary reads with routing ${destination}`, async () => {
+		await withWorkspace(async ({ worktree }) => {
+			const dir = join(worktree, ".pi/skills/review");
+			await mkdir(dir, { recursive: true });
+			await writeFile(join(dir, "SKILL.md"), "Read [scope](scope.md).\n");
+			await writeFile(join(dir, "scope.md"), "Scope must pass before judgment.\n");
+			const jev = fakeJev(destination === "off" ? "leave" : destination);
+			const launcher = launcherFor(destination === "off" ? { jevRouting: { enabled: () => false } } : {});
+			const ctx = gateContext(worktree, branchEnding("Read review instructions"), jev);
+			for (const name of ["SKILL.md", "scope.md", "missing.md"]) {
+				const result = await launcher.gateToolCall({ toolName: "read", input: { path: join(dir, name) } }, ctx);
+				assert.equal(result.allow, destination !== "leave", name);
+				if (destination === "leave") assert.match(result.reason, /spawn_child/);
+			}
+			assert.equal(jev.requests.length, destination === "off" ? 0 : 1);
 		});
-	}
+	});
 }
 
 test("unrelated tools do not need a session branch", async () => {

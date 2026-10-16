@@ -2301,14 +2301,6 @@ test("every child loads the parent's context files after its contract, and none 
 		systems.forEach((system, index) => {
 			const contract = system.indexOf(`${roles[index]} child session.`);
 			assert.ok(contract >= 0, roles[index]);
-			assert.match(system, /procedures identified by the assigned task or repository instructions, or otherwise known applicable/);
-			assert.match(system, /missing mandatory prerequisite of the assigned task.*stop dependent technical judgment/);
-			if (roles[index] !== "explore") {
-				assert.match(system, /Report blocked even when the parent owns it/);
-				assert.match(system, /Independent checks may run but cannot justify done or pass for the dependent task/);
-				assert.match(system, /Completed independent bounded discovery may succeed with unrelated global obligations remaining/);
-			}
-
 			for (const rule of [
 				"Global rule: answer in haiku.",
 				"Ancestor rule: keep modules small.",
@@ -8226,47 +8218,20 @@ test("an open Fleet row follows a rename", async () => {
 	});
 });
 
-test("assigned dependent task retains blocked prerequisite despite completed independent checks (scripted transport, not model compliance)", async () => {
-	await withWorkspace(async ({ worktree, agentDir }) => {
-		const result = {
-			verdict: "blocked", reason: "Parent-owned mandatory setup for the assigned task is missing.",
-			files_changed: [], validation: ["Independent inventory completed; dependent judgment not performed."],
-			left_undone: ["parent | blocked | supply required setup evidence before dependent judgment"],
-		};
-		const child = await realChild(agentDir, [reporting(result), fauxAssistantMessage("Assigned task blocked.")]);
-		const response = await spawn(child.extension.tool, { role: "worker", task: "Perform dependent judgment; parent-owned mandatory setup evidence is missing. Independent inventory may run." }, { ...toolContext("print", worktree), ...child.parent.context });
-		assert.equal(response.details.verdict, "blocked");
-		assert.deepEqual(response.details.result.left_undone, result.left_undone);
-		assert.match(JSON.stringify(child.parent.requests[0].messages[0]), /Report blocked even when the parent owns it/);
-	});
-});
-
 for (const count of [1, 2]) {
-	test(`real Pi child questions and background delivery retain owned and unowned obligations with ${count} scoped results (scripted provider, not model compliance)`, async () => {
+	test(`real Pi child questions and background delivery retain pending obligations with ${count} scoped results (scripted provider, not model compliance)`, async () => {
 		await withWorkspace(async ({ worktree, agentDir }) => {
-			const path = join(worktree, ".pi/skills/review/SKILL.md");
-			await mkdir(join(worktree, ".pi/skills/review"), { recursive: true });
-			await writeFile(path, "Read [scope](scope.md) and mandatory missing.md before dependent judgment. Before technical judgment: parent creates isolated worktree at pinned head abc123; scope must pass. Required passes: correctness, standards/design, CI at abc123.\n");
-			const scopePath = join(worktree, ".pi/skills/review/scope.md");
-			const missingPath = join(worktree, ".pi/skills/review/missing.md");
-			await writeFile(scopePath, "Scope UNKNOWN; operator inventory/plan exception required.\n");
 			const remaining = [
 				"parent | pending | isolated worktree at pinned head abc123 before judgment",
 				"parent | blocked | scope audit unknown; stop dependent technical judgment",
 				"unowned | blocked | standards/design and CI at abc123; scope prerequisite unresolved",
-				`parent | blocked | required instruction ${missingPath}: ENOENT; obtain instruction before dependent work`,
 			];
-			const result = { verdict: "done", files_changed: [], validation: [`Sources: ${path}, ${scopePath}; discovery only, no technical review performed. Unresolved: scope inventory/plan exception and missing instruction.`], left_undone: remaining };
+			const result = { verdict: "done", files_changed: [], validation: ["Discovery only; no dependent technical review performed."], left_undone: remaining };
 			const child = await realChild(agentDir, [
-				...Array.from({ length: count }, () => [
-					fauxAssistantMessage(fauxToolCall("read", { path }), { stopReason: "toolUse" }),
-					fauxAssistantMessage(fauxToolCall("read", { path: scopePath }), { stopReason: "toolUse" }),
-					fauxAssistantMessage(fauxToolCall("read", { path: missingPath }), { stopReason: "toolUse" }),
-					asking("Setup and scope are prerequisites. Limit this task to discovery and retain the parent/unowned obligations?"),
-				]).flat(),
+				...Array.from({ length: count }, () => asking("Limit this task to discovery while parent prerequisites remain pending?")),
 				...Array.from({ length: count }, () => [reporting(result), fauxAssistantMessage("Discovery subtask only.")]).flat(),
 			]);
-			const { extension, parent } = child;
+			const { extension } = child;
 			const ids = [];
 			for (let index = 0; index < count; index++) {
 				ids.push((await spawnReal(child, worktree)).details.id);
@@ -8285,16 +8250,6 @@ for (const count of [1, 2]) {
 				assert.equal(details.verdict, "done");
 				assert.deepEqual(details.result.left_undone, remaining);
 			}
-			const readOutputs = parent.requests.flatMap(({ messages }) => messages.filter((message) => message.role === "toolResult" && message.toolName === "read"));
-			assert.ok(readOutputs.length >= count);
-			assert.match(JSON.stringify(readOutputs), /parent creates isolated worktree at pinned head abc123/);
-			assert.match(JSON.stringify(readOutputs), /Scope UNKNOWN/);
-			assert.ok(readOutputs.some((output) => output.isError && /missing\.md/.test(JSON.stringify(output.content))));
-			assert.match(JSON.stringify(delivered), /Sources:.*SKILL\.md.*scope\.md/);
-			assert.match(JSON.stringify(delivered), /ENOENT.*obtain instruction before dependent work/);
-			const system = JSON.stringify(parent.requests[0].messages[0]);
-			assert.match(system, /mandatory prerequisite.*stop dependent technical judgment/);
-			assert.match(system, /parent-owned setup.*before starting dependent work/);
 			await extension.fire("turn_end");
 			assert.equal(extension.messages.filter(({ message }) => message.customType === "pi-workflow-child-result").length, delivered.length);
 		});

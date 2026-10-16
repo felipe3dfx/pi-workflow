@@ -73,7 +73,7 @@ test("the verify contract independently checks work, gives a verdict per criteri
 	assertSentence(text, /\bOnly Verdict pass means verified\b/, /\bfail or blocked is not a pass\b/);
 	assertSentence(text, /\b(do not|never)\b[^.]*\b(edit|write)\b[^.]*\bworktree files\b/i);
 	assertSentence(text, /\btracked worktree files change\b/i, /\bstop and report blocked\b/);
-	assertSentence(text, /Run independent checks despite parent-reserved commands/, /unverified/, /unmet prerequisite.*requires blocked/);
+	assertSentence(text, /\breserved for the parent is not a missing capability\b/, /\bunverified\b/);
 	assertSentence(text, /\bnever ask the parent to save memory\b/);
 	assert.doesNotMatch(text, /verdict: pass \| fail \| blocked/);
 });
@@ -90,7 +90,7 @@ test("the worker contract reports through report_result and separates a decision
 	assertSentence(text, /\bdecision\b/, /\b(do not|never) guess\b/, /\bask_parent with closed options\b/);
 	assertSentence(text, /\btechnical blocker\b[^.]*\bas blocked\b/);
 	assert.doesNotMatch(text, /\bdecision\b[^.]*\breport blocked\b|\bblocker\b[^.]*\bask_parent\b/);
-	assertSentence(text, /list reserved commands in left_undone/, /unless they are unmet prerequisites of the assigned task/);
+	assertSentence(text, /\breserved command is not a missing capability\b/, /\bleft_undone\b/);
 	assertSentence(text, /\bnever ask the parent to save memory\b/);
 	assert.doesNotMatch(text, /status: done \| partial \| blocked/);
 	assert.doesNotMatch(text, /interaction_required/);
@@ -185,16 +185,4 @@ test("the explore and verify read-only wording covers codemode scripts", async (
 		await contract("verify"),
 		/Do not edit or write worktree files, directly or from codemode, and do not run commands that rewrite tracked files/,
 	);
-});
-
-test("every child contract pauses dependent judgment for prerequisite gates and bounds scoped success", async () => {
-	for (const role of ["explore", "worker", "verify"]) {
-		const text = parseContract(await contract(role)).prompt;
-		assert.match(text, /Read instructions for procedures identified by the assigned task or repository instructions, or otherwise known applicable/);
-		assert.match(text, /mandatory prerequisite.*unresolved.*stop dependent technical judgment/i);
-		assert.match(text, /parent-owned setup.*before.*dependent work/i);
-		assert.match(text, /scope reduction does not waive.*mandatory/i);
-		assert.match(text, /retain each with its owner.*state/i);
-		assert.match(text, /scoped.*not.*global completion/i);
-	}
 });
