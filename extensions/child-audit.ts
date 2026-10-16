@@ -1684,6 +1684,7 @@ export function createChildAudit(options: {
 		const names = new Set<string>();
 		if (after === undefined) {
 			for (const record of records.values()) {
+				if (names.size >= limits.catalog) break;
 				if (record.identity.parent === parent && !record.listed) {
 					names.add(record.identity.child);
 				}
@@ -1701,13 +1702,16 @@ export function createChildAudit(options: {
 		if (parent && Number.isSafeInteger(from) && from >= 0) {
 			const path = join(options.root, parent, catalogFile);
 			try {
-				const bound = limits.catalog * catalogLine;
+				const room = limits.catalog - names.size;
+				const bound = room * catalogLine;
 				const buffer = await readAt(path, from, bound);
-				const page = catalogEntries(buffer, limits.catalog);
+				const page = catalogEntries(buffer, room);
 				for (const name of page.names) names.add(name);
 				let { at } = page;
-				if (at === 0 && buffer.length >= bound) at = buffer.length;
-				if (at > 0 && from + at < (await files.stat(path)).size) next = String(from + at);
+				if (at === 0 && buffer.length >= bound && room > 0) at = buffer.length;
+				if ((at > 0 || room === 0) && from + at < (await files.stat(path)).size) {
+					next = String(from + at);
+				}
 			} catch {}
 		}
 		for (const child of names) {

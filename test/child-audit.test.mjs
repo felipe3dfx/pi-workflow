@@ -2049,6 +2049,14 @@ test("a cancelled catalog repair leaves a valid catalog that a later repair comp
 	assert.equal(all.catalog, undefined);
 });
 
+test("the first catalog page stays bounded while many live children are not yet catalogued", async (t) => {
+	const { files } = catalogFailing();
+	const { audit, launch } = auditedCore(t, { files, limits: { catalog: 2 }, run: () => new Promise(() => {}) });
+	for (let i = 0; i < 3; i++) await flushed(audit, (await launch()).id);
+
+	assert.equal((await audit.list()).records.length, 2);
+});
+
 test("the parent's records are listed in bounded pages, live working children in the working section", async (t) => {
 	const { audit, core, launch, root } = auditedCore(t, { limits: { catalog: 2 } });
 	const ids = [];
