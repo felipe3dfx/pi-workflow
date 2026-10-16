@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { rm } from "node:fs/promises";
+import { mkdir, open as openFile, opendir, rename, rm, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { stripVTControlCharacters } from "node:util";
@@ -206,6 +206,7 @@ function audited(t, records, options = {}) {
 		root: options.root ?? withAgentDirectory(t),
 		parent: () => ("parent" in options ? options.parent : "parent-1"),
 		limits: options.limits,
+		files: options.files,
 	});
 	const captures = {};
 	for (const item of records) {
@@ -1047,6 +1048,41 @@ test("a child whose transcript cannot be read stays listed with its identity", a
 	const text = await settle(view);
 	assert.match(text, /⊘ worker 9e01 +interrupted/);
 	assert.match(text, /❯ Index the docs/);
+});
+
+test("children the catalog lost are reported, and r rebuilds the catalog so they are listed again", async (t) => {
+	const root = withAgentDirectory(t);
+	let failing = true;
+	const files = {
+		mkdir,
+		rename,
+		stat,
+		unlink,
+		opendir,
+		async open(path, flags, mode) {
+			if (failing && path.endsWith(".catalog")) throw new Error("catalog unavailable");
+			return openFile(path, flags, mode);
+		},
+	};
+	const lost = record("9e01", { task: "Index the docs" });
+	const before = audited(t, [lost], { root, files });
+	before.say(lost.id, [{ type: "text", text: "Indexed half." }]);
+	await written(before.audit, lost.id);
+	await before.audit.close();
+	failing = false;
+
+	const later = audited(t, [], { root });
+	const view = open(fakeSessions([]), { rows: 30, audit: later.audit });
+	let text = await settle(view);
+	assert.doesNotMatch(text, /worker 9e01/);
+	assert.match(text, /missing from the audit catalog/);
+	assert.match(text, /r repair/);
+
+	view.press("r");
+	text = await settle(view);
+	assert.match(text, /Catalog repaired: 1 record added\./);
+	assert.match(text, /worker 9e01/);
+	assert.doesNotMatch(text, /missing from the audit catalog/);
 });
 
 test("a record with an index warning is repaired only on request, and the repair can be cancelled and shows its outcome", async (t) => {

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { access, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, open, opendir, readdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
@@ -885,6 +885,8 @@ function faultyFiles(fault = {}) {
 		mkdir,
 		readdir,
 		stat,
+		unlink,
+		opendir: (path) => opendir(path, { bufferSize: 4 }),
 		async rename(from, to) {
 			await fault.rename?.(from, to);
 			await rename(from, to);
@@ -1931,6 +1933,66 @@ test("a child the catalog could not record stays listed live with a warning that
 	assert.equal(record.child, id);
 	assert.equal(record.health.complete, true);
 	assert.match(record.health.warning, /could not be added to the audit catalog.*not guaranteed/);
+});
+
+function catalogFailing() {
+	const state = { failing: true, onAppend: () => {} };
+	const files = faultyFiles({
+		open: (path, flags) => {
+			if (!path.endsWith(".catalog")) return;
+			if (state.failing) throw new Error("catalog unavailable");
+			if (flags === "a") state.onAppend();
+		},
+	});
+	return { state, files };
+}
+
+test("a child the catalog lost is missing after reopening with a warning, and an explicit catalog repair lists it again", async (t) => {
+	const { state, files } = catalogFailing();
+	const { audit, launch, root } = auditedCore(t, { files, run: () => new Promise(() => {}) });
+	const { id } = await launch();
+	await flushed(audit, id);
+	await audit.close();
+	state.failing = false;
+
+	const later = reopen(root, "parent-1", { files });
+	const before = await later.list();
+	assert.deepEqual(before.records, []);
+	assert.match(before.catalog, /missing from the audit catalog/);
+
+	assert.deepEqual(await later.repairCatalog(), { added: 1 });
+	const after = await later.list();
+	assert.deepEqual(after.records.map(({ child }) => child), [id]);
+	assert.equal(after.catalog, undefined);
+	assert.deepEqual(await later.repairCatalog(), { added: 0 });
+	assert.deepEqual((await later.list()).records.map(({ child }) => child), [id]);
+});
+
+test("a cancelled catalog repair leaves a valid catalog that a later repair completes", async (t) => {
+	const { state, files } = catalogFailing();
+	const { audit, launch, root } = auditedCore(t, { files, run: () => new Promise(() => {}) });
+	const ids = [];
+	for (let i = 0; i < 3; i++) {
+		const { id } = await launch();
+		await flushed(audit, id);
+		ids.push(id);
+	}
+	await audit.close();
+	state.failing = false;
+	const controller = new AbortController();
+	state.onAppend = () => controller.abort();
+
+	const later = reopen(root, "parent-1", { files });
+	assert.deepEqual(await later.repairCatalog(controller.signal), { cancelled: true });
+	const partial = await later.list();
+	assert.equal(partial.records.length, 1);
+	assert.match(partial.catalog, /missing from the audit catalog/);
+
+	state.onAppend = () => {};
+	assert.deepEqual(await later.repairCatalog(), { added: 2 });
+	const all = await later.list();
+	assert.deepEqual(all.records.map(({ child }) => child).sort(), [...ids].sort());
+	assert.equal(all.catalog, undefined);
 });
 
 test("the parent's records are listed in bounded pages, live working children in the working section", async (t) => {

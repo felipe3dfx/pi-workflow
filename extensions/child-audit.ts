@@ -1,4 +1,4 @@
-import { mkdir, open, rename, stat } from "node:fs/promises";
+import { mkdir, open, opendir, rename, stat, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { crc32 } from "node:zlib";
 
@@ -155,6 +155,8 @@ interface AuditFiles {
 	open(path: string, flags: string, mode?: number): Promise<AuditFile>;
 	rename(from: string, to: string): Promise<void>;
 	stat(path: string): Promise<{ size: number }>;
+	unlink(path: string): Promise<void>;
+	opendir(path: string): Promise<AsyncIterable<{ name: string }>>;
 }
 
 type Page = { n: number; entries: (Extent | null)[]; dirty: boolean };
@@ -222,6 +224,9 @@ const defaultLimits = {
 
 const version = 1;
 const catalogFile = ".catalog";
+const incompleteFile = ".catalog-incomplete";
+const uncatalogued =
+	"Some children may be missing from the audit catalog; repair it to find them again.";
 const catalogLine = 192;
 // A line adds a checksum, a header of at most this size and separators to its chunk; the loss marker is written outside the payload budget.
 const headerAllowance = 512;
@@ -285,6 +290,8 @@ export function createChildAudit(options: {
 		open,
 		rename,
 		stat,
+		unlink,
+		opendir: (path) => opendir(path, { bufferSize: 32 }),
 	};
 	const schedule = options.schedule ?? setImmediate;
 	const timer =
@@ -460,9 +467,9 @@ export function createChildAudit(options: {
 		record.draining = false;
 	}
 
-	async function catalogue(record: Capture) {
-		const path = join(dirname(record.path as string), catalogFile);
-		const entry = JSON.stringify({ child: record.identity.child });
+	async function appendCatalog(directory: string, child: string) {
+		const path = join(directory, catalogFile);
+		const entry = JSON.stringify({ child });
 		const previous = cataloguing.get(path) ?? Promise.resolve();
 		const appended = previous.then(async () => {
 			if (entry.length + 11 > catalogLine) throw new Error("the child ID is too long");
@@ -477,12 +484,84 @@ export function createChildAudit(options: {
 		cataloguing.set(path, settled);
 		try {
 			await appended;
-			record.listed = true;
-		} catch (error) {
-			record.unlisted = `The child could not be added to the audit catalog: ${errorMessage(error)}. ${unrecoverable}`;
 		} finally {
 			if (cataloguing.get(path) === settled) cataloguing.delete(path);
 		}
+	}
+
+	async function catalogue(record: Capture) {
+		const directory = dirname(record.path as string);
+		try {
+			await appendCatalog(directory, record.identity.child);
+			record.listed = true;
+		} catch (error) {
+			record.unlisted = `The child could not be added to the audit catalog: ${errorMessage(error)}. ${unrecoverable}`;
+			try {
+				await (await files.open(join(directory, incompleteFile), "w", 0o600)).close();
+			} catch {}
+		}
+	}
+
+	function catalogEntries(buffer: Buffer, max: number) {
+		const names: string[] = [];
+		let at = 0;
+		for (let end = buffer.indexOf(10); end >= 0 && names.length < max; end = buffer.indexOf(10, at)) {
+			const text = buffer.toString("utf8", at, end);
+			at = end + 1;
+			const entry = text.slice(9);
+			if (text.charCodeAt(8) !== 9 || checksum(entry) !== text.slice(0, 8)) continue;
+			try {
+				const child = JSON.parse(entry)?.child;
+				if (typeof child === "string") names.push(child);
+			} catch {}
+		}
+		return { names, at };
+	}
+
+	async function repairCatalog(signal?: AbortSignal) {
+		const parent = currentParent();
+		if (!parent) return { refused: "The parent session has no identity." };
+		if (cataloguing.size > 0) {
+			return { refused: "Children are still being added to the catalog." };
+		}
+		const directory = join(options.root, parent);
+		const path = join(directory, catalogFile);
+		const bound = limits.catalog * catalogLine;
+		let added = 0;
+		try {
+			const known = new Set<string>();
+			for (let from = 0; ; ) {
+				if (signal?.aborted) return { cancelled: true as const };
+				let buffer: Buffer;
+				try {
+					buffer = await readAt(path, from, bound);
+				} catch (error) {
+					if ((error as { code?: unknown }).code === "ENOENT") break;
+					throw error;
+				}
+				const { names, at } = catalogEntries(buffer, Number.POSITIVE_INFINITY);
+				for (const name of names) known.add(name);
+				const step = at === 0 && buffer.length >= bound ? buffer.length : at;
+				if (step === 0) break;
+				from += step;
+			}
+			for await (const entry of await files.opendir(directory)) {
+				if (signal?.aborted) return { cancelled: true as const };
+				if (!entry.name.endsWith(".jsonl")) continue;
+				const child = entry.name.slice(0, -".jsonl".length);
+				if (!/^[\w-]+$/.test(child) || known.has(child)) continue;
+				if (!(await identityOf(join(directory, entry.name), parent, child))) continue;
+				await appendCatalog(directory, child);
+				known.add(child);
+				added += 1;
+			}
+			await files.unlink(join(directory, incompleteFile)).catch(() => {});
+		} catch (error) {
+			return {
+				refused: `The audit catalog could not be rebuilt: ${errorMessage(error)}.`,
+			};
+		}
+		return { added };
 	}
 
 	async function store(record: Capture, file: AuditFile, item: Pending) {
@@ -1601,25 +1680,21 @@ export function createChildAudit(options: {
 		}
 		const from = Number(after ?? 0);
 		let next: string | undefined;
+		let catalog: string | undefined;
+		if (parent && after === undefined) {
+			try {
+				await files.stat(join(options.root, parent, incompleteFile));
+				catalog = uncatalogued;
+			} catch {}
+		}
 		if (parent && Number.isSafeInteger(from) && from >= 0) {
 			const path = join(options.root, parent, catalogFile);
 			try {
 				const bound = limits.catalog * catalogLine;
 				const buffer = await readAt(path, from, bound);
-				let at = 0;
-				let count = 0;
-				for (let end = buffer.indexOf(10); end >= 0 && count < limits.catalog; end = buffer.indexOf(10, at)) {
-					const text = buffer.toString("utf8", at, end);
-					at = end + 1;
-					const entry = text.slice(9);
-					if (text.charCodeAt(8) !== 9 || checksum(entry) !== text.slice(0, 8)) continue;
-					try {
-						const child = JSON.parse(entry)?.child;
-						if (typeof child !== "string") continue;
-						names.add(child);
-						count += 1;
-					} catch {}
-				}
+				const page = catalogEntries(buffer, limits.catalog);
+				for (const name of page.names) names.add(name);
+				let { at } = page;
 				if (at === 0 && buffer.length >= bound) at = buffer.length;
 				if (at > 0 && from + at < (await files.stat(path)).size) next = String(from + at);
 			} catch {}
@@ -1628,7 +1703,11 @@ export function createChildAudit(options: {
 			const record = await lookup(child);
 			if (record) listed.push(summary(record));
 		}
-		return { records: listed, ...(next === undefined ? {} : { next }) };
+		return {
+			records: listed,
+			...(next === undefined ? {} : { next }),
+			...(catalog === undefined ? {} : { catalog }),
+		};
 	}
 
 	async function read(child: string, cursor?: WindowCursor) {
@@ -1919,7 +1998,7 @@ export function createChildAudit(options: {
 		});
 	}
 
-	return { begin, execution, list, read, segment, repair, close };
+	return { begin, execution, list, read, segment, repair, repairCatalog, close };
 }
 
 const working = new Set(["queued", "running", "waiting"]);
