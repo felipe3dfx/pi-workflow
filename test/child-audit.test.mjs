@@ -222,7 +222,7 @@ test("without a parent session identity the child runs and live inspection warns
 
 test("an exhausted capture budget marks the record incomplete without stopping, steering, or failing the child", async (t) => {
 	const { audit, core, launch, children } = auditedCore(t, {
-		limits: { entries: 4 },
+		limits: { entries: 5 },
 	});
 	const { id, child } = await launch();
 	for (const text of ["one", "two", "three"]) {
@@ -580,7 +580,7 @@ test("concurrent children keep their own order and correlation, and identical te
 
 test("a final the capture could not retain never appears authoritative", async (t) => {
 	const { audit, core, launch } = auditedCore(t, {
-		limits: { entries: 5 },
+		limits: { entries: 6 },
 		run: () => new Promise(() => {}),
 	});
 	const { id, child } = await launch();
@@ -941,4 +941,25 @@ test("evidence observed while the journal is closing is still written", async (t
 
 	const window = await eventually(() => audit.read(id), allWritten);
 	assert.deepEqual(inputs(window).map(({ text }) => text), ["during close"]);
+});
+
+test("a saturating child cannot starve the identity and first evidence of a sibling started later", async (t) => {
+	const scheduler = manualScheduler();
+	const { audit, launch } = auditedCore(t, {
+		schedule: scheduler.schedule,
+		limits: { bytes: 64 * 1024, chunk: 1024 },
+		run: () => new Promise(() => {}),
+	});
+	const busy = await launch();
+	for (let i = 0; i < 100; i++) busy.child.spec.onEvent(userMessage("x".repeat(500)));
+	const late = await launch();
+	late.child.spec.onEvent(userMessage("hello"));
+
+	const saturated = await audit.read(busy.id);
+	assert.equal(saturated.health.complete, false);
+	assert.match(saturated.health.warning, /exhausted/);
+	const started = await audit.read(late.id);
+	assert.equal(started.health.complete, true);
+	assert.equal(started.health.admitted, started.health.received);
+	assert.deepEqual(inputs(started).map(({ text }) => text), ["hello"]);
 });

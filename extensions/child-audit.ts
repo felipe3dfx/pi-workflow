@@ -125,6 +125,7 @@ interface Capture {
 	extents: number[];
 	size: number;
 	admitted: number;
+	held: { bytes: number; entries: number };
 	queued: { steer: string[]; "follow-up": string[] };
 	next: number;
 	seen: Set<string>;
@@ -169,6 +170,12 @@ export function createChildAudit(options: {
 	const writer = limits.chunk + partOverhead;
 	const slice = Math.max(2, Math.floor((limits.chunk - 2) / 6));
 	const records = new Map<string, Capture>();
+	// Each live record keeps a minimum share no sibling may borrow, and a borrower also leaves one share free so a child that starts later can still admit its identity.
+	const share = {
+		bytes: Math.floor(limits.bytes / 16),
+		entries: Math.max(1, Math.floor(limits.entries / 16)),
+	};
+	const live = new Set<Capture>();
 	let admittedBytes = 0;
 	let admittedEntries = 0;
 
@@ -180,6 +187,7 @@ export function createChildAudit(options: {
 	function fail(record: Capture, cause: string) {
 		if (record.cause) return;
 		record.cause = cause;
+		live.delete(record);
 		if (record.draining || !record.path) return;
 		record.draining = true;
 		void mark(record).finally(() => {
@@ -190,12 +198,31 @@ export function createChildAudit(options: {
 	function start(record: Capture) {
 		record.draining = true;
 		admittedBytes += writer;
+		record.held.bytes += writer;
 		schedule(() => void drain(record));
 	}
 
-	function release(item: Pending) {
+	function release(record: Capture, item: Pending) {
 		admittedBytes -= item.bytes;
 		admittedEntries -= 1;
+		record.held.bytes -= item.bytes;
+		record.held.entries -= 1;
+	}
+
+	function fits(record: Capture, bytes: number) {
+		let spareBytes = 0;
+		let spareEntries = 0;
+		for (const other of live) {
+			if (other === record) continue;
+			spareBytes += Math.max(0, share.bytes - other.held.bytes);
+			spareEntries += Math.max(0, share.entries - other.held.entries);
+		}
+		if (record.held.bytes + bytes > share.bytes) spareBytes += share.bytes;
+		if (record.held.entries + 1 > share.entries) spareEntries += share.entries;
+		return (
+			admittedBytes + bytes + spareBytes <= limits.bytes &&
+			admittedEntries + 1 + spareEntries <= limits.entries
+		);
 	}
 
 	function admit(record: Capture, evidence?: Evidence) {
@@ -204,8 +231,7 @@ export function createChildAudit(options: {
 			lose(record, ordinal);
 			return false;
 		}
-		const whole = limits.bytes - writer;
-		const available = whole - admittedBytes + (record.draining ? writer : 0);
+		const whole = limits.bytes - writer - share.bytes;
 		let taken: { value: unknown; bytes: number };
 		try {
 			taken = snapshot(
@@ -225,13 +251,15 @@ export function createChildAudit(options: {
 			);
 			return false;
 		}
-		if (taken.bytes > available || admittedEntries + 1 > limits.entries) {
+		if (!fits(record, taken.bytes + (record.draining ? 0 : writer))) {
 			lose(record, ordinal);
 			fail(record, "The audit capture budget is exhausted.");
 			return false;
 		}
 		admittedBytes += taken.bytes;
 		admittedEntries += 1;
+		record.held.bytes += taken.bytes;
+		record.held.entries += 1;
 		record.admitted += 1;
 		record.pending.push({ ordinal, ...taken });
 		if (!record.draining) start(record);
@@ -257,24 +285,25 @@ export function createChildAudit(options: {
 				}
 				await store(record, file, item);
 				record.pending.shift();
-				release(item);
+				release(record, item);
 				record.extents.push(record.size);
 			}
 		} catch (error) {
 			const item = record.pending.shift() as Pending;
-			release(item);
+			release(record, item);
 			if (error instanceof Uncertain) record.uncertain = item.ordinal;
 			else lose(record, item.ordinal);
 			fail(record, `Audit capture failed: ${errorMessage(error)}.`);
 		}
 		for (const item of record.pending) {
-			release(item);
+			release(record, item);
 			lose(record, item.ordinal);
 		}
 		record.pending = [];
 		void file?.close().catch(() => {});
 		if (record.cause && !record.marker) await mark(record);
 		admittedBytes -= writer;
+		record.held.bytes -= writer;
 		record.draining = false;
 	}
 
@@ -550,6 +579,7 @@ export function createChildAudit(options: {
 			extents: [],
 			size: 0,
 			admitted: 0,
+			held: { bytes: 0, entries: 0 },
 			queued: { steer: [], "follow-up": [] },
 			next: 0,
 			seen: new Set(),
@@ -594,6 +624,7 @@ export function createChildAudit(options: {
 			admit(record);
 			return capture;
 		}
+		live.add(record);
 		admit(record);
 		return capture;
 	}
@@ -762,6 +793,7 @@ export function createChildAudit(options: {
 		const record = records.get(child);
 		if (!record || (record.state === state && verdict === undefined)) return;
 		record.state = state;
+		if (!working.has(state)) live.delete(record);
 		admit(record, {
 			kind: "execution",
 			state,
@@ -771,6 +803,8 @@ export function createChildAudit(options: {
 
 	return { begin, execution, read };
 }
+
+const working = new Set(["queued", "running", "waiting"]);
 
 const deltaParts: Record<string, "text" | "thinking" | "arguments"> = {
 	text_delta: "text",
