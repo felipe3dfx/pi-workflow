@@ -7,6 +7,7 @@ import { crc32 } from "node:zlib";
 
 import { createChildAudit } from "../extensions/child-audit.ts";
 import { createChildSessions } from "../extensions/child-sessions.ts";
+import { eventually } from "./support/eventually.mjs";
 import { fakeChildren } from "./support/fake-children.mjs";
 import { withAgentDirectory } from "./support/jev-routing.mjs";
 
@@ -47,16 +48,6 @@ function auditedCore(
 		return { id: started.id, started, child: children.created.at(-1) };
 	}
 	return { core, audit, children, sent, launch, root };
-}
-
-async function eventually(read, condition) {
-	let value;
-	for (let i = 0; i < 200; i++) {
-		value = await read();
-		if (condition(value)) return value;
-		await delay(5);
-	}
-	assert.fail(`condition never held: ${JSON.stringify(value)}`);
 }
 
 const allWritten = (window) =>
@@ -1063,6 +1054,15 @@ test("index pages are cached within a bounded number of entries", async (t) => {
 
 const indexOf = (root, id) => join(root, "parent-1", `${id}.index`);
 
+async function drained(audit, root, id) {
+	const window = await flushed(audit, id);
+	await eventually(
+		() => readFile(join(indexOf(root, id), "head.json"), "utf8").then(JSON.parse, () => ({})),
+		(head) => head.committed === window.health.received,
+	);
+	return window;
+}
+
 test("without its index a record still shows the known identity and windows verified from the record, with a warning", async (t) => {
 	const { audit, files, id, root } = await largeRecord(t, { window: 16, windowBytes: 1024 });
 	await rm(indexOf(root, id), { recursive: true });
@@ -1167,7 +1167,7 @@ test("an explicit repair can be cancelled, then recovers only verified evidence 
 	const { id, child } = await launch();
 	for (const text of ["alpha", "bravo", "charlie"]) child.spec.onEvent(userMessage(text));
 	await finishesUnchanged(core, id, child, sent);
-	await eventually(() => audit.read(id), allWritten);
+	await drained(audit, root, id);
 	const stale = (await audit.read(id)).next;
 	await damage(journalOf(root, id), "bravo", "brava");
 	await writeFile(journalOf(root, id), "torn", { flag: "a" });
@@ -1209,7 +1209,7 @@ test("evidence in an unsupported format stays visible as uninterpreted after rep
 	const { audit, core, sent, launch, root } = auditedCore(t);
 	const { id, child } = await launch();
 	await finishesUnchanged(core, id, child, sent);
-	const written = (await eventually(() => audit.read(id), allWritten)).health.written;
+	const written = (await drained(audit, root, id)).health.written;
 	await writeFile(journalOf(root, id), forged({ v: 2, ordinal: written, part: 0, parts: 1 }), {
 		flag: "a",
 	});
@@ -1383,12 +1383,12 @@ test("after an abrupt end the verified prefix is recoverable and only available 
 	const { audit, launch, root } = auditedCore(t, { run: () => new Promise(() => {}) });
 	const { id, child } = await launch();
 	child.spec.onEvent(userMessage("alpha"));
-	await flushed(audit, id);
+	await drained(audit, root, id);
 	const index = ["head.json", "0-0.json"].map((name) => join(indexOf(root, id), name));
 	const stale = await Promise.all(index.map((path) => readFile(path)));
 	child.spec.onEvent(userMessage("bravo"));
 	child.spec.onEvent(userMessage("charlie"));
-	await flushed(audit, id);
+	await drained(audit, root, id);
 	await Promise.all(index.map((path, i) => writeFile(path, stale[i])));
 	await writeFile(journalOf(root, id), '0badc0de\t{"v":1,"ordinal":9,"part":0', { flag: "a" });
 
