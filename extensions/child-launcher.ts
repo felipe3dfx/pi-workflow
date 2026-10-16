@@ -482,7 +482,7 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		return {
 			allow: false,
 			reason:
-				"Jev answered that the work for the latest user message leaves this session; a verdict for an earlier message does not carry over. Call spawn_child with the role whose tools cover the task; this message's verdict allows the launch.",
+				"Jev answered that the work for the latest user message leaves this session; a verdict for an earlier message does not carry over. Call spawn_child with the role whose tools cover the task; this message's verdict allows the launch. If procedure instructions are needed, delegate bounded discovery of obligations, prerequisites, sources, and unresolved questions before dependent work.",
 			destination: "leave",
 		};
 	}

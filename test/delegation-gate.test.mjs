@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setImmediate } from "node:timers";
@@ -1498,8 +1498,8 @@ test("after a stay, a direct read on the next message names its own verdict and 
 		});
 		const gated = await launcher.gateToolCall(
 			{
-				toolName: "bash",
-				input: { command: "gh pr view 941 --json headRefOid && git diff c7db f674 --" },
+				toolName: "read",
+				input: { path: "src/main.ts" },
 			},
 			ctx,
 		);
@@ -1515,10 +1515,33 @@ test("after a stay, a direct read on the next message names its own verdict and 
 		assert.equal(gated.allow, false);
 		assert.equal(
 			gated.reason,
-			"Jev answered that the work for the latest user message leaves this session; a verdict for an earlier message does not carry over. Call spawn_child with the role whose tools cover the task; this message's verdict allows the launch.",
+			"Jev answered that the work for the latest user message leaves this session; a verdict for an earlier message does not carry over. Call spawn_child with the role whose tools cover the task; this message's verdict allows the launch. If procedure instructions are needed, delegate bounded discovery of obligations, prerequisites, sources, and unresolved questions before dependent work.",
 		);
 		assertDelegatesWithoutRole(gated.reason);
 		assert.equal(launched.kind, "ready");
 		assert.equal(jev.order.length, 2);
 	});
 });
+
+for (const destination of ["off", "stay", "leave"]) {
+	test(`skill and references are ordinary reads with routing ${destination}`, async () => {
+		await withWorkspace(async ({ worktree }) => {
+			const dir = join(worktree, ".pi/skills/review");
+			await mkdir(dir, { recursive: true });
+			await writeFile(join(dir, "SKILL.md"), "Read [scope](scope.md).\n");
+			await writeFile(join(dir, "scope.md"), "Scope must pass before judgment.\n");
+			const jev = fakeJev(destination === "off" ? "leave" : destination);
+			const launcher = launcherFor(destination === "off" ? { jevRouting: { enabled: () => false } } : {});
+			const ctx = gateContext(worktree, branchEnding("Read review instructions"), jev);
+			for (const name of ["SKILL.md", "scope.md", "missing.md"]) {
+				const result = await launcher.gateToolCall({ toolName: "read", input: { path: join(dir, name) } }, ctx);
+				assert.equal(result.allow, destination !== "leave", name);
+				if (destination === "leave") {
+					assert.equal(result.destination, "leave");
+					assert.match(result.reason, /delegate bounded discovery of obligations, prerequisites, sources, and unresolved questions before dependent work/);
+				}
+			}
+			assert.equal(jev.requests.length, destination === "off" ? 0 : 1);
+		});
+	});
+}
