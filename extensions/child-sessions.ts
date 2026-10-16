@@ -150,7 +150,7 @@ interface Child {
 	plan: Plan;
 	handle: ChildHandle;
 	watch: ReturnType<typeof createWatch>;
-	capture?: ChildCapture;
+	capture: ChildCapture;
 	conversation?: Conversation;
 	entries?: SessionEntry[];
 	streaming?: AssistantMessage;
@@ -560,7 +560,7 @@ export function createChildSessions(options: {
 	report: (message: string) => void;
 	schedule?: Schedule;
 	todo?: TodoLink;
-	audit?: ChildAudit;
+	audit: ChildAudit;
 }) {
 	const create = options.create ?? createPiChildSession;
 	const schedule = options.schedule ?? scheduleTimer;
@@ -600,7 +600,7 @@ export function createChildSessions(options: {
 		notice?: string,
 	) {
 		const completed = state === "completed" ? result : undefined;
-		if (!notice) options.audit?.execution(id, state, completed?.verdict);
+		if (!notice) options.audit.execution(id, state, completed?.verdict);
 		try {
 			options.trace({
 				id,
@@ -938,7 +938,7 @@ export function createChildSessions(options: {
 		}
 		const id = randomUUID();
 		const createdAt = Date.now();
-		const capture = options.audit?.begin({
+		const capture = options.audit.begin({
 			child: id,
 			sdkSession: handle.sessionId,
 			role: plan.role,
@@ -953,10 +953,8 @@ export function createChildSessions(options: {
 			...(launch.group === undefined ? {} : { group: launch.group }),
 			...(from ? { continuedFrom: from.id } : {}),
 		});
-		if (capture) {
-			audited = (event) => capture.event(event);
-			auditReport = (result) => capture.reported(result);
-		}
+		audited = (event) => capture.event(event);
+		auditReport = (result) => capture.reported(result);
 		if (!launch.background) {
 			let ended: ChildState = "failed";
 			const stopped = Promise.withResolvers<never>();
@@ -1123,7 +1121,7 @@ export function createChildSessions(options: {
 			);
 		}
 		child.answers.set(number, { by, text });
-		child.capture?.answered(number, text);
+		child.capture.answered(number, text);
 		answer(child, text);
 	}
 

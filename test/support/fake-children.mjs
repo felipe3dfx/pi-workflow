@@ -1,3 +1,4 @@
+import { createChildAudit } from "../../extensions/child-audit.ts";
 import { createChildSessions } from "../../extensions/child-sessions.ts";
 
 export function userEntry(id, text) {
@@ -87,6 +88,7 @@ export function recordingCore({
 		trace() {},
 		report: (message) => reports.push(message),
 		schedule,
+		audit: createChildAudit({ root: "", parent: () => undefined }),
 	});
 	async function launch(role = "worker") {
 		const started = await core.start(
