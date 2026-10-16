@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import {
 	cp,
 	mkdir,
@@ -1710,6 +1710,34 @@ test("a reload closes a persisted parent's audit records for reopening, while an
 				[{ child: id, interrupted: true, closed: true }],
 			);
 		}
+	});
+});
+
+test("the reload notice does not wait for the audit drain", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: fakeChildren().create,
+			session: {
+				getSessionId: () => "parent-1",
+				getSessionFile: () => "/sessions/parent.jsonl",
+			},
+		});
+		const id = await spawnBackground(extension, worktree);
+		await settle();
+		const journal = join(agentDir, "pi-workflow-audit", "parent-1", `${id}.jsonl`);
+		await eventually(() => existsSync(journal));
+		let sealed;
+		extension.notifications.push = (...items) => {
+			sealed = readFileSync(journal, "utf8").includes('"close":');
+			return Array.prototype.push.apply(extension.notifications, items);
+		};
+
+		await extension.fire("session_shutdown", { reason: "reload" });
+
+		assert.match(extension.notifications.at(-1).message, /\/reload ended 1 working child\./);
+		assert.equal(sealed, false);
+		assert.match(readFileSync(journal, "utf8"), /"close":/);
 	});
 });
 

@@ -249,14 +249,16 @@ export default function piWorkflowExtension(
 		currentCtx = undefined;
 		childrenViews.close();
 		const ended = await childSessions.disposeAll();
-		await audit.close();
-		if (event.reason !== "reload" || ended === 0) return;
-		pi.appendEntry("pi-workflow-child-trace", { reason: "reload", ended });
-		report(
-			ctx,
-			`/reload ended ${ended} working ${ended === 1 ? "child" : "children"}.`,
-			"warning",
-		);
+		const closed = audit.close();
+		if (event.reason === "reload" && ended > 0) {
+			pi.appendEntry("pi-workflow-child-trace", { reason: "reload", ended });
+			report(
+				ctx,
+				`/reload ended ${ended} working ${ended === 1 ? "child" : "children"}.`,
+				"warning",
+			);
+		}
+		await closed;
 	});
 
 	async function runCatalogCommand(
