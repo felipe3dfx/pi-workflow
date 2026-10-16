@@ -361,14 +361,13 @@ function createThread(theme: ChildTheme) {
 		}
 		let field: string | undefined;
 		for (const part of slot.parts) {
-			if (part.field === undefined) continue;
 			const body = indented(clean(part.text), width, "text", indent);
-			const label = part.field !== field;
+			const label = part.field !== undefined && part.field !== field;
 			field = part.field;
 			blocks.push({
 				sub: partSub(name, part.part),
 				rows: label
-					? [`${indent}${theme.fg("dim", terminalSafeLine(part.field))}`, ...body.rows]
+					? [`${indent}${theme.fg("dim", terminalSafeLine(part.field as string))}`, ...body.rows]
 					: body.rows,
 				lines: label ? [-1, ...body.lines] : body.lines,
 			});
@@ -499,6 +498,9 @@ function createThread(theme: ChildTheme) {
 		];
 		if (entry.argsSegment && style.expanded) {
 			blocks.push(...slotBlocks("args", entry.argsSegment, slot("args"), width, indent));
+		} else if (entry.args !== undefined && style.expanded) {
+			const body = indented(clean(JSON.stringify(entry.args, null, 2)), width, "dim", indent);
+			blocks.push({ sub: "args", rows: body.rows, lines: body.lines });
 		}
 		if (entry.resultSegment) {
 			blocks.push(
@@ -536,11 +538,42 @@ function createThread(theme: ChildTheme) {
 		return blocks;
 	}
 
-	function input(item: Extract<Item, { kind: "input" }>, width: number, style: Style): Block[] {
+	function input(
+		item: Extract<Item, { kind: "input" }>,
+		width: number,
+		style: Style,
+		slot: (name: string) => Slot | undefined,
+	): Block[] {
+		const answer = item.question === undefined ? "Answer" : `Answer ${item.question}`;
+		if (item.segment) {
+			const label =
+				item.source === "answer"
+					? answer
+					: item.source === "steer"
+						? "Steer"
+						: item.source === "follow-up"
+							? "Follow-up"
+							: "Message";
+			const queued = item.delivery === "queued" ? " queued," : "";
+			return [
+				{
+					sub: "input",
+					rows: [
+						truncateToWidth(
+							`${theme.fg("accent", "❯ ")}${theme.fg("dim", `${label}${queued} retained in parts`)}`,
+							width,
+							"…",
+						),
+					],
+				},
+				...(style.expanded
+					? slotBlocks("text", item.segment, slot("text"), width, "  ")
+					: [{ sub: "collapsed", rows: [theme.fg("dim", `  … ${style.expandKey} to expand`)] }]),
+			];
+		}
 		const text = clean(item.text);
 		if (!text) return [];
 		if (item.source === "user" && text === clean(style.task)) return [];
-		const answer = item.question === undefined ? "Answer" : `Answer ${item.question}`;
 		if (item.delivery === "queued") {
 			const label = item.source === "answer" ? `${answer} queued` : `${item.source === "steer" ? "Steer" : "Follow-up"} queued`;
 			return [{ sub: "input", rows: [truncateToWidth(row("dim", label, text.split("\n")[0]), width, "…")] }];
@@ -568,7 +601,7 @@ function createThread(theme: ChildTheme) {
 		): Block[] {
 			if (item.kind === "message") return assistant(item, width, style, slot);
 			if (item.kind === "tool") return tool(item, width, style, slot);
-			if (item.kind === "input") return input(item, width, style);
+			if (item.kind === "input") return input(item, width, style, slot);
 			if (item.kind === "execution") {
 				const verdict = item.verdict ? ` · ${item.verdict}` : "";
 				return [

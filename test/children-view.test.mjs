@@ -1179,6 +1179,56 @@ test("an expanded huge message is read in bounded parts instead of staying colla
 	assert.match(await settle(view), /m199\. long/);
 });
 
+test("an expanded tool call shows all of its arguments, not only the truncated title", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	capture.tool(child.id, "t1", "bash", { command: `echo ${"word ".repeat(60)}LAST`, timeout: 99 }, "ok");
+	await written(capture.audit, child.id);
+	const view = open(fakeSessions([child]), { rows: 40, audit: capture.audit });
+	assert.doesNotMatch(await settle(view), /LAST/);
+
+	view.press("\t", "\x0f");
+	const text = await settle(view);
+	assert.match(text, /LAST/);
+	assert.match(text, /"timeout": 99/);
+});
+
+test("a huge delivered message stays listed and expands by bounded parts", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child], { limits: { chunk: 1024, windowBytes: 4096 } });
+	const lines = Array.from({ length: 200 }, (_, i) => `i${String(i).padStart(3, "0")}. ${"long ".repeat(18)}end`);
+	capture.emit(child.id, {
+		type: "message_start",
+		message: { role: "user", content: [{ type: "text", text: lines.join("\n") }] },
+	});
+	await written(capture.audit, child.id);
+	const view = open(fakeSessions([child]), { rows: 24, audit: capture.audit });
+	assert.match(await settle(view), /❯ Message retained in parts/);
+
+	view.press("\t", "\x0f");
+	assert.match(await settle(view), /i199\. long/);
+});
+
+test("an expanded huge result made of many small fields still shows its parts", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child], { limits: { chunk: 1024, windowBytes: 4096 } });
+	const content = Array.from({ length: 300 }, (_, i) => ({ type: "text", text: `s${String(i).padStart(3, "0")} ${"x".repeat(40)}` }));
+	capture.emit(child.id, { type: "tool_execution_start", toolCallId: "t1", toolName: "bash", args: { command: "ls" } });
+	capture.emit(child.id, {
+		type: "tool_execution_end",
+		toolCallId: "t1",
+		toolName: "bash",
+		result: { content },
+		isError: false,
+	});
+	await written(capture.audit, child.id);
+	const view = open(fakeSessions([child]), { rows: 24, audit: capture.audit });
+	assert.match(await settle(view), /large output/);
+
+	view.press("\t", "\x0f");
+	assert.match(await settle(view), /"text":"s\d{3}/);
+});
+
 test("an expanded huge result is read in bounded parts, every row is reachable in both directions, and the anchor survives resize and theme", async (t) => {
 	const child = record("5636");
 	const capture = audited(t, [child], { limits: { chunk: 1024, windowBytes: 4096 } });

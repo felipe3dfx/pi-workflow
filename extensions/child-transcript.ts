@@ -51,6 +51,7 @@ export type Item =
 			delivery: string;
 			text: string;
 			question?: number;
+			segment?: SegmentCursor;
 	  }
 	| { key: string; kind: "execution"; state: string; verdict?: string }
 	| { key: string; kind: "message"; entry: MessageEntry }
@@ -593,6 +594,7 @@ function keyOf(observation: Observation) {
 		if (meta.kind === "message" && meta.phase === "end" && meta.message) {
 			return meta.message;
 		}
+		if (meta.kind === "input") return `input:${observation.ordinal}`;
 		return undefined;
 	}
 	if (observation.kind === "input" || observation.kind === "execution") {
@@ -620,8 +622,23 @@ function project(items: Map<string, Item>, key: string, observation: Observation
 			name?: string;
 			error?: boolean;
 			start?: number;
+			source?: string;
+			delivery?: string;
+			question?: number;
 		};
 		const { segment, partial } = observation.large;
+		if (meta.kind === "input") {
+			items.set(key, {
+				key,
+				kind: "input",
+				source: meta.source ?? "user",
+				delivery: meta.delivery ?? "delivered",
+				text: "",
+				...(meta.question === undefined ? {} : { question: meta.question }),
+				segment,
+			});
+			return;
+		}
 		if (partial) {
 			if (known?.kind === "message" && !known.entry.final) {
 				items.set(key, { key, kind: "message", entry: { ...known.entry, segment } });
