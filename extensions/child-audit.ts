@@ -31,7 +31,6 @@ type Evidence =
 			delivery: "queued" | "delivered";
 			text: string;
 			question?: number;
-			error?: true;
 	  }
 	| { kind: "loadout"; thinking: string }
 	| { kind: "execution"; state: string; verdict?: string }
@@ -173,6 +172,7 @@ interface Capture {
 	admitted: number;
 	held: { bytes: number; entries: number };
 	queued: { steer: string[]; "follow-up": string[] };
+	answer?: number;
 	next: number;
 	seen: Set<string>;
 	updates: Map<string, number>;
@@ -800,17 +800,22 @@ export function createChildAudit(options: {
 			delivered(record, contentText(event.message.content));
 		} else if (
 			event.type === "tool_execution_end" &&
-			event.toolName === askParentTool
+			event.toolName === askParentTool &&
+			record.answer !== undefined
 		) {
-			admit(record, {
-				kind: "input",
-				source: "answer",
-				delivery: "delivered",
-				text: contentText(
-					(event.result as { content?: Content } | undefined)?.content ?? [],
-				),
-				...(event.isError ? { error: true as const } : {}),
-			});
+			const question = record.answer;
+			record.answer = undefined;
+			if (!event.isError) {
+				admit(record, {
+					kind: "input",
+					source: "answer",
+					delivery: "delivered",
+					question,
+					text: contentText(
+						(event.result as { content?: Content } | undefined)?.content ?? [],
+					),
+				});
+			}
 		} else if (event.type === "thinking_level_changed") {
 			admit(record, { kind: "loadout", thinking: event.level });
 		}
@@ -878,15 +883,16 @@ export function createChildAudit(options: {
 			reported: guarded((result: unknown) =>
 				admit(record, { kind: "report", result }),
 			),
-			answered: guarded((question: number, text: string) =>
+			answered: guarded((question: number, text: string) => {
+				record.answer = question;
 				admit(record, {
 					kind: "input",
 					source: "answer",
 					delivery: "queued",
 					question,
 					text,
-				}),
-			),
+				});
+			}),
 		};
 		try {
 			const parent = options.parent();

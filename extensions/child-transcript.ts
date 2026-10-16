@@ -48,7 +48,7 @@ export type Item =
 			source: string;
 			delivery: string;
 			text: string;
-			error?: true;
+			question?: number;
 	  }
 	| { key: string; kind: "execution"; state: string; verdict?: string }
 	| { key: string; kind: "message"; entry: MessageEntry }
@@ -602,7 +602,9 @@ function project(items: Map<string, Item>, key: string, observation: Observation
 			source: observation.source,
 			delivery: observation.delivery,
 			text: observation.text,
-			...(observation.error ? { error: true as const } : {}),
+			...(observation.question === undefined
+				? {}
+				: { question: observation.question }),
 		});
 	} else if (observation.kind === "execution") {
 		items.set(key, {

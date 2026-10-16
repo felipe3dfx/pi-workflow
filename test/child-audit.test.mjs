@@ -151,13 +151,15 @@ test("an answer is recorded when the parent replies and again when the child rec
 	const asked = child.spec.ask("Which file?");
 	core.reply(id, 1, "src/a.ts", "parent");
 	assert.equal(await asked, "src/a.ts");
-	child.spec.onEvent({
+	const delivered = {
 		type: "tool_execution_end",
 		toolCallId: "call-1",
 		toolName: "ask_parent",
 		result: { content: [{ type: "text", text: "src/a.ts" }], details: {} },
 		isError: false,
-	});
+	};
+	child.spec.onEvent(delivered);
+	child.spec.onEvent(delivered);
 
 	const window = await eventually(() => audit.read(id), allWritten);
 	assert.deepEqual(
@@ -166,8 +168,34 @@ test("an answer is recorded when the parent replies and again when the child rec
 			.map(({ source, delivery, question, text }) => ({ source, delivery, question, text })),
 		[
 			{ source: "answer", delivery: "queued", question: 1, text: "src/a.ts" },
-			{ source: "answer", delivery: "delivered", question: undefined, text: "src/a.ts" },
+			{ source: "answer", delivery: "delivered", question: 1, text: "src/a.ts" },
 		],
+	);
+});
+
+test("an aborted ask records no answer, only the failed ask_parent call", async (t) => {
+	const { audit, launch } = auditedCore(t, { run: () => new Promise(() => {}) });
+	const { id, child } = await launch();
+	await delay(0);
+	const controller = new AbortController();
+	const asked = child.spec.ask("Which file?", controller.signal);
+	controller.abort();
+	await assert.rejects(asked);
+	child.spec.onEvent({
+		type: "tool_execution_end",
+		toolCallId: "call-1",
+		toolName: "ask_parent",
+		result: { content: [{ type: "text", text: "The call was aborted." }], details: {} },
+		isError: true,
+	});
+
+	const window = await eventually(() => audit.read(id), allWritten);
+	assert.deepEqual(window.observations.filter((entry) => entry.kind === "input"), []);
+	assert.deepEqual(
+		window.observations
+			.filter((entry) => entry.kind === "tool")
+			.map(({ name, phase, error }) => ({ name, phase, error })),
+		[{ name: "ask_parent", phase: "end", error: true }],
 	);
 });
 

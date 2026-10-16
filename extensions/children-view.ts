@@ -522,18 +522,19 @@ function createThread(theme: ChildTheme) {
 		const text = clean(item.text);
 		if (!text) return [];
 		if (item.source === "user" && text === clean(style.task)) return [];
+		const answer = item.question === undefined ? "Answer" : `Answer ${item.question}`;
 		if (item.delivery === "queued") {
-			const label = item.source === "answer" ? "Answer queued" : `${item.source === "steer" ? "Steer" : "Follow-up"} queued`;
+			const label = item.source === "answer" ? `${answer} queued` : `${item.source === "steer" ? "Steer" : "Follow-up"} queued`;
 			return [{ sub: "input", rows: [truncateToWidth(row("dim", label, text.split("\n")[0]), width, "…")] }];
 		}
-		const prefix = item.source === "answer" ? "Answer: " : "";
+		const prefix = item.source === "answer" ? `${answer}: ` : "";
 		const body = wrapped(`${prefix}${text}`, width - 2);
 		return [
 			{
 				sub: "input",
 				rows: body.rows.map(
 					(line, i) =>
-						`${i === 0 ? theme.fg("accent", "❯ ") : "  "}${theme.fg(item.error ? "error" : "text", line)}`,
+						`${i === 0 ? theme.fg("accent", "❯ ") : "  "}${theme.fg("text", line)}`,
 				),
 				lines: body.lines,
 			},

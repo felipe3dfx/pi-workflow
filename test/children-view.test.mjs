@@ -223,6 +223,7 @@ function audited(t, records, options = {}) {
 	const emit = (id, event) => captures[id].event(event);
 	return {
 		audit,
+		captures,
 		emit,
 		say(id, content, extra = {}) {
 			const message = { role: "assistant", content, ...extra };
@@ -1043,6 +1044,30 @@ test("a child whose transcript cannot be read stays listed with its identity", a
 	const text = await settle(view);
 	assert.match(text, /⊘ worker 9e01 +interrupted/);
 	assert.match(text, /❯ Index the docs/);
+});
+
+test("an answer shows queued and delivered once under its question number, and an aborted ask never reads as an answer", async (t) => {
+	const root = withAgentDirectory(t);
+	const child = record("5636");
+	const before = audited(t, [child], { root });
+	before.tool(child.id, "call-1", "ask_parent", { question: "Which file?" });
+	before.captures[child.id].answered(1, "src/a.ts");
+	before.emit(child.id, {
+		type: "tool_execution_end",
+		toolCallId: "call-1",
+		toolName: "ask_parent",
+		result: { content: [{ type: "text", text: "src/a.ts" }] },
+		isError: false,
+	});
+	before.tool(child.id, "call-2", "ask_parent", { question: "Which test?" }, "The call was aborted.", true);
+	await before.audit.close();
+	const later = audited(t, [], { root });
+	const view = open(fakeSessions([]), { rows: 40, audit: later.audit });
+	const text = await settle(view);
+	assert.match(text, /Answer 1 queued src\/a\.ts/);
+	assert.equal(text.match(/Answer 1: src\/a\.ts/g)?.length, 1);
+	assert.doesNotMatch(text, /Answer: The call was aborted/);
+	assert.match(text, /The call was aborted\./);
 });
 
 test("without a parent session identity the capture warning shows beside the Run state while live inspection still reads the child", async (t) => {
