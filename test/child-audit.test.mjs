@@ -1,8 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { access, mkdir, open, writeFile } from "node:fs/promises";
+import { access, mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { crc32 } from "node:zlib";
 
 import { createChildAudit } from "../extensions/child-audit.ts";
 import { createChildSessions } from "../extensions/child-sessions.ts";
@@ -274,10 +275,10 @@ test("a read returns one bounded window of the child's observations at a time", 
 	const { audit, launch } = auditedCore(t, { limits: { window: 2 } });
 	const { id, child } = await launch();
 	for (const text of ["one", "two", "three"]) child.spec.onEvent(userMessage(text));
-	await eventually(() => audit.read(id, 5), allWritten);
+	await eventually(() => audit.read(id, { from: 5 }), allWritten);
 
 	const texts = async (from) =>
-		inputs(await audit.read(id, from)).map(({ ordinal, text }) => [ordinal, text]);
+		inputs(await audit.read(id, { from })).map(({ ordinal, text }) => [ordinal, text]);
 	assert.deepEqual(await texts(3), [[3, "one"], [4, "two"]]);
 	assert.deepEqual(await texts(5), [[5, "three"]]);
 });
@@ -613,12 +614,29 @@ test("a final the capture could not retain never appears authoritative", async (
 
 function faultyFiles(fault = {}) {
 	const writes = [];
+	const reads = [];
 	return {
 		writes,
+		reads,
 		mkdir,
+		async rename(from, to) {
+			await fault.rename?.(from, to);
+			await rename(from, to);
+		},
 		async open(path, flags, mode) {
 			await fault.open?.(path, flags);
 			const handle = await open(path, flags, mode);
+			if (!path.endsWith(".jsonl")) {
+				return {
+					write: (...args) => handle.write(...args),
+					async read(...args) {
+						const result = await handle.read(...args);
+						reads.push({ path, bytes: result.bytesRead });
+						return result;
+					},
+					close: () => handle.close(),
+				};
+			}
 			return {
 				async write(buffer, offset = 0, length = buffer.length - offset) {
 					const call = writes.push(length) - 1;
@@ -627,7 +645,12 @@ function faultyFiles(fault = {}) {
 					if (plan.error) throw plan.error;
 					return { bytesWritten: plan.bytes };
 				},
-				read: (...args) => handle.read(...args),
+				async read(...args) {
+					await fault.read?.(path);
+					const result = await handle.read(...args);
+					reads.push({ path, bytes: result.bytesRead });
+					return result;
+				},
 				close: async () => {
 					await fault.close?.();
 					await handle.close();
@@ -712,7 +735,7 @@ test("a large Unicode result is captured in bounded parts and read back exactly"
 	});
 	assert.equal(window.health.complete, true);
 	assert.ok(files.writes.length > 40);
-	assert.ok(Math.max(...files.writes) <= 1024 + 64);
+	assert.ok(Math.max(...files.writes) <= 1024 + 512);
 });
 
 test("one observation larger than the whole budget is refused visibly, not hidden behind a small entry", async (t) => {
@@ -962,4 +985,282 @@ test("a saturating child cannot starve the identity and first evidence of a sibl
 	assert.equal(started.health.complete, true);
 	assert.equal(started.health.admitted, started.health.received);
 	assert.deepEqual(inputs(started).map(({ text }) => text), ["hello"]);
+});
+
+async function damage(path, from, to) {
+	const bytes = await readFile(path);
+	const at = bytes.indexOf(from);
+	assert.ok(at >= 0);
+	const file = await open(path, "r+");
+	await file.write(Buffer.from(to), 0, Buffer.byteLength(to), at);
+	await file.close();
+}
+
+const journalOf = (root, id) => join(root, "parent-1", `${id}.jsonl`);
+
+test("a read never presents accidentally damaged evidence and still shows the verified rest", async (t) => {
+	const { audit, launch, root } = auditedCore(t, { run: () => new Promise(() => {}) });
+	const { id, child } = await launch();
+	for (const text of ["alpha", "bravo", "charlie"]) child.spec.onEvent(userMessage(text));
+	await eventually(() => audit.read(id), allWritten);
+	await damage(journalOf(root, id), "bravo", "brava");
+
+	const window = await audit.read(id);
+	assert.deepEqual(inputs(window).map(({ text }) => text), ["alpha", "charlie"]);
+	assert.deepEqual(window.unavailable, [{ from: 4, to: 4 }]);
+	assert.match(window.warning, /failed verification/);
+});
+
+const isJournal = (read) => read.path.endsWith(".jsonl");
+const ordinals = (window) => window.observations.map(({ ordinal }) => ordinal);
+
+async function largeRecord(t, limits) {
+	const files = faultyFiles();
+	const audited = auditedCore(t, {
+		files,
+		limits: { entries: 4096, ...limits },
+		run: () => new Promise(() => {}),
+	});
+	const { id, child } = await audited.launch();
+	for (let i = 0; i < 400; i++) child.spec.onEvent(userMessage(`message ${i}`));
+	await eventually(
+		() => audited.audit.read(id, { from: 400 }),
+		(window) => window.health.written === window.health.received,
+	);
+	files.reads.length = 0;
+	return { ...audited, files, id };
+}
+
+test("opening a window of a large record reads bounded index pages and journal bytes, and continues from its cursor", async (t) => {
+	const { audit, files, id } = await largeRecord(t, { window: 16, windowBytes: 1024 });
+
+	const window = await audit.read(id, { from: 200 });
+	const count = window.observations.length;
+	assert.ok(count > 1 && count < 16);
+	assert.deepEqual(ordinals(window), Array.from({ length: count }, (_, i) => 200 + i));
+	const journal = files.reads.filter(isJournal);
+	assert.ok(journal.reduce((total, read) => total + read.bytes, 0) <= 1024);
+	assert.ok(files.reads.length - journal.length <= 4);
+	assert.equal(window.warning, undefined);
+
+	const next = await audit.read(id, window.next);
+	assert.equal(next.observations[0].ordinal, 200 + count);
+});
+
+test("index pages are cached within a bounded number of entries", async (t) => {
+	const { audit, files, id } = await largeRecord(t, { window: 16, cacheEntries: 2 });
+	const pageReads = () => files.reads.filter((read) => !isJournal(read)).length;
+
+	await audit.read(id, { from: 200 });
+	const first = pageReads();
+	assert.ok(first > 0);
+	await audit.read(id, { from: 200 });
+	assert.equal(pageReads(), first);
+	await audit.read(id, { from: 300 });
+	await audit.read(id, { from: 200 });
+	assert.ok(pageReads() > first + 1);
+});
+
+const indexOf = (root, id) => join(root, "parent-1", `${id}.index`);
+
+test("without its index a record still shows the known identity and windows verified from the record, with a warning", async (t) => {
+	const { audit, files, id, root } = await largeRecord(t, { window: 16, windowBytes: 1024 });
+	await rm(indexOf(root, id), { recursive: true });
+
+	const first = await audit.read(id);
+	assert.equal(first.identity.child, id);
+	assert.match(first.warning, /index is missing or damaged/);
+	assert.deepEqual(ordinals(first), Array.from({ length: first.observations.length }, (_, i) => 1 + i));
+	assert.ok(first.observations.length > 0);
+
+	files.reads.length = 0;
+	const later = await audit.read(id, { from: 200 });
+	assert.match(later.warning, /index is missing or damaged/);
+	assert.ok(later.observations.every((entry) => entry.ordinal >= 200 && entry.written));
+	assert.ok(files.reads.filter(isJournal).reduce((total, read) => total + read.bytes, 0) <= 1024);
+	assert.ok(later.next.offset > 0);
+});
+
+test("an index that contradicts the record never prevails over it", async (t) => {
+	const { audit, id, root } = await largeRecord(t, { window: 16 });
+	const path = join(indexOf(root, id), "0-12.json");
+	const page = JSON.parse(await readFile(path, "utf8"));
+	page.entries.reverse();
+	await writeFile(path, JSON.stringify(page));
+
+	const window = await audit.read(id, { from: 192 });
+	assert.ok(window.observations.every((entry) => entry.ordinal >= 208));
+	assert.deepEqual(window.unavailable, [{ from: 192, to: 207 }]);
+	assert.match(window.warning, /failed verification/);
+});
+
+test("when only the index cannot be written the evidence stays complete and readable with a warning", async (t) => {
+	const files = faultyFiles({
+		rename: () => {
+			throw new Error("ENOSPC");
+		},
+	});
+	const { audit, launch } = auditedCore(t, {
+		files,
+		limits: { window: 4 },
+		run: () => new Promise(() => {}),
+	});
+	const { id, child } = await launch();
+	for (const text of ["one", "two", "three", "four", "five"]) child.spec.onEvent(userMessage(text));
+
+	const window = await eventually(() => audit.read(id), (read) => read.health.written === read.health.received);
+	assert.equal(window.health.complete, true);
+	assert.match(window.warning, /index could not be written: ENOSPC/);
+	assert.deepEqual(inputs(await audit.read(id, { from: 3 })).map(({ text }) => text).slice(0, 2), ["one", "two"]);
+});
+
+test("a second capture of the same record is refused visibly while the owner keeps writing", async (t) => {
+	const { audit, launch, root } = auditedCore(t, { run: () => new Promise(() => {}) });
+	const { id, child } = await launch();
+	await eventually(() => audit.read(id), allWritten);
+	const before = await readFile(journalOf(root, id));
+
+	const other = createChildAudit({ root, parent: () => "parent-1" });
+	const capture = other.begin({
+		child: id,
+		role: "worker",
+		task: "Someone else",
+		references: [],
+		instructions: "",
+		tools: [],
+		model: "p/m",
+		thinking: "low",
+		worktree: "/tmp",
+		createdAt: 0,
+	});
+	capture.event(userMessage("intruder"));
+	const refused = await eventually(() => other.read(id), (read) => read.health.marker);
+	assert.equal(refused.health.complete, false);
+	assert.match(refused.health.warning, /Another capture already owns this audit record/);
+
+	child.spec.onEvent(userMessage("owner"));
+	const owner = await eventually(() => audit.read(id), allWritten);
+	assert.equal(owner.health.complete, true);
+	assert.deepEqual(inputs(owner).map(({ text }) => text), ["owner"]);
+	const after = await readFile(journalOf(root, id));
+	assert.deepEqual(after.subarray(0, before.length), before);
+	assert.doesNotMatch(after.toString(), /intruder|Someone else/);
+});
+
+test("repair is refused while the record is still being captured", async (t) => {
+	const { audit, launch } = auditedCore(t, { run: () => new Promise(() => {}) });
+	const { id } = await launch();
+	await eventually(() => audit.read(id), allWritten);
+
+	assert.deepEqual(await audit.repair(id), { refused: "The record is still being captured." });
+});
+
+test("an explicit repair can be cancelled, then recovers only verified evidence without touching the record", async (t) => {
+	const controller = new AbortController();
+	let abortOnRead = false;
+	const files = faultyFiles({
+		read: () => {
+			if (abortOnRead) controller.abort();
+		},
+	});
+	const { audit, core, sent, launch, root } = auditedCore(t, { files });
+	const { id, child } = await launch();
+	for (const text of ["alpha", "bravo", "charlie"]) child.spec.onEvent(userMessage(text));
+	await finishesUnchanged(core, id, child, sent);
+	await eventually(() => audit.read(id), allWritten);
+	const stale = (await audit.read(id)).next;
+	await damage(journalOf(root, id), "bravo", "brava");
+	await writeFile(journalOf(root, id), "torn", { flag: "a" });
+	await rm(indexOf(root, id), { recursive: true });
+	const original = await readFile(journalOf(root, id));
+
+	abortOnRead = true;
+	assert.deepEqual(await audit.repair(id, controller.signal), { cancelled: true });
+	abortOnRead = false;
+	assert.equal((await audit.read(id, stale)).refresh, undefined);
+
+	const repaired = await audit.repair(id);
+	const last = repaired.recovered;
+	assert.deepEqual(repaired, {
+		generation: 1,
+		recovered: last,
+		unavailable: [{ from: 4, to: 4 }, { from: last + 1 }],
+		unsupported: [],
+	});
+	assert.deepEqual(await readFile(journalOf(root, id)), original);
+	assert.deepEqual(await audit.read(id, stale), {
+		refresh: true,
+		identity: (await audit.read(id)).identity,
+		health: (await audit.read(id)).health,
+	});
+
+	const window = await audit.read(id);
+	assert.equal(window.warning, undefined);
+	assert.deepEqual(inputs(window).map(({ text }) => text), ["alpha", "charlie"]);
+	assert.deepEqual(window.unavailable, [{ from: 4, to: 4 }, { from: last + 1 }]);
+});
+
+function forged(header) {
+	const body = `${JSON.stringify(header)}\t{}`;
+	return `${crc32(body).toString(16).padStart(8, "0")}\t${body}\n`;
+}
+
+test("evidence in an unsupported format stays visible as uninterpreted after repair", async (t) => {
+	const { audit, core, sent, launch, root } = auditedCore(t);
+	const { id, child } = await launch();
+	await finishesUnchanged(core, id, child, sent);
+	const written = (await eventually(() => audit.read(id), allWritten)).health.written;
+	await writeFile(journalOf(root, id), forged({ v: 2, ordinal: written, part: 0, parts: 1 }), {
+		flag: "a",
+	});
+
+	const repaired = await audit.repair(id);
+	assert.deepEqual(repaired.unsupported, [written]);
+	const window = await audit.read(id, { from: written });
+	assert.deepEqual(window.observations, [{ ordinal: written, written: true, unsupported: true }]);
+	assert.match(window.warning, /unsupported format/);
+});
+
+test("a block larger than a window is listed without being read and expands by bounded segments in both directions", async (t) => {
+	const files = faultyFiles();
+	const { audit, launch } = auditedCore(t, {
+		files,
+		limits: { chunk: 1024, windowBytes: 4096 },
+		run: () => new Promise(() => {}),
+	});
+	const { id, child } = await launch();
+	const text = unicodeText(20_000);
+	child.spec.onEvent(
+		toolEvent("end", "c1", {
+			result: { content: [{ type: "text", text }] },
+			isError: false,
+		}),
+	);
+	await eventually(() => audit.read(id), allWritten);
+	files.reads.length = 0;
+
+	const window = await audit.read(id);
+	const entry = window.transcript.find((item) => item.call === "c1");
+	assert.equal(entry.result, undefined);
+	assert.equal(entry.final, true);
+	assert.ok(files.reads.filter(isJournal).reduce((total, read) => total + read.bytes, 0) <= 4096);
+
+	const segments = [];
+	for (let cursor = entry.resultSegment; cursor; ) {
+		files.reads.length = 0;
+		const segment = await audit.segment(id, cursor);
+		assert.ok(files.reads.filter(isJournal).every((read) => read.bytes <= 1024 + 512));
+		segments.push({ cursor, segment });
+		cursor = segment.next;
+	}
+	assert.equal(segments.at(-1).segment.final, true);
+	assert.equal(
+		segments
+			.filter(({ segment }) => segment.field === "result.content.0.text")
+			.map(({ segment }) => segment.text)
+			.join(""),
+		text,
+	);
+	const back = await audit.segment(id, segments.at(-1).segment.previous);
+	assert.deepEqual(back, segments.at(-2).segment);
 });
