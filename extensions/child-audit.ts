@@ -51,6 +51,9 @@ type Evidence =
 					usage?: unknown;
 					stopReason?: string;
 					errorMessage?: string;
+					sections?: unknown;
+					toolsAdded?: unknown;
+					toolsRemoved?: unknown;
 			  }
 	  ))
 	| ({
@@ -840,27 +843,29 @@ export function createChildAudit(options: {
 		if (streamed.ended) return;
 		streamed.ended = true;
 		if (messages.open === streamed) messages.open = undefined;
-		const final = event.message as {
+		const { role, content, ...optional } = event.message as {
 			role: string;
 			content: unknown;
 			usage?: unknown;
 			stopReason?: string;
 			errorMessage?: string;
+			sections?: unknown;
+			toolsAdded?: unknown;
+			toolsRemoved?: unknown;
 		};
+		const kept = ["usage", "stopReason", "errorMessage", "sections", "toolsAdded", "toolsRemoved"];
 		admit(record, {
 			kind: "message",
 			event: `${id}:end`,
 			message: id,
 			phase: "end",
-			role: final.role,
-			content: final.content,
-			...(final.usage === undefined ? {} : { usage: final.usage }),
-			...(final.stopReason === undefined
-				? {}
-				: { stopReason: final.stopReason }),
-			...(final.errorMessage === undefined
-				? {}
-				: { errorMessage: final.errorMessage }),
+			role,
+			content,
+			...Object.fromEntries(
+				Object.entries(optional).filter(
+					([key, value]) => kept.includes(key) && value !== undefined,
+				),
+			),
 		});
 	}
 

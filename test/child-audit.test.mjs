@@ -214,6 +214,32 @@ test("an instruction loadout change exposed by Pi is recorded", async (t) => {
 	);
 });
 
+test("a system message keeps the prompt sections and tool loadout changes Pi exposes", async (t) => {
+	const { audit, launch } = auditedCore(t, { run: () => new Promise(() => {}) });
+	const { id, child } = await launch();
+	const system = {
+		role: "system",
+		content: "",
+		sections: { rules: "<rules>Stay in scope.</rules>", old: null },
+		toolsAdded: [{ name: "grep", description: "Search files", parameters: { type: "object" } }],
+		toolsRemoved: [{ name: "bash" }],
+		timestamp: 1,
+	};
+	child.spec.onEvent({ type: "message_start", message: system });
+	child.spec.onEvent({ type: "message_end", message: system });
+
+	const window = await eventually(() => audit.read(id), allWritten);
+	const final = window.observations.find((entry) => entry.kind === "message" && entry.phase === "end");
+	assert.deepEqual(
+		{ sections: final.sections, toolsAdded: final.toolsAdded, toolsRemoved: final.toolsRemoved },
+		{
+			sections: { rules: "<rules>Stay in scope.</rules>", old: null },
+			toolsAdded: [{ name: "grep", description: "Search files", parameters: { type: "object" } }],
+			toolsRemoved: [{ name: "bash" }],
+		},
+	);
+});
+
 test("when the audit storage cannot be created the child runs and delivers unchanged while live inspection warns", async (t) => {
 	const blocked = join(withAgentDirectory(t), "not-a-directory");
 	await writeFile(blocked, "");
