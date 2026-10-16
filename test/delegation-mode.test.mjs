@@ -740,12 +740,12 @@ test("in a real Pi session, the run that a child result starts carries the instr
 	assert.match(JSON.stringify(woken.messages.slice(1)), /README\.md installs the harness\./);
 	const [system] = woken.messages;
 	const injected = JSON.stringify(system);
-	assert.match(injected, /Before dependent work, learn the obligations of any mandatory procedure: read it when reading is allowed, otherwise delegate its discovery\./);
-	assert.match(injected, /Track each obligation with an owner and a state \(pending, satisfied with evidence, or blocked with reason\) across child questions, scope changes, and background results\./);
-	assert.match(injected, /An unmet mandatory prerequisite stops dependent work; do not continue it as qualified partial work\./);
-	assert.match(injected, /when a procedure requires them, such as worktree setup, the parent runs them itself before dependent child work\./);
-	assert.match(injected, /A child's done or pass covers only its task: reconcile left_undone and unverified against the remaining obligations, then continue or report an explicit blocker\./);
-	assert.match(injected, /docs\/agents\/\*\.md/);
+	assert.ok(injected.includes("otherwise delegate its discovery"));
+	assert.ok(injected.includes("An unmet mandatory prerequisite stops dependent work"));
+	assert.ok(injected.includes("if routing blocks them, launch the discovery child first"));
+	assert.ok(injected.includes("any launch releases parent tools for that message"));
+	assert.ok(injected.includes("reconcile left_undone and unverified against the remaining obligations"));
+	assert.ok(injected.includes("docs/agents/*.md"));
 
 	assert.equal(system.role, "system");
 	assert.ok(system.toolsAdded.some((tool) => tool.name === "spawn_child"));

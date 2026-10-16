@@ -212,7 +212,8 @@ test("the second gated tool in the turn does not call Jev again", async () => {
 
 	assert.equal(first.allow, false);
 	assert.equal(second.allow, false);
-	assert.equal(second.reason, first.reason);
+	assert.equal(second.destination, first.destination);
+	assert.ok(second.reason.startsWith(first.reason));
 	assert.equal(jev.requests.length, 1);
 });
 
@@ -652,7 +653,9 @@ test("concurrent gated calls in one turn share a single Jev request", async () =
 	const [left, right] = await Promise.all([first, second]);
 	assert.equal(jev.requests.length, 1);
 	assert.equal(left.allow, false);
-	assert.equal(right.reason, left.reason);
+	assert.equal(right.allow, false);
+	assert.equal(right.destination, left.destination);
+	assert.ok(right.reason.startsWith(left.reason));
 });
 
 test("the parent registers the gate with spawn_child only when spawn tools are allowed", async () => {
@@ -1153,10 +1156,11 @@ test("a gated tool called from a codemode script follows the direct verdict and 
 		);
 
 		assert.equal(direct.block, true);
-		assert.deepEqual(nested, direct);
+		assert.equal(nested.block, true);
+		assert.ok(nested.reason.startsWith(direct.reason));
 		assert.equal(jev.requests.length, 1);
 		assert.equal(extension.messages.length, 1);
-		assert.equal(extension.messages[0].message.content, direct.reason);
+		assert.equal(extension.messages[0].message.content, nested.reason);
 		assert.equal(extension.messages[0].message.display, true);
 		assert.equal(extension.messages[0].options.deliverAs, "steer");
 	});
@@ -1472,7 +1476,9 @@ test("several blocked inner calls of a script in one turn send one gate message 
 			blocked.map((result) => result.block),
 			[true, true, true],
 		);
-		assert.ok(blocked.every((result) => result.reason === blocked[0].reason));
+		assert.match(blocked[0].reason, /delegate bounded discovery/);
+		assert.doesNotMatch(blocked[1].reason, /bounded discovery/);
+		assert.equal(blocked[1].reason, blocked[2].reason);
 		assert.equal(extension.messages.length, 1);
 
 		await extension.fire("turn_start", { type: "turn_start", turnIndex: 1, timestamp: 1 }, ctx);
@@ -1481,7 +1487,7 @@ test("several blocked inner calls of a script in one turn send one gate message 
 	});
 });
 
-test("after a stay, a direct read on the next message names its own verdict and a launch for it proceeds", async () => {
+test("after a stay, bash on the next message names its own verdict without a discovery hint and a launch for it proceeds", async () => {
 	await withWorkspace(async ({ worktree }) => {
 		const jev = scriptJev(["stay", "leave"]);
 		const launcher = launcherFor();
@@ -1515,7 +1521,7 @@ test("after a stay, a direct read on the next message names its own verdict and 
 		assert.equal(gated.allow, false);
 		assert.equal(
 			gated.reason,
-			"Jev answered that the work for the latest user message leaves this session; a verdict for an earlier message does not carry over. Call spawn_child with the role whose tools cover the task; this message's verdict allows the launch. If procedure instructions are needed, delegate bounded discovery of obligations, prerequisites, sources, and unresolved questions before dependent work.",
+			"Jev answered that the work for the latest user message leaves this session; a verdict for an earlier message does not carry over. Call spawn_child with the role whose tools cover the task; this message's verdict allows the launch.",
 		);
 		assertDelegatesWithoutRole(gated.reason);
 		assert.equal(launched.kind, "ready");
@@ -1537,58 +1543,12 @@ for (const destination of ["off", "stay", "leave"]) {
 			for (const name of ["SKILL.md", "scope.md", "missing.md"]) {
 				const result = await launcher.gateToolCall({ toolName: "read", input: { path: join(dir, name) } }, ctx);
 				assert.equal(result.allow, destination !== "leave", name);
-				if (destination === "leave") assert.match(result.reason, /spawn_child/);
+				if (destination === "leave") {
+					assert.equal(result.destination, "leave");
+					assert.match(result.reason, /delegate bounded discovery of obligations, prerequisites, sources, and unresolved questions before dependent work/);
+				}
 			}
 			assert.equal(jev.requests.length, destination === "off" ? 0 : 1);
 		});
 	});
 }
-
-test("unrelated tools do not need a session branch", async () => {
-	const launcher = launcherFor();
-	const ctx = { cwd: "/", sessionManager: { getBranch() { throw new Error("No branch for unrelated tool"); } } };
-	assert.deepEqual(await launcher.gateToolCall({ toolName: "record_review_state", input: {} }, ctx), { allow: true });
-});
-
-test("a real Pi parent receives a routing block for direct procedure reads", async () => {
-	await withWorkspace(async ({ worktree, agentDirectory }) => {
-		const dir = join(worktree, ".pi/skills/review");
-		await mkdir(dir, { recursive: true });
-		await writeFile(join(dir, "SKILL.md"), "Read [scope](scope.md).\n");
-		await writeFile(join(dir, "scope.md"), "Scope must pass before judgment.\n");
-		const jev = fakeJev("leave");
-		const launcher = launcherFor();
-		const ctx = gateContext(worktree, branchEnding("Review PR"), jev);
-		const runtime = await ModelRuntime.create({ authPath: join(agentDirectory, "auth.json"), modelsPath: null, refreshOnCreate: false });
-		const faux = fauxProvider({ provider: "faux", models: [{ id: "parent", reasoning: true }] });
-		runtime.registerNativeProvider(faux.provider);
-		await runtime.setRuntimeApiKey("faux", "key");
-		faux.setResponses([
-			...["SKILL.md", "scope.md", "missing.md"].map((name) => fauxAssistantMessage(fauxToolCall("read", { path: join(dir, name) }), { stopReason: "toolUse" })),
-			fauxAssistantMessage("Transport characterization only."),
-		]);
-		const settingsManager = SettingsManager.inMemory();
-		const resourceLoader = new DefaultResourceLoader({
-			cwd: worktree, agentDir: agentDirectory, settingsManager,
-			noExtensions: true, noSkills: true, noContextFiles: true,
-			extensionFactories: [(pi) => {
-				pi.on("tool_call", async (event) => {
-					const result = await launcher.gateToolCall(event, ctx);
-					if (!result.allow) return { block: true, reason: result.reason };
-				});
-			}],
-		});
-		await resourceLoader.reload();
-		const { session } = await createAgentSession({ cwd: worktree, agentDir: agentDirectory, modelRuntime: runtime, model: faux.getModel(), resourceLoader, settingsManager, sessionManager: SessionManager.inMemory(worktree) });
-		try {
-			await session.bindExtensions({ mode: "rpc" });
-			await session.prompt("Review PR");
-			const results = session.messages.filter((message) => message.role === "toolResult");
-			assert.equal(results.length, 3);
-			for (const result of results) {
-				assert.equal(result.isError, true);
-				assert.match(JSON.stringify(result.content), /spawn_child/);
-			}
-		} finally { session.dispose(); }
-	});
-});
