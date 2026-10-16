@@ -383,7 +383,8 @@ test("in orchestrator with the child tools, the parent's leading system message 
 	assert.match(instruction, /git and gh/);
 	assert.match(instruction, /commit/);
 	assert.match(instruction, /AGENTS\.md/);
-	assert.match(instruction, /routing blocks.*spawn_child.*discovery/);
+	assert.doesNotMatch(instruction, /bounded discovery/);
+	assert.match(instruction, /GLOSSARY\.md, and docs\/agents/);
 	assert.match(instruction, /todo/);
 	assert.match(instruction, /ask_user_question/);
 	assert.match(instruction, /refused/i);
@@ -742,14 +743,14 @@ test("in a real Pi session, the run that a child result starts carries the instr
 	assert.match(injected, /mandatory obligation.*owner.*state/);
 	assert.match(injected, /routing blocks.*spawn_child.*discovery/);
 	assert.match(injected, /sequencing.*orchestration contract.*not.*enforced wait/);
-	assert.match(injected, /pinned head/);
-	assert.match(injected, /scope.*rejected or unknown.*stop dependent technical judgment/);
-	assert.match(injected, /correctness.*standards\/design.*CI/);
-	assert.match(injected, /head changes.*invalidate/);
+	assert.match(injected, /known applicable mandatory instruction paths and evidence/);
+	assert.match(injected, /prerequisite is rejected or unknown.*stop dependent technical judgment/);
+	assert.doesNotMatch(injected, /correctness.*standards\/design.*CI/);
+	assert.match(injected, /evidence identity changes.*invalidate/);
 	assert.match(injected, /unowned or incomplete.*continue.*explicit blocker/);
 	assert.match(injected, /scoped.*done.*never.*global objective/);
 	assert.match(injected, /one or many children/);
-	assert.match(injected, /parent.*isolated worktree.*before dependent work/);
+	assert.match(injected, /parent supplies required reserved prerequisites.*before dependent work/);
 
 	assert.equal(system.role, "system");
 	assert.ok(system.toolsAdded.some((tool) => tool.name === "spawn_child"));

@@ -77,3 +77,42 @@ Coverage is limited to the accepted evaluator fixes: closed ledger identities/ow
 - Deterministic evidence logs: `/tmp/277-test3-{red,green}.log` and `/tmp/277-test4-{red,green}.log`. Earlier traces above predate this action protocol and do not validate the changed protocol.
 
 The action interface observes an explicit fixture decision, not semantic interpretation of free prose or execution by real child models. Existing containment, injected candidate contracts, actual parent transport, blocked ordinary read and one/multiple-child coverage remain intact. No production or ADR changes are part of this follow-up. Parent independent confirmation/review and signed delivery remain separate.
+
+## Accepted ROUND2 follow-up (#278)
+
+Expected values for this follow-up derive from the approved ROUND2 findings, not generated model behavior. Coverage at the existing seams:
+
+| Finding | Seam and cases | Evidence and limit |
+| --- | --- | --- |
+| ROUND2-1/4 | Actual SDK-injected contracts for worker, verify and explore: identified applicable procedures only; missing assigned-task prerequisite, parent-owned prerequisite, independent checks, completed independent discovery | Injection assertions RED/GREEN. Paired controlled transport retains `blocked` for the assigned dependent task and `done` plus remainder for completed independent discovery (one/two results). These are contract/transport checks, not model semantic enforcement. Explore still has no Verdict. |
+| ROUND2-2/6/7 | Actual parent system injection: generic reserved prerequisites, procedure-required checks/evidence identity and invalidation; canonical discovery guidance; orchestrator wording | Injection assertions RED/GREEN. Review-specific requirements remain in the consumer fixture, not unconditional global guidance. Launcher recovery guidance and same-message release unchanged. |
+| ROUND2-8 | The evaluator's actual tool-call callback and posthoc call analysis: absent arguments, missing/null/numeric path; valid procedure read, forbidden other read, malformed call after valid read | Eight malformed cases RED with TypeError/ERR_INVALID_ARG_TYPE, then classified errors GREEN through the same functions used by live evaluation. Positive/containment triangulation also passes. Scheduling retains the existing awaited 50ms delay. |
+| ROUND2-9 | Two narrative catch comments removed | Inspection; no behavioral test warranted for comment deletion. Unscripted-parent constraint retained. |
+
+ROUND2-3's blanket removal claim and ROUND2-5's explore contradiction were rejected; no blanket deletion, explore role change, semantic enforcement, schema, launcher policy or ADR change was made. Known mandatory instruction paths/evidence belong in the parent handoff; no generic skill search was introduced. Missing identified mandatory procedures remain blockers.
+
+### Commands and artifacts
+
+- Safety net: `node --test test/parent-obligations-live.test.mjs test/delegation-mode.test.mjs`: 33 pass / 3 skip / 0 fail (`/tmp/277-round2-safety.log`).
+- Contract RED: `node --test --test-name-pattern='every child loads' test/child-sessions.test.mjs`: 0 pass / 1 fail (`/tmp/277-round2-contract-red.log`). GREEN: `node --test --test-name-pattern='every child loads|real Pi child questions' test/child-sessions.test.mjs`: 3 pass / 0 fail (`/tmp/277-round2-contract-green.log`). A capitalization-only assertion mismatch was corrected during GREEN; no model behavior is inferred.
+- Parent guidance RED/GREEN: `node --test test/delegation-mode.test.mjs`: 23 pass / 2 fail, then 25 pass / 0 fail (`/tmp/277-round2-parent-{red,green}.log`).
+- Path RED: `node --test --test-name-pattern='evaluation classifies' test/parent-obligations-live.test.mjs`: 0 pass / 8 fail (`/tmp/277-round2-path-red.log`). This record runs extracted unchanged callback/posthoc bodies, reproducing their actual malformed-input failures. An earlier undefined-function setup failure was discarded, not counted as behavioral RED. GREEN: `node --test test/parent-obligations-live.test.mjs`: 16 pass / 3 skip / 0 fail (`/tmp/277-round2-path-green.log`), before the additional valid-read triangulation case.
+- Combined focused check after triangulation: `node --test test/child-sessions.test.mjs test/parent-obligations-live.test.mjs test/delegation-mode.test.mjs`: 264 pass / 7 skip / 0 fail (`/tmp/277-round2-focused.log`). The new paired blocked-result case characterizes existing transport, not a transport bug or scripted compliance proof.
+- Fresh actual-parent comparison: `PI_WORKFLOW_PARENT_LIVE=1 PI_WORKFLOW_PARENT_ARTIFACTS=/tmp/277-round2-live node --test test/parent-obligations-live.test.mjs`: 20 pass / 0 skip / 0 fail, 147.9 seconds (`/tmp/277-round2-live.log`). Model `openai-codex/gpt-6-astra`, medium thinking, configured in-memory authentication/catalog, controlled leave classifier and fake children; baseline `66eb1832910dbe902d98e889cf2d64e2b49809cf`. Candidate requests 6/5/5, children 1/1/2; baseline requests 6/5/7, children 1/1/2. Six sanitized traces: `/tmp/277-round2-live/{base,candidate}-{scope-question,done-one,done-many}.json`.
+- All six traces' spawn briefs, replies, intermediate and final prose were inspected: discovery-only authorization, both scope replies pause, all global ledgers blocked with five obligations; no fabricated setup or technical passes observed. Baseline also passes; no superiority or historical reproduction claim. Real child prerequisite compliance is **not demonstrated** by this parent-only evaluation. No real child tools execute; existing containment, closed owner protocol and action seam remain unchanged.
+- `npm run check`: 1057 pass / 17 skip / 0 fail, including packed distribution; four existing lint warnings (`/tmp/277-round2-check-final.log`). An earlier gate found three obsolete contract-string assertions (1054 pass / 3 fail / 17 skip); those were updated to the approved semantics, then `node --test test/child-contracts.test.mjs` passed all 16 (`/tmp/277-round2-contract-file-green.log`). `git diff --check` passed. Mutation testing remains unsupported.
+
+### Decoded guidance footprint
+
+Measured against `c40200f9afa5edbb8efe0ba720c23438c88af822`: decoded strings, Unicode characters and whitespace-delimited words, **not tokens**. Parent counts include all `spawn_child.promptGuidelines` (launch limit 10) and the orchestrator instruction with Todo and operator questions seated. Role counts exclude contract frontmatter. Reproduction script/output: `/tmp/277-round2-footprint.{mjs,log}`.
+
+| Guidance | Before characters / words | After characters / words |
+| --- | ---: | ---: |
+| spawn_child guidelines | 4930 / 778 | 4836 / 754 |
+| orchestrator instruction | 941 / 143 | 780 / 123 |
+| parent combined (one newline separator) | 5872 / 921 | 5617 / 877 |
+| explore | 2241 / 356 | 2222 / 349 |
+| worker | 2374 / 375 | 2534 / 391 |
+| verify | 3024 / 476 | 3125 / 481 |
+
+Parent excess was trimmed; worker/verify grow to disambiguate assigned-task blockers from independent completion. No claim that the prior text was universally unnecessary or that character savings establish better model compliance. Independent parent review/critique and signed publication remain separate.

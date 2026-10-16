@@ -2301,6 +2301,14 @@ test("every child loads the parent's context files after its contract, and none 
 		systems.forEach((system, index) => {
 			const contract = system.indexOf(`${roles[index]} child session.`);
 			assert.ok(contract >= 0, roles[index]);
+			assert.match(system, /procedures identified by the assigned task or repository instructions, or otherwise known applicable/);
+			assert.match(system, /missing mandatory prerequisite of the assigned task.*stop dependent technical judgment/);
+			if (roles[index] !== "explore") {
+				assert.match(system, /Report blocked even when the parent owns it/);
+				assert.match(system, /Independent checks may run but cannot justify done or pass for the dependent task/);
+				assert.match(system, /Completed independent bounded discovery may succeed with unrelated global obligations remaining/);
+			}
+
 			for (const rule of [
 				"Global rule: answer in haiku.",
 				"Ancestor rule: keep modules small.",
@@ -8215,6 +8223,21 @@ test("an open Fleet row follows a rename", async () => {
 		assert.match(view.lines(200).join("\n"), /#1 Fix the parser/);
 		await todo.run("update", { id: 1, text: "Fix the lexer" });
 		assert.match(view.lines(200).join("\n"), /#1 Fix the lexer/);
+	});
+});
+
+test("assigned dependent task retains blocked prerequisite despite completed independent checks (scripted transport, not model compliance)", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const result = {
+			verdict: "blocked", reason: "Parent-owned mandatory setup for the assigned task is missing.",
+			files_changed: [], validation: ["Independent inventory completed; dependent judgment not performed."],
+			left_undone: ["parent | blocked | supply required setup evidence before dependent judgment"],
+		};
+		const child = await realChild(agentDir, [reporting(result), fauxAssistantMessage("Assigned task blocked.")]);
+		const response = await spawn(child.extension.tool, { role: "worker", task: "Perform dependent judgment; parent-owned mandatory setup evidence is missing. Independent inventory may run." }, { ...toolContext("print", worktree), ...child.parent.context });
+		assert.equal(response.details.verdict, "blocked");
+		assert.deepEqual(response.details.result.left_undone, result.left_undone);
+		assert.match(JSON.stringify(child.parent.requests[0].messages[0]), /Report blocked even when the parent owns it/);
 	});
 });
 

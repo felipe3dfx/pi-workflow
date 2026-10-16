@@ -128,9 +128,63 @@ for (const variant of ["decorated-owner", "duplicate-first", "duplicate-last", "
 	});
 }
 
+function fixtureToolBoundary({ workspace, skillPath, trace }) {
+	return (event) => {
+		trace.calls.push({ tool: event.toolName, input: event.input });
+		if (event.toolName === "read") {
+			if (typeof event.input?.path !== "string") {
+				const reason = "Malformed read path: expected string";
+				trace.boundaryErrors.push(reason);
+				return { block: true, reason };
+			}
+			if (resolve(workspace, event.input.path) === skillPath) return;
+		}
+		if (["spawn_child", "reply_child", "record_review_state"].includes(event.toolName)) return;
+		return { block: true, reason: "Evaluation boundary: no shell, writes, real children, external tools, or arbitrary reads. Parent isolation cannot be created here (SETUP-277)." };
+	};
+}
+
+function directProcedureReadIndex(calls, workspace, skillPath, errors) {
+	let index = -1;
+	calls.forEach((call, position) => {
+		if (call.name !== "read") return;
+		if (typeof call.arguments?.path !== "string") {
+			errors.push("Malformed read path: expected string");
+			return;
+		}
+		if (index < 0 && resolve(workspace, call.arguments.path) === skillPath) index = position;
+	});
+	return index;
+}
+
+for (const [label, input] of [["absent arguments", undefined], ["missing", {}], ["null", { path: null }], ["number", { path: 7 }]]) {
+	test(`evaluation classifies ${label} read path at callback boundary`, () => {
+		const trace = { calls: [], boundaryErrors: [] };
+		const boundary = fixtureToolBoundary({ workspace: "/fixture", skillPath: "/fixture/SKILL.md", trace });
+		assert.equal(boundary({ toolName: "read", input }).block, true);
+		assert.deepEqual(trace.boundaryErrors, ["Malformed read path: expected string"]);
+		assert.deepEqual(trace.calls, [{ tool: "read", input }]);
+	});
+	test(`evaluation classifies ${label} read path at posthoc boundary`, () => {
+		const errors = [];
+		assert.equal(directProcedureReadIndex([{ name: "read", arguments: input }], "/fixture", "/fixture/SKILL.md", errors), -1);
+		assert.deepEqual(errors, ["Malformed read path: expected string"]);
+	});
+}
+
+test("evaluation permits only the fixture procedure read and records malformed calls even after a valid read", () => {
+	const trace = { calls: [], boundaryErrors: [] };
+	const boundary = fixtureToolBoundary({ workspace: "/fixture", skillPath: "/fixture/SKILL.md", trace });
+	assert.equal(boundary({ toolName: "read", input: { path: "SKILL.md" } }), undefined);
+	assert.equal(boundary({ toolName: "read", input: { path: "other.md" } }).block, true);
+	const errors = [];
+	assert.equal(directProcedureReadIndex([{ name: "read", arguments: { path: "SKILL.md" } }, { name: "read", arguments: { path: null } }], "/fixture", "/fixture/SKILL.md", errors), 0);
+	assert.deepEqual(errors, ["Malformed read path: expected string"]);
+});
+
 async function runFixtureChild(task, spec, { workspace, skillPath, trace, scenario }) {
 	let choice;
-	try { choice = JSON.parse(task); } catch { /* Invalid tasks fail closed below. */ }
+	try { choice = JSON.parse(task); } catch {}
 	const action = choice?.action;
 	if (!choice || typeof choice !== "object" || Array.isArray(choice)
 		|| !["discovery", "dependent"].includes(action) || typeof choice.brief !== "string" || !choice.brief.trim()
@@ -149,7 +203,7 @@ async function runFixtureChild(task, spec, { workspace, skillPath, trace, scenar
 		const answer = await spec.ask(question);
 		trace.replies.push(answer);
 		let reply;
-		try { reply = JSON.parse(answer.replace(/^```(?:json)?\s*|\s*```$/g, "")); } catch { /* scopeDecisionErrors rejects invalid replies. */ }
+		try { reply = JSON.parse(answer.replace(/^```(?:json)?\s*|\s*```$/g, "")); } catch {}
 		if (reply?.action === "proceed") trace.childActions.push({ action: "dependent", attempt: "dependent-judgment", source: "scope-reply" });
 	}
 	spec.report(result);
@@ -261,7 +315,7 @@ async function evaluate({ extension, variant, scenario, count, dir, runtime, mod
 	await writeFile(join(agentDir, "pi-workflow-selection.json"), JSON.stringify(selection));
 	replaceSelection(selection);
 	turnJevRoutingOn(agentDir);
-	const trace = { variant, scenario, count, provider, modelId, thinking, base, head, skill, result, inputs: [], calls: [], replies: [], reports: [], messages: [], systems: [], contexts: [], reportEvidence: [], discoveryReads: [], childActions: [] };
+	const trace = { variant, scenario, count, provider, modelId, thinking, base, head, skill, result, inputs: [], calls: [], replies: [], reports: [], messages: [], systems: [], contexts: [], reportEvidence: [], discoveryReads: [], childActions: [], boundaryErrors: [] };
 	const children = fakeChildren({
 		run: (task, spec) => runFixtureChild(task, spec, { workspace, skillPath, trace, scenario }),
 	});
@@ -294,12 +348,7 @@ async function evaluate({ extension, variant, scenario, count, dir, runtime, mod
 					trace.contexts.push(structuredClone(event.messages));
 					if (trace.systems.length > 14) { void session.abort(); throw new Error("Evaluation model-request bound exceeded"); }
 				});
-				pi.on("tool_call", (event) => {
-					trace.calls.push({ tool: event.toolName, input: event.input });
-					if (event.toolName === "read" && resolve(workspace, event.input.path) === skillPath) return;
-					if (["spawn_child", "reply_child", "record_review_state"].includes(event.toolName)) return;
-					return { block: true, reason: "Evaluation boundary: no shell, writes, real children, external tools, or arbitrary reads. Parent isolation cannot be created here (SETUP-277)." };
-				});
+				pi.on("tool_call", fixtureToolBoundary({ workspace, skillPath, trace }));
 			},
 		],
 	});
@@ -323,10 +372,10 @@ async function evaluate({ extension, variant, scenario, count, dir, runtime, mod
 		trace.childCount = children.created.length;
 		trace.classifications = jev.requests;
 		trace.childContracts = children.created.map((child) => child.spec.prompt);
-		const errors = [];
+		const errors = [...trace.boundaryErrors];
 		if (trace.messages.some((message) => message.stopReason === "error")) errors.push("Provider/model execution error; this run is inconclusive, not behavioral RED");
 		const actualCalls = trace.messages.filter((message) => message.role === "assistant").flatMap((message) => Array.isArray(message.content) ? message.content.filter((block) => block.type === "toolCall") : []);
-		const directRead = actualCalls.findIndex((call) => call.name === "read" && resolve(workspace, call.arguments.path) === skillPath);
+		const directRead = directProcedureReadIndex(actualCalls, workspace, skillPath, errors);
 		const firstSpawn = actualCalls.findIndex((call) => call.name === "spawn_child");
 		if (directRead < 0 || firstSpawn < 0 || directRead > firstSpawn) errors.push("Blocked direct read before discovery not reached");
 		if (!trace.messages.some((message) => message.role === "toolResult" && message.toolName === "read" && message.isError && /spawn_child/.test(JSON.stringify(message.content)))) errors.push("No actual routing block for direct read");
