@@ -26,7 +26,7 @@ const plan = {
 
 function auditedCore(
 	t,
-	{ root = withAgentDirectory(t), parent = "parent-1", limits, run, dispose, files, schedule, timer } = {},
+	{ root = withAgentDirectory(t), parent = "parent-1", limits, run, dispose, files, schedule, timer, clock } = {},
 ) {
 	const children = fakeChildren({ run, dispose });
 	const audit = createChildAudit({ root, parent: () => parent, limits, files, schedule, timer });
@@ -38,6 +38,7 @@ function auditedCore(
 		trace() {},
 		report() {},
 		audit,
+		...(clock ? { schedule: clock } : {}),
 	});
 	async function launch(launchOptions = {}) {
 		const started = await core.start(plan, {
@@ -474,6 +475,31 @@ test("evidence arriving after a record closed is reported lost, never dropped si
 	);
 	assert.equal(window.health.closed, false);
 	assert.equal(window.health.lostFrom, 3);
+	assert.match(window.health.warning, /arrived after the record was closed/);
+});
+
+test("a parent's shutdown waits only a bounded time for a finished child whose disposal never settles", async (t) => {
+	const clock = manualTimer();
+	const { audit, core, launch, root } = auditedCore(t, {
+		run: () => new Promise(() => {}),
+		dispose: () => new Promise(() => {}),
+		clock: clock.timer,
+	});
+	const { id, child } = await launch();
+	await eventually(async () => core.get(id).state, (state) => state === "running");
+	core.cancel(id, false);
+	let ended = false;
+	const ending = core.disposeAll().then(() => {
+		ended = true;
+	});
+	await delay(20);
+	assert.equal(ended, false);
+	for (const entry of clock.timers) if (entry.ms === 1000 && !entry.cancelled) entry.task();
+	await ending;
+	await audit.close();
+
+	child.spec.onEvent({ type: "message_end", message: { role: "assistant", content: [], stopReason: "aborted" } });
+	const window = await eventually(() => reopen(root).read(id), (read) => !read.health.complete);
 	assert.match(window.health.warning, /arrived after the record was closed/);
 });
 

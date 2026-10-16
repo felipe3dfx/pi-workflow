@@ -183,6 +183,7 @@ export interface ChildTrace {
 
 const runningLimit = 5;
 const launchLimit = 10;
+export const shutdownDeadline = 1000;
 const stallMs = 4 * 60_000;
 const toolStallMs = 30 * 60_000;
 
@@ -1286,10 +1287,20 @@ export function createChildSessions(options: {
 			answer(child, new Error("The session ended."));
 		}
 		changed();
-		for (const child of working) {
-			void shutDown(child.handle, child.record.id, child.capture);
-		}
-		await Promise.all(disposing);
+		const finishing = Promise.all(disposing);
+		await Promise.all(
+			working.map((child) =>
+				shutDown(child.handle, child.record.id, child.capture),
+			),
+		);
+		let cancel = () => {};
+		await Promise.race([
+			finishing,
+			new Promise<void>((resolve) => {
+				cancel = schedule(resolve, shutdownDeadline);
+			}),
+		]);
+		cancel();
 		return working.length;
 	}
 

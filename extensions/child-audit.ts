@@ -4,7 +4,7 @@ import { crc32 } from "node:zlib";
 
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
-import { askParentTool } from "./child-sessions.ts";
+import { askParentTool, shutdownDeadline } from "./child-sessions.ts";
 import { errorMessage } from "./error-message.ts";
 
 export interface AuditIdentity {
@@ -212,7 +212,7 @@ const defaultLimits = {
 	cacheBytes: 16 * 1024 * 1024,
 	cacheEntries: 512,
 	catalog: 32,
-	drain: 1000,
+	drain: shutdownDeadline,
 };
 
 const version = 1;
