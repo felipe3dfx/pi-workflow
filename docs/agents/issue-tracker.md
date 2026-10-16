@@ -11,8 +11,8 @@ GitHub issue access:
 - provider: gh
 - limits: repository issues are enabled
 - effects/approval: read
-- degraded: none (confirmed absent)
 - blocked when: gh is missing, unauthenticated, or the GitHub API fails
+- none (confirmed absent): degraded
 
 ## When a Skill Says "Publish to the Issue Tracker"
 
@@ -26,10 +26,9 @@ Publication capability:
 - state: supported
 - evidence: repository permissions include admin, push, and triage; has_issues is true
 - provider: gh
-- limits: none
-- effects/approval: create, edit, label, assign, close, or relate requires explicit approval
-- degraded: none (confirmed absent)
+- effects/approval: create, edit, label, assign, close, or relate follows the approval policy in pull-requests.md
 - blocked when: permission is missing or the GitHub API fails
+- none (confirmed absent): limits, degraded
 
 Do not invent labels, milestones, projects, or relationships when a marker remains unresolved. Return the issue number and URL after creation.
 
@@ -46,9 +45,9 @@ Read capability:
 - provider: gh
 - limits: repository issues are enabled
 - effects/approval: read
-- degraded: none (confirmed absent)
 - blocked when: gh is missing, unauthenticated, or the GitHub API fails
+- none (confirmed absent): degraded
 
 ## Comments and Updates
 
-Write human-facing issue titles, bodies, and comments in Spanish. This is a workflow invariant, not a consumer preference, and it holds even where the repository's own conventions prescribe another language. Append progress or decisions according to `none (confirmed absent)`. Changes that create, edit, label, assign, or close an issue are external effects and require the approval defined in `pull-requests.md`.
+Write human-facing issue titles, bodies, and comments in Spanish. This is a workflow invariant, not a consumer preference, and it holds even where the repository's own conventions prescribe another language. Append progress or decisions according to `append-only Spanish ticket comment that links the pull request and its evidence and never changes the ticket's state`. Changes that create, edit, label, assign, or close an issue are external effects and require the approval defined in `pull-requests.md`.

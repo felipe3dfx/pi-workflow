@@ -73,13 +73,12 @@ Global skills may provide methodology or implementation assistance, but they mus
 
 ## Workflow Contracts
 
-Read these files in order:
+Read each file when its trigger applies:
 
-1. `AGENTS.md`
-2. `docs/agents/issue-tracker.md`
-3. `docs/agents/domain.md`
-4. `docs/agents/workflow.md`
-5. `docs/agents/quality.md`
-6. `docs/agents/pull-requests.md`
+- `docs/agents/workflow.md`: always.
+- `docs/agents/issue-tracker.md`: before reading, creating or commenting on issues or tickets.
+- `docs/agents/domain.md`: before naming domain concepts or editing the glossary or ADRs.
+- `docs/agents/quality.md`: before validating or running tests.
+- `docs/agents/pull-requests.md`: before any commit, push, pull request or other external effect.
 
 <!-- setup-workflow-routing:end -->

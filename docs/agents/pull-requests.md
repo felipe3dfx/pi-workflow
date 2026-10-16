@@ -14,7 +14,7 @@ Refs: <ticket identifier>
 
 - `type` is one of feat, fix, refactor, test, docs, chore; the summary is in the imperative.
 - The pull request title is in English: the commit header followed by the ticket identifier in parentheses, as in `feat(renewals): add premium calculation (AUT-103)`.
-- The ticket is referenced only by the branch name and the pull request title, never with a closing keyword.
+- For branch names and pull request titles, reference the ticket only by its identifier, never with a closing keyword. Commit `Refs:` and the pull request's linked ticket remain required.
 - Commits and pull requests carry no attribution trailer or line naming an AI agent, model, or tool.
 
 Commit capability:
@@ -23,15 +23,15 @@ Commit capability:
 - evidence: git 2.55.0; this directory is a Git repository
 - provider: git
 - limits: signing uses the repository configuration and is not changed
-- effects/approval: a local commit requires explicit approval
-- degraded: none (confirmed absent)
+- effects/approval: a local commit follows the approval policy in pull-requests.md
 - blocked when: git is unavailable or commit signing fails
+- none (confirmed absent): degraded
 
 ## When a Skill Says "Create a Pull Request"
 
 Use `GitHub` and create a pull request with:
 
-- Source and proposed destination: the source is the child ticket branch; the proposed destination is the parent integration branch, or the production base for a parent integration branch.
+- Source and proposed destination: under `pull-request` child integration, the source is the child ticket branch and the proposed destination is the parent integration branch. Under `direct`, children integrate locally and only the parent integration branch gets a pull request, proposed against the production base. A standalone ticket proposes the working base. Confirm the destination for each invocation.
 - Body: the fixed template below; add no other section.
 - Linked ticket and required evidence: the pull request cites the tracker ticket identifier, and how evidence returns to the ticket belongs to `issue-tracker.md`.
 - Reviewers, labels, and drafts: open the pull request as a draft with no labels and no reviewers. Ready-for-review, labels, and reviewers are a manual human process.
@@ -69,9 +69,9 @@ Write the body with these three sections, in this order and with no others, and 
 - evidence: git branch and origin/main exist
 - provider: git
 - limits: local branch creation was not executed
-- effects/approval: creating a branch requires explicit approval
-- degraded: none (confirmed absent)
+- effects/approval: creating a branch follows the approval policy in pull-requests.md
 - blocked when: git is unavailable
+- none (confirmed absent): degraded
 
 ### Push Capability
 
@@ -79,9 +79,9 @@ Write the body with these three sections, in this order and with no others, and 
 - evidence: origin tracks the current branch and repository permissions include push
 - provider: git
 - limits: no push was executed during discovery
-- effects/approval: push requires explicit approval
-- degraded: none (confirmed absent)
+- effects/approval: push follows the approval policy in pull-requests.md
 - blocked when: push permission is missing or the remote rejects the update
+- none (confirmed absent): degraded
 
 ### Pull Request Capability
 
@@ -89,9 +89,9 @@ Write the body with these three sections, in this order and with no others, and 
 - evidence: gh pr list succeeded; pull request 60 is merged into main
 - provider: gh
 - limits: no pull request was created during discovery
-- effects/approval: opening a pull request requires explicit approval
-- degraded: none (confirmed absent)
+- effects/approval: opening a pull request follows the approval policy in pull-requests.md
 - blocked when: gh is unauthenticated or the GitHub API fails
+- none (confirmed absent): degraded
 
 ### Review-Thread Capability
 
@@ -99,19 +99,19 @@ Write the body with these three sections, in this order and with no others, and 
 - evidence: gh read of pull request 60 review comments and reviews succeeded
 - provider: gh
 - limits: pull request 60 has no review comments
-- effects/approval: posting a review requires explicit approval
-- degraded: none (confirmed absent)
+- effects/approval: posting a review follows the approval policy in pull-requests.md
 - blocked when: gh is unauthenticated or the GitHub API fails
+- none (confirmed absent): degraded
 
 ### CI Capability
 
 - state: supported
 - evidence: .github/workflows/ci.yml runs npm run check; job test passed on pull request 60
 - provider: GitHub Actions
-- limits: CI runs on push and pull requests to main
+- limits: ci.yml runs on push and pull requests to main; publish.yml also runs npm run check on release
 - effects/approval: read
-- degraded: none (confirmed absent)
 - blocked when: the workflow is absent or the check fails
+- none (confirmed absent): degraded
 
 ## Approval Gates and External Effects
 
@@ -127,11 +127,11 @@ The policy governs approvals, not decisions. Where the agent has a grounded reco
 
 Approval preview: before asking for any approval, show in the conversation the complete literal content, its destination (repository and pull request, ticket, or file path), and the action (create, edit, close, merge, and so on). A question never replaces the content.
 
-Approval is per effect, given by the person performing it, and its evidence is preserved with the pull request or its linked ticket. The playbook names no approver. Under `direct` child integration, the batch rule, approved wherever the policy asks, is the approval, and its evidence, for the child-ticket closures it covers; the per-invocation plan `create-pr` requires is that skill's own contract.
+Where the policy requires approval, it is per effect, given by the person performing it, and its evidence is preserved with the pull request or its linked ticket. The playbook names no approver. Under `direct` child integration, the batch rule, approved wherever the policy asks, is the approval, and its evidence, for the child-ticket closures it covers; the per-invocation plan `create-pr` requires is that skill's own contract.
 
 ## Review and Merge
 
-Review, required checks, and merge of a pull request belong to the pull-request provider: `GitHub` owns branch protection and decides who may merge through the destination branch's permissions. Never merge, push, or change remote state without the applicable approval.
+Review, required checks, and merge of a pull request belong to the pull-request provider: `GitHub` owns branch protection and decides who may merge through the destination branch's permissions. Merge, push, and other remote-state changes follow the approval policy above, including its exceptions at every level.
 
 ### Review Capability
 
@@ -139,9 +139,9 @@ Review, required checks, and merge of a pull request belong to the pull-request 
 - evidence: gh can read pull request reviews; main has no branch protection
 - provider: GitHub
 - limits: reviews are not required
-- effects/approval: submitting a review requires explicit approval
-- degraded: none (confirmed absent)
+- effects/approval: submitting a review follows the approval policy in pull-requests.md
 - blocked when: gh is unauthenticated or the GitHub API fails
+- none (confirmed absent): degraded
 
 ### Merge Capability
 
@@ -149,6 +149,6 @@ Review, required checks, and merge of a pull request belong to the pull-request 
 - evidence: pull request 60 merged into main; repository permissions include admin; main has no branch protection
 - provider: GitHub
 - limits: no merge was executed during discovery
-- effects/approval: merge requires explicit approval
-- degraded: none (confirmed absent)
+- effects/approval: merge follows the approval policy in pull-requests.md
 - blocked when: permission is missing or the GitHub API fails
+- none (confirmed absent): degraded
