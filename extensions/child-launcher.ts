@@ -11,11 +11,13 @@ import {
 	getSupportedThinkingLevels,
 	type ModelThinkingLevel,
 } from "@earendil-works/pi-ai";
-import type {
-	ExtensionAPI,
-	ExtensionContext,
-	ToolCallEvent,
+import {
+	createReadTool,
+	type ExtensionAPI,
+	type ExtensionContext,
+	type ToolCallEvent,
 } from "@earendil-works/pi-coding-agent";
+import { Marked } from "@earendil-works/pi-tui";
 
 import { latestUserRequest } from "./child-sessions.ts";
 import { errorMessage } from "./error-message.ts";
@@ -25,6 +27,23 @@ import type { ModelProfilesLoad, Specialist } from "./model-profiles.ts";
 import { seated } from "./shell.ts";
 import { offerTool } from "./tool-offer.ts";
 import { registerRoutingBlocks } from "./routing-blocks.ts";
+
+// Pi keeps its read resolver private. Its public operations seam receives the
+// normalized absolute path (including ~/ and platform-specific fallbacks).
+// Probe normalization only: never read a work file while deciding its gate.
+async function instructionPath(input: string, cwd: string): Promise<string> {
+	let path = "";
+	const read = createReadTool(cwd, {
+		operations: {
+			access: async (absolutePath) => {
+				path = absolutePath;
+			},
+			readFile: async () => Buffer.alloc(0),
+		},
+	});
+	await read.execute("procedure-discovery-path", { path: input });
+	return path;
+}
 
 export interface LaunchRequest {
 	role?: string;
@@ -453,13 +472,69 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		}
 	}
 
+	let discoveryMessage: string | undefined;
+	const instructionPaths = new Set<string>();
+
+	async function instructionRead(
+		event: ToolCallEvent,
+		cwd: string,
+		message: string | undefined,
+	): Promise<boolean> {
+		if (discoveryMessage !== message) {
+			discoveryMessage = message;
+			instructionPaths.clear();
+		}
+		if (event.toolName !== "read") return false;
+		const input = stringField(event.input, "path");
+		if (!input) return false;
+		const path = await instructionPath(input, cwd);
+		if (
+			!/(?:^|[/\\])skills[/\\].+[/\\]SKILL\.md$/.test(path) &&
+			!instructionPaths.has(path)
+		) {
+			return false;
+		}
+		try {
+			// A Markdown alias must not exempt a source file from the work gate.
+			if (!realpathSync(path).endsWith(".md")) return false;
+			const text = readFileSync(path, "utf8");
+			const markdown = new Marked();
+			const references: string[] = [];
+			markdown.walkTokens(markdown.lexer(text), (token) => {
+				if (token.type === "link" && "href" in token) {
+					references.push(token.href);
+				} else if (
+					token.type === "codespan" &&
+					"text" in token &&
+					!/\s/.test(token.text)
+				) {
+					references.push(token.text);
+				}
+			});
+			for (const href of references) {
+				const reference = href.split("#", 1)[0];
+				if (
+					reference.endsWith(".md") &&
+					!reference.includes(":") &&
+					!reference.startsWith("//")
+				) {
+					instructionPaths.add(await instructionPath(reference, dirname(path)));
+				}
+			}
+		} catch {
+			// Let read return the actual missing/unreadable instruction error.
+		}
+		return true;
+	}
+
 	async function gateToolCall(
 		event: ToolCallEvent,
 		ctx: GateContext,
 	): Promise<{ allow: true } | { allow: false; reason: string; destination?: "leave" | "decide" }> {
 		if (!seated("child-session", "overlay")) return { allow: true };
-		if (!gatedTool(event, ctx.cwd)) return { allow: true };
 		const userRequest = latestUserRequest(ctx.sessionManager?.getBranch());
+		if (await instructionRead(event, ctx.cwd, userRequest?.id)) return { allow: true };
+		if (!gatedTool(event, ctx.cwd)) return { allow: true };
 		if (!userRequest) return { allow: true };
 		const verdict = await verdictFor(
 			{
@@ -482,7 +557,7 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		return {
 			allow: false,
 			reason:
-				"Jev answered that the work for the latest user message leaves this session; a verdict for an earlier message does not carry over. Call spawn_child with the role whose tools cover the task; this message's verdict allows the launch.",
+				"Jev answered that the work for the latest user message leaves this session; a verdict for an earlier message does not carry over. Call spawn_child with the role whose tools cover the task; this message's verdict allows the launch. Procedure discovery reads of SKILL.md under a skills directory and its explicit local Markdown references remain available before delegation; this does not permit dependent work before mandatory gates are satisfied.",
 			destination: "leave",
 		};
 	}

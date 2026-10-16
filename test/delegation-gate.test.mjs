@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setImmediate } from "node:timers";
@@ -9,7 +9,7 @@ import { setImmediate } from "node:timers";
 import { createChildLauncher } from "../extensions/child-launcher.ts";
 import { syncCompactTools } from "../extensions/compact-tools.ts";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@earendil-works/pi-ai";
-import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, createReadTool, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
@@ -1515,10 +1515,183 @@ test("after a stay, a direct read on the next message names its own verdict and 
 		assert.equal(gated.allow, false);
 		assert.equal(
 			gated.reason,
-			"Jev answered that the work for the latest user message leaves this session; a verdict for an earlier message does not carry over. Call spawn_child with the role whose tools cover the task; this message's verdict allows the launch.",
+			"Jev answered that the work for the latest user message leaves this session; a verdict for an earlier message does not carry over. Call spawn_child with the role whose tools cover the task; this message's verdict allows the launch. Procedure discovery reads of SKILL.md under a skills directory and its explicit local Markdown references remain available before delegation; this does not permit dependent work before mandatory gates are satisfied.",
 		);
 		assertDelegatesWithoutRole(gated.reason);
 		assert.equal(launched.kind, "ready");
 		assert.equal(jev.order.length, 2);
 	});
 });
+
+
+test("procedure discovery reads a skill before leave without releasing unrelated work", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const dir = join(worktree, ".pi/skills/review");
+		await mkdir(dir, { recursive: true });
+		await writeFile(join(dir, "SKILL.md"), "Before judgment read [scope](references/scope.md#gate).\n");
+		const launcher = launcherFor();
+		const jev = fakeJev("leave");
+		const ctx = gateContext(worktree, branchEnding("Review the PR"), jev);
+		assert.deepEqual(await launcher.gateToolCall({ toolName: "read", input: { path: join(dir, "SKILL.md") } }, ctx), { allow: true });
+		assert.equal(jev.requests.length, 0, "discovery is not a destination decision");
+		const work = await launcher.gateToolCall({ toolName: "read", input: { path: "src/review.ts" } }, ctx);
+		assert.equal(work.allow, false);
+		assert.equal(work.destination, "leave");
+		assert.match(work.reason, /Procedure discovery.*SKILL\.md/);
+		assert.equal(jev.requests.length, 1);
+	});
+});
+
+test("procedure discovery follows local Markdown instructions but not work references, and resets per message", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const dir = join(worktree, ".agents/skills/review");
+		await mkdir(join(dir, "references"), { recursive: true });
+		await writeFile(join(dir, "SKILL.md"), "Read [scope](references/scope.md#gate), `references/passes.md`, [source](review.ts), [web](https://example.org/remote.md), [broken](broken.md\n");
+		await writeFile(join(dir, "references/scope.md"), "Then [nested](nested.md).\n");
+		const launcher = launcherFor();
+		const jev = fakeJev("leave");
+		const ctx = gateContext(worktree, branchEnding("Review", undefined, "one"), jev);
+		const read = (path, context = ctx) => launcher.gateToolCall({ toolName: "read", input: { path } }, context);
+		assert.deepEqual(await read(join(dir, "SKILL.md")), { allow: true });
+		assert.deepEqual(await read(join(dir, "references/scope.md")), { allow: true });
+		assert.deepEqual(await read(join(dir, "references/nested.md")), { allow: true });
+		assert.deepEqual(await read(join(dir, "references/passes.md")), { allow: true });
+		for (const path of ["unrelated.md", "src/main.ts", join(dir, "review.ts"), join(dir, "remote.md"), join(dir, "broken.md")]) {
+			assert.equal((await read(path)).allow, false, path);
+		}
+		assert.equal((await launcher.gateToolCall({ toolName: "write", input: { path: join(dir, "SKILL.md"), content: "work" } }, ctx)).allow, false);
+		assert.equal((await read(join(dir, "references/scope.md"), gateContext(worktree, branchEnding("Review", undefined, "two"), jev))).allow, false);
+	});
+});
+
+test("a real Pi parent can discover instructions and observes a missing reference error while unrelated work stays gated", async () => {
+	await withWorkspace(async ({ worktree, agentDirectory }) => {
+		const dir = join(worktree, ".pi/skills/review");
+		await mkdir(dir, { recursive: true });
+		await writeFile(join(dir, "SKILL.md"), "Before judgment read [scope](scope.md) and `missing.md`.\n");
+		await writeFile(join(dir, "scope.md"), "Scope rejected or unknown: stop dependent judgment. Required isolation and all passes at pinned head.\n");
+		const jev = fakeJev("leave");
+		const launcher = launcherFor();
+		const ctx = gateContext(worktree, branchEnding("Review PR"), jev);
+		const runtime = await ModelRuntime.create({ authPath: join(agentDirectory, "auth.json"), modelsPath: null, refreshOnCreate: false });
+		const faux = fauxProvider({ provider: "faux", models: [{ id: "parent", reasoning: true }] });
+		runtime.registerNativeProvider(faux.provider);
+		await runtime.setRuntimeApiKey("faux", "key");
+		faux.setResponses([
+			...["SKILL.md", "scope.md", "missing.md"].map((name) => fauxAssistantMessage(fauxToolCall("read", { path: join(dir, name) }), { stopReason: "toolUse" })),
+			fauxAssistantMessage(fauxToolCall("read", { path: join(worktree, "unrelated.md") }), { stopReason: "toolUse" }),
+			fauxAssistantMessage("Fixture ends; no model-policy assertion."),
+		]);
+		const settingsManager = SettingsManager.inMemory();
+		const resourceLoader = new DefaultResourceLoader({
+			cwd: worktree, agentDir: agentDirectory, settingsManager,
+			noExtensions: true, noSkills: true, noContextFiles: true,
+			extensionFactories: [(pi) => {
+				pi.on("tool_call", async (event) => {
+					const result = await launcher.gateToolCall(event, ctx);
+					if (!result.allow) return { block: true, reason: result.reason };
+				});
+			}],
+		});
+		await resourceLoader.reload();
+		const { session } = await createAgentSession({ cwd: worktree, agentDir: agentDirectory, modelRuntime: runtime, model: faux.getModel(), resourceLoader, settingsManager, sessionManager: SessionManager.inMemory(worktree) });
+		try {
+			await session.bindExtensions({ mode: "rpc" });
+			await session.prompt("Review PR");
+			const results = session.messages.filter((message) => message.role === "toolResult");
+			assert.equal(results.length, 4);
+			assert.equal(results[0].isError, false);
+			assert.match(JSON.stringify(results[1].content), /Scope rejected or unknown/);
+			assert.equal(results[2].isError, true);
+			assert.match(JSON.stringify(results[2].content), /missing\.md/);
+			assert.doesNotMatch(JSON.stringify(results[2].content), /Jev/);
+			assert.equal(results[3].isError, true);
+			assert.match(JSON.stringify(results[3].content), /spawn_child/);
+			assert.equal(jev.requests.length, 1);
+		} finally {
+			session.dispose();
+		}
+	});
+});
+
+for (const destination of ["off", "stay", "leave"]) {
+	test(`discovery does not change ${destination} routing for work`, async () => {
+		await withWorkspace(async ({ worktree }) => {
+			const jev = fakeJev(destination === "off" ? "leave" : destination);
+			const launcher = launcherFor(destination === "off" ? { jevRouting: { enabled: () => false } } : {});
+			const ctx = gateContext(worktree, branchEnding("Review"), jev);
+			assert.deepEqual(await launcher.gateToolCall({ toolName: "read", input: { path: ".pi/skills/review/SKILL.md" } }, ctx), { allow: true });
+			assert.equal(jev.requests.length, 0, "discovery must not classify work early");
+			const work = await launcher.gateToolCall({ toolName: "read", input: { path: "src/review.ts" } }, ctx);
+			assert.equal(work.allow, destination !== "leave");
+			assert.equal(jev.requests.length, destination === "off" ? 0 : 1);
+		});
+	});
+}
+
+
+test("a source file aliased as instruction Markdown does not bypass the work gate", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const dir = join(worktree, ".pi/skills/review");
+		await mkdir(dir, { recursive: true });
+		await writeFile(join(worktree, "source.ts"), "export const work = true;\n");
+		await writeFile(join(dir, "SKILL.md"), "Read [alias](alias.md).\n");
+		await symlink(join(worktree, "source.ts"), join(dir, "alias.md"));
+		const launcher = launcherFor();
+		const ctx = gateContext(worktree, branchEnding("Review"), fakeJev("leave"));
+		assert.deepEqual(await launcher.gateToolCall({ toolName: "read", input: { path: join(dir, "SKILL.md") } }, ctx), { allow: true });
+		assert.equal((await launcher.gateToolCall({ toolName: "read", input: { path: join(dir, "alias.md") } }, ctx)).allow, false);
+	});
+});
+
+
+for (const tildeSkill of [true, false]) {
+	test(`actual reads discover ${tildeSkill ? "a tilde skill and its absolute" : "an absolute skill and its tilde"} instruction reference`, async () => {
+		await withWorkspace(async ({ worktree }) => {
+			const previousHome = process.env.HOME;
+			process.env.HOME = worktree;
+			try {
+				const dir = join(worktree, ".pi/skills/review");
+				await mkdir(dir, { recursive: true });
+				await writeFile(join(dir, "SKILL.md"), tildeSkill ? "Read [scope](scope.md).\n" : "Read [scope](~/.pi/skills/review/scope.md).\n");
+				await writeFile(join(dir, "scope.md"), "Scope gate must precede judgment.\n");
+				const launcher = launcherFor();
+				const jev = fakeJev("leave");
+				const ctx = gateContext(worktree, branchEnding("Review PR"), jev);
+				const reader = createReadTool(worktree);
+				for (const path of tildeSkill ? ["~/.pi/skills/review/SKILL.md", join(dir, "scope.md")] : [join(dir, "SKILL.md"), "~/.pi/skills/review/scope.md"]) {
+					assert.deepEqual(await launcher.gateToolCall({ toolName: "read", input: { path } }, ctx), { allow: true }, path);
+					const result = await reader.execute("fixture", { path });
+					assert.match(JSON.stringify(result.content), /scope|Scope/);
+				}
+				assert.equal(jev.requests.length, 0);
+				assert.equal((await launcher.gateToolCall({ toolName: "read", input: { path: "unrelated.md" } }, ctx)).allow, false);
+			} finally {
+				if (previousHome === undefined) delete process.env.HOME;
+				else process.env.HOME = previousHome;
+			}
+		});
+	});
+}
+
+for (const [style, pointer] of [
+	["titled inline", '[scope](scope.md "Scope gate")'],
+	["reference-style", "[scope][gate]\n\n[gate]: scope.md"],
+]) {
+	test(`procedure discovery follows ${style} local Markdown links`, async () => {
+		await withWorkspace(async ({ worktree }) => {
+			const dir = join(worktree, ".pi/skills/review");
+			await mkdir(dir, { recursive: true });
+			await writeFile(join(dir, "SKILL.md"), `Before judgment read ${pointer}\n`);
+			await writeFile(join(dir, "scope.md"), "Resolve scope before judgment.\n");
+			const launcher = launcherFor();
+			const jev = fakeJev("leave");
+			const ctx = gateContext(worktree, branchEnding("Review"), jev);
+			for (const path of [join(dir, "SKILL.md"), join(dir, "scope.md")]) {
+				assert.deepEqual(await launcher.gateToolCall({ toolName: "read", input: { path } }, ctx), { allow: true }, path);
+			}
+			assert.equal(jev.requests.length, 0, "linked instructions do not classify work");
+			assert.equal((await launcher.gateToolCall({ toolName: "read", input: { path: "unrelated.md" } }, ctx)).allow, false);
+		});
+	});
+}

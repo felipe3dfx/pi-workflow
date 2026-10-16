@@ -186,3 +186,15 @@ test("the explore and verify read-only wording covers codemode scripts", async (
 		/Do not edit or write worktree files, directly or from codemode, and do not run commands that rewrite tracked files/,
 	);
 });
+
+test("every child contract pauses dependent judgment for prerequisite gates and bounds scoped success", async () => {
+	for (const role of ["explore", "worker", "verify"]) {
+		const text = parseContract(await contract(role)).prompt;
+		assert.match(text, /Read the applicable skill and its instruction references before dependent work/);
+		assert.match(text, /mandatory prerequisite.*unresolved.*stop dependent technical judgment/i);
+		assert.match(text, /parent-owned setup.*before.*dependent work/i);
+		assert.match(text, /scope reduction does not waive.*mandatory/i);
+		assert.match(text, /owner.*state.*remaining/i);
+		assert.match(text, /scoped.*not.*global objective/i);
+	}
+});

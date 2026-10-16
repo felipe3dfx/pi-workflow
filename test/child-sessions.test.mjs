@@ -8217,3 +8217,54 @@ test("an open Fleet row follows a rename", async () => {
 		assert.match(view.lines(200).join("\n"), /#1 Fix the lexer/);
 	});
 });
+
+for (const count of [1, 2]) {
+	test(`real Pi child questions and background delivery retain owned and unowned obligations with ${count} scoped results (scripted provider, not model compliance)`, async () => {
+		await withWorkspace(async ({ worktree, agentDir }) => {
+			const path = join(worktree, ".pi/skills/review/SKILL.md");
+			await mkdir(join(worktree, ".pi/skills/review"), { recursive: true });
+			await writeFile(path, "Before technical judgment: parent creates isolated worktree at pinned head abc123; scope must pass. Required passes: correctness, standards/design, CI at abc123.\n");
+			const remaining = [
+				"parent | pending | isolated worktree at pinned head abc123 before judgment",
+				"parent | blocked | scope audit unknown; stop dependent technical judgment",
+				"unowned | pending | standards/design and CI at abc123",
+			];
+			const result = { verdict: "done", files_changed: [], validation: ["Read procedure; discovery only, no technical review performed"], left_undone: remaining };
+			const child = await realChild(agentDir, [
+				...Array.from({ length: count }, () => [
+					fauxAssistantMessage(fauxToolCall("read", { path }), { stopReason: "toolUse" }),
+					asking("Setup and scope are prerequisites. Limit this task to discovery and retain the parent/unowned obligations?"),
+				]).flat(),
+				...Array.from({ length: count }, () => [reporting(result), fauxAssistantMessage("Discovery subtask only.")]).flat(),
+			]);
+			const { extension, parent } = child;
+			const ids = [];
+			for (let index = 0; index < count; index++) {
+				ids.push((await spawnReal(child, worktree)).details.id);
+				await eventually(() => extension.messages.filter(({ message }) => message.customType === "pi-workflow-child-question").length === index + 1);
+			}
+			for (const id of ids) {
+				assert.equal(await stateOf(extension, id), "waiting");
+				// Controlled parent reply is test input, not a generated orchestration decision.
+				await use(extension, "reply_child", { id, question: 1, answer: "Discovery only. Parent setup and scope stay pending; standards/design and CI remain unowned. No technical judgment." });
+				await eventually(async () => await stateOf(extension, id) === "completed");
+			}
+			await eventually(() => extension.messages.some(({ message }) => message.customType === "pi-workflow-child-result"));
+			const delivered = extension.messages.filter(({ message }) => message.customType === "pi-workflow-child-result");
+			const results = delivered.flatMap(({ message }) => message.details.results ?? [message.details]);
+			assert.equal(results.length, count);
+			for (const details of results) {
+				assert.equal(details.verdict, "done");
+				assert.deepEqual(details.result.left_undone, remaining);
+			}
+			const readOutputs = parent.requests.flatMap(({ messages }) => messages.filter((message) => message.role === "toolResult" && message.toolName === "read"));
+			assert.ok(readOutputs.length >= count);
+			assert.match(JSON.stringify(readOutputs), /parent creates isolated worktree at pinned head abc123/);
+			const system = JSON.stringify(parent.requests[0].messages[0]);
+			assert.match(system, /mandatory prerequisite.*stop dependent technical judgment/);
+			assert.match(system, /parent-owned setup.*before starting dependent work/);
+			await extension.fire("turn_end");
+			assert.equal(extension.messages.filter(({ message }) => message.customType === "pi-workflow-child-result").length, delivered.length);
+		});
+	});
+}

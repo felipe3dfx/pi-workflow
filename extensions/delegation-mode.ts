@@ -18,7 +18,7 @@ function orchestratorInstruction(): string {
 		"",
 		"Delegate all work to child sessions, reading included: do not read, search, edit, write, or run commands for the work yourself.",
 		`Keep to ${keep.slice(0, -1).join(", ")}, and ${keep.at(-1)}.`,
-		"These stay with you: the mutating and publishing git and gh operations, such as a commit, a push, or opening a pull request, and the git reads they need; and reading AGENTS.md, GLOSSARY.md, and docs/agents/*.md.",
+		"These stay with you: the mutating and publishing git and gh operations, such as a commit, a push, or opening a pull request, and the git reads they need; and reading AGENTS.md, GLOSSARY.md, docs/agents/*.md, SKILL.md under a skills directory, and its explicitly referenced local Markdown instructions for procedure discovery before delegation. This discovery exception does not include source inspection or arbitrary work reads.",
 		"When a launch is refused, such as Launch blocked or the Launch limit, follow the refusal and tell the operator why. Do not retry silently or do the work yourself unannounced.",
 	].join("\n");
 }
