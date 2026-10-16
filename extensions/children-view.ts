@@ -100,7 +100,8 @@ type Action =
 	| "no"
 	| "type"
 	| "send"
-	| "leave";
+	| "leave"
+	| "repair";
 
 function clean(text: string) {
 	return terminalSafeBlock(text).trim();
@@ -628,7 +629,7 @@ function createThread(theme: ChildTheme) {
 	};
 }
 
-type Audit = Pick<ChildAudit, "list" | "read" | "segment">;
+type Audit = Pick<ChildAudit, "list" | "read" | "segment" | "repair">;
 type Listed = Awaited<ReturnType<ChildAudit["list"]>>["records"][number];
 type Shown = { child: ChildRecord; live: boolean; listed?: Listed };
 
@@ -751,6 +752,7 @@ function createChildrenView(
 	let more: string | undefined;
 	let listing = false;
 	let relist = false;
+	let repairing: { id: string; controller: AbortController } | undefined;
 	const thread = createThread(theme);
 	let layout = {
 		width: 0,
@@ -873,6 +875,44 @@ function createChildrenView(
 		if (!host.open.has(close)) return;
 		cleanup();
 		host.done();
+	}
+
+	function repairable(item: Shown | undefined) {
+		if (!item || (item.live && isWorking(item.child.state))) return false;
+		return repairing?.id === item.child.id || item.listed?.index !== undefined;
+	}
+
+	function repair(id: string, name: string) {
+		if (repairing) {
+			repairing.controller.abort();
+			notice = `Cancelling the repair of ${name}…`;
+			return;
+		}
+		const controller = new AbortController();
+		const current = { id, controller };
+		repairing = current;
+		notice = `Repairing ${name}…`;
+		void audit
+			.repair(id, controller.signal)
+			.then((result) => {
+				if (!result) notice = `${name} has no record to repair.`;
+				else if ("cancelled" in result) notice = `Repair of ${name} cancelled.`;
+				else if ("refused" in result) notice = `Repair of ${name} refused: ${result.refused}`;
+				else {
+					const lost = result.unavailable.length;
+					notice = `Repaired ${name}: ${result.recovered} observations recovered${lost > 0 ? `, ${lost} unavailable ranges` : ""}.`;
+				}
+			})
+			.catch((error: unknown) => {
+				notice = `Repair of ${name} failed: ${errorMessage(error)}`;
+			})
+			.finally(() => {
+				if (repairing === current) repairing = undefined;
+				if (!host.open.has(close)) return;
+				transcript?.changed();
+				void catalog();
+				tui.requestRender();
+			});
 	}
 
 	function cancel(id: string, name: string) {
@@ -998,6 +1038,8 @@ function createChildrenView(
 			send(item);
 		} else if (action === "leave") {
 			leave();
+		} else if (action === "repair" && item && child && repairable(item)) {
+			repair(child.id, name);
 		} else if (action === "cancel" && item && child) {
 			if (!item.live) {
 				notice = `${name} is history; it is read-only.`;
@@ -1027,6 +1069,7 @@ function createChildrenView(
 		if (data === "s" || data === "c") return "cancel";
 		if (data === "f") return "follow";
 		if (data === "p") return "prompt";
+		if (data === "r") return "repair";
 		if (keybindings.matches(data, "app.thinking.toggle")) return "thinking";
 		if (keybindings.matches(data, "app.tools.expand")) return "expand";
 		if (matchesKey(data, Key.ctrl("j")) || matchesKey(data, Key.pageDown)) {
@@ -1081,6 +1124,9 @@ function createChildrenView(
 		const views: [Hint, Action][] = [
 			[[expandKey, "expand"], "expand"],
 			[[thinkingKey, "thinking"], "thinking"],
+			...(repairable(item)
+				? ([[["r", repairing ? "cancel repair" : "repair"], "repair"]] as [Hint, Action][])
+				: []),
 		];
 		if (split)
 			return [
@@ -1265,7 +1311,11 @@ function createChildrenView(
 			...(child.worktree ? [`wt: ${basename(child.worktree)}`] : []),
 		].join(" · ");
 		const info = transcript?.info();
-		const capture = captureLine(info?.health ?? item.listed?.health, info?.warning);
+		const notes = new Set([info?.warning, item.listed?.index].filter((note) => note !== undefined));
+		const capture = captureLine(
+			info?.health ?? item.listed?.health,
+			notes.size > 0 ? [...notes].join(" ") : undefined,
+		);
 		return [
 			spread(
 				`${glyph(item)} ${theme.bold(theme.fg(focused ? "accent" : "text", terminalSafeLine(childName(child))))}`,

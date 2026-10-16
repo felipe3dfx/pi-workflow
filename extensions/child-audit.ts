@@ -1583,6 +1583,7 @@ export function createChildAudit(options: {
 			...(record.state === undefined ? {} : { state: record.state }),
 			...(record.verdict === undefined ? {} : { verdict: record.verdict }),
 			...(interrupted ? { interrupted: true as const } : {}),
+			...(record.index ? { index: record.index } : {}),
 			health: healthOf(record),
 		};
 	}
@@ -1890,6 +1891,7 @@ export function createChildAudit(options: {
 		if (tail) unavailable.push({ from: last + 1 });
 		record.generation = generation;
 		record.repaired = true;
+		record.index = undefined;
 		record.committed = last + 1;
 		record.end = extent;
 		record.page = { n: -1, entries: [], dirty: false };

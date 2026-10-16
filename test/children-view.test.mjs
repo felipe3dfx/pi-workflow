@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { rm } from "node:fs/promises";
+import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { stripVTControlCharacters } from "node:util";
 
@@ -1045,6 +1047,47 @@ test("a child whose transcript cannot be read stays listed with its identity", a
 	const text = await settle(view);
 	assert.match(text, /⊘ worker 9e01 +interrupted/);
 	assert.match(text, /❯ Index the docs/);
+});
+
+test("a record with an index warning is repaired only on request, and the repair can be cancelled and shows its outcome", async (t) => {
+	const root = withAgentDirectory(t);
+	const lost = record("9e01", { task: "Index the docs" });
+	const before = audited(t, [lost], { root });
+	before.say(lost.id, [{ type: "text", text: "Indexed half." }]);
+	await written(before.audit, lost.id);
+	await before.audit.close();
+	await rm(join(root, "parent-1", `${lost.id}.index`), { recursive: true });
+	const later = audited(t, [], { root });
+	const gates = [];
+	const audit = {
+		list: later.audit.list,
+		read: later.audit.read,
+		segment: later.audit.segment,
+		async repair(id, signal) {
+			await new Promise((resolve) => gates.push(resolve));
+			return later.audit.repair(id, signal);
+		},
+	};
+	const view = open(fakeSessions([]), { rows: 30, audit });
+	let text = await settle(view);
+	assert.match(text, /worker 9e01/);
+	assert.match(text, /index is missing or damaged/);
+	assert.match(text, /r repair/);
+	assert.equal(gates.length, 0);
+
+	view.press("r");
+	text = view.lines(120).join("\n");
+	assert.match(text, /Repairing worker 9e01/);
+	assert.match(text, /r cancel repair/);
+	view.press("r");
+	gates.shift()();
+	assert.match(await settle(view), /Repair of worker 9e01 cancelled\./);
+
+	view.press("r");
+	gates.shift()();
+	text = await settle(view);
+	assert.match(text, /Repaired worker 9e01: \d+ observations recovered/);
+	assert.doesNotMatch(text, /index is missing or damaged/);
 });
 
 test("an answer shows queued and delivered once under its question number, and an aborted ask never reads as an answer", async (t) => {
