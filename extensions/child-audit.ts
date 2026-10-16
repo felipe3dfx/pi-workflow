@@ -1,4 +1,4 @@
-import { mkdir, open, rename } from "node:fs/promises";
+import { mkdir, open, readdir, rename, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { crc32 } from "node:zlib";
 
@@ -120,6 +120,7 @@ type Header = {
 	field?: string;
 	meta?: Record<string, unknown>;
 	loss?: unknown;
+	close?: unknown;
 };
 
 type Line =
@@ -178,6 +179,8 @@ interface AuditFiles {
 	): Promise<unknown>;
 	open(path: string, flags: string, mode?: number): Promise<AuditFile>;
 	rename(from: string, to: string): Promise<void>;
+	readdir(path: string): Promise<string[]>;
+	stat(path: string): Promise<{ size: number }>;
 }
 
 type Page = { n: number; entries: (Extent | null)[]; dirty: boolean };
@@ -204,8 +207,14 @@ interface Capture {
 	finals: Set<string>;
 	updates: Map<string, number>;
 	state?: string;
+	verdict?: string;
 	messages: { count: number; open?: string; ids: WeakMap<object, string> };
 	draining: boolean;
+	work: Promise<void>;
+	slot: boolean;
+	closed: boolean;
+	fenced: boolean;
+	durable?: Health;
 	cause?: string;
 	lost: number;
 	lostFrom?: number;
@@ -221,6 +230,8 @@ const defaultLimits = {
 	chunk: 64 * 1024,
 	cacheBytes: 16 * 1024 * 1024,
 	cacheEntries: 512,
+	catalog: 32,
+	drain: 1000,
 };
 
 const version = 1;
@@ -233,6 +244,8 @@ const markerAllowance = 1024;
 class Uncertain extends Error {}
 
 class Refused extends Error {}
+
+class Fenced extends Error {}
 
 const foreign = "The journal does not belong to this record.";
 const damaged = "Some recorded evidence failed verification and is unavailable.";
@@ -251,6 +264,24 @@ type Window = {
 
 const unrecoverable =
 	"Durable recovery of this child's history is not guaranteed.";
+const unclosed =
+	"The record was not closed; evidence after its last verified line may be missing.";
+const closedIncomplete = "The capture was incomplete when the record closed.";
+const unverified = "The record's identity could not be verified.";
+const expired = "The audit drain expired before the record closed.";
+
+type Health = {
+	complete: boolean;
+	closed?: boolean;
+	received?: number;
+	admitted?: number;
+	written?: number;
+	lost?: number;
+	lostFrom?: number;
+	uncertain?: number;
+	marker?: "written" | "failed";
+	warning?: string;
+};
 
 export function createChildAudit(options: {
 	root: string;
@@ -258,10 +289,23 @@ export function createChildAudit(options: {
 	limits?: Partial<typeof defaultLimits>;
 	files?: AuditFiles;
 	schedule?: (task: () => void) => void;
+	timer?: (task: () => void, ms: number) => () => void;
 }) {
 	const limits = { ...defaultLimits, ...options.limits };
-	const files: AuditFiles = options.files ?? { mkdir, open, rename };
+	const files: AuditFiles = options.files ?? {
+		mkdir,
+		open,
+		rename,
+		readdir,
+		stat,
+	};
 	const schedule = options.schedule ?? setImmediate;
+	const timer =
+		options.timer ??
+		((task: () => void, ms: number) => {
+			const timeout = setTimeout(task, ms);
+			return () => clearTimeout(timeout);
+		});
 	const writer = limits.chunk + headerAllowance;
 	const maxLine = writer;
 	const size = limits.window;
@@ -269,6 +313,7 @@ export function createChildAudit(options: {
 	let cached = 0;
 	const slice = Math.max(2, Math.floor((limits.chunk - 2) / 6));
 	const records = new Map<string, Capture>();
+	const recovered = new Map<string, Capture>();
 	// Each live record keeps a minimum share no sibling may borrow, and a borrower also leaves one share free so a child that starts later can still admit its identity.
 	const share = {
 		bytes: Math.floor(limits.bytes / 16),
@@ -289,16 +334,19 @@ export function createChildAudit(options: {
 		live.delete(record);
 		if (record.draining || !record.path) return;
 		record.draining = true;
-		void mark(record).finally(() => {
+		record.work = mark(record).finally(() => {
 			record.draining = false;
 		});
 	}
 
 	function start(record: Capture) {
 		record.draining = true;
+		record.slot = true;
 		admittedBytes += writer;
 		record.held.bytes += writer;
-		schedule(() => void drain(record));
+		record.work = new Promise((resolve) =>
+			schedule(() => void drain(record).finally(resolve)),
+		);
 	}
 
 	function release(record: Capture, item: Pending) {
@@ -325,6 +373,7 @@ export function createChildAudit(options: {
 	}
 
 	function admit(record: Capture, evidence?: Evidence) {
+		if (record.closed) return false;
 		const ordinal = record.next++;
 		if (record.cause) {
 			lose(record, ordinal);
@@ -384,11 +433,14 @@ export function createChildAudit(options: {
 				}
 				const start = record.size;
 				await store(record, file, item);
+				if (record.fenced) return;
 				record.pending.shift();
 				release(record, item);
 				await commit(record, item.ordinal, start);
+				if (record.fenced) return;
 			}
 		} catch (error) {
+			if (record.fenced) return;
 			const item = record.pending.shift() as Pending;
 			release(record, item);
 			if (error instanceof Uncertain) record.uncertain = item.ordinal;
@@ -399,16 +451,19 @@ export function createChildAudit(options: {
 					? "Another capture already owns this audit record."
 					: `Audit capture failed: ${errorMessage(error)}.`,
 			);
+		} finally {
+			void file?.close().catch(() => {});
 		}
+		if (record.fenced) return;
 		for (const item of record.pending) {
 			release(record, item);
 			lose(record, item.ordinal);
 		}
 		record.pending = [];
-		void file?.close().catch(() => {});
 		if (record.cause && !record.marker) await mark(record);
 		admittedBytes -= writer;
 		record.held.bytes -= writer;
+		record.slot = false;
 		record.draining = false;
 	}
 
@@ -427,6 +482,7 @@ export function createChildAudit(options: {
 				...(part === 0 && !final ? { meta: meta(item.value) } : {}),
 			};
 			await new Promise<void>((resolve) => schedule(resolve));
+			if (record.fenced) throw new Fenced();
 			await writeAll(file, Buffer.from(line(header, texts.join(""))), (n) => {
 				record.size += n;
 			});
@@ -492,7 +548,7 @@ export function createChildAudit(options: {
 
 	async function flushIndex(record: Capture, page: Page) {
 		page.dirty = false;
-		if (record.index || record.repaired) return;
+		if (record.index || record.repaired || record.fenced) return;
 		const path = record.path as string;
 		try {
 			await files.mkdir(indexOf(path), { recursive: true, mode: 0o700 });
@@ -536,6 +592,7 @@ export function createChildAudit(options: {
 			record.marker = "failed";
 			return;
 		}
+		if (record.fenced) return;
 		const loss = {
 			loss: {
 				...(record.lostFrom === undefined ? {} : { from: record.lostFrom }),
@@ -545,22 +602,91 @@ export function createChildAudit(options: {
 				cause: (record.cause as string).slice(0, markerAllowance / 2),
 			},
 		};
+		record.marker = (await appendMarker(record, loss)) ? "written" : "failed";
+	}
+
+	async function appendMarker(record: Capture, marker: object) {
 		let file: AuditFile | undefined;
 		try {
 			file = await files.open(record.path as string, "a");
 			await writeAll(
 				file,
-				Buffer.from(`\n${line({ v: version, ...loss }, "")}`),
+				Buffer.from(`\n${line({ v: version, ...marker }, "")}`),
 				(n) => {
 					record.size += n;
 				},
 			);
-			record.marker = "written";
+			return true;
 		} catch {
-			record.marker = "failed";
+			return false;
 		} finally {
 			await file?.close().catch(() => {});
 		}
+	}
+
+	async function seal(record: Capture) {
+		if (!record.path || !record.created || record.fenced) return;
+		await appendMarker(record, {
+			close: {
+				committed: record.committed,
+				written: record.written,
+				complete: !record.cause && record.written === record.admitted,
+				...(record.state === undefined ? {} : { state: record.state }),
+				...(record.verdict === undefined ? {} : { verdict: record.verdict }),
+			},
+		});
+	}
+
+	function abandon(record: Capture) {
+		record.fenced = true;
+		for (const item of record.pending) {
+			release(record, item);
+			lose(record, item.ordinal);
+		}
+		record.pending = [];
+		if (record.slot) {
+			admittedBytes -= writer;
+			record.held.bytes -= writer;
+			record.slot = false;
+		}
+		record.cause ??= expired;
+	}
+
+	async function close() {
+		const closing = [...records.values()];
+		records.clear();
+		for (const record of closing) {
+			record.closed = true;
+			live.delete(record);
+		}
+		let late = false;
+		let cancel = () => {};
+		const deadline = new Promise<void>((resolve) => {
+			cancel = timer(() => {
+				late = true;
+				resolve();
+			}, limits.drain);
+		});
+		const sealed = new Set<Capture>();
+		await Promise.race([
+			Promise.all(
+				closing.map(async (record) => {
+					while (record.draining && !late) await record.work;
+					if (late) return;
+					await seal(record);
+					if (!late) sealed.add(record);
+				}),
+			),
+			deadline,
+		]);
+		cancel();
+		for (const record of closing) {
+			if (!sealed.has(record)) abandon(record);
+			record.seen.clear();
+			record.updates.clear();
+			record.queued = { steer: [], "follow-up": [] };
+		}
+		return { closed: sealed.size, expired: closing.length - sealed.size };
 	}
 
 	function enqueued(
@@ -740,10 +866,9 @@ export function createChildAudit(options: {
 		}
 	}
 
-	function begin(identity: Omit<AuditIdentity, "parent">) {
-		const record: Capture = {
-			identity: snapshot(identity, Number.POSITIVE_INFINITY)
-				.value as AuditIdentity,
+	function blank(identity: AuditIdentity): Capture {
+		return {
+			identity,
 			created: false,
 			pending: [],
 			size: 0,
@@ -762,8 +887,18 @@ export function createChildAudit(options: {
 			updates: new Map(),
 			messages: { count: 0, ids: new WeakMap() },
 			draining: false,
+			work: Promise.resolve(),
+			slot: false,
+			closed: false,
+			fenced: false,
 			lost: 0,
 		};
+	}
+
+	function begin(identity: Omit<AuditIdentity, "parent">) {
+		const record = blank(
+			snapshot(identity, Number.POSITIVE_INFINITY).value as AuditIdentity,
+		);
 		records.set(identity.child, record);
 		const guarded =
 			<A extends unknown[]>(observe: (...args: A) => unknown) =>
@@ -1016,6 +1151,17 @@ export function createChildAudit(options: {
 			window.offset = end;
 		}
 		await resolve();
+		if (
+			record.durable &&
+			!record.repaired &&
+			bytes === 0 &&
+			window.from >= record.committed &&
+			(window.offset ?? record.end) < record.size
+		) {
+			if (record.index) window.issues.add(record.index);
+			window.offset ??= record.end;
+			return scan(record, window);
+		}
 		if (record.tail !== undefined && window.from >= record.committed) {
 			window.unavailable.push({ from: record.tail });
 		}
@@ -1041,7 +1187,12 @@ export function createChildAudit(options: {
 			const offset = start + at;
 			at = end + 1;
 			consumed = at;
-			if (parsed === "blank" || (parsed && "header" in parsed && parsed.header.loss)) {
+			if (
+				parsed === "blank" ||
+				(parsed &&
+					"header" in parsed &&
+					(parsed.header.loss || parsed.header.close))
+			) {
 				continue;
 			}
 			if (!parsed) {
@@ -1103,12 +1254,211 @@ export function createChildAudit(options: {
 		return window;
 	}
 
-	async function read(child: string, cursor?: WindowCursor) {
+	function currentParent() {
+		try {
+			return options.parent();
+		} catch {
+			return undefined;
+		}
+	}
+
+	async function lookup(child: string) {
+		const parent = currentParent();
 		const record = records.get(child);
-		if (!record) return undefined;
+		if (record && record.identity.parent === parent) return record;
+		if (!parent || !/^[\w-]+$/.test(child)) return undefined;
+		const path = join(options.root, parent, `${child}.jsonl`);
+		const hit = recovered.get(path);
+		if (hit) {
+			recovered.delete(path);
+			recovered.set(path, hit);
+			return hit;
+		}
+		const opened = await reopen(parent, child, path);
+		if (!opened) return undefined;
+		recovered.set(path, opened);
+		for (const old of recovered.keys()) {
+			if (recovered.size <= limits.catalog) break;
+			recovered.delete(old);
+		}
+		return opened;
+	}
+
+	async function reopen(parent: string, child: string, path: string) {
+		let size: number;
+		try {
+			size = (await files.stat(path)).size;
+		} catch {
+			return undefined;
+		}
+		const owner = await identityOf(path, parent, child);
+		const head = await headOf(path, parent, child, size);
+		const facts = await tailOf(path, size);
+		const record = blank(owner ?? ({ parent, child } as AuditIdentity));
+		record.path = path;
+		record.created = true;
+		record.closed = true;
+		record.size = size;
+		record.written = owner ? 1 : 0;
+		if (head) {
+			record.generation = head.generation;
+			record.committed = head.committed;
+			record.end = head.extent;
+		} else record.index = unindexed;
+		record.state = facts.state;
+		record.verdict = facts.verdict;
+		const warnings = [
+			...(facts.cause ? [facts.cause] : []),
+			...(facts.closed ? [] : [unclosed]),
+			...(facts.closed && !facts.complete && !facts.loss ? [closedIncomplete] : []),
+			...(owner ? [] : [unverified]),
+		];
+		record.durable = {
+			complete: facts.complete && !!owner,
+			closed: facts.closed,
+			...(facts.written === undefined ? {} : { written: facts.written }),
+			...(facts.lostFrom === undefined ? {} : { lostFrom: facts.lostFrom }),
+			...(facts.uncertain === undefined ? {} : { uncertain: facts.uncertain }),
+			...(facts.loss ? { marker: "written" as const } : {}),
+			...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}),
+		};
+		return record;
+	}
+
+	async function identityOf(path: string, parent: string, child: string) {
+		const texts: string[] = [];
+		let bytes = 0;
+		let part = 0;
+		let position = 0;
+		let carry = Buffer.alloc(0);
+		for (;;) {
+			const chunk = await readAt(path, position, limits.windowBytes);
+			if (chunk.length === 0) return undefined;
+			position += chunk.length;
+			const buffer = Buffer.concat([carry, chunk]);
+			let at = 0;
+			for (let end = buffer.indexOf(10); end >= 0; end = buffer.indexOf(10, at)) {
+				const parsed = parse(buffer.toString("utf8", at, end));
+				at = end + 1;
+				if (
+					!parsed ||
+					!("header" in parsed) ||
+					parsed.header.ordinal !== 0 ||
+					parsed.header.part !== part
+				) {
+					return undefined;
+				}
+				bytes += parsed.payload.length;
+				if (bytes > limits.bytes) return undefined;
+				texts.push(parsed.payload);
+				part += 1;
+				if (parsed.header.parts === undefined) continue;
+				try {
+					const value = JSON.parse(texts.join("")) as AuditIdentity;
+					return value?.child === child && value.parent === parent
+						? value
+						: undefined;
+				} catch {
+					return undefined;
+				}
+			}
+			carry = buffer.subarray(at);
+			if (carry.length > maxLine) return undefined;
+		}
+	}
+
+	async function headOf(path: string, parent: string, child: string, size: number) {
+		try {
+			const buffer = await readAt(
+				join(indexOf(path), "head.json"),
+				0,
+				headerAllowance,
+			);
+			if (buffer.length >= headerAllowance) return undefined;
+			const head = JSON.parse(buffer.toString("utf8"));
+			const counts = [head?.generation, head?.committed, head?.extent];
+			if (
+				head?.v !== version ||
+				head.parent !== parent ||
+				head.child !== child ||
+				!counts.every((n) => Number.isSafeInteger(n) && n >= 0) ||
+				head.extent > size
+			) {
+				return undefined;
+			}
+			return head as { generation: number; committed: number; extent: number };
+		} catch {
+			return undefined;
+		}
+	}
+
+	async function tailOf(path: string, size: number) {
+		const start = Math.max(0, size - Math.max(limits.windowBytes, 2 * maxLine));
+		const buffer = await readAt(path, start, size - start);
+		let at = start === 0 ? 0 : buffer.indexOf(10) + 1;
+		let close: Record<string, unknown> | undefined;
+		let last: Header | undefined;
+		let loss: Record<string, unknown> | undefined;
+		let execution: { state?: unknown; verdict?: unknown } | undefined;
+		for (let end = buffer.indexOf(10, at); end >= 0; end = buffer.indexOf(10, at)) {
+			const text = buffer.toString("utf8", at, end);
+			at = end + 1;
+			if (text === "") continue;
+			const parsed = parse(text);
+			if (parsed && "header" in parsed && parsed.header.close !== undefined) {
+				const value = parsed.header.close as Record<string, unknown>;
+				close =
+					last?.parts !== undefined && value?.committed === last.ordinal + 1
+						? value
+						: undefined;
+				continue;
+			}
+			close = undefined;
+			if (!parsed || !("header" in parsed)) continue;
+			const { header, payload } = parsed;
+			if (header.loss !== undefined) {
+				loss = header.loss as Record<string, unknown>;
+				continue;
+			}
+			last = header;
+			if (header.part !== 0 || header.parts !== 1) continue;
+			try {
+				const value = JSON.parse(payload);
+				if (value?.kind === "execution") execution = value;
+			} catch {}
+		}
+		if (at < buffer.length) close = undefined;
+		const count = (value: unknown) =>
+			Number.isSafeInteger(value) ? (value as number) : undefined;
+		return {
+			closed: close !== undefined,
+			complete: close?.complete === true && loss === undefined,
+			written: count(close?.written),
+			loss: loss !== undefined,
+			cause: typeof loss?.cause === "string" ? loss.cause : undefined,
+			lostFrom: count(loss?.from),
+			uncertain: count(loss?.uncertain),
+			...(typeof close?.state === "string"
+				? {
+						state: close.state,
+						verdict:
+							typeof close.verdict === "string" ? close.verdict : undefined,
+					}
+				: {
+						state:
+							typeof execution?.state === "string" ? execution.state : undefined,
+						verdict:
+							typeof execution?.verdict === "string"
+								? execution.verdict
+								: undefined,
+					}),
+		};
+	}
+
+	function healthOf(record: Capture): Health {
+		if (record.durable) return record.durable;
 		const identityWritten = record.written > 0;
-		const identity = { ...record.identity, written: identityWritten };
-		const health = {
+		return {
 			complete: !record.cause,
 			received: record.next,
 			admitted: record.admitted,
@@ -1127,6 +1477,60 @@ export function createChildAudit(options: {
 					}
 				: {}),
 		};
+	}
+
+	function summary(record: Capture) {
+		const interrupted =
+			record.durable !== undefined &&
+			(record.state === undefined || working.has(record.state));
+		return {
+			child: record.identity.child,
+			identity: { ...record.identity, written: record.written > 0 },
+			section:
+				record.durable ||
+				(record.state !== undefined && !working.has(record.state))
+					? ("history" as const)
+					: ("working" as const),
+			...(record.state === undefined ? {} : { state: record.state }),
+			...(record.verdict === undefined ? {} : { verdict: record.verdict }),
+			...(interrupted ? { interrupted: true as const } : {}),
+			health: healthOf(record),
+		};
+	}
+
+	async function list(after?: string) {
+		const parent = currentParent();
+		const names = new Set<string>();
+		for (const record of records.values()) {
+			if (record.identity.parent === parent) names.add(record.identity.child);
+		}
+		if (parent) {
+			try {
+				for (const name of await files.readdir(join(options.root, parent))) {
+					if (name.endsWith(".jsonl")) names.add(name.slice(0, -".jsonl".length));
+				}
+			} catch {}
+		}
+		const sorted = [...names].sort();
+		const from =
+			after === undefined ? 0 : sorted.filter((name) => name <= after).length;
+		const page = sorted.slice(from, from + limits.catalog);
+		const listed: ReturnType<typeof summary>[] = [];
+		for (const child of page) {
+			const record = await lookup(child);
+			if (record) listed.push(summary(record));
+		}
+		return {
+			records: listed,
+			...(from + page.length < sorted.length ? { next: page.at(-1) } : {}),
+		};
+	}
+
+	async function read(child: string, cursor?: WindowCursor) {
+		const record = await lookup(child);
+		if (!record) return undefined;
+		const identity = { ...record.identity, written: record.written > 0 };
+		const health = healthOf(record);
 		if (
 			cursor?.generation !== undefined &&
 			(cursor.generation !== record.generation || cursor.child !== child)
@@ -1173,7 +1577,7 @@ export function createChildAudit(options: {
 	}
 
 	async function segment(child: string, cursor: SegmentCursor) {
-		const record = records.get(child);
+		const record = await lookup(child);
 		if (!record?.path) return undefined;
 		if (cursor.child !== child || cursor.generation !== record.generation) {
 			return { refresh: true as const };
@@ -1217,7 +1621,7 @@ export function createChildAudit(options: {
 	}
 
 	async function repair(child: string, signal?: AbortSignal) {
-		const record = records.get(child);
+		const record = await lookup(child);
 		if (!record) return undefined;
 		if (live.has(record) || record.draining || record.pending.length > 0) {
 			return { refused: "The record is still being captured." };
@@ -1279,6 +1683,7 @@ export function createChildAudit(options: {
 				loss = header.loss;
 				return;
 			}
+			if (header.close !== undefined) return;
 			if (header.part === 0 && header.ordinal > last) {
 				current = {
 					ordinal: header.ordinal,
@@ -1532,6 +1937,7 @@ export function createChildAudit(options: {
 		const record = records.get(child);
 		if (!record || (record.state === state && verdict === undefined)) return;
 		record.state = state;
+		record.verdict = verdict;
 		if (!working.has(state)) live.delete(record);
 		admit(record, {
 			kind: "execution",
@@ -1540,7 +1946,7 @@ export function createChildAudit(options: {
 		});
 	}
 
-	return { begin, execution, read, segment, repair };
+	return { begin, execution, list, read, segment, repair, close };
 }
 
 const working = new Set(["queued", "running", "waiting"]);
@@ -1694,7 +2100,9 @@ function parse(text: string): Line | undefined {
 				: undefined,
 		};
 	}
-	if (header.loss !== undefined) return { header, payload: "" };
+	if (header.loss !== undefined || header.close !== undefined) {
+		return { header, payload: "" };
+	}
 	if (
 		!Number.isSafeInteger(header.ordinal) ||
 		header.ordinal < 0 ||

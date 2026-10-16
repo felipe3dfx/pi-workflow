@@ -43,6 +43,7 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 
+import { createChildAudit } from "../extensions/child-audit.ts";
 import { createAskParentTool, createPiChildSession } from "../extensions/child-sessions.ts";
 import { compactToolRenderers } from "../extensions/compact-tools.ts";
 import { capabilities } from "../extensions/configure.ts";
@@ -791,6 +792,7 @@ function loadExtension({
 	refresh,
 	branch = [],
 	jevRouting = "on",
+	session = {},
 }) {
 	if (jevRouting === "on") turnJevRoutingOn(agentDir);
 	const handlers = new Map();
@@ -863,7 +865,11 @@ function loadExtension({
 				cwd: "/tmp",
 				getContextUsage: () => undefined,
 				isIdle: () => idle,
-				sessionManager: { getBranch: () => branch, getEntries: () => [] },
+				sessionManager: {
+					getBranch: () => branch,
+					getEntries: () => [],
+					...session,
+				},
 			});
 		}
 	};
@@ -1671,6 +1677,43 @@ test("a reload ends every working child, tells the operator how many ended, and 
 		});
 		assert.deepEqual((await use(extension, "list_children", {})).details.children, []);
 		assert.equal(extension.messages.length, 0);
+	});
+});
+
+test("a reload closes a persisted parent's audit records for reopening, while an ephemeral parent writes none", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const root = join(agentDir, "pi-workflow-audit");
+		for (const persisted of [true, false]) {
+			const extension = await loadSpawnTool({
+				agentDir,
+				create: fakeChildren().create,
+				session: {
+					getSessionId: () => `parent-${persisted}`,
+					getSessionFile: () => (persisted ? "/sessions/parent.jsonl" : undefined),
+				},
+			});
+			const id = await spawnBackground(extension, worktree);
+			await settle();
+
+			await extension.fire("session_shutdown", { reason: "reload" });
+
+			const { records } = await createChildAudit({
+				root,
+				parent: () => `parent-${persisted}`,
+			}).list();
+			if (!persisted) {
+				assert.deepEqual(records, []);
+				continue;
+			}
+			assert.deepEqual(
+				records.map(({ child, interrupted, health }) => ({
+					child,
+					interrupted,
+					closed: health.closed,
+				})),
+				[{ child: id, interrupted: true, closed: true }],
+			);
+		}
 	});
 });
 

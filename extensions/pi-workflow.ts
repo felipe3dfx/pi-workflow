@@ -146,6 +146,13 @@ export default function piWorkflowExtension(
 		}
 		return executors;
 	});
+	const audit = createChildAudit({
+		root: join(agentDirectory, "pi-workflow-audit"),
+		parent: () => {
+			const session = currentCtx?.sessionManager;
+			return session?.getSessionFile() ? session.getSessionId() : undefined;
+		},
+	});
 	const childSessions = createChildSessions({
 		create: options.childSessions?.create,
 		schedule: options.childSessions?.schedule,
@@ -157,10 +164,7 @@ export default function piWorkflowExtension(
 			if (currentCtx) report(currentCtx, message, "error");
 		},
 		todo,
-		audit: createChildAudit({
-			root: join(agentDirectory, "pi-workflow-audit"),
-			parent: () => currentCtx?.sessionManager.getSessionId(),
-		}),
+		audit,
 	});
 	pi.on("turn_end", () => childSessions.atBoundary());
 	pi.on("agent_settled", () => childSessions.atBoundary());
@@ -245,6 +249,7 @@ export default function piWorkflowExtension(
 		currentCtx = undefined;
 		childrenViews.close();
 		const ended = await childSessions.disposeAll();
+		await audit.close();
 		if (event.reason !== "reload" || ended === 0) return;
 		pi.appendEntry("pi-workflow-child-trace", { reason: "reload", ended });
 		report(

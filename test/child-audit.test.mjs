@@ -23,10 +23,10 @@ const plan = {
 
 function auditedCore(
 	t,
-	{ root = withAgentDirectory(t), parent = "parent-1", limits, run, files, schedule } = {},
+	{ root = withAgentDirectory(t), parent = "parent-1", limits, run, files, schedule, timer } = {},
 ) {
 	const children = fakeChildren({ run });
-	const audit = createChildAudit({ root, parent: () => parent, limits, files, schedule });
+	const audit = createChildAudit({ root, parent: () => parent, limits, files, schedule, timer });
 	const sent = [];
 	const core = createChildSessions({
 		create: children.create,
@@ -640,7 +640,7 @@ function faultyFiles(fault = {}) {
 			return {
 				async write(buffer, offset = 0, length = buffer.length - offset) {
 					const call = writes.push(length) - 1;
-					const plan = fault.write?.(call, length) ?? { bytes: length };
+					const plan = (await fault.write?.(call, length)) ?? { bytes: length };
 					if (plan.bytes > 0) await handle.write(buffer, offset, plan.bytes);
 					if (plan.error) throw plan.error;
 					return { bytesWritten: plan.bytes };
@@ -1263,4 +1263,307 @@ test("a block larger than a window is listed without being read and expands by b
 	);
 	const back = await audit.segment(id, segments.at(-1).segment.previous);
 	assert.deepEqual(back, segments.at(-2).segment);
+});
+
+const reopen = (root, parent = "parent-1", options = {}) =>
+	createChildAudit({ root, parent: () => parent, ...options });
+
+const outcome = ({ section, state, verdict, interrupted }) => ({ section, state, verdict, interrupted });
+
+async function listed(audit) {
+	const { records, next } = await audit.list();
+	assert.equal(next, undefined);
+	return Object.fromEntries(records.map((record) => [record.child, record]));
+}
+
+test("reopening the same parent lists a known terminal child and an interrupted running child as read-only history", async (t) => {
+	const { audit, core, launch, root } = auditedCore(t);
+	const finished = await launch();
+	finished.child.spec.report(done);
+	finished.child.result.resolve("Done.");
+	await eventually(async () => core.get(finished.id).state, (state) => state === "completed");
+	const working = await launch();
+	working.child.spec.onEvent(userMessage("Started"));
+	await eventually(async () => core.get(working.id).state, (state) => state === "running");
+	await core.disposeAll();
+	await audit.close();
+
+	const later = reopen(root);
+	const records = await listed(later);
+	assert.deepEqual(outcome(records[finished.id]), {
+		section: "history",
+		state: "completed",
+		verdict: "done",
+		interrupted: undefined,
+	});
+	assert.deepEqual(outcome(records[working.id]), {
+		section: "history",
+		state: "running",
+		verdict: undefined,
+		interrupted: true,
+	});
+	for (const record of Object.values(records)) {
+		assert.equal(record.health.complete, true);
+		assert.equal(record.health.closed, true);
+	}
+	assert.equal(records[working.id].identity.task, "Fix the failing test");
+
+	const window = await later.read(working.id);
+	assert.equal(window.identity.child, working.id);
+	assert.deepEqual(inputs(window).map(({ text }) => text), ["Started"]);
+	assert.equal(window.health.complete, true);
+});
+
+test("children still queued or waiting when the parent closed reopen as Interrupted child records", async (t) => {
+	const { audit, core, launch, root } = auditedCore(t);
+	const launched = [];
+	for (let i = 0; i < 6; i++) launched.push(await launch());
+	await eventually(async () => core.get(launched[4].id).state, (state) => state === "running");
+	launched[0].child.spec.ask("Which file?").catch(() => {});
+	await eventually(async () => core.get(launched[0].id).state, (state) => state === "waiting");
+	assert.equal(core.get(launched[5].id).state, "queued");
+	await audit.close();
+
+	const records = await listed(reopen(root));
+	assert.deepEqual(outcome(records[launched[0].id]), {
+		section: "history",
+		state: "waiting",
+		verdict: undefined,
+		interrupted: true,
+	});
+	assert.deepEqual(outcome(records[launched[5].id]), {
+		section: "history",
+		state: "queued",
+		verdict: undefined,
+		interrupted: true,
+	});
+});
+
+test("a known terminal outcome is kept when its transcript is incomplete, and only the written loss facts are reported", async (t) => {
+	const { files, failNext } = failingNext();
+	const { audit, core, sent, launch, root } = auditedCore(t, { files });
+	const { id, child } = await launch();
+	const before = await flushed(audit, id);
+	failNext({ bytes: 0 });
+	child.spec.onEvent(userMessage("one"));
+	await finishesUnchanged(core, id, child, sent);
+	await eventually(() => audit.read(id), (read) => read.health.marker);
+	await audit.close();
+
+	const record = (await listed(reopen(root)))[id];
+	assert.deepEqual(outcome(record), {
+		section: "history",
+		state: "completed",
+		verdict: "done",
+		interrupted: undefined,
+	});
+	assert.deepEqual(record.health, {
+		complete: false,
+		closed: true,
+		written: before.health.received,
+		lostFrom: before.health.received,
+		marker: "written",
+		warning: "Audit capture failed: the storage accepted no bytes.",
+	});
+});
+
+async function readAll(audit, id) {
+	const texts = [];
+	let window = await audit.read(id);
+	for (let i = 0; i < 50; i++) {
+		texts.push(...inputs(window).map(({ text }) => text));
+		const next = await audit.read(id, window.next);
+		if (next.next.from === window.next.from && next.next.offset === window.next.offset) break;
+		window = next;
+	}
+	return { texts, window };
+}
+
+test("after an abrupt end the verified prefix is recoverable and only available facts are reported", async (t) => {
+	const { audit, launch, root } = auditedCore(t, { run: () => new Promise(() => {}) });
+	const { id, child } = await launch();
+	child.spec.onEvent(userMessage("alpha"));
+	await flushed(audit, id);
+	const index = ["head.json", "0-0.json"].map((name) => join(indexOf(root, id), name));
+	const stale = await Promise.all(index.map((path) => readFile(path)));
+	child.spec.onEvent(userMessage("bravo"));
+	child.spec.onEvent(userMessage("charlie"));
+	await flushed(audit, id);
+	await Promise.all(index.map((path, i) => writeFile(path, stale[i])));
+	await writeFile(journalOf(root, id), '0badc0de\t{"v":1,"ordinal":9,"part":0', { flag: "a" });
+
+	const later = reopen(root);
+	const record = (await listed(later))[id];
+	assert.deepEqual(outcome(record), {
+		section: "history",
+		state: "running",
+		verdict: undefined,
+		interrupted: true,
+	});
+	assert.deepEqual(record.health, {
+		complete: false,
+		closed: false,
+		warning: "The record was not closed; evidence after its last verified line may be missing.",
+	});
+	const { texts } = await readAll(later, id);
+	assert.deepEqual(texts, ["alpha", "bravo", "charlie"]);
+});
+
+test("a reopened record without its index is still listed and read from verified journal lines, with a warning", async (t) => {
+	const { audit, launch, root } = auditedCore(t, { run: () => new Promise(() => {}) });
+	const { id, child } = await launch();
+	child.spec.onEvent(userMessage("alpha"));
+	await flushed(audit, id);
+	await audit.close();
+	await rm(indexOf(root, id), { recursive: true });
+
+	const later = reopen(root);
+	assert.equal((await listed(later))[id].health.complete, true);
+	const window = await later.read(id);
+	assert.deepEqual(inputs(window).map(({ text }) => text), ["alpha"]);
+	assert.match(window.warning, /index is missing or damaged/);
+});
+
+test("another parent session, such as a fork or clone, neither lists nor reads this parent's children", async (t) => {
+	const { audit, launch, root } = auditedCore(t);
+	const { id } = await launch();
+	await flushed(audit, id);
+	await audit.close();
+
+	const fork = reopen(root, "parent-2");
+	assert.deepEqual(await fork.list(), { records: [] });
+	assert.equal(await fork.read(id), undefined);
+	assert.equal(await fork.read(`../parent-1/${id}`), undefined);
+	assert.deepEqual(Object.keys(await listed(reopen(root))), [id]);
+});
+
+test("recovered history never becomes executable: no child, launch slot, question, result, or turn is restored", async (t) => {
+	const { audit, core, launch, root } = auditedCore(t);
+	const finished = await launch();
+	finished.child.spec.report(done);
+	finished.child.result.resolve("Done.");
+	await eventually(async () => core.get(finished.id).state, (state) => state === "completed");
+	const asking = await launch();
+	await eventually(async () => core.get(asking.id).state, (state) => state === "running");
+	asking.child.spec.ask("Which file?").catch(() => {});
+	await core.disposeAll();
+	await audit.close();
+
+	const later = reopen(root);
+	const children = fakeChildren();
+	const sent = [];
+	const fresh = createChildSessions({
+		create: children.create,
+		send: (message) => sent.push(message),
+		idle: () => true,
+		trace() {},
+		report() {},
+		audit: later,
+	});
+	assert.equal(Object.keys(await listed(later)).length, 2);
+	await later.read(finished.id);
+	await later.read(asking.id);
+	await delay(10);
+	assert.deepEqual(fresh.list(), []);
+	assert.equal(fresh.get(finished.id), undefined);
+	assert.equal(fresh.working(), 0);
+	assert.equal(fresh.waiting(), false);
+	assert.equal(fresh.get(asking.id), undefined);
+	assert.deepEqual(children.created, []);
+	assert.deepEqual(sent, []);
+});
+
+function manualTimer() {
+	const timers = [];
+	return {
+		timer(task, ms) {
+			const entry = { task, ms, cancelled: false };
+			timers.push(entry);
+			return () => {
+				entry.cancelled = true;
+			};
+		},
+		timers,
+		expire() {
+			for (const entry of timers) if (!entry.cancelled) entry.task();
+		},
+	};
+}
+
+test("closing drains admitted evidence, seals the record, and discards callbacks that arrive afterwards", async (t) => {
+	const clock = manualTimer();
+	const { audit, launch, root } = auditedCore(t, { run: () => new Promise(() => {}), timer: clock.timer });
+	const { id, child } = await launch();
+	child.spec.onEvent(userMessage("last words"));
+	assert.deepEqual(await audit.close(), { closed: 1, expired: 0 });
+	assert.deepEqual(clock.timers.map(({ ms, cancelled }) => ({ ms, cancelled })), [{ ms: 1000, cancelled: true }]);
+	const sealed = await readFile(journalOf(root, id));
+
+	child.spec.onEvent(userMessage("too late"));
+	await delay(20);
+	assert.deepEqual(await readFile(journalOf(root, id)), sealed);
+	assert.equal(await audit.read(id).then((read) => read.health.closed), true);
+	const later = reopen(root);
+	assert.deepEqual(inputs(await later.read(id)).map(({ text }) => text), ["last words"]);
+});
+
+test("when the drain deadline expires the close returns, frees the budget, and a late write completion appends nothing more", async (t) => {
+	const clock = manualTimer();
+	const stuck = Promise.withResolvers();
+	let hold = false;
+	const files = faultyFiles({
+		write: async (_call, length) => {
+			if (hold) await stuck.promise;
+			return { bytes: length };
+		},
+	});
+	const { audit, launch, root } = auditedCore(t, {
+		files,
+		timer: clock.timer,
+		limits: { chunk: 1024, entries: 16 },
+		run: () => new Promise(() => {}),
+	});
+	const { id, child } = await launch();
+	await flushed(audit, id);
+	hold = true;
+	for (let i = 0; i < 13; i++) child.spec.onEvent(userMessage(`message ${i}`));
+	assert.equal((await audit.read(id)).health.lost, 0);
+	await delay(10);
+	const closing = audit.close();
+	clock.expire();
+	assert.deepEqual(await closing, { closed: 0, expired: 1 });
+	const size = (await readFile(journalOf(root, id))).length;
+
+	stuck.resolve();
+	await delay(20);
+	assert.ok((await readFile(journalOf(root, id))).length <= size + 1024);
+	const record = (await listed(reopen(root)))[id];
+	assert.equal(record.health.complete, false);
+	assert.equal(record.health.closed, false);
+
+	const next = await launch();
+	const fresh = await flushed(audit, next.id);
+	assert.equal(fresh.health.complete, true);
+});
+
+test("the parent's records are listed in bounded pages, live working children in the working section", async (t) => {
+	const { audit, core, launch, root } = auditedCore(t, { limits: { catalog: 2 } });
+	const ids = [];
+	for (let i = 0; i < 3; i++) ids.push((await launch()).id);
+	await eventually(async () => core.get(ids[2]).state, (state) => state === "running");
+
+	const first = await audit.list();
+	assert.equal(first.records.length, 2);
+	assert.ok(first.next);
+	const second = await audit.list(first.next);
+	assert.equal(second.next, undefined);
+	const all = [...first.records, ...second.records];
+	assert.deepEqual(all.map(({ child }) => child), [...ids].sort());
+	assert.ok(all.every(({ section, state }) => section === "working" && state === "running"));
+
+	await audit.close();
+	const later = reopen(root, "parent-1", { limits: { catalog: 2 } });
+	const reopened = await later.list();
+	assert.equal(reopened.records.length, 2);
+	assert.equal((await later.list(reopened.next)).records.length, 1);
 });
