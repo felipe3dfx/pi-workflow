@@ -383,7 +383,7 @@ test("in orchestrator with the child tools, the parent's leading system message 
 	assert.match(instruction, /git and gh/);
 	assert.match(instruction, /commit/);
 	assert.match(instruction, /AGENTS\.md/);
-	assert.match(instruction, /SKILL\.md.*referenced.*Markdown/);
+	assert.match(instruction, /routing blocks.*spawn_child.*discovery/);
 	assert.match(instruction, /todo/);
 	assert.match(instruction, /ask_user_question/);
 	assert.match(instruction, /refused/i);
@@ -738,9 +738,10 @@ test("in a real Pi session, the run that a child result starts carries the instr
 	const woken = requests[2];
 	assert.match(JSON.stringify(woken.messages.slice(1)), /README\.md installs the harness\./);
 	const [system] = woken.messages;
-	// This asserts the actual model input, not the scripted parent's final decision.
 	const injected = JSON.stringify(system);
 	assert.match(injected, /mandatory obligation.*owner.*state/);
+	assert.match(injected, /routing blocks.*spawn_child.*discovery/);
+	assert.match(injected, /sequencing.*orchestration contract.*not.*enforced wait/);
 	assert.match(injected, /pinned head/);
 	assert.match(injected, /scope.*rejected or unknown.*stop dependent technical judgment/);
 	assert.match(injected, /correctness.*standards\/design.*CI/);

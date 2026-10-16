@@ -8223,16 +8223,22 @@ for (const count of [1, 2]) {
 		await withWorkspace(async ({ worktree, agentDir }) => {
 			const path = join(worktree, ".pi/skills/review/SKILL.md");
 			await mkdir(join(worktree, ".pi/skills/review"), { recursive: true });
-			await writeFile(path, "Before technical judgment: parent creates isolated worktree at pinned head abc123; scope must pass. Required passes: correctness, standards/design, CI at abc123.\n");
+			await writeFile(path, "Read [scope](scope.md) and mandatory missing.md before dependent judgment. Before technical judgment: parent creates isolated worktree at pinned head abc123; scope must pass. Required passes: correctness, standards/design, CI at abc123.\n");
+			const scopePath = join(worktree, ".pi/skills/review/scope.md");
+			const missingPath = join(worktree, ".pi/skills/review/missing.md");
+			await writeFile(scopePath, "Scope UNKNOWN; operator inventory/plan exception required.\n");
 			const remaining = [
 				"parent | pending | isolated worktree at pinned head abc123 before judgment",
 				"parent | blocked | scope audit unknown; stop dependent technical judgment",
-				"unowned | pending | standards/design and CI at abc123",
+				"unowned | blocked | standards/design and CI at abc123; scope prerequisite unresolved",
+				`parent | blocked | required instruction ${missingPath}: ENOENT; obtain instruction before dependent work`,
 			];
-			const result = { verdict: "done", files_changed: [], validation: ["Read procedure; discovery only, no technical review performed"], left_undone: remaining };
+			const result = { verdict: "done", files_changed: [], validation: [`Sources: ${path}, ${scopePath}; discovery only, no technical review performed. Unresolved: scope inventory/plan exception and missing instruction.`], left_undone: remaining };
 			const child = await realChild(agentDir, [
 				...Array.from({ length: count }, () => [
 					fauxAssistantMessage(fauxToolCall("read", { path }), { stopReason: "toolUse" }),
+					fauxAssistantMessage(fauxToolCall("read", { path: scopePath }), { stopReason: "toolUse" }),
+					fauxAssistantMessage(fauxToolCall("read", { path: missingPath }), { stopReason: "toolUse" }),
 					asking("Setup and scope are prerequisites. Limit this task to discovery and retain the parent/unowned obligations?"),
 				]).flat(),
 				...Array.from({ length: count }, () => [reporting(result), fauxAssistantMessage("Discovery subtask only.")]).flat(),
@@ -8245,7 +8251,6 @@ for (const count of [1, 2]) {
 			}
 			for (const id of ids) {
 				assert.equal(await stateOf(extension, id), "waiting");
-				// Controlled parent reply is test input, not a generated orchestration decision.
 				await use(extension, "reply_child", { id, question: 1, answer: "Discovery only. Parent setup and scope stay pending; standards/design and CI remain unowned. No technical judgment." });
 				await eventually(async () => await stateOf(extension, id) === "completed");
 			}
@@ -8260,6 +8265,10 @@ for (const count of [1, 2]) {
 			const readOutputs = parent.requests.flatMap(({ messages }) => messages.filter((message) => message.role === "toolResult" && message.toolName === "read"));
 			assert.ok(readOutputs.length >= count);
 			assert.match(JSON.stringify(readOutputs), /parent creates isolated worktree at pinned head abc123/);
+			assert.match(JSON.stringify(readOutputs), /Scope UNKNOWN/);
+			assert.ok(readOutputs.some((output) => output.isError && /missing\.md/.test(JSON.stringify(output.content))));
+			assert.match(JSON.stringify(delivered), /Sources:.*SKILL\.md.*scope\.md/);
+			assert.match(JSON.stringify(delivered), /ENOENT.*obtain instruction before dependent work/);
 			const system = JSON.stringify(parent.requests[0].messages[0]);
 			assert.match(system, /mandatory prerequisite.*stop dependent technical judgment/);
 			assert.match(system, /parent-owned setup.*before starting dependent work/);
