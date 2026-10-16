@@ -1037,6 +1037,27 @@ test("copying an observation stops walking its containers once the capture budge
 	}
 });
 
+test("copying a sparse array charges every slot it visits", async (t) => {
+	const audit = createChildAudit({
+		root: withAgentDirectory(t),
+		parent: () => "parent-1",
+		limits: { bytes: 64 * 1024, chunk: 1024 },
+	});
+	let reads = 0;
+	const sparse = new Proxy(new Array(10_000_000), {
+		get(object, key, receiver) {
+			reads += 1;
+			return Reflect.get(object, key, receiver);
+		},
+	});
+	const capture = audit.begin({ ...plan, child: "sparse", instructions: "", tools: [], createdAt: 0 });
+	capture.event(toolEvent("start", "c1", { args: { items: sparse } }));
+
+	const window = await eventually(() => audit.read("sparse"), allWritten);
+	assert.match(window.health.warning, /exceeds the whole audit capture budget/);
+	assert.ok(reads < 100_000, `${reads} slots were read`);
+});
+
 test("one observation larger than the whole budget is refused visibly, not hidden behind a small entry", async (t) => {
 	const { audit, core, sent, launch } = auditedCore(t, {
 		limits: { bytes: 16 * 1024, chunk: 1024 },

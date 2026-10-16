@@ -2071,6 +2071,7 @@ function snapshot(value: unknown, bound: number) {
 		if (Array.isArray(value)) {
 			const items: unknown[] = [];
 			for (let index = 0; index < value.length && bytes <= bound; index++) {
+				bytes += 8;
 				const kept = copy(value[index]);
 				items.push(kept === undefined ? null : kept);
 			}
@@ -2080,10 +2081,9 @@ function snapshot(value: unknown, bound: number) {
 			for (const key in value) {
 				if (bytes > bound) break;
 				if (!Object.hasOwn(value, key)) continue;
-				const kept = copy((value as Record<string, unknown>)[key]);
-				if (kept === undefined) continue;
 				bytes += 2 * key.length + 8;
-				fields[key] = kept;
+				const kept = copy((value as Record<string, unknown>)[key]);
+				if (kept !== undefined) fields[key] = kept;
 			}
 			copied = fields;
 		}
