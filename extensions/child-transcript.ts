@@ -19,6 +19,7 @@ type MessageEntry = {
 	stopReason?: string;
 	errorMessage?: string;
 	segment?: SegmentCursor;
+	earlier?: number;
 	final: boolean;
 };
 type ToolEntry = {
@@ -32,6 +33,7 @@ type ToolEntry = {
 	error?: boolean;
 	argsSegment?: SegmentCursor;
 	resultSegment?: SegmentCursor;
+	earlier?: number;
 	final: boolean;
 };
 type Identity = Opened["identity"];
@@ -63,7 +65,9 @@ export type Block = {
 	sub: string;
 	rows: string[];
 	lines?: number[];
-	load?: { slot: string; cursor: SegmentCursor; toward: "before" | "after" };
+	load?:
+		| { slot: string; cursor: SegmentCursor; toward: "before" | "after" }
+		| { earlier: number };
 };
 
 export type Render = (
@@ -123,6 +127,10 @@ export function createTranscript(options: {
 	const slots = new Map<string, Slot>();
 	const loading = new Set<string>();
 	const cache = new Map<string, Block[]>();
+	const attached = new Map<
+		string,
+		{ observations: Observation[]; tried: Set<number>; next?: number }
+	>();
 
 	const atStart = () => core || windows.length === 0 || windows[0].cursor.from <= 1;
 	const atEnd = () => core || windows.length === 0 || !windows.at(-1)?.more;
@@ -161,6 +169,7 @@ export function createTranscript(options: {
 		windows = [];
 		opened = false;
 		slots.clear();
+		attached.clear();
 		cache.clear();
 	}
 
@@ -261,6 +270,23 @@ export function createTranscript(options: {
 		}
 	}
 
+	async function attach(key: string, from: number) {
+		const first = windows[0];
+		if (!first) return;
+		const held = attached.get(key) ?? { observations: [], tried: new Set() };
+		held.tried.add(from);
+		attached.set(key, held);
+		const read = await fetch({ child, generation: first.next.generation, from });
+		if (!read) return;
+		held.observations.push(
+			...read.observations.filter(
+				(observation) =>
+					observation.ordinal < first.cursor.from && keyOf(observation) === key,
+			),
+		);
+		held.next = read.next.from;
+	}
+
 	function pump() {
 		if (busy || disposed) return;
 		let load: (() => Promise<void>) | undefined;
@@ -328,7 +354,24 @@ export function createTranscript(options: {
 			if (seen.has(observation.ordinal)) continue;
 			seen.add(observation.ordinal);
 			const key = keyOf(observation);
-			if (key !== undefined) project(merged, key, observation);
+			if (key === undefined) continue;
+			const held = merged.has(key) ? undefined : attached.get(key);
+			for (const early of held?.observations ?? []) {
+				if (seen.has(early.ordinal)) continue;
+				seen.add(early.ordinal);
+				project(merged, key, early);
+			}
+			project(merged, key, observation);
+			const item = merged.get(key);
+			if (
+				held?.next !== undefined &&
+				held.observations.length > 0 &&
+				item?.kind === "message" &&
+				!item.entry.final
+			) {
+				if (held.next < windows[0].cursor.from) item.entry.earlier = held.next;
+				else delete item.entry.earlier;
+			}
 		}
 		return [...merged.values()];
 	}
@@ -447,7 +490,17 @@ export function createTranscript(options: {
 			while (rows.length < height && index < blocks.length) {
 				const block = blocks[index];
 				shown.add(block.key);
-				if (block.load && !wanted) {
+				if (block.load && "earlier" in block.load && !wanted) {
+					const { key } = block;
+					const { earlier } = block.load;
+					const held = attached.get(key);
+					if (
+						!held?.tried.has(earlier) &&
+						(held?.observations.length ?? 0) < residentObservations
+					) {
+						wanted = () => attach(key, earlier);
+					}
+				} else if (block.load && "slot" in block.load && !wanted) {
 					const { slot, cursor, toward } = block.load;
 					const key = block.key;
 					const name = `${key}\n${slot}`;
@@ -474,6 +527,9 @@ export function createTranscript(options: {
 			}
 			for (const name of slots.keys()) {
 				if (!shown.has(name.slice(0, name.indexOf("\n")))) slots.delete(name);
+			}
+			for (const key of attached.keys()) {
+				if (!shown.has(key)) attached.delete(key);
 			}
 			pump();
 			return rows;
@@ -507,13 +563,16 @@ export function createTranscript(options: {
 			windows = [];
 			blocks = [];
 			slots.clear();
+			attached.clear();
 			cache.clear();
 		},
 	};
 }
 
 function isSettled(item: Item) {
-	if (item.kind === "message" || item.kind === "tool") return item.entry.final;
+	if (item.kind === "message" || item.kind === "tool") {
+		return item.entry.final && item.entry.earlier === undefined;
+	}
 	return true;
 }
 
@@ -558,6 +617,7 @@ function project(items: Map<string, Item>, key: string, observation: Observation
 			parent?: string;
 			name?: string;
 			error?: boolean;
+			start?: number;
 		};
 		const { segment } = observation.large;
 		if (meta.kind === "message") {
@@ -583,6 +643,9 @@ function project(items: Map<string, Item>, key: string, observation: Observation
 					call: meta.call ?? key,
 					...(meta.parent ? { parent: meta.parent } : {}),
 					name: meta.name ?? "",
+					...(meta.phase === "start" || meta.start === undefined
+						? {}
+						: { earlier: meta.start }),
 					final: false,
 				};
 		if (meta.phase === "start") entry.argsSegment = segment;
@@ -642,6 +705,9 @@ function project(items: Map<string, Item>, key: string, observation: Observation
 			message: observation.message,
 			role: observation.phase === "start" ? observation.role : "assistant",
 			content: [],
+			...(observation.phase === "update" && observation.start !== undefined
+				? { earlier: observation.start }
+				: {}),
 			final: false,
 		};
 		items.set(key, { key, kind: "message", entry });
@@ -668,6 +734,9 @@ function project(items: Map<string, Item>, key: string, observation: Observation
 					call: observation.call,
 					...(observation.parent ? { parent: observation.parent } : {}),
 					name: observation.name,
+					...(observation.phase === "start" || observation.start === undefined
+						? {}
+						: { earlier: observation.start }),
 					final: false,
 				};
 		if (observation.phase === "start") entry.args = observation.args;

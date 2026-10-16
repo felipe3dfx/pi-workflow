@@ -1165,6 +1165,19 @@ async function written(audit, id) {
 const detailColumn = (text) =>
 	text.split("\n").map((line) => line.split("│")[2] ?? "");
 
+test("an expanded huge message is read in bounded parts instead of staying collapsed", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child], { limits: { chunk: 1024, windowBytes: 4096 } });
+	const lines = Array.from({ length: 200 }, (_, i) => `m${String(i).padStart(3, "0")}. ${"long ".repeat(18)}end`);
+	capture.say(child.id, [{ type: "text", text: lines.join("\n") }]);
+	await written(capture.audit, child.id);
+	const view = open(fakeSessions([child]), { rows: 24, audit: capture.audit });
+	assert.match(await settle(view), /Message retained in parts/);
+
+	view.press("\t", "\x0f");
+	assert.match(await settle(view), /m199\. long/);
+});
+
 test("an expanded huge result is read in bounded parts, every row is reachable in both directions, and the anchor survives resize and theme", async (t) => {
 	const child = record("5636");
 	const capture = audited(t, [child], { limits: { chunk: 1024, windowBytes: 4096 } });
@@ -1326,6 +1339,49 @@ test("a long transcript opens on its tail in bounded windows and backscroll reac
 	assert.match(top, / Prompt ─/);
 	assert.match(top, /Line 0\./);
 	assert.ok(cursors.length < 40, JSON.stringify(cursors));
+});
+
+test("a tool or message that began before the resident windows says so, and expansion reveals its start", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	const streaming = { role: "assistant", content: [] };
+	const piece = (delta) => ({
+		type: "message_update",
+		message: streaming,
+		assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
+	});
+	capture.emit(child.id, {
+		type: "tool_execution_start",
+		toolCallId: "c1",
+		toolName: "read",
+		args: { path: "early/start.ts" },
+	});
+	capture.emit(child.id, { type: "message_start", message: streaming });
+	capture.emit(child.id, piece("Opening words. "));
+	for (let i = 0; i < 300; i++) {
+		capture.say(child.id, [{ type: "text", text: `Line ${i}.` }]);
+		if (i % 50 === 49) await written(capture.audit, child.id);
+	}
+	capture.emit(child.id, piece("Closing words."));
+	capture.emit(child.id, {
+		type: "tool_execution_end",
+		toolCallId: "c1",
+		toolName: "read",
+		result: { content: [{ type: "text", text: "done" }] },
+		isError: false,
+	});
+	await written(capture.audit, child.id);
+	const view = open(fakeSessions([child]), { rows: 30, audit: capture.audit });
+	const tail = await settle(view);
+	assert.match(tail, /Closing words\./);
+	assert.doesNotMatch(tail, /early\/start\.ts|Opening words/);
+	assert.equal(tail.match(/continues from earlier evidence/g)?.length, 2);
+
+	view.press("\t", "\x0f");
+	const expanded = await settle(view);
+	assert.match(expanded, /Opening words\. Closing words\./);
+	assert.match(expanded, /early\/start\.ts/);
+	assert.doesNotMatch(expanded, /continues from earlier evidence/);
 });
 
 test("a detached view keeps its row when a streamed message is replaced by its final", async (t) => {

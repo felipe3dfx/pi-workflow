@@ -42,6 +42,7 @@ type Evidence =
 					block: number;
 					part: "text" | "thinking" | "arguments";
 					delta: string;
+					start?: number;
 			  }
 			| {
 					phase: "end";
@@ -60,8 +61,8 @@ type Evidence =
 			name: string;
 	  } & (
 			| { phase: "start"; args: unknown }
-			| { phase: "update"; partial: unknown }
-			| { phase: "end"; result: unknown; error: boolean }
+			| { phase: "update"; partial: unknown; start?: number }
+			| { phase: "end"; result: unknown; error: boolean; start?: number }
 	  ));
 
 type Large = {
@@ -157,7 +158,7 @@ type Page = { n: number; entries: (Extent | null)[]; dirty: boolean };
 
 type Queued = { steer: string[]; "follow-up": string[] };
 
-type Streamed = { id: string; updates: number; ended?: true };
+type Streamed = { id: string; updates: number; start?: number; ended?: true };
 
 interface Capture {
 	identity: AuditIdentity;
@@ -180,7 +181,7 @@ interface Capture {
 	answer?: number;
 	next: number;
 	delivered: WeakSet<object>;
-	calls: Map<string, { updates: number }>;
+	calls: Map<string, { updates: number; start?: number }>;
 	state?: string;
 	verdict?: string;
 	messages: { count: number; open?: Streamed; ids: WeakMap<object, Streamed> };
@@ -722,15 +723,22 @@ export function createChildAudit(options: {
 			name: event.toolName,
 		};
 		const call = record.calls.get(event.toolCallId);
+		const start = call?.start === undefined ? {} : { start: call.start };
 		if (event.type === "tool_execution_start") {
 			if (call) return;
-			record.calls.set(event.toolCallId, { updates: 0 });
-			admit(record, {
-				...fields,
-				event: `${identity}:start`,
-				phase: "start",
-				args: event.args,
-			});
+			const opened: { updates: number; start?: number } = { updates: 0 };
+			record.calls.set(event.toolCallId, opened);
+			const ordinal = record.next;
+			if (
+				admit(record, {
+					...fields,
+					event: `${identity}:start`,
+					phase: "start",
+					args: event.args,
+				})
+			) {
+				opened.start = ordinal;
+			}
 		} else if (event.type === "tool_execution_update") {
 			const open = call ?? { updates: 0 };
 			record.calls.set(event.toolCallId, open);
@@ -740,6 +748,7 @@ export function createChildAudit(options: {
 				event: `${identity}:update:${open.updates}`,
 				phase: "update",
 				partial: event.partialResult,
+				...start,
 			});
 		} else {
 			record.calls.delete(event.toolCallId);
@@ -749,6 +758,7 @@ export function createChildAudit(options: {
 				phase: "end",
 				result: event.result,
 				error: event.isError,
+				...start,
 			});
 		}
 	}
@@ -762,13 +772,18 @@ export function createChildAudit(options: {
 			streamed = { id: `m${++messages.count}`, updates: 0 };
 			messages.ids.set(source, streamed);
 			messages.open = streamed;
-			admit(record, {
-				kind: "message",
-				event: `${streamed.id}:start`,
-				message: streamed.id,
-				phase: "start",
-				role: event.message.role,
-			});
+			const ordinal = record.next;
+			if (
+				admit(record, {
+					kind: "message",
+					event: `${streamed.id}:start`,
+					message: streamed.id,
+					phase: "start",
+					role: event.message.role,
+				})
+			) {
+				streamed.start = ordinal;
+			}
 			return;
 		}
 		if (!streamed) {
@@ -792,6 +807,7 @@ export function createChildAudit(options: {
 				block: update.contentIndex,
 				part,
 				delta: update.delta,
+				...(streamed.start === undefined ? {} : { start: streamed.start }),
 			});
 			return;
 		}

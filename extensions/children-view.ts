@@ -383,13 +383,30 @@ function createThread(theme: ChildTheme) {
 		return blocks;
 	}
 
+	function earlier(start: number | undefined, style: Style, indent: string): Block[] {
+		if (start === undefined) return [];
+		return [
+			{
+				sub: "earlier",
+				rows: [
+					theme.fg(
+						"dim",
+						`${indent}… continues from earlier evidence · ${style.expandKey} to show its start`,
+					),
+				],
+				...(style.expanded ? { load: { earlier: start } } : {}),
+			},
+		];
+	}
+
 	function assistant(
 		item: Extract<Item, { kind: "message" }>,
 		width: number,
 		style: Style,
+		slot: (name: string) => Slot | undefined,
 	): Block[] {
 		const { entry } = item;
-		const blocks: Block[] = [];
+		const blocks: Block[] = earlier(entry.earlier, style, "  ");
 		const content = Array.isArray(entry.content)
 			? (entry.content as Record<string, unknown>[])
 			: [];
@@ -428,7 +445,7 @@ function createThread(theme: ChildTheme) {
 			blocks.push({ sub: "large", rows: [row("dim", "Message", "retained in parts")] });
 			blocks.push(
 				...(style.expanded
-					? []
+					? slotBlocks("message", entry.segment, slot("message"), width, "  ")
 					: [
 							{
 								sub: "collapsed",
@@ -478,6 +495,7 @@ function createThread(theme: ChildTheme) {
 					),
 				],
 			},
+			...earlier(entry.earlier, style, indent),
 		];
 		if (entry.argsSegment && style.expanded) {
 			blocks.push(...slotBlocks("args", entry.argsSegment, slot("args"), width, indent));
@@ -548,7 +566,7 @@ function createThread(theme: ChildTheme) {
 			style: Style,
 			slot: (name: string) => Slot | undefined,
 		): Block[] {
-			if (item.kind === "message") return assistant(item, width, style);
+			if (item.kind === "message") return assistant(item, width, style, slot);
 			if (item.kind === "tool") return tool(item, width, style, slot);
 			if (item.kind === "input") return input(item, width, style);
 			if (item.kind === "execution") {
