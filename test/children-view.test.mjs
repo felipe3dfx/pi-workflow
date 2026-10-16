@@ -1082,8 +1082,8 @@ test("without a parent session identity the capture warning shows beside the Run
 	assert.match(text, /Live without a parent\./);
 	assert.doesNotMatch(text, /worker 9e01/);
 	assert.match(text, /▸ ◐ worker 5636 +running · 1m 0\ds/);
-	assert.match(text, /│ +incomplete capture · 6\.2k tok/);
-	assert.match(text, /incomplete capture \(live\): No parent session identity/);
+	assert.match(text, /│ +incomplete transcript · 6\.2k t/);
+	assert.match(text, /incomplete transcript \(live\): No parent session identity/);
 	assert.match(text, /❯ Run sleep 60/);
 	assert.match(text, /Enter steer/);
 });

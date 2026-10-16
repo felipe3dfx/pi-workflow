@@ -621,7 +621,7 @@ function captureLine(health: Listed["health"] | undefined, warning?: string) {
 		(note): note is string => typeof note === "string" && note.length > 0,
 	);
 	if (health.complete && notes.length === 0) return undefined;
-	const state = health.complete ? "capture warning" : "incomplete capture";
+	const state = health.complete ? "capture warning" : "incomplete transcript";
 	return `${state} (${durable ? "recorded" : "live"})${notes.length > 0 ? `: ${notes.join(" ")}` : ""}`;
 }
 
@@ -1167,7 +1167,7 @@ function createChildrenView(
 			const spend = usage(spent(sessions.thread(child.id)));
 			const marks = [
 				...steerMarks(child),
-				...(item.listed && !item.listed.health.complete ? ["incomplete capture"] : []),
+				...(item.listed && !item.listed.health.complete ? ["incomplete transcript"] : []),
 			];
 			const right = (rest: string[]) =>
 				[
