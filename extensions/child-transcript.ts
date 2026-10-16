@@ -362,7 +362,7 @@ export function createTranscript(options: {
 				held?.next !== undefined &&
 				held.next < windows[0].cursor.from;
 			for (const early of held?.observations ?? []) {
-				if (seen.has(early.ordinal)) continue;
+				if (early.ordinal >= observation.ordinal || seen.has(early.ordinal)) continue;
 				seen.add(early.ordinal);
 				project(merged, gap ? earlierKey(key) : key, early);
 			}
