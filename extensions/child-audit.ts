@@ -637,9 +637,14 @@ export function createChildAudit(options: {
 		record.retired = true;
 		live.delete(record);
 		await seal(record);
-		if (records.get(record.identity.child) === record) {
-			records.delete(record.identity.child);
-		}
+		const { parent, child } = record.identity;
+		if (records.get(child) === record) records.delete(child);
+		record.identity = { parent, child } as AuditIdentity;
+		record.page = { n: -1, entries: [], dirty: false };
+		record.calls.clear();
+		record.queued = { steer: [], "follow-up": [] };
+		record.leaving = { steer: [], "follow-up": [] };
+		record.answer = undefined;
 	}
 
 	function late(record: Capture) {
