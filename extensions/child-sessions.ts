@@ -572,6 +572,7 @@ export function createChildSessions(options: {
 	const listeners = new Set<() => void>();
 	let generation = 0;
 	let reserved = 0;
+	const disposing = new Set<Promise<void>>();
 
 	function warn(message: string) {
 		try {
@@ -580,12 +581,17 @@ export function createChildSessions(options: {
 	}
 
 	function shutDown(handle: ChildHandle, id?: string, capture?: ChildCapture) {
-		return handle
+		const done = handle
 			.dispose()
 			.catch((error: unknown) =>
 				warn(id ? `Child ${id}: ${errorMessage(error)}` : errorMessage(error)),
 			)
-			.finally(() => capture?.disposed());
+			.finally(() => {
+				capture?.disposed();
+				disposing.delete(done);
+			});
+		disposing.add(done);
+		return done;
 	}
 
 	function trace(child: Child) {
@@ -1280,11 +1286,10 @@ export function createChildSessions(options: {
 			answer(child, new Error("The session ended."));
 		}
 		changed();
-		await Promise.all(
-			working.map((child) =>
-				shutDown(child.handle, child.record.id, child.capture),
-			),
-		);
+		for (const child of working) {
+			void shutDown(child.handle, child.record.id, child.capture);
+		}
+		await Promise.all(disposing);
 		return working.length;
 	}
 

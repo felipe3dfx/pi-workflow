@@ -1642,7 +1642,7 @@ function manualTimer() {
 	};
 }
 
-test("closing drains admitted evidence, seals the record, and discards callbacks that arrive afterwards", async (t) => {
+test("closing drains admitted evidence, seals the record, and counts callbacks that arrive afterwards as lost", async (t) => {
 	const clock = manualTimer();
 	const { audit, launch, root } = auditedCore(t, { run: () => new Promise(() => {}), timer: clock.timer });
 	const { id, child } = await launch();
@@ -1652,11 +1652,34 @@ test("closing drains admitted evidence, seals the record, and discards callbacks
 	const sealed = await readFile(journalOf(root, id));
 
 	child.spec.onEvent(userMessage("too late"));
-	await delay(20);
-	assert.deepEqual(await readFile(journalOf(root, id)), sealed);
-	assert.equal(await audit.read(id).then((read) => read.health.closed), true);
-	const later = reopen(root);
-	assert.deepEqual(inputs(await later.read(id)).map(({ text }) => text), ["last words"]);
+	const window = await eventually(() => reopen(root).read(id), (read) => !read.health.complete);
+	assert.equal(window.health.closed, false);
+	assert.match(window.health.warning, /arrived after the record was closed/);
+	assert.deepEqual(inputs(window).map(({ text }) => text), ["last words"]);
+	const after = await readFile(journalOf(root, id));
+	assert.deepEqual(after.subarray(0, sealed.length), sealed);
+	assert.doesNotMatch(after.toString(), /too late/);
+});
+
+test("a parent's shutdown waits for a finished child still being disposed before closing its record", async (t) => {
+	const aborted = { role: "assistant", content: [], stopReason: "aborted" };
+	const { audit, core, launch, root } = auditedCore(t, {
+		run: () => new Promise(() => {}),
+		dispose: async (child) => {
+			await delay(20);
+			child.spec.onEvent({ type: "message_end", message: aborted });
+		},
+	});
+	const { id, child } = await launch();
+	await eventually(async () => core.get(id).state, (state) => state === "running");
+	child.spec.onEvent({ type: "message_start", message: aborted });
+	core.cancel(id, false);
+	await core.disposeAll();
+	await audit.close();
+
+	const window = await reopen(root).read(id);
+	assert.deepEqual(events(window), ["m1:start", "m1:end"]);
+	assert.deepEqual(window.health, { complete: true, closed: true, written: 6 });
 });
 
 test("when the drain deadline expires the close returns, frees the budget, and a late write completion appends nothing more", async (t) => {

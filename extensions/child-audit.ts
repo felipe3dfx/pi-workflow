@@ -678,6 +678,7 @@ export function createChildAudit(options: {
 		records.clear();
 		for (const record of closing) {
 			record.closed = true;
+			record.retired = true;
 			live.delete(record);
 		}
 		let late = false;
