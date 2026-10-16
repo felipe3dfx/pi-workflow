@@ -2071,3 +2071,22 @@ test("the parent's records are listed in bounded pages, live working children in
 	assert.equal(reopened.records.length, 2);
 	assert.equal((await later.list(reopened.next)).records.length, 1);
 });
+test("a journal that exists but cannot be read is not reported missing", async (t) => {
+	const { audit, launch, root } = auditedCore(t);
+	const { id } = await launch();
+	await flushed(audit, id);
+	await audit.close();
+	const files = {
+		...faultyFiles(),
+		async stat(path) {
+			if (path.endsWith(`${id}.jsonl`)) throw Object.assign(new Error("permission denied"), { code: "EACCES" });
+			return stat(path);
+		},
+	};
+
+	const [record] = (await reopen(root, "parent-1", { files }).list()).records;
+	assert.equal(record.child, id);
+	assert.match(record.health.warning, /journal could not be read/);
+	assert.doesNotMatch(record.health.warning, /missing/);
+});
+

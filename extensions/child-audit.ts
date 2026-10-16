@@ -1446,7 +1446,7 @@ export function createChildAudit(options: {
 			return hit;
 		}
 		const opened = await reopen(parent, child, path);
-		if (!opened) return undefined;
+		if (!opened?.path) return opened;
 		recovered.set(path, opened);
 		for (const old of recovered.keys()) {
 			if (recovered.size <= limits.catalog) break;
@@ -1459,8 +1459,16 @@ export function createChildAudit(options: {
 		let size: number;
 		try {
 			size = (await files.stat(path)).size;
-		} catch {
-			return undefined;
+		} catch (error) {
+			if ((error as { code?: unknown }).code === "ENOENT") return undefined;
+			const unreadable = blank({ parent, child } as AuditIdentity);
+			unreadable.closed = true;
+			unreadable.durable = {
+				complete: false,
+				closed: false,
+				warning: `The child's journal could not be read: ${errorMessage(error)}.`,
+			};
+			return unreadable;
 		}
 		const owner = await identityOf(path, parent, child);
 		const head = await headOf(path, parent, child, size);
