@@ -1441,6 +1441,19 @@ test("an explicit repair can be cancelled, then recovers only verified evidence 
 	assert.deepEqual(window.unavailable, [{ from: 4, to: 4 }, { from: last + 1 }]);
 });
 
+test("repairing a record whose index is missing rebuilds every index page", async (t) => {
+	const { audit, id, root } = await largeRecord(t, { window: 16 });
+	await audit.close();
+	await rm(indexOf(root, id), { recursive: true });
+
+	const repaired = await audit.repair(id);
+	assert.equal(repaired.refused, undefined);
+	assert.ok(repaired.recovered > 400);
+	const window = await audit.read(id, { child: id, generation: 1, from: 200 });
+	assert.equal(window.warning, undefined);
+	assert.equal(window.observations[0].ordinal, 200);
+});
+
 function forged(header) {
 	const body = `${JSON.stringify(header)}\t{}`;
 	return `${crc32(body).toString(16).padStart(8, "0")}\t${body}\n`;

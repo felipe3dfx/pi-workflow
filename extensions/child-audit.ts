@@ -1787,6 +1787,7 @@ export function createChildAudit(options: {
 		let file: AuditFile | undefined;
 		try {
 			file = await files.open(path, "r");
+			await files.mkdir(indexOf(path), { recursive: true, mode: 0o700 });
 			let position = 0;
 			let carry = Buffer.alloc(0);
 			let skipping = false;
@@ -1817,7 +1818,6 @@ export function createChildAudit(options: {
 			}
 			if (carry.length > 0 || skipping) unresolved = true;
 			if (signal?.aborted) return { cancelled: true as const };
-			await files.mkdir(indexOf(path), { recursive: true, mode: 0o700 });
 			await replace(pageOf(path, generation, page.n), {
 				...binding(rebuilt),
 				page: page.n,
