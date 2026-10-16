@@ -212,8 +212,7 @@ test("the second gated tool in the turn does not call Jev again", async () => {
 
 	assert.equal(first.allow, false);
 	assert.equal(second.allow, false);
-	assert.equal(second.destination, first.destination);
-	assert.ok(second.reason.startsWith(first.reason));
+	assert.equal(second.reason, first.reason);
 	assert.equal(jev.requests.length, 1);
 });
 
@@ -653,9 +652,7 @@ test("concurrent gated calls in one turn share a single Jev request", async () =
 	const [left, right] = await Promise.all([first, second]);
 	assert.equal(jev.requests.length, 1);
 	assert.equal(left.allow, false);
-	assert.equal(right.allow, false);
-	assert.equal(right.destination, left.destination);
-	assert.ok(right.reason.startsWith(left.reason));
+	assert.equal(right.reason, left.reason);
 });
 
 test("the parent registers the gate with spawn_child only when spawn tools are allowed", async () => {
@@ -1156,11 +1153,10 @@ test("a gated tool called from a codemode script follows the direct verdict and 
 		);
 
 		assert.equal(direct.block, true);
-		assert.equal(nested.block, true);
-		assert.ok(nested.reason.startsWith(direct.reason));
+		assert.deepEqual(nested, direct);
 		assert.equal(jev.requests.length, 1);
 		assert.equal(extension.messages.length, 1);
-		assert.equal(extension.messages[0].message.content, nested.reason);
+		assert.equal(extension.messages[0].message.content, direct.reason);
 		assert.equal(extension.messages[0].message.display, true);
 		assert.equal(extension.messages[0].options.deliverAs, "steer");
 	});
@@ -1476,9 +1472,7 @@ test("several blocked inner calls of a script in one turn send one gate message 
 			blocked.map((result) => result.block),
 			[true, true, true],
 		);
-		assert.match(blocked[0].reason, /delegate bounded discovery/);
-		assert.doesNotMatch(blocked[1].reason, /bounded discovery/);
-		assert.equal(blocked[1].reason, blocked[2].reason);
+		assert.ok(blocked.every((result) => result.reason === blocked[0].reason));
 		assert.equal(extension.messages.length, 1);
 
 		await extension.fire("turn_start", { type: "turn_start", turnIndex: 1, timestamp: 1 }, ctx);
@@ -1487,7 +1481,7 @@ test("several blocked inner calls of a script in one turn send one gate message 
 	});
 });
 
-test("after a stay, bash on the next message names its own verdict without a discovery hint and a launch for it proceeds", async () => {
+test("after a stay, a direct read on the next message names its own verdict and a launch for it proceeds", async () => {
 	await withWorkspace(async ({ worktree }) => {
 		const jev = scriptJev(["stay", "leave"]);
 		const launcher = launcherFor();
@@ -1504,8 +1498,8 @@ test("after a stay, bash on the next message names its own verdict without a dis
 		});
 		const gated = await launcher.gateToolCall(
 			{
-				toolName: "bash",
-				input: { command: "gh pr view 941 --json headRefOid && git diff c7db f674 --" },
+				toolName: "read",
+				input: { path: "src/main.ts" },
 			},
 			ctx,
 		);
@@ -1521,14 +1515,13 @@ test("after a stay, bash on the next message names its own verdict without a dis
 		assert.equal(gated.allow, false);
 		assert.equal(
 			gated.reason,
-			"Jev answered that the work for the latest user message leaves this session; a verdict for an earlier message does not carry over. Call spawn_child with the role whose tools cover the task; this message's verdict allows the launch.",
+			"Jev answered that the work for the latest user message leaves this session; a verdict for an earlier message does not carry over. Call spawn_child with the role whose tools cover the task; this message's verdict allows the launch. If procedure instructions are needed, delegate bounded discovery of obligations, prerequisites, sources, and unresolved questions before dependent work.",
 		);
 		assertDelegatesWithoutRole(gated.reason);
 		assert.equal(launched.kind, "ready");
 		assert.equal(jev.order.length, 2);
 	});
 });
-
 
 for (const destination of ["off", "stay", "leave"]) {
 	test(`skill and references are ordinary reads with routing ${destination}`, async () => {

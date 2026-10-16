@@ -740,12 +740,11 @@ test("in a real Pi session, the run that a child result starts carries the instr
 	assert.match(JSON.stringify(woken.messages.slice(1)), /README\.md installs the harness\./);
 	const [system] = woken.messages;
 	const injected = JSON.stringify(system);
-	assert.ok(injected.includes("otherwise delegate its discovery"));
+	assert.ok(injected.includes("read it when routing and delegation mode allow, otherwise delegate its discovery"));
 	assert.ok(injected.includes("An unmet mandatory prerequisite stops dependent work"));
-	assert.ok(injected.includes("if routing blocks them, launch the discovery child first"));
-	assert.ok(injected.includes("any launch releases parent tools for that message"));
+	assert.ok(injected.includes("if routing blocks them, delegate discovery first and run them after its result arrives"));
 	assert.ok(injected.includes("reconcile left_undone and unverified against the remaining obligations"));
-	assert.ok(injected.includes("docs/agents/*.md"));
+	assert.ok(injected.includes("Reads of AGENTS.md, GLOSSARY.md, and docs/agents/*.md stay available"));
 
 	assert.equal(system.role, "system");
 	assert.ok(system.toolsAdded.some((tool) => tool.name === "spawn_child"));
