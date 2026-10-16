@@ -912,7 +912,8 @@ function createChildrenView(
 			: audit.repairCatalog(controller.signal).then((result) => {
 					if ("cancelled" in result) return "Repair of the catalog cancelled.";
 					if ("refused" in result) return `Repair of the catalog refused: ${result.refused}`;
-					return `Catalog repaired: ${result.added} ${result.added === 1 ? "record" : "records"} added.`;
+					const added = `Catalog repaired: ${result.added} ${result.added === 1 ? "record" : "records"} added.`;
+					return "warning" in result ? `${added} ${result.warning}` : added;
 				});
 		void outcome
 			.then((text) => {

@@ -2079,6 +2079,40 @@ test("the parent's records are listed in bounded pages, live working children in
 	assert.equal(reopened.records.length, 2);
 	assert.equal((await later.list(reopened.next)).records.length, 1);
 });
+test("a catalog append failing while the catalog is repaired keeps the incomplete-catalog warning", async (t) => {
+	const { state, files } = catalogFailing();
+	state.failing = false;
+	let failDuringScan = async () => {};
+	const scanning = {
+		...files,
+		async opendir(path) {
+			const entries = await files.opendir(path);
+			return (async function* () {
+				for await (const entry of entries) {
+					await failDuringScan();
+					failDuringScan = async () => {};
+					yield entry;
+				}
+			})();
+		},
+	};
+	const { audit, launch, root } = auditedCore(t, { files: scanning, run: () => new Promise(() => {}) });
+	const first = await launch();
+	await flushed(audit, first.id);
+	failDuringScan = async () => {
+		state.failing = true;
+		const { id } = await launch();
+		await eventually(async () => (await audit.read(id)).health.warning ?? "", (text) => /catalog/.test(text));
+		state.failing = false;
+	};
+
+	const repaired = await audit.repairCatalog();
+	assert.equal(repaired.cancelled, undefined);
+	assert.equal(repaired.refused, undefined);
+	await access(join(root, "parent-1", ".catalog-incomplete"));
+	assert.match((await audit.list()).catalog, /missing from the audit catalog/);
+});
+
 test("a journal that exists but cannot be read is not reported missing", async (t) => {
 	const { audit, launch, root } = auditedCore(t);
 	const { id } = await launch();

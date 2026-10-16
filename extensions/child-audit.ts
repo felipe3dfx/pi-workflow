@@ -316,6 +316,7 @@ export function createChildAudit(options: {
 	};
 	const live = new Set<Capture>();
 	const cataloguing = new Map<string, Promise<void>>();
+	let catalogFailures = 0;
 	let admittedBytes = 0;
 	let admittedEntries = 0;
 
@@ -498,6 +499,7 @@ export function createChildAudit(options: {
 			await appendCatalog(directory, record.identity.child);
 			record.listed = true;
 		} catch (error) {
+			catalogFailures += 1;
 			record.unlisted = `The child could not be added to the audit catalog: ${errorMessage(error)}. ${unrecoverable}`;
 			try {
 				await (await files.open(join(directory, incompleteFile), "w", 0o600)).close();
@@ -530,6 +532,7 @@ export function createChildAudit(options: {
 		const directory = join(options.root, parent);
 		const path = join(directory, catalogFile);
 		const bound = limits.catalog * catalogLine;
+		const failures = catalogFailures;
 		let added = 0;
 		try {
 			const known = new Set<string>();
@@ -557,6 +560,12 @@ export function createChildAudit(options: {
 				await appendCatalog(directory, child);
 				known.add(child);
 				added += 1;
+			}
+			if (catalogFailures !== failures) {
+				return {
+					added,
+					warning: "A child could not be added to the catalog during the repair; repair it again.",
+				};
 			}
 			await files.unlink(join(directory, incompleteFile)).catch(() => {});
 		} catch (error) {
