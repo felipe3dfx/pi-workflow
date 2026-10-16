@@ -258,6 +258,39 @@ test("fixture discovery runs inventory; invalid action cannot execute it", async
 	}
 });
 
+test("evaluation artifacts use per-run locations and default lifecycle cleanup", async (t) => {
+	const dirs = [];
+	try {
+		await t.test("independent runs", async (run) => {
+			for (const value of ["first", "second"]) {
+				const dir = await mkdtemp(join(tmpdir(), "pi-parent-eval-"));
+				dirs.push(dir);
+				run.after(() => rm(dir, { recursive: true, force: true }));
+				await writeEvaluationArtifact({ dir, variant: "candidate", scenario: "done-one", trace: { value }, retained: null });
+			}
+			assert.notEqual(dirs[0], dirs[1]);
+			for (const [i, value] of ["first", "second"].entries()) {
+				assert.deepEqual(JSON.parse(await readFile(join(dirs[i], "artifacts", "candidate-done-one.json"), "utf8")), { value });
+			}
+		});
+	} finally {
+		for (const dir of dirs) await assert.rejects(readFile(join(dir, "artifacts", "candidate-done-one.json")), { code: "ENOENT" });
+	}
+});
+
+test("explicit artifact retention survives run cleanup and belongs to the caller", async (t) => {
+	const retained = await mkdtemp(join(tmpdir(), "pi-parent-retained-"));
+	t.after(() => rm(retained, { recursive: true, force: true }));
+	const dir = await mkdtemp(join(tmpdir(), "pi-parent-eval-"));
+	try {
+		await writeEvaluationArtifact({ dir, variant: "candidate", scenario: "done-one", trace: { retained: true }, retained });
+		await assert.rejects(readFile(join(dir, "artifacts", "candidate-done-one.json")), { code: "ENOENT" });
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+	assert.deepEqual(JSON.parse(await readFile(join(retained, "candidate-done-one.json"), "utf8")), { retained: true });
+});
+
 async function runtimeForEvaluation() {
 	// Never let OAuth refresh or model cache writes touch the user's configuration.
 	const credentials = new InMemoryCredentialStore();
@@ -304,6 +337,83 @@ async function baseExtension(dir) {
 	return module.default;
 }
 
+function completedDoneReports(messages) {
+	const ids = new Set();
+	for (const message of messages) {
+		if (message.role !== "custom" || message.customType !== "pi-workflow-child-result") continue;
+		const details = message.details;
+		const delivered = details?.results ?? [details];
+		if (!Array.isArray(delivered)) continue;
+		for (const child of delivered) {
+			if (typeof child?.id !== "string" || !child.id.trim() || child.state !== "completed" || child.role !== "worker") continue;
+			const report = child.result;
+			if (report?.verdict !== "done" || !["files_changed", "validation", "left_undone"].every((key) => Array.isArray(report[key]) && report[key].every((item) => typeof item === "string"))) continue;
+			ids.add(child.id);
+		}
+	}
+	return ids.size;
+}
+
+test("delivered done reports count structured single and batched results independent of incidental JSON", () => {
+	const first = { id: "first", state: "completed", role: "worker", result };
+	const second = { ...first, id: "second" };
+	for (const content of [JSON.stringify(result), JSON.stringify(result, null, 2), "No incidental JSON"]) {
+		const single = { role: "custom", customType: "pi-workflow-child-result", details: first, content };
+		const batched = { ...single, details: { results: [first, second] } };
+		assert.equal(completedDoneReports([single]), 1);
+		assert.equal(completedDoneReports([batched]), 2);
+		assert.equal(completedDoneReports([single, batched, single]), 2);
+		assert.deepEqual([completedDoneReports([single]), completedDoneReports([single])], [1, 1]);
+	}
+});
+
+test("delivered done reports reject absent or invalid details rather than counting quoted reports", () => {
+	const valid = { id: "first", state: "completed", role: "worker", result };
+	for (const details of [undefined, null, {}, [], { results: {} }, { results: [null, {}] },
+		{ ...valid, id: "" }, { ...valid, state: "running" }, { ...valid, role: "explore" },
+		{ ...valid, result: undefined, verdict: "done" }, { ...valid, result: { ...result, verdict: "partial" } },
+		...["files_changed", "validation", "left_undone"].flatMap((key) => [undefined, "not a list", [7]].map((value) => ({ ...valid, result: { ...result, [key]: value } }))),
+	]) {
+		assert.equal(completedDoneReports([{ role: "custom", customType: "pi-workflow-child-result", details, content: JSON.stringify(result, null, 2) }]), 0);
+	}
+	for (const change of [{ role: "assistant" }, { customType: "pi-workflow-child-question" }]) {
+		assert.equal(completedDoneReports([{ role: "custom", customType: "pi-workflow-child-result", details: valid, ...change }]), 0);
+	}
+});
+
+test("retained genuine reports reach context before each recorded ledger", { skip: !process.env.PI_WORKFLOW_PARENT_REPLAY && "Set PI_WORKFLOW_PARENT_REPLAY to retained evaluation artifacts (no inference)." }, async (t) => {
+	for (const variant of ["base", "candidate"]) {
+		for (const scenario of ["scope-question", "done-one", "done-many"]) {
+			const trace = JSON.parse(await readFile(join(process.env.PI_WORKFLOW_PARENT_REPLAY, `${variant}-${scenario}.json`), "utf8"));
+			const calls = (messages) => messages.filter((message) => message.role === "assistant").flatMap((message) => Array.isArray(message.content) ? message.content.filter((block) => block.type === "toolCall") : []);
+			const ledgers = calls(trace.messages).filter((call) => call.name === "record_review_state");
+			assert.ok(ledgers.length > 0);
+			for (const ledger of ledgers) {
+				const index = trace.contexts.findIndex((context) => calls(context).some((call) => call.id === ledger.id));
+				assert.ok(index > 0, "ledger appears after its input context");
+				const context = trace.contexts[index - 1];
+				assert.equal(completedDoneReports(context), trace.count);
+				const delivered = context.filter((message) => message.role === "custom" && message.customType === "pi-workflow-child-result").flatMap((message) => message.details.results ?? [message.details]);
+				assert.equal(delivered.length, trace.count);
+				for (const child of delivered) assert.deepEqual(child.result, trace.result, "full worker report, including left_undone, precedes ledger");
+			}
+			t.diagnostic(`${variant}-${scenario}: ${trace.count} full structured report(s) before ${ledgers.length} ledger(s)`);
+		}
+	}
+});
+
+async function writeEvaluationArtifact({ dir, variant, scenario, trace, retained = process.env.PI_WORKFLOW_PARENT_ARTIFACTS }) {
+	const artifactDir = retained ?? join(dir, "artifacts");
+	await mkdir(artifactDir, { recursive: true, mode: 0o700 });
+	// Only controlled inputs, model decisions and model-facing system data; no request headers/auth.
+	await writeFile(join(artifactDir, `${variant}-${scenario}.json`), JSON.stringify(trace, (key, value) => {
+		if (/signature|responseId/i.test(key)) return undefined;
+		if (key === "errorMessage") return /WebSocket/.test(value) ? "WebSocket error" : "Provider error (details suppressed)";
+		if (key === "content" && Array.isArray(value)) return value.filter((block) => block.type !== "thinking");
+		return value;
+	}, 2), { mode: 0o600 });
+}
+
 async function evaluate({ extension, variant, scenario, count, dir, runtime, model }) {
 	const workspace = join(dir, `${variant}-${scenario}`);
 	const agentDir = join(workspace, "agent");
@@ -339,7 +449,7 @@ async function evaluate({ extension, variant, scenario, count, dir, runtime, mod
 					parameters: Type.Object({ outcome: Type.Union([Type.Literal("complete"), Type.Literal("blocked"), Type.Literal("pending")]), obligations: Type.Array(Type.Object({ name: Type.Union(obligations.map((name) => Type.Literal(name))), owner: Type.Union(owners.map((owner) => Type.Literal(owner))), reason: Type.Optional(Type.String()), state: Type.Union([Type.Literal("pending"), Type.Literal("satisfied"), Type.Literal("blocked")]), evidence: Type.String() })) }),
 					execute: async (_id, params) => {
 						trace.reports.push(params);
-						trace.reportEvidence.push(trace.contexts.at(-1).filter((message) => message.role === "custom").reduce((sum, message) => sum + (String(message.content).match(/"verdict": "done"/g)?.length ?? 0), 0));
+						trace.reportEvidence.push(completedDoneReports(trace.contexts.at(-1)));
 						return { content: [{ type: "text", text: "Disposition recorded; no work executed." }], details: {} };
 					},
 				});
@@ -396,15 +506,7 @@ async function evaluate({ extension, variant, scenario, count, dir, runtime, mod
 		clearTimeout(deadline);
 		session.dispose();
 		Object.assign(runtime, original);
-		const artifactDir = process.env.PI_WORKFLOW_PARENT_ARTIFACTS ?? join(tmpdir(), "277-parent-evaluation");
-		await mkdir(artifactDir, { recursive: true, mode: 0o700 });
-		// Only controlled inputs, model decisions and model-facing system data; no request headers/auth.
-		await writeFile(join(artifactDir, `${variant}-${scenario}.json`), JSON.stringify(trace, (key, value) => {
-			if (/signature|responseId/i.test(key)) return undefined;
-			if (key === "errorMessage") return /WebSocket/.test(value) ? "WebSocket error" : "Provider error (details suppressed)";
-			if (key === "content" && Array.isArray(value)) return value.filter((block) => block.type !== "thinking");
-			return value;
-		}, 2), { mode: 0o600 });
+		await writeEvaluationArtifact({ dir, variant, scenario, trace });
 	}
 }
 
