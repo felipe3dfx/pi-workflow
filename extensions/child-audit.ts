@@ -1858,6 +1858,7 @@ type ToolEvent = Extract<
 
 type Content = string | readonly { type: string; text?: string }[];
 
+// Copies synchronously inside Pi's callback because Pi keeps mutating streamed objects after delivery; this single traversal is the unavoidable capture cost.
 function snapshot(value: unknown, bound: number) {
 	let bytes = 0;
 	const ancestors = new Set<object>();
