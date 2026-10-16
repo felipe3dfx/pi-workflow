@@ -503,6 +503,43 @@ test("a parent's shutdown waits only a bounded time for a finished child whose d
 	assert.match(window.health.warning, /arrived after the record was closed/);
 });
 
+test("closing while a finished record is being sealed waits for its close marker", async (t) => {
+	const root = withAgentDirectory(t);
+	const sealing = Promise.withResolvers();
+	let hold = false;
+	const files = faultyFiles({
+		open: async (path, flags) => {
+			if (hold && path.endsWith(".jsonl") && flags === "a") await sealing.promise;
+		},
+	});
+	const audit = createChildAudit({ root, parent: () => "parent-1", files });
+	const capture = audit.begin({
+		child: "done",
+		role: "worker",
+		task: "Task",
+		references: [],
+		instructions: "",
+		tools: [],
+		model: "p/m",
+		thinking: "low",
+		worktree: "/tmp",
+		createdAt: 0,
+	});
+	audit.execution("done", "completed");
+	await eventually(() => audit.read("done"), allWritten);
+	hold = true;
+	capture.disposed();
+	let closed = false;
+	const closing = audit.close().then(() => {
+		closed = true;
+	});
+	await delay(20);
+	assert.equal(closed, false);
+	sealing.resolve();
+	await closing;
+	assert.match(await readFile(journalOf(root, "done"), "utf8"), /"close":/);
+});
+
 test("the same update event delivered twice is recorded once, while distinct equal updates stay distinct", async (t) => {
 	const { audit, launch } = auditedCore(t, { run: () => new Promise(() => {}) });
 	const { id, child } = await launch();
