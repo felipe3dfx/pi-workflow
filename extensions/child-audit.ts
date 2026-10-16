@@ -225,6 +225,8 @@ const defaultLimits = {
 const version = 1;
 const catalogFile = ".catalog";
 const incompleteFile = ".catalog-incomplete";
+const unjournaled =
+	"The child's journal is missing; its evidence is unavailable.";
 const uncatalogued =
 	"Some children may be missing from the audit catalog; repair it to find them again.";
 const catalogLine = 192;
@@ -421,14 +423,15 @@ export function createChildAudit(options: {
 						recursive: true,
 						mode: 0o700,
 					});
-					const owned = !record.created;
+					if (!record.created && !record.listed && !record.unlisted) {
+						await catalogue(record);
+					}
 					file = await files.open(
 						record.path as string,
 						record.created ? "a" : "wx",
 						0o600,
 					);
 					record.created = true;
-					if (owned) await catalogue(record);
 				}
 				const start = record.size;
 				await store(record, file, item);
@@ -1702,6 +1705,11 @@ export function createChildAudit(options: {
 		for (const child of names) {
 			const record = await lookup(child);
 			if (record) listed.push(summary(record));
+			else if (parent && /^[\w-]+$/.test(child)) {
+				const missing = blank({ parent, child } as AuditIdentity);
+				missing.durable = { complete: false, closed: false, warning: unjournaled };
+				listed.push(summary(missing));
+			}
 		}
 		return {
 			records: listed,

@@ -1947,6 +1947,39 @@ function catalogFailing() {
 	return { state, files };
 }
 
+test("a crash after cataloguing a child but before its journal exists reopens as an unavailable record", async (t) => {
+	const files = faultyFiles({
+		open: (path, flags) => (path.endsWith(".jsonl") && flags === "wx" ? new Promise(() => {}) : undefined),
+	});
+	const { launch, root } = auditedCore(t, { files, run: () => new Promise(() => {}) });
+	const { id } = await launch();
+	await eventually(
+		() => readFile(join(root, "parent-1", ".catalog"), "utf8").catch(() => ""),
+		(text) => text.includes(id),
+	);
+
+	const [record] = (await reopen(root).list()).records;
+	assert.equal(record.child, id);
+	assert.equal(record.section, "history");
+	assert.equal(record.interrupted, true);
+	assert.equal(record.identity.written, false);
+	assert.equal(record.health.complete, false);
+	assert.match(record.health.warning, /journal is missing/);
+	assert.equal(await reopen(root).read(id), undefined);
+});
+
+test("a journal is never created before its child is in the catalog", async (t) => {
+	const files = faultyFiles({
+		open: (path, flags) => (path.endsWith(".catalog") && flags === "a" ? new Promise(() => {}) : undefined),
+	});
+	const { audit, launch, root } = auditedCore(t, { files, run: () => new Promise(() => {}) });
+	const { id } = await launch();
+	await delay(50);
+
+	await assert.rejects(access(journalOf(root, id)));
+	assert.equal((await audit.read(id)).identity.written, false);
+});
+
 test("a child the catalog lost is missing after reopening with a warning, and an explicit catalog repair lists it again", async (t) => {
 	const { state, files } = catalogFailing();
 	const { audit, launch, root } = auditedCore(t, { files, run: () => new Promise(() => {}) });
