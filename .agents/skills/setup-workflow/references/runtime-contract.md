@@ -9,6 +9,14 @@ Each recorded capability carries exactly one state:
 - `unsupported`: no mechanism is available, or a confirmed absence; optional phases may be omitted with an explicit record.
 - `blocked`: an invocation outcome, not a persisted state; it applies when a skill cannot obtain required evidence and no approved degraded path exists, such as an authentication failure in this invocation.
 
+## Capability Blocks
+
+A playbook records each capability in compact form; the asset's full field list is only the rendering input, and the long form is drift. A capability block starts at its `- state:` line, runs through the consecutive `- <field>: <value>` lines, and is named by its nearest heading.
+
+- An `unsupported` capability is one line, `- <heading>: unsupported — evidence: <evidence>`; its other fields are dropped, except a field still holding an unresolved marker, which stays on its own line below, in field order.
+- Any other capability keeps its fields in order but drops each one recorded `none (confirmed absent)`, listing their names after the kept fields on one line, `- none (confirmed absent): <field>, <field>`.
+- An unresolved marker is never dropped or grouped, so it stays distinguishable from a confirmed absence.
+
 ## Domain Authority Handoff
 
 `setup-workflow` discovers and validates map entries; `domain-modeling` selects one per invocation. A valid root `GLOSSARY-MAP.md` wins: its sole `## Contexts` section links relatively to existing, contained `GLOSSARY.md` files with unique case-folded labels and paths. Run the installed script as `python3 <absolute-installed-setup-workflow.py> glossary-map --repo <repository>` and record the map path, `DOMAIN_AUTHORITY_PATH = none (select per invocation)`, and `present (map-available)`. An invalid map blocks and never falls back. With no root map, adopt exactly one case-folded root `GLOSSARY.md` as `present (root-selected)`; duplicates are ambiguous. With neither, record `docs/agents/domain.md` as `absent (fallback-required)`; its unique marker region becomes `present (fallback-established)` only when `domain-modeling` adds the first term. A root `CONTEXT.md` or `CONTEXT-MAP.md` (retired names, matched case-folded) blocks in every state and is reported as drift; the user renames it by hand. These states are exclusive; never repair a map, shell, marker, or handoff.

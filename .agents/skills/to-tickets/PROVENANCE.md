@@ -46,29 +46,45 @@ concepts from the upstream `SKILL.md`. Issue #16 and
 `docs/specs/issue-16-group-spec.md` are derived implementation authorities for
 this adaptation; they are not additional upstream sources.
 
+The reusable Spanish ticket structure is in `assets/ticket-template.md` and is
+loaded only while drafting. Detailed publication authorization, mutation,
+read-back, and failure-recovery steps are in `references/publication.md` and are
+loaded for publication preparation or recovery.
+
 ## Modifications
 
 Grupo Ilao replaced tracker-specific commands, labels, local-file tickets, and
 conversation-driven exploration with a published-specification readiness gate,
-complete coverage inventory, user-approved reorganization, consumer/harness
+complete coverage inventory, policy-gated reorganization, consumer/harness
 ownership boundaries, native relationship proposals, concise Spanish ticket
 drafts, and sequential verified publication with recovery.
 
 The adaptation requires an observable final reference to the consumed
-Definition Handoff without duplicating it; binds explicit publication
-authorization to the final preview's complete handoff reference; and treats a
-material handoff change as an authorization invalidation that stops publication,
-re-audits coverage, produces a substitute preview, and requires new explicit
-authorization. It treats owner assignment as consumer policy; routes definition
-findings to their owner as `restart recommended` for the user to decide; and
-classifies implementation dependencies, external configuration, and capability
-dependencies. Capability dependencies remain
-invocation preconditions rather than tickets, tracker relationships, or durable
-state. Publication binds a final preview, authorized as the approval policy requires or published and reported under `autonomous`, to its listed effects. As a substantive transformation, it defines the publication-failure boundary at the mutation request: `blocked` means publication cannot proceed and no mutation request was sent, so preflight, handoff, and capability failures can block without tracker evidence. `partial failure` begins once a mutation request was sent or may have been sent, including when it is later confirmed rejected or its result or required read-back cannot be verified. Every `partial failure` stops at the last verifiable frontier, reconciles when tracker evidence becomes available, invalidates authorization, produces a complete substitute preview from the reconciled state, and always requires new explicit authorization before resuming, whatever the approval policy; if reconciliation is unavailable, it remains a `partial failure` and does not resume. It explicitly records a user's decision to proceed after a
-definition finding and that decision's impact in the handoff and completion
-output. Publication verifies and reads back create, update, move, and
-relationship mutations; it creates when no equivalent exists and stops for
-multiple or conflicting matches.
+Definition Handoff without duplicating it. A material change or reconstruction
+stops the prior plan, triggers a complete coverage re-audit and replacement
+preview, and invalidates authorization for the replaced plan; unchanged,
+still-equivalent confirmations remain valid. Every material operation follows
+the consumer repository's recorded approval policy. `autonomous` may continue
+only after the full replacement preview and all controls are current, and never
+when user intent or risk acceptance is unresolved. A `partial failure` follows
+any sent or possibly sent mutation request whose outcome or required read-back
+cannot be verified, including a confirmed rejection. It stops at the last
+verifiable frontier, reconciles from tracker evidence, re-audits full coverage,
+invalidates the old plan, and prepares a complete replacement preview; it
+resumes only under policy after controls pass. If reconciliation is unavailable,
+it remains a `partial failure`; missing material must be reconstructed and
+validated against current authority and tracker evidence before that same full
+replacement flow. Preflight and capability failures before a mutation request
+are `blocked`. The adaptation treats owner assignment as consumer policy;
+routes definition findings to their owner as `restart recommended` for the user
+to decide; and classifies implementation dependencies, external configuration,
+and capability dependencies. Capability dependencies remain invocation
+preconditions rather than tickets, tracker relationships, or durable state. It
+reports a user's decision to proceed after a definition finding and its impact
+in downstream handoff and completion output without altering the published
+specification or original Definition Handoff. Publication verifies and reads
+back create, update, move, and relationship mutations; it creates when no
+equivalent exists and stops for multiple or conflicting matches.
 
 It requires and verifies the parent in the handoff, hangs new, updated, and
 confirmed-moved tickets with read-back in GitHub and Linear, and treats another

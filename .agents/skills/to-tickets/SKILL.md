@@ -4,7 +4,7 @@ description: "Trigger: turn a published technical specification into approved, i
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "1.3"
+  version: "1.6"
   provenance: derived
 ---
 
@@ -12,60 +12,23 @@ metadata:
 
 ## Activation Contract
 
-Run after `to-spec` publishes the current specification and consolidated `feature-review` report; it owns the product ticket breakdown, its parent relationship, and handoff, not rediscovery, review, synthesis, implementation, QA, or pull requests.
+Use after `to-spec` publishes the current specification and consolidated `feature-critic` report. Own ticket breakdown, parent relationship, and handoff—not definition discovery, review, synthesis, implementation, QA, or pull requests.
 
-## Definition Handoff
+## Hard Rules
 
-Consume the published **Definition Handoff** as is, never reopening definitions or closing recommendations. It carries the specification, review report, parent, package/review handoff, verdict, prototype branch/commit, disposition and UI contract, decisions (resolver, source/authority, status, accepted supersession with what it replaced), deviations, accepted risks, dependencies, native relationships, conditions, and invariants. Verify currency, a `READY` or `READY WITH WARNINGS` verdict, a disposition for every warning and risk, consistent prototype evidence, and, in GitHub or Linear, an open parent citing the specification, even without children; a specification issue is its own parent. Keep that trail by pointer in durable artifacts, not conversation, memory, or temporary files, adding no duplicate, capture ID, hash, template, stage, or state; tickets cite each implemented decision's source; acceptance criteria verify it. Return suspected definition defects to their owner with evidence; the user decides whether to restart.
+- Consume the published `to-spec` Definition Handoff without reopening definitions or closing recommendations. Verify currency; specification, review, package and review handoff; `READY` or `READY WITH WARNINGS`; prototype evidence and disposition; UI contract; decisions, deviations, risks, dependencies, native relationships, conditions, invariants, and warning/risk dispositions. In GitHub or Linear, require an open parent citing the specification; a specification issue is its own parent. Do not invent verification criteria or decision metadata. Missing, incomplete, stale, conflicting, or non-ready required inputs block. A missing generated authority artifact alone is admissible when functional and semantic decisions are closed and readiness otherwise holds; report the gap for this handoff, not as a recurring waiver. A present malformed, blocked, stale, or conflicting artifact blocks. Route suspected omissions, duplicates, and interpretation concerns with evidence to their `to-spec` owner; report `restart recommended` for the user's decision without editing the specification. Such a concern does not by itself invalidate an otherwise admissible handoff; the user decides whether to restart or proceed, and a decision to proceed and its impact are recorded downstream. Escalate genuine semantic, functional, or technical conflicts to the developer with evidence and canon; owners provide evidence, not decisions. Stop for unresolved user intent or risk acceptance.
+- Keep the handoff trace in existing authoritative durable artifacts when they are created or updated, and cite it in run output in every mode; conversation, memory, and temporary files are not the trace. Report each consumed decision's resolver, sources, status, and accepted supersession (including what it replaced) when supplied. Tickets cite implemented decisions' sources and verify them in acceptance criteria. Report a user's decision to proceed despite a definition defect and its impact in downstream handoff and completion output, without changing the published specification or original handoff. `draft-only` creates no durable record. Reuse the canonical ticket format and workflow stages; add no capture IDs, propagated hashes, or distributed workflow state.
+- Human-facing tickets are Spanish. Follow consumer policy for metadata, estimates, assignment, and other language. Capability dependencies are invocation preconditions, never tickets, relationships, or persisted state.
+- `draft-only` is the default and has no external effects. Request only tracker reads needed for the audit; block if required reads are unavailable. Before `publish`, require operation-specific write capability and read capability for verification; if unavailable, block without a mutation request. Follow the recorded approval policy and the common approval preview contract in [its approval rules](../setup-workflow/assets/pull-requests.md#approval-gates-and-external-effects): show one complete preview, with this workflow's material and destinations added to that preview, not a second approval. Under `autonomous`, completion output lists every effect, destination, action, and link. If no policy is recorded, default to `every-step` and tell the user once to run `setup-workflow update`. Policy governs approvals, not the requested mode or decisions needing user intent/risk acceptance.
 
-A missing generated authority artifact alone does not block once functional and semantic decisions are closed and readiness otherwise holds; report the gap, never as a recurring waiver; a present but malformed, stale, blocked, or conflicting one still blocks. Genuine semantic, functional, or technical conflicts go to the developer with sources and canon; owners supply evidence, never the decision.
+## Execution
 
-Request only the audit's tracker reads and relationships, and write capability before `publish` mutates; before any mutation request, a missing or inconsistent handoff, unavailable required tracker operation, or unverifiable write capability is `blocked`. Consumer policy supplies metadata, estimates, assignment, and language otherwise; human-facing tickets are Spanish.
+1. Apply the Hard Rules.
+2. Inspect existing tickets and relationships; present equivalence evidence and resolve reuse, update, move, or absorption under recorded approval policy. Evidence may establish equivalence but never waives approval for material operations. Ask only if equivalence or user intent remains unresolved.
+3. Before drafting, show an inventory assigning every requirement, scenario, state, dependency, decision, accepted deviation, warning, risk, and invariant exactly one disposition: `new subtask`, `existing task to update`, `existing task to move`, `duplicate/absorbed`, `dependency/base`, `external configuration`, or `out of scope`. Every in-scope requirement has exactly one accountable child with an observable outcome; one child may cover several requirements. Dependencies and exclusions are dispositions; scope exclusions to this handoff. Classify implementation dependencies as `dependency/base` and external configuration separately. Show coverage, ownership boundaries, dependency order, and proposed conceptual and native relationships; keep relationships as proposals until publication. A disposition, including `dependency/base`, is not a relationship or blocker; preserve accountable children and required native blockers. Obtain required inventory approval before drafting. Reuse confirmations only within exact scope; never repeat an IDENTICAL question or infer broader permission. After any material change or reconstruction, stop the old plan, re-audit complete coverage, invalidate its authorization, preserve confirmations only for unchanged equivalent scope, and prepare a complete replacement preview before proceeding under policy; never authorize a partial plan. Report omissions, duplicates, or interpretation concerns as `restart recommended`, not a block.
+4. Draft and review one ticket at a time as an independently implementable vertical slice of product value, sized for one implementation session where practical—not a file, layer, or administrative task. Each has an observable outcome, demo contract, and one-sentence `Alcance`; split only independently demonstrable value. Load [`assets/ticket-template.md`](assets/ticket-template.md) when drafting and keep its format proportional to the slice. Obtain each draft's approval when required by policy before starting the next. Coverage, demo, estimate, implementation, and QA are distinct, non-substitutable evidence; an open ticket never proves pending work. Do not duplicate the specification; include what is needed to implement and verify the slice.
+5. For `publish`, load [`references/publication.md`](references/publication.md) before any mutation request, preview, or recovery; reload after material changes or reconstruction. Follow it for mutations, read-back, failures, and reconciliation; shared workflow and approval rules remain here and in the common contract. `draft-only` skips it and preflight.
 
-## Inventory and Approval
+## Output Contract
 
-Use `draft-only` by default; it mutates no tracker or repository. Approvals follow the pull-request playbook's approval policy and approval preview; with none recorded, use `every-step` and [the shipped rules](../setup-workflow/assets/pull-requests.md#approval-gates-and-external-effects), telling the user once to run `setup-workflow update`. The policy never changes the mode. Show a suggested inventory before drafting. Give every in-scope requirement one accountable child and observable outcome; a child may own several, and classified dependencies and exclusions are dispositions, not requirements. Map every scenario, state, dependency, decision, accepted deviation, warning, risk, and invariant exactly once as `new subtask`, `existing task to update`, `existing task to move`, `duplicate/absorbed`, `dependency/base`, `external configuration`, or `out of scope`, with exclusions scoped to this handoff.
-
-Inspect existing tickets, present equivalence evidence, and confirm reuse, update, move, or absorption where the approval policy asks, always when equivalence is open. Reuse a prior confirmation only within its exact scope, never repeating an identical question or inferring universal permission. A capability dependency is an invocation precondition, not a ticket, relationship, or state; other dependencies are `implementation dependency` or `external configuration`. Order proposed tickets by dependency, showing coverage, ownership boundaries, and conceptual dependencies distinct from native relationships, which only publication creates. Re-audit after every user reorganization or material change. An omission, duplicate, or interpretation concern yields evidence and `restart recommended`, not a block.
-
-## Ticket Drafting
-
-Draft and review tickets one at a time; under `every-step`, approve each before drafting the next. Each ticket is an independently implementable vertical slice of product value for one session, not a file, layer, or administrative task, stating its verifiable outcome. `Demo` and `Alcance` are mandatory. Coverage, demo, estimate, implementation, and QA are separate, non-substitutable evidence; an open ticket never proves pending work. Split only into independently demonstrable tickets.
-
-Use this proportional format without duplicating the specification:
-
-```md
-## Título
-
-<Comportamiento y valor de producto.>
-
-**Como** <actor>, **quiero** <capacidad>, **para** <resultado>.
-
-### Comportamiento
-
-- **Dado** <contexto>, **cuando** <acción>, **entonces** <resultado observable>.
-
-### Criterios de aceptación
-
-- [ ] <Resultado observable y verificable>
-
-### Demo
-
-<Precondición → acción → evidencia observable.>
-
-### Alcance
-
-<Qué cubre este ticket, en una frase.>
-
-### Fuera de alcance
-
-- <Límite solo si puede confundirse.>
-```
-
-## Publication and Handoff
-
-In `publish`, present one final approval preview: final inventory with each requirement's owner and outcome, tickets, relationships with each moved ticket's previous parent, external effects, and the Definition Handoff reference (specification and review locations, parent, package/review handoff, verdict, prototype branch/commit or `N/A`, authority). Authorize that preview and its effects; `autonomous` publishes and reports. A material change to the handoff, scope, operation, target, content, or relationships, or reconstructed material, invalidates authorization and the confirmations it touches, leaving others reusable: stop, re-audit coverage, produce a substitute preview, and require new explicit authorization. Before every mutation, verify the current handoff and equivalence; reuse one exact match, create when none exists, and stop on multiple or conflicting matches, including a reused ticket under another parent not confirmed as a move. Only after identities exist, create native relationships and, in GitHub and Linear, hang every new, updated, and confirmed-moved ticket except `dependency/base` from the parent; parents never replace blockers. Read back each mutation before continuing.
-
-`blocked` permits no mutation request. `partial failure` follows any sent or possibly sent mutation request, including rejected or unverifiable results or read-backs: stop, report the last verifiable frontier, reconcile from tracker evidence, invalidate authorization, produce a complete substitute preview, and always obtain new explicit authorization before resuming; without reconciliation, remain in `partial failure`. Preserve the approved breakdown and successful effects, avoid duplicates, resume only from verified tracker evidence, trust memory only when validated against it and authority, and ask the user to reconstruct missing material.
-
-Report the Definition Handoff reference without duplicating it, inventory, coverage audit, drafts and dispositions, relationships, any authority-artifact gap, each decision's status, sources, and supersession, any decision to proceed despite a suspected or confirmed definition defect with its impact (recorded in the handoff), and any publication boundary, with one outcome from: `awaiting user approval`, `auditing`, `ready to publish`, `publishing`, `partial failure`, `published`, `blocked`, or `restart recommended`. Complete only when every inventoried source item has one explicit terminal disposition; the organization and every draft cleared the approval policy; dependencies and relationships were reviewed; and, in `publish`, every approved ticket and required relationship has verified read-back.
+Report the inventory and its dispositions, coverage, ticket drafts and applicable approval status in both modes, relationships, every consumed decision and its sources/status/supersession, authority-artifact gaps, defect routing, and publication boundary. Cite the Definition Handoff in every mode by specification and review locations, package/review handoff, verdict, prototype branch/commit or `N/A`, and authority. Report a user's decision to proceed after a definition defect and its impact. Use one outcome: `awaiting user approval`, `auditing`, `ready to publish`, `publishing`, `partial failure`, `published`, `blocked`, or `restart recommended`. Complete only when every source item has a terminal disposition, the inventory and drafts cleared applicable approval gates, and dependencies and relationships were reviewed; `publish` also requires verified read-back of every approved ticket and relationship. `draft-only` ends without external effect.

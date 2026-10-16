@@ -47,7 +47,7 @@ handoff from the upstream `SKILL.md`.
 ## Modifications
 
 Grupo Ilao replaced conversation-only synthesis and direct tracker publication
-with structural readiness validation, the feature-review gate, an
+with structural readiness validation, the feature-critic gate, an
 execution-scoped current package and review handoff, explicit ownership
 returns, and orchestrator-owned publication. It added readiness and publication
 rules, consumer-authority boundaries, shared-capability invariants, verified

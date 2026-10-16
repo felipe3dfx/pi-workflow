@@ -45,7 +45,7 @@ The review of a diff since a fixed point; separate axes run in parallel isolated
 ## Modifications
 
 1. Frontmatter rewritten to this catalog's shape with a `Trigger:` description.
-2. Placed inside the implementation loop: the fixed point is the ticket's base, or the production base for a parent integration branch reviewed against its specification, and the diff includes uncommitted changes. The report is handed to `review-critique` instead of the user.
+2. Placed inside the implementation loop: the fixed point is the ticket's base, or the production base for a parent integration branch reviewed against its specification, and the diff runs to a committed, signed head. The report is handed to `review-critique` instead of the user.
 3. Added the Valuable Tests axis, which applies the `tdd` skill's valuable-tests rubric and also reports a changed behavior with no test at its agreed seam.
 4. Added team standards that ship with the skill, and moved them with the smell baseline, reworded, into `references/standards.md`. Repository standards are read from `docs/agents/coding-standards.md` and override both.
 5. Removed spec discovery from commit messages and file searches; the ticket or specification is a required input, and its absence blocks the review.
@@ -54,6 +54,7 @@ The review of a diff since a fixed point; separate axes run in parallel isolated
 8. The Valuable Tests axis reports a test skipped at an agreed seam as that seam having no test.
 9. The Valuable Tests axis reads the seams and coverage lines from the requirement-tracing table or coverage lines its caller hands over; a pertinent case agreed in a coverage line with no test, or only a skipped one, and a ticket requirement with no line in that table are `hard` findings.
 10. Added `references/scratch-evidence.md`: the Valuable Tests axis prepares scratch under the consumer's commands and limits, records the candidate's identity before and after, runs each file whole, lifting only the consumer command's stop at the first failure, isolates state shared across checkouts as the consumer's quality playbook records, classifies each test as setup, module-load or missing-name, or assertion failure, or pass, and blocks on missing evidence, including a run without recorded isolation, without a recorded degraded path.
+11. Reviews a committed, signed head only. A caller that hands over the last reviewed head and its findings gets a corrective review of the delta from that head, with its context and affected code, carrying the prior findings with their state, on the axes the delta calls for, Standards included whenever it fixes a Standards finding, with Valuable Tests keeping its baseline at the fixed point; after a rebase the review is full, as ADR 0027 records.
 
 ## Approval
 

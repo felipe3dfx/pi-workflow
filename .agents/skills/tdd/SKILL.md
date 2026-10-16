@@ -4,7 +4,7 @@ description: "Trigger: develop a feature or fix test-first. Establish behavior-l
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "1.3"
+  version: "1.4"
   provenance: derived
 ---
 
@@ -33,7 +33,7 @@ Work in vertical slices, not a batch of imagined tests followed by implementatio
 
 Read [valuable tests](references/valuable-tests.md) before writing the first test of a behavior: it is the rubric each test must meet, and the one review grades the tests against.
 
-Use the consumer's runner, framework, test layout, fixtures, and nearest useful end-to-end seam. Run focused tests during the loop and record actual commands and results; failures after GREEN return the candidate to implementation until it is functioning. TDD records evidence for the caller and does not commit or publish.
+Use the consumer's runner, framework, test layout, fixtures, and nearest useful end-to-end seam. Run focused tests during the loop and record actual commands and results; failures after GREEN return the candidate to implementation until it is functioning. Modify files through the harness's file-editing capability, which fails when the target text does not match; use the shell only to run commands, never to rewrite file content, though project formatters and codemods still run there. TDD records evidence for the caller and does not commit or publish.
 
 ## Output Contract
 

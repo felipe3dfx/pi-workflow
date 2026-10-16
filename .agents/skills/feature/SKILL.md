@@ -4,7 +4,7 @@ description: "Trigger: define a product feature from an idea or tracker issue. R
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "1.2"
+  version: "1.4"
   provenance: derived
 ---
 
@@ -12,7 +12,7 @@ metadata:
 
 ## Activation Contract
 
-Use this skill to turn a free-form idea or tracker issue into a coherent functional definition. It owns product discovery and the feature brief; `domain-modeling`, `to-spec`, and `feature-review` retain their respective authority.
+Use this skill to turn a free-form idea or tracker issue into a coherent functional definition. It owns product discovery and the feature brief; `domain-modeling`, `to-spec`, and `feature-critic` retain their respective authority.
 
 ## Inputs and Authority
 
@@ -26,7 +26,8 @@ A missing generated authority artifact is the only admissible absence: when func
 2. Confirm scope boundaries; scenarios, states, actions, ordering, and errors; decisions, assumptions, and open questions with resolver, source, status, and accepted supersession; dependencies; deviations; risks; and evidence gaps.
 3. Identify shared capabilities the feature reuses, extends, or replaces. Record comparison implementations and observable invariants for each.
 4. Recommend `prototype` when an artifact can resolve a functional question. Propose a brief delta from its findings; apply it only after user acceptance.
-5. Recommend `feature-review` when the brief is complete, every material question and assumption has a recorded disposition, prototype findings have a disposition, and every substantive conflict, important open decision, and other evidence gap is resolved or blocks review; a declared absence of a generated authority artifact alone does not block review when functional and semantic decisions are closed and all other criteria are met. A functional change requires renewed review; an editorial correction preserving meaning does not.
+5. Recommend `feature-critic` when the brief is complete, every material question and assumption has a recorded disposition, prototype findings have a disposition, and every substantive conflict, important open decision, and other evidence gap is resolved or blocks review; a declared absence of a generated authority artifact alone does not block review when functional and semantic decisions are closed and all other criteria are met. The developer may also invoke it earlier on a draft or a single decision; that critique adds no discovery stage.
+6. Take the critic's findings back into this loop. Present the simplifications the scope and proportionality lens proposes together, as one question of their own, separate from the other dispositions; each answer is that finding's disposition. Ask the developer for each disposition under the class rules in `feature-critic`, presenting each as the pull-request playbook's approval preview, or as [the shipped rules](../setup-workflow/assets/pull-requests.md#approval-gates-and-external-effects) define it when that playbook has none; product-intent changes and risk acceptance are always asked, whatever the approval policy. Record each disposition, apply only accepted adjustments as brief deltas, preserve the developer's decisions, and return the recorded dispositions and any changed definition to `feature-critic` once step 5 holds.
 
 ## Feature Brief
 
@@ -34,4 +35,4 @@ Maintain one user-confirmed brief with the problem and user; desired outcome; sc
 
 ## Output Contract
 
-Report the resolved Domain Authority Handoff when present, otherwise report the documented admissible gap; report decisions and assumptions with their disposition, open material questions, sources and contradictions, prototype recommendation or delta, shared-capability evidence, deviations, risks, and blockers. Hand `feature-review` the complete definition package; leave technical synthesis to `to-spec`.
+Report the resolved Domain Authority Handoff when present, otherwise report the documented admissible gap; report decisions and assumptions with their disposition, open material questions, sources and contradictions, prototype recommendation or delta, shared-capability evidence, deviations, risks, and blockers. Hand `feature-critic` the complete definition package; leave technical synthesis to `to-spec`.

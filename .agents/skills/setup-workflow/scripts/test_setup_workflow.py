@@ -7,6 +7,7 @@ import contextlib
 import importlib.util
 import io
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -67,6 +68,20 @@ Use `forgejo` and create a pull request with:
 DOMAIN_AUTHORITY_START = "<!-- domain-modeling:authority:start -->"
 DOMAIN_AUTHORITY_END = "<!-- domain-modeling:authority:end -->"
 ROUTING_BLOCK = """<!-- setup-workflow-routing:start -->
+
+## Workflow Contracts
+
+Read each file when its trigger applies:
+
+- `docs/agents/workflow.md`: always.
+- `docs/agents/issue-tracker.md`: before reading, creating or commenting on issues or tickets.
+- `docs/agents/domain.md`: before naming domain concepts or editing the glossary or ADRs.
+- `docs/agents/quality.md`: before validating or running tests.
+- `docs/agents/pull-requests.md`: before any commit, push, pull request or other external effect.
+
+<!-- setup-workflow-routing:end -->
+"""
+OUTDATED_ROUTING_BLOCK = """<!-- setup-workflow-routing:start -->
 
 ## Workflow Contracts
 
@@ -1310,18 +1325,62 @@ class SetupWorkflowCliTests(unittest.TestCase):
         self.assertIn("refused: AGENTS.md does not exist", result.stderr)
         self.assertFalse((self.repo / "AGENTS.md").exists())
 
-    def test_routing_append_refuses_against_a_hand_edited_block(self) -> None:
+    def test_routing_append_replaces_a_hand_edited_block_with_approval(self) -> None:
         hand_edited = ROUTING_BLOCK.replace(
             "## Workflow Contracts", "## Workflow Contracts (edited)"
         )
-        (self.repo / "AGENTS.md").write_text("# Repo\n\n" + hand_edited, encoding="utf-8")
+        (self.repo / "AGENTS.md").write_text(
+            "# Repo\n\n" + hand_edited + "\nTail.\n", encoding="utf-8"
+        )
+
+        result = self.run_script(
+            "routing", "--repo", str(self.repo), "--append", "--approve", "AGENTS.md"
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            (self.repo / "AGENTS.md").read_text(encoding="utf-8"),
+            "# Repo\n\n" + ROUTING_BLOCK + "\nTail.\n",
+        )
+
+    def test_routing_append_replaces_an_outdated_block_with_approval(self) -> None:
+        (self.repo / "AGENTS.md").write_text(
+            "# Repo\n\n" + OUTDATED_ROUTING_BLOCK, encoding="utf-8"
+        )
+
+        result = self.run_script(
+            "routing", "--repo", str(self.repo), "--append", "--approve", "AGENTS.md"
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            (self.repo / "AGENTS.md").read_text(encoding="utf-8"),
+            "# Repo\n\n" + ROUTING_BLOCK,
+        )
+
+    def test_routing_append_refuses_to_replace_a_differing_block_without_approval(self) -> None:
+        (self.repo / "AGENTS.md").write_text(
+            "# Repo\n\n" + OUTDATED_ROUTING_BLOCK, encoding="utf-8"
+        )
         before = (self.repo / "AGENTS.md").read_text(encoding="utf-8")
 
         result = self.run_script("routing", "--repo", str(self.repo), "--append")
 
         self.assertEqual(result.returncode, 1)
-        self.assertIn("refused: AGENTS.md carries a routing block that differs", result.stderr)
+        self.assertIn("requires --approve AGENTS.md", result.stderr)
         self.assertEqual((self.repo / "AGENTS.md").read_text(encoding="utf-8"), before)
+
+    def test_routing_append_refuses_on_a_duplicated_block(self) -> None:
+        content = "# Repo\n\n" + ROUTING_BLOCK + "\n" + ROUTING_BLOCK
+        (self.repo / "AGENTS.md").write_text(content, encoding="utf-8")
+
+        result = self.run_script(
+            "routing", "--repo", str(self.repo), "--append", "--approve", "AGENTS.md"
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("refused: malformed routing markers in AGENTS.md", result.stderr)
+        self.assertEqual((self.repo / "AGENTS.md").read_text(encoding="utf-8"), content)
 
     def test_routing_check_exits_2_on_a_differing_block(self) -> None:
         hand_edited = ROUTING_BLOCK.replace(
@@ -1925,6 +1984,206 @@ class SetupWorkflowCliTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
             self.assertIn(token, result.stderr)
             self.assertFalse((self.repo / "docs" / "agents" / "pull-requests.md").exists())
+
+    def test_render_emits_an_unsupported_capability_as_one_line_with_its_evidence(self) -> None:
+        self.use_real_assets()
+        values = self.write_values(
+            "values.txt",
+            self.real_assets_values(
+                SECURITY_CAPABILITY_STATE="unsupported",
+                SECURITY_CAPABILITY_EVIDENCE="no dependency audit in CI",
+                SECURITY_CAPABILITY_PROVIDER="none (confirmed absent)",
+            ),
+        )
+
+        result = self.run_render_with(values, TARGET_NAMES)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        quality = (self.repo / "docs" / "agents" / "quality.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "### Dependency or Security Checks\n\nTools: `SECURITY_TOOLS value`\n\n"
+            "- Dependency or Security Checks: unsupported — evidence: no dependency audit in CI\n\n"
+            "### Mutation Testing",
+            quality,
+        )
+
+    def test_render_groups_the_confirmed_absent_fields_of_a_supported_capability(self) -> None:
+        self.use_real_assets()
+        values = self.write_values(
+            "values.txt",
+            self.real_assets_values(
+                FORMATTING_CAPABILITY_STATE="requires-setup",
+                FORMATTING_CAPABILITY_LIMITS="none (confirmed absent)",
+                FORMATTING_CAPABILITY_DEGRADED="none (confirmed absent)",
+            ),
+        )
+
+        result = self.run_render_with(values, TARGET_NAMES)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        quality = (self.repo / "docs" / "agents" / "quality.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "Tools: `FORMATTING_TOOLS value`\n\n"
+            "- state: requires-setup\n"
+            "- evidence: FORMATTING_CAPABILITY_EVIDENCE value\n"
+            "- provider: FORMATTING_CAPABILITY_PROVIDER value\n"
+            "- effects/approval: FORMATTING_CAPABILITY_EFFECTS value\n"
+            "- blocked when: FORMATTING_CAPABILITY_BLOCKED_WHEN value\n"
+            "- none (confirmed absent): limits, degraded\n\n"
+            "### Dependency or Security Checks",
+            quality,
+        )
+
+    def test_render_never_compacts_a_field_holding_an_unresolved_marker(self) -> None:
+        self.use_real_assets()
+        values = self.write_values(
+            "values.txt",
+            self.real_assets_values(
+                FULL_VALIDATION_CAPABILITY_LIMITS="<marker>",
+                FULL_VALIDATION_CAPABILITY_DEGRADED="none (confirmed absent)",
+                STATIC_ANALYSIS_CAPABILITY_STATE="unsupported",
+                STATIC_ANALYSIS_CAPABILITY_EVIDENCE="<marker>",
+                STATIC_ANALYSIS_CAPABILITY_LIMITS="<marker>",
+            ),
+        )
+
+        result = self.run_render_with(values, TARGET_NAMES)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        quality = (self.repo / "docs" / "agents" / "quality.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "- provider: FULL_VALIDATION_CAPABILITY_PROVIDER value\n"
+            "- limits: {{FULL_VALIDATION_CAPABILITY_LIMITS}}\n"
+            "- effects/approval: FULL_VALIDATION_CAPABILITY_EFFECTS value\n"
+            "- blocked when: FULL_VALIDATION_CAPABILITY_BLOCKED_WHEN value\n"
+            "- none (confirmed absent): degraded\n\n",
+            quality,
+        )
+        self.assertIn(
+            "Tools: `STATIC_ANALYSIS_TOOLS value`\n\n"
+            "- Static Analysis: unsupported — evidence: {{STATIC_ANALYSIS_CAPABILITY_EVIDENCE}}\n"
+            "- limits: {{STATIC_ANALYSIS_CAPABILITY_LIMITS}}\n\n"
+            "### Formatting",
+            quality,
+        )
+
+    def test_render_compacts_scratch_evidence_and_mutation_testing(self) -> None:
+        self.use_real_assets()
+        for state, expected in (
+            (
+                "supported",
+                "- state: supported\n"
+                "- evidence: SCRATCH_EVIDENCE_CAPABILITY_EVIDENCE value\n"
+                "- none (confirmed absent): degraded, blocked when\n\n",
+            ),
+            (
+                "unsupported",
+                "- Scratch Evidence: unsupported — evidence: "
+                "SCRATCH_EVIDENCE_CAPABILITY_EVIDENCE value\n\n",
+            ),
+        ):
+            with self.subTest(state=state):
+                shutil.rmtree(self.repo / "docs", ignore_errors=True)
+                values = self.write_values(
+                    "values.txt",
+                    self.real_assets_values(
+                        SCRATCH_EVIDENCE_CAPABILITY_STATE=state,
+                        SCRATCH_EVIDENCE_CAPABILITY_DEGRADED="none (confirmed absent)",
+                        SCRATCH_EVIDENCE_CAPABILITY_BLOCKED_WHEN="none (confirmed absent)",
+                    ),
+                )
+
+                result = self.run_render_with(values, TARGET_NAMES)
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+                quality = (self.repo / "docs" / "agents" / "quality.md").read_text(encoding="utf-8")
+                self.assertIn(
+                    "`SCRATCH_ISOLATION value`.\n\n" + expected + "## Quality Tools", quality
+                )
+                self.assertIn(
+                    "### Mutation Testing\n\n- Mutation Testing: unsupported — evidence: "
+                    "no consumer-defined tool, valuable scope, exclusions, time budget, "
+                    "baseline, or survivor policy\n\n",
+                    quality,
+                )
+
+    def test_update_rewrites_a_long_form_capability_block_into_the_compact_form(self) -> None:
+        self.use_real_assets()
+        values = self.write_values(
+            "values.txt",
+            self.real_assets_values(
+                SECURITY_CAPABILITY_STATE="unsupported",
+                SECURITY_CAPABILITY_EVIDENCE="no dependency audit in CI",
+                FORMATTING_CAPABILITY_LIMITS="none (confirmed absent)",
+            ),
+        )
+        self.run_render_with(values, TARGET_NAMES)
+        quality = self.repo / "docs" / "agents" / "quality.md"
+        compact = quality.read_text(encoding="utf-8")
+        long_form = (
+            compact.replace(
+                "- Dependency or Security Checks: unsupported — evidence: no dependency audit in CI\n",
+                "- state: unsupported\n"
+                "- evidence: no dependency audit in CI\n"
+                "- provider: none (confirmed absent)\n"
+                "- limits: none (confirmed absent)\n"
+                "- effects/approval: none (confirmed absent)\n"
+                "- degraded: none (confirmed absent)\n"
+                "- blocked when: none (confirmed absent)\n",
+            )
+            .replace(
+                "- blocked when: FORMATTING_CAPABILITY_BLOCKED_WHEN value\n"
+                "- none (confirmed absent): limits\n",
+                "- blocked when: FORMATTING_CAPABILITY_BLOCKED_WHEN value\n",
+            )
+            .replace(
+                "- provider: FORMATTING_CAPABILITY_PROVIDER value\n",
+                "- provider: FORMATTING_CAPABILITY_PROVIDER value\n"
+                "- limits: none (confirmed absent)\n",
+            )
+        )
+        self.assertNotEqual(long_form, compact)
+        quality.write_text(long_form, encoding="utf-8")
+
+        before = self.run_diff(values)
+        unapproved = self.run_update(values)
+        self.assertEqual(quality.read_text(encoding="utf-8"), long_form)
+        update = self.run_update(values, "quality.md")
+        after = self.run_diff(values)
+
+        self.assertEqual(before.returncode, 0, before.stderr)
+        self.assertIn(f"DIFFERS {quality}", before.stdout)
+        self.assertEqual(unapproved.returncode, 0, unapproved.stderr)
+        self.assertIn(f"unapproved {quality}: not written", unapproved.stdout)
+        self.assertEqual(update.returncode, 0, update.stderr)
+        self.assertIn(f"updated {quality}", update.stdout)
+        self.assertEqual(quality.read_text(encoding="utf-8"), compact)
+        self.assertIn(f"IDENTICAL {quality}", after.stdout)
+
+    def test_update_refuses_a_marker_over_a_value_recorded_in_a_compact_line(self) -> None:
+        self.use_real_assets()
+        recorded = {
+            "SECURITY_CAPABILITY_STATE": "unsupported",
+            "SECURITY_CAPABILITY_EVIDENCE": "no dependency audit in CI",
+            "FORMATTING_CAPABILITY_LIMITS": "none (confirmed absent)",
+        }
+        self.run_render_with(
+            self.write_values("values.txt", self.real_assets_values(**recorded)), TARGET_NAMES
+        )
+        quality = self.repo / "docs" / "agents" / "quality.md"
+        before = quality.read_bytes()
+        for token in recorded:
+            with self.subTest(token=token):
+                values = self.write_values(
+                    "values.txt", self.real_assets_values(**{**recorded, token: "<marker>"})
+                )
+
+                result = self.run_update(values, "quality.md")
+
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("would replace a recorded value with a marker", result.stderr)
+                self.assertIn(token, result.stderr)
+                self.assertEqual(quality.read_bytes(), before)
 
 
 if __name__ == "__main__":

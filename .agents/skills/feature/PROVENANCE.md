@@ -38,7 +38,8 @@ SOFTWARE.
 
 ## Retrieved
 
-2026-08-26, issue #15 as retrieved from the Grupo Ilao skills repository.
+2026-08-26, issue #15 as retrieved from the Grupo Ilao skills repository;
+2026-10-16, issues #140 and #163.
 
 ## Material used
 
@@ -54,6 +55,12 @@ agent-agnostic skill contract. The material was organized as activation,
 authority, discovery, brief, and output sections; it defers prototype,
 adversarial review, technical synthesis, domain authority, and ADR lifecycle
 to their designated owners rather than duplicating their responsibilities.
+Under issue #140, the handoff targets `feature-critic`, which the developer
+may also invoke earlier, and the loop takes its findings back, asking the
+developer for each disposition, recording it, and applying only accepted
+adjustments as brief deltas. Under issue #163, the simplification that
+`feature-critic`'s scope and proportionality lens proposes is presented to the
+developer as a question of its own, separate from the other dispositions.
 
 ## Approval
 

@@ -1,0 +1,19 @@
+# Publication and Recovery
+
+When `publish` is selected, load this reference before the first mutation request or publication preview, and again whenever publication material is changed or reconstructed before resuming. Load it for publication recovery. `draft-only` does not load these instructions or run publication preflight. This reference owns publication-specific controls; the main skill and the common approval contract own shared workflow and approval policy.
+
+## Preview and authorization
+
+Use one approval preview under the common approval contract; this publication-specific content extends that preview and is not a second approval. Show the complete current plan: full inventory with each requirement's accountable child and outcome, tickets and exact content, proposed relationships and each moved ticket's previous parent, every external effect with destination and action, and the observable Definition Handoff reference (specification and review locations, parent, package/review handoff, verdict, prototype branch/commit or `N/A`, disposition, UI contract, decisions and relevant authority). Under `autonomous`, proceed only when this complete preview and all controls are current and no user intent or risk acceptance remains unresolved. Never exceed the approved effect scope.
+
+After any material change or reconstruction, stop the old plan and follow Execution step 3 for its full re-audit, authorization invalidation, unchanged-scope confirmations, and complete replacement preview. Before resuming publication, revalidate current authority and existing-ticket equivalence under Mutation sequence.
+
+## Mutation sequence
+
+Before any mutation request, including the first, verify current approved authority, required write capability for the operation, and read capability for read-back; inspect tracker evidence for equivalence. If a required precondition fails before any request is sent or possibly sent, stop as `blocked` without sending one. Before every subsequent mutation, repeat these checks against current authority, capabilities, and tracker evidence. Reuse exactly one matching ticket; create only when none exists. Stop on multiple or conflicting matches, including a reused ticket under another parent that is not confirmed for move. Read back each mutation before continuing. Create native relationships only after ticket identities exist. In GitHub and Linear, place each new, updated, and confirmed-moved ticket under the parent except `dependency/base`; a parent never replaces a required blocker relationship. Verify every approved relationship by read-back.
+
+## Failure and recovery
+
+Publication is `blocked` only if it stops before any mutation request is sent or may have been sent. Once a request is sent or may have been sent, every subsequent stoppage or failure—including ambiguity about whether it was sent, a later capability or preflight failure, rejection, unverifiable result, or failed/unavailable read-back—is `partial failure`. Stop at the last verifiable frontier, report it, and do not retry blindly.
+
+Reconcile from current tracker evidence before resuming. Preserve the approved breakdown and verified successful effects, avoid duplicates, and resume only from verified tracker evidence. Follow Execution step 3 for the full re-audit and replacement authorization, then revalidate current handoff, equivalence, and mutation preconditions. Continue only under the recorded approval policy after all controls pass; request approval only when policy requires it, and always stop for unresolved user intent or risk acceptance. If reconciliation is unavailable, remain in `partial failure` and do not resume or construct a preview from memory. Ask the user to reconstruct missing material; validate it against tracker evidence and the authoritative handoff, then follow the same full re-audit and replacement-preview flow.

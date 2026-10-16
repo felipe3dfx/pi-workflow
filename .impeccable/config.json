@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "low-contrast",
+        "value": "*",
+        "files": [
+          "prototype/operator-question/index.html"
+        ],
+        "createdAt": "2026-10-16T21:12:03.756Z",
+        "reason": "Claude: the terminal reproduces the real dim/muted colors from themes/pi-workflow.json; fidelity is the point of the prototype"
+      }
+    ]
+  }
+}

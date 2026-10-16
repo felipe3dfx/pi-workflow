@@ -4,7 +4,7 @@ description: "Trigger: configure repository workflow playbooks or audit existing
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "2.6"
+  version: "2.9"
   provenance: derived
 ---
 
@@ -40,7 +40,7 @@ Every run, before any write, including the first:
 1. Run `python3 <absolute-installed-setup-workflow.py> diff`, feeding only the current assets' tokens, each its recorded value where a playbook records one, else the run's confirmed value, never rediscovered wording; a recorded value with no token is dropped in the diff. The script finds form drift only; whether the repository contradicts a recorded value is discovery's judgment.
 2. Present recorded values as confirmed — value, file, and evidence — and work only the delta: unresolved markers, contradicted values, and sections the contract defines and the file lacks. Present one proposal covering every file to create or update, with the preserved value beside each change, and take its exact diff from `update` without an approval, so the proposed bytes are the written ones. A difference is a contradiction, never an alternative; a rival candidate beside a recorded value is not one.
 3. Wait for explicit user approval of every file to be written. A single verified candidate skips its question, never this approval. A run with nothing missing reports differences, writes nothing, and asks for no approval.
-4. Write missing files with `python3 <absolute-installed-setup-workflow.py> render --approve <file>`, keeping its values file in a temporary directory, never the consumer repository; a confirmed absence selects `issue-tracker-none.md`. Update an existing playbook with `python3 <absolute-installed-setup-workflow.py> update --approve <file>`, which re-renders the current asset from those values. Where root `AGENTS.md` has no routing block, `python3 <absolute-installed-setup-workflow.py> routing --append --approve AGENTS.md` writes [assets/routing-block.md](assets/routing-block.md) byte for byte; add no policy text.
+4. Write missing files with `python3 <absolute-installed-setup-workflow.py> render --approve <file>`, keeping its values file in a temporary directory, never the consumer repository; a confirmed absence selects `issue-tracker-none.md`. Update an existing playbook with `python3 <absolute-installed-setup-workflow.py> update --approve <file>`, which re-renders the current asset from those values. Where `AGENTS.md` lacks the canonical block, `python3 <absolute-installed-setup-workflow.py> routing --append --approve AGENTS.md` writes [assets/routing-block.md](assets/routing-block.md) byte for byte over differing spans; add no policy text.
 
 The write guards, the domain withhold, the outside-path refusal, and the no-interpreter degraded path are [references/runtime-contract.md](references/runtime-contract.md).
 

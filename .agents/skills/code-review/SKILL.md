@@ -4,7 +4,7 @@ description: "Trigger: review a ticket's diff inside the implementation loop, or
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "2.4.0"
+  version: "3.1.0"
   provenance: derived
 ---
 
@@ -12,34 +12,37 @@ metadata:
 
 ## Activation Contract
 
-Run once per implementation loop, after the build and before critique, in a context other than the implementer's. Review the diff since a fixed point along three axes, each in its own isolated context, and hand the report to `review-critique`.
+Run at each review of an implementation loop, after a checkpoint commit and before critique, in a context other than the implementer's. Review the diff since a fixed point along three axes, each in its own isolated context, and hand the report to `review-critique`.
 
-The fixed point is the ticket's base for a child ticket. For a parent integration branch reviewed against its specification, it is the production base. The diff runs from the merge-base of the fixed point to the current state, committed and uncommitted.
+The fixed point is the ticket's base for a ticket, and the production base for a parent integration branch reviewed against its specification. The diff runs from the merge-base of the fixed point to the head, a committed, signed commit.
 
-This skill never changes the reviewed tree. It reads the diff, the files around it, and the sources each axis names, and runs tests only in a scratch checkout. It never edits, fixes, comments, commits, or publishes.
+A review is full unless its caller hands over the last reviewed head and its findings with their state; then it is corrective: it reads only the delta from that head, with its surrounding context and affected code, and carries those findings. Its axes follow the delta: all three when it changes behavior, Spec and Valuable Tests when it changes only tests, otherwise Spec; any delta fixing a Standards finding adds Standards. Valuable Tests keeps its behavior baseline at the fixed point. After a rebase, the review is full.
+
+This skill never changes the reviewed tree: it reads the diff, the files around it, and each axis's sources, runs tests only in a scratch checkout, and never edits, fixes, comments, commits, or publishes.
 
 ## Decision Gates
 
 - The fixed point does not resolve: **blocked**. Name the ref.
+- Uncommitted changes, or an unsigned head: **blocked**. Name them.
 - The diff is empty: report that there is nothing to review and stop.
 - The ticket, or the specification for a parent integration branch, cannot be read: **blocked**. Name what is missing.
-- The harness cannot provide three isolated contexts: **blocked**. Ask the harness for them; never run two axes in one context, and never run an axis in the reviewer's own context.
+- The harness cannot provide an isolated context per axis: **blocked**. Ask the harness for them; never run two axes in one context, and never run an axis in the reviewer's own context.
 - The Valuable Tests axis is **blocked** as [scratch evidence](references/scratch-evidence.md) defines it; Standards and Spec still report.
 
 ## Execution Steps
 
-1. Pin the fixed point. Record the fixed point, the current head, the commit list since the fixed point, and whether uncommitted changes are included.
-2. Collect each axis's sources: for Standards, [team standards and smell baseline](references/standards.md) and the repository's `docs/agents/coding-standards.md` when it exists; for Spec, the ticket and its specification for a child ticket, or the specification and every child ticket for a parent integration branch, read fresh from the tracker, plus the published decision comments, never a scope note written by whoever invoked the review; for Valuable Tests, [the valuable-tests rubric](../tdd/references/valuable-tests.md), the scratch evidence file, the repository's `docs/agents/quality.md`, and the seams and coverage lines agreed before the first test, taken from the requirement-tracing table or coverage lines its caller hands over (or else from the ticket), plus the ticket, or every child ticket for a parent integration branch, read fresh from the tracker to check those tables against.
-3. Dispatch each axis to its own context, in parallel when the harness allows. Give each one the fixed point, the head, the commit list, its own sources by path, and its brief below. An axis receives no other axis's sources or findings.
-4. Assemble the report from the three axis reports, verbatim or lightly cleaned.
+1. Pin the fixed point: record it, the head, and the commit list since it.
+2. Collect each axis's sources: for Standards, [team standards and smell baseline](references/standards.md) and the repository's `docs/agents/coding-standards.md` when it exists; for Spec, the ticket and its specification when one exists, or the specification and every child ticket for a parent integration branch, read fresh from the tracker, plus the published Work Contract and decision comments, never a scope note written by whoever invoked the review; for Valuable Tests, [the valuable-tests rubric](../tdd/references/valuable-tests.md), the scratch evidence file, the repository's `docs/agents/quality.md`, the seams and coverage lines agreed before the first test, from the requirement-tracing table or coverage lines its caller hands over (else from the ticket), and the same tickets as Spec, read fresh, to check those tables against.
+3. Dispatch each axis to its own context, in parallel when the harness allows. Give each one the fixed point, the head, the commit list, the delta and its prior findings when corrective, its own sources by path, and its brief below. An axis receives no other axis's sources or findings.
+4. Assemble the report from the axis reports, verbatim or lightly cleaned.
 
 ### Standards brief
 
-Read only the team standards shipped with the skill and the repository's `docs/agents/coding-standards.md` when present; do not mine other repository documents for standards. Report every broken standard and every baseline smell, quoting the hunk, classified as the standards file says.
+Read only the standards sources received; do not mine other repository documents for standards. Report every broken standard and every baseline smell, quoting the hunk, classified as the standards file says.
 
 ### Spec brief
 
-Report requirements that are missing or partial, behavior the diff adds that the ticket or specification did not ask for, and requirements implemented wrongly. Quote the ticket or specification line for each finding. For a parent integration branch, confirm every child ticket's requirement is present.
+Report requirements that are missing or partial, behavior the diff adds that the ticket or specification did not ask for, and requirements implemented wrongly. For a parent integration branch, confirm every child ticket's requirement is present.
 
 ### Valuable Tests brief
 
@@ -47,16 +50,16 @@ Run each test file the diff adds or changes, whole, against the fixed point's pr
 
 ## Output Contract
 
-Prose, under three headings in this order: `## Standards`, `## Spec`, `## Valuable Tests`. Open with the fixed point, the head, and whether uncommitted changes were included. `## Valuable Tests` opens with the scratch record: the candidate's identity before and after, and each file's outcome classes. When one axis runs on its own, return only its own section, with that opening line and its count line.
+Prose, under three headings in this order: `## Standards`, `## Spec`, `## Valuable Tests`. Open with the fixed point and the head, plus the last reviewed head and the axes run when corrective; a corrective axis lists each prior finding with its state before its new findings. `## Valuable Tests` opens with the scratch record: the candidate's identity before and after, and each file's outcome classes. When fewer than three axes run, return only their sections, with that opening line and the count line.
 
 Each finding carries:
 
 - a stable ID: `STD-n`, `SPEC-n`, or `TEST-n`, numbered within its axis; a later review in the same loop continues the numbering and never reuses an ID;
 - `hard` or `judgement`;
-- a repository-relative path with a line in the reviewed version (the head, plus uncommitted changes when included), or the ticket or specification line when the finding is a missing requirement or a missing test at an agreed seam;
+- a repository-relative path with a line in the head, or the ticket or specification line when the finding is a missing requirement or a missing test at an agreed seam;
 - the claim, in one sentence;
 - the evidence: the quoted hunk, plus the standard, the ticket or specification line, or the rubric failure mode it breaks.
 
-An axis with nothing to report says so in one line, and says why when the diff gave it nothing to review, such as a diff without tests.
+An axis with nothing to report says so in one line, and why when the diff gave it nothing to review.
 
 Never merge findings across axes, rerank them, or pick a single worst finding. End with one line giving the finding count per axis and the most serious finding within each axis.

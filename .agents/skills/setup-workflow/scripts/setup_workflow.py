@@ -52,6 +52,7 @@ class DomainAuthorityError(Exception):
 TOKEN_LINE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$")
 PLACEHOLDER = re.compile(r"\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}")
 HEADING = re.compile(r"^#{1,6}\s+\S.*$")
+CAPABILITY_FIELD = re.compile(r"^- ([a-z/ ]+): (.*)$")
 
 
 def refuse(message: str) -> NoReturn:
@@ -131,6 +132,50 @@ def render_text(text: str, values: dict[str, str]) -> str:
         return match.group(0) if value == MARKER else value
 
     return PLACEHOLDER.sub(replace, text)
+
+
+ABSENT_PREFIX = f"- {CONFIRMED_ABSENT}: "
+
+
+def unsupported_prefix(name: str) -> str:
+    return f"- {name}: unsupported — evidence: "
+
+
+def compact_capability(name: str, fields: list[tuple[str, str]]) -> list[str]:
+    values = dict(fields)
+    if values["state"] == "unsupported":
+        unresolved = [
+            f"- {field}: {value}"
+            for field, value in fields
+            if field not in ("state", "evidence") and PLACEHOLDER.search(value)
+        ]
+        return [f"{unsupported_prefix(name)}{values['evidence']}", *unresolved]
+    absent = [field for field, value in fields if value == CONFIRMED_ABSENT]
+    kept = [f"- {field}: {value}" for field, value in fields if value != CONFIRMED_ABSENT]
+    if absent:
+        kept.append(f"{ABSENT_PREFIX}{', '.join(absent)}")
+    return kept
+
+
+def compact_capabilities(text: str) -> str:
+    lines = text.split("\n")
+    result: list[str] = []
+    name = ""
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if HEADING.match(line):
+            name = line.lstrip("#").strip()
+        if not line.startswith("- state: "):
+            result.append(line)
+            index += 1
+            continue
+        fields: list[tuple[str, str]] = []
+        while index < len(lines) and (match := CAPABILITY_FIELD.match(lines[index])):
+            fields.append((match.group(1), match.group(2)))
+            index += 1
+        result.extend(compact_capability(name, fields))
+    return "\n".join(result)
 
 
 def fence_annotated_lines(text: str) -> list[tuple[str, bool]]:
@@ -243,6 +288,34 @@ def recorded_tokens(template: str, existing: str) -> set[str]:
             for token in tokens_in(line):
                 if token not in recorded and prefix_records_token(line, token, bodies):
                     recorded.add(token)
+    return recorded | compact_recorded_tokens(template_sections, existing_by_heading)
+
+
+def compact_recorded_tokens(
+    template_sections: list[tuple[str | None, list[str]]],
+    existing_by_heading: dict[str | None, list[list[str]]],
+) -> set[str]:
+    recorded: set[str] = set()
+    for heading, body in template_sections:
+        field_tokens = {
+            match.group(1): tokens[0]
+            for line in body
+            if (match := CAPABILITY_FIELD.match(line))
+            and len(tokens := PLACEHOLDER.findall(line)) == 1
+        }
+        if heading is None or "state" not in field_tokens:
+            continue
+        unsupported = unsupported_prefix(heading.lstrip("#").strip())
+        for existing_body in existing_by_heading.get(heading, []):
+            for line in existing_body:
+                if line.startswith(unsupported):
+                    recorded.add(field_tokens["state"])
+                    if "evidence" in field_tokens and not PLACEHOLDER.search(line):
+                        recorded.add(field_tokens["evidence"])
+                elif line.startswith(ABSENT_PREFIX):
+                    for field in line[len(ABSENT_PREFIX) :].split(", "):
+                        if field in field_tokens:
+                            recorded.add(field_tokens[field])
     return recorded
 
 
@@ -271,7 +344,10 @@ def render_templates(
     errors = validate(template_tokens, values, allowed_tokens)
     if errors:
         return {}, errors
-    return {target_name(name): render_text(text, values) for name, text in texts.items()}, []
+    return {
+        target_name(name): compact_capabilities(render_text(text, values))
+        for name, text in texts.items()
+    }, []
 
 
 def approved_target_names(approvals: list[str], targets: set[str]) -> set[str]:
@@ -1038,16 +1114,20 @@ def cmd_routing(repo: Path, check: bool, append: bool, approvals: list[str]) -> 
     if state == "present":
         print(f"routing block already present in {agents_path}")
         return 0
-    if state == "differs":
-        refuse(
-            "refused: AGENTS.md carries a routing block that differs from the "
-            "canonical block; report it, never repair"
-        )
     if state == "malformed":
         refuse("refused: malformed routing markers in AGENTS.md")
 
     if "AGENTS.md" not in {value.strip() for value in approvals}:
-        refuse("refused: appending the routing block requires --approve AGENTS.md")
+        refuse("refused: writing the routing block requires --approve AGENTS.md")
+
+    if state == "differs":
+        end = content.find(ROUTING_END) + len(ROUTING_END)
+        agents_path.write_text(
+            content[: content.find(ROUTING_START)] + canonical + content[end:],
+            encoding="utf-8",
+        )
+        print(f"replaced routing block in {agents_path}")
+        return 0
 
     with agents_path.open("a", encoding="utf-8") as handle:
         if content and not content.endswith("\n"):

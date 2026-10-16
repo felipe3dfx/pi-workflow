@@ -2,7 +2,7 @@
 
 ## Focused Validation
 
-Run `{{FOCUSED_VALIDATION_COMMANDS}}` for the affected area. Record command status, duration, and relevant output; do not replace a failed command with a weaker check.
+Run `{{FOCUSED_VALIDATION_COMMANDS}}` for the impact set: the touched area plus the callers and consumers it affects. Builds and fixes use this path. Record command status, duration, and relevant output; do not replace a failed command with a weaker check.
 
 - state: {{FOCUSED_VALIDATION_CAPABILITY_STATE}}
 - evidence: {{FOCUSED_VALIDATION_CAPABILITY_EVIDENCE}}
@@ -14,7 +14,7 @@ Run `{{FOCUSED_VALIDATION_COMMANDS}}` for the affected area. Record command stat
 
 ## Full Validation
 
-Before the confirmed handoff point, run `{{FULL_VALIDATION_COMMANDS}}`. If the command is absent or unverified, report its state and use only the recorded degraded behavior. When the repository defines a single validation command, that command is the candidate for both focused and full validation; the same value recorded twice is one candidate, not a question, and no scoped variant is invented.
+`create-pr` runs `{{FULL_VALIDATION_COMMANDS}}` on the exact head before every push, and CI runs it after publication; no review skill runs it. If the command is absent or unverified, report its state and use only the recorded degraded behavior. When the repository defines a single validation command, that command is the candidate for both focused and full validation; the same value recorded twice is one candidate, not a question, and no scoped variant is invented.
 
 - state: {{FULL_VALIDATION_CAPABILITY_STATE}}
 - evidence: {{FULL_VALIDATION_CAPABILITY_EVIDENCE}}
@@ -77,6 +77,7 @@ Tools: `{{SECURITY_TOOLS}}`
 
 ### Mutation Testing
 
-- state: unsupported. Skip the phase and say so in the report.
+- state: unsupported
+- evidence: no consumer-defined tool, valuable scope, exclusions, time budget, baseline, or survivor policy
 
-Mutation testing remains `unsupported` until the consumer defines its tool, valuable scope, exclusions, time budget, baseline, and survivor policy. Do not infer any of those values from a first run.
+Skip the phase and say so in the report. Mutation testing remains `unsupported` until the consumer defines its tool, valuable scope, exclusions, time budget, baseline, and survivor policy. Do not infer any of those values from a first run.
