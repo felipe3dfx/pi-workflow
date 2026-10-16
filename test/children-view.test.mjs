@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { setTimeout as delay } from "node:timers/promises";
 import { stripVTControlCharacters } from "node:util";
 
 import { initTheme } from "@earendil-works/pi-coding-agent";
@@ -9,9 +10,11 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 
+import { createChildAudit } from "../extensions/child-audit.ts";
 import { createChildrenViews } from "../extensions/children-view.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
+import { withAgentDirectory } from "./support/jev-routing.mjs";
 
 replaceSelection({
 	schemaVersion: 1,
@@ -44,6 +47,10 @@ const keys = new KeybindingsManager({
 	"app.thinking.toggle": {
 		defaultKeys: "ctrl+t",
 		description: "Toggle thinking",
+	},
+	"app.tools.expand": {
+		defaultKeys: "ctrl+o",
+		description: "Toggle tool output",
 	},
 });
 
@@ -191,6 +198,68 @@ function fakeSessions(records, threads = {}) {
 	};
 }
 
+function audited(t, records, options = {}) {
+	const audit = createChildAudit({
+		root: options.root ?? withAgentDirectory(t),
+		parent: () => ("parent" in options ? options.parent : "parent-1"),
+		limits: options.limits,
+	});
+	const captures = {};
+	for (const item of records) {
+		captures[item.id] = audit.begin({
+			child: item.id,
+			role: item.role,
+			task: item.task,
+			references: [],
+			instructions: "You are a worker. Follow the Contract.",
+			tools: ["read"],
+			model: item.model,
+			thinking: item.thinking,
+			worktree: item.worktree,
+			createdAt: item.createdAt,
+			...(item.group === undefined ? {} : { group: item.group }),
+		});
+	}
+	const emit = (id, event) => captures[id].event(event);
+	return {
+		audit,
+		emit,
+		say(id, content, extra = {}) {
+			const message = { role: "assistant", content, ...extra };
+			emit(id, { type: "message_start", message });
+			emit(id, { type: "message_end", message });
+		},
+		tool(id, call, toolName, args, text, isError = false) {
+			emit(id, { type: "tool_execution_start", toolCallId: call, toolName, args });
+			if (text === undefined) return;
+			emit(id, {
+				type: "tool_execution_end",
+				toolCallId: call,
+				toolName,
+				result: { content: [{ type: "text", text }] },
+				isError,
+			});
+		},
+	};
+}
+
+async function settle(view, width = 120) {
+	let quiet = 0;
+	for (let i = 0; i < 400 && quiet < 4; i++) {
+		const renders = view.tui.renders;
+		view.lines(width);
+		await delay(5);
+		quiet = view.tui.renders === renders ? quiet + 1 : 0;
+	}
+	return view.lines(width).join("\n");
+}
+
+const emptyAudit = {
+	list: async () => ({ records: [] }),
+	read: async () => undefined,
+	segment: async () => undefined,
+};
+
 function manualSchedule() {
 	const pending = new Set();
 	const schedule = (run, ms) => {
@@ -217,11 +286,13 @@ function open(
 		schedule = manualSchedule().schedule,
 		latest = false,
 		tasks = {},
+		audit = emptyAudit,
 	} = {},
 ) {
 	let factory;
 	const views = createChildrenViews(
 		sessions,
+		audit,
 		{ text: (id) => tasks[id] },
 		schedule,
 	);
@@ -309,7 +380,7 @@ test("from 65 columns the view splits into a list and a detail pane; below that 
 	const wide = view.lines(120);
 	assert.match(wide[0], /^ ┌─ Fleet 3 · 1 active · 6\.2k tok · \$0\.01 ─+ \[×\] ─┐$/);
 	assert.equal(wide[1].indexOf("│", 2), 1 + 1 + 2 + 34 + 1);
-	assert.match(wide[1], /Active ─+ │ ◐ worker 5636 +running · 1m 0\ds {2}│$/);
+	assert.match(wide[1], /Working ─+ │ ◐ worker 5636 +running · 1m 0\ds {2}│$/);
 	assert.match(
 		wide[2],
 		/▸ ◐ worker 5636 +running · 1m 0\ds │ gpt-6-luna \(high\) · 6\.2k tok · \$0\.01 · wt: pi-workflow/,
@@ -325,14 +396,14 @@ test("from 65 columns the view splits into a list and a detail pane; below that 
 	assert.match(single.join("\n"), /j\/k move {2}\| {2}Enter detail/);
 });
 
-test("list rows take two lines under Active and Finished rules, and the selected child gets the selection background on both", () => {
+test("list rows take two lines under Working and History rules, and the selected child gets the selection background on both", () => {
 	const view = open(threeChildren(), { rows: 40 });
 	const raw = view.raw(120);
 	const lines = raw.map(plain);
-	assert.match(lines[1], /│ {2} Active ─/);
+	assert.match(lines[1], /│ {2} Working ─/);
 	assert.match(lines[2], /▸ ◐ worker 5636 +running · 1m 0\ds/);
 	assert.match(lines[3], /│ {6}bash sleep 60 +6\.2k tok · \$0\.01 │/);
-	assert.match(lines[4], /│ {2} Finished ─/);
+	assert.match(lines[4], /│ {2} History ─/);
 	assert.match(lines[5], /│ {4}✓ worker a809 +completed · 1m 04s/);
 	assert.match(lines[6], /│ {6}Run sleep 60/);
 	assert.match(lines[7], /│ {4}✗ reviewer 27c1 +failed · 4m 00s/);
@@ -365,7 +436,21 @@ test("the list keeps the selected child in view and falls back to one line per c
 	assert.ok(rows.length >= 4);
 });
 
-test("the detail shows a header, the clamped prompt, the thread in chat rows, and a result once the child ends", () => {
+function busyEvidence(capture, id) {
+	capture.say(id, [
+		{ type: "thinking", thinking: "Waiting 60 seconds.\tThen report." },
+		{
+			type: "text",
+			text: "Voy a **esperar** 60 segundos — 漢字テキスト 🚀 y luego `confirmo`.",
+		},
+		{ type: "toolCall", id: "t1", name: "read", arguments: { path: "extensions/children-view.ts" } },
+	]);
+	capture.tool(id, "t1", "read", { path: "extensions/children-view.ts" }, "ok");
+	capture.tool(id, "t2", "mcp__engram__mem_search", { query: "x" }, "no index", true);
+	capture.tool(id, "t3", "bash", { command: "sleep 60" });
+}
+
+test("the detail shows a header, the clamped prompt, the audited thread in chat rows, and a result once the child ends", async (t) => {
 	const long = Array.from(
 		{ length: 8 },
 		(_, i) => `Step ${i} of the work.`,
@@ -376,17 +461,21 @@ test("the detail shows a header, the clamped prompt, the thread in chat rows, an
 		endedAt: now,
 		text: "The child failed: provider error",
 	});
-	const sessions = fakeSessions([running, failed], {
-		[running.id]: busyThread(),
-		[failed.id]: { entries: [] },
+	const capture = audited(t, [running, failed]);
+	capture.emit(running.id, {
+		type: "message_start",
+		message: { role: "user", content: [{ type: "text", text: long }] },
 	});
-	const view = open(sessions, { rows: 60 });
-	let text = view.lines(120).join("\n");
+	busyEvidence(capture, running.id);
+	const sessions = fakeSessions([running, failed]);
+	const view = open(sessions, { rows: 60, audit: capture.audit });
+	let text = await settle(view);
 	assert.match(text, / Prompt ─/);
 	assert.match(text, /❯ Step 0 of the work\./);
 	assert.match(text, /Step 3 of the work\./);
 	assert.doesNotMatch(text, /Step 4 of the work\./);
 	assert.match(text, /… \+4 lines · p expand/);
+	assert.match(text, /Contract · 1 line · p expand/);
 	assert.match(text, / Thread ─/);
 	assert.match(text, /◆ Thought\s/);
 	assert.match(text, / {2}Waiting 60 seconds\. {3}Then report\./);
@@ -399,9 +488,12 @@ test("the detail shows a header, the clamped prompt, the thread in chat rows, an
 	assert.ok(raw.includes("\x1b[92m◆\x1b[39m \x1b[1m\x1b[37mRead"));
 	assert.ok(raw.includes("\x1b[31m◆\x1b[39m \x1b[1m\x1b[37mEngram"));
 	assert.ok(raw.includes("\x1b[90m◆\x1b[39m \x1b[1m\x1b[37mRun"));
+	assert.ok(raw.includes("  \x1b[31mno index"));
 
 	view.press("p");
-	assert.match(view.lines(120).join("\n"), /Step 7 of the work\./);
+	text = view.lines(120).join("\n");
+	assert.match(text, /Step 7 of the work\./);
+	assert.match(text, /You are a worker\. Follow the Contract\./);
 
 	view.press("\x14");
 	text = view.lines(120).join("\n");
@@ -409,7 +501,7 @@ test("the detail shows a header, the clamped prompt, the thread in chat rows, an
 	assert.doesNotMatch(text, /Waiting 60 seconds/);
 
 	view.press("j");
-	text = view.lines(120).join("\n");
+	text = await settle(view);
 	assert.match(text, /✗ worker 27c1 +failed · 1m 02s/);
 	assert.match(text, / Result ─/);
 	assert.ok(
@@ -421,35 +513,42 @@ test("the detail shows a header, the clamped prompt, the thread in chat rows, an
 	);
 });
 
-test("a thought streamed while the view is open shows its duration once it ends", () => {
+test("a thought streamed while the view is open shows its duration once it ends", async (t) => {
 	const child = record("5636");
-	const streaming = {
-		role: "assistant",
-		content: [{ type: "thinking", thinking: "Planning the wait." }],
-		timestamp: 7,
-	};
-	const sessions = fakeSessions([child], {
-		[child.id]: { entries: [], streaming },
+	const capture = audited(t, [child]);
+	const streaming = { role: "assistant", content: [] };
+	capture.emit(child.id, { type: "message_start", message: streaming });
+	capture.emit(child.id, {
+		type: "message_update",
+		message: streaming,
+		assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "Planning the wait." },
 	});
-	const view = open(sessions);
-	assert.match(view.lines(120).join("\n"), /◆ Thinking…/);
-	sessions.threads[child.id] = {
-		entries: [assistant("a1", streaming.content, { timestamp: 7 })],
-	};
-	assert.match(view.lines(120).join("\n"), /◆ Thought for \d+\.\ds/);
+	const sessions = fakeSessions([child]);
+	const view = open(sessions, { audit: capture.audit });
+	assert.match(await settle(view), /◆ Thinking…/);
+	capture.emit(child.id, {
+		type: "message_end",
+		message: { role: "assistant", content: [{ type: "thinking", thinking: "Planning the wait." }] },
+	});
+	sessions.changed();
+	assert.match(await settle(view), /◆ Thought for \d+\.\ds/);
 });
 
-test("Tab moves the focus between panes, Ctrl+J/K and page keys scroll the focused pane, f follows the tail, and Esc or q closes", () => {
+function lines40(t, child, others = []) {
+	const capture = audited(t, [child, ...others]);
+	for (let i = 0; i < 40; i++) capture.say(child.id, [{ type: "text", text: `Line ${i}.` }]);
+	return capture;
+}
+
+test("Tab moves the focus between panes, Ctrl+J/K and page keys scroll the focused pane, f follows the tail, and Esc or q closes", async (t) => {
 	const child = record("5636");
-	const entries = Array.from({ length: 40 }, (_, i) =>
-		assistant(`a${i}`, [{ type: "text", text: `Line ${i}.` }]),
-	);
-	const sessions = fakeSessions([child], { [child.id]: { entries } });
-	const view = open(sessions, { rows: 20 });
-	assert.match(view.lines(120).join("\n"), /Line 39\./);
+	const capture = lines40(t, child);
+	const sessions = fakeSessions([child]);
+	const view = open(sessions, { rows: 20, audit: capture.audit });
+	assert.match(await settle(view), /Line 39\./);
 	assert.match(
 		view.lines(120).at(-3),
-		/j\/k move {2}\| {2}Tab focus {2}\| {2}Enter steer {2}\| {2}Ctrl\+J\/K scroll {2}\| {2}f follow {2}\| {2}s\/c cancel {2}\| {2}Ctrl\+T thinking/,
+		/j\/k move {2}\| {2}Tab focus {2}\| {2}Enter steer {2}\| {2}Ctrl\+J\/K scroll {2}\| {2}f follow {2}\| {2}s\/c cancel/,
 	);
 	const accent = "\x1b[1m\x1b[36mworker 5636";
 	assert.equal(
@@ -460,21 +559,17 @@ test("Tab moves the focus between panes, Ctrl+J/K and page keys scroll the focus
 	assert.ok(view.raw(120).some((line) => line.includes(accent)));
 
 	view.press("\x0b", "\x0b");
-	let text = view.lines(120).join("\n");
+	let text = await settle(view);
 	assert.doesNotMatch(text, /Line 39\./);
-	sessions.threads[child.id] = {
-		entries: [
-			...entries,
-			assistant("a40", [{ type: "text", text: "Line 40." }]),
-		],
-	};
-	assert.doesNotMatch(view.lines(120).join("\n"), /Line 40\./);
+	capture.say(child.id, [{ type: "text", text: "Line 40." }]);
+	sessions.changed();
+	assert.doesNotMatch(await settle(view), /Line 40\./);
 	view.press("\x1b[6~", "\x1b[6~", "\x1b[6~");
-	assert.match(view.lines(120).join("\n"), /Line 40\./);
+	assert.match(await settle(view), /Line 40\./);
 	view.press("\x1b[5~");
-	assert.doesNotMatch(view.lines(120).join("\n"), /Line 40\./);
+	assert.doesNotMatch(await settle(view), /Line 40\./);
 	view.press("f");
-	assert.match(view.lines(120).join("\n"), /Line 40\./);
+	assert.match(await settle(view), /Line 40\./);
 
 	view.press("\n");
 	text = view.lines(120).join("\n");
@@ -484,21 +579,17 @@ test("Tab moves the focus between panes, Ctrl+J/K and page keys scroll the focus
 	assert.equal(view.closed(), true);
 });
 
-test("in one pane, Enter opens the detail, j/k scroll it, and Esc goes back to the list", () => {
+test("in one pane, Enter opens the detail, j/k scroll it, and Esc goes back to the list", async (t) => {
 	const child = record("5636");
-	const entries = Array.from({ length: 40 }, (_, i) =>
-		assistant(`a${i}`, [{ type: "text", text: `Line ${i}.` }]),
-	);
-	const view = open(fakeSessions([child], { [child.id]: { entries } }), {
-		rows: 20,
-	});
+	const capture = lines40(t, child);
+	const view = open(fakeSessions([child]), { rows: 20, audit: capture.audit });
 	view.press("\r");
-	let lines = view.lines(60);
+	let lines = (await settle(view, 60)).split("\n");
 	assert.match(lines[1], /◐ worker 5636 +running · 1m 0\ds/);
 	assert.match(lines.join("\n"), /Line 39\./);
 	assert.match(lines.join("\n"), /Esc back/);
 	view.press("k");
-	assert.doesNotMatch(view.lines(60).join("\n"), /Line 39\./);
+	assert.doesNotMatch(await settle(view, 60), /Line 39\./);
 	view.press("\x1b");
 	lines = view.lines(60);
 	assert.match(lines[2], /▸ ◐ worker 5636/);
@@ -518,17 +609,13 @@ test("s or c cancels the selected child after y/n in the two-pane view", () => {
 	assert.match(view.lines(120).join("\n"), /worker 5636 cancelled\./);
 });
 
-test("a click selects a list row, a double click focuses the detail, the wheel scrolls the pane under the pointer, and footer labels and [×] act", () => {
+test("a click selects a list row, a double click focuses the detail, the wheel scrolls the pane under the pointer, and footer labels and [×] act", async (t) => {
 	const records = [
 		record("5636"),
 		...Array.from({ length: 12 }, (_, i) => record(`${1000 + i}`)),
 	];
-	const entries = Array.from({ length: 40 }, (_, i) =>
-		assistant(`a${i}`, [{ type: "text", text: `Line ${i}.` }]),
-	);
-	const view = open(fakeSessions(records, { [records[0].id]: { entries } }), {
-		rows: 20,
-	});
+	const capture = lines40(t, records[0]);
+	const view = open(fakeSessions(records), { rows: 20, audit: capture.audit });
 	let lines = view.lines(120);
 	const row = lines.findIndex((line) => line.includes("worker 1001"));
 	assert.deepEqual(view.mouse({ type: "click", x: 5, y: row }), {
@@ -542,11 +629,11 @@ test("a click selects a list row, a double click focuses the detail, the wheel s
 	);
 
 	view.press("k", "k");
-	assert.match(view.lines(120).join("\n"), /Line 39\./);
+	assert.match(await settle(view), /Line 39\./);
 	assert.deepEqual(view.mouse({ type: "wheel", x: 60, y: 8, wheelDelta: -5 }), {
 		handled: true,
 	});
-	assert.doesNotMatch(view.lines(120).join("\n"), /Line 39\./);
+	assert.doesNotMatch(await settle(view), /Line 39\./);
 
 	const before = view.lines(120)[2];
 	view.mouse({ type: "wheel", x: 5, y: 8, wheelDelta: 6 });
@@ -559,7 +646,7 @@ test("a click selects a list row, a double click focuses the detail, the wheel s
 		x: lines[footer].indexOf("f follow") + 1,
 		y: footer,
 	});
-	assert.match(view.lines(120).join("\n"), /Line 39\./);
+	assert.match(await settle(view), /Line 39\./);
 
 	assert.deepEqual(
 		view.mouse({ type: "click", x: view.lines(120)[0].indexOf("×"), y: 0 }),
@@ -587,7 +674,7 @@ test("the elapsed time ticks every second while a child works, and the timer sto
 	assert.deepEqual(idle.pending(), []);
 });
 
-test("the final assistant text and the error appear once, in the Result section, and the view opens on the latest finished child", () => {
+test("the final assistant text and the error appear once, in the Result section, and the view opens on the latest finished child", async (t) => {
 	const done = record("a809", {
 		state: "completed",
 		endedAt: now - 1_000,
@@ -598,29 +685,21 @@ test("the final assistant text and the error appear once, in the Result section,
 		endedAt: now - 5_000,
 		text: "provider error",
 	});
-	const sessions = fakeSessions([failed, done], {
-		[done.id]: {
-			entries: [
-				assistant("m1", [{ type: "text", text: "Checking first." }]),
-				assistant("m2", [{ type: "text", text: "Waited 60 seconds.  " }]),
-			],
-		},
-		[failed.id]: {
-			entries: [
-				assistant("m3", [], {
-					errorMessage: "provider error",
-					stopReason: "error",
-				}),
-			],
-		},
+	const capture = audited(t, [failed, done]);
+	capture.say(done.id, [{ type: "text", text: "Checking first." }]);
+	capture.say(done.id, [{ type: "text", text: "Waited 60 seconds.  " }]);
+	capture.say(failed.id, [], { errorMessage: "provider error", stopReason: "error" });
+	const view = open(fakeSessions([failed, done]), {
+		rows: 60,
+		latest: true,
+		audit: capture.audit,
 	});
-	const view = open(sessions, { rows: 60, latest: true });
-	let text = view.lines(120).join("\n");
+	let text = await settle(view);
 	assert.match(text, /Checking first\./);
 	assert.equal(text.match(/Waited 60 seconds\./g)?.length, 1);
 	assert.match(text, / Result ─/);
 	view.press("k");
-	text = view.lines(120).join("\n");
+	text = await settle(view);
 	assert.equal(text.match(/provider error/g)?.length, 1);
 });
 
@@ -900,4 +979,386 @@ test("a linked child's Fleet row stops naming its task once the task no longer e
 	const lines = open(sessions).lines(200).join("\n");
 	assert.doesNotMatch(lines, /#3|Wire the parser/);
 	assert.match(lines, /bash sleep 60/);
+});
+
+test("a mixed Group appears under Working and History, and a reopened record is read-only Interrupted history", async (t) => {
+	const root = withAgentDirectory(t);
+	const lost = record("9e01", { group: "group-7af3", task: "Index the docs" });
+	const before = audited(t, [lost], { root });
+	before.say(lost.id, [{ type: "text", text: "Indexed half." }]);
+	before.audit.execution(lost.id, "running");
+	await before.audit.close();
+
+	const working = record("5636", { group: "group-7af3" });
+	const done = record("a809", {
+		group: "group-7af3",
+		state: "completed",
+		endedAt: now - 1_000,
+		text: "Done.",
+	});
+	const capture = audited(t, [working, done], { root });
+	const sessions = fakeSessions([working, done]);
+	const view = open(sessions, { rows: 40, audit: capture.audit });
+	const text = await settle(view);
+	const lines = text.split("\n").map((line) => line.slice(0, 38));
+	const at = (pattern) => lines.findIndex((line) => pattern.test(line));
+	assert.ok(at(/Working ─/) < at(/script 7af3/), text);
+	assert.ok(at(/script 7af3/) < at(/worker 5636/));
+	assert.ok(at(/History ─/) > at(/worker 5636/));
+	assert.equal(lines.filter((line) => /script 7af3/.test(line)).length, 2);
+	assert.ok(at(/✓ worker a809/) > at(/History ─/));
+	assert.match(lines[at(/worker 9e01/)], /⊘ worker 9e01 +interrupted/);
+
+	const rows = lines.findIndex((line) => line.includes("worker 9e01"));
+	view.mouse({ type: "click", x: 5, y: rows });
+	const detail = await settle(view);
+	assert.match(detail, /⊘ worker 9e01 .* interrupted/);
+	assert.match(detail, /Indexed half\./);
+	assert.match(detail, /❯ History is read-only/);
+	assert.doesNotMatch(detail, /s\/c cancel|Enter (steer|input|answer)/);
+	view.press("s");
+	assert.match(view.lines(120).join("\n"), /worker 9e01 is history; it is read-only\./);
+	view.press("\r", "x", "\r");
+	assert.match(view.lines(120).join("\n"), /worker 9e01 is history; it is read-only\./);
+	assert.deepEqual(sessions.steers, []);
+	assert.deepEqual(sessions.replies, []);
+	assert.equal(sessions.get(working.id).state, "running");
+	assert.equal(sessions.followers.has(lost.id), false);
+});
+
+test("a child whose transcript cannot be read stays listed with its identity", async (t) => {
+	const root = withAgentDirectory(t);
+	const lost = record("9e01", { task: "Index the docs" });
+	const before = audited(t, [lost], { root });
+	await before.audit.close();
+	const later = audited(t, [], { root });
+	const audit = {
+		list: later.audit.list,
+		read: async () => {
+			throw new Error("disk gone");
+		},
+		segment: later.audit.segment,
+	};
+	const view = open(fakeSessions([]), { rows: 30, audit });
+	const text = await settle(view);
+	assert.match(text, /⊘ worker 9e01 +interrupted/);
+	assert.match(text, /❯ Index the docs/);
+});
+
+test("without a parent session identity the capture warning shows beside the Run state while live inspection still reads the child", async (t) => {
+	const child = record("5636");
+	const gone = record("9e01");
+	const capture = audited(t, [child, gone], { parent: undefined });
+	const sessions = fakeSessions([child], {
+		[child.id]: { entries: [assistant("a1", [{ type: "text", text: "Live without a parent." }])] },
+	});
+	const view = open(sessions, { rows: 30, audit: capture.audit });
+	const text = await settle(view);
+	assert.match(text, /Live without a parent\./);
+	assert.doesNotMatch(text, /worker 9e01/);
+	assert.match(text, /▸ ◐ worker 5636 +running · 1m 0\ds/);
+	assert.match(text, /│ +incomplete capture · 6\.2k tok/);
+	assert.match(text, /incomplete capture \(live\): No parent session identity/);
+	assert.match(text, /❯ Run sleep 60/);
+	assert.match(text, /Enter steer/);
+});
+
+test("backscroll keeps its rows while the selected and other children stream, and f returns to the selected tail", async (t) => {
+	const mine = record("5636");
+	const other = record("1001");
+	const capture = lines40(t, mine, [other]);
+	const sessions = fakeSessions([mine, other]);
+	const view = open(sessions, { rows: 20, audit: capture.audit });
+	await settle(view);
+	view.press("\t", "\x0b", "\x0b");
+	const detail = (text) =>
+		text
+			.split("\n")
+			.slice(4)
+			.map((line) => line.split("│")[2] ?? "")
+			.join("\n");
+	const held = detail(await settle(view));
+	assert.doesNotMatch(held, /Line 39\./);
+	for (let i = 0; i < 300; i++) {
+		capture.say(other.id, [{ type: "text", text: `Other ${i}.` }]);
+	}
+	capture.say(mine.id, [{ type: "text", text: "Line 40." }]);
+	capture.emit(mine.id, {
+		type: "tool_execution_start",
+		toolCallId: "late",
+		toolName: "bash",
+		args: { command: "make" },
+	});
+	sessions.changed();
+	assert.equal(detail(await settle(view)), held);
+	assert.equal(detail(await settle(view, 140)).includes("Line"), true);
+	assert.equal(detail(await settle(view)), held);
+	view.press("f");
+	const tail = await settle(view);
+	assert.match(tail, /Line 40\./);
+	assert.match(tail, /◆ Run make/);
+	assert.doesNotMatch(tail, /Other/);
+});
+
+test("a late read for a previous selection never replaces the current one", async (t) => {
+	const first = record("5636");
+	const second = record("1001");
+	const capture = audited(t, [first, second]);
+	capture.say(first.id, [{ type: "text", text: "First child text." }]);
+	capture.say(second.id, [{ type: "text", text: "Second child text." }]);
+	const held = [];
+	const audit = {
+		list: capture.audit.list,
+		segment: capture.audit.segment,
+		async read(child, cursor) {
+			if (child === first.id) {
+				await new Promise((resolve) => held.push(resolve));
+			}
+			return capture.audit.read(child, cursor);
+		},
+	};
+	const view = open(fakeSessions([first, second]), { rows: 30, audit });
+	view.lines(120);
+	assert.equal(held.length, 1);
+	view.press("j");
+	assert.match(await settle(view), /Second child text\./);
+	for (const release of held.splice(0)) release();
+	const text = await settle(view);
+	assert.match(text, /Second child text\./);
+	assert.doesNotMatch(text, /First child text\./);
+});
+
+async function written(audit, id) {
+	for (let i = 0; i < 400; i++) {
+		const { health } = await audit.read(id);
+		if (health.written === health.received) return;
+		await delay(5);
+	}
+	assert.fail("the evidence was never written");
+}
+
+const detailColumn = (text) =>
+	text.split("\n").map((line) => line.split("│")[2] ?? "");
+
+test("an expanded huge result is read in bounded parts, every row is reachable in both directions, and the anchor survives resize and theme", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child], { limits: { chunk: 1024, windowBytes: 4096 } });
+	const rows = Array.from(
+		{ length: 300 },
+		(_, i) => `r${String(i).padStart(3, "0")}. ${"wide ".repeat(18)}end`,
+	);
+	capture.tool(child.id, "big", "bash", { command: "cat log" }, rows.join("\n"));
+	await written(capture.audit, child.id);
+	const reads = [];
+	const audit = {
+		list: capture.audit.list,
+		read: capture.audit.read,
+		async segment(id, cursor) {
+			reads.push(cursor.offset);
+			return capture.audit.segment(id, cursor);
+		},
+	};
+	const view = open(fakeSessions([child]), { rows: 24, audit });
+	const text = await settle(view);
+	assert.match(text, /◆ Run cat log/);
+	assert.match(text, /… large output · Ctrl\+O to expand/);
+	assert.equal(reads.length, 0);
+
+	view.press("\t", "\x0f");
+	assert.match(await settle(view), /r299\. wide/);
+
+	const back = [];
+	for (let i = 0; i < 400 && !back.join("").includes("r000"); i++) {
+		view.press("\x0b");
+		back.push(...detailColumn(await settle(view)));
+	}
+	assert.match(back.join("\n"), /result\.content\.0\.text/);
+
+	const seen = [];
+	for (let i = 0; i < 400 && !seen.join("").includes("r299"); i++) {
+		seen.push(...detailColumn(await settle(view)));
+		view.press("\n");
+	}
+	const joined = seen.join("").replace(/\s+/g, "");
+	for (const row of rows) assert.ok(joined.includes(row.replace(/\s+/g, "")), row.slice(0, 5));
+	assert.ok(new Set(reads).size < 60);
+
+	const firstRow = (width) =>
+		detailColumn(view.lines(width).join("\n"))
+			.join("\n")
+			.match(/r(\d{3})\./)?.[1];
+	view.press("\x0b", "\x0b", "\x0b");
+	await settle(view);
+	const anchored = firstRow(120);
+	assert.ok(anchored);
+	await settle(view, 90);
+	assert.equal(firstRow(90), anchored);
+	view.component.invalidate();
+	await settle(view);
+	assert.equal(firstRow(120), anchored);
+});
+
+test("hostile evidence is shown terminal-safe at every width without changing what the audit retains", async (t) => {
+	const hostile = (label) => `${label}\x1b[2J\x1b]52;c;eA==\x07\x9b31m‮⁦end`;
+	const child = record("5636", { task: hostile("task") });
+	const root = withAgentDirectory(t);
+	const old = record("9e01", { task: hostile("old"), role: hostile("role") });
+	const before = audited(t, [old], { root });
+	await before.audit.close();
+	const capture = audited(t, [child], { root });
+	capture.emit(child.id, {
+		type: "message_start",
+		message: { role: "user", content: [{ type: "text", text: hostile("steer") }] },
+	});
+	capture.say(child.id, [
+		{ type: "thinking", thinking: hostile("thought") },
+		{ type: "text", text: hostile("text") },
+	]);
+	capture.tool(child.id, "c1", hostile("tool"), { path: hostile("path") }, hostile("output"), true);
+	const view = open(fakeSessions([child]), { rows: 40, audit: capture.audit });
+	await settle(view);
+	for (const rows of [10, 24, 40]) {
+		view.tui.terminal.rows = rows;
+		for (const width of [40, 56, 64, 65, 80, 120, 200]) {
+			for (const pane of ["list", "detail"]) {
+				const raw = (await settle(view, width)) && view.raw(width);
+				assert.ok(raw.length <= rows, `${width}x${rows}`);
+				for (const line of raw) {
+					assert.ok(visibleWidth(line) <= width, `${width}x${rows} ${pane}`);
+					for (const sequence of ["\x1b[2J", "\x1b]52;c;", "\x9b", "\x07", "‮", "⁦"]) {
+						assert.equal(line.includes(sequence), false, JSON.stringify(sequence));
+					}
+				}
+				view.press("\t");
+			}
+		}
+	}
+	const kept = await capture.audit.read(child.id);
+	assert.ok(JSON.stringify(kept.observations).includes("text\\u001b[2J"));
+});
+
+test("unseating the child-session capability closes Fleet while accepted work and its auditing continue", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	const sessions = fakeSessions([child]);
+	const view = open(sessions, { audit: capture.audit });
+	await settle(view);
+	replaceSelection({
+		schemaVersion: 1,
+		capabilities: {
+			...Object.fromEntries(capabilities.map((capability) => [capability, true])),
+			"child-session": false,
+		},
+		expectations: {},
+	});
+	try {
+		assert.deepEqual(view.raw(120), []);
+		assert.equal(view.closed(), true);
+		capture.say(child.id, [{ type: "text", text: "Still working after Fleet closed." }]);
+		assert.equal(sessions.get(child.id).state, "running");
+		const window = await capture.audit.read(child.id);
+		assert.ok(
+			window.transcript.some((entry) =>
+				JSON.stringify(entry.content ?? "").includes("Still working after Fleet closed."),
+			),
+		);
+	} finally {
+		replaceSelection({
+			schemaVersion: 1,
+			capabilities: Object.fromEntries(capabilities.map((capability) => [capability, true])),
+			expectations: {},
+		});
+	}
+});
+
+test("a long transcript opens on its tail in bounded windows and backscroll reaches the prompt", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	for (let i = 0; i < 400; i++) {
+		capture.say(child.id, [{ type: "text", text: `Line ${i}.` }]);
+		if (i % 50 === 49) await written(capture.audit, child.id);
+	}
+	const cursors = [];
+	const audit = {
+		list: capture.audit.list,
+		segment: capture.audit.segment,
+		read(id, cursor) {
+			cursors.push(cursor?.from ?? 1);
+			return capture.audit.read(id, cursor);
+		},
+	};
+	const view = open(fakeSessions([child]), { rows: 20, audit });
+	const text = await settle(view);
+	assert.match(text, /Line 399\./);
+	assert.doesNotMatch(text, / Prompt ─/);
+	assert.ok(cursors.length <= 3, JSON.stringify(cursors));
+	view.press("\t");
+	let top = "";
+	for (let i = 0; i < 600 && !/ Prompt ─/.test(top); i++) {
+		view.press("\x0b");
+		top = await settle(view);
+	}
+	assert.match(top, / Prompt ─/);
+	assert.match(top, /Line 0\./);
+	assert.ok(cursors.length < 40, JSON.stringify(cursors));
+});
+
+test("a detached view keeps its row when a streamed message is replaced by its final", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	const body = Array.from({ length: 60 }, (_, i) => `Para ${i}.`).join("\n\n");
+	const streaming = { role: "assistant", content: [] };
+	capture.emit(child.id, { type: "message_start", message: streaming });
+	capture.emit(child.id, {
+		type: "message_update",
+		message: streaming,
+		assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: body },
+	});
+	const sessions = fakeSessions([child]);
+	const view = open(sessions, { rows: 20, audit: capture.audit });
+	await settle(view);
+	view.press("\t", "\x0b", "\x0b");
+	const held = detailColumn(await settle(view)).slice(4).join("\n");
+	assert.match(held, /Para \d+\./);
+	capture.emit(child.id, {
+		type: "message_end",
+		message: { role: "assistant", content: [{ type: "text", text: body }] },
+	});
+	sessions.changed();
+	assert.equal(detailColumn(await settle(view)).slice(4).join("\n"), held);
+});
+
+test("a message streamed across several windows reads back once and in order, including a character split between windows", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	const streaming = { role: "assistant", content: [] };
+	capture.emit(child.id, { type: "message_start", message: streaming });
+	const deltas = [];
+	for (let i = 0; i < 300; i++) deltas.push(`d${i}\n`);
+	deltas[200] = "d200 \ud83d";
+	deltas[201] = "\ude00\n";
+	for (const [i, delta] of deltas.entries()) {
+		capture.emit(child.id, {
+			type: "message_update",
+			message: streaming,
+			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
+		});
+		if (i % 50 === 49) await written(capture.audit, child.id);
+	}
+	await written(capture.audit, child.id);
+	const view = open(fakeSessions([child]), { rows: 60, audit: capture.audit });
+	await settle(view);
+	view.press("\t");
+	const seen = [];
+	for (let i = 0; i < 200 && !seen.join("\n").includes(" Prompt ─"); i++) {
+		seen.unshift(...detailColumn(await settle(view)).slice(4, -1));
+		view.press("\x0b");
+	}
+	const text = seen.join("\n");
+	assert.equal(text.match(/\bd0\b/g)?.length >= 1, true);
+	const order = [...text.matchAll(/\bd(\d+)\b/g)].map((match) => Number(match[1]));
+	const unique = [...new Set(order)];
+	assert.deepEqual(unique, [...unique].sort((a, b) => a - b));
+	assert.equal(unique.length, 299);
+	assert.match(text, /d200 😀/);
 });

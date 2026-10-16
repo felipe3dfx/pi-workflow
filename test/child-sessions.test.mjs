@@ -5863,13 +5863,13 @@ test("alt+a and /workflow:subagents open a full-screen overlay of every child; j
 		assert.match(lines[0], /^ ┌─ Fleet 2 · 1 active ─+ \[×\] ─┐$/);
 		assert.match(
 			lines[1],
-			/^ │ {3}Active ─+ │ ◐ worker [0-9a-f]{4} +running · \d+s {2}│$/,
+			/^ │ {3}Working ─+ │ ◐ worker [0-9a-f]{4} +running · \d+s {2}│$/,
 		);
 		assert.match(
 			lines[2],
 			/^ │ {2}▸ ◐ worker [0-9a-f]{4} +running · \d+s │ model \(medium\) · wt: repo/,
 		);
-		assert.match(lines[3], /^ │ {3}Finished ─+ │ Run the tests/);
+		assert.match(lines[3], /^ │ {3}History ─+ │ Run the tests/);
 		assert.match(lines[4], /^ │ {4}✓ worker [0-9a-f]{4} Map the.* \d+s │/);
 		assert.match(
 			view.lines(60).at(-2),
@@ -6045,7 +6045,7 @@ test("Enter opens a live detail that follows the tail, collapses thinking with P
 		assert.match(body, /The doctor checks three things\./);
 		assert.match(body, /◆ Run npm test/);
 		assert.match(body, /Esc back {2}\| {2}Enter steer {2}\| {2}Ctrl\+J\/K scroll/);
-		assert.match(body, /s\/c cancel {2}\| {2}Ctrl\+T thinking/);
+		assert.match(body, /s\/c cancel {2}\| {2}Ctrl\+O expand\s[\s\S]*Ctrl\+T thinking/);
 
 		const renders = view.tui.renders;
 		child.spec.onEvent({
@@ -6175,7 +6175,7 @@ test("in fullscreen a click selects a row, a double click opens it, and each foo
 		assert.match(lines[1], /◐ worker [0-9a-f]{4} +running · \d+s/);
 		const at = lines.findIndex((line) => line.includes("Esc back"));
 		click(lines[at].indexOf("Esc back") + 1, at);
-		assert.match(view.lines(60)[1], /Active ─/);
+		assert.match(view.lines(60)[1], /Working ─/);
 		const footer = view.lines(60).at(-2);
 		click(footer.indexOf("s/c cancel") + 1, 10);
 		assert.match(view.lines(60).join("\n"), /Cancel worker [0-9a-f]{4}\? y\/n/);
@@ -6355,7 +6355,7 @@ test("the view lists waiting, running, queued, then finished children, and a cli
 		);
 		assert.equal(view.active(60), 2);
 		assert.match(view.lines(60)[2], /\? worker [0-9a-f]{4} asks question 1/);
-		assert.match(view.lines(60)[8], /Finished ─/);
+		assert.match(view.lines(60)[8], /History ─/);
 
 		view.component.handleMouse({
 			type: "click",
@@ -6673,7 +6673,11 @@ test("children launched by one codemode call are grouped under it with the numbe
 		const row = (id) => rows.findIndex((line) => line.includes(`worker ${id.slice(0, 4)}`));
 		assert.ok(row(direct) < at);
 		assert.match(rows[at + 2], new RegExp(`◐ worker ${second.slice(0, 4)}`));
-		assert.match(rows[at + 4], /✓ worker .*completed/);
+		const history = rows.findIndex((line) => /History ─/.test(line));
+		const again = lines.findIndex((line, i) => i > history && / script ipt7 ─/.test(line));
+		assert.ok(at < history && history < again, lines.join("\n"));
+		assert.match(lines[again + 1], /2 launched · 1 done +3\.0k tok/);
+		assert.match(rows[again + 2], /✓ worker .*completed/);
 	});
 });
 
@@ -6864,7 +6868,7 @@ test("a click after leaving the detail and before the next redraw opens nothing"
 			clickCount: 2,
 		});
 		assert.equal(click, undefined);
-		assert.match(view.lines(60)[1], /Active ─/);
+		assert.match(view.lines(60)[1], /Working ─/);
 	});
 });
 

@@ -168,7 +168,7 @@ export default function piWorkflowExtension(
 	});
 	pi.on("turn_end", () => childSessions.atBoundary());
 	pi.on("agent_settled", () => childSessions.atBoundary());
-	const childrenViews = createChildrenViews(childSessions, todo);
+	const childrenViews = createChildrenViews(childSessions, audit, todo);
 	registerChildrenBox(
 		pi,
 		childSessions,
