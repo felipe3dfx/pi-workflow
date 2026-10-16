@@ -1204,12 +1204,14 @@ export function createChildAudit(options: {
 		offset: number,
 		header: Header | undefined,
 		bytes?: number,
+		partial?: boolean,
 	): Observation {
 		return {
 			ordinal,
 			written: true,
 			large: {
-				...(bytes === undefined ? { partial: true as const } : { bytes }),
+				...(bytes === undefined ? {} : { bytes }),
+				...(partial ? { partial: true as const } : {}),
 				meta: header?.meta ?? {},
 				segment: {
 					child: record.identity.child,
@@ -1356,7 +1358,14 @@ export function createChildAudit(options: {
 			Math.min(limits.windowBytes, record.size - start),
 		);
 		let current:
-			| { ordinal: number; part: number; start: number; header: Header; texts: string[] }
+			| {
+					ordinal: number;
+					part: number;
+					start: number;
+					end: number;
+					header: Header;
+					texts: string[];
+			  }
 			| undefined;
 		let consumed = 0;
 		let last: number | undefined;
@@ -1395,7 +1404,14 @@ export function createChildAudit(options: {
 			}
 			const { header, payload } = parsed;
 			if (header.part === 0) {
-				current = { ordinal: header.ordinal, part: 0, start: offset, header, texts: [] };
+				current = {
+					ordinal: header.ordinal,
+					part: 0,
+					start: offset,
+					end: offset,
+					header,
+					texts: [],
+				};
 			} else if (current?.ordinal !== header.ordinal || current.part !== header.part) {
 				if (current) window.issues.add(damaged);
 				current = undefined;
@@ -1403,6 +1419,7 @@ export function createChildAudit(options: {
 			}
 			current.texts.push(payload);
 			current.part += 1;
+			current.end = start + at;
 			if (header.parts === undefined) continue;
 			const { ordinal, texts } = current;
 			current = undefined;
@@ -1424,14 +1441,50 @@ export function createChildAudit(options: {
 		}
 		if (current && current.ordinal >= window.from) {
 			if (current.start === start) {
+				const end = await committedEnd(record, current.end, current.ordinal, current.part);
 				window.observations.push(
-					placeholder(record, current.ordinal, current.start, current.header),
+					placeholder(
+						record,
+						current.ordinal,
+						current.start,
+						current.header,
+						undefined,
+						end === undefined,
+					),
 				);
+				if (end !== undefined) {
+					consumed = end - start;
+					last = current.ordinal;
+				}
 			} else consumed = current.start - start;
 		}
 		window.offset = start + consumed;
 		if (last !== undefined) window.from = last + 1;
 		return window;
+	}
+
+	async function committedEnd(record: Capture, offset: number, ordinal: number, part: number) {
+		for (let at = offset; at < record.size; part++) {
+			const buffer = await readAt(
+				record.path as string,
+				at,
+				Math.min(maxLine, record.size - at),
+			);
+			const newline = buffer.indexOf(10);
+			if (newline < 0) return undefined;
+			const parsed = parse(buffer.toString("utf8", 0, newline));
+			if (
+				!parsed ||
+				!("header" in parsed) ||
+				parsed.header.ordinal !== ordinal ||
+				parsed.header.part !== part
+			) {
+				return undefined;
+			}
+			at += newline + 1;
+			if (parsed.header.parts !== undefined) return at;
+		}
+		return undefined;
 	}
 
 	function currentParent() {

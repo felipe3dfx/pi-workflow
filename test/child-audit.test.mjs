@@ -842,6 +842,32 @@ test("a final the capture could not retain never appears authoritative", async (
 	assert.equal(core.get(id).state, "running");
 });
 
+test("a committed final larger than a window stays authoritative when the record has no index", async (t) => {
+	const { audit, launch, root } = auditedCore(t, {
+		limits: { chunk: 1024, windowBytes: 4096 },
+		run: () => new Promise(() => {}),
+	});
+	const { id, child } = await launch();
+	const streaming = { role: "assistant", content: [] };
+	child.spec.onEvent({ type: "message_start", message: streaming });
+	child.spec.onEvent(delta(streaming, "text_delta", 0, "half"));
+	child.spec.onEvent({
+		type: "message_end",
+		message: { role: "assistant", content: [{ type: "text", text: unicodeText(20_000) }] },
+	});
+	await flushed(audit, id);
+	await audit.close();
+	await rm(indexOf(root, id), { recursive: true });
+
+	await projects(
+		reopen(root, "parent-1", { limits: { chunk: 1024, windowBytes: 4096 } }),
+		id,
+		[{ message: "m1", final: true, parts: true }],
+		(entries) =>
+			entries.map(({ message, final, segment }) => ({ message, final, parts: segment !== undefined })),
+	);
+});
+
 test("a large final cut off by an unexpected close never replaces its streamed partials", async (t) => {
 	const { audit, launch, root } = auditedCore(t, {
 		limits: { chunk: 1024, windowBytes: 4096 },
@@ -2049,36 +2075,6 @@ test("a cancelled catalog repair leaves a valid catalog that a later repair comp
 	assert.equal(all.catalog, undefined);
 });
 
-test("the first catalog page stays bounded while many live children are not yet catalogued", async (t) => {
-	const { files } = catalogFailing();
-	const { audit, launch } = auditedCore(t, { files, limits: { catalog: 2 }, run: () => new Promise(() => {}) });
-	for (let i = 0; i < 3; i++) await flushed(audit, (await launch()).id);
-
-	assert.equal((await audit.list()).records.length, 2);
-});
-
-test("the parent's records are listed in bounded pages, live working children in the working section", async (t) => {
-	const { audit, core, launch, root } = auditedCore(t, { limits: { catalog: 2 } });
-	const ids = [];
-	for (let i = 0; i < 3; i++) ids.push((await launch()).id);
-	await eventually(async () => core.get(ids[2]).state, (state) => state === "running");
-	for (const id of ids) await flushed(audit, id);
-
-	const first = await audit.list();
-	assert.equal(first.records.length, 2);
-	assert.ok(first.next);
-	const second = await audit.list(first.next);
-	assert.equal(second.next, undefined);
-	const all = [...first.records, ...second.records];
-	assert.deepEqual(all.map(({ child }) => child).sort(), [...ids].sort());
-	assert.ok(all.every(({ section, state }) => section === "working" && state === "running"));
-
-	await audit.close();
-	const later = reopen(root, "parent-1", { limits: { catalog: 2 } });
-	const reopened = await later.list();
-	assert.equal(reopened.records.length, 2);
-	assert.equal((await later.list(reopened.next)).records.length, 1);
-});
 test("a catalog append failing while the catalog is repaired keeps the incomplete-catalog warning", async (t) => {
 	const { state, files } = catalogFailing();
 	state.failing = false;
@@ -2132,3 +2128,33 @@ test("a journal that exists but cannot be read is not reported missing", async (
 	assert.doesNotMatch(record.health.warning, /missing/);
 });
 
+test("the first catalog page stays bounded while many live children are not yet catalogued", async (t) => {
+	const { files } = catalogFailing();
+	const { audit, launch } = auditedCore(t, { files, limits: { catalog: 2 }, run: () => new Promise(() => {}) });
+	for (let i = 0; i < 3; i++) await flushed(audit, (await launch()).id);
+
+	assert.equal((await audit.list()).records.length, 2);
+});
+
+test("the parent's records are listed in bounded pages, live working children in the working section", async (t) => {
+	const { audit, core, launch, root } = auditedCore(t, { limits: { catalog: 2 } });
+	const ids = [];
+	for (let i = 0; i < 3; i++) ids.push((await launch()).id);
+	await eventually(async () => core.get(ids[2]).state, (state) => state === "running");
+	for (const id of ids) await flushed(audit, id);
+
+	const first = await audit.list();
+	assert.equal(first.records.length, 2);
+	assert.ok(first.next);
+	const second = await audit.list(first.next);
+	assert.equal(second.next, undefined);
+	const all = [...first.records, ...second.records];
+	assert.deepEqual(all.map(({ child }) => child).sort(), [...ids].sort());
+	assert.ok(all.every(({ section, state }) => section === "working" && state === "running"));
+
+	await audit.close();
+	const later = reopen(root, "parent-1", { limits: { catalog: 2 } });
+	const reopened = await later.list();
+	assert.equal(reopened.records.length, 2);
+	assert.equal((await later.list(reopened.next)).records.length, 1);
+});
