@@ -970,6 +970,37 @@ test("a large Unicode result is captured in bounded parts and read back exactly"
 	assert.ok(Math.max(...files.writes) <= 1024 + 512);
 });
 
+test("copying an observation stops walking its containers once the capture budget is exceeded", async (t) => {
+	const audit = createChildAudit({
+		root: withAgentDirectory(t),
+		parent: () => "parent-1",
+		limits: { bytes: 64 * 1024, chunk: 1024 },
+	});
+	let reads = 0;
+	const counted = (target) =>
+		new Proxy(target, {
+			get(object, key, receiver) {
+				reads += 1;
+				return Reflect.get(object, key, receiver);
+			},
+		});
+	const many = 50_000;
+	const containers = [
+		Object.fromEntries(Array.from({ length: many }, (_, i) => [`k${i}`, "x".repeat(100)])),
+		Array.from({ length: many }, () => "x".repeat(100)),
+	];
+	for (const [index, container] of containers.entries()) {
+		const id = `child-${index}`;
+		const capture = audit.begin({ ...plan, child: id, instructions: "", tools: [], createdAt: 0 });
+		reads = 0;
+		capture.event(toolEvent("start", "c1", { args: counted(container) }));
+
+		const window = await eventually(() => audit.read(id), allWritten);
+		assert.match(window.health.warning, /exceeds the whole audit capture budget/);
+		assert.ok(reads < many / 10, `${reads} properties were read`);
+	}
+});
+
 test("one observation larger than the whole budget is refused visibly, not hidden behind a small entry", async (t) => {
 	const { audit, core, sent, launch } = auditedCore(t, {
 		limits: { bytes: 16 * 1024, chunk: 1024 },

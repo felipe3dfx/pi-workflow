@@ -1934,14 +1934,18 @@ function snapshot(value: unknown, bound: number) {
 		bytes += 8;
 		let copied: unknown;
 		if (Array.isArray(value)) {
-			copied = value.map((item) => {
-				const kept = copy(item);
-				return kept === undefined ? null : kept;
-			});
+			const items: unknown[] = [];
+			for (let index = 0; index < value.length && bytes <= bound; index++) {
+				const kept = copy(value[index]);
+				items.push(kept === undefined ? null : kept);
+			}
+			copied = items;
 		} else {
 			const fields: Record<string, unknown> = {};
-			for (const [key, field] of Object.entries(value)) {
-				const kept = copy(field);
+			for (const key in value) {
+				if (bytes > bound) break;
+				if (!Object.hasOwn(value, key)) continue;
+				const kept = copy((value as Record<string, unknown>)[key]);
 				if (kept === undefined) continue;
 				bytes += 2 * key.length + 8;
 				fields[key] = kept;
