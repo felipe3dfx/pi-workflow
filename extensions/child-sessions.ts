@@ -27,11 +27,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 
-import {
-	askParentTool,
-	type ChildAudit,
-	type ChildCapture,
-} from "./child-audit.ts";
+import type { ChildAudit, ChildCapture } from "./child-audit.ts";
 import { type ChildShell, createChildBashTool } from "./child-bash.ts";
 import type { createChildLauncher } from "./child-launcher.ts";
 import { createChildCodeGraphTool } from "./codegraph-tool.ts";
@@ -283,6 +279,7 @@ function parentProject(ctx: ExtensionContext): ParentProject {
 	return { cwd: ctx.cwd, trusted: ctx.isProjectTrusted() };
 }
 
+export const askParentTool = "ask_parent";
 const reportResultTool = "report_result";
 
 const mcpTools = [

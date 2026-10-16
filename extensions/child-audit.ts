@@ -4,9 +4,8 @@ import { crc32 } from "node:zlib";
 
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
+import { askParentTool } from "./child-sessions.ts";
 import { errorMessage } from "./error-message.ts";
-
-export const askParentTool = "ask_parent";
 
 export interface AuditIdentity {
 	parent?: string;
