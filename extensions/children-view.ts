@@ -951,6 +951,7 @@ function createChildrenView(
 			hideThinking = !hideThinking;
 		} else if (action === "expand") {
 			expanded = !expanded;
+			if (!expanded) transcript?.collapse();
 		} else if (action === "type" && item && child) {
 			selected = child.id;
 			focus = "detail";

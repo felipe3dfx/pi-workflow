@@ -284,6 +284,7 @@ export function createTranscript(options: {
 					observation.ordinal < first.cursor.from && keyOf(observation) === key,
 			),
 		);
+		held.observations.splice(0, held.observations.length - residentObservations);
 		held.next = read.next.from;
 	}
 
@@ -547,6 +548,9 @@ export function createTranscript(options: {
 		},
 		invalidate() {
 			cache.clear();
+		},
+		collapse() {
+			attached.clear();
 		},
 		info() {
 			return { identity, health, warning, missing };

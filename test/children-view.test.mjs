@@ -1425,18 +1425,35 @@ test("a message streamed far before the resident windows is revealed contiguousl
 		const numbers = text.trim().split(" ").map((word) => Number(word.slice(1)));
 		return numbers.every((n, i) => i === 0 || n === numbers[i - 1] + 1);
 	};
-	let pieces = [];
-	for (let i = 0; i < 400; i++) {
-		pieces = draw();
-		for (const piece of pieces) assert.ok(contiguous(piece.text), piece.text);
-		assert.ok(pieces.slice(0, -1).every((piece) => piece.earlier === undefined));
-		if (pieces.length === 1 && pieces[0].earlier === undefined && pieces[0].text.startsWith("w0 ")) break;
-		await delay(5);
-	}
+	const words = (text) => text.trim().split(" ").filter(Boolean);
+	const reached = new Set();
+	const step = async (done) => {
+		for (let i = 0; i < 800; i++) {
+			const pieces = draw();
+			for (const [index, piece] of pieces.entries()) {
+				assert.ok(contiguous(piece.text), piece.text);
+				for (const word of words(piece.text)) reached.add(word);
+				if (index === 0) {
+					assert.equal(piece.earlier === undefined, piece.text.startsWith("w0 "), piece.text);
+				} else {
+					assert.notEqual(piece.earlier, undefined);
+				}
+				if (index < pieces.length - 1) assert.ok(words(piece.text).length <= 384);
+			}
+			if (pieces.length > 0) assert.ok(words(pieces.at(-1).text).length <= 384 + 384);
+			if (pieces.length > 0 && done(pieces)) return pieces;
+			await delay(5);
+		}
+		assert.fail("the expansion never settled");
+	};
+	const slid = await step((pieces) => pieces.length === 1 && reached.size === 900);
+	assert.notEqual(slid[0].earlier, undefined);
+	assert.match(slid[0].text, / w899 $/);
+
+	transcript.collapse();
+	const again = await step((pieces) => pieces[0].text.startsWith("w0 "));
+	assert.equal(again.length, 2);
 	transcript.dispose();
-	assert.deepEqual(pieces, [
-		{ text: Array.from({ length: 900 }, (_, i) => `w${i} `).join(""), earlier: undefined },
-	]);
 });
 
 test("a detached view keeps its row when a streamed message is replaced by its final", async (t) => {
