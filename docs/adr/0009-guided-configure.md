@@ -8,7 +8,7 @@ Superseded by ADR 0012 for the command name and argumentless-command clauses.
 
 Amended by the deep harness modules feature (`docs/specs/deep-harness-modules.md`) to clarify what unseating stops.
 
-Superseded by ADR 0019 for where the operator question is placed.
+Amended by ADR 0019 for the operator question's position, width, and frame.
 
 ## Decision
 

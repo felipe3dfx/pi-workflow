@@ -1,17 +1,16 @@
 # Approved prototype: operator question v2
 
-Disposition: reference-only. The user approved variant V1 of `index.html` on 2026-10-16. It is evidence, not an implementation base. It supersedes the placement and visual points of `../child-session-operator/approved-questions-v1.md`.
+Disposition: reference-only. The user approved variant V1 of `index.html` on 2026-10-16. On the same day, a review moved its placement from the input to a docked overlay (ADR 0019). It is evidence, not an implementation base. It supersedes the visual points of `../child-session-operator/approved-questions-v1.md`.
 
 ## Confirmed
 
-- The question takes over the input for one interaction (screen place: the input). It is not an overlay.
-- It spans the full width with the shell margins. The transcript stays visible above it.
-- It uses the input's frame: rounded border in `borderAccent`, and a `question` caption on the bottom border.
+- The question is an overlay docked at the bottom across the full shell width, just above the footer.
+- It uses the input's frame: rounded border in `borderAccent` and a `question` caption on the bottom border.
 - The question, the options, and the free-text row all live inside the frame.
 - The active row is marked with `❯` and bold, like the command menu. There are no radios. `[x]`/`[ ]` appear only with `multiple: true`.
 - Descriptions sit to the right in `dim`.
-- The panel stops at half the terminal height. The option list scrolls with `↑ n more` / `↓ n more`.
-- When the question is answered, the input returns and the stream keeps the existing `◆ Asked … ↳ answer` row.
+- The panel stops at half the terminal height, and the option list scrolls with `↑ n more` / `↓ n more`. A question longer than that is shown in full.
+- When the question is answered, the stream keeps the existing `◆ Asked … ↳ answer` row.
 
 ## Unchanged from v1
 

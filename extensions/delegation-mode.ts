@@ -9,7 +9,7 @@ function orchestratorInstruction(): string {
 		"launching, steering, and answering children with the child tools",
 		"reading their results",
 		...(seated("todo", "above-input") ? ["planning with the todo tool"] : []),
-		...(seated("operator-questions", "input")
+		...(seated("operator-questions", "overlay")
 			? ["asking the operator questions with ask_user_choice or ask_user_question"]
 			: []),
 	];

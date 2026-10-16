@@ -9,7 +9,6 @@ import {
 const places = [
 	"header",
 	"above-input",
-	"input",
 	"overlay",
 	"message-stream",
 ] as const;
@@ -24,7 +23,7 @@ const placement: Record<Capability, { place: Place; order: number }[]> = {
 		{ place: "message-stream", order: 1 },
 	],
 	todo: [{ place: "above-input", order: 1 }],
-	"operator-questions": [{ place: "input", order: 0 }],
+	"operator-questions": [{ place: "overlay", order: 1 }],
 	"model-profiles": [{ place: "overlay", order: 2 }],
 	codegraph: [{ place: "message-stream", order: 2 }],
 	"compact-rendering": [{ place: "message-stream", order: 0 }],

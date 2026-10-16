@@ -34,7 +34,7 @@ export type AskUserAnswer =
 const CAPTION = " question ";
 const minFrame = 12;
 const minLabel = 4;
-const WAIT_WIDGET = "pi-workflow-question-wait";
+const footerRows = 1;
 
 function normalizeSingleLine(text: string): string {
 	return terminalSafeLine(text.replace(/\r\n/g, " "));
@@ -74,36 +74,6 @@ function describeAnswer(answer: AskUserAnswer): string {
 	return `Free-text answer: ${answer.text}`;
 }
 
-function overlayClosed(ctx: ExtensionContext, signal: AbortSignal | undefined): Promise<boolean> | undefined {
-	let open = false;
-	let settle = (_closed: boolean) => {};
-	ctx.ui.setWidget(WAIT_WIDGET, (tui) => {
-		open = tui.hasOverlay();
-		return {
-			render() {
-				if (!tui.hasOverlay()) queueMicrotask(() => settle(true));
-				return [];
-			},
-			invalidate() {},
-		};
-	});
-	if (!open) {
-		ctx.ui.setWidget(WAIT_WIDGET, undefined);
-		return undefined;
-	}
-	ctx.ui.notify("A question is waiting. Close this panel to answer it.", "info");
-	return new Promise((resolve) => {
-		const onAbort = () => settle(false);
-		settle = (closed) => {
-			settle = () => {};
-			signal?.removeEventListener("abort", onAbort);
-			ctx.ui.setWidget(WAIT_WIDGET, undefined);
-			resolve(closed);
-		};
-		signal?.addEventListener("abort", onAbort, { once: true });
-	});
-}
-
 async function askPanel(
 	ctx: ExtensionContext,
 	hints: FooterHints,
@@ -120,10 +90,6 @@ async function askPanel(
 	}
 
 	closeChildrenView();
-	const waiting = overlayClosed(ctx, signal);
-	if ((waiting && !(await waiting)) || signal?.aborted) {
-		return refusal(ABORTED_REASON);
-	}
 	const answer = await ctx.ui.custom<AskUserAnswer>((tui, theme, keybindings, done) => {
 		const freeTextIndex = options.length;
 		const rowCount = options.length + 1;
@@ -200,6 +166,7 @@ async function askPanel(
 					options.some((option) => option.description) ? Math.floor(0.45 * labelRoom) : labelRoom,
 				);
 				const descriptionWidth = contentWidth - prefixWidth - labelWidth - 2;
+				let wrapped: [string[], string[]] | undefined;
 				const optionRows = (i: number, limit = Number.POSITIVE_INFINITY) => {
 					const active = i === index;
 					const description = options[i].description ? normalizeSingleLine(options[i].description) : "";
@@ -220,8 +187,12 @@ async function askPanel(
 						lines.length > limit
 							? [...lines.slice(0, limit - 1), truncateToWidth(`${lines[limit - 1]}…`, width, "…")]
 							: lines;
-					const labelLines = cut(wrapTextWithAnsi(labels[i], labelWidth), labelWidth);
-					const descriptionLines = shown ? cut(wrapTextWithAnsi(description, descriptionWidth), descriptionWidth) : [];
+					wrapped ??= [
+						wrapTextWithAnsi(labels[i], labelWidth),
+						shown ? wrapTextWithAnsi(description, descriptionWidth) : [],
+					];
+					const labelLines = cut(wrapped[0], labelWidth);
+					const descriptionLines = cut(wrapped[1], descriptionWidth);
 					return Array.from({ length: Math.max(labelLines.length, descriptionLines.length) }, (_, k) => {
 						const label = strong(truncateToWidth(labelLines[k] ?? "", labelWidth, "", true));
 						const tail = descriptionLines[k] ? `  ${theme.fg("dim", descriptionLines[k])}` : "";
@@ -254,28 +225,27 @@ async function askPanel(
 						return visible - 1 + tall + (first > 0 ? 1 : 0) + (last < options.length ? 1 : 0);
 					};
 					const tall = active ? 1 : optionRows(index).length;
-					let visible = options.length;
-					while (visible > 1 && height(visible, tall) > budget) visible--;
-					const withMarks = height(visible, 1);
-					const marks = withMarks <= budget && options.length > Math.min(budget, withMarks);
-					if (!marks) visible = Math.min(options.length, budget);
-					const activeRows = active ? [] : optionRows(index, Math.max(1, budget - (marks ? withMarks : visible) + 1));
+					let visible = options.length - 1 + tall <= budget ? options.length : Math.max(1, budget - tall - 1);
+					if (visible + 1 < options.length && height(visible + 1, tall) <= budget) visible++;
+					if (options.length <= height(visible, 1)) visible = options.length;
+					const activeRows = active ? [] : optionRows(index, Math.max(1, budget - height(visible, 1) + 1));
 					const [first, last] = span(visible);
 					const more = (arrow: string, count: number) => {
-						const text = `${arrow} ${count} more`;
+						const long = `${arrow} ${count} more`;
+						const text = visibleWidth(long) <= contentWidth ? long : `${arrow} ${count}`;
 						const indent = prefixWidth + visibleWidth(text) <= contentWidth ? prefixWidth : 0;
 						return theme.fg("dim", `${" ".repeat(indent)}${text}`);
 					};
 					body.push("");
-					if (marks && first > 0) body.push(more("↑", first));
+					if (first > 0) body.push(more("↑", first));
 					for (let i = first; i < last; i++) body.push(...(i === index ? activeRows : optionRows(i)));
-					if (marks && last < options.length) body.push(more("↓", options.length - last));
+					if (last < options.length) body.push(more("↓", options.length - last));
 					body.push("");
 				}
 				body.push(freeRow);
 				const lines = body.map(row);
 				if (framed) {
-					const caption = frameWidth - 4 >= 6 ? truncateToWidth(CAPTION, frameWidth - 4) : "";
+					const caption = frameWidth - 4 >= visibleWidth(CAPTION) ? CAPTION : "";
 					lines.unshift(border(`╭${"─".repeat(frameWidth - 2)}╮`));
 					lines.push(
 						border(`╰${"─".repeat(frameWidth - 3 - visibleWidth(caption))}`) +
@@ -367,6 +337,9 @@ async function askPanel(
 		};
 
 		return component;
+	}, {
+		overlay: true,
+		overlayOptions: { anchor: "bottom-center", width: "100%", margin: { bottom: footerRows } },
 	}).finally(() => hints.set(undefined));
 
 	return { content: [{ type: "text", text: describeAnswer(answer) }], details: answer };
@@ -426,8 +399,8 @@ export function createAskUserChoiceTool(hints: FooterHints): ToolDefinition<type
 		name: "ask_user_choice",
 		label: "Ask User Choice",
 		description:
-			"Ask the operator to pick one of several numbered options, or several with multiple: true, in the input. Refuses in print mode or when no TUI session is available, and never launches a child session.",
-		promptSnippet: "Ask the operator to choose among numbered options in the input",
+			"Ask the operator to pick one of several numbered options, or several with multiple: true, in the question panel. Refuses in print mode or when no TUI session is available, and never launches a child session.",
+		promptSnippet: "Ask the operator to choose among numbered options in the question panel",
 		promptGuidelines: [
 			"Use ask_user_choice for a closed decision with a short list of named options.",
 			"Set multiple: true on ask_user_choice only when the options are not mutually exclusive.",
@@ -437,7 +410,7 @@ export function createAskUserChoiceTool(hints: FooterHints): ToolDefinition<type
 		executionMode: "sequential",
 		...askRenderers(),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			if (!seated("operator-questions", "input")) {
+			if (!seated("operator-questions", "overlay")) {
 				return {
 					content: [
 						{
@@ -465,8 +438,8 @@ export function createAskUserQuestionTool(hints: FooterHints): ToolDefinition<ty
 		name: "ask_user_question",
 		label: "Ask User Question",
 		description:
-			"Ask the operator an open question and collect a free-text answer in the input. Refuses in print mode or when no TUI session is available, and never launches a child session.",
-		promptSnippet: "Ask the operator an open question in the input",
+			"Ask the operator an open question and collect a free-text answer in the question panel. Refuses in print mode or when no TUI session is available, and never launches a child session.",
+		promptSnippet: "Ask the operator an open question in the question panel",
 		promptGuidelines: [
 			"Use ask_user_question for an open question with no fixed set of options.",
 			"ask_user_question never launches a child session and never invents an answer when the operator dismisses or is unavailable.",
@@ -475,7 +448,7 @@ export function createAskUserQuestionTool(hints: FooterHints): ToolDefinition<ty
 		executionMode: "sequential",
 		...askRenderers(),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			if (!seated("operator-questions", "input")) {
+			if (!seated("operator-questions", "overlay")) {
 				return {
 					content: [
 						{
@@ -495,7 +468,7 @@ export function createAskUserQuestionTool(hints: FooterHints): ToolDefinition<ty
 }
 
 export function syncAskUserTools(pi: ExtensionAPI, hints: FooterHints) {
-	const on = seated("operator-questions", "input");
+	const on = seated("operator-questions", "overlay");
 	offerTool(pi, createAskUserChoiceTool(hints), on);
 	offerTool(pi, createAskUserQuestionTool(hints), on);
 }
