@@ -155,6 +155,10 @@ interface AuditFiles {
 
 type Page = { n: number; entries: (Extent | null)[]; dirty: boolean };
 
+type Queued = { steer: string[]; "follow-up": string[] };
+
+type Streamed = { id: string; updates: number; ended?: true };
+
 interface Capture {
 	identity: AuditIdentity;
 	path?: string;
@@ -171,18 +175,20 @@ interface Capture {
 	tail?: number;
 	admitted: number;
 	held: { bytes: number; entries: number };
-	queued: { steer: string[]; "follow-up": string[] };
+	queued: Queued;
+	leaving: Queued;
 	answer?: number;
 	next: number;
-	seen: Set<string>;
-	updates: Map<string, number>;
+	delivered: WeakSet<object>;
+	calls: Map<string, { updates: number }>;
 	state?: string;
 	verdict?: string;
-	messages: { count: number; open?: string; ids: WeakMap<object, string> };
+	messages: { count: number; open?: Streamed; ids: WeakMap<object, Streamed> };
 	draining: boolean;
 	work: Promise<void>;
 	slot: boolean;
 	closed: boolean;
+	sealed: boolean;
 	fenced: boolean;
 	durable?: Health;
 	cause?: string;
@@ -432,6 +438,14 @@ export function createChildAudit(options: {
 		}
 		record.pending = [];
 		if (record.cause && !record.marker) await mark(record);
+		if (
+			record.written > 0 &&
+			!record.cause &&
+			!record.closed &&
+			!working.has(record.state ?? "queued")
+		) {
+			await retire(record);
+		}
 		admittedBytes -= maxLine;
 		record.held.bytes -= maxLine;
 		record.slot = false;
@@ -596,7 +610,8 @@ export function createChildAudit(options: {
 	}
 
 	async function seal(record: Capture) {
-		if (!record.path || !record.created || record.fenced) return;
+		if (!record.path || !record.created || record.fenced || record.sealed) return;
+		record.sealed = true;
 		await appendMarker(record, {
 			close: {
 				committed: record.committed,
@@ -606,6 +621,15 @@ export function createChildAudit(options: {
 				...(record.verdict === undefined ? {} : { verdict: record.verdict }),
 			},
 		});
+	}
+
+	async function retire(record: Capture) {
+		record.closed = true;
+		live.delete(record);
+		await seal(record);
+		if (records.get(record.identity.child) === record) {
+			records.delete(record.identity.child);
+		}
 	}
 
 	function abandon(record: Capture) {
@@ -653,35 +677,34 @@ export function createChildAudit(options: {
 		cancel();
 		for (const record of closing) {
 			if (!sealed.has(record)) abandon(record);
-			record.seen.clear();
-			record.updates.clear();
+			record.calls.clear();
 			record.queued = { steer: [], "follow-up": [] };
+			record.leaving = { steer: [], "follow-up": [] };
 		}
 		return { closed: sealed.size, expired: closing.length - sealed.size };
 	}
 
-	function enqueued(
-		record: Capture,
-		source: "steer" | "follow-up",
-		texts: readonly string[],
-	) {
-		const awaiting = [...record.queued[source]];
-		for (const text of texts) {
-			const index = awaiting.indexOf(text);
-			if (index >= 0) {
-				awaiting.splice(index, 1);
-				continue;
+	function enqueued(record: Capture, current: Queued) {
+		for (const source of ["steer", "follow-up"] as const) {
+			const left = [...record.queued[source]];
+			for (const text of current[source]) {
+				const index = left.indexOf(text);
+				if (index >= 0) {
+					left.splice(index, 1);
+					continue;
+				}
+				admit(record, { kind: "input", source, delivery: "queued", text });
 			}
-			record.queued[source].push(text);
-			admit(record, { kind: "input", source, delivery: "queued", text });
+			record.queued[source] = [...current[source]];
+			record.leaving[source] = left;
 		}
 	}
 
 	function delivered(record: Capture, text: string) {
+		const leaving = record.leaving;
+		record.leaving = { steer: [], "follow-up": [] };
 		for (const source of ["steer", "follow-up"] as const) {
-			const index = record.queued[source].indexOf(text);
-			if (index < 0) continue;
-			record.queued[source].splice(index, 1);
+			if (!leaving[source].includes(text)) continue;
 			admit(record, { kind: "input", source, delivery: "delivered", text });
 			return;
 		}
@@ -689,6 +712,8 @@ export function createChildAudit(options: {
 	}
 
 	function tool(record: Capture, event: ToolEvent) {
+		if (record.delivered.has(event)) return;
+		record.delivered.add(event);
 		const identity = `tool:${event.toolCallId}`;
 		const fields = {
 			kind: "tool" as const,
@@ -696,27 +721,31 @@ export function createChildAudit(options: {
 			...(event.parentToolCallId ? { parent: event.parentToolCallId } : {}),
 			name: event.toolName,
 		};
-		if (event.type === "tool_execution_update") {
-			const update = (record.updates.get(identity) ?? 0) + 1;
-			record.updates.set(identity, update);
+		const call = record.calls.get(event.toolCallId);
+		if (event.type === "tool_execution_start") {
+			if (call) return;
+			record.calls.set(event.toolCallId, { updates: 0 });
 			admit(record, {
 				...fields,
-				event: `${identity}:update:${update}`,
+				event: `${identity}:start`,
+				phase: "start",
+				args: event.args,
+			});
+		} else if (event.type === "tool_execution_update") {
+			const open = call ?? { updates: 0 };
+			record.calls.set(event.toolCallId, open);
+			open.updates += 1;
+			admit(record, {
+				...fields,
+				event: `${identity}:update:${open.updates}`,
 				phase: "update",
 				partial: event.partialResult,
 			});
-			return;
-		}
-		const phase = event.type === "tool_execution_start" ? "start" : "end";
-		const id = `${identity}:${phase}`;
-		if (record.seen.has(id)) return;
-		record.seen.add(id);
-		if (event.type === "tool_execution_start") {
-			admit(record, { ...fields, event: id, phase: "start", args: event.args });
 		} else {
+			record.calls.delete(event.toolCallId);
 			admit(record, {
 				...fields,
-				event: id,
+				event: `${identity}:end`,
 				phase: "end",
 				result: event.result,
 				error: event.isError,
@@ -727,35 +756,37 @@ export function createChildAudit(options: {
 	function message(record: Capture, event: MessageEvent) {
 		const messages = record.messages;
 		const source = event.message as object;
-		let id = messages.ids.get(source);
+		let streamed = messages.ids.get(source);
 		if (event.type === "message_start") {
-			if (id) return;
-			id = `m${++messages.count}`;
-			messages.ids.set(source, id);
-			messages.open = id;
+			if (streamed) return;
+			streamed = { id: `m${++messages.count}`, updates: 0 };
+			messages.ids.set(source, streamed);
+			messages.open = streamed;
 			admit(record, {
 				kind: "message",
-				event: `${id}:start`,
-				message: id,
+				event: `${streamed.id}:start`,
+				message: streamed.id,
 				phase: "start",
 				role: event.message.role,
 			});
 			return;
 		}
-		if (!id) {
-			id = messages.open ?? `m${++messages.count}`;
-			messages.ids.set(source, id);
-			messages.open = id;
+		if (!streamed) {
+			streamed = messages.open ?? { id: `m${++messages.count}`, updates: 0 };
+			messages.ids.set(source, streamed);
+			messages.open = streamed;
 		}
+		const id = streamed.id;
 		if (event.type === "message_update") {
+			if (record.delivered.has(event)) return;
+			record.delivered.add(event);
 			const update = event.assistantMessageEvent;
 			const part = deltaParts[update.type];
 			if (!part || !("delta" in update)) return;
-			const count = (record.updates.get(id) ?? 0) + 1;
-			record.updates.set(id, count);
+			streamed.updates += 1;
 			admit(record, {
 				kind: "message",
-				event: `${id}:update:${count}`,
+				event: `${id}:update:${streamed.updates}`,
 				message: id,
 				phase: "update",
 				block: update.contentIndex,
@@ -764,10 +795,9 @@ export function createChildAudit(options: {
 			});
 			return;
 		}
-		const end = `${id}:end`;
-		if (record.seen.has(end)) return;
-		record.seen.add(end);
-		if (messages.open === id) messages.open = undefined;
+		if (streamed.ended) return;
+		streamed.ended = true;
+		if (messages.open === streamed) messages.open = undefined;
 		const final = event.message as {
 			role: string;
 			content: unknown;
@@ -777,7 +807,7 @@ export function createChildAudit(options: {
 		};
 		admit(record, {
 			kind: "message",
-			event: end,
+			event: `${id}:end`,
 			message: id,
 			phase: "end",
 			role: final.role,
@@ -794,8 +824,7 @@ export function createChildAudit(options: {
 
 	function event(record: Capture, event: AgentSessionEvent) {
 		if (event.type === "queue_update") {
-			enqueued(record, "steer", event.steering);
-			enqueued(record, "follow-up", event.followUp);
+			enqueued(record, { steer: [...event.steering], "follow-up": [...event.followUp] });
 		} else if (event.type === "message_start" && event.message.role === "user") {
 			delivered(record, contentText(event.message.content));
 		} else if (
@@ -851,14 +880,16 @@ export function createChildAudit(options: {
 			admitted: 0,
 			held: { bytes: 0, entries: 0 },
 			queued: { steer: [], "follow-up": [] },
+			leaving: { steer: [], "follow-up": [] },
 			next: 0,
-			seen: new Set(),
-			updates: new Map(),
+			delivered: new WeakSet(),
+			calls: new Map(),
 			messages: { count: 0, ids: new WeakMap() },
 			draining: false,
 			work: Promise.resolve(),
 			slot: false,
 			closed: false,
+			sealed: false,
 			fenced: false,
 			lost: 0,
 		};

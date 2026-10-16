@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { access, mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
@@ -426,6 +426,52 @@ test("nested tool calls are captured live with their arguments, updates, and res
 	]);
 });
 
+test("the same update event delivered twice is recorded once, while distinct equal updates stay distinct", async (t) => {
+	const { audit, launch } = auditedCore(t, { run: () => new Promise(() => {}) });
+	const { id, child } = await launch();
+	const emit = (event) => child.spec.onEvent(event);
+	const update = () =>
+		toolEvent("update", "c1", { partialResult: { content: [{ type: "text", text: "same" }] } });
+	const repeated = update();
+	emit(toolEvent("start", "c1", { args: { path: "a" } }));
+	emit(repeated);
+	emit(repeated);
+	emit(update());
+	const streaming = { role: "assistant", content: [] };
+	const piece = delta(streaming, "text_delta", 0, "same");
+	emit({ type: "message_start", message: streaming });
+	emit(piece);
+	emit(piece);
+	emit(delta(streaming, "text_delta", 0, "same"));
+
+	const window = await eventually(() => audit.read(id), allWritten);
+	assert.deepEqual(events(window), [
+		"tool:c1:start",
+		"tool:c1:update:1",
+		"tool:c1:update:2",
+		"m1:start",
+		"m1:update:1",
+		"m1:update:2",
+	]);
+});
+
+test("a finished child's record is closed after its drain and read back from its journal", async (t) => {
+	const { audit, core, sent, launch } = auditedCore(t);
+	const { id, child } = await launch();
+	child.spec.onEvent(userMessage("alpha"));
+	await finishesUnchanged(core, id, child, sent);
+
+	const window = await eventually(() => audit.read(id), (read) => read.health.closed);
+	assert.deepEqual(window.health, { complete: true, closed: true, written: 6 });
+	assert.deepEqual(inputs(window).map(({ text }) => text), ["alpha"]);
+	assert.deepEqual(outcome((await audit.list()).records[0]), {
+		section: "history",
+		state: "completed",
+		verdict: "done",
+		interrupted: undefined,
+	});
+});
+
 const delta = (message, type, contentIndex, text) => ({
 	type: "message_update",
 	message,
@@ -543,7 +589,7 @@ test("execution transitions and each corrected Verdict report are recorded apart
 		(state) => state === "completed",
 	);
 
-	const window = await eventually(() => audit.read(id), allWritten);
+	const window = await eventually(() => audit.read(id), (read) => read.health.closed);
 	assert.deepEqual(
 		window.observations.map(({ kind, state, verdict, result }) => ({
 			kind,
@@ -574,7 +620,7 @@ test("execution transitions and each corrected Verdict report are recorded apart
 			},
 		],
 	);
-	assert.deepEqual(window.health, { complete: true, received: 6, admitted: 6, written: 6, lost: 0 });
+	assert.deepEqual(window.health, { complete: true, closed: true, written: 6 });
 });
 
 test("concurrent children keep their own order and correlation, and identical text from distinct events stays distinct", async (t) => {
@@ -663,6 +709,8 @@ function faultyFiles(fault = {}) {
 		writes,
 		reads,
 		mkdir,
+		readdir,
+		stat,
 		async rename(from, to) {
 			await fault.rename?.(from, to);
 			await rename(from, to);
@@ -1220,7 +1268,7 @@ test("an explicit repair can be cancelled, then recovers only verified evidence 
 	const { id, child } = await launch();
 	for (const text of ["alpha", "bravo", "charlie"]) child.spec.onEvent(userMessage(text));
 	await finishesUnchanged(core, id, child, sent);
-	await drained(audit, root, id);
+	await eventually(() => audit.read(id), (read) => read.health.closed);
 	const stale = (await audit.read(id)).next;
 	await damage(journalOf(root, id), "bravo", "brava");
 	await writeFile(journalOf(root, id), "torn", { flag: "a" });
@@ -1262,7 +1310,8 @@ test("evidence in an unsupported format stays visible as uninterpreted after rep
 	const { audit, core, sent, launch, root } = auditedCore(t);
 	const { id, child } = await launch();
 	await finishesUnchanged(core, id, child, sent);
-	const written = (await drained(audit, root, id)).health.written;
+	const written = (await eventually(() => audit.read(id), (read) => read.health.closed)).health
+		.written;
 	await writeFile(journalOf(root, id), forged({ v: 2, ordinal: written, part: 0, parts: 1 }), {
 		flag: "a",
 	});
