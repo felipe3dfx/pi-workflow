@@ -1463,7 +1463,8 @@ test("a message streamed far before the resident windows is revealed contiguousl
 	await step(() => ++redraws > 300);
 
 	transcript.collapse();
-	await step((pieces) => pieces[0].text.startsWith("w0 "));
+	const again = await step((pieces) => pieces[0].text.startsWith("w0 "));
+	assert.equal(again.length, 2);
 	transcript.dispose();
 });
 
