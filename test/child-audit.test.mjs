@@ -26,9 +26,9 @@ const plan = {
 
 function auditedCore(
 	t,
-	{ root = withAgentDirectory(t), parent = "parent-1", limits, run, files, schedule, timer } = {},
+	{ root = withAgentDirectory(t), parent = "parent-1", limits, run, dispose, files, schedule, timer } = {},
 ) {
-	const children = fakeChildren({ run });
+	const children = fakeChildren({ run, dispose });
 	const audit = createChildAudit({ root, parent: () => parent, limits, files, schedule, timer });
 	const sent = [];
 	const core = createChildSessions({
@@ -424,6 +424,57 @@ test("nested tool calls are captured live with their arguments, updates, and res
 			final: true,
 		},
 	]);
+});
+
+test("evidence the cancelled child emits while it is disposed is recorded before its record closes", async (t) => {
+	const aborted = { role: "assistant", content: [], stopReason: "aborted" };
+	const { audit, core, launch } = auditedCore(t, {
+		run: () => new Promise(() => {}),
+		dispose: async (child) => {
+			await delay(20);
+			child.spec.onEvent({ type: "message_end", message: aborted });
+			child.spec.onEvent(toolEvent("end", "c1", { result: { content: [] }, isError: true }));
+		},
+	});
+	const { id, child } = await launch();
+	await eventually(async () => core.get(id).state, (state) => state === "running");
+	child.spec.onEvent({ type: "message_start", message: aborted });
+	child.spec.onEvent(toolEvent("start", "c1", { args: { path: "a" } }));
+	core.cancel(id, false);
+
+	const window = await eventually(() => audit.read(id), (read) => read.health.closed);
+	assert.deepEqual(events(window), ["m1:start", "tool:c1:start", "m1:end", "tool:c1:end"]);
+	assert.deepEqual(window.health, { complete: true, closed: true, written: 8 });
+});
+
+test("evidence arriving after a record closed is reported lost, never dropped silently", async (t) => {
+	const root = withAgentDirectory(t);
+	const audit = createChildAudit({ root, parent: () => "parent-1" });
+	const capture = audit.begin({
+		child: "late",
+		role: "worker",
+		task: "Task",
+		references: [],
+		instructions: "",
+		tools: [],
+		model: "p/m",
+		thinking: "low",
+		worktree: "/tmp",
+		createdAt: 0,
+	});
+	audit.execution("late", "running");
+	audit.execution("late", "cancelled");
+	capture.disposed();
+	await eventually(() => audit.read("late"), (read) => read.health.closed);
+	capture.event(toolEvent("end", "c1", { result: { content: [] }, isError: true }));
+
+	const window = await eventually(
+		() => createChildAudit({ root, parent: () => "parent-1" }).read("late"),
+		(read) => !read.health.complete,
+	);
+	assert.equal(window.health.closed, false);
+	assert.equal(window.health.lostFrom, 3);
+	assert.match(window.health.warning, /arrived after the record was closed/);
 });
 
 test("the same update event delivered twice is recorded once, while distinct equal updates stay distinct", async (t) => {

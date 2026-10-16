@@ -189,6 +189,8 @@ interface Capture {
 	work: Promise<void>;
 	slot: boolean;
 	closed: boolean;
+	disposed: boolean;
+	retired: boolean;
 	sealed: boolean;
 	fenced: boolean;
 	durable?: Health;
@@ -351,7 +353,10 @@ export function createChildAudit(options: {
 	}
 
 	function admit(record: Capture, evidence?: Evidence) {
-		if (record.closed) return false;
+		if (record.closed) {
+			if (record.retired) late(record);
+			return false;
+		}
 		const ordinal = record.next++;
 		if (record.cause) {
 			lose(record, ordinal);
@@ -439,14 +444,7 @@ export function createChildAudit(options: {
 		}
 		record.pending = [];
 		if (record.cause && !record.marker) await mark(record);
-		if (
-			record.written > 0 &&
-			!record.cause &&
-			!record.closed &&
-			!working.has(record.state ?? "queued")
-		) {
-			await retire(record);
-		}
+		if (retirable(record)) await retire(record);
 		admittedBytes -= maxLine;
 		record.held.bytes -= maxLine;
 		record.slot = false;
@@ -624,13 +622,35 @@ export function createChildAudit(options: {
 		});
 	}
 
+	function retirable(record: Capture) {
+		return (
+			record.disposed &&
+			record.written > 0 &&
+			!record.cause &&
+			!record.closed &&
+			!working.has(record.state ?? "queued")
+		);
+	}
+
 	async function retire(record: Capture) {
 		record.closed = true;
+		record.retired = true;
 		live.delete(record);
 		await seal(record);
 		if (records.get(record.identity.child) === record) {
 			records.delete(record.identity.child);
 		}
+	}
+
+	function late(record: Capture) {
+		lose(record, record.next++);
+		if (record.cause) return;
+		record.cause = "Evidence arrived after the record was closed.";
+		const path = record.path as string;
+		const work = record.work;
+		record.work = work
+			.then(() => mark(record))
+			.finally(() => recovered.delete(path));
 	}
 
 	function abandon(record: Capture) {
@@ -905,6 +925,8 @@ export function createChildAudit(options: {
 			work: Promise.resolve(),
 			slot: false,
 			closed: false,
+			disposed: false,
+			retired: false,
 			sealed: false,
 			fenced: false,
 			lost: 0,
@@ -930,6 +952,14 @@ export function createChildAudit(options: {
 			reported: guarded((result: unknown) =>
 				admit(record, { kind: "report", result }),
 			),
+			disposed: guarded(() => {
+				record.disposed = true;
+				if (record.draining || !retirable(record)) return;
+				record.draining = true;
+				record.work = retire(record).finally(() => {
+					record.draining = false;
+				});
+			}),
 			answered: guarded((question: number, text: string) => {
 				record.answer = question;
 				admit(record, {

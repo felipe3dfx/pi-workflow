@@ -579,12 +579,13 @@ export function createChildSessions(options: {
 		} catch {}
 	}
 
-	function shutDown(handle: ChildHandle, id?: string) {
+	function shutDown(handle: ChildHandle, id?: string, capture?: ChildCapture) {
 		return handle
 			.dispose()
 			.catch((error: unknown) =>
 				warn(id ? `Child ${id}: ${errorMessage(error)}` : errorMessage(error)),
-			);
+			)
+			.finally(() => capture?.disposed());
 	}
 
 	function trace(child: Child) {
@@ -751,7 +752,7 @@ export function createChildSessions(options: {
 		} catch (error) {
 			warn(`Child ${record.id}: ${errorMessage(error)}`);
 		}
-		void shutDown(child.handle, record.id);
+		void shutDown(child.handle, record.id, child.capture);
 		pump();
 		changed();
 		if (!deliver || consumed.has(record.id)) return;
@@ -999,7 +1000,7 @@ export function createChildSessions(options: {
 			} finally {
 				watch.stop();
 				launch.signal?.removeEventListener("abort", abort);
-				void shutDown(handle, id);
+				void shutDown(handle, id, capture);
 			}
 		}
 		const child: Child = {
@@ -1280,7 +1281,9 @@ export function createChildSessions(options: {
 		}
 		changed();
 		await Promise.all(
-			working.map((child) => shutDown(child.handle, child.record.id)),
+			working.map((child) =>
+				shutDown(child.handle, child.record.id, child.capture),
+			),
 		);
 		return working.length;
 	}
