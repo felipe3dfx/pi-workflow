@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
+import { access, mkdir, open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -20,9 +20,12 @@ const plan = {
 	references: ["docs/spec.md"],
 };
 
-function auditedCore(t, { root = withAgentDirectory(t), parent = "parent-1", limits, run } = {}) {
+function auditedCore(
+	t,
+	{ root = withAgentDirectory(t), parent = "parent-1", limits, run, files, schedule } = {},
+) {
 	const children = fakeChildren({ run });
-	const audit = createChildAudit({ root, parent: () => parent, limits });
+	const audit = createChildAudit({ root, parent: () => parent, limits, files, schedule });
 	const sent = [];
 	const core = createChildSessions({
 		create: children.create,
@@ -81,7 +84,7 @@ test("an accepted child's identity is inspectable at once and then durably writt
 	});
 	assert.ok(live.identity.tools.includes("read"));
 	assert.equal(typeof live.identity.createdAt, "number");
-	assert.deepEqual(live.health, { complete: true, lost: 0 });
+	assert.deepEqual(live.health, { complete: true, received: 3, admitted: 3, written: 0, lost: 0 });
 
 	const durable = await eventually(() => audit.read(id), allWritten);
 	assert.equal(durable.identity.written, true);
@@ -226,11 +229,21 @@ test("an exhausted capture budget marks the record incomplete without stopping, 
 		child.spec.onEvent(userMessage(text));
 	}
 
-	const window = await eventually(() => audit.read(id), allWritten);
+	const window = await eventually(
+		() => audit.read(id),
+		(read) => allWritten(read) && read.health.marker,
+	);
 	assert.deepEqual(inputs(window).map(({ text }) => text), ["one"]);
-	assert.equal(window.health.complete, false);
-	assert.equal(window.health.lost, 2);
-	assert.match(window.health.warning, /budget/);
+	assert.deepEqual(window.health, {
+		complete: false,
+		received: 6,
+		admitted: 4,
+		written: 4,
+		lost: 2,
+		lostFrom: 4,
+		marker: "written",
+		warning: "The audit capture budget is exhausted.",
+	});
 	assert.deepEqual(core.get(id).state, "running");
 	assert.equal(children.created[0].aborts, 0);
 	assert.deepEqual(children.created[0].steered, []);
@@ -516,7 +529,7 @@ test("execution transitions and each corrected Verdict report are recorded apart
 			},
 		],
 	);
-	assert.deepEqual(window.health, { complete: true, lost: 0 });
+	assert.deepEqual(window.health, { complete: true, received: 6, admitted: 6, written: 6, lost: 0 });
 });
 
 test("concurrent children keep their own order and correlation, and identical text from distinct events stays distinct", async (t) => {
@@ -596,4 +609,336 @@ test("a final the capture could not retain never appears authoritative", async (
 	assert.equal(window.health.complete, false);
 	assert.equal(window.health.lost, 1);
 	assert.equal(core.get(id).state, "running");
+});
+
+function faultyFiles(fault = {}) {
+	const writes = [];
+	return {
+		writes,
+		mkdir,
+		async open(path, flags, mode) {
+			await fault.open?.(path, flags);
+			const handle = await open(path, flags, mode);
+			return {
+				async write(buffer, offset = 0, length = buffer.length - offset) {
+					const call = writes.push(length) - 1;
+					const plan = fault.write?.(call, length) ?? { bytes: length };
+					if (plan.bytes > 0) await handle.write(buffer, offset, plan.bytes);
+					if (plan.error) throw plan.error;
+					return { bytesWritten: plan.bytes };
+				},
+				read: (...args) => handle.read(...args),
+				close: async () => {
+					await fault.close?.();
+					await handle.close();
+				},
+			};
+		},
+	};
+}
+
+function manualScheduler() {
+	const tasks = [];
+	return {
+		schedule: (task) => tasks.push(task),
+		async runUntil(condition) {
+			for (let i = 0; i < 2000; i++) {
+				if (await condition()) return;
+				tasks.shift()?.();
+				await delay(1);
+			}
+			assert.fail("the scheduled work never reached the condition");
+		},
+	};
+}
+
+const done = {
+	verdict: "done",
+	files_changed: ["a.ts: fixed"],
+	validation: ["npm test: pass"],
+	left_undone: [],
+};
+
+async function finishesUnchanged(core, id, child, sent) {
+	child.spec.report(done);
+	child.result.resolve("Done.");
+	await eventually(
+		async () => core.get(id).state,
+		(state) => state === "completed",
+	);
+	await eventually(
+		async () => sent,
+		(messages) => messages.length === 1,
+	);
+	assert.equal(sent[0].customType, "pi-workflow-child-result");
+	assert.match(sent[0].content, /Done\./);
+	assert.equal(core.get(id).result.verdict, "done");
+	assert.equal(child.aborts, 0);
+	assert.deepEqual(child.steered, []);
+}
+
+const unicodeText = (length) => {
+	let text = "";
+	for (let i = 0; text.length < length; i++)
+		text += `${"a".repeat(i % 7)}\u{1F600}é\n"\\`;
+	return text;
+};
+
+const resultOf = (window, call) =>
+	window.transcript.find(
+		(entry) => entry.type === "tool" && entry.call === call,
+	)?.result;
+
+test("a large Unicode result is captured in bounded parts and read back exactly", async (t) => {
+	const files = faultyFiles();
+	const { audit, launch } = auditedCore(t, {
+		files,
+		limits: { chunk: 1024 },
+		run: () => new Promise(() => {}),
+	});
+	const { id, child } = await launch();
+	const text = unicodeText(40_000);
+	child.spec.onEvent(toolEvent("start", "c1", { args: { path: "big" } }));
+	child.spec.onEvent(
+		toolEvent("end", "c1", {
+			result: { content: [{ type: "text", text }] },
+			isError: false,
+		}),
+	);
+
+	const window = await eventually(() => audit.read(id), allWritten);
+	assert.deepEqual(resultOf(window, "c1"), {
+		content: [{ type: "text", text }],
+	});
+	assert.equal(window.health.complete, true);
+	assert.ok(files.writes.length > 40);
+	assert.ok(Math.max(...files.writes) <= 1024 + 64);
+});
+
+test("one observation larger than the whole budget is refused visibly, not hidden behind a small entry", async (t) => {
+	const { audit, core, sent, launch } = auditedCore(t, {
+		limits: { bytes: 16 * 1024, chunk: 1024 },
+	});
+	const { id, child } = await launch();
+	child.spec.onEvent(toolEvent("start", "c1", { args: { path: "big" } }));
+	child.spec.onEvent(
+		toolEvent("end", "c1", {
+			result: { content: [{ type: "text", text: "x".repeat(64 * 1024) }] },
+			isError: false,
+		}),
+	);
+	await finishesUnchanged(core, id, child, sent);
+
+	const window = await eventually(
+		() => audit.read(id),
+		(read) => allWritten(read) && read.health.marker,
+	);
+	const refused = window.health.lostFrom;
+	assert.equal(
+		window.observations.some((entry) => entry.ordinal >= refused),
+		false,
+	);
+	assert.equal(resultOf(window, "c1"), undefined);
+	assert.equal(window.health.complete, false);
+	assert.match(window.health.warning, /exceeds the whole audit capture budget/);
+	assert.doesNotMatch(window.health.warning, /not guaranteed/);
+	assert.equal(window.health.marker, "written");
+});
+
+test("an event counts as written only when its last part lands", async (t) => {
+	const files = faultyFiles();
+	const scheduler = manualScheduler();
+	const { audit, launch } = auditedCore(t, {
+		files,
+		schedule: scheduler.schedule,
+		limits: { chunk: 1024 },
+		run: () => new Promise(() => {}),
+	});
+	const { id, child } = await launch();
+	await scheduler.runUntil(async () => allWritten(await audit.read(id)));
+	const before = files.writes.length;
+	child.spec.onEvent(
+		toolEvent("end", "c1", {
+			result: { content: [{ type: "text", text: unicodeText(5000) }] },
+			isError: false,
+		}),
+	);
+	await scheduler.runUntil(() => files.writes.length === before + 1);
+	const window = await audit.read(id);
+
+	const big = window.observations.at(-1);
+	assert.equal(big.kind, "tool");
+	assert.equal(big.written, false);
+	assert.equal(window.health.admitted, big.ordinal + 1);
+	assert.equal(window.health.written, big.ordinal);
+	assert.equal(window.health.complete, true);
+});
+
+test("short writes are continued without losing or duplicating evidence", async (t) => {
+	const files = faultyFiles({
+		write: (_call, length) => ({ bytes: Math.min(length, 7) }),
+	});
+	const { audit, launch } = auditedCore(t, {
+		files,
+		limits: { chunk: 1024 },
+		run: () => new Promise(() => {}),
+	});
+	const { id, child } = await launch();
+	const text = unicodeText(3000);
+	child.spec.onEvent(
+		toolEvent("end", "c1", {
+			result: { content: [{ type: "text", text }] },
+			isError: false,
+		}),
+	);
+
+	const window = await eventually(() => audit.read(id), allWritten);
+	assert.deepEqual(resultOf(window, "c1"), {
+		content: [{ type: "text", text }],
+	});
+	assert.equal(window.health.complete, true);
+	assert.equal(window.health.written, window.health.received);
+});
+
+const failingNext = () => {
+	const state = { next: undefined };
+	const files = faultyFiles({
+		write: (_call, length) => {
+			const plan = state.next;
+			state.next = undefined;
+			return plan ?? { bytes: length };
+		},
+	});
+	return { files, failNext: (plan) => (state.next = plan) };
+};
+
+async function flushed(audit, id) {
+	return eventually(() => audit.read(id), allWritten);
+}
+
+test("a zero-byte write loses evidence exactly from that observation and a marker records the loss", async (t) => {
+	const { files, failNext } = failingNext();
+	const { audit, core, sent, launch } = auditedCore(t, { files });
+	const { id, child } = await launch();
+	const before = await flushed(audit, id);
+	failNext({ bytes: 0 });
+	child.spec.onEvent(userMessage("one"));
+	child.spec.onEvent(userMessage("two"));
+	await finishesUnchanged(core, id, child, sent);
+
+	const window = await eventually(
+		() => audit.read(id),
+		(read) => read.health.marker,
+	);
+	const first = before.health.received;
+	assert.equal(window.health.complete, false);
+	assert.equal(window.health.lostFrom, first);
+	assert.equal(window.health.uncertain, undefined);
+	assert.equal(window.health.written, first);
+	assert.equal(window.health.marker, "written");
+	assert.doesNotMatch(window.health.warning, /not guaranteed/);
+	assert.deepEqual(inputs(window), []);
+});
+
+test("an ambiguous failed append is declared uncertain and never retried", async (t) => {
+	const { files, failNext } = failingNext();
+	const { audit, core, sent, launch } = auditedCore(t, { files });
+	const { id, child } = await launch();
+	const before = await flushed(audit, id);
+	failNext({ bytes: 3, error: new Error("EIO") });
+	child.spec.onEvent(userMessage("one"));
+	child.spec.onEvent(userMessage("two"));
+	await finishesUnchanged(core, id, child, sent);
+
+	const window = await eventually(
+		() => audit.read(id),
+		(read) => read.health.marker,
+	);
+	const first = before.health.received;
+	assert.equal(window.health.uncertain, first);
+	assert.equal(window.health.lostFrom, first + 1);
+	assert.equal(window.health.written, first);
+	assert.equal(window.health.marker, "written");
+	assert.match(window.health.warning, /EIO/);
+	assert.equal(files.writes.length, before.health.written + 2);
+});
+
+test("when every write fails the child finishes normally and nothing is presented as durable", async (t) => {
+	const files = faultyFiles({
+		write: () => ({ bytes: 0, error: new Error("EIO") }),
+	});
+	const { audit, core, sent, launch } = auditedCore(t, { files });
+	const { id, child } = await launch();
+	await finishesUnchanged(core, id, child, sent);
+
+	const window = await eventually(
+		() => audit.read(id),
+		(read) => read.health.marker,
+	);
+	assert.equal(window.identity.written, false);
+	assert.equal(window.health.written, 0);
+	assert.equal(window.health.uncertain, 0);
+	assert.equal(window.health.marker, "failed");
+	assert.match(window.health.warning, /not guaranteed/);
+	assert.equal(
+		window.observations.some((entry) => entry.written),
+		false,
+	);
+});
+
+test("a journal that cannot be created loses everything from the identity and leaves no identity-less file", async (t) => {
+	const root = withAgentDirectory(t);
+	const files = faultyFiles({
+		open: () => {
+			throw new Error("EACCES");
+		},
+	});
+	const { audit, core, sent, launch } = auditedCore(t, { root, files });
+	const { id, child } = await launch();
+	await finishesUnchanged(core, id, child, sent);
+
+	const window = await eventually(
+		() => audit.read(id),
+		(read) => read.health.marker,
+	);
+	assert.equal(window.health.lostFrom, 0);
+	assert.equal(window.health.uncertain, undefined);
+	assert.equal(window.health.marker, "failed");
+	assert.match(window.health.warning, /EACCES.*not guaranteed/);
+	await assert.rejects(access(join(root, "parent-1", `${id}.jsonl`)));
+});
+
+test("evidence that cannot be snapshotted marks the record incomplete without reaching the child", async (t) => {
+	const { audit, core, sent, launch } = auditedCore(t);
+	const { id, child } = await launch();
+	const args = { path: "a" };
+	args.self = args;
+	child.spec.onEvent(toolEvent("start", "c1", { args }));
+	await finishesUnchanged(core, id, child, sent);
+
+	const window = await eventually(
+		() => audit.read(id),
+		(read) => read.health.marker,
+	);
+	assert.equal(window.health.complete, false);
+	assert.match(window.health.warning, /circular/i);
+});
+
+test("evidence observed while the journal is closing is still written", async (t) => {
+	const closing = Promise.withResolvers();
+	let closes = 0;
+	const files = faultyFiles({
+		close: () => {
+			closes += 1;
+			return closing.promise;
+		},
+	});
+	const { audit, launch } = auditedCore(t, { files, run: () => new Promise(() => {}) });
+	const { id, child } = await launch();
+	await eventually(async () => closes, (count) => count > 0);
+	child.spec.onEvent(userMessage("during close"));
+	closing.resolve();
+
+	const window = await eventually(() => audit.read(id), allWritten);
+	assert.deepEqual(inputs(window).map(({ text }) => text), ["during close"]);
 });
