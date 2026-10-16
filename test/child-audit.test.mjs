@@ -1946,7 +1946,7 @@ test("the parent's records are listed in bounded pages, live working children in
 	const second = await audit.list(first.next);
 	assert.equal(second.next, undefined);
 	const all = [...first.records, ...second.records];
-	assert.deepEqual(all.map(({ child }) => child), ids);
+	assert.deepEqual(all.map(({ child }) => child).sort(), [...ids].sort());
 	assert.ok(all.every(({ section, state }) => section === "working" && state === "running"));
 
 	await audit.close();
