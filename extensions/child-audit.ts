@@ -126,34 +126,6 @@ type Line =
 	| { header: Header; payload: string }
 	| { unsupported: number | undefined };
 
-type Entry =
-	| {
-			type: "message";
-			message: string;
-			role: string;
-			content: unknown;
-			usage?: unknown;
-			stopReason?: string;
-			errorMessage?: string;
-			segment?: SegmentCursor;
-			final: boolean;
-	  }
-	| ToolEntry;
-
-type ToolEntry = {
-	type: "tool";
-	call: string;
-	parent?: string;
-	name: string;
-	args?: unknown;
-	partial?: unknown;
-	result?: unknown;
-	error?: boolean;
-	argsSegment?: SegmentCursor;
-	resultSegment?: SegmentCursor;
-	final: boolean;
-};
-
 type Pending = { ordinal: number; value: unknown; bytes: number };
 
 interface AuditFile {
@@ -203,7 +175,6 @@ interface Capture {
 	queued: { steer: string[]; "follow-up": string[] };
 	next: number;
 	seen: Set<string>;
-	finals: Set<string>;
 	updates: Map<string, number>;
 	state?: string;
 	verdict?: string;
@@ -742,16 +713,14 @@ export function createChildAudit(options: {
 		record.seen.add(id);
 		if (event.type === "tool_execution_start") {
 			admit(record, { ...fields, event: id, phase: "start", args: event.args });
-		} else if (
+		} else {
 			admit(record, {
 				...fields,
 				event: id,
 				phase: "end",
 				result: event.result,
 				error: event.isError,
-			})
-		) {
-			record.finals.add(identity);
+			});
 		}
 	}
 
@@ -806,25 +775,21 @@ export function createChildAudit(options: {
 			stopReason?: string;
 			errorMessage?: string;
 		};
-		if (
-			admit(record, {
-				kind: "message",
-				event: end,
-				message: id,
-				phase: "end",
-				role: final.role,
-				content: final.content,
-				...(final.usage === undefined ? {} : { usage: final.usage }),
-				...(final.stopReason === undefined
-					? {}
-					: { stopReason: final.stopReason }),
-				...(final.errorMessage === undefined
-					? {}
-					: { errorMessage: final.errorMessage }),
-			})
-		) {
-			record.finals.add(id);
-		}
+		admit(record, {
+			kind: "message",
+			event: end,
+			message: id,
+			phase: "end",
+			role: final.role,
+			content: final.content,
+			...(final.usage === undefined ? {} : { usage: final.usage }),
+			...(final.stopReason === undefined
+				? {}
+				: { stopReason: final.stopReason }),
+			...(final.errorMessage === undefined
+				? {}
+				: { errorMessage: final.errorMessage }),
+		});
 	}
 
 	function event(record: Capture, event: AgentSessionEvent) {
@@ -883,7 +848,6 @@ export function createChildAudit(options: {
 			queued: { steer: [], "follow-up": [] },
 			next: 0,
 			seen: new Set(),
-			finals: new Set(),
 			updates: new Map(),
 			messages: { count: 0, ids: new WeakMap() },
 			draining: false,
@@ -1561,7 +1525,6 @@ export function createChildAudit(options: {
 		return {
 			identity,
 			observations,
-			transcript: transcript(record, observations),
 			health,
 			unavailable: window.unavailable,
 			...(window.issues.size > 0
@@ -1799,138 +1762,6 @@ export function createChildAudit(options: {
 			...(verified ? {} : { warning: "The record's identity could not be verified." }),
 			...(loss === undefined ? {} : { loss }),
 		};
-	}
-
-	function transcript(record: Capture, observations: Observation[]) {
-		const entries = new Map<string, Entry>();
-		for (const observation of observations) {
-			if (observation.large) {
-				large(entries, observation.large);
-				continue;
-			}
-			if (observation.kind === "message") {
-				project(record, entries, observation);
-				continue;
-			}
-			if (observation.kind !== "tool") continue;
-			const identity = `tool:${observation.call}`;
-			if (observation.phase === "update" && record.finals.has(identity)) {
-				continue;
-			}
-			const entry = (entries.get(identity) as ToolEntry | undefined) ?? {
-				type: "tool",
-				call: observation.call,
-				...(observation.parent ? { parent: observation.parent } : {}),
-				name: observation.name,
-				final: false,
-			};
-			entries.set(identity, entry);
-			if (observation.phase === "start") entry.args = observation.args;
-			else if (observation.phase === "update") {
-				if (!entry.final) entry.partial = observation.partial;
-			} else {
-				delete entry.partial;
-				entry.result = observation.result;
-				entry.error = observation.error;
-				entry.final = true;
-			}
-		}
-		return [...entries.values()];
-	}
-
-	function large(
-		entries: Map<string, Entry>,
-		{ segment, meta }: Large,
-	) {
-		const known = meta as {
-			kind?: string;
-			phase?: string;
-			message?: string;
-			role?: string;
-			call?: string;
-			parent?: string;
-			name?: string;
-			error?: boolean;
-		};
-		if (known.kind === "message" && known.phase === "end" && known.message) {
-			entries.set(known.message, {
-				type: "message",
-				message: known.message,
-				role: known.role ?? "assistant",
-				content: [],
-				segment,
-				final: true,
-			});
-			return;
-		}
-		if (known.kind !== "tool" || !known.call || known.phase === "update") {
-			return;
-		}
-		const identity = `tool:${known.call}`;
-		const entry = (entries.get(identity) as ToolEntry | undefined) ?? {
-			type: "tool",
-			call: known.call,
-			...(known.parent ? { parent: known.parent } : {}),
-			name: known.name ?? "",
-			final: false,
-		};
-		entries.set(identity, entry);
-		if (known.phase === "start") {
-			entry.argsSegment = segment;
-			return;
-		}
-		delete entry.partial;
-		entry.resultSegment = segment;
-		if (known.error !== undefined) entry.error = known.error;
-		entry.final = true;
-	}
-
-	function project(
-		record: Capture,
-		entries: Map<string, Entry>,
-		observation: Extract<Observation, { kind: "message" }>,
-	) {
-		const id = observation.message;
-		if (observation.phase === "end") {
-			const {
-				kind: _kind,
-				event: _event,
-				phase: _phase,
-				ordinal: _ordinal,
-				written: _written,
-				...final
-			} = observation;
-			entries.set(id, { type: "message", ...final, final: true });
-			return;
-		}
-		if (record.finals.has(id)) {
-			if (!entries.has(id) && observation.phase === "start") {
-				entries.set(id, {
-					type: "message",
-					message: id,
-					role: observation.role,
-					content: [],
-					final: false,
-				});
-			}
-			return;
-		}
-		const entry = (entries.get(id) as Extract<Entry, { type: "message" }>) ?? {
-			type: "message",
-			message: id,
-			role: observation.phase === "start" ? observation.role : "assistant",
-			content: [],
-			final: false,
-		};
-		entries.set(id, entry);
-		if (observation.phase !== "update") return;
-		const blocks = entry.content as Record<string, string>[];
-		const block = blocks[observation.block] ?? {
-			type: observation.part === "arguments" ? "toolCall" : observation.part,
-			[observation.part]: "",
-		};
-		block[observation.part] += observation.delta;
-		blocks[observation.block] = block;
 	}
 
 	function execution(child: string, state: string, verdict?: string) {

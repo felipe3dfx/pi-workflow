@@ -3,10 +3,12 @@ import assert from "node:assert/strict";
 import { access, mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { isDeepStrictEqual } from "node:util";
 import { crc32 } from "node:zlib";
 
 import { createChildAudit } from "../extensions/child-audit.ts";
 import { createChildSessions } from "../extensions/child-sessions.ts";
+import { createTranscript } from "../extensions/child-transcript.ts";
 import { eventually } from "./support/eventually.mjs";
 import { fakeChildren } from "./support/fake-children.mjs";
 import { withAgentDirectory } from "./support/jev-routing.mjs";
@@ -52,6 +54,29 @@ function auditedCore(
 
 const allWritten = (window) =>
 	window.identity.written && window.observations.every((entry) => entry.written);
+
+async function projects(audit, child, expected, view = (entries) => entries) {
+	const transcript = createTranscript({ audit, child, changed() {} });
+	const draw = () => {
+		const entries = [];
+		transcript.layout(
+			80,
+			1000,
+			"",
+			(item) => {
+				if (item.kind === "message" || item.kind === "tool") entries.push(item.entry);
+				return [];
+			},
+			{ head: [], tail: [] },
+		);
+		return view(entries);
+	};
+	try {
+		await eventually(async () => draw(), (shown) => isDeepStrictEqual(shown, expected));
+	} finally {
+		transcript.dispose();
+	}
+}
 
 test("an accepted child's identity is inspectable at once and then durably written without Fleet open", async (t) => {
 	const { audit, launch } = auditedCore(t);
@@ -346,7 +371,7 @@ test("nested tool calls are captured live with their arguments, updates, and res
 		"tool:c1/1:end",
 		"tool:c1:end",
 	]);
-	assert.deepEqual(window.transcript, [
+	await projects(audit, id, [
 		{
 			type: "tool",
 			call: "c1",
@@ -404,8 +429,7 @@ test("an authoritative final replaces its streamed partials once, while the part
 	emit(delta(streaming, "text_delta", 1, " late"));
 	final.content[1].text = "rewritten after the event";
 
-	const live = await audit.read(id);
-	assert.deepEqual(live.transcript, [
+	const authoritative = [
 		{
 			type: "message",
 			message: "m1",
@@ -418,7 +442,8 @@ test("an authoritative final replaces its streamed partials once, while the part
 			stopReason: "stop",
 			final: true,
 		},
-	]);
+	];
+	await projects(audit, id, authoritative);
 
 	const window = await eventually(() => audit.read(id), allWritten);
 	assert.deepEqual(events(window), [
@@ -429,7 +454,7 @@ test("an authoritative final replaces its streamed partials once, while the part
 		"m1:end",
 		"m1:update:4",
 	]);
-	assert.deepEqual(window.transcript, live.transcript);
+	await projects(audit, id, authoritative);
 	assert.deepEqual(
 		window.observations
 			.filter((entry) => entry.phase === "update")
@@ -450,8 +475,8 @@ test("a streaming message shows one current partial joined across Unicode-split 
 	child.spec.onEvent(delta(streaming, "text_delta", 0, "́ \ud83d"));
 	child.spec.onEvent(delta(streaming, "text_delta", 0, "\ude00"));
 
-	const window = await eventually(() => audit.read(id), allWritten);
-	assert.deepEqual(window.transcript, [
+	await eventually(() => audit.read(id), allWritten);
+	await projects(audit, id, [
 		{
 			type: "message",
 			message: "m1",
@@ -551,16 +576,16 @@ test("concurrent children keep their own order and correlation, and identical te
 		);
 	}
 
-	const summary = (window) =>
-		window.transcript.map((entry) =>
+	const summary = (entries) =>
+		entries.map((entry) =>
 			entry.type === "tool"
 				? `${entry.call} final=${entry.final}`
 				: `${entry.message} ${entry.content[0].text}`,
 		);
 	const one = await eventually(() => audit.read(first.id), allWritten);
 	const two = await eventually(() => audit.read(second.id), allWritten);
-	assert.deepEqual(summary(one), ["c1 final=true", "m1 same", "m2 same"]);
-	assert.deepEqual(summary(two), ["c1 final=true", "m1 same"]);
+	await projects(audit, first.id, ["c1 final=true", "m1 same", "m2 same"], summary);
+	await projects(audit, second.id, ["c1 final=true", "m1 same"], summary);
 	for (const window of [one, two]) {
 		const ordinals = window.observations.map((entry) => entry.ordinal);
 		assert.deepEqual(
@@ -589,7 +614,7 @@ test("a final the capture could not retain never appears authoritative", async (
 	});
 
 	const window = await eventually(() => audit.read(id), allWritten);
-	assert.deepEqual(window.transcript, [
+	await projects(audit, id, [
 		{
 			type: "message",
 			message: "m1",
@@ -699,8 +724,8 @@ const unicodeText = (length) => {
 };
 
 const resultOf = (window, call) =>
-	window.transcript.find(
-		(entry) => entry.type === "tool" && entry.call === call,
+	window.observations.find(
+		(entry) => entry.kind === "tool" && entry.call === call && entry.phase === "end",
 	)?.result;
 
 test("a large Unicode result is captured in bounded parts and read back exactly", async (t) => {
@@ -1240,13 +1265,12 @@ test("a block larger than a window is listed without being read and expands by b
 	files.reads.length = 0;
 
 	const window = await audit.read(id);
-	const entry = window.transcript.find((item) => item.call === "c1");
-	assert.equal(entry.result, undefined);
-	assert.equal(entry.final, true);
+	const { large } = window.observations.find((item) => item.large?.meta.call === "c1");
+	assert.equal(large.meta.phase, "end");
 	assert.ok(files.reads.filter(isJournal).reduce((total, read) => total + read.bytes, 0) <= 4096);
 
 	const segments = [];
-	for (let cursor = entry.resultSegment; cursor; ) {
+	for (let cursor = large.segment; cursor; ) {
 		files.reads.length = 0;
 		const segment = await audit.segment(id, cursor);
 		assert.ok(files.reads.filter(isJournal).every((read) => read.bytes <= 1024 + 512));

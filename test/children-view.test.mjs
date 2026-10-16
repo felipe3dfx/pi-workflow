@@ -1258,7 +1258,7 @@ test("unseating the child-session capability closes Fleet while accepted work an
 		assert.equal(sessions.get(child.id).state, "running");
 		const window = await capture.audit.read(child.id);
 		assert.ok(
-			window.transcript.some((entry) =>
+			window.observations.some((entry) =>
 				JSON.stringify(entry.content ?? "").includes("Still working after Fleet closed."),
 			),
 		);

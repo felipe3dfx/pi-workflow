@@ -10,9 +10,30 @@ type Opened = Exclude<
 	{ refresh: true }
 >;
 type Observation = Opened["observations"][number];
-type Entry = Opened["transcript"][number];
-type MessageEntry = Extract<Entry, { type: "message" }>;
-type ToolEntry = Extract<Entry, { type: "tool" }>;
+type MessageEntry = {
+	type: "message";
+	message: string;
+	role: string;
+	content: unknown;
+	usage?: unknown;
+	stopReason?: string;
+	errorMessage?: string;
+	segment?: SegmentCursor;
+	final: boolean;
+};
+type ToolEntry = {
+	type: "tool";
+	call: string;
+	parent?: string;
+	name: string;
+	args?: unknown;
+	partial?: unknown;
+	result?: unknown;
+	error?: boolean;
+	argsSegment?: SegmentCursor;
+	resultSegment?: SegmentCursor;
+	final: boolean;
+};
 type Identity = Opened["identity"];
 type Health = Opened["health"];
 type Segment = Exclude<
