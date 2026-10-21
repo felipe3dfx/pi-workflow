@@ -8315,3 +8315,30 @@ test("the default child factory gives a granted worker the checkpoint tool", asy
 		);
 	});
 });
+
+test("a foreground child that fails after a checkpoint hands the parent its harness-recorded checkpoints", async () => {
+	await withWorkspace(async ({ worktree, agentDir, dir }) => {
+		const linked = linkedWorktree(dir, worktree);
+		const children = fakeChildren({
+			run: async (_task, spec) => {
+				spec.checkpointed({ sha: "a".repeat(40), parent: "b".repeat(40), base: "c".repeat(40), branch: "feature" });
+				throw new Error("The model stopped.");
+			},
+		});
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+
+		await assert.rejects(
+			spawn(
+				extension.tool,
+				{ role: "worker", task: "Fix the failing test", worktree: linked, checkpoint: "feature" },
+				toolContext("print", worktree),
+			),
+			(error) => {
+				assert.match(error.message, /The model stopped\./);
+				assert.match(error.message, /Harness-recorded checkpoints:\n- a{40} on feature \(parent b{40}, base c{40}\)/);
+				assert.equal(error.cause.message, "The model stopped.");
+				return true;
+			},
+		);
+	});
+});

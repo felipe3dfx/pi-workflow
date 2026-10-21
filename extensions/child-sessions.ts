@@ -50,6 +50,7 @@ import {
 } from "./web-access.ts";
 import {
 	type ChildResult,
+	checkpointLines,
 	childOutcome,
 	needsNoReason,
 	projectChild,
@@ -1025,7 +1026,10 @@ export function createChildSessions(options: {
 				return { status: "completed" as const, text, result, checkpoints };
 			} catch (error) {
 				traceRun(id, plan, ended);
-				throw error;
+				if (checkpoints.length === 0) throw error;
+				throw new Error(`${errorMessage(error)}${checkpointLines(checkpoints)}`, {
+					cause: error,
+				});
 			} finally {
 				watch.stop();
 				launch.signal?.removeEventListener("abort", abort);

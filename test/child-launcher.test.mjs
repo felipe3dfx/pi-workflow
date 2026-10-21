@@ -713,9 +713,9 @@ test("Jev's destination criteria cover an explicit child or subagent request und
 		assert.match(criteria.leave, /session other than the parent/);
 		assert.match(criteria.stay, /nor for an independent review or check of work/);
 		assert.match(criteria.stay, /explicitly asks the parent to do the work itself in this session, in any language or wording, which takes precedence over the review rule/);
-		assert.match(criteria.stay, /reserved operation \(mutating git or gh, publication\) in the request stays with the parent, but only that part/);
-		assert.match(criteria.decide, /reserved operation \(mutating git or gh, publication\) is not an open product decision by itself and stays with the parent/);
-		assert.match(criteria.leave, /A reserved operation \(mutating git or gh, publication\) in the request stays with the parent, but only that part: the rest of the package is judged on its own/);
+		assert.match(criteria.stay, /reserved operation \(mutating git or gh other than a signed checkpoint the parent grants a worker with spawn_child checkpoint, publication\) in the request stays with the parent, but only that part/);
+		assert.match(criteria.decide, /reserved operation \(mutating git or gh other than a signed checkpoint the parent grants a worker with spawn_child checkpoint, publication\) is not an open product decision by itself and stays with the parent/);
+		assert.match(criteria.leave, /A reserved operation \(mutating git or gh other than a signed checkpoint the parent grants a worker with spawn_child checkpoint, publication\) in the request stays with the parent, but only that part: the rest of the package is judged on its own/);
 	});
 });
 
@@ -1023,5 +1023,33 @@ test("a checkpoint grant is refused outside an isolated worker worktree on its b
 			assert.equal(result.kind, "refused");
 			assert.equal(jev.requests.length, 0, String(reason));
 		}
+	});
+});
+
+test("Jev's criteria keep every mutating git or gh operation reserved except a granted checkpoint, and only a granted launch tells Jev of its grant", async () => {
+	await withLinkedWorktree(async ({ main, linked }) => {
+		const jev = fakeJev(() => "leave");
+		const launcher = checkpointLauncher();
+		await launcher.prepareLaunch(
+			{ role: "worker", task: "Fix the failing test", worktree: linked, checkpoint: "feature" },
+			launcherContext(main, { jev }),
+		);
+		await launcher.prepareLaunch(
+			{ role: "worker", task: "Fix the failing test", worktree: linked },
+			launcherContext(main, { jev }),
+		);
+
+		const [granted, ungranted] = jev.requests;
+		for (const criterion of ["decide", "stay", "leave"]) {
+			assert.match(
+				granted.questions.destination.criteria[criterion],
+				/mutating git or gh other than a signed checkpoint the parent grants a worker with spawn_child checkpoint, publication/,
+			);
+		}
+		assert.equal(
+			granted.state.checkpoint,
+			"The parent grants this worker a signed checkpoint on feature in its isolated worktree.",
+		);
+		assert.equal("checkpoint" in ungranted.state, false);
 	});
 });

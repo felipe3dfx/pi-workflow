@@ -247,6 +247,23 @@ test("a checkpoint message needs a Conventional Commits header and no attributio
 	});
 });
 
+test("a checkpoint is refused when a hook commits a file outside its paths, and the error names it", async () => {
+	await withCheckpoint(async ({ main, worktree, grant, checkpoint }) => {
+		const hooks = join(git(main, "rev-parse", "--absolute-git-dir"), "hooks");
+		await mkdir(hooks, { recursive: true });
+		await writeFile(join(hooks, "pre-commit"), "#!/bin/sh\necho extra > extra.md\ngit add extra.md\n", { mode: 0o755 });
+		await writeFile(join(worktree, "note.md"), "note\n");
+
+		const error = await checkpoint({ message, paths: ["note.md"] }).catch((caught) => caught);
+
+		const sha = git(worktree, "rev-parse", "HEAD");
+		assert.notEqual(sha, grant.base);
+		assert.match(error.message, /extra\.md/);
+		assert.ok(error.message.includes(sha));
+		assert.doesNotMatch(error.message, /note\.md/);
+	});
+});
+
 test("a checkpoint is refused when a hook moves another ref, and the error names it", async () => {
 	await withCheckpoint(async ({ main, worktree, grant, checkpoint }) => {
 		const hooks = join(git(main, "rev-parse", "--absolute-git-dir"), "hooks");

@@ -494,7 +494,7 @@ test("with Jev routing on, orchestrator gives Jev a stay criterion only for no w
 	assert.match(stay, /needs no work/);
 	assert.match(stay, /conversation, an opinion, or a question about what was already said/);
 	assert.match(stay, /only for reserved operations/);
-	assert.match(stay, /commit, a push, or opening a pull request/);
+	assert.match(stay, /a commit the parent has not granted to a worker, a push, or opening a pull request/);
 
 	assert.deepEqual(orchestrator.state, opportunistic.state);
 	assert.deepEqual(Object.keys(orchestrator.questions), ["destination"]);

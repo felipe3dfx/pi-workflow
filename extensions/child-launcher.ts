@@ -54,7 +54,8 @@ const specialistByRole: Record<Role, Specialist> = {
 	verify: "verifier",
 };
 
-const reservedOperations = "mutating git or gh, publication";
+const reservedOperations =
+	"mutating git or gh other than a signed checkpoint the parent grants a worker with spawn_child checkpoint, publication";
 
 const destinationInstructions = "Where should this package go?";
 
@@ -66,7 +67,7 @@ const destinationCriteria = {
 		`A bounded package a child session can finish on its own, or the user explicitly asks to delegate to child sessions or subagents, in any language or wording, or the user asks for an independent review or check of work, which must run in a session other than the parent. A reserved operation (${reservedOperations}) in the request stays with the parent, but only that part: the rest of the package is judged on its own. Investigating an architecture can leave.`,
 };
 
-const orchestratorStay = `The package needs no work: conversation, an opinion, or a question about what was already said. Or it asks only for reserved operations (${reservedOperations}), such as a commit, a push, or opening a pull request, which stay with the parent. Any other work does not stay, however small.`;
+const orchestratorStay = `The package needs no work: conversation, an opinion, or a question about what was already said. Or it asks only for reserved operations (${reservedOperations}), such as a commit the parent has not granted to a worker, a push, or opening a pull request, which stay with the parent. Any other work does not stay, however small.`;
 
 type Contract = { prompt: string; tools: string[] };
 
@@ -330,6 +331,11 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		const state: ClassifierContext["state"] = {
 			...(request.userRequest ? { user_request: request.userRequest } : {}),
 			task: request.task,
+			...(request.checkpoint
+				? {
+						checkpoint: `The parent grants this worker a signed checkpoint on ${request.checkpoint} in its isolated worktree.`,
+					}
+				: {}),
 		};
 		const questions: ClassifierContext["questions"] = {
 			destination: {

@@ -263,6 +263,16 @@ export function createCheckpointTool(
 				.trim()
 				.split("\n")
 				.filter((line) => line !== "");
+			const unauthorized = files
+				.map((line) => line.slice(line.indexOf("\t") + 1))
+				.filter(
+					(file) => !paths.some((path) => file === path || file.startsWith(`${path}/`)),
+				);
+			if (unauthorized.length > 0) {
+				throw new Error(
+					`the checkpoint commit ${sha} contains files outside the checkpoint paths: ${unauthorized.join(", ")}`,
+				);
+			}
 			const checkpoint = { sha, parent, base: grant.base, branch: grant.branch };
 			checkpointed(checkpoint);
 			return {

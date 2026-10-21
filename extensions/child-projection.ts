@@ -139,13 +139,16 @@ export function childOutcome(child: {
 	result?: ChildResult;
 	checkpoints?: readonly Checkpoint[];
 }) {
-	const outcome = childStateOutcome(child);
-	if (!child.checkpoints?.length) return outcome;
-	const recorded = child.checkpoints.map(
+	return `${childStateOutcome(child)}${checkpointLines(child.checkpoints)}`;
+}
+
+export function checkpointLines(checkpoints: readonly Checkpoint[] | undefined) {
+	if (!checkpoints?.length) return "";
+	const recorded = checkpoints.map(
 		({ sha, parent, base, branch }) =>
 			`- ${sha} on ${branch} (parent ${parent}, base ${base})`,
 	);
-	return `${outcome}\n\nHarness-recorded checkpoints:\n${recorded.join("\n")}`;
+	return `\n\nHarness-recorded checkpoints:\n${recorded.join("\n")}`;
 }
 
 function childStateOutcome(child: {
