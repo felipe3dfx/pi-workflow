@@ -35,7 +35,7 @@ ${program}() {
 };`;
 }
 
-function gitRoot(root: string): string {
+function gitRootAssignment(root: string): string {
 	return line`__pi_workflow_root=${shellQuote(root)};
 	case "$__pi_workflow_root" in
 	/*) ;;
@@ -150,7 +150,7 @@ export interface ChildShell {
 const posixShell = /(^|[/\\])(bash|zsh|sh|dash|ksh|mksh)(\.exe)?$/i;
 
 export function guardPrefix(root: string, checkpoint = false): string {
-	return `unalias git gh 2>/dev/null || :\n${gitRoot(root)} ${guard("git", gitDecision, checkpoint)}${guard("gh", ghDecision)}`;
+	return `unalias git gh 2>/dev/null || :\n${gitRootAssignment(root)} ${guard("git", gitDecision, checkpoint)}${guard("gh", ghDecision)}`;
 }
 
 export function createChildBashTool(
