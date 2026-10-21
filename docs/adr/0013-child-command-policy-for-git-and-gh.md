@@ -4,6 +4,8 @@
 
 Acceptance: approval and merge of the introducing PR.
 
+Superseded by ADR 0020 for granted checkpoints only: a granted worker commits signed checkpoints on its branch through the `checkpoint` tool.
+
 ## Decision
 
 A child session reads `git` and GitHub state on its own. Commands that mutate the repository or the remote, or publish, stay with the parent. For both `git` and `gh` the policy is an allowlist of reads: everything not listed is refused. It applies the same way whether Jev routing is on or off.

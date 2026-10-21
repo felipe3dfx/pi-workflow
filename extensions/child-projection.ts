@@ -1,5 +1,7 @@
 import { type Static, Type } from "typebox";
 
+import type { Checkpoint } from "./child-checkpoint.ts";
+
 export function childName(child: { role: string; id: string }) {
 	return `${child.role} ${child.id.slice(0, 4)}`;
 }
@@ -130,6 +132,26 @@ export function lastReportedResult(result: ChildResult) {
 }
 
 export function childOutcome(child: {
+	id?: string;
+	state: string;
+	role: string;
+	text?: string;
+	result?: ChildResult;
+	checkpoints?: readonly Checkpoint[];
+}) {
+	return `${childStateOutcome(child)}${checkpointLines(child.checkpoints)}`;
+}
+
+export function checkpointLines(checkpoints: readonly Checkpoint[] | undefined) {
+	if (!checkpoints?.length) return "";
+	const recorded = checkpoints.map(
+		({ sha, parent, base, branch }) =>
+			`- ${sha} on ${branch} (parent ${parent}, base ${base})`,
+	);
+	return `\n\nHarness-recorded checkpoints:\n${recorded.join("\n")}`;
+}
+
+function childStateOutcome(child: {
 	id?: string;
 	state: string;
 	role: string;

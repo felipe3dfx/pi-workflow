@@ -17,6 +17,7 @@ import type {
 	ToolCallEvent,
 } from "@earendil-works/pi-coding-agent";
 
+import { type CheckpointGrant, checkpointGrant } from "./child-checkpoint.ts";
 import { latestUserRequest } from "./child-sessions.ts";
 import { errorMessage } from "./error-message.ts";
 import { gitEnvironment } from "./git-environment.ts";
@@ -30,6 +31,7 @@ export interface LaunchRequest {
 	role?: string;
 	task: string;
 	worktree?: string;
+	checkpoint?: string;
 	references?: string[];
 	userRequest?: string;
 	userMessageId?: string;
@@ -52,7 +54,8 @@ const specialistByRole: Record<Role, Specialist> = {
 	verify: "verifier",
 };
 
-const reservedOperations = "mutating git or gh, publication";
+const reservedOperations =
+	"mutating git or gh other than a signed checkpoint the parent grants a worker with spawn_child checkpoint, publication";
 
 const destinationInstructions = "Where should this package go?";
 
@@ -64,7 +67,7 @@ const destinationCriteria = {
 		`A bounded package a child session can finish on its own, or the user explicitly asks to delegate to child sessions or subagents, in any language or wording, or the user asks for an independent review or check of work, which must run in a session other than the parent. A reserved operation (${reservedOperations}) in the request stays with the parent, but only that part: the rest of the package is judged on its own. Investigating an architecture can leave.`,
 };
 
-const orchestratorStay = `The package needs no work: conversation, an opinion, or a question about what was already said. Or it asks only for reserved operations (${reservedOperations}), such as a commit, a push, or opening a pull request, which stay with the parent. Any other work does not stay, however small.`;
+const orchestratorStay = `The package needs no work: conversation, an opinion, or a question about what was already said. Or it asks only for reserved operations (${reservedOperations}), such as a commit the parent has not granted to a worker, a push, or opening a pull request, which stay with the parent. Any other work does not stay, however small.`;
 
 type Contract = { prompt: string; tools: string[] };
 
@@ -112,6 +115,7 @@ type Ready = {
 	thinking: ModelThinkingLevel;
 	chosenBy: "parent";
 	references: string[];
+	checkpoint?: CheckpointGrant;
 	jev?: ClassifierResult;
 };
 
@@ -327,6 +331,11 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		const state: ClassifierContext["state"] = {
 			...(request.userRequest ? { user_request: request.userRequest } : {}),
 			task: request.task,
+			...(request.checkpoint
+				? {
+						checkpoint: `The parent grants this worker a signed checkpoint on ${request.checkpoint} in its isolated worktree.`,
+					}
+				: {}),
 		};
 		const questions: ClassifierContext["questions"] = {
 			destination: {
@@ -519,6 +528,29 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		}
 		const worktree = await gitRoot(resolve(ctx.cwd, request.worktree ?? "."));
 		if (typeof worktree !== "string") return worktree;
+		let checkpoint: CheckpointGrant | undefined;
+		if (request.checkpoint !== undefined) {
+			if (role !== "worker") {
+				return outcome(
+					"refused",
+					`A checkpoint is granted only to a worker, not to ${role ?? "a child without a role"}.`,
+				);
+			}
+			if (request.worktree === undefined) {
+				return outcome(
+					"refused",
+					"A checkpoint needs the isolated worktree passed explicitly as worktree.",
+				);
+			}
+			try {
+				checkpoint = await checkpointGrant(worktree, request.checkpoint, ctx.cwd);
+			} catch (error) {
+				return outcome(
+					"refused",
+					`The checkpoint cannot be granted: ${errorMessage(error)}`,
+				);
+			}
+		}
 		const verdict = await launchVerdict(request, ctx);
 		if (verdict.kind !== "leave") return show(verdict);
 		if (role === undefined) return outcome("stay", "Jev routing is off.");
@@ -541,6 +573,7 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			thinking: pair.thinking,
 			chosenBy: "parent",
 			references,
+			...(checkpoint ? { checkpoint } : {}),
 			...jev,
 		};
 	}

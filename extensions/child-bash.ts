@@ -14,11 +14,18 @@ function line(strings: TemplateStringsArray, ...values: string[]): string {
 		.reduce((code, part, index) => `${code}${values[index - 1]}${part}`);
 }
 
-function guard(program: string, decision: string): string {
+const checkpointRefusal = line`case "$reserved" in
+	"git add"|"git commit")
+		printf '\`%s\` does not run in bash. Commit through the checkpoint tool instead.\\n' "$reserved" >&2;
+		exit 126 ;;
+	esac;`;
+
+function guard(program: string, decision: string, checkpoint = false): string {
 	return line`__pi_workflow_${program}_guard() (
 	reserved=;
 	${decision}
 	[ -z "$reserved" ] && exit 0;
+	${checkpoint ? checkpointRefusal : ""}
 	printf '\`%s\` is reserved for the parent. Continue without it and list the exact command in your result; do not ask the parent to run it.\\n' "$reserved" >&2;
 	exit 126
 );
@@ -135,12 +142,16 @@ export interface ChildShell {
 
 const posixShell = /(^|[/\\])(bash|zsh|sh|dash|ksh|mksh)(\.exe)?$/i;
 
-export function guardPrefix(root: string): string {
-	return `unalias git gh 2>/dev/null || :\n${guard("git", gitDecision(root))}${guard("gh", ghDecision)}`;
+export function guardPrefix(root: string, checkpoint = false): string {
+	return `unalias git gh 2>/dev/null || :\n${guard("git", gitDecision(root), checkpoint)}${guard("gh", ghDecision)}`;
 }
 
-export function createChildBashTool(cwd: string, shell: ChildShell = {}) {
-	const commandPrefix = guardPrefix(physical(cwd));
+export function createChildBashTool(
+	cwd: string,
+	shell: ChildShell = {},
+	checkpoint = false,
+) {
+	const commandPrefix = guardPrefix(physical(cwd), checkpoint);
 	const user =
 		!shell.shellPath || posixShell.test(shell.shellPath) ? shell : {};
 	return defineTool(

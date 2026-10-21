@@ -152,6 +152,12 @@ The harness-owned definition of a child role: its `tools:` line lists the tools 
 
 _Avoid_: agent definition, persona, system prompt file
 
+### Checkpoint
+
+A signed commit that a worker creates with the harness-owned `checkpoint` tool on the branch of the isolated worktree the parent granted it. The harness records its SHA, parent, base, and branch in the child's result; integration, push, pull requests, and tracker effects stay with the parent.
+
+_Avoid_: child commit, handoff commit
+
 ### Trace
 
 The harness's record, in the parent session, of a child's launch and of each Run state it reaches, with the notices of its extensions. It never enters a model's context.
