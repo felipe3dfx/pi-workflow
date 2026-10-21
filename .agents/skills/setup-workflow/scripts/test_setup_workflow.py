@@ -1721,15 +1721,24 @@ class SetupWorkflowCliTests(unittest.TestCase):
             "<type>(<scope>): <summary>",
             "Refs: <ticket identifier>",
             "feat(renewals): add premium calculation (AUT-103)",
-            "under `pull-request` child integration, the source is the child ticket branch and the proposed destination is the parent integration branch",
-            "Under `direct`, children integrate locally and only the parent integration branch gets a pull request, proposed against the production base",
-            "A standalone ticket proposes the working base. Confirm the destination for each invocation.",
+            "For branch names and pull request titles, reference the ticket only by its identifier",
             "Commit `Refs:` and the pull request's linked ticket remain required.",
+            "under `pull-request` child integration, the source is the child ticket branch",
+            "Under `direct`, children integrate locally and only the parent integration branch gets a pull request",
+            "A standalone ticket proposes the working base. Confirm the destination for each invocation.",
             "Where the policy requires approval, it is per effect",
-            "Merge, push, and other remote-state changes follow the approval policy above, including its exceptions at every level.",
+            "including its exceptions at every level.",
             "no skill or tracker automation closes a specification's parent ticket",
         ):
             self.assertIn(required, playbook)
+        workflow = (self.repo / "docs" / "agents" / "workflow.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "Follow the instruction authority and precedence defined by `PRIMARY_REPOSITORY_INSTRUCTIONS value`.",
+            workflow,
+        )
+        self.assertIn("local workflow conventions in `LOCAL_WORKFLOW_CONVENTIONS value`", workflow)
+        self.assertIn("at the authority assigned by the primary repository instructions.", workflow)
+        self.assertNotIn("Follow this order when instructions conflict:", workflow)
         self.assertNotIn("{{COMMIT_CONVENTION}}", playbook)
         self.assertNotIn("{{PULL_REQUEST_BRANCH_RULES}}", playbook)
         self.assertTrue((self.repo / "docs" / "agents" / "coding-standards.md").is_file())
