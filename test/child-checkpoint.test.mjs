@@ -101,6 +101,21 @@ test("a granted checkpoint creates a signed commit on the branch and reports it"
 	});
 });
 
+test("a checkpoint authorizes and reports paths Git would quote", async () => {
+	await withCheckpoint(async ({ worktree, checkpoint }) => {
+		const names = ["café.md", 'say "hi".md', "tab\there.md"];
+		for (const name of names) await writeFile(join(worktree, name), "note\n");
+
+		const { details } = await checkpoint({ message, paths: names });
+
+		assert.equal(git(worktree, "rev-parse", "HEAD"), details.sha);
+		assert.deepEqual(
+			[...details.files].sort(),
+			names.map((name) => `A\t${name}`).sort(),
+		);
+	});
+});
+
 test("the parent verifies a returned checkpoint and integrates it", async () => {
 	await withCheckpoint(async ({ main, worktree, grant, checkpoint }) => {
 		await writeFile(join(worktree, "note.md"), "note\n");

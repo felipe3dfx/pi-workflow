@@ -257,14 +257,24 @@ export function createCheckpointTool(
 			if (!fields.some((line) => /^gpgsig(-sha256)? /.test(line))) {
 				throw new Error(`the checkpoint commit ${sha} is not signed`);
 			}
-			const files = (
-				await git(root, ["diff-tree", "--no-commit-id", "--name-status", "-r", sha])
-			)
-				.trim()
-				.split("\n")
-				.filter((line) => line !== "");
-			const unauthorized = files
-				.map((line) => line.slice(line.indexOf("\t") + 1))
+			const entries = (
+				await git(root, [
+					"diff-tree",
+					"--no-commit-id",
+					"--name-status",
+					"--no-renames",
+					"-z",
+					"-r",
+					sha,
+				])
+			).split("\0");
+			const changes: [string, string][] = [];
+			for (let at = 0; at + 1 < entries.length; at += 2) {
+				changes.push([entries[at], entries[at + 1]]);
+			}
+			const files = changes.map(([status, file]) => `${status}\t${file}`);
+			const unauthorized = changes
+				.map(([, file]) => file)
 				.filter(
 					(file) => !paths.some((path) => file === path || file.startsWith(`${path}/`)),
 				);
