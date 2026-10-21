@@ -86,6 +86,22 @@ function fakeGh(t, failure) {
 	return () => (existsSync(log) ? readFileSync(log, "utf8") : "");
 }
 
+const windowsRoot = "C:\\Users\\child\\worktree";
+
+function fakeCygpath(t, script) {
+	const bin = temporaryDirectory(t, "pi-workflow-fake-cygpath-");
+	writeFileSync(join(bin, "cygpath"), script, { mode: 0o755 });
+	return bin;
+}
+
+function guardedBash(root, command, cwd, bin) {
+	return spawnSync("bash", ["-c", `${guardPrefix(root)}\n${command}`], {
+		cwd,
+		encoding: "utf8",
+		env: { ...process.env, PATH: bin ? `${bin}${delimiter}${process.env.PATH}` : process.env.PATH },
+	});
+}
+
 async function assertReserved(command, cwd, expected) {
 	const result = await run(command, cwd);
 
@@ -525,18 +541,11 @@ test("a Windows worktree root keeps the git guard where cygpath converts it", (t
 	const dir = worktree(t);
 	const outside = temporaryDirectory(t);
 	const root = "C:\\Users\\child\\it's a worktree";
-	const bin = temporaryDirectory(t, "pi-workflow-fake-cygpath-");
-	writeFileSync(
-		join(bin, "cygpath"),
+	const bin = fakeCygpath(
+		t,
 		`#!/bin/sh\n[ "$1" = -u ] && [ "$2" = '${root.replaceAll("'", "'\\''")}' ] && printf '%s\\n' '${realpathSync(dir)}'\n`,
-		{ mode: 0o755 },
 	);
-	const bash = (command, cwd) =>
-		spawnSync("bash", ["-c", `${guardPrefix(root)}\n${command}`], {
-			cwd,
-			encoding: "utf8",
-			env: { ...process.env, PATH: `${bin}${delimiter}${process.env.PATH}` },
-		});
+	const bash = (command, cwd) => guardedBash(root, command, cwd, bin);
 
 	const inside = bash("git commit -qam x", join(dir, "sub"));
 	const elsewhere = bash(
@@ -551,11 +560,47 @@ test("a Windows worktree root keeps the git guard where cygpath converts it", (t
 	assert.match(elsewhere.stdout, / x$/m);
 });
 
+test("a Windows worktree root that cygpath cannot convert keeps the git guard in every directory", (t) => {
+	const dir = worktree(t);
+	const outside = temporaryDirectory(t);
+	const failing = fakeCygpath(t, "#!/bin/sh\nexit 1\n");
+
+	for (const bin of [undefined, failing]) {
+		for (const cwd of [dir, outside]) {
+			const result = guardedBash(windowsRoot, "git commit -qam x", cwd, bin);
+
+			assert.equal(result.status, 126, result.stderr);
+			assert.equal(result.stderr, reserved("git commit"));
+		}
+	}
+	assert.equal(commits(dir), "1");
+});
+
+test("a child's command converts the Windows worktree root with cygpath once", (t) => {
+	const dir = worktree(t);
+	const log = join(temporaryDirectory(t), "calls.log");
+	const bin = fakeCygpath(
+		t,
+		`#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\nprintf '%s\\n' '${realpathSync(dir)}'\n`,
+	);
+
+	const result = guardedBash(
+		windowsRoot,
+		"git status --short && git log --oneline && git commit -qam x",
+		dir,
+		bin,
+	);
+
+	assert.equal(result.status, 126, result.stderr);
+	assert.equal(result.stdout, " M file.txt\n" + execFileSync("git", ["log", "--oneline"], { cwd: dir, encoding: "utf8" }));
+	assert.equal(readFileSync(log, "utf8"), `-u ${windowsRoot}\n`);
+});
+
 test("the guard expands the command words only in the form bash 3.2 accepts under nounset", () => {
 	const prefix = guardPrefix("/worktree");
 
 	assert.match(prefix, /\$\{1\+"\$@"\}/);
-	assert.doesNotMatch(prefix.replace(/\$\{1\+"\$@"\}/g, ""), /"\$@"/);
+	assert.doesNotMatch(prefix.replace(/\$\{1\+"\$@"\}/g, ""), /"\$(@|\{@\}|\*|\{\*\})"/);
 });
 
 test("a child's git read does not take the index lock", async (t) => {
@@ -573,6 +618,25 @@ test("a child's git read does not take the index lock", async (t) => {
 	assert.equal(statSync(index).mtimeMs, before);
 	execFileSync("git", ["status", "--short"], { cwd: dir });
 	assert.notEqual(statSync(index).mtimeMs, before);
+});
+
+test("a child's git diff does not rewrite the index", async (t) => {
+	const dir = worktree(t);
+	execFileSync("git", [...identity, "commit", "-qam", "second"], { cwd: dir });
+	const index = join(dir, ".git", "index");
+	const past = new Date(Date.now() - 60_000);
+	utimesSync(join(dir, "file.txt"), past, past);
+	utimesSync(index, past, past);
+	const before = readFileSync(index);
+	const mtime = statSync(index).mtimeMs;
+
+	const result = await run("git diff", dir);
+
+	assert.equal(result.isError, undefined, text(result));
+	assert.equal(statSync(index).mtimeMs, mtime);
+	assert.deepEqual(readFileSync(index), before);
+	execFileSync("git", ["diff"], { cwd: dir });
+	assert.notEqual(statSync(index).mtimeMs, mtime);
 });
 
 test("a child's bash runs a command that only mentions git", async (t) => {
