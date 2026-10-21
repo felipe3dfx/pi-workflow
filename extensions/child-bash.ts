@@ -69,12 +69,12 @@ const gitDecision = line`case "$__pi_workflow_root" in
 	done;
 	for word in \${1+"$@"}; do
 		case "$subcommand $word" in
-		"grep -O"*|"grep -"[!-]*O*|"grep --op"*|"ls-remote -u"*|"ls-remote -"[!-]*u*|"ls-remote --u"*|"ls-remote --exe"*|*" --output"|*" --output="*)
+		"grep -O"*|"grep -"[!-]*O*|"grep --op"*|"ls-remote -u"*|"ls-remote -"[!-]*u*|"ls-remote --u"*|"ls-remote --exe"*|"archive -o"*|"archive -"[!-]*o*|"archive --o"*|"archive --r"*|"archive --e"*|*" --output"|*" --output="*)
 			reserved="\${reserved:-git $subcommand}" ;;
 		esac;
 	done;
 	[ -n "$reserved" ] || case "$subcommand" in
-	""|status|diff|log|show|blame|grep|ls-files|ls-tree|ls-remote|cat-file|rev-parse|rev-list|merge-base|describe|shortlog|name-rev|for-each-ref|show-ref|show-branch|whatchanged|range-diff|diff-tree|diff-files|diff-index|cherry|count-objects|check-ignore|check-attr|var|version|help) ;;
+	""|status|diff|log|show|blame|grep|archive|ls-files|ls-tree|ls-remote|cat-file|rev-parse|rev-list|merge-base|describe|shortlog|name-rev|for-each-ref|show-ref|show-branch|whatchanged|range-diff|diff-tree|diff-files|diff-index|cherry|count-objects|check-ignore|check-attr|var|version|help) ;;
 	reflog|stash|worktree|remote|submodule|lfs)
 		verb=;
 		case "\${1-}" in

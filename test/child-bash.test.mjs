@@ -238,7 +238,6 @@ test(`a child's bash refuses each reserved git subcommand in its worktree`, asyn
 		"svn",
 		"init",
 		"clone",
-		"archive",
 	]) {
 		await assertReserved(`git ${subcommand}`, dir, `git ${subcommand}`);
 	}
@@ -383,6 +382,19 @@ test(`a child's bash refuses git read options that run a command or write a file
 		["git ls-remote -o -- --upload-pack='touch X;' .", "git ls-remote"],
 		["git grep --untracked -e -- \"-Osh -c 'touch X'\"", "git grep"],
 		["git grep -e -Ofoo", "git grep"],
+		["git archive -o out.txt HEAD", "git archive"],
+		["git archive -oout.txt HEAD", "git archive"],
+		["git archive -vo out.txt HEAD", "git archive"],
+		["git archive --output out.txt HEAD", "git archive"],
+		["git archive --output=out.txt HEAD", "git archive"],
+		["git archive --outp=out.txt HEAD", "git archive"],
+		["git archive --remote . HEAD", "git archive"],
+		["git archive --remote=. HEAD", "git archive"],
+		["git archive --rem=. HEAD", "git archive"],
+		["git archive --remote . --exec touch HEAD", "git archive"],
+		["git archive --remote=. --exec=touch HEAD", "git archive"],
+		["git archive --remote=. --exe=touch HEAD", "git archive"],
+		["git archive HEAD -- --output=out.txt", "git archive"],
 	]) {
 		await assertReserved(command, dir, expected);
 	}
@@ -391,6 +403,16 @@ test(`a child's bash refuses git read options that run a command or write a file
 	assert.equal(existsSync(join(dir, "X")), false);
 	assert.match(text(await run("git grep -n two -- file.txt", dir)), /file\.txt:1:two/);
 	assert.match(text(await run("git log --output-indicator-new=+ -1 --oneline", dir)), /first/);
+});
+
+test(`a child's bash extracts a git archive written to standard output outside its worktree`, async (t) => {
+	const dir = worktree(t);
+	const scratch = temporaryDirectory(t, "pi-workflow-scratch-");
+
+	const result = await run(`git archive HEAD | tar -x -C '${scratch}'`, dir);
+
+	assert.equal(result.isError, undefined, text(result));
+	assert.equal(readFileSync(join(scratch, "file.txt"), "utf8"), "one\n");
 });
 
 test(`a child's bash refuses a git config override that is not a color or quotePath in its worktree`, async (t) => {
