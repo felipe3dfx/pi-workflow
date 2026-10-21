@@ -1,0 +1,363 @@
+{
+  "schemaVersion": 1,
+  "command": "node --test .agents/prototypes/action-escalation/integration.test.mjs",
+  "sha256": {
+    ".agents/prototypes/action-escalation/README.md": "b207fa402232cea79d70811f220d4a7cb36d6aa6d2d66822430fbac5be6d3db0",
+    ".agents/prototypes/action-escalation/integration.test.mjs": "18160e0929eb3c76740ca218444f4dc216849cc0874ab17461f30be510c715e5",
+    "extensions/child-sessions.ts": "09177de79cfed470844ec0f50deb0ba1eb4a020375c155cc43ccb9136c33f2f2",
+    "extensions/ask-user-panel.ts": "6375df25778dd659076794f2bbf50e84a567e760f0cfb463ab57560079290a37",
+    "test/support/fake-children.mjs": "fbecc5da10af61dc7c71b392a95e297eaf2e14e7d3cc95865923948644ff3c8b"
+  },
+  "observations": [
+    {
+      "id": "parent-facts",
+      "input": "declared scripted semantic fixture; no classifier/model evidence",
+      "authorized": true,
+      "counters": {
+        "executions": 1,
+        "consultations": 0,
+        "panels": 0
+      },
+      "states": [
+        "queued",
+        "running",
+        "waiting",
+        "running",
+        "completed"
+      ],
+      "events": [
+        "state:queued",
+        "state:running",
+        "ask-parent:1:executions=0",
+        "state:waiting",
+        "question-message:1:executions=0",
+        "parent-received-emitted-question:executions=0",
+        "scripted-parent-resolves-facts",
+        "real-reply-child:1:executions=0",
+        "state:running",
+        "resume:1",
+        "simulated-execute",
+        "state:completed"
+      ]
+    },
+    {
+      "id": "unresolved-parent",
+      "input": "declared scripted semantic fixture; no classifier/model evidence",
+      "authorized": true,
+      "counters": {
+        "executions": 1,
+        "consultations": 1,
+        "panels": 1
+      },
+      "states": [
+        "queued",
+        "running",
+        "waiting",
+        "running",
+        "completed"
+      ],
+      "events": [
+        "state:queued",
+        "state:running",
+        "ask-parent:1:executions=0",
+        "state:waiting",
+        "question-message:1:executions=0",
+        "parent-received-emitted-question:executions=0",
+        "real-ask-user-question:executions=0",
+        "real-panel-instantiated",
+        "simulated-operator:consult",
+        "operator-question-result:answered",
+        "real-reply-child:1:executions=0",
+        "state:running",
+        "resume:1",
+        "simulated-execute",
+        "state:completed"
+      ]
+    },
+    {
+      "id": "destructive-out-of-scope",
+      "input": "declared scripted semantic fixture; no classifier/model evidence",
+      "authorized": true,
+      "counters": {
+        "executions": 1,
+        "consultations": 1,
+        "panels": 1
+      },
+      "states": [
+        "queued",
+        "running",
+        "waiting",
+        "running",
+        "completed"
+      ],
+      "events": [
+        "state:queued",
+        "state:running",
+        "ask-parent:1:executions=0",
+        "state:waiting",
+        "question-message:1:executions=0",
+        "parent-received-emitted-question:executions=0",
+        "real-ask-user-question:executions=0",
+        "real-panel-instantiated",
+        "simulated-operator:explicit",
+        "operator-question-result:answered",
+        "real-reply-child:1:executions=0",
+        "state:running",
+        "resume:1",
+        "simulated-execute",
+        "state:completed"
+      ]
+    },
+    {
+      "id": "dismissal",
+      "input": "declared scripted semantic fixture; no classifier/model evidence",
+      "authorized": false,
+      "counters": {
+        "executions": 0,
+        "consultations": 1,
+        "panels": 1
+      },
+      "states": [
+        "queued",
+        "running",
+        "waiting",
+        "running",
+        "completed"
+      ],
+      "events": [
+        "state:queued",
+        "state:running",
+        "ask-parent:1:executions=0",
+        "state:waiting",
+        "question-message:1:executions=0",
+        "parent-received-emitted-question:executions=0",
+        "real-ask-user-question:executions=0",
+        "real-panel-instantiated",
+        "simulated-operator:dismiss",
+        "operator-question-result:refused",
+        "real-reply-child:1:executions=0",
+        "state:running",
+        "resume:1",
+        "scripted-nonauthorization",
+        "state:completed"
+      ]
+    },
+    {
+      "id": "panel-abort",
+      "input": "declared scripted semantic fixture; no classifier/model evidence",
+      "authorized": false,
+      "counters": {
+        "executions": 0,
+        "consultations": 1,
+        "panels": 1
+      },
+      "states": [
+        "queued",
+        "running",
+        "waiting",
+        "running",
+        "completed"
+      ],
+      "events": [
+        "state:queued",
+        "state:running",
+        "ask-parent:1:executions=0",
+        "state:waiting",
+        "question-message:1:executions=0",
+        "parent-received-emitted-question:executions=0",
+        "real-ask-user-question:executions=0",
+        "real-panel-instantiated",
+        "simulated-operator:abort",
+        "operator-question-result:refused",
+        "real-reply-child:1:executions=0",
+        "state:running",
+        "resume:1",
+        "scripted-nonauthorization",
+        "state:completed"
+      ]
+    },
+    {
+      "id": "user-unavailable",
+      "input": "declared scripted semantic fixture; no classifier/model evidence",
+      "authorized": false,
+      "counters": {
+        "executions": 0,
+        "consultations": 1,
+        "panels": 0
+      },
+      "states": [
+        "queued",
+        "running",
+        "waiting",
+        "running",
+        "completed"
+      ],
+      "events": [
+        "state:queued",
+        "state:running",
+        "ask-parent:1:executions=0",
+        "state:waiting",
+        "question-message:1:executions=0",
+        "parent-received-emitted-question:executions=0",
+        "real-ask-user-question:executions=0",
+        "operator-question-result:refused",
+        "real-reply-child:1:executions=0",
+        "state:running",
+        "resume:1",
+        "scripted-nonauthorization",
+        "state:completed"
+      ]
+    },
+    {
+      "id": "cancelled-waiting",
+      "input": "declared scripted semantic fixture; no classifier/model evidence",
+      "authorized": false,
+      "counters": {
+        "executions": 0,
+        "consultations": 0,
+        "panels": 0
+      },
+      "states": [
+        "queued",
+        "running",
+        "waiting",
+        "cancelled"
+      ],
+      "events": [
+        "state:queued",
+        "state:running",
+        "ask-parent:1:executions=0",
+        "state:waiting",
+        "question-message:1:executions=0",
+        "parent-received-emitted-question:executions=0",
+        "real-cancel-child",
+        "state:cancelled",
+        "ask-rejected"
+      ],
+      "askError": "The child was cancelled."
+    },
+    {
+      "id": "delivery-failure",
+      "input": "declared scripted semantic fixture; no classifier/model evidence",
+      "authorized": false,
+      "counters": {
+        "executions": 0,
+        "consultations": 0,
+        "panels": 0
+      },
+      "states": [
+        "queued",
+        "running",
+        "waiting",
+        "running",
+        "completed"
+      ],
+      "events": [
+        "state:queued",
+        "state:running",
+        "ask-parent:1:executions=0",
+        "state:waiting",
+        "question-message:1:executions=0",
+        "state:running",
+        "ask-rejected",
+        "state:completed"
+      ],
+      "askError": "The question could not reach the parent: scripted transport failure"
+    },
+    {
+      "id": "foreground-refusal",
+      "input": "declared scripted semantic fixture; no classifier/model evidence",
+      "authorized": false,
+      "counters": {
+        "executions": 0,
+        "consultations": 0,
+        "panels": 0
+      },
+      "states": [
+        "running",
+        "completed"
+      ],
+      "events": [
+        "state:running",
+        "ask-parent:1:executions=0",
+        "ask-rejected",
+        "state:completed"
+      ],
+      "askError": "The parent cannot answer: it is waiting for this child in the foreground. Continue without an answer."
+    },
+    {
+      "id": "reply-identity-guards",
+      "input": "declared scripted semantic fixture; no classifier/model evidence",
+      "authorized": true,
+      "counters": {
+        "executions": 1,
+        "consultations": 0,
+        "panels": 0
+      },
+      "states": [
+        "queued",
+        "running",
+        "waiting",
+        "running",
+        "waiting",
+        "running",
+        "completed"
+      ],
+      "events": [
+        "state:queued",
+        "state:running",
+        "ask-parent:1:executions=0",
+        "state:waiting",
+        "question-message:1:executions=0",
+        "parent-received-emitted-question:executions=0",
+        "wrong-id-and-number-rejected-still-waiting:executions=0",
+        "real-reply-child:1:executions=0",
+        "state:running",
+        "resume:1",
+        "ask-parent:2:executions=0",
+        "state:waiting",
+        "question-message:2:executions=0",
+        "duplicate-rejected-second-question-still-waiting:executions=0",
+        "real-reply-child:2:executions=0",
+        "state:running",
+        "resume:2",
+        "simulated-execute",
+        "state:completed"
+      ]
+    },
+    {
+      "id": "wrong-target-nonauthorization",
+      "input": "declared scripted semantic fixture; no classifier/model evidence",
+      "authorized": false,
+      "counters": {
+        "executions": 0,
+        "consultations": 1,
+        "panels": 1
+      },
+      "states": [
+        "queued",
+        "running",
+        "waiting",
+        "running",
+        "completed"
+      ],
+      "events": [
+        "state:queued",
+        "state:running",
+        "ask-parent:1:executions=0",
+        "state:waiting",
+        "question-message:1:executions=0",
+        "parent-received-emitted-question:executions=0",
+        "real-ask-user-question:executions=0",
+        "real-panel-instantiated",
+        "simulated-operator:wrong-target",
+        "operator-question-result:answered",
+        "real-reply-child:1:executions=0",
+        "state:running",
+        "resume:1",
+        "scripted-nonauthorization",
+        "state:completed"
+      ]
+    }
+  ]
+}
