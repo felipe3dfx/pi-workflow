@@ -31,16 +31,24 @@ function guard(program: string, decision: string, checkpoint = false): string {
 );
 ${program}() {
 	__pi_workflow_${program}_guard \${1+"$@"} || return 126;
-	${program === "git" ? "GIT_OPTIONAL_LOCKS=0 " : ""}command ${program} \${1+"$@"};
+	${program === "git" ? "GIT_OPTIONAL_LOCKS=0 command git -c diff.autoRefreshIndex=false" : "command gh"} \${1+"$@"};
 };`;
 }
 
-function gitDecision(root: string): string {
-	return line`root=${shellQuote(root)};
-	command -v cygpath >/dev/null 2>&1 && posix=$(cygpath -u "$root" 2>/dev/null) && root=$posix || :;
-	case "$(pwd -P)/" in
-	"$root"/*) ;;
-	*) exit 0 ;;
+function gitRoot(root: string): string {
+	return line`__pi_workflow_root=${shellQuote(root)};
+	case "$__pi_workflow_root" in
+	/*) ;;
+	*) __pi_workflow_root=$(cygpath -u "$__pi_workflow_root" 2>/dev/null) || __pi_workflow_root= ;;
+	esac;`;
+}
+
+const gitDecision = line`case "$__pi_workflow_root" in
+	/*)
+		case "$(pwd -P)/" in
+		"$__pi_workflow_root"/*) ;;
+		*) exit 0 ;;
+		esac ;;
 	esac;
 	subcommand=;
 	while [ "$#" -gt 0 ] && [ -z "$subcommand" ] && [ -z "$reserved" ]; do
@@ -100,7 +108,6 @@ function gitDecision(root: string): string {
 		[ -n "$list" ] || reserved="git config" ;;
 	*) reserved="git $subcommand" ;;
 	esac;`;
-}
 
 const ghDecision = line`group=;
 	verb=;
@@ -143,7 +150,7 @@ export interface ChildShell {
 const posixShell = /(^|[/\\])(bash|zsh|sh|dash|ksh|mksh)(\.exe)?$/i;
 
 export function guardPrefix(root: string, checkpoint = false): string {
-	return `unalias git gh 2>/dev/null || :\n${guard("git", gitDecision(root), checkpoint)}${guard("gh", ghDecision)}`;
+	return `unalias git gh 2>/dev/null || :\n${gitRoot(root)} ${guard("git", gitDecision, checkpoint)}${guard("gh", ghDecision)}`;
 }
 
 export function createChildBashTool(
