@@ -31,6 +31,7 @@ import type { ChildAudit, ChildCapture } from "./child-audit.ts";
 import {
 	type ActionAuthorization,
 	installActionAuthorization,
+	sessionActionAuthorization,
 } from "./action-authorization.ts";
 import { type ChildShell, createChildBashTool } from "./child-bash.ts";
 import {
@@ -373,6 +374,9 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 	if (spec.sources && !spec.authorization)
 		throw new Error("Common tool sources require contextual authorization.");
 	const sources = spec.authorization ? (spec.sources ?? {}) : undefined;
+	const authorization = spec.authorization
+		? sessionActionAuthorization(spec.authorization)
+		: undefined;
 	const runtime = parentRuntime(spec.modelRegistry);
 	if (!runtime) {
 		throw new Error("The session's model runtime is not available.");
@@ -388,10 +392,9 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 	if (!model) {
 		throw new Error(`The selected model ${spec.model} is not available in Pi.`);
 	}
-	const bridgeExtension =
-		spec.model.slice(0, slash) === "claude-bridge"
-			? await resolveClaudeBridgeExtension(getAgentDir(), spec.project)
-			: undefined;
+	const bridgeExtension = spec.model.slice(0, slash) === "claude-bridge"
+		? await resolveClaudeBridgeExtension(getAgentDir(), spec.project)
+		: undefined;
 	const settingsManager = SettingsManager.inMemory(
 		{},
 		{ projectTrusted: spec.project.trusted },
@@ -431,8 +434,8 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 			...(spec.authorization
 				? [
 						(pi: ExtensionAPI) => {
-							if (spec.authorization)
-								installActionAuthorization(pi, spec.authorization);
+							if (authorization)
+								installActionAuthorization(pi, authorization.authorization);
 						},
 					]
 				: []),
@@ -458,15 +461,9 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 			(entry) => resolve(entry.path) === bridgeExtension,
 		);
 		if (loadError) {
-			throw new Error(
-				`Claude Bridge extension failed to load: ${loadError.error}`,
-			);
+			throw new Error(`Claude Bridge extension failed to load: ${loadError.error}`);
 		}
-		if (
-			!loaded.extensions.some(
-				(entry) => resolve(entry.path) === bridgeExtension,
-			)
-		) {
+		if (!loaded.extensions.some((entry) => resolve(entry.path) === bridgeExtension)) {
 			throw new Error("The resolved Claude Bridge extension was not loaded.");
 		}
 	}
@@ -497,7 +494,10 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 									? resultParameters.verify
 									: resultParameters.worker,
 							async execute(_toolCallId: string, params: ChildResult) {
-								if (!params.reason && !verdictNeedsNoReason(params.verdict)) {
+								if (
+									!params.reason &&
+									!verdictNeedsNoReason(params.verdict)
+								) {
 									throw new Error(
 										`A ${params.verdict} Verdict needs a reason.`,
 									);
@@ -525,6 +525,7 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 		),
 		settingsManager,
 	});
+	authorization?.bindSession(session);
 	session.subscribe((event) => spec.onEvent(event));
 	let stopped = false;
 	let binding: Promise<void> | undefined;
@@ -1075,7 +1076,8 @@ export function createChildSessions(options: {
 			checkpointed = (checkpoint) => {
 				checkpoints.push(checkpoint);
 			};
-			noticed = (message) => traceRun(id, plan, "running", undefined, message);
+			noticed = (message) =>
+				traceRun(id, plan, "running", undefined, message);
 			watch.start();
 			onLaunch(id);
 			traceRun(id, plan, "running");
@@ -1089,12 +1091,9 @@ export function createChildSessions(options: {
 			} catch (error) {
 				traceRun(id, plan, ended);
 				if (checkpoints.length === 0) throw error;
-				throw new Error(
-					`${errorMessage(error)}${checkpointLines(checkpoints)}`,
-					{
-						cause: error,
-					},
-				);
+				throw new Error(`${errorMessage(error)}${checkpointLines(checkpoints)}`, {
+					cause: error,
+				});
 			} finally {
 				watch.stop();
 				launch.signal?.removeEventListener("abort", abort);
@@ -1134,10 +1133,7 @@ export function createChildSessions(options: {
 		};
 		observe = (event) => track(child, event);
 		checkpointed = (checkpoint) => {
-			child.record.checkpoints = [
-				...(child.record.checkpoints ?? []),
-				checkpoint,
-			];
+			child.record.checkpoints = [...(child.record.checkpoints ?? []), checkpoint];
 		};
 		noticed = (message) =>
 			traceRun(child.record.id, plan, child.record.state, undefined, message);
@@ -1178,11 +1174,7 @@ export function createChildSessions(options: {
 			const { todo } = child.record;
 			const started = await start(
 				{ ...child.plan, task },
-				{
-					...launch,
-					background: true,
-					...(todo === undefined ? {} : { todo }),
-				},
+				{ ...launch, background: true, ...(todo === undefined ? {} : { todo }) },
 				{ id, conversation: child.conversation },
 			);
 			if (started.status !== "queued") return started;
@@ -1575,7 +1567,9 @@ export function createSpawnChildTool(
 			}
 			let child: string | undefined;
 			const settle = (run: TaskRun) =>
-				claim && child ? sessions.settle(claim.task.id, child, run) : undefined;
+				claim && child
+					? sessions.settle(claim.task.id, child, run)
+					: undefined;
 			const background = ctx.mode === "tui" || ctx.mode === "rpc";
 			if (params.background && !background) {
 				return notLaunched("refused", {
@@ -1673,9 +1667,7 @@ function launched(
 				...(selection.jev ? { jev: selection.jev } : {}),
 			}
 		: {};
-	const selectionLine = selection
-		? `Launched as ${selection.role}.`
-		: undefined;
+	const selectionLine = selection ? `Launched as ${selection.role}.` : undefined;
 	if (started.status === "completed") {
 		const outcome = selection
 			? childOutcome({

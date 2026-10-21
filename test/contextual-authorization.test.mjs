@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { join, basename } from "node:path";
-import { existsSync, writeFileSync, readFileSync, mkdirSync } from "node:fs";
+import { existsSync, writeFileSync, readFileSync, mkdirSync, unlinkSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { Type } from "typebox";
 import {
@@ -9,6 +10,8 @@ import {
 	fauxAssistantMessage,
 	fauxToolCall,
 	fauxText,
+	getCurrentSystemMessage,
+	getSystemMessageText,
 } from "@earendil-works/pi-ai";
 import {
 	createAgentSession,
@@ -35,7 +38,15 @@ import {
 import { capabilities } from "../extensions/configure.ts";
 import { eventually } from "./support/eventually.mjs";
 
-async function parent(t, authorization, tool, sources) {
+async function parent(t, authorization, tool = {
+	name: "unused",
+	label: "unused",
+	description: "fixture",
+	parameters: Type.Object({}),
+	async execute() {
+		return { content: [], details: {} };
+	},
+}, sources, afterWorkflow = [], bind = true) {
 	const agentDir = withAgentDirectory(t);
 	const priorAgent = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = agentDir;
@@ -55,11 +66,11 @@ async function parent(t, authorization, tool, sources) {
 	runtime.registerNativeProvider(provider.provider);
 	await runtime.setRuntimeApiKey("faux", "fixture");
 	const settings = SettingsManager.inMemory({}, { projectTrusted: false });
-	const recipe = sources
+	const recipe = authorization
 		? contextualWorkflowSources({
 				agentDirectory: agentDir,
 				authorization,
-				sources,
+				sources: sources ?? {},
 			})
 		: undefined;
 	const loader = new DefaultResourceLoader({
@@ -77,6 +88,7 @@ async function parent(t, authorization, tool, sources) {
 					piWorkflowExtension(pi, { agentDirectory: agentDir, authorization }),
 			]),
 			(pi) => pi.registerTool(tool),
+			...afterWorkflow,
 		],
 	});
 	await loader.reload();
@@ -98,12 +110,14 @@ async function parent(t, authorization, tool, sources) {
 		});
 		session.dispose();
 	});
+	if (bind) recipe?.bindSession(session);
 	await session.bindExtensions({});
 	return {
 		session,
 		provider,
 		runtime,
 		agentDir,
+		recipe,
 		async call(args = {}, name = tool.name) {
 			provider.setResponses([
 				fauxAssistantMessage(fauxToolCall(name, args), {
@@ -236,15 +250,7 @@ test("Jev destination blocks are independent of contextual permission and a stay
 	const run = await parent(
 		t,
 		{ authority, classify: async () => assessment },
-		{
-			name: "unused",
-			label: "unused",
-			description: "fixture",
-			parameters: Type.Object({}),
-			async execute() {
-				return { content: [], details: {} };
-			},
-		},
+		undefined,
 	);
 	let destination = "leave";
 	const jev = classifierRegistry(async () => ({
@@ -266,6 +272,10 @@ test("Jev destination blocks are independent of contextual permission and a stay
 	const leave = await run.call({ path }, "read");
 	assert.match(leave.content[0].text, /leaves this session/);
 	assert.doesNotMatch(leave.content[0].text, /PRIVATE_READ_EFFECT/);
+	destination = "decide";
+	const decide = await run.call({ path }, "read");
+	assert.doesNotMatch(decide.content[0].text, /PRIVATE_READ_EFFECT/);
+	assert.match(decide.content[0].text, /ask.*question|decision/i);
 	destination = "stay";
 	assessment = {
 		...known,
@@ -332,15 +342,7 @@ test("the host recipe and real child instantiate selected paths and owned dynami
 	const host = await parent(
 		t,
 		authorization,
-		{
-			name: "unused",
-			label: "unused",
-			description: "fixture",
-			parameters: Type.Object({}),
-			async execute() {
-				return { content: [], details: {} };
-			},
-		},
+		undefined,
 		sources,
 	);
 	assert.equal(
@@ -423,15 +425,7 @@ test("real direct and deferred MCP discovery, resources and runtime changes rema
 	const host = await parent(
 		t,
 		authorization,
-		{
-			name: "unused",
-			label: "unused",
-			description: "fixture",
-			parameters: Type.Object({}),
-			async execute() {
-				return { content: [], details: {} };
-			},
-		},
+		undefined,
 		sources,
 	);
 	await eventually(() =>
@@ -564,15 +558,7 @@ test("a real parent launch carries common sources and local authority into the S
 			classify: async () => known,
 			onDecision: (d) => decisions.push(d),
 		},
-		{
-			name: "unused",
-			label: "unused",
-			description: "fixture",
-			parameters: Type.Object({}),
-			async execute() {
-				return { content: [], details: {} };
-			},
-		},
+		undefined,
 		sources,
 	);
 	host.provider.setResponses([
@@ -609,7 +595,7 @@ test("a real parent launch carries common sources and local authority into the S
 	);
 });
 
-test("changed authority is held and equivalent local actions remain equivalent with Jev on or off", async (t) => {
+test("changed parent authority and unresolved child ownership are held with Jev on or off", async (t) => {
 	let assignment = "Initial task";
 	let effects = 0;
 	const run = await parent(
@@ -674,15 +660,7 @@ test("changed authority is held and equivalent local actions remain equivalent w
 });
 
 test("concurrent real siblings keep cancellation and held actions local", async (t) => {
-	const host = await parent(t, undefined, {
-		name: "unused",
-		label: "unused",
-		description: "fixture",
-		parameters: Type.Object({}),
-		async execute() {
-			return { content: [], details: {} };
-		},
-	});
+	const host = await parent(t);
 	const entered = Promise.withResolvers();
 	const effects = [];
 	const held = [];
@@ -968,15 +946,7 @@ test("an explicitly prohibited parent action cannot execute even when ordinary a
 });
 
 test("an actual child's prohibited write has the same zero-effect outcome as the parent's", async (t) => {
-	const host = await parent(t, undefined, {
-		name: "unused",
-		label: "unused",
-		description: "fixture",
-		parameters: Type.Object({}),
-		async execute() {
-			return { content: [], details: {} };
-		},
-	});
+	const host = await parent(t);
 	const target = join(host.agentDir, "protected.txt");
 	host.provider.setResponses([
 		fauxAssistantMessage(
@@ -1009,15 +979,7 @@ test("an actual child's prohibited write has the same zero-effect outcome as the
 });
 
 test("each child role instantiates common custom sources locally rather than applying a role tool inventory", async (t) => {
-	const host = await parent(t, undefined, {
-		name: "unused",
-		label: "unused",
-		description: "fixture",
-		parameters: Type.Object({}),
-		async execute() {
-			return { content: [], details: {} };
-		},
-	});
+	const host = await parent(t);
 	const factory = (pi) => {
 		let count = 0;
 		pi.registerTool({
@@ -1061,15 +1023,7 @@ test("each child role instantiates common custom sources locally rather than app
 });
 
 test("a known authorized child read is not vetoed by the replaced shell command inventory", async (t) => {
-	const host = await parent(t, undefined, {
-		name: "unused",
-		label: "unused",
-		description: "fixture",
-		parameters: Type.Object({}),
-		async execute() {
-			return { content: [], details: {} };
-		},
-	});
+	const host = await parent(t);
 	host.provider.setResponses([
 		fauxAssistantMessage(fauxToolCall("bash", { command: "git notes list" }), {
 			stopReason: "toolUse",
@@ -1109,15 +1063,7 @@ test("a contextual child's local Todo cannot overwrite the parent's data or phys
 	const host = await parent(
 		t,
 		{ authority, classify: async () => known },
-		{
-			name: "unused",
-			label: "unused",
-			description: "fixture",
-			parameters: Type.Object({}),
-			async execute() {
-				return { content: [], details: {} };
-			},
-		},
+		undefined,
 	);
 	await host.call({ action: "add", text: "Parent-owned task" }, "todo");
 	host.provider.setResponses([
@@ -1151,4 +1097,398 @@ test("a contextual child's local Todo cannot overwrite the parent's data or phys
 	assert.doesNotMatch(painted, /Child-local task/);
 	const parentList = await host.call({ action: "list" }, "todo");
 	assert.doesNotMatch(parentList.content[0].text, /Child-local task/);
+});
+
+test("async decision delivery completes before dispatch and rejection retains the action", async (t) => {
+	let effects = 0;
+	const entered = Promise.withResolvers();
+	const delivery = Promise.withResolvers();
+	// Observe the rejection here too so the pre-fix discarded promise cannot leak.
+	delivery.promise.catch(() => {});
+	const run = await parent(t, {
+		authority,
+		classify: async () => known,
+		onDecision: () => {
+			entered.resolve();
+			return delivery.promise;
+		},
+	}, {
+		name: "effect", label: "Effect", description: "Effect",
+		parameters: Type.Object({}),
+		async execute() {
+			effects++;
+			return { content: [], details: {} };
+		},
+	});
+	const running = run.call();
+	await entered.promise;
+	await delay(20);
+	try {
+		assert.equal(effects, 0, "pending delivery must not release dispatch");
+	} finally {
+		delivery.reject(new Error("async delivery unavailable"));
+		await running;
+	}
+	assert.equal(effects, 0);
+	const held = run.session.sessionManager.getEntries()
+		.filter((e) => e.type === "custom" && e.customType === "pi-workflow-authorization").at(-1);
+	assert.equal(held.data.kind, "held");
+	assert.match(held.data.reason, /async delivery unavailable/);
+});
+
+for (const phase of ["initial", "freshness"]) {
+	test(`abort settles a pending ${phase} authority lookup and retains exact action`, async (t) => {
+		const entered = Promise.withResolvers();
+		const lookup = Promise.withResolvers();
+		let calls = 0;
+		let effects = 0;
+		const run = await parent(t, {
+			authority: () => {
+				if (++calls === (phase === "initial" ? 1 : 2)) {
+					entered.resolve();
+					return lookup.promise;
+				}
+				return authority();
+			},
+			classify: async () => known,
+		}, {
+			name: "effect", label: "Effect", description: "Effect",
+			parameters: Type.Object({ target: Type.String() }),
+			async execute() {
+				effects++;
+				return { content: [], details: {} };
+			},
+		});
+		const input = { target: "assigned.txt" };
+		const running = run.call(input);
+		await entered.promise;
+		const aborted = run.session.abort();
+		const settled = await Promise.race([
+			Promise.all([running, aborted]).then(() => true),
+			delay(100).then(() => false),
+		]);
+		try {
+			assert.equal(settled, true, "abort must settle without authority cooperation");
+			assert.equal(effects, 0);
+			const held = run.session.sessionManager.getEntries()
+				.filter((e) => e.type === "custom" && e.customType === "pi-workflow-authorization").at(-1);
+			assert.equal(held.data.kind, "held");
+			assert.match(held.data.reason, /cancel/i);
+			assert.deepEqual(held.data.proposal.action, {
+				tool: "effect", input, cwd: run.agentDir,
+			});
+		} finally {
+			lookup.resolve(authority());
+			await Promise.all([running, aborted]);
+		}
+	});
+}
+
+test("final transformed prohibition after workflow registration prevents parent dispatch", async (t) => {
+	let effects = 0;
+	let transformedHasProhibition = false;
+	let prohibit = true;
+	const seen = [];
+	const run = await parent(t, {
+		authority,
+		classify: async (proposal) => {
+			seen.push(proposal);
+			return {
+				...known,
+				prohibited: proposal.context.systemPrompt.includes("FINAL_PROHIBITION"),
+				reason: "Final transformed prohibition",
+			};
+		},
+	}, {
+		name: "effect", label: "Effect", description: "Effect",
+		parameters: Type.Object({}),
+		async execute() {
+			effects++;
+			return { content: [], details: {} };
+		},
+	}, {}, [
+		(pi) => pi.on("context_with_system", (event) => {
+			const [system, ...rest] = event.messages;
+			return { messages: [{
+				...system, sections: { ...system.sections, final: prohibit ? "FINAL_PROHIBITION" : "Constraint withdrawn" },
+			}, ...rest] };
+		}),
+	]);
+	const stream = run.session.agent.streamFunction;
+	run.session.agent.streamFunction = function (...args) {
+		const system = getCurrentSystemMessage(args[1].messages);
+		transformedHasProhibition ||= getSystemMessageText(system).includes("FINAL_PROHIBITION");
+		return stream.apply(this, args);
+	};
+	const result = await run.call();
+	assert.equal(transformedHasProhibition, true);
+	assert.equal(effects, 0);
+	assert.match(result.content[0].text, /Action prohibited/);
+	assert.match(seen[0].context.systemPrompt, /FINAL_PROHIBITION/);
+	prohibit = false;
+	await run.call();
+	assert.equal(effects, 1);
+	assert.doesNotMatch(seen.at(-1).context.systemPrompt, /FINAL_PROHIBITION/);
+});
+
+test("same supplied authority and action have equivalent parent-child outcomes with Jev on and off", async (t) => {
+	const prior = seatedCapabilities();
+	replaceSelection({
+		schemaVersion: 1,
+		capabilities: Object.fromEntries(capabilities.map((c) => [c, true])),
+		expectations: {},
+	});
+	t.after(() => replaceSelection({ schemaVersion: 1, ...prior, expectations: {} }));
+	let assessment = known;
+	const decisions = [];
+	const authorization = {
+		authority,
+		classify: async () => assessment,
+		onDecision: (d) => { decisions.push(d); },
+	};
+	const host = await parent(t, authorization, undefined, {});
+	const jev = classifierRegistry(async () => ({
+		answers: { destination: {
+			type: "choice", choice: "stay", probabilities: {}, confidence: 1,
+		} },
+	}));
+	const registry = host.session.extensionRunner.createContext().modelRegistry;
+	Object.assign(registry, jev.registry);
+	registry.getApiKeyForProvider = async () => "fixture";
+	const child = await piChildSession({
+		cwd: host.agentDir, role: "worker", model: "faux/authorization",
+		modelRegistry: new ModelRegistry(host.runtime), sources: {}, authorization,
+	});
+	t.after(() => child.dispose());
+	const input = { path: join(host.agentDir, "assigned.txt"), content: "MATRIX_EFFECT" };
+	for (const [kind, result, reason] of [
+		["allow", known, null],
+		["held", { ...known, effects: "unknown", reason: "Effects unresolved" }, /Authorization held/],
+		["deny", { ...known, prohibited: true, reason: "Explicit prohibition" }, /Action prohibited/],
+	]) {
+		assessment = result;
+		for (const routing of ["off", "on"]) {
+			writeFileSync(join(host.agentDir, "pi-workflow-routing.json"),
+				JSON.stringify({ schemaVersion: 1, jevRouting: routing }));
+			for (const destination of ["parent", "child"]) {
+				if (existsSync(input.path)) unlinkSync(input.path);
+				const response = destination === "parent"
+					? await host.call(input, "write")
+					: await childCall(host, child, "write", input);
+				const decision = decisions.at(-1);
+				assert.equal(decision.kind, kind, `${destination}/${routing}/${kind}`);
+				assert.deepEqual(decision.proposal.authority, authority());
+				assert.deepEqual(decision.proposal.action, {
+					tool: "write", input, cwd: host.agentDir,
+				});
+				assert.equal(existsSync(input.path), kind === "allow");
+				if (kind === "allow") assert.equal(readFileSync(input.path, "utf8"), "MATRIX_EFFECT");
+				else assert.match(response.content[0].text, reason);
+			}
+		}
+	}
+	assert.equal(decisions.length, 12);
+});
+
+for (const checkpoint of [false, true]) {
+	test(`contextual child bash preserves add/commit route with checkpoint ${checkpoint ? "enabled" : "disabled"}`, async (t) => {
+		const host = await parent(t);
+		const cwd = join(host.agentDir, "repository");
+		mkdirSync(cwd);
+		const git = (...args) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+		git("init", "-q");
+		writeFileSync(join(cwd, "assigned.txt"), "before");
+		git("add", "assigned.txt");
+		git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test",
+			"-c", "commit.gpgsign=false", "commit", "-qm", "fixture");
+		const head = git("rev-parse", "HEAD");
+		const index = readFileSync(join(cwd, ".git", "index"));
+		writeFileSync(join(cwd, "assigned.txt"), "after");
+		const child = await piChildSession({
+			cwd, role: "worker", model: "faux/authorization",
+			modelRegistry: new ModelRegistry(host.runtime), sources: {},
+			authorization: { authority, classify: async () => known },
+			...(checkpoint ? { checkpoint: {
+				root: cwd, gitDir: join(cwd, ".git"), commonDir: join(cwd, ".git"),
+				base: head, branch: git("branch", "--show-current"),
+			} } : {}),
+		});
+		t.after(() => child.dispose());
+		for (const command of ["git add assigned.txt", "git commit -am forbidden"]) {
+			const result = await childCall(host, child, "bash", { command });
+			assert.match(result.content[0].text, checkpoint
+				? /does not run in bash.*checkpoint tool/
+				: /reserved for the parent/);
+			assert.deepEqual(readFileSync(join(cwd, ".git", "index")), index);
+			assert.equal(git("rev-parse", "HEAD"), head);
+		}
+		const notes = await childCall(host, child, "bash", { command: "git notes list" });
+		assert.doesNotMatch(notes.content[0]?.text ?? "", /reserved|checkpoint tool|exit.*126/i);
+		assert.deepEqual(readFileSync(join(cwd, ".git", "index")), index);
+		assert.equal(git("rev-parse", "HEAD"), head);
+	});
+}
+
+test("selected system transforms stay local to parent and child snapshots", async (t) => {
+	const directory = withAgentDirectory(t);
+	const selected = join(directory, "instructions.js");
+	writeFileSync(selected, `export default pi => pi.on("context_with_system", (event, ctx) => {
+		const [system, ...rest] = event.messages;
+		return { messages: [{ ...system, sections: {
+			...system.sections, local: "LOCAL_PROHIBITION:" + ctx.cwd,
+		} }, ...rest] };
+	});`);
+	const seen = [];
+	const authorization = {
+		authority,
+		classify: async (proposal) => {
+			seen.push(proposal);
+			return { ...known, prohibited: proposal.context.systemPrompt.includes("LOCAL_PROHIBITION:"),
+				reason: "Local transformed prohibition" };
+		},
+	};
+	const sources = { paths: [selected] };
+	const host = await parent(t, authorization, undefined, sources);
+	const childCwd = join(host.agentDir, "child");
+	mkdirSync(childCwd);
+	const child = await piChildSession({
+		cwd: childCwd, role: "verify", model: "faux/authorization",
+		modelRegistry: new ModelRegistry(host.runtime), sources, authorization,
+	});
+	t.after(() => child.dispose());
+	const parentInput = { path: join(host.agentDir, "assigned.txt"), content: "blocked" };
+	const childInput = { path: join(childCwd, "assigned.txt"), content: "blocked" };
+	await host.call(parentInput, "write");
+	await childCall(host, child, "write", childInput);
+	await host.call(parentInput, "write");
+	assert.equal(seen.length, 3);
+	assert.equal(seen[0].context.systemPrompt.includes(`LOCAL_PROHIBITION:${host.agentDir}`), true);
+	assert.equal(seen[1].context.systemPrompt.includes(`LOCAL_PROHIBITION:${childCwd}`), true);
+	assert.equal(seen[2].context.systemPrompt.includes(`LOCAL_PROHIBITION:${childCwd}`), false);
+	assert.equal(existsSync(parentInput.path), false);
+	assert.equal(existsSync(childInput.path), false);
+});
+
+test("final snapshot includes delegation-mode instructions and later transforms", async (t) => {
+	const prior = seatedCapabilities();
+	replaceSelection({
+		schemaVersion: 1,
+		capabilities: Object.fromEntries(capabilities.map((c) => [c, true])),
+		expectations: {},
+	});
+	t.after(() => replaceSelection({ schemaVersion: 1, ...prior, expectations: {} }));
+	const seen = [];
+	const run = await parent(t, {
+		authority,
+		classify: async (proposal) => {
+			seen.push(proposal);
+			return { ...known, prohibited: true, reason: "Parent must delegate" };
+		},
+	}, undefined, {}, [(pi) => pi.on("context_with_system", (event) => {
+		const [system, ...rest] = event.messages;
+		return { messages: [{ ...system, sections: {
+			...system.sections, last: "AFTER_WORKFLOW",
+		} }, ...rest] };
+	})]);
+	writeFileSync(join(run.agentDir, "pi-workflow-delegation.json"),
+		JSON.stringify({ schemaVersion: 1, delegationMode: "orchestrator" }));
+	const path = join(run.agentDir, "assigned.txt");
+	const result = await run.call({ path, content: "blocked" }, "write");
+	assert.match(result.content[0].text, /Action prohibited/);
+	assert.equal(existsSync(path), false);
+	assert.match(seen[0].context.systemPrompt, /Delegate all work to child sessions/);
+	assert.match(seen[0].context.systemPrompt, /AFTER_WORKFLOW/);
+});
+
+for (const state of ["unbound", "replaced", "changed-prompt"]) {
+	test(`missing or stale final instructions hold dispatch: ${state}`, async (t) => {
+		let run;
+		let classified = 0;
+		let promptOptions;
+		const decisions = [];
+		run = await parent(t, {
+			authority,
+			classify: async () => {
+				classified++;
+				if (state === "changed-prompt") promptOptions.appendSystemPrompt = "Changed applicable instruction";
+				return known;
+			},
+			onDecision: (d) => { decisions.push(d); },
+		}, undefined, {}, [(pi) => pi.on("before_agent_start", (event) => {
+			promptOptions = event.systemPromptOptions;
+		})], state !== "unbound");
+		if (state === "replaced") {
+			const previous = run.session.agent.transformContext;
+			run.session.agent.transformContext = async function (...args) {
+				return previous.apply(this, args);
+			};
+		}
+		const path = join(run.agentDir, "assigned.txt");
+		const result = await run.call({ path, content: "not released" }, "write");
+		assert.equal(existsSync(path), false);
+		assert.match(result.content[0].text, /Authorization held/);
+		assert.equal(decisions.at(-1).kind, "held");
+		assert.equal(classified, state === "changed-prompt" ? 1 : 0);
+		assert.match(decisions.at(-1).reason, state === "changed-prompt"
+			? /Authority changed/ : /instructions.*unavailable or stale/);
+	});
+}
+
+for (const outcome of ["allow", "deny", "held"]) {
+	test(`async decision delivery preserves ${outcome} semantics`, async (t) => {
+		let effects = 0;
+		let delivered = false;
+		const entered = Promise.withResolvers();
+		const delivery = Promise.withResolvers();
+		const run = await parent(t, {
+			authority,
+			classify: async () => outcome === "deny"
+				? { ...known, prohibited: true, reason: "Denied explicitly" }
+				: outcome === "held" ? { ...known, scope: "unknown", reason: "Scope unresolved" } : known,
+			onDecision: async () => {
+				entered.resolve();
+				await delivery.promise;
+				delivered = true;
+			},
+		}, {
+			name: "effect", label: "Effect", description: "Effect",
+			parameters: Type.Object({}),
+			async execute() {
+				effects++;
+				return { content: [], details: {} };
+			},
+		});
+		const running = run.call();
+		await entered.promise;
+		if (outcome === "allow") delivery.resolve();
+		else delivery.reject(new Error("asynchronous delivery failure"));
+		const result = await running;
+		assert.equal(effects, outcome === "allow" ? 1 : 0);
+		assert.equal(delivered, outcome === "allow");
+		if (outcome !== "allow") {
+			assert.match(result.content[0].text, outcome === "deny"
+				? /Action prohibited.*Denied explicitly/ : /Authorization held.*asynchronous delivery failure/);
+		}
+	});
+}
+
+test("abort settles pending async decision delivery without dispatch", async (t) => {
+	const entered = Promise.withResolvers();
+	const run = await parent(t, {
+		authority, classify: async () => known,
+		onDecision: () => { entered.resolve(); return new Promise(() => {}); },
+	});
+	const path = join(run.agentDir, "assigned.txt");
+	const running = run.call({ path, content: "blocked" }, "write");
+	await Promise.race([entered.promise, running]);
+	if (!run.session.isStreaming) assert.fail("authorization delivery was not reached");
+	const aborted = run.session.abort();
+	assert.equal(await Promise.race([
+		Promise.all([running, aborted]).then(() => true), delay(100).then(() => false),
+	]), true);
+	const held = run.session.sessionManager.getEntries()
+		.filter((e) => e.type === "custom" && e.customType === "pi-workflow-authorization").at(-1);
+	assert.equal(held.data.kind, "held");
+	assert.match(held.data.reason, /cancel/i);
+	assert.equal(existsSync(path), false);
 });

@@ -1,5 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
+import { getCurrentSystemMessage, getSystemMessageText } from "@earendil-works/pi-ai";
 import type {
+	AgentSession,
 	ExtensionAPI,
 	ExtensionContext,
 	ToolCallEvent,
@@ -37,10 +39,50 @@ export interface AuthorizationDecision {
 	proposal?: ActionProposal;
 }
 
+interface SessionInstructions {
+	systemPrompt: string;
+	basePrompt: string;
+}
+
 export interface ActionAuthorization {
 	authority(ctx: ExtensionContext): ActionAuthority | Promise<ActionAuthority>;
 	classify(proposal: ActionProposal, signal?: AbortSignal): Promise<unknown>;
-	onDecision?(decision: AuthorizationDecision): void;
+	onDecision?(decision: AuthorizationDecision): void | Promise<void>;
+	sessionInstructions?(): SessionInstructions | undefined;
+}
+
+export function sessionActionAuthorization(options: ActionAuthorization) {
+	let session: AgentSession | undefined;
+	let snapshot: SessionInstructions | undefined;
+	let capture: AgentSession["agent"]["transformContext"];
+	return {
+		authorization: {
+			...options,
+			sessionInstructions: () =>
+				session?.agent.transformContext === capture ? snapshot : undefined,
+		},
+		bindSession(bound: AgentSession) {
+			if (session) {
+				if (session !== bound || bound.agent.transformContext !== capture)
+					throw new Error("Authorization must bind once to its own session.");
+				return;
+			}
+			session = bound;
+			const previous = bound.agent.transformContext;
+			capture = async function (this: unknown, ...args) {
+				snapshot = undefined;
+				const messages = previous ? await previous.apply(this, args) : args[0];
+				const system = getCurrentSystemMessage(messages);
+				if (system)
+					snapshot = {
+						systemPrompt: getSystemMessageText(system),
+						basePrompt: bound.systemPrompt,
+					};
+				return messages;
+			};
+			bound.agent.transformContext = capture;
+		},
+	};
 }
 
 const rules =
@@ -92,11 +134,10 @@ function interpret(
 	return { kind: "allow", reason: value.reason };
 }
 
-async function classifyAction(
-	options: ActionAuthorization,
-	proposal: ActionProposal,
+async function cancellable<T>(
+	evaluate: () => T | Promise<T>,
 	signal?: AbortSignal,
-): Promise<unknown> {
+): Promise<T> {
 	if (signal?.aborted) throw new Error("Authorization evaluation cancelled.");
 	let cancel = () => {};
 	const aborted = new Promise<never>((_resolve, reject) => {
@@ -104,10 +145,7 @@ async function classifyAction(
 		signal?.addEventListener("abort", cancel, { once: true });
 	});
 	try {
-		return await Promise.race([
-			options.classify(structuredClone(proposal), signal),
-			aborted,
-		]);
+		return await Promise.race([evaluate(), aborted]);
 	} finally {
 		signal?.removeEventListener("abort", cancel);
 	}
@@ -122,6 +160,12 @@ export function installActionAuthorization(
 	pi.on("tool_call", async (event: ToolCallEvent, ctx) => {
 		let decision: AuthorizationDecision;
 		let proposal: ActionProposal | undefined;
+		const held = (reason: string): AuthorizationDecision => ({
+			kind: "held",
+			reason,
+			call: event.toolCallId,
+			proposal,
+		});
 		try {
 			proposal = structuredClone({
 				authority: { assignment: "", instructions: [] },
@@ -129,8 +173,13 @@ export function installActionAuthorization(
 				context: { systemPrompt: "" },
 				rules,
 			});
-			proposal.context.systemPrompt = ctx.getSystemPrompt();
-			const authority = structuredClone(await options.authority(ctx));
+			const instructions = options.sessionInstructions?.();
+			if (!instructions || instructions.basePrompt !== ctx.getSystemPrompt())
+				throw new Error("Final session instructions are unavailable or stale.");
+			proposal.context.systemPrompt = instructions.systemPrompt;
+			const authority = structuredClone(
+				await cancellable(() => options.authority(ctx), ctx.signal),
+			);
 			if (!validAuthority(authority))
 				throw new Error(
 					"The current assignment or instructions are unavailable.",
@@ -147,7 +196,11 @@ export function installActionAuthorization(
 					parameters: tool.parameters,
 					promptGuidelines: tool.promptGuidelines,
 				});
-			const result = await classifyAction(options, proposal, ctx.signal);
+			const classifiedProposal = structuredClone(proposal);
+			const result = await cancellable(
+				() => options.classify(classifiedProposal, ctx.signal),
+				ctx.signal,
+			);
 			decision = { ...interpret(result), call: event.toolCallId, proposal };
 			if (
 				decision.kind === "allow" &&
@@ -157,56 +210,44 @@ export function installActionAuthorization(
 					isDeepStrictEqual(action, proposal?.action),
 				)
 			) {
-				decision = {
-					kind: "held",
-					reason:
-						"Explicit confirmation does not identify this actual action and target.",
-					call: event.toolCallId,
-					proposal,
-				};
+				decision = held(
+					"Explicit confirmation does not identify this actual action and target.",
+				);
 			}
 			if (
-				!isDeepStrictEqual(authority, await options.authority(ctx)) ||
-				ctx.getSystemPrompt() !== proposal.context.systemPrompt
+				!isDeepStrictEqual(
+					authority,
+					await cancellable(() => options.authority(ctx), ctx.signal),
+				) ||
+				ctx.getSystemPrompt() !== instructions.basePrompt ||
+				!isDeepStrictEqual(options.sessionInstructions?.(), instructions)
 			) {
-				decision = {
-					kind: "held",
-					reason:
-						"Authority changed during evaluation; current authority must be evaluated again.",
-					call: event.toolCallId,
-					proposal,
-				};
+				decision = held(
+					"Authority changed during evaluation; current authority must be evaluated again.",
+				);
 			}
 			if (
 				!isDeepStrictEqual(proposal.action.input, event.input) ||
 				ctx.signal?.aborted
 			) {
-				decision = {
-					kind: "held",
-					reason:
-						"The action changed or evaluation was cancelled; no authority was established.",
-					call: event.toolCallId,
-					proposal,
-				};
+				decision = held(
+					"The action changed or evaluation was cancelled; no authority was established.",
+				);
 			}
 		} catch (error) {
-			decision = {
-				kind: "held",
-				reason: `Authorization unresolved: ${errorMessage(error)}`,
-				call: event.toolCallId,
-				proposal,
-			};
+			decision = held(`Authorization unresolved: ${errorMessage(error)}`);
 		}
 		try {
-			options.onDecision?.(structuredClone(decision));
+			const delivery = Promise.resolve(
+				options.onDecision?.(structuredClone(decision)),
+			);
+			delivery.catch(() => {});
+			await cancellable(() => delivery, ctx.signal);
 		} catch (error) {
 			if (decision.kind !== "deny")
-				decision = {
-					kind: "held",
-					reason: `Authorization decision delivery unresolved: ${errorMessage(error)}`,
-					call: event.toolCallId,
-					proposal,
-				};
+				decision = held(
+					`Authorization decision delivery unresolved: ${errorMessage(error)}`,
+				);
 		}
 		if (decision.kind === "held") pending.set(event.toolCallId, decision);
 		else pending.delete(event.toolCallId);

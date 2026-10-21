@@ -62,6 +62,7 @@ import { createDelegationMode, createJevRouting } from "./workflow-settings.ts";
 import {
 	type ActionAuthorization,
 	installActionAuthorization,
+	sessionActionAuthorization,
 } from "./action-authorization.ts";
 import { type CommonToolSources, commonToolFactories } from "./tool-sources.ts";
 
@@ -93,13 +94,19 @@ export function contextualWorkflowSources(
 		sources: CommonToolSources;
 	},
 ) {
+	const local = sessionActionAuthorization(options.authorization);
 	return {
+		bindSession: local.bindSession,
 		noExtensions: true,
 		additionalExtensionPaths: [...(options.sources.paths ?? [])],
 		extensionFactories: [
 			...commonToolFactories(options.sources),
 			createMcpExtension(),
-			((pi) => piWorkflowExtension(pi, options)) satisfies ExtensionFactory,
+			((pi) =>
+				piWorkflowExtension(pi, {
+					...options,
+					authorization: local.authorization,
+				})) satisfies ExtensionFactory,
 		],
 	};
 }
