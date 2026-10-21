@@ -394,6 +394,9 @@ test(`a child's bash refuses git read options that run a command or write a file
 		["git archive --remote . --exec touch HEAD", "git archive"],
 		["git archive --remote=. --exec=touch HEAD", "git archive"],
 		["git archive --remote=. --exe=touch HEAD", "git archive"],
+		["git archive --exec touch HEAD", "git archive"],
+		["git archive --exec=touch HEAD", "git archive"],
+		["git archive --exe=touch HEAD", "git archive"],
 		["git archive HEAD -- --output=out.txt", "git archive"],
 	]) {
 		await assertReserved(command, dir, expected);
