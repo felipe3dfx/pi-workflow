@@ -81,6 +81,7 @@ async function askPanel(
 	options: AskUserOption[],
 	multiple: boolean,
 	signal: AbortSignal | undefined,
+	closeView: () => void,
 ): Promise<AgentToolResult<AskUserAnswer>> {
 	if (!ctx.hasUI || ctx.mode !== "tui") {
 		return refusal(NO_UI_REASON);
@@ -89,7 +90,7 @@ async function askPanel(
 		return refusal(ABORTED_REASON);
 	}
 
-	closeChildrenView();
+	closeView();
 	const answer = await ctx.ui.custom<AskUserAnswer>((tui, theme, keybindings, done) => {
 		const freeTextIndex = options.length;
 		const rowCount = options.length + 1;
@@ -394,7 +395,7 @@ const choiceParameters = Type.Object({
 	),
 });
 
-export function createAskUserChoiceTool(hints: FooterHints): ToolDefinition<typeof choiceParameters, AskUserAnswer> {
+export function createAskUserChoiceTool(hints: FooterHints, closeView = closeChildrenView): ToolDefinition<typeof choiceParameters, AskUserAnswer> {
 	return {
 		name: "ask_user_choice",
 		label: "Ask User Choice",
@@ -424,7 +425,7 @@ export function createAskUserChoiceTool(hints: FooterHints): ToolDefinition<type
 					},
 				};
 			}
-			return askPanel(ctx, hints, params.question, params.options, params.multiple ?? false, signal);
+			return askPanel(ctx, hints, params.question, params.options, params.multiple ?? false, signal, closeView);
 		},
 	};
 }
@@ -433,7 +434,7 @@ const questionParameters = Type.Object({
 	question: Type.String({ description: "The open-ended question to ask the operator." }),
 });
 
-export function createAskUserQuestionTool(hints: FooterHints): ToolDefinition<typeof questionParameters, AskUserAnswer> {
+export function createAskUserQuestionTool(hints: FooterHints, closeView = closeChildrenView): ToolDefinition<typeof questionParameters, AskUserAnswer> {
 	return {
 		name: "ask_user_question",
 		label: "Ask User Question",
@@ -462,7 +463,7 @@ export function createAskUserQuestionTool(hints: FooterHints): ToolDefinition<ty
 					},
 				};
 			}
-			return askPanel(ctx, hints, params.question, [], false, signal);
+			return askPanel(ctx, hints, params.question, [], false, signal, closeView);
 		},
 	};
 }

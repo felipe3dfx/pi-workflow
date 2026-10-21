@@ -38,6 +38,7 @@ export interface LaunchRequest {
 }
 
 export interface ChildLauncherOptions {
+	contextual?: boolean;
 	modelProfiles: { load: () => ModelProfilesLoad };
 	jevRouting: Pick<JevRouting, "enabled">;
 	delegationMode: Pick<DelegationMode, "current">;
@@ -60,11 +61,9 @@ const reservedOperations =
 const destinationInstructions = "Where should this package go?";
 
 const destinationCriteria = {
-	decide:
-		`A product decision is still open. The parent must ask the user one question and wait. Choosing an architecture with the user is a decision. A reserved operation (${reservedOperations}) is not an open product decision by itself and stays with the parent.`,
+	decide: `A product decision is still open. The parent must ask the user one question and wait. Choosing an architecture with the user is a decision. A reserved operation (${reservedOperations}) is not an open product decision by itself and stays with the parent.`,
 	stay: `The package is small and already understood, so the parent can finish it in this session, and the user did not ask for a child session or subagent, nor for an independent review or check of work; or the user explicitly asks the parent to do the work itself in this session, in any language or wording, which takes precedence over the review rule. A reserved operation (${reservedOperations}) in the request stays with the parent, but only that part: the rest of the package is judged on its own.`,
-	leave:
-		`A bounded package a child session can finish on its own, or the user explicitly asks to delegate to child sessions or subagents, in any language or wording, or the user asks for an independent review or check of work, which must run in a session other than the parent. A reserved operation (${reservedOperations}) in the request stays with the parent, but only that part: the rest of the package is judged on its own. Investigating an architecture can leave.`,
+	leave: `A bounded package a child session can finish on its own, or the user explicitly asks to delegate to child sessions or subagents, in any language or wording, or the user asks for an independent review or check of work, which must run in a session other than the parent. A reserved operation (${reservedOperations}) in the request stays with the parent, but only that part: the rest of the package is judged on its own. Investigating an architecture can leave.`,
 };
 
 const orchestratorStay = `The package needs no work: conversation, an opinion, or a question about what was already said. Or it asks only for reserved operations (${reservedOperations}), such as a commit the parent has not granted to a worker, a push, or opening a pull request, which stay with the parent. Any other work does not stay, however small.`;
@@ -87,7 +86,11 @@ type GateContext = LauncherContext & {
 
 type Assessment =
 	| { kind: "leave"; jev?: ClassifierResult }
-	| { kind: "stay" | "decide" | "blocked"; reason: string; jev?: ClassifierResult };
+	| {
+			kind: "stay" | "decide" | "blocked";
+			reason: string;
+			jev?: ClassifierResult;
+	  };
 
 type JevAnswer =
 	| { kind: "blocked"; reason: string; jev?: ClassifierResult }
@@ -195,7 +198,12 @@ function stringField(input: unknown, key: string): string | undefined {
 function withinCwd(path: string, cwd: string): string | undefined {
 	try {
 		const rel = relative(cwd, resolve(cwd, path));
-		if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+		if (
+			rel === "" ||
+			rel === ".." ||
+			rel.startsWith(`..${sep}`) ||
+			isAbsolute(rel)
+		) {
 			return undefined;
 		}
 		return rel;
@@ -251,7 +259,10 @@ function gatedTool(event: ToolCallEvent, cwd: string): boolean {
 		return operation === "query" || operation === "explore";
 	}
 	if (!gatedTools.has(event.toolName)) return false;
-	if (event.toolName === "read" && authorityRead(stringField(event.input, "path"), cwd)) {
+	if (
+		event.toolName === "read" &&
+		authorityRead(stringField(event.input, "path"), cwd)
+	) {
 		return false;
 	}
 	return true;
@@ -313,9 +324,14 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		options.contractsDirectory ?? defaultContractsDirectory;
 
 	function readContract(role: Role): Contract | Outcome {
-		const path = join(contractsDirectory, `${role}.md`);
+		const path = join(
+			contractsDirectory,
+			`${options.contextual ? "contextual" : role}.md`,
+		);
 		try {
-			return parseContract(readFileSync(path, "utf8"));
+			return parseContract(
+				readFileSync(path, "utf8").replaceAll("{{role}}", role),
+			);
 		} catch (error) {
 			return outcome(
 				"refused",
@@ -337,14 +353,28 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 					}
 				: {}),
 		};
+		const criteria = options.contextual
+			? {
+					decide:
+						"A product decision remains open; ask the user and wait. Authorization and tool availability are not destination decisions.",
+					stay: "The package is small and understood or the user expressly asks this parent to perform it. An explicitly requested independent review leaves for another session. Task authority is evaluated separately.",
+					leave:
+						"A bounded package another session can finish, explicit delegation, or independent review. The parent supplies the role; the task determines authority separately.",
+				}
+			: destinationCriteria;
 		const questions: ClassifierContext["questions"] = {
 			destination: {
 				type: "choice",
 				instructions: destinationInstructions,
 				criteria:
 					options.delegationMode.current() === "orchestrator"
-						? { ...destinationCriteria, stay: orchestratorStay }
-						: destinationCriteria,
+						? {
+								...criteria,
+								stay: options.contextual
+									? "Conversation, an opinion, or a question about what was already said; other work is delegated."
+									: orchestratorStay,
+							}
+						: criteria,
 			},
 		};
 		const model = ctx.modelRegistry.findOfType(
@@ -385,7 +415,11 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		}
 		const destination = jev.answers.destination;
 		if (!choiceIn(destination, ["decide", "stay", "leave"] as const)) {
-			return { kind: "blocked", reason: "Jev returned an invalid selection.", jev };
+			return {
+				kind: "blocked",
+				reason: "Jev returned an invalid selection.",
+				jev,
+			};
 		}
 		return { kind: "answer", destination: destination.choice, jev };
 	}
@@ -456,7 +490,8 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			return verdictFor(request, ctx);
 		}
 		for (;;) {
-			if (turn?.userMessageId !== userMessageId) return verdictFor(request, ctx);
+			if (turn?.userMessageId !== userMessageId)
+				return verdictFor(request, ctx);
 			const decided = await turn.pending;
 			if (decided.kind !== "blocked") return decided;
 		}
@@ -465,7 +500,10 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 	async function gateToolCall(
 		event: ToolCallEvent,
 		ctx: GateContext,
-	): Promise<{ allow: true } | { allow: false; reason: string; destination?: "leave" | "decide" }> {
+	): Promise<
+		| { allow: true }
+		| { allow: false; reason: string; destination?: "leave" | "decide" }
+	> {
 		if (!seated("child-session", "overlay")) return { allow: true };
 		if (!gatedTool(event, ctx.cwd)) return { allow: true };
 		const userRequest = latestUserRequest(ctx.sessionManager?.getBranch());
@@ -485,13 +523,16 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			return {
 				allow: false,
 				reason: `${shown.warning}\n${shown.reason}`,
-				...(verdict.kind === "decide" ? { destination: "decide" as const } : {}),
+				...(verdict.kind === "decide"
+					? { destination: "decide" as const }
+					: {}),
 			};
 		}
 		return {
 			allow: false,
-			reason:
-				"Jev answered that the work for the latest user message leaves this session; a verdict for an earlier message does not carry over. Call spawn_child with the role whose tools cover the task; this message's verdict allows the launch. If procedure instructions are needed, delegate bounded discovery of obligations, prerequisites, sources, and unresolved questions before dependent work.",
+			reason: options.contextual
+				? "Jev answered that the work for the latest user message leaves this session. Call spawn_child with the role appropriate to the assigned task; common tools grant no authority. Discover mandatory procedures and unresolved prerequisites before dependent work."
+				: "Jev answered that the work for the latest user message leaves this session; a verdict for an earlier message does not carry over. Call spawn_child with the role whose tools cover the task; this message's verdict allows the launch. If procedure instructions are needed, delegate bounded discovery of obligations, prerequisites, sources, and unresolved questions before dependent work.",
 			destination: "leave",
 		};
 	}
@@ -514,10 +555,14 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			);
 		}
 		if (role === undefined && options.jevRouting.enabled()) {
-			return outcome("refused", `spawn_child needs a role: ${roles.join(", ")}`);
+			return outcome(
+				"refused",
+				`spawn_child needs a role: ${roles.join(", ")}`,
+			);
 		}
 		const profiles = options.modelProfiles.load();
-		if (profiles.status === "refused") return outcome("refused", profiles.reason);
+		if (profiles.status === "refused")
+			return outcome("refused", profiles.reason);
 		const references = request.references ?? [];
 		const paths = resolveReferences(references, ctx.cwd);
 		if (!Array.isArray(paths)) {
@@ -543,7 +588,11 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 				);
 			}
 			try {
-				checkpoint = await checkpointGrant(worktree, request.checkpoint, ctx.cwd);
+				checkpoint = await checkpointGrant(
+					worktree,
+					request.checkpoint,
+					ctx.cwd,
+				);
 			} catch (error) {
 				return outcome(
 					"refused",
@@ -612,7 +661,8 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			pi.on("tool_call", async (event, toolCtx) => {
 				const gate = await gateToolCall(event, toolCtx);
 				if (gate.allow) return;
-				if (gate.destination) recordRoutingBlock(event.toolCallId, gate.destination);
+				if (gate.destination)
+					recordRoutingBlock(event.toolCallId, gate.destination);
 				if (event.parentToolCallId && !gateMessageSent) {
 					gateMessageSent = true;
 					pi.sendMessage(
@@ -634,7 +684,8 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 				refresh();
 			},
 			refresh,
-			offered: () => tools.every((tool) => childToolsOn.get(tool.name) === true),
+			offered: () =>
+				tools.every((tool) => childToolsOn.get(tool.name) === true),
 		};
 	}
 

@@ -71,12 +71,15 @@ export function registerSessionTodo(
 	pi: ExtensionAPI,
 	requestRender: () => void,
 	executors: () => TaskExecutors,
+	options: { attachUI?: boolean } = {},
 ) {
 	const todoList = createTodoList();
 	const boxState: TodoBoxState = { collapsed: false, showDone: true };
-	occupyAboveInput("todo", (width, theme) =>
-		renderTodoBox(theme, todoList.list(), boxState, width, executors()),
-	);
+	if (options.attachUI !== false) {
+		occupyAboveInput("todo", (width, theme) =>
+			renderTodoBox(theme, todoList.list(), boxState, width, executors()),
+		);
+	}
 
 	function reveal(): void {
 		boxState.collapsed = false;
@@ -152,21 +155,23 @@ export function registerSessionTodo(
 	};
 	pi.registerTool(tool);
 
-	pi.registerShortcut("alt+shift+t", {
-		description: "Collapse or expand the session task box above the input",
-		handler: async (_ctx) => {
-			boxState.collapsed = !boxState.collapsed;
-			requestRender();
-		},
-	});
+	if (options.attachUI !== false) {
+		pi.registerShortcut("alt+shift+t", {
+			description: "Collapse or expand the session task box above the input",
+			handler: async (_ctx) => {
+				boxState.collapsed = !boxState.collapsed;
+				requestRender();
+			},
+		});
 
-	pi.registerShortcut("alt+shift+h", {
-		description: "Show or hide done session tasks above the input",
-		handler: async (_ctx) => {
-			boxState.showDone = !boxState.showDone;
-			requestRender();
-		},
-	});
+		pi.registerShortcut("alt+shift+h", {
+			description: "Show or hide done session tasks above the input",
+			handler: async (_ctx) => {
+				boxState.showDone = !boxState.showDone;
+				requestRender();
+			},
+		});
+	}
 
 	async function restoreFromBranch(_event: unknown, ctx: ExtensionContext) {
 		todoList.restore(replayTasks(ctx.sessionManager.getBranch()));

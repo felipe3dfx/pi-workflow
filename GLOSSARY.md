@@ -148,7 +148,7 @@ _Avoid_: read result, acknowledged result
 
 ### Contract
 
-The harness-owned definition of a child role: its `tools:` line lists the tools every launch checks, and its body is the child's system prompt. A child follows its Contract over project context files, including when those files instruct it to ask the user, delegate, launch children, commit, push, or publish.
+The harness-owned instructions of a child role, with a tool-source declaration used when constructing its session. A child follows its Contract's applicable instructions over project context; the task and applicable prohibitions determine action authority, not tool availability or role.
 
 _Avoid_: agent definition, persona, system prompt file
 
