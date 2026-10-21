@@ -733,3 +733,41 @@ for (const name of ["bash.exe", "zsh.EXE", "C:\\Program Files\\Git\\bin\\bash.ex
 		assert.equal(shell.calls(), `${shell.path}\n${shell.path}\n`);
 	});
 }
+
+test("a granted child's bash still refuses every git mutation and points add and commit to the checkpoint tool", async (t) => {
+	const dir = worktree(t);
+	const bash = createChildBashTool(dir, {}, true);
+	const output = async (command) =>
+		(await bash.execute("call-1", { command })).structuredContent.output;
+	const checkpoint = (command) =>
+		`\`${command}\` does not run in bash. Commit through the checkpoint tool instead.\n`;
+
+	assert.equal(await output("git commit -am x"), checkpoint("git commit"));
+	assert.equal(await output("git -C . commit --amend -m x"), checkpoint("git commit"));
+	assert.equal(await output("git add file.txt"), checkpoint("git add"));
+	for (const [command, name] of [
+		["git push origin HEAD", "git push"],
+		["git merge main", "git merge"],
+		["git checkout -b other", "git checkout"],
+		["git switch -c other", "git switch"],
+		["git reset --hard", "git reset"],
+		["git worktree add ../other", "git worktree add"],
+		["git -c commit.gpgsign=false status", "git -c"],
+		["git --git-dir=.git status", "git --git-dir"],
+	]) {
+		assert.equal(await output(command), reserved(name), command);
+	}
+	assert.equal(commits(dir), "1");
+	assert.equal(await output("git status --short"), " M file.txt\n");
+});
+
+test("an ungranted child's bash keeps the parent-reserved refusal for add and commit", async (t) => {
+	const dir = worktree(t);
+	const bash = createChildBashTool(dir);
+
+	for (const [command, name] of [["git commit -am x", "git commit"], ["git add file.txt", "git add"]]) {
+		const result = await bash.execute("call-1", { command });
+		assert.equal(result.structuredContent.output, reserved(name));
+	}
+	assert.equal(commits(dir), "1");
+});

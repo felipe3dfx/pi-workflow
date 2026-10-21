@@ -382,6 +382,7 @@ test("in orchestrator with the child tools, the parent's leading system message 
 	assert.match(instruction, /reading included/i);
 	assert.match(instruction, /git and gh/);
 	assert.match(instruction, /commit/);
+	assert.match(instruction, /except the signed checkpoint commits of a worker you grant checkpoint in an isolated worktree you created, which you verify before you integrate them/);
 	assert.match(instruction, /AGENTS\.md/);
 	assert.doesNotMatch(instruction, /bounded discovery/);
 	assert.match(instruction, /GLOSSARY\.md, and docs\/agents/);

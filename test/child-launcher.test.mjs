@@ -950,3 +950,78 @@ test("a reference outside cwd, directly or through a symlink, refuses the launch
 		}
 	});
 });
+
+async function withLinkedWorktree(run) {
+	await withWorkspace(async ({ dir, worktree: main }) => {
+		const git = (cwd, ...args) =>
+			execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+		git(main, "-c", "user.name=Parent", "-c", "user.email=parent@example.com", "-c", "commit.gpgsign=false", "commit", "--quiet", "--allow-empty", "--message", "chore: init");
+		const branch = git(main, "branch", "--show-current");
+		const linked = join(dir, "feature");
+		git(main, "worktree", "add", "--quiet", "-b", "feature", linked);
+		return run({ dir, main, branch, linked: await realpath(linked), git });
+	});
+}
+
+function checkpointLauncher() {
+	return createChildLauncher({
+		jevRouting,
+		delegationMode,
+		modelProfiles: absentProfiles,
+	});
+}
+
+test("a worker in an isolated worktree on the granted branch carries the checkpoint grant", async () => {
+	await withLinkedWorktree(async ({ main, linked, git }) => {
+		const result = await checkpointLauncher().prepareLaunch(
+			{ role: "worker", task: "Fix the failing test", worktree: linked, checkpoint: "feature" },
+			launcherContext(main),
+		);
+
+		assert.equal(result.kind, "ready");
+		assert.deepEqual(result.checkpoint, {
+			branch: "feature",
+			root: linked,
+			gitDir: await realpath(git(linked, "rev-parse", "--absolute-git-dir")),
+			commonDir: await realpath(join(main, ".git")),
+			base: git(linked, "rev-parse", "HEAD"),
+		});
+	});
+});
+
+test("a launch without a checkpoint carries no grant", async () => {
+	await withLinkedWorktree(async ({ main, linked }) => {
+		const result = await checkpointLauncher().prepareLaunch(
+			{ role: "worker", task: "Fix the failing test", worktree: linked },
+			launcherContext(main),
+		);
+
+		assert.equal(result.kind, "ready");
+		assert.equal("checkpoint" in result, false);
+	});
+});
+
+test("a checkpoint grant is refused outside an isolated worker worktree on its branch before Jev is asked", async () => {
+	await withLinkedWorktree(async ({ dir, main, branch, linked, git }) => {
+		const clone = join(dir, "clone");
+		git(dir, "clone", "--quiet", main, clone);
+		const cases = [
+			[{ role: "explore", worktree: linked, checkpoint: "feature" }, main, /worker/],
+			[{ role: "verify", worktree: linked, checkpoint: "feature" }, main, /worker/],
+			[{ role: "worker", checkpoint: "feature" }, linked, /worktree/],
+			[{ role: "worker", worktree: main, checkpoint: branch }, main, /shared checkout/],
+			[{ role: "worker", worktree: linked, checkpoint: "other" }, main, /refs\/heads\/other/],
+			[{ role: "worker", worktree: clone, checkpoint: branch }, main, /parent's current branch/],
+		];
+		for (const [request, cwd, reason] of cases) {
+			const jev = fakeJev(() => "leave");
+			const result = await checkpointLauncher().prepareLaunch(
+				{ task: "Fix the failing test", ...request },
+				launcherContext(cwd, { jev }),
+			);
+			assertRefused(result, reason);
+			assert.equal(result.kind, "refused");
+			assert.equal(jev.requests.length, 0, String(reason));
+		}
+	});
+});

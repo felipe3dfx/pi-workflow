@@ -96,6 +96,19 @@ test("the worker contract reports through report_result and separates a decision
 	assert.doesNotMatch(text, /interaction_required/);
 });
 
+test("the worker contract commits only through an offered checkpoint tool and otherwise leaves the commit to the parent", async () => {
+	const text = await contract("worker");
+	assertSentence(
+		text,
+		/\bWhen the checkpoint tool is offered, commit only through it\b/,
+		/\bafter the required checks pass\b/,
+		/\bin the repository's commit template\b/,
+		/\bsha, parent, and base\b/,
+		/\bnever push, merge, change branches, or open pull requests\b/,
+	);
+	assertSentence(text, /\bWithout the checkpoint tool, do not commit\b/, /\bleft_undone\b/);
+});
+
 test("the explore contract reports no Verdict", async () => {
 	assert.doesNotMatch(await contract("explore"), /report_result/);
 });

@@ -4,6 +4,8 @@
 
 Acceptance: approval and merge of the introducing PR.
 
+Superseded by ADR 0020 for granted checkpoints only: a granted worker commits signed checkpoints on its branch through the `checkpoint` tool.
+
 ## Decision
 
 Before dependent work, the parent learns the obligations of any mandatory procedure: it reads the procedure when routing and delegation mode allow, otherwise delegates discovery through the existing child tools. `SKILL.md` and local Markdown references remain ordinary routed reads, whether used as instructions or as the object of work. There is no read exemption, reference allowlist, new role, or fixed child count. ADR-0015's delegation-mode stance and ADR-0017's destination-only Jev decision and per-role tools remain unchanged.

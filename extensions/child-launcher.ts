@@ -17,6 +17,7 @@ import type {
 	ToolCallEvent,
 } from "@earendil-works/pi-coding-agent";
 
+import { type CheckpointGrant, checkpointGrant } from "./child-checkpoint.ts";
 import { latestUserRequest } from "./child-sessions.ts";
 import { errorMessage } from "./error-message.ts";
 import { gitEnvironment } from "./git-environment.ts";
@@ -30,6 +31,7 @@ export interface LaunchRequest {
 	role?: string;
 	task: string;
 	worktree?: string;
+	checkpoint?: string;
 	references?: string[];
 	userRequest?: string;
 	userMessageId?: string;
@@ -112,6 +114,7 @@ type Ready = {
 	thinking: ModelThinkingLevel;
 	chosenBy: "parent";
 	references: string[];
+	checkpoint?: CheckpointGrant;
 	jev?: ClassifierResult;
 };
 
@@ -519,6 +522,29 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		}
 		const worktree = await gitRoot(resolve(ctx.cwd, request.worktree ?? "."));
 		if (typeof worktree !== "string") return worktree;
+		let checkpoint: CheckpointGrant | undefined;
+		if (request.checkpoint !== undefined) {
+			if (role !== "worker") {
+				return outcome(
+					"refused",
+					`A checkpoint is granted only to a worker, not to ${role ?? "a child without a role"}.`,
+				);
+			}
+			if (request.worktree === undefined) {
+				return outcome(
+					"refused",
+					"A checkpoint needs the isolated worktree passed explicitly as worktree.",
+				);
+			}
+			try {
+				checkpoint = await checkpointGrant(worktree, request.checkpoint, ctx.cwd);
+			} catch (error) {
+				return outcome(
+					"refused",
+					`The checkpoint cannot be granted: ${errorMessage(error)}`,
+				);
+			}
+		}
 		const verdict = await launchVerdict(request, ctx);
 		if (verdict.kind !== "leave") return show(verdict);
 		if (role === undefined) return outcome("stay", "Jev routing is off.");
@@ -541,6 +567,7 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			thinking: pair.thinking,
 			chosenBy: "parent",
 			references,
+			...(checkpoint ? { checkpoint } : {}),
 			...jev,
 		};
 	}

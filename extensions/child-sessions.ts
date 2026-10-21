@@ -29,6 +29,12 @@ import { type Static, Type } from "typebox";
 
 import type { ChildAudit, ChildCapture } from "./child-audit.ts";
 import { type ChildShell, createChildBashTool } from "./child-bash.ts";
+import {
+	type Checkpoint,
+	type CheckpointGrant,
+	checkpointTool,
+	createCheckpointTool,
+} from "./child-checkpoint.ts";
 import type { createChildLauncher } from "./child-launcher.ts";
 import { createChildCodeGraphTool } from "./codegraph-tool.ts";
 import { answerCard } from "./child-result-card.ts";
@@ -77,6 +83,8 @@ interface ChildSpec {
 	notify(message: string): void;
 	ask(question: string, signal?: AbortSignal): Promise<string>;
 	report(result: ChildResult): void;
+	checkpoint?: CheckpointGrant;
+	checkpointed(checkpoint: Checkpoint): void;
 	entries?: SessionEntry[];
 	parentSession?: string;
 }
@@ -110,6 +118,7 @@ type Plan = {
 	thinking: ModelThinkingLevel;
 	chosenBy: "parent";
 	references: string[];
+	checkpoint?: CheckpointGrant;
 };
 
 type ChildState =
@@ -141,6 +150,7 @@ export interface ChildRecord {
 	question?: number;
 	steering?: string[];
 	undelivered?: string[];
+	checkpoints?: Checkpoint[];
 }
 
 export type Answerer = "parent" | "operator";
@@ -257,6 +267,7 @@ function childDetails(record: ChildRecord, now = Date.now()) {
 		text: projected.text,
 		result: record.result,
 		verdict: record.state === "completed" ? record.result?.verdict : undefined,
+		...(record.checkpoints ? { checkpoints: record.checkpoints } : {}),
 	};
 }
 
@@ -297,6 +308,7 @@ function childTools(plan: Plan) {
 		...(plan.role === "explore" ? webAccessTools : []),
 		askParentTool,
 		...(reportsResult(plan.role) ? [reportResultTool] : []),
+		...(plan.checkpoint ? [checkpointTool] : []),
 	];
 }
 
@@ -412,7 +424,7 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 		thinkingLevel: spec.thinking,
 		tools: spec.tools,
 		customTools: [
-			createChildBashTool(spec.cwd, spec.shell),
+			createChildBashTool(spec.cwd, spec.shell, spec.checkpoint !== undefined),
 			createChildCodeGraphTool(spec.cwd),
 			createAskParentTool(spec.ask),
 			...(reportsResult(spec.role)
@@ -442,6 +454,9 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 							},
 						},
 					]
+				: []),
+			...(spec.checkpoint
+				? [createCheckpointTool(spec.checkpoint, spec.checkpointed)]
 				: []),
 		],
 		resourceLoader,
@@ -878,6 +893,7 @@ export function createChildSessions(options: {
 		let auditReport = (_result: ChildResult) => {};
 		let reported = (_result: ChildResult) => {};
 		let noticed = (_message: string) => {};
+		let checkpointed = (_checkpoint: Checkpoint) => {};
 		const watch = createWatch(schedule, (reason) => stall(reason));
 		const launchedIn = generation;
 		let handle: ChildHandle;
@@ -903,6 +919,8 @@ export function createChildSessions(options: {
 					auditReport(result);
 					reported(result);
 				},
+				...(plan.checkpoint ? { checkpoint: plan.checkpoint } : {}),
+				checkpointed: (checkpoint) => checkpointed(checkpoint),
 				entries: from?.conversation.entries,
 				parentSession: from?.conversation.sessionId,
 			});
@@ -989,6 +1007,10 @@ export function createChildSessions(options: {
 			reported = (value) => {
 				result = value;
 			};
+			const checkpoints: Checkpoint[] = [];
+			checkpointed = (checkpoint) => {
+				checkpoints.push(checkpoint);
+			};
 			noticed = (message) =>
 				traceRun(id, plan, "running", undefined, message);
 			watch.start();
@@ -1000,7 +1022,7 @@ export function createChildSessions(options: {
 					stopped.promise,
 				]);
 				traceRun(id, plan, "completed", result);
-				return { status: "completed" as const, text, result };
+				return { status: "completed" as const, text, result, checkpoints };
 			} catch (error) {
 				traceRun(id, plan, ended);
 				throw error;
@@ -1042,6 +1064,9 @@ export function createChildSessions(options: {
 			if (isWorking(child.record.state)) child.record.result = result;
 		};
 		observe = (event) => track(child, event);
+		checkpointed = (checkpoint) => {
+			child.record.checkpoints = [...(child.record.checkpoints ?? []), checkpoint];
+		};
 		noticed = (message) =>
 			traceRun(child.record.id, plan, child.record.state, undefined, message);
 		children.set(child.record.id, child);
@@ -1344,6 +1369,12 @@ const spawnChildParameters = Type.Object({
 				"An existing Git root for the child to work in. Defaults to the current Git root.",
 		}),
 	),
+	checkpoint: Type.Optional(
+		Type.String({
+			description:
+				"Grant a worker the checkpoint tool: the name of the branch checked out in the isolated worktree you created for it and passed as worktree. The child can then create signed checkpoint commits on that branch only, in the repository's commit template, and the harness records each SHA in its result. The launch is refused for another role, without an explicit worktree, for the shared checkout, when the worktree is not on that branch, or when it is your current branch.",
+		}),
+	),
 	references: Type.Optional(
 		Type.Array(Type.String(), {
 			description:
@@ -1440,7 +1471,7 @@ export function createSpawnChildTool(
 			"Pass the task and the role (explore, worker, or verify). The parent chooses the role and it determines the contract; Jev decides only the destination. Choose the role whose tools cover the task; a role named by a skill is a hint. Fixed tools per role (explore: read, grep, find, ls, codegraph, codemode; worker: read, bash, edit, write, grep, find, ls, codemode; verify: read, bash, grep, find, ls, codegraph, codemode), plus MCP and web tools added at runtime. Explore reads and queries CodeGraph and cannot run commands; verify independently checks completed work and may run checks and tests without editing; worker implements and runs commands. Give a brief with the scope, acceptance criteria, and edit surface; assign any reading needed before a write to the worker.",
 			"Children communicate only with the parent, never directly with the user.",
 			"Before dependent work, learn the obligations of any mandatory procedure: read it when routing and delegation mode allow, otherwise delegate its discovery. Track each obligation with an owner and a state (pending, satisfied with evidence, or blocked with reason) across child questions, scope changes, and background results. An unmet mandatory prerequisite stops dependent work; do not continue it as qualified partial work.",
-			"Do not delegate mutating git or gh commands or publication: they are reserved for the parent and stay with it; when a procedure requires them, such as worktree setup, the parent runs them itself before dependent child work; if routing blocks them, delegate discovery first and run them after its result arrives. Do not ask the child for intermediate progress reports. Copy evidence you already have into the task; references accept only paths inside the cwd. There is no channel to a running child; use reply_child only when the child asks.",
+			"Do not delegate mutating git or gh commands or publication: they are reserved for the parent and stay with it; when a procedure requires them, such as worktree setup, the parent runs them itself before dependent child work; if routing blocks them, delegate discovery first and run them after its result arrives. The one exception: you may grant checkpoint, with the branch of an isolated worktree you created, to a worker, which then commits its own signed checkpoints on that branch. Before integrating, verify that each returned SHA is on that branch, descends from the base, and contains the expected change; integration, integration checks, push, pull requests, and tracker effects stay with you. Without the grant, the worker hands over a verified tree and lists the commit for you. Do not ask the child for intermediate progress reports. Copy evidence you already have into the task; references accept only paths inside the cwd. There is no channel to a running child; use reply_child only when the child asks.",
 			"A refusal or a queued id is not a completed result and is not retried. After a background child is queued, end your turn: its result wakes you. Do not poll with sleep, list_children, child_status, or child_result.",
 			`One codemode script can launch several children: each spawn_child call returns at once without awaiting the child. Their results arrive in one message when every child is done, or earlier when a result needs you. In print and json modes each call waits for its child instead. At most ${launchLimit} children can be queued, running, or waiting at once; a launch beyond that is refused.`,
 			"Do not declare work done without a worker Verdict of done and its files_changed, validation, and left_undone fields. Do not declare work verified without a verifier Verdict of pass and its findings and unverified fields; partial, fail, and blocked are not success. A child's done or pass covers only its task: reconcile left_undone and unverified against the remaining obligations, then continue or report an explicit blocker.",
@@ -1484,6 +1515,7 @@ export function createSpawnChildTool(
 						role: params.role ?? undefined,
 						task: params.task,
 						worktree: params.worktree,
+						checkpoint: params.checkpoint,
 						references: params.references,
 						...(userRequest
 							? { userRequest: userRequest.text, userMessageId: userRequest.id }
@@ -1567,12 +1599,16 @@ function launched(
 					state: "completed",
 					text: started.text,
 					result: started.result,
+					checkpoints: started.checkpoints,
 				})
 			: started.text;
 		return report([...warnings, withNote(outcome, note)], {
 			status: "completed",
 			...(selection
 				? { verdict: started.result?.verdict, result: started.result }
+				: {}),
+			...(started.checkpoints.length > 0
+				? { checkpoints: started.checkpoints }
 				: {}),
 			...selected,
 		});

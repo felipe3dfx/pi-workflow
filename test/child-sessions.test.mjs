@@ -2751,6 +2751,9 @@ test("spawn_child tells the parent to end its turn instead of polling", async ()
 		);
 		assert.match(guidance, /Do not delegate mutating git or gh commands or publication/);
 		assert.match(guidance, /reserved for the parent/);
+		assert.match(guidance, /you may grant checkpoint, with the branch of an isolated worktree you created, to a worker/);
+		assert.match(guidance, /verify that each returned SHA is on that branch, descends from the base, and contains the expected change; integration, integration checks, push, pull requests, and tracker effects stay with you/);
+		assert.match(guidance, /Without the grant, the worker hands over a verified tree and lists the commit for you/);
 		assert.match(guidance, /Do not ask the child for intermediate progress reports/);
 		assert.match(guidance, /references accept only paths inside the cwd/);
 		assert.match(guidance, /no channel to a running child; use reply_child only when the child asks/);
@@ -8215,5 +8218,100 @@ test("an open Fleet row follows a rename", async () => {
 		assert.match(view.lines(200).join("\n"), /#1 Fix the parser/);
 		await todo.run("update", { id: 1, text: "Fix the lexer" });
 		assert.match(view.lines(200).join("\n"), /#1 Fix the lexer/);
+	});
+});
+
+function linkedWorktree(dir, worktree) {
+	execFileSync(
+		"git",
+		["-c", "user.name=Parent", "-c", "user.email=parent@example.com", "-c", "commit.gpgsign=false", "commit", "--quiet", "--allow-empty", "--message", "chore: init"],
+		{ cwd: worktree },
+	);
+	const linked = join(dir, "feature");
+	execFileSync("git", ["worktree", "add", "--quiet", "-b", "feature", linked], { cwd: worktree });
+	return linked;
+}
+
+test("only a granted worker gets the checkpoint tool and its grant, and continue_child keeps it", async () => {
+	await withWorkspace(async ({ worktree, agentDir, dir }) => {
+		const linked = linkedWorktree(dir, worktree);
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const ctx = toolContext("tui", worktree);
+
+		const granted = await spawn(
+			extension.tool,
+			{ role: "worker", task: "Fix the failing test", worktree: linked, checkpoint: "feature" },
+			ctx,
+		);
+		await spawn(extension.tool, { role: "worker", task: "Fix the other test", worktree: linked }, ctx);
+		await settle();
+
+		const [first, ungranted] = children.created;
+		assert.deepEqual(first.spec.tools, [...workerAllowlist, "checkpoint"]);
+		assert.equal(first.spec.checkpoint.branch, "feature");
+		assert.equal(first.spec.checkpoint.root, linked);
+		assert.deepEqual(ungranted.spec.tools, workerAllowlist);
+		assert.equal(ungranted.spec.checkpoint, undefined);
+
+		first.result.resolve("Done.");
+		await settle();
+		await use(extension, "continue_child", { id: granted.details.id, task: "Add a test" }, ctx);
+		const continued = children.created.at(-1);
+		assert.deepEqual(continued.spec.checkpoint, first.spec.checkpoint);
+		assert.deepEqual(continued.spec.tools, first.spec.tools);
+	});
+});
+
+test("the parent receives the harness-recorded checkpoints with the child's result", async () => {
+	await withWorkspace(async ({ worktree, agentDir, dir }) => {
+		const linked = linkedWorktree(dir, worktree);
+		const checkpoint = {
+			sha: "a".repeat(40),
+			parent: "b".repeat(40),
+			base: "b".repeat(40),
+			branch: "feature",
+		};
+		const children = fakeChildren({
+			run: async (_task, spec) => {
+				spec.checkpointed(checkpoint);
+				return "Committed.";
+			},
+		});
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const params = { role: "worker", task: "Fix the failing test", worktree: linked, checkpoint: "feature" };
+
+		await spawn(extension.tool, params, toolContext("tui", worktree));
+		await settle();
+		await settle();
+		const [{ message }] = extension.messages;
+		const foreground = await spawn(extension.tool, params, toolContext("print", worktree));
+
+		for (const content of [message.content, text(foreground)]) {
+			assert.match(content, /Harness-recorded checkpoints:\n- a{40} on feature \(parent b{40}, base b{40}\)/);
+		}
+		assert.deepEqual(message.details.checkpoints, [checkpoint]);
+		assert.deepEqual(foreground.details.checkpoints, [checkpoint]);
+	});
+});
+
+test("the default child factory gives a granted worker the checkpoint tool", async () => {
+	await withWorkspace(async ({ worktree, agentDir, dir }) => {
+		const linked = linkedWorktree(dir, worktree);
+		const parent = await fauxParent(agentDir, fauxAssistantMessage("Done."));
+		const { tool } = await loadSpawnTool({ agentDir });
+
+		const result = await spawn(
+			tool,
+			{ role: "worker", task: "Fix the failing test", worktree: linked, checkpoint: "feature" },
+			{ ...toolContext("print", worktree), ...parent.context },
+		);
+
+		assert.equal(result.details.status, "completed", text(result));
+		const [system] = parent.requests[0].messages;
+		assert.deepEqual(
+			system.toolsAdded.map((tool) => tool.name).sort(),
+			[...spawnedTools, "checkpoint"].sort(),
+		);
 	});
 });
