@@ -1,10 +1,10 @@
 ---
 name: create-pr
-description: "Trigger: publish a locally committed ticket candidate: full suite on the exact head, push, draft pull request, relationships, and Spanish ticket comment. Verify conventions, approve each effect, and reconcile without duplicating effects."
+description: "Trigger: publish a locally committed ticket candidate: publication gate on the exact head, push, draft pull request, relationships, and Spanish ticket comment. Verify conventions, approve each effect, and reconcile without duplicating effects."
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "3.1"
+  version: "3.4"
   provenance: original
 ---
 
@@ -20,15 +20,15 @@ Perform only the requested subset of these effects: push the branch, open the dr
 
 Resolve the candidate from repository state: the branch, its commits since the base, and its head SHA must match the handoff. A mismatch, an uncommitted change inside the candidate, or a missing commit returns to the handoff's owner: `implement` for a ticket, the developer for a parent. A handoff without a `code-review` report for the exact head it publishes, or with an unresolved missing-requirement finding, blocks publication and returns to its owner.
 
-Before every push, run the quality playbook's full validation on the exact head being pushed, with quiet output, publishing only on green. A red run publishes nothing: report it to the developer; never repair anything. After two consecutive red runs, ask the developer before running it again; CI is outside this cap. Each round's handoff carries the consecutive red-run count; only a green run resets it.
+Before every push, read [the publication gate](references/publication-gate.md) to select the gate by the change's impact, and run it on the exact head being pushed, with quiet output, publishing only on green. Whenever the gate is Full Validation, read [an interrupted Full Validation run](references/full-validation.md) before running it. A red gate publishes nothing: report it to the developer; never repair anything. After two consecutive red gate runs of any class, ask the developer before running it again; CI is outside this cap. Each round's handoff carries the consecutive red-run count; only a green run resets it.
 
-Never apply a fix or feedback on the change itself; only drafts (title, body, destination, relationships, comment) are adjusted here. A red full run's failures and developer feedback on the change, even during the preview before the first push, return to that owner as a new round, in `implement-spec`'s fix step for a parent. Never wait for CI: red CI the developer shows the change caused returns the same way; other red CI stays with the developer. The corrected head returns as a new handoff.
+Never apply a fix or feedback on the change itself; only drafts (title, body, destination, relationships, comment) are adjusted here. A red gate's failures and developer feedback on the change, even during the preview before the first push, return to that owner as a new round, in `implement-spec`'s fix step for a parent. Never wait for CI: red CI the developer shows the change caused returns the same way; other red CI stays with the developer. The corrected head returns as a new handoff.
 
 The merge destination is an explicit input on every invocation. Propose it from the recorded bases and the playbook's branch rule, or the working base for a Standalone Ticket, and have the user confirm it. A destination that differs from the recorded value is a decision, never a reason to refuse.
 
 Before any effect, verify the drafted pull-request title against the playbook's title rule. Verify every commit's signature: a merge commit the provider created when merging a child pull request against the provider's signing key, every other commit against the repository's existing signing configuration. Verify each commit's message against the fixed template; on a parent integration branch, only those provider merge commits are exempt from the template, and every other commit is checked, including one made directly on the parent. Verify that no commit and no part of the pull request carries an attribution naming an AI agent, model, or tool. Report every mismatch to its owner: `implement` for a ticket's commits, the developer for a commit made on the parent, and the user for the title. Never rewrite a message or a title silently.
 
-When the candidate adds or renames a decision record with a four-digit prefix, check the combined target: capture the confirmed destination's commit OID and verify that no prefix or exact path in the candidate collides with one on that target. Bind the result to that OID and recheck it immediately before the push and before opening the pull request; a moved target invalidates it. A collision blocks publication and is reported; never renumber.
+When the candidate adds or renames a decision record with a four-digit prefix, read [the decision-record check](references/decision-record-check.md) before the first effect.
 
 A missing or `requires-setup` capability the playbooks mark as required blocks its effect; use only a degraded path they document.
 
@@ -45,7 +45,7 @@ After a failure, cancellation, concurrent change, or uncertain provider result, 
 Report in prose:
 
 - each effect performed with its identity: pushed commit SHAs and head SHA, the pull-request URL, the comment's link;
-- the full validation result on each pushed head, and the count of consecutive red runs;
+- on each pushed head, the publication gate class selected, why, and its result, and the count of consecutive red runs;
 - each verification result, including any convention mismatch and who owns it;
 - what returned to its owner as a new round, and why;
 - what is pending, unapproved, blocked, or uncertain, and why;

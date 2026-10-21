@@ -23,4 +23,6 @@ A maintainer reference: a run does not need this file. Check every change to `im
 | Ticket that reports no defect | Unchanged: no diagnosis. |
 | `diagnose-bug` cannot build a red-capable loop | **blocked**, naming what was tried and what is needed. |
 | The diagnosed root cause lies outside the ticket's scope | A scope expansion the developer decides; the run never widens scope on its own. |
+| Child of `implement-spec` at a step 3 checkpoint | The child creates the signed checkpoint on its branch and returns the committed SHA with its evidence; `implement-spec` never creates it. |
+| Child of `implement-spec` whose harness cannot authorize the checkpoint commit | **blocked**, reporting the missing capability; the checkpoint is never handed to the parent and the guard is never bypassed. |
 | Repository gate | `uv run --frozen pre-commit run --all-files` is green, and the `SKILL.md` body stays within 1,000 words. |

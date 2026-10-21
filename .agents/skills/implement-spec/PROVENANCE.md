@@ -58,6 +58,12 @@ The upstream orchestration at `d81f3a1`: the tickets read as a task graph with a
 12. The parent review's Valuable Tests axis gets each requirement's latest line from the children's tables, never one the orchestrator writes, and every re-review runs with the same tables.
 13. In the parent fix loop, after the full first review, re-reviews are corrective on the delta with axes following the fix, a round makes at most two automatic review invocations, and a blocked axis is an accepted risk that stops the parent, as ADR 0027 records.
 14. A red full run or developer feedback returned by `create-pr`, and red CI the change caused after publication, open a new round in the parent fix loop; the corrected head returns to `create-pr`, and `qa-impact` runs again on the new pushed head.
+15. `implement-spec` never creates a child's checkpoint commit; it validates the committed SHA and evidence the child's handoff returns, and owns integration, integration checks, publication, and tracker effects.
+16. Frontier tickets that extend the same ordered sequence their tickets identify are serialized in graph order; others stay parallel.
+17. Added `references/findings-register.md`: the parent's first review, every re-review, and every critique receive a register of the children's rejected or developer-decided findings, never accepted-and-fixed ones, each with its ticket, ID, axis, location, claim, terminal verdict, and any developer decision, copied from their `implement` handoffs' review reports and findings lists and never written or rephrased by the orchestrator. The resume and cancellation rules moved unchanged into `references/resume-and-cancellation.md`, read when a run resumes or is cancelled.
+18. Register entries carry the finding's evidence and the critique's evidence or reason for its verdict, so a reopening is compared against what was adjudicated; a developer-decided `TRADE` is registered under each finding ID it names.
+19. Parent fixes still never run the full suite; `create-pr` runs the publication gate the quality playbook declares before publishing the parent, and a red gate of any class opens a new round in the parent fix loop, as ADR 0030 records.
+20. `create-pr` selects the publication gate by the change's impact for every consumer, with no declaration in the quality playbook, as ADR 0031 records.
 
 ## Approval
 

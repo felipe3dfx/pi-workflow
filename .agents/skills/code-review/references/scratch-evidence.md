@@ -4,7 +4,7 @@ The Valuable Tests axis reads this file in full before it prepares scratch. It r
 
 ## Preparation
 
-The harness owns how scratch is prepared. The consumer's `docs/agents/quality.md` owns what runs there: its test commands, execution constraints, and resource limits, and how scratch isolates state shared across checkouts.
+The harness owns how scratch is prepared. When it offers no mechanism, the Valuable Tests axis prepares scratch itself as a separate checkout of the fixed point, outside the candidate's tree, using only what `docs/agents/quality.md` records: it installs no tool and creates no cache that file does not name, and removes the checkout after the runs. Whoever invoked the review never prepares scratch for the axis. The consumer's `docs/agents/quality.md` owns what runs there: its test commands, execution constraints, and resource limits, and how scratch isolates state shared across checkouts.
 
 - Record the fixed point and the candidate: the candidate's commit, tree, and working-tree status.
 - Build scratch from the fixed point's production code and the candidate's added or changed test files with the test support they need, using dependencies compatible with those files.
@@ -24,3 +24,5 @@ Classify each test's outcome by its error, not by the runner's count:
 ## Missing evidence
 
 A file whose tests never executed, through a setup failure or no run at all, whose run touched shared state without recorded isolation, or whose candidate identity changed during the runs, is missing evidence, as is every file while `docs/agents/quality.md` records no `supported` Scratch Evidence state; when it has no Scratch Evidence section, also tell the user once to run `setup-workflow update`. Use only the degraded path recorded under Scratch Evidence, never taking, recreating, or waiting on shared state there either; otherwise, or when its blocked-when condition holds, the Valuable Tests axis is **blocked**, naming each file and the outcome classes in it. A module-load or missing-name failure is evidence of its class, not missing evidence. A weaker check, such as a narrower command or a static reading of the test, never stands in for the run.
+
+A blocked axis names who prepares scratch, the harness or, without its mechanism, this axis, and what the consumer's owner must record under Scratch Evidence to unblock it: a `supported` state with its evidence and the isolation for state shared across checkouts, or a degraded path with its blocked-when condition. Never edit the consumer's `docs/agents/quality.md`.

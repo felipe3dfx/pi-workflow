@@ -4,7 +4,7 @@ description: "Trigger: review a ticket's diff inside the implementation loop, or
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "3.1.0"
+  version: "3.3.0"
   provenance: derived
 ---
 
@@ -16,7 +16,9 @@ Run at each review of an implementation loop, after a checkpoint commit and befo
 
 The fixed point is the ticket's base for a ticket, and the production base for a parent integration branch reviewed against its specification. The diff runs from the merge-base of the fixed point to the head, a committed, signed commit.
 
-A review is full unless its caller hands over the last reviewed head and its findings with their state; then it is corrective: it reads only the delta from that head, with its surrounding context and affected code, and carries those findings. Its axes follow the delta: all three when it changes behavior, Spec and Valuable Tests when it changes only tests, otherwise Spec; any delta fixing a Standards finding adds Standards. Valuable Tests keeps its behavior baseline at the fixed point. After a rebase, the review is full.
+When the caller hands over the last reviewed head and its findings with their state, read [the corrective review](references/corrective-review.md) before step 1; otherwise the review is full.
+
+A caller may hand any review a register of findings earlier reviews adjudicated; it never makes the review corrective. When handed one, read [the findings register](references/findings-register.md) before dispatch.
 
 This skill never changes the reviewed tree: it reads the diff, the files around it, and each axis's sources, runs tests only in a scratch checkout, and never edits, fixes, comments, commits, or publishes.
 
@@ -33,7 +35,7 @@ This skill never changes the reviewed tree: it reads the diff, the files around 
 
 1. Pin the fixed point: record it, the head, and the commit list since it.
 2. Collect each axis's sources: for Standards, [team standards and smell baseline](references/standards.md) and the repository's `docs/agents/coding-standards.md` when it exists; for Spec, the ticket and its specification when one exists, or the specification and every child ticket for a parent integration branch, read fresh from the tracker, plus the published Work Contract and decision comments, never a scope note written by whoever invoked the review; for Valuable Tests, [the valuable-tests rubric](../tdd/references/valuable-tests.md), the scratch evidence file, the repository's `docs/agents/quality.md`, the seams and coverage lines agreed before the first test, from the requirement-tracing table or coverage lines its caller hands over (else from the ticket), and the same tickets as Spec, read fresh, to check those tables against.
-3. Dispatch each axis to its own context, in parallel when the harness allows. Give each one the fixed point, the head, the commit list, the delta and its prior findings when corrective, its own sources by path, and its brief below. An axis receives no other axis's sources or findings.
+3. Dispatch each axis to its own context, in parallel when the harness allows. Give each one the fixed point, the head, the commit list, the delta and its prior findings when corrective, its register entries, its own sources by path, and its brief below. An axis receives no other axis's sources or findings.
 4. Assemble the report from the axis reports, verbatim or lightly cleaned.
 
 ### Standards brief

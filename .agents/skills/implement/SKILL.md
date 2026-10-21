@@ -4,7 +4,7 @@ description: "Trigger: implement one approved ticket from the tracker. Build it 
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "3.3"
+  version: "4.2"
   provenance: derived
 ---
 
@@ -16,7 +16,7 @@ Implement exactly one approved ticket in a fresh session and deliver it as local
 
 Read the ticket, its specification when one exists, and the domain authority; coding standards serve only the review's Standards axis. Every step reads the ticket fresh from the tracker, never an orchestrator's scope note.
 
-Approvals follow the pull-request playbook's approval policy and approval preview; with no recorded policy, use `every-step` and [the shipped rules](../setup-workflow/assets/pull-requests.md#approval-gates-and-external-effects), telling the user once to run `setup-workflow update`. As a child of `implement-spec`, ask for no approval and perform no external effect: return each draft, proposed effect, and question to that run, which presents them under the policy.
+Approvals follow the pull-request playbook's approval policy and approval preview; with no recorded policy, use `every-step` and [the shipped rules](../setup-workflow/assets/pull-requests.md#approval-gates-and-external-effects), telling the user once to run `setup-workflow update`. As a child of `implement-spec`, read [child runs](references/child-run.md) first.
 
 ## Decision Gates
 
@@ -34,7 +34,7 @@ Before step 1, propose and create the branch, then build and approve the Work Co
 
 1. **Seams.** Load the `tdd` skill. Before the first test, propose and agree with the developer, where the approval policy asks, the test seams, each required behavior's coverage line, and any line `tdd` completes later; every ticket requirement traces to a line. A behavior with no valuable test seam records the exception `tdd` defines.
 2. **Build.** Drive `tdd` at those seams. Run type checks and focused checks regularly through the quality playbook's Focused Validation path, on the touched area plus affected callers and consumers. Modify files through the file-editing capability, which fails on a target mismatch; the shell rewrites files only through project formatters and codemods. Recover from failed edits or checks until the candidate functions. After GREEN, make one simplification pass in this context, keeping the simplest sufficient seams, and close it with green focused checks.
-3. **Checkpoint.** Before the first review and after each fix, commit locally with the repository's existing signing configuration and the fixed commit template from the pull-request playbook. Never run the full suite; `create-pr` runs it. A local commit is not an external effect; pushing is.
+3. **Checkpoint.** Before the first review and after each fix, commit locally with the repository's existing signing configuration and the fixed commit template from the pull-request playbook. Never run the full suite; `create-pr` runs the publication gate. A local commit is not an external effect; pushing is.
 4. **Review.** Open a context other than the implementer's that receives "Load the `code-review` skill", the checkpoint head, and the agreed coverage lines with their tracing, and reviews with the ticket's base as the fixed point. The first review and the first after a rebase are full; every other is corrective, receiving the last reviewed head and the prior findings with their state. A blocked axis is an accepted risk: stop the ticket for the developer.
 5. **Critique.** Load the `review-critique` skill and run it on the review report. Never ask the developer about ordinary findings between reviews; approvals, scope expansions, and accepted risks still stop immediately.
 6. **Fix.** Apply only the accepted findings, in a fresh context other than the implementer's, rerun focused checks, checkpoint, and review again. A round makes at most two automatic review invocations; the second's accepted findings stay open. When it closes, take to the developer only the `user decision` and still-open accepted findings; show the rejected ones, which need no answer. A further fix the developer approves gets a fresh review of its own head.
@@ -43,7 +43,7 @@ Every Work Contract addition, scope expansion, deviation from binding authority 
 
 On cancellation, preserve the work without stashing or discarding it and report the last verified point. Resume only after fresh validation.
 
-When the ticket re-enters after its handoff (a stop, a red full run, feedback, or red CI), read [rounds](references/rounds.md) first.
+When the ticket re-enters after its handoff (a stop, a red publication gate, feedback, or red CI), read [rounds](references/rounds.md) first.
 
 ## Output Contract
 
@@ -52,8 +52,8 @@ A prose handoff with:
 - the ticket, branch, and base, plus the previous head and `create-pr`'s red-run count on re-entry;
 - the commit SHAs, the last being the head, and each reviewed head with its review report, the last equal to the head;
 - a small table tracing each ticket requirement to its seam and cases, each case with RED and GREEN evidence, skipped with its reason, or under its behavior's recorded no-valuable-test-seam exception;
-- the focused checks, with commands and results, and the full suite pending, never green or integrated;
-- each finding ID with its verdict, the developer's answer where needed, and what was applied;
+- the focused checks, with commands and results, and the publication gate pending, never green or integrated;
+- each finding ID with its verdict and the critique's evidence or reason for it, the developer's answer where needed, and what was applied;
 - the Work Contract with its sources and approval;
 - decisions, deviations, accepted risks, and the approved issue comments;
 - blockers or the cancellation point.

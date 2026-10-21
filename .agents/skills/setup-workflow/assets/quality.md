@@ -14,7 +14,7 @@ Run `{{FOCUSED_VALIDATION_COMMANDS}}` for the impact set: the touched area plus 
 
 ## Full Validation
 
-`create-pr` runs `{{FULL_VALIDATION_COMMANDS}}` on the exact head before every push, and CI runs it after publication; no review skill runs it. If the command is absent or unverified, report its state and use only the recorded degraded behavior. When the repository defines a single validation command, that command is the candidate for both focused and full validation; the same value recorded twice is one candidate, not a question, and no scoped variant is invented.
+`create-pr` runs `{{FULL_VALIDATION_COMMANDS}}` on the exact head before a push when the publication gate it selects is Full Validation, and CI runs it after publication; no review skill runs it. If the command is absent or unverified, report its state and use only the recorded degraded behavior. When the repository defines a single validation command, that command is the candidate for both focused and full validation; the same value recorded twice is one candidate, not a question, and no scoped variant is invented.
 
 - state: {{FULL_VALIDATION_CAPABILITY_STATE}}
 - evidence: {{FULL_VALIDATION_CAPABILITY_EVIDENCE}}

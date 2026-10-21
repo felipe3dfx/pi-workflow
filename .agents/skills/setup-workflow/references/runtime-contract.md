@@ -17,6 +17,14 @@ A playbook records each capability in compact form; the asset's full field list 
 - Any other capability keeps its fields in order but drops each one recorded `none (confirmed absent)`, listing their names after the kept fields on one line, `- none (confirmed absent): <field>, <field>`.
 - An unresolved marker is never dropped or grouped, so it stays distinguishable from a confirmed absence.
 
+## Missing Instruction File
+
+Propose the harness's named initializer when it offers one; otherwise a minimal `AGENTS.md` carrying a title, one discovered repository line, and the routing block. Present one proposal, never an unqualified choice. Its approval may be collected before, with, or after other playbook findings, but `AGENTS.md` is never written before its own explicit approval.
+
+## Linear Branch Convention
+
+With a Linear tracker, `CHILD_BRANCH_CONVENTION` is the pattern `<KEY>-<number>` built from the resolved Linear team's key (`ENG-<number>`, never a literal identifier); branch history, prefix styles, and slugs supply no candidate, and an unresolved key leaves a marker.
+
 ## Domain Authority Handoff
 
 `setup-workflow` discovers and validates map entries; `domain-modeling` selects one per invocation. A valid root `GLOSSARY-MAP.md` wins: its sole `## Contexts` section links relatively to existing, contained `GLOSSARY.md` files with unique case-folded labels and paths. Run the installed script as `python3 <absolute-installed-setup-workflow.py> glossary-map --repo <repository>` and record the map path, `DOMAIN_AUTHORITY_PATH = none (select per invocation)`, and `present (map-available)`. An invalid map blocks and never falls back. With no root map, adopt exactly one case-folded root `GLOSSARY.md` as `present (root-selected)`; duplicates are ambiguous. With neither, record `docs/agents/domain.md` as `absent (fallback-required)`; its unique marker region becomes `present (fallback-established)` only when `domain-modeling` adds the first term. A root `CONTEXT.md` or `CONTEXT-MAP.md` (retired names, matched case-folded) blocks in every state and is reported as drift; the user renames it by hand. These states are exclusive; never repair a map, shell, marker, or handoff.

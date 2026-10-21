@@ -4,7 +4,7 @@ description: "Trigger: judge code-review findings inside the implementation loop
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "3.1.0"
+  version: "3.2.0"
   provenance: original
 ---
 
@@ -14,7 +14,7 @@ metadata:
 
 Run after `code-review` and before any fix, as its adversary. Consume its report together with the diff it names, the ticket or specification, the seams agreed before the first test, and the decisions recorded for the work. Only the findings this run accepts are applied.
 
-Judge the findings, not the code. The output covers exactly the findings received; a problem noticed outside them goes unreported here. In a corrective report, judge only the new findings: a prior finding keeps its verdict.
+Judge the findings, not the code. The output covers exactly the findings received; a problem noticed outside them goes unreported here. In a corrective report, judge only the new findings: a prior finding keeps its verdict. When handed a register of findings earlier reviews rejected or the developer decided, a finding that matches an entry, the same claim at the same location or requirement, keeps that entry's verdict and developer decision; only a finding that reopens an entry with new cited evidence is judged afresh.
 
 Dispose of every ordinary finding here, without asking the developer between reviews; when the loop closes, only the `user decision` findings, the last critique's trade among them, and the accepted findings still open reach the developer. A `user decision`, the trade included, is a proposal, not an accepted risk, so it never stops the loop before it closes.
 
@@ -42,7 +42,7 @@ For each finding, in the report's order:
 
 After the verdicts, answer two questions about the accepted set as a whole: is this the simplest sufficient change, and which single risk, if accepted, would remove the most complexity?
 
-Name the responsibility that generates those findings, the complexity removed, and whether the failure left behind is silent or loud. When the new findings come from what the previous fix added, propose shrinking that change instead of patching it. The trade only proposes removing, never adding, and never trades a risk to security, a binding contract, or a ticket requirement. Report it as one more `user decision` entry with the ID `TRADE`, which a corrective critique's trade, or its `Trade: none`, replaces. When no risk qualifies, write the single line `Trade: none`.
+Name those findings by ID, the responsibility that generates them, the complexity removed, and whether the failure left behind is silent or loud. When the new findings come from what the previous fix added, propose shrinking that change instead of patching it. The trade only proposes removing, never adding, and never trades a risk to security, a binding contract, or a ticket requirement. Report it as one more `user decision` entry with the ID `TRADE`, which a corrective critique's trade, or its `Trade: none`, replaces. When no risk qualifies, write the single line `Trade: none`.
 
 ## Output Contract
 
