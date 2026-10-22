@@ -1,0 +1,4 @@
+Q1: 60 successful timed responses; all 12 cells have N=5 and RSS
+Q4: global + trusted-only project, exact cwd/roots, absent untracked config
+Q2: real nested tool gates, consultations, report and DONE + settled
+Q3: same session/handles across real /reload; both Linux exit trees empty

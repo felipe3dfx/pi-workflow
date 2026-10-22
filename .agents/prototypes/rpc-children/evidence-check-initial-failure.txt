@@ -1,0 +1,386 @@
+
+> @felipe.3dfx/pi-workflow@2.4.1 check
+> npm run check:biome && npm run check:typecheck && npm run check:knip && npm run check:focused-tests && npm run check:publish && npm run check:release && node --test test/*.test.mjs && npm run check:distribution
+
+
+> @felipe.3dfx/pi-workflow@2.4.1 check:biome
+> biome check --formatter-enabled=false .
+
+.agents/prototypes/rpc-children/child.ts:6:35 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+
+    4 │  const sock = net.createConnection(process.env.PROTO_SOCKET);
+    5 │  let seq=0, buffer=""; const pending=new Map();
+  > 6 │  const emit = value => sock.write(JSON.stringify({pid:process.pid,...value})+"\n");
+      │                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    7 │  sock.on("error", error=>console.error("prototype channel:",error.message));
+    8 │  sock.on("data",data=>{buffer+=data; let i; while((i=buffer.indexOf("\n"))>=0){const m=JSON.parse(buffer.slice(0,i));buffer=buffer.slice(i+1);pending.get(m.id)?.(m.answer);pending.delete(m.id);}});
+
+  i Unsafe fix: Use a template literal.
+
+     4  4 │    const sock = net.createConnection(process.env.PROTO_SOCKET);
+     5  5 │    let seq=0, buffer=""; const pending=new Map();
+     6    │ - ·const·emit·=·value·=>·sock.write(JSON.stringify({pid:process.pid,...value})+"\n");
+        6 │ + ·const·emit·=·value·=>·sock.write(`${JSON.stringify({pid:process.pid,...value})}\n`);
+     7  7 │    sock.on("error", error=>console.error("prototype channel:",error.message));
+     8  8 │    sock.on("data",data=>{buffer+=data; let i; while((i=buffer.indexOf("\n"))>=0){const m=JSON.parse(buffer.slice(0,i));buffer=buffer.slice(i+1);pending.get(m.id)?.(m.answer);pending.delete(m.id);}});
+
+
+.agents/prototypes/rpc-children/child.ts:14:89 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+
+    12 │  });
+    13 │  const result = data => ({content:[{type:"text",text:JSON.stringify(data)}],details:data});
+  > 14 │  const tool = (name,parameters,execute) => pi.registerTool({name,label:name,description:"Disposable prototype "+name,parameters,execute});
+       │                                                                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    15 │  tool("ask_parent",Type.Object({question:Type.String()}),async(_id,p,signal)=>result({answer:await ask("ask_parent",p.question,signal)}));
+    16 │  tool("report_result",Type.Object({verdict:Type.String()}),async(_id,p)=>{emit({kind:"report_result",...p});return result(p);});
+
+  i Unsafe fix: Use a template literal.
+
+    12 12 │    });
+    13 13 │    const result = data => ({content:[{type:"text",text:JSON.stringify(data)}],details:data});
+    14    │ - ·const·tool·=·(name,parameters,execute)·=>·pi.registerTool({name,label:name,description:"Disposable·prototype·"+name,parameters,execute});
+       14 │ + ·const·tool·=·(name,parameters,execute)·=>·pi.registerTool({name,label:name,description:`Disposable·prototype·${name}`,parameters,execute});
+    15 15 │    tool("ask_parent",Type.Object({question:Type.String()}),async(_id,p,signal)=>result({answer:await ask("ask_parent",p.question,signal)}));
+    16 16 │    tool("report_result",Type.Object({verdict:Type.String()}),async(_id,p)=>{emit({kind:"report_result",...p});return result(p);});
+
+
+.agents/prototypes/rpc-children/mcp-server.mjs:4:66 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+
+    2 │ import readline from "node:readline";
+    3 │ import { appendFileSync } from "node:fs";
+  > 4 │ const log = (value) => appendFileSync(process.env.PROTO_MCP_LOG, JSON.stringify({pid:process.pid,ppid:process.ppid,cwd:process.cwd(),label:process.env.PROTO_LABEL,...value})+"\n");
+      │                                                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    5 │ const send = value => process.stdout.write(JSON.stringify(value)+"\n");
+    6 │ log({event:"start"});
+
+  i Unsafe fix: Use a template literal.
+
+     2  2 │   import readline from "node:readline";
+     3  3 │   import { appendFileSync } from "node:fs";
+     4    │ - const·log·=·(value)·=>·appendFileSync(process.env.PROTO_MCP_LOG,·JSON.stringify({pid:process.pid,ppid:process.ppid,cwd:process.cwd(),label:process.env.PROTO_LABEL,...value})+"\n");
+        4 │ + const·log·=·(value)·=>·appendFileSync(process.env.PROTO_MCP_LOG,·`${JSON.stringify({pid:process.pid,ppid:process.ppid,cwd:process.cwd(),label:process.env.PROTO_LABEL,...value})}\n`);
+     5  5 │   const send = value => process.stdout.write(JSON.stringify(value)+"\n");
+     6  6 │   log({event:"start"});
+
+
+.agents/prototypes/rpc-children/mcp-server.mjs:5:44 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+
+    3 │ import { appendFileSync } from "node:fs";
+    4 │ const log = (value) => appendFileSync(process.env.PROTO_MCP_LOG, JSON.stringify({pid:process.pid,ppid:process.ppid,cwd:process.cwd(),label:process.env.PROTO_LABEL,...value})+"\n");
+  > 5 │ const send = value => process.stdout.write(JSON.stringify(value)+"\n");
+      │                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    6 │ log({event:"start"});
+    7 │ readline.createInterface({input:process.stdin}).on("line", line => {
+
+  i Unsafe fix: Use a template literal.
+
+     3  3 │   import { appendFileSync } from "node:fs";
+     4  4 │   const log = (value) => appendFileSync(process.env.PROTO_MCP_LOG, JSON.stringify({pid:process.pid,ppid:process.ppid,cwd:process.cwd(),label:process.env.PROTO_LABEL,...value})+"\n");
+     5    │ - const·send·=·value·=>·process.stdout.write(JSON.stringify(value)+"\n");
+        5 │ + const·send·=·value·=>·process.stdout.write(`${JSON.stringify(value)}\n`);
+     6  6 │   log({event:"start"});
+     7  7 │   readline.createInterface({input:process.stdin}).on("line", line => {
+
+
+.agents/prototypes/rpc-children/parent.ts:5:69 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+
+    3 │ import net from "node:net";
+    4 │ const key=Symbol.for("prototype.rpc-children.v1");
+  > 5 │ const log = value => appendFileSync(process.env.PROTO_LIFECYCLE_LOG,JSON.stringify({source:"parent",time:Date.now()/1000,pid:process.pid,...value})+"\n");
+      │                                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    6 │ export default function(pi){
+    7 │  const s=globalThis[key]??=( {generation:0,n:0,pending:new Map(),buffer:"",sockets:[]} );
+
+  i Unsafe fix: Use a template literal.
+
+     3  3 │   import net from "node:net";
+     4  4 │   const key=Symbol.for("prototype.rpc-children.v1");
+     5    │ - const·log·=·value·=>·appendFileSync(process.env.PROTO_LIFECYCLE_LOG,JSON.stringify({source:"parent",time:Date.now()/1000,pid:process.pid,...value})+"\n");
+        5 │ + const·log·=·value·=>·appendFileSync(process.env.PROTO_LIFECYCLE_LOG,`${JSON.stringify({source:"parent",time:Date.now()/1000,pid:process.pid,...value})}\n`);
+     6  6 │   export default function(pi){
+     7  7 │    const s=globalThis[key]??=( {generation:0,n:0,pending:new Map(),buffer:"",sockets:[]} );
+
+
+.agents/prototypes/rpc-children/parent.ts:19:23 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+
+    17 │   const id=String(++s.n);const timeout=setTimeout(()=>{s.pending.delete(id);reject(new Error("rpc timeout"));},5000);
+    18 │   s.pending.set(id,m=>{clearTimeout(timeout);resolve(m);});
+  > 19 │   s.child.stdin.write(JSON.stringify({id,type,...extra})+"\n");
+       │                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    20 │  });
+    21 │  pi.registerCommand("fleet-start",{description:"Start isolated RPC child",handler:async()=>{
+
+  i Unsafe fix: Use a template literal.
+
+    17 17 │     const id=String(++s.n);const timeout=setTimeout(()=>{s.pending.delete(id);reject(new Error("rpc timeout"));},5000);
+    18 18 │     s.pending.set(id,m=>{clearTimeout(timeout);resolve(m);});
+    19    │ - ··s.child.stdin.write(JSON.stringify({id,type,...extra})+"\n");
+       19 │ + ··s.child.stdin.write(`${JSON.stringify({id,type,...extra})}\n`);
+    20 20 │    });
+    21 21 │    pi.registerCommand("fleet-start",{description:"Start isolated RPC child",handler:async()=>{
+
+
+.agents/prototypes/rpc-children/parent.ts:28:15 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+
+    26 │   });
+    27 │   await new Promise(resolve=>s.server.listen(process.env.PROTO_SOCKET,resolve));
+  > 28 │   const args=[process.env.PROTO_HERE+"/supervisor.py",process.env.PROTO_PI,"--mode","rpc","--session-dir",process.env.PI_CODING_AGENT_DIR+"/child-sessions","--no-extensions","--no-skills","--no-prompt-templates","--approve","--extension","builtin:mcp","--extension",process.env.PROTO_HERE+"/child.ts"];
+       │               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    29 │   s.child=spawn("python3",args,{cwd:process.env.PROTO_WORKTREE,env:process.env,detached:true,stdio:["pipe","pipe","pipe","pipe"]});
+    30 │   s.child.stdout.on("data",data=>{s.buffer+=data;let i;while((i=s.buffer.indexOf("\n"))>=0){const m=JSON.parse(s.buffer.slice(0,i));s.buffer=s.buffer.slice(i+1);log({event:"rpc",frame:m});s.pending.get(m.id)?.(m);s.pending.delete(m.id);}});
+
+  i Unsafe fix: Use a template literal.
+
+    26 26 │     });
+    27 27 │     await new Promise(resolve=>s.server.listen(process.env.PROTO_SOCKET,resolve));
+    28    │ - ··const·args=[process.env.PROTO_HERE+"/supervisor.py",process.env.PROTO_PI,"--mode","rpc","--session-dir",process.env.PI_CODING_AGENT_DIR+"/child-sessions","--no-extensions","--no-skills","--no-prompt-templates","--approve","--extension","builtin:mcp","--extension",process.env.PROTO_HERE+"/child.ts"];
+       28 │ + ··const·args=[`${process.env.PROTO_HERE}/supervisor.py`,process.env.PROTO_PI,"--mode","rpc","--session-dir",process.env.PI_CODING_AGENT_DIR+"/child-sessions","--no-extensions","--no-skills","--no-prompt-templates","--approve","--extension","builtin:mcp","--extension",process.env.PROTO_HERE+"/child.ts"];
+    29 29 │     s.child=spawn("python3",args,{cwd:process.env.PROTO_WORKTREE,env:process.env,detached:true,stdio:["pipe","pipe","pipe","pipe"]});
+    30 30 │     s.child.stdout.on("data",data=>{s.buffer+=data;let i;while((i=s.buffer.indexOf("\n"))>=0){const m=JSON.parse(s.buffer.slice(0,i));s.buffer=s.buffer.slice(i+1);log({event:"rpc",frame:m});s.pending.get(m.id)?.(m);s.pending.delete(m.id);}});
+
+
+.agents/prototypes/rpc-children/parent.ts:28:107 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+
+    26 │   });
+    27 │   await new Promise(resolve=>s.server.listen(process.env.PROTO_SOCKET,resolve));
+  > 28 │   const args=[process.env.PROTO_HERE+"/supervisor.py",process.env.PROTO_PI,"--mode","rpc","--session-dir",process.env.PI_CODING_AGENT_DIR+"/child-sessions","--no-extensions","--no-skills","--no-prompt-templates","--approve","--extension","builtin:mcp","--extension",process.env.PROTO_HERE+"/child.ts"];
+       │                                                                                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    29 │   s.child=spawn("python3",args,{cwd:process.env.PROTO_WORKTREE,env:process.env,detached:true,stdio:["pipe","pipe","pipe","pipe"]});
+    30 │   s.child.stdout.on("data",data=>{s.buffer+=data;let i;while((i=s.buffer.indexOf("\n"))>=0){const m=JSON.parse(s.buffer.slice(0,i));s.buffer=s.buffer.slice(i+1);log({event:"rpc",frame:m});s.pending.get(m.id)?.(m);s.pending.delete(m.id);}});
+
+  i Unsafe fix: Use a template literal.
+
+    26 26 │     });
+    27 27 │     await new Promise(resolve=>s.server.listen(process.env.PROTO_SOCKET,resolve));
+    28    │ - ··const·args=[process.env.PROTO_HERE+"/supervisor.py",process.env.PROTO_PI,"--mode","rpc","--session-dir",process.env.PI_CODING_AGENT_DIR+"/child-sessions","--no-extensions","--no-skills","--no-prompt-templates","--approve","--extension","builtin:mcp","--extension",process.env.PROTO_HERE+"/child.ts"];
+       28 │ + ··const·args=[process.env.PROTO_HERE+"/supervisor.py",process.env.PROTO_PI,"--mode","rpc","--session-dir",`${process.env.PI_CODING_AGENT_DIR}/child-sessions`,"--no-extensions","--no-skills","--no-prompt-templates","--approve","--extension","builtin:mcp","--extension",process.env.PROTO_HERE+"/child.ts"];
+    29 29 │     s.child=spawn("python3",args,{cwd:process.env.PROTO_WORKTREE,env:process.env,detached:true,stdio:["pipe","pipe","pipe","pipe"]});
+    30 30 │     s.child.stdout.on("data",data=>{s.buffer+=data;let i;while((i=s.buffer.indexOf("\n"))>=0){const m=JSON.parse(s.buffer.slice(0,i));s.buffer=s.buffer.slice(i+1);log({event:"rpc",frame:m});s.pending.get(m.id)?.(m);s.pending.delete(m.id);}});
+
+
+.agents/prototypes/rpc-children/parent.ts:28:267 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+
+    26 │   });
+    27 │   await new Promise(resolve=>s.server.listen(process.env.PROTO_SOCKET,resolve));
+  > 28 │   const args=[process.env.PROTO_HERE+"/supervisor.py",process.env.PROTO_PI,"--mode","rpc","--session-dir",process.env.PI_CODING_AGENT_DIR+"/child-sessions","--no-extensions","--no-skills","--no-prompt-templates","--approve","--extension","builtin:mcp","--extension",process.env.PROTO_HERE+"/child.ts"];
+       │                                                                                                                                                                                                                                                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    29 │   s.child=spawn("python3",args,{cwd:process.env.PROTO_WORKTREE,env:process.env,detached:true,stdio:["pipe","pipe","pipe","pipe"]});
+    30 │   s.child.stdout.on("data",data=>{s.buffer+=data;let i;while((i=s.buffer.indexOf("\n"))>=0){const m=JSON.parse(s.buffer.slice(0,i));s.buffer=s.buffer.slice(i+1);log({event:"rpc",frame:m});s.pending.get(m.id)?.(m);s.pending.delete(m.id);}});
+
+  i Unsafe fix: Use a template literal.
+
+    26 26 │     });
+    27 27 │     await new Promise(resolve=>s.server.listen(process.env.PROTO_SOCKET,resolve));
+    28    │ - ··const·args=[process.env.PROTO_HERE+"/supervisor.py",process.env.PROTO_PI,"--mode","rpc","--session-dir",process.env.PI_CODING_AGENT_DIR+"/child-sessions","--no-extensions","--no-skills","--no-prompt-templates","--approve","--extension","builtin:mcp","--extension",process.env.PROTO_HERE+"/child.ts"];
+       28 │ + ··const·args=[process.env.PROTO_HERE+"/supervisor.py",process.env.PROTO_PI,"--mode","rpc","--session-dir",process.env.PI_CODING_AGENT_DIR+"/child-sessions","--no-extensions","--no-skills","--no-prompt-templates","--approve","--extension","builtin:mcp","--extension",`${process.env.PROTO_HERE}/child.ts`];
+    29 29 │     s.child=spawn("python3",args,{cwd:process.env.PROTO_WORKTREE,env:process.env,detached:true,stdio:["pipe","pipe","pipe","pipe"]});
+    30 30 │     s.child.stdout.on("data",data=>{s.buffer+=data;let i;while((i=s.buffer.indexOf("\n"))>=0){const m=JSON.parse(s.buffer.slice(0,i));s.buffer=s.buffer.slice(i+1);log({event:"rpc",frame:m});s.pending.get(m.id)?.(m);s.pending.delete(m.id);}});
+
+
+.agents/prototypes/rpc-children/parent.ts:34:23 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+
+    32 │   await rpc("get_state");
+    33 │   // A real Pi RPC bash command creates a bash/sleep descendant.
+  > 34 │   s.child.stdin.write(JSON.stringify({id:"long-bash",type:"bash",command:"echo BASH_PID=$$; sleep 300 & echo SLEEP_PID=$!; wait"})+"\n");
+       │                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    35 │   log({event:"started",supervisor:s.child.pid});
+    36 │  }});
+
+  i Unsafe fix: Use a template literal.
+
+    32 32 │     await rpc("get_state");
+    33 33 │     // A real Pi RPC bash command creates a bash/sleep descendant.
+    34    │ - ··s.child.stdin.write(JSON.stringify({id:"long-bash",type:"bash",command:"echo·BASH_PID=$$;·sleep·300·&·echo·SLEEP_PID=$!;·wait"})+"\n");
+       34 │ + ··s.child.stdin.write(`${JSON.stringify({id:"long-bash",type:"bash",command:"echo·BASH_PID=$$;·sleep·300·&·echo·SLEEP_PID=$!;·wait"})}\n`);
+    35 35 │     log({event:"started",supervisor:s.child.pid});
+    36 36 │    }});
+
+
+test/child-bash.test.mjs:620:30 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+
+    619 │ 	assert.equal(result.status, 126, result.stderr);
+  > 620 │ 	assert.equal(result.stdout, " M file.txt\n" + execFileSync("git", ["log", "--oneline"], { cwd: dir, encoding: "utf8" }));
+        │ 	                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    621 │ 	assert.equal(readFileSync(log, "utf8"), `-u ${windowsRoot}\n`);
+    622 │ });
+
+  i Unsafe fix: Use a template literal.
+
+    618 618 │
+    619 619 │     assert.equal(result.status, 126, result.stderr);
+    620     │ - → assert.equal(result.stdout,·"·M·file.txt\n"·+·execFileSync("git",·["log",·"--oneline"],·{·cwd:·dir,·encoding:·"utf8"·}));
+        620 │ + → assert.equal(result.stdout,·`·M·file.txt\n${execFileSync("git",·["log",·"--oneline"],·{·cwd:·dir,·encoding:·"utf8"·})}`);
+    621 621 │     assert.equal(readFileSync(log, "utf8"), `-u ${windowsRoot}\n`);
+    622 622 │   });
+
+
+prototype/operator-question/index.html:56:1 lint/style/noDescendingSpecificity ━━━━━━━━━━━━━━━━━━━━━
+
+  ! Descending specificity selector found. This selector specificity is (0, 1, 1)
+
+    54 │ .focus-hint kbd, .keys kbd { font: 500 12px var(--mono); color: var(--ink); background: var(--panel); border: 1px solid var(--rule); border-radius: 4px; padding: 1px 5px; }
+    55 │ .pad { display: flex; flex-wrap: wrap; gap: 6px; }
+  > 56 │ .pad button { border: 1px solid var(--rule); border-radius: 5px; font-family: var(--mono); font-size: 12px; padding: 7px 10px; }
+       │ ^^^^^^^^^^^
+    57 │ .below { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 20px; }
+    58 │ @media (max-width: 860px) { .below { grid-template-columns: minmax(0, 1fr); } }
+
+  i This selector specificity is (0, 1, 2)
+
+    39 │ .seg { display: flex; flex-wrap: wrap; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
+    40 │ .seg button, .reset, .pad button { font: 500 13px/1 var(--sans); color: var(--ink); background: var(--panel); border: 0; padding: 9px 12px; cursor: pointer; }
+  > 41 │ .seg button + button { border-left: 1px solid var(--rule); }
+       │ ^^^^^^^^^^^^^^^^^^^^
+    42 │ .seg button[aria-pressed="true"] { background: #2b2633; color: var(--accent); }
+    43 │ .reset { border: 1px solid var(--rule); border-radius: 6px; }
+
+  i Descending specificity selector may not be applied. Consider rearranging the order of the selectors. See MDN web docs for more details.
+
+
+test/child-bash.test.mjs:640:55 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+
+    638 │ 	const before = statSync(index).mtimeMs;
+    639 │
+  > 640 │ 	const result = await run('git status --short; echo "[${GIT_OPTIONAL_LOCKS-}]"', dir);
+        │ 	                                                     ^^^^^^^^^^^^^^^^^^^^^^
+    641 │
+    642 │ 	assert.equal(text(result), "[]\n");
+
+  i Turn the string into a template string.
+
+
+.agents/prototypes/rpc-children/child.ts:8:42 lint/suspicious/noImplicitAnyLet ━━━━━━━━━━━━━━━━━━━━━
+
+  × This variable implicitly has the any type.
+
+     6 │  const emit = value => sock.write(JSON.stringify({pid:process.pid,...value})+"\n");
+     7 │  sock.on("error", error=>console.error("prototype channel:",error.message));
+   > 8 │  sock.on("data",data=>{buffer+=data; let i; while((i=buffer.indexOf("\n"))>=0){const m=JSON.parse(buffer.slice(0,i));buffer=buffer.slice(i+1);pending.get(m.id)?.(m.answer);pending.delete(m.id);}});
+       │                                          ^
+     9 │  const ask = (kind,message,signal) => new Promise((resolve,reject)=>{
+    10 │   const id=++seq; pending.set(id,resolve);emit({kind,id,message});
+
+  i Variable declarations without type annotation and initialization implicitly have the any type. Declare a type or initialize the variable with some value.
+
+
+.agents/prototypes/rpc-children/child.ts:8:52 lint/suspicious/noAssignInExpressions ━━━━━━━━━━━━━━━━
+
+  × The assignment should not be in an expression.
+
+     6 │  const emit = value => sock.write(JSON.stringify({pid:process.pid,...value})+"\n");
+     7 │  sock.on("error", error=>console.error("prototype channel:",error.message));
+   > 8 │  sock.on("data",data=>{buffer+=data; let i; while((i=buffer.indexOf("\n"))>=0){const m=JSON.parse(buffer.slice(0,i));buffer=buffer.slice(i+1);pending.get(m.id)?.(m.answer);pending.delete(m.id);}});
+       │                                                    ^^^^^^^^^^^^^^^^^^^^^^
+     9 │  const ask = (kind,message,signal) => new Promise((resolve,reject)=>{
+    10 │   const id=++seq; pending.set(id,resolve);emit({kind,id,message});
+
+  i The use of assignments in expressions is confusing.
+    Expressions are often considered as side-effect free.
+
+
+.agents/prototypes/rpc-children/parent.ts:7:10 lint/suspicious/noAssignInExpressions ━━━━━━━━━━━━━━━
+
+  × The assignment should not be in an expression.
+
+    5 │ const log = value => appendFileSync(process.env.PROTO_LIFECYCLE_LOG,JSON.stringify({source:"parent",time:Date.now()/1000,pid:process.pid,...value})+"\n");
+    6 │ export default function(pi){
+  > 7 │  const s=globalThis[key]??=( {generation:0,n:0,pending:new Map(),buffer:"",sockets:[]} );
+      │          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    8 │  s.generation++;log({event:"load",generation:s.generation,hasChild:!!s.child});
+    9 │  pi.on("session_start",()=>log({event:"session_start",generation:s.generation}));
+
+  i The use of assignments in expressions is confusing.
+    Expressions are often considered as side-effect free.
+
+
+.agents/prototypes/rpc-children/parent.ts:25:43 lint/suspicious/noImplicitAnyLet ━━━━━━━━━━━━━━━━━━━
+
+  × This variable implicitly has the any type.
+
+    23 │   s.server=net.createServer(sock=>{
+    24 │    s.sockets.push(sock);let buffer="";
+  > 25 │    sock.on("data",data=>{buffer+=data;let i;while((i=buffer.indexOf("\n"))>=0){const m=JSON.parse(buffer.slice(0,i));buffer=buffer.slice(i+1);log({event:"channel",frame:m});}});
+       │                                           ^
+    26 │   });
+    27 │   await new Promise(resolve=>s.server.listen(process.env.PROTO_SOCKET,resolve));
+
+  i Variable declarations without type annotation and initialization implicitly have the any type. Declare a type or initialize the variable with some value.
+
+
+.agents/prototypes/rpc-children/parent.ts:25:52 lint/suspicious/noAssignInExpressions ━━━━━━━━━━━━━━
+
+  × The assignment should not be in an expression.
+
+    23 │   s.server=net.createServer(sock=>{
+    24 │    s.sockets.push(sock);let buffer="";
+  > 25 │    sock.on("data",data=>{buffer+=data;let i;while((i=buffer.indexOf("\n"))>=0){const m=JSON.parse(buffer.slice(0,i));buffer=buffer.slice(i+1);log({event:"channel",frame:m});}});
+       │                                                    ^^^^^^^^^^^^^^^^^^^^^^
+    26 │   });
+    27 │   await new Promise(resolve=>s.server.listen(process.env.PROTO_SOCKET,resolve));
+
+  i The use of assignments in expressions is confusing.
+    Expressions are often considered as side-effect free.
+
+
+.agents/prototypes/rpc-children/parent.ts:30:54 lint/suspicious/noImplicitAnyLet ━━━━━━━━━━━━━━━━━━━
+
+  × This variable implicitly has the any type.
+
+    28 │   const args=[process.env.PROTO_HERE+"/supervisor.py",process.env.PROTO_PI,"--mode","rpc","--session-dir",process.env.PI_CODING_AGENT_DIR+"/child-sessions","--no-extensions","--no-skills","--no-prompt-templates","--approve","--extension","builtin:mcp","--extension",process.env.PROTO_HERE+"/child.ts"];
+    29 │   s.child=spawn("python3",args,{cwd:process.env.PROTO_WORKTREE,env:process.env,detached:true,stdio:["pipe","pipe","pipe","pipe"]});
+  > 30 │   s.child.stdout.on("data",data=>{s.buffer+=data;let i;while((i=s.buffer.indexOf("\n"))>=0){const m=JSON.parse(s.buffer.slice(0,i));s.buffer=s.buffer.slice(i+1);log({event:"rpc",frame:m});s.pending.get(m.id)?.(m);s.pending.delete(m.id);}});
+       │                                                      ^
+    31 │   s.child.stderr.on("data",data=>log({event:"child-stderr",text:String(data)}));
+    32 │   await rpc("get_state");
+
+  i Variable declarations without type annotation and initialization implicitly have the any type. Declare a type or initialize the variable with some value.
+
+
+.agents/prototypes/rpc-children/parent.ts:30:63 lint/suspicious/noAssignInExpressions ━━━━━━━━━━━━━━
+
+  × The assignment should not be in an expression.
+
+    28 │   const args=[process.env.PROTO_HERE+"/supervisor.py",process.env.PROTO_PI,"--mode","rpc","--session-dir",process.env.PI_CODING_AGENT_DIR+"/child-sessions","--no-extensions","--no-skills","--no-prompt-templates","--approve","--extension","builtin:mcp","--extension",process.env.PROTO_HERE+"/child.ts"];
+    29 │   s.child=spawn("python3",args,{cwd:process.env.PROTO_WORKTREE,env:process.env,detached:true,stdio:["pipe","pipe","pipe","pipe"]});
+  > 30 │   s.child.stdout.on("data",data=>{s.buffer+=data;let i;while((i=s.buffer.indexOf("\n"))>=0){const m=JSON.parse(s.buffer.slice(0,i));s.buffer=s.buffer.slice(i+1);log({event:"rpc",frame:m});s.pending.get(m.id)?.(m);s.pending.delete(m.id);}});
+       │                                                               ^^^^^^^^^^^^^^^^^^^^^^^^
+    31 │   s.child.stderr.on("data",data=>log({event:"child-stderr",text:String(data)}));
+    32 │   await rpc("get_state");
+
+  i The use of assignments in expressions is confusing.
+    Expressions are often considered as side-effect free.
+
+
+The number of diagnostics exceeds the limit allowed. Use --max-diagnostics to increase it.
+Diagnostics not shown: 3.
+Checked 216 files in 214ms. No fixes applied.
+Found 7 errors.
+Found 5 warnings.
+Found 11 infos.
+check ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Some errors were emitted while running checks.
