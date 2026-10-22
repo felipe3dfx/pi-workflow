@@ -333,9 +333,11 @@ export function installActionAuthorization(
 							? result.effects
 							: "unknown",
 				};
-				const response = await cancellable(
-					() => options.consult?.(structuredClone(question), ctx.signal),
-					ctx.signal,
+				const response = structuredClone(
+					await cancellable(
+						() => options.consult?.(structuredClone(question), ctx.signal),
+						ctx.signal,
+					),
 				);
 				if (!applicableResponse(response, question)) {
 					throw new Error(
@@ -348,7 +350,7 @@ export function installActionAuthorization(
 					proposal.consultation = {
 						answer: response.answer,
 						...(response.confirmedActions
-							? { confirmedActions: structuredClone(response.confirmedActions) }
+							? { confirmedActions: response.confirmedActions }
 							: {}),
 					};
 					const resumedProposal = structuredClone(proposal);

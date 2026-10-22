@@ -204,8 +204,115 @@ for (const confirmation of [null, 7, "action", {}, { tool: "write", cwd: "/" }, 
 	});
 }
 
-for (const input of [null, false, 0, "", undefined, 17, "text", [], {}]) {
-	test(`confirmed action accepts present arbitrary unknown input ${JSON.stringify(input)}`, async (t) => {
+test("consultation cannot hide an indexed null behind a custom iterator", async (t) => {
+	const resumed = [];
+	const questions = [];
+	const run = await parent(t, {
+		authority,
+		classify: async proposal => {
+			if (!proposal.consultation) return { ...known, scope: "unknown" };
+			resumed.push(proposal.consultation);
+			return known;
+		},
+		consult: async question => {
+			questions.push(question);
+			const confirmedActions = [null];
+			confirmedActions[Symbol.iterator] = function* () { yield question.proposal.action; };
+			return { ...question, kind: "resolved", answer: "Authorize this write.", confirmedActions };
+		},
+	});
+	const path = join(run.agentDir, "iterator.txt");
+	const result = await run.call({ path, content: "NO_EFFECT" }, "write");
+	assert.equal(questions.length, 1);
+	assert.deepEqual(resumed, [], "the stable indexed null must not enter the typed classifier");
+	assert.equal(result.isError, true);
+	assert.equal(existsSync(path), false);
+	const entry = run.session.sessionManager.getEntries().filter(e => e.customType === "pi-workflow-authorization").at(-1).data;
+	assert.equal(entry.kind, "held");
+});
+
+for (const shape of ["inherited-tool", "inherited-cwd", "nonenumerable-tool", "nonenumerable-cwd", "nonenumerable-input", "sparse", "changing-getter", "uncloneable"]) {
+	test(`consultation ${shape} leaves malformed snapshot held before resumed classification`, async (t) => {
+		const resumed = [];
+		const questions = [];
+		let reads = 0;
+		const run = await parent(t, {
+			authority,
+			classify: async proposal => {
+				if (!proposal.consultation) return { ...known, scope: "unknown" };
+				resumed.push(proposal.consultation);
+				return known;
+			},
+			consult: async question => {
+				questions.push(question);
+				const action = { ...question.proposal.action };
+				if (shape.startsWith("inherited-")) {
+					const key = shape.slice("inherited-".length);
+					Object.setPrototypeOf(action, { [key]: action[key] });
+					delete action[key];
+				} else if (shape.startsWith("nonenumerable-")) {
+					Object.defineProperty(action, shape.slice("nonenumerable-".length), { enumerable: false });
+				}
+				const response = { ...question, kind: "resolved", answer: "Authorize this write.", confirmedActions: [action] };
+				if (shape === "sparse") response.confirmedActions = new Array(1);
+				if (shape === "changing-getter") Object.defineProperty(response, "confirmedActions", {
+					enumerable: true, get: () => ++reads === 1 ? [null] : [action],
+				});
+				if (shape === "uncloneable") action.input = () => {};
+				return response;
+			},
+		});
+		const path = join(run.agentDir, "snapshot-held.txt");
+		const result = await run.call({ path, content: "NO_EFFECT" }, "write");
+		assert.equal(questions.length, 1);
+		assert.deepEqual(resumed, [], "malformed stable evidence must not enter the typed classifier");
+		assert.equal(result.isError, true);
+		assert.equal(existsSync(path), false);
+		if (shape === "changing-getter") assert.equal(reads, 1);
+		const entry = run.session.sessionManager.getEntries().filter(e => e.customType === "pi-workflow-authorization").at(-1).data;
+		assert.equal(entry.kind, "held");
+		assert.deepEqual(entry.proposal.action.input, { path, content: "NO_EFFECT" });
+	});
+}
+
+test("consultation consumes the valid chosen snapshot despite changing getters and iterator", async (t) => {
+	const resumed = [];
+	const decisions = [];
+	let confirmationReads = 0;
+	let answerReads = 0;
+	let expectedAction;
+	const run = await parent(t, {
+		authority,
+		onDecision: decision => { decisions.push(structuredClone(decision)); },
+		classify: async proposal => {
+			if (!proposal.consultation) return { ...known, scope: "unknown" };
+			resumed.push(structuredClone(proposal.consultation));
+			proposal.consultation.confirmedActions[0].input.content = "CLASSIFIER_MUTATION";
+			return { ...known, effects: "high-impact", confirmed: true };
+		},
+		consult: async question => {
+			expectedAction = structuredClone(question.proposal.action);
+			const confirmedActions = [question.proposal.action];
+			confirmedActions[Symbol.iterator] = function* () { yield null; };
+			return { ...question, kind: "resolved",
+				get answer() { return ++answerReads === 1 ? "Authorize this exact write and its impact." : ""; },
+				get confirmedActions() { return ++confirmationReads === 1 ? confirmedActions : [null]; },
+			};
+		},
+	});
+	const path = join(run.agentDir, "snapshot-valid.txt");
+	const result = await run.call({ path, content: "SNAPSHOT_EFFECT" }, "write");
+	assert.equal(result.isError, false);
+	assert.equal(answerReads, 1);
+	assert.equal(confirmationReads, 1);
+	assert.deepEqual(resumed, [{ answer: "Authorize this exact write and its impact.", confirmedActions: [expectedAction] }]);
+	assert.equal(readFileSync(path, "utf8"), "SNAPSHOT_EFFECT");
+	assert.equal(decisions.at(-1).kind, "allow");
+	assert.deepEqual(decisions.at(-1).proposal.consultation.confirmedActions, [expectedAction], "classifier mutations stay isolated");
+});
+
+for (const input of [null, false, 0, "", undefined, 17, "text", [], {}, 17n, new Map([["key", "value"]]), new Set([1]), new Date("2026-01-01T00:00:00Z"), new Uint8Array([1, 2])]) {
+	test(`confirmed action accepts present arbitrary unknown input ${String(input)}`, async (t) => {
 		const resumed = [];
 		const run = await parent(t, {
 			authority,
