@@ -2,10 +2,13 @@
 
 ## Status and authority
 
-Draft functional brief; implementation is not authorized.
+User-confirmed functional brief with an approved common-tool-source delta;
+renewed feature-critic review is pending. This revision does not authorize
+implementation or production adoption.
 
 Decision owner: the user. Confirmed decisions below originate in the
-current feature-discovery conversation.
+feature-discovery conversation and the subsequent explicit common-source
+confirmation relayed by the parent. The review handoff records their scope.
 
 Domain authority: GLOSSARY.md. No generated Domain Authority Handoff
 was found; this is a documented evidence gap, not invented authority.
@@ -23,8 +26,11 @@ Do not add a classifier while retaining the inventories it replaces.
 
 ## User-confirmed behavior
 
-- Parent and child sessions can access the same tools. Availability
-  does not grant unrestricted permission to use them.
+- Parent and child sessions receive the same tool sources and configuration.
+  Each session instantiates and executes its tools in its own context; the task
+  determines which actions are authorized. The approved common-tool-source
+  delta below defines dynamic and external-tool behavior. Availability grants
+  no authority.
 - Assignment instructions define authority. Reasonably necessary
   in-scope steps are authorized without enumerating commands.
 - Scope expansion or an undelegated decision requires consultation.
@@ -68,6 +74,49 @@ Reuse existing tools and parent/user communication capabilities.
 The approved intent replaces ADR 0013's command-based child restrictions
 and ADR 0017's role-specific tool restrictions where they conflict with
 this feature. Preserve ADR 0017's destination-only Jev behavior.
+
+### Approved common-tool-source delta
+
+Resolver: the user. Source: two approvals of the simplest common-source
+direction, followed by explicit confirmation of this exact contract, relayed
+by the parent during #290 prerequisite investigation:
+
+> Padre e hijos reciben las mismas fuentes de herramientas y configuración. Cada sesión crea y ejecuta sus herramientas con su propio contexto; la tarea determina qué acciones están autorizadas.
+
+Status: `approved delta`; the semantic decision is resolved. This material
+clarification/deviation supersedes the former absolute same-tool-availability
+interpretation, not merely its implementation wording. Renewed independent
+feature-critic review is required before technical synthesis resumes.
+
+Owned dynamic tools follow the same common-source, local-instantiation
+mechanism. External tools require compatible instantiation; retrieving an
+executable definition does not establish that its captured state is local.
+Tools created solely inside the parent's private captured state need not be
+automatically mirrored. That boundary is not a role-based tool exclusion.
+
+For example, the same configured extension source can instantiate tools in
+each session with that session's working directory and state. An owned dynamic
+availability update is applied through those local instances. A parent-only
+private closure is not copied to manufacture parity, and a registered tool
+name alone does not prove equivalent usability or readiness. Authority is
+still evaluated against the actual action and current local context.
+
+Reason and impact: common sources and local ownership preserve the intended
+capabilities without unsafe copying of parent-bound closures. Reuse existing
+loaders and factories; propagate owned dynamic updates where demonstrated.
+This approves neither blind loading or trust bypass nor role-specific source
+subsets, blanket authority, RPC, an SDK patch, a universal registry, a model,
+cache, extra inference budget, or production adoption. The SDK investigation
+is reference evidence, not an implementation base or proof of complete
+contextual authorization. Existing accepted prototype dispositions and the
+definition-only risk acceptance below are unchanged.
+
+Canonical reconciliation of the approved policy changes remains implementation
+work. ADRs 0013/0017 and related guidance are not superseded operationally by
+this brief. Preserve procedure discovery, destination-only Jev, applicable
+confirmation, signing, assigned scope, and protection of others' work. Complete
+consultation/resume, commit-specific policy, and adoption comparison retain
+their respective #291, #292, and #293 boundaries.
 
 ### Approved child-commit delta
 
@@ -157,12 +206,15 @@ escalation and action authorization remain unverified.
 
 ## Next step
 
-Return this changed definition to the parent's renewed three-lens
-feature-critic review before to-spec resumes. The existing critic report
-remains a prior snapshot: its verdict does not cover the approved delta.
-Resolve material definition findings before handing a completed definition
-to to-spec. The open adoption choices above are deliberate evaluation
-questions, not missing authorization behavior or a mandatory further prototype.
+Return the approved common-tool-source delta and the complete definition
+package to the parent's renewed three-lens feature-critic review before
+to-spec resumes. Historical critic verdicts cover their recorded captures,
+not this material delta. The existing specification and technical-review
+readiness are stale for this revision and remain unchanged pending that
+review and subsequent authorized synthesis. #290 implementation stays gated.
+Resolve material definition findings before handing the package to to-spec.
+The open adoption choices above are deliberate evaluation questions, not
+missing authorization behavior or a mandatory further prototype.
 
 ## Accepted residual risk — definition only
 

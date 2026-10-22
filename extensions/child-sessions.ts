@@ -28,6 +28,11 @@ import {
 import { type Static, Type } from "typebox";
 
 import type { ChildAudit, ChildCapture } from "./child-audit.ts";
+import {
+	type ActionAuthorization,
+	installActionAuthorization,
+	sessionActionAuthorization,
+} from "./action-authorization.ts";
 import { type ChildShell, createChildBashTool } from "./child-bash.ts";
 import {
 	type Checkpoint,
@@ -60,6 +65,7 @@ import {
 	verdictSucceeded,
 } from "./child-projection.ts";
 import { shellOptions } from "./shell-settings.ts";
+import { type CommonToolSources, commonToolFactories } from "./tool-sources.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
 import type { TodoClaim } from "./todo-extension.ts";
 import type { TaskState } from "./todo-list.ts";
@@ -71,6 +77,8 @@ const packageVersion = (
 ).version;
 
 interface ChildSpec {
+	authorization?: ActionAuthorization;
+	sources?: CommonToolSources;
 	cwd: string;
 	project: ParentProject;
 	role: string;
@@ -319,12 +327,14 @@ const askParentParameters = Type.Object({
 
 export function createAskParentTool(
 	ask: (question: string, signal?: AbortSignal) => Promise<string>,
+	contextual = false,
 ) {
 	return {
 		name: askParentTool,
 		label: "Ask Parent",
-		description:
-			"Ask the parent session one question and wait for its answer. Use it only when you are blocked and the answer changes your next step; a command reserved for the parent is not a reason to ask. An error result means no answer will come; continue without one.",
+		description: contextual
+			? "Ask the parent about missing facts or authority. A failed consultation leaves the action held, not permitted; continue only independent authorized work."
+			: "Ask the parent session one question and wait for its answer. Use it only when you are blocked and the answer changes your next step; a command reserved for the parent is not a reason to ask. An error result means no answer will come; continue without one.",
 		parameters: askParentParameters,
 		async execute(
 			_toolCallId: string,
@@ -361,6 +371,12 @@ function parentMcp(project: ParentProject): ExtensionFactory {
 }
 
 export const createPiChildSession: ChildSessionFactory = async (spec) => {
+	if (spec.sources && !spec.authorization)
+		throw new Error("Common tool sources require contextual authorization.");
+	const sources = spec.authorization ? (spec.sources ?? {}) : undefined;
+	const authorization = spec.authorization
+		? sessionActionAuthorization(spec.authorization)
+		: undefined;
 	const runtime = parentRuntime(spec.modelRegistry);
 	if (!runtime) {
 		throw new Error("The session's model runtime is not available.");
@@ -385,19 +401,44 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 	);
 	const agentDir = getAgentDir();
 	const web =
-		spec.role === "explore"
+		!spec.authorization && spec.role === "explore"
 			? await explorerWeb(agentDir, spec.project)
 			: { factories: [], problem: undefined };
+	const toolbox =
+		spec.authorization && sources
+			? (await import("./child-toolbox.ts")).childToolbox(
+					spec.authorization,
+					sources,
+				)
+			: undefined;
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: spec.cwd,
 		agentDir,
 		settingsManager,
 		noExtensions: true,
-		...(bridgeExtension ? { additionalExtensionPaths: [bridgeExtension] } : {}),
+		additionalExtensionPaths: [
+			...new Set([
+				...(sources?.paths ?? []).map((path) =>
+					resolve(spec.project.cwd, path),
+				),
+				...(bridgeExtension ? [bridgeExtension] : []),
+			]),
+		],
 		extensionFactories: [
-			createCodemodeExtension({ models: false }),
+			...(sources
+				? commonToolFactories(sources)
+				: [createCodemodeExtension({ models: false })]),
 			parentMcp(spec.project),
+			...(toolbox ? [toolbox] : []),
 			...web.factories,
+			...(spec.authorization
+				? [
+						(pi: ExtensionAPI) => {
+							if (authorization)
+								installActionAuthorization(pi, authorization.authorization);
+						},
+					]
+				: []),
 		],
 		noSkills: true,
 		noPromptTemplates: true,
@@ -406,6 +447,14 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 		appendSystemPromptOverride: () => [],
 	});
 	await resourceLoader.reload();
+	if (sources && resourceLoader.getExtensions().errors.length > 0) {
+		throw new Error(
+			`A selected common tool source could not load: ${resourceLoader
+				.getExtensions()
+				.errors.map((entry) => `${entry.path}: ${entry.error}`)
+				.join("; ")}`,
+		);
+	}
 	if (bridgeExtension) {
 		const loaded = resourceLoader.getExtensions();
 		const loadError = loaded.errors.find(
@@ -423,19 +472,27 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 		modelRuntime: runtime,
 		model,
 		thinkingLevel: spec.thinking,
-		tools: spec.tools,
+		...(sources ? {} : { tools: spec.tools }),
 		customTools: [
-			createChildBashTool(spec.cwd, spec.shell, spec.checkpoint !== undefined),
-			createChildCodeGraphTool(spec.cwd),
-			createAskParentTool(spec.ask),
-			...(reportsResult(spec.role)
+			createChildBashTool(
+				spec.cwd,
+				spec.shell,
+				spec.checkpoint !== undefined,
+				spec.authorization !== undefined,
+			),
+			...(spec.authorization ? [] : [createChildCodeGraphTool(spec.cwd)]),
+			createAskParentTool(spec.ask, spec.authorization !== undefined),
+			...(reportsResult(spec.role) || spec.authorization
 				? [
 						{
 							name: reportResultTool,
 							label: "Report Result",
 							description:
 								"Report your Verdict and result to the parent before your final answer. Call it again to correct it; the last call counts.",
-							parameters: resultParameters[spec.role],
+							parameters:
+								spec.role === "verify"
+									? resultParameters.verify
+									: resultParameters.worker,
 							async execute(_toolCallId: string, params: ChildResult) {
 								if (
 									!params.reason &&
@@ -468,8 +525,10 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 		),
 		settingsManager,
 	});
+	authorization?.bindSession(session);
 	session.subscribe((event) => spec.onEvent(event));
 	let stopped = false;
+	let binding: Promise<void> | undefined;
 	const stream = session.agent.streamFunction;
 	// abort() and dispose() do not cancel a prompt still preparing its run, so the
 	// run it later starts must be stopped before its provider request.
@@ -485,12 +544,13 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 		tools: session.getActiveToolNames(),
 		async run(task) {
 			if (web.problem) spec.notify(web.problem);
-			await session.bindExtensions({
+			binding ??= session.bindExtensions({
 				uiContext: {
 					...session.extensionRunner.getUIContext(),
 					notify: (message) => spec.notify(message),
 				},
 			});
+			await binding;
 			await session.prompt(task);
 			const last = session.messages.at(-1);
 			if (
@@ -570,6 +630,8 @@ type TodoLink = {
 };
 
 export function createChildSessions(options: {
+	authorization?: ActionAuthorization;
+	sources?: CommonToolSources;
 	create?: ChildSessionFactory;
 	send: (message: ChildMessage) => void;
 	idle: () => boolean;
@@ -900,6 +962,8 @@ export function createChildSessions(options: {
 		let handle: ChildHandle;
 		try {
 			handle = await create({
+				authorization: options.authorization,
+				sources: options.sources,
 				cwd: plan.worktree,
 				project: launch.project(),
 				role: plan.role,
@@ -940,9 +1004,9 @@ export function createChildSessions(options: {
 				reason: `The child would run ${handle.model ?? "no model"} at ${handle.thinking} instead of the selected ${plan.model} at ${plan.thinking}.`,
 			};
 		}
-		const missing = plan.contract.tools.filter(
-			(tool) => !handle.tools.includes(tool),
-		);
+		const missing = options.authorization
+			? []
+			: plan.contract.tools.filter((tool) => !handle.tools.includes(tool));
 		if (missing.length > 0) {
 			void shutDown(handle);
 			return {
@@ -1464,6 +1528,7 @@ export function createSpawnChildTool(
 	launcher: ReturnType<typeof createChildLauncher>,
 	sessions: ReturnType<typeof createChildSessions>,
 	todo: { claim(id: number): TodoClaim },
+	contextual = false,
 ): ToolDefinition<typeof spawnChildParameters, Record<string, unknown>> {
 	return {
 		name: "spawn_child",
@@ -1471,16 +1536,23 @@ export function createSpawnChildTool(
 		description:
 			"Delegate a bounded task to a child session that runs under a harness contract. When Jev routing is on, the harness decides whether the work leaves this session. The active profile picks the model for the role. In an interactive session the call returns the child id at once and the result arrives later as a message; in print and json modes the result returns in the same call.",
 		promptSnippet: "Delegate a bounded task to a child session",
-		promptGuidelines: [
-			"Pass the task and the role (explore, worker, or verify). The parent chooses the role and it determines the contract; Jev decides only the destination. Choose the role whose tools cover the task; a role named by a skill is a hint. Fixed tools per role (explore: read, grep, find, ls, codegraph, codemode; worker: read, bash, edit, write, grep, find, ls, codemode; verify: read, bash, grep, find, ls, codegraph, codemode), plus MCP and web tools added at runtime. Explore reads and queries CodeGraph and cannot run commands; verify independently checks completed work and may run checks and tests without editing; worker implements and runs commands. Give a brief with the scope, acceptance criteria, and edit surface; assign any reading needed before a write to the worker.",
-			"Children communicate only with the parent, never directly with the user.",
-			"Before dependent work, learn the obligations of any mandatory procedure: read it when routing and delegation mode allow, otherwise delegate its discovery. Track each obligation with an owner and a state (pending, satisfied with evidence, or blocked with reason) across child questions, scope changes, and background results. An unmet mandatory prerequisite stops dependent work; do not continue it as qualified partial work.",
-			"Do not delegate mutating git or gh commands or publication: they are reserved for the parent and stay with it; when a procedure requires them, such as worktree setup, the parent runs them itself before dependent child work; if routing blocks them, delegate discovery first and run them after its result arrives. The one exception: you may grant checkpoint, with the branch of an isolated worktree you created, to a worker, which then commits its own signed checkpoints on that branch. Before integrating, verify that each returned SHA is on that branch, descends from the base, and contains the expected change; integration, integration checks, push, pull requests, and tracker effects stay with you. Without the grant, the worker hands over a verified tree and lists the commit for you. Do not ask the child for intermediate progress reports. Copy evidence you already have into the task; references accept only paths inside the cwd. There is no channel to a running child; use reply_child only when the child asks.",
-			"A refusal or a queued id is not a completed result and is not retried. After a background child is queued, end your turn: its result wakes you. Do not poll with sleep, list_children, child_status, or child_result.",
-			`One codemode script can launch several children: each spawn_child call returns at once without awaiting the child. Their results arrive in one message when every child is done, or earlier when a result needs you. In print and json modes each call waits for its child instead. At most ${launchLimit} children can be queued, running, or waiting at once; a launch beyond that is refused.`,
-			"Do not declare work done without a worker Verdict of done and its files_changed, validation, and left_undone fields. Do not declare work verified without a verifier Verdict of pass and its findings and unverified fields; partial, fail, and blocked are not success. A child's done or pass covers only its task: reconcile left_undone and unverified against the remaining obligations, then continue or report an explicit blocker.",
-			"When Jev routing is on, the parent asks once per user turn before read, grep, find, ls, edit, write, bash, powershell, or codegraph query and explore. A block that says to delegate means call spawn_child with the role you choose. A block that says to ask the user one question means ask that one question and wait. Reads of AGENTS.md, GLOSSARY.md, and docs/agents/*.md stay available, and so does codegraph init.",
-		],
+		promptGuidelines: contextual
+			? [
+					"Pass the bounded task and role (explore, worker, verify). Roles guide work and Verdicts, not tool permission. Use common sources/configuration with local instantiation and task authority; Jev chooses only destination.",
+					"Discover mandatory procedures and track owners, prerequisites, evidence and remaining obligations before dependent work. Preserve signing, scope, others' work and applicable confirmations. Current specific checkpoint rules remain until their owning policy changes.",
+					"Scope expansion, undelegated choices, unknown effects/ownership and high-impact actions require applicable consultation/confirmation. Held actions cannot execute; tool availability, replies and Run state do not grant authority. A failure is not consent.",
+					"Reconcile each child's evidence and remaining obligations. End the turn after background launch and receive its result rather than polling. Independent review stays independent. Child session limits and actual delivery semantics remain unchanged.",
+				]
+			: [
+					"Pass the task and the role (explore, worker, or verify). The parent chooses the role and it determines the contract; Jev decides only the destination. Choose the role whose tools cover the task; a role named by a skill is a hint. Fixed tools per role (explore: read, grep, find, ls, codegraph, codemode; worker: read, bash, edit, write, grep, find, ls, codemode; verify: read, bash, grep, find, ls, codegraph, codemode), plus MCP and web tools added at runtime. Explore reads and queries CodeGraph and cannot run commands; verify independently checks completed work and may run checks and tests without editing; worker implements and runs commands. Give a brief with the scope, acceptance criteria, and edit surface; assign any reading needed before a write to the worker.",
+					"Children communicate only with the parent, never directly with the user.",
+					"Before dependent work, learn the obligations of any mandatory procedure: read it when routing and delegation mode allow, otherwise delegate its discovery. Track each obligation with an owner and a state (pending, satisfied with evidence, or blocked with reason) across child questions, scope changes, and background results. An unmet mandatory prerequisite stops dependent work; do not continue it as qualified partial work.",
+					"Do not delegate mutating git or gh commands or publication: they are reserved for the parent and stay with it; when a procedure requires them, such as worktree setup, the parent runs them itself before dependent child work; if routing blocks them, delegate discovery first and run them after its result arrives. The one exception: you may grant checkpoint, with the branch of an isolated worktree you created, to a worker, which then commits its own signed checkpoints on that branch. Before integrating, verify that each returned SHA is on that branch, descends from the base, and contains the expected change; integration, integration checks, push, pull requests, and tracker effects stay with you. Without the grant, the worker hands over a verified tree and lists the commit for you. Do not ask the child for intermediate progress reports. Copy evidence you already have into the task; references accept only paths inside the cwd. There is no channel to a running child; use reply_child only when the child asks.",
+					"A refusal or a queued id is not a completed result and is not retried. After a background child is queued, end your turn: its result wakes you. Do not poll with sleep, list_children, child_status, or child_result.",
+					`One codemode script can launch several children: each spawn_child call returns at once without awaiting the child. Their results arrive in one message when every child is done, or earlier when a result needs you. In print and json modes each call waits for its child instead. At most ${launchLimit} children can be queued, running, or waiting at once; a launch beyond that is refused.`,
+					"Do not declare work done without a worker Verdict of done and its files_changed, validation, and left_undone fields. Do not declare work verified without a verifier Verdict of pass and its findings and unverified fields; partial, fail, and blocked are not success. A child's done or pass covers only its task: reconcile left_undone and unverified against the remaining obligations, then continue or report an explicit blocker.",
+					"When Jev routing is on, the parent asks once per user turn before read, grep, find, ls, edit, write, bash, powershell, or codegraph query and explore. A block that says to delegate means call spawn_child with the role you choose. A block that says to ask the user one question means ask that one question and wait. Reads of AGENTS.md, GLOSSARY.md, and docs/agents/*.md stay available, and so does codegraph init.",
+				],
 		parameters: spawnChildParameters,
 		async execute(toolCallId, params, signal, _onUpdate, ctx) {
 			const unseated = unseatedChild();

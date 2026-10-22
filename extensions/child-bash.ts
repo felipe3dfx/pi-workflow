@@ -153,12 +153,32 @@ export function guardPrefix(root: string, checkpoint = false): string {
 	return `unalias git gh 2>/dev/null || :\n${gitRootAssignment(root)} ${guard("git", gitDecision, checkpoint)}${guard("gh", ghDecision)}`;
 }
 
+function checkpointOnlyPrefix(checkpoint: boolean): string {
+	return `unalias git 2>/dev/null || :\n${guard(
+		"git",
+		line`subcommand=; skip=;
+		for arg in \${1+"$@"}; do
+			if [ -n "$skip" ]; then skip=; continue; fi;
+			case "$arg" in
+			-C|-c|--git-dir|--work-tree|--config-env) skip=1 ;;
+			-*) ;;
+			*) subcommand=$arg; break ;;
+			esac;
+		done;
+		case "$subcommand" in add|commit) reserved="git $subcommand" ;; esac;`,
+		checkpoint,
+	)}`;
+}
+
 export function createChildBashTool(
 	cwd: string,
 	shell: ChildShell = {},
 	checkpoint = false,
+	contextual = false,
 ) {
-	const commandPrefix = guardPrefix(physical(cwd), checkpoint);
+	const commandPrefix = contextual
+		? checkpointOnlyPrefix(checkpoint)
+		: guardPrefix(physical(cwd), checkpoint);
 	const user =
 		!shell.shellPath || posixShell.test(shell.shellPath) ? shell : {};
 	return defineTool(
