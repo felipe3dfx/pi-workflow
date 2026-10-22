@@ -3,14 +3,16 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { seated } from "./shell.ts";
 import type { DelegationMode } from "./workflow-settings.ts";
 
-function orchestratorInstruction(): string {
+function orchestratorInstruction(contextual: boolean): string {
 	const keep = [
 		"conversing with the operator",
 		"launching, steering, and answering children with the child tools",
 		"reading their results",
 		...(seated("todo", "above-input") ? ["planning with the todo tool"] : []),
 		...(seated("operator-questions", "overlay")
-			? ["asking the operator questions with ask_user_choice or ask_user_question"]
+			? [
+					"asking the operator questions with ask_user_choice or ask_user_question",
+				]
 			: []),
 	];
 	return [
@@ -18,7 +20,13 @@ function orchestratorInstruction(): string {
 		"",
 		"Delegate all work to child sessions, reading included: do not read, search, edit, write, or run commands for the work yourself.",
 		`Keep to ${keep.slice(0, -1).join(", ")}, and ${keep.at(-1)}.`,
-		"These stay with you: the mutating and publishing git and gh operations, such as a commit, a push, or opening a pull request, and the git reads they need, except the signed checkpoint commits of a worker you grant checkpoint in an isolated worktree you created, which you verify before you integrate them; and reading AGENTS.md, GLOSSARY.md, and docs/agents/*.md.",
+		...(contextual
+			? [
+					"The task and applicable instructions determine authority in every session. Common tools and Jev routing grant no permission. Preserve mandatory procedure discovery, signing, scope, others' work and applicable confirmations; retain unresolved actions rather than executing them.",
+				]
+			: [
+					"These stay with you: the mutating and publishing git and gh operations, such as a commit, a push, or opening a pull request, and the git reads they need, except the signed checkpoint commits of a worker you grant checkpoint in an isolated worktree you created, which you verify before you integrate them; and reading AGENTS.md, GLOSSARY.md, and docs/agents/*.md.",
+				]),
 		"When a launch is refused, such as Launch blocked or the Launch limit, follow the refusal and tell the operator why. Do not retry silently or do the work yourself unannounced.",
 	].join("\n");
 }
@@ -27,6 +35,7 @@ export function registerDelegationMode(
 	pi: ExtensionAPI,
 	mode: Pick<DelegationMode, "current">,
 	childToolsOffered: () => boolean,
+	contextual = false,
 ) {
 	pi.on("context_with_system", (event) => {
 		const [system, ...rest] = event.messages;
@@ -43,7 +52,7 @@ export function registerDelegationMode(
 					...system,
 					sections: {
 						...system.sections,
-						"pi-workflow-delegation-mode": orchestratorInstruction(),
+						"pi-workflow-delegation-mode": orchestratorInstruction(contextual),
 					},
 				},
 				...rest,

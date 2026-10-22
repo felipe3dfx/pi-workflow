@@ -17,7 +17,7 @@ import type {
 	ToolCallEvent,
 } from "@earendil-works/pi-coding-agent";
 
-import { type CheckpointGrant, checkpointGrant } from "./child-checkpoint.ts";
+import { type CheckpointGrant, checkpointContext, checkpointGrant } from "./child-checkpoint.ts";
 import { latestUserRequest } from "./child-sessions.ts";
 import { errorMessage } from "./error-message.ts";
 import { gitEnvironment } from "./git-environment.ts";
@@ -38,6 +38,7 @@ export interface LaunchRequest {
 }
 
 export interface ChildLauncherOptions {
+	contextual?: boolean;
 	modelProfiles: { load: () => ModelProfilesLoad };
 	jevRouting: Pick<JevRouting, "enabled">;
 	delegationMode: Pick<DelegationMode, "current">;
@@ -313,9 +314,14 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		options.contractsDirectory ?? defaultContractsDirectory;
 
 	function readContract(role: Role): Contract | Outcome {
-		const path = join(contractsDirectory, `${role}.md`);
+		const path = join(
+			contractsDirectory,
+			`${options.contextual ? "contextual" : role}.md`,
+		);
 		try {
-			return parseContract(readFileSync(path, "utf8"));
+			return parseContract(
+				readFileSync(path, "utf8").replaceAll("{{role}}", role),
+			);
 		} catch (error) {
 			return outcome(
 				"refused",
@@ -333,18 +339,32 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			task: request.task,
 			...(request.checkpoint
 				? {
-						checkpoint: `The parent grants this worker a signed checkpoint on ${request.checkpoint} in its isolated worktree.`,
+						checkpoint: options.contextual ? `Assigned checkpoint context: ${request.checkpoint}; task authority is evaluated separately.` : `The parent grants this worker a signed checkpoint on ${request.checkpoint} in its isolated worktree.`,
 					}
 				: {}),
 		};
+		const criteria = options.contextual
+			? {
+					decide:
+						"A product decision remains open; ask the user and wait. Authorization and tool availability are not destination decisions.",
+					stay: "The package is small and understood or the user expressly asks this parent to perform it. An explicitly requested independent review leaves for another session. Task authority is evaluated separately.",
+					leave:
+						"A bounded package another session can finish, explicit delegation, or independent review. The parent supplies the role; the task determines authority separately.",
+				}
+			: destinationCriteria;
 		const questions: ClassifierContext["questions"] = {
 			destination: {
 				type: "choice",
 				instructions: destinationInstructions,
 				criteria:
 					options.delegationMode.current() === "orchestrator"
-						? { ...destinationCriteria, stay: orchestratorStay }
-						: destinationCriteria,
+						? {
+								...criteria,
+								stay: options.contextual
+									? "Conversation, an opinion, or a question about what was already said; other work is delegated."
+									: orchestratorStay,
+							}
+						: criteria,
 			},
 		};
 		const model = ctx.modelRegistry.findOfType(
@@ -490,8 +510,9 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		}
 		return {
 			allow: false,
-			reason:
-				"Jev answered that the work for the latest user message leaves this session; a verdict for an earlier message does not carry over. Call spawn_child with the role whose tools cover the task; this message's verdict allows the launch. If procedure instructions are needed, delegate bounded discovery of obligations, prerequisites, sources, and unresolved questions before dependent work.",
+			reason: options.contextual
+				? "Jev answered that the work for the latest user message leaves this session. Call spawn_child with the role appropriate to the assigned task; common tools grant no authority. Discover mandatory procedures and unresolved prerequisites before dependent work."
+				: "Jev answered that the work for the latest user message leaves this session; a verdict for an earlier message does not carry over. Call spawn_child with the role whose tools cover the task; this message's verdict allows the launch. If procedure instructions are needed, delegate bounded discovery of obligations, prerequisites, sources, and unresolved questions before dependent work.",
 			destination: "leave",
 		};
 	}
@@ -530,20 +551,24 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		if (typeof worktree !== "string") return worktree;
 		let checkpoint: CheckpointGrant | undefined;
 		if (request.checkpoint !== undefined) {
-			if (role !== "worker") {
+			if (!options.contextual && role !== "worker") {
 				return outcome(
 					"refused",
 					`A checkpoint is granted only to a worker, not to ${role ?? "a child without a role"}.`,
 				);
 			}
-			if (request.worktree === undefined) {
+			if (!options.contextual && request.worktree === undefined) {
 				return outcome(
 					"refused",
 					"A checkpoint needs the isolated worktree passed explicitly as worktree.",
 				);
 			}
 			try {
-				checkpoint = await checkpointGrant(worktree, request.checkpoint, ctx.cwd);
+				checkpoint = options.contextual
+					? await checkpointContext(worktree)
+					: await checkpointGrant(worktree, request.checkpoint, ctx.cwd);
+				if (checkpoint.branch !== request.checkpoint)
+					throw new Error(`The assigned context is not on refs/heads/${request.checkpoint}.`);
 			} catch (error) {
 				return outcome(
 					"refused",

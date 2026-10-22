@@ -1,9 +1,11 @@
 import { join } from "node:path";
+import { createMcpExtension } from "@earendil-works/pi-coding-agent";
 
 import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
 	ExtensionContext,
+	ExtensionFactory,
 } from "@earendil-works/pi-coding-agent";
 
 import {
@@ -55,15 +57,17 @@ import type { TaskExecutor } from "./todo-header.ts";
 import { registerCompactTools, syncCompactTools } from "./compact-tools.ts";
 import { resolveAgentDirectory } from "./agent-directory.ts";
 import { inspectClaudeBridgeCompanion } from "./web-access.ts";
+import { createDelegationMode, createJevRouting } from "./workflow-settings.ts";
+
 import {
-	createDelegationMode,
-	createJevRouting,
-} from "./workflow-settings.ts";
+	type ActionAuthorization,
+	installActionAuthorization,
+	sessionActionAuthorization,
+} from "./action-authorization.ts";
+import { type CommonToolSources, commonToolFactories } from "./tool-sources.ts";
 
 const usage =
 	"Usage: /workflow:status | /workflow:doctor | /workflow:config | /workflow:models | /workflow:subagents | /workflow:delegation-check";
-
-
 
 function createWorkflow(
 	pi: ExtensionAPI,
@@ -84,10 +88,35 @@ function createWorkflow(
 	});
 }
 
+export function contextualWorkflowSources(
+	options: Parameters<typeof piWorkflowExtension>[1] & {
+		authorization: ActionAuthorization;
+		sources: CommonToolSources;
+	},
+) {
+	const local = sessionActionAuthorization(options.authorization);
+	return {
+		bindSession: local.bindSession,
+		noExtensions: true,
+		additionalExtensionPaths: [...(options.sources.paths ?? [])],
+		extensionFactories: [
+			...commonToolFactories(options.sources),
+			createMcpExtension(),
+			((pi) =>
+				piWorkflowExtension(pi, {
+					...options,
+					authorization: local.authorization,
+				})) satisfies ExtensionFactory,
+		],
+	};
+}
+
 export default function piWorkflowExtension(
 	pi: ExtensionAPI,
 	options: Omit<CompanionWorkflowOptions, "agentDirectory"> & {
 		agentDirectory?: string;
+		authorization?: ActionAuthorization;
+		sources?: CommonToolSources;
 		codegraph?: CodeGraphAdapters;
 		childSessions?: {
 			create?: ChildSessionFactory;
@@ -97,6 +126,8 @@ export default function piWorkflowExtension(
 	} = {},
 ) {
 	const agentDirectory = resolveAgentDirectory(options.agentDirectory);
+	if (options.authorization)
+		installActionAuthorization(pi, options.authorization);
 	let currentCtx: ExtensionContext | ExtensionCommandContext | undefined;
 	const context = () => currentCtx;
 	const catalog = {
@@ -154,6 +185,8 @@ export default function piWorkflowExtension(
 		},
 	});
 	const childSessions = createChildSessions({
+		authorization: options.authorization,
+		sources: options.authorization ? (options.sources ?? {}) : undefined,
 		create: options.childSessions?.create,
 		schedule: options.childSessions?.schedule,
 		send: (message) =>
@@ -186,6 +219,7 @@ export default function piWorkflowExtension(
 		},
 	});
 	const launcher = createChildLauncher({
+		contextual: options.authorization !== undefined,
 		modelProfiles,
 		jevRouting,
 		delegationMode,
@@ -208,7 +242,12 @@ export default function piWorkflowExtension(
 	const childTools = launcher.childToolsOffer(
 		pi,
 		[
-			createSpawnChildTool(launcher, childSessions, todo),
+			createSpawnChildTool(
+				launcher,
+				childSessions,
+				todo,
+				options.authorization !== undefined,
+			),
 			createContinueChildTool(childSessions),
 			...createChildQueryTools(childSessions),
 		],
@@ -234,7 +273,12 @@ export default function piWorkflowExtension(
 		],
 	});
 	childSessions.subscribe(childTools.refresh);
-	registerDelegationMode(pi, delegationMode, childTools.offered);
+	registerDelegationMode(
+		pi,
+		delegationMode,
+		childTools.offered,
+		options.authorization !== undefined,
+	);
 
 	pi.on("session_start", async (_event, ctx) => {
 		currentCtx = ctx;

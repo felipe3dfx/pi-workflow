@@ -8,7 +8,7 @@ writeFileSync(join(pidDir, `${name}.pid`), String(process.pid));
 appendFileSync(join(pidDir, `${name}.pids`), `${process.pid}\n`);
 
 let lateToolAdvertised = false;
-const lateToolScenario = scenario === "late-tool";
+const lateToolScenario = scenario === "late-tool" || scenario === "authorization";
 const listedTools = () => [
 	{
 		name: "echo",
@@ -43,6 +43,7 @@ const results = {
 	ping: () => ({}),
 	"tools/list": () => ({ tools: listedTools() }),
 	"tools/call": (params) => {
+		if (scenario === "authorization") appendFileSync(join(pidDir, `${name}.calls`), `${params.name}\n`);
 		if (lateToolScenario && params.name === "publish_late_tool") {
 			lateToolAdvertised = true;
 			process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/tools/list_changed" })}\n`);

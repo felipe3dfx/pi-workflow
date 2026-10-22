@@ -148,13 +148,13 @@ _Avoid_: read result, acknowledged result
 
 ### Contract
 
-The harness-owned definition of a child role: its `tools:` line lists the tools every launch checks, and its body is the child's system prompt. A child follows its Contract over project context files, including when those files instruct it to ask the user, delegate, launch children, commit, push, or publish.
+The harness-owned instructions of a child role, with a tool-source declaration used when constructing its session. A child follows its Contract's applicable instructions over project context; the task and applicable prohibitions determine action authority, not tool availability or role.
 
 _Avoid_: agent definition, persona, system prompt file
 
 ### Checkpoint
 
-A signed commit that a worker creates with the harness-owned `checkpoint` tool on the branch of the isolated worktree the parent granted it. The harness records its SHA, parent, base, and branch in the child's result; integration, push, pull requests, and tracker effects stay with the parent.
+A signed, scoped commit that a child of any role creates under its task's authority in its assigned authorized context, with isolation wherever interference is possible. Tool availability does not grant commit authority, and commit authority does not grant push or publication authority.
 
 _Avoid_: child commit, handoff commit
 
