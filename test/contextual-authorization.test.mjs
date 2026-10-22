@@ -885,6 +885,74 @@ async function commitFixture(t, options, verify) {
 	});
 }
 
+function pauseCommitPreflight(cwd) {
+	const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+	const bin = join(cwd, "preflight-bin");
+	const entered = join(bin, "entered");
+	const released = join(bin, "released");
+	mkdirSync(bin);
+	writeFileSync(join(bin, "git"), `#!/bin/sh
+if [ "$1" = for-each-ref ] && mkdir '${bin}/claimed' 2>/dev/null; then
+  '${realGit}' "$@" || exit $?
+  touch '${entered}'
+  while [ ! -f '${released}' ]; do sleep 0.01; done
+else
+  exec '${realGit}' "$@"
+fi
+`, { mode: 0o755 });
+	const path = process.env.PATH;
+	process.env.PATH = `${bin}:${path}`;
+	return {
+		entered: () => existsSync(entered),
+		release: () => writeFileSync(released, ""),
+		restore: () => { process.env.PATH = path; },
+	};
+}
+
+test("overlapping task commit preflight holds the second call before either commits", async t => {
+	await commitFixture(t, {
+		classify: async proposal => proposal.action.tool === "codemode" ? known : { ...known, commit: { paths: ["assigned.txt"] } },
+		afterCommit: async ({ cwd }) => writeFileSync(join(cwd, "assigned.txt"), "NEXT_TASK_COMMIT"),
+	}, async ({ host, child, cwd, git, before, recorded, executions }) => {
+		const pause = pauseCommitPreflight(cwd);
+		const running = childCall(host, child, "codemode", {
+			code: "return await Promise.allSettled([tools.commit_probe({}), tools.commit_probe({})]);",
+		});
+		try {
+			await eventually(pause.entered);
+			await eventually(() => child.pendingAuthorizations().length > 0 || executions() > 0);
+			assert.equal(executions(), 0);
+			assert.match(child.pendingAuthorizations()[0].reason, /Another local commit owns/);
+		} finally {
+			pause.release();
+			await running;
+			pause.restore();
+		}
+		assert.equal(executions(), 1);
+		assert.equal(git("rev-list", "--count", `${before}..HEAD`), "1");
+		assert.equal(git("rev-parse", "HEAD^"), before);
+		assert.match(git("cat-file", "commit", "HEAD"), /^gpgsig /m);
+		assert.equal(recorded.length, 1);
+	});
+});
+
+test("task commit preparation failure releases the repository for a same-repository retry", async t => {
+	await commitFixture(t, {}, async ({ host, child, git, before, recorded, executions }) => {
+		git("config", "commit.gpgsign", "false");
+		const held = await childCall(host, child, "commit_probe", {});
+		assert.equal(held.isError, true);
+		assert.match(held.content[0].text, /signing is not configured/);
+		assert.equal(executions(), 0);
+		assert.equal(git("rev-parse", "HEAD"), before);
+		git("config", "commit.gpgsign", "true");
+		const retried = await childCall(host, child, "commit_probe", {});
+		assert.equal(retried.isError, false, JSON.stringify(retried));
+		assert.equal(executions(), 1);
+		assert.equal(recorded.length, 1);
+		assert.match(git("cat-file", "commit", "HEAD"), /^gpgsig /m);
+	});
+});
+
 for (const role of ["explore", "worker", "verify"]) {
 	for (const route of ["bash", "checkpoint", "commit_probe"]) {
 		test(`task commit: ${role} uses ${route} without a separate grant`, async t => {
@@ -999,6 +1067,33 @@ for (const failure of ["unsigned", "outside", "other-ref", "tool-error", "cancel
 	});
 }
 
+test("task commit reports a signed intervening-parent commit without rollback", async t => {
+	let intervening;
+	await commitFixture(t, { afterCommit: async ({ git }) => {
+		intervening = git("rev-parse", "HEAD");
+		git("commit", "--allow-empty", "-qm", "chore: deliberate second commit");
+	} }, async ({ host, child, git, before, recorded }) => {
+		const result = await childCall(host, child, "commit_probe", {});
+		const sha = git("rev-parse", "HEAD");
+		assert.notEqual(sha, intervening);
+		assert.notEqual(intervening, before);
+		assert.equal(git("rev-parse", "HEAD^"), intervening);
+		assert.equal(git("rev-parse", "HEAD^^"), before);
+		assert.equal(git("rev-list", "--count", `${before}..HEAD`), "2");
+		assert.equal(git("show", "HEAD:assigned.txt"), "TASK_COMMIT");
+		assert.match(git("cat-file", "commit", "HEAD"), /^gpgsig /m);
+		assert.match(git("cat-file", "commit", intervening), /^gpgsig /m);
+		assert.equal(result.isError, true);
+		const text = result.content.map(p => p.text).join("");
+		assert.match(text, /Postcommit verification failed \(no rollback\)/);
+		assert.match(text, new RegExp(sha));
+		assert.match(text, new RegExp(`does not have ${before} as its only parent`));
+		assert.equal(recorded.length, 0);
+		assert.equal(child.entries().filter(e => e.customType === "pi-workflow-checkpoint").length, 0);
+		assert.equal(git("rev-parse", "HEAD"), sha);
+	});
+});
+
 test("task commit does not authorize a subsequent publication action", async t => {
 	await commitFixture(t, { classify: async proposal => proposal.action.input.command === "git push origin HEAD"
 		? { ...known, commit: false, scope: "outside", reason: "Publication was not assigned" }
@@ -1035,19 +1130,33 @@ test("task commit rechecks current authority after repository preflight and rele
 	let permitted = true;
 	await commitFixture(t, {
 		authority: () => ({ ...authority(), ...(permitted ? { commit: { paths: ["assigned.txt"], context: "noninterfering" } } : {}) }),
-		onDecision: decision => { if (decision.kind === "allow") permitted = false; },
-	}, async ({ host, child, cwd, git, before, executions }) => {
+	}, async ({ host, child, cwd, git, before, executions, recorded }) => {
 		const index = readFileSync(join(cwd, ".git", "index"));
-		const result = await childCall(host, child, "commit_probe", {});
+		const pause = pauseCommitPreflight(cwd);
+		const running = childCall(host, child, "commit_probe", {});
+		let result;
+		try {
+			await eventually(pause.entered);
+			permitted = false;
+		} finally {
+			pause.release();
+			result = await running;
+			pause.restore();
+		}
 		assert.equal(result.isError, true);
 		assert.match(result.content[0].text, /Authority changed/);
+		assert.match(child.pendingAuthorizations()[0].reason, /Authority changed/);
 		assert.equal(executions(), 0);
+		assert.equal(recorded.length, 0);
 		assert.equal(git("rev-parse", "HEAD"), before);
 		assert.deepEqual(readFileSync(join(cwd, ".git", "index")), index);
-	});
-	await commitFixture(t, {}, async ({ host, child }) => {
-		const result = await childCall(host, child, "commit_probe", {});
-		assert.equal(result.isError, false);
+		permitted = true;
+		const retried = await childCall(host, child, "commit_probe", {});
+		assert.equal(retried.isError, false, JSON.stringify(retried));
+		assert.equal(executions(), 1);
+		assert.equal(recorded.length, 1);
+		assert.equal(git("rev-parse", "HEAD^"), before);
+		assert.match(git("cat-file", "commit", "HEAD"), /^gpgsig /m);
 	});
 });
 

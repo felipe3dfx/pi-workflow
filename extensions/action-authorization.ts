@@ -40,6 +40,17 @@ function commitPaths(value: unknown): value is { paths: string[] } {
 	);
 }
 
+const unresolvedCommitAuthority =
+	"Commit task authority, scope or noninterfering/isolated context is unresolved.";
+
+function validCommitAuthority(value: unknown): value is CommitAuthority {
+	return (
+		commitPaths(value) &&
+		"context" in value &&
+		(value.context === "noninterfering" || value.context === "isolated")
+	);
+}
+
 async function prepareTaskCommit(
 	grant: CheckpointGrant | undefined,
 	intent: unknown,
@@ -48,20 +59,20 @@ async function prepareTaskCommit(
 	if (
 		!grant ||
 		!commitPaths(intent) ||
-		!commitPaths(authority) ||
-		!("context" in authority) ||
-		(authority.context !== "noninterfering" && authority.context !== "isolated")
+		!validCommitAuthority(authority)
 	)
-		throw new Error(
-			"Commit task authority, scope or noninterfering/isolated context is unresolved.",
-		);
-	const prepared = await prepareCommit(grant, intent.paths, authority.paths);
+		throw new Error(unresolvedCommitAuthority);
 	if (committing.has(grant.commonDir))
 		throw new Error(
 			"Another local commit owns this repository; consult or isolate before committing.",
 		);
 	committing.add(grant.commonDir);
-	return prepared;
+	try {
+		return await prepareCommit(grant, intent.paths, authority.paths);
+	} catch (error) {
+		committing.delete(grant.commonDir);
+		throw error;
+	}
 }
 
 interface ActionAuthority {
@@ -271,16 +282,10 @@ function assess(
 					"Commit intent is missing or malformed; consult before dispatch.",
 			};
 		const authority = proposal.authority.commit;
-		if (
-			!commitPaths(authority) ||
-			!("context" in authority) ||
-			(authority.context !== "noninterfering" &&
-				authority.context !== "isolated")
-		)
+		if (!validCommitAuthority(authority))
 			return {
 				kind: "held",
-				reason:
-					"Commit task authority, scope or noninterfering/isolated context is unresolved.",
+				reason: unresolvedCommitAuthority,
 			};
 	}
 	if (
