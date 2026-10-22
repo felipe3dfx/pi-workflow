@@ -79,8 +79,10 @@ worktree, with its own configuration and state, and survives a parent
     `/reload` the re-attaching parent rebuilds the claims of the surviving
     children.
   - Claims are compared only within the same resolved launch worktree, by
-    canonical path and ignoring case. Admission does not change the conditions
-    of an ADR 0020 `checkpoint` grant.
+    canonical path and ignoring case. The case folding is deliberate even on
+    case-sensitive filesystems: an unnecessary refusal is preferable to lost
+    edits where the two names are one file. Admission does not change the
+    conditions of an ADR 0020 `checkpoint` grant.
   - The parent's own writes are outside the admission, deliberately: the
     guarantee is between children, and the parent answers for its own edits as
     it did under D7.
@@ -166,7 +168,9 @@ the three independent feature-critic lenses over commit `58af30e`.
   child-to-child scope, user decision); declaration, claim lifecycle and path or
   checkout identity (warnings, corrected as written above); a per-checkout lock
   instead of declared surfaces (informative, rejected: parallel writers in
-  `implement-spec` are a traced need).
+  `implement-spec` are a traced need). Round 3: case-insensitive comparison on
+  case-sensitive filesystems (warning, corrected by stating the deliberate
+  conservative refusal).
 - Conflict with ADRs 0014 and 0016 (blocker): rejected. The brief declares the
   replacement; the replacing ADR is a deliverable of the specification.
 - Own-worktree MCP against ADR 0021, reload reconciliation and `continue_child`,
