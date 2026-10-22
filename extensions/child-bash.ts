@@ -157,11 +157,8 @@ export function createChildBashTool(
 	cwd: string,
 	shell: ChildShell = {},
 	checkpoint = false,
-	contextual = false,
 ) {
-	const commandPrefix = contextual
-		? ""
-		: guardPrefix(physical(cwd), checkpoint);
+	const commandPrefix = guardPrefix(physical(cwd), checkpoint);
 	const user =
 		!shell.shellPath || posixShell.test(shell.shellPath) ? shell : {};
 	return defineTool(
