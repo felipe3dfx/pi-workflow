@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
 import { type Static, Type } from "typebox";
+import { errorMessage } from "./error-message.ts";
 
 export type CheckpointGrant = {
 	branch: string;
@@ -122,7 +123,9 @@ async function verifyScope(grant: CheckpointGrant) {
 		grant.base,
 		"HEAD",
 	]).catch(() => {
-		throw new Error(`the checkpoint branch no longer descends from the base ${grant.base}`);
+		throw new Error(
+			`the checkpoint branch no longer descends from the base ${grant.base}`,
+		);
 	});
 }
 
@@ -151,7 +154,8 @@ async function refs(root: string) {
 }
 
 function relativePaths(root: string, paths: readonly string[]) {
-	if (paths.length === 0) throw new Error("the checkpoint needs at least one path");
+	if (paths.length === 0)
+		throw new Error("the checkpoint needs at least one path");
 	return paths.map((path) => {
 		const inside = relative(root, resolve(root, path));
 		if (
@@ -160,13 +164,177 @@ function relativePaths(root: string, paths: readonly string[]) {
 			inside.startsWith(`..${sep}`) ||
 			isAbsolute(inside)
 		) {
-			throw new Error(`the checkpoint path ${path} is not inside the worktree ${root}`);
+			throw new Error(
+				`the checkpoint path ${path} is not inside the worktree ${root}`,
+			);
 		}
 		if (inside.split(sep)[0].toLowerCase() === ".git") {
 			throw new Error(`the checkpoint path ${path} is Git metadata`);
 		}
+		let existing = resolve(root, inside);
+		while (!existsSync(existing)) existing = resolve(existing, "..");
+		const canonical = relative(root, realpathSync(existing));
+		if (
+			canonical === ".." ||
+			canonical.startsWith(`..${sep}`) ||
+			isAbsolute(canonical) ||
+			canonical.split(sep)[0].toLowerCase() === ".git"
+		)
+			throw new Error(
+				`the checkpoint path ${path} resolves outside the worktree`,
+			);
 		return inside.split(sep).join("/");
 	});
+}
+
+export async function checkpointContext(
+	root: string,
+): Promise<CheckpointGrant> {
+	const current = await scope(root);
+	if (!current.ref?.startsWith("refs/heads/"))
+		throw new Error(
+			"A signed commit needs an assigned branch, not a detached HEAD.",
+		);
+	return {
+		root: current.root,
+		gitDir: current.gitDir,
+		commonDir: current.commonDir,
+		branch: current.ref.slice("refs/heads/".length),
+		base: (await git(root, ["rev-parse", "HEAD"])).trim(),
+	};
+}
+
+async function scopedIndex(root: string, paths: readonly string[]) {
+	const staged = (
+		await git(root, ["diff", "--cached", "--no-renames", "--name-only", "-z"])
+	)
+		.split("\0")
+		.filter(Boolean);
+	const outside = staged.filter(
+		(file) =>
+			!paths.some((path) => file === path || file.startsWith(`${path}/`)),
+	);
+	if (outside.length)
+		throw new Error(
+			`the index holds changes outside the checkpoint paths: ${outside.join(", ")}`,
+		);
+	return staged;
+}
+
+export async function prepareCommit(
+	grant: CheckpointGrant,
+	authorizedPaths: readonly string[],
+	taskPaths?: readonly string[],
+) {
+	const { root } = grant;
+	await verifyScope(grant);
+	const paths = relativePaths(root, authorizedPaths);
+	if (taskPaths) {
+		const assigned = relativePaths(root, taskPaths);
+		if (
+			paths.some(
+				(file) =>
+					!assigned.some(
+						(path) => file === path || file.startsWith(`${path}/`),
+					),
+			)
+		)
+			throw new Error(
+				"Commit intent exceeds the current task's authorized paths.",
+			);
+	}
+	const signing = await git(root, [
+		"config",
+		"--type=bool",
+		"--get",
+		"commit.gpgsign",
+	]).catch(() => "");
+	if (signing.trim() !== "true")
+		throw new Error(
+			"commit signing is not configured: commit.gpgsign is not true; no commit is authorized",
+		);
+	await scopedIndex(root, paths);
+	return {
+		grant,
+		paths,
+		parent: (await git(root, ["rev-parse", "HEAD"])).trim(),
+		before: await refs(root),
+	};
+}
+
+export async function verifyCommit(
+	prepared: Awaited<ReturnType<typeof prepareCommit>>,
+) {
+	const { grant, paths, parent, before } = prepared;
+	const { root } = grant;
+	const sha = (await git(root, ["rev-parse", "HEAD"])).trim();
+	if (sha === parent) return undefined;
+	try {
+		const after = await refs(root);
+		const branchRef = `refs/heads/${grant.branch}`;
+		const moved = [...new Set([...before.keys(), ...after.keys()])].filter(
+			(ref) => ref !== branchRef && before.get(ref) !== after.get(ref),
+		);
+		if (moved.length > 0) {
+			throw new Error(
+				`the checkpoint commit ${sha} changed other refs: ${moved.join(", ")}`,
+			);
+		}
+		const parents = (await git(root, ["rev-list", "--parents", "-n", "1", sha]))
+			.trim()
+			.split(" ")
+			.slice(1);
+		if (parents.length !== 1 || parents[0] !== parent) {
+			throw new Error(
+				`the checkpoint commit ${sha} does not have ${parent} as its only parent`,
+			);
+		}
+		if ((await head(root)) !== `refs/heads/${grant.branch}`) {
+			throw new Error(
+				`HEAD left refs/heads/${grant.branch} during the checkpoint ${sha}`,
+			);
+		}
+		const object = await git(root, ["cat-file", "commit", sha]);
+		const fields = object.slice(0, object.indexOf("\n\n")).split("\n");
+		if (!fields.some((line) => /^gpgsig(-sha256)? /.test(line))) {
+			throw new Error(`the checkpoint commit ${sha} is not signed`);
+		}
+		const entries = (
+			await git(root, [
+				"diff-tree",
+				"--no-commit-id",
+				"--name-status",
+				"--no-renames",
+				"-z",
+				"-r",
+				sha,
+			])
+		).split("\0");
+		const changes: [string, string][] = [];
+		for (let at = 0; at + 1 < entries.length; at += 2) {
+			changes.push([entries[at], entries[at + 1]]);
+		}
+		const files = changes.map(([status, file]) => `${status}\t${file}`);
+		const unauthorized = changes
+			.map(([, file]) => file)
+			.filter(
+				(file) =>
+					!paths.some((path) => file === path || file.startsWith(`${path}/`)),
+			);
+		if (unauthorized.length > 0) {
+			throw new Error(
+				`the checkpoint commit ${sha} contains files outside the checkpoint paths: ${unauthorized.join(", ")}`,
+			);
+		}
+		const checkpoint = { sha, parent, base: grant.base, branch: grant.branch };
+
+		return { ...checkpoint, files };
+	} catch (error) {
+		throw new Error(
+			`the checkpoint commit ${sha} failed verification: ${errorMessage(error)}`,
+			{ cause: error },
+		);
+	}
 }
 
 export const checkpointParameters = Type.Object({
@@ -181,117 +349,42 @@ export const checkpointParameters = Type.Object({
 });
 
 export function createCheckpointTool(
-	grant: CheckpointGrant,
+	assigned: CheckpointGrant | string,
 	checkpointed: (checkpoint: Checkpoint) => void,
 ) {
 	return {
 		name: checkpointTool,
 		label: "Checkpoint",
-		description: `Create a signed checkpoint commit of the given paths on ${grant.branch} in this worktree. Hooks and the repository signing configuration apply; the call fails without a commit when signing is not configured or fails.`,
+		description:
+			"Create a task-authorized signed scoped commit in the assigned context. Availability is not permission; hooks and existing signing configuration apply. Postcommit verification failures report the SHA without rollback.",
 		parameters: checkpointParameters,
 		async execute(
 			_toolCallId: string,
 			params: Static<typeof checkpointParameters>,
 		) {
+			const grant =
+				typeof assigned === "string"
+					? await checkpointContext(assigned)
+					: assigned;
 			const { root } = grant;
-			await verifyScope(grant);
 			verifyMessage(params.message);
-			const paths = relativePaths(root, params.paths);
-			const signing = await git(root, [
-				"config",
-				"--type=bool",
-				"--get",
-				"commit.gpgsign",
-			]).catch(() => "");
-			if (signing.trim() !== "true") {
-				throw new Error(
-					"commit signing is not configured: commit.gpgsign is not true, so no checkpoint was created",
-				);
-			}
-			const before = await refs(root);
-			const literal = paths.map((path) => `:(literal)${path}`);
+			const prepared = await prepareCommit(grant, params.paths);
+			const literal = prepared.paths.map((path) => `:(literal)${path}`);
 			await git(root, ["add", "-A", "--", ...literal]);
-			const staged = (
-				await git(root, ["diff", "--cached", "--no-renames", "--name-only", "-z"])
-			)
-				.split("\0")
-				.filter((path) => path !== "");
-			if (staged.length === 0) {
+			if (!(await scopedIndex(root, prepared.paths)).length)
 				throw new Error("the checkpoint has nothing to commit for these paths");
-			}
-			const outside = staged.filter(
-				(file) => !paths.some((path) => file === path || file.startsWith(`${path}/`)),
-			);
-			if (outside.length > 0) {
-				throw new Error(
-					`the index holds changes outside the checkpoint paths: ${outside.join(", ")}`,
-				);
-			}
-			const parent = (await git(root, ["rev-parse", "HEAD"])).trim();
 			await git(root, ["commit", "--file=-"], params.message);
-			const sha = (await git(root, ["rev-parse", "HEAD"])).trim();
-			const after = await refs(root);
-			const branchRef = `refs/heads/${grant.branch}`;
-			const moved = [...new Set([...before.keys(), ...after.keys()])].filter(
-				(ref) => ref !== branchRef && before.get(ref) !== after.get(ref),
-			);
-			if (moved.length > 0) {
-				throw new Error(
-					`the checkpoint commit ${sha} changed other refs: ${moved.join(", ")}`,
-				);
-			}
-			const parents = (await git(root, ["rev-list", "--parents", "-n", "1", sha]))
-				.trim()
-				.split(" ")
-				.slice(1);
-			if (parents.length !== 1 || parents[0] !== parent) {
-				throw new Error(
-					`the checkpoint commit ${sha} does not have ${parent} as its only parent`,
-				);
-			}
-			if ((await head(root)) !== `refs/heads/${grant.branch}`) {
-				throw new Error(`HEAD left refs/heads/${grant.branch} during the checkpoint ${sha}`);
-			}
-			const object = await git(root, ["cat-file", "commit", sha]);
-			const fields = object.slice(0, object.indexOf("\n\n")).split("\n");
-			if (!fields.some((line) => /^gpgsig(-sha256)? /.test(line))) {
-				throw new Error(`the checkpoint commit ${sha} is not signed`);
-			}
-			const entries = (
-				await git(root, [
-					"diff-tree",
-					"--no-commit-id",
-					"--name-status",
-					"--no-renames",
-					"-z",
-					"-r",
-					sha,
-				])
-			).split("\0");
-			const changes: [string, string][] = [];
-			for (let at = 0; at + 1 < entries.length; at += 2) {
-				changes.push([entries[at], entries[at + 1]]);
-			}
-			const files = changes.map(([status, file]) => `${status}\t${file}`);
-			const unauthorized = changes
-				.map(([, file]) => file)
-				.filter(
-					(file) => !paths.some((path) => file === path || file.startsWith(`${path}/`)),
-				);
-			if (unauthorized.length > 0) {
-				throw new Error(
-					`the checkpoint commit ${sha} contains files outside the checkpoint paths: ${unauthorized.join(", ")}`,
-				);
-			}
-			const checkpoint = { sha, parent, base: grant.base, branch: grant.branch };
+			const verified = await verifyCommit(prepared);
+			if (!verified) throw new Error("the checkpoint did not create a commit");
+			const { files, ...checkpoint } = verified;
 			checkpointed(checkpoint);
 			return {
 				content: [
 					{
 						type: "text" as const,
 						text: [
-							`Checkpoint ${sha} on ${grant.branch}.`,
-							`parent: ${parent}`,
+							`Checkpoint ${checkpoint.sha} on ${grant.branch}.`,
+							`parent: ${checkpoint.parent}`,
 							`base: ${grant.base}`,
 							"files:",
 							...files.map((file) => `- ${file}`),

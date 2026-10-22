@@ -971,6 +971,24 @@ function checkpointLauncher() {
 	});
 }
 
+test("contextual checkpoint descriptors accept every role in an assigned shared context", async () => {
+	await withLinkedWorktree(async ({ main, branch }) => {
+		for (const role of ["explore", "worker", "verify"]) {
+			const launcher = createChildLauncher({
+				contextual: true, jevRouting, delegationMode, modelProfiles: absentProfiles,
+			});
+			const result = await launcher.prepareLaunch(
+				{ role, task: "Commit only task-owned changes when authorized", checkpoint: branch },
+				launcherContext(main),
+			);
+			assert.equal(result.kind, "ready", JSON.stringify(result));
+			assert.equal(result.checkpoint.root, main);
+			assert.equal(result.checkpoint.branch, branch);
+			assert.match(result.contract.prompt, /current task authorizes/);
+		}
+	});
+});
+
 test("a worker in an isolated worktree on the granted branch carries the checkpoint grant", async () => {
 	await withLinkedWorktree(async ({ main, linked, git }) => {
 		const result = await checkpointLauncher().prepareLaunch(

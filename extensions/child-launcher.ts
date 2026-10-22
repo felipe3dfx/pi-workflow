@@ -17,7 +17,7 @@ import type {
 	ToolCallEvent,
 } from "@earendil-works/pi-coding-agent";
 
-import { type CheckpointGrant, checkpointGrant } from "./child-checkpoint.ts";
+import { type CheckpointGrant, checkpointContext, checkpointGrant } from "./child-checkpoint.ts";
 import { latestUserRequest } from "./child-sessions.ts";
 import { errorMessage } from "./error-message.ts";
 import { gitEnvironment } from "./git-environment.ts";
@@ -339,7 +339,7 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			task: request.task,
 			...(request.checkpoint
 				? {
-						checkpoint: `The parent grants this worker a signed checkpoint on ${request.checkpoint} in its isolated worktree.`,
+						checkpoint: options.contextual ? `Assigned checkpoint context: ${request.checkpoint}; task authority is evaluated separately.` : `The parent grants this worker a signed checkpoint on ${request.checkpoint} in its isolated worktree.`,
 					}
 				: {}),
 		};
@@ -551,20 +551,24 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		if (typeof worktree !== "string") return worktree;
 		let checkpoint: CheckpointGrant | undefined;
 		if (request.checkpoint !== undefined) {
-			if (role !== "worker") {
+			if (!options.contextual && role !== "worker") {
 				return outcome(
 					"refused",
 					`A checkpoint is granted only to a worker, not to ${role ?? "a child without a role"}.`,
 				);
 			}
-			if (request.worktree === undefined) {
+			if (!options.contextual && request.worktree === undefined) {
 				return outcome(
 					"refused",
 					"A checkpoint needs the isolated worktree passed explicitly as worktree.",
 				);
 			}
 			try {
-				checkpoint = await checkpointGrant(worktree, request.checkpoint, ctx.cwd);
+				checkpoint = options.contextual
+					? await checkpointContext(worktree)
+					: await checkpointGrant(worktree, request.checkpoint, ctx.cwd);
+				if (checkpoint.branch !== request.checkpoint)
+					throw new Error(`The assigned context is not on refs/heads/${request.checkpoint}.`);
 			} catch (error) {
 				return outcome(
 					"refused",

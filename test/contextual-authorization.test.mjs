@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { join, basename } from "node:path";
-import { existsSync, writeFileSync, readFileSync, mkdirSync, unlinkSync } from "node:fs";
+import { existsSync, writeFileSync, readFileSync, mkdirSync, unlinkSync, symlinkSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { Type } from "typebox";
@@ -39,6 +39,7 @@ import { capabilities } from "../extensions/configure.ts";
 import { eventually } from "./support/eventually.mjs";
 import { createChildSessions } from "../extensions/child-sessions.ts";
 import { createChildAudit } from "../extensions/child-audit.ts";
+import { withCheckpoint } from "./support/signed-checkpoint.mjs";
 
 async function parent(t, authorization, tool = {
 	name: "unused",
@@ -816,7 +817,298 @@ test("an unbound high-impact classifier confirmation still consults before dispa
 	assert.equal(readFileSync(path, "utf8"), "SPECIFIC_IMPACT_EFFECT");
 });
 
+
+test("task-authorized explorer commits signed changes through ordinary bash in shared context", async (t) => {
+	await withCheckpoint(async ({ main }) => {
+		const host = await parent(t);
+		writeFileSync(join(main, "assigned.txt"), "SIGNED_TASK_EFFECT");
+		writeFileSync(join(main, "others.txt"), "OTHERS_UNSTAGED");
+		const config = readFileSync(join(main, ".git", "config"));
+		const child = await piChildSession({
+			cwd: main, role: "explore", model: "faux/authorization",
+			modelRegistry: new ModelRegistry(host.runtime), sources: {},
+			authorization: {
+				authority: () => ({ ...authority(), commit: { paths: ["assigned.txt"], context: "noninterfering" } }),
+				classify: async () => ({ ...known, commit: { paths: ["assigned.txt"] } }),
+			},
+		});
+		t.after(() => child.dispose());
+		const result = await childCall(host, child, "bash", { command: "git add assigned.txt && git commit -m 'feat: deliver task'" });
+		assert.equal(result.isError, false, JSON.stringify(result));
+		const git = (...args) => execFileSync("git", args, { cwd: main, encoding: "utf8" }).trim();
+		assert.equal(git("show", "HEAD:assigned.txt"), "SIGNED_TASK_EFFECT");
+		assert.match(git("cat-file", "commit", "HEAD"), /^gpgsig /m);
+		assert.equal(readFileSync(join(main, "others.txt"), "utf8"), "OTHERS_UNSTAGED");
+		assert.deepEqual(readFileSync(join(main, ".git", "config")), config);
+	});
+});
+
+
+async function commitFixture(t, options, verify) {
+	await withCheckpoint(async fixture => {
+		const host = await parent(t);
+		const cwd = options.isolated ? fixture.worktree : fixture.main;
+		const git = (...args) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+		const before = git("rev-parse", "HEAD");
+		writeFileSync(join(cwd, "assigned.txt"), "TASK_COMMIT");
+		const recorded = [];
+		const questions = [];
+		let executions = 0;
+		const commit = { paths: ["assigned.txt"], context: options.isolated ? "isolated" : "noninterfering" };
+		const child = await piChildSession({
+			cwd, role: options.role ?? "verify", model: "faux/authorization",
+			modelRegistry: new ModelRegistry(host.runtime),
+			sources: { factories: [pi => {
+				pi.registerTool({
+					name: "commit_probe", label: "Commit probe", description: "Commit the assigned change",
+					parameters: Type.Object({}),
+					async execute(_id, _args, signal) {
+						executions++;
+						git("add", "assigned.txt");
+						git("commit", "-qm", "feat: commit assigned change");
+						if (options.afterCommit) await options.afterCommit({ git, cwd, signal });
+						return { content: [{ type: "text", text: "TOOL_COMPLETED" }], details: {} };
+					},
+				});
+			}] },
+			authorization: {
+				authority: options.authority ?? (() => ({ ...authority(), commit })),
+				classify: options.classify ?? (async () => ({ ...known, commit: { paths: ["assigned.txt"] } })),
+				onDecision: options.onDecision,
+			},
+			ask: async question => { questions.push(question); throw new Error("COMMIT_CONSULTATION_REQUIRED"); },
+			checkpointed: checkpoint => recorded.push(checkpoint),
+		});
+		try {
+			await verify({ ...fixture, host, child, cwd, git, before, recorded, questions, executions: () => executions });
+		} finally { await child.dispose(); }
+	});
+}
+
+for (const role of ["explore", "worker", "verify"]) {
+	for (const route of ["bash", "checkpoint", "commit_probe"]) {
+		test(`task commit: ${role} uses ${route} without a separate grant`, async t => {
+			await commitFixture(t, { role, isolated: route === "checkpoint" }, async ({ host, child, cwd, main, git, before, recorded }) => {
+				writeFileSync(join(cwd, "others.txt"), "OTHERS_UNSTAGED");
+				const config = readFileSync(join(main, ".git", "config"));
+				const args = route === "bash" ? { command: "git add assigned.txt && git commit -m 'feat: task commit'" }
+					: route === "checkpoint" ? { message: "feat: task commit", paths: ["assigned.txt"] } : {};
+				const result = await childCall(host, child, route, args);
+				assert.equal(result.isError, false, JSON.stringify(result));
+				assert.equal(git("show", "HEAD:assigned.txt"), "TASK_COMMIT");
+				assert.equal(git("rev-parse", "HEAD^"), before);
+				assert.match(git("cat-file", "commit", "HEAD"), /^gpgsig /m);
+				assert.equal(recorded.length, 1);
+				assert.equal(recorded[0].sha, git("rev-parse", "HEAD"));
+				assert.match(result.content.map(p => p.text).join(""), /Signed commit/);
+				assert.equal(readFileSync(join(cwd, "others.txt"), "utf8"), "OTHERS_UNSTAGED");
+				assert.deepEqual(readFileSync(join(main, ".git", "config")), config);
+			});
+		});
+	}
+}
+
+for (const [name, taskCommit, intent] of [
+	["edit-only", undefined, { paths: ["assigned.txt"] }],
+	["uncertain context", { paths: ["assigned.txt"], context: "unknown" }, { paths: ["assigned.txt"] }],
+	["interference", { paths: ["assigned.txt"], context: "interfering" }, { paths: ["assigned.txt"] }],
+	["missing intent", { paths: ["assigned.txt"], context: "noninterfering" }, undefined],
+	["malformed intent", { paths: ["assigned.txt"], context: "noninterfering" }, { paths: [null] }],
+	["scope expansion", { paths: ["README.md"], context: "noninterfering" }, { paths: ["assigned.txt"] }],
+	["outside path", { paths: ["assigned.txt"], context: "noninterfering" }, { paths: ["../outside"] }],
+	["metadata", { paths: ["assigned.txt"], context: "noninterfering" }, { paths: [".git/config"] }],
+]) {
+	test(`task commit holds ${name} without touching the index or history`, async t => {
+		await commitFixture(t, {
+			authority: () => ({ ...authority(), ...(taskCommit ? { commit: taskCommit } : {}) }),
+			classify: async () => ({ ...known, commit: intent }),
+		}, async ({ host, child, cwd, git, before, executions, questions }) => {
+			const index = readFileSync(join(cwd, ".git", "index"));
+			const result = await childCall(host, child, "commit_probe", {});
+			assert.equal(result.isError, true);
+			assert.match(result.content[0].text, /Authorization held/);
+			assert.equal(executions(), 0);
+			assert.equal(git("rev-parse", "HEAD"), before);
+			assert.deepEqual(readFileSync(join(cwd, ".git", "index")), index);
+			assert.equal(child.pendingAuthorizations().length, 1);
+			if (["edit-only", "uncertain context", "interference"].includes(name))
+				assert.match(questions[0], /Commit task authority/);
+			else if (["missing intent", "malformed intent"].includes(name))
+				assert.match(questions[0], /Commit intent is missing or malformed/);
+			else assert.match(result.content[0].text, /exceeds|not inside|Git metadata/);
+		});
+	});
+}
+
+test("task commit preflight preserves others' staged and unstaged work before checkpoint staging", async t => {
+	await commitFixture(t, {}, async ({ host, child, cwd, git, before }) => {
+		writeFileSync(join(cwd, "others.txt"), "OTHERS_STAGED");
+		git("add", "others.txt");
+		writeFileSync(join(cwd, "others.txt"), "OTHERS_UNSTAGED");
+		const index = readFileSync(join(cwd, ".git", "index"));
+		const result = await childCall(host, child, "checkpoint", { message: "feat: assigned only", paths: ["assigned.txt"] });
+		assert.equal(result.isError, true);
+		assert.match(result.content[0].text, /index holds changes outside/);
+		assert.equal(git("rev-parse", "HEAD"), before);
+		assert.equal(git("show", ":others.txt"), "OTHERS_STAGED");
+		assert.equal(readFileSync(join(cwd, "others.txt"), "utf8"), "OTHERS_UNSTAGED");
+		assert.deepEqual(readFileSync(join(cwd, ".git", "index")), index);
+		assert.equal(git("diff", "--cached", "--name-only"), "others.txt");
+	});
+});
+
+for (const failure of ["unsigned", "outside", "other-ref", "tool-error", "cancel"]) {
+	test(`task commit reports ${failure} after committing without rollback`, async t => {
+		const entered = Promise.withResolvers();
+		await commitFixture(t, { afterCommit: async ({ git, cwd, signal }) => {
+			if (failure === "unsigned") git("-c", "commit.gpgsign=false", "commit", "--amend", "--no-edit", "-q");
+			if (failure === "outside") {
+				writeFileSync(join(cwd, "outside.txt"), "OUTSIDE");
+				git("add", "outside.txt");
+				git("commit", "--amend", "--no-edit", "-q");
+			}
+			if (failure === "other-ref") git("update-ref", "refs/heads/other", "HEAD");
+			if (failure === "tool-error") throw new Error("POSTCOMMIT_TOOL_ERROR");
+			if (failure === "cancel") {
+				entered.resolve();
+				await new Promise(resolve => signal.addEventListener("abort", resolve, { once: true }));
+				throw new Error("POSTCOMMIT_CANCELLED");
+			}
+		} }, async ({ host, child, git, before, recorded }) => {
+			const running = childCall(host, child, "commit_probe", {});
+			if (failure === "cancel") {
+				await entered.promise;
+				await Promise.allSettled([child.abort(), running]);
+			} else await running;
+			const result = child.entries().filter(e => e.type === "message" && e.message.role === "toolResult").at(-1).message;
+			const sha = git("rev-parse", "HEAD");
+			assert.notEqual(sha, before);
+			assert.equal(git("rev-parse", "HEAD^"), before);
+			assert.equal(git("show", "HEAD:assigned.txt"), "TASK_COMMIT");
+			assert.equal(result.isError, true);
+			const text = result.content.map(p => p.text).join("");
+			assert.match(text, new RegExp(sha));
+			if (failure === "tool-error" || failure === "cancel") {
+				assert.match(text, /POSTCOMMIT_/);
+				assert.equal(recorded.length, 1);
+			} else {
+				assert.match(text, /Postcommit verification failed \(no rollback\)/);
+				assert.equal(recorded.length, 0);
+			}
+		});
+	});
+}
+
+test("task commit does not authorize a subsequent publication action", async t => {
+	await commitFixture(t, { classify: async proposal => proposal.action.input.command === "git push origin HEAD"
+		? { ...known, commit: false, scope: "outside", reason: "Publication was not assigned" }
+		: { ...known, commit: { paths: ["assigned.txt"] } } }, async ({ host, child, git, before, recorded }) => {
+		const committed = await childCall(host, child, "commit_probe", {});
+		assert.equal(committed.isError, false);
+		const sha = git("rev-parse", "HEAD");
+		const pushed = await childCall(host, child, "bash", { command: "git push origin HEAD" });
+		assert.equal(pushed.isError, true);
+		assert.match(pushed.content[0].text, /Authorization held/);
+		assert.equal(git("rev-parse", "HEAD"), sha);
+		assert.notEqual(sha, before);
+		assert.equal(recorded.length, 1);
+	});
+});
+
+
+for (const problem of ["disabled-signing", "failing-signer"]) {
+	test(`task commit surfaces ${problem} without changing signing configuration`, async t => {
+		await commitFixture(t, {}, async ({ host, child, cwd, git, before }) => {
+			if (problem === "disabled-signing") git("config", "commit.gpgsign", "false");
+			else git("config", "user.signingkey", join(cwd, "missing-fixture-key"));
+			const config = readFileSync(join(cwd, ".git", "config"));
+			const result = await childCall(host, child, "commit_probe", {});
+			assert.equal(result.isError, true);
+			assert.match(result.content[0].text, problem === "disabled-signing" ? /signing is not configured/ : /sign|key/i);
+			assert.equal(git("rev-parse", "HEAD"), before);
+			assert.deepEqual(readFileSync(join(cwd, ".git", "config")), config);
+		});
+	});
+}
+
+test("task commit rechecks current authority after repository preflight and releases held ownership", async t => {
+	let permitted = true;
+	await commitFixture(t, {
+		authority: () => ({ ...authority(), ...(permitted ? { commit: { paths: ["assigned.txt"], context: "noninterfering" } } : {}) }),
+		onDecision: decision => { if (decision.kind === "allow") permitted = false; },
+	}, async ({ host, child, cwd, git, before, executions }) => {
+		const index = readFileSync(join(cwd, ".git", "index"));
+		const result = await childCall(host, child, "commit_probe", {});
+		assert.equal(result.isError, true);
+		assert.match(result.content[0].text, /Authority changed/);
+		assert.equal(executions(), 0);
+		assert.equal(git("rev-parse", "HEAD"), before);
+		assert.deepEqual(readFileSync(join(cwd, ".git", "index")), index);
+	});
+	await commitFixture(t, {}, async ({ host, child }) => {
+		const result = await childCall(host, child, "commit_probe", {});
+		assert.equal(result.isError, false);
+	});
+});
+
+test("nested concurrent task commits cannot spend another invocation's preflight", async t => {
+	await commitFixture(t, {
+		classify: async proposal => proposal.action.tool === "codemode" ? known : { ...known, commit: { paths: ["assigned.txt"] } },
+		afterCommit: async () => delay(80),
+	}, async ({ host, child, git, before, recorded, executions }) => {
+		const result = await childCall(host, child, "codemode", {
+			code: "return await Promise.allSettled([tools.commit_probe({}), tools.commit_probe({})]);",
+		});
+		assert.equal(executions(), 1);
+		assert.equal(git("rev-parse", "HEAD^"), before);
+		assert.equal(recorded.length, 1);
+		assert.match(child.pendingAuthorizations()[0].reason, /Another local commit owns/);
+		assert.match(result.content.map(p => p.text).join(""), /Signed commit/);
+		assert.equal(child.pendingAuthorizations().length, 1);
+		writeFileSync(join(child.pendingAuthorizations()[0].proposal.action.cwd, "assigned.txt"), "NEXT_TASK_COMMIT");
+		const next = await childCall(host, child, "commit_probe", {});
+		assert.equal(next.isError, false, JSON.stringify(next));
+		assert.equal(recorded.length, 2);
+		assert.equal(git("show", "HEAD:assigned.txt"), "NEXT_TASK_COMMIT");
+	});
+});
+
+
+test("task commit stays bound to its assigned branch after local context changes", async t => {
+	await commitFixture(t, { classify: async proposal => proposal.action.tool === "bash" ? known : { ...known, commit: { paths: ["assigned.txt"] } } },
+		async ({ host, child, git, before, executions }) => {
+			const warmup = await childCall(host, child, "bash", { command: "git notes list" });
+			assert.equal(warmup.isError, false);
+			git("switch", "-qc", "different");
+			const result = await childCall(host, child, "commit_probe", {});
+			assert.equal(result.isError, true);
+			assert.match(result.content[0].text, /needs HEAD on refs\/heads\/main/);
+			assert.equal(git("rev-parse", "HEAD"), before);
+			assert.equal(executions(), 0);
+		});
+});
+
+
+for (const target of ["outside", "metadata"]) {
+	test(`task commit refuses canonical ${target} paths behind a symlink`, async t => {
+		await commitFixture(t, {
+			authority: () => ({ ...authority(), commit: { paths: ["linked"], context: "noninterfering" } }),
+			classify: async () => ({ ...known, commit: { paths: ["linked"] } }),
+		}, async ({ host, child, cwd, worktree, git, before, executions }) => {
+			symlinkSync(target === "outside" ? worktree : join(cwd, ".git"), join(cwd, "linked"));
+			const index = readFileSync(join(cwd, ".git", "index"));
+			const result = await childCall(host, child, "commit_probe", {});
+			assert.equal(result.isError, true);
+			assert.match(result.content[0].text, /resolves outside/);
+			assert.equal(executions(), 0);
+			assert.equal(git("rev-parse", "HEAD"), before);
+			assert.deepEqual(readFileSync(join(cwd, ".git", "index")), index);
+		});
+	});
+}
+
 const known = {
+	commit: false,
 	scope: "within",
 	effects: "ordinary",
 	ownership: "assigned",
@@ -2106,7 +2398,7 @@ test("same supplied authority and action have equivalent parent-child outcomes w
 });
 
 for (const checkpoint of [false, true]) {
-	test(`contextual child bash preserves add/commit route with checkpoint ${checkpoint ? "enabled" : "disabled"}`, async (t) => {
+	test(`edit-only child has no commit authority with checkpoint ${checkpoint ? "enabled" : "disabled"}`, async (t) => {
 		const host = await parent(t);
 		const cwd = join(host.agentDir, "repository");
 		mkdirSync(cwd);
@@ -2122,7 +2414,8 @@ for (const checkpoint of [false, true]) {
 		const child = await piChildSession({
 			cwd, role: "worker", model: "faux/authorization",
 			modelRegistry: new ModelRegistry(host.runtime), sources: {},
-			authorization: { authority, classify: async () => known },
+			authorization: { authority, classify: async proposal => proposal.action.input.command === "git notes list" ? known : { ...known, commit: { paths: ["assigned.txt"] } } },
+			ask: async () => { throw new Error("Commit task authority unresolved"); },
 			...(checkpoint ? { checkpoint: {
 				root: cwd, gitDir: join(cwd, ".git"), commonDir: join(cwd, ".git"),
 				base: head, branch: git("branch", "--show-current"),
@@ -2131,9 +2424,7 @@ for (const checkpoint of [false, true]) {
 		t.after(() => child.dispose());
 		for (const command of ["git add assigned.txt", "git commit -am forbidden"]) {
 			const result = await childCall(host, child, "bash", { command });
-			assert.match(result.content[0].text, checkpoint
-				? /does not run in bash.*checkpoint tool/
-				: /reserved for the parent/);
+			assert.match(result.content[0].text, /Commit task authority/);
 			assert.deepEqual(readFileSync(join(cwd, ".git", "index")), index);
 			assert.equal(git("rev-parse", "HEAD"), head);
 		}
