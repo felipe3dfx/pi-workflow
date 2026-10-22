@@ -1,6 +1,7 @@
 import { type Static, Type } from "typebox";
 
 import type { Checkpoint } from "./child-checkpoint.ts";
+import type { AuthorizationDecision } from "./action-authorization.ts";
 
 export function childName(child: { role: string; id: string }) {
 	return `${child.role} ${child.id.slice(0, 4)}`;
@@ -138,8 +139,12 @@ export function childOutcome(child: {
 	text?: string;
 	result?: ChildResult;
 	checkpoints?: readonly Checkpoint[];
+	pendingAuthorizations?: readonly AuthorizationDecision[];
 }) {
-	return `${childStateOutcome(child)}${checkpointLines(child.checkpoints)}`;
+	const pending = child.pendingAuthorizations?.length
+		? `\n\nAuthorization remains pending; consult the parent/user and re-propose with current facts. No held action was authorized.\n${JSON.stringify(child.pendingAuthorizations)}`
+		: "";
+	return `${childStateOutcome(child)}${checkpointLines(child.checkpoints)}${pending}`;
 }
 
 export function checkpointLines(checkpoints: readonly Checkpoint[] | undefined) {

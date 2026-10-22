@@ -30,6 +30,7 @@ import { type Static, Type } from "typebox";
 import type { ChildAudit, ChildCapture } from "./child-audit.ts";
 import {
 	type ActionAuthorization,
+	type AuthorizationDecision,
 	installActionAuthorization,
 	sessionActionAuthorization,
 } from "./action-authorization.ts";
@@ -114,6 +115,7 @@ interface ChildHandle {
 	clearQueue(): string[];
 	abort(): Promise<void>;
 	dispose(): Promise<void>;
+	pendingAuthorizations?(): AuthorizationDecision[];
 }
 
 export type ChildSessionFactory = (spec: ChildSpec) => Promise<ChildHandle>;
@@ -160,6 +162,7 @@ export interface ChildRecord {
 	steering?: string[];
 	undelivered?: string[];
 	checkpoints?: Checkpoint[];
+	pendingAuthorizations?: AuthorizationDecision[];
 }
 
 export type Answerer = "parent" | "operator";
@@ -277,6 +280,9 @@ function childDetails(record: ChildRecord, now = Date.now()) {
 		result: record.result,
 		verdict: record.state === "completed" ? record.result?.verdict : undefined,
 		...(record.checkpoints ? { checkpoints: record.checkpoints } : {}),
+		...(record.pendingAuthorizations
+			? { pendingAuthorizations: record.pendingAuthorizations }
+			: {}),
 	};
 }
 
@@ -374,9 +380,20 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 	if (spec.sources && !spec.authorization)
 		throw new Error("Common tool sources require contextual authorization.");
 	const sources = spec.authorization ? (spec.sources ?? {}) : undefined;
-	const authorization = spec.authorization
-		? sessionActionAuthorization(spec.authorization)
+	const policy = spec.authorization;
+	const authorization = policy
+		? sessionActionAuthorization({
+				authority: (ctx) => policy.authority(ctx),
+				classify: (proposal, signal) => policy.classify(proposal, signal),
+				onDecision: (decision) => policy.onDecision?.(decision),
+				consult: async (question, signal): Promise<unknown> =>
+					JSON.parse(await spec.ask(
+						`Resolve only within your authority; otherwise consult the user. Reply with the same id, call and proposal plus kind (resolved/deny/pending), answer and optional confirmedActions identifying the explicitly confirmed actual action and target. Scope alone is not impact confirmation. No receipt or running state is consent.\n${JSON.stringify(question)}`,
+						signal,
+					)),
+			})
 		: undefined;
+	let pendingAuthorizations: () => AuthorizationDecision[] = () => [];
 	const runtime = parentRuntime(spec.modelRegistry);
 	if (!runtime) {
 		throw new Error("The session's model runtime is not available.");
@@ -435,7 +452,9 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 				? [
 						(pi: ExtensionAPI) => {
 							if (authorization)
-								installActionAuthorization(pi, authorization.authorization);
+								pendingAuthorizations = installActionAuthorization(
+									pi, authorization.authorization,
+								).pending;
 						},
 					]
 				: []),
@@ -539,6 +558,7 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 	return {
 		sessionId: session.sessionId,
 		entries: () => session.sessionManager.getEntries(),
+		pendingAuthorizations: () => pendingAuthorizations(),
 		model: session.model && `${session.model.provider}/${session.model.id}`,
 		thinking: session.thinkingLevel,
 		tools: session.getActiveToolNames(),
@@ -809,6 +829,8 @@ export function createChildSessions(options: {
 		record.text = text;
 		record.endedAt = Date.now();
 		record.step = undefined;
+		const unresolved = child.handle.pendingAuthorizations?.() ?? [];
+		if (unresolved.length > 0) record.pendingAuthorizations = unresolved;
 		trace(child);
 		child.streaming = undefined;
 		answer(
@@ -1087,6 +1109,16 @@ export function createChildSessions(options: {
 					stopped.promise,
 				]);
 				traceRun(id, plan, "completed", result);
+				const unresolved = handle.pendingAuthorizations?.() ?? [];
+				if (unresolved.length > 0)
+					return {
+						status: "pending" as const,
+						launched: true as const,
+						text, result, checkpoints,
+						pendingAuthorizations: unresolved,
+						warning: "The foreground child returned unresolved authority. No held action executed; consult the parent/user, then explicitly re-propose in a fresh authorized run. continue_child does not recover this foreground session.",
+						reason: "Authorization consultation remains pending.",
+					};
 				return { status: "completed" as const, text, result, checkpoints };
 			} catch (error) {
 				traceRun(id, plan, ended);
@@ -1654,6 +1686,12 @@ function launched(
 	selection?: { role: string; jev?: ClassifierResult },
 	note?: string,
 ) {
+	if (started.status === "pending" && "pendingAuthorizations" in started) {
+		return report(
+			[...warnings, started.warning, JSON.stringify(started.pendingAuthorizations)],
+			{ ...started, warnings },
+		);
+	}
 	if (started.status === "refused" || started.status === "pending") {
 		return notLaunched(started.status, {
 			...started,
