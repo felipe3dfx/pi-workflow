@@ -3,7 +3,8 @@
 ## Status and authority
 
 Functional brief drafted from the feature-discovery conversation for issue
-#296; feature-critic review is pending. This revision does not authorize
+#296; feature-critic round 1 dispositions are recorded below and the renewed
+verification is pending. This revision does not authorize
 implementation, production adoption, or any change to an accepted ADR. The
 decision owner is the user; each decision below records the conversation as
 its source.
@@ -49,12 +50,23 @@ worktree, with its own configuration and state, and survives a parent
   `--approve` or `--no-approve`. A parent `.pi/mcp.json` that is not in the
   worktree does not reach the child, and the launch surfaces that gap instead
   of falling back silently. This replaces the ADR 0014 rule that a child never
-  reads its own worktree's MCP configuration.
+  reads its own worktree's MCP configuration. Under ADR 0021, "the same tool
+  sources and configuration" means the user's global configuration plus the
+  project configuration of the session's own worktree, resolved by Pi as for
+  the parent.
 - Lifetime: children survive a parent `/reload` and the parent re-attaches to
   them. Every child and its descendants stop when the parent Pi exits or dies.
   Surviving a parent exit stays with #204.
 - Platforms: Linux and macOS must terminate the whole process tree. Windows
   guarantees nothing and is documented as a known limit.
+- Concurrent writers: Pi's per-file mutation queue no longer spans children,
+  so concurrent writing children in one checkout are admitted only when the
+  edit surfaces they declare are disjoint, as in gentle-shell
+  (`lib/writer-surfaces.ts`, gentle-shell#1731). A launch whose surfaces
+  overlap an active writer's is rejected and names the conflicting entries; the
+  claim is released when the child finishes. Surfaces that cannot be
+  interpreted count as overlapping. Read-only children claim nothing. This
+  replaces the ADR 0014 D7 rule that children carry no launch-time check.
 
 ## Observable scenarios
 
@@ -66,6 +78,11 @@ worktree, with its own configuration and state, and survives a parent
   still consult the parent and report its result.
 - When the parent exits normally or is killed with SIGKILL, no child, MCP
   server or `bash` descendant remains.
+- A second writing child whose declared surfaces overlap an active writer's in
+  the same checkout is refused at launch; one with disjoint surfaces runs.
+- A question, an answer in flight, a Pending result or a Consumed result at
+  the moment of `/reload` is neither lost nor delivered twice, and
+  `continue_child` still resumes a completed child afterwards.
 - A child asks the parent a question and waits for the answer over a channel
   separate from the RPC stream; a tool call in the child can be blocked or
   replaced after that consultation.
@@ -76,7 +93,12 @@ Every protection from specification #288 is preserved: contextual
 authorization (ADR 0021), recoverable consultation, and task-authorized signed
 commits (ADR 0022), plus ADR 0020 checkpoints, ADR 0013 command policy, ADR
 0017 routing and ADR 0018 procedure discovery. Availability grants no commit or
-publication authority. Child results, Pending result and Consumed result
+publication authority. The specification must demonstrate that the guarded
+bash, contextual authorization and signed scoped commits are effective inside
+the RPC child, including nested tools, signing failure and post-commit checks;
+the prototype showed one guarded command only. Claude Bridge models (ADR 0016)
+and the explorer's web access remain supported in RPC children, with visible
+failures; removing either needs a separate decision. Child results, Pending result and Consumed result
 semantics (ADR 0010), the Fleet view, Run state, Launch limit and the Todo box
 keep their observable behavior. Replacing the transport must not change what
 the operator sees or approves.
@@ -107,18 +129,35 @@ against the installed standalone Pi 1.4.0 and not against the SDK:
 
 - macOS whole-tree termination is not verified and is an acceptance criterion.
   The Linux subreaper is not portable.
-- Pi's per-file mutation queue, which serializes edits of one file across
-  in-process children and the parent (ADR 0014, D7), is lost across processes.
-  Whether separate worktrees make that acceptable, or a replacement is needed,
-  is not decided.
 - How consultation, cancellation, disconnects and withdrawn answers behave over
   the parent channel is only prototyped, without hardening.
 - Memory scales per child; concurrency limits need a budget based on the
   measured cost.
-- The explorer's `pi-web-access` load and the stream-function patch for
-  cancellation exist because children are in-process; their fate is a
-  specification decision.
+- The stream-function patch for cancellation exists because children are
+  in-process; its fate is a specification decision. How the explorer's
+  `pi-web-access` and Claude Bridge are provided to an RPC child is too.
 - Whether #204 and #281 change shape under RPC is for their own definitions.
+
+## Critic round 1 dispositions
+
+Resolver: the user, in the feature-discovery conversation. Findings come from
+the three independent feature-critic lenses over commit `58af30e`.
+
+- Per-file mutation serialization lost across processes (blocker): resolved by
+  the write-surface admission decision above; replaces ADR 0014 D7.
+- Conflict with ADRs 0014 and 0016 (blocker): rejected. The brief declares the
+  replacement; the replacing ADR is a deliverable of the specification.
+- Own-worktree MCP against ADR 0021, reload reconciliation and `continue_child`,
+  Claude Bridge and explorer web access, and preservation of bash guard and
+  signed commits (warnings): corrected in this brief as written above.
+- macOS whole-tree termination (warning): risk accepted by the user, because it
+  cannot be verified in the available environment. It remains an acceptance
+  criterion of the implementation.
+- Prototype mechanisms as requirements (informative): accepted. The prototype
+  stays reference-only and the specification states observable outcomes, not the
+  socket, registry or supervisor.
+- Withdrawn: tracker and capture verification findings; the parent verified
+  them.
 
 ## Dependencies
 
@@ -127,5 +166,5 @@ independent.
 
 ## Next step
 
-Run `feature-critic` on this brief, apply accepted dispositions, then hand the
-package to `to-spec` and later `to-tickets`.
+Return the corrected brief to `feature-critic` for reverification of the
+corrected findings, then hand the package to `to-spec` and later `to-tickets`.
