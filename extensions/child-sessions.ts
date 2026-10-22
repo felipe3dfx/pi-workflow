@@ -453,7 +453,7 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 						(pi: ExtensionAPI) => {
 							if (authorization)
 								pendingAuthorizations = installActionAuthorization(
-									pi, authorization.authorization,
+									pi, authorization.authorization, spec.checkpointed,
 								).pending;
 						},
 					]
@@ -532,8 +532,8 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 						},
 					]
 				: []),
-			...(spec.checkpoint
-				? [createCheckpointTool(spec.checkpoint, spec.checkpointed)]
+			...(spec.authorization || spec.checkpoint
+				? [createCheckpointTool(spec.checkpoint ?? spec.cwd, spec.authorization ? () => {} : spec.checkpointed)]
 				: []),
 		],
 		resourceLoader,
@@ -1476,7 +1476,7 @@ const spawnChildParameters = Type.Object({
 	checkpoint: Type.Optional(
 		Type.String({
 			description:
-				"Grant a worker the checkpoint tool: the name of the branch checked out in the isolated worktree you created for it and passed as worktree. The child can then create signed checkpoint commits on that branch only, in the repository's commit template, and the harness records each SHA in its result. The launch is refused for another role, without an explicit worktree, for the shared checkout, when the worktree is not on that branch, or when it is your current branch.",
+				"Name the assigned checkpoint branch. This context descriptor is not commit authority. The active session policy determines availability and context requirements; task authorization, signing, scope and protection of others' work still apply.",
 		}),
 	),
 	references: Type.Optional(
@@ -1575,7 +1575,7 @@ export function createSpawnChildTool(
 		promptGuidelines: contextual
 			? [
 					"Pass the bounded task and role (explore, worker, verify). Roles guide work and Verdicts, not tool permission. Use common sources/configuration with local instantiation and task authority; Jev chooses only destination.",
-					"Discover mandatory procedures and track owners, prerequisites, evidence and remaining obligations before dependent work. Preserve signing, scope, others' work and applicable confirmations. Current specific checkpoint rules remain until their owning policy changes.",
+					"Discover mandatory procedures and track owners, prerequisites, evidence and remaining obligations before dependent work. Preserve signing, scope, others' work and applicable confirmations. Any role may make a task-authorized signed scoped commit in its assigned authorized context. Tool availability or a checkpoint descriptor is not authority; preserve isolation where interference is possible and consult on uncertainty. Commit does not authorize publication.",
 					"Scope expansion, undelegated choices, unknown effects/ownership and high-impact actions require applicable consultation/confirmation. Held actions cannot execute; tool availability, replies and Run state do not grant authority. A failure is not consent.",
 					"Reconcile each child's evidence and remaining obligations. End the turn after background launch and receive its result rather than polling. Independent review stays independent. Child session limits and actual delivery semantics remain unchanged.",
 				]
