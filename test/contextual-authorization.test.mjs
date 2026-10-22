@@ -1099,6 +1099,148 @@ test("a contextual child's local Todo cannot overwrite the parent's data or phys
 	assert.doesNotMatch(parentList.content[0].text, /Child-local task/);
 });
 
+test("class authorization adapters preserve prototype methods and instance receivers", async (t) => {
+	class Adapter {
+		assignment = "Correct assigned.txt";
+		assessment = known;
+		decisions = [];
+		authority() {
+			return { assignment: this.assignment, instructions: [] };
+		}
+		async classify(proposal) {
+			return proposal.authority.assignment === this.assignment
+				? this.assessment : { ...known, scope: "unknown" };
+		}
+		onDecision(decision) {
+			this.decisions.push(decision);
+		}
+		sessionInstructions() {
+			throw new Error("The binder must own session instructions");
+		}
+	}
+	const adapter = new Adapter();
+	const run = await parent(t, adapter);
+	const input = { path: join(run.agentDir, "assigned.txt"), content: "CLASS_EFFECT" };
+	const result = await run.call(input, "write");
+	assert.equal(result.isError, false);
+	assert.equal(readFileSync(input.path, "utf8"), "CLASS_EFFECT");
+	assert.equal(adapter.decisions.length, 1);
+	assert.equal(adapter.decisions[0].kind, "allow");
+	assert.deepEqual(adapter.decisions[0].proposal.action, {
+		tool: "write", input, cwd: run.agentDir,
+	});
+});
+
+for (const change of ["assignment", "instructions", "binding", "prompt", "none"]) {
+	test(`decision delivery cannot release stale authority or instructions: ${change}`, async (t) => {
+		const entered = Promise.withResolvers();
+		const delivery = Promise.withResolvers();
+		let current = authority();
+		let promptOptions;
+		let notifications = 0;
+		const run = await parent(t, {
+			authority: () => current,
+			classify: async () => known,
+			onDecision: async () => {
+				notifications++;
+				entered.resolve();
+				await delivery.promise;
+			},
+		}, undefined, {}, [(pi) => pi.on("before_agent_start", (event) => {
+			promptOptions = event.systemPromptOptions;
+		})]);
+		const input = { path: join(run.agentDir, "assigned.txt"), content: "DELIVERY_EFFECT" };
+		const running = run.call(input, "write");
+		await entered.promise;
+		try {
+			assert.equal(existsSync(input.path), false, "delivery must finish before dispatch");
+			if (change === "assignment") current = { ...current, assignment: "Read only" };
+			if (change === "instructions") current.instructions.push("Do not write assigned.txt");
+			if (change === "prompt") promptOptions.appendSystemPrompt = "Do not write assigned.txt";
+			if (change === "binding") {
+				const previous = run.session.agent.transformContext;
+				run.session.agent.transformContext = async function (...args) {
+					return previous.apply(this, args);
+				};
+			}
+		} finally {
+			delivery.resolve();
+			await running;
+		}
+		assert.equal(notifications, 1, "final validation must not retry decision delivery");
+		assert.equal(existsSync(input.path), change === "none");
+		if (change === "none") {
+			assert.equal(readFileSync(input.path, "utf8"), "DELIVERY_EFFECT");
+		} else {
+			const result = run.session.messages.filter((m) => m.role === "toolResult").at(-1);
+			assert.match(result.content[0].text, /Authorization held.*Authority changed/);
+			const held = run.session.sessionManager.getEntries()
+				.filter((e) => e.type === "custom" && e.customType === "pi-workflow-authorization").at(-1).data;
+			assert.equal(held.kind, "held");
+			assert.deepEqual(held.proposal.authority, authority());
+			assert.deepEqual(held.proposal.action, { tool: "write", input, cwd: run.agentDir });
+		}
+	});
+}
+
+for (const outcome of ["failure", "abort", "binding-change", "unchanged"]) {
+	test(`final authority observation after delivery retains safety: ${outcome}`, async (t) => {
+		const entered = Promise.withResolvers();
+		const lookup = Promise.withResolvers();
+		let delivered = false;
+		let notifications = 0;
+		const run = await parent(t, {
+			authority: () => {
+				if (!delivered) return authority();
+				entered.resolve();
+				return lookup.promise;
+			},
+			classify: async () => known,
+			onDecision: async () => { delivered = true; notifications++; },
+		});
+		const input = { path: join(run.agentDir, "assigned.txt"), content: "FINAL_EFFECT" };
+		const running = run.call(input, "write");
+		await entered.promise;
+		let aborted;
+		try {
+			assert.equal(existsSync(input.path), false);
+			if (outcome === "abort") {
+				aborted = run.session.abort();
+				assert.equal(await Promise.race([
+					Promise.all([running, aborted]).then(() => true),
+					delay(100).then(() => false),
+				]), true, "abort must not require final authority cooperation");
+			} else if (outcome === "failure") {
+				lookup.reject(new Error("final authority unavailable"));
+			} else {
+				if (outcome === "binding-change") {
+					const previous = run.session.agent.transformContext;
+					run.session.agent.transformContext = async function (...args) {
+						return previous.apply(this, args);
+					};
+				}
+				lookup.resolve(authority());
+			}
+			await running;
+			assert.equal(notifications, 1);
+			assert.equal(existsSync(input.path), outcome === "unchanged");
+			if (outcome === "unchanged") {
+				assert.equal(readFileSync(input.path, "utf8"), "FINAL_EFFECT");
+			} else {
+				const held = run.session.sessionManager.getEntries()
+					.filter((e) => e.type === "custom" && e.customType === "pi-workflow-authorization").at(-1).data;
+				assert.equal(held.kind, "held");
+				assert.match(held.reason, outcome === "abort" ? /cancel/i
+					: outcome === "failure" ? /final authority unavailable/ : /Authority changed/);
+				assert.deepEqual(held.proposal.action, { tool: "write", input, cwd: run.agentDir });
+			}
+		} finally {
+			lookup.resolve(authority());
+			await Promise.all([running, aborted]);
+		}
+	});
+}
+
 test("async decision delivery completes before dispatch and rejection retains the action", async (t) => {
 	let effects = 0;
 	const entered = Promise.withResolvers();

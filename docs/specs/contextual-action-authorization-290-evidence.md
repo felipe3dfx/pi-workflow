@@ -130,3 +130,48 @@ Expected results are the approved zero-dispatch/prohibition/current-authority/ca
 - Existing full-gate opt-in skips and unsupported mutation testing remain unchanged. No inference/adoption accuracy, human-consent, complete resume, arbitrary-extension compatibility or sandbox claims.
 
 The parent owns staging/mechanical added-comment audit, final tree confirmation and authorization to checkpoint. The fixer must stop for that handoff before using the signed checkpoint capability. Corrective independent review against the same original base and previous reviewed head remains pending.
+
+## Further bounded corrective round — STD-7 and SPEC-4
+
+### Approval, fixed points and dispositions
+
+- User authorization: “Adelante” after the two automatic reviews, recorded by the parent in the [bounded-round decision](https://github.com/felipe3dfx/pi-workflow/issues/290#issuecomment-6329507095). Fresh issue body/comments read in this fixer context; issue OPEN. This is implementation of exactly two accepted findings, not another definition phase.
+- Previous reviewed signed head: `f9f9f3ec5c03a4d18ac01e83e7e6b6bbc8bf0124`, tree `bdaeafacf1d0883392c7718fc8456c89d2feb897`; signature verification supplied by parent. Original fixed base remains `464e160d48e2bebf2d0ba23a7f5d47dccd5c8a6e`; integration `288` unchanged. No rebase, integration or publication by fixer.
+- Parent's completed review/critique disposition closes prior accepted STD-1/2/5/6, SPEC-1/3 and TEST-1/2. Rejected STD-3 (duplicate SPEC-3), STD-4 (unjustified abstraction) and hard SPEC-2 (nonbinding recursive-depth inference) retain their dispositions; no implementation changes target them.
+- Fresh context consumed implement/child-run/rounds, TDD/valuable-tests, applicable TypeScript async/error guidance and design skill, playbooks/domain authority, specification, complete evidence and existing SDK test seams. Installed Pi 1.0.4 SDK, extensions, message-types, how-pi-works, codemode and MCP docs read in full before changes. No package installation, live inference, SDK patch, RPC, new framework or functional contract change. Trade: none.
+- ADR 0021 is untouched, SHA-256 `154998e43f34de5516a09fa47766277ecdedb1ac295265dc0ffb35c82c7d1352`; the parent's no-replace installation and separate acceptance lifecycle remain unchanged.
+
+| Stable ID | Accepted/rejected disposition | Applied state in this candidate |
+| --- | --- | --- |
+| STD-7 | Accepted hard: spreading a behavioral adapter loses prototype methods and their original receiver | Explicit authority/classify/optional onDecision forwarding calls the original adapter as receiver; no serialization or interface change. Binder-owned sessionInstructions still replaces adapter-supplied instructions. Addressed, independent corrective review pending. |
+| SPEC-4 | Accepted hard critical: awaited decision delivery could release a stale allow | Final cancellation-aware authority observation occurs after delivery. Compare with the classified authority snapshot, then synchronously validate current base prompt, effective-instruction snapshot/binding, call identity and complete tool/input/cwd facts plus abort before allow. Mismatches/errors retain the exact action visibly. No notification, retry or other await follows final validation. Addressed, independent corrective review pending. |
+| TEST-3 | Rejected as duplicate of SPEC-4 | Regression obligation retained in SPEC-4 cases below; no separate product change. |
+
+### Ordering and simplification
+
+The pre-delivery freshness checks remain so already-known changed authority/instructions and cancellation still reach the observer as held, preserving the prior snapshot/notification lifecycle. They are not the release check: only a candidate allow reaches the added final observation after awaited delivery. A final lookup may itself suspend, so prompt/binding/invocation/abort checks run only after that lookup settles. Existing deny/held and failed/cancelled-delivery paths cannot be promoted to allow. The final hold is appended to the SDK transcript/pending state without invoking the observer recursively; its earlier notification is not a dispatch receipt.
+
+The simplification pass retained the existing local held envelope and cancellation helper, added no new abstraction, and confined changes to the authorization module, existing SDK tests and this evidence. No atomicity of external authority state, downstream handlers, dispatch or external effects is claimed. The host binding remains the same supported public SDK composition; no transforms are rerun by authorization.
+
+### Requirement and case tracing with actual evidence
+
+Coverage lines agreed before tests use the existing real SDK parent/native-write seam, public tool results, retained SDK entries and actual file effects. Semantic/classifier/provider responses remain scripted. Expected values derive from spec §§4–5 (current action-target authority, zero execution on uncertainty/cancellation) and the accepted findings, not from implementation calculations.
+
+| Requirement / finding | Cases and observable outcomes | Actual RED | Actual GREEN / supplemental outcome |
+| --- | --- | --- | --- |
+| R3/R4 / STD-7 | Class prototype authority/classify/onDecision access instance state; native write succeeds once, observer retains original receiver/action; adapter sessionInstructions cannot override binder | `node --test --test-name-pattern='class authorization adapters' test/contextual-authorization.test.mjs`: exit1, 0/1; tool result isError true vs expected false; 732.838566ms runner | Same command exit0, 1/1, 767.347147ms runner. Native file contains literal CLASS_EFFECT; one allow notification. |
+| R3/R4 / SPEC-4, duplicate TEST-3 | Paused delivery, then changed assignment, in-place instruction mutation, replaced transform binding or changed base prompt: file absent, visible retained hold with original authority/action. Unchanged authority succeeds once; no repeated delivery | `node --test --test-name-pattern='decision delivery cannot release stale' test/contextual-authorization.test.mjs`: exit1, 1/5; all four changed-state cases wrote the file (true vs false); unchanged case passed; 807.937897ms runner | `node --test --test-name-pattern='class authorization adapters|decision delivery cannot release stale' test/contextual-authorization.test.mjs`: exit0, 6/6, 807.222436ms runner. |
+| R3/R4 / SPEC-4 async-boundary preservation | Final authority lookup after delivery: rejection retains exact action/reason; noncooperative lookup abort settles; binding replaced during lookup holds after it resolves; unchanged lookup writes literal FINAL_EFFECT | Supplemental after mechanism GREEN; no independent RED claimed | `node --test --test-name-pattern='final authority observation after delivery|decision delivery cannot release stale|class authorization adapters' test/contextual-authorization.test.mjs`: exit0, 10/10, 970.131714ms runner. One notification per invocation, no recursive retry. |
+| R1–R6 preservation | Prior 38 cases retained, including deny/held delivery outcomes, failed/pending delivery, initial/freshness/classifier cancellation, real parent/child, routing, MCP/nested/dynamic sources and checkpoint guard | Initial unchanged safety net exit0, 38/38; not a defect RED | Focused three-file safety net below passes306 with4 existing skips; full gate below passes1120 with15 existing skips. |
+
+### Validation and limits
+
+- `node --test test/contextual-authorization.test.mjs > /tmp/290-round2-baseline.log 2>&1; r=$?; tail -12 /tmp/290-round2-baseline.log; exit $r`: exit0,38/38,2239.585504ms runner,2.3s wall.
+- `npm run check:typecheck`: exit0,1.1s wall after core GREEN.
+- `node --test test/contextual-authorization.test.mjs test/child-sessions.test.mjs test/child-launcher.test.mjs > /tmp/290-round2-focused.log 2>&1; r=$?; tail -14 /tmp/290-round2-focused.log; exit $r`: exit0,310 tests,306 pass,4 existing skips,0 fail,14548.792653ms runner,14.6s wall.
+- `npm run check > /tmp/290-round2-gate.log 2>&1; r=$?; tail -28 /tmp/290-round2-gate.log; exit $r`: exit0,1135 tests,1120 pass,15 existing skips,0 fail,15955.72511ms runner,19.1s wall; packed distribution passed. This preceded this evidence-only addition; final unchanged-candidate gate belongs to the checkpoint handoff.
+- `git diff --check`: exit0. ADR digest readback matches the unchanged value above. No unrelated files, test weakening, formatter run or warning cleanup.
+- Parent-reserved relationship reads were not performed: `gh api repos/felipe3dfx/pi-workflow/issues/290/parent` and `gh api repos/felipe3dfx/pi-workflow/issues/290/sub_issues` returned the harness reservation (exit126). This is not a retrieved relationship result.
+- Mutation testing remains unsupported. No production inference, adoption, complete consultation/resume, human consent, external-state atomicity or universal extension compatibility claim.
+
+Parent staging/mechanical comment audit, exact tree confirmation and explicit checkpoint authorization must precede signing. Independent corrective review of the new checkpoint remains pending; this evidence does not close the two new accepted findings independently or claim integration/adoption.

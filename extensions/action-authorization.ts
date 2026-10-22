@@ -57,7 +57,11 @@ export function sessionActionAuthorization(options: ActionAuthorization) {
 	let capture: AgentSession["agent"]["transformContext"];
 	return {
 		authorization: {
-			...options,
+			authority: (ctx: ExtensionContext) => options.authority(ctx),
+			classify: (proposal: ActionProposal, signal?: AbortSignal) =>
+				options.classify(proposal, signal),
+			onDecision: (decision: AuthorizationDecision) =>
+				options.onDecision?.(decision),
 			sessionInstructions: () =>
 				session?.agent.transformContext === capture ? snapshot : undefined,
 		},
@@ -160,6 +164,7 @@ export function installActionAuthorization(
 	pi.on("tool_call", async (event: ToolCallEvent, ctx) => {
 		let decision: AuthorizationDecision;
 		let proposal: ActionProposal | undefined;
+		let instructions: SessionInstructions | undefined;
 		const held = (reason: string): AuthorizationDecision => ({
 			kind: "held",
 			reason,
@@ -173,7 +178,7 @@ export function installActionAuthorization(
 				context: { systemPrompt: "" },
 				rules,
 			});
-			const instructions = options.sessionInstructions?.();
+			instructions = options.sessionInstructions?.();
 			if (!instructions || instructions.basePrompt !== ctx.getSystemPrompt())
 				throw new Error("Final session instructions are unavailable or stale.");
 			proposal.context.systemPrompt = instructions.systemPrompt;
@@ -248,6 +253,38 @@ export function installActionAuthorization(
 				decision = held(
 					`Authorization decision delivery unresolved: ${errorMessage(error)}`,
 				);
+		}
+		if (decision.kind === "allow") {
+			try {
+				const authority = await cancellable(
+					() => options.authority(ctx),
+					ctx.signal,
+				);
+				if (
+					!isDeepStrictEqual(proposal?.authority, authority) ||
+					ctx.getSystemPrompt() !== instructions?.basePrompt ||
+					!isDeepStrictEqual(options.sessionInstructions?.(), instructions)
+				) {
+					decision = held(
+						"Authority changed during evaluation; current authority must be evaluated again.",
+					);
+				}
+				if (
+					decision.call !== event.toolCallId ||
+					!isDeepStrictEqual(proposal?.action, {
+						tool: event.toolName,
+						input: event.input,
+						cwd: ctx.cwd,
+					}) ||
+					ctx.signal?.aborted
+				) {
+					decision = held(
+						"The action changed or evaluation was cancelled; no authority was established.",
+					);
+				}
+			} catch (error) {
+				decision = held(`Authorization unresolved: ${errorMessage(error)}`);
+			}
 		}
 		if (decision.kind === "held") pending.set(event.toolCallId, decision);
 		else pending.delete(event.toolCallId);
