@@ -1592,6 +1592,84 @@ test("real direct and deferred MCP discovery, resources and runtime changes rema
 	);
 });
 
+for (const pathKind of ["relative", "absolute"]) {
+	test(`${pathKind} selected source survives parent child and local grandchild launch`, async (t) => {
+		const prior = seatedCapabilities();
+		replaceSelection({ schemaVersion: 1,
+			capabilities: Object.fromEntries(capabilities.map((c) => [c, true])), expectations: {} });
+		t.after(() => replaceSelection({ schemaVersion: 1, ...prior, expectations: {} }));
+		const fixtureDir = withAgentDirectory(t);
+		const sourcePath = join(fixtureDir, "selected-relative.js");
+		writeFileSync(sourcePath, `import {writeFileSync} from 'node:fs';
+export default pi=>pi.registerTool({name:'selected_source',label:'Source',description:'Selected local source',parameters:{type:'object',properties:{}},async execute(id,args,signal,update,ctx){writeFileSync(ctx.cwd+'/source-completed', 'LOCAL_SOURCE_COMPLETED');return {content:[{type:'text',text:ctx.cwd}],details:{}};}});`);
+		const sources = { paths: [pathKind === "relative"
+			? join("..", basename(fixtureDir), "selected-relative.js") : sourcePath] };
+		const host = await parent(t, { authority, classify: async () => known }, undefined, sources);
+		assert.equal((await host.call({}, "selected_source")).content[0].text, host.agentDir);
+		const childDir = join(fixtureDir, "child");
+		const grandchildDir = join(fixtureDir, "grandchild");
+		for (const cwd of [childDir, grandchildDir]) {
+			mkdirSync(cwd);
+			execFileSync("git", ["init", "--quiet", cwd]);
+		}
+		host.provider.setResponses([
+			fauxAssistantMessage(fauxToolCall("spawn_child", { role: "explore", task: "Use selected_source then launch a local grandchild", worktree: childDir }), { stopReason: "toolUse" }),
+			fauxAssistantMessage(fauxToolCall("selected_source", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage(fauxToolCall("spawn_child", { role: "explore", task: "Use selected_source and complete", worktree: grandchildDir }), { stopReason: "toolUse" }),
+			fauxAssistantMessage(fauxToolCall("selected_source", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage(fauxText("grandchild completed")),
+			fauxAssistantMessage(fauxText("child completed")),
+			fauxAssistantMessage(fauxText("parent completed")),
+		]);
+		await host.session.prompt("Complete the assigned local source proof.");
+		assert.equal(readFileSync(join(childDir, "source-completed"), "utf8"), "LOCAL_SOURCE_COMPLETED");
+		assert.equal(existsSync(join(grandchildDir, "source-completed")), true, "grandchild must execute the selected source locally");
+		assert.equal(readFileSync(join(grandchildDir, "source-completed"), "utf8"), "LOCAL_SOURCE_COMPLETED");
+		const result = host.session.messages.filter(m => m.role === "toolResult" && m.toolName === "spawn_child").at(-1);
+		assert.equal(result.isError, false);
+		assert.match(result.content.map(c => c.text ?? "").join(""), /child completed/);
+	});
+}
+
+test("selected configured bash executes locally in parent and contextual child without replacing the legacy guard", async (t) => {
+	const sources = { factories: [(pi) => pi.registerTool({
+		name: "bash", label: "Configured bash", description: "Configured local executor",
+		parameters: Type.Object({ command: Type.String() }),
+		async execute(_id, _args, _signal, _update, ctx) {
+			return { content: [{ type: "text", text: `CONFIGURED_LOCAL_BASH:${ctx.cwd}` }], details: {} };
+		},
+	})] };
+	const authorization = { authority, classify: async () => known };
+	const host = await parent(t, authorization, undefined, sources);
+	const cwd = join(host.agentDir, "child");
+	mkdirSync(cwd);
+	assert.equal((await host.call({ command: "printf NATIVE_SHELL" }, "bash")).content[0].text,
+		`CONFIGURED_LOCAL_BASH:${host.agentDir}`);
+	const child = await piChildSession({ cwd, role: "worker", model: "faux/authorization",
+		modelRegistry: new ModelRegistry(host.runtime), sources, authorization });
+	t.after(() => child.dispose());
+	assert.equal((await childCall(host, child, "bash", { command: "printf NATIVE_SHELL" })).content[0].text,
+		`CONFIGURED_LOCAL_BASH:${cwd}`);
+	const legacy = await piChildSession({ cwd, role: "worker", model: "faux/authorization",
+		tools: ["bash"], modelRegistry: new ModelRegistry(host.runtime) });
+	t.after(() => legacy.dispose());
+	assert.equal((await childCall(host, legacy, "bash", { command: "printf NATIVE_SHELL" })).content[0].text, "NATIVE_SHELL");
+	assert.match((await childCall(host, legacy, "bash", { command: "git push" })).content[0].text, /reserved for the parent/);
+});
+
+test("contextual native bash fallback preserves the configured shell and command prefix", async (t) => {
+	const authorization = { authority, classify: async () => known };
+	const host = await parent(t, authorization);
+	const shellPath = join(host.agentDir, "configured-shell");
+	writeFileSync(shellPath, '#!/bin/sh\nexport PI_CONFIGURED_SHELL=CONFIGURED_PATH\nexec /bin/bash "$@"\n', { mode: 0o755 });
+	const child = await piChildSession({ cwd: host.agentDir, role: "worker", model: "faux/authorization",
+		modelRegistry: new ModelRegistry(host.runtime), authorization,
+		shell: { shellPath, commandPrefix: "export PI_CONFIGURED_PREFIX=CONFIGURED_PREFIX" } });
+	t.after(() => child.dispose());
+	assert.equal((await childCall(host, child, "bash", { command: 'printf "%s:%s" "$PI_CONFIGURED_SHELL" "$PI_CONFIGURED_PREFIX"' })).content[0].text,
+		"CONFIGURED_PATH:CONFIGURED_PREFIX");
+});
+
 test("a real parent launch carries common sources and local authority into the SDK child", async (t) => {
 	const prior = seatedCapabilities();
 	replaceSelection({

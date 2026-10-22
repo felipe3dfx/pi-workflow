@@ -379,7 +379,12 @@ function parentMcp(project: ParentProject): ExtensionFactory {
 export const createPiChildSession: ChildSessionFactory = async (spec) => {
 	if (spec.sources && !spec.authorization)
 		throw new Error("Common tool sources require contextual authorization.");
-	const sources = spec.authorization ? (spec.sources ?? {}) : undefined;
+	const sources = spec.authorization
+		? {
+				...spec.sources,
+				paths: spec.sources?.paths?.map((path) => resolve(spec.project.cwd, path)),
+			}
+		: undefined;
 	const policy = spec.authorization;
 	const authorization = policy
 		? sessionActionAuthorization({
@@ -413,7 +418,9 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 		? await resolveClaudeBridgeExtension(getAgentDir(), spec.project)
 		: undefined;
 	const settingsManager = SettingsManager.inMemory(
-		{},
+		spec.authorization
+			? { shellPath: spec.shell.shellPath, shellCommandPrefix: spec.shell.commandPrefix }
+			: {},
 		{ projectTrusted: spec.project.trusted },
 	);
 	const agentDir = getAgentDir();
@@ -435,9 +442,7 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 		noExtensions: true,
 		additionalExtensionPaths: [
 			...new Set([
-				...(sources?.paths ?? []).map((path) =>
-					resolve(spec.project.cwd, path),
-				),
+				...(sources?.paths ?? []),
 				...(bridgeExtension ? [bridgeExtension] : []),
 			]),
 		],
@@ -493,12 +498,9 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 		thinkingLevel: spec.thinking,
 		...(sources ? {} : { tools: spec.tools }),
 		customTools: [
-			createChildBashTool(
-				spec.cwd,
-				spec.shell,
-				spec.checkpoint !== undefined,
-				spec.authorization !== undefined,
-			),
+			...(spec.authorization
+				? []
+				: [createChildBashTool(spec.cwd, spec.shell, spec.checkpoint !== undefined)]),
 			...(spec.authorization ? [] : [createChildCodeGraphTool(spec.cwd)]),
 			createAskParentTool(spec.ask, spec.authorization !== undefined),
 			...(reportsResult(spec.role) || spec.authorization

@@ -137,20 +137,20 @@ export default function piWorkflowExtension(
 			(options.catalog?.resolveInstalledVersion
 				? undefined
 				: async (packageName: string) => {
-						if (packageName !== "pi-claude-bridge") return undefined;
-						const project = currentCtx;
-						if (
-							!project ||
-							typeof project.cwd !== "string" ||
-							typeof project.isProjectTrusted !== "function"
-						) {
-							return { error: "The parent project context is unavailable." };
-						}
-						return inspectClaudeBridgeCompanion(agentDirectory, {
-							cwd: project.cwd,
-							trusted: project.isProjectTrusted(),
-						});
-					}),
+					if (packageName !== "pi-claude-bridge") return undefined;
+					const project = currentCtx;
+					if (
+						!project ||
+						typeof project.cwd !== "string" ||
+						typeof project.isProjectTrusted !== "function"
+					) {
+						return { error: "The parent project context is unavailable." };
+					}
+					return inspectClaudeBridgeCompanion(agentDirectory, {
+						cwd: project.cwd,
+						trusted: project.isProjectTrusted(),
+					});
+				}),
 	};
 	const workflow = createWorkflow(pi, context, {
 		...options,
