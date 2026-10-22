@@ -92,7 +92,17 @@ function applicableResponse(
 		typeof value.answer === "string" &&
 		value.answer.trim().length > 0 &&
 		(value.confirmedActions === undefined ||
-			Array.isArray(value.confirmedActions))
+			(Array.isArray(value.confirmedActions) &&
+				Array.from(value.confirmedActions).every(
+					(action: unknown) =>
+						typeof action === "object" &&
+						action !== null &&
+						"tool" in action &&
+						typeof action.tool === "string" &&
+						"cwd" in action &&
+						typeof action.cwd === "string" &&
+						Object.hasOwn(action, "input"),
+				)))
 	);
 }
 

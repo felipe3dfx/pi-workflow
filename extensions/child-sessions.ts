@@ -1122,8 +1122,12 @@ export function createChildSessions(options: {
 				return { status: "completed" as const, text, result, checkpoints };
 			} catch (error) {
 				traceRun(id, plan, ended);
-				if (checkpoints.length === 0) throw error;
-				throw new Error(`${errorMessage(error)}${checkpointLines(checkpoints)}`, {
+				const unresolved = handle.pendingAuthorizations?.() ?? [];
+				if (checkpoints.length === 0 && unresolved.length === 0) throw error;
+				const pending = unresolved.length === 0
+					? ""
+					: `\n\nUnresolved authorization proposals (no held action executed):\n${JSON.stringify(unresolved)}`;
+				throw new Error(`${errorMessage(error)}${checkpointLines(checkpoints)}${pending}`, {
 					cause: error,
 				});
 			} finally {
