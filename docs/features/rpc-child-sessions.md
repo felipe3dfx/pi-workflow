@@ -67,6 +67,23 @@ worktree, with its own configuration and state, and survives a parent
   claim is released when the child finishes. Surfaces that cannot be
   interpreted count as overlapping. Read-only children claim nothing. This
   replaces the ADR 0014 D7 rule that children carry no launch-time check.
+  The need is parallel work: `implement-spec` can run several writing children
+  at once when the orchestrator splits the work, and the admission is the
+  backstop for a split that overlaps.
+  - The parent supplies the surfaces when it launches a writing child. A writer
+    that declares none claims the whole checkout. Where the declaration lives in
+    the task contract is a specification decision.
+  - A claim is taken at launch, before queueing, and held while the child is
+    queued, running or waiting. It is released on completion, cancellation or
+    failure. `continue_child` is a new launch and claims again. After
+    `/reload` the re-attaching parent rebuilds the claims of the surviving
+    children.
+  - Claims are compared only within the same resolved launch worktree, by
+    canonical path and ignoring case. Admission does not change the conditions
+    of an ADR 0020 `checkpoint` grant.
+  - The parent's own writes are outside the admission, deliberately: the
+    guarantee is between children, and the parent answers for its own edits as
+    it did under D7.
 
 ## Observable scenarios
 
@@ -144,7 +161,12 @@ Resolver: the user, in the feature-discovery conversation. Findings come from
 the three independent feature-critic lenses over commit `58af30e`.
 
 - Per-file mutation serialization lost across processes (blocker): resolved by
-  the write-surface admission decision above; replaces ADR 0014 D7.
+  the write-surface admission decision above; replaces ADR 0014 D7. Round 2
+  added: parent writes outside the admission (blocker, resolved by stating the
+  child-to-child scope, user decision); declaration, claim lifecycle and path or
+  checkout identity (warnings, corrected as written above); a per-checkout lock
+  instead of declared surfaces (informative, rejected: parallel writers in
+  `implement-spec` are a traced need).
 - Conflict with ADRs 0014 and 0016 (blocker): rejected. The brief declares the
   replacement; the replacing ADR is a deliverable of the specification.
 - Own-worktree MCP against ADR 0021, reload reconciliation and `continue_child`,
