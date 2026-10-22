@@ -37,6 +37,8 @@ import {
 } from "../extensions/shell.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { eventually } from "./support/eventually.mjs";
+import { createChildSessions } from "../extensions/child-sessions.ts";
+import { createChildAudit } from "../extensions/child-audit.ts";
 
 async function parent(t, authorization, tool = {
 	name: "unused",
@@ -142,6 +144,677 @@ async function childCall(host, child, name, args) {
 		.filter((e) => e.type === "message" && e.message.role === "toolResult")
 		.at(-1).message;
 }
+
+test("one applicable consultation confirms expanded scope and impact before one real write", async (t) => {
+	const questions = [];
+	const run = await parent(t, {
+		authority,
+		classify: async (proposal) => proposal.consultation
+			? { ...known, effects: "high-impact", confirmed: true }
+			: { ...known, scope: "outside", effects: "high-impact" },
+		consult: async (question) => {
+			questions.push(question);
+			return {
+				id: question.id, call: question.call, proposal: question.proposal,
+				kind: "resolved", answer: "Expand scope and overwrite approved.txt with APPROVED_EFFECT.",
+				confirmedActions: [question.proposal.action],
+			};
+		},
+	});
+	const target = join(run.agentDir, "approved.txt");
+	const result = await run.call({ path: target, content: "APPROVED_EFFECT" }, "write");
+	assert.equal(result.isError, false);
+	assert.equal(readFileSync(target, "utf8"), "APPROVED_EFFECT");
+	assert.equal(questions.length, 1);
+	assert.equal(questions[0].effects, "high-impact");
+	assert.equal(questions[0].proposal.authority.assignment, "Correct assigned.txt");
+	assert.deepEqual(questions[0].proposal.authority.instructions, ["Do not change protected.txt"]);
+	assert.equal(questions[0].proposal.action.input.path, target);
+	assert.equal(questions[0].proposal.action.input.content, "APPROVED_EFFECT");
+	assert.match(questions[0].proposal.context.systemPrompt, /./);
+	assert.match(questions[0].proposal.tool.description, /./);
+});
+
+for (const confirmation of [null, 7, "action", {}, { tool: "write", cwd: "/" }, { tool: 7, cwd: "/", input: {} }, { tool: "write", cwd: 7, input: {} }]) {
+	test(`malformed confirmed action ${JSON.stringify(confirmation)} remains held before resumed classification`, async (t) => {
+		const resumed = [];
+		const questions = [];
+		const run = await parent(t, {
+			authority,
+			classify: async proposal => {
+				if (!proposal.consultation) return { ...known, scope: "unknown" };
+				resumed.push(proposal);
+				proposal.consultation.confirmedActions.map(action => action.tool);
+				return known;
+			},
+			consult: async question => {
+				questions.push(question);
+				return { ...question, kind: "resolved", answer: "Authorize this write.", confirmedActions: [confirmation] };
+			},
+		});
+		const path = join(run.agentDir, "malformed.txt");
+		const result = await run.call({ path, content: "NO_EFFECT" }, "write");
+		assert.equal(questions.length, 1);
+		assert.equal(result.isError, true);
+		assert.equal(existsSync(path), false);
+		assert.equal(resumed.length, 0, "malformed elements must never be offered as typed classifier evidence");
+		const entry = run.session.sessionManager.getEntries().filter(e => e.customType === "pi-workflow-authorization").at(-1).data;
+		assert.equal(entry.kind, "held");
+		assert.deepEqual(entry.proposal.action.input, { path, content: "NO_EFFECT" });
+	});
+}
+
+test("consultation cannot hide an indexed null behind a custom iterator", async (t) => {
+	const resumed = [];
+	const questions = [];
+	const run = await parent(t, {
+		authority,
+		classify: async proposal => {
+			if (!proposal.consultation) return { ...known, scope: "unknown" };
+			resumed.push(proposal.consultation);
+			return known;
+		},
+		consult: async question => {
+			questions.push(question);
+			const confirmedActions = [null];
+			confirmedActions[Symbol.iterator] = function* () { yield question.proposal.action; };
+			return { ...question, kind: "resolved", answer: "Authorize this write.", confirmedActions };
+		},
+	});
+	const path = join(run.agentDir, "iterator.txt");
+	const result = await run.call({ path, content: "NO_EFFECT" }, "write");
+	assert.equal(questions.length, 1);
+	assert.deepEqual(resumed, [], "the stable indexed null must not enter the typed classifier");
+	assert.equal(result.isError, true);
+	assert.equal(existsSync(path), false);
+	const entry = run.session.sessionManager.getEntries().filter(e => e.customType === "pi-workflow-authorization").at(-1).data;
+	assert.equal(entry.kind, "held");
+});
+
+for (const shape of ["inherited-tool", "inherited-cwd", "nonenumerable-tool", "nonenumerable-cwd", "nonenumerable-input", "sparse", "changing-getter", "uncloneable"]) {
+	test(`consultation ${shape} leaves malformed snapshot held before resumed classification`, async (t) => {
+		const resumed = [];
+		const questions = [];
+		let reads = 0;
+		const run = await parent(t, {
+			authority,
+			classify: async proposal => {
+				if (!proposal.consultation) return { ...known, scope: "unknown" };
+				resumed.push(proposal.consultation);
+				return known;
+			},
+			consult: async question => {
+				questions.push(question);
+				const action = { ...question.proposal.action };
+				if (shape.startsWith("inherited-")) {
+					const key = shape.slice("inherited-".length);
+					Object.setPrototypeOf(action, { [key]: action[key] });
+					delete action[key];
+				} else if (shape.startsWith("nonenumerable-")) {
+					Object.defineProperty(action, shape.slice("nonenumerable-".length), { enumerable: false });
+				}
+				const response = { ...question, kind: "resolved", answer: "Authorize this write.", confirmedActions: [action] };
+				if (shape === "sparse") response.confirmedActions = new Array(1);
+				if (shape === "changing-getter") Object.defineProperty(response, "confirmedActions", {
+					enumerable: true, get: () => ++reads === 1 ? [null] : [action],
+				});
+				if (shape === "uncloneable") action.input = () => {};
+				return response;
+			},
+		});
+		const path = join(run.agentDir, "snapshot-held.txt");
+		const result = await run.call({ path, content: "NO_EFFECT" }, "write");
+		assert.equal(questions.length, 1);
+		assert.deepEqual(resumed, [], "malformed stable evidence must not enter the typed classifier");
+		assert.equal(result.isError, true);
+		assert.equal(existsSync(path), false);
+		if (shape === "changing-getter") assert.equal(reads, 1);
+		const entry = run.session.sessionManager.getEntries().filter(e => e.customType === "pi-workflow-authorization").at(-1).data;
+		assert.equal(entry.kind, "held");
+		assert.deepEqual(entry.proposal.action.input, { path, content: "NO_EFFECT" });
+	});
+}
+
+test("consultation consumes the valid chosen snapshot despite changing getters and iterator", async (t) => {
+	const resumed = [];
+	const decisions = [];
+	let confirmationReads = 0;
+	let answerReads = 0;
+	let expectedAction;
+	const run = await parent(t, {
+		authority,
+		onDecision: decision => { decisions.push(structuredClone(decision)); },
+		classify: async proposal => {
+			if (!proposal.consultation) return { ...known, scope: "unknown" };
+			resumed.push(structuredClone(proposal.consultation));
+			proposal.consultation.confirmedActions[0].input.content = "CLASSIFIER_MUTATION";
+			return { ...known, effects: "high-impact", confirmed: true };
+		},
+		consult: async question => {
+			expectedAction = structuredClone(question.proposal.action);
+			const confirmedActions = [question.proposal.action];
+			confirmedActions[Symbol.iterator] = function* () { yield null; };
+			return { ...question, kind: "resolved",
+				get answer() { return ++answerReads === 1 ? "Authorize this exact write and its impact." : ""; },
+				get confirmedActions() { return ++confirmationReads === 1 ? confirmedActions : [null]; },
+			};
+		},
+	});
+	const path = join(run.agentDir, "snapshot-valid.txt");
+	const result = await run.call({ path, content: "SNAPSHOT_EFFECT" }, "write");
+	assert.equal(result.isError, false);
+	assert.equal(answerReads, 1);
+	assert.equal(confirmationReads, 1);
+	assert.deepEqual(resumed, [{ answer: "Authorize this exact write and its impact.", confirmedActions: [expectedAction] }]);
+	assert.equal(readFileSync(path, "utf8"), "SNAPSHOT_EFFECT");
+	assert.equal(decisions.at(-1).kind, "allow");
+	assert.deepEqual(decisions.at(-1).proposal.consultation.confirmedActions, [expectedAction], "classifier mutations stay isolated");
+});
+
+for (const input of [null, false, 0, "", undefined, 17, "text", [], {}, 17n, new Map([["key", "value"]]), new Set([1]), new Date("2026-01-01T00:00:00Z"), new Uint8Array([1, 2])]) {
+	test(`confirmed action accepts present arbitrary unknown input ${String(input)}`, async (t) => {
+		const resumed = [];
+		const run = await parent(t, {
+			authority,
+			classify: async proposal => {
+				if (!proposal.consultation) return { ...known, scope: "unknown" };
+				resumed.push(proposal.consultation.confirmedActions);
+				return known;
+			},
+			consult: async question => ({ ...question, kind: "resolved", answer: "Authorize this ordinary write.",
+				confirmedActions: [{ tool: "other", cwd: "/", input }] }),
+		});
+		const path = join(run.agentDir, "unknown-input.txt");
+		const result = await run.call({ path, content: "VALID_UNKNOWN" }, "write");
+		assert.equal(result.isError, false);
+		assert.deepEqual(resumed, [[{ tool: "other", cwd: "/", input }]]);
+		assert.equal(readFileSync(path, "utf8"), "VALID_UNKNOWN");
+	});
+}
+
+test("unavailable classification enters consultation and recovers through the current action", async (t) => {
+	const questions = [];
+	const run = await parent(t, {
+		authority,
+		classify: async (proposal) => {
+			if (!proposal.consultation) throw new Error("classifier unavailable");
+			return known;
+		},
+		consult: async (question) => {
+			questions.push(question);
+			return { ...question, kind: "resolved", answer: "The exact assigned write is authorized." };
+		},
+	});
+	const path = join(run.agentDir, "recovered.txt");
+	const result = await run.call({ path, content: "RECOVERED_EFFECT" }, "write");
+	assert.equal(result.isError, false);
+	assert.equal(readFileSync(path, "utf8"), "RECOVERED_EFFECT");
+	assert.match(questions[0].reason, /classifier unavailable/);
+});
+
+test("a real child consults its parent with retained context before the exact authorized write", async (t) => {
+	const host = await parent(t);
+	const questionReady = Promise.withResolvers();
+	const answer = Promise.withResolvers();
+	const child = await piChildSession({
+		cwd: host.agentDir, model: "faux/authorization", modelRegistry: new ModelRegistry(host.runtime),
+		authorization: {
+			authority,
+			classify: async (proposal) => proposal.consultation ? known : { ...known, scope: "unknown" },
+		},
+		ask: async (text) => {
+			questionReady.resolve(text);
+			return answer.promise;
+		},
+	});
+	t.after(() => child.dispose());
+	const path = join(host.agentDir, "child-consulted.txt");
+	const action = childCall(host, child, "write", { path, content: "CHILD_CONSULTED_EFFECT" });
+	const text = await Promise.race([questionReady.promise, action.then(() => "NO_CONSULTATION")]);
+	assert.match(text, /Resolve only within your authority/);
+	assert.equal(existsSync(path), false);
+	assert.equal(child.pendingAuthorizations()[0].proposal.action.input.path, path);
+	const question = JSON.parse(text.slice(text.indexOf("\n") + 1));
+	assert.equal(question.proposal.action.input.path, path);
+	answer.resolve(JSON.stringify({ ...question, kind: "resolved", answer: "This exact assigned write is authorized." }));
+	const result = await action;
+	assert.equal(result.isError, false);
+	assert.equal(readFileSync(path, "utf8"), "CHILD_CONSULTED_EFFECT");
+	assert.deepEqual(child.pendingAuthorizations(), []);
+});
+
+test("foreground returns unresolved action to the parent and a fresh authorized run can resolve it", async (t) => {
+	const host = await parent(t);
+	let authorized = false;
+	const core = createChildSessions({
+		authorization: { authority, classify: async () => authorized ? known : { ...known, scope: "outside" } },
+		send() {}, idle: () => false, trace() {}, report() {},
+		audit: createChildAudit({ root: "", parent: () => undefined }),
+	});
+	t.after(() => core.disposeAll());
+	const path = join(host.agentDir, "foreground.txt");
+	const plan = {
+		role: "worker", contract: { prompt: "Correct the assigned file only", tools: [] },
+		task: "Perform the proposed write only if authorized", worktree: host.agentDir,
+		model: "faux/authorization", thinking: "off", chosenBy: "parent", references: [],
+	};
+	const launch = { background: false, modelRegistry: new ModelRegistry(host.runtime),
+		project: () => ({ cwd: host.agentDir, trusted: false }), shell: () => ({}) };
+	const responses = () => host.provider.setResponses([
+		fauxAssistantMessage(fauxToolCall("write", { path, content: "FOREGROUND_EFFECT" }), { stopReason: "toolUse" }),
+		fauxAssistantMessage(fauxText("No dependent work without authority")),
+	]);
+	responses();
+	const pending = await core.start(plan, launch);
+	assert.equal(pending.status, "pending");
+	assert.equal(existsSync(path), false);
+	assert.equal(pending.pendingAuthorizations[0].proposal.action.input.path, path);
+	assert.match(pending.pendingAuthorizations[0].reason, /foreground/);
+	assert.equal(core.list().length, 0);
+	authorized = true;
+	responses();
+	const completed = await core.start(plan, launch);
+	assert.equal(completed.status, "completed");
+	assert.equal(readFileSync(path, "utf8"), "FOREGROUND_EFFECT");
+});
+
+for (const failure of ["abort", "provider"]) {
+	test(`foreground held proposals survive ${failure} in the parent's serialized SDK tool error`, async (t) => {
+		const controller = new AbortController();
+		let host;
+		let captured;
+		let snapshot;
+		let held = 0;
+		const core = createChildSessions({
+			create: async spec => {
+				const handle = await piChildSession(spec);
+				return { ...handle, pendingAuthorizations: () => {
+					snapshot = handle.pendingAuthorizations();
+					return snapshot;
+				} };
+			},
+			authorization: { authority, classify: async () => ({ ...known, scope: "outside" }),
+				onDecision: decision => {
+					if (decision.kind === "held") {
+						held++;
+						if (failure === "abort") controller.abort();
+					}
+				} },
+			send() {}, idle: () => false, trace() {}, report() {},
+			audit: createChildAudit({ root: "", parent: () => undefined }),
+		});
+		t.after(() => core.disposeAll());
+		host = await parent(t, undefined, {
+			name: "foreground_failure", label: "Foreground failure", description: "Run foreground child",
+			parameters: Type.Object({}),
+			async execute() {
+				host.provider.setResponses([
+					fauxAssistantMessage(fauxToolCall("write", { path: join(host.agentDir, "lost.txt"), content: "NO_EFFECT" }), { stopReason: "toolUse" }),
+					fauxAssistantMessage("", { stopReason: "error", errorMessage: "PROVIDER_FAILURE_AFTER_HOLD" }),
+				]);
+				try {
+					return await core.start({
+						role: "worker", contract: { prompt: "Correct the assigned file only", tools: [] },
+						task: "Perform only the assigned write", worktree: host.agentDir,
+						model: "faux/authorization", thinking: "off", chosenBy: "parent", references: [],
+					}, { background: false, signal: controller.signal,
+						modelRegistry: new ModelRegistry(host.runtime),
+						project: () => ({ cwd: host.agentDir, trusted: false }), shell: () => ({}) });
+				} catch (error) {
+					captured = error;
+					throw error;
+				} finally {
+					host.provider.setResponses([fauxAssistantMessage(fauxText("Parent received the failure."))]);
+				}
+			},
+		});
+		const result = await host.call();
+		assert.equal(held, 1, "the actual child must first hold a proposed write");
+		assert.equal(result.isError, true);
+		const visible = result.content.filter(c => c.type === "text").map(c => c.text).join("\n");
+		assert.match(visible, failure === "abort" ? /The call was aborted/ : /PROVIDER_FAILURE_AFTER_HOLD/);
+		assert.match(visible, /Unresolved authorization proposals \(no held action executed\):\n/);
+		assert.ok(Array.isArray(snapshot) && snapshot.length === 1, "capture pending authority before disposal");
+		const serialized = visible.slice(visible.indexOf("Unresolved authorization proposals (no held action executed):\n") +
+			"Unresolved authorization proposals (no held action executed):\n".length);
+		assert.deepEqual(JSON.parse(serialized), snapshot);
+		assert.deepEqual(snapshot[0].proposal.action.input, { path: join(host.agentDir, "lost.txt"), content: "NO_EFFECT" });
+		assert.match(captured.cause.message, failure === "abort" ? /The call was aborted/ : /PROVIDER_FAILURE_AFTER_HOLD/);
+		assert.equal(existsSync(join(host.agentDir, "lost.txt")), false);
+		assert.deepEqual(core.list(), []);
+	});
+}
+
+test("actual spawn_child SDK error exposes held proposals after provider failure to the parent", async (t) => {
+	const prior = seatedCapabilities();
+	replaceSelection({ schemaVersion: 1, capabilities: Object.fromEntries(capabilities.map(c => [c, true])), expectations: {} });
+	t.after(() => replaceSelection({ schemaVersion: 1, ...prior, expectations: {} }));
+	let held = 0;
+	const host = await parent(t, {
+		authority,
+		classify: async proposal => proposal.action.tool === "write" ? { ...known, scope: "outside" } : known,
+		onDecision: decision => { if (decision.kind === "held") held++; },
+	});
+	await host.session.bindExtensions({ mode: "print" });
+	const path = join(host.agentDir, "spawn-pending.txt");
+	host.provider.setResponses([
+		fauxAssistantMessage(fauxToolCall("spawn_child", {
+			role: "explore", task: "Perform only the assigned write", worktree: process.cwd(),
+		}), { stopReason: "toolUse" }),
+		fauxAssistantMessage(fauxToolCall("write", { path, content: "NO_EFFECT" }), { stopReason: "toolUse" }),
+		fauxAssistantMessage("", { stopReason: "error", errorMessage: "SPAWN_PROVIDER_FAILURE" }),
+		fauxAssistantMessage(fauxText("Parent received unresolved authority.")),
+	]);
+	await host.session.prompt("Perform only the assigned child action.");
+	const result = host.session.messages.filter(m => m.role === "toolResult" && m.toolName === "spawn_child").at(-1);
+	assert.ok(result, "actual spawn_child must return through the SDK");
+	assert.equal(held, 1);
+	assert.equal(result.isError, true, JSON.stringify(result));
+	const visible = result.content.filter(c => c.type === "text").map(c => c.text).join("\n");
+	assert.match(visible, /SPAWN_PROVIDER_FAILURE/);
+	assert.match(visible, /Unresolved authorization proposals \(no held action executed\):\n/);
+	const pending = JSON.parse(visible.split("Unresolved authorization proposals (no held action executed):\n")[1]);
+	assert.equal(pending.length, 1);
+	assert.equal(pending[0].kind, "held");
+	assert.deepEqual(pending[0].proposal.action.input, { path, content: "NO_EFFECT" });
+	assert.equal(existsSync(path), false);
+});
+
+for (const scenario of ["scope-only", "wrong-confirmation", "wrong-id", "wrong-call", "wrong-target", "pending", "receipt", "delivery-failed", "no-ui", "dismissed", "denied", "stale-assignment", "stale-instructions", "classifier-failed-after-answer", "final-delivery-change", "valid-response"]) {
+	test(scenario === "valid-response" ? "consultation valid-response executes the exact write as a matrix control" : `consultation ${scenario} cannot release an unconfirmed or inapplicable write`, async (t) => {
+		const current = authority();
+		const observed = [];
+		const questions = [];
+		const answers = [];
+		const resumed = [];
+		const failures = [];
+		const run = await parent(t, {
+			authority: () => current,
+			classify: async (proposal) => {
+				if (proposal.consultation) resumed.push(proposal);
+				if (proposal.consultation && scenario === "classifier-failed-after-answer") throw new Error("unavailable after reply");
+				return proposal.consultation ? { ...known, effects: "high-impact", confirmed: true }
+					: { ...known, effects: "high-impact", scope: "outside" };
+			},
+			consult: async (question) => {
+				questions.push(question);
+				if (["delivery-failed", "no-ui", "dismissed"].includes(scenario)) { failures.push(scenario); throw new Error(scenario); }
+				if (scenario === "receipt") { answers.push("received"); return "received"; }
+				const response = { ...question, kind: "resolved", answer: "Expand scope and confirm this exact write.", confirmedActions: [question.proposal.action] };
+				if (scenario === "scope-only") delete response.confirmedActions;
+				if (scenario === "wrong-confirmation") response.confirmedActions = [{ ...question.proposal.action, input: { path: "other.txt", content: "NO_EFFECT" } }];
+				if (scenario === "wrong-id") response.id = "another-child-consultation";
+				if (scenario === "wrong-call") response.call = "another-call";
+				if (scenario === "wrong-target") response.proposal = { ...question.proposal, action: { ...question.proposal.action, input: { path: "other.txt" } } };
+				if (scenario === "pending") response.kind = "pending";
+				if (scenario === "denied") { response.kind = "deny"; response.answer = "Do not execute this action."; }
+				if (scenario === "stale-assignment") current.assignment = "A different task now owns the target";
+				if (scenario === "stale-instructions") current.instructions.push("New applicable restriction");
+				answers.push(response);
+				return response;
+			},
+			onDecision: async (decision) => {
+				observed.push(decision);
+				if (decision.kind === "allow" && scenario === "final-delivery-change") current.assignment = "Changed during delivery";
+			},
+		});
+		const path = join(run.agentDir, "unconfirmed.txt");
+		const result = await run.call({ path, content: "NO_EFFECT" }, "write");
+		assert.equal(questions.length, 1, `${scenario} must cross the actual consultation boundary`);
+		assert.deepEqual(questions[0].proposal.action.input, { path, content: "NO_EFFECT" });
+		const answer = answers[0];
+		const reason = result.content.filter(c => c.type === "text").map(c => c.text).join("\n");
+		const rejectedEnvelope = ["wrong-id", "wrong-call", "wrong-target", "receipt"].includes(scenario);
+		const failedDelivery = ["delivery-failed", "no-ui", "dismissed"].includes(scenario);
+		assert.equal(resumed.length, rejectedEnvelope || failedDelivery || ["pending", "denied"].includes(scenario) ? 0 : 1);
+		if (scenario === "scope-only") { assert.equal(answer.confirmedActions, undefined); assert.match(reason, /confirmation/); }
+		if (scenario === "wrong-confirmation") { assert.equal(answer.confirmedActions[0].input.path, "other.txt"); assert.match(reason, /confirmation/); }
+		if (scenario === "wrong-id") assert.equal(answer.id, "another-child-consultation");
+		if (scenario === "wrong-call") assert.equal(answer.call, "another-call");
+		if (scenario === "wrong-target") assert.equal(answer.proposal.action.input.path, "other.txt");
+		if (rejectedEnvelope) assert.match(reason, /response is missing, stale or belongs to another action/);
+		if (scenario === "receipt") assert.equal(answer, "received");
+		if (scenario === "pending") { assert.equal(answer.kind, "pending"); assert.match(reason, /Consultation remains pending/); }
+		if (scenario === "denied") { assert.equal(answer.kind, "deny"); assert.match(reason, /Do not execute this action/); }
+		if (failedDelivery) { assert.deepEqual(failures, [scenario]); assert.ok(reason.includes(scenario)); }
+		if (scenario === "stale-assignment") { assert.equal(current.assignment, "A different task now owns the target"); assert.match(reason, /Authority changed/); }
+		if (scenario === "stale-instructions") { assert.equal(current.instructions.at(-1), "New applicable restriction"); assert.match(reason, /Authority changed/); }
+		if (scenario === "classifier-failed-after-answer") { assert.equal(resumed[0].consultation.answer, answer.answer); assert.match(reason, /unavailable after reply/); }
+		if (scenario === "final-delivery-change") { assert.equal(observed[0].kind, "allow"); assert.equal(current.assignment, "Changed during delivery"); assert.match(reason, /Authority changed/); }
+		if (scenario === "valid-response") {
+			assert.equal(result.isError, false);
+			assert.equal(readFileSync(path, "utf8"), "NO_EFFECT");
+			assert.equal(observed[0].kind, "allow");
+			return;
+		}
+		assert.equal(result.isError, true);
+		assert.equal(existsSync(path), false);
+		assert.equal(existsSync(join(run.agentDir, "other.txt")), false);
+		const entry = run.session.sessionManager.getEntries().filter(e => e.type === "custom" && e.customType === "pi-workflow-authorization").at(-1).data;
+		assert.equal(entry.kind, scenario === "denied" ? "deny" : "held");
+		assert.equal(entry.proposal.action.input.path, path);
+		assert.equal(entry.proposal.authority.assignment, "Correct assigned.txt");
+		assert.equal(observed.length, 1);
+	});
+}
+
+test("abort while consulting retains the action and a late answer cannot execute; a fresh proposal can resolve", async (t) => {
+	const entered = Promise.withResolvers();
+	const reply = Promise.withResolvers();
+	let recover = false;
+	const run = await parent(t, {
+		authority,
+		classify: async (proposal) => proposal.consultation ? known : { ...known, scope: "unknown" },
+		consult: async question => {
+			entered.resolve(question);
+			if (!recover) return reply.promise;
+			return { ...question, kind: "resolved", answer: "Authorize this current exact action." };
+		},
+	});
+	const path = join(run.agentDir, "after-abort.txt");
+	const first = run.call({ path, content: "AFTER_ABORT_EFFECT" }, "write");
+	const question = await entered.promise;
+	assert.equal(existsSync(path), false);
+	await run.session.abort();
+	await first;
+	reply.resolve({ ...question, kind: "resolved", answer: "A late answer cannot release the aborted invocation." });
+	await delay(0);
+	assert.equal(existsSync(path), false);
+	recover = true;
+	const result = await run.call({ path, content: "AFTER_ABORT_EFFECT" }, "write");
+	assert.equal(result.isError, false);
+	assert.equal(readFileSync(path, "utf8"), "AFTER_ABORT_EFFECT");
+});
+
+test("a paused consultation cannot authorize mutated actual SDK invocation input", async (t) => {
+	const entered = Promise.withResolvers();
+	const reply = Promise.withResolvers();
+	let actualInput;
+	const run = await parent(t, {
+		authority,
+		classify: async proposal => proposal.consultation ? known : { ...known, scope: "unknown" },
+		consult: question => { entered.resolve(question); return reply.promise; },
+	}, undefined, { factories: [pi => pi.on("tool_call", event => {
+		if (event.toolName === "write") actualInput = event.input;
+	})] });
+	const original = join(run.agentDir, "original.txt");
+	const changed = join(run.agentDir, "changed.txt");
+	const action = run.call({ path: original, content: "NO_EFFECT" }, "write");
+	const question = await Promise.race([entered.promise, action.then(() => undefined)]);
+	assert.ok(question, "the invocation must reach consultation before input changes");
+	assert.equal(actualInput.path, original);
+	assert.notEqual(actualInput, question.proposal.action.input);
+	assert.equal(existsSync(original), false);
+	actualInput.path = changed;
+	assert.equal(question.proposal.action.input.path, original);
+	reply.resolve({ ...question, kind: "resolved", answer: "Authorize only the original action." });
+	const result = await action;
+	assert.equal(result.isError, true);
+	assert.match(result.content[0].text, /action changed/);
+	assert.equal(existsSync(original), false);
+	assert.equal(existsSync(changed), false);
+	const entry = run.session.sessionManager.getEntries().filter(e => e.customType === "pi-workflow-authorization").at(-1).data;
+	assert.equal(entry.kind, "held");
+	assert.equal(entry.proposal.action.input.path, original);
+});
+
+test("fresh valid answers cannot execute the same SDK invocation id twice or consult twice", async (t) => {
+	let effects = 0;
+	const questions = [];
+	const run = await parent(t, {
+		authority,
+		classify: async proposal => proposal.consultation ? known : { ...known, scope: "unknown" },
+		consult: async question => {
+			questions.push(question);
+			return { ...question, kind: "resolved", answer: "Authorize this current invocation." };
+		},
+	}, { name: "effect", label: "Effect", description: "Record an effect", parameters: Type.Object({}),
+		async execute() { effects++; return { content: [], details: {} }; } });
+	for (let attempt = 0; attempt < 2; attempt++) {
+		run.provider.setResponses([
+			fauxAssistantMessage(fauxToolCall("effect", {}, { id: "same-invocation" }), { stopReason: "toolUse" }),
+			fauxAssistantMessage(fauxText("finished")),
+		]);
+		await run.session.prompt("Perform only the assigned effect.");
+	}
+	assert.equal(effects, 1);
+	assert.equal(questions.length, 1);
+	const result = run.session.messages.filter(m => m.role === "toolResult").at(-1);
+	assert.equal(result.isError, true);
+	assert.match(result.content[0].text, /invocation was already evaluated/);
+});
+
+test("a spent consultation cannot authorize an independent fresh SDK invocation", async (t) => {
+	let cached;
+	const questions = [];
+	let effects = 0;
+	const run = await parent(t, {
+		authority,
+		classify: async proposal => proposal.consultation ? known : { ...known, scope: "unknown" },
+		consult: async question => {
+			questions.push(question);
+			cached ??= { ...question, kind: "resolved", answer: "Authorize exactly this invocation." };
+			return cached;
+		},
+	}, { name: "effect", label: "Effect", description: "Record an effect", parameters: Type.Object({}),
+		async execute() { effects++; return { content: [], details: {} }; } });
+	run.provider.setResponses([
+		fauxAssistantMessage(fauxToolCall("effect", {}, { id: "same-invocation" }), { stopReason: "toolUse" }),
+		fauxAssistantMessage(fauxText("finished")),
+	]);
+	await run.session.prompt("Perform the assigned effect");
+	assert.equal(effects, 1);
+	const result = await run.call();
+	assert.equal(questions.length, 2);
+	assert.notEqual(questions[0].call, questions[1].call);
+	assert.notEqual(questions[0].id, questions[1].id);
+	assert.equal(result.isError, true);
+	assert.match(result.content[0].text, /response is missing, stale or belongs to another action/);
+	assert.equal(effects, 1);
+});
+
+test("background ask and reply retain authority until classification, not receipt or running, releases the write", async (t) => {
+	const prior = seatedCapabilities();
+	replaceSelection({ schemaVersion: 1, capabilities: Object.fromEntries(capabilities.map(c => [c, true])), expectations: {} });
+	t.after(() => replaceSelection({ schemaVersion: 1, ...prior, expectations: {} }));
+	const host = await parent(t);
+	const sent = [];
+	const checking = Promise.withResolvers();
+	const classified = Promise.withResolvers();
+	const core = createChildSessions({
+		authorization: { authority, classify: async proposal => {
+			if (!proposal.consultation) return { ...known, scope: "unknown" };
+			checking.resolve();
+			await classified.promise;
+			return known;
+		} },
+		send: message => sent.push(message), idle: () => false, trace() {}, report() {},
+		audit: createChildAudit({ root: "", parent: () => undefined }),
+	});
+	t.after(() => core.disposeAll());
+	const path = join(host.agentDir, "background.txt");
+	host.provider.setResponses([
+		fauxAssistantMessage(fauxToolCall("write", { path, content: "BACKGROUND_EFFECT" }), { stopReason: "toolUse" }),
+		fauxAssistantMessage(fauxText("finished")),
+	]);
+	const started = await core.start({
+		role: "worker", contract: { prompt: "Only assigned work", tools: [] }, task: "Perform proposed write only with authority",
+		worktree: host.agentDir, model: "faux/authorization", thinking: "off", chosenBy: "parent", references: [],
+	}, { background: true, modelRegistry: new ModelRegistry(host.runtime), project: () => ({ cwd: host.agentDir, trusted: false }), shell: () => ({}) });
+	await eventually(() => core.list()[0].state === "waiting");
+	const message = sent.find(m => m.customType === "pi-workflow-child-question");
+	const question = JSON.parse(message.details.text.slice(message.details.text.indexOf("\n") + 1));
+	assert.equal(existsSync(path), false);
+	assert.throws(() => core.reply("another-child", 1, "yes", "parent"), /No child/);
+	assert.throws(() => core.reply(started.id, 2, "yes", "parent"), /not waiting/);
+	const noUI = await host.call({ question: "May this exact write proceed?" }, "ask_user_question");
+	assert.equal(noUI.details.status, "refused");
+	assert.equal(existsSync(path), false);
+	assert.equal(core.list()[0].state, "waiting");
+	// A later user decision is represented by the trusted parent resolver, not by the UI refusal.
+	host.provider.setResponses([fauxAssistantMessage(fauxText("finished"))]);
+	core.reply(started.id, 1, JSON.stringify({ ...question, kind: "resolved", answer: "The current exact write is authorized." }), "parent");
+	await checking.promise;
+	assert.equal(core.list()[0].state, "running");
+	assert.equal(existsSync(path), false);
+	assert.throws(() => core.reply(started.id, 1, "yes again", "parent"), /already answered/);
+	classified.resolve();
+	await eventually(() => core.list()[0].state === "completed");
+	assert.equal(readFileSync(path, "utf8"), "BACKGROUND_EFFECT");
+});
+
+test("failed background consultation delivery retains proposals in the parent result and permits explicit continuation", async (t) => {
+	const host = await parent(t);
+	let authorized = false;
+	const sent = [];
+	const core = createChildSessions({
+		authorization: { authority, classify: async () => authorized ? known : { ...known, scope: "unknown" } },
+		send: message => { if (message.customType === "pi-workflow-child-question") throw new Error("transport closed"); sent.push(message); },
+		idle: () => false, trace() {}, report() {},
+		audit: createChildAudit({ root: "", parent: () => undefined }),
+	});
+	t.after(() => core.disposeAll());
+	const path = join(host.agentDir, "after-delivery-failure.txt");
+	const respond = () => host.provider.setResponses([
+		fauxAssistantMessage(fauxToolCall("write", { path, content: "DELIVERY_RECOVERED_EFFECT" }), { stopReason: "toolUse" }),
+		fauxAssistantMessage(fauxText("Authority unresolved")),
+	]);
+	const launch = { background: true, modelRegistry: new ModelRegistry(host.runtime), project: () => ({ cwd: host.agentDir, trusted: false }), shell: () => ({}) };
+	respond();
+	const started = await core.start({ role: "worker", contract: { prompt: "Assigned work only", tools: [] }, task: "Write only with authority", worktree: host.agentDir, model: "faux/authorization", thinking: "off", chosenBy: "parent", references: [] }, launch);
+	await eventually(() => core.get(started.id)?.state === "completed");
+	assert.equal(existsSync(path), false);
+	const pending = core.get(started.id).pendingAuthorizations;
+	assert.ok(pending, "The parent result must retain unresolved authorization proposals");
+	assert.equal(pending[0].proposal.action.input.path, path);
+	assert.match(pending[0].reason, /transport closed/);
+	core.atBoundary();
+	const result = sent.find(m => m.customType === "pi-workflow-child-result");
+	assert.equal(result.details.pendingAuthorizations[0].proposal.action.input.path, path);
+	assert.match(result.content, /Authorization remains pending/);
+	authorized = true;
+	respond();
+	const continued = await core.resume(started.id, "Parent resolved authority; re-propose the exact write with current facts", launch);
+	await eventually(() => core.get(continued.id)?.state === "completed");
+	assert.equal(readFileSync(path, "utf8"), "DELIVERY_RECOVERED_EFFECT");
+});
+
+test("an unbound high-impact classifier confirmation still consults before dispatch", async (t) => {
+	let consultations = 0;
+	const run = await parent(t, {
+		authority,
+		classify: async () => ({ ...known, effects: "high-impact", confirmed: true }),
+		consult: async question => {
+			consultations++;
+			return { ...question, kind: "resolved", answer: "Confirm this exact high-impact write", confirmedActions: [question.proposal.action] };
+		},
+	});
+	const path = join(run.agentDir, "specific-impact.txt");
+	const result = await run.call({ path, content: "SPECIFIC_IMPACT_EFFECT" }, "write");
+	assert.equal(result.isError, false);
+	assert.equal(consultations, 1);
+	assert.equal(readFileSync(path, "utf8"), "SPECIFIC_IMPACT_EFFECT");
+});
 
 const known = {
 	scope: "within",
