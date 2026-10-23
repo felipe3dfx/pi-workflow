@@ -1,3 +1,6 @@
+import { realpathSync } from "node:fs";
+import { isAbsolute, join, relative, sep } from "node:path";
+
 const SPECIAL = /[*?{}]/;
 const MAX_LISTED_PAIRS = 5;
 
@@ -96,6 +99,37 @@ export function surfacesOverlap(a: string, b: string): boolean {
 	return true;
 }
 
+function missing(error: unknown) {
+	const code = (error as NodeJS.ErrnoException).code;
+	return code === "ENOENT" || code === "ENOTDIR";
+}
+
+function canonical(root: string, entry: string): string | undefined {
+	const value = entry.trim().normalize("NFC");
+	if (normalize(value) === undefined || uninterpretable(value)) return undefined;
+	const segments = value.split("/").filter((segment) => segment !== "" && segment !== ".");
+	const glob = segments.findIndex((segment) => SPECIAL.test(segment));
+	let base: string;
+	try {
+		base = realpathSync(root);
+	} catch (error) {
+		return missing(error) ? value : undefined;
+	}
+	for (let count = glob < 0 ? segments.length : glob; count >= 0; count--) {
+		let resolved: string;
+		try {
+			resolved = realpathSync(join(base, ...segments.slice(0, count)));
+		} catch (error) {
+			if (missing(error)) continue;
+			return undefined;
+		}
+		const inside = relative(base, resolved);
+		if (inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside)) return undefined;
+		return [inside, ...segments.slice(count)].filter(Boolean).join("/") || undefined;
+	}
+	return undefined;
+}
+
 function entries(surfaces: readonly string[]) {
 	return surfaces.length > 0 ? surfaces : ["."];
 }
@@ -113,8 +147,12 @@ export function createWriteClaims() {
 			if (!sameRoot(claim.root, root)) continue;
 			const pairs: Array<[string, string]> = [];
 			for (const mine of entries(surfaces)) {
+				const left = canonical(root, mine);
 				for (const theirs of entries(claim.surfaces)) {
-					if (surfacesOverlap(mine, theirs)) pairs.push([mine, theirs]);
+					const right = canonical(claim.root, theirs);
+					if (left === undefined || right === undefined || surfacesOverlap(left, right)) {
+						pairs.push([mine, theirs]);
+					}
 				}
 			}
 			if (pairs.length > 0) found.push({ owner: claim.owner, pairs });

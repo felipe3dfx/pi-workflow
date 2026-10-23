@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { conflictReason, createWriteClaims, surfacesOverlap } from "../extensions/write-claims.ts";
 
@@ -74,4 +77,27 @@ test("rebuild replaces every claim", () => {
 	assert.deepEqual(claims.conflicts("/repo", ["test"]), []);
 	assert.deepEqual(claims.conflicts("/repo", ["src/x.ts"]).map((c) => c.owner), ["a"]);
 	assert.equal(claims.release("old"), false);
+});
+
+test("entries are compared by the paths they reach through symbolic links in the worktree", async (t) => {
+	const dir = await realpath(await mkdtemp(join(tmpdir(), "pi-workflow-write-claims-")));
+	t.after(() => rm(dir, { recursive: true, force: true }));
+	const root = join(dir, "repo");
+	await mkdir(join(root, "src"), { recursive: true });
+	await mkdir(join(root, "docs"));
+	await mkdir(join(dir, "outside"));
+	await writeFile(join(root, "src", "a.ts"), "");
+	await symlink("src", join(root, "alias"), "dir");
+	await symlink(join(dir, "outside"), join(root, "away"), "dir");
+	const owners = (claims, surfaces) => claims.conflicts(root, surfaces).map((conflict) => conflict.owner);
+	const claims = createWriteClaims();
+	claims.claim("existing", root, ["src/a.ts"]);
+	claims.claim("new", root, ["src/new/b.ts"]);
+	claims.claim("docs", root, ["docs"]);
+	assert.deepEqual(owners(claims, ["alias/a.ts"]), ["existing"]);
+	assert.deepEqual(owners(claims, ["alias/new/b.ts"]), ["new"]);
+	assert.deepEqual(owners(claims, ["alias/*.ts"]), ["existing"]);
+	assert.deepEqual(owners(claims, ["alias/c.ts"]), []);
+	assert.deepEqual(owners(claims, ["away/a.ts"]), ["existing", "new", "docs"]);
+	assert.deepEqual(claims.conflicts(root, ["alias/a.ts"])[0].pairs, [["alias/a.ts", "src/a.ts"]]);
 });
