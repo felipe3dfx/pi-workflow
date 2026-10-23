@@ -1,7 +1,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { accessSync, constants, readdirSync } from "node:fs";
-import { delimiter, join, resolve } from "node:path";
+import { basename, delimiter, join, resolve } from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 
@@ -52,9 +52,10 @@ type Update = {
 	toolCall?: unknown;
 };
 
-function installedPi() {
+export function installedPi() {
+	if (basename(process.execPath) === "pi") return process.execPath;
 	for (const directory of (process.env.PATH ?? "").split(delimiter)) {
-		if (!directory) continue;
+		if (!directory || directory.includes(join("node_modules", ".bin"))) continue;
 		const candidate = join(directory, "pi");
 		try {
 			accessSync(candidate, constants.X_OK);

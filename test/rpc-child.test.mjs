@@ -1,13 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { channelFrameLimit, createRpcChildSession, readinessDeadline } from "../extensions/rpc-child.ts";
+import { channelFrameLimit, createRpcChildSession, installedPi, readinessDeadline } from "../extensions/rpc-child.ts";
 import { createChildAudit } from "../extensions/child-audit.ts";
 import { createChildSessions, shutdownDeadline } from "../extensions/child-sessions.ts";
 import { treeDeadline } from "../extensions/process-tree.ts";
@@ -65,6 +65,35 @@ async function fakeChild(t, scenario, spec = {}, options = {}) {
 	const launched = () => JSON.parse(readFileSync(record, "utf8"));
 	return { handle, events, notes, launched, record, dir };
 }
+
+test("a child runs the parent's own Pi executable when the parent is Pi", (t) => {
+	const parentPi = "/opt/pi/1.4.0/pi";
+	const execPath = process.execPath;
+	process.execPath = parentPi;
+	t.after(() => {
+		process.execPath = execPath;
+	});
+	assert.equal(installedPi(), parentPi);
+});
+
+test("a child of a parent that is not Pi runs the installed Pi from PATH, never a package's node_modules/.bin", async (t) => {
+	const dir = await scratch(t);
+	const packageBin = join(dir, "node_modules", ".bin");
+	const installed = join(dir, "installed");
+	for (const directory of [packageBin, installed]) {
+		await mkdir(directory, { recursive: true });
+		await writeFile(join(directory, "pi"), "#!/bin/sh\n");
+		await chmod(join(directory, "pi"), 0o755);
+	}
+	const path = process.env.PATH;
+	process.env.PATH = [packageBin, installed].join(delimiter);
+	t.after(() => {
+		process.env.PATH = path;
+	});
+	assert.equal(installedPi(), join(installed, "pi"));
+	process.env.PATH = packageBin;
+	assert.throws(() => installedPi(), /Pi was not found on PATH/);
+});
 
 test("a queued RPC child opens no process until it runs", async (t) => {
 	const { handle, record } = await fakeChild(t, "complete");

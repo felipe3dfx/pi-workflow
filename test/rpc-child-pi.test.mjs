@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { accessSync, constants, existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { join } from "node:path";
 import process from "node:process";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -18,20 +18,12 @@ import { treeDeadline } from "../extensions/process-tree.ts";
 import { createRpcChildSession, readinessDeadline } from "../extensions/rpc-child.ts";
 import { companionMetadataPath, loadCompanionsFromPath } from "../extensions/companion-workflow.ts";
 import { eventually } from "./support/eventually.mjs";
+import { pi as installedPi, piSkip as skip, piVersion } from "./support/installed-pi.mjs";
 import { modelEndpoint } from "./support/model-endpoint.mjs";
 import { gone, parent } from "./support/process-tree.mjs";
 import { selectionWith } from "./support/selection.mjs";
 import { withCheckpoint } from "./support/signed-checkpoint.mjs";
 
-const installed = (process.env.PATH ?? "").split(delimiter).some((directory) => {
-	try {
-		accessSync(join(directory, "pi"), constants.X_OK);
-		return true;
-	} catch {
-		return false;
-	}
-});
-const skip = !installed && "Pi is not installed on PATH, so the real-binary RPC child checks cannot run.";
 const mcpFixture = fileURLToPath(new URL("./support/mcp-fixture-server.mjs", import.meta.url));
 const git = (cwd, ...args) =>
 	execFileSync("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.com", "-c", "commit.gpgsign=false", ...args], { cwd, stdio: "pipe" });
@@ -91,6 +83,15 @@ function launch(t, { dir, endpoint }, cwd, project) {
 		return handle;
 	});
 }
+
+function runsInstalledPi(pid) {
+	if (existsSync("/proc/self/exe")) assert.equal(realpathSync(`/proc/${pid}/exe`), realpathSync(installedPi));
+}
+
+test("the real-binary checks run the installed Pi, never the SDK's node_modules/.bin/pi", { skip }, (t) => {
+	assert.doesNotMatch(installedPi, /node_modules/);
+	t.diagnostic(`pi --version: ${piVersion}; ${installedPi}`);
+});
 
 const seen = async (evidence, name) => ({
 	cwd: await readFile(join(evidence, `${name}.cwd`), "utf8"),
@@ -288,6 +289,7 @@ test("a real Pi child that crashes leaves no MCP server or shell descendant with
 	const handle = await launch(t, scene, repo, { cwd: repo, trusted: false });
 	assert.equal(await handle.run("Say done."), "DONE");
 	const { pi, pids } = await tree();
+	runsInstalledPi(pi);
 	process.kill(pi, "SIGKILL");
 	const crashed = Date.now();
 	const elapsed = await gone(pids, crashed);
@@ -498,23 +500,9 @@ test("a real Pi worker's guarded bash refuses a parent command and its report st
 const reloadCommand = fileURLToPath(new URL("./support/reload-command.mjs", import.meta.url));
 const workflowExtension = fileURLToPath(new URL("../extensions/pi-workflow.ts", import.meta.url));
 
-const installedPath = (process.env.PATH ?? "")
-	.split(delimiter)
-	.filter((directory) => !directory.includes(join("node_modules", ".bin")))
-	.join(delimiter);
-const reloadSkip =
-	!installedPath.split(delimiter).some((directory) => {
-		try {
-			accessSync(join(directory, "pi"), constants.X_OK);
-			return true;
-		} catch {
-			return false;
-		}
-	}) && "The installed Pi is not on PATH, so a real parent cannot be reloaded.";
-
 function rpcParent(t, scene, cwd) {
 	const pi = spawn(
-		"pi",
+		installedPi,
 		[
 			"--mode", "rpc",
 			"--session-dir", join(scene.dir, "parent-sessions"),
@@ -530,7 +518,7 @@ function rpcParent(t, scene, cwd) {
 		],
 		{
 			cwd,
-			env: { ...process.env, PATH: installedPath, PI_CODING_AGENT_DIR: scene.agentDir },
+			env: { ...process.env, PI_CODING_AGENT_DIR: scene.agentDir },
 			stdio: ["pipe", "pipe", "pipe"],
 		},
 	);
@@ -575,15 +563,7 @@ function rpcParent(t, scene, cwd) {
 	return { pi, events, request, exited, stderr: () => stderr };
 }
 
-async function within(read, condition = Boolean, ms = 60_000) {
-	const end = Date.now() + ms;
-	for (;;) {
-		const value = await read();
-		if (condition(value)) return value;
-		if (Date.now() > end) assert.fail(`condition never held: ${JSON.stringify(value)}`);
-		await delay(20);
-	}
-}
+const realParentPolls = 12_000;
 
 const said = (message) => JSON.stringify(message.content ?? "");
 const toolNames = (body) => (body.tools ?? []).map((tool) => tool.function?.name);
@@ -595,7 +575,7 @@ function childPids(agentDir) {
 		.map((line) => Number(line.trim().split(/\s+/)[0]));
 }
 
-test("a real Pi parent's /reload keeps its working child process, the question open across it is answered once, the result arrives once, and quitting or killing the parent still ends the child", { skip: reloadSkip, timeout: 120_000 }, async (t) => {
+test("a real Pi parent's /reload keeps its working child process, the question open across it is answered once, the result arrives once, and quitting or killing the parent still ends the child", { skip, timeout: 120_000 }, async (t) => {
 	for (const ending of ["quit", "SIGKILL"]) await t.test(ending, (t) => reloadScenario(t, ending));
 });
 
@@ -657,15 +637,20 @@ async function reloadScenario(t, ending) {
 	const idle = () => parentPi.events.at(-1)?.type === "agent_settled";
 
 	await parentPi.request("prompt", { message: "Delegate the color question." });
-	await within(() => ended("pi-workflow-child-question").length === 2 && idle());
-	const pids = await within(() => childPids(scene.agentDir), (found) => found.length === 2);
+	await eventually(() => ended("pi-workflow-child-question").length === 2 && idle(), undefined, realParentPolls);
+	const pids = await eventually(() => childPids(scene.agentDir), (found) => found.length === 2);
+	for (const pid of pids) runsInstalledPi(pid);
 
 	const reloaded = await parentPi.request("prompt", { message: "/test-reload" });
 	assert.equal(reloaded.disposition, "handled");
 	assert.deepEqual(childPids(scene.agentDir), pids);
 
 	await parentPi.request("prompt", { message: "Answer the child now." });
-	const [result] = await within(() => ended("pi-workflow-child-result"), (found) => found.length === 1 && idle());
+	const [result] = await eventually(
+		() => ended("pi-workflow-child-result"),
+		(found) => found.length === 1 && idle(),
+		realParentPolls,
+	);
 	const { messages } = await parentPi.request("get_messages");
 	const custom = (type) => messages.filter((message) => message.customType === type);
 
