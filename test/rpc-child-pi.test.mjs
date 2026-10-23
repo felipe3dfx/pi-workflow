@@ -80,7 +80,6 @@ function launch(t, { dir, endpoint }, cwd, project) {
 		thinking: "off",
 		prompt: "You are a child session. Answer DONE.",
 		tools: ["read", "mcp__*"],
-		modelRegistry: {},
 		shell: {},
 		onEvent() {},
 		notify() {},
@@ -192,7 +191,6 @@ test("a background child runs as a real Pi process and reaches the registry comp
 		},
 		{
 			background: true,
-			modelRegistry: {},
 			project: () => ({ cwd: repo, trusted: false }),
 			shell: () => ({}),
 		},
@@ -214,7 +212,6 @@ test("a background child runs as a real Pi process and reaches the registry comp
 	t.diagnostic(`${record.state}: ${record.text}`);
 
 	const continued = await core.resume(started.id, "Say done again.", {
-		modelRegistry: {},
 		project: () => ({ cwd: repo, trusted: false }),
 		shell: () => ({}),
 	});
@@ -327,7 +324,6 @@ test("a real Pi explorer child offers the pi-web-access tools to its model", { s
 		thinking: "off",
 		prompt: "You are a child session. Answer DONE.",
 		tools: ["read", "web_search", "source_check", "fetch_content", "get_search_content"],
-		modelRegistry: {},
 		shell: {},
 		onEvent() {},
 		notify() {},
@@ -357,7 +353,6 @@ test("a real Pi child with a Claude Bridge model loads the provider and a missin
 		thinking: "off",
 		prompt: "You are a child session.",
 		tools: ["read"],
-		modelRegistry: {},
 		shell: {},
 		onEvent() {},
 		notify() {},
@@ -404,7 +399,6 @@ function background(core, repo, scene, role, tools) {
 		},
 		{
 			background: true,
-			modelRegistry: {},
 			project: () => ({ cwd: repo, trusted: false }),
 			shell: () => ({}),
 		},
@@ -448,7 +442,6 @@ test("a real Pi child withdraws a question when its call is aborted", { skip, ti
 		thinking: "off",
 		prompt: "You are a child session.",
 		tools: ["read", "ask_parent"],
-		modelRegistry: {},
 		shell: {},
 		onEvent() {},
 		notify() {},
@@ -717,7 +710,6 @@ function granted(core, scene, worktree, grant) {
 		},
 		{
 			background: true,
-			modelRegistry: {},
 			project: () => ({ cwd: worktree, trusted: false }),
 			shell: () => ({}),
 		},
@@ -801,7 +793,6 @@ test("a real Pi contextual child continues an authorized call, holds an uncertai
 			thinking: "off",
 			prompt: "You are a contextual child.",
 			tools: ["read"],
-			modelRegistry: {},
 			shell: {},
 			onEvent() {},
 			notify() {},
@@ -876,7 +867,6 @@ test("a real Pi contextual child surfaces a scope violation after commit and ref
 					thinking: "off",
 					prompt: "You are a contextual child.",
 					tools: ["read"],
-					modelRegistry: {},
 					shell: {},
 					onEvent() {},
 					notify() {},
@@ -893,4 +883,23 @@ test("a real Pi contextual child surfaces a scope violation after commit and ref
 			});
 		});
 	}
+});
+
+test("a real Pi child's codemode offers no models API and calls only the child's allowlisted tools", { skip, timeout: 60_000 }, async (t) => {
+	const scene = await fixture(t, [
+		{ tool: "codemode", args: { code: "return { tools: Object.keys(tools).sort(), models: typeof models };" } },
+		"DONE",
+	]);
+	const repo = await repository(scene.dir, "repo", {});
+	const core = registry(t, scene);
+	const started = await background(core, repo, scene, "worker", ["read", "grep", "find", "ls", "codemode"]);
+	assert.equal(started.status, "queued", started.reason);
+	await eventually(() => core.get(started.id), (child) => child?.state === "completed");
+	const output = toolResults(scene.endpoint.requests[1]).at(-1);
+	assert.match(output, /"models":"undefined"/);
+	assert.match(
+		output,
+		/"tools":\["ask_parent","find","grep","list_mcp_resource_templates","list_mcp_resources","ls","mcp__global__echo","read","read_mcp_resource","report_result"\]/,
+	);
+	t.diagnostic(`codemode: ${output.split("\n").find((line) => line.includes("tools"))}`);
 });

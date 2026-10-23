@@ -67,6 +67,14 @@ test("the child runtime registers the guarded bash, ask_parent and report_result
 	assert.deepEqual([...explorer.tools.keys()], ["bash", "ask_parent"]);
 });
 
+test("the child registers codegraph only when the parent has CodeGraph seated", async (t) => {
+	const seated = await runtime(t, "explore", { codegraph: true });
+	assert.deepEqual([...seated.tools.keys()], ["bash", "codegraph", "ask_parent"]);
+	assert.deepEqual(seated.tools.get("codegraph").parameters.properties.operation.enum, ["query", "explore"]);
+	const unseated = await runtime(t, "explore");
+	assert.equal(unseated.tools.has("codegraph"), false);
+});
+
 test("the child's bash refuses a command reserved for the parent", async (t) => {
 	const { tools } = await runtime(t);
 	const result = await tools.get("bash").execute("call-1", { command: "git push origin HEAD" });

@@ -12,7 +12,6 @@ const handle = await createRpcChildSession({ command, sessionRoot })({
 	thinking: "off",
 	prompt: "You are a child session. Answer DONE.",
 	tools: ["read", "mcp__*"],
-	modelRegistry: {},
 	shell: {},
 	onEvent() {},
 	notify() {},

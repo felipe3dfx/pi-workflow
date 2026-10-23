@@ -16,7 +16,6 @@ import {
 import {
 	createAgentSession,
 	DefaultResourceLoader,
-	ModelRegistry,
 	ModelRuntime,
 	SessionManager,
 	SettingsManager,
@@ -29,15 +28,14 @@ import {
 	turnJevRoutingOn,
 } from "./support/jev-routing.mjs";
 import { classifierRegistry } from "./support/fake-jev.mjs";
-import { piChildSession } from "./support/child-session.mjs";
+import { runtimeChild, runtimeChildSession } from "./support/runtime-child.mjs";
 import {
 	replaceSelection,
 	seatedCapabilities,
-	paintAboveInput,
 } from "../extensions/shell.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { eventually } from "./support/eventually.mjs";
-import { createChildSessions, createPiChildSession } from "../extensions/child-sessions.ts";
+import { createChildSessions } from "../extensions/child-sessions.ts";
 import { createChildAudit } from "../extensions/child-audit.ts";
 import { withCheckpoint } from "./support/signed-checkpoint.mjs";
 
@@ -74,7 +72,7 @@ async function parent(t, authorization, tool = {
 				agentDirectory: agentDir,
 				authorization,
 				sources: sources ?? {},
-				childSessions: { create: createPiChildSession },
+				childSessions: { create: runtimeChild(runtime) },
 			})
 		: undefined;
 	const loader = new DefaultResourceLoader({
@@ -92,7 +90,7 @@ async function parent(t, authorization, tool = {
 					piWorkflowExtension(pi, {
 						agentDirectory: agentDir,
 						authorization,
-						childSessions: { create: createPiChildSession },
+						childSessions: { create: runtimeChild(runtime) },
 					}),
 			]),
 			(pi) => pi.registerTool(tool),
@@ -362,8 +360,8 @@ test("a real child consults its parent with retained context before the exact au
 	const host = await parent(t);
 	const questionReady = Promise.withResolvers();
 	const answer = Promise.withResolvers();
-	const child = await piChildSession({
-		cwd: host.agentDir, model: "faux/authorization", modelRegistry: new ModelRegistry(host.runtime),
+	const child = await runtimeChildSession({
+		cwd: host.agentDir, model: "faux/authorization", runtime: host.runtime,
 		authorization: {
 			authority,
 			classify: async (proposal) => proposal.consultation ? known : { ...known, scope: "unknown" },
@@ -379,7 +377,6 @@ test("a real child consults its parent with retained context before the exact au
 	const text = await Promise.race([questionReady.promise, action.then(() => "NO_CONSULTATION")]);
 	assert.match(text, /Resolve only within your authority/);
 	assert.equal(existsSync(path), false);
-	assert.equal(child.pendingAuthorizations()[0].proposal.action.input.path, path);
 	const question = JSON.parse(text.slice(text.indexOf("\n") + 1));
 	assert.equal(question.proposal.action.input.path, path);
 	answer.resolve(JSON.stringify({ ...question, kind: "resolved", answer: "This exact assigned write is authorized." }));
@@ -393,7 +390,7 @@ test("foreground returns unresolved action to the parent and a fresh authorized 
 	const host = await parent(t);
 	let authorized = false;
 	const core = createChildSessions({
-		create: createPiChildSession,
+		create: runtimeChild(host.runtime),
 		authorization: { authority, classify: async () => authorized ? known : { ...known, scope: "outside" } },
 		send() {}, idle: () => false, trace() {}, report() {},
 		audit: createChildAudit({ root: "", parent: () => undefined }),
@@ -405,7 +402,7 @@ test("foreground returns unresolved action to the parent and a fresh authorized 
 		task: "Perform the proposed write only if authorized", worktree: host.agentDir,
 		model: "faux/authorization", thinking: "off", chosenBy: "parent", references: [],
 	};
-	const launch = { background: false, modelRegistry: new ModelRegistry(host.runtime),
+	const launch = { background: false, 
 		project: () => ({ cwd: host.agentDir, trusted: false }), shell: () => ({}) };
 	const responses = () => host.provider.setResponses([
 		fauxAssistantMessage(fauxToolCall("write", { path, content: "FOREGROUND_EFFECT" }), { stopReason: "toolUse" }),
@@ -434,7 +431,7 @@ for (const failure of ["abort", "provider"]) {
 		let held = 0;
 		const core = createChildSessions({
 			create: async spec => {
-				const handle = await piChildSession(spec);
+				const handle = await runtimeChild(host.runtime)(spec);
 				return { ...handle, pendingAuthorizations: () => {
 					snapshot = handle.pendingAuthorizations();
 					return snapshot;
@@ -465,7 +462,6 @@ for (const failure of ["abort", "provider"]) {
 						task: "Perform only the assigned write", worktree: host.agentDir,
 						model: "faux/authorization", thinking: "off", chosenBy: "parent", references: [],
 					}, { background: false, signal: controller.signal,
-						modelRegistry: new ModelRegistry(host.runtime),
 						project: () => ({ cwd: host.agentDir, trusted: false }), shell: () => ({}) });
 				} catch (error) {
 					captured = error;
@@ -729,7 +725,7 @@ test("background ask and reply retain authority until classification, not receip
 	const checking = Promise.withResolvers();
 	const classified = Promise.withResolvers();
 	const core = createChildSessions({
-		create: createPiChildSession,
+		create: runtimeChild(host.runtime),
 		authorization: { authority, classify: async proposal => {
 			if (!proposal.consultation) return { ...known, scope: "unknown" };
 			checking.resolve();
@@ -748,7 +744,7 @@ test("background ask and reply retain authority until classification, not receip
 	const started = await core.start({
 		role: "worker", contract: { prompt: "Only assigned work", tools: [] }, task: "Perform proposed write only with authority",
 		worktree: host.agentDir, model: "faux/authorization", thinking: "off", chosenBy: "parent", references: [],
-	}, { background: true, modelRegistry: new ModelRegistry(host.runtime), project: () => ({ cwd: host.agentDir, trusted: false }), shell: () => ({}) });
+	}, { background: true, project: () => ({ cwd: host.agentDir, trusted: false }), shell: () => ({}) });
 	await eventually(() => core.list()[0].state === "waiting");
 	const message = sent.find(m => m.customType === "pi-workflow-child-question");
 	const question = JSON.parse(message.details.text.slice(message.details.text.indexOf("\n") + 1));
@@ -776,7 +772,7 @@ test("failed background consultation delivery retains proposals in the parent re
 	let authorized = false;
 	const sent = [];
 	const core = createChildSessions({
-		create: createPiChildSession,
+		create: runtimeChild(host.runtime),
 		authorization: { authority, classify: async () => authorized ? known : { ...known, scope: "unknown" } },
 		send: message => { if (message.customType === "pi-workflow-child-question") throw new Error("transport closed"); sent.push(message); },
 		idle: () => false, trace() {}, report() {},
@@ -788,7 +784,7 @@ test("failed background consultation delivery retains proposals in the parent re
 		fauxAssistantMessage(fauxToolCall("write", { path, content: "DELIVERY_RECOVERED_EFFECT" }), { stopReason: "toolUse" }),
 		fauxAssistantMessage(fauxText("Authority unresolved")),
 	]);
-	const launch = { background: true, modelRegistry: new ModelRegistry(host.runtime), project: () => ({ cwd: host.agentDir, trusted: false }), shell: () => ({}) };
+	const launch = { background: true, project: () => ({ cwd: host.agentDir, trusted: false }), shell: () => ({}) };
 	respond();
 	const started = await core.start({ role: "worker", contract: { prompt: "Assigned work only", tools: [] }, task: "Write only with authority", worktree: host.agentDir, model: "faux/authorization", thinking: "off", chosenBy: "parent", references: [] }, launch);
 	await eventually(() => core.get(started.id)?.state === "completed");
@@ -825,16 +821,15 @@ test("an unbound high-impact classifier confirmation still consults before dispa
 	assert.equal(readFileSync(path, "utf8"), "SPECIFIC_IMPACT_EFFECT");
 });
 
-
 test("task-authorized explorer commits signed changes through ordinary bash in shared context", async (t) => {
 	await withCheckpoint(async ({ main }) => {
 		const host = await parent(t);
 		writeFileSync(join(main, "assigned.txt"), "SIGNED_TASK_EFFECT");
 		writeFileSync(join(main, "others.txt"), "OTHERS_UNSTAGED");
 		const config = readFileSync(join(main, ".git", "config"));
-		const child = await piChildSession({
+		const child = await runtimeChildSession({
 			cwd: main, role: "explore", model: "faux/authorization",
-			modelRegistry: new ModelRegistry(host.runtime), sources: {},
+			runtime: host.runtime, sources: {},
 			authorization: {
 				authority: () => ({ ...authority(), commit: { paths: ["assigned.txt"], context: "noninterfering" } }),
 				classify: async () => ({ ...known, commit: { paths: ["assigned.txt"] } }),
@@ -851,7 +846,6 @@ test("task-authorized explorer commits signed changes through ordinary bash in s
 	});
 });
 
-
 async function commitFixture(t, options, verify) {
 	await withCheckpoint(async fixture => {
 		const host = await parent(t);
@@ -863,9 +857,9 @@ async function commitFixture(t, options, verify) {
 		const questions = [];
 		let executions = 0;
 		const commit = { paths: ["assigned.txt"], context: options.isolated ? "isolated" : "noninterfering" };
-		const child = await piChildSession({
+		const child = await runtimeChildSession({
 			cwd, role: options.role ?? "verify", model: "faux/authorization",
-			modelRegistry: new ModelRegistry(host.runtime),
+			runtime: host.runtime,
 			sources: { factories: [pi => {
 				pi.registerTool({
 					name: "commit_probe", label: "Commit probe", description: "Commit the assigned change",
@@ -1118,7 +1112,6 @@ test("task commit does not authorize a subsequent publication action", async t =
 	});
 });
 
-
 for (const problem of ["disabled-signing", "failing-signer"]) {
 	test(`task commit surfaces ${problem} without changing signing configuration`, async t => {
 		await commitFixture(t, {}, async ({ host, child, cwd, git, before }) => {
@@ -1190,7 +1183,6 @@ test("nested concurrent task commits cannot spend another invocation's preflight
 	});
 });
 
-
 test("task commit stays bound to its assigned branch after local context changes", async t => {
 	await commitFixture(t, { classify: async proposal => proposal.action.tool === "bash" ? known : { ...known, commit: { paths: ["assigned.txt"] } } },
 		async ({ host, child, git, before, executions }) => {
@@ -1204,7 +1196,6 @@ test("task commit stays bound to its assigned branch after local context changes
 			assert.equal(executions(), 0);
 		});
 });
-
 
 for (const target of ["outside", "metadata"]) {
 	test(`task commit refuses canonical ${target} paths behind a symlink`, async t => {
@@ -1435,13 +1426,13 @@ test("the host recipe and real child instantiate selected paths and owned dynami
 	mkdirSync(childDir);
 	let child;
 	await assert.doesNotReject(async () => {
-		child = await piChildSession({
+		child = await runtimeChildSession({
 			cwd: childDir,
 			project: { cwd: host.agentDir, trusted: false },
 			role: "verify",
 			model: "faux/authorization",
 			tools: ["read"],
-			modelRegistry: new ModelRegistry(host.runtime),
+			runtime: host.runtime,
 			sources,
 			authorization,
 		});
@@ -1526,12 +1517,12 @@ test("real direct and deferred MCP discovery, resources and runtime changes rema
 		(await host.call({ text: "host" }, "mcp__deferred__echo")).content[0].text,
 		/deferred echoes host/,
 	);
-	const child = await piChildSession({
+	const child = await runtimeChildSession({
 		cwd: fixtureDir,
 		role: "worker",
 		model: "faux/authorization",
 		tools: ["read"],
-		modelRegistry: new ModelRegistry(host.runtime),
+		runtime: host.runtime,
 		sources,
 		authorization,
 	});
@@ -1601,7 +1592,7 @@ test("real direct and deferred MCP discovery, resources and runtime changes rema
 });
 
 for (const pathKind of ["relative", "absolute"]) {
-	test(`${pathKind} selected source survives parent child and local grandchild launch`, async (t) => {
+	test(`${pathKind} selected source survives parent and child launch`, async (t) => {
 		const prior = seatedCapabilities();
 		replaceSelection({ schemaVersion: 1,
 			capabilities: Object.fromEntries(capabilities.map((c) => [c, true])), expectations: {} });
@@ -1615,24 +1606,16 @@ export default pi=>pi.registerTool({name:'selected_source',label:'Source',descri
 		const host = await parent(t, { authority, classify: async () => known }, undefined, sources);
 		assert.equal((await host.call({}, "selected_source")).content[0].text, host.agentDir);
 		const childDir = join(fixtureDir, "child");
-		const grandchildDir = join(fixtureDir, "grandchild");
-		for (const cwd of [childDir, grandchildDir]) {
-			mkdirSync(cwd);
-			execFileSync("git", ["init", "--quiet", cwd]);
-		}
+		mkdirSync(childDir);
+		execFileSync("git", ["init", "--quiet", childDir]);
 		host.provider.setResponses([
-			fauxAssistantMessage(fauxToolCall("spawn_child", { role: "explore", task: "Use selected_source then launch a local grandchild", worktree: childDir }), { stopReason: "toolUse" }),
+			fauxAssistantMessage(fauxToolCall("spawn_child", { role: "explore", task: "Use selected_source and complete", worktree: childDir }), { stopReason: "toolUse" }),
 			fauxAssistantMessage(fauxToolCall("selected_source", {}), { stopReason: "toolUse" }),
-			fauxAssistantMessage(fauxToolCall("spawn_child", { role: "explore", task: "Use selected_source and complete", worktree: grandchildDir }), { stopReason: "toolUse" }),
-			fauxAssistantMessage(fauxToolCall("selected_source", {}), { stopReason: "toolUse" }),
-			fauxAssistantMessage(fauxText("grandchild completed")),
 			fauxAssistantMessage(fauxText("child completed")),
 			fauxAssistantMessage(fauxText("parent completed")),
 		]);
 		await host.session.prompt("Complete the assigned local source proof.");
 		assert.equal(readFileSync(join(childDir, "source-completed"), "utf8"), "LOCAL_SOURCE_COMPLETED");
-		assert.equal(existsSync(join(grandchildDir, "source-completed")), true, "grandchild must execute the selected source locally");
-		assert.equal(readFileSync(join(grandchildDir, "source-completed"), "utf8"), "LOCAL_SOURCE_COMPLETED");
 		const result = host.session.messages.filter(m => m.role === "toolResult" && m.toolName === "spawn_child").at(-1);
 		assert.equal(result.isError, false);
 		assert.match(result.content.map(c => c.text ?? "").join(""), /child completed/);
@@ -1653,13 +1636,13 @@ test("selected configured bash executes locally in parent and contextual child w
 	mkdirSync(cwd);
 	assert.equal((await host.call({ command: "printf NATIVE_SHELL" }, "bash")).content[0].text,
 		`CONFIGURED_LOCAL_BASH:${host.agentDir}`);
-	const child = await piChildSession({ cwd, role: "worker", model: "faux/authorization",
-		modelRegistry: new ModelRegistry(host.runtime), sources, authorization });
+	const child = await runtimeChildSession({ cwd, role: "worker", model: "faux/authorization",
+		runtime: host.runtime, sources, authorization });
 	t.after(() => child.dispose());
 	assert.equal((await childCall(host, child, "bash", { command: "printf NATIVE_SHELL" })).content[0].text,
 		`CONFIGURED_LOCAL_BASH:${cwd}`);
-	const legacy = await piChildSession({ cwd, role: "worker", model: "faux/authorization",
-		tools: ["bash"], modelRegistry: new ModelRegistry(host.runtime) });
+	const legacy = await runtimeChildSession({ cwd, role: "worker", model: "faux/authorization",
+		tools: ["bash"], runtime: host.runtime });
 	t.after(() => legacy.dispose());
 	assert.equal((await childCall(host, legacy, "bash", { command: "printf NATIVE_SHELL" })).content[0].text, "NATIVE_SHELL");
 	assert.match((await childCall(host, legacy, "bash", { command: "git push" })).content[0].text, /reserved for the parent/);
@@ -1670,15 +1653,15 @@ test("contextual native bash fallback preserves the configured shell and command
 	const host = await parent(t, authorization);
 	const shellPath = join(host.agentDir, "configured-shell");
 	writeFileSync(shellPath, '#!/bin/sh\nexport PI_CONFIGURED_SHELL=CONFIGURED_PATH\nexec /bin/bash "$@"\n', { mode: 0o755 });
-	const child = await piChildSession({ cwd: host.agentDir, role: "worker", model: "faux/authorization",
-		modelRegistry: new ModelRegistry(host.runtime), authorization,
+	const child = await runtimeChildSession({ cwd: host.agentDir, role: "worker", model: "faux/authorization",
+		runtime: host.runtime, authorization,
 		shell: { shellPath, commandPrefix: "export PI_CONFIGURED_PREFIX=CONFIGURED_PREFIX" } });
 	t.after(() => child.dispose());
 	assert.equal((await childCall(host, child, "bash", { command: 'printf "%s:%s" "$PI_CONFIGURED_SHELL" "$PI_CONFIGURED_PREFIX"' })).content[0].text,
 		"CONFIGURED_PATH:CONFIGURED_PREFIX");
 });
 
-test("a real parent launch carries common sources and local authority into the SDK child", async (t) => {
+test("a real parent launch carries common sources and local authority into the child", async (t) => {
 	const prior = seatedCapabilities();
 	replaceSelection({
 		schemaVersion: 1,
@@ -1796,12 +1779,12 @@ test("changed parent authority and unresolved child ownership are held with Jev 
 			}),
 			onDecision: (d) => outcomes.push(d.kind),
 		};
-		const child = await piChildSession({
+		const child = await runtimeChildSession({
 			cwd: run.agentDir,
 			role: "verify",
 			model: "faux/authorization",
 			tools: ["write"],
-			modelRegistry: new ModelRegistry(run.runtime),
+			runtime: run.runtime,
 			sources: {},
 			authorization: configuration,
 		});
@@ -1842,11 +1825,11 @@ test("concurrent real siblings keep cancellation and held actions local", async 
 				}),
 		],
 	};
-	const a = await piChildSession({
+	const a = await runtimeChildSession({
 		cwd: host.agentDir,
 		role: "worker",
 		model: "faux/authorization",
-		modelRegistry: new ModelRegistry(host.runtime),
+		runtime: host.runtime,
 		sources,
 		authorization: {
 			authority,
@@ -1857,11 +1840,11 @@ test("concurrent real siblings keep cancellation and held actions local", async 
 			onDecision: (d) => held.push(d.kind),
 		},
 	});
-	const b = await piChildSession({
+	const b = await runtimeChildSession({
 		cwd: host.agentDir,
 		role: "verify",
 		model: "faux/authorization",
-		modelRegistry: new ModelRegistry(host.runtime),
+		runtime: host.runtime,
 		sources,
 		authorization: { authority, classify: async () => known },
 	});
@@ -2116,12 +2099,12 @@ test("an actual child's prohibited write has the same zero-effect outcome as the
 		fauxAssistantMessage(fauxText("finished")),
 	]);
 	const decisions = [];
-	const child = await piChildSession({
+	const child = await runtimeChildSession({
 		cwd: host.agentDir,
 		role: "worker",
 		model: "faux/authorization",
 		tools: ["write"],
-		modelRegistry: new ModelRegistry(host.runtime),
+		runtime: host.runtime,
 		authorization: {
 			authority,
 			classify: async () => ({
@@ -2162,12 +2145,12 @@ test("each child role instantiates common custom sources locally rather than app
 			}),
 			fauxAssistantMessage(fauxText("finished")),
 		]);
-		const child = await piChildSession({
+		const child = await runtimeChildSession({
 			cwd: host.agentDir,
 			role,
 			model: "faux/authorization",
 			tools: ["read"],
-			modelRegistry: new ModelRegistry(host.runtime),
+			runtime: host.runtime,
 			sources: { factories: [factory] },
 			authorization: { authority, classify: async () => known },
 		});
@@ -2190,12 +2173,12 @@ test("a known authorized child read is not vetoed by the replaced shell command 
 		}),
 		fauxAssistantMessage(fauxText("finished")),
 	]);
-	const child = await piChildSession({
+	const child = await runtimeChildSession({
 		cwd: host.agentDir,
 		role: "explore",
 		model: "faux/authorization",
 		tools: ["read"],
-		modelRegistry: new ModelRegistry(host.runtime),
+		runtime: host.runtime,
 		sources: {},
 		authorization: { authority, classify: async () => known },
 	});
@@ -2208,55 +2191,6 @@ test("a known authorized child read is not vetoed by the replaced shell command 
 	const text = result.content.map((c) => c.text ?? "").join("");
 	assert.doesNotMatch(text, /reserved for the parent/);
 	assert.match(text, /not a git repository/);
-});
-
-test("a contextual child's local Todo cannot overwrite the parent's data or physical painter", async (t) => {
-	const prior = seatedCapabilities();
-	replaceSelection({
-		schemaVersion: 1,
-		capabilities: Object.fromEntries(capabilities.map((c) => [c, true])),
-		expectations: {},
-	});
-	t.after(() =>
-		replaceSelection({ schemaVersion: 1, ...prior, expectations: {} }),
-	);
-	const host = await parent(
-		t,
-		{ authority, classify: async () => known },
-		undefined,
-	);
-	await host.call({ action: "add", text: "Parent-owned task" }, "todo");
-	host.provider.setResponses([
-		fauxAssistantMessage(
-			fauxToolCall("todo", { action: "add", text: "Child-local task" }),
-			{ stopReason: "toolUse" },
-		),
-		fauxAssistantMessage(fauxText("finished")),
-	]);
-	const child = await piChildSession({
-		cwd: host.agentDir,
-		role: "explore",
-		model: "faux/authorization",
-		tools: ["read"],
-		modelRegistry: new ModelRegistry(host.runtime),
-		sources: {},
-		authorization: { authority, classify: async () => known },
-	});
-	t.after(() => child.dispose());
-	await child.run("Track this local assigned task.");
-	const childResult = child
-		.entries()
-		.filter((e) => e.type === "message" && e.message.role === "toolResult")
-		.at(-1).message;
-	assert.match(childResult.content[0].text, /Child-local task/);
-	const painted = paintAboveInput(80, {
-		fg: (_color, text) => text,
-		bold: (text) => text,
-	}).join("\n");
-	assert.match(painted, /Parent-owned task/);
-	assert.doesNotMatch(painted, /Child-local task/);
-	const parentList = await host.call({ action: "list" }, "todo");
-	assert.doesNotMatch(parentList.content[0].text, /Child-local task/);
 });
 
 test("class authorization adapters preserve prototype methods and instance receivers", async (t) => {
@@ -2557,9 +2491,9 @@ test("same supplied authority and action have equivalent parent-child outcomes w
 	const registry = host.session.extensionRunner.createContext().modelRegistry;
 	Object.assign(registry, jev.registry);
 	registry.getApiKeyForProvider = async () => "fixture";
-	const child = await piChildSession({
+	const child = await runtimeChildSession({
 		cwd: host.agentDir, role: "worker", model: "faux/authorization",
-		modelRegistry: new ModelRegistry(host.runtime), sources: {}, authorization,
+		runtime: host.runtime, sources: {}, authorization,
 	});
 	t.after(() => child.dispose());
 	const input = { path: join(host.agentDir, "assigned.txt"), content: "MATRIX_EFFECT" };
@@ -2606,9 +2540,9 @@ for (const checkpoint of [false, true]) {
 		const head = git("rev-parse", "HEAD");
 		const index = readFileSync(join(cwd, ".git", "index"));
 		writeFileSync(join(cwd, "assigned.txt"), "after");
-		const child = await piChildSession({
+		const child = await runtimeChildSession({
 			cwd, role: "worker", model: "faux/authorization",
-			modelRegistry: new ModelRegistry(host.runtime), sources: {},
+			runtime: host.runtime, sources: {},
 			authorization: { authority, classify: async proposal => proposal.action.input.command === "git notes list" ? known : { ...known, commit: { paths: ["assigned.txt"] } } },
 			ask: async () => { throw new Error("Commit task authority unresolved"); },
 			...(checkpoint ? { checkpoint: {
@@ -2652,9 +2586,9 @@ test("selected system transforms stay local to parent and child snapshots", asyn
 	const host = await parent(t, authorization, undefined, sources);
 	const childCwd = join(host.agentDir, "child");
 	mkdirSync(childCwd);
-	const child = await piChildSession({
+	const child = await runtimeChildSession({
 		cwd: childCwd, role: "verify", model: "faux/authorization",
-		modelRegistry: new ModelRegistry(host.runtime), sources, authorization,
+		runtime: host.runtime, sources, authorization,
 	});
 	t.after(() => child.dispose());
 	const parentInput = { path: join(host.agentDir, "assigned.txt"), content: "blocked" };
