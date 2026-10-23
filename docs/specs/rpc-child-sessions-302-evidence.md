@@ -33,7 +33,9 @@
 
 ## Quality gate
 
-See the report of this ticket for the final `npm run check` totals and duration.
+`npm run check` after merging `296-rpc-children` (with #300): exit 0, tests 1336, pass 1321, fail 0, skipped 15, wall clock 39 s.
+
+The real-parent test removes `node_modules/.bin` from the parent's `PATH`. Under `npm run check` that directory comes first and holds the SDK 1.0.4 `pi` CLI, so without it the parent and its children would not be the installed Pi 1.4.0.
 
 ## Open gaps
 
@@ -42,3 +44,5 @@ See the report of this ticket for the final `npm run check` totals and duration.
 - A launch whose `spawn_child` call is still preparing when the reload starts (before the factory runs) is launched into the detached registry and is stopped only when the parent ends. The same race existed for `disposeAll`.
 - If an audit drain or a child disposal outlasts its deadline during the reload, its late completion still runs against the old runtime's audit counters.
 - The stall watchdog of a surviving child restarts its full period at the reload.
+- A contextual child (unadopted path, #300) keeps the old runtime's authorization object across a reload; the production path has none.
+- The other real-binary tests in `test/rpc-child-pi.test.mjs` resolve `pi` from `PATH`, which under `npm run check` is the SDK 1.0.4 CLI in `node_modules/.bin`, not the installed 1.4.0 binary.
