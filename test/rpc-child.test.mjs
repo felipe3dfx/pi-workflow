@@ -37,6 +37,7 @@ async function fakeChild(t, scenario, spec = {}, options = {}) {
 		delete process.env.FAKE_PI_WITHDRAW_MS;
 		delete process.env.FAKE_PI_LINGER_MS;
 		delete process.env.FAKE_PI_FRAME_BYTES;
+		delete process.env.FAKE_PI_LACKS;
 	});
 	const events = [];
 	const notes = [];
@@ -130,7 +131,6 @@ test("an RPC child runs as its own Pi process in its worktree with the selected 
 		shell: {},
 		codegraph: false,
 	});
-	assert.deepEqual(handle.tools, ["read", "grep", "codemode", "mcp__*", "bash", "ask_parent"]);
 });
 
 test("an RPC child gets codegraph when the parent has CodeGraph seated", async (t) => {
@@ -362,6 +362,20 @@ test("readiness refuses a Pi process running another session or model", async (t
 			await assert.rejects(handle.run("Say done."), message);
 		});
 	}
+});
+
+test("readiness refuses a child that lacks a contract tool, except codegraph while CodeGraph is unseated", async (t) => {
+	process.env.FAKE_PI_LACKS = "bash";
+	const lacking = await fakeChild(t, "complete");
+	await assert.rejects(lacking.handle.run("Say done."), /lacks the contract tools bash\./);
+	process.env.FAKE_PI_LACKS = "codegraph";
+	const unseated = await fakeChild(t, "complete", { role: "explore", tools: ["read", "codegraph", "ask_parent"] });
+	assert.equal(await unseated.handle.run("Say done."), "DONE");
+	const capabilityOff = Object.fromEntries(capabilities.map((capability) => [capability, false]));
+	replaceSelection({ schemaVersion: 1, capabilities: { ...capabilityOff, codegraph: true }, expectations: {} });
+	t.after(() => replaceSelection({ schemaVersion: 1, capabilities: capabilityOff, expectations: {} }));
+	const seated = await fakeChild(t, "complete", { role: "explore", tools: ["read", "codegraph", "ask_parent"] });
+	await assert.rejects(seated.handle.run("Say done."), /lacks the contract tools codegraph\./);
 });
 
 test("an RPC child whose transcript cannot be read fails its run", async (t) => {

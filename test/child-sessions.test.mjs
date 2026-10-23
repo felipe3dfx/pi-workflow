@@ -1229,45 +1229,6 @@ test("a profile model Pi cannot run refuses the launch with no child id", async 
 	});
 });
 
-test("a child that would run another model or thinking stays pending, and one missing a contract tool is refused", async () => {
-	await withWorkspace(async ({ worktree, agentDir }) => {
-		const cases = [
-			{ child: { model: "other/model" }, status: "pending" },
-			{ child: { thinking: "low" }, status: "pending" },
-			{
-				child: { tools: workerTools.filter((tool) => tool !== "bash") },
-				status: "refused",
-				reason: /bash/,
-			},
-			{
-				child: { tools: workerTools.filter((tool) => tool !== "codemode") },
-				status: "refused",
-				reason: /lacks the contract tools codemode\./,
-			},
-		];
-		for (const { child, status, reason } of cases) {
-			const children = fakeChildren(child);
-			const { tool, messages } = await loadSpawnTool({
-				agentDir,
-				create: children.create,
-			});
-
-			const result = await spawn(
-				tool,
-				{ role: "worker", task: "Fix the failing test" },
-				toolContext("tui", worktree),
-			);
-
-			assert.equal(result.details.status, status);
-			if (reason) assert.match(result.details.reason, reason);
-			assert.equal("id" in result.details, false);
-			assert.deepEqual(children.created[0].tasks, []);
-			assert.equal(children.created[0].disposals, 1);
-			assert.equal(messages.length, 0);
-		}
-	});
-});
-
 test("aborting a foreground call aborts the child, while a background child ignores the call's signal", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
@@ -2925,15 +2886,17 @@ test("print and json launches from a script run in the foreground outside the la
 	});
 });
 
-test("a pending launch from a script is no launched child and holds no place under the launch limit", async () => {
+test("a refused launch from a script is no launched child and holds no place under the launch limit", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
-		const mismatched = fakeChildren({ model: "other/model", onCreate: () => delay(5) });
 		const children = fakeChildren({ onCreate: () => delay(5) });
-		let pending = true;
+		let refusing = true;
 		const extension = await loadSpawnTool({
 			agentDir,
-			create: (spec) =>
-				pending ? mismatched.create(spec) : children.create(spec),
+			create: async (spec) => {
+				await delay(5);
+				if (refusing) throw new Error("The child Pi process could not start.");
+				return children.create(spec);
+			},
 		});
 		const script = () =>
 			Promise.all(
@@ -2951,11 +2914,11 @@ test("a pending launch from a script is no launched child and holds no place und
 		const held = await script();
 		assert.deepEqual(
 			held.map((result) => result.details.status),
-			Array(10).fill("pending"),
+			Array(10).fill("refused"),
 		);
 		assert.equal((await use(extension, "list_children", {})).details.children.length, 0);
 
-		pending = false;
+		refusing = false;
 		const launched = await script();
 		assert.deepEqual(
 			launched.map((result) => result.details.status),
@@ -7139,25 +7102,6 @@ test("a launch refused inside start does not take the task from the running chil
 		await settle();
 		const refused = await spawn(extension.tool, { role: "worker", task: "Again", todo: 1 }, toolContext("tui", worktree));
 		assert.equal(refused.details.status, "refused");
-		children.created[0].spec.report(workerResult("done"));
-		children.created[0].result.resolve("Finished.");
-		await settle();
-		const delivered = extension.messages.map(({ message }) => message.content).join("\n\n");
-		assert.match(delivered, /Task #1 is now done\./);
-		assert.equal(await todo.list(), "[done] #1: Fix the parser");
-	});
-});
-
-test("a launch refused after the child is created does not take the task from the running child", async () => {
-	await withWorkspace(async ({ worktree, agentDir }) => {
-		const children = fakeChildren({ model: (index, spec) => (index === 1 ? "other/model" : spec.model) });
-		const extension = await loadSpawnTool({ agentDir, create: children.create });
-		const todo = todoTool(extension);
-		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
-		await spawnOnTask(extension, worktree, 1);
-		await settle();
-		const refused = await spawn(extension.tool, { role: "worker", task: "Again", todo: 1 }, toolContext("tui", worktree));
-		assert.equal(refused.details.status, "pending");
 		children.created[0].spec.report(workerResult("done"));
 		children.created[0].result.resolve("Finished.");
 		await settle();

@@ -16,6 +16,7 @@ import type { ActionAuthorization, AuthorizationDecision } from "./action-author
 import {
 	type ChildHandle,
 	type ChildSessionFactory,
+	mcpTools,
 	shutdownDeadline,
 } from "./child-sessions.ts";
 import {
@@ -32,7 +33,7 @@ import { errorMessage } from "./error-message.ts";
 import { stopTree, treeEnvironment } from "./process-tree.ts";
 import { seated } from "./shell.ts";
 import { defaultActiveTools } from "./tool-sources.ts";
-import { resolveClaudeBridgeExtension, resolveWebAccessExtensions } from "./web-access.ts";
+import { resolveClaudeBridgeExtension, resolveWebAccessExtensions, webAccessTools } from "./web-access.ts";
 
 export const readinessDeadline = 10_000;
 export const channelFrameLimit = 1024 * 1024;
@@ -128,6 +129,13 @@ export function createRpcChildSession(
 				active: spec.sources?.active ?? defaultActiveTools,
 			},
 		};
+		// MCP and web tools register only when configured, and codegraph only while seated (ADR 0023).
+		const required = spec.tools.filter(
+			(tool) =>
+				!mcpTools.includes(tool) &&
+				!webAccessTools.includes(tool) &&
+				(tool !== "codegraph" || runtime.codegraph),
+		);
 		const args = [
 			...prefix,
 			"--mode", "rpc",
@@ -302,7 +310,7 @@ export function createRpcChildSession(
 				input,
 				(frame) => {
 					if (frame.type === "ready") {
-						connected?.resolve(undefined);
+						connected?.resolve(frame.tools);
 						connected = undefined;
 					} else if (frame.type === "ask") {
 						answer(frame.id, (signal) => spec.ask(frame.question, signal));
@@ -395,7 +403,11 @@ export function createRpcChildSession(
 					);
 				}
 				// Without the child runtime, Pi's built-in bash would run without the ADR 0013 guard.
-				await Promise.race([runtimeReady, deadline]);
+				const active = (await Promise.race([runtimeReady, deadline])) as string[];
+				const missing = policy ? [] : required.filter((tool) => !active.includes(tool));
+				if (missing.length > 0) {
+					throw new Error(`The child Pi process lacks the contract tools ${missing.join(", ")}.`);
+				}
 				entries = [];
 				await Promise.race([refresh(), deadline]);
 			} finally {
@@ -406,9 +418,6 @@ export function createRpcChildSession(
 		const handle: ChildHandle = {
 			sessionId,
 			entries: () => entries,
-			model: spec.model,
-			thinking: spec.thinking,
-			tools: spec.tools,
 			pendingAuthorizations: () => structuredClone([...held.values()]),
 			async run(task) {
 				starting ??= ready();

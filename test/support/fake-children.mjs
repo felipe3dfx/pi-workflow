@@ -5,7 +5,7 @@ export function userEntry(id, text) {
 	return { type: "message", id, message: { role: "user", content: text } };
 }
 
-export function fakeChildren({ model, thinking, tools, run, dispose, onCreate } = {}) {
+export function fakeChildren({ run, dispose, onCreate } = {}) {
 	const created = [];
 	const create = async (spec) => {
 		await onCreate?.();
@@ -37,9 +37,6 @@ export function fakeChildren({ model, thinking, tools, run, dispose, onCreate } 
 		return {
 			sessionId: `session-${created.length - 1}`,
 			entries: () => child.entries,
-			model: typeof model === "function" ? model(created.length - 1, spec) : (model ?? spec.model),
-			thinking: thinking ?? spec.thinking,
-			tools: tools ?? spec.tools,
 			run: async (task) => {
 				child.tasks.push(task);
 				return run ? run(task, child.spec) : child.result.promise;

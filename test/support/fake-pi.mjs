@@ -42,7 +42,10 @@ channel.on("data", (chunk) => {
 	}
 });
 channel.on("error", () => {});
-if (scenario !== "no-runtime") tell({ type: "ready" });
+if (scenario !== "no-runtime") {
+	const tools = (flag("--tools") ?? "").split(",");
+	tell({ type: "ready", tools: tools.filter((tool) => tool !== process.env.FAKE_PI_LACKS) });
+}
 const consult = (frame) =>
 	new Promise((resolve) => {
 		replies.set(frame.id, resolve);

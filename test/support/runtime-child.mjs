@@ -96,8 +96,6 @@ export function runtimeChild(runtime) {
 			sessionId: session.sessionId,
 			entries: () => session.sessionManager.getEntries(),
 			pendingAuthorizations: () => held(session.sessionManager.getEntries()),
-			model: `${session.model.provider}/${session.model.id}`,
-			thinking: session.thinkingLevel,
 			tools: session.getActiveToolNames(),
 			async run(task) {
 				await session.prompt(task);

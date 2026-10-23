@@ -87,9 +87,6 @@ interface Conversation {
 export interface ChildHandle {
 	sessionId: string;
 	entries(): SessionEntry[];
-	model: string | undefined;
-	thinking: string;
-	tools: string[];
 	run(task: string): Promise<string>;
 	steer(text: string): Promise<void>;
 	clearQueue(): string[];
@@ -313,7 +310,7 @@ function parentProject(ctx: ExtensionContext): ParentProject {
 	return { cwd: ctx.cwd, trusted: ctx.isProjectTrusted() };
 }
 
-const mcpTools = [
+export const mcpTools = [
 	"mcp__*",
 	"list_mcp_resources",
 	"list_mcp_resource_templates",
@@ -771,6 +768,7 @@ export function createChildSessions(options: {
 			checkpointed: () => {},
 		};
 		const launchedIn = generation;
+		const tools = childTools(plan);
 		let handle: ChildHandle;
 		try {
 			handle = await create({
@@ -782,7 +780,7 @@ export function createChildSessions(options: {
 				model: plan.model,
 				thinking: plan.thinking,
 				prompt: plan.contract.prompt,
-				tools: childTools(plan),
+				tools,
 				shell: launch.shell(),
 				onEvent: (event) => port.event(event),
 				notify: (message) => port.notify(message),
@@ -795,21 +793,6 @@ export function createChildSessions(options: {
 			});
 		} catch (error) {
 			return refused(`The child session could not be created: ${errorMessage(error)}`);
-		}
-		if (handle.model !== plan.model || handle.thinking !== plan.thinking) {
-			void shutDown(handle);
-			return {
-				status: "pending" as const,
-				warning: "The work stays pending. No child was launched.",
-				reason: `The child would run ${handle.model ?? "no model"} at ${handle.thinking} instead of the selected ${plan.model} at ${plan.thinking}.`,
-			};
-		}
-		const missing = options.authorization
-			? []
-			: plan.contract.tools.filter((tool) => !handle.tools.includes(tool));
-		if (missing.length > 0) {
-			void shutDown(handle);
-			return refused(`The child session lacks the contract tools ${missing.join(", ")}.`);
 		}
 		if (launch.signal?.aborted) {
 			void shutDown(handle);
@@ -827,7 +810,7 @@ export function createChildSessions(options: {
 			task: plan.task,
 			references: plan.references,
 			instructions: plan.contract.prompt,
-			tools: handle.tools,
+			tools,
 			model: plan.model,
 			thinking: plan.thinking,
 			worktree: plan.worktree,
@@ -1519,7 +1502,7 @@ function launched(
 			{ ...started, warnings },
 		);
 	}
-	if (started.status === "refused" || started.status === "pending") {
+	if (started.status === "refused") {
 		return notLaunched(started.status, {
 			...started,
 			warnings,

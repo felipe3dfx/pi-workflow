@@ -62,7 +62,7 @@ test("the child runtime registers the guarded bash, ask_parent and report_result
 	const worker = await runtime(t, "worker");
 	await worker.flushed();
 	assert.deepEqual([...worker.tools.keys()], ["bash", "ask_parent", "report_result"]);
-	assert.deepEqual(worker.frames, [{ type: "ready" }]);
+	assert.deepEqual(worker.frames, [{ type: "ready", tools: ["read", "bash", "edit", "write"] }]);
 	const explorer = await runtime(t, "explore");
 	assert.deepEqual([...explorer.tools.keys()], ["bash", "ask_parent"]);
 });

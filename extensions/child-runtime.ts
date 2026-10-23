@@ -59,7 +59,7 @@ type ChildRequest =
 	| { type: "policy"; method: PolicyMethod; value?: unknown };
 
 export type ChildFrame =
-	| { type: "ready" }
+	| { type: "ready"; tools: string[] }
 	| { type: "withdraw"; id: number }
 	| (ChildRequest & { id: number });
 
@@ -181,7 +181,7 @@ export function parentChannel(input: Readable, output: Writable) {
 	input.once("error", close);
 	output.once("error", close);
 	return {
-		ready: () => send({ type: "ready" }),
+		ready: (tools: string[]) => send({ type: "ready", tools }),
 		request(frame: ChildRequest, signal?: AbortSignal) {
 			if (closed) return Promise.reject(closed);
 			if (signal?.aborted) return Promise.reject(new Error("The call was aborted."));
@@ -301,7 +301,7 @@ export async function installChildRuntime(
 	pi.on("before_agent_start", (event) => {
 		event.systemPromptOptions.appendSystemPrompt = "";
 	});
-	channel.ready();
+	channel.ready(pi.getActiveTools());
 }
 
 export default function childRuntime(pi: ExtensionAPI) {
