@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import childProcess from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { syncBuiltinESMExports } from "node:module";
 import { delimiter, join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -228,6 +230,43 @@ test("a child that disconnects withdraws its open question", async (t) => {
 	await handle.dispose();
 	assert.equal(signals[0].aborted, true);
 	await assert.rejects(run, /exited/);
+});
+
+function spawned(t) {
+	const processes = [];
+	const spawn = childProcess.spawn;
+	childProcess.spawn = (...args) => {
+		const child = spawn(...args);
+		processes.push(child);
+		return child;
+	};
+	syncBuiltinESMExports();
+	t.after(() => {
+		childProcess.spawn = spawn;
+		syncBuiltinESMExports();
+	});
+	return processes;
+}
+
+test("an error on the child's output streams fails the child, not the parent", async (t) => {
+	for (const stream of ["stdout", "stderr"]) {
+		await t.test(stream, async (t) => {
+			const processes = spawned(t);
+			let asked = false;
+			const { handle } = await fakeChild(t, "ask", {
+				ask: () => {
+					asked = true;
+					return new Promise(() => {});
+				},
+			});
+			const run = handle.run("Ask first.");
+			run.catch(() => {});
+			await eventually(() => asked, Boolean);
+			const pi = processes.find((child) => child.spawnargs.includes("--mode"));
+			pi[stream].emit("error", new Error("read EIO"));
+			await assert.rejects(run, /read EIO/);
+		});
+	}
 });
 
 test("a child's structured report reaches the parent apart from its final answer", async (t) => {
