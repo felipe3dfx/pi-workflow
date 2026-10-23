@@ -229,7 +229,7 @@ export function createRpcChildSession(
 				} else if (record.type === "message_end" && message?.role === "assistant") {
 					last = message;
 				}
-				if (record.type === "message_end") await refresh().catch(() => {});
+				if (record.type === "message_end") await refresh().catch(fail);
 			} else if (record.type === "queue_update") {
 				steering = [...(record.steering as string[])];
 			} else if (record.type === "entry_appended") {

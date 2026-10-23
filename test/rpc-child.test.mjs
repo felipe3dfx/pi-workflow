@@ -359,6 +359,11 @@ test("readiness refuses a Pi process running another session or model", async (t
 	}
 });
 
+test("an RPC child whose transcript cannot be read fails its run", async (t) => {
+	const { handle } = await fakeChild(t, "entries-fail");
+	await assert.rejects(handle.run("Say done."), /entries unavailable/);
+});
+
 test("an RPC child steers, reports undelivered steering and aborts", async (t) => {
 	const { handle, events } = await fakeChild(t, "steer");
 	const run = handle.run("Wait.");

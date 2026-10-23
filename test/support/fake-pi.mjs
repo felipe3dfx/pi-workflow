@@ -147,6 +147,10 @@ const handlers = {
 		});
 	},
 	get_entries: (command) => {
+		if (scenario === "entries-fail" && entries.length > 0) {
+			write({ id: command.id, type: "response", command: command.type, success: false, error: "entries unavailable" });
+			return;
+		}
 		const since = entries.findIndex((item) => item.id === command.since);
 		respond(command, { entries: entries.slice(since + 1), leafId: entries.at(-1)?.id ?? null });
 	},
