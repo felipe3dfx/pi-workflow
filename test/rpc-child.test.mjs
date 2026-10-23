@@ -330,6 +330,11 @@ test("an RPC child that cannot start fails its run with its diagnostics", async 
 	await assert.rejects(handle.run("Say done."), /exited with code 3.*fake pi refused to start/s);
 });
 
+test("an RPC child whose executable is missing fails its run with the spawn error", async (t) => {
+	const { handle } = await fakeChild(t, "complete", {}, { command: [join(tmpdir(), "pi-workflow-missing-pi")] });
+	await assert.rejects(handle.run("Say done."), /ENOENT/);
+});
+
 test("readiness is a correlated state reply within the readiness deadline", async (t) => {
 	assert.equal(readinessDeadline, 10_000);
 	const scheduled = [];

@@ -355,6 +355,8 @@ export function createRpcChildSession(
 			});
 			pi.once("error", (error) => fail(error));
 			pi.stdin.on("error", () => {});
+			// Under Bun a failed spawn leaves the channel null and reports the cause by a later error event.
+			if (pi.pid === undefined || !pi.stdio[channelDescriptor]) return;
 			pi.stderr.setEncoding("utf8");
 			pi.stderr.on("data", (chunk: string) => {
 				stderr = `${stderr}${chunk}`.slice(-4000);
