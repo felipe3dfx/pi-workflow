@@ -12,9 +12,9 @@ members() {
 		grep -l -s -z "^PI_WORKFLOW_PROCESS_TREE=$mark" /proc/[0-9]*/environ |
 			sed 's|^/proc/\([0-9]*\)/environ$|\1|'
 	else
+		# Built inside awk, the pattern appears in no command line, its own included.
 		ps -A -E -ww -o pid= -o command= |
-			grep " PI_WORKFLOW_PROCESS_TREE=$mark" |
-			awk '{ print $1 }'
+			awk -v mark="$mark" 'index($0, " PI_WORKFLOW_PROCESS_TREE=" mark) { print $1 }'
 	fi
 }
 
