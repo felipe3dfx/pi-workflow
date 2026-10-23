@@ -32,6 +32,7 @@ import {
 	ModelRegistry,
 	ModelRuntime,
 	SettingsManager,
+	VERSION,
 } from "@earendil-works/pi-coding-agent";
 import {
 	KeybindingsManager,
@@ -1986,7 +1987,7 @@ async function withPathPi(dir, scenario, run) {
 	await mkdir(bin);
 	await writeFile(
 		join(bin, "pi"),
-		`#!/bin/sh\nexec "${process.execPath}" "${fakePi}" "$@"\n`,
+		`#!/bin/sh\nif [ "$1" = "--version" ]; then echo "${VERSION}"; exit 0; fi\nexec "${process.execPath}" "${fakePi}" "$@"\n`,
 		{ mode: 0o755 },
 	);
 	const record = join(dir, "pi.json");

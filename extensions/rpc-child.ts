@@ -1,15 +1,17 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { accessSync, constants, readdirSync } from "node:fs";
 import { basename, delimiter, join, resolve } from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import {
 	type AgentSessionEvent,
 	getAgentDir,
 	type SessionEntry,
+	VERSION,
 } from "@earendil-works/pi-coding-agent";
 
 import type { ActionAuthorization, AuthorizationDecision } from "./action-authorization.ts";
@@ -66,6 +68,19 @@ export function installedPi() {
 	throw new Error("Pi was not found on PATH.");
 }
 
+async function verifiedPi() {
+	const path = installedPi();
+	if (path === process.execPath) return { path, version: VERSION };
+	const { stdout } = await promisify(execFile)(path, ["--version"], { timeout: readinessDeadline });
+	const version = stdout.trim();
+	if (version !== VERSION) {
+		throw new Error(
+			`The Pi on PATH at ${path} is version ${version}, but the parent runs Pi ${VERSION}; a child must run the parent's Pi version.`,
+		);
+	}
+	return { path, version };
+}
+
 function sessionFile(root: string, sessionId: string) {
 	const directory = join(root, sessionId);
 	const file = readdirSync(directory).find((name) => name.endsWith(".jsonl"));
@@ -96,6 +111,14 @@ export function createRpcChildSession(
 	options: { command?: string[]; sessionRoot?: string; schedule?: Schedule } = {},
 ): ChildSessionFactory {
 	const schedule = options.schedule ?? scheduleTimer;
+	let executable: ReturnType<typeof verifiedPi> | undefined;
+	function piExecutable() {
+		executable ??= verifiedPi().catch((error: unknown) => {
+			executable = undefined;
+			throw error;
+		});
+		return executable;
+	}
 	return async (spec) => {
 		const policy = spec.authorization;
 		if (spec.sources && !policy) {
@@ -106,7 +129,8 @@ export function createRpcChildSession(
 				"Common tool factories cannot load in a child process; select the common tool sources by path.",
 			);
 		}
-		const [command, ...prefix] = options.command ?? [installedPi()];
+		const installed = options.command ? undefined : await piExecutable();
+		const [command, ...prefix] = options.command ?? [installed?.path as string];
 		const agentDir = getAgentDir();
 		const root = options.sessionRoot ?? join(agentDir, "pi-workflow-children");
 		const sessionId = randomUUID();
@@ -371,8 +395,8 @@ export function createRpcChildSession(
 			// Under Bun a failed spawn leaves the channel null and reports the cause by a later error event.
 			if (pi.pid === undefined || !pi.stdio[channelDescriptor]) return;
 			pi.stdout.on("error", fail);
-		pi.stderr.on("error", fail);
-		pi.stderr.setEncoding("utf8");
+			pi.stderr.on("error", fail);
+			pi.stderr.setEncoding("utf8");
 			pi.stderr.on("data", (chunk: string) => {
 				stderr = `${stderr}${chunk}`.slice(-4000);
 			});
@@ -390,7 +414,12 @@ export function createRpcChildSession(
 			let cancel = () => {};
 			const deadline = new Promise<never>((_, reject) => {
 				cancel = schedule(
-					() => reject(new Error(`The child Pi process did not become ready within ${readinessDeadline} ms.`)),
+					() =>
+						reject(
+							new Error(
+								`The child Pi process ${command}${installed ? ` (Pi ${installed.version})` : ""} did not become ready within ${readinessDeadline} ms.`,
+							),
+						),
 					readinessDeadline,
 				);
 			});

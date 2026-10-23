@@ -5,6 +5,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { syncBuiltinESMExports } from "node:module";
+import { VERSION } from "@earendil-works/pi-coding-agent";
 import { delimiter, join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -97,6 +98,68 @@ test("a child of a parent that is not Pi runs the installed Pi from PATH, never 
 	assert.equal(installedPi(), join(installed, "pi"));
 	process.env.PATH = packageBin;
 	assert.throws(() => installedPi(), /Pi was not found on PATH/);
+});
+
+async function piOnPath(t, version) {
+	const dir = await scratch(t);
+	const checks = join(dir, "version-checks");
+	await writeFile(
+		join(dir, "pi"),
+		`#!/bin/sh\nif [ "$1" = "--version" ]; then echo >> "${checks}"; echo "${version}"; exit 0; fi\nexec "${process.execPath}" "${fakePi}" "$@"\n`,
+	);
+	await chmod(join(dir, "pi"), 0o755);
+	const path = process.env.PATH;
+	process.env.PATH = [dir, path].join(delimiter);
+	t.after(() => {
+		process.env.PATH = path;
+	});
+	return { pi: join(dir, "pi"), checks: () => (existsSync(checks) ? readFileSync(checks, "utf8").length : 0) };
+}
+
+test("a child refuses a Pi on PATH whose version differs from the parent's, naming both", async (t) => {
+	const { pi } = await piOnPath(t, "0.9.0");
+	await assert.rejects(
+		fakeChild(t, "complete", {}, { command: undefined }),
+		{ message: `The Pi on PATH at ${pi} is version 0.9.0, but the parent runs Pi ${VERSION}; a child must run the parent's Pi version.` },
+	);
+});
+
+test("a factory checks the version of the Pi on PATH once, and its readiness timeout names the executable and version", async (t) => {
+	const { pi, checks } = await piOnPath(t, VERSION);
+	const options = {
+		command: undefined,
+		schedule(run, ms) {
+			if (ms === readinessDeadline) setImmediate(run);
+			return () => {};
+		},
+	};
+	const create = createRpcChildSession({ ...options, sessionRoot: join(await scratch(t), "sessions") });
+	const spec = {
+		cwd: tmpdir(),
+		project: { cwd: tmpdir(), trusted: false },
+		role: "worker",
+		model: "fake/echo",
+		thinking: "off",
+		prompt: "",
+		tools: [],
+		shell: {},
+		onEvent() {},
+		notify() {},
+		ask: async () => "",
+		report() {},
+		checkpointed() {},
+	};
+	process.env.FAKE_PI_SCENARIO = "silent";
+	t.after(() => {
+		delete process.env.FAKE_PI_SCENARIO;
+	});
+	const first = await create(spec);
+	const second = await create(spec);
+	t.after(() => Promise.all([first.dispose(), second.dispose()]));
+	assert.equal(checks(), 1);
+	await assert.rejects(first.run("Say done."), {
+		message: `The child Pi process ${pi} (Pi ${VERSION}) did not become ready within ${readinessDeadline} ms.`,
+	});
 });
 
 test("a queued RPC child opens no process until it runs", async (t) => {
