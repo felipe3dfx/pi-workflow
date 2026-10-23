@@ -10,7 +10,7 @@ export async function modelEndpoint(agentDir, answer = "DONE") {
 		request.on("data", (chunk) => {
 			body += chunk;
 		});
-		request.on("end", () => {
+		request.on("end", async () => {
 			const parsed = JSON.parse(body);
 			requests.push(parsed);
 			response.writeHead(200, { "content-type": "text/event-stream" });
@@ -20,7 +20,7 @@ export async function modelEndpoint(agentDir, answer = "DONE") {
 				);
 			const step =
 				typeof answer === "function"
-					? answer(parsed)
+					? await answer(parsed)
 					: Array.isArray(answer)
 						? (steps.shift() ?? "DONE")
 						: answer;

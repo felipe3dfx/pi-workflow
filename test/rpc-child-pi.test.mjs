@@ -589,7 +589,7 @@ function childPids(agentDir) {
 		.map((line) => Number(line.trim().split(/\s+/)[0]));
 }
 
-test("a real Pi parent's /reload keeps its working child process, the question open across it is answered once, the result arrives once, and quitting or killing the parent still ends the child", { skip, timeout: 120_000 }, async (t) => {
+test("a real Pi parent's /reload keeps its working child processes, a Pending result is delivered once, a Consumed one never, an answer in flight across it reaches its child once, and quitting or killing the parent still ends the children", { skip, timeout: 120_000 }, async (t) => {
 	for (const ending of ["quit", "SIGKILL"]) await t.test(ending, (t) => reloadScenario(t, ending));
 });
 
@@ -598,19 +598,36 @@ function colorChild(body) {
 	return asked.match(/Child (\S+) asks/)[1];
 }
 
+const queuedChild = (message) => said(message).match(/Child (\S+) is queued in the background/)[1];
+
 async function reloadScenario(t, ending) {
 	let replies = 0;
+	const answered = Promise.withResolvers();
+	const asked = Promise.withResolvers();
+	let release;
+	t.after(() => {
+		asked.resolve();
+		release?.();
+	});
 	const scene = await fixture(t, (body) => {
 		const last = body.messages.at(-1);
 		if (!toolNames(body).includes("spawn_child")) {
-			if (body.messages.map(said).join("\n").includes("Hold on")) {
+			const conversation = body.messages.map(said).join("\n");
+			if (conversation.includes("Hold on")) {
 				return { tool: "ask_parent", args: { question: "Keep holding?" } };
 			}
+			if (conversation.includes("Map the docs")) return asked.promise.then(() => "Docs mapped.");
+			if (conversation.includes("Map the tests")) return asked.promise.then(() => "Tests mapped.");
 			const [answer, reported] = body.messages.filter((message) => message.role === "tool");
 			if (!answer) return { tool: "ask_parent", args: { question: "Which color?" } };
 			if (!reported) {
 				const reason = `The color is ${answer.content}.`;
-				return { tool: "report_result", args: { verdict: "partial", reason, files_changed: [], validation: [], left_undone: ["Paint it."] } };
+				const step = { tool: "report_result", args: { verdict: "partial", reason, files_changed: [], validation: [], left_undone: ["Paint it."] } };
+				if (release) return step;
+				answered.resolve();
+				return new Promise((resolve) => {
+					release = () => resolve(step);
+				});
 			}
 			return `The color is ${answer.content}.`;
 		}
@@ -619,8 +636,10 @@ async function reloadScenario(t, ending) {
 		if (last.role === "user" && text.includes("Delegate the color question.")) {
 			return { tool: "spawn_child", args: { role: "worker", task: "Ask the parent which color, then say it." } };
 		}
-		if (last.role === "tool" && launched.length === 1 && last === launched[0]) {
-			return { tool: "spawn_child", args: { role: "verify", task: "Hold on until the parent answers." } };
+		const next = ["Hold on until the parent answers.", "Map the docs.", "Map the tests."][launched.length - 1];
+		if (next) return { tool: "spawn_child", args: { role: "verify", task: next } };
+		if (last.role === "user" && text.includes("Read the docs map.")) {
+			return { tool: "child_result", args: { id: queuedChild(launched[2]) } };
 		}
 		if (last.role === "user" && text.includes("Answer the child now.")) {
 			replies += 1;
@@ -648,18 +667,30 @@ async function reloadScenario(t, ending) {
 	const parentPi = rpcParent(t, scene, repo);
 	const ended = (type) =>
 		parentPi.events.filter((event) => event.type === "message_end" && event.message.customType === type);
-	const idle = () => parentPi.events.at(-1)?.type === "agent_settled";
+	const idle = () =>
+		parentPi.events.findLast((event) => event.type === "agent_start" || event.type === "agent_settled")?.type === "agent_settled";
+	const settled = () => parentPi.events.filter((event) => event.type === "agent_settled").length;
+	async function turn(message, done = () => true) {
+		const before = settled();
+		const response = await parentPi.request("prompt", { message });
+		await eventually(() => settled() > before && idle() && done(), undefined, realParentPolls);
+		return response;
+	}
 
-	await parentPi.request("prompt", { message: "Delegate the color question." });
-	await eventually(() => ended("pi-workflow-child-question").length === 2 && idle(), undefined, realParentPolls);
-	const pids = await eventually(() => childPids(scene.agentDir), (found) => found.length === 2);
+	await turn("Delegate the color question.", () => ended("pi-workflow-child-question").length === 2);
+	asked.resolve();
+	const pids = await eventually(() => childPids(scene.agentDir), (found) => found.length === 2, realParentPolls);
 	for (const pid of pids) runsInstalledPi(pid);
+	await turn("Read the docs map.");
+	await turn("Answer the child now.", () => replies === 2);
+	await answered.promise;
 
 	const reloaded = await parentPi.request("prompt", { message: "/test-reload" });
 	assert.equal(reloaded.disposition, "handled");
 	assert.deepEqual(childPids(scene.agentDir), pids);
+	assert.deepEqual(ended("pi-workflow-child-result"), []);
 
-	await parentPi.request("prompt", { message: "Answer the child now." });
+	release();
 	const [result] = await eventually(
 		() => ended("pi-workflow-child-result"),
 		(found) => found.length === 1 && idle(),
@@ -667,21 +698,33 @@ async function reloadScenario(t, ending) {
 	);
 	const { messages } = await parentPi.request("get_messages");
 	const custom = (type) => messages.filter((message) => message.customType === type);
+	const [color, , docs, tests] = messages
+		.filter((message) => message.role === "toolResult" && message.toolName === "spawn_child")
+		.map(queuedChild);
+	const consumed = messages.find((message) => message.role === "toolResult" && message.toolName === "child_result");
 
 	assert.equal(custom("pi-workflow-child-question").length, 2);
 	assert.equal(custom("pi-workflow-child-result").length, 1);
-	assert.match(result.message.content, /completed\. Verdict: partial[\s\S]*The color is blue\./);
+	assert.match(said(consumed), /Docs mapped\./);
+	assert.deepEqual(result.message.details.results.map(({ id }) => id), [tests, color]);
+	assert.match(result.message.content, /Tests mapped\.[\s\S]*completed\. Verdict: partial[\s\S]*The color is blue\./);
+	assert.equal(result.message.content.includes(docs), false);
 	const childAnswers = scene.endpoint.requests
 		.filter((body) => !toolNames(body).includes("spawn_child"))
 		.flatMap((body) => body.messages.filter((message) => message.role === "tool").slice(0, 1).map((message) => message.content));
 	assert.deepEqual([...new Set(childAnswers)], ["blue"]);
+	const answeredRequests = scene.endpoint.requests.filter(
+		(body) => body.messages.filter((message) => message.role === "tool").map((message) => message.content).join() === "blue",
+	);
+	assert.equal(answeredRequests.length, 1);
 	const second = messages.filter((message) => message.role === "toolResult" && message.toolName === "reply_child").at(-1);
 	assert.equal(second.isError, true);
 	assert.match(said(second), /already answered by the parent: blue/);
 	const holding = childPids(scene.agentDir);
 	assert.equal(holding.length, 1);
 	assert.ok(pids.includes(holding[0]));
-	t.diagnostic(`child pids ${pids.join(", ")} kept across /reload; ${result.message.content.split("\n")[0]}`);
+	t.diagnostic(`child pids ${pids.join(", ")} kept across /reload; Consumed before it: ${docs}; Pending at it: ${tests}; answered "blue" before it, reported after it: ${color}`);
+	t.diagnostic(`one result message after the reload: ${result.message.details.results.map(({ id, state, result }) => `${id} ${state}${result ? ` Verdict ${result.verdict}` : ""}`).join(", ")}`);
 
 	const since = Date.now();
 	if (ending === "quit") parentPi.pi.stdin.end();
