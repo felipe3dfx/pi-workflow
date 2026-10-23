@@ -1,4 +1,4 @@
-// Replicates the logic of Pi 1.0.0 (AssistantMessageComponent.updateContent, UserMessageComponent.rebuild, createMarkdownTransform).
+// Replicates the logic of Pi 1.4.0 (AssistantMessageComponent.updateContent, UserMessageComponent.rebuild, createMarkdownTransform).
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import {
 	AssistantMessageComponent,

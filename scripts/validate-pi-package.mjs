@@ -35,11 +35,8 @@ const themeSchemaPath = path.join(
 	"node_modules",
 	"@earendil-works",
 	"pi-coding-agent",
-	"dist",
-	"modes",
-	"interactive",
-	"theme",
-	"theme-schema.json",
+	"schemas",
+	"theme.schema.json",
 );
 
 export async function validateTheme(packageRoot, name = "pi-workflow") {

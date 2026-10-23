@@ -1,6 +1,5 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { stripVTControlCharacters } from "node:util";
 
 import {
 	ExtensionInputComponent,
@@ -18,6 +17,7 @@ import {
 	SelectList,
 	SettingsList,
 	Spacer,
+	stripTerminalSequences,
 	Text,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
@@ -36,7 +36,7 @@ import { createChromeEditor } from "../extensions/chrome-editor.ts";
 
 initTheme("dark", false);
 const theme = globalThis[Symbol.for("@earendil-works/pi-coding-agent:theme")];
-const plain = (lines) => lines.map((line) => stripVTControlCharacters(line));
+const plain = (lines) => lines.map((line) => stripTerminalSequences(line));
 const selectedBg = theme.bg("selectedBg", "\u0000").split("\u0000")[0];
 
 function patched(t) {
@@ -142,7 +142,7 @@ test("a patched SettingsList right-aligns values, dims off/false, adds a dim ›
 	assert.ok(lines[3].includes(theme.fg("dim", "off")));
 	const hint = list.render(70).at(-1);
 	assert.match(
-		stripVTControlCharacters(hint),
+		stripTerminalSequences(hint),
 		/^ {2}Type search {2}\| {2}Enter\/Space change {2}\| {2}Esc cancel$/,
 	);
 	assert.ok(hint.includes(theme.bold(theme.fg("text", "Esc"))));
@@ -180,7 +180,7 @@ test("a patched SettingsList search input shows a dim ❯ prompt and a Type to s
 	patched(t);
 	const list = settingsList();
 	const [line] = list.render(50);
-	assert.match(stripVTControlCharacters(line), /^❯ Type to search\s*$/);
+	assert.match(stripTerminalSequences(line), /^❯ Type to search\s*$/);
 	assert.ok(line.startsWith(theme.fg("dim", "❯ ")));
 	assert.equal(visibleWidth(line), 50);
 	list.handleInput("x");
