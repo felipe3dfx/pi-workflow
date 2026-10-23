@@ -25,6 +25,7 @@ function held(entries) {
 }
 
 export function runtimeChild(runtime) {
+	const sessions = new Map();
 	return async (spec) => {
 		const policy = spec.authorization;
 		const slash = spec.model.indexOf("/");
@@ -85,9 +86,14 @@ export function runtimeChild(runtime) {
 			thinkingLevel: spec.thinking,
 			...(policy ? {} : { tools: spec.tools }),
 			resourceLoader,
-			sessionManager: SessionManager.inMemory(spec.cwd, { parentSession: spec.parentSession }, spec.entries),
+			sessionManager: SessionManager.inMemory(
+				spec.cwd,
+				{ parentSession: spec.parentSession },
+				sessions.get(spec.parentSession)?.getEntries(),
+			),
 			settingsManager,
 		});
+		sessions.set(session.sessionId, session.sessionManager);
 		session.subscribe((event) => spec.onEvent(event));
 		await session.bindExtensions({
 			uiContext: { ...session.extensionRunner.getUIContext(), notify: (message) => spec.notify(message) },

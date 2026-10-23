@@ -1750,7 +1750,6 @@ test("after a reload, continue_child resumes a child that completed before it fr
 
 		assert.equal(result.details.status, "queued");
 		const continued = children.created.at(-1);
-		assert.deepEqual(continued.spec.entries, children.created[0].entries);
 		assert.equal(continued.spec.parentSession, "session-0");
 		await after.fire("session_shutdown", { reason: "quit" });
 	});
@@ -3264,7 +3263,6 @@ test("continue_child starts a new queued child from a completed child's conversa
 		assert.equal(jev.requests.length, jevRequests);
 		const [first] = children.created;
 		const continued = children.created.at(-1);
-		assert.deepEqual(continued.spec.entries, first.entries);
 		assert.equal(continued.spec.parentSession, "session-0");
 		for (const key of ["cwd", "model", "thinking", "prompt", "tools"]) {
 			assert.deepEqual(continued.spec[key], first.spec[key]);

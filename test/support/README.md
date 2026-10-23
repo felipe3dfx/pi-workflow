@@ -17,7 +17,7 @@
 | `packed-subprocess.mjs` | `runPackedSubprocess` | Run a command against the packed package. |
 | `process-tree.mjs` | `alive`, `descendants`, `parent`, `gone` | Read the fake Pi's descendant pids, start `child-parent.mjs`, and wait until pids are gone. |
 | `reload-command.mjs` | none (Pi extension) | Registers `/test-reload`, which reloads the real Pi parent that loads it. |
-| `runtime-child.mjs` | `runtimeChild`, `runtimeChildSession` | Child session factory that installs the child runtime extension on an in-test agent session with a given model runtime, answering its channel requests from the spec; for registry and authorization tests that need a real agent loop without a Pi binary. |
+| `runtime-child.mjs` | `runtimeChild`, `runtimeChildSession` | Child session factory that installs the child runtime extension on an in-test agent session with a given model runtime, answering its channel requests from the spec and starting a continued child from the factory's session its `parentSession` names; for registry and authorization tests that need a real agent loop without a Pi binary. |
 | `selection.mjs` | `selectionWith` | Build a stored selection. |
 | `signed-checkpoint.mjs` | `withCheckpoint`, `repository` | Temporary signed repositories/worktrees with isolated HOME/XDG and ephemeral SSH fixture key. |
 

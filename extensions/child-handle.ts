@@ -34,7 +34,6 @@ interface ChildSpec {
 	report(result: ChildResult): void;
 	checkpoint?: CheckpointGrant;
 	checkpointed(checkpoint: Checkpoint): void;
-	entries?: SessionEntry[];
 	parentSession?: string;
 }
 

@@ -66,7 +66,6 @@ const packageVersion = (
 
 interface Conversation {
 	sessionId: string;
-	entries: SessionEntry[];
 }
 
 type Plan = {
@@ -560,10 +559,7 @@ export function createChildSessions(options: {
 		try {
 			child.entries = child.handle.entries();
 			if (state === "completed") {
-				child.conversation = {
-					sessionId: child.handle.sessionId,
-					entries: child.entries,
-				};
+				child.conversation = { sessionId: child.handle.sessionId };
 			}
 		} catch (error) {
 			warn(`Child ${record.id}: ${errorMessage(error)}`);
@@ -752,7 +748,6 @@ export function createChildSessions(options: {
 				report: (result) => port.report(result),
 				...(plan.checkpoint ? { checkpoint: plan.checkpoint } : {}),
 				checkpointed: (checkpoint) => port.checkpointed(checkpoint),
-				entries: from?.conversation.entries,
 				parentSession: from?.conversation.sessionId,
 			});
 		} catch (error) {

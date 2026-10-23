@@ -199,7 +199,9 @@ export function createRpcChildSession(
 		let requests = 0;
 		const waiting = new Map<string, Pending>();
 		let settled: Pending | undefined;
-		let entries: SessionEntry[] = spec.entries ?? [];
+		const entries: SessionEntry[] = [];
+		let stale = true;
+		let fetching: Promise<void> | undefined;
 		let steering: string[] = [];
 		let streaming: AssistantMessage | undefined;
 		let last: AssistantMessage | undefined;
@@ -237,15 +239,28 @@ export function createRpcChildSession(
 			});
 		}
 
-		async function refresh() {
-			const since = entries.at(-1)?.id;
-			const data = (await request("get_entries", since ? { since } : {})) as {
-				entries: SessionEntry[];
-			};
-			entries = [...entries, ...data.entries];
+		function refresh() {
+			fetching ??= (async () => {
+				while (stale) {
+					stale = false;
+					const since = entries.at(-1)?.id;
+					try {
+						const data = (await request("get_entries", since ? { since } : {})) as {
+							entries: SessionEntry[];
+						};
+						entries.push(...data.entries);
+					} catch (error) {
+						stale = true;
+						throw error;
+					}
+				}
+			})().finally(() => {
+				fetching = undefined;
+			});
+			return fetching;
 		}
 
-		async function deliver(record: RpcRecord) {
+		function deliver(record: RpcRecord) {
 			let event = record;
 			if (record.type === "message_start" || record.type === "message_update" || record.type === "message_end") {
 				const message = record.message as AssistantMessage | undefined;
@@ -262,7 +277,7 @@ export function createRpcChildSession(
 				} else if (record.type === "message_end" && message?.role === "assistant") {
 					last = message;
 				}
-				if (record.type === "message_end") await refresh().catch(fail);
+				if (record.type === "message_end") stale = true;
 			} else if (record.type === "queue_update") {
 				steering = [...(record.steering as string[])];
 			} else if (record.type === "entry_appended") {
@@ -444,8 +459,6 @@ export function createRpcChildSession(
 				if (missing.length > 0) {
 					throw new Error(`The child Pi process lacks the contract tools ${missing.join(", ")}.`);
 				}
-				entries = [];
-				await Promise.race([refresh(), deadline]);
 			} finally {
 				cancel();
 			}
@@ -453,7 +466,10 @@ export function createRpcChildSession(
 
 		const handle: ChildHandle = {
 			sessionId,
-			entries: () => entries,
+			entries() {
+				if (stale && child && !failure) refresh().catch(() => {});
+				return entries;
+			},
 			pendingAuthorizations: () => structuredClone([...held.values()]),
 			async run(task) {
 				starting ??= ready();
@@ -468,7 +484,9 @@ export function createRpcChildSession(
 				if (accepted.disposition === "handled") {
 					throw new Error("The child Pi process handled the task but started no run.");
 				}
-				if (await done) throw new Error("The child run aborted.");
+				const aborted = await done;
+				await refresh();
+				if (aborted) throw new Error("The child run aborted.");
 				if (last?.stopReason === "error" || last?.stopReason === "aborted") {
 					throw new Error(last.errorMessage ?? `The child run ${last.stopReason}.`);
 				}

@@ -395,19 +395,28 @@ test("RPC events reach onEvent in the SDK shape with one cumulative assistant me
 	);
 });
 
-test("the transcript entries are current when an RPC message ends", async (t) => {
-	const { handle, events } = await fakeChild(t, "complete", {
-		onEvent(event) {
-			events.push({ type: event.type, entries: handle.entries().length });
-		},
+test("an RPC child fetches its transcript when it is read and when its run ends, not on every message", async (t) => {
+	const commands = join(await scratch(t), "commands");
+	process.env.FAKE_PI_COMMANDS = commands;
+	t.after(() => {
+		delete process.env.FAKE_PI_COMMANDS;
 	});
-	await handle.run("Say done.");
-	const counts = events
-		.filter((event) => event.type === "message_end")
-		.map((event) => event.entries);
-	assert.equal(counts.length, 2);
-	assert.ok(counts[0] >= 1);
-	assert.equal(counts[1], 2);
+	const fetches = () => readFileSync(commands, "utf8").split("\n").filter((type) => type === "get_entries").length;
+	const roles = (handle) => handle.entries().filter((entry) => entry.type === "message").map((entry) => entry.message.role);
+
+	const complete = await fakeChild(t, "complete");
+	await complete.handle.run("Say done.");
+	assert.equal(fetches(), 1);
+	assert.deepEqual(roles(complete.handle), ["user", "assistant"]);
+	assert.equal(fetches(), 1);
+
+	const steering = await fakeChild(t, "steer");
+	const run = steering.handle.run("Wait.");
+	await eventually(() => steering.events.some((event) => event.type === "message_end"), Boolean);
+	assert.deepEqual(roles(steering.handle), []);
+	await eventually(() => roles(steering.handle), (read) => read.length === 1);
+	await steering.handle.abort();
+	await assert.rejects(run, /aborted/);
 });
 
 test("an RPC child run fails on an error stop reason, an aborted settle and a handled prompt", async (t) => {
