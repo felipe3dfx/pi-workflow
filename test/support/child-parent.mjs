@@ -7,7 +7,7 @@ const { command, sessionRoot, cwd, model, ending } = JSON.parse(process.argv[2])
 const handle = await createRpcChildSession({ command, sessionRoot })({
 	cwd,
 	project: { cwd, trusted: false },
-	role: "explore",
+	role: "worker",
 	model,
 	thinking: "off",
 	prompt: "You are a child session. Answer DONE.",

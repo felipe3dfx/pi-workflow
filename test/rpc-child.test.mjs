@@ -208,7 +208,12 @@ test("an RPC child steers, reports undelivered steering and aborts", async (t) =
 test("cancelling an RPC child asks it to abort, then kills its whole process tree after the shutdown deadline", async (t) => {
 	const waits = [];
 	const tree = await descendants(t);
-	const { handle, launched, record } = await fakeChild(t, "linger", {}, {
+	const commands = join(await scratch(t), "commands");
+	process.env.FAKE_PI_COMMANDS = commands;
+	t.after(() => {
+		delete process.env.FAKE_PI_COMMANDS;
+	});
+	const { handle, launched } = await fakeChild(t, "linger", {}, {
 		schedule(run, ms) {
 			waits.push(ms);
 			const timer = setTimeout(run, ms === shutdownDeadline ? 10 : ms);
@@ -219,7 +224,7 @@ test("cancelling an RPC child asks it to abort, then kills its whole process tre
 	const pids = [launched().pid, ...(await tree())];
 	await handle.dispose();
 	assert.ok(waits.includes(shutdownDeadline));
-	assert.ok(readFileSync(`${record}.commands`, "utf8").split("\n").includes("abort"));
+	assert.ok(readFileSync(commands, "utf8").split("\n").includes("abort"));
 	assert.deepEqual(pids.filter(alive), []);
 });
 

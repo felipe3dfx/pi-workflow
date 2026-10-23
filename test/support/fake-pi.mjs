@@ -124,7 +124,7 @@ process.stdin.on("data", (chunk) => {
 	for (let newline = buffer.indexOf("\n"); newline >= 0; newline = buffer.indexOf("\n")) {
 		const command = JSON.parse(buffer.slice(0, newline));
 		buffer = buffer.slice(newline + 1);
-		if (process.env.FAKE_PI_RECORD) appendFileSync(`${process.env.FAKE_PI_RECORD}.commands`, `${command.type}\n`);
+		if (process.env.FAKE_PI_COMMANDS) appendFileSync(process.env.FAKE_PI_COMMANDS, `${command.type}\n`);
 		handlers[command.type]?.(command);
 	}
 });
