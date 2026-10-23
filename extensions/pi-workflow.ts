@@ -34,13 +34,14 @@ import {
 	createCodeGraphTool,
 	syncCodeGraphTool,
 } from "./codegraph-tool.ts";
-import { createChildAudit } from "./child-audit.ts";
+import { type ChildAudit, createChildAudit } from "./child-audit.ts";
 import { createChildLauncher } from "./child-launcher.ts";
 import { runDelegationCheck } from "./delegation-check.ts";
 import { registerDelegationMode } from "./delegation-mode.ts";
 import { registerChildResultCards } from "./child-result-card.ts";
 import {
 	type ChildSessionFactory,
+	type ResidentChildren,
 	createChildQueryTools,
 	createChildSessions,
 	createContinueChildTool,
@@ -65,6 +66,14 @@ import {
 	sessionActionAuthorization,
 } from "./action-authorization.ts";
 import { type CommonToolSources, commonToolFactories } from "./tool-sources.ts";
+
+// /reload replaces this module but not the Pi process, so the children of the old runtime wait here for the new one.
+const RESIDENT = Symbol.for("pi-workflow:child-sessions:resident");
+const slots = globalThis as Record<
+	symbol,
+	| { children: ResidentChildren; audit: Awaited<ReturnType<ChildAudit["detach"]>> }
+	| undefined
+>;
 
 const usage =
 	"Usage: /workflow:status | /workflow:doctor | /workflow:config | /workflow:models | /workflow:subagents | /workflow:delegation-check";
@@ -282,6 +291,12 @@ export default function piWorkflowExtension(
 
 	pi.on("session_start", async (_event, ctx) => {
 		currentCtx = ctx;
+		const resident = slots[RESIDENT];
+		slots[RESIDENT] = undefined;
+		if (resident) {
+			audit.adopt(resident.audit);
+			childSessions.adopt(resident.children);
+		}
 		const read = seating.read();
 		if (read.status === "refused") report(ctx, read.reason, "error");
 		await seating.seat(read.status === "ready" ? read.selection : undefined);
@@ -289,20 +304,16 @@ export default function piWorkflowExtension(
 	pi.on("tool_execution_start", async (_event, ctx) => {
 		currentCtx = ctx;
 	});
-	pi.on("session_shutdown", async (event, ctx) => {
+	pi.on("session_shutdown", async (event) => {
 		currentCtx = undefined;
 		childrenViews.close();
-		const ended = await childSessions.disposeAll();
-		const closed = audit.close();
-		if (event.reason === "reload" && ended > 0) {
-			pi.appendEntry("pi-workflow-child-trace", { reason: "reload", ended });
-			report(
-				ctx,
-				`/reload ended ${ended} working ${ended === 1 ? "child" : "children"}.`,
-				"warning",
-			);
+		if (event.reason === "reload") {
+			const children = await childSessions.detach();
+			slots[RESIDENT] = { children, audit: await audit.detach() };
+			return;
 		}
-		await closed;
+		await childSessions.disposeAll();
+		await audit.close();
 	});
 
 	async function runCatalogCommand(

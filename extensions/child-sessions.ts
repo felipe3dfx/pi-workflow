@@ -175,10 +175,28 @@ export interface ChildRecord {
 
 export type Answerer = "parent" | "operator";
 
+interface Port {
+	event(event: AgentSessionEvent): void;
+	ask(question: string, signal?: AbortSignal): Promise<string>;
+	report(result: ChildResult): void;
+	notify(message: string): void;
+	checkpointed(checkpoint: Checkpoint): void;
+}
+
+interface Question {
+	number: number;
+	signal?: AbortSignal;
+	resolve(answer: string): void;
+	reject(error: Error): void;
+	release?(): void;
+}
+
 interface Child {
 	record: ChildRecord;
 	plan: Plan;
 	handle: ChildHandle;
+	port: Port;
+	running?: Promise<string>;
 	watch: ReturnType<typeof createWatch>;
 	capture: ChildCapture;
 	conversation?: Conversation;
@@ -191,11 +209,7 @@ interface Child {
 	asked: number;
 	answers: Map<number, { by: Answerer; text: string }>;
 	withdrawn: Set<number>;
-	question?: {
-		number: number;
-		resolve(answer: string): void;
-		reject(error: Error): void;
-	};
+	question?: Question;
 }
 
 export interface ChildTrace {
@@ -272,6 +286,30 @@ function changedPath(worktree: string, path: string) {
 
 export function isWorking(state: ChildState) {
 	return state === "queued" || state === "running" || state === "waiting";
+}
+
+type Replay = (port: Port) => void;
+
+function hold(port: Port) {
+	const held: Replay[] = [];
+	port.event = (event) => held.push((next) => next.event(event));
+	port.report = (result) => held.push((next) => next.report(result));
+	port.notify = (message) => held.push((next) => next.notify(message));
+	port.checkpointed = (checkpoint) =>
+		held.push((next) => next.checkpointed(checkpoint));
+	port.ask = (question, signal) =>
+		new Promise<string>((resolve, reject) => {
+			held.push((next) => void next.ask(question, signal).then(resolve, reject));
+		});
+	return held;
+}
+
+export interface ResidentChildren {
+	children: { child: Child; held: Replay[] }[];
+	queue: string[];
+	consumed: Set<string>;
+	linked: Map<number, string>;
+	pending: ChildRecord[];
 }
 
 function childDetails(record: ChildRecord, now = Date.now()) {
@@ -640,6 +678,17 @@ export function createChildSessions(options: {
 		return done;
 	}
 
+	async function within(work: Promise<unknown>) {
+		let cancel = () => {};
+		await Promise.race([
+			work,
+			new Promise<void>((resolve) => {
+				cancel = schedule(resolve, shutdownDeadline);
+			}),
+		]);
+		cancel();
+	}
+
 	function trace(child: Child) {
 		const { record, plan } = child;
 		traceRun(record.id, plan, record.state, record.result);
@@ -755,7 +804,12 @@ export function createChildSessions(options: {
 		trace(child);
 		child.watch.start();
 		changed();
-		void child.handle.run(child.plan.task).then(
+		child.running = child.handle.run(child.plan.task);
+		settleOn(child);
+	}
+
+	function settleOn(child: Child) {
+		void child.running?.then(
 			(text) => finish(child, "completed", text),
 			(error: unknown) => finish(child, "failed", errorMessage(error)),
 		);
@@ -822,6 +876,7 @@ export function createChildSessions(options: {
 	function answer(child: Child, reply: string | Error) {
 		const { question } = child;
 		if (!question) return;
+		question.release?.();
 		child.question = undefined;
 		child.record.question = undefined;
 		if (child.record.state === "waiting") {
@@ -852,23 +907,7 @@ export function createChildSessions(options: {
 		child.asked += 1;
 		const number = child.asked;
 		return new Promise<string>((resolve, reject) => {
-			const withdraw = () => {
-				if (child.question?.number !== number) return;
-				child.withdrawn.add(number);
-				answer(child, new Error("The call was aborted."));
-			};
-			signal?.addEventListener("abort", withdraw, { once: true });
-			child.question = {
-				number,
-				resolve(reply) {
-					signal?.removeEventListener("abort", withdraw);
-					resolve(reply);
-				},
-				reject(error) {
-					signal?.removeEventListener("abort", withdraw);
-					reject(error);
-				},
-			};
+			pose(child, { number, signal, resolve, reject });
 			child.record.question = number;
 			child.record.state = "waiting";
 			child.record.step = `asks question ${number}`;
@@ -895,6 +934,40 @@ export function createChildSessions(options: {
 				);
 			}
 		});
+	}
+
+	function pose(child: Child, question: Question) {
+		const { number, signal } = question;
+		const withdraw = () => {
+			if (child.question?.number !== number) return;
+			child.withdrawn.add(number);
+			answer(child, new Error("The call was aborted."));
+		};
+		child.question = {
+			...question,
+			release: () => signal?.removeEventListener("abort", withdraw),
+		};
+		signal?.addEventListener("abort", withdraw, { once: true });
+		if (signal?.aborted) withdraw();
+	}
+
+	function bind(child: Child) {
+		const { port } = child;
+		port.event = (event) => {
+			child.capture.event(event);
+			child.watch.event(event);
+			track(child, event);
+		};
+		port.ask = (question, signal) => ask(child, question, signal);
+		port.report = (result) => {
+			child.capture.reported(result);
+			if (isWorking(child.record.state)) child.record.result = result;
+		};
+		port.notify = (message) =>
+			traceRun(child.record.id, child.plan, child.record.state, undefined, message);
+		port.checkpointed = (checkpoint) => {
+			child.record.checkpoints = [...(child.record.checkpoints ?? []), checkpoint];
+		};
 	}
 
 	async function start(
@@ -948,15 +1021,14 @@ export function createChildSessions(options: {
 		};
 		if (launch.signal?.aborted) return abortedBeforeLaunch;
 		let stall = (_reason: string) => {};
-		let asked = (_question: string, _signal?: AbortSignal) =>
-			Promise.reject<string>(new Error("The child is not running."));
-		let observe = (_event: AgentSessionEvent) => {};
-		let audited = (_event: AgentSessionEvent) => {};
-		let auditReport = (_result: ChildResult) => {};
-		let reported = (_result: ChildResult) => {};
-		let noticed = (_message: string) => {};
-		let checkpointed = (_checkpoint: Checkpoint) => {};
 		const watch = createWatch(schedule, (reason) => stall(reason));
+		const port: Port = {
+			event: (event) => watch.event(event),
+			ask: () => Promise.reject<string>(new Error("The child is not running.")),
+			report: () => {},
+			notify: () => {},
+			checkpointed: () => {},
+		};
 		const launchedIn = generation;
 		let handle: ChildHandle;
 		try {
@@ -972,19 +1044,12 @@ export function createChildSessions(options: {
 				tools: childTools(plan),
 				modelRegistry: launch.modelRegistry,
 				shell: launch.shell(),
-				onEvent: (event) => {
-					audited(event);
-					watch.event(event);
-					observe(event);
-				},
-				notify: (message) => noticed(message),
-				ask: (question, signal) => asked(question, signal),
-				report: (result) => {
-					auditReport(result);
-					reported(result);
-				},
+				onEvent: (event) => port.event(event),
+				notify: (message) => port.notify(message),
+				ask: (question, signal) => port.ask(question, signal),
+				report: (result) => port.report(result),
 				...(plan.checkpoint ? { checkpoint: plan.checkpoint } : {}),
-				checkpointed: (checkpoint) => checkpointed(checkpoint),
+				checkpointed: (checkpoint) => port.checkpointed(checkpoint),
 				entries: from?.conversation.entries,
 				parentSession: from?.conversation.sessionId,
 			});
@@ -1042,8 +1107,6 @@ export function createChildSessions(options: {
 			...(launch.group === undefined ? {} : { group: launch.group }),
 			...(from ? { continuedFrom: from.id } : {}),
 		});
-		audited = (event) => capture.event(event);
-		auditReport = (result) => capture.reported(result);
 		if (!launch.background) {
 			let ended: ChildState = "failed";
 			const stopped = Promise.withResolvers<never>();
@@ -1060,21 +1123,26 @@ export function createChildSessions(options: {
 			launch.signal?.addEventListener("abort", abort, { once: true });
 			stall = (reason) =>
 				stop("timed out", new Error(`The child timed out: ${reason}`));
-			asked = () =>
+			let result: ChildResult | undefined;
+			const checkpoints: Checkpoint[] = [];
+			port.event = (event) => {
+				capture.event(event);
+				watch.event(event);
+			};
+			port.ask = () =>
 				Promise.reject<string>(
 					new Error(
 						"The parent cannot answer: it is waiting for this child in the foreground. Continue without an answer.",
 					),
 				);
-			let result: ChildResult | undefined;
-			reported = (value) => {
+			port.report = (value) => {
+				capture.reported(value);
 				result = value;
 			};
-			const checkpoints: Checkpoint[] = [];
-			checkpointed = (checkpoint) => {
+			port.checkpointed = (checkpoint) => {
 				checkpoints.push(checkpoint);
 			};
-			noticed = (message) =>
+			port.notify = (message) =>
 				traceRun(id, plan, "running", undefined, message);
 			watch.start();
 			onLaunch(id);
@@ -1128,6 +1196,7 @@ export function createChildSessions(options: {
 			},
 			plan,
 			handle,
+			port,
 			watch,
 			capture,
 			tools: new Map(),
@@ -1139,16 +1208,7 @@ export function createChildSessions(options: {
 			withdrawn: new Set(),
 		};
 		stall = (reason) => finish(child, "timed out", reason);
-		asked = (question, signal) => ask(child, question, signal);
-		reported = (result) => {
-			if (isWorking(child.record.state)) child.record.result = result;
-		};
-		observe = (event) => track(child, event);
-		checkpointed = (checkpoint) => {
-			child.record.checkpoints = [...(child.record.checkpoints ?? []), checkpoint];
-		};
-		noticed = (message) =>
-			traceRun(child.record.id, plan, child.record.state, undefined, message);
+		bind(child);
 		children.set(child.record.id, child);
 		queue.push(child);
 		onLaunch(child.record.id);
@@ -1399,15 +1459,70 @@ export function createChildSessions(options: {
 				shutDown(child.handle, child.record.id, child.capture),
 			),
 		);
-		let cancel = () => {};
-		await Promise.race([
-			finishing,
-			new Promise<void>((resolve) => {
-				cancel = schedule(resolve, shutdownDeadline);
-			}),
-		]);
-		cancel();
+		await within(finishing);
 		return working.length;
+	}
+
+	async function detach(): Promise<ResidentChildren> {
+		generation += 1;
+		const resident = {
+			children: [...children.values()].map((child) => {
+				child.watch.stop();
+				child.question?.release?.();
+				return { child, held: hold(child.port) };
+			}),
+			queue: queue.map((child) => child.record.id),
+			consumed: new Set(consumed),
+			linked: new Map(linked),
+			pending,
+		};
+		children.clear();
+		claims.rebuild([]);
+		linked.clear();
+		consumed.clear();
+		queue.length = 0;
+		pending = [];
+		changed();
+		await within(Promise.all(disposing));
+		return resident;
+	}
+
+	function adopt(resident: ResidentChildren) {
+		for (const { child: kept, held } of resident.children) {
+			const child: Child = {
+				...kept,
+				watch: createWatch(schedule, (reason) =>
+					finish(child, "timed out", reason),
+				),
+				capture: options.audit.resume(kept.record.id),
+				followers: new Set(),
+				question: undefined,
+			};
+			children.set(child.record.id, child);
+			bind(child);
+			if (kept.question) pose(child, kept.question);
+			if (child.record.state === "running" || child.record.state === "waiting") {
+				child.watch.start();
+				settleOn(child);
+			}
+			for (const replay of held) replay(child.port);
+		}
+		for (const id of resident.queue) queue.push(children.get(id) as Child);
+		for (const id of resident.consumed) consumed.add(id);
+		for (const [task, id] of resident.linked) linked.set(task, id);
+		pending = [...resident.pending];
+		claims.rebuild(
+			[...children.values()]
+				.filter(({ plan, record }) => plan.role === "worker" && isWorking(record.state))
+				.map(({ plan, record }) => ({
+					owner: record.id,
+					root: plan.worktree,
+					surfaces: plan.surfaces ?? [],
+				})),
+		);
+		changed();
+		queueMicrotask(pump);
+		if (pending.length > 0 && options.idle()) queueMicrotask(atBoundary);
 	}
 
 	return {
@@ -1430,6 +1545,8 @@ export function createChildSessions(options: {
 		follow,
 		thread,
 		disposeAll,
+		detach,
+		adopt,
 	};
 }
 

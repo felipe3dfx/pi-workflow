@@ -22,7 +22,8 @@ function parentToken() {
 	watchdog.on("error", () => {});
 	watchdog.stdin.on("error", () => {});
 	watchdog.unref();
-	(watchdog.stdin as Socket).unref();
+	// Pi 1.4.0 runs on Bun, whose child stdin pipe has no unref.
+	(watchdog.stdin as Partial<Socket>).unref?.();
 	slots[WATCHDOG] = token;
 	return token;
 }

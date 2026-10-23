@@ -172,7 +172,7 @@ _Avoid_: active child, live child
 
 ### Interrupted child record
 
-A historical record of a previously working child whose terminal Run state is unavailable after reopening or reloading the parent session. It represents an unknown terminal outcome, not active or resumable execution.
+A historical record of a previously working child whose terminal Run state is unavailable after reopening the parent session. It represents an unknown terminal outcome, not active or resumable execution. A reload keeps working children, so it interrupts none.
 
 ### Incomplete transcript
 
