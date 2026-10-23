@@ -88,6 +88,23 @@ function run(task) {
 		);
 		return;
 	}
+	if (scenario === "policy") {
+		(async () => {
+			const authority = await consult({ type: "policy", id: 1, method: "authority" });
+			const classified = await consult({ type: "policy", id: 2, method: "classify", value: { action: { tool: "write" } } });
+			const decision = { kind: "held", reason: "The scope is unknown.", call: "call-1" };
+			const delivered = await consult({ type: "policy", id: 3, method: "decision", value: decision });
+			write({ type: "entry_appended", entry: { type: "custom", id: "held", customType: "pi-workflow-authorization", data: decision } });
+			finish("stop", JSON.stringify([authority, classified, delivered]));
+		})();
+		return;
+	}
+	if (scenario === "checkpoint") {
+		consult({ type: "checkpoint", id: 1, checkpoint: { sha: "c0ffee", parent: "base", base: "base", branch: "feature" } }).then(
+			(reply) => finish("stop", reply.error === undefined ? "DONE" : `ERROR ${reply.error}`),
+		);
+		return;
+	}
 	if (scenario === "oversize") {
 		channel.write("x".repeat(Number(process.env.FAKE_PI_FRAME_BYTES)));
 		settle = () => finish("stop", "SETTLED");

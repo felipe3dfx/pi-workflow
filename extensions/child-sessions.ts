@@ -68,6 +68,7 @@ import { type CommonToolSources, commonToolFactories } from "./tool-sources.ts";
 import { createRpcChildSession } from "./rpc-child.ts";
 import {
 	askParentTool,
+	consultation,
 	createAskParentTool,
 	createReportResultTool,
 	reportResultTool,
@@ -366,10 +367,7 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 				classify: (proposal, signal) => policy.classify(proposal, signal),
 				onDecision: (decision) => policy.onDecision?.(decision),
 				consult: async (question, signal): Promise<unknown> =>
-					JSON.parse(await spec.ask(
-						`Resolve only within your authority; otherwise consult the user. Reply with the same id, call and proposal plus kind (resolved/deny/pending), answer and optional confirmedActions identifying the explicitly confirmed actual action and target. Scope alone is not impact confirmation. No receipt or running state is consent.\n${JSON.stringify(question)}`,
-						signal,
-					)),
+					JSON.parse(await spec.ask(consultation(question), signal)),
 			})
 		: undefined;
 	let pendingAuthorizations: () => AuthorizationDecision[] = () => [];

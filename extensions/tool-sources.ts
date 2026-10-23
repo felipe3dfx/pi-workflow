@@ -10,7 +10,7 @@ export interface CommonToolSources {
 	active?: readonly string[];
 }
 
-const defaults = [
+export const defaultActiveTools = [
 	"read",
 	"bash",
 	"edit",
@@ -32,7 +32,7 @@ export function commonToolFactories(
 		(pi) => {
 			pi.on("session_start", () => {
 				pi.setActiveTools([
-					...new Set([...pi.getActiveTools(), ...(sources.active ?? defaults)]),
+					...new Set([...pi.getActiveTools(), ...(sources.active ?? defaultActiveTools)]),
 				]);
 			});
 		},

@@ -350,7 +350,7 @@ export const checkpointParameters = Type.Object({
 
 export function createCheckpointTool(
 	assigned: CheckpointGrant | string,
-	checkpointed: (checkpoint: Checkpoint) => void,
+	checkpointed: (checkpoint: Checkpoint) => unknown,
 ) {
 	return {
 		name: checkpointTool,
@@ -377,7 +377,7 @@ export function createCheckpointTool(
 			const verified = await verifyCommit(prepared);
 			if (!verified) throw new Error("the checkpoint did not create a commit");
 			const { files, ...checkpoint } = verified;
-			checkpointed(checkpoint);
+			await checkpointed(checkpoint);
 			return {
 				content: [
 					{

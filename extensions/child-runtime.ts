@@ -1,10 +1,32 @@
 import { createReadStream, createWriteStream } from "node:fs";
 import type { Readable, Writable } from "node:stream";
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import {
+	getCurrentSystemMessage,
+	getSystemMessageText,
+} from "@earendil-works/pi-ai";
+import type {
+	ExtensionAPI,
+	ExtensionContext,
+	ExtensionHandler,
+} from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 
-import { type ChildShell, createChildBashTool } from "./child-bash.ts";
+import {
+	type ActionAuthorization,
+	type AuthorizationQuestion,
+	installActionAuthorization,
+} from "./action-authorization.ts";
+import {
+	type ChildShell,
+	createChildBashTool,
+	createConfiguredBashTool,
+} from "./child-bash.ts";
+import {
+	type Checkpoint,
+	type CheckpointGrant,
+	createCheckpointTool,
+} from "./child-checkpoint.ts";
 import {
 	type ChildResult,
 	reportsResult,
@@ -21,20 +43,32 @@ export type ChildRuntimeConfig = {
 	role: string;
 	cwd: string;
 	shell: ChildShell;
-	checkpoint: boolean;
+	checkpoint?: CheckpointGrant;
+	contextual?: { active: readonly string[] };
 };
+
+export type PolicyMethod = "authority" | "classify" | "decision";
+
+type ChildRequest =
+	| { type: "ask"; question: string }
+	| { type: "report"; result: ChildResult }
+	| { type: "checkpoint"; checkpoint: Checkpoint }
+	| { type: "policy"; method: PolicyMethod; value?: unknown };
 
 export type ChildFrame =
 	| { type: "ready" }
-	| { type: "ask"; id: number; question: string }
 	| { type: "withdraw"; id: number }
-	| { type: "report"; id: number; result: ChildResult };
+	| (ChildRequest & { id: number });
 
 export type ParentReply = { id: number; answer?: string; error?: string };
 
 const askParentParameters = Type.Object({
 	question: Type.String({ description: "One question for the parent." }),
 });
+
+export function consultation(question: AuthorizationQuestion) {
+	return `Resolve only within your authority; otherwise consult the user. Reply with the same id, call and proposal plus kind (resolved/deny/pending), answer and optional confirmedActions identifying the explicitly confirmed actual action and target. Scope alone is not impact confirmation. No receipt or running state is consent.\n${JSON.stringify(question)}`;
+}
 
 export function createAskParentTool(
 	ask: (question: string, signal?: AbortSignal) => Promise<string>,
@@ -144,10 +178,7 @@ export function parentChannel(input: Readable, output: Writable) {
 	output.once("error", close);
 	return {
 		ready: () => send({ type: "ready" }),
-		request(
-			frame: { type: "ask"; question: string } | { type: "report"; result: ChildResult },
-			signal?: AbortSignal,
-		) {
+		request(frame: ChildRequest, signal?: AbortSignal) {
 			if (closed) return Promise.reject(closed);
 			if (signal?.aborted) return Promise.reject(new Error("The call was aborted."));
 			const id = ++next;
@@ -174,23 +205,96 @@ export function parentChannel(input: Readable, output: Writable) {
 	};
 }
 
-export function installChildRuntime(
+function installContextual(
 	pi: ExtensionAPI,
 	config: ChildRuntimeConfig,
 	channel: ReturnType<typeof parentChannel>,
+	ctx: ExtensionContext,
+	ask: (question: string, signal?: AbortSignal) => Promise<string>,
+	checkpointed: (checkpoint: Checkpoint) => Promise<unknown>,
 ) {
-	pi.registerTool(createChildBashTool(config.cwd, config.shell, config.checkpoint));
+	pi.registerTool(createConfiguredBashTool(config.cwd, config.shell));
+	pi.registerTool(createAskParentTool(ask, true));
 	pi.registerTool(
-		createAskParentTool((question, signal) =>
-			channel.request({ type: "ask", question }, signal),
+		createReportResultTool(config.role, (result) =>
+			channel.request({ type: "report", result }),
 		),
 	);
-	if (reportsResult(config.role)) {
+	pi.registerTool(createCheckpointTool(config.cwd, () => {}));
+	pi.setActiveTools([
+		...new Set([...pi.getActiveTools(), ...(config.contextual?.active ?? [])]),
+	]);
+	let instructions: { systemPrompt: string; basePrompt: string } | undefined;
+	pi.on("context_with_system", (event, context) => {
+		const system = getCurrentSystemMessage(event.messages);
+		instructions = system && {
+			systemPrompt: getSystemMessageText(system),
+			basePrompt: context.getSystemPrompt(),
+		};
+	});
+	const policy = async (
+		method: PolicyMethod,
+		value: unknown,
+		signal?: AbortSignal,
+	) =>
+		JSON.parse(
+			await channel.request({ type: "policy", method, value }, signal),
+		) as never;
+	const starting: unknown[] = [];
+	const authorization: ActionAuthorization = {
+		authority: (context) => policy("authority", undefined, context.signal),
+		classify: (proposal, signal) => policy("classify", proposal, signal),
+		consult: async (question, signal) =>
+			JSON.parse(await ask(consultation(question), signal)),
+		onDecision: (decision) => policy("decision", decision),
+		sessionInstructions: () => instructions,
+	};
+	// Pi does not call a session_start handler registered while session_start runs.
+	const on = pi.on.bind(pi) as (
+		event: string,
+		handler: ExtensionHandler<unknown>,
+	) => void;
+	installActionAuthorization(
+		{
+			...pi,
+			on: (event: string, handler: ExtensionHandler<unknown>) =>
+				event === "session_start"
+					? void starting.push(handler({ type: event }, ctx))
+					: on(event, handler),
+		} as ExtensionAPI,
+		authorization,
+		checkpointed,
+	);
+	return Promise.all(starting);
+}
+
+export async function installChildRuntime(
+	pi: ExtensionAPI,
+	config: ChildRuntimeConfig,
+	channel: ReturnType<typeof parentChannel>,
+	ctx: ExtensionContext,
+) {
+	const ask = (question: string, signal?: AbortSignal) =>
+		channel.request({ type: "ask", question }, signal);
+	const checkpointed = (checkpoint: Checkpoint) =>
+		channel.request({ type: "checkpoint", checkpoint }).catch(() => {});
+	if (config.contextual) {
+		await installContextual(pi, config, channel, ctx, ask, checkpointed);
+	} else {
 		pi.registerTool(
-			createReportResultTool(config.role, (result) =>
-				channel.request({ type: "report", result }),
-			),
+			createChildBashTool(config.cwd, config.shell, config.checkpoint !== undefined),
 		);
+		pi.registerTool(createAskParentTool(ask));
+		if (reportsResult(config.role)) {
+			pi.registerTool(
+				createReportResultTool(config.role, (result) =>
+					channel.request({ type: "report", result }),
+				),
+			);
+		}
+		if (config.checkpoint) {
+			pi.registerTool(createCheckpointTool(config.checkpoint, checkpointed));
+		}
 	}
 	pi.on("before_agent_start", (event) => {
 		event.systemPromptOptions.appendSystemPrompt = "";
@@ -203,17 +307,18 @@ export default function childRuntime(pi: ExtensionAPI) {
 		type: "string",
 		description: "The launch of a pi-workflow child session.",
 	});
-	pi.on("session_start", () => {
+	pi.on("session_start", async (_event, ctx) => {
 		const config = JSON.parse(
 			String(pi.getFlag(childRuntimeFlag)),
 		) as ChildRuntimeConfig;
-		installChildRuntime(
+		await installChildRuntime(
 			pi,
 			config,
 			parentChannel(
 				createReadStream("", { fd: channelDescriptor, autoClose: false }),
 				createWriteStream("", { fd: channelDescriptor, autoClose: false }),
 			),
+			ctx,
 		);
 	});
 }

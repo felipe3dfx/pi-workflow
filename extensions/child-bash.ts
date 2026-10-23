@@ -170,3 +170,12 @@ export function createChildBashTool(
 		}),
 	);
 }
+
+export function createConfiguredBashTool(cwd: string, shell: ChildShell) {
+	return defineTool(
+		createBashToolDefinition(cwd, {
+			commandPrefix: shell.commandPrefix,
+			shellPath: shell.shellPath,
+		}),
+	);
+}

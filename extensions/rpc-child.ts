@@ -1,7 +1,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { accessSync, constants, readdirSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 
@@ -12,6 +12,7 @@ import {
 	type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 
+import type { ActionAuthorization, AuthorizationDecision } from "./action-authorization.ts";
 import {
 	type ChildHandle,
 	type ChildSessionFactory,
@@ -23,11 +24,13 @@ import {
 	channelDescriptor,
 	childRuntimeFlag,
 	type ParentReply,
+	type PolicyMethod,
 	readLines,
 } from "./child-runtime.ts";
 import { type Schedule, scheduleTimer } from "./clock.ts";
 import { errorMessage } from "./error-message.ts";
 import { stopTree, treeEnvironment } from "./process-tree.ts";
+import { defaultActiveTools } from "./tool-sources.ts";
 import { resolveClaudeBridgeExtension, resolveWebAccessExtensions } from "./web-access.ts";
 
 export const readinessDeadline = 10_000;
@@ -91,8 +94,14 @@ export function createRpcChildSession(
 ): ChildSessionFactory {
 	const schedule = options.schedule ?? scheduleTimer;
 	return async (spec) => {
-		if (spec.authorization || spec.sources) {
-			throw new Error("Contextual authorization is not available to RPC children.");
+		const policy = spec.authorization;
+		if (spec.sources && !policy) {
+			throw new Error("Common tool sources require contextual authorization.");
+		}
+		if (spec.sources?.factories?.length) {
+			throw new Error(
+				"Common tool factories cannot load in a child process; select the common tool sources by path.",
+			);
 		}
 		const [command, ...prefix] = options.command ?? [installedPi()];
 		const agentDir = getAgentDir();
@@ -103,7 +112,7 @@ export function createRpcChildSession(
 			...(spec.model.startsWith("claude-bridge/")
 				? [await resolveClaudeBridgeExtension(agentDir, spec.project)]
 				: []),
-			...(spec.role === "explore"
+			...(spec.role === "explore" && !policy
 				? resolveWebAccessExtensions(agentDir, spec.project)
 				: []),
 		];
@@ -111,7 +120,10 @@ export function createRpcChildSession(
 			role: spec.role,
 			cwd: spec.cwd,
 			shell: spec.shell,
-			checkpoint: spec.checkpoint !== undefined,
+			checkpoint: spec.checkpoint,
+			contextual: policy && {
+				active: spec.sources?.active ?? defaultActiveTools,
+			},
 		};
 		const args = [
 			...prefix,
@@ -121,10 +133,18 @@ export function createRpcChildSession(
 			...(fork ? ["--fork", fork] : []),
 			"--model", spec.model,
 			"--thinking", spec.thinking,
-			"--tools", spec.tools.join(","),
+			...(policy ? [] : ["--tools", spec.tools.join(",")]),
 			"--no-extensions",
 			"--extension", "builtin:mcp",
 			"--extension", "builtin:codemode",
+			...(policy
+				? [
+						"--extension", "builtin:tool-search",
+						...(spec.sources?.paths ?? []).flatMap((path) => [
+							"--extension", resolve(spec.project.cwd, path),
+						]),
+					]
+				: []),
 			...resources.flatMap((path) => ["--extension", path]),
 			"--extension", childRuntime,
 			`--${childRuntimeFlag}`, JSON.stringify(runtime),
@@ -150,6 +170,7 @@ export function createRpcChildSession(
 		let last: AssistantMessage | undefined;
 		let delivery = Promise.resolve();
 		const asks = new Map<number, AbortController>();
+		const held = new Map<string, AuthorizationDecision>();
 		let connected: Pending | undefined;
 
 		function fail(error: Error) {
@@ -209,6 +230,15 @@ export function createRpcChildSession(
 				if (record.type === "message_end") await refresh().catch(() => {});
 			} else if (record.type === "queue_update") {
 				steering = [...(record.steering as string[])];
+			} else if (record.type === "entry_appended") {
+				const { customType, data } = record.entry as {
+					customType?: string;
+					data?: AuthorizationDecision;
+				};
+				if (customType === "pi-workflow-authorization" && data) {
+					if (data.kind === "held") held.set(data.call, data);
+					else held.delete(data.call);
+				}
 			}
 			spec.onEvent(event as unknown as AgentSessionEvent);
 			if (record.type === "agent_settled") {
@@ -246,9 +276,31 @@ export function createRpcChildSession(
 			asks.clear();
 		}
 
+		async function evaluate(method: PolicyMethod, value: unknown, signal: AbortSignal) {
+			if (!policy) throw new Error("This child has no contextual authorization.");
+			if (method === "authority") return policy.authority({ cwd: spec.cwd, signal });
+			if (method === "classify") {
+				return policy.classify(
+					value as Parameters<ActionAuthorization["classify"]>[0],
+					signal,
+				);
+			}
+			return policy.onDecision?.(value as AuthorizationDecision);
+		}
+
 		function listen(input: Readable, output: Writable) {
 			const reply = (message: ParentReply) => {
 				if (output.writable) output.write(`${JSON.stringify(message)}\n`);
+			};
+			const answer = (id: number, produce: (signal: AbortSignal) => Promise<string>) => {
+				const call = new AbortController();
+				asks.set(id, call);
+				produce(call.signal)
+					.then(
+						(text) => reply({ id, answer: text }),
+						(error: unknown) => reply({ id, error: errorMessage(error) }),
+					)
+					.finally(() => asks.delete(id));
 			};
 			readLines(
 				input,
@@ -263,17 +315,18 @@ export function createRpcChildSession(
 						connected?.resolve(undefined);
 						connected = undefined;
 					} else if (frame.type === "ask") {
-						const question = new AbortController();
-						asks.set(frame.id, question);
-						spec.ask(frame.question, question.signal).then(
-							(answer) => reply({ id: frame.id, answer }),
-							(error: unknown) => reply({ id: frame.id, error: errorMessage(error) }),
-						).finally(() => asks.delete(frame.id));
+						answer(frame.id, (signal) => spec.ask(frame.question, signal));
+					} else if (frame.type === "policy") {
+						const { method, value } = frame;
+						answer(frame.id, async (signal) =>
+							JSON.stringify((await evaluate(method, value, signal)) ?? null),
+						);
 					} else if (frame.type === "withdraw") {
 						asks.get(frame.id)?.abort();
-					} else if (frame.type === "report") {
+					} else if (frame.type === "report" || frame.type === "checkpoint") {
 						try {
-							spec.report(frame.result);
+							if (frame.type === "report") spec.report(frame.result);
+							else spec.checkpointed(frame.checkpoint);
 							reply({ id: frame.id });
 						} catch (error) {
 							reply({ id: frame.id, error: errorMessage(error) });
@@ -364,6 +417,7 @@ export function createRpcChildSession(
 			model: spec.model,
 			thinking: spec.thinking,
 			tools: spec.tools,
+			pendingAuthorizations: () => structuredClone([...held.values()]),
 			async run(task) {
 				starting ??= ready();
 				await starting;

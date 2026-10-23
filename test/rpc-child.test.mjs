@@ -98,7 +98,6 @@ test("an RPC child runs as its own Pi process in its worktree with the selected 
 		role: "worker",
 		cwd: dir,
 		shell: {},
-		checkpoint: false,
 	});
 	assert.deepEqual(handle.tools, ["read", "grep", "codemode", "mcp__*", "bash", "ask_parent"]);
 });
@@ -395,11 +394,84 @@ test("a parent that exits or is killed leaves no RPC child or descendant within 
 	}
 });
 
-test("an RPC child refuses contextual authorization instead of dropping it", async (t) => {
-	await assert.rejects(
-		fakeChild(t, "complete", { authorization: {} }),
-		/Contextual authorization is not available to RPC children/,
+test("a contextual RPC child loads the common tool sources by path with no tool allowlist", async (t) => {
+	const { handle, launched, dir } = await fakeChild(t, "complete", {
+		role: "explore",
+		authorization: { authority: () => ({}), classify: async () => ({}) },
+		sources: { paths: ["tools/selected.ts"] },
+	});
+	await handle.run("Say done.");
+	const { argv } = launched();
+	assert.equal(argv.includes("--tools"), false);
+	assert.deepEqual(
+		argv.flatMap((arg, index) => (arg === "--extension" ? [argv[index + 1]] : [])),
+		["builtin:mcp", "builtin:codemode", "builtin:tool-search", join(dir, "tools/selected.ts"), childRuntime],
 	);
+	assert.deepEqual(JSON.parse(argv[argv.indexOf("--pi-workflow-child") + 1]).contextual, {
+		active: ["read", "bash", "edit", "write", "grep", "find", "ls", "codemode", "tool_search"],
+	});
+});
+
+test("an RPC child refuses common tool factories, which cannot load in its process", async (t) => {
+	await assert.rejects(
+		fakeChild(t, "complete", {
+			authorization: { authority: () => ({}), classify: async () => ({}) },
+			sources: { factories: [() => {}] },
+		}),
+		/Common tool factories cannot load in a child process; select the common tool sources by path\./,
+	);
+});
+
+test("the parent's contextual policy answers its RPC child and held decisions stay pending", async (t) => {
+	const calls = [];
+	const { handle, dir } = await fakeChild(t, "policy", {
+		authorization: {
+			authority: (ctx) => {
+				calls.push(["authority", ctx.cwd, ctx.signal instanceof AbortSignal]);
+				return { assignment: "Edit assigned.txt", instructions: [] };
+			},
+			classify: async (proposal, signal) => {
+				calls.push(["classify", proposal, signal instanceof AbortSignal]);
+				return { reason: "unknown" };
+			},
+			onDecision: (decision) => {
+				calls.push(["decision", decision]);
+			},
+		},
+	});
+	const decision = { kind: "held", reason: "The scope is unknown.", call: "call-1" };
+	assert.deepEqual(JSON.parse(await handle.run("Act.")), [
+		{ id: 1, answer: JSON.stringify({ assignment: "Edit assigned.txt", instructions: [] }) },
+		{ id: 2, answer: JSON.stringify({ reason: "unknown" }) },
+		{ id: 3, answer: "null" },
+	]);
+	assert.deepEqual(calls, [
+		["authority", dir, true],
+		["classify", { action: { tool: "write" } }, true],
+		["decision", decision],
+	]);
+	assert.deepEqual(handle.pendingAuthorizations(), [decision]);
+});
+
+test("an operational RPC child gets no answer from a contextual policy", async (t) => {
+	const { handle } = await fakeChild(t, "policy");
+	const replies = JSON.parse(await handle.run("Act."));
+	assert.deepEqual(replies[0], { id: 1, error: "This child has no contextual authorization." });
+});
+
+test("a checkpoint the RPC child commits is recorded by the parent", async (t) => {
+	const recorded = [];
+	const { handle } = await fakeChild(t, "checkpoint", { checkpointed: (checkpoint) => recorded.push(checkpoint) });
+	assert.equal(await handle.run("Commit."), "DONE");
+	assert.deepEqual(recorded, [{ sha: "c0ffee", parent: "base", base: "base", branch: "feature" }]);
+});
+
+test("a granted RPC worker receives its checkpoint grant", async (t) => {
+	const grant = { branch: "feature", root: "/repo", gitDir: "/repo/.git", commonDir: "/repo/.git", base: "base" };
+	const { handle, launched } = await fakeChild(t, "complete", { checkpoint: grant });
+	await handle.run("Say done.");
+	const { argv } = launched();
+	assert.deepEqual(JSON.parse(argv[argv.indexOf("--pi-workflow-child") + 1]).checkpoint, grant);
 });
 
 test("an RPC child refuses construction when Pi is not installed", async (t) => {

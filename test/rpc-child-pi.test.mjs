@@ -19,6 +19,7 @@ import { createRpcChildSession, readinessDeadline } from "../extensions/rpc-chil
 import { eventually } from "./support/eventually.mjs";
 import { modelEndpoint } from "./support/model-endpoint.mjs";
 import { gone, parent } from "./support/process-tree.mjs";
+import { withCheckpoint } from "./support/signed-checkpoint.mjs";
 
 const installed = (process.env.PATH ?? "").split(delimiter).some((directory) => {
 	try {
@@ -497,4 +498,199 @@ test("a real Pi worker's guarded bash refuses a parent command and its report st
 	t.diagnostic(`bash: ${refusal.trim()}`);
 	t.diagnostic(`bash sockets: ${[...descriptors.matchAll(/ \d+ -> socket:\S+/g)].join(",")}`);
 	t.diagnostic(`result: ${JSON.stringify(done.result)}; final: ${done.text}`);
+});
+
+const head = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+
+function granted(core, scene, worktree, grant) {
+	return core.start(
+		{
+			role: "worker",
+			contract: { prompt: "You are a child session.", tools: ["read", "bash", "codemode", "checkpoint"] },
+			task: "Commit a.txt.",
+			worktree,
+			model: scene.endpoint.model,
+			thinking: "off",
+			chosenBy: "parent",
+			references: [],
+			checkpoint: grant,
+		},
+		{
+			background: true,
+			modelRegistry: {},
+			project: () => ({ cwd: worktree, trusted: false }),
+			shell: () => ({}),
+		},
+	);
+}
+
+test("a real Pi worker's guard holds inside a script and its granted checkpoint makes a signed commit the parent records", { skip, timeout: 90_000 }, async (t) => {
+	const scene = await fixture(t, [
+		{ tool: "codemode", args: { code: "return await tools.bash({ command: 'git push origin HEAD' });" } },
+		{ tool: "bash", args: { command: "printf 'A\\n' > a.txt" } },
+		{ tool: "checkpoint", args: { message: "feat: add a", paths: ["a.txt"] } },
+		"DONE",
+	]);
+	await withCheckpoint(async ({ worktree, grant }) => {
+		const core = registry(t, scene);
+		const started = await granted(core, scene, worktree, grant);
+		assert.equal(started.status, "queued");
+		const done = await eventually(() => core.get(started.id), (child) => child?.state === "completed");
+		const nested = toolResults(scene.endpoint.requests[1]).at(-1);
+		assert.match(nested, /`git push` is reserved for the parent/);
+		const sha = head(worktree, "rev-parse", "HEAD");
+		assert.match(head(worktree, "cat-file", "commit", "HEAD"), /^gpgsig /m);
+		assert.equal(head(worktree, "show", "HEAD:a.txt"), "A");
+		assert.deepEqual(done.checkpoints, [{ sha, parent: grant.base, base: grant.base, branch: "feature" }]);
+		t.diagnostic(`nested bash: ${nested.split("\n").find((line) => line.includes("reserved"))}`);
+		t.diagnostic(`checkpoint: ${toolResults(scene.endpoint.requests[3]).at(-1).split("\n")[0]}; gpgsig present`);
+	});
+});
+
+test("a real Pi worker's checkpoint fails closed on a signing failure and records nothing", { skip, timeout: 90_000 }, async (t) => {
+	const scene = await fixture(t, [
+		{ tool: "bash", args: { command: "printf 'A\\n' > a.txt" } },
+		{ tool: "checkpoint", args: { message: "feat: add a", paths: ["a.txt"] } },
+		"DONE",
+	]);
+	await withCheckpoint(async ({ dir, worktree, grant }) => {
+		head(worktree, "config", "user.signingkey", join(dir, "missing-key"));
+		const core = registry(t, scene);
+		const started = await granted(core, scene, worktree, grant);
+		const done = await eventually(() => core.get(started.id), (child) => child?.state === "completed");
+		const failure = toolResults(scene.endpoint.requests[2]).at(-1);
+		assert.doesNotMatch(failure, /^Checkpoint /);
+		assert.equal(head(worktree, "rev-parse", "HEAD"), grant.base);
+		assert.equal(done.checkpoints, undefined);
+		t.diagnostic(`checkpoint: ${failure.split("\n")[0]}`);
+	});
+});
+
+test("a real Pi contextual child continues an authorized call, holds an uncertain nested one after consulting the parent and verifies a scoped signed commit", { skip, timeout: 90_000 }, async (t) => {
+	const scene = await fixture(t, [
+		{ tool: "write", args: { path: "assigned.txt", content: "ASSIGNED" } },
+		{ tool: "codemode", args: { code: "return await tools.write({ path: 'other.txt', content: 'OTHER' });" } },
+		{ tool: "bash", args: { command: "git add assigned.txt && git commit -q -m 'feat: assigned change'" } },
+		"DONE",
+	]);
+	const known = { prohibited: false, scope: "within", ownership: "assigned", effects: "ordinary", confirmed: false, commit: false };
+	await withCheckpoint(async ({ worktree, grant }) => {
+		const proposals = [];
+		const questions = [];
+		const recorded = [];
+		const handle = await createRpcChildSession({ sessionRoot: join(scene.dir, "sessions") })({
+			authorization: {
+				authority: () => ({
+					assignment: "Write assigned.txt and commit it.",
+					instructions: [],
+					commit: { paths: ["assigned.txt"], context: "noninterfering" },
+				}),
+				classify: async (proposal) => {
+					proposals.push(proposal);
+					const { tool, input } = proposal.action;
+					if (tool === "write" && input.path === "other.txt")
+						return { ...known, scope: "unknown", reason: "other.txt is outside the assignment." };
+					if (tool === "bash") return { ...known, commit: { paths: ["assigned.txt"] }, reason: "The assigned commit." };
+					return { ...known, reason: "Assigned work." };
+				},
+			},
+			cwd: worktree,
+			project: { cwd: worktree, trusted: false },
+			role: "explore",
+			model: scene.endpoint.model,
+			thinking: "off",
+			prompt: "You are a contextual child.",
+			tools: ["read"],
+			modelRegistry: {},
+			shell: {},
+			onEvent() {},
+			notify() {},
+			ask: async (text) => {
+				const question = JSON.parse(text.slice(text.indexOf("\n") + 1));
+				questions.push(question);
+				return JSON.stringify({ id: question.id, call: question.call, proposal: question.proposal, kind: "pending", answer: "Waiting for the owner." });
+			},
+			report() {},
+			checkpointed: (checkpoint) => recorded.push(checkpoint),
+		});
+		t.after(() => handle.dispose());
+		assert.equal(await handle.run("Do the assigned work."), "DONE");
+		assert.equal(head(worktree, "show", "HEAD:assigned.txt"), "ASSIGNED");
+		assert.equal(existsSync(join(worktree, "other.txt")), false);
+		const held = toolResults(scene.endpoint.requests[2]).at(-1);
+		assert.match(held, /Authorization held; consultation required: Consultation remains pending; no authority established\./);
+		assert.equal(questions.length, 1);
+		assert.deepEqual(questions[0].proposal.action, { tool: "write", input: { path: "other.txt", content: "OTHER" }, cwd: worktree });
+		assert.deepEqual(handle.pendingAuthorizations().map((decision) => decision.call), [questions[0].call]);
+		assert.match(proposals[0].context.systemPrompt, /You are a contextual child\./);
+		assert.ok(proposals.some((proposal) => proposal.action.tool === "codemode"));
+		const sha = head(worktree, "rev-parse", "HEAD");
+		assert.equal(head(worktree, "rev-parse", "HEAD^"), grant.base);
+		assert.match(head(worktree, "cat-file", "commit", "HEAD"), /^gpgsig /m);
+		const committed = toolResults(scene.endpoint.requests[3]).at(-1);
+		assert.match(committed, new RegExp(`Signed commit ${sha}; parent: ${grant.base}; base: ${grant.base}; branch: feature`));
+		assert.deepEqual(recorded, [{ sha, parent: grant.base, base: grant.base, branch: "feature", files: ["A\tassigned.txt"] }]);
+		t.diagnostic(`allowed: ${proposals[0].action.tool} ${proposals[0].action.input.path}`);
+		t.diagnostic(`held: ${held.split("\n").find((line) => line.includes("Authorization held"))}`);
+		t.diagnostic(`commit: ${committed.split("\n").at(-1)}`);
+	});
+});
+
+test("a real Pi contextual child surfaces a scope violation after commit and refuses a commit without signing", { skip, timeout: 90_000 }, async (t) => {
+	const cases = {
+		"scope violation": {
+			prepare: (worktree) => writeFile(join(worktree, "outside.txt"), "OUTSIDE"),
+			expected: /Postcommit verification failed \(no rollback\): /,
+			committed: true,
+		},
+		"disabled signing": {
+			prepare: (worktree) => head(worktree, "config", "commit.gpgsign", "false"),
+			expected: /Authorization held; consultation required: Authorization unresolved: /,
+			committed: false,
+		},
+	};
+	for (const [name, { prepare, expected, committed }] of Object.entries(cases)) {
+		await t.test(name, async (t) => {
+			const scene = await fixture(t, [
+				{ tool: "bash", args: { command: "printf A > assigned.txt && git add -A && git commit -q -m 'feat: assigned change'" } },
+				"DONE",
+			]);
+			await withCheckpoint(async ({ worktree, grant }) => {
+				await prepare(worktree);
+				const handle = await createRpcChildSession({ sessionRoot: join(scene.dir, "sessions") })({
+					authorization: {
+						authority: () => ({
+							assignment: "Commit assigned.txt.",
+							instructions: [],
+							commit: { paths: ["assigned.txt"], context: "noninterfering" },
+						}),
+						classify: async () => ({
+							prohibited: false, scope: "within", ownership: "assigned", effects: "ordinary", confirmed: false,
+							commit: { paths: ["assigned.txt"] }, reason: "The assigned commit.",
+						}),
+					},
+					cwd: worktree,
+					project: { cwd: worktree, trusted: false },
+					role: "worker",
+					model: scene.endpoint.model,
+					thinking: "off",
+					prompt: "You are a contextual child.",
+					tools: ["read"],
+					modelRegistry: {},
+					shell: {},
+					onEvent() {},
+					notify() {},
+					ask: async () => "{}",
+					report() {},
+					checkpointed() {},
+				});
+				t.after(() => handle.dispose());
+				assert.equal(await handle.run("Commit."), "DONE");
+				const result = toolResults(scene.endpoint.requests[1]).at(-1);
+				assert.match(result, expected);
+				assert.equal(head(worktree, "rev-parse", "HEAD") !== grant.base, committed);
+				t.diagnostic(result.split("\n").find((line) => expected.test(line)));
+			});
+		});
+	}
 });

@@ -131,7 +131,9 @@ interface SessionInstructions {
 }
 
 export interface ActionAuthorization {
-	authority(ctx: ExtensionContext): ActionAuthority | Promise<ActionAuthority>;
+	authority(
+		ctx: Pick<ExtensionContext, "cwd" | "signal">,
+	): ActionAuthority | Promise<ActionAuthority>;
 	classify(proposal: ActionProposal, signal?: AbortSignal): Promise<unknown>;
 	consult?(
 		question: AuthorizationQuestion,
@@ -176,7 +178,8 @@ export function sessionActionAuthorization(options: ActionAuthorization) {
 	let capture: AgentSession["agent"]["transformContext"];
 	return {
 		authorization: {
-			authority: (ctx: ExtensionContext) => options.authority(ctx),
+			authority: (ctx: Pick<ExtensionContext, "cwd" | "signal">) =>
+				options.authority(ctx),
 			classify: (proposal: ActionProposal, signal?: AbortSignal) =>
 				options.classify(proposal, signal),
 			...(options.consult
@@ -326,7 +329,7 @@ async function cancellable<T>(
 export function installActionAuthorization(
 	pi: ExtensionAPI,
 	options: ActionAuthorization,
-	checkpointed?: (checkpoint: Checkpoint) => void,
+	checkpointed?: (checkpoint: Checkpoint) => unknown,
 ) {
 	let assigned: CheckpointGrant | undefined;
 	pi.on("session_start", async (_event, ctx) => {
@@ -340,7 +343,7 @@ export function installActionAuthorization(
 		try {
 			const checkpoint = await verifyCommit(prepared);
 			if (checkpoint) {
-				checkpointed?.(checkpoint);
+				await checkpointed?.(checkpoint);
 				pi.appendEntry("pi-workflow-checkpoint", checkpoint);
 				return {
 					content: [
