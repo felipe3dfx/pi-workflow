@@ -33,14 +33,14 @@ function server(name, evidence) {
 	return { command: process.execPath, args: [mcpFixture, name, evidence, "0", "roots"] };
 }
 
-async function fixture(t) {
+async function fixture(t, answer) {
 	const dir = await realpath(await mkdtemp(join(tmpdir(), "pi-workflow-rpc-child-pi-")));
 	const agentDir = join(dir, "agent");
 	const evidence = join(dir, "evidence");
 	await mkdir(agentDir);
 	await mkdir(evidence);
 	await writeFile(join(agentDir, "mcp.json"), JSON.stringify({ mcpServers: { global: server("global", evidence) } }));
-	const endpoint = await modelEndpoint(agentDir);
+	const endpoint = await modelEndpoint(agentDir, answer);
 	const previous = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = agentDir;
 	t.after(async () => {
@@ -234,4 +234,129 @@ test("a real Pi child whose model Pi cannot select fails its run instead of hang
 	assert.ok(Date.now() - started < readinessDeadline);
 	assert.match(failure.message, /Model "absent-provider\/absent-model" not found/);
 	t.diagnostic(failure.message);
+});
+
+function registry(t, scene, sent = []) {
+	const core = createChildSessions({
+		create: createRpcChildSession({ sessionRoot: join(scene.dir, "sessions") }),
+		send: (message) => sent.push(message),
+		idle: () => false,
+		trace() {},
+		report() {},
+		audit: createChildAudit({ root: "", parent: () => undefined }),
+	});
+	t.after(() => core.disposeAll());
+	return core;
+}
+
+function background(core, repo, scene, role, tools) {
+	return core.start(
+		{
+			role,
+			contract: { prompt: "You are a child session.", tools },
+			task: "Do the task.",
+			worktree: repo,
+			model: scene.endpoint.model,
+			thinking: "off",
+			chosenBy: "parent",
+			references: [],
+		},
+		{
+			background: true,
+			modelRegistry: {},
+			project: () => ({ cwd: repo, trusted: false }),
+			shell: () => ({}),
+		},
+	);
+}
+
+const toolResults = (request) =>
+	request.messages.filter((message) => message.role === "tool").map((message) => message.content);
+
+test("a real Pi child asks the parent, the first answer wins and the child continues with it", { skip, timeout: 60_000 }, async (t) => {
+	const scene = await fixture(t, [{ tool: "ask_parent", args: { question: "Which file?" } }, "DONE"]);
+	const repo = await repository(scene.dir, "repo", {});
+	const sent = [];
+	const core = registry(t, scene, sent);
+	const started = await background(core, repo, scene, "explore", ["read"]);
+	assert.equal(started.status, "queued");
+	const waiting = await eventually(() => core.get(started.id), (child) => child?.state === "waiting");
+	assert.equal(waiting.question, 1);
+	const question = sent.find((message) => message.customType === "pi-workflow-child-question");
+	assert.equal(question.details.text, "Which file?");
+	core.reply(started.id, 1, "README.md", "operator");
+	assert.throws(
+		() => core.reply(started.id, 1, "other.md", "parent"),
+		/already answered by the operator: README.md/,
+	);
+	const done = await eventually(() => core.get(started.id), (child) => child?.state === "completed");
+	assert.equal(done.text, "DONE");
+	assert.deepEqual(toolResults(scene.endpoint.requests[1]), ["README.md"]);
+	t.diagnostic(`asked: ${question.details.text}; answered by the operator: README.md; final: ${done.text}`);
+});
+
+test("a real Pi child withdraws a question when its call is aborted", { skip, timeout: 60_000 }, async (t) => {
+	const scene = await fixture(t, [{ tool: "ask_parent", args: { question: "Which file?" } }, "DONE"]);
+	const repo = await repository(scene.dir, "repo", {});
+	const signals = [];
+	const handle = await createRpcChildSession({ sessionRoot: join(scene.dir, "sessions") })({
+		cwd: repo,
+		project: { cwd: repo, trusted: false },
+		role: "explore",
+		model: scene.endpoint.model,
+		thinking: "off",
+		prompt: "You are a child session.",
+		tools: ["read", "ask_parent"],
+		modelRegistry: {},
+		shell: {},
+		onEvent() {},
+		notify() {},
+		ask: (_question, signal) => {
+			signals.push(signal);
+			return new Promise(() => {});
+		},
+		report() {},
+		checkpointed() {},
+	});
+	t.after(() => handle.dispose());
+	const run = handle.run("Ask first.");
+	run.catch(() => {});
+	await eventually(() => signals.length === 1);
+	assert.equal(signals[0].aborted, false);
+	await handle.abort();
+	await eventually(() => signals[0].aborted);
+	await assert.rejects(run, /aborted/);
+	t.diagnostic("the aborted ask_parent call withdrew question 1");
+});
+
+test("a real Pi worker's guarded bash refuses a parent command and its report stays apart from its final answer", { skip, timeout: 60_000 }, async (t) => {
+	const result = { verdict: "done", files_changed: [], validation: ["git push origin HEAD: refused"], left_undone: [] };
+	const scene = await fixture(t, [
+		{ tool: "bash", args: { command: "git push origin HEAD" } },
+		{ tool: "bash", args: { command: "ls -l /proc/$$/fd" } },
+		{ tool: "report_result", args: result },
+		"DONE",
+	]);
+	await writeFile(join(scene.agentDir, "APPEND_SYSTEM.md"), "APPENDED-BY-THE-USER\n");
+	const repo = await repository(scene.dir, "repo", {});
+	const core = registry(t, scene);
+	const started = await background(core, repo, scene, "worker", ["read", "bash"]);
+	assert.equal(started.status, "queued");
+	const done = await eventually(() => core.get(started.id), (child) => child?.state === "completed");
+	assert.equal(done.text, "DONE");
+	assert.deepEqual(done.result, result);
+	const refusal = toolResults(scene.endpoint.requests[1]).at(-1);
+	assert.match(refusal, /`git push` is reserved for the parent/);
+	const descriptors = toolResults(scene.endpoint.requests[2]).at(-1);
+	assert.deepEqual(
+		[...descriptors.matchAll(/ (\d+) -> socket:/g)].map((match) => match[1]),
+		["1", "2"],
+	);
+	assert.equal(toolResults(scene.endpoint.requests[3]).at(-1), "Result recorded.");
+	const system = scene.endpoint.requests[0].messages.find((message) => message.role === "system").content;
+	assert.match(system, /You are a child session\./);
+	assert.doesNotMatch(system, /APPENDED-BY-THE-USER/);
+	t.diagnostic(`bash: ${refusal.trim()}`);
+	t.diagnostic(`bash sockets: ${[...descriptors.matchAll(/ \d+ -> socket:\S+/g)].join(",")}`);
+	t.diagnostic(`result: ${JSON.stringify(done.result)}; final: ${done.text}`);
 });

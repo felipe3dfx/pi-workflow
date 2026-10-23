@@ -2,6 +2,8 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { accessSync, constants, readdirSync } from "node:fs";
 import { delimiter, join } from "node:path";
+import type { Readable, Writable } from "node:stream";
+import { fileURLToPath } from "node:url";
 
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import {
@@ -15,13 +17,21 @@ import {
 	type ChildSessionFactory,
 	shutdownDeadline,
 } from "./child-sessions.ts";
+import {
+	type ChildFrame,
+	type ChildRuntimeConfig,
+	channelDescriptor,
+	childRuntimeFlag,
+	type ParentReply,
+	readLines,
+} from "./child-runtime.ts";
 import { type Schedule, scheduleTimer } from "./clock.ts";
 import { errorMessage } from "./error-message.ts";
 
 export const readinessDeadline = 10_000;
+export const channelFrameLimit = 1024 * 1024;
 
-// Pi's built-in bash bypasses the ADR 0013 guard; only a guarded replacement may take its name.
-const unguardedTools = new Set(["bash"]);
+const childRuntime = fileURLToPath(new URL("./child-runtime.ts", import.meta.url));
 
 type RpcRecord = { type: string; [field: string]: unknown };
 type Pending = { resolve(data: unknown): void; reject(error: Error): void };
@@ -86,7 +96,12 @@ export function createRpcChildSession(
 		const root = options.sessionRoot ?? join(getAgentDir(), "pi-workflow-children");
 		const sessionId = randomUUID();
 		const fork = spec.parentSession ? sessionFile(root, spec.parentSession) : undefined;
-		const tools = spec.tools.filter((tool) => !unguardedTools.has(tool));
+		const runtime: ChildRuntimeConfig = {
+			role: spec.role,
+			cwd: spec.cwd,
+			shell: spec.shell,
+			checkpoint: spec.checkpoint !== undefined,
+		};
 		const args = [
 			...prefix,
 			"--mode", "rpc",
@@ -95,10 +110,12 @@ export function createRpcChildSession(
 			...(fork ? ["--fork", fork] : []),
 			"--model", spec.model,
 			"--thinking", spec.thinking,
-			"--tools", tools.join(","),
+			"--tools", spec.tools.join(","),
 			"--no-extensions",
 			"--extension", "builtin:mcp",
 			"--extension", "builtin:codemode",
+			"--extension", childRuntime,
+			`--${childRuntimeFlag}`, JSON.stringify(runtime),
 			"--no-skills",
 			"--no-prompt-templates",
 			"--no-themes",
@@ -120,9 +137,14 @@ export function createRpcChildSession(
 		let streaming: AssistantMessage | undefined;
 		let last: AssistantMessage | undefined;
 		let delivery = Promise.resolve();
+		const asks = new Map<number, AbortController>();
+		let connected: Pending | undefined;
 
 		function fail(error: Error) {
 			failure ??= error;
+			withdrawAll();
+			connected?.reject(failure);
+			connected = undefined;
 			for (const pending of waiting.values()) pending.reject(failure);
 			waiting.clear();
 			settled?.reject(failure);
@@ -207,11 +229,56 @@ export function createRpcChildSession(
 			}
 		}
 
+		function withdrawAll() {
+			for (const question of asks.values()) question.abort();
+			asks.clear();
+		}
+
+		function listen(input: Readable, output: Writable) {
+			const reply = (message: ParentReply) => {
+				if (output.writable) output.write(`${JSON.stringify(message)}\n`);
+			};
+			readLines(
+				input,
+				(line) => {
+					let frame: ChildFrame;
+					try {
+						frame = JSON.parse(line) as ChildFrame;
+					} catch {
+						return;
+					}
+					if (frame.type === "ready") {
+						connected?.resolve(undefined);
+						connected = undefined;
+					} else if (frame.type === "ask") {
+						const question = new AbortController();
+						asks.set(frame.id, question);
+						spec.ask(frame.question, question.signal).then(
+							(answer) => reply({ id: frame.id, answer }),
+							(error: unknown) => reply({ id: frame.id, error: errorMessage(error) }),
+						).finally(() => asks.delete(frame.id));
+					} else if (frame.type === "withdraw") {
+						asks.get(frame.id)?.abort();
+					} else if (frame.type === "report") {
+						try {
+							spec.report(frame.result);
+							reply({ id: frame.id });
+						} catch (error) {
+							reply({ id: frame.id, error: errorMessage(error) });
+						}
+					}
+				},
+				channelFrameLimit,
+			);
+			input.once("error", (error) => fail(error));
+			input.once("close", withdrawAll);
+		}
+
 		function launch() {
 			if (disposed) throw new Error("The child session was stopped.");
 			const pi = spawn(command, args, {
 				cwd: spec.cwd,
-				stdio: ["pipe", "pipe", "pipe"],
+				stdio: ["pipe", "pipe", "pipe", "pipe"],
 				detached: true,
 			});
 			child = pi;
@@ -232,19 +299,16 @@ export function createRpcChildSession(
 			pi.stderr.on("data", (chunk: string) => {
 				stderr = `${stderr}${chunk}`.slice(-4000);
 			});
-			let buffer = "";
-			pi.stdout.setEncoding("utf8");
-			pi.stdout.on("data", (chunk: string) => {
-				buffer += chunk;
-				for (let newline = buffer.indexOf("\n"); newline >= 0; newline = buffer.indexOf("\n")) {
-					const line = buffer.slice(0, newline).replace(/\r$/, "");
-					buffer = buffer.slice(newline + 1);
-					if (line) receive(line);
-				}
-			});
+			readLines(pi.stdout, receive);
+			const channel = pi.stdio[channelDescriptor] as unknown as Readable & Writable;
+			listen(channel, channel);
 		}
 
 		async function ready() {
+			const runtimeReady = new Promise<unknown>((resolve, reject) => {
+				connected = { resolve, reject };
+			});
+			runtimeReady.catch(() => {});
 			launch();
 			let cancel = () => {};
 			const deadline = new Promise<never>((_, reject) => {
@@ -268,6 +332,8 @@ export function createRpcChildSession(
 						`The child would run ${model ?? "no model"} at ${state.thinkingLevel} instead of the selected ${spec.model} at ${spec.thinking}.`,
 					);
 				}
+				// Without the child runtime, Pi's built-in bash would run without the ADR 0013 guard.
+				await Promise.race([runtimeReady, deadline]);
 				entries = [];
 				await Promise.race([refresh(), deadline]);
 			} finally {
@@ -280,7 +346,7 @@ export function createRpcChildSession(
 			entries: () => entries,
 			model: spec.model,
 			thinking: spec.thinking,
-			tools,
+			tools: spec.tools,
 			async run(task) {
 				starting ??= ready();
 				await starting;
@@ -321,7 +387,9 @@ export function createRpcChildSession(
 			async dispose() {
 				disposed = true;
 				const pi = child;
-				if (!pi || failure) return exited;
+				if (!pi || pi.pid === undefined || pi.exitCode !== null || pi.signalCode !== null) {
+					return exited;
+				}
 				pi.stdin?.end();
 				let cancel = () => {};
 				const grace = new Promise<boolean>((resolve) => {
@@ -329,7 +397,7 @@ export function createRpcChildSession(
 				});
 				const stopped = await Promise.race([exited.then(() => true), grace]);
 				cancel();
-				if (!stopped && pi.pid !== undefined) {
+				if (!stopped) {
 					try {
 						process.kill(-pi.pid, "SIGKILL");
 					} catch {}

@@ -7,10 +7,13 @@ import { join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { createRpcChildSession, readinessDeadline } from "../extensions/rpc-child.ts";
-import { shutdownDeadline } from "../extensions/child-sessions.ts";
+import { channelFrameLimit, createRpcChildSession, readinessDeadline } from "../extensions/rpc-child.ts";
+import { createChildAudit } from "../extensions/child-audit.ts";
+import { createChildSessions, shutdownDeadline } from "../extensions/child-sessions.ts";
+import { eventually } from "./support/eventually.mjs";
 
 const fakePi = fileURLToPath(new URL("./support/fake-pi.mjs", import.meta.url));
+const childRuntime = fileURLToPath(new URL("../extensions/child-runtime.ts", import.meta.url));
 
 async function scratch(t) {
 	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-rpc-child-"));
@@ -27,6 +30,9 @@ async function fakeChild(t, scenario, spec = {}, options = {}) {
 		delete process.env.FAKE_PI_SCENARIO;
 		delete process.env.FAKE_PI_RECORD;
 		delete process.env.FAKE_PI_DELIVER;
+		delete process.env.FAKE_PI_WITHDRAW_MS;
+		delete process.env.FAKE_PI_LINGER_MS;
+		delete process.env.FAKE_PI_FRAME_BYTES;
 	});
 	const events = [];
 	const notes = [];
@@ -76,7 +82,7 @@ test("an RPC child runs as its own Pi process in its worktree with the selected 
 	assert.equal(value("--model"), "fake/echo");
 	assert.equal(value("--thinking"), "off");
 	assert.equal(value("--system-prompt"), "You are a child.");
-	assert.equal(value("--tools"), "read,grep,codemode,mcp__*,ask_parent");
+	assert.equal(value("--tools"), "read,grep,codemode,mcp__*,bash,ask_parent");
 	assert.deepEqual(
 		argv.filter((arg) => arg === "--approve" || arg === "--no-approve"),
 		["--no-approve"],
@@ -84,9 +90,130 @@ test("an RPC child runs as its own Pi process in its worktree with the selected 
 	assert.ok(argv.includes("--no-extensions"));
 	assert.deepEqual(
 		argv.flatMap((arg, index) => (arg === "--extension" ? [argv[index + 1]] : [])),
-		["builtin:mcp", "builtin:codemode"],
+		["builtin:mcp", "builtin:codemode", childRuntime],
 	);
-	assert.deepEqual(handle.tools, ["read", "grep", "codemode", "mcp__*", "ask_parent"]);
+	assert.deepEqual(JSON.parse(value("--pi-workflow-child")), {
+		role: "explore",
+		cwd: dir,
+		shell: {},
+		checkpoint: false,
+	});
+	assert.deepEqual(handle.tools, ["read", "grep", "codemode", "mcp__*", "bash", "ask_parent"]);
+});
+
+test("an RPC child asks the parent over its channel and continues with the answer", async (t) => {
+	const questions = [];
+	const { handle } = await fakeChild(t, "ask", {
+		ask: async (question) => {
+			questions.push(question);
+			return "README.md";
+		},
+	});
+	assert.equal(await handle.run("Ask first."), "ANSWER README.md");
+	assert.deepEqual(questions, ["Which file?"]);
+});
+
+test("a consultation the parent cannot answer reaches the child as an error", async (t) => {
+	const { handle } = await fakeChild(t, "ask", {
+		ask: async () => {
+			throw new Error("A question is already waiting for the parent's reply.");
+		},
+	});
+	assert.equal(
+		await handle.run("Ask first."),
+		"ERROR A question is already waiting for the parent's reply.",
+	);
+});
+
+test("a question the child withdraws aborts the parent's wait", async (t) => {
+	const signals = [];
+	const { handle } = await fakeChild(t, "withdraw", {
+		ask: (_question, signal) => {
+			signals.push(signal);
+			return new Promise(() => {});
+		},
+	});
+	assert.equal(await handle.run("Ask first."), "DONE");
+	assert.equal(signals.length, 1);
+	assert.equal(signals[0].aborted, true);
+});
+
+test("a late answer to a question the child withdrew is refused", async (t) => {
+	const dir = await scratch(t);
+	process.env.FAKE_PI_SCENARIO = "withdraw";
+	process.env.FAKE_PI_WITHDRAW_MS = "50";
+	process.env.FAKE_PI_LINGER_MS = "300";
+	t.after(() => {
+		delete process.env.FAKE_PI_SCENARIO;
+		delete process.env.FAKE_PI_WITHDRAW_MS;
+		delete process.env.FAKE_PI_LINGER_MS;
+	});
+	const core = createChildSessions({
+		create: createRpcChildSession({ command: [process.execPath, fakePi], sessionRoot: join(dir, "sessions") }),
+		send() {},
+		idle: () => false,
+		trace() {},
+		report() {},
+		audit: createChildAudit({ root: "", parent: () => undefined }),
+	});
+	t.after(() => core.disposeAll());
+	const { id } = await core.start(
+		{ role: "explore", contract: { prompt: "You are a child.", tools: [] }, task: "Ask.", worktree: dir, model: "fake/echo", thinking: "off", chosenBy: "parent", references: [] },
+		{ background: true, modelRegistry: {}, project: () => ({ cwd: dir, trusted: false }), shell: () => ({}) },
+	);
+	await eventually(() => core.get(id), (child) => child?.state === "waiting");
+	await eventually(() => core.get(id), (child) => child?.state === "running");
+	assert.throws(
+		() => core.reply(id, 1, "late", "parent"),
+		/Question 1 of child .* was withdrawn: the call that asked it ended/,
+	);
+	await eventually(() => core.get(id), (child) => child?.state === "completed");
+});
+
+test("a child that disconnects withdraws its open question", async (t) => {
+	const signals = [];
+	const { handle } = await fakeChild(t, "ask", {
+		ask: (_question, signal) => {
+			signals.push(signal);
+			return new Promise(() => {});
+		},
+	});
+	const run = handle.run("Ask first.");
+	run.catch(() => {});
+	while (signals.length === 0) await new Promise((resolve) => setTimeout(resolve, 5));
+	assert.equal(signals[0].aborted, false);
+	await handle.dispose();
+	assert.equal(signals[0].aborted, true);
+	await assert.rejects(run, /exited/);
+});
+
+test("a child's structured report reaches the parent apart from its final answer", async (t) => {
+	const reports = [];
+	const { handle } = await fakeChild(t, "report", {
+		role: "worker",
+		report: (result) => reports.push(result),
+	});
+	assert.equal(await handle.run("Work."), "DONE");
+	assert.deepEqual(reports, [
+		{ verdict: "done", files_changed: ["a.ts: added"], validation: [], left_undone: [] },
+	]);
+});
+
+test("an oversized channel frame fails the child", async (t) => {
+	assert.equal(channelFrameLimit, 1024 * 1024);
+	process.env.FAKE_PI_FRAME_BYTES = String(channelFrameLimit + 1);
+	const { handle } = await fakeChild(t, "oversize");
+	await assert.rejects(handle.run("Say done."), /channel frame over 1048576 bytes/);
+});
+
+test("readiness waits for the child runtime to connect its channel", async (t) => {
+	const { handle } = await fakeChild(t, "no-runtime", {}, {
+		schedule(run, ms) {
+			if (ms === readinessDeadline) setTimeout(run, 200);
+			return () => {};
+		},
+	});
+	await assert.rejects(handle.run("Say done."), /did not become ready within 10000 ms/);
 });
 
 test("a trusted parent launches its RPC child with exactly --approve", async (t) => {

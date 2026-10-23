@@ -25,7 +25,7 @@ import {
 	SettingsManager,
 	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { type Static, Type } from "typebox";
+import { Type } from "typebox";
 
 import type { ChildAudit, ChildCapture } from "./child-audit.ts";
 import {
@@ -61,13 +61,17 @@ import {
 	needsNoReason,
 	projectChild,
 	reportsResult,
-	resultParameters,
-	verdictNeedsNoReason,
 	verdictSucceeded,
 } from "./child-projection.ts";
 import { shellOptions } from "./shell-settings.ts";
 import { type CommonToolSources, commonToolFactories } from "./tool-sources.ts";
 import { createRpcChildSession } from "./rpc-child.ts";
+import {
+	askParentTool,
+	createAskParentTool,
+	createReportResultTool,
+	reportResultTool,
+} from "./child-runtime.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
 import type { TodoClaim } from "./todo-extension.ts";
 import type { TaskState } from "./todo-list.ts";
@@ -307,9 +311,6 @@ function parentProject(ctx: ExtensionContext): ParentProject {
 	return { cwd: ctx.cwd, trusted: ctx.isProjectTrusted() };
 }
 
-export const askParentTool = "ask_parent";
-const reportResultTool = "report_result";
-
 const mcpTools = [
 	"mcp__*",
 	"list_mcp_resources",
@@ -326,36 +327,6 @@ function childTools(plan: Plan) {
 		...(reportsResult(plan.role) ? [reportResultTool] : []),
 		...(plan.checkpoint ? [checkpointTool] : []),
 	];
-}
-
-const askParentParameters = Type.Object({
-	question: Type.String({ description: "One question for the parent." }),
-});
-
-export function createAskParentTool(
-	ask: (question: string, signal?: AbortSignal) => Promise<string>,
-	contextual = false,
-) {
-	return {
-		name: askParentTool,
-		label: "Ask Parent",
-		description: contextual
-			? "Ask the parent about missing facts or authority. A failed consultation leaves the action held, not permitted; continue only independent authorized work."
-			: "Ask the parent session one question and wait for its answer. Use it only when you are blocked and the answer changes your next step; a command reserved for the parent is not a reason to ask. An error result means no answer will come; continue without one.",
-		parameters: askParentParameters,
-		async execute(
-			_toolCallId: string,
-			params: Static<typeof askParentParameters>,
-			signal?: AbortSignal,
-		) {
-			return {
-				content: [
-					{ type: "text" as const, text: await ask(params.question, signal) },
-				],
-				details: {},
-			};
-		},
-	};
 }
 
 function parentMcp(project: ParentProject): ExtensionFactory {
@@ -505,35 +476,7 @@ export const createPiChildSession: ChildSessionFactory = async (spec) => {
 			...(spec.authorization ? [] : [createChildCodeGraphTool(spec.cwd)]),
 			createAskParentTool(spec.ask, spec.authorization !== undefined),
 			...(reportsResult(spec.role) || spec.authorization
-				? [
-						{
-							name: reportResultTool,
-							label: "Report Result",
-							description:
-								"Report your Verdict and result to the parent before your final answer. Call it again to correct it; the last call counts.",
-							parameters:
-								spec.role === "verify"
-									? resultParameters.verify
-									: resultParameters.worker,
-							async execute(_toolCallId: string, params: ChildResult) {
-								if (
-									!params.reason &&
-									!verdictNeedsNoReason(params.verdict)
-								) {
-									throw new Error(
-										`A ${params.verdict} Verdict needs a reason.`,
-									);
-								}
-								spec.report(params);
-								return {
-									content: [
-										{ type: "text" as const, text: "Result recorded." },
-									],
-									details: {},
-								};
-							},
-						},
-					]
+				? [createReportResultTool(spec.role, spec.report)]
 				: []),
 			...(spec.authorization || spec.checkpoint
 				? [createCheckpointTool(spec.checkpoint ?? spec.cwd, spec.authorization ? () => {} : spec.checkpointed)]
