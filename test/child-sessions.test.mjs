@@ -44,7 +44,8 @@ import {
 } from "@earendil-works/pi-tui";
 
 import { createChildAudit } from "../extensions/child-audit.ts";
-import { createAskParentTool, createPiChildSession } from "../extensions/child-sessions.ts";
+import { createAskParentTool } from "../extensions/child-runtime.ts";
+import { createPiChildSession } from "../extensions/child-sessions.ts";
 import { compactToolRenderers } from "../extensions/compact-tools.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";

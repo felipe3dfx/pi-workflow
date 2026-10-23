@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { Socket } from "node:net";
 
 const argv = process.argv.slice(2);
 const flag = (name) => {
@@ -27,6 +28,27 @@ if (scenario === "refuse") {
 	process.exit(3);
 }
 
+const channel = new Socket({ fd: 3, readable: true, writable: true });
+const tell = (frame) => channel.write(`${JSON.stringify(frame)}\n`);
+const replies = new Map();
+let inbound = "";
+channel.setEncoding("utf8");
+channel.on("data", (chunk) => {
+	inbound += chunk;
+	for (let newline = inbound.indexOf("\n"); newline >= 0; newline = inbound.indexOf("\n")) {
+		const reply = JSON.parse(inbound.slice(0, newline));
+		inbound = inbound.slice(newline + 1);
+		replies.get(reply.id)?.(reply);
+	}
+});
+channel.on("error", () => {});
+if (scenario !== "no-runtime") tell({ type: "ready" });
+const consult = (frame) =>
+	new Promise((resolve) => {
+		replies.set(frame.id, resolve);
+		tell(frame);
+	});
+
 const [provider, id] = (flag("--model") ?? "/").split("/");
 const entries = [];
 let steering = [];
@@ -46,6 +68,31 @@ function run(task) {
 	write({ type: "message_end", message: user });
 	entry(user);
 	if (scenario === "crash") process.exit(7);
+	if (scenario === "ask") {
+		consult({ type: "ask", id: 1, question: "Which file?" }).then((reply) =>
+			finish("stop", reply.error === undefined ? `ANSWER ${reply.answer}` : `ERROR ${reply.error}`),
+		);
+		return;
+	}
+	if (scenario === "withdraw") {
+		tell({ type: "ask", id: 1, question: "Which file?" });
+		setTimeout(() => {
+			tell({ type: "withdraw", id: 1 });
+			setTimeout(() => finish("stop", "DONE"), Number(process.env.FAKE_PI_LINGER_MS ?? 0));
+		}, Number(process.env.FAKE_PI_WITHDRAW_MS ?? 0));
+		return;
+	}
+	if (scenario === "report") {
+		consult({ type: "report", id: 1, result: { verdict: "done", files_changed: ["a.ts: added"], validation: [], left_undone: [] } }).then(
+			(reply) => finish("stop", reply.error === undefined ? "DONE" : `ERROR ${reply.error}`),
+		);
+		return;
+	}
+	if (scenario === "oversize") {
+		channel.write("x".repeat(Number(process.env.FAKE_PI_FRAME_BYTES)));
+		settle = () => finish("stop", "SETTLED");
+		return;
+	}
 	if (scenario === "hang" || scenario === "steer") {
 		settle = () => finish("stop", "SETTLED");
 		return;

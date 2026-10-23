@@ -19,6 +19,7 @@ const required = [
 	"extensions/codegraph-tool.ts",
 	"extensions/mcp-config.ts",
 	"extensions/pi-settings.ts",
+	"extensions/child-runtime.ts",
 	"extensions/process-tree.sh",
 	"assets/companions.json",
 	"assets/mcp-servers.json",
