@@ -1902,6 +1902,15 @@ test("a named implement skill selects no role; the parent's role launches", asyn
 	});
 });
 
+async function stubWebAccess(agentDir) {
+	const root = join(agentDir, "npm", "node_modules", "pi-web-access");
+	await mkdir(root, { recursive: true });
+	await writeFile(join(root, "package.json"), JSON.stringify({ name: "pi-web-access", pi: { extensions: ["./index.ts"] } }));
+	await writeFile(join(root, "index.ts"), "export default () => {};\n");
+	await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-web-access"] }));
+	return join(root, "index.ts");
+}
+
 async function withPathPi(dir, scenario, run) {
 	const bin = join(dir, "bin");
 	await mkdir(bin);
@@ -1932,6 +1941,7 @@ async function withPathPi(dir, scenario, run) {
 
 test("the default child factory runs a background child as the Pi process on PATH and delivers its result", async () => {
 	await withWorkspace(async ({ worktree, agentDir, dir }) => {
+		const webAccess = await stubWebAccess(agentDir);
 		await withPathPi(dir, "complete", async ({ launched }) => {
 			const { tool, messages } = await loadSpawnTool({ agentDir, create: null });
 			const result = await spawn(
@@ -1953,12 +1963,14 @@ test("the default child factory runs a background child as the Pi process on PAT
 			assert.equal(argv[argv.indexOf("--model") + 1], "session/model");
 			assert.equal(argv[argv.indexOf("--thinking") + 1], "medium");
 			assert.ok(argv.includes("--no-approve"));
+			assert.ok(argv.includes(webAccess));
 		});
 	});
 });
 
 test("the default child factory opens no Pi process for a queued child", async () => {
 	await withWorkspace(async ({ worktree, agentDir, dir }) => {
+		await stubWebAccess(agentDir);
 		await withPathPi(dir, "hang", async ({ launches }) => {
 			const { tool, named } = await loadSpawnTool({ agentDir, create: null });
 			const ids = [];
