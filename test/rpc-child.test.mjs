@@ -377,6 +377,7 @@ test("an RPC child steers, reports undelivered steering and aborts", async (t) =
 });
 
 test("cancelling an RPC child asks it to abort, then kills its whole process tree after the shutdown deadline", async (t) => {
+	assert.equal(shutdownDeadline, 1_000);
 	const waits = [];
 	const tree = await descendants(t);
 	const commands = join(await scratch(t), "commands");
