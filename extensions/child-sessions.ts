@@ -300,6 +300,7 @@ function refused(reason: string) {
 }
 
 const abortedBeforeLaunch = refused("The call was aborted before the child launched.");
+const sessionEnded = refused("The session ended before the child launched.");
 
 interface ChildMessage {
 	customType: "pi-workflow-child-result" | "pi-workflow-child-question";
@@ -360,6 +361,7 @@ export function createChildSessions(options: {
 	let pending: ChildRecord[] = [];
 	const listeners = new Set<() => void>();
 	let generation = 0;
+	let detached = false;
 	let reserved = 0;
 	const disposing = new Set<Promise<void>>();
 	const claims = createWriteClaims();
@@ -678,6 +680,7 @@ export function createChildSessions(options: {
 		launch: Parameters<typeof begin>[2],
 		from?: { id: string; conversation: Conversation },
 	) {
+		if (detached) return sessionEnded;
 		const id = randomUUID();
 		if (plan.role === "worker") {
 			const surfaces = plan.surfaces ?? [];
@@ -759,7 +762,7 @@ export function createChildSessions(options: {
 		}
 		if (launchedIn !== generation) {
 			void shutDown(handle);
-			return refused("The session ended before the child launched.");
+			return sessionEnded;
 		}
 		const createdAt = Date.now();
 		const capture = options.audit.begin({
@@ -1139,6 +1142,7 @@ export function createChildSessions(options: {
 	}
 
 	async function detach(): Promise<ResidentChildren> {
+		detached = true;
 		generation += 1;
 		const resident = {
 			children: [...children.values()].map((child) => {

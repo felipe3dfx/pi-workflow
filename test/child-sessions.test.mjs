@@ -1626,6 +1626,24 @@ test("a reload keeps every working child with its session, and the re-attached p
 	});
 });
 
+test("a launch whose preparation completes after a reload began is refused and leaves no child behind", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const before = await loadSpawnTool({ agentDir, create: children.create });
+		const launching = spawn(before.tool, { role: "worker", task: "Fix the failing test" }, toolContext("tui", worktree));
+
+		await before.fire("session_shutdown", { reason: "reload" });
+		const result = await launching;
+		const after = await loadSpawnTool({ agentDir, create: children.create });
+
+		assert.equal(result.details.status, "refused");
+		assert.match(text(result), /The session ended before the child launched\./);
+		assert.deepEqual(children.created, []);
+		assert.deepEqual((await use(after, "list_children", {})).details.children, []);
+		await after.fire("session_shutdown", { reason: "quit" });
+	});
+});
+
 test("a child that reports and ends while the parent reloads is settled once by the re-attached parent, whose watchdog times out a silent one", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const clock = manualClock();
