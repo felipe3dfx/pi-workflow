@@ -50,7 +50,7 @@ import {
 	verdictSucceeded,
 } from "./child-projection.ts";
 import { shellOptions } from "./shell-settings.ts";
-import type { CommonToolSources } from "./tool-sources.ts";
+import { type CommonToolSources, defaultActiveTools } from "./tool-sources.ts";
 import { createRpcChildSession } from "./rpc-child.ts";
 import { askParentTool, reportResultTool } from "./child-runtime.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
@@ -372,6 +372,14 @@ export function createChildSessions(options: {
 		} catch {}
 	}
 
+	// ADR 0008: an operational explorer or verifier is read-only even with bash; a contextual child has no such contract.
+	function writes(plan: Plan) {
+		const [tools, writing] = options.authorization
+			? [options.sources?.active ?? defaultActiveTools, ["edit", "write", "bash"]]
+			: [plan.contract.tools, ["edit", "write"]];
+		return tools.some((tool) => writing.includes(tool));
+	}
+
 	function shutDown(handle: ChildHandle, id?: string, capture?: ChildCapture) {
 		const done = handle
 			.dispose()
@@ -682,7 +690,7 @@ export function createChildSessions(options: {
 	) {
 		if (detached) return sessionEnded;
 		const id = randomUUID();
-		if (plan.role === "worker") {
+		if (writes(plan)) {
 			const surfaces = plan.surfaces ?? [];
 			const found = claims.conflicts(plan.worktree, surfaces);
 			if (found.length > 0) {
@@ -1206,7 +1214,7 @@ export function createChildSessions(options: {
 		pending = [...resident.pending];
 		claims.rebuild(
 			[...children.values()]
-				.filter(({ plan, record }) => plan.role === "worker" && isWorking(record.state))
+				.filter(({ plan, record }) => writes(plan) && isWorking(record.state))
 				.map(({ plan, record }) => ({
 					owner: record.id,
 					root: plan.worktree,

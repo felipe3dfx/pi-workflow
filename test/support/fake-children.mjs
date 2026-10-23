@@ -96,7 +96,7 @@ export function recordingCore({
 		const started = await core.start(
 			{
 				role,
-				contract: { prompt: "Contract", tools: [] },
+				contract: { prompt: "Contract", tools: role === "worker" ? ["read", "edit"] : ["read"] },
 				task: "Fix the failing test",
 				worktree: "/tmp",
 				model: "p/m",

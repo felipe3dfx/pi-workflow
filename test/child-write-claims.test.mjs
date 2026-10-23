@@ -1,12 +1,20 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { recordingCore } from "./support/fake-children.mjs";
+import { createChildAudit } from "../extensions/child-audit.ts";
+import { createChildSessions } from "../extensions/child-sessions.ts";
+import { fakeChildren, recordingCore } from "./support/fake-children.mjs";
+
+const contractTools = {
+	worker: ["read", "bash", "edit", "write", "grep", "find", "ls", "codemode"],
+	verify: ["read", "bash", "grep", "find", "ls", "codegraph", "codemode"],
+	explore: ["read", "grep", "find", "ls", "codegraph", "codemode"],
+};
 
 function plan(role, surfaces, worktree = "/tmp") {
 	return {
 		role,
-		contract: { prompt: "Contract", tools: [] },
+		contract: { prompt: "Contract", tools: contractTools[role] },
 		task: "Edit",
 		worktree,
 		model: "p/m",
@@ -100,4 +108,47 @@ test("continue_child claims again and is refused on overlap", async () => {
 	const refused = await core.resume(id, "again", launch());
 	assert.equal(refused.status, "refused");
 	assert.match(refused.reason, /overlap/);
+});
+
+function contextualCore(sources) {
+	const children = fakeChildren();
+	const core = createChildSessions({
+		authorization: {},
+		sources,
+		create: children.create,
+		send() {},
+		idle: () => false,
+		trace() {},
+		report() {},
+		audit: createChildAudit({ root: "", parent: () => undefined }),
+	});
+	return { core, children };
+}
+
+test("a contextual child with a tool that writes claims, whatever its role, and one without claims nothing", async () => {
+	const { core } = contextualCore(undefined);
+	const explorer = await core.start(plan("explore", ["src"]), launch());
+	assert.equal(explorer.status, "queued");
+	const refused = await core.start(plan("explore", ["src/a.ts"]), launch());
+	assert.equal(refused.status, "refused");
+	assert.match(refused.reason, new RegExp(`child ${explorer.id} \\(\`src/a\\.ts\` overlaps \`src\`\\)`));
+	const reader = contextualCore({ active: ["read", "grep"] }).core;
+	await reader.start(plan("worker"), launch());
+	assert.equal((await reader.start(plan("worker"), launch())).status, "queued");
+});
+
+test("a reload rebuilds the claims of the children that hold one, by the same rule as admission", async () => {
+	const { core } = contextualCore(undefined);
+	await core.start(plan("explore", ["src"]), launch());
+	const after = contextualCore(undefined).core;
+	after.adopt(await core.detach());
+	assert.equal((await after.start(plan("explore", ["src/a.ts"]), launch())).status, "refused");
+	assert.equal((await after.start(plan("explore", ["docs"]), launch())).status, "queued");
+
+	const operational = recordingCore();
+	await operational.core.start(plan("verify"), launch());
+	await operational.core.start(plan("explore"), launch());
+	const reloaded = recordingCore();
+	reloaded.core.adopt(await operational.core.detach());
+	assert.equal((await reloaded.core.start(plan("worker"), launch())).status, "queued");
 });
