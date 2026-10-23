@@ -14,6 +14,7 @@ import { createChildLauncher } from "./child-launcher.ts";
 import {
 	createChildQueryTools,
 	createChildSessions,
+	createPiChildSession,
 	createContinueChildTool,
 	createSpawnChildTool,
 } from "./child-sessions.ts";
@@ -43,6 +44,7 @@ export function childToolbox(
 			parent: () => undefined,
 		});
 		const sessions = createChildSessions({
+			create: createPiChildSession,
 			authorization,
 			sources,
 			todo,

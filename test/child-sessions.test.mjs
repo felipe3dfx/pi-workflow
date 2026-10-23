@@ -13,7 +13,7 @@ import {
 	symlink,
 	writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { tmpdir } from "node:os";
 import process from "node:process";
 import { stripVTControlCharacters } from "node:util";
@@ -74,6 +74,8 @@ replaceSelection({
 	capabilities: Object.fromEntries(capabilities.map((capability) => [capability, true])),
 	expectations: {},
 });
+
+const fakePi = fileURLToPath(new URL("./support/fake-pi.mjs", import.meta.url));
 
 const packageVersion = JSON.parse(
 	await readFile(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"),
@@ -786,7 +788,7 @@ function fakeJev({ choice = "leave" } = {}) {
 
 function loadExtension({
 	agentDir,
-	create,
+	create = createPiChildSession,
 	legacy = false,
 	sendMessage,
 	schedule,
@@ -1900,7 +1902,89 @@ test("a named implement skill selects no role; the parent's role launches", asyn
 	});
 });
 
-test("the default child factory refuses when the session's model runtime is not reachable", async () => {
+async function withPathPi(dir, scenario, run) {
+	const bin = join(dir, "bin");
+	await mkdir(bin);
+	await writeFile(
+		join(bin, "pi"),
+		`#!/bin/sh\nexec "${process.execPath}" "${fakePi}" "$@"\n`,
+		{ mode: 0o755 },
+	);
+	const record = join(dir, "pi.json");
+	const previous = process.env.PATH;
+	process.env.PATH = `${bin}${delimiter}${previous}`;
+	process.env.FAKE_PI_RECORD = record;
+	process.env.FAKE_PI_SCENARIO = scenario;
+	try {
+		return await run({
+			launched: async () => JSON.parse(await readFile(record, "utf8")),
+			launches: async () =>
+				existsSync(`${record}.launches`)
+					? (await readFile(`${record}.launches`, "utf8")).trim().split("\n")
+					: [],
+		});
+	} finally {
+		process.env.PATH = previous;
+		delete process.env.FAKE_PI_RECORD;
+		delete process.env.FAKE_PI_SCENARIO;
+	}
+}
+
+test("the default child factory runs a background child as the Pi process on PATH and delivers its result", async () => {
+	await withWorkspace(async ({ worktree, agentDir, dir }) => {
+		await withPathPi(dir, "complete", async ({ launched }) => {
+			const { tool, messages } = await loadSpawnTool({ agentDir, create: null });
+			const result = await spawn(
+				tool,
+				{ role: "explore", task: "Map the code" },
+				toolContext("tui", worktree),
+			);
+			assert.equal(result.details.status, "queued");
+			const delivered = await eventually(() =>
+				messages.find(
+					({ message }) => message.customType === "pi-workflow-child-result",
+				),
+			);
+			assert.equal(delivered.message.details.id, result.details.id);
+			assert.equal(delivered.message.details.state, "completed");
+			assert.equal(delivered.message.details.text, "DONE");
+			const { argv, cwd } = await launched();
+			assert.equal(cwd, worktree);
+			assert.equal(argv[argv.indexOf("--model") + 1], "session/model");
+			assert.equal(argv[argv.indexOf("--thinking") + 1], "medium");
+			assert.ok(argv.includes("--no-approve"));
+		});
+	});
+});
+
+test("the default child factory opens no Pi process for a queued child", async () => {
+	await withWorkspace(async ({ worktree, agentDir, dir }) => {
+		await withPathPi(dir, "hang", async ({ launches }) => {
+			const { tool, named } = await loadSpawnTool({ agentDir, create: null });
+			const ids = [];
+			for (let index = 0; index < 6; index += 1) {
+				const result = await spawn(
+					tool,
+					{ role: "explore", task: `Map part ${index}` },
+					toolContext("tui", worktree),
+				);
+				assert.equal(result.details.status, "queued");
+				ids.push(result.details.id);
+			}
+			await eventually(launches, (pids) => pids.length === 5);
+			await delay(100);
+			assert.equal((await launches()).length, 5);
+			const cancel = named("cancel_child");
+			await cancel.execute("call-2", { id: ids[0] }, undefined, undefined, toolContext("tui", worktree));
+			await eventually(launches, (pids) => pids.length === 6);
+			for (const id of ids.slice(1)) {
+				await cancel.execute("call-3", { id }, undefined, undefined, toolContext("tui", worktree));
+			}
+		});
+	});
+});
+
+test("the SDK child factory refuses when the session's model runtime is not reachable", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const { tool } = await loadSpawnTool({ agentDir });
 
@@ -1945,7 +2029,7 @@ async function fauxParent(agentDir, responses, { tokensPerSecond } = {}) {
 	};
 }
 
-test("the default child factory runs the contract on the parent's model runtime through Pi's SDK", async () => {
+test("the SDK child factory runs the contract on the parent's model runtime through Pi's SDK", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const parent = await fauxParent(
 			agentDir,
@@ -1976,7 +2060,7 @@ test("the default child factory runs the contract on the parent's model runtime 
 	});
 });
 
-test("the default child factory gives an explore child a read-only codegraph and no init", async () => {
+test("the SDK child factory gives an explore child a read-only codegraph and no init", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const parent = await fauxParent(agentDir, fauxAssistantMessage("Found it."));
 		const { tool } = await loadSpawnTool({ agentDir });
@@ -1999,7 +2083,7 @@ test("the default child factory gives an explore child a read-only codegraph and
 	});
 });
 
-test("the default child factory runs a trusted project's shell prefix in the child's bash", async () => {
+test("the SDK child factory runs a trusted project's shell prefix in the child's bash", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		await mkdir(join(worktree, ".pi"));
 		await writeFile(
@@ -8295,7 +8379,7 @@ test("the parent receives the harness-recorded checkpoints with the child's resu
 	});
 });
 
-test("the default child factory gives a granted worker the checkpoint tool", async () => {
+test("the SDK child factory gives a granted worker the checkpoint tool", async () => {
 	await withWorkspace(async ({ worktree, agentDir, dir }) => {
 		const linked = linkedWorktree(dir, worktree);
 		const parent = await fauxParent(agentDir, fauxAssistantMessage("Done."));

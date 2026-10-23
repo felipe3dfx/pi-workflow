@@ -37,7 +37,7 @@ import {
 } from "../extensions/shell.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { eventually } from "./support/eventually.mjs";
-import { createChildSessions } from "../extensions/child-sessions.ts";
+import { createChildSessions, createPiChildSession } from "../extensions/child-sessions.ts";
 import { createChildAudit } from "../extensions/child-audit.ts";
 import { withCheckpoint } from "./support/signed-checkpoint.mjs";
 
@@ -74,6 +74,7 @@ async function parent(t, authorization, tool = {
 				agentDirectory: agentDir,
 				authorization,
 				sources: sources ?? {},
+				childSessions: { create: createPiChildSession },
 			})
 		: undefined;
 	const loader = new DefaultResourceLoader({
@@ -88,7 +89,11 @@ async function parent(t, authorization, tool = {
 		extensionFactories: [
 			...(recipe?.extensionFactories ?? [
 				(pi) =>
-					piWorkflowExtension(pi, { agentDirectory: agentDir, authorization }),
+					piWorkflowExtension(pi, {
+						agentDirectory: agentDir,
+						authorization,
+						childSessions: { create: createPiChildSession },
+					}),
 			]),
 			(pi) => pi.registerTool(tool),
 			...afterWorkflow,
@@ -388,6 +393,7 @@ test("foreground returns unresolved action to the parent and a fresh authorized 
 	const host = await parent(t);
 	let authorized = false;
 	const core = createChildSessions({
+		create: createPiChildSession,
 		authorization: { authority, classify: async () => authorized ? known : { ...known, scope: "outside" } },
 		send() {}, idle: () => false, trace() {}, report() {},
 		audit: createChildAudit({ root: "", parent: () => undefined }),
@@ -723,6 +729,7 @@ test("background ask and reply retain authority until classification, not receip
 	const checking = Promise.withResolvers();
 	const classified = Promise.withResolvers();
 	const core = createChildSessions({
+		create: createPiChildSession,
 		authorization: { authority, classify: async proposal => {
 			if (!proposal.consultation) return { ...known, scope: "unknown" };
 			checking.resolve();
@@ -769,6 +776,7 @@ test("failed background consultation delivery retains proposals in the parent re
 	let authorized = false;
 	const sent = [];
 	const core = createChildSessions({
+		create: createPiChildSession,
 		authorization: { authority, classify: async () => authorized ? known : { ...known, scope: "unknown" } },
 		send: message => { if (message.customType === "pi-workflow-child-question") throw new Error("transport closed"); sent.push(message); },
 		idle: () => false, trace() {}, report() {},

@@ -1,0 +1,44 @@
+import { writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import { join } from "node:path";
+
+export async function modelEndpoint(agentDir, answer = "DONE") {
+	const requests = [];
+	const server = createServer((request, response) => {
+		let body = "";
+		request.on("data", (chunk) => {
+			body += chunk;
+		});
+		request.on("end", () => {
+			requests.push(JSON.parse(body));
+			response.writeHead(200, { "content-type": "text/event-stream" });
+			const chunk = (choice) =>
+				response.write(
+					`data: ${JSON.stringify({ id: "fake", object: "chat.completion.chunk", created: 1, model: "echo", choices: [{ index: 0, ...choice }] })}\n\n`,
+				);
+			chunk({ delta: { role: "assistant", content: answer } });
+			chunk({ delta: {}, finish_reason: "stop" });
+			response.end("data: [DONE]\n\n");
+		});
+	});
+	await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+	const zero = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+	await writeFile(
+		join(agentDir, "models.json"),
+		JSON.stringify({
+			providers: {
+				fake: {
+					baseUrl: `http://127.0.0.1:${server.address().port}/v1`,
+					api: "openai-completions",
+					apiKey: "fixture",
+					models: [{ id: "echo", cost: zero }],
+				},
+			},
+		}),
+	);
+	return {
+		model: "fake/echo",
+		requests,
+		close: () => new Promise((resolve) => server.close(resolve)),
+	};
+}
