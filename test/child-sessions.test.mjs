@@ -1548,6 +1548,27 @@ test("session shutdown disposes running background children, which then deliver 
 	});
 });
 
+test("a session end other than a reload removes every child's session, a reload keeps them, and a session start prunes those of gone parents", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const leftover = join(agentDir, "pi-workflow-children", "6f1c2b8e-leftover");
+		await mkdir(leftover, { recursive: true });
+		const children = fakeChildren();
+		const before = await loadSpawnTool({ agentDir, create: children.create });
+		assert.equal(existsSync(leftover), false);
+		await spawnBackground(before, worktree);
+		await spawnBackground(before, worktree);
+		await settle();
+		children.created[0].result.resolve("Done.");
+		await settle();
+
+		await before.fire("session_shutdown", { reason: "reload" });
+		assert.deepEqual(children.created.map((child) => child.removals), [0, 0]);
+		const after = await loadSpawnTool({ agentDir, create: children.create });
+		await after.fire("session_shutdown", { reason: "new" });
+		assert.deepEqual(children.created.map((child) => child.removals), [1, 1]);
+	});
+});
+
 async function reload(extension, options) {
 	await extension.fire("session_shutdown", { reason: "reload" });
 	return loadSpawnTool(options);

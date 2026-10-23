@@ -45,6 +45,7 @@ export interface ChildHandle {
 	clearQueue(): string[];
 	abort(): Promise<void>;
 	dispose(): Promise<void>;
+	removeSession(): Promise<void>;
 	pendingAuthorizations?(): AuthorizationDecision[];
 }
 

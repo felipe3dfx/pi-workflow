@@ -50,6 +50,7 @@ import {
 } from "./child-sessions.ts";
 import type { Schedule } from "./clock.ts";
 import { registerChildrenBox } from "./children-box.ts";
+import { pruneChildSessions } from "./rpc-child.ts";
 import { createFooterHints, registerChrome } from "./chrome.ts";
 import { createChildrenViews } from "./children-view.ts";
 import { createModelProfiles, report } from "./model-profiles.ts";
@@ -291,6 +292,7 @@ export default function piWorkflowExtension(
 
 	pi.on("session_start", async (_event, ctx) => {
 		currentCtx = ctx;
+		await pruneChildSessions();
 		const resident = slots[RESIDENT];
 		slots[RESIDENT] = undefined;
 		if (resident) {

@@ -1109,9 +1109,8 @@ export function createChildSessions(options: {
 
 	async function disposeAll() {
 		generation += 1;
-		const working = [...children.values()].filter((child) =>
-			isWorking(child.record.state),
-		);
+		const ended = [...children.values()];
+		const working = ended.filter((child) => isWorking(child.record.state));
 		children.clear();
 		claims.rebuild([]);
 		linked.clear();
@@ -1129,6 +1128,13 @@ export function createChildSessions(options: {
 			),
 		);
 		await within(finishing);
+		await Promise.all(
+			ended.map(({ handle, record }) =>
+				handle
+					.removeSession()
+					.catch((error: unknown) => warn(`Child ${record.id}: ${errorMessage(error)}`)),
+			),
+		);
 		return working.length;
 	}
 

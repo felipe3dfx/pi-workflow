@@ -1,6 +1,7 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { accessSync, constants, readdirSync } from "node:fs";
+import { readdir, rm } from "node:fs/promises";
 import { basename, delimiter, join, resolve } from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
@@ -81,6 +82,31 @@ async function verifiedPi() {
 	return { path, version };
 }
 
+function sessionsRoot() {
+	return join(getAgentDir(), "pi-workflow-children");
+}
+
+function running(name: string) {
+	const pid = Number(name);
+	if (!Number.isInteger(pid) || pid <= 0) return false;
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (error) {
+		return (error as NodeJS.ErrnoException).code === "EPERM";
+	}
+}
+
+export async function pruneChildSessions() {
+	const root = sessionsRoot();
+	const owners = await readdir(root).catch(() => []);
+	await Promise.all(
+		owners
+			.filter((owner) => !running(owner))
+			.map((owner) => rm(join(root, owner), { recursive: true, force: true })),
+	);
+}
+
 function sessionFile(root: string, sessionId: string) {
 	const directory = join(root, sessionId);
 	const file = readdirSync(directory).find((name) => name.endsWith(".jsonl"));
@@ -132,7 +158,7 @@ export function createRpcChildSession(
 		const installed = options.command ? undefined : await piExecutable();
 		const [command, ...prefix] = options.command ?? [installed?.path as string];
 		const agentDir = getAgentDir();
-		const root = options.sessionRoot ?? join(agentDir, "pi-workflow-children");
+		const root = options.sessionRoot ?? join(sessionsRoot(), String(process.pid));
 		const sessionId = randomUUID();
 		const fork = spec.parentSession ? sessionFile(root, spec.parentSession) : undefined;
 		const resources = [
@@ -471,6 +497,7 @@ export function createRpcChildSession(
 				return entries;
 			},
 			pendingAuthorizations: () => structuredClone([...held.values()]),
+			removeSession: () => rm(join(root, sessionId), { recursive: true, force: true }),
 			async run(task) {
 				starting ??= ready();
 				await starting;

@@ -14,6 +14,7 @@ export function fakeChildren({ run, dispose, onCreate } = {}) {
 			tasks: [],
 			aborts: 0,
 			disposals: 0,
+			removals: 0,
 			result: Promise.withResolvers(),
 			entries: [userEntry(`entry-${created.length}`, spec.prompt)],
 			steered: [],
@@ -58,6 +59,9 @@ export function fakeChildren({ run, dispose, onCreate } = {}) {
 			dispose: async () => {
 				child.disposals += 1;
 				await dispose?.(child);
+			},
+			removeSession: async () => {
+				child.removals += 1;
 			},
 		};
 	};

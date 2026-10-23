@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import childProcess from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { syncBuiltinESMExports } from "node:module";
@@ -10,7 +10,13 @@ import { delimiter, join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { channelFrameLimit, createRpcChildSession, installedPi, readinessDeadline } from "../extensions/rpc-child.ts";
+import {
+	channelFrameLimit,
+	createRpcChildSession,
+	installedPi,
+	pruneChildSessions,
+	readinessDeadline,
+} from "../extensions/rpc-child.ts";
 import { createChildAudit } from "../extensions/child-audit.ts";
 import { createChildSessions } from "../extensions/child-sessions.ts";
 import { shutdownDeadline } from "../extensions/child-handle.ts";
@@ -276,6 +282,47 @@ test("a late answer to a question the child withdrew is refused", async (t) => {
 		/Question 1 of child .* was withdrawn: the call that asked it ended/,
 	);
 	await eventually(() => core.get(id), (child) => child?.state === "completed");
+});
+
+test("a child's session directory outlives the child for continue_child and is removed when the parent ends its children", async (t) => {
+	const dir = await scratch(t);
+	const sessions = join(dir, "sessions");
+	process.env.FAKE_PI_SCENARIO = "complete";
+	t.after(() => {
+		delete process.env.FAKE_PI_SCENARIO;
+	});
+	const core = createChildSessions({
+		create: createRpcChildSession({ command: [process.execPath, fakePi], sessionRoot: sessions }),
+		send() {},
+		idle: () => false,
+		trace() {},
+		report() {},
+		audit: createChildAudit({ root: "", parent: () => undefined }),
+	});
+	const { id } = await core.start(
+		{ role: "worker", contract: { prompt: "You are a child.", tools: [] }, task: "Say done.", worktree: dir, model: "fake/echo", thinking: "off", chosenBy: "parent", references: [] },
+		{ background: true, project: () => ({ cwd: dir, trusted: false }), shell: () => ({}) },
+	);
+	await eventually(() => core.get(id), (child) => child?.state === "completed");
+	assert.equal(readdirSync(sessions).length, 1);
+	await core.disposeAll();
+	assert.deepEqual(readdirSync(sessions), []);
+});
+
+test("pruning removes the child session directories of parents that are gone and keeps those of live parents", async (t) => {
+	const agentDir = await scratch(t);
+	const previous = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	t.after(() => {
+		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previous;
+	});
+	const root = join(agentDir, "pi-workflow-children");
+	const gone = String(childProcess.spawnSync(process.execPath, ["-e", ""]).pid);
+	const kept = [String(process.pid), String(process.ppid)];
+	for (const name of [...kept, gone, "6f1c2b8e-legacy"]) await mkdir(join(root, name, "child"), { recursive: true });
+	await pruneChildSessions();
+	assert.deepEqual(readdirSync(root).sort(), kept.sort());
 });
 
 test("a child that disconnects withdraws its open question", async (t) => {

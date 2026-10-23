@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { Socket } from "node:net";
+import { join } from "node:path";
 
 const argv = process.argv.slice(2);
 const flag = (name) => {
@@ -8,6 +9,10 @@ const flag = (name) => {
 	return index < 0 ? undefined : argv[index + 1];
 };
 const scenario = process.env.FAKE_PI_SCENARIO ?? "complete";
+if (flag("--session-dir")) {
+	mkdirSync(flag("--session-dir"), { recursive: true });
+	writeFileSync(join(flag("--session-dir"), "session.jsonl"), "");
+}
 if (process.env.FAKE_PI_RECORD) {
 	writeFileSync(
 		process.env.FAKE_PI_RECORD,

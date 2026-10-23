@@ -121,6 +121,7 @@ export function runtimeChild(runtime) {
 					session.dispose();
 				}
 			},
+			async removeSession() {},
 		};
 	};
 }
