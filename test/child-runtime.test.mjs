@@ -186,6 +186,19 @@ test("a granted worker commits through checkpoint and the parent records it befo
 	});
 });
 
+test("a checkpoint the parent fails to record fails the checkpoint call with the parent's error", async (t) => {
+	await withCheckpoint(async ({ worktree, grant }) => {
+		const { tools } = await runtime(t, "worker", { cwd: worktree, checkpoint: grant }, (frame) =>
+			frame.type === "checkpoint" ? { error: "The parent could not record the checkpoint." } : undefined,
+		);
+		await writeFile(join(worktree, "a.txt"), "A\n");
+		await assert.rejects(
+			tools.get("checkpoint").execute("call-1", { message: "feat: add a", paths: ["a.txt"] }),
+			/The parent could not record the checkpoint\./,
+		);
+	});
+});
+
 const ordinary = {
 	prohibited: false,
 	scope: "within",

@@ -273,7 +273,7 @@ export async function installChildRuntime(
 	const ask = (question: string, signal?: AbortSignal) =>
 		channel.request({ type: "ask", question }, signal);
 	const checkpointed = (checkpoint: Checkpoint) =>
-		channel.request({ type: "checkpoint", checkpoint }).catch(() => {});
+		channel.request({ type: "checkpoint", checkpoint });
 	const contextual = config.contextual !== undefined;
 	pi.registerTool(
 		contextual
