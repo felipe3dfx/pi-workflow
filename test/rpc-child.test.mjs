@@ -9,6 +9,9 @@ import { fileURLToPath } from "node:url";
 
 import { createRpcChildSession, readinessDeadline } from "../extensions/rpc-child.ts";
 import { shutdownDeadline } from "../extensions/child-sessions.ts";
+import { treeDeadline } from "../extensions/process-tree.ts";
+import { alive, descendants, gone, parent } from "./support/process-tree.mjs";
+import { eventually } from "./support/eventually.mjs";
 
 const fakePi = fileURLToPath(new URL("./support/fake-pi.mjs", import.meta.url));
 
@@ -202,8 +205,14 @@ test("an RPC child steers, reports undelivered steering and aborts", async (t) =
 	await assert.rejects(run, /aborted/);
 });
 
-test("disposing an RPC child kills a process that ignores shutdown after the deadline", async (t) => {
+test("cancelling an RPC child asks it to abort, then kills its whole process tree after the shutdown deadline", async (t) => {
 	const waits = [];
+	const tree = await descendants(t);
+	const commands = join(await scratch(t), "commands");
+	process.env.FAKE_PI_COMMANDS = commands;
+	t.after(() => {
+		delete process.env.FAKE_PI_COMMANDS;
+	});
 	const { handle, launched } = await fakeChild(t, "linger", {}, {
 		schedule(run, ms) {
 			waits.push(ms);
@@ -212,10 +221,52 @@ test("disposing an RPC child kills a process that ignores shutdown after the dea
 		},
 	});
 	await handle.run("Say done.");
-	const { pid } = launched();
+	const pids = [launched().pid, ...(await tree())];
 	await handle.dispose();
 	assert.ok(waits.includes(shutdownDeadline));
-	assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+	assert.ok(readFileSync(commands, "utf8").split("\n").includes("abort"));
+	assert.deepEqual(pids.filter(alive), []);
+});
+
+test("an RPC child that crashes leaves no descendant within the tree deadline", async (t) => {
+	assert.equal(treeDeadline, 2_000);
+	const tree = await descendants(t);
+	const { handle } = await fakeChild(t, "crash");
+	const run = assert.rejects(handle.run("Say done."), /exited with code 7/);
+	const pids = await tree();
+	await run;
+	const crashed = Date.now();
+	await eventually(() => pids.filter(alive), (left) => left.length === 0);
+	assert.ok(Date.now() - crashed < treeDeadline);
+});
+
+test("a parent that exits or is killed leaves no RPC child or descendant within the tree deadline", async (t) => {
+	for (const ending of ["shutdown", "SIGKILL"]) {
+		await t.test(ending, async (t) => {
+			const tree = await descendants(t);
+			const dir = await scratch(t);
+			const record = join(dir, "record.json");
+			process.env.FAKE_PI_SCENARIO = "linger";
+			process.env.FAKE_PI_RECORD = record;
+			t.after(() => {
+				delete process.env.FAKE_PI_SCENARIO;
+				delete process.env.FAKE_PI_RECORD;
+			});
+			const started = await parent(t, {
+				command: [process.execPath, fakePi],
+				sessionRoot: join(dir, "sessions"),
+				cwd: dir,
+				model: "fake/echo",
+				ending,
+			});
+			assert.equal(started.answer, "DONE");
+			const pids = [JSON.parse(readFileSync(record, "utf8")).pid, ...(await tree())];
+			started.end();
+			const elapsed = await gone(pids, await started.exited);
+			assert.ok(elapsed < treeDeadline, `cleanup took ${elapsed} ms`);
+			t.diagnostic(`no child process remains ${elapsed} ms after the parent ${ending === "SIGKILL" ? "was killed" : "exited"}`);
+		});
+	}
 });
 
 test("an RPC child refuses contextual authorization instead of dropping it", async (t) => {

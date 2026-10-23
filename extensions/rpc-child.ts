@@ -17,6 +17,7 @@ import {
 } from "./child-sessions.ts";
 import { type Schedule, scheduleTimer } from "./clock.ts";
 import { errorMessage } from "./error-message.ts";
+import { stopTree, treeEnvironment } from "./process-tree.ts";
 import { resolveClaudeBridgeExtension, resolveWebAccessExtensions } from "./web-access.ts";
 
 export const readinessDeadline = 10_000;
@@ -222,10 +223,15 @@ export function createRpcChildSession(
 			if (disposed) throw new Error("The child session was stopped.");
 			const pi = spawn(command, args, {
 				cwd: spec.cwd,
+				env: { ...process.env, ...treeEnvironment(sessionId) },
 				stdio: ["pipe", "pipe", "pipe"],
 				detached: true,
 			});
 			child = pi;
+			let swept = Promise.resolve();
+			pi.once("exit", () => {
+				swept = stopTree(sessionId);
+			});
 			exited = new Promise((resolve) => {
 				pi.once("close", (code, signal) => {
 					const tail = stderr.trim().split("\n").slice(-5).join(" ");
@@ -234,7 +240,7 @@ export function createRpcChildSession(
 							`The child Pi process exited with ${code === null ? `signal ${signal}` : `code ${code}`}.${tail ? ` ${tail}` : ""}`,
 						),
 					);
-					resolve();
+					void swept.then(resolve);
 				});
 			});
 			pi.once("error", (error) => fail(error));
@@ -333,6 +339,7 @@ export function createRpcChildSession(
 				disposed = true;
 				const pi = child;
 				if (!pi || failure) return exited;
+				request("abort").catch(() => {});
 				pi.stdin?.end();
 				let cancel = () => {};
 				const grace = new Promise<boolean>((resolve) => {
@@ -340,11 +347,7 @@ export function createRpcChildSession(
 				});
 				const stopped = await Promise.race([exited.then(() => true), grace]);
 				cancel();
-				if (!stopped && pi.pid !== undefined) {
-					try {
-						process.kill(-pi.pid, "SIGKILL");
-					} catch {}
-				}
+				if (!stopped) await stopTree(sessionId);
 				await exited;
 			},
 		};

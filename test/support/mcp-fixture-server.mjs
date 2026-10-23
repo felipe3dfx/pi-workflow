@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { appendFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -7,6 +8,11 @@ const [name, pidDir, delayMs = "0", scenario] = process.argv.slice(2);
 writeFileSync(join(pidDir, `${name}.pid`), String(process.pid));
 appendFileSync(join(pidDir, `${name}.pids`), `${process.pid}\n`);
 writeFileSync(join(pidDir, `${name}.cwd`), process.cwd());
+if (scenario === "descendants") {
+	const tree = join(pidDir, `${name}.tree`);
+	const shell = spawn("/bin/sh", ["-c", 'sleep 300 & echo $! >> "$1"; wait', "sh", tree], { detached: true, stdio: "ignore" });
+	appendFileSync(tree, `${process.pid}\n${shell.pid}\n`);
+}
 
 let lateToolAdvertised = false;
 const lateToolScenario = scenario === "late-tool" || scenario === "authorization";

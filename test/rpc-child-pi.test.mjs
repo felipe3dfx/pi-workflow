@@ -14,9 +14,11 @@ import { DefaultPackageManager, getAgentDir, SettingsManager } from "@earendil-w
 import { createChildAudit } from "../extensions/child-audit.ts";
 import { createChildLauncher } from "../extensions/child-launcher.ts";
 import { createChildSessions } from "../extensions/child-sessions.ts";
+import { treeDeadline } from "../extensions/process-tree.ts";
 import { createRpcChildSession, readinessDeadline } from "../extensions/rpc-child.ts";
 import { eventually } from "./support/eventually.mjs";
 import { modelEndpoint } from "./support/model-endpoint.mjs";
+import { gone, parent } from "./support/process-tree.mjs";
 
 const installed = (process.env.PATH ?? "").split(delimiter).some((directory) => {
 	try {
@@ -31,8 +33,8 @@ const mcpFixture = fileURLToPath(new URL("./support/mcp-fixture-server.mjs", imp
 const git = (cwd, ...args) =>
 	execFileSync("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.com", "-c", "commit.gpgsign=false", ...args], { cwd, stdio: "pipe" });
 
-function server(name, evidence) {
-	return { command: process.execPath, args: [mcpFixture, name, evidence, "0", "roots"] };
+function server(name, evidence, scenario = "roots") {
+	return { command: process.execPath, args: [mcpFixture, name, evidence, "0", scenario] };
 }
 
 async function fixture(t) {
@@ -236,6 +238,61 @@ test("a real Pi child whose model Pi cannot select fails its run instead of hang
 	assert.ok(Date.now() - started < readinessDeadline);
 	assert.match(failure.message, /Model "absent-provider\/absent-model" not found/);
 	t.diagnostic(failure.message);
+});
+
+async function descendantTree(scene) {
+	await writeFile(
+		join(scene.agentDir, "mcp.json"),
+		JSON.stringify({ mcpServers: { global: server("global", scene.evidence, "descendants") } }),
+	);
+	return async () => {
+		const [mcp, ...shell] = await eventually(
+			async () =>
+				existsSync(join(scene.evidence, "global.tree"))
+					? (await readFile(join(scene.evidence, "global.tree"), "utf8")).trim().split("\n").map(Number)
+					: [],
+			(pids) => pids.length === 3,
+		);
+		const pi = Number(execFileSync("ps", ["-o", "ppid=", "-p", String(mcp)], { encoding: "utf8" }).trim());
+		return { pi, pids: [pi, mcp, ...shell] };
+	};
+}
+
+test("a real Pi child, its MCP server and its shell descendants end within the tree deadline when the parent exits or is killed", { skip, timeout: 60_000 }, async (t) => {
+	assert.equal(treeDeadline, 2_000);
+	for (const ending of ["shutdown", "SIGKILL"]) {
+		await t.test(ending, async (t) => {
+			const scene = await fixture(t);
+			const repo = await repository(scene.dir, "repo", {});
+			const tree = await descendantTree(scene);
+			const started = await parent(t, {
+				sessionRoot: join(scene.dir, "sessions"),
+				cwd: repo,
+				model: scene.endpoint.model,
+				ending,
+			});
+			assert.equal(started.answer, "DONE");
+			const { pids } = await tree();
+			started.end();
+			const elapsed = await gone(pids, await started.exited);
+			assert.ok(elapsed < treeDeadline, `cleanup took ${elapsed} ms`);
+			t.diagnostic(`Pi, MCP server, shell and its background sleep (${pids.join(", ")}) ended ${elapsed} ms after the parent ${ending === "SIGKILL" ? "was killed" : "exited"}`);
+		});
+	}
+});
+
+test("a real Pi child that crashes leaves no MCP server or shell descendant within the tree deadline", { skip, timeout: 60_000 }, async (t) => {
+	const scene = await fixture(t);
+	const repo = await repository(scene.dir, "repo", {});
+	const tree = await descendantTree(scene);
+	const handle = await launch(t, scene, repo, { cwd: repo, trusted: false });
+	assert.equal(await handle.run("Say done."), "DONE");
+	const { pi, pids } = await tree();
+	process.kill(pi, "SIGKILL");
+	const crashed = Date.now();
+	const elapsed = await gone(pids, crashed);
+	assert.ok(elapsed < treeDeadline, `cleanup took ${elapsed} ms`);
+	t.diagnostic(`MCP server, shell and its background sleep (${pids.slice(1).join(", ")}) ended ${elapsed} ms after the child Pi was killed`);
 });
 
 const realAgentDir = getAgentDir();
