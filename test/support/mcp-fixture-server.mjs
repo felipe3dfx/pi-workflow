@@ -10,8 +10,8 @@ appendFileSync(join(pidDir, `${name}.pids`), `${process.pid}\n`);
 writeFileSync(join(pidDir, `${name}.cwd`), process.cwd());
 if (scenario === "descendants") {
 	const tree = join(pidDir, `${name}.tree`);
-	const shell = spawn("/bin/sh", ["-c", 'sleep 300 & echo $! >> "$1"; wait', "sh", tree], { detached: true, stdio: "ignore" });
-	appendFileSync(tree, `${process.pid}\n${shell.pid}\n`);
+	appendFileSync(tree, `${process.pid}\n`);
+	spawn("/bin/sh", ["-c", 'sleep 300 & printf "%s\\n%s\\n" "$$" "$!" >> "$1"; wait', "sh", tree], { detached: true, stdio: "ignore" });
 }
 
 let lateToolAdvertised = false;
