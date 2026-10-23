@@ -11,6 +11,8 @@ import { channelFrameLimit, createRpcChildSession, readinessDeadline } from "../
 import { createChildAudit } from "../extensions/child-audit.ts";
 import { createChildSessions, shutdownDeadline } from "../extensions/child-sessions.ts";
 import { treeDeadline } from "../extensions/process-tree.ts";
+import { capabilities } from "../extensions/configure.ts";
+import { replaceSelection } from "../extensions/shell.ts";
 import { alive, descendants, gone, parent } from "./support/process-tree.mjs";
 import { eventually } from "./support/eventually.mjs";
 
@@ -51,7 +53,6 @@ async function fakeChild(t, scenario, spec = {}, options = {}) {
 		thinking: "off",
 		prompt: "You are a child.",
 		tools: ["read", "grep", "codemode", "mcp__*", "bash", "ask_parent"],
-		modelRegistry: {},
 		shell: {},
 		onEvent: (event) => events.push(event),
 		notify: (message) => notes.push(message),
@@ -92,14 +93,25 @@ test("an RPC child runs as its own Pi process in its worktree with the selected 
 	assert.ok(argv.includes("--no-extensions"));
 	assert.deepEqual(
 		argv.flatMap((arg, index) => (arg === "--extension" ? [argv[index + 1]] : [])),
-		["builtin:mcp", "builtin:codemode", childRuntime],
+		["builtin:mcp", childRuntime],
 	);
 	assert.deepEqual(JSON.parse(value("--pi-workflow-child")), {
 		role: "worker",
 		cwd: dir,
 		shell: {},
+		codegraph: false,
 	});
 	assert.deepEqual(handle.tools, ["read", "grep", "codemode", "mcp__*", "bash", "ask_parent"]);
+});
+
+test("an RPC child gets codegraph when the parent has CodeGraph seated", async (t) => {
+	const seated = Object.fromEntries(capabilities.map((capability) => [capability, false]));
+	replaceSelection({ schemaVersion: 1, capabilities: { ...seated, codegraph: true }, expectations: {} });
+	t.after(() => replaceSelection({ schemaVersion: 1, capabilities: seated, expectations: {} }));
+	const { handle, launched } = await fakeChild(t, "complete");
+	await handle.run("Say done.");
+	const { argv } = launched();
+	assert.equal(JSON.parse(argv[argv.indexOf("--pi-workflow-child") + 1]).codegraph, true);
 });
 
 test("an RPC child asks the parent over its channel and continues with the answer", async (t) => {
@@ -160,7 +172,7 @@ test("a late answer to a question the child withdrew is refused", async (t) => {
 	t.after(() => core.disposeAll());
 	const { id } = await core.start(
 		{ role: "worker", contract: { prompt: "You are a child.", tools: [] }, task: "Ask.", worktree: dir, model: "fake/echo", thinking: "off", chosenBy: "parent", references: [] },
-		{ background: true, modelRegistry: {}, project: () => ({ cwd: dir, trusted: false }), shell: () => ({}) },
+		{ background: true, project: () => ({ cwd: dir, trusted: false }), shell: () => ({}) },
 	);
 	await eventually(() => core.get(id), (child) => child?.state === "waiting");
 	await eventually(() => core.get(id), (child) => child?.state === "running");
@@ -405,7 +417,7 @@ test("a contextual RPC child loads the common tool sources by path with no tool 
 	assert.equal(argv.includes("--tools"), false);
 	assert.deepEqual(
 		argv.flatMap((arg, index) => (arg === "--extension" ? [argv[index + 1]] : [])),
-		["builtin:mcp", "builtin:codemode", "builtin:tool-search", join(dir, "tools/selected.ts"), childRuntime],
+		["builtin:mcp", "builtin:tool-search", join(dir, "tools/selected.ts"), childRuntime],
 	);
 	assert.deepEqual(JSON.parse(argv[argv.indexOf("--pi-workflow-child") + 1]).contextual, {
 		active: ["read", "bash", "edit", "write", "grep", "find", "ls", "codemode", "tool_search"],
@@ -520,26 +532,26 @@ test("an explorer RPC child receives the pi-web-access extension and other roles
 	const { modules } = await agentWith(t, { "pi-web-access": { pi: { extensions: ["./src/index.ts"] } } });
 	const explorer = await fakeChild(t, "complete", { role: "explore" });
 	await explorer.handle.run("Say done.");
-	assert.deepEqual(extensionsOf(explorer.launched().argv).slice(2), [
+	assert.deepEqual(extensionsOf(explorer.launched().argv).slice(1), [
 		join(modules, "pi-web-access", "src", "index.ts"),
 		childRuntime,
 	]);
 	const worker = await fakeChild(t, "complete");
 	await worker.handle.run("Say done.");
-	assert.deepEqual(extensionsOf(worker.launched().argv), ["builtin:mcp", "builtin:codemode", childRuntime]);
+	assert.deepEqual(extensionsOf(worker.launched().argv), ["builtin:mcp", childRuntime]);
 });
 
 test("a Claude Bridge RPC child receives the official provider extension and a native model child does not", async (t) => {
 	const { modules } = await agentWith(t, { "pi-claude-bridge": bridgeManifest });
 	const bridge = await fakeChild(t, "complete", { role: "worker", model: "claude-bridge/claude-haiku-4-5" });
 	await bridge.handle.run("Say done.");
-	assert.deepEqual(extensionsOf(bridge.launched().argv).slice(2), [
+	assert.deepEqual(extensionsOf(bridge.launched().argv).slice(1), [
 		await realpath(join(modules, "pi-claude-bridge", "src", "index.ts")),
 		childRuntime,
 	]);
 	const native = await fakeChild(t, "complete");
 	await native.handle.run("Say done.");
-	assert.deepEqual(extensionsOf(native.launched().argv), ["builtin:mcp", "builtin:codemode", childRuntime]);
+	assert.deepEqual(extensionsOf(native.launched().argv), ["builtin:mcp", childRuntime]);
 });
 
 test("a missing pi-web-access or Claude Bridge package fails the launch with its cause", async (t) => {

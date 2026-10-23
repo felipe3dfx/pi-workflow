@@ -5,10 +5,11 @@ import {
 	getCurrentSystemMessage,
 	getSystemMessageText,
 } from "@earendil-works/pi-ai";
-import type {
-	ExtensionAPI,
-	ExtensionContext,
-	ExtensionHandler,
+import {
+	createCodemodeExtension,
+	type ExtensionAPI,
+	type ExtensionContext,
+	type ExtensionHandler,
 } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 
@@ -27,6 +28,7 @@ import {
 	type CheckpointGrant,
 	createCheckpointTool,
 } from "./child-checkpoint.ts";
+import { createChildCodeGraphTool } from "./codegraph-tool.ts";
 import {
 	type ChildResult,
 	reportsResult,
@@ -44,6 +46,7 @@ export type ChildRuntimeConfig = {
 	cwd: string;
 	shell: ChildShell;
 	checkpoint?: CheckpointGrant;
+	codegraph?: boolean;
 	contextual?: { active: readonly string[] };
 };
 
@@ -284,6 +287,7 @@ export async function installChildRuntime(
 		pi.registerTool(
 			createChildBashTool(config.cwd, config.shell, config.checkpoint !== undefined),
 		);
+		if (config.codegraph) pi.registerTool(createChildCodeGraphTool(config.cwd));
 		pi.registerTool(createAskParentTool(ask));
 		if (reportsResult(config.role)) {
 			pi.registerTool(
@@ -303,6 +307,7 @@ export async function installChildRuntime(
 }
 
 export default function childRuntime(pi: ExtensionAPI) {
+	createCodemodeExtension({ models: false })(pi);
 	pi.registerFlag(childRuntimeFlag, {
 		type: "string",
 		description: "The launch of a pi-workflow child session.",

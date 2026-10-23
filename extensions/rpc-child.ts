@@ -30,6 +30,7 @@ import {
 import { type Schedule, scheduleTimer } from "./clock.ts";
 import { errorMessage } from "./error-message.ts";
 import { stopTree, treeEnvironment } from "./process-tree.ts";
+import { seated } from "./shell.ts";
 import { defaultActiveTools } from "./tool-sources.ts";
 import { resolveClaudeBridgeExtension, resolveWebAccessExtensions } from "./web-access.ts";
 
@@ -121,6 +122,7 @@ export function createRpcChildSession(
 			cwd: spec.cwd,
 			shell: spec.shell,
 			checkpoint: spec.checkpoint,
+			codegraph: !policy && seated("codegraph", "message-stream"),
 			contextual: policy && {
 				active: spec.sources?.active ?? defaultActiveTools,
 			},
@@ -136,7 +138,6 @@ export function createRpcChildSession(
 			...(policy ? [] : ["--tools", spec.tools.join(",")]),
 			"--no-extensions",
 			"--extension", "builtin:mcp",
-			"--extension", "builtin:codemode",
 			...(policy
 				? [
 						"--extension", "builtin:tool-search",

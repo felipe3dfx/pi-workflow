@@ -19,7 +19,6 @@ function plan(role, surfaces, worktree = "/tmp") {
 
 const launch = (background = true) => ({
 	background,
-	modelRegistry: {},
 	project: () => ({ cwd: "/tmp", trusted: false }),
 	shell: () => ({}),
 });

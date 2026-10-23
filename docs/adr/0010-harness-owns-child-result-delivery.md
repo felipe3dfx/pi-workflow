@@ -3,6 +3,7 @@
 ## Status
 
 Acceptance: approval and merge of the introducing PR.
+Amended by [ADR 0023](0023-children-run-as-rpc-processes.md): children and pending results survive `/reload`; every other end of the parent session still ends them.
 
 ## Decision
 

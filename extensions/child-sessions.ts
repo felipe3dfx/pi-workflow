@@ -8,52 +8,32 @@ import type {
 	ModelThinkingLevel,
 	UserMessage,
 } from "@earendil-works/pi-ai";
-import {
-	type AgentSessionEvent,
-	createAgentSession,
-	createCodemodeExtension,
-	createMcpExtension,
-	DefaultResourceLoader,
-	type ExtensionAPI,
-	type ExtensionContext,
-	type ExtensionFactory,
-	type ExtensionHandler,
-	getAgentDir,
-	type ModelRuntime,
-	type SessionEntry,
-	SessionManager,
-	SettingsManager,
-	type ToolDefinition,
+import type {
+	AgentSessionEvent,
+	ExtensionContext,
+	SessionEntry,
+	ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 import type { ChildAudit, ChildCapture } from "./child-audit.ts";
-import {
-	type ActionAuthorization,
-	type AuthorizationDecision,
-	installActionAuthorization,
-	sessionActionAuthorization,
+import type {
+	ActionAuthorization,
+	AuthorizationDecision,
 } from "./action-authorization.ts";
-import { type ChildShell, createChildBashTool } from "./child-bash.ts";
+import type { ChildShell } from "./child-bash.ts";
 import {
 	type Checkpoint,
 	type CheckpointGrant,
 	checkpointTool,
-	createCheckpointTool,
 } from "./child-checkpoint.ts";
 import type { createChildLauncher } from "./child-launcher.ts";
-import { createChildCodeGraphTool } from "./codegraph-tool.ts";
 import { answerCard } from "./child-result-card.ts";
 import { hidden, outputText } from "./compact-tools.ts";
 import { type Schedule, scheduleTimer } from "./clock.ts";
 import { seated } from "./shell.ts";
 import { errorMessage } from "./error-message.ts";
-import {
-	explorerWeb,
-	resolveClaudeBridgeExtension,
-	type ParentProject,
-	webAccessTools,
-} from "./web-access.ts";
+import { type ParentProject, webAccessTools } from "./web-access.ts";
 import {
 	type ChildResult,
 	checkpointLines,
@@ -64,15 +44,9 @@ import {
 	verdictSucceeded,
 } from "./child-projection.ts";
 import { shellOptions } from "./shell-settings.ts";
-import { type CommonToolSources, commonToolFactories } from "./tool-sources.ts";
+import type { CommonToolSources } from "./tool-sources.ts";
 import { createRpcChildSession } from "./rpc-child.ts";
-import {
-	askParentTool,
-	consultation,
-	createAskParentTool,
-	createReportResultTool,
-	reportResultTool,
-} from "./child-runtime.ts";
+import { askParentTool, reportResultTool } from "./child-runtime.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
 import type { TodoClaim } from "./todo-extension.ts";
 import type { TaskState } from "./todo-list.ts";
@@ -94,7 +68,6 @@ interface ChildSpec {
 	thinking: ModelThinkingLevel;
 	prompt: string;
 	tools: string[];
-	modelRegistry: ExtensionContext["modelRegistry"];
 	shell: ChildShell;
 	onEvent(event: AgentSessionEvent): void;
 	notify(message: string): void;
@@ -336,18 +309,6 @@ export type ChildDetails = ReturnType<typeof childDetails> & {
 	question?: number;
 };
 
-function parentRuntime(
-	registry: ExtensionContext["modelRegistry"],
-): ModelRuntime | undefined {
-	// Extensions only see the ModelRegistry facade; its private runtime carries the
-	// parent's extension-registered providers and runtime API keys.
-	const runtime = (registry as unknown as { runtime?: Partial<ModelRuntime> })
-		.runtime;
-	return typeof runtime?.getModel === "function"
-		? (runtime as ModelRuntime)
-		: undefined;
-}
-
 function parentProject(ctx: ExtensionContext): ParentProject {
 	return { cwd: ctx.cwd, trusted: ctx.isProjectTrusted() };
 }
@@ -369,225 +330,6 @@ function childTools(plan: Plan) {
 		...(plan.checkpoint ? [checkpointTool] : []),
 	];
 }
-
-function parentMcp(project: ParentProject): ExtensionFactory {
-	const mcp = createMcpExtension();
-	// Pi does not export its MCP config loader, and its default loader reads the session's cwd,
-	// which for a child is the worktree.
-	const atParentProject = (ctx: ExtensionContext): ExtensionContext =>
-		Object.create(ctx, { cwd: { value: project.cwd } });
-	return (pi) =>
-		mcp({
-			...pi,
-			on: (event: string, handler: ExtensionHandler<unknown>) =>
-				pi.on(
-					event as "session_start",
-					event === "session_start"
-						? (payload, ctx) => handler(payload, atParentProject(ctx))
-						: handler,
-				),
-		} as ExtensionAPI);
-}
-
-export const createPiChildSession: ChildSessionFactory = async (spec) => {
-	if (spec.sources && !spec.authorization)
-		throw new Error("Common tool sources require contextual authorization.");
-	const sources = spec.authorization
-		? {
-				...spec.sources,
-				paths: spec.sources?.paths?.map((path) => resolve(spec.project.cwd, path)),
-			}
-		: undefined;
-	const policy = spec.authorization;
-	const authorization = policy
-		? sessionActionAuthorization({
-				authority: (ctx) => policy.authority(ctx),
-				classify: (proposal, signal) => policy.classify(proposal, signal),
-				onDecision: (decision) => policy.onDecision?.(decision),
-				consult: async (question, signal): Promise<unknown> =>
-					JSON.parse(await spec.ask(consultation(question), signal)),
-			})
-		: undefined;
-	let pendingAuthorizations: () => AuthorizationDecision[] = () => [];
-	const runtime = parentRuntime(spec.modelRegistry);
-	if (!runtime) {
-		throw new Error("The session's model runtime is not available.");
-	}
-	const slash = spec.model.indexOf("/");
-	if (slash < 1 || slash === spec.model.length - 1) {
-		throw new Error(`The selected model ${spec.model} is not available in Pi.`);
-	}
-	const model = runtime.getModel(
-		spec.model.slice(0, slash),
-		spec.model.slice(slash + 1),
-	);
-	if (!model) {
-		throw new Error(`The selected model ${spec.model} is not available in Pi.`);
-	}
-	const bridgeExtension = spec.model.slice(0, slash) === "claude-bridge"
-		? await resolveClaudeBridgeExtension(getAgentDir(), spec.project)
-		: undefined;
-	const settingsManager = SettingsManager.inMemory(
-		spec.authorization
-			? { shellPath: spec.shell.shellPath, shellCommandPrefix: spec.shell.commandPrefix }
-			: {},
-		{ projectTrusted: spec.project.trusted },
-	);
-	const agentDir = getAgentDir();
-	const web =
-		!spec.authorization && spec.role === "explore"
-			? await explorerWeb(agentDir, spec.project)
-			: { factories: [], problem: undefined };
-	const toolbox =
-		spec.authorization && sources
-			? (await import("./child-toolbox.ts")).childToolbox(
-					spec.authorization,
-					sources,
-				)
-			: undefined;
-	const resourceLoader = new DefaultResourceLoader({
-		cwd: spec.cwd,
-		agentDir,
-		settingsManager,
-		noExtensions: true,
-		additionalExtensionPaths: [
-			...new Set([
-				...(sources?.paths ?? []),
-				...(bridgeExtension ? [bridgeExtension] : []),
-			]),
-		],
-		extensionFactories: [
-			...(sources
-				? commonToolFactories(sources)
-				: [createCodemodeExtension({ models: false })]),
-			parentMcp(spec.project),
-			...(toolbox ? [toolbox] : []),
-			...web.factories,
-			...(spec.authorization
-				? [
-						(pi: ExtensionAPI) => {
-							if (authorization)
-								pendingAuthorizations = installActionAuthorization(
-									pi, authorization.authorization, spec.checkpointed,
-								).pending;
-						},
-					]
-				: []),
-		],
-		noSkills: true,
-		noPromptTemplates: true,
-		noThemes: true,
-		systemPromptOverride: () => spec.prompt,
-		appendSystemPromptOverride: () => [],
-	});
-	await resourceLoader.reload();
-	if (sources && resourceLoader.getExtensions().errors.length > 0) {
-		throw new Error(
-			`A selected common tool source could not load: ${resourceLoader
-				.getExtensions()
-				.errors.map((entry) => `${entry.path}: ${entry.error}`)
-				.join("; ")}`,
-		);
-	}
-	if (bridgeExtension) {
-		const loaded = resourceLoader.getExtensions();
-		const loadError = loaded.errors.find(
-			(entry) => resolve(entry.path) === bridgeExtension,
-		);
-		if (loadError) {
-			throw new Error(`Claude Bridge extension failed to load: ${loadError.error}`);
-		}
-		if (!loaded.extensions.some((entry) => resolve(entry.path) === bridgeExtension)) {
-			throw new Error("The resolved Claude Bridge extension was not loaded.");
-		}
-	}
-	const { session } = await createAgentSession({
-		cwd: spec.cwd,
-		modelRuntime: runtime,
-		model,
-		thinkingLevel: spec.thinking,
-		...(sources ? {} : { tools: spec.tools }),
-		customTools: [
-			...(spec.authorization
-				? []
-				: [createChildBashTool(spec.cwd, spec.shell, spec.checkpoint !== undefined)]),
-			...(spec.authorization ? [] : [createChildCodeGraphTool(spec.cwd)]),
-			createAskParentTool(spec.ask, spec.authorization !== undefined),
-			...(reportsResult(spec.role) || spec.authorization
-				? [createReportResultTool(spec.role, spec.report)]
-				: []),
-			...(spec.authorization || spec.checkpoint
-				? [createCheckpointTool(spec.checkpoint ?? spec.cwd, spec.authorization ? () => {} : spec.checkpointed)]
-				: []),
-		],
-		resourceLoader,
-		sessionManager: SessionManager.inMemory(
-			spec.cwd,
-			{ parentSession: spec.parentSession },
-			spec.entries,
-		),
-		settingsManager,
-	});
-	authorization?.bindSession(session);
-	session.subscribe((event) => spec.onEvent(event));
-	let stopped = false;
-	let binding: Promise<void> | undefined;
-	const stream = session.agent.streamFunction;
-	// abort() and dispose() do not cancel a prompt still preparing its run, so the
-	// run it later starts must be stopped before its provider request.
-	session.agent.streamFunction = (...args) => {
-		if (stopped) throw new Error("The child session was stopped.");
-		return stream(...args);
-	};
-	return {
-		sessionId: session.sessionId,
-		entries: () => session.sessionManager.getEntries(),
-		pendingAuthorizations: () => pendingAuthorizations(),
-		model: session.model && `${session.model.provider}/${session.model.id}`,
-		thinking: session.thinkingLevel,
-		tools: session.getActiveToolNames(),
-		async run(task) {
-			if (web.problem) spec.notify(web.problem);
-			binding ??= session.bindExtensions({
-				uiContext: {
-					...session.extensionRunner.getUIContext(),
-					notify: (message) => spec.notify(message),
-				},
-			});
-			await binding;
-			await session.prompt(task);
-			const last = session.messages.at(-1);
-			if (
-				last?.role === "assistant" &&
-				(last.stopReason === "error" || last.stopReason === "aborted")
-			) {
-				throw new Error(
-					last.errorMessage ?? `The child run ${last.stopReason}.`,
-				);
-			}
-			return session.getLastAssistantText() ?? "";
-		},
-		async steer(text) {
-			await session.steer(text);
-		},
-		clearQueue: () => session.clearQueue().steering,
-		abort: () => {
-			stopped = true;
-			return session.abort();
-		},
-		async dispose() {
-			stopped = true;
-			try {
-				const runner = session.extensionRunner;
-				if (runner.hasHandlers("session_shutdown")) {
-					await runner.emit({ type: "session_shutdown", reason: "quit" });
-				}
-			} finally {
-				session.dispose();
-			}
-		},
-	};
-};
 
 const abortedBeforeLaunch = {
 	status: "refused" as const,
@@ -1004,7 +746,6 @@ export function createChildSessions(options: {
 		launch: {
 			background: boolean;
 			signal?: AbortSignal;
-			modelRegistry: ExtensionContext["modelRegistry"];
 			project: () => ParentProject;
 			shell: () => ChildShell;
 			onLaunch?: (id: string) => void;
@@ -1042,7 +783,6 @@ export function createChildSessions(options: {
 				thinking: plan.thinking,
 				prompt: plan.contract.prompt,
 				tools: childTools(plan),
-				modelRegistry: launch.modelRegistry,
 				shell: launch.shell(),
 				onEvent: (event) => port.event(event),
 				notify: (message) => port.notify(message),
@@ -1223,7 +963,6 @@ export function createChildSessions(options: {
 		task: string,
 		launch: {
 			signal?: AbortSignal;
-			modelRegistry: ExtensionContext["modelRegistry"];
 			project: () => ParentProject;
 			shell: () => ChildShell;
 		},
@@ -1741,7 +1480,6 @@ export function createSpawnChildTool(
 					.start(plan, {
 						background,
 						signal,
-						modelRegistry: ctx.modelRegistry,
 						project: () => parentProject(ctx),
 						shell: () => shellOptions(ctx),
 						onLaunch: (id) => {
@@ -1867,7 +1605,6 @@ export function createContinueChildTool(
 			if (unseated) return unseated;
 			const started = await sessions.resume(params.id, params.task, {
 				signal,
-				modelRegistry: ctx.modelRegistry,
 				project: () => parentProject(ctx),
 				shell: () => shellOptions(ctx),
 			});

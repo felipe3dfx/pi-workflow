@@ -106,7 +106,6 @@ export function recordingCore({
 			},
 			{
 				background: true,
-				modelRegistry: {},
 				project: () => ({ cwd: "/tmp", trusted: false }),
 				shell: () => ({}),
 			},

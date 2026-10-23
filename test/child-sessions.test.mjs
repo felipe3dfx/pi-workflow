@@ -26,14 +26,11 @@ import {
 	fauxToolCall,
 } from "@earendil-works/pi-ai";
 import {
-	createAgentSession,
 	DefaultPackageManager,
-	DefaultResourceLoader,
 	getAgentDir,
 	initTheme,
 	ModelRegistry,
 	ModelRuntime,
-	SessionManager,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import {
@@ -45,7 +42,6 @@ import {
 
 import { createChildAudit } from "../extensions/child-audit.ts";
 import { createAskParentTool } from "../extensions/child-runtime.ts";
-import { createPiChildSession } from "../extensions/child-sessions.ts";
 import { compactToolRenderers } from "../extensions/compact-tools.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
@@ -57,7 +53,6 @@ import {
 } from "./support/fake-children.mjs";
 import {
 	installedPackagePath,
-	piChildSession,
 	spawnedTools,
 	workerTools,
 } from "./support/child-session.mjs";
@@ -65,8 +60,8 @@ import {
 	inspectClaudeBridgeCompanion,
 	resolveClaudeBridgeExtension,
 } from "../extensions/web-access.ts";
-import { createBridgeParentSession } from "./support/bridge-parent.mjs";
 import { eventually } from "./support/eventually.mjs";
+import { runtimeChild } from "./support/runtime-child.mjs";
 import { classifierRegistry } from "./support/fake-jev.mjs";
 import { turnJevRoutingOn } from "./support/jev-routing.mjs";
 
@@ -474,44 +469,6 @@ test("an official package source with a mismatched package identity is rejected"
 	});
 });
 
-test("child factory reports an official extension module load failure", async (t) => {
-	const installed = installedPackagePath(getAgentDir(), "npm:pi-claude-bridge");
-	if (!installed) {
-		t.skip("pi-claude-bridge is not installed in the Pi agent directory");
-		return;
-	}
-	await withWorkspace(async ({ worktree, agentDir }) => {
-		const root = join(agentDir, "npm", "node_modules", "pi-claude-bridge");
-		await mkdir(join(root, "src"), { recursive: true });
-		const manifest = await officialManifest(installed);
-		manifest.pi.extensions = ["./src/broken.ts"];
-		await writeFile(join(root, "package.json"), JSON.stringify(manifest));
-		await writeFile(join(root, "src", "broken.ts"), "export default (\n");
-		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
-		const parent = await fauxParent(agentDir, fauxAssistantMessage("unused"));
-		const provider = fauxProvider({ provider: "claude-bridge", models: [{ id: "child", reasoning: true }] });
-		parent.runtime.registerNativeProvider(provider.provider);
-		await assert.rejects(
-			createPiChildSession({
-				cwd: worktree,
-				project: { cwd: worktree, trusted: false },
-				role: "explore",
-				model: "claude-bridge/child",
-				thinking: "low",
-				prompt: "test",
-				tools: ["read"],
-				modelRegistry: parent.context.modelRegistry,
-				shell: {},
-				onEvent() {},
-				notify() {},
-				async ask() { return ""; },
-				report() {},
-			}),
-			/Claude Bridge extension failed to load/,
-		);
-	});
-});
-
 test("parent project resolution ignores a poisoned child cwd and unrelated child resource", async (t) => {
 	const installed = installedPackagePath(getAgentDir(), "npm:pi-claude-bridge");
 	if (!installed) {
@@ -689,34 +646,6 @@ test("Claude Bridge discovery follows parent trust and project package filters",
 	});
 });
 
-test("the faux-provider public seam leaves a native child without Bridge resources (not live native-provider evidence)", async (t) => {
-	const sourceAgentDir = getAgentDir();
-	const installed = installedPackagePath(sourceAgentDir, "npm:pi-claude-bridge");
-	if (!installed) {
-		t.skip("pi-claude-bridge is not installed in the Pi agent directory");
-		return;
-	}
-	await withWorkspace(async ({ worktree, agentDir }) => {
-		await mkdir(join(agentDir, "npm"), { recursive: true });
-		await symlink(join(sourceAgentDir, "npm", "node_modules"), join(agentDir, "npm", "node_modules"), "dir");
-		await writeFile(
-			join(agentDir, "settings.json"),
-			JSON.stringify({ packages: ["npm:pi-claude-bridge"] }),
-		);
-		const parent = await fauxParent(agentDir, fauxAssistantMessage("Native child."));
-		const child = await piChildSession({
-			cwd: worktree,
-			modelRegistry: parent.context.modelRegistry,
-		});
-		try {
-			assert.equal(child.model, "faux/child");
-			assert.equal(parent.runtime.getModel("claude-bridge", "claude-haiku-4-5"), undefined);
-		} finally {
-			await child.dispose();
-		}
-	});
-});
-
 const workerContract = await readFile(
 	fileURLToPath(new URL("../assets/contracts/worker.md", import.meta.url)),
 	"utf8",
@@ -789,7 +718,7 @@ function fakeJev({ choice = "leave" } = {}) {
 
 function loadExtension({
 	agentDir,
-	create = createPiChildSession,
+	create,
 	legacy = false,
 	sendMessage,
 	schedule,
@@ -2176,22 +2105,6 @@ test("the default child factory opens no Pi process for a queued child", async (
 	});
 });
 
-test("the SDK child factory refuses when the session's model runtime is not reachable", async () => {
-	await withWorkspace(async ({ worktree, agentDir }) => {
-		const { tool } = await loadSpawnTool({ agentDir });
-
-		const result = await spawn(
-			tool,
-			{ role: "worker", task: "Fix the failing test" },
-			toolContext("print", worktree),
-		);
-
-		assert.equal(result.details.status, "refused");
-		assert.match(result.details.reason, /model runtime/);
-		assert.equal("id" in result.details, false);
-	});
-});
-
 async function fauxParent(agentDir, responses, { tokensPerSecond } = {}) {
 	const runtime = await ModelRuntime.create({
 		authPath: join(agentDir, "auth.json"),
@@ -2221,7 +2134,7 @@ async function fauxParent(agentDir, responses, { tokensPerSecond } = {}) {
 	};
 }
 
-test("the SDK child factory runs the contract on the parent's model runtime through Pi's SDK", async () => {
+test("the child runtime runs the contract on the selected model", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const parent = await fauxParent(
 			agentDir,
@@ -2229,6 +2142,7 @@ test("the SDK child factory runs the contract on the parent's model runtime thro
 		);
 		const { tool, messages } = await loadSpawnTool({
 			agentDir,
+			create: runtimeChild(parent.runtime),
 		});
 
 		const result = await spawn(
@@ -2252,30 +2166,7 @@ test("the SDK child factory runs the contract on the parent's model runtime thro
 	});
 });
 
-test("the SDK child factory gives an explore child a read-only codegraph and no init", async () => {
-	await withWorkspace(async ({ worktree, agentDir }) => {
-		const parent = await fauxParent(agentDir, fauxAssistantMessage("Found it."));
-		const { tool } = await loadSpawnTool({ agentDir });
-
-		const result = await spawn(
-			tool,
-			{ role: "explore", task: "Map the launcher" },
-			{ ...toolContext("print", worktree), ...parent.context },
-		);
-
-		assert.equal(result.details.status, "completed", text(result));
-		const [system] = parent.requests[0].messages;
-		const added = system.toolsAdded.map((added) => added.name);
-		assert.ok(added.includes("codegraph"));
-		const codegraph = system.toolsAdded.find((added) => added.name === "codegraph");
-		assert.deepEqual(codegraph.parameters.properties.operation.enum, [
-			"query",
-			"explore",
-		]);
-	});
-});
-
-test("the SDK child factory runs a trusted project's shell prefix in the child's bash", async () => {
+test("the child runtime runs a trusted project's shell prefix in the child's bash", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		await mkdir(join(worktree, ".pi"));
 		await writeFile(
@@ -2293,7 +2184,7 @@ test("the SDK child factory runs a trusted project's shell prefix in the child's
 			echo(),
 			fauxAssistantMessage("Untrusted."),
 		]);
-		const { tool } = await loadSpawnTool({ agentDir });
+		const { tool } = await loadSpawnTool({ agentDir, create: runtimeChild(parent.runtime) });
 
 		for (const trusted of [true, false]) {
 			const result = await spawn(
@@ -2336,144 +2227,9 @@ async function writeMcpConfig(dir, pids, servers) {
 	);
 }
 
-function processRuns(pid) {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-async function fixturePid(pids, name) {
-	return Number(await readFile(join(pids, `${name}.pid`), "utf8"));
-}
-
 function declared(request) {
 	return request.messages[0].toolsAdded.map((added) => added.name);
 }
-
-function toolOutputs(requests) {
-	return requests
-		.flatMap((request) => request.messages)
-		.filter((message) => message.role === "toolResult")
-		.map((message) => message.content.map((part) => part.text ?? "").join(""));
-}
-
-const mcpScript = [
-	'const echoed = await tools.mcp__tracker__echo({ text: "hi" });',
-	"return { echoed: echoed.content[0].text, models: typeof models, mcp: Object.keys(tools).filter((name) => name.includes(\"mcp\")).sort() };",
-].join("\n");
-
-test("every Specialist reaches the parent's direct and codemode-only MCP tools and the resource tools, and nothing of the parent", async () => {
-	await withWorkspace(async ({ worktree, agentDir }) => {
-		const pids = join(agentDir, "pids");
-		await writeMcpConfig(agentDir, pids, {
-			docs: { exposure: "direct", description: "Library docs." },
-			tracker: { description: "Issue tracker." },
-		});
-		const roles = { explore: [], worker: ["report_result"], verify: ["report_result"] };
-		for (const [role, extra] of Object.entries(roles)) {
-			const parent = await fauxParent(agentDir, [
-				fauxAssistantMessage(fauxToolCall("codemode", { code: mcpScript }), {
-					stopReason: "toolUse",
-				}),
-				fauxAssistantMessage("Done."),
-			]);
-			const { tool } = await loadSpawnTool({ agentDir });
-			const contract = await readFile(
-				fileURLToPath(new URL(`../assets/contracts/${role}.md`, import.meta.url)),
-				"utf8",
-			);
-			const contractTools = contract
-				.match(/^tools: (.*)$/m)[1]
-				.split(", ");
-
-			const result = await spawn(
-				tool,
-				{ role, task: "Use the trackers" },
-				{ ...toolContext("print", worktree), ...parent.context },
-			);
-
-			assert.equal(result.details.status, "completed", text(result));
-			const names = declared(parent.requests[0]);
-			for (const name of [
-				...contractTools,
-				"ask_parent",
-				...extra,
-				"mcp__docs__echo",
-				"list_mcp_resources",
-				"list_mcp_resource_templates",
-				"read_mcp_resource",
-			]) {
-				assert.ok(names.includes(name), `${role} lacks ${name}: ${names}`);
-			}
-			for (const name of [
-				"spawn_child",
-				"mcp__tracker__echo",
-				...childTools,
-			]) {
-				assert.ok(!names.includes(name), `${role} declares ${name}`);
-			}
-			assert.ok(!names.some((name) => /web|fetch/.test(name)), `${role}: ${names}`);
-			const [output] = toolOutputs(parent.requests);
-			assert.match(output, /"echoed":"tracker echoes hi"/);
-			assert.match(output, /"models":"undefined"/);
-			assert.match(output, /mcp__docs__echo/);
-			assert.match(output, /mcp__tracker__echo/);
-		}
-	});
-});
-
-test("a child session starts its MCP servers only when it runs and closes them when it is disposed", async () => {
-	await withWorkspace(async ({ worktree, agentDir }) => {
-		const pids = join(agentDir, "pids");
-		await writeMcpConfig(agentDir, pids, {
-			docs: { exposure: "direct", description: "Library docs." },
-		});
-		const parent = await fauxParent(agentDir, fauxAssistantMessage("Done."));
-		const handle = await piChildSession({
-			cwd: worktree,
-			tools: ["read", "codemode", "mcp__*", "ask_parent"],
-			modelRegistry: parent.context.modelRegistry,
-		});
-
-		await delay(100);
-		assert.deepEqual(await readdir(pids), []);
-
-		assert.equal(await handle.run("Look it up."), "Done.");
-		const pid = await fixturePid(pids, "docs");
-		assert.ok(processRuns(pid));
-		assert.ok(declared(parent.requests[0]).includes("mcp__docs__echo"));
-
-		await handle.dispose();
-		await eventually(() => !processRuns(pid));
-	});
-});
-
-test("a child's first prompt does not wait for a slow MCP server whose tools are not direct", async () => {
-	await withWorkspace(async ({ worktree, agentDir }) => {
-		const pids = join(agentDir, "pids");
-		await writeMcpConfig(agentDir, pids, {
-			slow: { args: [mcpFixture, "slow", pids, "3000"], description: "Slow tools." },
-		});
-		const parent = await fauxParent(agentDir, fauxAssistantMessage("Done."));
-		const handle = await piChildSession({
-			cwd: worktree,
-			tools: ["read", "codemode", "mcp__*", "ask_parent"],
-			modelRegistry: parent.context.modelRegistry,
-		});
-
-		const started = Date.now();
-		try {
-			assert.equal(await handle.run("Look it up."), "Done.");
-			assert.ok(Date.now() - started < 1500, `${Date.now() - started} ms`);
-			await eventually(() => existsSync(join(pids, "slow.pid")));
-		} finally {
-			await handle.dispose();
-		}
-	});
-});
 
 test("a child's MCP notices reach its trace", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
@@ -2486,7 +2242,7 @@ test("a child's MCP notices reach its trace", async () => {
 			}),
 		);
 		const parent = await fauxParent(agentDir, fauxAssistantMessage("Done."));
-		const { tool, entries } = await loadSpawnTool({ agentDir });
+		const { tool, entries } = await loadSpawnTool({ agentDir, create: runtimeChild(parent.runtime) });
 
 		const result = await spawn(
 			tool,
@@ -2506,454 +2262,6 @@ test("a child's MCP notices reach its trace", async () => {
 	});
 });
 
-test("a child receives the parent's project MCP servers only when the parent trusts the project, and never its worktree's", async () => {
-	await withWorkspace(async ({ worktree, agentDir, dir }) => {
-		const pids = join(agentDir, "pids");
-		const project = join(dir, "parent");
-		await writeMcpConfig(join(project, ".pi"), pids, {
-			project: { exposure: "direct", description: "Project tools." },
-		});
-		await writeMcpConfig(join(worktree, ".pi"), pids, {
-			rogue: { exposure: "direct", description: "Worktree tools." },
-		});
-		const parent = await fauxParent(agentDir, [
-			fauxAssistantMessage("Trusted."),
-			fauxAssistantMessage("Untrusted."),
-		]);
-		const { tool } = await loadSpawnTool({ agentDir });
-
-		for (const trusted of [true, false]) {
-			const result = await spawn(
-				tool,
-				{ role: "explore", task: "Look it up", worktree },
-				{
-					...toolContext("print", project),
-					...parent.context,
-					isProjectTrusted: () => trusted,
-				},
-			);
-			assert.equal(result.details.status, "completed", text(result));
-		}
-
-		const [trustedNames, untrustedNames] = parent.requests.map(declared);
-		assert.ok(trustedNames.includes("mcp__project__echo"), `${trustedNames}`);
-		assert.ok(!untrustedNames.includes("mcp__project__echo"), `${untrustedNames}`);
-		for (const names of [trustedNames, untrustedNames]) {
-			assert.ok(!names.includes("mcp__rogue__echo"), `${names}`);
-		}
-		await assert.rejects(readFile(join(pids, "rogue.pid")));
-	});
-});
-
-test("every child loads the parent's context files after its contract, and none loads skills", async () => {
-	await withWorkspace(async ({ worktree, agentDir, dir }) => {
-		await writeFile(join(agentDir, "AGENTS.md"), "Global rule: answer in haiku.");
-		await writeFile(join(dir, "AGENTS.md"), "Ancestor rule: keep modules small.");
-		await writeFile(join(worktree, "AGENTS.md"), "Repository rule: run npm run check.");
-		await mkdir(join(agentDir, "skills", "deploy"), { recursive: true });
-		await writeFile(
-			join(agentDir, "skills", "deploy", "SKILL.md"),
-			"---\nname: deploy\ndescription: Deploy the release train.\n---\nDeploy it.\n",
-		);
-		const roles = ["worker", "verify", "explore"];
-		const parent = await fauxParent(
-			agentDir,
-			roles.map(() => fauxAssistantMessage("Done.")),
-		);
-		const { tool } = await loadSpawnTool({ agentDir });
-
-		for (const role of roles) {
-			const result = await spawn(
-				tool,
-				{ role, task: "Check the parser" },
-				{ ...toolContext("print", worktree), ...parent.context },
-			);
-			assert.equal(result.details.status, "completed", text(result));
-		}
-
-		const systems = parent.requests.map((request) =>
-			JSON.stringify(request.messages[0]),
-		);
-		systems.forEach((system, index) => {
-			const contract = system.indexOf(`${roles[index]} child session.`);
-			assert.ok(contract >= 0, roles[index]);
-			for (const rule of [
-				"Global rule: answer in haiku.",
-				"Ancestor rule: keep modules small.",
-				"Repository rule: run npm run check.",
-			]) {
-				assert.ok(system.indexOf(rule, contract) > contract, `${roles[index]}: ${rule}`);
-			}
-		});
-		for (const request of parent.requests) {
-			assert.deepEqual(
-				Object.keys(request.messages[0].sections).slice(0, 2),
-				["preamble", "project_context"],
-			);
-		}
-		for (const system of systems) {
-			assert.doesNotMatch(system, /Deploy the release train/);
-		}
-	});
-});
-
-test("no child loads APPEND_SYSTEM files from the agent directory or the repository", async () => {
-	await withWorkspace(async ({ worktree, agentDir }) => {
-		await writeFile(join(agentDir, "APPEND_SYSTEM.md"), "Global append: answer in haiku.");
-		await mkdir(join(worktree, ".pi"), { recursive: true });
-		await writeFile(
-			join(worktree, ".pi", "APPEND_SYSTEM.md"),
-			"Repository append: deploy on friday.",
-		);
-		const roles = ["worker", "verify", "explore"];
-		const parent = await fauxParent(
-			agentDir,
-			roles.map(() => fauxAssistantMessage("Done.")),
-		);
-		const { tool } = await loadSpawnTool({ agentDir });
-
-		for (const role of roles) {
-			const result = await spawn(
-				tool,
-				{ role, task: "Check the parser" },
-				{ ...toolContext("print", worktree), ...parent.context },
-			);
-			assert.equal(result.details.status, "completed", text(result));
-		}
-
-		for (const request of parent.requests) {
-			const system = JSON.stringify(request.messages[0]);
-			assert.doesNotMatch(system, /Global append/);
-			assert.doesNotMatch(system, /Repository append/);
-		}
-	});
-});
-
-test("a worker loads the worktree's AGENTS.override.md in place of its AGENTS.md", async () => {
-	await withWorkspace(async ({ worktree, agentDir }) => {
-		await writeFile(join(worktree, "AGENTS.md"), "Repository rule: run npm run check.");
-		await writeFile(
-			join(worktree, "AGENTS.override.md"),
-			"Override rule: run npm test only.",
-		);
-		const parent = await fauxParent(agentDir, [fauxAssistantMessage("Done.")]);
-		const { tool } = await loadSpawnTool({ agentDir });
-
-		const result = await spawn(
-			tool,
-			{ role: "worker", task: "Check the parser" },
-			{ ...toolContext("print", worktree), ...parent.context },
-		);
-		assert.equal(result.details.status, "completed", text(result));
-
-		const system = JSON.stringify(parent.requests[0].messages[0]);
-		assert.match(system, /Override rule: run npm test only\./);
-		assert.doesNotMatch(system, /Repository rule/);
-	});
-});
-
-function installWebAccess(agentDir, label = "local") {
-	return installWebAccessAt(
-		join(agentDir, "npm", "node_modules", "pi-web-access"),
-		label,
-	);
-}
-
-async function installWebAccessAt(dir, label) {
-	await mkdir(join(dir, "dist"), { recursive: true });
-	await writeFile(
-		join(dir, "package.json"),
-		JSON.stringify({
-			name: "pi-web-access",
-			type: "module",
-			pi: { extensions: ["./dist"] },
-		}),
-	);
-	await writeFile(
-		join(dir, "dist", "index.js"),
-		[
-			"const state = { fetches: new Set() };",
-			"(globalThis.webAccessStates ??= []).push(state);",
-			"export default function (pi) {",
-			'\tpi.on("session_start", () => state.fetches.add("fetch"));',
-			'\tpi.on("session_shutdown", () => state.fetches.clear());',
-			'\tfor (const name of ["web_search", "fetch_content"]) {',
-			"\t\tpi.registerTool({",
-			"\t\t\tname,",
-			"\t\t\tlabel: name,",
-			`\t\t\tdescription: ${JSON.stringify(`Web from ${label}.`)},`,
-			'\t\t\tparameters: { type: "object", properties: {} },',
-			'\t\t\texecute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),',
-			"\t\t});",
-			"\t}",
-			"}",
-			"",
-		].join("\n"),
-	);
-	return dir;
-}
-
-function childTraces(entries) {
-	return entries
-		.filter((entry) => entry.customType === "pi-workflow-child-trace")
-		.map((entry) => entry.data);
-}
-
-test("an explorer has the local pi-web-access tools whether or not its expectation is on, and a worker and a verifier have none", async () => {
-	await withWorkspace(async ({ worktree, agentDir }) => {
-		await installWebAccess(agentDir);
-		const roles = ["explore", "worker", "verify"];
-		const launches = [false, true].flatMap((expected) =>
-			roles.map((role) => ({ expected, role })),
-		);
-		const parent = await fauxParent(
-			agentDir,
-			launches.map(() => fauxAssistantMessage("Done.")),
-		);
-
-		try {
-			for (const { expected, role } of launches) {
-				replaceSelection({
-					schemaVersion: 1,
-					capabilities: Object.fromEntries(
-						capabilities.map((capability) => [capability, true]),
-					),
-					expectations: { "pi-web-access": expected },
-				});
-				const { tool, entries } = await loadSpawnTool({ agentDir });
-				const result = await spawn(
-					tool,
-					{ role, task: "Research the parser" },
-					{ ...toolContext("print", worktree), ...parent.context },
-				);
-				assert.equal(result.details.status, "completed", text(result));
-				assert.ok(
-					childTraces(entries).every((trace) => trace.notice === undefined),
-					`${role}: ${JSON.stringify(childTraces(entries))}`,
-				);
-			}
-		} finally {
-			replaceSelection({
-				schemaVersion: 1,
-				capabilities: Object.fromEntries(
-					capabilities.map((capability) => [capability, true]),
-				),
-				expectations: {},
-			});
-		}
-
-		parent.requests.forEach((request, index) => {
-			const { role } = launches[index];
-			const web = declared(request).filter((name) =>
-				["web_search", "fetch_content"].includes(name),
-			);
-			assert.deepEqual(web, role === "explore" ? ["web_search", "fetch_content"] : [], role);
-		});
-	});
-});
-
-test("an explorer without a local pi-web-access launches without web tools, its trace names the package, and nothing is installed", async () => {
-	await withWorkspace(async ({ worktree, agentDir }) => {
-		const parent = await fauxParent(agentDir, fauxAssistantMessage("Done."));
-		const { tool, entries } = await loadSpawnTool({ agentDir });
-
-		const result = await spawn(
-			tool,
-			{ role: "explore", task: "Research the parser" },
-			{ ...toolContext("print", worktree), ...parent.context },
-		);
-
-		assert.equal(result.details.status, "completed", text(result));
-		const names = declared(parent.requests[0]);
-		assert.ok(!names.some((name) => /web|fetch/.test(name)), `${names}`);
-		const notices = childTraces(entries).filter((trace) => trace.notice);
-		assert.equal(notices.length, 1);
-		assert.match(notices[0].notice, /pi-web-access/);
-		await assert.rejects(readdir(join(agentDir, "npm")));
-	});
-});
-
-test("an explorer loads pi-web-access from Pi's agent directory under both agent-directory variables", async () => {
-	await withWorkspace(async ({ worktree, agentDir, dir }) => {
-		const home = join(dir, "home");
-		const piDefault = join(home, ".pi", "agent");
-		const agentHome = join(dir, "agent-home");
-		await installWebAccess(agentDir, "PI_CODING_AGENT_DIR");
-		await installWebAccess(piDefault, "the default agent directory");
-		await installWebAccess(agentHome, "PI_AGENT_HOME");
-		const cases = [
-			{ codingAgentDir: agentDir, agentHome: undefined, loads: "PI_CODING_AGENT_DIR" },
-			{ codingAgentDir: agentDir, agentHome, loads: "PI_CODING_AGENT_DIR" },
-			{ codingAgentDir: undefined, agentHome, loads: "the default agent directory" },
-			{ codingAgentDir: undefined, agentHome: undefined, loads: "the default agent directory" },
-		];
-		const saved = { HOME: process.env.HOME, PI_AGENT_HOME: process.env.PI_AGENT_HOME };
-		try {
-			for (const variables of cases) {
-				const parent = await fauxParent(agentDir, fauxAssistantMessage("Done."));
-				process.env.HOME = home;
-				for (const [name, value] of [
-					["PI_CODING_AGENT_DIR", variables.codingAgentDir],
-					["PI_AGENT_HOME", variables.agentHome],
-				]) {
-					if (value === undefined) delete process.env[name];
-					else process.env[name] = value;
-				}
-				const parentPackage = new DefaultPackageManager({
-					cwd: worktree,
-					agentDir: getAgentDir(),
-					settingsManager: SettingsManager.inMemory(),
-				}).getInstalledPath("npm:pi-web-access", "user");
-				const handle = await piChildSession({
-					cwd: worktree,
-					modelRegistry: parent.context.modelRegistry,
-				});
-				try {
-					await handle.run("Look it up.");
-				} finally {
-					await handle.dispose();
-				}
-				const search = parent.requests[0].messages[0].toolsAdded.find(
-					(added) => added.name === "web_search",
-				);
-				assert.equal(search?.description, `Web from ${variables.loads}.`, JSON.stringify(variables));
-				assert.equal(
-					parentPackage,
-					join(variables.codingAgentDir ?? piDefault, "npm", "node_modules", "pi-web-access"),
-				);
-			}
-		} finally {
-			for (const [name, value] of Object.entries(saved)) {
-				if (value === undefined) delete process.env[name];
-				else process.env[name] = value;
-			}
-		}
-	});
-});
-
-async function explorerSearch(agentDir, worktree, project) {
-	const parent = await fauxParent(agentDir, fauxAssistantMessage("Done."));
-	const handle = await piChildSession({
-		cwd: worktree,
-		project,
-		modelRegistry: parent.context.modelRegistry,
-	});
-	try {
-		await handle.run("Look it up.");
-	} finally {
-		await handle.dispose();
-	}
-	return parent.requests[0].messages[0].toolsAdded.find(
-		(added) => added.name === "web_search",
-	)?.description;
-}
-
-test("an explorer loads pi-web-access from the parent's project when the parent trusts it, and from Pi's agent directory otherwise", async () => {
-	await withWorkspace(async ({ worktree, agentDir, dir }) => {
-		const project = join(dir, "parent");
-		await installWebAccess(join(project, ".pi"), "the project");
-		await installWebAccess(agentDir, "the agent directory");
-
-		assert.equal(
-			await explorerSearch(agentDir, worktree, { cwd: project, trusted: true }),
-			"Web from the project.",
-		);
-		assert.equal(
-			await explorerSearch(agentDir, worktree, { cwd: project, trusted: false }),
-			"Web from the agent directory.",
-		);
-	});
-});
-
-test("an explorer loads a trusted project's pi-web-access with nothing in Pi's agent directory, and an untrusted one's not at all", async () => {
-	await withWorkspace(async ({ worktree, agentDir, dir }) => {
-		const project = join(dir, "parent");
-		await installWebAccess(join(project, ".pi"), "the project");
-
-		assert.equal(
-			await explorerSearch(agentDir, worktree, { cwd: project, trusted: true }),
-			"Web from the project.",
-		);
-		assert.equal(
-			await explorerSearch(agentDir, worktree, { cwd: project, trusted: false }),
-			undefined,
-		);
-	});
-});
-
-test("an explorer loads a legacy global pi-web-access when Pi's agent directory has none", async () => {
-	await withWorkspace(async ({ worktree, agentDir, dir }) => {
-		await installWebAccessAt(
-			join(dir, "global", "lib", "node_modules", "pi-web-access"),
-			"the global install",
-		);
-
-		assert.equal(
-			await explorerSearch(agentDir, worktree, { cwd: worktree, trusted: false }),
-			"Web from the global install.",
-		);
-	});
-});
-
-test("an explorer ending, in the parent's worktree or another, leaves the parent's pi-web-access state alone", async () => {
-	await withWorkspace(async ({ worktree, agentDir, dir }) => {
-		const directory = await installWebAccess(agentDir);
-		const other = join(dir, "other");
-		await mkdir(other);
-		execFileSync("git", ["init", "--quiet"], { cwd: other });
-		const parent = await fauxParent(agentDir, [
-			fauxAssistantMessage("Same."),
-			fauxAssistantMessage("Other."),
-		]);
-		const states = [];
-		globalThis.webAccessStates = states;
-		const settingsManager = SettingsManager.inMemory();
-		const resourceLoader = new DefaultResourceLoader({
-			cwd: worktree,
-			agentDir,
-			settingsManager,
-			noSkills: true,
-			noContextFiles: true,
-			additionalExtensionPaths: [directory],
-		});
-		await resourceLoader.reload();
-		const { session } = await createAgentSession({
-			cwd: worktree,
-			agentDir,
-			modelRuntime: parent.runtime,
-			model: parent.context.model,
-			resourceLoader,
-			settingsManager,
-			sessionManager: SessionManager.inMemory(worktree),
-		});
-		await session.bindExtensions({});
-		try {
-			assert.equal(states.length, 1);
-			const [parentState] = states;
-			assert.deepEqual([...parentState.fetches], ["fetch"]);
-
-			for (const cwd of [worktree, other]) {
-				const handle = await piChildSession({
-					cwd,
-					project: { cwd: worktree, trusted: false },
-					modelRegistry: parent.context.modelRegistry,
-				});
-				await handle.run("Look it up.");
-				const explorerState = states.at(-1);
-				assert.notEqual(explorerState, parentState);
-				assert.deepEqual([...explorerState.fetches], ["fetch"]);
-				await handle.dispose();
-				assert.deepEqual([...explorerState.fetches], []);
-				assert.deepEqual([...parentState.fetches], ["fetch"], cwd);
-			}
-			assert.equal(states.length, 3);
-		} finally {
-			session.dispose();
-			delete globalThis.webAccessStates;
-		}
-	});
-});
-
 test("two children of one Specialist and model in one worktree send the same prefix, with the task only in the user message", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const pids = join(agentDir, "pids");
@@ -2966,7 +2274,7 @@ test("two children of one Specialist and model in one worktree send the same pre
 			fauxAssistantMessage("First."),
 			fauxAssistantMessage("Second."),
 		]);
-		const { tool } = await loadSpawnTool({ agentDir });
+		const { tool } = await loadSpawnTool({ agentDir, create: runtimeChild(parent.runtime) });
 
 		for (const task of ["Fix the parser", "Fix the lexer"]) {
 			const result = await spawn(
@@ -3126,7 +2434,7 @@ async function assertLaunchKeepsParentModel(jev, jevRouting = "on") {
 				},
 			}),
 		);
-		const extension = await loadSpawnTool({ agentDir, jevRouting });
+		const extension = await loadSpawnTool({ agentDir, create: runtimeChild(parent.runtime), jevRouting });
 		const ctx = { ...toolContext("tui", worktree, jev), ...parent.context };
 		const parentModel = ctx.model;
 
@@ -3162,6 +2470,7 @@ test("a foreground child whose run ends in a provider error is a tool error", as
 		);
 		const { tool } = await loadSpawnTool({
 			agentDir,
+			create: runtimeChild(parent.runtime),
 		});
 
 		await assert.rejects(
@@ -3191,86 +2500,6 @@ async function collectUnhandled(run) {
 	}
 	return unhandled;
 }
-
-test("a background child disposed at session shutdown while its prompt is still preparing never sends a provider request", async () => {
-	await withWorkspace(async ({ worktree, agentDir }) => {
-		const parent = await fauxParent(
-			agentDir,
-			fauxAssistantMessage("Late answer."),
-		);
-		const preparing = Promise.withResolvers();
-		const release = Promise.withResolvers();
-		const checkAuth = parent.runtime.checkAuth.bind(parent.runtime);
-		parent.runtime.hasConfiguredAuth = () => false;
-		parent.runtime.checkAuth = async (...args) => {
-			preparing.resolve();
-			await release.promise;
-			return checkAuth(...args);
-		};
-		const { tool, messages, fire } = await loadSpawnTool({
-			agentDir,
-		});
-
-		const unhandled = await collectUnhandled(async () => {
-			const result = await spawn(
-				tool,
-				{ role: "worker", task: "Fix the failing test" },
-				{ ...toolContext("tui", worktree), ...parent.context },
-			);
-			assert.equal(result.details.status, "queued", text(result));
-			await preparing.promise;
-			await fire("session_shutdown", { reason: "quit" });
-			release.resolve();
-			await settle();
-		});
-
-		assert.equal(parent.requests.length, 0);
-		assert.equal(messages.length, 0);
-		assert.deepEqual(unhandled, []);
-	});
-});
-
-test("aborting a foreground call while the child's prompt is still preparing sends no provider request and does not complete", async () => {
-	await withWorkspace(async ({ worktree, agentDir }) => {
-		const parent = await fauxParent(
-			agentDir,
-			fauxAssistantMessage("Late answer."),
-		);
-		const preparing = Promise.withResolvers();
-		const release = Promise.withResolvers();
-		const checkAuth = parent.runtime.checkAuth.bind(parent.runtime);
-		parent.runtime.hasConfiguredAuth = () => false;
-		parent.runtime.checkAuth = async (...args) => {
-			preparing.resolve();
-			await release.promise;
-			return checkAuth(...args);
-		};
-		const { tool, messages } = await loadSpawnTool({
-			agentDir,
-		});
-		const call = new AbortController();
-
-		const unhandled = await collectUnhandled(async () => {
-			const result = spawn(
-				tool,
-				{ role: "worker", task: "Fix the failing test" },
-				{ ...toolContext("print", worktree), ...parent.context },
-				call.signal,
-			);
-			await preparing.promise;
-			call.abort();
-			release.resolve();
-			await assert.rejects(
-				result,
-				/The call was aborted and the child was stopped\./,
-			);
-		});
-
-		assert.equal(parent.requests.length, 0);
-		assert.equal(messages.length, 0);
-		assert.deepEqual(unhandled, []);
-	});
-});
 
 test("a background result is still delivered when disposing the child throws, and nothing is left unhandled", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
@@ -4736,6 +3965,7 @@ async function realChild(agentDir, responses, options) {
 	const clock = manualClock();
 	const extension = await loadSpawnTool({
 		agentDir,
+		create: runtimeChild(parent.runtime),
 		schedule: clock.schedule,
 	});
 	return { parent, clock, extension };
@@ -4749,7 +3979,7 @@ async function spawnReal({ parent, extension }, worktree, mode = "tui") {
 	);
 }
 
-test("cancelling a streaming child through Pi's SDK leaves it cancelled, not failed, and stops its provider stream", async () => {
+test("cancelling a streaming child on a real agent session leaves it cancelled, not failed, and stops its provider stream", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const child = await realChild(
 			agentDir,
@@ -4774,7 +4004,7 @@ test("cancelling a streaming child through Pi's SDK leaves it cancelled, not fai
 	});
 });
 
-test("a streaming child that stalls through Pi's SDK times out, is delivered as timed out, and is not turned into a failure", async () => {
+test("a streaming child that stalls on a real agent session times out, is delivered as timed out, and is not turned into a failure", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const child = await realChild(
 			agentDir,
@@ -4806,469 +4036,7 @@ test("a streaming child that stalls through Pi's SDK times out, is delivered as 
 	});
 });
 
-test("a child that times out through Pi's SDK while its prompt is still preparing never sends a provider request", async () => {
-	await withWorkspace(async ({ worktree, agentDir }) => {
-		const child = await realChild(
-			agentDir,
-			fauxAssistantMessage("Late answer."),
-		);
-		const preparing = Promise.withResolvers();
-		const release = Promise.withResolvers();
-		const runtime = child.parent.runtime;
-		const checkAuth = runtime.checkAuth.bind(runtime);
-		runtime.hasConfiguredAuth = () => false;
-		runtime.checkAuth = async (...args) => {
-			preparing.resolve();
-			await release.promise;
-			return checkAuth(...args);
-		};
-		let id;
-		const unhandled = await collectUnhandled(async () => {
-			id = (await spawnReal(child, worktree)).details.id;
-			await preparing.promise;
-			child.clock.fire(minutes(4));
-			release.resolve();
-			await delay(20);
-		});
-
-		assert.equal(await stateOf(child.extension, id), "timed out");
-		assert.equal(child.parent.requests.length, 0);
-		assert.deepEqual(unhandled, []);
-	});
-});
-
-test("the real Claude Bridge child manager records a completed result and requested parent wake, then continues saved history", {
-	skip: process.env.PI_WORKFLOW_BRIDGE_LIVE !== "1" && "Set PI_WORKFLOW_BRIDGE_LIVE=1 to run real Claude Bridge manager lifecycle checks.",
-	timeout: 110_000,
-}, async () => {
-	const installed = installedPackagePath(getAgentDir(), "npm:pi-claude-bridge");
-	if (!installed) {
-		t.skip("pi-claude-bridge is not installed in the Pi agent directory");
-		return;
-	}
-	await withWorkspace(async ({ worktree, agentDir }) => {
-		await mkdir(join(agentDir, "npm", "node_modules"), { recursive: true });
-		await symlink(installed, join(agentDir, "npm", "node_modules", "pi-claude-bridge"), "dir");
-		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
-		const project = { cwd: worktree, trusted: false };
-		const bridgePath = await resolveClaudeBridgeExtension(agentDir, project);
-		const native = fauxProvider({ provider: "faux", models: [{ id: "child", reasoning: true }] });
-		const created = await createBridgeParentSession({
-			cwd: worktree, agentDir, extensionPath: bridgePath, model: native.getModel(),
-			nativeProvider: native.provider,
-		});
-		assert.equal(created.loader.getExtensions().errors.length, 0);
-		const runtime = created.runtime;
-		const parent = created.session;
-		const extensionChildren = [];
-		let extension;
-		try {
-			await parent.bindExtensions({});
-			const bridgeModel = runtime.getModel("claude-bridge", "claude-haiku-4-5");
-			assert.ok(bridgeModel, "the installed Bridge extension registered its model in Pi's runtime");
-			const registry = new ModelRegistry(runtime);
-			extension = await loadSpawnTool({
-				agentDir,
-				create: async (spec) => {
-					const child = await createPiChildSession(spec);
-					extensionChildren.push(child);
-					return child;
-				},
-				jevRouting: "off",
-			});
-			const ctx = {
-				...toolContext("tui", worktree),
-				model: bridgeModel,
-				modelRegistry: registry,
-			};
-			const launched = await use(extension, "spawn_child", {
-				role: "worker",
-				task: "Reply with BRIDGE_MANAGER_FIRST_MARKER and report a done result.",
-			}, ctx);
-			const firstId = launched.details.id;
-			assert.ok(firstId, "manager accepted the real Bridge child");
-			for (
-				let attempt = 0;
-				attempt < 3000 &&
-				!(await stateOf(extension, firstId) &&
-					["completed", "failed", "cancelled", "timed out"].includes(await stateOf(extension, firstId)));
-				attempt++
-			) await delay(10);
-			const firstStatus = await use(extension, "child_status", { id: firstId }, ctx);
-			assert.ok(extension.messages.length > 0, `the manager did not invoke its injected parent-send callback: ${JSON.stringify(firstStatus.details.child)}`);
-			assert.equal(firstStatus.details.child.state, "completed");
-			assert.ok(extension.messages.some(({ message, options }) =>
-				message.details?.id === firstId && message.details?.state === "completed" &&
-				options?.deliverAs === "steer" && options?.triggerTurn === true),
-			"manager requested steer/triggerTurn delivery from its injected send callback; this is not evidence a real parent session received or resumed");
-			const original = extensionChildren[0].entries();
-			assert.match(JSON.stringify(original), /BRIDGE_MANAGER_FIRST_MARKER/);
-			const continued = await use(extension, "continue_child", {
-				id: firstId,
-				task: "Return the prior marker you remember and include BRIDGE_MANAGER_CONTINUED_MARKER.",
-			}, ctx);
-			assert.equal(continued.details.status, "queued");
-			for (
-				let attempt = 0;
-				attempt < 3000 && (await stateOf(extension, continued.details.id)) !== "completed";
-				attempt++
-			) await delay(10);
-			assert.equal(await stateOf(extension, continued.details.id), "completed");
-			const childStatus = await use(extension, "child_status", { id: continued.details.id }, ctx);
-			assert.equal(childStatus.details.child.continuedFrom, firstId);
-			assert.match(childStatus.details.child.text ?? "", /BRIDGE_MANAGER_FIRST_MARKER/, "the continuation's returned assistant text recalls the prior marker without repeating it in the continuation task");
-			assert.match(JSON.stringify(extensionChildren[1].entries()), /BRIDGE_MANAGER_FIRST_MARKER/);
-			assert.match(JSON.stringify(extensionChildren[1].entries()), /BRIDGE_MANAGER_CONTINUED_MARKER/);
-			assert.deepEqual(extensionChildren[0].entries(), original, "continuation used a distinct session and left the saved conversation unchanged");
-		} finally {
-			if (extension) await extension.fire("session_shutdown", { reason: "quit" });
-			for (const child of extensionChildren) await child.dispose();
-			try {
-				const runner = parent.extensionRunner;
-				if (runner.hasHandlers("session_shutdown")) await runner.emit({ type: "session_shutdown", reason: "quit" });
-			} finally {
-				parent.dispose();
-			}
-		}
-	});
-});
-
-test("the real Claude Bridge manager records a public runtime stream failure and refuses continuation", {
-	skip: process.env.PI_WORKFLOW_BRIDGE_LIVE !== "1" && "Set PI_WORKFLOW_BRIDGE_LIVE=1 to run real Claude Bridge manager lifecycle checks.",
-	timeout: 110_000,
-}, async () => {
-	const installed = installedPackagePath(getAgentDir(), "npm:pi-claude-bridge");
-	if (!installed) {
-		t.skip("pi-claude-bridge is not installed in the Pi agent directory");
-		return;
-	}
-	await withWorkspace(async ({ worktree, agentDir }) => {
-		await mkdir(join(agentDir, "npm", "node_modules"), { recursive: true });
-		await symlink(installed, join(agentDir, "npm", "node_modules", "pi-claude-bridge"), "dir");
-		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
-		const project = { cwd: worktree, trusted: false };
-		const bridgePath = await resolveClaudeBridgeExtension(agentDir, project);
-		const native = fauxProvider({ provider: "faux", models: [{ id: "child", reasoning: true }] });
-		const created = await createBridgeParentSession({
-			cwd: worktree, agentDir, extensionPath: bridgePath, model: native.getModel(),
-			nativeProvider: native.provider,
-		});
-		assert.equal(created.loader.getExtensions().errors.length, 0);
-		const runtime = created.runtime;
-		const parent = created.session;
-		const extensionChildren = [];
-		let extension;
-		const observed = [];
-		const fail = new Error("BRIDGE_PUBLIC_PROVIDER_BOUNDARY_FAILURE");
-		const originalStream = runtime.stream;
-		const originalStreamSimple = runtime.streamSimple;
-		let delegatedProviderCalls = 0;
-		runtime.stream = function (model, context, options) {
-			observed.push({ method: "stream", model, context });
-			if (model.provider === "claude-bridge") throw fail;
-			delegatedProviderCalls++;
-			return originalStream.call(this, model, context, options);
-		};
-		runtime.streamSimple = function (model, context, options) {
-			observed.push({ method: "streamSimple", model, context });
-			if (model.provider === "claude-bridge") throw fail;
-			delegatedProviderCalls++;
-			return originalStreamSimple.call(this, model, context, options);
-		};
-		try {
-			await parent.bindExtensions({});
-			const bridgeModel = runtime.getModel("claude-bridge", "claude-haiku-4-5");
-			assert.ok(bridgeModel, "the official installed extension registered its model");
-			const registry = new ModelRegistry(runtime);
-			extension = await loadSpawnTool({
-				agentDir,
-				create: async (spec) => {
-					const child = await createPiChildSession(spec);
-					extensionChildren.push(child);
-					return child;
-				},
-				jevRouting: "off",
-			});
-			const ctx = {
-				...toolContext("tui", worktree),
-				model: bridgeModel,
-				modelRegistry: registry,
-			};
-			const launched = await use(extension, "spawn_child", {
-				role: "worker",
-				task: "Reach the model stream and finish.",
-			}, ctx);
-			const id = launched.details.id;
-			assert.ok(id, "manager accepted the actual Bridge-backed child session");
-			for (let attempt = 0; attempt < 3000; attempt++) {
-				const status = await use(extension, "child_status", { id }, ctx);
-				if (["completed", "failed", "cancelled", "timed out"].includes(status.details.child?.state)) break;
-				await delay(10);
-			}
-			const status = await use(extension, "child_status", { id }, ctx);
-			assert.equal(status.details.child.state, "failed", "the manager recorded the injected boundary failure as terminal FAILED");
-			assert.ok(observed.length > 0, "the actual child's selected model reached a documented public ModelRuntime stream method");
-			assert.ok(observed.every(({ model }) => model.provider === "claude-bridge"), "no alternate provider or fallback model was selected");
-			assert.ok(observed.every(({ context }) => context && typeof context === "object"), "the public stream seam received the provider context");
-			assert.equal(delegatedProviderCalls, 0, "the injected failure occurred before any provider implementation was called");
-			const result = await use(extension, "child_result", { id }, ctx);
-			assert.match(text(result), /BRIDGE_PUBLIC_PROVIDER_BOUNDARY_FAILURE/);
-			assert.doesNotMatch(text(result), /external provider auth denial/i, "this injected pre-provider failure is not external authentication evidence");
-			assert.equal(extensionChildren.length, 1, "the failure did not launch an alternate model, provider, or fallback child");
-			const refused = await use(extension, "continue_child", {
-				id,
-				task: "This failed continuation must not launch.",
-			}, ctx);
-			assert.equal(refused.details.status, "refused");
-			assert.match(text(refused), /Continue refused\. No child was launched\./);
-			assert.match(text(refused), /failed; only a completed child can be continued/);
-			assert.equal(extensionChildren.length, 1, "continue_child refused without creating a second session");
-		} finally {
-			delete runtime.stream;
-			delete runtime.streamSimple;
-			if (extension) await extension.fire("session_shutdown", { reason: "quit" });
-			for (const child of extensionChildren) await child.dispose();
-			try {
-				const runner = parent.extensionRunner;
-				if (runner.hasHandlers("session_shutdown")) await runner.emit({ type: "session_shutdown", reason: "quit" });
-			} finally {
-				parent.dispose();
-			}
-		}
-	});
-});
-
-test("the real Claude Bridge manager cancels a child blocked in ask_parent and refuses its continuation", {
-	skip: process.env.PI_WORKFLOW_BRIDGE_LIVE !== "1" && "Set PI_WORKFLOW_BRIDGE_LIVE=1 to run real Claude Bridge manager lifecycle checks.",
-	timeout: 110_000,
-}, async (t) => {
-	const installed = installedPackagePath(getAgentDir(), "npm:pi-claude-bridge");
-	if (!installed) {
-		t.skip("pi-claude-bridge is not installed in the Pi agent directory");
-		return;
-	}
-	await withWorkspace(async ({ worktree, agentDir }) => {
-		await mkdir(join(agentDir, "npm", "node_modules"), { recursive: true });
-		await symlink(installed, join(agentDir, "npm", "node_modules", "pi-claude-bridge"), "dir");
-		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
-		const project = { cwd: worktree, trusted: false };
-		const bridgePath = await resolveClaudeBridgeExtension(agentDir, project);
-		const native = fauxProvider({ provider: "faux", models: [{ id: "child", reasoning: true }] });
-		const created = await createBridgeParentSession({
-			cwd: worktree, agentDir, extensionPath: bridgePath, model: native.getModel(),
-			nativeProvider: native.provider,
-		});
-		assert.equal(created.loader.getExtensions().errors.length, 0);
-		const runtime = created.runtime;
-		const parent = created.session;
-		const extensionChildren = [];
-		let extension;
-		try {
-			await parent.bindExtensions({});
-			const bridgeModel = runtime.getModel("claude-bridge", "claude-haiku-4-5");
-			assert.ok(bridgeModel, "the installed Bridge extension registered its model in Pi's runtime");
-			const registry = new ModelRegistry(runtime);
-			extension = await loadSpawnTool({
-				agentDir,
-				create: async (spec) => {
-					const child = await createPiChildSession(spec);
-					extensionChildren.push(child);
-					return child;
-				},
-				jevRouting: "off",
-			});
-			const ctx = {
-				...toolContext("tui", worktree),
-				model: bridgeModel,
-				modelRegistry: registry,
-			};
-			const launched = await use(extension, "spawn_child", {
-				role: "worker",
-				task: "Call ask_parent with the exact question BRIDGE_CANCEL_ASK_PARENT_BARRIER and wait for the parent's answer. Do not finish or report a result before the answer.",
-			}, ctx);
-			const id = launched.details.id;
-			assert.ok(id, "manager accepted the real Bridge child");
-			for (let attempt = 0; attempt < 6000; attempt++) {
-				const status = await use(extension, "child_status", { id }, ctx);
-				if (status.details.child?.state === "waiting") break;
-				if (["completed", "failed", "cancelled", "timed out"].includes(status.details.child?.state)) {
-					assert.fail(`child ended before the public ask_parent barrier: ${JSON.stringify(status.details.child)}`);
-				}
-				await delay(10);
-			}
-			const waiting = await use(extension, "child_status", { id }, ctx);
-			assert.equal(waiting.details.child.state, "waiting", "manager observed the child's pending ask_parent callback");
-			assert.ok(extension.messages.some(({ message }) =>
-				message.customType === "pi-workflow-child-question" &&
-				message.details?.id === id &&
-				message.details?.text === "BRIDGE_CANCEL_ASK_PARENT_BARRIER"),
-			"the real Bridge tool invocation reached the manager's public ask_parent callback");
-
-			const cancelled = await use(extension, "cancel_child", { id }, ctx);
-			assert.equal(cancelled.details.state, "cancelled");
-			assert.equal(await stateOf(extension, id), "cancelled");
-			const refused = await use(extension, "continue_child", {
-				id,
-				task: "This cancelled continuation must not launch.",
-			}, ctx);
-			assert.equal(refused.details.status, "refused");
-			assert.match(text(refused), /Continue refused\. No child was launched\./);
-			assert.match(text(refused), /cancelled; only a completed child can be continued/);
-			assert.equal(extensionChildren.length, 1, "cancelled-child continuation created no new session");
-
-			const steerLaunch = await use(extension, "spawn_child", {
-				role: "worker",
-				task: "Call ask_parent with the exact question BRIDGE_STEER_ASK_PARENT_BARRIER and wait for the parent's answer. After receiving it, incorporate the parent's next Steer and finish with a concise confirmation of what it asked you to do.",
-			}, ctx);
-			const steerId = steerLaunch.details.id;
-			assert.ok(steerId, "manager accepted the second real Bridge child");
-			for (let attempt = 0; attempt < 6000; attempt++) {
-				const status = await use(extension, "child_status", { id: steerId }, ctx);
-				if (status.details.child?.state === "waiting") break;
-				if (["completed", "failed", "cancelled", "timed out"].includes(status.details.child?.state)) {
-					assert.fail(`Steer child ended before the public ask_parent barrier: ${JSON.stringify(status.details.child)}`);
-				}
-				await delay(10);
-			}
-			const steerWaiting = await use(extension, "child_status", { id: steerId }, ctx);
-			assert.equal(steerWaiting.details.child.state, "waiting", "the real Bridge child reached the public question barrier");
-			const questionMessage = extension.messages.find(({ message }) =>
-				message.customType === "pi-workflow-child-question" && message.details?.id === steerId,
-			);
-			assert.ok(questionMessage, "the manager published the actual Bridge ask_parent call");
-			await use(extension, "reply_child", {
-				id: steerId,
-				question: questionMessage.message.details.question,
-				answer: "Continue and apply the operator's next instruction.",
-			}, ctx);
-
-			const fleet = openChildren(extension, { rows: 30 });
-			fleet.press("\r", "\r", ..."Include the marker BRIDGE_STEER_DELIVERED in your confirmation.", "\r");
-			assert.ok(fleet.lines(120).some((line) => line.includes(`Steer sent to worker ${steerId.slice(0, 4)}.`)) || fleet.lines(120).some((line) => line.includes("Steer sent to worker")), "the Fleet caller observed successful Steer delivery");
-			for (let attempt = 0; attempt < 6000; attempt++) {
-				const status = await use(extension, "child_status", { id: steerId }, ctx);
-				if (["completed", "failed", "cancelled", "timed out"].includes(status.details.child?.state)) break;
-				await delay(10);
-			}
-			const steered = await use(extension, "child_status", { id: steerId }, ctx);
-			assert.equal(steered.details.child.state, "completed", "real Bridge child completed after the Steer");
-			const result = await use(extension, "child_result", { id: steerId }, ctx);
-			assert.match(text(result), /BRIDGE_STEER_DELIVERED/, "caller observed the child's steer-responsive result without coupling to natural prose");
-			assert.equal(extensionChildren.length, 2, "the Steer scenario did not create an extra continuation child");
-		} finally {
-			if (extension) await extension.fire("session_shutdown", { reason: "quit" });
-			for (const child of extensionChildren) await child.dispose();
-			try {
-				const runner = parent.extensionRunner;
-				if (runner.hasHandlers("session_shutdown")) await runner.emit({ type: "session_shutdown", reason: "quit" });
-			} finally {
-				parent.dispose();
-			}
-		}
-	});
-});
-
-test("the real Claude Bridge manager times out a child stalled in ask_parent and refuses its continuation", {
-	skip: process.env.PI_WORKFLOW_BRIDGE_LIVE !== "1" && "Set PI_WORKFLOW_BRIDGE_LIVE=1 to run real Claude Bridge manager lifecycle checks.",
-	timeout: 110_000,
-}, async (t) => {
-	const installed = installedPackagePath(getAgentDir(), "npm:pi-claude-bridge");
-	if (!installed) {
-		t.skip("pi-claude-bridge is not installed in the Pi agent directory");
-		return;
-	}
-	await withWorkspace(async ({ worktree, agentDir }) => {
-		await mkdir(join(agentDir, "npm", "node_modules"), { recursive: true });
-		await symlink(installed, join(agentDir, "npm", "node_modules", "pi-claude-bridge"), "dir");
-		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
-		const project = { cwd: worktree, trusted: false };
-		const bridgePath = await resolveClaudeBridgeExtension(agentDir, project);
-		const native = fauxProvider({ provider: "faux", models: [{ id: "child", reasoning: true }] });
-		const created = await createBridgeParentSession({
-			cwd: worktree, agentDir, extensionPath: bridgePath, model: native.getModel(),
-			nativeProvider: native.provider,
-		});
-		assert.equal(created.loader.getExtensions().errors.length, 0);
-		const runtime = created.runtime;
-		const parent = created.session;
-		const extensionChildren = [];
-		const clock = manualClock();
-		let extension;
-		try {
-			await parent.bindExtensions({});
-			const bridgeModel = runtime.getModel("claude-bridge", "claude-haiku-4-5");
-			assert.ok(bridgeModel, "the installed Bridge extension registered its model in Pi's runtime");
-			const registry = new ModelRegistry(runtime);
-			extension = await loadSpawnTool({
-				agentDir,
-				create: async (spec) => {
-					const child = await createPiChildSession(spec);
-					extensionChildren.push(child);
-					return child;
-				},
-				jevRouting: "off",
-				schedule: clock.schedule,
-			});
-			const ctx = {
-				...toolContext("tui", worktree),
-				model: bridgeModel,
-				modelRegistry: registry,
-			};
-			const launched = await use(extension, "spawn_child", {
-				role: "worker",
-				task: "Call ask_parent with the exact question BRIDGE_TIMEOUT_ASK_PARENT_BARRIER and wait for the parent's answer. Do not finish or report a result before the answer.",
-			}, ctx);
-			const id = launched.details.id;
-			assert.ok(id, "manager accepted the real Bridge child");
-			for (let attempt = 0; attempt < 6000; attempt++) {
-				const status = await use(extension, "child_status", { id }, ctx);
-				if (status.details.child?.state === "waiting") break;
-				if (["completed", "failed", "cancelled", "timed out"].includes(status.details.child?.state)) {
-					assert.fail(`child ended before the public ask_parent barrier: ${JSON.stringify(status.details.child)}`);
-				}
-				await delay(10);
-			}
-			const waiting = await use(extension, "child_status", { id }, ctx);
-			assert.equal(waiting.details.child.state, "waiting", "manager observed the child's pending ask_parent callback");
-			assert.ok(extension.messages.some(({ message }) =>
-				message.customType === "pi-workflow-child-question" &&
-				message.details?.id === id &&
-				message.details?.text === "BRIDGE_TIMEOUT_ASK_PARENT_BARRIER"),
-			"the real Bridge tool invocation reached the manager's public ask_parent callback");
-			assert.deepEqual(clock.pending(), [minutes(30)], "pending ask_parent has the public tool-stall timeout");
-
-			clock.fire(minutes(30));
-			for (let attempt = 0; attempt < 6000; attempt++) {
-				if (await stateOf(extension, id) === "timed out") break;
-				await delay(10);
-			}
-			const timedOut = await use(extension, "child_status", { id }, ctx);
-			assert.equal(timedOut.details.child.state, "timed out");
-			const result = await use(extension, "child_result", { id }, ctx);
-			assert.match(text(result), /timed out: the tool ask_parent ran for 30 minutes without finishing/);
-			const refused = await use(extension, "continue_child", {
-				id,
-				task: "This timed-out continuation must not launch.",
-			}, ctx);
-			assert.equal(refused.details.status, "refused");
-			assert.match(text(refused), /Continue refused\. No child was launched\./);
-			assert.match(text(refused), /timed out; only a completed child can be continued/);
-			assert.equal(extensionChildren.length, 1, "timed-out-child continuation created no new session");
-			assert.deepEqual(clock.pending(), []);
-		} finally {
-			if (extension) await extension.fire("session_shutdown", { reason: "quit" });
-			for (const child of extensionChildren) await child.dispose();
-			try {
-				const runner = parent.extensionRunner;
-				if (runner.hasHandlers("session_shutdown")) await runner.emit({ type: "session_shutdown", reason: "quit" });
-			} finally {
-				parent.dispose();
-			}
-		}
-	});
-});
-
-test("continue_child through Pi's SDK sends the completed child's conversation plus the follow-up, and leaves that conversation unchanged", async () => {
+test("continue_child on a real agent session sends the completed child's conversation plus the follow-up, and leaves that conversation unchanged", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const child = await realChild(agentDir, [
 			fauxAssistantMessage("First answer."),
@@ -5324,39 +4092,7 @@ test("continue_child through Pi's SDK sends the completed child's conversation p
 	});
 });
 
-test("continue_child through Pi's SDK starts its own MCP servers for the continued run and shuts them down when it ends", async () => {
-	await withWorkspace(async ({ worktree, agentDir }) => {
-		const pids = join(agentDir, "pids");
-		await writeMcpConfig(agentDir, pids, {
-			docs: { exposure: "direct", description: "Library docs." },
-		});
-		const child = await realChild(agentDir, [
-			fauxAssistantMessage("First answer."),
-			fauxAssistantMessage(fauxToolCall("mcp__docs__echo", { text: "again" }), {
-				stopReason: "toolUse",
-			}),
-			fauxAssistantMessage("Second answer."),
-		]);
-		const { extension, parent } = child;
-		const ctx = { ...toolContext("tui", worktree), ...parent.context };
-		const unhandled = await collectUnhandled(async () => {
-			const done = (await spawnReal(child, worktree)).details.id;
-			await eventually(() => extension.messages.length === 1);
-			const first = await fixturePid(pids, "docs");
-			await eventually(() => !processRuns(first));
-
-			await use(extension, "continue_child", { id: done, task: "Once more" }, ctx);
-			await eventually(() => extension.messages.length === 2);
-		});
-
-		assert.deepEqual(toolOutputs(parent.requests), ["docs echoes again"]);
-		const continued = await fixturePid(pids, "docs");
-		await eventually(() => !processRuns(continued));
-		assert.deepEqual(unhandled, []);
-	});
-});
-
-test("a background child asks through Pi's SDK, the parent model replies, and the child finishes with the answer", async () => {
+test("a background child asks on a real agent session, the parent model replies, and the child finishes with the answer", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const child = await realChild(agentDir, [
 			asking("Which file holds the parser?"),
@@ -5395,7 +4131,7 @@ test("a background child asks through Pi's SDK, the parent model replies, and th
 	});
 });
 
-test("a question asked from a script that times out through Pi's SDK is withdrawn, the child runs again, and a later reply is refused as withdrawn", async () => {
+test("a question asked from a script that times out on a real agent session is withdrawn, the child runs again, and a later reply is refused as withdrawn", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const child = await realChild(agentDir, [
 			fauxAssistantMessage(
@@ -5438,7 +4174,7 @@ function reporting(result) {
 	});
 }
 
-test("a worker reports through Pi's SDK; a result outside its role's schema is refused and the last valid call is delivered", async () => {
+test("a worker reports on a real agent session; a result outside its role's schema is refused and the last valid call is delivered", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const child = await realChild(agentDir, [
 			reporting({ ...workerResult("done"), verdict: "pass" }),
@@ -5459,7 +4195,7 @@ test("a worker reports through Pi's SDK; a result outside its role's schema is r
 	});
 });
 
-test("a worker result through Pi's SDK with a property outside its role's schema is refused and the last valid call is delivered", async () => {
+test("a worker result on a real agent session with a property outside its role's schema is refused and the last valid call is delivered", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const child = await realChild(agentDir, [
 			reporting({ ...workerResult("done"), summary: "Finished" }),
@@ -5482,7 +4218,7 @@ test("a worker result through Pi's SDK with a property outside its role's schema
 	});
 });
 
-test("a worker through Pi's SDK reports done without a reason, and a blocked result without a reason is refused", async () => {
+test("a worker on a real agent session reports done without a reason, and a blocked result without a reason is refused", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const { reason: _reason, ...blocked } = workerResult("blocked");
 		const { reason: _done, ...done } = workerResult("done");
@@ -5506,7 +4242,7 @@ test("a worker through Pi's SDK reports done without a reason, and a blocked res
 	});
 });
 
-test("a child through Pi's SDK that waits for a reply that never comes ends timed out by the watchdog, and a late reply is refused", async () => {
+test("a child on a real agent session that waits for a reply that never comes ends timed out by the watchdog, and a late reply is refused", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const child = await realChild(agentDir, [
 			asking("Which file?"),
@@ -5544,7 +4280,7 @@ test("a child through Pi's SDK that waits for a reply that never comes ends time
 	});
 });
 
-test("cancelling a child through Pi's SDK while it waits for a reply ends it with no further provider request", async () => {
+test("cancelling a child on a real agent session while it waits for a reply ends it with no further provider request", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const child = await realChild(agentDir, [
 			asking("Which file?"),
@@ -5566,7 +4302,7 @@ test("cancelling a child through Pi's SDK while it waits for a reply ends it wit
 	});
 });
 
-test("a foreground child's question through Pi's SDK fails closed and the child finishes in the same call", async () => {
+test("a foreground child's question on a real agent session fails closed and the child finishes in the same call", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const child = await realChild(agentDir, [
 			asking("Which file?"),
@@ -5705,78 +4441,6 @@ test("a launch whose child session is created after session shutdown is refused 
 			(await use(extension, "list_children", {})).details.children,
 			[],
 		);
-	});
-});
-
-function holdPreparation(runtime) {
-	const preparing = Promise.withResolvers();
-	const release = Promise.withResolvers();
-	const checkAuth = runtime.checkAuth.bind(runtime);
-	runtime.hasConfiguredAuth = () => false;
-	runtime.checkAuth = async (...args) => {
-		preparing.resolve();
-		await release.promise;
-		return checkAuth(...args);
-	};
-	return { preparing: preparing.promise, release: release.resolve };
-}
-
-test("a foreground child held in preparation through Pi's SDK times out without waiting for its run, and never sends a request", async () => {
-	await withWorkspace(async ({ worktree, agentDir }) => {
-		const child = await realChild(
-			agentDir,
-			fauxAssistantMessage("Late answer."),
-		);
-		const hold = holdPreparation(child.parent.runtime);
-		const unhandled = await collectUnhandled(async () => {
-			const call = spawnReal(child, worktree, "print");
-			await hold.preparing;
-			child.clock.fire(minutes(4));
-
-			assert.equal(
-				await settledNow(call),
-				"The child timed out: no activity for 4 minutes.",
-			);
-
-			hold.release();
-			await delay(50);
-		});
-
-		assert.equal(child.parent.requests.length, 0);
-		assert.equal(child.extension.messages.length, 0);
-		assert.deepEqual(unhandled, []);
-	});
-});
-
-test("aborting a foreground call through Pi's SDK while the child is held in preparation returns at once, and never sends a request", async () => {
-	await withWorkspace(async ({ worktree, agentDir }) => {
-		const child = await realChild(
-			agentDir,
-			fauxAssistantMessage("Late answer."),
-		);
-		const hold = holdPreparation(child.parent.runtime);
-		const call = new AbortController();
-		const unhandled = await collectUnhandled(async () => {
-			const result = spawn(
-				child.extension.tool,
-				{ role: "worker", task: "Fix the failing test" },
-				{ ...toolContext("print", worktree), ...child.parent.context },
-				call.signal,
-			);
-			await hold.preparing;
-			call.abort();
-
-			assert.equal(
-				await settledNow(result),
-				"The call was aborted and the child was stopped.",
-			);
-
-			hold.release();
-			await delay(50);
-		});
-
-		assert.equal(child.parent.requests.length, 0);
-		assert.deepEqual(unhandled, []);
 	});
 });
 
@@ -6240,7 +4904,7 @@ test("the Fleet view keeps a child running after agent_end while Pi retries auto
 			}),
 			fauxAssistantMessage("Retried answer."),
 		]);
-		const extension = await loadSpawnTool({ agentDir });
+		const extension = await loadSpawnTool({ agentDir, create: runtimeChild(parent.runtime) });
 		const result = await spawn(
 			extension.tool,
 			{ role: "worker", task: "Fix the failing test" },
@@ -7789,7 +6453,7 @@ test("a Steer the child has not received when it ends is shown as undelivered on
 	});
 });
 
-test("through Pi's SDK, a Steer still queued when the child is cancelled mid-stream is shown as undelivered", async () => {
+test("on a real agent session, a Steer still queued when the child is cancelled mid-stream is shown as undelivered", async () => {
 	initTheme("dark", false);
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const child = await realChild(
@@ -7844,7 +6508,7 @@ test("a Steer beginning with / is refused, and a child that turns waiting or end
 	});
 });
 
-test("through Pi's SDK, two Steers reach a running child at its next turns, one per turn, after the tool results and without cancelling it", async () => {
+test("on a real agent session, two Steers reach a running child at its next turns, one per turn, after the tool results and without cancelling it", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const child = await realChild(agentDir, [
 			fauxAssistantMessage(fauxToolCall("bash", { command: "sleep 0.5" }), {
@@ -8590,11 +7254,11 @@ test("the parent receives the harness-recorded checkpoints with the child's resu
 	});
 });
 
-test("the SDK child factory gives a granted worker the checkpoint tool", async () => {
+test("the child runtime gives a granted worker the checkpoint tool", async () => {
 	await withWorkspace(async ({ worktree, agentDir, dir }) => {
 		const linked = linkedWorktree(dir, worktree);
 		const parent = await fauxParent(agentDir, fauxAssistantMessage("Done."));
-		const { tool } = await loadSpawnTool({ agentDir });
+		const { tool } = await loadSpawnTool({ agentDir, create: runtimeChild(parent.runtime) });
 
 		const result = await spawn(
 			tool,

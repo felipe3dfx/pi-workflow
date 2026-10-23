@@ -1,17 +1,10 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
-import * as piAi from "@earendil-works/pi-ai/compat";
-import * as piCodingAgent from "@earendil-works/pi-coding-agent";
 import {
 	DefaultPackageManager,
-	type ExtensionFactory,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import * as piTui from "@earendil-works/pi-tui";
-import { createJiti } from "jiti";
-import * as typebox from "typebox";
-import * as typeboxValue from "typebox/value";
 
 import { errorMessage } from "./error-message.ts";
 
@@ -31,17 +24,6 @@ export const webAccessTools = [
 	"fetch_content",
 	"get_search_content",
 ];
-
-// The specifiers Pi's extension loader maps to its own modules, limited to the harness's peers.
-// Re-verify against Pi's loader on every Pi upgrade.
-const hostModules = {
-	"@earendil-works/pi-coding-agent": piCodingAgent,
-	"@earendil-works/pi-ai": piAi,
-	"@earendil-works/pi-ai/compat": piAi,
-	"@earendil-works/pi-tui": piTui,
-	typebox,
-	"typebox/value": typeboxValue,
-};
 
 function moduleFile(path: string): string | undefined {
 	if (!existsSync(path)) return undefined;
@@ -69,37 +51,6 @@ function entries(directory: string): string[] {
 	}
 	const index = moduleFile(directory);
 	return index === undefined ? [] : [index];
-}
-
-// Each call evaluates the package again, so no explorer shares module state with the
-// parent's instance or another explorer's. jiti.import would load an ES module package
-// natively, through Node's shared module cache and without the host modules.
-async function loadWebAccess(
-	directory: string,
-): Promise<ExtensionFactory[]> {
-	const paths = entries(directory);
-	if (paths.length === 0) {
-		throw new Error(`${directory} declares no extension.`);
-	}
-	const jiti = createJiti(import.meta.url, {
-		moduleCache: false,
-		tryNative: false,
-		virtualModules: hostModules,
-	});
-	const factories: ExtensionFactory[] = [];
-	for (const path of paths) {
-		const loaded = (await jiti.evalModule(readFileSync(path, "utf8"), {
-			filename: path,
-			async: true,
-			forceTranspile: true,
-		})) as { default?: unknown } | undefined;
-		const factory = loaded?.default ?? loaded;
-		if (typeof factory !== "function") {
-			throw new Error(`${path} does not export an extension factory.`);
-		}
-		factories.push(factory as ExtensionFactory);
-	}
-	return factories;
 }
 
 function packageManager(agentDir: string, project: ParentProject) {
@@ -130,24 +81,6 @@ function webAccessDirectory(agentDir: string, project: ParentProject) {
 		userPackages.set(agentDir, user);
 	}
 	return user.getInstalledPath(webAccessSource, "user");
-}
-
-export async function explorerWeb(agentDir: string, project: ParentProject) {
-	const directory = webAccessDirectory(agentDir, project);
-	if (directory === undefined) {
-		return {
-			factories: [],
-			problem: `${webAccessPackage} is not installed locally, so the explorer has no web tools.`,
-		};
-	}
-	try {
-		return { factories: await loadWebAccess(directory), problem: undefined };
-	} catch (error) {
-		return {
-			factories: [],
-			problem: `${webAccessPackage} could not be loaded, so the explorer has no web tools: ${errorMessage(error)}`,
-		};
-	}
 }
 
 export function resolveWebAccessExtensions(

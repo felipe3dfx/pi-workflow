@@ -251,11 +251,6 @@ export function createChildCodeGraphTool(
 			if (params.operation !== "query" && params.operation !== "explore") {
 				throw new Error("CodeGraph here accepts only query or explore.");
 			}
-			if (!seated("codegraph", "message-stream")) {
-				throw new Error(
-					`CodeGraph is not available to this child. ${fallback}`,
-				);
-			}
 			return runIn(cwd, params, signal, true);
 		},
 	};
