@@ -100,13 +100,17 @@ function entries(surfaces: readonly string[]) {
 	return surfaces.length > 0 ? surfaces : ["."];
 }
 
+function sameRoot(a: string, b: string) {
+	return a.normalize("NFC").toLowerCase() === b.normalize("NFC").toLowerCase();
+}
+
 export function createWriteClaims() {
 	const live = new Map<string, WriteClaim>();
 
 	function conflicts(root: string, surfaces: readonly string[]): WriteConflict[] {
 		const found: WriteConflict[] = [];
 		for (const claim of live.values()) {
-			if (claim.root !== root) continue;
+			if (!sameRoot(claim.root, root)) continue;
 			const pairs: Array<[string, string]> = [];
 			for (const mine of entries(surfaces)) {
 				for (const theirs of entries(claim.surfaces)) {

@@ -42,6 +42,12 @@ test("claims in different worktrees never conflict", () => {
 	assert.deepEqual(claims.conflicts("/other", []), []);
 });
 
+test("claims in one worktree conflict whatever the case of its path", () => {
+	const claims = createWriteClaims();
+	claims.claim("one", "/home/Dev/Repo", ["src"]);
+	assert.deepEqual(claims.conflicts("/home/dev/repo", ["SRC/a.ts"]).map((c) => c.owner), ["one"]);
+});
+
 test("a conflict names the owner and the overlapping entries", () => {
 	const claims = createWriteClaims();
 	claims.claim("one", "/repo", ["src/a.ts", "docs"]);
