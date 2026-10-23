@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { accessSync, constants, existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -16,9 +16,11 @@ import { createChildLauncher } from "../extensions/child-launcher.ts";
 import { createChildSessions } from "../extensions/child-sessions.ts";
 import { treeDeadline } from "../extensions/process-tree.ts";
 import { createRpcChildSession, readinessDeadline } from "../extensions/rpc-child.ts";
+import { companionMetadataPath, loadCompanionsFromPath } from "../extensions/companion-workflow.ts";
 import { eventually } from "./support/eventually.mjs";
 import { modelEndpoint } from "./support/model-endpoint.mjs";
 import { gone, parent } from "./support/process-tree.mjs";
+import { selectionWith } from "./support/selection.mjs";
 
 const installed = (process.env.PATH ?? "").split(delimiter).some((directory) => {
 	try {
@@ -498,3 +500,201 @@ test("a real Pi worker's guarded bash refuses a parent command and its report st
 	t.diagnostic(`bash sockets: ${[...descriptors.matchAll(/ \d+ -> socket:\S+/g)].join(",")}`);
 	t.diagnostic(`result: ${JSON.stringify(done.result)}; final: ${done.text}`);
 });
+
+const reloadCommand = fileURLToPath(new URL("./support/reload-command.mjs", import.meta.url));
+const workflowExtension = fileURLToPath(new URL("../extensions/pi-workflow.ts", import.meta.url));
+
+const installedPath = (process.env.PATH ?? "")
+	.split(delimiter)
+	.filter((directory) => !directory.includes(join("node_modules", ".bin")))
+	.join(delimiter);
+const reloadSkip =
+	!installedPath.split(delimiter).some((directory) => {
+		try {
+			accessSync(join(directory, "pi"), constants.X_OK);
+			return true;
+		} catch {
+			return false;
+		}
+	}) && "The installed Pi is not on PATH, so a real parent cannot be reloaded.";
+
+function rpcParent(t, scene, cwd) {
+	const pi = spawn(
+		"pi",
+		[
+			"--mode", "rpc",
+			"--session-dir", join(scene.dir, "parent-sessions"),
+			"--model", scene.endpoint.model,
+			"--thinking", "off",
+			"--no-extensions",
+			"--extension", workflowExtension,
+			"--extension", reloadCommand,
+			"--no-skills",
+			"--no-prompt-templates",
+			"--no-themes",
+			"--no-approve",
+		],
+		{
+			cwd,
+			env: { ...process.env, PATH: installedPath, PI_CODING_AGENT_DIR: scene.agentDir },
+			stdio: ["pipe", "pipe", "pipe"],
+		},
+	);
+	const exited = new Promise((resolve) => pi.once("exit", resolve));
+	t.after(async () => {
+		if (pi.exitCode === null && pi.signalCode === null) {
+			pi.stdin.end();
+			await Promise.race([exited, delay(5_000)]);
+			pi.kill("SIGKILL");
+		}
+	});
+	const events = [];
+	const waiting = new Map();
+	let stderr = "";
+	let buffer = "";
+	let requests = 0;
+	pi.stderr.setEncoding("utf8");
+	pi.stderr.on("data", (chunk) => {
+		stderr += chunk;
+	});
+	pi.stdout.setEncoding("utf8");
+	pi.stdout.on("data", (chunk) => {
+		buffer += chunk;
+		for (let end = buffer.indexOf("\n"); end >= 0; end = buffer.indexOf("\n")) {
+			const record = JSON.parse(buffer.slice(0, end));
+			buffer = buffer.slice(end + 1);
+			if (record.type === "response" && waiting.has(record.id)) {
+				waiting.get(record.id)(record);
+				waiting.delete(record.id);
+			} else events.push(record);
+		}
+	});
+	function request(type, fields = {}) {
+		const id = `t${++requests}`;
+		return new Promise((resolve, reject) => {
+			waiting.set(id, (record) =>
+				record.success ? resolve(record.data) : reject(new Error(`${record.error}\n${stderr}`)),
+			);
+			pi.stdin.write(`${JSON.stringify({ id, type, ...fields })}\n`);
+		});
+	}
+	return { pi, events, request, exited, stderr: () => stderr };
+}
+
+async function within(read, condition = Boolean, ms = 60_000) {
+	const end = Date.now() + ms;
+	for (;;) {
+		const value = await read();
+		if (condition(value)) return value;
+		if (Date.now() > end) assert.fail(`condition never held: ${JSON.stringify(value)}`);
+		await delay(20);
+	}
+}
+
+const said = (message) => JSON.stringify(message.content ?? "");
+const toolNames = (body) => (body.tools ?? []).map((tool) => tool.function?.name);
+
+function childPids(agentDir) {
+	return execFileSync("ps", ["-A", "-ww", "-o", "pid=,command="], { encoding: "utf8" })
+		.split("\n")
+		.filter((line) => line.includes(join(agentDir, "pi-workflow-children")) && line.includes("--mode rpc"))
+		.map((line) => Number(line.trim().split(/\s+/)[0]));
+}
+
+test("a real Pi parent's /reload keeps its working child process, the question open across it is answered once, the result arrives once, and quitting or killing the parent still ends the child", { skip: reloadSkip, timeout: 120_000 }, async (t) => {
+	for (const ending of ["quit", "SIGKILL"]) await t.test(ending, (t) => reloadScenario(t, ending));
+});
+
+function colorChild(body) {
+	const asked = body.messages.map(said).find((text) => text.includes("Which color?") && text.includes("asks (question 1)"));
+	return asked.match(/Child (\S+) asks/)[1];
+}
+
+async function reloadScenario(t, ending) {
+	let replies = 0;
+	const scene = await fixture(t, (body) => {
+		const last = body.messages.at(-1);
+		if (!toolNames(body).includes("spawn_child")) {
+			if (body.messages.map(said).join("\n").includes("Hold on")) {
+				return { tool: "ask_parent", args: { question: "Keep holding?" } };
+			}
+			const [answer, reported] = body.messages.filter((message) => message.role === "tool");
+			if (!answer) return { tool: "ask_parent", args: { question: "Which color?" } };
+			if (!reported) {
+				const reason = `The color is ${answer.content}.`;
+				return { tool: "report_result", args: { verdict: "partial", reason, files_changed: [], validation: [], left_undone: ["Paint it."] } };
+			}
+			return `The color is ${answer.content}.`;
+		}
+		const text = said(last);
+		const launched = body.messages.filter((message) => message.role === "tool" && said(message).includes("is queued in the background"));
+		if (last.role === "user" && text.includes("Delegate the color question.")) {
+			return { tool: "spawn_child", args: { role: "worker", task: "Ask the parent which color, then say it." } };
+		}
+		if (last.role === "tool" && launched.length === 1 && last === launched[0]) {
+			return { tool: "spawn_child", args: { role: "verify", task: "Hold on until the parent answers." } };
+		}
+		if (last.role === "user" && text.includes("Answer the child now.")) {
+			replies += 1;
+			return { tool: "reply_child", args: { id: colorChild(body), question: 1, answer: "blue" } };
+		}
+		if (last.role === "tool" && replies === 1) {
+			replies += 1;
+			return { tool: "reply_child", args: { id: colorChild(body), question: 1, answer: "red" } };
+		}
+		return "Noted.";
+	});
+	const repo = await repository(scene.dir, "repo", {});
+	await writeFile(
+		join(scene.agentDir, "pi-workflow-selection.json"),
+		JSON.stringify(
+			selectionWith(loadCompanionsFromPath(companionMetadataPath).companions.map((companion) => companion.package), {
+				todo: false,
+				"operator-questions": false,
+				"model-profiles": false,
+				codegraph: false,
+				"compact-rendering": false,
+			}),
+		),
+	);
+	const parentPi = rpcParent(t, scene, repo);
+	const ended = (type) =>
+		parentPi.events.filter((event) => event.type === "message_end" && event.message.customType === type);
+	const idle = () => parentPi.events.at(-1)?.type === "agent_settled";
+
+	await parentPi.request("prompt", { message: "Delegate the color question." });
+	await within(() => ended("pi-workflow-child-question").length === 2 && idle());
+	const pids = await within(() => childPids(scene.agentDir), (found) => found.length === 2);
+
+	const reloaded = await parentPi.request("prompt", { message: "/test-reload" });
+	assert.equal(reloaded.disposition, "handled");
+	assert.deepEqual(childPids(scene.agentDir), pids);
+
+	await parentPi.request("prompt", { message: "Answer the child now." });
+	const [result] = await within(() => ended("pi-workflow-child-result"), (found) => found.length === 1 && idle());
+	const { messages } = await parentPi.request("get_messages");
+	const custom = (type) => messages.filter((message) => message.customType === type);
+
+	assert.equal(custom("pi-workflow-child-question").length, 2);
+	assert.equal(custom("pi-workflow-child-result").length, 1);
+	assert.match(result.message.content, /completed\. Verdict: partial[\s\S]*The color is blue\./);
+	const childAnswers = scene.endpoint.requests
+		.filter((body) => !toolNames(body).includes("spawn_child"))
+		.flatMap((body) => body.messages.filter((message) => message.role === "tool").slice(0, 1).map((message) => message.content));
+	assert.deepEqual([...new Set(childAnswers)], ["blue"]);
+	const second = messages.filter((message) => message.role === "toolResult" && message.toolName === "reply_child").at(-1);
+	assert.equal(second.isError, true);
+	assert.match(said(second), /already answered by the parent: blue/);
+	const holding = childPids(scene.agentDir);
+	assert.equal(holding.length, 1);
+	assert.ok(pids.includes(holding[0]));
+	t.diagnostic(`child pids ${pids.join(", ")} kept across /reload; ${result.message.content.split("\n")[0]}`);
+
+	const since = Date.now();
+	if (ending === "quit") parentPi.pi.stdin.end();
+	else parentPi.pi.kill("SIGKILL");
+	await parentPi.exited;
+	const elapsed = await gone(holding, since);
+	assert.ok(elapsed < treeDeadline + 1_000, `${elapsed} ms`);
+	t.diagnostic(`after ${ending}, the waiting child ended in ${elapsed} ms`);
+}

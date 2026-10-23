@@ -11,13 +11,19 @@ export async function modelEndpoint(agentDir, answer = "DONE") {
 			body += chunk;
 		});
 		request.on("end", () => {
-			requests.push(JSON.parse(body));
+			const parsed = JSON.parse(body);
+			requests.push(parsed);
 			response.writeHead(200, { "content-type": "text/event-stream" });
 			const chunk = (choice) =>
 				response.write(
 					`data: ${JSON.stringify({ id: "fake", object: "chat.completion.chunk", created: 1, model: "echo", choices: [{ index: 0, ...choice }] })}\n\n`,
 				);
-			const step = Array.isArray(answer) ? (steps.shift() ?? "DONE") : answer;
+			const step =
+				typeof answer === "function"
+					? answer(parsed)
+					: Array.isArray(answer)
+						? (steps.shift() ?? "DONE")
+						: answer;
 			if (typeof step === "string") {
 				chunk({ delta: { role: "assistant", content: step } });
 				chunk({ delta: {}, finish_reason: "stop" });

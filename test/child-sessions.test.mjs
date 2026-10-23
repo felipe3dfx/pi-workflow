@@ -1657,120 +1657,290 @@ test("session shutdown disposes running background children, which then deliver 
 	});
 });
 
-test("a reload ends every working child, tells the operator how many ended, and records it in the trace", async () => {
+async function reload(extension, options) {
+	await extension.fire("session_shutdown", { reason: "reload" });
+	return loadSpawnTool(options);
+}
+
+function resultIds(extension) {
+	return extension.messages
+		.filter(({ message }) => message.customType === "pi-workflow-child-result")
+		.flatMap(({ message }) =>
+			(message.details.results ?? [message.details]).map(({ id }) => id),
+		);
+}
+
+test("a reload keeps every working child with its session, and the re-attached parent lists them and receives each result once", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
-		const extension = await loadSpawnTool({
-			agentDir,
-			create: children.create,
-		});
-		for (let i = 0; i < 7; i++) await spawnBackground(extension, worktree);
+		const before = await loadSpawnTool({ agentDir, create: children.create });
+		const ids = [];
+		for (let i = 0; i < 7; i++) ids.push(await spawnBackground(before, worktree));
 		await settle();
 		children.created[0].result.resolve("Done.");
 		await settle();
-		extension.notifications.length = 0;
+		await use(before, "child_result", { id: ids[0] });
+		before.notifications.length = 0;
+		const entries = before.entries.length;
 
-		await extension.fire("session_shutdown", { reason: "reload" });
+		const after = await reload(before, { agentDir, create: children.create });
 
+		assert.deepEqual(children.created.map((child) => child.disposals), [1, 0, 0, 0, 0, 0, 0]);
+		assert.deepEqual(before.notifications, []);
+		assert.equal(before.entries.length, entries);
+		assert.equal(children.created.length, 7);
 		assert.deepEqual(
-			children.created.map((child) => child.disposals),
-			Array(7).fill(1),
+			(await use(after, "list_children", {})).details.children.map(stateOfDetails),
+			ids.map((id, index) => ({
+				id,
+				state: index === 0 ? "completed" : index === 6 ? "queued" : "running",
+			})),
 		);
-		assert.deepEqual(extension.notifications, [
-			{ message: "/reload ended 6 working children.", level: "warning" },
-		]);
-		assert.deepEqual(extension.entries.at(-1), {
-			customType: "pi-workflow-child-trace",
-			data: { reason: "reload", ended: 6 },
-		});
-		assert.deepEqual((await use(extension, "list_children", {})).details.children, []);
-		assert.equal(extension.messages.length, 0);
+
+		children.created[1].result.resolve("Second.");
+		await settle();
+		assert.equal(await stateOf(after, ids[6]), "running");
+		for (const child of children.created.slice(2)) child.result.resolve("Done.");
+		await settle();
+		await after.fire("agent_settled");
+		await after.fire("agent_settled");
+		assert.deepEqual(resultIds(after), ids.slice(1));
+		assert.deepEqual(resultIds(before), []);
+
+		await after.fire("session_shutdown", { reason: "quit" });
+		assert.deepEqual(children.created.map((child) => child.disposals), Array(7).fill(1));
 	});
 });
 
-test("a reload closes a persisted parent's audit records for reopening, while an ephemeral parent writes none", async () => {
+test("a child that reports and ends while the parent reloads is settled once by the re-attached parent, whose watchdog times out a silent one", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
-		const root = join(agentDir, "pi-workflow-audit");
-		for (const persisted of [true, false]) {
-			const extension = await loadSpawnTool({
-				agentDir,
-				create: fakeChildren().create,
-				session: {
-					getSessionId: () => `parent-${persisted}`,
-					getSessionFile: () => (persisted ? "/sessions/parent.jsonl" : undefined),
-				},
-			});
-			const id = await spawnBackground(extension, worktree);
-			await settle();
+		const clock = manualClock();
+		const children = fakeChildren();
+		const options = { agentDir, create: children.create, schedule: clock.schedule };
+		const before = await loadSpawnTool(options);
+		const ending = await spawnBackground(before, worktree);
+		const silent = await spawnBackground(before, worktree);
+		await settle();
 
-			await extension.fire("session_shutdown", { reason: "reload" });
+		await before.fire("session_shutdown", { reason: "reload" });
+		children.created[0].spec.report(workerResult("done"));
+		children.created[0].result.resolve("Fixed.");
+		await settle();
+		clock.fire(minutes(4));
+		const after = await loadSpawnTool(options);
+		await settle();
 
-			const { records } = await createChildAudit({
-				root,
-				parent: () => `parent-${persisted}`,
-			}).list();
-			if (!persisted) {
-				assert.deepEqual(records, []);
-				continue;
-			}
-			assert.deepEqual(
-				records.map(({ child, interrupted, health }) => ({
-					child,
-					interrupted,
-					closed: health.closed,
-				})),
-				[{ child: id, interrupted: true, closed: true }],
-			);
-		}
+		assert.equal((await use(after, "child_status", { id: ending })).details.child.result.verdict, "done");
+		assert.equal(await stateOf(after, ending), "completed");
+		assert.equal(await stateOf(after, silent), "running");
+		clock.fire(minutes(4));
+		await settle();
+		assert.equal(await stateOf(after, silent), "timed out");
+		await after.fire("agent_settled");
+		assert.deepEqual(resultIds(after), [ending, silent]);
+		assert.deepEqual(resultIds(before), []);
+		await after.fire("session_shutdown", { reason: "quit" });
 	});
 });
 
-test("the reload notice does not wait for the audit drain", async () => {
+test("a question open at a reload, one asked or withdrawn while the parent reloads, and one already answered are each answered once by the re-attached parent", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
-		const extension = await loadSpawnTool({
-			agentDir,
-			create: fakeChildren().create,
-			session: {
-				getSessionId: () => "parent-1",
-				getSessionFile: () => "/sessions/parent.jsonl",
+		const children = fakeChildren();
+		const before = await loadSpawnTool({ agentDir, create: children.create });
+		const ids = [];
+		for (let i = 0; i < 4; i++) ids.push(await spawnBackground(before, worktree));
+		await settle();
+		const [first, open, late, withdrawn] = children.created;
+		const answered = first.spec.ask("Delete the cache?");
+		await use(before, "reply_child", { id: ids[0], question: 1, answer: "Yes." });
+		assert.equal(await answered, "Yes.");
+		const pending = open.spec.ask("Which file?");
+		const leaving = new AbortController();
+		const dropped = withdrawn.spec.ask("Keep going?", leaving.signal);
+		dropped.catch(() => {});
+
+		await before.fire("session_shutdown", { reason: "reload" });
+		const asked = late.spec.ask("Rename the module?");
+		leaving.abort();
+		const after = await loadSpawnTool({ agentDir, create: children.create });
+		await settle();
+
+		await assert.rejects(
+			use(after, "reply_child", { id: ids[0], question: 1, answer: "No." }),
+			{ message: `Question 1 of child ${ids[0]} was already answered by the parent: Yes.` },
+		);
+		assert.equal(await stateOf(after, ids[1]), "waiting");
+		await use(after, "reply_child", { id: ids[1], question: 1, answer: "src/a.ts" });
+		assert.equal(await pending, "src/a.ts");
+		await assert.rejects(
+			use(after, "reply_child", { id: ids[1], question: 1, answer: "src/b.ts" }),
+			{ message: `Question 1 of child ${ids[1]} was already answered by the parent: src/a.ts` },
+		);
+		assert.deepEqual(
+			after.messages.map(({ message }) => [message.customType, message.details.id]),
+			[["pi-workflow-child-question", ids[2]]],
+		);
+		await use(after, "reply_child", { id: ids[2], question: 1, answer: "Yes." });
+		assert.equal(await asked, "Yes.");
+		await assert.rejects(dropped, { message: "The call was aborted." });
+		assert.equal(await stateOf(after, ids[3]), "running");
+		await assert.rejects(
+			use(after, "reply_child", { id: ids[3], question: 1, answer: "Yes." }),
+			{ message: `Question 1 of child ${ids[3]} was withdrawn: the call that asked it ended.` },
+		);
+		await after.fire("session_shutdown", { reason: "quit" });
+	});
+});
+
+test("a result pending at a reload is delivered once by the re-attached parent, and a consumed one is never delivered again", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const before = await loadSpawnTool({ agentDir, create: children.create });
+		const waiting = await spawnBackground(before, worktree);
+		const read = await spawnBackground(before, worktree);
+		await settle();
+		before.busy(true);
+		children.created[0].result.resolve("Pending answer.");
+		children.created[1].result.resolve("Read answer.");
+		await settle();
+		await use(before, "child_result", { id: read });
+		assert.deepEqual(resultIds(before), []);
+
+		const after = await reload(before, { agentDir, create: children.create });
+		await settle();
+		await after.fire("turn_end");
+		await after.fire("agent_settled");
+
+		assert.deepEqual(resultIds(after), [waiting]);
+		assert.deepEqual(resultIds(before), []);
+		await after.fire("session_shutdown", { reason: "quit" });
+	});
+});
+
+test("a reload rebuilds the write claims of the surviving workers, which completion still releases", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const before = await loadSpawnTool({ agentDir, create: children.create });
+		const ctx = toolContext("tui", worktree);
+		await spawn(before.tool, { role: "worker", task: "Fix the parser", surfaces: ["src/**"] }, ctx);
+		await settle();
+
+		const after = await reload(before, { agentDir, create: children.create });
+		const overlapping = await spawn(after.tool, { role: "worker", task: "Fix a.ts", surfaces: ["src/a.ts"] }, ctx);
+		const disjoint = await spawn(after.tool, { role: "worker", task: "Fix docs", surfaces: ["docs/**"] }, ctx);
+		children.created[0].result.resolve("Fixed.");
+		await settle();
+		const released = await spawn(after.tool, { role: "worker", task: "Fix a.ts", surfaces: ["src/a.ts"] }, ctx);
+
+		assert.equal(overlapping.details.status, "refused");
+		assert.match(overlapping.details.reason, /`src\/a\.ts` overlaps `src\/\*\*`/);
+		assert.equal(disjoint.details.status, "queued");
+		assert.equal(released.details.status, "queued");
+		await after.fire("session_shutdown", { reason: "quit" });
+	});
+});
+
+test("after a reload, continue_child resumes a child that completed before it from the same conversation", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const before = await loadSpawnTool({ agentDir, create: children.create });
+		const done = await spawnBackground(before, worktree);
+		await settle();
+		children.created[0].result.resolve("First answer.");
+		await settle();
+
+		const after = await reload(before, { agentDir, create: children.create });
+		const result = await use(
+			after,
+			"continue_child",
+			{ id: done, task: "Now add a test" },
+			toolContext("tui", worktree),
+		);
+
+		assert.equal(result.details.status, "queued");
+		const continued = children.created.at(-1);
+		assert.deepEqual(continued.spec.entries, children.created[0].entries);
+		assert.equal(continued.spec.parentSession, "session-0");
+		await after.fire("session_shutdown", { reason: "quit" });
+	});
+});
+
+test("after a reload, the result of a child linked to a Todo task sets that task's final state", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const before = await loadSpawnTool({ agentDir, create: children.create });
+		const written = await todoTool(before).run("write", { tasks: [{ text: "Fix the parser" }] });
+		await spawnOnTask(before, worktree, 1);
+		await settle();
+		const branch = [
+			{
+				type: "message",
+				message: { role: "toolResult", toolName: "todo", isError: false, details: written.details },
 			},
-		});
-		const id = await spawnBackground(extension, worktree);
+			...before.entries.map(({ customType, data }) => ({ type: "custom", customType, data })),
+		];
+
+		const after = await reload(before, { agentDir, create: children.create, branch });
+		children.created[0].spec.report(workerResult("done"));
+		children.created[0].result.resolve("Fixed.");
+		await settle();
+
+		assert.match(after.messages.at(-1).message.content, /Task #1 is now done\./);
+		assert.match(await todoTool(after).list(), /\[done\] #1: Fix the parser/);
+		await after.fire("session_shutdown", { reason: "quit" });
+	});
+});
+
+test("a reload keeps a persisted parent's audit capture open, and the record closes when the child ends after it", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const session = {
+			getSessionId: () => "parent-1",
+			getSessionFile: () => "/sessions/parent.jsonl",
+		};
+		const before = await loadSpawnTool({ agentDir, create: children.create, session });
+		const id = await spawnBackground(before, worktree);
 		await settle();
 		const journal = join(agentDir, "pi-workflow-audit", "parent-1", `${id}.jsonl`);
 		await eventually(() => existsSync(journal));
-		let sealed;
-		extension.notifications.push = (...items) => {
-			sealed = readFileSync(journal, "utf8").includes('"close":');
-			return Array.prototype.push.apply(extension.notifications, items);
-		};
 
-		await extension.fire("session_shutdown", { reason: "reload" });
+		const after = await reload(before, { agentDir, create: children.create, session });
+		assert.doesNotMatch(readFileSync(journal, "utf8"), /"close":/);
+		children.created[0].spec.report(workerResult("done"));
+		children.created[0].result.resolve("Fixed.");
+		await settle();
+		await after.fire("session_shutdown", { reason: "quit" });
 
-		assert.match(extension.notifications.at(-1).message, /\/reload ended 1 working child\./);
-		assert.equal(sealed, false);
-		assert.match(readFileSync(journal, "utf8"), /"close":/);
+		const { records } = await createChildAudit({
+			root: join(agentDir, "pi-workflow-audit"),
+			parent: () => "parent-1",
+		}).list();
+		assert.deepEqual(
+			records.map(({ child, state, verdict, interrupted, health }) => ({
+				child,
+				state,
+				verdict,
+				interrupted,
+				closed: health.closed,
+				complete: health.complete,
+			})),
+			[{ child: id, state: "completed", verdict: "done", interrupted: undefined, closed: true, complete: true }],
+		);
 	});
 });
 
-test("a shutdown for another reason, or a reload with no working child, gives no notice", async () => {
+test("a shutdown for any reason other than reload ends the working children without a notice", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
-		for (const [reason, launches] of [
-			["new", 1],
-			["quit", 1],
-			["reload", 0],
-		]) {
-			const extension = await loadSpawnTool({
-				agentDir,
-				create: fakeChildren().create,
-			});
-			for (let i = 0; i < launches; i++)
-				await spawnBackground(extension, worktree);
+		for (const reason of ["new", "resume", "fork", "quit"]) {
+			const children = fakeChildren();
+			const extension = await loadSpawnTool({ agentDir, create: children.create });
+			await spawnBackground(extension, worktree);
 			extension.notifications.length = 0;
 			const entries = extension.entries.length;
 
 			await extension.fire("session_shutdown", { reason });
 
+			assert.deepEqual(children.created.map((child) => child.disposals), [1], reason);
 			assert.deepEqual(extension.notifications, [], reason);
 			assert.equal(extension.entries.length, entries, reason);
 		}
