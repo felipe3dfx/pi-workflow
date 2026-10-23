@@ -23,6 +23,12 @@ import type {
 } from "./action-authorization.ts";
 import type { ChildShell } from "./child-bash.ts";
 import {
+	type ChildHandle,
+	type ChildSessionFactory,
+	mcpTools,
+	shutdownDeadline,
+} from "./child-handle.ts";
+import {
 	type Checkpoint,
 	type CheckpointGrant,
 	checkpointTool,
@@ -58,44 +64,10 @@ const packageVersion = (
 	) as { version: string }
 ).version;
 
-interface ChildSpec {
-	authorization?: ActionAuthorization;
-	sources?: CommonToolSources;
-	cwd: string;
-	project: ParentProject;
-	role: string;
-	model: string;
-	thinking: ModelThinkingLevel;
-	prompt: string;
-	tools: string[];
-	shell: ChildShell;
-	onEvent(event: AgentSessionEvent): void;
-	notify(message: string): void;
-	ask(question: string, signal?: AbortSignal): Promise<string>;
-	report(result: ChildResult): void;
-	checkpoint?: CheckpointGrant;
-	checkpointed(checkpoint: Checkpoint): void;
-	entries?: SessionEntry[];
-	parentSession?: string;
-}
-
 interface Conversation {
 	sessionId: string;
 	entries: SessionEntry[];
 }
-
-export interface ChildHandle {
-	sessionId: string;
-	entries(): SessionEntry[];
-	run(task: string): Promise<string>;
-	steer(text: string): Promise<void>;
-	clearQueue(): string[];
-	abort(): Promise<void>;
-	dispose(): Promise<void>;
-	pendingAuthorizations?(): AuthorizationDecision[];
-}
-
-export type ChildSessionFactory = (spec: ChildSpec) => Promise<ChildHandle>;
 
 type Plan = {
 	role: string;
@@ -197,7 +169,6 @@ export interface ChildTrace {
 
 const runningLimit = 5;
 const launchLimit = 10;
-export const shutdownDeadline = 1000;
 const stallMs = 4 * 60_000;
 const toolStallMs = 30 * 60_000;
 
@@ -309,13 +280,6 @@ export type ChildDetails = ReturnType<typeof childDetails> & {
 function parentProject(ctx: ExtensionContext): ParentProject {
 	return { cwd: ctx.cwd, trusted: ctx.isProjectTrusted() };
 }
-
-export const mcpTools = [
-	"mcp__*",
-	"list_mcp_resources",
-	"list_mcp_resource_templates",
-	"read_mcp_resource",
-];
 
 function childTools(plan: Plan) {
 	return [

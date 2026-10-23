@@ -18,7 +18,7 @@ import {
 	type ChildSessionFactory,
 	mcpTools,
 	shutdownDeadline,
-} from "./child-sessions.ts";
+} from "./child-handle.ts";
 import {
 	type ChildFrame,
 	type ChildRuntimeConfig,

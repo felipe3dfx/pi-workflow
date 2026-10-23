@@ -39,8 +39,8 @@ import { createChildLauncher } from "./child-launcher.ts";
 import { runDelegationCheck } from "./delegation-check.ts";
 import { registerDelegationMode } from "./delegation-mode.ts";
 import { registerChildResultCards } from "./child-result-card.ts";
+import type { ChildSessionFactory } from "./child-handle.ts";
 import {
-	type ChildSessionFactory,
 	type ResidentChildren,
 	createChildQueryTools,
 	createChildSessions,

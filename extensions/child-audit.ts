@@ -5,7 +5,7 @@ import { crc32 } from "node:zlib";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 import { askParentTool } from "./child-runtime.ts";
-import { shutdownDeadline } from "./child-sessions.ts";
+import { shutdownDeadline } from "./child-handle.ts";
 import { errorMessage } from "./error-message.ts";
 
 export interface AuditIdentity {

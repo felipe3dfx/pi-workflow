@@ -9,7 +9,8 @@ import { fileURLToPath } from "node:url";
 
 import { channelFrameLimit, createRpcChildSession, installedPi, readinessDeadline } from "../extensions/rpc-child.ts";
 import { createChildAudit } from "../extensions/child-audit.ts";
-import { createChildSessions, shutdownDeadline } from "../extensions/child-sessions.ts";
+import { createChildSessions } from "../extensions/child-sessions.ts";
+import { shutdownDeadline } from "../extensions/child-handle.ts";
 import { treeDeadline } from "../extensions/process-tree.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
