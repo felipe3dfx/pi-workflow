@@ -41,7 +41,7 @@ The required `authorization` configuration supplies `authority(ctx)` (current as
 
 Every covered parent/child dispatch, including local nested and dynamic/MCP tools, passes the shared authorization hook. Jev's destination block still applies independently. Uncertainty, malformed/failed classification and cancellation retain an `Authorization held` reason and a `pi-workflow-authorization` entry without executing; failures are not consent or permanent action refusal. Consultation/resume uses the #291 envelope above; [ADR 0022](docs/adr/0022-task-authorized-signed-commits.md) replaces commit role/tool/grant exclusivity in this injected path. Any role can commit through ordinary bash, compatible local tools or the optional checkpoint convenience when current task authority authorizes the scoped action. The assigned context may be shared when noninterfering; isolate wherever interference is possible. Trusted authority must identify task-owned paths and establish that context, not infer either from classifier output or tool availability. The repository identity, branch and base are captured at session start and verified before each commit. Paths are relative to that assigned Git root; a directory asserts ownership of all included changes, so use exact owned files when ownership is mixed. Repository preflight checks signing configuration and the existing index before staging; shared postcommit verification reports signature-header, scope, parent, branch or other-ref failures with the SHA and no rollback. Verification also runs after an executed tool throws or is cancelled. Within one Pi process, a competing commit that shares Git metadata is held, not serialized into permission, and a call that does not execute releases its reservation when its tool execution ends; each child is its own process, so commits from different children are not held against each other. These checks are non-atomic, do not verify signer identity, and do not sandbox arbitrary extension code, hooks, shell descendants or external processes. The semantic adapter must identify actual direct commit effects, including overrides or different repository targets; command text is not proof of effects. Real adoption comparison belongs to #293. No tool availability authorizes commit or publication.
 
-A contextual child has no child toolbox and cannot launch grandchildren. Registered, active, callable and UI-ready tools differ; genuine deferred MCP uses tool_search, and recursive codemode scripts are not callable in SDK 1.0.4. Hooks do not sandbox raw extension code, shell descendants, hooks, external services or module globals; never call retrieved definitions' `execute` directly as a dispatch substitute. Scripted tests validate covered integration, not real semantic accuracy, human consent or production readiness.
+A contextual child has no child toolbox and cannot launch grandchildren. Registered, active, callable and UI-ready tools differ; genuine deferred MCP uses tool_search, and recursive codemode scripts are not callable in Pi 1.4.0. Hooks do not sandbox raw extension code, shell descendants, hooks, external services or module globals; never call retrieved definitions' `execute` directly as a dispatch substitute. Scripted tests validate covered integration, not real semantic accuracy, human consent or production readiness.
 
 ## Model profiles
 
@@ -49,7 +49,7 @@ A contextual child has no child toolbox and cannot launch grandchildren. Registe
 
 ## Theme and chrome
 
-The package ships the `pi-workflow` theme and restyles Pi's terminal UI. The chrome patches Pi internals copied from Pi 1.0.4 without a version guard; re-verify them on every Pi upgrade. See [ADR 0007](docs/adr/0007-patch-pi-tui-internals-for-chrome.md).
+The package ships the `pi-workflow` theme and restyles Pi's terminal UI. The chrome patches Pi internals copied from Pi 1.4.0 without a version guard; re-verify them on every Pi upgrade. See [ADR 0007](docs/adr/0007-patch-pi-tui-internals-for-chrome.md).
 
 ## Colliding packages
 
@@ -78,4 +78,4 @@ The launcher isolates Pi home, configuration, packages, and sessions. It is not 
 ## Requirements
 
 - Node.js `>=22.19`
-- Pi CLI `>=1.0.4` available in the target environment
+- Pi CLI `>=1.4.0` available in the target environment

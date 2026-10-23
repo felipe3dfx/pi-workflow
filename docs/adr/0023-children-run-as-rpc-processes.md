@@ -41,6 +41,6 @@ Accepted risks:
 - The parent can overwrite a child's edits in a shared checkout.
 - A contextual child has no child toolbox and cannot launch grandchildren, and common tool factories cannot cross into a child process; a contextual launch that selects them is refused.
 - macOS termination of the whole tree runs the Linux mechanism and is unverified on macOS. A descendant that clears its environment escapes it.
-- The design is verified against Pi 1.4.0 only.
+- The design is verified against Pi 1.4.0 only, so the supported range starts there: the SDK peers in `package.json` and the Pi CLI requirement are `>=1.4.0`.
 
 R13 and R14 of ADR 0014 no longer apply. ADR 0014's remaining accepted risks about what a child can reach (R2 to R11) still describe the child process.
