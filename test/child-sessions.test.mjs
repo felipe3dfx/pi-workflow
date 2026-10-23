@@ -926,8 +926,17 @@ function toolContext(mode, cwd, jev = fakeJev()) {
 	};
 }
 
+let spawned = 0;
+
 function spawn(tool, params, ctx, signal) {
-	return tool.execute("call-1", params, signal, undefined, ctx);
+	const disjoint = params.role === "worker" && !("surfaces" in params);
+	return tool.execute(
+		"call-1",
+		disjoint ? { ...params, surfaces: [`surface-${spawned++}`] } : params,
+		signal,
+		undefined,
+		ctx,
+	);
 }
 
 function text(result) {
@@ -1902,6 +1911,15 @@ test("a named implement skill selects no role; the parent's role launches", asyn
 	});
 });
 
+async function stubWebAccess(agentDir) {
+	const root = join(agentDir, "npm", "node_modules", "pi-web-access");
+	await mkdir(root, { recursive: true });
+	await writeFile(join(root, "package.json"), JSON.stringify({ name: "pi-web-access", pi: { extensions: ["./index.ts"] } }));
+	await writeFile(join(root, "index.ts"), "export default () => {};\n");
+	await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-web-access"] }));
+	return join(root, "index.ts");
+}
+
 async function withPathPi(dir, scenario, run) {
 	const bin = join(dir, "bin");
 	await mkdir(bin);
@@ -1932,6 +1950,7 @@ async function withPathPi(dir, scenario, run) {
 
 test("the default child factory runs a background child as the Pi process on PATH and delivers its result", async () => {
 	await withWorkspace(async ({ worktree, agentDir, dir }) => {
+		const webAccess = await stubWebAccess(agentDir);
 		await withPathPi(dir, "complete", async ({ launched }) => {
 			const { tool, messages } = await loadSpawnTool({ agentDir, create: null });
 			const result = await spawn(
@@ -1953,12 +1972,14 @@ test("the default child factory runs a background child as the Pi process on PAT
 			assert.equal(argv[argv.indexOf("--model") + 1], "session/model");
 			assert.equal(argv[argv.indexOf("--thinking") + 1], "medium");
 			assert.ok(argv.includes("--no-approve"));
+			assert.ok(argv.includes(webAccess));
 		});
 	});
 });
 
 test("the default child factory opens no Pi process for a queued child", async () => {
 	await withWorkspace(async ({ worktree, agentDir, dir }) => {
+		await stubWebAccess(agentDir);
 		await withPathPi(dir, "hang", async ({ launches }) => {
 			const { tool, named } = await loadSpawnTool({ agentDir, create: null });
 			const ids = [];
@@ -3369,6 +3390,25 @@ test("at most five children run at once; the others wait queued and start first 
 	});
 });
 
+test("spawn_child admits writers with disjoint surfaces and refuses an overlap naming the entries until the first ends", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const launch = (surfaces, role = "worker") =>
+			spawn(extension.tool, { role, task: "Edit", ...(surfaces ? { surfaces } : {}) }, toolContext("tui", worktree));
+		const first = await launch(["src/a.ts"]);
+		const second = await launch(["docs"]);
+		assert.equal(first.details.status, "queued");
+		assert.equal(second.details.status, "queued");
+		const refused = await launch(["SRC/*.ts"]);
+		assert.equal(refused.details.status, "refused");
+		assert.match(text(refused), new RegExp(`child ${first.details.id} \\(\`SRC/\\*\\.ts\` overlaps \`src/a\\.ts\`\\)`));
+		assert.equal((await launch(undefined, "explore")).details.status, "queued");
+		await use(extension, "cancel_child", { id: first.details.id });
+		assert.equal((await launch(["SRC/*.ts"])).details.status, "queued");
+	});
+});
+
 test("with ten working children, spawn_child and continue_child are refused before Jev and before a session is created", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
@@ -3434,7 +3474,7 @@ test("a script that launches twelve children at once gets ten launches and two r
 			Array.from({ length: 12 }, (_, i) =>
 				extension.tool.execute(
 					`script/${i + 1}`,
-					{ role: "worker", task: `Task ${i}` },
+					{ role: "worker", task: `Task ${i}`, surfaces: [`script-${i}`] },
 					undefined,
 					undefined,
 					toolContext("tui", worktree),
@@ -3470,7 +3510,7 @@ test("print and json launches from a script run in the foreground outside the la
 				Array.from({ length: 12 }, (_, i) =>
 					spawn(
 						extension.tool,
-						{ role: "worker", task: `Task ${i}` },
+						{ role: "worker", task: `Task ${i}`, surfaces: [`script-${i}`] },
 						toolContext(mode, worktree),
 					),
 				),
@@ -3500,7 +3540,7 @@ test("a pending launch from a script is no launched child and holds no place und
 				Array.from({ length: 10 }, (_, i) =>
 					extension.tool.execute(
 						`script/${i + 1}`,
-						{ role: "worker", task: `Task ${i}` },
+						{ role: "worker", task: `Task ${i}`, surfaces: [`script-${i}`] },
 						undefined,
 						undefined,
 						toolContext("tui", worktree),
@@ -6749,7 +6789,7 @@ test("children launched by one codemode call are grouped under it with the numbe
 			(
 				await extension.tool.execute(
 					toolCallId,
-					{ role: "worker", task: "Fix the failing test" },
+					{ role: "worker", task: "Fix the failing test", surfaces: [toolCallId] },
 					undefined,
 					undefined,
 					toolContext("tui", worktree),
@@ -7237,7 +7277,7 @@ test("children launched by an aborted script keep running and asking, and reach 
 				[0, 1, 2].map((i) =>
 					extension.tool.execute(
 						`script/${i + 1}`,
-						{ role: "worker", task: `Task ${i}` },
+						{ role: "worker", task: `Task ${i}`, surfaces: [`script-${i}`] },
 						script.signal,
 						undefined,
 						toolContext("tui", worktree),

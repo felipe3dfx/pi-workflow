@@ -71,6 +71,7 @@ import { createRpcChildSession } from "./rpc-child.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
 import type { TodoClaim } from "./todo-extension.ts";
 import type { TaskState } from "./todo-list.ts";
+import { conflictReason, createWriteClaims } from "./write-claims.ts";
 
 const packageVersion = (
 	JSON.parse(
@@ -130,6 +131,7 @@ type Plan = {
 	thinking: ModelThinkingLevel;
 	chosenBy: "parent";
 	references: string[];
+	surfaces?: string[];
 	checkpoint?: CheckpointGrant;
 };
 
@@ -675,6 +677,7 @@ export function createChildSessions(options: {
 	let generation = 0;
 	let reserved = 0;
 	const disposing = new Set<Promise<void>>();
+	const claims = createWriteClaims();
 
 	function warn(message: string) {
 		try {
@@ -827,6 +830,7 @@ export function createChildSessions(options: {
 		if (!isWorking(record.state) || children.get(record.id) !== child) return;
 		const queued = queue.indexOf(child);
 		if (queued >= 0) queue.splice(queued, 1);
+		claims.release(record.id);
 		child.watch.stop();
 		record.state = state;
 		record.text = text;
@@ -954,6 +958,35 @@ export function createChildSessions(options: {
 
 	async function start(
 		plan: Plan,
+		launch: Parameters<typeof begin>[2],
+		from?: { id: string; conversation: Conversation },
+	) {
+		const id = randomUUID();
+		if (plan.role === "worker") {
+			const surfaces = plan.surfaces ?? [];
+			const found = claims.conflicts(plan.worktree, surfaces);
+			if (found.length > 0) {
+				return {
+					status: "refused" as const,
+					warning: "Launch refused. No child was launched.",
+					reason: conflictReason(found),
+				};
+			}
+			claims.claim(id, plan.worktree, surfaces);
+		}
+		let queued = false;
+		try {
+			const started = await begin(id, plan, launch, from);
+			queued = started.status === "queued";
+			return started;
+		} finally {
+			if (!queued) claims.release(id);
+		}
+	}
+
+	async function begin(
+		id: string,
+		plan: Plan,
 		launch: {
 			background: boolean;
 			signal?: AbortSignal;
@@ -1052,7 +1085,6 @@ export function createChildSessions(options: {
 				reason: "The session ended before the child launched.",
 			};
 		}
-		const id = randomUUID();
 		const createdAt = Date.now();
 		const capture = options.audit.begin({
 			child: id,
@@ -1411,6 +1443,7 @@ export function createChildSessions(options: {
 			isWorking(child.record.state),
 		);
 		children.clear();
+		claims.rebuild([]);
 		linked.clear();
 		queue.length = 0;
 		pending = [];
@@ -1480,6 +1513,12 @@ const spawnChildParameters = Type.Object({
 		Type.String({
 			description:
 				"Name the assigned checkpoint branch. This context descriptor is not commit authority. The active session policy determines availability and context requirements; task authorization, signing, scope and protection of others' work still apply.",
+		}),
+	),
+	surfaces: Type.Optional(
+		Type.Array(Type.String(), {
+			description:
+				"Worker only: the repository-relative paths or globs the worker may edit. A worker whose surfaces overlap those of a working worker in the same worktree is refused. Omitted, the worker claims the whole checkout. Other roles claim nothing.",
 		}),
 	),
 	references: Type.Optional(
@@ -1632,6 +1671,7 @@ export function createSpawnChildTool(
 						worktree: params.worktree,
 						checkpoint: params.checkpoint,
 						references: params.references,
+						surfaces: params.surfaces,
 						...(userRequest
 							? { userRequest: userRequest.text, userMessageId: userRequest.id }
 							: {}),

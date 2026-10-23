@@ -40,8 +40,9 @@ function auditedCore(
 		audit,
 		...(clock ? { schedule: clock } : {}),
 	});
+	let launches = 0;
 	async function launch(launchOptions = {}) {
-		const started = await core.start(plan, {
+		const started = await core.start({ ...plan, surfaces: [`surface-${launches++}`] }, {
 			background: true,
 			modelRegistry: {},
 			project: () => ({ cwd: "/tmp", trusted: false }),

@@ -90,6 +90,7 @@ export function recordingCore({
 		schedule,
 		audit: createChildAudit({ root: "", parent: () => undefined }),
 	});
+	let launches = 0;
 	async function launch(role = "worker") {
 		const started = await core.start(
 			{
@@ -101,6 +102,7 @@ export function recordingCore({
 				thinking: "medium",
 				chosenBy: "parent",
 				references: [],
+				surfaces: [`surface-${launches++}`],
 			},
 			{
 				background: true,
@@ -114,6 +116,7 @@ export function recordingCore({
 	}
 	return {
 		core,
+		children,
 		sent,
 		reports,
 		launch,
