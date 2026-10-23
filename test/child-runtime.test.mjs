@@ -1,39 +1,61 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 
 import { installChildRuntime, parentChannel } from "../extensions/child-runtime.ts";
+import { eventually } from "./support/eventually.mjs";
+import { withCheckpoint } from "./support/signed-checkpoint.mjs";
 
-async function runtime(t, role = "worker", config = {}) {
-	const cwd = await realpath(await mkdtemp(join(tmpdir(), "pi-workflow-child-runtime-")));
-	t.after(() => rm(cwd, { recursive: true, force: true }));
+async function runtime(t, role = "worker", config = {}, serve = () => undefined) {
+	const cwd = config.cwd ?? (await realpath(await mkdtemp(join(tmpdir(), "pi-workflow-child-runtime-"))));
+	if (!config.cwd) t.after(() => rm(cwd, { recursive: true, force: true }));
 	const toChild = new PassThrough();
 	const fromChild = new PassThrough();
 	const frames = [];
+	const answer = (reply) => toChild.write(`${JSON.stringify(reply)}\n`);
 	let buffer = "";
 	fromChild.setEncoding("utf8");
 	fromChild.on("data", (chunk) => {
 		buffer += chunk;
 		const lines = buffer.split("\n");
 		buffer = lines.pop();
-		frames.push(...lines.map((line) => JSON.parse(line)));
+		for (const frame of lines.map((line) => JSON.parse(line))) {
+			frames.push(frame);
+			const reply = serve(frame);
+			if (reply !== undefined) Promise.resolve(reply).then((value) => answer({ id: frame.id, ...value }));
+		}
 	});
 	const tools = new Map();
 	const handlers = new Map();
-	installChildRuntime(
-		{
-			registerTool: (tool) => tools.set(tool.name, tool),
-			on: (event, handler) => handlers.set(event, handler),
+	const entries = [];
+	let active = ["read", "bash", "edit", "write"];
+	const pi = {
+		registerTool: (tool) => tools.set(tool.name, tool),
+		on: (event, handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
+		getAllTools: () => [...tools.values()].map(({ name, description, parameters }) => ({ name, description, parameters })),
+		getActiveTools: () => active,
+		setActiveTools: (names) => {
+			active = names;
 		},
-		{ role, cwd, shell: {}, checkpoint: false, ...config },
+		appendEntry: (customType, data) => entries.push({ customType, data }),
+	};
+	await installChildRuntime(
+		pi,
+		{ role, cwd, shell: {}, ...config },
 		parentChannel(toChild, fromChild),
+		{ cwd, getSystemPrompt: () => "You are a child.", signal: undefined },
 	);
 	const flushed = () => new Promise((resolve) => setImmediate(resolve));
-	const answer = (reply) => toChild.write(`${JSON.stringify(reply)}\n`);
-	return { tools, handlers, frames, flushed, answer, toChild };
+	const emit = async (event, payload, ctx = {}) => {
+		let result;
+		for (const handler of handlers.get(event) ?? [])
+			result = (await handler(payload, { cwd, getSystemPrompt: () => "You are a child.", signal: undefined, ...ctx })) ?? result;
+		return result;
+	};
+	return { cwd, tools, handlers, emit, frames, flushed, answer, toChild, entries, active: () => active };
 }
 
 test("the child runtime registers the guarded bash, ask_parent and report_result and connects", async (t) => {
@@ -115,8 +137,153 @@ test("a verifier reports with the verifier's result schema", async (t) => {
 });
 
 test("the child keeps its contract free of APPEND_SYSTEM.md", async (t) => {
-	const { handlers } = await runtime(t);
+	const { emit } = await runtime(t);
 	const event = { systemPromptOptions: { appendSystemPrompt: "Appended by the user." } };
-	handlers.get("before_agent_start")(event);
+	await emit("before_agent_start", event);
 	assert.equal(event.systemPromptOptions.appendSystemPrompt, "");
+});
+
+test("a granted worker commits through checkpoint and the parent records it before the tool returns", async (t) => {
+	await withCheckpoint(async ({ worktree, grant }) => {
+		let acknowledge;
+		const { tools, frames } = await runtime(t, "worker", { cwd: worktree, checkpoint: grant }, (frame) =>
+			frame.type === "checkpoint"
+				? new Promise((resolve) => {
+						acknowledge = () => resolve({});
+					})
+				: undefined,
+		);
+		assert.deepEqual([...tools.keys()], ["bash", "ask_parent", "report_result", "checkpoint"]);
+		const refused = await tools.get("bash").execute("call-0", { command: "git commit -m 'feat: x'" });
+		assert.match(refused.structuredContent.output, /Commit through the checkpoint tool instead/);
+		await writeFile(join(worktree, "a.txt"), "A\n");
+		let returned = false;
+		const committed = tools
+			.get("checkpoint")
+			.execute("call-1", { message: "feat: add a", paths: ["a.txt"] })
+			.then((result) => {
+				returned = true;
+				return result;
+			});
+		await eventually(() => frames.some((frame) => frame.type === "checkpoint"));
+		assert.equal(returned, false);
+		acknowledge();
+		const { details } = await committed;
+		assert.deepEqual(frames.find((frame) => frame.type === "checkpoint").checkpoint, {
+			sha: details.sha,
+			parent: details.parent,
+			base: grant.base,
+			branch: "feature",
+		});
+	});
+});
+
+const ordinary = {
+	prohibited: false,
+	scope: "within",
+	ownership: "assigned",
+	effects: "ordinary",
+	confirmed: false,
+	commit: false,
+	reason: "The assigned edit.",
+};
+
+test("a contextual child evaluates every tool call, nested ones included, through the parent's policy", async (t) => {
+	const authority = { assignment: "Edit assigned.txt only.", instructions: [] };
+	const proposals = [];
+	const questions = [];
+	const decisions = [];
+	const child = await runtime(t, "explore", { contextual: { active: ["read", "codemode"] } }, (frame) => {
+		if (frame.type === "policy" && frame.method === "authority") return { answer: JSON.stringify(authority) };
+		if (frame.type === "policy" && frame.method === "classify") {
+			proposals.push(frame.value);
+			return {
+				answer: JSON.stringify(
+					frame.value.action.input.path === "assigned.txt"
+						? ordinary
+						: { ...ordinary, scope: "unknown", reason: "other.txt is not in the assignment." },
+				),
+			};
+		}
+		if (frame.type === "ask") {
+			const question = JSON.parse(frame.question.slice(frame.question.indexOf("\n") + 1));
+			questions.push(question);
+			return {
+				answer: JSON.stringify({
+					id: question.id,
+					call: question.call,
+					proposal: question.proposal,
+					kind: "deny",
+					answer: "other.txt belongs to another task.",
+				}),
+			};
+		}
+		if (frame.type === "policy" && frame.method === "decision") {
+			decisions.push(frame.value);
+			return { answer: "null" };
+		}
+	});
+	assert.deepEqual([...child.tools.keys()], ["bash", "ask_parent", "report_result", "checkpoint"]);
+	assert.match(child.tools.get("ask_parent").description, /leaves the action held, not permitted/);
+	assert.deepEqual(child.active(), ["read", "bash", "edit", "write", "codemode"]);
+	await child.emit("context_with_system", {
+		type: "context_with_system",
+		messages: [{ role: "system", content: "You are a child.\n\nProject rules.", timestamp: 1 }],
+	});
+	assert.equal(
+		await child.emit("tool_call", {
+			type: "tool_call",
+			toolCallId: "call-1",
+			toolName: "write",
+			input: { path: "assigned.txt", content: "A" },
+		}),
+		undefined,
+	);
+	assert.deepEqual(
+		await child.emit("tool_call", {
+			type: "tool_call",
+			toolCallId: "script/1",
+			parentToolCallId: "script",
+			toolName: "write",
+			input: { path: "other.txt", content: "B" },
+		}),
+		{ block: true, reason: "Action prohibited: other.txt belongs to another task." },
+	);
+	assert.deepEqual(proposals[0].authority, authority);
+	assert.deepEqual(proposals[0].action, { tool: "write", input: { path: "assigned.txt", content: "A" }, cwd: child.cwd });
+	assert.equal(proposals[0].context.systemPrompt, "You are a child.\n\nProject rules.");
+	assert.deepEqual(questions.map((question) => [question.call, question.reason]), [
+		["script/1", "other.txt is not in the assignment."],
+	]);
+	assert.deepEqual(decisions.map((decision) => [decision.call, decision.kind]), [
+		["call-1", "allow"],
+		["script/1", "deny"],
+	]);
+	assert.deepEqual(child.entries.map((entry) => [entry.customType, entry.data.kind]), [
+		["pi-workflow-authorization", "deny"],
+	]);
+});
+
+test("a contextual child holds a call when the parent's policy cannot answer", async (t) => {
+	const child = await runtime(t, "worker", { contextual: { active: [] } }, (frame) =>
+		frame.type === "policy" ? { error: "The parent's policy is unavailable." } : undefined,
+	);
+	await child.emit("context_with_system", {
+		type: "context_with_system",
+		messages: [{ role: "system", content: "You are a child.", timestamp: 1 }],
+	});
+	const blocked = await child.emit("tool_call", {
+		type: "tool_call",
+		toolCallId: "call-1",
+		toolName: "write",
+		input: { path: "assigned.txt", content: "A" },
+	});
+	assert.equal(blocked.block, true);
+	assert.match(blocked.reason, /^Authorization held; consultation required: .*The parent's policy is unavailable\./);
+});
+
+test("an operational child installs no contextual evaluation", async (t) => {
+	const { handlers, tools } = await runtime(t, "worker");
+	assert.equal(handlers.has("tool_call"), false);
+	assert.equal(tools.has("checkpoint"), false);
 });
