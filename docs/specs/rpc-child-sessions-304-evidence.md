@@ -4,7 +4,8 @@
 
 - Ticket: #304, "Keep Claude Bridge and web access in RPC children"; branch `304`, based on `296-rpc-children` at `8aa69af`.
 - Specification: `docs/specs/rpc-child-sessions.md`, sections 2, 4 and 7.7; ADR 0016.
-- Host: Linux 7.2.8, Node v26.12.1, standalone Pi 1.4.0 on `PATH`, installed `pi-claude-bridge` 0.9.3 and `pi-web-access`. No macOS run was made.
+- Host: Linux 7.2.8, Node v26.12.1, standalone Pi on `PATH` (`pi --version`: `1.4.0`), installed `pi-claude-bridge` 0.9.3 and `pi-web-access`. No macOS run was made.
+- Binary: until `17a3070`, `npm run check` put `node_modules/.bin` first on `PATH`, so the real-binary tests it ran resolved the SDK 1.0.4 `pi` CLI, not the standalone binary; excerpts taken from such a run came from 1.0.4. The real-binary excerpts below are from a rerun on 2026-10-23 with `node_modules/.bin` first on `PATH`, where the tests resolve the installed binary and assert that the child process is that binary: `ℹ pi --version: 1.4.0; /home/felipe3dfx/.local/share/mise/installs/pi/latest/pi/pi`. All 26 real-binary tests passed.
 - Real-binary tests run against the installed `pi` with a scratch `PI_CODING_AGENT_DIR` whose `npm/node_modules` links to the installed packages, and a local OpenAI-compatible endpoint. They skip with an explicit reason when `pi` or the package is missing.
 
 ## What changed

@@ -4,7 +4,8 @@
 
 - Ticket: #302, "Keep children across parent reload"; branch `302`, based on `296-rpc-children`.
 - Specification: `docs/specs/rpc-child-sessions.md`, sections 4.6, 5 and 7.5.
-- Host: Linux, Node v26, installed Pi 1.4.0 on PATH. No macOS run was made.
+- Host: Linux, Node v26, installed Pi on PATH (`pi --version`: `1.4.0`). No macOS run was made.
+- Binary: until `17a3070`, `npm run check` put `node_modules/.bin` first on `PATH`, so the real-binary tests it ran resolved the SDK 1.0.4 `pi` CLI, not the standalone binary; excerpts taken from such a run came from 1.0.4. The real-binary excerpts below are from a rerun on 2026-10-23 with `node_modules/.bin` first on `PATH`, where the tests resolve the installed binary and assert that the child process is that binary: `ℹ pi --version: 1.4.0; /home/felipe3dfx/.local/share/mise/installs/pi/latest/pi/pi`. All 26 real-binary tests passed.
 
 ## What changed
 
@@ -18,9 +19,9 @@
 
 | Scenario (spec §5) | Proof | Output excerpt |
 | --- | --- | --- |
-| `/reload` keeps the same child process, session and channel; an open question is answered once and the result arrives once (real binary) | `test/rpc-child-pi.test.mjs` "a real Pi parent's /reload keeps its working child process, ..." (a real `pi --mode rpc` parent loads `extensions/pi-workflow.ts` and reloads through `ctx.reload()` from `test/support/reload-command.mjs`) | `ℹ child pids 1449406, 1449417 kept across /reload; Child 69fe95d2-… completed. Verdict: partial.` |
+| `/reload` keeps the same child process, session and channel; an open question is answered once and the result arrives once (real binary) | `test/rpc-child-pi.test.mjs` "a real Pi parent's /reload keeps its working child process, ..." (a real `pi --mode rpc` parent loads `extensions/pi-workflow.ts` and reloads through `ctx.reload()` from `test/support/reload-command.mjs`) | `ℹ child pids 1709088, 1709099 kept across /reload; Child 1eb98b24-… completed. Verdict: partial.` |
 | A second reply after the reload is refused as already answered (real binary) | same test, the parent model's second `reply_child` | tool result `isError: true`, `already answered by the parent: blue` |
-| Quitting or killing the parent after a reload still ends a working child (real binary) | same test, subtests `quit` and `SIGKILL` | `ℹ after quit, the waiting child ended in 67 ms`, `ℹ after SIGKILL, the waiting child ended in 34 ms` |
+| Quitting or killing the parent after a reload still ends a working child (real binary) | same test, subtests `quit` and `SIGKILL` | `ℹ after quit, the waiting child ended in 53 ms`, `ℹ after SIGKILL, the waiting child ended in 39 ms` |
 | Working children are neither disposed nor announced; the re-attached parent lists them and delivers each result once; any later shutdown disposes them | `test/child-sessions.test.mjs` "a reload keeps every working child with its session, ..." | `✔ a reload keeps every working child with its session, and the re-attached parent lists them and receives each result once` |
 | A question open at the reload, one asked or withdrawn during it, and one already answered are each answered once | "a question open at a reload, one asked or withdrawn while the parent reloads, ..." | `✔ a question open at a reload, one asked or withdrawn while the parent reloads, and one already answered are each answered once by the re-attached parent` |
 | A report and a run end that arrive during the reload are settled once; the new watchdog times out a silent child | "a child that reports and ends while the parent reloads ..." | `✔ a child that reports and ends while the parent reloads is settled once by the re-attached parent, whose watchdog times out a silent one` |
@@ -35,7 +36,7 @@
 
 `npm run check` after merging `296-rpc-children` (with #300): exit 0, tests 1336, pass 1321, fail 0, skipped 15, wall clock 39 s.
 
-The real-parent test removes `node_modules/.bin` from the parent's `PATH`. Under `npm run check` that directory comes first and holds the SDK 1.0.4 `pi` CLI, so without it the parent and its children would not be the installed Pi 1.4.0.
+The real-parent test starts the installed binary that `test/support/installed-pi.mjs` resolves, and its children run the parent's own executable; the test asserts that each child process is that binary.
 
 ## Open gaps
 
@@ -45,4 +46,3 @@ The real-parent test removes `node_modules/.bin` from the parent's `PATH`. Under
 - If an audit drain or a child disposal outlasts its deadline during the reload, its late completion still runs against the old runtime's audit counters.
 - The stall watchdog of a surviving child restarts its full period at the reload.
 - A contextual child (unadopted path, #300) keeps the old runtime's authorization object across a reload; the production path has none.
-- The other real-binary tests in `test/rpc-child-pi.test.mjs` resolve `pi` from `PATH`, which under `npm run check` is the SDK 1.0.4 CLI in `node_modules/.bin`, not the installed 1.4.0 binary.
