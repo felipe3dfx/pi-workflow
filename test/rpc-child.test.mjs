@@ -459,6 +459,39 @@ test("cancelling an RPC child asks it to abort, then kills its whole process tre
 	assert.deepEqual(pids.filter(alive), []);
 });
 
+test("only an unclean exit or a shutdown past the deadline sweeps the child's process tree, and once", async (t) => {
+	const sweeps = (processes) =>
+		processes.filter(
+			(child) => child.spawnargs.some((arg) => arg.endsWith("process-tree.sh")) && !child.spawnargs.includes("watch"),
+		).length;
+	await t.test("clean exit", async (t) => {
+		const processes = spawned(t);
+		const { handle } = await fakeChild(t, "complete");
+		await handle.run("Say done.");
+		await handle.dispose();
+		assert.equal(sweeps(processes), 0);
+	});
+	await t.test("crash", async (t) => {
+		const processes = spawned(t);
+		const { handle } = await fakeChild(t, "crash");
+		await assert.rejects(handle.run("Say done."), /exited with code 7/);
+		await handle.dispose();
+		assert.equal(sweeps(processes), 1);
+	});
+	await t.test("past the shutdown deadline", async (t) => {
+		const processes = spawned(t);
+		const { handle } = await fakeChild(t, "linger", {}, {
+			schedule(run, ms) {
+				const timer = setTimeout(run, ms === shutdownDeadline ? 10 : ms);
+				return () => clearTimeout(timer);
+			},
+		});
+		await handle.run("Say done.");
+		await handle.dispose();
+		assert.equal(sweeps(processes), 1);
+	});
+});
+
 test("an RPC child that crashes leaves no descendant within the tree deadline", async (t) => {
 	assert.equal(treeDeadline, 2_000);
 	const tree = await descendants(t);

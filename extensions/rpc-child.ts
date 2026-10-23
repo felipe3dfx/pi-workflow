@@ -168,6 +168,7 @@ export function createRpcChildSession(
 		let child: ChildProcess | undefined;
 		let starting: Promise<void> | undefined;
 		let exited: Promise<void> = Promise.resolve();
+		let swept: Promise<void> | undefined;
 		let failure: Error | undefined;
 		let disposed = false;
 		let stderr = "";
@@ -337,6 +338,11 @@ export function createRpcChildSession(
 			input.once("close", withdrawAll);
 		}
 
+		function sweep() {
+			swept ??= stopTree(sessionId);
+			return swept;
+		}
+
 		function launch() {
 			if (disposed) throw new Error("The child session was stopped.");
 			const pi = spawn(command, args, {
@@ -346,9 +352,8 @@ export function createRpcChildSession(
 				detached: true,
 			});
 			child = pi;
-			let swept = Promise.resolve();
-			pi.once("exit", () => {
-				swept = stopTree(sessionId);
+			pi.once("exit", (code) => {
+				if (code !== 0) sweep();
 			});
 			exited = new Promise((resolve) => {
 				pi.once("close", (code, signal) => {
@@ -358,7 +363,7 @@ export function createRpcChildSession(
 							`The child Pi process exited with ${code === null ? `signal ${signal}` : `code ${code}`}.${tail ? ` ${tail}` : ""}`,
 						),
 					);
-					void swept.then(resolve);
+					void (swept ?? Promise.resolve()).then(resolve);
 				});
 			});
 			pi.once("error", (error) => fail(error));
@@ -472,7 +477,7 @@ export function createRpcChildSession(
 				});
 				const stopped = await Promise.race([exited.then(() => true), grace]);
 				cancel();
-				if (!stopped) await stopTree(sessionId);
+				if (!stopped) await sweep();
 				await exited;
 			},
 		};
