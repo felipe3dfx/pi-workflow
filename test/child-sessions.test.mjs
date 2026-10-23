@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import {
 	cp,
 	mkdir,
@@ -46,7 +46,8 @@ import { createAskParentTool } from "../extensions/child-runtime.ts";
 import { compactToolRenderers } from "../extensions/compact-tools.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
-import piWorkflowExtension from "../extensions/pi-workflow.ts";
+import piWorkflowExtension, { adoptionDeadline } from "../extensions/pi-workflow.ts";
+import { createRpcChildSession } from "../extensions/rpc-child.ts";
 import {
 	fakeChildren,
 	recordingCore,
@@ -62,6 +63,7 @@ import {
 	resolveClaudeBridgeExtension,
 } from "../extensions/web-access.ts";
 import { eventually } from "./support/eventually.mjs";
+import { alive } from "./support/process-tree.mjs";
 import { runtimeChild } from "./support/runtime-child.mjs";
 import { classifierRegistry } from "./support/fake-jev.mjs";
 import { turnJevRoutingOn } from "./support/jev-routing.mjs";
@@ -1799,6 +1801,42 @@ test("after a reload, the result of a child linked to a Todo task sets that task
 		assert.match(after.messages.at(-1).message.content, /Task #1 is now done\./);
 		assert.match(await todoTool(after).list(), /\[done\] #1: Fix the parser/);
 		await after.fire("session_shutdown", { reason: "quit" });
+	});
+});
+
+test("children parked at a reload that no runtime adopts are stopped at the adoption deadline and recorded as failed", async () => {
+	await withWorkspace(async ({ worktree, agentDir, dir }) => {
+		const clock = manualClock();
+		const record = join(dir, "pi.json");
+		const sessions = join(dir, "sessions");
+		process.env.FAKE_PI_SCENARIO = "steer";
+		process.env.FAKE_PI_RECORD = record;
+		try {
+			const before = await loadSpawnTool({
+				agentDir,
+				schedule: clock.schedule,
+				session: { getSessionId: () => "parent-1", getSessionFile: () => "/sessions/parent.jsonl" },
+				create: createRpcChildSession({ command: [process.execPath, fakePi], sessionRoot: sessions, schedule: clock.schedule }),
+			});
+			const id = await spawnBackground(before, worktree);
+			const { pid } = await eventually(() => existsSync(record) && JSON.parse(readFileSync(record, "utf8")));
+
+			await before.fire("session_shutdown", { reason: "reload" });
+			assert.equal(alive(pid), true);
+			clock.fire(adoptionDeadline);
+
+			await eventually(() => !alive(pid));
+			await eventually(() => readdirSync(sessions).length === 0);
+			const audit = createChildAudit({ root: join(agentDir, "pi-workflow-audit"), parent: () => "parent-1" });
+			const { records } = await eventually(
+				() => audit.list(),
+				({ records }) => records.some((listed) => listed.child === id && listed.health.closed),
+			);
+			assert.equal(records.find((listed) => listed.child === id).state, "failed");
+		} finally {
+			delete process.env.FAKE_PI_SCENARIO;
+			delete process.env.FAKE_PI_RECORD;
+		}
 	});
 });
 

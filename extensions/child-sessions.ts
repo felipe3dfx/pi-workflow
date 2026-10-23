@@ -1162,6 +1162,20 @@ export function createChildSessions(options: {
 		return resident;
 	}
 
+	async function abandon(resident: ResidentChildren) {
+		await Promise.all(
+			resident.children.map(async ({ child: { handle, record, capture } }) => {
+				if (isWorking(record.state)) {
+					options.audit.execution(record.id, "failed");
+					await shutDown(handle, record.id, capture);
+				}
+				await handle
+					.removeSession()
+					.catch((error: unknown) => warn(`Child ${record.id}: ${errorMessage(error)}`));
+			}),
+		);
+	}
+
 	function adopt(resident: ResidentChildren) {
 		for (const { child: kept, held } of resident.children) {
 			const child: Child = {
@@ -1222,6 +1236,7 @@ export function createChildSessions(options: {
 		disposeAll,
 		detach,
 		adopt,
+		abandon,
 	};
 }
 

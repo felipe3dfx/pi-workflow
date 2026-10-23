@@ -48,7 +48,7 @@ import {
 	createSpawnChildTool,
 	isWorking,
 } from "./child-sessions.ts";
-import type { Schedule } from "./clock.ts";
+import { type Schedule, scheduleTimer } from "./clock.ts";
 import { registerChildrenBox } from "./children-box.ts";
 import { pruneChildSessions } from "./rpc-child.ts";
 import { createFooterHints, registerChrome } from "./chrome.ts";
@@ -75,6 +75,8 @@ const slots = globalThis as Record<
 	| { children: ResidentChildren; audit: Awaited<ReturnType<ChildAudit["detach"]>> }
 	| undefined
 >;
+// /reload re-imports every extension within seconds; a runtime that has not adopted by then failed to load, and its children must not run unsupervised.
+export const adoptionDeadline = 30_000;
 
 const usage =
 	"Usage: /workflow:status | /workflow:doctor | /workflow:config | /workflow:models | /workflow:subagents | /workflow:delegation-check";
@@ -311,7 +313,15 @@ export default function piWorkflowExtension(
 		childrenViews.close();
 		if (event.reason === "reload") {
 			const children = await childSessions.detach();
-			slots[RESIDENT] = { children, audit: await audit.detach() };
+			const resident = { children, audit: await audit.detach() };
+			slots[RESIDENT] = resident;
+			(options.childSessions?.schedule ?? scheduleTimer)(async () => {
+				if (slots[RESIDENT] !== resident) return;
+				slots[RESIDENT] = undefined;
+				audit.adopt(resident.audit);
+				await childSessions.abandon(resident.children);
+				await audit.close();
+			}, adoptionDeadline);
 			return;
 		}
 		await childSessions.disposeAll();
