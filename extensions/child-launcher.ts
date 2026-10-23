@@ -33,6 +33,7 @@ export interface LaunchRequest {
 	worktree?: string;
 	checkpoint?: string;
 	references?: string[];
+	surfaces?: string[];
 	userRequest?: string;
 	userMessageId?: string;
 }
@@ -116,6 +117,7 @@ type Ready = {
 	thinking: ModelThinkingLevel;
 	chosenBy: "parent";
 	references: string[];
+	surfaces?: string[];
 	checkpoint?: CheckpointGrant;
 	jev?: ClassifierResult;
 };
@@ -605,6 +607,7 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			thinking: pair.thinking,
 			chosenBy: "parent",
 			references,
+			...(request.surfaces ? { surfaces: request.surfaces } : {}),
 			...(checkpoint ? { checkpoint } : {}),
 			...jev,
 		};
