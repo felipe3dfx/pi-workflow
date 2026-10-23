@@ -125,8 +125,12 @@ export function createReportResultTool(
 
 export function readRecords<Frame>(
 	stream: Readable,
+	valid: (record: Record<string, unknown>) => boolean,
 	onRecord: (record: Frame) => void,
-	limit = Number.POSITIVE_INFINITY,
+	{
+		limit = Number.POSITIVE_INFINITY,
+		onInvalid,
+	}: { limit?: number; onInvalid?: (error: Error) => void } = {},
 ) {
 	let buffer = "";
 	const refuse = () =>
@@ -143,13 +147,22 @@ export function readRecords<Frame>(
 			buffer = buffer.slice(newline + 1);
 			if (line.length > limit) return refuse();
 			if (!line) continue;
-			let record: Frame;
+			let record: unknown;
 			try {
-				record = JSON.parse(line) as Frame;
+				record = JSON.parse(line);
 			} catch {
 				continue;
 			}
-			onRecord(record);
+			if (
+				typeof record !== "object" ||
+				record === null ||
+				Array.isArray(record) ||
+				!valid(record as Record<string, unknown>)
+			) {
+				onInvalid?.(new Error(`A malformed record was refused: ${line.slice(0, 200)}`));
+				continue;
+			}
+			onRecord(record as Frame);
 		}
 		if (buffer.length > limit) refuse();
 	});
@@ -170,13 +183,17 @@ export function parentChannel(input: Readable, output: Writable) {
 		for (const pending of waiting.values()) pending.reject(closed);
 		waiting.clear();
 	};
-	readRecords<ParentReply>(input, (reply) => {
-		const pending = waiting.get(reply.id);
-		if (!pending) return;
-		waiting.delete(reply.id);
-		if (reply.error === undefined) pending.resolve(reply.answer ?? "");
-		else pending.reject(new Error(reply.error));
-	});
+	readRecords<ParentReply>(
+		input,
+		(reply) => typeof reply.id === "number",
+		(reply) => {
+			const pending = waiting.get(reply.id);
+			if (!pending) return;
+			waiting.delete(reply.id);
+			if (reply.error === undefined) pending.resolve(reply.answer ?? "");
+			else pending.reject(new Error(reply.error));
+		},
+	);
 	input.once("end", close);
 	input.once("error", close);
 	output.once("error", close);

@@ -99,6 +99,14 @@ test("ask_parent waits for the parent's correlated answer", async (t) => {
 	await assert.rejects(second, /A question is already waiting for the parent's reply/);
 });
 
+test("the child drops a malformed reply and still takes the parent's answer", async (t) => {
+	const { tools, toChild, answer } = await runtime(t);
+	const asked = tools.get("ask_parent").execute("call-1", { question: "Which file?" });
+	toChild.write("null\n5\n{\"answer\":\"stray\"}\n");
+	answer({ id: 1, answer: "README.md" });
+	assert.deepEqual((await asked).content, [{ type: "text", text: "README.md" }]);
+});
+
 test("an aborted ask_parent withdraws its question and ignores a late answer", async (t) => {
 	const { tools, frames, flushed, answer } = await runtime(t);
 	const call = new AbortController();

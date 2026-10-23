@@ -374,6 +374,8 @@ export function createRpcChildSession(
 			};
 			readRecords<ChildFrame>(
 				input,
+				(frame) =>
+					typeof frame.type === "string" && (frame.type === "ready" || typeof frame.id === "number"),
 				(frame) => {
 					if (frame.type === "ready") {
 						connected?.resolve(frame.tools);
@@ -397,7 +399,7 @@ export function createRpcChildSession(
 						}
 					}
 				},
-				channelFrameLimit,
+				{ limit: channelFrameLimit, onInvalid: fail },
 			);
 			input.once("error", (error) => fail(error));
 			input.once("close", withdrawAll);
@@ -439,7 +441,7 @@ export function createRpcChildSession(
 			pi.stderr.on("data", (chunk: string) => {
 				stderr = `${stderr}${chunk}`.slice(-4000);
 			});
-			readRecords(pi.stdout, receive);
+			readRecords(pi.stdout, (record) => typeof record.type === "string", receive, { onInvalid: fail });
 			const channel = pi.stdio[channelDescriptor] as unknown as Readable & Writable;
 			listen(channel, channel);
 		}

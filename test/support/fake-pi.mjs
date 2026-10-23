@@ -118,6 +118,12 @@ function run(task) {
 		settle = () => finish("stop", "SETTLED");
 		return;
 	}
+	if (scenario === "malformed") {
+		const stream = process.env.FAKE_PI_MALFORMED_ON === "channel" ? channel : process.stdout;
+		stream.write(`${process.env.FAKE_PI_MALFORMED}\n`);
+		settle = () => finish("stop", "SETTLED");
+		return;
+	}
 	if (scenario === "hang" || scenario === "steer") {
 		settle = () => finish("stop", "SETTLED");
 		return;

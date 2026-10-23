@@ -48,6 +48,8 @@ async function fakeChild(t, scenario, spec = {}, options = {}) {
 		delete process.env.FAKE_PI_LINGER_MS;
 		delete process.env.FAKE_PI_FRAME_BYTES;
 		delete process.env.FAKE_PI_LACKS;
+		delete process.env.FAKE_PI_MALFORMED;
+		delete process.env.FAKE_PI_MALFORMED_ON;
 	});
 	const events = [];
 	const notes = [];
@@ -396,6 +398,19 @@ test("an oversized channel frame fails the child", async (t) => {
 	process.env.FAKE_PI_FRAME_BYTES = String(channelFrameLimit + 1);
 	const { handle } = await fakeChild(t, "oversize");
 	await assert.rejects(handle.run("Say done."), /channel frame over 1048576 bytes/);
+});
+
+test("a malformed record from the child fails that child", async (t) => {
+	for (const on of ["stdout", "channel"]) {
+		for (const line of ["null", "5", JSON.stringify({ id: 1 })]) {
+			await t.test(`${line} on ${on}`, async (t) => {
+				process.env.FAKE_PI_MALFORMED = line;
+				process.env.FAKE_PI_MALFORMED_ON = on;
+				const { handle } = await fakeChild(t, "malformed");
+				await assert.rejects(handle.run("Say done."), /malformed record was refused/);
+			});
+		}
+	}
 });
 
 test("readiness waits for the child runtime to connect its channel", async (t) => {
