@@ -7,9 +7,11 @@
 | `config-guide.mjs` | `driveConfig`, `keys`, `press`, `click`, `wheel`, `focusOn`, `rowOf`, `title`, `body`, `plain`, `catalogOf`, themes | Drive and read the `/workflow:config` panel. |
 | `eventually.mjs` | `eventually` | Poll a read until its condition holds, or fail with the last value. |
 | `fake-children.mjs` | `fakeChildren`, `recordingCore`, `userEntry` | Fake child session factory with scripted runs. |
+| `fake-pi.mjs` | none (subprocess) | Fake `pi --mode rpc` process; `FAKE_PI_SCENARIO` scripts the run, `FAKE_PI_RECORD` receives its argv, cwd and pid, and `<record>.launches` one pid per launch. |
 | `fake-jev.mjs` | `classifierRegistry` | Fake Jev classifier with scripted answers. |
 | `jev-routing.mjs` | `withAgentDirectory`, `turnJevRoutingOn` | Per-test agent directory; Jev routing switched on. |
-| `mcp-fixture-server.mjs` | none (subprocess) | MCP stdio server; argv `name pidDir delayMs scenario`; `authorization` adds late-tool notifications and a per-server `.calls` audit for zero-dispatch assertions. |
+| `mcp-fixture-server.mjs` | none (subprocess) | MCP stdio server; argv `name pidDir delayMs scenario`; writes `<name>.cwd`; `authorization` adds late-tool notifications and a per-server `.calls` audit for zero-dispatch assertions; `roots` records the client's `roots/list` answer in `<name>.roots`. |
+| `model-endpoint.mjs` | `modelEndpoint` | Local OpenAI-compatible endpoint registered as `fake/echo` in an agent directory's `models.json`, so a real Pi answers without credentials. |
 | `packed-subprocess.mjs` | `runPackedSubprocess` | Run a command against the packed package. |
 | `signed-checkpoint.mjs` | `withCheckpoint`, `repository` | Temporary signed repositories/worktrees with isolated HOME/XDG and ephemeral SSH fixture key. |
 | `selection.mjs` | `selectionWith` | Build a stored selection. |

@@ -432,6 +432,42 @@ test("a Git root worktree is the launch root", async () => {
 	});
 });
 
+test("a parent .pi/mcp.json absent from the worktree is reported at launch, not inherited", async () => {
+	await withWorkspace(async ({ dir, worktree }) => {
+		const launcher = createChildLauncher({
+			jevRouting,
+			delegationMode,
+			modelProfiles: absentProfiles,
+		});
+		const parent = join(dir, "parent");
+		await mkdir(join(parent, ".pi"), { recursive: true });
+		await writeFile(join(parent, ".pi", "mcp.json"), "{}");
+
+		const missing = await launcher.prepareLaunch(
+			{ role: "explore", task: "Map the code", worktree },
+			launcherContext(parent),
+		);
+		assert.equal(missing.kind, "ready");
+		assert.deepEqual(missing.warnings, [
+			`The parent's .pi/mcp.json is absent from the worktree ${await realpath(worktree)}; the child does not inherit it.`,
+		]);
+
+		await mkdir(join(worktree, ".pi"));
+		await writeFile(join(worktree, ".pi", "mcp.json"), "{}");
+		const present = await launcher.prepareLaunch(
+			{ role: "explore", task: "Map the code", worktree },
+			launcherContext(parent),
+		);
+		assert.deepEqual(present.warnings, []);
+
+		const same = await launcher.prepareLaunch(
+			{ role: "explore", task: "Map the code" },
+			launcherContext(worktree),
+		);
+		assert.deepEqual(same.warnings, []);
+	});
+});
+
 test("a request refused by a local check never asks Jev", async () => {
 	await withWorkspace(async ({ dir, worktree }) => {
 		const listsPath = join(dir, "pi-workflow-models.json");

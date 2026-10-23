@@ -67,6 +67,7 @@ import {
 } from "./child-projection.ts";
 import { shellOptions } from "./shell-settings.ts";
 import { type CommonToolSources, commonToolFactories } from "./tool-sources.ts";
+import { createRpcChildSession } from "./rpc-child.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
 import type { TodoClaim } from "./todo-extension.ts";
 import type { TaskState } from "./todo-list.ts";
@@ -104,7 +105,7 @@ interface Conversation {
 	entries: SessionEntry[];
 }
 
-interface ChildHandle {
+export interface ChildHandle {
 	sessionId: string;
 	entries(): SessionEntry[];
 	model: string | undefined;
@@ -663,7 +664,7 @@ export function createChildSessions(options: {
 	todo?: TodoLink;
 	audit: ChildAudit;
 }) {
-	const create = options.create ?? createPiChildSession;
+	const create = options.create ?? createRpcChildSession({ schedule: options.schedule });
 	const schedule = options.schedule ?? scheduleTimer;
 	const children = new Map<string, Child>();
 	const queue: Child[] = [];
