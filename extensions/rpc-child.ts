@@ -17,6 +17,7 @@ import {
 } from "./child-sessions.ts";
 import { type Schedule, scheduleTimer } from "./clock.ts";
 import { errorMessage } from "./error-message.ts";
+import { resolveClaudeBridgeExtension, resolveWebAccessExtensions } from "./web-access.ts";
 
 export const readinessDeadline = 10_000;
 
@@ -83,9 +84,18 @@ export function createRpcChildSession(
 			throw new Error("Contextual authorization is not available to RPC children.");
 		}
 		const [command, ...prefix] = options.command ?? [installedPi()];
-		const root = options.sessionRoot ?? join(getAgentDir(), "pi-workflow-children");
+		const agentDir = getAgentDir();
+		const root = options.sessionRoot ?? join(agentDir, "pi-workflow-children");
 		const sessionId = randomUUID();
 		const fork = spec.parentSession ? sessionFile(root, spec.parentSession) : undefined;
+		const resources = [
+			...(spec.model.startsWith("claude-bridge/")
+				? [await resolveClaudeBridgeExtension(agentDir, spec.project)]
+				: []),
+			...(spec.role === "explore"
+				? resolveWebAccessExtensions(agentDir, spec.project)
+				: []),
+		];
 		const tools = spec.tools.filter((tool) => !unguardedTools.has(tool));
 		const args = [
 			...prefix,
@@ -99,6 +109,7 @@ export function createRpcChildSession(
 			"--no-extensions",
 			"--extension", "builtin:mcp",
 			"--extension", "builtin:codemode",
+			...resources.flatMap((path) => ["--extension", path]),
 			"--no-skills",
 			"--no-prompt-templates",
 			"--no-themes",

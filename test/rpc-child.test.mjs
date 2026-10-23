@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
@@ -38,7 +38,7 @@ async function fakeChild(t, scenario, spec = {}, options = {}) {
 	const handle = await create({
 		cwd: dir,
 		project: { cwd: dir, trusted: false },
-		role: "explore",
+		role: "worker",
 		model: "fake/echo",
 		thinking: "off",
 		prompt: "You are a child.",
@@ -236,4 +236,71 @@ test("an RPC child refuses construction when Pi is not installed", async (t) => 
 		create({ cwd: "/tmp", project: { cwd: "/tmp", trusted: false }, model: "fake/echo", thinking: "off", tools: [], prompt: "" }),
 		/Pi was not found on PATH/,
 	);
+});
+
+async function agentWith(t, packages) {
+	const agentDir = await scratch(t);
+	const previous = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	t.after(() => {
+		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previous;
+	});
+	const modules = join(agentDir, "npm", "node_modules");
+	for (const [name, manifest] of Object.entries(packages)) {
+		await mkdir(join(modules, name, "src"), { recursive: true });
+		await writeFile(join(modules, name, "package.json"), JSON.stringify({ name, ...manifest }));
+		if (manifest.pi) await writeFile(join(modules, name, "src", "index.ts"), "export default () => {};\n");
+	}
+	await writeFile(
+		join(agentDir, "settings.json"),
+		JSON.stringify({ packages: Object.keys(packages).map((name) => `npm:${name}`) }),
+	);
+	return { modules };
+}
+
+const bridgeManifest = {
+	version: "0.9.3",
+	repository: { type: "git", url: "git+https://github.com/elidickinson/pi-claude-bridge.git" },
+	pi: { extensions: ["./src/index.ts"] },
+};
+const extensionsOf = (argv) =>
+	argv.flatMap((arg, index) => (arg === "--extension" ? [argv[index + 1]] : []));
+
+test("an explorer RPC child receives the pi-web-access extension and other roles do not", async (t) => {
+	const { modules } = await agentWith(t, { "pi-web-access": { pi: { extensions: ["./src/index.ts"] } } });
+	const explorer = await fakeChild(t, "complete", { role: "explore" });
+	await explorer.handle.run("Say done.");
+	assert.deepEqual(extensionsOf(explorer.launched().argv).slice(2), [
+		join(modules, "pi-web-access", "src", "index.ts"),
+	]);
+	const worker = await fakeChild(t, "complete");
+	await worker.handle.run("Say done.");
+	assert.deepEqual(extensionsOf(worker.launched().argv), ["builtin:mcp", "builtin:codemode"]);
+});
+
+test("a Claude Bridge RPC child receives the official provider extension and a native model child does not", async (t) => {
+	const { modules } = await agentWith(t, { "pi-claude-bridge": bridgeManifest });
+	const bridge = await fakeChild(t, "complete", { role: "worker", model: "claude-bridge/claude-haiku-4-5" });
+	await bridge.handle.run("Say done.");
+	assert.deepEqual(extensionsOf(bridge.launched().argv).slice(2), [
+		await realpath(join(modules, "pi-claude-bridge", "src", "index.ts")),
+	]);
+	const native = await fakeChild(t, "complete");
+	await native.handle.run("Say done.");
+	assert.deepEqual(extensionsOf(native.launched().argv), ["builtin:mcp", "builtin:codemode"]);
+});
+
+test("a missing pi-web-access or Claude Bridge package fails the launch with its cause", async (t) => {
+	await agentWith(t, {});
+	await assert.rejects(fakeChild(t, "complete", { role: "explore" }), /pi-web-access is not installed locally, so the explorer has no web tools/);
+	await assert.rejects(
+		fakeChild(t, "complete", { role: "worker", model: "claude-bridge/claude-haiku-4-5" }),
+		/official pi-claude-bridge package is not installed and configured/,
+	);
+});
+
+test("a pi-web-access package without an extension fails the launch with its cause", async (t) => {
+	await agentWith(t, { "pi-web-access": {} });
+	await assert.rejects(fakeChild(t, "complete", { role: "explore" }), /pi-web-access could not be loaded, so the explorer has no web tools/);
 });

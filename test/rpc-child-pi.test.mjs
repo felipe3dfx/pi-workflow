@@ -2,12 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { accessSync, constants, existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import process from "node:process";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
+
+import { DefaultPackageManager, getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 
 import { createChildAudit } from "../extensions/child-audit.ts";
 import { createChildLauncher } from "../extensions/child-launcher.ts";
@@ -68,7 +70,7 @@ function launch(t, { dir, endpoint }, cwd, project) {
 	return create({
 		cwd,
 		project,
-		role: "explore",
+		role: "worker",
 		model: endpoint.model,
 		thinking: "off",
 		prompt: "You are a child session. Answer DONE.",
@@ -174,7 +176,7 @@ test("a background child runs as a real Pi process and reaches the registry comp
 	t.after(() => core.disposeAll());
 	const started = await core.start(
 		{
-			role: "explore",
+			role: "worker",
 			contract: { prompt: "You are a child session. Answer DONE.", tools: ["read"] },
 			task: "Say done.",
 			worktree: repo,
@@ -234,4 +236,83 @@ test("a real Pi child whose model Pi cannot select fails its run instead of hang
 	assert.ok(Date.now() - started < readinessDeadline);
 	assert.match(failure.message, /Model "absent-provider\/absent-model" not found/);
 	t.diagnostic(failure.message);
+});
+
+const realAgentDir = getAgentDir();
+const installedPackage = (name) =>
+	new DefaultPackageManager({
+		cwd: process.cwd(),
+		agentDir: realAgentDir,
+		settingsManager: SettingsManager.create(process.cwd(), realAgentDir, { projectTrusted: false }),
+	}).getInstalledPath(`npm:${name}`, "user");
+
+async function install(scene) {
+	await mkdir(join(scene.agentDir, "npm"), { recursive: true });
+	await symlink(join(realAgentDir, "npm", "node_modules"), join(scene.agentDir, "npm", "node_modules"), "dir");
+}
+
+const webSkip = skip || (!installedPackage("pi-web-access") && "pi-web-access is not installed in the Pi agent directory.");
+
+test("a real Pi explorer child offers the pi-web-access tools to its model", { skip: webSkip, timeout: 60_000 }, async (t) => {
+	const scene = await fixture(t);
+	await install(scene);
+	await writeFile(join(scene.agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-web-access"] }));
+	const repo = await repository(scene.dir, "repo", {});
+	const create = createRpcChildSession({ sessionRoot: join(scene.dir, "sessions") });
+	const handle = await create({
+		cwd: repo,
+		project: { cwd: repo, trusted: false },
+		role: "explore",
+		model: scene.endpoint.model,
+		thinking: "off",
+		prompt: "You are a child session. Answer DONE.",
+		tools: ["read", "web_search", "source_check", "fetch_content", "get_search_content"],
+		modelRegistry: {},
+		shell: {},
+		onEvent() {},
+		notify() {},
+		ask: async () => "answer",
+		report() {},
+		checkpointed() {},
+	});
+	t.after(() => handle.dispose());
+	assert.equal(await handle.run("Say done."), "DONE");
+	const offered = scene.endpoint.requests[0].tools.map((tool) => tool.function.name);
+	for (const name of ["web_search", "source_check", "fetch_content", "get_search_content"]) {
+		assert.ok(offered.includes(name), `${name} missing from ${offered.join(", ")}`);
+	}
+	t.diagnostic(`offered: ${offered.join(", ")}`);
+});
+
+const bridgeSkip = skip || (!installedPackage("pi-claude-bridge") && "pi-claude-bridge is not installed in the Pi agent directory.");
+
+test("a real Pi child with a Claude Bridge model loads the provider and a missing package fails the launch", { skip: bridgeSkip, timeout: 60_000 }, async (t) => {
+	const scene = await fixture(t);
+	const repo = await repository(scene.dir, "repo", {});
+	const spec = {
+		cwd: repo,
+		project: { cwd: repo, trusted: false },
+		role: "worker",
+		model: "claude-bridge/claude-haiku-4-5",
+		thinking: "off",
+		prompt: "You are a child session.",
+		tools: ["read"],
+		modelRegistry: {},
+		shell: {},
+		onEvent() {},
+		notify() {},
+		ask: async () => "answer",
+		report() {},
+		checkpointed() {},
+	};
+	const create = createRpcChildSession({ sessionRoot: join(scene.dir, "sessions") });
+	await assert.rejects(create(spec), /official pi-claude-bridge package is not installed and configured/);
+	await install(scene);
+	await writeFile(join(scene.agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+	const handle = await create(spec);
+	t.after(() => handle.dispose());
+	const outcome = await handle.run("Reply with the single word DONE.").then((text) => ({ text }), (error) => ({ error }));
+	t.diagnostic(outcome.error ? `failed: ${outcome.error.message}` : `answered: ${outcome.text}`);
+	assert.doesNotMatch(outcome.error?.message ?? "", /not found|did not become ready|instead of the selected/);
+	assert.ok(outcome.error || outcome.text.length > 0);
 });
