@@ -123,9 +123,9 @@ export function createReportResultTool(
 	};
 }
 
-export function readLines(
+export function readRecords<Frame>(
 	stream: Readable,
-	onLine: (line: string) => void,
+	onRecord: (record: Frame) => void,
 	limit = Number.POSITIVE_INFINITY,
 ) {
 	let buffer = "";
@@ -142,7 +142,14 @@ export function readLines(
 			const line = buffer.slice(0, newline).replace(/\r$/, "");
 			buffer = buffer.slice(newline + 1);
 			if (line.length > limit) return refuse();
-			if (line) onLine(line);
+			if (!line) continue;
+			let record: Frame;
+			try {
+				record = JSON.parse(line) as Frame;
+			} catch {
+				continue;
+			}
+			onRecord(record);
 		}
 		if (buffer.length > limit) refuse();
 	});
@@ -163,13 +170,7 @@ export function parentChannel(input: Readable, output: Writable) {
 		for (const pending of waiting.values()) pending.reject(closed);
 		waiting.clear();
 	};
-	readLines(input, (line) => {
-		let reply: ParentReply;
-		try {
-			reply = JSON.parse(line) as ParentReply;
-		} catch {
-			return;
-		}
+	readRecords<ParentReply>(input, (reply) => {
 		const pending = waiting.get(reply.id);
 		if (!pending) return;
 		waiting.delete(reply.id);
@@ -216,14 +217,6 @@ function installContextual(
 	ask: (question: string, signal?: AbortSignal) => Promise<string>,
 	checkpointed: (checkpoint: Checkpoint) => Promise<unknown>,
 ) {
-	pi.registerTool(createConfiguredBashTool(config.cwd, config.shell));
-	pi.registerTool(createAskParentTool(ask, true));
-	pi.registerTool(
-		createReportResultTool(config.role, (result) =>
-			channel.request({ type: "report", result }),
-		),
-	);
-	pi.registerTool(createCheckpointTool(config.cwd, () => {}));
 	pi.setActiveTools([
 		...new Set([...pi.getActiveTools(), ...(config.contextual?.active ?? [])]),
 	]);
@@ -281,25 +274,30 @@ export async function installChildRuntime(
 		channel.request({ type: "ask", question }, signal);
 	const checkpointed = (checkpoint: Checkpoint) =>
 		channel.request({ type: "checkpoint", checkpoint }).catch(() => {});
-	if (config.contextual) {
-		await installContextual(pi, config, channel, ctx, ask, checkpointed);
-	} else {
+	const contextual = config.contextual !== undefined;
+	pi.registerTool(
+		contextual
+			? createConfiguredBashTool(config.cwd, config.shell)
+			: createChildBashTool(config.cwd, config.shell, config.checkpoint !== undefined),
+	);
+	if (config.codegraph) pi.registerTool(createChildCodeGraphTool(config.cwd));
+	pi.registerTool(createAskParentTool(ask, contextual));
+	if (contextual || reportsResult(config.role)) {
 		pi.registerTool(
-			createChildBashTool(config.cwd, config.shell, config.checkpoint !== undefined),
+			createReportResultTool(config.role, (result) =>
+				channel.request({ type: "report", result }),
+			),
 		);
-		if (config.codegraph) pi.registerTool(createChildCodeGraphTool(config.cwd));
-		pi.registerTool(createAskParentTool(ask));
-		if (reportsResult(config.role)) {
-			pi.registerTool(
-				createReportResultTool(config.role, (result) =>
-					channel.request({ type: "report", result }),
-				),
-			);
-		}
-		if (config.checkpoint) {
-			pi.registerTool(createCheckpointTool(config.checkpoint, checkpointed));
-		}
 	}
+	if (contextual) {
+		pi.registerTool(createCheckpointTool(config.cwd, () => {}));
+	} else if (config.checkpoint) {
+		pi.registerTool(createCheckpointTool(config.checkpoint, checkpointed));
+	}
+	if (contextual) {
+		await installContextual(pi, config, channel, ctx, ask, checkpointed);
+	}
+	// ADR 0017: a child loads context files after its role contract, but never APPEND_SYSTEM.
 	pi.on("before_agent_start", (event) => {
 		event.systemPromptOptions.appendSystemPrompt = "";
 	});

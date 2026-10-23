@@ -25,7 +25,7 @@ import {
 	childRuntimeFlag,
 	type ParentReply,
 	type PolicyMethod,
-	readLines,
+	readRecords,
 } from "./child-runtime.ts";
 import { type Schedule, scheduleTimer } from "./clock.ts";
 import { errorMessage } from "./error-message.ts";
@@ -249,13 +249,7 @@ export function createRpcChildSession(
 			}
 		}
 
-		function receive(line: string) {
-			let record: RpcRecord;
-			try {
-				record = JSON.parse(line) as RpcRecord;
-			} catch {
-				return;
-			}
+		function receive(record: RpcRecord) {
 			if (record.type === "response") {
 				const pending = waiting.get(record.id as string);
 				if (!pending) return;
@@ -304,15 +298,9 @@ export function createRpcChildSession(
 					)
 					.finally(() => asks.delete(id));
 			};
-			readLines(
+			readRecords<ChildFrame>(
 				input,
-				(line) => {
-					let frame: ChildFrame;
-					try {
-						frame = JSON.parse(line) as ChildFrame;
-					} catch {
-						return;
-					}
+				(frame) => {
 					if (frame.type === "ready") {
 						connected?.resolve(undefined);
 						connected = undefined;
@@ -371,7 +359,7 @@ export function createRpcChildSession(
 			pi.stderr.on("data", (chunk: string) => {
 				stderr = `${stderr}${chunk}`.slice(-4000);
 			});
-			readLines(pi.stdout, receive);
+			readRecords(pi.stdout, receive);
 			const channel = pi.stdio[channelDescriptor] as unknown as Readable & Writable;
 			listen(channel, channel);
 		}

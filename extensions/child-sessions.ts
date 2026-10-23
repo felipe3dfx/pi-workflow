@@ -331,11 +331,15 @@ function childTools(plan: Plan) {
 	];
 }
 
-const abortedBeforeLaunch = {
-	status: "refused" as const,
-	warning: "Launch refused. No child was launched.",
-	reason: "The call was aborted before the child launched.",
-};
+function refused(reason: string) {
+	return {
+		status: "refused" as const,
+		warning: "Launch refused. No child was launched.",
+		reason,
+	};
+}
+
+const abortedBeforeLaunch = refused("The call was aborted before the child launched.");
 
 interface ChildMessage {
 	customType: "pi-workflow-child-result" | "pi-workflow-child-question";
@@ -722,11 +726,7 @@ export function createChildSessions(options: {
 			const surfaces = plan.surfaces ?? [];
 			const found = claims.conflicts(plan.worktree, surfaces);
 			if (found.length > 0) {
-				return {
-					status: "refused" as const,
-					warning: "Launch refused. No child was launched.",
-					reason: conflictReason(found),
-				};
+				return refused(conflictReason(found));
 			}
 			claims.claim(id, plan.worktree, surfaces);
 		}
@@ -794,11 +794,7 @@ export function createChildSessions(options: {
 				parentSession: from?.conversation.sessionId,
 			});
 		} catch (error) {
-			return {
-				status: "refused" as const,
-				warning: "Launch refused. No child was launched.",
-				reason: `The child session could not be created: ${errorMessage(error)}`,
-			};
+			return refused(`The child session could not be created: ${errorMessage(error)}`);
 		}
 		if (handle.model !== plan.model || handle.thinking !== plan.thinking) {
 			void shutDown(handle);
@@ -813,11 +809,7 @@ export function createChildSessions(options: {
 			: plan.contract.tools.filter((tool) => !handle.tools.includes(tool));
 		if (missing.length > 0) {
 			void shutDown(handle);
-			return {
-				status: "refused" as const,
-				warning: "Launch refused. No child was launched.",
-				reason: `The child session lacks the contract tools ${missing.join(", ")}.`,
-			};
+			return refused(`The child session lacks the contract tools ${missing.join(", ")}.`);
 		}
 		if (launch.signal?.aborted) {
 			void shutDown(handle);
@@ -825,11 +817,7 @@ export function createChildSessions(options: {
 		}
 		if (launchedIn !== generation) {
 			void shutDown(handle);
-			return {
-				status: "refused" as const,
-				warning: "Launch refused. No child was launched.",
-				reason: "The session ended before the child launched.",
-			};
+			return refused("The session ended before the child launched.");
 		}
 		const createdAt = Date.now();
 		const capture = options.audit.begin({
@@ -1435,10 +1423,7 @@ export function createSpawnChildTool(
 			const claim =
 				params.todo === undefined ? undefined : todo.claim(params.todo);
 			if (claim && "reason" in claim) {
-				return notLaunched("refused", {
-					warning: "Launch refused. No child was launched.",
-					reason: claim.reason,
-				});
+				return notLaunched("refused", refused(claim.reason));
 			}
 			let child: string | undefined;
 			const settle = (run: TaskRun) =>
@@ -1447,17 +1432,16 @@ export function createSpawnChildTool(
 					: undefined;
 			const background = ctx.mode === "tui" || ctx.mode === "rpc";
 			if (params.background && !background) {
-				return notLaunched("refused", {
-					warning: "Launch refused. No child was launched.",
-					reason: `${ctx.mode} mode runs the child in the foreground and cannot run it in the background.`,
-				});
+				return notLaunched(
+					"refused",
+					refused(
+						`${ctx.mode} mode runs the child in the foreground and cannot run it in the background.`,
+					),
+				);
 			}
 			const release = background ? sessions.reserve() : () => {};
 			if (!release) {
-				return notLaunched("refused", {
-					warning: "Launch refused. No child was launched.",
-					reason: launchLimitReason,
-				});
+				return notLaunched("refused", refused(launchLimitReason));
 			}
 			try {
 				const userRequest = latestUserRequest(sessionBranch(ctx));
