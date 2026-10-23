@@ -27,6 +27,8 @@ import {
 } from "./child-runtime.ts";
 import { type Schedule, scheduleTimer } from "./clock.ts";
 import { errorMessage } from "./error-message.ts";
+import { stopTree, treeEnvironment } from "./process-tree.ts";
+import { resolveClaudeBridgeExtension, resolveWebAccessExtensions } from "./web-access.ts";
 
 export const readinessDeadline = 10_000;
 export const channelFrameLimit = 1024 * 1024;
@@ -93,9 +95,18 @@ export function createRpcChildSession(
 			throw new Error("Contextual authorization is not available to RPC children.");
 		}
 		const [command, ...prefix] = options.command ?? [installedPi()];
-		const root = options.sessionRoot ?? join(getAgentDir(), "pi-workflow-children");
+		const agentDir = getAgentDir();
+		const root = options.sessionRoot ?? join(agentDir, "pi-workflow-children");
 		const sessionId = randomUUID();
 		const fork = spec.parentSession ? sessionFile(root, spec.parentSession) : undefined;
+		const resources = [
+			...(spec.model.startsWith("claude-bridge/")
+				? [await resolveClaudeBridgeExtension(agentDir, spec.project)]
+				: []),
+			...(spec.role === "explore"
+				? resolveWebAccessExtensions(agentDir, spec.project)
+				: []),
+		];
 		const runtime: ChildRuntimeConfig = {
 			role: spec.role,
 			cwd: spec.cwd,
@@ -114,6 +125,7 @@ export function createRpcChildSession(
 			"--no-extensions",
 			"--extension", "builtin:mcp",
 			"--extension", "builtin:codemode",
+			...resources.flatMap((path) => ["--extension", path]),
 			"--extension", childRuntime,
 			`--${childRuntimeFlag}`, JSON.stringify(runtime),
 			"--no-skills",
@@ -278,10 +290,15 @@ export function createRpcChildSession(
 			if (disposed) throw new Error("The child session was stopped.");
 			const pi = spawn(command, args, {
 				cwd: spec.cwd,
+				env: { ...process.env, ...treeEnvironment(sessionId) },
 				stdio: ["pipe", "pipe", "pipe", "pipe"],
 				detached: true,
 			});
 			child = pi;
+			let swept = Promise.resolve();
+			pi.once("exit", () => {
+				swept = stopTree(sessionId);
+			});
 			exited = new Promise((resolve) => {
 				pi.once("close", (code, signal) => {
 					const tail = stderr.trim().split("\n").slice(-5).join(" ");
@@ -290,7 +307,7 @@ export function createRpcChildSession(
 							`The child Pi process exited with ${code === null ? `signal ${signal}` : `code ${code}`}.${tail ? ` ${tail}` : ""}`,
 						),
 					);
-					resolve();
+					void swept.then(resolve);
 				});
 			});
 			pi.once("error", (error) => fail(error));
@@ -390,6 +407,7 @@ export function createRpcChildSession(
 				if (!pi || pi.pid === undefined || pi.exitCode !== null || pi.signalCode !== null) {
 					return exited;
 				}
+				request("abort").catch(() => {});
 				pi.stdin?.end();
 				let cancel = () => {};
 				const grace = new Promise<boolean>((resolve) => {
@@ -397,11 +415,7 @@ export function createRpcChildSession(
 				});
 				const stopped = await Promise.race([exited.then(() => true), grace]);
 				cancel();
-				if (!stopped) {
-					try {
-						process.kill(-pi.pid, "SIGKILL");
-					} catch {}
-				}
+				if (!stopped) await stopTree(sessionId);
 				await exited;
 			},
 		};

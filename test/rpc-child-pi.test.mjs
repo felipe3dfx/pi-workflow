@@ -2,19 +2,23 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { accessSync, constants, existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import process from "node:process";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { DefaultPackageManager, getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
+
 import { createChildAudit } from "../extensions/child-audit.ts";
 import { createChildLauncher } from "../extensions/child-launcher.ts";
 import { createChildSessions } from "../extensions/child-sessions.ts";
+import { treeDeadline } from "../extensions/process-tree.ts";
 import { createRpcChildSession, readinessDeadline } from "../extensions/rpc-child.ts";
 import { eventually } from "./support/eventually.mjs";
 import { modelEndpoint } from "./support/model-endpoint.mjs";
+import { gone, parent } from "./support/process-tree.mjs";
 
 const installed = (process.env.PATH ?? "").split(delimiter).some((directory) => {
 	try {
@@ -29,8 +33,8 @@ const mcpFixture = fileURLToPath(new URL("./support/mcp-fixture-server.mjs", imp
 const git = (cwd, ...args) =>
 	execFileSync("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.com", "-c", "commit.gpgsign=false", ...args], { cwd, stdio: "pipe" });
 
-function server(name, evidence) {
-	return { command: process.execPath, args: [mcpFixture, name, evidence, "0", "roots"] };
+function server(name, evidence, scenario = "roots") {
+	return { command: process.execPath, args: [mcpFixture, name, evidence, "0", scenario] };
 }
 
 async function fixture(t, answer) {
@@ -68,7 +72,7 @@ function launch(t, { dir, endpoint }, cwd, project) {
 	return create({
 		cwd,
 		project,
-		role: "explore",
+		role: "worker",
 		model: endpoint.model,
 		thinking: "off",
 		prompt: "You are a child session. Answer DONE.",
@@ -174,7 +178,7 @@ test("a background child runs as a real Pi process and reaches the registry comp
 	t.after(() => core.disposeAll());
 	const started = await core.start(
 		{
-			role: "explore",
+			role: "worker",
 			contract: { prompt: "You are a child session. Answer DONE.", tools: ["read"] },
 			task: "Say done.",
 			worktree: repo,
@@ -236,6 +240,140 @@ test("a real Pi child whose model Pi cannot select fails its run instead of hang
 	t.diagnostic(failure.message);
 });
 
+async function descendantTree(scene) {
+	await writeFile(
+		join(scene.agentDir, "mcp.json"),
+		JSON.stringify({ mcpServers: { global: server("global", scene.evidence, "descendants") } }),
+	);
+	return async () => {
+		const [mcp, ...shell] = await eventually(
+			async () =>
+				existsSync(join(scene.evidence, "global.tree"))
+					? (await readFile(join(scene.evidence, "global.tree"), "utf8")).trim().split("\n").map(Number)
+					: [],
+			(pids) => pids.length === 3,
+		);
+		const pi = Number(execFileSync("ps", ["-o", "ppid=", "-p", String(mcp)], { encoding: "utf8" }).trim());
+		return { pi, pids: [pi, mcp, ...shell] };
+	};
+}
+
+test("a real Pi child, its MCP server and its shell descendants end within the tree deadline when the parent exits or is killed", { skip, timeout: 60_000 }, async (t) => {
+	assert.equal(treeDeadline, 2_000);
+	for (const ending of ["shutdown", "SIGKILL"]) {
+		await t.test(ending, async (t) => {
+			const scene = await fixture(t);
+			const repo = await repository(scene.dir, "repo", {});
+			const tree = await descendantTree(scene);
+			const started = await parent(t, {
+				sessionRoot: join(scene.dir, "sessions"),
+				cwd: repo,
+				model: scene.endpoint.model,
+				ending,
+			});
+			assert.equal(started.answer, "DONE");
+			const { pids } = await tree();
+			started.end();
+			const elapsed = await gone(pids, await started.exited);
+			assert.ok(elapsed < treeDeadline, `cleanup took ${elapsed} ms`);
+			t.diagnostic(`Pi, MCP server, shell and its background sleep (${pids.join(", ")}) ended ${elapsed} ms after the parent ${ending === "SIGKILL" ? "was killed" : "exited"}`);
+		});
+	}
+});
+
+test("a real Pi child that crashes leaves no MCP server or shell descendant within the tree deadline", { skip, timeout: 60_000 }, async (t) => {
+	const scene = await fixture(t);
+	const repo = await repository(scene.dir, "repo", {});
+	const tree = await descendantTree(scene);
+	const handle = await launch(t, scene, repo, { cwd: repo, trusted: false });
+	assert.equal(await handle.run("Say done."), "DONE");
+	const { pi, pids } = await tree();
+	process.kill(pi, "SIGKILL");
+	const crashed = Date.now();
+	const elapsed = await gone(pids, crashed);
+	assert.ok(elapsed < treeDeadline, `cleanup took ${elapsed} ms`);
+	t.diagnostic(`MCP server, shell and its background sleep (${pids.slice(1).join(", ")}) ended ${elapsed} ms after the child Pi was killed`);
+});
+
+const realAgentDir = getAgentDir();
+const installedPackage = (name) =>
+	new DefaultPackageManager({
+		cwd: process.cwd(),
+		agentDir: realAgentDir,
+		settingsManager: SettingsManager.create(process.cwd(), realAgentDir, { projectTrusted: false }),
+	}).getInstalledPath(`npm:${name}`, "user");
+
+async function install(scene) {
+	await mkdir(join(scene.agentDir, "npm"), { recursive: true });
+	await symlink(join(realAgentDir, "npm", "node_modules"), join(scene.agentDir, "npm", "node_modules"), "dir");
+}
+
+const webSkip = skip || (!installedPackage("pi-web-access") && "pi-web-access is not installed in the Pi agent directory.");
+
+test("a real Pi explorer child offers the pi-web-access tools to its model", { skip: webSkip, timeout: 60_000 }, async (t) => {
+	const scene = await fixture(t);
+	await install(scene);
+	await writeFile(join(scene.agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-web-access"] }));
+	const repo = await repository(scene.dir, "repo", {});
+	const create = createRpcChildSession({ sessionRoot: join(scene.dir, "sessions") });
+	const handle = await create({
+		cwd: repo,
+		project: { cwd: repo, trusted: false },
+		role: "explore",
+		model: scene.endpoint.model,
+		thinking: "off",
+		prompt: "You are a child session. Answer DONE.",
+		tools: ["read", "web_search", "source_check", "fetch_content", "get_search_content"],
+		modelRegistry: {},
+		shell: {},
+		onEvent() {},
+		notify() {},
+		ask: async () => "answer",
+		report() {},
+		checkpointed() {},
+	});
+	t.after(() => handle.dispose());
+	assert.equal(await handle.run("Say done."), "DONE");
+	const offered = scene.endpoint.requests[0].tools.map((tool) => tool.function.name);
+	for (const name of ["web_search", "source_check", "fetch_content", "get_search_content"]) {
+		assert.ok(offered.includes(name), `${name} missing from ${offered.join(", ")}`);
+	}
+	t.diagnostic(`offered: ${offered.join(", ")}`);
+});
+
+const bridgeSkip = skip || (!installedPackage("pi-claude-bridge") && "pi-claude-bridge is not installed in the Pi agent directory.");
+
+test("a real Pi child with a Claude Bridge model loads the provider and a missing package fails the launch", { skip: bridgeSkip, timeout: 60_000 }, async (t) => {
+	const scene = await fixture(t);
+	const repo = await repository(scene.dir, "repo", {});
+	const spec = {
+		cwd: repo,
+		project: { cwd: repo, trusted: false },
+		role: "worker",
+		model: "claude-bridge/claude-haiku-4-5",
+		thinking: "off",
+		prompt: "You are a child session.",
+		tools: ["read"],
+		modelRegistry: {},
+		shell: {},
+		onEvent() {},
+		notify() {},
+		ask: async () => "answer",
+		report() {},
+		checkpointed() {},
+	};
+	const create = createRpcChildSession({ sessionRoot: join(scene.dir, "sessions") });
+	await assert.rejects(create(spec), /official pi-claude-bridge package is not installed and configured/);
+	await install(scene);
+	await writeFile(join(scene.agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+	const handle = await create(spec);
+	t.after(() => handle.dispose());
+	const outcome = await handle.run("Reply with the single word DONE.").then((text) => ({ text }), (error) => ({ error }));
+	t.diagnostic(outcome.error ? `failed: ${outcome.error.message}` : `answered: ${outcome.text}`);
+	assert.doesNotMatch(outcome.error?.message ?? "", /not found|did not become ready|instead of the selected/);
+	assert.ok(outcome.error || outcome.text.length > 0);
+});
+
 function registry(t, scene, sent = []) {
 	const core = createChildSessions({
 		create: createRpcChildSession({ sessionRoot: join(scene.dir, "sessions") }),
@@ -278,7 +416,7 @@ test("a real Pi child asks the parent, the first answer wins and the child conti
 	const repo = await repository(scene.dir, "repo", {});
 	const sent = [];
 	const core = registry(t, scene, sent);
-	const started = await background(core, repo, scene, "explore", ["read"]);
+	const started = await background(core, repo, scene, "worker", ["read"]);
 	assert.equal(started.status, "queued");
 	const waiting = await eventually(() => core.get(started.id), (child) => child?.state === "waiting");
 	assert.equal(waiting.question, 1);
@@ -302,7 +440,7 @@ test("a real Pi child withdraws a question when its call is aborted", { skip, ti
 	const handle = await createRpcChildSession({ sessionRoot: join(scene.dir, "sessions") })({
 		cwd: repo,
 		project: { cwd: repo, trusted: false },
-		role: "explore",
+		role: "worker",
 		model: scene.endpoint.model,
 		thinking: "off",
 		prompt: "You are a child session.",

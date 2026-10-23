@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
@@ -10,6 +10,8 @@ import { fileURLToPath } from "node:url";
 import { channelFrameLimit, createRpcChildSession, readinessDeadline } from "../extensions/rpc-child.ts";
 import { createChildAudit } from "../extensions/child-audit.ts";
 import { createChildSessions, shutdownDeadline } from "../extensions/child-sessions.ts";
+import { treeDeadline } from "../extensions/process-tree.ts";
+import { alive, descendants, gone, parent } from "./support/process-tree.mjs";
 import { eventually } from "./support/eventually.mjs";
 
 const fakePi = fileURLToPath(new URL("./support/fake-pi.mjs", import.meta.url));
@@ -44,7 +46,7 @@ async function fakeChild(t, scenario, spec = {}, options = {}) {
 	const handle = await create({
 		cwd: dir,
 		project: { cwd: dir, trusted: false },
-		role: "explore",
+		role: "worker",
 		model: "fake/echo",
 		thinking: "off",
 		prompt: "You are a child.",
@@ -93,7 +95,7 @@ test("an RPC child runs as its own Pi process in its worktree with the selected 
 		["builtin:mcp", "builtin:codemode", childRuntime],
 	);
 	assert.deepEqual(JSON.parse(value("--pi-workflow-child")), {
-		role: "explore",
+		role: "worker",
 		cwd: dir,
 		shell: {},
 		checkpoint: false,
@@ -158,7 +160,7 @@ test("a late answer to a question the child withdrew is refused", async (t) => {
 	});
 	t.after(() => core.disposeAll());
 	const { id } = await core.start(
-		{ role: "explore", contract: { prompt: "You are a child.", tools: [] }, task: "Ask.", worktree: dir, model: "fake/echo", thinking: "off", chosenBy: "parent", references: [] },
+		{ role: "worker", contract: { prompt: "You are a child.", tools: [] }, task: "Ask.", worktree: dir, model: "fake/echo", thinking: "off", chosenBy: "parent", references: [] },
 		{ background: true, modelRegistry: {}, project: () => ({ cwd: dir, trusted: false }), shell: () => ({}) },
 	);
 	await eventually(() => core.get(id), (child) => child?.state === "waiting");
@@ -329,8 +331,14 @@ test("an RPC child steers, reports undelivered steering and aborts", async (t) =
 	await assert.rejects(run, /aborted/);
 });
 
-test("disposing an RPC child kills a process that ignores shutdown after the deadline", async (t) => {
+test("cancelling an RPC child asks it to abort, then kills its whole process tree after the shutdown deadline", async (t) => {
 	const waits = [];
+	const tree = await descendants(t);
+	const commands = join(await scratch(t), "commands");
+	process.env.FAKE_PI_COMMANDS = commands;
+	t.after(() => {
+		delete process.env.FAKE_PI_COMMANDS;
+	});
 	const { handle, launched } = await fakeChild(t, "linger", {}, {
 		schedule(run, ms) {
 			waits.push(ms);
@@ -339,10 +347,52 @@ test("disposing an RPC child kills a process that ignores shutdown after the dea
 		},
 	});
 	await handle.run("Say done.");
-	const { pid } = launched();
+	const pids = [launched().pid, ...(await tree())];
 	await handle.dispose();
 	assert.ok(waits.includes(shutdownDeadline));
-	assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+	assert.ok(readFileSync(commands, "utf8").split("\n").includes("abort"));
+	assert.deepEqual(pids.filter(alive), []);
+});
+
+test("an RPC child that crashes leaves no descendant within the tree deadline", async (t) => {
+	assert.equal(treeDeadline, 2_000);
+	const tree = await descendants(t);
+	const { handle } = await fakeChild(t, "crash");
+	const run = assert.rejects(handle.run("Say done."), /exited with code 7/);
+	const pids = await tree();
+	await run;
+	const crashed = Date.now();
+	await eventually(() => pids.filter(alive), (left) => left.length === 0);
+	assert.ok(Date.now() - crashed < treeDeadline);
+});
+
+test("a parent that exits or is killed leaves no RPC child or descendant within the tree deadline", async (t) => {
+	for (const ending of ["shutdown", "SIGKILL"]) {
+		await t.test(ending, async (t) => {
+			const tree = await descendants(t);
+			const dir = await scratch(t);
+			const record = join(dir, "record.json");
+			process.env.FAKE_PI_SCENARIO = "linger";
+			process.env.FAKE_PI_RECORD = record;
+			t.after(() => {
+				delete process.env.FAKE_PI_SCENARIO;
+				delete process.env.FAKE_PI_RECORD;
+			});
+			const started = await parent(t, {
+				command: [process.execPath, fakePi],
+				sessionRoot: join(dir, "sessions"),
+				cwd: dir,
+				model: "fake/echo",
+				ending,
+			});
+			assert.equal(started.answer, "DONE");
+			const pids = [JSON.parse(readFileSync(record, "utf8")).pid, ...(await tree())];
+			started.end();
+			const elapsed = await gone(pids, await started.exited);
+			assert.ok(elapsed < treeDeadline, `cleanup took ${elapsed} ms`);
+			t.diagnostic(`no child process remains ${elapsed} ms after the parent ${ending === "SIGKILL" ? "was killed" : "exited"}`);
+		});
+	}
 });
 
 test("an RPC child refuses contextual authorization instead of dropping it", async (t) => {
@@ -363,4 +413,73 @@ test("an RPC child refuses construction when Pi is not installed", async (t) => 
 		create({ cwd: "/tmp", project: { cwd: "/tmp", trusted: false }, model: "fake/echo", thinking: "off", tools: [], prompt: "" }),
 		/Pi was not found on PATH/,
 	);
+});
+
+async function agentWith(t, packages) {
+	const agentDir = await scratch(t);
+	const previous = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	t.after(() => {
+		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previous;
+	});
+	const modules = join(agentDir, "npm", "node_modules");
+	for (const [name, manifest] of Object.entries(packages)) {
+		await mkdir(join(modules, name, "src"), { recursive: true });
+		await writeFile(join(modules, name, "package.json"), JSON.stringify({ name, ...manifest }));
+		if (manifest.pi) await writeFile(join(modules, name, "src", "index.ts"), "export default () => {};\n");
+	}
+	await writeFile(
+		join(agentDir, "settings.json"),
+		JSON.stringify({ packages: Object.keys(packages).map((name) => `npm:${name}`) }),
+	);
+	return { modules };
+}
+
+const bridgeManifest = {
+	version: "0.9.3",
+	repository: { type: "git", url: "git+https://github.com/elidickinson/pi-claude-bridge.git" },
+	pi: { extensions: ["./src/index.ts"] },
+};
+const extensionsOf = (argv) =>
+	argv.flatMap((arg, index) => (arg === "--extension" ? [argv[index + 1]] : []));
+
+test("an explorer RPC child receives the pi-web-access extension and other roles do not", async (t) => {
+	const { modules } = await agentWith(t, { "pi-web-access": { pi: { extensions: ["./src/index.ts"] } } });
+	const explorer = await fakeChild(t, "complete", { role: "explore" });
+	await explorer.handle.run("Say done.");
+	assert.deepEqual(extensionsOf(explorer.launched().argv).slice(2), [
+		join(modules, "pi-web-access", "src", "index.ts"),
+		childRuntime,
+	]);
+	const worker = await fakeChild(t, "complete");
+	await worker.handle.run("Say done.");
+	assert.deepEqual(extensionsOf(worker.launched().argv), ["builtin:mcp", "builtin:codemode", childRuntime]);
+});
+
+test("a Claude Bridge RPC child receives the official provider extension and a native model child does not", async (t) => {
+	const { modules } = await agentWith(t, { "pi-claude-bridge": bridgeManifest });
+	const bridge = await fakeChild(t, "complete", { role: "worker", model: "claude-bridge/claude-haiku-4-5" });
+	await bridge.handle.run("Say done.");
+	assert.deepEqual(extensionsOf(bridge.launched().argv).slice(2), [
+		await realpath(join(modules, "pi-claude-bridge", "src", "index.ts")),
+		childRuntime,
+	]);
+	const native = await fakeChild(t, "complete");
+	await native.handle.run("Say done.");
+	assert.deepEqual(extensionsOf(native.launched().argv), ["builtin:mcp", "builtin:codemode", childRuntime]);
+});
+
+test("a missing pi-web-access or Claude Bridge package fails the launch with its cause", async (t) => {
+	await agentWith(t, {});
+	await assert.rejects(fakeChild(t, "complete", { role: "explore" }), /pi-web-access is not installed locally, so the explorer has no web tools/);
+	await assert.rejects(
+		fakeChild(t, "complete", { role: "worker", model: "claude-bridge/claude-haiku-4-5" }),
+		/official pi-claude-bridge package is not installed and configured/,
+	);
+});
+
+test("a pi-web-access package without an extension fails the launch with its cause", async (t) => {
+	await agentWith(t, { "pi-web-access": {} });
+	await assert.rejects(fakeChild(t, "complete", { role: "explore" }), /pi-web-access could not be loaded, so the explorer has no web tools/);
 });

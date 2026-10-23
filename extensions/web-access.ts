@@ -150,6 +150,21 @@ export async function explorerWeb(agentDir: string, project: ParentProject) {
 	}
 }
 
+export function resolveWebAccessExtensions(
+	agentDir: string,
+	project: ParentProject,
+): string[] {
+	const directory = webAccessDirectory(agentDir, project);
+	if (directory === undefined) {
+		throw new Error(`${webAccessPackage} is not installed locally, so the explorer has no web tools.`);
+	}
+	const paths = entries(directory);
+	if (paths.length === 0) {
+		throw new Error(`${webAccessPackage} could not be loaded, so the explorer has no web tools: ${directory} declares no extension.`);
+	}
+	return paths;
+}
+
 function repositoryIdentity(value: unknown): string | undefined {
 	const input = typeof value === "object" && value !== null
 		? (value as { url?: unknown }).url

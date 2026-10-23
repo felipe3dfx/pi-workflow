@@ -1,4 +1,5 @@
-import { appendFileSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { Socket } from "node:net";
 
 const argv = process.argv.slice(2);
@@ -13,6 +14,13 @@ if (process.env.FAKE_PI_RECORD) {
 		JSON.stringify({ argv, cwd: process.cwd(), pid: process.pid }),
 	);
 	appendFileSync(`${process.env.FAKE_PI_RECORD}.launches`, `${process.pid}\n`);
+}
+if (process.env.FAKE_PI_TREE) {
+	const tree = process.env.FAKE_PI_TREE;
+	const server = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore" });
+	const shell = spawn("/bin/sh", ["-c", 'sleep 300 & echo $! >> "$1"; wait', "sh", tree], { detached: true, stdio: "ignore" });
+	appendFileSync(tree, `${server.pid}\n${shell.pid}\n`);
+	while (readFileSync(tree, "utf8").trim().split("\n").length < 3) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
 }
 if (scenario === "linger") setInterval(() => {}, 1000);
 if (scenario === "refuse") {
@@ -163,6 +171,7 @@ process.stdin.on("data", (chunk) => {
 	for (let newline = buffer.indexOf("\n"); newline >= 0; newline = buffer.indexOf("\n")) {
 		const command = JSON.parse(buffer.slice(0, newline));
 		buffer = buffer.slice(newline + 1);
+		if (process.env.FAKE_PI_COMMANDS) appendFileSync(process.env.FAKE_PI_COMMANDS, `${command.type}\n`);
 		handlers[command.type]?.(command);
 	}
 });
