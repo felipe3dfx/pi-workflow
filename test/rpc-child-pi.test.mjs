@@ -20,7 +20,7 @@ import { companionMetadataPath, loadCompanionsFromPath } from "../extensions/com
 import { eventually } from "./support/eventually.mjs";
 import { pi as installedPi, piSkip as skip, piVersion } from "./support/installed-pi.mjs";
 import { modelEndpoint } from "./support/model-endpoint.mjs";
-import { gone, parent } from "./support/process-tree.mjs";
+import { alive, gone, parent } from "./support/process-tree.mjs";
 import { selectionWith } from "./support/selection.mjs";
 import { withCheckpoint } from "./support/signed-checkpoint.mjs";
 
@@ -62,7 +62,7 @@ async function repository(dir, name, files) {
 	return repo;
 }
 
-function launch(t, { dir, endpoint }, cwd, project) {
+function launch(t, { dir, endpoint }, cwd, project, tools = ["read", "mcp__*"]) {
 	const create = createRpcChildSession({ sessionRoot: join(dir, "sessions") });
 	return create({
 		cwd,
@@ -71,7 +71,7 @@ function launch(t, { dir, endpoint }, cwd, project) {
 		model: endpoint.model,
 		thinking: "off",
 		prompt: "You are a child session. Answer DONE.",
-		tools: ["read", "mcp__*"],
+		tools,
 		shell: {},
 		onEvent() {},
 		notify() {},
@@ -295,6 +295,20 @@ test("a real Pi child that crashes leaves no MCP server or shell descendant with
 	const elapsed = await gone(pids, crashed);
 	assert.ok(elapsed < treeDeadline, `cleanup took ${elapsed} ms`);
 	t.diagnostic(`MCP server, shell and its background sleep (${pids.slice(1).join(", ")}) ended ${elapsed} ms after the child Pi was killed`);
+});
+
+test("a real Pi child that ends cleanly leaves no background process of its shell within the tree deadline", { skip, timeout: 60_000 }, async (t) => {
+	const scene = await fixture(t, [{ tool: "bash", args: { command: "sleep 600 >/dev/null 2>&1 & echo $!" } }, "DONE"]);
+	const repo = await repository(scene.dir, "repo", {});
+	const handle = await launch(t, scene, repo, { cwd: repo, trusted: false }, ["read", "bash"]);
+	assert.equal(await handle.run("Start the sleep."), "DONE");
+	const sleep = Number(toolResults(scene.endpoint.requests[1]).at(-1).trim());
+	assert.ok(alive(sleep));
+	const since = Date.now();
+	await handle.dispose();
+	const elapsed = await gone([sleep], since);
+	assert.ok(elapsed < treeDeadline, `cleanup took ${elapsed} ms`);
+	t.diagnostic(`the background sleep ${sleep} ended ${elapsed} ms after the child Pi ended`);
 });
 
 const realAgentDir = getAgentDir();

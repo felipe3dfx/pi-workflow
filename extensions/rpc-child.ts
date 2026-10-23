@@ -417,9 +417,7 @@ export function createRpcChildSession(
 				detached: true,
 			});
 			child = pi;
-			pi.once("exit", (code) => {
-				if (code !== 0) sweep();
-			});
+			pi.once("exit", () => sweep());
 			exited = new Promise((resolve) => {
 				pi.once("close", (code, signal) => {
 					const tail = stderr.trim().split("\n").slice(-5).join(" ");
@@ -428,7 +426,7 @@ export function createRpcChildSession(
 							`The child Pi process exited with ${code === null ? `signal ${signal}` : `code ${code}`}.${tail ? ` ${tail}` : ""}`,
 						),
 					);
-					void (swept ?? Promise.resolve()).then(resolve);
+					void sweep().then(resolve);
 				});
 			});
 			pi.once("error", (error) => fail(error));
