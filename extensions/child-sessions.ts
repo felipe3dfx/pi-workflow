@@ -1119,6 +1119,7 @@ export function createChildSessions(options: {
 	}
 
 	async function disposeAll() {
+		detached = true;
 		generation += 1;
 		const ended = [...children.values()];
 		const working = ended.filter((child) => isWorking(child.record.state));
