@@ -192,7 +192,7 @@ _Avoid_: edit scope, lock path
 
 ### Claim
 
-A writing child's hold on its write surfaces, from launch until it is no longer a working child. A launch whose write surfaces overlap another claim in the same worktree is refused. Read-only roles and the parent hold no claim.
+A writing child's hold on its write surfaces, from launch until it is no longer a working child. A launch whose write surfaces overlap another claim in the same worktree is refused. A child without write authority and the parent hold no claim.
 
 _Avoid_: lock, reservation, lease
 

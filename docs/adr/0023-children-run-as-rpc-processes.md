@@ -20,7 +20,7 @@ A construction failure, which happens before a child record exists, is a refused
 
 Amendment of ADR 0010: `/reload` keeps every child process, its session and its channel. The re-attaching parent adopts the registry, Pending and Consumed results, open questions and in-flight answers, claims, audit and transcript capture, and Todo links, without loss or duplication. Every other end of the parent session still ends its children and drops its pending results.
 
-Replacement of D7: a writing child's launch carries the write surfaces the parent declares, and takes a claim on them before it is queued. A writer that declares none claims the whole checkout. The claim is held while the child is queued, running or waiting and released when it ends; `continue_child` claims again; a reload rebuilds the claims of surviving children. Claims are compared only within the same resolved worktree, by canonical path folded to lower case on every filesystem. An entry that cannot be interpreted overlaps everything. Read-only roles claim nothing. A refused launch names the conflicting entries. Admission covers children only; the parent's own writes are outside it.
+Replacement of D7: a writing child's launch carries the write surfaces the parent declares, and takes a claim on them before it is queued. A writer that declares none claims the whole checkout. The claim is held while the child is queued, running or waiting and released when it ends; `continue_child` claims again; a reload rebuilds the claims of surviving children. Claims are compared only within the same resolved worktree, by canonical path folded to lower case on every filesystem. An entry that cannot be interpreted overlaps everything. A child claims only when it holds write authority: an operational role whose contract tools include `edit` or `write`, or a contextual child whose active tools include `edit`, `write` or `bash`; read-only roles claim nothing. A refused launch names the conflicting entries. Admission covers children only; the parent's own writes are outside it.
 
 ## Considered Options
 
@@ -39,8 +39,9 @@ Accepted risks:
 - Each running child costs about 130 to 150 MiB of resident memory before MCP servers and model context. The Launch limit and the five running children are unchanged.
 - Case folding can refuse a launch that would not conflict on a case-sensitive filesystem.
 - The parent can overwrite a child's edits in a shared checkout.
-- A contextual child has no child toolbox and cannot launch grandchildren, and common tool factories cannot cross into a child process; a contextual launch that selects them is refused.
-- macOS termination of the whole tree runs the Linux mechanism and is unverified on macOS. A descendant that clears its environment escapes it.
+- A contextual child has no child toolbox and cannot launch grandchildren, and common tool factories cannot cross into a child process; a contextual launch that selects them is refused. Only path-based common tool sources load in a contextual child. Accepted by the Owner in the review of PR #306 (DEC-2).
+- macOS termination of the whole tree runs the Linux mechanism and is unverified on macOS.
+- Process-tree membership is the `PI_WORKFLOW_PROCESS_TREE` environment mark, because Pi starts MCP servers and shells in sessions of their own and a reparented orphan keeps no ancestry. A descendant that clears its environment escapes the sweep. Accepted by the Owner in the review of PR #306 (DEC-1); an environment-independent guarantee needs a sandbox and is a separate ticket.
 - The design is verified against Pi 1.4.0 only, so the supported range starts there: the SDK peers in `package.json` and the Pi CLI requirement are `>=1.4.0`.
 
 R13 and R14 of ADR 0014 no longer apply. ADR 0014's remaining accepted risks about what a child can reach (R2 to R11) still describe the child process.
