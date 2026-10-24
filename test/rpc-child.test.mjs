@@ -543,12 +543,12 @@ test("readiness refuses a child that lacks a contract tool, except codegraph whi
 	const lacking = await fakeChild(t, "complete");
 	await assert.rejects(lacking.handle.run("Say done."), /lacks the contract tools bash\./);
 	process.env.FAKE_PI_LACKS = "codegraph";
-	const unseated = await fakeChild(t, "complete", { role: "explore", tools: ["read", "codegraph", "ask_parent"] });
+	const unseated = await fakeChild(t, "complete", { role: "verify", tools: ["read", "codegraph", "ask_parent"] });
 	assert.equal(await unseated.handle.run("Say done."), "DONE");
 	const capabilityOff = Object.fromEntries(capabilities.map((capability) => [capability, false]));
 	replaceSelection({ schemaVersion: 1, capabilities: { ...capabilityOff, codegraph: true }, expectations: {} });
 	t.after(() => replaceSelection({ schemaVersion: 1, capabilities: capabilityOff, expectations: {} }));
-	const seated = await fakeChild(t, "complete", { role: "explore", tools: ["read", "codegraph", "ask_parent"] });
+	const seated = await fakeChild(t, "complete", { role: "verify", tools: ["read", "codegraph", "ask_parent"] });
 	await assert.rejects(seated.handle.run("Say done."), /lacks the contract tools codegraph\./);
 });
 
