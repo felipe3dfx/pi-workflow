@@ -34,21 +34,23 @@ import {
 	createCodeGraphTool,
 	syncCodeGraphTool,
 } from "./codegraph-tool.ts";
-import { createChildAudit } from "./child-audit.ts";
+import { type ChildAudit, createChildAudit } from "./child-audit.ts";
 import { createChildLauncher } from "./child-launcher.ts";
 import { runDelegationCheck } from "./delegation-check.ts";
 import { registerDelegationMode } from "./delegation-mode.ts";
 import { registerChildResultCards } from "./child-result-card.ts";
+import type { ChildSessionFactory } from "./child-handle.ts";
 import {
-	type ChildSessionFactory,
+	type ResidentChildren,
 	createChildQueryTools,
 	createChildSessions,
 	createContinueChildTool,
 	createSpawnChildTool,
 	isWorking,
 } from "./child-sessions.ts";
-import type { Schedule } from "./clock.ts";
+import { type Schedule, scheduleTimer } from "./clock.ts";
 import { registerChildrenBox } from "./children-box.ts";
+import { pruneChildSessions } from "./rpc-child.ts";
 import { createFooterHints, registerChrome } from "./chrome.ts";
 import { createChildrenViews } from "./children-view.ts";
 import { createModelProfiles, report } from "./model-profiles.ts";
@@ -65,6 +67,16 @@ import {
 	sessionActionAuthorization,
 } from "./action-authorization.ts";
 import { type CommonToolSources, commonToolFactories } from "./tool-sources.ts";
+
+// /reload replaces this module but not the Pi process, so the children of the old runtime wait here for the new one.
+const RESIDENT = Symbol.for("pi-workflow:child-sessions:resident");
+const slots = globalThis as Record<
+	symbol,
+	| { children: ResidentChildren; audit: Awaited<ReturnType<ChildAudit["detach"]>> }
+	| undefined
+>;
+// /reload re-imports every extension within seconds; a runtime that has not adopted by then failed to load, and its children must not run unsupervised.
+export const adoptionDeadline = 30_000;
 
 const usage =
 	"Usage: /workflow:status | /workflow:doctor | /workflow:config | /workflow:models | /workflow:subagents | /workflow:delegation-check";
@@ -282,6 +294,13 @@ export default function piWorkflowExtension(
 
 	pi.on("session_start", async (_event, ctx) => {
 		currentCtx = ctx;
+		await pruneChildSessions();
+		const resident = slots[RESIDENT];
+		slots[RESIDENT] = undefined;
+		if (resident) {
+			audit.adopt(resident.audit);
+			childSessions.adopt(resident.children);
+		}
 		const read = seating.read();
 		if (read.status === "refused") report(ctx, read.reason, "error");
 		await seating.seat(read.status === "ready" ? read.selection : undefined);
@@ -289,20 +308,24 @@ export default function piWorkflowExtension(
 	pi.on("tool_execution_start", async (_event, ctx) => {
 		currentCtx = ctx;
 	});
-	pi.on("session_shutdown", async (event, ctx) => {
+	pi.on("session_shutdown", async (event) => {
 		currentCtx = undefined;
 		childrenViews.close();
-		const ended = await childSessions.disposeAll();
-		const closed = audit.close();
-		if (event.reason === "reload" && ended > 0) {
-			pi.appendEntry("pi-workflow-child-trace", { reason: "reload", ended });
-			report(
-				ctx,
-				`/reload ended ${ended} working ${ended === 1 ? "child" : "children"}.`,
-				"warning",
-			);
+		if (event.reason === "reload") {
+			const children = await childSessions.detach();
+			const resident = { children, audit: await audit.detach() };
+			slots[RESIDENT] = resident;
+			(options.childSessions?.schedule ?? scheduleTimer)(async () => {
+				if (slots[RESIDENT] !== resident) return;
+				slots[RESIDENT] = undefined;
+				audit.adopt(resident.audit);
+				await childSessions.abandon(resident.children);
+				await audit.close();
+			}, adoptionDeadline);
+			return;
 		}
-		await closed;
+		await childSessions.disposeAll();
+		await audit.close();
 	});
 
 	async function runCatalogCommand(

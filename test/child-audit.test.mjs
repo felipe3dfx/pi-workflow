@@ -40,10 +40,10 @@ function auditedCore(
 		audit,
 		...(clock ? { schedule: clock } : {}),
 	});
+	let launches = 0;
 	async function launch(launchOptions = {}) {
-		const started = await core.start(plan, {
+		const started = await core.start({ ...plan, surfaces: [`surface-${launches++}`] }, {
 			background: true,
-			modelRegistry: {},
 			project: () => ({ cwd: "/tmp", trusted: false }),
 			shell: () => ({}),
 			...launchOptions,
@@ -279,7 +279,6 @@ test("without a parent session identity the child runs and live inspection warns
 	});
 	const { id } = await core.start(plan, {
 		background: true,
-		modelRegistry: {},
 		project: () => ({ cwd: "/tmp", trusted: false }),
 		shell: () => ({}),
 	});
@@ -330,7 +329,6 @@ test("a live continuation gets its own audit identity linked to the retained pre
 	await eventually(async () => core.get(id).state, (state) => state === "completed");
 
 	const continued = await core.resume(id, "Now add a test", {
-		modelRegistry: {},
 		project: () => ({ cwd: "/tmp", trusted: false }),
 		shell: () => ({}),
 	});

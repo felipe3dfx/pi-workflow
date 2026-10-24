@@ -106,7 +106,7 @@ _Avoid_: install, enable
 
 ### Child session
 
-A Pi session distinct from the parent session. It belongs to a harness capability, not to a companion package.
+A Pi session distinct from the parent session, running as its own Pi process in its worktree. It belongs to a harness capability, not to a companion package.
 
 _Avoid_: subagent package, workflow run
 
@@ -172,7 +172,7 @@ _Avoid_: active child, live child
 
 ### Interrupted child record
 
-A historical record of a previously working child whose terminal Run state is unavailable after reopening or reloading the parent session. It represents an unknown terminal outcome, not active or resumable execution.
+A historical record of a previously working child whose terminal Run state is unavailable after reopening the parent session. It represents an unknown terminal outcome, not active or resumable execution. A reload keeps working children, so it interrupts none.
 
 ### Incomplete transcript
 
@@ -183,6 +183,18 @@ A child's audit transcript whose completeness cannot be established because capt
 The fixed bound on a parent's working children. A launch beyond it is refused before Jev is asked or a child session is created.
 
 _Avoid_: running limit, concurrency limit
+
+### Write surface
+
+A repository-relative path or pattern that a writing child declares it may change in its worktree. A writer that declares none has the whole checkout as its write surface.
+
+_Avoid_: edit scope, lock path
+
+### Claim
+
+A writing child's hold on its write surfaces, from launch until it is no longer a working child. A launch whose write surfaces overlap another claim in the same worktree is refused. A child without write authority and the parent hold no claim.
+
+_Avoid_: lock, reservation, lease
 
 ### Group
 

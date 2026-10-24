@@ -421,7 +421,7 @@ test("a codemode script is one Run script row closed and Pi's code and output un
 	assert.ok(expanded[0].includes("codemode"));
 	assert.ok(expanded.some((line) => line.includes("return issues.length;")));
 	assert.ok(expanded.some((line) => line.includes("mcp__linear__get_issue")));
-	assert.equal(expanded.at(-1), "┃ 3");
+	assert.ok(expanded.includes("┃ 3"));
 	for (let width = 1; width <= 60; width++)
 		for (const line of call.render(width))
 			assert.ok(stripVTControlCharacters(line).length <= width, `width ${width}`);

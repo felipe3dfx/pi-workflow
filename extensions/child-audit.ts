@@ -4,7 +4,8 @@ import { crc32 } from "node:zlib";
 
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
-import { askParentTool, shutdownDeadline } from "./child-sessions.ts";
+import { askParentTool } from "./child-runtime.ts";
+import { shutdownDeadline } from "./child-handle.ts";
 import { errorMessage } from "./error-message.ts";
 
 export interface AuditIdentity {
@@ -836,6 +837,43 @@ export function createChildAudit(options: {
 		return { closed: sealed.size, expired: closing.length - sealed.size };
 	}
 
+	async function detach() {
+		const moving = [...records.values()];
+		records.clear();
+		for (const record of moving) live.delete(record);
+		let cancel = () => {};
+		await Promise.race([
+			Promise.all(
+				moving.map(async (record) => {
+					while (record.draining) await record.work;
+				}),
+			),
+			new Promise<void>((resolve) => {
+				cancel = timer(resolve, limits.drain);
+			}),
+		]);
+		cancel();
+		return moving;
+	}
+
+	function adopt(moving: readonly Capture[]) {
+		for (const record of moving) {
+			if (record.retired) continue;
+			records.set(record.identity.child, record);
+			if (!record.cause && working.has(record.state ?? "queued")) live.add(record);
+			admittedBytes += record.held.bytes;
+			admittedEntries += record.held.entries;
+		}
+	}
+
+	function resume(child: string) {
+		const record = records.get(child);
+		if (record) return captureOf(record);
+		const ended = blank({ child } as AuditIdentity);
+		ended.closed = true;
+		return captureOf(ended);
+	}
+
 	function enqueued(record: Capture, current: Queued) {
 		for (const source of ["steer", "follow-up"] as const) {
 			const left = [...record.queued[source]];
@@ -1066,11 +1104,7 @@ export function createChildAudit(options: {
 		};
 	}
 
-	function begin(identity: Omit<AuditIdentity, "parent">) {
-		const record = blank(
-			snapshot(identity, Number.POSITIVE_INFINITY).value as AuditIdentity,
-		);
-		records.set(identity.child, record);
+	function captureOf(record: Capture) {
 		const guarded =
 			<A extends unknown[]>(observe: (...args: A) => unknown) =>
 			(...args: A) => {
@@ -1080,7 +1114,7 @@ export function createChildAudit(options: {
 					fail(record, `Audit capture failed: ${errorMessage(error)}.`);
 				}
 			};
-		const capture = {
+		return {
 			event: guarded((value: AgentSessionEvent) => event(record, value)),
 			reported: guarded((result: unknown) =>
 				admit(record, { kind: "report", result }),
@@ -1104,6 +1138,14 @@ export function createChildAudit(options: {
 				});
 			}),
 		};
+	}
+
+	function begin(identity: Omit<AuditIdentity, "parent">) {
+		const record = blank(
+			snapshot(identity, Number.POSITIVE_INFINITY).value as AuditIdentity,
+		);
+		records.set(identity.child, record);
+		const capture = captureOf(record);
 		try {
 			const parent = options.parent();
 			if (!parent) throw new Error("the parent session has no identity");
@@ -2080,7 +2122,19 @@ export function createChildAudit(options: {
 		});
 	}
 
-	return { begin, execution, list, read, segment, repair, repairCatalog, close };
+	return {
+		begin,
+		resume,
+		execution,
+		list,
+		read,
+		segment,
+		repair,
+		repairCatalog,
+		close,
+		detach,
+		adopt,
+	};
 }
 
 const working = new Set(["queued", "running", "waiting"]);

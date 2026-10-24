@@ -5,6 +5,7 @@ import {
 import {
 	type AutocompleteProvider,
 	type EditorTheme,
+	renderFakeCursor,
 	type SelectListTheme,
 	stripTerminalSequences,
 	type TUI,
@@ -22,7 +23,7 @@ const TOP = "\u0000chrome-top";
 const BOTTOM = "\u0000chrome-bottom";
 const SCROLL = "\u0000chrome-scroll";
 const EMPTY = "\u0000chrome-empty";
-const CURSOR = "\x1b[7m \x1b[0m";
+const CURSOR = renderFakeCursor(" ");
 const RESET = "\x1b[0m";
 const inset = 4;
 const gutter = 2;
@@ -59,12 +60,7 @@ function withPlaceholder(line: string, text: string) {
 
 function tint(line: string, theme: ChromeTheme) {
 	const [open, close] = theme.fg("text", "\u0000").split("\u0000");
-	const kept = line
-		.split(RESET)
-		.join(RESET + open)
-		.split(close)
-		.join(close + open);
-	return open + kept + close;
+	return open + line.split(close).join(close + open) + close;
 }
 
 function argumentHint(description: string | undefined) {
@@ -167,7 +163,7 @@ class ChromeEditor extends CustomEditor {
 		const ghost = truncateToWidth(hint, room, "…");
 		if (!spaced) return head + CURSOR + theme.fg("muted", ghost);
 		const [first, ...others] = [...ghost];
-		return `${head}\x1b[7m${first}${RESET}${theme.fg("muted", others.join(""))}`;
+		return `${head}${renderFakeCursor(first)}${theme.fg("muted", others.join(""))}`;
 	}
 
 	protected renderTopBorder(width: number, hiddenLineCount: number) {

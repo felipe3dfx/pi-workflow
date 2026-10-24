@@ -1,4 +1,4 @@
-// Relies on Pi 1.0.0 chat container internals (InteractiveMode.chatContainer, ToolExecutionComponent fields).
+// Relies on Pi 1.4.0 chat container internals (InteractiveMode.chatContainer, ToolExecutionComponent fields).
 import {
 	AssistantMessageComponent,
 	CustomMessageComponent,

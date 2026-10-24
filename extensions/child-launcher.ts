@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -33,6 +33,7 @@ export interface LaunchRequest {
 	worktree?: string;
 	checkpoint?: string;
 	references?: string[];
+	surfaces?: string[];
 	userRequest?: string;
 	userMessageId?: string;
 }
@@ -116,6 +117,7 @@ type Ready = {
 	thinking: ModelThinkingLevel;
 	chosenBy: "parent";
 	references: string[];
+	surfaces?: string[];
 	checkpoint?: CheckpointGrant;
 	jev?: ClassifierResult;
 };
@@ -307,6 +309,13 @@ function profilePair(
 		);
 	}
 	return entry;
+}
+
+function missingMcpConfiguration(parent: string, worktree: string) {
+	const file = join(".pi", "mcp.json");
+	return existsSync(join(parent, file)) && !existsSync(join(worktree, file))
+		? [`The parent's .pi/mcp.json is absent from the worktree ${worktree}; the child does not inherit it.`]
+		: [];
 }
 
 export function createChildLauncher(options: ChildLauncherOptions) {
@@ -593,11 +602,12 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 					? `${request.task}\n\nRead these paths first:\n${paths.map((path) => `- ${path}`).join("\n")}`
 					: request.task,
 			worktree,
-			warnings: [],
+			warnings: missingMcpConfiguration(ctx.cwd, worktree),
 			model: pair.model,
 			thinking: pair.thinking,
 			chosenBy: "parent",
 			references,
+			...(request.surfaces ? { surfaces: request.surfaces } : {}),
 			...(checkpoint ? { checkpoint } : {}),
 			...jev,
 		};

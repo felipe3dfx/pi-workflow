@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { initTheme } from "@earendil-works/pi-coding-agent";
-import { CURSOR_MARKER, KeybindingsManager, stripTerminalSequences, TUI_KEYBINDINGS, visibleWidth } from "@earendil-works/pi-tui";
+import { CURSOR_MARKER, KeybindingsManager, renderFakeCursor, stripTerminalSequences, TUI_KEYBINDINGS, visibleWidth } from "@earendil-works/pi-tui";
 
 import {
 	createAskUserChoiceTool,
@@ -442,7 +442,7 @@ test("the active free-text row scrolls to keep the cursor and the answer's end v
 	const lines = render(30);
 	const freeTextLine = lines.at(-1);
 	assert.ok(freeTextLine.startsWith("❯ "));
-	assert.ok(freeTextLine.includes("\x1b[7m"), "expected an inverse-video cursor marker");
+	assert.ok(freeTextLine.includes(renderFakeCursor(" ")), "expected a fake cursor at the answer's end");
 	assert.ok(freeTextLine.includes(longAnswer.slice(-5)), "expected the tail of the long answer to stay visible");
 	send("\r");
 	await pending;

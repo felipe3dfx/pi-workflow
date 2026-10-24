@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { appendFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -6,6 +7,12 @@ import { setTimeout as delay } from "node:timers/promises";
 const [name, pidDir, delayMs = "0", scenario] = process.argv.slice(2);
 writeFileSync(join(pidDir, `${name}.pid`), String(process.pid));
 appendFileSync(join(pidDir, `${name}.pids`), `${process.pid}\n`);
+writeFileSync(join(pidDir, `${name}.cwd`), process.cwd());
+if (scenario === "descendants") {
+	const tree = join(pidDir, `${name}.tree`);
+	appendFileSync(tree, `${process.pid}\n`);
+	spawn("/bin/sh", ["-c", 'sleep 300 & printf "%s\\n%s\\n" "$$" "$!" >> "$1"; wait', "sh", tree], { detached: true, stdio: "ignore" });
+}
 
 let lateToolAdvertised = false;
 const lateToolScenario = scenario === "late-tool" || scenario === "authorization";
@@ -66,6 +73,13 @@ const results = {
 
 createInterface({ input: process.stdin }).on("line", async (line) => {
 	const message = JSON.parse(line);
+	if (scenario === "roots" && message.method === "notifications/initialized") {
+		process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", id: "roots", method: "roots/list" })}\n`);
+	}
+	if (message.id === "roots" && message.method === undefined) {
+		writeFileSync(join(pidDir, `${name}.roots`), JSON.stringify(message.result ?? message.error));
+		return;
+	}
 	if (message.id === undefined) return;
 	if (message.method === "initialize") await delay(Number(delayMs));
 	const result = results[message.method];

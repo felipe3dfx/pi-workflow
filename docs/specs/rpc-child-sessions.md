@@ -143,9 +143,9 @@ All items are recommendations unless marked mandatory. Vocabulary follows `codeb
 
 Out of scope: surviving a parent exit and recovering pending results (#204); an operating-system sandbox; Windows tree termination; admission for the parent's own writes; recursive delegation; a universal tool registry; changing model selection.
 
-Accepted risks: macOS whole-tree termination unverified (user, brief); same-user risk of ADR 0014 R1 persists, since process separation is not a security boundary; case folding may refuse a launch that does not conflict on a case-sensitive filesystem (deliberate, user); the parent can overwrite a child's edits in a shared checkout.
+Accepted risks: macOS whole-tree termination unverified (user, brief); same-user risk of ADR 0014 R1 persists, since process separation is not a security boundary; case folding may refuse a launch that does not conflict on a case-sensitive filesystem (deliberate, user); the parent can overwrite a child's edits in a shared checkout; a descendant that clears its environment escapes the process-tree sweep, since membership is an environment mark and a sandbox is out of scope (user, PR #306 review DEC-1); common tool factories are refused in contextual children and only path-based common tool sources load (user, PR #306 review DEC-2).
 
-Open for tickets: the macOS mechanism and the supported Pi version range (tested on 1.4.0 only; `package.json` still declares SDK peers `>=1.0.4`).
+Open for tickets: the macOS mechanism. The supported Pi version range was decided during implementation: `>=1.4.0` (ADR 0023).
 
 ## 12. Shared-capability invariants and handoff
 

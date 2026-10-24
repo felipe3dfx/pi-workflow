@@ -3,6 +3,7 @@
 ## Status
 
 Acceptance: approval and merge of the introducing PR.
+Superseded by [ADR 0023](0023-children-run-as-rpc-processes.md), which carries its Claude Bridge resolution and failure constraints forward for children that run as RPC processes.
 
 ## Context
 
