@@ -1,8 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { stripVTControlCharacters } from "node:util";
 
-import { CURSOR_MARKER, visibleWidth } from "@earendil-works/pi-tui";
+import {
+	CURSOR_MARKER,
+	renderFakeCursor,
+	stripTerminalSequences,
+	visibleWidth,
+} from "@earendil-works/pi-tui";
 
 import { createChromeEditor } from "../extensions/chrome-editor.ts";
 
@@ -43,8 +47,7 @@ async function editor(theme = marked) {
 	return input;
 }
 
-const visible = (line) =>
-	stripVTControlCharacters(line.replace(CURSOR_MARKER, ""));
+const visible = (line) => stripTerminalSequences(line);
 
 const first = (input, width = 100) => input.render(width)[1];
 
@@ -197,8 +200,7 @@ test("typed text carries the text token, including after the cursor", async () =
 	input.handleInput("\x1b[D");
 	const moved = first(input);
 	assert.equal(moved.split(CURSOR_MARKER).length, 2);
-	const tail = moved.slice(moved.indexOf(CURSOR_MARKER));
-	assert.ok(tail.includes("\x1b[0m<text>d"));
+	assert.ok(moved.includes(`<text>hello wor${CURSOR_MARKER}${renderFakeCursor("l")}d`));
 });
 
 test("the slash token keeps its own color inside the text color", async () => {

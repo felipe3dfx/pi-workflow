@@ -1,0 +1,11 @@
+{"kind": "tui-command", "mode": "normal", "pid": 953419, "command": "/fleet-start"}
+Traceback (most recent call last):
+  File "/home/felipe3dfx/Documents/repos/pi-workflow-rpc-proto/.agents/prototypes/rpc-children/lifecycle-probe.py", line 47, in <module>
+    for mode in ["normal","sigkill"]:run(mode)
+                                     ~~~^^^^^^
+  File "/home/felipe3dfx/Documents/repos/pi-workflow-rpc-proto/.agents/prototypes/rpc-children/lifecycle-probe.py", line 31, in run
+    wait(lambda rr:any(r.get("event")=="started" and r.get("pid")==p.pid for r in rr))
+    ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/felipe3dfx/Documents/repos/pi-workflow-rpc-proto/.agents/prototypes/rpc-children/lifecycle-probe.py", line 12, in wait
+    raise TimeoutError("event not seen; tail="+str(rows()[-5:]))
+TimeoutError: event not seen; tail=[{'source': 'parent', 'time': 1792687380.937, 'pid': 953419, 'event': 'load', 'generation': 1, 'hasChild': False}, {'source': 'parent', 'time': 1792687381.075, 'pid': 953419, 'event': 'session_start', 'generation': 1}, {'source': 'parent', 'time': 1792687381.888, 'pid': 953419, 'event': 'child-stderr', 'text': '  File "/home/felipe3dfx/Documents/repos/pi-workflow-rpc-proto/.agents/prototypes/rpc-children/supervisor.py", line 9\n    ps=subprocess.Popen(["ps","-eo","pid=,ppid=,pgid="],stdout=subprocess.PIPE,text=True)\\n rows=[list(map(int,l.split())) for l in ps.communicate()[0].splitlines()]\n                                                                                          ^\nSyntaxError: unexpected character after line continuation character\n'}]

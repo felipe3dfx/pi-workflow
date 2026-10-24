@@ -1,4 +1,3 @@
-import { createPiChildSession } from "../../extensions/child-sessions.ts";
 import { DefaultPackageManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import process from "node:process";
 
@@ -13,21 +12,4 @@ export function installedPackagePath(agentDir, source, scope = "user") {
 			projectTrusted: false,
 		}),
 	}).getInstalledPath(source, scope);
-}
-
-export function piChildSession(spec) {
-	return createPiChildSession({
-		project: { cwd: spec.cwd, trusted: false },
-		role: "explore",
-		model: "faux/child",
-		thinking: "high",
-		prompt: "You are a child session.",
-		tools: ["read", "web_search"],
-		shell: {},
-		onEvent: () => {},
-		notify: () => {},
-		ask: async () => "answer",
-		report: () => {},
-		...spec,
-	});
 }

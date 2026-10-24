@@ -1,0 +1,112 @@
+.agents/prototypes/rpc-children/child.ts:15:7 lint/suspicious/noImplicitAnyLet ━━━━━━━━━━━━━━━━━━━━━
+
+  × This variable implicitly has the any type.
+
+    13 │ 	sock.on("data", (data) => {
+    14 │ 		buffer += data;
+  > 15 │ 		let i;
+       │ 		    ^
+    16 │ 		while ((i = buffer.indexOf("\n")) >= 0) {
+    17 │ 			const m = JSON.parse(buffer.slice(0, i));
+
+  i Variable declarations without type annotation and initialization implicitly have the any type. Declare a type or initialize the variable with some value.
+
+
+.agents/prototypes/rpc-children/child.ts:16:11 lint/suspicious/noAssignInExpressions ━━━━━━━━━━━━━━━
+
+  × The assignment should not be in an expression.
+
+    14 │ 		buffer += data;
+    15 │ 		let i;
+  > 16 │ 		while ((i = buffer.indexOf("\n")) >= 0) {
+       │ 		        ^^^^^^^^^^^^^^^^^^^^^^^^
+    17 │ 			const m = JSON.parse(buffer.slice(0, i));
+    18 │ 			buffer = buffer.slice(i + 1);
+
+  i The use of assignments in expressions is confusing.
+    Expressions are often considered as side-effect free.
+
+
+.agents/prototypes/rpc-children/parent.ts:11:13 lint/suspicious/noAssignInExpressions ━━━━━━━━━━━━━━
+
+  × The assignment should not be in an expression.
+
+     9 │ 	);
+    10 │ export default function (pi) {
+  > 11 │ 	const s = (globalThis[key] ??= {
+       │ 	           ^^^^^^^^^^^^^^^^^^^^^
+  > 12 │ 		generation: 0,
+        ...
+  > 16 │ 		sockets: [],
+  > 17 │ 	});
+       │ 	^
+    18 │ 	s.generation++;
+    19 │ 	log({ event: "load", generation: s.generation, hasChild: !!s.child });
+
+  i The use of assignments in expressions is confusing.
+    Expressions are often considered as side-effect free.
+
+
+.agents/prototypes/rpc-children/parent.ts:55:10 lint/suspicious/noImplicitAnyLet ━━━━━━━━━━━━━━━━━━━
+
+  × This variable implicitly has the any type.
+
+    53 │ 				sock.on("data", (data) => {
+    54 │ 					buffer += data;
+  > 55 │ 					let i;
+       │ 					    ^
+    56 │ 					while ((i = buffer.indexOf("\n")) >= 0) {
+    57 │ 						const m = JSON.parse(buffer.slice(0, i));
+
+  i Variable declarations without type annotation and initialization implicitly have the any type. Declare a type or initialize the variable with some value.
+
+
+.agents/prototypes/rpc-children/parent.ts:56:14 lint/suspicious/noAssignInExpressions ━━━━━━━━━━━━━━
+
+  × The assignment should not be in an expression.
+
+    54 │ 					buffer += data;
+    55 │ 					let i;
+  > 56 │ 					while ((i = buffer.indexOf("\n")) >= 0) {
+       │ 					        ^^^^^^^^^^^^^^^^^^^^^^^^
+    57 │ 						const m = JSON.parse(buffer.slice(0, i));
+    58 │ 						buffer = buffer.slice(i + 1);
+
+  i The use of assignments in expressions is confusing.
+    Expressions are often considered as side-effect free.
+
+
+.agents/prototypes/rpc-children/parent.ts:90:9 lint/suspicious/noImplicitAnyLet ━━━━━━━━━━━━━━━━━━━━
+
+  × This variable implicitly has the any type.
+
+    88 │ 			s.child.stdout.on("data", (data) => {
+    89 │ 				s.buffer += data;
+  > 90 │ 				let i;
+       │ 				    ^
+    91 │ 				while ((i = s.buffer.indexOf("\n")) >= 0) {
+    92 │ 					const m = JSON.parse(s.buffer.slice(0, i));
+
+  i Variable declarations without type annotation and initialization implicitly have the any type. Declare a type or initialize the variable with some value.
+
+
+.agents/prototypes/rpc-children/parent.ts:91:13 lint/suspicious/noAssignInExpressions ━━━━━━━━━━━━━━
+
+  × The assignment should not be in an expression.
+
+    89 │ 				s.buffer += data;
+    90 │ 				let i;
+  > 91 │ 				while ((i = s.buffer.indexOf("\n")) >= 0) {
+       │ 				        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    92 │ 					const m = JSON.parse(s.buffer.slice(0, i));
+    93 │ 					s.buffer = s.buffer.slice(i + 1);
+
+  i The use of assignments in expressions is confusing.
+    Expressions are often considered as side-effect free.
+
+
+Checked 4 files in 8ms. Fixed 4 files.
+Found 7 errors.
+check ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Some errors were emitted while running checks.

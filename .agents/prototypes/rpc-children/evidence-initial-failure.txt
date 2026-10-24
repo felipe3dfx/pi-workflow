@@ -1,0 +1,31 @@
+{"kind": "environment", "binary": "/home/felipe3dfx/.local/share/mise/installs/pi/1.4.0/pi/pi", "version": "1.4.0", "root": "/tmp/rpc-children.xDI0Ax", "node": "v26.12.1"}
+{"kind": "git", "cwd": "/tmp/rpc-children.xDI0Ax/repo", "args": ["init"], "stdout": "Initialized empty Git repository in /tmp/rpc-children.xDI0Ax/repo/.git/\n", "stderr": ""}
+{"kind": "git", "cwd": "/tmp/rpc-children.xDI0Ax/repo", "args": ["add", "."], "stdout": "", "stderr": ""}
+{"kind": "git", "cwd": "/tmp/rpc-children.xDI0Ax/repo", "args": ["-c", "user.name=proto", "-c", "user.email=proto@example.invalid", "-c", "commit.gpgsign=false", "commit", "-m", "fixture"], "stdout": "[main (root-commit) a30d243] fixture\n 1 file changed, 1 insertion(+)\n create mode 100644 .pi/mcp.json\n", "stderr": ""}
+{"kind": "git", "cwd": "/tmp/rpc-children.xDI0Ax/repo", "args": ["worktree", "add", "/tmp/rpc-children.xDI0Ax/worktree"], "stdout": "HEAD is now at a30d243 fixture\n", "stderr": "Preparing worktree (new branch 'worktree')\n"}
+Traceback (most recent call last):
+  File "/home/felipe3dfx/Documents/repos/pi-workflow-rpc-proto/.agents/prototypes/rpc-children/probe.py", line 87, in <module>
+    if __name__=="__main__":asyncio.run(main())
+                            ~~~~~~~~~~~^^^^^^^^
+  File "/usr/lib/python3.14/asyncio/runners.py", line 205, in run
+    return runner.run(main)
+           ~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.14/asyncio/runners.py", line 128, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/lib/python3.14/asyncio/base_events.py", line 720, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/home/felipe3dfx/Documents/repos/pi-workflow-rpc-proto/.agents/prototypes/rpc-children/probe.py", line 84, in main
+    wt=await q4()
+       ^^^^^^^^^^
+  File "/home/felipe3dfx/Documents/repos/pi-workflow-rpc-proto/.agents/prototypes/rpc-children/probe.py", line 53, in q4
+    record("Q4",trust=trust,pid=r.p.pid,cwd=str(wt),args=r.args,state=state,mcp=(ROOT/"mcp.log").read_text()[len(before):]);await r.close()
+                                                                                ~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/usr/lib/python3.14/pathlib/__init__.py", line 787, in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors, newline=newline) as f:
+         ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.14/pathlib/__init__.py", line 771, in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/tmp/rpc-children.xDI0Ax/mcp.log'

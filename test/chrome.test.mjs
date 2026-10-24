@@ -1,8 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { stripVTControlCharacters } from "node:util";
 
-import { visibleWidth } from "@earendil-works/pi-tui";
+import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 
 import {
 	createFooterHints,
@@ -28,7 +27,7 @@ const theme = {
 	bg: (_color, text) => text,
 };
 
-const plain = (lines) => lines.map((line) => stripVTControlCharacters(line));
+const plain = (lines) => lines.map((line) => stripTerminalSequences(line));
 
 const header = {
 	branch: "main",
@@ -91,7 +90,7 @@ const half = { ...header, usage: { tokens: 128_000, contextWindow: 256_000 } };
 test("the header shows the brand, cwd, and branch on the left and the working children and a context meter on the right", () => {
 	const [line] = renderHeader(painted, half, 87);
 	assert.equal(
-		stripVTControlCharacters(line),
+		stripTerminalSequences(line),
 		` π-workflow · ~/D/repos/pi-workflow · main${" ".repeat(7)}◆ 2 · ctx ▰ ▰ ▰ ▰ ▱ ▱ ▱ ▱  50% · 256K`,
 	);
 	assert.equal(visibleWidth(line), 86);
@@ -139,7 +138,7 @@ test("the context meter rounds the percentage, fills eight cells, and colors bot
 			80,
 		);
 		assert.match(
-			stripVTControlCharacters(line),
+			stripTerminalSequences(line),
 			new RegExp(`ctx ${bar}  ${pct}% · 100K$`),
 		);
 		assert.equal(styleOf(line, bar), color, bar);
@@ -164,7 +163,7 @@ test("the header shows ctx ? with the window when tokens are unknown and drops t
 		usage: { tokens: null, contextWindow: 256_000 },
 	};
 	const [line] = renderHeader(painted, unknown, 80);
-	assert.match(stripVTControlCharacters(line), /◆ 2 · ctx \? · 256K$/);
+	assert.match(stripTerminalSequences(line), /◆ 2 · ctx \? · 256K$/);
 	assert.equal(styleOf(line, "ctx"), "dim");
 	assert.equal(styleOf(line, "?"), "dim");
 	assert.equal(styleOf(line, "256K"), "dim");

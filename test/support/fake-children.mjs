@@ -5,7 +5,7 @@ export function userEntry(id, text) {
 	return { type: "message", id, message: { role: "user", content: text } };
 }
 
-export function fakeChildren({ model, thinking, tools, run, dispose, onCreate } = {}) {
+export function fakeChildren({ run, dispose, onCreate } = {}) {
 	const created = [];
 	const create = async (spec) => {
 		await onCreate?.();
@@ -14,6 +14,7 @@ export function fakeChildren({ model, thinking, tools, run, dispose, onCreate } 
 			tasks: [],
 			aborts: 0,
 			disposals: 0,
+			removals: 0,
 			result: Promise.withResolvers(),
 			entries: [userEntry(`entry-${created.length}`, spec.prompt)],
 			steered: [],
@@ -37,9 +38,6 @@ export function fakeChildren({ model, thinking, tools, run, dispose, onCreate } 
 		return {
 			sessionId: `session-${created.length - 1}`,
 			entries: () => child.entries,
-			model: typeof model === "function" ? model(created.length - 1, spec) : (model ?? spec.model),
-			thinking: thinking ?? spec.thinking,
-			tools: tools ?? spec.tools,
 			run: async (task) => {
 				child.tasks.push(task);
 				return run ? run(task, child.spec) : child.result.promise;
@@ -61,6 +59,9 @@ export function fakeChildren({ model, thinking, tools, run, dispose, onCreate } 
 			dispose: async () => {
 				child.disposals += 1;
 				await dispose?.(child);
+			},
+			removeSession: async () => {
+				child.removals += 1;
 			},
 		};
 	};
@@ -90,21 +91,22 @@ export function recordingCore({
 		schedule,
 		audit: createChildAudit({ root: "", parent: () => undefined }),
 	});
+	let launches = 0;
 	async function launch(role = "worker") {
 		const started = await core.start(
 			{
 				role,
-				contract: { prompt: "Contract", tools: [] },
+				contract: { prompt: "Contract", tools: role === "worker" ? ["read", "edit"] : ["read"] },
 				task: "Fix the failing test",
 				worktree: "/tmp",
 				model: "p/m",
 				thinking: "medium",
 				chosenBy: "parent",
 				references: [],
+				surfaces: [`surface-${launches++}`],
 			},
 			{
 				background: true,
-				modelRegistry: {},
 				project: () => ({ cwd: "/tmp", trusted: false }),
 				shell: () => ({}),
 			},
@@ -114,6 +116,7 @@ export function recordingCore({
 	}
 	return {
 		core,
+		children,
 		sent,
 		reports,
 		launch,

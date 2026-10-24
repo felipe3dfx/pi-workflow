@@ -1,0 +1,65 @@
+COMMAND: git branch --show-current
+prototype/rpc-children
+COMMAND: git diff --name-only
+CREATED FILES:
+.agents/prototypes/rpc-children/child.ts
+.agents/prototypes/rpc-children/evidence-assertions.txt
+.agents/prototypes/rpc-children/evidence-biome-fix.txt
+.agents/prototypes/rpc-children/evidence-check-initial-failure.txt
+.agents/prototypes/rpc-children/evidence-check.txt
+.agents/prototypes/rpc-children/evidence-cleanup-initial.txt
+.agents/prototypes/rpc-children/evidence-cleanup.txt
+.agents/prototypes/rpc-children/evidence-final-status.txt
+.agents/prototypes/rpc-children/evidence-initial-failure.txt
+.agents/prototypes/rpc-children/evidence-mcp-final.jsonl
+.agents/prototypes/rpc-children/evidence-q1-cache-isolated.jsonl
+.agents/prototypes/rpc-children/evidence-q2-final.jsonl
+.agents/prototypes/rpc-children/evidence-q2-harness-failure.jsonl
+.agents/prototypes/rpc-children/evidence-q2.jsonl
+.agents/prototypes/rpc-children/evidence-q3-final.jsonl
+.agents/prototypes/rpc-children/evidence-q3-harness-failure.txt
+.agents/prototypes/rpc-children/evidence-q3-initial.jsonl
+.agents/prototypes/rpc-children/evidence-q3.jsonl
+.agents/prototypes/rpc-children/evidence-q4.jsonl
+.agents/prototypes/rpc-children/evidence-q4-q1.jsonl
+.agents/prototypes/rpc-children/lifecycle-probe.py
+.agents/prototypes/rpc-children/mcp-server.mjs
+.agents/prototypes/rpc-children/parent.ts
+.agents/prototypes/rpc-children/probe.py
+.agents/prototypes/rpc-children/README.md
+.agents/prototypes/rpc-children/scratch-path.txt
+.agents/prototypes/rpc-children/small.ts
+.agents/prototypes/rpc-children/supervisor.py
+.agents/prototypes/rpc-children/tools-probe.py
+.agents/prototypes/rpc-children/validate-evidence.py
+COMMAND: git status --short --untracked-files=all
+?? .agents/prototypes/rpc-children/README.md
+?? .agents/prototypes/rpc-children/child.ts
+?? .agents/prototypes/rpc-children/evidence-assertions.txt
+?? .agents/prototypes/rpc-children/evidence-biome-fix.txt
+?? .agents/prototypes/rpc-children/evidence-check-initial-failure.txt
+?? .agents/prototypes/rpc-children/evidence-check.txt
+?? .agents/prototypes/rpc-children/evidence-cleanup-initial.txt
+?? .agents/prototypes/rpc-children/evidence-cleanup.txt
+?? .agents/prototypes/rpc-children/evidence-final-status.txt
+?? .agents/prototypes/rpc-children/evidence-initial-failure.txt
+?? .agents/prototypes/rpc-children/evidence-mcp-final.jsonl
+?? .agents/prototypes/rpc-children/evidence-q1-cache-isolated.jsonl
+?? .agents/prototypes/rpc-children/evidence-q2-final.jsonl
+?? .agents/prototypes/rpc-children/evidence-q2-harness-failure.jsonl
+?? .agents/prototypes/rpc-children/evidence-q2.jsonl
+?? .agents/prototypes/rpc-children/evidence-q3-final.jsonl
+?? .agents/prototypes/rpc-children/evidence-q3-harness-failure.txt
+?? .agents/prototypes/rpc-children/evidence-q3-initial.jsonl
+?? .agents/prototypes/rpc-children/evidence-q3.jsonl
+?? .agents/prototypes/rpc-children/evidence-q4-q1.jsonl
+?? .agents/prototypes/rpc-children/evidence-q4.jsonl
+?? .agents/prototypes/rpc-children/lifecycle-probe.py
+?? .agents/prototypes/rpc-children/mcp-server.mjs
+?? .agents/prototypes/rpc-children/parent.ts
+?? .agents/prototypes/rpc-children/probe.py
+?? .agents/prototypes/rpc-children/scratch-path.txt
+?? .agents/prototypes/rpc-children/small.ts
+?? .agents/prototypes/rpc-children/supervisor.py
+?? .agents/prototypes/rpc-children/tools-probe.py
+?? .agents/prototypes/rpc-children/validate-evidence.py

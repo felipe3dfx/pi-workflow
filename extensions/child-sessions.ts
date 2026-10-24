@@ -8,52 +8,38 @@ import type {
 	ModelThinkingLevel,
 	UserMessage,
 } from "@earendil-works/pi-ai";
-import {
-	type AgentSessionEvent,
-	createAgentSession,
-	createCodemodeExtension,
-	createMcpExtension,
-	DefaultResourceLoader,
-	type ExtensionAPI,
-	type ExtensionContext,
-	type ExtensionFactory,
-	type ExtensionHandler,
-	getAgentDir,
-	type ModelRuntime,
-	type SessionEntry,
-	SessionManager,
-	SettingsManager,
-	type ToolDefinition,
+import type {
+	AgentSessionEvent,
+	ExtensionContext,
+	SessionEntry,
+	ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { type Static, Type } from "typebox";
+import { Type } from "typebox";
 
 import type { ChildAudit, ChildCapture } from "./child-audit.ts";
-import {
-	type ActionAuthorization,
-	type AuthorizationDecision,
-	installActionAuthorization,
-	sessionActionAuthorization,
+import type {
+	ActionAuthorization,
+	AuthorizationDecision,
 } from "./action-authorization.ts";
-import { type ChildShell, createChildBashTool } from "./child-bash.ts";
+import type { ChildShell } from "./child-bash.ts";
+import {
+	type ChildHandle,
+	type ChildSessionFactory,
+	mcpTools,
+	shutdownDeadline,
+} from "./child-handle.ts";
 import {
 	type Checkpoint,
 	type CheckpointGrant,
 	checkpointTool,
-	createCheckpointTool,
 } from "./child-checkpoint.ts";
 import type { createChildLauncher } from "./child-launcher.ts";
-import { createChildCodeGraphTool } from "./codegraph-tool.ts";
 import { answerCard } from "./child-result-card.ts";
 import { hidden, outputText } from "./compact-tools.ts";
 import { type Schedule, scheduleTimer } from "./clock.ts";
 import { seated } from "./shell.ts";
 import { errorMessage } from "./error-message.ts";
-import {
-	explorerWeb,
-	resolveClaudeBridgeExtension,
-	type ParentProject,
-	webAccessTools,
-} from "./web-access.ts";
+import { type ParentProject, webAccessTools } from "./web-access.ts";
 import {
 	type ChildResult,
 	checkpointLines,
@@ -61,15 +47,16 @@ import {
 	needsNoReason,
 	projectChild,
 	reportsResult,
-	resultParameters,
-	verdictNeedsNoReason,
 	verdictSucceeded,
 } from "./child-projection.ts";
 import { shellOptions } from "./shell-settings.ts";
-import { type CommonToolSources, commonToolFactories } from "./tool-sources.ts";
+import { type CommonToolSources, defaultActiveTools } from "./tool-sources.ts";
+import { createRpcChildSession } from "./rpc-child.ts";
+import { askParentTool, reportResultTool } from "./child-runtime.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
 import type { TodoClaim } from "./todo-extension.ts";
 import type { TaskState } from "./todo-list.ts";
+import { conflictReason, createWriteClaims } from "./write-claims.ts";
 
 const packageVersion = (
 	JSON.parse(
@@ -77,48 +64,9 @@ const packageVersion = (
 	) as { version: string }
 ).version;
 
-interface ChildSpec {
-	authorization?: ActionAuthorization;
-	sources?: CommonToolSources;
-	cwd: string;
-	project: ParentProject;
-	role: string;
-	model: string;
-	thinking: ModelThinkingLevel;
-	prompt: string;
-	tools: string[];
-	modelRegistry: ExtensionContext["modelRegistry"];
-	shell: ChildShell;
-	onEvent(event: AgentSessionEvent): void;
-	notify(message: string): void;
-	ask(question: string, signal?: AbortSignal): Promise<string>;
-	report(result: ChildResult): void;
-	checkpoint?: CheckpointGrant;
-	checkpointed(checkpoint: Checkpoint): void;
-	entries?: SessionEntry[];
-	parentSession?: string;
-}
-
 interface Conversation {
 	sessionId: string;
-	entries: SessionEntry[];
 }
-
-interface ChildHandle {
-	sessionId: string;
-	entries(): SessionEntry[];
-	model: string | undefined;
-	thinking: string;
-	tools: string[];
-	run(task: string): Promise<string>;
-	steer(text: string): Promise<void>;
-	clearQueue(): string[];
-	abort(): Promise<void>;
-	dispose(): Promise<void>;
-	pendingAuthorizations?(): AuthorizationDecision[];
-}
-
-export type ChildSessionFactory = (spec: ChildSpec) => Promise<ChildHandle>;
 
 type Plan = {
 	role: string;
@@ -129,6 +77,7 @@ type Plan = {
 	thinking: ModelThinkingLevel;
 	chosenBy: "parent";
 	references: string[];
+	surfaces?: string[];
 	checkpoint?: CheckpointGrant;
 };
 
@@ -167,10 +116,28 @@ export interface ChildRecord {
 
 export type Answerer = "parent" | "operator";
 
+interface Port {
+	event(event: AgentSessionEvent): void;
+	ask(question: string, signal?: AbortSignal): Promise<string>;
+	report(result: ChildResult): void;
+	notify(message: string): void;
+	checkpointed(checkpoint: Checkpoint): void;
+}
+
+interface Question {
+	number: number;
+	signal?: AbortSignal;
+	resolve(answer: string): void;
+	reject(error: Error): void;
+	release?(): void;
+}
+
 interface Child {
 	record: ChildRecord;
 	plan: Plan;
 	handle: ChildHandle;
+	port: Port;
+	running?: Promise<string>;
 	watch: ReturnType<typeof createWatch>;
 	capture: ChildCapture;
 	conversation?: Conversation;
@@ -183,11 +150,7 @@ interface Child {
 	asked: number;
 	answers: Map<number, { by: Answerer; text: string }>;
 	withdrawn: Set<number>;
-	question?: {
-		number: number;
-		resolve(answer: string): void;
-		reject(error: Error): void;
-	};
+	question?: Question;
 }
 
 export interface ChildTrace {
@@ -205,7 +168,6 @@ export interface ChildTrace {
 
 const runningLimit = 5;
 const launchLimit = 10;
-export const shutdownDeadline = 1000;
 const stallMs = 4 * 60_000;
 const toolStallMs = 30 * 60_000;
 
@@ -266,6 +228,30 @@ export function isWorking(state: ChildState) {
 	return state === "queued" || state === "running" || state === "waiting";
 }
 
+type Replay = (port: Port) => void;
+
+function hold(port: Port) {
+	const held: Replay[] = [];
+	port.event = (event) => held.push((next) => next.event(event));
+	port.report = (result) => held.push((next) => next.report(result));
+	port.notify = (message) => held.push((next) => next.notify(message));
+	port.checkpointed = (checkpoint) =>
+		held.push((next) => next.checkpointed(checkpoint));
+	port.ask = (question, signal) =>
+		new Promise<string>((resolve, reject) => {
+			held.push((next) => void next.ask(question, signal).then(resolve, reject));
+		});
+	return held;
+}
+
+export interface ResidentChildren {
+	children: { child: Child; held: Replay[] }[];
+	queue: string[];
+	consumed: Set<string>;
+	linked: Map<number, string>;
+	pending: ChildRecord[];
+}
+
 function childDetails(record: ChildRecord, now = Date.now()) {
 	const projected = projectChild(record, now);
 	return {
@@ -290,31 +276,9 @@ export type ChildDetails = ReturnType<typeof childDetails> & {
 	question?: number;
 };
 
-function parentRuntime(
-	registry: ExtensionContext["modelRegistry"],
-): ModelRuntime | undefined {
-	// Extensions only see the ModelRegistry facade; its private runtime carries the
-	// parent's extension-registered providers and runtime API keys.
-	const runtime = (registry as unknown as { runtime?: Partial<ModelRuntime> })
-		.runtime;
-	return typeof runtime?.getModel === "function"
-		? (runtime as ModelRuntime)
-		: undefined;
-}
-
 function parentProject(ctx: ExtensionContext): ParentProject {
 	return { cwd: ctx.cwd, trusted: ctx.isProjectTrusted() };
 }
-
-export const askParentTool = "ask_parent";
-const reportResultTool = "report_result";
-
-const mcpTools = [
-	"mcp__*",
-	"list_mcp_resources",
-	"list_mcp_resource_templates",
-	"read_mcp_resource",
-];
 
 function childTools(plan: Plan) {
 	return [
@@ -327,291 +291,16 @@ function childTools(plan: Plan) {
 	];
 }
 
-const askParentParameters = Type.Object({
-	question: Type.String({ description: "One question for the parent." }),
-});
-
-export function createAskParentTool(
-	ask: (question: string, signal?: AbortSignal) => Promise<string>,
-	contextual = false,
-) {
+function refused(reason: string) {
 	return {
-		name: askParentTool,
-		label: "Ask Parent",
-		description: contextual
-			? "Ask the parent about missing facts or authority. A failed consultation leaves the action held, not permitted; continue only independent authorized work."
-			: "Ask the parent session one question and wait for its answer. Use it only when you are blocked and the answer changes your next step; a command reserved for the parent is not a reason to ask. An error result means no answer will come; continue without one.",
-		parameters: askParentParameters,
-		async execute(
-			_toolCallId: string,
-			params: Static<typeof askParentParameters>,
-			signal?: AbortSignal,
-		) {
-			return {
-				content: [
-					{ type: "text" as const, text: await ask(params.question, signal) },
-				],
-				details: {},
-			};
-		},
+		status: "refused" as const,
+		warning: "Launch refused. No child was launched.",
+		reason,
 	};
 }
 
-function parentMcp(project: ParentProject): ExtensionFactory {
-	const mcp = createMcpExtension();
-	// Pi does not export its MCP config loader, and its default loader reads the session's cwd,
-	// which for a child is the worktree.
-	const atParentProject = (ctx: ExtensionContext): ExtensionContext =>
-		Object.create(ctx, { cwd: { value: project.cwd } });
-	return (pi) =>
-		mcp({
-			...pi,
-			on: (event: string, handler: ExtensionHandler<unknown>) =>
-				pi.on(
-					event as "session_start",
-					event === "session_start"
-						? (payload, ctx) => handler(payload, atParentProject(ctx))
-						: handler,
-				),
-		} as ExtensionAPI);
-}
-
-export const createPiChildSession: ChildSessionFactory = async (spec) => {
-	if (spec.sources && !spec.authorization)
-		throw new Error("Common tool sources require contextual authorization.");
-	const sources = spec.authorization
-		? {
-				...spec.sources,
-				paths: spec.sources?.paths?.map((path) => resolve(spec.project.cwd, path)),
-			}
-		: undefined;
-	const policy = spec.authorization;
-	const authorization = policy
-		? sessionActionAuthorization({
-				authority: (ctx) => policy.authority(ctx),
-				classify: (proposal, signal) => policy.classify(proposal, signal),
-				onDecision: (decision) => policy.onDecision?.(decision),
-				consult: async (question, signal): Promise<unknown> =>
-					JSON.parse(await spec.ask(
-						`Resolve only within your authority; otherwise consult the user. Reply with the same id, call and proposal plus kind (resolved/deny/pending), answer and optional confirmedActions identifying the explicitly confirmed actual action and target. Scope alone is not impact confirmation. No receipt or running state is consent.\n${JSON.stringify(question)}`,
-						signal,
-					)),
-			})
-		: undefined;
-	let pendingAuthorizations: () => AuthorizationDecision[] = () => [];
-	const runtime = parentRuntime(spec.modelRegistry);
-	if (!runtime) {
-		throw new Error("The session's model runtime is not available.");
-	}
-	const slash = spec.model.indexOf("/");
-	if (slash < 1 || slash === spec.model.length - 1) {
-		throw new Error(`The selected model ${spec.model} is not available in Pi.`);
-	}
-	const model = runtime.getModel(
-		spec.model.slice(0, slash),
-		spec.model.slice(slash + 1),
-	);
-	if (!model) {
-		throw new Error(`The selected model ${spec.model} is not available in Pi.`);
-	}
-	const bridgeExtension = spec.model.slice(0, slash) === "claude-bridge"
-		? await resolveClaudeBridgeExtension(getAgentDir(), spec.project)
-		: undefined;
-	const settingsManager = SettingsManager.inMemory(
-		spec.authorization
-			? { shellPath: spec.shell.shellPath, shellCommandPrefix: spec.shell.commandPrefix }
-			: {},
-		{ projectTrusted: spec.project.trusted },
-	);
-	const agentDir = getAgentDir();
-	const web =
-		!spec.authorization && spec.role === "explore"
-			? await explorerWeb(agentDir, spec.project)
-			: { factories: [], problem: undefined };
-	const toolbox =
-		spec.authorization && sources
-			? (await import("./child-toolbox.ts")).childToolbox(
-					spec.authorization,
-					sources,
-				)
-			: undefined;
-	const resourceLoader = new DefaultResourceLoader({
-		cwd: spec.cwd,
-		agentDir,
-		settingsManager,
-		noExtensions: true,
-		additionalExtensionPaths: [
-			...new Set([
-				...(sources?.paths ?? []),
-				...(bridgeExtension ? [bridgeExtension] : []),
-			]),
-		],
-		extensionFactories: [
-			...(sources
-				? commonToolFactories(sources)
-				: [createCodemodeExtension({ models: false })]),
-			parentMcp(spec.project),
-			...(toolbox ? [toolbox] : []),
-			...web.factories,
-			...(spec.authorization
-				? [
-						(pi: ExtensionAPI) => {
-							if (authorization)
-								pendingAuthorizations = installActionAuthorization(
-									pi, authorization.authorization, spec.checkpointed,
-								).pending;
-						},
-					]
-				: []),
-		],
-		noSkills: true,
-		noPromptTemplates: true,
-		noThemes: true,
-		systemPromptOverride: () => spec.prompt,
-		appendSystemPromptOverride: () => [],
-	});
-	await resourceLoader.reload();
-	if (sources && resourceLoader.getExtensions().errors.length > 0) {
-		throw new Error(
-			`A selected common tool source could not load: ${resourceLoader
-				.getExtensions()
-				.errors.map((entry) => `${entry.path}: ${entry.error}`)
-				.join("; ")}`,
-		);
-	}
-	if (bridgeExtension) {
-		const loaded = resourceLoader.getExtensions();
-		const loadError = loaded.errors.find(
-			(entry) => resolve(entry.path) === bridgeExtension,
-		);
-		if (loadError) {
-			throw new Error(`Claude Bridge extension failed to load: ${loadError.error}`);
-		}
-		if (!loaded.extensions.some((entry) => resolve(entry.path) === bridgeExtension)) {
-			throw new Error("The resolved Claude Bridge extension was not loaded.");
-		}
-	}
-	const { session } = await createAgentSession({
-		cwd: spec.cwd,
-		modelRuntime: runtime,
-		model,
-		thinkingLevel: spec.thinking,
-		...(sources ? {} : { tools: spec.tools }),
-		customTools: [
-			...(spec.authorization
-				? []
-				: [createChildBashTool(spec.cwd, spec.shell, spec.checkpoint !== undefined)]),
-			...(spec.authorization ? [] : [createChildCodeGraphTool(spec.cwd)]),
-			createAskParentTool(spec.ask, spec.authorization !== undefined),
-			...(reportsResult(spec.role) || spec.authorization
-				? [
-						{
-							name: reportResultTool,
-							label: "Report Result",
-							description:
-								"Report your Verdict and result to the parent before your final answer. Call it again to correct it; the last call counts.",
-							parameters:
-								spec.role === "verify"
-									? resultParameters.verify
-									: resultParameters.worker,
-							async execute(_toolCallId: string, params: ChildResult) {
-								if (
-									!params.reason &&
-									!verdictNeedsNoReason(params.verdict)
-								) {
-									throw new Error(
-										`A ${params.verdict} Verdict needs a reason.`,
-									);
-								}
-								spec.report(params);
-								return {
-									content: [
-										{ type: "text" as const, text: "Result recorded." },
-									],
-									details: {},
-								};
-							},
-						},
-					]
-				: []),
-			...(spec.authorization || spec.checkpoint
-				? [createCheckpointTool(spec.checkpoint ?? spec.cwd, spec.authorization ? () => {} : spec.checkpointed)]
-				: []),
-		],
-		resourceLoader,
-		sessionManager: SessionManager.inMemory(
-			spec.cwd,
-			{ parentSession: spec.parentSession },
-			spec.entries,
-		),
-		settingsManager,
-	});
-	authorization?.bindSession(session);
-	session.subscribe((event) => spec.onEvent(event));
-	let stopped = false;
-	let binding: Promise<void> | undefined;
-	const stream = session.agent.streamFunction;
-	// abort() and dispose() do not cancel a prompt still preparing its run, so the
-	// run it later starts must be stopped before its provider request.
-	session.agent.streamFunction = (...args) => {
-		if (stopped) throw new Error("The child session was stopped.");
-		return stream(...args);
-	};
-	return {
-		sessionId: session.sessionId,
-		entries: () => session.sessionManager.getEntries(),
-		pendingAuthorizations: () => pendingAuthorizations(),
-		model: session.model && `${session.model.provider}/${session.model.id}`,
-		thinking: session.thinkingLevel,
-		tools: session.getActiveToolNames(),
-		async run(task) {
-			if (web.problem) spec.notify(web.problem);
-			binding ??= session.bindExtensions({
-				uiContext: {
-					...session.extensionRunner.getUIContext(),
-					notify: (message) => spec.notify(message),
-				},
-			});
-			await binding;
-			await session.prompt(task);
-			const last = session.messages.at(-1);
-			if (
-				last?.role === "assistant" &&
-				(last.stopReason === "error" || last.stopReason === "aborted")
-			) {
-				throw new Error(
-					last.errorMessage ?? `The child run ${last.stopReason}.`,
-				);
-			}
-			return session.getLastAssistantText() ?? "";
-		},
-		async steer(text) {
-			await session.steer(text);
-		},
-		clearQueue: () => session.clearQueue().steering,
-		abort: () => {
-			stopped = true;
-			return session.abort();
-		},
-		async dispose() {
-			stopped = true;
-			try {
-				const runner = session.extensionRunner;
-				if (runner.hasHandlers("session_shutdown")) {
-					await runner.emit({ type: "session_shutdown", reason: "quit" });
-				}
-			} finally {
-				session.dispose();
-			}
-		},
-	};
-};
-
-const abortedBeforeLaunch = {
-	status: "refused" as const,
-	warning: "Launch refused. No child was launched.",
-	reason: "The call was aborted before the child launched.",
-};
+const abortedBeforeLaunch = refused("The call was aborted before the child launched.");
+const sessionEnded = refused("The session ended before the child launched.");
 
 interface ChildMessage {
 	customType: "pi-workflow-child-result" | "pi-workflow-child-question";
@@ -663,7 +352,7 @@ export function createChildSessions(options: {
 	todo?: TodoLink;
 	audit: ChildAudit;
 }) {
-	const create = options.create ?? createPiChildSession;
+	const create = options.create ?? createRpcChildSession({ schedule: options.schedule });
 	const schedule = options.schedule ?? scheduleTimer;
 	const children = new Map<string, Child>();
 	const queue: Child[] = [];
@@ -672,13 +361,23 @@ export function createChildSessions(options: {
 	let pending: ChildRecord[] = [];
 	const listeners = new Set<() => void>();
 	let generation = 0;
+	let detached = false;
 	let reserved = 0;
 	const disposing = new Set<Promise<void>>();
+	const claims = createWriteClaims();
 
 	function warn(message: string) {
 		try {
 			options.report(message);
 		} catch {}
+	}
+
+	// ADR 0008: an operational explorer or verifier is read-only even with bash; a contextual child has no such contract.
+	function writes(plan: Plan) {
+		const [tools, writing] = options.authorization
+			? [options.sources?.active ?? defaultActiveTools, ["edit", "write", "bash"]]
+			: [plan.contract.tools, ["edit", "write"]];
+		return tools.some((tool) => writing.includes(tool));
 	}
 
 	function shutDown(handle: ChildHandle, id?: string, capture?: ChildCapture) {
@@ -693,6 +392,17 @@ export function createChildSessions(options: {
 			});
 		disposing.add(done);
 		return done;
+	}
+
+	async function within(work: Promise<unknown>) {
+		let cancel = () => {};
+		await Promise.race([
+			work,
+			new Promise<void>((resolve) => {
+				cancel = schedule(resolve, shutdownDeadline);
+			}),
+		]);
+		cancel();
 	}
 
 	function trace(child: Child) {
@@ -810,7 +520,12 @@ export function createChildSessions(options: {
 		trace(child);
 		child.watch.start();
 		changed();
-		void child.handle.run(child.plan.task).then(
+		child.running = child.handle.run(child.plan.task);
+		settleOn(child);
+	}
+
+	function settleOn(child: Child) {
+		void child.running?.then(
 			(text) => finish(child, "completed", text),
 			(error: unknown) => finish(child, "failed", errorMessage(error)),
 		);
@@ -826,6 +541,7 @@ export function createChildSessions(options: {
 		if (!isWorking(record.state) || children.get(record.id) !== child) return;
 		const queued = queue.indexOf(child);
 		if (queued >= 0) queue.splice(queued, 1);
+		claims.release(record.id);
 		child.watch.stop();
 		record.state = state;
 		record.text = text;
@@ -853,10 +569,7 @@ export function createChildSessions(options: {
 		try {
 			child.entries = child.handle.entries();
 			if (state === "completed") {
-				child.conversation = {
-					sessionId: child.handle.sessionId,
-					entries: child.entries,
-				};
+				child.conversation = { sessionId: child.handle.sessionId };
 			}
 		} catch (error) {
 			warn(`Child ${record.id}: ${errorMessage(error)}`);
@@ -876,6 +589,7 @@ export function createChildSessions(options: {
 	function answer(child: Child, reply: string | Error) {
 		const { question } = child;
 		if (!question) return;
+		question.release?.();
 		child.question = undefined;
 		child.record.question = undefined;
 		if (child.record.state === "waiting") {
@@ -906,23 +620,7 @@ export function createChildSessions(options: {
 		child.asked += 1;
 		const number = child.asked;
 		return new Promise<string>((resolve, reject) => {
-			const withdraw = () => {
-				if (child.question?.number !== number) return;
-				child.withdrawn.add(number);
-				answer(child, new Error("The call was aborted."));
-			};
-			signal?.addEventListener("abort", withdraw, { once: true });
-			child.question = {
-				number,
-				resolve(reply) {
-					signal?.removeEventListener("abort", withdraw);
-					resolve(reply);
-				},
-				reject(error) {
-					signal?.removeEventListener("abort", withdraw);
-					reject(error);
-				},
-			};
+			pose(child, { number, signal, resolve, reject });
 			child.record.question = number;
 			child.record.state = "waiting";
 			child.record.step = `asks question ${number}`;
@@ -951,12 +649,71 @@ export function createChildSessions(options: {
 		});
 	}
 
+	function pose(child: Child, question: Question) {
+		const { number, signal } = question;
+		const withdraw = () => {
+			if (child.question?.number !== number) return;
+			child.withdrawn.add(number);
+			answer(child, new Error("The call was aborted."));
+		};
+		child.question = {
+			...question,
+			release: () => signal?.removeEventListener("abort", withdraw),
+		};
+		signal?.addEventListener("abort", withdraw, { once: true });
+		if (signal?.aborted) withdraw();
+	}
+
+	function bind(child: Child) {
+		const { port } = child;
+		port.event = (event) => {
+			child.capture.event(event);
+			child.watch.event(event);
+			track(child, event);
+		};
+		port.ask = (question, signal) => ask(child, question, signal);
+		port.report = (result) => {
+			child.capture.reported(result);
+			if (isWorking(child.record.state)) child.record.result = result;
+		};
+		port.notify = (message) =>
+			traceRun(child.record.id, child.plan, child.record.state, undefined, message);
+		port.checkpointed = (checkpoint) => {
+			child.record.checkpoints = [...(child.record.checkpoints ?? []), checkpoint];
+		};
+	}
+
 	async function start(
+		plan: Plan,
+		launch: Parameters<typeof begin>[2],
+		from?: { id: string; conversation: Conversation },
+	) {
+		if (detached) return sessionEnded;
+		const id = randomUUID();
+		if (writes(plan)) {
+			const surfaces = plan.surfaces ?? [];
+			const found = claims.conflicts(plan.worktree, surfaces);
+			if (found.length > 0) {
+				return refused(conflictReason(found));
+			}
+			claims.claim(id, plan.worktree, surfaces);
+		}
+		let queued = false;
+		try {
+			const started = await begin(id, plan, launch, from);
+			queued = started.status === "queued";
+			return started;
+		} finally {
+			if (!queued) claims.release(id);
+		}
+	}
+
+	async function begin(
+		id: string,
 		plan: Plan,
 		launch: {
 			background: boolean;
 			signal?: AbortSignal;
-			modelRegistry: ExtensionContext["modelRegistry"];
 			project: () => ParentProject;
 			shell: () => ChildShell;
 			onLaunch?: (id: string) => void;
@@ -973,16 +730,16 @@ export function createChildSessions(options: {
 		};
 		if (launch.signal?.aborted) return abortedBeforeLaunch;
 		let stall = (_reason: string) => {};
-		let asked = (_question: string, _signal?: AbortSignal) =>
-			Promise.reject<string>(new Error("The child is not running."));
-		let observe = (_event: AgentSessionEvent) => {};
-		let audited = (_event: AgentSessionEvent) => {};
-		let auditReport = (_result: ChildResult) => {};
-		let reported = (_result: ChildResult) => {};
-		let noticed = (_message: string) => {};
-		let checkpointed = (_checkpoint: Checkpoint) => {};
 		const watch = createWatch(schedule, (reason) => stall(reason));
+		const port: Port = {
+			event: (event) => watch.event(event),
+			ask: () => Promise.reject<string>(new Error("The child is not running.")),
+			report: () => {},
+			notify: () => {},
+			checkpointed: () => {},
+		};
 		const launchedIn = generation;
+		const tools = childTools(plan);
 		let handle: ChildHandle;
 		try {
 			handle = await create({
@@ -994,50 +751,18 @@ export function createChildSessions(options: {
 				model: plan.model,
 				thinking: plan.thinking,
 				prompt: plan.contract.prompt,
-				tools: childTools(plan),
-				modelRegistry: launch.modelRegistry,
+				tools,
 				shell: launch.shell(),
-				onEvent: (event) => {
-					audited(event);
-					watch.event(event);
-					observe(event);
-				},
-				notify: (message) => noticed(message),
-				ask: (question, signal) => asked(question, signal),
-				report: (result) => {
-					auditReport(result);
-					reported(result);
-				},
+				onEvent: (event) => port.event(event),
+				notify: (message) => port.notify(message),
+				ask: (question, signal) => port.ask(question, signal),
+				report: (result) => port.report(result),
 				...(plan.checkpoint ? { checkpoint: plan.checkpoint } : {}),
-				checkpointed: (checkpoint) => checkpointed(checkpoint),
-				entries: from?.conversation.entries,
+				checkpointed: (checkpoint) => port.checkpointed(checkpoint),
 				parentSession: from?.conversation.sessionId,
 			});
 		} catch (error) {
-			return {
-				status: "refused" as const,
-				warning: "Launch refused. No child was launched.",
-				reason: `The child session could not be created: ${errorMessage(error)}`,
-			};
-		}
-		if (handle.model !== plan.model || handle.thinking !== plan.thinking) {
-			void shutDown(handle);
-			return {
-				status: "pending" as const,
-				warning: "The work stays pending. No child was launched.",
-				reason: `The child would run ${handle.model ?? "no model"} at ${handle.thinking} instead of the selected ${plan.model} at ${plan.thinking}.`,
-			};
-		}
-		const missing = options.authorization
-			? []
-			: plan.contract.tools.filter((tool) => !handle.tools.includes(tool));
-		if (missing.length > 0) {
-			void shutDown(handle);
-			return {
-				status: "refused" as const,
-				warning: "Launch refused. No child was launched.",
-				reason: `The child session lacks the contract tools ${missing.join(", ")}.`,
-			};
+			return refused(`The child session could not be created: ${errorMessage(error)}`);
 		}
 		if (launch.signal?.aborted) {
 			void shutDown(handle);
@@ -1045,13 +770,8 @@ export function createChildSessions(options: {
 		}
 		if (launchedIn !== generation) {
 			void shutDown(handle);
-			return {
-				status: "refused" as const,
-				warning: "Launch refused. No child was launched.",
-				reason: "The session ended before the child launched.",
-			};
+			return sessionEnded;
 		}
-		const id = randomUUID();
 		const createdAt = Date.now();
 		const capture = options.audit.begin({
 			child: id,
@@ -1060,7 +780,7 @@ export function createChildSessions(options: {
 			task: plan.task,
 			references: plan.references,
 			instructions: plan.contract.prompt,
-			tools: handle.tools,
+			tools,
 			model: plan.model,
 			thinking: plan.thinking,
 			worktree: plan.worktree,
@@ -1068,8 +788,6 @@ export function createChildSessions(options: {
 			...(launch.group === undefined ? {} : { group: launch.group }),
 			...(from ? { continuedFrom: from.id } : {}),
 		});
-		audited = (event) => capture.event(event);
-		auditReport = (result) => capture.reported(result);
 		if (!launch.background) {
 			let ended: ChildState = "failed";
 			const stopped = Promise.withResolvers<never>();
@@ -1086,21 +804,26 @@ export function createChildSessions(options: {
 			launch.signal?.addEventListener("abort", abort, { once: true });
 			stall = (reason) =>
 				stop("timed out", new Error(`The child timed out: ${reason}`));
-			asked = () =>
+			let result: ChildResult | undefined;
+			const checkpoints: Checkpoint[] = [];
+			port.event = (event) => {
+				capture.event(event);
+				watch.event(event);
+			};
+			port.ask = () =>
 				Promise.reject<string>(
 					new Error(
 						"The parent cannot answer: it is waiting for this child in the foreground. Continue without an answer.",
 					),
 				);
-			let result: ChildResult | undefined;
-			reported = (value) => {
+			port.report = (value) => {
+				capture.reported(value);
 				result = value;
 			};
-			const checkpoints: Checkpoint[] = [];
-			checkpointed = (checkpoint) => {
+			port.checkpointed = (checkpoint) => {
 				checkpoints.push(checkpoint);
 			};
-			noticed = (message) =>
+			port.notify = (message) =>
 				traceRun(id, plan, "running", undefined, message);
 			watch.start();
 			onLaunch(id);
@@ -1154,6 +877,7 @@ export function createChildSessions(options: {
 			},
 			plan,
 			handle,
+			port,
 			watch,
 			capture,
 			tools: new Map(),
@@ -1165,16 +889,7 @@ export function createChildSessions(options: {
 			withdrawn: new Set(),
 		};
 		stall = (reason) => finish(child, "timed out", reason);
-		asked = (question, signal) => ask(child, question, signal);
-		reported = (result) => {
-			if (isWorking(child.record.state)) child.record.result = result;
-		};
-		observe = (event) => track(child, event);
-		checkpointed = (checkpoint) => {
-			child.record.checkpoints = [...(child.record.checkpoints ?? []), checkpoint];
-		};
-		noticed = (message) =>
-			traceRun(child.record.id, plan, child.record.state, undefined, message);
+		bind(child);
 		children.set(child.record.id, child);
 		queue.push(child);
 		onLaunch(child.record.id);
@@ -1189,7 +904,6 @@ export function createChildSessions(options: {
 		task: string,
 		launch: {
 			signal?: AbortSignal;
-			modelRegistry: ExtensionContext["modelRegistry"];
 			project: () => ParentProject;
 			shell: () => ChildShell;
 		},
@@ -1405,11 +1119,12 @@ export function createChildSessions(options: {
 	}
 
 	async function disposeAll() {
+		detached = true;
 		generation += 1;
-		const working = [...children.values()].filter((child) =>
-			isWorking(child.record.state),
-		);
+		const ended = [...children.values()];
+		const working = ended.filter((child) => isWorking(child.record.state));
 		children.clear();
+		claims.rebuild([]);
 		linked.clear();
 		queue.length = 0;
 		pending = [];
@@ -1424,15 +1139,92 @@ export function createChildSessions(options: {
 				shutDown(child.handle, child.record.id, child.capture),
 			),
 		);
-		let cancel = () => {};
-		await Promise.race([
-			finishing,
-			new Promise<void>((resolve) => {
-				cancel = schedule(resolve, shutdownDeadline);
-			}),
-		]);
-		cancel();
+		await within(finishing);
+		await Promise.all(
+			ended.map(({ handle, record }) =>
+				handle
+					.removeSession()
+					.catch((error: unknown) => warn(`Child ${record.id}: ${errorMessage(error)}`)),
+			),
+		);
 		return working.length;
+	}
+
+	async function detach(): Promise<ResidentChildren> {
+		detached = true;
+		generation += 1;
+		const resident = {
+			children: [...children.values()].map((child) => {
+				child.watch.stop();
+				child.question?.release?.();
+				return { child, held: hold(child.port) };
+			}),
+			queue: queue.map((child) => child.record.id),
+			consumed: new Set(consumed),
+			linked: new Map(linked),
+			pending,
+		};
+		children.clear();
+		claims.rebuild([]);
+		linked.clear();
+		consumed.clear();
+		queue.length = 0;
+		pending = [];
+		changed();
+		await within(Promise.all(disposing));
+		return resident;
+	}
+
+	async function abandon(resident: ResidentChildren) {
+		await Promise.all(
+			resident.children.map(async ({ child: { handle, record, capture } }) => {
+				if (isWorking(record.state)) {
+					options.audit.execution(record.id, "failed");
+					await shutDown(handle, record.id, capture);
+				}
+				await handle
+					.removeSession()
+					.catch((error: unknown) => warn(`Child ${record.id}: ${errorMessage(error)}`));
+			}),
+		);
+	}
+
+	function adopt(resident: ResidentChildren) {
+		for (const { child: kept, held } of resident.children) {
+			const child: Child = {
+				...kept,
+				watch: createWatch(schedule, (reason) =>
+					finish(child, "timed out", reason),
+				),
+				capture: options.audit.resume(kept.record.id),
+				followers: new Set(),
+				question: undefined,
+			};
+			children.set(child.record.id, child);
+			bind(child);
+			if (kept.question) pose(child, kept.question);
+			if (child.record.state === "running" || child.record.state === "waiting") {
+				child.watch.start();
+				settleOn(child);
+			}
+			for (const replay of held) replay(child.port);
+		}
+		for (const id of resident.queue) queue.push(children.get(id) as Child);
+		for (const id of resident.consumed) consumed.add(id);
+		for (const [task, id] of resident.linked) linked.set(task, id);
+		pending = [...resident.pending];
+		claims.rebuild(
+			[...children.values()]
+				.filter(({ plan, record }) => writes(plan) && isWorking(record.state))
+				.map(({ plan, record }) => ({
+					owner: record.id,
+					root: plan.worktree,
+					surfaces: plan.surfaces ?? [],
+				})),
+		);
+		changed();
+		queueMicrotask(pump);
+		if (pending.length > 0 && options.idle()) queueMicrotask(atBoundary);
 	}
 
 	return {
@@ -1455,6 +1247,9 @@ export function createChildSessions(options: {
 		follow,
 		thread,
 		disposeAll,
+		detach,
+		adopt,
+		abandon,
 	};
 }
 
@@ -1479,6 +1274,12 @@ const spawnChildParameters = Type.Object({
 		Type.String({
 			description:
 				"Name the assigned checkpoint branch. This context descriptor is not commit authority. The active session policy determines availability and context requirements; task authorization, signing, scope and protection of others' work still apply.",
+		}),
+	),
+	surfaces: Type.Optional(
+		Type.Array(Type.String(), {
+			description:
+				"Worker only: the repository-relative paths or globs the worker may edit. A worker whose surfaces overlap those of a working worker in the same worktree is refused. Omitted, the worker claims the whole checkout. Other roles claim nothing.",
 		}),
 	),
 	references: Type.Optional(
@@ -1598,10 +1399,7 @@ export function createSpawnChildTool(
 			const claim =
 				params.todo === undefined ? undefined : todo.claim(params.todo);
 			if (claim && "reason" in claim) {
-				return notLaunched("refused", {
-					warning: "Launch refused. No child was launched.",
-					reason: claim.reason,
-				});
+				return notLaunched("refused", refused(claim.reason));
 			}
 			let child: string | undefined;
 			const settle = (run: TaskRun) =>
@@ -1610,17 +1408,16 @@ export function createSpawnChildTool(
 					: undefined;
 			const background = ctx.mode === "tui" || ctx.mode === "rpc";
 			if (params.background && !background) {
-				return notLaunched("refused", {
-					warning: "Launch refused. No child was launched.",
-					reason: `${ctx.mode} mode runs the child in the foreground and cannot run it in the background.`,
-				});
+				return notLaunched(
+					"refused",
+					refused(
+						`${ctx.mode} mode runs the child in the foreground and cannot run it in the background.`,
+					),
+				);
 			}
 			const release = background ? sessions.reserve() : () => {};
 			if (!release) {
-				return notLaunched("refused", {
-					warning: "Launch refused. No child was launched.",
-					reason: launchLimitReason,
-				});
+				return notLaunched("refused", refused(launchLimitReason));
 			}
 			try {
 				const userRequest = latestUserRequest(sessionBranch(ctx));
@@ -1631,6 +1428,7 @@ export function createSpawnChildTool(
 						worktree: params.worktree,
 						checkpoint: params.checkpoint,
 						references: params.references,
+						surfaces: params.surfaces,
 						...(userRequest
 							? { userRequest: userRequest.text, userMessageId: userRequest.id }
 							: {}),
@@ -1642,7 +1440,6 @@ export function createSpawnChildTool(
 					.start(plan, {
 						background,
 						signal,
-						modelRegistry: ctx.modelRegistry,
 						project: () => parentProject(ctx),
 						shell: () => shellOptions(ctx),
 						onLaunch: (id) => {
@@ -1698,7 +1495,7 @@ function launched(
 			{ ...started, warnings },
 		);
 	}
-	if (started.status === "refused" || started.status === "pending") {
+	if (started.status === "refused") {
 		return notLaunched(started.status, {
 			...started,
 			warnings,
@@ -1768,7 +1565,6 @@ export function createContinueChildTool(
 			if (unseated) return unseated;
 			const started = await sessions.resume(params.id, params.task, {
 				signal,
-				modelRegistry: ctx.modelRegistry,
 				project: () => parentProject(ctx),
 				shell: () => shellOptions(ctx),
 			});

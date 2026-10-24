@@ -3,7 +3,7 @@
 ## Status
 
 Acceptance: approval and merge of the introducing PR.
-Superseded by [ADR 0016](0016-claude-bridge-for-child-sessions.md).
+Superseded by [ADR 0016](0016-claude-bridge-for-child-sessions.md), and with it by [ADR 0023](0023-children-run-as-rpc-processes.md): children run as RPC processes, R13 and R14 no longer apply.
 
 ## Decision
 

@@ -14,5 +14,6 @@ Each specification pairs with its review and the feature brief it came from. The
 | [fleet-transcript-history](fleet-transcript-history.md) | [review](fleet-transcript-history-review.md) | [brief](../features/fleet-transcript-history.md), [review](../features/fleet-transcript-history-review.md) | #265 |
 | [header-identity](header-identity.md) | [review](header-identity-review.md) | [brief](../features/header-identity.md), [review](../features/header-identity-review.md) | #243 |
 | [routing-owner](routing-owner.md) | [review](routing-owner-review.md) | — | #118, #119, #124, #125 |
+| [rpc-child-sessions](rpc-child-sessions.md) | [review](rpc-child-sessions-review.md) | [brief](../features/rpc-child-sessions.md), [review](../features/rpc-child-sessions-review.md) | #296 |
 | [todo-child-link](todo-child-link.md) | — | — | #207 |
 | [workflow-config-guide](workflow-config-guide.md) | [review](workflow-config-guide-review.md) | [brief](../features/workflow-config-guide.md), [review](../features/workflow-config-guide-review.md) | #248 |
