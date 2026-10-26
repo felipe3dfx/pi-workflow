@@ -133,72 +133,52 @@ test("a sweep kills a recorded group's live leader and leaves alone a process th
 	await gone([control.pid], Date.now());
 });
 
-test("a parent's watchdog kills the group a child's descendant started once it is orphaned and the parent dies", async (t) => {
-	const { sweep, path } = await sweepWithoutProc(t);
-	const groups = await groupsOf(t, "child");
-	const serverFile = join(groups, "server.pid");
-	const pi = spawn(
-		process.execPath,
+test("a parent's watchdog kills the group a recorded or marked child's descendant started once it is orphaned and the parent dies", async (t) => {
+	for (const [name, setup] of [
 		[
-			"-e",
-			'const s = require("node:child_process").spawn("sleep", ["300"], { detached: true, stdio: "ignore", env: { PATH: process.env.PATH } }); require("node:fs").writeFileSync(process.argv[1], String(s.pid)); setInterval(() => {}, 1000);',
-			serverFile,
+			"recorded",
+			{
+				env: () => hidden,
+				record: (groups, pid) => writeFile(join(groups, "child", String(pid)), startTime(pid)),
+			},
 		],
-		{ detached: true, env: hidden, stdio: "ignore" },
-	);
-	t.after(() => pi.kill("SIGKILL"));
-	const server = Number(await eventually(() => existsSync(serverFile) && readFileSync(serverFile, "utf8")));
-	t.after(() => alive(server) && process.kill(server, "SIGKILL"));
-	await writeFile(join(groups, "child", String(pi.pid)), startTime(pi.pid));
-	const watchdog = spawn("/bin/sh", [sweep, `${randomUUID()}/`, "2000", groups, "watch"], {
-		env: { ...process.env, PATH: path },
-		stdio: ["pipe", "ignore", "ignore"],
-	});
-	t.after(() => watchdog.kill("SIGKILL"));
-	await eventually(() => existsSync(join(groups, "child", String(server))), Boolean, 600);
-	process.kill(pi.pid, "SIGKILL");
-	await eventually(() => alive(pi.pid), (living) => !living);
-	assert.ok(alive(server));
-	const parentDied = Date.now();
-	watchdog.stdin.end();
-	const [code] = await once(watchdog, "close");
-	assert.equal(code, 0);
-	const elapsed = await gone([server], parentDied);
-	assert.ok(elapsed < 2000, `cleanup took ${elapsed} ms`);
-});
-
-test("a parent's watchdog kills the group a marked descendant started outside the recorded groups once it is orphaned", async (t) => {
-	const { sweep, path } = await sweepWithoutProc(t);
-	const token = randomUUID();
-	const groups = await groupsOf(t, "child");
-	const serverFile = join(groups, "server.pid");
-	const pi = spawn(
-		process.execPath,
-		[
-			"-e",
-			'const s = require("node:child_process").spawn("sleep", ["300"], { detached: true, stdio: "ignore", env: { PATH: process.env.PATH } }); require("node:fs").writeFileSync(process.argv[1], String(s.pid)); setInterval(() => {}, 1000);',
-			serverFile,
-		],
-		{ detached: true, env: { ...hidden, PI_WORKFLOW_PROCESS_TREE: `${token}/child/` }, stdio: "ignore" },
-	);
-	t.after(() => pi.kill("SIGKILL"));
-	const server = Number(await eventually(() => existsSync(serverFile) && readFileSync(serverFile, "utf8")));
-	t.after(() => alive(server) && process.kill(server, "SIGKILL"));
-	const watchdog = spawn("/bin/sh", [sweep, `${token}/`, "2000", groups, "watch"], {
-		env: { ...process.env, PATH: path },
-		stdio: ["pipe", "ignore", "ignore"],
-	});
-	t.after(() => watchdog.kill("SIGKILL"));
-	await eventually(() => existsSync(join(groups, "child", String(server))), Boolean, 600);
-	process.kill(pi.pid, "SIGKILL");
-	await eventually(() => alive(pi.pid), (living) => !living);
-	assert.ok(alive(server));
-	const parentDied = Date.now();
-	watchdog.stdin.end();
-	const [code] = await once(watchdog, "close");
-	assert.equal(code, 0);
-	const elapsed = await gone([server], parentDied);
-	assert.ok(elapsed < 2000, `cleanup took ${elapsed} ms`);
+		["marked", { env: (token) => ({ ...hidden, PI_WORKFLOW_PROCESS_TREE: `${token}/child/` }) }],
+	]) {
+		await t.test(name, async (t) => {
+			const { sweep, path } = await sweepWithoutProc(t);
+			const token = randomUUID();
+			const groups = await groupsOf(t, "child");
+			const serverFile = join(groups, "server.pid");
+			const pi = spawn(
+				process.execPath,
+				[
+					"-e",
+					'const s = require("node:child_process").spawn("sleep", ["300"], { detached: true, stdio: "ignore", env: { PATH: process.env.PATH } }); require("node:fs").writeFileSync(process.argv[1], String(s.pid)); setInterval(() => {}, 1000);',
+					serverFile,
+				],
+				{ detached: true, env: setup.env(token), stdio: "ignore" },
+			);
+			t.after(() => pi.kill("SIGKILL"));
+			const server = Number(await eventually(() => existsSync(serverFile) && readFileSync(serverFile, "utf8")));
+			t.after(() => alive(server) && process.kill(server, "SIGKILL"));
+			await setup.record?.(groups, pi.pid);
+			const watchdog = spawn("/bin/sh", [sweep, `${token}/`, "2000", groups, "watch"], {
+				env: { ...process.env, PATH: path },
+				stdio: ["pipe", "ignore", "ignore"],
+			});
+			t.after(() => watchdog.kill("SIGKILL"));
+			await eventually(() => existsSync(join(groups, "child", String(server))), Boolean, 600);
+			process.kill(pi.pid, "SIGKILL");
+			await eventually(() => alive(pi.pid), (living) => !living);
+			assert.ok(alive(server));
+			const parentDied = Date.now();
+			watchdog.stdin.end();
+			const [code] = await once(watchdog, "close");
+			assert.equal(code, 0);
+			const elapsed = await gone([server], parentDied);
+			assert.ok(elapsed < 2000, `cleanup took ${elapsed} ms`);
+		});
+	}
 });
 
 test("record mode drops empty old groups and reused numbers but retains a live old group", async (t) => {
