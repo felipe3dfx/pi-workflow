@@ -55,8 +55,8 @@ function runScript(id: string, ...mode: string[]) {
 
 // The child Pi leads its own group, and on macOS its environment is unreadable once it sets its title, so its pid
 // seeds the record. The watchdog keeps recording every 500 ms there.
-export function recordTree(id: string, pid?: number) {
-	return runScript(id, "record", ...(pid === undefined ? [] : [String(pid)]));
+export function recordTree(id: string, pid: number) {
+	return runScript(id, "record", String(pid));
 }
 
 export function stopTree(id: string) {

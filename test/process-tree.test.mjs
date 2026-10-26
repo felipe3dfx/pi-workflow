@@ -4,7 +4,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import process from "node:process";
@@ -93,13 +93,16 @@ test("a sweep kills a recorded process group whose environment hides the mark, i
 	await gone([sleep], Date.now());
 });
 
-test("a sweep leaves alone a process that reuses a recorded group's number with another start time", async (t) => {
+test("a sweep kills a recorded group's live leader and leaves alone a process that reuses a recorded group's number with another start time", async (t) => {
 	const groups = await groupsOf(t, "child");
 	const unrelated = lingering(t);
+	const control = lingering(t);
+	await writeFile(join(groups, "child", String(control.pid)), startTime(control.pid));
 	await writeFile(join(groups, "child", String(unrelated.pid)), "Thu Jan  1 00:00:00 1970\n");
 	const { code } = await sweepOf(script, [`${randomUUID()}/child/`, "1000", groups]);
 	assert.equal(code, 0);
 	assert.ok(alive(unrelated.pid));
+	await gone([control.pid], Date.now());
 });
 
 test("a parent's watchdog kills the group a child's descendant started once it is orphaned and the parent dies", async (t) => {
@@ -134,6 +137,63 @@ test("a parent's watchdog kills the group a child's descendant started once it i
 	assert.equal(code, 0);
 	const elapsed = await gone([server], parentDied);
 	assert.ok(elapsed < 2000, `cleanup took ${elapsed} ms`);
+});
+
+test("a parent's watchdog kills the group a marked descendant started outside the recorded groups once it is orphaned", async (t) => {
+	const { sweep, path } = await sweepWithoutProc(t);
+	const token = randomUUID();
+	const groups = await groupsOf(t, "child");
+	const serverFile = join(groups, "server.pid");
+	const pi = spawn(
+		process.execPath,
+		[
+			"-e",
+			'const s = require("node:child_process").spawn("sleep", ["300"], { detached: true, stdio: "ignore", env: { PATH: process.env.PATH } }); require("node:fs").writeFileSync(process.argv[1], String(s.pid)); setInterval(() => {}, 1000);',
+			serverFile,
+		],
+		{ detached: true, env: { ...hidden, PI_WORKFLOW_PROCESS_TREE: `${token}/child/` }, stdio: "ignore" },
+	);
+	t.after(() => pi.kill("SIGKILL"));
+	const server = Number(await eventually(() => existsSync(serverFile) && readFileSync(serverFile, "utf8")));
+	t.after(() => alive(server) && process.kill(server, "SIGKILL"));
+	const watchdog = spawn("/bin/sh", [sweep, `${token}/`, "2000", groups, "watch"], {
+		env: { ...process.env, PATH: path },
+		stdio: ["pipe", "ignore", "ignore"],
+	});
+	t.after(() => watchdog.kill("SIGKILL"));
+	await eventually(() => existsSync(join(groups, "child", String(server))), Boolean, 600);
+	process.kill(pi.pid, "SIGKILL");
+	await eventually(() => alive(pi.pid), (living) => !living);
+	assert.ok(alive(server));
+	const parentDied = Date.now();
+	watchdog.stdin.end();
+	const [code] = await once(watchdog, "close");
+	assert.equal(code, 0);
+	const elapsed = await gone([server], parentDied);
+	assert.ok(elapsed < 2000, `cleanup took ${elapsed} ms`);
+});
+
+test("record mode drops empty old groups and reused numbers but retains a live old group", async (t) => {
+	const groups = await groupsOf(t, "child");
+	const exited = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+	t.after(() => exited.kill("SIGKILL"));
+	await once(exited, "close");
+	const reused = lingering(t);
+	const control = lingering(t);
+	const emptyRecord = join(groups, "child", String(exited.pid));
+	const reusedRecord = join(groups, "child", String(reused.pid));
+	const liveRecord = join(groups, "child", String(control.pid));
+	await writeFile(emptyRecord, "-\n");
+	await writeFile(reusedRecord, "Thu Jan  1 00:00:00 1970\n");
+	await writeFile(liveRecord, startTime(control.pid));
+	const old = new Date(Date.now() - 120_000);
+	await utimes(emptyRecord, old, old);
+	await utimes(liveRecord, old, old);
+	const { code } = await sweepOf(script, [`${randomUUID()}/child/`, "2000", groups, "record", String(control.pid)]);
+	assert.equal(code, 0);
+	assert.ok(!existsSync(emptyRecord));
+	assert.ok(!existsSync(reusedRecord));
+	assert.ok(existsSync(liveRecord));
 });
 
 test("a child's bash records its shell's group, so a background job it leaves behind dies with the child's tree", async (t) => {

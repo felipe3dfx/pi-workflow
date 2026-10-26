@@ -13,12 +13,12 @@ groups=${3:?}/${mark#*/}
 
 environment_members() {
 	if [ -r /proc/self/environ ]; then
-		grep -l -s -z "^PI_WORKFLOW_PROCESS_TREE=$mark" /proc/[0-9]*/environ |
+		grep -l -s -z "^PI_WORKFLOW_PROCESS_TREE=$1" /proc/[0-9]*/environ |
 			sed 's|^/proc/\([0-9]*\)/environ$|\1|'
 	else
 		# Built inside awk, the pattern appears in no command line, its own included.
 		ps -A -E -ww -o pid= -o command= |
-			awk -v mark="$mark" 'index($0, " PI_WORKFLOW_PROCESS_TREE=" mark) { print $1 }'
+			awk -v mark="$1" 'index($0, " PI_WORKFLOW_PROCESS_TREE=" mark) { print $1 }'
 	fi
 }
 
@@ -32,8 +32,6 @@ snapshot() {
 	LC_ALL=C ps -A -o pid= -o ppid= -o pgid= -o lstart= | sed 's/^/P /'
 }
 
-# Members are the live processes of a valid recorded group or carrying the mark,
-# then every process whose parent or group leader is a member.
 closure='
 $1 == "E" { member[$2] = 1; next }
 $1 == "O" { old[$2] = 1; next }
@@ -67,7 +65,7 @@ END {
 
 members() {
 	{
-		environment_members | sed 's/^/E /'
+		environment_members "$mark" | sed 's/^/E /'
 		records "$groups"
 		snapshot
 	} | awk -v self=$$ "$closure"
@@ -76,10 +74,11 @@ members() {
 # A group seen empty for a minute is gone for good, so its number may be reused.
 record() {
 	[ -d "$1" ] || return 0
-	now=$(snapshot)
+	table=$(snapshot)
 	for dir; do
 		{
-			printf '%s\n' "$now"
+			printf '%s\n' "$table"
+			environment_members "$mark${dir#"$groups"}" | sed 's/^/E /'
 			if [ -n "$seed" ]; then echo "E $seed"; fi
 			records "$dir"
 			find "$dir" -type f -mmin +1 | sed 's|.*/|O |'
