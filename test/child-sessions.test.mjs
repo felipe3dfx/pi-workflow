@@ -2379,8 +2379,9 @@ test("spawn_child tells the parent to end its turn instead of polling", async ()
 		assert.match(guidance, /Do not ask the child for intermediate progress reports/);
 		assert.match(guidance, /references accept only paths inside the cwd/);
 		assert.match(guidance, /no channel to a running child; use reply_child only when the child asks/);
-		assert.match(guidance, /Do not declare work done without a worker Verdict of done/);
-		assert.match(guidance, /Do not declare work verified without a verifier Verdict of pass/);
+		assert.match(guidance, /never repeat an identical launch, but when a refusal names a cause you can correct, such as an unknown Todo id, correct it and relaunch once/);
+		assert.match(guidance, /Do not declare work delegated to a worker done without its Verdict of done/);
+		assert.match(guidance, /Do not declare verification delegated to a verifier passed without its Verdict of pass/);
 		assert.match(guidance, /partial, fail, and blocked are not success/);
 		assert.match(
 			guidance,

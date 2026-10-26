@@ -87,6 +87,15 @@ test("the todo tool advertises itself in the system prompt so the model finds it
 	assert.ok(tool.promptGuidelines.some((line) => /todo/i.test(line)));
 });
 
+test("the write action description says ids are new and never reused", () => {
+	const { pi, tools } = fakePi();
+	registerSessionTodo(pi, () => {}, () => new Map());
+	assert.match(
+		tools.get("todo").parameters.properties.action.description,
+		/write replaces the whole list with new, increasing ids that are never reused; use the ids it returns/,
+	);
+});
+
 test("add appends a pending task and reports it", async () => {
 	const { pi, tools } = fakePi();
 	registerSessionTodo(pi, () => {}, () => new Map());
