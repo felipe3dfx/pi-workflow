@@ -149,6 +149,14 @@ export interface ChildShell {
 
 const posixShell = /(^|[/\\])(bash|zsh|sh|dash|ksh|mksh)(\.exe)?$/i;
 
+// Pi starts each command's shell as a process group leader. Recorded on the first line, the group joins the
+// child's process tree without shifting the line numbers the shell reports.
+function recordingGroup(prefix?: string) {
+	const record =
+		'[ -z "$PI_WORKFLOW_PROCESS_GROUPS" ] || LC_ALL=C ps -o lstart= -p $$ > "$PI_WORKFLOW_PROCESS_GROUPS/$$" 2>/dev/null;';
+	return prefix ? `${record} ${prefix}` : record;
+}
+
 export function guardPrefix(root: string, checkpoint = false): string {
 	return `unalias git gh 2>/dev/null || :\n${gitRootAssignment(root)} ${guard("git", gitDecision, checkpoint)}${guard("gh", ghDecision)}`;
 }
@@ -163,9 +171,11 @@ export function createChildBashTool(
 		!shell.shellPath || posixShell.test(shell.shellPath) ? shell : {};
 	return defineTool(
 		createBashToolDefinition(cwd, {
-			commandPrefix: user.commandPrefix
-				? `${user.commandPrefix}\n${commandPrefix}`
-				: commandPrefix,
+			commandPrefix: recordingGroup(
+				user.commandPrefix
+					? `${user.commandPrefix}\n${commandPrefix}`
+					: commandPrefix,
+			),
 			shellPath: user.shellPath,
 		}),
 	);
@@ -174,7 +184,7 @@ export function createChildBashTool(
 export function createConfiguredBashTool(cwd: string, shell: ChildShell) {
 	return defineTool(
 		createBashToolDefinition(cwd, {
-			commandPrefix: shell.commandPrefix,
+			commandPrefix: recordingGroup(shell.commandPrefix),
 			shellPath: shell.shellPath,
 		}),
 	);

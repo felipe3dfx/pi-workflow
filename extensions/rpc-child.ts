@@ -33,7 +33,7 @@ import {
 } from "./child-runtime.ts";
 import { type Schedule, scheduleTimer } from "./clock.ts";
 import { errorMessage } from "./error-message.ts";
-import { stopTree, treeEnvironment } from "./process-tree.ts";
+import { recordTree, stopTree, treeEnvironment } from "./process-tree.ts";
 import { seated } from "./shell.ts";
 import { defaultActiveTools } from "./tool-sources.ts";
 import { resolveClaudeBridgeExtension, resolveWebAccessExtensions, webAccessTools } from "./web-access.ts";
@@ -419,6 +419,7 @@ export function createRpcChildSession(
 				detached: true,
 			});
 			child = pi;
+			if (pi.pid !== undefined) void recordTree(sessionId, pi.pid);
 			pi.once("exit", () => sweep());
 			exited = new Promise((resolve) => {
 				pi.once("close", (code, signal) => {
@@ -485,6 +486,7 @@ export function createRpcChildSession(
 				if (missing.length > 0) {
 					throw new Error(`The child Pi process lacks the contract tools ${missing.join(", ")}.`);
 				}
+				if (child?.pid !== undefined) await recordTree(sessionId, child.pid);
 			} finally {
 				cancel();
 			}
@@ -513,6 +515,7 @@ export function createRpcChildSession(
 				}
 				const aborted = await done;
 				await refresh();
+				if (child?.pid !== undefined) await recordTree(sessionId, child.pid);
 				if (aborted) throw new Error("The child run aborted.");
 				if (last?.stopReason === "error" || last?.stopReason === "aborted") {
 					throw new Error(last.errorMessage ?? `The child run ${last.stopReason}.`);

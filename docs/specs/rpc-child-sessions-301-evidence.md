@@ -37,9 +37,62 @@ Removing the sweep from `rpc-child.ts` makes the cancellation and crash tests fa
 
 `npm run check` in the worktree after merging `79666e1`: exit 0, wall clock 20.4 s; `node --test`: 1294 tests, 1279 passed, 15 skipped, 0 failed; "Packed distribution validation passed."
 
+## macOS
+
+### Environment
+
+- Host: macOS 26.6.2 (25G83), arm64, System Integrity Protection enabled; Node v22.21.1.
+- Pi 1.4.0 in two installations: the standalone release binary `pi-darwin-arm64.tar.gz` (checksum verified against the release's `SHA256SUMS`), `ℹ pi --version: 1.4.0; /tmp/diag301/pi-dl/darwin/pi/pi`, and the npm package `@earendil-works/pi-coding-agent` 1.4.0 on Node, `ℹ pi --version: 1.4.0; …/fnm_multishells/…/bin/pi`. Neither path is under `node_modules`.
+
+### What failed with the environment mark alone
+
+On `main` (`e1a6f1e`) the sweep exited 0 with members still running:
+
+- macOS strips the environment of platform binaries from `KERN_PROCARGS2`: a direct `sysctl` read of a marked `/bin/sleep` returned 28 bytes and no mark, so `ps -E` showed nothing for `/bin/sh`, `/bin/bash` or `sleep`, the shells Pi's bash tool and the fixtures start.
+- `ps -E` cannot read the environment of a process that changes its title. A marked `node` with `process.title = "pi"` kept the mark in `KERN_PROCARGS2` but `ps -E` did not show it, and the child Pi shows as `pi`.
+- Results: `test/rpc-child.test.mjs` failed the cancellation, crash and parent exit tests with the shell and its `sleep` alive; `test/process-tree.test.mjs` failed the `ps`-based sweep on a marked `sleep`; `test/rpc-child-pi.test.mjs` never ended, because `dispose()` waited for a child Pi the sweep had not found.
+
+### What changed
+
+ADR 0024 adds recorded process groups to membership only without `/proc`, as on macOS; Linux keeps the mark alone.
+
+- `extensions/process-tree.sh` takes the parent's groups directory as its third argument. Without `/proc`, members are the processes that carry the mark or belong to a recorded group whose leader's start time still matches, plus every process whose parent or group leader is a member. With `/proc`, only the mark determines membership. The sweep stops the members, reads them again and kills them. Only without `/proc`, `record` mode records the groups of a child's members and the watchdog runs it every 500 ms and drops records whose number was reused or whose group stayed empty for a minute. Cleanup removes the records directory without following it if replaced by a symlink. The watchdog reads its lifetime pipe through a duplicated descriptor, since `dash` gives a background job `/dev/null` as stdin.
+- `extensions/process-tree.ts` creates the groups directory per parent process with `mkdtemp` and, only without `/proc`, passes `PI_WORKFLOW_PROCESS_GROUPS=<groups>/<session id>` to the child. Only there does `extensions/rpc-child.ts` record the child Pi's group at spawn, at readiness and after every run.
+- Only without `/proc`, `extensions/child-bash.ts` records each command shell's group from the first line of the command prefix, for the guarded and the configured bash.
+- Tests: `childPids` in `test/rpc-child-pi.test.mjs` finds the parent's Pi children by parent pid and name, since Pi's title hides `--mode rpc` on macOS; the `/reload` scenario waits up to `shutdownDeadline + treeDeadline` for the completed child to end, because the npm Pi on Node does not exit when its stdin closes and is killed after the shutdown deadline.
+
+### Scenario evidence
+
+Command on `045bc3b`: `node --test test/rpc-child-pi.test.mjs test/rpc-child.test.mjs test/process-tree.test.mjs`, once with the standalone binary first on `PATH` and once with the npm package. Each run: 103 tests, 99 passed, 4 failed, all outside the process tree (below). `pgrep -fl "mcp-fixture-server|sleep (300|600)"` printed nothing afterwards.
+
+| Scenario | Proof | Standalone binary | npm package on Node |
+| --- | --- | --- | --- |
+| Normal parent exit, real Pi | "a real Pi child, its MCP server and its shell descendants end within the tree deadline when the parent exits or is killed", `shutdown` | `ℹ Pi, MCP server, shell and its background sleep (67743, 67861, 67881, 67885) ended 0 ms after the parent exited` | `… ended 126 ms after the parent exited` |
+| SIGKILL of the parent, real Pi | Same test, `SIGKILL` | `… (68251, 68312, 68331, 68335) ended 207 ms after the parent was killed` | `… ended 347 ms after the parent was killed` |
+| Crashed child, real Pi | "a real Pi child that crashes leaves no MCP server or shell descendant within the tree deadline" | `ℹ MCP server, shell and its background sleep (68531, 68541, 68544) ended 150 ms after the child Pi was killed` | `… ended 127 ms after the child Pi was killed` |
+| Child that ends cleanly, real Pi | "a real Pi child that ends cleanly leaves no background process of its shell within the tree deadline" | `ℹ the background sleep 68876 ended 260 ms after the child Pi ended` | `… ended 1252 ms after the child Pi ended` |
+| `/reload`, then quit or SIGKILL of a real Pi parent | "a real Pi parent's /reload keeps its working child processes, …" | `ℹ after quit, the waiting child ended in 81 ms` / `ℹ after SIGKILL, the waiting child ended in 15 ms` | `… 1263 ms` / `… 10 ms` |
+| Parent exit and SIGKILL, fake Pi | "a parent that exits or is killed leaves no RPC child or descendant within the tree deadline" | `ℹ no child process remains 149 ms after the parent exited` / `ℹ no child process remains 522 ms after the parent was killed` | same suite |
+| Crash and cancellation, fake Pi | "an RPC child that crashes leaves no descendant within the tree deadline", "cancelling an RPC child asks it to abort, then kills its whole process tree after the shutdown deadline" | `ok` | same suite |
+| Recorded groups | `test/process-tree.test.mjs`: hidden-environment group with the orphan its exited shell left; a live recorded group killed while a reused number is left alone; watchdog after the parent dies, for a recorded and for a marked descendant; record pruning; a child's bash records its shell | 9 of 9 passed | same suite |
+
+Every measurement is below `treeDeadline` (2 000 ms). The npm package on Node does not exit when its stdin closes, on Linux too, so a clean end waits the `shutdownDeadline` of 1 000 ms and the sweep kills it.
+
+The 4 failures also fail on `main` on this host and come from test portability, not from the process tree: "a real Pi worker's guarded bash refuses a parent command …" lists `/proc/$$/fd`; "an RPC child runs as its own Pi process …" and "a trusted parent launches its RPC child with exactly --approve" compare `/var/…` with `/private/var/…`; "a missing pi-web-access or Claude Bridge package fails the launch …" depends on the packages installed in the host's agent directory. The full `node --test test/*.test.mjs` on this host also fails, on `main` too, a `child-bash` line-number message from bash 3.2, two more `/private/var` comparisons and the installed Claude Bridge package.
+
+### Linux after the change
+
+Docker `node:22.19.0` (Debian, arm64), non-root user, `--init`, on `git archive 045bc3b`:
+
+- `npm run check`: exit 0; 1333 tests, 1293 passed, 40 skipped, 0 failed; "Packed distribution validation passed."
+- With the standalone `pi-linux-arm64` 1.4.0 (checksum verified) on `PATH`, the three suites above: 103 tests, 101 passed, 2 skipped (pi-web-access and Claude Bridge not installed), 0 failed; `ℹ Pi, MCP server, shell and its background sleep … ended 0 ms after the parent exited`, `… ended 15 ms after the parent was killed`, `ℹ MCP server, shell and its background sleep … ended 21 ms after the child Pi was killed`, `ℹ after quit, the waiting child ended in 50 ms`.
+
+### Demo
+
+The real-binary `/reload` test drives a real Pi parent loading the extension, with children whose MCP servers and shells run, and quits it in one run and kills it with SIGKILL in another. The interactive demo with a model was not run.
+
 ## Open gaps
 
-- macOS: the same script runs there (`ps -A -E -ww` instead of `/proc`), but no macOS evidence was produced on this Linux host. Spec section 9 makes macOS lifecycle evidence an acceptance gate, so #301 cannot be completed until the same tests pass on macOS.
 - Windows guarantees nothing: there is no `/bin/sh`, the watchdog and sweep fail silently and only Pi's own shutdown remains.
-- A descendant that clears its environment (for example through `env -i`) or that runs under another user escapes the mark. Pi 1.4.0 passes its environment to MCP servers and shell commands; a future Pi that starts them with a reduced environment would break the guarantee, and the real-binary tests would detect it.
+- A descendant that clears its environment (for example through `env -i`) and leaves its process group, or that runs under another user, escapes the sweep. Where `/proc` is absent, a process with an unreadable environment that starts a group of its own and is orphaned before a recording point sees it escapes too (ADR 0024).
 - A SIGKILL of the watchdog itself is not covered.

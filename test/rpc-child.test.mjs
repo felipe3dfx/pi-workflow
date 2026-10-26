@@ -596,7 +596,10 @@ test("cancelling an RPC child asks it to abort, then kills its whole process tre
 test("every child end sweeps the child's process tree exactly once", async (t) => {
 	const sweeps = (processes) =>
 		processes.filter(
-			(child) => child.spawnargs.some((arg) => arg.endsWith("process-tree.sh")) && !child.spawnargs.includes("watch"),
+			(child) =>
+				child.spawnargs.some((arg) => arg.endsWith("process-tree.sh")) &&
+				!child.spawnargs.includes("watch") &&
+				!child.spawnargs.includes("record"),
 		).length;
 	await t.test("clean exit", async (t) => {
 		const processes = spawned(t);

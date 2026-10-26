@@ -4,7 +4,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import process from "node:process";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -12,6 +12,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { DefaultPackageManager, getAgentDir, SettingsManager } from "@earendil-works/pi-coding-agent";
 
 import { createChildAudit } from "../extensions/child-audit.ts";
+import { shutdownDeadline } from "../extensions/child-handle.ts";
 import { createChildLauncher } from "../extensions/child-launcher.ts";
 import { createChildSessions } from "../extensions/child-sessions.ts";
 import { treeDeadline } from "../extensions/process-tree.ts";
@@ -637,11 +638,13 @@ const realParentPolls = 12_000;
 const said = (message) => JSON.stringify(message.content ?? "");
 const toolNames = (body) => (body.tools ?? []).map((tool) => tool.function?.name);
 
-function childPids(agentDir) {
-	return execFileSync("ps", ["-A", "-ww", "-o", "pid=,command="], { encoding: "utf8" })
+// On macOS Pi replaces its command line with its title, so a child is the parent's Pi child by its name there.
+function childPids(parent) {
+	return execFileSync("ps", ["-A", "-ww", "-o", "pid=,ppid=,comm=,command="], { encoding: "utf8" })
 		.split("\n")
-		.filter((line) => line.includes(join(agentDir, "pi-workflow-children")) && line.includes("--mode rpc"))
-		.map((line) => Number(line.trim().split(/\s+/)[0]));
+		.map((line) => line.trim().split(/\s+/))
+		.filter(([, ppid, name, ...command]) => Number(ppid) === parent && (basename(name ?? "") === "pi" || command.includes("--mode")))
+		.map(([pid]) => Number(pid));
 }
 
 test("a real Pi parent's /reload keeps its working child processes, a Pending result is delivered once, a Consumed one never, an answer in flight across it reaches its child once, and quitting or killing the parent still ends the children", { skip, timeout: 120_000 }, async (t) => {
@@ -734,7 +737,7 @@ async function reloadScenario(t, ending) {
 
 	await turn("Delegate the color question.", () => ended("pi-workflow-child-question").length === 2);
 	asked.resolve();
-	const pids = await eventually(() => childPids(scene.agentDir), (found) => found.length === 2, realParentPolls);
+	const pids = await eventually(() => childPids(parentPi.pi.pid), (found) => found.length === 2, realParentPolls);
 	for (const pid of pids) runsInstalledPi(pid);
 	await turn("Read the docs map.");
 	await turn("Answer the child now.", () => replies === 2);
@@ -742,7 +745,7 @@ async function reloadScenario(t, ending) {
 
 	const reloaded = await parentPi.request("prompt", { message: "/test-reload" });
 	assert.equal(reloaded.disposition, "handled");
-	assert.deepEqual(childPids(scene.agentDir), pids);
+	assert.deepEqual(childPids(parentPi.pi.pid), pids);
 	assert.deepEqual(ended("pi-workflow-child-result"), []);
 
 	release();
@@ -775,8 +778,12 @@ async function reloadScenario(t, ending) {
 	const second = messages.filter((message) => message.role === "toolResult" && message.toolName === "reply_child").at(-1);
 	assert.equal(second.isError, true);
 	assert.match(said(second), /already answered by the parent: blue/);
-	const holding = childPids(scene.agentDir);
-	assert.equal(holding.length, 1);
+	// A completed child that does not exit when its input closes is stopped after the shutdown deadline.
+	const holding = await eventually(
+		() => childPids(parentPi.pi.pid),
+		(found) => found.length === 1,
+		(shutdownDeadline + treeDeadline) / 5,
+	);
 	assert.ok(pids.includes(holding[0]));
 	t.diagnostic(`child pids ${pids.join(", ")} kept across /reload; Consumed before it: ${docs}; Pending at it: ${tests}; answered "blue" before it, reported after it: ${color}`);
 	t.diagnostic(`one result message after the reload: ${result.message.details.results.map(({ id, state, result }) => `${id} ${state}${result ? ` Verdict ${result.verdict}` : ""}`).join(", ")}`);
