@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import type { Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +11,7 @@ export const treeDeadline = 2_000;
 const script = fileURLToPath(new URL("./process-tree.sh", import.meta.url));
 const variable = "PI_WORKFLOW_PROCESS_TREE";
 const groupsVariable = "PI_WORKFLOW_PROCESS_GROUPS";
+const recordGroups = !existsSync("/proc/self/environ");
 // One watchdog per parent process, kept across /reload, so its lifetime pipe closes only when the parent dies.
 const WATCHDOG = Symbol.for("pi-workflow:process-tree:watchdog");
 const slots = globalThis as Record<symbol, Watchdog | undefined>;
@@ -39,7 +40,7 @@ function parentWatchdog() {
 export function treeEnvironment(id: string) {
 	const { token, groups } = parentWatchdog();
 	mkdirSync(join(groups, id), { recursive: true });
-	return { [variable]: `${token}/${id}/`, [groupsVariable]: join(groups, id) };
+	return { [variable]: `${token}/${id}/`, ...(recordGroups ? { [groupsVariable]: join(groups, id) } : {}) };
 }
 
 function runScript(id: string, ...mode: string[]) {
@@ -56,7 +57,7 @@ function runScript(id: string, ...mode: string[]) {
 // The child Pi leads its own group, and on macOS its environment is unreadable once it sets its title, so its pid
 // seeds the record. The watchdog keeps recording every 500 ms there.
 export function recordTree(id: string, pid: number) {
-	return runScript(id, "record", String(pid));
+	return recordGroups ? runScript(id, "record", String(pid)) : Promise.resolve();
 }
 
 export function stopTree(id: string) {

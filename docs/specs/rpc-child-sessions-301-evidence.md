@@ -54,11 +54,11 @@ On `main` (`e1a6f1e`) the sweep exited 0 with members still running:
 
 ### What changed
 
-ADR 0024 adds recorded process groups to the membership; Linux keeps the mark.
+ADR 0024 adds recorded process groups to membership only without `/proc`, as on macOS; Linux keeps the mark alone.
 
-- `extensions/process-tree.sh` takes the parent's groups directory as its third argument. Members are the processes that carry the mark or belong to a recorded group whose leader's start time still matches, plus every process whose parent or group leader is a member. The sweep stops the members, reads them again and kills them. A `record` mode records the groups of a child's members; where `/proc` is absent the watchdog runs it every 500 ms and drops records whose number was reused or whose group stayed empty for a minute. The watchdog reads its lifetime pipe through a duplicated descriptor, since `dash` gives a background job `/dev/null` as stdin.
-- `extensions/process-tree.ts` creates the groups directory per parent process with `mkdtemp` and passes `PI_WORKFLOW_PROCESS_GROUPS=<groups>/<session id>` to the child. `extensions/rpc-child.ts` records the child Pi's group at spawn, at readiness and after every run.
-- `extensions/child-bash.ts` records each command shell's group from the first line of the command prefix, for the guarded and the configured bash.
+- `extensions/process-tree.sh` takes the parent's groups directory as its third argument. Without `/proc`, members are the processes that carry the mark or belong to a recorded group whose leader's start time still matches, plus every process whose parent or group leader is a member. With `/proc`, only the mark determines membership. The sweep stops the members, reads them again and kills them. Only without `/proc`, `record` mode records the groups of a child's members and the watchdog runs it every 500 ms and drops records whose number was reused or whose group stayed empty for a minute. Cleanup removes the records directory without following it if replaced by a symlink. The watchdog reads its lifetime pipe through a duplicated descriptor, since `dash` gives a background job `/dev/null` as stdin.
+- `extensions/process-tree.ts` creates the groups directory per parent process with `mkdtemp` and, only without `/proc`, passes `PI_WORKFLOW_PROCESS_GROUPS=<groups>/<session id>` to the child. Only there does `extensions/rpc-child.ts` record the child Pi's group at spawn, at readiness and after every run.
+- Only without `/proc`, `extensions/child-bash.ts` records each command shell's group from the first line of the command prefix, for the guarded and the configured bash.
 - Tests: `childPids` in `test/rpc-child-pi.test.mjs` finds the parent's Pi children by parent pid and name, since Pi's title hides `--mode rpc` on macOS; the `/reload` scenario waits up to `shutdownDeadline + treeDeadline` for the completed child to end, because the npm Pi on Node does not exit when its stdin closes and is killed after the shutdown deadline.
 
 ### Scenario evidence

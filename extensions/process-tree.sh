@@ -1,11 +1,12 @@
 #!/bin/sh
 # process-tree.sh <mark> <deadline ms> <groups dir> [watch | record [pid]]
 # Pi starts MCP servers and shell commands in sessions of their own and an orphan
-# leaves its parent's tree, so the inherited environment and the recorded process
-# groups are the only memberships that survive both. macOS hides the environment
-# of platform binaries and of retitled processes such as Pi, so there only the
-# groups hold. A group is named by its leader's pid and recorded with the leader's
-# start time; a live process with that pid and another start time reused it.
+# leaves its parent's tree, so membership follows the inherited environment.
+# Where /proc is absent, recorded process groups also track membership: macOS hides
+# the environment of platform binaries and of retitled processes such as Pi.
+# There only the groups hold. A group is named by its leader's pid and recorded
+# with the leader's start time; a live process with that pid and another start
+# time reused it.
 # Stdin reaches EOF when the parent exits or is SIGKILLed.
 mark=$1
 rounds=$(($2 / 50))
@@ -64,6 +65,10 @@ END {
 }'
 
 members() {
+	if [ -r /proc/self/environ ]; then
+		environment_members "$mark"
+		return
+	fi
 	{
 		environment_members "$mark" | sed 's/^/E /'
 		records "$groups"
@@ -93,6 +98,7 @@ record() {
 
 seed=$5
 if [ "$4" = record ]; then
+	[ -r /proc/self/environ ] && exit 0
 	record "$groups"
 	exit 0
 fi
@@ -115,7 +121,7 @@ fi
 while [ "$rounds" -gt 0 ]; do
 	pids=$(members)
 	if [ -z "$pids" ]; then
-		rm -rf "$groups"
+		rm -rf -- "${groups%/}"
 		exit 0
 	fi
 	kill -STOP $pids 2>/dev/null

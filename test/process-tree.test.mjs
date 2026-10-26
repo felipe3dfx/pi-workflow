@@ -4,7 +4,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import process from "node:process";
@@ -75,7 +75,33 @@ test("the ps-based sweep kills the tree's members and ends without matching its 
 	assert.equal(signal, "SIGKILL");
 });
 
+test("where /proc exists, a sweep follows only the mark and ignores recorded groups", async (t) => {
+	const dir = await scratch(t);
+	const proc = join(dir, "environ");
+	await writeFile(proc, "");
+	const sweep = join(dir, "process-tree.sh");
+	await writeFile(sweep, readFileSync(script, "utf8").replaceAll("/proc/self/environ", proc));
+	const groups = await groupsOf(t, "child");
+	const unrelated = lingering(t);
+	await writeFile(join(groups, "child", String(unrelated.pid)), startTime(unrelated.pid));
+	const { code } = await sweepOf(sweep, [`${randomUUID()}/child/`, "1000", groups]);
+	assert.equal(code, 0);
+	assert.ok(alive(unrelated.pid));
+});
+
+test("a sweep removes its records without following a records directory replaced by a symlink", async (t) => {
+	const groups = await scratch(t);
+	const outside = await scratch(t);
+	const sentinel = join(outside, "sentinel");
+	await writeFile(sentinel, "keep");
+	await symlink(outside, join(groups, "child"));
+	const { code } = await sweepOf(script, [`${randomUUID()}/child/`, "1000", groups]);
+	assert.equal(code, 0);
+	assert.ok(existsSync(sentinel));
+});
+
 test("a sweep kills a recorded process group whose environment hides the mark, including a background job its exited shell left behind", async (t) => {
+	const { sweep, path } = await sweepWithoutProc(t);
 	const token = randomUUID();
 	const groups = await groupsOf(t, "child");
 	const job = join(groups, "job.pid");
@@ -88,18 +114,19 @@ test("a sweep kills a recorded process group whose environment hides the mark, i
 	const sleep = Number(readFileSync(job, "utf8"));
 	t.after(() => alive(sleep) && process.kill(sleep, "SIGKILL"));
 	assert.ok(alive(sleep));
-	const { code } = await sweepOf(script, [`${token}/child/`, "2000", groups]);
+	const { code } = await sweepOf(sweep, [`${token}/child/`, "2000", groups], path);
 	assert.equal(code, 0);
 	await gone([sleep], Date.now());
 });
 
 test("a sweep kills a recorded group's live leader and leaves alone a process that reuses a recorded group's number with another start time", async (t) => {
+	const { sweep, path } = await sweepWithoutProc(t);
 	const groups = await groupsOf(t, "child");
 	const unrelated = lingering(t);
 	const control = lingering(t);
 	await writeFile(join(groups, "child", String(control.pid)), startTime(control.pid));
 	await writeFile(join(groups, "child", String(unrelated.pid)), "Thu Jan  1 00:00:00 1970\n");
-	const { code } = await sweepOf(script, [`${randomUUID()}/child/`, "1000", groups]);
+	const { code } = await sweepOf(sweep, [`${randomUUID()}/child/`, "1000", groups], path);
 	assert.equal(code, 0);
 	assert.ok(alive(unrelated.pid));
 	await gone([control.pid], Date.now());
@@ -174,6 +201,7 @@ test("a parent's watchdog kills the group a marked descendant started outside th
 });
 
 test("record mode drops empty old groups and reused numbers but retains a live old group", async (t) => {
+	const { sweep, path } = await sweepWithoutProc(t);
 	const groups = await groupsOf(t, "child");
 	const exited = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
 	t.after(() => exited.kill("SIGKILL"));
@@ -189,7 +217,7 @@ test("record mode drops empty old groups and reused numbers but retains a live o
 	const old = new Date(Date.now() - 120_000);
 	await utimes(emptyRecord, old, old);
 	await utimes(liveRecord, old, old);
-	const { code } = await sweepOf(script, [`${randomUUID()}/child/`, "2000", groups, "record", String(control.pid)]);
+	const { code } = await sweepOf(sweep, [`${randomUUID()}/child/`, "2000", groups, "record", String(control.pid)], path);
 	assert.equal(code, 0);
 	assert.ok(!existsSync(emptyRecord));
 	assert.ok(!existsSync(reusedRecord));
@@ -202,6 +230,7 @@ test("a child's bash records its shell's group, so a background job it leaves be
 		["configured", (cwd) => createConfiguredBashTool(cwd, {})],
 	]) {
 		await t.test(name, async (t) => {
+			const { sweep, path } = await sweepWithoutProc(t);
 			const groups = await groupsOf(t, "child");
 			process.env.PI_WORKFLOW_PROCESS_GROUPS = join(groups, "child");
 			t.after(() => {
@@ -212,7 +241,7 @@ test("a child's bash records its shell's group, so a background job it leaves be
 			const sleep = Number(result.content.map((part) => part.text).join("").trim());
 			t.after(() => alive(sleep) && process.kill(sleep, "SIGKILL"));
 			assert.ok(alive(sleep));
-			const { code } = await sweepOf(script, [`${randomUUID()}/child/`, "2000", groups]);
+			const { code } = await sweepOf(sweep, [`${randomUUID()}/child/`, "2000", groups], path);
 			assert.equal(code, 0);
 			await gone([sleep], Date.now());
 		});
