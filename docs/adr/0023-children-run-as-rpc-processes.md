@@ -3,6 +3,7 @@
 ## Status
 
 Acceptance: approval and merge of the introducing PR.
+Amended by [ADR 0024](0024-process-tree-membership-by-recorded-groups.md): process-tree membership also follows recorded process groups, and macOS termination is verified.
 
 ## Decision
 
