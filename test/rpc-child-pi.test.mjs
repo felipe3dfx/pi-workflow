@@ -131,6 +131,61 @@ test("a real Pi child runs in its worktree and loads the worktree's MCP servers 
 	}
 });
 
+test("a real Pi child resolves its MCP servers' working directories against its worktree on the inherited and contextual routes", { skip, timeout: 90_000 }, async (t) => {
+	for (const route of ["inherited", "contextual"]) {
+		await t.test(route, async (t) => {
+			const scene = await fixture(t);
+			const outside = join(scene.dir, "outside");
+			await mkdir(outside);
+			const repo = await repository(scene.dir, "repo", {
+				".pi/mcp.json": JSON.stringify({
+					mcpServers: {
+						bare: server("bare", scene.evidence),
+						relative: { ...server("relative", scene.evidence), cwd: ".pi" },
+						absolute: { ...server("absolute", scene.evidence), cwd: outside },
+					},
+				}),
+			});
+			const worktree = join(scene.dir, "child-worktree");
+			git(repo, "worktree", "add", "--quiet", "-b", "child", worktree);
+			const project = { cwd: repo, trusted: true };
+			const handle =
+				route === "inherited"
+					? await launch(t, scene, worktree, project)
+					: await createRpcChildSession({ sessionRoot: join(scene.dir, "sessions") })({
+							authorization: {
+								authority: () => ({ assignment: "Answer DONE.", instructions: [] }),
+								classify: async () => {
+									throw new Error("classify is not expected");
+								},
+							},
+							cwd: worktree,
+							project,
+							role: "explore",
+							model: scene.endpoint.model,
+							thinking: "off",
+							prompt: "You are a contextual child. Answer DONE.",
+							tools: ["read"],
+							shell: {},
+							onEvent() {},
+							notify() {},
+							ask: async () => "answer",
+							report() {},
+							checkpointed() {},
+						});
+			if (route === "contextual") t.after(() => handle.dispose());
+			assert.equal(await handle.run("Say done."), "DONE");
+			const expected = { bare: worktree, relative: join(worktree, ".pi"), absolute: outside };
+			for (const [name, cwd] of Object.entries(expected)) {
+				const evidence = await eventually(() =>
+					existsSync(join(scene.evidence, `${name}.roots`)) && seen(scene.evidence, name),
+				);
+				assert.deepEqual(await evidence, { cwd, roots: [pathToFileURL(worktree).href] }, name);
+			}
+		});
+	}
+});
+
 test("a parent's untracked .pi/mcp.json is reported at launch and a real Pi child does not inherit it", { skip, timeout: 60_000 }, async (t) => {
 	const scene = await fixture(t);
 	const repo = await repository(scene.dir, "repo", {});
