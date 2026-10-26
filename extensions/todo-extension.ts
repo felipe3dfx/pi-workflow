@@ -31,7 +31,7 @@ const TodoParams = Type.Object({
 		],
 		{
 			description:
-				"write replaces the whole list; add appends one task; update changes one task; clear empties the list; list reads it",
+				"write replaces the whole list with new, increasing ids that are never reused; use the ids it returns; add appends one task; update changes one task; clear empties the list; list reads it",
 		},
 	),
 	tasks: Type.Optional(Type.Array(TodoWriteTask, { description: "The whole list, for action write" })),
