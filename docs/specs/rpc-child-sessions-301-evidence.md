@@ -63,18 +63,18 @@ ADR 0024 adds recorded process groups to the membership; Linux keeps the mark.
 
 ### Scenario evidence
 
-Command: `node --test test/rpc-child-pi.test.mjs test/rpc-child.test.mjs test/process-tree.test.mjs`, with the standalone binary first on `PATH`. 101 tests: 97 passed, 4 failed, all outside the process tree (below). `pgrep -fl "mcp-fixture-server|sleep (300|600)"` printed nothing afterwards.
+Command on `045bc3b`: `node --test test/rpc-child-pi.test.mjs test/rpc-child.test.mjs test/process-tree.test.mjs`, once with the standalone binary first on `PATH` and once with the npm package. Each run: 103 tests, 99 passed, 4 failed, all outside the process tree (below). `pgrep -fl "mcp-fixture-server|sleep (300|600)"` printed nothing afterwards.
 
 | Scenario | Proof | Standalone binary | npm package on Node |
 | --- | --- | --- | --- |
-| Normal parent exit, real Pi | "a real Pi child, its MCP server and its shell descendants end within the tree deadline when the parent exits or is killed", `shutdown` | `ℹ Pi, MCP server, shell and its background sleep (42155, 42227, 42232, 42237) ended 0 ms after the parent exited` | `… ended 130 ms after the parent exited` |
-| SIGKILL of the parent, real Pi | Same test, `SIGKILL` | `… (42430, 42482, 42491, 42494) ended 248 ms after the parent was killed` | `… ended 377 ms after the parent was killed` |
-| Crashed child, real Pi | "a real Pi child that crashes leaves no MCP server or shell descendant within the tree deadline" | `ℹ MCP server, shell and its background sleep (42766, 42787, 42790) ended 136 ms after the child Pi was killed` | `… ended 125 ms after the child Pi was killed` |
-| Child that ends cleanly, real Pi | "a real Pi child that ends cleanly leaves no background process of its shell within the tree deadline" | `ℹ the background sleep 43248 ended 258 ms after the child Pi ended` | `… ended 1279 ms after the child Pi ended` |
-| `/reload`, then quit or SIGKILL of a real Pi parent | "a real Pi parent's /reload keeps its working child processes, …" | `ℹ after quit, the waiting child ended in 87 ms` / `ℹ after SIGKILL, the waiting child ended in 15 ms` | `… 1269 ms` / `… 58 ms` |
-| Parent exit and SIGKILL, fake Pi | "a parent that exits or is killed leaves no RPC child or descendant within the tree deadline" | `ℹ no child process remains 137 ms after the parent exited` / `ℹ no child process remains 560 ms after the parent was killed` | same suite |
-| Crash and cancellation, fake Pi | "an RPC child that crashes leaves no descendant within the tree deadline", "cancelling an RPC child asks it to abort, then kills its whole process tree after the shutdown deadline" | `ok 59`, `ok 57` | same suite |
-| Recorded groups | `test/process-tree.test.mjs`: hidden-environment group with the orphan its exited shell left, reused group number left alone, watchdog after the parent dies, a child's bash records its shell | `ok 1` to `ok 5` | same suite |
+| Normal parent exit, real Pi | "a real Pi child, its MCP server and its shell descendants end within the tree deadline when the parent exits or is killed", `shutdown` | `ℹ Pi, MCP server, shell and its background sleep (67743, 67861, 67881, 67885) ended 0 ms after the parent exited` | `… ended 126 ms after the parent exited` |
+| SIGKILL of the parent, real Pi | Same test, `SIGKILL` | `… (68251, 68312, 68331, 68335) ended 207 ms after the parent was killed` | `… ended 347 ms after the parent was killed` |
+| Crashed child, real Pi | "a real Pi child that crashes leaves no MCP server or shell descendant within the tree deadline" | `ℹ MCP server, shell and its background sleep (68531, 68541, 68544) ended 150 ms after the child Pi was killed` | `… ended 127 ms after the child Pi was killed` |
+| Child that ends cleanly, real Pi | "a real Pi child that ends cleanly leaves no background process of its shell within the tree deadline" | `ℹ the background sleep 68876 ended 260 ms after the child Pi ended` | `… ended 1252 ms after the child Pi ended` |
+| `/reload`, then quit or SIGKILL of a real Pi parent | "a real Pi parent's /reload keeps its working child processes, …" | `ℹ after quit, the waiting child ended in 81 ms` / `ℹ after SIGKILL, the waiting child ended in 15 ms` | `… 1263 ms` / `… 10 ms` |
+| Parent exit and SIGKILL, fake Pi | "a parent that exits or is killed leaves no RPC child or descendant within the tree deadline" | `ℹ no child process remains 149 ms after the parent exited` / `ℹ no child process remains 522 ms after the parent was killed` | same suite |
+| Crash and cancellation, fake Pi | "an RPC child that crashes leaves no descendant within the tree deadline", "cancelling an RPC child asks it to abort, then kills its whole process tree after the shutdown deadline" | `ok` | same suite |
+| Recorded groups | `test/process-tree.test.mjs`: hidden-environment group with the orphan its exited shell left; a live recorded group killed while a reused number is left alone; watchdog after the parent dies, for a recorded and for a marked descendant; record pruning; a child's bash records its shell | 9 of 9 passed | same suite |
 
 Every measurement is below `treeDeadline` (2 000 ms). The npm package on Node does not exit when its stdin closes, on Linux too, so a clean end waits the `shutdownDeadline` of 1 000 ms and the sweep kills it.
 
@@ -82,10 +82,10 @@ The 4 failures also fail on `main` on this host and come from test portability, 
 
 ### Linux after the change
 
-Docker `node:22.19.0` (Debian, arm64), non-root user, `--init`:
+Docker `node:22.19.0` (Debian, arm64), non-root user, `--init`, on `git archive 045bc3b`:
 
-- `npm run check`: exit 0; 1331 tests, 1291 passed, 40 skipped, 0 failed; "Packed distribution validation passed."
-- With the standalone `pi-linux-arm64` 1.4.0 on `PATH`, the three suites above: 101 tests, 99 passed, 2 skipped (pi-web-access and Claude Bridge not installed), 0 failed; `ℹ Pi, MCP server, shell and its background sleep … ended 0 ms after the parent exited`, `… ended 16 ms after the parent was killed`, `ℹ MCP server, shell and its background sleep … ended 16 ms after the child Pi was killed`, `ℹ after quit, the waiting child ended in 55 ms`.
+- `npm run check`: exit 0; 1333 tests, 1293 passed, 40 skipped, 0 failed; "Packed distribution validation passed."
+- With the standalone `pi-linux-arm64` 1.4.0 (checksum verified) on `PATH`, the three suites above: 103 tests, 101 passed, 2 skipped (pi-web-access and Claude Bridge not installed), 0 failed; `ℹ Pi, MCP server, shell and its background sleep … ended 0 ms after the parent exited`, `… ended 15 ms after the parent was killed`, `ℹ MCP server, shell and its background sleep … ended 21 ms after the child Pi was killed`, `ℹ after quit, the waiting child ended in 50 ms`.
 
 ### Demo
 
