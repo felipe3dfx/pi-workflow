@@ -728,8 +728,7 @@ function createChildrenView(
 ) {
 	let selected: string | undefined = sessions
 		.list()
-		.filter((child) => !isWorking(child.state))
-		.sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0))[0]?.id;
+		.sort((a, b) => byState(a, b) || (b.endedAt ?? 0) - (a.endedAt ?? 0))[0]?.id;
 	let focus: "list" | "detail" = "list";
 	let confirming: string | undefined;
 	let notice = "";
@@ -1615,7 +1614,8 @@ function createChildrenView(
 				press(hint.action);
 				return { handled: true };
 			}
-			if (event.y < 1 || event.y > layout.size) return undefined;
+			const outside = event.type === "wheel" ? { handled: true } : undefined;
+			if (event.y < 1 || event.y > layout.size) return outside;
 			const inside = (span: Span | undefined) =>
 				span !== undefined && x >= span.x && x < span.x + span.width;
 			const pane = inside(layout.list)
@@ -1623,10 +1623,10 @@ function createChildrenView(
 				: inside(layout.detail)
 					? "detail"
 					: undefined;
-			if (!pane) return undefined;
+			if (!pane) return outside;
 			if (event.type === "wheel") {
 				const delta = event.wheelDelta ?? 0;
-				if (delta === 0) return undefined;
+				if (delta === 0) return outside;
 				if (pane === "list") scrollList(delta);
 				else scrollDetail(delta);
 				tui.requestRender();

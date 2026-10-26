@@ -660,6 +660,37 @@ test("a click selects a list row, a double click focuses the detail, the wheel s
 	assert.equal(view.closed(), true);
 });
 
+test("the view opens on a running child while one works", () => {
+	const view = open(threeChildren(), { latest: true });
+	assert.match(
+		view.lines(120).find((line) => line.includes("▸")),
+		/▸ ◐ worker 5636 +running/,
+	);
+});
+
+test("the wheel over the title, borders, divider, or footer stays in the view", async (t) => {
+	const child = record("5636");
+	const capture = lines40(t, child);
+	const view = open(fakeSessions([child]), { rows: 20, audit: capture.audit });
+	await settle(view);
+	const lines = view.lines(120);
+	const divider = lines[2].indexOf("│", 2);
+	const footer = lines.findIndex((line) => line.includes("f follow"));
+	for (const [x, y] of [
+		[60, 0],
+		[0, 8],
+		[divider, 8],
+		[119, 8],
+		[60, footer],
+	]) {
+		assert.deepEqual(
+			view.mouse({ type: "wheel", x, y, wheelDelta: -3 }),
+			{ handled: true },
+			`wheel at ${x},${y}`,
+		);
+	}
+});
+
 test("the elapsed time ticks every second while a child works, and the timer stops when the view closes", () => {
 	const clock = manualSchedule();
 	const sessions = threeChildren();
