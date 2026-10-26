@@ -4,7 +4,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import process from "node:process";
@@ -75,7 +75,7 @@ test("the ps-based sweep kills the tree's members and ends without matching its 
 	assert.equal(signal, "SIGKILL");
 });
 
-test("where /proc exists, a sweep follows only the mark and ignores recorded groups", async (t) => {
+test("where /proc exists, a sweep ignores recorded groups", async (t) => {
 	const dir = await scratch(t);
 	const proc = join(dir, "environ");
 	await writeFile(proc, "");
@@ -98,6 +98,7 @@ test("a sweep removes its records without following a records directory replaced
 	const { code } = await sweepOf(script, [`${randomUUID()}/child/`, "1000", groups]);
 	assert.equal(code, 0);
 	assert.ok(existsSync(sentinel));
+	await assert.rejects(lstat(join(groups, "child")), { code: "ENOENT" });
 });
 
 test("a sweep kills a recorded process group whose environment hides the mark, including a background job its exited shell left behind", async (t) => {
