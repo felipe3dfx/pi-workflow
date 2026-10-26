@@ -1841,16 +1841,17 @@ test("children parked at a reload that no runtime adopts are stopped at the adop
 
 			await before.fire("session_shutdown", { reason: "reload" });
 			assert.equal(alive(pid), true);
-			clock.fire(adoptionDeadline);
+			await clock.fire(adoptionDeadline);
 
-			await eventually(() => !alive(pid));
-			await eventually(() => readdirSync(sessions).length === 0);
-			const audit = createChildAudit({ root: join(agentDir, "pi-workflow-audit"), parent: () => "parent-1" });
-			const { records } = await eventually(
-				() => audit.list(),
-				({ records }) => records.some((listed) => listed.child === id && listed.health.closed),
-			);
-			assert.equal(records.find((listed) => listed.child === id).state, "failed");
+			assert.equal(alive(pid), false);
+			assert.deepEqual(readdirSync(sessions), []);
+			const { records } = await createChildAudit({
+				root: join(agentDir, "pi-workflow-audit"),
+				parent: () => "parent-1",
+			}).list();
+			const listed = records.find((record) => record.child === id);
+			assert.equal(listed.state, "failed");
+			assert.equal(listed.health.closed, true);
 		} finally {
 			delete process.env.FAKE_PI_SCENARIO;
 			delete process.env.FAKE_PI_RECORD;
@@ -3188,11 +3189,13 @@ function manualClock() {
 		},
 		pending: () => [...timers].map((timer) => timer.ms),
 		fire(ms) {
+			const fired = [];
 			for (const timer of [...timers]) {
 				if (timer.ms !== ms) continue;
 				timers.delete(timer);
-				timer.fn();
+				fired.push(timer.fn());
 			}
+			return Promise.all(fired);
 		},
 	};
 }
