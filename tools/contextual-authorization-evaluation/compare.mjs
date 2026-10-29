@@ -98,6 +98,33 @@ function parseResponse(message) {
 	}
 }
 
+export function liveClassifier(runtime, model, thinking) {
+	return async (proposal, signal) =>
+		parseResponse(
+			await runtime.completeSimple(
+				model,
+				{
+					systemPrompt:
+						"Return only a JSON object with scope, effects, ownership, prohibited, confirmed, commit and reason. Assess the provided proposal and its rules.",
+					messages: [
+						{
+							role: "user",
+							content: JSON.stringify(proposal),
+							timestamp: Date.now(),
+						},
+					],
+				},
+				{
+					signal,
+					maxRetries: 0,
+					maxTokens: 2048,
+					reasoning: thinking,
+					cacheRetention: "none",
+				},
+			),
+		);
+}
+
 export async function runComparison(
 	input,
 	complete,
@@ -344,30 +371,12 @@ async function cli() {
 	try {
 		const result = await runComparison(
 			{ corpus, review, plan },
-			async (cell, proposal, signal) => {
-				const message = await runtime.completeSimple(
+			(cell, proposal, signal) =>
+				liveClassifier(
+					runtime,
 					catalog.get(cell.model),
-					{
-						systemPrompt:
-							"Return only a JSON object with scope, effects, ownership, prohibited, confirmed, commit and reason. Assess the provided proposal and its rules.",
-						messages: [
-							{
-								role: "user",
-								content: JSON.stringify(proposal),
-								timestamp: Date.now(),
-							},
-						],
-					},
-					{
-						signal,
-						maxRetries: 0,
-						maxTokens: 2048,
-						reasoning: cell.thinking,
-						cacheRetention: "none",
-					},
-				);
-				return parseResponse(message);
-			},
+					cell.thinking,
+				)(proposal, signal),
 			{
 				signal: controller.signal,
 				onProgress: ({ run, details }) => {
