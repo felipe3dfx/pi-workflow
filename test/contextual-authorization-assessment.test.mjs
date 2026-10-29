@@ -13,10 +13,13 @@ import { assessProposal } from "../tools/contextual-authorization-evaluation/ass
 
 const rules = JSON.parse(
 	readFileSync(
-		new URL("../extensions/action-authorization.ts", import.meta.url),
+		new URL(
+			"../tools/contextual-authorization-evaluation/cases.json",
+			import.meta.url,
+		),
 		"utf8",
-	).match(/const rules =\s*("[^\n]*");/)[1],
-);
+	),
+).cases[0].modelInput.rules;
 const proposal = {
 	authority: {
 		assignment: "Correct the assigned file",

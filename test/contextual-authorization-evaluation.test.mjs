@@ -135,11 +135,20 @@ test("manifest rejects invalid identities and leaked gold", () =>
 	fixture(({ path, corpus }) => {
 		corpus.cases[1].id = corpus.cases[0].id;
 		writeFileSync(path, JSON.stringify(corpus));
-		assert.notEqual(run("manifest", path).status, 0);
+		let invalid = run("manifest", path);
+		assert.equal(invalid.status, 1);
+		assert.equal(invalid.stdout, "");
+		assert.equal(invalid.stderr.trim(), "Error: Invalid case metadata");
 		corpus.cases[1].id = "other";
 		corpus.cases[0].modelInput.expected = "allow";
 		writeFileSync(path, JSON.stringify(corpus));
-		assert.notEqual(run("manifest", path).status, 0);
+		invalid = run("manifest", path);
+		assert.equal(invalid.status, 1);
+		assert.equal(invalid.stdout, "");
+		assert.equal(
+			invalid.stderr.trim(),
+			"Error: Invalid model input or gold separation",
+		);
 	}));
 test("corpus rejects unknown metadata while permitting arbitrary tool input", () =>
 	fixture(({ path, corpus }) => {
@@ -178,6 +187,8 @@ test("corpus rejects unknown metadata while permitting arbitrary tool input", ()
 	}));
 test("scripted report separates outcomes, failures, populations and elapsed time", () =>
 	fixture(({ dir, path, artifact }) => {
+		artifact.samples[0].finishedAt = "2025-01-01T00:00:08.000Z";
+		artifact.samples[2].finishedAt = "2025-01-01T00:00:02.000Z";
 		const result = report(dir, path, artifact);
 		assert.equal(result.status, 0, result.stderr);
 		const output = JSON.parse(result.stdout);
@@ -225,10 +236,22 @@ test("scripted report separates outcomes, failures, populations and elapsed time
 		);
 		assert.equal(output.cells[0].timing.successful.count, 3);
 		assert.equal(output.cells[0].timing.failed.count, 1);
-		assert.equal(output.cells[0].timing.successful.p95Ms, 1000);
+		assert.equal(output.cells[0].timing.successful.p50Ms, 2000);
+		assert.equal(output.cells[0].timing.successful.p95Ms, 8000);
+		assert.deepEqual(output.cells[0].timing.failed, {
+			count: 1,
+			p50Ms: 1000,
+			p95Ms: 1000,
+			sequentialSampleSumMs: 1000,
+		});
+		assert.equal(
+			output.cells[0].timing.successful.sequentialSampleSumMs,
+			11000,
+		);
+		assert.equal(output.timing.p50Ms, 1000);
 		assert.equal(output.timing.wallMs, 10000);
-		assert.equal(output.timing.sequentialSampleSumMs, 4000);
-		assert.equal(output.timing.p95Ms, 1000);
+		assert.equal(output.timing.sequentialSampleSumMs, 12000);
+		assert.equal(output.timing.p95Ms, 8000);
 	}));
 test("cell rates use observed expected populations and timing separates failure latency", () =>
 	fixture(({ dir, path, artifact }) => {
@@ -302,7 +325,7 @@ test("empty and aborted cells keep null rates and separate elapsed samples", () 
 	}));
 test("report rejects duplicated, mismatched, ambiguous or untruthful inputs", () =>
 	fixture(({ dir, path, artifact }) => {
-		for (const mutate of [
+		const mutations = [
 			(a) => a.samples.push(a.samples[0]),
 			(a) => a.cells.push(a.cells[0]),
 			(a) => {
@@ -332,9 +355,26 @@ test("report rejects duplicated, mismatched, ambiguous or untruthful inputs", ()
 			(a) => {
 				a.samples[0].caseId = "unknown";
 			},
-		]) {
+		];
+		const diagnostics = [
+			"Duplicate sample",
+			"Duplicate cell",
+			"Invalid sample fields",
+			"Invalid cell",
+			"Sample timing outside run",
+			"Invalid run timing",
+			"Invalid artifact or corpus digest",
+			"Sample timing outside run",
+			"Invalid provenance",
+			"Invalid failure",
+			"Unknown sample identity",
+		];
+		for (const [index, mutate] of mutations.entries()) {
 			const copy = structuredClone(artifact);
 			mutate(copy);
-			assert.notEqual(report(dir, path, copy).status, 0);
+			const invalid = report(dir, path, copy);
+			assert.equal(invalid.status, 1);
+			assert.equal(invalid.stdout, "");
+			assert.equal(invalid.stderr.trim(), `Error: ${diagnostics[index]}`);
 		}
 	}));

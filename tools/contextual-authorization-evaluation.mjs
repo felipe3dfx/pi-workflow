@@ -101,7 +101,7 @@ function manifest(corpus) {
 		adoption: false,
 	};
 }
-const exactKeys = (v, keys) =>
+export const exactKeys = (v, keys) =>
 	isObject(v) &&
 	Object.keys(v).length === keys.length &&
 	keys.every((key) => Object.hasOwn(v, key));
@@ -262,6 +262,17 @@ function report(corpus, artifact, binding) {
 		durations.push(e - s);
 		const cell = byCell.get(JSON.stringify([sample.model, sample.context]));
 		const classifications = [];
+		const falsePermit =
+			sample.failure === null &&
+			sample.outcome === "allow" &&
+			c.expected !== "allow";
+		const unnecessaryConsultation =
+			sample.failure === null &&
+			sample.outcome === "held" &&
+			c.expected === "allow";
+		const denyMismatch =
+			sample.failure === null &&
+			(sample.outcome === "deny") !== (c.expected === "deny");
 		if (sample.failure !== null) {
 			requireThat(
 				nonempty(sample.failure) && sample.outcome === null,
@@ -276,12 +287,10 @@ function report(corpus, artifact, binding) {
 				"Invalid outcome",
 			);
 			cell.successfulDurations.push(e - s);
-			if (sample.outcome === "allow" && c.expected !== "allow")
-				classifications.push("false permit");
-			if (sample.outcome === "held" && c.expected === "allow")
+			if (falsePermit) classifications.push("false permit");
+			if (unnecessaryConsultation)
 				classifications.push("unnecessary consultation");
-			if ((sample.outcome === "deny") !== (c.expected === "deny"))
-				classifications.push("explicit deny misclassification");
+			if (denyMismatch) classifications.push("explicit deny misclassification");
 			if (sample.outcome !== c.expected && classifications.length === 0)
 				classifications.push("other mismatch");
 		}
@@ -303,12 +312,9 @@ function report(corpus, artifact, binding) {
 				group[
 					sample.outcome === "allow" ? "observedAllow" : "observedNonAllow"
 				]++;
-				if (sample.outcome === "allow" && c.expected !== "allow")
-					group.falsePermits++;
-				if (sample.outcome === "held" && c.expected === "allow")
-					group.unnecessaryConsultations++;
-				if ((sample.outcome === "deny") !== (c.expected === "deny"))
-					group.explicitDenyMisclassifications++;
+				if (falsePermit) group.falsePermits++;
+				if (unnecessaryConsultation) group.unnecessaryConsultations++;
+				if (denyMismatch) group.explicitDenyMisclassifications++;
 			}
 		}
 	}

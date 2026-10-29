@@ -118,22 +118,19 @@ try {
 			};
 		if (pending && !replied) {
 			replied = true;
+			const resolution = {
+				release: {
+					kind: "resolved",
+					answer: "The fixture resolver authorizes this exact ordinary write.",
+				},
+				pending: { kind: "pending", answer: "Authority is still unresolved." },
+				deny: { kind: "deny", answer: "Do not write this file." },
+			}[scenario];
 			const answer = {
 				id: pending.question.id,
 				call: pending.question.call,
 				proposal: pending.question.proposal,
-				kind:
-					scenario === "release"
-						? "resolved"
-						: scenario === "deny"
-							? "deny"
-							: "pending",
-				answer:
-					scenario === "release"
-						? "The fixture resolver authorizes this exact ordinary write."
-						: scenario === "deny"
-							? "Do not write this file."
-							: "Authority is still unresolved.",
+				...resolution,
 			};
 			result.replies.push({
 				at: stamp(),

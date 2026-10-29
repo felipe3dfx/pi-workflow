@@ -11,21 +11,16 @@ import { isDeepStrictEqual } from "node:util";
 import {
 	corpusAt,
 	adjudication,
+	exactKeys,
 } from "../contextual-authorization-evaluation.mjs";
 import { assessProposal } from "./assess.ts";
 
 const models = new Set(["openai/gpt-6.1-sol", "openai/gpt-6-sol"]);
 const now = () => new Date().toISOString();
-const keys = (x, names) =>
-	x &&
-	typeof x === "object" &&
-	!Array.isArray(x) &&
-	Object.keys(x).length === names.length &&
-	names.every((k) => Object.hasOwn(x, k));
 const integer = (x, max) => Number.isSafeInteger(x) && x > 0 && x <= max;
 function validate({ corpus, review, plan }) {
 	if (
-		!keys(plan, [
+		!exactKeys(plan, [
 			"version",
 			"corpusPath",
 			"reviewPath",
@@ -54,7 +49,7 @@ function validate({ corpus, review, plan }) {
 	const seen = new Set();
 	for (const cell of plan.cells) {
 		if (
-			!keys(cell, ["model", "context", "thinking"]) ||
+			!exactKeys(cell, ["model", "context", "thinking"]) ||
 			!models.has(cell.model) ||
 			cell.context !== "full" ||
 			!["off", "low", "high"].includes(cell.thinking) ||
@@ -180,20 +175,20 @@ export async function runComparison(
 				break outer;
 			}
 			const sampleStart = now();
-			const overflowSample = {
+			const record = {
 				caseId: c.id,
 				model: cell.model,
 				context: cell.context,
 				startedAt: sampleStart,
+			};
+			const overflowSample = {
+				...record,
 				finishedAt: sampleStart,
 				outcome: null,
 				failure: "evidence-limit",
 			};
 			const overflowDetail = {
-				caseId: c.id,
-				model: cell.model,
-				context: cell.context,
-				startedAt: sampleStart,
+				...record,
 				finishedAt: sampleStart,
 				failure: "evidence-limit",
 			};
@@ -253,21 +248,16 @@ export async function runComparison(
 				clearTimeout(timer);
 				signal?.removeEventListener("abort", abort);
 			}
+			const finishedAt = now();
 			const sample = {
-				caseId: c.id,
-				model: cell.model,
-				context: cell.context,
-				startedAt: sampleStart,
-				finishedAt: now(),
+				...record,
+				finishedAt,
 				outcome: failure ? null : assessment.assessment.kind,
 				failure,
 			};
 			const detail = {
-				caseId: c.id,
-				model: cell.model,
-				context: cell.context,
-				startedAt: sampleStart,
-				finishedAt: sample.finishedAt,
+				...record,
+				finishedAt,
 				...(assessment
 					? {
 							classification: assessment.classification,
