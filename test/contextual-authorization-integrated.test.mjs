@@ -5,6 +5,7 @@ import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { piSkip as skip } from "./support/installed-pi.mjs";
 
 const cli = fileURLToPath(
 	new URL(
@@ -24,6 +25,7 @@ function capture(scenario, env = process.env) {
 }
 
 test("the scripted real RPC child performs the ordinary assigned write", {
+	skip,
 	timeout: 50_000,
 }, () => {
 	const result = capture("allow");
@@ -45,6 +47,7 @@ test("the scripted real RPC child performs the ordinary assigned write", {
 });
 
 test("a pending consultation preserves the correlated hold without a marker", {
+	skip,
 	timeout: 50_000,
 }, () => {
 	const result = capture("pending");
@@ -67,6 +70,7 @@ test("a pending consultation preserves the correlated hold without a marker", {
 });
 
 test("scripted confirmation of the exact action releases one write", {
+	skip,
 	timeout: 50_000,
 }, () => {
 	const result = capture("release");
@@ -88,6 +92,7 @@ test("scripted confirmation of the exact action releases one write", {
 });
 
 test("a failed scripted endpoint retains an incomplete capture and cleans its scratch directory", {
+	skip,
 	timeout: 50_000,
 }, () => {
 	const scratch = mkdtempSync(join(tmpdir(), "pi-auth-test-"));

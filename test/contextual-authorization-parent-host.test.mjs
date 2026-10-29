@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import test from "node:test";
+import { piSkip as skip } from "./support/installed-pi.mjs";
 
 const host = new URL(
 	"../tools/contextual-authorization-evaluation/parent-host.mjs",
@@ -15,6 +16,7 @@ const run = (scenario) =>
 	);
 
 test("the SDK parent receives and answers a real RPC child question before its scratch effect", {
+	skip,
 	timeout: 50000,
 }, () => {
 	const result = run("release");
@@ -36,6 +38,7 @@ test("the SDK parent receives and answers a real RPC child question before its s
 
 for (const scenario of ["pending", "deny"])
 	test(`the SDK parent ${scenario} reply preserves zero effects in the RPC child`, {
+		skip,
 		timeout: 50000,
 	}, () => {
 		const result = run(scenario);
