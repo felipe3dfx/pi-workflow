@@ -589,6 +589,17 @@ test("a parent sends harness messages without classification but still classifie
 	assert.equal(written.isError, true);
 	assert.equal(existsSync(path), false);
 	assert.deepEqual(classified, ["codemode", "notify_child", "write"]);
+	for (const [tool, input] of [
+		["spawn_child", { role: "worker", task: "Classified launch" }],
+		["continue_child", { id: "missing-child", task: "Classified continuation" }],
+		["cancel_child", { id: "missing-child" }],
+	]) {
+		const lifecycle = await host.call(input, tool);
+		assert.equal(lifecycle.isError, true, tool);
+		assert.match(JSON.stringify(lifecycle.content), /Fixture prohibits every classified call/, tool);
+		assert.equal(decisions.some(decision => decision.kind === "exempt" && decision.action?.tool === tool), false, tool);
+	}
+	assert.deepEqual(classified, ["codemode", "notify_child", "write", "spawn_child", "continue_child", "cancel_child"]);
 });
 
 test("anonymous workflow exempts owned tools but classifies a foreign same-name tool", async (t) => {

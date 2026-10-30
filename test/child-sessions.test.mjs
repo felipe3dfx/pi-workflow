@@ -41,9 +41,6 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 
-import { isHarnessMessage } from "../extensions/harness-message.ts";
-import { createChildQueryTools } from "../extensions/child-sessions.ts";
-import { createAskUserChoiceTool, createAskUserQuestionTool } from "../extensions/ask-user-panel.ts";
 import { createChildAudit } from "../extensions/child-audit.ts";
 import { consultation, createAskParentTool } from "../extensions/child-runtime.ts";
 import { compactToolRenderers } from "../extensions/compact-tools.ts";
@@ -7402,19 +7399,5 @@ test("a foreground child that fails after a checkpoint hands the parent its harn
 				return true;
 			},
 		);
-	});
-});
-
-test("only the six harness-message tool definitions are marked", async () => {
-	const hints = {};
-	const tools = [...createChildQueryTools({}), createAskUserChoiceTool(hints), createAskUserQuestionTool(hints)];
-	assert.deepEqual(tools.filter(isHarnessMessage).map(tool => tool.name).sort(),
-		["ask_user_choice", "ask_user_question", "child_result", "child_status", "list_children", "reply_child"]);
-	await withWorkspace(async ({ agentDir }) => {
-		const extension = await loadSpawnTool({ agentDir, create: fakeChildren().create, schedule: manualClock().schedule });
-		for (const name of ["cancel_child", "spawn_child", "continue_child"]) {
-			assert.ok(extension.named(name), name);
-			assert.equal(isHarnessMessage(extension.named(name)), false, name);
-		}
 	});
 });
