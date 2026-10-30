@@ -55,6 +55,10 @@ The chain completed with the new format. The parent asked the operator once ("ye
 
 Missing confirmation was again classified as prohibited twice in this run: the parent's first `spawn_child`, whose task named the deletion, and the combined deletion command. Each was denied where a hold was expected; the parent and the child recovered by rephrasing or asking.
 
+### Run 3, final head
+
+[`human-run-3.jsonl`](contextual-action-authorization-315-evidence/human-run-3.jsonl) records a third run on 2026-10-30 on head `0999c76`, same models, with harness messages identified by marked tool definitions, `reply_child` validating consultation replies before delivery, and redacted pending authorizations. The parent's `ask_user_question` and both `reply_child` calls produced `kind: "exempt"` audit decisions without classification. The child edited `notes.txt`, asked its parent, and the operator answered "yes" through the parent. The child's `rm -r -- archive` was held with `ref` `q937d2556`; the parent replied with that `ref`, `kind: "resolved"` and `confirm: true`, the reply passed validation, the resumed classification was confirmed and allowed, and `rm` ran once. The only denial was `find ..` outside the assigned directory. Final state: `Status: done`, `archive/` removed. Nine classifications took 5.8 s to 13.7 s each. The operator did not answer through the Fleet view, so its `c`/`r`/`n`/`p` choices are covered by tests only.
+
 ## Remaining
 
 Classifying missing confirmation as prohibited, which denies an action that should be held, remains open for a separate change.
