@@ -34,7 +34,7 @@ export function runtimeChild(runtime) {
 		const channel = {
 			ready() {},
 			async request(frame, signal) {
-				if (frame.type === "ask") return spec.ask(frame.question, signal);
+				if (frame.type === "ask") return spec.ask(frame.question, signal, frame.consultation);
 				if (frame.type === "report") {
 					spec.report(frame.result);
 					return "";

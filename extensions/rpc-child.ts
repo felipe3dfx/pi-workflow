@@ -233,7 +233,7 @@ export function createRpcChildSession(
 		let last: AssistantMessage | undefined;
 		let delivery = Promise.resolve();
 		const asks = new Map<number, AbortController>();
-		const held = new Map<string, AuthorizationDecision>();
+		const held = new Map<string, Extract<AuthorizationDecision, { kind: "allow" | "deny" | "held" }>>();
 		let connected: Pending | undefined;
 
 		function fail(error: Error) {
@@ -381,7 +381,7 @@ export function createRpcChildSession(
 						connected?.resolve(frame.tools);
 						connected = undefined;
 					} else if (frame.type === "ask") {
-						answer(frame.id, (signal) => spec.ask(frame.question, signal));
+						answer(frame.id, (signal) => spec.ask(frame.question, signal, frame.consultation));
 					} else if (frame.type === "policy") {
 						const { method, value } = frame;
 						answer(frame.id, async (signal) =>

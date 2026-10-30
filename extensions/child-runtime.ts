@@ -54,7 +54,7 @@ export type ChildRuntimeConfig = {
 export type PolicyMethod = "authority" | "classify" | "decision";
 
 type ChildRequest =
-	| { type: "ask"; question: string }
+	| { type: "ask"; question: string; consultation?: string }
 	| { type: "report"; result: ChildResult }
 	| { type: "checkpoint"; checkpoint: Checkpoint }
 	| { type: "policy"; method: PolicyMethod; value?: unknown };
@@ -80,18 +80,6 @@ const consultationPreamble =
 
 export function consultation(question: AuthorizationQuestion) {
 	return `${consultationPreamble} Reply with only a JSON object {"ref": "${reference(question)}", "kind": "resolved" | "deny" | "pending", "answer": string, "confirm": boolean}, repeating this ref. Set confirm to true only when the decision explicitly confirms this exact action and target, including its impact. Scope alone is not impact confirmation. No receipt or running state is consent.\n${JSON.stringify({ ref: reference(question), action: question.proposal.action, reason: question.reason, effects: question.effects })}`;
-}
-
-export function consultationReference(text: string) {
-	if (!text.startsWith(consultationPreamble)) return undefined;
-	try {
-		const question: unknown = JSON.parse(text.slice(text.indexOf("\n") + 1));
-		return isPlainRecord(question) && typeof question.ref === "string"
-			? question.ref
-			: undefined;
-	} catch {
-		return undefined;
-	}
 }
 
 export function consultationReply(
@@ -284,7 +272,7 @@ function installContextual(
 	config: ChildRuntimeConfig,
 	channel: ReturnType<typeof parentChannel>,
 	ctx: ExtensionContext,
-	ask: (question: string, signal?: AbortSignal) => Promise<string>,
+	ask: (question: string, signal?: AbortSignal, consultation?: string) => Promise<string>,
 	checkpointed: (checkpoint: Checkpoint) => Promise<unknown>,
 ) {
 	pi.setActiveTools([
@@ -311,7 +299,7 @@ function installContextual(
 		authority: (context) => policy("authority", undefined, context.signal),
 		classify: (proposal, signal) => policy("classify", proposal, signal),
 		consult: async (question, signal) =>
-			answered(question, await ask(consultation(question), signal)),
+			answered(question, await ask(consultation(question), signal, reference(question))),
 		onDecision: (decision) => policy("decision", decision),
 		sessionInstructions: () => instructions,
 	};
@@ -340,8 +328,8 @@ export async function installChildRuntime(
 	channel: ReturnType<typeof parentChannel>,
 	ctx: ExtensionContext,
 ) {
-	const ask = (question: string, signal?: AbortSignal) =>
-		channel.request({ type: "ask", question }, signal);
+	const ask = (question: string, signal?: AbortSignal, consultation?: string) =>
+		channel.request({ type: "ask", question, ...(consultation === undefined ? {} : { consultation }) }, signal);
 	const checkpointed = (checkpoint: Checkpoint) =>
 		channel.request({ type: "checkpoint", checkpoint });
 	const contextual = config.contextual !== undefined;

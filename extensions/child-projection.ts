@@ -132,6 +132,12 @@ export function lastReportedResult(result: ChildResult) {
 	return `Last reported result:\n${resultLines(result)}`;
 }
 
+export type PendingAuthorization = Extract<AuthorizationDecision, { kind: "allow" | "deny" | "held" }>;
+
+export function projectPendingAuthorizations(decisions: readonly PendingAuthorization[]) {
+	return decisions.map((decision) => ({ call: decision.call, action: decision.proposal?.action, reason: decision.reason }));
+}
+
 export function childOutcome(child: {
 	id?: string;
 	state: string;
@@ -139,10 +145,10 @@ export function childOutcome(child: {
 	text?: string;
 	result?: ChildResult;
 	checkpoints?: readonly Checkpoint[];
-	pendingAuthorizations?: readonly AuthorizationDecision[];
+	pendingAuthorizations?: readonly PendingAuthorization[];
 }) {
 	const pending = child.pendingAuthorizations?.length
-		? `\n\nAuthorization remains pending; consult the parent/user and re-propose with current facts. No held action was authorized.\n${JSON.stringify(child.pendingAuthorizations.map((decision) => ({ call: decision.call, action: decision.kind === "exempt" ? decision.action : decision.proposal?.action, reason: decision.reason })))}`
+		? `\n\nAuthorization remains pending; consult the parent/user and re-propose with current facts. No held action was authorized.\n${JSON.stringify(projectPendingAuthorizations(child.pendingAuthorizations))}`
 		: "";
 	return `${childStateOutcome(child)}${checkpointLines(child.checkpoints)}${pending}`;
 }

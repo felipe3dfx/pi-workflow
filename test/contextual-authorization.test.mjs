@@ -35,7 +35,8 @@ import {
 } from "../extensions/shell.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { eventually } from "./support/eventually.mjs";
-import { createChildSessions } from "../extensions/child-sessions.ts";
+import { createChildSessions, createChildQueryTools } from "../extensions/child-sessions.ts";
+import { createAskUserChoiceTool, createAskUserQuestionTool } from "../extensions/ask-user-panel.ts";
 import { installActionAuthorization } from "../extensions/action-authorization.ts";
 import { createChildAudit } from "../extensions/child-audit.ts";
 import { withCheckpoint } from "./support/signed-checkpoint.mjs";
@@ -361,13 +362,15 @@ test("a real child consults its parent with retained context before the exact au
 	const host = await parent(t);
 	const questionReady = Promise.withResolvers();
 	const answer = Promise.withResolvers();
+	let structuralRef;
 	const child = await runtimeChildSession({
 		cwd: host.agentDir, model: "faux/authorization", runtime: host.runtime,
 		authorization: {
 			authority,
 			classify: async (proposal) => proposal.consultation ? known : { ...known, scope: "unknown" },
 		},
-		ask: async (text) => {
+		ask: async (text, _signal, ref) => {
+			structuralRef = ref;
 			questionReady.resolve(text);
 			return answer.promise;
 		},
@@ -380,6 +383,7 @@ test("a real child consults its parent with retained context before the exact au
 	assert.equal(existsSync(path), false);
 	const question = JSON.parse(text.slice(text.indexOf("\n") + 1));
 	assert.equal(question.action.input.path, path);
+	assert.equal(structuralRef, question.ref);
 	answer.resolve(JSON.stringify({ ref: question.ref, kind: "resolved", answer: "This exact assigned write is authorized." }));
 	const result = await action;
 	assert.equal(result.isError, false);
@@ -763,7 +767,8 @@ for (const failure of ["abort", "provider"]) {
 		assert.ok(Array.isArray(snapshot) && snapshot.length === 1, "capture pending authority before disposal");
 		const serialized = visible.slice(visible.indexOf("Unresolved authorization proposals (no held action executed):\n") +
 			"Unresolved authorization proposals (no held action executed):\n".length);
-		assert.deepEqual(JSON.parse(serialized), snapshot);
+		assert.deepEqual(JSON.parse(serialized), snapshot.map(d => ({ call: d.call, action: d.proposal.action, reason: d.reason })));
+		assert.doesNotMatch(visible, /systemPrompt|"rules"|"authority"|Do not change protected\.txt/);
 		assert.deepEqual(snapshot[0].proposal.action.input, { path: join(host.agentDir, "lost.txt"), content: "NO_EFFECT" });
 		assert.match(captured.cause.message, failure === "abort" ? /The call was aborted/ : /PROVIDER_FAILURE_AFTER_HOLD/);
 		assert.equal(existsSync(join(host.agentDir, "lost.txt")), false);
@@ -801,9 +806,53 @@ test("actual spawn_child SDK error exposes held proposals after provider failure
 	assert.match(visible, /Unresolved authorization proposals \(no held action executed\):\n/);
 	const pending = JSON.parse(visible.split("Unresolved authorization proposals (no held action executed):\n")[1]);
 	assert.equal(pending.length, 1);
-	assert.equal(pending[0].kind, "held");
-	assert.deepEqual(pending[0].proposal.action.input, { path, content: "NO_EFFECT" });
+	assert.deepEqual(pending[0].action.input, { path, content: "NO_EFFECT" });
+	assert.ok(pending[0].reason);
+	assert.doesNotMatch(visible, /systemPrompt|"rules"|"authority"|Do not change protected\.txt/);
 	assert.equal(existsSync(path), false);
+});
+
+test("foreground spawn result exposes only a short held authorization", async (t) => {
+	const prior = seatedCapabilities();
+	replaceSelection({ schemaVersion: 1, capabilities: Object.fromEntries(capabilities.map(c => [c, true])), expectations: {} });
+	t.after(() => replaceSelection({ schemaVersion: 1, ...prior, expectations: {} }));
+	const host = await parent(t, { authority, classify: async proposal => proposal.action.tool === "write" ? { ...known, scope: "outside" } : known });
+	await host.session.bindExtensions({ mode: "print" });
+	const path = join(host.agentDir, "spawn-pending.txt");
+	host.provider.setResponses([
+		fauxAssistantMessage(fauxToolCall("spawn_child", { role: "explore", task: "Perform only the assigned write", worktree: process.cwd() }), { stopReason: "toolUse" }),
+		fauxAssistantMessage(fauxToolCall("write", { path, content: "NO_EFFECT" }), { stopReason: "toolUse" }),
+		fauxAssistantMessage(fauxText("No dependent work without authority")),
+		fauxAssistantMessage(fauxText("Parent received unresolved authority.")),
+	]);
+	await host.session.prompt("Perform only the assigned child action.");
+	const result = host.session.messages.filter(m => m.role === "toolResult" && m.toolName === "spawn_child").at(-1);
+	const visible = result.content.filter(c => c.type === "text").map(c => c.text).join("\n");
+	assert.match(visible, /spawn-pending\.txt/);
+	assert.match(visible, /foreground/i);
+	assert.doesNotMatch(JSON.stringify(result.details), /systemPrompt|"rules"|"authority"|Do not change protected\.txt/);
+	assert.doesNotMatch(visible, /systemPrompt|"rules"|"authority"|Do not change protected\.txt/);
+});
+
+test("independent message factories do not share schemas or exemptions", async (t) => {
+	const sessions = {};
+	const make = () => [...createChildQueryTools(sessions), createAskUserChoiceTool({}), createAskUserQuestionTool({})];
+	const first = make();
+	const second = make();
+	for (const name of ["list_children", "child_status", "child_result", "reply_child", "ask_user_choice", "ask_user_question"]) {
+		assert.notStrictEqual(first.find(tool => tool.name === name).parameters, second.find(tool => tool.name === name).parameters, name);
+	}
+	const prior = seatedCapabilities();
+	replaceSelection({ schemaVersion: 1, capabilities: Object.fromEntries(capabilities.map(c => [c, true])), expectations: {} });
+	t.after(() => replaceSelection({ schemaVersion: 1, ...prior, expectations: {} }));
+	const foreign = second.find(tool => tool.name === "reply_child");
+	const classified = [];
+	const host = await parent(t, { authority, classify: async proposal => {
+		classified.push(proposal.action.tool); return { ...known, prohibited: true, reason: "Foreign prohibited" };
+	} }, undefined, { factories: [{ name: "foreign", factory: pi => pi.registerTool(foreign) }] });
+	const result = await host.call({ id: "child", question: 1, answer: "yes" }, "reply_child");
+	assert.equal(result.isError, true);
+	assert.deepEqual(classified, ["reply_child"]);
 });
 
 for (const scenario of ["scope-only", "wrong-confirmation", "wrong-id", "wrong-call", "wrong-target", "pending", "receipt", "delivery-failed", "no-ui", "dismissed", "denied", "stale-assignment", "stale-instructions", "classifier-failed-after-answer", "final-delivery-change", "valid-response"]) {
@@ -3011,7 +3060,7 @@ test("abort settles pending async decision delivery without dispatch", async (t)
 	assert.equal(existsSync(path), false);
 });
 
-test("abort releases an exempt message whose audit never settles", async (t) => {
+test("abort blocks an exempt message whose audit never settles", async (t) => {
 	const prior = seatedCapabilities();
 	replaceSelection({ schemaVersion: 1, capabilities: Object.fromEntries(capabilities.map(c => [c, true])), expectations: {} });
 	t.after(() => replaceSelection({ schemaVersion: 1, ...prior, expectations: {} }));
@@ -3023,6 +3072,28 @@ test("abort releases an exempt message whose audit never settles", async (t) => 
 	await entered.promise;
 	const aborted = run.session.abort();
 	assert.equal(await Promise.race([Promise.all([running, aborted]).then(() => true), delay(100).then(() => false)]), true);
+	const result = await running;
+	assert.equal(result.isError, true);
+	assert.match(result.content[0].text, /abort|cancel/i);
+});
+
+test("aborting exempt audit blocks dispatch at the authorization hook", async () => {
+	const schema = Type.Object({});
+	let hook;
+	const pi = { on(name, handler) { if (name === "tool_call") hook = handler; },
+		getAllTools: () => [{ name: "reply_child", parameters: schema }], appendEntry() {} };
+	const entered = Promise.withResolvers();
+	installActionAuthorization(pi, { authority, classify: async () => known,
+		onDecision: () => { entered.resolve(); return new Promise(() => {}); } },
+		{ messages: new Map([["reply_child", schema]]) });
+	const controller = new AbortController();
+	const running = hook({ toolName: "reply_child", toolCallId: "call", input: { confirm: true } },
+		{ cwd: "/tmp", signal: controller.signal });
+	await entered.promise;
+	controller.abort();
+	const result = await running;
+	assert.equal(result?.block, true);
+	assert.match(result.reason, /cancel/i);
 });
 
 

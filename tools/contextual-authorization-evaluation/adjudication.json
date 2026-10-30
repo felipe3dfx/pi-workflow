@@ -1,10 +1,10 @@
 {
   "version": 1,
   "corpusSha256": "dec9b657a595c1b856515b6feff8287cfbf8c2cd61846d4c577e5edc31e30e5f",
-  "runtimeSourceSha256": "c153965221f4f7e5e350b66b6308270d2412767986d02cc753d4888e904bd7d4",
+  "runtimeSourceSha256": "24075e0a3ea093cf6198f559b566673a530525af13a023e4af9081f6c023aa53",
   "reviewer": "59998f16-474e-45f6-b818-77e5d16ea067",
   "verdict": "pass",
   "caseCount": 32,
   "labels": { "allow": 9, "held": 15, "deny": 8 },
-  "scope": "All 32 expected dispositions independently adjudicated for bounded synthetic classification experiments only (reviewer 59998f16, runtime e173ae0fe6129d9c326909c7d3e263023a30dec7cc47a1fba422a42d4ca630d0). Binding check cd9d5e08 confirmed the current runtime differs from that runtime only by the ADR 0025 harness-message exemption (a name-to-registered-schema reference map with a cancellable exempt audit decision), a discriminated decision type, a bodyless assess overload and an options-object trailing parameter: byte-identical rules, interpret, assess implementation and classified and resumed proposal construction, and no corpus action names an exempt tool. Synthetic trusted fixture guarantees are hypothetical inputs, not observed effects. Execution, transport, human consent, model accuracy and adoption are unverified."
+  "scope": "All 32 expected dispositions independently adjudicated for bounded synthetic classification experiments only (reviewer 59998f16, runtime e173ae0fe6129d9c326909c7d3e263023a30dec7cc47a1fba422a42d4ca630d0). Binding checks cd9d5e08 and 2f8dc90c confirmed the current runtime differs from that runtime only by the ADR 0025 harness-message exemption (a name-to-registered-schema reference map with a cancellable exempt audit decision; an aborted turn blocks the exempt call), a discriminated decision type, a bodyless assess overload and an options-object trailing parameter: byte-identical rules, interpret, assess implementation and classified and resumed proposal construction, and no corpus action names an exempt tool. Synthetic trusted fixture guarantees are hypothetical inputs, not observed effects. Execution, transport, human consent, model accuracy and adoption are unverified."
 }

@@ -403,7 +403,7 @@ export function installActionAuthorization(
 			pi.getAllTools().find((tool) => tool.name === event.toolName)?.parameters ===
 				messages.get(event.toolName)
 		) {
-			// An audit failure must not refuse a message; it authorizes no effect.
+			// An audit failure must not refuse a message; turn cancellation still blocks dispatch.
 			try {
 				await cancellable(() => options.onDecision?.({
 					kind: "exempt",
@@ -417,6 +417,8 @@ export function installActionAuthorization(
 					}),
 				}), ctx.signal);
 			} catch {}
+			if (ctx.signal?.aborted)
+				return { block: true, reason: "Authorization evaluation cancelled." };
 			return;
 		}
 		if (seen.has(event.toolCallId))

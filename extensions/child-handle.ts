@@ -1,10 +1,10 @@
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { AgentSessionEvent, SessionEntry } from "@earendil-works/pi-coding-agent";
 
-import type { ActionAuthorization, AuthorizationDecision } from "./action-authorization.ts";
+import type { ActionAuthorization } from "./action-authorization.ts";
 import type { ChildShell } from "./child-bash.ts";
 import type { Checkpoint, CheckpointGrant } from "./child-checkpoint.ts";
-import type { ChildResult } from "./child-projection.ts";
+import type { ChildResult, PendingAuthorization } from "./child-projection.ts";
 import type { CommonToolSources } from "./tool-sources.ts";
 import type { ParentProject } from "./web-access.ts";
 
@@ -30,7 +30,7 @@ interface ChildSpec {
 	shell: ChildShell;
 	onEvent(event: AgentSessionEvent): void;
 	notify(message: string): void;
-	ask(question: string, signal?: AbortSignal): Promise<string>;
+	ask(question: string, signal?: AbortSignal, consultation?: string): Promise<string>;
 	report(result: ChildResult): void;
 	checkpoint?: CheckpointGrant;
 	checkpointed(checkpoint: Checkpoint): void;
@@ -46,7 +46,7 @@ export interface ChildHandle {
 	abort(): Promise<void>;
 	dispose(): Promise<void>;
 	removeSession(): Promise<void>;
-	pendingAuthorizations?(): AuthorizationDecision[];
+	pendingAuthorizations?(): PendingAuthorization[];
 }
 
 export type ChildSessionFactory = (spec: ChildSpec) => Promise<ChildHandle>;

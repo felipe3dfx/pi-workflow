@@ -225,6 +225,8 @@ export default function piWorkflowExtension(
 		options.childSessions?.refresh,
 	);
 	const footerHints = createFooterHints();
+	const askChoice = createAskUserChoiceTool(footerHints);
+	const askQuestion = createAskUserQuestionTool(footerHints);
 	occupyHeader("child-session", childSessions.working);
 	childSessions.subscribe(notifyHeader);
 	registerChrome(pi, footerHints);
@@ -286,7 +288,7 @@ export default function piWorkflowExtension(
 			};
 		},
 		offers: [
-			() => syncAskUserTools(pi, footerHints),
+			() => syncAskUserTools(pi, askChoice, askQuestion),
 			todo.offer,
 			() => syncCodeGraphTool(pi, options.codegraph),
 			() => syncCompactTools(pi, currentCtx),
@@ -351,8 +353,6 @@ export default function piWorkflowExtension(
 	}
 
 	pi.registerTool(createCodeGraphTool(options.codegraph));
-	const askChoice = createAskUserChoiceTool(footerHints);
-	const askQuestion = createAskUserQuestionTool(footerHints);
 	messages.set(askChoice.name, askChoice.parameters);
 	messages.set(askQuestion.name, askQuestion.parameters);
 	pi.registerTool(askChoice);
