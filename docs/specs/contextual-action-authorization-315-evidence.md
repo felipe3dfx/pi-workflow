@@ -2,7 +2,7 @@
 
 ## Outcome
 
-[ADR 0024](../adr/0024-authorize-effects-not-harness-messages.md) records the decision. Harness message tools skip contextual classification, and a child completes a short parent reply from its pending authorization question. Narrowing the `prohibited` rule was measured and not adopted. The contextual path remains unadopted (#293).
+[ADR 0025](../adr/0025-authorize-effects-not-harness-messages.md) records the decision. Harness message tools skip contextual classification, and a child completes a short parent reply from its pending authorization question. Narrowing the `prohibited` rule was measured and not adopted. The contextual path remains unadopted (#293).
 
 ## Behavior and tests
 

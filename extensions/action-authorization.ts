@@ -26,7 +26,7 @@ import {
 const committing = new Set<string>();
 const workflowSource = fileURLToPath(new URL("./pi-workflow.ts", import.meta.url));
 
-// ADR 0024: these harness tools only carry messages between sessions and the operator; what they lead to is classified where it takes effect.
+// ADR 0025: these harness tools only carry messages between sessions and the operator; what they lead to is classified where it takes effect.
 const harnessMessages = new Set([
 	"reply_child",
 	"ask_user_question",

@@ -1,4 +1,4 @@
-# ADR 0024: Authorize effects, not harness messages
+# ADR 0025: Authorize effects, not harness messages
 
 ## Status
 
