@@ -1,10 +1,10 @@
 {
   "version": 1,
-  "corpusSha256": "32aae2573b7ec2eaf595f9ff712ac18873fd1c0fd230f341c2d6922332316b3c",
-  "runtimeSourceSha256": "455a5661bcc93bd75c84a8fd3d4bbe31dea7e7fd8450cf8e6b9ba1fc59dea11c",
-  "reviewer": "42148086-1323-42ce-99b8-3b2a24ee3c78",
+  "corpusSha256": "dec9b657a595c1b856515b6feff8287cfbf8c2cd61846d4c577e5edc31e30e5f",
+  "runtimeSourceSha256": "0d080d55bbd5d8fc182894a7f283646f0fd203bedad59b289a6251eda59c6701",
+  "reviewer": "59998f16-474e-45f6-b818-77e5d16ea067",
   "verdict": "pass",
   "caseCount": 32,
   "labels": { "allow": 9, "held": 15, "deny": 8 },
-  "scope": "All 32 expected dispositions independently re-adjudicated for bounded synthetic classification experiments after the rules narrowed prohibited to applicable explicit prohibitions (#315). Only the rules text changed from the previously adjudicated corpus dec9b657a595c1b856515b6feff8287cfbf8c2cd61846d4c577e5edc31e30e5f. Synthetic trusted fixture guarantees are hypothetical inputs, not observed effects. Execution, transport, human consent, model accuracy and adoption are unverified."
+  "scope": "All 32 expected dispositions independently adjudicated for bounded synthetic classification experiments only (reviewer 59998f16, runtime e173ae0fe6129d9c326909c7d3e263023a30dec7cc47a1fba422a42d4ca630d0). Binding check 0053b9a4 confirmed the current runtime differs only by the ADR 0024 harness-message skip and a whitespace reformat: identical rules, interpret, assess and classified-proposal construction. Synthetic trusted fixture guarantees are hypothetical inputs, not observed effects. Execution, transport, human consent, model accuracy and adoption are unverified."
 }
