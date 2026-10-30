@@ -15,6 +15,7 @@ import {
 	VERSION,
 } from "@earendil-works/pi-coding-agent";
 
+import type { PendingAuthorization } from "./child-projection.ts";
 import type { ActionAuthorization, AuthorizationDecision } from "./action-authorization.ts";
 import {
 	type ChildHandle,
@@ -233,7 +234,7 @@ export function createRpcChildSession(
 		let last: AssistantMessage | undefined;
 		let delivery = Promise.resolve();
 		const asks = new Map<number, AbortController>();
-		const held = new Map<string, Extract<AuthorizationDecision, { kind: "allow" | "deny" | "held" }>>();
+		const held = new Map<string, PendingAuthorization>();
 		let connected: Pending | undefined;
 
 		function fail(error: Error) {

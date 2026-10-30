@@ -67,6 +67,7 @@ import {
 	sessionActionAuthorization,
 } from "./action-authorization.ts";
 import { type CommonToolSources, commonToolFactories } from "./tool-sources.ts";
+import { isHarnessMessage } from "./harness-message.ts";
 
 // /reload replaces this module but not the Pi process, so the children of the old runtime wait here for the new one.
 const RESIDENT = Symbol.for("pi-workflow:child-sessions:resident");
@@ -114,14 +115,11 @@ export function contextualWorkflowSources(
 		extensionFactories: [
 			...commonToolFactories(options.sources),
 			createMcpExtension(),
-			{
-				name: "pi-workflow",
-				factory: ((pi) =>
-					piWorkflowExtension(pi, {
-						...options,
-						authorization: local.authorization,
-					})) satisfies ExtensionFactory,
-			},
+			((pi) =>
+				piWorkflowExtension(pi, {
+					...options,
+					authorization: local.authorization,
+				})) satisfies ExtensionFactory,
 		],
 	};
 }
@@ -258,8 +256,8 @@ export default function piWorkflowExtension(
 	}
 
 	const childQueries = createChildQueryTools(childSessions);
-	for (const tool of childQueries) {
-		if (["list_children", "child_status", "child_result", "reply_child"].includes(tool.name))
+	for (const tool of [...childQueries, askChoice, askQuestion]) {
+		if (isHarnessMessage(tool))
 			messages.set(tool.name, tool.parameters);
 	}
 	const childTools = launcher.childToolsOffer(
@@ -353,8 +351,6 @@ export default function piWorkflowExtension(
 	}
 
 	pi.registerTool(createCodeGraphTool(options.codegraph));
-	messages.set(askChoice.name, askChoice.parameters);
-	messages.set(askQuestion.name, askQuestion.parameters);
 	pi.registerTool(askChoice);
 	pi.registerTool(askQuestion);
 

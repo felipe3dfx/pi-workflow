@@ -614,7 +614,7 @@ test("anonymous workflow exempts owned tools but classifies a foreign same-name 
 			},
 			onDecision: decision => decisions.push(decision),
 		} });
-		const workflow = recipe.extensionFactories.at(-1).factory;
+		const workflow = recipe.extensionFactories.at(-1);
 		const loader = new DefaultResourceLoader({
 			cwd: agentDir, agentDir, settingsManager: settings, noExtensions: true,
 			noSkills: true, noThemes: true, noPromptTemplates: true,

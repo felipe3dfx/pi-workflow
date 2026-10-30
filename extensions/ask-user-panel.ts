@@ -1,3 +1,4 @@
+import { harnessMessage } from "./harness-message.ts";
 import type { AgentToolResult, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
 	decodeKittyPrintable,
@@ -396,7 +397,7 @@ const choiceParameters = () => Type.Object({
 });
 
 export function createAskUserChoiceTool(hints: FooterHints, closeView = closeChildrenView): ToolDefinition<ReturnType<typeof choiceParameters>, AskUserAnswer> {
-	return {
+	return harnessMessage({
 		name: "ask_user_choice",
 		label: "Ask User Choice",
 		description:
@@ -427,7 +428,7 @@ export function createAskUserChoiceTool(hints: FooterHints, closeView = closeChi
 			}
 			return askPanel(ctx, hints, params.question, params.options, params.multiple ?? false, signal, closeView);
 		},
-	};
+	});
 }
 
 const questionParameters = () => Type.Object({
@@ -435,7 +436,7 @@ const questionParameters = () => Type.Object({
 });
 
 export function createAskUserQuestionTool(hints: FooterHints, closeView = closeChildrenView): ToolDefinition<ReturnType<typeof questionParameters>, AskUserAnswer> {
-	return {
+	return harnessMessage({
 		name: "ask_user_question",
 		label: "Ask User Question",
 		description:
@@ -465,7 +466,7 @@ export function createAskUserQuestionTool(hints: FooterHints, closeView = closeC
 			}
 			return askPanel(ctx, hints, params.question, [], false, signal, closeView);
 		},
-	};
+	});
 }
 
 export function syncAskUserTools(pi: ExtensionAPI, choice: ReturnType<typeof createAskUserChoiceTool>, question: ReturnType<typeof createAskUserQuestionTool>) {

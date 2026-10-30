@@ -75,19 +75,17 @@ function reference(question: AuthorizationQuestion) {
 	return `q${question.id.replaceAll("-", "").slice(0, 8)}`;
 }
 
-const consultationPreamble =
-	"Resolve only within your authority; otherwise consult the user.";
-
-export function consultation(question: AuthorizationQuestion) {
-	return `${consultationPreamble} Reply with only a JSON object {"ref": "${reference(question)}", "kind": "resolved" | "deny" | "pending", "answer": string, "confirm": boolean}, repeating this ref. Set confirm to true only when the decision explicitly confirms this exact action and target, including its impact. Scope alone is not impact confirmation. No receipt or running state is consent.\n${JSON.stringify({ ref: reference(question), action: question.proposal.action, reason: question.reason, effects: question.effects })}`;
+export function consultation(question: AuthorizationQuestion, ref = reference(question)) {
+	return `Resolve only within your authority; otherwise consult the user. Reply with only a JSON object {"ref": "${ref}", "kind": "resolved" | "deny" | "pending", "answer": string, "confirm": boolean}, repeating this ref. Set confirm to true only when the decision explicitly confirms this exact action and target, including its impact. Scope alone is not impact confirmation. No receipt or running state is consent.\n${JSON.stringify({ ref, action: question.proposal.action, reason: question.reason, effects: question.effects })}`;
 }
 
 export function consultationReply(
 	ref: string,
 	kind: "resolved" | "deny" | "pending",
 	answer: string,
+	confirm: boolean,
 ) {
-	return JSON.stringify({ ref, kind, answer, confirm: kind === "resolved" });
+	return JSON.stringify({ ref, kind, answer, confirm });
 }
 
 // The reply names its question by ref; the rest of its identity comes from the pending question, never from the reply.
@@ -298,8 +296,10 @@ function installContextual(
 	const authorization: ActionAuthorization = {
 		authority: (context) => policy("authority", undefined, context.signal),
 		classify: (proposal, signal) => policy("classify", proposal, signal),
-		consult: async (question, signal) =>
-			answered(question, await ask(consultation(question), signal, reference(question))),
+		consult: async (question, signal) => {
+			const ref = reference(question);
+			return answered(question, await ask(consultation(question, ref), signal, ref));
+		},
 		onDecision: (decision) => policy("decision", decision),
 		sessionInstructions: () => instructions,
 	};

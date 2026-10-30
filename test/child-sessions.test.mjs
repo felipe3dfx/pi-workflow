@@ -41,6 +41,9 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 
+import { isHarnessMessage } from "../extensions/harness-message.ts";
+import { createChildQueryTools } from "../extensions/child-sessions.ts";
+import { createAskUserChoiceTool, createAskUserQuestionTool } from "../extensions/ask-user-panel.ts";
 import { createChildAudit } from "../extensions/child-audit.ts";
 import { consultation, createAskParentTool } from "../extensions/child-runtime.ts";
 import { compactToolRenderers } from "../extensions/compact-tools.ts";
@@ -6432,15 +6435,15 @@ test("a real runtime consultation enables the Fleet decision mode", async () => 
 		await eventually(() => stateOf(extension, id), state => state === "waiting");
 		const view = openChildren(extension);
 		view.press("\r", "\r", ..."Write the file", "\r");
-		assert.match(view.lines(120).join("\n"), /y confirm.*n deny.*p pending/);
-		view.press("y");
+		assert.match(view.lines(120).join("\n"), /c confirm impact.*r resolve.*n deny.*p pending/);
+		view.press("c");
 		await eventually(() => stateOf(extension, id), state => state === "completed");
 		assert.equal(readFileSync(path, "utf8"), "approved");
 	});
 });
 
-for (const [key, kind, confirm] of [["y", "resolved", true], ["n", "deny", false], ["p", "pending", false]])
-	test(`an operator answers an authorization consultation from the Fleet view with ${kind}`, async () => {
+for (const [key, kind, confirm] of [["c", "resolved", true], ["r", "resolved", false], ["n", "deny", false], ["p", "pending", false]])
+	test(`an operator answers an authorization consultation from the Fleet view with ${key}`, async () => {
 		await withWorkspace(async ({ worktree, agentDir }) => {
 			const children = fakeChildren();
 			const extension = await loadSpawnTool({
@@ -6461,10 +6464,10 @@ for (const [key, kind, confirm] of [["y", "resolved", true], ["n", "deny", false
 			const view = openChildren(extension);
 
 			view.press("\r", "\r", ..."Only archive", "\r");
-			assert.match(view.lines(120).join("\n"), /y confirm.*n deny.*p pending/);
 			view.press(key);
 
-			assert.deepEqual(JSON.parse(await asked), {
+			const reply = await Promise.race([asked, new Promise(resolve => setTimeout(() => resolve(undefined), 100))]);
+			assert.deepEqual(reply === undefined ? undefined : JSON.parse(reply), {
 				ref: "q12345678",
 				kind,
 				answer: "Only archive",
@@ -7399,5 +7402,19 @@ test("a foreground child that fails after a checkpoint hands the parent its harn
 				return true;
 			},
 		);
+	});
+});
+
+test("only the six harness-message tool definitions are marked", async () => {
+	const hints = {};
+	const tools = [...createChildQueryTools({}), createAskUserChoiceTool(hints), createAskUserQuestionTool(hints)];
+	assert.deepEqual(tools.filter(isHarnessMessage).map(tool => tool.name).sort(),
+		["ask_user_choice", "ask_user_question", "child_result", "child_status", "list_children", "reply_child"]);
+	await withWorkspace(async ({ agentDir }) => {
+		const extension = await loadSpawnTool({ agentDir, create: fakeChildren().create, schedule: manualClock().schedule });
+		for (const name of ["cancel_child", "spawn_child", "continue_child"]) {
+			assert.ok(extension.named(name), name);
+			assert.equal(isHarnessMessage(extension.named(name)), false, name);
+		}
 	});
 });

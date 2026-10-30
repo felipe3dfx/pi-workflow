@@ -53,10 +53,8 @@ import {
 import { shellOptions } from "./shell-settings.ts";
 import { type CommonToolSources, defaultActiveTools } from "./tool-sources.ts";
 import { createRpcChildSession } from "./rpc-child.ts";
-import {
-	askParentTool,
-	reportResultTool,
-} from "./child-runtime.ts";
+import { askParentTool, reportResultTool } from "./child-runtime.ts";
+import { harnessMessage } from "./harness-message.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
 import type { TodoClaim } from "./todo-extension.ts";
 import type { TaskState } from "./todo-list.ts";
@@ -1512,9 +1510,10 @@ function launched(
 	note?: string,
 ) {
 	if (started.status === "pending" && "pendingAuthorizations" in started) {
+		const pendingAuthorizations = projectPendingAuthorizations(started.pendingAuthorizations);
 		return report(
-			[...warnings, started.warning, JSON.stringify(projectPendingAuthorizations(started.pendingAuthorizations))],
-			{ ...started, pendingAuthorizations: projectPendingAuthorizations(started.pendingAuthorizations), warnings },
+			[...warnings, started.warning, JSON.stringify(pendingAuthorizations)],
+			{ ...started, pendingAuthorizations, warnings },
 		);
 	}
 	if (started.status === "refused") {
@@ -1749,5 +1748,5 @@ export function createChildQueryTools(
 				context.isError ? outputText(result) : undefined,
 			),
 	};
-	return [listChildren, childStatus, childResult, cancelChild, replyChild];
+	return [harnessMessage(listChildren), harnessMessage(childStatus), harnessMessage(childResult), cancelChild, harnessMessage(replyChild)];
 }

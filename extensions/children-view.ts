@@ -104,6 +104,7 @@ type Action =
 	| "leave"
 	| "repair"
 	| "authorize"
+	| "resolve"
 	| "refuse"
 	| "defer";
 
@@ -1005,11 +1006,11 @@ function createChildrenView(
 		}
 	}
 
-	function decide(kind: "resolved" | "deny" | "pending") {
+	function decide(kind: "resolved" | "deny" | "pending", confirm: boolean) {
 		if (!deciding) return;
 		const { id, name, number, ref, text } = deciding;
 		deciding = undefined;
-		answer(id, name, number, consultationReply(ref, kind, text));
+		answer(id, name, number, consultationReply(ref, kind, text, confirm));
 	}
 
 	function scrollDetail(delta: number) {
@@ -1040,11 +1041,13 @@ function createChildrenView(
 		} else if (action === "no") {
 			confirming = undefined;
 		} else if (action === "authorize") {
-			decide("resolved");
+			decide("resolved", true);
+		} else if (action === "resolve") {
+			decide("resolved", false);
 		} else if (action === "refuse") {
-			decide("deny");
+			decide("deny", false);
 		} else if (action === "defer") {
-			decide("pending");
+			decide("pending", false);
 		} else if (action === "leave" && deciding) {
 			deciding = undefined;
 		} else if ((action === "down" || action === "up") && single) {
@@ -1108,7 +1111,8 @@ function createChildrenView(
 
 	function actionFor(data: string): Action | undefined {
 		if (deciding) {
-			if (data === "y") return "authorize";
+			if (data === "c") return "authorize";
+			if (data === "r") return "resolve";
 			if (data === "n") return "refuse";
 			if (data === "p") return "defer";
 			if (matchesKey(data, Key.escape)) return "leave";
@@ -1155,7 +1159,8 @@ function createChildrenView(
 	function footer(split: boolean, detail: boolean, item: Shown | undefined) {
 		if (deciding)
 			return [
-				[["y", "confirm"], "authorize"],
+				[["c", "confirm impact"], "authorize"],
+				[["r", "resolve without confirm"], "resolve"],
 				[["n", "deny"], "refuse"],
 				[["p", "pending"], "defer"],
 				[["Esc", "discard"], "leave"],
@@ -1229,7 +1234,7 @@ function createChildrenView(
 		if (deciding) {
 			return theme.fg(
 				"warning",
-				`Authorization for ${deciding.name}: does your answer confirm this exact action?`,
+				`Authorization for ${deciding.name}: does your answer confirm the impact of this exact action?`,
 			);
 		}
 		if (!notice && uncatalogued) {
