@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import {
 	getCurrentSystemMessage,
@@ -23,6 +24,7 @@ import {
 } from "./child-checkpoint.ts";
 
 const committing = new Set<string>();
+const workflowSource = fileURLToPath(new URL("./pi-workflow.ts", import.meta.url));
 
 // ADR 0024: these harness tools only carry messages between sessions and the operator; what they lead to is classified where it takes effect.
 const harnessMessages = new Set([
@@ -66,7 +68,11 @@ async function prepareTaskCommit(
 	intent: unknown,
 	authority: unknown,
 ) {
-	if (!grant || !commitPaths(intent) || !validCommitAuthority(authority))
+	if (
+		!grant ||
+		!commitPaths(intent) ||
+		!validCommitAuthority(authority)
+	)
 		throw new Error(unresolvedCommitAuthority);
 	if (committing.has(grant.commonDir))
 		throw new Error(
@@ -393,7 +399,12 @@ export function installActionAuthorization(
 		seen.clear();
 	});
 	pi.on("tool_call", async (event: ToolCallEvent, ctx) => {
-		if (harnessMessages.has(event.toolName)) return;
+		if (harnessMessages.has(event.toolName)) {
+			const source = pi
+				.getAllTools()
+				.find((tool) => tool.name === event.toolName)?.sourceInfo?.path;
+			if (source === "<inline:pi-workflow>" || source === workflowSource) return;
+		}
 		if (seen.has(event.toolCallId))
 			return {
 				block: true,

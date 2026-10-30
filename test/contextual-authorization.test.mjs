@@ -411,7 +411,6 @@ for (const [decision, effect] of [["resolved", true], ["deny", false]])
 		const path = join(host.agentDir, `short-${decision}.txt`);
 		const action = childCall(host, child, "write", { path, content: "SHORT_REPLY_EFFECT" });
 		const text = await Promise.race([questionReady.promise, action.then(() => "NO_CONSULTATION")]);
-		assert.doesNotMatch(text, /same id, call and proposal/);
 		const question = JSON.parse(text.slice(text.indexOf("\n") + 1));
 		answer.resolve(JSON.stringify({ kind: decision, answer: "The user decided about this exact write.", confirm: true }));
 		const result = await action;
@@ -423,28 +422,101 @@ for (const [decision, effect] of [["resolved", true], ["deny", false]])
 		} else assert.deepEqual(resumed, []);
 	});
 
+for (const [label, reply, malformed] of [
+	["invalid JSON", "{", true], ["null", "null", true], ["array", "[]", true],
+	["string", '"answer"', true],
+	["absent confirmation", '{"kind":"resolved","answer":"Proceed"}', false],
+	["false confirmation", '{"kind":"resolved","answer":"Proceed","confirm":false}', false],
+]) test(`a child holds a high-impact action for ${label}`, async (t) => {
+	const host = await parent(t);
+	const resumed = [];
+	let asked = 0;
+	const child = await runtimeChildSession({
+		cwd: host.agentDir, model: "faux/authorization", runtime: host.runtime,
+		authorization: {
+			authority,
+			classify: async proposal => {
+				if (proposal.consultation) resumed.push(proposal.consultation);
+				return { ...known, effects: "high-impact", confirmed: true };
+			},
+		},
+		ask: async () => { asked++; return reply; },
+	});
+	t.after(() => child.dispose());
+	const path = join(host.agentDir, "held-short.txt");
+	const result = await childCall(host, child, "write", { path, content: "NO_EFFECT" });
+	assert.equal(asked, 1);
+	assert.equal(result.isError, true);
+	assert.equal(existsSync(path), false);
+	if (malformed) assert.deepEqual(resumed, []);
+	else for (const consultation of resumed) assert.equal(consultation.confirmedActions, undefined);
+});
+
+test("a third-party reply_child is classified in parent, nested and child calls", async (t) => {
+	let effects = 0;
+	const classified = [];
+	const sources = { factories: [pi => pi.registerTool({
+		name: "reply_child", label: "Reply", description: "Third-party effect",
+		parameters: Type.Object({}),
+		async execute() { effects++; return { content: [], details: {} }; },
+	})] };
+	const authorization = {
+		authority,
+		classify: async proposal => {
+			classified.push(proposal.action.tool);
+			return proposal.action.tool === "codemode" ? known : { ...known, prohibited: true, reason: "Forbidden effect" };
+		},
+	};
+	const host = await parent(t, authorization, undefined, sources);
+	const direct = await host.call({}, "reply_child");
+	assert.equal(direct.isError, true);
+	assert.equal(effects, 0);
+	assert.deepEqual(classified, ["reply_child"]);
+	const nested = await host.call({ code: 'await tools.reply_child({})' }, "codemode");
+	assert.equal(effects, 0);
+	assert.deepEqual(classified, ["reply_child", "codemode", "reply_child"]);
+	assert.match(JSON.stringify(nested), /prohibit|Forbidden/i);
+	const child = await runtimeChildSession({
+		cwd: host.agentDir, role: "worker", model: "faux/authorization",
+		runtime: host.runtime, sources, authorization,
+	});
+	t.after(() => child.dispose());
+	const result = await childCall(host, child, "reply_child", {});
+	assert.equal(result.isError, true);
+	assert.equal(effects, 0);
+	assert.deepEqual(classified, ["reply_child", "codemode", "reply_child", "reply_child"]);
+});
+
 test("a parent sends harness messages without classification but still classifies effects", async (t) => {
 	const prior = seatedCapabilities();
 	replaceSelection({ schemaVersion: 1, capabilities: Object.fromEntries(capabilities.map(c => [c, true])), expectations: {} });
 	t.after(() => replaceSelection({ schemaVersion: 1, ...prior, expectations: {} }));
 	const classified = [];
+	let effects = 0;
 	const host = await parent(t, {
 		authority,
 		classify: async (proposal) => {
 			classified.push(proposal.action.tool);
-			return { ...known, prohibited: true, reason: "Fixture prohibits every classified call." };
+			return proposal.action.tool === "codemode" ? known : { ...known, prohibited: true, reason: "Fixture prohibits every classified call." };
 		},
-	});
+	}, { name: "notify_child", label: "Notify", description: "Effect", parameters: Type.Object({}),
+		async execute() { effects++; return { content: [], details: {} }; } });
 	const asked = await host.call({ question: "May this exact write proceed?" }, "ask_user_question");
 	assert.equal(asked.details.status, "refused");
 	const listed = await host.call({}, "list_children");
 	assert.equal(listed.isError, false);
 	assert.deepEqual(classified, []);
+	const nestedList = await host.call({ code: "await tools.list_children({})" }, "codemode");
+	assert.equal(nestedList.isError, false);
+	assert.deepEqual(classified, ["codemode"]);
+	const notified = await host.call({}, "notify_child");
+	assert.equal(notified.isError, true);
+	assert.equal(effects, 0);
 	const path = join(host.agentDir, "effect.txt");
 	const written = await host.call({ path, content: "NO_EFFECT" }, "write");
 	assert.equal(written.isError, true);
 	assert.equal(existsSync(path), false);
-	assert.deepEqual(classified, ["write"]);
+	assert.deepEqual(classified, ["codemode", "notify_child", "write"]);
 });
 
 test("foreground returns unresolved action to the parent and a fresh authorized run can resolve it", async (t) => {

@@ -114,11 +114,14 @@ export function contextualWorkflowSources(
 		extensionFactories: [
 			...commonToolFactories(options.sources),
 			createMcpExtension(),
-			((pi) =>
-				piWorkflowExtension(pi, {
-					...options,
-					authorization: local.authorization,
-				})) satisfies ExtensionFactory,
+			{
+				name: "pi-workflow",
+				factory: ((pi) =>
+					piWorkflowExtension(pi, {
+						...options,
+						authorization: local.authorization,
+					})) satisfies ExtensionFactory,
+			},
 		],
 	};
 }

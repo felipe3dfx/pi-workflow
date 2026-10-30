@@ -61,6 +61,7 @@ test("a pending consultation preserves the correlated hold without a marker", {
 	assert.equal(result.pending.length, 1);
 	assert.equal(result.pending[0].call, question.call);
 	assert.equal(result.pending[0].kind, "held");
+	assert.equal(result.pending[0].reason, "Consultation remains pending; no authority established.");
 	assert.deepEqual(
 		result.toolOutcomes.map(({ event }) => [event.toolName, event.isError]),
 		[["write", true]],

@@ -151,9 +151,7 @@ export function readRecords<Frame>(
 ) {
 	let buffer = "";
 	const refuse = () =>
-		stream.destroy(
-			new Error(`A channel frame over ${limit} bytes was refused.`),
-		);
+		stream.destroy(new Error(`A channel frame over ${limit} bytes was refused.`));
 	stream.setEncoding("utf8");
 	stream.on("data", (chunk: string) => {
 		buffer += chunk;
@@ -178,9 +176,7 @@ export function readRecords<Frame>(
 				Array.isArray(record) ||
 				!valid(record as Record<string, unknown>)
 			) {
-				onInvalid?.(
-					new Error(`A malformed record was refused: ${line.slice(0, 200)}`),
-				);
+				onInvalid?.(new Error(`A malformed record was refused: ${line.slice(0, 200)}`));
 				continue;
 			}
 			onRecord(record as Frame);
@@ -222,8 +218,7 @@ export function parentChannel(input: Readable, output: Writable) {
 		ready: (tools: string[]) => send({ type: "ready", tools }),
 		request(frame: ChildRequest, signal?: AbortSignal) {
 			if (closed) return Promise.reject(closed);
-			if (signal?.aborted)
-				return Promise.reject(new Error("The call was aborted."));
+			if (signal?.aborted) return Promise.reject(new Error("The call was aborted."));
 			const id = ++next;
 			return new Promise<string>((resolve, reject) => {
 				const withdraw = () => {
@@ -317,11 +312,7 @@ export async function installChildRuntime(
 	pi.registerTool(
 		contextual
 			? createConfiguredBashTool(config.cwd, config.shell)
-			: createChildBashTool(
-					config.cwd,
-					config.shell,
-					config.checkpoint !== undefined,
-				),
+			: createChildBashTool(config.cwd, config.shell, config.checkpoint !== undefined),
 	);
 	if (config.codegraph) pi.registerTool(createChildCodeGraphTool(config.cwd));
 	pi.registerTool(createAskParentTool(ask, contextual));
