@@ -88,7 +88,7 @@ try {
 	]);
 	if (scenario === "endpoint-failure") await endpoint.close();
 	const known = {
-		prohibited: false,
+		restriction: "none",
 		scope: "within",
 		ownership: "assigned",
 		effects: "ordinary",

@@ -75,7 +75,7 @@ const completed = new Promise((resolve, fail) => {
 });
 completed.catch(() => {});
 const known = {
-	prohibited: false,
+	restriction: "none",
 	scope: "within",
 	ownership: "assigned",
 	effects: "ordinary",

@@ -6426,7 +6426,7 @@ test("a real runtime consultation enables the Fleet decision mode", async () => 
 		]);
 		const authorization = {
 			authority: async () => ({ assignment: "Write the file", instructions: [] }),
-			classify: async proposal => ({ scope: "within", effects: "high-impact", ownership: "assigned", prohibited: false,
+			classify: async proposal => ({ scope: "within", effects: "high-impact", ownership: "assigned", restriction: "none",
 				confirmed: !!proposal.consultation, reason: "Needs explicit confirmation", commit: false }),
 		};
 		const extension = await loadSpawnTool({ agentDir, create: runtimeChild(parent.runtime), authorization, schedule: manualClock().schedule });

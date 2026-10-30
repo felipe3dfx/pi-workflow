@@ -208,7 +208,7 @@ test("a checkpoint the parent fails to record fails the checkpoint call with the
 });
 
 const ordinary = {
-	prohibited: false,
+	restriction: "none",
 	scope: "within",
 	ownership: "assigned",
 	effects: "ordinary",

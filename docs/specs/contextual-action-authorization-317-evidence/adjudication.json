@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "corpusSha256": "dec9b657a595c1b856515b6feff8287cfbf8c2cd61846d4c577e5edc31e30e5f",
+  "runtimeSourceSha256": "988a15b6338895715f5cacf79076e7409d56f45e3961a7b3bfa63aad856cec91",
+  "reviewer": "4a17171f-eb40-4243-b66d-e3973cde6d6d",
+  "verdict": "pass",
+  "caseCount": 32,
+  "labels": { "allow": 9, "held": 15, "deny": 8 },
+  "scope": "All 32 frozen #293 expected dispositions independently adjudicated against this exact uncommitted #317 runtime for bounded synthetic classification experiments only. Effective proposals replace only historical modelInput.rules with canonical actionAuthorizationRules; authority, action, context, tool metadata, consultation snapshots and golds remain frozen. The required restriction representation none|prohibition|confirmation|information preserves all nine allow, fifteen held and eight deny interpretations. Scripted mechanism checks covered 24 initial and eight resumed assessments, with exact proposal matching and no gold metadata exposure. Synthetic trusted fixture guarantees are hypothetical inputs, not observed effects. This approves bounded synthetic gold interpretations, not model accuracy, execution, transport, human consent, production adoption or commit authorization."
+}
