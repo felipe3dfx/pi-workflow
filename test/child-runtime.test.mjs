@@ -239,9 +239,7 @@ test("a contextual child evaluates every tool call, nested ones included, throug
 			questions.push(question);
 			return {
 				answer: JSON.stringify({
-					id: question.id,
-					call: question.call,
-					proposal: question.proposal,
+					ref: question.ref,
 					kind: "deny",
 					answer: "other.txt belongs to another task.",
 				}),
@@ -281,8 +279,8 @@ test("a contextual child evaluates every tool call, nested ones included, throug
 	assert.deepEqual(proposals[0].authority, authority);
 	assert.deepEqual(proposals[0].action, { tool: "write", input: { path: "assigned.txt", content: "A" }, cwd: child.cwd });
 	assert.equal(proposals[0].context.systemPrompt, "You are a child.\n\nProject rules.");
-	assert.deepEqual(questions.map((question) => [question.call, question.reason]), [
-		["script/1", "other.txt is not in the assignment."],
+	assert.deepEqual(questions.map((question) => [question.action.input.path, question.reason]), [
+		["other.txt", "other.txt is not in the assignment."],
 	]);
 	assert.deepEqual(decisions.map((decision) => [decision.call, decision.kind]), [
 		["call-1", "allow"],

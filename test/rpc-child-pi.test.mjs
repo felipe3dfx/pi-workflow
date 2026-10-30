@@ -896,7 +896,7 @@ test("a real Pi contextual child continues an authorized call, holds an uncertai
 			ask: async (text) => {
 				const question = JSON.parse(text.slice(text.indexOf("\n") + 1));
 				questions.push(question);
-				return JSON.stringify({ id: question.id, call: question.call, proposal: question.proposal, kind: "pending", answer: "Waiting for the owner." });
+				return JSON.stringify({ ref: question.ref, kind: "pending", answer: "Waiting for the owner." });
 			},
 			report() {},
 			checkpointed: (checkpoint) => recorded.push(checkpoint),
@@ -908,8 +908,8 @@ test("a real Pi contextual child continues an authorized call, holds an uncertai
 		const held = toolResults(scene.endpoint.requests[2]).at(-1);
 		assert.match(held, /Authorization held; consultation required: Consultation remains pending; no authority established\./);
 		assert.equal(questions.length, 1);
-		assert.deepEqual(questions[0].proposal.action, { tool: "write", input: { path: "other.txt", content: "OTHER" }, cwd: worktree });
-		assert.deepEqual(handle.pendingAuthorizations().map((decision) => decision.call), [questions[0].call]);
+		assert.deepEqual(questions[0].action, { tool: "write", input: { path: "other.txt", content: "OTHER" }, cwd: worktree });
+		assert.deepEqual(handle.pendingAuthorizations().map((decision) => decision.proposal.action), [questions[0].action]);
 		assert.match(proposals[0].context.systemPrompt, /You are a contextual child\./);
 		assert.ok(proposals.some((proposal) => proposal.action.tool === "codemode"));
 		const sha = head(worktree, "rev-parse", "HEAD");

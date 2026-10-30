@@ -127,6 +127,7 @@ try {
 				deny: { kind: "deny", answer: "Do not write this file." },
 			}[scenario];
 			const answer = {
+				ref: pending.question.ref,
 				...resolution,
 				confirm: scenario === "release",
 			};

@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import {
 	getCurrentSystemMessage,
@@ -24,17 +23,6 @@ import {
 } from "./child-checkpoint.ts";
 
 const committing = new Set<string>();
-const workflowSource = fileURLToPath(new URL("./pi-workflow.ts", import.meta.url));
-
-// ADR 0025: these harness tools only carry messages between sessions and the operator; what they lead to is classified where it takes effect.
-const harnessMessages = new Set([
-	"reply_child",
-	"ask_user_question",
-	"ask_user_choice",
-	"list_children",
-	"child_status",
-	"child_result",
-]);
 
 interface CommitAuthority {
 	paths: readonly string[];
@@ -135,6 +123,13 @@ export interface AuthorizationDecision {
 	reason: string;
 	call: string;
 	proposal?: ActionProposal;
+	action?: ActionProposal["action"];
+}
+
+// ADR 0025: tools whose calls only carry messages, exempt when registered by `source`.
+export interface MessageExemption {
+	tools: readonly string[];
+	source: string;
 }
 
 interface SessionInstructions {
@@ -342,6 +337,7 @@ export function installActionAuthorization(
 	pi: ExtensionAPI,
 	options: ActionAuthorization,
 	checkpointed?: (checkpoint: Checkpoint) => unknown,
+	messages?: MessageExemption,
 ) {
 	let assigned: CheckpointGrant | undefined;
 	pi.on("session_start", async (_event, ctx) => {
@@ -399,11 +395,26 @@ export function installActionAuthorization(
 		seen.clear();
 	});
 	pi.on("tool_call", async (event: ToolCallEvent, ctx) => {
-		if (harnessMessages.has(event.toolName)) {
-			const source = pi
-				.getAllTools()
-				.find((tool) => tool.name === event.toolName)?.sourceInfo?.path;
-			if (source === "<inline:pi-workflow>" || source === workflowSource) return;
+		if (
+			messages?.tools.includes(event.toolName) &&
+			pi.getAllTools().find((tool) => tool.name === event.toolName)?.sourceInfo
+				?.path === messages.source
+		) {
+			// An audit failure must not refuse a message; it authorizes no effect.
+			try {
+				await options.onDecision?.({
+					kind: "allow",
+					reason:
+						"Harness message; its effect is authorized where it takes place.",
+					call: event.toolCallId,
+					action: structuredClone({
+						tool: event.toolName,
+						input: event.input,
+						cwd: ctx.cwd,
+					}),
+				});
+			} catch {}
+			return;
 		}
 		if (seen.has(event.toolCallId))
 			return {

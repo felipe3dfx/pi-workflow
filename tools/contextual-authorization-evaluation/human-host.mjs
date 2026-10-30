@@ -151,14 +151,14 @@ const authorization = {
 			throw error;
 		}
 	},
-	onDecision: (decision) =>
+	onDecision: ({ kind, reason, call, proposal, action = proposal?.action }) =>
 		record("decision", {
-			kind: decision.kind,
-			reason: decision.reason,
-			call: decision.call,
-			cwd: decision.proposal?.action.cwd,
-			tool: decision.proposal?.action.tool,
-			input: decision.proposal?.action.input,
+			kind,
+			reason,
+			call,
+			cwd: action?.cwd,
+			tool: action?.tool,
+			input: action?.input,
 		}),
 };
 const rpc = createRpcChildSession();

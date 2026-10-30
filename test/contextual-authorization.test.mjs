@@ -378,8 +378,8 @@ test("a real child consults its parent with retained context before the exact au
 	assert.match(text, /Resolve only within your authority/);
 	assert.equal(existsSync(path), false);
 	const question = JSON.parse(text.slice(text.indexOf("\n") + 1));
-	assert.equal(question.proposal.action.input.path, path);
-	answer.resolve(JSON.stringify({ ...question, kind: "resolved", answer: "This exact assigned write is authorized." }));
+	assert.equal(question.action.input.path, path);
+	answer.resolve(JSON.stringify({ ref: question.ref, kind: "resolved", answer: "This exact assigned write is authorized." }));
 	const result = await action;
 	assert.equal(result.isError, false);
 	assert.equal(readFileSync(path, "utf8"), "CHILD_CONSULTED_EFFECT");
@@ -412,21 +412,27 @@ for (const [decision, effect] of [["resolved", true], ["deny", false]])
 		const action = childCall(host, child, "write", { path, content: "SHORT_REPLY_EFFECT" });
 		const text = await Promise.race([questionReady.promise, action.then(() => "NO_CONSULTATION")]);
 		const question = JSON.parse(text.slice(text.indexOf("\n") + 1));
-		answer.resolve(JSON.stringify({ kind: decision, answer: "The user decided about this exact write.", confirm: true }));
+		assert.deepEqual(Object.keys(question).sort(), ["action", "effects", "reason", "ref"]);
+		assert.deepEqual(question.action, { tool: "write", input: { path, content: "SHORT_REPLY_EFFECT" }, cwd: host.agentDir });
+		assert.match(question.ref, /^[0-9a-f]{8}$/);
+		answer.resolve(JSON.stringify({ ref: question.ref, kind: decision, answer: "The user decided about this exact write.", confirm: true }));
 		const result = await action;
 		assert.equal(result.isError, !effect);
 		assert.equal(existsSync(path), effect);
 		if (effect) {
 			assert.equal(readFileSync(path, "utf8"), "SHORT_REPLY_EFFECT");
-			assert.deepEqual(resumed, [{ answer: "The user decided about this exact write.", confirmedActions: [question.proposal.action] }]);
+			assert.deepEqual(resumed, [{ answer: "The user decided about this exact write.", confirmedActions: [question.action] }]);
 		} else assert.deepEqual(resumed, []);
 	});
 
-for (const [label, reply, malformed] of [
-	["invalid JSON", "{", true], ["null", "null", true], ["array", "[]", true],
-	["string", '"answer"', true],
-	["absent confirmation", '{"kind":"resolved","answer":"Proceed"}', false],
-	["false confirmation", '{"kind":"resolved","answer":"Proceed","confirm":false}', false],
+const notAReply = /The parent reply is not a JSON object with ref, kind, answer and confirm\./;
+for (const [label, reply, reason] of [
+	["invalid JSON", () => "{", notAReply], ["null", () => "null", notAReply], ["array", () => "[]", notAReply],
+	["string", () => '"answer"', notAReply],
+	["missing ref", () => '{"kind":"resolved","answer":"Proceed","confirm":true}', notAReply],
+	["another question's ref", () => '{"ref":"00000000","kind":"resolved","answer":"Proceed","confirm":true}', /The parent reply names another question\./],
+	["absent confirmation", ref => JSON.stringify({ ref, kind: "resolved", answer: "Proceed" }), undefined],
+	["false confirmation", ref => JSON.stringify({ ref, kind: "resolved", answer: "Proceed", confirm: false }), undefined],
 ]) test(`a child holds a high-impact action for ${label}`, async (t) => {
 	const host = await parent(t);
 	const resumed = [];
@@ -440,7 +446,7 @@ for (const [label, reply, malformed] of [
 				return { ...known, effects: "high-impact", confirmed: true };
 			},
 		},
-		ask: async () => { asked++; return reply; },
+		ask: async text => { asked++; return reply(JSON.parse(text.slice(text.indexOf("\n") + 1)).ref); },
 	});
 	t.after(() => child.dispose());
 	const path = join(host.agentDir, "held-short.txt");
@@ -448,7 +454,10 @@ for (const [label, reply, malformed] of [
 	assert.equal(asked, 1);
 	assert.equal(result.isError, true);
 	assert.equal(existsSync(path), false);
-	if (malformed) assert.deepEqual(resumed, []);
+	if (reason) {
+		assert.match(result.content[0].text, reason);
+		assert.deepEqual(resumed, []);
+	}
 	else for (const consultation of resumed) assert.equal(consultation.confirmedActions, undefined);
 });
 
@@ -492,6 +501,7 @@ test("a parent sends harness messages without classification but still classifie
 	replaceSelection({ schemaVersion: 1, capabilities: Object.fromEntries(capabilities.map(c => [c, true])), expectations: {} });
 	t.after(() => replaceSelection({ schemaVersion: 1, ...prior, expectations: {} }));
 	const classified = [];
+	const decisions = [];
 	let effects = 0;
 	const host = await parent(t, {
 		authority,
@@ -499,13 +509,28 @@ test("a parent sends harness messages without classification but still classifie
 			classified.push(proposal.action.tool);
 			return proposal.action.tool === "codemode" ? known : { ...known, prohibited: true, reason: "Fixture prohibits every classified call." };
 		},
+		onDecision: decision => decisions.push(decision),
 	}, { name: "notify_child", label: "Notify", description: "Effect", parameters: Type.Object({}),
 		async execute() { effects++; return { content: [], details: {} }; } });
 	const asked = await host.call({ question: "May this exact write proceed?" }, "ask_user_question");
 	assert.equal(asked.details.status, "refused");
 	const listed = await host.call({}, "list_children");
 	assert.equal(listed.isError, false);
+	const choice = await host.call({ question: "Choose", options: [{ label: "Yes" }] }, "ask_user_choice");
+	assert.equal(choice.details.status, "refused");
+	for (const tool of ["child_status", "child_result"]) {
+		const result = await host.call({ id: "missing-child" }, tool);
+		assert.equal(result.isError, false);
+		assert.match(result.content[0].text, /No child missing-child/);
+	}
+	const replied = await host.call({ id: "missing-child", question: 1, answer: "yes" }, "reply_child");
+	assert.doesNotMatch(JSON.stringify(replied.content), /Authorization held|Action prohibited/);
+	assert.match(JSON.stringify(replied.content), /missing-child/);
 	assert.deepEqual(classified, []);
+	const audited = decisions.map(decision => [decision.kind, decision.action?.tool]);
+	for (const tool of ["ask_user_question", "list_children", "ask_user_choice", "child_status", "child_result", "reply_child"])
+		assert.ok(audited.some(([kind, name]) => kind === "allow" && name === tool), tool);
+	assert.deepEqual(decisions.find(decision => decision.action?.tool === "reply_child").action.input, { id: "missing-child", question: 1, answer: "yes" });
 	const nestedList = await host.call({ code: "await tools.list_children({})" }, "codemode");
 	assert.equal(nestedList.isError, false);
 	assert.deepEqual(classified, ["codemode"]);

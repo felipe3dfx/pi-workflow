@@ -68,6 +68,8 @@ import {
 } from "./action-authorization.ts";
 import { type CommonToolSources, commonToolFactories } from "./tool-sources.ts";
 
+export const workflowExtensionName = "pi-workflow";
+
 // /reload replaces this module but not the Pi process, so the children of the old runtime wait here for the new one.
 const RESIDENT = Symbol.for("pi-workflow:child-sessions:resident");
 const slots = globalThis as Record<
@@ -115,7 +117,7 @@ export function contextualWorkflowSources(
 			...commonToolFactories(options.sources),
 			createMcpExtension(),
 			{
-				name: "pi-workflow",
+				name: workflowExtensionName,
 				factory: ((pi) =>
 					piWorkflowExtension(pi, {
 						...options,
@@ -142,7 +144,17 @@ export default function piWorkflowExtension(
 ) {
 	const agentDirectory = resolveAgentDirectory(options.agentDirectory);
 	if (options.authorization)
-		installActionAuthorization(pi, options.authorization);
+		installActionAuthorization(pi, options.authorization, undefined, {
+			tools: [
+				"reply_child",
+				"ask_user_question",
+				"ask_user_choice",
+				"list_children",
+				"child_status",
+				"child_result",
+			],
+			source: `<inline:${workflowExtensionName}>`,
+		});
 	let currentCtx: ExtensionContext | ExtensionCommandContext | undefined;
 	const context = () => currentCtx;
 	const catalog = {

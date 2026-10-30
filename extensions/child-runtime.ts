@@ -70,14 +70,27 @@ const askParentParameters = Type.Object({
 	question: Type.String({ description: "One question for the parent." }),
 });
 
-export function consultation(question: AuthorizationQuestion) {
-	return `Resolve only within your authority; otherwise consult the user. Reply with only a JSON object {"kind": "resolved" | "deny" | "pending", "answer": string, "confirm": boolean}. Set confirm to true only when the decision explicitly confirms this exact action and target, including its impact. Scope alone is not impact confirmation. No receipt or running state is consent.\n${JSON.stringify(question)}`;
+// Question numbers restart in every child, so the reference comes from the question's random id to catch a reply sent to the wrong child.
+function reference(question: AuthorizationQuestion) {
+	return question.id.replaceAll("-", "").slice(0, 8);
 }
 
-// The ask transport already correlates the reply with this pending question, so its identity comes from the question, never from the reply.
+export function consultation(question: AuthorizationQuestion) {
+	return `Resolve only within your authority; otherwise consult the user. Reply with only a JSON object {"ref": "${reference(question)}", "kind": "resolved" | "deny" | "pending", "answer": string, "confirm": boolean}, repeating this ref. Set confirm to true only when the decision explicitly confirms this exact action and target, including its impact. Scope alone is not impact confirmation. No receipt or running state is consent.\n${JSON.stringify({ ref: reference(question), action: question.proposal.action, reason: question.reason, effects: question.effects })}`;
+}
+
+// The reply names its question by ref; the rest of its identity comes from the pending question, never from the reply.
 function answered(question: AuthorizationQuestion, text: string) {
-	const reply: unknown = JSON.parse(text);
-	if (!isPlainRecord(reply)) return reply;
+	let reply: unknown;
+	try {
+		reply = JSON.parse(text);
+	} catch {}
+	if (!isPlainRecord(reply) || typeof reply.ref !== "string")
+		throw new Error(
+			"The parent reply is not a JSON object with ref, kind, answer and confirm.",
+		);
+	if (reply.ref !== reference(question))
+		throw new Error("The parent reply names another question.");
 	return {
 		id: question.id,
 		call: question.call,

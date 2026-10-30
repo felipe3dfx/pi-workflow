@@ -59,7 +59,7 @@ test("a pending consultation preserves the correlated hold without a marker", {
 	assert.equal(markerCountWhileHeld, 0);
 	assert.equal(answer.kind, "pending");
 	assert.equal(result.pending.length, 1);
-	assert.equal(result.pending[0].call, question.call);
+	assert.deepEqual(result.pending[0].proposal.action, question.action);
 	assert.equal(result.pending[0].kind, "held");
 	assert.equal(result.pending[0].reason, "Consultation remains pending; no authority established.");
 	assert.deepEqual(
@@ -79,7 +79,7 @@ test("scripted confirmation of the exact action releases one write", {
 	assert.equal(markerCountWhileHeld, 0);
 	assert.equal(answer.kind, "resolved");
 	assert.equal(answer.confirm, true);
-	assert.equal(result.decisions.at(-1).decision.call, question.call);
+	assert.deepEqual(result.decisions.at(-1).decision.proposal.action, question.action);
 	assert.equal(result.decisions.at(-1).decision.kind, "allow");
 	assert.deepEqual(result.pending, []);
 	assert.deepEqual(

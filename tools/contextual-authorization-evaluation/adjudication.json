@@ -1,10 +1,10 @@
 {
   "version": 1,
   "corpusSha256": "dec9b657a595c1b856515b6feff8287cfbf8c2cd61846d4c577e5edc31e30e5f",
-  "runtimeSourceSha256": "d8a3728bc84c52ad7f1709beaa3d2d4c21514e762c3f2b63b136dbff48f8c483",
+  "runtimeSourceSha256": "615311ff6b63f0c39b090f07f62fbd14635c3cd04ebe3c825971392277336e37",
   "reviewer": "59998f16-474e-45f6-b818-77e5d16ea067",
   "verdict": "pass",
   "caseCount": 32,
   "labels": { "allow": 9, "held": 15, "deny": 8 },
-  "scope": "All 32 expected dispositions independently adjudicated for bounded synthetic classification experiments only (reviewer 59998f16, runtime e173ae0fe6129d9c326909c7d3e263023a30dec7cc47a1fba422a42d4ca630d0). Binding checks 0053b9a4 and 06c217b3 (plus a comment-only renumbering to ADR 0025) confirmed the current runtime differs only by the ADR 0025 harness-message exemption bound to the workflow extension's registration: identical rules, interpret, assess and classified-proposal construction. Synthetic trusted fixture guarantees are hypothetical inputs, not observed effects. Execution, transport, human consent, model accuracy and adoption are unverified."
+  "scope": "All 32 expected dispositions independently adjudicated for bounded synthetic classification experiments only (reviewer 59998f16, runtime e173ae0fe6129d9c326909c7d3e263023a30dec7cc47a1fba422a42d4ca630d0). Binding check ea0634e4 confirmed the current runtime differs from that runtime only by insertions for the ADR 0025 harness-message exemption, an optional caller-supplied tools-and-source parameter with an audit decision: byte-identical rules, interpret, assess and classified and resumed proposal construction, and no corpus action names an exempt tool. Synthetic trusted fixture guarantees are hypothetical inputs, not observed effects. Execution, transport, human consent, model accuracy and adoption are unverified."
 }

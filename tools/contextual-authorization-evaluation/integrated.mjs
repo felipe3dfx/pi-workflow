@@ -138,6 +138,7 @@ try {
 				if (error.code !== "ENOENT") throw error;
 			}
 			const answer = {
+				ref: question.ref,
 				kind: scenario === "release" ? "resolved" : "pending",
 				answer:
 					scenario === "release"
