@@ -28,6 +28,7 @@ import {
 	type CheckpointGrant,
 	createCheckpointTool,
 } from "./child-checkpoint.ts";
+import { isPlainRecord } from "./agent-directory.ts";
 import { createChildCodeGraphTool } from "./codegraph-tool.ts";
 import {
 	type ChildResult,
@@ -53,7 +54,7 @@ export type ChildRuntimeConfig = {
 export type PolicyMethod = "authority" | "classify" | "decision";
 
 type ChildRequest =
-	| { type: "ask"; question: string }
+	| { type: "ask"; question: string; consultation?: string }
 	| { type: "report"; result: ChildResult }
 	| { type: "checkpoint"; checkpoint: Checkpoint }
 	| { type: "policy"; method: PolicyMethod; value?: unknown };
@@ -69,8 +70,54 @@ const askParentParameters = Type.Object({
 	question: Type.String({ description: "One question for the parent." }),
 });
 
+// Question numbers restart in every child, so the reference comes from the question's random id to catch a reply sent to the wrong child.
+function reference(question: AuthorizationQuestion) {
+	return `q${question.id.replaceAll("-", "").slice(0, 8)}`;
+}
+
 export function consultation(question: AuthorizationQuestion) {
-	return `Resolve only within your authority; otherwise consult the user. Reply with the same id, call and proposal plus kind (resolved/deny/pending), answer and optional confirmedActions identifying the explicitly confirmed actual action and target. Scope alone is not impact confirmation. No receipt or running state is consent.\n${JSON.stringify(question)}`;
+	const ref = reference(question);
+	return `Resolve only within your authority; otherwise consult the user. Reply with only a JSON object {"ref": "${ref}", "kind": "resolved" | "deny" | "pending", "answer": string, "confirm": boolean}, repeating this ref. Set confirm to true only when the decision explicitly confirms this exact action and target, including its impact. Scope alone is not impact confirmation. No receipt or running state is consent.\n${JSON.stringify({ ref, action: question.proposal.action, reason: question.reason, effects: question.effects })}`;
+}
+
+export function consultationReply(
+	ref: string,
+	kind: "resolved" | "deny" | "pending",
+	answer: string,
+	confirm: boolean,
+) {
+	return JSON.stringify({ ref, kind, answer, confirm });
+}
+
+export function consultationAnswer(ref: string, text: string) {
+	let reply: unknown;
+	try {
+		reply = JSON.parse(text);
+	} catch {}
+	if (!isPlainRecord(reply) || typeof reply.ref !== "string")
+		throw new Error(
+			"The parent reply is not a JSON object with ref, kind, answer and confirm.",
+		);
+	if (reply.ref !== ref)
+		throw new Error("The parent reply names another question.");
+	if (reply.kind !== "resolved" && reply.kind !== "deny" && reply.kind !== "pending")
+		throw new Error("The parent reply kind must be resolved, deny or pending.");
+	if (typeof reply.answer !== "string" || !reply.answer.trim())
+		throw new Error("The parent reply needs a nonempty answer.");
+	return { kind: reply.kind, answer: reply.answer, confirm: reply.confirm === true };
+}
+
+// The reply names its question by ref; the rest of its identity comes from the pending question, never from the reply.
+function answered(question: AuthorizationQuestion, ref: string, text: string) {
+	const { kind, answer, confirm } = consultationAnswer(ref, text);
+	return {
+		id: question.id,
+		call: question.call,
+		proposal: question.proposal,
+		kind,
+		answer,
+		...(confirm ? { confirmedActions: [question.proposal.action] } : {}),
+	};
 }
 
 export function createAskParentTool(
@@ -231,7 +278,7 @@ function installContextual(
 	config: ChildRuntimeConfig,
 	channel: ReturnType<typeof parentChannel>,
 	ctx: ExtensionContext,
-	ask: (question: string, signal?: AbortSignal) => Promise<string>,
+	ask: (question: string, signal?: AbortSignal, consultation?: string) => Promise<string>,
 	checkpointed: (checkpoint: Checkpoint) => Promise<unknown>,
 ) {
 	pi.setActiveTools([
@@ -257,8 +304,10 @@ function installContextual(
 	const authorization: ActionAuthorization = {
 		authority: (context) => policy("authority", undefined, context.signal),
 		classify: (proposal, signal) => policy("classify", proposal, signal),
-		consult: async (question, signal) =>
-			JSON.parse(await ask(consultation(question), signal)),
+		consult: async (question, signal) => {
+			const ref = reference(question);
+			return answered(question, ref, await ask(consultation(question), signal, ref));
+		},
 		onDecision: (decision) => policy("decision", decision),
 		sessionInstructions: () => instructions,
 	};
@@ -276,7 +325,7 @@ function installContextual(
 					: on(event, handler),
 		} as ExtensionAPI,
 		authorization,
-		checkpointed,
+		{ checkpointed },
 	);
 	return Promise.all(starting);
 }
@@ -287,8 +336,8 @@ export async function installChildRuntime(
 	channel: ReturnType<typeof parentChannel>,
 	ctx: ExtensionContext,
 ) {
-	const ask = (question: string, signal?: AbortSignal) =>
-		channel.request({ type: "ask", question }, signal);
+	const ask = (question: string, signal?: AbortSignal, consultation?: string) =>
+		channel.request({ type: "ask", question, ...(consultation === undefined ? {} : { consultation }) }, signal);
 	const checkpointed = (checkpoint: Checkpoint) =>
 		channel.request({ type: "checkpoint", checkpoint });
 	const contextual = config.contextual !== undefined;

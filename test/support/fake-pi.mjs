@@ -76,8 +76,8 @@ function run(task) {
 	write({ type: "message_end", message: user });
 	entry(user);
 	if (scenario === "crash") process.exit(7);
-	if (scenario === "ask") {
-		consult({ type: "ask", id: 1, question: "Which file?" }).then((reply) =>
+	if (scenario === "ask" || scenario === "ask-consultation") {
+		consult({ type: "ask", id: 1, question: "Which file?", ...(scenario === "ask-consultation" ? { consultation: "q12345678" } : {}) }).then((reply) =>
 			finish("stop", reply.error === undefined ? `ANSWER ${reply.answer}` : `ERROR ${reply.error}`),
 		);
 		return;

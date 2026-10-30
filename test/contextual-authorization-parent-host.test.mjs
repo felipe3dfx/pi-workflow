@@ -48,12 +48,14 @@ for (const scenario of ["pending", "deny"])
 		assert.equal(result.questions[0].markerWhileHeld, false);
 		assert.equal(result.replies[0].answer.kind, scenario);
 		assert.equal(result.replies[0].child, result.questions[0].child);
-		assert.equal(
-			result.replies[0].answer.call,
-			result.questions[0].question.call,
-		);
+		assert.equal(result.replies[0].question, result.questions[0].number);
 		assert.equal(result.childWriteResults.length, 1);
 		assert.equal(result.childWriteResults[0].isError, true);
+		const decision = result.decisions.map(entry => entry.decision).find(d =>
+			d.proposal && JSON.stringify(d.proposal.action) === JSON.stringify(result.questions[0].question.action));
+		assert.equal(decision.kind, scenario === "pending" ? "held" : "deny");
+		assert.equal(decision.reason, scenario === "pending"
+			? "Consultation remains pending; no authority established." : "Do not write this file.");
 		assert.equal(result.terminalResults.length, 1);
 		assert.equal(result.finalText, "FINISHED");
 		assert.equal(result.scratchRemoved, true);

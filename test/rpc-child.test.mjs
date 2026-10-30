@@ -229,6 +229,15 @@ test("an RPC child asks the parent over its channel and continues with the answe
 	assert.deepEqual(questions, ["Which file?"]);
 });
 
+test("an RPC consultation carries its structural reference", async (t) => {
+	const received = [];
+	const { handle } = await fakeChild(t, "ask-consultation", {
+		ask: async (question, signal, consultation) => { received.push({ question, signal: !!signal, consultation }); return "answer"; },
+	});
+	assert.equal(await handle.run("Ask first."), "ANSWER answer");
+	assert.deepEqual(received, [{ question: "Which file?", signal: true, consultation: "q12345678" }]);
+});
+
 test("a consultation the parent cannot answer reaches the child as an error", async (t) => {
 	const { handle } = await fakeChild(t, "ask", {
 		ask: async () => {

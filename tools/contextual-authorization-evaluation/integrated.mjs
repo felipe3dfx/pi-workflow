@@ -138,17 +138,13 @@ try {
 				if (error.code !== "ENOENT") throw error;
 			}
 			const answer = {
-				id: question.id,
-				call: question.call,
-				proposal: question.proposal,
+				ref: question.ref,
 				kind: scenario === "release" ? "resolved" : "pending",
 				answer:
 					scenario === "release"
 						? "Scripted authorization of this exact write."
 						: "Scripted pending answer.",
-				...(scenario === "release"
-					? { confirmedActions: [question.proposal.action] }
-					: {}),
+				confirm: scenario === "release",
 			};
 			result.questions.push({
 				at: timestamp(),

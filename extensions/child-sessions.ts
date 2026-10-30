@@ -19,7 +19,6 @@ import { Type } from "typebox";
 import type { ChildAudit, ChildCapture } from "./child-audit.ts";
 import type {
 	ActionAuthorization,
-	AuthorizationDecision,
 } from "./action-authorization.ts";
 import type { ChildShell } from "./child-bash.ts";
 import {
@@ -46,13 +45,16 @@ import {
 	childOutcome,
 	needsNoReason,
 	projectChild,
+	projectPendingAuthorizations,
+	type PendingAuthorization,
 	reportsResult,
 	verdictSucceeded,
 } from "./child-projection.ts";
 import { shellOptions } from "./shell-settings.ts";
 import { type CommonToolSources, defaultActiveTools } from "./tool-sources.ts";
 import { createRpcChildSession } from "./rpc-child.ts";
-import { askParentTool, reportResultTool } from "./child-runtime.ts";
+import { askParentTool, consultationAnswer, reportResultTool } from "./child-runtime.ts";
+import { harnessMessage } from "./harness-message.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
 import type { TodoClaim } from "./todo-extension.ts";
 import type { TaskState } from "./todo-list.ts";
@@ -108,17 +110,18 @@ export interface ChildRecord {
 	todo?: number;
 	step?: string;
 	question?: number;
+	consultation?: string;
 	steering?: string[];
 	undelivered?: string[];
 	checkpoints?: Checkpoint[];
-	pendingAuthorizations?: AuthorizationDecision[];
+	pendingAuthorizations?: PendingAuthorization[];
 }
 
 export type Answerer = "parent" | "operator";
 
 interface Port {
 	event(event: AgentSessionEvent): void;
-	ask(question: string, signal?: AbortSignal): Promise<string>;
+	ask(question: string, signal?: AbortSignal, consultation?: string): Promise<string>;
 	report(result: ChildResult): void;
 	notify(message: string): void;
 	checkpointed(checkpoint: Checkpoint): void;
@@ -237,9 +240,9 @@ function hold(port: Port) {
 	port.notify = (message) => held.push((next) => next.notify(message));
 	port.checkpointed = (checkpoint) =>
 		held.push((next) => next.checkpointed(checkpoint));
-	port.ask = (question, signal) =>
+	port.ask = (question, signal, consultation) =>
 		new Promise<string>((resolve, reject) => {
-			held.push((next) => void next.ask(question, signal).then(resolve, reject));
+			held.push((next) => void next.ask(question, signal, consultation).then(resolve, reject));
 		});
 	return held;
 }
@@ -267,9 +270,24 @@ function childDetails(record: ChildRecord, now = Date.now()) {
 		verdict: record.state === "completed" ? record.result?.verdict : undefined,
 		...(record.checkpoints ? { checkpoints: record.checkpoints } : {}),
 		...(record.pendingAuthorizations
-			? { pendingAuthorizations: record.pendingAuthorizations }
+			? {
+					pendingAuthorizations: projectPendingAuthorizations(
+						record.pendingAuthorizations,
+					),
+				}
 			: {}),
 	};
+}
+
+function publicRecord(record: ChildRecord) {
+	return record.pendingAuthorizations
+		? {
+				...record,
+				pendingAuthorizations: projectPendingAuthorizations(
+					record.pendingAuthorizations,
+				),
+			}
+		: record;
 }
 
 export type ChildDetails = ReturnType<typeof childDetails> & {
@@ -592,6 +610,7 @@ export function createChildSessions(options: {
 		question.release?.();
 		child.question = undefined;
 		child.record.question = undefined;
+		child.record.consultation = undefined;
 		if (child.record.state === "waiting") {
 			child.record.state = "running";
 			child.record.step = undefined;
@@ -602,7 +621,7 @@ export function createChildSessions(options: {
 		else question.resolve(reply);
 	}
 
-	function ask(child: Child, question: string, signal?: AbortSignal) {
+	function ask(child: Child, question: string, signal?: AbortSignal, consultation?: string) {
 		if (signal?.aborted) {
 			return Promise.reject(new Error("The call was aborted."));
 		}
@@ -622,6 +641,7 @@ export function createChildSessions(options: {
 		return new Promise<string>((resolve, reject) => {
 			pose(child, { number, signal, resolve, reject });
 			child.record.question = number;
+			child.record.consultation = consultation;
 			child.record.state = "waiting";
 			child.record.step = `asks question ${number}`;
 			trace(child);
@@ -671,7 +691,7 @@ export function createChildSessions(options: {
 			child.watch.event(event);
 			track(child, event);
 		};
-		port.ask = (question, signal) => ask(child, question, signal);
+		port.ask = (question, signal, consultation) => ask(child, question, signal, consultation);
 		port.report = (result) => {
 			child.capture.reported(result);
 			if (isWorking(child.record.state)) child.record.result = result;
@@ -755,7 +775,7 @@ export function createChildSessions(options: {
 				shell: launch.shell(),
 				onEvent: (event) => port.event(event),
 				notify: (message) => port.notify(message),
-				ask: (question, signal) => port.ask(question, signal),
+				ask: (question, signal, consultation) => port.ask(question, signal, consultation),
 				report: (result) => port.report(result),
 				...(plan.checkpoint ? { checkpoint: plan.checkpoint } : {}),
 				checkpointed: (checkpoint) => port.checkpointed(checkpoint),
@@ -851,7 +871,7 @@ export function createChildSessions(options: {
 				if (checkpoints.length === 0 && unresolved.length === 0) throw error;
 				const pending = unresolved.length === 0
 					? ""
-					: `\n\nUnresolved authorization proposals (no held action executed):\n${JSON.stringify(unresolved)}`;
+					: `\n\nUnresolved authorization proposals (no held action executed):\n${JSON.stringify(projectPendingAuthorizations(unresolved))}`;
 				throw new Error(`${errorMessage(error)}${checkpointLines(checkpoints)}${pending}`, {
 					cause: error,
 				});
@@ -1490,9 +1510,10 @@ function launched(
 	note?: string,
 ) {
 	if (started.status === "pending" && "pendingAuthorizations" in started) {
+		const pendingAuthorizations = projectPendingAuthorizations(started.pendingAuthorizations);
 		return report(
-			[...warnings, started.warning, JSON.stringify(started.pendingAuthorizations)],
-			{ ...started, warnings },
+			[...warnings, started.warning, JSON.stringify(pendingAuthorizations)],
+			{ ...started, pendingAuthorizations, warnings },
 		);
 	}
 	if (started.status === "refused") {
@@ -1599,16 +1620,8 @@ function describeChildren(children: ChildRecord[]) {
 		: ["No children in this session."];
 }
 
-const childIdParameters = Type.Object({
+const cancelChildParameters = Type.Object({
 	id: Type.String({ description: "The child id that spawn_child returned." }),
-});
-
-const replyChildParameters = Type.Object({
-	id: Type.String({ description: "The id of the child waiting for a reply." }),
-	question: Type.Integer({
-		description: "The question number from the child's question message.",
-	}),
-	answer: Type.String({ description: "The answer to the child's question." }),
 });
 
 function unknownChild(id: string) {
@@ -1618,6 +1631,16 @@ function unknownChild(id: string) {
 export function createChildQueryTools(
 	sessions: ReturnType<typeof createChildSessions>,
 ) {
+	const childIdParameters = Type.Object({
+		id: Type.String({ description: "The child id that spawn_child returned." }),
+	});
+	const replyChildParameters = Type.Object({
+		id: Type.String({ description: "The id of the child waiting for a reply." }),
+		question: Type.Integer({
+			description: "The question number from the child's question message.",
+		}),
+		answer: Type.String({ description: "The answer to the child's question." }),
+	});
 	const listChildren: ToolDefinition<
 		ReturnType<typeof Type.Object>,
 		Record<string, unknown>
@@ -1631,7 +1654,9 @@ export function createChildQueryTools(
 			const unseated = unseatedChild();
 			if (unseated) return unseated;
 			const children = sessions.list();
-			return report(describeChildren(children), { children });
+			return report(describeChildren(children), {
+				children: children.map(publicRecord),
+			});
 		},
 	};
 	const childStatus: ToolDefinition<
@@ -1647,7 +1672,7 @@ export function createChildQueryTools(
 			if (unseated) return unseated;
 			const child = sessions.get(params.id);
 			if (!child) return unknownChild(params.id);
-			return report([describeChild(child)], { child });
+			return report([describeChild(child)], { child: publicRecord(child) });
 		},
 	};
 	const childResult: ToolDefinition<
@@ -1678,13 +1703,13 @@ export function createChildQueryTools(
 		},
 	};
 	const cancelChild: ToolDefinition<
-		typeof childIdParameters,
+		typeof cancelChildParameters,
 		Record<string, unknown>
 	> = {
 		name: "cancel_child",
 		label: "Cancel Child",
 		description: "Cancel a queued, running, or waiting child session.",
-		parameters: childIdParameters,
+		parameters: cancelChildParameters,
 		async execute(_toolCallId, params) {
 			const unseated = unseatedChild();
 			if (unseated) return unseated;
@@ -1707,6 +1732,9 @@ export function createChildQueryTools(
 			"Answer the question a child session is waiting on, naming the question number from its message. A reply to a question that is not waiting is refused.",
 		parameters: replyChildParameters,
 		async execute(_toolCallId, params) {
+			const child = sessions.get(params.id);
+			if (child?.consultation && child.question === params.question)
+				consultationAnswer(child.consultation, params.answer);
 			sessions.reply(params.id, params.question, params.answer, "parent");
 			return report([`Reply sent to child ${params.id}.`], {
 				id: params.id,
@@ -1723,5 +1751,5 @@ export function createChildQueryTools(
 				context.isError ? outputText(result) : undefined,
 			),
 	};
-	return [listChildren, childStatus, childResult, cancelChild, replyChild];
+	return [harnessMessage(listChildren), harnessMessage(childStatus), harnessMessage(childResult), cancelChild, harnessMessage(replyChild)];
 }

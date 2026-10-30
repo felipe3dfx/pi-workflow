@@ -1,3 +1,4 @@
+import { harnessMessage } from "./harness-message.ts";
 import type { AgentToolResult, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
 	decodeKittyPrintable,
@@ -384,7 +385,7 @@ const optionSchema = Type.Object({
 	description: Type.Optional(Type.String({ description: "Short description shown to the right of the option." })),
 });
 
-const choiceParameters = Type.Object({
+const choiceParameters = () => Type.Object({
 	question: Type.String({ description: "The question to ask the operator." }),
 	options: Type.Array(optionSchema, { minItems: 1, description: "Numbered options presented to the operator." }),
 	multiple: Type.Optional(
@@ -395,8 +396,8 @@ const choiceParameters = Type.Object({
 	),
 });
 
-export function createAskUserChoiceTool(hints: FooterHints, closeView = closeChildrenView): ToolDefinition<typeof choiceParameters, AskUserAnswer> {
-	return {
+export function createAskUserChoiceTool(hints: FooterHints, closeView = closeChildrenView): ToolDefinition<ReturnType<typeof choiceParameters>, AskUserAnswer> {
+	return harnessMessage({
 		name: "ask_user_choice",
 		label: "Ask User Choice",
 		description:
@@ -407,7 +408,7 @@ export function createAskUserChoiceTool(hints: FooterHints, closeView = closeChi
 			"Set multiple: true on ask_user_choice only when the options are not mutually exclusive.",
 			"ask_user_choice never launches a child session and never invents an answer when the operator dismisses or is unavailable.",
 		],
-		parameters: choiceParameters,
+		parameters: choiceParameters(),
 		executionMode: "sequential",
 		...askRenderers(),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
@@ -427,15 +428,15 @@ export function createAskUserChoiceTool(hints: FooterHints, closeView = closeChi
 			}
 			return askPanel(ctx, hints, params.question, params.options, params.multiple ?? false, signal, closeView);
 		},
-	};
+	});
 }
 
-const questionParameters = Type.Object({
+const questionParameters = () => Type.Object({
 	question: Type.String({ description: "The open-ended question to ask the operator." }),
 });
 
-export function createAskUserQuestionTool(hints: FooterHints, closeView = closeChildrenView): ToolDefinition<typeof questionParameters, AskUserAnswer> {
-	return {
+export function createAskUserQuestionTool(hints: FooterHints, closeView = closeChildrenView): ToolDefinition<ReturnType<typeof questionParameters>, AskUserAnswer> {
+	return harnessMessage({
 		name: "ask_user_question",
 		label: "Ask User Question",
 		description:
@@ -445,7 +446,7 @@ export function createAskUserQuestionTool(hints: FooterHints, closeView = closeC
 			"Use ask_user_question for an open question with no fixed set of options.",
 			"ask_user_question never launches a child session and never invents an answer when the operator dismisses or is unavailable.",
 		],
-		parameters: questionParameters,
+		parameters: questionParameters(),
 		executionMode: "sequential",
 		...askRenderers(),
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
@@ -465,11 +466,11 @@ export function createAskUserQuestionTool(hints: FooterHints, closeView = closeC
 			}
 			return askPanel(ctx, hints, params.question, [], false, signal, closeView);
 		},
-	};
+	});
 }
 
-export function syncAskUserTools(pi: ExtensionAPI, hints: FooterHints) {
+export function syncAskUserTools(pi: ExtensionAPI, choice: ReturnType<typeof createAskUserChoiceTool>, question: ReturnType<typeof createAskUserQuestionTool>) {
 	const on = seated("operator-questions", "overlay");
-	offerTool(pi, createAskUserChoiceTool(hints), on);
-	offerTool(pi, createAskUserQuestionTool(hints), on);
+	offerTool(pi, choice, on);
+	offerTool(pi, question, on);
 }

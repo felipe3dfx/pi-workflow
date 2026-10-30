@@ -151,15 +151,18 @@ const authorization = {
 			throw error;
 		}
 	},
-	onDecision: (decision) =>
-		record("decision", {
-			kind: decision.kind,
-			reason: decision.reason,
-			call: decision.call,
-			cwd: decision.proposal?.action.cwd,
-			tool: decision.proposal?.action.tool,
-			input: decision.proposal?.action.input,
-		}),
+	onDecision: (decision) => {
+		const { kind, reason, call } = decision;
+		const action = kind === "exempt" ? decision.action : decision.proposal?.action;
+		return record("decision", {
+			kind,
+			reason,
+			call,
+			cwd: action?.cwd,
+			tool: action?.tool,
+			input: action?.input,
+		});
+	},
 };
 const rpc = createRpcChildSession();
 const recipe = contextualWorkflowSources({
