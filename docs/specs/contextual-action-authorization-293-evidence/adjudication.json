@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "corpusSha256": "dec9b657a595c1b856515b6feff8287cfbf8c2cd61846d4c577e5edc31e30e5f",
+  "runtimeSourceSha256": "e173ae0fe6129d9c326909c7d3e263023a30dec7cc47a1fba422a42d4ca630d0",
+  "reviewer": "59998f16-474e-45f6-b818-77e5d16ea067",
+  "verdict": "pass",
+  "caseCount": 32,
+  "labels": { "allow": 9, "held": 15, "deny": 8 },
+  "scope": "All 32 expected dispositions independently adjudicated for bounded synthetic classification experiments only. Synthetic trusted fixture guarantees are hypothetical inputs, not observed effects. Execution, transport, human consent, model accuracy and adoption are unverified."
+}

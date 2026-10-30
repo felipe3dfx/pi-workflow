@@ -67,6 +67,7 @@ import {
 	sessionActionAuthorization,
 } from "./action-authorization.ts";
 import { type CommonToolSources, commonToolFactories } from "./tool-sources.ts";
+import { isHarnessMessage } from "./harness-message.ts";
 
 // /reload replaces this module but not the Pi process, so the children of the old runtime wait here for the new one.
 const RESIDENT = Symbol.for("pi-workflow:child-sessions:resident");
@@ -138,8 +139,9 @@ export default function piWorkflowExtension(
 	} = {},
 ) {
 	const agentDirectory = resolveAgentDirectory(options.agentDirectory);
+	const messages = new Map<string, unknown>();
 	if (options.authorization)
-		installActionAuthorization(pi, options.authorization);
+		installActionAuthorization(pi, options.authorization, { messages });
 	let currentCtx: ExtensionContext | ExtensionCommandContext | undefined;
 	const context = () => currentCtx;
 	const catalog = {
@@ -221,6 +223,8 @@ export default function piWorkflowExtension(
 		options.childSessions?.refresh,
 	);
 	const footerHints = createFooterHints();
+	const askChoice = createAskUserChoiceTool(footerHints);
+	const askQuestion = createAskUserQuestionTool(footerHints);
 	occupyHeader("child-session", childSessions.working);
 	childSessions.subscribe(notifyHeader);
 	registerChrome(pi, footerHints);
@@ -251,6 +255,11 @@ export default function piWorkflowExtension(
 			.map(([name]) => name);
 	}
 
+	const childQueries = createChildQueryTools(childSessions);
+	for (const tool of [...childQueries, askChoice, askQuestion]) {
+		if (isHarnessMessage(tool))
+			messages.set(tool.name, tool.parameters);
+	}
 	const childTools = launcher.childToolsOffer(
 		pi,
 		[
@@ -261,7 +270,7 @@ export default function piWorkflowExtension(
 				options.authorization !== undefined,
 			),
 			createContinueChildTool(childSessions),
-			...createChildQueryTools(childSessions),
+			...childQueries,
 		],
 		childSessions,
 		workflow.checkSpawnTools,
@@ -277,7 +286,7 @@ export default function piWorkflowExtension(
 			};
 		},
 		offers: [
-			() => syncAskUserTools(pi, footerHints),
+			() => syncAskUserTools(pi, askChoice, askQuestion),
 			todo.offer,
 			() => syncCodeGraphTool(pi, options.codegraph),
 			() => syncCompactTools(pi, currentCtx),
@@ -342,8 +351,8 @@ export default function piWorkflowExtension(
 	}
 
 	pi.registerTool(createCodeGraphTool(options.codegraph));
-	pi.registerTool(createAskUserChoiceTool(footerHints));
-	pi.registerTool(createAskUserQuestionTool(footerHints));
+	pi.registerTool(askChoice);
+	pi.registerTool(askQuestion);
 
 	pi.registerCommand("workflow:status", {
 		description: "Summarize companion, MCP, and default settings readiness",

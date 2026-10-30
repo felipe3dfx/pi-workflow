@@ -35,7 +35,9 @@ import {
 } from "../extensions/shell.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { eventually } from "./support/eventually.mjs";
-import { createChildSessions } from "../extensions/child-sessions.ts";
+import { createChildSessions, createChildQueryTools } from "../extensions/child-sessions.ts";
+import { createAskUserChoiceTool, createAskUserQuestionTool } from "../extensions/ask-user-panel.ts";
+import { installActionAuthorization } from "../extensions/action-authorization.ts";
 import { createChildAudit } from "../extensions/child-audit.ts";
 import { withCheckpoint } from "./support/signed-checkpoint.mjs";
 
@@ -360,13 +362,15 @@ test("a real child consults its parent with retained context before the exact au
 	const host = await parent(t);
 	const questionReady = Promise.withResolvers();
 	const answer = Promise.withResolvers();
+	let structuralRef;
 	const child = await runtimeChildSession({
 		cwd: host.agentDir, model: "faux/authorization", runtime: host.runtime,
 		authorization: {
 			authority,
 			classify: async (proposal) => proposal.consultation ? known : { ...known, scope: "unknown" },
 		},
-		ask: async (text) => {
+		ask: async (text, _signal, ref) => {
+			structuralRef = ref;
 			questionReady.resolve(text);
 			return answer.promise;
 		},
@@ -378,12 +382,309 @@ test("a real child consults its parent with retained context before the exact au
 	assert.match(text, /Resolve only within your authority/);
 	assert.equal(existsSync(path), false);
 	const question = JSON.parse(text.slice(text.indexOf("\n") + 1));
-	assert.equal(question.proposal.action.input.path, path);
-	answer.resolve(JSON.stringify({ ...question, kind: "resolved", answer: "This exact assigned write is authorized." }));
+	assert.equal(question.action.input.path, path);
+	assert.equal(structuralRef, question.ref);
+	answer.resolve(JSON.stringify({ ref: question.ref, kind: "resolved", answer: "This exact assigned write is authorized." }));
 	const result = await action;
 	assert.equal(result.isError, false);
 	assert.equal(readFileSync(path, "utf8"), "CHILD_CONSULTED_EFFECT");
 	assert.deepEqual(child.pendingAuthorizations(), []);
+});
+
+for (const [decision, effect] of [["resolved", true], ["deny", false]])
+	test(`a child completes a short ${decision} parent reply from its pending question`, async (t) => {
+		const host = await parent(t);
+		const questionReady = Promise.withResolvers();
+		const answer = Promise.withResolvers();
+		const resumed = [];
+		const child = await runtimeChildSession({
+			cwd: host.agentDir, model: "faux/authorization", runtime: host.runtime,
+			authorization: {
+				authority,
+				classify: async (proposal) => {
+					if (!proposal.consultation) return { ...known, effects: "high-impact" };
+					resumed.push(proposal.consultation);
+					return { ...known, effects: "high-impact", confirmed: true };
+				},
+			},
+			ask: async (text) => {
+				questionReady.resolve(text);
+				return answer.promise;
+			},
+		});
+		t.after(() => child.dispose());
+		const path = join(host.agentDir, `short-${decision}.txt`);
+		const action = childCall(host, child, "write", { path, content: "SHORT_REPLY_EFFECT" });
+		const text = await Promise.race([questionReady.promise, action.then(() => "NO_CONSULTATION")]);
+		const question = JSON.parse(text.slice(text.indexOf("\n") + 1));
+		assert.deepEqual(Object.keys(question).sort(), ["action", "effects", "reason", "ref"]);
+		assert.deepEqual(question.action, { tool: "write", input: { path, content: "SHORT_REPLY_EFFECT" }, cwd: host.agentDir });
+		assert.match(question.ref, /^q[0-9a-f]{8}$/);
+		answer.resolve(JSON.stringify({ ref: question.ref, kind: decision, answer: "The user decided about this exact write.", confirm: true }));
+		const result = await action;
+		assert.equal(result.isError, !effect);
+		assert.equal(existsSync(path), effect);
+		if (effect) {
+			assert.equal(readFileSync(path, "utf8"), "SHORT_REPLY_EFFECT");
+			assert.deepEqual(resumed, [{ answer: "The user decided about this exact write.", confirmedActions: [question.action] }]);
+		} else assert.deepEqual(resumed, []);
+	});
+
+test("two children reject each other's pending consultation references", async (t) => {
+	const hosts = [await parent(t), await parent(t)];
+	const resumed = [];
+	const questions = [];
+	const replies = [];
+	const actions = [];
+	const paths = hosts.map((host, i) => join(host.agentDir, `child-${i}.txt`));
+	for (let i = 0; i < paths.length; i++) {
+		const host = hosts[i];
+		const path = paths[i];
+		const ready = Promise.withResolvers();
+		const reply = Promise.withResolvers();
+		const child = await runtimeChildSession({
+			cwd: host.agentDir, model: "faux/authorization", runtime: host.runtime,
+			authorization: { authority, classify: async proposal => {
+				if (!proposal.consultation) return { ...known, effects: "high-impact" };
+				resumed.push(proposal.consultation);
+				return { ...known, effects: "high-impact", confirmed: true };
+			} },
+			ask: async text => { ready.resolve(text); return reply.promise; },
+		});
+		t.after(() => child.dispose());
+		const action = childCall(host, child, "write", { path, content: "NO_EFFECT" });
+		actions.push(action);
+		const text = await Promise.race([ready.promise, action.then(() => "NO_CONSULTATION")]);
+		questions.push(JSON.parse(text.slice(text.indexOf("\n") + 1)));
+		replies.push(reply);
+	}
+	assert.notEqual(questions[0].ref, questions[1].ref);
+	for (let i = 0; i < 2; i++) {
+		assert.equal(questions[i].action.input.path, paths[i]);
+		replies[i].resolve(JSON.stringify({ ref: questions[1 - i].ref, kind: "resolved", answer: "Confirm this write.", confirm: true }));
+	}
+	for (const result of await Promise.all(actions)) {
+		assert.equal(result.isError, true);
+		assert.match(result.content[0].text, /The parent reply names another question\./);
+	}
+	assert.deepEqual(resumed, []);
+	for (const path of paths) assert.equal(existsSync(path), false);
+});
+
+const notAReply = /The parent reply is not a JSON object with ref, kind, answer and confirm\./;
+for (const [label, reply, reason] of [
+	["invalid JSON", () => "{", notAReply], ["null", () => "null", notAReply], ["array", () => "[]", notAReply],
+	["string", () => '"answer"', notAReply],
+	["missing ref", () => '{"kind":"resolved","answer":"Proceed","confirm":true}', notAReply],
+	["another question's ref", () => '{"ref":"00000000","kind":"resolved","answer":"Proceed","confirm":true}', /The parent reply names another question\./],
+	["an invalid kind", ref => JSON.stringify({ ref, kind: "maybe", answer: "Proceed", confirm: true }), /The parent reply kind must be resolved, deny or pending\./],
+	["an empty answer", ref => JSON.stringify({ ref, kind: "resolved", answer: " ", confirm: true }), /The parent reply needs a nonempty answer\./],
+	["absent confirmation", ref => JSON.stringify({ ref, kind: "resolved", answer: "Proceed" }), undefined],
+	["false confirmation", ref => JSON.stringify({ ref, kind: "resolved", answer: "Proceed", confirm: false }), undefined],
+]) test(`a child holds a high-impact action for ${label}`, async (t) => {
+	const host = await parent(t);
+	const resumed = [];
+	let asked = 0;
+	const child = await runtimeChildSession({
+		cwd: host.agentDir, model: "faux/authorization", runtime: host.runtime,
+		authorization: {
+			authority,
+			classify: async proposal => {
+				if (proposal.consultation) resumed.push(proposal.consultation);
+				return { ...known, effects: "high-impact", confirmed: true };
+			},
+		},
+		ask: async text => { asked++; return reply(JSON.parse(text.slice(text.indexOf("\n") + 1)).ref); },
+	});
+	t.after(() => child.dispose());
+	const path = join(host.agentDir, "held-short.txt");
+	const result = await childCall(host, child, "write", { path, content: "NO_EFFECT" });
+	assert.equal(asked, 1);
+	assert.equal(result.isError, true);
+	assert.equal(existsSync(path), false);
+	if (reason) {
+		assert.match(result.content[0].text, reason);
+		assert.doesNotMatch(result.content[0].text, /stale/);
+		assert.deepEqual(resumed, []);
+	}
+	else for (const consultation of resumed) assert.equal(consultation.confirmedActions, undefined);
+});
+
+test("a third-party reply_child is classified in parent, nested and child calls", async (t) => {
+	let effects = 0;
+	const classified = [];
+	const sources = { factories: [pi => pi.registerTool({
+		name: "reply_child", label: "Reply", description: "Third-party effect",
+		parameters: Type.Object({}),
+		async execute() { effects++; return { content: [], details: {} }; },
+	})] };
+	const authorization = {
+		authority,
+		classify: async proposal => {
+			classified.push(proposal.action.tool);
+			return proposal.action.tool === "codemode" ? known : { ...known, prohibited: true, reason: "Forbidden effect" };
+		},
+	};
+	const host = await parent(t, authorization, undefined, sources);
+	const direct = await host.call({}, "reply_child");
+	assert.equal(direct.isError, true);
+	assert.equal(effects, 0);
+	assert.deepEqual(classified, ["reply_child"]);
+	const nested = await host.call({ code: 'await tools.reply_child({})' }, "codemode");
+	assert.equal(effects, 0);
+	assert.deepEqual(classified, ["reply_child", "codemode", "reply_child"]);
+	assert.match(JSON.stringify(nested), /prohibit|Forbidden/i);
+	const child = await runtimeChildSession({
+		cwd: host.agentDir, role: "worker", model: "faux/authorization",
+		runtime: host.runtime, sources, authorization,
+	});
+	t.after(() => child.dispose());
+	const result = await childCall(host, child, "reply_child", {});
+	assert.equal(result.isError, true);
+	assert.equal(effects, 0);
+	assert.deepEqual(classified, ["reply_child", "codemode", "reply_child", "reply_child"]);
+});
+
+test("a parent sends harness messages without classification but still classifies effects", async (t) => {
+	const prior = seatedCapabilities();
+	replaceSelection({ schemaVersion: 1, capabilities: Object.fromEntries(capabilities.map(c => [c, true])), expectations: {} });
+	t.after(() => replaceSelection({ schemaVersion: 1, ...prior, expectations: {} }));
+	const classified = [];
+	const decisions = [];
+	let effects = 0;
+	const host = await parent(t, {
+		authority,
+		classify: async (proposal) => {
+			classified.push(proposal.action.tool);
+			return proposal.action.tool === "codemode" ? known : { ...known, prohibited: true, reason: "Fixture prohibits every classified call." };
+		},
+		onDecision: decision => decisions.push(decision),
+	}, { name: "notify_child", label: "Notify", description: "Effect", parameters: Type.Object({}),
+		async execute() { effects++; return { content: [], details: {} }; } });
+	const asked = await host.call({ question: "May this exact write proceed?" }, "ask_user_question");
+	assert.equal(asked.details.status, "refused");
+	const listed = await host.call({}, "list_children");
+	assert.equal(listed.isError, false);
+	const choice = await host.call({ question: "Choose", options: [{ label: "Yes" }] }, "ask_user_choice");
+	assert.equal(choice.details.status, "refused");
+	for (const tool of ["child_status", "child_result"]) {
+		const result = await host.call({ id: "missing-child" }, tool);
+		assert.equal(result.isError, false);
+		assert.match(result.content[0].text, /No child missing-child/);
+	}
+	const replied = await host.call({ id: "missing-child", question: 1, answer: "yes" }, "reply_child");
+	assert.doesNotMatch(JSON.stringify(replied.content), /Authorization held|Action prohibited/);
+	assert.match(JSON.stringify(replied.content), /missing-child/);
+	assert.deepEqual(classified, []);
+	const audited = decisions.map(decision => [decision.kind, decision.action?.tool]);
+	for (const tool of ["ask_user_question", "list_children", "ask_user_choice", "child_status", "child_result", "reply_child"])
+		assert.ok(audited.some(([kind, name]) => kind === "exempt" && name === tool), tool);
+	assert.deepEqual(decisions.find(decision => decision.action?.tool === "reply_child").action.input, { id: "missing-child", question: 1, answer: "yes" });
+	assert.ok(decisions.every(decision => decision.kind === "exempt" && !("proposal" in decision)));
+	const nestedList = await host.call({ code: "await tools.list_children({})" }, "codemode");
+	assert.equal(nestedList.isError, false);
+	assert.deepEqual(classified, ["codemode"]);
+	const notified = await host.call({}, "notify_child");
+	assert.equal(notified.isError, true);
+	assert.equal(effects, 0);
+	const path = join(host.agentDir, "effect.txt");
+	const written = await host.call({ path, content: "NO_EFFECT" }, "write");
+	assert.equal(written.isError, true);
+	assert.equal(existsSync(path), false);
+	assert.deepEqual(classified, ["codemode", "notify_child", "write"]);
+	for (const [tool, input] of [
+		["spawn_child", { role: "worker", task: "Classified launch" }],
+		["continue_child", { id: "missing-child", task: "Classified continuation" }],
+		["cancel_child", { id: "missing-child" }],
+	]) {
+		const lifecycle = await host.call(input, tool);
+		assert.equal(lifecycle.isError, true, tool);
+		assert.match(JSON.stringify(lifecycle.content), /Fixture prohibits every classified call/, tool);
+		assert.equal(decisions.some(decision => decision.kind === "exempt" && decision.action?.tool === tool), false, tool);
+	}
+	assert.deepEqual(classified, ["codemode", "notify_child", "write", "spawn_child", "continue_child", "cancel_child"]);
+});
+
+test("anonymous workflow exempts owned tools but classifies a foreign same-name tool", async (t) => {
+	const prior = seatedCapabilities();
+	replaceSelection({ schemaVersion: 1, capabilities: Object.fromEntries(capabilities.map(c => [c, true])), expectations: {} });
+	t.after(() => replaceSelection({ schemaVersion: 1, ...prior, expectations: {} }));
+	for (const row of [
+		{ name: "owned", input: {}, foreign: false },
+		{ name: "foreign", input: { target: "foreign target" }, foreign: true },
+	]) {
+		const agentDir = withAgentDirectory(t);
+		const runtime = await ModelRuntime.create({ authPath: join(agentDir, "auth.json"), modelsPath: null, refreshOnCreate: false });
+		const provider = fauxProvider({ provider: "faux", models: [{ id: "authorization" }] });
+		runtime.registerNativeProvider(provider.provider);
+		await runtime.setRuntimeApiKey("faux", "fixture");
+		const settings = SettingsManager.inMemory({}, { projectTrusted: false });
+		const classified = [];
+		const decisions = [];
+		const recipe = contextualWorkflowSources({ agentDirectory: agentDir, sources: {}, authorization: {
+			authority, classify: async proposal => {
+				classified.push(proposal.action);
+				return { ...known, prohibited: true, reason: "Anonymous workflow call prohibited." };
+			},
+			onDecision: decision => decisions.push(decision),
+		} });
+		const workflow = recipe.extensionFactories.at(-1);
+		const loader = new DefaultResourceLoader({
+			cwd: agentDir, agentDir, settingsManager: settings, noExtensions: true,
+			noSkills: true, noThemes: true, noPromptTemplates: true,
+			extensionFactories: [
+				...(row.foreign ? [pi => pi.registerTool({ name: "list_children", label: "Foreign", description: "Foreign effect", parameters: Type.Object({ target: Type.String() }), async execute() { return { content: [], details: {} }; } })] : []),
+				...recipe.extensionFactories.slice(0, -1), pi => workflow(pi),
+			],
+		});
+		await loader.reload();
+		assert.deepEqual(loader.getExtensions().errors, [], row.name);
+		const { session } = await createAgentSession({
+			cwd: agentDir, agentDir, modelRuntime: runtime, model: provider.getModel(), thinkingLevel: "off",
+			resourceLoader: loader, settingsManager: settings, sessionManager: SessionManager.inMemory(agentDir),
+		});
+		t.after(async () => { await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" }); session.dispose(); });
+		recipe.bindSession(session);
+		await session.bindExtensions({});
+		provider.setResponses([fauxAssistantMessage(fauxToolCall("list_children", row.input), { stopReason: "toolUse" }), fauxAssistantMessage(fauxText("finished"))]);
+		await session.prompt("List children.");
+		const result = session.messages.filter(m => m.role === "toolResult").at(-1);
+		if (row.foreign) {
+			assert.deepEqual(classified, [{ tool: "list_children", input: row.input, cwd: agentDir }]);
+			assert.equal(result.isError, true);
+			assert.match(result.content[0].text, /Anonymous workflow call prohibited\./);
+		} else {
+			assert.deepEqual(classified, []);
+			assert.deepEqual(decisions.map(decision => decision.kind), ["exempt"]);
+			assert.equal(result.isError, false);
+			assert.deepEqual(result.details.children, []);
+		}
+	}
+});
+
+test("exempt message audit failures do not block real list_children calls", async (t) => {
+	const prior = seatedCapabilities();
+	replaceSelection({ schemaVersion: 1, capabilities: Object.fromEntries(capabilities.map(c => [c, true])), expectations: {} });
+	t.after(() => replaceSelection({ schemaVersion: 1, ...prior, expectations: {} }));
+	for (const failure of ["throw", "reject"]) {
+		const classified = [];
+		const decisions = [];
+		const host = await parent(t, {
+			authority,
+			classify: async proposal => { classified.push(proposal); return known; },
+			onDecision: decision => {
+				decisions.push(decision);
+				if (failure === "throw") throw new Error("audit failed");
+				return Promise.reject(new Error("audit failed"));
+			},
+		});
+		const result = await host.call({}, "list_children");
+		assert.equal(result.isError, false);
+		assert.deepEqual(result.details.children, []);
+		assert.deepEqual(decisions.map(decision => decision.kind), ["exempt"]);
+		assert.deepEqual(decisions.map(decision => decision.action), [{ tool: "list_children", input: {}, cwd: host.agentDir }]);
+		assert.deepEqual(classified, []);
+	}
 });
 
 test("foreground returns unresolved action to the parent and a fresh authorized run can resolve it", async (t) => {
@@ -480,7 +781,8 @@ for (const failure of ["abort", "provider"]) {
 		assert.ok(Array.isArray(snapshot) && snapshot.length === 1, "capture pending authority before disposal");
 		const serialized = visible.slice(visible.indexOf("Unresolved authorization proposals (no held action executed):\n") +
 			"Unresolved authorization proposals (no held action executed):\n".length);
-		assert.deepEqual(JSON.parse(serialized), snapshot);
+		assert.deepEqual(JSON.parse(serialized), snapshot.map(d => ({ call: d.call, action: d.proposal.action, reason: d.reason })));
+		assert.doesNotMatch(visible, /systemPrompt|"rules"|"authority"|Do not change protected\.txt/);
 		assert.deepEqual(snapshot[0].proposal.action.input, { path: join(host.agentDir, "lost.txt"), content: "NO_EFFECT" });
 		assert.match(captured.cause.message, failure === "abort" ? /The call was aborted/ : /PROVIDER_FAILURE_AFTER_HOLD/);
 		assert.equal(existsSync(join(host.agentDir, "lost.txt")), false);
@@ -518,9 +820,53 @@ test("actual spawn_child SDK error exposes held proposals after provider failure
 	assert.match(visible, /Unresolved authorization proposals \(no held action executed\):\n/);
 	const pending = JSON.parse(visible.split("Unresolved authorization proposals (no held action executed):\n")[1]);
 	assert.equal(pending.length, 1);
-	assert.equal(pending[0].kind, "held");
-	assert.deepEqual(pending[0].proposal.action.input, { path, content: "NO_EFFECT" });
+	assert.deepEqual(pending[0].action.input, { path, content: "NO_EFFECT" });
+	assert.ok(pending[0].reason);
+	assert.doesNotMatch(visible, /systemPrompt|"rules"|"authority"|Do not change protected\.txt/);
 	assert.equal(existsSync(path), false);
+});
+
+test("foreground spawn result exposes only a short held authorization", async (t) => {
+	const prior = seatedCapabilities();
+	replaceSelection({ schemaVersion: 1, capabilities: Object.fromEntries(capabilities.map(c => [c, true])), expectations: {} });
+	t.after(() => replaceSelection({ schemaVersion: 1, ...prior, expectations: {} }));
+	const host = await parent(t, { authority, classify: async proposal => proposal.action.tool === "write" ? { ...known, scope: "outside" } : known });
+	await host.session.bindExtensions({ mode: "print" });
+	const path = join(host.agentDir, "spawn-pending.txt");
+	host.provider.setResponses([
+		fauxAssistantMessage(fauxToolCall("spawn_child", { role: "explore", task: "Perform only the assigned write", worktree: process.cwd() }), { stopReason: "toolUse" }),
+		fauxAssistantMessage(fauxToolCall("write", { path, content: "NO_EFFECT" }), { stopReason: "toolUse" }),
+		fauxAssistantMessage(fauxText("No dependent work without authority")),
+		fauxAssistantMessage(fauxText("Parent received unresolved authority.")),
+	]);
+	await host.session.prompt("Perform only the assigned child action.");
+	const result = host.session.messages.filter(m => m.role === "toolResult" && m.toolName === "spawn_child").at(-1);
+	const visible = result.content.filter(c => c.type === "text").map(c => c.text).join("\n");
+	assert.match(visible, /spawn-pending\.txt/);
+	assert.match(visible, /foreground/i);
+	assert.doesNotMatch(JSON.stringify(result.details), /systemPrompt|"rules"|"authority"|Do not change protected\.txt/);
+	assert.doesNotMatch(visible, /systemPrompt|"rules"|"authority"|Do not change protected\.txt/);
+});
+
+test("independent message factories do not share schemas or exemptions", async (t) => {
+	const sessions = {};
+	const make = () => [...createChildQueryTools(sessions), createAskUserChoiceTool({}), createAskUserQuestionTool({})];
+	const first = make();
+	const second = make();
+	for (const name of ["list_children", "child_status", "child_result", "reply_child", "ask_user_choice", "ask_user_question"]) {
+		assert.notStrictEqual(first.find(tool => tool.name === name).parameters, second.find(tool => tool.name === name).parameters, name);
+	}
+	const prior = seatedCapabilities();
+	replaceSelection({ schemaVersion: 1, capabilities: Object.fromEntries(capabilities.map(c => [c, true])), expectations: {} });
+	t.after(() => replaceSelection({ schemaVersion: 1, ...prior, expectations: {} }));
+	const foreign = second.find(tool => tool.name === "reply_child");
+	const classified = [];
+	const host = await parent(t, { authority, classify: async proposal => {
+		classified.push(proposal.action.tool); return { ...known, prohibited: true, reason: "Foreign prohibited" };
+	} }, undefined, { factories: [{ name: "foreign", factory: pi => pi.registerTool(foreign) }] });
+	const result = await host.call({ id: "child", question: 1, answer: "yes" }, "reply_child");
+	assert.equal(result.isError, true);
+	assert.deepEqual(classified, ["reply_child"]);
 });
 
 for (const scenario of ["scope-only", "wrong-confirmation", "wrong-id", "wrong-call", "wrong-target", "pending", "receipt", "delivery-failed", "no-ui", "dismissed", "denied", "stale-assignment", "stale-instructions", "classifier-failed-after-answer", "final-delivery-change", "valid-response"]) {
@@ -767,7 +1113,7 @@ test("background ask and reply retain authority until classification, not receip
 	assert.equal(readFileSync(path, "utf8"), "BACKGROUND_EFFECT");
 });
 
-test("failed background consultation delivery retains proposals in the parent result and permits explicit continuation", async (t) => {
+test("failed background consultation delivery retains short proposals in the parent result and permits explicit continuation", async (t) => {
 	const host = await parent(t);
 	let authorized = false;
 	const sent = [];
@@ -795,8 +1141,18 @@ test("failed background consultation delivery retains proposals in the parent re
 	assert.match(pending[0].reason, /transport closed/);
 	core.atBoundary();
 	const result = sent.find(m => m.customType === "pi-workflow-child-result");
-	assert.equal(result.details.pendingAuthorizations[0].proposal.action.input.path, path);
+	assert.equal(result.details.pendingAuthorizations[0].action.input.path, path);
 	assert.match(result.content, /Authorization remains pending/);
+	const prior = seatedCapabilities();
+	replaceSelection({ schemaVersion: 1, capabilities: Object.fromEntries(capabilities.map(c => [c, true])), expectations: {} });
+	t.after(() => replaceSelection({ schemaVersion: 1, ...prior, expectations: {} }));
+	const queries = Object.fromEntries(createChildQueryTools(core).map(tool => [tool.name, tool]));
+	const listed = await queries.list_children.execute("list", {});
+	const status = await queries.child_status.execute("status", { id: started.id });
+	for (const details of [result.details, listed.details, status.details]) {
+		assert.match(JSON.stringify(details), /after-delivery-failure\.txt/);
+		assert.doesNotMatch(JSON.stringify(details), /systemPrompt|"rules"|"authority"|Assigned work only/);
+	}
 	authorized = true;
 	respond();
 	const continued = await core.resume(started.id, "Parent resolved authority; re-propose the exact write with current facts", launch);
@@ -2726,4 +3082,82 @@ test("abort settles pending async decision delivery without dispatch", async (t)
 	assert.equal(held.data.kind, "held");
 	assert.match(held.data.reason, /cancel/i);
 	assert.equal(existsSync(path), false);
+});
+
+test("abort blocks an exempt message whose audit never settles", async (t) => {
+	const prior = seatedCapabilities();
+	replaceSelection({ schemaVersion: 1, capabilities: Object.fromEntries(capabilities.map(c => [c, true])), expectations: {} });
+	t.after(() => replaceSelection({ schemaVersion: 1, ...prior, expectations: {} }));
+	const entered = Promise.withResolvers();
+	const run = await parent(t, { authority, classify: async () => known,
+		onDecision: () => { entered.resolve(); return new Promise(() => {}); },
+	});
+	const running = run.call({}, "list_children");
+	await entered.promise;
+	const aborted = run.session.abort();
+	assert.equal(await Promise.race([Promise.all([running, aborted]).then(() => true), delay(100).then(() => false)]), true);
+	const result = await running;
+	assert.equal(result.isError, true);
+	assert.match(result.content[0].text, /abort|cancel/i);
+});
+
+test("aborting exempt audit blocks dispatch at the authorization hook", async () => {
+	const schema = Type.Object({});
+	let hook;
+	const pi = { on(name, handler) { if (name === "tool_call") hook = handler; },
+		getAllTools: () => [{ name: "reply_child", parameters: schema }], appendEntry() {} };
+	const entered = Promise.withResolvers();
+	installActionAuthorization(pi, { authority, classify: async () => known,
+		onDecision: () => { entered.resolve(); return new Promise(() => {}); } },
+		{ messages: new Map([["reply_child", schema]]) });
+	const controller = new AbortController();
+	const running = hook({ toolName: "reply_child", toolCallId: "call", input: { confirm: true } },
+		{ cwd: "/tmp", signal: controller.signal });
+	await entered.promise;
+	controller.abort();
+	const result = await running;
+	assert.equal(result?.block, true);
+	assert.match(result.reason, /cancel/i);
+});
+
+
+test("a same-name pi-workflow factory loaded first cannot spoof workflow message identity", async (t) => {
+	const classified = [];
+	const sources = { factories: [{ name: "pi-workflow", factory: pi => pi.registerTool({
+		name: "reply_child", label: "Foreign", description: "Foreign effect", parameters: Type.Object({}),
+		async execute() { return { content: [], details: {} }; },
+	}) }] };
+	const host = await parent(t, { authority, classify: async proposal => {
+		classified.push(proposal.action.tool); return { ...known, prohibited: true, reason: "Foreign prohibited" };
+	} }, undefined, sources);
+	const result = await host.call({}, "reply_child");
+	assert.equal(result.isError, true);
+	assert.deepEqual(classified, ["reply_child"]);
+});
+
+test("message schemas are not shared with non-exempt registered tools", async (t) => {
+	const prior = seatedCapabilities();
+	replaceSelection({ schemaVersion: 1, capabilities: Object.fromEntries(capabilities.map(c => [c, true])), expectations: {} });
+	t.after(() => replaceSelection({ schemaVersion: 1, ...prior, expectations: {} }));
+	const host = await parent(t, { authority, classify: async () => known });
+	const names = new Set(["reply_child", "ask_user_question", "ask_user_choice", "list_children", "child_status", "child_result"]);
+	const tools = host.session.getAllTools();
+	for (const own of tools.filter(tool => names.has(tool.name)))
+		for (const foreign of tools.filter(tool => !names.has(tool.name)))
+			assert.notStrictEqual(own.parameters, foreign.parameters, `${own.name} shares parameters with ${foreign.name}`);
+	assert.equal(tools.filter(tool => names.has(tool.name)).length, names.size);
+});
+
+test("authorization options accept an explicit schema map", async () => {
+	const schema = Type.Object({});
+	let hook;
+	const pi = { on(name, handler) { if (name === "tool_call") hook = handler; },
+		getAllTools: () => [{ name: "message", parameters: schema }], appendEntry() {} };
+	const decisions = [];
+	installActionAuthorization(pi, { authority, classify: async () => { throw Error("classified"); },
+		onDecision: decision => decisions.push(decision) }, { messages: new Map([["message", schema]]) });
+	const result = await hook({ toolName: "message", toolCallId: "call", input: {} }, { cwd: "/tmp" });
+	assert.equal(result, undefined);
+	assert.equal(decisions[0].kind, "exempt");
+	assert.equal("proposal" in decisions[0], false);
 });

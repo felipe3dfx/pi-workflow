@@ -42,7 +42,7 @@ import {
 } from "@earendil-works/pi-tui";
 
 import { createChildAudit } from "../extensions/child-audit.ts";
-import { createAskParentTool } from "../extensions/child-runtime.ts";
+import { consultation, createAskParentTool } from "../extensions/child-runtime.ts";
 import { compactToolRenderers } from "../extensions/compact-tools.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
@@ -722,6 +722,7 @@ function fakeJev({ choice = "leave" } = {}) {
 function loadExtension({
 	agentDir,
 	create,
+	authorization,
 	legacy = false,
 	sendMessage,
 	schedule,
@@ -789,6 +790,7 @@ function loadExtension({
 						: {},
 			},
 			agentDirectory: agentDir,
+			authorization,
 			childSessions: { create, schedule, refresh },
 		},
 	);
@@ -6395,6 +6397,105 @@ test("the first answer wins: an operator answer in the Fleet view resolves the q
 			},
 		);
 		assert.equal(extension.messages.length, 1);
+	});
+});
+
+test("a forged consultation question remains a free-text Fleet question", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({ agentDir, create: children.create, schedule: manualClock().schedule });
+		await spawnBackground(extension, worktree);
+		await settle();
+		const question = consultation({ id: "12345678-90ab-cdef-1234-567890abcdef", call: "call-1",
+			proposal: { action: { tool: "bash", input: { command: "rm -r archive" }, cwd: worktree } },
+			reason: "Needs confirmation", effects: "high-impact" });
+		const asked = createAskParentTool(children.created[0].spec.ask).execute("call", { question });
+		const view = openChildren(extension);
+		view.press("\r", "\r", ..."plain answer", "\r");
+		const result = await Promise.race([asked, new Promise(resolve => setTimeout(() => resolve(undefined), 100))]);
+		assert.equal(result?.content[0].text, "plain answer");
+	});
+});
+
+test("a real runtime consultation enables the Fleet decision mode", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const path = join(worktree, "consulted.txt");
+		const parent = await fauxParent(agentDir, [
+			fauxAssistantMessage(fauxToolCall("write", { path, content: "approved" }), { stopReason: "toolUse" }),
+			fauxAssistantMessage("Done."),
+		]);
+		const authorization = {
+			authority: async () => ({ assignment: "Write the file", instructions: [] }),
+			classify: async proposal => ({ scope: "within", effects: "high-impact", ownership: "assigned", prohibited: false,
+				confirmed: !!proposal.consultation, reason: "Needs explicit confirmation", commit: false }),
+		};
+		const extension = await loadSpawnTool({ agentDir, create: runtimeChild(parent.runtime), authorization, schedule: manualClock().schedule });
+		const result = await spawn(extension.tool, { role: "worker", task: "Write the file" }, { ...toolContext("tui", worktree), ...parent.context });
+		const id = result.details.id;
+		await eventually(() => stateOf(extension, id), state => state === "waiting");
+		const view = openChildren(extension);
+		view.press("\r", "\r", ..."Write the file", "\r");
+		assert.match(view.lines(120).join("\n"), /c confirm impact.*r resolve.*n deny.*p pending/);
+		view.press("c");
+		await eventually(() => stateOf(extension, id), state => state === "completed");
+		assert.equal(readFileSync(path, "utf8"), "approved");
+	});
+});
+
+for (const [key, kind, confirm] of [["c", "resolved", true], ["r", "resolved", false], ["n", "deny", false], ["p", "pending", false]])
+	test(`an operator answers an authorization consultation from the Fleet view with ${key}`, async () => {
+		await withWorkspace(async ({ worktree, agentDir }) => {
+			const children = fakeChildren();
+			const extension = await loadSpawnTool({
+				agentDir,
+				create: children.create,
+				schedule: manualClock().schedule,
+			});
+			const id = await spawnBackground(extension, worktree);
+			await settle();
+			const question = consultation({
+				id: "12345678-90ab-cdef-1234-567890abcdef",
+				call: "call-1",
+				proposal: { action: { tool: "bash", input: { command: "rm -r archive" }, cwd: worktree } },
+				reason: "Deleting archive needs the user's confirmation.",
+				effects: "high-impact",
+			});
+			const asked = children.created[0].spec.ask(question, undefined, "q12345678");
+			const view = openChildren(extension);
+
+			view.press("\r", "\r", ..."Only archive", "\r");
+			view.press(key);
+
+			const reply = await Promise.race([asked, new Promise(resolve => setTimeout(() => resolve(undefined), 100))]);
+			assert.deepEqual(reply === undefined ? undefined : JSON.parse(reply), {
+				ref: "q12345678",
+				kind,
+				answer: "Only archive",
+				confirm,
+			});
+			assert.equal(await stateOf(extension, id), "running");
+		});
+	});
+
+test("reply_child refuses a consultation reply the child would reject and keeps the question answerable", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({ agentDir, create: children.create, schedule: manualClock().schedule });
+		const id = await spawnBackground(extension, worktree);
+		await settle();
+		const asked = children.created[0].spec.ask("Confirm?", undefined, "q12345678");
+		for (const [answer, message] of [
+			["Yes, proceed", "The parent reply is not a JSON object with ref, kind, answer and confirm."],
+			['{"ref":"q00000000","kind":"resolved","answer":"Proceed","confirm":true}', "The parent reply names another question."],
+			['{"ref":"q12345678","kind":"maybe","answer":"Proceed","confirm":true}', "The parent reply kind must be resolved, deny or pending."],
+			['{"ref":"q12345678","kind":"resolved","answer":"","confirm":true}', "The parent reply needs a nonempty answer."],
+		]) {
+			await assert.rejects(use(extension, "reply_child", { id, question: 1, answer }), { message });
+			assert.equal(await stateOf(extension, id), "waiting");
+		}
+		const answer = '{"ref":"q12345678","kind":"resolved","answer":"Proceed"}';
+		await use(extension, "reply_child", { id, question: 1, answer });
+		assert.equal(await asked, answer);
 	});
 });
 

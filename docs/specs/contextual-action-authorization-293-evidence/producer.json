@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "baseCommit": "e1a6f1e9b0073188b968b22b677613286a5853fa",
+  "candidateState": "Uncommitted evaluation tooling on branch 293 at measurement time; production runtime unchanged.",
+  "nodeVersion": "v26.13.0",
+  "piVersion": "1.4.0",
+  "packageVersion": "3.0.0",
+  "corpusSha256": "dec9b657a595c1b856515b6feff8287cfbf8c2cd61846d4c577e5edc31e30e5f",
+  "measuredSourceSha256": {
+    "tools/contextual-authorization-evaluation/compare.mjs": "56c25a410d23acae88e2d2d2361002c12c54c97aeb07b5f043cd188ef238bc11",
+    "tools/contextual-authorization-evaluation/assess.ts": "18053a9af84a620a54ec31449dc6a855415980e1524cb0b76a48ecdf26436416",
+    "tools/contextual-authorization-evaluation.mjs": "391d0027c297a61b4099c462c8d9b0f7a0334668a3bba276b4a6b85ab38dba06",
+    "extensions/action-authorization.ts": "e173ae0fe6129d9c326909c7d3e263023a30dec7cc47a1fba422a42d4ca630d0"
+  },
+  "interpretation": "Local code-provenance record, not a cryptographic runtime attestation. No parent SDK, RPC effect, human consent, operational prevalence, or adoption conclusion follows from the classification run. Plans and datasets are preserved separately. Failed raw provider responses were not captured."
+}
