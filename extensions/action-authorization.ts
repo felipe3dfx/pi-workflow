@@ -24,6 +24,16 @@ import {
 
 const committing = new Set<string>();
 
+// ADR 0024: these harness tools only carry messages between sessions and the operator; what they lead to is classified where it takes effect.
+const harnessMessages = new Set([
+	"reply_child",
+	"ask_user_question",
+	"ask_user_choice",
+	"list_children",
+	"child_status",
+	"child_result",
+]);
+
 interface CommitAuthority {
 	paths: readonly string[];
 	context: "noninterfering" | "isolated";
@@ -56,11 +66,7 @@ async function prepareTaskCommit(
 	intent: unknown,
 	authority: unknown,
 ) {
-	if (
-		!grant ||
-		!commitPaths(intent) ||
-		!validCommitAuthority(authority)
-	)
+	if (!grant || !commitPaths(intent) || !validCommitAuthority(authority))
 		throw new Error(unresolvedCommitAuthority);
 	if (committing.has(grant.commonDir))
 		throw new Error(
@@ -387,6 +393,7 @@ export function installActionAuthorization(
 		seen.clear();
 	});
 	pi.on("tool_call", async (event: ToolCallEvent, ctx) => {
+		if (harnessMessages.has(event.toolName)) return;
 		if (seen.has(event.toolCallId))
 			return {
 				block: true,

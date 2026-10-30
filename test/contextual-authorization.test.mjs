@@ -386,6 +386,67 @@ test("a real child consults its parent with retained context before the exact au
 	assert.deepEqual(child.pendingAuthorizations(), []);
 });
 
+for (const [decision, effect] of [["resolved", true], ["deny", false]])
+	test(`a child completes a short ${decision} parent reply from its pending question`, async (t) => {
+		const host = await parent(t);
+		const questionReady = Promise.withResolvers();
+		const answer = Promise.withResolvers();
+		const resumed = [];
+		const child = await runtimeChildSession({
+			cwd: host.agentDir, model: "faux/authorization", runtime: host.runtime,
+			authorization: {
+				authority,
+				classify: async (proposal) => {
+					if (!proposal.consultation) return { ...known, effects: "high-impact" };
+					resumed.push(proposal.consultation);
+					return { ...known, effects: "high-impact", confirmed: true };
+				},
+			},
+			ask: async (text) => {
+				questionReady.resolve(text);
+				return answer.promise;
+			},
+		});
+		t.after(() => child.dispose());
+		const path = join(host.agentDir, `short-${decision}.txt`);
+		const action = childCall(host, child, "write", { path, content: "SHORT_REPLY_EFFECT" });
+		const text = await Promise.race([questionReady.promise, action.then(() => "NO_CONSULTATION")]);
+		assert.doesNotMatch(text, /same id, call and proposal/);
+		const question = JSON.parse(text.slice(text.indexOf("\n") + 1));
+		answer.resolve(JSON.stringify({ kind: decision, answer: "The user decided about this exact write.", confirm: true }));
+		const result = await action;
+		assert.equal(result.isError, !effect);
+		assert.equal(existsSync(path), effect);
+		if (effect) {
+			assert.equal(readFileSync(path, "utf8"), "SHORT_REPLY_EFFECT");
+			assert.deepEqual(resumed, [{ answer: "The user decided about this exact write.", confirmedActions: [question.proposal.action] }]);
+		} else assert.deepEqual(resumed, []);
+	});
+
+test("a parent sends harness messages without classification but still classifies effects", async (t) => {
+	const prior = seatedCapabilities();
+	replaceSelection({ schemaVersion: 1, capabilities: Object.fromEntries(capabilities.map(c => [c, true])), expectations: {} });
+	t.after(() => replaceSelection({ schemaVersion: 1, ...prior, expectations: {} }));
+	const classified = [];
+	const host = await parent(t, {
+		authority,
+		classify: async (proposal) => {
+			classified.push(proposal.action.tool);
+			return { ...known, prohibited: true, reason: "Fixture prohibits every classified call." };
+		},
+	});
+	const asked = await host.call({ question: "May this exact write proceed?" }, "ask_user_question");
+	assert.equal(asked.details.status, "refused");
+	const listed = await host.call({}, "list_children");
+	assert.equal(listed.isError, false);
+	assert.deepEqual(classified, []);
+	const path = join(host.agentDir, "effect.txt");
+	const written = await host.call({ path, content: "NO_EFFECT" }, "write");
+	assert.equal(written.isError, true);
+	assert.equal(existsSync(path), false);
+	assert.deepEqual(classified, ["write"]);
+});
+
 test("foreground returns unresolved action to the parent and a fresh authorized run can resolve it", async (t) => {
 	const host = await parent(t);
 	let authorized = false;

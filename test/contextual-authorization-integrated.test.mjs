@@ -58,8 +58,6 @@ test("a pending consultation preserves the correlated hold without a marker", {
 	const { question, answer, markerCountWhileHeld } = result.questions[0];
 	assert.equal(markerCountWhileHeld, 0);
 	assert.equal(answer.kind, "pending");
-	assert.equal(answer.id, question.id);
-	assert.equal(answer.call, question.call);
 	assert.equal(result.pending.length, 1);
 	assert.equal(result.pending[0].call, question.call);
 	assert.equal(result.pending[0].kind, "held");
@@ -79,8 +77,7 @@ test("scripted confirmation of the exact action releases one write", {
 	const { question, answer, markerCountWhileHeld } = result.questions[0];
 	assert.equal(markerCountWhileHeld, 0);
 	assert.equal(answer.kind, "resolved");
-	assert.deepEqual(answer.confirmedActions, [question.proposal.action]);
-	assert.equal(answer.call, question.call);
+	assert.equal(answer.confirm, true);
 	assert.equal(result.decisions.at(-1).decision.call, question.call);
 	assert.equal(result.decisions.at(-1).decision.kind, "allow");
 	assert.deepEqual(result.pending, []);

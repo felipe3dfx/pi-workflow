@@ -127,10 +127,8 @@ try {
 				deny: { kind: "deny", answer: "Do not write this file." },
 			}[scenario];
 			const answer = {
-				id: pending.question.id,
-				call: pending.question.call,
-				proposal: pending.question.proposal,
 				...resolution,
+				confirm: scenario === "release",
 			};
 			result.replies.push({
 				at: stamp(),

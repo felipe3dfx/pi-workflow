@@ -28,6 +28,7 @@ import {
 	type CheckpointGrant,
 	createCheckpointTool,
 } from "./child-checkpoint.ts";
+import { isPlainRecord } from "./agent-directory.ts";
 import { createChildCodeGraphTool } from "./codegraph-tool.ts";
 import {
 	type ChildResult,
@@ -70,7 +71,23 @@ const askParentParameters = Type.Object({
 });
 
 export function consultation(question: AuthorizationQuestion) {
-	return `Resolve only within your authority; otherwise consult the user. Reply with the same id, call and proposal plus kind (resolved/deny/pending), answer and optional confirmedActions identifying the explicitly confirmed actual action and target. Scope alone is not impact confirmation. No receipt or running state is consent.\n${JSON.stringify(question)}`;
+	return `Resolve only within your authority; otherwise consult the user. Reply with only a JSON object {"kind": "resolved" | "deny" | "pending", "answer": string, "confirm": boolean}. Set confirm to true only when the decision explicitly confirms this exact action and target, including its impact. Scope alone is not impact confirmation. No receipt or running state is consent.\n${JSON.stringify(question)}`;
+}
+
+// The ask transport already correlates the reply with this pending question, so its identity comes from the question, never from the reply.
+function answered(question: AuthorizationQuestion, text: string) {
+	const reply: unknown = JSON.parse(text);
+	if (!isPlainRecord(reply)) return reply;
+	return {
+		id: question.id,
+		call: question.call,
+		proposal: question.proposal,
+		kind: reply.kind,
+		answer: reply.answer,
+		...(reply.confirm === true
+			? { confirmedActions: [question.proposal.action] }
+			: {}),
+	};
 }
 
 export function createAskParentTool(
@@ -134,7 +151,9 @@ export function readRecords<Frame>(
 ) {
 	let buffer = "";
 	const refuse = () =>
-		stream.destroy(new Error(`A channel frame over ${limit} bytes was refused.`));
+		stream.destroy(
+			new Error(`A channel frame over ${limit} bytes was refused.`),
+		);
 	stream.setEncoding("utf8");
 	stream.on("data", (chunk: string) => {
 		buffer += chunk;
@@ -159,7 +178,9 @@ export function readRecords<Frame>(
 				Array.isArray(record) ||
 				!valid(record as Record<string, unknown>)
 			) {
-				onInvalid?.(new Error(`A malformed record was refused: ${line.slice(0, 200)}`));
+				onInvalid?.(
+					new Error(`A malformed record was refused: ${line.slice(0, 200)}`),
+				);
 				continue;
 			}
 			onRecord(record as Frame);
@@ -201,7 +222,8 @@ export function parentChannel(input: Readable, output: Writable) {
 		ready: (tools: string[]) => send({ type: "ready", tools }),
 		request(frame: ChildRequest, signal?: AbortSignal) {
 			if (closed) return Promise.reject(closed);
-			if (signal?.aborted) return Promise.reject(new Error("The call was aborted."));
+			if (signal?.aborted)
+				return Promise.reject(new Error("The call was aborted."));
 			const id = ++next;
 			return new Promise<string>((resolve, reject) => {
 				const withdraw = () => {
@@ -258,7 +280,7 @@ function installContextual(
 		authority: (context) => policy("authority", undefined, context.signal),
 		classify: (proposal, signal) => policy("classify", proposal, signal),
 		consult: async (question, signal) =>
-			JSON.parse(await ask(consultation(question), signal)),
+			answered(question, await ask(consultation(question), signal)),
 		onDecision: (decision) => policy("decision", decision),
 		sessionInstructions: () => instructions,
 	};
@@ -295,7 +317,11 @@ export async function installChildRuntime(
 	pi.registerTool(
 		contextual
 			? createConfiguredBashTool(config.cwd, config.shell)
-			: createChildBashTool(config.cwd, config.shell, config.checkpoint !== undefined),
+			: createChildBashTool(
+					config.cwd,
+					config.shell,
+					config.checkpoint !== undefined,
+				),
 	);
 	if (config.codegraph) pi.registerTool(createChildCodeGraphTool(config.cwd));
 	pi.registerTool(createAskParentTool(ask, contextual));
