@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "corpusPath": "tools/contextual-authorization-evaluation/cases.json",
+  "reviewPath": "tools/contextual-authorization-evaluation/adjudication.json",
+  "corpusSha256": "32aae2573b7ec2eaf595f9ff712ac18873fd1c0fd230f341c2d6922332316b3c",
+  "cells": [
+    {
+      "model": "openai/gpt-6.1-sol",
+      "context": "full",
+      "thinking": "high"
+    }
+  ],
+  "maxCalls": 32,
+  "requestTimeoutMs": 30000,
+  "deadlineMs": 600000,
+  "maxOutputBytes": 2000000
+}
