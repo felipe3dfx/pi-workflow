@@ -477,6 +477,8 @@ for (const [label, reply, reason] of [
 	["string", () => '"answer"', notAReply],
 	["missing ref", () => '{"kind":"resolved","answer":"Proceed","confirm":true}', notAReply],
 	["another question's ref", () => '{"ref":"00000000","kind":"resolved","answer":"Proceed","confirm":true}', /The parent reply names another question\./],
+	["an invalid kind", ref => JSON.stringify({ ref, kind: "maybe", answer: "Proceed", confirm: true }), /The parent reply kind must be resolved, deny or pending\./],
+	["an empty answer", ref => JSON.stringify({ ref, kind: "resolved", answer: " ", confirm: true }), /The parent reply needs a nonempty answer\./],
 	["absent confirmation", ref => JSON.stringify({ ref, kind: "resolved", answer: "Proceed" }), undefined],
 	["false confirmation", ref => JSON.stringify({ ref, kind: "resolved", answer: "Proceed", confirm: false }), undefined],
 ]) test(`a child holds a high-impact action for ${label}`, async (t) => {
@@ -502,6 +504,7 @@ for (const [label, reply, reason] of [
 	assert.equal(existsSync(path), false);
 	if (reason) {
 		assert.match(result.content[0].text, reason);
+		assert.doesNotMatch(result.content[0].text, /stale/);
 		assert.deepEqual(resumed, []);
 	}
 	else for (const consultation of resumed) assert.equal(consultation.confirmedActions, undefined);

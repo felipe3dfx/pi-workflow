@@ -53,7 +53,7 @@ import {
 import { shellOptions } from "./shell-settings.ts";
 import { type CommonToolSources, defaultActiveTools } from "./tool-sources.ts";
 import { createRpcChildSession } from "./rpc-child.ts";
-import { askParentTool, reportResultTool } from "./child-runtime.ts";
+import { askParentTool, consultationAnswer, reportResultTool } from "./child-runtime.ts";
 import { harnessMessage } from "./harness-message.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
 import type { TodoClaim } from "./todo-extension.ts";
@@ -1732,6 +1732,9 @@ export function createChildQueryTools(
 			"Answer the question a child session is waiting on, naming the question number from its message. A reply to a question that is not waiting is refused.",
 		parameters: replyChildParameters,
 		async execute(_toolCallId, params) {
+			const child = sessions.get(params.id);
+			if (child?.consultation && child.question === params.question)
+				consultationAnswer(child.consultation, params.answer);
 			sessions.reply(params.id, params.question, params.answer, "parent");
 			return report([`Reply sent to child ${params.id}.`], {
 				id: params.id,

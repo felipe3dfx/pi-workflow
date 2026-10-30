@@ -6474,6 +6474,28 @@ for (const [key, kind, confirm] of [["c", "resolved", true], ["r", "resolved", f
 		});
 	});
 
+test("reply_child refuses a consultation reply the child would reject and keeps the question answerable", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({ agentDir, create: children.create, schedule: manualClock().schedule });
+		const id = await spawnBackground(extension, worktree);
+		await settle();
+		const asked = children.created[0].spec.ask("Confirm?", undefined, "q12345678");
+		for (const [answer, message] of [
+			["Yes, proceed", "The parent reply is not a JSON object with ref, kind, answer and confirm."],
+			['{"ref":"q00000000","kind":"resolved","answer":"Proceed","confirm":true}', "The parent reply names another question."],
+			['{"ref":"q12345678","kind":"maybe","answer":"Proceed","confirm":true}', "The parent reply kind must be resolved, deny or pending."],
+			['{"ref":"q12345678","kind":"resolved","answer":"","confirm":true}', "The parent reply needs a nonempty answer."],
+		]) {
+			await assert.rejects(use(extension, "reply_child", { id, question: 1, answer }), { message });
+			assert.equal(await stateOf(extension, id), "waiting");
+		}
+		const answer = '{"ref":"q12345678","kind":"resolved","answer":"Proceed"}';
+		await use(extension, "reply_child", { id, question: 1, answer });
+		assert.equal(await asked, answer);
+	});
+});
+
 test("the first answer wins: after the parent's reply_child, an operator answer is refused with its reason", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();

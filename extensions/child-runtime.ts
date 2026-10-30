@@ -75,7 +75,8 @@ function reference(question: AuthorizationQuestion) {
 	return `q${question.id.replaceAll("-", "").slice(0, 8)}`;
 }
 
-export function consultation(question: AuthorizationQuestion, ref = reference(question)) {
+export function consultation(question: AuthorizationQuestion) {
+	const ref = reference(question);
 	return `Resolve only within your authority; otherwise consult the user. Reply with only a JSON object {"ref": "${ref}", "kind": "resolved" | "deny" | "pending", "answer": string, "confirm": boolean}, repeating this ref. Set confirm to true only when the decision explicitly confirms this exact action and target, including its impact. Scope alone is not impact confirmation. No receipt or running state is consent.\n${JSON.stringify({ ref, action: question.proposal.action, reason: question.reason, effects: question.effects })}`;
 }
 
@@ -88,8 +89,7 @@ export function consultationReply(
 	return JSON.stringify({ ref, kind, answer, confirm });
 }
 
-// The reply names its question by ref; the rest of its identity comes from the pending question, never from the reply.
-function answered(question: AuthorizationQuestion, text: string) {
+export function consultationAnswer(ref: string, text: string) {
 	let reply: unknown;
 	try {
 		reply = JSON.parse(text);
@@ -98,17 +98,25 @@ function answered(question: AuthorizationQuestion, text: string) {
 		throw new Error(
 			"The parent reply is not a JSON object with ref, kind, answer and confirm.",
 		);
-	if (reply.ref !== reference(question))
+	if (reply.ref !== ref)
 		throw new Error("The parent reply names another question.");
+	if (reply.kind !== "resolved" && reply.kind !== "deny" && reply.kind !== "pending")
+		throw new Error("The parent reply kind must be resolved, deny or pending.");
+	if (typeof reply.answer !== "string" || !reply.answer.trim())
+		throw new Error("The parent reply needs a nonempty answer.");
+	return { kind: reply.kind, answer: reply.answer, confirm: reply.confirm === true };
+}
+
+// The reply names its question by ref; the rest of its identity comes from the pending question, never from the reply.
+function answered(question: AuthorizationQuestion, ref: string, text: string) {
+	const { kind, answer, confirm } = consultationAnswer(ref, text);
 	return {
 		id: question.id,
 		call: question.call,
 		proposal: question.proposal,
-		kind: reply.kind,
-		answer: reply.answer,
-		...(reply.confirm === true
-			? { confirmedActions: [question.proposal.action] }
-			: {}),
+		kind,
+		answer,
+		...(confirm ? { confirmedActions: [question.proposal.action] } : {}),
 	};
 }
 
@@ -298,7 +306,7 @@ function installContextual(
 		classify: (proposal, signal) => policy("classify", proposal, signal),
 		consult: async (question, signal) => {
 			const ref = reference(question);
-			return answered(question, await ask(consultation(question, ref), signal, ref));
+			return answered(question, ref, await ask(consultation(question), signal, ref));
 		},
 		onDecision: (decision) => policy("decision", decision),
 		sessionInstructions: () => instructions,
