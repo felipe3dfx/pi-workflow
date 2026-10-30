@@ -123,12 +123,13 @@ test("pending authorization outcome excludes private context and authority", () 
 		id: "child-1", state: "pending", role: "worker",
 		pendingAuthorizations: [{ kind: "held", call: "call-1", reason: "Needs approval", proposal: {
 			action: { tool: "write", input: { path: "file" }, cwd: "/work" },
-			context: { systemPrompt: "PRIVATE_SYSTEM_PROMPT", rules: "PRIVATE_RULES" },
-			authority: { secret: "PRIVATE_AUTHORITY" },
+			context: { systemPrompt: "PRIVATE_SYSTEM_PROMPT" },
+			rules: "PRIVATE_RULES",
+			authority: { assignment: "PRIVATE_AUTHORITY", instructions: ["PRIVATE_INSTRUCTIONS"] },
 		} }],
 	});
 	assert.match(outcome, /Needs approval/);
 	assert.match(outcome, /"tool":"write"/);
 	assert.match(outcome, /call-1/);
-	assert.doesNotMatch(outcome, /PRIVATE_SYSTEM_PROMPT|PRIVATE_RULES|PRIVATE_AUTHORITY/);
+	assert.doesNotMatch(outcome, /PRIVATE_SYSTEM_PROMPT|PRIVATE_RULES|PRIVATE_AUTHORITY|PRIVATE_INSTRUCTIONS/);
 });

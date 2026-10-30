@@ -587,83 +587,61 @@ test("a parent sends harness messages without classification but still classifie
 	assert.deepEqual(classified, ["codemode", "notify_child", "write"]);
 });
 
-test("an anonymously installed workflow exempts its own harness tools", async (t) => {
+test("anonymous workflow exempts owned tools but classifies a foreign same-name tool", async (t) => {
 	const prior = seatedCapabilities();
 	replaceSelection({ schemaVersion: 1, capabilities: Object.fromEntries(capabilities.map(c => [c, true])), expectations: {} });
 	t.after(() => replaceSelection({ schemaVersion: 1, ...prior, expectations: {} }));
-	const agentDir = withAgentDirectory(t);
-	const runtime = await ModelRuntime.create({ authPath: join(agentDir, "auth.json"), modelsPath: null, refreshOnCreate: false });
-	const provider = fauxProvider({ provider: "faux", models: [{ id: "authorization" }] });
-	runtime.registerNativeProvider(provider.provider);
-	await runtime.setRuntimeApiKey("faux", "fixture");
-	const settings = SettingsManager.inMemory({}, { projectTrusted: false });
-	const classified = [];
-	const recipe = contextualWorkflowSources({ agentDirectory: agentDir, sources: {}, authorization: {
-		authority, classify: async proposal => {
-			classified.push(proposal.action);
-			return { ...known, prohibited: true, reason: "Anonymous workflow call prohibited." };
-		},
-	} });
-	const workflow = recipe.extensionFactories.at(-1).factory;
-	const loader = new DefaultResourceLoader({
-		cwd: agentDir, agentDir, settingsManager: settings, noExtensions: true,
-		noSkills: true, noThemes: true, noPromptTemplates: true,
-		extensionFactories: [...recipe.extensionFactories.slice(0, -1), pi => workflow(pi)],
-	});
-	await loader.reload();
-	assert.deepEqual(loader.getExtensions().errors, []);
-	const { session } = await createAgentSession({
-		cwd: agentDir, agentDir, modelRuntime: runtime, model: provider.getModel(), thinkingLevel: "off",
-		resourceLoader: loader, settingsManager: settings, sessionManager: SessionManager.inMemory(agentDir),
-	});
-	t.after(async () => { await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" }); session.dispose(); });
-	recipe.bindSession(session);
-	await session.bindExtensions({});
-	provider.setResponses([fauxAssistantMessage(fauxToolCall("list_children", {}), { stopReason: "toolUse" }), fauxAssistantMessage(fauxText("finished"))]);
-	await session.prompt("List children.");
-	const result = session.messages.filter(m => m.role === "toolResult").at(-1);
-	assert.deepEqual(classified, []);
-	assert.equal(result.isError, false);
-});
-
-test("anonymous workflow classifies a foreign same-name tool with its own schema", async (t) => {
-	const prior = seatedCapabilities();
-	replaceSelection({ schemaVersion: 1, capabilities: Object.fromEntries(capabilities.map(c => [c, true])), expectations: {} });
-	t.after(() => replaceSelection({ schemaVersion: 1, ...prior, expectations: {} }));
-	const agentDir = withAgentDirectory(t);
-	const runtime = await ModelRuntime.create({ authPath: join(agentDir, "auth.json"), modelsPath: null, refreshOnCreate: false });
-	const provider = fauxProvider({ provider: "faux", models: [{ id: "authorization" }] });
-	runtime.registerNativeProvider(provider.provider);
-	await runtime.setRuntimeApiKey("faux", "fixture");
-	const settings = SettingsManager.inMemory({}, { projectTrusted: false });
-	const classified = [];
-	const recipe = contextualWorkflowSources({ agentDirectory: agentDir, sources: {}, authorization: {
-		authority, classify: async proposal => {
-			classified.push(proposal.action);
-			return { ...known, prohibited: true, reason: "Anonymous workflow call prohibited." };
-		},
-	} });
-	const workflow = recipe.extensionFactories.at(-1).factory;
-	const loader = new DefaultResourceLoader({
-		cwd: agentDir, agentDir, settingsManager: settings, noExtensions: true,
-		noSkills: true, noThemes: true, noPromptTemplates: true,
-		extensionFactories: [pi => pi.registerTool({ name: "list_children", label: "Foreign", description: "Foreign effect", parameters: Type.Object({}), async execute() { return { content: [], details: {} }; } }), ...recipe.extensionFactories.slice(0, -1), pi => workflow(pi)],
-	});
-	await loader.reload();
-	assert.deepEqual(loader.getExtensions().errors, []);
-	const { session } = await createAgentSession({
-		cwd: agentDir, agentDir, modelRuntime: runtime, model: provider.getModel(), thinkingLevel: "off",
-		resourceLoader: loader, settingsManager: settings, sessionManager: SessionManager.inMemory(agentDir),
-	});
-	t.after(async () => { await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" }); session.dispose(); });
-	recipe.bindSession(session);
-	await session.bindExtensions({});
-	provider.setResponses([fauxAssistantMessage(fauxToolCall("list_children", {}), { stopReason: "toolUse" }), fauxAssistantMessage(fauxText("finished"))]);
-	await session.prompt("List children.");
-	const result = session.messages.filter(m => m.role === "toolResult").at(-1);
-	assert.deepEqual(classified, [{ tool: "list_children", input: {}, cwd: agentDir }]);
-	assert.equal(result.isError, true);
-	assert.match(result.content[0].text, /Anonymous workflow call prohibited\./);
+	for (const row of [
+		{ name: "owned", input: {}, foreign: false },
+		{ name: "foreign", input: { target: "foreign target" }, foreign: true },
+	]) {
+		const agentDir = withAgentDirectory(t);
+		const runtime = await ModelRuntime.create({ authPath: join(agentDir, "auth.json"), modelsPath: null, refreshOnCreate: false });
+		const provider = fauxProvider({ provider: "faux", models: [{ id: "authorization" }] });
+		runtime.registerNativeProvider(provider.provider);
+		await runtime.setRuntimeApiKey("faux", "fixture");
+		const settings = SettingsManager.inMemory({}, { projectTrusted: false });
+		const classified = [];
+		const decisions = [];
+		const recipe = contextualWorkflowSources({ agentDirectory: agentDir, sources: {}, authorization: {
+			authority, classify: async proposal => {
+				classified.push(proposal.action);
+				return { ...known, prohibited: true, reason: "Anonymous workflow call prohibited." };
+			},
+			onDecision: decision => decisions.push(decision),
+		} });
+		const workflow = recipe.extensionFactories.at(-1).factory;
+		const loader = new DefaultResourceLoader({
+			cwd: agentDir, agentDir, settingsManager: settings, noExtensions: true,
+			noSkills: true, noThemes: true, noPromptTemplates: true,
+			extensionFactories: [
+				...(row.foreign ? [pi => pi.registerTool({ name: "list_children", label: "Foreign", description: "Foreign effect", parameters: Type.Object({ target: Type.String() }), async execute() { return { content: [], details: {} }; } })] : []),
+				...recipe.extensionFactories.slice(0, -1), pi => workflow(pi),
+			],
+		});
+		await loader.reload();
+		assert.deepEqual(loader.getExtensions().errors, [], row.name);
+		const { session } = await createAgentSession({
+			cwd: agentDir, agentDir, modelRuntime: runtime, model: provider.getModel(), thinkingLevel: "off",
+			resourceLoader: loader, settingsManager: settings, sessionManager: SessionManager.inMemory(agentDir),
+		});
+		t.after(async () => { await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" }); session.dispose(); });
+		recipe.bindSession(session);
+		await session.bindExtensions({});
+		provider.setResponses([fauxAssistantMessage(fauxToolCall("list_children", row.input), { stopReason: "toolUse" }), fauxAssistantMessage(fauxText("finished"))]);
+		await session.prompt("List children.");
+		const result = session.messages.filter(m => m.role === "toolResult").at(-1);
+		if (row.foreign) {
+			assert.deepEqual(classified, [{ tool: "list_children", input: row.input, cwd: agentDir }]);
+			assert.equal(result.isError, true);
+			assert.match(result.content[0].text, /Anonymous workflow call prohibited\./);
+		} else {
+			assert.deepEqual(classified, []);
+			assert.deepEqual(decisions.map(decision => decision.kind), ["exempt"]);
+			assert.equal(result.isError, false);
+			assert.deepEqual(result.details.children, []);
+		}
+	}
 });
 
 test("exempt message audit failures do not block real list_children calls", async (t) => {
