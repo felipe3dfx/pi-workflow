@@ -272,9 +272,24 @@ function childDetails(record: ChildRecord, now = Date.now()) {
 		verdict: record.state === "completed" ? record.result?.verdict : undefined,
 		...(record.checkpoints ? { checkpoints: record.checkpoints } : {}),
 		...(record.pendingAuthorizations
-			? { pendingAuthorizations: record.pendingAuthorizations }
+			? {
+					pendingAuthorizations: projectPendingAuthorizations(
+						record.pendingAuthorizations,
+					),
+				}
 			: {}),
 	};
+}
+
+function publicRecord(record: ChildRecord) {
+	return record.pendingAuthorizations
+		? {
+				...record,
+				pendingAuthorizations: projectPendingAuthorizations(
+					record.pendingAuthorizations,
+				),
+			}
+		: record;
 }
 
 export type ChildDetails = ReturnType<typeof childDetails> & {
@@ -1640,7 +1655,9 @@ export function createChildQueryTools(
 			const unseated = unseatedChild();
 			if (unseated) return unseated;
 			const children = sessions.list();
-			return report(describeChildren(children), { children });
+			return report(describeChildren(children), {
+				children: children.map(publicRecord),
+			});
 		},
 	};
 	const childStatus: ToolDefinition<
@@ -1656,7 +1673,7 @@ export function createChildQueryTools(
 			if (unseated) return unseated;
 			const child = sessions.get(params.id);
 			if (!child) return unknownChild(params.id);
-			return report([describeChild(child)], { child });
+			return report([describeChild(child)], { child: publicRecord(child) });
 		},
 	};
 	const childResult: ToolDefinition<

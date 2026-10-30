@@ -1099,7 +1099,7 @@ test("background ask and reply retain authority until classification, not receip
 	assert.equal(readFileSync(path, "utf8"), "BACKGROUND_EFFECT");
 });
 
-test("failed background consultation delivery retains proposals in the parent result and permits explicit continuation", async (t) => {
+test("failed background consultation delivery retains short proposals in the parent result and permits explicit continuation", async (t) => {
 	const host = await parent(t);
 	let authorized = false;
 	const sent = [];
@@ -1127,8 +1127,18 @@ test("failed background consultation delivery retains proposals in the parent re
 	assert.match(pending[0].reason, /transport closed/);
 	core.atBoundary();
 	const result = sent.find(m => m.customType === "pi-workflow-child-result");
-	assert.equal(result.details.pendingAuthorizations[0].proposal.action.input.path, path);
+	assert.equal(result.details.pendingAuthorizations[0].action.input.path, path);
 	assert.match(result.content, /Authorization remains pending/);
+	const prior = seatedCapabilities();
+	replaceSelection({ schemaVersion: 1, capabilities: Object.fromEntries(capabilities.map(c => [c, true])), expectations: {} });
+	t.after(() => replaceSelection({ schemaVersion: 1, ...prior, expectations: {} }));
+	const queries = Object.fromEntries(createChildQueryTools(core).map(tool => [tool.name, tool]));
+	const listed = await queries.list_children.execute("list", {});
+	const status = await queries.child_status.execute("status", { id: started.id });
+	for (const details of [result.details, listed.details, status.details]) {
+		assert.match(JSON.stringify(details), /after-delivery-failure\.txt/);
+		assert.doesNotMatch(JSON.stringify(details), /systemPrompt|"rules"|"authority"|Assigned work only/);
+	}
 	authorized = true;
 	respond();
 	const continued = await core.resume(started.id, "Parent resolved authority; re-propose the exact write with current facts", launch);
