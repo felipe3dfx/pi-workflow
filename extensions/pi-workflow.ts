@@ -68,8 +68,6 @@ import {
 } from "./action-authorization.ts";
 import { type CommonToolSources, commonToolFactories } from "./tool-sources.ts";
 
-export const workflowExtensionName = "pi-workflow";
-
 // /reload replaces this module but not the Pi process, so the children of the old runtime wait here for the new one.
 const RESIDENT = Symbol.for("pi-workflow:child-sessions:resident");
 const slots = globalThis as Record<
@@ -117,7 +115,7 @@ export function contextualWorkflowSources(
 			...commonToolFactories(options.sources),
 			createMcpExtension(),
 			{
-				name: workflowExtensionName,
+				name: "pi-workflow",
 				factory: ((pi) =>
 					piWorkflowExtension(pi, {
 						...options,
@@ -143,18 +141,9 @@ export default function piWorkflowExtension(
 	} = {},
 ) {
 	const agentDirectory = resolveAgentDirectory(options.agentDirectory);
+	const messages = new Map<string, unknown>();
 	if (options.authorization)
-		installActionAuthorization(pi, options.authorization, undefined, {
-			tools: [
-				"reply_child",
-				"ask_user_question",
-				"ask_user_choice",
-				"list_children",
-				"child_status",
-				"child_result",
-			],
-			source: `<inline:${workflowExtensionName}>`,
-		});
+		installActionAuthorization(pi, options.authorization, { messages });
 	let currentCtx: ExtensionContext | ExtensionCommandContext | undefined;
 	const context = () => currentCtx;
 	const catalog = {
@@ -266,6 +255,11 @@ export default function piWorkflowExtension(
 			.map(([name]) => name);
 	}
 
+	const childQueries = createChildQueryTools(childSessions);
+	for (const tool of childQueries) {
+		if (["list_children", "child_status", "child_result", "reply_child"].includes(tool.name))
+			messages.set(tool.name, tool.parameters);
+	}
 	const childTools = launcher.childToolsOffer(
 		pi,
 		[
@@ -276,7 +270,7 @@ export default function piWorkflowExtension(
 				options.authorization !== undefined,
 			),
 			createContinueChildTool(childSessions),
-			...createChildQueryTools(childSessions),
+			...childQueries,
 		],
 		childSessions,
 		workflow.checkSpawnTools,
@@ -357,8 +351,12 @@ export default function piWorkflowExtension(
 	}
 
 	pi.registerTool(createCodeGraphTool(options.codegraph));
-	pi.registerTool(createAskUserChoiceTool(footerHints));
-	pi.registerTool(createAskUserQuestionTool(footerHints));
+	const askChoice = createAskUserChoiceTool(footerHints);
+	const askQuestion = createAskUserQuestionTool(footerHints);
+	messages.set(askChoice.name, askChoice.parameters);
+	messages.set(askQuestion.name, askQuestion.parameters);
+	pi.registerTool(askChoice);
+	pi.registerTool(askQuestion);
 
 	pi.registerCommand("workflow:status", {
 		description: "Summarize companion, MCP, and default settings readiness",

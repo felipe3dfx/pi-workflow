@@ -52,7 +52,11 @@ import {
 import { shellOptions } from "./shell-settings.ts";
 import { type CommonToolSources, defaultActiveTools } from "./tool-sources.ts";
 import { createRpcChildSession } from "./rpc-child.ts";
-import { askParentTool, reportResultTool } from "./child-runtime.ts";
+import {
+	askParentTool,
+	consultationReference,
+	reportResultTool,
+} from "./child-runtime.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
 import type { TodoClaim } from "./todo-extension.ts";
 import type { TaskState } from "./todo-list.ts";
@@ -108,6 +112,7 @@ export interface ChildRecord {
 	todo?: number;
 	step?: string;
 	question?: number;
+	consultation?: string;
 	steering?: string[];
 	undelivered?: string[];
 	checkpoints?: Checkpoint[];
@@ -592,6 +597,7 @@ export function createChildSessions(options: {
 		question.release?.();
 		child.question = undefined;
 		child.record.question = undefined;
+		child.record.consultation = undefined;
 		if (child.record.state === "waiting") {
 			child.record.state = "running";
 			child.record.step = undefined;
@@ -622,6 +628,7 @@ export function createChildSessions(options: {
 		return new Promise<string>((resolve, reject) => {
 			pose(child, { number, signal, resolve, reject });
 			child.record.question = number;
+			child.record.consultation = consultationReference(question);
 			child.record.state = "waiting";
 			child.record.step = `asks question ${number}`;
 			trace(child);
@@ -1603,6 +1610,10 @@ const childIdParameters = Type.Object({
 	id: Type.String({ description: "The child id that spawn_child returned." }),
 });
 
+const cancelChildParameters = Type.Object({
+	id: Type.String({ description: "The child id that spawn_child returned." }),
+});
+
 const replyChildParameters = Type.Object({
 	id: Type.String({ description: "The id of the child waiting for a reply." }),
 	question: Type.Integer({
@@ -1678,13 +1689,13 @@ export function createChildQueryTools(
 		},
 	};
 	const cancelChild: ToolDefinition<
-		typeof childIdParameters,
+		typeof cancelChildParameters,
 		Record<string, unknown>
 	> = {
 		name: "cancel_child",
 		label: "Cancel Child",
 		description: "Cancel a queued, running, or waiting child session.",
-		parameters: childIdParameters,
+		parameters: cancelChildParameters,
 		async execute(_toolCallId, params) {
 			const unseated = unseatedChild();
 			if (unseated) return unseated;

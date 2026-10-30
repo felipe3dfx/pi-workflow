@@ -27,6 +27,7 @@ import {
 	type createChildSessions,
 	isWorking,
 } from "./child-sessions.ts";
+import { consultationReply } from "./child-runtime.ts";
 import {
 	type Block,
 	createTranscript,
@@ -101,7 +102,10 @@ type Action =
 	| "type"
 	| "send"
 	| "leave"
-	| "repair";
+	| "repair"
+	| "authorize"
+	| "refuse"
+	| "defer";
 
 function clean(text: string) {
 	return terminalSafeBlock(text).trim();
@@ -742,6 +746,9 @@ function createChildrenView(
 	let hideThinking = false;
 	let typing = false;
 	let answering: number | undefined;
+	let deciding:
+		| { id: string; name: string; number: number; ref: string; text: string }
+		| undefined;
 	const input = new Input({ prompt: "❯ " });
 	let followed: string | undefined;
 	let unfollow: (() => void) | undefined;
@@ -976,12 +983,33 @@ function createChildrenView(
 			});
 			return;
 		}
+		if (child.consultation) {
+			deciding = {
+				id: child.id,
+				name: childName(child),
+				number,
+				ref: child.consultation,
+				text,
+			};
+			return;
+		}
+		answer(child.id, childName(child), number, text);
+	}
+
+	function answer(id: string, name: string, number: number, text: string) {
 		try {
-			sessions.reply(child.id, number, text, "operator");
-			notice = `Answer sent to ${childName(child)}.`;
+			sessions.reply(id, number, text, "operator");
+			notice = `Answer sent to ${name}.`;
 		} catch (error) {
 			notice = errorMessage(error);
 		}
+	}
+
+	function decide(kind: "resolved" | "deny" | "pending") {
+		if (!deciding) return;
+		const { id, name, number, ref, text } = deciding;
+		deciding = undefined;
+		answer(id, name, number, consultationReply(ref, kind, text));
 	}
 
 	function scrollDetail(delta: number) {
@@ -1011,6 +1039,14 @@ function createChildrenView(
 			confirming = undefined;
 		} else if (action === "no") {
 			confirming = undefined;
+		} else if (action === "authorize") {
+			decide("resolved");
+		} else if (action === "refuse") {
+			decide("deny");
+		} else if (action === "defer") {
+			decide("pending");
+		} else if (action === "leave" && deciding) {
+			deciding = undefined;
 		} else if ((action === "down" || action === "up") && single) {
 			scrollDetail(action === "down" ? 1 : -1);
 		} else if (action === "down" || action === "up") {
@@ -1071,6 +1107,13 @@ function createChildrenView(
 	}
 
 	function actionFor(data: string): Action | undefined {
+		if (deciding) {
+			if (data === "y") return "authorize";
+			if (data === "n") return "refuse";
+			if (data === "p") return "defer";
+			if (matchesKey(data, Key.escape)) return "leave";
+			return undefined;
+		}
 		if (typing) {
 			if (matchesKey(data, Key.escape)) return "leave";
 			if (matchesKey(data, Key.enter)) return "send";
@@ -1110,6 +1153,13 @@ function createChildrenView(
 	}
 
 	function footer(split: boolean, detail: boolean, item: Shown | undefined) {
+		if (deciding)
+			return [
+				[["y", "confirm"], "authorize"],
+				[["n", "deny"], "refuse"],
+				[["p", "pending"], "defer"],
+				[["Esc", "discard"], "leave"],
+			] as [Hint, Action][];
 		if (typing)
 			return [
 				[["Enter", "send"], "send"],
@@ -1175,6 +1225,12 @@ function createChildrenView(
 			confirming === undefined ? undefined : sessions.get(confirming);
 		if (pending) {
 			return theme.fg("warning", `Cancel ${childName(pending)}? y/n`);
+		}
+		if (deciding) {
+			return theme.fg(
+				"warning",
+				`Authorization for ${deciding.name}: does your answer confirm this exact action?`,
+			);
 		}
 		if (!notice && uncatalogued) {
 			return theme.fg("warning", terminalSafeLine(uncatalogued));

@@ -314,3 +314,10 @@ test("an operational child installs no contextual evaluation", async (t) => {
 	assert.equal(handlers.has("tool_call"), false);
 	assert.equal(tools.has("checkpoint"), false);
 });
+
+test("consultation references remain strings for numeric question ids", async () => {
+	const { consultation } = await import("../extensions/child-runtime.ts");
+	const text = consultation({ id: "12345678-0000-0000-0000-000000000000", proposal: { action: {} }, reason: "reason", effects: "effects" });
+	const summary = JSON.parse(text.slice(text.lastIndexOf("\n") + 1));
+	assert.equal(summary.ref, "q12345678");
+});

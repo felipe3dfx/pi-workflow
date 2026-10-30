@@ -118,19 +118,19 @@ interface AuthorizationResponse
 	confirmedActions?: ActionAuthority["confirmedActions"];
 }
 
-export interface AuthorizationDecision {
+type ClassifiedDecision = {
 	kind: "allow" | "deny" | "held";
 	reason: string;
 	call: string;
 	proposal?: ActionProposal;
-	action?: ActionProposal["action"];
-}
+};
 
-// ADR 0025: tools whose calls only carry messages, exempt when registered by `source`.
-export interface MessageExemption {
-	tools: readonly string[];
-	source: string;
-}
+export type AuthorizationDecision = ClassifiedDecision | {
+	kind: "exempt";
+	reason: string;
+	call: string;
+	action: ActionProposal["action"];
+};
 
 interface SessionInstructions {
 	systemPrompt: string;
@@ -275,6 +275,7 @@ function interpret(
 	return { kind: "allow", reason: value.reason };
 }
 
+function assess(value: unknown, proposal: ActionProposal): Pick<ClassifiedDecision, "kind" | "reason">;
 function assess(
 	value: unknown,
 	proposal: ActionProposal,
@@ -336,8 +337,10 @@ async function cancellable<T>(
 export function installActionAuthorization(
 	pi: ExtensionAPI,
 	options: ActionAuthorization,
-	checkpointed?: (checkpoint: Checkpoint) => unknown,
-	messages?: MessageExemption,
+	{ checkpointed, messages }: {
+		checkpointed?: (checkpoint: Checkpoint) => unknown;
+		messages?: ReadonlyMap<string, unknown>;
+	} = {},
 ) {
 	let assigned: CheckpointGrant | undefined;
 	pi.on("session_start", async (_event, ctx) => {
@@ -396,14 +399,14 @@ export function installActionAuthorization(
 	});
 	pi.on("tool_call", async (event: ToolCallEvent, ctx) => {
 		if (
-			messages?.tools.includes(event.toolName) &&
-			pi.getAllTools().find((tool) => tool.name === event.toolName)?.sourceInfo
-				?.path === messages.source
+			messages?.has(event.toolName) &&
+			pi.getAllTools().find((tool) => tool.name === event.toolName)?.parameters ===
+				messages.get(event.toolName)
 		) {
 			// An audit failure must not refuse a message; it authorizes no effect.
 			try {
-				await options.onDecision?.({
-					kind: "allow",
+				await cancellable(() => options.onDecision?.({
+					kind: "exempt",
 					reason:
 						"Harness message; its effect is authorized where it takes place.",
 					call: event.toolCallId,
@@ -412,7 +415,7 @@ export function installActionAuthorization(
 						input: event.input,
 						cwd: ctx.cwd,
 					}),
-				});
+				}), ctx.signal);
 			} catch {}
 			return;
 		}
@@ -423,12 +426,12 @@ export function installActionAuthorization(
 					"This authorization invocation was already evaluated; re-propose with current facts.",
 			};
 		seen.add(event.toolCallId);
-		let decision: AuthorizationDecision;
+		let decision: ClassifiedDecision;
 		let proposal: ActionProposal | undefined;
 		let instructions: SessionInstructions | undefined;
 		let commitIntent: unknown;
 		let prepared: Awaited<ReturnType<typeof prepareCommit>> | undefined;
-		const held = (reason: string): AuthorizationDecision => ({
+		const held = (reason: string): ClassifiedDecision => ({
 			kind: "held",
 			reason,
 			call: event.toolCallId,

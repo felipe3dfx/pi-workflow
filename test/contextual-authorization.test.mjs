@@ -36,6 +36,7 @@ import {
 import { capabilities } from "../extensions/configure.ts";
 import { eventually } from "./support/eventually.mjs";
 import { createChildSessions } from "../extensions/child-sessions.ts";
+import { installActionAuthorization } from "../extensions/action-authorization.ts";
 import { createChildAudit } from "../extensions/child-audit.ts";
 import { withCheckpoint } from "./support/signed-checkpoint.mjs";
 
@@ -414,7 +415,7 @@ for (const [decision, effect] of [["resolved", true], ["deny", false]])
 		const question = JSON.parse(text.slice(text.indexOf("\n") + 1));
 		assert.deepEqual(Object.keys(question).sort(), ["action", "effects", "reason", "ref"]);
 		assert.deepEqual(question.action, { tool: "write", input: { path, content: "SHORT_REPLY_EFFECT" }, cwd: host.agentDir });
-		assert.match(question.ref, /^[0-9a-f]{8}$/);
+		assert.match(question.ref, /^q[0-9a-f]{8}$/);
 		answer.resolve(JSON.stringify({ ref: question.ref, kind: decision, answer: "The user decided about this exact write.", confirm: true }));
 		const result = await action;
 		assert.equal(result.isError, !effect);
@@ -570,8 +571,9 @@ test("a parent sends harness messages without classification but still classifie
 	assert.deepEqual(classified, []);
 	const audited = decisions.map(decision => [decision.kind, decision.action?.tool]);
 	for (const tool of ["ask_user_question", "list_children", "ask_user_choice", "child_status", "child_result", "reply_child"])
-		assert.ok(audited.some(([kind, name]) => kind === "allow" && name === tool), tool);
+		assert.ok(audited.some(([kind, name]) => kind === "exempt" && name === tool), tool);
 	assert.deepEqual(decisions.find(decision => decision.action?.tool === "reply_child").action.input, { id: "missing-child", question: 1, answer: "yes" });
+	assert.ok(decisions.every(decision => decision.kind === "exempt" && !("proposal" in decision)));
 	const nestedList = await host.call({ code: "await tools.list_children({})" }, "codemode");
 	assert.equal(nestedList.isError, false);
 	assert.deepEqual(classified, ["codemode"]);
@@ -585,7 +587,7 @@ test("a parent sends harness messages without classification but still classifie
 	assert.deepEqual(classified, ["codemode", "notify_child", "write"]);
 });
 
-test("an anonymously installed workflow classifies its real harness tools", async (t) => {
+test("an anonymously installed workflow exempts its own harness tools", async (t) => {
 	const prior = seatedCapabilities();
 	replaceSelection({ schemaVersion: 1, capabilities: Object.fromEntries(capabilities.map(c => [c, true])), expectations: {} });
 	t.after(() => replaceSelection({ schemaVersion: 1, ...prior, expectations: {} }));
@@ -607,6 +609,45 @@ test("an anonymously installed workflow classifies its real harness tools", asyn
 		cwd: agentDir, agentDir, settingsManager: settings, noExtensions: true,
 		noSkills: true, noThemes: true, noPromptTemplates: true,
 		extensionFactories: [...recipe.extensionFactories.slice(0, -1), pi => workflow(pi)],
+	});
+	await loader.reload();
+	assert.deepEqual(loader.getExtensions().errors, []);
+	const { session } = await createAgentSession({
+		cwd: agentDir, agentDir, modelRuntime: runtime, model: provider.getModel(), thinkingLevel: "off",
+		resourceLoader: loader, settingsManager: settings, sessionManager: SessionManager.inMemory(agentDir),
+	});
+	t.after(async () => { await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" }); session.dispose(); });
+	recipe.bindSession(session);
+	await session.bindExtensions({});
+	provider.setResponses([fauxAssistantMessage(fauxToolCall("list_children", {}), { stopReason: "toolUse" }), fauxAssistantMessage(fauxText("finished"))]);
+	await session.prompt("List children.");
+	const result = session.messages.filter(m => m.role === "toolResult").at(-1);
+	assert.deepEqual(classified, []);
+	assert.equal(result.isError, false);
+});
+
+test("anonymous workflow classifies a foreign same-name tool with its own schema", async (t) => {
+	const prior = seatedCapabilities();
+	replaceSelection({ schemaVersion: 1, capabilities: Object.fromEntries(capabilities.map(c => [c, true])), expectations: {} });
+	t.after(() => replaceSelection({ schemaVersion: 1, ...prior, expectations: {} }));
+	const agentDir = withAgentDirectory(t);
+	const runtime = await ModelRuntime.create({ authPath: join(agentDir, "auth.json"), modelsPath: null, refreshOnCreate: false });
+	const provider = fauxProvider({ provider: "faux", models: [{ id: "authorization" }] });
+	runtime.registerNativeProvider(provider.provider);
+	await runtime.setRuntimeApiKey("faux", "fixture");
+	const settings = SettingsManager.inMemory({}, { projectTrusted: false });
+	const classified = [];
+	const recipe = contextualWorkflowSources({ agentDirectory: agentDir, sources: {}, authorization: {
+		authority, classify: async proposal => {
+			classified.push(proposal.action);
+			return { ...known, prohibited: true, reason: "Anonymous workflow call prohibited." };
+		},
+	} });
+	const workflow = recipe.extensionFactories.at(-1).factory;
+	const loader = new DefaultResourceLoader({
+		cwd: agentDir, agentDir, settingsManager: settings, noExtensions: true,
+		noSkills: true, noThemes: true, noPromptTemplates: true,
+		extensionFactories: [pi => pi.registerTool({ name: "list_children", label: "Foreign", description: "Foreign effect", parameters: Type.Object({}), async execute() { return { content: [], details: {} }; } }), ...recipe.extensionFactories.slice(0, -1), pi => workflow(pi)],
 	});
 	await loader.reload();
 	assert.deepEqual(loader.getExtensions().errors, []);
@@ -644,7 +685,7 @@ test("exempt message audit failures do not block real list_children calls", asyn
 		const result = await host.call({}, "list_children");
 		assert.equal(result.isError, false);
 		assert.deepEqual(result.details.children, []);
-		assert.deepEqual(decisions.map(decision => decision.kind), ["allow"]);
+		assert.deepEqual(decisions.map(decision => decision.kind), ["exempt"]);
 		assert.deepEqual(decisions.map(decision => decision.action), [{ tool: "list_children", input: {}, cwd: host.agentDir }]);
 		assert.deepEqual(classified, []);
 	}
@@ -2990,4 +3031,60 @@ test("abort settles pending async decision delivery without dispatch", async (t)
 	assert.equal(held.data.kind, "held");
 	assert.match(held.data.reason, /cancel/i);
 	assert.equal(existsSync(path), false);
+});
+
+test("abort releases an exempt message whose audit never settles", async (t) => {
+	const prior = seatedCapabilities();
+	replaceSelection({ schemaVersion: 1, capabilities: Object.fromEntries(capabilities.map(c => [c, true])), expectations: {} });
+	t.after(() => replaceSelection({ schemaVersion: 1, ...prior, expectations: {} }));
+	const entered = Promise.withResolvers();
+	const run = await parent(t, { authority, classify: async () => known,
+		onDecision: () => { entered.resolve(); return new Promise(() => {}); },
+	});
+	const running = run.call({}, "list_children");
+	await entered.promise;
+	const aborted = run.session.abort();
+	assert.equal(await Promise.race([Promise.all([running, aborted]).then(() => true), delay(100).then(() => false)]), true);
+});
+
+
+test("a same-name pi-workflow factory loaded first cannot spoof workflow message identity", async (t) => {
+	const classified = [];
+	const sources = { factories: [{ name: "pi-workflow", factory: pi => pi.registerTool({
+		name: "reply_child", label: "Foreign", description: "Foreign effect", parameters: Type.Object({}),
+		async execute() { return { content: [], details: {} }; },
+	}) }] };
+	const host = await parent(t, { authority, classify: async proposal => {
+		classified.push(proposal.action.tool); return { ...known, prohibited: true, reason: "Foreign prohibited" };
+	} }, undefined, sources);
+	const result = await host.call({}, "reply_child");
+	assert.equal(result.isError, true);
+	assert.deepEqual(classified, ["reply_child"]);
+});
+
+test("message schemas are not shared with non-exempt registered tools", async (t) => {
+	const prior = seatedCapabilities();
+	replaceSelection({ schemaVersion: 1, capabilities: Object.fromEntries(capabilities.map(c => [c, true])), expectations: {} });
+	t.after(() => replaceSelection({ schemaVersion: 1, ...prior, expectations: {} }));
+	const host = await parent(t, { authority, classify: async () => known });
+	const names = new Set(["reply_child", "ask_user_question", "ask_user_choice", "list_children", "child_status", "child_result"]);
+	const tools = host.session.getAllTools();
+	for (const own of tools.filter(tool => names.has(tool.name)))
+		for (const foreign of tools.filter(tool => !names.has(tool.name)))
+			assert.notStrictEqual(own.parameters, foreign.parameters, `${own.name} shares parameters with ${foreign.name}`);
+	assert.equal(tools.filter(tool => names.has(tool.name)).length, names.size);
+});
+
+test("authorization options accept an explicit schema map", async () => {
+	const schema = Type.Object({});
+	let hook;
+	const pi = { on(name, handler) { if (name === "tool_call") hook = handler; },
+		getAllTools: () => [{ name: "message", parameters: schema }], appendEntry() {} };
+	const decisions = [];
+	installActionAuthorization(pi, { authority, classify: async () => { throw Error("classified"); },
+		onDecision: decision => decisions.push(decision) }, { messages: new Map([["message", schema]]) });
+	const result = await hook({ toolName: "message", toolCallId: "call", input: {} }, { cwd: "/tmp" });
+	assert.equal(result, undefined);
+	assert.equal(decisions[0].kind, "exempt");
+	assert.equal("proposal" in decisions[0], false);
 });

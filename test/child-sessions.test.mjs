@@ -42,7 +42,7 @@ import {
 } from "@earendil-works/pi-tui";
 
 import { createChildAudit } from "../extensions/child-audit.ts";
-import { createAskParentTool } from "../extensions/child-runtime.ts";
+import { consultation, createAskParentTool } from "../extensions/child-runtime.ts";
 import { compactToolRenderers } from "../extensions/compact-tools.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
@@ -6394,6 +6394,41 @@ test("the first answer wins: an operator answer in the Fleet view resolves the q
 		assert.equal(extension.messages.length, 1);
 	});
 });
+
+for (const [key, kind, confirm] of [["y", "resolved", true], ["n", "deny", false], ["p", "pending", false]])
+	test(`an operator answers an authorization consultation from the Fleet view with ${kind}`, async () => {
+		await withWorkspace(async ({ worktree, agentDir }) => {
+			const children = fakeChildren();
+			const extension = await loadSpawnTool({
+				agentDir,
+				create: children.create,
+				schedule: manualClock().schedule,
+			});
+			const id = await spawnBackground(extension, worktree);
+			await settle();
+			const question = consultation({
+				id: "12345678-90ab-cdef-1234-567890abcdef",
+				call: "call-1",
+				proposal: { action: { tool: "bash", input: { command: "rm -r archive" }, cwd: worktree } },
+				reason: "Deleting archive needs the user's confirmation.",
+				effects: "high-impact",
+			});
+			const asked = children.created[0].spec.ask(question);
+			const view = openChildren(extension);
+
+			view.press("\r", "\r", ..."Only archive", "\r");
+			assert.match(view.lines(120).join("\n"), /y confirm.*n deny.*p pending/);
+			view.press(key);
+
+			assert.deepEqual(JSON.parse(await asked), {
+				ref: "q12345678",
+				kind,
+				answer: "Only archive",
+				confirm,
+			});
+			assert.equal(await stateOf(extension, id), "running");
+		});
+	});
 
 test("the first answer wins: after the parent's reply_child, an operator answer is refused with its reason", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {

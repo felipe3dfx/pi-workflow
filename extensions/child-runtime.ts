@@ -72,11 +72,34 @@ const askParentParameters = Type.Object({
 
 // Question numbers restart in every child, so the reference comes from the question's random id to catch a reply sent to the wrong child.
 function reference(question: AuthorizationQuestion) {
-	return question.id.replaceAll("-", "").slice(0, 8);
+	return `q${question.id.replaceAll("-", "").slice(0, 8)}`;
 }
 
+const consultationPreamble =
+	"Resolve only within your authority; otherwise consult the user.";
+
 export function consultation(question: AuthorizationQuestion) {
-	return `Resolve only within your authority; otherwise consult the user. Reply with only a JSON object {"ref": "${reference(question)}", "kind": "resolved" | "deny" | "pending", "answer": string, "confirm": boolean}, repeating this ref. Set confirm to true only when the decision explicitly confirms this exact action and target, including its impact. Scope alone is not impact confirmation. No receipt or running state is consent.\n${JSON.stringify({ ref: reference(question), action: question.proposal.action, reason: question.reason, effects: question.effects })}`;
+	return `${consultationPreamble} Reply with only a JSON object {"ref": "${reference(question)}", "kind": "resolved" | "deny" | "pending", "answer": string, "confirm": boolean}, repeating this ref. Set confirm to true only when the decision explicitly confirms this exact action and target, including its impact. Scope alone is not impact confirmation. No receipt or running state is consent.\n${JSON.stringify({ ref: reference(question), action: question.proposal.action, reason: question.reason, effects: question.effects })}`;
+}
+
+export function consultationReference(text: string) {
+	if (!text.startsWith(consultationPreamble)) return undefined;
+	try {
+		const question: unknown = JSON.parse(text.slice(text.indexOf("\n") + 1));
+		return isPlainRecord(question) && typeof question.ref === "string"
+			? question.ref
+			: undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+export function consultationReply(
+	ref: string,
+	kind: "resolved" | "deny" | "pending",
+	answer: string,
+) {
+	return JSON.stringify({ ref, kind, answer, confirm: kind === "resolved" });
 }
 
 // The reply names its question by ref; the rest of its identity comes from the pending question, never from the reply.
@@ -306,7 +329,7 @@ function installContextual(
 					: on(event, handler),
 		} as ExtensionAPI,
 		authorization,
-		checkpointed,
+		{ checkpointed },
 	);
 	return Promise.all(starting);
 }

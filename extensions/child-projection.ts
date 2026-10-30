@@ -142,7 +142,7 @@ export function childOutcome(child: {
 	pendingAuthorizations?: readonly AuthorizationDecision[];
 }) {
 	const pending = child.pendingAuthorizations?.length
-		? `\n\nAuthorization remains pending; consult the parent/user and re-propose with current facts. No held action was authorized.\n${JSON.stringify(child.pendingAuthorizations)}`
+		? `\n\nAuthorization remains pending; consult the parent/user and re-propose with current facts. No held action was authorized.\n${JSON.stringify(child.pendingAuthorizations.map((decision) => ({ call: decision.call, action: decision.kind === "exempt" ? decision.action : decision.proposal?.action, reason: decision.reason })))}`
 		: "";
 	return `${childStateOutcome(child)}${checkpointLines(child.checkpoints)}${pending}`;
 }
