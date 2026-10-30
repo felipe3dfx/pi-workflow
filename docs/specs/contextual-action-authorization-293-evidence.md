@@ -22,10 +22,10 @@ The two compared models are evaluation alternatives, not production choices. The
 
 ## Corpus identity and adjudication
 
-- Corpus: [`cases.json`](../../tools/contextual-authorization-evaluation/cases.json), SHA-256 `dec9b657a595c1b856515b6feff8287cfbf8c2cd61846d4c577e5edc31e30e5f`.
+- Corpus: [`corpus.json`](contextual-action-authorization-293-evidence/corpus.json), the exact `cases.json` measured here, SHA-256 `dec9b657a595c1b856515b6feff8287cfbf8c2cd61846d4c577e5edc31e30e5f`.
 - Cases: 12 representative and 20 adversarial; expected dispositions: nine `allow`, 15 `held`, eight `deny`.
 - Independent renewed reviewer: `59998f16-474e-45f6-b818-77e5d16ea067`, pass on all 32 exact inputs before inference.
-- Local adjudication binding: [`adjudication.json`](../../tools/contextual-authorization-evaluation/adjudication.json). It is evidence, not a cryptographic attestation.
+- Local adjudication binding: [`adjudication.json`](contextual-action-authorization-293-evidence/adjudication.json). It is evidence, not a cryptographic attestation. #315 later narrowed the rules text, so the tools directory now holds a renewed corpus and binding; these copies preserve what this run measured.
 - Runtime policy source: `extensions/action-authorization.ts`, SHA-256 `e173ae0fe6129d9c326909c7d3e263023a30dec7cc47a1fba422a42d4ca630d0`. All cases carry its exact 1,757-character classification rules.
 
 The original digest `9f8bd7c5fe9d26d41b2152dbca78d8e2742d0a81c96594c28c8a1eccbaff43aa` was rejected by independent reviewer `9db16069`: 15 labels agreed, but seven positives relied on ownership/effect claims inside tool input, and every case carried abbreviated rules. Corrections supply explicitly synthetic trusted fixture guarantees in `authority.instructions`, actual bounded edit/code inputs, staged-work facts and full runtime rules. Ten additional negative controls cover effects/instruction uncertainty, confirmation applicability, prohibitions, forged authority, commit context and undelegated decisions.
@@ -92,12 +92,11 @@ Default manifest performs zero inference:
 ```bash
 node tools/contextual-authorization-evaluation.mjs manifest
 node tools/contextual-authorization-evaluation.mjs report \
-  tools/contextual-authorization-evaluation/cases.json \
-  docs/specs/contextual-action-authorization-293-evidence/comparison-run.json \
-  tools/contextual-authorization-evaluation/adjudication.json
+  docs/specs/contextual-action-authorization-293-evidence/corpus.json \
+  docs/specs/contextual-action-authorization-293-evidence/comparison-run.json
 ```
 
-The report intentionally exits nonzero for the incomplete matrix. It does not grant adoption. The manifest remains unadjudicated until a matching binding is explicitly provided to report/evaluation; it never guesses approval.
+The preserved binding names the runtime source of this run, which #315 changed, so the report now omits it and labels the corpus not adjudicated; the binding and its digests above remain the record. The report intentionally exits nonzero for the incomplete matrix. It does not grant adoption. The manifest remains unadjudicated until a matching binding is explicitly provided to report/evaluation; it never guesses approval.
 
 Controlled integration commands make only loopback scripted model requests and owned temporary effects:
 
