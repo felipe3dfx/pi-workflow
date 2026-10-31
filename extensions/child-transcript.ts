@@ -77,12 +77,14 @@ export type Render = (
 	slot: (name: string) => Slot | undefined,
 ) => Block[];
 
-type Window = {
-	cursor: WindowCursor;
-	next: WindowCursor;
-	observations: Observation[];
-	unavailable: { from: number; to?: number }[];
-	more: boolean;
+type Entry = {
+	key: string;
+	first: number;
+	last: number;
+	held: Observation[];
+	range?: { from: number; to?: number };
+	floor?: number;
+	ceiling?: number;
 };
 
 type Anchor = {
@@ -95,7 +97,10 @@ type Anchor = {
 type Placed = Block & { key: string };
 type At = { index: number; row: number };
 
+const residentItems = windowSize * 3;
 const residentObservations = windowSize * 3;
+const partialChars = 32 * 1024;
+const pieceChars = 1024;
 const residentParts = 4;
 
 export function partSub(slot: string, part: number) {
@@ -109,7 +114,9 @@ export function createTranscript(options: {
 	live?: () => Item[];
 }) {
 	const { audit, child } = options;
-	let windows: Window[] = [];
+	const entries = new Map<string, Entry>();
+	let lo = 1;
+	let tail: { cursor: WindowCursor; more: boolean } | undefined;
 	let identity: Identity | undefined;
 	let health: Health | undefined;
 	let warning: string | undefined;
@@ -124,8 +131,11 @@ export function createTranscript(options: {
 	let wanted: (() => Promise<void>) | undefined;
 	let blocks: Placed[] = [];
 	let shownAt = 0;
+	let toward = 0;
+	let overshoot = 0;
 	let core = options.live !== undefined;
 	const slots = new Map<string, Slot>();
+	const marked = new Set<string>();
 	const loading = new Set<string>();
 	const cache = new Map<string, Block[]>();
 	const attached = new Map<
@@ -133,18 +143,95 @@ export function createTranscript(options: {
 		{ observations: Observation[]; tried: Set<number>; next?: number }
 	>();
 
-	const atStart = () => core || windows.length === 0 || windows[0].cursor.from <= 1;
-	const atEnd = () => core || windows.length === 0 || !windows.at(-1)?.more;
+	const atStart = () => core || entries.size === 0 || lo <= 1;
+	const atEnd = () => core || entries.size === 0 || !tail?.more;
 
-	function windowOf(cursor: WindowCursor, read: Opened, below?: number): Window {
+	function fold(read: Opened, below?: number) {
+		const tailed = read.next.from >= (read.health.written ?? Number.POSITIVE_INFINITY);
+		const front = below !== undefined || following || tailed;
 		const kept = (ordinal: number) => below === undefined || ordinal < below;
-		return {
-			cursor,
-			next: read.next,
-			observations: read.observations.filter((item) => kept(item.ordinal)),
-			unavailable: read.unavailable.filter((range) => kept(range.from)),
-			more: read.next.from > cursor.from,
-		};
+		const spans = new Map<string, [number, number]>();
+		for (const observation of read.observations) {
+			if (!kept(observation.ordinal)) continue;
+			const key = keyOf(observation);
+			if (key === undefined) continue;
+			const { ordinal } = observation;
+			const known = entries.get(key);
+			const span =
+				spans.get(key) ?? (known ? [known.first, known.last] : [ordinal, ordinal - 1]);
+			spans.set(key, span);
+			if (ordinal >= span[0] && ordinal <= span[1]) continue;
+			const entry = known ?? { key, first: ordinal, last: ordinal, held: [] };
+			entries.set(key, entry);
+			entry.first = Math.min(entry.first, ordinal);
+			entry.last = Math.max(entry.last, ordinal);
+			merge(entry, observation, front);
+		}
+		for (const range of read.unavailable) {
+			if (!kept(range.from)) continue;
+			const key = `gap:${range.from}`;
+			entries.set(key, { key, first: range.from, last: range.to ?? range.from, held: [], range });
+			for (const entry of entries.values()) {
+				entry.held = entry.held.filter(
+					(held) => held.ordinal < range.from || held.ordinal > (range.to ?? Number.POSITIVE_INFINITY),
+				);
+			}
+		}
+	}
+
+	function merge(entry: Entry, observation: Observation, front: boolean) {
+		const kind = kindOf(observation);
+		const phase = phaseOf(observation);
+		if (kind !== "message" && kind !== "tool") {
+			entry.held = [observation];
+			return;
+		}
+		if (entry.held.some(isFinal)) {
+			if (kind === "tool" && phase === "start") entry.held.unshift(observation);
+			return;
+		}
+		if (isFinal(observation)) {
+			const capped = entry.floor !== undefined || marked.has(entry.key);
+			if (capped && anchor?.key === entry.key) pinFromEnd();
+			entry.held =
+				kind === "tool"
+					? [...entry.held.filter((held) => phaseOf(held) === "start"), observation]
+					: [observation];
+			return;
+		}
+		const { ordinal } = observation;
+		if (kind === "message") {
+			if (entry.floor !== undefined && ordinal < entry.floor) return;
+			if (phase === "update" && entry.ceiling !== undefined && ordinal >= entry.ceiling) {
+				if (!front) return;
+				entry.held = [];
+				entry.floor = ordinal;
+				entry.ceiling = undefined;
+			}
+		}
+		let chars = entry.held.reduce((sum, held) => sum + deltaOf(held).length, 0);
+		chars += deltaOf(observation).length;
+		if (kind === "message" && !front && chars > partialChars && entry.held.length > 0) {
+			entry.ceiling = ordinal;
+			return;
+		}
+		const at = entry.held.findIndex((held) => held.ordinal > ordinal);
+		const index = at < 0 ? entry.held.length : at;
+		entry.held.splice(index, 0, observation);
+		if (kind === "tool") {
+			const latest = entry.held.findLast((held) => phaseOf(held) === "update");
+			entry.held = entry.held.filter((held) => phaseOf(held) !== "update" || held === latest);
+			return;
+		}
+		coalesce(entry.held, index);
+		while (chars > partialChars && entry.held.length > 1) {
+			chars -= deltaOf(entry.held.shift() as Observation).length;
+			entry.floor = entry.held[0].ordinal;
+		}
+	}
+
+	function ordered() {
+		return [...entries.values()].sort((a, b) => a.first - b.first);
 	}
 
 	async function fetch(cursor?: WindowCursor) {
@@ -167,7 +254,9 @@ export function createTranscript(options: {
 
 	function restart() {
 		epoch += 1;
-		windows = [];
+		overshoot = 0;
+		entries.clear();
+		tail = undefined;
 		opened = false;
 		slots.clear();
 		attached.clear();
@@ -181,63 +270,65 @@ export function createTranscript(options: {
 		if (!first) return;
 		const start = { child, generation: first.next.generation, from: 1 };
 		const total = first.health.received ?? first.health.written ?? 0;
-		const tail = Math.max(1, total - windowSize);
-		if (tail <= first.next.from) {
-			windows = [windowOf(start, first)];
-			return;
+		const from = Math.max(1, total - windowSize);
+		let cursor = start;
+		let read: Opened | undefined = first;
+		if (from > first.next.from) {
+			cursor = { ...start, from };
+			read = await fetch(cursor);
 		}
-		const cursor = { ...start, from: tail };
-		const last = await fetch(cursor);
-		if (last) windows = [windowOf(cursor, last)];
+		if (!read) return;
+		lo = cursor.from;
+		fold(read);
+		tail = { cursor: read.next, more: read.next.from > cursor.from };
 	}
 
 	async function forward() {
-		const last = windows.at(-1);
-		if (!last) return;
-		const read = await fetch(last.next);
+		if (!tail) return;
+		const { cursor } = tail;
+		const read = await fetch(cursor);
 		if (!read) return;
 		if (read.observations.length === 0 && read.unavailable.length === 0) {
-			last.more = false;
+			tail.more = false;
 			return;
 		}
-		windows.push(windowOf(last.next, read));
-	}
-
-	async function refresh() {
-		const last = windows.at(-1);
-		if (!last) return;
-		const read = await fetch(last.cursor);
-		if (read) windows[windows.length - 1] = windowOf(last.cursor, read);
+		fold(read);
+		tail = { cursor: read.next, more: read.next.from > cursor.from };
 	}
 
 	async function backward() {
-		const first = windows[0];
-		if (!first) return;
-		const boundary = first.cursor.from;
-		const pieces: Window[] = [];
+		if (!tail) return;
+		const boundary = lo;
 		let cursor: WindowCursor = {
 			child,
-			generation: first.next.generation,
+			generation: tail.cursor.generation,
 			from: Math.max(1, boundary - windowSize),
 		};
+		const from = cursor.from;
 		while (cursor.from < boundary) {
 			const read = await fetch(cursor);
 			if (!read) return;
-			pieces.push({ ...windowOf(cursor, read, boundary), more: true });
+			pinFromEnd();
+			fold(read, boundary);
 			if (read.next.from <= cursor.from) break;
 			cursor = read.next;
 		}
-		pinFromEnd();
-		windows = [...pieces, ...windows];
+		lo = from;
 	}
 
 	function pinFromEnd() {
 		if (!anchor || following) return;
 		const at = locate(anchor);
 		const block = blocks[at.index];
-		if (block?.key === anchor.key && block.sub === anchor.sub) {
-			anchor = { ...anchor, fromEnd: block.rows.length - at.row };
+		if (block?.key !== anchor.key || block.sub !== anchor.sub) return;
+		const next = blocks[at.index + 1];
+		const first = blocks[at.index - 1]?.key !== block.key;
+		if (marked.has(block.key) && first && next?.key === block.key) {
+			const fromEnd = next.rows.length + block.rows.length - at.row;
+			anchor = { key: next.key, sub: next.sub, row: 0, fromEnd };
+			return;
 		}
+		anchor = { ...anchor, fromEnd: block.rows.length - at.row };
 	}
 
 	async function expand(
@@ -272,17 +363,16 @@ export function createTranscript(options: {
 	}
 
 	async function attach(key: string, from: number) {
-		const first = windows[0];
-		if (!first) return;
+		if (!tail) return;
 		const held = attached.get(key) ?? { observations: [], tried: new Set() };
 		held.tried.add(from);
 		attached.set(key, held);
-		const read = await fetch({ child, generation: first.next.generation, from });
+		const read = await fetch({ child, generation: tail.cursor.generation, from });
 		if (!read) return;
+		const boundary = retainedFrom(key);
 		held.observations.push(
 			...read.observations.filter(
-				(observation) =>
-					observation.ordinal < first.cursor.from && keyOf(observation) === key,
+				(observation) => observation.ordinal < boundary && keyOf(observation) === key,
 			),
 		);
 		held.observations.splice(0, held.observations.length - residentObservations);
@@ -297,79 +387,89 @@ export function createTranscript(options: {
 			load = open;
 		} else if (stale && !core && (following || atEnd())) {
 			stale = false;
-			load = refresh;
+			load = forward;
 		} else load = wanted;
 		wanted = undefined;
 		if (!load) return;
 		busy = true;
-		const at = epoch;
 		void load()
 			.catch(() => {})
 			.finally(() => {
 				busy = false;
 				if (disposed) return;
-				if (at === epoch) prune();
 				options.changed();
 			});
 	}
 
-	function prune() {
-		let total = windows.reduce((sum, item) => sum + item.observations.length, 0);
-		while (windows.length > 1 && total > residentObservations) {
-			const held = windows.findIndex((window) =>
-				window.observations.some((observation) => keyOf(observation) === anchor?.key),
-			);
-			const placed = blocks.findIndex((block) => block.key === anchor?.key);
-			const top =
-				following ||
-				(held < 0
-					? placed > blocks.length / 2
-					: held > windows.length - 1 - held);
-			if (top) pinFromEnd();
-			const removed = top ? windows.shift() : windows.pop();
-			total -= removed?.observations.length ?? 0;
-			const last = windows.at(-1);
-			if (!top && last) last.more = true;
+	function retainedFrom(key: string) {
+		return entries.get(key)?.held[0]?.ordinal ?? lo;
+	}
+
+	function evict(start: At, height: number) {
+		if (!tail || entries.size <= residentItems) return;
+		const extent = new Map<string, { top: number; bottom: number }>();
+		let row = 0;
+		for (const block of blocks) {
+			const seen = extent.get(block.key) ?? { top: row, bottom: row };
+			seen.bottom = row + block.rows.length;
+			extent.set(block.key, seen);
+			row += block.rows.length;
+		}
+		const at = rowsBetween({ index: 0, row: 0 }, start);
+		const above = at - height;
+		const below = at + 2 * height;
+		const list = ordered();
+		let edge = 0;
+		for (const entry of list) {
+			const seen = extent.get(entry.key);
+			if (seen) edge = seen.bottom;
+			else extent.set(entry.key, { top: edge, bottom: edge });
+		}
+		let head = 0;
+		let foot = list.length - 1;
+		while (entries.size > residentItems && head < foot) {
+			const top = extent.get(list[head].key) as { top: number; bottom: number };
+			const bottom = extent.get(list[foot].key) as { top: number; bottom: number };
+			const topFree = top.bottom <= above;
+			const bottomFree = bottom.top >= below;
+			if (!topFree && !bottomFree) break;
+			const fromTop = topFree && (!bottomFree || above - top.bottom >= bottom.top - below);
+			if (fromTop) {
+				lo = Math.max(lo, list[head].last + 1);
+				while (head < foot && list[head].last < lo) entries.delete(list[head++].key);
+			} else {
+				const hi = list[foot].first;
+				while (foot > head && list[foot].first >= hi) entries.delete(list[foot--].key);
+				tail = { cursor: { child, generation: tail.cursor.generation, from: hi }, more: true };
+			}
+		}
+		for (const entry of list.slice(head + 1, foot)) {
+			if (entries.size <= residentItems) return;
+			const seen = extent.get(entry.key);
+			if (seen?.top === seen?.bottom && entry.held.some(isFinal)) entries.delete(entry.key);
 		}
 	}
 
 	function items() {
 		if (core) return options.live?.() ?? [];
 		const merged = new Map<string, Item>();
-		const seen = new Set<number>();
-		const steps = windows
-			.flatMap((window) => [
-				...window.observations.map((observation) => ({
-					at: observation.ordinal,
-					observation,
-				})),
-				...window.unavailable.map((range) => ({ at: range.from, range })),
-			])
-			.sort((a, b) => a.at - b.at);
-		for (const step of steps) {
-			if ("range" in step) {
-				const key = `gap:${step.range.from}`;
-				merged.set(key, { key, kind: "unavailable", ...step.range });
+		for (const entry of ordered()) {
+			if (entry.range) {
+				merged.set(entry.key, { key: entry.key, kind: "unavailable", ...entry.range });
 				continue;
 			}
-			const { observation } = step;
-			if (seen.has(observation.ordinal)) continue;
-			seen.add(observation.ordinal);
-			const key = keyOf(observation);
-			if (key === undefined) continue;
-			const held = merged.has(key) ? undefined : attached.get(key);
+			const { key } = entry;
+			const held = attached.get(key);
+			const boundary = retainedFrom(key);
 			const gap =
-				observation.kind === "message" &&
-				held?.next !== undefined &&
-				held.next < windows[0].cursor.from;
+				kindOf(entry.held[0]) === "message" && held?.next !== undefined && held.next < boundary;
 			for (const early of held?.observations ?? []) {
-				if (early.ordinal >= observation.ordinal || seen.has(early.ordinal)) continue;
-				seen.add(early.ordinal);
+				if (early.ordinal >= boundary) continue;
 				project(merged, gap ? earlierKey(key) : key, early);
 			}
-			project(merged, key, observation);
+			for (const observation of entry.held) project(merged, key, observation);
 			const item = merged.get(key);
-			if (!gap || item?.kind !== "message") continue;
+			if (!gap || item?.kind !== "message" || !held) continue;
 			if (item.entry.final) merged.delete(earlierKey(key));
 			else item.entry.earlier = held.next;
 		}
@@ -379,7 +479,9 @@ export function createTranscript(options: {
 	function place(list: Item[], width: number, style: string, render: Render) {
 		const placed: Placed[] = [];
 		const kept = new Set<string>();
+		marked.clear();
 		for (const item of list) {
+			if (item.kind === "message" && item.entry.earlier !== undefined) marked.add(item.key);
 			const settled = item.kind === "static" ? false : isSettled(item);
 			const id = `${item.key}\n${width}\n${style}`;
 			let shown = settled ? cache.get(id) : undefined;
@@ -420,6 +522,7 @@ export function createTranscript(options: {
 				: first >= 0
 					? first + at.row
 					: at.row;
+		if (row < 0) return move({ index, row: 0 }, row);
 		return { index, row: Math.max(0, Math.min(row, rows.length - 1)) };
 	}
 
@@ -478,6 +581,12 @@ export function createTranscript(options: {
 				row: Math.max(0, (blocks.at(-1)?.rows.length ?? 1) - 1),
 			};
 			let start = following ? move(end, 1 - height) : locate(anchor);
+			if (overshoot < 0 && !following) {
+				const to = move(start, overshoot);
+				overshoot += rowsBetween(to, start);
+				start = to;
+			}
+			if (atStart()) overshoot = 0;
 			if (!following && atEnd() && rowsBetween(start, end) + 1 < height) {
 				start = move(end, 1 - height);
 			}
@@ -515,10 +624,24 @@ export function createTranscript(options: {
 				index += 1;
 				row = 0;
 			}
-			if (opened && windows.length > 0 && !wanted) {
-				if (index >= blocks.length && !atEnd()) wanted = forward;
-				else if (rowsBetween({ index: 0, row: 0 }, start) < height && !atStart()) {
-					wanted = backward;
+			if (
+				!following &&
+				toward > 0 &&
+				!wanted &&
+				loading.size === 0 &&
+				atEnd() &&
+				rowsBetween(start, end) < height
+			) {
+				following = true;
+			}
+			if (opened && entries.size > 0) {
+				evict(start, height);
+				if (!wanted) {
+					const below = rowsBetween(start, end) + 1 - rows.length;
+					if (below < height && !atEnd()) wanted = forward;
+					else if (rowsBetween({ index: 0, row: 0 }, start) < height && !atStart()) {
+						wanted = backward;
+					}
 				}
 			}
 			for (const name of slots.keys()) {
@@ -533,10 +656,15 @@ export function createTranscript(options: {
 		scroll(delta: number) {
 			if (delta === 0 || blocks.length === 0) return;
 			following = false;
-			anchor = anchorAt(move(locate(anchor), delta));
+			toward = Math.sign(delta);
+			const from = locate(anchor);
+			const to = move(from, delta);
+			anchor = anchorAt(to);
+			overshoot = delta < 0 ? overshoot + delta + rowsBetween(to, from) : 0;
 		},
 		follow() {
 			following = true;
+			overshoot = 0;
 			stale = true;
 			pump();
 		},
@@ -554,12 +682,18 @@ export function createTranscript(options: {
 			attached.clear();
 		},
 		info() {
-			return { identity, health, warning, missing };
+			const observations = [...entries.values()].reduce(
+				(sum, entry) => sum + entry.held.length,
+				0,
+			);
+			const retained = { items: entries.size, observations };
+			return { identity, health, warning, missing, retained };
 		},
 		dispose() {
 			disposed = true;
 			epoch += 1;
-			windows = [];
+			entries.clear();
+			tail = undefined;
 			blocks = [];
 			slots.clear();
 			attached.clear();
@@ -577,6 +711,44 @@ function isSettled(item: Item) {
 		return item.entry.final && item.entry.earlier === undefined;
 	}
 	return true;
+}
+
+function kindOf(observation: Observation | undefined) {
+	if (!observation) return undefined;
+	if (observation.large) return (observation.large.meta as { kind?: string }).kind;
+	return observation.kind;
+}
+
+function deltaOf(observation: Observation) {
+	return observation.kind === "message" && observation.phase === "update" ? observation.delta : "";
+}
+
+function coalesce(held: Observation[], index: number) {
+	const previous = held[index - 1];
+	const current = held[index];
+	if (
+		!previous ||
+		!current ||
+		previous.kind !== "message" ||
+		current.kind !== "message" ||
+		previous.phase !== "update" ||
+		current.phase !== "update" ||
+		previous.block !== current.block ||
+		previous.part !== current.part ||
+		previous.delta.length >= pieceChars
+	) {
+		return;
+	}
+	held.splice(index - 1, 2, { ...previous, delta: previous.delta + current.delta });
+}
+
+function isFinal(observation: Observation) {
+	return phaseOf(observation) === "end" && !observation.large?.partial;
+}
+
+function phaseOf(observation: Observation) {
+	if (observation.large) return (observation.large.meta as { phase?: string }).phase;
+	return "phase" in observation ? observation.phase : undefined;
 }
 
 function keyOf(observation: Observation) {
