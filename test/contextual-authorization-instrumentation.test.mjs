@@ -83,27 +83,6 @@ test("successful classifier records tool and invocation duration", async () =>
 		assert.ok(result.details.samples[0].elapsedMs >= 20);
 	}));
 
-test("failed, malformed, and timed-out invocations retain evidence", async () =>
-	withFixture(async (input) => {
-		for (const [complete, failure] of [
-			[
-				async () => {
-					throw new Error("provider");
-				},
-				"provider-error",
-			],
-			[async () => ({}), "malformed-response"],
-			[async () => new Promise(() => {}), "timeout"],
-		]) {
-			const result = await runComparison(
-				{ ...input, plan: { ...input.plan, requestTimeoutMs: 20 } },
-				complete,
-			);
-			assert.equal(result.run.samples[0].failure, failure);
-			checkEvidence(result, input);
-		}
-	}));
-
 test("abort and evidence overflow retain invocation evidence; pre-abort fabricates none", async () =>
 	withFixture(async (input) => {
 		const controller = new AbortController();

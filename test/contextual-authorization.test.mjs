@@ -162,7 +162,9 @@ for (const [restriction, response, confirmed, expected] of [
 		const questions = [];
 		const run = await parent(t, {
 			authority,
-			classify: async proposal => proposal.consultation
+			classify: async proposal => proposal.action.input.content === "CONTROL_EFFECT"
+				? known
+				: proposal.consultation
 				? { ...known, effects: "high-impact", confirmed: true }
 				: { ...known, restriction, effects: "high-impact", confirmed: true, reason: "Ask first or establish facts" },
 			consult: async question => {
@@ -175,6 +177,10 @@ for (const [restriction, response, confirmed, expected] of [
 		assert.equal(questions.length, 1);
 		assert.equal(existsSync(path), expected);
 		assert.equal(result.isError, !expected);
+		const control = join(run.agentDir, "ordinary-control.txt");
+		const ordinary = await run.call({ path: control, content: "CONTROL_EFFECT" }, "write");
+		assert.equal(ordinary.isError, false);
+		assert.equal(readFileSync(control, "utf8"), "CONTROL_EFFECT");
 	});
 }
 
@@ -182,7 +188,9 @@ test("a restriction remains held when reclassification does not resolve it", asy
 	let questions = 0;
 	const run = await parent(t, {
 		authority,
-		classify: async () => ({ ...known, restriction: "confirmation", confirmed: true }),
+		classify: async proposal => proposal.action.input.content === "CONTROL_EFFECT"
+			? known
+			: { ...known, restriction: "confirmation", confirmed: true },
 		consult: async question => {
 			questions++;
 			return { ...question, kind: "resolved", answer: "Confirmed", confirmedActions: [question.proposal.action] };
@@ -193,6 +201,10 @@ test("a restriction remains held when reclassification does not resolve it", asy
 	assert.equal(questions, 1);
 	assert.equal(existsSync(path), false);
 	assert.match(result.content[0].text, /Authorization held/);
+	const control = join(run.agentDir, "ordinary-control.txt");
+	const ordinary = await run.call({ path: control, content: "CONTROL_EFFECT" }, "write");
+	assert.equal(ordinary.isError, false);
+	assert.equal(readFileSync(control, "utf8"), "CONTROL_EFFECT");
 });
 
 test("prohibition takes precedence before and after consultation", async (t) => {
@@ -1468,7 +1480,7 @@ for (const failure of ["unsigned", "outside", "other-ref", "tool-error", "cancel
 		} }, async ({ host, child, git, before, recorded }) => {
 			const running = childCall(host, child, "commit_probe", {});
 			if (failure === "cancel") {
-				await entered.promise;
+				await Promise.race([entered.promise, running.then(() => assert.fail("invocation finished before postcommit phase"))]);
 				await Promise.allSettled([child.abort(), running]);
 			} else await running;
 			const result = child.entries().filter(e => e.type === "message" && e.message.role === "toolResult").at(-1).message;
@@ -2719,7 +2731,7 @@ for (const outcome of ["failure", "abort", "binding-change", "unchanged"]) {
 		});
 		const input = { path: join(run.agentDir, "assigned.txt"), content: "FINAL_EFFECT" };
 		const running = run.call(input, "write");
-		await entered.promise;
+		await Promise.race([entered.promise, running.then(() => assert.fail("invocation finished before final authority observation"))]);
 		let aborted;
 		try {
 			assert.equal(existsSync(input.path), false);

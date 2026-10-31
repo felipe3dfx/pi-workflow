@@ -403,6 +403,8 @@ test("malformed, provider error and timeout are failures, never held results", a
 		);
 		assert.equal(result.run.samples[0].failure, failure);
 		assert.equal(result.run.samples[0].outcome, null);
+		assert.equal(result.details.samples[0].tool, corpus.cases[0].modelInput.action.tool);
+		assert.ok(Number.isFinite(result.details.samples[0].elapsedMs) && result.details.samples[0].elapsedMs >= 0);
 		assert.doesNotMatch(JSON.stringify(result), /secret/);
 	}
 });
