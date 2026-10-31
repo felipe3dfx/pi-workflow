@@ -5,6 +5,7 @@ import { createReadStream } from "node:fs";
 import { mkdtemp, mkdir, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { consultationQuestion } from "../../extensions/child-runtime.ts";
 import {
 	createRpcChildSession,
 	installedPi,
@@ -130,7 +131,7 @@ try {
 		report() {},
 		checkpointed() {},
 		ask: async (text) => {
-			const question = JSON.parse(text.slice(text.indexOf("\n") + 1));
+			const question = consultationQuestion(text);
 			let content = null;
 			try {
 				content = await readFile(join(cwd, "assigned.txt"), "utf8");

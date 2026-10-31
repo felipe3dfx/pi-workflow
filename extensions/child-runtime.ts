@@ -80,6 +80,15 @@ export function consultation(question: AuthorizationQuestion) {
 	return `Resolve only within your authority; otherwise consult the user. Reply with only a JSON object {"ref": "${ref}", "kind": "resolved" | "deny" | "pending", "answer": string, "confirm": boolean}, repeating this ref. Set confirm to true only when the decision explicitly confirms this exact action and target, including its impact. Scope alone is not impact confirmation. No receipt or running state is consent.\n${JSON.stringify({ ref, action: question.proposal.action, reason: question.reason, effects: question.effects })}`;
 }
 
+export function consultationQuestion(text: string): {
+	ref: string;
+	action: AuthorizationQuestion["proposal"]["action"];
+	reason: string;
+	effects: string;
+} {
+	return JSON.parse(text.slice(text.indexOf("\n") + 1));
+}
+
 export function consultationReply(
 	ref: string,
 	kind: "resolved" | "deny" | "pending",

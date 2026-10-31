@@ -240,7 +240,7 @@ function validAuthority(value: ActionAuthority): boolean {
 
 function interpret(
 	value: unknown,
-): Pick<AuthorizationDecision, "kind" | "reason"> {
+): Pick<ClassifiedDecision, "kind" | "reason"> {
 	if (isPlainRecord(value) && value.restriction === "prohibition") {
 		return {
 			kind: "deny",
@@ -275,11 +275,10 @@ function interpret(
 	return { kind: "allow", reason: value.reason };
 }
 
-function assess(value: unknown, proposal: ActionProposal): Pick<ClassifiedDecision, "kind" | "reason">;
 function assess(
 	value: unknown,
 	proposal: ActionProposal,
-): Pick<AuthorizationDecision, "kind" | "reason"> {
+): Pick<ClassifiedDecision, "kind" | "reason"> {
 	const decision = interpret(value);
 	if (
 		decision.kind === "allow" &&
@@ -347,7 +346,6 @@ export function installActionAuthorization(
 		assigned = await checkpointContext(ctx.cwd).catch(() => undefined);
 	});
 	const commits = new Map<string, Awaited<ReturnType<typeof prepareCommit>>>();
-	const pending = new Map<string, AuthorizationDecision>();
 	pi.on("tool_result", async (event) => {
 		const prepared = commits.get(event.toolCallId);
 		if (!prepared) return;
@@ -394,7 +392,6 @@ export function installActionAuthorization(
 		for (const prepared of commits.values())
 			committing.delete(prepared.grant.commonDir);
 		commits.clear();
-		pending.clear();
 		seen.clear();
 	});
 	pi.on("tool_call", async (event: ToolCallEvent, ctx) => {
@@ -495,7 +492,6 @@ export function installActionAuthorization(
 				proposal,
 			};
 			if (decision.kind === "held" && options.consult) {
-				pending.set(event.toolCallId, decision);
 				const question = {
 					id: randomUUID(),
 					call: event.toolCallId,
@@ -622,8 +618,6 @@ export function installActionAuthorization(
 			if (decision.kind === "allow") commits.set(event.toolCallId, prepared);
 			else committing.delete(prepared.grant.commonDir);
 		}
-		if (decision.kind === "held") pending.set(event.toolCallId, decision);
-		else pending.delete(event.toolCallId);
 		if (decision.kind === "allow") return;
 		pi.appendEntry("pi-workflow-authorization", decision);
 		return {
@@ -631,5 +625,4 @@ export function installActionAuthorization(
 			reason: `${decision.kind === "held" ? "Authorization held; consultation required" : "Action prohibited"}: ${decision.reason}`,
 		};
 	});
-	return { pending: () => structuredClone([...pending.values()]) };
 }
