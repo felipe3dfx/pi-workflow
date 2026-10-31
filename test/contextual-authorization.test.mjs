@@ -151,6 +151,83 @@ async function childCall(host, child, name, args) {
 		.at(-1).message;
 }
 
+for (const [restriction, response, confirmed, expected] of [
+	["confirmation", "pending", false, false],
+	["confirmation", "deny", false, false],
+	["confirmation", "resolved", false, false],
+	["confirmation", "resolved", true, true],
+	["information", "resolved", true, true],
+]) {
+	test(`${restriction} consultation ${response} with exact confirmation ${confirmed}`, async (t) => {
+		const questions = [];
+		const run = await parent(t, {
+			authority,
+			classify: async proposal => proposal.action.input.content === "CONTROL_EFFECT"
+				? known
+				: proposal.consultation
+				? { ...known, effects: "high-impact", confirmed: true }
+				: { ...known, restriction, effects: "high-impact", confirmed: true, reason: "Ask first or establish facts" },
+			consult: async question => {
+				questions.push(question);
+				return { ...question, kind: response, answer: "Decision", confirmedActions: confirmed ? [question.proposal.action] : [] };
+			},
+		});
+		const path = join(run.agentDir, "restricted.txt");
+		const result = await run.call({ path, content: "EFFECT" }, "write");
+		assert.equal(questions.length, 1);
+		assert.equal(existsSync(path), expected);
+		assert.equal(result.isError, !expected);
+		const control = join(run.agentDir, "ordinary-control.txt");
+		const ordinary = await run.call({ path: control, content: "CONTROL_EFFECT" }, "write");
+		assert.equal(ordinary.isError, false);
+		assert.equal(readFileSync(control, "utf8"), "CONTROL_EFFECT");
+	});
+}
+
+test("a restriction remains held when reclassification does not resolve it", async (t) => {
+	let questions = 0;
+	const run = await parent(t, {
+		authority,
+		classify: async proposal => proposal.action.input.content === "CONTROL_EFFECT"
+			? known
+			: { ...known, restriction: "confirmation", confirmed: true },
+		consult: async question => {
+			questions++;
+			return { ...question, kind: "resolved", answer: "Confirmed", confirmedActions: [question.proposal.action] };
+		},
+	});
+	const path = join(run.agentDir, "still-restricted.txt");
+	const result = await run.call({ path, content: "NO_EFFECT" }, "write");
+	assert.equal(questions, 1);
+	assert.equal(existsSync(path), false);
+	assert.match(result.content[0].text, /Authorization held/);
+	const control = join(run.agentDir, "ordinary-control.txt");
+	const ordinary = await run.call({ path: control, content: "CONTROL_EFFECT" }, "write");
+	assert.equal(ordinary.isError, false);
+	assert.equal(readFileSync(control, "utf8"), "CONTROL_EFFECT");
+});
+
+test("prohibition takes precedence before and after consultation", async (t) => {
+	for (const initiallyHeld of [false, true]) {
+		let questions = 0;
+		const run = await parent(t, {
+			authority,
+			classify: async proposal => !initiallyHeld || proposal.consultation
+				? { ...known, restriction: "prohibition", reason: "Explicit prohibition" }
+				: { ...known, restriction: "confirmation" },
+			consult: async question => {
+				questions++;
+				return { ...question, kind: "resolved", answer: "Confirmed", confirmedActions: [question.proposal.action] };
+			},
+		});
+		const path = join(run.agentDir, "prohibited.txt");
+		const result = await run.call({ path, content: "NO_EFFECT" }, "write");
+		assert.equal(questions, initiallyHeld ? 1 : 0);
+		assert.equal(existsSync(path), false);
+		assert.match(result.content[0].text, /Action prohibited/);
+	}
+});
+
 test("one applicable consultation confirms expanded scope and impact before one real write", async (t) => {
 	const questions = [];
 	const run = await parent(t, {
@@ -522,7 +599,7 @@ test("a third-party reply_child is classified in parent, nested and child calls"
 		authority,
 		classify: async proposal => {
 			classified.push(proposal.action.tool);
-			return proposal.action.tool === "codemode" ? known : { ...known, prohibited: true, reason: "Forbidden effect" };
+			return proposal.action.tool === "codemode" ? known : { ...known, restriction: "prohibition", reason: "Forbidden effect" };
 		},
 	};
 	const host = await parent(t, authorization, undefined, sources);
@@ -556,7 +633,7 @@ test("a parent sends harness messages without classification but still classifie
 		authority,
 		classify: async (proposal) => {
 			classified.push(proposal.action.tool);
-			return proposal.action.tool === "codemode" ? known : { ...known, prohibited: true, reason: "Fixture prohibits every classified call." };
+			return proposal.action.tool === "codemode" ? known : { ...known, restriction: "prohibition", reason: "Fixture prohibits every classified call." };
 		},
 		onDecision: decision => decisions.push(decision),
 	}, { name: "notify_child", label: "Notify", description: "Effect", parameters: Type.Object({}),
@@ -624,7 +701,7 @@ test("anonymous workflow exempts owned tools but classifies a foreign same-name 
 		const recipe = contextualWorkflowSources({ agentDirectory: agentDir, sources: {}, authorization: {
 			authority, classify: async proposal => {
 				classified.push(proposal.action);
-				return { ...known, prohibited: true, reason: "Anonymous workflow call prohibited." };
+				return { ...known, restriction: "prohibition", reason: "Anonymous workflow call prohibited." };
 			},
 			onDecision: decision => decisions.push(decision),
 		} });
@@ -862,7 +939,7 @@ test("independent message factories do not share schemas or exemptions", async (
 	const foreign = second.find(tool => tool.name === "reply_child");
 	const classified = [];
 	const host = await parent(t, { authority, classify: async proposal => {
-		classified.push(proposal.action.tool); return { ...known, prohibited: true, reason: "Foreign prohibited" };
+		classified.push(proposal.action.tool); return { ...known, restriction: "prohibition", reason: "Foreign prohibited" };
 	} }, undefined, { factories: [{ name: "foreign", factory: pi => pi.registerTool(foreign) }] });
 	const result = await host.call({ id: "child", question: 1, answer: "yes" }, "reply_child");
 	assert.equal(result.isError, true);
@@ -1403,7 +1480,7 @@ for (const failure of ["unsigned", "outside", "other-ref", "tool-error", "cancel
 		} }, async ({ host, child, git, before, recorded }) => {
 			const running = childCall(host, child, "commit_probe", {});
 			if (failure === "cancel") {
-				await entered.promise;
+				await Promise.race([entered.promise, running.then(() => assert.fail("invocation finished before postcommit phase"))]);
 				await Promise.allSettled([child.abort(), running]);
 			} else await running;
 			const result = child.entries().filter(e => e.type === "message" && e.message.role === "toolResult").at(-1).message;
@@ -1576,7 +1653,7 @@ const known = {
 	scope: "within",
 	effects: "ordinary",
 	ownership: "assigned",
-	prohibited: false,
+	restriction: "none",
 	confirmed: false,
 	reason: "Necessary assigned correction",
 };
@@ -1586,6 +1663,10 @@ const authority = () => ({
 });
 
 for (const [name, assessment] of [
+	["confirmation restriction", { ...known, restriction: "confirmation", confirmed: true }],
+	["information restriction", { ...known, restriction: "information", confirmed: true }],
+	["missing restriction", { ...known, restriction: undefined, prohibited: false, confirmed: true }],
+	["invalid restriction", { ...known, restriction: "other", confirmed: true }],
 	[
 		"outside scope",
 		{ ...known, scope: "outside", reason: "Scope consultation required" },
@@ -1765,7 +1846,7 @@ test("the host recipe and real child instantiate selected paths and owned dynami
 		authority,
 		classify: async (p) =>
 			p.action.input?.target === "denied"
-				? { ...known, prohibited: true, reason: "Denied target" }
+				? { ...known, restriction: "prohibition", reason: "Denied target" }
 				: known,
 	};
 	const host = await parent(
@@ -1848,7 +1929,7 @@ test("real direct and deferred MCP discovery, resources and runtime changes rema
 		authority,
 		classify: async (p) =>
 			p.action.input?.text === "denied"
-				? { ...known, prohibited: true, reason: "MCP target denied" }
+				? { ...known, restriction: "prohibition", reason: "MCP target denied" }
 				: known,
 	};
 	const host = await parent(
@@ -2227,7 +2308,7 @@ test("a clear prohibition remains a refusal even when the remaining classificati
 	let effects = 0;
 	const run = await parent(
 		t,
-		{ authority, classify: async () => ({ prohibited: true }) },
+		{ authority, classify: async () => ({ restriction: "prohibition" }) },
 		{
 			name: "effect",
 			label: "Effect",
@@ -2411,7 +2492,7 @@ test("an explicitly prohibited parent action cannot execute even when ordinary a
 				seen.push(request);
 				return {
 					...known,
-					prohibited: true,
+					restriction: "prohibition",
 					reason: "protected.txt is explicitly prohibited",
 				};
 			},
@@ -2465,7 +2546,7 @@ test("an actual child's prohibited write has the same zero-effect outcome as the
 			authority,
 			classify: async () => ({
 				...known,
-				prohibited: true,
+				restriction: "prohibition",
 				reason: "protected.txt is explicitly prohibited",
 			}),
 			onDecision: (decision) => decisions.push(decision),
@@ -2650,7 +2731,7 @@ for (const outcome of ["failure", "abort", "binding-change", "unchanged"]) {
 		});
 		const input = { path: join(run.agentDir, "assigned.txt"), content: "FINAL_EFFECT" };
 		const running = run.call(input, "write");
-		await entered.promise;
+		await Promise.race([entered.promise, running.then(() => assert.fail("invocation finished before final authority observation"))]);
 		let aborted;
 		try {
 			assert.equal(existsSync(input.path), false);
@@ -2787,7 +2868,7 @@ test("final transformed prohibition after workflow registration prevents parent 
 			seen.push(proposal);
 			return {
 				...known,
-				prohibited: proposal.context.systemPrompt.includes("FINAL_PROHIBITION"),
+				restriction: proposal.context.systemPrompt.includes("FINAL_PROHIBITION") ? "prohibition" : "none",
 				reason: "Final transformed prohibition",
 			};
 		},
@@ -2856,7 +2937,7 @@ test("same supplied authority and action have equivalent parent-child outcomes w
 	for (const [kind, result, reason] of [
 		["allow", known, null],
 		["held", { ...known, effects: "unknown", reason: "Effects unresolved" }, /Authorization held/],
-		["deny", { ...known, prohibited: true, reason: "Explicit prohibition" }, /Action prohibited/],
+		["deny", { ...known, restriction: "prohibition", reason: "Explicit prohibition" }, /Action prohibited/],
 	]) {
 		assessment = result;
 		for (const routing of ["off", "on"]) {
@@ -2934,7 +3015,7 @@ test("selected system transforms stay local to parent and child snapshots", asyn
 		authority,
 		classify: async (proposal) => {
 			seen.push(proposal);
-			return { ...known, prohibited: proposal.context.systemPrompt.includes("LOCAL_PROHIBITION:"),
+			return { ...known, restriction: proposal.context.systemPrompt.includes("LOCAL_PROHIBITION:") ? "prohibition" : "none",
 				reason: "Local transformed prohibition" };
 		},
 	};
@@ -2973,7 +3054,7 @@ test("final snapshot includes delegation-mode instructions and later transforms"
 		authority,
 		classify: async (proposal) => {
 			seen.push(proposal);
-			return { ...known, prohibited: true, reason: "Parent must delegate" };
+			return { ...known, restriction: "prohibition", reason: "Parent must delegate" };
 		},
 	}, undefined, {}, [(pi) => pi.on("context_with_system", (event) => {
 		const [system, ...rest] = event.messages;
@@ -3034,7 +3115,7 @@ for (const outcome of ["allow", "deny", "held"]) {
 		const run = await parent(t, {
 			authority,
 			classify: async () => outcome === "deny"
-				? { ...known, prohibited: true, reason: "Denied explicitly" }
+				? { ...known, restriction: "prohibition", reason: "Denied explicitly" }
 				: outcome === "held" ? { ...known, scope: "unknown", reason: "Scope unresolved" } : known,
 			onDecision: async () => {
 				entered.resolve();
@@ -3128,7 +3209,7 @@ test("a same-name pi-workflow factory loaded first cannot spoof workflow message
 		async execute() { return { content: [], details: {} }; },
 	}) }] };
 	const host = await parent(t, { authority, classify: async proposal => {
-		classified.push(proposal.action.tool); return { ...known, prohibited: true, reason: "Foreign prohibited" };
+		classified.push(proposal.action.tool); return { ...known, restriction: "prohibition", reason: "Foreign prohibited" };
 	} }, undefined, sources);
 	const result = await host.call({}, "reply_child");
 	assert.equal(result.isError, true);

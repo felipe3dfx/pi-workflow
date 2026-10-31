@@ -58,7 +58,7 @@ export async function assessProposal(
 					scope: "unknown",
 					effects: "unknown",
 					ownership: "unknown",
-					prohibited: false,
+					restriction: "none",
 					confirmed: false,
 					commit: false,
 					reason: "Scripted consultation gate",
@@ -79,7 +79,7 @@ export async function assessProposal(
 						v.effects as string,
 					) ||
 					!["assigned", "other", "unknown"].includes(v.ownership as string) ||
-					typeof v.prohibited !== "boolean" ||
+					!["none", "prohibition", "confirmation", "information"].includes(v.restriction as string) ||
 					typeof v.confirmed !== "boolean" ||
 					typeof v.reason !== "string" ||
 					!v.reason.trim() ||

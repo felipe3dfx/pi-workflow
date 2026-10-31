@@ -10,16 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assessProposal } from "../tools/contextual-authorization-evaluation/assess.ts";
-
-const rules = JSON.parse(
-	readFileSync(
-		new URL(
-			"../tools/contextual-authorization-evaluation/cases.json",
-			import.meta.url,
-		),
-		"utf8",
-	),
-).cases[0].modelInput.rules;
+import { actionAuthorizationRules as rules } from "../extensions/action-authorization.ts";
 const proposal = {
 	authority: {
 		assignment: "Correct the assigned file",
@@ -38,7 +29,7 @@ const ordinary = {
 	scope: "within",
 	effects: "ordinary",
 	ownership: "assigned",
-	prohibited: false,
+	restriction: "none",
 	confirmed: false,
 	commit: false,
 	reason: "Assigned correction",
@@ -62,7 +53,7 @@ test("assesses an ordinary assigned action without executing it", async () => {
 test("prohibition and uncertainty remain distinct", async () => {
 	const denied = await assessProposal(proposal, async () => ({
 		...ordinary,
-		prohibited: true,
+		restriction: "prohibition",
 		reason: "Explicit prohibition",
 	}));
 	const held = await assessProposal(proposal, async () => ({

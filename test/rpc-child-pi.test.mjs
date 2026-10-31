@@ -869,7 +869,7 @@ test("a real Pi contextual child continues an authorized call, holds an uncertai
 		{ tool: "bash", args: { command: "git add assigned.txt && git commit -q -m 'feat: assigned change'" } },
 		"DONE",
 	]);
-	const known = { prohibited: false, scope: "within", ownership: "assigned", effects: "ordinary", confirmed: false, commit: false };
+	const known = { restriction: "none", scope: "within", ownership: "assigned", effects: "ordinary", confirmed: false, commit: false };
 	await withCheckpoint(async ({ worktree, grant }) => {
 		const proposals = [];
 		const questions = [];
@@ -960,7 +960,7 @@ test("a real Pi contextual child surfaces a scope violation after commit and ref
 							commit: { paths: ["assigned.txt"], context: "noninterfering" },
 						}),
 						classify: async () => ({
-							prohibited: false, scope: "within", ownership: "assigned", effects: "ordinary", confirmed: false,
+							restriction: "none", scope: "within", ownership: "assigned", effects: "ordinary", confirmed: false,
 							commit: { paths: ["assigned.txt"] }, reason: "The assigned commit.",
 						}),
 					},
