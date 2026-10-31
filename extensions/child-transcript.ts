@@ -179,7 +179,8 @@ export function createTranscript(options: {
 		}
 	}
 
-	function merge(entry: Entry, observation: Observation, front: boolean) {
+	function merge(entry: Entry, delivered: Observation, front: boolean) {
+		let observation = delivered;
 		const kind = kindOf(observation);
 		const phase = phaseOf(observation);
 		if (kind !== "message" && kind !== "tool") {
@@ -210,11 +211,21 @@ export function createTranscript(options: {
 			}
 		}
 		let chars = entry.held.reduce((sum, held) => sum + deltaOf(held).length, 0);
-		chars += deltaOf(observation).length;
-		if (kind === "message" && !front && chars > partialChars && entry.held.length > 0) {
+		if (kind === "message" && !front && chars + deltaOf(observation).length > partialChars) {
+			if (chars >= partialChars) {
+				entry.ceiling = ordinal;
+				return;
+			}
+			observation = clip(observation, partialChars - chars, false);
 			entry.ceiling = ordinal;
-			return;
 		}
+		if (kind === "message" && front && deltaOf(observation).length > partialChars) {
+			observation = clip(observation, partialChars, true);
+			entry.held = entry.held.filter((held) => held.ordinal > ordinal);
+			entry.floor = ordinal;
+			chars = entry.held.reduce((sum, held) => sum + deltaOf(held).length, 0);
+		}
+		chars += deltaOf(observation).length;
 		const at = entry.held.findIndex((held) => held.ordinal > ordinal);
 		const index = at < 0 ? entry.held.length : at;
 		entry.held.splice(index, 0, observation);
@@ -372,7 +383,7 @@ export function createTranscript(options: {
 		const boundary = retainedFrom(key);
 		held.observations.push(
 			...read.observations.filter(
-				(observation) => observation.ordinal < boundary && keyOf(observation) === key,
+				(observation) => observation.ordinal <= boundary && keyOf(observation) === key,
 			),
 		);
 		held.observations.splice(0, held.observations.length - residentObservations);
@@ -427,6 +438,7 @@ export function createTranscript(options: {
 		}
 		let head = 0;
 		let foot = list.length - 1;
+		const spanning: Entry[] = [];
 		while (entries.size > residentItems && head < foot) {
 			const top = extent.get(list[head].key) as { top: number; bottom: number };
 			const bottom = extent.get(list[foot].key) as { top: number; bottom: number };
@@ -435,8 +447,12 @@ export function createTranscript(options: {
 			if (!topFree && !bottomFree) break;
 			const fromTop = topFree && (!bottomFree || above - top.bottom >= bottom.top - below);
 			if (fromTop) {
-				lo = Math.max(lo, list[head].last + 1);
-				while (head < foot && list[head].last < lo) entries.delete(list[head++].key);
+				spanning.push(list[head++]);
+				lo = Math.max(lo, list[head].first);
+				for (const entry of spanning.splice(0)) {
+					if (entry.last < lo) entries.delete(entry.key);
+					else spanning.push(entry);
+				}
 			} else {
 				const hi = list[foot].first;
 				while (foot > head && list[foot].first >= hi) entries.delete(list[foot--].key);
@@ -446,7 +462,7 @@ export function createTranscript(options: {
 		for (const entry of list.slice(head + 1, foot)) {
 			if (entries.size <= residentItems) return;
 			const seen = extent.get(entry.key);
-			if (seen?.top === seen?.bottom && entry.held.some(isFinal)) entries.delete(entry.key);
+			if (entry.first >= lo && seen?.top === seen?.bottom && entry.held.some(isFinal)) entries.delete(entry.key);
 		}
 	}
 
@@ -454,6 +470,7 @@ export function createTranscript(options: {
 		if (core) return options.live?.() ?? [];
 		const merged = new Map<string, Item>();
 		for (const entry of ordered()) {
+			if (entry.first < lo) continue;
 			if (entry.range) {
 				merged.set(entry.key, { key: entry.key, kind: "unavailable", ...entry.range });
 				continue;
@@ -462,12 +479,19 @@ export function createTranscript(options: {
 			const held = attached.get(key);
 			const boundary = retainedFrom(key);
 			const gap =
-				kindOf(entry.held[0]) === "message" && held?.next !== undefined && held.next < boundary;
+				kindOf(entry.held[0]) === "message" && held?.next !== undefined && held.next <= boundary;
 			for (const early of held?.observations ?? []) {
 				if (early.ordinal >= boundary) continue;
 				project(merged, gap ? earlierKey(key) : key, early);
 			}
-			for (const observation of entry.held) project(merged, key, observation);
+			const whole = gap ? undefined : held?.observations.find((early) => early.ordinal === boundary);
+			for (const observation of entry.held) {
+				const clipped =
+					whole !== undefined &&
+					observation.ordinal === boundary &&
+					deltaOf(whole).endsWith(deltaOf(observation));
+				project(merged, key, clipped ? whole : observation);
+			}
 			const item = merged.get(key);
 			if (!gap || item?.kind !== "message" || !held) continue;
 			if (item.entry.final) merged.delete(earlierKey(key));
@@ -740,6 +764,15 @@ function coalesce(held: Observation[], index: number) {
 		return;
 	}
 	held.splice(index - 1, 2, { ...previous, delta: previous.delta + current.delta });
+}
+
+function clip(observation: Observation, keep: number, fromEnd: boolean): Observation {
+	if (observation.kind !== "message" || observation.phase !== "update") return observation;
+	const { delta } = observation;
+	let at = fromEnd ? delta.length - keep : keep;
+	const code = delta.charCodeAt(at);
+	if (code >= 0xdc00 && code <= 0xdfff) at += fromEnd ? 1 : -1;
+	return { ...observation, delta: fromEnd ? delta.slice(at) : delta.slice(0, at) };
 }
 
 function isFinal(observation: Observation) {

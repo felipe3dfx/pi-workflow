@@ -1508,6 +1508,148 @@ test("the row under the earlier-evidence marker stays put while backward pages a
 	transcript.dispose();
 });
 
+function oversized() {
+	const length = 40 * 1024 + 1;
+	const text = [..."S".padEnd(length - 1, "a"), "E"];
+	for (const at of [length - 32 * 1024 - 1, 32 * 1024 - 1]) {
+		text[at] = "\ud83d";
+		text[at + 1] = "\ude00";
+	}
+	return text.join("");
+}
+
+function messageTranscript(audit, id) {
+	let changes = 0;
+	const state = { expand: false, pieces: [] };
+	const transcript = createTranscript({
+		audit,
+		child: id,
+		changed() {
+			changes += 1;
+		},
+	});
+	const render = (item) => {
+		if (item.kind === "static") return [{ sub: "s", rows: ["head"] }];
+		if (item.kind !== "message") return [];
+		const text = item.entry.content[0]?.text ?? "";
+		if (!text.startsWith("S") && !text.endsWith("E") && item.entry.earlier === undefined) {
+			return [{ sub: "b", rows: [text] }];
+		}
+		state.pieces.push({ key: item.key, text, earlier: item.entry.earlier });
+		const load =
+			state.expand && item.entry.earlier !== undefined
+				? { load: { earlier: item.entry.earlier } }
+				: {};
+		return [{ sub: "b", rows: ["BIG"], ...load }];
+	};
+	const draw = () => {
+		state.pieces = [];
+		return transcript.layout(80, 30, "", render, {
+			head: [{ key: "head", kind: "static" }],
+			tail: [],
+		});
+	};
+	return { transcript, state, draw: () => quiet(draw, () => changes) };
+}
+
+test("a followed message made of one oversized delta keeps its last 32 KiB under the marker, and expansion reaches its start", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	const message = { role: "assistant", content: [] };
+	capture.emit(child.id, { type: "message_start", message });
+	const delta = oversized();
+	capture.emit(child.id, {
+		type: "message_update",
+		message,
+		assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
+	});
+	await written(capture.audit, child.id);
+	const { transcript, state, draw } = messageTranscript(capture.audit, child.id);
+	await draw();
+	assert.equal(state.pieces.length, 1);
+	const [piece] = state.pieces;
+	assert.ok(piece.text.length <= 32 * 1024, `${piece.text.length} characters`);
+	assert.ok(piece.text.isWellFormed());
+	assert.ok(delta.endsWith(piece.text));
+	assert.notEqual(piece.earlier, undefined);
+	state.expand = true;
+	await draw();
+	assert.equal(state.pieces.map((shown) => shown.text).join(""), delta);
+	transcript.dispose();
+});
+
+test("a message made of one oversized delta read forward from above keeps its first 32 KiB", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	for (let i = 0; i < 400; i++) {
+		capture.say(child.id, [{ type: "text", text: `Line ${i}.` }]);
+		if (i % 100 === 99) await written(capture.audit, child.id);
+	}
+	const message = { role: "assistant", content: [] };
+	capture.emit(child.id, { type: "message_start", message });
+	const delta = oversized();
+	capture.emit(child.id, {
+		type: "message_update",
+		message,
+		assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
+	});
+	await written(capture.audit, child.id);
+	for (let i = 0; i < 200; i++) {
+		capture.say(child.id, [{ type: "text", text: `After ${i}.` }]);
+		if (i % 50 === 49) await written(capture.audit, child.id);
+	}
+	const { transcript, state, draw } = messageTranscript(capture.audit, child.id);
+	let rows = await draw();
+	for (let i = 0; i < 100 && rows[0] !== "head"; i++) {
+		transcript.scroll(-30);
+		rows = await draw();
+	}
+	assert.equal(rows[0], "head");
+	for (let i = 0; i < 100 && !rows.includes("BIG"); i++) {
+		transcript.scroll(30);
+		rows = await draw();
+	}
+	assert.equal(state.pieces.length, 1);
+	const [piece] = state.pieces;
+	assert.ok(piece.text.length <= 32 * 1024, `${piece.text.length} characters`);
+	assert.ok(piece.text.isWellFormed());
+	assert.ok(piece.text.length > 0);
+	assert.ok(delta.startsWith(piece.text));
+	assert.equal(piece.earlier, undefined);
+	transcript.dispose();
+});
+
+test("expanding a capped message whose earlier read ends right before the kept delta shows the whole text", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	const message = { role: "assistant", content: [] };
+	capture.emit(child.id, { type: "message_start", message });
+	let full = "";
+	for (let i = 0; i < 127; i++) {
+		full += `d${i}.`;
+		capture.emit(child.id, {
+			type: "message_update",
+			message,
+			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: `d${i}.` },
+		});
+	}
+	const delta = oversized();
+	full += delta;
+	capture.emit(child.id, {
+		type: "message_update",
+		message,
+		assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
+	});
+	await written(capture.audit, child.id);
+	const { transcript, state, draw } = messageTranscript(capture.audit, child.id);
+	await draw();
+	state.expand = true;
+	await draw();
+	await draw();
+	assert.equal(state.pieces.map((piece) => piece.text).join(""), full);
+	transcript.dispose();
+});
+
 test("paging a long transcript row by row settles after every step", async (t) => {
 	const child = record("5636");
 	const capture = audited(t, [child]);
@@ -2130,6 +2272,137 @@ test("scrolling both ways over thousands of tool-call messages that draw no rows
 	for (let i = 0; i < 200 && rows.at(-1) !== "After 39."; i++) await step(7);
 	assert.equal(rows.at(-1), "After 39.");
 	assert.ok(most <= 8, `${most} reads in one step`);
+	transcript.dispose();
+});
+
+test("an early tool updated late is not pruned with the rows on screen when the read after it crosses the item budget", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	capture.tool(child.id, "early", "bash", { command: "early" });
+	for (let i = 0; i < 383; i++) {
+		capture.say(child.id, [{ type: "text", text: `Line ${i}.` }]);
+		if (i % 100 === 99) await written(capture.audit, child.id);
+	}
+	await written(capture.audit, child.id);
+	const { transcript, draw } = rowsTranscript(capture.audit, child.id);
+	let rows = await draw();
+	for (let i = 0; i < 40 && rows[0] !== "head"; i++) {
+		transcript.scroll(-30);
+		rows = await draw();
+	}
+	assert.equal(rows[0], "head");
+	for (let i = 0; i < 40 && !rows.includes("Line 350."); i++) {
+		transcript.scroll(30);
+		rows = await draw();
+	}
+	assert.ok(rows.includes("Line 350."));
+	assert.equal(transcript.info().retained.items, 384);
+	toolUpdate(capture, child.id, "early", 1);
+	capture.say(child.id, [{ type: "text", text: "Line 383." }]);
+	await written(capture.audit, child.id);
+	transcript.changed();
+	const after = await draw();
+	assert.deepEqual(after, rows);
+	for (const delta of [-3, -3, -3, 3, 3, 3, 3, 3]) {
+		transcript.scroll(delta);
+		const next = await draw();
+		assert.equal(next.length, 30);
+		if (delta < 0) assert.deepEqual(next.slice(3), rows.slice(0, -3));
+		else assert.deepEqual(next.slice(0, -3), rows.slice(3));
+		rows = next;
+	}
+	for (let i = 0; i < 40 && rows[0] !== "head"; i++) {
+		transcript.scroll(-10);
+		rows = await draw();
+	}
+	assert.equal(rows[0], "head");
+	assert.ok(rows.some((row) => row.includes("early1")), rows.join("\n"));
+	transcript.dispose();
+});
+
+function earlyInPlace(rows) {
+	const at = rows.indexOf("tool:early");
+	if (at >= 0 && at + 2 < rows.length) assert.equal(rows[at + 2], "Line 0.");
+}
+
+test("following a child whose early tool keeps updating among thousands of later items keeps residency bounded", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	capture.tool(child.id, "early", "bash", { command: "early" });
+	await written(capture.audit, child.id);
+	const { transcript, draw } = rowsTranscript(capture.audit, child.id);
+	let rows = await draw();
+	for (let n = 0; n < 2400; n++) {
+		capture.say(child.id, [{ type: "text", text: `Line ${n}.` }]);
+		if (n % 5 === 4) toolUpdate(capture, child.id, "early", n);
+		if (n % 60 === 59) {
+			await written(capture.audit, child.id);
+			transcript.changed();
+			rows = await draw();
+			assert.ok(transcript.info().retained.items <= 384, `${transcript.info().retained.items} items`);
+		}
+	}
+	assert.equal(rows.at(-1), "Line 2399.");
+	transcript.scroll(-100000);
+	earlyInPlace(
+		transcript.layout(80, 30, "", itemRows, { head: [{ key: "head", kind: "static" }], tail: [] }),
+	);
+	for (let i = 0; i < 200 && rows[0] !== "head"; i++) {
+		transcript.scroll(-30);
+		rows = await draw();
+		assert.ok(transcript.info().retained.items <= 384, `${transcript.info().retained.items} items`);
+		earlyInPlace(rows);
+	}
+	assert.equal(rows[0], "head");
+	assert.ok(rows.some((row) => row.includes("early2399")), rows.join("\n"));
+	transcript.dispose();
+});
+
+function zeroRow(capture, id, n) {
+	const message = { role: "assistant", content: [] };
+	capture.emit(id, { type: "message_start", message });
+	capture.emit(id, {
+		type: "message_update",
+		message,
+		assistantMessageEvent: { type: "toolcall_delta", contentIndex: 0, delta: "x" },
+	});
+	const call = { type: "toolCall", id: `c${n}`, name: "read", arguments: {} };
+	capture.emit(id, { type: "message_end", message: { role: "assistant", content: [call] } });
+}
+
+test("an undrawn tool that ended below the read range shows its result when scrolling back reaches it", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	capture.tool(child.id, "a", "bash", { command: "a" });
+	capture.tool(child.id, "b", "bash", { command: "b" });
+	for (let i = 0; i < 100; i++) capture.say(child.id, [{ type: "text", text: `Line ${i}.` }]);
+	await written(capture.audit, child.id);
+	const { transcript, draw } = rowsTranscript(capture.audit, child.id);
+	let rows = await draw();
+	let n = 0;
+	const read = async (count) => {
+		for (let j = 0; j < count; j++) zeroRow(capture, child.id, n++);
+		await written(capture.audit, child.id);
+		transcript.changed();
+		rows = await draw();
+	};
+	for (let k = 0; k < 10; k++) {
+		for (let j = 0; j < 40; j++) zeroRow(capture, child.id, n++);
+		toolUpdate(capture, child.id, "a", k);
+		toolUpdate(capture, child.id, "b", k);
+		await read(0);
+	}
+	toolEnd(capture, child.id, "a");
+	toolEnd(capture, child.id, "b");
+	await read(40);
+	transcript.scroll(-5);
+	await read(60);
+	for (let i = 0; i < 400 && rows[0] !== "head"; i++) {
+		transcript.scroll(-30);
+		rows = await draw();
+	}
+	assert.equal(rows[0], "head");
+	assert.ok(rows.some((row) => row.includes("b done")), rows.slice(0, 6).join("\n"));
 	transcript.dispose();
 });
 
