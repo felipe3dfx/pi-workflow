@@ -20,6 +20,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { contextualWorkflowSources } from "../../extensions/pi-workflow.ts";
 import { readSelection } from "../../extensions/configure.ts";
+import { consultationQuestion } from "../../extensions/child-runtime.ts";
 import {
 	companionMetadataPath,
 	loadCompanionsFromPath,
@@ -225,7 +226,7 @@ try {
 			const message = event.message;
 			if (message.customType === "pi-workflow-child-question") {
 				const text = message.details.text;
-				const question = JSON.parse(text.slice(text.indexOf("\n") + 1));
+				const question = consultationQuestion(text);
 				pending = {
 					child: message.details.id,
 					number: message.details.question,

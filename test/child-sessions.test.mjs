@@ -6477,6 +6477,68 @@ for (const [key, kind, confirm] of [["c", "resolved", true], ["r", "resolved", f
 		});
 	});
 
+test("Esc in the Fleet decision step returns to editing with the typed answer intact", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({ agentDir, create: children.create, schedule: manualClock().schedule });
+		await spawnBackground(extension, worktree);
+		await settle();
+		const question = consultation({
+			id: "12345678-90ab-cdef-1234-567890abcdef",
+			call: "call-1",
+			proposal: { action: { tool: "bash", input: { command: "rm -r archive" }, cwd: worktree } },
+			reason: "Deleting archive needs the user's confirmation.",
+			effects: "high-impact",
+		});
+		const asked = children.created[0].spec.ask(question, undefined, "q12345678");
+		const view = openChildren(extension);
+		view.lines(120);
+
+		view.press("\r", "\r", ..."Only archive", "\r");
+		assert.match(view.lines(120).join("\n"), /p pending.*Esc edit/);
+		view.press("\x1b");
+		assert.match(view.lines(120).join("\n"), /Enter send.*Esc stop typing/);
+		view.press(..." now", "\r", "c");
+
+		const reply = await Promise.race([asked, new Promise(resolve => setTimeout(() => resolve(undefined), 100))]);
+		assert.deepEqual(reply === undefined ? undefined : JSON.parse(reply), {
+			ref: "q12345678",
+			kind: "resolved",
+			answer: "Only archive now",
+			confirm: true,
+		});
+	});
+});
+
+test("a click on another child during the Fleet decision step keeps the decision", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({ agentDir, create: children.create, schedule: manualClock().schedule });
+		await spawnBackground(extension, worktree, "First");
+		await spawnBackground(extension, worktree, "Second");
+		await settle();
+		const question = consultation({
+			id: "12345678-90ab-cdef-1234-567890abcdef",
+			call: "call-1",
+			proposal: { action: { tool: "bash", input: { command: "rm -r archive" }, cwd: worktree } },
+			reason: "Deleting archive needs the user's confirmation.",
+			effects: "high-impact",
+		});
+		const asked = children.created[0].spec.ask(question, undefined, "q12345678");
+		const view = openChildren(extension);
+		view.lines(120);
+
+		view.press("\r", "\r", ..."Only archive", "\r");
+		view.lines(120);
+		const click = view.component.handleMouse({ type: "click", button: "left", x: 5, y: 3, clickCount: 1 });
+		assert.equal(click, undefined);
+		view.press("\x1b", ..." now", "\r", "c");
+
+		const reply = await Promise.race([asked, new Promise(resolve => setTimeout(() => resolve(undefined), 100))]);
+		assert.equal(reply === undefined ? undefined : JSON.parse(reply).answer, "Only archive now");
+	});
+});
+
 test("reply_child refuses a consultation reply the child would reject and keeps the question answerable", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();

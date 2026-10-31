@@ -974,16 +974,9 @@ function createChildrenView(
 		const number = answering;
 		if (!item?.live || !text) return;
 		const { child } = item;
-		leave();
-		if (number === undefined) {
-			notice = `Steer sent to ${childName(child)}.`;
-			sessions.steer(child.id, text).catch((error: unknown) => {
-				notice = errorMessage(error);
-				tui.requestRender();
-			});
-			return;
-		}
-		if (child.consultation) {
+		if (number !== undefined && child.consultation) {
+			typing = false;
+			answering = undefined;
 			deciding = {
 				id: child.id,
 				name: childName(child),
@@ -991,6 +984,15 @@ function createChildrenView(
 				ref: child.consultation,
 				text,
 			};
+			return;
+		}
+		leave();
+		if (number === undefined) {
+			notice = `Steer sent to ${childName(child)}.`;
+			sessions.steer(child.id, text).catch((error: unknown) => {
+				notice = errorMessage(error);
+				tui.requestRender();
+			});
 			return;
 		}
 		answer(child.id, childName(child), number, text);
@@ -1009,6 +1011,7 @@ function createChildrenView(
 		if (!deciding) return;
 		const { id, name, number, ref, text } = deciding;
 		deciding = undefined;
+		input.setValue("");
 		answer(id, name, number, consultationReply(ref, kind, text, confirm));
 	}
 
@@ -1048,6 +1051,8 @@ function createChildrenView(
 		} else if (action === "defer") {
 			decide("pending", false);
 		} else if (action === "leave" && deciding) {
+			typing = true;
+			answering = deciding.number;
 			deciding = undefined;
 		} else if ((action === "down" || action === "up") && single) {
 			scrollDetail(action === "down" ? 1 : -1);
@@ -1162,7 +1167,7 @@ function createChildrenView(
 				[["r", "resolve without confirm"], "resolve"],
 				[["n", "deny"], "refuse"],
 				[["p", "pending"], "defer"],
-				[["Esc", "discard"], "leave"],
+				[["Esc", "edit"], "leave"],
 			] as [Hint, Action][];
 		if (typing)
 			return [
@@ -1693,7 +1698,7 @@ function createChildrenView(
 				tui.requestRender();
 				return { handled: true };
 			}
-			if (!click || confirming) return undefined;
+			if (!click || confirming || deciding) return undefined;
 			if (pane === "detail") {
 				if (!layout.split) return undefined;
 				focus = "detail";

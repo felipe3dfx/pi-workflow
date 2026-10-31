@@ -321,3 +321,10 @@ test("consultation references remain strings for numeric question ids", async ()
 	const summary = JSON.parse(text.slice(text.lastIndexOf("\n") + 1));
 	assert.equal(summary.ref, "q12345678");
 });
+
+test("a consultation question reads back its ref, action, reason and effects", async () => {
+	const { consultation, consultationQuestion } = await import("../extensions/child-runtime.ts");
+	const action = { tool: "bash", input: { command: "rm -r archive" }, cwd: "/work" };
+	const text = consultation({ id: "12345678-0000-0000-0000-000000000000", call: "call-1", proposal: { action }, reason: "Needs confirmation", effects: "high-impact" });
+	assert.deepEqual(consultationQuestion(text), { ref: "q12345678", action, reason: "Needs confirmation", effects: "high-impact" });
+});
