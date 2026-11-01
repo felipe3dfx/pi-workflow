@@ -2315,7 +2315,22 @@ test("two children of one Specialist and model in one worktree send the same pre
 			fauxAssistantMessage("First."),
 			fauxAssistantMessage("Second."),
 		]);
-		const { tool } = await loadSpawnTool({ agentDir, create: runtimeChild(parent.runtime) });
+		const create = runtimeChild(parent.runtime);
+		const disposals = [];
+		const { tool, fire } = await loadSpawnTool({
+			agentDir,
+			async create(spec) {
+				const handle = await create(spec);
+				return {
+					...handle,
+					dispose() {
+						const disposed = handle.dispose();
+						disposals.push(disposed);
+						return disposed;
+					},
+				};
+			},
+		});
 
 		for (const task of ["Fix the parser", "Fix the lexer"]) {
 			const result = await spawn(
@@ -2334,6 +2349,9 @@ test("two children of one Specialist and model in one worktree send the same pre
 		assert.doesNotMatch(JSON.stringify(first.messages[0]), /Fix the/);
 		assert.match(JSON.stringify(first.messages.slice(1)), /Fix the parser/);
 		assert.match(JSON.stringify(second.messages.slice(1)), /Fix the lexer/);
+		await fire("session_shutdown", { reason: "quit" });
+		await Promise.all(disposals);
+		assert.equal(disposals.length, 2);
 	});
 });
 
