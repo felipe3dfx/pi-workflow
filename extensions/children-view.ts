@@ -1644,6 +1644,9 @@ function createChildrenView(
 				width,
 			).map((line) => margin + line);
 		},
+		get pending() {
+			return listing || repairing !== undefined || transcript?.pending === true;
+		},
 		invalidate() {
 			transcript?.invalidate();
 		},

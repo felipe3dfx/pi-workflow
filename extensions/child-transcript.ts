@@ -426,7 +426,10 @@ export function createTranscript(options: {
 	}
 
 	function pump() {
-		if (busy || disposed) return;
+		if (busy || disposed) {
+			wanted = undefined;
+			return;
+		}
 		let load: (() => Promise<void>) | undefined;
 		if (!opened) {
 			opened = true;
@@ -702,7 +705,7 @@ export function createTranscript(options: {
 				following = true;
 			}
 			if (opened && entries.size > 0) {
-				evict(start, height);
+				if (!busy) evict(start, height);
 				if (!wanted) {
 					const below = rowsBetween(start, end) + 1 - rows.length;
 					if (below < height && !atEnd()) wanted = forward;
@@ -733,14 +736,15 @@ export function createTranscript(options: {
 			following = true;
 			overshoot = 0;
 			stale = true;
-			pump();
 		},
 		get following() {
 			return following;
 		},
+		get pending() {
+			return busy;
+		},
 		changed() {
 			stale = true;
-			pump();
 		},
 		invalidate() {
 			cache.clear();

@@ -249,14 +249,13 @@ function audited(t, records, options = {}) {
 }
 
 async function settle(view, width = 120) {
-	let quiet = 0;
-	for (let i = 0; i < 400 && quiet < 4; i++) {
-		const renders = view.tui.renders;
-		view.lines(width);
+	let lines = view.lines(width);
+	for (let i = 0; i < 400 && view.component.pending; i++) {
 		await delay(5);
-		quiet = view.tui.renders === renders ? quiet + 1 : 0;
+		lines = view.lines(width);
 	}
-	return view.lines(width).join("\n");
+	assert.equal(view.component.pending, false, "the view never settled");
+	return lines.join("\n");
 }
 
 const emptyAudit = {
@@ -1217,6 +1216,7 @@ test("backscroll keeps its rows while the selected and other children stream, an
 	assert.doesNotMatch(held, /Line 39\./);
 	for (let i = 0; i < 300; i++) {
 		capture.say(other.id, [{ type: "text", text: `Other ${i}.` }]);
+		if (i % 50 === 49) await written(capture.audit, other.id);
 	}
 	capture.say(mine.id, [{ type: "text", text: "Line 40." }]);
 	capture.emit(mine.id, {
@@ -1392,16 +1392,14 @@ test("the wheel settles over tool calls whose messages draw no rows, scrolling u
 	}
 });
 
-async function quiet(draw, changes) {
-	let still = 0;
-	for (let i = 0; i < 100 && still < 3; i++) {
-		const seen = changes();
-		draw();
+async function quiet(transcript, draw) {
+	let rows = draw();
+	for (let i = 0; i < 100 && transcript.pending; i++) {
 		await delay(5);
-		still = changes() === seen ? still + 1 : 0;
+		rows = draw();
 	}
-	assert.equal(still, 3, "the windows never settled");
-	return draw();
+	assert.equal(transcript.pending, false, "the windows never settled");
+	return rows;
 }
 
 test("a followed message streaming far past its text cap keeps showing its newest delta under the marker", async (t) => {
@@ -1410,13 +1408,10 @@ test("a followed message streaming far past its text cap keeps showing its newes
 	const streaming = { role: "assistant", content: [] };
 	capture.emit(child.id, { type: "message_start", message: streaming });
 	await written(capture.audit, child.id);
-	let changes = 0;
 	const transcript = createTranscript({
 		audit: capture.audit,
 		child: child.id,
-		changed() {
-			changes += 1;
-		},
+		changed() {},
 	});
 	let entry;
 	const draw = () =>
@@ -1432,7 +1427,7 @@ test("a followed message streaming far past its text cap keeps showing its newes
 			},
 			{ head: [], tail: [] },
 		);
-	await quiet(draw, () => changes);
+	await quiet(transcript, draw);
 	for (let i = 0; i < 4000; i++) {
 		capture.emit(child.id, {
 			type: "message_update",
@@ -1446,7 +1441,7 @@ test("a followed message streaming far past its text cap keeps showing its newes
 		if (i % 50 === 49) {
 			await written(capture.audit, child.id);
 			transcript.changed();
-			await quiet(draw, () => changes);
+			await quiet(transcript, draw);
 			const text = entry.content[0]?.text ?? "";
 			assert.match(text, new RegExp(` pad${i} $`), `delta ${i}`);
 			assert.ok(text.length <= 32 * 1024, `delta ${i}`);
@@ -1473,13 +1468,10 @@ test("the row under the earlier-evidence marker stays put while backward pages a
 		delta(i < 600 ? "a" : `w${i - 600}\n`);
 		if (i % 100 === 99) await written(capture.audit, child.id);
 	}
-	let changes = 0;
 	const transcript = createTranscript({
 		audit: capture.audit,
 		child: child.id,
-		changed() {
-			changes += 1;
-		},
+		changed() {},
 	});
 	const draw = () =>
 		transcript.layout(
@@ -1496,13 +1488,13 @@ test("the row under the earlier-evidence marker stays put while backward pages a
 			},
 			{ head: [], tail: [] },
 		);
-	let rows = await quiet(draw, () => changes);
+	let rows = await quiet(transcript, draw);
 	for (let i = 0; i < 400 && rows[0] !== "marker"; i++) {
 		transcript.scroll(-1);
 		rows = draw();
 	}
 	assert.equal(rows[0], "marker");
-	const after = await quiet(draw, () => changes);
+	const after = await quiet(transcript, draw);
 	assert.notEqual(after[0], "marker");
 	assert.deepEqual(after.slice(1), rows.slice(1));
 	transcript.dispose();
@@ -1519,14 +1511,11 @@ function oversized() {
 }
 
 function messageTranscript(audit, id) {
-	let changes = 0;
 	const state = { expand: false, pieces: [] };
 	const transcript = createTranscript({
 		audit,
 		child: id,
-		changed() {
-			changes += 1;
-		},
+		changed() {},
 	});
 	const render = (item) => {
 		if (item.kind === "static") return [{ sub: "s", rows: ["head"] }];
@@ -1549,7 +1538,7 @@ function messageTranscript(audit, id) {
 			tail: [],
 		});
 	};
-	return { transcript, state, draw: () => quiet(draw, () => changes) };
+	return { transcript, state, draw: () => quiet(transcript, draw) };
 }
 
 test("a followed message made of one oversized delta keeps its last 32 KiB under the marker, and expansion reaches its start", async (t) => {
@@ -1658,28 +1647,25 @@ test("paging a long transcript row by row settles after every step", async (t) =
 		if (i % 50 === 49) await written(capture.audit, child.id);
 	}
 	await written(capture.audit, child.id);
-	let changes = 0;
 	const transcript = createTranscript({
 		audit: capture.audit,
 		child: child.id,
-		changed() {
-			changes += 1;
-		},
+		changed() {},
 	});
 	const draw = () =>
 		transcript.layout(80, 70, "", (item) => [{ sub: "b", rows: [item.key] }], {
 			head: [{ key: "head", kind: "static" }],
 			tail: [],
 		});
-	let rows = await quiet(draw, () => changes);
+	let rows = await quiet(transcript, draw);
 	for (let i = 0; i < 100 && rows[0] !== "head"; i++) {
 		transcript.scroll(-70);
-		rows = await quiet(draw, () => changes);
+		rows = await quiet(transcript, draw);
 	}
 	assert.equal(rows[0], "head");
 	for (let step = 0; step < 250; step++) {
 		transcript.scroll(1);
-		const after = await quiet(draw, () => changes);
+		const after = await quiet(transcript, draw);
 		assert.deepEqual(after.slice(0, -1), rows.slice(1), `step ${step}`);
 		rows = after;
 	}
@@ -1703,13 +1689,10 @@ test("a tool streaming thousands of updates stays bounded while followed", async
 		if (i % 100 === 99) await written(capture.audit, child.id);
 	}
 	await written(capture.audit, child.id);
-	let changes = 0;
 	const transcript = createTranscript({
 		audit: capture.audit,
 		child: child.id,
-		changed() {
-			changes += 1;
-		},
+		changed() {},
 	});
 	let tool;
 	const draw = () =>
@@ -1726,7 +1709,7 @@ test("a tool streaming thousands of updates stays bounded while followed", async
 			},
 			{ head: [], tail: [] },
 		);
-	await quiet(draw, () => changes);
+	await quiet(transcript, draw);
 	assert.equal(tool.earlier, undefined);
 	assert.deepEqual(tool.args, { command: "make" });
 	for (let i = 3000; i < 3300; i++) {
@@ -1735,7 +1718,7 @@ test("a tool streaming thousands of updates stays bounded while followed", async
 	}
 	await written(capture.audit, child.id);
 	transcript.changed();
-	await quiet(draw, () => changes);
+	await quiet(transcript, draw);
 	assert.match(JSON.stringify(tool.partial), /p3299/);
 	assert.deepEqual(tool.args, { command: "make" });
 	assert.deepEqual(transcript.info().retained, { items: 1, observations: 2 });
@@ -1760,13 +1743,10 @@ test("scrolling up a streamed message longer than its text cap shows its capped 
 		if (i % 100 === 99) await written(capture.audit, child.id);
 	}
 	await written(capture.audit, child.id);
-	let changes = 0;
 	const transcript = createTranscript({
 		audit: capture.audit,
 		child: child.id,
-		changed() {
-			changes += 1;
-		},
+		changed() {},
 	});
 	let expand = false;
 	let revealed = false;
@@ -1792,10 +1772,10 @@ test("scrolling up a streamed message longer than its text cap shows its capped 
 			{ head: [{ key: "head", kind: "static" }], tail: [] },
 		);
 	};
-	let rows = await quiet(draw, () => changes);
+	let rows = await quiet(transcript, draw);
 	for (let i = 0; i < 400 && rows[0] !== "head"; i++) {
 		transcript.scroll(-40);
-		rows = await quiet(draw, () => changes);
+		rows = await quiet(transcript, draw);
 		assert.ok(pieces[0].text.length <= 32 * 1024, `step ${i}`);
 	}
 	assert.equal(rows[0], "head");
@@ -1804,7 +1784,7 @@ test("scrolling up a streamed message longer than its text cap shows its capped 
 	assert.match(pieces[0].text, / w7999 $/);
 	assert.equal(revealed, false);
 	expand = true;
-	await quiet(draw, () => changes);
+	await quiet(transcript, draw);
 	assert.equal(revealed, true);
 	transcript.dispose();
 });
@@ -1816,20 +1796,17 @@ function compact(item) {
 }
 
 function compactTranscript(capture, id) {
-	let changes = 0;
 	const transcript = createTranscript({
 		audit: capture.audit,
 		child: id,
-		changed() {
-			changes += 1;
-		},
+		changed() {},
 	});
 	const draw = () =>
 		transcript.layout(80, 30, "", compact, {
 			head: [{ key: "head", kind: "static" }],
 			tail: [],
 		});
-	return { transcript, draw: () => quiet(draw, () => changes) };
+	return { transcript, draw: () => quiet(transcript, draw) };
 }
 
 async function pageDown(transcript, draw, rows) {
@@ -2157,20 +2134,17 @@ function itemRows(item) {
 }
 
 function rowsTranscript(audit, id) {
-	let changes = 0;
 	const transcript = createTranscript({
 		audit,
 		child: id,
-		changed() {
-			changes += 1;
-		},
+		changed() {},
 	});
 	const draw = () =>
 		transcript.layout(80, 30, "", itemRows, {
 			head: [{ key: "head", kind: "static" }],
 			tail: [],
 		});
-	return { transcript, draw: () => quiet(draw, () => changes) };
+	return { transcript, draw: () => quiet(transcript, draw) };
 }
 
 test("two parallel tools streaming thousands of interleaved updates retain observations bounded by their items while the view crosses them", async (t) => {
@@ -2440,6 +2414,38 @@ test("following hundreds of running tools that all update after the last one sta
 
 test("a removed tool brought back over a record without its index, by backward pages that pass their boundary, shows its latest state", (t) =>
 	runningTools(t, { unindexed: true, limits: { windowBytes: 2048, cacheEntries: 0 } }));
+
+test("a followed child streaming while each render lags behind its reads keeps at most 384 items resident", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	let timer;
+	let resident = 0;
+	const transcript = createTranscript({
+		audit: capture.audit,
+		child: child.id,
+		changed: () => {
+			timer ??= setTimeout(draw, 16);
+		},
+	});
+	const layout = () => transcript.layout(80, 30, "", itemRows, { head: [], tail: [] });
+	function draw() {
+		timer = undefined;
+		layout();
+		resident = Math.max(resident, transcript.info().retained.items);
+	}
+	for (let i = 0; i < 1000; i++) {
+		capture.say(child.id, [{ type: "text", text: `Line ${i}.` }]);
+		transcript.changed();
+		timer ??= setTimeout(draw, 16);
+		if (i % 2 === 1) await delay(1);
+	}
+	await written(capture.audit, child.id);
+	clearTimeout(timer);
+	const rows = await quiet(transcript, layout);
+	assert.equal(rows.at(-1), "Line 999.");
+	assert.ok(resident <= 384, `${resident} items`);
+	transcript.dispose();
+});
 
 test("a record without its index opens on its tail even when the tail lies past the first window of bytes", async (t) => {
 	const root = withAgentDirectory(t);
@@ -2730,17 +2736,14 @@ test("a detached view keeps the newest text of a message streaming past its cap,
 			if (i % 50 === 49) {
 				await written(capture.audit, child.id);
 				transcript.changed();
-				await quiet(draw, () => changes);
+				await quiet(transcript, draw);
 			}
 		}
 	};
-	let changes = 0;
 	const transcript = createTranscript({
 		audit: capture.audit,
 		child: child.id,
-		changed() {
-			changes += 1;
-		},
+		changed() {},
 	});
 	let entry;
 	const draw = () =>
@@ -2758,11 +2761,11 @@ test("a detached view keeps the newest text of a message streaming past its cap,
 		);
 	await stream(2300);
 	transcript.scroll(-3);
-	await quiet(draw, () => changes);
+	await quiet(transcript, draw);
 	assert.equal(transcript.following, false);
 	await stream(300);
 	transcript.follow();
-	await quiet(draw, () => changes);
+	await quiet(transcript, draw);
 	assert.match(entry.content[0]?.text ?? "", / pad2599 $/);
 	transcript.dispose();
 });
