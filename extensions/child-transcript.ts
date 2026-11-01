@@ -295,10 +295,14 @@ export function createTranscript(options: {
 			cursor = { ...start, from };
 			read = await fetch(cursor);
 		}
-		if (!read) return;
 		lo = cursor.from;
+		while (read && read.observations.length === 0 && read.unavailable.length === 0 && advanced(cursor, read.next)) {
+			cursor = read.next;
+			read = await fetch(cursor);
+		}
+		if (!read) return;
 		fold(read);
-		tail = { cursor: read.next, more: read.next.from > cursor.from };
+		tail = { cursor: read.next, more: advanced(cursor, read.next) };
 	}
 
 	async function forward() {
@@ -306,12 +310,8 @@ export function createTranscript(options: {
 		const { cursor } = tail;
 		const read = await fetch(cursor);
 		if (!read) return;
-		if (read.observations.length === 0 && read.unavailable.length === 0) {
-			tail.more = false;
-			return;
-		}
 		fold(read);
-		tail = { cursor: read.next, more: read.next.from > cursor.from };
+		tail = { cursor: read.next, more: advanced(cursor, read.next) };
 	}
 
 	async function backward() {
@@ -323,20 +323,32 @@ export function createTranscript(options: {
 			from: Math.max(1, boundary - windowSize),
 		};
 		const from = cursor.from;
+		const pages: Opened[] = [];
 		while (cursor.from < boundary) {
 			const read = await fetch(cursor);
 			if (!read) return;
-			pinFromEnd();
-			fold(read, boundary);
-			if (read.next.from <= cursor.from) break;
+			pages.push(read);
+			if (!advanced(cursor, read.next)) break;
 			cursor = read.next;
+		}
+		const range = pages.at(-1);
+		if (range) {
+			pinFromEnd();
+			fold(
+				{
+					...range,
+					observations: pages.flatMap((page) => page.observations),
+					unavailable: pages.flatMap((page) => page.unavailable),
+				},
+				boundary,
+			);
 		}
 		lo = from;
 		const back = [...gone.keys()].filter((key) => entries.has(key));
 		const dropped = new Set(back);
 		const reach = Math.max(0, ...back.map((key) => gone.get(key) as number));
 		for (const key of back) gone.delete(key);
-		cursor = { ...cursor, from: boundary };
+		cursor = { child, generation: cursor.generation, from: boundary };
 		while (cursor.from <= reach) {
 			const read = await fetch(cursor);
 			if (!read) return;
@@ -345,7 +357,7 @@ export function createTranscript(options: {
 				return key !== undefined && dropped.has(key);
 			});
 			fold({ ...read, observations, unavailable: [] }, Number.POSITIVE_INFINITY);
-			if (read.next.from <= cursor.from) break;
+			if (!advanced(cursor, read.next)) break;
 			cursor = read.next;
 		}
 	}
@@ -473,8 +485,12 @@ export function createTranscript(options: {
 				spanning.push(list[head++]);
 				lo = Math.max(lo, list[head].first);
 				for (const entry of spanning.splice(0)) {
-					if (entry.last < lo) entries.delete(entry.key);
-					else spanning.push(entry);
+					if (entry.last >= lo) spanning.push(entry);
+					else {
+						entries.delete(entry.key);
+						const kind = kindOf(entry.held[0]);
+						if ((kind === "message" || kind === "tool") && !entry.held.some(isFinal)) gone.set(entry.key, entry.last);
+					}
 				}
 			} else {
 				const hi = list[foot].first;
@@ -751,6 +767,10 @@ export function createTranscript(options: {
 			cache.clear();
 		},
 	};
+}
+
+function advanced(cursor: WindowCursor, next: WindowCursor) {
+	return next.from > cursor.from || (next.offset ?? 0) > (cursor.offset ?? 0);
 }
 
 function earlierKey(key: string) {

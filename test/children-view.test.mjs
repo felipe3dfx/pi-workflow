@@ -2358,10 +2358,22 @@ test("following a child whose early tool keeps updating among thousands of later
 	transcript.dispose();
 });
 
-test("following hundreds of running tools that all update after the last one started keeps residency bounded and each tool's state", async (t) => {
+async function runningTools(t, options = {}) {
+	const root = withAgentDirectory(t);
 	const child = record("5636");
-	const capture = audited(t, [child]);
-	const { transcript, draw } = rowsTranscript(capture.audit, child.id);
+	const capture = audited(t, [child], { root, limits: options.limits });
+	const issued = new Set();
+	const invented = [];
+	const audit = {
+		async read(id, cursor) {
+			if (cursor?.offset !== undefined && !issued.has(JSON.stringify(cursor))) invented.push(cursor);
+			const read = await capture.audit.read(id, cursor);
+			if (read && "next" in read) issued.add(JSON.stringify(read.next));
+			return read;
+		},
+		segment: capture.audit.segment,
+	};
+	const { transcript, draw } = rowsTranscript(audit, child.id);
 	let rows = await draw();
 	const latest = new Map();
 	const message = { role: "assistant", content: [] };
@@ -2403,6 +2415,7 @@ test("following hundreds of running tools that all update after the last one sta
 	await update(1, 2);
 	await start(20);
 	assert.ok(rows.includes("tool:p404"), rows.join("\n"));
+	if (options.unindexed) await rm(join(root, "parent-1", `${child.id}.index`), { recursive: true });
 	const shown = (pane) => {
 		for (const [at, row] of pane.entries()) {
 			const want = latest.get(row);
@@ -2418,6 +2431,28 @@ test("following hundreds of running tools that all update after the last one sta
 	}
 	assert.equal(rows[0], "head");
 	assert.equal(rows[1], streamed);
+	assert.deepEqual(invented, []);
+	transcript.dispose();
+}
+
+test("following hundreds of running tools that all update after the last one started keeps residency bounded and each tool's state", (t) =>
+	runningTools(t));
+
+test("a removed tool brought back over a record without its index, by backward pages that pass their boundary, shows its latest state", (t) =>
+	runningTools(t, { unindexed: true, limits: { windowBytes: 2048, cacheEntries: 0 } }));
+
+test("a record without its index opens on its tail even when the tail lies past the first window of bytes", async (t) => {
+	const root = withAgentDirectory(t);
+	const child = record("5636");
+	const capture = audited(t, [child], { root, limits: { windowBytes: 4096, cacheEntries: 0 } });
+	for (let i = 0; i < 300; i++) {
+		capture.say(child.id, [{ type: "text", text: `Line ${i}.` }]);
+		if (i % 50 === 49) await written(capture.audit, child.id);
+	}
+	await rm(join(root, "parent-1", `${child.id}.index`), { recursive: true });
+	const { transcript, draw } = rowsTranscript(capture.audit, child.id);
+	const rows = await draw();
+	assert.equal(rows.at(-1), "Line 299.");
 	transcript.dispose();
 });
 
