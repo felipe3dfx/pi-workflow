@@ -1236,6 +1236,1537 @@ test("backscroll keeps its rows while the selected and other children stream, an
 	assert.doesNotMatch(tail, /Other/);
 });
 
+test("the wheel scrolls streamed messages longer than the resident windows by its exact delta, settles after each step, and follows again at the end", async (t) => {
+	const child = record("5636", {
+		state: "completed",
+		endedAt: now,
+		text: "done",
+	});
+	const capture = audited(t, [child]);
+	for (let m = 0; m < 5; m++) {
+		const message = { role: "assistant", content: [] };
+		capture.emit(child.id, { type: "message_start", message });
+		let text = "";
+		for (let i = 0; i < 300; i++) {
+			const delta =
+				i % 12 === 11 ? `M${m}.${i}\n\n` : `M${m}.${i} alpha beta gamma `;
+			text += delta;
+			capture.emit(child.id, {
+				type: "message_update",
+				message,
+				assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
+			});
+			if (i % 100 === 99) await written(capture.audit, child.id);
+		}
+		capture.emit(child.id, {
+			type: "message_end",
+			message: { role: "assistant", content: [{ type: "text", text }] },
+		});
+	}
+	await written(capture.audit, child.id);
+	const sessions = fakeSessions([child]);
+	const view = open(sessions, { rows: 30, audit: capture.audit });
+	view.press("\t");
+	const pane = async () => detailColumn(await settle(view)).slice(4, 25);
+	let before = await pane();
+	for (let step = 0; step < 130; step++) {
+		view.mouse({ type: "wheel", x: 60, y: 8, wheelDelta: -3 });
+		const renders = view.tui.renders;
+		const after = await pane();
+		assert.ok(view.tui.renders - renders < 20, `step ${step} never settled`);
+		assert.deepEqual(after.slice(3), before.slice(0, -3), `step ${step}`);
+		before = after;
+	}
+	for (let i = 0; i < 100 && !/M4\.299/.test(before.join("\n")); i++) {
+		view.mouse({ type: "wheel", x: 60, y: 8, wheelDelta: 40 });
+		before = await pane();
+	}
+	view.mouse({ type: "wheel", x: 60, y: 8, wheelDelta: 3 });
+	for (let i = 0; i < 30; i++)
+		capture.say(child.id, [{ type: "text", text: `Late ${i}.` }]);
+	await written(capture.audit, child.id);
+	sessions.changed();
+	assert.match((await pane()).join("\n"), /Late 29\./);
+});
+
+for (const ended of [true, false]) {
+	test(`the wheel scrolls up ${ended ? "an ended" : "a streaming"} message of token-sized deltas by its exact delta while the pane stays full`, async (t) => {
+		const child = record(
+			"5636",
+			ended ? { state: "completed", endedAt: now, text: "done" } : {},
+		);
+		const capture = audited(t, [child]);
+		const message = { role: "assistant", content: [] };
+		capture.emit(child.id, { type: "message_start", message });
+		let text = "";
+		for (let i = 0; i < 3000; i++) {
+			const delta = i % 60 === 59 ? `t${i}\n\n` : `t${i} `;
+			text += delta;
+			capture.emit(child.id, {
+				type: "message_update",
+				message,
+				assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
+			});
+			if (i % 100 === 99) await written(capture.audit, child.id);
+		}
+		if (ended) {
+			capture.emit(child.id, {
+				type: "message_end",
+				message: { role: "assistant", content: [{ type: "text", text }] },
+			});
+		}
+		await written(capture.audit, child.id);
+		const view = open(fakeSessions([child]), {
+			rows: 60,
+			audit: capture.audit,
+		});
+		view.press("\t");
+		const pane = async () => detailColumn(await settle(view)).slice(4, 55);
+		let before = await pane();
+		for (let step = 0; step < 45; step++) {
+			view.mouse({ type: "wheel", x: 60, y: 8, wheelDelta: -3 });
+			const renders = view.tui.renders;
+			const after = await pane();
+			assert.ok(view.tui.renders - renders < 20, `step ${step} never settled`);
+			assert.deepEqual(after.slice(3), before.slice(0, -3), `step ${step}`);
+			assert.ok(
+				after.filter((line) => line.trim()).length > 40,
+				`step ${step}`,
+			);
+			before = after;
+		}
+	});
+}
+
+test("the wheel settles over tool calls whose messages draw no rows, scrolling up and then down", async (t) => {
+	const child = record("5636", {
+		state: "completed",
+		endedAt: now,
+		text: "done",
+	});
+	const capture = audited(t, [child]);
+	for (let n = 0; n < 200; n++) {
+		const message = { role: "assistant", content: [] };
+		capture.emit(child.id, { type: "message_start", message });
+		for (let i = 0; i < 20; i++) {
+			capture.emit(child.id, {
+				type: "message_update",
+				message,
+				assistantMessageEvent: {
+					type: "toolcall_delta",
+					contentIndex: 0,
+					delta: `${i}`,
+				},
+			});
+		}
+		const call = {
+			type: "toolCall",
+			id: `c${n}`,
+			name: "read",
+			arguments: { path: `f${n}` },
+		};
+		capture.emit(child.id, {
+			type: "message_end",
+			message: { role: "assistant", content: [call] },
+		});
+		capture.tool(child.id, `c${n}`, "read", { path: `f${n}` }, "ok");
+		if (n % 4 === 3) await written(capture.audit, child.id);
+	}
+	await written(capture.audit, child.id);
+	const view = open(fakeSessions([child]), { rows: 30, audit: capture.audit });
+	view.press("\t");
+	await settle(view);
+	for (const [steps, wheelDelta] of [
+		[150, -3],
+		[60, 3],
+	]) {
+		for (let step = 0; step < steps; step++) {
+			view.mouse({ type: "wheel", x: 60, y: 8, wheelDelta });
+			const renders = view.tui.renders;
+			await settle(view);
+			assert.ok(
+				view.tui.renders - renders < 20,
+				`${wheelDelta} step ${step} never settled`,
+			);
+		}
+	}
+});
+
+async function quiet(draw, changes) {
+	let still = 0;
+	for (let i = 0; i < 100 && still < 3; i++) {
+		const seen = changes();
+		draw();
+		await delay(5);
+		still = changes() === seen ? still + 1 : 0;
+	}
+	assert.equal(still, 3, "the windows never settled");
+	return draw();
+}
+
+test("a followed message streaming far past its text cap keeps showing its newest delta under the marker", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	const streaming = { role: "assistant", content: [] };
+	capture.emit(child.id, { type: "message_start", message: streaming });
+	await written(capture.audit, child.id);
+	let changes = 0;
+	const transcript = createTranscript({
+		audit: capture.audit,
+		child: child.id,
+		changed() {
+			changes += 1;
+		},
+	});
+	let entry;
+	const draw = () =>
+		transcript.layout(
+			80,
+			30,
+			"",
+			(item) => {
+				if (item.kind !== "message") return [];
+				entry = item.entry;
+				const text = item.entry.content[0]?.text ?? "";
+				return [{ sub: "b", rows: text.trim().split(" ").slice(-200) }];
+			},
+			{ head: [], tail: [] },
+		);
+	await quiet(draw, () => changes);
+	for (let i = 0; i < 4000; i++) {
+		capture.emit(child.id, {
+			type: "message_update",
+			message: streaming,
+			assistantMessageEvent: {
+				type: "text_delta",
+				contentIndex: 0,
+				delta: `w${i} pad${i} `,
+			},
+		});
+		if (i % 50 === 49) {
+			await written(capture.audit, child.id);
+			transcript.changed();
+			await quiet(draw, () => changes);
+			const text = entry.content[0]?.text ?? "";
+			assert.match(text, new RegExp(` pad${i} $`), `delta ${i}`);
+			assert.ok(text.length <= 32 * 1024, `delta ${i}`);
+		}
+	}
+	assert.notEqual(entry.earlier, undefined);
+	transcript.dispose();
+});
+
+test("the row under the earlier-evidence marker stays put while backward pages add no rows to its message", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	for (let i = 0; i < 5; i++)
+		capture.say(child.id, [{ type: "text", text: `Say ${i}.` }]);
+	const message = { role: "assistant", content: [] };
+	capture.emit(child.id, { type: "message_start", message });
+	const delta = (text) =>
+		capture.emit(child.id, {
+			type: "message_update",
+			message,
+			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: text },
+		});
+	for (let i = 0; i < 700; i++) {
+		delta(i < 600 ? "a" : `w${i - 600}\n`);
+		if (i % 100 === 99) await written(capture.audit, child.id);
+	}
+	let changes = 0;
+	const transcript = createTranscript({
+		audit: capture.audit,
+		child: child.id,
+		changed() {
+			changes += 1;
+		},
+	});
+	const draw = () =>
+		transcript.layout(
+			80,
+			30,
+			"",
+			(item) => {
+				if (item.kind !== "message") return [];
+				const lines = (item.entry.content[0]?.text ?? "").split("\n").filter(Boolean);
+				return [
+					...(item.entry.earlier === undefined ? [] : [{ sub: "e", rows: ["marker"] }]),
+					{ sub: "b", rows: lines.map((line) => line.replace(/^a+/, "")) },
+				];
+			},
+			{ head: [], tail: [] },
+		);
+	let rows = await quiet(draw, () => changes);
+	for (let i = 0; i < 400 && rows[0] !== "marker"; i++) {
+		transcript.scroll(-1);
+		rows = draw();
+	}
+	assert.equal(rows[0], "marker");
+	const after = await quiet(draw, () => changes);
+	assert.notEqual(after[0], "marker");
+	assert.deepEqual(after.slice(1), rows.slice(1));
+	transcript.dispose();
+});
+
+function oversized() {
+	const length = 40 * 1024 + 1;
+	const text = [..."S".padEnd(length - 1, "a"), "E"];
+	for (const at of [length - 32 * 1024 - 1, 32 * 1024 - 1]) {
+		text[at] = "\ud83d";
+		text[at + 1] = "\ude00";
+	}
+	return text.join("");
+}
+
+function messageTranscript(audit, id) {
+	let changes = 0;
+	const state = { expand: false, pieces: [] };
+	const transcript = createTranscript({
+		audit,
+		child: id,
+		changed() {
+			changes += 1;
+		},
+	});
+	const render = (item) => {
+		if (item.kind === "static") return [{ sub: "s", rows: ["head"] }];
+		if (item.kind !== "message") return [];
+		const text = item.entry.content[0]?.text ?? "";
+		if (!text.startsWith("S") && !text.endsWith("E") && item.entry.earlier === undefined) {
+			return [{ sub: "b", rows: [text] }];
+		}
+		state.pieces.push({ key: item.key, text, earlier: item.entry.earlier });
+		const load =
+			state.expand && item.entry.earlier !== undefined
+				? { load: { earlier: item.entry.earlier } }
+				: {};
+		return [{ sub: "b", rows: ["BIG"], ...load }];
+	};
+	const draw = () => {
+		state.pieces = [];
+		return transcript.layout(80, 30, "", render, {
+			head: [{ key: "head", kind: "static" }],
+			tail: [],
+		});
+	};
+	return { transcript, state, draw: () => quiet(draw, () => changes) };
+}
+
+test("a followed message made of one oversized delta keeps its last 32 KiB under the marker, and expansion reaches its start", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	const message = { role: "assistant", content: [] };
+	capture.emit(child.id, { type: "message_start", message });
+	const delta = oversized();
+	capture.emit(child.id, {
+		type: "message_update",
+		message,
+		assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
+	});
+	await written(capture.audit, child.id);
+	const { transcript, state, draw } = messageTranscript(capture.audit, child.id);
+	await draw();
+	assert.equal(state.pieces.length, 1);
+	const [piece] = state.pieces;
+	assert.ok(piece.text.length <= 32 * 1024, `${piece.text.length} characters`);
+	assert.ok(piece.text.isWellFormed());
+	assert.ok(delta.endsWith(piece.text));
+	assert.notEqual(piece.earlier, undefined);
+	state.expand = true;
+	await draw();
+	assert.equal(state.pieces.map((shown) => shown.text).join(""), delta);
+	transcript.dispose();
+});
+
+test("a message made of one oversized delta read forward from above keeps its first 32 KiB", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	for (let i = 0; i < 400; i++) {
+		capture.say(child.id, [{ type: "text", text: `Line ${i}.` }]);
+		if (i % 100 === 99) await written(capture.audit, child.id);
+	}
+	const message = { role: "assistant", content: [] };
+	capture.emit(child.id, { type: "message_start", message });
+	const delta = oversized();
+	capture.emit(child.id, {
+		type: "message_update",
+		message,
+		assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
+	});
+	await written(capture.audit, child.id);
+	for (let i = 0; i < 200; i++) {
+		capture.say(child.id, [{ type: "text", text: `After ${i}.` }]);
+		if (i % 50 === 49) await written(capture.audit, child.id);
+	}
+	const { transcript, state, draw } = messageTranscript(capture.audit, child.id);
+	let rows = await draw();
+	for (let i = 0; i < 100 && rows[0] !== "head"; i++) {
+		transcript.scroll(-30);
+		rows = await draw();
+	}
+	assert.equal(rows[0], "head");
+	for (let i = 0; i < 100 && !rows.includes("BIG"); i++) {
+		transcript.scroll(30);
+		rows = await draw();
+	}
+	assert.equal(state.pieces.length, 1);
+	const [piece] = state.pieces;
+	assert.ok(piece.text.length <= 32 * 1024, `${piece.text.length} characters`);
+	assert.ok(piece.text.isWellFormed());
+	assert.ok(piece.text.length > 0);
+	assert.ok(delta.startsWith(piece.text));
+	assert.equal(piece.earlier, undefined);
+	transcript.dispose();
+});
+
+test("expanding a capped message whose earlier read ends right before the kept delta shows the whole text", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	const message = { role: "assistant", content: [] };
+	capture.emit(child.id, { type: "message_start", message });
+	let full = "";
+	for (let i = 0; i < 127; i++) {
+		full += `d${i}.`;
+		capture.emit(child.id, {
+			type: "message_update",
+			message,
+			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: `d${i}.` },
+		});
+	}
+	const delta = oversized();
+	full += delta;
+	capture.emit(child.id, {
+		type: "message_update",
+		message,
+		assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
+	});
+	await written(capture.audit, child.id);
+	const { transcript, state, draw } = messageTranscript(capture.audit, child.id);
+	await draw();
+	state.expand = true;
+	await draw();
+	await draw();
+	assert.equal(state.pieces.map((piece) => piece.text).join(""), full);
+	transcript.dispose();
+});
+
+test("paging a long transcript row by row settles after every step", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	for (let i = 0; i < 600; i++) {
+		capture.say(child.id, [{ type: "text", text: `Line ${i}.` }]);
+		if (i % 50 === 49) await written(capture.audit, child.id);
+	}
+	await written(capture.audit, child.id);
+	let changes = 0;
+	const transcript = createTranscript({
+		audit: capture.audit,
+		child: child.id,
+		changed() {
+			changes += 1;
+		},
+	});
+	const draw = () =>
+		transcript.layout(80, 70, "", (item) => [{ sub: "b", rows: [item.key] }], {
+			head: [{ key: "head", kind: "static" }],
+			tail: [],
+		});
+	let rows = await quiet(draw, () => changes);
+	for (let i = 0; i < 100 && rows[0] !== "head"; i++) {
+		transcript.scroll(-70);
+		rows = await quiet(draw, () => changes);
+	}
+	assert.equal(rows[0], "head");
+	for (let step = 0; step < 250; step++) {
+		transcript.scroll(1);
+		const after = await quiet(draw, () => changes);
+		assert.deepEqual(after.slice(0, -1), rows.slice(1), `step ${step}`);
+		rows = after;
+	}
+	transcript.dispose();
+});
+
+test("a tool streaming thousands of updates stays bounded while followed", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	const update = (i) =>
+		capture.emit(child.id, {
+			type: "tool_execution_update",
+			toolCallId: "long",
+			toolName: "bash",
+			args: { command: "make" },
+			partialResult: { content: [{ type: "text", text: `p${i}` }] },
+		});
+	capture.tool(child.id, "long", "bash", { command: "make" });
+	for (let i = 0; i < 3000; i++) {
+		update(i);
+		if (i % 100 === 99) await written(capture.audit, child.id);
+	}
+	await written(capture.audit, child.id);
+	let changes = 0;
+	const transcript = createTranscript({
+		audit: capture.audit,
+		child: child.id,
+		changed() {
+			changes += 1;
+		},
+	});
+	let tool;
+	const draw = () =>
+		transcript.layout(
+			80,
+			30,
+			"",
+			(item) => {
+				if (item.kind !== "tool") return [];
+				tool = item.entry;
+				return [
+					{ sub: "t", rows: ["tool", JSON.stringify(item.entry.partial)] },
+				];
+			},
+			{ head: [], tail: [] },
+		);
+	await quiet(draw, () => changes);
+	assert.equal(tool.earlier, undefined);
+	assert.deepEqual(tool.args, { command: "make" });
+	for (let i = 3000; i < 3300; i++) {
+		update(i);
+		if (i % 100 === 99) await written(capture.audit, child.id);
+	}
+	await written(capture.audit, child.id);
+	transcript.changed();
+	await quiet(draw, () => changes);
+	assert.match(JSON.stringify(tool.partial), /p3299/);
+	assert.deepEqual(tool.args, { command: "make" });
+	assert.deepEqual(transcript.info().retained, { items: 1, observations: 2 });
+	transcript.dispose();
+});
+
+test("scrolling up a streamed message longer than its text cap shows its capped tail under the marker, and expansion reaches its start", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	const streaming = { role: "assistant", content: [] };
+	capture.emit(child.id, { type: "message_start", message: streaming });
+	for (let i = 0; i < 8000; i++) {
+		capture.emit(child.id, {
+			type: "message_update",
+			message: streaming,
+			assistantMessageEvent: {
+				type: "text_delta",
+				contentIndex: 0,
+				delta: `w${i} `,
+			},
+		});
+		if (i % 100 === 99) await written(capture.audit, child.id);
+	}
+	await written(capture.audit, child.id);
+	let changes = 0;
+	const transcript = createTranscript({
+		audit: capture.audit,
+		child: child.id,
+		changed() {
+			changes += 1;
+		},
+	});
+	let expand = false;
+	let revealed = false;
+	let pieces = [];
+	const draw = () => {
+		pieces = [];
+		return transcript.layout(
+			80,
+			50,
+			"",
+			(item) => {
+				if (item.kind === "static") return [{ sub: "s", rows: ["head"] }];
+				if (item.kind !== "message") return [];
+				const text = item.entry.content[0]?.text ?? "";
+				pieces.push({ text, earlier: item.entry.earlier });
+				revealed ||= text.startsWith("w0 ");
+				const load =
+					expand && item.entry.earlier !== undefined
+						? { load: { earlier: item.entry.earlier } }
+						: {};
+				return [{ sub: "body", rows: text.trim().split(" "), ...load }];
+			},
+			{ head: [{ key: "head", kind: "static" }], tail: [] },
+		);
+	};
+	let rows = await quiet(draw, () => changes);
+	for (let i = 0; i < 400 && rows[0] !== "head"; i++) {
+		transcript.scroll(-40);
+		rows = await quiet(draw, () => changes);
+		assert.ok(pieces[0].text.length <= 32 * 1024, `step ${i}`);
+	}
+	assert.equal(rows[0], "head");
+	assert.equal(pieces.length, 1);
+	assert.notEqual(pieces[0].earlier, undefined);
+	assert.match(pieces[0].text, / w7999 $/);
+	assert.equal(revealed, false);
+	expand = true;
+	await quiet(draw, () => changes);
+	assert.equal(revealed, true);
+	transcript.dispose();
+});
+
+function compact(item) {
+	if (item.kind === "static") return [{ sub: "s", rows: ["head"] }];
+	const text = item.entry?.content?.[0]?.text ?? "";
+	return [{ sub: "b", rows: [/^(Line|After) /.test(text) ? text : "LONG"] }];
+}
+
+function compactTranscript(capture, id) {
+	let changes = 0;
+	const transcript = createTranscript({
+		audit: capture.audit,
+		child: id,
+		changed() {
+			changes += 1;
+		},
+	});
+	const draw = () =>
+		transcript.layout(80, 30, "", compact, {
+			head: [{ key: "head", kind: "static" }],
+			tail: [],
+		});
+	return { transcript, draw: () => quiet(draw, () => changes) };
+}
+
+async function pageDown(transcript, draw, rows) {
+	for (let step = 0; rows.at(-1) !== "After 99."; step++) {
+		assert.ok(step < 400, "the end was never reached");
+		transcript.scroll(1);
+		const after = await draw();
+		assert.equal(after.length, 30, `step ${step}`);
+		assert.deepEqual(after.slice(0, -1), rows.slice(1), `step ${step}`);
+		rows = after;
+	}
+	assert.equal(transcript.following, true);
+}
+
+function streamLong(capture, id, message, count, part = "text_delta") {
+	return (async () => {
+		for (let i = 0; i < count; i++) {
+			capture.emit(id, {
+				type: "message_update",
+				message,
+				assistantMessageEvent: { type: part, contentIndex: 0, delta: `d${i} ` },
+			});
+			if (i % 100 === 99) await written(capture.audit, id);
+		}
+	})();
+}
+
+test("paging row by row past a message longer than the resident windows keeps the pane full on both sides of it and follows again at the end", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	for (let i = 0; i < 100; i++)
+		capture.say(child.id, [{ type: "text", text: `Line ${i}.` }]);
+	await written(capture.audit, child.id);
+	const message = { role: "assistant", content: [] };
+	capture.emit(child.id, { type: "message_start", message });
+	await streamLong(capture, child.id, message, 1000);
+	capture.emit(child.id, {
+		type: "message_end",
+		message: { role: "assistant", content: [{ type: "text", text: "LONG" }] },
+	});
+	for (let i = 0; i < 100; i++)
+		capture.say(child.id, [{ type: "text", text: `After ${i}.` }]);
+	await written(capture.audit, child.id);
+	const { transcript, draw } = compactTranscript(capture, child.id);
+	let rows = await draw();
+	for (let i = 0; i < 100 && rows[0] !== "head"; i++) {
+		transcript.scroll(-30);
+		rows = await draw();
+	}
+	assert.equal(rows[0], "head");
+	await pageDown(transcript, draw, rows);
+	transcript.dispose();
+});
+
+test("paging row by row from the top past a message that grew longer than the resident windows after the view reached it keeps the pane full", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	for (let i = 0; i < 40; i++)
+		capture.say(child.id, [{ type: "text", text: `Line ${i}.` }]);
+	const message = { role: "assistant", content: [] };
+	capture.emit(child.id, { type: "message_start", message });
+	await written(capture.audit, child.id);
+	const { transcript, draw } = compactTranscript(capture, child.id);
+	let rows = await draw();
+	for (let i = 0; i < 10 && rows[0] !== "head"; i++) {
+		transcript.scroll(-30);
+		rows = await draw();
+	}
+	assert.equal(rows[0], "head");
+	await streamLong(capture, child.id, message, 1000);
+	capture.emit(child.id, {
+		type: "message_end",
+		message: { role: "assistant", content: [{ type: "text", text: "LONG" }] },
+	});
+	for (let i = 0; i < 100; i++)
+		capture.say(child.id, [{ type: "text", text: `After ${i}.` }]);
+	await written(capture.audit, child.id);
+	transcript.changed();
+	await pageDown(transcript, draw, await draw());
+	transcript.dispose();
+});
+
+for (const key of ["wheel", "page"]) {
+	test(`${key === "wheel" ? "the wheel" : "Ctrl+K"} reaches the start past a long ended tool call, settling after every step`, async (t) => {
+		const child = record("5636", {
+			state: "completed",
+			endedAt: now,
+			text: "done",
+		});
+		const capture = audited(t, [child]);
+		for (let i = 0; i < 60; i++)
+			capture.say(child.id, [{ type: "text", text: `Before ${i}.` }]);
+		capture.tool(child.id, "long", "bash", { command: "make" });
+		for (let i = 0; i < 2000; i++) {
+			capture.emit(child.id, {
+				type: "tool_execution_update",
+				toolCallId: "long",
+				toolName: "bash",
+				args: { command: "make" },
+				partialResult: { content: [{ type: "text", text: `p${i}` }] },
+			});
+			if (i % 100 === 99) await written(capture.audit, child.id);
+		}
+		capture.emit(child.id, {
+			type: "tool_execution_end",
+			toolCallId: "long",
+			toolName: "bash",
+			result: { content: [{ type: "text", text: "built" }] },
+			isError: false,
+		});
+		for (let i = 0; i < 60; i++)
+			capture.say(child.id, [{ type: "text", text: `After ${i}.` }]);
+		await written(capture.audit, child.id);
+		const view = open(fakeSessions([child]), { rows: 30, audit: capture.audit });
+		view.press("\t");
+		let text = await settle(view);
+		let before = detailColumn(text).slice(4, 25);
+		for (let step = 0; !/Before 0\./.test(text); step++) {
+			assert.ok(step < 300, "the start was never reached");
+			if (key === "wheel") view.mouse({ type: "wheel", x: 60, y: 8, wheelDelta: -3 });
+			else view.press("\x0b");
+			const renders = view.tui.renders;
+			text = await settle(view);
+			assert.ok(view.tui.renders - renders < 20, `step ${step} never settled`);
+			const after = detailColumn(text).slice(4, 25);
+			if (key === "wheel") assert.deepEqual(after.slice(3), before.slice(0, -3), `step ${step}`);
+			before = after;
+		}
+	});
+}
+
+test("the wheel scrolls down past a long streamed tool call by its exact delta while the pane stays full, and f reaches the tail", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	for (let i = 0; i < 40; i++)
+		capture.say(child.id, [{ type: "text", text: `Before ${i}.` }]);
+	const message = { role: "assistant", content: [] };
+	capture.emit(child.id, { type: "message_start", message });
+	capture.emit(child.id, {
+		type: "message_update",
+		message,
+		assistantMessageEvent: {
+			type: "toolcall_delta",
+			contentIndex: 0,
+			delta: `{"path":"big.txt","content":"`,
+		},
+	});
+	await written(capture.audit, child.id);
+	const sessions = fakeSessions([child]);
+	const view = open(sessions, { rows: 30, audit: capture.audit });
+	view.press("\t");
+	const wheel = async (wheelDelta) => {
+		view.mouse({ type: "wheel", x: 60, y: 8, wheelDelta });
+		const renders = view.tui.renders;
+		const text = await settle(view);
+		assert.ok(view.tui.renders - renders < 20, "a step never settled");
+		return text;
+	};
+	let text = await settle(view);
+	for (let i = 0; i < 40 && !/Before 0\./.test(text); i++) text = await wheel(-3);
+	assert.match(text, /Before 0\./);
+	await streamLong(capture, child.id, message, 2000, "toolcall_delta");
+	const call = {
+		type: "toolCall",
+		id: "w",
+		name: "write",
+		arguments: { path: "big.txt", content: "x" },
+	};
+	capture.emit(child.id, {
+		type: "message_end",
+		message: { role: "assistant", content: [call] },
+	});
+	capture.tool(child.id, "w", "write", { path: "big.txt", content: "x" }, "ok");
+	for (let i = 0; i < 60; i++)
+		capture.say(child.id, [{ type: "text", text: `After ${i}.` }]);
+	await written(capture.audit, child.id);
+	sessions.changed();
+	let before = detailColumn(await settle(view)).slice(4, 25);
+	for (let step = 0; !/After 59\./.test(before.join("\n")); step++) {
+		assert.ok(step < 200, "the end was never reached");
+		const after = detailColumn(await wheel(3)).slice(4, 25);
+		if (!/After 59\./.test(after.join("\n"))) {
+			assert.deepEqual(after.slice(0, -3), before.slice(3), `step ${step}`);
+		}
+		before = after;
+	}
+	for (let i = 0; i < 12; i++) await wheel(-3);
+	assert.doesNotMatch(await settle(view), /After 59\./);
+	view.press("f");
+	assert.match(await settle(view), /After 59\./);
+});
+
+test("following a long streaming tool call preceded by messages fills the pane, and the wheel then moves it by its exact delta", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	for (let i = 0; i < 40; i++)
+		capture.say(child.id, [{ type: "text", text: `Before ${i}.` }]);
+	const message = { role: "assistant", content: [] };
+	capture.emit(child.id, { type: "message_start", message });
+	await streamLong(capture, child.id, message, 2000, "toolcall_delta");
+	await written(capture.audit, child.id);
+	const view = open(fakeSessions([child]), { rows: 30, audit: capture.audit });
+	view.press("\t");
+	const before = detailColumn(await settle(view)).slice(4, 25);
+	assert.match(before.join("\n"), /Before 39\./);
+	assert.match(before.at(-1), /Calling a tool/);
+	view.mouse({ type: "wheel", x: 60, y: 8, wheelDelta: -3 });
+	const after = detailColumn(await settle(view)).slice(4, 25);
+	assert.deepEqual(after.slice(3), before.slice(0, -3));
+});
+
+test("the wheel moves down and up through a long ended message of interleaved thinking, text and steers by its exact delta, settling after each step and reaching its end", async (t) => {
+	const child = record("5636", {
+		state: "completed",
+		endedAt: now,
+		text: "done",
+	});
+	const capture = audited(t, [child]);
+	for (let i = 0; i < 400; i++) {
+		capture.say(child.id, [{ type: "text", text: `Before ${i}.` }]);
+		if (i % 100 === 99) await written(capture.audit, child.id);
+	}
+	const message = { role: "assistant", content: [] };
+	capture.emit(child.id, { type: "message_start", message });
+	let thinking = "";
+	let text = "";
+	const steers = [];
+	for (let i = 0; i < 1200; i++) {
+		const thought = `k${i} `;
+		const said = i % 40 === 39 ? `t${i}\n\n` : `t${i} `;
+		thinking += thought;
+		text += said;
+		capture.emit(child.id, {
+			type: "message_update",
+			message,
+			assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: thought },
+		});
+		capture.emit(child.id, {
+			type: "message_update",
+			message,
+			assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: said },
+		});
+		if (i % 300 === 299) {
+			steers.push(`Steer ${i}.`);
+			capture.emit(child.id, {
+				type: "queue_update",
+				steering: [...steers],
+				followUp: [],
+			});
+		}
+		if (i % 100 === 99) await written(capture.audit, child.id);
+	}
+	capture.emit(child.id, {
+		type: "message_end",
+		message: {
+			role: "assistant",
+			content: [
+				{ type: "thinking", thinking },
+				{ type: "text", text },
+			],
+		},
+	});
+	for (let i = 0; i < 40; i++)
+		capture.say(child.id, [{ type: "text", text: `After ${i}.` }]);
+	await written(capture.audit, child.id);
+	const view = open(fakeSessions([child]), { rows: 30, audit: capture.audit });
+	view.press("\t");
+	const pane = async () => detailColumn(await settle(view)).slice(4, 25);
+	const wheel = async (wheelDelta) => {
+		view.mouse({ type: "wheel", x: 60, y: 8, wheelDelta });
+		const renders = view.tui.renders;
+		const after = await pane();
+		assert.ok(view.tui.renders - renders < 20, "a step never settled");
+		return after;
+	};
+	let before = await pane();
+	for (let i = 0; i < 200 && !/Before 0\./.test(before.join("\n")); i++)
+		before = await wheel(-40);
+	for (let i = 0; i < 200 && !/Before 390\./.test(before.join("\n")); i++)
+		before = await wheel(40);
+	for (let step = 0; !/After 39\./.test(before.join("\n")); step++) {
+		assert.ok(step < 600, "the end was never reached");
+		const after = await wheel(3);
+		if (!/After 39\./.test(after.join("\n"))) {
+			assert.deepEqual(after.slice(0, -3), before.slice(3), `down step ${step}`);
+		}
+		before = after;
+	}
+	for (let step = 0; !/Before 390\./.test(before.join("\n")); step++) {
+		assert.ok(step < 600, "the start was never reached again");
+		const after = await wheel(-3);
+		assert.deepEqual(after.slice(3), before.slice(0, -3), `up step ${step}`);
+		before = after;
+	}
+});
+
+function toolUpdate(capture, id, call, i) {
+	capture.emit(id, {
+		type: "tool_execution_update",
+		toolCallId: call,
+		toolName: "bash",
+		args: { command: call },
+		partialResult: { content: [{ type: "text", text: `${call}${i}` }] },
+	});
+}
+
+function toolEnd(capture, id, call) {
+	capture.emit(id, {
+		type: "tool_execution_end",
+		toolCallId: call,
+		toolName: "bash",
+		result: { content: [{ type: "text", text: `${call} done` }] },
+		isError: false,
+	});
+}
+
+function itemRows(item) {
+	if (item.kind === "static") return [{ sub: "s", rows: ["head"] }];
+	if (item.kind === "tool") {
+		const partial = JSON.stringify(item.entry.partial ?? item.entry.result ?? "");
+		return [{ sub: "t", rows: [item.key, partial] }];
+	}
+	const text = item.entry?.content?.[0]?.text;
+	return text === undefined ? [] : [{ sub: "b", rows: [text] }];
+}
+
+function rowsTranscript(audit, id) {
+	let changes = 0;
+	const transcript = createTranscript({
+		audit,
+		child: id,
+		changed() {
+			changes += 1;
+		},
+	});
+	const draw = () =>
+		transcript.layout(80, 30, "", itemRows, {
+			head: [{ key: "head", kind: "static" }],
+			tail: [],
+		});
+	return { transcript, draw: () => quiet(draw, () => changes) };
+}
+
+test("two parallel tools streaming thousands of interleaved updates retain observations bounded by their items while the view crosses them", async (t) => {
+	const child = record("5636", {
+		state: "completed",
+		endedAt: now,
+		text: "done",
+	});
+	const capture = audited(t, [child]);
+	for (let i = 0; i < 40; i++)
+		capture.say(child.id, [{ type: "text", text: `Line ${i}.` }]);
+	capture.tool(child.id, "A", "bash", { command: "A" });
+	capture.tool(child.id, "B", "bash", { command: "B" });
+	for (let i = 0; i < 2000; i++) {
+		toolUpdate(capture, child.id, "A", i);
+		toolUpdate(capture, child.id, "B", i);
+		if (i % 50 === 49) await written(capture.audit, child.id);
+	}
+	toolEnd(capture, child.id, "A");
+	toolEnd(capture, child.id, "B");
+	for (let i = 0; i < 40; i++)
+		capture.say(child.id, [{ type: "text", text: `After ${i}.` }]);
+	await written(capture.audit, child.id);
+	const { transcript, draw } = rowsTranscript(capture.audit, child.id);
+	const bounded = (where) => {
+		const { items, observations } = transcript.info().retained;
+		assert.ok(items <= 82, `${items} items retained ${where}`);
+		assert.ok(observations <= 80 + 2 * 3, `${observations} observations retained ${where}`);
+	};
+	let rows = await draw();
+	bounded("when opened");
+	for (let i = 0; i < 100 && rows[0] !== "head"; i++) {
+		transcript.scroll(-7);
+		rows = await draw();
+		bounded("going up");
+	}
+	assert.equal(rows[0], "head");
+	for (let i = 0; i < 100 && rows.at(-1) !== "After 39."; i++) {
+		transcript.scroll(7);
+		rows = await draw();
+		bounded("going down");
+	}
+	assert.equal(rows.at(-1), "After 39.");
+	transcript.dispose();
+});
+
+test("scrolling both ways over thousands of tool-call messages that draw no rows keeps at most 384 items resident", async (t) => {
+	const child = record("5636", {
+		state: "completed",
+		endedAt: now,
+		text: "done",
+	});
+	const capture = audited(t, [child]);
+	for (let n = 0; n < 3000; n++) {
+		if (n % 10 === 0) {
+			capture.say(child.id, [{ type: "text", text: `Line ${n}.` }]);
+		} else {
+			const message = { role: "assistant", content: [] };
+			capture.emit(child.id, { type: "message_start", message });
+			for (let i = 0; i < 5; i++) {
+				capture.emit(child.id, {
+					type: "message_update",
+					message,
+					assistantMessageEvent: { type: "toolcall_delta", contentIndex: 0, delta: `${i}` },
+				});
+			}
+			const call = { type: "toolCall", id: `c${n}`, name: "read", arguments: {} };
+			capture.emit(child.id, {
+				type: "message_end",
+				message: { role: "assistant", content: [call] },
+			});
+		}
+		if (n % 20 === 19) await written(capture.audit, child.id);
+	}
+	for (let i = 0; i < 40; i++)
+		capture.say(child.id, [{ type: "text", text: `After ${i}.` }]);
+	await written(capture.audit, child.id);
+	let reads = 0;
+	const audit = {
+		read(id, cursor) {
+			reads += 1;
+			return capture.audit.read(id, cursor);
+		},
+		segment: capture.audit.segment,
+	};
+	const { transcript, draw } = rowsTranscript(audit, child.id);
+	let rows = await draw();
+	let most = 0;
+	const step = async (delta) => {
+		const before = reads;
+		transcript.scroll(delta);
+		rows = await draw();
+		most = Math.max(most, reads - before);
+		assert.equal(rows.length, 30);
+		assert.ok(transcript.info().retained.items <= 384, `${transcript.info().retained.items} items`);
+	};
+	for (let i = 0; i < 200 && rows[0] !== "head"; i++) await step(-7);
+	assert.equal(rows[0], "head");
+	for (let i = 0; i < 200 && rows.at(-1) !== "After 39."; i++) await step(7);
+	assert.equal(rows.at(-1), "After 39.");
+	assert.ok(most <= 8, `${most} reads in one step`);
+	transcript.dispose();
+});
+
+test("an early tool updated late is not pruned with the rows on screen when the read after it crosses the item budget", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	capture.tool(child.id, "early", "bash", { command: "early" });
+	for (let i = 0; i < 383; i++) {
+		capture.say(child.id, [{ type: "text", text: `Line ${i}.` }]);
+		if (i % 100 === 99) await written(capture.audit, child.id);
+	}
+	await written(capture.audit, child.id);
+	const { transcript, draw } = rowsTranscript(capture.audit, child.id);
+	let rows = await draw();
+	for (let i = 0; i < 40 && rows[0] !== "head"; i++) {
+		transcript.scroll(-30);
+		rows = await draw();
+	}
+	assert.equal(rows[0], "head");
+	for (let i = 0; i < 40 && !rows.includes("Line 350."); i++) {
+		transcript.scroll(30);
+		rows = await draw();
+	}
+	assert.ok(rows.includes("Line 350."));
+	assert.equal(transcript.info().retained.items, 384);
+	toolUpdate(capture, child.id, "early", 1);
+	capture.say(child.id, [{ type: "text", text: "Line 383." }]);
+	await written(capture.audit, child.id);
+	transcript.changed();
+	const after = await draw();
+	assert.deepEqual(after, rows);
+	for (const delta of [-3, -3, -3, 3, 3, 3, 3, 3]) {
+		transcript.scroll(delta);
+		const next = await draw();
+		assert.equal(next.length, 30);
+		if (delta < 0) assert.deepEqual(next.slice(3), rows.slice(0, -3));
+		else assert.deepEqual(next.slice(0, -3), rows.slice(3));
+		rows = next;
+	}
+	for (let i = 0; i < 40 && rows[0] !== "head"; i++) {
+		transcript.scroll(-10);
+		rows = await draw();
+	}
+	assert.equal(rows[0], "head");
+	assert.ok(rows.some((row) => row.includes("early1")), rows.join("\n"));
+	transcript.dispose();
+});
+
+function earlyInPlace(rows) {
+	const at = rows.indexOf("tool:early");
+	if (at >= 0 && at + 2 < rows.length) assert.equal(rows[at + 2], "Line 0.");
+}
+
+test("following a child whose early tool keeps updating among thousands of later items keeps residency bounded", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	capture.tool(child.id, "early", "bash", { command: "early" });
+	await written(capture.audit, child.id);
+	const { transcript, draw } = rowsTranscript(capture.audit, child.id);
+	let rows = await draw();
+	for (let n = 0; n < 2400; n++) {
+		capture.say(child.id, [{ type: "text", text: `Line ${n}.` }]);
+		if (n % 5 === 4) toolUpdate(capture, child.id, "early", n);
+		if (n % 60 === 59) {
+			await written(capture.audit, child.id);
+			transcript.changed();
+			rows = await draw();
+			assert.ok(transcript.info().retained.items <= 384, `${transcript.info().retained.items} items`);
+		}
+	}
+	assert.equal(rows.at(-1), "Line 2399.");
+	transcript.scroll(-100000);
+	earlyInPlace(
+		transcript.layout(80, 30, "", itemRows, { head: [{ key: "head", kind: "static" }], tail: [] }),
+	);
+	for (let i = 0; i < 200 && rows[0] !== "head"; i++) {
+		transcript.scroll(-30);
+		rows = await draw();
+		assert.ok(transcript.info().retained.items <= 384, `${transcript.info().retained.items} items`);
+		earlyInPlace(rows);
+	}
+	assert.equal(rows[0], "head");
+	assert.ok(rows.some((row) => row.includes("early2399")), rows.join("\n"));
+	transcript.dispose();
+});
+
+async function runningTools(t, options = {}) {
+	const root = withAgentDirectory(t);
+	const child = record("5636");
+	const capture = audited(t, [child], { root, limits: options.limits });
+	const issued = new Set();
+	const invented = [];
+	const audit = {
+		async read(id, cursor) {
+			if (cursor?.offset !== undefined && !issued.has(JSON.stringify(cursor))) invented.push(cursor);
+			const read = await capture.audit.read(id, cursor);
+			if (read && "next" in read) issued.add(JSON.stringify(read.next));
+			return read;
+		},
+		segment: capture.audit.segment,
+	};
+	const { transcript, draw } = rowsTranscript(audit, child.id);
+	let rows = await draw();
+	const latest = new Map();
+	const message = { role: "assistant", content: [] };
+	let streamed = "";
+	capture.emit(child.id, { type: "message_start", message });
+	const sync = async () => {
+		const delta = `d${streamed.split(" ").length} `;
+		streamed += delta;
+		capture.emit(child.id, {
+			type: "message_update",
+			message,
+			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
+		});
+		await written(capture.audit, child.id);
+		transcript.changed();
+		rows = await draw();
+		assert.ok(transcript.info().retained.items <= 384, `${transcript.info().retained.items} items`);
+	};
+	let started = 0;
+	const start = async (count) => {
+		for (let j = 0; j < count; j++) {
+			capture.tool(child.id, `p${started}`, "bash", { command: `p${started}` });
+			started += 1;
+			if (started % 50 === 0) await sync();
+		}
+		await sync();
+	};
+	const update = async (round, step = 1) => {
+		for (let k = 0; k < started; k += step) {
+			toolUpdate(capture, child.id, `p${k}`, `u${round}`);
+			latest.set(`tool:p${k}`, `p${k}u${round}`);
+			if (k % 50 === 49) await sync();
+		}
+		await sync();
+	};
+	await start(384);
+	await update(0);
+	await start(1);
+	await update(1, 2);
+	await start(20);
+	assert.ok(rows.includes("tool:p404"), rows.join("\n"));
+	if (options.unindexed) await rm(join(root, "parent-1", `${child.id}.index`), { recursive: true });
+	const shown = (pane) => {
+		for (const [at, row] of pane.entries()) {
+			const want = latest.get(row);
+			if (want !== undefined && at + 1 < pane.length) assert.match(pane[at + 1], new RegExp(want), row);
+		}
+	};
+	for (let i = 0; i < 400 && rows[0] !== "head"; i++) {
+		transcript.scroll(-7);
+		rows = await draw();
+		assert.equal(rows.length, 30);
+		assert.ok(transcript.info().retained.items <= 384, `${transcript.info().retained.items} items`);
+		shown(rows);
+	}
+	assert.equal(rows[0], "head");
+	assert.equal(rows[1], streamed);
+	assert.deepEqual(invented, []);
+	transcript.dispose();
+}
+
+test("following hundreds of running tools that all update after the last one started keeps residency bounded and each tool's state", (t) =>
+	runningTools(t));
+
+test("a removed tool brought back over a record without its index, by backward pages that pass their boundary, shows its latest state", (t) =>
+	runningTools(t, { unindexed: true, limits: { windowBytes: 2048, cacheEntries: 0 } }));
+
+test("a record without its index opens on its tail even when the tail lies past the first window of bytes", async (t) => {
+	const root = withAgentDirectory(t);
+	const child = record("5636");
+	const capture = audited(t, [child], { root, limits: { windowBytes: 4096, cacheEntries: 0 } });
+	for (let i = 0; i < 300; i++) {
+		capture.say(child.id, [{ type: "text", text: `Line ${i}.` }]);
+		if (i % 50 === 49) await written(capture.audit, child.id);
+	}
+	await rm(join(root, "parent-1", `${child.id}.index`), { recursive: true });
+	const { transcript, draw } = rowsTranscript(capture.audit, child.id);
+	const rows = await draw();
+	assert.equal(rows.at(-1), "Line 299.");
+	transcript.dispose();
+});
+
+function zeroRow(capture, id, n) {
+	const message = { role: "assistant", content: [] };
+	capture.emit(id, { type: "message_start", message });
+	capture.emit(id, {
+		type: "message_update",
+		message,
+		assistantMessageEvent: { type: "toolcall_delta", contentIndex: 0, delta: "x" },
+	});
+	const call = { type: "toolCall", id: `c${n}`, name: "read", arguments: {} };
+	capture.emit(id, { type: "message_end", message: { role: "assistant", content: [call] } });
+}
+
+test("an undrawn tool that ended below the read range shows its result when scrolling back reaches it", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	capture.tool(child.id, "a", "bash", { command: "a" });
+	capture.tool(child.id, "b", "bash", { command: "b" });
+	for (let i = 0; i < 100; i++) capture.say(child.id, [{ type: "text", text: `Line ${i}.` }]);
+	await written(capture.audit, child.id);
+	const { transcript, draw } = rowsTranscript(capture.audit, child.id);
+	let rows = await draw();
+	let n = 0;
+	const read = async (count) => {
+		for (let j = 0; j < count; j++) zeroRow(capture, child.id, n++);
+		await written(capture.audit, child.id);
+		transcript.changed();
+		rows = await draw();
+	};
+	for (let k = 0; k < 10; k++) {
+		for (let j = 0; j < 40; j++) zeroRow(capture, child.id, n++);
+		toolUpdate(capture, child.id, "a", k);
+		toolUpdate(capture, child.id, "b", k);
+		await read(0);
+	}
+	toolEnd(capture, child.id, "a");
+	toolEnd(capture, child.id, "b");
+	await read(40);
+	transcript.scroll(-5);
+	await read(60);
+	for (let i = 0; i < 400 && rows[0] !== "head"; i++) {
+		transcript.scroll(-30);
+		rows = await draw();
+	}
+	assert.equal(rows[0], "head");
+	assert.ok(rows.some((row) => row.includes("b done")), rows.slice(0, 6).join("\n"));
+	transcript.dispose();
+});
+
+test("random wheel reversals over consecutive long tool calls keep the pane full", async (t) => {
+	const child = record("5636", {
+		state: "completed",
+		endedAt: now,
+		text: "done",
+	});
+	const capture = audited(t, [child]);
+	for (let i = 0; i < 20; i++)
+		capture.say(child.id, [{ type: "text", text: `Line ${i}.` }]);
+	for (let k = 0; k < 6; k++) {
+		capture.tool(child.id, `T${k}`, "bash", { command: `T${k}` });
+		for (let i = 0; i < 1000; i++) {
+			toolUpdate(capture, child.id, `T${k}`, i);
+			if (i % 100 === 99) await written(capture.audit, child.id);
+		}
+		toolEnd(capture, child.id, `T${k}`);
+	}
+	for (let i = 0; i < 20; i++)
+		capture.say(child.id, [{ type: "text", text: `After ${i}.` }]);
+	await written(capture.audit, child.id);
+	const { transcript, draw } = rowsTranscript(capture.audit, child.id);
+	let seed = 7;
+	const random = () => {
+		seed = (seed * 1103515245 + 12345) % 2147483648;
+		return seed / 2147483648;
+	};
+	await draw();
+	for (let step = 0; step < 300; step++) {
+		transcript.scroll(Math.round((random() - 0.5) * 40) || 1);
+		const rows = await draw();
+		assert.equal(rows.length, 30, `step ${step}`);
+	}
+	transcript.dispose();
+});
+
+for (const reopened of [true, false]) {
+	test(`${reopened ? "a reopened record left unclosed" : "a live record"} scrolls down into a long ended message by its exact delta`, async (t) => {
+		const root = withAgentDirectory(t);
+		const child = record("5636", {
+			state: "completed",
+			endedAt: now,
+			text: "done",
+		});
+		const capture = audited(t, [child], { root });
+		for (let i = 0; i < 450; i++) {
+			capture.say(child.id, [{ type: "text", text: `Say ${i}.` }]);
+			if (i % 50 === 49) await written(capture.audit, child.id);
+		}
+		const message = { role: "assistant", content: [] };
+		capture.emit(child.id, { type: "message_start", message });
+		let text = "";
+		for (let i = 0; i < 7000; i++) {
+			const delta = i % 40 === 39 ? `w${i}\n\n` : `w${i} `;
+			text += delta;
+			capture.emit(child.id, {
+				type: "message_update",
+				message,
+				assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
+			});
+			if (i % 100 === 99) await written(capture.audit, child.id);
+		}
+		capture.emit(child.id, {
+			type: "message_end",
+			message: { role: "assistant", content: [{ type: "text", text }] },
+		});
+		for (let i = 0; i < 20; i++)
+			capture.say(child.id, [{ type: "text", text: `After ${i}.` }]);
+		await written(capture.audit, child.id);
+		const audit = reopened
+			? createChildAudit({ root, parent: () => "parent-1" })
+			: capture.audit;
+		const view = open(fakeSessions([child]), { rows: 40, audit });
+		view.press("\t");
+		const pane = async () => detailColumn(await settle(view)).slice(5, 35);
+		let before = await pane();
+		for (let i = 0; i < 400 && !/Say 0\./.test(before.join("\n")); i++) {
+			view.press("\x0b");
+			before = await pane();
+		}
+		assert.match(before.join("\n"), /Say 0\./);
+		for (let i = 0; i < 400 && !/Say 440\./.test(before.join("\n")); i++) {
+			view.press("\x0a");
+			before = await pane();
+		}
+		for (let step = 0; !/After 19\./.test(before.join("\n")); step++) {
+			assert.ok(step < 600, "the end was never reached");
+			view.mouse({ type: "wheel", x: 60, y: 8, wheelDelta: 3 });
+			const after = await pane();
+			if (!/After 19\./.test(after.join("\n"))) {
+				assert.deepEqual(after.slice(0, -3), before.slice(3), `step ${step}`);
+			}
+			before = after;
+		}
+	});
+}
+
+test("a followed message past its text cap keeps the rows the wheel left when its end arrives", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	capture.say(child.id, [{ type: "text", text: "Before." }]);
+	const message = { role: "assistant", content: [] };
+	capture.emit(child.id, { type: "message_start", message });
+	await written(capture.audit, child.id);
+	const sessions = fakeSessions([child]);
+	const view = open(sessions, { rows: 40, audit: capture.audit });
+	view.press("\t");
+	const pane = async () => detailColumn(await settle(view)).slice(4, 35);
+	await pane();
+	let text = "";
+	for (let i = 0; i < 7000; i++) {
+		const delta = i % 40 === 39 ? `w${i}\n\n` : `w${i} `;
+		text += delta;
+		capture.emit(child.id, {
+			type: "message_update",
+			message,
+			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
+		});
+		if (i % 100 === 99) {
+			await written(capture.audit, child.id);
+			sessions.changed();
+			await pane();
+		}
+	}
+	await written(capture.audit, child.id);
+	sessions.changed();
+	assert.match((await pane()).join("\n"), /w6999/);
+	view.mouse({ type: "wheel", x: 60, y: 8, wheelDelta: -15 });
+	const before = await pane();
+	capture.emit(child.id, {
+		type: "message_end",
+		message: { role: "assistant", content: [{ type: "text", text }] },
+	});
+	await written(capture.audit, child.id);
+	sessions.changed();
+	assert.deepEqual(await pane(), before);
+});
+
+test("a streaming message whose start is not loaded keeps the rows the wheel left when its end arrives", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	for (let i = 0; i < 5; i++)
+		capture.say(child.id, [{ type: "text", text: `Say ${i}.` }]);
+	const message = { role: "assistant", content: [] };
+	capture.emit(child.id, { type: "message_start", message });
+	let text = "";
+	for (let i = 0; i < 600; i++) {
+		const delta = `w${i}\n`;
+		text += delta;
+		capture.emit(child.id, {
+			type: "message_update",
+			message,
+			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
+		});
+		if (i % 100 === 99) await written(capture.audit, child.id);
+	}
+	await written(capture.audit, child.id);
+	const sessions = fakeSessions([child]);
+	const view = open(sessions, { rows: 40, audit: capture.audit });
+	view.press("\t");
+	const pane = async () => detailColumn(await settle(view)).slice(4, 35);
+	assert.match((await pane()).join("\n"), /w599/);
+	view.mouse({ type: "wheel", x: 60, y: 8, wheelDelta: -50 });
+	const before = await pane();
+	capture.emit(child.id, {
+		type: "message_end",
+		message: { role: "assistant", content: [{ type: "text", text }] },
+	});
+	await written(capture.audit, child.id);
+	sessions.changed();
+	assert.deepEqual(await pane(), before);
+});
+
+test("a fast flick up a streaming message whose start is not loaded settles where the flick put it", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	capture.say(child.id, [{ type: "text", text: "Before the stream." }]);
+	const message = { role: "assistant", content: [] };
+	capture.emit(child.id, { type: "message_start", message });
+	for (let i = 0; i < 3000; i++) {
+		const delta = i % 25 === 24 ? `t${i}\n\n` : `t${i} `;
+		capture.emit(child.id, {
+			type: "message_update",
+			message,
+			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
+		});
+		if (i % 100 === 99) await written(capture.audit, child.id);
+	}
+	await written(capture.audit, child.id);
+	const flicked = open(fakeSessions([child]), { rows: 40, audit: capture.audit });
+	const stepped = open(fakeSessions([child]), { rows: 40, audit: capture.audit });
+	const pane = async (view) => detailColumn(await settle(view)).slice(4, 35);
+	for (const view of [flicked, stepped]) {
+		view.press("\t");
+		await pane(view);
+	}
+	for (let k = 0; k < 40; k++) {
+		flicked.mouse({ type: "wheel", x: 60, y: 8, wheelDelta: -3 });
+		flicked.lines(120);
+	}
+	for (let k = 0; k < 40; k++) {
+		stepped.mouse({ type: "wheel", x: 60, y: 8, wheelDelta: -3 });
+		await pane(stepped);
+	}
+	assert.deepEqual(await pane(flicked), await pane(stepped));
+});
+
+test("a detached view keeps the newest text of a message streaming past its cap, so following shows it at once", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	const streaming = { role: "assistant", content: [] };
+	capture.emit(child.id, { type: "message_start", message: streaming });
+	let i = 0;
+	const stream = async (count) => {
+		for (const end = i + count; i < end; i++) {
+			capture.emit(child.id, {
+				type: "message_update",
+				message: streaming,
+				assistantMessageEvent: {
+					type: "text_delta",
+					contentIndex: 0,
+					delta: `w${i} pad${i} `,
+				},
+			});
+			if (i % 50 === 49) {
+				await written(capture.audit, child.id);
+				transcript.changed();
+				await quiet(draw, () => changes);
+			}
+		}
+	};
+	let changes = 0;
+	const transcript = createTranscript({
+		audit: capture.audit,
+		child: child.id,
+		changed() {
+			changes += 1;
+		},
+	});
+	let entry;
+	const draw = () =>
+		transcript.layout(
+			80,
+			30,
+			"",
+			(item) => {
+				if (item.kind !== "message") return [];
+				entry = item.entry;
+				const text = item.entry.content[0]?.text ?? "";
+				return [{ sub: "b", rows: text.trim().split(" ").slice(-10) }];
+			},
+			{ head: [], tail: [] },
+		);
+	await stream(2300);
+	transcript.scroll(-3);
+	await quiet(draw, () => changes);
+	assert.equal(transcript.following, false);
+	await stream(300);
+	transcript.follow();
+	await quiet(draw, () => changes);
+	assert.match(entry.content[0]?.text ?? "", / pad2599 $/);
+	transcript.dispose();
+});
+
 test("a late read for a previous selection never replaces the current one", async (t) => {
 	const first = record("5636");
 	const second = record("1001");
@@ -1550,7 +3081,7 @@ test("a message streamed far before the resident windows is revealed contiguousl
 	const capture = audited(t, [child]);
 	const streaming = { role: "assistant", content: [] };
 	capture.emit(child.id, { type: "message_start", message: streaming });
-	for (let i = 0; i < 900; i++) {
+	for (let i = 0; i < 8000; i++) {
 		capture.emit(child.id, {
 			type: "message_update",
 			message: streaming,
@@ -1608,15 +3139,15 @@ test("a message streamed far before the resident windows is revealed contiguousl
 				}
 				if (index < pieces.length - 1) assert.ok(words(piece.text).length <= 384);
 			}
-			if (pieces.length > 0) assert.ok(words(pieces.at(-1).text).length <= 384 + 384);
+			if (pieces.length > 0) assert.ok(pieces.at(-1).text.length <= 32 * 1024 + 384 * 6);
 			if (pieces.length > 0 && done(pieces)) return pieces;
 			await delay(5);
 		}
 		assert.fail("the expansion never settled");
 	};
-	const slid = await step((pieces) => pieces.length === 1 && reached.size === 900);
+	const slid = await step((pieces) => pieces.length === 1 && reached.size === 8000);
 	assert.notEqual(slid[0].earlier, undefined);
-	assert.match(slid[0].text, / w899 $/);
+	assert.match(slid[0].text, / w7999 $/);
 	assert.equal(fromStart.length, 1);
 
 	let redraws = 0;
