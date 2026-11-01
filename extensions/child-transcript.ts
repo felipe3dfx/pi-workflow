@@ -115,6 +115,7 @@ export function createTranscript(options: {
 }) {
 	const { audit, child } = options;
 	const entries = new Map<string, Entry>();
+	const gone = new Map<string, number>();
 	let lo = 1;
 	let tail: { cursor: WindowCursor; more: boolean } | undefined;
 	let identity: Identity | undefined;
@@ -156,6 +157,11 @@ export function createTranscript(options: {
 			const key = keyOf(observation);
 			if (key === undefined) continue;
 			const { ordinal } = observation;
+			const last = gone.get(key);
+			if (last !== undefined && below === undefined) {
+				gone.set(key, Math.max(last, ordinal));
+				continue;
+			}
 			const known = entries.get(key);
 			const span =
 				spans.get(key) ?? (known ? [known.first, known.last] : [ordinal, ordinal - 1]);
@@ -266,6 +272,7 @@ export function createTranscript(options: {
 	function restart() {
 		epoch += 1;
 		overshoot = 0;
+		gone.clear();
 		entries.clear();
 		tail = undefined;
 		opened = false;
@@ -325,6 +332,22 @@ export function createTranscript(options: {
 			cursor = read.next;
 		}
 		lo = from;
+		const back = [...gone.keys()].filter((key) => entries.has(key));
+		const dropped = new Set(back);
+		const reach = Math.max(0, ...back.map((key) => gone.get(key) as number));
+		for (const key of back) gone.delete(key);
+		cursor = { ...cursor, from: boundary };
+		while (cursor.from <= reach) {
+			const read = await fetch(cursor);
+			if (!read) return;
+			const observations = read.observations.filter((observation) => {
+				const key = keyOf(observation);
+				return key !== undefined && dropped.has(key);
+			});
+			fold({ ...read, observations, unavailable: [] }, Number.POSITIVE_INFINITY);
+			if (read.next.from <= cursor.from) break;
+			cursor = read.next;
+		}
 	}
 
 	function pinFromEnd() {
@@ -463,6 +486,10 @@ export function createTranscript(options: {
 			if (entries.size <= residentItems) return;
 			const seen = extent.get(entry.key);
 			if (entry.first >= lo && seen?.top === seen?.bottom && entry.held.some(isFinal)) entries.delete(entry.key);
+		}
+		for (const entry of list) {
+			if (entries.size <= residentItems) return;
+			if (entry.first < lo && entries.delete(entry.key)) gone.set(entry.key, entry.last);
 		}
 	}
 

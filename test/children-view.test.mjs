@@ -2358,6 +2358,69 @@ test("following a child whose early tool keeps updating among thousands of later
 	transcript.dispose();
 });
 
+test("following hundreds of running tools that all update after the last one started keeps residency bounded and each tool's state", async (t) => {
+	const child = record("5636");
+	const capture = audited(t, [child]);
+	const { transcript, draw } = rowsTranscript(capture.audit, child.id);
+	let rows = await draw();
+	const latest = new Map();
+	const message = { role: "assistant", content: [] };
+	let streamed = "";
+	capture.emit(child.id, { type: "message_start", message });
+	const sync = async () => {
+		const delta = `d${streamed.split(" ").length} `;
+		streamed += delta;
+		capture.emit(child.id, {
+			type: "message_update",
+			message,
+			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
+		});
+		await written(capture.audit, child.id);
+		transcript.changed();
+		rows = await draw();
+		assert.ok(transcript.info().retained.items <= 384, `${transcript.info().retained.items} items`);
+	};
+	let started = 0;
+	const start = async (count) => {
+		for (let j = 0; j < count; j++) {
+			capture.tool(child.id, `p${started}`, "bash", { command: `p${started}` });
+			started += 1;
+			if (started % 50 === 0) await sync();
+		}
+		await sync();
+	};
+	const update = async (round, step = 1) => {
+		for (let k = 0; k < started; k += step) {
+			toolUpdate(capture, child.id, `p${k}`, `u${round}`);
+			latest.set(`tool:p${k}`, `p${k}u${round}`);
+			if (k % 50 === 49) await sync();
+		}
+		await sync();
+	};
+	await start(384);
+	await update(0);
+	await start(1);
+	await update(1, 2);
+	await start(20);
+	assert.ok(rows.includes("tool:p404"), rows.join("\n"));
+	const shown = (pane) => {
+		for (const [at, row] of pane.entries()) {
+			const want = latest.get(row);
+			if (want !== undefined && at + 1 < pane.length) assert.match(pane[at + 1], new RegExp(want), row);
+		}
+	};
+	for (let i = 0; i < 400 && rows[0] !== "head"; i++) {
+		transcript.scroll(-7);
+		rows = await draw();
+		assert.equal(rows.length, 30);
+		assert.ok(transcript.info().retained.items <= 384, `${transcript.info().retained.items} items`);
+		shown(rows);
+	}
+	assert.equal(rows[0], "head");
+	assert.equal(rows[1], streamed);
+	transcript.dispose();
+});
+
 function zeroRow(capture, id, n) {
 	const message = { role: "assistant", content: [] };
 	capture.emit(id, { type: "message_start", message });
