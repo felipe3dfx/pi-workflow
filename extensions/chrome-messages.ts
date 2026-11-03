@@ -1,4 +1,4 @@
-// Replicates the logic of Pi 1.4.0 (AssistantMessageComponent.updateContent, UserMessageComponent.rebuild, createMarkdownTransform).
+// Replicates the logic of Pi 1.5.0 (AssistantMessageComponent.updateContent, UserMessageComponent.rebuild, createMarkdownTransform).
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import {
 	AssistantMessageComponent,
@@ -70,6 +70,8 @@ type AssistantState = {
 	hasToolCalls: boolean;
 	isStreaming: boolean;
 	thinkingVisibilityOverrides: Map<number, boolean>;
+	messageId?: string;
+	timestamp?: string;
 	updateContent(message: AssistantMessage, isStreaming?: boolean): void;
 };
 
@@ -291,17 +293,18 @@ function withLinkColor(base: MarkdownTheme): MarkdownTheme {
 
 function markdownTransform(
 	messageType: MarkdownTransformContext["messageType"],
-	isStreaming: boolean,
-	transformers: readonly MarkdownTransformer[],
+	state: AssistantState,
 ) {
 	return (markdown: string, availableWidth: number) => {
 		let transformed = markdown;
-		for (const transformer of transformers) {
+		for (const transformer of state.markdownTransformers) {
 			try {
 				const next = transformer(transformed, {
 					messageType,
-					isStreaming,
+					isStreaming: state.isStreaming,
 					availableWidth,
+					messageId: state.messageId,
+					timestamp: state.timestamp,
 				});
 				if (typeof next === "string") transformed = next;
 			} catch {}
@@ -333,11 +336,7 @@ function expandedThinking(
 			state.markdownTheme,
 			{ color: (text: string) => theme().fg("thinkingText", text) },
 			{
-				transform: markdownTransform(
-					"assistant-thinking",
-					state.isStreaming,
-					state.markdownTransformers,
-				),
+				transform: markdownTransform("assistant-thinking", state),
 			},
 		),
 	);
@@ -383,11 +382,7 @@ function updateContent(
 				withLinkColor(this.markdownTheme),
 				{ color: (content: string) => theme().fg("text", content) },
 				{
-					transform: markdownTransform(
-						"assistant",
-						this.isStreaming,
-						this.markdownTransformers,
-					),
+					transform: markdownTransform("assistant", this),
 				},
 			);
 			this.contentContainer.addChild(
