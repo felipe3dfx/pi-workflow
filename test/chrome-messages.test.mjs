@@ -443,7 +443,13 @@ test("a collapsed header advertises Pi's thinking toggle key and drops the hint 
 
 test("a throw in the patched updateContent falls back to Pi's renderer for that call only", (t) => {
 	patched(t);
-	const component = assistantComponent(true, { toString: () => "Pondering" });
+	// A label Pi can trim and print, but whose trim() result the chrome cannot use.
+	const component = assistantComponent(true, {
+		trim() {
+			return this;
+		},
+		toString: () => "Pondering",
+	});
 	component.updateContent(assistant([thought]), false);
 	const fallback = plain(component.render(40)).join("\n");
 	assert.ok(fallback.includes("Pondering"));
@@ -451,6 +457,45 @@ test("a throw in the patched updateContent falls back to Pi's renderer for that 
 	component.hiddenThinkingLabel = "Thinking...";
 	component.updateContent(assistant([thought]), false);
 	assert.equal(plain(component.render(40))[1].trimEnd(), "   ◆ Thought");
+});
+
+test("Markdown transformers see the same message type, streaming state, saved entry id and timestamp under the chrome as under Pi", (t) => {
+	const contexts = () => {
+		let seen;
+		const component = new AssistantMessageComponent(
+			undefined,
+			false,
+			markdownTheme,
+			"Thinking...",
+			1,
+			[
+				(markdown, { availableWidth: _, ...context }) => {
+					seen.set(JSON.stringify(context), context);
+					return markdown;
+				},
+			],
+			"entry-7",
+			"2026-09-29T11:55:00.000Z",
+		);
+		return [true, false].map((isStreaming) => {
+			seen = new Map();
+			component.updateContent(assistant([thought, answer]), isStreaming);
+			component.render(60);
+			return [...seen.values()];
+		});
+	};
+	const expected = [true, false].map((isStreaming) =>
+		["assistant-thinking", "assistant"].map((messageType) => ({
+			messageType,
+			isStreaming,
+			messageId: "entry-7",
+			timestamp: "2026-09-29T11:55:00.000Z",
+		})),
+	);
+	const pi = contexts();
+	assert.deepEqual(pi, expected);
+	patched(t);
+	assert.deepEqual(contexts(), pi);
 });
 
 test("a finished thinking run is saved once and restored on session_start so the collapsed header keeps its duration after a reload", async (t) => {

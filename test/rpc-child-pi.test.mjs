@@ -990,8 +990,9 @@ test("a real Pi contextual child surfaces a scope violation after commit and ref
 });
 
 test("a real Pi child's codemode offers no models API and calls only the child's allowlisted tools", { skip, timeout: 60_000 }, async (t) => {
+	// Pi connects MCP servers in the background; a script that reads ALL_TOOLS waits for all of them.
 	const scene = await fixture(t, [
-		{ tool: "codemode", args: { code: "return { tools: Object.keys(tools).sort(), models: typeof models };" } },
+		{ tool: "codemode", args: { code: "ALL_TOOLS; return { tools: Object.keys(tools).sort(), models: typeof models };" } },
 		"DONE",
 	]);
 	const repo = await repository(scene.dir, "repo", {});

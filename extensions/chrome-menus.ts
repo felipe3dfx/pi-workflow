@@ -1,4 +1,4 @@
-// Replicates the logic of Pi 1.4.0 (SelectList.renderItem, SettingsList.renderMainList).
+// Replicates the logic of Pi 1.5.0 (SelectList.renderItem, SettingsList.renderMainList).
 import {
 	ExtensionEditorComponent,
 	ExtensionInputComponent,
