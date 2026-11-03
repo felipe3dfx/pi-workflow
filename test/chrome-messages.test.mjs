@@ -461,7 +461,7 @@ test("a throw in the patched updateContent falls back to Pi's renderer for that 
 
 test("Markdown transformers see the same message type, streaming state, saved entry id and timestamp under the chrome as under Pi", (t) => {
 	const contexts = () => {
-		const seen = [];
+		let seen;
 		const component = new AssistantMessageComponent(
 			undefined,
 			false,
@@ -470,19 +470,30 @@ test("Markdown transformers see the same message type, streaming state, saved en
 			1,
 			[
 				(markdown, { availableWidth: _, ...context }) => {
-					seen.push(JSON.stringify(context));
+					seen.set(JSON.stringify(context), context);
 					return markdown;
 				},
 			],
 			"entry-7",
 			"2026-09-29T11:55:00.000Z",
 		);
-		component.updateContent(assistant([thought, answer]), false);
-		component.render(60);
-		return [...new Set(seen)].sort();
+		return [true, false].map((isStreaming) => {
+			seen = new Map();
+			component.updateContent(assistant([thought, answer]), isStreaming);
+			component.render(60);
+			return [...seen.values()];
+		});
 	};
+	const expected = [true, false].map((isStreaming) =>
+		["assistant-thinking", "assistant"].map((messageType) => ({
+			messageType,
+			isStreaming,
+			messageId: "entry-7",
+			timestamp: "2026-09-29T11:55:00.000Z",
+		})),
+	);
 	const pi = contexts();
-	assert.equal(pi.length, 2);
+	assert.deepEqual(pi, expected);
 	patched(t);
 	assert.deepEqual(contexts(), pi);
 });
