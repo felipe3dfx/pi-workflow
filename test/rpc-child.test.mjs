@@ -126,7 +126,7 @@ async function piOnPath(t, version, status = 0) {
 	return { pi: join(dir, "pi"), checks: () => (existsSync(checks) ? readFileSync(checks, "utf8").length : 0) };
 }
 
-for (const version of ["1.4.0", "1.10.0"]) {
+for (const version of ["1.4.0", "1.10.0", "2.0.0"]) {
 	test(`a child runs a Pi ${version} on PATH, inside the supported range though it differs from the parent's Pi`, async (t) => {
 		assert.notEqual(version, VERSION);
 		await piOnPath(t, version);
@@ -144,14 +144,14 @@ for (const version of ["0.9.0", "1.3.9"]) {
 	});
 }
 
-for (const [name, output, status] of [
-	["prints no version", "pi unknown", 0],
-	["fails its version check", "", 1],
+for (const [name, output, status, reported] of [
+	["prints no version", "pi unknown", 0, 'reported version "pi unknown", which is not readable'],
+	["fails its version check", "", 1, "has no readable version"],
 ]) {
 	test(`a child refuses a Pi on PATH that ${name}, naming the supported range`, async (t) => {
 		const { pi } = await piOnPath(t, output, status);
 		await assert.rejects(fakeChild(t, "complete", {}, { command: undefined }), {
-			message: `The Pi on PATH at ${pi} has no readable version, but a child requires Pi >=1.4.0.`,
+			message: `The Pi on PATH at ${pi} ${reported}, but a child requires Pi >=1.4.0.`,
 		});
 	});
 }

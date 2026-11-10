@@ -84,7 +84,8 @@ async function verifiedPi() {
 	);
 	const parts = /^(\d+)\.(\d+)\.(\d+)$/.exec(version)?.slice(1).map(Number);
 	if (!parts) {
-		throw new Error(`The Pi on PATH at ${path} has no readable version, but a child requires Pi ${supportedPi}.`);
+		const found = version ? `reported version ${JSON.stringify(version)}, which is not readable` : "has no readable version";
+		throw new Error(`The Pi on PATH at ${path} ${found}, but a child requires Pi ${supportedPi}.`);
 	}
 	const differs = parts.findIndex((part, index) => part !== minimumPi[index]);
 	if (differs >= 0 && parts[differs] < minimumPi[differs]) {
