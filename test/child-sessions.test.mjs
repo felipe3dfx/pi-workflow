@@ -6234,7 +6234,11 @@ test("after child session is unseated, a launch is refused while a fan-out's chi
 			toolContext("tui", worktree),
 		);
 		assert.equal(refused.details.status, "refused");
-		assert.equal(text(refused), "Child session is not seated. Run /workflow:config.");
+		assert.match(text(refused), /^Child session is not seated\. Run \/workflow:config\.\n/);
+		assert.match(
+			text(refused),
+			/^Do not stand in for the child with another agent process, such as Pi or another model CLI started from the shell\. Tell the operator that no child ran and why; any work you then do yourself is yours, not a child's or an independent agent's\.$/m,
+		);
 		assert.equal(children.created.length, 6);
 
 		for (const [i, child] of children.created.entries()) {

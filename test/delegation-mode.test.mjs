@@ -566,6 +566,9 @@ test("in orchestrator, the prompt the child session factory receives never carri
 	assert.doesNotMatch(prompt, /delegate all work/i);
 });
 
+const noStandInLine =
+	/^Do not stand in for the child with another agent process, such as Pi or another model CLI started from the shell\. Tell the operator that no child ran and why; any work you then do yourself is yours, not a child's or an independent agent's\.$/m;
+
 for (const mode of ["opportunistic", "orchestrator"]) {
 	test(`in ${mode}, a Jev stay verdict refuses spawn_child`, async (t) => {
 		const dir = withAgentDirectory(t);
@@ -587,6 +590,62 @@ for (const mode of ["opportunistic", "orchestrator"]) {
 
 		assert.equal(result.details.status, "refused");
 		assert.match(result.content[0].text, /The work stays in this session/);
+		assert.match(result.content[0].text, noStandInLine);
+		assert.equal(children.created.length, 0);
+	});
+
+	test(`in ${mode}, a spawn_child refused by a Pi version mismatch tells the parent not to stand in for the child`, async (t) => {
+		const dir = withAgentDirectory(t);
+		const worktree = await gitRepository(dir);
+		turnJevRoutingOn(dir);
+		chooseMode(dir, mode);
+		seat();
+		const children = fakeChildren({
+			onCreate: () => {
+				throw new Error("The Pi on PATH at /x/pi is version 1.3.9, but a child requires Pi >=1.4.0.");
+			},
+		});
+		const session = await parentSession(dir, { create: children.create });
+		const spawn = session.tools.find((tool) => tool.name === "spawn_child");
+
+		const result = await spawn.execute(
+			"call-1",
+			{ role: "explore", task: "Read README.md and report what it installs." },
+			undefined,
+			undefined,
+			spawnContext(worktree, destinationJev("leave")),
+		);
+
+		const text = result.content[0].text;
+		assert.equal(result.details.status, "refused");
+		assert.match(text, /Launch refused\. No child was launched\./);
+		assert.match(text, /version 1\.3\.9, but a child requires Pi >=1\.4\.0\./);
+		assert.match(text, noStandInLine);
+		assert.equal(children.created.length, 0);
+	});
+
+	test(`in ${mode}, a continue_child refused for an unknown child tells the parent not to stand in for the child`, async (t) => {
+		const dir = withAgentDirectory(t);
+		const worktree = await gitRepository(dir);
+		turnJevRoutingOn(dir);
+		chooseMode(dir, mode);
+		seat();
+		const children = fakeChildren();
+		const session = await parentSession(dir, { create: children.create });
+		const resume = session.tools.find((tool) => tool.name === "continue_child");
+
+		const result = await resume.execute(
+			"call-1",
+			{ id: "nope", task: "Try again" },
+			undefined,
+			undefined,
+			spawnContext(worktree, destinationJev("leave")),
+		);
+
+		const text = result.content[0].text;
+		assert.equal(result.details.status, "refused");
+		assert.match(text, /Continue refused\. No child was launched\./);
+		assert.match(text, noStandInLine);
 		assert.equal(children.created.length, 0);
 	});
 }
