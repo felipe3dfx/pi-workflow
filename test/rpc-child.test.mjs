@@ -145,7 +145,7 @@ for (const version of ["0.9.0", "1.3.9"]) {
 }
 
 for (const [name, output, status, reported] of [
-	["prints no version", "pi unknown", 0, 'reported version "pi unknown", which is not readable'],
+	["reports an unreadable version", "pi unknown", 0, 'reported version "pi unknown", which is not readable'],
 	["fails its version check", "", 1, "has no readable version"],
 ]) {
 	test(`a child refuses a Pi on PATH that ${name}, naming the supported range`, async (t) => {
