@@ -5,3 +5,6 @@
 # Dependencies and package artifacts
 node_modules/
 *.tgz
+
+# Local diagnosis scripts
+tools/diagnosis/
