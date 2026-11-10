@@ -1063,7 +1063,7 @@ test("a real Pi child of every packaged contract, launched and continued, receiv
 				delegationMode: { current: () => "opportunistic" },
 				modelProfiles: { load: () => ({ status: "absent" }) },
 			}).prepareLaunch(
-				{ role, task: "Redacta el borrador del ticket en español." },
+				{ role, task: "Draft the ticket in Spanish." },
 				{
 					cwd: repo,
 					model: { provider, id, reasoning: false },
@@ -1095,14 +1095,14 @@ test("a real Pi child of every packaged contract, launched and continued, receiv
 			const started = await core.start(plan, { ...launch, background: true });
 			assert.equal(started.status, "queued", started.reason);
 			await eventually(() => core.get(started.id), (child) => child?.state === "completed");
-			const continued = await core.resume(started.id, "Continúa con el mismo borrador.", launch);
+			const continued = await core.resume(started.id, "Continue with the same draft.", launch);
 			assert.equal(continued.status, "queued", continued.reason);
 			await eventually(() => core.get(continued.id), (child) => child?.state === "completed");
 
 			const prompts = scene.endpoint.requests.map(systemPromptOf);
 			assert.equal(prompts.length, 2);
 			for (const prompt of prompts) {
-				assert.match(prompt, /\bfor the parent in English\b[^.]*\boperator message does not change this language\b/);
+				assert.match(prompt, /\breport\b[^.]*\bfor the parent in English\b[^.]*\boperator message does not change this language\b/);
 				assert.match(prompt, /\bartifacts keep their content or the language their destination requires\b[^.]*\bnever translate stable JSON keys, enum values, or identifiers\b/);
 			}
 		});

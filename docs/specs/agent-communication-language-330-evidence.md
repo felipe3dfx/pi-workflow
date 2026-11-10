@@ -40,6 +40,8 @@ Instruction presence proves delivery only, not compliance.
 
 The 11 failures are the same tests that fail on the base `328` (`13d5130`) on this host with the same PATH (tests 1558, pass 1544, fail 11, skipped 3): a bash syntax-error line number, a `/private/var` versus `/var` temporary path, the installed Claude Bridge package, three SDK-parent RPC consultation tests, the sandbox dry-run, the guarded-bash worker, two RPC launch-argv tests and the missing pi-web-access package. None touches the changed files; the 17 tests this change adds pass. The gate is therefore not green on this macOS host for pre-existing environmental reasons, and CI evidence is still required.
 
+CI `npm run check` passed on PR #340 for head `80fcb0c`: https://github.com/felipe3dfx/pi-workflow/actions/runs/42865780809/job/130003598564 (the run is for that head, before the review fixes that follow it).
+
 ## Behavioral QA
 
 Reported separately from instruction delivery. One ordinary real Pi session, driven non-interactively over `--mode rpc`.
@@ -49,7 +51,7 @@ Reported separately from instruction delivery. One ordinary real Pi session, dri
 - Parent model `openai/gpt-6.1-terra` (thinking default); model profile `default` (explorer `openai/gpt-6.1-terra` medium, worker `openai/gpt-6.1-terra` high).
 - Delegation mode `opportunistic`, Jev routing off, role-contract (non-contextual) variant.
 - Consumer project: a fresh Git repository whose `AGENTS.md` has no language rule.
-- Parent session: `2026-11-10T16-58-02-266Z_01a1c665-2e9a-744b-b311-7b4b65adaddb.jsonl` (records the `pi-workflow-language` section). The raw session files were in a temporary directory and are not kept; [`agent-communication-language-330-evidence/transcript.json`](agent-communication-language-330-evidence/transcript.json) is the extract of that session (user turns, parent text, parent tool calls to children, child questions and results, and the delivered language section), and [`ticket-changelog.md`](agent-communication-language-330-evidence/ticket-changelog.md) is the delivered draft. Children: worker `ed608b74-dfd7-43de-aaf4-61b614ae1533`, its continuation `c5915991-9550-4a2a-b4ea-4a5813bfdfca`, explorer `3566a50e-61c1-4424-a98c-daa102144a1f`; each child's session transcript (`<child id>.jsonl`) carries the Contract language rule in its system prompt.
+- Parent session: `2026-11-10T16-58-02-266Z_01a1c665-2e9a-744b-b311-7b4b65adaddb.jsonl` (records the `pi-workflow-language` section). The raw session files were in a temporary directory and are not kept; [`agent-communication-language-330-evidence/transcript.json`](agent-communication-language-330-evidence/transcript.json) is the extract of that session (user turns, parent text, parent tool calls to children, child questions and results, and the delivered language section), and [`ticket-changelog.md`](agent-communication-language-330-evidence/ticket-changelog.md) is the delivered draft. Children: worker `ed608b74-dfd7-43de-aaf4-61b614ae1533`, its continuation `c5915991-9550-4a2a-b4ea-4a5813bfdfca`, explorer `3566a50e-61c1-4424-a98c-daa102144a1f`. The child session transcripts were not kept; delivery of the Contract language rule to a real Pi child is evidenced by the deterministic `test/rpc-child-pi.test.mjs` test, not by these sessions.
 
 | # | Turn and observation | Result |
 | --- | --- | --- |

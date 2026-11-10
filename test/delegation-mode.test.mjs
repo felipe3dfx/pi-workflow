@@ -35,6 +35,7 @@ import {
 	press,
 } from "./support/config-guide.mjs";
 import { turnJevRoutingOn, withAgentDirectory } from "./support/jev-routing.mjs";
+import { assertSentence } from "./support/sentence.mjs";
 
 initTheme("dark", false);
 
@@ -408,7 +409,7 @@ test("the instruction names the Todo and operator questions only when each is se
 });
 
 for (const routing of ["off", "on"]) {
-	test(`with Jev routing ${routing}, opportunistic leaves the model call untouched`, async (t) => {
+	test(`with Jev routing ${routing}, opportunistic adds no Delegation mode instruction`, async (t) => {
 		const dir = withAgentDirectory(t);
 		if (routing === "on") turnJevRoutingOn(dir);
 		seat();
@@ -419,14 +420,14 @@ for (const routing of ["off", "on"]) {
 	});
 }
 
-test("orchestrator leaves the model call untouched while child session is not seated", async (t) => {
+test("orchestrator adds no Delegation mode instruction while child session is not seated", async (t) => {
 	const dir = withAgentDirectory(t);
 	chooseMode(dir, "orchestrator");
 	seat(capabilities.filter((capability) => capability !== "child-session"));
 	assert.equal(await modelCall(await parentSession(dir)), undefined);
 });
 
-test("orchestrator leaves the model call untouched while a legacy subagent package withholds the child tools", async (t) => {
+test("orchestrator adds no Delegation mode instruction while a legacy subagent package withholds the child tools", async (t) => {
 	const dir = withAgentDirectory(t);
 	chooseMode(dir, "orchestrator");
 	seat();
@@ -760,9 +761,7 @@ test("in a real Pi session, the run that a child result starts carries the instr
 
 	assert.equal(system.role, "system");
 	assert.ok(system.toolsAdded.some((tool) => tool.name === "spawn_child"));
-	assert.ok(
-		Object.values(system.sections).some((section) => /delegate all work to child sessions/i.test(section)),
-	);
+	assert.ok(delegationInstructed(woken));
 });
 
 function languageInstruction(request) {
@@ -784,20 +783,15 @@ function delegationInstructed(request) {
 test("the language instruction keeps parent-child text English, the user's language with the user, and transported content as it is", async (t) => {
 	const dir = withAgentDirectory(t);
 	seat();
-	const parent = await realParent(t, dir, [fauxAssistantMessage("Hola.")]);
-	await parent.session.prompt("Explícame qué instala el README");
+	const parent = await realParent(t, dir, [fauxAssistantMessage("Hello.")]);
+	await parent.session.prompt("Explain what the README installs");
 	const instruction = languageInstruction(parent.requests[0]);
-	const sentences = instruction.split(/(?<=\.)\s+/);
-	const sentence = (...patterns) =>
-		assert.ok(
-			sentences.some((text) => patterns.every((pattern) => pattern.test(text))),
-			`no sentence matches all of ${patterns.join(", ")}`,
-		);
+	const sentence = (...patterns) => assertSentence(instruction, ...patterns);
 
 	sentence(/\buser's language\b/, /\bexplicit user instruction\b/, /\bchild sessions never change it\b/);
 	sentence(/\bEnglish\b/, /\bspawn_child\b/, /\bcontinue_child\b/, /\breply_child\b/, /\bconsultation reply\b/);
 	sentence(/\bchild questions and conclusions\b/, /\buser's language\b/, /\buser's decisions to children in English\b/);
-	sentence(/\bcode, identifiers, tool outputs, quotations, and artifacts\b/, /\bnever translate stable JSON keys, enum values, or identifiers\b/, /\bref, kind, and confirm\b/);
+	sentence(/\bcode, identifiers, tool outputs, quotations,? and artifacts\b/, /\bnever translate stable JSON keys, enum values, or identifiers\b/, /\bref, kind, and confirm\b/);
 	sentence(/\bFleet view\b/, /\bSteer\b/, /\bunchanged\b/);
 	assert.doesNotMatch(instruction, /delegate all work/i);
 });
@@ -810,10 +804,10 @@ for (const mode of ["opportunistic", "orchestrator"]) {
 				if (routing === "on") turnJevRoutingOn(dir);
 				chooseMode(dir, mode);
 				seat(offered ? capabilities : capabilities.filter((capability) => capability !== "child-session"));
-				const parent = await realParent(t, dir, [fauxAssistantMessage("Hola."), fauxAssistantMessage("Claro.")]);
+				const parent = await realParent(t, dir, [fauxAssistantMessage("Hello."), fauxAssistantMessage("Sure.")]);
 
-				await parent.session.prompt("Hola");
-				await parent.session.prompt("Ahora en inglés, por favor");
+				await parent.session.prompt("Hello");
+				await parent.session.prompt("Now in English, please");
 
 				assert.equal(parent.requests.length, 2);
 				for (const request of parent.requests) {

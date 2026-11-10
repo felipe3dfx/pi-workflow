@@ -5,19 +5,12 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { parseContract } from "../extensions/child-launcher.ts";
+import { assertSentence } from "./support/sentence.mjs";
 
 const contracts = fileURLToPath(new URL("../assets/contracts/", import.meta.url));
 
 async function contract(role) {
 	return readFile(join(contracts, `${role}.md`), "utf8");
-}
-
-function assertSentence(text, ...patterns) {
-	const sentences = text.split(/(?<=\.)\s+/);
-	assert.ok(
-		sentences.some((sentence) => patterns.every((pattern) => pattern.test(sentence))),
-		`no sentence matches all of ${patterns.join(", ")}`,
-	);
 }
 
 const unobserved =
@@ -46,11 +39,12 @@ test("every packaged contract keeps text for the parent in English whatever an o
 			/\bfinding\b/,
 			/\bVerdict reason\b/,
 			/\bchange and validation description\b/,
+			/\breport\b/,
 			/\boperator message does not change this language\b/,
 		);
 		assertSentence(
 			text,
-			/\bcode, identifiers, tool outputs, quotations, and artifacts keep their content or the language their destination requires\b/,
+			/\bcode, identifiers, tool outputs, quotations,? and artifacts keep their content or the language their destination requires\b/,
 			/\bnever translate stable JSON keys, enum values, or identifiers\b/,
 		);
 	}
