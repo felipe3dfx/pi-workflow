@@ -2444,6 +2444,7 @@ test("a followed child streaming while each render lags behind its reads keeps a
 		transcript.changed();
 		timer ??= setTimeout(draw, 16);
 		if (i % 2 === 1) await delay(1);
+		if (i % 50 === 49) await written(capture.audit, child.id);
 	}
 	await written(capture.audit, child.id);
 	clearTimeout(timer);
