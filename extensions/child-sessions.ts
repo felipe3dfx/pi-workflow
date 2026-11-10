@@ -22,6 +22,7 @@ import type {
 } from "./action-authorization.ts";
 import type { ChildShell } from "./child-bash.ts";
 import {
+	type ChildContext,
 	type ChildHandle,
 	type ChildSessionFactory,
 	mcpTools,
@@ -125,6 +126,7 @@ interface Port {
 	report(result: ChildResult): void;
 	notify(message: string): void;
 	checkpointed(checkpoint: Checkpoint): void;
+	context(state: ChildContext | undefined): void;
 }
 
 interface Question {
@@ -150,6 +152,7 @@ interface Child {
 	writes: Map<string, string>;
 	changed: Set<string>;
 	followers: Set<() => void>;
+	context?: ChildContext;
 	asked: number;
 	answers: Map<number, { by: Answerer; text: string }>;
 	withdrawn: Set<number>;
@@ -240,6 +243,7 @@ function hold(port: Port) {
 	port.notify = (message) => held.push((next) => next.notify(message));
 	port.checkpointed = (checkpoint) =>
 		held.push((next) => next.checkpointed(checkpoint));
+	port.context = (state) => held.push((next) => next.context(state));
 	port.ask = (question, signal, consultation) =>
 		new Promise<string>((resolve, reject) => {
 			held.push((next) => void next.ask(question, signal, consultation).then(resolve, reject));
@@ -465,6 +469,16 @@ export function createChildSessions(options: {
 		}
 	}
 
+	function notify(child: Child) {
+		for (const follower of [...child.followers]) {
+			try {
+				follower();
+			} catch (error) {
+				warn(errorMessage(error));
+			}
+		}
+	}
+
 	function track(child: Child, event: AgentSessionEvent) {
 		if (children.get(child.record.id) !== child) return;
 		if (event.type === "queue_update" && isWorking(child.record.state)) {
@@ -503,13 +517,7 @@ export function createChildSessions(options: {
 			if (kind.startsWith("thinking")) step = "thinking";
 			else if (kind.startsWith("text")) step = "writing";
 		}
-		for (const follower of [...child.followers]) {
-			try {
-				follower();
-			} catch (error) {
-				warn(errorMessage(error));
-			}
-		}
+		notify(child);
 		if (
 			step !== null &&
 			step !== child.record.step &&
@@ -701,6 +709,10 @@ export function createChildSessions(options: {
 		port.checkpointed = (checkpoint) => {
 			child.record.checkpoints = [...(child.record.checkpoints ?? []), checkpoint];
 		};
+		port.context = (state) => {
+			child.context = state;
+			if (children.get(child.record.id) === child) notify(child);
+		};
 	}
 
 	async function start(
@@ -757,6 +769,7 @@ export function createChildSessions(options: {
 			report: () => {},
 			notify: () => {},
 			checkpointed: () => {},
+			context: () => {},
 		};
 		const launchedIn = generation;
 		const tools = childTools(plan);
@@ -779,6 +792,7 @@ export function createChildSessions(options: {
 				report: (result) => port.report(result),
 				...(plan.checkpoint ? { checkpoint: plan.checkpoint } : {}),
 				checkpointed: (checkpoint) => port.checkpointed(checkpoint),
+				context: (state) => port.context(state),
 				parentSession: from?.conversation.sessionId,
 			});
 		} catch (error) {
@@ -1104,6 +1118,10 @@ export function createChildSessions(options: {
 		return [...(children.get(id)?.changed ?? [])];
 	}
 
+	function context(id: string) {
+		return children.get(id)?.context;
+	}
+
 	function working() {
 		return [...children.values()].filter((child) =>
 			isWorking(child.record.state),
@@ -1261,6 +1279,7 @@ export function createChildSessions(options: {
 		get,
 		list,
 		changedFiles,
+		context,
 		working,
 		waiting,
 		subscribe,

@@ -118,12 +118,12 @@ function indented(lines: string[], width: number, extra = 0) {
 }
 
 type Color = Parameters<ChromeTheme["fg"]>[0];
-type Segment = [Color | null, string][];
+export type Segment = [Color | null, string][];
 
 const brand = "π-workflow";
 const meterCells = 8;
 
-function paintSegments(theme: ChromeTheme, segments: Segment[]) {
+export function paintSegments(theme: ChromeTheme, segments: Segment[]) {
 	return segments
 		.map((segment) =>
 			segment
@@ -145,6 +145,10 @@ function contextSegments(usage: HeaderData["usage"], bar: boolean): Segment[] {
 			],
 			window,
 		];
+	return [occupancySegment(tokens, contextWindow, bar), window];
+}
+
+export function occupancySegment(tokens: number, contextWindow: number, bar: boolean): Segment {
 	const percent = Math.round((tokens / contextWindow) * 100);
 	const color = usageColor(percent);
 	const filled = Math.min(
@@ -158,7 +162,7 @@ function contextSegments(usage: HeaderData["usage"], bar: boolean): Segment[] {
 			[null, ""],
 		);
 	meter.push([color, `${percent}%`]);
-	return [meter, window];
+	return meter;
 }
 
 function keepEnd(text: string, width: number) {

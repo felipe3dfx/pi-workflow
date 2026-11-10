@@ -51,6 +51,13 @@ import {
 	type ChildTheme,
 	childGlyph,
 } from "./children-box.ts";
+import type { ChildContext } from "./child-handle.ts";
+import {
+	formatContextTokens,
+	occupancySegment,
+	paintSegments,
+	type Segment,
+} from "./chrome.ts";
 import { marginFor } from "./chrome-editor.ts";
 import { toolLabel } from "./compact-tools.ts";
 import {
@@ -170,6 +177,42 @@ function usage({ tokens, cost }: { tokens: number; cost: number }) {
 		...(tokens > 0 ? [`${count(tokens)} tok`] : []),
 		...(cost > 0 ? [`$${cost.toFixed(2)}`] : []),
 	];
+}
+
+function contextRow(
+	theme: ChildTheme,
+	context: ChildContext | undefined,
+	ended: boolean,
+	width: number,
+) {
+	const segments = (counts: boolean, bar: boolean): Segment[] => {
+		if (!context) return [[["dim", "ctx unavailable"]]];
+		const capacity = formatContextTokens(context.capacity);
+		const last: Segment[] = context.last || ended ? [[["dim", "last"]]] : [];
+		if (context.tokens === null) {
+			return [
+				[["dim", "ctx"], ["dim", "?"]],
+				...(counts ? [[["dim", capacity]] as Segment] : []),
+				...last,
+			];
+		}
+		return [
+			occupancySegment(context.tokens, context.capacity, bar),
+			...(counts
+				? [[["dim", `${formatContextTokens(context.tokens)} / ${capacity}`]] as Segment]
+				: []),
+			...last,
+		];
+	};
+	for (const [counts, bar] of [
+		[true, true],
+		[true, false],
+		[false, false],
+	]) {
+		const line = paintSegments(theme, segments(counts, bar));
+		if (visibleWidth(line) <= width) return line;
+	}
+	return truncateToWidth(paintSegments(theme, segments(false, false)), width, "…");
 }
 
 function runTime(child: ChildRecord, now: number) {
@@ -1406,6 +1449,12 @@ function createChildrenView(
 				width,
 			),
 			theme.fg("dim", truncateToWidth(terminalSafeLine(meta), width, "…")),
+			contextRow(
+				theme,
+				item.live ? sessions.context(child.id) : undefined,
+				!isWorking(child.state),
+				width,
+			),
 			theme.fg(
 				"muted",
 				truncateToWidth(

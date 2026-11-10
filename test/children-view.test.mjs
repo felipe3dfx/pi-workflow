@@ -15,6 +15,7 @@ import {
 import { createChildAudit } from "../extensions/child-audit.ts";
 import { createTranscript } from "../extensions/child-transcript.ts";
 import { createChildrenViews } from "../extensions/children-view.ts";
+import { renderHeader } from "../extensions/chrome.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
 import { withAgentDirectory } from "./support/jev-routing.mjs";
@@ -169,6 +170,10 @@ function fakeSessions(records, threads = {}) {
 		},
 		thread: (id) => threads[id],
 		changedFiles: () => [],
+		contexts: {},
+		context(id) {
+			return this.contexts[id];
+		},
 		cancel(id) {
 			const found = records.find((item) => item.id === id);
 			found.state = "cancelled";
@@ -389,7 +394,8 @@ test("from 65 columns the view splits into a list and a detail pane; below that 
 		wide[2],
 		/▸ ◐ worker 5636 +running · 1m 0\ds │ gpt-6-luna \(high\) · 6\.2k tok · \$0\.01 · wt: pi-workflow/,
 	);
-	assert.match(wide[3], /^ │ {6}bash sleep 60 6\.2k tok · \$0\.01 │ Run sleep 60 /);
+	assert.match(wide[3], /^ │ {6}bash sleep 60 6\.2k tok · \$0\.01 │ ctx unavailable /);
+	assert.match(wide[4], /│ Run sleep 60 /);
 
 	const narrow = view.lines(80);
 	assert.equal(narrow[1].indexOf("│", 2), 1 + 1 + 2 + 23 + 1);
@@ -1267,7 +1273,7 @@ test("the wheel scrolls streamed messages longer than the resident windows by it
 	const sessions = fakeSessions([child]);
 	const view = open(sessions, { rows: 30, audit: capture.audit });
 	view.press("\t");
-	const pane = async () => detailColumn(await settle(view)).slice(4, 25);
+	const pane = async () => detailColumn(await settle(view)).slice(5, 25);
 	let before = await pane();
 	for (let step = 0; step < 130; step++) {
 		view.mouse({ type: "wheel", x: 60, y: 8, wheelDelta: -3 });
@@ -1321,7 +1327,7 @@ for (const ended of [true, false]) {
 			audit: capture.audit,
 		});
 		view.press("\t");
-		const pane = async () => detailColumn(await settle(view)).slice(4, 55);
+		const pane = async () => detailColumn(await settle(view)).slice(5, 55);
 		let before = await pane();
 		for (let step = 0; step < 45; step++) {
 			view.mouse({ type: "wheel", x: 60, y: 8, wheelDelta: -3 });
@@ -1923,7 +1929,7 @@ for (const key of ["wheel", "page"]) {
 		const view = open(fakeSessions([child]), { rows: 30, audit: capture.audit });
 		view.press("\t");
 		let text = await settle(view);
-		let before = detailColumn(text).slice(4, 25);
+		let before = detailColumn(text).slice(5, 25);
 		for (let step = 0; !/Before 0\./.test(text); step++) {
 			assert.ok(step < 300, "the start was never reached");
 			if (key === "wheel") view.mouse({ type: "wheel", x: 60, y: 8, wheelDelta: -3 });
@@ -1931,7 +1937,7 @@ for (const key of ["wheel", "page"]) {
 			const renders = view.tui.renders;
 			text = await settle(view);
 			assert.ok(view.tui.renders - renders < 20, `step ${step} never settled`);
-			const after = detailColumn(text).slice(4, 25);
+			const after = detailColumn(text).slice(5, 25);
 			if (key === "wheel") assert.deepEqual(after.slice(3), before.slice(0, -3), `step ${step}`);
 			before = after;
 		}
@@ -1984,10 +1990,10 @@ test("the wheel scrolls down past a long streamed tool call by its exact delta w
 		capture.say(child.id, [{ type: "text", text: `After ${i}.` }]);
 	await written(capture.audit, child.id);
 	sessions.changed();
-	let before = detailColumn(await settle(view)).slice(4, 25);
+	let before = detailColumn(await settle(view)).slice(5, 25);
 	for (let step = 0; !/After 59\./.test(before.join("\n")); step++) {
 		assert.ok(step < 200, "the end was never reached");
-		const after = detailColumn(await wheel(3)).slice(4, 25);
+		const after = detailColumn(await wheel(3)).slice(5, 25);
 		if (!/After 59\./.test(after.join("\n"))) {
 			assert.deepEqual(after.slice(0, -3), before.slice(3), `step ${step}`);
 		}
@@ -2010,11 +2016,11 @@ test("following a long streaming tool call preceded by messages fills the pane, 
 	await written(capture.audit, child.id);
 	const view = open(fakeSessions([child]), { rows: 30, audit: capture.audit });
 	view.press("\t");
-	const before = detailColumn(await settle(view)).slice(4, 25);
+	const before = detailColumn(await settle(view)).slice(5, 25);
 	assert.match(before.join("\n"), /Before 39\./);
 	assert.match(before.at(-1), /Calling a tool/);
 	view.mouse({ type: "wheel", x: 60, y: 8, wheelDelta: -3 });
-	const after = detailColumn(await settle(view)).slice(4, 25);
+	const after = detailColumn(await settle(view)).slice(5, 25);
 	assert.deepEqual(after.slice(3), before.slice(0, -3));
 });
 
@@ -2074,7 +2080,7 @@ test("the wheel moves down and up through a long ended message of interleaved th
 	await written(capture.audit, child.id);
 	const view = open(fakeSessions([child]), { rows: 30, audit: capture.audit });
 	view.press("\t");
-	const pane = async () => detailColumn(await settle(view)).slice(4, 25);
+	const pane = async () => detailColumn(await settle(view)).slice(5, 25);
 	const wheel = async (wheelDelta) => {
 		view.mouse({ type: "wheel", x: 60, y: 8, wheelDelta });
 		const renders = view.tui.renders;
@@ -2583,7 +2589,7 @@ for (const reopened of [true, false]) {
 			: capture.audit;
 		const view = open(fakeSessions([child]), { rows: 40, audit });
 		view.press("\t");
-		const pane = async () => detailColumn(await settle(view)).slice(5, 35);
+		const pane = async () => detailColumn(await settle(view)).slice(6, 35);
 		let before = await pane();
 		for (let i = 0; i < 400 && !/Say 0\./.test(before.join("\n")); i++) {
 			view.press("\x0b");
@@ -3220,4 +3226,117 @@ test("a message streamed across several windows reads back once and in order, in
 	assert.deepEqual(unique, [...unique].sort((a, b) => a - b));
 	assert.equal(unique.length, 299);
 	assert.match(text, /d200 😀/);
+});
+
+function contextView(t, child, context, { rows = 20 } = {}) {
+	const capture = lines40(t, child);
+	const sessions = fakeSessions([child]);
+	if (context) sessions.contexts[child.id] = context;
+	const view = open(sessions, { rows, audit: capture.audit });
+	view.press("\r");
+	return { view, sessions };
+}
+
+test("the detail shows the selected child's context below its model and above its task, fixed while the transcript scrolls", async (t) => {
+	const child = record("5636");
+	const { view } = contextView(t, child, { capacity: 200_000, tokens: 100_000, last: false });
+	const lines = (await settle(view, 60)).split("\n");
+	const meta = lines.findIndex((line) => /gpt-6-luna \(high\)/.test(line));
+	assert.match(lines[meta + 1], /│ {2}ctx ▰ ▰ ▰ ▰ ▱ ▱ ▱ ▱ {2}50% · 100K \/ 200K +│/);
+	assert.match(lines[meta + 2], /Run sleep 60/);
+	view.press("k", "k", "k");
+	const scrolled = (await settle(view, 60)).split("\n");
+	assert.notDeepEqual(scrolled, lines);
+	assert.equal(scrolled[meta + 1], lines[meta + 1]);
+});
+
+
+const contextRawOf = (view, width) => {
+	const lines = view.raw(width);
+	return lines[lines.findIndex((line) => plain(line).includes("gpt-6-luna (high)")) + 1];
+};
+
+test("the context row's percentage, eight-cell meter and colors follow the principal header's rounded rules, uncapped above 100%", async (t) => {
+	for (const [tokens, row, color] of [
+		[0, "ctx ▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱  0% · 0 / 200K", "text"],
+		[12_000, "ctx ▱ ▱ ▱ ▱ ▱ ▱ ▱ ▱  6% · 12K / 200K", "text"],
+		[14_000, "ctx ▰ ▱ ▱ ▱ ▱ ▱ ▱ ▱  7% · 14K / 200K", "text"],
+		[148_000, "ctx ▰ ▰ ▰ ▰ ▰ ▰ ▱ ▱  74% · 148K / 200K", "text"],
+		[149_000, "ctx ▰ ▰ ▰ ▰ ▰ ▰ ▱ ▱  75% · 149K / 200K", "warning"],
+		[188_999, "ctx ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰  94% · 188K / 200K", "warning"],
+		[189_000, "ctx ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰  95% · 189K / 200K", "error"],
+		[300_000, "ctx ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰  150% · 300K / 200K", "error"],
+	]) {
+		await t.test(`${tokens} of 200K`, async (t) => {
+			const { view } = contextView(t, record("5636"), { capacity: 200_000, tokens, last: false });
+			await settle(view, 60);
+			const raw = contextRawOf(view, 60);
+			assert.equal(plain(raw).replace(/^ │ {2}/, "").trimEnd().replace(/ +│$/, ""), row);
+			const percent = row.match(/\d+%/)[0];
+			assert.ok(raw.includes(theme.fg(color, percent)), raw);
+			const main = renderHeader(theme, { branch: null, cwd: "/", home: "/", working: 0, usage: { tokens, contextWindow: 200_000 } }, 120)[0];
+			const start = main.indexOf(theme.fg("dim", "ctx"));
+			const meter = main.slice(start, main.indexOf(theme.fg(color, percent)) + theme.fg(color, percent).length);
+			assert.ok(raw.includes(meter), `${JSON.stringify(meter)} in ${JSON.stringify(raw)}`);
+		});
+	}
+});
+
+test("the context row tells unavailable, unknown occupancy and retained readings apart, and an ended child's reading is last", async (t) => {
+	const running = record("5636");
+	const ended = record("5636", { state: "completed", endedAt: now, text: "Done." });
+	for (const [name, child, context, row] of [
+		["queued", record("5636", { state: "queued", startedAt: undefined }), undefined, "ctx unavailable"],
+		["no measurement", running, undefined, "ctx unavailable"],
+		["unknown occupancy", running, { capacity: 200_000, tokens: null, last: false }, "ctx ? · 200K"],
+		["retained reading", running, { capacity: 200_000, tokens: 100_000, last: true }, "ctx ▰ ▰ ▰ ▰ ▱ ▱ ▱ ▱  50% · 100K / 200K · last"],
+		["retained unknown occupancy", running, { capacity: 200_000, tokens: null, last: true }, "ctx ? · 200K · last"],
+		["ended reading", ended, { capacity: 200_000, tokens: 100_000, last: false }, "ctx ▰ ▰ ▰ ▰ ▱ ▱ ▱ ▱  50% · 100K / 200K · last"],
+		["ended unknown occupancy", ended, { capacity: 200_000, tokens: null, last: false }, "ctx ? · 200K · last"],
+		["ended without a measurement", ended, undefined, "ctx unavailable"],
+	]) {
+		await t.test(name, async (t) => {
+			const { view } = contextView(t, child, context);
+			await settle(view, 60);
+			assert.equal(plain(contextRawOf(view, 60)).replace(/^ │ {2}/, "").replace(/ +│$/, ""), row);
+		});
+	}
+});
+
+test("a narrowing detail drops the meter, then the counts, then clips the context row, never overflowing down to one column", async (t) => {
+	const forms = {
+		numeric: [
+			[60, "ctx ▰ ▰ ▰ ▰ ▱ ▱ ▱ ▱  50% · 100K / 200K · last"],
+			[52, "ctx 50% · 100K / 200K · last"],
+			[35, "ctx 50% · last"],
+			[19, "ctx 50% · la…"],
+		],
+		unknown: [
+			[60, "ctx ? · 200K · last"],
+			[24, "ctx ? · last"],
+			[17, "ctx ? · la…"],
+		],
+		unavailable: [
+			[60, "ctx unavailable"],
+			[17, "ctx unavai…"],
+		],
+	};
+	const contexts = {
+		numeric: { capacity: 200_000, tokens: 100_000, last: true },
+		unknown: { capacity: 200_000, tokens: null, last: true },
+		unavailable: undefined,
+	};
+	for (const [name, expected] of Object.entries(forms)) {
+		await t.test(name, async (t) => {
+			const { view } = contextView(t, record("5636"), contexts[name]);
+			await settle(view, 60);
+			for (const [width, row] of expected) {
+				assert.equal(plain(view.lines(width)[3]).replace(/^ │ {1,2}/, "").replace(/ +│$/, ""), row, `${width}`);
+			}
+			for (let width = 60; width >= 1; width--) {
+				for (const line of view.raw(width)) assert.ok(visibleWidth(line) <= width, `${width}: ${line}`);
+			}
+			assert.equal(plain(view.lines(4)[3]), "│c…│");
+		});
+	}
 });

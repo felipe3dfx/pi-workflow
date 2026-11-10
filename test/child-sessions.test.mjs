@@ -4918,8 +4918,8 @@ test("alt+a and /workflow:subagents open a full-screen overlay of every child; j
 			lines[2],
 			/^ │ {2}▸ ◐ worker [0-9a-f]{4} +running · \d+s │ model \(medium\) · wt: repo/,
 		);
-		assert.match(lines[3], /^ │ {3}History ─+ │ Run the tests/);
-		assert.match(lines[4], /^ │ {4}✓ worker [0-9a-f]{4} Map the.* \d+s │/);
+		assert.match(lines[3], /^ │ {3}History ─+ │ ctx unavailable/);
+		assert.match(lines[4], /^ │ {4}✓ worker [0-9a-f]{4} Map the.* \d+s │ Run the tests/);
 		assert.match(
 			view.lines(60).at(-2),
 			/j\/k move {2}\| {2}Enter detail {2}\| {2}s\/c cancel {2}\| {2}q close/,
@@ -7504,5 +7504,56 @@ test("a foreground child that fails after a checkpoint hands the parent its harn
 				return true;
 			},
 		);
+	});
+});
+
+test("each child's context state reaches its own record and its followers at once, and survives its end and a reload without loss or duplication", async () => {
+	const { core, launch } = recordingCore();
+	const first = await launch();
+	const second = await launch();
+	const notified = [];
+	core.follow(first.id, () => notified.push(core.context(first.id)));
+	const reading = { capacity: 200_000, tokens: 50_000, last: false };
+	first.child.spec.context(reading);
+	second.child.spec.context({ capacity: 100_000, tokens: null, last: false });
+	assert.deepEqual(notified, [reading]);
+	assert.deepEqual(core.context(first.id), reading);
+	assert.deepEqual(core.context(second.id), { capacity: 100_000, tokens: null, last: false });
+
+	const resident = await core.detach();
+	const held = { capacity: 200_000, tokens: 60_000, last: false };
+	first.child.spec.context(held);
+	const reloaded = recordingCore();
+	reloaded.core.adopt(resident);
+	const followed = [];
+	reloaded.core.follow(first.id, () => followed.push(reloaded.core.context(first.id)));
+	assert.deepEqual(reloaded.core.context(first.id), held);
+	assert.deepEqual(reloaded.core.context(second.id), { capacity: 100_000, tokens: null, last: false });
+	const after = { capacity: 200_000, tokens: 70_000, last: true };
+	first.child.spec.context(after);
+	assert.deepEqual(followed, [after]);
+	assert.deepEqual(notified, [reading]);
+
+	first.child.result.resolve("Done.");
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.equal(reloaded.core.get(first.id).state, "completed");
+	assert.deepEqual(reloaded.core.context(first.id), after);
+	assert.equal("context" in reloaded.core.get(first.id), false);
+});
+
+test("an accepted context update repaints the open Fleet detail of its child without another child event", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		await spawnBackground(extension, worktree, "Run the tests");
+		await settle();
+		const view = openChildren(extension, { rows: 12 });
+		assert.match(view.lines()[3], /│ ctx unavailable/);
+		const renders = view.tui.renders;
+		children.created[0].spec.context({ capacity: 200_000, tokens: 100_000, last: false });
+		assert.ok(view.tui.renders > renders);
+		assert.match(view.lines()[3], /│ ctx ▰ ▰ ▰ ▰ ▱ ▱ ▱ ▱ {2}50% · 100K \/ 200K/);
+		view.press("q");
+		await view.opened;
 	});
 });

@@ -17,6 +17,8 @@ export const mcpTools = [
 	"read_mcp_resource",
 ];
 
+export type ChildContext = { capacity: number; tokens: number | null; last: boolean };
+
 interface ChildSpec {
 	authorization?: ActionAuthorization;
 	sources?: CommonToolSources;
@@ -34,6 +36,7 @@ interface ChildSpec {
 	report(result: ChildResult): void;
 	checkpoint?: CheckpointGrant;
 	checkpointed(checkpoint: Checkpoint): void;
+	context?(state: ChildContext | undefined): void;
 	parentSession?: string;
 }
 

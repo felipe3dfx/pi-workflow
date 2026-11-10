@@ -62,8 +62,37 @@ const entries = [];
 let steering = [];
 let settle;
 const write = (record) => process.stdout.write(`${JSON.stringify(record)}\n`);
-const respond = (command, data) =>
-	write({ id: command.id, type: "response", command: command.type, success: true, data });
+const reply = (command, data) =>
+	JSON.stringify({ id: command.id, type: "response", command: command.type, success: true, data });
+const respond = (command, data) => process.stdout.write(`${reply(command, data)}\n`);
+const stats = JSON.parse(process.env.FAKE_PI_STATS ?? "[{}]");
+const held = [];
+const compacted = (success, aborted = false) =>
+	JSON.stringify({
+		type: "compaction_end",
+		reason: "manual",
+		result: success ? { summary: "Summary.", firstKeptEntryId: "e1", tokensBefore: 150000 } : undefined,
+		aborted,
+		willRetry: false,
+		...(success ? {} : { errorMessage: "Compaction failed." }),
+	});
+
+function act(action) {
+	if (action === "reply") {
+		const message = { role: "assistant", content: [{ type: "text", text: "Working." }], stopReason: "toolUse" };
+		write({ type: "message_start", message });
+		write({ type: "message_end", message });
+	} else if (action === "compact") process.stdout.write(`${compacted(true)}\n`);
+	else if (action === "compact-failed") process.stdout.write(`${compacted(false)}\n`);
+	else if (action === "compact-aborted") process.stdout.write(`${compacted(false, true)}\n`);
+	else if (action === "release" || action === "compact-release" || action === "release-compact") {
+		const lines = held.splice(0);
+		if (action === "compact-release") lines.unshift(compacted(true));
+		if (action === "release-compact") lines.push(compacted(true));
+		process.stdout.write(lines.map((line) => `${line}\n`).join(""));
+	} else if (action === "die") process.exit(9);
+	else if (action === "finish") settle?.();
+}
 const entry = (message) => {
 	const added = { type: "message", id: `e${entries.length + 1}`, message };
 	entries.push(added);
@@ -124,7 +153,7 @@ function run(task) {
 		settle = () => finish("stop", "SETTLED");
 		return;
 	}
-	if (scenario === "hang" || scenario === "steer") {
+	if (scenario === "hang" || scenario === "steer" || scenario === "context") {
 		settle = () => finish("stop", "SETTLED");
 		return;
 	}
@@ -172,7 +201,20 @@ const handlers = {
 		respond(command, { disposition: scenario === "handled" ? "handled" : "started" });
 		if (scenario !== "handled") run(command.message);
 	},
+	get_session_stats: (command) => {
+		const step = stats.length > 1 ? stats.shift() : stats[0];
+		if (step === "silent") return;
+		if (step?.hold) held.push(reply(command, step.hold));
+		else if (step === "fail") {
+			write({ id: command.id, type: "response", command: command.type, success: false, error: "stats unavailable" });
+		} else respond(command, step);
+	},
 	steer: (command) => {
+		if (scenario === "context") {
+			respond(command);
+			act(command.message);
+			return;
+		}
 		steering = [...steering, command.message];
 		write({ type: "queue_update", steering, followUp: [] });
 		respond(command);
