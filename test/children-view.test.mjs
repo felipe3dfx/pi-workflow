@@ -3250,6 +3250,24 @@ test("the detail shows the selected child's context below its model and above it
 	assert.equal(scrolled[meta + 1], lines[meta + 1]);
 });
 
+test("a short terminal clips the detail header from the bottom, giving up the task before the context row", async (t) => {
+	const ctx = /^ │ {2}ctx ▰ ▰ ▰ ▰ ▱ ▱ ▱ ▱ {2}50% · 100K \/ 200K +│$/;
+	for (const [rows, top] of [
+		[8, [/◐ worker 5636/, /gpt-6-luna \(high\)/]],
+		[9, [/◐ worker 5636/, /gpt-6-luna \(high\)/, ctx]],
+		[10, [/◐ worker 5636/, /gpt-6-luna \(high\)/, ctx, /Run sleep 60/]],
+	]) {
+		await t.test(`${rows} rows`, async (t) => {
+			const { view } = contextView(t, record("5636"), { capacity: 200_000, tokens: 100_000, last: false }, { rows });
+			await settle(view, 60);
+			const lines = view.raw(60).map(plain);
+			assert.equal(lines.length, rows);
+			for (const [at, pattern] of top.entries()) assert.match(lines[1 + at], pattern);
+			assert.equal(lines.filter((line) => line.includes("ctx ")).length, rows >= 9 ? 1 : 0);
+			assert.match(lines[1 + top.length], /^ │ +│$/);
+		});
+	}
+});
 
 const contextRawOf = (view, width) => {
 	const lines = view.raw(width);

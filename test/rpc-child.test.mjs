@@ -8,7 +8,6 @@ import { syncBuiltinESMExports } from "node:module";
 import { VERSION } from "@earendil-works/pi-coding-agent";
 import { delimiter, join } from "node:path";
 import process from "node:process";
-import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -26,6 +25,7 @@ import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
 import { alive, descendants, gone, parent } from "./support/process-tree.mjs";
 import { eventually } from "./support/eventually.mjs";
+import { manualClock } from "./support/manual-clock.mjs";
 
 const fakePi = fileURLToPath(new URL("./support/fake-pi.mjs", import.meta.url));
 const childRuntime = fileURLToPath(new URL("../extensions/child-runtime.ts", import.meta.url));
@@ -865,18 +865,7 @@ test("an RPC child measures its own context when its run starts and after each c
 	});
 });
 
-function manualClock() {
-	const timers = new Set();
-	return {
-		timers,
-		schedule(run, ms) {
-			const timer = { run, ms };
-			timers.add(timer);
-			return () => timers.delete(timer);
-		},
-		pending: () => [...timers].find((timer) => timer.ms === readinessDeadline),
-	};
-}
+const querying = (clock) => () => clock.pending().includes(readinessDeadline);
 
 const unknown = (contextWindow = 200_000) => ({ contextUsage: { tokens: null, contextWindow, percent: null } });
 
@@ -885,6 +874,7 @@ test("a measurement without a positive context window means unavailable, not a f
 		["no context usage", {}],
 		["a zero window", usage(10, 0)],
 		["no window", { contextUsage: { tokens: 10, percent: 1 } }],
+		["a null window", { contextUsage: { tokens: 10, contextWindow: null, percent: null } }],
 	]) {
 		await t.test(name, async (t) => {
 			const { handle, states } = await measured(t, [usage(50_000), step]);
@@ -912,18 +902,18 @@ test("a failed, malformed or late measurement keeps only the still-valid reading
 			await eventually(latest);
 			await handle.steer("reply");
 			if (step.hold) {
-				(await eventually(clock.pending)).run();
+				await eventually(querying(clock));
+				await clock.fire(readinessDeadline);
 				await handle.steer("release");
 			}
 			await eventually(() => latest()?.last);
-			await delay(50);
-			assert.deepEqual(states.slice(1), [{ capacity: 200_000, tokens: 50_000, last: true }]);
 			await handle.steer("reply");
-			assert.deepEqual(await eventually(latest, (state) => state.tokens === 70_000), {
-				capacity: 200_000,
-				tokens: 70_000,
-				last: false,
-			});
+			await eventually(latest, (state) => state.tokens === 70_000);
+			assert.deepEqual(states, [
+				{ capacity: 200_000, tokens: 50_000, last: false },
+				{ capacity: 200_000, tokens: 50_000, last: true },
+				{ capacity: 200_000, tokens: 70_000, last: false },
+			]);
 			await handle.steer("finish");
 			assert.equal(await run, "SETTLED");
 		});
@@ -942,7 +932,12 @@ test("a failed, malformed or late measurement keeps only the still-valid reading
 test("a successful compaction invalidates occupancy in receipt order and no earlier reply restores it", async (t) => {
 	for (const order of ["compact", "compact-release", "release-compact"]) {
 		await t.test(order, async (t) => {
-			const { handle, states, latest } = await measured(t, [usage(150_000), { hold: usage(150_000) }, unknown()]);
+			const { handle, states, latest } = await measured(t, [
+				usage(150_000),
+				{ hold: usage(150_000) },
+				unknown(),
+				usage(5_000),
+			]);
 			await eventually(latest);
 			await handle.steer("reply");
 			await eventually(() => latest()?.last);
@@ -954,8 +949,9 @@ test("a successful compaction invalidates occupancy in receipt order and no earl
 				tokens: null,
 				last: false,
 			});
-			await delay(50);
-			const after = states.slice(order === "release-compact" ? before + 1 : before);
+			await handle.steer("reply");
+			await eventually(latest, (state) => state.tokens === 5_000);
+			const after = states.slice(order === "release-compact" ? before + 1 : before, -1);
 			assert.ok(after.every((state) => state.tokens === null), JSON.stringify(after));
 		});
 	}
@@ -973,20 +969,37 @@ test("a failed or aborted compaction alone keeps the valid reading", async (t) =
 	}
 });
 
+test("a context consumer that throws is reported through the child's notices and later readings still reach it", async (t) => {
+	process.env.FAKE_PI_STATS = JSON.stringify([usage(50_000), usage(80_000)]);
+	const states = [];
+	const { handle, notes } = await fakeChild(t, "context", {
+		context(state) {
+			states.push(state);
+			throw new Error("The Fleet view could not repaint.");
+		},
+	});
+	handle.run("Work.").catch(() => {});
+	await eventually(() => states.length === 1);
+	await handle.steer("reply");
+	await eventually(() => states.at(-1)?.tokens === 80_000);
+	assert.deepEqual(notes, Array(states.length).fill("The Fleet view could not repaint."));
+});
+
 test("measurement triggers during a query coalesce into one later query", async (t) => {
 	const commands = join(await scratch(t), "commands");
 	process.env.FAKE_PI_COMMANDS = commands;
 	t.after(() => {
 		delete process.env.FAKE_PI_COMMANDS;
 	});
-	const { handle, latest } = await measured(t, [usage(1_000), { hold: usage(2_000) }, usage(3_000)]);
+	const { handle, latest } = await measured(t, [usage(1_000), { hold: usage(2_000) }, usage(3_000), usage(4_000)]);
 	await eventually(latest);
 	for (let i = 0; i < 3; i++) await handle.steer("reply");
 	await handle.steer("release");
 	await eventually(latest, (state) => state.tokens === 3_000);
-	await delay(50);
+	await handle.steer("reply");
+	await eventually(latest, (state) => state.tokens === 4_000);
 	const queries = readFileSync(commands, "utf8").split("\n").filter((type) => type === "get_session_stats");
-	assert.equal(queries.length, 3);
+	assert.equal(queries.length, 4);
 });
 
 test("a child that dies or is disposed during a measurement keeps its reading marked last and leaves no measurement timer", async (t) => {
@@ -996,7 +1009,7 @@ test("a child that dies or is disposed during a measurement keeps its reading ma
 			const { handle, latest, run } = await measured(t, [usage(50_000), { hold: usage(90_000) }], clock);
 			await eventually(latest);
 			await handle.steer("reply");
-			await eventually(clock.pending);
+			await eventually(querying(clock));
 			if (ending === "die") {
 				await handle.steer("die").catch(() => {});
 				await assert.rejects(run, /exited with code 9/);
@@ -1005,7 +1018,7 @@ test("a child that dies or is disposed during a measurement keeps its reading ma
 			}
 			await handle.dispose();
 			assert.deepEqual(latest(), { capacity: 200_000, tokens: 50_000, last: true });
-			assert.deepEqual([...clock.timers], []);
+			assert.deepEqual(clock.pending(), []);
 		});
 	}
 });
