@@ -1367,12 +1367,12 @@ async function largeRecord(t, limits) {
 	});
 	const { id, child } = await audited.launch();
 	for (let i = 0; i < 400; i++) child.spec.onEvent(userMessage(`message ${i}`));
-	await eventually(
+	const { health } = await eventually(
 		() => audited.audit.read(id, { from: 400 }),
 		(window) => window.health.written === window.health.received,
 	);
 	files.reads.length = 0;
-	return { ...audited, files, id };
+	return { ...audited, files, id, received: health.received };
 }
 
 test("opening a window of a large record reads bounded index pages and journal bytes, and continues from its cursor", async (t) => {
@@ -1417,7 +1417,11 @@ async function drained(audit, root, id) {
 }
 
 test("without its index a record still shows the known identity and windows verified from the record, with a warning", async (t) => {
-	const { audit, files, id, root } = await largeRecord(t, { window: 16, windowBytes: 1024 });
+	const { audit, files, id, root, received } = await largeRecord(t, { window: 16, windowBytes: 1024 });
+	await eventually(
+		() => readFile(join(indexOf(root, id), "head.json"), "utf8").then(JSON.parse, () => ({})),
+		(head) => head.committed === received,
+	);
 	await rm(indexOf(root, id), { recursive: true });
 
 	const first = await audit.read(id);
