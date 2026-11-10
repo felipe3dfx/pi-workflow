@@ -19,6 +19,12 @@ export const mcpTools = [
 
 export type ChildContext = { capacity: number; tokens: number | null; last: boolean };
 
+export function contextReading(capacity: unknown, tokens: unknown): Omit<ChildContext, "last"> | undefined {
+	if (!Number.isSafeInteger(capacity) || (capacity as number) <= 0) return undefined;
+	if (tokens !== null && !(Number.isSafeInteger(tokens) && (tokens as number) >= 0)) return undefined;
+	return { capacity: capacity as number, tokens: tokens as number | null };
+}
+
 interface ChildSpec {
 	authorization?: ActionAuthorization;
 	sources?: CommonToolSources;

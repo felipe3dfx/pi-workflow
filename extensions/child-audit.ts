@@ -5,7 +5,7 @@ import { crc32 } from "node:zlib";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 import { askParentTool } from "./child-runtime.ts";
-import { type ChildContext, shutdownDeadline } from "./child-handle.ts";
+import { type ChildContext, contextReading, shutdownDeadline } from "./child-handle.ts";
 import { errorMessage } from "./error-message.ts";
 
 export interface AuditIdentity {
@@ -2354,9 +2354,7 @@ function parse(text: string): Line | undefined {
 function sealedContext(value: unknown): SealedContext | undefined {
 	if (typeof value !== "object" || value === null) return undefined;
 	const { capacity, tokens } = value as { capacity?: unknown; tokens?: unknown };
-	if (!Number.isSafeInteger(capacity) || (capacity as number) <= 0) return undefined;
-	if (tokens !== null && !(Number.isSafeInteger(tokens) && (tokens as number) >= 0)) return undefined;
-	return { capacity: capacity as number, tokens: tokens as number | null };
+	return contextReading(capacity, tokens);
 }
 
 function meta(value: unknown) {

@@ -21,6 +21,7 @@ import {
 	type ChildContext,
 	type ChildHandle,
 	type ChildSessionFactory,
+	contextReading,
 	mcpTools,
 	shutdownDeadline,
 } from "./child-handle.ts";
@@ -141,12 +142,9 @@ function reading(data: unknown): ChildContext | undefined {
 	if (usage === undefined) return undefined;
 	const { tokens, contextWindow } = (usage ?? {}) as { tokens?: unknown; contextWindow?: unknown };
 	if (contextWindow == null || (typeof contextWindow === "number" && contextWindow <= 0)) return undefined;
-	const capacity = contextWindow as number;
-	const occupied = tokens as number | null;
-	if (!Number.isSafeInteger(capacity) || (occupied !== null && !(Number.isSafeInteger(occupied) && occupied >= 0))) {
-		throw new Error("The child sent malformed session stats.");
-	}
-	return { capacity, tokens: occupied, last: false };
+	const measured = contextReading(contextWindow, tokens);
+	if (!measured) throw new Error("The child sent malformed session stats.");
+	return { ...measured, last: false };
 }
 
 export function createRpcChildSession(
