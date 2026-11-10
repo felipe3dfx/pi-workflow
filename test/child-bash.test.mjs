@@ -744,10 +744,13 @@ test("a child's bash keeps the guard when the user's prefix sets errexit", async
 
 test("a child's bash reports a syntax error two lines below the command's line", async (t) => {
 
-	const result = await run("echo ok\nif then", worktree(t));
+	const command = "echo ok\nif then";
+	const result = await run(command, worktree(t));
 
 	assert.equal(result.isError, true);
-	assert.match(text(result), /line 4: syntax error/);
+	const [, shell, line] = text(result).match(/^(.+): -c: line (\d+): syntax error/m);
+	const bare = spawnSync(shell, ["-c", command], { encoding: "utf8" }).stderr;
+	assert.match(bare, new RegExp(`line ${Number(line) - 2}: syntax error`));
 });
 
 test("a child's bash cannot be created for a worktree that does not resolve", (t) => {
