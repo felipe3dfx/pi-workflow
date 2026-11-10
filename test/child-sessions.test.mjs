@@ -106,7 +106,7 @@ test("the installed Claude Bridge npm package resolves to its declared official 
 			trusted: false,
 		});
 		assert.equal(actual, await realpath(join(installed, "src", "index.ts")));
-		assert.equal(dir.startsWith(tmpdir()), true);
+		assert.equal(dir.startsWith(await realpath(tmpdir())), true);
 	});
 });
 

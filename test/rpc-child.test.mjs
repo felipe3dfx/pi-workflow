@@ -205,7 +205,7 @@ test("an RPC child runs as its own Pi process in its worktree with the selected 
 	const { handle, launched, dir } = await fakeChild(t, "complete");
 	assert.equal(await handle.run("Say done."), "DONE");
 	const { argv, cwd } = launched();
-	assert.equal(cwd, dir);
+	assert.equal(cwd, await realpath(dir));
 	const value = (name) => argv[argv.indexOf(name) + 1];
 	assert.equal(value("--mode"), "rpc");
 	assert.equal(value("--session-dir"), join(dir, "sessions", handle.sessionId));
@@ -466,7 +466,7 @@ test("a trusted parent launches its RPC child with exactly --approve", async (t)
 		argv.filter((arg) => arg === "--approve" || arg === "--no-approve"),
 		["--approve"],
 	);
-	assert.equal(launched().cwd, dir);
+	assert.equal(launched().cwd, await realpath(dir));
 });
 
 test("RPC events reach onEvent in the SDK shape with one cumulative assistant message", async (t) => {
@@ -799,10 +799,14 @@ test("an RPC child refuses construction when Pi is not installed", async (t) => 
 async function agentWith(t, packages) {
 	const agentDir = await scratch(t);
 	const previous = process.env.PI_CODING_AGENT_DIR;
+	const previousPrefix = process.env.npm_config_prefix;
 	process.env.PI_CODING_AGENT_DIR = agentDir;
+	process.env.npm_config_prefix = join(agentDir, "global");
 	t.after(() => {
 		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previous;
+		if (previousPrefix === undefined) delete process.env.npm_config_prefix;
+		else process.env.npm_config_prefix = previousPrefix;
 	});
 	const modules = join(agentDir, "npm", "node_modules");
 	for (const [name, manifest] of Object.entries(packages)) {

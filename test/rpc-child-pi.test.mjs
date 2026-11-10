@@ -539,7 +539,7 @@ test("a real Pi worker's guarded bash refuses a parent command and its report st
 	const result = { verdict: "done", files_changed: [], validation: ["git push origin HEAD: refused"], left_undone: [] };
 	const scene = await fixture(t, [
 		{ tool: "bash", args: { command: "git push origin HEAD" } },
-		{ tool: "bash", args: { command: "ls -l /proc/$$/fd" } },
+		{ tool: "bash", args: { command: 'for f in /dev/fd/*; do [ -S "$f" ] && echo "${f##*/} socket"; done; true' } },
 		{ tool: "report_result", args: result },
 		"DONE",
 	]);
@@ -555,7 +555,7 @@ test("a real Pi worker's guarded bash refuses a parent command and its report st
 	assert.match(refusal, /`git push` is reserved for the parent/);
 	const descriptors = toolResults(scene.endpoint.requests[2]).at(-1);
 	assert.deepEqual(
-		[...descriptors.matchAll(/ (\d+) -> socket:/g)].map((match) => match[1]),
+		[...descriptors.matchAll(/^(\d+) socket$/gm)].map((match) => match[1]),
 		["1", "2"],
 	);
 	assert.equal(toolResults(scene.endpoint.requests[3]).at(-1), "Result recorded.");
@@ -563,7 +563,7 @@ test("a real Pi worker's guarded bash refuses a parent command and its report st
 	assert.match(system, /You are a child session\./);
 	assert.doesNotMatch(system, /APPENDED-BY-THE-USER/);
 	t.diagnostic(`bash: ${refusal.trim()}`);
-	t.diagnostic(`bash sockets: ${[...descriptors.matchAll(/ \d+ -> socket:\S+/g)].join(",")}`);
+	t.diagnostic(`bash sockets: ${[...descriptors.matchAll(/^\d+ socket$/gm)].join(",")}`);
 	t.diagnostic(`result: ${JSON.stringify(done.result)}; final: ${done.text}`);
 });
 

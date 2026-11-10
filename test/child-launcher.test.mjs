@@ -1018,7 +1018,7 @@ test("contextual checkpoint descriptors accept every role in an assigned shared 
 				launcherContext(main),
 			);
 			assert.equal(result.kind, "ready", JSON.stringify(result));
-			assert.equal(result.checkpoint.root, main);
+			assert.equal(result.checkpoint.root, await realpath(main));
 			assert.equal(result.checkpoint.branch, branch);
 			assert.match(result.contract.prompt, /current task authorizes/);
 		}

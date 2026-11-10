@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { access, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { runPackedSubprocess } from "./support/packed-subprocess.mjs";
@@ -95,7 +96,7 @@ test("dry-run reports the isolated local executable and removes its temporary sa
 	const report = JSON.parse(stdout);
 	assert.equal(report.executable, join(root, "node_modules", ".bin", "pi"));
 	assert.deepEqual(report.arguments, ["-e", root, "--approve", "--version"]);
-	assert.match(report.sandboxRoot, /^\/tmp\/pi-workflow-sandbox-/);
+	assert.ok(report.sandboxRoot.startsWith(join(tmpdir(), "pi-workflow-sandbox-")), report.sandboxRoot);
 	await assert.rejects(() => access(report.sandboxRoot));
 });
 

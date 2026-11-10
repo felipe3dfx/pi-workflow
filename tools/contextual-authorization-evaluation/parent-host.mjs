@@ -65,6 +65,11 @@ const result = {
 let endpoint;
 let session;
 let timer;
+const children = [];
+const track = (child) => {
+	children.push(child);
+	return child;
+};
 let childSteps = 0;
 let replied = false;
 let pending;
@@ -161,7 +166,7 @@ try {
 		sources: {},
 		childSessions: {
 			create: (spec) =>
-				rpc({
+				track(rpc({
 					...spec,
 					onEvent(event) {
 						if (
@@ -174,7 +179,7 @@ try {
 							});
 						spec.onEvent(event);
 					},
-				}),
+				})),
 		},
 		authorization: {
 			authority: ({ cwd }) => ({
@@ -279,6 +284,8 @@ try {
 		});
 		session.dispose();
 	}
+	// On macOS the sweep finds a child only through the process-group records kept under TMPDIR, inside dir.
+	await Promise.allSettled(children.map(async (child) => (await child).dispose()));
 	if (endpoint) await endpoint.close();
 	try {
 		result.effect.content = await readFile(marker, "utf8");
