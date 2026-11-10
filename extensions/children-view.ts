@@ -1451,7 +1451,7 @@ function createChildrenView(
 			theme.fg("dim", truncateToWidth(terminalSafeLine(meta), width, "…")),
 			contextRow(
 				theme,
-				item.live ? sessions.context(child.id) : undefined,
+				item.live ? sessions.context(child.id) : item.listed?.context,
 				!isWorking(child.state),
 				width,
 			),

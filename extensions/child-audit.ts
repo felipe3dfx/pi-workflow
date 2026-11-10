@@ -5,7 +5,7 @@ import { crc32 } from "node:zlib";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 import { askParentTool } from "./child-runtime.ts";
-import { shutdownDeadline } from "./child-handle.ts";
+import { type ChildContext, shutdownDeadline } from "./child-handle.ts";
 import { errorMessage } from "./error-message.ts";
 
 export interface AuditIdentity {
@@ -198,6 +198,9 @@ interface Capture {
 	disposed: boolean;
 	retired: boolean;
 	sealed: boolean;
+	sealing?: Promise<unknown>;
+	context?: { capacity: number; tokens: number | null };
+	outdated?: true;
 	fenced: boolean;
 	durable?: Health;
 	cause?: string;
@@ -265,6 +268,7 @@ const unclosed =
 const closedIncomplete = "The capture was incomplete when the record closed.";
 const unverified = "The record's identity could not be verified.";
 const expired = "The audit drain expired before the record closed.";
+const arrivedLate = "Evidence arrived after the record was closed.";
 
 type Health = {
 	complete: boolean;
@@ -737,15 +741,33 @@ export function createChildAudit(options: {
 	async function seal(record: Capture) {
 		if (!record.path || !record.created || record.fenced || record.sealed) return;
 		record.sealed = true;
-		await appendMarker(record, {
+		record.sealing = appendMarker(record, {
 			close: {
 				committed: record.committed,
 				written: record.written,
 				complete: !record.cause && record.written === record.admitted,
 				...(record.state === undefined ? {} : { state: record.state }),
 				...(record.verdict === undefined ? {} : { verdict: record.verdict }),
+				...(record.context === undefined ? {} : { context: record.context }),
 			},
 		});
+		await record.sealing;
+	}
+
+	function retain(record: Capture, state: ChildContext | undefined) {
+		const next = state && { capacity: state.capacity, tokens: state.tokens };
+		if (next?.capacity === record.context?.capacity && next?.tokens === record.context?.tokens) return;
+		record.context = next;
+		if (!record.sealed || record.outdated) return;
+		// A sealed snapshot can only be voided, never rewritten: the voiding marker must follow the close line even when an earlier loss already set the cause.
+		record.outdated = true;
+		record.cause ??= arrivedLate;
+		const path = record.path as string;
+		record.work = Promise.all([record.work, record.sealing])
+			.then(async () => {
+				if (!record.fenced) await appendMarker(record, { loss: { cause: arrivedLate } });
+			})
+			.finally(() => recovered.delete(path));
 	}
 
 	function retirable(record: Capture) {
@@ -776,7 +798,7 @@ export function createChildAudit(options: {
 	function late(record: Capture) {
 		lose(record, record.next++);
 		if (record.cause) return;
-		record.cause = "Evidence arrived after the record was closed.";
+		record.cause = arrivedLate;
 		const path = record.path as string;
 		const work = record.work;
 		record.work = work
@@ -1127,6 +1149,7 @@ export function createChildAudit(options: {
 					record.draining = false;
 				});
 			}),
+			context: guarded((state: ChildContext | undefined) => retain(record, state)),
 			answered: guarded((question: number, text: string) => {
 				record.answer = question;
 				admit(record, {
@@ -1590,6 +1613,7 @@ export function createChildAudit(options: {
 		} else record.index = unindexed;
 		record.state = facts.state;
 		record.verdict = facts.verdict;
+		if (owner) record.context = facts.context;
 		const warnings = [
 			...(facts.cause ? [facts.cause] : []),
 			...(facts.closed ? [] : [unclosed]),
@@ -1721,6 +1745,7 @@ export function createChildAudit(options: {
 			cause: typeof loss?.cause === "string" ? loss.cause : undefined,
 			lostFrom: count(loss?.from),
 			uncertain: count(loss?.uncertain),
+			context: close === undefined ? undefined : sealedContext(close.context),
 			...(typeof close?.state === "string"
 				? {
 						state: close.state,
@@ -1777,6 +1802,7 @@ export function createChildAudit(options: {
 			...(record.state === undefined ? {} : { state: record.state }),
 			...(record.verdict === undefined ? {} : { verdict: record.verdict }),
 			...(interrupted ? { interrupted: true as const } : {}),
+			...(record.durable && record.context ? { context: { ...record.context, last: true } } : {}),
 			...(record.index ? { index: record.index } : {}),
 			health: healthOf(record),
 		};
@@ -2306,6 +2332,14 @@ function parse(text: string): Line | undefined {
 		return undefined;
 	}
 	return { header, payload: text.slice(split + 1) };
+}
+
+function sealedContext(value: unknown) {
+	if (typeof value !== "object" || value === null) return undefined;
+	const { capacity, tokens } = value as { capacity?: unknown; tokens?: unknown };
+	if (!Number.isSafeInteger(capacity) || (capacity as number) <= 0) return undefined;
+	if (tokens !== null && !(Number.isSafeInteger(tokens) && (tokens as number) >= 0)) return undefined;
+	return { capacity: capacity as number, tokens: tokens as number | null };
 }
 
 function meta(value: unknown) {

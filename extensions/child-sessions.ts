@@ -771,6 +771,8 @@ export function createChildSessions(options: {
 			checkpointed: () => {},
 			context: () => {},
 		};
+		// The capture outlives a reload's held port, so a context change reaches the record before any seal.
+		let retain: ChildCapture["context"] = () => {};
 		const launchedIn = generation;
 		const tools = childTools(plan);
 		let handle: ChildHandle;
@@ -792,7 +794,10 @@ export function createChildSessions(options: {
 				report: (result) => port.report(result),
 				...(plan.checkpoint ? { checkpoint: plan.checkpoint } : {}),
 				checkpointed: (checkpoint) => port.checkpointed(checkpoint),
-				context: (state) => port.context(state),
+				context: (state) => {
+					retain(state);
+					port.context(state);
+				},
 				parentSession: from?.conversation.sessionId,
 			});
 		} catch (error) {
@@ -822,6 +827,7 @@ export function createChildSessions(options: {
 			...(launch.group === undefined ? {} : { group: launch.group }),
 			...(from ? { continuedFrom: from.id } : {}),
 		});
+		retain = capture.context;
 		if (!launch.background) {
 			let ended: ChildState = "failed";
 			const stopped = Promise.withResolvers<never>();

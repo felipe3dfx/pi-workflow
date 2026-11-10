@@ -3340,3 +3340,36 @@ test("a narrowing detail drops the meter, then the counts, then clips the contex
 		});
 	}
 });
+
+test("a reopened history child shows its recovered context as last, and unavailable without a valid snapshot", async (t) => {
+	const root = withAgentDirectory(t);
+	const numeric = record("5636", { state: "completed", endedAt: now, text: "Done." });
+	const unknown = record("9e01", { state: "completed", endedAt: now, text: "Done." });
+	const interrupted = record("a809");
+	const never = record("b7c2", { state: "completed", endedAt: now, text: "Done." });
+	const before = audited(t, [numeric, unknown, interrupted, never], { root });
+	before.captures[numeric.id].context({ capacity: 200_000, tokens: 100_000, last: false });
+	before.captures[unknown.id].context({ capacity: 200_000, tokens: null, last: false });
+	before.captures[interrupted.id].context({ capacity: 200_000, tokens: 50_000, last: false });
+	for (const child of [numeric, unknown, never]) before.audit.execution(child.id, "completed");
+	before.audit.execution(interrupted.id, "running");
+	await before.audit.close();
+
+	const later = audited(t, [], { root });
+	const view = open(fakeSessions([]), { rows: 30, audit: later.audit });
+	await settle(view, 60);
+	const rows = {};
+	for (let i = 0; i < 4; i++) {
+		view.press("\r");
+		const shown = (await settle(view, 60)).split("\n")[1];
+		const child = [numeric, unknown, interrupted, never].find(({ id }) => shown.includes(`worker ${id.slice(0, 4)}`));
+		rows[child.id] = plain(contextRawOf(view, 60)).replace(/^ │ {2}/, "").trimEnd().replace(/ +│$/, "");
+		view.press("\x1b", "j");
+	}
+	assert.deepEqual(rows, {
+		[numeric.id]: "ctx ▰ ▰ ▰ ▰ ▱ ▱ ▱ ▱  50% · 100K / 200K · last",
+		[unknown.id]: "ctx ? · 200K · last",
+		[interrupted.id]: "ctx ▰ ▰ ▱ ▱ ▱ ▱ ▱ ▱  25% · 50K / 200K · last",
+		[never.id]: "ctx unavailable",
+	});
+});

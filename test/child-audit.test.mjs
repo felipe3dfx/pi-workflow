@@ -2156,3 +2156,305 @@ test("the parent's records are listed in bounded pages, live working children in
 	assert.equal(reopened.records.length, 2);
 	assert.equal((await later.list(reopened.next)).records.length, 1);
 });
+
+async function ended(core, id, child) {
+	child.spec.report(done);
+	child.result.resolve("Done.");
+	await eventually(async () => core.get(id).state, (state) => state === "completed");
+}
+
+async function reopenedContext(root, id, options) {
+	return (await listed(reopen(root, "parent-1", options)))[id].context;
+}
+
+test("reopening the parent recovers each ended child's own last context, numeric or of unknown occupancy", async (t) => {
+	const { audit, core, launch, root } = auditedCore(t);
+	const numeric = await launch();
+	const unknown = await launch();
+	numeric.child.spec.context({ capacity: 200_000, tokens: 50_000, last: false });
+	unknown.child.spec.context({ capacity: 400_000, tokens: 10_000, last: false });
+	numeric.child.spec.context({ capacity: 200_000, tokens: 100_000, last: true });
+	unknown.child.spec.context({ capacity: 400_000, tokens: null, last: false });
+	await ended(core, numeric.id, numeric.child);
+	await ended(core, unknown.id, unknown.child);
+	await core.disposeAll();
+	await audit.close();
+
+	const records = await listed(reopen(root));
+	assert.deepEqual(records[numeric.id].context, { capacity: 200_000, tokens: 100_000, last: true });
+	assert.deepEqual(records[unknown.id].context, { capacity: 400_000, tokens: null, last: true });
+	assert.equal(records[numeric.id].health.complete, true);
+});
+
+test("a child that ended after a compaction and a failed refresh reopens with unknown occupancy, never the invalidated percentage", async (t) => {
+	const { audit, core, launch, root } = auditedCore(t);
+	const { id, child } = await launch();
+	child.spec.context({ capacity: 200_000, tokens: 150_000, last: false });
+	child.spec.context({ capacity: 200_000, tokens: null, last: true });
+	child.spec.context({ capacity: 200_000, tokens: null, last: true });
+	await ended(core, id, child);
+	await core.disposeAll();
+	await audit.close();
+
+	assert.deepEqual(await reopenedContext(root, id), { capacity: 200_000, tokens: null, last: true });
+});
+
+test("a child that never measured, or whose last reading had no capacity, reopens unavailable", async (t) => {
+	const { audit, core, launch, root } = auditedCore(t);
+	const never = await launch();
+	const uncapped = await launch();
+	uncapped.child.spec.context({ capacity: 200_000, tokens: 1_000, last: false });
+	uncapped.child.spec.context(undefined);
+	await ended(core, never.id, never.child);
+	await ended(core, uncapped.id, uncapped.child);
+	await core.disposeAll();
+	await audit.close();
+
+	const records = await listed(reopen(root));
+	assert.equal(records[never.id].context, undefined);
+	assert.equal(records[uncapped.id].context, undefined);
+	assert.equal(records[never.id].health.complete, true);
+});
+
+test("a context invalidation reaches the close even when the transcript capture lost it", async (t) => {
+	const { files, failNext } = failingNext();
+	const { audit, core, sent, launch, root } = auditedCore(t, { files });
+	const { id, child } = await launch();
+	child.spec.context({ capacity: 200_000, tokens: 150_000, last: false });
+	await flushed(audit, id);
+	failNext({ bytes: 0 });
+	child.spec.onEvent(userMessage("lost"));
+	await eventually(() => audit.read(id), (read) => read.health.marker);
+	child.spec.context({ capacity: 200_000, tokens: null, last: false });
+	await finishesUnchanged(core, id, child, sent);
+	await core.disposeAll();
+	await audit.close();
+
+	const record = (await listed(reopen(root)))[id];
+	assert.equal(record.health.complete, false);
+	assert.equal(record.health.closed, true);
+	assert.deepEqual(record.context, { capacity: 200_000, tokens: null, last: true });
+});
+
+test("a record that was never closed reopens unavailable however complete its verified transcript is", async (t) => {
+	const { audit, launch, root } = auditedCore(t, { run: () => new Promise(() => {}) });
+	const { id, child } = await launch();
+	child.spec.context({ capacity: 200_000, tokens: 100_000, last: false });
+	child.spec.onEvent(userMessage("alpha"));
+	await drained(audit, root, id);
+
+	const later = reopen(root);
+	const record = (await listed(later))[id];
+	assert.equal(record.health.closed, false);
+	assert.equal(record.context, undefined);
+	assert.deepEqual(inputs(await later.read(id)).map(({ text }) => text), ["alpha"]);
+});
+
+async function resealed(root, id, change) {
+	const path = journalOf(root, id);
+	const lines = (await readFile(path, "utf8")).split("\n");
+	const at = lines.findLastIndex((line) => line.includes('"close"'));
+	const header = JSON.parse(lines[at].slice(9, lines[at].indexOf("\t", 9)));
+	change(header.close);
+	lines[at] = forged(header).slice(0, -1);
+	await writeFile(path, lines.join("\n"));
+}
+
+async function sealedWithContext(t) {
+	const { audit, core, launch, root } = auditedCore(t);
+	const { id, child } = await launch();
+	child.spec.onEvent(userMessage("alpha"));
+	child.spec.context({ capacity: 200_000, tokens: 100_000, last: false });
+	await ended(core, id, child);
+	await core.disposeAll();
+	await audit.close();
+	return { root, id };
+}
+
+test("a verified close is trusted only with a well-formed snapshot; an old one without it stays readable as unavailable", async (t) => {
+	for (const [name, context] of [
+		["old record", undefined],
+		["null", null],
+		["not an object", "200K"],
+		["zero capacity", { capacity: 0, tokens: 0 }],
+		["textual capacity", { capacity: "200000", tokens: 0 }],
+		["fractional capacity", { capacity: 1.5, tokens: 0 }],
+		["missing occupancy", { capacity: 200_000 }],
+		["negative occupancy", { capacity: 200_000, tokens: -1 }],
+		["fractional occupancy", { capacity: 200_000, tokens: 0.5 }],
+		["textual occupancy", { capacity: 200_000, tokens: "100000" }],
+		["unsafe occupancy", { capacity: 200_000, tokens: 2 ** 53 }],
+	]) {
+		await t.test(name, async (t) => {
+			const { root, id } = await sealedWithContext(t);
+			await resealed(root, id, (close) => {
+				if (context === undefined) delete close.context;
+				else close.context = context;
+			});
+			const later = reopen(root);
+			const record = (await listed(later))[id];
+			assert.equal(record.health.closed, true);
+			assert.equal(record.state, "completed");
+			assert.equal(record.context, undefined);
+			assert.deepEqual(inputs(await later.read(id)).map(({ text }) => text), ["alpha"]);
+		});
+	}
+	await t.test("occupancy above capacity", async (t) => {
+		const { root, id } = await sealedWithContext(t);
+		await resealed(root, id, (close) => {
+			close.context = { capacity: 200_000, tokens: 300_000 };
+		});
+		assert.deepEqual(await reopenedContext(root, id), { capacity: 200_000, tokens: 300_000, last: true });
+	});
+});
+
+test("a snapshot in a journal whose identity belongs to another child is unavailable", async (t) => {
+	const { audit, core, launch, root } = auditedCore(t);
+	const owner = await launch();
+	const other = await launch();
+	owner.child.spec.context({ capacity: 200_000, tokens: 100_000, last: false });
+	await ended(core, owner.id, owner.child);
+	await ended(core, other.id, other.child);
+	await core.disposeAll();
+	await audit.close();
+	await writeFile(journalOf(root, other.id), await readFile(journalOf(root, owner.id)));
+
+	const records = await listed(reopen(root));
+	assert.match(records[other.id].health.warning, /identity could not be verified/);
+	assert.equal(records[other.id].context, undefined);
+	assert.deepEqual(records[owner.id].context, { capacity: 200_000, tokens: 100_000, last: true });
+});
+
+test("a torn line after the close leaves the snapshot unavailable", async (t) => {
+	const { root, id } = await sealedWithContext(t);
+	await writeFile(journalOf(root, id), '0badc0de\t{"v":1,"ordinal":9,"part":0', { flag: "a" });
+
+	const record = (await listed(reopen(root)))[id];
+	assert.equal(record.health.closed, false);
+	assert.equal(record.context, undefined);
+});
+
+for (const [name, change] of [
+	["invalidation", { capacity: 200_000, tokens: null, last: false }],
+	["reading", { capacity: 200_000, tokens: 20_000, last: false }],
+]) {
+	test(`a context ${name} after the seal voids the snapshot without rewriting the sealed lines`, async (t) => {
+		const { audit, core, launch, root } = auditedCore(t);
+		const { id, child } = await launch();
+		child.spec.context({ capacity: 200_000, tokens: 100_000, last: false });
+		await ended(core, id, child);
+		await core.disposeAll();
+		await audit.close();
+		const sealed = await readFile(journalOf(root, id));
+		child.spec.context({ capacity: 200_000, tokens: 100_000, last: true });
+		assert.deepEqual(await readFile(journalOf(root, id)), sealed);
+
+		child.spec.context(change);
+		const record = await eventually(
+			async () => (await listed(reopen(root)))[id],
+			(found) => found.health.closed === false,
+		);
+		assert.equal(record.context, undefined);
+		assert.match(record.health.warning, /arrived after the record was closed/);
+		const after = await readFile(journalOf(root, id));
+		assert.deepEqual(after.subarray(0, sealed.length), sealed);
+	});
+}
+
+test("a late invalidation voids the snapshot of a record whose transcript capture had already failed", async (t) => {
+	const { files, failNext } = failingNext();
+	const { audit, core, sent, launch, root } = auditedCore(t, { files });
+	const { id, child } = await launch();
+	await flushed(audit, id);
+	failNext({ bytes: 0 });
+	child.spec.onEvent(userMessage("lost"));
+	await eventually(() => audit.read(id), (read) => read.health.marker);
+	child.spec.context({ capacity: 200_000, tokens: 150_000, last: false });
+	await finishesUnchanged(core, id, child, sent);
+	await core.disposeAll();
+	await audit.close();
+	assert.deepEqual(await reopenedContext(root, id), { capacity: 200_000, tokens: 150_000, last: true });
+
+	child.spec.context({ capacity: 200_000, tokens: null, last: false });
+	const record = await eventually(
+		async () => (await listed(reopen(root)))[id],
+		(found) => found.health.closed === false,
+	);
+	assert.equal(record.context, undefined);
+});
+
+test("a record whose drain expired before its close reopens unavailable", async (t) => {
+	const clock = manualTimer();
+	const stuck = Promise.withResolvers();
+	let hold = false;
+	const files = faultyFiles({
+		write: async (_call, length) => {
+			if (hold) await stuck.promise;
+			return { bytes: length };
+		},
+	});
+	const { audit, launch, root } = auditedCore(t, { files, timer: clock.timer, run: () => new Promise(() => {}) });
+	const { id, child } = await launch();
+	child.spec.context({ capacity: 200_000, tokens: 100_000, last: false });
+	await flushed(audit, id);
+	hold = true;
+	child.spec.onEvent(userMessage("stuck"));
+	await delay(10);
+	const closing = audit.close();
+	clock.expire();
+	assert.deepEqual(await closing, { closed: 0, expired: 1 });
+	stuck.resolve();
+	await delay(20);
+
+	const record = (await listed(reopen(root)))[id];
+	assert.equal(record.health.closed, false);
+	assert.equal(record.context, undefined);
+});
+
+test("recovering the snapshot reads only the bounded identity and tail of a long journal", async (t) => {
+	const limits = { chunk: 1024, windowBytes: 4096 };
+	const { audit, core, launch, root } = auditedCore(t, { limits });
+	const { id, child } = await launch();
+	for (let i = 0; i < 300; i++) child.spec.onEvent(userMessage(`message ${i} ${"x".repeat(100)}`));
+	child.spec.context({ capacity: 200_000, tokens: 100_000, last: false });
+	await ended(core, id, child);
+	await core.disposeAll();
+	await audit.close();
+	const size = (await readFile(journalOf(root, id))).length;
+
+	const files = faultyFiles();
+	assert.deepEqual(await reopenedContext(root, id, { files, limits }), { capacity: 200_000, tokens: 100_000, last: true });
+	const read = files.reads.filter(({ path }) => path.endsWith(".jsonl")).reduce((sum, { bytes }) => sum + bytes, 0);
+	assert.ok(read <= 2 * limits.windowBytes && read < size / 4, `${read} of ${size} journal bytes were read`);
+});
+
+test("an invalidation held across an abandoned reload still reaches the record before its seal", async (t) => {
+	const { audit, core, launch, root } = auditedCore(t, { run: () => new Promise(() => {}) });
+	const { id, child } = await launch();
+	await eventually(async () => core.get(id).state, (state) => state === "running");
+	child.spec.context({ capacity: 200_000, tokens: 150_000, last: false });
+	const resident = await core.detach();
+	child.spec.context({ capacity: 200_000, tokens: null, last: false });
+	await core.abandon(resident);
+	await audit.close();
+
+	assert.deepEqual(await reopenedContext(root, id), { capacity: 200_000, tokens: null, last: true });
+});
+
+test("a foreground child's last context is recovered like a background child's", async (t) => {
+	const { audit, core, children, root } = auditedCore(t);
+	const running = core.start({ ...plan, surfaces: ["surface-foreground"] }, {
+		background: false,
+		project: () => ({ cwd: "/tmp", trusted: false }),
+		shell: () => ({}),
+	});
+	const child = await eventually(async () => children.created[0], Boolean);
+	child.spec.context({ capacity: 200_000, tokens: 100_000, last: false });
+	child.result.resolve("Done.");
+	await running;
+	await core.disposeAll();
+	await audit.close();
+	const id = (await reopen(root).list()).records[0].child;
+
+	assert.deepEqual(await reopenedContext(root, id), { capacity: 200_000, tokens: 100_000, last: true });
+});
