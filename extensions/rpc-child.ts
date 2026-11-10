@@ -72,15 +72,24 @@ export function installedPi() {
 	throw new Error("Pi was not found on PATH.");
 }
 
+const minimumPi = [1, 4, 0];
+const supportedPi = `>=${minimumPi.join(".")}`;
+
 async function verifiedPi() {
 	const path = installedPi();
 	if (path === process.execPath) return { path, version: VERSION };
-	const { stdout } = await promisify(execFile)(path, ["--version"], { timeout: readinessDeadline });
-	const version = stdout.trim();
-	if (version !== VERSION) {
-		throw new Error(
-			`The Pi on PATH at ${path} is version ${version}, but the parent runs Pi ${VERSION}; a child must run the parent's Pi version.`,
-		);
+	const version = await promisify(execFile)(path, ["--version"], { timeout: readinessDeadline }).then(
+		({ stdout }) => stdout.trim(),
+		() => "",
+	);
+	const parts = /^(\d+)\.(\d+)\.(\d+)$/.exec(version)?.slice(1).map(Number);
+	if (!parts) {
+		const found = version ? `reported version ${JSON.stringify(version)}, which is not readable` : "has no readable version";
+		throw new Error(`The Pi on PATH at ${path} ${found}, but a child requires Pi ${supportedPi}.`);
+	}
+	const differs = parts.findIndex((part, index) => part !== minimumPi[index]);
+	if (differs >= 0 && parts[differs] < minimumPi[differs]) {
+		throw new Error(`The Pi on PATH at ${path} is version ${version}, but a child requires Pi ${supportedPi}.`);
 	}
 	return { path, version };
 }
