@@ -1358,9 +1358,12 @@ const launchLimitReason = `The parent already has ${launchLimit} working childre
 
 const unseatedMessage = "Child session is not seated. Run /workflow:config.";
 
-function unseatedChild() {
+const noStandInLine =
+	"Do not stand in for the child with another agent process, such as Pi or another model CLI started from the shell. Tell the operator that no child ran and why; any work you then do yourself is yours, not a child's or an independent agent's.";
+
+function unseatedChild(...extra: string[]) {
 	if (seated("child-session", "overlay")) return undefined;
-	return report([unseatedMessage], { status: "refused" });
+	return report([unseatedMessage, ...extra], { status: "refused" });
 }
 
 function report(lines: string[], details: Record<string, unknown>) {
@@ -1372,7 +1375,12 @@ function report(lines: string[], details: Record<string, unknown>) {
 
 function notLaunched(status: string, outcome: Outcome) {
 	return report(
-		[...(outcome.warnings ?? []), outcome.warning, `Reason: ${outcome.reason}`],
+		[
+			...(outcome.warnings ?? []),
+			outcome.warning,
+			`Reason: ${outcome.reason}`,
+			noStandInLine,
+		],
 		{
 			status,
 			reason: outcome.reason,
@@ -1439,7 +1447,7 @@ export function createSpawnChildTool(
 				],
 		parameters: spawnChildParameters,
 		async execute(toolCallId, params, signal, _onUpdate, ctx) {
-			const unseated = unseatedChild();
+			const unseated = unseatedChild(noStandInLine);
 			if (unseated) return unseated;
 			const claim =
 				params.todo === undefined ? undefined : todo.claim(params.todo);
@@ -1607,7 +1615,7 @@ export function createContinueChildTool(
 		],
 		parameters: continueChildParameters,
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			const unseated = unseatedChild();
+			const unseated = unseatedChild(noStandInLine);
 			if (unseated) return unseated;
 			const started = await sessions.resume(params.id, params.task, {
 				signal,

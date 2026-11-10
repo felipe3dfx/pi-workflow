@@ -6234,7 +6234,11 @@ test("after child session is unseated, a launch is refused while a fan-out's chi
 			toolContext("tui", worktree),
 		);
 		assert.equal(refused.details.status, "refused");
-		assert.equal(text(refused), "Child session is not seated. Run /workflow:config.");
+		assert.match(text(refused), /^Child session is not seated\. Run \/workflow:config\.\n/);
+		assert.match(
+			text(refused),
+			/^Do not stand in for the child with another agent process, such as Pi or another model CLI started from the shell\. Tell the operator that no child ran and why; any work you then do yourself is yours, not a child's or an independent agent's\.$/m,
+		);
 		assert.equal(children.created.length, 6);
 
 		for (const [i, child] of children.created.entries()) {
@@ -6249,6 +6253,45 @@ test("after child session is unseated, a launch is refused while a fan-out's chi
 			extension.messages[0].message.details.results.map(stateOfDetails),
 			ids.map((id) => ({ id, state: "completed" })),
 		);
+	});
+});
+
+test("after child session is unseated, continue_child is refused with the no-stand-in instruction", async (t) => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		const seated = Object.fromEntries(
+			capabilities.map((capability) => [capability, true]),
+		);
+		t.after(() =>
+			replaceSelection({
+				schemaVersion: 1,
+				capabilities: seated,
+				expectations: {},
+			}),
+		);
+		replaceSelection({
+			schemaVersion: 1,
+			capabilities: { ...seated, "child-session": false },
+			expectations: {},
+		});
+
+		const refused = await use(
+			extension,
+			"continue_child",
+			{ id: "any", task: "Try again" },
+			toolContext("tui", worktree),
+		);
+		assert.equal(refused.details.status, "refused");
+		assert.match(text(refused), /^Child session is not seated\. Run \/workflow:config\.\n/);
+		assert.match(
+			text(refused),
+			/^Do not stand in for the child with another agent process, such as Pi or another model CLI started from the shell\. Tell the operator that no child ran and why; any work you then do yourself is yours, not a child's or an independent agent's\.$/m,
+		);
+		assert.equal(children.created.length, 0);
 	});
 });
 
