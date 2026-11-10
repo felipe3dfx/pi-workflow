@@ -809,8 +809,9 @@ export function createChildAudit(options: {
 
 	function late(record: Capture) {
 		lose(record, record.next++);
-		if (record.cause) return;
-		record.cause = arrivedLate;
+		if (record.outdated || (record.cause && !record.fenced)) return;
+		record.outdated = true;
+		record.cause ??= arrivedLate;
 		unseal(record);
 	}
 

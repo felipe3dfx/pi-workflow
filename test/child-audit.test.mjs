@@ -932,7 +932,7 @@ function faultyFiles(fault = {}) {
 			return {
 				async write(buffer, offset = 0, length = buffer.length - offset) {
 					const call = writes.push(length) - 1;
-					const plan = (await fault.write?.(call, length)) ?? { bytes: length };
+					const plan = (await fault.write?.(call, length, path)) ?? { bytes: length };
 					if (plan.bytes > 0) await handle.write(buffer, offset, plan.bytes);
 					if (plan.error) throw plan.error;
 					return { bytesWritten: plan.bytes };
@@ -2472,6 +2472,32 @@ test("a context change while the seal is still being written voids the snapshot 
 	assert.match(record.health.warning, /arrived after the record was closed/);
 });
 
+test("late evidence after a seal that landed past the drain deadline still voids the snapshot", async (t) => {
+	const clock = manualTimer();
+	const { files, holdNext, held, release } = heldSeal();
+	const { audit, launch, root } = auditedCore(t, { files, timer: clock.timer, run: () => new Promise(() => {}) });
+	const { id, child } = await launch();
+	child.spec.context({ capacity: 200_000, tokens: 100_000, last: false });
+	await flushed(audit, id);
+	holdNext();
+	const closing = audit.close();
+	await held;
+	clock.expire();
+	assert.deepEqual(await closing, { closed: 0, expired: 1 });
+	release();
+	assert.deepEqual(
+		await eventually(() => reopenedContext(root, id)),
+		{ capacity: 200_000, tokens: 100_000, last: true },
+	);
+
+	child.spec.onEvent(userMessage("too late"));
+	const record = await eventually(
+		async () => (await listed(reopen(root)))[id],
+		(found) => found.health.closed === false,
+	);
+	assert.equal(record.context, undefined);
+});
+
 test("a context change after a seal that landed past the drain deadline still voids the snapshot", async (t) => {
 	const clock = manualTimer();
 	const { files, holdNext, held, release } = heldSeal();
@@ -2503,7 +2529,7 @@ test("a record whose drain expired before its close reopens unavailable, while a
 	const stuck = Promise.withResolvers();
 	let holding;
 	const files = faultyFiles({
-		open: async (path) => {
+		write: async (_call, _length, path) => {
 			if (holding && path.endsWith(`${holding}.jsonl`)) await stuck.promise;
 		},
 	});
