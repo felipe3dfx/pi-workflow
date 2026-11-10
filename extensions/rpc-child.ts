@@ -18,8 +18,10 @@ import {
 import type { PendingAuthorization } from "./child-projection.ts";
 import type { ActionAuthorization, AuthorizationDecision } from "./action-authorization.ts";
 import {
+	type ChildContext,
 	type ChildHandle,
 	type ChildSessionFactory,
+	contextReading,
 	mcpTools,
 	shutdownDeadline,
 } from "./child-handle.ts";
@@ -134,6 +136,17 @@ function applyUpdate(message: AssistantMessage, update: Update) {
 	}
 }
 
+function reading(data: unknown): ChildContext | undefined {
+	if (typeof data !== "object" || data === null) throw new Error("The child sent malformed session stats.");
+	const usage = (data as { contextUsage?: unknown }).contextUsage;
+	if (usage === undefined) return undefined;
+	const { tokens, contextWindow } = (usage ?? {}) as { tokens?: unknown; contextWindow?: unknown };
+	if (contextWindow == null || (typeof contextWindow === "number" && contextWindow <= 0)) return undefined;
+	const measured = contextReading(contextWindow, tokens);
+	if (!measured) throw new Error("The child sent malformed session stats.");
+	return { ...measured, last: false };
+}
+
 export function createRpcChildSession(
 	options: { command?: string[]; sessionRoot?: string; schedule?: Schedule } = {},
 ): ChildSessionFactory {
@@ -236,6 +249,10 @@ export function createRpcChildSession(
 		const asks = new Map<number, AbortController>();
 		const held = new Map<string, PendingAuthorization>();
 		let connected: Pending | undefined;
+		let context: ChildContext | undefined;
+		let contextGeneration = 0;
+		let measuring = false;
+		let remeasure = false;
 
 		function fail(error: Error) {
 			failure ??= error;
@@ -253,17 +270,64 @@ export function createRpcChildSession(
 			child?.stdin?.write(`${JSON.stringify(record)}\n`);
 		}
 
-		function request(type: string, fields: Record<string, unknown> = {}) {
+		function request(type: string, fields: Record<string, unknown> = {}, limit?: number) {
 			const id = `r${++requests}`;
 			return new Promise<unknown>((resolve, reject) => {
-				waiting.set(id, { resolve, reject });
+				let cancel = () => {};
+				const abandon = (error: unknown) => {
+					cancel();
+					waiting.delete(id);
+					reject(error);
+				};
+				waiting.set(id, {
+					resolve(data) {
+						cancel();
+						resolve(data);
+					},
+					reject: abandon,
+				});
+				if (limit !== undefined) {
+					cancel = schedule(
+						() => abandon(new Error(`The child Pi process did not answer ${type} within ${limit} ms.`)),
+						limit,
+					);
+				}
 				try {
 					send({ id, type, ...fields });
 				} catch (error) {
-					waiting.delete(id);
-					reject(error);
+					abandon(error);
 				}
 			});
+		}
+
+		function publish(next: ChildContext | undefined) {
+			context = next;
+			try {
+				spec.context?.(next);
+			} catch (error) {
+				spec.notify(errorMessage(error));
+			}
+		}
+
+		function measure() {
+			if (context && !context.last) publish({ ...context, last: true });
+			if (measuring) {
+				remeasure = true;
+				return;
+			}
+			if (disposed || failure || !child) return;
+			measuring = true;
+			remeasure = false;
+			const issued = contextGeneration;
+			request("get_session_stats", {}, readinessDeadline)
+				.then((data) => {
+					if (issued === contextGeneration) publish(reading(data));
+				})
+				.catch(() => {})
+				.finally(() => {
+					measuring = false;
+					if (remeasure) measure();
+				});
 		}
 
 		function refresh() {
@@ -336,6 +400,16 @@ export function createRpcChildSession(
 				else if (["select", "confirm", "input", "editor"].includes(String(record.method)))
 					send({ type: "extension_ui_response", id: record.id, cancelled: true });
 			} else {
+				if (record.type === "compaction_end" && record.result != null && record.aborted !== true) {
+					contextGeneration += 1;
+					if (context) context = { capacity: context.capacity, tokens: null, last: false };
+				}
+				if (
+					record.type === "compaction_end" ||
+					(record.type === "message_end" && (record.message as { role?: unknown } | undefined)?.role === "assistant")
+				) {
+					measure();
+				}
 				delivery = delivery
 					.then(() => deliver(record))
 					.catch((error: unknown) => spec.notify(errorMessage(error)));
@@ -504,6 +578,7 @@ export function createRpcChildSession(
 			async run(task) {
 				starting ??= ready();
 				await starting;
+				measure();
 				const done = new Promise<unknown>((resolve, reject) => {
 					settled = { resolve, reject };
 				});

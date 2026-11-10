@@ -25,6 +25,7 @@ import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
 import { alive, descendants, gone, parent } from "./support/process-tree.mjs";
 import { eventually } from "./support/eventually.mjs";
+import { manualClock } from "./support/manual-clock.mjs";
 
 const fakePi = fileURLToPath(new URL("./support/fake-pi.mjs", import.meta.url));
 const childRuntime = fileURLToPath(new URL("../extensions/child-runtime.ts", import.meta.url));
@@ -50,6 +51,7 @@ async function fakeChild(t, scenario, spec = {}, options = {}) {
 		delete process.env.FAKE_PI_LACKS;
 		delete process.env.FAKE_PI_MALFORMED;
 		delete process.env.FAKE_PI_MALFORMED_ON;
+		delete process.env.FAKE_PI_STATS;
 	});
 	const events = [];
 	const notes = [];
@@ -839,4 +841,214 @@ test("a missing pi-web-access or Claude Bridge package fails the launch with its
 test("a pi-web-access package without an extension fails the launch with its cause", async (t) => {
 	await agentWith(t, { "pi-web-access": {} });
 	await assert.rejects(fakeChild(t, "complete", { role: "explore" }), /pi-web-access could not be loaded, so the explorer has no web tools/);
+});
+
+const usage = (tokens, contextWindow = 200_000) => ({ contextUsage: { tokens, contextWindow, percent: 99 } });
+
+async function measured(t, stats, options) {
+	process.env.FAKE_PI_STATS = JSON.stringify(stats);
+	const states = [];
+	const child = await fakeChild(t, "context", { context: (state) => states.push(state) }, options);
+	const run = child.handle.run("Work.");
+	run.catch(() => {});
+	return { ...child, states, run, latest: () => states.at(-1) };
+}
+
+test("an RPC child measures its own context when its run starts and after each completed assistant response", async (t) => {
+	const { handle, latest } = await measured(t, [usage(50_000), usage(80_000)]);
+	assert.deepEqual(await eventually(latest), { capacity: 200_000, tokens: 50_000, last: false });
+	await handle.steer("reply");
+	assert.deepEqual(await eventually(latest, (state) => state?.tokens === 80_000), {
+		capacity: 200_000,
+		tokens: 80_000,
+		last: false,
+	});
+});
+
+const querying = (clock) => () => clock.pending().includes(readinessDeadline);
+
+const unknown = (contextWindow = 200_000) => ({ contextUsage: { tokens: null, contextWindow, percent: null } });
+
+test("a measurement without a positive context window means unavailable, not a failure that keeps the earlier reading", async (t) => {
+	for (const [name, step] of [
+		["no context usage", {}],
+		["a zero window", usage(10, 0)],
+		["no window", { contextUsage: { tokens: 10, percent: 1 } }],
+		["a null window", { contextUsage: { tokens: 10, contextWindow: null, percent: null } }],
+	]) {
+		await t.test(name, async (t) => {
+			const { handle, states } = await measured(t, [usage(50_000), step]);
+			await eventually(() => states.length === 1);
+			await handle.steer("reply");
+			await eventually(() => states.length === 3);
+			assert.deepEqual(states, [
+				{ capacity: 200_000, tokens: 50_000, last: false },
+				{ capacity: 200_000, tokens: 50_000, last: true },
+				undefined,
+			]);
+		});
+	}
+});
+
+test("a failed, malformed or late measurement keeps only the still-valid reading marked last, and the run still completes", async (t) => {
+	for (const [name, step] of [
+		["error reply", "fail"],
+		["malformed reply", { contextUsage: { tokens: "many", contextWindow: 200_000 } }],
+		["reply after the deadline", { hold: usage(90_000) }],
+	]) {
+		await t.test(name, async (t) => {
+			const clock = manualClock();
+			const { handle, states, latest, run } = await measured(t, [usage(50_000), step, usage(70_000)], clock);
+			await eventually(latest);
+			await handle.steer("reply");
+			if (step.hold) {
+				await eventually(querying(clock));
+				await clock.fire(readinessDeadline);
+				await handle.steer("release");
+			}
+			await eventually(() => latest()?.last);
+			await handle.steer("reply");
+			await eventually(latest, (state) => state.tokens === 70_000);
+			assert.deepEqual(states, [
+				{ capacity: 200_000, tokens: 50_000, last: false },
+				{ capacity: 200_000, tokens: 50_000, last: true },
+				{ capacity: 200_000, tokens: 70_000, last: false },
+			]);
+			await handle.steer("finish");
+			assert.equal(await run, "SETTLED");
+		});
+	}
+	await t.test("without an earlier reading", async (t) => {
+		const { handle, states, run } = await measured(t, ["fail", "fail", usage(5_000)]);
+		await handle.steer("reply");
+		await handle.steer("reply");
+		await eventually(() => states.length === 1);
+		assert.deepEqual(states, [{ capacity: 200_000, tokens: 5_000, last: false }]);
+		await handle.steer("finish");
+		assert.equal(await run, "SETTLED");
+	});
+});
+
+test("a successful compaction invalidates occupancy in receipt order and no earlier reply restores it", async (t) => {
+	for (const order of ["compact", "compact-release", "release-compact"]) {
+		await t.test(order, async (t) => {
+			const { handle, states, latest } = await measured(t, [
+				usage(150_000),
+				{ hold: usage(150_000) },
+				unknown(),
+				usage(5_000),
+			]);
+			await eventually(latest);
+			await handle.steer("reply");
+			await eventually(() => latest()?.last);
+			const before = states.length;
+			await handle.steer(order);
+			if (order === "compact") await handle.steer("release");
+			assert.deepEqual(await eventually(latest, (state) => state.tokens === null && !state.last), {
+				capacity: 200_000,
+				tokens: null,
+				last: false,
+			});
+			await handle.steer("reply");
+			await eventually(latest, (state) => state.tokens === 5_000);
+			const after = states.slice(order === "release-compact" ? before + 1 : before, -1);
+			assert.ok(after.every((state) => state.tokens === null), JSON.stringify(after));
+		});
+	}
+});
+
+test("a failed or aborted compaction alone keeps the valid reading", async (t) => {
+	for (const outcome of ["compact-failed", "compact-aborted"]) {
+		await t.test(outcome, async (t) => {
+			const { handle, states, latest } = await measured(t, [usage(150_000), usage(160_000)]);
+			await eventually(latest);
+			await handle.steer(outcome);
+			await eventually(latest, (state) => state.tokens === 160_000 && !state.last);
+			assert.ok(states.every((state) => state.tokens !== null));
+		});
+	}
+});
+
+test("a context consumer that throws is reported through the child's notices and later readings still reach it", async (t) => {
+	process.env.FAKE_PI_STATS = JSON.stringify([usage(50_000), usage(80_000)]);
+	const states = [];
+	const { handle, notes } = await fakeChild(t, "context", {
+		context(state) {
+			states.push(state);
+			throw new Error("The Fleet view could not repaint.");
+		},
+	});
+	handle.run("Work.").catch(() => {});
+	await eventually(() => states.length === 1);
+	await handle.steer("reply");
+	await eventually(() => states.at(-1)?.tokens === 80_000);
+	assert.deepEqual(notes, Array(states.length).fill("The Fleet view could not repaint."));
+});
+
+test("measurement triggers during a query coalesce into one later query", async (t) => {
+	const commands = join(await scratch(t), "commands");
+	process.env.FAKE_PI_COMMANDS = commands;
+	t.after(() => {
+		delete process.env.FAKE_PI_COMMANDS;
+	});
+	const { handle, latest } = await measured(t, [usage(1_000), { hold: usage(2_000) }, usage(3_000), usage(4_000)]);
+	await eventually(latest);
+	for (let i = 0; i < 3; i++) await handle.steer("reply");
+	await handle.steer("release");
+	await eventually(latest, (state) => state.tokens === 3_000);
+	await handle.steer("reply");
+	await eventually(latest, (state) => state.tokens === 4_000);
+	const queries = readFileSync(commands, "utf8").split("\n").filter((type) => type === "get_session_stats");
+	assert.equal(queries.length, 4);
+});
+
+test("a child that dies or is disposed during a measurement keeps its reading marked last and leaves no measurement timer", async (t) => {
+	for (const ending of ["die", "dispose"]) {
+		await t.test(ending, async (t) => {
+			const clock = manualClock();
+			const { handle, latest, run } = await measured(t, [usage(50_000), { hold: usage(90_000) }], clock);
+			await eventually(latest);
+			await handle.steer("reply");
+			await eventually(querying(clock));
+			if (ending === "die") {
+				await handle.steer("die").catch(() => {});
+				await assert.rejects(run, /exited with code 9/);
+			} else {
+				await handle.dispose();
+			}
+			await handle.dispose();
+			assert.deepEqual(latest(), { capacity: 200_000, tokens: 50_000, last: true });
+			assert.deepEqual(clock.pending(), []);
+		});
+	}
+});
+
+test("a streamed response is measured once when it completes, not on each token", async (t) => {
+	const commands = join(await scratch(t), "commands");
+	process.env.FAKE_PI_COMMANDS = commands;
+	t.after(() => {
+		delete process.env.FAKE_PI_COMMANDS;
+	});
+	process.env.FAKE_PI_STATS = JSON.stringify([usage(1_000), usage(2_000)]);
+	const states = [];
+	const { handle, events } = await fakeChild(t, "complete", { context: (state) => states.push(state) });
+	assert.equal(await handle.run("Say done."), "DONE");
+	await eventually(() => states.at(-1)?.tokens === 2_000);
+	assert.ok(events.filter((event) => event.type === "message_update").length > 1);
+	const queries = readFileSync(commands, "utf8").split("\n").filter((type) => type === "get_session_stats");
+	assert.equal(queries.length, 2);
+});
+
+test("a successful compaction clears occupancy before any later reading, and a child that then dies keeps unknown occupancy marked last", async (t) => {
+	const { handle, latest, run } = await measured(t, [usage(150_000), { hold: usage(10_000) }]);
+	await eventually(latest);
+	await handle.steer("compact");
+	assert.deepEqual(await eventually(latest, (state) => state.tokens !== 150_000), {
+		capacity: 200_000,
+		tokens: null,
+		last: true,
+	});
+	await handle.steer("die").catch(() => {});
+	await assert.rejects(run, /exited with code 9/);
+	assert.deepEqual(latest(), { capacity: 200_000, tokens: null, last: true });
 });

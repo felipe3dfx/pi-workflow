@@ -5,7 +5,7 @@ import { crc32 } from "node:zlib";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 import { askParentTool } from "./child-runtime.ts";
-import { shutdownDeadline } from "./child-handle.ts";
+import { type ChildContext, contextReading, shutdownDeadline } from "./child-handle.ts";
 import { errorMessage } from "./error-message.ts";
 
 export interface AuditIdentity {
@@ -131,6 +131,8 @@ type Line =
 	| { header: Header; payload: string }
 	| { unsupported: number | undefined };
 
+type SealedContext = Omit<ChildContext, "last">;
+
 type Pending = { ordinal: number; value: unknown; bytes: number };
 
 interface AuditFile {
@@ -198,6 +200,9 @@ interface Capture {
 	disposed: boolean;
 	retired: boolean;
 	sealed: boolean;
+	sealing?: Promise<unknown>;
+	context?: SealedContext;
+	outdated?: true;
 	fenced: boolean;
 	durable?: Health;
 	cause?: string;
@@ -265,6 +270,7 @@ const unclosed =
 const closedIncomplete = "The capture was incomplete when the record closed.";
 const unverified = "The record's identity could not be verified.";
 const expired = "The audit drain expired before the record closed.";
+const arrivedLate = "Evidence arrived after the record was closed.";
 
 type Health = {
 	complete: boolean;
@@ -310,6 +316,7 @@ export function createChildAudit(options: {
 	const slice = Math.max(2, Math.floor((limits.chunk - 2) / 6));
 	const records = new Map<string, Capture>();
 	const recovered = new Map<string, Capture>();
+	const doubted = new Set<string>();
 	// Each live record keeps a minimum share no sibling may borrow, and a borrower also leaves one share free so a child that starts later can still admit its identity.
 	const share = {
 		bytes: Math.floor(limits.bytes / 16),
@@ -702,7 +709,8 @@ export function createChildAudit(options: {
 			record.marker = "failed";
 			return;
 		}
-		if (record.fenced) return;
+		// A seal starts only after the drain ends, so a sealed record has no write the fence still guards.
+		if (record.fenced && !record.sealed) return;
 		const loss = {
 			loss: {
 				...(record.lostFrom === undefined ? {} : { from: record.lostFrom }),
@@ -737,15 +745,43 @@ export function createChildAudit(options: {
 	async function seal(record: Capture) {
 		if (!record.path || !record.created || record.fenced || record.sealed) return;
 		record.sealed = true;
-		await appendMarker(record, {
+		record.sealing = appendMarker(record, {
 			close: {
 				committed: record.committed,
 				written: record.written,
 				complete: !record.cause && record.written === record.admitted,
 				...(record.state === undefined ? {} : { state: record.state }),
 				...(record.verdict === undefined ? {} : { verdict: record.verdict }),
+				...(record.context === undefined ? {} : { context: record.context }),
 			},
 		});
+		await record.sealing;
+	}
+
+	function retain(record: Capture, state: ChildContext | undefined) {
+		const next = state && { capacity: state.capacity, tokens: state.tokens };
+		if (next?.capacity === record.context?.capacity && next?.tokens === record.context?.tokens) return;
+		record.context = next;
+		if (!record.sealed || record.outdated) return;
+		// A sealed snapshot can only be voided, never rewritten: the voiding marker must follow the close line even when an earlier loss already set the cause.
+		record.outdated = true;
+		record.cause ??= arrivedLate;
+		unseal(record);
+	}
+
+	function unseal(record: Capture) {
+		const path = record.path as string;
+		// A void the journal refuses is kept beside it, so no later reader trusts the seal it could not follow.
+		record.work = Promise.all([record.work, record.sealing])
+			.then(async () => {
+				await mark(record);
+				if (!record.sealed || record.marker === "written") return;
+				doubted.add(path);
+				const file = await files.open(voidOf(path), "w", 0o600);
+				await file.close();
+			})
+			.catch(() => {})
+			.finally(() => recovered.delete(path));
 	}
 
 	function retirable(record: Capture) {
@@ -775,13 +811,14 @@ export function createChildAudit(options: {
 
 	function late(record: Capture) {
 		lose(record, record.next++);
-		if (record.cause) return;
-		record.cause = "Evidence arrived after the record was closed.";
-		const path = record.path as string;
-		const work = record.work;
-		record.work = work
-			.then(() => mark(record))
-			.finally(() => recovered.delete(path));
+		if (!record.sealed) {
+			record.cause ??= arrivedLate;
+			return;
+		}
+		if (record.outdated || (record.cause && !record.fenced)) return;
+		record.outdated = true;
+		record.cause ??= arrivedLate;
+		unseal(record);
 	}
 
 	function abandon(record: Capture) {
@@ -1127,6 +1164,7 @@ export function createChildAudit(options: {
 					record.draining = false;
 				});
 			}),
+			context: guarded((state: ChildContext | undefined) => retain(record, state)),
 			answered: guarded((question: number, text: string) => {
 				record.answer = question;
 				admit(record, {
@@ -1576,7 +1614,17 @@ export function createChildAudit(options: {
 		}
 		const owner = await identityOf(path, parent, child);
 		const head = await headOf(path, parent, child, size);
-		const facts = await tailOf(path, size);
+		const tail = await tailOf(path, size);
+		const voided =
+			tail.closed &&
+			(doubted.has(path) ||
+				(await files.stat(voidOf(path)).then(
+					() => true,
+					() => false,
+				)));
+		const facts = voided
+			? { ...tail, closed: false, complete: false, cause: tail.cause ?? arrivedLate, context: undefined }
+			: tail;
 		const record = blank(owner ?? ({ parent, child } as AuditIdentity));
 		record.path = path;
 		record.created = true;
@@ -1590,6 +1638,7 @@ export function createChildAudit(options: {
 		} else record.index = unindexed;
 		record.state = facts.state;
 		record.verdict = facts.verdict;
+		if (owner) record.context = facts.context;
 		const warnings = [
 			...(facts.cause ? [facts.cause] : []),
 			...(facts.closed ? [] : [unclosed]),
@@ -1602,7 +1651,7 @@ export function createChildAudit(options: {
 			...(facts.written === undefined ? {} : { written: facts.written }),
 			...(facts.lostFrom === undefined ? {} : { lostFrom: facts.lostFrom }),
 			...(facts.uncertain === undefined ? {} : { uncertain: facts.uncertain }),
-			...(facts.loss ? { marker: "written" as const } : {}),
+			...(voided ? { marker: "failed" as const } : facts.loss ? { marker: "written" as const } : {}),
 			...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}),
 		};
 		return record;
@@ -1721,6 +1770,7 @@ export function createChildAudit(options: {
 			cause: typeof loss?.cause === "string" ? loss.cause : undefined,
 			lostFrom: count(loss?.from),
 			uncertain: count(loss?.uncertain),
+			context: close === undefined ? undefined : sealedContext(close.context),
 			...(typeof close?.state === "string"
 				? {
 						state: close.state,
@@ -1777,6 +1827,7 @@ export function createChildAudit(options: {
 			...(record.state === undefined ? {} : { state: record.state }),
 			...(record.verdict === undefined ? {} : { verdict: record.verdict }),
 			...(interrupted ? { interrupted: true as const } : {}),
+			...(record.durable && record.context ? { context: { ...record.context, last: true } } : {}),
 			...(record.index ? { index: record.index } : {}),
 			health: healthOf(record),
 		};
@@ -2308,6 +2359,12 @@ function parse(text: string): Line | undefined {
 	return { header, payload: text.slice(split + 1) };
 }
 
+function sealedContext(value: unknown): SealedContext | undefined {
+	if (typeof value !== "object" || value === null) return undefined;
+	const { capacity, tokens } = value as { capacity?: unknown; tokens?: unknown };
+	return contextReading(capacity, tokens);
+}
+
 function meta(value: unknown) {
 	const kept: Record<string, unknown> = {};
 	if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -2334,6 +2391,10 @@ function gap(ranges: Range[], from: number, to: number) {
 
 function indexOf(journal: string) {
 	return journal.replace(/\.jsonl$/, ".index");
+}
+
+function voidOf(journal: string) {
+	return journal.replace(/\.jsonl$/, ".void");
 }
 
 function pageOf(journal: string, generation: number, page: number) {

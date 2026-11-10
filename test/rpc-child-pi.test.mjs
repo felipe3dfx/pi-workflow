@@ -1008,3 +1008,39 @@ test("a real Pi child's codemode offers no models API and calls only the child's
 	);
 	t.diagnostic(`codemode: ${output.split("\n").find((line) => line.includes("tools"))}`);
 });
+
+test("a real Pi child reports its own context occupancy and capacity, and a successful compaction leaves it unknown without a pre-compaction value returning", { skip, timeout: 60_000 }, async (t) => {
+	const scene = await fixture(t, "DONE ".repeat(50));
+	await writeFile(join(scene.agentDir, "settings.json"), JSON.stringify({ compaction: { reserveTokens: 127_900, keepRecentTokens: 50 } }));
+	const repo = await repository(scene.dir, "repo", {});
+	const states = [];
+	const events = [];
+	const started = Date.now();
+	const handle = await createRpcChildSession({ sessionRoot: join(scene.dir, "sessions") })({
+		cwd: repo,
+		project: { cwd: repo, trusted: false },
+		role: "worker",
+		model: scene.endpoint.model,
+		thinking: "off",
+		prompt: "You are a child session. Answer DONE.",
+		tools: ["read"],
+		shell: {},
+		onEvent: (event) => events.push(event.type === "compaction_end" ? `compaction_end:${event.result ? "ok" : "failed"}` : event.type),
+		notify() {},
+		ask: async () => "answer",
+		report() {},
+		checkpointed() {},
+		context: (state) => states.push({ ...state, at: Date.now() - started }),
+	});
+	t.after(() => handle.dispose());
+	assert.match(await handle.run("Say done."), /DONE/);
+	await eventually(() => states.at(-1), (state) => state?.tokens === null && !state.last);
+	assert.ok(events.includes("compaction_end:ok"), events.join(" "));
+	const numeric = states.findIndex((state) => state.tokens > 0);
+	const invalidated = states.findIndex((state) => state.tokens === null);
+	assert.ok(numeric >= 0 && numeric < invalidated, JSON.stringify(states));
+	assert.equal(states[numeric].capacity, 128_000);
+	assert.ok(states.slice(invalidated).every((state) => state.tokens === null && state.capacity === 128_000), JSON.stringify(states));
+	t.diagnostic(`states: ${JSON.stringify(states)}`);
+	t.diagnostic(`events: ${events.filter((type) => !type.startsWith("message_update")).join(" ")}`);
+});
