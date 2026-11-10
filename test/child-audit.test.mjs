@@ -2415,6 +2415,31 @@ test("a late context change whose void cannot be written reopens unavailable, wi
 	assert.equal((await listed(audit))[id].health.marker, "failed");
 });
 
+test("a late context change this process could not record anywhere is still listed unavailable here", async (t) => {
+	let failing = false;
+	const files = faultyFiles({
+		write: () => (failing ? { bytes: 0 } : undefined),
+		open: (path) => {
+			if (failing && path.endsWith(".void")) throw Object.assign(new Error("denied"), { code: "EACCES" });
+		},
+	});
+	const { audit, core, launch } = auditedCore(t, { files });
+	const { id, child } = await launch();
+	child.spec.context({ capacity: 200_000, tokens: 100_000, last: false });
+	await ended(core, id, child);
+	await core.disposeAll();
+	await audit.close();
+
+	failing = true;
+	child.spec.context({ capacity: 200_000, tokens: null, last: false });
+	const record = await eventually(
+		async () => (await listed(audit))[id],
+		(found) => found.health.marker === "failed",
+	);
+	assert.equal(record.health.closed, false);
+	assert.equal(record.context, undefined);
+});
+
 test("late evidence whose loss marker cannot be written reopens the record as not closed, with the marker failed", async (t) => {
 	let failing = false;
 	const files = faultyFiles({ write: () => (failing ? { bytes: 0 } : undefined) });
@@ -2439,17 +2464,91 @@ test("late evidence whose loss marker cannot be written reopens the record as no
 function heldSeal() {
 	const stuck = Promise.withResolvers();
 	const reached = Promise.withResolvers();
+	const draining = Promise.withResolvers();
+	const drained = Promise.withResolvers();
+	let stall = false;
+	let skip = 0;
 	let hold = false;
+	let holding = false;
+	let others = 0;
+	let settled = 0;
+	let caughtUp = () => {};
 	const files = faultyFiles({
 		open: async (path) => {
-			if (!hold || !path.endsWith(".jsonl")) return;
+			if (!path.endsWith(".jsonl")) return;
+			if (holding) {
+				others += 1;
+				return;
+			}
+			if (!hold) return;
+			if (skip > 0) {
+				skip -= 1;
+				return;
+			}
 			hold = false;
+			holding = true;
 			reached.resolve();
 			await stuck.promise;
 		},
+		write: async (_call, _length, path) => {
+			if (!stall || !path.endsWith(".jsonl")) return;
+			stall = false;
+			draining.resolve();
+			await drained.promise;
+		},
+		close: async () => {
+			if (holding && ++settled === others) caughtUp();
+		},
 	});
-	return { files, holdNext: () => (hold = true), held: reached.promise, release: () => stuck.resolve() };
+	async function release() {
+		await new Promise((resolve) => setImmediate(resolve));
+		if (settled < others) await new Promise((resolve) => (caughtUp = resolve));
+		holding = false;
+		stuck.resolve();
+	}
+	return {
+		files,
+		holdNext(after = 0) {
+			hold = true;
+			skip = after;
+		},
+		held: reached.promise,
+		release,
+		stallNext() {
+			stall = true;
+			return draining.promise;
+		},
+		unstall: () => drained.resolve(),
+	};
 }
+
+test("evidence that arrives while the close drains leaves the seal last, so a later context change still voids it", async (t) => {
+	const { files, holdNext, held, release, stallNext, unstall } = heldSeal();
+	const { audit, launch, root } = auditedCore(t, { files, run: () => new Promise(() => {}) });
+	const { id, child } = await launch();
+	child.spec.context({ capacity: 200_000, tokens: 100_000, last: false });
+	await flushed(audit, id);
+	const stalled = stallNext();
+	child.spec.onEvent(userMessage("draining"));
+	await stalled;
+	const closing = audit.close();
+	child.spec.onEvent(userMessage("late during the drain"));
+	holdNext(1);
+	unstall();
+	await held;
+	await release();
+	assert.deepEqual(await closing, { closed: 1, expired: 0 });
+	const sealed = (await listed(reopen(root)))[id];
+	assert.equal(sealed.health.closed, true);
+	assert.equal(sealed.health.complete, false);
+
+	child.spec.context({ capacity: 200_000, tokens: null, last: false });
+	const record = await eventually(
+		async () => (await listed(reopen(root)))[id],
+		(found) => found.health.closed === false,
+	);
+	assert.equal(record.context, undefined);
+});
 
 test("a context change while the seal is still being written voids the snapshot once the seal lands", async (t) => {
 	const { files, holdNext, held, release } = heldSeal();
@@ -2461,7 +2560,7 @@ test("a context change while the seal is still being written voids the snapshot 
 	const closing = audit.close();
 	await held;
 	child.spec.context({ capacity: 200_000, tokens: null, last: false });
-	release();
+	await release();
 	assert.deepEqual(await closing, { closed: 1, expired: 0 });
 
 	const record = await eventually(
@@ -2484,7 +2583,7 @@ test("late evidence after a seal that landed past the drain deadline still voids
 	await held;
 	clock.expire();
 	assert.deepEqual(await closing, { closed: 0, expired: 1 });
-	release();
+	await release();
 	assert.deepEqual(
 		await eventually(() => reopenedContext(root, id)),
 		{ capacity: 200_000, tokens: 100_000, last: true },
@@ -2496,6 +2595,7 @@ test("late evidence after a seal that landed past the drain deadline still voids
 		(found) => found.health.closed === false,
 	);
 	assert.equal(record.context, undefined);
+	assert.equal(record.health.marker, "written");
 });
 
 test("a context change after a seal that landed past the drain deadline still voids the snapshot", async (t) => {
@@ -2510,7 +2610,7 @@ test("a context change after a seal that landed past the drain deadline still vo
 	await held;
 	clock.expire();
 	assert.deepEqual(await closing, { closed: 0, expired: 1 });
-	release();
+	await release();
 	assert.deepEqual(
 		await eventually(() => reopenedContext(root, id)),
 		{ capacity: 200_000, tokens: 100_000, last: true },
@@ -2522,6 +2622,7 @@ test("a context change after a seal that landed past the drain deadline still vo
 		(found) => found.health.closed === false,
 	);
 	assert.equal(record.context, undefined);
+	assert.equal(record.health.marker, "written");
 });
 
 test("a record whose drain expired before its close reopens unavailable, while a sibling sealed in the same close keeps its snapshot", async (t) => {

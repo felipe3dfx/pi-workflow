@@ -316,6 +316,7 @@ export function createChildAudit(options: {
 	const slice = Math.max(2, Math.floor((limits.chunk - 2) / 6));
 	const records = new Map<string, Capture>();
 	const recovered = new Map<string, Capture>();
+	const doubted = new Set<string>();
 	// Each live record keeps a minimum share no sibling may borrow, and a borrower also leaves one share free so a child that starts later can still admit its identity.
 	const share = {
 		bytes: Math.floor(limits.bytes / 16),
@@ -775,6 +776,7 @@ export function createChildAudit(options: {
 			.then(async () => {
 				await mark(record);
 				if (!record.sealed || record.marker === "written") return;
+				doubted.add(path);
 				const file = await files.open(voidOf(path), "w", 0o600);
 				await file.close();
 			})
@@ -809,6 +811,10 @@ export function createChildAudit(options: {
 
 	function late(record: Capture) {
 		lose(record, record.next++);
+		if (!record.sealed) {
+			record.cause ??= arrivedLate;
+			return;
+		}
 		if (record.outdated || (record.cause && !record.fenced)) return;
 		record.outdated = true;
 		record.cause ??= arrivedLate;
@@ -1611,10 +1617,11 @@ export function createChildAudit(options: {
 		const tail = await tailOf(path, size);
 		const voided =
 			tail.closed &&
-			(await files.stat(voidOf(path)).then(
-				() => true,
-				() => false,
-			));
+			(doubted.has(path) ||
+				(await files.stat(voidOf(path)).then(
+					() => true,
+					() => false,
+				)));
 		const facts = voided
 			? { ...tail, closed: false, complete: false, cause: tail.cause ?? arrivedLate, context: undefined }
 			: tail;
