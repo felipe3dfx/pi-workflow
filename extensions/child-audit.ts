@@ -708,7 +708,8 @@ export function createChildAudit(options: {
 			record.marker = "failed";
 			return;
 		}
-		if (record.fenced) return;
+		// A seal starts only after the drain ends, so a sealed record has no write the fence still guards.
+		if (record.fenced && !record.sealed) return;
 		const loss = {
 			loss: {
 				...(record.lostFrom === undefined ? {} : { from: record.lostFrom }),
@@ -764,9 +765,20 @@ export function createChildAudit(options: {
 		// A sealed snapshot can only be voided, never rewritten: the voiding marker must follow the close line even when an earlier loss already set the cause.
 		record.outdated = true;
 		record.cause ??= arrivedLate;
+		unseal(record);
+	}
+
+	function unseal(record: Capture) {
 		const path = record.path as string;
+		// A void the journal refuses is kept beside it, so no later reader trusts the seal it could not follow.
 		record.work = Promise.all([record.work, record.sealing])
-			.then(() => mark(record))
+			.then(async () => {
+				await mark(record);
+				if (!record.sealed || record.marker === "written") return;
+				const file = await files.open(voidOf(path), "w", 0o600);
+				await file.close();
+			})
+			.catch(() => {})
 			.finally(() => recovered.delete(path));
 	}
 
@@ -799,11 +811,7 @@ export function createChildAudit(options: {
 		lose(record, record.next++);
 		if (record.cause) return;
 		record.cause = arrivedLate;
-		const path = record.path as string;
-		const work = record.work;
-		record.work = work
-			.then(() => mark(record))
-			.finally(() => recovered.delete(path));
+		unseal(record);
 	}
 
 	function abandon(record: Capture) {
@@ -1599,7 +1607,16 @@ export function createChildAudit(options: {
 		}
 		const owner = await identityOf(path, parent, child);
 		const head = await headOf(path, parent, child, size);
-		const facts = await tailOf(path, size);
+		const tail = await tailOf(path, size);
+		const voided =
+			tail.closed &&
+			(await files.stat(voidOf(path)).then(
+				() => true,
+				() => false,
+			));
+		const facts = voided
+			? { ...tail, closed: false, complete: false, cause: tail.cause ?? arrivedLate, context: undefined }
+			: tail;
 		const record = blank(owner ?? ({ parent, child } as AuditIdentity));
 		record.path = path;
 		record.created = true;
@@ -1626,7 +1643,7 @@ export function createChildAudit(options: {
 			...(facts.written === undefined ? {} : { written: facts.written }),
 			...(facts.lostFrom === undefined ? {} : { lostFrom: facts.lostFrom }),
 			...(facts.uncertain === undefined ? {} : { uncertain: facts.uncertain }),
-			...(facts.loss ? { marker: "written" as const } : {}),
+			...(voided ? { marker: "failed" as const } : facts.loss ? { marker: "written" as const } : {}),
 			...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}),
 		};
 		return record;
@@ -2368,6 +2385,10 @@ function gap(ranges: Range[], from: number, to: number) {
 
 function indexOf(journal: string) {
 	return journal.replace(/\.jsonl$/, ".index");
+}
+
+function voidOf(journal: string) {
+	return journal.replace(/\.jsonl$/, ".void");
 }
 
 function pageOf(journal: string, generation: number, page: number) {

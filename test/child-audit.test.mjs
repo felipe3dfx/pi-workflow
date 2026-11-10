@@ -2204,10 +2204,13 @@ test("a child that never measured, or whose last reading had no capacity, reopen
 	const { audit, core, launch, root } = auditedCore(t);
 	const never = await launch();
 	const uncapped = await launch();
+	const measured = await launch();
 	uncapped.child.spec.context({ capacity: 200_000, tokens: 1_000, last: false });
 	uncapped.child.spec.context(undefined);
+	measured.child.spec.context({ capacity: 200_000, tokens: 1_000, last: false });
 	await ended(core, never.id, never.child);
 	await ended(core, uncapped.id, uncapped.child);
+	await ended(core, measured.id, measured.child);
 	await core.disposeAll();
 	await audit.close();
 
@@ -2215,6 +2218,7 @@ test("a child that never measured, or whose last reading had no capacity, reopen
 	assert.equal(records[never.id].context, undefined);
 	assert.equal(records[uncapped.id].context, undefined);
 	assert.equal(records[never.id].health.complete, true);
+	assert.deepEqual(records[measured.id].context, { capacity: 200_000, tokens: 1_000, last: true });
 });
 
 test("a context invalidation reaches the close even when the transcript capture lost it", async (t) => {
@@ -2342,16 +2346,18 @@ for (const [name, change] of [
 	["invalidation", { capacity: 200_000, tokens: null, last: false }],
 	["reading", { capacity: 200_000, tokens: 20_000, last: false }],
 ]) {
-	test(`a context ${name} after the seal voids the snapshot without rewriting the sealed lines`, async (t) => {
+	test(`a context ${name} after the seal voids the snapshot while the sealed transcript stays readable`, async (t) => {
 		const { audit, core, launch, root } = auditedCore(t);
 		const { id, child } = await launch();
+		child.spec.onEvent(userMessage("alpha"));
 		child.spec.context({ capacity: 200_000, tokens: 100_000, last: false });
 		await ended(core, id, child);
 		await core.disposeAll();
 		await audit.close();
-		const sealed = await readFile(journalOf(root, id));
 		child.spec.context({ capacity: 200_000, tokens: 100_000, last: true });
-		assert.deepEqual(await readFile(journalOf(root, id)), sealed);
+		const unchanged = (await listed(reopen(root)))[id];
+		assert.equal(unchanged.health.closed, true);
+		assert.deepEqual(unchanged.context, { capacity: 200_000, tokens: 100_000, last: true });
 
 		child.spec.context(change);
 		const record = await eventually(
@@ -2360,8 +2366,7 @@ for (const [name, change] of [
 		);
 		assert.equal(record.context, undefined);
 		assert.match(record.health.warning, /arrived after the record was closed/);
-		const after = await readFile(journalOf(root, id));
-		assert.deepEqual(after.subarray(0, sealed.length), sealed);
+		assert.deepEqual(inputs(await reopen(root).read(id)).map(({ text }) => text), ["alpha"]);
 	});
 }
 
@@ -2387,26 +2392,138 @@ test("a late invalidation voids the snapshot of a record whose transcript captur
 	assert.equal(record.context, undefined);
 });
 
-test("a record whose drain expired before its close reopens unavailable", async (t) => {
-	const clock = manualTimer();
+test("a late context change whose void cannot be written reopens unavailable, with the void marked failed", async (t) => {
+	let failing = false;
+	const files = faultyFiles({ write: () => (failing ? { bytes: 0 } : undefined) });
+	const { audit, core, launch, root } = auditedCore(t, { files });
+	const { id, child } = await launch();
+	child.spec.context({ capacity: 200_000, tokens: 100_000, last: false });
+	await ended(core, id, child);
+	await core.disposeAll();
+	await audit.close();
+	assert.deepEqual(await reopenedContext(root, id), { capacity: 200_000, tokens: 100_000, last: true });
+
+	failing = true;
+	child.spec.context({ capacity: 200_000, tokens: null, last: false });
+	const record = await eventually(
+		async () => (await listed(reopen(root)))[id],
+		(found) => found.health.marker === "failed",
+	);
+	assert.equal(record.health.closed, false);
+	assert.equal(record.context, undefined);
+	assert.match(record.health.warning, /arrived after the record was closed/);
+	assert.equal((await listed(audit))[id].health.marker, "failed");
+});
+
+test("late evidence whose loss marker cannot be written reopens the record as not closed, with the marker failed", async (t) => {
+	let failing = false;
+	const files = faultyFiles({ write: () => (failing ? { bytes: 0 } : undefined) });
+	const { audit, launch, root } = auditedCore(t, { files, run: () => new Promise(() => {}) });
+	const { id, child } = await launch();
+	child.spec.context({ capacity: 200_000, tokens: 100_000, last: false });
+	child.spec.onEvent(userMessage("last words"));
+	assert.deepEqual(await audit.close(), { closed: 1, expired: 0 });
+	assert.equal((await listed(reopen(root)))[id].health.closed, true);
+
+	failing = true;
+	child.spec.onEvent(userMessage("too late"));
+	const record = await eventually(
+		async () => (await listed(reopen(root)))[id],
+		(found) => found.health.marker === "failed",
+	);
+	assert.equal(record.health.closed, false);
+	assert.equal(record.health.complete, false);
+	assert.equal(record.context, undefined);
+});
+
+function heldSeal() {
 	const stuck = Promise.withResolvers();
+	const reached = Promise.withResolvers();
 	let hold = false;
 	const files = faultyFiles({
-		write: async (_call, length) => {
-			if (hold) await stuck.promise;
-			return { bytes: length };
+		open: async (path) => {
+			if (!hold || !path.endsWith(".jsonl")) return;
+			hold = false;
+			reached.resolve();
+			await stuck.promise;
 		},
 	});
+	return { files, holdNext: () => (hold = true), held: reached.promise, release: () => stuck.resolve() };
+}
+
+test("a context change while the seal is still being written voids the snapshot once the seal lands", async (t) => {
+	const { files, holdNext, held, release } = heldSeal();
+	const { audit, launch, root } = auditedCore(t, { files, run: () => new Promise(() => {}) });
+	const { id, child } = await launch();
+	child.spec.context({ capacity: 200_000, tokens: 100_000, last: false });
+	await flushed(audit, id);
+	holdNext();
+	const closing = audit.close();
+	await held;
+	child.spec.context({ capacity: 200_000, tokens: null, last: false });
+	release();
+	assert.deepEqual(await closing, { closed: 1, expired: 0 });
+
+	const record = await eventually(
+		async () => (await listed(reopen(root)))[id],
+		(found) => found.health.closed === false,
+	);
+	assert.equal(record.context, undefined);
+	assert.match(record.health.warning, /arrived after the record was closed/);
+});
+
+test("a context change after a seal that landed past the drain deadline still voids the snapshot", async (t) => {
+	const clock = manualTimer();
+	const { files, holdNext, held, release } = heldSeal();
 	const { audit, launch, root } = auditedCore(t, { files, timer: clock.timer, run: () => new Promise(() => {}) });
 	const { id, child } = await launch();
 	child.spec.context({ capacity: 200_000, tokens: 100_000, last: false });
 	await flushed(audit, id);
-	hold = true;
+	holdNext();
+	const closing = audit.close();
+	await held;
+	clock.expire();
+	assert.deepEqual(await closing, { closed: 0, expired: 1 });
+	release();
+	assert.deepEqual(
+		await eventually(() => reopenedContext(root, id)),
+		{ capacity: 200_000, tokens: 100_000, last: true },
+	);
+
+	child.spec.context({ capacity: 200_000, tokens: null, last: false });
+	const record = await eventually(
+		async () => (await listed(reopen(root)))[id],
+		(found) => found.health.closed === false,
+	);
+	assert.equal(record.context, undefined);
+});
+
+test("a record whose drain expired before its close reopens unavailable, while a sibling sealed in the same close keeps its snapshot", async (t) => {
+	const clock = manualTimer();
+	const stuck = Promise.withResolvers();
+	let holding;
+	const files = faultyFiles({
+		open: async (path) => {
+			if (holding && path.endsWith(`${holding}.jsonl`)) await stuck.promise;
+		},
+	});
+	const { audit, launch, root } = auditedCore(t, { files, timer: clock.timer, run: () => new Promise(() => {}) });
+	const { id, child } = await launch();
+	const sibling = await launch();
+	child.spec.context({ capacity: 200_000, tokens: 100_000, last: false });
+	sibling.child.spec.context({ capacity: 200_000, tokens: 100_000, last: false });
+	await flushed(audit, id);
+	await flushed(audit, sibling.id);
+	holding = id;
 	child.spec.onEvent(userMessage("stuck"));
 	await delay(10);
 	const closing = audit.close();
+	assert.deepEqual(
+		await eventually(() => reopenedContext(root, sibling.id)),
+		{ capacity: 200_000, tokens: 100_000, last: true },
+	);
 	clock.expire();
-	assert.deepEqual(await closing, { closed: 0, expired: 1 });
+	assert.deepEqual(await closing, { closed: 1, expired: 1 });
 	stuck.resolve();
 	await delay(20);
 
