@@ -1044,3 +1044,67 @@ test("a real Pi child reports its own context occupancy and capacity, and a succ
 	t.diagnostic(`states: ${JSON.stringify(states)}`);
 	t.diagnostic(`events: ${events.filter((type) => !type.startsWith("message_update")).join(" ")}`);
 });
+
+function systemPromptOf(request) {
+	const system = request.messages.find((message) => message.role === "system" || message.role === "developer");
+	return typeof system.content === "string" ? system.content : system.content.map((part) => part.text).join("");
+}
+
+test("a real Pi child of every packaged contract, launched and continued, receives the rule to write for the parent in English and keep transported content", { skip, timeout: 120_000 }, async (t) => {
+	for (const [variant, role] of [["role", "explore"], ["role", "worker"], ["role", "verify"], ["contextual", "worker"]]) {
+		await t.test(`${variant} ${role}`, async (t) => {
+			const scene = await fixture(t);
+			const repo = await repository(scene.dir, "repo", {});
+			const contextual = variant === "contextual";
+			const [provider, id] = scene.endpoint.model.split("/");
+			const plan = await createChildLauncher({
+				contextual,
+				jevRouting: { enabled: () => false },
+				delegationMode: { current: () => "opportunistic" },
+				modelProfiles: { load: () => ({ status: "absent" }) },
+			}).prepareLaunch(
+				{ role, task: "Draft the ticket in Spanish." },
+				{
+					cwd: repo,
+					model: { provider, id, reasoning: false },
+					thinkingLevel: "off",
+					modelRegistry: { getApiKeyForProvider: async () => undefined, getAvailable: () => [] },
+				},
+			);
+			assert.equal(plan.kind, "ready", plan.reason);
+			const core = createChildSessions({
+				create: createRpcChildSession({ sessionRoot: join(scene.dir, "sessions") }),
+				...(contextual
+					? {
+							authorization: {
+								authority: () => ({ assignment: "Answer DONE.", instructions: [] }),
+								classify: async () => {
+									throw new Error("classify is not expected");
+								},
+							},
+						}
+					: {}),
+				send() {},
+				idle: () => true,
+				trace() {},
+				report() {},
+				audit: createChildAudit({ root: "", parent: () => undefined }),
+			});
+			t.after(() => core.disposeAll());
+			const launch = { project: () => ({ cwd: repo, trusted: false }), shell: () => ({}) };
+			const started = await core.start(plan, { ...launch, background: true });
+			assert.equal(started.status, "queued", started.reason);
+			await eventually(() => core.get(started.id), (child) => child?.state === "completed");
+			const continued = await core.resume(started.id, "Continue with the same draft.", launch);
+			assert.equal(continued.status, "queued", continued.reason);
+			await eventually(() => core.get(continued.id), (child) => child?.state === "completed");
+
+			const prompts = scene.endpoint.requests.map(systemPromptOf);
+			assert.equal(prompts.length, 2);
+			for (const prompt of prompts) {
+				assert.match(prompt, /\breport\b[^.]*\bfor the parent in English\b[^.]*\boperator message does not change this language\b/);
+				assert.match(prompt, /\bartifacts keep their content or the language their destination requires\b[^.]*\bnever translate stable JSON keys, enum values, or identifiers\b/);
+			}
+		});
+	}
+});

@@ -5,19 +5,12 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { parseContract } from "../extensions/child-launcher.ts";
+import { assertSentence } from "./support/sentence.mjs";
 
 const contracts = fileURLToPath(new URL("../assets/contracts/", import.meta.url));
 
 async function contract(role) {
 	return readFile(join(contracts, `${role}.md`), "utf8");
-}
-
-function assertSentence(text, ...patterns) {
-	const sentences = text.split(/(?<=\.)\s+/);
-	assert.ok(
-		sentences.some((sentence) => patterns.every((pattern) => pattern.test(sentence))),
-		`no sentence matches all of ${patterns.join(", ")}`,
-	);
 }
 
 const unobserved =
@@ -29,13 +22,32 @@ test("child contracts forbid unobserved command and check claims", async () => {
 	}
 });
 
-test("child contracts limit communication to the parent without imposing consumer language policy", async () => {
+test("child contracts limit communication to the parent", async () => {
 	for (const role of ["explore", "worker", "verify"]) {
 		const text = await contract(role);
 		assert.match(text, /Communicate only with the parent, never directly with the user/);
 	}
-	const agents = await readFile(fileURLToPath(new URL("../AGENTS.md", import.meta.url)), "utf8");
-	assert.match(agents, /Parent-child instructions, questions, findings, and results are always in English/);
+});
+
+test("every packaged contract keeps text for the parent in English whatever an operator writes, and transported content as it is", async () => {
+	for (const role of ["explore", "worker", "verify", "contextual"]) {
+		const text = await contract(role);
+		assertSentence(
+			text,
+			/\bfor the parent in English\b/,
+			/\bquestion\b/,
+			/\bfinding\b/,
+			/\bVerdict reason\b/,
+			/\bchange and validation description\b/,
+			/\breport\b/,
+			/\boperator message does not change this language\b/,
+		);
+		assertSentence(
+			text,
+			/\bcode, identifiers, tool outputs, quotations,? and artifacts keep their content or the language their destination requires\b/,
+			/\bnever translate stable JSON keys, enum values, or identifiers\b/,
+		);
+	}
 });
 
 const fixedTools = {

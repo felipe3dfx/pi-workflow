@@ -37,6 +37,7 @@ import {
 import { type ChildAudit, createChildAudit } from "./child-audit.ts";
 import { createChildLauncher } from "./child-launcher.ts";
 import { runDelegationCheck } from "./delegation-check.ts";
+import { registerAgentLanguage } from "./agent-language.ts";
 import { registerDelegationMode } from "./delegation-mode.ts";
 import { registerChildResultCards } from "./child-result-card.ts";
 import type { ChildSessionFactory } from "./child-handle.ts";
@@ -300,6 +301,7 @@ export default function piWorkflowExtension(
 		childTools.offered,
 		options.authorization !== undefined,
 	);
+	registerAgentLanguage(pi);
 
 	pi.on("session_start", async (_event, ctx) => {
 		currentCtx = ctx;

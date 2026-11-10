@@ -35,6 +35,7 @@ import {
 	press,
 } from "./support/config-guide.mjs";
 import { turnJevRoutingOn, withAgentDirectory } from "./support/jev-routing.mjs";
+import { assertSentence } from "./support/sentence.mjs";
 
 initTheme("dark", false);
 
@@ -408,7 +409,7 @@ test("the instruction names the Todo and operator questions only when each is se
 });
 
 for (const routing of ["off", "on"]) {
-	test(`with Jev routing ${routing}, opportunistic leaves the model call untouched`, async (t) => {
+	test(`with Jev routing ${routing}, opportunistic adds no Delegation mode instruction`, async (t) => {
 		const dir = withAgentDirectory(t);
 		if (routing === "on") turnJevRoutingOn(dir);
 		seat();
@@ -419,14 +420,14 @@ for (const routing of ["off", "on"]) {
 	});
 }
 
-test("orchestrator leaves the model call untouched while child session is not seated", async (t) => {
+test("orchestrator adds no Delegation mode instruction while child session is not seated", async (t) => {
 	const dir = withAgentDirectory(t);
 	chooseMode(dir, "orchestrator");
 	seat(capabilities.filter((capability) => capability !== "child-session"));
 	assert.equal(await modelCall(await parentSession(dir)), undefined);
 });
 
-test("orchestrator leaves the model call untouched while a legacy subagent package withholds the child tools", async (t) => {
+test("orchestrator adds no Delegation mode instruction while a legacy subagent package withholds the child tools", async (t) => {
 	const dir = withAgentDirectory(t);
 	chooseMode(dir, "orchestrator");
 	seat();
@@ -665,11 +666,8 @@ test("/workflow:delegation-check in opportunistic keeps stay as the expectation 
 	}
 });
 
-test("in a real Pi session, the run that a child result starts carries the instruction", async (t) => {
-	const dir = withAgentDirectory(t);
+async function realParent(t, dir, responses) {
 	const worktree = await gitRepository(dir);
-	chooseMode(dir, "orchestrator");
-	seat();
 	const runtime = await ModelRuntime.create({
 		authPath: join(dir, "auth.json"),
 		modelsPath: null,
@@ -680,18 +678,7 @@ test("in a real Pi session, the run that a child result starts carries the instr
 	await runtime.setRuntimeApiKey("faux", "key");
 	const requests = [];
 	faux.setResponses(
-		[
-			fauxAssistantMessage(
-				fauxToolCall(
-					"spawn_child",
-					{ role: "explore", task: "Read README.md and report what it installs." },
-					{ id: "spawn" },
-				),
-				{ stopReason: "toolUse" },
-			),
-			fauxAssistantMessage("Waiting for the child."),
-			fauxAssistantMessage("It installs the harness."),
-		].map((response) => (context) => {
+		responses.map((response) => (context) => {
 			requests.push(structuredClone(context));
 			return response;
 		}),
@@ -727,7 +714,23 @@ test("in a real Pi session, the run that a child result starts carries the instr
 	});
 	t.after(() => session.dispose());
 	await session.bindExtensions({ mode: "rpc" });
+	return { session, requests, children };
+}
 
+const spawnThenWait = () => [
+	fauxAssistantMessage(
+		fauxToolCall(
+			"spawn_child",
+			{ role: "explore", task: "Read README.md and report what it installs." },
+			{ id: "spawn" },
+		),
+		{ stopReason: "toolUse" },
+	),
+	fauxAssistantMessage("Waiting for the child."),
+	fauxAssistantMessage("It installs the harness."),
+];
+
+async function wakeByChildResult({ session, requests, children }) {
 	await session.prompt("Read README.md and tell me what it installs");
 	assert.equal(requests.length, 2);
 	assert.equal(children.created.length, 1);
@@ -735,8 +738,17 @@ test("in a real Pi session, the run that a child result starts carries the instr
 	for (let i = 0; i < 200 && requests.length < 3; i++) {
 		await new Promise((resolve) => setTimeout(resolve, 5));
 	}
-
 	assert.equal(requests.length, 3);
+}
+
+test("in a real Pi session, the run that a child result starts carries the instruction", async (t) => {
+	const dir = withAgentDirectory(t);
+	chooseMode(dir, "orchestrator");
+	seat();
+	const parent = await realParent(t, dir, spawnThenWait());
+	await wakeByChildResult(parent);
+	const { requests } = parent;
+
 	const woken = requests[2];
 	assert.match(JSON.stringify(woken.messages.slice(1)), /README\.md installs the harness\./);
 	const [system] = woken.messages;
@@ -749,7 +761,75 @@ test("in a real Pi session, the run that a child result starts carries the instr
 
 	assert.equal(system.role, "system");
 	assert.ok(system.toolsAdded.some((tool) => tool.name === "spawn_child"));
-	assert.ok(
-		Object.values(system.sections).some((section) => /delegate all work to child sessions/i.test(section)),
-	);
+	assert.ok(delegationInstructed(woken));
 });
+
+function languageInstruction(request) {
+	const [system] = request.messages;
+	assert.equal(system.role, "system");
+	const found = Object.values(system.sections).filter(
+		(section) => /\bEnglish\b/.test(section) && /\buser's language\b/.test(section),
+	);
+	assert.equal(found.length, 1, "the model call carries no language instruction");
+	return found[0];
+}
+
+function delegationInstructed(request) {
+	return Object.values(request.messages[0].sections).some((section) =>
+		/delegate all work to child sessions/i.test(section),
+	);
+}
+
+test("the language instruction keeps parent-child text English, the user's language with the user, and transported content as it is", async (t) => {
+	const dir = withAgentDirectory(t);
+	seat();
+	const parent = await realParent(t, dir, [fauxAssistantMessage("Hello.")]);
+	await parent.session.prompt("Explain what the README installs");
+	const instruction = languageInstruction(parent.requests[0]);
+	const sentence = (...patterns) => assertSentence(instruction, ...patterns);
+
+	sentence(/\buser's language\b/, /\bexplicit user instruction\b/, /\bchild sessions never change it\b/);
+	sentence(/\bEnglish\b/, /\bspawn_child\b/, /\bcontinue_child\b/, /\breply_child\b/, /\bconsultation reply\b/);
+	sentence(/\bchild questions and conclusions\b/, /\buser's language\b/, /\buser's decisions to children in English\b/);
+	sentence(/\bcode, identifiers, tool outputs, quotations,? and artifacts\b/, /\bnever translate stable JSON keys, enum values, or identifiers\b/, /\bref, kind, and confirm\b/);
+	sentence(/\bFleet view\b/, /\bSteer\b/, /\bunchanged\b/);
+	assert.doesNotMatch(instruction, /delegate all work/i);
+});
+
+for (const mode of ["opportunistic", "orchestrator"]) {
+	for (const routing of ["off", "on"]) {
+		for (const offered of [true, false]) {
+			test(`in ${mode} with Jev routing ${routing} and the child tools ${offered ? "offered" : "not offered"}, every parent model call carries the language instruction and the Delegation mode section keeps its conditions`, async (t) => {
+				const dir = withAgentDirectory(t);
+				if (routing === "on") turnJevRoutingOn(dir);
+				chooseMode(dir, mode);
+				seat(offered ? capabilities : capabilities.filter((capability) => capability !== "child-session"));
+				const parent = await realParent(t, dir, [fauxAssistantMessage("Hello."), fauxAssistantMessage("Sure.")]);
+
+				await parent.session.prompt("Hello");
+				await parent.session.prompt("Now in English, please");
+
+				assert.equal(parent.requests.length, 2);
+				for (const request of parent.requests) {
+					languageInstruction(request);
+					assert.equal(
+						request.messages[0].toolsAdded.some((tool) => tool.name === "spawn_child"),
+						offered,
+					);
+					assert.equal(delegationInstructed(request), mode === "orchestrator" && offered);
+				}
+			});
+		}
+	}
+	test(`in ${mode}, every model call of a run a child result starts carries the language instruction`, async (t) => {
+		const dir = withAgentDirectory(t);
+		chooseMode(dir, mode);
+		seat();
+		const parent = await realParent(t, dir, spawnThenWait());
+		await wakeByChildResult(parent);
+		for (const request of parent.requests) {
+			languageInstruction(request);
+			assert.equal(delegationInstructed(request), mode === "orchestrator");
+		}
+	});
+}
