@@ -2175,6 +2175,7 @@ test("reopening the parent recovers each ended child's own last context, numeric
 	unknown.child.spec.context({ capacity: 400_000, tokens: 10_000, last: false });
 	numeric.child.spec.context({ capacity: 200_000, tokens: 100_000, last: true });
 	unknown.child.spec.context({ capacity: 400_000, tokens: null, last: false });
+	assert.equal((await listed(audit))[numeric.id].context, undefined);
 	await ended(core, numeric.id, numeric.child);
 	await ended(core, unknown.id, unknown.child);
 	await core.disposeAll();
@@ -2248,6 +2249,8 @@ test("a record that was never closed reopens unavailable however complete its ve
 	assert.equal(record.health.closed, false);
 	assert.equal(record.context, undefined);
 	assert.deepEqual(inputs(await later.read(id)).map(({ text }) => text), ["alpha"]);
+	await audit.close();
+	assert.deepEqual(await reopenedContext(root, id), { capacity: 200_000, tokens: 100_000, last: true });
 });
 
 async function resealed(root, id, change) {
@@ -2268,6 +2271,7 @@ async function sealedWithContext(t) {
 	await ended(core, id, child);
 	await core.disposeAll();
 	await audit.close();
+	assert.deepEqual(await reopenedContext(root, id), { capacity: 200_000, tokens: 100_000, last: true });
 	return { root, id };
 }
 

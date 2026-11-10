@@ -131,6 +131,8 @@ type Line =
 	| { header: Header; payload: string }
 	| { unsupported: number | undefined };
 
+type SealedContext = Omit<ChildContext, "last">;
+
 type Pending = { ordinal: number; value: unknown; bytes: number };
 
 interface AuditFile {
@@ -199,7 +201,7 @@ interface Capture {
 	retired: boolean;
 	sealed: boolean;
 	sealing?: Promise<unknown>;
-	context?: { capacity: number; tokens: number | null };
+	context?: SealedContext;
 	outdated?: true;
 	fenced: boolean;
 	durable?: Health;
@@ -764,9 +766,7 @@ export function createChildAudit(options: {
 		record.cause ??= arrivedLate;
 		const path = record.path as string;
 		record.work = Promise.all([record.work, record.sealing])
-			.then(async () => {
-				if (!record.fenced) await appendMarker(record, { loss: { cause: arrivedLate } });
-			})
+			.then(() => mark(record))
 			.finally(() => recovered.delete(path));
 	}
 
@@ -2334,7 +2334,7 @@ function parse(text: string): Line | undefined {
 	return { header, payload: text.slice(split + 1) };
 }
 
-function sealedContext(value: unknown) {
+function sealedContext(value: unknown): SealedContext | undefined {
 	if (typeof value !== "object" || value === null) return undefined;
 	const { capacity, tokens } = value as { capacity?: unknown; tokens?: unknown };
 	if (!Number.isSafeInteger(capacity) || (capacity as number) <= 0) return undefined;
