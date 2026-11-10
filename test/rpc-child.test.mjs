@@ -110,12 +110,12 @@ test("a child of a parent that is not Pi runs the installed Pi from PATH, never 
 	assert.throws(() => installedPi(), /Pi was not found on PATH/);
 });
 
-async function piOnPath(t, version) {
+async function piOnPath(t, version, status = 0) {
 	const dir = await scratch(t);
 	const checks = join(dir, "version-checks");
 	await writeFile(
 		join(dir, "pi"),
-		`#!/bin/sh\nif [ "$1" = "--version" ]; then echo >> "${checks}"; echo "${version}"; exit 0; fi\nexec "${process.execPath}" "${fakePi}" "$@"\n`,
+		`#!/bin/sh\nif [ "$1" = "--version" ]; then echo >> "${checks}"; echo "${version}"; exit ${status}; fi\nexec "${process.execPath}" "${fakePi}" "$@"\n`,
 	);
 	await chmod(join(dir, "pi"), 0o755);
 	const path = process.env.PATH;
@@ -126,16 +126,38 @@ async function piOnPath(t, version) {
 	return { pi: join(dir, "pi"), checks: () => (existsSync(checks) ? readFileSync(checks, "utf8").length : 0) };
 }
 
-test("a child refuses a Pi on PATH whose version differs from the parent's, naming both", async (t) => {
-	const { pi } = await piOnPath(t, "0.9.0");
-	await assert.rejects(
-		fakeChild(t, "complete", {}, { command: undefined }),
-		{ message: `The Pi on PATH at ${pi} is version 0.9.0, but the parent runs Pi ${VERSION}; a child must run the parent's Pi version.` },
-	);
-});
+for (const version of ["1.4.0", "1.10.0"]) {
+	test(`a child runs a Pi ${version} on PATH, inside the supported range though it differs from the parent's Pi`, async (t) => {
+		assert.notEqual(version, VERSION);
+		await piOnPath(t, version);
+		const { handle } = await fakeChild(t, "complete", {}, { command: undefined });
+		assert.equal(await handle.run("Say done."), "DONE");
+	});
+}
+
+for (const version of ["0.9.0", "1.3.9"]) {
+	test(`a child refuses a Pi ${version} on PATH, naming the version found and the supported range`, async (t) => {
+		const { pi } = await piOnPath(t, version);
+		await assert.rejects(fakeChild(t, "complete", {}, { command: undefined }), {
+			message: `The Pi on PATH at ${pi} is version ${version}, but a child requires Pi >=1.4.0.`,
+		});
+	});
+}
+
+for (const [name, output, status] of [
+	["prints no version", "pi unknown", 0],
+	["fails its version check", "", 1],
+]) {
+	test(`a child refuses a Pi on PATH that ${name}, naming the supported range`, async (t) => {
+		const { pi } = await piOnPath(t, output, status);
+		await assert.rejects(fakeChild(t, "complete", {}, { command: undefined }), {
+			message: `The Pi on PATH at ${pi} has no readable version, but a child requires Pi >=1.4.0.`,
+		});
+	});
+}
 
 test("a factory checks the version of the Pi on PATH once, and its readiness timeout names the executable and version", async (t) => {
-	const { pi, checks } = await piOnPath(t, VERSION);
+	const { pi, checks } = await piOnPath(t, "1.4.0");
 	const options = {
 		command: undefined,
 		schedule(run, ms) {
@@ -168,7 +190,7 @@ test("a factory checks the version of the Pi on PATH once, and its readiness tim
 	t.after(() => Promise.all([first.dispose(), second.dispose()]));
 	assert.equal(checks(), 1);
 	await assert.rejects(first.run("Say done."), {
-		message: `The child Pi process ${pi} (Pi ${VERSION}) did not become ready within ${readinessDeadline} ms.`,
+		message: `The child Pi process ${pi} (Pi 1.4.0) did not become ready within ${readinessDeadline} ms.`,
 	});
 });
 
