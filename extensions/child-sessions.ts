@@ -469,7 +469,7 @@ export function createChildSessions(options: {
 		}
 	}
 
-	function notify(child: Child) {
+	function wakeFollowers(child: Child) {
 		for (const follower of [...child.followers]) {
 			try {
 				follower();
@@ -517,7 +517,7 @@ export function createChildSessions(options: {
 			if (kind.startsWith("thinking")) step = "thinking";
 			else if (kind.startsWith("text")) step = "writing";
 		}
-		notify(child);
+		wakeFollowers(child);
 		if (
 			step !== null &&
 			step !== child.record.step &&
@@ -711,7 +711,7 @@ export function createChildSessions(options: {
 		};
 		port.context = (state) => {
 			child.context = state;
-			if (children.get(child.record.id) === child) notify(child);
+			if (children.get(child.record.id) === child) wakeFollowers(child);
 		};
 	}
 

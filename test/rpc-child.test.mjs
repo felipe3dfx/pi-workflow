@@ -881,18 +881,23 @@ function manualClock() {
 const unknown = (contextWindow = 200_000) => ({ contextUsage: { tokens: null, contextWindow, percent: null } });
 
 test("a measurement without a positive context window means unavailable, not a failure that keeps the earlier reading", async (t) => {
-	const { handle, states } = await measured(t, [usage(50_000), {}, usage(10, 0)]);
-	await eventually(() => states.length === 1);
-	await handle.steer("reply");
-	await eventually(() => states.length === 3);
-	await handle.steer("reply");
-	await eventually(() => states.length === 4);
-	assert.deepEqual(states, [
-		{ capacity: 200_000, tokens: 50_000, last: false },
-		{ capacity: 200_000, tokens: 50_000, last: true },
-		undefined,
-		undefined,
-	]);
+	for (const [name, step] of [
+		["no context usage", {}],
+		["a zero window", usage(10, 0)],
+		["no window", { contextUsage: { tokens: 10, percent: 1 } }],
+	]) {
+		await t.test(name, async (t) => {
+			const { handle, states } = await measured(t, [usage(50_000), step]);
+			await eventually(() => states.length === 1);
+			await handle.steer("reply");
+			await eventually(() => states.length === 3);
+			assert.deepEqual(states, [
+				{ capacity: 200_000, tokens: 50_000, last: false },
+				{ capacity: 200_000, tokens: 50_000, last: true },
+				undefined,
+			]);
+		});
+	}
 });
 
 test("a failed, malformed or late measurement keeps only the still-valid reading marked last, and the run still completes", async (t) => {
@@ -924,11 +929,13 @@ test("a failed, malformed or late measurement keeps only the still-valid reading
 		});
 	}
 	await t.test("without an earlier reading", async (t) => {
-		const { handle, states, run } = await measured(t, ["fail"]);
+		const { handle, states, run } = await measured(t, ["fail", "fail", usage(5_000)]);
 		await handle.steer("reply");
+		await handle.steer("reply");
+		await eventually(() => states.length === 1);
+		assert.deepEqual(states, [{ capacity: 200_000, tokens: 5_000, last: false }]);
 		await handle.steer("finish");
 		assert.equal(await run, "SETTLED");
-		assert.deepEqual(states, []);
 	});
 });
 
@@ -1017,4 +1024,18 @@ test("a streamed response is measured once when it completes, not on each token"
 	assert.ok(events.filter((event) => event.type === "message_update").length > 1);
 	const queries = readFileSync(commands, "utf8").split("\n").filter((type) => type === "get_session_stats");
 	assert.equal(queries.length, 2);
+});
+
+test("a successful compaction clears occupancy before any later reading, and a child that then dies keeps unknown occupancy marked last", async (t) => {
+	const { handle, latest, run } = await measured(t, [usage(150_000), { hold: usage(10_000) }]);
+	await eventually(latest);
+	await handle.steer("compact");
+	assert.deepEqual(await eventually(latest, (state) => state.tokens !== 150_000), {
+		capacity: 200_000,
+		tokens: null,
+		last: true,
+	});
+	await handle.steer("die").catch(() => {});
+	await assert.rejects(run, /exited with code 9/);
+	assert.deepEqual(latest(), { capacity: 200_000, tokens: null, last: true });
 });

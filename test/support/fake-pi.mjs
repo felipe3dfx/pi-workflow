@@ -62,34 +62,32 @@ const entries = [];
 let steering = [];
 let settle;
 const write = (record) => process.stdout.write(`${JSON.stringify(record)}\n`);
-const reply = (command, data) =>
-	JSON.stringify({ id: command.id, type: "response", command: command.type, success: true, data });
-const respond = (command, data) => process.stdout.write(`${reply(command, data)}\n`);
+const response = (command, data) => ({ id: command.id, type: "response", command: command.type, success: true, data });
+const respond = (command, data) => write(response(command, data));
 const stats = JSON.parse(process.env.FAKE_PI_STATS ?? "[{}]");
 const held = [];
-const compacted = (success, aborted = false) =>
-	JSON.stringify({
-		type: "compaction_end",
-		reason: "manual",
-		result: success ? { summary: "Summary.", firstKeptEntryId: "e1", tokensBefore: 150000 } : undefined,
-		aborted,
-		willRetry: false,
-		...(success ? {} : { errorMessage: "Compaction failed." }),
-	});
+const compacted = (success, aborted = false) => ({
+	type: "compaction_end",
+	reason: "manual",
+	result: success ? { summary: "Summary.", firstKeptEntryId: "e1", tokensBefore: 150000 } : undefined,
+	aborted,
+	willRetry: false,
+	...(success ? {} : { errorMessage: "Compaction failed." }),
+});
 
 function act(action) {
 	if (action === "reply") {
 		const message = { role: "assistant", content: [{ type: "text", text: "Working." }], stopReason: "toolUse" };
 		write({ type: "message_start", message });
 		write({ type: "message_end", message });
-	} else if (action === "compact") process.stdout.write(`${compacted(true)}\n`);
-	else if (action === "compact-failed") process.stdout.write(`${compacted(false)}\n`);
-	else if (action === "compact-aborted") process.stdout.write(`${compacted(false, true)}\n`);
+	} else if (action === "compact") write(compacted(true));
+	else if (action === "compact-failed") write(compacted(false));
+	else if (action === "compact-aborted") write(compacted(false, true));
 	else if (action === "release" || action === "compact-release" || action === "release-compact") {
-		const lines = held.splice(0);
-		if (action === "compact-release") lines.unshift(compacted(true));
-		if (action === "release-compact") lines.push(compacted(true));
-		process.stdout.write(lines.map((line) => `${line}\n`).join(""));
+		const records = held.splice(0);
+		if (action === "compact-release") records.unshift(compacted(true));
+		if (action === "release-compact") records.push(compacted(true));
+		process.stdout.write(records.map((record) => `${JSON.stringify(record)}\n`).join(""));
 	} else if (action === "die") process.exit(9);
 	else if (action === "finish") settle?.();
 }
@@ -203,8 +201,7 @@ const handlers = {
 	},
 	get_session_stats: (command) => {
 		const step = stats.length > 1 ? stats.shift() : stats[0];
-		if (step === "silent") return;
-		if (step?.hold) held.push(reply(command, step.hold));
+		if (step?.hold) held.push(response(command, step.hold));
 		else if (step === "fail") {
 			write({ id: command.id, type: "response", command: command.type, success: false, error: "stats unavailable" });
 		} else respond(command, step);

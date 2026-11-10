@@ -140,7 +140,7 @@ function reading(data: unknown): ChildContext | undefined {
 	const usage = (data as { contextUsage?: unknown }).contextUsage;
 	if (usage === undefined) return undefined;
 	const { tokens, contextWindow } = (usage ?? {}) as { tokens?: unknown; contextWindow?: unknown };
-	if (typeof contextWindow === "number" && contextWindow <= 0) return undefined;
+	if (contextWindow == null || (typeof contextWindow === "number" && contextWindow <= 0)) return undefined;
 	const capacity = contextWindow as number;
 	const occupied = tokens as number | null;
 	if (!Number.isSafeInteger(capacity) || (occupied !== null && !(Number.isSafeInteger(occupied) && occupied >= 0))) {
@@ -306,7 +306,9 @@ export function createRpcChildSession(
 			context = next;
 			try {
 				spec.context?.(next);
-			} catch {}
+			} catch (error) {
+				spec.notify(errorMessage(error));
+			}
 		}
 
 		function measure() {
