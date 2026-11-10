@@ -29,13 +29,31 @@ test("child contracts forbid unobserved command and check claims", async () => {
 	}
 });
 
-test("child contracts limit communication to the parent without imposing consumer language policy", async () => {
+test("child contracts limit communication to the parent", async () => {
 	for (const role of ["explore", "worker", "verify"]) {
 		const text = await contract(role);
 		assert.match(text, /Communicate only with the parent, never directly with the user/);
 	}
-	const agents = await readFile(fileURLToPath(new URL("../AGENTS.md", import.meta.url)), "utf8");
-	assert.match(agents, /Parent-child instructions, questions, findings, and results are always in English/);
+});
+
+test("every packaged contract keeps text for the parent in English whatever an operator writes, and transported content as it is", async () => {
+	for (const role of ["explore", "worker", "verify", "contextual"]) {
+		const text = await contract(role);
+		assertSentence(
+			text,
+			/\bfor the parent in English\b/,
+			/\bquestion\b/,
+			/\bfinding\b/,
+			/\bVerdict reason\b/,
+			/\bchange and validation description\b/,
+			/\boperator message does not change this language\b/,
+		);
+		assertSentence(
+			text,
+			/\bcode, identifiers, tool outputs, quotations, and artifacts keep their content or the language their destination requires\b/,
+			/\bnever translate stable JSON keys, enum values, or identifiers\b/,
+		);
+	}
 });
 
 const fixedTools = {
