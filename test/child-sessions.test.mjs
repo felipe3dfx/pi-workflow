@@ -1861,6 +1861,47 @@ test("spawn_child with a valid role launches without consulting any classifier",
 	});
 });
 
+test("a leftover routing choice in the agent directory is neither read nor deleted", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const leftover = join(agentDir, "pi-workflow-routing.json");
+		const content = '{"schemaVersion":1,"jevRouting":"on"}';
+		await writeFile(leftover, content);
+		const children = fakeChildren({ run: async () => "Done." });
+		const { tool } = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		const calls = [];
+		const record = (name) => async () => {
+			calls.push(name);
+			throw new Error(`${name} must not be consulted`);
+		};
+		const ctx = {
+			mode: "print",
+			hasUI: false,
+			cwd: worktree,
+			isProjectTrusted: () => false,
+			model: { provider: "session", id: "model", reasoning: true },
+			thinkingLevel: "medium",
+			modelRegistry: {
+				getAvailable: () => [],
+				findOfType: () => {
+					calls.push("findOfType");
+					return undefined;
+				},
+				getApiKeyForProvider: record("getApiKeyForProvider"),
+				classify: record("classify"),
+			},
+		};
+
+		const result = await spawn(tool, { role: "worker", task: "Map the module" }, ctx);
+
+		assert.equal(result.details.status, "completed");
+		assert.deepEqual(calls, []);
+		assert.equal(await readFile(leftover, "utf8"), content);
+	});
+});
+
 test("a named implement skill selects no role; the parent's role launches", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();

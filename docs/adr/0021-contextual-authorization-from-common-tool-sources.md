@@ -4,6 +4,8 @@
 
 Acceptance: approval and merge of the introducing PR.
 
+Superseded by [ADR 0027](0027-parent-owns-delegation.md) for the clause that composes contextual authorization with destination routing, where Jev stays destination-only and authorization never overrides its destination block, only; contextual authorization at the parent and child dispatch seams stays in force.
+
 The contextual path remains unadopted. Production inference and adoption require the separate integration and comparison work tracked by #291 and #293.
 
 ## Decision

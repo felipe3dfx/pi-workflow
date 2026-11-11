@@ -4,6 +4,8 @@
 
 Acceptance: approval and merge of the introducing PR.
 
+Superseded by [ADR 0027](0027-parent-owns-delegation.md) for the clause that the launch is refused before Jev is asked only; the checkpoint grant and its refusal conditions stay in force as local checks.
+
 ## Decision
 
 Supersedes: ADR-0013 and ADR-0018, only their clause that every mutating `git` operation stays with the parent, for checkpoints a parent grants a worker.

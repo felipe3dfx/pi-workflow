@@ -4,6 +4,8 @@
 
 Acceptance: approval and merge of the introducing PR.
 
+Superseded by [ADR 0027](0027-parent-owns-delegation.md) for the Jev routing row of the `/workflow:config` menu only; `/workflow:config` as the single command entrypoint stays in force.
+
 ## Decision
 
 The package exposes `/workflow:config` as the single command entrypoint for companion and harness configuration. Jev routing is a row of the `/workflow:config` menu, staged and applied with the rest of the plan. Neither the former `/workflow:configure` command nor the former `/workflow:settings` command is registered. This decision consolidates command names only; [ADR 0009](0009-guided-configure.md) continues to own companion-selection behavior, and [the routing-owner specification](../specs/routing-owner.md) owns Jev routing behavior.

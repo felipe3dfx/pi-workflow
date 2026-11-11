@@ -80,12 +80,12 @@ type Ready = {
 
 type Pair = { model: string; thinking: ModelThinkingLevel };
 
-const warningFor = {
-	refused: "Launch refused. No child was launched.",
-} as const;
-
-function outcome(kind: keyof typeof warningFor, reason: string): Outcome {
-	return { kind, warning: warningFor[kind], reason };
+function outcome(reason: string): Outcome {
+	return {
+		kind: "refused",
+		warning: "Launch refused. No child was launched.",
+		reason,
+	};
 }
 
 function isRole(value: string): value is Role {
@@ -107,7 +107,6 @@ const execFileAsync = promisify(execFile);
 
 async function gitRoot(worktree: string): Promise<string | Outcome> {
 	const invalid = outcome(
-		"refused",
 		`${worktree} is not a valid worktree: it must be an existing Git root.`,
 	);
 	try {
@@ -161,7 +160,7 @@ function resolveReferences(
 
 function sessionPair(ctx: LauncherContext): Pair | Outcome {
 	if (!ctx.model || !ctx.thinkingLevel) {
-		return outcome("refused", "The session has no model and thinking to use.");
+		return outcome("The session has no model and thinking to use.");
 	}
 	return {
 		model: `${ctx.model.provider}/${ctx.model.id}`,
@@ -187,13 +186,11 @@ function profilePair(
 		);
 	if (!found) {
 		return outcome(
-			"refused",
 			`${setting}, but that model is not available in Pi.`,
 		);
 	}
 	if (!getSupportedThinkingLevels(found).includes(entry.thinking)) {
 		return outcome(
-			"refused",
 			`${setting}, but that model does not support thinking ${entry.thinking}.`,
 		);
 	}
@@ -222,7 +219,6 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			);
 		} catch (error) {
 			return outcome(
-				"refused",
 				`Unable to read the contract for ${role} at ${path}: ${errorMessage(error)}`,
 			);
 		}
@@ -235,20 +231,18 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		const role = request.role;
 		if (role !== undefined && !isRole(role)) {
 			return outcome(
-				"refused",
 				`unknown role ${role}; expected ${roles.join(", ")}`,
 			);
 		}
 		if (role === undefined) {
-			return outcome("refused", `spawn_child needs a role: ${roles.join(", ")}`);
+			return outcome(`spawn_child needs a role: ${roles.join(", ")}`);
 		}
 		const profiles = options.modelProfiles.load();
-		if (profiles.status === "refused") return outcome("refused", profiles.reason);
+		if (profiles.status === "refused") return outcome(profiles.reason);
 		const references = request.references ?? [];
 		const paths = resolveReferences(references, ctx.cwd);
 		if (!Array.isArray(paths)) {
 			return outcome(
-				"refused",
 				`reference ${paths.unreachable} does not exist or is outside ${ctx.cwd}`,
 			);
 		}
@@ -258,13 +252,11 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		if (request.checkpoint !== undefined) {
 			if (!options.contextual && role !== "worker") {
 				return outcome(
-					"refused",
 					`A checkpoint is granted only to a worker, not to ${role}.`,
 				);
 			}
 			if (!options.contextual && request.worktree === undefined) {
 				return outcome(
-					"refused",
 					"A checkpoint needs the isolated worktree passed explicitly as worktree.",
 				);
 			}
@@ -276,7 +268,6 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 					throw new Error(`The assigned context is not on refs/heads/${request.checkpoint}.`);
 			} catch (error) {
 				return outcome(
-					"refused",
 					`The checkpoint cannot be granted: ${errorMessage(error)}`,
 				);
 			}
