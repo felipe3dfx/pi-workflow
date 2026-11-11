@@ -2334,6 +2334,7 @@ test("spawn_child describes who decides the role and what each role can do", asy
 		assert.match(guidance, /surface each child owns[^.]*siblings share the checkout[^.]*prior findings/i);
 		assert.match(guidance, /never put commands[^.]*explore task[^.]*worktree[^.]*changed-file list[^.]*verify/i);
 		assert.match(guidance, /scratch checkouts[^.]*one child per axis/i);
+		assert.match(guidance, /copy evidence you already have, such as the diff, into the task/i);
 		assert.match(guidance, /read[^.]*before[^.]*write[^.]*worker|worker[^.]*read[^.]*write/i);
 		assert.doesNotMatch(guidance, /specialist/i);
 		assert.doesNotMatch(guidance, /names a role|use that role/i);

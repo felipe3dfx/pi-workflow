@@ -86,7 +86,12 @@ test("the verify contract independently checks work, gives a verdict per criteri
 	assertSentence(text, /\bOnly Verdict pass means verified\b/, /\bfail or blocked is not a pass\b/);
 	assertSentence(text, /\b(do not|never)\b[^.]*\b(edit|write)\b[^.]*\bworktree files\b/i);
 	assertSentence(text, /\btracked worktree files change\b/i, /\bstop and report blocked\b/);
-	assertSentence(text, /\breserved for the parent is not a missing capability\b/, /\bunverified\b/);
+	assertSentence(
+		text,
+		/\breserved for the parent is not a missing capability\b/,
+		/\bunverified\b/,
+		/\bdo not ask the parent for its output\b/,
+	);
 	assertSentence(text, /\bnever ask the parent to save memory\b/);
 	assertSentence(text, /\bgit archive \| tar\b[^.]*\boutside the worktree is not a worktree write\b/);
 	assertSentence(text, /\bevery question in one call\b/);
@@ -105,7 +110,12 @@ test("the worker contract reports through report_result and separates a decision
 	assertSentence(text, /\bdecision\b/, /\b(do not|never) guess\b/, /\bask_parent with closed options\b/, /\bevery question in one call\b/);
 	assertSentence(text, /\btechnical blocker\b[^.]*\bas blocked\b/);
 	assert.doesNotMatch(text, /\bdecision\b[^.]*\breport blocked\b|\bblocker\b[^.]*\bask_parent\b/);
-	assertSentence(text, /\breserved command is not a missing capability\b/, /\bleft_undone\b/);
+	assertSentence(
+		text,
+		/\breserved command is not a missing capability\b/,
+		/\bleft_undone\b/,
+		/\bdo not ask the parent for its output\b/,
+	);
 	assertSentence(text, /\bnever ask the parent to save memory\b/);
 	assert.doesNotMatch(text, /status: done \| partial \| blocked/);
 	assert.doesNotMatch(text, /interaction_required/);
