@@ -112,7 +112,7 @@ const gitDecision = line`case "$__pi_workflow_root" in
 const ghDecision = line`group=;
 	verb=;
 	option=;
-	while [ "$#" -gt 0 ] && [ -z "$verb" ]; do
+	while [ "$#" -gt 0 ] && [ -z "$verb" ] && [ "$group" != api ]; do
 		case "$1" in
 		-R|--repo) shift ;;
 		--repo=*) ;;
@@ -123,7 +123,39 @@ const ghDecision = line`group=;
 	done;
 	case "$group" in
 	""|help|search) ;;
-	api|auth) reserved="gh $group" ;;
+	auth) reserved="gh auth" ;;
+	api)
+		endpoint=;
+		method=;
+		field=;
+		value=;
+		[ -z "$option" ] || reserved="gh api";
+		for word in \${1+"$@"}; do
+			kind=$value;
+			value=;
+			[ -n "$kind" ] || case "$word" in
+			--paginate|--slurp|-i|--include|--silent|--verbose) ;;
+			-q|--jq|-t|--template|-p|--preview|--cache|--hostname) value=any ;;
+			-q?*|--jq=*|-t?*|--template=*|-p?*|--preview=*|--cache=*|--hostname=*) ;;
+			-f|-F|--field|--raw-field) field=1; value=any ;;
+			-f?*|-F?*|--field=*|--raw-field=*) field=1 ;;
+			-X|--method) value=method ;;
+			-X?*|--method=*) kind=method; word=\${word#-X}; word=\${word#--method=}; word=\${word#=} ;;
+			-H|--header) value=header ;;
+			-H?*|--header=*) kind=header ;;
+			-*) reserved="gh api" ;;
+			*) if [ -z "$endpoint" ]; then endpoint=$word; else reserved="gh api"; fi ;;
+			esac;
+			case "$kind $word" in
+			"method "[Gg][Ee][Tt]) method=1 ;;
+			method*|"header "*[Mm][Ee][Tt][Hh][Oo][Dd]*) reserved="gh api" ;;
+			esac;
+		done;
+		[ -z "$value" ] || reserved="gh api";
+		case "$endpoint" in
+		""|graphql) reserved="gh api" ;;
+		esac;
+		[ -z "$field" ] || [ -n "$method" ] || reserved="gh api" ;;
 	*)
 		[ -n "$option" ] && verb=;
 		case "$verb" in
