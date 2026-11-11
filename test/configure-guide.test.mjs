@@ -25,7 +25,7 @@ import {
 	title,
 	wheel,
 } from "./support/config-guide.mjs";
-import { withAgentDirectory } from "./support/jev-routing.mjs";
+import { withAgentDirectory } from "./support/agent-directory.mjs";
 
 initTheme("dark", false);
 
@@ -116,7 +116,6 @@ test("the guide opens on the defaults with nothing pending and the focus on Chil
 	]) {
 		assert.ok(lines.includes(`[x] ${label}`), label);
 	}
-	assert.ok(lines.some((line) => /^\[ \] Jev routing$/.test(line)));
 	for (const name of [engram, nan, web, bridge]) {
 		assert.ok(
 			lines.some((line) => line.startsWith(`[x] ${name}`)),
@@ -144,8 +143,7 @@ test("three titled sections list every label in order and the action closes the 
 		"[x] Model profiles",
 		"[x] CodeGraph",
 		"[x] Compact rendering",
-		"Routing and delegation",
-		"[ ] Jev routing",
+		"Delegation",
 		"Delegation mode",
 		"Companions",
 		`[x] ${engram}`,
@@ -345,8 +343,6 @@ test("the focused row's description shows below the list, a companion's from the
 			focusOn(panel, label);
 			copy[key] = descriptionOf();
 		}
-		focusOn(panel, "Jev routing");
-		copy.jev = descriptionOf();
 		focusOn(panel, "Delegation mode");
 		copy.mode = descriptionOf();
 		for (const entry of companions) {
@@ -374,10 +370,6 @@ test("the focused row's description shows below the list, a companion's from the
 	assert.match(
 		copy.compact,
 		/Shows Pi's built-in tool calls in compact form\. Off restores native rendering\./,
-	);
-	assert.match(
-		copy.jev,
-		/Ask Jev on each message whether the work stays in the parent or goes to a child session\. Needs a TypeSafe key\./,
 	);
 	assert.match(
 		copy.mode,
@@ -425,7 +417,7 @@ test("choosing orchestrator with Child session off warns, and with it on does no
 test("Tab moves the focus to Review and apply from any row", async (t) => {
 	let focused;
 	await open(t, {}, (panel) => {
-		focusOn(panel, "Jev routing");
+		focusOn(panel, "Compact rendering");
 		press(panel, keys.tab);
 		focused = body(panel).find((line) => line.startsWith("▸"));
 		closeGuide(panel);
@@ -490,8 +482,6 @@ test("Tab then Enter opens the review with the changes as from → to", async (t
 	let lines;
 	await open(t, {}, (panel) => {
 		press(panel, keys.space);
-		focusOn(panel, "Jev routing");
-		press(panel, keys.space);
 		focusOn(panel, "Delegation mode");
 		press(panel, keys.right);
 		openReview(panel);
@@ -502,7 +492,6 @@ test("Tab then Enter opens the review with the changes as from → to", async (t
 	assert.equal(head, "Workflow config › Review");
 	assert.ok(lines.some((line) => /^Changes ─+$/.test(line)));
 	assert.ok(lines.some((line) => /^Child session\s+on → off$/.test(line)));
-	assert.ok(lines.some((line) => /^Jev routing\s+off → on$/.test(line)));
 	assert.ok(
 		lines.some((line) =>
 			/^Delegation mode\s+opportunistic → orchestrator$/.test(line),
@@ -911,7 +900,7 @@ test("a short terminal keeps the focused row, the warning and the hints in the l
 			"No effect while Child session is off: the parent has no child tools to delegate with.",
 		),
 	);
-	assert.match(up.focused, /^▸\s+\[.\] Jev routing/);
+	assert.match(up.focused, /^▸\s+\[.\] Compact rendering/);
 	assert.match(down.focused, /^▸\s+Delegation mode/);
 	assert.match(action.focused, /^▸\s+Review and apply/);
 	assert.match(companion.focused, /^▸\s+\[.\] \S+\s+\S+/);
@@ -964,7 +953,7 @@ test("discard confirmation at 12x48 keeps the complete frame and paged descripti
 	const setup = guide(t);
 	const session = await driveConfig(setup.command, (panel, running) => {
 		press(panel, keys.space);
-		for (let i = 0; i < 7; i++) press(panel, keys.down);
+		for (let i = 0; i < 6; i++) press(panel, keys.down);
 		press(panel, keys.right);
 		assert.equal(plain(panel, 48).length, 12);
 		press(panel, keys.escape);
@@ -1055,7 +1044,7 @@ for (const mechanism of ["click", "Tab"]) {
 	test(`${mechanism} immediately resets the overflowing destination description to its first page`, async (t) => {
 		const width = mechanism === "click" ? 30 : 48;
 		await open(t, {}, (panel) => {
-			const destination = mechanism === "Tab" ? "Review and apply" : "Jev routing";
+			const destination = mechanism === "Tab" ? "Review and apply" : "Child session";
 			focusOn(panel, destination);
 			const first = body(panel, width);
 			assert.ok(first.some((line) => line.startsWith("▸") && line.includes(destination)));
@@ -1065,13 +1054,13 @@ for (const mechanism of ["click", "Tab"]) {
 				body(panel, width);
 			}
 			assert.notDeepEqual(body(panel, width), first);
-			focusOn(panel, "Delegation mode");
+			focusOn(panel, mechanism === "Tab" ? "Delegation mode" : "Todo");
 			for (let i = 0; i < 20; i++) {
 				body(panel, width);
 				press(panel, "\x1b[6~");
 			}
 			if (mechanism === "Tab") press(panel, keys.tab);
-			else click(panel, 10, lineIndex(panel, "Jev routing", 200));
+			else click(panel, 10, lineIndex(panel, "Child session", 200));
 			const actual = body(panel, width);
 			assert.ok(actual.some((line) => line.startsWith("▸") && line.includes(destination)));
 			const description = (lines) => lines.slice(lines.findIndex((line) => line.startsWith("▸")) + 1)

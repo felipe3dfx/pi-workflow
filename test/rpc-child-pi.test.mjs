@@ -197,8 +197,6 @@ test("a parent's untracked .pi/mcp.json is reported at launch and a real Pi chil
 		JSON.stringify({ mcpServers: { parent: server("parent", scene.evidence) } }),
 	);
 	const launcher = createChildLauncher({
-		jevRouting: { enabled: () => false },
-		delegationMode: { current: () => "opportunistic" },
 		modelProfiles: { load: () => ({ status: "absent" }) },
 	});
 	const plan = await launcher.prepareLaunch(
@@ -1059,8 +1057,6 @@ test("a real Pi child of every packaged contract, launched and continued, receiv
 			const [provider, id] = scene.endpoint.model.split("/");
 			const plan = await createChildLauncher({
 				contextual,
-				jevRouting: { enabled: () => false },
-				delegationMode: { current: () => "opportunistic" },
 				modelProfiles: { load: () => ({ status: "absent" }) },
 			}).prepareLaunch(
 				{ role, task: "Draft the ticket in Spanish." },

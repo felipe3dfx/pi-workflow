@@ -20,10 +20,8 @@ import {
 
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
-import { delegationCases } from "../extensions/delegation-check.ts";
 import { createDelegationMode } from "../extensions/workflow-settings.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
-import { classifierRegistry } from "./support/fake-jev.mjs";
 import { fakeChildren } from "./support/fake-children.mjs";
 import {
 	body as shown,
@@ -34,7 +32,7 @@ import {
 	plainTheme,
 	press,
 } from "./support/config-guide.mjs";
-import { turnJevRoutingOn, withAgentDirectory } from "./support/jev-routing.mjs";
+import { withAgentDirectory } from "./support/agent-directory.mjs";
 import { assertSentence } from "./support/sentence.mjs";
 
 initTheme("dark", false);
@@ -74,17 +72,17 @@ async function stored(dir, name) {
 	}
 }
 
-test("the /workflow:config menu shows the Delegation mode beside Jev routing, opportunistic by default", async (t) => {
+test("the /workflow:config menu shows the Delegation mode in its own section, opportunistic by default", async (t) => {
 	const dir = withAgentDirectory(t);
 	let lines;
 	await driveConfig(extensionCommand(dir, "workflow:config"), (panel) => {
 		lines = shown(panel);
 		panel.handleInput(ESC);
 	});
-	const routing = lines.findIndex((line) => /^\[ \] Jev routing$/.test(line));
+	const section = lines.findIndex((line) => /^Delegation ─+$/.test(line));
 	const mode = lines.findIndex((line) => /^Delegation mode\s+‹ opportunistic ›$/.test(line));
-	assert.ok(routing > 0);
-	assert.equal(mode, routing + 1);
+	assert.ok(section > 0);
+	assert.equal(mode, section + 1);
 });
 
 test("orchestrator with the child tools off is accepted by Apply and reports no error", async (t) => {
@@ -118,7 +116,7 @@ test("orchestrator with the child tools off is accepted by Apply and reports no 
 	assert.ok(notifications.every((entry) => entry.level !== "error"));
 });
 
-test("choosing orchestrator and confirming Apply names the change and persists it for a new process without touching Jev routing", async (t) => {
+test("choosing orchestrator and confirming Apply names the change and persists it for a new process", async (t) => {
 	const dir = withAgentDirectory(t);
 	let review;
 	await driveConfig(extensionCommand(dir, "workflow:config"), (panel) => {
@@ -130,12 +128,10 @@ test("choosing orchestrator and confirming Apply names the change and persists i
 		panel.handleInput("\r");
 	});
 	assert.ok(review.some((line) => /^Delegation mode\s+opportunistic → orchestrator$/.test(line)));
-	assert.ok(review.every((line) => !/^Jev routing\s+\S+ → /.test(line)));
 	assert.deepEqual(await stored(dir, "pi-workflow-delegation.json"), {
 		schemaVersion: 1,
 		delegationMode: "orchestrator",
 	});
-	assert.equal(await stored(dir, "pi-workflow-routing.json"), undefined);
 
 	const restarted = execFileSync(
 		process.execPath,
@@ -193,47 +189,6 @@ test("choosing orchestrator and cancelling with Esc writes nothing", async (t) =
 		panel.handleInput(ESC);
 	});
 	assert.equal(await stored(dir, "pi-workflow-delegation.json"), undefined);
-});
-
-test("saving Jev routing keeps the Delegation mode, and saving the Delegation mode keeps Jev routing", async (t) => {
-	const dir = withAgentDirectory(t);
-	await writeFile(
-		join(dir, "pi-workflow-delegation.json"),
-		JSON.stringify({ schemaVersion: 1, delegationMode: "orchestrator" }),
-	);
-	const command = extensionCommand(dir, "workflow:config");
-	let review;
-	await driveConfig(command, (panel) => {
-		focus(panel, "Jev routing");
-		panel.handleInput(" ");
-		openApply(panel);
-		review = shown(panel);
-		panel.handleInput("\r");
-	});
-	assert.ok(review.every((line) => !/^Delegation mode\s+\S+ → /.test(line)));
-	assert.deepEqual(await stored(dir, "pi-workflow-routing.json"), {
-		schemaVersion: 1,
-		jevRouting: "on",
-	});
-	assert.deepEqual(await stored(dir, "pi-workflow-delegation.json"), {
-		schemaVersion: 1,
-		delegationMode: "orchestrator",
-	});
-
-	await driveConfig(command, (panel) => {
-		focus(panel, "Delegation mode");
-		panel.handleInput(" ");
-		openApply(panel);
-		panel.handleInput("\r");
-	});
-	assert.deepEqual(await stored(dir, "pi-workflow-delegation.json"), {
-		schemaVersion: 1,
-		delegationMode: "opportunistic",
-	});
-	assert.deepEqual(await stored(dir, "pi-workflow-routing.json"), {
-		schemaVersion: 1,
-		jevRouting: "on",
-	});
 });
 
 for (const [label, write] of [
@@ -408,17 +363,14 @@ test("the instruction names the Todo and operator questions only when each is se
 	assert.doesNotMatch(withTodo, /ask_user/);
 });
 
-for (const routing of ["off", "on"]) {
-	test(`with Jev routing ${routing}, opportunistic adds no Delegation mode instruction`, async (t) => {
-		const dir = withAgentDirectory(t);
-		if (routing === "on") turnJevRoutingOn(dir);
-		seat();
-		assert.equal(await modelCall(await parentSession(dir)), undefined);
+test("opportunistic adds no Delegation mode instruction", async (t) => {
+	const dir = withAgentDirectory(t);
+	seat();
+	assert.equal(await modelCall(await parentSession(dir)), undefined);
 
-		chooseMode(dir, "opportunistic");
-		assert.equal(await modelCall(await parentSession(dir)), undefined);
-	});
-}
+	chooseMode(dir, "opportunistic");
+	assert.equal(await modelCall(await parentSession(dir)), undefined);
+});
 
 test("orchestrator adds no Delegation mode instruction while child session is not seated", async (t) => {
 	const dir = withAgentDirectory(t);
@@ -449,66 +401,7 @@ test("a Delegation mode change applies from the next model call of the same sess
 	assert.equal(await modelCall(session), undefined);
 });
 
-function destinationJev(destination) {
-	return classifierRegistry((context) => ({
-		answers: {
-			...(context.questions.destination
-				? {
-						destination: {
-							type: "choice",
-							choice: destination,
-							confidence: 0.9,
-							probabilities: {},
-						},
-					}
-				: {}),
-		},
-	}));
-}
-
-async function jevRequestFor(mode, t) {
-	const dir = withAgentDirectory(t);
-	turnJevRoutingOn(dir);
-	chooseMode(dir, mode);
-	seat();
-	const session = await parentSession(dir);
-	const jev = destinationJev("leave");
-	await session.fire(
-		"tool_call",
-		{ type: "tool_call", toolCallId: "c1", toolName: "read", input: { path: "README.md" } },
-		spawnContext(dir, jev),
-	);
-	assert.equal(jev.requests.length, 1);
-	return jev.requests[0];
-}
-
-test("with Jev routing on, orchestrator gives Jev a stay criterion only for no work or the reserved git and gh operations", async (t) => {
-	const opportunistic = await jevRequestFor("opportunistic", t);
-	const orchestrator = await jevRequestFor("orchestrator", t);
-
-	assert.match(
-		opportunistic.questions.destination.criteria.stay,
-		/^The package is small and already understood/,
-	);
-	const stay = orchestrator.questions.destination.criteria.stay;
-	assert.doesNotMatch(stay, /small and already understood/);
-	assert.match(stay, /needs no work/);
-	assert.match(stay, /conversation, an opinion, or a question about what was already said/);
-	assert.match(stay, /only for reserved operations/);
-	assert.match(stay, /a commit the parent has not granted to a worker, a push, or opening a pull request/);
-
-	assert.deepEqual(orchestrator.state, opportunistic.state);
-	assert.deepEqual(Object.keys(orchestrator.questions), ["destination"]);
-	const { stay: _o, ...otherOpportunistic } = opportunistic.questions.destination.criteria;
-	const { stay: _r, ...otherOrchestrator } = orchestrator.questions.destination.criteria;
-	assert.deepEqual(otherOrchestrator, otherOpportunistic);
-	assert.equal(
-		orchestrator.questions.destination.instructions,
-		opportunistic.questions.destination.instructions,
-	);
-});
-
-function spawnContext(cwd, jev) {
+function spawnContext(cwd) {
 	return {
 		mode: "tui",
 		hasUI: true,
@@ -516,11 +409,7 @@ function spawnContext(cwd, jev) {
 		isProjectTrusted: () => false,
 		model: { provider: "session", id: "model", reasoning: true },
 		thinkingLevel: "medium",
-		modelRegistry: {
-			getApiKeyForProvider: async () => "typesafe-key",
-			getAvailable: () => [],
-			...jev.registry,
-		},
+		modelRegistry: { getAvailable: () => [] },
 		sessionManager: {
 			getBranch: () => [
 				{
@@ -555,7 +444,7 @@ test("in orchestrator, the prompt the child session factory receives never carri
 		{ role: "explore", task: "Read README.md and report what it installs." },
 		undefined,
 		undefined,
-		spawnContext(worktree, destinationJev("leave")),
+		spawnContext(worktree),
 	);
 
 	assert.equal(result.details.status, "queued");
@@ -570,34 +459,9 @@ const noStandInLine =
 	/^Do not stand in for the child with another agent process, such as Pi or another model CLI started from the shell\. Tell the operator that no child ran and why; any work you then do yourself is yours, not a child's or an independent agent's\.$/m;
 
 for (const mode of ["opportunistic", "orchestrator"]) {
-	test(`in ${mode}, a Jev stay verdict refuses spawn_child`, async (t) => {
-		const dir = withAgentDirectory(t);
-		const worktree = await gitRepository(dir);
-		turnJevRoutingOn(dir);
-		chooseMode(dir, mode);
-		seat();
-		const children = fakeChildren();
-		const session = await parentSession(dir, { create: children.create });
-		const spawn = session.tools.find((tool) => tool.name === "spawn_child");
-
-		const result = await spawn.execute(
-			"call-1",
-			{ role: "explore", task: "Commit and push the change." },
-			undefined,
-			undefined,
-			spawnContext(worktree, destinationJev("stay")),
-		);
-
-		assert.equal(result.details.status, "refused");
-		assert.match(result.content[0].text, /The work stays in this session/);
-		assert.match(result.content[0].text, noStandInLine);
-		assert.equal(children.created.length, 0);
-	});
-
 	test(`in ${mode}, a spawn_child refused by a Pi version mismatch tells the parent not to stand in for the child`, async (t) => {
 		const dir = withAgentDirectory(t);
 		const worktree = await gitRepository(dir);
-		turnJevRoutingOn(dir);
 		chooseMode(dir, mode);
 		seat();
 		const children = fakeChildren({
@@ -613,7 +477,7 @@ for (const mode of ["opportunistic", "orchestrator"]) {
 			{ role: "explore", task: "Read README.md and report what it installs." },
 			undefined,
 			undefined,
-			spawnContext(worktree, destinationJev("leave")),
+			spawnContext(worktree),
 		);
 
 		const text = result.content[0].text;
@@ -627,7 +491,6 @@ for (const mode of ["opportunistic", "orchestrator"]) {
 	test(`in ${mode}, a continue_child refused for an unknown child tells the parent not to stand in for the child`, async (t) => {
 		const dir = withAgentDirectory(t);
 		const worktree = await gitRepository(dir);
-		turnJevRoutingOn(dir);
 		chooseMode(dir, mode);
 		seat();
 		const children = fakeChildren();
@@ -639,7 +502,7 @@ for (const mode of ["opportunistic", "orchestrator"]) {
 			{ id: "nope", task: "Try again" },
 			undefined,
 			undefined,
-			spawnContext(worktree, destinationJev("leave")),
+			spawnContext(worktree),
 		);
 
 		const text = result.content[0].text;
@@ -649,81 +512,6 @@ for (const mode of ["opportunistic", "orchestrator"]) {
 		assert.equal(children.created.length, 0);
 	});
 }
-
-function orchestratingJev() {
-	return classifierRegistry((context) => {
-		const request = context.state.user_request;
-		const reserved = /commit/i.test(request) && /push/i.test(request);
-		const item = delegationCases.find((candidate) => candidate.userRequest === request);
-		const destination =
-			reserved
-				? "stay"
-				: item.expected.action === "decide"
-					? "decide"
-					: "leave";
-		return {
-			answers: {
-				destination: { type: "choice", choice: destination, confidence: 0.9, probabilities: {} },
-			},
-		};
-	});
-}
-
-async function runCheck(mode, t) {
-	const dir = withAgentDirectory(t);
-	turnJevRoutingOn(dir);
-	chooseMode(dir, mode);
-	seat();
-	const jev = orchestratingJev();
-	const notifications = [];
-	await extensionCommand(dir, "workflow:delegation-check").handler("", {
-		hasUI: true,
-		mode: "tui",
-		ui: { notify: (message, level) => notifications.push({ message, level }) },
-		cwd: dir,
-		model: { provider: "session", id: "model", reasoning: true },
-		thinkingLevel: "medium",
-		modelRegistry: {
-			getApiKeyForProvider: async () => "typesafe-key",
-			getAvailable: () => [],
-			...jev.registry,
-		},
-	});
-	assert.equal(notifications.length, 1);
-	return { ...notifications[0], lines: notifications[0].message.split("\n"), jev };
-}
-
-test("/workflow:delegation-check in orchestrator expects a launch for the small understood answer and stay for a commit and push", async (t) => {
-	const { level, lines, jev } = await runCheck("orchestrator", t);
-
-	assert.equal(level, "info", lines.join("\n"));
-	assert.ok(lines.every((line) => line.startsWith("pass:")));
-	assert.match(
-		lines.find((line) => line.startsWith("pass: small understood answer")),
-		/action launch/,
-	);
-	const reserved = jev.requests.find(
-		(request) => /commit/i.test(request.state.user_request) && /push/i.test(request.state.user_request),
-	);
-	assert.ok(reserved);
-	assert.ok(lines.some((line) => /^pass: .*action stay, destination asked yes/.test(line)));
-	for (const request of jev.requests) {
-		assert.match(request.questions.destination.criteria.stay, /needs no work/);
-	}
-});
-
-test("/workflow:delegation-check in opportunistic keeps stay as the expectation for the small understood answer", async (t) => {
-	const { level, lines, jev } = await runCheck("opportunistic", t);
-
-	assert.equal(level, "error");
-	assert.match(
-		lines.find((line) => line.startsWith("fail: small understood answer")),
-		/action expected stay, got launch/,
-	);
-	for (const request of jev.requests) {
-		assert.match(request.questions.destination.criteria.stay, /small and already understood/);
-	}
-});
 
 async function realParent(t, dir, responses) {
 	const worktree = await gitRepository(dir);
@@ -812,11 +600,9 @@ test("in a real Pi session, the run that a child result starts carries the instr
 	assert.match(JSON.stringify(woken.messages.slice(1)), /README\.md installs the harness\./);
 	const [system] = woken.messages;
 	const injected = JSON.stringify(system);
-	assert.ok(injected.includes("read it when routing and delegation mode allow, otherwise delegate its discovery"));
+	assert.ok(injected.includes("read it when delegation mode allows, otherwise delegate its discovery"));
 	assert.ok(injected.includes("An unmet mandatory prerequisite stops dependent work"));
-	assert.ok(injected.includes("if routing blocks them, delegate discovery first and run them after its result arrives"));
 	assert.ok(injected.includes("reconcile left_undone and unverified against the remaining obligations"));
-	assert.ok(injected.includes("Reads of AGENTS.md, GLOSSARY.md, and docs/agents/*.md stay available"));
 
 	assert.equal(system.role, "system");
 	assert.ok(system.toolsAdded.some((tool) => tool.name === "spawn_child"));
@@ -856,29 +642,26 @@ test("the language instruction keeps parent-child text English, the user's langu
 });
 
 for (const mode of ["opportunistic", "orchestrator"]) {
-	for (const routing of ["off", "on"]) {
-		for (const offered of [true, false]) {
-			test(`in ${mode} with Jev routing ${routing} and the child tools ${offered ? "offered" : "not offered"}, every parent model call carries the language instruction and the Delegation mode section keeps its conditions`, async (t) => {
-				const dir = withAgentDirectory(t);
-				if (routing === "on") turnJevRoutingOn(dir);
-				chooseMode(dir, mode);
-				seat(offered ? capabilities : capabilities.filter((capability) => capability !== "child-session"));
-				const parent = await realParent(t, dir, [fauxAssistantMessage("Hello."), fauxAssistantMessage("Sure.")]);
+	for (const offered of [true, false]) {
+		test(`in ${mode} with the child tools ${offered ? "offered" : "not offered"}, every parent model call carries the language instruction and the Delegation mode section keeps its conditions`, async (t) => {
+			const dir = withAgentDirectory(t);
+			chooseMode(dir, mode);
+			seat(offered ? capabilities : capabilities.filter((capability) => capability !== "child-session"));
+			const parent = await realParent(t, dir, [fauxAssistantMessage("Hello."), fauxAssistantMessage("Sure.")]);
 
-				await parent.session.prompt("Hello");
-				await parent.session.prompt("Now in English, please");
+			await parent.session.prompt("Hello");
+			await parent.session.prompt("Now in English, please");
 
-				assert.equal(parent.requests.length, 2);
-				for (const request of parent.requests) {
-					languageInstruction(request);
-					assert.equal(
-						request.messages[0].toolsAdded.some((tool) => tool.name === "spawn_child"),
-						offered,
-					);
-					assert.equal(delegationInstructed(request), mode === "orchestrator" && offered);
-				}
-			});
-		}
+			assert.equal(parent.requests.length, 2);
+			for (const request of parent.requests) {
+				languageInstruction(request);
+				assert.equal(
+					request.messages[0].toolsAdded.some((tool) => tool.name === "spawn_child"),
+					offered,
+				);
+				assert.equal(delegationInstructed(request), mode === "orchestrator" && offered);
+			}
+		});
 	}
 	test(`in ${mode}, every model call of a run a child result starts carries the language instruction`, async (t) => {
 		const dir = withAgentDirectory(t);

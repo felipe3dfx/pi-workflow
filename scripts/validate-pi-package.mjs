@@ -12,7 +12,6 @@ export const commands = [
 	"workflow:config",
 	"workflow:models",
 	"workflow:subagents",
-	"workflow:delegation-check",
 ];
 
 export function validateCommandSurface(extension) {

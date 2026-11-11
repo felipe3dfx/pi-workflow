@@ -66,8 +66,6 @@ import { eventually } from "./support/eventually.mjs";
 import { manualClock } from "./support/manual-clock.mjs";
 import { alive } from "./support/process-tree.mjs";
 import { runtimeChild } from "./support/runtime-child.mjs";
-import { classifierRegistry } from "./support/fake-jev.mjs";
-import { turnJevRoutingOn } from "./support/jev-routing.mjs";
 
 replaceSelection({
 	schemaVersion: 1,
@@ -694,32 +692,6 @@ async function withWorkspace(run) {
 	}
 }
 
-function choiceAnswer(choice, criteria = {}) {
-	return {
-		type: "choice",
-		choice,
-		confidence: 0.9,
-		probabilities: Object.fromEntries(
-			Object.keys(criteria).map((key) => [key, key === choice ? 1 : 0]),
-		),
-	};
-}
-
-function fakeJev({ choice = "leave" } = {}) {
-	return classifierRegistry((body) => {
-		const questions = body.questions ?? {};
-		const answers = {};
-		if (questions.destination) {
-			const destinations = ["stay", "leave", "decide"];
-			answers.destination = choiceAnswer(
-				destinations.includes(choice) ? choice : "leave",
-				questions.destination.criteria,
-			);
-		}
-		return { answers };
-	});
-}
-
 function loadExtension({
 	agentDir,
 	create,
@@ -729,10 +701,8 @@ function loadExtension({
 	schedule,
 	refresh,
 	branch = [],
-	jevRouting = "on",
 	session = {},
 }) {
-	if (jevRouting === "on") turnJevRoutingOn(agentDir);
 	const handlers = new Map();
 	const tools = [];
 	const commands = new Map();
@@ -834,7 +804,7 @@ function loadExtension({
 			legacy = true;
 		},
 		named: (name) => tools.find((tool) => tool.name === name),
-		gate: (event, ctx) => handlers.get("tool_call")[0](event, ctx),
+		toolCallHandlers: () => handlers.get("tool_call") ?? [],
 		spawnTools: () => tools.filter((tool) => tool.name === "spawn_child"),
 	};
 }
@@ -846,7 +816,7 @@ async function loadSpawnTool(options) {
 	return { ...extension, tool };
 }
 
-function toolContext(mode, cwd, jev = fakeJev()) {
+function toolContext(mode, cwd) {
 	return {
 		mode,
 		hasUI: mode === "tui" || mode === "rpc",
@@ -855,9 +825,7 @@ function toolContext(mode, cwd, jev = fakeJev()) {
 		model: { provider: "session", id: "model", reasoning: true },
 		thinkingLevel: "medium",
 		modelRegistry: {
-			getApiKeyForProvider: async () => "typesafe-key",
 			getAvailable: () => [],
-			...jev.registry,
 		},
 	};
 }
@@ -921,6 +889,7 @@ test("spawn_child is registered once at session start, and not while the legacy 
 		await allowed.fire("session_start");
 		await allowed.fire("session_start");
 		assert.equal(allowed.spawnTools().length, 1);
+		assert.deepEqual(allowed.toolCallHandlers(), []);
 	});
 });
 
@@ -943,7 +912,6 @@ for (const mode of ["tui", "rpc"]) {
 			assert.equal(result.details.status, "queued");
 			assert.match(result.details.id, uuid);
 			assert.equal(result.details.role, "worker");
-			assert.equal(result.details.jev.answers.destination.choice, "leave");
 			assert.match(text(result), new RegExp(`${result.details.id} is queued`));
 			assert.match(text(result), /Launched as worker\./);
 			assert.equal(children.created.length, 1);
@@ -986,7 +954,7 @@ for (const mode of ["tui", "rpc"]) {
 				reasoning: true,
 			});
 			assert.equal(ctx.thinkingLevel, "medium");
-			assert.deepEqual(await readdir(agentDir), ["pi-workflow-routing.json"]);
+			assert.deepEqual(await readdir(agentDir), []);
 		});
 	});
 }
@@ -1007,9 +975,7 @@ for (const mode of ["print", "json"]) {
 			);
 
 			assert.match(text(result), /All tests pass\./);
-			assert.doesNotMatch(text(result), /Jev selected/);
 			assert.equal(result.details.role, "worker");
-			assert.equal(result.details.jev.answers.destination.choice, "leave");
 			assert.equal("id" in result.details, false);
 			assert.equal(messages.length, 0);
 			assert.equal(children.created[0].disposals, 1);
@@ -1041,10 +1007,9 @@ test("a foreground result shows its Run state and Verdict to the parent", async 
 	});
 });
 
-test("print mode refuses an explicit background request before asking Jev or creating a child", async () => {
+test("print mode refuses an explicit background request before creating a child", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
-		const jev = fakeJev();
 		const { tool, messages } = await loadSpawnTool({
 			agentDir,
 			create: children.create,
@@ -1054,14 +1019,13 @@ test("print mode refuses an explicit background request before asking Jev or cre
 			const result = await spawn(
 				tool,
 				{ role: "worker", task: "Fix the failing test", background: true },
-				toolContext(mode, worktree, jev),
+				toolContext(mode, worktree),
 			);
 
 			assert.equal(result.details.status, "refused");
 			assert.equal("id" in result.details, false);
 			assert.match(text(result), /background/);
 		}
-		assert.equal(jev.requests.length, 0);
 		assert.equal(children.created.length, 0);
 		assert.equal(messages.length, 0);
 	});
@@ -1098,14 +1062,8 @@ test("refused and pending launches return a warning and reason with no child id 
 				status: "refused",
 				reason: /not a valid worktree/,
 			},
-			{
-				params: { role: "worker", task: "Decide the architecture" },
-				jev: { choice: "stay" },
-				status: "refused",
-				reason: /Jev answered that the work for this user message stays/,
-			},
 		];
-		for (const { params, jev, status, reason } of cases) {
+		for (const { params, status, reason } of cases) {
 			const children = fakeChildren();
 			const { tool, messages } = await loadSpawnTool({
 				agentDir,
@@ -1115,91 +1073,16 @@ test("refused and pending launches return a warning and reason with no child id 
 			const result = await spawn(
 				tool,
 				params,
-				toolContext("tui", worktree, fakeJev(jev)),
+				toolContext("tui", worktree),
 			);
 
 			assert.equal(result.details.status, status);
 			assert.match(result.details.reason, reason);
 			assert.equal("id" in result.details, false);
-			if (jev) {
-				assert.equal(result.details.jev.answers.destination.choice, "stay");
-			} else {
-				assert.equal("jev" in result.details, false);
-			}
 			assert.match(text(result), /No child was launched/);
 			assert.equal(children.created.length, 0);
 			assert.equal(messages.length, 0);
 		}
-	});
-});
-
-test("under leave, the parent's gated tools stay blocked until a launch for the message succeeds", async () => {
-	await withWorkspace(async ({ worktree, agentDir }) => {
-		const message = "Research the parser and tell me the package version";
-		let failures = 1;
-		const children = fakeChildren({
-			onCreate: () => {
-				if (failures-- > 0) throw new Error("provider gone");
-			},
-		});
-		const extension = await loadSpawnTool({ agentDir, create: children.create });
-		const ctx = {
-			...toolContext("tui", worktree, fakeJev()),
-			sessionManager: {
-				getBranch: () => [
-					{ id: "request", type: "message", message: { role: "user", content: message } },
-				],
-			},
-		};
-		const read = { toolName: "read", input: { path: "package.json" } };
-
-		const refused = await spawn(extension.tool, { role: "explore", task: "Research the parser" }, ctx);
-		const afterRefusal = await extension.gate(read, ctx);
-		const queued = await spawn(extension.tool, { role: "explore", task: "Research the parser" }, ctx);
-		const afterLaunch = await extension.gate(read, ctx);
-
-		assert.equal(refused.details.status, "refused");
-		assert.equal(afterRefusal.block, true);
-		assert.doesNotMatch(afterRefusal.reason, /\b(explore|worker|verify)\b/);
-		assert.equal(queued.details.status, "queued");
-		assert.equal(afterLaunch, undefined);
-	});
-});
-
-test("under leave, a foreground child that starts and then fails unblocks the parent's gated tools, and a refusal before start does not", async () => {
-	await withWorkspace(async ({ worktree, agentDir }) => {
-		const message = "Research the parser and tell me the package version";
-		let failures = 1;
-		const children = fakeChildren({
-			onCreate: () => {
-				if (failures-- > 0) throw new Error("provider gone");
-			},
-			run: async () => {
-				throw new Error("provider overloaded");
-			},
-		});
-		const extension = await loadSpawnTool({ agentDir, create: children.create });
-		const ctx = {
-			...toolContext("print", worktree, fakeJev()),
-			sessionManager: {
-				getBranch: () => [
-					{ id: "request", type: "message", message: { role: "user", content: message } },
-				],
-			},
-		};
-		const read = { toolName: "read", input: { path: "package.json" } };
-
-		const refused = await spawn(extension.tool, { role: "explore", task: "Research the parser" }, ctx);
-		const afterRefusal = await extension.gate(read, ctx);
-		await assert.rejects(
-			spawn(extension.tool, { role: "explore", task: "Research the parser" }, ctx),
-			/provider overloaded/,
-		);
-		const afterFailure = await extension.gate(read, ctx);
-
-		assert.equal(refused.details.status, "refused");
-		assert.equal(afterRefusal.block, true);
-		assert.equal(afterFailure, undefined);
 	});
 });
 
@@ -1918,100 +1801,69 @@ test("a shutdown for any reason other than reload ends the working children with
 	});
 });
 
-test("with Jev routing on, a null role is refused and never assumes worker", async () => {
+test("spawn_child without a role is refused and asks for one, never assuming worker", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
-		const children = fakeChildren({ run: async () => "Done." });
-		const { tool } = await loadSpawnTool({
-			agentDir,
-			create: children.create,
-		});
-
-		const result = await spawn(
-			tool,
+		for (const params of [
+			{ task: "Fix the failing test" },
 			{ role: null, task: "Fix the failing test" },
-			toolContext("print", worktree),
-		);
+		]) {
+			const children = fakeChildren({ run: async () => "Done." });
+			const { tool } = await loadSpawnTool({
+				agentDir,
+				create: children.create,
+			});
 
-		assert.equal(result.details.status, "refused");
-		assert.match(result.details.reason, /needs a role/);
-		assert.equal("role" in result.details, false);
-		assert.equal(children.created.length, 0);
+			const result = await spawn(tool, params, toolContext("print", worktree));
+
+			assert.equal(result.details.status, "refused");
+			assert.equal(
+				result.details.reason,
+				"spawn_child needs a role: explore, worker, verify",
+			);
+			assert.match(text(result), /Launch refused\. No child was launched\./);
+			assert.equal("role" in result.details, false);
+			assert.equal(children.created.length, 0);
+		}
 	});
 });
 
-test("an explicit child request in the user message is sent to Jev with the destination question", async () => {
+test("spawn_child with a valid role launches without consulting any classifier", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren({ run: async () => "Done." });
-		const jev = fakeJev();
 		const { tool } = await loadSpawnTool({
 			agentDir,
 			create: children.create,
 		});
-
-		const result = await spawn(
-			tool,
-			{ role: "explore", task: "Map the module" },
-			{
-				...toolContext("print", worktree, jev),
-				sessionManager: {
-					getBranch: () => [
-						{
-							type: "message",
-							id: "older",
-							message: { role: "user", content: "Look at the file" },
-						},
-						{
-							type: "message",
-							id: "assistant",
-							message: {
-								role: "assistant",
-								content: [{ type: "text", text: "I can spawn a child." }],
-							},
-						},
-						{
-							type: "message",
-							id: "tool",
-							message: {
-								role: "toolResult",
-								content: [{ type: "text", text: "child" }],
-							},
-						},
-						{
-							type: "message",
-							id: "latest",
-							message: {
-								role: "user",
-								content: [
-									{ type: "text", text: "Use a child" },
-									{ type: "text", text: "to map the module" },
-								],
-							},
-						},
-						{
-							type: "message",
-							id: "blank",
-							message: { role: "user", content: "   " },
-						},
-					],
+		const classified = [];
+		const ctx = {
+			mode: "print",
+			hasUI: false,
+			cwd: worktree,
+			isProjectTrusted: () => false,
+			model: { provider: "session", id: "model", reasoning: true },
+			thinkingLevel: "medium",
+			modelRegistry: {
+				getAvailable: () => [],
+				classify: async (...request) => {
+					classified.push(request);
+					throw new Error("no classifier is registered");
 				},
 			},
-		);
+		};
 
-		assert.equal(result.details.status, "completed");
-		assert.equal(jev.requests.length, 1);
-		assert.equal(
-			jev.requests[0].state.user_request,
-			"Use a child\nto map the module",
-		);
-		assert.equal(jev.requests[0].state.task, "Map the module");
-		assert.equal(jev.requests[0].questions.destination.type, "choice");
+		for (const role of ["explore", "worker", "verify"]) {
+			const result = await spawn(tool, { role, task: "Map the module" }, ctx);
+			assert.equal(result.details.status, "completed", role);
+			assert.equal(result.details.role, role);
+		}
+		assert.equal(children.created.length, 3);
+		assert.deepEqual(classified, []);
 	});
 });
 
 test("a named implement skill selects no role; the parent's role launches", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
-		const jev = fakeJev();
 		const { tool } = await loadSpawnTool({
 			agentDir,
 			create: children.create,
@@ -2021,7 +1873,7 @@ test("a named implement skill selects no role; the parent's role launches", asyn
 			tool,
 			{ role: "explore", task: "Implement the ticket" },
 			{
-				...toolContext("tui", worktree, jev),
+				...toolContext("tui", worktree),
 				sessionManager: {
 					getBranch: () => [
 						{
@@ -2039,15 +1891,8 @@ test("a named implement skill selects no role; the parent's role launches", asyn
 		assert.equal(result.details.status, "queued");
 		assert.equal(result.details.role, "explore");
 		assert.equal("skill" in result.details, false);
-		assert.equal(result.details.jev.answers.destination.choice, "leave");
 		assert.match(text(result), /Launched as explore\./);
 		assert.doesNotMatch(text(result), /skill selected/);
-		assert.equal(jev.requests.length, 1);
-		assert.equal(
-			jev.requests[0].state.user_request,
-			"Usa la skill implement para este ticket",
-		);
-		assert.deepEqual(Object.keys(jev.requests[0].questions), ["destination"]);
 		assert.equal(children.created.length, 1);
 		assert.ok(!children.created[0].spec.tools.includes("report_result"));
 	});
@@ -2167,8 +2012,6 @@ async function fauxParent(agentDir, responses, { tokensPerSecond } = {}) {
 		}),
 	);
 	const modelRegistry = new ModelRegistry(runtime);
-	modelRegistry.getApiKeyForProvider = async () => "typesafe-key";
-	Object.assign(modelRegistry, fakeJev().registry);
 	return {
 		runtime,
 		requests,
@@ -2357,16 +2200,15 @@ test("two children of one Specialist and model in one worktree send the same pre
 });
 
 test("launching a child keeps the parent's model and thinking, and a profile naming a virtual model runs the child on it", async () => {
-	await assertLaunchKeepsParentModel(fakeJev());
+	await assertLaunchKeepsParentModel();
 });
 
-test("with Jev routing off, the launch response names the launched role and not Jev", async () => {
+test("the launch response names the launched role", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
 		const { tool } = await loadSpawnTool({
 			agentDir,
 			create: children.create,
-			jevRouting: "off",
 		});
 
 		const result = await spawn(
@@ -2377,7 +2219,6 @@ test("with Jev routing off, the launch response names the launched role and not 
 
 		assert.equal(result.details.status, "queued", text(result));
 		assert.match(text(result), /Launched as verify\./);
-		assert.doesNotMatch(text(result), /Jev selected/);
 	});
 });
 
@@ -2428,7 +2269,7 @@ test("spawn_child describes who decides the role and what each role can do", asy
 			create: fakeChildren().create,
 		});
 		const role = tool.parameters.properties.role.description;
-		assert.match(role, /Jev routing is off, the role you pass decides/);
+		assert.match(role, /The role is required and the parent chooses it; omitting it does not choose worker/);
 		assert.doesNotMatch(role, /suggestion|specialist/i);
 		const guidance = tool.promptGuidelines.join("\n");
 		const taskDescription = tool.parameters.properties.task.description;
@@ -2450,25 +2291,13 @@ test("spawn_child describes who decides the role and what each role can do", asy
 		assert.match(guidance, /acceptance criteria/i);
 		assert.match(guidance, /edit surface/i);
 		assert.match(guidance, /read[^.]*before[^.]*write[^.]*worker|worker[^.]*read[^.]*write/i);
-		assert.match(guidance, /When Jev routing is on, the parent asks once per user turn/);
 		assert.doesNotMatch(guidance, /specialist/i);
 		assert.doesNotMatch(guidance, /names a role|use that role/i);
 		assert.match(guidance, /parent chooses the role/i);
-		assert.match(guidance, /Jev decides only the destination/i);
-		assert.match(
-			tool.description,
-			/When Jev routing is on, the harness decides whether the work leaves/,
-		);
 	});
 });
 
-test("with Jev routing off, launching a named role keeps the parent's model and thinking, and a profile naming a virtual model runs the child on it", async () => {
-	const jev = fakeJev();
-	await assertLaunchKeepsParentModel(jev, "off");
-	assert.equal(jev.requests.length, 0);
-});
-
-async function assertLaunchKeepsParentModel(jev, jevRouting = "on") {
+async function assertLaunchKeepsParentModel() {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const parent = await fauxParent(
 			agentDir,
@@ -2495,8 +2324,8 @@ async function assertLaunchKeepsParentModel(jev, jevRouting = "on") {
 				},
 			}),
 		);
-		const extension = await loadSpawnTool({ agentDir, create: runtimeChild(parent.runtime), jevRouting });
-		const ctx = { ...toolContext("tui", worktree, jev), ...parent.context };
+		const extension = await loadSpawnTool({ agentDir, create: runtimeChild(parent.runtime) });
+		const ctx = { ...toolContext("tui", worktree), ...parent.context };
 		const parentModel = ctx.model;
 
 		const result = await spawn(
@@ -2870,10 +2699,9 @@ test("spawn_child admits writers with disjoint surfaces and refuses an overlap n
 	});
 });
 
-test("with ten working children, spawn_child and continue_child are refused before Jev and before a session is created", async () => {
+test("with ten working children, spawn_child and continue_child are refused before a session is created", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
-		const jev = fakeJev();
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
@@ -2886,18 +2714,17 @@ test("with ten working children, spawn_child and continue_child are refused befo
 		for (let i = 0; i < 10; i++) await spawnBackground(extension, worktree);
 		await settle();
 		const created = children.created.length;
-		const jevRequests = jev.requests.length;
 
 		const spawned = await spawn(
 			extension.tool,
 			{ role: "worker", task: "One more" },
-			toolContext("tui", worktree, jev),
+			toolContext("tui", worktree),
 		);
 		const continued = await use(
 			extension,
 			"continue_child",
 			{ id: done, task: "Now add a test" },
-			toolContext("tui", worktree, jev),
+			toolContext("tui", worktree),
 		);
 
 		for (const [result, warning] of [
@@ -2909,17 +2736,15 @@ test("with ten working children, spawn_child and continue_child are refused befo
 			assert.match(result.details.reason, /10 working children/);
 		}
 		assert.equal(children.created.length, created);
-		assert.equal(jev.requests.length, jevRequests);
 
 		children.created[1].result.resolve("Done.");
 		await settle();
 		const freed = await spawn(
 			extension.tool,
 			{ role: "worker", task: "One more" },
-			toolContext("tui", worktree, jev),
+			toolContext("tui", worktree),
 		);
 		assert.equal(freed.details.status, "queued");
-		assert.equal(jev.requests.length, jevRequests + 1);
 	});
 });
 
@@ -3314,7 +3139,6 @@ test("a foreground child silent for four minutes is aborted and the call fails a
 test("continue_child starts a new queued child from a completed child's conversation, and the completed record stays completed", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
-		const jev = fakeJev();
 		const extension = await loadSpawnTool({
 			agentDir,
 			create: children.create,
@@ -3325,13 +3149,12 @@ test("continue_child starts a new queued child from a completed child's conversa
 		await settle();
 		for (let i = 0; i < 5; i++) await spawnBackground(extension, worktree);
 		await settle();
-		const jevRequests = jev.requests.length;
 
 		const result = await use(
 			extension,
 			"continue_child",
 			{ id: done, task: "Now add a test" },
-			toolContext("tui", worktree, jev),
+			toolContext("tui", worktree),
 		);
 
 		const next = result.details.id;
@@ -3339,9 +3162,6 @@ test("continue_child starts a new queued child from a completed child's conversa
 		assert.match(next, uuid);
 		assert.notEqual(next, done);
 		assert.match(text(result), new RegExp(`${next} is queued`));
-		assert.doesNotMatch(text(result), /Jev selected/);
-		assert.equal("jev" in result.details, false);
-		assert.equal(jev.requests.length, jevRequests);
 		const [first] = children.created;
 		const continued = children.created.at(-1);
 		assert.equal(continued.spec.parentSession, "session-0");
@@ -3369,7 +3189,7 @@ test("continue_child starts a new queued child from a completed child's conversa
 			extension,
 			"continue_child",
 			{ id: done, task: "And another" },
-			toolContext("tui", worktree, jev),
+			toolContext("tui", worktree),
 		);
 		assert.equal(again.details.status, "queued");
 		assert.ok(![done, next].includes(again.details.id));
@@ -6838,7 +6658,7 @@ function seatAll(overrides = {}) {
 	});
 }
 
-test("a launch naming a missing task, a done task, or a task while the Todo is not seated is refused before Jev is asked or a child is created", async () => {
+test("a launch naming a missing task, a done task, or a task while the Todo is not seated is refused before a child is created", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
 		const extension = await loadSpawnTool({ agentDir, create: children.create });
@@ -6846,7 +6666,6 @@ test("a launch naming a missing task, a done task, or a task while the Todo is n
 		await todo.run("write", {
 			tasks: [{ text: "Fix the parser" }, { text: "Ship it", state: "done" }],
 		});
-		const jev = fakeJev();
 		const cases = [
 			{ todo: 9, reason: /Task #9 does not exist/ },
 			{ todo: 2, reason: /Task #2 is done/ },
@@ -6858,7 +6677,7 @@ test("a launch naming a missing task, a done task, or a task while the Todo is n
 				const result = await spawn(
 					extension.tool,
 					{ role: "worker", task: "Fix the parser", todo: id },
-					toolContext("tui", worktree, jev),
+					toolContext("tui", worktree),
 				);
 				assert.equal(result.details.status, "refused");
 				assert.match(result.details.reason, reason);
@@ -6867,13 +6686,12 @@ test("a launch naming a missing task, a done task, or a task while the Todo is n
 		} finally {
 			seatAll();
 		}
-		assert.equal(jev.requests.length, 0);
 		assert.equal(children.created.length, 0);
 		assert.match(await todo.list(), /\[pending\] #1: Fix the parser/);
 	});
 });
 
-test("an accepted launch, even queued, sets its task in progress and the Todo box names the child, while a blocked or limited launch changes nothing", async () => {
+test("an accepted launch, even queued, sets its task in progress and the Todo box names the child, while a refused or limited launch changes nothing", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const extension = await loadSpawnTool({ agentDir, create: fakeChildren().create });
 		const todo = todoTool(extension);
@@ -6883,8 +6701,8 @@ test("an accepted launch, even queued, sets its task in progress and the Todo bo
 
 		const blocked = await spawn(
 			extension.tool,
-			{ role: "worker", task: "Decide the architecture", todo: 2 },
-			toolContext("tui", worktree, fakeJev({ choice: "stay" })),
+			{ task: "Decide the architecture", todo: 2 },
+			toolContext("tui", worktree),
 		);
 		assert.equal(blocked.details.status, "refused");
 

@@ -1,22 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
-import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { getAgentDir, initTheme } from "@earendil-works/pi-coding-agent";
 
-import { createChildLauncher } from "../extensions/child-launcher.ts";
 import {
 	companionMetadataPath,
 	loadCompanionsFromPath,
 } from "../extensions/companion-workflow.ts";
 import { capabilities, readSelection } from "../extensions/configure.ts";
-import { createJevRouting } from "../extensions/workflow-settings.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 import { occupants, replaceSelection, seated } from "../extensions/shell.ts";
-import { classifierRegistry } from "./support/fake-jev.mjs";
 import { installedPackagePath } from "./support/child-session.mjs";
 import {
 	body as shown,
@@ -26,7 +22,7 @@ import {
 	press,
 	title,
 } from "./support/config-guide.mjs";
-import { withAgentDirectory } from "./support/jev-routing.mjs";
+import { withAgentDirectory } from "./support/agent-directory.mjs";
 
 initTheme("dark", false);
 
@@ -52,35 +48,10 @@ function extension(commands, notifications, agentDirectory, catalog, exec = asyn
 	};
 }
 
-function launcherContext(cwd, jev) {
-	return {
-		cwd,
-		model: { provider: "session", id: "model", reasoning: true },
-		thinkingLevel: "medium",
-		modelRegistry: {
-			getApiKeyForProvider: async () => "typesafe-key",
-			getAvailable: () => [],
-			...jev.registry,
-		},
-		sessionManager: {
-			getBranch: () => [
-				{
-					type: "message",
-					message: { role: "user", content: "Map the source" },
-				},
-			],
-		},
-	};
-}
-
 const ESC = "\x1b";
 
 const driveConfig = (command, notify, drive) =>
 	drive_(command, drive, { notify });
-
-function focusRouting(panel) {
-	focusOn(panel, "Jev routing");
-}
 
 const focus = focusOn;
 
@@ -93,18 +64,10 @@ function confirmApply(panel) {
 	press(panel, keys.enter);
 }
 
-async function storedRouting(dir) {
-	try {
-		return JSON.parse(await readFile(join(dir, "pi-workflow-routing.json"), "utf8"));
-	} catch {
-		return undefined;
-	}
-}
-
 test("/workflow:config rejects the settings argument and unknown arguments, and needs the TUI", async () => {
 	const notifications = [];
 	const { command, commands, notify } = extension(new Map(), notifications);
-	assert.match(command.description, /Jev routing/);
+	assert.match(command.description, /Delegation mode/);
 	assert.equal(command.getArgumentCompletions, undefined);
 	assert.equal(commands.has("workflow:settings"), false);
 	assert.equal(commands.has("workflow:configure"), false);
@@ -119,271 +82,6 @@ test("/workflow:config rejects the settings argument and unknown arguments, and 
 	await command.handler("", { hasUI: true, mode: "print", ui: { notify } });
 	assert.equal(notifications.at(-1).level, "error");
 	assert.match(notifications.at(-1).message, /needs the TUI/);
-});
-
-test("the /workflow:config menu shows the stored Jev routing after the capabilities", async (t) => {
-	const dir = withAgentDirectory(t);
-	await writeFile(
-		join(dir, "pi-workflow-routing.json"),
-		JSON.stringify({ schemaVersion: 1, jevRouting: "on" }),
-	);
-	const { command, notify } = extension(new Map(), [], dir);
-	let lines;
-	await driveConfig(command, notify, (panel) => {
-		lines = shown(panel);
-		panel.handleInput(ESC);
-	});
-	const routing = lines.findIndex((line) => /^\[x\] Jev routing$/.test(line));
-	assert.ok(routing > 0);
-	assert.ok(lines.findIndex((line) => /Compact rendering/.test(line)) < routing);
-});
-
-test("toggling Jev routing and confirming Apply persists it for a new process and leaves the model profiles alone", async (t) => {
-	const dir = withAgentDirectory(t);
-	const profilesPath = join(dir, "pi-workflow-models.json");
-	const profiles =
-		'{"schemaVersion":2,"active":"default","profiles":{"default":{}}}\n';
-	await writeFile(profilesPath, profiles);
-	const { command, notify } = extension(new Map(), [], dir);
-	let review;
-	await driveConfig(command, notify, (panel) => {
-		focusRouting(panel);
-		assert.ok(shown(panel).some((line) => /^(▸ )?\[ \] Jev routing\s*$/.test(line)));
-		panel.handleInput(" ");
-		assert.ok(shown(panel).some((line) => /^(▸ )?\[x\] Jev routing\s+•$/.test(line)));
-		openApply(panel);
-		review = shown(panel);
-		focus(panel, "Confirm apply");
-		panel.handleInput("\r");
-	});
-	assert.ok(review.some((line) => /^Jev routing\s+off → on$/.test(line)));
-	assert.deepEqual(await storedRouting(dir), { schemaVersion: 1, jevRouting: "on" });
-	assert.equal(await readFile(profilesPath, "utf8"), profiles);
-
-	const restarted = execFileSync(
-		process.execPath,
-		[
-			"--input-type=module",
-			"--eval",
-			`
-			import { initTheme } from "@earendil-works/pi-coding-agent";
-			import { KeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
-			import { stripVTControlCharacters } from "node:util";
-			import piWorkflowExtension from ${JSON.stringify(new URL("../extensions/pi-workflow.ts", import.meta.url).href)};
-			initTheme("dark", false);
-			const commands = new Map();
-			piWorkflowExtension({
-				on() {},
-				exec: async () => ({ code: 0 }),
-				registerCommand: (name, command) => commands.set(name, command),
-				registerTool() {},
-				registerShortcut() {},
-				registerMessageRenderer() {},
-				registerToolRenderer() {},
-				registerProvider() {},
-				sendMessage() {},
-			});
-			await commands.get("workflow:config").handler("", {
-				hasUI: true,
-				mode: "tui",
-				ui: {
-					notify() {},
-					custom: async (factory) => {
-						const plain = { fg: (_c, text) => text, bg: (_c, text) => text, bold: (text) => text };
-						const panel = factory({ terminal: { rows: 40 } }, plain, new KeybindingsManager(TUI_KEYBINDINGS), () => {});
-						for (const line of panel.render(60)) console.log(stripVTControlCharacters(line));
-					},
-				},
-			});
-			`,
-		],
-		{
-			cwd: new URL("..", import.meta.url),
-			env: { ...process.env, PI_CODING_AGENT_DIR: dir },
-			encoding: "utf8",
-		},
-	);
-	assert.match(restarted, /\[x\] Jev routing\s+│$/m);
-});
-
-test("toggling Jev routing and cancelling with Esc writes nothing", async (t) => {
-	const dir = withAgentDirectory(t);
-	const { command, notify } = extension(new Map(), [], dir);
-	await driveConfig(command, notify, (panel) => {
-		focusRouting(panel);
-		panel.handleInput(" ");
-		assert.ok(shown(panel).some((line) => /^(▸ )?\[x\] Jev routing\s+•$/.test(line)));
-		panel.handleInput(ESC);
-		panel.handleInput(ESC);
-	});
-	assert.equal(await storedRouting(dir), undefined);
-});
-
-test("turning Jev routing off in the menu gates a launch on the stored choice", async (t) => {
-	const dir = withAgentDirectory(t);
-	await writeFile(
-		join(dir, "pi-workflow-routing.json"),
-		JSON.stringify({ schemaVersion: 1, jevRouting: "on" }),
-	);
-	const worktree = join(dir, "repo");
-	await mkdir(worktree);
-	execFileSync("git", ["init", "--quiet"], { cwd: worktree });
-	const { command, notify } = extension(new Map(), [], dir);
-	await driveConfig(command, notify, (p) => {
-		focusRouting(p);
-		p.handleInput(" ");
-		assert.ok(shown(p).some((line) => /^▸ \[ \] Jev routing\s+•$/.test(line)));
-		confirmApply(p);
-	});
-	assert.deepEqual(await storedRouting(dir), { schemaVersion: 1, jevRouting: "off" });
-
-	const jev = classifierRegistry(() => ({}));
-	const launcher = createChildLauncher({
-		modelProfiles: { load: () => ({ status: "absent" }) },
-		jevRouting: createJevRouting(dir),
-		delegationMode: { current: () => "opportunistic" },
-	});
-	const ctx = launcherContext(worktree, jev);
-	assert.deepEqual(
-		await launcher.gateToolCall(
-			{ toolName: "grep", input: { pattern: "source" } },
-			ctx,
-		),
-		{ allow: true },
-	);
-	const missingRole = await launcher.prepareLaunch(
-		{ task: "Map the source", userRequest: "Map the source" },
-		ctx,
-	);
-	assert.equal(missingRole.kind, "stay");
-	assert.equal(missingRole.reason, "Jev routing is off.");
-	assert.equal(jev.requests.length, 0);
-});
-
-test("with Jev routing off, a message naming implement neither calls Jev nor launches a worker", async (t) => {
-	const dir = withAgentDirectory(t);
-	const worktree = join(dir, "repo");
-	await mkdir(worktree);
-	execFileSync("git", ["init", "--quiet"], { cwd: worktree });
-	const jev = classifierRegistry(() => ({}));
-	const launcher = createChildLauncher({
-		modelProfiles: { load: () => ({ status: "absent" }) },
-		jevRouting: createJevRouting(dir),
-		delegationMode: { current: () => "opportunistic" },
-	});
-	const message = "implement the toggle";
-	const ctx = {
-		...launcherContext(worktree, jev),
-		sessionManager: {
-			getBranch: () => [
-				{ type: "message", message: { role: "user", content: message } },
-			],
-		},
-	};
-
-	assert.deepEqual(
-		await launcher.gateToolCall(
-			{ toolName: "edit", input: { path: "src/toggle.ts" } },
-			ctx,
-		),
-		{ allow: true },
-	);
-	const decided = await launcher.prepareLaunch(
-		{ task: "Implement the toggle", userRequest: message },
-		ctx,
-	);
-	assert.equal(decided.kind, "stay");
-	assert.equal(decided.reason, "Jev routing is off.");
-	assert.equal(jev.requests.length, 0);
-});
-
-test("with Jev routing off and no role, a refused model profile is reported before the routing stay", async (t) => {
-	const dir = withAgentDirectory(t);
-	const worktree = join(dir, "repo");
-	await mkdir(worktree);
-	execFileSync("git", ["init", "--quiet"], { cwd: worktree });
-	const jev = classifierRegistry(() => ({}));
-	const launcher = createChildLauncher({
-		modelProfiles: {
-			load: () => ({ status: "refused", reason: "Profiles file is broken." }),
-		},
-		jevRouting: createJevRouting(dir),
-		delegationMode: { current: () => "opportunistic" },
-	});
-
-	const launch = await launcher.prepareLaunch(
-		{ task: "Map the source", userRequest: "Map the source" },
-		launcherContext(worktree, jev),
-	);
-	assert.equal(launch.kind, "refused");
-	assert.equal(launch.reason, "Profiles file is broken.");
-	assert.equal(jev.requests.length, 0);
-});
-
-for (const [label, write] of [
-	["absent", async () => {}],
-	["unreadable", (path) => mkdir(path)],
-	["not JSON", (path) => writeFile(path, "{ on")],
-	[
-		"an unknown value",
-		(path) =>
-			writeFile(path, JSON.stringify({ schemaVersion: 1, jevRouting: "yes" })),
-	],
-	[
-		"an unknown schema",
-		(path) =>
-			writeFile(path, JSON.stringify({ schemaVersion: 2, jevRouting: "on" })),
-	],
-]) {
-	test(`Jev routing is off without asking Jev when the choice document is ${label}`, async (t) => {
-		const dir = withAgentDirectory(t);
-		await write(join(dir, "pi-workflow-routing.json"));
-		const worktree = join(dir, "repo");
-		await mkdir(worktree);
-		execFileSync("git", ["init", "--quiet"], { cwd: worktree });
-		const jev = classifierRegistry(() => ({}));
-		const launcher = createChildLauncher({
-			modelProfiles: { load: () => ({ status: "absent" }) },
-			jevRouting: createJevRouting(dir),
-			delegationMode: { current: () => "opportunistic" },
-		});
-		const ctx = launcherContext(worktree, jev);
-
-		assert.deepEqual(
-			await launcher.gateToolCall(
-				{ toolName: "grep", input: { pattern: "source" } },
-				ctx,
-			),
-			{ allow: true },
-		);
-		const launch = await launcher.prepareLaunch(
-			{ task: "Map the source", userRequest: "Map the source" },
-			ctx,
-		);
-		assert.equal(launch.kind, "stay");
-		assert.equal(launch.reason, "Jev routing is off.");
-		assert.doesNotMatch(launch.warning, /Launch blocked/);
-		assert.equal(jev.requests.length, 0);
-	});
-}
-
-test("Jev routing follows its document in the injected directory on each read", async (t) => {
-	const dir = withAgentDirectory(t);
-	const path = join(dir, "pi-workflow-routing.json");
-	const jevRouting = createJevRouting(dir);
-	assert.equal(jevRouting.enabled(), false);
-
-	jevRouting.set(true);
-	assert.equal(jevRouting.enabled(), true);
-
-	await writeFile(path, "{ corrupt");
-	assert.equal(jevRouting.enabled(), false);
-
-	await writeFile(path, JSON.stringify({ schemaVersion: 1, jevRouting: "on" }));
-	assert.equal(jevRouting.enabled(), true);
-
-	await rm(path);
-	assert.equal(jevRouting.enabled(), false);
 });
 
 test("/workflow:status and /workflow:doctor report unsupported arguments without UI", async () => {
@@ -753,7 +451,7 @@ test("the /workflow:config guide opens from the selection on disk, not the seate
 	assert.ok(lines.some((line) => /^\[ \] Todo$/.test(line)));
 });
 
-test("the review omits Jev routing when it is unchanged", async (t) => {
+test("the review keeps a companion installed when it is no longer expected", async (t) => {
 	const dir = withAgentDirectory(t);
 	const selection = selectionWith([]);
 	selection.expectations["pi-claude-bridge"] = false;
@@ -771,7 +469,6 @@ test("the review omits Jev routing when it is unchanged", async (t) => {
 	});
 	assert.ok(review.some((line) => /Keep pi-claude-bridge installed \(not uninstalled\)/.test(line)));
 	assert.ok(review.some((line) => /Nothing is uninstalled/.test(line)));
-	assert.ok(review.every((line) => !/Jev routing/.test(line)));
 });
 
 const changesSection = (review) =>
@@ -882,18 +579,19 @@ test("a failed selection write on confirm stops before seating", async (t) => {
 	assert.equal(seated("todo", "above-input"), true);
 });
 
-test("a failed Jev routing write on confirm stops before seating", async (t) => {
+test("a failed Delegation mode write on confirm stops before seating", async (t) => {
 	const dir = withAgentDirectory(t);
 	seatOnly(t, ["todo"]);
 	const { command, notify } = extension(new Map(), [], dir);
 	await assert.rejects(
 		driveConfig(command, notify, (panel) => {
-			focusRouting(panel);
+			focusOn(panel, "Delegation mode");
 			panel.handleInput(" ");
-			mkdirSync(join(dir, "pi-workflow-routing.json"));
+			mkdirSync(join(dir, "pi-workflow-delegation.json"));
 			confirmApply(panel);
 		}),
 	);
 	assert.deepEqual(seatedNames(), ["todo"]);
 	assert.equal(seated("todo", "above-input"), true);
 });
+

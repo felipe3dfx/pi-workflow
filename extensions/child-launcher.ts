@@ -5,27 +5,20 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import {
-	type ClassifierAnswer,
-	type ClassifierContext,
-	type ClassifierResult,
 	getSupportedThinkingLevels,
 	type ModelThinkingLevel,
 } from "@earendil-works/pi-ai";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
-	ToolCallEvent,
 } from "@earendil-works/pi-coding-agent";
 
 import { type CheckpointGrant, checkpointContext, checkpointGrant } from "./child-checkpoint.ts";
-import { latestUserRequest } from "./child-sessions.ts";
 import { errorMessage } from "./error-message.ts";
 import { gitEnvironment } from "./git-environment.ts";
-import type { DelegationMode, JevRouting } from "./workflow-settings.ts";
 import type { ModelProfilesLoad, Specialist } from "./model-profiles.ts";
 import { seated } from "./shell.ts";
 import { offerTool } from "./tool-offer.ts";
-import { registerRoutingBlocks } from "./routing-blocks.ts";
 
 export interface LaunchRequest {
 	role?: string;
@@ -34,15 +27,11 @@ export interface LaunchRequest {
 	checkpoint?: string;
 	references?: string[];
 	surfaces?: string[];
-	userRequest?: string;
-	userMessageId?: string;
 }
 
 export interface ChildLauncherOptions {
 	contextual?: boolean;
 	modelProfiles: { load: () => ModelProfilesLoad };
-	jevRouting: Pick<JevRouting, "enabled">;
-	delegationMode: Pick<DelegationMode, "current">;
 	contractsDirectory?: string;
 }
 
@@ -56,21 +45,6 @@ const specialistByRole: Record<Role, Specialist> = {
 	verify: "verifier",
 };
 
-const reservedOperations =
-	"mutating git or gh other than a signed checkpoint the parent grants a worker with spawn_child checkpoint, publication";
-
-const destinationInstructions = "Where should this package go?";
-
-const destinationCriteria = {
-	decide:
-		`A product decision is still open. The parent must ask the user one question and wait. Choosing an architecture with the user is a decision. A reserved operation (${reservedOperations}) is not an open product decision by itself and stays with the parent.`,
-	stay: `The package is small and already understood, so the parent can finish it in this session, and the user did not ask for a child session or subagent, nor for an independent review or check of work; or the user explicitly asks the parent to do the work itself in this session, in any language or wording, which takes precedence over the review rule. A reserved operation (${reservedOperations}) in the request stays with the parent, but only that part: the rest of the package is judged on its own.`,
-	leave:
-		`A bounded package a child session can finish on its own, or the user explicitly asks to delegate to child sessions or subagents, in any language or wording, or the user asks for an independent review or check of work, which must run in a session other than the parent. A reserved operation (${reservedOperations}) in the request stays with the parent, but only that part: the rest of the package is judged on its own. Investigating an architecture can leave.`,
-};
-
-const orchestratorStay = `The package needs no work: conversation, an opinion, or a question about what was already said. Or it asks only for reserved operations (${reservedOperations}), such as a commit the parent has not granted to a worker, a push, or opening a pull request, which stay with the parent. Any other work does not stay, however small.`;
-
 type Contract = { prompt: string; tools: string[] };
 
 const defaultContractsDirectory = resolve(
@@ -80,30 +54,13 @@ const defaultContractsDirectory = resolve(
 
 type LauncherContext = Pick<
 	ExtensionContext,
-	"cwd" | "modelRegistry" | "model" | "thinkingLevel" | "signal"
+	"cwd" | "modelRegistry" | "model" | "thinkingLevel"
 >;
 
-type GateContext = LauncherContext & {
-	sessionManager?: Pick<ExtensionContext["sessionManager"], "getBranch">;
-};
-
-type Assessment =
-	| { kind: "leave"; jev?: ClassifierResult }
-	| { kind: "stay" | "decide" | "blocked"; reason: string; jev?: ClassifierResult };
-
-type JevAnswer =
-	| { kind: "blocked"; reason: string; jev?: ClassifierResult }
-	| {
-			kind: "answer";
-			destination: "stay" | "decide" | "leave";
-			jev: ClassifierResult;
-	  };
-
 type Outcome = {
-	kind: "stay" | "decide" | "blocked" | "refused";
+	kind: "refused";
 	warning: string;
 	reason: string;
-	jev?: ClassifierResult;
 };
 
 type Ready = {
@@ -119,28 +76,16 @@ type Ready = {
 	references: string[];
 	surfaces?: string[];
 	checkpoint?: CheckpointGrant;
-	jev?: ClassifierResult;
 };
 
 type Pair = { model: string; thinking: ModelThinkingLevel };
 
 const warningFor = {
-	stay: "The work stays in this session. No child was launched.",
-	decide: "Ask the user one question and wait. No child was launched.",
-	blocked: "Launch blocked. No child was launched.",
 	refused: "Launch refused. No child was launched.",
 } as const;
 
-function outcome(
-	kind: keyof typeof warningFor,
-	reason: string,
-	jev?: ClassifierResult,
-): Outcome {
-	return { kind, warning: warningFor[kind], reason, ...(jev ? { jev } : {}) };
-}
-
-function show(assessment: Exclude<Assessment, { kind: "leave" }>): Outcome {
-	return outcome(assessment.kind, assessment.reason, assessment.jev);
+function outcome(kind: keyof typeof warningFor, reason: string): Outcome {
+	return { kind, warning: warningFor[kind], reason };
 }
 
 function isRole(value: string): value is Role {
@@ -178,23 +123,6 @@ async function gitRoot(worktree: string): Promise<string | Outcome> {
 	}
 }
 
-const gatedTools = new Set([
-	"read",
-	"grep",
-	"find",
-	"ls",
-	"edit",
-	"write",
-	"bash",
-	"powershell",
-]);
-
-function stringField(input: unknown, key: string): string | undefined {
-	if (typeof input !== "object" || input === null) return undefined;
-	const value = (input as Record<string, unknown>)[key];
-	return typeof value === "string" ? value : undefined;
-}
-
 function withinCwd(path: string, cwd: string): string | undefined {
 	try {
 		const rel = relative(cwd, resolve(cwd, path));
@@ -229,45 +157,6 @@ function resolveReferences(
 	} catch {
 		return references.length > 0 ? { unreachable: references[0] } : [];
 	}
-}
-
-function authorityRead(path: string | undefined, cwd: string): boolean {
-	if (!path) return false;
-	const rel = withinCwd(path, cwd);
-	if (rel === undefined) return false;
-	if (rel === "AGENTS.md" || rel === "GLOSSARY.md") return true;
-	const parts = rel.split(sep);
-	const name = parts[2];
-	return (
-		parts.length === 3 &&
-		parts[0] === "docs" &&
-		parts[1] === "agents" &&
-		typeof name === "string" &&
-		name.endsWith(".md") &&
-		name.length > ".md".length
-	);
-}
-
-function gatedTool(event: ToolCallEvent, cwd: string): boolean {
-	if (event.toolName === "codegraph") {
-		const operation = stringField(event.input, "operation");
-		return operation === "query" || operation === "explore";
-	}
-	if (!gatedTools.has(event.toolName)) return false;
-	if (event.toolName === "read" && authorityRead(stringField(event.input, "path"), cwd)) {
-		return false;
-	}
-	return true;
-}
-
-function choiceIn<T extends string>(
-	answer: ClassifierAnswer | undefined,
-	allowed: readonly T[],
-): answer is ClassifierAnswer & { type: "choice"; choice: T } {
-	return (
-		answer?.type === "choice" &&
-		(allowed as readonly string[]).includes(answer.choice)
-	);
 }
 
 function sessionPair(ctx: LauncherContext): Pair | Outcome {
@@ -339,199 +228,6 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		}
 	}
 
-	async function ask(
-		request: LaunchRequest,
-		ctx: LauncherContext,
-	): Promise<JevAnswer> {
-		const state: ClassifierContext["state"] = {
-			...(request.userRequest ? { user_request: request.userRequest } : {}),
-			task: request.task,
-			...(request.checkpoint
-				? {
-						checkpoint: options.contextual ? `Assigned checkpoint context: ${request.checkpoint}; task authority is evaluated separately.` : `The parent grants this worker a signed checkpoint on ${request.checkpoint} in its isolated worktree.`,
-					}
-				: {}),
-		};
-		const criteria = options.contextual
-			? {
-					decide:
-						"A product decision remains open; ask the user and wait. Authorization and tool availability are not destination decisions.",
-					stay: "The package is small and understood or the user expressly asks this parent to perform it. An explicitly requested independent review leaves for another session. Task authority is evaluated separately.",
-					leave:
-						"A bounded package another session can finish, explicit delegation, or independent review. The parent supplies the role; the task determines authority separately.",
-				}
-			: destinationCriteria;
-		const questions: ClassifierContext["questions"] = {
-			destination: {
-				type: "choice",
-				instructions: destinationInstructions,
-				criteria:
-					options.delegationMode.current() === "orchestrator"
-						? {
-								...criteria,
-								stay: options.contextual
-									? "Conversation, an opinion, or a question about what was already said; other work is delegated."
-									: orchestratorStay,
-							}
-						: criteria,
-			},
-		};
-		const model = ctx.modelRegistry.findOfType(
-			"classifier",
-			"typesafe",
-			"jev-latest",
-		);
-		if (!model) {
-			return {
-				kind: "blocked",
-				reason:
-					"Jev did not answer: typesafe/jev-latest is not in Pi's classifier registry.",
-			};
-		}
-		try {
-			const apiKey = await ctx.modelRegistry.getApiKeyForProvider("typesafe");
-			if (!apiKey) {
-				throw new Error(
-					"no TypeSafe API key; run /login and choose TypeSafe or set TYPESAFE_API_KEY",
-				);
-			}
-		} catch (error) {
-			return {
-				kind: "blocked",
-				reason: `Jev did not answer: ${errorMessage(error)}`,
-			};
-		}
-		const jev = await ctx.modelRegistry.classify(
-			model,
-			{ state, questions },
-			{ signal: ctx.signal },
-		);
-		if (jev.stopReason !== "stop") {
-			return {
-				kind: "blocked",
-				reason: `Jev did not answer: ${jev.errorMessage ?? `stop reason ${jev.stopReason}`}`,
-			};
-		}
-		const destination = jev.answers.destination;
-		if (!choiceIn(destination, ["decide", "stay", "leave"] as const)) {
-			return { kind: "blocked", reason: "Jev returned an invalid selection.", jev };
-		}
-		return { kind: "answer", destination: destination.choice, jev };
-	}
-
-	async function judge(
-		request: LaunchRequest,
-		ctx: LauncherContext,
-	): Promise<Assessment> {
-		if (!options.jevRouting.enabled()) {
-			if (request.role !== undefined && isRole(request.role)) {
-				return { kind: "leave" };
-			}
-			return { kind: "stay", reason: "Jev routing is off." };
-		}
-		const answer = await ask(request, ctx);
-		if (answer.kind === "blocked") return answer;
-		const { jev } = answer;
-		if (answer.destination === "decide") {
-			return {
-				kind: "decide",
-				reason: "Jev answered that a decision is still open.",
-				jev,
-			};
-		}
-		if (answer.destination === "stay") {
-			return {
-				kind: "stay",
-				reason:
-					"Jev answered that the work for this user message stays. Do it in this session with your own tools.",
-				jev,
-			};
-		}
-		return { kind: "leave", jev };
-	}
-
-	let turn:
-		| { userMessageId: string; pending: Promise<Assessment>; launched?: true }
-		| undefined;
-
-	function verdictFor(
-		request: LaunchRequest,
-		ctx: LauncherContext,
-	): Promise<Assessment> {
-		const userMessageId = request.userMessageId;
-		const bypass =
-			!options.jevRouting.enabled() &&
-			request.role !== undefined &&
-			isRole(request.role);
-		if (!bypass && userMessageId && turn?.userMessageId === userMessageId) {
-			return turn.pending;
-		}
-		const pending: Promise<Assessment> = judge(request, ctx).then((verdict) => {
-			if (verdict.kind === "blocked" && turn?.pending === pending) {
-				turn = undefined;
-			}
-			return verdict;
-		});
-		if (!bypass && userMessageId) turn = { userMessageId, pending };
-		return pending;
-	}
-
-	async function launchVerdict(
-		request: LaunchRequest,
-		ctx: LauncherContext,
-	): Promise<Assessment> {
-		const userMessageId = request.userMessageId;
-		if (!options.jevRouting.enabled() || !userMessageId) {
-			return verdictFor(request, ctx);
-		}
-		for (;;) {
-			if (turn?.userMessageId !== userMessageId) return verdictFor(request, ctx);
-			const decided = await turn.pending;
-			if (decided.kind !== "blocked") return decided;
-		}
-	}
-
-	async function gateToolCall(
-		event: ToolCallEvent,
-		ctx: GateContext,
-	): Promise<{ allow: true } | { allow: false; reason: string; destination?: "leave" | "decide" }> {
-		if (!seated("child-session", "overlay")) return { allow: true };
-		if (!gatedTool(event, ctx.cwd)) return { allow: true };
-		const userRequest = latestUserRequest(ctx.sessionManager?.getBranch());
-		if (!userRequest) return { allow: true };
-		const verdict = await verdictFor(
-			{
-				task: userRequest.text,
-				userRequest: userRequest.text,
-				userMessageId: userRequest.id,
-			},
-			ctx,
-		);
-		if (verdict.kind === "stay") return { allow: true };
-		if (verdict.kind === "leave" && turn?.launched) return { allow: true };
-		if (verdict.kind !== "leave") {
-			const shown = show(verdict);
-			return {
-				allow: false,
-				reason: `${shown.warning}\n${shown.reason}`,
-				...(verdict.kind === "decide" ? { destination: "decide" as const } : {}),
-			};
-		}
-		return {
-			allow: false,
-			reason: options.contextual
-				? "Jev answered that the work for the latest user message leaves this session. Call spawn_child with the role appropriate to the assigned task; common tools grant no authority. Discover mandatory procedures and unresolved prerequisites before dependent work."
-				: "Jev answered that the work for the latest user message leaves this session; a verdict for an earlier message does not carry over. Call spawn_child with the role whose tools cover the task; this message's verdict allows the launch. If procedure instructions are needed, delegate bounded discovery of obligations, prerequisites, sources, and unresolved questions before dependent work.",
-			destination: "leave",
-		};
-	}
-
-	function classify(request: LaunchRequest, ctx: LauncherContext) {
-		return verdictFor(request, ctx).then((assessment) =>
-			assessment.kind === "leave" ? assessment : show(assessment),
-		);
-	}
-
 	async function prepareLaunch(
 		request: LaunchRequest,
 		ctx: LauncherContext,
@@ -543,7 +239,7 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 				`unknown role ${role}; expected ${roles.join(", ")}`,
 			);
 		}
-		if (role === undefined && options.jevRouting.enabled()) {
+		if (role === undefined) {
 			return outcome("refused", `spawn_child needs a role: ${roles.join(", ")}`);
 		}
 		const profiles = options.modelProfiles.load();
@@ -563,7 +259,7 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			if (!options.contextual && role !== "worker") {
 				return outcome(
 					"refused",
-					`A checkpoint is granted only to a worker, not to ${role ?? "a child without a role"}.`,
+					`A checkpoint is granted only to a worker, not to ${role}.`,
 				);
 			}
 			if (!options.contextual && request.worktree === undefined) {
@@ -585,14 +281,10 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 				);
 			}
 		}
-		const verdict = await launchVerdict(request, ctx);
-		if (verdict.kind !== "leave") return show(verdict);
-		if (role === undefined) return outcome("stay", "Jev routing is off.");
 		const contract = readContract(role);
-		const jev = verdict.jev ? { jev: verdict.jev } : {};
-		if ("kind" in contract) return { ...contract, ...jev };
+		if ("kind" in contract) return contract;
 		const pair = profilePair(role, profiles, ctx);
-		if ("kind" in pair) return { ...pair, ...jev };
+		if ("kind" in pair) return pair;
 		return {
 			kind: "ready",
 			role,
@@ -609,13 +301,9 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 			references,
 			...(request.surfaces ? { surfaces: request.surfaces } : {}),
 			...(checkpoint ? { checkpoint } : {}),
-			...jev,
 		};
 	}
-	function recordLaunch(userMessageId: string | undefined) {
-		if (turn && turn.userMessageId === userMessageId) turn.launched = true;
-	}
-	let gateInstalled = false;
+	let offerStarted = false;
 	const childToolsOn = new Map<string, boolean>();
 
 	function childToolsOffer(
@@ -625,12 +313,11 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 		checkSpawnTools: () => Promise<{ allowed: boolean }>,
 	) {
 		let allowed = false;
-		const recordRoutingBlock = registerRoutingBlocks(pi);
 
 		function refresh() {
 			if (!allowed) return;
 			const on = seated("child-session", "overlay");
-			if (!gateInstalled && !on) return;
+			if (!offerStarted && !on) return;
 			const waiting = children.waiting();
 			for (const tool of tools) {
 				const offered = on || (waiting && tool.name === "reply_child");
@@ -638,29 +325,7 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 				childToolsOn.set(tool.name, offered);
 				offerTool(pi, tool, offered);
 			}
-			if (gateInstalled) return;
-			gateInstalled = true;
-			let gateMessageSent = false;
-			pi.on("turn_start", () => {
-				gateMessageSent = false;
-			});
-			pi.on("tool_call", async (event, toolCtx) => {
-				const gate = await gateToolCall(event, toolCtx);
-				if (gate.allow) return;
-				if (gate.destination) recordRoutingBlock(event.toolCallId, gate.destination);
-				if (event.parentToolCallId && !gateMessageSent) {
-					gateMessageSent = true;
-					pi.sendMessage(
-						{
-							customType: "pi-workflow-gate-block",
-							content: gate.reason,
-							display: true,
-						},
-						{ deliverAs: "steer" },
-					);
-				}
-				return { block: true, reason: gate.reason };
-			});
+			offerStarted = true;
 		}
 
 		return {
@@ -675,9 +340,6 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 
 	return {
 		prepareLaunch,
-		recordLaunch,
-		gateToolCall,
-		classify,
 		childToolsOffer,
 	};
 }

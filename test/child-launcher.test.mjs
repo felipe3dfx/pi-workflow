@@ -18,11 +18,6 @@ import { fileURLToPath } from "node:url";
 
 import { createChildLauncher } from "../extensions/child-launcher.ts";
 import { createModelProfiles } from "../extensions/model-profiles.ts";
-import { classifierRegistry } from "./support/fake-jev.mjs";
-import { turnJevRoutingOn } from "./support/jev-routing.mjs";
-
-const jevRouting = turnJevRoutingOn();
-const delegationMode = { current: () => "opportunistic" };
 
 const realContracts = fileURLToPath(
 	new URL("../assets/contracts/", import.meta.url),
@@ -40,31 +35,6 @@ async function withWorkspace(run) {
 	}
 }
 
-function choiceAnswer(choice, criteria) {
-	return {
-		type: "choice",
-		choice,
-		confidence: 0.91,
-		probabilities: Object.fromEntries(
-			Object.keys(criteria).map((key) => [key, key === choice ? 1 : 0]),
-		),
-	};
-}
-
-function fakeJev(answer) {
-	return classifierRegistry((body) => {
-		const answered = answer(body);
-		if (answered && typeof answered === "object") return answered;
-		const questions = body.questions ?? {};
-		const answers = {};
-		const text = typeof answered === "string" ? answered : "leave";
-		if (questions.destination) {
-			answers.destination = choiceAnswer(text, questions.destination.criteria);
-		}
-		return { answers };
-	});
-}
-
 const sessionPair = { model: "session/model", thinking: "medium" };
 
 function catalogModel(name, reasoning = true) {
@@ -74,23 +44,13 @@ function catalogModel(name, reasoning = true) {
 
 function launcherContext(
 	cwd,
-	{
-		typesafeKey = "typesafe-key",
-		available = [],
-		session = true,
-		jev = fakeJev(() => "leave"),
-	} = {},
+	{ available = [], session = true } = {},
 ) {
 	return {
 		cwd,
 		model: session ? catalogModel(sessionPair.model) : undefined,
 		thinkingLevel: session ? sessionPair.thinking : undefined,
-		modelRegistry: {
-			getApiKeyForProvider: async (provider) =>
-				provider === "typesafe" ? typesafeKey : undefined,
-			getAvailable: () => available,
-			...jev.registry,
-		},
+		modelRegistry: { getAvailable: () => available },
 	};
 }
 
@@ -113,66 +73,6 @@ function assertRefused(result, reason) {
 	assert.match(result.reason, reason);
 }
 
-test("work Jev keeps in the session is refused with a warning and no child id", async () => {
-	await withWorkspace(async ({ worktree }) => {
-		const jev = fakeJev(() => "stay");
-		const launcher = createChildLauncher({
-			jevRouting,
-			delegationMode,
-			modelProfiles: absentProfiles,
-		});
-
-		const result = await launcher.prepareLaunch(
-			{ role: "worker", task: "Decide the storage architecture" },
-			launcherContext(worktree, { jev }),
-		);
-
-		assert.equal(result.kind, "stay");
-		assert.equal(
-			result.warning,
-			"The work stays in this session. No child was launched.",
-		);
-		assertRefused(result, /stays/);
-		assert.equal(jev.requests.length, 1);
-		assert.equal(jev.requests[0].state.task, "Decide the storage architecture");
-	});
-});
-
-test("a missing Jev answer blocks the launch and does not decide to stay", async () => {
-	await withWorkspace(async ({ worktree }) => {
-		const failures = [
-			[
-				fakeJev(() => ({ stopReason: "error", errorMessage: "Jev returned 503" })),
-				/Jev did not answer: Jev returned 503/,
-			],
-			[fakeJev(() => "maybe"), /invalid selection/],
-			[
-				fakeJev(() => ({ stopReason: "error", errorMessage: "fetch failed" })),
-				/Jev did not answer: fetch failed/,
-			],
-		];
-		for (const [jev, reason] of failures) {
-			const launcher = createChildLauncher({ jevRouting, delegationMode, modelProfiles: absentProfiles });
-			const result = await launcher.prepareLaunch(
-				{ role: "worker", task: "Fix the failing test" },
-				launcherContext(worktree, { jev }),
-			);
-			assertRefused(result, reason);
-			assert.match(result.warning, /Launch blocked/);
-			assert.doesNotMatch(result.warning, /stays/);
-		}
-
-		const noKey = createChildLauncher({ jevRouting, delegationMode, modelProfiles: absentProfiles });
-		assertRefused(
-			await noKey.prepareLaunch(
-				{ role: "worker", task: "Fix the failing test" },
-				launcherContext(worktree, { typesafeKey: null }),
-			),
-			/TypeSafe/,
-		);
-	});
-});
-
 async function copyContracts(dir, roles) {
 	const contracts = join(dir, "contracts");
 	await mkdir(contracts);
@@ -185,11 +85,9 @@ async function copyContracts(dir, roles) {
 	return contracts;
 }
 
-test("a role Jev lets leave gets its contract prompt and tools", async () => {
+test("a role the parent names gets its contract prompt and tools", async () => {
 	await withWorkspace(async ({ worktree }) => {
 		const launcher = createChildLauncher({
-			jevRouting,
-			delegationMode,
 			modelProfiles: absentProfiles,
 		});
 		for (const role of ["explore", "worker", "verify"]) {
@@ -213,19 +111,50 @@ test("a role Jev lets leave gets its contract prompt and tools", async () => {
 	});
 });
 
-test("with Jev routing on, a launch without a role is refused and never assumes worker", async () => {
+test("a named role launches without reading the task text or consulting a classifier", async () => {
 	await withWorkspace(async ({ worktree }) => {
-		const jev = fakeJev(() => "leave");
-		const launcher = createChildLauncher({ jevRouting, delegationMode, modelProfiles: absentProfiles });
+		const classified = [];
+		const launcher = createChildLauncher({ modelProfiles: absentProfiles });
+		const ctx = {
+			cwd: worktree,
+			model: catalogModel(sessionPair.model),
+			thinkingLevel: sessionPair.thinking,
+			modelRegistry: {
+				getAvailable: () => [],
+				classify: async (...request) => {
+					classified.push(request);
+					throw new Error("no classifier is registered");
+				},
+			},
+		};
+
+		for (const [role, task] of [
+			["worker", "git status"],
+			["worker", "  gh pr create --fill"],
+			["verify", "Check the branch (git)"],
+			["explore", "Map how the parser calls git"],
+			["worker", "Fix the parser"],
+		]) {
+			const launched = await launcher.prepareLaunch({ role, task }, ctx);
+			assert.equal(launched.kind, "ready");
+			assert.equal(launched.role, role);
+			assert.equal(launched.task, task);
+		}
+		assert.deepEqual(classified, []);
+	});
+});
+
+test("a launch without a role is refused and never assumes worker", async () => {
+	await withWorkspace(async ({ worktree }) => {
+		const launcher = createChildLauncher({ modelProfiles: absentProfiles });
 
 		const result = await launcher.prepareLaunch(
 			{ task: "Compare the two sources" },
-			launcherContext(worktree, { jev }),
+			launcherContext(worktree),
 		);
 
 		assertRefused(result, /needs a role/);
 		assert.equal("role" in result, false);
-		assert.equal(jev.requests.length, 0);
 	});
 });
 
@@ -241,8 +170,6 @@ test("an unknown role is refused even when a contract file has its name", async 
 			"---\ntools: read\n---\nYou are a wizard.\n",
 		);
 		const launcher = createChildLauncher({
-			jevRouting,
-			delegationMode,
 			modelProfiles: absentProfiles,
 			contractsDirectory,
 		});
@@ -261,8 +188,6 @@ test("a missing or unreadable contract is refused and never falls back to worker
 	await withWorkspace(async ({ dir, worktree }) => {
 		const contractsDirectory = await copyContracts(dir, ["explore", "verify"]);
 		const launcher = createChildLauncher({
-			jevRouting,
-			delegationMode,
 			modelProfiles: absentProfiles,
 			contractsDirectory,
 		});
@@ -292,7 +217,7 @@ test("an invalid, schema version 1, or unreadable model profiles file is refused
 	await withWorkspace(async ({ dir, worktree }) => {
 		const path = join(dir, "pi-workflow-models.json");
 		const decide = (modelProfiles) =>
-			createChildLauncher({ jevRouting, delegationMode, modelProfiles }).prepareLaunch(
+			createChildLauncher({ modelProfiles }).prepareLaunch(
 				{ role: "worker", task: "Fix the failing test" },
 				launcherContext(worktree),
 			);
@@ -340,8 +265,6 @@ test("a model profiles file created in this turn is not read and is not a refusa
 		);
 
 		const result = await createChildLauncher({
-			jevRouting,
-			delegationMode,
 			modelProfiles,
 		}).prepareLaunch(
 			{ role: "worker", task: "Fix the failing test" },
@@ -365,8 +288,6 @@ test("an invalid worktree is refused before any child would be created", async (
 		const file = join(dir, "file.txt");
 		await writeFile(file, "not a directory", "utf8");
 		const launcher = createChildLauncher({
-			jevRouting,
-			delegationMode,
 			modelProfiles: absentProfiles,
 		});
 
@@ -392,8 +313,6 @@ test("an invalid worktree is refused before any child would be created", async (
 test("a Git root worktree is the launch root", async () => {
 	await withWorkspace(async ({ dir, worktree }) => {
 		const launcher = createChildLauncher({
-			jevRouting,
-			delegationMode,
 			modelProfiles: absentProfiles,
 		});
 
@@ -435,8 +354,6 @@ test("a Git root worktree is the launch root", async () => {
 test("a parent .pi/mcp.json absent from the worktree is reported at launch, not inherited", async () => {
 	await withWorkspace(async ({ dir, worktree }) => {
 		const launcher = createChildLauncher({
-			jevRouting,
-			delegationMode,
 			modelProfiles: absentProfiles,
 		});
 		const parent = join(dir, "parent");
@@ -468,36 +385,6 @@ test("a parent .pi/mcp.json absent from the worktree is reported at launch, not 
 	});
 });
 
-test("a request refused by a local check never asks Jev", async () => {
-	await withWorkspace(async ({ dir, worktree }) => {
-		const listsPath = join(dir, "pi-workflow-models.json");
-		await writeFile(listsPath, "{ not json", "utf8");
-		const cases = [
-			[{ role: "wizard" }, {}, /unknown role/],
-			[
-				{ role: "explore" },
-				{ modelProfiles: createModelProfiles(dirname(listsPath)) },
-				/Invalid model profiles/,
-			],
-			[{ role: "explore", worktree: join(dir, "missing") }, {}, /worktree/],
-		];
-		for (const [request, options, reason] of cases) {
-			const jev = fakeJev(() => "leave");
-			const result = await createChildLauncher({
-				jevRouting,
-				delegationMode,
-				modelProfiles: absentProfiles,
-				...options,
-			}).prepareLaunch(
-				{ task: "Fix the failing test", ...request },
-				launcherContext(worktree, { jev }),
-			);
-			assertRefused(result, reason);
-			assert.equal(jev.requests.length, 0, String(reason));
-		}
-	});
-});
-
 test("a contract saved with CRLF line endings reads like the LF one", async () => {
 	await withWorkspace(async ({ dir, worktree }) => {
 		const contractsDirectory = await copyContracts(dir, ["worker"]);
@@ -506,8 +393,6 @@ test("a contract saved with CRLF line endings reads like the LF one", async () =
 		await writeFile(path, lf.replaceAll("\n", "\r\n"), "utf8");
 		const decide = (directory) =>
 			createChildLauncher({
-				jevRouting,
-				delegationMode,
 				modelProfiles: absentProfiles,
 				contractsDirectory: directory,
 			}).prepareLaunch(
@@ -530,8 +415,6 @@ test("git location variables in the environment cannot make a false worktree roo
 		const nested = join(worktree, "src");
 		await mkdir(nested);
 		const launcher = createChildLauncher({
-			jevRouting,
-			delegationMode,
 			modelProfiles: absentProfiles,
 		});
 		const cases = [
@@ -582,20 +465,15 @@ test("each role the parent chooses runs the model and thinking of that entry in 
 			verify: everyRole.verifier,
 		};
 		for (const [role, pair] of Object.entries(expected)) {
-			const jev = fakeJev(() => "leave");
 			const result = await createChildLauncher({
-				jevRouting,
-				delegationMode,
 				modelProfiles: profiles,
 			}).prepareLaunch(
 				{ role, task: "Add the export command" },
-				launcherContext(worktree, { jev, available: everyModel }),
+				launcherContext(worktree, { available: everyModel }),
 			);
 			assert.equal(result.kind, "ready");
 			assert.deepEqual({ model: result.model, thinking: result.thinking }, pair);
 			assert.deepEqual(result.warnings, []);
-			assert.equal(jev.requests.length, 1);
-			assert.deepEqual(Object.keys(jev.requests[0].questions), ["destination"]);
 		}
 	});
 });
@@ -611,8 +489,6 @@ test("a specialist missing from the active profile, or no profiles file, inherit
 		];
 		for (const [modelProfiles, role] of cases) {
 			const result = await createChildLauncher({
-				jevRouting,
-				delegationMode,
 				modelProfiles,
 			}).prepareLaunch(
 				{ role, task: "Add the export command" },
@@ -643,8 +519,6 @@ test("a configured model Pi cannot run is refused with the profile, specialist, 
 		];
 		for (const [profile, available, reason] of cases) {
 			const result = await createChildLauncher({
-				jevRouting,
-				delegationMode,
 				modelProfiles: loadedProfiles({ main: profile }, "main"),
 			}).prepareLaunch(
 				{ role: "worker", task: "Add the export command" },
@@ -657,31 +531,25 @@ test("a configured model Pi cannot run is refused with the profile, specialist, 
 	});
 });
 
-test("a misconfigured profile is refused after Jev lets the parent's role leave", async () => {
+test("a misconfigured profile is refused for the parent's role", async () => {
 	await withWorkspace(async ({ worktree }) => {
-		const jev = fakeJev(() => "leave");
 		const result = await createChildLauncher({
-			jevRouting,
-			delegationMode,
 			modelProfiles: loadedProfiles({
 				default: { worker: { model: "gone/model", thinking: "low" } },
 			}),
 		}).prepareLaunch(
 			{ role: "worker", task: "Add the export command" },
-			launcherContext(worktree, { jev }),
+			launcherContext(worktree),
 		);
 
 		assertRefused(result, /gone\/model.*not available in Pi/);
 		assert.match(result.warning, /Launch refused/);
-		assert.equal(jev.requests.length, 1);
 	});
 });
 
 test("a session without a model or thinking is refused when the session pair is needed", async () => {
 	await withWorkspace(async ({ worktree }) => {
 		const result = await createChildLauncher({
-			jevRouting,
-			delegationMode,
 			modelProfiles: absentProfiles,
 		}).prepareLaunch(
 			{ role: "worker", task: "Add the export command" },
@@ -692,180 +560,9 @@ test("a session without a model or thinking is refused when the session pair is 
 	});
 });
 
-test("Jev decides only the destination and the parent's role launches", async () => {
-	await withWorkspace(async ({ worktree }) => {
-		const jev = fakeJev(() => "leave");
-		const result = await createChildLauncher({
-			jevRouting,
-			delegationMode,
-			modelProfiles: absentProfiles,
-		}).prepareLaunch(
-			{
-				role: "worker",
-				task: "Read the two implementations and summarize them",
-				userRequest: "Explora con un hijo la arquitectura de estas dos implementaciones",
-			},
-			launcherContext(worktree, { jev }),
-		);
-
-		assert.equal(result.kind, "ready");
-		assert.equal(result.role, "worker");
-		assert.equal(result.chosenBy, "parent");
-		assert.ok(result.contract.tools.includes("bash"));
-		assert.equal(jev.requests.length, 1);
-		assert.deepEqual(Object.keys(jev.requests[0].questions), ["destination"]);
-		assert.equal(
-			jev.requests[0].state.user_request,
-			"Explora con un hijo la arquitectura de estas dos implementaciones",
-		);
-		assert.equal(jev.requests[0].state.task, "Read the two implementations and summarize them");
-		assert.equal(result.jev.answers.destination.choice, "leave");
-		assert.equal(result.jev.provider, "typesafe");
-		assert.equal(result.jev.model, "jev-latest");
-	});
-});
-
-test("Jev's destination criteria cover an explicit child or subagent request under leave and exclude it from stay", async () => {
-	await withWorkspace(async ({ worktree }) => {
-		const jev = fakeJev(() => "leave");
-		const result = await createChildLauncher({
-			jevRouting,
-			delegationMode,
-			modelProfiles: absentProfiles,
-		}).prepareLaunch(
-			{
-				role: "worker",
-				task: "Wait 10 seconds and report.",
-				userRequest: "Lanza 5 subagentes que esperen 10 segundos",
-			},
-			launcherContext(worktree, { jev }),
-		);
-
-		assert.equal(result.kind, "ready");
-		const { criteria } = jev.requests[0].questions.destination;
-		assert.match(criteria.leave, /explicitly asks to delegate to child sessions or subagents/);
-		assert.match(criteria.stay, /did not ask for a child session or subagent/);
-		assert.match(criteria.leave, /independent review or check of work/);
-		assert.match(criteria.leave, /session other than the parent/);
-		assert.match(criteria.stay, /nor for an independent review or check of work/);
-		assert.match(criteria.stay, /explicitly asks the parent to do the work itself in this session, in any language or wording, which takes precedence over the review rule/);
-		assert.match(criteria.stay, /reserved operation \(mutating git or gh other than a signed checkpoint the parent grants a worker with spawn_child checkpoint, publication\) in the request stays with the parent, but only that part/);
-		assert.match(criteria.decide, /reserved operation \(mutating git or gh other than a signed checkpoint the parent grants a worker with spawn_child checkpoint, publication\) is not an open product decision by itself and stays with the parent/);
-		assert.match(criteria.leave, /A reserved operation \(mutating git or gh other than a signed checkpoint the parent grants a worker with spawn_child checkpoint, publication\) in the request stays with the parent, but only that part: the rest of the package is judged on its own/);
-	});
-});
-
-test("the parent's task cannot turn a user request into an explicit child", async () => {
-	await withWorkspace(async ({ worktree }) => {
-		const jev = fakeJev(() => "stay");
-		const result = await createChildLauncher({
-			jevRouting,
-			delegationMode,
-			modelProfiles: absentProfiles,
-		}).prepareLaunch(
-			{
-				role: "explore",
-				task: "Run this in a child session and explore the architecture",
-				userRequest: "Decide the storage architecture with me",
-			},
-			launcherContext(worktree, { jev }),
-		);
-
-		assertRefused(result, /stays/);
-		assert.equal(jev.requests[0].questions.destination.type, "choice");
-		assert.equal(
-			jev.requests[0].state.user_request,
-			"Decide the storage architecture with me",
-		);
-	});
-});
-
-test("sibling launches of one message keep each parent role and Jev classifies the destination once", async () => {
-	await withWorkspace(async ({ worktree }) => {
-		const jev = fakeJev(() => "leave");
-		const launcher = createChildLauncher({
-			jevRouting,
-			delegationMode,
-			modelProfiles: absentProfiles,
-		});
-		const launch = (role) =>
-			launcher.prepareLaunch(
-				{
-					role,
-					task: `${role} the change`,
-					userRequest: "Delegate this to three children",
-					userMessageId: "m1",
-				},
-				launcherContext(worktree, { jev }),
-			);
-
-		const results = await Promise.all(["explore", "worker", "verify"].map(launch));
-		const again = await launch("explore");
-
-		assert.deepEqual(
-			[...results, again].map((result) => [result.kind, result.role, result.chosenBy]),
-			[
-				["ready", "explore", "parent"],
-				["ready", "worker", "parent"],
-				["ready", "verify", "parent"],
-				["ready", "explore", "parent"],
-			],
-		);
-		assert.equal(jev.requests.length, 1);
-	});
-});
-
-test("a reserved request stays with the parent instead of blocking the launch", async () => {
-	await withWorkspace(async ({ worktree }) => {
-		const jev = fakeJev(() => "stay");
-		const result = await createChildLauncher({
-			jevRouting,
-			delegationMode,
-			modelProfiles: absentProfiles,
-		}).prepareLaunch(
-			{ role: "worker", task: "Commit and push this", userRequest: "commit and push this" },
-			launcherContext(worktree, { jev }),
-		);
-
-		assert.equal(result.kind, "stay");
-		assert.doesNotMatch(result.warning, /Launch blocked/);
-	});
-});
-
-test("an invalid Jev selection blocks the launch and keeps the returned signals", async () => {
-	await withWorkspace(async ({ worktree }) => {
-		const jev = fakeJev(() => ({
-			answers: {
-				destination: {
-					type: "choice",
-					choice: "elsewhere",
-					confidence: 0.2,
-					probabilities: { stay: 0.4, leave: 0.4, decide: 0.2 },
-				},
-			},
-		}));
-		const result = await createChildLauncher({
-			jevRouting,
-			delegationMode,
-			modelProfiles: absentProfiles,
-		}).prepareLaunch(
-			{ role: "worker", task: "Compare the cited sources" },
-			launcherContext(worktree, { jev }),
-		);
-
-		assertRefused(result, /invalid selection/);
-		assert.match(result.warning, /Launch blocked/);
-		assert.doesNotMatch(result.warning, /stays/);
-		assert.equal(result.jev.answers.destination.choice, "elsewhere");
-		assert.equal(result.jev.answers.destination.probabilities.stay, 0.4);
-	});
-});
-
 test("a session with a model but no thinking is refused when the session pair is needed", async () => {
 	await withWorkspace(async ({ worktree }) => {
 		const result = await createChildLauncher({
-			jevRouting,
-			delegationMode,
 			modelProfiles: absentProfiles,
 		}).prepareLaunch(
 			{ role: "worker", task: "Add the export command" },
@@ -876,29 +573,12 @@ test("a session with a model but no thinking is refused when the session pair is
 	});
 });
 
-test("while Jev routing is on, git and gh in a named role's task go to Jev like any other work", async () => {
-	await withWorkspace(async ({ worktree }) => {
-		const jev = fakeJev(() => "leave");
-		const launcher = createChildLauncher({
-			jevRouting,
-			delegationMode,
-			modelProfiles: absentProfiles,
-		});
-		const result = await launcher.prepareLaunch(
-			{ role: "worker", task: "git status" },
-			launcherContext(worktree, { jev }),
-		);
-		assert.ok(jev.requests.length >= 1);
-		assert.equal(result.kind, "ready");
-	});
-});
-
 test("references that exist under cwd are listed in the child's task", async () => {
 	await withWorkspace(async ({ worktree }) => {
 		await mkdir(join(worktree, "docs"));
 		await writeFile(join(worktree, "docs", "policy.md"), "policy");
 		await writeFile(join(worktree, "AGENTS.md"), "agents");
-		const launcher = createChildLauncher({ jevRouting, delegationMode, modelProfiles: absentProfiles });
+		const launcher = createChildLauncher({ modelProfiles: absentProfiles });
 
 		const result = await launcher.prepareLaunch(
 			{
@@ -922,7 +602,7 @@ test("references checked from a subdirectory reach the child as absolute paths",
 	await withWorkspace(async ({ worktree }) => {
 		await mkdir(join(worktree, "docs"));
 		await writeFile(join(worktree, "docs", "policy.md"), "policy");
-		const launcher = createChildLauncher({ jevRouting, delegationMode, modelProfiles: absentProfiles });
+		const launcher = createChildLauncher({ modelProfiles: absentProfiles });
 
 		const result = await launcher.prepareLaunch(
 			{
@@ -945,7 +625,7 @@ test("references checked from a subdirectory reach the child as absolute paths",
 
 test("a launch without references keeps the task unchanged", async () => {
 	await withWorkspace(async ({ worktree }) => {
-		const launcher = createChildLauncher({ jevRouting, delegationMode, modelProfiles: absentProfiles });
+		const launcher = createChildLauncher({ modelProfiles: absentProfiles });
 
 		const result = await launcher.prepareLaunch(
 			{ role: "worker", task: "Apply the policy" },
@@ -959,7 +639,7 @@ test("a launch without references keeps the task unchanged", async () => {
 
 test("a reference that does not exist refuses the launch and names the path", async () => {
 	await withWorkspace(async ({ worktree }) => {
-		const launcher = createChildLauncher({ jevRouting, delegationMode, modelProfiles: absentProfiles });
+		const launcher = createChildLauncher({ modelProfiles: absentProfiles });
 
 		const result = await launcher.prepareLaunch(
 			{ role: "worker", task: "Apply the policy", references: ["docs/missing.md"] },
@@ -974,7 +654,7 @@ test("a reference outside cwd, directly or through a symlink, refuses the launch
 	await withWorkspace(async ({ dir, worktree }) => {
 		await writeFile(join(dir, "outside.md"), "outside");
 		await symlink(join(dir, "outside.md"), join(worktree, "link.md"));
-		const launcher = createChildLauncher({ jevRouting, delegationMode, modelProfiles: absentProfiles });
+		const launcher = createChildLauncher({ modelProfiles: absentProfiles });
 
 		for (const reference of ["../outside.md", join(dir, "outside.md"), "link.md"]) {
 			const result = await launcher.prepareLaunch(
@@ -1001,8 +681,6 @@ async function withLinkedWorktree(run) {
 
 function checkpointLauncher() {
 	return createChildLauncher({
-		jevRouting,
-		delegationMode,
 		modelProfiles: absentProfiles,
 	});
 }
@@ -1011,7 +689,7 @@ test("contextual checkpoint descriptors accept every role in an assigned shared 
 	await withLinkedWorktree(async ({ main, branch }) => {
 		for (const role of ["explore", "worker", "verify"]) {
 			const launcher = createChildLauncher({
-				contextual: true, jevRouting, delegationMode, modelProfiles: absentProfiles,
+				contextual: true, modelProfiles: absentProfiles,
 			});
 			const result = await launcher.prepareLaunch(
 				{ role, task: "Commit only task-owned changes when authorized", checkpoint: branch },
@@ -1055,7 +733,7 @@ test("a launch without a checkpoint carries no grant", async () => {
 	});
 });
 
-test("a checkpoint grant is refused outside an isolated worker worktree on its branch before Jev is asked", async () => {
+test("a checkpoint grant is refused outside an isolated worker worktree on its branch", async () => {
 	await withLinkedWorktree(async ({ dir, main, branch, linked, git }) => {
 		const clone = join(dir, "clone");
 		git(dir, "clone", "--quiet", main, clone);
@@ -1068,42 +746,12 @@ test("a checkpoint grant is refused outside an isolated worker worktree on its b
 			[{ role: "worker", worktree: clone, checkpoint: branch }, main, /parent's current branch/],
 		];
 		for (const [request, cwd, reason] of cases) {
-			const jev = fakeJev(() => "leave");
 			const result = await checkpointLauncher().prepareLaunch(
 				{ task: "Fix the failing test", ...request },
-				launcherContext(cwd, { jev }),
+				launcherContext(cwd),
 			);
 			assertRefused(result, reason);
 			assert.equal(result.kind, "refused");
-			assert.equal(jev.requests.length, 0, String(reason));
 		}
-	});
-});
-
-test("Jev's criteria keep every mutating git or gh operation reserved except a granted checkpoint, and only a granted launch tells Jev of its grant", async () => {
-	await withLinkedWorktree(async ({ main, linked }) => {
-		const jev = fakeJev(() => "leave");
-		const launcher = checkpointLauncher();
-		await launcher.prepareLaunch(
-			{ role: "worker", task: "Fix the failing test", worktree: linked, checkpoint: "feature" },
-			launcherContext(main, { jev }),
-		);
-		await launcher.prepareLaunch(
-			{ role: "worker", task: "Fix the failing test", worktree: linked },
-			launcherContext(main, { jev }),
-		);
-
-		const [granted, ungranted] = jev.requests;
-		for (const criterion of ["decide", "stay", "leave"]) {
-			assert.match(
-				granted.questions.destination.criteria[criterion],
-				/mutating git or gh other than a signed checkpoint the parent grants a worker with spawn_child checkpoint, publication/,
-			);
-		}
-		assert.equal(
-			granted.state.checkpoint,
-			"The parent grants this worker a signed checkpoint on feature in its isolated worktree.",
-		);
-		assert.equal("checkpoint" in ungranted.state, false);
 	});
 });

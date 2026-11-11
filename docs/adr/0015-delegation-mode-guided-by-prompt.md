@@ -4,6 +4,8 @@
 
 Acceptance: approval and merge of the introducing PR.
 
+Superseded by [ADR 0027](0027-parent-owns-delegation.md) for its Jev routing clauses only: storage beside Jev routing, independence from the routing owner, the orchestrator `stay` criterion, and the unchanged tool gate.
+
 ## Decision
 
 Delegation mode is a persistent choice, stored beside Jev routing, with the values `opportunistic` and `orchestrator`. It is `opportunistic` until the operator chooses otherwise. It is independent of who owns routing, so it applies with Jev routing on or off.

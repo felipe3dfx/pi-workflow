@@ -36,7 +36,6 @@ import {
 } from "./codegraph-tool.ts";
 import { type ChildAudit, createChildAudit } from "./child-audit.ts";
 import { createChildLauncher } from "./child-launcher.ts";
-import { runDelegationCheck } from "./delegation-check.ts";
 import { registerAgentLanguage } from "./agent-language.ts";
 import { registerDelegationMode } from "./delegation-mode.ts";
 import { registerChildResultCards } from "./child-result-card.ts";
@@ -60,7 +59,7 @@ import type { TaskExecutor } from "./todo-header.ts";
 import { registerCompactTools, syncCompactTools } from "./compact-tools.ts";
 import { resolveAgentDirectory } from "./agent-directory.ts";
 import { inspectClaudeBridgeCompanion } from "./web-access.ts";
-import { createDelegationMode, createJevRouting } from "./workflow-settings.ts";
+import { createDelegationMode } from "./workflow-settings.ts";
 
 import {
 	type ActionAuthorization,
@@ -81,7 +80,7 @@ const slots = globalThis as Record<
 export const adoptionDeadline = 30_000;
 
 const usage =
-	"Usage: /workflow:status | /workflow:doctor | /workflow:config | /workflow:models | /workflow:subagents | /workflow:delegation-check";
+	"Usage: /workflow:status | /workflow:doctor | /workflow:config | /workflow:models | /workflow:subagents";
 
 function createWorkflow(
 	pi: ExtensionAPI,
@@ -176,7 +175,6 @@ export default function piWorkflowExtension(
 	registerCompactTools(pi);
 	registerChildResultCards(pi);
 	const modelProfiles = createModelProfiles(agentDirectory);
-	const jevRouting = createJevRouting(agentDirectory);
 	const delegationMode = createDelegationMode(agentDirectory);
 	const { requestAboveInputRender } = registerShell(pi);
 	const todo = registerSessionTodo(pi, requestAboveInputRender, () => {
@@ -238,8 +236,6 @@ export default function piWorkflowExtension(
 	const launcher = createChildLauncher({
 		contextual: options.authorization !== undefined,
 		modelProfiles,
-		jevRouting,
-		delegationMode,
 	});
 
 	function companionPackages() {
@@ -366,7 +362,7 @@ export default function piWorkflowExtension(
 	});
 	pi.registerCommand("workflow:config", {
 		description:
-			"Configure companions, harness capabilities, Jev routing, and Delegation mode",
+			"Configure companions, harness capabilities, and Delegation mode",
 		handler: async (args, ctx) => {
 			if (args.trim()) {
 				report(ctx, usage, "error");
@@ -384,25 +380,18 @@ export default function piWorkflowExtension(
 			}
 			const loaded = companionPackages();
 			const states = await resolveCompanionStates(loaded.companions, catalog);
-			const routing = jevRouting.enabled();
 			const mode = delegationMode.current();
 			const guided = await guideSelection(
 				ctx,
 				read.selection,
 				loaded.companions,
 				states,
-				routing,
 				mode,
 				seatedCapabilities(),
 			);
 			if (!guided) return;
-			const {
-				selection: chosen,
-				jevRouting: chosenRouting,
-				delegationMode: chosenMode,
-			} = guided;
+			const { selection: chosen, delegationMode: chosenMode } = guided;
 			seating.save(chosen);
-			if (chosenRouting !== routing) jevRouting.set(chosenRouting);
 			if (chosenMode !== mode) delegationMode.set(chosenMode);
 			await seating.seat(chosen);
 			const expected = Object.entries(chosen.expectations)
@@ -441,30 +430,6 @@ export default function piWorkflowExtension(
 				return;
 			}
 			await modelProfiles.edit(ctx);
-		},
-	});
-	pi.registerCommand("workflow:delegation-check", {
-		description:
-			"Score the fixed delegation cases against Jev without launching a child",
-		handler: async (args, ctx) => {
-			if (args.trim()) {
-				report(ctx, usage, "error");
-				return;
-			}
-			if (!seated("child-session", "overlay")) {
-				report(
-					ctx,
-					"Child session is not seated. Run /workflow:config.",
-					"error",
-				);
-				return;
-			}
-			const { lines, failed } = await runDelegationCheck(ctx, {
-				modelProfiles,
-				jevRouting,
-				delegationMode,
-			});
-			report(ctx, lines.join("\n"), failed ? "error" : "info");
 		},
 	});
 }

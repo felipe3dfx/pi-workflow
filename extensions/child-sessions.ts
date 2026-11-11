@@ -4,9 +4,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 
 import type {
 	AssistantMessage,
-	ClassifierResult,
 	ModelThinkingLevel,
-	UserMessage,
 } from "@earendil-works/pi-ai";
 import type {
 	AgentSessionEvent,
@@ -1306,7 +1304,7 @@ const spawnChildParameters = Type.Object({
 	role: Type.Optional(
 		Type.String({
 			description:
-				"explore, worker, or verify. When Jev routing is off, the role you pass decides and omitting it does not choose worker. When on, the role is still required and the parent chooses it; Jev does not.",
+				"explore, worker, or verify. The role is required and the parent chooses it; omitting it does not choose worker.",
 		}),
 	),
 	worktree: Type.Optional(
@@ -1351,7 +1349,6 @@ type Outcome = {
 	warning: string;
 	reason: string;
 	warnings?: string[];
-	jev?: ClassifierResult;
 };
 
 const launchLimitReason = `The parent already has ${launchLimit} working children (queued, running, or waiting). Launch more after some of them end.`;
@@ -1384,36 +1381,8 @@ function notLaunched(status: string, outcome: Outcome) {
 		{
 			status,
 			reason: outcome.reason,
-			...(outcome.jev ? { jev: outcome.jev } : {}),
 		},
 	);
-}
-
-function userText(content: UserMessage["content"]): string {
-	if (typeof content === "string") return content.trim();
-	return content
-		.flatMap((part) => (part.type === "text" ? [part.text] : []))
-		.join("\n")
-		.trim();
-}
-
-export function latestUserRequest(
-	entries: readonly SessionEntry[] | undefined,
-): { id: string; text: string } | undefined {
-	if (!entries) return undefined;
-	for (let index = entries.length - 1; index >= 0; index -= 1) {
-		const entry = entries[index];
-		if (entry?.type !== "message" || entry.message.role !== "user") continue;
-		const text = userText(entry.message.content);
-		if (text.length > 0) return { id: entry.id, text };
-	}
-	return undefined;
-}
-
-function sessionBranch(ctx: {
-	sessionManager?: Pick<ExtensionContext["sessionManager"], "getBranch">;
-}): readonly SessionEntry[] | undefined {
-	return ctx.sessionManager?.getBranch();
 }
 
 export function createSpawnChildTool(
@@ -1426,24 +1395,23 @@ export function createSpawnChildTool(
 		name: "spawn_child",
 		label: "Spawn Child",
 		description:
-			"Delegate a bounded task to a child session that runs under a harness contract. When Jev routing is on, the harness decides whether the work leaves this session. The active profile picks the model for the role. In an interactive session the call returns the child id at once and the result arrives later as a message; in print and json modes the result returns in the same call.",
+			"Delegate a bounded task to a child session that runs under a harness contract. The active profile picks the model for the role. In an interactive session the call returns the child id at once and the result arrives later as a message; in print and json modes the result returns in the same call.",
 		promptSnippet: "Delegate a bounded task to a child session",
 		promptGuidelines: contextual
 			? [
-					"Pass the bounded task and role (explore, worker, verify). Roles guide work and Verdicts, not tool permission. Use common sources/configuration with local instantiation and task authority; Jev chooses only destination.",
+					"Pass the bounded task and role (explore, worker, verify). Roles guide work and Verdicts, not tool permission. Use common sources/configuration with local instantiation and task authority.",
 					"Discover mandatory procedures and track owners, prerequisites, evidence and remaining obligations before dependent work. Preserve signing, scope, others' work and applicable confirmations. Any role may make a task-authorized signed scoped commit in its assigned authorized context. Tool availability or a checkpoint descriptor is not authority; preserve isolation where interference is possible and consult on uncertainty. Commit does not authorize publication.",
 					"Scope expansion, undelegated choices, unknown effects/ownership and high-impact actions require applicable consultation/confirmation. Held actions cannot execute; tool availability, replies and Run state do not grant authority. A failure is not consent.",
 					"Reconcile each child's evidence and remaining obligations. End the turn after background launch and receive its result rather than polling. Independent review stays independent. Child session limits and actual delivery semantics remain unchanged.",
 				]
 			: [
-					"Pass the task and the role (explore, worker, or verify). The parent chooses the role and it determines the contract; Jev decides only the destination. Choose the role whose tools cover the task; a role named by a skill is a hint. Fixed tools per role (explore: read, grep, find, ls, codegraph, codemode; worker: read, bash, edit, write, grep, find, ls, codemode; verify: read, bash, grep, find, ls, codegraph, codemode), plus MCP and web tools added at runtime. Explore reads and queries CodeGraph and cannot run commands; verify independently checks completed work and may run checks and tests without editing; worker implements and runs commands. Give a brief with the scope, acceptance criteria, and edit surface; assign any reading needed before a write to the worker.",
+					"Pass the task and the role (explore, worker, or verify). The parent chooses the role and it determines the contract. Choose the role whose tools cover the task; a role named by a skill is a hint. Fixed tools per role (explore: read, grep, find, ls, codegraph, codemode; worker: read, bash, edit, write, grep, find, ls, codemode; verify: read, bash, grep, find, ls, codegraph, codemode), plus MCP and web tools added at runtime. Explore reads and queries CodeGraph and cannot run commands; verify independently checks completed work and may run checks and tests without editing; worker implements and runs commands. Give a brief with the scope, acceptance criteria, and edit surface; assign any reading needed before a write to the worker.",
 					"Children communicate only with the parent, never directly with the user.",
-					"Before dependent work, learn the obligations of any mandatory procedure: read it when routing and delegation mode allow, otherwise delegate its discovery. Track each obligation with an owner and a state (pending, satisfied with evidence, or blocked with reason) across child questions, scope changes, and background results. An unmet mandatory prerequisite stops dependent work; do not continue it as qualified partial work.",
-					"Do not delegate mutating git or gh commands or publication: they are reserved for the parent and stay with it; when a procedure requires them, such as worktree setup, the parent runs them itself before dependent child work; if routing blocks them, delegate discovery first and run them after its result arrives. The one exception: you may grant checkpoint, with the branch of an isolated worktree you created, to a worker, which then commits its own signed checkpoints on that branch. Before integrating, verify that each returned SHA is on that branch, descends from the base, and contains the expected change; integration, integration checks, push, pull requests, and tracker effects stay with you. Without the grant, the worker hands over a verified tree and lists the commit for you. Do not ask the child for intermediate progress reports. Copy evidence you already have into the task; references accept only paths inside the cwd. There is no channel to a running child; use reply_child only when the child asks.",
+					"Before dependent work, learn the obligations of any mandatory procedure: read it when delegation mode allows, otherwise delegate its discovery. Track each obligation with an owner and a state (pending, satisfied with evidence, or blocked with reason) across child questions, scope changes, and background results. An unmet mandatory prerequisite stops dependent work; do not continue it as qualified partial work.",
+					"Do not delegate mutating git or gh commands or publication: they are reserved for the parent and stay with it; when a procedure requires them, such as worktree setup, the parent runs them itself before dependent child work. The one exception: you may grant checkpoint, with the branch of an isolated worktree you created, to a worker, which then commits its own signed checkpoints on that branch. Before integrating, verify that each returned SHA is on that branch, descends from the base, and contains the expected change; integration, integration checks, push, pull requests, and tracker effects stay with you. Without the grant, the worker hands over a verified tree and lists the commit for you. Do not ask the child for intermediate progress reports. Copy evidence you already have into the task; references accept only paths inside the cwd. There is no channel to a running child; use reply_child only when the child asks.",
 					"A refusal or a queued id is not a completed result; never repeat an identical launch, but when a refusal names a cause you can correct, such as an unknown Todo id, correct it and relaunch once. After a background child is queued, end your turn: its result wakes you. Do not poll with sleep, list_children, child_status, or child_result.",
 					`One codemode script can launch several children: each spawn_child call returns at once without awaiting the child. Their results arrive in one message when every child is done, or earlier when a result needs you. In print and json modes each call waits for its child instead. At most ${launchLimit} children can be queued, running, or waiting at once; a launch beyond that is refused.`,
 					"Do not declare work delegated to a worker done without its Verdict of done and its files_changed, validation, and left_undone fields. Do not declare verification delegated to a verifier passed without its Verdict of pass and its findings and unverified fields; partial, fail, and blocked are not success. A child's done or pass covers only its task: reconcile left_undone and unverified against the remaining obligations, then continue or report an explicit blocker.",
-					"When Jev routing is on, the parent asks once per user turn before read, grep, find, ls, edit, write, bash, powershell, or codegraph query and explore. A block that says to delegate means call spawn_child with the role you choose. A block that says to ask the user one question means ask that one question and wait. Reads of AGENTS.md, GLOSSARY.md, and docs/agents/*.md stay available, and so does codegraph init.",
 				],
 		parameters: spawnChildParameters,
 		async execute(toolCallId, params, signal, _onUpdate, ctx) {
@@ -1473,7 +1441,6 @@ export function createSpawnChildTool(
 				return notLaunched("refused", refused(launchLimitReason));
 			}
 			try {
-				const userRequest = latestUserRequest(sessionBranch(ctx));
 				const plan = await launcher.prepareLaunch(
 					{
 						role: params.role ?? undefined,
@@ -1482,9 +1449,6 @@ export function createSpawnChildTool(
 						checkpoint: params.checkpoint,
 						references: params.references,
 						surfaces: params.surfaces,
-						...(userRequest
-							? { userRequest: userRequest.text, userMessageId: userRequest.id }
-							: {}),
 					},
 					ctx,
 				);
@@ -1497,7 +1461,6 @@ export function createSpawnChildTool(
 						shell: () => shellOptions(ctx),
 						onLaunch: (id) => {
 							child = id;
-							launcher.recordLaunch(userRequest?.id);
 						},
 						group: /^([\s\S]+)\/\d+$/.exec(toolCallId)?.[1],
 						...(claim ? { todo: claim.task.id } : {}),
@@ -1523,10 +1486,7 @@ export function createSpawnChildTool(
 				return launched(
 					started,
 					plan.warnings,
-					{
-						role: plan.role,
-						...(plan.jev ? { jev: plan.jev } : {}),
-					},
+					{ role: plan.role },
 					note,
 				);
 			} finally {
@@ -1539,7 +1499,7 @@ export function createSpawnChildTool(
 function launched(
 	started: Awaited<ReturnType<ReturnType<typeof createChildSessions>["start"]>>,
 	warnings: string[],
-	selection?: { role: string; jev?: ClassifierResult },
+	selection?: { role: string },
 	note?: string,
 ) {
 	if (started.status === "pending" && "pendingAuthorizations" in started) {
@@ -1550,18 +1510,9 @@ function launched(
 		);
 	}
 	if (started.status === "refused") {
-		return notLaunched(started.status, {
-			...started,
-			warnings,
-			...(selection?.jev ? { jev: selection.jev } : {}),
-		});
+		return notLaunched(started.status, { ...started, warnings });
 	}
-	const selected = selection
-		? {
-				role: selection.role,
-				...(selection.jev ? { jev: selection.jev } : {}),
-			}
-		: {};
+	const selected = selection ? { role: selection.role } : {};
 	const selectionLine = selection ? `Launched as ${selection.role}.` : undefined;
 	if (started.status === "completed") {
 		const outcome = selection

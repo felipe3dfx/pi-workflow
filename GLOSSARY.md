@@ -42,7 +42,7 @@ The versioned Pi settings in `assets/settings.json` that `/workflow:config` appl
 
 ### Agent directory
 
-The user's Pi configuration directory. It holds the selection, Jev routing, model profiles, `mcp.json`, and the user's Pi `settings.json`.
+The user's Pi configuration directory. It holds the selection, Delegation mode, model profiles, `mcp.json`, and the user's Pi `settings.json`.
 
 _Avoid_: home, config folder
 
@@ -54,39 +54,15 @@ An installed package that overlaps with a harness capability: `@heyhuynhgiabuu/p
 
 A named set of model and thinking assignments, one per specialist, stored in `pi-workflow-models.json` (schema v2) with one profile active. A missing specialist entry inherits the session model. An entry may name any model in Pi's catalog, including a virtual model.
 
-### Jev
-
-TypeSafe's classifier model, `typesafe/jev-latest` in Pi's catalog. When Jev routing is on, it owns routing for a parent session.
-
-_Avoid_: engineering skill, TypeSafe key, another provider's Jev
-
-### Jev routing
-
-The persistent choice, stored with the user's Pi configuration, of whether Jev decides the destination for each user message. When on, Jev decides only whether work stays, leaves for a child, or cannot be decided; it does not select a Specialist or child role.
-
-_Avoid_: process switch, repository setting, Jev router, virtual model routing
-
 ### Delegation mode
 
-The persistent choice, stored beside Jev routing, of whether work may stay in the parent session: `opportunistic` or `orchestrator`. In `orchestrator`, the parent is told to delegate all work to child sessions and to keep to conversing, planning, asking, and directing them; nothing blocks its tools beyond what already applies. It is independent of who owns routing.
+The persistent choice, stored in the agent directory, of whether work may stay in the parent session: `opportunistic` or `orchestrator`. In `orchestrator`, the parent is told to delegate all work to child sessions and to keep to conversing, planning, asking, and directing them; nothing blocks its tools.
 
 _Avoid_: orchestrator routing, parent mode, routing mode
 
-### Launch blocked
-
-The warning when Jev routing is on and Jev gives no valid answer. No child launches and the gated parent tool does not run. It is not kept as the verdict for the user message.
-
-_Avoid_: stay, worker fallback
-
-### Tool gate
-
-The parent's check of each of its gated tool calls against the routing decision for the current user message. It applies to the parent session only, never to a child session.
-
-_Avoid_: delegation hook, router
-
 ### Specialist
 
-One of `explorer`, `worker`, or `verifier`, mapped from the child roles `explore`, `worker`, and `verify`. The parent supplies a role for each child launch, regardless of Jev routing.
+One of `explorer`, `worker`, or `verifier`, mapped from the child roles `explore`, `worker`, and `verify`. The parent supplies a role for each child launch.
 
 ### Engineering skills
 
@@ -180,7 +156,7 @@ A child's audit transcript whose completeness cannot be established because capt
 
 ### Launch limit
 
-The fixed bound on a parent's working children. A launch beyond it is refused before Jev is asked or a child session is created.
+The fixed bound on a parent's working children. A launch beyond it is refused before a child session is created.
 
 _Avoid_: running limit, concurrency limit
 

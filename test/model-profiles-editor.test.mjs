@@ -18,9 +18,7 @@ import { createChildLauncher } from "../extensions/child-launcher.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
 import { createModelProfiles } from "../extensions/model-profiles.ts";
-import { createJevRouting } from "../extensions/workflow-settings.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
-import { classifierRegistry } from "./support/fake-jev.mjs";
 
 replaceSelection({
 	schemaVersion: 1,
@@ -562,37 +560,15 @@ test("a launch right after a panel save uses the saved profile", async () => {
 		const worktree = join(dir, "repo");
 		await mkdir(worktree);
 		execFileSync("git", ["init", "--quiet"], { cwd: worktree });
-		const jev = classifierRegistry(() => ({
-			answers: {
-				specialist: {
-					type: "choice",
-					choice: "worker",
-					confidence: 0.9,
-					probabilities: { explorer: 0, worker: 1, verifier: 0 },
-				},
-				destination: {
-					type: "choice",
-					choice: "leave",
-					confidence: 0.9,
-					probabilities: { stay: 0, leave: 1 },
-				},
-			},
-		}));
 		const result = await createChildLauncher({
 			modelProfiles: profiles,
-			jevRouting: createJevRouting(dirname(path)),
-			delegationMode: { current: () => "opportunistic" },
 		}).prepareLaunch(
 			{ role: "worker", task: "Add the export command" },
 			{
 				cwd: worktree,
 				model: undefined,
 				thinkingLevel: undefined,
-				modelRegistry: {
-					getApiKeyForProvider: async () => "typesafe-key",
-					getAvailable: () => catalog,
-					...jev.registry,
-				},
+				modelRegistry: { getAvailable: () => catalog },
 			},
 		);
 
