@@ -5,6 +5,8 @@
 Acceptance: approval and merge of the introducing PR.
 Superseded by [ADR 0016](0016-claude-bridge-for-child-sessions.md), and with it by [ADR 0023](0023-children-run-as-rpc-processes.md): children run as RPC processes, R13 and R14 no longer apply.
 
+Superseded by [ADR 0027](0027-parent-owns-delegation.md) for the clause that the parent's Tool gate does not reach a child only; the rest stays in force as amended above.
+
 ## Decision
 
 Child sessions run in the parent's Pi process with no operating-system boundary between them (D1). A child carries the parent's risk: it reaches what the parent reaches, through the same user, files, credentials, and network.

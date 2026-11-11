@@ -6,6 +6,8 @@ Acceptance: approval and merge of the introducing PR.
 
 Superseded by ADR 0012 for the command name and argumentless-command clauses.
 
+Superseded by [ADR 0027](0027-parent-owns-delegation.md) for the clause that the tool gate and the launcher share one chooser verdict per operator message only; the rest stays in force.
+
 Amended by the deep harness modules feature (`docs/specs/deep-harness-modules.md`) to clarify what unseating stops.
 
 Amended by ADR 0019 for the operator question's position, width, and frame.

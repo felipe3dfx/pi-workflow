@@ -22,12 +22,12 @@ function orchestratorInstruction(contextual: boolean): string {
 		`Keep to ${keep.slice(0, -1).join(", ")}, and ${keep.at(-1)}.`,
 		...(contextual
 			? [
-					"The task and applicable instructions determine authority in every session. Common tools and Jev routing grant no permission. Preserve mandatory procedure discovery, signing, scope, others' work and applicable confirmations; retain unresolved actions rather than executing them.",
+					"The task and applicable instructions determine authority in every session. Common tools grant no permission. Preserve mandatory procedure discovery, signing, scope, others' work and applicable confirmations; retain unresolved actions rather than executing them.",
 				]
 			: [
 					"These stay with you: the mutating and publishing git and gh operations, such as a commit, a push, or opening a pull request, and the git reads they need, except the signed checkpoint commits of a worker you grant checkpoint in an isolated worktree you created, which you verify before you integrate them; and reading AGENTS.md, GLOSSARY.md, and docs/agents/*.md.",
 				]),
-		"When a launch is refused, such as Launch blocked or the Launch limit, follow the refusal and tell the operator why. Do not retry silently or do the work yourself unannounced.",
+		"When a launch is refused, such as by the Launch limit, follow the refusal and tell the operator why. Do not retry silently or do the work yourself unannounced.",
 	].join("\n");
 }
 

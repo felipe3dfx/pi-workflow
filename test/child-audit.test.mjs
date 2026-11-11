@@ -11,7 +11,7 @@ import { createChildSessions } from "../extensions/child-sessions.ts";
 import { createTranscript } from "../extensions/child-transcript.ts";
 import { eventually } from "./support/eventually.mjs";
 import { fakeChildren } from "./support/fake-children.mjs";
-import { withAgentDirectory } from "./support/jev-routing.mjs";
+import { withAgentDirectory } from "./support/agent-directory.mjs";
 
 const plan = {
 	role: "worker",

@@ -4,6 +4,8 @@
 
 Acceptance: approval and merge of the introducing PR.
 
+Superseded by [ADR 0027](0027-parent-owns-delegation.md) for the destination-only Jev item of the preserved obligations only; the other preserved obligations stay in force.
+
 The contextual path remains unadopted. Production evaluation and adoption belong to #293.
 
 ## Decision

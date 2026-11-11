@@ -50,7 +50,6 @@ type Keys = { matches(data: string, id: string): boolean };
 
 type GuideOutcome = {
 	selection: Selection;
-	jevRouting: boolean;
 	delegationMode: DelegationModeName;
 };
 
@@ -78,9 +77,6 @@ const capabilityCopy: Record<Capability, [label: string, description: string]> =
 			"Shows Pi's built-in tool calls in compact form. Off restores native rendering.",
 		],
 	};
-
-const routingCopy =
-	"Ask Jev on each message whether the work stays in the parent or goes to a child session. Needs a TypeSafe key.";
 
 const modeCopy: Record<DelegationModeName, string> = {
 	opportunistic:
@@ -142,7 +138,7 @@ function toggleRow(
 
 function createConfigGuide(
 	draft: Selection,
-	draftState: { routing: boolean; mode: DelegationModeName },
+	draftState: { mode: DelegationModeName },
 	companions: readonly { package: string; description?: string }[],
 	states: readonly GuideState[],
 	seated: Pick<Selection, "capabilities">,
@@ -167,16 +163,8 @@ function createConfigGuide(
 			),
 		},
 		{
-			title: "Routing and delegation",
+			title: "Delegation",
 			rows: [
-				toggleRow(
-					"Jev routing",
-					routingCopy,
-					() => draftState.routing,
-					(on) => {
-						draftState.routing = on;
-					},
-				),
 				{
 					kind: "choice",
 					label: "Delegation mode",
@@ -647,7 +635,6 @@ export async function guideSelection(
 	selection: Selection,
 	companions: readonly { package: string; description?: string }[],
 	states: readonly GuideState[],
-	jevRouting: boolean,
 	delegationMode: DelegationModeName,
 	seated: Pick<Selection, "capabilities">,
 ): Promise<GuideOutcome | undefined> {
@@ -656,7 +643,7 @@ export async function guideSelection(
 		return undefined;
 	}
 	const draft: Selection = structuredClone(selection);
-	const draftState = { routing: jevRouting, mode: delegationMode };
+	const draftState = { mode: delegationMode };
 	let confirmed = false;
 	await ctx.ui.custom(
 		(tui, theme, keybindings, done) =>
@@ -687,7 +674,6 @@ export async function guideSelection(
 	return confirmed
 		? {
 				selection: draft,
-				jevRouting: draftState.routing,
 				delegationMode: draftState.mode,
 			}
 		: undefined;

@@ -18,7 +18,7 @@ import { createChildrenViews } from "../extensions/children-view.ts";
 import { renderHeader } from "../extensions/chrome.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
-import { withAgentDirectory } from "./support/jev-routing.mjs";
+import { withAgentDirectory } from "./support/agent-directory.mjs";
 
 replaceSelection({
 	schemaVersion: 1,

@@ -4,6 +4,8 @@
 
 Acceptance: approval and merge of the introducing PR.
 
+Superseded by [ADR 0027](0027-parent-owns-delegation.md) for the Jev destination and Tool gate clauses only; the uniform child context clause stays in force.
+
 ## Decision
 
 Supersedes: ADR-0008 (only its Jev-selected-Specialist routing clause); ADR-0014 (only its explorer-context clause, as retained by ADR-0016); ADR-0016 (only its retention of that explorer-context clause).

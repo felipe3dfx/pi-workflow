@@ -33,7 +33,7 @@ Follow `node --test test/*.test.mjs`. Required fixtures, services, environments,
 Scratch runs isolate state shared across checkouts by `withAgentDirectory`.
 
 - state: supported
-- evidence: test/support/jev-routing.mjs creates and cleans per-test mkdtemp directories; tests also use temporary Git repositories and stdio MCP fixture subprocesses; packed-distribution validation creates and removes its own temporary workspace; live checks have separate opt-in prerequisites
+- evidence: test/support/agent-directory.mjs creates and cleans per-test mkdtemp directories; tests also use temporary Git repositories and stdio MCP fixture subprocesses; packed-distribution validation creates and removes its own temporary workspace; live checks have separate opt-in prerequisites
 - blocked when: Node dependencies are missing or a test writes outside its temporary directory
 - none (confirmed absent): degraded
 

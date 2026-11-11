@@ -23,11 +23,7 @@ import {
 import piWorkflowExtension, {
 	contextualWorkflowSources,
 } from "../extensions/pi-workflow.ts";
-import {
-	withAgentDirectory,
-	turnJevRoutingOn,
-} from "./support/jev-routing.mjs";
-import { classifierRegistry } from "./support/fake-jev.mjs";
+import { withAgentDirectory } from "./support/agent-directory.mjs";
 import { runtimeChild, runtimeChildSession } from "./support/runtime-child.mjs";
 import {
 	replaceSelection,
@@ -1746,7 +1742,7 @@ for (const [name, assessment] of [
 	});
 }
 
-test("Jev destination blocks are independent of contextual permission and a stay never grants authority", async (t) => {
+test("a contextual read with unresolved ownership is held and runs once authority is known", async (t) => {
 	const prior = seatedCapabilities();
 	replaceSelection({
 		schemaVersion: 1,
@@ -1762,39 +1758,16 @@ test("Jev destination blocks are independent of contextual permission and a stay
 		{ authority, classify: async () => assessment },
 		undefined,
 	);
-	let destination = "leave";
-	const jev = classifierRegistry(async () => ({
-		answers: {
-			destination: {
-				type: "choice",
-				choice: destination,
-				probabilities: {},
-				confidence: 1,
-			},
-		},
-	}));
-	const registry = run.session.extensionRunner.createContext().modelRegistry;
-	Object.assign(registry, jev.registry);
-	registry.getApiKeyForProvider = async () => "fixture";
-	turnJevRoutingOn(run.agentDir);
 	const path = join(run.agentDir, "assigned.txt");
 	writeFileSync(path, "PRIVATE_READ_EFFECT");
-	const leave = await run.call({ path }, "read");
-	assert.match(leave.content[0].text, /leaves this session/);
-	assert.doesNotMatch(leave.content[0].text, /PRIVATE_READ_EFFECT/);
-	destination = "decide";
-	const decide = await run.call({ path }, "read");
-	assert.doesNotMatch(decide.content[0].text, /PRIVATE_READ_EFFECT/);
-	assert.match(decide.content[0].text, /ask.*question|decision/i);
-	destination = "stay";
 	assessment = {
 		...known,
 		ownership: "unknown",
 		reason: "Ownership unresolved",
 	};
-	const stay = await run.call({ path }, "read");
-	assert.match(stay.content[0].text, /Authorization held/);
-	assert.doesNotMatch(stay.content[0].text, /PRIVATE_READ_EFFECT/);
+	const held = await run.call({ path }, "read");
+	assert.match(held.content[0].text, /Authorization held/);
+	assert.doesNotMatch(held.content[0].text, /PRIVATE_READ_EFFECT/);
 	assessment = known;
 	const allowed = await run.call({ path }, "read");
 	assert.match(allowed.content[0].text, /PRIVATE_READ_EFFECT/);
@@ -2175,7 +2148,7 @@ test("a real parent launch carries common sources and local authority into the c
 	);
 });
 
-test("changed parent authority and unresolved child ownership are held with Jev on or off", async (t) => {
+test("changed parent authority and unresolved child ownership are held", async (t) => {
 	let assignment = "Initial task";
 	let effects = 0;
 	const run = await parent(
@@ -2201,42 +2174,36 @@ test("changed parent authority and unresolved child ownership are held with Jev 
 	const result = await run.call();
 	assert.equal(effects, 0);
 	assert.match(result.content[0].text, /Authority changed/);
-	for (const routing of ["off", "on"]) {
-		writeFileSync(
-			join(run.agentDir, "pi-workflow-routing.json"),
-			JSON.stringify({ schemaVersion: 1, jevRouting: routing }),
-		);
-		const outcomes = [];
-		const configuration = {
-			authority,
-			classify: async () => ({
-				...known,
-				ownership: "unknown",
-				reason: "Unresolved ownership",
-			}),
-			onDecision: (d) => outcomes.push(d.kind),
-		};
-		const child = await runtimeChildSession({
-			cwd: run.agentDir,
-			role: "verify",
-			model: "faux/authorization",
-			tools: ["write"],
-			runtime: run.runtime,
-			sources: {},
-			authorization: configuration,
-		});
-		t.after(() => child.dispose());
-		const denied = await childCall(run, child, "write", {
-			path: join(run.agentDir, `unresolved-${routing}`),
-			content: "not released",
-		});
-		assert.match(denied.content[0].text, /Authorization held/);
-		assert.deepEqual(outcomes, ["held"]);
-		assert.equal(
-			existsSync(join(run.agentDir, `unresolved-${routing}`)),
-			false,
-		);
-	}
+	const outcomes = [];
+	const configuration = {
+		authority,
+		classify: async () => ({
+			...known,
+			ownership: "unknown",
+			reason: "Unresolved ownership",
+		}),
+		onDecision: (d) => outcomes.push(d.kind),
+	};
+	const child = await runtimeChildSession({
+		cwd: run.agentDir,
+		role: "verify",
+		model: "faux/authorization",
+		tools: ["write"],
+		runtime: run.runtime,
+		sources: {},
+		authorization: configuration,
+	});
+	t.after(() => child.dispose());
+	const denied = await childCall(run, child, "write", {
+		path: join(run.agentDir, "unresolved"),
+		content: "not released",
+	});
+	assert.match(denied.content[0].text, /Authorization held/);
+	assert.deepEqual(outcomes, ["held"]);
+	assert.equal(
+		existsSync(join(run.agentDir, "unresolved")),
+		false,
+	);
 });
 
 test("concurrent real siblings keep cancellation and held actions local", async (t) => {
@@ -2904,7 +2871,7 @@ test("final transformed prohibition after workflow registration prevents parent 
 	assert.doesNotMatch(seen.at(-1).context.systemPrompt, /FINAL_PROHIBITION/);
 });
 
-test("same supplied authority and action have equivalent parent-child outcomes with Jev on and off", async (t) => {
+test("same supplied authority and action have equivalent parent-child outcomes", async (t) => {
 	const prior = seatedCapabilities();
 	replaceSelection({
 		schemaVersion: 1,
@@ -2920,14 +2887,6 @@ test("same supplied authority and action have equivalent parent-child outcomes w
 		onDecision: (d) => { decisions.push(d); },
 	};
 	const host = await parent(t, authorization, undefined, {});
-	const jev = classifierRegistry(async () => ({
-		answers: { destination: {
-			type: "choice", choice: "stay", probabilities: {}, confidence: 1,
-		} },
-	}));
-	const registry = host.session.extensionRunner.createContext().modelRegistry;
-	Object.assign(registry, jev.registry);
-	registry.getApiKeyForProvider = async () => "fixture";
 	const child = await runtimeChildSession({
 		cwd: host.agentDir, role: "worker", model: "faux/authorization",
 		runtime: host.runtime, sources: {}, authorization,
@@ -2940,27 +2899,23 @@ test("same supplied authority and action have equivalent parent-child outcomes w
 		["deny", { ...known, restriction: "prohibition", reason: "Explicit prohibition" }, /Action prohibited/],
 	]) {
 		assessment = result;
-		for (const routing of ["off", "on"]) {
-			writeFileSync(join(host.agentDir, "pi-workflow-routing.json"),
-				JSON.stringify({ schemaVersion: 1, jevRouting: routing }));
-			for (const destination of ["parent", "child"]) {
-				if (existsSync(input.path)) unlinkSync(input.path);
-				const response = destination === "parent"
-					? await host.call(input, "write")
-					: await childCall(host, child, "write", input);
-				const decision = decisions.at(-1);
-				assert.equal(decision.kind, kind, `${destination}/${routing}/${kind}`);
-				assert.deepEqual(decision.proposal.authority, authority());
-				assert.deepEqual(decision.proposal.action, {
-					tool: "write", input, cwd: host.agentDir,
-				});
-				assert.equal(existsSync(input.path), kind === "allow");
-				if (kind === "allow") assert.equal(readFileSync(input.path, "utf8"), "MATRIX_EFFECT");
-				else assert.match(response.content[0].text, reason);
-			}
+		for (const destination of ["parent", "child"]) {
+			if (existsSync(input.path)) unlinkSync(input.path);
+			const response = destination === "parent"
+				? await host.call(input, "write")
+				: await childCall(host, child, "write", input);
+			const decision = decisions.at(-1);
+			assert.equal(decision.kind, kind, `${destination}/${kind}`);
+			assert.deepEqual(decision.proposal.authority, authority());
+			assert.deepEqual(decision.proposal.action, {
+				tool: "write", input, cwd: host.agentDir,
+			});
+			assert.equal(existsSync(input.path), kind === "allow");
+			if (kind === "allow") assert.equal(readFileSync(input.path, "utf8"), "MATRIX_EFFECT");
+			else assert.match(response.content[0].text, reason);
 		}
 	}
-	assert.equal(decisions.length, 12);
+	assert.equal(decisions.length, 6);
 });
 
 for (const checkpoint of [false, true]) {
