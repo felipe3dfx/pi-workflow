@@ -2334,11 +2334,35 @@ test("spawn_child describes who decides the role and what each role can do", asy
 		assert.match(guidance, /surface each child owns[^.]*siblings share the checkout[^.]*prior findings/i);
 		assert.match(guidance, /never put commands[^.]*explore task[^.]*worktree[^.]*changed-file list[^.]*verify/i);
 		assert.match(guidance, /scratch checkouts[^.]*one child per axis/i);
-		assert.match(guidance, /copy evidence you already have, such as the diff, into the task/i);
+		assert.match(guidance, /read only what decides the route, never the files the child will read/i);
+		assert.match(guidance, /pass paths through references, the spec reference, and what to change, not file contents/i);
+		assert.match(guidance, /copy only short evidence you already have/i);
+		assert.doesNotMatch(guidance, /such as the diff/i);
 		assert.match(guidance, /read[^.]*before[^.]*write[^.]*worker|worker[^.]*read[^.]*write/i);
 		assert.doesNotMatch(guidance, /specialist/i);
 		assert.doesNotMatch(guidance, /names a role|use that role/i);
 		assert.match(guidance, /parent chooses the role/i);
+	});
+});
+
+test("spawn_child guidance stays within its byte ceiling", async () => {
+	await withWorkspace(async ({ agentDir }) => {
+		const authorization = {
+			authority: async () => ({ assignment: "", instructions: [] }),
+			classify: async () => ({}),
+		};
+		for (const [options, ceiling] of [
+			[{}, 4096],
+			[{ authorization }, 1280],
+		]) {
+			const { tool } = await loadSpawnTool({
+				agentDir,
+				create: fakeChildren().create,
+				...options,
+			});
+			const size = Buffer.byteLength(tool.promptGuidelines.join("\n"), "utf8");
+			assert.ok(size <= ceiling, `${size} > ${ceiling}`);
+		}
 	});
 });
 

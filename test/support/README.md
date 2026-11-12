@@ -21,5 +21,6 @@
 | `selection.mjs` | `selectionWith` | Build a stored selection. |
 | `sentence.mjs` | `assertSentence` | Assert that one sentence of a text matches every given pattern. |
 | `signed-checkpoint.mjs` | `withCheckpoint`, `repository` | Temporary signed repositories/worktrees with isolated HOME/XDG and ephemeral SSH fixture key. |
+| `workflow-parent.mjs` | `seat`, `parentSession`, `gitRepository`, `realParent` | Seat a capability selection; a fake parent of the workflow extension (`fire`, registered `tools`, `sent` messages); an empty Git repository; a real Pi parent session on a faux model with fake children, optional extra `extensionFactories`, returning `session`, `requests`, `children` and `worktree`. |
 
 Check this table before writing a helper or reading a large test file to find one.

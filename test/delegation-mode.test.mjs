@@ -6,20 +6,11 @@ import { join } from "node:path";
 
 import {
 	fauxAssistantMessage,
-	fauxProvider,
 	fauxToolCall,
 } from "@earendil-works/pi-ai";
-import {
-	createAgentSession,
-	DefaultResourceLoader,
-	initTheme,
-	ModelRuntime,
-	SessionManager,
-	SettingsManager,
-} from "@earendil-works/pi-coding-agent";
+import { initTheme } from "@earendil-works/pi-coding-agent";
 
 import { capabilities } from "../extensions/configure.ts";
-import { replaceSelection } from "../extensions/shell.ts";
 import { createDelegationMode } from "../extensions/workflow-settings.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 import { fakeChildren } from "./support/fake-children.mjs";
@@ -34,6 +25,12 @@ import {
 } from "./support/config-guide.mjs";
 import { withAgentDirectory } from "./support/agent-directory.mjs";
 import { assertSentence } from "./support/sentence.mjs";
+import {
+	gitRepository,
+	parentSession,
+	realParent,
+	seat,
+} from "./support/workflow-parent.mjs";
 
 initTheme("dark", false);
 
@@ -222,75 +219,8 @@ test("the Delegation mode follows its document on each read", async (t) => {
 	assert.equal(mode.current(), "opportunistic");
 });
 
-function seat(on = capabilities) {
-	replaceSelection({
-		schemaVersion: 1,
-		capabilities: Object.fromEntries(
-			capabilities.map((capability) => [capability, on.includes(capability)]),
-		),
-		expectations: {},
-	});
-}
-
 function chooseMode(dir, mode) {
 	createDelegationMode(dir).set(mode);
-}
-
-async function parentSession(agentDirectory, { legacy = false, create } = {}) {
-	const handlers = new Map();
-	const tools = [];
-	const ui = {
-		notify() {},
-		setWidget() {},
-		setStatus() {},
-		setHeader() {},
-		setFooter() {},
-		setEditorComponent() {},
-		setWorkingVisible() {},
-		setWorkingIndicator() {},
-		setWorkingMessage() {},
-	};
-	piWorkflowExtension(
-		{
-			on(event, handler) {
-				handlers.set(event, [...(handlers.get(event) ?? []), handler]);
-			},
-			registerCommand() {},
-			registerShortcut() {},
-			registerMessageRenderer() {},
-			registerToolRenderer() {},
-			registerProvider() {},
-			registerTool: (tool) => tools.push(tool),
-			sendMessage() {},
-			appendEntry() {},
-			exec: async () => {
-				throw new Error("must not run commands");
-			},
-		},
-		{
-			catalog: {
-				resolveInstalledVersion: (name) =>
-					legacy && name === "@tintinweb/pi-subagents" ? { version: "2.0.0" } : {},
-			},
-			agentDirectory,
-			childSessions: create ? { create } : undefined,
-		},
-	);
-	const fire = async (event, payload = {}, ctx = {}) => {
-		let result;
-		for (const handler of handlers.get(event) ?? []) {
-			result = await handler(payload, ctx);
-		}
-		return result;
-	};
-	await fire("session_start", {}, {
-		mode: "print",
-		hasUI: true,
-		ui,
-		cwd: agentDirectory,
-		sessionManager: { getBranch: () => [], getEntries: () => [] },
-	});
-	return { fire, tools };
 }
 
 const systemMessage = {
@@ -422,13 +352,6 @@ function spawnContext(cwd) {
 	};
 }
 
-async function gitRepository(dir) {
-	const worktree = join(dir, "repo");
-	await mkdir(worktree);
-	execFileSync("git", ["init", "--quiet"], { cwd: worktree });
-	return worktree;
-}
-
 test("in orchestrator, the prompt the child session factory receives never carries the instruction", async (t) => {
 	const dir = withAgentDirectory(t);
 	const worktree = await gitRepository(dir);
@@ -511,57 +434,6 @@ for (const mode of ["opportunistic", "orchestrator"]) {
 		assert.match(text, noStandInLine);
 		assert.equal(children.created.length, 0);
 	});
-}
-
-async function realParent(t, dir, responses) {
-	const worktree = await gitRepository(dir);
-	const runtime = await ModelRuntime.create({
-		authPath: join(dir, "auth.json"),
-		modelsPath: null,
-		refreshOnCreate: false,
-	});
-	const faux = fauxProvider({ provider: "faux", models: [{ id: "parent", reasoning: true }] });
-	runtime.registerNativeProvider(faux.provider);
-	await runtime.setRuntimeApiKey("faux", "key");
-	const requests = [];
-	faux.setResponses(
-		responses.map((response) => (context) => {
-			requests.push(structuredClone(context));
-			return response;
-		}),
-	);
-	const children = fakeChildren();
-	const settingsManager = SettingsManager.inMemory();
-	const resourceLoader = new DefaultResourceLoader({
-		cwd: worktree,
-		agentDir: dir,
-		settingsManager,
-		noExtensions: true,
-		noSkills: true,
-		noContextFiles: true,
-		extensionFactories: [
-			(pi) =>
-				piWorkflowExtension(pi, {
-					agentDirectory: dir,
-					catalog: { resolveInstalledVersion: () => ({}) },
-					childSessions: { create: children.create },
-				}),
-		],
-	});
-	await resourceLoader.reload();
-	const { session } = await createAgentSession({
-		cwd: worktree,
-		agentDir: dir,
-		modelRuntime: runtime,
-		model: faux.getModel(),
-		thinkingLevel: "high",
-		resourceLoader,
-		settingsManager,
-		sessionManager: SessionManager.inMemory(worktree),
-	});
-	t.after(() => session.dispose());
-	await session.bindExtensions({ mode: "rpc" });
-	return { session, requests, children };
 }
 
 const spawnThenWait = () => [

@@ -4,6 +4,8 @@
 
 Acceptance: approval and merge of the introducing PR.
 
+Amended by [ADR 0028](0028-parent-evidence-budget.md): Delegation mode stays the only persistent delegation stance, but no longer the only delegation guidance; the `spawn_child` preparation contract and the advisory exploration-budget notice join it.
+
 ## Decision
 
 Issue: #352.
