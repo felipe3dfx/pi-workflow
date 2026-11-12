@@ -112,7 +112,7 @@ const gitDecision = line`case "$__pi_workflow_root" in
 const ghDecision = line`group=;
 	verb=;
 	option=;
-	while [ "$#" -gt 0 ] && [ -z "$verb" ]; do
+	while [ "$#" -gt 0 ] && [ -z "$verb" ] && [ "$group" != api ]; do
 		case "$1" in
 		-R|--repo) shift ;;
 		--repo=*) ;;
@@ -123,7 +123,44 @@ const ghDecision = line`group=;
 	done;
 	case "$group" in
 	""|help|search) ;;
-	api|auth) reserved="gh $group" ;;
+	auth) reserved="gh auth" ;;
+	api)
+		endpoint=;
+		get_method=;
+		field=;
+		pending_value=;
+		[ -z "$option" ] || reserved="gh api";
+		for word in \${1+"$@"}; do
+			value_of=$pending_value;
+			pending_value=;
+			[ -n "$value_of" ] || case "$word" in
+			--paginate|--slurp|-i|--include|--silent|--verbose) ;;
+			-q|--jq|-t|--template|-p|--preview|--cache) pending_value=any ;;
+			-q?*|--jq=*|-t?*|--template=*|-p?*|--preview=*|--cache=*) ;;
+			-f|--raw-field) field=1; pending_value=any ;;
+			-f?*|--raw-field=*) field=1 ;;
+			-F|--field) field=1; pending_value=field ;;
+			-F?*|--field=*) field=1; value_of=field; word=\${word#-F}; word=\${word#--field=}; word=\${word#=} ;;
+			-X|--method) pending_value=method ;;
+			-X?*|--method=*) value_of=method; word=\${word#-X}; word=\${word#--method=}; word=\${word#=} ;;
+			-H|--header) pending_value=header ;;
+			-H?*|--header=*) value_of=header ;;
+			-*) reserved="gh api" ;;
+			*) if [ -z "$endpoint" ]; then endpoint=$word; else reserved="gh api"; fi ;;
+			esac;
+			case "$value_of $word" in
+			"method "[Gg][Ee][Tt]) get_method=1 ;;
+			method*|"header "*[Mm][Ee][Tt][Hh][Oo][Dd]*) reserved="gh api" ;;
+			esac;
+			[ "$value_of" != field ] || case "\${word#*=}" in
+			@*) reserved="gh api" ;;
+			esac;
+		done;
+		[ -z "$pending_value" ] || reserved="gh api";
+		case "$endpoint" in
+		""|*://*|[Gg][Rr][Aa][Pp][Hh][Qq][Ll]|/[Gg][Rr][Aa][Pp][Hh][Qq][Ll]) reserved="gh api" ;;
+		esac;
+		[ -z "$field" ] || [ -n "$get_method" ] || reserved="gh api" ;;
 	*)
 		[ -n "$option" ] && verb=;
 		case "$verb" in

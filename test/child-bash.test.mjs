@@ -179,6 +179,101 @@ test(`a child's bash runs gh reads from any directory`, async (t) => {
 	assert.match(calls(), /^run view --log-failed$/m);
 });
 
+test(`a child's bash runs read-only gh api REST GET calls from any directory`, async (t) => {
+	fakeGh(t);
+	const dir = worktree(t);
+
+	for (const command of [
+		"gh api repos/o/r/pulls/1",
+		"gh api view",
+		"gh api -X GET repos/o/r/pulls",
+		"gh api repos/o/r/pulls -X get",
+		"gh api -XGET repos/o/r",
+		"gh api -X=GET repos/o/r",
+		"gh api --method=Get repos/o/r",
+		"gh api --method GET search/issues -f q=repo:o/r",
+		"gh api -f q=x -F per_page=5 --raw-field a=b --field c=d --method GET search/issues",
+		"gh api -X GET search/issues -fq=x -Fper_page=5 --raw-field=a=b --field=c=d",
+		"gh api -X GET search/issues -f q=@me -fa=@b --raw-field c=@d --raw-field=e=@f -F g=h@i --field=j=k=@l",
+		"gh api --paginate --jq '.[].body' repos/o/r/issues/1/comments",
+		"gh api --paginate --slurp repos/o/r/issues",
+		"gh api -q .x -t '{{.x}}' --jq=.y --template={{.y}} -q.z -t{{.z}} repos/o/r",
+		"gh api -i --include --silent --verbose repos/o/r",
+		"gh api --cache 1h --cache=60m repos/o/r",
+		"gh api -p nebula --preview baptiste -pa --preview=b repos/o/r",
+		"gh api -H 'Accept: application/vnd.github.raw+json' --header 'X-GitHub-Api-Version: 2022-11-28' -HAccept:x --header=Accept:y repos/o/r",
+		"gh -R o/r api repos/o/r",
+		"gh --repo=o/r api repos/o/r",
+		"cd /tmp && gh api repos/o/r/compare/a...b",
+	]) {
+		const result = await run(command, dir);
+
+		assert.equal(result.isError, undefined, command);
+		assert.match(text(result), /^fake gh .*api /, command);
+	}
+});
+
+test(`a child's bash refuses gh api calls that are not a REST GET with allowed options`, async (t) => {
+	const calls = fakeGh(t);
+	const dir = worktree(t);
+
+	for (const command of [
+		"gh api",
+		"gh api graphql -f query='{viewer{login}}'",
+		"gh api -X GET graphql -f query='{viewer{login}}'",
+		"gh api list -X DELETE",
+		"gh api -X POST repos/o/r/issues",
+		"gh api repos/o/r/issues -XPOST",
+		"gh api -X=PATCH repos/o/r",
+		"gh api --method=put repos/o/r",
+		"gh api --method GET --method POST repos/o/r",
+		"gh api -X",
+		"gh api repos/o/r -X",
+		"gh api repos/o/r/issues -f body=x",
+		"gh api repos/o/r/issues -F body=x",
+		"gh api repos/o/r/issues --field=body=x",
+		"gh api repos/o/r/issues --raw-field body=x",
+		"gh api repos/o/r/issues -fbody=x",
+		"gh api repos/o/r --input body.json",
+		"gh api repos/o/r --input=body.json -X GET",
+		"gh api repos/o/r --unknown",
+		"gh api repos/o/r --allow-escape-sequences",
+		"gh api repos/o/r -iq .x",
+		"gh api repos/o/r -H 'X-HTTP-Method-Override: DELETE'",
+		"gh api repos/o/r --header=x-http-method-override:DELETE",
+		"gh api repos/o/r -HX-Http-Method-Override:PUT",
+		"gh api repos/o/r other",
+		"gh api repos/o/r -- -X",
+		"gh api --jq",
+		"gh --verbose api repos/o/r",
+		"gh api -X GET repos/o/r -H 'X-HTTP-Method-Override: DELETE'",
+		"gh api repos/o/r --hostname",
+		"gh api --hostname example.invalid repos/o/r",
+		"gh api repos/o/r --hostname=example.invalid",
+		"gh api repos/o/r --cache",
+		"gh api repos/o/r -H",
+		"gh api repos/o/r -f",
+		"gh api repos/o/r/issues --field body=x",
+		"gh api repos/o/r/issues --raw-field=body=x",
+		"gh api repos/o/r/issues -Fbody=x",
+		"gh api -X GET repos/o/r -F k=@/etc/passwd",
+		"gh api -X GET repos/o/r -F k=@-",
+		"gh api -X GET repos/o/r -Fk=@body.json",
+		"gh api -X GET repos/o/r -F=k=@/etc/hostname",
+		"gh api -X GET repos/o/r -F==@/etc/hostname",
+		"gh api -X GET repos/o/r --field k=@body.json",
+		"gh api --method=GET repos/o/r --field=k=@body.json",
+		"gh api https://example.com/x",
+		"gh api -X GET https://api.github.com/repos/o/r",
+		"gh api /graphql",
+		"gh api GRAPHQL",
+		"gh api -X GET /GraphQL",
+	]) {
+		await assertReserved(command, dir, "gh api");
+	}
+	assert.equal(calls(), "");
+});
+
 test(`a child's bash propagates a failing gh read`, async (t) => {
 	const calls = fakeGh(t, { exitCode: 3, stderr: "gh: run 1 not found" });
 	const dir = worktree(t);
@@ -478,9 +573,6 @@ test(`a child's bash refuses every gh command outside the allowed reads from any
 	const dir = worktree(t);
 
 	for (const [command, expected] of [
-		["gh api repos/owner/repo", "gh api"],
-		["gh api list -X DELETE", "gh api"],
-		["gh api view", "gh api"],
 		["gh workflow run ci", "gh workflow run"],
 		["gh pr create --fill", "gh pr create"],
 		["gh issue edit 1", "gh issue edit"],
