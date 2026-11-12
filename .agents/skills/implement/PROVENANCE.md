@@ -77,6 +77,8 @@ The upstream loop at `d81f3a1`: `tdd` at pre-agreed seams, type checks and singl
 
 27. Under issue #222, each context that uses the ticket reads it fresh from the tracker once, and this run passes each delegated context the ticket's identifier instead of its content. A scope note still never substitutes for the ticket.
 
+28. The completion line requires the requirement-tracing table and every finding rejected, applied, or decided by the developer, so `implement` owns the one definition of a complete handoff that `implement-spec` checks. The references point at `references/decision-recording.md` for the issue-comment rule instead of `SKILL.md`, and the round reference drops its restated copy of that rule.
+
 ## Approval
 
 Internal reuse under the MIT license was approved by the Issue #17 group specification. The `d81f3a1` material is approved through review of the pull request that introduces it.

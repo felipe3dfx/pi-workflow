@@ -10,9 +10,11 @@ A test exercises the system through a public interface at a seam agreed before t
 
 A test that reaches past the seam, into a private method, an internal collaborator, or a storage row the interface never exposes, tests the implementation instead of the behavior.
 
-## Three failure modes
+Some changes have no seam of their own. A schema migration or other generated artifact is tested through the behavior it enables; a data migration with real transformation logic is tested at that transformation, once per rule it applies. A removal needs no test of the absence unless a caller or a requirement depends on it, such as an endpoint that must answer not found or a revoked permission: delete or update the tests of the retired behavior instead. A template or partial is tested through the view or flow that serves it.
 
-Agent-written tests fail in three recognizable ways. Each one passes today and protects nothing tomorrow.
+## Four failure modes
+
+Agent-written tests fail in four recognizable ways. The first three pass today and protect nothing tomorrow; the fourth protects behavior at a price every later change pays.
 
 ### Tautological
 
@@ -26,7 +28,8 @@ The test breaks when the code changes form while behavior stays the same. Tells:
 
 - asserting which internal function was called, how often, or in what order;
 - testing a private method, or a helper the public interface already covers;
-- snapshotting incidental structure, such as markup or object shape, that no caller depends on;
+- snapshotting incidental structure, such as markup, object shape, or a declaration, that no caller depends on;
+- asserting a query plan or a timing that no caller observes;
 - a name that describes how the code works rather than what it guarantees.
 
 A refactor that breaks such a test teaches nothing, and the cost of fixing it lands on the next change.
@@ -41,6 +44,17 @@ A test double replaces something the code under test owns, or stands in for a bo
 - verifying through a side channel, such as querying the database after a write, instead of reading the result back through the interface.
 
 Doubles belong at system boundaries the team does not control: external services, time, randomness, and sometimes storage or the file system. Where a boundary is doubled, at least one test drives its failure path through the public interface. A boundary passed in as a narrow, operation-specific interface needs no conditional logic inside its double; a generic fetcher does, and that logic is where tests start to lie.
+
+### Cost out of proportion
+
+Every test runs on every change for the life of the suite, so its cost recurs. A test is out of proportion when it pays for a mechanism the behavior does not need. The consumer's testing standards say what counts as expensive; otherwise, real transaction commits and the database cleanup they force, threads, sockets, subprocesses, and large data volumes do. Tells:
+
+- an expensive mechanism where the behavior is observable without it, such as committing to observe a callback that can be captured inside the test's own transaction, or resetting database sequences no assertion reads;
+- an expensive test parametrized over combinations of inputs, or over an axis that never changes the asserted outcome, when the invariant needs one case per outcome and the other cases can run at a cheaper seam;
+- data far larger than the limit under test;
+- a case another test already covers at the same or a cheaper seam, such as one contract repeated per surface or channel.
+
+Place each pertinent case at the cheapest seam that observes it: input combinations, states, and rejections at a cheap seam, and the expensive mechanism only for the invariant that needs it, such as a real concurrent writer for a lock.
 
 ## Deeper modules, sturdier tests
 

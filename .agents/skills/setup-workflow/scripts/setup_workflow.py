@@ -392,84 +392,14 @@ def create_consumer_owned(
         target.write_text((assets / CODING_STANDARDS).read_text(encoding="utf-8"), encoding="utf-8")
         messages.append(f"wrote {target}")
     else:
-        messages.append(f"MISSING {target} (no approval; not written)")
+        desired = (assets / CODING_STANDARDS).read_text(encoding="utf-8")
+        preview = "".join(
+            difflib.unified_diff(
+                [], desired.splitlines(keepends=True), fromfile=str(target), tofile="rendered"
+            )
+        )
+        messages.append(f"{preview}MISSING {target} (no approval; not written)")
     return messages
-
-
-def cmd_render(
-    assets: Path, values_path: Path, tracker: str, repo: Path, approvals: list[str]
-) -> int:
-    agents_md = repo / "AGENTS.md"
-    require_contained([agents_md], repo)
-    if not agents_md.exists():
-        refuse("refused: root AGENTS.md is absent; the run stops before any write (step 2)")
-    if not agents_md.is_file():
-        refuse("refused: root AGENTS.md is not a regular file")
-    docs_dir = repo / "docs" / "agents"
-    expected_targets = {
-        target_name(template): docs_dir / target_name(template)
-        for template in selected_templates(tracker)
-    }
-    require_contained([docs_dir, *expected_targets.values()], repo)
-    if docs_dir.exists() and not docs_dir.is_dir():
-        refuse(f"refused: {docs_dir} exists but is not a directory")
-    if docs_dir.exists():
-        require_contained(list(docs_dir.glob("*.md")), repo)
-    for target in expected_targets.values():
-        if target.exists() and not target.is_file():
-            refuse(f"refused: {target} exists but is not a regular file")
-    approved = approved_target_names(approvals, {*expected_targets, CODING_STANDARDS})
-    domain_target = expected_targets["domain.md"]
-    values, errors = parse_values(values_path)
-    authority_errors = authority_value_errors(values, repo)
-    unrelated_templates = tuple(name for name in selected_templates(tracker) if name != "domain.md")
-    rendered, render_errors = render_templates(assets, values, tracker, unrelated_templates)
-    for error in errors + render_errors:
-        print(error, file=sys.stderr)
-    if errors or render_errors:
-        raise SystemExit(1)
-
-    domain_reason: str | None = None
-    if authority_errors:
-        domain_reason = "; ".join(authority_errors)
-    elif domain_target.exists():
-        try:
-            domain_content = domain_target.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            domain_reason = "expected UTF-8 text"
-        else:
-            domain_reason = domain_contract_error(domain_content, values, repo)
-    else:
-        domain_rendered, domain_reason = domain_template_rendering(assets, values, tracker, repo)
-        if domain_reason is None:
-            rendered.update(domain_rendered)
-    if domain_reason is not None:
-        print(f"WITHHELD {domain_target}: {domain_reason}", file=sys.stderr)
-
-    targets = {name: expected_targets[name] for name in rendered}
-    written: list[Path] = []
-    skipped: list[Path] = []
-    unapproved: list[Path] = []
-    for name, content in rendered.items():
-        target = targets[name]
-        if target.exists():
-            skipped.append(target)
-            continue
-        if name not in approved:
-            unapproved.append(target)
-            continue
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
-        written.append(target)
-    for target in written:
-        print(f"wrote {target}")
-    for target in skipped:
-        print(f"skipped (exists) {target}")
-    for target in unapproved:
-        print(f"MISSING {target} (no approval; not written)")
-    for message in create_consumer_owned(assets, docs_dir, approved, repo):
-        print(message)
-    return 0
 
 
 def domain_marker_offsets(content: str) -> tuple[list[int], list[int]]:
@@ -831,13 +761,17 @@ def domain_update_content(
     if authority_errors:
         print(f"WITHHELD {target}: {'; '.join(authority_errors)}", file=sys.stderr)
         return None
+    if not target.exists():
+        created, reason = domain_template_rendering(assets, values, tracker, repo)
+        if reason is not None:
+            print(f"WITHHELD {target}: {reason}", file=sys.stderr)
+            return None
+        return created["domain.md"]
     domain_rendered, domain_errors = render_templates(assets, values, tracker, ("domain.md",))
     if domain_errors:
         print(f"WITHHELD {target}: {'; '.join(domain_errors)}", file=sys.stderr)
         return None
     rendered = domain_rendered["domain.md"]
-    if not target.exists():
-        return rendered
     try:
         existing = target.read_text(encoding="utf-8")
     except UnicodeDecodeError:
@@ -909,6 +843,14 @@ def cmd_update(
                 target.write_text(desired, encoding="utf-8")
                 print(f"wrote {target}")
             else:
+                sys.stdout.writelines(
+                    difflib.unified_diff(
+                        [],
+                        desired.splitlines(keepends=True),
+                        fromfile=str(target),
+                        tofile="rendered",
+                    )
+                )
                 print(f"MISSING {target} (no approval; not written)")
             continue
         try:
@@ -1033,13 +975,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    render_parser = subparsers.add_parser("render")
-    render_parser.add_argument("--assets", required=True, type=Path)
-    render_parser.add_argument("--values", required=True, type=Path)
-    render_parser.add_argument("--tracker", required=True, choices=TRACKER_CHOICES)
-    render_parser.add_argument("--repo", required=True, type=Path)
-    render_parser.add_argument("--approve", action="append", default=[], metavar="FILE")
-
     diff_parser = subparsers.add_parser("diff")
     diff_parser.add_argument("--assets", required=True, type=Path)
     diff_parser.add_argument("--values", required=True, type=Path)
@@ -1065,10 +1000,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     arguments = build_parser().parse_args()
-    if arguments.command == "render":
-        return cmd_render(
-            arguments.assets, arguments.values, arguments.tracker, arguments.repo, arguments.approve
-        )
     if arguments.command == "diff":
         return cmd_diff(arguments.assets, arguments.values, arguments.tracker, arguments.repo)
     if arguments.command == "update":

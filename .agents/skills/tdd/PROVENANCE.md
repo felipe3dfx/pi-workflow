@@ -48,6 +48,8 @@ Grupo Ilao removed consumer-specific file and framework instructions; added appr
 
 From version 1.3.2, the seam note on what it catches and misses joins the existing coverage line as an optional brief note, when useful, rather than a mandatory note per seam, a new document, or a gate, and what a seam misses never waives a required behavior or pertinent case. The pristine-copy check moves from upstream's bug-diagnosis regression step to this skill, which owns writing the test, because the local `diagnose-bug` establishes cause and does not own the fix: it applies only when code or a fixture is deliberately mutated to prove a test can fail, uses a disposable, isolated copy for both the mutation and the test, is no mutation-testing phase, and replaces neither the reproducible assertion RED nor the review's run against the fixed point.
 
+Consumer evidence from a timed full run and a classification of the `ilaos-website` suite at immutable revision `91004c3266a0749dac6d06615a0dd54aba4a0493`, where tests in files using real transaction commits took most of the suite's time, added a fourth failure mode, cost out of proportion, and the rule that each pertinent case sits at the cheapest seam that observes it. The rubric now also says how changes without a seam of their own are tested: migrations and generated artifacts through the behavior they enable, removals through the retired behavior's tests, and templates through the view or flow that serves them; declaration snapshots, query plans, and timings joined the structure-sensitive tells.
+
 ## Approval
 
 Internal reuse under the MIT license was approved by the Issue #17 group specification. The `d81f3a1` material is approved through review of the pull request that introduces it.

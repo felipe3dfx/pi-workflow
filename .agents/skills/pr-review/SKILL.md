@@ -4,7 +4,7 @@ description: "Trigger: review a pull request as a whole for a human reviewer, or
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "1.4"
+  version: "1.5"
   provenance: derived
 ---
 
@@ -35,18 +35,14 @@ Resolve every source from what the repository configures, never assuming a provi
 
 ## Execution Steps
 
-1. **Pin** the base, the head SHA, and the commits; every finding refers to code at that head.
-2. **Review along three axes**, each dispatched to its own isolated context, in parallel when the harness allows. Give each axis the pinned base and head, its own sources by path or tracker identifier, never their content, and this skill's read-only rule; an axis receives no other axis's findings. Only when the harness cannot open another context, run the axes in this one, one at a time, and tell the reviewer they were not isolated. Each completes its own pass: Correctness when every requirement line maps to code or is reported missing, Standards and Decisions when every changed file has been read.
+1. **Pin** the base, the head SHA, and the commits, plus the head a prior review covered, if one exists; every finding refers to code at the pinned head SHA.
+2. **Review along three axes**, each dispatched to its own isolated context, in parallel when the harness allows. Give each axis the pinned base and head, its own sources by path or tracker identifier, never their content, and this skill's read-only rule; in a later round, add the prior head and the prior review's findings, each to the axis whose scope it falls under, Correctness when unclear, to verify each against the head and read the delta since the prior head with the code it affects, leaving unchanged code closed. An axis receives no other axis's findings. Only when the harness cannot open another context, run the axes in this one, one at a time, and tell the reviewer they were not isolated. Each completes its own pass: Correctness when every requirement line maps to code or is reported missing, Standards and Decisions when every changed file has been read.
    - **Correctness**: the change against its requirement and as a whole: missing, partial, or wrong behavior, effects on callers and sibling paths that share a changed invariant, and changes outside the requirement's scope.
    - **Standards**: style, the repository's standards, domain rules, architecture, and design quality, from the standards sources only.
    - **Decisions**: each new or modified decision record, and each significant departure from the repository's usual flow, architecture, or standards. Present its documented justification, benefits, costs, risks, and consequences, and what calls for human judgment. Never invent a motivation: say when none is documented. A departure is not wrong by being one, not every decision needs a record, and a defect belongs to the other axes.
-3. **Critique** the three axes' results together, after all return. It judges findings, not code, and never reviews again from scratch. For each finding, weigh evidence, context, necessity, impact, and proportionality, then keep it as a blocker or a warning, reclassify it, or discard it, giving the reason. A hypothetical possibility never becomes a requirement; a supported risk is never discarded for being rare. Group confirmed instances of one problem into one finding. Recover prior decisions and critiques when they exist, without requiring them. Keep every important decision visible, defect or not. Close with the Simplification Trade: the single kept risk whose acceptance would remove the most complexity, naming the responsibility behind it, the complexity removed, and whether the remaining failure is silent or loud. It only removes, never trades security, a binding contract, or a requirement, and the human reviewer decides it.
+3. **Critique** the three axes' results together, after all return. It judges findings, not code, and never reviews again from scratch. For each finding, weigh evidence, context, necessity, impact, and proportionality, then keep it as a blocker or a warning, reclassify it, or discard it, giving the reason. A hypothetical possibility never becomes a requirement; a supported risk is never discarded for being rare. Group confirmed instances of one problem into one finding. Recover prior decisions and critiques when they exist, without requiring them. Acknowledge a miss as the previous review's, and judge it on its own evidence. Keep every important decision visible, defect or not. Close with the Simplification Trade as [`review-critique` defines it](../review-critique/SKILL.md#simplification-trade), applied to the kept findings; draft it under the comment's simplification trade heading, or say there is none, and the human reviewer decides it.
 4. **Decide** the verdict: `APPROVE` when the review concluded with no blocker, `REQUEST_CHANGES` when a supported blocker remains. No other verdict exists.
 5. **Draft** the comment, the inline comments, and the event, as [the comment format](references/comment-format.md) defines; load it before drafting.
-
-## Later Rounds
-
-When the pull request carries a prior review, verify each of its findings against the current head and read the delta since the head it reviewed, with the code that delta affects; never reopen unchanged code by inertia. List first what is resolved, then classify what remains as not or partially resolved, introduced by the correction, genuinely new, or pre-existing and missed by the previous review. Acknowledge a miss as the previous review's, and judge it in critique on its own evidence.
 
 ## Publication
 

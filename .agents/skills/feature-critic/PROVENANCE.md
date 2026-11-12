@@ -48,6 +48,8 @@ The execution-scoped package capture, independent review lenses, finite transver
 
 Grupo Ilao transformed its feature-definition workflow specification into a direct, agent-agnostic read-only review contract. It preserves Domain Authority ownership, requires independent lenses, and records every finding's evidence, disposition, correction, acceptance, and reverification without taking over discovery or technical synthesis. Under issue #140 it was renamed `feature-critic`: each recommendation is weighed against need, evidence, impact, and complexity; findings are classified as demonstrated failures, substantiated risks, or speculative; simplifications state the complexity removed and the behavior preserved; justified complexity and infrequent but substantiated risks are kept; accepted adjustments are applied by `feature`, never by the critic; and the contract requires a sample of at least two sibling implementations, checks omitted shared capabilities the definition directly uses, defines the finding owner and traceable risk acceptance, and records package gaps as findings.
 
+1. Version 2.1 drops the "read-only authority review" input because nothing produces it; the critic now consumes only the Domain Authority Handoff, and the recorded evidence gap for an absent authority artifact refers to that handoff alone. The disposition class rules (blocker, warning with `risk accepted`, informative accepted or rejected) move verbatim to step 7 of `feature`, which owns disposition; the critic keeps the return of findings to `feature`, reverification by the owning lens of a recorded correction, accepted deviation, or disputed finding, and the upheld or `withdrawn` outcome of a dispute.
+
 ## Approval
 
 Grupo Ilao approved internal reuse under the MIT license.

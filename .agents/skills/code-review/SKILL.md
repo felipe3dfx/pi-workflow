@@ -4,7 +4,7 @@ description: "Trigger: review a ticket's diff inside the implementation loop, or
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "3.5.0"
+  version: "3.6.0"
   provenance: derived
 ---
 
@@ -48,7 +48,7 @@ Report requirements that are missing or partial, behavior the diff adds that the
 
 ### Valuable Tests brief
 
-Run each test file the diff adds or changes, whole, against the fixed point's production code, in a scratch checkout prepared and classified as the scratch evidence file says. Apply the rubric to every test the diff adds or changes: tautological tests, structure-sensitive tests, and mocks that hide failure or verify through a side channel. Also report a behavior the diff changes that has no test at its agreed seam, unless a no-valuable-test-seam exception is recorded. Name the failure mode for each finding. A finding is `hard` when a behavior agreed at a seam has no test, or its test cannot fail, including one that passes against the fixed point; every other rubric tell is `judgement`. A test skipped at an agreed seam never counts as passing: report it with its reason as that seam having no test, even where an exception is recorded; a pertinent case planned in a coverage line with no test, or only a skipped one, and a ticket requirement with no line in a handed-over tracing table are `hard` findings.
+Run each test file the diff adds or changes, whole, against the fixed point's production code, in a scratch checkout prepared and classified as the scratch evidence file says. Apply each of the rubric's failure modes to every test the diff adds or changes. Also report a behavior the diff changes that has no test at its agreed seam, unless a no-valuable-test-seam exception is recorded. Name the failure mode for each finding. A finding is `hard` when a behavior agreed at a seam has no test, or its test cannot fail, including one that passes against the fixed point; every other rubric tell is `judgement`. A test skipped at an agreed seam never counts as passing: report it with its reason as that seam having no test, even where an exception is recorded; a pertinent case planned in a coverage line with no test, or only a skipped one, and a ticket requirement with no line in a handed-over tracing table are `hard` findings.
 
 ## Output Contract
 

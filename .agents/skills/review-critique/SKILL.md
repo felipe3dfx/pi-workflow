@@ -4,7 +4,7 @@ description: "Trigger: judge code-review findings inside the implementation loop
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "3.2.0"
+  version: "3.3.0"
   provenance: original
 ---
 
@@ -22,8 +22,8 @@ This skill is read-only. It never edits, fixes, comments, commits, or publishes.
 
 ## Decision Gates
 
-- The report lacks an axis heading, or a finding lacks its ID or its location (a `file:line`, or a ticket or specification line): **blocked**. Name what is missing and return the report to `code-review`.
-- An axis reported that it had nothing to review: accept that and judge the other findings.
+- The report lacks the heading of an axis it ran: `Standards`, `Spec`, and `Valuable Tests` in a full report, each axis its opening line lists in a corrective report; or a finding lacks its ID or its location (a `file:line`, or a ticket or specification line): **blocked**. Name what is missing and return the report to `code-review`.
+- An axis reported that it had nothing to review, or reported itself **blocked**: accept that and judge the other axes' findings.
 
 ## Critique Procedure
 

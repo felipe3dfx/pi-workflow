@@ -49,6 +49,7 @@ The review of a whole pull request along independent axes that must not hide one
 13. Under issue #165, approvals with no pull-request playbook block and point to `setup-workflow` instead of linking its shipped rules.
 14. Under issue #218, each axis is dispatched to its own isolated context by default and receives no other axis's findings; the axes run in the invoking context only when the harness cannot open another one, and the reviewer is told. This replaces leaving isolation to the harness's choice.
 15. Under issue #222, each axis receives its sources by path or tracker identifier, never their content, so the requirement is read fresh in the axis that uses it instead of being copied from the invoking context.
+16. Later rounds reach the axes: step 1 pins the prior head, and each axis receives it with the prior findings whose scope falls under it, Correctness when unclear, verifies them against the head, and reads the delta with the code it affects. The separate later-rounds section is removed; its resolution tags stay in `references/comment-format.md`. The Simplification Trade points at `review-critique`'s definition, applied to the kept findings, instead of restating it, and is drafted under the comment's simplification trade heading.
 
 ## Approval
 

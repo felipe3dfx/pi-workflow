@@ -48,7 +48,7 @@ handoff from the upstream `SKILL.md`.
 
 Grupo Ilao replaced conversation-only synthesis and direct tracker publication
 with structural readiness validation, the feature-critic gate, an
-execution-scoped current package and review handoff, explicit ownership
+execution-scoped current package, explicit ownership
 returns, and orchestrator-owned publication. It added readiness and publication
 rules, consumer-authority boundaries, shared-capability invariants, verified
 publication of both artifacts before `PUBLISHED`, and the ticket-slicing
@@ -58,6 +58,8 @@ shape.
 In GitHub and Linear, the skill publishes or reuses the specification's parent
 ticket with preflight, preview, read-back, and `PUBLISHED` over three artifacts;
 hands the parent to `to-tickets`; and loads `codebase-design` by name.
+
+1. Version 1.7 makes publication preparation an explicit part of what `to-spec` owns: it validates readiness, synthesizes, and prepares the approval preview and publication controls, while the orchestrator performs each publication mutation. The "read-only authority review" and "review handoff" inputs are dropped because nothing produces them; readiness, the `feature-critic` report, the preview, publication identity and read-back, `PUBLISHED`, and the `to-tickets` handoff now key on the current package alone, and only the Domain Authority Handoff is consumed as a generated authority artifact.
 
 Under issue #165, approvals with no pull-request playbook block and point to `setup-workflow` instead of linking its shipped rules.
 

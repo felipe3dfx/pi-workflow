@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import difflib
 import importlib.util
 import re
 import shutil
@@ -156,29 +157,8 @@ class SetupWorkflowCliTests(unittest.TestCase):
             check=False,
         )
 
-    def run_render(self, values_path: Path) -> subprocess.CompletedProcess[str]:
-        return self.run_render_with(values_path, TARGET_NAMES)
-
-    def run_render_unapproved(self, values_path: Path) -> subprocess.CompletedProcess[str]:
-        return self.run_render_with(values_path, ())
-
-    def run_render_with(
-        self, values_path: Path, approvals: tuple[str, ...]
-    ) -> subprocess.CompletedProcess[str]:
-        arguments = [
-            "render",
-            "--assets",
-            str(self.assets),
-            "--values",
-            str(values_path),
-            "--tracker",
-            "none",
-            "--repo",
-            str(self.repo),
-        ]
-        for approval in approvals:
-            arguments += ["--approve", approval]
-        return self.run_script(*arguments)
+    def run_update_all(self, values_path: Path) -> subprocess.CompletedProcess[str]:
+        return self.run_update(values_path, *TARGET_NAMES)
 
     def run_diff(self, values_path: Path) -> subprocess.CompletedProcess[str]:
         return self.run_script(
@@ -221,7 +201,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
         self.glossary_map_script.unlink()
         values = self.write_values("values.txt", self.full_values())
 
-        result = self.run_render(values)
+        result = self.run_update_all(values)
 
         self.assertEqual(result.returncode, 1)
         self.assertIn("incomplete skill installation", result.stderr)
@@ -235,7 +215,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("invalid choice: 'glossary-map'", result.stderr)
 
-    def test_render_exposes_all_map_entries_without_a_fixed_selection(self) -> None:
+    def test_update_exposes_all_map_entries_without_a_fixed_selection(self) -> None:
         orders = self.repo / "contexts" / "Orders" / "GLOSSARY.md"
         billing = self.repo / "contexts" / "Billing" / "GLOSSARY.md"
         for glossary in (orders, billing):
@@ -254,7 +234,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
             .replace("absent (fallback-required)", "present (map-available)"),
         )
 
-        result = self.run_render(values)
+        result = self.run_update_all(values)
 
         self.assertEqual(result.returncode, 0, result.stderr)
         domain = (self.repo / "docs" / "agents" / "domain.md").read_text(encoding="utf-8")
@@ -268,7 +248,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
         self.assertIn("docs/agents/domain.md and the authority it resolves", workflow)
         self.assertNotIn("none (select per invocation)", workflow)
 
-    def test_render_preserves_lexical_symlinked_authority_paths(self) -> None:
+    def test_update_preserves_lexical_symlinked_authority_paths(self) -> None:
         glossary = self.repo / "contexts" / "orders" / "GLOSSARY.md"
         glossary.parent.mkdir(parents=True)
         glossary.write_text("# Orders\n", encoding="utf-8")
@@ -286,7 +266,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
             .replace("absent (fallback-required)", "present (map-available)"),
         )
 
-        map_result = self.run_render(map_values)
+        map_result = self.run_update_all(map_values)
 
         self.assertEqual(map_result.returncode, 0, map_result.stderr)
         map_domain = (self.repo / "docs" / "agents" / "domain.md").read_text(encoding="utf-8")
@@ -313,7 +293,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
             .replace("absent (fallback-required)", "present (root-selected)"),
         )
 
-        root_result = self.run_render(root_values)
+        root_result = self.run_update_all(root_values)
 
         self.assertEqual(root_result.returncode, 0, root_result.stderr)
         root_domain = (self.repo / "docs" / "agents" / "domain.md").read_text(encoding="utf-8")
@@ -324,7 +304,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
             f"IDENTICAL {self.repo / 'docs' / 'agents' / 'domain.md'}", root_diff_result.stdout
         )
 
-    def test_render_accepts_case_preserved_root_selected_authority(self) -> None:
+    def test_update_accepts_case_preserved_root_selected_authority(self) -> None:
         (self.repo / "glossary.md").write_text("# Root glossary\n", encoding="utf-8")
         values = self.write_values(
             "values.txt",
@@ -333,14 +313,14 @@ class SetupWorkflowCliTests(unittest.TestCase):
             .replace("absent (fallback-required)", "present (root-selected)"),
         )
 
-        result = self.run_render(values)
+        result = self.run_update_all(values)
 
         self.assertEqual(result.returncode, 0, result.stderr)
         domain = (self.repo / "docs" / "agents" / "domain.md").read_text(encoding="utf-8")
         self.assertIn("- Domain authority: `glossary.md`", domain)
         self.assertIn("Authority state: present (root-selected)", domain)
 
-    def test_render_withholds_invalid_domain_authority_but_writes_unrelated_playbooks(self) -> None:
+    def test_update_withholds_invalid_domain_authority_but_writes_unrelated_playbooks(self) -> None:
         cases = {
             "unknown-state": self.full_values().replace("absent (fallback-required)", "absent"),
             "fallback-external-path": self.full_values().replace(
@@ -354,7 +334,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
             with self.subTest(name=name):
                 values = self.write_values("values.txt", content)
 
-                result = self.run_render(values)
+                result = self.run_update_all(values)
 
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("WITHHELD", result.stderr)
@@ -368,7 +348,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
                 for path in docs.glob("*.md"):
                     path.unlink()
 
-    def test_render_and_diff_report_a_glossary_map_directory_without_traceback(self) -> None:
+    def test_update_and_diff_report_a_glossary_map_directory_without_traceback(self) -> None:
         (self.repo / "GLOSSARY-MAP.md").mkdir()
         values = self.write_values(
             "values.txt",
@@ -378,13 +358,13 @@ class SetupWorkflowCliTests(unittest.TestCase):
             .replace("absent (fallback-required)", "present (map-available)"),
         )
 
-        render_result = self.run_render(values)
+        created = self.run_update_all(values)
         diff_result = self.run_diff(values)
 
-        self.assertEqual(render_result.returncode, 0, render_result.stderr)
-        self.assertIn("WITHHELD", render_result.stderr)
-        self.assertIn("not a regular file", render_result.stderr)
-        self.assertNotIn("Traceback", render_result.stderr)
+        self.assertEqual(created.returncode, 0, created.stderr)
+        self.assertIn("WITHHELD", created.stderr)
+        self.assertIn("not a regular file", created.stderr)
+        self.assertNotIn("Traceback", created.stderr)
         self.assertTrue((self.repo / "docs" / "agents" / "workflow.md").is_file())
         self.assertEqual(diff_result.returncode, 0, diff_result.stderr)
         self.assertIn("FORM-DRIFT domain authority withheld", diff_result.stdout)
@@ -394,7 +374,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
         )
         self.assertNotIn("Traceback", diff_result.stderr)
 
-    def test_render_and_diff_withhold_a_glossary_map_target_control_character(self) -> None:
+    def test_update_and_diff_withhold_a_glossary_map_target_control_character(self) -> None:
         values = self.write_values(
             "values.txt",
             self.full_values()
@@ -406,19 +386,19 @@ class SetupWorkflowCliTests(unittest.TestCase):
             "## Contexts\n\n- [Orders](./contexts/GLOSSARY\x00.md)\n", encoding="utf-8"
         )
 
-        render_result = self.run_render(values)
+        created = self.run_update_all(values)
         diff_result = self.run_diff(values)
 
-        self.assertEqual(render_result.returncode, 0, render_result.stderr)
-        self.assertIn("WITHHELD", render_result.stderr)
-        self.assertIn("glossary target contains a control character", render_result.stderr)
+        self.assertEqual(created.returncode, 0, created.stderr)
+        self.assertIn("WITHHELD", created.stderr)
+        self.assertIn("glossary target contains a control character", created.stderr)
         self.assertTrue((self.repo / "docs" / "agents" / "workflow.md").is_file())
         self.assertEqual(diff_result.returncode, 0, diff_result.stderr)
         self.assertIn("FORM-DRIFT domain authority withheld", diff_result.stdout)
         self.assertIn("glossary target contains a control character", diff_result.stdout)
         self.assertNotIn("Traceback", diff_result.stderr)
 
-    def test_render_withholds_domain_for_a_retired_root_file_in_every_state(self) -> None:
+    def test_update_withholds_domain_for_a_retired_root_file_in_every_state(self) -> None:
         cases = {
             "context-fallback": ("CONTEXT.md", self.full_values()),
             "context-map-fallback": ("CONTEXT-MAP.md", self.full_values()),
@@ -437,7 +417,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
                     (self.repo / "GLOSSARY.md").unlink()
                 values = self.write_values("values.txt", content)
 
-                result = self.run_render(values)
+                result = self.run_update_all(values)
 
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("WITHHELD", result.stderr)
@@ -452,7 +432,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
 
     def test_diff_and_update_withhold_domain_for_a_retired_root_file(self) -> None:
         values = self.write_values("values.txt", self.full_values())
-        self.run_render(values)
+        self.run_update_all(values)
         domain = self.repo / "docs" / "agents" / "domain.md"
         rendered = domain.read_text(encoding="utf-8")
         (self.repo / "CONTEXT.md").write_text("# Retired\n", encoding="utf-8")
@@ -467,7 +447,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
         self.assertIn("retired root CONTEXT.md", update_result.stderr)
         self.assertEqual(domain.read_text(encoding="utf-8"), rendered)
 
-    def test_render_withholds_a_malformed_glossary_map_but_writes_unrelated_playbooks(self) -> None:
+    def test_update_withholds_a_malformed_glossary_map_but_writes_unrelated_playbooks(self) -> None:
         (self.repo / "GLOSSARY-MAP.md").write_text("## Contexts\n", encoding="utf-8")
         values = self.write_values(
             "values.txt",
@@ -477,7 +457,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
             .replace("absent (fallback-required)", "present (map-available)"),
         )
 
-        result = self.run_render(values)
+        result = self.run_update_all(values)
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("WITHHELD", result.stderr)
@@ -486,7 +466,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
         self.assertFalse((docs / "domain.md").exists())
         self.assertTrue((docs / "workflow.md").is_file())
 
-    def test_render_refuses_a_glossary_map_glossary_outside_the_repository(self) -> None:
+    def test_update_refuses_a_glossary_map_glossary_outside_the_repository(self) -> None:
         outside = self.root / "outside"
         outside.mkdir()
         (outside / "GLOSSARY.md").write_text("# Outside\n", encoding="utf-8")
@@ -504,13 +484,13 @@ class SetupWorkflowCliTests(unittest.TestCase):
             .replace("absent (fallback-required)", "present (map-available)"),
         )
 
-        result = self.run_render(values)
+        result = self.run_update_all(values)
 
         self.assertEqual(result.returncode, 1)
         self.assertIn("resolves outside the repository", result.stderr)
         self.assertFalse((self.repo / "docs" / "agents").exists())
 
-    def test_render_withholds_a_fixed_map_selection(self) -> None:
+    def test_update_withholds_a_fixed_map_selection(self) -> None:
         glossary = self.repo / "contexts" / "Orders" / "GLOSSARY.md"
         glossary.parent.mkdir(parents=True)
         glossary.write_text("# Orders\n", encoding="utf-8")
@@ -525,7 +505,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
             .replace("absent (fallback-required)", "present (map-available)"),
         )
 
-        result = self.run_render(values)
+        result = self.run_update_all(values)
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("WITHHELD", result.stderr)
@@ -551,7 +531,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
 
     def test_diff_reports_invalid_handoff_declaration_and_fallback_content(self) -> None:
         values = self.write_values("values.txt", self.full_values())
-        self.run_render(values)
+        self.run_update_all(values)
         domain = self.repo / "docs" / "agents" / "domain.md"
         domain.write_text(
             domain.read_text(encoding="utf-8").replace(
@@ -580,7 +560,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
 
         self.assertIn("non-authoritative empty authority region", fallback_result.stdout)
 
-    def test_render_and_diff_withhold_invalid_fallback_established_authority(self) -> None:
+    def test_update_and_diff_withhold_invalid_fallback_established_authority(self) -> None:
         values = self.write_values(
             "values.txt",
             self.full_values().replace(
@@ -611,11 +591,11 @@ class SetupWorkflowCliTests(unittest.TestCase):
                     encoding="utf-8",
                 )
 
-                render_result = self.run_render(values)
+                created = self.run_update_all(values)
                 diff_result = self.run_diff(values)
 
-                self.assertEqual(render_result.returncode, 0, render_result.stderr)
-                self.assertIn("WITHHELD", render_result.stderr)
+                self.assertEqual(created.returncode, 0, created.stderr)
+                self.assertIn("WITHHELD", created.stderr)
                 self.assertTrue((self.repo / "docs" / "agents" / "workflow.md").is_file())
                 self.assertEqual(diff_result.returncode, 0, diff_result.stderr)
                 self.assertIn("FORM-DRIFT domain authority withheld", diff_result.stdout)
@@ -625,19 +605,19 @@ class SetupWorkflowCliTests(unittest.TestCase):
                 for path in (self.repo / "docs" / "agents").glob("*.md"):
                     path.unlink()
 
-    def test_render_and_diff_withhold_invalid_utf8_domain_authority(self) -> None:
+    def test_update_and_diff_withhold_invalid_utf8_domain_authority(self) -> None:
         values = self.write_values("values.txt", self.full_values())
         docs = self.repo / "docs" / "agents"
         docs.mkdir(parents=True)
         (docs / "domain.md").write_bytes(b"\xff")
 
-        render_result = self.run_render(values)
+        created = self.run_update_all(values)
         diff_result = self.run_diff(values)
 
-        self.assertEqual(render_result.returncode, 0, render_result.stderr)
-        self.assertIn("WITHHELD", render_result.stderr)
-        self.assertIn("expected UTF-8 text", render_result.stderr)
-        self.assertNotIn("Traceback", render_result.stderr)
+        self.assertEqual(created.returncode, 0, created.stderr)
+        self.assertIn("WITHHELD", created.stderr)
+        self.assertIn("expected UTF-8 text", created.stderr)
+        self.assertNotIn("Traceback", created.stderr)
         self.assertTrue((docs / "workflow.md").is_file())
         self.assertEqual(diff_result.returncode, 0, diff_result.stderr)
         self.assertIn(f"DIFFERS {docs / 'domain.md'}", diff_result.stdout)
@@ -646,7 +626,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
 
     def test_diff_reports_fallback_established_without_a_glossary(self) -> None:
         values = self.write_values("values.txt", self.full_values())
-        self.run_render(values)
+        self.run_update_all(values)
         domain = self.repo / "docs" / "agents" / "domain.md"
         domain.write_text(
             domain.read_text(encoding="utf-8").replace(
@@ -669,20 +649,20 @@ class SetupWorkflowCliTests(unittest.TestCase):
     def test_missing_token_errors(self) -> None:
         values = self.write_values("values.txt", "TRACKER_CAPABILITY_STATE = unsupported\n")
 
-        result = self.run_render(values)
+        result = self.run_update_all(values)
 
         self.assertEqual(result.returncode, 1)
         self.assertIn("missing value for token WORKING_BASE", result.stderr)
         self.assertFalse((self.repo / "docs" / "agents").exists())
 
     def test_missing_authority_token_with_existing_contract_is_controlled(self) -> None:
-        self.run_render(self.write_values("initial-values.txt", self.full_values()))
+        self.run_update_all(self.write_values("initial-values.txt", self.full_values()))
         values = self.write_values(
             "values.txt",
             self.full_values().replace("DOMAIN_AUTHORITY_PATH = docs/agents/domain.md\n", ""),
         )
 
-        result = self.run_render(values)
+        result = self.run_update_all(values)
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("WITHHELD", result.stderr)
@@ -692,7 +672,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
     def test_extra_token_errors(self) -> None:
         values = self.write_values("values.txt", self.full_values() + "UNUSED_TOKEN = something\n")
 
-        result = self.run_render(values)
+        result = self.run_update_all(values)
 
         self.assertEqual(result.returncode, 1)
         self.assertIn("unused token in values file: UNUSED_TOKEN", result.stderr)
@@ -705,7 +685,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
             ),
         )
 
-        result = self.run_render(values)
+        result = self.run_update_all(values)
 
         self.assertEqual(result.returncode, 1)
         self.assertIn("invalid capability state for TRACKER_CAPABILITY_STATE", result.stderr)
@@ -713,36 +693,15 @@ class SetupWorkflowCliTests(unittest.TestCase):
     def test_marker_survives_verbatim(self) -> None:
         values = self.write_values("values.txt", self.full_values())
 
-        result = self.run_render(values)
+        result = self.run_update_all(values)
 
         self.assertEqual(result.returncode, 0, result.stderr)
         quality = (self.repo / "docs" / "agents" / "quality.md").read_text(encoding="utf-8")
         self.assertIn("{{FOCUSED_VALIDATION_COMMANDS}}", quality)
 
-    def test_existing_owned_file_is_never_overwritten(self) -> None:
-        values = self.write_values("values.txt", self.full_values())
-        docs_dir = self.repo / "docs" / "agents"
-        docs_dir.mkdir(parents=True)
-        domain_content = (
-            "# Hand-written\n\n"
-            "- Domain authority: `docs/agents/domain.md`\n"
-            "- Glossary map: `none (confirmed absent)`\n\n"
-            + DOMAIN_AUTHORITY_START
-            + "\nAuthority state: absent (fallback-required)\n"
-            + DOMAIN_AUTHORITY_END
-            + "\n"
-        )
-        (docs_dir / "domain.md").write_text(domain_content, encoding="utf-8")
-
-        result = self.run_render(values)
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((docs_dir / "domain.md").read_text(encoding="utf-8"), domain_content)
-        self.assertNotIn("WITHHELD", result.stderr)
-
     def test_diff_reports_identical_for_a_freshly_rendered_tree(self) -> None:
         values = self.write_values("values.txt", self.full_values())
-        self.run_render(values)
+        self.run_update_all(values)
 
         result = self.run_diff(values)
 
@@ -752,7 +711,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
 
     def test_diff_reports_differs_after_a_hand_edit(self) -> None:
         values = self.write_values("values.txt", self.full_values())
-        self.run_render(values)
+        self.run_update_all(values)
         (self.repo / "docs" / "agents" / "domain.md").write_text(
             "edited by hand\n", encoding="utf-8"
         )
@@ -764,7 +723,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
 
     def test_diff_preserves_a_populated_domain_authority_region(self) -> None:
         values = self.write_values("values.txt", self.full_values())
-        self.run_render(values)
+        self.run_update_all(values)
         domain = self.repo / "docs" / "agents" / "domain.md"
         content = domain.read_text(encoding="utf-8").replace(
             DOMAIN_AUTHORITY_START
@@ -787,7 +746,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(f"IDENTICAL {domain}", result.stdout)
 
-    def test_render_withholds_a_malformed_domain_authority_template(self) -> None:
+    def test_update_withholds_a_malformed_domain_authority_template(self) -> None:
         values = self.write_values("values.txt", self.full_values())
         (self.assets / "domain.md").write_text(
             "# Domain\n- Domain authority: `{{DOMAIN_AUTHORITY_PATH}}`\n"
@@ -795,7 +754,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-        result = self.run_render(values)
+        result = self.run_update_all(values)
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("WITHHELD", result.stderr)
@@ -804,7 +763,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
         self.assertFalse((docs / "domain.md").exists())
         self.assertTrue((docs / "workflow.md").is_file())
 
-    def test_render_withholds_embedded_domain_authority_markers(self) -> None:
+    def test_update_withholds_embedded_domain_authority_markers(self) -> None:
         values = self.write_values("values.txt", self.full_values())
         docs = self.repo / "docs" / "agents"
         docs.mkdir(parents=True)
@@ -814,14 +773,14 @@ class SetupWorkflowCliTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-        result = self.run_render(values)
+        result = self.run_update_all(values)
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("WITHHELD", result.stderr)
         self.assertIn("expected exactly one start marker", result.stderr)
         self.assertTrue((docs / "workflow.md").is_file())
 
-    def test_render_withholds_duplicate_or_reversed_domain_authority_markers(self) -> None:
+    def test_update_withholds_duplicate_or_reversed_domain_authority_markers(self) -> None:
         values = self.write_values("values.txt", self.full_values())
         cases = {
             "duplicate": DOMAIN_AUTHORITY_START
@@ -839,7 +798,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
                 domain = docs / "domain.md"
                 domain.write_text(content, encoding="utf-8")
 
-                result = self.run_render(values)
+                result = self.run_update_all(values)
 
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("WITHHELD", result.stderr)
@@ -852,7 +811,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
 
     def test_diff_accepts_crlf_domain_authority_markers(self) -> None:
         values = self.write_values("values.txt", self.full_values())
-        self.run_render(values)
+        self.run_update_all(values)
         domain = self.repo / "docs" / "agents" / "domain.md"
         domain.write_bytes(domain.read_bytes().replace(b"\n", b"\r\n"))
 
@@ -861,14 +820,14 @@ class SetupWorkflowCliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(f"IDENTICAL {domain}", result.stdout)
 
-    def test_render_withholds_a_legacy_domain_contract_without_markers(self) -> None:
+    def test_update_withholds_a_legacy_domain_contract_without_markers(self) -> None:
         values = self.write_values("values.txt", self.full_values())
         docs = self.repo / "docs" / "agents"
         docs.mkdir(parents=True)
         domain = docs / "domain.md"
         domain.write_text("# Legacy domain contract\n", encoding="utf-8")
 
-        result = self.run_render(values)
+        result = self.run_update_all(values)
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("WITHHELD", result.stderr)
@@ -886,7 +845,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
         self.assertIn("already present", result.stdout)
         self.assertEqual((self.repo / "AGENTS.md").read_text(encoding="utf-8"), before)
 
-    def test_render_refuses_when_destination_resolves_outside_the_repo(self) -> None:
+    def test_update_refuses_when_destination_resolves_outside_the_repo(self) -> None:
         outside = self.root / "outside"
         outside.mkdir()
         (self.repo / "docs").mkdir()
@@ -900,28 +859,28 @@ class SetupWorkflowCliTests(unittest.TestCase):
             with self.subTest(malformed_values="WORKING_BASE = \n" in content):
                 values = self.write_values("values.txt", content)
 
-                result = self.run_render(values)
+                result = self.run_update_all(values)
 
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("resolves outside the repository", result.stderr)
                 self.assertEqual(list(outside.iterdir()), [])
 
-    def test_render_refuses_when_root_agents_md_is_absent(self) -> None:
+    def test_update_refuses_when_root_agents_md_is_absent(self) -> None:
         values = self.write_values("values.txt", self.full_values())
         (self.repo / "AGENTS.md").unlink()
 
-        result = self.run_render(values)
+        result = self.run_update_all(values)
 
         self.assertEqual(result.returncode, 1)
         self.assertIn("refused: root AGENTS.md is absent", result.stderr)
         self.assertFalse((self.repo / "docs" / "agents").exists())
 
-    def test_render_refuses_on_an_empty_value(self) -> None:
+    def test_update_refuses_on_an_empty_value(self) -> None:
         values = self.write_values(
             "values.txt", self.full_values().replace("WORKING_BASE = main\n", "WORKING_BASE = \n")
         )
 
-        result = self.run_render(values)
+        result = self.run_update_all(values)
 
         self.assertEqual(result.returncode, 1)
         self.assertIn("empty value for WORKING_BASE", result.stderr)
@@ -968,7 +927,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
         self.assertIn("resolves outside the repository", result.stderr)
         self.assertNotIn("SECRET", result.stdout)
 
-    def test_render_refuses_when_agents_md_resolves_outside_the_repo(self) -> None:
+    def test_update_refuses_when_agents_md_resolves_outside_the_repo(self) -> None:
         outside = self.root / "outside"
         outside.mkdir()
         (outside / "AGENTS.md").write_text("# Elsewhere\n", encoding="utf-8")
@@ -976,7 +935,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
         (self.repo / "AGENTS.md").symlink_to(outside / "AGENTS.md")
         values = self.write_values("values.txt", self.full_values())
 
-        result = self.run_render(values)
+        result = self.run_update_all(values)
 
         self.assertEqual(result.returncode, 1)
         self.assertIn("resolves outside the repository", result.stderr)
@@ -1018,24 +977,24 @@ class SetupWorkflowCliTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("resolves outside the repository", result.stderr)
 
-    def test_render_refuses_when_agents_md_is_a_directory(self) -> None:
+    def test_update_refuses_when_agents_md_is_a_directory(self) -> None:
         values = self.write_values("values.txt", self.full_values())
         (self.repo / "AGENTS.md").unlink()
         (self.repo / "AGENTS.md").mkdir()
 
-        result = self.run_render(values)
+        result = self.run_update_all(values)
 
         self.assertEqual(result.returncode, 1)
         self.assertIn("AGENTS.md is not a regular file", result.stderr)
         self.assertFalse((self.repo / "docs").exists())
 
-    def test_render_refuses_existing_playbook_directory_before_writing(self) -> None:
+    def test_update_refuses_existing_playbook_directory_before_writing(self) -> None:
         values = self.write_values("values.txt", self.full_values())
         docs = self.repo / "docs" / "agents"
         docs.mkdir(parents=True)
         (docs / "domain.md").mkdir()
 
-        result = self.run_render(values)
+        result = self.run_update_all(values)
 
         self.assertEqual(result.returncode, 1)
         self.assertIn("domain.md exists but is not a regular file", result.stderr)
@@ -1176,7 +1135,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
 
     def test_update_writes_an_approved_contract_change_and_preserves_recorded_values(self) -> None:
         values = self.write_values("values.txt", self.full_values())
-        self.run_render(values)
+        self.run_update_all(values)
         (self.assets / "workflow.md").write_text(
             (self.assets / "workflow.md").read_text(encoding="utf-8")
             + "\n## New Section\n\nFixed text.\n",
@@ -1216,7 +1175,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
                 "FOCUSED_VALIDATION_COMMANDS = make check",
             ),
         )
-        self.run_render(recorded)
+        self.run_update_all(recorded)
         values = self.write_values("values.txt", self.full_values())
 
         result = self.run_update(values, "quality.md")
@@ -1229,7 +1188,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
 
     def test_update_writes_nothing_without_approval(self) -> None:
         values = self.write_values("values.txt", self.full_values())
-        self.run_render(values)
+        self.run_update_all(values)
         workflow = self.repo / "docs" / "agents" / "workflow.md"
         (self.assets / "workflow.md").write_text(
             (self.assets / "workflow.md").read_text(encoding="utf-8") + "\n## New Section\n",
@@ -1245,7 +1204,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
 
     def test_update_reports_identical_and_writes_nothing(self) -> None:
         values = self.write_values("values.txt", self.full_values())
-        self.run_render(values)
+        self.run_update_all(values)
         docs = self.repo / "docs" / "agents"
         before = {path.name: path.read_text(encoding="utf-8") for path in docs.glob("*.md")}
 
@@ -1273,6 +1232,42 @@ class SetupWorkflowCliTests(unittest.TestCase):
 
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assertTrue((docs / "workflow.md").is_file())
+
+    def test_unapproved_update_previews_a_missing_playbook_as_a_diff_from_empty(self) -> None:
+        values = self.write_values("values.txt", self.full_values())
+        target = self.repo / "docs" / "agents" / "workflow.md"
+
+        preview = self.run_update(values)
+
+        self.assertEqual(preview.returncode, 0, preview.stderr)
+        self.assertFalse(target.exists())
+        self.assertEqual(self.run_update(values, "workflow.md").returncode, 0)
+        written = target.read_text(encoding="utf-8")
+        expected = "".join(
+            difflib.unified_diff(
+                [], written.splitlines(keepends=True), fromfile=str(target), tofile="rendered"
+            )
+        )
+        self.assertIn(expected + f"MISSING {target} (no approval; not written)", preview.stdout)
+
+    def test_unapproved_update_previews_a_missing_coding_standards_as_a_diff_from_empty(
+        self,
+    ) -> None:
+        values = self.write_values("values.txt", self.full_values())
+        target = self.repo / "docs" / "agents" / "coding-standards.md"
+
+        preview = self.run_update(values)
+
+        self.assertEqual(preview.returncode, 0, preview.stderr)
+        self.assertFalse(target.exists())
+        self.assertEqual(self.run_update(values, "coding-standards.md").returncode, 0)
+        written = target.read_text(encoding="utf-8")
+        expected = "".join(
+            difflib.unified_diff(
+                [], written.splitlines(keepends=True), fromfile=str(target), tofile="rendered"
+            )
+        )
+        self.assertIn(expected + f"MISSING {target} (no approval; not written)", preview.stdout)
 
     def test_update_refuses_an_unknown_approval_name(self) -> None:
         values = self.write_values("values.txt", self.full_values())
@@ -1316,10 +1311,10 @@ class SetupWorkflowCliTests(unittest.TestCase):
 
         self.assertEqual(module.recorded_tokens(template, existing), {"A"})
 
-    def test_render_writes_nothing_without_approval(self) -> None:
+    def test_update_creates_no_missing_playbook_without_approval(self) -> None:
         values = self.write_values("values.txt", self.full_values())
 
-        result = self.run_render_unapproved(values)
+        result = self.run_update(values)
 
         self.assertEqual(result.returncode, 0, result.stderr)
         agents = self.repo / "docs" / "agents"
@@ -1328,7 +1323,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
 
     def test_update_writes_approved_files_and_refuses_a_foreign_section_in_one_batch(self) -> None:
         values = self.write_values("values.txt", self.full_values())
-        self.run_render(values)
+        self.run_update_all(values)
         docs = self.repo / "docs" / "agents"
         quality = docs / "quality.md"
         quality.write_text(
@@ -1363,7 +1358,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
             "TEST_CONVENTIONS = docs/agents/testing.md\n"
             "TEST_EXECUTION_CONSTRAINTS = docker compose up\n"
         )
-        self.run_render(self.write_values("recorded.txt", values_content))
+        self.run_update_all(self.write_values("recorded.txt", values_content))
         marker_values = self.write_values(
             "marker.txt",
             values_content.replace(
@@ -1417,7 +1412,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
 
     def test_update_rewrites_the_domain_shell_and_preserves_the_authority_region(self) -> None:
         values = self.write_values("values.txt", self.full_values())
-        self.run_render(values)
+        self.run_update_all(values)
         domain = self.repo / "docs" / "agents" / "domain.md"
         domain.write_text(
             domain.read_text(encoding="utf-8").replace(
@@ -1480,11 +1475,11 @@ class SetupWorkflowCliTests(unittest.TestCase):
     def use_real_assets(self) -> None:
         self.assets = REAL_ASSETS
 
-    def test_render_ships_the_fixed_commit_and_pull_request_conventions(self) -> None:
+    def test_update_ships_the_fixed_commit_and_pull_request_conventions(self) -> None:
         self.use_real_assets()
         values = self.write_values("values.txt", self.real_assets_values())
 
-        result = self.run_render_with(values, (*TARGET_NAMES, "coding-standards.md"))
+        result = self.run_update(values, *TARGET_NAMES, "coding-standards.md")
 
         self.assertEqual(result.returncode, 0, result.stderr)
         playbook = (self.repo / "docs" / "agents" / "pull-requests.md").read_text(encoding="utf-8")
@@ -1501,13 +1496,13 @@ class SetupWorkflowCliTests(unittest.TestCase):
         self.assertNotIn("{{PULL_REQUEST_BRANCH_RULES}}", playbook)
         self.assertTrue((self.repo / "docs" / "agents" / "coding-standards.md").is_file())
 
-    def test_render_ships_the_scratch_evidence_isolation(self) -> None:
+    def test_update_ships_the_scratch_evidence_isolation(self) -> None:
         self.use_real_assets()
         values = self.write_values(
             "values.txt", self.real_assets_values(SCRATCH_ISOLATION="TEST_DB_NAME per worktree")
         )
 
-        result = self.run_render_with(values, (*TARGET_NAMES, "coding-standards.md"))
+        result = self.run_update(values, *TARGET_NAMES, "coding-standards.md")
 
         self.assertEqual(result.returncode, 0, result.stderr)
         quality = (self.repo / "docs" / "agents" / "quality.md").read_text(encoding="utf-8")
@@ -1520,7 +1515,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
             f"{token} = {value}\n" for token, value in lines.items()
         )
 
-    def test_render_and_update_ship_the_tracker_comment_and_closure_lines_of_every_tracker(
+    def test_update_ships_the_tracker_comment_and_closure_lines_of_every_tracker(
         self,
     ) -> None:
         self.use_real_assets()
@@ -1568,9 +1563,9 @@ class SetupWorkflowCliTests(unittest.TestCase):
                     "issue-tracker.md",
                 )
 
-                render = self.run_script("render", *arguments)
+                created = self.run_script("update", *arguments)
 
-                self.assertEqual(render.returncode, 0, render.stderr)
+                self.assertEqual(created.returncode, 0, created.stderr)
                 rendered = playbook.read_text(encoding="utf-8")
                 self.assertNotIn("{{", rendered)
                 phrases = [*tracker_phrases, events, shape, override, qa_format]
@@ -1637,7 +1632,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
                     "--approve",
                     "issue-tracker.md",
                 )
-                self.assertEqual(self.run_script("render", *arguments).returncode, 0)
+                self.assertEqual(self.run_script("update", *arguments).returncode, 0)
                 rendered = playbook.read_text(encoding="utf-8")
                 old_sentence = f"Append progress or decisions according to `{recorded_value}`."
                 new_sentence = (
@@ -1691,8 +1686,8 @@ class SetupWorkflowCliTests(unittest.TestCase):
                     "--approve",
                     "issue-tracker.md",
                 )
-                render = self.run_script("render", *arguments)
-                self.assertEqual(render.returncode, 0, render.stderr)
+                created = self.run_script("update", *arguments)
+                self.assertEqual(created.returncode, 0, created.stderr)
                 recorded = "".join(
                     "- Title: `[Spec] <summary>`\n- Body: `## Context, ## Scope`\n"
                     if line.startswith("- Title")
@@ -1746,20 +1741,20 @@ class SetupWorkflowCliTests(unittest.TestCase):
                 self.assertIn(f"unused token in values file: {token}", result.stderr)
                 self.assertFalse((self.repo / "docs" / "agents" / "issue-tracker.md").exists())
 
-    def test_render_records_the_child_integration_mode_in_the_review_policy(self) -> None:
+    def test_update_records_the_child_integration_mode_in_the_review_policy(self) -> None:
         self.use_real_assets()
         values = self.write_values(
             "values.txt", self.real_assets_values() + "CHILD_INTEGRATION = direct\n"
         )
 
-        result = self.run_render_with(values, TARGET_NAMES)
+        result = self.run_update(values, *TARGET_NAMES)
 
         self.assertEqual(result.returncode, 0, result.stderr)
         playbook = (self.repo / "docs" / "agents" / "workflow.md").read_text(encoding="utf-8")
         review_policy = playbook.split("## Review Policy")[1].split("## Ownership")[0]
         self.assertIn("Child integration: `direct`", review_policy)
 
-    def test_render_records_each_approval_policy_level(self) -> None:
+    def test_update_records_each_approval_policy_level(self) -> None:
         self.use_real_assets()
         for policy in ("every-step", "external-only", "autonomous"):
             with self.subTest(policy=policy):
@@ -1769,14 +1764,14 @@ class SetupWorkflowCliTests(unittest.TestCase):
                 playbook = self.repo / "docs" / "agents" / "workflow.md"
                 playbook.unlink(missing_ok=True)
 
-                result = self.run_render_with(values, ("workflow.md",))
+                result = self.run_update(values, "workflow.md")
 
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn(
                     f"- Approval policy: `{policy}`", playbook.read_text(encoding="utf-8")
                 )
 
-    def test_render_refuses_an_unknown_approval_policy(self) -> None:
+    def test_update_refuses_an_unknown_approval_policy(self) -> None:
         self.use_real_assets()
         for policy in ("ask-sometimes", "none (confirmed absent)"):
             with self.subTest(policy=policy):
@@ -1784,7 +1779,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
                     "values.txt", self.real_assets_values(APPROVAL_POLICY=policy)
                 )
 
-                result = self.run_render_with(values, TARGET_NAMES)
+                result = self.run_update(values, *TARGET_NAMES)
 
                 self.assertEqual(result.returncode, 1)
                 self.assertIn(f"invalid approval policy: {policy!r}", result.stderr)
@@ -1793,7 +1788,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
     def test_update_brings_an_old_playbook_up_to_date_and_keeps_recorded_values(self) -> None:
         self.use_real_assets()
         values = self.write_values("values.txt", self.real_assets_values())
-        self.run_render_with(values, (*TARGET_NAMES, "coding-standards.md"))
+        self.run_update(values, *TARGET_NAMES, "coding-standards.md")
         playbook = self.repo / "docs" / "agents" / "pull-requests.md"
         playbook.write_text(OLD_PULL_REQUEST_PLAYBOOK, encoding="utf-8")
         before = playbook.read_text(encoding="utf-8")
@@ -1810,20 +1805,18 @@ class SetupWorkflowCliTests(unittest.TestCase):
         self.assertIn("`forgejo`", updated)
         self.assertIn("state: supported", updated)
 
-    def test_update_and_render_leave_existing_coding_standards_untouched(self) -> None:
+    def test_update_leaves_existing_coding_standards_untouched(self) -> None:
         self.use_real_assets()
         values = self.write_values("values.txt", self.real_assets_values())
-        self.run_render_with(values, TARGET_NAMES)
+        self.run_update(values, *TARGET_NAMES)
         standards = self.repo / "docs" / "agents" / "coding-standards.md"
         standards.write_text("# Ours\n\n## Style\n\n{{NOT_A_TOKEN}}\nuse tabs\n", encoding="utf-8")
         before = standards.read_bytes()
 
         update = self.run_update(values, *TARGET_NAMES, "coding-standards.md")
-        render = self.run_render_with(values, (*TARGET_NAMES, "coding-standards.md"))
         diff = self.run_diff(values)
 
         self.assertEqual(update.returncode, 0, update.stderr)
-        self.assertEqual(render.returncode, 0, render.stderr)
         self.assertEqual(standards.read_bytes(), before)
         self.assertNotIn("coding-standards.md", diff.stdout)
 
@@ -1832,7 +1825,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
         values = self.write_values("values.txt", self.real_assets_values())
         standards = self.repo / "docs" / "agents" / "coding-standards.md"
 
-        self.run_render_with(values, TARGET_NAMES)
+        self.run_update(values, *TARGET_NAMES)
         self.assertFalse(standards.exists())
 
         self.run_update(values, "coding-standards.md")
@@ -1845,13 +1838,13 @@ class SetupWorkflowCliTests(unittest.TestCase):
                 "values.txt", self.real_assets_values() + f"{token} = anything\n"
             )
 
-            result = self.run_render_with(values, TARGET_NAMES)
+            result = self.run_update(values, *TARGET_NAMES)
 
             self.assertEqual(result.returncode, 1)
             self.assertIn(token, result.stderr)
             self.assertFalse((self.repo / "docs" / "agents" / "pull-requests.md").exists())
 
-    def test_render_emits_an_unsupported_capability_as_one_line_with_its_evidence(self) -> None:
+    def test_update_emits_an_unsupported_capability_as_one_line_with_its_evidence(self) -> None:
         self.use_real_assets()
         values = self.write_values(
             "values.txt",
@@ -1862,7 +1855,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
             ),
         )
 
-        result = self.run_render_with(values, TARGET_NAMES)
+        result = self.run_update(values, *TARGET_NAMES)
 
         self.assertEqual(result.returncode, 0, result.stderr)
         quality = (self.repo / "docs" / "agents" / "quality.md").read_text(encoding="utf-8")
@@ -1873,7 +1866,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
             quality,
         )
 
-    def test_render_groups_the_confirmed_absent_fields_of_a_supported_capability(self) -> None:
+    def test_update_groups_the_confirmed_absent_fields_of_a_supported_capability(self) -> None:
         self.use_real_assets()
         values = self.write_values(
             "values.txt",
@@ -1884,7 +1877,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
             ),
         )
 
-        result = self.run_render_with(values, TARGET_NAMES)
+        result = self.run_update(values, *TARGET_NAMES)
 
         self.assertEqual(result.returncode, 0, result.stderr)
         quality = (self.repo / "docs" / "agents" / "quality.md").read_text(encoding="utf-8")
@@ -1900,7 +1893,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
             quality,
         )
 
-    def test_render_never_compacts_a_field_holding_an_unresolved_marker(self) -> None:
+    def test_update_never_compacts_a_field_holding_an_unresolved_marker(self) -> None:
         self.use_real_assets()
         values = self.write_values(
             "values.txt",
@@ -1913,7 +1906,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
             ),
         )
 
-        result = self.run_render_with(values, TARGET_NAMES)
+        result = self.run_update(values, *TARGET_NAMES)
 
         self.assertEqual(result.returncode, 0, result.stderr)
         quality = (self.repo / "docs" / "agents" / "quality.md").read_text(encoding="utf-8")
@@ -1933,7 +1926,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
             quality,
         )
 
-    def test_render_compacts_scratch_evidence_and_mutation_testing(self) -> None:
+    def test_update_compacts_scratch_evidence_and_mutation_testing(self) -> None:
         self.use_real_assets()
         for state, expected in (
             (
@@ -1959,7 +1952,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
                     ),
                 )
 
-                result = self.run_render_with(values, TARGET_NAMES)
+                result = self.run_update(values, *TARGET_NAMES)
 
                 self.assertEqual(result.returncode, 0, result.stderr)
                 quality = (self.repo / "docs" / "agents" / "quality.md").read_text(encoding="utf-8")
@@ -1983,7 +1976,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
                 FORMATTING_CAPABILITY_LIMITS="none (confirmed absent)",
             ),
         )
-        self.run_render_with(values, TARGET_NAMES)
+        self.run_update(values, *TARGET_NAMES)
         quality = self.repo / "docs" / "agents" / "quality.md"
         compact = quality.read_text(encoding="utf-8")
         long_form = (
@@ -2033,9 +2026,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
             "SECURITY_CAPABILITY_EVIDENCE": "no dependency audit in CI",
             "FORMATTING_CAPABILITY_LIMITS": "none (confirmed absent)",
         }
-        self.run_render_with(
-            self.write_values("values.txt", self.real_assets_values(**recorded)), TARGET_NAMES
-        )
+        self.run_update_all(self.write_values("values.txt", self.real_assets_values(**recorded)))
         quality = self.repo / "docs" / "agents" / "quality.md"
         before = quality.read_bytes()
         for token in recorded:

@@ -60,6 +60,7 @@ The review of a diff since a fixed point; separate axes run in parallel isolated
 14. When the harness offers no scratch mechanism, the Valuable Tests axis prepares scratch itself as a separate checkout of the fixed point under the consumer's recorded commands and isolation, never its invoker; a blocked axis names that owner and what the consumer must record under Scratch Evidence, without editing it.
 15. Signing is no longer a review precondition: git applies the repository's signing configuration, and `implement` warns once per ticket on an unsigned head, as ADR 0035 records. A report with the Valuable Tests axis blocked on missing evidence states it as blocked, apart from findings.
 16. Under issue #222, the reviewer collects each ticket and specification by identifier and every axis reads them fresh from the tracker, instead of the reviewer reading them and handing their content to the axes.
+17. The Valuable Tests axis applies every failure mode the rubric defines, instead of naming three, so the rubric's cost-out-of-proportion mode is graded too.
 
 ## Upstream review
 

@@ -71,12 +71,23 @@ only when the problem, user, or outcome cannot be recovered, an important
 choice is open, a material conflict remains, or the developer asks for a
 stress test, and proposes its returned decisions as a brief delta whose
 acceptance closes the interview. Product discovery, authority and approval
-contracts, critic disposition rules, brief deltas, and prototype ownership are
-unchanged. The major version marks the new required install dependency:
+contracts, brief deltas, and prototype ownership are unchanged. The major version marks the new required install dependency:
 consumers that install `feature` must also install `grilling`. The issue #15
 material above remains the unchanged internal original source; no Matt Pocock
 material was copied into `feature`, and the upstream `grilling` material is
 recorded in that skill's own provenance.
+
+1. Version 2.1 moves the critic disposition class rules verbatim from
+   `feature-critic` into step 7 of the discovery loop: a blocker closes only
+   when corrected, a warning when corrected or with the developer's explicit
+   `risk accepted` recorded with who, why, and source, an informative finding
+   when `accepted` or `rejected` with a reason, and a disputed finding returns
+   to its lens and is recorded `withdrawn` when withdrawn. The rules are
+   unchanged in meaning; ownership of their application moves to `feature`,
+   which already owns disposition. The generic "generated authority artifact"
+   becomes the Domain Authority Handoff, since no skill produces the read-only
+   authority review, so the only authority artifact `feature` admits is the Domain Authority Handoff; its absence stays the one
+   admissible gap.
 
 ## Approval
 

@@ -4,7 +4,7 @@ description: "Trigger: implement one approved ticket from the tracker. Build it 
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "4.9"
+  version: "4.10"
   provenance: derived
 ---
 
@@ -60,4 +60,4 @@ A prose handoff with:
 - decisions, deviations, accepted risks, and the approved issue comments;
 - blockers or the cancellation point.
 
-Complete only with green focused checks, every finding at a verdict, and the head's review report. Next: `create-pr` publishes the branch, and `qa-impact` runs on the pushed head; as a `direct` child, `implement-spec` integrates it instead.
+Complete only with green focused checks, the tracing table, every finding rejected, applied, or decided by the developer, and the head's review report. Next: `create-pr` publishes the branch, and `qa-impact` runs on the pushed head; as a `direct` child, `implement-spec` integrates it instead.

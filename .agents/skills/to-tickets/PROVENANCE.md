@@ -111,6 +111,8 @@ capture IDs or propagated hashes, maintain distributed workflow state, or
 supersede the issue #16/group-spec authorities. The frontmatter was normalized
 to this repository's required shape.
 
+1. Version 1.8 drops the "read-only authority review" and "review handoff" inputs because nothing produces them: the Definition Handoff is verified, cited, and previewed by specification, review, and package alone, and the admissible authority gap is a missing Domain Authority Handoff, with a present malformed, blocked, stale, or conflicting one still blocking.
+
 Under issue #165, approvals with no pull-request playbook block and point to `setup-workflow` instead of linking its shipped rules.
 
 ## Upstream review

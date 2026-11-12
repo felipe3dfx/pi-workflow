@@ -12,7 +12,7 @@ Apply the scratch evidence gate in step 4; Valuable Tests blocks on missing evid
 
 After acceptance, the run continues through Critique and Fix, steps 5–6, to the handoff as usual.
 
-An accepted block is an accepted risk: publish it as the append-only Spanish issue comment under SKILL.md's issue-comment rule, after its approval preview where the policy asks, and carry it in the handoff's accepted risks. Report the axis as blocked and accepted, never as reviewed, passed, or approved. An accepted block does not prevent completion.
+An accepted block is an accepted risk: publish it as the append-only Spanish issue comment per [decision recording](decision-recording.md), after its approval preview where the policy asks, and carry it in the handoff's accepted risks. Report the axis as blocked and accepted, never as reviewed, passed, or approved. An accepted block does not prevent completion.
 
 The acceptance holds for the whole ticket, across later heads and rounds, while its cause is unchanged. A different cause, such as a scratch setup failure, asks again.
 

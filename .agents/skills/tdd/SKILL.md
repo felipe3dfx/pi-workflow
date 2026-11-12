@@ -4,7 +4,7 @@ description: "Trigger: develop a feature or fix test-first. Establish behavior-l
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "1.5"
+  version: "1.6"
   provenance: derived
 ---
 
@@ -18,7 +18,7 @@ Use for meaningful observable behavior while implementing an approved change. Th
 
 Consume the technical handoff, applicable authority, and consumer testing contract. Before a test, confirm the named seam or ask the developer to resolve a missing or contradicted seam. Prefer the highest useful existing public interface that fully exercises the behavior. Load the `codebase-design` skill only when seam shape needs design vocabulary.
 
-Before the first test of each required behavior, agree its coverage line and trace it to the requirement it serves: the observable behavior, its seam, with a brief note on what it catches and misses when useful, the pertinent cases (the success path plus each state, limit, and rejection or error the requirement or the seam's boundary names), each case's independent expected-value source, and its planned evidence or a no-valuable-test-seam exception. A requirement without a line, or a pertinent case missing from one, is a coverage gap: complete the line, within approved scope, before that behavior's first test. Plan the cases a requirement makes pertinent, not every combination of inputs; tests still follow one at a time. What a seam misses never waives a required behavior or pertinent case.
+Before the first test of each required behavior, agree its coverage line and trace it to the requirement it serves: the observable behavior, its seam, with a brief note on what it catches and misses when useful, the pertinent cases (the success path plus each state, limit, and rejection or error the requirement or the seam's boundary names), each case's independent expected-value source, and its planned evidence or a no-valuable-test-seam exception. A requirement without a line, or a pertinent case missing from one, is a coverage gap: complete the line, within approved scope, before that behavior's first test. Plan the cases a requirement makes pertinent, not every combination of inputs; tests still follow one at a time. Among the agreed seams that observe a case, place it at the cheapest; a real commit, thread, socket, or process carries only the invariant that needs it. What a seam misses never waives a required behavior or pertinent case.
 
 A documentation-only, purely visual, or configuration-only change may record a no-valuable-test-seam exception only when it has no valuable test seam and the decision is recorded with its reason. Otherwise missing seams, an unresolved governing-authority or required-contract contradiction, or an unavailable required test path blocks this activity rather than inventing an internal test.
 
