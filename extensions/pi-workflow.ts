@@ -60,6 +60,10 @@ import { registerCompactTools, syncCompactTools } from "./compact-tools.ts";
 import { resolveAgentDirectory } from "./agent-directory.ts";
 import { inspectClaudeBridgeCompanion } from "./web-access.ts";
 import { createDelegationMode } from "./workflow-settings.ts";
+import {
+	createExplorationBudget,
+	explorationNotice,
+} from "./exploration-budget.ts";
 
 import {
 	type ActionAuthorization,
@@ -298,6 +302,24 @@ export default function piWorkflowExtension(
 		options.authorization !== undefined,
 	);
 	registerAgentLanguage(pi);
+	const explorationBudget = createExplorationBudget();
+	pi.on("before_agent_start", (event) => {
+		if (event.messageType === "user") explorationBudget.start();
+	});
+	pi.on("tool_result", (event, ctx) => {
+		if (!childTools.offered()) return;
+		const facts = explorationBudget.result(event, ctx.signal?.aborted === true);
+		if (facts)
+			pi.sendMessage(
+				{
+					customType: "pi-workflow-exploration-budget",
+					content: explorationNotice(facts, delegationMode.current()),
+					display: true,
+					details: facts,
+				},
+				{ deliverAs: "steer", triggerTurn: true },
+			);
+	});
 
 	pi.on("session_start", async (_event, ctx) => {
 		currentCtx = ctx;
@@ -312,8 +334,9 @@ export default function piWorkflowExtension(
 		if (read.status === "refused") report(ctx, read.reason, "error");
 		await seating.seat(read.status === "ready" ? read.selection : undefined);
 	});
-	pi.on("tool_execution_start", async (_event, ctx) => {
+	pi.on("tool_execution_start", async (event, ctx) => {
 		currentCtx = ctx;
+		explorationBudget.call(event);
 	});
 	pi.on("session_shutdown", async (event) => {
 		currentCtx = undefined;
