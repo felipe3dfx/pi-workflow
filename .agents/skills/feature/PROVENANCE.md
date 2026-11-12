@@ -62,6 +62,22 @@ adjustments as brief deltas. Under issue #163, the simplification that
 `feature-critic`'s scope and proportionality lens proposes is presented to the
 developer as a question of its own, separate from the other dispositions.
 
+Under issue #165, approvals with no pull-request playbook block and point to `setup-workflow` instead of linking its shipped rules.
+
+Version 2.0 moves the discovery loop's interview rules (one question per
+round, sources shown, evidence-grounded recommendation, decisions recovered
+before asking) into the new `grilling` skill. `feature` now loads `grilling`
+only when the problem, user, or outcome cannot be recovered, an important
+choice is open, a material conflict remains, or the developer asks for a
+stress test, and proposes its returned decisions as a brief delta whose
+acceptance closes the interview. Product discovery, authority and approval
+contracts, critic disposition rules, brief deltas, and prototype ownership are
+unchanged. The major version marks the new required install dependency:
+consumers that install `feature` must also install `grilling`. The issue #15
+material above remains the unchanged internal original source; no Matt Pocock
+material was copied into `feature`, and the upstream `grilling` material is
+recorded in that skill's own provenance.
+
 ## Approval
 
 Internal reuse under the MIT license was approved through Grupo Ilao skills

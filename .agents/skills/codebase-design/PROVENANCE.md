@@ -61,6 +61,12 @@ SOFTWARE.
 
 The numbered list exhaustively records substantive transformations from the pinned upstream revision. Entry 10 groups meaning-preserving editorial normalization; those differences are intentionally not tracked line by line.
 
+## Upstream review
+
+2026-11-01: reviewed [`mattpocock-skills` v1.3.2](https://github.com/mattpocock/skills/tree/d1478fcb140db0b93c0c8df17bcfd311844749d0/skills/engineering/codebase-design) at commit `d1478fcb140db0b93c0c8df17bcfd311844749d0`. This is the reviewed reference, not a replacement for the adopted source revisions above.
+
+The glossary rename and editorial changes require no new behavior locally; DESIGN-IT-TWICE already requires independent fresh contexts. Preserve the local seam and precedence rules. No runtime material imported; the skill version is unchanged.
+
 ## Approval
 
 Reviewed and approved for internal use by Felipe Gonzalez on 2026-08-24. Upstream is MIT and this catalog is MIT, so the material is redistributed under the same terms with the notice above preserved.

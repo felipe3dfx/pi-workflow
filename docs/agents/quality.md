@@ -14,7 +14,9 @@ Run `npm run check` for the impact set: the touched area plus the callers and co
 
 ## Full Validation
 
-`create-pr` runs `npm run check` on the exact head before every push, and CI runs it after publication; no review skill runs it. If the command is absent or unverified, report its state and use only the recorded degraded behavior. When the repository defines a single validation command, that command is the candidate for both focused and full validation; the same value recorded twice is one candidate, not a question, and no scoped variant is invented.
+`create-pr` runs `npm run check` on the exact head before a push when the publication gate it selects is Full Validation, and CI runs it after publication; no review skill runs it. If the command is absent or unverified, report its state and use only the recorded degraded behavior. When the repository defines a single validation command, that command is the candidate for both focused and full validation; the same value recorded twice is one candidate, not a question, and no scoped variant is invented.
+
+Declare which full suites each path reaches, with the command that runs each suite whole, in the document Test Conventions names, never in this playbook: `setup-workflow` regenerates this playbook and never writes that document. For a change whose impact calls for full validation, `create-pr` then runs only the suites the changed paths reach; without that declaration, or when Test Conventions name no document, it runs `npm run check`.
 
 - state: supported
 - evidence: AGENTS.md names npm run check as the complete quality gate; historical CI job test passed on pull request 60

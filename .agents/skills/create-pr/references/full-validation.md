@@ -1,10 +1,10 @@
 # Full Validation
 
-Read this file before running the gate whenever it is Full Validation.
+Read this file before running the gate whenever it is the full class: Full Validation or the full suites the change reaches.
 
 ## An interrupted run
 
-A Full Validation run that does not finish, because its observer is lost, it times out, or it is cancelled, is interrupted: neither green nor red. Report it to the developer as interrupted, with how it ended.
+A full-class run that does not finish, because its observer is lost, it times out, or it is cancelled, is interrupted: neither green nor red. Report it to the developer as interrupted, with how it ended.
 
 - An interrupted run never publishes.
 - It does not count toward the cap of two consecutive red gate runs.

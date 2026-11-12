@@ -59,6 +59,14 @@ In GitHub and Linear, the skill publishes or reuses the specification's parent
 ticket with preflight, preview, read-back, and `PUBLISHED` over three artifacts;
 hands the parent to `to-tickets`; and loads `codebase-design` by name.
 
+Under issue #165, approvals with no pull-request playbook block and point to `setup-workflow` instead of linking its shipped rules.
+
+## Upstream review
+
+2026-11-01: reviewed [`mattpocock-skills` v1.3.2](https://github.com/mattpocock/skills/tree/d1478fcb140db0b93c0c8df17bcfd311844749d0/skills/engineering/to-spec) at commit `d1478fcb140db0b93c0c8df17bcfd311844749d0`. This is the reviewed reference, not a replacement for the adopted source revisions above.
+
+No upstream skill changes since the source revision. Preserve the local readiness, synthesis, and publication handoff contracts. No runtime material imported; the skill version is unchanged.
+
 ## Approval
 
 Grupo Ilao approved internal reuse under the MIT license.

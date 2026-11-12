@@ -55,6 +55,12 @@ SOFTWARE.
 
 The instructional content is adopted verbatim. Every change above is structural or is repository policy; moved passages keep their upstream wording, and no lever, definition, or recommendation was altered, added, or removed.
 
+## Upstream review
+
+2026-11-01: reviewed [`mattpocock-skills` v1.3.2](https://github.com/mattpocock/skills/tree/d1478fcb140db0b93c0c8df17bcfd311844749d0/skills/productivity/writing-for-agents) at commit `d1478fcb140db0b93c0c8df17bcfd311844749d0`. This is the reviewed reference, not a replacement for the adopted source revisions above.
+
+Changes from the source revision are meaning-preserving editorial wording. Keep the source attribution and the local structural split and precedence rules. No runtime material imported; the skill version is unchanged.
+
 ## Approval
 
 Adopted on 2026-08-24 by Felipe Gonzalez.

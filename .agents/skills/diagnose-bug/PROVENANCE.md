@@ -55,6 +55,12 @@ The redaction rule; the feedback-loop phase with its ordered construction option
 9. Added `tests/hitl_loop_test.sh`, which feeds the template scripted input and checks its exit status and, except for a syntax error, that the last output line is `exit=` with that status: yes and no answers with spaces, uppercase, or a carriage return, empty, ambiguous, `n o`, or `y es` answers exiting 125, a run without input on stdin, or one that ends before the answer, exiting 125 with its interactive-terminal message; a failing command, a failing pipeline stage, or an unset variable in the edited steps exiting 125; edited steps that assign `verdict` leaving an ambiguous answer at 125; edited steps that start a background command and kill it from their own `EXIT` trap still exiting 0 for `n` and 1 for `y`, with `exit=` as the last line; and a syntax error in the edited steps exiting with a status that is neither 0 nor 1.
 10. Editorial: wording condensed and rephrased in Grupo Ilao's words throughout.
 
+## Upstream review
+
+2026-11-01: reviewed [`mattpocock-skills` v1.3.2](https://github.com/mattpocock/skills/tree/d1478fcb140db0b93c0c8df17bcfd311844749d0/skills/engineering/diagnosing-bugs) at commit `d1478fcb140db0b93c0c8df17bcfd311844749d0`. This is the reviewed reference, not a replacement for the adopted source revisions above.
+
+The new upstream instruction checks a deliberately forced mutation against a pristine copy during the fix phase; the HITL template is unchanged. This skill remains diagnosis-only. The caller's test-first loop owns that conditional check, adopted in the local tdd skill, not an added diagnosis phase. No runtime material imported here; the skill version is unchanged.
+
 ## Approval
 
 Internal reuse under the MIT license is approved through review of the pull request that introduces it.

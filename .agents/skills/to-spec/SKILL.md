@@ -4,7 +4,7 @@ description: "Trigger: synthesize an approved feature definition into an authori
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "1.5"
+  version: "1.6"
   provenance: derived
 ---
 
@@ -28,7 +28,7 @@ Load the `codebase-design` skill and use its vocabulary. For every proposed stru
 
 ## Preparation, Publication and Handoff
 
-`READY` and `READY WITH WARNINGS` permit publication, not publication itself. For GitHub or Linear, verify tracker read capability before preparing the preview and write capability before the first publication mutation; on either failure, report `blocked` and send no mutation request. Prepare the playbook's approval preview with destination and title, current package and review handoff, stage artifacts and roles (stable brief and report for joint `feature-critic` publication, or final specification and report for `to-spec`), verdict, accepted warnings and deviations, parent and disposition, and external effects. Technical specifications are English; human-facing tracker artifacts and comments are Spanish. Preview creates no durable artifact or external mutation. Approvals follow the pull-request playbook's approval policy and approval preview; with no recorded policy, use `every-step` and [the shipped rules](../setup-workflow/assets/pull-requests.md#approval-gates-and-external-effects), telling the user once to run `setup-workflow update`.
+`READY` and `READY WITH WARNINGS` permit publication, not publication itself. For GitHub or Linear, verify tracker read capability before preparing the preview and write capability before the first publication mutation; on either failure, report `blocked` and send no mutation request. Prepare the playbook's approval preview with destination and title, current package and review handoff, stage artifacts and roles (stable brief and report for joint `feature-critic` publication, or final specification and report for `to-spec`), verdict, accepted warnings and deviations, parent and disposition, and external effects. Technical specifications are English; human-facing tracker artifacts and comments are Spanish. Preview creates no durable artifact or external mutation. Approvals follow the pull-request playbook's approval policy and approval preview; with no recorded policy, use `every-step`, telling the user once to run `setup-workflow update`; with no pull-request playbook, block and point to `setup-workflow`.
 
 In GitHub and Linear, a specification has one parent ticket: an issue specification is its own parent; a file specification gets a Spanish parent issue following tracker publication fields, identifying the specification by path only (never commit). Reuse one open issue matching the specification location, even without children. A closed match or multiple candidates blocks with no mutation request. Preview whether to reuse, create, or use the specification issue itself. GitLab, `local-markdown`, and `none` have no parent.
 

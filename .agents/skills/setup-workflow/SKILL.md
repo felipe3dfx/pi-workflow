@@ -4,7 +4,7 @@ description: "Trigger: configure repository workflow playbooks or audit existing
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "2.11"
+  version: "2.16"
   provenance: derived
 ---
 
@@ -31,7 +31,7 @@ Configure repository-level playbooks. For every script step, invoke `python3` wi
 1. Inspect the root instruction file, `docs/agents/`, remotes and branches, tracker evidence, domain authority, validation conventions, and pull-request practice. Surface unrelated `docs/agents/` files for confirmation. Discovery ends when every template value and capability has repository evidence or an unresolved status.
 2. If root `AGENTS.md` is absent, stop before writing and resolve it first, reading [the missing instruction file rule](references/runtime-contract.md#missing-instruction-file) for the proposal.
 3. Present findings in routing-block order, instruction file first. An existing recorded value is resolved but still compared; a surviving marker is reported. Repeated occurrences count once. One verified candidate skips its question; multiple require the user's choice; zero require confirmed absence or a supplied candidate. Batch unresolved values per playbook into one question. Working, production, and parent branches are recorded or marked unresolved, never gated.
-4. Resolve and record the Domain Authority Handoff by the exclusive states in [references/runtime-contract.md](references/runtime-contract.md), proving a map with the installed `glossary-map` validator.
+4. Resolve and record the Domain Authority Handoff by the exclusive states in [references/runtime-contract.md](references/runtime-contract.md), proving a map with the installed `domain-modeling` sibling's glossary-map validator.
 
 ## Write and Re-run
 
@@ -51,4 +51,5 @@ List confirmed playbooks, created or updated files, unresolved markers, capabili
 ## References
 
 - Runtime: Load [`runtime-contract.md`](references/runtime-contract.md) when resolving the Domain Authority Handoff, recording a capability state, or before any write.
+- Installation: [`installed-files.md`](references/installed-files.md) lists what a run leaves in the consumer and which skills read each file; read it when asked whether this skill can be uninstalled after a run or how to update; a run does not need it.
 - Maintainer: [`behavioral-scenarios.md`](references/behavioral-scenarios.md) is the conformance table for reviewing this skill; a run does not need it.
