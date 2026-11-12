@@ -135,12 +135,12 @@ const ghDecision = line`group=;
 			pending_value=;
 			[ -n "$value_of" ] || case "$word" in
 			--paginate|--slurp|-i|--include|--silent|--verbose) ;;
-			-q|--jq|-t|--template|-p|--preview|--cache|--hostname) pending_value=any ;;
-			-q?*|--jq=*|-t?*|--template=*|-p?*|--preview=*|--cache=*|--hostname=*) ;;
+			-q|--jq|-t|--template|-p|--preview|--cache) pending_value=any ;;
+			-q?*|--jq=*|-t?*|--template=*|-p?*|--preview=*|--cache=*) ;;
 			-f|--raw-field) field=1; pending_value=any ;;
 			-f?*|--raw-field=*) field=1 ;;
 			-F|--field) field=1; pending_value=field ;;
-			-F?*|--field=*) field=1; value_of=field; word=\${word#-F}; word=\${word#--field=} ;;
+			-F?*|--field=*) field=1; value_of=field; word=\${word#-F}; word=\${word#--field=}; word=\${word#=} ;;
 			-X|--method) pending_value=method ;;
 			-X?*|--method=*) value_of=method; word=\${word#-X}; word=\${word#--method=}; word=\${word#=} ;;
 			-H|--header) pending_value=header ;;
