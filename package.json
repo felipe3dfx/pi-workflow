@@ -25,6 +25,7 @@
   "files": [
     "README.md",
     "scripts/**/*.mjs",
+    "!scripts/flow-metrics.mjs",
     "tools/pi-sandbox.mjs",
     "package.json",
     "LICENSE",
