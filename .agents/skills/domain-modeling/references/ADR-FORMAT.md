@@ -16,6 +16,8 @@ Acceptance: approval and merge of the introducing PR.
 
 Add context, considered options, and consequences only when they help a future reader understand a consequential trade-off.
 
+`Decision` names the document or code that governs a current value, such as a limit or a field, instead of copying it. Only a value that is the decision itself, one whose change would need a new ADR, is written in the ADR.
+
 ## Lifecycle
 
 - Create an ADR only when the decision is hard to reverse, surprising without context, and the result of a real trade-off.

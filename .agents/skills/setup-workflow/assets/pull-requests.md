@@ -14,7 +14,7 @@ Refs: <ticket identifier>
 
 - `type` is one of feat, fix, refactor, test, docs, chore; the summary is in the imperative.
 - The pull request title is in English: the commit header followed by the ticket identifier in parentheses, as in `feat(renewals): add premium calculation (AUT-103)`.
-- The ticket is referenced only by the branch name and the pull request title, never with a closing keyword.
+- The ticket is referenced by the branch name, the pull request title, and the commit's `Refs:` trailer, never with a closing keyword.
 - Commits and pull requests carry no attribution trailer or line naming an AI agent, model, or tool.
 
 Commit capability:
@@ -56,12 +56,16 @@ Write the body with these three sections, in this order and with no others, and 
 
 **Door:** <one-way or two-way>
 
+<optional: why this door>
+
 **Blast Radius:** <one-word description>
+
+<optional: potential ramifications of merge>
 ```
 
 - Summary: the smallest view that makes the point, placed beside the sentence it supports — pseudocode, call tree, component or file tree, Mermaid, or a focused `diff`.
 - Evidence: the concrete before and after — a screenshot when the change is visual, otherwise the exact test or command output that failed and then passed.
-- Merge Danger: the door, one-way when destructive or expensive to reverse and two-way otherwise, plus the blast radius in one word: layout, consumers, deploy, data.
+- Merge Danger: the door, one-way when destructive or expensive to reverse and two-way otherwise, plus the blast radius in one word: layout, consumers, deploy, data. Add one concise line under a label only when the label alone does not convey why the door is what it is or what the merge could reach; otherwise drop the optional line.
 
 ### Branch Capability
 

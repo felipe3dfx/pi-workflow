@@ -14,7 +14,7 @@ Refs: <ticket identifier>
 
 - `type` is one of feat, fix, refactor, test, docs, chore; the summary is in the imperative.
 - The pull request title is in English: the commit header followed by the ticket identifier in parentheses, as in `feat(renewals): add premium calculation (AUT-103)`.
-- For branch names and pull request titles, reference the ticket only by its identifier, never with a closing keyword. Commit `Refs:` and the pull request's linked ticket remain required.
+- The ticket is referenced by the branch name, the pull request title, and the commit's `Refs:` trailer, never with a closing keyword.
 - Commits and pull requests carry no attribution trailer or line naming an AI agent, model, or tool.
 
 Commit capability:
@@ -31,7 +31,7 @@ Commit capability:
 
 Use `GitHub` and create a pull request with:
 
-- Source and proposed destination: under `pull-request` child integration, the source is the child ticket branch and the proposed destination is the parent integration branch. Under `direct`, children integrate locally and only the parent integration branch gets a pull request, proposed against the production base. A standalone ticket proposes the working base. Confirm the destination for each invocation.
+- Source and proposed destination: the source is the child ticket branch; the proposed destination is the parent integration branch, or the production base for a parent integration branch.
 - Body: the fixed template below; add no other section.
 - Linked ticket and required evidence: the pull request cites the tracker ticket identifier, and how evidence returns to the ticket belongs to `issue-tracker.md`.
 - Reviewers, labels, and drafts: open the pull request as a draft with no labels and no reviewers. Ready-for-review, labels, and reviewers are a manual human process.
@@ -56,12 +56,16 @@ Write the body with these three sections, in this order and with no others, and 
 
 **Door:** <one-way or two-way>
 
+<optional: why this door>
+
 **Blast Radius:** <one-word description>
+
+<optional: potential ramifications of merge>
 ```
 
 - Summary: the smallest view that makes the point, placed beside the sentence it supports — pseudocode, call tree, component or file tree, Mermaid, or a focused `diff`.
 - Evidence: the concrete before and after — a screenshot when the change is visual, otherwise the exact test or command output that failed and then passed.
-- Merge Danger: the door, one-way when destructive or expensive to reverse and two-way otherwise, plus the blast radius in one word: layout, consumers, deploy, data.
+- Merge Danger: the door, one-way when destructive or expensive to reverse and two-way otherwise, plus the blast radius in one word: layout, consumers, deploy, data. Add one concise line under a label only when the label alone does not convey why the door is what it is or what the merge could reach; otherwise drop the optional line.
 
 ### Branch Capability
 
@@ -127,11 +131,11 @@ The policy governs approvals, not decisions. Where the agent has a grounded reco
 
 Approval preview: before asking for any approval, show in the conversation the complete literal content, its destination (repository and pull request, ticket, or file path), and the action (create, edit, close, merge, and so on). A question never replaces the content.
 
-Where the policy requires approval, it is per effect, given by the person performing it, and its evidence is preserved with the pull request or its linked ticket. The playbook names no approver. Under `direct` child integration, the batch rule, approved wherever the policy asks, is the approval, and its evidence, for the child-ticket closures it covers; the per-invocation plan `create-pr` requires is that skill's own contract.
+Approval is per effect, given by the person performing it, and its evidence is preserved with the pull request or its linked ticket. The playbook names no approver. Under `direct` child integration, the batch rule, approved wherever the policy asks, is the approval, and its evidence, for the child-ticket closures it covers; the per-invocation plan `create-pr` requires is that skill's own contract.
 
 ## Review and Merge
 
-Review, required checks, and merge of a pull request belong to the pull-request provider: `GitHub` owns branch protection and decides who may merge through the destination branch's permissions. Merge, push, and other remote-state changes follow the approval policy above, including its exceptions at every level.
+Review, required checks, and merge of a pull request belong to the pull-request provider: `GitHub` owns branch protection and decides who may merge through the destination branch's permissions. Never merge, push, or change remote state without the applicable approval.
 
 ### Review Capability
 

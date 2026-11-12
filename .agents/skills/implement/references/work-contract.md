@@ -48,4 +48,6 @@ Propose the branch, which the developer may change, and create it as soon as the
 - A Child Ticket's branch starts from its parent's integration branch.
 - A Standalone Ticket's branch starts from the recorded working base. When the naming convention includes a parent's identifier, use the ticket's identifier alone. The handoff names the working base, and `create-pr` receives it as the proposed destination. The `direct` child integration mode does not apply.
 
+Recover approved prototype code selectively, never as a base or a wholesale cherry-pick.
+
 Maintainers changing these rules check them against [the behavioral scenarios](behavioral-scenarios.md); a run does not need that file.

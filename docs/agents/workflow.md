@@ -2,9 +2,12 @@
 
 ## Authority and Precedence
 
-Follow the instruction authority and precedence defined by `AGENTS.md`.
+Follow this order when instructions conflict:
 
-Apply this `docs/agents/` playbook set, `docs/agents/domain.md` and the authority it resolves, applicable architectural decisions, and local workflow conventions in `AGENTS.md` at the authority assigned by the primary repository instructions.
+1. `AGENTS.md`
+2. `docs/agents/domain.md` and the authority it resolves, plus applicable architectural decisions
+3. This `docs/agents/` playbook set
+4. `AGENTS.md`
 
 An unresolved marker is absent authority, not permission to choose a default. A value recorded `none (confirmed absent)` is settled: a later skill proposes `setup-workflow` only for an unresolved marker or a verifiable contradiction, never for a confirmed absence.
 

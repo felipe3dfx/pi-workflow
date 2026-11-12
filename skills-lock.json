@@ -1,54 +1,54 @@
 {
-  "version": 1,
+  "version": 2,
   "skills": {
     "code-review": {
       "source": "git@github.com:grupo-ilao/skills.git",
       "sourceUrl": "git@github.com:grupo-ilao/skills.git",
       "sourceType": "git",
       "skillPath": "skills/engineering/code-review/SKILL.md",
-      "computedHash": "9c70f6e2aa48cb2d48db93ead49d273db58ffb3b459f4bbc64ca587194bc3e7b"
+      "computedHash": "aaa51de9b3c9cc04ee60bd7db29bff74f31b3c77211c17b3333f361dd44b9682"
     },
     "codebase-design": {
       "source": "git@github.com:grupo-ilao/skills.git",
       "sourceUrl": "git@github.com:grupo-ilao/skills.git",
       "sourceType": "git",
       "skillPath": "skills/engineering/codebase-design/SKILL.md",
-      "computedHash": "53a1b6a2195285469facf3f9b780806802bae9aab3e6712020ac311b933d37af"
+      "computedHash": "f3a7c4cc382f05ba0f3390b2c1c5c431245841e7f0b32e2a59cc3241d5aabff1"
     },
     "create-pr": {
       "source": "git@github.com:grupo-ilao/skills.git",
       "sourceUrl": "git@github.com:grupo-ilao/skills.git",
       "sourceType": "git",
       "skillPath": "skills/engineering/create-pr/SKILL.md",
-      "computedHash": "fa031ed0bf350d92be844d6590309d7bace2a9a9e18e8302aa7fda9d3398ff39"
+      "computedHash": "1085092007285c79a5ce38a12301609a74e88794c78c5cb87406d277eab97c0d"
     },
     "diagnose-bug": {
       "source": "git@github.com:grupo-ilao/skills.git",
       "sourceUrl": "git@github.com:grupo-ilao/skills.git",
       "sourceType": "git",
       "skillPath": "skills/engineering/diagnose-bug/SKILL.md",
-      "computedHash": "51f1d8cbdaeb1d0f8b9dd73002d676f34e7f19daae09a90169a7c0ae9065480e"
+      "computedHash": "f0c012510bac846ef1cbc4ff3689dbc8e32c5e281154b0c84bf940a420314c25"
     },
     "domain-modeling": {
       "source": "git@github.com:grupo-ilao/skills.git",
       "sourceUrl": "git@github.com:grupo-ilao/skills.git",
       "sourceType": "git",
       "skillPath": "skills/engineering/domain-modeling/SKILL.md",
-      "computedHash": "403104981183d1981977161747b4ed1e39d2cc5a6a4e53304e768959dd6f0d5b"
+      "computedHash": "fbf67099bda481a20637148dd5af1a21efdcdf38b2c303ff87883c51a8c8a520"
     },
     "feature": {
       "source": "git@github.com:grupo-ilao/skills.git",
       "sourceUrl": "git@github.com:grupo-ilao/skills.git",
       "sourceType": "git",
       "skillPath": "skills/engineering/feature/SKILL.md",
-      "computedHash": "f1bcbe44e514b54a24b511487582f6bb1660facd3d8273f1a8352c5e9ddccdd1"
+      "computedHash": "f6fabb00ad00de35a65e548dfab5ef0862d13771256ee00db1a91951cbd3629b"
     },
     "feature-critic": {
       "source": "git@github.com:grupo-ilao/skills.git",
       "sourceUrl": "git@github.com:grupo-ilao/skills.git",
       "sourceType": "git",
       "skillPath": "skills/engineering/feature-critic/SKILL.md",
-      "computedHash": "4f81372ac62d16819eb20246da6aa9a74492469815ad5f1fc73e89522f37695c"
+      "computedHash": "ffaf2d7214559ac8d63ace42a542e2f9a8280b2bfb710d9312aa4422784aa599"
     },
     "feature-review": {
       "source": "git@github.com:grupo-ilao/skills.git",
@@ -56,98 +56,105 @@
       "ref": "main",
       "sourceType": "git",
       "skillPath": "skills/engineering/feature-review/SKILL.md",
-      "computedHash": "54bc661337ee95bccf6e4e8333ffc71af0b9f88e3b14a702dc5270788d136a9d"
+      "computedHash": ""
+    },
+    "grilling": {
+      "source": "git@github.com:grupo-ilao/skills.git",
+      "sourceUrl": "git@github.com:grupo-ilao/skills.git",
+      "sourceType": "git",
+      "skillPath": "skills/engineering/grilling/SKILL.md",
+      "computedHash": "667bf24b65d93c0f82a1f24490a1621486e96650be3f247ff7d5e46e92135e98"
     },
     "implement": {
       "source": "git@github.com:grupo-ilao/skills.git",
       "sourceUrl": "git@github.com:grupo-ilao/skills.git",
       "sourceType": "git",
       "skillPath": "skills/engineering/implement/SKILL.md",
-      "computedHash": "4ddeddaf769f151158780ee934a1c19bec70d4eff7d733f26c117ccec87a338f"
+      "computedHash": "3d041962725b45b18c0e035d0912179135ebe98d90800a74c59d5b1ecaa906b7"
     },
     "implement-spec": {
       "source": "git@github.com:grupo-ilao/skills.git",
       "sourceUrl": "git@github.com:grupo-ilao/skills.git",
       "sourceType": "git",
       "skillPath": "skills/engineering/implement-spec/SKILL.md",
-      "computedHash": "f65987b060af753396a03032a49ec19ccc1f02b85323c944c5eafc9b10cbbfd1"
+      "computedHash": "aae10dd20e6e4864badf9aee544615a5766d98275d4bff8e293ef327b0d4ec7f"
     },
     "mutation-testing": {
       "source": "git@github.com:grupo-ilao/skills.git",
       "sourceUrl": "git@github.com:grupo-ilao/skills.git",
       "sourceType": "git",
       "skillPath": "skills/engineering/mutation-testing/SKILL.md",
-      "computedHash": "4c73d42e22096fc3898b1e07c583e22e502df8750408b90469093b844f7e8266"
+      "computedHash": "2319eade22a85af08726b64564eb08294917b07fe084e008704cc437f9d3c054"
     },
     "pr-review": {
       "source": "git@github.com:grupo-ilao/skills.git",
       "sourceUrl": "git@github.com:grupo-ilao/skills.git",
       "sourceType": "git",
       "skillPath": "skills/engineering/pr-review/SKILL.md",
-      "computedHash": "b3760a1899c0a6d802f1308db481a97f5158d2512fe9cc601342ee0f23d133f5"
+      "computedHash": "66df813eaeeaae196fff3d90b73b6e2e03f2e3eb790d5a346e4ef9ab249332da"
     },
     "prototype": {
       "source": "git@github.com:grupo-ilao/skills.git",
       "sourceUrl": "git@github.com:grupo-ilao/skills.git",
       "sourceType": "git",
       "skillPath": "skills/engineering/prototype/SKILL.md",
-      "computedHash": "446c6ba1d740b2a76628ced0439846fabff549a8bef0fdf3b4c74bd6d75a9c2e"
+      "computedHash": "bccd04a247dc5fbf96fc54a68863edc4e612fcbbf78b8beb45c1bffd22c41376"
     },
     "qa-impact": {
       "source": "git@github.com:grupo-ilao/skills.git",
       "sourceUrl": "git@github.com:grupo-ilao/skills.git",
       "sourceType": "git",
       "skillPath": "skills/engineering/qa-impact/SKILL.md",
-      "computedHash": "e16c4c464bbddbc449e258230446ea40ada7150340a39e194ac262a2a3ebc8ba"
+      "computedHash": "7b26f771b871f1ff2be43b82c13ba50696e0c82a2ebb8f4b9875d4df8751d786"
     },
     "review-critique": {
       "source": "git@github.com:grupo-ilao/skills.git",
       "sourceUrl": "git@github.com:grupo-ilao/skills.git",
       "sourceType": "git",
       "skillPath": "skills/engineering/review-critique/SKILL.md",
-      "computedHash": "7d1b3623fc9e28da9abfa75504ce890c7661f71c8839efb5d576020ac11ef64f"
+      "computedHash": "053523b51394145a3ae1e0155726a173abc8ee29aeec6d0afa9fe48c2bfc554a"
     },
     "setup-workflow": {
       "source": "git@github.com:grupo-ilao/skills.git",
       "sourceUrl": "git@github.com:grupo-ilao/skills.git",
       "sourceType": "git",
       "skillPath": "skills/engineering/setup-workflow/SKILL.md",
-      "computedHash": "ca3b7a9c8e7d5b9eccdbf57ea04f66030237a638314c0c39805929b0f11d241e"
+      "computedHash": "e9afe0bc527770e196b086c56bb2a0ad9049b2abfdb4b5e7707a4363b799405d"
     },
     "tdd": {
       "source": "git@github.com:grupo-ilao/skills.git",
       "sourceUrl": "git@github.com:grupo-ilao/skills.git",
       "sourceType": "git",
       "skillPath": "skills/engineering/tdd/SKILL.md",
-      "computedHash": "1fedded2cf387475d4d337d3d543b8d38768e038cea1432c1244a869399a8a1d"
+      "computedHash": "a67ba975c9102c3b0507fe3cc712e34c72b9e3ecd86cccb1835b1855f399702d"
     },
     "to-spec": {
       "source": "git@github.com:grupo-ilao/skills.git",
       "sourceUrl": "git@github.com:grupo-ilao/skills.git",
       "sourceType": "git",
       "skillPath": "skills/engineering/to-spec/SKILL.md",
-      "computedHash": "a106d41ae0705c2d38ef75f947d9c9280e2e8f52e2693ff683f166d02716c2d6"
+      "computedHash": "969538ce402c7694f186a1fb61a7e61bc9336249a73476729dbb4de8f6bc9bef"
     },
     "to-tickets": {
       "source": "git@github.com:grupo-ilao/skills.git",
       "sourceUrl": "git@github.com:grupo-ilao/skills.git",
       "sourceType": "git",
       "skillPath": "skills/engineering/to-tickets/SKILL.md",
-      "computedHash": "60c0735ad8f20158f104aba98234edb5a9d168b5963c7047b29cf77e92cbbe5f"
+      "computedHash": "56053059a034ef4831da46365cc4fbc74770d781147ec794012b0974cad469fd"
     },
     "typescript-best-practices": {
       "source": "jwynia/agent-skills",
       "ref": "main",
       "sourceType": "github",
       "skillPath": "skills/tech/development/tooling/typescript-best-practices/SKILL.md",
-      "computedHash": "db4675b9948beee1b029809ac861474048ac334c80f6dea60435a96afc122d38"
+      "computedHash": ""
     },
     "writing-for-agents": {
       "source": "git@github.com:grupo-ilao/skills.git",
       "sourceUrl": "git@github.com:grupo-ilao/skills.git",
       "sourceType": "git",
       "skillPath": "skills/engineering/writing-for-agents/SKILL.md",
-      "computedHash": "513498b7fa5b05a9170628cd987995150449bc41e6a634431a89ea3e18edd63e"
+      "computedHash": "d3f58d50026cb69e22e0ba320a1df68f1ddb52e5276ada4a64c910ce23c24f52"
     }
   }
 }

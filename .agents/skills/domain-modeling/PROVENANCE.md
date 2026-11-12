@@ -50,7 +50,13 @@ The activation boundary; terminology challenge, sharpening, scenario, and code-e
 
 ## Modifications
 
-Grupo Ilao made authority reading supporting work rather than activation; delegated layout discovery, shell ownership, marker validation, and drift reporting to `setup-workflow`; fixed the validator handoff to the deterministic sibling path `../setup-workflow/scripts/setup_workflow.py`; added fail-closed resolved-contract checks and the fallback glossary region; added glossary evidence, conflict visibility, and impact scope; adopted one root `docs/adr/` namespace instead of Matt's context-local ADR directories; adopted the upstream `GLOSSARY.md` and `GLOSSARY-MAP.md` names without a path for the retired `CONTEXT.md` and `CONTEXT-MAP.md`; and added the accepted ADR lifecycle, prefix checks, preview, approval, and reporting contracts from ADRs 0009–0011.
+Grupo Ilao made authority reading supporting work rather than activation; delegated layout discovery, shell ownership, marker validation, and drift reporting to `setup-workflow`; shipped the glossary-map validator as `scripts/glossary_map.py`, run from this skill's own directory and by `setup-workflow` as a sibling during discovery, as ADR 0034 records; added fail-closed resolved-contract checks and the fallback glossary region; added glossary evidence, conflict visibility, and impact scope; adopted one root `docs/adr/` namespace instead of Matt's context-local ADR directories; adopted the upstream `GLOSSARY.md` and `GLOSSARY-MAP.md` names without a path for the retired `CONTEXT.md` and `CONTEXT-MAP.md`; added the accepted ADR lifecycle, prefix checks, preview, approval, and reporting contracts from ADRs 0009–0011; and made an ADR's `Decision` name the document or code that governs a current value instead of copying it. ADR approvals follow the consumer's pull-request playbook, `every-step` when it records no policy, and block and point to `setup-workflow` without that playbook instead of falling back to another skill's asset.
+
+## Upstream review
+
+2026-11-01: reviewed [`mattpocock-skills` v1.3.2](https://github.com/mattpocock/skills/tree/d1478fcb140db0b93c0c8df17bcfd311844749d0/skills/engineering/domain-modeling) at commit `d1478fcb140db0b93c0c8df17bcfd311844749d0`. This is the reviewed reference, not a replacement for the adopted source revisions above.
+
+No upstream skill changes since the last reviewed revision. Preserve the local authority-resolution, glossary-map validator, and accepted ADR lifecycle contracts. No runtime material imported; the skill version is unchanged.
 
 ## Approval
 

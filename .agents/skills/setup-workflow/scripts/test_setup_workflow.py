@@ -3,9 +3,7 @@
 
 from __future__ import annotations
 
-import contextlib
 import importlib.util
-import io
 import re
 import shutil
 import subprocess
@@ -14,24 +12,8 @@ import unittest
 from pathlib import Path
 
 SCRIPT = Path(__file__).with_name("setup_workflow.py")
+GLOSSARY_MAP_SCRIPT = SCRIPT.parents[2] / "domain-modeling" / "scripts" / "glossary_map.py"
 REAL_ASSETS = SCRIPT.parent.parent / "assets"
-
-
-def case_insensitive_filesystem() -> bool:
-    """Probe whether this filesystem folds case, instead of assuming a platform.
-
-    A case-insensitive filesystem cannot hold two names that differ only in case, so
-    a fixture that writes both ends up with one file and the ambiguity under test
-    never exists. Probing beats checking `sys.platform`: macOS can mount a
-    case-sensitive volume and Linux can mount a folding one.
-    """
-    with tempfile.TemporaryDirectory() as probe:
-        lower = Path(probe) / "probe.tmp"
-        lower.write_text("", encoding="utf-8")
-        return (Path(probe) / "PROBE.TMP").exists()
-
-
-FOLDS_CASE = case_insensitive_filesystem()
 
 
 def load_setup_workflow():
@@ -101,10 +83,16 @@ Read these files in order:
 class SetupWorkflowCliTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
-        self.root = Path(self.temporary_directory.name)
-        (self.root / "scripts").mkdir()
+        skills = Path(self.temporary_directory.name)
+        self.root = skills / "setup-workflow"
+        (self.root / "scripts").mkdir(parents=True)
         (self.root / "scripts" / "setup_workflow.py").write_text(
             SCRIPT.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        self.glossary_map_script = skills / "domain-modeling" / "scripts" / "glossary_map.py"
+        self.glossary_map_script.parent.mkdir(parents=True)
+        self.glossary_map_script.write_text(
+            GLOSSARY_MAP_SCRIPT.read_text(encoding="utf-8"), encoding="utf-8"
         )
         self.assets = self.root / "assets"
         self.assets.mkdir()
@@ -222,247 +210,30 @@ class SetupWorkflowCliTests(unittest.TestCase):
         return self.run_script(*arguments)
 
     def run_glossary_map(self) -> subprocess.CompletedProcess[str]:
-        return self.run_script("glossary-map", "--repo", str(self.repo))
-
-    def test_glossary_map_reports_reachable_glossaries_before_root_glossary(self) -> None:
-        (self.repo / "GLOSSARY.md").write_text("# Root glossary\n", encoding="utf-8")
-        ordering = self.repo / "src" / "ordering"
-        billing = self.repo / "src" / "billing"
-        ordering.mkdir(parents=True)
-        billing.mkdir(parents=True)
-        (ordering / "GLOSSARY.md").write_text("# Ordering\n", encoding="utf-8")
-        (billing / "GLOSSARY.md").write_text("# Billing\n", encoding="utf-8")
-        (self.repo / "GLOSSARY-MAP.md").write_text(
-            "# Glossary Map\n\n## Contexts\n\n"
-            "- [Ordering](./src/ordering/GLOSSARY.md) — orders\n"
-            "- [Billing](./src/billing/GLOSSARY.md) — billing\n\n"
-            "## Relationships\n\n- **Ordering → Billing**: invoices\n",
-            encoding="utf-8",
+        return subprocess.run(
+            ["python3", str(self.glossary_map_script), "--repo", str(self.repo)],
+            text=True,
+            capture_output=True,
+            check=False,
         )
 
-        result = self.run_glossary_map()
+    def test_every_command_refuses_without_the_domain_modeling_sibling(self) -> None:
+        self.glossary_map_script.unlink()
+        values = self.write_values("values.txt", self.full_values())
 
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(
-            result.stdout,
-            "map GLOSSARY-MAP.md\n"
-            "context Ordering\tsrc/ordering/GLOSSARY.md\n"
-            "context Billing\tsrc/billing/GLOSSARY.md\n",
-        )
-        self.assertNotIn("Root glossary", result.stdout)
-
-    def test_glossary_map_blocks_zero_entries_without_falling_back_to_root_glossary(self) -> None:
-        (self.repo / "GLOSSARY.md").write_text("# Root glossary\n", encoding="utf-8")
-        (self.repo / "GLOSSARY-MAP.md").write_text("## Contexts\n", encoding="utf-8")
-
-        result = self.run_glossary_map()
+        result = self.run_render(values)
 
         self.assertEqual(result.returncode, 1)
-        self.assertIn("no contextual glossaries listed", result.stderr)
-        self.assertEqual(result.stdout, "")
+        self.assertIn("incomplete skill installation", result.stderr)
+        self.assertIn("domain-modeling", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertFalse((self.repo / "docs").exists())
 
-    def test_glossary_map_refuses_a_malformed_map_without_falling_back_to_root_glossary(
-        self,
-    ) -> None:
-        (self.repo / "GLOSSARY.md").write_text("# Root glossary\n", encoding="utf-8")
-        (self.repo / "GLOSSARY-MAP.md").write_text(
-            "# Glossary Map\n\n## Contexts\n\n- ordering: src/ordering/GLOSSARY.md\n",
-            encoding="utf-8",
-        )
+    def test_glossary_map_is_not_a_setup_workflow_command(self) -> None:
+        result = self.run_script("glossary-map", "--repo", str(self.repo))
 
-        result = self.run_glossary_map()
-
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("malformed glossary map", result.stderr)
-        self.assertNotIn("Root glossary", result.stdout)
-        self.assertEqual(result.stdout, "")
-
-    def test_glossary_map_refuses_unreachable_or_outside_glossary_entries(self) -> None:
-        outside = self.root / "outside"
-        outside.mkdir()
-        (outside / "GLOSSARY.md").write_text("# Outside\n", encoding="utf-8")
-        cases = {
-            "missing": "./src/missing/GLOSSARY.md",
-            "outside": "../outside/GLOSSARY.md",
-            "not-glossary": "./src/context.txt",
-        }
-        for name, target in cases.items():
-            with self.subTest(name=name):
-                (self.repo / "GLOSSARY-MAP.md").write_text(
-                    f"## Contexts\n\n- [Context]({target})\n", encoding="utf-8"
-                )
-
-                result = self.run_glossary_map()
-
-                self.assertEqual(result.returncode, 1)
-                self.assertIn("refused:", result.stderr)
-                self.assertEqual(result.stdout, "")
-
-    def test_glossary_map_refuses_control_characters_in_labels(self) -> None:
-        context = self.repo / "src" / "orders"
-        context.mkdir(parents=True)
-        (context / "GLOSSARY.md").write_text("# Orders\n", encoding="utf-8")
-        for label in ("Orders\tSales", "Orders\x1fSales", "Orders\x00Sales"):
-            with self.subTest(label=label):
-                (self.repo / "GLOSSARY-MAP.md").write_text(
-                    f"## Contexts\n\n- [{label}](./src/orders/GLOSSARY.md)\n", encoding="utf-8"
-                )
-
-                result = self.run_glossary_map()
-
-                self.assertEqual(result.returncode, 1)
-                self.assertIn("context label contains a control character", result.stderr)
-                self.assertEqual(result.stdout, "")
-
-    def test_glossary_map_refuses_control_characters_in_targets_before_path_resolution(
-        self,
-    ) -> None:
-        context = self.repo / "src" / "orders"
-        context.mkdir(parents=True)
-        (context / "GLOSSARY.md").write_text("# Orders\n", encoding="utf-8")
-        target = "./src/orders/GLOSSARY\x00.md"
-        (self.repo / "GLOSSARY-MAP.md").write_text(
-            f"## Contexts\n\n- [Orders]({target})\n", encoding="utf-8"
-        )
-
-        result = self.run_glossary_map()
-
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("glossary target contains a control character", result.stderr)
-        self.assertEqual(result.stdout, "")
-
-    def test_glossary_map_refuses_ambiguous_labels_and_glossaries(self) -> None:
-        context = self.repo / "src" / "orders"
-        context.mkdir(parents=True)
-        (context / "GLOSSARY.md").write_text("# Orders\n", encoding="utf-8")
-        cases = {
-            "labels": "- [Orders](./src/orders/GLOSSARY.md)\n- [orders](./src/orders/GLOSSARY.md)\n",
-            "glossaries": "- [Orders](./src/orders/GLOSSARY.md)\n- [Sales](./src/orders/./GLOSSARY.md)\n",
-        }
-        for name, entries in cases.items():
-            with self.subTest(name=name):
-                (self.repo / "GLOSSARY-MAP.md").write_text(
-                    "## Contexts\n\n" + entries, encoding="utf-8"
-                )
-
-                result = self.run_glossary_map()
-
-                self.assertEqual(result.returncode, 1)
-                self.assertIn("ambiguous glossary map", result.stderr)
-                self.assertEqual(result.stdout, "")
-
-    @unittest.skipIf(
-        FOLDS_CASE,
-        "this filesystem folds case, so two case-fold-equivalent names cannot coexist; "
-        "the same refusal is covered by "
-        "test_glossary_map_refuses_several_root_map_candidates",
-    )
-    def test_glossary_map_refuses_casefold_ambiguous_root_map_names(self) -> None:
-        (self.repo / "GLOSSARY-MAP.md").write_text("## Contexts\n", encoding="utf-8")
-        (self.repo / "glossary-map.md").write_text("## Contexts\n", encoding="utf-8")
-
-        result = self.run_glossary_map()
-
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("ambiguous root glossary map names", result.stderr)
-
-    def test_glossary_map_refuses_several_root_map_candidates(self) -> None:
-        """The same refusal, decided in process, so no filesystem can hide it.
-
-        The test above builds the ambiguity out of two real files and therefore only
-        runs where the filesystem keeps them apart. This one hands the resolver the
-        candidate list directly, so the decision is covered everywhere.
-        """
-        module = load_setup_workflow()
-        first = self.repo / "GLOSSARY-MAP.md"
-        second = self.repo / "GLOSSARY-MAP.other.md"
-        first.write_text("## Contexts\n", encoding="utf-8")
-        second.write_text("## Contexts\n", encoding="utf-8")
-
-        original = module.glossary_map_candidates
-        module.glossary_map_candidates = lambda repo: [first, second]
-        captured = io.StringIO()
-        try:
-            with contextlib.redirect_stderr(captured), self.assertRaises(SystemExit) as raised:
-                module.cmd_glossary_map(self.repo)
-        finally:
-            module.glossary_map_candidates = original
-
-        self.assertEqual(raised.exception.code, 1)
-        self.assertIn("ambiguous root glossary map names", captured.getvalue())
-
-    def test_glossary_map_refuses_a_symlinked_glossary_outside_the_repository(self) -> None:
-        outside = self.root / "outside"
-        outside.mkdir()
-        (outside / "GLOSSARY.md").write_text("# Outside\n", encoding="utf-8")
-        source = self.repo / "src"
-        source.mkdir()
-        (source / "context").symlink_to(outside, target_is_directory=True)
-        (self.repo / "GLOSSARY-MAP.md").write_text(
-            "## Contexts\n\n- [Outside](./src/context/GLOSSARY.md)\n", encoding="utf-8"
-        )
-
-        result = self.run_glossary_map()
-
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("resolves outside the repository", result.stderr)
-        self.assertEqual(result.stdout, "")
-
-    def test_glossary_map_refuses_invalid_utf8(self) -> None:
-        (self.repo / "GLOSSARY-MAP.md").write_bytes(b"## Contexts\n\xff")
-
-        result = self.run_glossary_map()
-
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("expected UTF-8 text", result.stderr)
-        self.assertEqual(result.stdout, "")
-
-    def test_glossary_map_blocks_a_retired_root_file_with_or_without_its_replacement(self) -> None:
-        cases = {
-            "context-alone": (["CONTEXT.md"], "retired root CONTEXT.md: rename it to GLOSSARY.md"),
-            "context-map-alone": (
-                ["CONTEXT-MAP.md"],
-                "retired root CONTEXT-MAP.md: rename it to GLOSSARY-MAP.md",
-            ),
-            "context-casefolded": (
-                ["context.md"],
-                "retired root context.md: rename it to GLOSSARY.md",
-            ),
-            "context-with-glossary": (
-                ["CONTEXT.md", "GLOSSARY.md"],
-                "retired root CONTEXT.md: rename it to GLOSSARY.md",
-            ),
-            "context-map-with-glossary-map": (
-                ["CONTEXT-MAP.md", "GLOSSARY-MAP.md"],
-                "retired root CONTEXT-MAP.md: rename it to GLOSSARY-MAP.md",
-            ),
-        }
-        for name, (files, message) in cases.items():
-            with self.subTest(name=name):
-                for file in files:
-                    (self.repo / file).write_text("## Contexts\n", encoding="utf-8")
-
-                result = self.run_glossary_map()
-
-                self.assertEqual(result.returncode, 1)
-                self.assertIn(message, result.stderr)
-                self.assertEqual(result.stdout, "")
-                for file in files:
-                    (self.repo / file).unlink()
-
-    def test_glossary_map_refuses_an_entry_pointing_to_a_retired_glossary_name(self) -> None:
-        orders = self.repo / "src" / "orders"
-        orders.mkdir(parents=True)
-        (orders / "CONTEXT.md").write_text("# Orders\n", encoding="utf-8")
-        (self.repo / "GLOSSARY-MAP.md").write_text(
-            "## Contexts\n\n- [Orders](./src/orders/CONTEXT.md)\n", encoding="utf-8"
-        )
-
-        result = self.run_glossary_map()
-
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("unreachable glossary entry", result.stderr)
-        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("invalid choice: 'glossary-map'", result.stderr)
 
     def test_render_exposes_all_map_entries_without_a_fixed_selection(self) -> None:
         orders = self.repo / "contexts" / "Orders" / "GLOSSARY.md"
@@ -1720,6 +1491,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
         for required in (
             "<type>(<scope>): <summary>",
             "Refs: <ticket identifier>",
+            "The ticket is referenced by the branch name, the pull request title, and the commit's `Refs:` trailer, never with a closing keyword.",
             "feat(renewals): add premium calculation (AUT-103)",
             "the source is the child ticket branch; the proposed destination is the parent integration branch, or the production base for a parent integration branch",
             "no skill or tracker automation closes a specification's parent ticket",
@@ -1748,7 +1520,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
             f"{token} = {value}\n" for token, value in lines.items()
         )
 
-    def test_render_and_update_ship_the_parent_child_and_closure_lines_of_github_and_linear(
+    def test_render_and_update_ship_the_tracker_comment_and_closure_lines_of_every_tracker(
         self,
     ) -> None:
         self.use_real_assets()
@@ -1761,8 +1533,24 @@ class SetupWorkflowCliTests(unittest.TestCase):
                 "keeps every closing automation off: parent auto-close, sub-issue auto-close, and auto-close of inactive issues",
                 "the specification's parent wins over a `parent` required by the fields above",
             ),
+            "gitlab": (),
+            "local-markdown": (),
         }
-        for tracker, phrases in expected.items():
+        policy_tokens = {
+            "linear": "LINEAR_COMMENT_POLICY",
+            "github": "GITHUB_COMMENT_POLICY",
+            "gitlab": "GITLAB_COMMENT_POLICY",
+            "local-markdown": "LOCAL_COMMENT_POLICY",
+        }
+        events = "may only reduce or schedule the publishable events and never adds another kind"
+        shape = (
+            "in at most five lines, stating the fact, then why, then what changes for the reader"
+        )
+        closure = "and closure explanations share one shape"
+        override = "one shape that no comment policy overrides"
+        qa_format = "The QA comment follows its own format, outside this shape"
+        pull_request = "plus one or two lines on what the reader will see change"
+        for tracker, tracker_phrases in expected.items():
             with self.subTest(tracker=tracker):
                 values = self.write_values(f"{tracker}.txt", self.tracker_values(tracker))
                 playbook = self.repo / "docs" / "agents" / "issue-tracker.md"
@@ -1785,6 +1573,14 @@ class SetupWorkflowCliTests(unittest.TestCase):
                 self.assertEqual(render.returncode, 0, render.stderr)
                 rendered = playbook.read_text(encoding="utf-8")
                 self.assertNotIn("{{", rendered)
+                phrases = [*tracker_phrases, events, shape, override, qa_format]
+                if tracker == "local-markdown":
+                    self.assertNotIn(closure, rendered)
+                else:
+                    phrases.append(closure)
+                if tracker == "linear":
+                    phrases.append(pull_request)
+                    self.assertNotIn("URL and evidence", rendered)
                 for phrase in phrases:
                     self.assertIn(phrase, rendered)
 
@@ -1804,7 +1600,77 @@ class SetupWorkflowCliTests(unittest.TestCase):
                 updated = playbook.read_text(encoding="utf-8")
                 for phrase in phrases:
                     self.assertIn(phrase, updated)
-                self.assertIn(f"{tracker.upper()}_COMMENT_POLICY value", updated)
+                self.assertIn(f"{policy_tokens[tracker]} value", updated)
+
+    def test_update_keeps_a_recorded_comment_policy_across_the_reworded_sentence(self) -> None:
+        self.use_real_assets()
+        shape = (
+            "in at most five lines, stating the fact, then why, then what changes for the reader"
+        )
+        reworded_tail = (
+            "; that policy may only reduce or schedule the publishable events and never adds "
+            "another kind. A progress or decision comment carries only a scope change (including "
+            "a Work Contract addition), a deviation, an accepted risk, or the pull request link; "
+            "a technical decision stays in the commit body."
+        )
+        for tracker, token in (
+            ("linear", "LINEAR_COMMENT_POLICY"),
+            ("github", "GITHUB_COMMENT_POLICY"),
+            ("gitlab", "GITLAB_COMMENT_POLICY"),
+            ("local-markdown", "LOCAL_COMMENT_POLICY"),
+        ):
+            with self.subTest(tracker=tracker):
+                recorded_value = f"{token} value"
+                values_text = self.tracker_values(tracker)
+                values = self.write_values(f"{tracker}.txt", values_text)
+                playbook = self.repo / "docs" / "agents" / "issue-tracker.md"
+                playbook.unlink(missing_ok=True)
+                arguments = (
+                    "--assets",
+                    str(REAL_ASSETS),
+                    "--values",
+                    str(values),
+                    "--tracker",
+                    tracker,
+                    "--repo",
+                    str(self.repo),
+                    "--approve",
+                    "issue-tracker.md",
+                )
+                self.assertEqual(self.run_script("render", *arguments).returncode, 0)
+                rendered = playbook.read_text(encoding="utf-8")
+                old_sentence = f"Append progress or decisions according to `{recorded_value}`."
+                new_sentence = (
+                    f"Append progress or decisions according to `{recorded_value}`{reworded_tail}"
+                )
+                self.assertIn(new_sentence, rendered)
+                playbook.write_text(
+                    "\n".join(
+                        line
+                        for line in rendered.replace(new_sentence, old_sentence).splitlines()
+                        if shape not in line
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+
+                update = self.run_script("update", *arguments)
+
+                self.assertEqual(update.returncode, 0, update.stderr)
+                self.assertIn(new_sentence, playbook.read_text(encoding="utf-8"))
+
+                playbook.write_text(rendered.replace(new_sentence, old_sentence), encoding="utf-8")
+                marker_values = self.write_values(
+                    f"{tracker}-marker.txt",
+                    values_text.replace(f"{token} = {recorded_value}", f"{token} = <marker>"),
+                )
+                refused = self.run_script(
+                    "update", *arguments[:3], str(marker_values), *arguments[4:]
+                )
+
+                self.assertEqual(refused.returncode, 1)
+                self.assertIn("would replace a recorded value with a marker", refused.stderr)
+                self.assertIn(token, refused.stderr)
 
     def test_update_drops_a_recorded_issue_title_and_body_template(self) -> None:
         self.use_real_assets()

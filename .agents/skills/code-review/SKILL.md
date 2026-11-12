@@ -4,7 +4,7 @@ description: "Trigger: review a ticket's diff inside the implementation loop, or
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "3.3.0"
+  version: "3.5.0"
   provenance: derived
 ---
 
@@ -14,7 +14,7 @@ metadata:
 
 Run at each review of an implementation loop, after a checkpoint commit and before critique, in a context other than the implementer's. Review the diff since a fixed point along three axes, each in its own isolated context, and hand the report to `review-critique`.
 
-The fixed point is the ticket's base for a ticket, and the production base for a parent integration branch reviewed against its specification. The diff runs from the merge-base of the fixed point to the head, a committed, signed commit.
+The fixed point is the ticket's base for a ticket, and the production base for a parent integration branch reviewed against its specification. The diff runs from the merge-base of the fixed point to the committed head.
 
 When the caller hands over the last reviewed head and its findings with their state, read [the corrective review](references/corrective-review.md) before step 1; otherwise the review is full.
 
@@ -25,17 +25,17 @@ This skill never changes the reviewed tree: it reads the diff, the files around 
 ## Decision Gates
 
 - The fixed point does not resolve: **blocked**. Name the ref.
-- Uncommitted changes, or an unsigned head: **blocked**. Name them.
+- Uncommitted changes: **blocked**. Name them.
 - The diff is empty: report that there is nothing to review and stop.
-- The ticket, or the specification for a parent integration branch, cannot be read: **blocked**. Name what is missing.
+- The ticket, or the specification for a parent integration branch, does not resolve: **blocked**. Name what is missing.
 - The harness cannot provide an isolated context per axis: **blocked**. Ask the harness for them; never run two axes in one context, and never run an axis in the reviewer's own context.
 - The Valuable Tests axis is **blocked** as [scratch evidence](references/scratch-evidence.md) defines it; Standards and Spec still report.
 
 ## Execution Steps
 
 1. Pin the fixed point: record it, the head, and the commit list since it.
-2. Collect each axis's sources: for Standards, [team standards and smell baseline](references/standards.md) and the repository's `docs/agents/coding-standards.md` when it exists; for Spec, the ticket and its specification when one exists, or the specification and every child ticket for a parent integration branch, read fresh from the tracker, plus the published Work Contract and decision comments, never a scope note written by whoever invoked the review; for Valuable Tests, [the valuable-tests rubric](../tdd/references/valuable-tests.md), the scratch evidence file, the repository's `docs/agents/quality.md`, the seams and coverage lines agreed before the first test, from the requirement-tracing table or coverage lines its caller hands over (else from the ticket), and the same tickets as Spec, read fresh, to check those tables against.
-3. Dispatch each axis to its own context, in parallel when the harness allows. Give each one the fixed point, the head, the commit list, the delta and its prior findings when corrective, its register entries, its own sources by path, and its brief below. An axis receives no other axis's sources or findings.
+2. Collect each axis's sources: for Standards, [team standards and smell baseline](references/standards.md) and the repository's `docs/agents/coding-standards.md` when it exists; for Spec, the ticket and its specification when one exists, or the specification and every child ticket for a parent integration branch, by identifier, plus the published Work Contract and decision comments, never a scope note written by whoever invoked the review; for Valuable Tests, [the valuable-tests rubric](../tdd/references/valuable-tests.md), the scratch evidence file, the repository's `docs/agents/quality.md`, the seams and coverage lines agreed before the first test, from the requirement-tracing table or coverage lines its caller hands over (else from the ticket), and the same tickets as Spec, to check those tables against.
+3. Dispatch each axis to its own context, in parallel when the harness allows. Give each one the fixed point, the head, the commit list, the delta and its prior findings when corrective, its register entries, its own sources by path or identifier to read fresh, and its brief below. An axis receives no other axis's sources or findings.
 4. Assemble the report from the axis reports, verbatim or lightly cleaned.
 
 ### Standards brief
@@ -62,6 +62,6 @@ Each finding carries:
 - the claim, in one sentence;
 - the evidence: the quoted hunk, plus the standard, the ticket or specification line, or the rubric failure mode it breaks.
 
-An axis with nothing to report says so in one line, and why when the diff gave it nothing to review.
+A blocked axis states **blocked** and its cause under its heading, apart from findings, so the caller can tell missing evidence from a failed review; it adds no finding to the count line. An axis with nothing to report says so in one line, and why when the diff gave it nothing to review.
 
 Never merge findings across axes, rerank them, or pick a single worst finding. End with one line giving the finding count per axis and the most serious finding within each axis.

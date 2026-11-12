@@ -53,6 +53,14 @@ user acceptance, the three
 dispositions, clean-tree preflight, and selective prototype recovery. The
 frontmatter was normalized to this repository's required shape.
 
+Under issue #165, approvals with no pull-request playbook block and point to `setup-workflow` instead of linking its shipped rules.
+
+## Upstream review
+
+2026-11-01: reviewed [`mattpocock-skills` v1.3.2](https://github.com/mattpocock/skills/tree/d1478fcb140db0b93c0c8df17bcfd311844749d0/skills/engineering/prototype) at commit `d1478fcb140db0b93c0c8df17bcfd311844749d0`. This is the reviewed reference, not a replacement for the adopted source revisions above.
+
+No upstream skill changes since the source revision. Preserve the recorded local prototype disposition and candidate-to-production contract rather than importing a throwaway-only workflow. No runtime material imported; the skill version is unchanged.
+
 ## Approval
 
 Grupo Ilao approved internal reuse under the MIT license.

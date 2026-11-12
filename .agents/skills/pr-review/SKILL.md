@@ -4,7 +4,7 @@ description: "Trigger: review a pull request as a whole for a human reviewer, or
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "1.1"
+  version: "1.4"
   provenance: derived
 ---
 
@@ -36,7 +36,7 @@ Resolve every source from what the repository configures, never assuming a provi
 ## Execution Steps
 
 1. **Pin** the base, the head SHA, and the commits; every finding refers to code at that head.
-2. **Review along three axes.** Each completes its own pass: Correctness when every requirement line maps to code or is reported missing, Standards and Decisions when every changed file has been read. Whether axes run in separate contexts is the harness's choice.
+2. **Review along three axes**, each dispatched to its own isolated context, in parallel when the harness allows. Give each axis the pinned base and head, its own sources by path or tracker identifier, never their content, and this skill's read-only rule; an axis receives no other axis's findings. Only when the harness cannot open another context, run the axes in this one, one at a time, and tell the reviewer they were not isolated. Each completes its own pass: Correctness when every requirement line maps to code or is reported missing, Standards and Decisions when every changed file has been read.
    - **Correctness**: the change against its requirement and as a whole: missing, partial, or wrong behavior, effects on callers and sibling paths that share a changed invariant, and changes outside the requirement's scope.
    - **Standards**: style, the repository's standards, domain rules, architecture, and design quality, from the standards sources only.
    - **Decisions**: each new or modified decision record, and each significant departure from the repository's usual flow, architecture, or standards. Present its documented justification, benefits, costs, risks, and consequences, and what calls for human judgment. Never invent a motivation: say when none is documented. A departure is not wrong by being one, not every decision needs a record, and a defect belongs to the other axes.
@@ -50,7 +50,7 @@ When the pull request carries a prior review, verify each of its findings agains
 
 ## Publication
 
-Drafting is not publishing. The run ends with the draft for the human reviewer, who may question the author's decisions, reclassify findings, and edit the draft; recompute the verdict from the final classification. Publish only when the reviewer asks, through the review capability the repository already has, after the approval preview of `pull-requests.md` and under its approval policy; with no recorded policy, use `every-step` and [the shipped rules](../setup-workflow/assets/pull-requests.md#approval-gates-and-external-effects), telling the user once to run `setup-workflow update`.
+Drafting is not publishing. The run ends with the draft for the human reviewer, who may question the author's decisions, reclassify findings, and edit the draft; recompute the verdict from the final classification. Publish only when the reviewer asks, through the review capability the repository already has, after the approval preview of `pull-requests.md` and under its approval policy; with no recorded policy, use `every-step`, telling the user once to run `setup-workflow update`; with no pull-request playbook, block and point to `setup-workflow`.
 
 ## References
 

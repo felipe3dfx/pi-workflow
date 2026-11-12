@@ -45,7 +45,7 @@ The review of a diff since a fixed point; separate axes run in parallel isolated
 ## Modifications
 
 1. Frontmatter rewritten to this catalog's shape with a `Trigger:` description.
-2. Placed inside the implementation loop: the fixed point is the ticket's base, or the production base for a parent integration branch reviewed against its specification, and the diff runs to a committed, signed head. The report is handed to `review-critique` instead of the user.
+2. Placed inside the implementation loop: the fixed point is the ticket's base, or the production base for a parent integration branch reviewed against its specification, and the diff runs to a committed head. The report is handed to `review-critique` instead of the user.
 3. Added the Valuable Tests axis, which applies the `tdd` skill's valuable-tests rubric and also reports a changed behavior with no test at its agreed seam.
 4. Added team standards that ship with the skill, and moved them with the smell baseline, reworded, into `references/standards.md`. Repository standards are read from `docs/agents/coding-standards.md` and override both.
 5. Removed spec discovery from commit messages and file searches; the ticket or specification is a required input, and its absence blocks the review.
@@ -54,10 +54,18 @@ The review of a diff since a fixed point; separate axes run in parallel isolated
 8. The Valuable Tests axis reports a test skipped at an agreed seam as that seam having no test.
 9. The Valuable Tests axis reads the seams and coverage lines from the requirement-tracing table or coverage lines its caller hands over; a pertinent case agreed in a coverage line with no test, or only a skipped one, and a ticket requirement with no line in that table are `hard` findings.
 10. Added `references/scratch-evidence.md`: the Valuable Tests axis prepares scratch under the consumer's commands and limits, records the candidate's identity before and after, runs each file whole, lifting only the consumer command's stop at the first failure, isolates state shared across checkouts as the consumer's quality playbook records, classifies each test as setup, module-load or missing-name, or assertion failure, or pass, and blocks on missing evidence, including a run without recorded isolation, without a recorded degraded path.
-11. Reviews a committed, signed head only. A caller that hands over the last reviewed head and its findings gets a corrective review of the delta from that head, with its context and affected code, carrying the prior findings with their state, on the axes the delta calls for, Standards included whenever it fixes a Standards finding, with Valuable Tests keeping its baseline at the fixed point; after a rebase the review is full, as ADR 0027 records.
+11. Reviews a committed head only. A caller that hands over the last reviewed head and its findings gets a corrective review of the delta from that head, with its context and affected code, carrying the prior findings with their state, on the axes the delta calls for, Standards included whenever it fixes a Standards finding, with Valuable Tests keeping its baseline at the fixed point; after a rebase the review is full, as ADR 0027 records.
 12. Added `references/findings-register.md`: a caller may hand any review a register of findings earlier reviews rejected or the developer decided without making it corrective; each axis receives only its own entries and re-raises a matching finding only with new evidence the head shows and the entry lacked, under a new ID naming the entry it reopens. The corrective-review rules moved unchanged into `references/corrective-review.md`, read when the caller hands over the last reviewed head.
 13. Register entries carry the finding's evidence and its verdict's evidence or reason; new evidence must be absent from all of them to reopen an entry.
 14. When the harness offers no scratch mechanism, the Valuable Tests axis prepares scratch itself as a separate checkout of the fixed point under the consumer's recorded commands and isolation, never its invoker; a blocked axis names that owner and what the consumer must record under Scratch Evidence, without editing it.
+15. Signing is no longer a review precondition: git applies the repository's signing configuration, and `implement` warns once per ticket on an unsigned head, as ADR 0035 records. A report with the Valuable Tests axis blocked on missing evidence states it as blocked, apart from findings.
+16. Under issue #222, the reviewer collects each ticket and specification by identifier and every axis reads them fresh from the tracker, instead of the reviewer reading them and handing their content to the axes.
+
+## Upstream review
+
+2026-11-01: reviewed [`mattpocock-skills` v1.3.2](https://github.com/mattpocock/skills/tree/d1478fcb140db0b93c0c8df17bcfd311844749d0/skills/engineering/code-review) at commit `d1478fcb140db0b93c0c8df17bcfd311844749d0`. This is the reviewed reference, not a replacement for the adopted source revisions above.
+
+Fresh isolated contexts and aggregation from returned axis reports are already required locally. Keep the recorded canonical Standards sources rather than searching for additional authorities, and keep dispatch portable rather than requiring foreground tool calls. No runtime material imported; the skill version is unchanged.
 
 ## Approval
 

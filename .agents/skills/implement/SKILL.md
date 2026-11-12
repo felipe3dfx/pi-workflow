@@ -4,7 +4,7 @@ description: "Trigger: implement one approved ticket from the tracker. Build it 
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "4.2"
+  version: "4.9"
   provenance: derived
 ---
 
@@ -12,11 +12,11 @@ metadata:
 
 ## Activation Contract
 
-Implement exactly one approved ticket in a fresh session and deliver it as local, signed commits. Compose `tdd`, `code-review`, `review-critique`, and `diagnose-bug`; each keeps its own contract.
+Implement exactly one approved ticket in a fresh session and deliver it as local commits. Compose `tdd`, `code-review`, `review-critique`, and `diagnose-bug`; each keeps its own contract.
 
-Read the ticket, its specification when one exists, and the domain authority; coding standards serve only the review's Standards axis. Every step reads the ticket fresh from the tracker, never an orchestrator's scope note.
+Read the ticket, its specification when one exists, and the domain authority; coding standards serve only the review's Standards axis. Each context that uses the ticket reads it fresh from the tracker once; this run passes each delegated context the ticket's identifier, never its content or a scope note.
 
-Approvals follow the pull-request playbook's approval policy and approval preview; with no recorded policy, use `every-step` and [the shipped rules](../setup-workflow/assets/pull-requests.md#approval-gates-and-external-effects), telling the user once to run `setup-workflow update`. As a child of `implement-spec`, read [child runs](references/child-run.md) first.
+Approvals follow the pull-request playbook's approval policy and approval preview; with no recorded policy, use `every-step`, telling the user once to run `setup-workflow update`; with no pull-request playbook, block and point to `setup-workflow`. As a child of `implement-spec`, read [child runs](references/child-run.md) first.
 
 ## Decision Gates
 
@@ -26,22 +26,24 @@ Approvals follow the pull-request playbook's approval policy and approval previe
 - A technical choice stated only as a recommendation is discretionary: departing from it while preserving approved behavior and contracts needs only the decision and reason recorded in the handoff.
 - The developer owns scope, discretionary findings, and accepted risks. Preferences and approved scope expansion never block.
 
-The ticket's base is the commit the branch starts from. Recover approved prototype code selectively, never as a base or a wholesale cherry-pick.
+The ticket's base is the commit the branch starts from.
 
 ## Execution Steps
 
-Before step 1, propose and create the branch, then build and approve the Work Contract per [the Work Contract rules](references/work-contract.md).
+Before step 1, resolve the ticket reference through the confirmed tracker and show its canonical ID, title, and repository or project; ask one focused question only if it is ambiguous. Then create the proposed branch and approve the Work Contract per [its rules](references/work-contract.md).
 
-1. **Seams.** Load the `tdd` skill. Before the first test, propose and agree with the developer, where the approval policy asks, the test seams, each required behavior's coverage line, and any line `tdd` completes later; every ticket requirement traces to a line. A behavior with no valuable test seam records the exception `tdd` defines.
-2. **Build.** Drive `tdd` at those seams. Run type checks and focused checks regularly through the quality playbook's Focused Validation path, on the touched area plus affected callers and consumers. Modify files through the file-editing capability, which fails on a target mismatch; the shell rewrites files only through project formatters and codemods. Recover from failed edits or checks until the candidate functions. After GREEN, make one simplification pass in this context, keeping the simplest sufficient seams, and close it with green focused checks.
-3. **Checkpoint.** Before the first review and after each fix, commit locally with the repository's existing signing configuration and the fixed commit template from the pull-request playbook. Never run the full suite; `create-pr` runs the publication gate. A local commit is not an external effect; pushing is.
-4. **Review.** Open a context other than the implementer's that receives "Load the `code-review` skill", the checkpoint head, and the agreed coverage lines with their tracing, and reviews with the ticket's base as the fixed point. The first review and the first after a rebase are full; every other is corrective, receiving the last reviewed head and the prior findings with their state. A blocked axis is an accepted risk: stop the ticket for the developer.
-5. **Critique.** Load the `review-critique` skill and run it on the review report. Never ask the developer about ordinary findings between reviews; approvals, scope expansions, and accepted risks still stop immediately.
+Scope prerequisites by phase and report discovered future limitations. Read [missing evidence](references/missing-evidence.md) before step 1 when the quality playbook records no `supported` Scratch Evidence state, and at Review whenever Valuable Tests blocks on missing evidence.
+
+1. **Seams.** Load the `tdd` skill. Before testing, propose and agree with the developer, where policy asks, seams, each required behavior's coverage line, and lines `tdd` completes later; trace every ticket requirement to a line. Without a valuable seam, record `tdd`'s exception.
+2. **Build.** Drive `tdd` at agreed seams. Regularly run type and focused checks through the quality playbook's Focused Validation path on touched areas and affected callers and consumers. Edit through the file-editing capability, failing on target mismatch; shell rewrites use only project formatters and codemods. Recover failed edits or checks until the candidate functions. After GREEN, simplify once in this context, keeping the simplest sufficient seams; close with green focused checks.
+3. **Checkpoint.** Before first review and after each fix, commit locally with the pull-request playbook's fixed commit template. Surface a signing failure as is, never bypassing it; warn once per ticket on an unsigned head to configure signing. Never run the full suite; `create-pr` runs the publication gate. A local commit is not an external effect; pushing is.
+4. **Review.** Give a context other than the implementer's "Load the `code-review` skill", the checkpoint head, and agreed coverage lines with tracing; review against the ticket's fixed base. First and post-rebase reviews are full; others are corrective, receiving the last reviewed head and prior findings with state. Apply the scratch evidence gate here; Standards and Spec still report if Valuable Tests blocks. A blocked axis stops the ticket for the developer, except missing evidence the developer accepts, which continues through steps 5–6 to the handoff.
+5. **Critique.** Load the `review-critique` skill and run it on the review report. Never ask the developer about ordinary findings between reviews; approvals, scope expansions, and accepted risks not already answered still stop immediately.
 6. **Fix.** Apply only the accepted findings, in a fresh context other than the implementer's, rerun focused checks, checkpoint, and review again. A round makes at most two automatic review invocations; the second's accepted findings stay open. When it closes, take to the developer only the `user decision` and still-open accepted findings; show the rejected ones, which need no answer. A further fix the developer approves gets a fresh review of its own head.
 
-Every Work Contract addition, scope expansion, deviation from binding authority or the prototype contract, accepted risk, or rejected hard finding (one citing a binding standard or requirement) needs an append-only Spanish issue comment stating decision, reason, and impact, published only once its approval preview is approved, where the policy asks. A decision that narrows a binding criterion is published as that deviation comment before step 4, so the Spec axis judges it. Those comments and an approved blocker closure are the skill's only external effects.
+For a Work Contract addition, scope expansion, deviation from binding authority or the prototype contract, or accepted risk, read [decision recording](references/decision-recording.md) before acting or publishing. Decision comments and an approved blocker closure are this skill's only external effects.
 
-On cancellation, preserve the work without stashing or discarding it and report the last verified point. Resume only after fresh validation.
+On cancellation, read [cancellation](references/cancellation.md) first.
 
 When the ticket re-enters after its handoff (a stop, a red publication gate, feedback, or red CI), read [rounds](references/rounds.md) first.
 
@@ -49,7 +51,7 @@ When the ticket re-enters after its handoff (a stop, a red publication gate, fee
 
 A prose handoff with:
 
-- the ticket, branch, and base, plus the previous head and `create-pr`'s red-run count on re-entry;
+- the ticket, branch, and base, plus the previous head and `create-pr`'s red-run count and last green pushed head on re-entry;
 - the commit SHAs, the last being the head, and each reviewed head with its review report, the last equal to the head;
 - a small table tracing each ticket requirement to its seam and cases, each case with RED and GREEN evidence, skipped with its reason, or under its behavior's recorded no-valuable-test-seam exception;
 - the focused checks, with commands and results, and the publication gate pending, never green or integrated;

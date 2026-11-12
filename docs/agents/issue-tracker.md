@@ -36,7 +36,7 @@ When both the parent issue and the child issue exist, publish the parent-child (
 
 ## When a Skill Says "Fetch the Relevant Ticket"
 
-Retrieve the issue body, comments, state, labels, assignees, milestone, project, linked issues, linked pull requests, and the issue's parent and sub-issues. Resolve whether a referenced number is an issue or pull request before acting.
+Retrieve the issue body, comments, state, labels, assignees, milestone, project, linked issues, linked pull requests, and the issue's parent and sub-issues. Retrieve its native blocked-by relationships with each blocker's current state: the parent relationship alone is not a blocker, and only an open blocker blocks the issue. Resolve whether a referenced number is an issue or pull request before acting.
 
 Read capability:
 
@@ -50,4 +50,8 @@ Read capability:
 
 ## Comments and Updates
 
-Write human-facing issue titles, bodies, and comments in Spanish. This is a workflow invariant, not a consumer preference, and it holds even where the repository's own conventions prescribe another language. Append progress or decisions according to `append-only Spanish ticket comment that links the pull request and its evidence and never changes the ticket's state`. Changes that create, edit, label, assign, or close an issue are external effects and require the approval defined in `pull-requests.md`.
+Write human-facing issue titles, bodies, and comments in Spanish. This is a workflow invariant, not a consumer preference, and it holds even where the repository's own conventions prescribe another language. Append progress or decisions according to `append-only Spanish ticket comment that links the pull request and its evidence and never changes the ticket's state`; that policy may only reduce or schedule the publishable events and never adds another kind. A progress or decision comment carries only a scope change (including a Work Contract addition), a deviation, an accepted risk, or the pull request link; a technical decision stays in the commit body. Changes that create, edit, label, assign, or close an issue are external effects and require the approval defined in `pull-requests.md`. Before any such change, confirm that the repository the access mechanism will act on, as the mechanism reports it or as the call names it explicitly, is the one recorded above; a fork, a remote, or a mechanism default never stands in for it, and a mismatch or a destination that cannot be confirmed blocks the change.
+
+These comments and closure explanations share one shape that no comment policy overrides: written for a person without the code, in Spanish and domain language, in at most five lines, stating the fact, then why, then what changes for the reader, with nothing the reader would have to look up in the code. A deviation or scope change names the affected acceptance criterion in the ticket's own wording; a Work Contract addition states the new behavior as one verifiable criterion in that wording. The QA comment follows its own format, outside this shape.
+
+When a skill closes an issue with an explanation, post the explanation as a comment and read it back on the issue, then close the issue and read back its closed state; each is an effect under the approval policy. When recovering an interrupted closure, an explanation the issue already shows is not posted again.

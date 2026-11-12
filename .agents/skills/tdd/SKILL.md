@@ -4,7 +4,7 @@ description: "Trigger: develop a feature or fix test-first. Establish behavior-l
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "1.4"
+  version: "1.5"
   provenance: derived
 ---
 
@@ -18,14 +18,14 @@ Use for meaningful observable behavior while implementing an approved change. Th
 
 Consume the technical handoff, applicable authority, and consumer testing contract. Before a test, confirm the named seam or ask the developer to resolve a missing or contradicted seam. Prefer the highest useful existing public interface that fully exercises the behavior. Load the `codebase-design` skill only when seam shape needs design vocabulary.
 
-Before the first test of each required behavior, agree its coverage line and trace it to the requirement it serves: the observable behavior, its seam, the pertinent cases (the success path plus each state, limit, and rejection or error the requirement or the seam's boundary names), each case's independent expected-value source, and its planned evidence or a no-valuable-test-seam exception. A requirement without a line, or a pertinent case missing from one, is a coverage gap: complete the line, within approved scope, before that behavior's first test. Plan the cases a requirement makes pertinent, not every combination of inputs; tests still follow one at a time.
+Before the first test of each required behavior, agree its coverage line and trace it to the requirement it serves: the observable behavior, its seam, with a brief note on what it catches and misses when useful, the pertinent cases (the success path plus each state, limit, and rejection or error the requirement or the seam's boundary names), each case's independent expected-value source, and its planned evidence or a no-valuable-test-seam exception. A requirement without a line, or a pertinent case missing from one, is a coverage gap: complete the line, within approved scope, before that behavior's first test. Plan the cases a requirement makes pertinent, not every combination of inputs; tests still follow one at a time. What a seam misses never waives a required behavior or pertinent case.
 
 A documentation-only, purely visual, or configuration-only change may record a no-valuable-test-seam exception only when it has no valuable test seam and the decision is recorded with its reason. Otherwise missing seams, an unresolved governing-authority or required-contract contradiction, or an unavailable required test path blocks this activity rather than inventing an internal test.
 
 ## Red-Green Loop
 
 1. Establish the current safety net with the consumer's relevant checks.
-2. Write one durable behavior test at the agreed seam and record a reproducible assertion RED, not a setup failure. Derive expected values from an approved specification, worked example, or known literal independent of the implementation.
+2. Write one durable behavior test at the agreed seam and record a reproducible assertion RED, not a setup failure. Derive expected values from an approved specification, worked example, or known literal independent of the implementation. When you deliberately mutate code or a fixture to prove a test can fail, use a disposable, isolated copy for both the mutation and the test, and diff that copy against a pristine one to confirm the intended mutation landed before trusting the result; this conditional check is no mutation-testing phase and never replaces the assertion RED or the review's run against the fixed point.
 3. Add only the implementation needed for GREEN and record the result.
 4. Add another example only when it materially strengthens the contract; then repeat for the next planned case and the next behavior.
 

@@ -64,6 +64,18 @@ The upstream orchestration at `d81f3a1`: the tickets read as a task graph with a
 18. Register entries carry the finding's evidence and the critique's evidence or reason for its verdict, so a reopening is compared against what was adjudicated; a developer-decided `TRADE` is registered under each finding ID it names.
 19. Parent fixes still never run the full suite; `create-pr` runs the publication gate the quality playbook declares before publishing the parent, and a red gate of any class opens a new round in the parent fix loop, as ADR 0030 records.
 20. `create-pr` selects the publication gate by the change's impact for every consumer, with no declaration in the quality playbook, as ADR 0031 records.
+21. `qa-impact` runs on each pushed parent head with the children's aggregated handoffs and the parent coverage report, and its draft updates the parent ticket's single QA comment in place instead of appending a new one.
+22. The parent fix loop carries `create-pr`'s last green pushed head with its class unchanged, so the next publication gate measures from it, as ADR 0033 records.
+23. Under issue #165, approvals with no pull-request playbook block and point to `setup-workflow` instead of linking its shipped rules.
+24. Signing is no longer required: git applies the repository's signing configuration to the merge and fix commits, and a signing failure is surfaced, never bypassed, as ADR 0035 records.
+25. The parent fix loop publishes only scope changes, deviations, and accepted risks on the parent ticket, under the tracker playbook's comment shape, instead of every developer decision; every other decision stays in the commit body, and a blocked parent review axis is published as an accepted-risk comment, as ADR 0036 records.
+26. Under issue #222, each delegated context reads its ticket or specification fresh from the tracker, and this run passes the identifier instead of the content. A scope note still never substitutes for the ticket.
+
+## Upstream review
+
+2026-11-01: reviewed [`mattpocock-skills` v1.3.2](https://github.com/mattpocock/skills/tree/d1478fcb140db0b93c0c8df17bcfd311844749d0/skills/engineering/implement-spec) at commit `d1478fcb140db0b93c0c8df17bcfd311844749d0`. This is the reviewed reference, not a replacement for the adopted source revisions above.
+
+The upstream addition requires a fresh context for every subagent. Local ticket implementers and parent reviews already have that boundary. Preserve the existing integration and publication contracts. No runtime material imported; the skill version is unchanged.
 
 ## Approval
 

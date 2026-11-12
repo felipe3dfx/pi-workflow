@@ -46,6 +46,9 @@ The review of a whole pull request along independent axes that must not hide one
 10. Added the run-read comment format and a maintainer reference with two worked rounds.
 11. Replaced the fixed Spanish review with the language the user asks for, else the one the repository sets, else the pull request's; section headings and later-round tags are defined by meaning and written in that language.
 12. Under issue #163, the critique closes with `review-critique`'s Simplification Trade, added to the draft for the human reviewer, and the description names the re-review of an updated pull request as a trigger.
+13. Under issue #165, approvals with no pull-request playbook block and point to `setup-workflow` instead of linking its shipped rules.
+14. Under issue #218, each axis is dispatched to its own isolated context by default and receives no other axis's findings; the axes run in the invoking context only when the harness cannot open another one, and the reviewer is told. This replaces leaving isolation to the harness's choice.
+15. Under issue #222, each axis receives its sources by path or tracker identifier, never their content, so the requirement is read fresh in the axis that uses it instead of being copied from the invoking context.
 
 ## Approval
 
