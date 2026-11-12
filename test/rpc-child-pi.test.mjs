@@ -1050,8 +1050,12 @@ function systemPromptOf(request) {
 
 test("a real Pi child of every packaged contract, launched and continued, receives the rule to write for the parent in English and keep transported content", { skip, timeout: 120_000 }, async (t) => {
 	for (const [variant, role] of [["role", "explore"], ["role", "worker"], ["role", "verify"], ["contextual", "worker"]]) {
-		await t.test(`${variant} ${role}`, async (t) => {
+		await t.test(`${variant} ${role}`, { skip: role === "explore" && webSkip }, async (t) => {
 			const scene = await fixture(t);
+			if (role === "explore") {
+				await install(scene);
+				await writeFile(join(scene.agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-web-access"] }));
+			}
 			const repo = await repository(scene.dir, "repo", {});
 			const contextual = variant === "contextual";
 			const [provider, id] = scene.endpoint.model.split("/");

@@ -77,11 +77,12 @@ async function npmPack(root, destination) {
 		["pack", "--json", "--pack-destination", destination, "--ignore-scripts"],
 		{ cwd: root },
 	);
-	const result = JSON.parse(stdout);
-	if (!Array.isArray(result) || !result[0]?.filename) {
+	const parsed = JSON.parse(stdout);
+	const [result] = Array.isArray(parsed) ? parsed : Object.values(parsed ?? {});
+	if (!result?.filename) {
 		throw new Error("npm pack did not report a tarball");
 	}
-	return join(destination, result[0].filename);
+	return join(destination, result.filename);
 }
 
 async function main() {
