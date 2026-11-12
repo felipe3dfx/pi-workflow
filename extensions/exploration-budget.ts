@@ -26,12 +26,7 @@ const discoveryTools = new Set([
 	"mem_context",
 ]);
 
-const nestingTools = new Set(["codemode", "mcp"]);
-
-const neutralCommands = [
-	/^(cd|pushd|popd|echo|printf|true|false|export|set)\b/,
-	/^([A-Za-z_]\w*=("[^"]*"|'[^']*'|[^\s"'])*(\s+|$))+$/,
-];
+const neutralCommand = /^(cd|pushd|popd|echo|printf|true|false|export|set)\b/;
 
 const inspectionCommands = [
 	/^git\s+(diff|show|log|blame|grep|status|ls-files|rev-parse)\b/,
@@ -40,7 +35,7 @@ const inspectionCommands = [
 	/^git\s+(worktree|stash)\s+list\b/,
 	/^git\s+config\s+(--get|--get-all|--get-regexp|-l|--list)\b/,
 	/^gh\s+(pr|issue|repo|release)\s+(view|list|diff|status)\b/,
-	/^(ls|cat|head|tail|grep|rg|wc|tree|stat|jq|awk|diff)\b/,
+	/^(ls|cat|head|tail|grep|rg|wc|tree|stat|jq|diff)\b/,
 	/^find\b(?!.*\s-(delete|exec|execdir|ok|okdir|fprint\w*|fls)\b)/,
 	/^sed\b(?!.*\s(-[a-zA-Z]*i|--in-place)\b)/,
 	/^sort\b(?!.*\s(-o|--output)\b)/,
@@ -105,20 +100,14 @@ function segments(command: string): string[] {
 }
 
 function inspectsOnly(command: unknown): boolean {
-	if (typeof command !== "string") return false;
+	if (typeof command !== "string" || /`|[<>]\(/.test(command)) return false;
 	const commands = segments(command)
 		.map((segment) => segment.replace(harmlessRedirects, "").trim())
 		.filter(Boolean)
 		.map((segment) =>
-			segment
-				.replace(/^([A-Za-z_]\w*=("[^"]*"|'[^']*'|[^\s"'])*\s+)+(?=\S)/, "")
-				.replace(/^git\s+((-C|-c)\s+\S+\s+|--no-pager\s+)+/, "git "),
+			segment.replace(/^git\s+((-C|-c)\s+\S+\s+|--no-pager\s+)+/, "git "),
 		)
-		.filter(
-			(segment) =>
-				segment.includes(">") ||
-				!neutralCommands.some((pattern) => pattern.test(segment)),
-		);
+		.filter((segment) => segment.includes(">") || !neutralCommand.test(segment));
 	return (
 		commands.length > 0 &&
 		commands.every(
@@ -171,7 +160,7 @@ export function createExplorationBudget() {
 				if (
 					!parent ||
 					parent.parentToolCallId !== undefined ||
-					!nestingTools.has(parent.toolName)
+					parent.toolName !== "codemode"
 				)
 					return;
 			}

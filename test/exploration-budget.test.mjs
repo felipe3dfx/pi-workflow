@@ -1,31 +1,25 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
 	fauxAssistantMessage,
-	fauxProvider,
 	fauxToolCall,
 } from "@earendil-works/pi-ai";
-import {
-	createAgentSession,
-	DefaultResourceLoader,
-	ModelRuntime,
-	SessionManager,
-	SettingsManager,
-} from "@earendil-works/pi-coding-agent";
 
 import { capabilities } from "../extensions/configure.ts";
 import {
 	createExplorationBudget,
 	explorationNotice,
 } from "../extensions/exploration-budget.ts";
-import piWorkflowExtension from "../extensions/pi-workflow.ts";
-import { replaceSelection } from "../extensions/shell.ts";
 import { createDelegationMode } from "../extensions/workflow-settings.ts";
 import { withAgentDirectory } from "./support/agent-directory.mjs";
+import {
+	parentSession as workflowParent,
+	realParent as workflowRealParent,
+	seat,
+} from "./support/workflow-parent.mjs";
 
 let calls = 0;
 
@@ -124,6 +118,13 @@ test("errors, aborted results and unrecorded calls do not count", () => {
 	assert.equal(counts("read", { unrecorded: true }), false);
 });
 
+test("a result whose tool name differs from its recorded call does not count", () => {
+	const budget = started();
+	for (let i = 0; i < 3; i++) lookup(budget, "read");
+	budget.call({ toolCallId: "swapped", toolName: "edit" });
+	assert.equal(lookup(budget, "read", { id: "swapped", unrecorded: true }), undefined);
+});
+
 test("Engram memory reads and MCP-proxied discovery tools count", () => {
 	for (const name of [
 		"mem_search",
@@ -177,7 +178,7 @@ test("a discovery call nested in codemode counts and the codemode call does not"
 	assert.equal(lookup(budget, "codemode", { id: "script", unrecorded: true }), undefined);
 });
 
-test("nested calls count only one level below codemode or an MCP proxy", () => {
+test("nested calls count only one level below codemode", () => {
 	const nested = (parentName, grandparent) => {
 		const budget = started();
 		for (let i = 0; i < 3; i++) lookup(budget, "read");
@@ -187,7 +188,7 @@ test("nested calls count only one level below codemode or an MCP proxy", () => {
 		return lookup(budget, "read", { id: "p/1", parent: "p" }) !== undefined;
 	};
 	assert.equal(nested("codemode"), true);
-	assert.equal(nested("mcp"), true);
+	assert.equal(nested("mcp"), false);
 	assert.equal(nested("bash"), false);
 	assert.equal(nested("codemode", true), false);
 });
@@ -226,7 +227,6 @@ const inspecting = [
 	"tree src",
 	"stat a.ts",
 	"jq .name package.json",
-	"awk '{print $1}' a.txt",
 	"diff a b",
 	"find . -name '*.ts'",
 	"sed -n 1,20p a.ts",
@@ -239,7 +239,6 @@ const inspecting = [
 	'grep "a && b" file',
 	"grep 'x; touch y' file",
 	"cat $(git rev-parse --show-toplevel)/README.md",
-	"FILE=README.md cat $FILE",
 	"git diff 2>&1 | head",
 ];
 
@@ -280,6 +279,15 @@ const notInspecting = [
 	"curl https://example.com",
 	"python3 script.py",
 	"git status & npm install",
+	"cat `rm x`",
+	"echo `rm x`; ls",
+	"cat <(rm x)",
+	"ls >(rm x)",
+	"FILE=README.md cat $FILE",
+	"GIT_EXTERNAL_DIFF=./x.sh git diff",
+	"X=1; ls",
+	"awk '{print $1}' a.txt",
+	"awk 'BEGIN{system(\"rm x\")}'",
 ];
 
 test("bash counts only when every segment is read-only inspection", () => {
@@ -306,61 +314,8 @@ test("the notice states the evidence budget, the explore child, the mode and tha
 	);
 });
 
-function seat(on = capabilities) {
-	replaceSelection({
-		schemaVersion: 1,
-		capabilities: Object.fromEntries(
-			capabilities.map((capability) => [capability, on.includes(capability)]),
-		),
-		expectations: {},
-	});
-}
-
 async function parentSession(agentDirectory) {
-	const handlers = new Map();
-	const sent = [];
-	piWorkflowExtension(
-		{
-			on(event, handler) {
-				handlers.set(event, [...(handlers.get(event) ?? []), handler]);
-			},
-			registerCommand() {},
-			registerShortcut() {},
-			registerMessageRenderer() {},
-			registerToolRenderer() {},
-			registerProvider() {},
-			registerTool() {},
-			sendMessage: (message, options) => sent.push({ message, options }),
-			appendEntry() {},
-			exec: async () => {
-				throw new Error("must not run commands");
-			},
-		},
-		{
-			catalog: { resolveInstalledVersion: () => ({}) },
-			agentDirectory,
-		},
-	);
-	const fire = async (event, payload = {}, ctx = {}) => {
-		for (const handler of handlers.get(event) ?? []) await handler(payload, ctx);
-	};
-	await fire("session_start", {}, {
-		mode: "print",
-		hasUI: true,
-		ui: {
-			notify() {},
-			setWidget() {},
-			setStatus() {},
-			setHeader() {},
-			setFooter() {},
-			setEditorComponent() {},
-			setWorkingVisible() {},
-			setWorkingIndicator() {},
-			setWorkingMessage() {},
-		},
-		cwd: agentDirectory,
-		sessionManager: { getBranch: () => [], getEntries: () => [] },
-	});
+	const { fire, sent } = await workflowParent(agentDirectory);
 	let id = 0;
 	return {
 		sent,
@@ -450,38 +405,8 @@ test("a session without the child tools sends no notice", async (t) => {
 });
 
 async function realParent(t, dir, responses) {
-	const worktree = join(dir, "worktree");
-	execFileSync("git", ["init", "-q", worktree]);
-	await writeFile(join(worktree, "README.md"), "Installs the harness.\n");
-	const runtime = await ModelRuntime.create({
-		authPath: join(dir, "auth.json"),
-		modelsPath: null,
-		refreshOnCreate: false,
-	});
-	const faux = fauxProvider({ provider: "faux", models: [{ id: "parent", reasoning: true }] });
-	runtime.registerNativeProvider(faux.provider);
-	await runtime.setRuntimeApiKey("faux", "key");
-	const requests = [];
-	faux.setResponses(
-		responses.map((response) => (context) => {
-			requests.push(structuredClone(context));
-			return response;
-		}),
-	);
-	const settingsManager = SettingsManager.inMemory();
-	const resourceLoader = new DefaultResourceLoader({
-		cwd: worktree,
-		agentDir: dir,
-		settingsManager,
-		noExtensions: true,
-		noSkills: true,
-		noContextFiles: true,
+	const parent = await workflowRealParent(t, dir, responses, {
 		extensionFactories: [
-			(pi) =>
-				piWorkflowExtension(pi, {
-					agentDirectory: dir,
-					catalog: { resolveInstalledVersion: () => ({}) },
-				}),
 			(pi) =>
 				pi.registerTool({
 					name: "codemode",
@@ -496,20 +421,8 @@ async function realParent(t, dir, responses) {
 				}),
 		],
 	});
-	await resourceLoader.reload();
-	const { session } = await createAgentSession({
-		cwd: worktree,
-		agentDir: dir,
-		modelRuntime: runtime,
-		model: faux.getModel(),
-		thinkingLevel: "high",
-		resourceLoader,
-		settingsManager,
-		sessionManager: SessionManager.inMemory(worktree),
-	});
-	t.after(() => session.dispose());
-	await session.bindExtensions({ mode: "rpc" });
-	return { session, requests };
+	await writeFile(join(parent.worktree, "README.md"), "Installs the harness.\n");
+	return parent;
 }
 
 const notices = (request) =>
@@ -531,6 +444,10 @@ test("in a real Pi session, the fourth read of a prompt steers the notice into t
 	assert.equal(requests.length, 2);
 	assert.equal(notices(requests[1]), 1);
 	assert.match(JSON.stringify(requests[1].messages), /4 tracked lookups/);
+	const result = (id) => requests[1].messages.find((message) => message.toolCallId === id);
+	assert.equal(result("a-4").isError, false);
+	assert.match(JSON.stringify(result("a-4").content), /Installs the harness\./);
+	assert.deepEqual(result("a-4").content, result("a-1").content);
 });
 
 test("in a real Pi session, reads a codemode script makes count toward the budget", async (t) => {
