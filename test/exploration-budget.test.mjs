@@ -16,8 +16,8 @@ import {
 import { createDelegationMode } from "../extensions/workflow-settings.ts";
 import { withAgentDirectory } from "./support/agent-directory.mjs";
 import {
-	parentSession as workflowParent,
-	realParent as workflowRealParent,
+	parentSession,
+	realParent,
 	seat,
 } from "./support/workflow-parent.mjs";
 
@@ -314,8 +314,8 @@ test("the notice states the evidence budget, the explore child, the mode and tha
 	);
 });
 
-async function parentSession(agentDirectory) {
-	const { fire, sent } = await workflowParent(agentDirectory);
+async function budgetParent(agentDirectory) {
+	const { fire, sent } = await parentSession(agentDirectory);
 	let id = 0;
 	return {
 		sent,
@@ -340,7 +340,7 @@ async function parentSession(agentDirectory) {
 test("a parent with the child tools that crosses the budget gets one visible steer notice for the request", async (t) => {
 	const dir = withAgentDirectory(t);
 	seat();
-	const parent = await parentSession(dir);
+	const parent = await budgetParent(dir);
 	await parent.prompt();
 	await parent.lookups(3, { text: "abc" });
 	assert.deepEqual(parent.sent, []);
@@ -357,7 +357,7 @@ test("a parent with the child tools that crosses the budget gets one visible ste
 test("the notice reads the Delegation mode when it is sent", async (t) => {
 	const dir = withAgentDirectory(t);
 	seat();
-	const parent = await parentSession(dir);
+	const parent = await budgetParent(dir);
 	await parent.prompt();
 	await parent.lookups(3);
 	createDelegationMode(dir).set("orchestrator");
@@ -368,7 +368,7 @@ test("the notice reads the Delegation mode when it is sent", async (t) => {
 test("a run woken by a custom message continues the request and a new prompt starts another", async (t) => {
 	const dir = withAgentDirectory(t);
 	seat();
-	const parent = await parentSession(dir);
+	const parent = await budgetParent(dir);
 	await parent.prompt();
 	await parent.lookups(3);
 	await parent.wake();
@@ -387,7 +387,7 @@ test("a run woken by a custom message continues the request and a new prompt sta
 test("aborted results and non-discovery tools send no notice", async (t) => {
 	const dir = withAgentDirectory(t);
 	seat();
-	const parent = await parentSession(dir);
+	const parent = await budgetParent(dir);
 	await parent.prompt();
 	await parent.lookups(5, { ctx: { signal: AbortSignal.abort() } });
 	await parent.lookups(5, { toolName: "web_fetch" });
@@ -398,14 +398,14 @@ test("aborted results and non-discovery tools send no notice", async (t) => {
 test("a session without the child tools sends no notice", async (t) => {
 	const dir = withAgentDirectory(t);
 	seat(capabilities.filter((capability) => capability !== "child-session"));
-	const parent = await parentSession(dir);
+	const parent = await budgetParent(dir);
 	await parent.prompt();
 	await parent.lookups(5, { text: "x".repeat(50_000) });
 	assert.deepEqual(parent.sent, []);
 });
 
-async function realParent(t, dir, responses) {
-	const parent = await workflowRealParent(t, dir, responses, {
+async function budgetRealParent(t, dir, responses) {
+	const parent = await realParent(t, dir, responses, {
 		extensionFactories: [
 			(pi) =>
 				pi.registerTool({
@@ -436,7 +436,7 @@ test("in a real Pi session, the fourth read of a prompt steers the notice into t
 			[1, 2, 3, 4].map((n) => fauxToolCall("read", { path: "README.md" }, { id: `${prefix}-${n}` })),
 			{ stopReason: "toolUse" },
 		);
-	const { session, requests } = await realParent(t, dir, [
+	const { session, requests } = await budgetRealParent(t, dir, [
 		reads("a"),
 		fauxAssistantMessage("Done."),
 	]);
@@ -453,7 +453,7 @@ test("in a real Pi session, the fourth read of a prompt steers the notice into t
 test("in a real Pi session, reads a codemode script makes count toward the budget", async (t) => {
 	const dir = withAgentDirectory(t);
 	seat();
-	const { session, requests } = await realParent(t, dir, [
+	const { session, requests } = await budgetRealParent(t, dir, [
 		fauxAssistantMessage(fauxToolCall("codemode", {}, { id: "script" }), { stopReason: "toolUse" }),
 		fauxAssistantMessage("Done."),
 	]);
