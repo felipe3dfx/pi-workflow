@@ -179,6 +179,18 @@ test("narrow controls do not displace a higher priority page position", () => {
 	assert.deepEqual(layout.targets.filter((target) => target.row !== 1), []);
 });
 
+test("compact summary shows keyboard hints when they fit and stays within narrow widths", () => {
+	const tasks = [{ id: 1, text: "work", state: "pending" }, { id: 2, text: "done", state: "done" }];
+	const state = { collapsed: false, showDone: false };
+	const wide = renderTodoBox(fakeTheme(), tasks, state, 80, new Map(), 17, 1).lines;
+	assert.equal(wide.length, 1);
+	assert.match(wide[0], /1\/2 Without done/);
+	assert.match(wide[0], /Alt\+Shift\+T\/H\/P\/N/);
+	const narrow = renderTodoBox(fakeTheme(), tasks, state, 12, new Map(), 17, 1).lines;
+	assert.equal(narrow.length, 1);
+	assert.ok(visibleWidth(narrow[0]) <= 12);
+});
+
 test("extreme heights, manual collapse and compact preserve the requested page", () => {
 	const tasks = [{ id: 1, text: "work", state: "pending" }];
 	const state = { collapsed: false, showDone: false };

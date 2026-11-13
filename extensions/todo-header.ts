@@ -56,7 +56,7 @@ export function renderTodoBox(
 	}
 	const visible = tasks.filter((task) => state.showDone || task.state !== "done");
 	if (capacity === 0) {
-		const summary = `${visible.length}/${tasks.length} ${state.showDone ? "All" : "Without done"} · Alt+Shift+T/H`;
+		const summary = `${visible.length}/${tasks.length} ${state.showDone ? "All" : "Without done"} · Alt+Shift+T/H/P/N`;
 		return deferred([truncateToWidth(theme.fg("dim", summary), safeWidth)]);
 	}
 	const pageCount = Math.max(1, Math.ceil(visible.length / capacity));
