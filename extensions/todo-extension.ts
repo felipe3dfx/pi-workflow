@@ -7,6 +7,8 @@ import {
 	renderTodoBox,
 	type TaskExecutors,
 	type TodoBoxState,
+	type TodoHitTarget,
+	type TodoHitAction,
 } from "./todo-header.ts";
 import { createTodoList, TASK_STATES, type Task, type TaskState } from "./todo-list.ts";
 
@@ -75,14 +77,39 @@ export function registerSessionTodo(
 ) {
 	const todoList = createTodoList();
 	const boxState: TodoBoxState = { collapsed: false, showDone: true };
+	let page = 1;
+	let pageCount: number | null = null;
+	let targets: TodoHitTarget[] = [];
+	function act(action: TodoHitAction) {
+		targets = [];
+		switch (action) {
+			case "collapse": boxState.collapsed = true; break;
+			case "expand": boxState.collapsed = false; break;
+			case "filter": boxState.showDone = !boxState.showDone; page = 1; break;
+			case "previous": page = Math.max(1, page - 1); break;
+			case "next": if (pageCount !== null) page = Math.min(pageCount, page + 1); break;
+		}
+		requestRender();
+	}
 	if (options.attachUI !== false) {
-		occupyAboveInput("todo", (width, theme) =>
-			renderTodoBox(theme, todoList.list(), boxState, width, executors()),
-		);
+		occupyAboveInput("todo", (width, theme, rows) => {
+			const layout = renderTodoBox(theme, todoList.list(), boxState, width, executors(), rows, page);
+			page = layout.page;
+			if (layout.pageCount !== null) pageCount = layout.pageCount;
+			targets = layout.targets;
+			return layout.lines;
+		}, (event) => {
+			if (event.type !== "click" || event.button !== "left") return undefined;
+			const target = targets.find(({ row, start, end }) => event.y === row && event.x >= start && event.x < end);
+			if (!target) return undefined;
+			act(target.action);
+			return { handled: true };
+		});
 	}
 
 	function reveal(): void {
 		boxState.collapsed = false;
+		targets = [];
 		requestRender();
 	}
 
@@ -159,22 +186,24 @@ export function registerSessionTodo(
 		pi.registerShortcut("alt+shift+t", {
 			description: "Collapse or expand the session task box above the input",
 			handler: async (_ctx) => {
-				boxState.collapsed = !boxState.collapsed;
-				requestRender();
+				act(boxState.collapsed ? "expand" : "collapse");
 			},
 		});
 
 		pi.registerShortcut("alt+shift+h", {
 			description: "Show or hide done session tasks above the input",
 			handler: async (_ctx) => {
-				boxState.showDone = !boxState.showDone;
-				requestRender();
+				act("filter");
 			},
 		});
+		for (const [key, action] of [["alt+shift+p", "previous"], ["alt+shift+n", "next"]] as const) {
+			pi.registerShortcut(key, { description: `${action === "previous" ? "Previous" : "Next"} session task page`, handler: async () => act(action) });
+		}
 	}
 
 	async function restoreFromBranch(_event: unknown, ctx: ExtensionContext) {
 		todoList.restore(replayTasks(ctx.sessionManager.getBranch()));
+		targets = [];
 		requestRender();
 	}
 
@@ -208,6 +237,7 @@ export function registerSessionTodo(
 	function set(id: number, state: TaskState): void {
 		if (!todoList.update(id, { state })) return;
 		pi.appendEntry(TODO_ENTRY, { tasks: todoList.list() });
+		targets = [];
 		requestRender();
 	}
 

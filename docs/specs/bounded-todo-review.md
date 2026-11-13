@@ -1,0 +1,12 @@
+# Informe de preparación y entrega — Todo acotado
+
+Estado: especificación aprobada, no implementada. Paquete `bounded-todo/definition-1`; especificación `bounded-todo/specification-1`; informe funcional `bounded-todo/feature-review-1`. Resultado de definición: **READY WITH WARNINGS**. Este informe consolida la crítica funcional vigente; no es una revisión independiente de implementación ni declara su validación. Padre existente: https://github.com/felipe3dfx/pi-workflow/issues/364.
+
+## Fundamento y condiciones
+
+La definición, los escenarios, límites, decisiones, evidencia, alternativas y exclusiones están en el [brief](../features/bounded-todo.md) y la [especificación](bounded-todo.md). Las críticas independientes previas y la comprobación final del alcance afectado ya fueron realizadas por el padre; sus hallazgos y disposiciones constan en el [informe funcional](../features/bounded-todo-review.md) a partir del testimonio del padre; las transcripciones originales no están disponibles. La corrección del borrador aclara el ajuste diferido de página en compacto y limita la garantía de geometría a celdas lógicas, sin modificar resultados aprobados. No se repitieron ni se inventó una aprobación. La única advertencia es el posible recorte conjunto de Todo y otros paneles, aceptado expresamente por el usuario en [6853940782](https://github.com/felipe3dfx/pi-workflow/issues/364#issuecomment-6853940782); verificar con una child session en ejecución. No hay otra aceptación de riesgo ni pregunta de producto pendiente. Sin prototipo ni contrato de interfaz de prototipo. Se consultaron GLOSSARY.md y ADR 0007; no se suministró Domain Authority Handoff, ausencia admisible con semántica cerrada; no se requiere ADR nuevo.
+
+Las fuentes públicas respaldan la factibilidad de la interfaz desde 1.4, no una ejecución integrada ni clics reales. La implementación deberá verificar las teclas propuestas con 1.5.2, geometría, resize, límites, teclado, fullscreen y el escenario aceptado, además de ejecutar `npm run check` en su commit exacto. El intento previo de 180 segundos quedó incompleto. Mutation testing no está soportado por la política nativa. Los cambios de presentación previstos en las especificaciones existentes no son una mutación previa ni una revisión ya realizada.
+
+
+El [issue padre #364](https://github.com/felipe3dfx/pi-workflow/issues/364) es el tracker autoritativo. La [evidencia técnica](bounded-todo.md#source-evidence) distingue el fixed point observado de la base de publicación y no acredita validación runtime.
