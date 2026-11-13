@@ -17,6 +17,7 @@ import {
 	Container,
 	Markdown,
 	type MarkdownTheme,
+	type TuiMouseEvent,
 	MouseRegion,
 	Spacer,
 	sliceByColumn,
@@ -25,6 +26,7 @@ import {
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
+import { dispatchMouseEvent } from "@earendil-works/pi-tui/dist/tui.js";
 
 import { markThought, patchChat, restoreChat } from "./chrome-groups.ts";
 import {
@@ -134,6 +136,20 @@ class Framed implements Component {
 			lines[0] += `${" ".repeat(pad + stampGap)}${stamp}${" ".repeat(trail)}`;
 		}
 		return lines.map((line) => truncateToWidth(line, width));
+	}
+
+	handleMouse(event: TuiMouseEvent) {
+		const edge = edgeFor(this.edge, event.width);
+		const width = event.width - edge * 2;
+		const { first, stamp = "", trail = 0 } = this.frame();
+		const prefix = visibleWidth(first);
+		const reserve = stamp ? stampGap + visibleWidth(stamp) + trail : 0;
+		const stamped = reserve > 0 && width - prefix - reserve >= minTextWidth;
+		const offset = width - prefix < 1 ? 0 : prefix;
+		const inner = width - offset - (stamped ? reserve : 0);
+		const x = event.x - edge - offset;
+		if (x < 0 || x >= inner || event.y < 0 || event.y >= event.height) return undefined;
+		return dispatchMouseEvent(this.child, { ...event, x, width: inner });
 	}
 
 	invalidate() {
