@@ -4480,7 +4480,7 @@ const viewKeys = new KeybindingsManager({
 
 const plain = (line) => stripVTControlCharacters(line);
 
-function boxOf(extension, tui = { requestRender() {} }) {
+function boxOf(extension, tui = { terminal: { rows: 24, columns: 100 }, requestRender() {} }) {
 	return extension.widgets.get(boxKey).factory(tui, plainTheme);
 }
 
@@ -4665,7 +4665,7 @@ test("the box refreshes at once on a state change, groups redraws within 400 ms,
 			create: children.create,
 			refresh: clock.schedule,
 		});
-		const tui = { renders: 0, requestRender: () => (tui.renders += 1) };
+		const tui = { terminal: { rows: 24, columns: 100 }, renders: 0, requestRender: () => (tui.renders += 1) };
 		const box = boxOf(extension, tui);
 		const uiTimers = () => clock.pending().sort((a, b) => a - b);
 		assert.deepEqual(uiTimers(), []);
