@@ -58,14 +58,14 @@ test("an unseated occupant leaves the above-input place empty and keeps the othe
 		return ["child"];
 	});
 
-	assert.deepEqual(paintAboveInput(10, theme), ["todo"]);
+	assert.deepEqual(paintAboveInput(10, theme, 99), ["todo"]);
 	assert.equal(childDrawn, false);
 	assert.deepEqual(occupants("above-input"), ["todo"]);
 	assert.equal(occupants("overlay").includes("child-session"), false);
 	assert.equal(occupants("message-stream").includes("compact-rendering"), true);
 
 	replaceSelection(selectionWith(packages, {}));
-	assert.deepEqual(paintAboveInput(10, theme), ["child", "todo"]);
+	assert.deepEqual(paintAboveInput(10, theme, 99), ["child", "todo"]);
 });
 
 test("a capability occupies the above-input place only where it is declared", () => {
@@ -83,7 +83,7 @@ test("a second occupation of the above-input place replaces the first draw", (t)
 	replaceSelection(selectionWith(packages, {}));
 	occupyAboveInput("todo", () => ["first"]);
 	occupyAboveInput("todo", () => ["second"]);
-	assert.deepEqual(paintAboveInput(10, theme), ["second"]);
+	assert.deepEqual(paintAboveInput(10, theme, 99), ["second"]);
 });
 
 test("each occupant draws once per frame with the width and theme the widget was given", (t) => {
@@ -101,7 +101,7 @@ test("each occupant draws once per frame with the width and theme the widget was
 		calls.push(["todo", width, given]);
 		return ["todo"];
 	});
-	assert.deepEqual(paintAboveInput(7, theme), ["child", "todo"]);
+	assert.deepEqual(paintAboveInput(7, theme, 99), ["child", "todo"]);
 	assert.deepEqual(calls, [
 		["child", 7, theme],
 		["todo", 7, theme],
@@ -148,7 +148,7 @@ test("the Shell installs one above-editor widget on a TUI session start and none
 
 	let renders = 0;
 	const component = host.widgets[1].factory(
-		{ requestRender: () => renders++ },
+		{ requestRender: () => renders++, terminal: { rows: 99 } },
 		theme,
 	);
 	assert.deepEqual(component.render(9), ["todo 9"]);

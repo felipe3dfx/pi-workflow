@@ -42,7 +42,7 @@ When the parent launches a child, it may name the Todo task the child executes. 
 24. As the parent, I want the Task state still applied when the Todo becomes unseated while the child works, so that accepted work finishes as Seating promises.
 25. As the parent, I want to set any Task state on any task with the `todo` tool, so that tasks without a child can also be in progress or blocked.
 26. As the parent, I want the Todo, including the harness's Task state changes, restored when the session reloads or I move in the session tree, so that the list survives like the rest of the session.
-27. As the operator, I want each Todo task to show its Task state with a distinct glyph, so that I read the plan at a glance.
+27. As the operator, I want each visible Todo task to show its Task state with a distinct glyph, so that I read the plan at a glance.
 28. As the operator, I want an in-progress linked task to show the child's role and short id, so that I know which child to follow in the Fleet view.
 29. As the operator, I want a child's Fleet view row to show the task number and text, so that I know what each child is doing for the plan.
 30. As the operator, I want the Fleet view to keep showing Run state and Verdict, not Task state, so that the row stays free of repetition.
@@ -86,7 +86,7 @@ Every decision below was resolved by the developer in the #207 grilling session.
 
 ### Presentation
 
-- Todo box: one distinct glyph per Task state, keeping the current `done` check and `pending` box. An `in progress` task whose latest linked child is still a Working child appends the child's role and short id (`← worker a1b2`). The hide-done toggle hides only `done` tasks.
+- Todo box: visible task rows use one distinct glyph per Task state, keeping the `done` check and `pending` box. An `in progress` task whose latest linked child is still a Working child appends the child's role and short id (`← worker a1b2`). For bounded presentation and the done filter, see [Bounded Todo](bounded-todo.md#required-behavior).
 - Fleet view: a linked child's row shows `#<id>` and the task text, truncated to the row. It does not show the Task state.
 
 ### Shared-capability invariants

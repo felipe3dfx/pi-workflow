@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { capabilities } from "../extensions/configure.ts";
-import { paintAboveInput, replaceSelection } from "../extensions/shell.ts";
+import { occupyAboveInput, paintAboveInput, registerShell, replaceSelection, resetPlaces } from "../extensions/shell.ts";
 import { registerSessionTodo } from "../extensions/todo-extension.ts";
 
 replaceSelection({
@@ -197,11 +197,11 @@ test("clear empties the list and the box", async () => {
 	const { pi, tools } = fakePi();
 	registerSessionTodo(pi, () => {}, () => new Map());
 	await execute(tools, "add", { text: "alpha" });
-	assert.ok(paintAboveInput(80, fakeTheme()).some((line) => line.includes("alpha")));
+	assert.ok(paintAboveInput(80, fakeTheme(), 99).some((line) => line.includes("alpha")));
 	const result = await execute(tools, "clear", {});
 	assert.match(result.content[0].text, /Cleared/);
 	assert.deepEqual(result.details.tasks, []);
-	assert.deepEqual(paintAboveInput(80, fakeTheme()), []);
+	assert.deepEqual(paintAboveInput(80, fakeTheme(), 99), []);
 });
 
 test("add without text throws instead of returning a disguised error", async () => {
@@ -248,7 +248,7 @@ test("alt+shift+t toggles the box open and closed", async () => {
 	const { ctx } = fakeCtx({ mode: "tui" });
 	await execute(tools, "add", { text: "Review the doctor output" }, ctx);
 
-	const component = { render: (width) => paintAboveInput(width, fakeTheme()) };
+	const component = { render: (width) => paintAboveInput(width, fakeTheme(), 99) };
 	assert.ok(component.render(80).some((line) => line.includes("Review the doctor output")));
 
 	await shortcuts.get("alt+shift+t").handler(ctx);
@@ -267,7 +267,7 @@ test("adding a task after collapsing reopens the box", async () => {
 
 	await execute(tools, "add", { text: "Write the list contract" }, ctx);
 
-	const component = { render: (width) => paintAboveInput(width, fakeTheme()) };
+	const component = { render: (width) => paintAboveInput(width, fakeTheme(), 99) };
 	assert.ok(component.render(80).some((line) => line.includes("Write the list contract")));
 });
 
@@ -277,7 +277,7 @@ test("alt+shift+h hides and re-shows done tasks", async () => {
 	const { ctx } = fakeCtx({ mode: "tui" });
 	await execute(tools, "write", { tasks: [{ text: "pending" }, { text: "finished", state: "done" }] }, ctx);
 
-	const component = { render: (width) => paintAboveInput(width, fakeTheme()) };
+	const component = { render: (width) => paintAboveInput(width, fakeTheme(), 99) };
 	assert.ok(component.render(80).some((line) => line.includes("finished")));
 
 	await shortcuts.get("alt+shift+h").handler(ctx);
@@ -300,7 +300,7 @@ test("session_start rebuilds the list from the last todo tool result on the bran
 	const { ctx } = fakeCtx({ mode: "tui", branch });
 	await fireEvent(handlers, "session_start", ctx);
 
-	const lines = paintAboveInput(80, fakeTheme());
+	const lines = paintAboveInput(80, fakeTheme(), 99);
 	assert.ok(lines.some((line) => line.includes("old")));
 	assert.ok(lines.some((line) => line.includes("recent")));
 
@@ -318,7 +318,7 @@ test("session_start ignores a failed todo tool result", async () => {
 	const { ctx } = fakeCtx({ mode: "tui", branch });
 	await fireEvent(handlers, "session_start", ctx);
 
-	const lines = paintAboveInput(80, fakeTheme());
+	const lines = paintAboveInput(80, fakeTheme(), 99);
 	assert.ok(lines.some((line) => line.includes("kept")));
 	assert.ok(!lines.some((line) => line.includes("should be ignored")));
 });
@@ -330,7 +330,7 @@ test("session_start starts empty when the restored list has no open tasks", asyn
 	const { ctx } = fakeCtx({ mode: "tui", branch });
 	await fireEvent(handlers, "session_start", ctx);
 
-	assert.deepEqual(paintAboveInput(80, fakeTheme()), []);
+	assert.deepEqual(paintAboveInput(80, fakeTheme(), 99), []);
 });
 
 test("session_start restores each task's Task state when the list still has unfinished tasks", async () => {
@@ -346,7 +346,7 @@ test("session_start restores each task's Task state when the list still has unfi
 
 	const listed = await execute(tools, "list", {}, ctx);
 	assert.equal(listed.content[0].text, "[done] #1: finished\n[blocked] #2: stuck\n[in progress] #3: working");
-	const row = (text) => paintAboveInput(80, fakeTheme()).find((line) => line.includes(text));
+	const row = (text) => paintAboveInput(80, fakeTheme(), 99).find((line) => line.includes(text));
 	assert.ok(row("stuck").includes("! stuck"));
 	assert.ok(row("working").includes("◐ working"));
 });
@@ -363,7 +363,7 @@ test("session_start drops restored tasks without a known Task state instead of c
 
 	const listed = await execute(tools, "list", {}, ctx);
 	assert.equal(listed.content[0].text, "[pending] #2: current");
-	const painted = paintAboveInput(80, fakeTheme());
+	const painted = paintAboveInput(80, fakeTheme(), 99);
 	assert.ok(painted.some((line) => line.includes("□ current")));
 	assert.ok(!painted.some((line) => line.includes("legacy")));
 });
@@ -395,7 +395,7 @@ test("a Task state the harness sets redraws the box", async () => {
 
 	set(1, "blocked");
 	assert.equal(redraws, before + 1);
-	assert.ok(paintAboveInput(80, fakeTheme()).some((line) => line.includes("! Fix the parser")));
+	assert.ok(paintAboveInput(80, fakeTheme(), 99).some((line) => line.includes("! Fix the parser")));
 });
 
 test("session_tree rebuilds the list from the tree's branch, like session_start does", async () => {
@@ -410,7 +410,7 @@ test("session_tree rebuilds the list from the tree's branch, like session_start 
 	setBranch([todoResultEntry([{ id: 7, text: "on the tree branch", state: "pending" }])]);
 	await fireEvent(handlers, "session_tree", ctx);
 
-	const lines = paintAboveInput(80, fakeTheme());
+	const lines = paintAboveInput(80, fakeTheme(), 99);
 	assert.ok(lines.some((line) => line.includes("on the tree branch")));
 	assert.ok(!lines.some((line) => line.includes("on the old branch")));
 
@@ -443,4 +443,118 @@ test("the returned todo offer exposes the tool only while todo is seated", () =>
 			expectations: {},
 		});
 	}
+});
+
+
+test("actual shell widget routes the rendered close and reopen cells without mutating tasks", async (t) => {
+	t.after(resetPlaces);
+	const { pi, tools, handlers } = fakePi();
+	const shell = registerShell(pi);
+	registerSessionTodo(pi, shell.requestAboveInputRender, () => new Map());
+	let factory;
+	const ctx = { ...fakeCtx().ctx, ui: { setWidget: (_key, make) => { factory = make; } } };
+	await fireEvent(handlers, "session_start", ctx);
+	const tui = { terminal: { rows: 39 }, requestRender() {} };
+	const widget = factory(tui, fakeTheme());
+	await execute(tools, "write", { tasks: [{ text: "kept" }] }, ctx);
+	let lines = widget.render(40);
+	const event = (x, y) => ({ type: "click", button: "left", x, y, screenX: x, screenY: y, width: 40, height: lines.length, shift: false, alt: false, ctrl: false });
+	assert.equal(widget.handleMouse(event(39, 1))?.handled, true);
+	lines = widget.render(40);
+	assert.match(lines[0], /collapsed/);
+	assert.equal(widget.handleMouse(event(0, 0))?.handled, true);
+	lines = widget.render(40);
+	assert.ok(lines.some((line) => line.includes("kept")));
+	assert.equal((await execute(tools, "list", {}, ctx)).details.tasks.length, 1);
+});
+
+test("height-only resize invalidates old hits; paging clamps only after expansion", async (t) => {
+	t.after(resetPlaces);
+	const { pi, tools, handlers, shortcuts } = fakePi();
+	const shell = registerShell(pi);
+	registerSessionTodo(pi, shell.requestAboveInputRender, () => new Map());
+	let factory;
+	const ctx = { ...fakeCtx().ctx, ui: { setWidget: (_key, make) => { factory = make; } } };
+	await fireEvent(handlers, "session_start", ctx);
+	const tui = { terminal: { rows: 18 }, requestRender() {} };
+	const widget = factory(tui, fakeTheme());
+	await execute(tools, "write", { tasks: Array.from({ length: 9 }, (_, i) => ({ text: `Task ${i + 1}` })) }, ctx);
+	let lines = widget.render(80);
+	for (let i = 0; i < 6; i++) { await shortcuts.get("alt+shift+n").handler(ctx); lines = widget.render(80); }
+	assert.ok(lines.some((line) => line.includes("Task 7")));
+	const click = (x, y) => ({ type: "click", button: "left", x, y, screenX: x, screenY: y, width: 80, height: lines.length, shift: false, alt: false, ctrl: false });
+	tui.terminal.rows = 17;
+	assert.equal(widget.handleMouse(click(79, 1)), undefined);
+	lines = widget.render(80);
+	assert.equal(lines.length, 1);
+	tui.terminal.rows = 39;
+	lines = widget.render(80);
+	assert.ok(lines.some((line) => line.includes("Task 9")));
+	tui.terminal.rows = 18;
+	lines = widget.render(80);
+	assert.ok(lines.some((line) => line.includes("Task 2")));
+});
+
+test("a fresh frame handles filter and page clicks like keyboard and isolates the child panel", async (t) => {
+	t.after(() => { resetPlaces(); replaceSelection({ schemaVersion: 1, capabilities: Object.fromEntries(capabilities.map((c) => [c, c === "todo"])), expectations: {} }); });
+	replaceSelection({ schemaVersion: 1, capabilities: Object.fromEntries(capabilities.map((c) => [c, c === "todo" || c === "child-session"])), expectations: {} });
+	occupyAboveInput("child-session", () => ["child one", "child two"]);
+	const { pi, tools, handlers, shortcuts } = fakePi();
+	const shell = registerShell(pi);
+	registerSessionTodo(pi, shell.requestAboveInputRender, () => new Map());
+	let factory;
+	const ctx = { ...fakeCtx().ctx, ui: { setWidget: (_key, make) => { factory = make; } } };
+	await fireEvent(handlers, "session_start", ctx);
+	const tui = { terminal: { rows: 18 }, requestRender() {} };
+	const widget = factory(tui, fakeTheme());
+	await execute(tools, "write", { tasks: [{ text: "界 pending" }, { text: "done", state: "done" }] }, ctx);
+	let lines = widget.render(80);
+	const click = (x, y, overrides = {}) => widget.handleMouse({ type: "click", button: "left", x, y, screenX: x, screenY: y, width: 80, height: lines.length, shift: false, alt: false, ctrl: false, ...overrides });
+	assert.equal(click(0, 0), undefined);
+	assert.equal(click(79, 3, { type: "press" }), undefined);
+	let control = lines.findIndex((line) => line.includes("Without done"));
+	assert.equal(click(lines[control].indexOf("›"), control)?.handled, true);
+	assert.equal(click(lines[control].indexOf("›"), control), undefined);
+	lines = widget.render(80);
+	assert.ok(lines.some((line) => line.includes("done")));
+	control = lines.findIndex((line) => line.includes("Without done"));
+	assert.equal(click(lines[control].indexOf("Without done"), control)?.handled, true);
+	lines = widget.render(80);
+	assert.ok(lines.some((line) => line.includes("界 pending")));
+	assert.ok(!lines.some((line) => line.includes("✓ done")));
+	await shortcuts.get("alt+shift+h").handler(ctx);
+	lines = widget.render(80);
+	assert.match(lines.find((line) => line.includes("Without done")), /2\/2 All/);
+});
+
+test("filtered empty stays reversible, and stale hits cannot survive reseating or session changes", async (t) => {
+	const selection = (enabled) => ({ schemaVersion: 1, capabilities: Object.fromEntries(capabilities.map((c) => [c, c === "todo" && enabled])), expectations: {} });
+	t.after(() => { resetPlaces(); replaceSelection(selection(true)); });
+	const { pi, tools, handlers, shortcuts } = fakePi();
+	const shell = registerShell(pi);
+	registerSessionTodo(pi, shell.requestAboveInputRender, () => new Map());
+	let factory;
+	const ctx = { ...fakeCtx().ctx, ui: { setWidget: (_key, make) => { factory = make; } } };
+	await fireEvent(handlers, "session_start", ctx);
+	const tui = { terminal: { rows: 18 }, requestRender() {} };
+	const widget = factory(tui, fakeTheme());
+	await execute(tools, "write", { tasks: [{ text: "done 界", state: "done" }] }, ctx);
+	let lines = widget.render(80);
+	await shortcuts.get("alt+shift+h").handler(ctx);
+	lines = widget.render(80);
+	assert.ok(lines.some((line) => line.includes("0/1 Without done")));
+	const y = lines.findIndex((line) => line.includes("0/1"));
+	const x = lines[y].indexOf(" All");
+	const event = { type: "click", button: "left", x: x + 1, y, screenX: x + 1, screenY: y, width: 80, height: lines.length, shift: false, alt: false, ctrl: false };
+	assert.equal(widget.handleMouse(event)?.handled, true);
+	lines = widget.render(80);
+	assert.ok(lines.some((line) => line.includes("done 界")));
+	replaceSelection(selection(false));
+	replaceSelection(selection(true));
+	assert.equal(widget.handleMouse({ ...event, x: 79, y: 1 }), undefined);
+	lines = widget.render(1);
+	assert.equal(widget.handleMouse({ ...event, width: 1, x: 0, y: 1, height: lines.length }), undefined);
+	lines = widget.render(80);
+	await fireEvent(handlers, "session_start", ctx);
+	assert.equal(widget.handleMouse({ ...event, x: 79, y: 1 }), undefined);
 });
