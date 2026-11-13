@@ -26,7 +26,6 @@ import {
 	visibleWidth,
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
-import { dispatchMouseEvent } from "@earendil-works/pi-tui/dist/tui.js";
 
 import { markThought, patchChat, restoreChat } from "./chrome-groups.ts";
 import {
@@ -103,11 +102,13 @@ export function edgeFor(edge: number, outer: number) {
 
 class Framed implements Component {
 	child: Component;
+	host = new Container();
 	frame: () => Frame;
 	edge: number;
 
 	constructor(child: Component, frame: () => Frame, edge = 0) {
 		this.child = child;
+		this.host.addChild(child);
 		this.frame = frame;
 		this.edge = edge;
 	}
@@ -149,7 +150,7 @@ class Framed implements Component {
 		const inner = width - offset - (stamped ? reserve : 0);
 		const x = event.x - edge - offset;
 		if (x < 0 || x >= inner || event.y < 0 || event.y >= event.height) return undefined;
-		return dispatchMouseEvent(this.child, { ...event, x, width: inner });
+		return this.host.handleMouse({ ...event, x, width: inner });
 	}
 
 	invalidate() {
