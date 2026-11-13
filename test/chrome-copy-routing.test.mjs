@@ -14,7 +14,6 @@ test("framed assistant routes Markdown copy and captured events in the rendered 
 	patchMessages();
 	const render = Markdown.prototype.render;
 	const originalMouse = Markdown.prototype.handleMouse;
-	const copies = [];
 	const received = [];
 	Markdown.prototype.render = function (width) {
 		const lines = render.call(this, width);
@@ -24,10 +23,7 @@ test("framed assistant routes Markdown copy and captured events in the rendered 
 	Markdown.prototype.handleMouse = (event) => {
 		received.push(event);
 		if (event.type === "press" && event.button === "left" && !event.shift && event.y === 0 && event.x >= 0 && event.x < 6) return { capture: true, render: false };
-		if (event.type === "release") {
-			copies.push("  alpha\n\tbeta");
-			return { handled: true, render: false };
-		}
+		if (event.type === "release") return { handled: true, render: false };
 	};
 	t.after(() => {
 		Markdown.prototype.render = render;
@@ -57,8 +53,7 @@ test("framed assistant routes Markdown copy and captured events in the rendered 
 		assert.equal(ended?.handled, true);
 		assert.equal(ended.render, false);
 		assert.equal(received.length, before + 2);
-		assert.equal(copies.at(-1), "  alpha\n\tbeta");
-		const count = copies.length;
+		assert.equal(received.at(-1).type, "release");
 		if (col > 0) {
 			const calls = received.length;
 			assert.equal(dispatchMouseEvent(component, { ...event, x: col - 1, screenX: event.screenX - 1 }), undefined);
@@ -66,6 +61,5 @@ test("framed assistant routes Markdown copy and captured events in the rendered 
 		}
 		assert.equal(dispatchMouseEvent(component, { ...event, x: col + 6, screenX: event.screenX + 6 }), undefined);
 		assert.equal(dispatchMouseEvent(component, { ...event, shift: true }), undefined);
-		assert.equal(copies.length, count);
 	}
 });
