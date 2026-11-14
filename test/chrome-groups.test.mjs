@@ -415,3 +415,71 @@ test("consecutive subagent result cards fold into one ◈ row that counts the fa
 	assert.ok(!expanded.some((line) => line.includes("◈")));
 	assert.ok(expanded.some((line) => line.includes("worker 2222")));
 });
+
+function mouse(container, width, type, row, x = 5) {
+	container.render(width);
+	return container.handleMouse({
+		type,
+		button: type === "move" ? "none" : "left",
+		x,
+		y: row,
+		width,
+		height: 1000,
+		screenX: x,
+		screenY: row,
+	});
+}
+
+test("the blank line above a row and the margin columns reach the row", (t) => {
+	const { mode, say, tool, render } = chat(t);
+	const container = mode.chatContainer;
+	say([thought(), said("Looking.")]);
+	const command = tool("bash", { command: "ls" }, { text: "one\ntwo" });
+	const rows = render();
+	const run = rows.indexOf("   ◆ Run ls");
+	assert.equal(rows[run - 1], "");
+	assert.ok(mouse(container, 80, "click", run - 1)?.handled);
+	assert.equal(command.expanded, true);
+	command.setExpanded(false);
+	assert.ok(mouse(container, 80, "click", run, 0)?.handled);
+	assert.equal(command.expanded, true);
+	command.setExpanded(false);
+	assert.ok(mouse(container, 80, "click", run, 79)?.handled);
+	assert.equal(command.expanded, true);
+});
+
+test("an open row collapses from its header only, so its body stays selectable", (t) => {
+	const { mode, say, tool, render } = chat(t);
+	const container = mode.chatContainer;
+	say([thought("first step\n\nsecond step"), said("Looking.")]);
+	const command = tool("bash", { command: "ls" }, { text: "one\ntwo" });
+	command.setExpanded(true);
+	const rows = render();
+	const head = rows.indexOf("   ┃ $ ls");
+	assert.equal(mouse(container, 80, "click", head + 2), undefined);
+	assert.equal(command.expanded, true);
+	assert.ok(mouse(container, 80, "click", head)?.handled);
+	assert.equal(command.expanded, false);
+	const thinking = render().indexOf("   ◆ Thought");
+	assert.ok(mouse(container, 80, "click", thinking)?.handled);
+	const open = render();
+	const step = open.findIndex((line) => line.includes("second step"));
+	assert.ok(step > thinking);
+	assert.equal(mouse(container, 80, "click", step), undefined);
+	assert.ok(render().some((line) => line.includes("second step")));
+});
+
+test("hovering a clickable row points at it and leaving it restores the glyph", (t) => {
+	const { mode, say, tool, render } = chat(t);
+	const container = mode.chatContainer;
+	say([thought(), said("Looking.")]);
+	tool("bash", { command: "ls" }, { text: "one" });
+	const run = render().indexOf("   ◆ Run ls");
+	assert.ok(mouse(container, 80, "move", run - 1)?.handled);
+	assert.equal(render()[run], "   ▸ Run ls");
+	assert.equal(mouse(container, 80, "move", run), undefined);
+	const text = render().findIndex((line) => line.includes("Looking."));
+	assert.ok(mouse(container, 80, "move", text)?.handled);
+	assert.equal(render()[run], "   ◆ Run ls");
+	assert.equal(mouse(container, 80, "move", text), undefined);
+});

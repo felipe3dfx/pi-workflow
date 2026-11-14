@@ -248,6 +248,7 @@ class ResultCard implements Component {
 
 	handleMouse(event: TuiMouseEvent) {
 		if (event.type !== "click" || event.button !== "left") return undefined;
+		if (this.open() && event.y > 0) return undefined;
 		opened.set(this.key, !this.open());
 		this.state.open = this.open();
 		return { handled: true };

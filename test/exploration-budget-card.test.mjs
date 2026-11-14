@@ -83,6 +83,32 @@ test("an expanded exploration notice shows the full model-facing text below the 
 	);
 });
 
+test("a click on the row toggles the notice text, and a click on the text does not", (t) => {
+	const component = card(t, {
+		content: explorationNotice(facts, "inline"),
+		details: facts,
+	});
+	const at = (y) => ({
+		type: "click",
+		button: "left",
+		x: 6,
+		y,
+		width: 120,
+		height: component.render(120).length,
+		screenX: 6,
+		screenY: y,
+	});
+	assert.equal(plain(component).length, 2);
+	assert.ok(component.handleMouse(at(1))?.handled);
+	component.invalidate();
+	const open = plain(component);
+	assert.ok(open.length > 2);
+	assert.equal(component.handleMouse(at(2)), undefined);
+	assert.ok(component.handleMouse(at(1))?.handled);
+	component.invalidate();
+	assert.equal(plain(component).length, 2);
+});
+
 test("a notice without numeric facts falls back to Pi's default rendering", (t) => {
 	const component = card(t, { content: "raw", details: {} });
 	assert.ok(

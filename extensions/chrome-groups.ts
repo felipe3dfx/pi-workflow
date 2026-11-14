@@ -8,6 +8,7 @@ import {
 	type Component,
 	type Container,
 	Spacer,
+	type TuiMouseEvent,
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
@@ -69,6 +70,7 @@ type Seg = {
 	open: boolean;
 	running: boolean;
 	failed: boolean;
+	clickable: boolean;
 	kind: Kind;
 };
 
@@ -76,6 +78,7 @@ type Span = { start: number; claimed: Set<number>; members: number[] };
 type Shared = {
 	thoughts: WeakMap<object, { open: boolean; running: boolean }>;
 	cards: WeakMap<object, { open: boolean; failed: boolean }>;
+	toggles: WeakSet<object>;
 	expandedGroups: WeakSet<object>;
 };
 
@@ -84,10 +87,13 @@ const slots = globalThis as Record<symbol, Shared | undefined>;
 slots[SHARED] ??= {
 	thoughts: new WeakMap(),
 	cards: new WeakMap(),
+	toggles: new WeakSet(),
 	expandedGroups: new WeakSet(),
 };
-const { thoughts, cards, expandedGroups } = slots[SHARED];
+slots[SHARED].toggles ??= new WeakSet();
+const { thoughts, cards, toggles, expandedGroups } = slots[SHARED];
 const patched = new Set<Container>();
+const hovered = new WeakMap<Container, number>();
 
 export function toolKind(name: string, args: unknown): Kind {
 	if (name.startsWith("mcp__")) return "mcp";
@@ -128,6 +134,10 @@ export function markThought(
 	thoughts.set(region, state);
 }
 
+export function markToggle(component: object) {
+	toggles.add(component);
+}
+
 export function markCard(
 	card: object,
 	state: { open: boolean; failed: boolean },
@@ -148,6 +158,7 @@ function rowOf(child: Component) {
 			open: tool.expanded,
 			running: tool.isPartial,
 			failed: tool.result?.isError === true,
+			clickable: tool.result !== undefined,
 			kind: toolKind(tool.toolName, tool.args),
 		};
 	}
@@ -156,7 +167,12 @@ function rowOf(child: Component) {
 			(child as unknown as { customComponent?: object }).customComponent ?? {},
 		);
 		if (card)
-			return { role: "card" as const, kind: "subagent" as Kind, ...card };
+			return {
+				role: "card" as const,
+				kind: "subagent" as Kind,
+				clickable: true,
+				...card,
+			};
 	}
 	return undefined;
 }
@@ -167,6 +183,7 @@ function segments(child: Component, lines: string[]): Seg[] {
 		open: false,
 		running: false,
 		failed: false,
+		clickable: false,
 		kind: "tool" as Kind,
 	};
 	if (lines.length === 0) return [];
@@ -205,6 +222,7 @@ function segments(child: Component, lines: string[]): Seg[] {
 								: "block",
 						open: thought?.open ?? false,
 						running: thought?.running ?? false,
+						clickable: thought !== undefined,
 					});
 				}
 				at += height;
@@ -212,7 +230,19 @@ function segments(child: Component, lines: string[]): Seg[] {
 			return out;
 		}
 	}
-	return [{ ...base, from: 0, to: lines.length, role: "block" }];
+	const toggle =
+		child instanceof CustomMessageComponent &&
+		toggles.has(
+			(child as unknown as { customComponent?: object }).customComponent ?? {},
+		);
+	if (toggle && lines.length > 1 && visibleWidth(lines[0]) === 0)
+		return [
+			{ ...base, from: 0, to: 1, role: "gap" },
+			{ ...base, from: 1, to: lines.length, role: "block", clickable: true },
+		];
+	return [
+		{ ...base, from: 0, to: lines.length, role: "block", clickable: toggle },
+	];
 }
 
 type Step = "member" | "thought" | "transparent" | "break";
@@ -402,6 +432,8 @@ function renderChat(
 	}
 	const lines: string[] = [];
 	const mouse: MouseLayout["children"] = [];
+	const heads = new Set<number>();
+	const bodies = new Set<number>();
 	let carry = "";
 	let last: { child: Component; next: number } | undefined;
 	const emit = (seg: Seg) => {
@@ -409,6 +441,11 @@ function renderChat(
 		const part = all.slice(seg.from, seg.to);
 		part[0] = carry + part[0];
 		carry = "";
+		if (seg.clickable) {
+			heads.add(lines.length);
+			if (seg.open && (seg.role === "tool" || seg.role === "thought"))
+				for (let i = 1; i < part.length; i++) bodies.add(lines.length + i);
+		}
 		lines.push(...part);
 		const entry = mouse.at(-1);
 		if (entry && last?.child === seg.child && last.next === seg.from)
@@ -428,6 +465,7 @@ function renderChat(
 		}
 		const head = headers.get(seg);
 		if (head) {
+			heads.add(lines.length);
 			lines.push(carry + head.render(width)[0]);
 			carry = "";
 			mouse.push({ component: head, height: 1 });
@@ -436,7 +474,58 @@ function renderChat(
 		if (!hidden.has(seg)) emit(seg);
 	});
 	if (carry && lines.length > 0) lines[lines.length - 1] += carry;
-	return { lines, mouse };
+	return { lines, mouse, heads, bodies };
+}
+
+function pointAt(line: string) {
+	const at = line.search(/[◆◈]/);
+	if (at < 0) return line;
+	return `${line.slice(0, at)}${theme().fg("accent", "▸")}${line.slice(at + 1)}`;
+}
+
+function rows(
+	container: Container,
+	chat: ReturnType<typeof renderChat>,
+	width: number,
+	edge: number,
+): MouseLayout["children"] {
+	const { lines, mouse, heads, bodies } = chat;
+	const owners: { component: Component; y: number; height: number }[] = [];
+	for (const { component, height } of mouse)
+		for (let y = 0; y < height; y++) owners.push({ component, y, height });
+	if (owners.length !== lines.length) return mouse;
+	const target = (line: number) =>
+		visibleWidth(lines[line] ?? "") === 0 && heads.has(line + 1)
+			? line + 1
+			: line;
+	return owners.map((_, line) => ({
+		height: 1,
+		component: {
+			render: () => [],
+			invalidate() {},
+			handleMouse(event: TuiMouseEvent) {
+				const at = target(line);
+				if (event.type === "move") {
+					const next = heads.has(at) ? at : undefined;
+					if (hovered.get(container) === next) return undefined;
+					if (next === undefined) hovered.delete(container);
+					else hovered.set(container, next);
+					return { handled: true, render: true };
+				}
+				if (bodies.has(at) && event.type !== "wheel") return undefined;
+				const owner = owners[at];
+				return owner.component.handleMouse?.({
+					...event,
+					x: Math.min(
+						Math.max(event.x, edge),
+						Math.max(edge, width - edge - 1),
+					),
+					y: owner.y,
+					height: owner.height,
+				});
+			},
+		},
+	}));
 }
 
 export function patchChat(
@@ -452,9 +541,14 @@ export function patchChat(
 	};
 	target.render = (width: number) => {
 		try {
-			const { lines, mouse } = renderChat(target.children, width, indent);
-			target.mouseLayout = { width, children: mouse };
-			return lines;
+			const chat = renderChat(target.children, width, indent);
+			target.mouseLayout = {
+				width,
+				children: rows(container, chat, width, indent(width)),
+			};
+			const point = hovered.get(container);
+			if (point === undefined || !chat.heads.has(point)) return chat.lines;
+			return chat.lines.map((line, i) => (i === point ? pointAt(line) : line));
 		} catch {
 			delete (target as Partial<typeof target>).render;
 			patched.delete(container);
