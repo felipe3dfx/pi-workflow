@@ -8,7 +8,7 @@ import {
 	initTheme,
 	ToolExecutionComponent,
 } from "@earendil-works/pi-coding-agent";
-import { Container, visibleWidth } from "@earendil-works/pi-tui";
+import { Container, Markdown, visibleWidth } from "@earendil-works/pi-tui";
 
 import { toolKind, transcriptCursor } from "../extensions/chrome-groups.ts";
 import { createChromeEditor } from "../extensions/chrome-editor.ts";
@@ -577,4 +577,43 @@ test("while the cursor is active the editor moves, toggles and leaves it, and ot
 	input.handleInput("y");
 	assert.equal(transcriptCursor.active(), false);
 	assert.equal(input.getText(), "xy");
+});
+
+test("a Copy control inside an open thought receives the click, and the rest of the body neither collapses nor captures it", (t) => {
+	const render = Markdown.prototype.render;
+	const original = Markdown.prototype.handleMouse;
+	const pressed = [];
+	Markdown.prototype.render = function (width) {
+		const lines = render.call(this, width);
+		if (this.text?.includes("alpha")) lines[0] = `[Copy]${lines[0].slice(6)}`;
+		return lines;
+	};
+	Markdown.prototype.handleMouse = function (event) {
+		if (!this.text?.includes("alpha")) return original?.call(this, event);
+		if (event.type === "press" && event.y === 0 && event.x < 6) {
+			pressed.push(event);
+			return { capture: true, render: false };
+		}
+		return undefined;
+	};
+	t.after(() => {
+		Markdown.prototype.render = render;
+		if (original === undefined) delete Markdown.prototype.handleMouse;
+		else Markdown.prototype.handleMouse = original;
+	});
+	const { mode, say, render: rows } = chat(t);
+	const container = mode.chatContainer;
+	say([thought("```text\nalpha\nbeta\n```"), said("Done.")]);
+	assert.ok(
+		mouse(container, 80, "click", rows().indexOf("   ◆ Thought"))?.handled,
+	);
+	const open = rows();
+	const copy = open.findIndex((line) => line.includes("[Copy]"));
+	assert.ok(copy > 0);
+	const col = open[copy].indexOf("[Copy]");
+	assert.equal(mouse(container, 80, "press", copy, col)?.capture, true);
+	assert.equal(pressed.length, 1);
+	const beta = open.findIndex((line) => line.includes("beta"));
+	assert.equal(mouse(container, 80, "click", beta), undefined);
+	assert.deepEqual(rows(), open);
 });

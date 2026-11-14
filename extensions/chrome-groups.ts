@@ -464,7 +464,7 @@ function renderChat(
 		carry = "";
 		if (seg.clickable) {
 			heads.add(lines.length);
-			if (seg.open && (seg.role === "tool" || seg.role === "thought"))
+			if (seg.open && seg.role === "tool")
 				for (let i = 1; i < part.length; i++) bodies.add(lines.length + i);
 		}
 		lines.push(...part);
