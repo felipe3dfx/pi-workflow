@@ -388,6 +388,36 @@ test("an open edit bands every row of a wrapped diff line and stops at the next 
 	for (const line of same) assert.ok(!line.includes("\x1b[48;"), line);
 });
 
+test("an open edit keeps the band on a wrapped row that opens inside an inverse word", (t) => {
+	const workflow = withWorkflowTheme(t);
+	workflow.inverse = (text) => `\x1b[7m${text}\x1b[27m`;
+	const view = loadTools()
+		.get("edit")
+		.renderResult(
+			{
+				content: [{ type: "text", text: "ok" }],
+				details: {
+					diff: `-1 aaaa ${"x".repeat(40)} tail\n+1 aaaa ${"y".repeat(40)} tail\n 2 same`,
+				},
+			},
+			{ expanded: true, isPartial: false },
+			workflow,
+			renderContext({ path: "a.ts", edits: [] }, true, process.cwd()),
+		);
+	const shown = view.render(30);
+	const removed = shown.filter((line) => /x|-1/.test(line));
+	assert.ok(
+		removed.some((line) => line.includes("\x1b[7;")),
+		shown.join("\n"),
+	);
+	for (const line of removed)
+		assert.ok(line.includes("\x1b[48;2;66;14;20m"), JSON.stringify(line));
+	for (const line of shown.filter((line) => /y|\+1/.test(line)))
+		assert.ok(line.includes("\x1b[48;2;6;56;6m"), JSON.stringify(line));
+	const same = shown.find((line) => line.includes("same"));
+	assert.ok(!same.includes("\x1b[48;"), same);
+});
+
 test("an open edit draws no diff band without truecolor", (t) => {
 	const workflow = withWorkflowTheme(t, "256color");
 	const diff = {

@@ -46,7 +46,10 @@ function bandDiff(lines: string[], width: number) {
 			content.startsWith(`${palette.getFgAnsi(token)}${sign}`),
 		);
 		if (signed) current = signed;
-		else if (!current || !content.startsWith(palette.getFgAnsi(current[0])))
+		else if (
+			!visibleWidth(content.trim()) ||
+			content.startsWith(palette.getFgAnsi("toolDiffContext"))
+		)
 			current = undefined;
 		if (!current) return line;
 		return current[2](
