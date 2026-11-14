@@ -260,5 +260,9 @@ export function syncCodeGraphTool(
 	pi: ExtensionAPI,
 	adapters?: CodeGraphAdapters,
 ) {
-	offerTool(pi, createCodeGraphTool(adapters), seated("codegraph", "message-stream"));
+	offerTool(
+		pi,
+		createCodeGraphTool(adapters),
+		seated("codegraph", "message-stream"),
+	);
 }

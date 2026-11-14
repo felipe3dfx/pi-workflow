@@ -96,7 +96,10 @@ test("dry-run reports the isolated local executable and removes its temporary sa
 	const report = JSON.parse(stdout);
 	assert.equal(report.executable, join(root, "node_modules", ".bin", "pi"));
 	assert.deepEqual(report.arguments, ["-e", root, "--approve", "--version"]);
-	assert.ok(report.sandboxRoot.startsWith(join(tmpdir(), "pi-workflow-sandbox-")), report.sandboxRoot);
+	assert.ok(
+		report.sandboxRoot.startsWith(join(tmpdir(), "pi-workflow-sandbox-")),
+		report.sandboxRoot,
+	);
 	await assert.rejects(() => access(report.sandboxRoot));
 });
 

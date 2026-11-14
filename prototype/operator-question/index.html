@@ -38,6 +38,7 @@ h1 { margin: 4px 0 6px; font: 600 clamp(22px, 3vw, 30px)/1.2 var(--sans); text-w
 .group > span { color: var(--soft); font: 500 11px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
 .seg { display: flex; flex-wrap: wrap; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
 .seg button, .reset, .pad button { font: 500 13px/1 var(--sans); color: var(--ink); background: var(--panel); border: 0; padding: 9px 12px; cursor: pointer; }
+.pad button { border: 1px solid var(--rule); border-radius: 5px; font-family: var(--mono); font-size: 12px; padding: 7px 10px; }
 .seg button + button { border-left: 1px solid var(--rule); }
 .seg button[aria-pressed="true"] { background: #2b2633; color: var(--accent); }
 .reset { border: 1px solid var(--rule); border-radius: 6px; }
@@ -53,7 +54,6 @@ button:focus-visible, .term:focus-visible { outline: 2px solid var(--accent); ou
 .focus-hint { margin: 0; color: var(--soft); font-size: 13px; }
 .focus-hint kbd, .keys kbd { font: 500 12px var(--mono); color: var(--ink); background: var(--panel); border: 1px solid var(--rule); border-radius: 4px; padding: 1px 5px; }
 .pad { display: flex; flex-wrap: wrap; gap: 6px; }
-.pad button { border: 1px solid var(--rule); border-radius: 5px; font-family: var(--mono); font-size: 12px; padding: 7px 10px; }
 .below { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 20px; }
 @media (max-width: 860px) { .below { grid-template-columns: minmax(0, 1fr); } }
 .card { background: var(--panel); border: 1px solid var(--rule); border-radius: 8px; padding: 16px 18px; min-width: 0; }

@@ -344,7 +344,10 @@ test("MCP and renderer-less tools render one Grok row closed and their arguments
 		renderShell: "default",
 	}));
 	assert.equal(child.renderShell, "self");
-	assert.equal(compactToolRenderers("unknown", () => undefined).renderShell, "self");
+	assert.equal(
+		compactToolRenderers("unknown", () => undefined).renderShell,
+		"self",
+	);
 	assert.deepEqual(
 		lines(
 			child.renderCall({ task: "Audit\nthe repo" }, theme, {
@@ -391,11 +394,14 @@ test("a codemode script is one Run script row closed and Pi's code and output un
 	const context = renderContext(args, false, "/");
 	const call = renderers.renderCall(args, theme, context);
 	assert.deepEqual(lines(call, 100), [
-		"◆ Run script const issues = await sentry_search_issues({ query: \"is:unresolved\" });",
+		'◆ Run script const issues = await sentry_search_issues({ query: "is:unresolved" });',
 	]);
 	const result = {
 		content: [
-			{ type: "text", text: "Script completed\nWall time 0.4 seconds\nOutput:\n" },
+			{
+				type: "text",
+				text: "Script completed\nWall time 0.4 seconds\nOutput:\n",
+			},
 			{ type: "text", text: "3" },
 		],
 		details: {
@@ -406,7 +412,12 @@ test("a codemode script is one Run script row closed and Pi's code and output un
 			],
 		},
 	};
-	const closed = renderers.renderResult(result, { expanded: false, isPartial: false }, theme, context);
+	const closed = renderers.renderResult(
+		result,
+		{ expanded: false, isPartial: false },
+		theme,
+		context,
+	);
 	assert.deepEqual(lines(closed, 80), []);
 	assert.deepEqual(lines(call, 80), [
 		"◆ Run script Sentry Search Issues, Linear Get Issue, … · 3 tool calls",
@@ -415,7 +426,15 @@ test("a codemode script is one Run script row closed and Pi's code and output un
 	open.state = context.state;
 	const expanded = [
 		...lines(renderers.renderCall(args, theme, open), 80),
-		...lines(renderers.renderResult(result, { expanded: true, isPartial: false }, theme, open), 80),
+		...lines(
+			renderers.renderResult(
+				result,
+				{ expanded: true, isPartial: false },
+				theme,
+				open,
+			),
+			80,
+		),
 	];
 	assert.ok(expanded.every((line) => line.startsWith("┃")));
 	assert.ok(expanded[0].includes("codemode"));
@@ -424,20 +443,32 @@ test("a codemode script is one Run script row closed and Pi's code and output un
 	assert.ok(expanded.includes("┃ 3"));
 	for (let width = 1; width <= 60; width++)
 		for (const line of call.render(width))
-			assert.ok(stripVTControlCharacters(line).length <= width, `width ${width}`);
+			assert.ok(
+				stripVTControlCharacters(line).length <= width,
+				`width ${width}`,
+			);
 });
 
 test("a tool with its own call renderer passes through, and so does every tool when compact rendering is off", () => {
 	loadTools();
 	const own = { renderCall() {}, renderResult() {} };
-	assert.equal(compactToolRenderers("read", () => own), own);
+	assert.equal(
+		compactToolRenderers("read", () => own),
+		own,
+	);
 	const preview = readSelection(undefined, []);
 	assert.equal(preview.status, "ready");
 	preview.selection.capabilities["compact-rendering"] = false;
 	replaceSelection(preview.selection);
 	const mcp = { renderCall() {} };
-	assert.equal(compactToolRenderers("mcp__engram__mem_search", () => mcp), mcp);
-	assert.equal(compactToolRenderers("spawn_child", () => undefined), undefined);
+	assert.equal(
+		compactToolRenderers("mcp__engram__mem_search", () => mcp),
+		mcp,
+	);
+	assert.equal(
+		compactToolRenderers("spawn_child", () => undefined),
+		undefined,
+	);
 });
 
 test("the HTML export draws codemode and MCP rows through the registered resolver", () => {
@@ -500,19 +531,15 @@ test("turning compact rendering off registers the seven tools with the session c
 			sessionContext(cwd),
 		);
 		for (const name of Object.keys(builtIns)) assert.ok(tools.has(name), name);
-		const result = await tools.get("bash").execute(
-			"call-1",
-			{ command: "pwd" },
-			undefined,
-			undefined,
-			{
+		const result = await tools
+			.get("bash")
+			.execute("call-1", { command: "pwd" }, undefined, undefined, {
 				isProjectTrusted: () => false,
 				sessionManager: {
 					getSessionId: () => "session-1",
 					getSessionFile: () => undefined,
 				},
-			},
-		);
+			});
 		const text = result.content
 			.map((block) => (block.type === "text" ? block.text : ""))
 			.join("\n");

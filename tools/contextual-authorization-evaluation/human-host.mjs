@@ -153,7 +153,8 @@ const authorization = {
 	},
 	onDecision: (decision) => {
 		const { kind, reason, call } = decision;
-		const action = kind === "exempt" ? decision.action : decision.proposal?.action;
+		const action =
+			kind === "exempt" ? decision.action : decision.proposal?.action;
 		return record("decision", {
 			kind,
 			reason,

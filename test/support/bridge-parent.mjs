@@ -14,11 +14,13 @@ export async function createBridgeParentSession({
 	nativeProvider,
 	runtime: existingRuntime,
 }) {
-	const runtime = existingRuntime ?? await ModelRuntime.create({
-		authPath: `${agentDir}/auth.json`,
-		modelsPath: null,
-		refreshOnCreate: false,
-	});
+	const runtime =
+		existingRuntime ??
+		(await ModelRuntime.create({
+			authPath: `${agentDir}/auth.json`,
+			modelsPath: null,
+			refreshOnCreate: false,
+		}));
 	if (nativeProvider) runtime.registerNativeProvider(nativeProvider);
 	const settings = SettingsManager.inMemory({}, { projectTrusted: false });
 	const loader = new DefaultResourceLoader({

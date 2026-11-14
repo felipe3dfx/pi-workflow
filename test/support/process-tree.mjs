@@ -27,22 +27,34 @@ export async function descendants(t) {
 	});
 	return () =>
 		eventually(
-			() => (existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").map(Number) : []),
+			() =>
+				existsSync(file)
+					? readFileSync(file, "utf8").trim().split("\n").map(Number)
+					: [],
 			(pids) => pids.length === 3,
 		);
 }
 
-const parentScript = fileURLToPath(new URL("./child-parent.mjs", import.meta.url));
+const parentScript = fileURLToPath(
+	new URL("./child-parent.mjs", import.meta.url),
+);
 
 export async function parent(t, launch) {
 	const { ending } = launch;
-	const child = spawn(process.execPath, [parentScript, JSON.stringify(launch)], {
-		stdio: ["pipe", "pipe", "inherit"],
-	});
+	const child = spawn(
+		process.execPath,
+		[parentScript, JSON.stringify(launch)],
+		{
+			stdio: ["pipe", "pipe", "inherit"],
+		},
+	);
 	t.after(() => {
-		if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+		if (child.exitCode === null && child.signalCode === null)
+			child.kill("SIGKILL");
 	});
-	const exited = new Promise((resolve) => child.once("exit", () => resolve(Date.now())));
+	const exited = new Promise((resolve) =>
+		child.once("exit", () => resolve(Date.now())),
+	);
 	let output = "";
 	child.stdout.setEncoding("utf8");
 	await new Promise((resolve, reject) => {
@@ -50,13 +62,21 @@ export async function parent(t, launch) {
 			output += chunk;
 			if (output.includes("\n")) resolve();
 		});
-		child.once("exit", (code) => reject(new Error(`The parent exited with ${code} before its child answered.`)));
+		child.once("exit", (code) =>
+			reject(
+				new Error(`The parent exited with ${code} before its child answered.`),
+			),
+		);
 	});
-	const end = () => (ending === "SIGKILL" ? child.kill("SIGKILL") : child.stdin.write("exit\n"));
+	const end = () =>
+		ending === "SIGKILL" ? child.kill("SIGKILL") : child.stdin.write("exit\n");
 	return { answer: output.trim(), end, exited };
 }
 
 export async function gone(pids, since) {
-	await eventually(() => pids.filter(alive), (left) => left.length === 0);
+	await eventually(
+		() => pids.filter(alive),
+		(left) => left.length === 0,
+	);
 	return Date.now() - since;
 }

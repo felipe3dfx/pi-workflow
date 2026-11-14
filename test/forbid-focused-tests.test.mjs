@@ -18,7 +18,9 @@ async function createFixture(source) {
 
 async function runGuard(root) {
 	try {
-		const result = await execFileAsync(process.execPath, [guardPath], { cwd: root });
+		const result = await execFileAsync(process.execPath, [guardPath], {
+			cwd: root,
+		});
 		return { code: 0, stdout: result.stdout, stderr: result.stderr };
 	} catch (error) {
 		return {
@@ -30,11 +32,11 @@ async function runGuard(root) {
 }
 
 test("passes when test files do not contain focused markers", async () => {
-	const root = await createFixture([
-		'import test from "node:test";',
-		'test("regular", () => {});',
-		"",
-	].join("\n"));
+	const root = await createFixture(
+		['import test from "node:test";', 'test("regular", () => {});', ""].join(
+			"\n",
+		),
+	);
 	try {
 		const result = await runGuard(root);
 		assert.equal(result.code, 0, result.stderr);

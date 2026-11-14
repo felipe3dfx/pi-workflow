@@ -32,7 +32,10 @@ export function commonToolFactories(
 		(pi) => {
 			pi.on("session_start", () => {
 				pi.setActiveTools([
-					...new Set([...pi.getActiveTools(), ...(sources.active ?? defaultActiveTools)]),
+					...new Set([
+						...pi.getActiveTools(),
+						...(sources.active ?? defaultActiveTools),
+					]),
 				]);
 			});
 		},

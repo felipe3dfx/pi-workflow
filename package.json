@@ -37,7 +37,7 @@
     "pack:dry-run": "npm pack --dry-run",
     "lint": "biome lint .",
     "format": "biome format --write .",
-    "check:biome": "biome check --formatter-enabled=false .",
+    "check:biome": "biome check --error-on-warnings .",
     "check:focused-tests": "node scripts/forbid-focused-tests.mjs",
     "pi:sandbox": "node tools/pi-sandbox.mjs",
     "check:publish": "node scripts/validate-pi-package.mjs",

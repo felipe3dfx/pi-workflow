@@ -42,7 +42,10 @@ export function createSeating({
 		}
 		const selection = readSelection(text, loaded.packages);
 		if (selection.status === "refused") return selection;
-		return { status: text === undefined ? "absent" : "ready", selection: selection.selection };
+		return {
+			status: text === undefined ? "absent" : "ready",
+			selection: selection.selection,
+		};
 	}
 
 	async function seat(selection?: Selection) {

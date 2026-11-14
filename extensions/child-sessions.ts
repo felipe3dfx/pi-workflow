@@ -15,9 +15,7 @@ import type {
 import { Type } from "typebox";
 
 import type { ChildAudit, ChildCapture } from "./child-audit.ts";
-import type {
-	ActionAuthorization,
-} from "./action-authorization.ts";
+import type { ActionAuthorization } from "./action-authorization.ts";
 import type { ChildShell } from "./child-bash.ts";
 import {
 	type ChildContext,
@@ -52,7 +50,11 @@ import {
 import { shellOptions } from "./shell-settings.ts";
 import { type CommonToolSources, defaultActiveTools } from "./tool-sources.ts";
 import { createRpcChildSession } from "./rpc-child.ts";
-import { askParentTool, consultationAnswer, reportResultTool } from "./child-runtime.ts";
+import {
+	askParentTool,
+	consultationAnswer,
+	reportResultTool,
+} from "./child-runtime.ts";
 import { harnessMessage } from "./harness-message.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
 import type { TodoClaim } from "./todo-extension.ts";
@@ -120,7 +122,11 @@ export type Answerer = "parent" | "operator";
 
 interface Port {
 	event(event: AgentSessionEvent): void;
-	ask(question: string, signal?: AbortSignal, consultation?: string): Promise<string>;
+	ask(
+		question: string,
+		signal?: AbortSignal,
+		consultation?: string,
+	): Promise<string>;
 	report(result: ChildResult): void;
 	notify(message: string): void;
 	checkpointed(checkpoint: Checkpoint): void;
@@ -244,7 +250,10 @@ function hold(port: Port) {
 	port.context = (state) => held.push((next) => next.context(state));
 	port.ask = (question, signal, consultation) =>
 		new Promise<string>((resolve, reject) => {
-			held.push((next) => void next.ask(question, signal, consultation).then(resolve, reject));
+			held.push(
+				(next) =>
+					void next.ask(question, signal, consultation).then(resolve, reject),
+			);
 		});
 	return held;
 }
@@ -319,7 +328,9 @@ function refused(reason: string) {
 	};
 }
 
-const abortedBeforeLaunch = refused("The call was aborted before the child launched.");
+const abortedBeforeLaunch = refused(
+	"The call was aborted before the child launched.",
+);
 const sessionEnded = refused("The session ended before the child launched.");
 
 interface ChildMessage {
@@ -372,7 +383,8 @@ export function createChildSessions(options: {
 	todo?: TodoLink;
 	audit: ChildAudit;
 }) {
-	const create = options.create ?? createRpcChildSession({ schedule: options.schedule });
+	const create =
+		options.create ?? createRpcChildSession({ schedule: options.schedule });
 	const schedule = options.schedule ?? scheduleTimer;
 	const children = new Map<string, Child>();
 	const queue: Child[] = [];
@@ -395,7 +407,10 @@ export function createChildSessions(options: {
 	// ADR 0008: an operational explorer or verifier is read-only even with bash; a contextual child has no such contract.
 	function writes(plan: Plan) {
 		const [tools, writing] = options.authorization
-			? [options.sources?.active ?? defaultActiveTools, ["edit", "write", "bash"]]
+			? [
+					options.sources?.active ?? defaultActiveTools,
+					["edit", "write", "bash"],
+				]
 			: [plan.contract.tools, ["edit", "write"]];
 		return tools.some((tool) => writing.includes(tool));
 	}
@@ -627,7 +642,12 @@ export function createChildSessions(options: {
 		else question.resolve(reply);
 	}
 
-	function ask(child: Child, question: string, signal?: AbortSignal, consultation?: string) {
+	function ask(
+		child: Child,
+		question: string,
+		signal?: AbortSignal,
+		consultation?: string,
+	) {
 		if (signal?.aborted) {
 			return Promise.reject(new Error("The call was aborted."));
 		}
@@ -697,15 +717,25 @@ export function createChildSessions(options: {
 			child.watch.event(event);
 			track(child, event);
 		};
-		port.ask = (question, signal, consultation) => ask(child, question, signal, consultation);
+		port.ask = (question, signal, consultation) =>
+			ask(child, question, signal, consultation);
 		port.report = (result) => {
 			child.capture.reported(result);
 			if (isWorking(child.record.state)) child.record.result = result;
 		};
 		port.notify = (message) =>
-			traceRun(child.record.id, child.plan, child.record.state, undefined, message);
+			traceRun(
+				child.record.id,
+				child.plan,
+				child.record.state,
+				undefined,
+				message,
+			);
 		port.checkpointed = (checkpoint) => {
-			child.record.checkpoints = [...(child.record.checkpoints ?? []), checkpoint];
+			child.record.checkpoints = [
+				...(child.record.checkpoints ?? []),
+				checkpoint,
+			];
 		};
 		port.context = (state) => {
 			child.context = state;
@@ -788,7 +818,8 @@ export function createChildSessions(options: {
 				shell: launch.shell(),
 				onEvent: (event) => port.event(event),
 				notify: (message) => port.notify(message),
-				ask: (question, signal, consultation) => port.ask(question, signal, consultation),
+				ask: (question, signal, consultation) =>
+					port.ask(question, signal, consultation),
 				report: (result) => port.report(result),
 				...(plan.checkpoint ? { checkpoint: plan.checkpoint } : {}),
 				checkpointed: (checkpoint) => port.checkpointed(checkpoint),
@@ -799,7 +830,9 @@ export function createChildSessions(options: {
 				parentSession: from?.conversation.sessionId,
 			});
 		} catch (error) {
-			return refused(`The child session could not be created: ${errorMessage(error)}`);
+			return refused(
+				`The child session could not be created: ${errorMessage(error)}`,
+			);
 		}
 		if (launch.signal?.aborted) {
 			void shutDown(handle);
@@ -877,9 +910,12 @@ export function createChildSessions(options: {
 					return {
 						status: "pending" as const,
 						launched: true as const,
-						text, result, checkpoints,
+						text,
+						result,
+						checkpoints,
 						pendingAuthorizations: unresolved,
-						warning: "The foreground child returned unresolved authority. No held action executed; consult the parent/user, then explicitly re-propose in a fresh authorized run. continue_child does not recover this foreground session.",
+						warning:
+							"The foreground child returned unresolved authority. No held action executed; consult the parent/user, then explicitly re-propose in a fresh authorized run. continue_child does not recover this foreground session.",
 						reason: "Authorization consultation remains pending.",
 					};
 				return { status: "completed" as const, text, result, checkpoints };
@@ -887,12 +923,16 @@ export function createChildSessions(options: {
 				traceRun(id, plan, ended);
 				const unresolved = handle.pendingAuthorizations?.() ?? [];
 				if (checkpoints.length === 0 && unresolved.length === 0) throw error;
-				const pending = unresolved.length === 0
-					? ""
-					: `\n\nUnresolved authorization proposals (no held action executed):\n${JSON.stringify(projectPendingAuthorizations(unresolved))}`;
-				throw new Error(`${errorMessage(error)}${checkpointLines(checkpoints)}${pending}`, {
-					cause: error,
-				});
+				const pending =
+					unresolved.length === 0
+						? ""
+						: `\n\nUnresolved authorization proposals (no held action executed):\n${JSON.stringify(projectPendingAuthorizations(unresolved))}`;
+				throw new Error(
+					`${errorMessage(error)}${checkpointLines(checkpoints)}${pending}`,
+					{
+						cause: error,
+					},
+				);
 			} finally {
 				watch.stop();
 				launch.signal?.removeEventListener("abort", abort);
@@ -964,7 +1004,11 @@ export function createChildSessions(options: {
 			const { todo } = child.record;
 			const started = await start(
 				{ ...child.plan, task },
-				{ ...launch, background: true, ...(todo === undefined ? {} : { todo }) },
+				{
+					...launch,
+					background: true,
+					...(todo === undefined ? {} : { todo }),
+				},
 				{ id, conversation: child.conversation },
 			);
 			if (started.status !== "queued") return started;
@@ -1186,7 +1230,9 @@ export function createChildSessions(options: {
 			ended.map(({ handle, record }) =>
 				handle
 					.removeSession()
-					.catch((error: unknown) => warn(`Child ${record.id}: ${errorMessage(error)}`)),
+					.catch((error: unknown) =>
+						warn(`Child ${record.id}: ${errorMessage(error)}`),
+					),
 			),
 		);
 		return working.length;
@@ -1226,7 +1272,9 @@ export function createChildSessions(options: {
 				}
 				await handle
 					.removeSession()
-					.catch((error: unknown) => warn(`Child ${record.id}: ${errorMessage(error)}`));
+					.catch((error: unknown) =>
+						warn(`Child ${record.id}: ${errorMessage(error)}`),
+					);
 			}),
 		);
 	}
@@ -1245,7 +1293,10 @@ export function createChildSessions(options: {
 			children.set(child.record.id, child);
 			bind(child);
 			if (kept.question) pose(child, kept.question);
-			if (child.record.state === "running" || child.record.state === "waiting") {
+			if (
+				child.record.state === "running" ||
+				child.record.state === "waiting"
+			) {
 				child.watch.start();
 				settleOn(child);
 			}
@@ -1424,9 +1475,7 @@ export function createSpawnChildTool(
 			}
 			let child: string | undefined;
 			const settle = (run: TaskRun) =>
-				claim && child
-					? sessions.settle(claim.task.id, child, run)
-					: undefined;
+				claim && child ? sessions.settle(claim.task.id, child, run) : undefined;
 			const background = ctx.mode === "tui" || ctx.mode === "rpc";
 			if (params.background && !background) {
 				return notLaunched(
@@ -1483,12 +1532,7 @@ export function createSpawnChildTool(
 								result: started.result,
 							})
 						: undefined;
-				return launched(
-					started,
-					plan.warnings,
-					{ role: plan.role },
-					note,
-				);
+				return launched(started, plan.warnings, { role: plan.role }, note);
 			} finally {
 				release();
 			}
@@ -1503,7 +1547,9 @@ function launched(
 	note?: string,
 ) {
 	if (started.status === "pending" && "pendingAuthorizations" in started) {
-		const pendingAuthorizations = projectPendingAuthorizations(started.pendingAuthorizations);
+		const pendingAuthorizations = projectPendingAuthorizations(
+			started.pendingAuthorizations,
+		);
 		return report(
 			[...warnings, started.warning, JSON.stringify(pendingAuthorizations)],
 			{ ...started, pendingAuthorizations, warnings },
@@ -1513,7 +1559,9 @@ function launched(
 		return notLaunched(started.status, { ...started, warnings });
 	}
 	const selected = selection ? { role: selection.role } : {};
-	const selectionLine = selection ? `Launched as ${selection.role}.` : undefined;
+	const selectionLine = selection
+		? `Launched as ${selection.role}.`
+		: undefined;
 	if (started.status === "completed") {
 		const outcome = selection
 			? childOutcome({
@@ -1619,7 +1667,9 @@ export function createChildQueryTools(
 		id: Type.String({ description: "The child id that spawn_child returned." }),
 	});
 	const replyChildParameters = Type.Object({
-		id: Type.String({ description: "The id of the child waiting for a reply." }),
+		id: Type.String({
+			description: "The id of the child waiting for a reply.",
+		}),
 		question: Type.Integer({
 			description: "The question number from the child's question message.",
 		}),
@@ -1735,5 +1785,11 @@ export function createChildQueryTools(
 				context.isError ? outputText(result) : undefined,
 			),
 	};
-	return [harnessMessage(listChildren), harnessMessage(childStatus), harnessMessage(childResult), cancelChild, harnessMessage(replyChild)];
+	return [
+		harnessMessage(listChildren),
+		harnessMessage(childStatus),
+		harnessMessage(childResult),
+		cancelChild,
+		harnessMessage(replyChild),
+	];
 }

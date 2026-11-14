@@ -19,7 +19,9 @@ export interface WriteConflict {
 function normalize(entry: string): string | undefined {
 	const value = entry.trim().normalize("NFC");
 	if (!value || /^(?:\/|~|[A-Za-z]:)/.test(value)) return undefined;
-	const segments = value.split("/").filter((segment) => segment !== "" && segment !== ".");
+	const segments = value
+		.split("/")
+		.filter((segment) => segment !== "" && segment !== ".");
 	if (!segments.length || segments.includes("..")) return undefined;
 	return segments.join("/").toLowerCase();
 }
@@ -68,7 +70,10 @@ function suffix(value: string) {
 
 function affixesCompatible(a: string, b: string) {
 	const [pa, pb, sa, sb] = [prefix(a), prefix(b), suffix(a), suffix(b)];
-	return (pa.startsWith(pb) || pb.startsWith(pa)) && (sa.endsWith(sb) || sb.endsWith(sa));
+	return (
+		(pa.startsWith(pb) || pb.startsWith(pa)) &&
+		(sa.endsWith(sb) || sb.endsWith(sa))
+	);
 }
 
 function segmentsCompatible(a: string, b: string) {
@@ -87,7 +92,12 @@ function segmentsCompatible(a: string, b: string) {
 export function surfacesOverlap(a: string, b: string): boolean {
 	const left = normalize(a);
 	const right = normalize(b);
-	if (left === undefined || right === undefined || uninterpretable(left) || uninterpretable(right)) {
+	if (
+		left === undefined ||
+		right === undefined ||
+		uninterpretable(left) ||
+		uninterpretable(right)
+	) {
 		return true;
 	}
 	const as = left.split("/");
@@ -106,8 +116,11 @@ function missing(error: unknown) {
 
 function canonical(root: string, entry: string): string | undefined {
 	const value = entry.trim().normalize("NFC");
-	if (normalize(value) === undefined || uninterpretable(value)) return undefined;
-	const segments = value.split("/").filter((segment) => segment !== "" && segment !== ".");
+	if (normalize(value) === undefined || uninterpretable(value))
+		return undefined;
+	const segments = value
+		.split("/")
+		.filter((segment) => segment !== "" && segment !== ".");
 	const glob = segments.findIndex((segment) => SPECIAL.test(segment));
 	let base: string;
 	try {
@@ -124,8 +137,11 @@ function canonical(root: string, entry: string): string | undefined {
 			return undefined;
 		}
 		const inside = relative(base, resolved);
-		if (inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside)) return undefined;
-		return [inside, ...segments.slice(count)].filter(Boolean).join("/") || undefined;
+		if (inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside))
+			return undefined;
+		return (
+			[inside, ...segments.slice(count)].filter(Boolean).join("/") || undefined
+		);
 	}
 	return undefined;
 }
@@ -141,7 +157,10 @@ function sameRoot(a: string, b: string) {
 export function createWriteClaims() {
 	const live = new Map<string, WriteClaim>();
 
-	function conflicts(root: string, surfaces: readonly string[]): WriteConflict[] {
+	function conflicts(
+		root: string,
+		surfaces: readonly string[],
+	): WriteConflict[] {
 		const found: WriteConflict[] = [];
 		for (const claim of live.values()) {
 			if (!sameRoot(claim.root, root)) continue;
@@ -150,7 +169,11 @@ export function createWriteClaims() {
 				const left = canonical(root, mine);
 				for (const theirs of entries(claim.surfaces)) {
 					const right = canonical(claim.root, theirs);
-					if (left === undefined || right === undefined || surfacesOverlap(left, right)) {
+					if (
+						left === undefined ||
+						right === undefined ||
+						surfacesOverlap(left, right)
+					) {
 						pairs.push([mine, theirs]);
 					}
 				}
@@ -182,7 +205,10 @@ export function conflictReason(found: readonly WriteConflict[]): string {
 				.slice(0, MAX_LISTED_PAIRS)
 				.map(([mine, theirs]) => `\`${mine}\` overlaps \`${theirs}\``)
 				.join(", ");
-			const more = pairs.length > MAX_LISTED_PAIRS ? ` and ${pairs.length - MAX_LISTED_PAIRS} more` : "";
+			const more =
+				pairs.length > MAX_LISTED_PAIRS
+					? ` and ${pairs.length - MAX_LISTED_PAIRS} more`
+					: "";
 			return `child ${owner} (${listed}${more})`;
 		})
 		.join("; ");

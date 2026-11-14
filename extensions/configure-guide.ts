@@ -547,7 +547,12 @@ function createConfigGuide(
 						? summary()
 						: full;
 			targets = [...(frameSpacer ? [undefined] : []), ...view.targets];
-			return modalFrame(t, title, [...(frameSpacer ? [""] : []), ...view.lines], width);
+			return modalFrame(
+				t,
+				title,
+				[...(frameSpacer ? [""] : []), ...view.lines],
+				width,
+			);
 		},
 		invalidate() {},
 		handleMouse(event: TuiMouseEvent) {
@@ -602,7 +607,9 @@ function createConfigGuide(
 					Math.min(
 						descriptionMax,
 						descriptionOffset +
-							(matchesKey(data, Key.pageUp) ? -descriptionPage : descriptionPage),
+							(matchesKey(data, Key.pageUp)
+								? -descriptionPage
+								: descriptionPage),
 					),
 				);
 				return;

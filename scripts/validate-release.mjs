@@ -33,8 +33,14 @@ export function validateReleaseBody(body, expectedTag) {
 		const start = body.indexOf(marker) + marker.length;
 		const next = requiredSections[index + 1];
 		const end = next ? body.indexOf(`## ${next}`, start) : body.length;
-		if (start < marker.length || end < start || body.slice(start, end).trim().length === 0) {
-			throw new Error(`GitHub Release body section ${section} must be non-empty`);
+		if (
+			start < marker.length ||
+			end < start ||
+			body.slice(start, end).trim().length === 0
+		) {
+			throw new Error(
+				`GitHub Release body section ${section} must be non-empty`,
+			);
 		}
 	}
 	return { sections: [...requiredSections] };
@@ -62,7 +68,11 @@ export function validateRelease({ manifest, tag, body }) {
 		}
 		validateReleaseBody(body, expectedTag);
 	}
-	return { packageName: manifest.name, version: manifest.version, tag: expectedTag };
+	return {
+		packageName: manifest.name,
+		version: manifest.version,
+		tag: expectedTag,
+	};
 }
 
 async function main() {
@@ -72,13 +82,17 @@ async function main() {
 		(eventIndex !== -1 && (!args[eventIndex + 1] || args.length !== 2)) ||
 		(eventIndex === -1 && args.length !== 0)
 	) {
-		throw new Error("Usage: validate-release.mjs [--event <github-event.json>]");
+		throw new Error(
+			"Usage: validate-release.mjs [--event <github-event.json>]",
+		);
 	}
 	const manifest = JSON.parse(await readFile(resolve("package.json"), "utf8"));
 	let tag;
 	let body;
 	if (eventIndex !== -1) {
-		const event = JSON.parse(await readFile(resolve(args[eventIndex + 1]), "utf8"));
+		const event = JSON.parse(
+			await readFile(resolve(args[eventIndex + 1]), "utf8"),
+		);
 		tag = event.release?.tag_name;
 		body = event.release?.body;
 	}
@@ -86,7 +100,9 @@ async function main() {
 	process.stdout.write(`Release validation passed for ${result.tag}.\n`);
 }
 
-const isMain = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const isMain =
+	process.argv[1] &&
+	resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMain) {
 	main().catch((error) => {
 		process.stderr.write(

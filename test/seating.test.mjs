@@ -101,7 +101,9 @@ test("seating replaces the seated selection before the first offer runs", async 
 test("seating without a selection keeps the current seating and still offers", async (t) => {
 	let offered = 0;
 	const { seating } = setup(t, { offers: [() => offered++] });
-	replaceSelection(selectionWith(names, { todo: true, "child-session": false }));
+	replaceSelection(
+		selectionWith(names, { todo: true, "child-session": false }),
+	);
 	await seating.seat();
 	assert.equal(offered, 1);
 	assert.equal(seated("todo", "above-input"), true);
@@ -138,7 +140,10 @@ test("a failed offer stops the later ones and keeps the new selection", async (t
 			() => ran.push("c"),
 		],
 	});
-	await assert.rejects(seating.seat(selectionWith(names, { todo: true })), /offer b failed/);
+	await assert.rejects(
+		seating.seat(selectionWith(names, { todo: true })),
+		/offer b failed/,
+	);
 	assert.deepEqual(ran, ["a"]);
 	assert.equal(seated("todo", "above-input"), true);
 });

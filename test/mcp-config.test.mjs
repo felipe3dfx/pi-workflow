@@ -135,7 +135,11 @@ test("an entry with extra keys plus the catalog keys is aligned and left untouch
 		assert.equal(plan.changed, false);
 		assert.deepEqual(plan.replacements, []);
 
-		const outcome = applyMcpConfiguration(plan, exposureCatalog, agentDirectory);
+		const outcome = applyMcpConfiguration(
+			plan,
+			exposureCatalog,
+			agentDirectory,
+		);
 		assert.deepEqual(outcome, {
 			status: "applied",
 			path: configPath,
@@ -172,7 +176,11 @@ test("an entry with a different exposure is reported and fixed while its extra k
 		assert.equal(plan.replacements.length, 1);
 		assert.deepEqual(plan.replacements[0].keys, ["exposure"]);
 
-		const outcome = applyMcpConfiguration(plan, exposureCatalog, agentDirectory);
+		const outcome = applyMcpConfiguration(
+			plan,
+			exposureCatalog,
+			agentDirectory,
+		);
 		assert.equal(outcome.status, "applied");
 		assert.deepEqual(JSON.parse(await readFile(configPath, "utf8")), {
 			mcpServers: {
@@ -189,7 +197,11 @@ test("an entry with a different exposure is reported and fixed while its extra k
 
 test("planMcpConfiguration reports an error for corrupt existing configuration", async () => {
 	await withAgentDirectory(async ({ agentDirectory }) => {
-		await writeFile(join(agentDirectory, "mcp.json"), "{ not valid json", "utf8");
+		await writeFile(
+			join(agentDirectory, "mcp.json"),
+			"{ not valid json",
+			"utf8",
+		);
 
 		const plan = planMcpConfiguration(catalog, agentDirectory);
 		assert.equal(plan.changed, false);
@@ -430,10 +442,7 @@ test("applyMcpConfiguration write-failed reports a freshly re-read latestPlan, n
 
 			assert.equal(outcome.status, "write-failed");
 			assert.ok(outcome.latestPlan);
-			assert.equal(
-				outcome.latestPlan.mergedConfig.telemetry.sampleRate,
-				0.5,
-			);
+			assert.equal(outcome.latestPlan.mergedConfig.telemetry.sampleRate, 0.5);
 		} finally {
 			chmodSync(agentDirectory, 0o700);
 		}
@@ -452,11 +461,17 @@ test("manualMcpConfigurationInstructions renders the catalog and flags same-name
 		const instructions = manualMcpConfigurationInstructions(plan, catalog);
 
 		assert.match(instructions, /cannot mutate Pi configuration automatically/i);
-		assert.match(instructions, new RegExp(plan.path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+		assert.match(
+			instructions,
+			new RegExp(plan.path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+		);
 		assert.match(instructions, /"foo"/);
 		assert.match(instructions, /"bar"/);
 		assert.match(instructions, /Set only the differing keys below/);
-		assert.match(instructions, /url: current "https:\/\/example\.test\/drifted", expected "https:\/\/example\.test\/foo"/);
+		assert.match(
+			instructions,
+			/url: current "https:\/\/example\.test\/drifted", expected "https:\/\/example\.test\/foo"/,
+		);
 		assert.match(instructions, /\/mcp login sentry and \/mcp login linear/);
 	});
 });

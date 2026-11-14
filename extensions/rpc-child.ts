@@ -16,7 +16,10 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import type { PendingAuthorization } from "./child-projection.ts";
-import type { ActionAuthorization, AuthorizationDecision } from "./action-authorization.ts";
+import type {
+	ActionAuthorization,
+	AuthorizationDecision,
+} from "./action-authorization.ts";
 import {
 	type ChildContext,
 	type ChildHandle,
@@ -39,12 +42,18 @@ import { errorMessage } from "./error-message.ts";
 import { recordTree, stopTree, treeEnvironment } from "./process-tree.ts";
 import { seated } from "./shell.ts";
 import { defaultActiveTools } from "./tool-sources.ts";
-import { resolveClaudeBridgeExtension, resolveWebAccessExtensions, webAccessTools } from "./web-access.ts";
+import {
+	resolveClaudeBridgeExtension,
+	resolveWebAccessExtensions,
+	webAccessTools,
+} from "./web-access.ts";
 
 export const readinessDeadline = 10_000;
 export const channelFrameLimit = 1024 * 1024;
 
-const childRuntime = fileURLToPath(new URL("./child-runtime.ts", import.meta.url));
+const childRuntime = fileURLToPath(
+	new URL("./child-runtime.ts", import.meta.url),
+);
 
 type RpcRecord = { type: string; [field: string]: unknown };
 type Pending = { resolve(data: unknown): void; reject(error: Error): void };
@@ -62,7 +71,8 @@ type Update = {
 export function installedPi() {
 	if (basename(process.execPath) === "pi") return process.execPath;
 	for (const directory of (process.env.PATH ?? "").split(delimiter)) {
-		if (!directory || directory.includes(join("node_modules", ".bin"))) continue;
+		if (!directory || directory.includes(join("node_modules", ".bin")))
+			continue;
 		const candidate = join(directory, "pi");
 		try {
 			accessSync(candidate, constants.X_OK);
@@ -78,18 +88,26 @@ const supportedPi = `>=${minimumPi.join(".")}`;
 async function verifiedPi() {
 	const path = installedPi();
 	if (path === process.execPath) return { path, version: VERSION };
-	const version = await promisify(execFile)(path, ["--version"], { timeout: readinessDeadline }).then(
+	const version = await promisify(execFile)(path, ["--version"], {
+		timeout: readinessDeadline,
+	}).then(
 		({ stdout }) => stdout.trim(),
 		() => "",
 	);
 	const parts = /^(\d+)\.(\d+)\.(\d+)$/.exec(version)?.slice(1).map(Number);
 	if (!parts) {
-		const found = version ? `reported version ${JSON.stringify(version)}, which is not readable` : "has no readable version";
-		throw new Error(`The Pi on PATH at ${path} ${found}, but a child requires Pi ${supportedPi}.`);
+		const found = version
+			? `reported version ${JSON.stringify(version)}, which is not readable`
+			: "has no readable version";
+		throw new Error(
+			`The Pi on PATH at ${path} ${found}, but a child requires Pi ${supportedPi}.`,
+		);
 	}
 	const differs = parts.findIndex((part, index) => part !== minimumPi[index]);
 	if (differs >= 0 && parts[differs] < minimumPi[differs]) {
-		throw new Error(`The Pi on PATH at ${path} is version ${version}, but a child requires Pi ${supportedPi}.`);
+		throw new Error(
+			`The Pi on PATH at ${path} is version ${version}, but a child requires Pi ${supportedPi}.`,
+		);
 	}
 	return { path, version };
 }
@@ -122,7 +140,8 @@ export async function pruneChildSessions() {
 function sessionFile(root: string, sessionId: string) {
 	const directory = join(root, sessionId);
 	const file = readdirSync(directory).find((name) => name.endsWith(".jsonl"));
-	if (!file) throw new Error(`The session ${sessionId} has no saved conversation.`);
+	if (!file)
+		throw new Error(`The session ${sessionId} has no saved conversation.`);
 	return join(directory, file);
 }
 
@@ -135,29 +154,49 @@ function applyUpdate(message: AssistantMessage, update: Update) {
 		content[index] = { type: kind, [field]: "" };
 	} else if (update.type === "text_delta" || update.type === "thinking_delta") {
 		const block = content[index] ?? { type: kind, [field]: "" };
-		content[index] = { ...block, [field]: `${block[field] ?? ""}${update.delta}` };
+		content[index] = {
+			...block,
+			[field]: `${block[field] ?? ""}${update.delta}`,
+		};
 	} else if (update.type === "text_end" || update.type === "thinking_end") {
 		content[index] = { ...content[index], type: kind, [field]: update.content };
 	} else if (update.type === "toolcall_start") {
-		content[index] = { type: "toolCall", id: update.id, name: update.toolName, arguments: {} } as Block;
+		content[index] = {
+			type: "toolCall",
+			id: update.id,
+			name: update.toolName,
+			arguments: {},
+		} as Block;
 	} else if (update.type === "toolcall_end") {
 		content[index] = update.toolCall as Block;
 	}
 }
 
 function reading(data: unknown): ChildContext | undefined {
-	if (typeof data !== "object" || data === null) throw new Error("The child sent malformed session stats.");
+	if (typeof data !== "object" || data === null)
+		throw new Error("The child sent malformed session stats.");
 	const usage = (data as { contextUsage?: unknown }).contextUsage;
 	if (usage === undefined) return undefined;
-	const { tokens, contextWindow } = (usage ?? {}) as { tokens?: unknown; contextWindow?: unknown };
-	if (contextWindow == null || (typeof contextWindow === "number" && contextWindow <= 0)) return undefined;
+	const { tokens, contextWindow } = (usage ?? {}) as {
+		tokens?: unknown;
+		contextWindow?: unknown;
+	};
+	if (
+		contextWindow == null ||
+		(typeof contextWindow === "number" && contextWindow <= 0)
+	)
+		return undefined;
 	const measured = contextReading(contextWindow, tokens);
 	if (!measured) throw new Error("The child sent malformed session stats.");
 	return { ...measured, last: false };
 }
 
 export function createRpcChildSession(
-	options: { command?: string[]; sessionRoot?: string; schedule?: Schedule } = {},
+	options: {
+		command?: string[];
+		sessionRoot?: string;
+		schedule?: Schedule;
+	} = {},
 ): ChildSessionFactory {
 	const schedule = options.schedule ?? scheduleTimer;
 	let executable: ReturnType<typeof verifiedPi> | undefined;
@@ -181,9 +220,12 @@ export function createRpcChildSession(
 		const installed = options.command ? undefined : await piExecutable();
 		const [command, ...prefix] = options.command ?? [installed?.path as string];
 		const agentDir = getAgentDir();
-		const root = options.sessionRoot ?? join(sessionsRoot(), String(process.pid));
+		const root =
+			options.sessionRoot ?? join(sessionsRoot(), String(process.pid));
 		const sessionId = randomUUID();
-		const fork = spec.parentSession ? sessionFile(root, spec.parentSession) : undefined;
+		const fork = spec.parentSession
+			? sessionFile(root, spec.parentSession)
+			: undefined;
 		const resources = [
 			...(spec.model.startsWith("claude-bridge/")
 				? [await resolveClaudeBridgeExtension(agentDir, spec.project)]
@@ -211,30 +253,41 @@ export function createRpcChildSession(
 		);
 		const args = [
 			...prefix,
-			"--mode", "rpc",
-			"--session-dir", join(root, sessionId),
-			"--session-id", sessionId,
+			"--mode",
+			"rpc",
+			"--session-dir",
+			join(root, sessionId),
+			"--session-id",
+			sessionId,
 			...(fork ? ["--fork", fork] : []),
-			"--model", spec.model,
-			"--thinking", spec.thinking,
+			"--model",
+			spec.model,
+			"--thinking",
+			spec.thinking,
 			...(policy ? [] : ["--tools", spec.tools.join(",")]),
 			"--no-extensions",
-			"--extension", "builtin:mcp",
+			"--extension",
+			"builtin:mcp",
 			...(policy
 				? [
-						"--extension", "builtin:tool-search",
+						"--extension",
+						"builtin:tool-search",
 						...(spec.sources?.paths ?? []).flatMap((path) => [
-							"--extension", resolve(spec.project.cwd, path),
+							"--extension",
+							resolve(spec.project.cwd, path),
 						]),
 					]
 				: []),
 			...resources.flatMap((path) => ["--extension", path]),
-			"--extension", childRuntime,
-			`--${childRuntimeFlag}`, JSON.stringify(runtime),
+			"--extension",
+			childRuntime,
+			`--${childRuntimeFlag}`,
+			JSON.stringify(runtime),
 			"--no-skills",
 			"--no-prompt-templates",
 			"--no-themes",
-			"--system-prompt", spec.prompt,
+			"--system-prompt",
+			spec.prompt,
 			spec.project.trusted ? "--approve" : "--no-approve",
 		];
 
@@ -279,7 +332,11 @@ export function createRpcChildSession(
 			child?.stdin?.write(`${JSON.stringify(record)}\n`);
 		}
 
-		function request(type: string, fields: Record<string, unknown> = {}, limit?: number) {
+		function request(
+			type: string,
+			fields: Record<string, unknown> = {},
+			limit?: number,
+		) {
 			const id = `r${++requests}`;
 			return new Promise<unknown>((resolve, reject) => {
 				let cancel = () => {};
@@ -297,7 +354,12 @@ export function createRpcChildSession(
 				});
 				if (limit !== undefined) {
 					cancel = schedule(
-						() => abandon(new Error(`The child Pi process did not answer ${type} within ${limit} ms.`)),
+						() =>
+							abandon(
+								new Error(
+									`The child Pi process did not answer ${type} within ${limit} ms.`,
+								),
+							),
 						limit,
 					);
 				}
@@ -345,7 +407,10 @@ export function createRpcChildSession(
 					stale = false;
 					const since = entries.at(-1)?.id;
 					try {
-						const data = (await request("get_entries", since ? { since } : {})) as {
+						const data = (await request(
+							"get_entries",
+							since ? { since } : {},
+						)) as {
 							entries: SessionEntry[];
 						};
 						entries.push(...data.entries);
@@ -362,19 +427,30 @@ export function createRpcChildSession(
 
 		function deliver(record: RpcRecord) {
 			let event = record;
-			if (record.type === "message_start" || record.type === "message_update" || record.type === "message_end") {
+			if (
+				record.type === "message_start" ||
+				record.type === "message_update" ||
+				record.type === "message_end"
+			) {
 				const message = record.message as AssistantMessage | undefined;
 				if (record.type === "message_start" && message?.role === "assistant") {
 					streaming = message;
 				} else if (record.type === "message_update" && streaming) {
 					applyUpdate(streaming, record.assistantMessageEvent as Update);
 					event = { ...record, message: streaming };
-				} else if (record.type === "message_end" && message?.role === "assistant" && streaming) {
+				} else if (
+					record.type === "message_end" &&
+					message?.role === "assistant" &&
+					streaming
+				) {
 					Object.assign(streaming, message);
 					event = { ...record, message: streaming };
 					last = streaming;
 					streaming = undefined;
-				} else if (record.type === "message_end" && message?.role === "assistant") {
+				} else if (
+					record.type === "message_end" &&
+					message?.role === "assistant"
+				) {
 					last = message;
 				}
 				if (record.type === "message_end") stale = true;
@@ -406,16 +482,31 @@ export function createRpcChildSession(
 				else pending.reject(new Error(String(record.error)));
 			} else if (record.type === "extension_ui_request") {
 				if (record.method === "notify") spec.notify(String(record.message));
-				else if (["select", "confirm", "input", "editor"].includes(String(record.method)))
-					send({ type: "extension_ui_response", id: record.id, cancelled: true });
+				else if (
+					["select", "confirm", "input", "editor"].includes(
+						String(record.method),
+					)
+				)
+					send({
+						type: "extension_ui_response",
+						id: record.id,
+						cancelled: true,
+					});
 			} else {
-				if (record.type === "compaction_end" && record.result != null && record.aborted !== true) {
+				if (
+					record.type === "compaction_end" &&
+					record.result != null &&
+					record.aborted !== true
+				) {
 					contextGeneration += 1;
-					if (context) context = { capacity: context.capacity, tokens: null, last: false };
+					if (context)
+						context = { capacity: context.capacity, tokens: null, last: false };
 				}
 				if (
 					record.type === "compaction_end" ||
-					(record.type === "message_end" && (record.message as { role?: unknown } | undefined)?.role === "assistant")
+					(record.type === "message_end" &&
+						(record.message as { role?: unknown } | undefined)?.role ===
+							"assistant")
 				) {
 					measure();
 				}
@@ -430,9 +521,15 @@ export function createRpcChildSession(
 			asks.clear();
 		}
 
-		async function evaluate(method: PolicyMethod, value: unknown, signal: AbortSignal) {
-			if (!policy) throw new Error("This child has no contextual authorization.");
-			if (method === "authority") return policy.authority({ cwd: spec.cwd, signal });
+		async function evaluate(
+			method: PolicyMethod,
+			value: unknown,
+			signal: AbortSignal,
+		) {
+			if (!policy)
+				throw new Error("This child has no contextual authorization.");
+			if (method === "authority")
+				return policy.authority({ cwd: spec.cwd, signal });
 			if (method === "classify") {
 				return policy.classify(
 					value as Parameters<ActionAuthorization["classify"]>[0],
@@ -446,7 +543,10 @@ export function createRpcChildSession(
 			const reply = (message: ParentReply) => {
 				if (output.writable) output.write(`${JSON.stringify(message)}\n`);
 			};
-			const answer = (id: number, produce: (signal: AbortSignal) => Promise<string>) => {
+			const answer = (
+				id: number,
+				produce: (signal: AbortSignal) => Promise<string>,
+			) => {
 				const call = new AbortController();
 				asks.set(id, call);
 				produce(call.signal)
@@ -459,13 +559,16 @@ export function createRpcChildSession(
 			readRecords<ChildFrame>(
 				input,
 				(frame) =>
-					typeof frame.type === "string" && (frame.type === "ready" || typeof frame.id === "number"),
+					typeof frame.type === "string" &&
+					(frame.type === "ready" || typeof frame.id === "number"),
 				(frame) => {
 					if (frame.type === "ready") {
 						connected?.resolve(frame.tools);
 						connected = undefined;
 					} else if (frame.type === "ask") {
-						answer(frame.id, (signal) => spec.ask(frame.question, signal, frame.consultation));
+						answer(frame.id, (signal) =>
+							spec.ask(frame.question, signal, frame.consultation),
+						);
 					} else if (frame.type === "policy") {
 						const { method, value } = frame;
 						answer(frame.id, async (signal) =>
@@ -526,8 +629,14 @@ export function createRpcChildSession(
 			pi.stderr.on("data", (chunk: string) => {
 				stderr = `${stderr}${chunk}`.slice(-4000);
 			});
-			readRecords(pi.stdout, (record) => typeof record.type === "string", receive, { onInvalid: fail });
-			const channel = pi.stdio[channelDescriptor] as unknown as Readable & Writable;
+			readRecords(
+				pi.stdout,
+				(record) => typeof record.type === "string",
+				receive,
+				{ onInvalid: fail },
+			);
+			const channel = pi.stdio[channelDescriptor] as unknown as Readable &
+				Writable;
 			listen(channel, channel);
 		}
 
@@ -550,25 +659,38 @@ export function createRpcChildSession(
 				);
 			});
 			try {
-				const state = (await Promise.race([request("get_state"), deadline])) as {
+				const state = (await Promise.race([
+					request("get_state"),
+					deadline,
+				])) as {
 					sessionId: string;
 					model?: { provider: string; id: string };
 					thinkingLevel: string;
 				};
 				if (state.sessionId !== sessionId) {
-					throw new Error(`The child Pi process opened session ${state.sessionId} instead of ${sessionId}.`);
+					throw new Error(
+						`The child Pi process opened session ${state.sessionId} instead of ${sessionId}.`,
+					);
 				}
-				const model = state.model && `${state.model.provider}/${state.model.id}`;
+				const model =
+					state.model && `${state.model.provider}/${state.model.id}`;
 				if (model !== spec.model || state.thinkingLevel !== spec.thinking) {
 					throw new Error(
 						`The child would run ${model ?? "no model"} at ${state.thinkingLevel} instead of the selected ${spec.model} at ${spec.thinking}.`,
 					);
 				}
 				// Without the child runtime, Pi's built-in bash would run without the ADR 0013 guard.
-				const active = (await Promise.race([runtimeReady, deadline])) as string[];
-				const missing = policy ? [] : required.filter((tool) => !active.includes(tool));
+				const active = (await Promise.race([
+					runtimeReady,
+					deadline,
+				])) as string[];
+				const missing = policy
+					? []
+					: required.filter((tool) => !active.includes(tool));
 				if (missing.length > 0) {
-					throw new Error(`The child Pi process lacks the contract tools ${missing.join(", ")}.`);
+					throw new Error(
+						`The child Pi process lacks the contract tools ${missing.join(", ")}.`,
+					);
 				}
 				if (child?.pid !== undefined) await recordTree(sessionId, child.pid);
 			} finally {
@@ -583,7 +705,8 @@ export function createRpcChildSession(
 				return entries;
 			},
 			pendingAuthorizations: () => structuredClone([...held.values()]),
-			removeSession: () => rm(join(root, sessionId), { recursive: true, force: true }),
+			removeSession: () =>
+				rm(join(root, sessionId), { recursive: true, force: true }),
 			async run(task) {
 				starting ??= ready();
 				await starting;
@@ -596,14 +719,18 @@ export function createRpcChildSession(
 					disposition?: string;
 				};
 				if (accepted.disposition === "handled") {
-					throw new Error("The child Pi process handled the task but started no run.");
+					throw new Error(
+						"The child Pi process handled the task but started no run.",
+					);
 				}
 				const aborted = await done;
 				await refresh();
 				if (child?.pid !== undefined) await recordTree(sessionId, child.pid);
 				if (aborted) throw new Error("The child run aborted.");
 				if (last?.stopReason === "error" || last?.stopReason === "aborted") {
-					throw new Error(last.errorMessage ?? `The child run ${last.stopReason}.`);
+					throw new Error(
+						last.errorMessage ?? `The child run ${last.stopReason}.`,
+					);
 				}
 				const { text } = (await request("get_last_assistant_text")) as {
 					text: string | null;
@@ -628,7 +755,12 @@ export function createRpcChildSession(
 			async dispose() {
 				disposed = true;
 				const pi = child;
-				if (!pi || pi.pid === undefined || pi.exitCode !== null || pi.signalCode !== null) {
+				if (
+					!pi ||
+					pi.pid === undefined ||
+					pi.exitCode !== null ||
+					pi.signalCode !== null
+				) {
 					return exited;
 				}
 				request("abort").catch(() => {});

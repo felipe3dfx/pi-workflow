@@ -3,10 +3,7 @@ import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import {
-	fauxAssistantMessage,
-	fauxToolCall,
-} from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 
 import { capabilities } from "../extensions/configure.ts";
 import {
@@ -15,11 +12,7 @@ import {
 } from "../extensions/exploration-budget.ts";
 import { createDelegationMode } from "../extensions/workflow-settings.ts";
 import { withAgentDirectory } from "./support/agent-directory.mjs";
-import {
-	parentSession,
-	realParent,
-	seat,
-} from "./support/workflow-parent.mjs";
+import { parentSession, realParent, seat } from "./support/workflow-parent.mjs";
 
 let calls = 0;
 
@@ -59,17 +52,26 @@ test("the fourth discovery lookup of a request crosses the budget once, with its
 	assert.equal(lookup(budget, "read", { text: "abc" }), undefined);
 	assert.equal(lookup(budget, "grep", { text: "é" }), undefined);
 	assert.equal(lookup(budget, "find", { text: "" }), undefined);
-	assert.deepEqual(lookup(budget, "ls", { text: "ñu" }), { lookups: 4, textBytes: 8 });
+	assert.deepEqual(lookup(budget, "ls", { text: "ñu" }), {
+		lookups: 4,
+		textBytes: 8,
+	});
 	assert.equal(lookup(budget, "read"), undefined);
 	assert.equal(lookup(budget, "read", { text: "x".repeat(50_000) }), undefined);
 });
 
 test("40,000 UTF-8 text bytes stay within the budget and one more byte crosses it", () => {
-	assert.equal(lookup(started(), "read", { text: "é".repeat(20_000) }), undefined);
-	assert.deepEqual(lookup(started(), "read", { text: `${"é".repeat(20_000)}x` }), {
-		lookups: 1,
-		textBytes: 40_001,
-	});
+	assert.equal(
+		lookup(started(), "read", { text: "é".repeat(20_000) }),
+		undefined,
+	);
+	assert.deepEqual(
+		lookup(started(), "read", { text: `${"é".repeat(20_000)}x` }),
+		{
+			lookups: 1,
+			textBytes: 40_001,
+		},
+	);
 });
 
 test("only text parts add bytes", () => {
@@ -108,7 +110,10 @@ test("a call started before the request began contributes nothing", () => {
 	budget.call({ toolCallId: "early", toolName: "read" });
 	budget.start();
 	for (let i = 0; i < 3; i++) lookup(budget, "read");
-	assert.equal(lookup(budget, "read", { id: "early", unrecorded: true }), undefined);
+	assert.equal(
+		lookup(budget, "read", { id: "early", unrecorded: true }),
+		undefined,
+	);
 	assert.ok(lookup(budget, "read"));
 });
 
@@ -122,7 +127,10 @@ test("a result whose tool name differs from its recorded call does not count", (
 	const budget = started();
 	for (let i = 0; i < 3; i++) lookup(budget, "read");
 	budget.call({ toolCallId: "swapped", toolName: "edit" });
-	assert.equal(lookup(budget, "read", { id: "swapped", unrecorded: true }), undefined);
+	assert.equal(
+		lookup(budget, "read", { id: "swapped", unrecorded: true }),
+		undefined,
+	);
 });
 
 test("Engram memory reads and MCP-proxied discovery tools count", () => {
@@ -158,12 +166,24 @@ test("writes, other MCP tools, web tools and harness tools do not count", () => 
 
 test("codegraph counts its successful query and explore operations only", () => {
 	const ok = { status: "ok" };
-	assert.equal(counts("codegraph", { input: { operation: "query" }, details: ok }), true);
-	assert.equal(counts("codegraph", { input: { operation: "explore" }, details: ok }), true);
-	assert.equal(counts("codegraph", { input: { operation: "init" }, details: ok }), false);
+	assert.equal(
+		counts("codegraph", { input: { operation: "query" }, details: ok }),
+		true,
+	);
+	assert.equal(
+		counts("codegraph", { input: { operation: "explore" }, details: ok }),
+		true,
+	);
+	assert.equal(
+		counts("codegraph", { input: { operation: "init" }, details: ok }),
+		false,
+	);
 	for (const status of ["failed", "unavailable", "refused"])
 		assert.equal(
-			counts("codegraph", { input: { operation: "query" }, details: { status } }),
+			counts("codegraph", {
+				input: { operation: "query" },
+				details: { status },
+			}),
 			false,
 			status,
 		);
@@ -173,18 +193,33 @@ test("a discovery call nested in codemode counts and the codemode call does not"
 	const budget = started();
 	budget.call({ toolCallId: "script", toolName: "codemode" });
 	for (let i = 1; i <= 3; i++)
-		assert.equal(lookup(budget, "read", { id: `script/${i}`, parent: "script" }), undefined);
-	assert.equal(lookup(budget, "mcp__codegraph__codegraph_explore", { id: "script/4", parent: "script" }) !== undefined, true);
-	assert.equal(lookup(budget, "codemode", { id: "script", unrecorded: true }), undefined);
+		assert.equal(
+			lookup(budget, "read", { id: `script/${i}`, parent: "script" }),
+			undefined,
+		);
+	assert.equal(
+		lookup(budget, "mcp__codegraph__codegraph_explore", {
+			id: "script/4",
+			parent: "script",
+		}) !== undefined,
+		true,
+	);
+	assert.equal(
+		lookup(budget, "codemode", { id: "script", unrecorded: true }),
+		undefined,
+	);
 });
 
 test("nested calls count only one level below codemode", () => {
 	const nested = (parentName, grandparent) => {
 		const budget = started();
 		for (let i = 0; i < 3; i++) lookup(budget, "read");
-		if (grandparent)
-			budget.call({ toolCallId: "outer", toolName: "codemode" });
-		budget.call({ toolCallId: "p", toolName: parentName, parentToolCallId: grandparent ? "outer" : undefined });
+		if (grandparent) budget.call({ toolCallId: "outer", toolName: "codemode" });
+		budget.call({
+			toolCallId: "p",
+			toolName: parentName,
+			parentToolCallId: grandparent ? "outer" : undefined,
+		});
 		return lookup(budget, "read", { id: "p/1", parent: "p" }) !== undefined;
 	};
 	assert.equal(nested("codemode"), true);
@@ -320,16 +355,37 @@ async function budgetParent(agentDirectory) {
 	return {
 		sent,
 		prompt: () =>
-			fire("before_agent_start", { type: "before_agent_start", messageType: "user", prompt: "Explain", systemPromptOptions: { sections: {} } }),
+			fire("before_agent_start", {
+				type: "before_agent_start",
+				messageType: "user",
+				prompt: "Explain",
+				systemPromptOptions: { sections: {} },
+			}),
 		wake: () =>
-			fire("before_agent_start", { type: "before_agent_start", messageType: "custom", message: {}, systemPromptOptions: { sections: {} } }),
+			fire("before_agent_start", {
+				type: "before_agent_start",
+				messageType: "custom",
+				message: {},
+				systemPromptOptions: { sections: {} },
+			}),
 		async lookups(count, { toolName = "read", text = "x", ctx = {} } = {}) {
 			for (let i = 0; i < count; i++) {
 				const toolCallId = `call-${++id}`;
-				await fire("tool_execution_start", { type: "tool_execution_start", toolCallId, toolName, args: {} }, ctx);
+				await fire(
+					"tool_execution_start",
+					{ type: "tool_execution_start", toolCallId, toolName, args: {} },
+					ctx,
+				);
 				await fire(
 					"tool_result",
-					{ type: "tool_result", toolCallId, toolName, input: {}, content: [{ type: "text", text }], isError: false },
+					{
+						type: "tool_result",
+						toolCallId,
+						toolName,
+						input: {},
+						content: [{ type: "text", text }],
+						isError: false,
+					},
 					ctx,
 				);
 			}
@@ -351,7 +407,10 @@ test("a parent with the child tools that crosses the budget gets one visible ste
 	assert.equal(message.customType, "pi-workflow-exploration-budget");
 	assert.equal(message.display, true);
 	assert.deepEqual(message.details, { lookups: 4, textBytes: 12 });
-	assert.equal(message.content, explorationNotice({ lookups: 4, textBytes: 12 }, "opportunistic"));
+	assert.equal(
+		message.content,
+		explorationNotice({ lookups: 4, textBytes: 12 }, "opportunistic"),
+	);
 });
 
 test("the notice reads the Delegation mode when it is sent", async (t) => {
@@ -362,7 +421,10 @@ test("the notice reads the Delegation mode when it is sent", async (t) => {
 	await parent.lookups(3);
 	createDelegationMode(dir).set("orchestrator");
 	await parent.lookups(1);
-	assert.match(parent.sent[0].message.content, /Reading that prepares a writer belongs in that writer's task\./);
+	assert.match(
+		parent.sent[0].message.content,
+		/Reading that prepares a writer belongs in that writer's task\./,
+	);
 });
 
 test("a run woken by a custom message continues the request and a new prompt starts another", async (t) => {
@@ -421,7 +483,10 @@ async function budgetRealParent(t, dir, responses) {
 				}),
 		],
 	});
-	await writeFile(join(parent.worktree, "README.md"), "Installs the harness.\n");
+	await writeFile(
+		join(parent.worktree, "README.md"),
+		"Installs the harness.\n",
+	);
 	return parent;
 }
 
@@ -433,7 +498,9 @@ test("in a real Pi session, the fourth read of a prompt steers the notice into t
 	seat();
 	const reads = (prefix) =>
 		fauxAssistantMessage(
-			[1, 2, 3, 4].map((n) => fauxToolCall("read", { path: "README.md" }, { id: `${prefix}-${n}` })),
+			[1, 2, 3, 4].map((n) =>
+				fauxToolCall("read", { path: "README.md" }, { id: `${prefix}-${n}` }),
+			),
 			{ stopReason: "toolUse" },
 		);
 	const { session, requests } = await budgetRealParent(t, dir, [
@@ -444,7 +511,8 @@ test("in a real Pi session, the fourth read of a prompt steers the notice into t
 	assert.equal(requests.length, 2);
 	assert.equal(notices(requests[1]), 1);
 	assert.match(JSON.stringify(requests[1].messages), /4 tracked lookups/);
-	const result = (id) => requests[1].messages.find((message) => message.toolCallId === id);
+	const result = (id) =>
+		requests[1].messages.find((message) => message.toolCallId === id);
 	assert.equal(result("a-4").isError, false);
 	assert.match(JSON.stringify(result("a-4").content), /Installs the harness\./);
 	assert.deepEqual(result("a-4").content, result("a-1").content);
@@ -454,7 +522,9 @@ test("in a real Pi session, reads a codemode script makes count toward the budge
 	const dir = withAgentDirectory(t);
 	seat();
 	const { session, requests } = await budgetRealParent(t, dir, [
-		fauxAssistantMessage(fauxToolCall("codemode", {}, { id: "script" }), { stopReason: "toolUse" }),
+		fauxAssistantMessage(fauxToolCall("codemode", {}, { id: "script" }), {
+			stopReason: "toolUse",
+		}),
 		fauxAssistantMessage("Done."),
 	]);
 	await session.prompt("Explain the README");

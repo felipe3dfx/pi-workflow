@@ -1,6 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import {
+	mkdir,
+	mkdtemp,
+	readFile,
+	rm,
+	symlink,
+	writeFile,
+} from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -11,7 +18,9 @@ import piWorkflowExtension from "../extensions/pi-workflow.ts";
 
 replaceSelection({
 	schemaVersion: 1,
-	capabilities: Object.fromEntries(capabilities.map((capability) => [capability, true])),
+	capabilities: Object.fromEntries(
+		capabilities.map((capability) => [capability, true]),
+	),
 	expectations: {},
 });
 

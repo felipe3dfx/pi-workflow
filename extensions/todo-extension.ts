@@ -1,4 +1,8 @@
-import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type {
+	ExtensionAPI,
+	ExtensionContext,
+	ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 import { occupyAboveInput, seated } from "./shell.ts";
@@ -10,11 +14,19 @@ import {
 	type TodoHitTarget,
 	type TodoHitAction,
 } from "./todo-header.ts";
-import { createTodoList, TASK_STATES, type Task, type TaskState } from "./todo-list.ts";
+import {
+	createTodoList,
+	TASK_STATES,
+	type Task,
+	type TaskState,
+} from "./todo-list.ts";
 
 const TodoTaskState = Type.Union(
 	TASK_STATES.map((state) => Type.Literal(state)),
-	{ description: "Task state; blocked means the task needs the parent's attention" },
+	{
+		description:
+			"Task state; blocked means the task needs the parent's attention",
+	},
 );
 
 const TodoWriteTask = Type.Object({
@@ -36,22 +48,32 @@ const TodoParams = Type.Object({
 				"write replaces the whole list with new, increasing ids that are never reused; use the ids it returns; add appends one task; update changes one task; clear empties the list; list reads it",
 		},
 	),
-	tasks: Type.Optional(Type.Array(TodoWriteTask, { description: "The whole list, for action write" })),
-	text: Type.Optional(Type.String({ description: "Task text, for action add or update" })),
+	tasks: Type.Optional(
+		Type.Array(TodoWriteTask, {
+			description: "The whole list, for action write",
+		}),
+	),
+	text: Type.Optional(
+		Type.String({ description: "Task text, for action add or update" }),
+	),
 	id: Type.Optional(Type.Number({ description: "Task id, for action update" })),
 	state: Type.Optional(TodoTaskState),
 });
 
 function summarize(tasks: Task[]): string {
 	if (tasks.length === 0) return "No session tasks";
-	return tasks.map((task) => `[${task.state}] #${task.id}: ${task.text}`).join("\n");
+	return tasks
+		.map((task) => `[${task.state}] #${task.id}: ${task.text}`)
+		.join("\n");
 }
 
 const TODO_ENTRY = "pi-workflow-todo";
 
 export type TodoClaim = { reason: string } | { task: Task };
 
-function replayTasks(entries: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>): Task[] {
+function replayTasks(
+	entries: ReturnType<ExtensionContext["sessionManager"]["getBranch"]>,
+): Task[] {
 	let tasks: Task[] = [];
 	for (const entry of entries) {
 		if (entry.type === "custom" && entry.customType === TODO_ENTRY) {
@@ -61,12 +83,19 @@ function replayTasks(entries: ReturnType<ExtensionContext["sessionManager"]["get
 		}
 		if (entry.type !== "message") continue;
 		const message = entry.message;
-		if (message.role !== "toolResult" || message.toolName !== "todo" || message.isError) continue;
+		if (
+			message.role !== "toolResult" ||
+			message.toolName !== "todo" ||
+			message.isError
+		)
+			continue;
 		const details = message.details as { tasks?: Task[] } | undefined;
 		if (details && Array.isArray(details.tasks)) tasks = details.tasks;
 	}
 	tasks = tasks.filter((task) => TASK_STATES.includes(task.state));
-	return tasks.length > 0 && tasks.every((task) => task.state === "done") ? [] : tasks;
+	return tasks.length > 0 && tasks.every((task) => task.state === "done")
+		? []
+		: tasks;
 }
 
 export function registerSessionTodo(
@@ -83,28 +112,54 @@ export function registerSessionTodo(
 	function act(action: TodoHitAction) {
 		targets = [];
 		switch (action) {
-			case "collapse": boxState.collapsed = true; break;
-			case "expand": boxState.collapsed = false; break;
-			case "filter": boxState.showDone = !boxState.showDone; page = 1; break;
-			case "previous": page = Math.max(1, page - 1); break;
-			case "next": if (pageCount !== null) page = Math.min(pageCount, page + 1); break;
+			case "collapse":
+				boxState.collapsed = true;
+				break;
+			case "expand":
+				boxState.collapsed = false;
+				break;
+			case "filter":
+				boxState.showDone = !boxState.showDone;
+				page = 1;
+				break;
+			case "previous":
+				page = Math.max(1, page - 1);
+				break;
+			case "next":
+				if (pageCount !== null) page = Math.min(pageCount, page + 1);
+				break;
 		}
 		requestRender();
 	}
 	if (options.attachUI !== false) {
-		occupyAboveInput("todo", (width, theme, rows) => {
-			const layout = renderTodoBox(theme, todoList.list(), boxState, width, executors(), rows, page);
-			page = layout.page;
-			if (layout.pageCount !== null) pageCount = layout.pageCount;
-			targets = layout.targets;
-			return layout.lines;
-		}, (event) => {
-			if (event.type !== "click" || event.button !== "left") return undefined;
-			const target = targets.find(({ row, start, end }) => event.y === row && event.x >= start && event.x < end);
-			if (!target) return undefined;
-			act(target.action);
-			return { handled: true };
-		});
+		occupyAboveInput(
+			"todo",
+			(width, theme, rows) => {
+				const layout = renderTodoBox(
+					theme,
+					todoList.list(),
+					boxState,
+					width,
+					executors(),
+					rows,
+					page,
+				);
+				page = layout.page;
+				if (layout.pageCount !== null) pageCount = layout.pageCount;
+				targets = layout.targets;
+				return layout.lines;
+			},
+			(event) => {
+				if (event.type !== "click" || event.button !== "left") return undefined;
+				const target = targets.find(
+					({ row, start, end }) =>
+						event.y === row && event.x >= start && event.x < end,
+				);
+				if (!target) return undefined;
+				act(target.action);
+				return { handled: true };
+			},
+		);
 	}
 
 	function reveal(): void {
@@ -118,7 +173,8 @@ export function registerSessionTodo(
 		label: "Todo",
 		description:
 			"Manage the current session's task list, shown in a box pinned above the input. Actions: write (replace the whole list), add, update, clear, list. Session-scoped only; never creates a file.",
-		promptSnippet: "Track the session's todo list, shown above the input, with write/add/update/clear/list",
+		promptSnippet:
+			"Track the session's todo list, shown above the input, with write/add/update/clear/list",
 		promptGuidelines: [
 			"Use todo, not a markdown or TODO file, whenever the user asks for a task list or to track work for this session, unless the user explicitly asks for a file; todo never creates a file.",
 			"Prefer todo write to replace the whole plan when it changes, and todo update to move one task's Task state as work progresses.",
@@ -143,7 +199,10 @@ export function registerSessionTodo(
 					}
 					const tasks = todoList.write(params.tasks);
 					reveal();
-					return { content: [{ type: "text", text: summarize(tasks) }], details: { tasks } };
+					return {
+						content: [{ type: "text", text: summarize(tasks) }],
+						details: { tasks },
+					};
 				}
 				case "add": {
 					if (!params.text) {
@@ -152,7 +211,12 @@ export function registerSessionTodo(
 					const task = todoList.add(params.text, params.state);
 					reveal();
 					return {
-						content: [{ type: "text", text: `Added #${task.id}: ${task.text}\n${summarize(todoList.list())}` }],
+						content: [
+							{
+								type: "text",
+								text: `Added #${task.id}: ${task.text}\n${summarize(todoList.list())}`,
+							},
+						],
 						details: { tasks: todoList.list() },
 					};
 				}
@@ -160,17 +224,31 @@ export function registerSessionTodo(
 					if (params.id === undefined) {
 						throw new Error("id is required for update");
 					}
-					const task = todoList.update(params.id, { text: params.text, state: params.state });
+					const task = todoList.update(params.id, {
+						text: params.text,
+						state: params.state,
+					});
 					if (!task) {
 						throw new Error(`task #${params.id} not found`);
 					}
 					reveal();
-					return { content: [{ type: "text", text: `Updated #${task.id}\n${summarize(todoList.list())}` }], details: { tasks: todoList.list() } };
+					return {
+						content: [
+							{
+								type: "text",
+								text: `Updated #${task.id}\n${summarize(todoList.list())}`,
+							},
+						],
+						details: { tasks: todoList.list() },
+					};
 				}
 				case "clear": {
 					todoList.clear();
 					reveal();
-					return { content: [{ type: "text", text: "Cleared session tasks" }], details: { tasks: [] } };
+					return {
+						content: [{ type: "text", text: "Cleared session tasks" }],
+						details: { tasks: [] },
+					};
 				}
 				case "list":
 					return {
@@ -196,8 +274,14 @@ export function registerSessionTodo(
 				act("filter");
 			},
 		});
-		for (const [key, action] of [["alt+shift+p", "previous"], ["alt+shift+n", "next"]] as const) {
-			pi.registerShortcut(key, { description: `${action === "previous" ? "Previous" : "Next"} session task page`, handler: async () => act(action) });
+		for (const [key, action] of [
+			["alt+shift+p", "previous"],
+			["alt+shift+n", "next"],
+		] as const) {
+			pi.registerShortcut(key, {
+				description: `${action === "previous" ? "Previous" : "Next"} session task page`,
+				handler: async () => act(action),
+			});
 		}
 	}
 
@@ -216,12 +300,16 @@ export function registerSessionTodo(
 
 	function claim(id: number): TodoClaim {
 		if (!seated("todo", "above-input")) {
-			return { reason: `Todo is not seated, so task #${id} cannot be linked. Run /workflow:config.` };
+			return {
+				reason: `Todo is not seated, so task #${id} cannot be linked. Run /workflow:config.`,
+			};
 		}
 		const task = find(id);
 		if (!task) return { reason: `Task #${id} does not exist in the Todo.` };
 		if (task.state === "done") {
-			return { reason: `Task #${id} is done. Change its Task state before executing it again.` };
+			return {
+				reason: `Task #${id} is done. Change its Task state before executing it again.`,
+			};
 		}
 		return { task };
 	}

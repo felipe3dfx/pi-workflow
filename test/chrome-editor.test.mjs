@@ -161,10 +161,7 @@ test("the selected autocomplete row bolds a whole value that contains a single s
 	const selected = input.theme.selectList.selectedText(
 		"→ two words   A description",
 	);
-	assert.equal(
-		selected,
-		"<text>❯ two words</text>   <dim>A description</dim>",
-	);
+	assert.equal(selected, "<text>❯ two words</text>   <dim>A description</dim>");
 });
 
 test("the frame uses the border token regardless of the thinking-level borderColor", async () => {
@@ -200,7 +197,9 @@ test("typed text carries the text token, including after the cursor", async () =
 	input.handleInput("\x1b[D");
 	const moved = first(input);
 	assert.equal(moved.split(CURSOR_MARKER).length, 2);
-	assert.ok(moved.includes(`<text>hello wor${CURSOR_MARKER}${renderFakeCursor("l")}d`));
+	assert.ok(
+		moved.includes(`<text>hello wor${CURSOR_MARKER}${renderFakeCursor("l")}d`),
+	);
 });
 
 test("the slash token keeps its own color inside the text color", async () => {

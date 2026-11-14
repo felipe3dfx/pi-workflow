@@ -140,7 +140,9 @@ function mcpConfigPath(agentDirectory: string): string {
 	return resolve(agentDirectory, "mcp.json");
 }
 
-export function legacyMcpAdapterNote(agentDirectory: string): string | undefined {
+export function legacyMcpAdapterNote(
+	agentDirectory: string,
+): string | undefined {
 	const legacyPath = resolve(agentDirectory, "mcp-adapter.json");
 	if (!existsSync(legacyPath)) return undefined;
 	return `${legacyPath} is no longer read. Move any servers you still need from it to ${mcpConfigPath(agentDirectory)}.`;
@@ -159,7 +161,10 @@ function readExistingMcpConfiguration(path: string): {
 			};
 		}
 		const currentServersValue = parsed.mcpServers;
-		if (currentServersValue !== undefined && !isPlainRecord(currentServersValue)) {
+		if (
+			currentServersValue !== undefined &&
+			!isPlainRecord(currentServersValue)
+		) {
 			return {
 				error: `Refusing to overwrite malformed JSON at ${path}: mcpServers must be an object when present.`,
 			};

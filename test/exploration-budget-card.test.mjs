@@ -77,12 +77,19 @@ test("an expanded exploration notice shows the full model-facing text below the 
 	component.setExpanded(true);
 	const lines = plain(component);
 	assert.match(lines[1], /\(ctrl\+o to collapse\)$/);
-	assert.match(lines.slice(2).join(" "), /grants no mutation or guard bypass authority/);
+	assert.match(
+		lines.slice(2).join(" "),
+		/grants no mutation or guard bypass authority/,
+	);
 });
 
 test("a notice without numeric facts falls back to Pi's default rendering", (t) => {
 	const component = card(t, { content: "raw", details: {} });
-	assert.ok(plain(component).some((line) => line.includes(`[${EXPLORATION_BUDGET_TYPE}]`)));
+	assert.ok(
+		plain(component).some((line) =>
+			line.includes(`[${EXPLORATION_BUDGET_TYPE}]`),
+		),
+	);
 });
 
 test("byte counts read as B, KB, or MB", () => {

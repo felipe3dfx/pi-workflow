@@ -23,10 +23,14 @@ function parentWatchdog() {
 	if (existing) return existing;
 	const token = randomUUID();
 	const groups = mkdtempSync(join(tmpdir(), "pi-workflow-process-groups-"));
-	const watchdog = spawn("/bin/sh", [script, `${token}/`, String(treeDeadline), groups, "watch"], {
-		stdio: ["pipe", "ignore", "ignore"],
-		detached: true,
-	});
+	const watchdog = spawn(
+		"/bin/sh",
+		[script, `${token}/`, String(treeDeadline), groups, "watch"],
+		{
+			stdio: ["pipe", "ignore", "ignore"],
+			detached: true,
+		},
+	);
 	watchdog.on("error", () => {});
 	watchdog.stdin.on("error", () => {});
 	watchdog.unref();
@@ -40,15 +44,22 @@ function parentWatchdog() {
 export function treeEnvironment(id: string) {
 	const { token, groups } = parentWatchdog();
 	mkdirSync(join(groups, id), { recursive: true });
-	return { [variable]: `${token}/${id}/`, ...(recordGroups ? { [groupsVariable]: join(groups, id) } : {}) };
+	return {
+		[variable]: `${token}/${id}/`,
+		...(recordGroups ? { [groupsVariable]: join(groups, id) } : {}),
+	};
 }
 
 function runScript(id: string, ...mode: string[]) {
 	return new Promise<void>((resolve) => {
 		const { token, groups } = parentWatchdog();
-		const run = spawn("/bin/sh", [script, `${token}/${id}/`, String(treeDeadline), groups, ...mode], {
-			stdio: "ignore",
-		});
+		const run = spawn(
+			"/bin/sh",
+			[script, `${token}/${id}/`, String(treeDeadline), groups, ...mode],
+			{
+				stdio: "ignore",
+			},
+		);
 		run.once("error", () => resolve());
 		run.once("close", () => resolve());
 	});
@@ -57,7 +68,9 @@ function runScript(id: string, ...mode: string[]) {
 // The child Pi leads its own group, and on macOS its environment is unreadable once it sets its title, so its pid
 // seeds the record. The watchdog keeps recording every 500 ms there.
 export function recordTree(id: string, pid: number) {
-	return recordGroups ? runScript(id, "record", String(pid)) : Promise.resolve();
+	return recordGroups
+		? runScript(id, "record", String(pid))
+		: Promise.resolve();
 }
 
 export function stopTree(id: string) {

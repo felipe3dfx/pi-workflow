@@ -10,7 +10,17 @@
   },
   "formatter": {
     "enabled": true,
-    "indentStyle": "tab"
+    "indentStyle": "tab",
+    "includes": [
+      "**",
+      "!.agents/prototypes/**",
+      "!.engram/**",
+      "!extensions/action-authorization.ts",
+      "!tools/contextual-authorization-evaluation/cases.json",
+      "!.impeccable/**",
+      "!docs/specs/**",
+      "!prototype/**"
+    ]
   },
   "json": {
     "formatter": {

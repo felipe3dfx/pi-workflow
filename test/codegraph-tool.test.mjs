@@ -20,7 +20,9 @@ import piWorkflowExtension from "../extensions/pi-workflow.ts";
 
 replaceSelection({
 	schemaVersion: 1,
-	capabilities: Object.fromEntries(capabilities.map((capability) => [capability, true])),
+	capabilities: Object.fromEntries(
+		capabilities.map((capability) => [capability, true]),
+	),
 	expectations: {},
 });
 
@@ -395,12 +397,19 @@ test("the default runner ignores GIT_DIR when validating the Git root", async (t
 test("the child codegraph tool queries and explores the child's own root and offers no init", async (t) => {
 	const workspace = fakeWorkspace(t);
 	const tool = createChildCodeGraphTool(workspace.root, workspace.adapters);
-	assert.deepEqual(tool.parameters.properties.operation.enum, ["query", "explore"]);
-	const result = await tool.execute("call-1", { operation: "explore", query: "Workflow" });
-	assert.equal(result.details.status, "ok");
-	assert.deepEqual(workspace.codegraphCalls().map((call) => call.args), [
-		["explore", "--path", workspace.root, "--", "Workflow"],
+	assert.deepEqual(tool.parameters.properties.operation.enum, [
+		"query",
+		"explore",
 	]);
+	const result = await tool.execute("call-1", {
+		operation: "explore",
+		query: "Workflow",
+	});
+	assert.equal(result.details.status, "ok");
+	assert.deepEqual(
+		workspace.codegraphCalls().map((call) => call.args),
+		[["explore", "--path", workspace.root, "--", "Workflow"]],
+	);
 	await assert.rejects(
 		tool.execute("call-2", { operation: "init" }),
 		/query or explore/,

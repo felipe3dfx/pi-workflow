@@ -1,6 +1,10 @@
 {
   "$schema": "https://unpkg.com/knip@latest/schema.json",
-  "entry": ["extensions/pi-workflow.ts", "extensions/child-runtime.ts", "scripts/*.mjs"],
+  "entry": [
+    "extensions/pi-workflow.ts",
+    "extensions/child-runtime.ts",
+    "scripts/*.mjs"
+  ],
   "ignore": [".agents/**"],
   "ignoreBinaries": ["ssh-keygen"]
 }

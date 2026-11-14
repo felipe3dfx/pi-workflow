@@ -148,7 +148,8 @@ export function createTranscript(options: {
 	const atEnd = () => core || entries.size === 0 || !tail?.more;
 
 	function fold(read: Opened, below?: number) {
-		const tailed = read.next.from >= (read.health.written ?? Number.POSITIVE_INFINITY);
+		const tailed =
+			read.next.from >= (read.health.written ?? Number.POSITIVE_INFINITY);
 		const front = below !== undefined || following || tailed;
 		const kept = (ordinal: number) => below === undefined || ordinal < below;
 		const spans = new Map<string, [number, number]>();
@@ -164,7 +165,8 @@ export function createTranscript(options: {
 			}
 			const known = entries.get(key);
 			const span =
-				spans.get(key) ?? (known ? [known.first, known.last] : [ordinal, ordinal - 1]);
+				spans.get(key) ??
+				(known ? [known.first, known.last] : [ordinal, ordinal - 1]);
 			spans.set(key, span);
 			if (ordinal >= span[0] && ordinal <= span[1]) continue;
 			const entry = known ?? { key, first: ordinal, last: ordinal, held: [] };
@@ -176,10 +178,18 @@ export function createTranscript(options: {
 		for (const range of read.unavailable) {
 			if (!kept(range.from)) continue;
 			const key = `gap:${range.from}`;
-			entries.set(key, { key, first: range.from, last: range.to ?? range.from, held: [], range });
+			entries.set(key, {
+				key,
+				first: range.from,
+				last: range.to ?? range.from,
+				held: [],
+				range,
+			});
 			for (const entry of entries.values()) {
 				entry.held = entry.held.filter(
-					(held) => held.ordinal < range.from || held.ordinal > (range.to ?? Number.POSITIVE_INFINITY),
+					(held) =>
+						held.ordinal < range.from ||
+						held.ordinal > (range.to ?? Number.POSITIVE_INFINITY),
 				);
 			}
 		}
@@ -202,14 +212,21 @@ export function createTranscript(options: {
 			if (capped && anchor?.key === entry.key) pinFromEnd();
 			entry.held =
 				kind === "tool"
-					? [...entry.held.filter((held) => phaseOf(held) === "start"), observation]
+					? [
+							...entry.held.filter((held) => phaseOf(held) === "start"),
+							observation,
+						]
 					: [observation];
 			return;
 		}
 		const { ordinal } = observation;
 		if (kind === "message") {
 			if (entry.floor !== undefined && ordinal < entry.floor) return;
-			if (phase === "update" && entry.ceiling !== undefined && ordinal >= entry.ceiling) {
+			if (
+				phase === "update" &&
+				entry.ceiling !== undefined &&
+				ordinal >= entry.ceiling
+			) {
 				if (!front) return;
 				entry.held = [];
 				entry.floor = ordinal;
@@ -217,7 +234,11 @@ export function createTranscript(options: {
 			}
 		}
 		let chars = entry.held.reduce((sum, held) => sum + deltaOf(held).length, 0);
-		if (kind === "message" && !front && chars + deltaOf(observation).length > partialChars) {
+		if (
+			kind === "message" &&
+			!front &&
+			chars + deltaOf(observation).length > partialChars
+		) {
 			if (chars >= partialChars) {
 				entry.ceiling = ordinal;
 				return;
@@ -225,7 +246,11 @@ export function createTranscript(options: {
 			observation = clip(observation, partialChars - chars, false);
 			entry.ceiling = ordinal;
 		}
-		if (kind === "message" && front && deltaOf(observation).length > partialChars) {
+		if (
+			kind === "message" &&
+			front &&
+			deltaOf(observation).length > partialChars
+		) {
 			observation = clip(observation, partialChars, true);
 			entry.held = entry.held.filter((held) => held.ordinal > ordinal);
 			entry.floor = ordinal;
@@ -237,7 +262,9 @@ export function createTranscript(options: {
 		entry.held.splice(index, 0, observation);
 		if (kind === "tool") {
 			const latest = entry.held.findLast((held) => phaseOf(held) === "update");
-			entry.held = entry.held.filter((held) => phaseOf(held) !== "update" || held === latest);
+			entry.held = entry.held.filter(
+				(held) => phaseOf(held) !== "update" || held === latest,
+			);
 			return;
 		}
 		coalesce(entry.held, index);
@@ -296,7 +323,12 @@ export function createTranscript(options: {
 			read = await fetch(cursor);
 		}
 		lo = cursor.from;
-		while (read && read.observations.length === 0 && read.unavailable.length === 0 && advanced(cursor, read.next)) {
+		while (
+			read &&
+			read.observations.length === 0 &&
+			read.unavailable.length === 0 &&
+			advanced(cursor, read.next)
+		) {
 			cursor = read.next;
 			read = await fetch(cursor);
 		}
@@ -356,7 +388,10 @@ export function createTranscript(options: {
 				const key = keyOf(observation);
 				return key !== undefined && dropped.has(key);
 			});
-			fold({ ...read, observations, unavailable: [] }, Number.POSITIVE_INFINITY);
+			fold(
+				{ ...read, observations, unavailable: [] },
+				Number.POSITIVE_INFINITY,
+			);
 			if (!advanced(cursor, read.next)) break;
 			cursor = read.next;
 		}
@@ -403,8 +438,16 @@ export function createTranscript(options: {
 			else parts.pop();
 		}
 		slots.set(name, { parts });
-		if (toward === "before" && anchor?.key === key && anchor.sub === `${slot}:before`) {
-			anchor = { key, sub: partSub(slot, read.part), row: Number.MAX_SAFE_INTEGER };
+		if (
+			toward === "before" &&
+			anchor?.key === key &&
+			anchor.sub === `${slot}:before`
+		) {
+			anchor = {
+				key,
+				sub: partSub(slot, read.part),
+				row: Number.MAX_SAFE_INTEGER,
+			};
 		}
 	}
 
@@ -413,15 +456,23 @@ export function createTranscript(options: {
 		const held = attached.get(key) ?? { observations: [], tried: new Set() };
 		held.tried.add(from);
 		attached.set(key, held);
-		const read = await fetch({ child, generation: tail.cursor.generation, from });
+		const read = await fetch({
+			child,
+			generation: tail.cursor.generation,
+			from,
+		});
 		if (!read) return;
 		const boundary = retainedFrom(key);
 		held.observations.push(
 			...read.observations.filter(
-				(observation) => observation.ordinal <= boundary && keyOf(observation) === key,
+				(observation) =>
+					observation.ordinal <= boundary && keyOf(observation) === key,
 			),
 		);
-		held.observations.splice(0, held.observations.length - residentObservations);
+		held.observations.splice(
+			0,
+			held.observations.length - residentObservations,
+		);
 		held.next = read.next.from;
 	}
 
@@ -479,11 +530,15 @@ export function createTranscript(options: {
 		const spanning: Entry[] = [];
 		while (entries.size > residentItems && head < foot) {
 			const top = extent.get(list[head].key) as { top: number; bottom: number };
-			const bottom = extent.get(list[foot].key) as { top: number; bottom: number };
+			const bottom = extent.get(list[foot].key) as {
+				top: number;
+				bottom: number;
+			};
 			const topFree = top.bottom <= above;
 			const bottomFree = bottom.top >= below;
 			if (!topFree && !bottomFree) break;
-			const fromTop = topFree && (!bottomFree || above - top.bottom >= bottom.top - below);
+			const fromTop =
+				topFree && (!bottomFree || above - top.bottom >= bottom.top - below);
 			if (fromTop) {
 				spanning.push(list[head++]);
 				lo = Math.max(lo, list[head].first);
@@ -492,23 +547,37 @@ export function createTranscript(options: {
 					else {
 						entries.delete(entry.key);
 						const kind = kindOf(entry.held[0]);
-						if ((kind === "message" || kind === "tool") && !entry.held.some(isFinal)) gone.set(entry.key, entry.last);
+						if (
+							(kind === "message" || kind === "tool") &&
+							!entry.held.some(isFinal)
+						)
+							gone.set(entry.key, entry.last);
 					}
 				}
 			} else {
 				const hi = list[foot].first;
-				while (foot > head && list[foot].first >= hi) entries.delete(list[foot--].key);
-				tail = { cursor: { child, generation: tail.cursor.generation, from: hi }, more: true };
+				while (foot > head && list[foot].first >= hi)
+					entries.delete(list[foot--].key);
+				tail = {
+					cursor: { child, generation: tail.cursor.generation, from: hi },
+					more: true,
+				};
 			}
 		}
 		for (const entry of list.slice(head + 1, foot)) {
 			if (entries.size <= residentItems) return;
 			const seen = extent.get(entry.key);
-			if (entry.first >= lo && seen?.top === seen?.bottom && entry.held.some(isFinal)) entries.delete(entry.key);
+			if (
+				entry.first >= lo &&
+				seen?.top === seen?.bottom &&
+				entry.held.some(isFinal)
+			)
+				entries.delete(entry.key);
 		}
 		for (const entry of list) {
 			if (entries.size <= residentItems) return;
-			if (entry.first < lo && entries.delete(entry.key)) gone.set(entry.key, entry.last);
+			if (entry.first < lo && entries.delete(entry.key))
+				gone.set(entry.key, entry.last);
 		}
 	}
 
@@ -518,19 +587,27 @@ export function createTranscript(options: {
 		for (const entry of ordered()) {
 			if (entry.first < lo) continue;
 			if (entry.range) {
-				merged.set(entry.key, { key: entry.key, kind: "unavailable", ...entry.range });
+				merged.set(entry.key, {
+					key: entry.key,
+					kind: "unavailable",
+					...entry.range,
+				});
 				continue;
 			}
 			const { key } = entry;
 			const held = attached.get(key);
 			const boundary = retainedFrom(key);
 			const gap =
-				kindOf(entry.held[0]) === "message" && held?.next !== undefined && held.next <= boundary;
+				kindOf(entry.held[0]) === "message" &&
+				held?.next !== undefined &&
+				held.next <= boundary;
 			for (const early of held?.observations ?? []) {
 				if (early.ordinal >= boundary) continue;
 				project(merged, gap ? earlierKey(key) : key, early);
 			}
-			const whole = gap ? undefined : held?.observations.find((early) => early.ordinal === boundary);
+			const whole = gap
+				? undefined
+				: held?.observations.find((early) => early.ordinal === boundary);
 			for (const observation of entry.held) {
 				const clipped =
 					whole !== undefined &&
@@ -551,7 +628,8 @@ export function createTranscript(options: {
 		const kept = new Set<string>();
 		marked.clear();
 		for (const item of list) {
-			if (item.kind === "message" && item.entry.earlier !== undefined) marked.add(item.key);
+			if (item.kind === "message" && item.entry.earlier !== undefined)
+				marked.add(item.key);
 			const settled = item.kind === "static" ? false : isSettled(item);
 			const id = `${item.key}\n${width}\n${style}`;
 			let shown = settled ? cache.get(id) : undefined;
@@ -580,7 +658,8 @@ export function createTranscript(options: {
 		if (index < 0) {
 			const item = blocks.findIndex((block) => block.key === at.key);
 			return {
-				index: item >= 0 ? item : Math.max(0, Math.min(shownAt, blocks.length - 1)),
+				index:
+					item >= 0 ? item : Math.max(0, Math.min(shownAt, blocks.length - 1)),
 				row: 0,
 			};
 		}
@@ -600,7 +679,8 @@ export function createTranscript(options: {
 		const block = blocks[index];
 		if (!block) return undefined;
 		const line = block.lines?.[row];
-		if (line === undefined || !block.lines) return { key: block.key, sub: block.sub, row };
+		if (line === undefined || !block.lines)
+			return { key: block.key, sub: block.sub, row };
 		return {
 			key: block.key,
 			sub: block.sub,
@@ -628,7 +708,8 @@ export function createTranscript(options: {
 		if (to.index < from.index) return 0;
 		if (to.index === from.index) return Math.max(0, to.row - from.row);
 		let rows = blocks[from.index].rows.length - from.row;
-		for (let i = from.index + 1; i < to.index; i++) rows += blocks[i].rows.length;
+		for (let i = from.index + 1; i < to.index; i++)
+			rows += blocks[i].rows.length;
 		return rows + to.row;
 	}
 
@@ -672,7 +753,10 @@ export function createTranscript(options: {
 				if (block.load && "earlier" in block.load && !wanted) {
 					const { key } = block;
 					const { earlier } = block.load;
-					if (!key.endsWith(earlierKey("")) && !attached.get(key)?.tried.has(earlier)) {
+					if (
+						!key.endsWith(earlierKey("")) &&
+						!attached.get(key)?.tried.has(earlier)
+					) {
 						wanted = () => attach(key, earlier);
 					}
 				} else if (block.load && "slot" in block.load && !wanted) {
@@ -709,7 +793,10 @@ export function createTranscript(options: {
 				if (!wanted) {
 					const below = rowsBetween(start, end) + 1 - rows.length;
 					if (below < height && !atEnd()) wanted = forward;
-					else if (rowsBetween({ index: 0, row: 0 }, start) < height && !atStart()) {
+					else if (
+						rowsBetween({ index: 0, row: 0 }, start) < height &&
+						!atStart()
+					) {
 						wanted = backward;
 					}
 				}
@@ -718,7 +805,8 @@ export function createTranscript(options: {
 				if (!shown.has(name.slice(0, name.indexOf("\n")))) slots.delete(name);
 			}
 			for (const key of attached.keys()) {
-				if (!shown.has(key) && !shown.has(earlierKey(key))) attached.delete(key);
+				if (!shown.has(key) && !shown.has(earlierKey(key)))
+					attached.delete(key);
 			}
 			pump();
 			return rows;
@@ -790,12 +878,15 @@ function isSettled(item: Item) {
 
 function kindOf(observation: Observation | undefined) {
 	if (!observation) return undefined;
-	if (observation.large) return (observation.large.meta as { kind?: string }).kind;
+	if (observation.large)
+		return (observation.large.meta as { kind?: string }).kind;
 	return observation.kind;
 }
 
 function deltaOf(observation: Observation) {
-	return observation.kind === "message" && observation.phase === "update" ? observation.delta : "";
+	return observation.kind === "message" && observation.phase === "update"
+		? observation.delta
+		: "";
 }
 
 function coalesce(held: Observation[], index: number) {
@@ -814,16 +905,27 @@ function coalesce(held: Observation[], index: number) {
 	) {
 		return;
 	}
-	held.splice(index - 1, 2, { ...previous, delta: previous.delta + current.delta });
+	held.splice(index - 1, 2, {
+		...previous,
+		delta: previous.delta + current.delta,
+	});
 }
 
-function clip(observation: Observation, keep: number, fromEnd: boolean): Observation {
-	if (observation.kind !== "message" || observation.phase !== "update") return observation;
+function clip(
+	observation: Observation,
+	keep: number,
+	fromEnd: boolean,
+): Observation {
+	if (observation.kind !== "message" || observation.phase !== "update")
+		return observation;
 	const { delta } = observation;
 	let at = fromEnd ? delta.length - keep : keep;
 	const code = delta.charCodeAt(at);
 	if (code >= 0xdc00 && code <= 0xdfff) at += fromEnd ? 1 : -1;
-	return { ...observation, delta: fromEnd ? delta.slice(at) : delta.slice(0, at) };
+	return {
+		...observation,
+		delta: fromEnd ? delta.slice(at) : delta.slice(0, at),
+	};
 }
 
 function isFinal(observation: Observation) {
@@ -831,7 +933,8 @@ function isFinal(observation: Observation) {
 }
 
 function phaseOf(observation: Observation) {
-	if (observation.large) return (observation.large.meta as { phase?: string }).phase;
+	if (observation.large)
+		return (observation.large.meta as { phase?: string }).phase;
 	return "phase" in observation ? observation.phase : undefined;
 }
 
@@ -861,7 +964,11 @@ function keyOf(observation: Observation) {
 	return undefined;
 }
 
-function project(items: Map<string, Item>, key: string, observation: Observation) {
+function project(
+	items: Map<string, Item>,
+	key: string,
+	observation: Observation,
+) {
 	const known = items.get(key);
 	if (observation.unsupported) {
 		items.set(key, { key, kind: "unsupported", ordinal: observation.ordinal });
@@ -897,12 +1004,20 @@ function project(items: Map<string, Item>, key: string, observation: Observation
 		}
 		if (partial) {
 			if (known?.kind === "message" && !known.entry.final) {
-				items.set(key, { key, kind: "message", entry: { ...known.entry, segment } });
+				items.set(key, {
+					key,
+					kind: "message",
+					entry: { ...known.entry, segment },
+				});
 				return;
 			}
 			if (known?.kind === "tool" && !known.entry.final) {
 				const slot = meta.phase === "start" ? "argsSegment" : "resultSegment";
-				items.set(key, { key, kind: "tool", entry: { ...known.entry, [slot]: segment } });
+				items.set(key, {
+					key,
+					kind: "tool",
+					entry: { ...known.entry, [slot]: segment },
+				});
 				return;
 			}
 			if (known) return;
@@ -961,7 +1076,9 @@ function project(items: Map<string, Item>, key: string, observation: Observation
 			key,
 			kind: "execution",
 			state: observation.state,
-			...(observation.verdict === undefined ? {} : { verdict: observation.verdict }),
+			...(observation.verdict === undefined
+				? {}
+				: { verdict: observation.verdict }),
 		});
 	} else if (observation.kind === "message") {
 		const before = known?.kind === "message" ? known.entry : undefined;
@@ -974,7 +1091,9 @@ function project(items: Map<string, Item>, key: string, observation: Observation
 					message: observation.message,
 					role: observation.role,
 					content: observation.content,
-					...(observation.usage === undefined ? {} : { usage: observation.usage }),
+					...(observation.usage === undefined
+						? {}
+						: { usage: observation.usage }),
 					...(observation.stopReason === undefined
 						? {}
 						: { stopReason: observation.stopReason }),
@@ -1004,13 +1123,18 @@ function project(items: Map<string, Item>, key: string, observation: Observation
 			type: observation.part === "arguments" ? "toolCall" : observation.part,
 			[observation.part]: "",
 		};
-		block[observation.part] = (block[observation.part] ?? "") + observation.delta;
+		block[observation.part] =
+			(block[observation.part] ?? "") + observation.delta;
 		blocks[observation.block] = block;
 	} else if (observation.kind === "tool") {
 		const before = known?.kind === "tool" ? known.entry : undefined;
 		if (before?.final && observation.phase !== "end") {
 			if (observation.phase === "start") {
-				items.set(key, { key, kind: "tool", entry: { ...before, args: observation.args } });
+				items.set(key, {
+					key,
+					kind: "tool",
+					entry: { ...before, args: observation.args },
+				});
 			}
 			return;
 		}
@@ -1027,7 +1151,8 @@ function project(items: Map<string, Item>, key: string, observation: Observation
 					final: false,
 				};
 		if (observation.phase === "start") entry.args = observation.args;
-		else if (observation.phase === "update") entry.partial = observation.partial;
+		else if (observation.phase === "update")
+			entry.partial = observation.partial;
 		else {
 			delete entry.partial;
 			entry.result = observation.result;

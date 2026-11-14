@@ -620,7 +620,10 @@ test("tabs in a prompt expand to three spaces before the dedent and the hanging 
 	const two = lines.find((line) => line.includes("two"));
 	assert.ok(!one.includes("\t") && !two.includes("\t"));
 	assert.equal(two.indexOf("two") - one.indexOf("one"), 3);
-	assert.equal(one.indexOf("one"), lines.find((line) => line.includes("Steps")).indexOf("Steps"));
+	assert.equal(
+		one.indexOf("one"),
+		lines.find((line) => line.includes("Steps")).indexOf("Steps"),
+	);
 });
 
 test("only the latest collapsed thinking row advertises the expand hint", (t) => {
@@ -639,7 +642,10 @@ test("only the latest collapsed thinking row advertises the expand hint", (t) =>
 	older.updateContent(assistant([thought]), false);
 	assert.equal(hinted(older), true);
 	const newer = assistantComponent(true);
-	newer.updateContent(assistant([thought], { timestamp: at1155 + 1000 }), false);
+	newer.updateContent(
+		assistant([thought], { timestamp: at1155 + 1000 }),
+		false,
+	);
 	assert.equal(hinted(newer), true);
 	assert.equal(hinted(older), false);
 });
@@ -657,7 +663,10 @@ test("a chat rebuilt from an older session gives the expand hint back to its lat
 	const hinted = (component) =>
 		plain(component.render(60)).join("\n").includes("to expand");
 	const newer = assistantComponent(true);
-	newer.updateContent(assistant([thought], { timestamp: at1155 + 1000 }), false);
+	newer.updateContent(
+		assistant([thought], { timestamp: at1155 + 1000 }),
+		false,
+	);
 	const mode = {
 		chatContainer: new Container(),
 		renderSessionItems() {

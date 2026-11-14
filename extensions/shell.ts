@@ -1,18 +1,12 @@
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
-import type { TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
+import type {
+	TuiMouseEvent,
+	TuiMouseEventResult,
+} from "@earendil-works/pi-tui";
 
-import {
-	type Capability,
-	capabilities,
-	type Selection,
-} from "./configure.ts";
+import { type Capability, capabilities, type Selection } from "./configure.ts";
 
-const places = [
-	"header",
-	"above-input",
-	"overlay",
-	"message-stream",
-] as const;
+const places = ["header", "above-input", "overlay", "message-stream"] as const;
 
 type Place = (typeof places)[number];
 
@@ -109,12 +103,27 @@ export function registerShell(pi: ExtensionAPI) {
 			ABOVE_INPUT_WIDGET,
 			(tui, theme) => {
 				aboveInputTui = tui;
-				let frame: { width: number; rows: number; version: number; ranges: { start: number; end: number; occupant: AboveInputOccupant }[] } | undefined;
+				let frame:
+					| {
+							width: number;
+							rows: number;
+							version: number;
+							ranges: {
+								start: number;
+								end: number;
+								occupant: AboveInputOccupant;
+							}[];
+					  }
+					| undefined;
 				return {
 					render(width: number) {
 						const rows = tui.terminal.rows;
 						const lines: string[] = [];
-						const ranges: { start: number; end: number; occupant: AboveInputOccupant }[] = [];
+						const ranges: {
+							start: number;
+							end: number;
+							occupant: AboveInputOccupant;
+						}[] = [];
 						for (const capability of occupants("above-input")) {
 							const occupant = aboveInput.get(capability);
 							if (!occupant) continue;
@@ -126,11 +135,30 @@ export function registerShell(pi: ExtensionAPI) {
 						return lines;
 					},
 					handleMouse(event: TuiMouseEvent) {
-						if (!frame || currentSession !== session || frame.version !== geometryVersion || frame.rows !== tui.terminal.rows || frame.width !== event.width || event.x < 0 || event.x >= event.width || event.y < 0 || event.y >= event.height) return undefined;
-						const range = frame.ranges.find(({ start, end }) => event.y >= start && event.y < end);
-						return range?.occupant.mouse?.({ ...event, y: event.y - range.start, height: range.end - range.start });
+						if (
+							!frame ||
+							currentSession !== session ||
+							frame.version !== geometryVersion ||
+							frame.rows !== tui.terminal.rows ||
+							frame.width !== event.width ||
+							event.x < 0 ||
+							event.x >= event.width ||
+							event.y < 0 ||
+							event.y >= event.height
+						)
+							return undefined;
+						const range = frame.ranges.find(
+							({ start, end }) => event.y >= start && event.y < end,
+						);
+						return range?.occupant.mouse?.({
+							...event,
+							y: event.y - range.start,
+							height: range.end - range.start,
+						});
 					},
-					invalidate() { frame = undefined; },
+					invalidate() {
+						frame = undefined;
+					},
 				};
 			},
 			{ placement: "aboveEditor" },
@@ -141,7 +169,12 @@ export function registerShell(pi: ExtensionAPI) {
 		session++;
 		geometryVersion++;
 	});
-	return { requestAboveInputRender: () => { geometryVersion++; aboveInputTui?.requestRender(); } };
+	return {
+		requestAboveInputRender: () => {
+			geometryVersion++;
+			aboveInputTui?.requestRender();
+		},
+	};
 }
 
 export function occupyHeader(capability: Capability, read: () => number) {

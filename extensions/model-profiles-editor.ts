@@ -416,10 +416,13 @@ export function createModelProfilesEditor(
 						return;
 					}
 					push(
-						confirmScreen(`Delete profile ${terminalSafeLine(selected)}?`, () => {
-							delete state.profiles[selected];
-							list = rebuild(0);
-						}),
+						confirmScreen(
+							`Delete profile ${terminalSafeLine(selected)}?`,
+							() => {
+								delete state.profiles[selected];
+								list = rebuild(0);
+							},
+						),
 					);
 				} else {
 					list.handleInput(data);

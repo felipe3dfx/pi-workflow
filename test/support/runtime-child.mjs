@@ -12,12 +12,19 @@ import {
 
 import { installChildRuntime } from "../../extensions/child-runtime.ts";
 import { seated } from "../../extensions/shell.ts";
-import { commonToolFactories, defaultActiveTools } from "../../extensions/tool-sources.ts";
+import {
+	commonToolFactories,
+	defaultActiveTools,
+} from "../../extensions/tool-sources.ts";
 
 function held(entries) {
 	const decisions = new Map();
 	for (const entry of entries) {
-		if (entry.type !== "custom" || entry.customType !== "pi-workflow-authorization") continue;
+		if (
+			entry.type !== "custom" ||
+			entry.customType !== "pi-workflow-authorization"
+		)
+			continue;
 		if (entry.data.kind === "held") decisions.set(entry.data.call, entry.data);
 		else decisions.delete(entry.data.call);
 	}
@@ -29,12 +36,19 @@ export function runtimeChild(runtime) {
 	return async (spec) => {
 		const policy = spec.authorization;
 		const slash = spec.model.indexOf("/");
-		const model = runtime.getModel(spec.model.slice(0, slash), spec.model.slice(slash + 1));
-		if (!model) throw new Error(`The selected model ${spec.model} is not available in Pi.`);
+		const model = runtime.getModel(
+			spec.model.slice(0, slash),
+			spec.model.slice(slash + 1),
+		);
+		if (!model)
+			throw new Error(
+				`The selected model ${spec.model} is not available in Pi.`,
+			);
 		const channel = {
 			ready() {},
 			async request(frame, signal) {
-				if (frame.type === "ask") return spec.ask(frame.question, signal, frame.consultation);
+				if (frame.type === "ask")
+					return spec.ask(frame.question, signal, frame.consultation);
 				if (frame.type === "report") {
 					spec.report(frame.result);
 					return "";
@@ -45,7 +59,10 @@ export function runtimeChild(runtime) {
 				}
 				const value =
 					frame.method === "authority"
-						? await policy.authority({ cwd: spec.cwd, signal: signal ?? new AbortController().signal })
+						? await policy.authority({
+								cwd: spec.cwd,
+								signal: signal ?? new AbortController().signal,
+							})
 						: frame.method === "classify"
 							? await policy.classify(frame.value, signal)
 							: await policy.onDecision?.(frame.value);
@@ -58,20 +75,32 @@ export function runtimeChild(runtime) {
 			shell: spec.shell,
 			checkpoint: spec.checkpoint,
 			codegraph: !policy && seated("codegraph", "message-stream"),
-			contextual: policy && { active: spec.sources?.active ?? defaultActiveTools },
+			contextual: policy && {
+				active: spec.sources?.active ?? defaultActiveTools,
+			},
 		};
 		const agentDir = getAgentDir();
-		const settingsManager = SettingsManager.inMemory({}, { projectTrusted: spec.project.trusted });
+		const settingsManager = SettingsManager.inMemory(
+			{},
+			{ projectTrusted: spec.project.trusted },
+		);
 		const resourceLoader = new DefaultResourceLoader({
 			cwd: spec.cwd,
 			agentDir,
 			settingsManager,
 			noExtensions: true,
-			additionalExtensionPaths: (spec.sources?.paths ?? []).map((path) => resolve(spec.project.cwd, path)),
+			additionalExtensionPaths: (spec.sources?.paths ?? []).map((path) =>
+				resolve(spec.project.cwd, path),
+			),
 			extensionFactories: [
-				...(policy ? commonToolFactories(spec.sources ?? {}) : [createCodemodeExtension({ models: false })]),
+				...(policy
+					? commonToolFactories(spec.sources ?? {})
+					: [createCodemodeExtension({ models: false })]),
 				createMcpExtension(),
-				(pi) => pi.on("session_start", (_event, ctx) => installChildRuntime(pi, config, channel, ctx)),
+				(pi) =>
+					pi.on("session_start", (_event, ctx) =>
+						installChildRuntime(pi, config, channel, ctx),
+					),
 			],
 			noSkills: true,
 			noPromptTemplates: true,
@@ -96,7 +125,10 @@ export function runtimeChild(runtime) {
 		sessions.set(session.sessionId, session.sessionManager);
 		session.subscribe((event) => spec.onEvent(event));
 		await session.bindExtensions({
-			uiContext: { ...session.extensionRunner.getUIContext(), notify: (message) => spec.notify(message) },
+			uiContext: {
+				...session.extensionRunner.getUIContext(),
+				notify: (message) => spec.notify(message),
+			},
 		});
 		return {
 			sessionId: session.sessionId,
@@ -106,8 +138,13 @@ export function runtimeChild(runtime) {
 			async run(task) {
 				await session.prompt(task);
 				const last = session.messages.at(-1);
-				if (last?.role === "assistant" && (last.stopReason === "error" || last.stopReason === "aborted")) {
-					throw new Error(last.errorMessage ?? `The child run ${last.stopReason}.`);
+				if (
+					last?.role === "assistant" &&
+					(last.stopReason === "error" || last.stopReason === "aborted")
+				) {
+					throw new Error(
+						last.errorMessage ?? `The child run ${last.stopReason}.`,
+					);
 				}
 				return session.getLastAssistantText() ?? "";
 			},
@@ -116,7 +153,10 @@ export function runtimeChild(runtime) {
 			abort: () => session.abort(),
 			async dispose() {
 				try {
-					await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+					await session.extensionRunner.emit({
+						type: "session_shutdown",
+						reason: "quit",
+					});
 				} finally {
 					session.dispose();
 				}

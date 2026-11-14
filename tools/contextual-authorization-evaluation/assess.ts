@@ -79,7 +79,9 @@ export async function assessProposal(
 						v.effects as string,
 					) ||
 					!["assigned", "other", "unknown"].includes(v.ownership as string) ||
-					!["none", "prohibition", "confirmation", "information"].includes(v.restriction as string) ||
+					!["none", "prohibition", "confirmation", "information"].includes(
+						v.restriction as string,
+					) ||
 					typeof v.confirmed !== "boolean" ||
 					typeof v.reason !== "string" ||
 					!v.reason.trim() ||

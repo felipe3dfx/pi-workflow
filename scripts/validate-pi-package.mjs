@@ -47,12 +47,17 @@ export async function validateTheme(packageRoot, name = "pi-workflow") {
 			await readFile(path.join(packageRoot, "themes", `${name}.json`), "utf8"),
 		);
 	} catch (error) {
-		return [`themes/${name}.json must exist and parse as JSON: ${error.message}`];
+		return [
+			`themes/${name}.json must exist and parse as JSON: ${error.message}`,
+		];
 	}
-	if (theme.name !== name) errors.push(`themes/${name}.json name must equal ${name}`);
+	if (theme.name !== name)
+		errors.push(`themes/${name}.json name must equal ${name}`);
 	for (const token of schema.properties.colors.required) {
 		if (theme.colors?.[token] === undefined) {
-			errors.push(`themes/${name}.json is missing required color token ${token}`);
+			errors.push(
+				`themes/${name}.json is missing required color token ${token}`,
+			);
 		}
 	}
 	return errors;
@@ -67,7 +72,10 @@ export async function validatePiPackage(packageRoot = root) {
 		await readFile(path.join(packageRoot, "assets", "companions.json"), "utf8"),
 	);
 	const mcpServers = JSON.parse(
-		await readFile(path.join(packageRoot, "assets", "mcp-servers.json"), "utf8"),
+		await readFile(
+			path.join(packageRoot, "assets", "mcp-servers.json"),
+			"utf8",
+		),
 	);
 	const settings = JSON.parse(
 		await readFile(path.join(packageRoot, "assets", "settings.json"), "utf8"),
@@ -85,23 +93,45 @@ export async function validatePiPackage(packageRoot = root) {
 		if (!condition) errors.push(message);
 	};
 
-	check(packageJson.name === "@felipe.3dfx/pi-workflow", "package name must stay @felipe.3dfx/pi-workflow");
-	check(packageJson.engines?.node === ">=22.19", "engines.node must remain >=22.19");
 	check(
-		JSON.stringify(packageJson.pi?.extensions) === JSON.stringify(["./extensions/pi-workflow.ts"]),
+		packageJson.name === "@felipe.3dfx/pi-workflow",
+		"package name must stay @felipe.3dfx/pi-workflow",
+	);
+	check(
+		packageJson.engines?.node === ">=22.19",
+		"engines.node must remain >=22.19",
+	);
+	check(
+		JSON.stringify(packageJson.pi?.extensions) ===
+			JSON.stringify(["./extensions/pi-workflow.ts"]),
 		"pi.extensions must expose only ./extensions/pi-workflow.ts",
 	);
 	check(
-		JSON.stringify(packageJson.pi?.themes) === JSON.stringify(["./themes/pi-workflow.json"]),
+		JSON.stringify(packageJson.pi?.themes) ===
+			JSON.stringify(["./themes/pi-workflow.json"]),
 		"pi.themes must expose only ./themes/pi-workflow.json",
 	);
-	check(packageJson.files?.includes("themes/"), "package files must ship themes/");
-	errors.push(...(await validateTheme(packageRoot)));
-	check(packageJson.pi?.skills === undefined, "pi.skills must not bundle workflow skills");
-	check(packageJson.pi?.prompts === undefined, "pi.prompts must not bundle workflow prompts");
-	check(packageJson.bin === undefined, "package must not expose a workflow sync binary");
 	check(
-		!packageJson.files?.some((entry) => entry === "skills/" || entry === "prompts/"),
+		packageJson.files?.includes("themes/"),
+		"package files must ship themes/",
+	);
+	errors.push(...(await validateTheme(packageRoot)));
+	check(
+		packageJson.pi?.skills === undefined,
+		"pi.skills must not bundle workflow skills",
+	);
+	check(
+		packageJson.pi?.prompts === undefined,
+		"pi.prompts must not bundle workflow prompts",
+	);
+	check(
+		packageJson.bin === undefined,
+		"package must not expose a workflow sync binary",
+	);
+	check(
+		!packageJson.files?.some(
+			(entry) => entry === "skills/" || entry === "prompts/",
+		),
 		"package files must not ship workflow skills or prompts",
 	);
 	check(
@@ -109,7 +139,8 @@ export async function validatePiPackage(packageRoot = root) {
 			Array.isArray(companions.companions) &&
 			companions.companions.length > 0 &&
 			companions.companions.every(
-				(entry) => typeof entry?.package === "string" && entry.package.length > 0,
+				(entry) =>
+					typeof entry?.package === "string" && entry.package.length > 0,
 			),
 		"companion catalog must be a non-empty schemaVersion 1 package list",
 	);

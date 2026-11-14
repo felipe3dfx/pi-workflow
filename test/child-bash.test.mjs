@@ -18,13 +18,10 @@ import { delimiter, join } from "node:path";
 import { createChildBashTool, guardPrefix } from "../extensions/child-bash.ts";
 
 function run(command, cwd, options) {
-	return createChildBashTool(cwd, options && { commandPrefix: options }).execute(
-		"call-1",
-		{ command },
-		undefined,
-		undefined,
-		undefined,
-	);
+	return createChildBashTool(
+		cwd,
+		options && { commandPrefix: options },
+	).execute("call-1", { command }, undefined, undefined, undefined);
 }
 
 function text(result) {
@@ -98,7 +95,10 @@ function guardedBash(root, command, cwd, bin) {
 	return spawnSync("bash", ["-c", `${guardPrefix(root)}\n${command}`], {
 		cwd,
 		encoding: "utf8",
-		env: { ...process.env, PATH: bin ? `${bin}${delimiter}${process.env.PATH}` : process.env.PATH },
+		env: {
+			...process.env,
+			PATH: bin ? `${bin}${delimiter}${process.env.PATH}` : process.env.PATH,
+		},
 	});
 }
 
@@ -499,8 +499,14 @@ test(`a child's bash refuses git read options that run a command or write a file
 	assert.equal(existsSync(join(dir, "touch")), false);
 	assert.equal(existsSync(join(dir, "out.txt")), false);
 	assert.equal(existsSync(join(dir, "X")), false);
-	assert.match(text(await run("git grep -n two -- file.txt", dir)), /file\.txt:1:two/);
-	assert.match(text(await run("git log --output-indicator-new=+ -1 --oneline", dir)), /first/);
+	assert.match(
+		text(await run("git grep -n two -- file.txt", dir)),
+		/file\.txt:1:two/,
+	);
+	assert.match(
+		text(await run("git log --output-indicator-new=+ -1 --oneline", dir)),
+		/first/,
+	);
 });
 
 test(`a child's bash extracts a git archive written to standard output outside its worktree`, async (t) => {
@@ -709,7 +715,11 @@ test("a child's command converts the Windows worktree root with cygpath once", (
 	);
 
 	assert.equal(result.status, 126, result.stderr);
-	assert.equal(result.stdout, " M file.txt\n" + execFileSync("git", ["log", "--oneline"], { cwd: dir, encoding: "utf8" }));
+	assert.equal(
+		result.stdout,
+		" M file.txt\n" +
+			execFileSync("git", ["log", "--oneline"], { cwd: dir, encoding: "utf8" }),
+	);
 	assert.equal(readFileSync(log, "utf8"), `-u ${windowsRoot}\n`);
 });
 
@@ -717,7 +727,10 @@ test("the guard expands the command words only in the form bash 3.2 accepts unde
 	const prefix = guardPrefix("/worktree");
 
 	assert.match(prefix, /\$\{1\+"\$@"\}/);
-	assert.doesNotMatch(prefix.replace(/\$\{1\+"\$@"\}/g, ""), /"\$(@|\{@\}|\*|\{\*\})"/);
+	assert.doesNotMatch(
+		prefix.replace(/\$\{1\+"\$@"\}/g, ""),
+		/"\$(@|\{@\}|\*|\{\*\})"/,
+	);
 });
 
 test("a child's git read does not take the index lock", async (t) => {
@@ -729,7 +742,10 @@ test("a child's git read does not take the index lock", async (t) => {
 	utimesSync(index, past, past);
 	const before = statSync(index).mtimeMs;
 
-	const result = await run('git status --short; echo "[${GIT_OPTIONAL_LOCKS-}]"', dir);
+	const result = await run(
+		`git status --short; echo "[\${GIT_OPTIONAL_LOCKS-}]"`,
+		dir,
+	);
 
 	assert.equal(text(result), "[]\n");
 	assert.equal(statSync(index).mtimeMs, before);
@@ -757,7 +773,6 @@ test("a child's git diff does not rewrite the index", async (t) => {
 });
 
 test("a child's bash runs a command that only mentions git", async (t) => {
-
 	const result = await run("printf 'git commit\\n' | grep -c git", worktree(t));
 
 	assert.equal(result.isError, undefined);
@@ -765,7 +780,6 @@ test("a child's bash runs a command that only mentions git", async (t) => {
 });
 
 test("a child's bash runs shell arithmetic", async (t) => {
-
 	assert.equal(text(await run("echo $((2*3))", worktree(t))).trim(), "6");
 });
 
@@ -817,9 +831,15 @@ test("a child's bash keeps the guard when the user's prefix sets nounset", async
 	}
 	assert.match(text(await run("git status", dir, "set -u")), /On branch/);
 	assert.match(text(await run("git", dir, "set -u")), /usage: git/);
-	assert.match(text(await run("git branch", dir, "set -u")), /^\* (main|master)$/m);
+	assert.match(
+		text(await run("git branch", dir, "set -u")),
+		/^\* (main|master)$/m,
+	);
 	assert.equal(text(await run("gh", dir, "set -u")), "fake gh \n");
-	assert.equal(text(await run("gh pr view 12", dir, "set -u")), "fake gh pr view 12\n");
+	assert.equal(
+		text(await run("gh pr view 12", dir, "set -u")),
+		"fake gh pr view 12\n",
+	);
 });
 
 test("a child's bash keeps the guard when the user's prefix sets errexit", async (t) => {
@@ -830,17 +850,22 @@ test("a child's bash keeps the guard when the user's prefix sets errexit", async
 		assert.equal(text(await run("echo hi", dir, prefix)), "hi\n", prefix);
 		const result = await run("git commit -am x", dir, prefix);
 		assert.equal(result.structuredContent.exit_code, 126, prefix);
-		assert.equal(result.structuredContent.output, reserved("git commit"), prefix);
+		assert.equal(
+			result.structuredContent.output,
+			reserved("git commit"),
+			prefix,
+		);
 	}
 });
 
 test("a child's bash reports a syntax error two lines below the command's line", async (t) => {
-
 	const command = "echo ok\nif then";
 	const result = await run(command, worktree(t));
 
 	assert.equal(result.isError, true);
-	const [, shell, line] = text(result).match(/^(.+): -c: line (\d+): syntax error/m);
+	const [, shell, line] = text(result).match(
+		/^(.+): -c: line (\d+): syntax error/m,
+	);
 	const bare = spawnSync(shell, ["-c", command], { encoding: "utf8" }).stderr;
 	assert.match(bare, new RegExp(`line ${Number(line) - 2}: syntax error`));
 });
@@ -863,7 +888,10 @@ function fakeShell(t, name) {
 		`#!/bin/sh\nprintf '%s\\n' "$0" >> '${log}'\nexec /bin/bash "$@"\n`,
 		{ mode: 0o755 },
 	);
-	return { path, calls: () => (existsSync(log) ? readFileSync(log, "utf8") : "") };
+	return {
+		path,
+		calls: () => (existsSync(log) ? readFileSync(log, "utf8") : ""),
+	};
 }
 
 test("a child's bash runs the user's prefix and the guard with a POSIX-family shell", async (t) => {
@@ -874,7 +902,9 @@ test("a child's bash runs the user's prefix and the guard with a POSIX-family sh
 		shellPath: shell.path,
 	});
 
-	const user = await bash.execute("call-1", { command: 'echo "$PI_WORKFLOW_PREFIX"' });
+	const user = await bash.execute("call-1", {
+		command: 'echo "$PI_WORKFLOW_PREFIX"',
+	});
 	const result = await bash.execute("call-2", { command: "git commit -am x" });
 
 	assert.equal(text(user), "on\n");
@@ -891,7 +921,9 @@ test("a child's bash runs only the guard with the default bash for a shell outsi
 		shellPath: shell.path,
 	});
 
-	const user = await bash.execute("call-1", { command: 'echo "[$PI_WORKFLOW_PREFIX]"' });
+	const user = await bash.execute("call-1", {
+		command: 'echo "[$PI_WORKFLOW_PREFIX]"',
+	});
 	const result = await bash.execute("call-2", { command: "git commit -am x" });
 
 	assert.equal(text(user), "[]\n");
@@ -900,7 +932,11 @@ test("a child's bash runs only the guard with the default bash for a shell outsi
 	assert.equal(commits(dir), "1");
 });
 
-for (const name of ["bash.exe", "zsh.EXE", "C:\\Program Files\\Git\\bin\\bash.exe"]) {
+for (const name of [
+	"bash.exe",
+	"zsh.EXE",
+	"C:\\Program Files\\Git\\bin\\bash.exe",
+]) {
 	test(`a child's bash runs the user's prefix and the guard with the shell ${name}`, async (t) => {
 		const dir = worktree(t);
 		const shell = fakeShell(t, name);
@@ -909,8 +945,12 @@ for (const name of ["bash.exe", "zsh.EXE", "C:\\Program Files\\Git\\bin\\bash.ex
 			shellPath: shell.path,
 		});
 
-		const user = await bash.execute("call-1", { command: 'echo "$PI_WORKFLOW_PREFIX"' });
-		const result = await bash.execute("call-2", { command: "git commit -am x" });
+		const user = await bash.execute("call-1", {
+			command: 'echo "$PI_WORKFLOW_PREFIX"',
+		});
+		const result = await bash.execute("call-2", {
+			command: "git commit -am x",
+		});
 
 		assert.equal(text(user), "on\n");
 		assert.equal(result.structuredContent.output, reserved("git commit"));
@@ -927,7 +967,10 @@ test("a granted child's bash still refuses every git mutation and points add and
 		`\`${command}\` does not run in bash. Commit through the checkpoint tool instead.\n`;
 
 	assert.equal(await output("git commit -am x"), checkpoint("git commit"));
-	assert.equal(await output("git -C . commit --amend -m x"), checkpoint("git commit"));
+	assert.equal(
+		await output("git -C . commit --amend -m x"),
+		checkpoint("git commit"),
+	);
 	assert.equal(await output("git add file.txt"), checkpoint("git add"));
 	for (const [command, name] of [
 		["git push origin HEAD", "git push"],
@@ -949,7 +992,10 @@ test("an ungranted child's bash keeps the parent-reserved refusal for add and co
 	const dir = worktree(t);
 	const bash = createChildBashTool(dir);
 
-	for (const [command, name] of [["git commit -am x", "git commit"], ["git add file.txt", "git add"]]) {
+	for (const [command, name] of [
+		["git commit -am x", "git commit"],
+		["git add file.txt", "git add"],
+	]) {
 		const result = await bash.execute("call-1", { command });
 		assert.equal(result.structuredContent.output, reserved(name));
 	}

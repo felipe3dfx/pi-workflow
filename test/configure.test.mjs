@@ -7,7 +7,11 @@ import {
 	readSelection,
 } from "../extensions/configure.ts";
 
-const packages = ["gentle-engram", "@gtrabanco/pi-nan-provider", "pi-web-access"];
+const packages = [
+	"gentle-engram",
+	"@gtrabanco/pi-nan-provider",
+	"pi-web-access",
+];
 
 test("a missing companion is installed only when its expectation is on", () => {
 	const selection = readSelection(undefined, packages);

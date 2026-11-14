@@ -29,7 +29,9 @@ async function collectTestFiles(target) {
 
 	const entries = await readdir(absoluteTarget, { withFileTypes: true });
 	const files = await Promise.all(
-		entries.map((entry) => collectTestFiles(path.join(absoluteTarget, entry.name))),
+		entries.map((entry) =>
+			collectTestFiles(path.join(absoluteTarget, entry.name)),
+		),
 	);
 	return files.flat();
 }

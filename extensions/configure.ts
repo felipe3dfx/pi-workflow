@@ -143,7 +143,9 @@ export function planApply(
 	selection: Selection,
 	states: readonly CompanionState[],
 ): ApplyPlan {
-	const byPackage = new Map(states.map((state) => [state.package, state.status]));
+	const byPackage = new Map(
+		states.map((state) => [state.package, state.status]),
+	);
 	const install = Object.entries(selection.expectations)
 		.filter(([name, expected]) => expected && byPackage.get(name) === "missing")
 		.map(([name]) => name);

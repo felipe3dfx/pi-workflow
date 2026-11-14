@@ -81,7 +81,10 @@ import { isHarnessMessage } from "./harness-message.ts";
 const RESIDENT = Symbol.for("pi-workflow:child-sessions:resident");
 const slots = globalThis as Record<
 	symbol,
-	| { children: ResidentChildren; audit: Awaited<ReturnType<ChildAudit["detach"]>> }
+	| {
+			children: ResidentChildren;
+			audit: Awaited<ReturnType<ChildAudit["detach"]>>;
+	  }
 	| undefined
 >;
 // /reload re-imports every extension within seconds; a runtime that has not adopted by then failed to load, and its children must not run unsupervised.
@@ -159,20 +162,20 @@ export default function piWorkflowExtension(
 			(options.catalog?.resolveInstalledVersion
 				? undefined
 				: async (packageName: string) => {
-					if (packageName !== "pi-claude-bridge") return undefined;
-					const project = currentCtx;
-					if (
-						!project ||
-						typeof project.cwd !== "string" ||
-						typeof project.isProjectTrusted !== "function"
-					) {
-						return { error: "The parent project context is unavailable." };
-					}
-					return inspectClaudeBridgeCompanion(agentDirectory, {
-						cwd: project.cwd,
-						trusted: project.isProjectTrusted(),
-					});
-				}),
+						if (packageName !== "pi-claude-bridge") return undefined;
+						const project = currentCtx;
+						if (
+							!project ||
+							typeof project.cwd !== "string" ||
+							typeof project.isProjectTrusted !== "function"
+						) {
+							return { error: "The parent project context is unavailable." };
+						}
+						return inspectClaudeBridgeCompanion(agentDirectory, {
+							cwd: project.cwd,
+							trusted: project.isProjectTrusted(),
+						});
+					}),
 	};
 	const workflow = createWorkflow(pi, context, {
 		...options,
@@ -262,8 +265,7 @@ export default function piWorkflowExtension(
 
 	const childQueries = createChildQueryTools(childSessions);
 	for (const tool of [...childQueries, askChoice, askQuestion]) {
-		if (isHarnessMessage(tool))
-			messages.set(tool.name, tool.parameters);
+		if (isHarnessMessage(tool)) messages.set(tool.name, tool.parameters);
 	}
 	const childTools = launcher.childToolsOffer(
 		pi,

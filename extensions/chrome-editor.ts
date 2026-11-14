@@ -245,13 +245,12 @@ class ChromeEditor extends CustomEditor {
 			const selected = stripTerminalSequences(line).trimStart().startsWith("❯");
 			const named =
 				commands && !line.includes(EMPTY)
-					? unmark(line).replace(selected ? "❯ " : /^ {2}/, (head) => `${head}/`)
+					? unmark(line).replace(
+							selected ? "❯ " : /^ {2}/,
+							(head) => `${head}/`,
+						)
 					: unmark(line);
-			const text = truncateToWidth(
-				`${" ".repeat(gutter)}${named}`,
-				width,
-				"",
-			);
+			const text = truncateToWidth(`${" ".repeat(gutter)}${named}`, width, "");
 			const row = text + " ".repeat(Math.max(0, width - visibleWidth(text)));
 			return row
 				.split(RESET)

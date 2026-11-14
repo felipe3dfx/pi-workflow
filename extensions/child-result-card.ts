@@ -155,7 +155,9 @@ function frame(
 	const pad = " ".repeat(indent);
 	return [
 		margin + top,
-		...content(inner).map((line) => margin + pad + truncateToWidth(line, inner)),
+		...content(inner).map(
+			(line) => margin + pad + truncateToWidth(line, inner),
+		),
 	];
 }
 
@@ -330,13 +332,7 @@ export function answerCard(
 		previous.theme === theme
 	)
 		return previous;
-	return new AnswerCard(
-		args.id,
-		args.question,
-		args.answer,
-		theme,
-		rejection,
-	);
+	return new AnswerCard(args.id, args.question, args.answer, theme, rejection);
 }
 
 function resultCards(message: Message, expanded: boolean, theme: Theme) {

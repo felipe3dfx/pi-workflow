@@ -2,7 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { initTheme } from "@earendil-works/pi-coding-agent";
-import { CURSOR_MARKER, KeybindingsManager, renderFakeCursor, stripTerminalSequences, TUI_KEYBINDINGS, visibleWidth } from "@earendil-works/pi-tui";
+import {
+	CURSOR_MARKER,
+	KeybindingsManager,
+	renderFakeCursor,
+	stripTerminalSequences,
+	TUI_KEYBINDINGS,
+	visibleWidth,
+} from "@earendil-works/pi-tui";
 
 import {
 	createAskUserChoiceTool,
@@ -15,7 +22,9 @@ import { replaceSelection } from "../extensions/shell.ts";
 
 replaceSelection({
 	schemaVersion: 1,
-	capabilities: Object.fromEntries(capabilities.map((capability) => [capability, true])),
+	capabilities: Object.fromEntries(
+		capabilities.map((capability) => [capability, true]),
+	),
 	expectations: {},
 });
 
@@ -57,11 +66,17 @@ function tuiContext(rows = 40) {
 		ui: {
 			custom: (factory, options) => {
 				customOptions = options;
-				component = factory(host, fakeTheme, fakeKeybindings, (result) => resolveDone(result));
+				component = factory(host, fakeTheme, fakeKeybindings, (result) =>
+					resolveDone(result),
+				);
 				return donePromise;
 			},
 		},
-		getContextUsage: () => ({ tokens: 1234, contextWindow: 200000, percent: 0.6 }),
+		getContextUsage: () => ({
+			tokens: 1234,
+			contextWindow: 200000,
+			percent: 0.6,
+		}),
 	};
 	return {
 		ctx,
@@ -91,7 +106,13 @@ test("print mode refuses ask_user_choice without inventing an answer and never o
 
 test("a session with hasUI but no TUI mode refuses ask_user_question the same way", async () => {
 	const tool = createAskUserQuestionTool(createFooterHints());
-	const result = await tool.execute("call-2", { question: "Why?" }, undefined, undefined, noUiContext("rpc"));
+	const result = await tool.execute(
+		"call-2",
+		{ question: "Why?" },
+		undefined,
+		undefined,
+		noUiContext("rpc"),
+	);
 	assert.equal(result.details.status, "refused");
 });
 
@@ -112,7 +133,11 @@ test("the operator question opens as a full-width overlay docked above the foote
 		thread: () => undefined,
 		cancel: () => ({ cancelled: false, message: "" }),
 	};
-	const views = createChildrenViews(sessions, { text: () => undefined }, () => () => {});
+	const views = createChildrenViews(
+		sessions,
+		{ text: () => undefined },
+		() => () => {},
+	);
 	let factory;
 	void views.open({
 		hasUI: true,
@@ -149,7 +174,11 @@ test("the operator question opens as a full-width overlay docked above the foote
 	assert.equal(closed, true);
 	assert.deepEqual(options(), {
 		overlay: true,
-		overlayOptions: { anchor: "bottom-center", width: "100%", margin: { bottom: 1 } },
+		overlayOptions: {
+			anchor: "bottom-center",
+			width: "100%",
+			margin: { bottom: 1 },
+		},
 	});
 	send("\r");
 	const result = await pending;
@@ -169,7 +198,12 @@ test("TUI ask_user_choice answers with the selected option on Enter", async () =
 	send(DOWN);
 	send("\r");
 	const result = await pending;
-	assert.deepEqual(result.details, { status: "answered", kind: "option", index: 1, label: "No" });
+	assert.deepEqual(result.details, {
+		status: "answered",
+		kind: "option",
+		index: 1,
+		label: "No",
+	});
 });
 
 test("digits jump directly to the numbered option", async () => {
@@ -177,7 +211,10 @@ test("digits jump directly to the numbered option", async () => {
 	const { ctx, send } = tuiContext();
 	const pending = tool.execute(
 		"call-4",
-		{ question: "Pick one", options: [{ label: "A" }, { label: "B" }, { label: "C" }] },
+		{
+			question: "Pick one",
+			options: [{ label: "A" }, { label: "B" }, { label: "C" }],
+		},
 		undefined,
 		undefined,
 		ctx,
@@ -185,7 +222,12 @@ test("digits jump directly to the numbered option", async () => {
 	send("3");
 	send("\r");
 	const result = await pending;
-	assert.deepEqual(result.details, { status: "answered", kind: "option", index: 2, label: "C" });
+	assert.deepEqual(result.details, {
+		status: "answered",
+		kind: "option",
+		index: 2,
+		label: "C",
+	});
 });
 
 test("Esc leaves the panel open instead of resolving it", async () => {
@@ -230,11 +272,21 @@ test("Shift+X dismisses the panel with a refusal, never an invented answer", asy
 test("ask_user_question collects free text typed into the z row", async () => {
 	const tool = createAskUserQuestionTool(createFooterHints());
 	const { ctx, send } = tuiContext();
-	const pending = tool.execute("call-7", { question: "What should happen next?" }, undefined, undefined, ctx);
+	const pending = tool.execute(
+		"call-7",
+		{ question: "What should happen next?" },
+		undefined,
+		undefined,
+		ctx,
+	);
 	for (const char of "later") send(char);
 	send("\r");
 	const result = await pending;
-	assert.deepEqual(result.details, { status: "answered", kind: "text", text: "later" });
+	assert.deepEqual(result.details, {
+		status: "answered",
+		kind: "text",
+		text: "later",
+	});
 });
 
 test("z jumps to the free-text row for ask_user_choice when free text is allowed", async () => {
@@ -251,12 +303,22 @@ test("z jumps to the free-text row for ask_user_choice when free text is allowed
 	for (const char of "maybe") send(char);
 	send("\r");
 	const result = await pending;
-	assert.deepEqual(result.details, { status: "answered", kind: "text", text: "maybe" });
+	assert.deepEqual(result.details, {
+		status: "answered",
+		kind: "text",
+		text: "maybe",
+	});
 });
 
 test("both tools run sequentially so a second panel cannot evict the first", () => {
-	assert.equal(createAskUserChoiceTool(createFooterHints()).executionMode, "sequential");
-	assert.equal(createAskUserQuestionTool(createFooterHints()).executionMode, "sequential");
+	assert.equal(
+		createAskUserChoiceTool(createFooterHints()).executionMode,
+		"sequential",
+	);
+	assert.equal(
+		createAskUserQuestionTool(createFooterHints()).executionMode,
+		"sequential",
+	);
 });
 
 test("render truncates every line to the requested width even with wide characters", async () => {
@@ -276,7 +338,10 @@ test("render truncates every line to the requested width even with wide characte
 		ctx,
 	);
 	for (const line of render(20)) {
-		assert.ok(visibleWidth(line) <= 20, `line exceeds width 20: ${JSON.stringify(line)}`);
+		assert.ok(
+			visibleWidth(line) <= 20,
+			`line exceeds width 20: ${JSON.stringify(line)}`,
+		);
 	}
 	send("X");
 	await pending;
@@ -308,10 +373,7 @@ test("options render numbered with ❯ on the active row and their description, 
 		"call-r7-rows",
 		{
 			question: "Deploy now?",
-			options: [
-				{ label: "Yes", description: "Ship it" },
-				{ label: "No" },
-			],
+			options: [{ label: "Yes", description: "Ship it" }, { label: "No" }],
 		},
 		undefined,
 		undefined,
@@ -325,7 +387,10 @@ test("options render numbered with ❯ on the active row and their description, 
 	send(DOWN);
 	send(DOWN);
 	render(80);
-	assert.deepEqual(hints.get()?.[1], { key: "Enter", action: "edit free text" });
+	assert.deepEqual(hints.get()?.[1], {
+		key: "Enter",
+		action: "edit free text",
+	});
 	send("X");
 	await pending;
 });
@@ -336,14 +401,25 @@ test("the z row and its hint always render, even if a caller passes allowFreeTex
 	const { ctx, send, render } = tuiContext();
 	const pending = tool.execute(
 		"call-f1-hint",
-		{ question: "Deploy now?", options: [{ label: "Yes" }, { label: "No" }], allowFreeText: false },
+		{
+			question: "Deploy now?",
+			options: [{ label: "Yes" }, { label: "No" }],
+			allowFreeText: false,
+		},
 		undefined,
 		undefined,
 		ctx,
 	);
 	const lines = render(80);
-	assert.ok(lines.some((line) => line.startsWith("  z  ")), "expected the free-text row to render");
-	assert.ok(hints.get()?.some((hint) => hint.key === "z" && hint.action === "edit free text"));
+	assert.ok(
+		lines.some((line) => line.startsWith("  z  ")),
+		"expected the free-text row to render",
+	);
+	assert.ok(
+		hints
+			.get()
+			?.some((hint) => hint.key === "z" && hint.action === "edit free text"),
+	);
 	send("X");
 	await pending;
 });
@@ -351,12 +427,22 @@ test("the z row and its hint always render, even if a caller passes allowFreeTex
 test("typing X after other characters into the free-text row inserts it instead of dismissing", async () => {
 	const tool = createAskUserQuestionTool(createFooterHints());
 	const { ctx, send } = tuiContext();
-	const pending = tool.execute("call-r3-insert", { question: "What tech?" }, undefined, undefined, ctx);
+	const pending = tool.execute(
+		"call-r3-insert",
+		{ question: "What tech?" },
+		undefined,
+		undefined,
+		ctx,
+	);
 	send("a");
 	send("X");
 	send("\r");
 	const result = await pending;
-	assert.deepEqual(result.details, { status: "answered", kind: "text", text: "aX" });
+	assert.deepEqual(result.details, {
+		status: "answered",
+		kind: "text",
+		text: "aX",
+	});
 });
 
 test("aborting before the panel opens refuses without ever calling ui.custom", async () => {
@@ -406,44 +492,86 @@ test("aborting while the panel is open resolves with a refusal, not an invented 
 test("free text captures a bracketed paste as plain text", async () => {
 	const tool = createAskUserQuestionTool(createFooterHints());
 	const { ctx, send } = tuiContext();
-	const pending = tool.execute("call-r5-paste", { question: "Paste the log" }, undefined, undefined, ctx);
+	const pending = tool.execute(
+		"call-r5-paste",
+		{ question: "Paste the log" },
+		undefined,
+		undefined,
+		ctx,
+	);
 	send("\x1b[200~pasted answer\x1b[201~");
 	send("\r");
 	const result = await pending;
-	assert.deepEqual(result.details, { status: "answered", kind: "text", text: "pasted answer" });
+	assert.deepEqual(result.details, {
+		status: "answered",
+		kind: "text",
+		text: "pasted answer",
+	});
 });
 
 test("free text captures an emoji typed directly", async () => {
 	const tool = createAskUserQuestionTool(createFooterHints());
 	const { ctx, send } = tuiContext();
-	const pending = tool.execute("call-r5-emoji", { question: "React with an emoji" }, undefined, undefined, ctx);
+	const pending = tool.execute(
+		"call-r5-emoji",
+		{ question: "React with an emoji" },
+		undefined,
+		undefined,
+		ctx,
+	);
 	send("😀");
 	send("\r");
 	const result = await pending;
-	assert.deepEqual(result.details, { status: "answered", kind: "text", text: "😀" });
+	assert.deepEqual(result.details, {
+		status: "answered",
+		kind: "text",
+		text: "😀",
+	});
 });
 
 test("free text captures a kitty CSI-u printable key", async () => {
 	const tool = createAskUserQuestionTool(createFooterHints());
 	const { ctx, send } = tuiContext();
-	const pending = tool.execute("call-r5-kitty", { question: "Kitty protocol input" }, undefined, undefined, ctx);
+	const pending = tool.execute(
+		"call-r5-kitty",
+		{ question: "Kitty protocol input" },
+		undefined,
+		undefined,
+		ctx,
+	);
 	send("\x1b[97u");
 	send("\r");
 	const result = await pending;
-	assert.deepEqual(result.details, { status: "answered", kind: "text", text: "a" });
+	assert.deepEqual(result.details, {
+		status: "answered",
+		kind: "text",
+		text: "a",
+	});
 });
 
 test("the active free-text row scrolls to keep the cursor and the answer's end visible", async () => {
 	const tool = createAskUserQuestionTool(createFooterHints());
 	const { ctx, send, render } = tuiContext();
-	const pending = tool.execute("call-r11", { question: "Explain" }, undefined, undefined, ctx);
+	const pending = tool.execute(
+		"call-r11",
+		{ question: "Explain" },
+		undefined,
+		undefined,
+		ctx,
+	);
 	const longAnswer = "x".repeat(80);
 	for (const char of longAnswer) send(char);
 	const lines = render(30);
 	const freeTextLine = lines.at(-1);
 	assert.ok(freeTextLine.startsWith("❯ "));
-	assert.ok(freeTextLine.includes(renderFakeCursor(" ")), "expected a fake cursor at the answer's end");
-	assert.ok(freeTextLine.includes(longAnswer.slice(-5)), "expected the tail of the long answer to stay visible");
+	assert.ok(
+		freeTextLine.includes(renderFakeCursor(" ")),
+		"expected a fake cursor at the answer's end",
+	);
+	assert.ok(
+		freeTextLine.includes(longAnswer.slice(-5)),
+		"expected the tail of the long answer to stay visible",
+	);
 	send("\r");
 	await pending;
 });
@@ -454,7 +582,9 @@ test("the abort listener is removed once the panel resolves normally", async () 
 	let addCount = 0;
 	let removeCount = 0;
 	const realAdd = controller.signal.addEventListener.bind(controller.signal);
-	const realRemove = controller.signal.removeEventListener.bind(controller.signal);
+	const realRemove = controller.signal.removeEventListener.bind(
+		controller.signal,
+	);
 	controller.signal.addEventListener = (...args) => {
 		addCount += 1;
 		return realAdd(...args);
@@ -491,7 +621,11 @@ test("ask_user_choice: typing after z in edit mode produces the typed answer", a
 	for (const char of "Xylophone") send(char);
 	send("\r");
 	const result = await pending;
-	assert.deepEqual(result.details, { status: "answered", kind: "text", text: "Xylophone" });
+	assert.deepEqual(result.details, {
+		status: "answered",
+		kind: "text",
+		text: "Xylophone",
+	});
 });
 
 test("ask_user_choice: Shift+X in browse mode refuses without entering edit mode", async () => {
@@ -533,7 +667,11 @@ test("ask_user_choice: Esc in edit mode returns to browse without refusing, and 
 	for (const char of "lin") send(char);
 	send("\r");
 	const result = await pending;
-	assert.deepEqual(result.details, { status: "answered", kind: "text", text: "Violin" });
+	assert.deepEqual(result.details, {
+		status: "answered",
+		kind: "text",
+		text: "Violin",
+	});
 });
 
 test("ask_user_choice free text still requires z before typing takes effect", async () => {
@@ -550,36 +688,66 @@ test("ask_user_choice free text still requires z before typing takes effect", as
 	for (const char of "ignored") send(char);
 	send("\r");
 	const result = await pending;
-	assert.deepEqual(result.details, { status: "answered", kind: "text", text: "ignored" });
+	assert.deepEqual(result.details, {
+		status: "answered",
+		kind: "text",
+		text: "ignored",
+	});
 });
 
 test("ask_user_question opens directly in edit mode, so typing yields the answer immediately", async () => {
 	const tool = createAskUserQuestionTool(createFooterHints());
 	const { ctx, send } = tuiContext();
-	const pending = tool.execute("call-r14-immediate", { question: "Favorite instrument?" }, undefined, undefined, ctx);
+	const pending = tool.execute(
+		"call-r14-immediate",
+		{ question: "Favorite instrument?" },
+		undefined,
+		undefined,
+		ctx,
+	);
 	for (const char of "Xylophone") send(char);
 	send("\r");
 	const result = await pending;
-	assert.deepEqual(result.details, { status: "answered", kind: "text", text: "Xylophone" });
+	assert.deepEqual(result.details, {
+		status: "answered",
+		kind: "text",
+		text: "Xylophone",
+	});
 });
 
 test("Tab in edit mode is ignored: it does not type and does not leave edit mode", async () => {
 	const tool = createAskUserQuestionTool(createFooterHints());
 	const { ctx, send } = tuiContext();
-	const pending = tool.execute("call-tab-in-edit", { question: "Favorite instrument?" }, undefined, undefined, ctx);
+	const pending = tool.execute(
+		"call-tab-in-edit",
+		{ question: "Favorite instrument?" },
+		undefined,
+		undefined,
+		ctx,
+	);
 	send("h");
 	send("i");
 	send("\t");
 	send("!");
 	send("\r");
 	const result = await pending;
-	assert.deepEqual(result.details, { status: "answered", kind: "text", text: "hi!" });
+	assert.deepEqual(result.details, {
+		status: "answered",
+		kind: "text",
+		text: "hi!",
+	});
 });
 
 test("Esc returns ask_user_question to browse mode, then Shift+X dismisses", async () => {
 	const tool = createAskUserQuestionTool(createFooterHints());
 	const { ctx, send } = tuiContext();
-	const pending = tool.execute("call-r14-esc-dismiss", { question: "Favorite instrument?" }, undefined, undefined, ctx);
+	const pending = tool.execute(
+		"call-r14-esc-dismiss",
+		{ question: "Favorite instrument?" },
+		undefined,
+		undefined,
+		ctx,
+	);
 	send("\x1b");
 	send("X");
 	const result = await pending;
@@ -589,12 +757,24 @@ test("Esc returns ask_user_question to browse mode, then Shift+X dismisses", asy
 test("the free-text row is only IME-focused while actively in edit mode", async () => {
 	const tool = createAskUserQuestionTool(createFooterHints());
 	const { ctx, send, render } = tuiContext();
-	const pending = tool.execute("call-r15-focus", { question: "Favorite instrument?" }, undefined, undefined, ctx);
+	const pending = tool.execute(
+		"call-r15-focus",
+		{ question: "Favorite instrument?" },
+		undefined,
+		undefined,
+		ctx,
+	);
 	const editLine = render(80).at(-1);
-	assert.ok(editLine.includes(CURSOR_MARKER), "expected the marker while in edit mode");
+	assert.ok(
+		editLine.includes(CURSOR_MARKER),
+		"expected the marker while in edit mode",
+	);
 	send("\x1b");
 	const browseLine = render(80).at(-1);
-	assert.ok(!browseLine.includes(CURSOR_MARKER), "did not expect the marker while in browse mode");
+	assert.ok(
+		!browseLine.includes(CURSOR_MARKER),
+		"did not expect the marker while in browse mode",
+	);
 	send("X");
 	await pending;
 });
@@ -613,10 +793,20 @@ test("a question with embedded newlines wraps into separate one-line render entr
 	const width = 30;
 	const lines = render(width);
 	for (const line of lines) {
-		assert.ok(!line.includes("\n"), `line contains an embedded newline: ${JSON.stringify(line)}`);
-		assert.ok(visibleWidth(line) <= width, `line exceeds width ${width}: ${JSON.stringify(line)}`);
+		assert.ok(
+			!line.includes("\n"),
+			`line contains an embedded newline: ${JSON.stringify(line)}`,
+		);
+		assert.ok(
+			visibleWidth(line) <= width,
+			`line exceeds width ${width}: ${JSON.stringify(line)}`,
+		);
 	}
-	assert.equal(lines.length, 7, "expected 3 question lines + option + free-text and the two blank rows between them");
+	assert.equal(
+		lines.length,
+		7,
+		"expected 3 question lines + option + free-text and the two blank rows between them",
+	);
 	assert.ok(lines.some((line) => line.includes("Deploy now?")));
 	assert.ok(lines.some((line) => line.includes("Restart workers?")));
 	assert.ok(lines.some((line) => line.includes("Continue?")));
@@ -643,10 +833,20 @@ test("newlines in option labels and descriptions are normalized so each option s
 	const width = 80;
 	const lines = render(width);
 	for (const line of lines) {
-		assert.ok(!line.includes("\n"), `line contains an embedded newline: ${JSON.stringify(line)}`);
-		assert.ok(visibleWidth(line) <= width, `line exceeds width ${width}: ${JSON.stringify(line)}`);
+		assert.ok(
+			!line.includes("\n"),
+			`line contains an embedded newline: ${JSON.stringify(line)}`,
+		);
+		assert.ok(
+			visibleWidth(line) <= width,
+			`line exceeds width ${width}: ${JSON.stringify(line)}`,
+		);
 	}
-	assert.ok(lines.some((line) => line.includes("Yes please") && line.includes("Ship it now")));
+	assert.ok(
+		lines.some(
+			(line) => line.includes("Yes please") && line.includes("Ship it now"),
+		),
+	);
 	send("X");
 	await pending;
 });
@@ -665,11 +865,24 @@ test("CR and CRLF line endings in the question normalize like LF before wrapping
 	const width = 20;
 	const lines = render(width);
 	for (const line of lines) {
-		assert.ok(!line.includes("\r"), `line contains a stray carriage return: ${JSON.stringify(line)}`);
-		assert.ok(!line.includes("\n"), `line contains an embedded newline: ${JSON.stringify(line)}`);
-		assert.ok(visibleWidth(line) <= width, `line exceeds width ${width}: ${JSON.stringify(line)}`);
+		assert.ok(
+			!line.includes("\r"),
+			`line contains a stray carriage return: ${JSON.stringify(line)}`,
+		);
+		assert.ok(
+			!line.includes("\n"),
+			`line contains an embedded newline: ${JSON.stringify(line)}`,
+		);
+		assert.ok(
+			visibleWidth(line) <= width,
+			`line exceeds width ${width}: ${JSON.stringify(line)}`,
+		);
 	}
-	assert.equal(lines.length, 8, "expected 4 question lines + option + free-text and the two blank rows between them");
+	assert.equal(
+		lines.length,
+		8,
+		"expected 4 question lines + option + free-text and the two blank rows between them",
+	);
 	send("X");
 	await pending;
 });
@@ -688,9 +901,18 @@ test("an ANSI erase-screen sequence and a bidi override in the question cannot b
 	const width = 80;
 	const lines = render(width);
 	for (const line of lines) {
-		assert.ok(!line.includes("\x1b[2J"), `line contains the raw escape sequence: ${JSON.stringify(line)}`);
-		assert.ok(!line.includes("‮"), `line contains the bidi override: ${JSON.stringify(line)}`);
-		assert.ok(visibleWidth(line) <= width, `line exceeds width ${width}: ${JSON.stringify(line)}`);
+		assert.ok(
+			!line.includes("\x1b[2J"),
+			`line contains the raw escape sequence: ${JSON.stringify(line)}`,
+		);
+		assert.ok(
+			!line.includes("‮"),
+			`line contains the bidi override: ${JSON.stringify(line)}`,
+		);
+		assert.ok(
+			visibleWidth(line) <= width,
+			`line exceeds width ${width}: ${JSON.stringify(line)}`,
+		);
 	}
 	send("X");
 	await pending;
@@ -712,9 +934,18 @@ test("an ANSI erase-screen sequence and a bidi override in an option label/descr
 	const width = 80;
 	const lines = render(width);
 	for (const line of lines) {
-		assert.ok(!line.includes("\x1b[2J"), `line contains the raw escape sequence: ${JSON.stringify(line)}`);
-		assert.ok(!line.includes("‮"), `line contains the bidi override: ${JSON.stringify(line)}`);
-		assert.ok(visibleWidth(line) <= width, `line exceeds width ${width}: ${JSON.stringify(line)}`);
+		assert.ok(
+			!line.includes("\x1b[2J"),
+			`line contains the raw escape sequence: ${JSON.stringify(line)}`,
+		);
+		assert.ok(
+			!line.includes("‮"),
+			`line contains the bidi override: ${JSON.stringify(line)}`,
+		);
+		assert.ok(
+			visibleWidth(line) <= width,
+			`line exceeds width ${width}: ${JSON.stringify(line)}`,
+		);
 	}
 	send("X");
 	await pending;
@@ -734,7 +965,10 @@ test("a tab in the question does not exceed the render width", async () => {
 	const width = 10;
 	const lines = render(width);
 	for (const line of lines) {
-		assert.ok(visibleWidth(line) <= width, `line exceeds width ${width}: ${JSON.stringify(line)}`);
+		assert.ok(
+			visibleWidth(line) <= width,
+			`line exceeds width ${width}: ${JSON.stringify(line)}`,
+		);
 	}
 	send("X");
 	await pending;
@@ -773,7 +1007,10 @@ test("a ZWJ emoji sequence in an option label keeps its visible width unchanged"
 	const width = 80;
 	const lines = render(width);
 	const optionLine = lines.find((line) => line.includes(family));
-	assert.ok(optionLine, "expected the ZWJ emoji sequence to survive normalization intact");
+	assert.ok(
+		optionLine,
+		"expected the ZWJ emoji sequence to survive normalization intact",
+	);
 	assert.equal(visibleWidth(optionLine), visibleWidth(`❯ 1  ${family}`));
 	send("X");
 	await pending;
@@ -798,7 +1035,12 @@ test("Down and Up move the active row in browse mode, and Enter answers the acti
 	assert.ok(render(80).some((line) => line === "❯ 2  B"));
 	send("\r");
 	const result = await pending;
-	assert.deepEqual(result.details, { status: "answered", kind: "option", index: 1, label: "B" });
+	assert.deepEqual(result.details, {
+		status: "answered",
+		kind: "option",
+		index: 1,
+		label: "B",
+	});
 });
 
 test("Tab no longer moves the active row", async () => {
@@ -833,7 +1075,12 @@ test("Up/Down from edit mode leave edit mode and move the active row", async () 
 	assert.ok(render(80).some((line) => line === "❯ 1  A"));
 	send("\r");
 	const result = await pending;
-	assert.deepEqual(result.details, { status: "answered", kind: "option", index: 0, label: "A" });
+	assert.deepEqual(result.details, {
+		status: "answered",
+		kind: "option",
+		index: 0,
+		label: "A",
+	});
 });
 
 test("multiple mode renders checkboxes", async () => {
@@ -841,7 +1088,11 @@ test("multiple mode renders checkboxes", async () => {
 	const { ctx, send, render } = tuiContext();
 	const pending = tool.execute(
 		"call-multi-render",
-		{ question: "Pick some", options: [{ label: "A" }, { label: "B" }], multiple: true },
+		{
+			question: "Pick some",
+			options: [{ label: "A" }, { label: "B" }],
+			multiple: true,
+		},
 		undefined,
 		undefined,
 		ctx,
@@ -871,7 +1122,9 @@ test("multiple mode: the free-text row is never rendered as a checkbox, since Sp
 	send("x");
 	const lines = render(80);
 	const freeTextLine = lines.at(-1);
-	assert.ok(freeTextLine.startsWith("❯     z  x") && !/\[[ x]\]/.test(freeTextLine));
+	assert.ok(
+		freeTextLine.startsWith("❯     z  x") && !/\[[ x]\]/.test(freeTextLine),
+	);
 	send(UP);
 	send(SPACE);
 	send("\r");
@@ -890,7 +1143,11 @@ test("multiple mode: Space toggles the active option", async () => {
 	const { ctx, send, render } = tuiContext();
 	const pending = tool.execute(
 		"call-multi-space",
-		{ question: "Pick some", options: [{ label: "A" }, { label: "B" }], multiple: true },
+		{
+			question: "Pick some",
+			options: [{ label: "A" }, { label: "B" }],
+			multiple: true,
+		},
 		undefined,
 		undefined,
 		ctx,
@@ -902,7 +1159,12 @@ test("multiple mode: Space toggles the active option", async () => {
 	send(SPACE);
 	send("\r");
 	const result = await pending;
-	assert.deepEqual(result.details, { status: "answered", kind: "options", indices: [0], labels: ["A"] });
+	assert.deepEqual(result.details, {
+		status: "answered",
+		kind: "options",
+		indices: [0],
+		labels: ["A"],
+	});
 });
 
 test("multiple mode: digits jump without marking", async () => {
@@ -921,13 +1183,21 @@ test("multiple mode: digits jump without marking", async () => {
 	);
 	send("2");
 	let lines = render(80);
-	assert.ok(lines.some((line) => line === "❯ [ ] 2  B"), "digit alone must not mark the option");
+	assert.ok(
+		lines.some((line) => line === "❯ [ ] 2  B"),
+		"digit alone must not mark the option",
+	);
 	send(SPACE);
 	lines = render(80);
 	assert.ok(lines.some((line) => line === "❯ [x] 2  B"));
 	send("\r");
 	const result = await pending;
-	assert.deepEqual(result.details, { status: "answered", kind: "options", indices: [1], labels: ["B"] });
+	assert.deepEqual(result.details, {
+		status: "answered",
+		kind: "options",
+		indices: [1],
+		labels: ["B"],
+	});
 });
 
 test("multiple mode: Enter with nothing marked is ignored", async () => {
@@ -935,7 +1205,11 @@ test("multiple mode: Enter with nothing marked is ignored", async () => {
 	const { ctx, send } = tuiContext();
 	const pending = tool.execute(
 		"call-multi-empty-enter",
-		{ question: "Pick some", options: [{ label: "A" }, { label: "B" }], multiple: true },
+		{
+			question: "Pick some",
+			options: [{ label: "A" }, { label: "B" }],
+			multiple: true,
+		},
 		undefined,
 		undefined,
 		ctx,
@@ -952,7 +1226,12 @@ test("multiple mode: Enter with nothing marked is ignored", async () => {
 	send(SPACE);
 	send("\r");
 	const result = await pending;
-	assert.deepEqual(result.details, { status: "answered", kind: "options", indices: [0], labels: ["A"] });
+	assert.deepEqual(result.details, {
+		status: "answered",
+		kind: "options",
+		indices: [0],
+		labels: ["A"],
+	});
 });
 
 test("multiple mode: free text typed into the z row is included with the marked options", async () => {
@@ -960,7 +1239,11 @@ test("multiple mode: free text typed into the z row is included with the marked 
 	const { ctx, send } = tuiContext();
 	const pending = tool.execute(
 		"call-multi-freetext",
-		{ question: "Pick some", options: [{ label: "A" }, { label: "B" }], multiple: true },
+		{
+			question: "Pick some",
+			options: [{ label: "A" }, { label: "B" }],
+			multiple: true,
+		},
 		undefined,
 		undefined,
 		ctx,
@@ -985,7 +1268,11 @@ test("multiple mode: Enter with only free text and no option marked with Space i
 	const { ctx, send } = tuiContext();
 	const pending = tool.execute(
 		"call-multi-freetext-only",
-		{ question: "Pick some", options: [{ label: "A" }, { label: "B" }], multiple: true },
+		{
+			question: "Pick some",
+			options: [{ label: "A" }, { label: "B" }],
+			multiple: true,
+		},
 		undefined,
 		undefined,
 		ctx,
@@ -1053,13 +1340,24 @@ test("without multiple, ask_user_choice behaviour and result stay exactly as a s
 	send(DOWN);
 	send("\r");
 	const result = await pending;
-	assert.deepEqual(result.details, { status: "answered", kind: "option", index: 1, label: "B" });
+	assert.deepEqual(result.details, {
+		status: "answered",
+		kind: "option",
+		index: 1,
+		label: "B",
+	});
 });
 
 test("the panel spans the full width inside the input frame with a question caption on the bottom border", async () => {
 	const tool = createAskUserChoiceTool(createFooterHints());
 	const { ctx, send, renderRaw } = tuiContext();
-	const pending = tool.execute("call-frame", { question: "Deploy now?", options: [{ label: "Yes" }] }, undefined, undefined, ctx);
+	const pending = tool.execute(
+		"call-frame",
+		{ question: "Deploy now?", options: [{ label: "Yes" }] },
+		undefined,
+		undefined,
+		ctx,
+	);
 	const lines = renderRaw(120);
 	for (const line of lines) assert.equal(visibleWidth(line), 119);
 	assert.equal(lines[0], ` ╭${"─".repeat(116)}╮`);
@@ -1078,20 +1376,36 @@ test("rows use ❯ and bold for the active option, muted numbers, dim descriptio
 	const { ctx, send, renderRaw } = tuiContext();
 	const tool = createAskUserChoiceTool(createFooterHints());
 	const original = ctx.ui.custom;
-	ctx.ui.custom = (factory) => original((tui, _theme, keys, done) => factory(tui, tagged, keys, done));
+	ctx.ui.custom = (factory) =>
+		original((tui, _theme, keys, done) => factory(tui, tagged, keys, done));
 	const pending = tool.execute(
 		"call-look",
-		{ question: "Deploy now?", options: [{ label: "Yes", description: "Ship it" }, { label: "No" }] },
+		{
+			question: "Deploy now?",
+			options: [{ label: "Yes", description: "Ship it" }, { label: "No" }],
+		},
 		undefined,
 		undefined,
 		ctx,
 	);
 	const lines = renderRaw(300);
 	assert.match(lines[0], /^ <borderAccent>╭─/);
-	assert.match(lines[1], /^ <borderAccent>│<\/borderAccent> <b><text>Deploy now\?<\/text><\/b>/);
-	assert.match(lines[3], /<b><text>❯ <\/text><\/b><b><text>1<\/text><\/b> {2}<b><text>Yes<\/text><\/b> {2}<dim>Ship it<\/dim>/);
-	assert.match(lines[4], /^ <borderAccent>│<\/borderAccent> {3}<muted>2<\/muted> {2}<text>No /);
-	assert.doesNotMatch(lines.join("\n"), /[●○]|\[(customMessageBg|selectedBg)\]/);
+	assert.match(
+		lines[1],
+		/^ <borderAccent>│<\/borderAccent> <b><text>Deploy now\?<\/text><\/b>/,
+	);
+	assert.match(
+		lines[3],
+		/<b><text>❯ <\/text><\/b><b><text>1<\/text><\/b> {2}<b><text>Yes<\/text><\/b> {2}<dim>Ship it<\/dim>/,
+	);
+	assert.match(
+		lines[4],
+		/^ <borderAccent>│<\/borderAccent> {3}<muted>2<\/muted> {2}<text>No /,
+	);
+	assert.doesNotMatch(
+		lines.join("\n"),
+		/[●○]|\[(customMessageBg|selectedBg)\]/,
+	);
 	send("X");
 	await pending;
 });
@@ -1101,7 +1415,12 @@ test("the panel stays within half the terminal height and scrolls the options wi
 	const { ctx, send, render, renderRaw } = tuiContext(24);
 	const pending = tool.execute(
 		"call-cap",
-		{ question: "Pick", options: Array.from({ length: 10 }, (_, i) => ({ label: `Option ${i + 1}` })) },
+		{
+			question: "Pick",
+			options: Array.from({ length: 10 }, (_, i) => ({
+				label: `Option ${i + 1}`,
+			})),
+		},
 		undefined,
 		undefined,
 		ctx,
@@ -1123,7 +1442,13 @@ test("the panel stays within half the terminal height and scrolls the options wi
 test("a terminal too narrow for the frame renders unframed rows", async () => {
 	const tool = createAskUserChoiceTool(createFooterHints());
 	const { ctx, send, renderRaw } = tuiContext();
-	const pending = tool.execute("call-narrow", { question: "Go?", options: [{ label: "Yes" }] }, undefined, undefined, ctx);
+	const pending = tool.execute(
+		"call-narrow",
+		{ question: "Go?", options: [{ label: "Yes" }] },
+		undefined,
+		undefined,
+		ctx,
+	);
 	const lines = renderRaw(10);
 	assert.ok(!lines.some((line) => /[╭╰│]/.test(line)));
 	assert.equal(lines[0].trimEnd(), "Go?");
@@ -1145,7 +1470,10 @@ test("the footer shows the panel hints while it is open, switches with the mode,
 		ctx,
 	);
 	const lines = render(80);
-	assert.ok(!lines.some((line) => line.includes("Shift+X")), "hints must not render inline");
+	assert.ok(
+		!lines.some((line) => line.includes("Shift+X")),
+		"hints must not render inline",
+	);
 	assert.deepEqual(hints.get()?.[0], { key: "↑/↓", action: "move" });
 	assert.deepEqual(hints.get()?.at(-1), { key: "Shift+X", action: "dismiss" });
 	send("z");
@@ -1197,7 +1525,8 @@ test("the footer hints clear when the panel is dismissed or aborted", async () =
 test("option rows pad labels to a shared column, truncate unfocused descriptions, and wrap the focused one", async () => {
 	const tool = createAskUserChoiceTool(createFooterHints());
 	const { ctx, send, render } = tuiContext();
-	const long = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda";
+	const long =
+		"alpha beta gamma delta epsilon zeta eta theta iota kappa lambda";
 	const pending = tool.execute(
 		"call-columns",
 		{
@@ -1221,7 +1550,10 @@ test("option rows pad labels to a shared column, truncate unfocused descriptions
 	assert.ok(lines[second].startsWith("  2  Longer label"));
 	assert.ok(lines[second].includes("…"));
 	assert.ok(second - first > 1);
-	assert.ok(lines[first + 1].startsWith(" ".repeat(column)) && lines[first + 1].trim().length > 0);
+	assert.ok(
+		lines[first + 1].startsWith(" ".repeat(column)) &&
+			lines[first + 1].trim().length > 0,
+	);
 	send("X");
 	await pending;
 });
@@ -1236,11 +1568,13 @@ test("at 80 columns the focused row wraps its long label and description in thei
 			options: [
 				{
 					label: "Guardar observación en Engram (memoria)",
-					description: "Registrar el defecto como memoria en el store de Engram vía CLI (scope project/global). No toca GitHub.",
+					description:
+						"Registrar el defecto como memoria en el store de Engram vía CLI (scope project/global). No toca GitHub.",
 				},
 				{
 					label: "Abrir issue nuevo en Gentleman-Programming/engram",
-					description: "Publicar un issue nuevo. Ojo: duplicaría #1557 (abierto hoy).",
+					description:
+						"Publicar un issue nuevo. Ojo: duplicaría #1557 (abierto hoy).",
 				},
 			],
 		},
@@ -1254,14 +1588,30 @@ test("at 80 columns the focused row wraps its long label and description in thei
 	const column = focused[first].indexOf("Registrar");
 	const rows = focused.slice(first, second);
 	assert.ok(rows.length > 1);
-	assert.equal(rows.map((line) => line.slice(5, column).trim()).filter(Boolean).join(" "), "Guardar observación en Engram (memoria)");
-	assert.equal(rows.map((line) => line.slice(column).trim()).filter(Boolean).join(" "), "Registrar el defecto como memoria en el store de Engram vía CLI (scope project/global). No toca GitHub.");
+	assert.equal(
+		rows
+			.map((line) => line.slice(5, column).trim())
+			.filter(Boolean)
+			.join(" "),
+		"Guardar observación en Engram (memoria)",
+	);
+	assert.equal(
+		rows
+			.map((line) => line.slice(column).trim())
+			.filter(Boolean)
+			.join(" "),
+		"Registrar el defecto como memoria en el store de Engram vía CLI (scope project/global). No toca GitHub.",
+	);
 	assert.ok(focused[second].includes("…"));
 	send(DOWN);
 	const moved = render(80);
 	const next = moved.findIndex((line) => line.startsWith("❯ 2  "));
-	assert.ok(moved[next - 1].startsWith("  1  Guardar") && moved[next - 1].includes("…"));
-	assert.ok(moved[next + 1].startsWith("     ") && moved[next + 1].trim().length > 0);
+	assert.ok(
+		moved[next - 1].startsWith("  1  Guardar") && moved[next - 1].includes("…"),
+	);
+	assert.ok(
+		moved[next + 1].startsWith("     ") && moved[next + 1].trim().length > 0,
+	);
 	for (const line of renderRaw(80)) assert.ok(visibleWidth(line) <= 80);
 	send("X");
 	await pending;
@@ -1273,7 +1623,10 @@ test("labels take the full row when no option has a description", async () => {
 	const label = "Abrir issue nuevo en Gentleman-Programming/engram con datos";
 	const pending = tool.execute(
 		"call-bare-labels",
-		{ question: "¿Qué hago?", options: [{ label }, { label: `${label} y más contexto adicional` }] },
+		{
+			question: "¿Qué hago?",
+			options: [{ label }, { label: `${label} y más contexto adicional` }],
+		},
 		undefined,
 		undefined,
 		ctx,
@@ -1289,25 +1642,50 @@ test("labels take the full row when no option has a description", async () => {
 test("renderResult shows nothing while partial and a Asked row with its answer once done", () => {
 	const tool = createAskUserChoiceTool(createFooterHints());
 	const context = { args: { question: "Deploy now?" } };
-	const details = { status: "answered", kind: "option", index: 0, label: "Yes" };
+	const details = {
+		status: "answered",
+		kind: "option",
+		index: 0,
+		label: "Yes",
+	};
 	const result = { content: [], details };
-	assert.deepEqual(tool.renderCall(context.args, fakeTheme, context).render(80), []);
-	assert.deepEqual(tool.renderResult(result, { isPartial: true }, fakeTheme, context).render(80), []);
-	const done = tool.renderResult(result, { isPartial: false }, fakeTheme, context).render(80);
-	assert.deepEqual(done.map((line) => line.trimEnd()), [
-		"◆ Asked Deploy now?",
-		"  ↳ Yes",
-	]);
-	const colored = { ...fakeTheme, fg: (name, text) => `<${name}>${text}</${name}>` };
-	const [first] = tool.renderResult(result, { isPartial: false }, colored, context).render(80);
+	assert.deepEqual(
+		tool.renderCall(context.args, fakeTheme, context).render(80),
+		[],
+	);
+	assert.deepEqual(
+		tool
+			.renderResult(result, { isPartial: true }, fakeTheme, context)
+			.render(80),
+		[],
+	);
+	const done = tool
+		.renderResult(result, { isPartial: false }, fakeTheme, context)
+		.render(80);
+	assert.deepEqual(
+		done.map((line) => line.trimEnd()),
+		["◆ Asked Deploy now?", "  ↳ Yes"],
+	);
+	const colored = {
+		...fakeTheme,
+		fg: (name, text) => `<${name}>${text}</${name}>`,
+	};
+	const [first] = tool
+		.renderResult(result, { isPartial: false }, colored, context)
+		.render(80);
 	assert.ok(first.startsWith("<toolTitle>◆</toolTitle>"));
 });
 
 test("renderResult omits the answer row when the result has no details", () => {
 	const tool = createAskUserChoiceTool(createFooterHints());
 	const context = { args: { question: "Deploy now?" } };
-	const lines = tool.renderResult({ content: [] }, { isPartial: false }, fakeTheme, context).render(80);
-	assert.deepEqual(lines.map((line) => line.trimEnd()), ["◆ Asked Deploy now?"]);
+	const lines = tool
+		.renderResult({ content: [] }, { isPartial: false }, fakeTheme, context)
+		.render(80);
+	assert.deepEqual(
+		lines.map((line) => line.trimEnd()),
+		["◆ Asked Deploy now?"],
+	);
 });
 
 test("renderResult without details does not read the answer from the result text", () => {
@@ -1315,7 +1693,12 @@ test("renderResult without details does not read the answer from the result text
 	const context = { args: { question: "Deploy now?" } };
 	const answer = (text) =>
 		tool
-			.renderResult({ content: [{ type: "text", text }] }, { isPartial: false }, fakeTheme, context)
+			.renderResult(
+				{ content: [{ type: "text", text }] },
+				{ isPartial: false },
+				fakeTheme,
+				context,
+			)
 			.render(80)
 			.map((line) => line.trimEnd())
 			.slice(1);
@@ -1327,8 +1710,18 @@ test("renderResult strips control and bidi characters from the answer", () => {
 	const tool = createAskUserQuestionTool(createFooterHints());
 	const context = { args: { question: "Why?" } };
 	const details = { status: "answered", kind: "text", text: "a\u0007b\u202Ec" };
-	const lines = tool.renderResult({ content: [], details }, { isPartial: false }, fakeTheme, context).render(80);
-	assert.deepEqual(lines.map((line) => line.trimEnd()), ["◆ Asked Why?", "  ↳ a b c"]);
+	const lines = tool
+		.renderResult(
+			{ content: [], details },
+			{ isPartial: false },
+			fakeTheme,
+			context,
+		)
+		.render(80);
+	assert.deepEqual(
+		lines.map((line) => line.trimEnd()),
+		["◆ Asked Why?", "  ↳ a b c"],
+	);
 });
 
 test("a long active row is cut to the half-height cap and ends with an ellipsis", async () => {
@@ -1337,7 +1730,13 @@ test("a long active row is cut to the half-height cap and ends with an ellipsis"
 	const description = "word ".repeat(72).trim();
 	const pending = tool.execute(
 		"call-cap-active",
-		{ question: "Pick", options: Array.from({ length: 6 }, (_, i) => ({ label: `Option ${i + 1}`, description })) },
+		{
+			question: "Pick",
+			options: Array.from({ length: 6 }, (_, i) => ({
+				label: `Option ${i + 1}`,
+				description,
+			})),
+		},
 		undefined,
 		undefined,
 		ctx,
@@ -1355,7 +1754,9 @@ test("a long active row is cut to the half-height cap and ends with an ellipsis"
 test("a question taller than the cap is shown in full with one option", async () => {
 	const tool = createAskUserChoiceTool(createFooterHints());
 	const { ctx, send, render } = tuiContext(24);
-	const question = Array.from({ length: 14 }, (_, i) => `Line ${i + 1}`).join("\n");
+	const question = Array.from({ length: 14 }, (_, i) => `Line ${i + 1}`).join(
+		"\n",
+	);
 	const pending = tool.execute(
 		"call-cap-question",
 		{ question, options: [{ label: "A" }, { label: "B" }, { label: "C" }] },
@@ -1378,14 +1779,24 @@ test("narrow frames in multiple mode never wrap the label into a one-column stac
 	const { ctx, send, renderRaw } = tuiContext(24);
 	const pending = tool.execute(
 		"call-cap-narrow",
-		{ question: "Pick", options: [{ label: "Deploy the service to production now" }, { label: "Wait" }], multiple: true },
+		{
+			question: "Pick",
+			options: [
+				{ label: "Deploy the service to production now" },
+				{ label: "Wait" },
+			],
+			multiple: true,
+		},
 		undefined,
 		undefined,
 		ctx,
 	);
 	for (let width = 12; width <= 16; width++) {
 		const lines = renderRaw(width);
-		assert.ok(lines.length <= 12, `width ${width} rendered ${lines.length} lines`);
+		assert.ok(
+			lines.length <= 12,
+			`width ${width} rendered ${lines.length} lines`,
+		);
 		for (const line of lines) assert.ok(visibleWidth(line) <= width);
 	}
 	send("X");
@@ -1397,7 +1808,10 @@ test("unframed rows keep the more counts visible", async () => {
 	const { ctx, send, renderRaw } = tuiContext(24);
 	const pending = tool.execute(
 		"call-narrow-more",
-		{ question: "Go?", options: Array.from({ length: 10 }, (_, i) => ({ label: `O${i + 1}` })) },
+		{
+			question: "Go?",
+			options: Array.from({ length: 10 }, (_, i) => ({ label: `O${i + 1}` })),
+		},
 		undefined,
 		undefined,
 		ctx,
@@ -1421,7 +1835,13 @@ test("framed narrow multiple mode keeps the whole more count", async () => {
 		const { ctx, send, render } = tuiContext(24);
 		const pending = tool.execute(
 			"call-narrow-count",
-			{ question: "Pick", options: Array.from({ length: count }, (_, i) => ({ label: `O${i + 1}` })), multiple: true },
+			{
+				question: "Pick",
+				options: Array.from({ length: count }, (_, i) => ({
+					label: `O${i + 1}`,
+				})),
+				multiple: true,
+			},
 			undefined,
 			undefined,
 			ctx,
@@ -1437,8 +1857,18 @@ test("options are never hidden without a more row, even when that exceeds the ha
 	const tool = createAskUserChoiceTool(createFooterHints());
 	const cases = [
 		[16, "Pick", ["A", "B", "C"], ["  1  A", "❯ 2  B", "  3  C"]],
-		[24, "One\nTwo\nThree\nFour\nFive", ["A", "B", "C", "D"], ["↑ 1 more", "❯ 2  B", "↓ 2 more"]],
-		[24, "1\n2\n3\n4\n5\n6\n7", ["A", "B", "C", "D", "E"], ["↑ 1 more", "❯ 2  B", "↓ 3 more"]],
+		[
+			24,
+			"One\nTwo\nThree\nFour\nFive",
+			["A", "B", "C", "D"],
+			["↑ 1 more", "❯ 2  B", "↓ 2 more"],
+		],
+		[
+			24,
+			"1\n2\n3\n4\n5\n6\n7",
+			["A", "B", "C", "D", "E"],
+			["↑ 1 more", "❯ 2  B", "↓ 3 more"],
+		],
 	];
 	for (const [rows, question, labels, expected] of cases) {
 		const { ctx, send, render } = tuiContext(rows);
@@ -1451,7 +1881,9 @@ test("options are never hidden without a more row, even when that exceeds the ha
 		);
 		send(DOWN);
 		const lines = render(80);
-		const shown = lines.slice(lines.indexOf("") + 1, lines.lastIndexOf("")).map((line) => line.replace(/^ +(?=[↑↓])/, ""));
+		const shown = lines
+			.slice(lines.indexOf("") + 1, lines.lastIndexOf(""))
+			.map((line) => line.replace(/^ +(?=[↑↓])/, ""));
 		assert.deepEqual(shown, expected);
 		send("X");
 		await pending;
@@ -1461,7 +1893,13 @@ test("options are never hidden without a more row, even when that exceeds the ha
 test("the caption shows only when it fits whole", async () => {
 	const tool = createAskUserChoiceTool(createFooterHints());
 	const { ctx, send, renderRaw } = tuiContext();
-	const pending = tool.execute("call-caption", { question: "Go?", options: [{ label: "Yes" }] }, undefined, undefined, ctx);
+	const pending = tool.execute(
+		"call-caption",
+		{ question: "Go?", options: [{ label: "Yes" }] },
+		undefined,
+		undefined,
+		ctx,
+	);
 	for (const width of [12, 13]) {
 		assert.equal(renderRaw(width).at(-1), `╰${"─".repeat(width - 2)}╯`);
 	}
