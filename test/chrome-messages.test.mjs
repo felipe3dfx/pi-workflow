@@ -10,7 +10,8 @@ import {
 	ToolExecutionComponent,
 	UserMessageComponent,
 } from "@earendil-works/pi-coding-agent";
-import { Container, visibleWidth } from "@earendil-works/pi-tui";
+import { Container, Markdown, visibleWidth } from "@earendil-works/pi-tui";
+import { loadThemeFromPath } from "../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 
 import { registerChrome } from "../extensions/chrome.ts";
 import {
@@ -51,6 +52,7 @@ const pristine = {
 	toolRender: ToolExecutionComponent.prototype.render,
 	toolMouse: ToolExecutionComponent.prototype.handleMouse,
 	bashRender: Object.hasOwn(BashExecutionComponent.prototype, "render"),
+	renderToken: Markdown.prototype.renderToken,
 };
 
 function isPristine() {
@@ -62,7 +64,8 @@ function isPristine() {
 		ToolExecutionComponent.prototype.render === pristine.toolRender &&
 		ToolExecutionComponent.prototype.handleMouse === pristine.toolMouse &&
 		Object.hasOwn(BashExecutionComponent.prototype, "render") ===
-			pristine.bashRender
+			pristine.bashRender &&
+		Markdown.prototype.renderToken === pristine.renderToken
 	);
 }
 
@@ -909,4 +912,77 @@ test("patching twice keeps one row margin and restore removes the wrapper", () =
 	restoreMessages();
 	assert.ok(isPristine());
 	assert.ok(!Object.hasOwn(BashExecutionComponent.prototype, "render"));
+});
+
+test("each heading level of Pi's Markdown theme takes its own theme var color, with Pi's bold and underline kept, a Markdown theme of its own keeps its heading, and restore returns Pi's heading color", (t) => {
+	const key = Symbol.for("@earendil-works/pi-coding-agent:theme");
+	const workflow = loadThemeFromPath(
+		new URL("../themes/pi-workflow.json", import.meta.url).pathname,
+		"truecolor",
+	);
+	globalThis[key] = workflow;
+	t.after(() => {
+		globalThis[key] = theme;
+	});
+	const headingTheme = {
+		...markdownTheme,
+		heading: (text) => globalThis[key].fg("mdHeading", text),
+		bold: (text) => `<b>${text}`,
+		underline: (text) => `<u>${text}`,
+	};
+	const source = [1, 2, 3, 4, 5, 6]
+		.map((level) => `${"#".repeat(level)} Level ${level}`)
+		.join("\n\n");
+	const render = (heading = headingTheme.heading) =>
+		new Markdown(
+			source,
+			0,
+			0,
+			new Proxy(
+				{ ...headingTheme, heading },
+				{
+					get: (target, name) => target[name] ?? ((text) => text),
+				},
+			),
+		)
+			.render(60)
+			.filter((line) => line.trim());
+	patched(t);
+	const lines = render();
+	const rgb = [
+		"26;188;156",
+		"122;162;247",
+		"157;124;216",
+		"120;120;120",
+		"108;108;108",
+		"90;90;90",
+	];
+	assert.equal(lines.length, 6);
+	lines.forEach((line, i) => {
+		assert.ok(line.includes(`\x1b[38;2;${rgb[i]}m`), line);
+		assert.ok(line.includes("<b>"), line);
+	});
+	assert.ok(lines[0].includes("<u>"));
+	assert.ok(!lines[1].includes("<u>"));
+	const own = render((text) => `<heading>${text}`);
+	assert.ok(
+		own.every(
+			(line) => line.includes("<heading>") && !line.includes("\x1b[38;2;"),
+		),
+		own.join("\n"),
+	);
+
+	globalThis[key] = theme;
+	const fallback = render();
+	assert.ok(
+		fallback.every((line) =>
+			line.includes(theme.fg("mdHeading", "|").split("|")[0]),
+		),
+		fallback.join("\n"),
+	);
+
+	globalThis[key] = workflow;
+	restoreMessages();
+	const pi = workflow.fg("mdHeading", "|").split("|")[0];
+	assert.ok(render().every((line) => line.includes(pi)));
 });

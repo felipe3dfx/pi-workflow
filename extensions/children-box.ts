@@ -13,7 +13,12 @@ import {
 import { type Schedule, scheduleTimer } from "./clock.ts";
 import { occupyAboveInput } from "./shell.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
-import { spinnerMs, spread, workingFrames } from "./visual-language.ts";
+import {
+	spinnerMs,
+	spread,
+	themeVar,
+	workingFrames,
+} from "./visual-language.ts";
 
 type Sessions = ReturnType<typeof createChildSessions>;
 export type ChildTheme = Pick<Theme, "fg" | "bg" | "bold">;
@@ -55,16 +60,20 @@ function childMeta(child: ChildRecord, now: number) {
 	return `${childModelLine(child)} ${childElapsed(child, now)}`;
 }
 
+const running = themeVar("cyan", glyphs.running[1]);
+
 export function childGlyph(theme: ChildTheme, child: ChildRecord) {
 	const [glyph, color] = glyphs[child.state];
-	return theme.fg(color, glyph);
+	return child.state === "running"
+		? running(glyph, theme)
+		: theme.fg(color, glyph);
 }
 
 function rowGlyph(theme: ChildTheme, child: ChildRecord, now: number) {
 	if (child.state !== "running") return childGlyph(theme, child);
 	const frame =
 		workingFrames[Math.floor(now / spinnerMs) % workingFrames.length];
-	return theme.fg(glyphs.running[1], frame);
+	return running(frame, theme);
 }
 
 function childrenHeading(theme: ChildTheme, rows: ChildRecord[]) {

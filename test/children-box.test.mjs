@@ -4,7 +4,9 @@ import { stripVTControlCharacters } from "node:util";
 
 import { visibleWidth } from "@earendil-works/pi-tui";
 
-import { renderChildrenBox } from "../extensions/children-box.ts";
+import { loadThemeFromPath } from "../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
+
+import { childGlyph, renderChildrenBox } from "../extensions/children-box.ts";
 
 const theme = {
 	fg: (_color, text) => text,
@@ -217,4 +219,21 @@ test("a running row cycles the working spinner every 133 ms while other states k
 		for (const at of [start, start + 133])
 			assert.equal(glyphAt(child({ state, endedAt: at }), at), glyph);
 	}
+});
+
+test("a running child's glyph and spinner take the cyan theme var, while finished glyphs keep their tokens", () => {
+	const workflow = loadThemeFromPath(
+		new URL("../themes/pi-workflow.json", import.meta.url).pathname,
+		"truecolor",
+	);
+	const cyan = "\x1b[38;2;125;207;255m";
+	const [, row] = renderChildrenBox(workflow, [child({})], now, 80);
+	assert.ok(row.includes(`${cyan}⠦`), row);
+	assert.equal(childGlyph(workflow, child({})), `${cyan}◐\x1b[39m`);
+	assert.equal(
+		childGlyph(workflow, child({ state: "completed" })),
+		workflow.fg("success", "✓"),
+	);
+	const tagged = { ...theme, fg: (color, text) => `<${color}>${text}` };
+	assert.equal(childGlyph(tagged, child({})), "<accent>◐");
 });

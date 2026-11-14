@@ -39,7 +39,13 @@ import {
 	type PatchTarget,
 } from "./chrome-patch.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
-import { formatDuration, minThoughtMs, theme } from "./visual-language.ts";
+import {
+	formatDuration,
+	initializedTheme,
+	minThoughtMs,
+	theme,
+	themeVar,
+} from "./visual-language.ts";
 
 const SHARED = Symbol.for("pi-workflow:chrome-messages:shared");
 const piDefaultHiddenLabel = "Thinking...";
@@ -639,6 +645,40 @@ function guarded(replacement: PatchMethod) {
 		} as PatchMethod;
 }
 
+const headingColors = [
+	themeVar("heading1", "mdHeading"),
+	themeVar("blue", "mdHeading"),
+	themeVar("heading3", "mdHeading"),
+	themeVar("muted", "mdHeading"),
+	themeVar("faint", "mdHeading"),
+	themeVar("heading6", "mdHeading"),
+];
+
+function wrapRenderToken(original: PatchMethod) {
+	return function (
+		this: { theme: MarkdownTheme },
+		token: { type?: string; depth?: number },
+		...rest: unknown[]
+	) {
+		const render = original as (...args: unknown[]) => unknown;
+		const palette = initializedTheme();
+		const saved = this.theme;
+		if (
+			token?.type !== "heading" ||
+			!palette ||
+			saved.heading("\0") !== palette.fg("mdHeading", "\0")
+		)
+			return render.call(this, token, ...rest);
+		const color = headingColors[Math.min(Math.max(token.depth ?? 1, 1), 6) - 1];
+		try {
+			this.theme = { ...saved, heading: (text) => color(text, palette) };
+			return render.call(this, token, ...rest);
+		} finally {
+			this.theme = saved;
+		}
+	} as PatchMethod;
+}
+
 type MouseEvent = { x: number; width: number };
 function wrapRowRender(original: PatchMethod) {
 	return function (this: unknown, outer: number) {
@@ -695,6 +735,12 @@ const targets: PatchTarget[] = [
 		proto: InteractiveMode.prototype,
 		name: "renderSessionEntries",
 		create: wrapRenderSessionEntries,
+		replaces: false,
+	},
+	{
+		proto: Markdown.prototype,
+		name: "renderToken",
+		create: wrapRenderToken,
 		replaces: false,
 	},
 	...[ToolExecutionComponent, BashExecutionComponent].flatMap((row) => [
