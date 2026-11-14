@@ -72,7 +72,7 @@ import {
 	selectedRow,
 } from "./chrome-menus.ts";
 import { terminalSafeBlock, terminalSafeLine } from "./terminal-safe-text.ts";
-import { spread } from "./visual-language.ts";
+import { formatDuration, minThoughtMs, spread } from "./visual-language.ts";
 
 let closeSeatedView: () => void = () => {};
 
@@ -140,10 +140,6 @@ function steerMarks(child: ChildRecord) {
 		...mark(child.steering?.length ?? 0, "pending"),
 		...mark(child.undelivered?.length ?? 0, "undelivered"),
 	];
-}
-
-function seconds(ms: number) {
-	return `${(Math.max(0, ms) / 1000).toFixed(1)}s`;
 }
 
 function count(tokens: number) {
@@ -467,7 +463,13 @@ function createThread(theme: ChildTheme) {
 				const ms = thought(`${style.child}:${entry.message}:${index}`, running);
 				const head = running
 					? row("dim", "Thinking…")
-					: row("dim", "Thought", ms === undefined ? "" : `for ${seconds(ms)}`);
+					: row(
+							"dim",
+							"Thought",
+							ms === undefined || ms < minThoughtMs
+								? ""
+								: `for ${formatDuration(ms)}`,
+						);
 				const body = style.hideThinking
 					? { rows: [], lines: [] }
 					: indented(text, width, "dim");

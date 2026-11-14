@@ -295,20 +295,20 @@ function spans(items: Seg[]) {
 
 function groupLabel(members: Seg[], width: number) {
 	const t = theme();
-	const buckets: { kind: Kind; count: number }[] = [];
-	let running = false;
+	const buckets: { kind: Kind; count: number; running: boolean }[] = [];
 	let failed = 0;
 	for (const seg of members) {
 		if (seg.role !== "tool" && seg.role !== "card") continue;
 		const bucket = buckets.find((b) => b.kind === seg.kind);
-		if (bucket) bucket.count++;
-		else buckets.push({ kind: seg.kind, count: 1 });
-		running ||= seg.running;
+		if (bucket) {
+			bucket.count++;
+			bucket.running ||= seg.running;
+		} else buckets.push({ kind: seg.kind, count: 1, running: seg.running });
 		if (seg.failed) failed++;
 	}
 	const label =
 		buckets
-			.map(({ kind, count }) => {
+			.map(({ kind, count, running }) => {
 				const [past, present, one, many] = words[kind];
 				return `${running ? present : past} ${count} ${count === 1 ? one : many}`;
 			})

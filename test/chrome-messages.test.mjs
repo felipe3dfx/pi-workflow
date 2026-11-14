@@ -252,19 +252,34 @@ test("collapsed thinking reads Thinking with the current step while it streams a
 		true,
 	);
 	const lines = component.render(60);
-	assert.equal(plain(lines)[1], "   ◆ Thought for 12.6s".padEnd(60));
+	assert.equal(plain(lines)[1], "   ◆ Thought for 13s".padEnd(60));
 	assert.ok(
 		lines[1].includes(
-			`${theme.fg("dim", "◆")} ${theme.bold(theme.fg("muted", "Thought"))}${theme.fg("dim", " for 12.6s")}`,
+			`${theme.fg("dim", "◆")} ${theme.bold(theme.fg("muted", "Thought"))}${theme.fg("dim", " for 13s")}`,
 		),
 	);
+});
+
+test("a thought shorter than a second reads Thought without a duration", (t) => {
+	patched(t);
+	t.mock.timers.enable({ apis: ["Date"], now: 1_000 });
+	const component = assistantComponent(true);
+	component.updateContent(assistant([thought], { timestamp: 13 }), true);
+	t.mock.timers.tick(400);
+	component.updateContent(
+		assistant([thought, answer], { timestamp: 13 }),
+		true,
+	);
+	assert.equal(plain(component.render(60))[1].trimEnd(), "   ◆ Thought");
 });
 
 test("thought durations round once so the seconds and minutes boundaries roll over", (t) => {
 	patched(t);
 	const cases = [
-		[59_940, "59.9s"],
-		[59_960, "1m0s"],
+		[9_940, "9.9s"],
+		[9_960, "10s"],
+		[59_400, "59s"],
+		[59_600, "1m0s"],
 		[60_000, "1m0s"],
 		[119_400, "1m59s"],
 		[119_600, "2m0s"],
@@ -383,10 +398,10 @@ test("a finished run shows its duration and never a step count", (t) => {
 	t.mock.timers.tick(12_600);
 	component.updateContent(assistant([steps, answer], { timestamp: 5 }), true);
 	const lines = component.render(60);
-	assert.equal(plain(lines)[1].trimEnd(), "   ◆ Thought for 12.6s");
+	assert.equal(plain(lines)[1].trimEnd(), "   ◆ Thought for 13s");
 	assert.ok(
 		lines[1].includes(
-			`${theme.fg("dim", "◆")} ${theme.bold(theme.fg("muted", "Thought"))}${theme.fg("dim", " for 12.6s")}`,
+			`${theme.fg("dim", "◆")} ${theme.bold(theme.fg("muted", "Thought"))}${theme.fg("dim", " for 13s")}`,
 		),
 	);
 	const unknown = assistantComponent(true);
