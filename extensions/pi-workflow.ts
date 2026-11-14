@@ -64,6 +64,10 @@ import {
 	createExplorationBudget,
 	explorationNotice,
 } from "./exploration-budget.ts";
+import {
+	EXPLORATION_BUDGET_TYPE,
+	registerExplorationBudgetCard,
+} from "./exploration-budget-card.ts";
 
 import {
 	type ActionAuthorization,
@@ -303,6 +307,7 @@ export default function piWorkflowExtension(
 	);
 	registerAgentLanguage(pi);
 	const explorationBudget = createExplorationBudget();
+	registerExplorationBudgetCard(pi);
 	pi.on("before_agent_start", (event) => {
 		if (event.messageType === "user") explorationBudget.start();
 	});
@@ -312,7 +317,7 @@ export default function piWorkflowExtension(
 		if (facts)
 			pi.sendMessage(
 				{
-					customType: "pi-workflow-exploration-budget",
+					customType: EXPLORATION_BUDGET_TYPE,
 					content: explorationNotice(facts, delegationMode.current()),
 					display: true,
 					details: facts,
