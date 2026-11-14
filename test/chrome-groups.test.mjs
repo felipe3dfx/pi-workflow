@@ -10,7 +10,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Container, visibleWidth } from "@earendil-works/pi-tui";
 
-import { toolKind } from "../extensions/chrome-groups.ts";
+import { toolKind, transcriptCursor } from "../extensions/chrome-groups.ts";
+import { createChromeEditor } from "../extensions/chrome-editor.ts";
 import {
 	patchMessages,
 	restoreMessages,
@@ -482,4 +483,98 @@ test("hovering a clickable row points at it and leaving it restores the glyph", 
 	assert.ok(mouse(container, 80, "move", text)?.handled);
 	assert.equal(render()[run], "   ◆ Run ls");
 	assert.equal(mouse(container, 80, "move", text), undefined);
+});
+
+const shows = (rows, text) => rows.some((line) => line.trimEnd() === text);
+
+test("the transcript cursor starts at the last clickable row, moves between rows, and toggles the one it selects", (t) => {
+	const { mode, say, tool, render } = chat(t);
+	t.after(() => transcriptCursor.leave());
+	say([thought(), said("Looking.")]);
+	const first = tool("bash", { command: "ls" }, { text: "one" });
+	say([said("Then.")]);
+	tool("bash", { command: "pwd" }, { text: "/" });
+	render();
+	assert.equal(transcriptCursor.active(), false);
+	assert.ok(transcriptCursor.move(-1));
+	assert.equal(transcriptCursor.active(), true);
+	assert.ok(shows(render(), "   ▸ Run pwd"));
+	assert.ok(transcriptCursor.move(-1));
+	const rows = render();
+	assert.ok(shows(rows, "   ▸ Run ls"));
+	assert.ok(shows(rows, "   ◆ Run pwd"));
+	assert.ok(transcriptCursor.toggle());
+	assert.equal(first.expanded, true);
+	const expanded = mode.chatContainer.render(80);
+	const head = expanded.findIndex((line) => line.includes("$ ls"));
+	const background = "\u001b[48";
+	assert.ok(expanded[head].includes(background));
+	assert.ok(!(expanded[head + 1] ?? "").includes(background));
+	assert.ok(transcriptCursor.toggle());
+	assert.equal(first.expanded, false);
+	assert.ok(transcriptCursor.move(-1));
+	assert.ok(shows(render(), "   ▸ Thought"));
+	assert.ok(transcriptCursor.move(-1));
+	assert.ok(shows(render(), "   ▸ Thought"));
+	transcriptCursor.leave();
+	assert.equal(transcriptCursor.active(), false);
+	assert.ok(!render().some((line) => line.includes("▸")));
+	assert.equal(mode.chatContainer.children.length > 0, true);
+});
+
+test("moving the cursor off screen scrolls the transcript to it, and leaving returns to the end", (t) => {
+	const { mode, say, tool, render } = chat(t);
+	t.after(() => transcriptCursor.leave());
+	say([said("Start.")]);
+	tool("bash", { command: "ls" }, { text: "one" });
+	for (let i = 0; i < 30; i++) say([said(`Line ${i}.`)]);
+	const total = render().length;
+	const calls = [];
+	mode.transcriptScrollView = {
+		contentHeight: total + 2,
+		scrollTop: total + 2 - 10,
+		viewportHeight: 10,
+		isFollowingEnd: true,
+		scrollTo: (top, options) => calls.push(["to", top, options]),
+		scrollToEnd: () => calls.push(["end"]),
+	};
+	assert.ok(transcriptCursor.move(-1));
+	const run = render().findIndex((line) => line.trimEnd() === "   ▸ Run ls");
+	assert.deepEqual(calls, [["to", 2 + run - 3, { disableFollow: true }]]);
+	transcriptCursor.leave();
+	assert.deepEqual(calls.at(-1), ["end"]);
+});
+
+test("while the cursor is active the editor moves, toggles and leaves it, and other keys reach the input", (t) => {
+	const { tool, render } = chat(t);
+	t.after(() => transcriptCursor.leave());
+	const command = tool("bash", { command: "ls" }, { text: "one" });
+	tool("bash", { command: "pwd" }, { text: "/" });
+	render();
+	const input = createChromeEditor(
+		{ terminal: { rows: 40 }, requestRender() {} },
+		{ borderColor: (text) => text, selectList: {} },
+		{ matches: () => false },
+		{
+			theme: () => ({ fg: (_c, x) => x, bold: (x) => x, bg: (_c, x) => x }),
+			label: () => "m",
+		},
+	);
+	input.focused = true;
+	input.handleInput("x");
+	assert.equal(input.getText(), "x");
+	assert.ok(transcriptCursor.move(-1));
+	input.handleInput("\x1b[A");
+	assert.ok(shows(render(), "   ▸ Run ls"));
+	input.handleInput("\r");
+	assert.equal(command.expanded, true);
+	input.handleInput(" ");
+	assert.equal(command.expanded, false);
+	input.handleInput("\x1b");
+	assert.equal(transcriptCursor.active(), false);
+	assert.equal(input.getText(), "x");
+	assert.ok(transcriptCursor.move(-1));
+	input.handleInput("y");
+	assert.equal(transcriptCursor.active(), false);
+	assert.equal(input.getText(), "xy");
 });

@@ -150,6 +150,27 @@ type MouseLayout = {
 	children: { component: Component; height: number }[];
 };
 
+type Entry = MouseLayout["children"][number] & { key: object; from: number };
+type Place = { key: object; y: number };
+type View = {
+	width: number;
+	edge: number;
+	heads: number[];
+	places: Place[];
+	targets: MouseLayout["children"];
+	total: number;
+};
+export type Viewport = {
+	reveal(line: number, total: number): void;
+	restore(): void;
+};
+
+const views = new WeakMap<Container, View>();
+const cursors = new WeakMap<Container, Place>();
+const viewports = new WeakMap<Container, Viewport>();
+let current: Container | undefined;
+const cursorListeners = new Set<() => void>();
+
 function rowOf(child: Component) {
 	if (child instanceof ToolExecutionComponent) {
 		const tool = child as unknown as ToolState;
@@ -431,7 +452,7 @@ function renderChat(
 		else if (!hidden.has(seg)) state = compact(seg);
 	}
 	const lines: string[] = [];
-	const mouse: MouseLayout["children"] = [];
+	const mouse: Entry[] = [];
 	const heads = new Set<number>();
 	const bodies = new Set<number>();
 	let carry = "";
@@ -455,6 +476,8 @@ function renderChat(
 				component:
 					seg.from === 0 ? seg.child : shifted(seg.child, seg.from, all.length),
 				height: part.length,
+				key: seg.child,
+				from: seg.from,
 			});
 		last = { child: seg.child, next: seg.to };
 	};
@@ -468,7 +491,7 @@ function renderChat(
 			heads.add(lines.length);
 			lines.push(carry + head.render(width)[0]);
 			carry = "";
-			mouse.push({ component: head, height: 1 });
+			mouse.push({ component: head, height: 1, key: seg.child, from: -1 });
 			last = undefined;
 		}
 		if (!hidden.has(seg)) emit(seg);
@@ -493,7 +516,8 @@ function rows(
 	const owners: { component: Component; y: number; height: number }[] = [];
 	for (const { component, height } of mouse)
 		for (let y = 0; y < height; y++) owners.push({ component, y, height });
-	if (owners.length !== lines.length) return mouse;
+	if (owners.length !== lines.length)
+		return mouse.map(({ component, height }) => ({ component, height }));
 	const target = (line: number) =>
 		visibleWidth(lines[line] ?? "") === 0 && heads.has(line + 1)
 			? line + 1
@@ -528,10 +552,80 @@ function rows(
 	}));
 }
 
+function cursorLine(container: Container) {
+	const cursor = cursors.get(container);
+	const view = views.get(container);
+	if (!cursor || !view) return undefined;
+	const line = view.places.findIndex(
+		(place) => place.key === cursor.key && place.y === cursor.y,
+	);
+	return line >= 0 && view.heads.includes(line) ? line : undefined;
+}
+
+function selected(line: string, width: number) {
+	const pad = " ".repeat(Math.max(0, width - visibleWidth(line)));
+	return theme().bg("selectedBg", line + pad);
+}
+
+export const transcriptCursor = {
+	active() {
+		return current !== undefined && cursors.has(current);
+	},
+	move(delta: -1 | 1) {
+		const view = current && views.get(current);
+		if (!current || !view || view.heads.length === 0) return false;
+		const line = cursorLine(current);
+		const at = line === undefined ? -1 : view.heads.indexOf(line);
+		const next =
+			at < 0
+				? view.heads.length - 1
+				: Math.min(view.heads.length - 1, Math.max(0, at + delta));
+		const head = view.heads[next];
+		const entering = !cursors.has(current);
+		cursors.set(current, view.places[head]);
+		viewports.get(current)?.reveal(head, view.total);
+		if (entering) for (const listener of cursorListeners) listener();
+		return true;
+	},
+	toggle() {
+		const view = current && views.get(current);
+		const line = current && cursorLine(current);
+		if (!view || line === undefined) return false;
+		const result = view.targets[line]?.component.handleMouse?.({
+			type: "click",
+			button: "left",
+			x: view.edge,
+			y: 0,
+			width: view.width,
+			height: 1,
+			screenX: view.edge,
+			screenY: 0,
+			shift: false,
+			alt: false,
+			ctrl: false,
+		});
+		return result !== undefined;
+	},
+	leave() {
+		if (!current || !cursors.has(current)) return;
+		cursors.delete(current);
+		viewports.get(current)?.restore();
+		for (const listener of cursorListeners) listener();
+	},
+	subscribe(listener: () => void) {
+		cursorListeners.add(listener);
+		return () => {
+			cursorListeners.delete(listener);
+		};
+	},
+};
+
 export function patchChat(
 	container: Container,
 	indent: (width: number) => number,
+	viewport?: Viewport,
 ) {
+	if (viewport && !viewports.has(container)) viewports.set(container, viewport);
 	if (patched.has(container)) return;
 	patched.add(container);
 	const target = container as unknown as {
@@ -542,13 +636,30 @@ export function patchChat(
 	target.render = (width: number) => {
 		try {
 			const chat = renderChat(target.children, width, indent);
-			target.mouseLayout = {
+			const edge = indent(width);
+			const targets = rows(container, chat, width, edge);
+			target.mouseLayout = { width, children: targets };
+			current = container;
+			const places = chat.mouse.flatMap(({ key, from, height }) =>
+				Array.from({ length: height }, (_, y) => ({
+					key,
+					y: from < 0 ? -1 : from + y,
+				})),
+			);
+			views.set(container, {
 				width,
-				children: rows(container, chat, width, indent(width)),
-			};
+				edge,
+				heads: [...chat.heads].sort((a, b) => a - b),
+				places,
+				targets,
+				total: chat.lines.length,
+			});
 			const point = hovered.get(container);
-			if (point === undefined || !chat.heads.has(point)) return chat.lines;
-			return chat.lines.map((line, i) => (i === point ? pointAt(line) : line));
+			const cursor = cursorLine(container);
+			return chat.lines.map((line, i) => {
+				if (i === cursor) return selected(pointAt(line), width);
+				return i === point && chat.heads.has(point) ? pointAt(line) : line;
+			});
 		} catch {
 			delete (target as Partial<typeof target>).render;
 			patched.delete(container);
@@ -558,7 +669,10 @@ export function patchChat(
 }
 
 export function restoreChat() {
-	for (const container of patched)
+	for (const container of patched) {
 		delete (container as Partial<{ render: unknown }>).render;
+		cursors.delete(container);
+	}
 	patched.clear();
+	current = undefined;
 }

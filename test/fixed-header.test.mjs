@@ -139,6 +139,7 @@ function startChrome() {
 		on(event, handler) {
 			handlers.set(event, [...(handlers.get(event) ?? []), handler]);
 		},
+		registerShortcut() {},
 	};
 	const factories = {};
 	const ctx = {

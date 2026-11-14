@@ -5,6 +5,8 @@ import {
 import {
 	type AutocompleteProvider,
 	type EditorTheme,
+	Key,
+	matchesKey,
 	renderFakeCursor,
 	type SelectListTheme,
 	stripTerminalSequences,
@@ -15,6 +17,7 @@ import {
 } from "@earendil-works/pi-tui";
 
 import type { ChromeTheme } from "./chrome.ts";
+import { transcriptCursor } from "./chrome-groups.ts";
 import { NATIVE } from "./chrome-menus.ts";
 
 export const PLACEHOLDER = "What should we build together?";
@@ -113,6 +116,33 @@ class ChromeEditor extends CustomEditor {
 		super(tui, { ...theme, selectList: menuTheme(chrome.theme) }, keybindings);
 		this.chrome = chrome;
 		this.host = tui;
+	}
+
+	handleInput(data: string) {
+		if (transcriptCursor.active() && this.navigate(data)) {
+			this.host.requestRender();
+			return;
+		}
+		super.handleInput(data);
+	}
+
+	navigate(data: string) {
+		if (
+			matchesKey(data, Key.up) ||
+			matchesKey(data, Key.alt("k")) ||
+			data === "k"
+		)
+			return transcriptCursor.move(-1);
+		if (
+			matchesKey(data, Key.down) ||
+			matchesKey(data, Key.alt("j")) ||
+			data === "j"
+		)
+			return transcriptCursor.move(1);
+		if (matchesKey(data, Key.enter) || matchesKey(data, Key.space))
+			return transcriptCursor.toggle() || true;
+		transcriptCursor.leave();
+		return matchesKey(data, Key.escape);
 	}
 
 	setAutocompleteProvider(provider: AutocompleteProvider) {

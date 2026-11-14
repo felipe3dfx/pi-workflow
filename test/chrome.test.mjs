@@ -457,10 +457,12 @@ test("the footer shows other extensions' statuses on the right and drops whole s
 
 function fakeChrome(entries = []) {
 	const handlers = new Map();
+	const shortcuts = new Map();
 	const pi = {
 		on(event, handler) {
 			handlers.set(event, [...(handlers.get(event) ?? []), handler]);
 		},
+		registerShortcut: (key, shortcut) => shortcuts.set(key, shortcut),
 	};
 	const timers = new Set();
 	const schedule = (run) => {

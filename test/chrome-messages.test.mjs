@@ -775,6 +775,7 @@ test("every rendered line fits the width from 10 to 160 columns", (t) => {
 test("the chrome patches the message components on a TUI session_start, keeps them across session replacement and restores them on quit", async () => {
 	const handlers = new Map();
 	const pi = {
+		registerShortcut() {},
 		on(event, handler) {
 			handlers.set(event, [...(handlers.get(event) ?? []), handler]);
 		},
