@@ -210,7 +210,7 @@ export function createCodeGraphTool(adapters: CodeGraphAdapters = {}) {
 					content: [
 						{
 							type: "text" as const,
-							text: "CodeGraph access is not seated. Run /workflow:config.",
+							text: "CodeGraph access is disabled. Enable it in /workflow:config.",
 						},
 					],
 					details: { status: "refused" },

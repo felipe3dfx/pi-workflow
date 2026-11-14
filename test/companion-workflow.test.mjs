@@ -1298,7 +1298,7 @@ test("workflow:config outside the TUI notifies that it needs the TUI and does no
 			async ({ configure, notifications }) => {
 				await configure(mode);
 				assert.deepEqual(notifications, [
-					{ message: "Configure needs the TUI.", level: "error" },
+					{ message: "Configure needs the TUI.", level: "warning" },
 				]);
 				assert.deepEqual(seatedNames(), []);
 			},

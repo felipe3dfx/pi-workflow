@@ -834,8 +834,8 @@ export function createChildrenViews(
 		async open(ctx: ExtensionContext) {
 			if (!seated("child-session", "overlay")) {
 				ctx.ui.notify(
-					"Child session is not seated. Run /workflow:config.",
-					"error",
+					"Child session is disabled. Enable it in /workflow:config.",
+					"warning",
 				);
 				return;
 			}

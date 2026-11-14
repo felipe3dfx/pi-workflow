@@ -560,12 +560,12 @@ export function createAskUserChoiceTool(
 					content: [
 						{
 							type: "text" as const,
-							text: "Operator questions are not seated. Run /workflow:config.",
+							text: "Operator questions are disabled. Enable them in /workflow:config.",
 						},
 					],
 					details: {
 						status: "refused",
-						reason: "Operator questions are not seated.",
+						reason: "Operator questions are disabled.",
 					},
 				};
 			}
@@ -612,12 +612,12 @@ export function createAskUserQuestionTool(
 					content: [
 						{
 							type: "text" as const,
-							text: "Operator questions are not seated. Run /workflow:config.",
+							text: "Operator questions are disabled. Enable them in /workflow:config.",
 						},
 					],
 					details: {
 						status: "refused",
-						reason: "Operator questions are not seated.",
+						reason: "Operator questions are disabled.",
 					},
 				};
 			}

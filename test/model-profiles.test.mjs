@@ -214,7 +214,7 @@ test("/workflow:models rejects extra arguments with the shared usage", async (t)
 		await command.handler("--force", { hasUI: false, mode: "print", ui });
 
 		assert.equal(notifications.length, 1);
-		assert.equal(notifications[0].level, "error");
+		assert.equal(notifications[0].level, "warning");
 		for (const message of [notifications[0].message, ...printed]) {
 			assert.match(message, /\/workflow:models \| \/workflow:subagents/);
 			assert.doesNotMatch(message, /models-edit/);

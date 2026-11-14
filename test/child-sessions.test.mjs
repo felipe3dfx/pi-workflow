@@ -5464,7 +5464,7 @@ test("alt+a and /workflow:subagents open a full-screen overlay of every child; j
 		const views = extension.views.length;
 		await extension.command("workflow:subagents", "", "rpc");
 		assert.equal(extension.views.length, views);
-		assert.equal(extension.notifications.at(-1).level, "error");
+		assert.equal(extension.notifications.at(-1).level, "warning");
 		assert.equal(extension.commands.has("pi-workflow-child-cancel"), false);
 		assert.doesNotMatch(extension.notifications.at(-2).message, /child-cancel/);
 	});
@@ -6830,7 +6830,7 @@ test("after child session is unseated, a launch is refused while a fan-out's chi
 		assert.equal(refused.details.status, "refused");
 		assert.match(
 			text(refused),
-			/^Child session is not seated\. Run \/workflow:config\.\n/,
+			/^Child session is disabled\. Enable it in \/workflow:config\.\n/,
 		);
 		assert.match(
 			text(refused),
@@ -6885,7 +6885,7 @@ test("after child session is unseated, continue_child is refused with the no-sta
 		assert.equal(refused.details.status, "refused");
 		assert.match(
 			text(refused),
-			/^Child session is not seated\. Run \/workflow:config\.\n/,
+			/^Child session is disabled\. Enable it in \/workflow:config\.\n/,
 		);
 		assert.match(
 			text(refused),
@@ -7624,7 +7624,7 @@ test("a launch naming a missing task, a done task, or a task while the Todo is n
 		const cases = [
 			{ todo: 9, reason: /Task #9 does not exist/ },
 			{ todo: 2, reason: /Task #2 is done/ },
-			{ todo: 1, unseat: true, reason: /Todo is not seated/ },
+			{ todo: 1, unseat: true, reason: /Todo is disabled/ },
 		];
 		try {
 			for (const { todo: id, unseat, reason } of cases) {

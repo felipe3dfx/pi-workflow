@@ -186,7 +186,7 @@ export function registerSessionTodo(
 					content: [
 						{
 							type: "text" as const,
-							text: "Todo is not seated. Run /workflow:config.",
+							text: "Todo is disabled. Enable it in /workflow:config.",
 						},
 					],
 					details: { status: "refused" },
@@ -301,7 +301,7 @@ export function registerSessionTodo(
 	function claim(id: number): TodoClaim {
 		if (!seated("todo", "above-input")) {
 			return {
-				reason: `Todo is not seated, so task #${id} cannot be linked. Run /workflow:config.`,
+				reason: `Todo is disabled, so task #${id} cannot be linked. Enable it in /workflow:config.`,
 			};
 		}
 		const task = find(id);
