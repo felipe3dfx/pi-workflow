@@ -17,7 +17,9 @@ import {
 	createWriteToolDefinition,
 	initTheme,
 } from "@earendil-works/pi-coding-agent";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { createToolHtmlRenderer } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/export-html/tool-renderer.js";
+import { loadThemeFromPath } from "../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 
 import {
 	compactToolRenderers,
@@ -287,6 +289,101 @@ test("a closed tool colors only its glyph by status: error, running dim, done to
 		`<dim>◆</dim> ${rest}`,
 	);
 	assert.equal(row({ isError: false }), `<toolTitle>◆</toolTitle> ${rest}`);
+});
+
+const themeKey = Symbol.for("@earendil-works/pi-coding-agent:theme");
+
+function withWorkflowTheme(t, mode = "truecolor") {
+	const previous = globalThis[themeKey];
+	const workflow = loadThemeFromPath(
+		new URL("../themes/pi-workflow.json", import.meta.url).pathname,
+		mode,
+	);
+	globalThis[themeKey] = workflow;
+	t.after(() => {
+		globalThis[themeKey] = previous;
+	});
+	return workflow;
+}
+
+test("a closed tool paints a file path orange and a running glyph cyan from the theme vars", (t) => {
+	const workflow = withWorkflowTheme(t);
+	const tools = loadTools();
+	const orange = "\x1b[38;2;255;158;100m";
+	const cyan = "\x1b[38;2;125;207;255m";
+	const row = (name, args, status = {}) =>
+		tools
+			.get(name)
+			.renderCall(args, workflow, {
+				...renderContext(args, false, "/"),
+				...status,
+			})
+			.render(80)[0];
+	for (const name of ["read", "ls", "edit", "write"])
+		assert.ok(row(name, { path: "a.ts" }).includes(`${orange}a.ts`), name);
+	for (const [name, args] of [
+		["bash", { command: "npm test" }],
+		["grep", { pattern: "TODO" }],
+		["find", { pattern: "*.ts" }],
+	])
+		assert.ok(!row(name, args).includes(orange), name);
+	assert.ok(
+		row("bash", { command: "x" }, { isPartial: true }).startsWith(`${cyan}◆`),
+	);
+	assert.ok(!row("bash", { command: "x" }).includes(cyan));
+});
+
+test("an open edit bands added and removed diff lines across the width and leaves Pi's cached lines untouched", (t) => {
+	const workflow = withWorkflowTheme(t);
+	const tool = loadTools().get("edit");
+	const args = { path: "a.ts", edits: [] };
+	const context = renderContext(args, true, process.cwd());
+	const view = tool.renderResult(
+		{
+			content: [{ type: "text", text: "ok" }],
+			details: { diff: "-1 old line\n+1 new line\n 2 same" },
+		},
+		{ expanded: true, isPartial: false },
+		workflow,
+		context,
+	);
+	const width = 40;
+	const shown = view.render(width);
+	const removed = shown.find((line) => line.includes("-1 old"));
+	const added = shown.find((line) => line.includes("+1 new"));
+	const same = shown.find((line) => line.includes("2 same"));
+	assert.ok(removed.includes("\x1b[48;2;66;14;20m"), removed);
+	assert.ok(added.includes("\x1b[48;2;6;56;6m"), added);
+	for (const line of [removed, added]) {
+		assert.ok(line.endsWith("\x1b[49m"), line);
+		assert.ok(stripVTControlCharacters(line).startsWith("┃ "), line);
+		assert.equal(visibleWidth(line), width);
+	}
+	assert.ok(!same.includes("\x1b[48;"), same);
+	assert.ok(
+		view.own.render(width - 2).every((line) => !line.includes("\x1b[48;")),
+	);
+});
+
+test("an open edit draws no diff band without truecolor", (t) => {
+	const workflow = withWorkflowTheme(t, "256color");
+	const diff = {
+		content: [{ type: "text", text: "ok" }],
+		details: { diff: "-1 old line\n+1 new line" },
+	};
+	const options = { expanded: true, isPartial: false };
+	const editArgs = { path: "a.ts", edits: [] };
+	const edit = loadTools()
+		.get("edit")
+		.renderResult(
+			diff,
+			options,
+			workflow,
+			renderContext(editArgs, true, process.cwd()),
+		)
+		.render(40);
+	assert.ok(edit.some((line) => line.includes("-1 old")));
+	assert.ok(edit.every((line) => !line.includes("\x1b[48;")));
 });
 
 test("an open bash keeps the elapsed time Pi draws", () => {

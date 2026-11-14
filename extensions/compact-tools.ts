@@ -11,10 +11,20 @@ import {
 	type ToolDefinition,
 	type ToolRenderers,
 } from "@earendil-works/pi-coding-agent";
-import { type Component, Text, TruncatedText } from "@earendil-works/pi-tui";
+import {
+	type Component,
+	Text,
+	TruncatedText,
+	visibleWidth,
+} from "@earendil-works/pi-tui";
 
 import { seated } from "./shell.ts";
 import { settings, shellOptions } from "./shell-settings.ts";
+import {
+	theme as activeTheme,
+	themeBgVar,
+	themeVar,
+} from "./visual-language.ts";
 
 type Theme = Parameters<NonNullable<ToolDefinition["renderCall"]>>[1];
 type RenderContext = Parameters<NonNullable<ToolDefinition["renderCall"]>>[2];
@@ -22,22 +32,49 @@ type ScriptCall = { name: string };
 
 export const hidden: Component = { render: () => [], invalidate() {} };
 
+const diffBands = [
+	["toolDiffAdded", "+", themeBgVar("diffAddedBg")],
+	["toolDiffRemoved", "-", themeBgVar("diffRemovedBg")],
+] as const;
+
+function diffBand(line: string, width: number) {
+	const content = line.replace(/^ */, "");
+	const palette = activeTheme();
+	for (const [token, sign, band] of diffBands) {
+		if (!content.startsWith(`${palette.getFgAnsi(token)}${sign}`)) continue;
+		return band(
+			`${line}${" ".repeat(Math.max(0, width - visibleWidth(line)))}`,
+			palette,
+		);
+	}
+	return line;
+}
+
 class View implements Component {
 	readonly own: Component;
 	private readonly closed: Component;
 	private readonly bar: string | undefined;
+	private readonly bands: boolean;
 
-	constructor(own: Component, closed: Component, bar: string | undefined) {
+	constructor(
+		own: Component,
+		closed: Component,
+		bar: string | undefined,
+		bands = false,
+	) {
 		this.own = own;
 		this.closed = closed;
 		this.bar = bar;
+		this.bands = bands;
 	}
 
 	render(width: number) {
 		if (this.bar === undefined) return this.closed.render(width);
-		return this.own
-			.render(Math.max(1, width - 2))
-			.map((line) => `${this.bar} ${line}`);
+		const inner = Math.max(1, width - 2);
+		const lines = this.own.render(inner);
+		return (
+			this.bands ? lines.map((line) => diffBand(line, inner)) : lines
+		).map((line) => `${this.bar} ${line}`);
 	}
 
 	invalidate() {
@@ -55,22 +92,32 @@ const verbs: Record<string, string> = {
 	write: "Write",
 };
 
+const pathTools = new Set(["read", "ls", "edit", "write"]);
+const running = themeVar("cyan", "dim");
+const pathDetail = themeVar("orange", "dim");
+
 type Status = { isError: boolean; isPartial: boolean };
 
-function toolRow(theme: Theme, status: Status, label: string, detail = "") {
-	const glyph = theme.fg(
-		status.isError ? "error" : status.isPartial ? "dim" : "toolTitle",
-		"◆",
-	);
+function toolRow(
+	theme: Theme,
+	status: Status,
+	label: string,
+	detail = "",
+	path = false,
+) {
+	const glyph = status.isError
+		? theme.fg("error", "◆")
+		: status.isPartial
+			? running("◆", theme)
+			: theme.fg("toolTitle", "◆");
 	const head = theme.bold(theme.fg("muted", label));
-	return detail
-		? `${glyph} ${head} ${theme.fg("dim", detail)}`
-		: `${glyph} ${head}`;
+	if (!detail) return `${glyph} ${head}`;
+	return `${glyph} ${head} ${path ? pathDetail(detail, theme) : theme.fg("dim", detail)}`;
 }
 
 function title(name: string, args: unknown, theme: Theme, status: Status) {
 	const [label, detail] = toolLabel(name, args);
-	return toolRow(theme, status, label, detail);
+	return toolRow(theme, status, label, detail, pathTools.has(name));
 }
 
 function titleCase(value: string) {
@@ -148,6 +195,7 @@ function compact<
 				own,
 				new TruncatedText(title(name, args, theme, context)),
 				bar(theme, context.expanded),
+				name === "edit",
 			);
 		},
 		renderResult(result, options, theme, context) {
@@ -165,7 +213,12 @@ function compact<
 					...context,
 					lastComponent: previous,
 				}) ?? hidden;
-			return new View(own, hidden, bar(theme, context.expanded));
+			return new View(
+				own,
+				hidden,
+				bar(theme, context.expanded),
+				name === "edit",
+			);
 		},
 	};
 }
