@@ -7,7 +7,6 @@ import {
 	createFooterHints,
 	footerHints,
 	formatContextTokens,
-	formatDuration,
 	formatOutputTokens,
 	modelLabel,
 	renderFooter,
@@ -20,6 +19,7 @@ import {
 	createChromeEditor,
 	PLACEHOLDER,
 } from "../extensions/chrome-editor.ts";
+import { formatDuration } from "../extensions/visual-language.ts";
 
 const theme = {
 	fg: (_color, text) => text,
@@ -238,12 +238,10 @@ test("token counts and durations use the compact formats", () => {
 		[420, 2_960, 34_000, 340_000, 1_200_000].map(formatOutputTokens),
 		["420", "2.96k", "34.0k", "340k", "1.20m"],
 	);
-	assert.deepEqual([3_640, 44_000, 128_000, 3_720_000].map(formatDuration), [
-		"3.6s",
-		"44s",
-		"2m8s",
-		"1h2m",
-	]);
+	assert.deepEqual(
+		[3_640, 9_960, 44_000, 59_600, 128_000, 3_720_000].map(formatDuration),
+		["3.6s", "10s", "44s", "1m0s", "2m8s", "1h2m"],
+	);
 });
 
 test("the status row shows the spinner, activity, and step time on the left and the turn time and output tokens on the right", () => {

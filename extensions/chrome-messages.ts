@@ -34,7 +34,7 @@ import {
 	type PatchTarget,
 } from "./chrome-patch.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
-import { theme } from "./visual-language.ts";
+import { formatDuration, minThoughtMs, theme } from "./visual-language.ts";
 
 const SHARED = Symbol.for("pi-workflow:chrome-messages:shared");
 const piDefaultHiddenLabel = "Thinking...";
@@ -171,14 +171,6 @@ function stamp(timestamp: number | undefined) {
 	return text ? theme().fg("dim", text) : "";
 }
 
-function thoughtDuration(ms: number) {
-	const seconds = Math.max(0, ms) / 1_000;
-	const tenths = Math.round(seconds * 10);
-	if (tenths < 600) return `${(tenths / 10).toFixed(1)}s`;
-	const whole = Math.round(seconds);
-	return `${Math.floor(whole / 60)}m${whole % 60}s`;
-}
-
 function thinkingDuration(
 	timestamp: number | undefined,
 	runIndex: number,
@@ -263,7 +255,9 @@ function thinkingHeader(parts: HeaderParts, width: number) {
 	const label = terminalSafeLine(parts.label);
 	const duration = parts.duration?.();
 	const meta =
-		duration === undefined ? "" : ` for ${thoughtDuration(duration)}`;
+		duration === undefined || duration < minThoughtMs
+			? ""
+			: ` for ${formatDuration(duration)}`;
 	let used = visibleWidth(`◆ ${label}${meta}`);
 	let line = `${t.fg("dim", "◆")} ${t.bold(t.fg("muted", label))}${meta ? t.fg("dim", meta) : ""}`;
 	const room = width - used - 3;

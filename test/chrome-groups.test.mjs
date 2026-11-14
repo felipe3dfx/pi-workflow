@@ -193,6 +193,15 @@ test("a running member switches the header to the present tense", (t) => {
 	assert.ok(render().includes("   ◈ Read 2 files"));
 });
 
+test("each kind in a header keeps its own tense while another kind runs", (t) => {
+	const { tool, render } = chat(t);
+	tool("read", { path: "a.ts" });
+	const search = tool("grep", { pattern: "TODO" }, { done: false });
+	assert.ok(render().includes("   ◈ Read 1 file, Searching 1 pattern"));
+	search.updateResult({ content: [{ type: "text", text: "ok" }] }, false);
+	assert.ok(render().includes("   ◈ Read 1 file, Searched 1 pattern"));
+});
+
 test("a run longer than eleven rows folds its oldest rows into a ◈ header and keeps the last ten", (t) => {
 	const { say, tool, render } = chat(t);
 	say([thought()]);

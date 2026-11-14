@@ -25,7 +25,12 @@ import { type Schedule, scheduleTimer } from "./clock.ts";
 import { fixHeader } from "./fixed-header.ts";
 import { readHeader, watchHeader } from "./shell.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
-import { spinnerMs, spread, workingFrames } from "./visual-language.ts";
+import {
+	formatDuration,
+	spinnerMs,
+	spread,
+	workingFrames,
+} from "./visual-language.ts";
 
 export type ChromeTheme = Pick<Theme, "fg" | "bold" | "bg">;
 export type Hint = { key: string; action: string };
@@ -86,16 +91,6 @@ export function formatOutputTokens(tokens: number) {
 	if (tokens < 1_000_000) return `${Math.floor(tokens / 1_000)}k`;
 	if (tokens < 10_000_000) return `${(tokens / 1_000_000).toFixed(2)}m`;
 	return `${(tokens / 1_000_000).toFixed(1)}m`;
-}
-
-export function formatDuration(ms: number) {
-	const seconds = Math.max(0, ms) / 1_000;
-	if (seconds < 10) return `${seconds.toFixed(1)}s`;
-	const whole = Math.floor(seconds);
-	if (whole < 60) return `${whole}s`;
-	const minutes = Math.floor(whole / 60);
-	if (minutes < 60) return `${minutes}m${whole % 60}s`;
-	return `${Math.floor(minutes / 60)}h${minutes % 60}m`;
 }
 
 export interface HeaderData {

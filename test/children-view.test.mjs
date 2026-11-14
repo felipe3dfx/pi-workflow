@@ -525,6 +525,7 @@ test("the detail shows a header, the clamped prompt, the audited thread in chat 
 
 test("a thought streamed while the view is open shows its duration once it ends", async (t) => {
 	const child = record("5636");
+	t.mock.timers.enable({ apis: ["Date"], now: 1_000 });
 	const capture = audited(t, [child]);
 	const streaming = { role: "assistant", content: [] };
 	capture.emit(child.id, { type: "message_start", message: streaming });
@@ -536,12 +537,13 @@ test("a thought streamed while the view is open shows its duration once it ends"
 	const sessions = fakeSessions([child]);
 	const view = open(sessions, { audit: capture.audit });
 	assert.match(await settle(view), /◆ Thinking…/);
+	t.mock.timers.tick(1_500);
 	capture.emit(child.id, {
 		type: "message_end",
 		message: { role: "assistant", content: [{ type: "thinking", thinking: "Planning the wait." }] },
 	});
 	sessions.changed();
-	assert.match(await settle(view), /◆ Thought for \d+\.\ds/);
+	assert.match(await settle(view), /◆ Thought for 1\.5s/);
 });
 
 function lines40(t, child, others = []) {
