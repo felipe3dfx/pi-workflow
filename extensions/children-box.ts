@@ -67,8 +67,20 @@ function rowGlyph(theme: ChildTheme, child: ChildRecord, now: number) {
 	return theme.fg(glyphs.running[1], frame);
 }
 
-function childrenHeading(theme: ChildTheme, count: number) {
-	return `${theme.fg("dim", "▾")} ${theme.bold(theme.fg("muted", "Subagents"))} ${theme.fg("dim", String(count))}`;
+function childrenHeading(theme: ChildTheme, rows: ChildRecord[]) {
+	const tally = (match: (state: ChildRecord["state"]) => boolean) =>
+		rows.filter((child) => match(child.state)).length;
+	const parts = [
+		["warning", tally((state) => state === "waiting"), "waiting"],
+		["dim", tally((state) => state === "running"), "running"],
+		["dim", tally((state) => state === "queued"), "queued"],
+		["dim", tally((state) => !isWorking(state)), "finished"],
+	] as const;
+	const counts = parts
+		.filter(([, count]) => count > 0)
+		.map(([color, count, label]) => theme.fg(color, `${count} ${label}`))
+		.join(theme.fg("dim", " · "));
+	return `${theme.fg("dim", "▾")} ${theme.bold(theme.fg("muted", "Subagents"))} ${counts}`;
 }
 
 function renderChildRow(
@@ -107,7 +119,7 @@ export function renderChildrenBox(
 	const shown = rows.slice(0, maxRows);
 	const hint = theme.fg("dim", "alt+a view");
 	const lines = [
-		spread(childrenHeading(theme, rows.length), hint, width),
+		spread(childrenHeading(theme, rows), hint, width),
 		...shown.map((child, i) =>
 			renderChildRow(theme, child, now, i === 0, width),
 		),

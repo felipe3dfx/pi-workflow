@@ -42,7 +42,7 @@ test("no children, or only children that finished more than 60 seconds ago, rend
 	);
 });
 
-test("the box reads Subagents with the count, and each row shows the state, name, step, model, effort, and elapsed time", () => {
+test("the box reads Subagents with counts by state, and each row shows the state, name, step, model, effort, and elapsed time", () => {
 	const lines = renderChildrenBox(
 		theme,
 		[
@@ -59,7 +59,7 @@ test("the box reads Subagents with the count, and each row shows the state, name
 		now,
 		100,
 	);
-	assert.match(lines[0], /▾ Subagents 2 +alt\+a view/);
+	assert.match(lines[0], /▾ Subagents 1 waiting · 1 running +alt\+a view/);
 	assert.match(
 		lines[1],
 		/\? explore c3d4 asks question 1 +grok-4\.7 \(low\) 1m 02s/,
@@ -119,7 +119,7 @@ test("finished rows stay 60 seconds, at most the three latest, after the working
 			.map((line) => stripVTControlCharacters(line).trim().split(" ")[0]),
 		["⠦", "✓", "✗", "–"],
 	);
-	assert.match(lines[0], /Subagents 4/);
+	assert.match(lines[0], /Subagents 1 running · 3 finished /);
 	assert.doesNotMatch(lines.join("\n"), /old|slow/);
 });
 
@@ -140,7 +140,10 @@ test("waiting rows come first, then running, then queued, and the box shows eigh
 		}),
 	];
 	const lines = renderChildrenBox(theme, records, now, 80);
-	assert.match(lines[0], /Subagents 11/);
+	assert.match(
+		lines[0],
+		/Subagents 1 waiting · 4 running · 5 queued · 1 finished /,
+	);
 	assert.equal(lines.length, 10);
 	assert.match(lines[1], /\? w /);
 	assert.match(lines[2], /⠦ r0 /);
@@ -169,16 +172,26 @@ test("the running glyph and the role use the accent while the short id stays pla
 	assert.match(row, /<accent>⠦<\/accent> <accent>worker<\/accent> a1b2 /);
 });
 
-test("the heading is a dim chevron, a bold muted title, and a dim count", () => {
+test("the heading is a dim chevron, a bold muted title, and dim counts with waiting in the warning tone", () => {
 	const tagged = {
 		...theme,
 		fg: (color, text) => `<${color}>${text}</${color}>`,
 		bold: (text) => `<b>${text}</b>`,
 	};
-	const [heading] = renderChildrenBox(tagged, [child({})], now, 80);
+	const [heading] = renderChildrenBox(tagged, [child({})], now, 200);
 	assert.match(
 		heading,
-		/^<dim>▾<\/dim> <b><muted>Subagents<\/muted><\/b> <dim>1<\/dim> +<dim>alt\+a view<\/dim>$/,
+		/^<dim>▾<\/dim> <b><muted>Subagents<\/muted><\/b> <dim>1 running<\/dim> +<dim>alt\+a view<\/dim>$/,
+	);
+	const [waiting] = renderChildrenBox(
+		tagged,
+		[child({ state: "waiting" }), child({})],
+		now,
+		200,
+	);
+	assert.match(
+		waiting,
+		/<warning>1 waiting<\/warning><dim> · <\/dim><dim>1 running<\/dim>/,
 	);
 });
 
