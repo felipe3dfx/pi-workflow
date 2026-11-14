@@ -59,7 +59,9 @@ export type InstallPackage = (
 interface CompanionCatalogAdapters {
 	metadataPath?: string;
 	resolveInstalledVersion?: ResolveInstalledVersion;
-	resolveInstalledVersionAsync?: (packageName: string) => Promise<{ version?: string; error?: string } | undefined>;
+	resolveInstalledVersionAsync?: (
+		packageName: string,
+	) => Promise<{ version?: string; error?: string } | undefined>;
 }
 
 type ExecCapability = (
@@ -158,7 +160,9 @@ export function loadCompanionsFromPath(
 	metadataPath: string,
 ): CompanionLoadResult {
 	try {
-		const metadata = JSON.parse(readFileSync(metadataPath, "utf8")) as CompanionMetadata;
+		const metadata = JSON.parse(
+			readFileSync(metadataPath, "utf8"),
+		) as CompanionMetadata;
 		if (!Array.isArray(metadata.companions)) {
 			return {
 				companions: [],
@@ -187,7 +191,10 @@ function readInstalledPackageVersion(packageJsonPath: string): {
 	const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
 		version?: unknown;
 	};
-	if (typeof packageJson.version !== "string" || packageJson.version.length === 0) {
+	if (
+		typeof packageJson.version !== "string" ||
+		packageJson.version.length === 0
+	) {
 		return { error: "installed package.json does not define a version" };
 	}
 	return { version: packageJson.version };
@@ -237,14 +244,19 @@ function getInstalledCompanionVersion(packageName: string): {
 	if (piInstalled.version || piInstalled.error) return piInstalled;
 
 	try {
-		const packageJsonPath = requireFromPackage.resolve(`${packageName}/package.json`);
+		const packageJsonPath = requireFromPackage.resolve(
+			`${packageName}/package.json`,
+		);
 		return readInstalledPackageVersion(packageJsonPath);
 	} catch (error) {
 		const code =
 			typeof error === "object" && error !== null
 				? (error as { code?: unknown }).code
 				: undefined;
-		if (code === "MODULE_NOT_FOUND" || code === "ERR_PACKAGE_PATH_NOT_EXPORTED") {
+		if (
+			code === "MODULE_NOT_FOUND" ||
+			code === "ERR_PACKAGE_PATH_NOT_EXPORTED"
+		) {
 			return {};
 		}
 		return { error: errorMessage(error) };
@@ -295,19 +307,23 @@ export async function resolveCompanionStates(
 ): Promise<CompanionState[]> {
 	const resolveInstalledVersion =
 		catalogOptions.resolveInstalledVersion ?? getInstalledCompanionVersion;
-	return Promise.all(companions.map(async (companion) => {
-		let resolved: { version?: string; error?: string } | undefined;
-		try {
-			resolved = await catalogOptions.resolveInstalledVersionAsync?.(companion.package);
-		} catch (error) {
-			resolved = { error: errorMessage(error) };
-		}
-		return getCompanionState(companion, (name) =>
-			name === companion.package && resolved !== undefined
-				? resolved
-				: resolveInstalledVersion(name),
-		);
-	}));
+	return Promise.all(
+		companions.map(async (companion) => {
+			let resolved: { version?: string; error?: string } | undefined;
+			try {
+				resolved = await catalogOptions.resolveInstalledVersionAsync?.(
+					companion.package,
+				);
+			} catch (error) {
+				resolved = { error: errorMessage(error) };
+			}
+			return getCompanionState(companion, (name) =>
+				name === companion.package && resolved !== undefined
+					? resolved
+					: resolveInstalledVersion(name),
+			);
+		}),
+	);
 }
 
 async function resolveCompanionCatalog(
@@ -317,7 +333,10 @@ async function resolveCompanionCatalog(
 	const loaded = loadCompanionsFromPath(metadataPath);
 	const resolveInstalledVersion =
 		catalogOptions.resolveInstalledVersion ?? getInstalledCompanionVersion;
-	const states = await resolveCompanionStates(loaded.companions, catalogOptions);
+	const states = await resolveCompanionStates(
+		loaded.companions,
+		catalogOptions,
+	);
 	const legacySpawnPackageState = resolveInstalledVersion(legacySpawnPackage);
 	return {
 		metadataPath,
@@ -367,12 +386,17 @@ export function manualInstallInstructions(
 ): string {
 	return [
 		heading,
-		...companions.map((companion) => `pi install ${companionInstallSpec(companion)}`),
+		...companions.map(
+			(companion) => `pi install ${companionInstallSpec(companion)}`,
+		),
 		"Then run /reload.",
 	].join("\n");
 }
 
-function notificationLevel(loadError: boolean, needsAttention: boolean): NotificationLevel {
+function notificationLevel(
+	loadError: boolean,
+	needsAttention: boolean,
+): NotificationLevel {
 	if (loadError) return "error";
 	if (needsAttention) return "warning";
 	return "info";
@@ -497,12 +521,17 @@ function renderCompanionCatalogStatus(
 	lines.push(...collisionLines(catalog));
 
 	if (catalog.legacySpawnPackageBlocked) {
-		lines.push("", ...legacySpawnPackageWarningLines(catalog.legacySpawnPackageError));
+		lines.push(
+			"",
+			...legacySpawnPackageWarningLines(catalog.legacySpawnPackageError),
+		);
 	}
 
-	for (const alignment of options.alignments) lines.push(...alignmentLines(alignment));
+	for (const alignment of options.alignments)
+		lines.push(...alignmentLines(alignment));
 
-	if (options.metadataPath) lines.push("", `Companion metadata: ${options.metadataPath}`);
+	if (options.metadataPath)
+		lines.push("", `Companion metadata: ${options.metadataPath}`);
 
 	return {
 		lines,
@@ -585,13 +614,17 @@ export function createCompanionWorkflow(options: CompanionWorkflowOptions) {
 	return {
 		async checkSpawnTools(): Promise<{ allowed: boolean }> {
 			const resolveInstalledVersion =
-				options.catalog?.resolveInstalledVersion ?? getInstalledCompanionVersion;
-			const legacySpawnPackageState = resolveInstalledVersion(legacySpawnPackage);
+				options.catalog?.resolveInstalledVersion ??
+				getInstalledCompanionVersion;
+			const legacySpawnPackageState =
+				resolveInstalledVersion(legacySpawnPackage);
 			const allowed = spawnToolsAllowed(legacySpawnPackageState);
 			if (!allowed) {
 				notify(
 					interaction,
-					legacySpawnPackageWarningLines(legacySpawnPackageState.error).join("\n"),
+					legacySpawnPackageWarningLines(legacySpawnPackageState.error).join(
+						"\n",
+					),
 					"warning",
 				);
 			}
@@ -612,7 +645,8 @@ export function createCompanionWorkflow(options: CompanionWorkflowOptions) {
 
 			const loadedMcp = loadMcpServerCatalog(options.mcp);
 			if (!loadedMcp.catalog) {
-				const message = loadedMcp.error ?? "Unable to load the MCP server catalog.";
+				const message =
+					loadedMcp.error ?? "Unable to load the MCP server catalog.";
 				notify(interaction, message, "error");
 				return emptyInstallResult("mcp-catalog-error", { message });
 			}
@@ -631,12 +665,16 @@ export function createCompanionWorkflow(options: CompanionWorkflowOptions) {
 
 			const loadedSettings = loadPiSettingsCatalog(options.settings);
 			if (!loadedSettings.catalog) {
-				const message = loadedSettings.error ?? "Unable to load the settings catalog.";
+				const message =
+					loadedSettings.error ?? "Unable to load the settings catalog.";
 				notify(interaction, message, "error");
 				return emptyInstallResult("settings-catalog-error", { message });
 			}
 
-			const settingsPlan = planPiSettings(loadedSettings.catalog, agentDirectory);
+			const settingsPlan = planPiSettings(
+				loadedSettings.catalog,
+				agentDirectory,
+			);
 			if (settingsPlan.error) {
 				notify(interaction, settingsPlan.error, "error");
 				return emptyInstallResult("config-error", {
@@ -645,9 +683,7 @@ export function createCompanionWorkflow(options: CompanionWorkflowOptions) {
 				});
 			}
 
-			const expected = expectedPackages
-				? new Set(expectedPackages)
-				: undefined;
+			const expected = expectedPackages ? new Set(expectedPackages) : undefined;
 			const installable = catalog.states.filter(
 				(companion) =>
 					companion.status === "missing" &&
@@ -674,7 +710,10 @@ export function createCompanionWorkflow(options: CompanionWorkflowOptions) {
 				settingsPath: settingsPlan.path,
 			};
 			const hasWork =
-				installable.length > 0 || errored.length > 0 || mcpPlan.changed || settingsPlan.changed;
+				installable.length > 0 ||
+				errored.length > 0 ||
+				mcpPlan.changed ||
+				settingsPlan.changed;
 			if (!hasWork) {
 				const message =
 					"All configured companions are installed, MCP configuration matches the catalog, and default settings are applied.";
@@ -697,13 +736,23 @@ export function createCompanionWorkflow(options: CompanionWorkflowOptions) {
 				!settingsPlan.changed
 			) {
 				notify(interaction, manualInstructions, "error");
-				return { outcome: "manual-only", message: manualInstructions, ...base, failures: [] };
+				return {
+					outcome: "manual-only",
+					message: manualInstructions,
+					...base,
+					failures: [],
+				};
 			}
 
 			const installPackage = resolveInstallPackage(interaction);
 			if (!installPackage) {
 				notify(interaction, manualInstructions, "warning");
-				return { outcome: "manual-only", message: manualInstructions, ...base, failures: [] };
+				return {
+					outcome: "manual-only",
+					message: manualInstructions,
+					...base,
+					failures: [],
+				};
 			}
 
 			const failures: string[] = [];
@@ -739,7 +788,11 @@ async function finishApply(
 	agentDirectory: string,
 	base: Pick<
 		SetupResult,
-		"installable" | "errored" | "manualInstructions" | "mcpPath" | "settingsPath"
+		| "installable"
+		| "errored"
+		| "manualInstructions"
+		| "mcpPath"
+		| "settingsPath"
 	>,
 	companions: ResolvedCompanionCatalog,
 	failures: string[] = [],

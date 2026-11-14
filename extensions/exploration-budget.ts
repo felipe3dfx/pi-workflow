@@ -107,7 +107,9 @@ function inspectsOnly(command: unknown): boolean {
 		.map((segment) =>
 			segment.replace(/^git\s+((-C|-c)\s+\S+\s+|--no-pager\s+)+/, "git "),
 		)
-		.filter((segment) => segment.includes(">") || !neutralCommand.test(segment));
+		.filter(
+			(segment) => segment.includes(">") || !neutralCommand.test(segment),
+		);
 	return (
 		commands.length > 0 &&
 		commands.every(
@@ -169,8 +171,7 @@ export function createExplorationBudget() {
 			for (const part of event.content)
 				if (part.type === "text")
 					facts.textBytes += Buffer.byteLength(part.text, "utf8");
-			if (notified || (facts.lookups <= 3 && facts.textBytes <= 40_000))
-				return;
+			if (notified || (facts.lookups <= 3 && facts.textBytes <= 40_000)) return;
 			notified = true;
 			return { ...facts };
 		},

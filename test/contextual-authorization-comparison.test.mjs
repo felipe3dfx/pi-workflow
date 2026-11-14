@@ -57,7 +57,10 @@ test("comparison sends only the complete proposal and retains the missing matrix
 		},
 	);
 	assert.equal(received.length, 1);
-	assert.deepEqual(received[0].proposal, { ...corpus.cases[0].modelInput, rules: actionAuthorizationRules });
+	assert.deepEqual(received[0].proposal, {
+		...corpus.cases[0].modelInput,
+		rules: actionAuthorizationRules,
+	});
 	assert.equal(details.effectiveRules, actionAuthorizationRules);
 	assert.equal(run.samples.length, 1);
 	assert.equal(run.samples[0].outcome, "allow");
@@ -97,7 +100,10 @@ test("resumed exact consultation reaches the hook unchanged and is scored separa
 				: known;
 		},
 	);
-	assert.deepEqual(received[index], { ...corpus.cases[index].modelInput, rules: actionAuthorizationRules });
+	assert.deepEqual(received[index], {
+		...corpus.cases[index].modelInput,
+		rules: actionAuthorizationRules,
+	});
 	assert.equal(result.run.samples[index].outcome, "allow");
 	assert.equal(result.details.samples[index].stage, "resumed");
 	assert.equal(result.details.samples[index].initialGate, "scripted-held");
@@ -342,13 +348,19 @@ test("CLI accepts a local response with thinking and JSON text without leaking g
 					content:
 						"Return only a JSON object with scope, effects, ownership, restriction, confirmed, commit and reason. Assess the provided proposal and its rules.",
 				},
-				{ role: "user", content: { ...corpus.cases[0].modelInput, rules: actionAuthorizationRules } },
+				{
+					role: "user",
+					content: {
+						...corpus.cases[0].modelInput,
+						rules: actionAuthorizationRules,
+					},
+				},
 			],
 		);
-		assert.deepEqual(
-			JSON.parse(requests[0].messages[1].content),
-			{ ...corpus.cases[0].modelInput, rules: actionAuthorizationRules },
-		);
+		assert.deepEqual(JSON.parse(requests[0].messages[1].content), {
+			...corpus.cases[0].modelInput,
+			rules: actionAuthorizationRules,
+		});
 		assert.equal(statSync(output).mode & 0o777, 0o700);
 		assert.equal(statSync(join(output, "run.json")).mode & 0o777, 0o600);
 		for (const [name, failure] of [
@@ -403,8 +415,14 @@ test("malformed, provider error and timeout are failures, never held results", a
 		);
 		assert.equal(result.run.samples[0].failure, failure);
 		assert.equal(result.run.samples[0].outcome, null);
-		assert.equal(result.details.samples[0].tool, corpus.cases[0].modelInput.action.tool);
-		assert.ok(Number.isFinite(result.details.samples[0].elapsedMs) && result.details.samples[0].elapsedMs >= 0);
+		assert.equal(
+			result.details.samples[0].tool,
+			corpus.cases[0].modelInput.action.tool,
+		);
+		assert.ok(
+			Number.isFinite(result.details.samples[0].elapsedMs) &&
+				result.details.samples[0].elapsedMs >= 0,
+		);
 		assert.doesNotMatch(JSON.stringify(result), /secret/);
 	}
 });

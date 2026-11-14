@@ -143,7 +143,11 @@ function contextSegments(usage: HeaderData["usage"], bar: boolean): Segment[] {
 	return [occupancySegment(tokens, contextWindow, bar), window];
 }
 
-export function occupancySegment(tokens: number, contextWindow: number, bar: boolean): Segment {
+export function occupancySegment(
+	tokens: number,
+	contextWindow: number,
+	bar: boolean,
+): Segment {
 	const percent = Math.round((tokens / contextWindow) * 100);
 	const color = usageColor(percent);
 	const filled = Math.min(
@@ -153,7 +157,10 @@ export function occupancySegment(tokens: number, contextWindow: number, bar: boo
 	const meter: Segment = [["dim", "ctx"]];
 	if (bar)
 		meter.push(
-			[color, [...("▰".repeat(filled) + "▱".repeat(meterCells - filled))].join(" ")],
+			[
+				color,
+				[...("▰".repeat(filled) + "▱".repeat(meterCells - filled))].join(" "),
+			],
 			[null, ""],
 		);
 	meter.push([color, `${percent}%`]);

@@ -30,7 +30,12 @@ const required = [
 	"assets/contracts/verify.md",
 	"tools/pi-sandbox.mjs",
 ];
-const forbiddenPrefixes = ["skills/", "prompts/", "assets/agents/", "assets/acceptance/"];
+const forbiddenPrefixes = [
+	"skills/",
+	"prompts/",
+	"assets/agents/",
+	"assets/acceptance/",
+];
 const forbiddenFiles = [
 	"extensions/define-product-workflow.ts",
 	"extensions/qa-handoff-workflow.ts",
@@ -43,7 +48,8 @@ async function filesUnder(root, directory = root) {
 	for (const entry of await readdir(directory, { withFileTypes: true })) {
 		const path = join(directory, entry.name);
 		if (entry.isDirectory()) files.push(...(await filesUnder(root, path)));
-		else if (entry.isFile()) files.push(relative(root, path).replaceAll("\\", "/"));
+		else if (entry.isFile())
+			files.push(relative(root, path).replaceAll("\\", "/"));
 	}
 	return files.sort();
 }
@@ -52,7 +58,8 @@ export function validatePackedFiles(files) {
 	const errors = [];
 	const fileSet = new Set(files);
 	for (const path of required) {
-		if (!fileSet.has(path)) errors.push(`packed distribution is missing ${path}`);
+		if (!fileSet.has(path))
+			errors.push(`packed distribution is missing ${path}`);
 	}
 	for (const path of files) {
 		if (forbiddenPrefixes.some((prefix) => path.startsWith(prefix))) {

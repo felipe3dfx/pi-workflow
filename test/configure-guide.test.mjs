@@ -893,7 +893,9 @@ test("a short terminal keeps the focused row, the warning and the hints in the l
 		},
 		{ rows },
 	);
-	const [orchestrator, up, down, action, companion] = seen.filter((frame) => !frame.label.endsWith("discard"));
+	const [orchestrator, up, down, action, companion] = seen.filter(
+		(frame) => !frame.label.endsWith("discard"),
+	);
 	assert.match(orchestrator.focused, /^▸\s+Delegation mode\s+‹ orchestrator ›/);
 	assert.ok(
 		orchestrator.text.includes(
@@ -914,121 +916,174 @@ test("a short terminal keeps the focused row, the warning and the hints in the l
 });
 
 test("PageUp and PageDown expose the full focused description at 12x48 without moving focus", async (t) => {
-	await open(t, {}, (panel) => {
-		press(panel, keys.space);
-		focusOn(panel, "Delegation mode");
-		press(panel, keys.right);
-		const frames = [];
-		for (let i = 0; i < 20; i++) {
-			frames.push(body(panel, 48));
-			press(panel, "\x1b[6~");
-		}
-		const first = frames[0].join(" ");
-		assert.ok(first.includes("PgUp/PgDn description"));
-		assert.ok(first.includes("↓ more"));
-		const copy = frames.flatMap((lines) => lines.slice(
-			lines.findIndex((line) => line.startsWith("▸")) + 1,
-			lines.findIndex((line) => line.includes("more")),
-		));
-		const unique = [...new Set(copy)].join(" ").replace(/\s+/g, " ");
-		assert.ok(unique.includes("opportunistic: the parent decides per message whether to delegate (default)."), unique);
-		assert.ok(unique.includes("orchestrator: the parent is told to delegate all work to child sessions and keep to conversing, planning, asking, and directing children."), unique);
-		assert.ok(frames.at(-1).join(" ").includes("↑ more"));
-		for (const lines of frames) {
-			const text = lines.join(" ").replace(/\s+/g, " ");
-			assert.ok(lines.length + 2 <= 12);
-			assert.ok(lines.every((line) => visibleWidth(line) <= 48));
-			assert.ok(lines.some((line) => /^▸\s+Delegation mode/.test(line)));
-			assert.ok(text.includes("No effect while Child session is off: the parent has no child tools to delegate with."));
-			assert.ok(text.includes("↑/↓ move"));
-			assert.ok(text.includes("Esc"));
-		}
-		for (let i = 0; i < 20; i++) press(panel, "\x1b[5~");
-		assert.deepEqual(body(panel, 48), frames[0]);
-		closeGuide(panel);
-	}, { rows: 12 });
+	await open(
+		t,
+		{},
+		(panel) => {
+			press(panel, keys.space);
+			focusOn(panel, "Delegation mode");
+			press(panel, keys.right);
+			const frames = [];
+			for (let i = 0; i < 20; i++) {
+				frames.push(body(panel, 48));
+				press(panel, "\x1b[6~");
+			}
+			const first = frames[0].join(" ");
+			assert.ok(first.includes("PgUp/PgDn description"));
+			assert.ok(first.includes("↓ more"));
+			const copy = frames.flatMap((lines) =>
+				lines.slice(
+					lines.findIndex((line) => line.startsWith("▸")) + 1,
+					lines.findIndex((line) => line.includes("more")),
+				),
+			);
+			const unique = [...new Set(copy)].join(" ").replace(/\s+/g, " ");
+			assert.ok(
+				unique.includes(
+					"opportunistic: the parent decides per message whether to delegate (default).",
+				),
+				unique,
+			);
+			assert.ok(
+				unique.includes(
+					"orchestrator: the parent is told to delegate all work to child sessions and keep to conversing, planning, asking, and directing children.",
+				),
+				unique,
+			);
+			assert.ok(frames.at(-1).join(" ").includes("↑ more"));
+			for (const lines of frames) {
+				const text = lines.join(" ").replace(/\s+/g, " ");
+				assert.ok(lines.length + 2 <= 12);
+				assert.ok(lines.every((line) => visibleWidth(line) <= 48));
+				assert.ok(lines.some((line) => /^▸\s+Delegation mode/.test(line)));
+				assert.ok(
+					text.includes(
+						"No effect while Child session is off: the parent has no child tools to delegate with.",
+					),
+				);
+				assert.ok(text.includes("↑/↓ move"));
+				assert.ok(text.includes("Esc"));
+			}
+			for (let i = 0; i < 20; i++) press(panel, "\x1b[5~");
+			assert.deepEqual(body(panel, 48), frames[0]);
+			closeGuide(panel);
+		},
+		{ rows: 12 },
+	);
 });
 
 test("discard confirmation at 12x48 keeps the complete frame and paged description accessible", async (t) => {
 	const setup = guide(t);
-	const session = await driveConfig(setup.command, (panel, running) => {
-		press(panel, keys.space);
-		for (let i = 0; i < 6; i++) press(panel, keys.down);
-		press(panel, keys.right);
-		assert.equal(plain(panel, 48).length, 12);
-		press(panel, keys.escape);
-		const frames = [];
-		const descriptionLines = [];
-		const snap = () => {
-			const lines = plain(panel, 48);
-			const text = body(panel, 48).join(" ").replace(/\s+/g, " ");
-			assert.ok(lines.length <= 12, `${lines.length} rows`);
-			assert.ok(lines.every((line) => visibleWidth(line) <= 48));
-			assert.match(text, /▸\s+Delegation mode\s+‹ orchestrator ›/);
-			assert.ok(text.includes("No effect while Child session is off: the parent has no child tools to delegate with."));
-			assert.ok(text.includes("↑/↓ move"));
-			assert.ok(text.includes("←/→/Space change"));
-			assert.ok(text.includes("Tab go to apply"));
-			assert.ok(text.includes("Esc discard changes"));
-			assert.ok(text.includes("PgUp/PgDn description"));
-			return text;
-		};
-		const notice = snap();
-		assert.ok(notice.includes("Discard 2 changes? Esc again discards and closes; any other key keeps editing."));
-		assert.equal(running.closed, false);
-		click(panel, 10, lineIndex(panel, "Delegation mode", 48));
-		assert.match(rowOf(panel, "Delegation mode", 48), /‹ opportunistic ›/);
-		assert.ok(!body(panel, 48).join(" ").includes("Discard 2 changes?"));
-		press(panel, keys.right);
-		press(panel, keys.escape);
-		snap();
-		press(panel, "a");
-		assert.ok(!snap().includes("Discard 2 changes?"));
-		for (let i = 0; i < 20; i++) {
-			frames.push(snap());
-			const lines = body(panel, 48);
-			descriptionLines.push(...lines.slice(
-				lines.findIndex((line) => line.startsWith("▸")) + 1,
-				lines.findIndex((line) => line.includes("more")),
-			));
-			press(panel, "\x1b[6~");
-		}
-		const copy = [...new Set(descriptionLines)].join(" ").replace(/\s+/g, " ");
-		assert.ok(copy.includes("opportunistic: the parent decides per message whether to delegate (default)."));
-		assert.ok(copy.includes("orchestrator: the parent is told to delegate all work to child sessions and keep to conversing, planning, asking, and directing children."));
-		assert.ok(frames[0].includes("↓ more"));
-		assert.ok(frames.at(-1).includes("↑ more"));
-		for (let i = 0; i < 20; i++) press(panel, "\x1b[5~");
-		assert.equal(snap(), frames[0]);
-		press(panel, keys.escape);
-		snap();
-		press(panel, keys.escape);
-	}, { rows: 12 });
+	const session = await driveConfig(
+		setup.command,
+		(panel, running) => {
+			press(panel, keys.space);
+			for (let i = 0; i < 6; i++) press(panel, keys.down);
+			press(panel, keys.right);
+			assert.equal(plain(panel, 48).length, 12);
+			press(panel, keys.escape);
+			const frames = [];
+			const descriptionLines = [];
+			const snap = () => {
+				const lines = plain(panel, 48);
+				const text = body(panel, 48).join(" ").replace(/\s+/g, " ");
+				assert.ok(lines.length <= 12, `${lines.length} rows`);
+				assert.ok(lines.every((line) => visibleWidth(line) <= 48));
+				assert.match(text, /▸\s+Delegation mode\s+‹ orchestrator ›/);
+				assert.ok(
+					text.includes(
+						"No effect while Child session is off: the parent has no child tools to delegate with.",
+					),
+				);
+				assert.ok(text.includes("↑/↓ move"));
+				assert.ok(text.includes("←/→/Space change"));
+				assert.ok(text.includes("Tab go to apply"));
+				assert.ok(text.includes("Esc discard changes"));
+				assert.ok(text.includes("PgUp/PgDn description"));
+				return text;
+			};
+			const notice = snap();
+			assert.ok(
+				notice.includes(
+					"Discard 2 changes? Esc again discards and closes; any other key keeps editing.",
+				),
+			);
+			assert.equal(running.closed, false);
+			click(panel, 10, lineIndex(panel, "Delegation mode", 48));
+			assert.match(rowOf(panel, "Delegation mode", 48), /‹ opportunistic ›/);
+			assert.ok(!body(panel, 48).join(" ").includes("Discard 2 changes?"));
+			press(panel, keys.right);
+			press(panel, keys.escape);
+			snap();
+			press(panel, "a");
+			assert.ok(!snap().includes("Discard 2 changes?"));
+			for (let i = 0; i < 20; i++) {
+				frames.push(snap());
+				const lines = body(panel, 48);
+				descriptionLines.push(
+					...lines.slice(
+						lines.findIndex((line) => line.startsWith("▸")) + 1,
+						lines.findIndex((line) => line.includes("more")),
+					),
+				);
+				press(panel, "\x1b[6~");
+			}
+			const copy = [...new Set(descriptionLines)]
+				.join(" ")
+				.replace(/\s+/g, " ");
+			assert.ok(
+				copy.includes(
+					"opportunistic: the parent decides per message whether to delegate (default).",
+				),
+			);
+			assert.ok(
+				copy.includes(
+					"orchestrator: the parent is told to delegate all work to child sessions and keep to conversing, planning, asking, and directing children.",
+				),
+			);
+			assert.ok(frames[0].includes("↓ more"));
+			assert.ok(frames.at(-1).includes("↑ more"));
+			for (let i = 0; i < 20; i++) press(panel, "\x1b[5~");
+			assert.equal(snap(), frames[0]);
+			press(panel, keys.escape);
+			snap();
+			press(panel, keys.escape);
+		},
+		{ rows: 12 },
+	);
 	assert.equal(session.closed, true);
 	await assertNothingWritten(setup.dir);
 });
 
 test("focus navigation resets description scrolling and normal-height descriptions need no scroll hint", async (t) => {
-	await open(t, {}, (panel) => {
-		press(panel, keys.space);
-		focusOn(panel, "Delegation mode");
-		press(panel, keys.right);
-		const first = body(panel, 48);
-		const navigate = [
-			() => press(panel, keys.up, keys.down),
-			() => { wheel(panel, -1); wheel(panel, 1); },
-		];
-		for (const move of navigate) {
-			for (let i = 0; i < 20; i++) {
-				press(panel, "\x1b[6~");
-				body(panel, 48);
+	await open(
+		t,
+		{},
+		(panel) => {
+			press(panel, keys.space);
+			focusOn(panel, "Delegation mode");
+			press(panel, keys.right);
+			const first = body(panel, 48);
+			const navigate = [
+				() => press(panel, keys.up, keys.down),
+				() => {
+					wheel(panel, -1);
+					wheel(panel, 1);
+				},
+			];
+			for (const move of navigate) {
+				for (let i = 0; i < 20; i++) {
+					press(panel, "\x1b[6~");
+					body(panel, 48);
+				}
+				assert.notDeepEqual(body(panel, 48), first);
+				move();
+				assert.deepEqual(body(panel, 48), first);
 			}
-			assert.notDeepEqual(body(panel, 48), first);
-			move();
-			assert.deepEqual(body(panel, 48), first);
-		}
-		closeGuide(panel);
-	}, { rows: 12 });
+			closeGuide(panel);
+		},
+		{ rows: 12 },
+	);
 	await open(t, {}, (panel) => {
 		focusOn(panel, "Delegation mode");
 		const before = body(panel, 48);
@@ -1043,30 +1098,46 @@ test("focus navigation resets description scrolling and normal-height descriptio
 for (const mechanism of ["click", "Tab"]) {
 	test(`${mechanism} immediately resets the overflowing destination description to its first page`, async (t) => {
 		const width = mechanism === "click" ? 30 : 48;
-		await open(t, {}, (panel) => {
-			const destination = mechanism === "Tab" ? "Review and apply" : "Child session";
-			focusOn(panel, destination);
-			const first = body(panel, width);
-			assert.ok(first.some((line) => line.startsWith("▸") && line.includes(destination)));
-			assert.ok(first.join(" ").includes("PgUp/PgDn description"));
-			for (let i = 0; i < 20; i++) {
-				press(panel, "\x1b[6~");
-				body(panel, width);
-			}
-			assert.notDeepEqual(body(panel, width), first);
-			focusOn(panel, mechanism === "Tab" ? "Delegation mode" : "Todo");
-			for (let i = 0; i < 20; i++) {
-				body(panel, width);
-				press(panel, "\x1b[6~");
-			}
-			if (mechanism === "Tab") press(panel, keys.tab);
-			else click(panel, 10, lineIndex(panel, "Child session", 200));
-			const actual = body(panel, width);
-			assert.ok(actual.some((line) => line.startsWith("▸") && line.includes(destination)));
-			const description = (lines) => lines.slice(lines.findIndex((line) => line.startsWith("▸")) + 1)
-				.filter((line) => !line.includes("Esc"));
-			assert.deepEqual(description(actual), description(first));
-			closeGuide(panel);
-		}, { rows: mechanism === "click" ? 10 : 8 });
+		await open(
+			t,
+			{},
+			(panel) => {
+				const destination =
+					mechanism === "Tab" ? "Review and apply" : "Child session";
+				focusOn(panel, destination);
+				const first = body(panel, width);
+				assert.ok(
+					first.some(
+						(line) => line.startsWith("▸") && line.includes(destination),
+					),
+				);
+				assert.ok(first.join(" ").includes("PgUp/PgDn description"));
+				for (let i = 0; i < 20; i++) {
+					press(panel, "\x1b[6~");
+					body(panel, width);
+				}
+				assert.notDeepEqual(body(panel, width), first);
+				focusOn(panel, mechanism === "Tab" ? "Delegation mode" : "Todo");
+				for (let i = 0; i < 20; i++) {
+					body(panel, width);
+					press(panel, "\x1b[6~");
+				}
+				if (mechanism === "Tab") press(panel, keys.tab);
+				else click(panel, 10, lineIndex(panel, "Child session", 200));
+				const actual = body(panel, width);
+				assert.ok(
+					actual.some(
+						(line) => line.startsWith("▸") && line.includes(destination),
+					),
+				);
+				const description = (lines) =>
+					lines
+						.slice(lines.findIndex((line) => line.startsWith("▸")) + 1)
+						.filter((line) => !line.includes("Esc"));
+				assert.deepEqual(description(actual), description(first));
+				closeGuide(panel);
+			},
+			{ rows: mechanism === "click" ? 10 : 8 },
+		);
 	});
 }

@@ -13,7 +13,11 @@ import type {
 	ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 
-import { type CheckpointGrant, checkpointContext, checkpointGrant } from "./child-checkpoint.ts";
+import {
+	type CheckpointGrant,
+	checkpointContext,
+	checkpointGrant,
+} from "./child-checkpoint.ts";
 import { errorMessage } from "./error-message.ts";
 import { gitEnvironment } from "./git-environment.ts";
 import type { ModelProfilesLoad, Specialist } from "./model-profiles.ts";
@@ -125,7 +129,12 @@ async function gitRoot(worktree: string): Promise<string | Outcome> {
 function withinCwd(path: string, cwd: string): string | undefined {
 	try {
 		const rel = relative(cwd, resolve(cwd, path));
-		if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+		if (
+			rel === "" ||
+			rel === ".." ||
+			rel.startsWith(`..${sep}`) ||
+			isAbsolute(rel)
+		) {
 			return undefined;
 		}
 		return rel;
@@ -185,9 +194,7 @@ function profilePair(
 			(candidate) => `${candidate.provider}/${candidate.id}` === entry.model,
 		);
 	if (!found) {
-		return outcome(
-			`${setting}, but that model is not available in Pi.`,
-		);
+		return outcome(`${setting}, but that model is not available in Pi.`);
 	}
 	if (!getSupportedThinkingLevels(found).includes(entry.thinking)) {
 		return outcome(
@@ -200,7 +207,9 @@ function profilePair(
 function missingMcpConfiguration(parent: string, worktree: string) {
 	const file = join(".pi", "mcp.json");
 	return existsSync(join(parent, file)) && !existsSync(join(worktree, file))
-		? [`The parent's .pi/mcp.json is absent from the worktree ${worktree}; the child does not inherit it.`]
+		? [
+				`The parent's .pi/mcp.json is absent from the worktree ${worktree}; the child does not inherit it.`,
+			]
 		: [];
 }
 
@@ -230,9 +239,7 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 	): Promise<Ready | Outcome> {
 		const role = request.role;
 		if (role !== undefined && !isRole(role)) {
-			return outcome(
-				`unknown role ${role}; expected ${roles.join(", ")}`,
-			);
+			return outcome(`unknown role ${role}; expected ${roles.join(", ")}`);
 		}
 		if (role === undefined) {
 			return outcome(`spawn_child needs a role: ${roles.join(", ")}`);
@@ -265,7 +272,9 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 					? await checkpointContext(worktree)
 					: await checkpointGrant(worktree, request.checkpoint, ctx.cwd);
 				if (checkpoint.branch !== request.checkpoint)
-					throw new Error(`The assigned context is not on refs/heads/${request.checkpoint}.`);
+					throw new Error(
+						`The assigned context is not on refs/heads/${request.checkpoint}.`,
+					);
 			} catch (error) {
 				return outcome(
 					`The checkpoint cannot be granted: ${errorMessage(error)}`,
@@ -325,7 +334,8 @@ export function createChildLauncher(options: ChildLauncherOptions) {
 				refresh();
 			},
 			refresh,
-			offered: () => tools.every((tool) => childToolsOn.get(tool.name) === true),
+			offered: () =>
+				tools.every((tool) => childToolsOn.get(tool.name) === true),
 		};
 	}
 

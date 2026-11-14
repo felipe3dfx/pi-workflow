@@ -149,7 +149,8 @@ class Framed implements Component {
 		const offset = width - prefix < 1 ? 0 : prefix;
 		const inner = width - offset - (stamped ? reserve : 0);
 		const x = event.x - edge - offset;
-		if (x < 0 || x >= inner || event.y < 0 || event.y >= event.height) return undefined;
+		if (x < 0 || x >= inner || event.y < 0 || event.y >= event.height)
+			return undefined;
 		return this.host.handleMouse({ ...event, x, width: inner });
 	}
 
@@ -186,7 +187,11 @@ function thinkingDuration(
 	if (!time) return undefined;
 	if (time.end === undefined) {
 		time.end = Date.now();
-		shared.saveThinkingTime?.({ timestamp, runIndex, ms: time.end - time.start });
+		shared.saveThinkingTime?.({
+			timestamp,
+			runIndex,
+			ms: time.end - time.start,
+		});
 	}
 	return time.end - time.start;
 }
@@ -377,7 +382,8 @@ function updateContent(
 	const inset = this.outputPad * assistantInset;
 	this.lastMessage = message;
 	this.isStreaming = isStreaming;
-	if (shared.latestCollapsed?.owner === this) shared.latestCollapsed = undefined;
+	if (shared.latestCollapsed?.owner === this)
+		shared.latestCollapsed = undefined;
 	this.contentContainer.clear();
 	if (message.content.some(hasVisibleText)) {
 		this.contentContainer.addChild(new Spacer(1));
@@ -434,7 +440,11 @@ function updateContent(
 			};
 			const latest = shared.latestCollapsed;
 			if (hidden && (!latest || message.timestamp >= latest.at))
-				shared.latestCollapsed = { owner: this, runIndex, at: message.timestamp };
+				shared.latestCollapsed = {
+					owner: this,
+					runIndex,
+					at: message.timestamp,
+				};
 			const thinkingComponent = hidden
 				? new ThinkingHeader(
 						{
@@ -445,11 +455,7 @@ function updateContent(
 						},
 						inset,
 					)
-				: expandedThinking(
-						this,
-						thinkingBlocks,
-						new ThinkingHeader(header, 0),
-					);
+				: expandedThinking(this, thinkingBlocks, new ThinkingHeader(header, 0));
 			const region = new MouseRegion(thinkingComponent, (event) => {
 				if (event.type !== "click" || event.button !== "left") return undefined;
 				this.thinkingVisibilityOverrides.set(runIndex, !hidden);

@@ -4,10 +4,7 @@ import { execFileSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import {
-	fauxAssistantMessage,
-	fauxToolCall,
-} from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 
 import { capabilities } from "../extensions/configure.ts";
@@ -77,7 +74,9 @@ test("the /workflow:config menu shows the Delegation mode in its own section, op
 		panel.handleInput(ESC);
 	});
 	const section = lines.findIndex((line) => /^Delegation ─+$/.test(line));
-	const mode = lines.findIndex((line) => /^Delegation mode\s+‹ opportunistic ›$/.test(line));
+	const mode = lines.findIndex((line) =>
+		/^Delegation mode\s+‹ opportunistic ›$/.test(line),
+	);
 	assert.ok(section > 0);
 	assert.equal(mode, section + 1);
 });
@@ -93,7 +92,12 @@ test("orchestrator with the child tools off is accepted by Apply and reports no 
 			notify: (message, level) => notifications.push({ message, level }),
 			custom: (factory) =>
 				new Promise((resolve) => {
-					const panel = factory({ requestRender() {}, terminal: { rows: 40 } }, plainTheme, newKeybindings(), () => resolve());
+					const panel = factory(
+						{ requestRender() {}, terminal: { rows: 40 } },
+						plainTheme,
+						newKeybindings(),
+						() => resolve(),
+					);
 					focus(panel, "Child session");
 					panel.handleInput(" ");
 					focus(panel, "Delegation mode");
@@ -104,12 +108,21 @@ test("orchestrator with the child tools off is accepted by Apply and reports no 
 				}),
 		},
 	});
-	assert.ok(review.some((line) => /^Delegation mode\s+opportunistic → orchestrator$/.test(line)));
+	assert.ok(
+		review.some((line) =>
+			/^Delegation mode\s+opportunistic → orchestrator$/.test(line),
+		),
+	);
 	assert.deepEqual(await stored(dir, "pi-workflow-delegation.json"), {
 		schemaVersion: 1,
 		delegationMode: "orchestrator",
 	});
-	assert.equal((await stored(dir, "pi-workflow-selection.json")).capabilities["child-session"], false);
+	assert.equal(
+		(await stored(dir, "pi-workflow-selection.json")).capabilities[
+			"child-session"
+		],
+		false,
+	);
 	assert.ok(notifications.every((entry) => entry.level !== "error"));
 });
 
@@ -119,12 +132,20 @@ test("choosing orchestrator and confirming Apply names the change and persists i
 	await driveConfig(extensionCommand(dir, "workflow:config"), (panel) => {
 		focus(panel, "Delegation mode");
 		panel.handleInput(" ");
-		assert.ok(shown(panel).some((line) => /^▸\s+Delegation mode\s+‹ orchestrator ›\s+•$/.test(line)));
+		assert.ok(
+			shown(panel).some((line) =>
+				/^▸\s+Delegation mode\s+‹ orchestrator ›\s+•$/.test(line),
+			),
+		);
 		openApply(panel);
 		review = shown(panel);
 		panel.handleInput("\r");
 	});
-	assert.ok(review.some((line) => /^Delegation mode\s+opportunistic → orchestrator$/.test(line)));
+	assert.ok(
+		review.some((line) =>
+			/^Delegation mode\s+opportunistic → orchestrator$/.test(line),
+		),
+	);
 	assert.deepEqual(await stored(dir, "pi-workflow-delegation.json"), {
 		schemaVersion: 1,
 		delegationMode: "orchestrator",
@@ -181,7 +202,11 @@ test("choosing orchestrator and cancelling with Esc writes nothing", async (t) =
 	await driveConfig(extensionCommand(dir, "workflow:config"), (panel) => {
 		focus(panel, "Delegation mode");
 		panel.handleInput(" ");
-		assert.ok(shown(panel).some((line) => /^▸\s+Delegation mode\s+‹ orchestrator ›\s+•$/.test(line)));
+		assert.ok(
+			shown(panel).some((line) =>
+				/^▸\s+Delegation mode\s+‹ orchestrator ›\s+•$/.test(line),
+			),
+		);
 		panel.handleInput(ESC);
 		panel.handleInput(ESC);
 	});
@@ -195,12 +220,18 @@ for (const [label, write] of [
 	[
 		"an unknown value",
 		(path) =>
-			writeFile(path, JSON.stringify({ schemaVersion: 1, delegationMode: "parent" })),
+			writeFile(
+				path,
+				JSON.stringify({ schemaVersion: 1, delegationMode: "parent" }),
+			),
 	],
 	[
 		"an unknown schema",
 		(path) =>
-			writeFile(path, JSON.stringify({ schemaVersion: 2, delegationMode: "orchestrator" })),
+			writeFile(
+				path,
+				JSON.stringify({ schemaVersion: 2, delegationMode: "orchestrator" }),
+			),
 	],
 ]) {
 	test(`the Delegation mode reads as opportunistic when its document is ${label}`, async (t) => {
@@ -228,13 +259,19 @@ const systemMessage = {
 	content: "Base prompt.",
 	sections: { cwd: "Current directory: /work" },
 	toolsAdded: [
-		{ name: "read", description: "Read a file.", parameters: { type: "object" } },
+		{
+			name: "read",
+			description: "Read a file.",
+			parameters: { type: "object" },
+		},
 	],
 	timestamp: 1,
 };
 const userMessage = {
 	role: "user",
-	content: [{ type: "text", text: "Read README.md and tell me what it installs" }],
+	content: [
+		{ type: "text", text: "Read README.md and tell me what it installs" },
+	],
 	timestamp: 2,
 };
 
@@ -253,7 +290,9 @@ function instructionOf(result) {
 	assert.deepEqual(system.toolsAdded, systemMessage.toolsAdded);
 	assert.equal(system.sections.cwd, systemMessage.sections.cwd);
 	assert.deepEqual(rest, [userMessage]);
-	const added = Object.entries(system.sections).filter(([name]) => name !== "cwd");
+	const added = Object.entries(system.sections).filter(
+		([name]) => name !== "cwd",
+	);
 	assert.equal(added.length, 1);
 	return added[0][1];
 }
@@ -268,7 +307,10 @@ test("in orchestrator with the child tools, the parent's leading system message 
 	assert.match(instruction, /reading included/i);
 	assert.match(instruction, /git and gh/);
 	assert.match(instruction, /commit/);
-	assert.match(instruction, /except the signed checkpoint commits of a worker you grant checkpoint in an isolated worktree you created, which you verify before you integrate them/);
+	assert.match(
+		instruction,
+		/except the signed checkpoint commits of a worker you grant checkpoint in an isolated worktree you created, which you verify before you integrate them/,
+	);
 	assert.match(instruction, /AGENTS\.md/);
 	assert.doesNotMatch(instruction, /bounded discovery/);
 	assert.match(instruction, /GLOSSARY\.md, and docs\/agents/);
@@ -314,7 +356,10 @@ test("orchestrator adds no Delegation mode instruction while a legacy subagent p
 	chooseMode(dir, "orchestrator");
 	seat();
 	const session = await parentSession(dir, { legacy: true });
-	assert.equal(session.tools.some((tool) => tool.name === "spawn_child"), false);
+	assert.equal(
+		session.tools.some((tool) => tool.name === "spawn_child"),
+		false,
+	);
 	assert.equal(await modelCall(session), undefined);
 });
 
@@ -345,7 +390,10 @@ function spawnContext(cwd) {
 				{
 					id: "m1",
 					type: "message",
-					message: { role: "user", content: "Read README.md and tell me what it installs" },
+					message: {
+						role: "user",
+						content: "Read README.md and tell me what it installs",
+					},
 				},
 			],
 		},
@@ -389,7 +437,9 @@ for (const mode of ["opportunistic", "orchestrator"]) {
 		seat();
 		const children = fakeChildren({
 			onCreate: () => {
-				throw new Error("The Pi on PATH at /x/pi is version 1.3.9, but a child requires Pi >=1.4.0.");
+				throw new Error(
+					"The Pi on PATH at /x/pi is version 1.3.9, but a child requires Pi >=1.4.0.",
+				);
 			},
 		});
 		const session = await parentSession(dir, { create: children.create });
@@ -469,12 +519,25 @@ test("in a real Pi session, the run that a child result starts carries the instr
 	const { requests } = parent;
 
 	const woken = requests[2];
-	assert.match(JSON.stringify(woken.messages.slice(1)), /README\.md installs the harness\./);
+	assert.match(
+		JSON.stringify(woken.messages.slice(1)),
+		/README\.md installs the harness\./,
+	);
 	const [system] = woken.messages;
 	const injected = JSON.stringify(system);
-	assert.ok(injected.includes("read it when delegation mode allows, otherwise delegate its discovery"));
-	assert.ok(injected.includes("An unmet mandatory prerequisite stops dependent work"));
-	assert.ok(injected.includes("reconcile left_undone and unverified against the remaining obligations"));
+	assert.ok(
+		injected.includes(
+			"read it when delegation mode allows, otherwise delegate its discovery",
+		),
+	);
+	assert.ok(
+		injected.includes("An unmet mandatory prerequisite stops dependent work"),
+	);
+	assert.ok(
+		injected.includes(
+			"reconcile left_undone and unverified against the remaining obligations",
+		),
+	);
 
 	assert.equal(system.role, "system");
 	assert.ok(system.toolsAdded.some((tool) => tool.name === "spawn_child"));
@@ -485,9 +548,14 @@ function languageInstruction(request) {
 	const [system] = request.messages;
 	assert.equal(system.role, "system");
 	const found = Object.values(system.sections).filter(
-		(section) => /\bEnglish\b/.test(section) && /\buser's language\b/.test(section),
+		(section) =>
+			/\bEnglish\b/.test(section) && /\buser's language\b/.test(section),
 	);
-	assert.equal(found.length, 1, "the model call carries no language instruction");
+	assert.equal(
+		found.length,
+		1,
+		"the model call carries no language instruction",
+	);
 	return found[0];
 }
 
@@ -505,10 +573,28 @@ test("the language instruction keeps parent-child text English, the user's langu
 	const instruction = languageInstruction(parent.requests[0]);
 	const sentence = (...patterns) => assertSentence(instruction, ...patterns);
 
-	sentence(/\buser's language\b/, /\bexplicit user instruction\b/, /\bchild sessions never change it\b/);
-	sentence(/\bEnglish\b/, /\bspawn_child\b/, /\bcontinue_child\b/, /\breply_child\b/, /\bconsultation reply\b/);
-	sentence(/\bchild questions and conclusions\b/, /\buser's language\b/, /\buser's decisions to children in English\b/);
-	sentence(/\bcode, identifiers, tool outputs, quotations,? and artifacts\b/, /\bnever translate stable JSON keys, enum values, or identifiers\b/, /\bref, kind, and confirm\b/);
+	sentence(
+		/\buser's language\b/,
+		/\bexplicit user instruction\b/,
+		/\bchild sessions never change it\b/,
+	);
+	sentence(
+		/\bEnglish\b/,
+		/\bspawn_child\b/,
+		/\bcontinue_child\b/,
+		/\breply_child\b/,
+		/\bconsultation reply\b/,
+	);
+	sentence(
+		/\bchild questions and conclusions\b/,
+		/\buser's language\b/,
+		/\buser's decisions to children in English\b/,
+	);
+	sentence(
+		/\bcode, identifiers, tool outputs, quotations,? and artifacts\b/,
+		/\bnever translate stable JSON keys, enum values, or identifiers\b/,
+		/\bref, kind, and confirm\b/,
+	);
 	sentence(/\bFleet view\b/, /\bSteer\b/, /\bunchanged\b/);
 	assert.doesNotMatch(instruction, /delegate all work/i);
 });
@@ -518,8 +604,15 @@ for (const mode of ["opportunistic", "orchestrator"]) {
 		test(`in ${mode} with the child tools ${offered ? "offered" : "not offered"}, every parent model call carries the language instruction and the Delegation mode section keeps its conditions`, async (t) => {
 			const dir = withAgentDirectory(t);
 			chooseMode(dir, mode);
-			seat(offered ? capabilities : capabilities.filter((capability) => capability !== "child-session"));
-			const parent = await realParent(t, dir, [fauxAssistantMessage("Hello."), fauxAssistantMessage("Sure.")]);
+			seat(
+				offered
+					? capabilities
+					: capabilities.filter((capability) => capability !== "child-session"),
+			);
+			const parent = await realParent(t, dir, [
+				fauxAssistantMessage("Hello."),
+				fauxAssistantMessage("Sure."),
+			]);
 
 			await parent.session.prompt("Hello");
 			await parent.session.prompt("Now in English, please");
@@ -528,10 +621,15 @@ for (const mode of ["opportunistic", "orchestrator"]) {
 			for (const request of parent.requests) {
 				languageInstruction(request);
 				assert.equal(
-					request.messages[0].toolsAdded.some((tool) => tool.name === "spawn_child"),
+					request.messages[0].toolsAdded.some(
+						(tool) => tool.name === "spawn_child",
+					),
 					offered,
 				);
-				assert.equal(delegationInstructed(request), mode === "orchestrator" && offered);
+				assert.equal(
+					delegationInstructed(request),
+					mode === "orchestrator" && offered,
+				);
 			}
 		});
 	}

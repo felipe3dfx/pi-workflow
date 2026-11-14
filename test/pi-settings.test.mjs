@@ -66,7 +66,10 @@ test("an aligned array is a no-op regardless of order", async () => {
 			const plan = planPiSettings(catalog, options.agentDirectory);
 			assert.equal(plan.changed, false);
 			assert.deepEqual(plan.misaligned, []);
-			assert.equal(applyPiSettings(catalog, options.agentDirectory).wrote, false);
+			assert.equal(
+				applyPiSettings(catalog, options.agentDirectory).wrote,
+				false,
+			);
 		},
 	);
 });

@@ -6,20 +6,7 @@ import {
 	terminalSafeLine,
 } from "../extensions/terminal-safe-text.ts";
 
-const BIDI = [
-	"؜",
-	"‎",
-	"‏",
-	"‪",
-	"‫",
-	"‬",
-	"‭",
-	"‮",
-	"⁦",
-	"⁧",
-	"⁨",
-	"⁩",
-];
+const BIDI = ["؜", "‎", "‏", "‪", "‫", "‬", "‭", "‮", "⁦", "⁧", "⁨", "⁩"];
 
 const unsafe = [
 	["C0 NUL", "\u0000"],

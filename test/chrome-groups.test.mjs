@@ -311,7 +311,12 @@ test("a leading thought that stops running keeps its opened group open", (t) => 
 	const container = mode.chatContainer;
 	const message = say([thought()]);
 	message.updateContent(
-		{ role: "assistant", content: [thought()], stopReason: "toolUse", timestamp: at1155 },
+		{
+			role: "assistant",
+			content: [thought()],
+			stopReason: "toolUse",
+			timestamp: at1155,
+		},
 		true,
 	);
 	tool("read", { path: "a.ts" });
@@ -320,7 +325,12 @@ test("a leading thought that stops running keeps its opened group open", (t) => 
 	assert.ok(header >= 0);
 	assert.ok(click(container, 80, header)?.handled);
 	message.updateContent(
-		{ role: "assistant", content: [thought()], stopReason: "toolUse", timestamp: at1155 },
+		{
+			role: "assistant",
+			content: [thought()],
+			stopReason: "toolUse",
+			timestamp: at1155,
+		},
 		false,
 	);
 	const lines = render();
@@ -371,9 +381,7 @@ test("consecutive subagent result cards fold into one ◈ row that counts the fa
 		question: 2,
 	});
 	const closed = render();
-	assert.ok(
-		closed.includes("   ◆ Subagent worker 1111  1m 02s"),
-	);
+	assert.ok(closed.includes("   ◆ Subagent worker 1111  1m 02s"));
 	const header = closed.indexOf("   ◈ Ran 3 subagents · 1 failed");
 	assert.ok(header > 0);
 	assert.ok(!closed.some((line) => line.includes("worker 2222")));

@@ -26,7 +26,10 @@ export function seat(on = capabilities) {
 	});
 }
 
-export async function parentSession(agentDirectory, { legacy = false, create } = {}) {
+export async function parentSession(
+	agentDirectory,
+	{ legacy = false, create } = {},
+) {
 	const handlers = new Map();
 	const tools = [];
 	const sent = [];
@@ -61,7 +64,9 @@ export async function parentSession(agentDirectory, { legacy = false, create } =
 		{
 			catalog: {
 				resolveInstalledVersion: (name) =>
-					legacy && name === "@tintinweb/pi-subagents" ? { version: "2.0.0" } : {},
+					legacy && name === "@tintinweb/pi-subagents"
+						? { version: "2.0.0" }
+						: {},
 			},
 			agentDirectory,
 			childSessions: create ? { create } : undefined,
@@ -74,13 +79,17 @@ export async function parentSession(agentDirectory, { legacy = false, create } =
 		}
 		return result;
 	};
-	await fire("session_start", {}, {
-		mode: "print",
-		hasUI: true,
-		ui,
-		cwd: agentDirectory,
-		sessionManager: { getBranch: () => [], getEntries: () => [] },
-	});
+	await fire(
+		"session_start",
+		{},
+		{
+			mode: "print",
+			hasUI: true,
+			ui,
+			cwd: agentDirectory,
+			sessionManager: { getBranch: () => [], getEntries: () => [] },
+		},
+	);
 	return { fire, tools, sent };
 }
 
@@ -91,14 +100,22 @@ export async function gitRepository(dir) {
 	return worktree;
 }
 
-export async function realParent(t, dir, responses, { extensionFactories = [] } = {}) {
+export async function realParent(
+	t,
+	dir,
+	responses,
+	{ extensionFactories = [] } = {},
+) {
 	const worktree = await gitRepository(dir);
 	const runtime = await ModelRuntime.create({
 		authPath: join(dir, "auth.json"),
 		modelsPath: null,
 		refreshOnCreate: false,
 	});
-	const faux = fauxProvider({ provider: "faux", models: [{ id: "parent", reasoning: true }] });
+	const faux = fauxProvider({
+		provider: "faux",
+		models: [{ id: "parent", reasoning: true }],
+	});
 	runtime.registerNativeProvider(faux.provider);
 	await runtime.setRuntimeApiKey("faux", "key");
 	const requests = [];

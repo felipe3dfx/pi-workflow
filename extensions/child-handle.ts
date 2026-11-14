@@ -1,5 +1,8 @@
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
-import type { AgentSessionEvent, SessionEntry } from "@earendil-works/pi-coding-agent";
+import type {
+	AgentSessionEvent,
+	SessionEntry,
+} from "@earendil-works/pi-coding-agent";
 
 import type { ActionAuthorization } from "./action-authorization.ts";
 import type { ChildShell } from "./child-bash.ts";
@@ -17,11 +20,23 @@ export const mcpTools = [
 	"read_mcp_resource",
 ];
 
-export type ChildContext = { capacity: number; tokens: number | null; last: boolean };
+export type ChildContext = {
+	capacity: number;
+	tokens: number | null;
+	last: boolean;
+};
 
-export function contextReading(capacity: unknown, tokens: unknown): Omit<ChildContext, "last"> | undefined {
-	if (!Number.isSafeInteger(capacity) || (capacity as number) <= 0) return undefined;
-	if (tokens !== null && !(Number.isSafeInteger(tokens) && (tokens as number) >= 0)) return undefined;
+export function contextReading(
+	capacity: unknown,
+	tokens: unknown,
+): Omit<ChildContext, "last"> | undefined {
+	if (!Number.isSafeInteger(capacity) || (capacity as number) <= 0)
+		return undefined;
+	if (
+		tokens !== null &&
+		!(Number.isSafeInteger(tokens) && (tokens as number) >= 0)
+	)
+		return undefined;
 	return { capacity: capacity as number, tokens: tokens as number | null };
 }
 
@@ -38,7 +53,11 @@ interface ChildSpec {
 	shell: ChildShell;
 	onEvent(event: AgentSessionEvent): void;
 	notify(message: string): void;
-	ask(question: string, signal?: AbortSignal, consultation?: string): Promise<string>;
+	ask(
+		question: string,
+		signal?: AbortSignal,
+		consultation?: string,
+	): Promise<string>;
 	report(result: ChildResult): void;
 	checkpoint?: CheckpointGrant;
 	checkpointed(checkpoint: Checkpoint): void;

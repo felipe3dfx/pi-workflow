@@ -1,5 +1,10 @@
 import { spawn } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+	appendFileSync,
+	mkdirSync,
+	readFileSync,
+	writeFileSync,
+} from "node:fs";
 import { Socket } from "node:net";
 import { join } from "node:path";
 
@@ -22,10 +27,19 @@ if (process.env.FAKE_PI_RECORD) {
 }
 if (process.env.FAKE_PI_TREE) {
 	const tree = process.env.FAKE_PI_TREE;
-	const server = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore" });
-	const shell = spawn("/bin/sh", ["-c", 'sleep 300 & echo $! >> "$1"; wait', "sh", tree], { detached: true, stdio: "ignore" });
+	const server = spawn(
+		process.execPath,
+		["-e", "setInterval(() => {}, 1000)"],
+		{ detached: true, stdio: "ignore" },
+	);
+	const shell = spawn(
+		"/bin/sh",
+		["-c", 'sleep 300 & echo $! >> "$1"; wait', "sh", tree],
+		{ detached: true, stdio: "ignore" },
+	);
 	appendFileSync(tree, `${server.pid}\n${shell.pid}\n`);
-	while (readFileSync(tree, "utf8").trim().split("\n").length < 3) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+	while (readFileSync(tree, "utf8").trim().split("\n").length < 3)
+		Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
 }
 if (scenario === "linger") setInterval(() => {}, 1000);
 if (scenario === "refuse") {
@@ -40,7 +54,11 @@ let inbound = "";
 channel.setEncoding("utf8");
 channel.on("data", (chunk) => {
 	inbound += chunk;
-	for (let newline = inbound.indexOf("\n"); newline >= 0; newline = inbound.indexOf("\n")) {
+	for (
+		let newline = inbound.indexOf("\n");
+		newline >= 0;
+		newline = inbound.indexOf("\n")
+	) {
 		const reply = JSON.parse(inbound.slice(0, newline));
 		inbound = inbound.slice(newline + 1);
 		replies.get(reply.id)?.(reply);
@@ -49,7 +67,10 @@ channel.on("data", (chunk) => {
 channel.on("error", () => {});
 if (scenario !== "no-runtime") {
 	const tools = (flag("--tools") ?? "").split(",");
-	tell({ type: "ready", tools: tools.filter((tool) => tool !== process.env.FAKE_PI_LACKS) });
+	tell({
+		type: "ready",
+		tools: tools.filter((tool) => tool !== process.env.FAKE_PI_LACKS),
+	});
 }
 const consult = (frame) =>
 	new Promise((resolve) => {
@@ -62,14 +83,22 @@ const entries = [];
 let steering = [];
 let settle;
 const write = (record) => process.stdout.write(`${JSON.stringify(record)}\n`);
-const response = (command, data) => ({ id: command.id, type: "response", command: command.type, success: true, data });
+const response = (command, data) => ({
+	id: command.id,
+	type: "response",
+	command: command.type,
+	success: true,
+	data,
+});
 const respond = (command, data) => write(response(command, data));
 const stats = JSON.parse(process.env.FAKE_PI_STATS ?? "[{}]");
 const held = [];
 const compacted = (success, aborted = false) => ({
 	type: "compaction_end",
 	reason: "manual",
-	result: success ? { summary: "Summary.", firstKeptEntryId: "e1", tokensBefore: 150000 } : undefined,
+	result: success
+		? { summary: "Summary.", firstKeptEntryId: "e1", tokensBefore: 150000 }
+		: undefined,
 	aborted,
 	willRetry: false,
 	...(success ? {} : { errorMessage: "Compaction failed." }),
@@ -77,17 +106,27 @@ const compacted = (success, aborted = false) => ({
 
 function act(action) {
 	if (action === "reply") {
-		const message = { role: "assistant", content: [{ type: "text", text: "Working." }], stopReason: "toolUse" };
+		const message = {
+			role: "assistant",
+			content: [{ type: "text", text: "Working." }],
+			stopReason: "toolUse",
+		};
 		write({ type: "message_start", message });
 		write({ type: "message_end", message });
 	} else if (action === "compact") write(compacted(true));
 	else if (action === "compact-failed") write(compacted(false));
 	else if (action === "compact-aborted") write(compacted(false, true));
-	else if (action === "release" || action === "compact-release" || action === "release-compact") {
+	else if (
+		action === "release" ||
+		action === "compact-release" ||
+		action === "release-compact"
+	) {
 		const records = held.splice(0);
 		if (action === "compact-release") records.unshift(compacted(true));
 		if (action === "release-compact") records.push(compacted(true));
-		process.stdout.write(records.map((record) => `${JSON.stringify(record)}\n`).join(""));
+		process.stdout.write(
+			records.map((record) => `${JSON.stringify(record)}\n`).join(""),
+		);
 	} else if (action === "die") process.exit(9);
 	else if (action === "finish") settle?.();
 }
@@ -104,39 +143,105 @@ function run(task) {
 	entry(user);
 	if (scenario === "crash") process.exit(7);
 	if (scenario === "ask" || scenario === "ask-consultation") {
-		consult({ type: "ask", id: 1, question: "Which file?", ...(scenario === "ask-consultation" ? { consultation: "q12345678" } : {}) }).then((reply) =>
-			finish("stop", reply.error === undefined ? `ANSWER ${reply.answer}` : `ERROR ${reply.error}`),
+		consult({
+			type: "ask",
+			id: 1,
+			question: "Which file?",
+			...(scenario === "ask-consultation" ? { consultation: "q12345678" } : {}),
+		}).then((reply) =>
+			finish(
+				"stop",
+				reply.error === undefined
+					? `ANSWER ${reply.answer}`
+					: `ERROR ${reply.error}`,
+			),
 		);
 		return;
 	}
 	if (scenario === "withdraw") {
 		tell({ type: "ask", id: 1, question: "Which file?" });
-		setTimeout(() => {
-			tell({ type: "withdraw", id: 1 });
-			setTimeout(() => finish("stop", "DONE"), Number(process.env.FAKE_PI_LINGER_MS ?? 0));
-		}, Number(process.env.FAKE_PI_WITHDRAW_MS ?? 0));
+		setTimeout(
+			() => {
+				tell({ type: "withdraw", id: 1 });
+				setTimeout(
+					() => finish("stop", "DONE"),
+					Number(process.env.FAKE_PI_LINGER_MS ?? 0),
+				);
+			},
+			Number(process.env.FAKE_PI_WITHDRAW_MS ?? 0),
+		);
 		return;
 	}
 	if (scenario === "report") {
-		consult({ type: "report", id: 1, result: { verdict: "done", files_changed: ["a.ts: added"], validation: [], left_undone: [] } }).then(
-			(reply) => finish("stop", reply.error === undefined ? "DONE" : `ERROR ${reply.error}`),
+		consult({
+			type: "report",
+			id: 1,
+			result: {
+				verdict: "done",
+				files_changed: ["a.ts: added"],
+				validation: [],
+				left_undone: [],
+			},
+		}).then((reply) =>
+			finish(
+				"stop",
+				reply.error === undefined ? "DONE" : `ERROR ${reply.error}`,
+			),
 		);
 		return;
 	}
 	if (scenario === "policy") {
 		(async () => {
-			const authority = await consult({ type: "policy", id: 1, method: "authority" });
-			const classified = await consult({ type: "policy", id: 2, method: "classify", value: { action: { tool: "write" } } });
-			const decision = { kind: "held", reason: "The scope is unknown.", call: "call-1" };
-			const delivered = await consult({ type: "policy", id: 3, method: "decision", value: decision });
-			write({ type: "entry_appended", entry: { type: "custom", id: "held", customType: "pi-workflow-authorization", data: decision } });
+			const authority = await consult({
+				type: "policy",
+				id: 1,
+				method: "authority",
+			});
+			const classified = await consult({
+				type: "policy",
+				id: 2,
+				method: "classify",
+				value: { action: { tool: "write" } },
+			});
+			const decision = {
+				kind: "held",
+				reason: "The scope is unknown.",
+				call: "call-1",
+			};
+			const delivered = await consult({
+				type: "policy",
+				id: 3,
+				method: "decision",
+				value: decision,
+			});
+			write({
+				type: "entry_appended",
+				entry: {
+					type: "custom",
+					id: "held",
+					customType: "pi-workflow-authorization",
+					data: decision,
+				},
+			});
 			finish("stop", JSON.stringify([authority, classified, delivered]));
 		})();
 		return;
 	}
 	if (scenario === "checkpoint") {
-		consult({ type: "checkpoint", id: 1, checkpoint: { sha: "c0ffee", parent: "base", base: "base", branch: "feature" } }).then(
-			(reply) => finish("stop", reply.error === undefined ? "DONE" : `ERROR ${reply.error}`),
+		consult({
+			type: "checkpoint",
+			id: 1,
+			checkpoint: {
+				sha: "c0ffee",
+				parent: "base",
+				base: "base",
+				branch: "feature",
+			},
+		}).then((reply) =>
+			finish(
+				"stop",
+				reply.error === undefined ? "DONE" : `ERROR ${reply.error}`,
+			),
 		);
 		return;
 	}
@@ -146,7 +251,8 @@ function run(task) {
 		return;
 	}
 	if (scenario === "malformed") {
-		const stream = process.env.FAKE_PI_MALFORMED_ON === "channel" ? channel : process.stdout;
+		const stream =
+			process.env.FAKE_PI_MALFORMED_ON === "channel" ? channel : process.stdout;
 		stream.write(`${process.env.FAKE_PI_MALFORMED}\n`);
 		settle = () => finish("stop", "SETTLED");
 		return;
@@ -159,12 +265,36 @@ function run(task) {
 }
 
 function finish(stopReason, text) {
-	const start = { role: "assistant", content: [{ type: "text", text: text.slice(0, 2) }], stopReason: "pending" };
+	const start = {
+		role: "assistant",
+		content: [{ type: "text", text: text.slice(0, 2) }],
+		stopReason: "pending",
+	};
 	write({ type: "message_start", message: start });
-	write({ type: "message_update", assistantMessageEvent: { type: "text_start", contentIndex: 0 } });
-	write({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: text.slice(0, 2) } });
-	write({ type: "message_update", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: text.slice(2) } });
-	write({ type: "message_update", assistantMessageEvent: { type: "text_end", contentIndex: 0, content: text } });
+	write({
+		type: "message_update",
+		assistantMessageEvent: { type: "text_start", contentIndex: 0 },
+	});
+	write({
+		type: "message_update",
+		assistantMessageEvent: {
+			type: "text_delta",
+			contentIndex: 0,
+			delta: text.slice(0, 2),
+		},
+	});
+	write({
+		type: "message_update",
+		assistantMessageEvent: {
+			type: "text_delta",
+			contentIndex: 0,
+			delta: text.slice(2),
+		},
+	});
+	write({
+		type: "message_update",
+		assistantMessageEvent: { type: "text_end", contentIndex: 0, content: text },
+	});
 	const end = {
 		role: "assistant",
 		content: [{ type: "text", text }],
@@ -189,21 +319,38 @@ const handlers = {
 	},
 	get_entries: (command) => {
 		if (scenario === "entries-fail" && entries.length > 0) {
-			write({ id: command.id, type: "response", command: command.type, success: false, error: "entries unavailable" });
+			write({
+				id: command.id,
+				type: "response",
+				command: command.type,
+				success: false,
+				error: "entries unavailable",
+			});
 			return;
 		}
 		const since = entries.findIndex((item) => item.id === command.since);
-		respond(command, { entries: entries.slice(since + 1), leafId: entries.at(-1)?.id ?? null });
+		respond(command, {
+			entries: entries.slice(since + 1),
+			leafId: entries.at(-1)?.id ?? null,
+		});
 	},
 	prompt: (command) => {
-		respond(command, { disposition: scenario === "handled" ? "handled" : "started" });
+		respond(command, {
+			disposition: scenario === "handled" ? "handled" : "started",
+		});
 		if (scenario !== "handled") run(command.message);
 	},
 	get_session_stats: (command) => {
 		const step = stats.length > 1 ? stats.shift() : stats[0];
 		if (step?.hold) held.push(response(command, step.hold));
 		else if (step === "fail") {
-			write({ id: command.id, type: "response", command: command.type, success: false, error: "stats unavailable" });
+			write({
+				id: command.id,
+				type: "response",
+				command: command.type,
+				success: false,
+				error: "stats unavailable",
+			});
 		} else respond(command, step);
 	},
 	steer: (command) => {
@@ -242,10 +389,15 @@ let buffer = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
 	buffer += chunk;
-	for (let newline = buffer.indexOf("\n"); newline >= 0; newline = buffer.indexOf("\n")) {
+	for (
+		let newline = buffer.indexOf("\n");
+		newline >= 0;
+		newline = buffer.indexOf("\n")
+	) {
 		const command = JSON.parse(buffer.slice(0, newline));
 		buffer = buffer.slice(newline + 1);
-		if (process.env.FAKE_PI_COMMANDS) appendFileSync(process.env.FAKE_PI_COMMANDS, `${command.type}\n`);
+		if (process.env.FAKE_PI_COMMANDS)
+			appendFileSync(process.env.FAKE_PI_COMMANDS, `${command.type}\n`);
 		handlers[command.type]?.(command);
 	}
 });

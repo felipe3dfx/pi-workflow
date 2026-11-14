@@ -42,10 +42,7 @@ function catalogModel(name, reasoning = true) {
 	return { provider, id, reasoning };
 }
 
-function launcherContext(
-	cwd,
-	{ available = [], session = true } = {},
-) {
+function launcherContext(cwd, { available = [], session = true } = {}) {
 	return {
 		cwd,
 		model: session ? catalogModel(sessionPair.model) : undefined,
@@ -107,7 +104,14 @@ test("a role the parent names gets its contract prompt and tools", async () => {
 			{ role: "explore", task: "Map the launcher module" },
 			launcherContext(worktree),
 		);
-		assert.deepEqual(explore.contract.tools, ["read", "grep", "find", "ls", "codegraph", "codemode"]);
+		assert.deepEqual(explore.contract.tools, [
+			"read",
+			"grep",
+			"find",
+			"ls",
+			"codegraph",
+			"codemode",
+		]);
 	});
 });
 
@@ -244,7 +248,10 @@ test("an invalid, schema version 1, or unreadable model profiles file is refused
 
 		await rm(path);
 		await mkdir(path);
-		assertRefused(await decide(createModelProfiles(dirname(path))), /Unable to read/);
+		assertRefused(
+			await decide(createModelProfiles(dirname(path))),
+			/Unable to read/,
+		);
 	});
 });
 
@@ -472,7 +479,10 @@ test("each role the parent chooses runs the model and thinking of that entry in 
 				launcherContext(worktree, { available: everyModel }),
 			);
 			assert.equal(result.kind, "ready");
-			assert.deepEqual({ model: result.model, thinking: result.thinking }, pair);
+			assert.deepEqual(
+				{ model: result.model, thinking: result.thinking },
+				pair,
+			);
 			assert.deepEqual(result.warnings, []);
 		}
 	});
@@ -642,7 +652,11 @@ test("a reference that does not exist refuses the launch and names the path", as
 		const launcher = createChildLauncher({ modelProfiles: absentProfiles });
 
 		const result = await launcher.prepareLaunch(
-			{ role: "worker", task: "Apply the policy", references: ["docs/missing.md"] },
+			{
+				role: "worker",
+				task: "Apply the policy",
+				references: ["docs/missing.md"],
+			},
 			launcherContext(worktree),
 		);
 
@@ -656,13 +670,20 @@ test("a reference outside cwd, directly or through a symlink, refuses the launch
 		await symlink(join(dir, "outside.md"), join(worktree, "link.md"));
 		const launcher = createChildLauncher({ modelProfiles: absentProfiles });
 
-		for (const reference of ["../outside.md", join(dir, "outside.md"), "link.md"]) {
+		for (const reference of [
+			"../outside.md",
+			join(dir, "outside.md"),
+			"link.md",
+		]) {
 			const result = await launcher.prepareLaunch(
 				{ role: "worker", task: "Apply the policy", references: [reference] },
 				launcherContext(worktree),
 			);
 
-			assertRefused(result, new RegExp(reference.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+			assertRefused(
+				result,
+				new RegExp(reference.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+			);
 		}
 	});
 });
@@ -671,7 +692,20 @@ async function withLinkedWorktree(run) {
 	await withWorkspace(async ({ dir, worktree: main }) => {
 		const git = (cwd, ...args) =>
 			execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
-		git(main, "-c", "user.name=Parent", "-c", "user.email=parent@example.com", "-c", "commit.gpgsign=false", "commit", "--quiet", "--allow-empty", "--message", "chore: init");
+		git(
+			main,
+			"-c",
+			"user.name=Parent",
+			"-c",
+			"user.email=parent@example.com",
+			"-c",
+			"commit.gpgsign=false",
+			"commit",
+			"--quiet",
+			"--allow-empty",
+			"--message",
+			"chore: init",
+		);
 		const branch = git(main, "branch", "--show-current");
 		const linked = join(dir, "feature");
 		git(main, "worktree", "add", "--quiet", "-b", "feature", linked);
@@ -689,10 +723,15 @@ test("contextual checkpoint descriptors accept every role in an assigned shared 
 	await withLinkedWorktree(async ({ main, branch }) => {
 		for (const role of ["explore", "worker", "verify"]) {
 			const launcher = createChildLauncher({
-				contextual: true, modelProfiles: absentProfiles,
+				contextual: true,
+				modelProfiles: absentProfiles,
 			});
 			const result = await launcher.prepareLaunch(
-				{ role, task: "Commit only task-owned changes when authorized", checkpoint: branch },
+				{
+					role,
+					task: "Commit only task-owned changes when authorized",
+					checkpoint: branch,
+				},
 				launcherContext(main),
 			);
 			assert.equal(result.kind, "ready", JSON.stringify(result));
@@ -706,7 +745,12 @@ test("contextual checkpoint descriptors accept every role in an assigned shared 
 test("a worker in an isolated worktree on the granted branch carries the checkpoint grant", async () => {
 	await withLinkedWorktree(async ({ main, linked, git }) => {
 		const result = await checkpointLauncher().prepareLaunch(
-			{ role: "worker", task: "Fix the failing test", worktree: linked, checkpoint: "feature" },
+			{
+				role: "worker",
+				task: "Fix the failing test",
+				worktree: linked,
+				checkpoint: "feature",
+			},
 			launcherContext(main),
 		);
 
@@ -738,12 +782,32 @@ test("a checkpoint grant is refused outside an isolated worker worktree on its b
 		const clone = join(dir, "clone");
 		git(dir, "clone", "--quiet", main, clone);
 		const cases = [
-			[{ role: "explore", worktree: linked, checkpoint: "feature" }, main, /worker/],
-			[{ role: "verify", worktree: linked, checkpoint: "feature" }, main, /worker/],
+			[
+				{ role: "explore", worktree: linked, checkpoint: "feature" },
+				main,
+				/worker/,
+			],
+			[
+				{ role: "verify", worktree: linked, checkpoint: "feature" },
+				main,
+				/worker/,
+			],
 			[{ role: "worker", checkpoint: "feature" }, linked, /worktree/],
-			[{ role: "worker", worktree: main, checkpoint: branch }, main, /shared checkout/],
-			[{ role: "worker", worktree: linked, checkpoint: "other" }, main, /refs\/heads\/other/],
-			[{ role: "worker", worktree: clone, checkpoint: branch }, main, /parent's current branch/],
+			[
+				{ role: "worker", worktree: main, checkpoint: branch },
+				main,
+				/shared checkout/,
+			],
+			[
+				{ role: "worker", worktree: linked, checkpoint: "other" },
+				main,
+				/refs\/heads\/other/,
+			],
+			[
+				{ role: "worker", worktree: clone, checkpoint: branch },
+				main,
+				/parent's current branch/,
+			],
 		];
 		for (const [request, cwd, reason] of cases) {
 			const result = await checkpointLauncher().prepareLaunch(

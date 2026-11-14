@@ -1,6 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import {
+	lstat,
+	mkdir,
+	mkdtemp,
+	readFile,
+	rm,
+	symlink,
+	writeFile,
+} from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { stripVTControlCharacters } from "node:util";
@@ -22,7 +30,9 @@ import piWorkflowExtension from "../extensions/pi-workflow.ts";
 
 replaceSelection({
 	schemaVersion: 1,
-	capabilities: Object.fromEntries(capabilities.map((capability) => [capability, true])),
+	capabilities: Object.fromEntries(
+		capabilities.map((capability) => [capability, true]),
+	),
 	expectations: {},
 });
 
@@ -52,9 +62,14 @@ const catalog = [
 ];
 
 async function withConfigDirectory(run) {
-	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-model-profiles-editor-"));
+	const dir = await mkdtemp(
+		join(tmpdir(), "pi-workflow-model-profiles-editor-"),
+	);
 	try {
-		return await run({ dir, path: join(dir, "agent", "pi-workflow-models.json") });
+		return await run({
+			dir,
+			path: join(dir, "agent", "pi-workflow-models.json"),
+		});
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
@@ -62,7 +77,11 @@ async function withConfigDirectory(run) {
 
 async function writeProfiles(path, content) {
 	await mkdir(dirname(path), { recursive: true });
-	await writeFile(path, JSON.stringify({ schemaVersion: 2, ...content }), "utf8");
+	await writeFile(
+		path,
+		JSON.stringify({ schemaVersion: 2, ...content }),
+		"utf8",
+	);
 }
 
 function editorContext({
@@ -91,7 +110,12 @@ function editorContext({
 			custom: (factory, options) =>
 				new Promise((resolve) => {
 					overlays.push(options);
-					const panel = factory({ requestRender() {}, terminal: { rows } }, theme, keybindings, resolve);
+					const panel = factory(
+						{ requestRender() {}, terminal: { rows } },
+						theme,
+						keybindings,
+						resolve,
+					);
 					const waiter = waiting.shift();
 					if (waiter) waiter(panel);
 					else opened.push(panel);
@@ -118,11 +142,20 @@ function type(panel, text) {
 }
 
 function lines(panel, width = 120) {
-	const [top, ...rest] = panel.render(width).map((line) => stripVTControlCharacters(line));
+	const [top, ...rest] = panel
+		.render(width)
+		.map((line) => stripVTControlCharacters(line));
 	const title = top.replace(/^┌─ /, "").replace(/ ─+( \[×\] )?─┐$/, "");
 	const body = rest
 		.slice(0, -1)
-		.map((line) => line.slice(1, -1).trim().replace(/^▸ /, "").replace(/\s*›$/, "").replace(/ {2,}/g, " "))
+		.map((line) =>
+			line
+				.slice(1, -1)
+				.trim()
+				.replace(/^▸ /, "")
+				.replace(/\s*›$/, "")
+				.replace(/ {2,}/g, " "),
+		)
 		.filter((line) => line !== "" && !/ ─+$/.test(line));
 	return [title, ...body];
 }
@@ -176,7 +209,10 @@ test("without a file the panel starts with one empty default profile marked acti
 			active: "default",
 			profiles: { default: {} },
 		});
-		assert.match(notifications.at(-1).message, /^Saved model profiles to .*\.$/);
+		assert.match(
+			notifications.at(-1).message,
+			/^Saved model profiles to .*\.$/,
+		);
 	});
 });
 
@@ -186,12 +222,24 @@ test("Enter on a specialist picks a model by filter, then a thinking level it su
 
 		press(panel, keys.enter, keys.down, keys.enter);
 		type(panel, "luna");
-		assert.deepEqual(lines(panel).slice(2, 4), ["openai-codex/gpt-5.6-luna", "type filter | ↑/↓ choose | Enter select | Esc back"]);
+		assert.deepEqual(lines(panel).slice(2, 4), [
+			"openai-codex/gpt-5.6-luna",
+			"type filter | ↑/↓ choose | Enter select | Esc back",
+		]);
 		press(panel, keys.enter);
-		assert.deepEqual(lines(panel).slice(1, 6), ["off", "minimal", "low", "medium", "high"]);
+		assert.deepEqual(lines(panel).slice(1, 6), [
+			"off",
+			"minimal",
+			"low",
+			"medium",
+			"high",
+		]);
 		press(panel, keys.down, keys.down, keys.enter);
 
-		assert.match(lines(panel)[2], /^worker\s+openai-codex\/gpt-5\.6-luna · thinking: low$/);
+		assert.match(
+			lines(panel)[2],
+			/^worker\s+openai-codex\/gpt-5\.6-luna · thinking: low$/,
+		);
 		press(panel, keys.escape);
 		const saved = await saveFrom(panel, editing, path);
 		assert.deepEqual(saved.profiles.default, {
@@ -202,12 +250,20 @@ test("Enter on a specialist picks a model by filter, then a thinking level it su
 
 test("the model picker lists only available models and the thinking screen only supported levels", async () => {
 	await withConfigDirectory(async ({ path }) => {
-		const { panel, editing } = await openPanel(path, { available: [catalog[1], catalog[2]] });
+		const { panel, editing } = await openPanel(path, {
+			available: [catalog[1], catalog[2]],
+		});
 
 		press(panel, keys.enter, keys.enter);
-		assert.deepEqual(lines(panel).slice(2, 4), ["openai-codex/gpt-6-astra", "nan/mimo-v2.5"]);
+		assert.deepEqual(lines(panel).slice(2, 4), [
+			"openai-codex/gpt-6-astra",
+			"nan/mimo-v2.5",
+		]);
 		press(panel, keys.down, keys.enter);
-		assert.deepEqual(lines(panel).slice(1, 3), ["off", "↑/↓ choose | Enter confirm | Esc back"]);
+		assert.deepEqual(lines(panel).slice(1, 3), [
+			"off",
+			"↑/↓ choose | Enter confirm | Esc back",
+		]);
 		press(panel, "s");
 		assert.match(lines(panel)[0], /Thinking level/);
 		press(panel, keys.escape, keys.escape, keys.escape, keys.escape);
@@ -262,7 +318,13 @@ test("a new name must be a slug that no other profile uses", async () => {
 		type(panel, "Fast");
 		press(panel, keys.enter);
 		assert.match(lines(panel)[1], /lowercase letters, digits, or hyphens/);
-		press(panel, keys.backspace, keys.backspace, keys.backspace, keys.backspace);
+		press(
+			panel,
+			keys.backspace,
+			keys.backspace,
+			keys.backspace,
+			keys.backspace,
+		);
 		type(panel, "deep");
 		press(panel, keys.enter);
 		assert.match(lines(panel)[1], /deep already exists/);
@@ -332,7 +394,10 @@ test("x refuses to delete the active profile and deletes another only after y", 
 		const { panel, editing } = await openPanel(path);
 
 		press(panel, "x");
-		assert.match(lines(panel)[1], /daily is the active profile and cannot be deleted/);
+		assert.match(
+			lines(panel)[1],
+			/daily is the active profile and cannot be deleted/,
+		);
 		assert.equal(lines(panel)[0], "Model profiles");
 
 		press(panel, keys.down, "x");
@@ -390,7 +455,12 @@ test("an invalid, schema version 1, or unreadable file refuses to open the panel
 		const refusals = [
 			["{ broken", /Invalid model profiles/],
 			[
-				JSON.stringify({ schemaVersion: 1, specialists: {}, tiers: {}, taskTypes: {} }),
+				JSON.stringify({
+					schemaVersion: 1,
+					specialists: {},
+					tiers: {},
+					taskTypes: {},
+				}),
 				/schema version 1.*recreate the profiles with \/workflow:models/,
 			],
 		];
@@ -399,7 +469,10 @@ test("an invalid, schema version 1, or unreadable file refuses to open the panel
 			const invalid = editorContext();
 			invalid.ctx.ui.custom = () => assert.fail("the panel must not open");
 
-			assert.equal((await createModelProfiles(dirname(path)).edit(invalid.ctx)).status, "refused");
+			assert.equal(
+				(await createModelProfiles(dirname(path)).edit(invalid.ctx)).status,
+				"refused",
+			);
 			assert.match(invalid.notifications.at(-1).message, reason);
 			assert.equal(await readFile(path, "utf8"), content);
 		}
@@ -409,7 +482,10 @@ test("an invalid, schema version 1, or unreadable file refuses to open the panel
 		const dangling = editorContext();
 		dangling.ctx.ui.custom = () => assert.fail("the panel must not open");
 
-		assert.equal((await createModelProfiles(dirname(path)).edit(dangling.ctx)).status, "refused");
+		assert.equal(
+			(await createModelProfiles(dirname(path)).edit(dangling.ctx)).status,
+			"refused",
+		);
 		assert.match(dangling.notifications.at(-1).message, /Unable to read/);
 		assert.equal((await lstat(path)).isSymbolicLink(), true);
 	});
@@ -419,9 +495,15 @@ test("the panel refuses outside the TUI", async (t) => {
 	const printed = [];
 	t.mock.method(console, "error", (message) => printed.push(message));
 	await withConfigDirectory(async ({ path }) => {
-		for (const context of [editorContext({ hasUI: false, mode: "print" }), editorContext({ mode: "rpc" })]) {
+		for (const context of [
+			editorContext({ hasUI: false, mode: "print" }),
+			editorContext({ mode: "rpc" }),
+		]) {
 			context.ctx.ui.custom = () => assert.fail("the panel must not open");
-			assert.equal((await createModelProfiles(dirname(path)).edit(context.ctx)).status, "refused");
+			assert.equal(
+				(await createModelProfiles(dirname(path)).edit(context.ctx)).status,
+				"refused",
+			);
 		}
 		assert.deepEqual(printed, ["The model profiles panel needs the TUI."]);
 		await assert.rejects(readFile(path, "utf8"), { code: "ENOENT" });
@@ -429,13 +511,23 @@ test("the panel refuses outside the TUI", async (t) => {
 });
 
 test("the model picker honours remapped selection keybindings", async (t) => {
-	const remapped = new KeybindingsManager(TUI_KEYBINDINGS, { "tui.select.down": "ctrl+n" });
+	const remapped = new KeybindingsManager(TUI_KEYBINDINGS, {
+		"tui.select.down": "ctrl+n",
+	});
 	setKeybindings(remapped);
 	t.after(() => setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS)));
 	await withConfigDirectory(async ({ path }) => {
 		const { panel, editing } = await openPanel(path, { keybindings: remapped });
 
-		press(panel, keys.enter, keys.enter, "\x0e", keys.enter, keys.enter, keys.escape);
+		press(
+			panel,
+			keys.enter,
+			keys.enter,
+			"\x0e",
+			keys.enter,
+			keys.enter,
+			keys.escape,
+		);
 
 		const saved = await saveFrom(panel, editing, path);
 		assert.deepEqual(saved.profiles.default.explorer, {
@@ -452,7 +544,12 @@ test("the panel opens as a centered overlay framed like a Grok modal at every wi
 
 		assert.deepEqual(overlays[0], {
 			overlay: true,
-			overlayOptions: { anchor: "center", width: "70%", minWidth: 44, maxHeight: "100%" },
+			overlayOptions: {
+				anchor: "center",
+				width: "70%",
+				minWidth: 44,
+				maxHeight: "100%",
+			},
 		});
 		const shown = panel.render(60);
 		assert.deepEqual(shown, [
@@ -469,7 +566,8 @@ test("the panel opens as a centered overlay framed like a Grok modal at every wi
 		for (const width of [10, 24, 44, 80, 120, 160]) {
 			const lines = panel.render(width);
 			assert.ok(lines.at(-1).startsWith("└"));
-			for (const line of lines) assert.ok(visibleWidth(line) <= width, `${width}: ${line}`);
+			for (const line of lines)
+				assert.ok(visibleWidth(line) <= width, `${width}: ${line}`);
 		}
 		press(panel, keys.escape);
 		assert.equal((await editing).status, "cancelled");
@@ -484,7 +582,9 @@ test("every rendered row fits the width and hostile model names cannot inject co
 			profiles: { default: { explorer: { model: longName, thinking: "low" } } },
 		});
 		const { ctx, nextPanel } = editorContext();
-		ctx.modelRegistry.getAvailable = () => [{ provider: "nan", id: "evil\x1b[2J‮name" }];
+		ctx.modelRegistry.getAvailable = () => [
+			{ provider: "nan", id: "evil\x1b[2J‮name" },
+		];
 		const editing = createModelProfiles(dirname(path)).edit(ctx);
 		const panel = await nextPanel();
 		const width = 24;
@@ -514,7 +614,11 @@ test("every rendered row fits the width and hostile model names cannot inject co
 test("saving keeps a file changed or corrupted while the panel was open", async () => {
 	await withConfigDirectory(async ({ path }) => {
 		for (const changed of [
-			JSON.stringify({ schemaVersion: 2, active: "other", profiles: { other: {} } }),
+			JSON.stringify({
+				schemaVersion: 2,
+				active: "other",
+				profiles: { other: {} },
+			}),
 			"{ not json",
 		]) {
 			await writeProfiles(path, existing);
@@ -525,7 +629,10 @@ test("saving keeps a file changed or corrupted while the panel was open", async 
 
 			assert.equal((await editing).status, "kept");
 			assert.equal(await readFile(path, "utf8"), changed);
-			assert.match(notifications.at(-1).message, /changed on disk since the panel opened/);
+			assert.match(
+				notifications.at(-1).message,
+				/changed on disk since the panel opened/,
+			);
 			assert.equal(notifications.at(-1).level, "warning");
 		}
 	});
@@ -598,7 +705,13 @@ test("the model picker does not offer a model with no supported thinking levels"
 			provider: "acme",
 			id: "silent",
 			reasoning: true,
-			thinkingLevelMap: { off: null, minimal: null, low: null, medium: null, high: null },
+			thinkingLevelMap: {
+				off: null,
+				minimal: null,
+				low: null,
+				medium: null,
+				high: null,
+			},
 		};
 		const context = editorContext({ available: [...catalog, silent] });
 		context.ctx.modelRegistry.getAll = () => [...catalog, silent];
@@ -650,7 +763,10 @@ test("/workflow:models opens the panel over the saved profiles and /workflow:mod
 		const panel = await nextPanel();
 		press(panel, keys.enter);
 
-		assert.match(lines(panel)[1], /^explorer\s+nan\/mimo-v2\.5 · thinking: off$/);
+		assert.match(
+			lines(panel)[1],
+			/^explorer\s+nan\/mimo-v2\.5 · thinking: off$/,
+		);
 		press(panel, keys.escape, keys.escape);
 		await editing;
 	});
@@ -683,7 +799,8 @@ test("clicking [×] exits like Esc, asking first when there are unsaved changes"
 		const { panel, editing, confirmations, nextPanel } = await openPanel(path, {
 			confirm: () => discard,
 		});
-		const click = (x, y) => panel.handleMouse({ type: "click", button: "left", x, y });
+		const click = (x, y) =>
+			panel.handleMouse({ type: "click", button: "left", x, y });
 		const top = stripVTControlCharacters(panel.render(60)[0]);
 		const x = top.indexOf("[×]") + 1;
 
@@ -715,7 +832,10 @@ test("on a short terminal the panel never exceeds the height and keeps its botto
 			await editing;
 		}
 		const { panel, editing } = await openPanel(path, { rows: 10 });
-		assert.match(stripVTControlCharacters(panel.render(80).at(-2)), /Enter open|Esc exit/);
+		assert.match(
+			stripVTControlCharacters(panel.render(80).at(-2)),
+			/Enter open|Esc exit/,
+		);
 		press(panel, keys.escape);
 		await editing;
 	});

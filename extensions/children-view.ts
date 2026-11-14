@@ -21,7 +21,11 @@ import {
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 
-import type { AuditIdentity, ChildAudit, SegmentCursor } from "./child-audit.ts";
+import type {
+	AuditIdentity,
+	ChildAudit,
+	SegmentCursor,
+} from "./child-audit.ts";
 import {
 	type ChildRecord,
 	type createChildSessions,
@@ -46,11 +50,7 @@ import {
 import { type Schedule, scheduleTimer } from "./clock.ts";
 import { seated } from "./shell.ts";
 
-import {
-	byState,
-	type ChildTheme,
-	childGlyph,
-} from "./children-box.ts";
+import { byState, type ChildTheme, childGlyph } from "./children-box.ts";
 import type { ChildContext } from "./child-handle.ts";
 import {
 	formatContextTokens,
@@ -135,7 +135,9 @@ function wrap(text: string, width: number) {
 
 function steerMarks(child: ChildRecord) {
 	const mark = (count: number, state: string) =>
-		count === 0 ? [] : [`${count} ${count === 1 ? "steer" : "steers"} ${state}`];
+		count === 0
+			? []
+			: [`${count} ${count === 1 ? "steer" : "steers"} ${state}`];
 	return [
 		...mark(child.steering?.length ?? 0, "pending"),
 		...mark(child.undelivered?.length ?? 0, "undelivered"),
@@ -187,7 +189,10 @@ function contextRow(
 		const last: Segment[] = context.last || ended ? [[["dim", "last"]]] : [];
 		if (context.tokens === null) {
 			return [
-				[["dim", "ctx"], ["dim", "?"]],
+				[
+					["dim", "ctx"],
+					["dim", "?"],
+				],
 				...(counts ? [[["dim", capacity]] as Segment] : []),
 				...last,
 			];
@@ -195,7 +200,11 @@ function contextRow(
 		return [
 			occupancySegment(context.tokens, context.capacity, bar),
 			...(counts
-				? [[["dim", `${formatContextTokens(context.tokens)} / ${capacity}`]] as Segment]
+				? [
+						[
+							["dim", `${formatContextTokens(context.tokens)} / ${capacity}`],
+						] as Segment,
+					]
 				: []),
 			...last,
 		];
@@ -208,7 +217,11 @@ function contextRow(
 		const line = paintSegments(theme, segments(counts, bar));
 		if (visibleWidth(line) <= width) return line;
 	}
-	return truncateToWidth(paintSegments(theme, segments(false, false)), width, "…");
+	return truncateToWidth(
+		paintSegments(theme, segments(false, false)),
+		width,
+		"…",
+	);
 }
 
 function runTime(child: ChildRecord, now: number) {
@@ -328,7 +341,11 @@ function coreItems(thread: Thread | undefined): Item[] {
 					name: part.name,
 					args: part.arguments,
 					...(result
-						? { result: { content: result.content }, error: result.isError, final: true }
+						? {
+								result: { content: result.content },
+								error: result.isError,
+								final: true,
+							}
 						: { final: false }),
 				},
 			});
@@ -372,9 +389,17 @@ function createThread(theme: ChildTheme) {
 		return time.end - time.start;
 	}
 
-	function indented(text: string, width: number, color: ThemeColor, indent = "  ") {
+	function indented(
+		text: string,
+		width: number,
+		color: ThemeColor,
+		indent = "  ",
+	) {
 		const { rows, lines } = wrapped(text, width - indent.length);
-		return { rows: rows.map((line) => `${indent}${theme.fg(color, line)}`), lines };
+		return {
+			rows: rows.map((line) => `${indent}${theme.fg(color, line)}`),
+			lines,
+		};
 	}
 
 	function slotBlocks(
@@ -390,11 +415,20 @@ function createThread(theme: ChildTheme) {
 		});
 		if (!slot) {
 			return [
-				{ ...note("start", "… loading"), load: { slot: name, cursor: start, toward: "after" } },
+				{
+					...note("start", "… loading"),
+					load: { slot: name, cursor: start, toward: "after" },
+				},
 			];
 		}
 		if (slot.unavailable) {
-			return [note("unavailable", "This part of the evidence is unavailable.", "warning")];
+			return [
+				note(
+					"unavailable",
+					"This part of the evidence is unavailable.",
+					"warning",
+				),
+			];
 		}
 		const blocks: Block[] = [];
 		const first = slot.parts[0];
@@ -412,7 +446,10 @@ function createThread(theme: ChildTheme) {
 			blocks.push({
 				sub: partSub(name, part.part),
 				rows: label
-					? [`${indent}${theme.fg("dim", terminalSafeLine(part.field as string))}`, ...body.rows]
+					? [
+							`${indent}${theme.fg("dim", terminalSafeLine(part.field as string))}`,
+							...body.rows,
+						]
 					: body.rows,
 				lines: label ? [-1, ...body.lines] : body.lines,
 			});
@@ -427,7 +464,11 @@ function createThread(theme: ChildTheme) {
 		return blocks;
 	}
 
-	function earlier(start: number | undefined, style: Style, indent: string): Block[] {
+	function earlier(
+		start: number | undefined,
+		style: Style,
+		indent: string,
+	): Block[] {
 		if (start === undefined) return [];
 		return [
 			{
@@ -473,11 +514,18 @@ function createThread(theme: ChildTheme) {
 				const body = style.hideThinking
 					? { rows: [], lines: [] }
 					: indented(text, width, "dim");
-				blocks.push({ sub, rows: [head, ...body.rows], lines: [-1, ...body.lines] });
+				blocks.push({
+					sub,
+					rows: [head, ...body.rows],
+					lines: [-1, ...body.lines],
+				});
 			} else if (part?.type === "text") {
 				const text = clean(String(part.text ?? ""));
 				if (text && !(entry.final && text === style.duplicate)) {
-					blocks.push({ sub, rows: new Markdown(text, 0, 0, markdown).render(width) });
+					blocks.push({
+						sub,
+						rows: new Markdown(text, 0, 0, markdown).render(width),
+					});
 				}
 			} else if (part?.type === "toolCall" && !entry.final) {
 				const args = terminalSafeLine(
@@ -487,12 +535,17 @@ function createThread(theme: ChildTheme) {
 				);
 				blocks.push({
 					sub,
-					rows: [truncateToWidth(row("dim", "Calling a tool", args), width, "…")],
+					rows: [
+						truncateToWidth(row("dim", "Calling a tool", args), width, "…"),
+					],
 				});
 			}
 		});
 		if (entry.segment) {
-			blocks.push({ sub: "large", rows: [row("dim", "Message", "retained in parts")] });
+			blocks.push({
+				sub: "large",
+				rows: [row("dim", "Message", "retained in parts")],
+			});
 			blocks.push(
 				...(style.expanded
 					? slotBlocks("message", entry.segment, slot("message"), width, "  ")
@@ -548,20 +601,36 @@ function createThread(theme: ChildTheme) {
 			...earlier(entry.earlier, style, indent),
 		];
 		if (entry.argsSegment && style.expanded) {
-			blocks.push(...slotBlocks("args", entry.argsSegment, slot("args"), width, indent));
+			blocks.push(
+				...slotBlocks("args", entry.argsSegment, slot("args"), width, indent),
+			);
 		} else if (entry.args !== undefined && style.expanded) {
-			const body = indented(clean(JSON.stringify(entry.args, null, 2)), width, "dim", indent);
+			const body = indented(
+				clean(JSON.stringify(entry.args, null, 2)),
+				width,
+				"dim",
+				indent,
+			);
 			blocks.push({ sub: "args", rows: body.rows, lines: body.lines });
 		}
 		if (entry.resultSegment) {
 			blocks.push(
 				...(style.expanded
-					? slotBlocks("result", entry.resultSegment, slot("result"), width, indent)
+					? slotBlocks(
+							"result",
+							entry.resultSegment,
+							slot("result"),
+							width,
+							indent,
+						)
 					: [
 							{
 								sub: "collapsed",
 								rows: [
-									theme.fg("dim", `${indent}… large output · ${style.expandKey} to expand`),
+									theme.fg(
+										"dim",
+										`${indent}… large output · ${style.expandKey} to expand`,
+									),
 								],
 							},
 						]),
@@ -595,7 +664,8 @@ function createThread(theme: ChildTheme) {
 		style: Style,
 		slot: (name: string) => Slot | undefined,
 	): Block[] {
-		const answer = item.question === undefined ? "Answer" : `Answer ${item.question}`;
+		const answer =
+			item.question === undefined ? "Answer" : `Answer ${item.question}`;
 		if (item.segment) {
 			const label =
 				item.source === "answer"
@@ -619,15 +689,30 @@ function createThread(theme: ChildTheme) {
 				},
 				...(style.expanded
 					? slotBlocks("text", item.segment, slot("text"), width, "  ")
-					: [{ sub: "collapsed", rows: [theme.fg("dim", `  … ${style.expandKey} to expand`)] }]),
+					: [
+							{
+								sub: "collapsed",
+								rows: [theme.fg("dim", `  … ${style.expandKey} to expand`)],
+							},
+						]),
 			];
 		}
 		const text = clean(item.text);
 		if (!text) return [];
 		if (item.source === "user" && text === clean(style.task)) return [];
 		if (item.delivery === "queued") {
-			const label = item.source === "answer" ? `${answer} queued` : `${item.source === "steer" ? "Steer" : "Follow-up"} queued`;
-			return [{ sub: "input", rows: [truncateToWidth(row("dim", label, text.split("\n")[0]), width, "…")] }];
+			const label =
+				item.source === "answer"
+					? `${answer} queued`
+					: `${item.source === "steer" ? "Steer" : "Follow-up"} queued`;
+			return [
+				{
+					sub: "input",
+					rows: [
+						truncateToWidth(row("dim", label, text.split("\n")[0]), width, "…"),
+					],
+				},
+			];
 		}
 		const prefix = item.source === "answer" ? `${answer}: ` : "";
 		const body = wrapped(`${prefix}${text}`, width - 2);
@@ -658,7 +743,16 @@ function createThread(theme: ChildTheme) {
 				return [
 					{
 						sub: "state",
-						rows: [truncateToWidth(theme.fg("dim", `→ ${terminalSafeLine(item.state)}${terminalSafeLine(verdict)}`), width, "…")],
+						rows: [
+							truncateToWidth(
+								theme.fg(
+									"dim",
+									`→ ${terminalSafeLine(item.state)}${terminalSafeLine(verdict)}`,
+								),
+								width,
+								"…",
+							),
+						],
 					},
 				];
 			}
@@ -666,20 +760,36 @@ function createThread(theme: ChildTheme) {
 				return [
 					{
 						sub: "unsupported",
-						rows: [row("warning", "Unsupported evidence", `#${item.ordinal} is not interpreted`)],
+						rows: [
+							row(
+								"warning",
+								"Unsupported evidence",
+								`#${item.ordinal} is not interpreted`,
+							),
+						],
 					},
 				];
 			}
 			if (item.kind === "unavailable") {
-				const range = item.to === undefined ? `from #${item.from}` : item.to === item.from ? `#${item.from}` : `#${item.from}–${item.to}`;
-				return [{ sub: "gap", rows: [row("warning", "Evidence unavailable", range)] }];
+				const range =
+					item.to === undefined
+						? `from #${item.from}`
+						: item.to === item.from
+							? `#${item.from}`
+							: `#${item.from}–${item.to}`;
+				return [
+					{ sub: "gap", rows: [row("warning", "Evidence unavailable", range)] },
+				];
 			}
 			return [];
 		},
 	};
 }
 
-type Audit = Pick<ChildAudit, "list" | "read" | "segment" | "repair" | "repairCatalog">;
+type Audit = Pick<
+	ChildAudit,
+	"list" | "read" | "segment" | "repair" | "repairCatalog"
+>;
 type Listed = Awaited<ReturnType<ChildAudit["list"]>>["records"][number];
 type Shown = { child: ChildRecord; live: boolean; listed?: Listed };
 
@@ -778,7 +888,9 @@ function createChildrenView(
 ) {
 	let selected: string | undefined = sessions
 		.list()
-		.sort((a, b) => byState(a, b) || (b.endedAt ?? 0) - (a.endedAt ?? 0))[0]?.id;
+		.sort(
+			(a, b) => byState(a, b) || (b.endedAt ?? 0) - (a.endedAt ?? 0),
+		)[0]?.id;
 	let focus: "list" | "detail" = "list";
 	let confirming: string | undefined;
 	let notice = "";
@@ -881,10 +993,21 @@ function createChildrenView(
 		const live = sessions.list();
 		const ids = new Set(live.map((child) => child.id));
 		const list = fleetOrder([
-			...live.map((child) => ({ child, live: true, listed: listed.get(child.id) })),
+			...live.map((child) => ({
+				child,
+				live: true,
+				listed: listed.get(child.id),
+			})),
 			...[...listed.values()]
-				.filter((record) => !ids.has(record.child) && record.identity.parent !== undefined)
-				.map((record) => ({ child: historical(record), live: false, listed: record })),
+				.filter(
+					(record) =>
+						!ids.has(record.child) && record.identity.parent !== undefined,
+				)
+				.map((record) => ({
+					child: historical(record),
+					live: false,
+					listed: record,
+				})),
 		]);
 		const found = list.findIndex((item) => item.child.id === selected);
 		if (found === -1 && focus === "detail" && !layout.split) focus = "list";
@@ -938,7 +1061,9 @@ function createChildrenView(
 
 	function repairs(item: Shown | undefined): [Hint, Action][] {
 		if (repairing) return [[["r", "cancel repair"], "repair"]];
-		return repairable(item) || uncatalogued ? [[["r", "repair"], "repair"]] : [];
+		return repairable(item) || uncatalogued
+			? [[["r", "repair"], "repair"]]
+			: [];
 	}
 
 	function repair(item: Shown | undefined) {
@@ -957,13 +1082,15 @@ function createChildrenView(
 			? audit.repair(id, controller.signal).then((result) => {
 					if (!result) return `${name} has no record to repair.`;
 					if ("cancelled" in result) return `Repair of ${name} cancelled.`;
-					if ("refused" in result) return `Repair of ${name} refused: ${result.refused}`;
+					if ("refused" in result)
+						return `Repair of ${name} refused: ${result.refused}`;
 					const lost = result.unavailable.length;
 					return `Repaired ${name}: ${result.recovered} observations recovered${lost > 0 ? `, ${lost} unavailable ranges` : ""}.`;
 				})
 			: audit.repairCatalog(controller.signal).then((result) => {
 					if ("cancelled" in result) return "Repair of the catalog cancelled.";
-					if ("refused" in result) return `Repair of the catalog refused: ${result.refused}`;
+					if ("refused" in result)
+						return `Repair of the catalog refused: ${result.refused}`;
 					const added = `Catalog repaired: ${result.added} ${result.added === 1 ? "record" : "records"} added.`;
 					return "warning" in result ? `${added} ${result.warning}` : added;
 				});
@@ -1227,12 +1354,7 @@ function createChildrenView(
 		const live = item?.live ?? true;
 		const working = item ? live && isWorking(item.child.state) : true;
 		const inputHint: [Hint, Action][] = live
-			? [
-					[
-						["Enter", (item && replyKind(item.child)) ?? "input"],
-						"type",
-					],
-				]
+			? [[["Enter", (item && replyKind(item.child)) ?? "input"], "type"]]
 			: [];
 		const cancelHint: [Hint, Action][] = working
 			? [[["s/c", "cancel"], "cancel"]]
@@ -1340,7 +1462,9 @@ function createChildrenView(
 				ids.push(undefined);
 			}
 			if (child.group !== undefined && child.group !== group) {
-				const members = list.filter((other) => other.child.group === child.group);
+				const members = list.filter(
+					(other) => other.child.group === child.group,
+				);
 				const done = members.filter((other) => sectionOf(other) === "History");
 				const { tokens } = spentBy(members);
 				lines.push(
@@ -1363,10 +1487,13 @@ function createChildrenView(
 					? theme.bold(theme.fg("accent", "▸ "))
 					: theme.fg("dim", "▸ ")
 				: "  ";
-			const step = terminalSafeLine(item.live ? childStep(child) : child.task.trim().split("\n")[0] ?? "");
+			const step = terminalSafeLine(
+				item.live ? childStep(child) : (child.task.trim().split("\n")[0] ?? ""),
+			);
 			const color = child.state === "waiting" && item.live ? "warning" : "dim";
 			const head = `${mark}${glyph(item)} ${theme.fg("accent", terminalSafeLine(child.role))} ${theme.fg("dim", terminalSafeLine(child.id.slice(0, 4)))}`;
-			const task = child.todo === undefined ? undefined : host.todo.text(child.todo);
+			const task =
+				child.todo === undefined ? undefined : host.todo.text(child.todo);
 			const detail =
 				child.todo !== undefined && task !== undefined
 					? `${theme.fg("text", `#${child.todo} ${terminalSafeLine(task)}`)} ${theme.fg(color, step)}`
@@ -1375,7 +1502,9 @@ function createChildrenView(
 			const spend = usage(spent(sessions.thread(child.id)));
 			const marks = [
 				...steerMarks(child),
-				...(item.listed && !item.listed.health.complete ? ["incomplete transcript"] : []),
+				...(item.listed && !item.listed.health.complete
+					? ["incomplete transcript"]
+					: []),
 			];
 			const right = (rest: string[]) =>
 				[
@@ -1385,8 +1514,9 @@ function createChildrenView(
 			const tail =
 				[[state, ...spend], [state], [timeOf(item, now)]]
 					.map(right)
-					.find((text) => visibleWidth(head) + 1 + visibleWidth(text) <= width) ??
-				right([timeOf(item, now)]);
+					.find(
+						(text) => visibleWidth(head) + 1 + visibleWidth(text) <= width,
+					) ?? right([timeOf(item, now)]);
 			const room = width - visibleWidth(head) - visibleWidth(tail) - 2;
 			const shown = two
 				? [
@@ -1395,9 +1525,7 @@ function createChildrenView(
 					]
 				: [
 						spread(
-							room > 1
-								? `${head} ${truncateToWidth(detail, room, "…")}`
-								: head,
+							room > 1 ? `${head} ${truncateToWidth(detail, room, "…")}` : head,
 							tail,
 							width,
 						),
@@ -1439,7 +1567,9 @@ function createChildrenView(
 			...(child.worktree ? [`wt: ${basename(child.worktree)}`] : []),
 		].join(" · ");
 		const info = transcript?.info();
-		const notes = new Set([info?.warning, item.listed?.index].filter((note) => note !== undefined));
+		const notes = new Set(
+			[info?.warning, item.listed?.index].filter((note) => note !== undefined),
+		);
 		const capture = captureLine(
 			info?.health ?? item.listed?.health,
 			notes.size > 0 ? [...notes].join(" ") : undefined,
@@ -1466,7 +1596,12 @@ function createChildrenView(
 				),
 			),
 			...(capture
-				? [theme.fg("warning", truncateToWidth(terminalSafeLine(capture), width, "…"))]
+				? [
+						theme.fg(
+							"warning",
+							truncateToWidth(terminalSafeLine(capture), width, "…"),
+						),
+					]
 				: []),
 		];
 	}
@@ -1500,7 +1635,8 @@ function createChildrenView(
 						: `  Contract · ${contract.length} ${contract.length === 1 ? "line" : "lines"} · p expand`,
 				),
 			);
-			if (promptOpen) lines.push(...contract.map((line) => `  ${theme.fg("dim", line)}`));
+			if (promptOpen)
+				lines.push(...contract.map((line) => `  ${theme.fg("dim", line)}`));
 		}
 		lines.push(rule("Thread", width, focused));
 		return [{ sub: "prompt", rows: lines }];
@@ -1558,14 +1694,20 @@ function createChildrenView(
 		return lines.length > 0 ? [{ sub: "tail", rows: lines }] : [];
 	}
 
-	function renderDetail(item: Shown, width: number, rows: number, focused: boolean) {
+	function renderDetail(
+		item: Shown,
+		width: number,
+		rows: number,
+		focused: boolean,
+	) {
 		const { child } = item;
 		const top = header(item, width, focused).slice(0, rows);
 		detailRoom = Math.max(1, rows - top.length - 1);
 		const style = {
 			child: child.id,
 			task: child.task,
-			duplicate: item.live && !isWorking(child.state) ? clean(child.text ?? "") : "",
+			duplicate:
+				item.live && !isWorking(child.state) ? clean(child.text ?? "") : "",
 			hideThinking,
 			expanded,
 			expandKey,
@@ -1680,7 +1822,9 @@ function createChildrenView(
 						action: keys[span.index][1],
 					})),
 			};
-			const working = list.filter((entry) => sectionOf(entry) === "Working").length;
+			const working = list.filter(
+				(entry) => sectionOf(entry) === "Working",
+			).length;
 			const total = spentBy(list);
 			const title = [
 				`Fleet ${list.length}`,

@@ -109,11 +109,19 @@ export function consultationAnswer(ref: string, text: string) {
 		);
 	if (reply.ref !== ref)
 		throw new Error("The parent reply names another question.");
-	if (reply.kind !== "resolved" && reply.kind !== "deny" && reply.kind !== "pending")
+	if (
+		reply.kind !== "resolved" &&
+		reply.kind !== "deny" &&
+		reply.kind !== "pending"
+	)
 		throw new Error("The parent reply kind must be resolved, deny or pending.");
 	if (typeof reply.answer !== "string" || !reply.answer.trim())
 		throw new Error("The parent reply needs a nonempty answer.");
-	return { kind: reply.kind, answer: reply.answer, confirm: reply.confirm === true };
+	return {
+		kind: reply.kind,
+		answer: reply.answer,
+		confirm: reply.confirm === true,
+	};
 }
 
 // The reply names its question by ref; the rest of its identity comes from the pending question, never from the reply.
@@ -190,7 +198,9 @@ export function readRecords<Frame>(
 ) {
 	let buffer = "";
 	const refuse = () =>
-		stream.destroy(new Error(`A channel frame over ${limit} bytes was refused.`));
+		stream.destroy(
+			new Error(`A channel frame over ${limit} bytes was refused.`),
+		);
 	stream.setEncoding("utf8");
 	stream.on("data", (chunk: string) => {
 		buffer += chunk;
@@ -215,7 +225,9 @@ export function readRecords<Frame>(
 				Array.isArray(record) ||
 				!valid(record as Record<string, unknown>)
 			) {
-				onInvalid?.(new Error(`A malformed record was refused: ${line.slice(0, 200)}`));
+				onInvalid?.(
+					new Error(`A malformed record was refused: ${line.slice(0, 200)}`),
+				);
 				continue;
 			}
 			onRecord(record as Frame);
@@ -257,7 +269,8 @@ export function parentChannel(input: Readable, output: Writable) {
 		ready: (tools: string[]) => send({ type: "ready", tools }),
 		request(frame: ChildRequest, signal?: AbortSignal) {
 			if (closed) return Promise.reject(closed);
-			if (signal?.aborted) return Promise.reject(new Error("The call was aborted."));
+			if (signal?.aborted)
+				return Promise.reject(new Error("The call was aborted."));
 			const id = ++next;
 			return new Promise<string>((resolve, reject) => {
 				const withdraw = () => {
@@ -287,7 +300,11 @@ function installContextual(
 	config: ChildRuntimeConfig,
 	channel: ReturnType<typeof parentChannel>,
 	ctx: ExtensionContext,
-	ask: (question: string, signal?: AbortSignal, consultation?: string) => Promise<string>,
+	ask: (
+		question: string,
+		signal?: AbortSignal,
+		consultation?: string,
+	) => Promise<string>,
 	checkpointed: (checkpoint: Checkpoint) => Promise<unknown>,
 ) {
 	pi.setActiveTools([
@@ -315,7 +332,11 @@ function installContextual(
 		classify: (proposal, signal) => policy("classify", proposal, signal),
 		consult: async (question, signal) => {
 			const ref = reference(question);
-			return answered(question, ref, await ask(consultation(question), signal, ref));
+			return answered(
+				question,
+				ref,
+				await ask(consultation(question), signal, ref),
+			);
 		},
 		onDecision: (decision) => policy("decision", decision),
 		sessionInstructions: () => instructions,
@@ -346,14 +367,25 @@ export async function installChildRuntime(
 	ctx: ExtensionContext,
 ) {
 	const ask = (question: string, signal?: AbortSignal, consultation?: string) =>
-		channel.request({ type: "ask", question, ...(consultation === undefined ? {} : { consultation }) }, signal);
+		channel.request(
+			{
+				type: "ask",
+				question,
+				...(consultation === undefined ? {} : { consultation }),
+			},
+			signal,
+		);
 	const checkpointed = (checkpoint: Checkpoint) =>
 		channel.request({ type: "checkpoint", checkpoint });
 	const contextual = config.contextual !== undefined;
 	pi.registerTool(
 		contextual
 			? createConfiguredBashTool(config.cwd, config.shell)
-			: createChildBashTool(config.cwd, config.shell, config.checkpoint !== undefined),
+			: createChildBashTool(
+					config.cwd,
+					config.shell,
+					config.checkpoint !== undefined,
+				),
 	);
 	if (config.codegraph) pi.registerTool(createChildCodeGraphTool(config.cwd));
 	pi.registerTool(createAskParentTool(ask, contextual));

@@ -132,10 +132,19 @@ export function lastReportedResult(result: ChildResult) {
 	return `Last reported result:\n${resultLines(result)}`;
 }
 
-export type PendingAuthorization = Extract<AuthorizationDecision, { kind: "allow" | "deny" | "held" }>;
+export type PendingAuthorization = Extract<
+	AuthorizationDecision,
+	{ kind: "allow" | "deny" | "held" }
+>;
 
-export function projectPendingAuthorizations(decisions: readonly PendingAuthorization[]) {
-	return decisions.map((decision) => ({ call: decision.call, action: decision.proposal?.action, reason: decision.reason }));
+export function projectPendingAuthorizations(
+	decisions: readonly PendingAuthorization[],
+) {
+	return decisions.map((decision) => ({
+		call: decision.call,
+		action: decision.proposal?.action,
+		reason: decision.reason,
+	}));
 }
 
 export function childOutcome(child: {
@@ -153,7 +162,9 @@ export function childOutcome(child: {
 	return `${childStateOutcome(child)}${checkpointLines(child.checkpoints)}${pending}`;
 }
 
-export function checkpointLines(checkpoints: readonly Checkpoint[] | undefined) {
+export function checkpointLines(
+	checkpoints: readonly Checkpoint[] | undefined,
+) {
 	if (!checkpoints?.length) return "";
 	const recorded = checkpoints.map(
 		({ sha, parent, base, branch }) =>

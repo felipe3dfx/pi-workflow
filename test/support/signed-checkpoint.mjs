@@ -3,7 +3,10 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import process from "node:process";
-import { checkpointGrant, createCheckpointTool } from "../../extensions/child-checkpoint.ts";
+import {
+	checkpointGrant,
+	createCheckpointTool,
+} from "../../extensions/child-checkpoint.ts";
 
 function git(cwd, ...args) {
 	return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
@@ -30,18 +33,31 @@ export async function repository(dir, name, key) {
 
 export async function withCheckpoint(run) {
 	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-checkpoint-"));
-	const saved = { HOME: process.env.HOME, XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME };
+	const saved = {
+		HOME: process.env.HOME,
+		XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+	};
 	process.env.HOME = dir;
 	process.env.XDG_CONFIG_HOME = join(dir, "config");
 	try {
 		const key = join(dir, "key");
 		execFileSync("ssh-keygen", ["-q", "-t", "ed25519", "-N", "", "-f", key]);
 		const main = await repository(dir, "main", key);
-		git(main, "worktree", "add", "--quiet", "-b", "feature", join(dir, "feature"));
+		git(
+			main,
+			"worktree",
+			"add",
+			"--quiet",
+			"-b",
+			"feature",
+			join(dir, "feature"),
+		);
 		const worktree = await realpath(join(dir, "feature"));
 		const grant = await checkpointGrant(worktree, "feature", main);
 		const recorded = [];
-		const tool = createCheckpointTool(grant, (checkpoint) => recorded.push(checkpoint));
+		const tool = createCheckpointTool(grant, (checkpoint) =>
+			recorded.push(checkpoint),
+		);
 		const checkpoint = (params) => tool.execute("call-1", params);
 		return await run({ dir, key, main, worktree, grant, checkpoint, recorded });
 	} finally {

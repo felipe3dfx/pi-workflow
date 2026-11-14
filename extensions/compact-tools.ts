@@ -99,7 +99,9 @@ export function toolLabel(name: string, args: unknown) {
 	return [verb ?? titleCase(name), subject?.trim().split("\n")[0] ?? ""];
 }
 
-export function outputText(result: { content: { type: string; text?: string }[] }) {
+export function outputText(result: {
+	content: { type: string; text?: string }[];
+}) {
 	return result.content
 		.filter((part) => part.type === "text")
 		.map((part) => part.text ?? "")
@@ -170,9 +172,7 @@ function compact<
 
 function usesFallback(toolName: string, own: ToolRenderers | undefined) {
 	return (
-		toolName.startsWith("mcp__") ||
-		toolName === "codemode" ||
-		!own?.renderCall
+		toolName.startsWith("mcp__") || toolName === "codemode" || !own?.renderCall
 	);
 }
 
@@ -180,7 +180,9 @@ function unwrapped(context: RenderContext) {
 	return {
 		...context,
 		lastComponent:
-			context.lastComponent instanceof View ? context.lastComponent.own : undefined,
+			context.lastComponent instanceof View
+				? context.lastComponent.own
+				: undefined,
 	};
 }
 
@@ -193,7 +195,8 @@ function callName(name: string) {
 function scriptDetail(code: unknown, calls: ScriptCall[]) {
 	if (calls.length > 0) {
 		const names = [...new Set(calls.map((call) => callName(call.name)))];
-		const shown = names.slice(0, 2).join(", ") + (names.length > 2 ? ", …" : "");
+		const shown =
+			names.slice(0, 2).join(", ") + (names.length > 2 ? ", …" : "");
 		return `${shown} · ${calls.length} tool call${calls.length === 1 ? "" : "s"}`;
 	}
 	if (typeof code !== "string") return "";
@@ -292,10 +295,15 @@ export function compactToolRenderers(
 export function syncCompactTools(pi: ExtensionAPI, ctx?: ExtensionContext) {
 	if (!ctx?.cwd || typeof ctx.isProjectTrusted !== "function") return;
 	const on = seated("compact-rendering", "message-stream");
-	const register = (name: string, create: (cwd: string, ctx?: ExtensionContext) => object) => {
-		const tool = (on
-			? compact(name, create as Parameters<typeof compact>[1], ctx)
-			: create(ctx.cwd, ctx)) as Parameters<ExtensionAPI["registerTool"]>[0];
+	const register = (
+		name: string,
+		create: (cwd: string, ctx?: ExtensionContext) => object,
+	) => {
+		const tool = (
+			on
+				? compact(name, create as Parameters<typeof compact>[1], ctx)
+				: create(ctx.cwd, ctx)
+		) as Parameters<ExtensionAPI["registerTool"]>[0];
 		pi.registerTool(tool);
 	};
 	register("read", (cwd, ctx) =>

@@ -5,7 +5,11 @@ import { crc32 } from "node:zlib";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 import { askParentTool } from "./child-runtime.ts";
-import { type ChildContext, contextReading, shutdownDeadline } from "./child-handle.ts";
+import {
+	type ChildContext,
+	contextReading,
+	shutdownDeadline,
+} from "./child-handle.ts";
 import { errorMessage } from "./error-message.ts";
 
 export interface AuditIdentity {
@@ -249,7 +253,8 @@ class Refused extends Error {}
 class Fenced extends Error {}
 
 const foreign = "The journal does not belong to this record.";
-const damaged = "Some recorded evidence failed verification and is unavailable.";
+const damaged =
+	"Some recorded evidence failed verification and is unavailable.";
 const unindexed =
 	"The audit index is missing or damaged; this window was verified directly from the record.";
 const unsupportedEvidence =
@@ -311,7 +316,10 @@ export function createChildAudit(options: {
 		});
 	const maxLine = limits.chunk + headerAllowance;
 	const size = limits.window;
-	const cache = new Map<string, { entries: (Extent | null)[]; bytes: number }>();
+	const cache = new Map<
+		string,
+		{ entries: (Extent | null)[]; bytes: number }
+	>();
 	let cached = 0;
 	const slice = Math.max(2, Math.floor((limits.chunk - 2) / 6));
 	const records = new Map<string, Capture>();
@@ -484,7 +492,8 @@ export function createChildAudit(options: {
 		const entry = JSON.stringify({ child });
 		const previous = cataloguing.get(path) ?? Promise.resolve();
 		const appended = previous.then(async () => {
-			if (entry.length + 11 > catalogLine) throw new Error("the child ID is too long");
+			if (entry.length + 11 > catalogLine)
+				throw new Error("the child ID is too long");
 			const file = await files.open(path, "a", 0o600);
 			try {
 				await writeAll(file, Buffer.from(`\n${checksum(entry)}\t${entry}\n`));
@@ -510,7 +519,9 @@ export function createChildAudit(options: {
 			catalogFailures += 1;
 			record.unlisted = `The child could not be added to the audit catalog: ${errorMessage(error)}. ${unrecoverable}`;
 			try {
-				await (await files.open(join(directory, incompleteFile), "w", 0o600)).close();
+				await (
+					await files.open(join(directory, incompleteFile), "w", 0o600)
+				).close();
 			} catch {}
 		}
 	}
@@ -518,11 +529,16 @@ export function createChildAudit(options: {
 	function catalogEntries(buffer: Buffer, max: number) {
 		const names: string[] = [];
 		let at = 0;
-		for (let end = buffer.indexOf(10); end >= 0 && names.length < max; end = buffer.indexOf(10, at)) {
+		for (
+			let end = buffer.indexOf(10);
+			end >= 0 && names.length < max;
+			end = buffer.indexOf(10, at)
+		) {
 			const text = buffer.toString("utf8", at, end);
 			at = end + 1;
 			const entry = text.slice(9);
-			if (text.charCodeAt(8) !== 9 || checksum(entry) !== text.slice(0, 8)) continue;
+			if (text.charCodeAt(8) !== 9 || checksum(entry) !== text.slice(0, 8))
+				continue;
 			try {
 				const child = JSON.parse(entry)?.child;
 				if (typeof child === "string") names.push(child);
@@ -564,7 +580,8 @@ export function createChildAudit(options: {
 				if (!entry.name.endsWith(".jsonl")) continue;
 				const child = entry.name.slice(0, -".jsonl".length);
 				if (!/^[\w-]+$/.test(child) || known.has(child)) continue;
-				if (!(await identityOf(join(directory, entry.name), parent, child))) continue;
+				if (!(await identityOf(join(directory, entry.name), parent, child)))
+					continue;
 				await appendCatalog(directory, child);
 				known.add(child);
 				added += 1;
@@ -572,7 +589,8 @@ export function createChildAudit(options: {
 			if (catalogFailures !== failures) {
 				return {
 					added,
-					warning: "A child could not be added to the catalog during the repair; repair it again.",
+					warning:
+						"A child could not be added to the catalog during the repair; repair it again.",
 				};
 			}
 			await files.unlink(join(directory, incompleteFile)).catch(() => {});
@@ -743,7 +761,8 @@ export function createChildAudit(options: {
 	}
 
 	async function seal(record: Capture) {
-		if (!record.path || !record.created || record.fenced || record.sealed) return;
+		if (!record.path || !record.created || record.fenced || record.sealed)
+			return;
 		record.sealed = true;
 		record.sealing = appendMarker(record, {
 			close: {
@@ -760,7 +779,11 @@ export function createChildAudit(options: {
 
 	function retain(record: Capture, state: ChildContext | undefined) {
 		const next = state && { capacity: state.capacity, tokens: state.tokens };
-		if (next?.capacity === record.context?.capacity && next?.tokens === record.context?.tokens) return;
+		if (
+			next?.capacity === record.context?.capacity &&
+			next?.tokens === record.context?.tokens
+		)
+			return;
 		record.context = next;
 		if (!record.sealed || record.outdated) return;
 		// A sealed snapshot can only be voided, never rewritten: the voiding marker must follow the close line even when an earlier loss already set the cause.
@@ -897,7 +920,8 @@ export function createChildAudit(options: {
 		for (const record of moving) {
 			if (record.retired) continue;
 			records.set(record.identity.child, record);
-			if (!record.cause && working.has(record.state ?? "queued")) live.add(record);
+			if (!record.cause && working.has(record.state ?? "queued"))
+				live.add(record);
 			admittedBytes += record.held.bytes;
 			admittedEntries += record.held.entries;
 		}
@@ -935,7 +959,12 @@ export function createChildAudit(options: {
 			admit(record, { kind: "input", source, delivery: "delivered", text });
 			return;
 		}
-		admit(record, { kind: "input", source: "user", delivery: "delivered", text });
+		admit(record, {
+			kind: "input",
+			source: "user",
+			delivery: "delivered",
+			text,
+		});
 	}
 
 	function tool(record: Capture, event: ToolEvent) {
@@ -1050,7 +1079,14 @@ export function createChildAudit(options: {
 			toolsAdded?: unknown;
 			toolsRemoved?: unknown;
 		};
-		const kept = ["usage", "stopReason", "errorMessage", "sections", "toolsAdded", "toolsRemoved"];
+		const kept = [
+			"usage",
+			"stopReason",
+			"errorMessage",
+			"sections",
+			"toolsAdded",
+			"toolsRemoved",
+		];
 		admit(record, {
 			kind: "message",
 			event: `${id}:end`,
@@ -1068,8 +1104,14 @@ export function createChildAudit(options: {
 
 	function event(record: Capture, event: AgentSessionEvent) {
 		if (event.type === "queue_update") {
-			enqueued(record, { steer: [...event.steering], "follow-up": [...event.followUp] });
-		} else if (event.type === "message_start" && event.message.role === "user") {
+			enqueued(record, {
+				steer: [...event.steering],
+				"follow-up": [...event.followUp],
+			});
+		} else if (
+			event.type === "message_start" &&
+			event.message.role === "user"
+		) {
 			delivered(record, contentText(event.message.content));
 		} else if (
 			event.type === "tool_execution_end" &&
@@ -1164,7 +1206,9 @@ export function createChildAudit(options: {
 					record.draining = false;
 				});
 			}),
-			context: guarded((state: ChildContext | undefined) => retain(record, state)),
+			context: guarded((state: ChildContext | undefined) =>
+				retain(record, state),
+			),
 			answered: guarded((question: number, text: string) => {
 				record.answer = question;
 				admit(record, {
@@ -1303,10 +1347,7 @@ export function createChildAudit(options: {
 		};
 	}
 
-	function assemble(
-		buffer: Buffer,
-		ordinal: number,
-	): Observation | undefined {
+	function assemble(buffer: Buffer, ordinal: number): Observation | undefined {
 		const texts: string[] = [];
 		let start = 0;
 		for (let part = 0; ; part++) {
@@ -1452,7 +1493,8 @@ export function createChildAudit(options: {
 		for (let at = 0; window.observations.length < size; ) {
 			const end = buffer.indexOf(10, at);
 			if (end < 0) break;
-			const parsed = end === at ? "blank" : parse(buffer.toString("utf8", at, end));
+			const parsed =
+				end === at ? "blank" : parse(buffer.toString("utf8", at, end));
 			const offset = start + at;
 			at = end + 1;
 			consumed = at;
@@ -1472,7 +1514,10 @@ export function createChildAudit(options: {
 			if ("unsupported" in parsed) {
 				current = undefined;
 				window.issues.add(unsupportedEvidence);
-				if (parsed.unsupported !== undefined && parsed.unsupported >= window.from) {
+				if (
+					parsed.unsupported !== undefined &&
+					parsed.unsupported >= window.from
+				) {
 					window.observations.push({
 						ordinal: parsed.unsupported,
 						written: true,
@@ -1492,7 +1537,10 @@ export function createChildAudit(options: {
 					header,
 					texts: [],
 				};
-			} else if (current?.ordinal !== header.ordinal || current.part !== header.part) {
+			} else if (
+				current?.ordinal !== header.ordinal ||
+				current.part !== header.part
+			) {
 				if (current) window.issues.add(damaged);
 				current = undefined;
 				continue;
@@ -1521,7 +1569,12 @@ export function createChildAudit(options: {
 		}
 		if (current && current.ordinal >= window.from) {
 			if (current.start === start) {
-				const end = await committedEnd(record, current.end, current.ordinal, current.part);
+				const end = await committedEnd(
+					record,
+					current.end,
+					current.ordinal,
+					current.part,
+				);
 				window.observations.push(
 					placeholder(
 						record,
@@ -1543,7 +1596,12 @@ export function createChildAudit(options: {
 		return window;
 	}
 
-	async function committedEnd(record: Capture, offset: number, ordinal: number, part: number) {
+	async function committedEnd(
+		record: Capture,
+		offset: number,
+		ordinal: number,
+		part: number,
+	) {
 		for (let at = offset; at < record.size; part++) {
 			const buffer = await readAt(
 				record.path as string,
@@ -1623,7 +1681,13 @@ export function createChildAudit(options: {
 					() => false,
 				)));
 		const facts = voided
-			? { ...tail, closed: false, complete: false, cause: tail.cause ?? arrivedLate, context: undefined }
+			? {
+					...tail,
+					closed: false,
+					complete: false,
+					cause: tail.cause ?? arrivedLate,
+					context: undefined,
+				}
 			: tail;
 		const record = blank(owner ?? ({ parent, child } as AuditIdentity));
 		record.path = path;
@@ -1642,7 +1706,9 @@ export function createChildAudit(options: {
 		const warnings = [
 			...(facts.cause ? [facts.cause] : []),
 			...(facts.closed ? [] : [unclosed]),
-			...(facts.closed && !facts.complete && !facts.loss ? [closedIncomplete] : []),
+			...(facts.closed && !facts.complete && !facts.loss
+				? [closedIncomplete]
+				: []),
 			...(owner ? [] : [unverified]),
 		];
 		record.durable = {
@@ -1651,7 +1717,11 @@ export function createChildAudit(options: {
 			...(facts.written === undefined ? {} : { written: facts.written }),
 			...(facts.lostFrom === undefined ? {} : { lostFrom: facts.lostFrom }),
 			...(facts.uncertain === undefined ? {} : { uncertain: facts.uncertain }),
-			...(voided ? { marker: "failed" as const } : facts.loss ? { marker: "written" as const } : {}),
+			...(voided
+				? { marker: "failed" as const }
+				: facts.loss
+					? { marker: "written" as const }
+					: {}),
 			...(warnings.length > 0 ? { warning: warnings.join(" ") } : {}),
 		};
 		return record;
@@ -1669,7 +1739,11 @@ export function createChildAudit(options: {
 			position += chunk.length;
 			const buffer = Buffer.concat([carry, chunk]);
 			let at = 0;
-			for (let end = buffer.indexOf(10); end >= 0; end = buffer.indexOf(10, at)) {
+			for (
+				let end = buffer.indexOf(10);
+				end >= 0;
+				end = buffer.indexOf(10, at)
+			) {
 				const parsed = parse(buffer.toString("utf8", at, end));
 				at = end + 1;
 				if (
@@ -1699,7 +1773,12 @@ export function createChildAudit(options: {
 		}
 	}
 
-	async function headOf(path: string, parent: string, child: string, size: number) {
+	async function headOf(
+		path: string,
+		parent: string,
+		child: string,
+		size: number,
+	) {
 		try {
 			const buffer = await readAt(
 				join(indexOf(path), "head.json"),
@@ -1732,7 +1811,11 @@ export function createChildAudit(options: {
 		let last: Header | undefined;
 		let loss: Record<string, unknown> | undefined;
 		let execution: { state?: unknown; verdict?: unknown } | undefined;
-		for (let end = buffer.indexOf(10, at); end >= 0; end = buffer.indexOf(10, at)) {
+		for (
+			let end = buffer.indexOf(10, at);
+			end >= 0;
+			end = buffer.indexOf(10, at)
+		) {
 			const text = buffer.toString("utf8", at, end);
 			at = end + 1;
 			if (text === "") continue;
@@ -1779,7 +1862,9 @@ export function createChildAudit(options: {
 					}
 				: {
 						state:
-							typeof execution?.state === "string" ? execution.state : undefined,
+							typeof execution?.state === "string"
+								? execution.state
+								: undefined,
 						verdict:
 							typeof execution?.verdict === "string"
 								? execution.verdict
@@ -1796,7 +1881,9 @@ export function createChildAudit(options: {
 				? record.cause
 				: `${record.cause} ${unrecoverable}`
 			: undefined;
-		const warnings = [warning, record.unlisted].filter((note) => note !== undefined);
+		const warnings = [warning, record.unlisted].filter(
+			(note) => note !== undefined,
+		);
 		return {
 			complete: !record.cause,
 			received: record.next,
@@ -1827,7 +1914,9 @@ export function createChildAudit(options: {
 			...(record.state === undefined ? {} : { state: record.state }),
 			...(record.verdict === undefined ? {} : { verdict: record.verdict }),
 			...(interrupted ? { interrupted: true as const } : {}),
-			...(record.durable && record.context ? { context: { ...record.context, last: true } } : {}),
+			...(record.durable && record.context
+				? { context: { ...record.context, last: true } }
+				: {}),
 			...(record.index ? { index: record.index } : {}),
 			health: healthOf(record),
 		};
@@ -1864,7 +1953,10 @@ export function createChildAudit(options: {
 				for (const name of page.names) names.add(name);
 				let { at } = page;
 				if (at === 0 && buffer.length >= bound && room > 0) at = buffer.length;
-				if ((at > 0 || room === 0) && from + at < (await files.stat(path)).size) {
+				if (
+					(at > 0 || room === 0) &&
+					from + at < (await files.stat(path)).size
+				) {
 					next = String(from + at);
 				}
 			} catch {}
@@ -1874,7 +1966,11 @@ export function createChildAudit(options: {
 			if (record) listed.push(summary(record));
 			else if (parent && /^[\w-]+$/.test(child)) {
 				const missing = blank({ parent, child } as AuditIdentity);
-				missing.durable = { complete: false, closed: false, warning: unjournaled };
+				missing.durable = {
+					complete: false,
+					closed: false,
+					warning: unjournaled,
+				};
 				listed.push(summary(missing));
 			}
 		}
@@ -1949,7 +2045,11 @@ export function createChildAudit(options: {
 		const newline = buffer.indexOf(10);
 		const parsed =
 			newline < 0 ? undefined : parse(buffer.toString("utf8", 0, newline));
-		if (!parsed || !("header" in parsed) || parsed.header.ordinal !== cursor.ordinal) {
+		if (
+			!parsed ||
+			!("header" in parsed) ||
+			parsed.header.ordinal !== cursor.ordinal
+		) {
 			return { unavailable: true as const };
 		}
 		const { header, payload } = parsed;
@@ -1973,7 +2073,9 @@ export function createChildAudit(options: {
 			final: header.parts !== undefined,
 			...(header.field === undefined ? {} : { field: header.field }),
 			text,
-			...(header.parts === undefined ? { next: at(cursor.offset + newline + 1) } : {}),
+			...(header.parts === undefined
+				? { next: at(cursor.offset + newline + 1) }
+				: {}),
 			...(previous === undefined ? {} : { previous: at(previous) }),
 		};
 	}
@@ -1994,7 +2096,13 @@ export function createChildAudit(options: {
 		const unsupportedOrdinals: number[] = [];
 		let page: Page = { n: 0, entries: [], dirty: false };
 		let current:
-			| { ordinal: number; part: number; start: number; texts?: string[]; bytes: number }
+			| {
+					ordinal: number;
+					part: number;
+					start: number;
+					texts?: string[];
+					bytes: number;
+			  }
 			| undefined;
 		let last = -1;
 		let extent = 0;
@@ -2060,7 +2168,9 @@ export function createChildAudit(options: {
 			if (current.texts) {
 				current.bytes += payload.length;
 				if (current.bytes > limits.bytes) {
-					throw new Refused("The record's identity exceeds the audit capture budget.");
+					throw new Refused(
+						"The record's identity exceeds the audit capture budget.",
+					);
 				}
 				current.texts.push(payload);
 			}
@@ -2105,7 +2215,12 @@ export function createChildAudit(options: {
 					const end = buffer.indexOf(10, at);
 					if (end < 0) break;
 					if (skipping) skipping = false;
-					else await take(base + at, base + end + 1, buffer.toString("utf8", at, end));
+					else
+						await take(
+							base + at,
+							base + end + 1,
+							buffer.toString("utf8", at, end),
+						);
 					at = end + 1;
 				}
 				carry = buffer.subarray(at);
@@ -2155,7 +2270,9 @@ export function createChildAudit(options: {
 			recovered,
 			unavailable,
 			unsupported: unsupportedOrdinals,
-			...(verified ? {} : { warning: "The record's identity could not be verified." }),
+			...(verified
+				? {}
+				: { warning: "The record's identity could not be verified." }),
 			...(loss === undefined ? {} : { loss }),
 		};
 	}
@@ -2281,14 +2398,16 @@ function* encode(value: unknown, slice: number, path = ""): Generator<Piece> {
 			yield { text: JSON.stringify(value) };
 			return;
 		}
-		const field =
-			Buffer.byteLength(path) <= fieldAllowance ? path : undefined;
+		const field = Buffer.byteLength(path) <= fieldAllowance ? path : undefined;
 		yield { text: '"' };
 		for (let start = 0; start < value.length; ) {
 			let end = Math.min(start + slice, value.length);
 			const last = value.charCodeAt(end - 1);
 			if (end < value.length && last >= 0xd800 && last <= 0xdbff) end -= 1;
-			yield { text: JSON.stringify(value.slice(start, end)).slice(1, -1), field };
+			yield {
+				text: JSON.stringify(value.slice(start, end)).slice(1, -1),
+				field,
+			};
 			start = end;
 		}
 		yield { text: '"' };
@@ -2325,7 +2444,10 @@ function checksum(body: string) {
 }
 
 function parse(text: string): Line | undefined {
-	if (text.charCodeAt(8) !== 9 || checksum(text.slice(9)) !== text.slice(0, 8)) {
+	if (
+		text.charCodeAt(8) !== 9 ||
+		checksum(text.slice(9)) !== text.slice(0, 8)
+	) {
 		return undefined;
 	}
 	const split = text.indexOf("\t", 9);
@@ -2361,7 +2483,10 @@ function parse(text: string): Line | undefined {
 
 function sealedContext(value: unknown): SealedContext | undefined {
 	if (typeof value !== "object" || value === null) return undefined;
-	const { capacity, tokens } = value as { capacity?: unknown; tokens?: unknown };
+	const { capacity, tokens } = value as {
+		capacity?: unknown;
+		tokens?: unknown;
+	};
 	return contextReading(capacity, tokens);
 }
 

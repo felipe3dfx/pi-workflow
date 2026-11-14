@@ -176,7 +176,10 @@ test("the heading is a dim chevron, a bold muted title, and a dim count", () => 
 		bold: (text) => `<b>${text}</b>`,
 	};
 	const [heading] = renderChildrenBox(tagged, [child({})], now, 80);
-	assert.match(heading, /^<dim>▾<\/dim> <b><muted>Subagents<\/muted><\/b> <dim>1<\/dim> +<dim>alt\+a view<\/dim>$/);
+	assert.match(
+		heading,
+		/^<dim>▾<\/dim> <b><muted>Subagents<\/muted><\/b> <dim>1<\/dim> +<dim>alt\+a view<\/dim>$/,
+	);
 });
 
 test("a running row cycles the working spinner every 133 ms while other states keep their glyph", () => {

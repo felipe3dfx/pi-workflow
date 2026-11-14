@@ -39,9 +39,17 @@ test("writers with disjoint surfaces both run and an overlapping third is refuse
 	assert.equal(second.status, "queued");
 	const refused = await core.start(plan("worker", ["SRC/*.ts"]), launch());
 	assert.equal(refused.status, "refused");
-	assert.match(refused.reason, new RegExp(`child ${first.id} \\(\`SRC/\\*\\.ts\` overlaps \`src/a\\.ts\`\\)`));
+	assert.match(
+		refused.reason,
+		new RegExp(
+			`child ${first.id} \\(\`SRC/\\*\\.ts\` overlaps \`src/a\\.ts\`\\)`,
+		),
+	);
 	core.cancel(first.id, false);
-	assert.equal((await core.start(plan("worker", ["SRC/*.ts"]), launch())).status, "queued");
+	assert.equal(
+		(await core.start(plan("worker", ["SRC/*.ts"]), launch())).status,
+		"queued",
+	);
 });
 
 test("a writer without surfaces conflicts with any other writer", async () => {
@@ -56,7 +64,10 @@ test("read-only roles claim nothing and are never refused", async () => {
 	assert.equal((await core.start(plan("explore"), launch())).status, "queued");
 	assert.equal((await core.start(plan("verify"), launch())).status, "queued");
 	await core.start(plan("explore"), launch());
-	assert.equal((await core.start(plan("worker", [], "/other"), launch())).status, "queued");
+	assert.equal(
+		(await core.start(plan("worker", [], "/other"), launch())).status,
+		"queued",
+	);
 });
 
 test("a queued writer holds its claim before it runs", async () => {
@@ -67,7 +78,10 @@ test("a queued writer holds its claim before it runs", async () => {
 	}
 	const queued = await core.start(plan("worker", ["src"]), launch());
 	assert.equal(core.get(queued.id).state, "queued");
-	assert.equal((await core.start(plan("worker", ["src"]), launch())).status, "refused");
+	assert.equal(
+		(await core.start(plan("worker", ["src"]), launch())).status,
+		"refused",
+	);
 });
 
 test("failure, cancellation and completion release the claim", async () => {
@@ -75,13 +89,21 @@ test("failure, cancellation and completion release the claim", async () => {
 		const children = recordingCore();
 		const { core } = children;
 		const { id, child } = await children.launch("worker");
-		assert.equal((await core.start(plan("worker"), launch())).status, "refused", end);
+		assert.equal(
+			(await core.start(plan("worker"), launch())).status,
+			"refused",
+			end,
+		);
 		if (end === "cancel") core.cancel(id, false);
 		if (end === "complete") child.result.resolve("done");
 		if (end === "fail") child.result.reject(new Error("boom"));
 		await new Promise((resolve) => setImmediate(resolve));
 		assert.notEqual(core.get(id).state, "running", end);
-		assert.equal((await core.start(plan("worker"), launch())).status, "queued", end);
+		assert.equal(
+			(await core.start(plan("worker"), launch())).status,
+			"queued",
+			end,
+		);
 	}
 });
 
@@ -131,7 +153,10 @@ test("a contextual child with a tool that writes claims, whatever its role, and 
 	assert.equal(explorer.status, "queued");
 	const refused = await core.start(plan("explore", ["src/a.ts"]), launch());
 	assert.equal(refused.status, "refused");
-	assert.match(refused.reason, new RegExp(`child ${explorer.id} \\(\`src/a\\.ts\` overlaps \`src\`\\)`));
+	assert.match(
+		refused.reason,
+		new RegExp(`child ${explorer.id} \\(\`src/a\\.ts\` overlaps \`src\`\\)`),
+	);
 	const reader = contextualCore({ active: ["read", "grep"] }).core;
 	await reader.start(plan("worker"), launch());
 	assert.equal((await reader.start(plan("worker"), launch())).status, "queued");
@@ -142,13 +167,22 @@ test("a reload rebuilds the claims of the children that hold one, by the same ru
 	await core.start(plan("explore", ["src"]), launch());
 	const after = contextualCore(undefined).core;
 	after.adopt(await core.detach());
-	assert.equal((await after.start(plan("explore", ["src/a.ts"]), launch())).status, "refused");
-	assert.equal((await after.start(plan("explore", ["docs"]), launch())).status, "queued");
+	assert.equal(
+		(await after.start(plan("explore", ["src/a.ts"]), launch())).status,
+		"refused",
+	);
+	assert.equal(
+		(await after.start(plan("explore", ["docs"]), launch())).status,
+		"queued",
+	);
 
 	const operational = recordingCore();
 	await operational.core.start(plan("verify"), launch());
 	await operational.core.start(plan("explore"), launch());
 	const reloaded = recordingCore();
 	reloaded.core.adopt(await operational.core.detach());
-	assert.equal((await reloaded.core.start(plan("worker"), launch())).status, "queued");
+	assert.equal(
+		(await reloaded.core.start(plan("worker"), launch())).status,
+		"queued",
+	);
 });

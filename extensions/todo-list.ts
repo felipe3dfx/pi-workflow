@@ -1,4 +1,9 @@
-export const TASK_STATES = ["pending", "in progress", "done", "blocked"] as const;
+export const TASK_STATES = [
+	"pending",
+	"in progress",
+	"done",
+	"blocked",
+] as const;
 
 export type TaskState = (typeof TASK_STATES)[number];
 

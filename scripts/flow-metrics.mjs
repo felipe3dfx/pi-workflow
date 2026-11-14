@@ -34,7 +34,8 @@ function jsonlFiles(root, name) {
 	try {
 		directories = readdirSync(root, { withFileTypes: true });
 	} catch (error) {
-		if (error.code === "ENOENT" || error.code === "ENOTDIR") throw new Error(`${name} directory not found: ${root}`);
+		if (error.code === "ENOENT" || error.code === "ENOTDIR")
+			throw new Error(`${name} directory not found: ${root}`);
 		throw error;
 	}
 	const files = [];
@@ -42,7 +43,8 @@ function jsonlFiles(root, name) {
 	for (const entry of directories.filter((entry) => entry.isDirectory())) {
 		try {
 			for (const file of readdirSync(join(root, entry.name))) {
-				if (file.endsWith(".jsonl")) files.push({ group: entry.name, path: join(root, entry.name, file) });
+				if (file.endsWith(".jsonl"))
+					files.push({ group: entry.name, path: join(root, entry.name, file) });
 			}
 		} catch {
 			unreadable += 1;
@@ -61,7 +63,10 @@ function percent(part, whole) {
 
 function callsSpawnChild(call) {
 	if (call.name === "spawn_child") return true;
-	return call.name === "codemode" && /\bspawn_child\s*\(/.test(JSON.stringify(call.arguments));
+	return (
+		call.name === "codemode" &&
+		/\bspawn_child\s*\(/.test(JSON.stringify(call.arguments))
+	);
 }
 
 function readSession(text) {
@@ -92,8 +97,10 @@ function readSession(text) {
 		} else if (entry.type === "custom_message") {
 			const size = bytes(entry.content);
 			session.conversationBytes += size;
-			if (String(entry.customType).startsWith("pi-workflow-child")) session.childMessageBytes += size;
-			if (entry.customType === "pi-workflow-exploration-budget") session.explorationBudgetNotices += 1;
+			if (String(entry.customType).startsWith("pi-workflow-child"))
+				session.childMessageBytes += size;
+			if (entry.customType === "pi-workflow-exploration-budget")
+				session.explorationBudgetNotices += 1;
 		} else if (entry.type === "message" && entry.message?.role !== "system") {
 			addMessage(session, entry.message ?? {});
 		}
@@ -105,12 +112,22 @@ function addMessage(session, message) {
 	const size = bytes(message.content);
 	session.conversationBytes += size;
 	if (message.role === "assistant" && Array.isArray(message.content)) {
-		if (message.content.some((part) => part?.type === "toolCall" && callsSpawnChild(part))) {
+		if (
+			message.content.some(
+				(part) => part?.type === "toolCall" && callsSpawnChild(part),
+			)
+		) {
 			session.delegates = true;
 		}
-	} else if (message.role === "toolResult" && message.toolName === "child_result") {
+	} else if (
+		message.role === "toolResult" &&
+		message.toolName === "child_result"
+	) {
 		session.childMessageBytes += size;
-	} else if (message.role === "toolResult" && !childTools.has(message.toolName)) {
+	} else if (
+		message.role === "toolResult" &&
+		!childTools.has(message.toolName)
+	) {
 		session.ownResultBytes += size;
 		if (message.toolName === "codemode") {
 			session.codemodeResults += 1;
@@ -147,7 +164,8 @@ function readLaunches(root) {
 		if (launch.continuedFrom) continue;
 		const counts = launches.get(group) ?? { launches: 0, withReferences: 0 };
 		counts.launches += 1;
-		if (Array.isArray(launch.references) && launch.references.length > 0) counts.withReferences += 1;
+		if (Array.isArray(launch.references) && launch.references.length > 0)
+			counts.withReferences += 1;
 		launches.set(group, counts);
 	}
 	return { launches, unparseableFiles };
@@ -161,9 +179,17 @@ function quantile(sorted, q) {
 }
 
 function summarize(values, pooled) {
-	const sorted = values.filter((value) => value !== undefined).sort((a, b) => a - b);
-	if (sorted.length === 0) return { n: 0, median: null, p90: null, pooled: null };
-	return { n: sorted.length, median: quantile(sorted, 0.5), p90: quantile(sorted, 0.9), pooled };
+	const sorted = values
+		.filter((value) => value !== undefined)
+		.sort((a, b) => a - b);
+	if (sorted.length === 0)
+		return { n: 0, median: null, p90: null, pooled: null };
+	return {
+		n: sorted.length,
+		median: quantile(sorted, 0.5),
+		p90: quantile(sorted, 0.9),
+		pooled,
+	};
 }
 
 function total(values) {
@@ -174,7 +200,10 @@ function ratio(pairs) {
 	const present = pairs.filter((pair) => pair !== undefined);
 	return summarize(
 		present.map(([part, whole]) => percent(part, whole)),
-		percent(total(present.map(([part]) => part)), total(present.map(([, whole]) => whole))),
+		percent(
+			total(present.map(([part]) => part)),
+			total(present.map(([, whole]) => whole)),
+		),
 	);
 }
 
@@ -184,7 +213,8 @@ function summarizeWithTotal(values) {
 
 function measure({ sessions: sessionRoot, audit, since, until }) {
 	const sessionFiles = jsonlFiles(sessionRoot, "Sessions");
-	const { launches, unparseableFiles: unparseableAuditFiles } = readLaunches(audit);
+	const { launches, unparseableFiles: unparseableAuditFiles } =
+		readLaunches(audit);
 	let unparseableSessionFiles = sessionFiles.unreadable;
 	let unparseableSessionLines = 0;
 	const sessionIds = new Set();
@@ -205,29 +235,41 @@ function measure({ sessions: sessionRoot, audit, since, until }) {
 		}
 		sessionIds.add(session.id);
 		if (!session.delegates) continue;
-		if ((since && session.date < since) || (until && session.date > until)) continue;
+		if ((since && session.date < since) || (until && session.date > until))
+			continue;
 		sessions.push(session);
 	}
 	const metrics = {
-		ownResultShare: ratio(sessions.map((s) => [s.ownResultBytes, s.conversationBytes])),
-		largeCodemodeResults: ratio(sessions.map((s) => [s.largeCodemodeResults, s.codemodeResults])),
+		ownResultShare: ratio(
+			sessions.map((s) => [s.ownResultBytes, s.conversationBytes]),
+		),
+		largeCodemodeResults: ratio(
+			sessions.map((s) => [s.largeCodemodeResults, s.codemodeResults]),
+		),
 		launchesWithReferences: ratio(
 			sessions.map((s) => {
 				const counts = launches.get(s.id);
 				return counts && [counts.withReferences, counts.launches];
 			}),
 		),
-		childMessageBytes: summarizeWithTotal(sessions.map((s) => s.childMessageBytes)),
-		explorationBudgetNotices: summarizeWithTotal(sessions.map((s) => s.explorationBudgetNotices)),
+		childMessageBytes: summarizeWithTotal(
+			sessions.map((s) => s.childMessageBytes),
+		),
+		explorationBudgetNotices: summarizeWithTotal(
+			sessions.map((s) => s.explorationBudgetNotices),
+		),
 	};
 	return {
 		sessions: sessions.length,
 		since: since ?? null,
 		until: until ?? null,
 		metrics,
-		delegatingSessionsWithoutAudit: sessions.filter((s) => !launches.has(s.id)).length,
+		delegatingSessionsWithoutAudit: sessions.filter((s) => !launches.has(s.id))
+			.length,
 		allFiles: {
-			auditGroupsWithoutSession: [...launches.keys()].filter((id) => !sessionIds.has(id)).length,
+			auditGroupsWithoutSession: [...launches.keys()].filter(
+				(id) => !sessionIds.has(id),
+			).length,
 			unparseableSessionFiles,
 			unparseableSessionLines,
 			unparseableAuditFiles,
@@ -245,8 +287,12 @@ function markdown(report) {
 		([key, { n, median, p90, pooled }]) =>
 			`| ${metricLabels[key]} | ${n} | ${formatNumber(median)} | ${formatNumber(p90)} | ${formatNumber(pooled)} |`,
 	);
-	const { auditGroupsWithoutSession, unparseableSessionFiles, unparseableSessionLines, unparseableAuditFiles } =
-		report.allFiles;
+	const {
+		auditGroupsWithoutSession,
+		unparseableSessionFiles,
+		unparseableSessionLines,
+		unparseableAuditFiles,
+	} = report.allFiles;
 	return [
 		`Delegating parent sessions: ${report.sessions} (since ${report.since ?? "start"}, until ${report.until ?? "now"})`,
 		"",
@@ -263,7 +309,9 @@ function markdown(report) {
 function isRealDate(value) {
 	if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
 	const date = new Date(`${value}T00:00:00Z`);
-	return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+	return (
+		!Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value
+	);
 }
 
 function main() {
@@ -296,7 +344,9 @@ function main() {
 		since: values.since,
 		until: values.until,
 	});
-	process.stdout.write(values.json ? `${JSON.stringify(report, null, 2)}\n` : markdown(report));
+	process.stdout.write(
+		values.json ? `${JSON.stringify(report, null, 2)}\n` : markdown(report),
+	);
 }
 
 try {

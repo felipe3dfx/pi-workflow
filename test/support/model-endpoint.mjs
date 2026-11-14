@@ -36,7 +36,10 @@ export async function modelEndpoint(agentDir, answer = "DONE") {
 								index: 0,
 								id: `call_${requests.length}`,
 								type: "function",
-								function: { name: step.tool, arguments: JSON.stringify(step.args) },
+								function: {
+									name: step.tool,
+									arguments: JSON.stringify(step.args),
+								},
 							},
 						],
 					},

@@ -42,11 +42,16 @@ import {
 } from "@earendil-works/pi-tui";
 
 import { createChildAudit } from "../extensions/child-audit.ts";
-import { consultation, createAskParentTool } from "../extensions/child-runtime.ts";
+import {
+	consultation,
+	createAskParentTool,
+} from "../extensions/child-runtime.ts";
 import { compactToolRenderers } from "../extensions/compact-tools.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
-import piWorkflowExtension, { adoptionDeadline } from "../extensions/pi-workflow.ts";
+import piWorkflowExtension, {
+	adoptionDeadline,
+} from "../extensions/pi-workflow.ts";
 import { createRpcChildSession } from "../extensions/rpc-child.ts";
 import {
 	fakeChildren,
@@ -69,14 +74,19 @@ import { runtimeChild } from "./support/runtime-child.mjs";
 
 replaceSelection({
 	schemaVersion: 1,
-	capabilities: Object.fromEntries(capabilities.map((capability) => [capability, true])),
+	capabilities: Object.fromEntries(
+		capabilities.map((capability) => [capability, true]),
+	),
 	expectations: {},
 });
 
 const fakePi = fileURLToPath(new URL("./support/fake-pi.mjs", import.meta.url));
 
 const packageVersion = JSON.parse(
-	await readFile(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"),
+	await readFile(
+		fileURLToPath(new URL("../package.json", import.meta.url)),
+		"utf8",
+	),
 ).version;
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -110,7 +120,10 @@ test("the installed Claude Bridge npm package resolves to its declared official 
 
 test("Claude Bridge discovery maps an installed package to git-shaped and local source identities (fixtures only)", async (t) => {
 	const sourceAgentDir = getAgentDir();
-	const installed = installedPackagePath(sourceAgentDir, "npm:pi-claude-bridge");
+	const installed = installedPackagePath(
+		sourceAgentDir,
+		"npm:pi-claude-bridge",
+	);
 	if (!installed) {
 		t.skip("pi-claude-bridge is not installed in the Pi agent directory");
 		return;
@@ -132,9 +145,16 @@ test("Claude Bridge discovery maps an installed package to git-shaped and local 
 			);
 			const project = { cwd: worktree, trusted: false };
 			const selected = await resolveClaudeBridgeExtension(agentDir, project);
-			assert.equal(selected, await realpath(join(installed, "src", "index.ts")));
+			assert.equal(
+				selected,
+				await realpath(join(installed, "src", "index.ts")),
+			);
 			const companion = await inspectClaudeBridgeCompanion(agentDir, project);
-			assert.equal(companion.version, (await officialManifest(installed)).version, kind);
+			assert.equal(
+				companion.version,
+				(await officialManifest(installed)).version,
+				kind,
+			);
 		});
 	}
 });
@@ -149,24 +169,39 @@ test("Pi's public autoload:false resource metadata selects the Bridge runtime an
 		const userNodeModules = join(agentDir, "npm", "node_modules");
 		await mkdir(userNodeModules, { recursive: true });
 		await symlink(installed, join(userNodeModules, "pi-claude-bridge"), "dir");
-		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+		await writeFile(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ packages: ["npm:pi-claude-bridge"] }),
+		);
 		await mkdir(join(worktree, ".pi"), { recursive: true });
-		await writeFile(join(worktree, ".pi", "settings.json"), JSON.stringify({
-			packages: [{ source: "npm:pi-claude-bridge", autoload: false }],
-		}));
+		await writeFile(
+			join(worktree, ".pi", "settings.json"),
+			JSON.stringify({
+				packages: [{ source: "npm:pi-claude-bridge", autoload: false }],
+			}),
+		);
 		const project = { cwd: worktree, trusted: true };
 		const manager = new DefaultPackageManager({
 			cwd: worktree,
 			agentDir,
-			settingsManager: SettingsManager.create(worktree, agentDir, { projectTrusted: true }),
+			settingsManager: SettingsManager.create(worktree, agentDir, {
+				projectTrusted: true,
+			}),
 		});
 		const resolved = await manager.resolve(async () => "skip");
-		const effective = resolved.extensions.find((resource) =>
-			resource.metadata.source === "npm:pi-claude-bridge",
+		const effective = resolved.extensions.find(
+			(resource) => resource.metadata.source === "npm:pi-claude-bridge",
 		);
-		assert.ok(effective, "public Pi resolution exposes the autoload:false delta's selected provider resource");
+		assert.ok(
+			effective,
+			"public Pi resolution exposes the autoload:false delta's selected provider resource",
+		);
 		assert.equal(effective.enabled, true);
-		assert.equal(effective.metadata.scope, "user", "autoload:false resolves through the user's effective installed package");
+		assert.equal(
+			effective.metadata.scope,
+			"user",
+			"autoload:false resolves through the user's effective installed package",
+		);
 		assert.equal(
 			await resolveClaudeBridgeExtension(agentDir, project),
 			await realpath(join(installed, "src", "index.ts")),
@@ -175,71 +210,184 @@ test("Pi's public autoload:false resource metadata selects the Bridge runtime an
 			(await inspectClaudeBridgeCompanion(agentDir, project)).version,
 			(await officialManifest(installed)).version,
 		);
-		assert.equal(await readdir(join(worktree, ".pi", "npm")).then(() => true, () => false), false,
-			"the configured-package resolution does not install a project package");
+		assert.equal(
+			await readdir(join(worktree, ".pi", "npm")).then(
+				() => true,
+				() => false,
+			),
+			false,
+			"the configured-package resolution does not install a project package",
+		);
 	});
 });
 
 test("Bridge inventory follows Pi's public resolution across project delta and shadow cases", async (t) => {
 	const cases = [
-		{ name: "bare autoload:false", projectPackage: { source: "npm:pi-claude-bridge", autoload: false }, expectedScope: "user", expectedRoot: "user", expectedVersion: "1.1.1" },
-		{ name: "delta enables src/index.ts", projectPackage: { source: "npm:pi-claude-bridge", autoload: false, extensions: ["src/index.ts"] }, expectedScope: "project", expectedRoot: "user", expectedVersion: "1.1.1" },
-		{ name: "delta disables !src/index.ts", projectPackage: { source: "npm:pi-claude-bridge", autoload: false, extensions: ["!src/index.ts"] }, expectedScope: "user", expectedRoot: "user", expectedVersion: "1.1.1", filtered: true },
-		{ name: "ordinary project shadow", projectPackage: "npm:pi-claude-bridge", expectedScope: "project", expectedRoot: "project", expectedVersion: "2.2.2" },
-		{ name: "missing configured user is not replaced by project cache", projectPackage: { source: "npm:pi-claude-bridge", autoload: false }, expectedVersion: undefined, missingUser: true, noRuntime: true },
-		{ name: "no configured user preserves Pi project behavior", projectPackage: { source: "npm:pi-claude-bridge", autoload: false }, expectedVersion: "2.2.2", noUser: true, noRuntime: true },
+		{
+			name: "bare autoload:false",
+			projectPackage: { source: "npm:pi-claude-bridge", autoload: false },
+			expectedScope: "user",
+			expectedRoot: "user",
+			expectedVersion: "1.1.1",
+		},
+		{
+			name: "delta enables src/index.ts",
+			projectPackage: {
+				source: "npm:pi-claude-bridge",
+				autoload: false,
+				extensions: ["src/index.ts"],
+			},
+			expectedScope: "project",
+			expectedRoot: "user",
+			expectedVersion: "1.1.1",
+		},
+		{
+			name: "delta disables !src/index.ts",
+			projectPackage: {
+				source: "npm:pi-claude-bridge",
+				autoload: false,
+				extensions: ["!src/index.ts"],
+			},
+			expectedScope: "user",
+			expectedRoot: "user",
+			expectedVersion: "1.1.1",
+			filtered: true,
+		},
+		{
+			name: "ordinary project shadow",
+			projectPackage: "npm:pi-claude-bridge",
+			expectedScope: "project",
+			expectedRoot: "project",
+			expectedVersion: "2.2.2",
+		},
+		{
+			name: "missing configured user is not replaced by project cache",
+			projectPackage: { source: "npm:pi-claude-bridge", autoload: false },
+			expectedVersion: undefined,
+			missingUser: true,
+			noRuntime: true,
+		},
+		{
+			name: "no configured user preserves Pi project behavior",
+			projectPackage: { source: "npm:pi-claude-bridge", autoload: false },
+			expectedVersion: "2.2.2",
+			noUser: true,
+			noRuntime: true,
+		},
 	];
 	for (const scenario of cases) {
 		await withWorkspace(async ({ worktree, agentDir }) => {
 			const user = join(agentDir, "npm", "node_modules", "pi-claude-bridge");
-			const projectRoot = join(worktree, ".pi", "npm", "node_modules", "pi-claude-bridge");
-			const manifest = (version) => JSON.stringify({
-				name: "pi-claude-bridge", version,
-				repository: "https://github.com/elidickinson/pi-claude-bridge",
-				pi: { extensions: ["./src/index.ts"] },
-			});
+			const projectRoot = join(
+				worktree,
+				".pi",
+				"npm",
+				"node_modules",
+				"pi-claude-bridge",
+			);
+			const manifest = (version) =>
+				JSON.stringify({
+					name: "pi-claude-bridge",
+					version,
+					repository: "https://github.com/elidickinson/pi-claude-bridge",
+					pi: { extensions: ["./src/index.ts"] },
+				});
 			if (!scenario.missingUser) {
 				await mkdir(user, { recursive: true });
 				await writeFile(join(user, "package.json"), manifest("1.1.1"));
 				await mkdir(join(user, "src"), { recursive: true });
-				await writeFile(join(user, "src", "index.ts"), "export default () => ({})");
+				await writeFile(
+					join(user, "src", "index.ts"),
+					"export default () => ({})",
+				);
 			}
 			await mkdir(projectRoot, { recursive: true });
 			await writeFile(join(projectRoot, "package.json"), manifest("2.2.2"));
 			await mkdir(join(projectRoot, "src"), { recursive: true });
-			await writeFile(join(projectRoot, "src", "index.ts"), "export default () => ({})");
+			await writeFile(
+				join(projectRoot, "src", "index.ts"),
+				"export default () => ({})",
+			);
 			const userPackages = scenario.noUser ? [] : ["npm:pi-claude-bridge"];
-			await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: userPackages }));
+			await writeFile(
+				join(agentDir, "settings.json"),
+				JSON.stringify({ packages: userPackages }),
+			);
 			await mkdir(join(worktree, ".pi"), { recursive: true });
-			await writeFile(join(worktree, ".pi", "settings.json"), JSON.stringify({ packages: [scenario.projectPackage] }));
+			await writeFile(
+				join(worktree, ".pi", "settings.json"),
+				JSON.stringify({ packages: [scenario.projectPackage] }),
+			);
 			const project = { cwd: worktree, trusted: true };
 			const manager = new DefaultPackageManager({
-				cwd: worktree, agentDir,
-				settingsManager: SettingsManager.create(worktree, agentDir, { projectTrusted: true }),
+				cwd: worktree,
+				agentDir,
+				settingsManager: SettingsManager.create(worktree, agentDir, {
+					projectTrusted: true,
+				}),
 			});
 			const resolved = await manager.resolve(async () => "skip");
-			const resources = resolved.extensions.filter((resource) => resource.metadata.source === "npm:pi-claude-bridge");
+			const resources = resolved.extensions.filter(
+				(resource) => resource.metadata.source === "npm:pi-claude-bridge",
+			);
 			const publicSelected = resources.filter((resource) => resource.enabled);
 			if (scenario.filtered || scenario.noRuntime) {
 				assert.equal(publicSelected.length, 0, scenario.name);
 				if (scenario.noRuntime) {
-					await assert.rejects(resolveClaudeBridgeExtension(agentDir, project), /not installed and configured|missing, filtered out, or disabled/);
-					const companion = await inspectClaudeBridgeCompanion(agentDir, project);
-					assert.equal(companion.version, scenario.expectedVersion, scenario.name);
+					await assert.rejects(
+						resolveClaudeBridgeExtension(agentDir, project),
+						/not installed and configured|missing, filtered out, or disabled/,
+					);
+					const companion = await inspectClaudeBridgeCompanion(
+						agentDir,
+						project,
+					);
+					assert.equal(
+						companion.version,
+						scenario.expectedVersion,
+						scenario.name,
+					);
 				} else {
-					await assert.rejects(resolveClaudeBridgeExtension(agentDir, project), /filtered out|disabled/);
-					assert.deepEqual(await inspectClaudeBridgeCompanion(agentDir, project), { version: "1.1.1" }, scenario.name);
+					await assert.rejects(
+						resolveClaudeBridgeExtension(agentDir, project),
+						/filtered out|disabled/,
+					);
+					assert.deepEqual(
+						await inspectClaudeBridgeCompanion(agentDir, project),
+						{ version: "1.1.1" },
+						scenario.name,
+					);
 				}
 			} else {
 				assert.equal(publicSelected.length, 1, scenario.name);
 				const oracle = publicSelected[0];
-				assert.equal(oracle.metadata.scope, scenario.expectedScope, scenario.name);
-				assert.equal(await realpath(oracle.metadata.packageRoot), await realpath(scenario.expectedRoot === "user" ? user : projectRoot), scenario.name);
-				assert.equal(await resolveClaudeBridgeExtension(agentDir, project), await realpath(oracle.path), scenario.name);
+				assert.equal(
+					oracle.metadata.scope,
+					scenario.expectedScope,
+					scenario.name,
+				);
+				assert.equal(
+					await realpath(oracle.metadata.packageRoot),
+					await realpath(scenario.expectedRoot === "user" ? user : projectRoot),
+					scenario.name,
+				);
+				assert.equal(
+					await resolveClaudeBridgeExtension(agentDir, project),
+					await realpath(oracle.path),
+					scenario.name,
+				);
 				if (scenario.expectedVersion === undefined) {
-					assert.match((await inspectClaudeBridgeCompanion(agentDir, project)).error, /not installed and configured|multiple effective sources/, scenario.name);
+					assert.match(
+						(await inspectClaudeBridgeCompanion(agentDir, project)).error,
+						/not installed and configured|multiple effective sources/,
+						scenario.name,
+					);
 				} else {
-					assert.deepEqual(await inspectClaudeBridgeCompanion(agentDir, project), { version: scenario.expectedVersion }, scenario.name);
+					assert.deepEqual(
+						await inspectClaudeBridgeCompanion(agentDir, project),
+						{ version: scenario.expectedVersion },
+						scenario.name,
+					);
 				}
 			}
 		});
@@ -254,31 +402,64 @@ test("an autoload:false Bridge resource filter blocks runtime loading but not th
 	}
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		await mkdir(join(agentDir, "npm", "node_modules"), { recursive: true });
-		await symlink(installed, join(agentDir, "npm", "node_modules", "pi-claude-bridge"), "dir");
-		const userSettings = { packages: [{ source: "npm:pi-claude-bridge", extensions: [] }] };
-		const projectSettings = { packages: [{ source: "npm:pi-claude-bridge", autoload: false }] };
-		await writeFile(join(agentDir, "settings.json"), JSON.stringify(userSettings));
+		await symlink(
+			installed,
+			join(agentDir, "npm", "node_modules", "pi-claude-bridge"),
+			"dir",
+		);
+		const userSettings = {
+			packages: [{ source: "npm:pi-claude-bridge", extensions: [] }],
+		};
+		const projectSettings = {
+			packages: [{ source: "npm:pi-claude-bridge", autoload: false }],
+		};
+		await writeFile(
+			join(agentDir, "settings.json"),
+			JSON.stringify(userSettings),
+		);
 		await mkdir(join(worktree, ".pi"), { recursive: true });
-		await writeFile(join(worktree, ".pi", "settings.json"), JSON.stringify(projectSettings));
+		await writeFile(
+			join(worktree, ".pi", "settings.json"),
+			JSON.stringify(projectSettings),
+		);
 		const beforeUser = await readFile(join(agentDir, "settings.json"), "utf8");
-		const beforeProject = await readFile(join(worktree, ".pi", "settings.json"), "utf8");
+		const beforeProject = await readFile(
+			join(worktree, ".pi", "settings.json"),
+			"utf8",
+		);
 		const project = { cwd: worktree, trusted: true };
 		const manager = new DefaultPackageManager({
 			cwd: worktree,
 			agentDir,
-			settingsManager: SettingsManager.create(worktree, agentDir, { projectTrusted: true }),
+			settingsManager: SettingsManager.create(worktree, agentDir, {
+				projectTrusted: true,
+			}),
 		});
 		const resolved = await manager.resolve(async () => "skip");
-		assert.ok(!resolved.extensions.some((resource) =>
-			resource.metadata.source === "npm:pi-claude-bridge" && resource.enabled,
-		), "Pi public resource filtering exposes no enabled official Bridge resource");
-		await assert.rejects(resolveClaudeBridgeExtension(agentDir, project), /filtered out or disabled|missing, filtered out, or disabled/);
+		assert.ok(
+			!resolved.extensions.some(
+				(resource) =>
+					resource.metadata.source === "npm:pi-claude-bridge" &&
+					resource.enabled,
+			),
+			"Pi public resource filtering exposes no enabled official Bridge resource",
+		);
+		await assert.rejects(
+			resolveClaudeBridgeExtension(agentDir, project),
+			/filtered out or disabled|missing, filtered out, or disabled/,
+		);
 		assert.equal(
 			(await inspectClaudeBridgeCompanion(agentDir, project)).version,
 			(await officialManifest(installed)).version,
 		);
-		assert.equal(await readFile(join(agentDir, "settings.json"), "utf8"), beforeUser);
-		assert.equal(await readFile(join(worktree, ".pi", "settings.json"), "utf8"), beforeProject);
+		assert.equal(
+			await readFile(join(agentDir, "settings.json"), "utf8"),
+			beforeUser,
+		);
+		assert.equal(
+			await readFile(join(worktree, ".pi", "settings.json"), "utf8"),
+			beforeProject,
+		);
 		await assert.rejects(readdir(join(worktree, ".pi", "npm")));
 	});
 });
@@ -294,9 +475,15 @@ test("Claude Bridge reports malformed, null, primitive, and array manifests cont
 			const root = join(agentDir, "npm", "node_modules", "pi-claude-bridge");
 			await mkdir(root, { recursive: true });
 			await writeFile(join(root, "package.json"), contents);
-			await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+			await writeFile(
+				join(agentDir, "settings.json"),
+				JSON.stringify({ packages: ["npm:pi-claude-bridge"] }),
+			);
 			await assert.rejects(
-				resolveClaudeBridgeExtension(agentDir, { cwd: worktree, trusted: false }),
+				resolveClaudeBridgeExtension(agentDir, {
+					cwd: worktree,
+					trusted: false,
+				}),
 				expected,
 			);
 		});
@@ -308,7 +495,10 @@ test("an unreadable configured official manifest fails visibly", async () => {
 		const root = join(agentDir, "npm", "node_modules", "pi-claude-bridge");
 		await mkdir(root, { recursive: true });
 		await symlink(join(root, "absent-manifest"), join(root, "package.json"));
-		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+		await writeFile(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ packages: ["npm:pi-claude-bridge"] }),
+		);
 		await assert.rejects(
 			resolveClaudeBridgeExtension(agentDir, { cwd: worktree, trusted: false }),
 			/Unable to read the configured Claude Bridge package manifest/,
@@ -318,7 +508,10 @@ test("an unreadable configured official manifest fails visibly", async () => {
 
 test("an unavailable configured package version is not installed or replaced by another source", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
-		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge@999.0.0"] }));
+		await writeFile(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ packages: ["npm:pi-claude-bridge@999.0.0"] }),
+		);
 		await assert.rejects(
 			resolveClaudeBridgeExtension(agentDir, { cwd: worktree, trusted: false }),
 			/official pi-claude-bridge package is not installed|resolve the configured Claude Bridge package/,
@@ -334,17 +527,31 @@ test("an untrusted project package cannot shadow the configured user Bridge pack
 		return;
 	}
 	await withWorkspace(async ({ worktree, agentDir }) => {
-		const userPackage = join(agentDir, "npm", "node_modules", "pi-claude-bridge");
+		const userPackage = join(
+			agentDir,
+			"npm",
+			"node_modules",
+			"pi-claude-bridge",
+		);
 		const projectPackage = join(worktree, "untrusted-project-bridge");
 		await mkdir(join(agentDir, "npm", "node_modules"), { recursive: true });
 		await symlink(installed, userPackage, "dir");
 		await mkdir(projectPackage, { recursive: true });
 		await writeFile(join(projectPackage, "package.json"), "null");
 		await mkdir(join(worktree, ".pi"), { recursive: true });
-		await writeFile(join(worktree, ".pi", "settings.json"), JSON.stringify({ packages: [projectPackage] }));
-		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+		await writeFile(
+			join(worktree, ".pi", "settings.json"),
+			JSON.stringify({ packages: [projectPackage] }),
+		);
+		await writeFile(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ packages: ["npm:pi-claude-bridge"] }),
+		);
 		assert.equal(
-			await resolveClaudeBridgeExtension(agentDir, { cwd: worktree, trusted: false }),
+			await resolveClaudeBridgeExtension(agentDir, {
+				cwd: worktree,
+				trusted: false,
+			}),
 			await realpath(join(installed, "src", "index.ts")),
 		);
 	});
@@ -358,15 +565,28 @@ test("a missing trusted project source shadows a valid user Bridge source", asyn
 	}
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		await mkdir(join(agentDir, "npm", "node_modules"), { recursive: true });
-		await symlink(installed, join(agentDir, "npm", "node_modules", "pi-claude-bridge"), "dir");
-		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+		await symlink(
+			installed,
+			join(agentDir, "npm", "node_modules", "pi-claude-bridge"),
+			"dir",
+		);
+		await writeFile(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ packages: ["npm:pi-claude-bridge"] }),
+		);
 		await mkdir(join(worktree, ".pi"), { recursive: true });
-		await writeFile(join(worktree, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+		await writeFile(
+			join(worktree, ".pi", "settings.json"),
+			JSON.stringify({ packages: ["npm:pi-claude-bridge"] }),
+		);
 		const project = { cwd: worktree, trusted: true };
 		const companion = await inspectClaudeBridgeCompanion(agentDir, project);
 		assert.equal(companion.version, undefined);
 		assert.equal(companion.error, undefined);
-		await assert.rejects(resolveClaudeBridgeExtension(agentDir, project), /not installed and configured/);
+		await assert.rejects(
+			resolveClaudeBridgeExtension(agentDir, project),
+			/not installed and configured/,
+		);
 	});
 });
 
@@ -383,9 +603,15 @@ test("an unrelated configured local index.ts package does not block Bridge resol
 		await symlink(installed, source, "dir");
 		await mkdir(unrelated);
 		await writeFile(join(unrelated, "index.ts"), "export default () => ({})");
-		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge", unrelated] }));
+		await writeFile(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ packages: ["npm:pi-claude-bridge", unrelated] }),
+		);
 		assert.equal(
-			await resolveClaudeBridgeExtension(agentDir, { cwd: worktree, trusted: false }),
+			await resolveClaudeBridgeExtension(agentDir, {
+				cwd: worktree,
+				trusted: false,
+			}),
 			await realpath(join(installed, "src", "index.ts")),
 		);
 	});
@@ -393,7 +619,10 @@ test("an unrelated configured local index.ts package does not block Bridge resol
 
 test("a configured missing Bridge package uses a no-install policy", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
-		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+		await writeFile(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ packages: ["npm:pi-claude-bridge"] }),
+		);
 		await assert.rejects(
 			resolveClaudeBridgeExtension(agentDir, { cwd: worktree, trusted: false }),
 			/official pi-claude-bridge package is not installed/,
@@ -414,8 +643,14 @@ test("an official manifest pointing outside its package is rejected as an invali
 		const manifest = await officialManifest(installed);
 		manifest.pi.extensions = ["../outside.ts"];
 		await writeFile(join(root, "package.json"), JSON.stringify(manifest));
-		await writeFile(join(agentDir, "npm", "node_modules", "outside.ts"), "export default () => ({})");
-		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+		await writeFile(
+			join(agentDir, "npm", "node_modules", "outside.ts"),
+			"export default () => ({})",
+		);
+		await writeFile(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ packages: ["npm:pi-claude-bridge"] }),
+		);
 		await assert.rejects(
 			resolveClaudeBridgeExtension(agentDir, { cwd: worktree, trusted: false }),
 			/inside its installed package|does not match the official package's declared extension/,
@@ -435,7 +670,10 @@ test("a configured but missing extension file fails visibly without fallback", a
 		const manifest = await officialManifest(installed);
 		manifest.pi.extensions = ["./missing-extension.ts"];
 		await writeFile(join(root, "package.json"), JSON.stringify(manifest));
-		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+		await writeFile(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ packages: ["npm:pi-claude-bridge"] }),
+		);
 		await assert.rejects(
 			resolveClaudeBridgeExtension(agentDir, { cwd: worktree, trusted: false }),
 			/unreadable|missing, filtered out, or disabled/,
@@ -487,11 +725,23 @@ test("parent project resolution ignores a poisoned child cwd and unrelated child
 		await mkdir(join(childCwd, ".pi"), { recursive: true });
 		await cp(installed, parentPackage, { recursive: true });
 		await mkdir(childPackage, { recursive: true });
-		await writeFile(join(childPackage, "index.ts"), "export default () => ({})");
-		await writeFile(join(parentCwd, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
-		await writeFile(join(childCwd, ".pi", "settings.json"), JSON.stringify({ packages: [childPackage] }));
+		await writeFile(
+			join(childPackage, "index.ts"),
+			"export default () => ({})",
+		);
+		await writeFile(
+			join(parentCwd, ".pi", "settings.json"),
+			JSON.stringify({ packages: ["npm:pi-claude-bridge"] }),
+		);
+		await writeFile(
+			join(childCwd, ".pi", "settings.json"),
+			JSON.stringify({ packages: [childPackage] }),
+		);
 		assert.equal(
-			await resolveClaudeBridgeExtension(agentDir, { cwd: parentCwd, trusted: true }),
+			await resolveClaudeBridgeExtension(agentDir, {
+				cwd: parentCwd,
+				trusted: true,
+			}),
 			await realpath(join(parentPackage, "src", "index.ts")),
 		);
 	});
@@ -505,8 +755,17 @@ test("duplicate configured Bridge sources at the same effective scope and root a
 	}
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		await mkdir(join(agentDir, "npm", "node_modules"), { recursive: true });
-		await symlink(installed, join(agentDir, "npm", "node_modules", "pi-claude-bridge"), "dir");
-		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge", "npm:pi-claude-bridge"] }));
+		await symlink(
+			installed,
+			join(agentDir, "npm", "node_modules", "pi-claude-bridge"),
+			"dir",
+		);
+		await writeFile(
+			join(agentDir, "settings.json"),
+			JSON.stringify({
+				packages: ["npm:pi-claude-bridge", "npm:pi-claude-bridge"],
+			}),
+		);
 		const project = { cwd: worktree, trusted: false };
 		assert.equal(
 			await resolveClaudeBridgeExtension(agentDir, project),
@@ -526,12 +785,20 @@ test("two effective official resources are rejected as ambiguous", async (t) => 
 		return;
 	}
 	await withWorkspace(async ({ worktree, agentDir }) => {
-		const userPackage = join(agentDir, "npm", "node_modules", "pi-claude-bridge");
+		const userPackage = join(
+			agentDir,
+			"npm",
+			"node_modules",
+			"pi-claude-bridge",
+		);
 		const projectPackage = join(worktree, "project-bridge");
 		await mkdir(join(agentDir, "npm", "node_modules"), { recursive: true });
 		await cp(installed, userPackage, { recursive: true });
 		await cp(installed, projectPackage, { recursive: true });
-		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+		await writeFile(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ packages: ["npm:pi-claude-bridge"] }),
+		);
 		await mkdir(join(worktree, ".pi"), { recursive: true });
 		await writeFile(
 			join(worktree, ".pi", "settings.json"),
@@ -551,22 +818,41 @@ test("a trusted project Bridge package wins before a malformed shadowed user pac
 		return;
 	}
 	await withWorkspace(async ({ worktree, agentDir }) => {
-		const userPackage = join(agentDir, "npm", "node_modules", "pi-claude-bridge");
+		const userPackage = join(
+			agentDir,
+			"npm",
+			"node_modules",
+			"pi-claude-bridge",
+		);
 		const projectNpm = join(worktree, ".pi", "npm", "node_modules");
 		const projectPackage = join(projectNpm, "pi-claude-bridge");
 		await mkdir(userPackage, { recursive: true });
 		await writeFile(join(userPackage, "package.json"), "null");
 		await mkdir(projectNpm, { recursive: true });
 		await cp(installed, projectPackage, { recursive: true });
-		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+		await writeFile(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ packages: ["npm:pi-claude-bridge"] }),
+		);
 		await mkdir(join(worktree, ".pi"), { recursive: true });
-		await writeFile(join(worktree, ".pi", "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+		await writeFile(
+			join(worktree, ".pi", "settings.json"),
+			JSON.stringify({ packages: ["npm:pi-claude-bridge"] }),
+		);
 		assert.equal(
-			await resolveClaudeBridgeExtension(agentDir, { cwd: worktree, trusted: true }),
+			await resolveClaudeBridgeExtension(agentDir, {
+				cwd: worktree,
+				trusted: true,
+			}),
 			await realpath(join(projectPackage, "src", "index.ts")),
 		);
 		assert.equal(
-			(await inspectClaudeBridgeCompanion(agentDir, { cwd: worktree, trusted: true })).version,
+			(
+				await inspectClaudeBridgeCompanion(agentDir, {
+					cwd: worktree,
+					trusted: true,
+				})
+			).version,
 			(await officialManifest(installed)).version,
 			"trusted project package supersedes malformed user package",
 		);
@@ -580,24 +866,41 @@ test("a filtered trusted project source does not validate its shadowed malformed
 		return;
 	}
 	await withWorkspace(async ({ worktree, agentDir }) => {
-		const userPackage = join(agentDir, "npm", "node_modules", "pi-claude-bridge");
+		const userPackage = join(
+			agentDir,
+			"npm",
+			"node_modules",
+			"pi-claude-bridge",
+		);
 		const projectNpm = join(worktree, ".pi", "npm", "node_modules");
 		await mkdir(userPackage, { recursive: true });
 		await writeFile(join(userPackage, "package.json"), "null");
 		await mkdir(projectNpm, { recursive: true });
-		await cp(installed, join(projectNpm, "pi-claude-bridge"), { recursive: true });
-		await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-claude-bridge"] }));
+		await cp(installed, join(projectNpm, "pi-claude-bridge"), {
+			recursive: true,
+		});
+		await writeFile(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ packages: ["npm:pi-claude-bridge"] }),
+		);
 		await mkdir(join(worktree, ".pi"), { recursive: true });
 		await writeFile(
 			join(worktree, ".pi", "settings.json"),
-			JSON.stringify({ packages: [{ source: "npm:pi-claude-bridge", extensions: [] }] }),
+			JSON.stringify({
+				packages: [{ source: "npm:pi-claude-bridge", extensions: [] }],
+			}),
 		);
 		await assert.rejects(
 			resolveClaudeBridgeExtension(agentDir, { cwd: worktree, trusted: true }),
 			/filtered out|disabled/,
 		);
 		assert.equal(
-			(await inspectClaudeBridgeCompanion(agentDir, { cwd: worktree, trusted: true })).version,
+			(
+				await inspectClaudeBridgeCompanion(agentDir, {
+					cwd: worktree,
+					trusted: true,
+				})
+			).version,
 			(await officialManifest(installed)).version,
 			"configured source filters do not turn an installed companion into a duplicate-install gap",
 		);
@@ -611,7 +914,12 @@ test("Claude Bridge discovery follows parent trust and project package filters",
 		return;
 	}
 	await withWorkspace(async ({ worktree, agentDir }) => {
-		const userPackage = join(agentDir, "npm", "node_modules", "pi-claude-bridge");
+		const userPackage = join(
+			agentDir,
+			"npm",
+			"node_modules",
+			"pi-claude-bridge",
+		);
 		const projectNpm = join(worktree, ".pi", "npm", "node_modules");
 		const projectPackage = join(projectNpm, "pi-claude-bridge");
 		await mkdir(join(agentDir, "npm", "node_modules"), { recursive: true });
@@ -625,23 +933,38 @@ test("Claude Bridge discovery follows parent trust and project package filters",
 		await mkdir(join(worktree, ".pi"), { recursive: true });
 		await writeFile(
 			join(worktree, ".pi", "settings.json"),
-			JSON.stringify({ packages: [{ source: "npm:pi-claude-bridge", extensions: [] }] }),
+			JSON.stringify({
+				packages: [{ source: "npm:pi-claude-bridge", extensions: [] }],
+			}),
 		);
 		await assert.rejects(
 			resolveClaudeBridgeExtension(agentDir, { cwd: worktree, trusted: true }),
 			/filtered out/,
 		);
 		assert.equal(
-			await resolveClaudeBridgeExtension(agentDir, { cwd: worktree, trusted: false }),
+			await resolveClaudeBridgeExtension(agentDir, {
+				cwd: worktree,
+				trusted: false,
+			}),
 			await realpath(join(installed, "src", "index.ts")),
 		);
 		assert.equal(
-			(await inspectClaudeBridgeCompanion(agentDir, { cwd: worktree, trusted: true })).version,
+			(
+				await inspectClaudeBridgeCompanion(agentDir, {
+					cwd: worktree,
+					trusted: true,
+				})
+			).version,
 			(await officialManifest(installed)).version,
 			"the expected companion is independent of the selected provider resource filter",
 		);
 		assert.equal(
-			(await inspectClaudeBridgeCompanion(agentDir, { cwd: worktree, trusted: false })).version,
+			(
+				await inspectClaudeBridgeCompanion(agentDir, {
+					cwd: worktree,
+					trusted: false,
+				})
+			).version,
 			(await officialManifest(installed)).version,
 			"the untrusted project does not shadow the configured user package",
 		);
@@ -945,7 +1268,10 @@ for (const mode of ["tui", "rpc"]) {
 				result: undefined,
 				verdict: undefined,
 			});
-			assert.match(message.content, /completed\. Verdict: absent\.\n\nAll tests pass\./);
+			assert.match(
+				message.content,
+				/completed\. Verdict: absent\.\n\nAll tests pass\./,
+			);
 			assert.deepEqual(options, { deliverAs: "steer", triggerTurn: true });
 			assert.equal(child.disposals, 1);
 			assert.deepEqual(ctx.model, {
@@ -1058,7 +1384,11 @@ test("refused and pending launches return a warning and reason with no child id 
 				reason: /unknown role planner/,
 			},
 			{
-				params: { role: "worker", task: "Fix the failing test", worktree: agentDir },
+				params: {
+					role: "worker",
+					task: "Fix the failing test",
+					worktree: agentDir,
+				},
 				status: "refused",
 				reason: /not a valid worktree/,
 			},
@@ -1070,11 +1400,7 @@ test("refused and pending launches return a warning and reason with no child id 
 				create: children.create,
 			});
 
-			const result = await spawn(
-				tool,
-				params,
-				toolContext("tui", worktree),
-			);
+			const result = await spawn(tool, params, toolContext("tui", worktree));
 
 			assert.equal(result.details.status, status);
 			assert.match(result.details.reason, reason);
@@ -1399,7 +1725,10 @@ test("a background child that fails, is cancelled, or times out is traced with t
 test("a trace entry that cannot be appended does not break the child", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
-		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
 		extension.entries.push = () => {
 			throw new Error("disk full");
 		};
@@ -1438,7 +1767,11 @@ test("session shutdown disposes running background children, which then deliver 
 
 test("a session end other than a reload removes every child's session, a reload keeps them, and a session start prunes those of gone parents", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
-		const leftover = join(agentDir, "pi-workflow-children", "6f1c2b8e-leftover");
+		const leftover = join(
+			agentDir,
+			"pi-workflow-children",
+			"6f1c2b8e-leftover",
+		);
 		await mkdir(leftover, { recursive: true });
 		const children = fakeChildren();
 		const before = await loadSpawnTool({ agentDir, create: children.create });
@@ -1450,10 +1783,16 @@ test("a session end other than a reload removes every child's session, a reload 
 		await settle();
 
 		await before.fire("session_shutdown", { reason: "reload" });
-		assert.deepEqual(children.created.map((child) => child.removals), [0, 0]);
+		assert.deepEqual(
+			children.created.map((child) => child.removals),
+			[0, 0],
+		);
 		const after = await loadSpawnTool({ agentDir, create: children.create });
 		await after.fire("session_shutdown", { reason: "new" });
-		assert.deepEqual(children.created.map((child) => child.removals), [1, 1]);
+		assert.deepEqual(
+			children.created.map((child) => child.removals),
+			[1, 1],
+		);
 	});
 });
 
@@ -1475,7 +1814,8 @@ test("a reload keeps every working child with its session, and the re-attached p
 		const children = fakeChildren();
 		const before = await loadSpawnTool({ agentDir, create: children.create });
 		const ids = [];
-		for (let i = 0; i < 7; i++) ids.push(await spawnBackground(before, worktree));
+		for (let i = 0; i < 7; i++)
+			ids.push(await spawnBackground(before, worktree));
 		await settle();
 		children.created[0].result.resolve("Done.");
 		await settle();
@@ -1485,12 +1825,17 @@ test("a reload keeps every working child with its session, and the re-attached p
 
 		const after = await reload(before, { agentDir, create: children.create });
 
-		assert.deepEqual(children.created.map((child) => child.disposals), [1, 0, 0, 0, 0, 0, 0]);
+		assert.deepEqual(
+			children.created.map((child) => child.disposals),
+			[1, 0, 0, 0, 0, 0, 0],
+		);
 		assert.deepEqual(before.notifications, []);
 		assert.equal(before.entries.length, entries);
 		assert.equal(children.created.length, 7);
 		assert.deepEqual(
-			(await use(after, "list_children", {})).details.children.map(stateOfDetails),
+			(await use(after, "list_children", {})).details.children.map(
+				stateOfDetails,
+			),
 			ids.map((id, index) => ({
 				id,
 				state: index === 0 ? "completed" : index === 6 ? "queued" : "running",
@@ -1500,7 +1845,8 @@ test("a reload keeps every working child with its session, and the re-attached p
 		children.created[1].result.resolve("Second.");
 		await settle();
 		assert.equal(await stateOf(after, ids[6]), "running");
-		for (const child of children.created.slice(2)) child.result.resolve("Done.");
+		for (const child of children.created.slice(2))
+			child.result.resolve("Done.");
 		await settle();
 		await after.fire("agent_settled");
 		await after.fire("agent_settled");
@@ -1508,7 +1854,10 @@ test("a reload keeps every working child with its session, and the re-attached p
 		assert.deepEqual(resultIds(before), []);
 
 		await after.fire("session_shutdown", { reason: "quit" });
-		assert.deepEqual(children.created.map((child) => child.disposals), Array(7).fill(1));
+		assert.deepEqual(
+			children.created.map((child) => child.disposals),
+			Array(7).fill(1),
+		);
 	});
 });
 
@@ -1516,7 +1865,11 @@ test("a launch whose preparation completes after a reload began is refused and l
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
 		const before = await loadSpawnTool({ agentDir, create: children.create });
-		const launching = spawn(before.tool, { role: "worker", task: "Fix the failing test" }, toolContext("tui", worktree));
+		const launching = spawn(
+			before.tool,
+			{ role: "worker", task: "Fix the failing test" },
+			toolContext("tui", worktree),
+		);
 
 		await before.fire("session_shutdown", { reason: "reload" });
 		const result = await launching;
@@ -1525,7 +1878,10 @@ test("a launch whose preparation completes after a reload began is refused and l
 		assert.equal(result.details.status, "refused");
 		assert.match(text(result), /The session ended before the child launched\./);
 		assert.deepEqual(children.created, []);
-		assert.deepEqual((await use(after, "list_children", {})).details.children, []);
+		assert.deepEqual(
+			(await use(after, "list_children", {})).details.children,
+			[],
+		);
 		await after.fire("session_shutdown", { reason: "quit" });
 	});
 });
@@ -1534,7 +1890,11 @@ test("a child that reports and ends while the parent reloads is settled once by 
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const clock = manualClock();
 		const children = fakeChildren();
-		const options = { agentDir, create: children.create, schedule: clock.schedule };
+		const options = {
+			agentDir,
+			create: children.create,
+			schedule: clock.schedule,
+		};
 		const before = await loadSpawnTool(options);
 		const ending = await spawnBackground(before, worktree);
 		const silent = await spawnBackground(before, worktree);
@@ -1548,7 +1908,11 @@ test("a child that reports and ends while the parent reloads is settled once by 
 		const after = await loadSpawnTool(options);
 		await settle();
 
-		assert.equal((await use(after, "child_status", { id: ending })).details.child.result.verdict, "done");
+		assert.equal(
+			(await use(after, "child_status", { id: ending })).details.child.result
+				.verdict,
+			"done",
+		);
 		assert.equal(await stateOf(after, ending), "completed");
 		assert.equal(await stateOf(after, silent), "running");
 		clock.fire(minutes(4));
@@ -1566,11 +1930,16 @@ test("a question open at a reload, one asked or withdrawn while the parent reloa
 		const children = fakeChildren();
 		const before = await loadSpawnTool({ agentDir, create: children.create });
 		const ids = [];
-		for (let i = 0; i < 4; i++) ids.push(await spawnBackground(before, worktree));
+		for (let i = 0; i < 4; i++)
+			ids.push(await spawnBackground(before, worktree));
 		await settle();
 		const [first, open, late, withdrawn] = children.created;
 		const answered = first.spec.ask("Delete the cache?");
-		await use(before, "reply_child", { id: ids[0], question: 1, answer: "Yes." });
+		await use(before, "reply_child", {
+			id: ids[0],
+			question: 1,
+			answer: "Yes.",
+		});
 		assert.equal(await answered, "Yes.");
 		const pending = open.spec.ask("Which file?");
 		const leaving = new AbortController();
@@ -1585,26 +1954,47 @@ test("a question open at a reload, one asked or withdrawn while the parent reloa
 
 		await assert.rejects(
 			use(after, "reply_child", { id: ids[0], question: 1, answer: "No." }),
-			{ message: `Question 1 of child ${ids[0]} was already answered by the parent: Yes.` },
+			{
+				message: `Question 1 of child ${ids[0]} was already answered by the parent: Yes.`,
+			},
 		);
 		assert.equal(await stateOf(after, ids[1]), "waiting");
-		await use(after, "reply_child", { id: ids[1], question: 1, answer: "src/a.ts" });
+		await use(after, "reply_child", {
+			id: ids[1],
+			question: 1,
+			answer: "src/a.ts",
+		});
 		assert.equal(await pending, "src/a.ts");
 		await assert.rejects(
-			use(after, "reply_child", { id: ids[1], question: 1, answer: "src/b.ts" }),
-			{ message: `Question 1 of child ${ids[1]} was already answered by the parent: src/a.ts` },
+			use(after, "reply_child", {
+				id: ids[1],
+				question: 1,
+				answer: "src/b.ts",
+			}),
+			{
+				message: `Question 1 of child ${ids[1]} was already answered by the parent: src/a.ts`,
+			},
 		);
 		assert.deepEqual(
-			after.messages.map(({ message }) => [message.customType, message.details.id]),
+			after.messages.map(({ message }) => [
+				message.customType,
+				message.details.id,
+			]),
 			[["pi-workflow-child-question", ids[2]]],
 		);
-		await use(after, "reply_child", { id: ids[2], question: 1, answer: "Yes." });
+		await use(after, "reply_child", {
+			id: ids[2],
+			question: 1,
+			answer: "Yes.",
+		});
 		assert.equal(await asked, "Yes.");
 		await assert.rejects(dropped, { message: "The call was aborted." });
 		assert.equal(await stateOf(after, ids[3]), "running");
 		await assert.rejects(
 			use(after, "reply_child", { id: ids[3], question: 1, answer: "Yes." }),
-			{ message: `Question 1 of child ${ids[3]} was withdrawn: the call that asked it ended.` },
+			{
+				message: `Question 1 of child ${ids[3]} was withdrawn: the call that asked it ended.`,
+			},
 		);
 		await after.fire("session_shutdown", { reason: "quit" });
 	});
@@ -1640,18 +2030,37 @@ test("a reload rebuilds the write claims of the surviving workers, which complet
 		const children = fakeChildren();
 		const before = await loadSpawnTool({ agentDir, create: children.create });
 		const ctx = toolContext("tui", worktree);
-		await spawn(before.tool, { role: "worker", task: "Fix the parser", surfaces: ["src/**"] }, ctx);
+		await spawn(
+			before.tool,
+			{ role: "worker", task: "Fix the parser", surfaces: ["src/**"] },
+			ctx,
+		);
 		await settle();
 
 		const after = await reload(before, { agentDir, create: children.create });
-		const overlapping = await spawn(after.tool, { role: "worker", task: "Fix a.ts", surfaces: ["src/a.ts"] }, ctx);
-		const disjoint = await spawn(after.tool, { role: "worker", task: "Fix docs", surfaces: ["docs/**"] }, ctx);
+		const overlapping = await spawn(
+			after.tool,
+			{ role: "worker", task: "Fix a.ts", surfaces: ["src/a.ts"] },
+			ctx,
+		);
+		const disjoint = await spawn(
+			after.tool,
+			{ role: "worker", task: "Fix docs", surfaces: ["docs/**"] },
+			ctx,
+		);
 		children.created[0].result.resolve("Fixed.");
 		await settle();
-		const released = await spawn(after.tool, { role: "worker", task: "Fix a.ts", surfaces: ["src/a.ts"] }, ctx);
+		const released = await spawn(
+			after.tool,
+			{ role: "worker", task: "Fix a.ts", surfaces: ["src/a.ts"] },
+			ctx,
+		);
 
 		assert.equal(overlapping.details.status, "refused");
-		assert.match(overlapping.details.reason, /`src\/a\.ts` overlaps `src\/\*\*`/);
+		assert.match(
+			overlapping.details.reason,
+			/`src\/a\.ts` overlaps `src\/\*\*`/,
+		);
 		assert.equal(disjoint.details.status, "queued");
 		assert.equal(released.details.status, "queued");
 		await after.fire("session_shutdown", { reason: "quit" });
@@ -1686,23 +2095,41 @@ test("after a reload, the result of a child linked to a Todo task sets that task
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
 		const before = await loadSpawnTool({ agentDir, create: children.create });
-		const written = await todoTool(before).run("write", { tasks: [{ text: "Fix the parser" }] });
+		const written = await todoTool(before).run("write", {
+			tasks: [{ text: "Fix the parser" }],
+		});
 		await spawnOnTask(before, worktree, 1);
 		await settle();
 		const branch = [
 			{
 				type: "message",
-				message: { role: "toolResult", toolName: "todo", isError: false, details: written.details },
+				message: {
+					role: "toolResult",
+					toolName: "todo",
+					isError: false,
+					details: written.details,
+				},
 			},
-			...before.entries.map(({ customType, data }) => ({ type: "custom", customType, data })),
+			...before.entries.map(({ customType, data }) => ({
+				type: "custom",
+				customType,
+				data,
+			})),
 		];
 
-		const after = await reload(before, { agentDir, create: children.create, branch });
+		const after = await reload(before, {
+			agentDir,
+			create: children.create,
+			branch,
+		});
 		children.created[0].spec.report(workerResult("done"));
 		children.created[0].result.resolve("Fixed.");
 		await settle();
 
-		assert.match(after.messages.at(-1).message.content, /Task #1 is now done\./);
+		assert.match(
+			after.messages.at(-1).message.content,
+			/Task #1 is now done\./,
+		);
 		assert.match(await todoTool(after).list(), /\[done\] #1: Fix the parser/);
 		await after.fire("session_shutdown", { reason: "quit" });
 	});
@@ -1719,11 +2146,20 @@ test("children parked at a reload that no runtime adopts are stopped at the adop
 			const before = await loadSpawnTool({
 				agentDir,
 				schedule: clock.schedule,
-				session: { getSessionId: () => "parent-1", getSessionFile: () => "/sessions/parent.jsonl" },
-				create: createRpcChildSession({ command: [process.execPath, fakePi], sessionRoot: sessions, schedule: clock.schedule }),
+				session: {
+					getSessionId: () => "parent-1",
+					getSessionFile: () => "/sessions/parent.jsonl",
+				},
+				create: createRpcChildSession({
+					command: [process.execPath, fakePi],
+					sessionRoot: sessions,
+					schedule: clock.schedule,
+				}),
 			});
 			const id = await spawnBackground(before, worktree);
-			const { pid } = await eventually(() => existsSync(record) && JSON.parse(readFileSync(record, "utf8")));
+			const { pid } = await eventually(
+				() => existsSync(record) && JSON.parse(readFileSync(record, "utf8")),
+			);
 
 			await before.fire("session_shutdown", { reason: "reload" });
 			assert.equal(alive(pid), true);
@@ -1752,13 +2188,26 @@ test("a reload keeps a persisted parent's audit capture open, and the record clo
 			getSessionId: () => "parent-1",
 			getSessionFile: () => "/sessions/parent.jsonl",
 		};
-		const before = await loadSpawnTool({ agentDir, create: children.create, session });
+		const before = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			session,
+		});
 		const id = await spawnBackground(before, worktree);
 		await settle();
-		const journal = join(agentDir, "pi-workflow-audit", "parent-1", `${id}.jsonl`);
+		const journal = join(
+			agentDir,
+			"pi-workflow-audit",
+			"parent-1",
+			`${id}.jsonl`,
+		);
 		await eventually(() => existsSync(journal));
 
-		const after = await reload(before, { agentDir, create: children.create, session });
+		const after = await reload(before, {
+			agentDir,
+			create: children.create,
+			session,
+		});
 		assert.doesNotMatch(readFileSync(journal, "utf8"), /"close":/);
 		children.created[0].spec.report(workerResult("done"));
 		children.created[0].result.resolve("Fixed.");
@@ -1778,7 +2227,16 @@ test("a reload keeps a persisted parent's audit capture open, and the record clo
 				closed: health.closed,
 				complete: health.complete,
 			})),
-			[{ child: id, state: "completed", verdict: "done", interrupted: undefined, closed: true, complete: true }],
+			[
+				{
+					child: id,
+					state: "completed",
+					verdict: "done",
+					interrupted: undefined,
+					closed: true,
+					complete: true,
+				},
+			],
 		);
 	});
 });
@@ -1787,14 +2245,21 @@ test("a shutdown for any reason other than reload ends the working children with
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		for (const reason of ["new", "resume", "fork", "quit"]) {
 			const children = fakeChildren();
-			const extension = await loadSpawnTool({ agentDir, create: children.create });
+			const extension = await loadSpawnTool({
+				agentDir,
+				create: children.create,
+			});
 			await spawnBackground(extension, worktree);
 			extension.notifications.length = 0;
 			const entries = extension.entries.length;
 
 			await extension.fire("session_shutdown", { reason });
 
-			assert.deepEqual(children.created.map((child) => child.disposals), [1], reason);
+			assert.deepEqual(
+				children.created.map((child) => child.disposals),
+				[1],
+				reason,
+			);
 			assert.deepEqual(extension.notifications, [], reason);
 			assert.equal(extension.entries.length, entries, reason);
 		}
@@ -1894,7 +2359,11 @@ test("a leftover routing choice in the agent directory is neither read nor delet
 			},
 		};
 
-		const result = await spawn(tool, { role: "worker", task: "Map the module" }, ctx);
+		const result = await spawn(
+			tool,
+			{ role: "worker", task: "Map the module" },
+			ctx,
+		);
 
 		assert.equal(result.details.status, "completed");
 		assert.deepEqual(calls, []);
@@ -1942,9 +2411,18 @@ test("a named implement skill selects no role; the parent's role launches", asyn
 async function stubWebAccess(agentDir) {
 	const root = join(agentDir, "npm", "node_modules", "pi-web-access");
 	await mkdir(root, { recursive: true });
-	await writeFile(join(root, "package.json"), JSON.stringify({ name: "pi-web-access", pi: { extensions: ["./index.ts"] } }));
+	await writeFile(
+		join(root, "package.json"),
+		JSON.stringify({
+			name: "pi-web-access",
+			pi: { extensions: ["./index.ts"] },
+		}),
+	);
 	await writeFile(join(root, "index.ts"), "export default () => {};\n");
-	await writeFile(join(agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-web-access"] }));
+	await writeFile(
+		join(agentDir, "settings.json"),
+		JSON.stringify({ packages: ["npm:pi-web-access"] }),
+	);
 	return join(root, "index.ts");
 }
 
@@ -1980,7 +2458,10 @@ test("the default child factory runs a background child as the Pi process on PAT
 	await withWorkspace(async ({ worktree, agentDir, dir }) => {
 		const webAccess = await stubWebAccess(agentDir);
 		await withPathPi(dir, "complete", async ({ launched }) => {
-			const { tool, messages } = await loadSpawnTool({ agentDir, create: null });
+			const { tool, messages } = await loadSpawnTool({
+				agentDir,
+				create: null,
+			});
 			const result = await spawn(
 				tool,
 				{ role: "explore", task: "Map the code" },
@@ -2024,10 +2505,22 @@ test("the default child factory opens no Pi process for a queued child", async (
 			await delay(100);
 			assert.equal((await launches()).length, 5);
 			const cancel = named("cancel_child");
-			await cancel.execute("call-2", { id: ids[0] }, undefined, undefined, toolContext("tui", worktree));
+			await cancel.execute(
+				"call-2",
+				{ id: ids[0] },
+				undefined,
+				undefined,
+				toolContext("tui", worktree),
+			);
 			await eventually(launches, (pids) => pids.length === 6);
 			for (const id of ids.slice(1)) {
-				await cancel.execute("call-3", { id }, undefined, undefined, toolContext("tui", worktree));
+				await cancel.execute(
+					"call-3",
+					{ id },
+					undefined,
+					undefined,
+					toolContext("tui", worktree),
+				);
 			}
 		});
 	});
@@ -2110,7 +2603,10 @@ test("the child runtime runs a trusted project's shell prefix in the child's bas
 			echo(),
 			fauxAssistantMessage("Untrusted."),
 		]);
-		const { tool } = await loadSpawnTool({ agentDir, create: runtimeChild(parent.runtime) });
+		const { tool } = await loadSpawnTool({
+			agentDir,
+			create: runtimeChild(parent.runtime),
+		});
 
 		for (const trusted of [true, false]) {
 			const result = await spawn(
@@ -2146,7 +2642,11 @@ async function writeMcpConfig(dir, pids, servers) {
 			mcpServers: Object.fromEntries(
 				Object.entries(servers).map(([name, config]) => [
 					name,
-					{ command: process.execPath, args: [mcpFixture, name, pids], ...config },
+					{
+						command: process.execPath,
+						args: [mcpFixture, name, pids],
+						...config,
+					},
 				]),
 			),
 		}),
@@ -2163,12 +2663,18 @@ test("a child's MCP notices reach its trace", async () => {
 			join(agentDir, "mcp.json"),
 			JSON.stringify({
 				mcpServers: {
-					broken: { command: join(agentDir, "missing-server"), exposure: "direct" },
+					broken: {
+						command: join(agentDir, "missing-server"),
+						exposure: "direct",
+					},
 				},
 			}),
 		);
 		const parent = await fauxParent(agentDir, fauxAssistantMessage("Done."));
-		const { tool, entries } = await loadSpawnTool({ agentDir, create: runtimeChild(parent.runtime) });
+		const { tool, entries } = await loadSpawnTool({
+			agentDir,
+			create: runtimeChild(parent.runtime),
+		});
 
 		const result = await spawn(
 			tool,
@@ -2195,7 +2701,10 @@ test("two children of one Specialist and model in one worktree send the same pre
 			docs: { exposure: "direct", description: "Library docs." },
 			tracker: { description: "Issue tracker." },
 		});
-		await writeFile(join(worktree, "AGENTS.md"), "Repository rule: run npm run check.");
+		await writeFile(
+			join(worktree, "AGENTS.md"),
+			"Repository rule: run npm run check.",
+		);
 		const parent = await fauxParent(agentDir, [
 			fauxAssistantMessage("First."),
 			fauxAssistantMessage("Second."),
@@ -2275,23 +2784,53 @@ test("spawn_child tells the parent to end its turn instead of polling", async ()
 			guidance,
 			/sleep, list_children, child_status, or child_result/,
 		);
-		assert.match(guidance, /Do not delegate mutating git or gh commands or publication/);
+		assert.match(
+			guidance,
+			/Do not delegate mutating git or gh commands or publication/,
+		);
 		assert.match(guidance, /reserved for the parent/);
-		assert.match(guidance, /you may grant checkpoint, with the branch of an isolated worktree you created, to a worker/);
-		assert.match(guidance, /verify that each returned SHA is on that branch, descends from the base, and contains the expected change; integration, integration checks, push, pull requests, and tracker effects stay with you/);
-		assert.match(guidance, /Without the grant, the worker hands over a verified tree and lists the commit for you/);
-		assert.match(guidance, /Do not ask the child for intermediate progress reports/);
+		assert.match(
+			guidance,
+			/you may grant checkpoint, with the branch of an isolated worktree you created, to a worker/,
+		);
+		assert.match(
+			guidance,
+			/verify that each returned SHA is on that branch, descends from the base, and contains the expected change; integration, integration checks, push, pull requests, and tracker effects stay with you/,
+		);
+		assert.match(
+			guidance,
+			/Without the grant, the worker hands over a verified tree and lists the commit for you/,
+		);
+		assert.match(
+			guidance,
+			/Do not ask the child for intermediate progress reports/,
+		);
 		assert.match(guidance, /references accept only paths inside the cwd/);
-		assert.match(guidance, /no channel to a running child; use reply_child only when the child asks/);
-		assert.match(guidance, /never repeat an identical launch, but when a refusal names a cause you can correct, such as an unknown Todo id, correct it and relaunch once/);
-		assert.match(guidance, /Do not declare work delegated to a worker done without its Verdict of done/);
-		assert.match(guidance, /Do not declare verification delegated to a verifier passed without its Verdict of pass/);
+		assert.match(
+			guidance,
+			/no channel to a running child; use reply_child only when the child asks/,
+		);
+		assert.match(
+			guidance,
+			/never repeat an identical launch, but when a refusal names a cause you can correct, such as an unknown Todo id, correct it and relaunch once/,
+		);
+		assert.match(
+			guidance,
+			/Do not declare work delegated to a worker done without its Verdict of done/,
+		);
+		assert.match(
+			guidance,
+			/Do not declare verification delegated to a verifier passed without its Verdict of pass/,
+		);
 		assert.match(guidance, /partial, fail, and blocked are not success/);
 		assert.match(
 			guidance,
 			/One codemode script can launch several children: each spawn_child call returns at once without awaiting the child\. Their results arrive in one message when every child is done, or earlier when a result needs you\./,
 		);
-		assert.match(guidance, /At most 10 children can be queued, running, or waiting/);
+		assert.match(
+			guidance,
+			/At most 10 children can be queued, running, or waiting/,
+		);
 
 		const result = await spawn(
 			tool,
@@ -2310,14 +2849,29 @@ test("spawn_child describes who decides the role and what each role can do", asy
 			create: fakeChildren().create,
 		});
 		const role = tool.parameters.properties.role.description;
-		assert.match(role, /The role is required and the parent chooses it; omitting it does not choose worker/);
+		assert.match(
+			role,
+			/The role is required and the parent chooses it; omitting it does not choose worker/,
+		);
 		assert.doesNotMatch(role, /suggestion|specialist/i);
 		const guidance = tool.promptGuidelines.join("\n");
 		const taskDescription = tool.parameters.properties.task.description;
-		assert.match(taskDescription, /acceptance criteria and changed-file\/diff context/);
-		assert.match(taskDescription, /known validation commands\/results as context/);
-		assert.match(taskDescription, /Exploration may discover context directly from the worktree/);
-		assert.match(guidance, /Pass the task and the role \(explore, worker, or verify\)\./);
+		assert.match(
+			taskDescription,
+			/acceptance criteria and changed-file\/diff context/,
+		);
+		assert.match(
+			taskDescription,
+			/known validation commands\/results as context/,
+		);
+		assert.match(
+			taskDescription,
+			/Exploration may discover context directly from the worktree/,
+		);
+		assert.match(
+			guidance,
+			/Pass the task and the role \(explore, worker, or verify\)\./,
+		);
 		for (const line of [
 			"explore: read, grep, find, ls, codegraph, codemode",
 			"worker: read, bash, edit, write, grep, find, ls, codemode",
@@ -2331,14 +2885,29 @@ test("spawn_child describes who decides the role and what each role can do", asy
 		assert.match(guidance, /scope/i);
 		assert.match(guidance, /acceptance criteria/i);
 		assert.match(guidance, /edit surface/i);
-		assert.match(guidance, /surface each child owns[^.]*siblings share the checkout[^.]*prior findings/i);
-		assert.match(guidance, /never put commands[^.]*explore task[^.]*worktree[^.]*changed-file list[^.]*verify/i);
+		assert.match(
+			guidance,
+			/surface each child owns[^.]*siblings share the checkout[^.]*prior findings/i,
+		);
+		assert.match(
+			guidance,
+			/never put commands[^.]*explore task[^.]*worktree[^.]*changed-file list[^.]*verify/i,
+		);
 		assert.match(guidance, /scratch checkouts[^.]*one child per axis/i);
-		assert.match(guidance, /read only what decides the route, never the files the child will read/i);
-		assert.match(guidance, /pass paths through references, the spec reference, and what to change, not file contents/i);
+		assert.match(
+			guidance,
+			/read only what decides the route, never the files the child will read/i,
+		);
+		assert.match(
+			guidance,
+			/pass paths through references, the spec reference, and what to change, not file contents/i,
+		);
 		assert.match(guidance, /copy only short evidence you already have/i);
 		assert.doesNotMatch(guidance, /such as the diff/i);
-		assert.match(guidance, /read[^.]*before[^.]*write[^.]*worker|worker[^.]*read[^.]*write/i);
+		assert.match(
+			guidance,
+			/read[^.]*before[^.]*write[^.]*worker|worker[^.]*read[^.]*write/i,
+		);
 		assert.doesNotMatch(guidance, /specialist/i);
 		assert.doesNotMatch(guidance, /names a role|use that role/i);
 		assert.match(guidance, /parent chooses the role/i);
@@ -2379,7 +2948,9 @@ async function assertLaunchKeepsParentModel() {
 			name: "Auto",
 			thinkingLevels: ["low", "high"],
 			route(request) {
-				routes.push(`${request.model.provider}/${request.model.id}:${request.thinkingLevel}`);
+				routes.push(
+					`${request.model.provider}/${request.model.id}:${request.thinkingLevel}`,
+				);
 				return { model: parent.context.model, thinkingLevel: "high" };
 			},
 		});
@@ -2393,7 +2964,10 @@ async function assertLaunchKeepsParentModel() {
 				},
 			}),
 		);
-		const extension = await loadSpawnTool({ agentDir, create: runtimeChild(parent.runtime) });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: runtimeChild(parent.runtime),
+		});
 		const ctx = { ...toolContext("tui", worktree), ...parent.context };
 		const parentModel = ctx.model;
 
@@ -2407,8 +2981,9 @@ async function assertLaunchKeepsParentModel() {
 		assert.equal(result.details.status, "queued", text(result));
 		assert.deepEqual(routes, ["router/auto:low"]);
 		assert.equal(parent.requests.length, 1);
-		const child = (await use(extension, "child_status", { id: result.details.id }))
-			.details.child;
+		const child = (
+			await use(extension, "child_status", { id: result.details.id })
+		).details.child;
 		assert.equal(child.state, "completed");
 		assert.equal(child.model, "router/auto");
 		assert.equal(child.thinking, "low");
@@ -2752,16 +3327,28 @@ test("at most five children run at once; the others wait queued and start first 
 test("spawn_child admits writers with disjoint surfaces and refuses an overlap naming the entries until the first ends", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
-		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
 		const launch = (surfaces, role = "worker") =>
-			spawn(extension.tool, { role, task: "Edit", ...(surfaces ? { surfaces } : {}) }, toolContext("tui", worktree));
+			spawn(
+				extension.tool,
+				{ role, task: "Edit", ...(surfaces ? { surfaces } : {}) },
+				toolContext("tui", worktree),
+			);
 		const first = await launch(["src/a.ts"]);
 		const second = await launch(["docs"]);
 		assert.equal(first.details.status, "queued");
 		assert.equal(second.details.status, "queued");
 		const refused = await launch(["SRC/*.ts"]);
 		assert.equal(refused.details.status, "refused");
-		assert.match(text(refused), new RegExp(`child ${first.details.id} \\(\`SRC/\\*\\.ts\` overlaps \`src/a\\.ts\`\\)`));
+		assert.match(
+			text(refused),
+			new RegExp(
+				`child ${first.details.id} \\(\`SRC/\\*\\.ts\` overlaps \`src/a\\.ts\`\\)`,
+			),
+		);
 		assert.equal((await launch(undefined, "explore")).details.status, "queued");
 		await use(extension, "cancel_child", { id: first.details.id });
 		assert.equal((await launch(["SRC/*.ts"])).details.status, "queued");
@@ -2876,7 +3463,10 @@ test("print and json launches from a script run in the foreground outside the la
 			);
 		}
 		assert.equal(children.created.length, 24);
-		assert.equal((await use(extension, "list_children", {})).details.children.length, 0);
+		assert.equal(
+			(await use(extension, "list_children", {})).details.children.length,
+			0,
+		);
 	});
 });
 
@@ -2910,7 +3500,10 @@ test("a refused launch from a script is no launched child and holds no place und
 			held.map((result) => result.details.status),
 			Array(10).fill("refused"),
 		);
-		assert.equal((await use(extension, "list_children", {})).details.children.length, 0);
+		assert.equal(
+			(await use(extension, "list_children", {})).details.children.length,
+			0,
+		);
 
 		refusing = false;
 		const launched = await script();
@@ -3212,7 +3805,12 @@ test("continue_child starts a new queued child from a completed child's conversa
 			agentDir,
 			create: children.create,
 		});
-		const done = await spawnBackground(extension, worktree, "Map the parser", "explore");
+		const done = await spawnBackground(
+			extension,
+			worktree,
+			"Map the parser",
+			"explore",
+		);
 		await settle();
 		children.created[0].result.resolve("First answer.");
 		await settle();
@@ -3241,9 +3839,19 @@ test("continue_child starts a new queued child from a completed child's conversa
 		assert.deepEqual(
 			list
 				.filter((child) => [done, next].includes(child.id))
-				.map(({ id, role, state, continuedFrom }) => ({ id, role, state, continuedFrom })),
+				.map(({ id, role, state, continuedFrom }) => ({
+					id,
+					role,
+					state,
+					continuedFrom,
+				})),
 			[
-				{ id: done, role: "explore", state: "completed", continuedFrom: undefined },
+				{
+					id: done,
+					role: "explore",
+					state: "completed",
+					continuedFrom: undefined,
+				},
 				{ id: next, role: "explore", state: "queued", continuedFrom: done },
 			],
 		);
@@ -3587,12 +4195,18 @@ test("reply_child paints the answer card with compact rendering on and off, pain
 	const theme = globalThis[Symbol.for("@earendil-works/pi-coding-agent:theme")];
 	const args = { id: "5636a1b2-0000", question: 3, answer: "src/parser.ts" };
 	const lines = (component) =>
-		component.render(60).map((line) => stripVTControlCharacters(line).trimEnd());
+		component
+			.render(60)
+			.map((line) => stripVTControlCharacters(line).trimEnd());
 	const seated = Object.fromEntries(
 		capabilities.map((capability) => [capability, true]),
 	);
 	t.after(() =>
-		replaceSelection({ schemaVersion: 1, capabilities: seated, expectations: {} }),
+		replaceSelection({
+			schemaVersion: 1,
+			capabilities: seated,
+			expectations: {},
+		}),
 	);
 	const cards = [];
 	for (const compact of [true, false]) {
@@ -3640,16 +4254,18 @@ test("reply_child paints the answer card with compact rendering on and off, pain
 		const renderers = compactToolRenderers("reply_child", () => tool);
 		for (const reason of reasons) {
 			const refused = renderers.renderResult(
-				{ content: [{ type: "text", text: reason }], details: {}, isError: true },
+				{
+					content: [{ type: "text", text: reason }],
+					details: {},
+					isError: true,
+				},
 				{},
 				theme,
 				{ args, isError: true },
 			);
 			assert.equal(lines(refused)[0], "   ◆ Parent → 5636 · answer 3 rejected");
 			assert.ok(refused.render(200)[0].includes(theme.fg("error", "◆")));
-			assert.ok(
-				refused.render(200)[1].includes(theme.fg("error", reason)),
-			);
+			assert.ok(refused.render(200)[1].includes(theme.fg("error", reason)));
 		}
 	}
 	replaceSelection({
@@ -3675,12 +4291,20 @@ test("reply_child falls back to a plain-text answer when the child-session card 
 	const extension = await loadSpawnTool({ agentDir: tmpdir() });
 	const tool = extension.named("reply_child");
 	const theme = globalThis[Symbol.for("@earendil-works/pi-coding-agent:theme")];
-	const args = { id: "5636a1b2-0000", question: 3, answer: "src/\u001b[31mparser.ts" };
+	const args = {
+		id: "5636a1b2-0000",
+		question: 3,
+		answer: "src/\u001b[31mparser.ts",
+	};
 	const seated = Object.fromEntries(
 		capabilities.map((capability) => [capability, true]),
 	);
 	t.after(() =>
-		replaceSelection({ schemaVersion: 1, capabilities: seated, expectations: {} }),
+		replaceSelection({
+			schemaVersion: 1,
+			capabilities: seated,
+			expectations: {},
+		}),
 	);
 	replaceSelection({
 		schemaVersion: 1,
@@ -4091,7 +4715,11 @@ test("a question asked from a script that times out on a real agent session is w
 				},
 			);
 			assert.equal(await stateOf(extension, id), "waiting");
-			await use(extension, "reply_child", { id, question: 2, answer: "parser" });
+			await use(extension, "reply_child", {
+				id,
+				question: 2,
+				answer: "parser",
+			});
 			await eventually(() => extension.messages.length === 3);
 		});
 
@@ -4480,7 +5108,10 @@ const viewKeys = new KeybindingsManager({
 
 const plain = (line) => stripVTControlCharacters(line);
 
-function boxOf(extension, tui = { terminal: { rows: 24, columns: 100 }, requestRender() {} }) {
+function boxOf(
+	extension,
+	tui = { terminal: { rows: 24, columns: 100 }, requestRender() {} },
+) {
 	return extension.widgets.get(boxKey).factory(tui, plainTheme);
 }
 
@@ -4526,7 +5157,9 @@ const todoBranch = [
 			role: "toolResult",
 			toolName: "todo",
 			isError: false,
-			details: { tasks: [{ id: 1, text: "Review the doctor", state: "pending" }] },
+			details: {
+				tasks: [{ id: 1, text: "Review the doctor", state: "pending" }],
+			},
 		},
 	},
 ];
@@ -4564,7 +5197,9 @@ test("a background child shows in the subagent box pinned above the input and ab
 			lines[1],
 			/[⠋⠙⠹⠸⠼⠴⠦⠧] worker [0-9a-f]{4} Fix the failing test +model \(medium\) \d+s$/,
 		);
-		const task = lines.findIndex((line) => line.includes("□ Review the doctor"));
+		const task = lines.findIndex((line) =>
+			line.includes("□ Review the doctor"),
+		);
 		assert.ok(task > 1);
 
 		children.created[0].spec.onEvent({
@@ -4626,7 +5261,9 @@ test("with child session unseated, a task that arrives mid-session shows in the 
 			[...extension.widgets.keys()],
 			[boxKey, "pi-workflow-status"],
 		);
-		assert.ok(box.render(100).some((line) => plain(line).includes("Arrive late")));
+		assert.ok(
+			box.render(100).some((line) => plain(line).includes("Arrive late")),
+		);
 	});
 });
 
@@ -4665,7 +5302,11 @@ test("the box refreshes at once on a state change, groups redraws within 400 ms,
 			create: children.create,
 			refresh: clock.schedule,
 		});
-		const tui = { terminal: { rows: 24, columns: 100 }, renders: 0, requestRender: () => (tui.renders += 1) };
+		const tui = {
+			terminal: { rows: 24, columns: 100 },
+			renders: 0,
+			requestRender: () => (tui.renders += 1),
+		};
 		const box = boxOf(extension, tui);
 		const uiTimers = () => clock.pending().sort((a, b) => a - b);
 		assert.deepEqual(uiTimers(), []);
@@ -4788,7 +5429,10 @@ test("alt+a and /workflow:subagents open a full-screen overlay of every child; j
 			/^ │ {2}▸ ◐ worker [0-9a-f]{4} +running · \d+s │ model \(medium\) · wt: repo/,
 		);
 		assert.match(lines[3], /^ │ {3}History ─+ │ ctx unavailable/);
-		assert.match(lines[4], /^ │ {4}✓ worker [0-9a-f]{4} Map the.* \d+s │ Run the tests/);
+		assert.match(
+			lines[4],
+			/^ │ {4}✓ worker [0-9a-f]{4} Map the.* \d+s │ Run the tests/,
+		);
 		assert.match(
 			view.lines(60).at(-2),
 			/j\/k move {2}\| {2}Enter detail {2}\| {2}s\/c cancel {2}\| {2}q close/,
@@ -4836,7 +5480,10 @@ test("the Fleet view keeps a child running after agent_end while Pi retries auto
 			}),
 			fauxAssistantMessage("Retried answer."),
 		]);
-		const extension = await loadSpawnTool({ agentDir, create: runtimeChild(parent.runtime) });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: runtimeChild(parent.runtime),
+		});
 		const result = await spawn(
 			extension.tool,
 			{ role: "worker", task: "Fix the failing test" },
@@ -4962,8 +5609,14 @@ test("Enter opens a live detail that follows the tail, collapses thinking with P
 		assert.match(body, /I should read the doctor module first\./);
 		assert.match(body, /The doctor checks three things\./);
 		assert.match(body, /◆ Run npm test/);
-		assert.match(body, /Esc back {2}\| {2}Enter steer {2}\| {2}Ctrl\+J\/K scroll/);
-		assert.match(body, /s\/c cancel {2}\| {2}Ctrl\+O expand\s[\s\S]*Ctrl\+T thinking/);
+		assert.match(
+			body,
+			/Esc back {2}\| {2}Enter steer {2}\| {2}Ctrl\+J\/K scroll/,
+		);
+		assert.match(
+			body,
+			/s\/c cancel {2}\| {2}Ctrl\+O expand\s[\s\S]*Ctrl\+T thinking/,
+		);
 
 		const renders = view.tui.renders;
 		child.spec.onEvent({
@@ -5058,7 +5711,10 @@ test("the children view never renders more lines than the terminal is tall", asy
 			view.press("\r");
 			for (let width = 10; width <= 80; width++) {
 				const lines = view.lines(width);
-				assert.ok(lines.length <= rows, `detail ${rows}x${width}: ${lines.length}`);
+				assert.ok(
+					lines.length <= rows,
+					`detail ${rows}x${width}: ${lines.length}`,
+				);
 			}
 		}
 	});
@@ -5367,7 +6023,10 @@ test("a child that starts while a finished row waits to expire gets the one-seco
 
 		await spawnBackground(extension, worktree);
 		await settle();
-		assert.deepEqual(ticks().sort((a, b) => a - b), [133, 1000]);
+		assert.deepEqual(
+			ticks().sort((a, b) => a - b),
+			[133, 1000],
+		);
 	});
 });
 
@@ -5489,13 +6148,38 @@ test("the detail lists the files a child changed through its own successful edit
 		const emit = (event) => children.created[0].spec.onEvent(event);
 		const call = (toolCallId, toolName, args, isError, parent) => {
 			const nested = parent ? { parentToolCallId: parent } : {};
-			emit({ type: "tool_execution_start", toolCallId, toolName, args, ...nested });
+			emit({
+				type: "tool_execution_start",
+				toolCallId,
+				toolName,
+				args,
+				...nested,
+			});
 			return () =>
-				emit({ type: "tool_execution_end", toolCallId, toolName, result: {}, isError, ...nested });
+				emit({
+					type: "tool_execution_end",
+					toolCallId,
+					toolName,
+					result: {},
+					isError,
+					...nested,
+				});
 		};
 		const script = call("cm1", "codemode", { code: "..." }, true);
-		const nestedWrite = call("cm1/1", "write", { path: "src/b.ts", content: "b" }, false, "cm1");
-		const nestedEdit = call("cm1/2", "edit", { path: "src/c.ts", edits: [] }, true, "cm1");
+		const nestedWrite = call(
+			"cm1/1",
+			"write",
+			{ path: "src/b.ts", content: "b" },
+			false,
+			"cm1",
+		);
+		const nestedEdit = call(
+			"cm1/2",
+			"edit",
+			{ path: "src/c.ts", edits: [] },
+			true,
+			"cm1",
+		);
 		call("t1", "edit", { path: "src/a.ts", edits: [] }, false)();
 		call("t2", "bash", { command: "echo d > src/d.ts" }, false)();
 		call("t3", "write", { path: "src/pending.ts", content: "e" }, false);
@@ -5556,7 +6240,11 @@ test("children launched by one codemode call are grouped under it with the numbe
 			(
 				await extension.tool.execute(
 					toolCallId,
-					{ role: "worker", task: "Fix the failing test", surfaces: [toolCallId] },
+					{
+						role: "worker",
+						task: "Fix the failing test",
+						surfaces: [toolCallId],
+					},
 					undefined,
 					undefined,
 					toolContext("tui", worktree),
@@ -5577,7 +6265,8 @@ test("children launched by one codemode call are grouped under it with the numbe
 		children.created[1].result.resolve("Done.");
 		await settle();
 
-		const records = (await use(extension, "list_children", {})).details.children;
+		const records = (await use(extension, "list_children", {})).details
+			.children;
 		const group = (id) => records.find((child) => child.id === id)?.group;
 		assert.equal(group(direct), undefined);
 		assert.equal(group(first), "toolu_script7");
@@ -5588,11 +6277,14 @@ test("children launched by one codemode call are grouped under it with the numbe
 		assert.ok(at > 0, lines.join("\n"));
 		assert.match(lines[at + 1], /2 launched · 1 done +3\.0k tok/);
 		const rows = lines.map((line) => line.split("│")[1] ?? "");
-		const row = (id) => rows.findIndex((line) => line.includes(`worker ${id.slice(0, 4)}`));
+		const row = (id) =>
+			rows.findIndex((line) => line.includes(`worker ${id.slice(0, 4)}`));
 		assert.ok(row(direct) < at);
 		assert.match(rows[at + 2], new RegExp(`◐ worker ${second.slice(0, 4)}`));
 		const history = rows.findIndex((line) => /History ─/.test(line));
-		const again = lines.findIndex((line, i) => i > history && / script ipt7 ─/.test(line));
+		const again = lines.findIndex(
+			(line, i) => i > history && / script ipt7 ─/.test(line),
+		);
 		assert.ok(at < history && history < again, lines.join("\n"));
 		assert.match(lines[again + 1], /2 launched · 1 done +3\.0k tok/);
 		assert.match(rows[again + 2], /✓ worker .*completed/);
@@ -5615,7 +6307,9 @@ test("a hostile group label never reaches the rendered list", async () => {
 			toolContext("tui", worktree),
 		);
 		await settle();
-		const emitted = openChildren(extension, { rows: 40 }).component.render(100).join("\n");
+		const emitted = openChildren(extension, { rows: 40 })
+			.component.render(100)
+			.join("\n");
 		for (const bytes of hostileBytes) {
 			assert.equal(emitted.includes(bytes), false, JSON.stringify(bytes));
 		}
@@ -5635,7 +6329,9 @@ test("a child that times out after reporting shows its last result in the Fleet 
 		});
 		const id = await spawnBackground(extension, worktree);
 		await settle();
-		children.created[0].spec.report(workerResult("partial", "The parser half is fixed."));
+		children.created[0].spec.report(
+			workerResult("partial", "The parser half is fixed."),
+		);
 		clock.fire(minutes(4));
 		await settle();
 
@@ -5659,7 +6355,9 @@ test("a child that times out after reporting shows its last result in the Fleet 
 
 		const view = openChildren(extension, { rows: 80 });
 		view.press("\r");
-		const lines = view.lines(100).map((line) => line.split("│")[2]?.trim() ?? "");
+		const lines = view
+			.lines(100)
+			.map((line) => line.split("│")[2]?.trim() ?? "");
 		const at = lines.findIndex((line) => /^Result ─/.test(line));
 		assert.ok(at > 0, view.lines(100).join("\n"));
 		assert.deepEqual(lines.slice(at + 1, at + 3 + last.length), [
@@ -5809,7 +6507,10 @@ test("a busy parent receives a child result after the current turn, steered rath
 
 		assert.equal(extension.messages.length, 1);
 		const [{ message, options }] = extension.messages;
-		assert.deepEqual(stateOfDetails(message.details), { id, state: "completed" });
+		assert.deepEqual(stateOfDetails(message.details), {
+			id,
+			state: "completed",
+		});
 		assert.deepEqual(options, { deliverAs: "steer", triggerTurn: true });
 	});
 });
@@ -6067,7 +6768,11 @@ test("children launched by an aborted script keep running and asking, and reach 
 		);
 		const asking = extension.messages[0].message.details.id;
 		assert.ok(ids.includes(asking));
-		await use(extension, "reply_child", { id: asking, question: 1, answer: "a.ts" });
+		await use(extension, "reply_child", {
+			id: asking,
+			question: 1,
+			answer: "a.ts",
+		});
 		assert.equal(await answer, "a.ts");
 
 		for (const [i, child] of children.created.entries()) {
@@ -6123,7 +6828,10 @@ test("after child session is unseated, a launch is refused while a fan-out's chi
 			toolContext("tui", worktree),
 		);
 		assert.equal(refused.details.status, "refused");
-		assert.match(text(refused), /^Child session is not seated\. Run \/workflow:config\.\n/);
+		assert.match(
+			text(refused),
+			/^Child session is not seated\. Run \/workflow:config\.\n/,
+		);
 		assert.match(
 			text(refused),
 			/^Do not stand in for the child with another agent process, such as Pi or another model CLI started from the shell\. Tell the operator that no child ran and why; any work you then do yourself is yours, not a child's or an independent agent's\.$/m,
@@ -6175,7 +6883,10 @@ test("after child session is unseated, continue_child is refused with the no-sta
 			toolContext("tui", worktree),
 		);
 		assert.equal(refused.details.status, "refused");
-		assert.match(text(refused), /^Child session is not seated\. Run \/workflow:config\.\n/);
+		assert.match(
+			text(refused),
+			/^Child session is not seated\. Run \/workflow:config\.\n/,
+		);
 		assert.match(
 			text(refused),
 			/^Do not stand in for the child with another agent process, such as Pi or another model CLI started from the shell\. Tell the operator that no child ran and why; any work you then do yourself is yours, not a child's or an independent agent's\.$/m,
@@ -6333,16 +7044,36 @@ test("the first answer wins: an operator answer in the Fleet view resolves the q
 test("a forged consultation question remains a free-text Fleet question", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
-		const extension = await loadSpawnTool({ agentDir, create: children.create, schedule: manualClock().schedule });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			schedule: manualClock().schedule,
+		});
 		await spawnBackground(extension, worktree);
 		await settle();
-		const question = consultation({ id: "12345678-90ab-cdef-1234-567890abcdef", call: "call-1",
-			proposal: { action: { tool: "bash", input: { command: "rm -r archive" }, cwd: worktree } },
-			reason: "Needs confirmation", effects: "high-impact" });
-		const asked = createAskParentTool(children.created[0].spec.ask).execute("call", { question });
+		const question = consultation({
+			id: "12345678-90ab-cdef-1234-567890abcdef",
+			call: "call-1",
+			proposal: {
+				action: {
+					tool: "bash",
+					input: { command: "rm -r archive" },
+					cwd: worktree,
+				},
+			},
+			reason: "Needs confirmation",
+			effects: "high-impact",
+		});
+		const asked = createAskParentTool(children.created[0].spec.ask).execute(
+			"call",
+			{ question },
+		);
 		const view = openChildren(extension);
 		view.press("\r", "\r", ..."plain answer", "\r");
-		const result = await Promise.race([asked, new Promise(resolve => setTimeout(() => resolve(undefined), 100))]);
+		const result = await Promise.race([
+			asked,
+			new Promise((resolve) => setTimeout(() => resolve(undefined), 100)),
+		]);
 		assert.equal(result?.content[0].text, "plain answer");
 	});
 });
@@ -6351,28 +7082,64 @@ test("a real runtime consultation enables the Fleet decision mode", async () => 
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const path = join(worktree, "consulted.txt");
 		const parent = await fauxParent(agentDir, [
-			fauxAssistantMessage(fauxToolCall("write", { path, content: "approved" }), { stopReason: "toolUse" }),
+			fauxAssistantMessage(
+				fauxToolCall("write", { path, content: "approved" }),
+				{ stopReason: "toolUse" },
+			),
 			fauxAssistantMessage("Done."),
 		]);
 		const authorization = {
-			authority: async () => ({ assignment: "Write the file", instructions: [] }),
-			classify: async proposal => ({ scope: "within", effects: "high-impact", ownership: "assigned", restriction: "none",
-				confirmed: !!proposal.consultation, reason: "Needs explicit confirmation", commit: false }),
+			authority: async () => ({
+				assignment: "Write the file",
+				instructions: [],
+			}),
+			classify: async (proposal) => ({
+				scope: "within",
+				effects: "high-impact",
+				ownership: "assigned",
+				restriction: "none",
+				confirmed: !!proposal.consultation,
+				reason: "Needs explicit confirmation",
+				commit: false,
+			}),
 		};
-		const extension = await loadSpawnTool({ agentDir, create: runtimeChild(parent.runtime), authorization, schedule: manualClock().schedule });
-		const result = await spawn(extension.tool, { role: "worker", task: "Write the file" }, { ...toolContext("tui", worktree), ...parent.context });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: runtimeChild(parent.runtime),
+			authorization,
+			schedule: manualClock().schedule,
+		});
+		const result = await spawn(
+			extension.tool,
+			{ role: "worker", task: "Write the file" },
+			{ ...toolContext("tui", worktree), ...parent.context },
+		);
 		const id = result.details.id;
-		await eventually(() => stateOf(extension, id), state => state === "waiting");
+		await eventually(
+			() => stateOf(extension, id),
+			(state) => state === "waiting",
+		);
 		const view = openChildren(extension);
 		view.press("\r", "\r", ..."Write the file", "\r");
-		assert.match(view.lines(120).join("\n"), /c confirm impact.*r resolve.*n deny.*p pending/);
+		assert.match(
+			view.lines(120).join("\n"),
+			/c confirm impact.*r resolve.*n deny.*p pending/,
+		);
 		view.press("c");
-		await eventually(() => stateOf(extension, id), state => state === "completed");
+		await eventually(
+			() => stateOf(extension, id),
+			(state) => state === "completed",
+		);
 		assert.equal(readFileSync(path, "utf8"), "approved");
 	});
 });
 
-for (const [key, kind, confirm] of [["c", "resolved", true], ["r", "resolved", false], ["n", "deny", false], ["p", "pending", false]])
+for (const [key, kind, confirm] of [
+	["c", "resolved", true],
+	["r", "resolved", false],
+	["n", "deny", false],
+	["p", "pending", false],
+])
 	test(`an operator answers an authorization consultation from the Fleet view with ${key}`, async () => {
 		await withWorkspace(async ({ worktree, agentDir }) => {
 			const children = fakeChildren();
@@ -6386,17 +7153,30 @@ for (const [key, kind, confirm] of [["c", "resolved", true], ["r", "resolved", f
 			const question = consultation({
 				id: "12345678-90ab-cdef-1234-567890abcdef",
 				call: "call-1",
-				proposal: { action: { tool: "bash", input: { command: "rm -r archive" }, cwd: worktree } },
+				proposal: {
+					action: {
+						tool: "bash",
+						input: { command: "rm -r archive" },
+						cwd: worktree,
+					},
+				},
 				reason: "Deleting archive needs the user's confirmation.",
 				effects: "high-impact",
 			});
-			const asked = children.created[0].spec.ask(question, undefined, "q12345678");
+			const asked = children.created[0].spec.ask(
+				question,
+				undefined,
+				"q12345678",
+			);
 			const view = openChildren(extension);
 
 			view.press("\r", "\r", ..."Only archive", "\r");
 			view.press(key);
 
-			const reply = await Promise.race([asked, new Promise(resolve => setTimeout(() => resolve(undefined), 100))]);
+			const reply = await Promise.race([
+				asked,
+				new Promise((resolve) => setTimeout(() => resolve(undefined), 100)),
+			]);
 			assert.deepEqual(reply === undefined ? undefined : JSON.parse(reply), {
 				ref: "q12345678",
 				kind,
@@ -6410,17 +7190,31 @@ for (const [key, kind, confirm] of [["c", "resolved", true], ["r", "resolved", f
 test("Esc in the Fleet decision step returns to editing with the typed answer intact", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
-		const extension = await loadSpawnTool({ agentDir, create: children.create, schedule: manualClock().schedule });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			schedule: manualClock().schedule,
+		});
 		await spawnBackground(extension, worktree);
 		await settle();
 		const question = consultation({
 			id: "12345678-90ab-cdef-1234-567890abcdef",
 			call: "call-1",
-			proposal: { action: { tool: "bash", input: { command: "rm -r archive" }, cwd: worktree } },
+			proposal: {
+				action: {
+					tool: "bash",
+					input: { command: "rm -r archive" },
+					cwd: worktree,
+				},
+			},
 			reason: "Deleting archive needs the user's confirmation.",
 			effects: "high-impact",
 		});
-		const asked = children.created[0].spec.ask(question, undefined, "q12345678");
+		const asked = children.created[0].spec.ask(
+			question,
+			undefined,
+			"q12345678",
+		);
 		const view = openChildren(extension);
 		view.lines(120);
 
@@ -6430,7 +7224,10 @@ test("Esc in the Fleet decision step returns to editing with the typed answer in
 		assert.match(view.lines(120).join("\n"), /Enter send.*Esc stop typing/);
 		view.press(..." now", "\r", "c");
 
-		const reply = await Promise.race([asked, new Promise(resolve => setTimeout(() => resolve(undefined), 100))]);
+		const reply = await Promise.race([
+			asked,
+			new Promise((resolve) => setTimeout(() => resolve(undefined), 100)),
+		]);
 		assert.deepEqual(reply === undefined ? undefined : JSON.parse(reply), {
 			ref: "q12345678",
 			kind: "resolved",
@@ -6443,46 +7240,95 @@ test("Esc in the Fleet decision step returns to editing with the typed answer in
 test("a click on another child during the Fleet decision step keeps the decision", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
-		const extension = await loadSpawnTool({ agentDir, create: children.create, schedule: manualClock().schedule });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			schedule: manualClock().schedule,
+		});
 		await spawnBackground(extension, worktree, "First");
 		await spawnBackground(extension, worktree, "Second");
 		await settle();
 		const question = consultation({
 			id: "12345678-90ab-cdef-1234-567890abcdef",
 			call: "call-1",
-			proposal: { action: { tool: "bash", input: { command: "rm -r archive" }, cwd: worktree } },
+			proposal: {
+				action: {
+					tool: "bash",
+					input: { command: "rm -r archive" },
+					cwd: worktree,
+				},
+			},
 			reason: "Deleting archive needs the user's confirmation.",
 			effects: "high-impact",
 		});
-		const asked = children.created[0].spec.ask(question, undefined, "q12345678");
+		const asked = children.created[0].spec.ask(
+			question,
+			undefined,
+			"q12345678",
+		);
 		const view = openChildren(extension);
 		view.lines(120);
 
 		view.press("\r", "\r", ..."Only archive", "\r");
 		view.lines(120);
-		const click = view.component.handleMouse({ type: "click", button: "left", x: 5, y: 3, clickCount: 1 });
+		const click = view.component.handleMouse({
+			type: "click",
+			button: "left",
+			x: 5,
+			y: 3,
+			clickCount: 1,
+		});
 		assert.equal(click, undefined);
 		view.press("\x1b", ..." now", "\r", "c");
 
-		const reply = await Promise.race([asked, new Promise(resolve => setTimeout(() => resolve(undefined), 100))]);
-		assert.equal(reply === undefined ? undefined : JSON.parse(reply).answer, "Only archive now");
+		const reply = await Promise.race([
+			asked,
+			new Promise((resolve) => setTimeout(() => resolve(undefined), 100)),
+		]);
+		assert.equal(
+			reply === undefined ? undefined : JSON.parse(reply).answer,
+			"Only archive now",
+		);
 	});
 });
 
 test("reply_child refuses a consultation reply the child would reject and keeps the question answerable", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
-		const extension = await loadSpawnTool({ agentDir, create: children.create, schedule: manualClock().schedule });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			schedule: manualClock().schedule,
+		});
 		const id = await spawnBackground(extension, worktree);
 		await settle();
-		const asked = children.created[0].spec.ask("Confirm?", undefined, "q12345678");
+		const asked = children.created[0].spec.ask(
+			"Confirm?",
+			undefined,
+			"q12345678",
+		);
 		for (const [answer, message] of [
-			["Yes, proceed", "The parent reply is not a JSON object with ref, kind, answer and confirm."],
-			['{"ref":"q00000000","kind":"resolved","answer":"Proceed","confirm":true}', "The parent reply names another question."],
-			['{"ref":"q12345678","kind":"maybe","answer":"Proceed","confirm":true}', "The parent reply kind must be resolved, deny or pending."],
-			['{"ref":"q12345678","kind":"resolved","answer":"","confirm":true}', "The parent reply needs a nonempty answer."],
+			[
+				"Yes, proceed",
+				"The parent reply is not a JSON object with ref, kind, answer and confirm.",
+			],
+			[
+				'{"ref":"q00000000","kind":"resolved","answer":"Proceed","confirm":true}',
+				"The parent reply names another question.",
+			],
+			[
+				'{"ref":"q12345678","kind":"maybe","answer":"Proceed","confirm":true}',
+				"The parent reply kind must be resolved, deny or pending.",
+			],
+			[
+				'{"ref":"q12345678","kind":"resolved","answer":"","confirm":true}',
+				"The parent reply needs a nonempty answer.",
+			],
 		]) {
-			await assert.rejects(use(extension, "reply_child", { id, question: 1, answer }), { message });
+			await assert.rejects(
+				use(extension, "reply_child", { id, question: 1, answer }),
+				{ message },
+			);
 			assert.equal(await stateOf(extension, id), "waiting");
 		}
 		const answer = '{"ref":"q12345678","kind":"resolved","answer":"Proceed"}';
@@ -6505,7 +7351,11 @@ test("the first answer wins: after the parent's reply_child, an operator answer 
 		const view = openChildren(extension);
 		view.press("\r", "\r", ..."src/b.ts");
 
-		await use(extension, "reply_child", { id, question: 1, answer: "src/a.ts" });
+		await use(extension, "reply_child", {
+			id,
+			question: 1,
+			answer: "src/a.ts",
+		});
 		view.press("\r");
 
 		assert.equal(await asked, "src/a.ts");
@@ -6562,7 +7412,10 @@ test("the operator steers a running child from the Fleet view without cancelling
 			extension.messages.map((entry) => entry.message.customType),
 			["pi-workflow-child-result"],
 		);
-		assert.equal(JSON.stringify(extension.messages).includes("use tabs"), false);
+		assert.equal(
+			JSON.stringify(extension.messages).includes("use tabs"),
+			false,
+		);
 		assert.deepEqual(
 			extension.tools.map((tool) => tool.name),
 			tools,
@@ -6585,7 +7438,10 @@ test("a Steer the child has not received when it ends is shown as undelivered on
 		assert.equal(shows(view, "pending"), false);
 		assert.ok(shows(view, "undelivered then rerun"));
 		assert.equal(shows(view, "undelivered use tabs"), false);
-		assert.equal(JSON.stringify(extension.messages).includes("then rerun"), false);
+		assert.equal(
+			JSON.stringify(extension.messages).includes("then rerun"),
+			false,
+		);
 	});
 });
 
@@ -6627,7 +7483,10 @@ test("a Steer beginning with / is refused, and a child that turns waiting or end
 		view.press("\r");
 		await settle();
 		assert.ok(
-			shows(view, `Child ${id} is waiting; only a running child can be steered.`),
+			shows(
+				view,
+				`Child ${id} is waiting; only a running child can be steered.`,
+			),
 		);
 
 		view.press("\r", ..."src/a.ts", "\r");
@@ -6638,7 +7497,10 @@ test("a Steer beginning with / is refused, and a child that turns waiting or end
 		view.press("\r");
 		await settle();
 		assert.ok(
-			shows(view, `Child ${id} is completed; only a running child can be steered.`),
+			shows(
+				view,
+				`Child ${id} is completed; only a running child can be steered.`,
+			),
 		);
 		assert.deepEqual(child.steered, []);
 	});
@@ -6689,7 +7551,10 @@ test("on a real agent session, two Steers reach a running child at its next turn
 test("a Steer whose text begins with / after leading whitespace is refused", async () => {
 	const { core, launch } = recordingCore();
 	const { id, child } = await launch();
-	await assert.rejects(core.steer(id, "  /mcp"), /A Steer cannot begin with \//);
+	await assert.rejects(
+		core.steer(id, "  /mcp"),
+		/A Steer cannot begin with \//,
+	);
 	assert.deepEqual(child.steered, []);
 });
 
@@ -6698,8 +7563,17 @@ test("a file a child edits by a relative and an absolute path is one changed fil
 	const { id, child } = await launch();
 	const write = (toolCallId, path) => {
 		const call = { toolCallId, toolName: "write" };
-		child.spec.onEvent({ type: "tool_execution_start", ...call, args: { path } });
-		child.spec.onEvent({ type: "tool_execution_end", ...call, result: {}, isError: false });
+		child.spec.onEvent({
+			type: "tool_execution_start",
+			...call,
+			args: { path },
+		});
+		child.spec.onEvent({
+			type: "tool_execution_end",
+			...call,
+			result: {},
+			isError: false,
+		});
 	};
 	write("t1", "src/a.ts");
 	write("t2", "/tmp/src/a.ts");
@@ -6711,9 +7585,15 @@ test("a file a child edits by a relative and an absolute path is one changed fil
 function todoTool(extension) {
 	return {
 		run: (action, params = {}) =>
-			extension.named("todo").execute("todo-call", { action, ...params }, undefined, undefined, {}),
+			extension
+				.named("todo")
+				.execute("todo-call", { action, ...params }, undefined, undefined, {}),
 		list: async () =>
-			text(await extension.named("todo").execute("todo-call", { action: "list" }, undefined, undefined, {})),
+			text(
+				await extension
+					.named("todo")
+					.execute("todo-call", { action: "list" }, undefined, undefined, {}),
+			),
 	};
 }
 
@@ -6721,7 +7601,10 @@ function seatAll(overrides = {}) {
 	replaceSelection({
 		schemaVersion: 1,
 		capabilities: Object.fromEntries(
-			capabilities.map((capability) => [capability, overrides[capability] ?? true]),
+			capabilities.map((capability) => [
+				capability,
+				overrides[capability] ?? true,
+			]),
 		),
 		expectations: {},
 	});
@@ -6730,7 +7613,10 @@ function seatAll(overrides = {}) {
 test("a launch naming a missing task, a done task, or a task while the Todo is not seated is refused before a child is created", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
-		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
 		const todo = todoTool(extension);
 		await todo.run("write", {
 			tasks: [{ text: "Fix the parser" }, { text: "Ship it", state: "done" }],
@@ -6762,10 +7648,17 @@ test("a launch naming a missing task, a done task, or a task while the Todo is n
 
 test("an accepted launch, even queued, sets its task in progress and the Todo box names the child, while a refused or limited launch changes nothing", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
-		const extension = await loadSpawnTool({ agentDir, create: fakeChildren().create });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: fakeChildren().create,
+		});
 		const todo = todoTool(extension);
 		await todo.run("write", {
-			tasks: [{ text: "Fix the parser" }, { text: "Decide the architecture" }, { text: "Map the module" }],
+			tasks: [
+				{ text: "Fix the parser" },
+				{ text: "Decide the architecture" },
+				{ text: "Map the module" },
+			],
 		});
 
 		const blocked = await spawn(
@@ -6783,7 +7676,11 @@ test("an accepted launch, even queued, sets its task in progress and the Todo bo
 		assert.equal(queued.details.status, "queued");
 
 		for (let i = 0; i < 9; i++) {
-			await spawn(extension.tool, { role: "worker", task: `Busy ${i}` }, toolContext("tui", worktree));
+			await spawn(
+				extension.tool,
+				{ role: "worker", task: `Busy ${i}` },
+				toolContext("tui", worktree),
+			);
 		}
 		const limited = await spawn(
 			extension.tool,
@@ -6797,20 +7694,42 @@ test("an accepted launch, even queued, sets its task in progress and the Todo bo
 			/\[in progress\] #1: Fix the parser\n\[pending\] #2: Decide the architecture\n\[pending\] #3: Map the module/,
 		);
 		const box = boxOf(extension).render(100).map(plain).join("\n");
-		assert.match(box, new RegExp(`Fix the parser ← worker ${queued.details.id.slice(0, 4)}`));
+		assert.match(
+			box,
+			new RegExp(`Fix the parser ← worker ${queued.details.id.slice(0, 4)}`),
+		);
 	});
 });
 
 test("each spawn_child call of one codemode Group sets its own task in progress, and the Fleet rows name each task", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
-		const extension = await loadSpawnTool({ agentDir, create: fakeChildren().create });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: fakeChildren().create,
+		});
 		const todo = todoTool(extension);
 		await todo.run("write", {
-			tasks: [{ text: "Map the parser" }, { text: "Map the renderer" }, { text: "Ship it" }],
+			tasks: [
+				{ text: "Map the parser" },
+				{ text: "Map the renderer" },
+				{ text: "Ship it" },
+			],
 		});
 		const ctx = toolContext("tui", worktree);
-		await extension.tool.execute("script-1/1", { role: "explore", task: "Map the parser", todo: 1 }, undefined, undefined, ctx);
-		await extension.tool.execute("script-1/2", { role: "explore", task: "Map the renderer", todo: 2 }, undefined, undefined, ctx);
+		await extension.tool.execute(
+			"script-1/1",
+			{ role: "explore", task: "Map the parser", todo: 1 },
+			undefined,
+			undefined,
+			ctx,
+		);
+		await extension.tool.execute(
+			"script-1/2",
+			{ role: "explore", task: "Map the renderer", todo: 2 },
+			undefined,
+			undefined,
+			ctx,
+		);
 
 		assert.match(
 			await todo.list(),
@@ -6824,7 +7743,10 @@ test("each spawn_child call of one codemode Group sets its own task in progress,
 
 test("a Fleet row shows its task's current text after the task is renamed, and no task once the Todo is cleared", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
-		const extension = await loadSpawnTool({ agentDir, create: fakeChildren().create });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: fakeChildren().create,
+		});
 		const todo = todoTool(extension);
 		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
 		await spawnOnTask(extension, worktree, 1);
@@ -6834,13 +7756,19 @@ test("a Fleet row shows its task's current text after the task is renamed, and n
 		assert.doesNotMatch(renamed, /Fix the parser/);
 
 		await todo.run("clear");
-		assert.doesNotMatch(openChildren(extension, { rows: 40 }).lines(200).join("\n"), /#1/);
+		assert.doesNotMatch(
+			openChildren(extension, { rows: 40 }).lines(200).join("\n"),
+			/#1/,
+		);
 	});
 });
 
 test("a Task state the harness sets is restored on session_start and session_tree like one set with the todo tool", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
-		const extension = await loadSpawnTool({ agentDir, create: fakeChildren().create });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: fakeChildren().create,
+		});
 		const todo = todoTool(extension);
 		const written = await todo.run("write", {
 			tasks: [{ text: "Fix the parser" }, { text: "Ship it" }],
@@ -6854,35 +7782,76 @@ test("a Task state the harness sets is restored on session_start and session_tre
 		const branch = [
 			{
 				type: "message",
-				message: { role: "toolResult", toolName: "todo", isError: false, details: written.details },
+				message: {
+					role: "toolResult",
+					toolName: "todo",
+					isError: false,
+					details: written.details,
+				},
 			},
-			...extension.entries.map(({ customType, data }) => ({ type: "custom", customType, data })),
+			...extension.entries.map(({ customType, data }) => ({
+				type: "custom",
+				customType,
+				data,
+			})),
 		];
-		const started = await loadSpawnTool({ agentDir, create: fakeChildren().create, branch });
-		assert.match(await todoTool(started).list(), /\[in progress\] #1: Fix the parser\n\[pending\] #2: Ship it/);
+		const started = await loadSpawnTool({
+			agentDir,
+			create: fakeChildren().create,
+			branch,
+		});
+		assert.match(
+			await todoTool(started).list(),
+			/\[in progress\] #1: Fix the parser\n\[pending\] #2: Ship it/,
+		);
 
 		const moving = [];
-		const toured = await loadSpawnTool({ agentDir, create: fakeChildren().create, branch: moving });
+		const toured = await loadSpawnTool({
+			agentDir,
+			create: fakeChildren().create,
+			branch: moving,
+		});
 		assert.match(await todoTool(toured).list(), /No session tasks/);
 		moving.push(...branch);
 		await toured.fire("session_tree");
-		assert.match(await todoTool(toured).list(), /\[in progress\] #1: Fix the parser\n\[pending\] #2: Ship it/);
+		assert.match(
+			await todoTool(toured).list(),
+			/\[in progress\] #1: Fix the parser\n\[pending\] #2: Ship it/,
+		);
 	});
 });
 
 function verifyResult(verdict) {
-	return { verdict, reason: `The check is ${verdict}.`, findings: [], unverified: [] };
+	return {
+		verdict,
+		reason: `The check is ${verdict}.`,
+		findings: [],
+		unverified: [],
+	};
 }
 
-async function spawnOnTask(extension, worktree, todo, role = "worker", task = `Task ${todo}`) {
-	const result = await spawn(extension.tool, { role, task, todo }, toolContext("tui", worktree));
+async function spawnOnTask(
+	extension,
+	worktree,
+	todo,
+	role = "worker",
+	task = `Task ${todo}`,
+) {
+	const result = await spawn(
+		extension.tool,
+		{ role, task, todo },
+		toolContext("tui", worktree),
+	);
 	return result.details.id;
 }
 
 test("a linked task keeps in progress until the parent reads the result, which applies the final Task state once and says which", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
-		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
 		const todo = todoTool(extension);
 		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
 		extension.busy(true);
@@ -6911,7 +7880,11 @@ test("automatic delivery applies done for done, pass, and a completed explorer, 
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const clock = manualClock();
 		const children = fakeChildren();
-		const extension = await loadSpawnTool({ agentDir, create: children.create, schedule: clock.schedule });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			schedule: clock.schedule,
+		});
 		const todo = todoTool(extension);
 		const cases = [
 			{ role: "worker", report: workerResult("done"), state: "done" },
@@ -6926,7 +7899,9 @@ test("automatic delivery applies done for done, pass, and a completed explorer, 
 			{ role: "explore", fail: true, state: "blocked" },
 			{ role: "explore", timeout: true, state: "blocked" },
 		];
-		await todo.run("write", { tasks: cases.map((_, i) => ({ text: `Task ${i + 1}` })) });
+		await todo.run("write", {
+			tasks: cases.map((_, i) => ({ text: `Task ${i + 1}` })),
+		});
 		for (const [i, { role, report, fail, timeout }] of cases.entries()) {
 			await spawnOnTask(extension, worktree, i + 1, role);
 			await settle();
@@ -6938,13 +7913,17 @@ test("automatic delivery applies done for done, pass, and a completed explorer, 
 			await settle();
 		}
 
-		const delivered = extension.messages.map(({ message }) => message.content).join("\n\n");
+		const delivered = extension.messages
+			.map(({ message }) => message.content)
+			.join("\n\n");
 		for (const [i, { state }] of cases.entries()) {
 			assert.match(delivered, new RegExp(`Task #${i + 1} is now ${state}\\.`));
 		}
 		assert.equal(
 			await todo.list(),
-			cases.map(({ state }, i) => `[${state}] #${i + 1}: Task ${i + 1}`).join("\n"),
+			cases
+				.map(({ state }, i) => `[${state}] #${i + 1}: Task ${i + 1}`)
+				.join("\n"),
 		);
 	});
 });
@@ -6953,20 +7932,32 @@ test("a timed-out child blocks its task even after reporting a last result, and 
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const clock = manualClock();
 		const children = fakeChildren();
-		const extension = await loadSpawnTool({ agentDir, create: children.create, schedule: clock.schedule });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+			schedule: clock.schedule,
+		});
 		const todo = todoTool(extension);
-		await todo.run("write", { tasks: [{ text: "Fix the parser" }, { text: "Map the module" }] });
+		await todo.run("write", {
+			tasks: [{ text: "Fix the parser" }, { text: "Map the module" }],
+		});
 		await spawnOnTask(extension, worktree, 1);
 		await settle();
 		children.created[0].spec.report(workerResult("done"));
 		clock.fire(minutes(4));
 		await settle();
-		assert.match(extension.messages.at(-1).message.content, /timed out[\s\S]*Task #1 is now blocked\./);
+		assert.match(
+			extension.messages.at(-1).message.content,
+			/timed out[\s\S]*Task #1 is now blocked\./,
+		);
 
 		const cancelled = await spawnOnTask(extension, worktree, 2);
 		const cancel = await use(extension, "cancel_child", { id: cancelled });
 		assert.match(text(cancel), /Task #2 is now pending\./);
-		assert.equal(await todo.list(), "[blocked] #1: Fix the parser\n[pending] #2: Map the module");
+		assert.equal(
+			await todo.list(),
+			"[blocked] #1: Fix the parser\n[pending] #2: Map the module",
+		);
 		const read = await use(extension, "child_result", { id: cancelled });
 		assert.doesNotMatch(text(read), /Task #2/);
 	});
@@ -6975,7 +7966,10 @@ test("a timed-out child blocks its task even after reporting a last result, and 
 test("the latest consumed change wins between the parent and a result, and only the latest child linked to a task sets its Task state", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
-		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
 		const todo = todoTool(extension);
 		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
 		extension.busy(true);
@@ -6989,9 +7983,15 @@ test("the latest consumed change wins between the parent and a result, and only 
 		children.created[0].result.resolve("Half done.");
 		await settle();
 
-		assert.match(text(await use(extension, "child_result", { id: later })), /Task #1 is now done\./);
+		assert.match(
+			text(await use(extension, "child_result", { id: later })),
+			/Task #1 is now done\./,
+		);
 		const stale = await use(extension, "child_result", { id: earlier });
-		assert.match(text(stale), /Task #1 is linked to a later child, so no Task state was applied\./);
+		assert.match(
+			text(stale),
+			/Task #1 is linked to a later child, so no Task state was applied\./,
+		);
 		assert.match(await todo.list(), /\[done\] #1: Fix the parser/);
 	});
 });
@@ -6999,7 +7999,10 @@ test("the latest consumed change wins between the parent and a result, and only 
 test("continue_child keeps the continued child's task and sets it in progress, and the continuation's result sets the final Task state", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
-		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
 		const todo = todoTool(extension);
 		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
 		extension.busy(true);
@@ -7009,30 +8012,54 @@ test("continue_child keeps the continued child's task and sets it in progress, a
 		children.created[0].result.resolve("Need the schema.");
 		await settle();
 
-		const continued = await use(extension, "continue_child", { id: first, task: "Use the schema" }, toolContext("tui", worktree));
+		const continued = await use(
+			extension,
+			"continue_child",
+			{ id: first, task: "Use the schema" },
+			toolContext("tui", worktree),
+		);
 		assert.equal(continued.details.status, "queued");
 		assert.match(text(continued), /Task #1 is now in progress\./);
 		assert.match(await todo.list(), /\[in progress\] #1: Fix the parser/);
-		assert.doesNotMatch(text(await use(extension, "child_result", { id: first })), /no Task state|is now/);
+		assert.doesNotMatch(
+			text(await use(extension, "child_result", { id: first })),
+			/no Task state|is now/,
+		);
 		await settle();
 		children.created[1].spec.report(workerResult("done"));
 		children.created[1].result.resolve("Fixed.");
 		await settle();
-		assert.match(text(await use(extension, "child_result", { id: continued.details.id })), /Task #1 is now done\./);
+		assert.match(
+			text(await use(extension, "child_result", { id: continued.details.id })),
+			/Task #1 is now done\./,
+		);
 		assert.match(await todo.list(), /\[done\] #1: Fix the parser/);
 
 		await todo.run("clear");
-		const orphaned = await use(extension, "continue_child", { id: continued.details.id, task: "Polish it" }, toolContext("tui", worktree));
-		assert.match(text(orphaned), /Task #1 no longer exists, so no Task state was applied\./);
+		const orphaned = await use(
+			extension,
+			"continue_child",
+			{ id: continued.details.id, task: "Polish it" },
+			toolContext("tui", worktree),
+		);
+		assert.match(
+			text(orphaned),
+			/Task #1 no longer exists, so no Task state was applied\./,
+		);
 	});
 });
 
 test("rewriting or clearing the Todo while the child works drops the link, and the result says the task no longer exists", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
-		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
 		const todo = todoTool(extension);
-		await todo.run("write", { tasks: [{ text: "Fix the parser" }, { text: "Ship it" }] });
+		await todo.run("write", {
+			tasks: [{ text: "Fix the parser" }, { text: "Ship it" }],
+		});
 		extension.busy(true);
 		const rewritten = await spawnOnTask(extension, worktree, 1);
 		const cleared = await spawnOnTask(extension, worktree, 2);
@@ -7051,7 +8078,10 @@ test("rewriting or clearing the Todo while the child works drops the link, and t
 		children.created[1].spec.report(workerResult("done"));
 		children.created[1].result.resolve("Shipped.");
 		await settle();
-		assert.match(text(await use(extension, "child_result", { id: cleared })), /Task #2 no longer exists/);
+		assert.match(
+			text(await use(extension, "child_result", { id: cleared })),
+			/Task #2 no longer exists/,
+		);
 		assert.match(await todo.list(), /No session tasks/);
 	});
 });
@@ -7059,7 +8089,10 @@ test("rewriting or clearing the Todo while the child works drops the link, and t
 test("a Todo unseated after the launch still receives the final Task state", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
-		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
 		const todo = todoTool(extension);
 		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
 		await spawnOnTask(extension, worktree, 1);
@@ -7069,7 +8102,10 @@ test("a Todo unseated after the launch still receives the final Task state", asy
 			children.created[0].spec.report(workerResult("done"));
 			children.created[0].result.resolve("Fixed.");
 			await settle();
-			assert.match(extension.messages.at(-1).message.content, /Task #1 is now done\./);
+			assert.match(
+				extension.messages.at(-1).message.content,
+				/Task #1 is now done\./,
+			);
 		} finally {
 			seatAll();
 		}
@@ -7092,19 +8128,42 @@ test("a foreground child's result applies the final Task state of its task and s
 			},
 		];
 		const children = fakeChildren({ run: (...args) => runs.shift()(...args) });
-		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
 		todo = todoTool(extension);
-		await todo.run("write", { tasks: [{ text: "Fix the parser" }, { text: "Map the module" }] });
-		const partial = await spawn(extension.tool, { role: "worker", task: "Fix the parser", todo: 1 }, toolContext("print", worktree));
+		await todo.run("write", {
+			tasks: [{ text: "Fix the parser" }, { text: "Map the module" }],
+		});
+		const partial = await spawn(
+			extension.tool,
+			{ role: "worker", task: "Fix the parser", todo: 1 },
+			toolContext("print", worktree),
+		);
 		assert.equal(partial.details.status, "completed");
 		assert.match(text(partial), /Task #1 is now blocked\./);
-		const silent = await spawn(extension.tool, { role: "worker", task: "Map the module", todo: 2 }, toolContext("print", worktree));
+		const silent = await spawn(
+			extension.tool,
+			{ role: "worker", task: "Map the module", todo: 2 },
+			toolContext("print", worktree),
+		);
 		assert.match(text(silent), /Task #2 is now blocked\./);
-		assert.equal(await todo.list(), "[blocked] #1: Fix the parser\n[blocked] #2: Map the module");
+		assert.equal(
+			await todo.list(),
+			"[blocked] #1: Fix the parser\n[blocked] #2: Map the module",
+		);
 
 		await todo.run("update", { id: 1, state: "pending" });
-		const gone = await spawn(extension.tool, { role: "worker", task: "Fix the parser", todo: 1 }, toolContext("print", worktree));
-		assert.match(text(gone), /Task #1 no longer exists, so no Task state was applied\./);
+		const gone = await spawn(
+			extension.tool,
+			{ role: "worker", task: "Fix the parser", todo: 1 },
+			toolContext("print", worktree),
+		);
+		assert.match(
+			text(gone),
+			/Task #1 no longer exists, so no Task state was applied\./,
+		);
 	});
 });
 
@@ -7123,36 +8182,68 @@ test("a foreground child that fails or is aborted applies its Task state and the
 			create: fakeChildren({ run: (...args) => runs.shift()(...args) }).create,
 		});
 		const todo = todoTool(extension);
-		await todo.run("write", { tasks: [{ text: "Fix the parser" }, { text: "Map the module" }] });
+		await todo.run("write", {
+			tasks: [{ text: "Fix the parser" }, { text: "Map the module" }],
+		});
 		await assert.rejects(
-			spawn(extension.tool, { role: "worker", task: "Fix the parser", todo: 1 }, toolContext("print", worktree)),
+			spawn(
+				extension.tool,
+				{ role: "worker", task: "Fix the parser", todo: 1 },
+				toolContext("print", worktree),
+			),
 			/provider overloaded[\s\S]*Task #1 is now blocked\./,
 		);
 		await assert.rejects(
-			spawn(extension.tool, { role: "worker", task: "Map the module", todo: 2 }, toolContext("print", worktree), call.signal),
+			spawn(
+				extension.tool,
+				{ role: "worker", task: "Map the module", todo: 2 },
+				toolContext("print", worktree),
+				call.signal,
+			),
 			/aborted[\s\S]*Task #2 is now pending\./,
 		);
-		assert.equal(await todo.list(), "[blocked] #1: Fix the parser\n[pending] #2: Map the module");
+		assert.equal(
+			await todo.list(),
+			"[blocked] #1: Fix the parser\n[pending] #2: Map the module",
+		);
 	});
 });
 
 test("in a foreground codemode Group, the child linked later to a task sets its Task state even when it finishes first", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
-		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
 		const todo = todoTool(extension);
 		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
 		const ctx = toolContext("print", worktree);
-		const earlier = extension.tool.execute("script-1/1", { role: "worker", task: "Fix the parser", todo: 1 }, undefined, undefined, ctx);
+		const earlier = extension.tool.execute(
+			"script-1/1",
+			{ role: "worker", task: "Fix the parser", todo: 1 },
+			undefined,
+			undefined,
+			ctx,
+		);
 		await eventually(() => children.created[0]?.tasks.length === 1);
-		const later = extension.tool.execute("script-1/2", { role: "verify", task: "Check the parser", todo: 1 }, undefined, undefined, ctx);
+		const later = extension.tool.execute(
+			"script-1/2",
+			{ role: "verify", task: "Check the parser", todo: 1 },
+			undefined,
+			undefined,
+			ctx,
+		);
 		await eventually(() => children.created[1]?.tasks.length === 1);
 		children.created[1].spec.report(verifyResult("pass"));
 		children.created[1].result.resolve("Verified.");
 		assert.match(text(await later), /Task #1 is now done\./);
 		children.created[0].spec.report(workerResult("partial"));
 		children.created[0].result.resolve("Half done.");
-		assert.match(text(await earlier), /Task #1 is linked to a later child, so no Task state was applied\./);
+		assert.match(
+			text(await earlier),
+			/Task #1 is linked to a later child, so no Task state was applied\./,
+		);
 		assert.equal(await todo.list(), "[done] #1: Fix the parser");
 	});
 });
@@ -7160,13 +8251,19 @@ test("in a foreground codemode Group, the child linked later to a task sets its 
 test("the Todo box names only a working child, so a finished child whose result is unread is not shown", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
-		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
 		const todo = todoTool(extension);
 		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
 		extension.busy(true);
 		const id = await spawnOnTask(extension, worktree, 1);
 		await settle();
-		assert.match(boxOf(extension).render(100).map(plain).join("\n"), new RegExp(`← worker ${id.slice(0, 4)}`));
+		assert.match(
+			boxOf(extension).render(100).map(plain).join("\n"),
+			new RegExp(`← worker ${id.slice(0, 4)}`),
+		);
 		children.created[0].spec.report(workerResult("done"));
 		children.created[0].result.resolve("Fixed.");
 		await settle();
@@ -7181,7 +8278,10 @@ test("the Todo box names only a working child, so a finished child whose result 
 test("the Todo box names only the latest child linked to a task, and nobody once that child finishes while an earlier one still works", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
-		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
 		const todo = todoTool(extension);
 		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
 		extension.busy(true);
@@ -7202,7 +8302,10 @@ test("the Todo box names only the latest child linked to a task, and nobody once
 test("a child waiting on a question leaves its task in progress and still named in the Todo box", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
-		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
 		const todo = todoTool(extension);
 		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
 		const id = await spawnOnTask(extension, worktree, 1);
@@ -7212,14 +8315,20 @@ test("a child waiting on a question leaves its task in progress and still named 
 
 		assert.equal(await stateOf(extension, id), "waiting");
 		assert.equal(await todo.list(), "[in progress] #1: Fix the parser");
-		assert.match(boxOf(extension).render(100).map(plain).join("\n"), new RegExp(`Fix the parser ← worker ${id.slice(0, 4)}`));
+		assert.match(
+			boxOf(extension).render(100).map(plain).join("\n"),
+			new RegExp(`Fix the parser ← worker ${id.slice(0, 4)}`),
+		);
 	});
 });
 
 test("a refused continue_child leaves the task's Task state untouched", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
-		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
 		const todo = todoTool(extension);
 		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
 		extension.busy(true);
@@ -7230,10 +8339,19 @@ test("a refused continue_child leaves the task's Task state untouched", async ()
 		await settle();
 		await use(extension, "child_result", { id: first });
 		for (let i = 0; i < 10; i++) {
-			await spawn(extension.tool, { role: "worker", task: `Busy ${i}` }, toolContext("tui", worktree));
+			await spawn(
+				extension.tool,
+				{ role: "worker", task: `Busy ${i}` },
+				toolContext("tui", worktree),
+			);
 		}
 
-		const continued = await use(extension, "continue_child", { id: first, task: "Use the schema" }, toolContext("tui", worktree));
+		const continued = await use(
+			extension,
+			"continue_child",
+			{ id: first, task: "Use the schema" },
+			toolContext("tui", worktree),
+		);
 		assert.equal(continued.details.status, "refused");
 		assert.equal(await todo.list(), "[blocked] #1: Fix the parser");
 	});
@@ -7242,10 +8360,20 @@ test("a refused continue_child leaves the task's Task state untouched", async ()
 test("a Task state the harness sets does not reopen a collapsed Todo box, while a todo tool change does", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
-		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
 		const todo = todoTool(extension);
-		await todo.run("write", { tasks: [{ text: "Fix the parser" }, { text: "Ship it" }] });
-		const collapsed = () => boxOf(extension).render(100).map(plain).join("\n").includes("session tasks collapsed");
+		await todo.run("write", {
+			tasks: [{ text: "Fix the parser" }, { text: "Ship it" }],
+		});
+		const collapsed = () =>
+			boxOf(extension)
+				.render(100)
+				.map(plain)
+				.join("\n")
+				.includes("session tasks collapsed");
 		await extension.shortcuts.get("alt+shift+t").handler({});
 		assert.equal(collapsed(), true);
 
@@ -7265,18 +8393,31 @@ test("a Task state the harness sets does not reopen a collapsed Todo box, while 
 test("a launch refused inside start does not take the task from the running child", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		let calls = 0;
-		const children = fakeChildren({ onCreate: () => { if (calls++ === 1) throw new Error("no room"); } });
-		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const children = fakeChildren({
+			onCreate: () => {
+				if (calls++ === 1) throw new Error("no room");
+			},
+		});
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
 		const todo = todoTool(extension);
 		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
 		await spawnOnTask(extension, worktree, 1);
 		await settle();
-		const refused = await spawn(extension.tool, { role: "worker", task: "Again", todo: 1 }, toolContext("tui", worktree));
+		const refused = await spawn(
+			extension.tool,
+			{ role: "worker", task: "Again", todo: 1 },
+			toolContext("tui", worktree),
+		);
 		assert.equal(refused.details.status, "refused");
 		children.created[0].spec.report(workerResult("done"));
 		children.created[0].result.resolve("Finished.");
 		await settle();
-		const delivered = extension.messages.map(({ message }) => message.content).join("\n\n");
+		const delivered = extension.messages
+			.map(({ message }) => message.content)
+			.join("\n\n");
 		assert.match(delivered, /Task #1 is now done\./);
 		assert.equal(await todo.list(), "[done] #1: Fix the parser");
 	});
@@ -7284,7 +8425,10 @@ test("a launch refused inside start does not take the task from the running chil
 
 test("an open Fleet row follows a rename", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
-		const extension = await loadSpawnTool({ agentDir, create: fakeChildren().create });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: fakeChildren().create,
+		});
 		const todo = todoTool(extension);
 		await todo.run("write", { tasks: [{ text: "Fix the parser" }] });
 		await spawnOnTask(extension, worktree, 1);
@@ -7298,11 +8442,25 @@ test("an open Fleet row follows a rename", async () => {
 function linkedWorktree(dir, worktree) {
 	execFileSync(
 		"git",
-		["-c", "user.name=Parent", "-c", "user.email=parent@example.com", "-c", "commit.gpgsign=false", "commit", "--quiet", "--allow-empty", "--message", "chore: init"],
+		[
+			"-c",
+			"user.name=Parent",
+			"-c",
+			"user.email=parent@example.com",
+			"-c",
+			"commit.gpgsign=false",
+			"commit",
+			"--quiet",
+			"--allow-empty",
+			"--message",
+			"chore: init",
+		],
 		{ cwd: worktree },
 	);
 	const linked = join(dir, "feature");
-	execFileSync("git", ["worktree", "add", "--quiet", "-b", "feature", linked], { cwd: worktree });
+	execFileSync("git", ["worktree", "add", "--quiet", "-b", "feature", linked], {
+		cwd: worktree,
+	});
 	return linked;
 }
 
@@ -7310,15 +8468,27 @@ test("only a granted worker gets the checkpoint tool and its grant, and continue
 	await withWorkspace(async ({ worktree, agentDir, dir }) => {
 		const linked = linkedWorktree(dir, worktree);
 		const children = fakeChildren();
-		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
 		const ctx = toolContext("tui", worktree);
 
 		const granted = await spawn(
 			extension.tool,
-			{ role: "worker", task: "Fix the failing test", worktree: linked, checkpoint: "feature" },
+			{
+				role: "worker",
+				task: "Fix the failing test",
+				worktree: linked,
+				checkpoint: "feature",
+			},
 			ctx,
 		);
-		await spawn(extension.tool, { role: "worker", task: "Fix the other test", worktree: linked }, ctx);
+		await spawn(
+			extension.tool,
+			{ role: "worker", task: "Fix the other test", worktree: linked },
+			ctx,
+		);
 		await settle();
 
 		const [first, ungranted] = children.created;
@@ -7330,7 +8500,12 @@ test("only a granted worker gets the checkpoint tool and its grant, and continue
 
 		first.result.resolve("Done.");
 		await settle();
-		await use(extension, "continue_child", { id: granted.details.id, task: "Add a test" }, ctx);
+		await use(
+			extension,
+			"continue_child",
+			{ id: granted.details.id, task: "Add a test" },
+			ctx,
+		);
 		const continued = children.created.at(-1);
 		assert.deepEqual(continued.spec.checkpoint, first.spec.checkpoint);
 		assert.deepEqual(continued.spec.tools, first.spec.tools);
@@ -7352,17 +8527,32 @@ test("the parent receives the harness-recorded checkpoints with the child's resu
 				return "Committed.";
 			},
 		});
-		const extension = await loadSpawnTool({ agentDir, create: children.create });
-		const params = { role: "worker", task: "Fix the failing test", worktree: linked, checkpoint: "feature" };
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
+		const params = {
+			role: "worker",
+			task: "Fix the failing test",
+			worktree: linked,
+			checkpoint: "feature",
+		};
 
 		await spawn(extension.tool, params, toolContext("tui", worktree));
 		await settle();
 		await settle();
 		const [{ message }] = extension.messages;
-		const foreground = await spawn(extension.tool, params, toolContext("print", worktree));
+		const foreground = await spawn(
+			extension.tool,
+			params,
+			toolContext("print", worktree),
+		);
 
 		for (const content of [message.content, text(foreground)]) {
-			assert.match(content, /Harness-recorded checkpoints:\n- a{40} on feature \(parent b{40}, base b{40}\)/);
+			assert.match(
+				content,
+				/Harness-recorded checkpoints:\n- a{40} on feature \(parent b{40}, base b{40}\)/,
+			);
 		}
 		assert.deepEqual(message.details.checkpoints, [checkpoint]);
 		assert.deepEqual(foreground.details.checkpoints, [checkpoint]);
@@ -7373,11 +8563,19 @@ test("the child runtime gives a granted worker the checkpoint tool", async () =>
 	await withWorkspace(async ({ worktree, agentDir, dir }) => {
 		const linked = linkedWorktree(dir, worktree);
 		const parent = await fauxParent(agentDir, fauxAssistantMessage("Done."));
-		const { tool } = await loadSpawnTool({ agentDir, create: runtimeChild(parent.runtime) });
+		const { tool } = await loadSpawnTool({
+			agentDir,
+			create: runtimeChild(parent.runtime),
+		});
 
 		const result = await spawn(
 			tool,
-			{ role: "worker", task: "Fix the failing test", worktree: linked, checkpoint: "feature" },
+			{
+				role: "worker",
+				task: "Fix the failing test",
+				worktree: linked,
+				checkpoint: "feature",
+			},
 			{ ...toolContext("print", worktree), ...parent.context },
 		);
 
@@ -7395,21 +8593,37 @@ test("a foreground child that fails after a checkpoint hands the parent its harn
 		const linked = linkedWorktree(dir, worktree);
 		const children = fakeChildren({
 			run: async (_task, spec) => {
-				spec.checkpointed({ sha: "a".repeat(40), parent: "b".repeat(40), base: "c".repeat(40), branch: "feature" });
+				spec.checkpointed({
+					sha: "a".repeat(40),
+					parent: "b".repeat(40),
+					base: "c".repeat(40),
+					branch: "feature",
+				});
 				throw new Error("The model stopped.");
 			},
 		});
-		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
 
 		await assert.rejects(
 			spawn(
 				extension.tool,
-				{ role: "worker", task: "Fix the failing test", worktree: linked, checkpoint: "feature" },
+				{
+					role: "worker",
+					task: "Fix the failing test",
+					worktree: linked,
+					checkpoint: "feature",
+				},
 				toolContext("print", worktree),
 			),
 			(error) => {
 				assert.match(error.message, /The model stopped\./);
-				assert.match(error.message, /Harness-recorded checkpoints:\n- a{40} on feature \(parent b{40}, base c{40}\)/);
+				assert.match(
+					error.message,
+					/Harness-recorded checkpoints:\n- a{40} on feature \(parent b{40}, base c{40}\)/,
+				);
 				assert.equal(error.cause.message, "The model stopped.");
 				return true;
 			},
@@ -7428,7 +8642,11 @@ test("each child's context state reaches its own record and its followers at onc
 	second.child.spec.context({ capacity: 100_000, tokens: null, last: false });
 	assert.deepEqual(notified, [reading]);
 	assert.deepEqual(core.context(first.id), reading);
-	assert.deepEqual(core.context(second.id), { capacity: 100_000, tokens: null, last: false });
+	assert.deepEqual(core.context(second.id), {
+		capacity: 100_000,
+		tokens: null,
+		last: false,
+	});
 
 	const resident = await core.detach();
 	const held = { capacity: 200_000, tokens: 60_000, last: false };
@@ -7436,9 +8654,15 @@ test("each child's context state reaches its own record and its followers at onc
 	const reloaded = recordingCore();
 	reloaded.core.adopt(resident);
 	const followed = [];
-	reloaded.core.follow(first.id, () => followed.push(reloaded.core.context(first.id)));
+	reloaded.core.follow(first.id, () =>
+		followed.push(reloaded.core.context(first.id)),
+	);
 	assert.deepEqual(reloaded.core.context(first.id), held);
-	assert.deepEqual(reloaded.core.context(second.id), { capacity: 100_000, tokens: null, last: false });
+	assert.deepEqual(reloaded.core.context(second.id), {
+		capacity: 100_000,
+		tokens: null,
+		last: false,
+	});
 	const after = { capacity: 200_000, tokens: 70_000, last: true };
 	first.child.spec.context(after);
 	assert.deepEqual(followed, [after]);
@@ -7453,15 +8677,25 @@ test("each child's context state reaches its own record and its followers at onc
 test("an accepted context update repaints the open Fleet detail of its child without another child event", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		const children = fakeChildren();
-		const extension = await loadSpawnTool({ agentDir, create: children.create });
+		const extension = await loadSpawnTool({
+			agentDir,
+			create: children.create,
+		});
 		await spawnBackground(extension, worktree, "Run the tests");
 		await settle();
 		const view = openChildren(extension, { rows: 12 });
 		assert.match(view.lines()[3], /│ ctx unavailable/);
 		const renders = view.tui.renders;
-		children.created[0].spec.context({ capacity: 200_000, tokens: 100_000, last: false });
+		children.created[0].spec.context({
+			capacity: 200_000,
+			tokens: 100_000,
+			last: false,
+		});
 		assert.ok(view.tui.renders > renders);
-		assert.match(view.lines()[3], /│ ctx ▰ ▰ ▰ ▰ ▱ ▱ ▱ ▱ {2}50% · 100K \/ 200K/);
+		assert.match(
+			view.lines()[3],
+			/│ ctx ▰ ▰ ▰ ▰ ▱ ▱ ▱ ▱ {2}50% · 100K \/ 200K/,
+		);
 		view.press("q");
 		await view.opened;
 	});

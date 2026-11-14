@@ -1,6 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, open as openFile, opendir, rename, rm, stat, unlink } from "node:fs/promises";
+import {
+	mkdir,
+	open as openFile,
+	opendir,
+	rename,
+	rm,
+	stat,
+	unlink,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { stripVTControlCharacters } from "node:util";
@@ -22,7 +30,9 @@ import { withAgentDirectory } from "./support/agent-directory.mjs";
 
 replaceSelection({
 	schemaVersion: 1,
-	capabilities: Object.fromEntries(capabilities.map((capability) => [capability, true])),
+	capabilities: Object.fromEntries(
+		capabilities.map((capability) => [capability, true]),
+	),
 	expectations: {},
 });
 
@@ -240,7 +250,12 @@ function audited(t, records, options = {}) {
 			emit(id, { type: "message_end", message });
 		},
 		tool(id, call, toolName, args, text, isError = false) {
-			emit(id, { type: "tool_execution_start", toolCallId: call, toolName, args });
+			emit(id, {
+				type: "tool_execution_start",
+				toolCallId: call,
+				toolName,
+				args,
+			});
 			if (text === undefined) return;
 			emit(id, {
 				type: "tool_execution_end",
@@ -387,14 +402,20 @@ test("from 65 columns the view splits into a list and a detail pane; below that 
 	const view = open(sessions, { rows: 40 });
 
 	const wide = view.lines(120);
-	assert.match(wide[0], /^ ┌─ Fleet 3 · 1 active · 6\.2k tok · \$0\.01 ─+ \[×\] ─┐$/);
+	assert.match(
+		wide[0],
+		/^ ┌─ Fleet 3 · 1 active · 6\.2k tok · \$0\.01 ─+ \[×\] ─┐$/,
+	);
 	assert.equal(wide[1].indexOf("│", 2), 1 + 1 + 2 + 34 + 1);
 	assert.match(wide[1], /Working ─+ │ ◐ worker 5636 +running · 1m 0\ds {2}│$/);
 	assert.match(
 		wide[2],
 		/▸ ◐ worker 5636 +running · 1m 0\ds │ gpt-6-luna \(high\) · 6\.2k tok · \$0\.01 · wt: pi-workflow/,
 	);
-	assert.match(wide[3], /^ │ {6}bash sleep 60 6\.2k tok · \$0\.01 │ ctx unavailable /);
+	assert.match(
+		wide[3],
+		/^ │ {6}bash sleep 60 6\.2k tok · \$0\.01 │ ctx unavailable /,
+	);
 	assert.match(wide[4], /│ Run sleep 60 /);
 
 	const narrow = view.lines(80);
@@ -453,10 +474,22 @@ function busyEvidence(capture, id) {
 			type: "text",
 			text: "Voy a **esperar** 60 segundos — 漢字テキスト 🚀 y luego `confirmo`.",
 		},
-		{ type: "toolCall", id: "t1", name: "read", arguments: { path: "extensions/children-view.ts" } },
+		{
+			type: "toolCall",
+			id: "t1",
+			name: "read",
+			arguments: { path: "extensions/children-view.ts" },
+		},
 	]);
 	capture.tool(id, "t1", "read", { path: "extensions/children-view.ts" }, "ok");
-	capture.tool(id, "t2", "mcp__engram__mem_search", { query: "x" }, "no index", true);
+	capture.tool(
+		id,
+		"t2",
+		"mcp__engram__mem_search",
+		{ query: "x" },
+		"no index",
+		true,
+	);
 	capture.tool(id, "t3", "bash", { command: "sleep 60" });
 }
 
@@ -532,7 +565,11 @@ test("a thought streamed while the view is open shows its duration once it ends"
 	capture.emit(child.id, {
 		type: "message_update",
 		message: streaming,
-		assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "Planning the wait." },
+		assistantMessageEvent: {
+			type: "thinking_delta",
+			contentIndex: 0,
+			delta: "Planning the wait.",
+		},
 	});
 	const sessions = fakeSessions([child]);
 	const view = open(sessions, { audit: capture.audit });
@@ -540,7 +577,10 @@ test("a thought streamed while the view is open shows its duration once it ends"
 	t.mock.timers.tick(1_500);
 	capture.emit(child.id, {
 		type: "message_end",
-		message: { role: "assistant", content: [{ type: "thinking", thinking: "Planning the wait." }] },
+		message: {
+			role: "assistant",
+			content: [{ type: "thinking", thinking: "Planning the wait." }],
+		},
 	});
 	sessions.changed();
 	assert.match(await settle(view), /◆ Thought for 1\.5s/);
@@ -548,7 +588,8 @@ test("a thought streamed while the view is open shows its duration once it ends"
 
 function lines40(t, child, others = []) {
 	const capture = audited(t, [child, ...others]);
-	for (let i = 0; i < 40; i++) capture.say(child.id, [{ type: "text", text: `Line ${i}.` }]);
+	for (let i = 0; i < 40; i++)
+		capture.say(child.id, [{ type: "text", text: `Line ${i}.` }]);
 	return capture;
 }
 
@@ -731,7 +772,10 @@ test("the final assistant text and the error appear once, in the Result section,
 	const capture = audited(t, [failed, done]);
 	capture.say(done.id, [{ type: "text", text: "Checking first." }]);
 	capture.say(done.id, [{ type: "text", text: "Waited 60 seconds.  " }]);
-	capture.say(failed.id, [], { errorMessage: "provider error", stopReason: "error" });
+	capture.say(failed.id, [], {
+		errorMessage: "provider error",
+		stopReason: "error",
+	});
 	const view = open(fakeSessions([failed, done]), {
 		rows: 60,
 		latest: true,
@@ -807,7 +851,6 @@ test("the Fleet view is titled Fleet with the total of every child, and each row
 		lines[2],
 		/│ gpt-6-luna \(high\) · 8\.0k tok · \$0\.02 · wt: pi-workflow/,
 	);
-
 });
 
 test("one-line rows show the Run state, or only its time in the narrowest pane, then tokens, cost, and the step as the pane has room", () => {
@@ -834,8 +877,7 @@ test("one-line rows show the Run state, or only its time in the narrowest pane, 
 
 test("hostile text in a child's step, task, or model never reaches the terminal from the Fleet rows", () => {
 	const bytes = ["\x1b[2J", "\x1b]52;c;", "\x9b", "\x07", "‮", "⁦"];
-	const hostile = (label) =>
-		`${label}\x1b[2J\x1b]52;c;eA==\x07\x9b31m‮⁦end`;
+	const hostile = (label) => `${label}\x1b[2J\x1b]52;c;eA==\x07\x9b31m‮⁦end`;
 	const sessions = fakeSessions([
 		record("5636", { step: hostile("step"), model: hostile("model") }),
 		record("a809", {
@@ -863,11 +905,16 @@ test("the detail's input line answers a waiting child, and its text and refusals
 	const view = open(sessions, { rows: 30 });
 
 	const lines = view.lines(120);
-	assert.ok(lines.some((line) => line.includes("❯ Enter to answer question 2")));
+	assert.ok(
+		lines.some((line) => line.includes("❯ Enter to answer question 2")),
+	);
 	assert.match(lines.join("\n"), /Enter answer/);
 	view.press("\r", "\x1b[200~qs \x1b[31mc\u202e\x1b[201~", "\x7f", "a");
 	const typed = view.raw(120).join("\n");
-	assert.match(view.lines(120).join("\n"), /Enter send {2}\| {2}Esc stop typing/);
+	assert.match(
+		view.lines(120).join("\n"),
+		/Enter send {2}\| {2}Esc stop typing/,
+	);
 	assert.equal(typed.includes("\x1b[31mc"), false);
 	assert.equal(typed.includes("\u202e"), false);
 	view.press("\r");
@@ -875,7 +922,9 @@ test("the detail's input line answers a waiting child, and its text and refusals
 		{ id: waiting.id, number: 2, text: "qs  [31mca", by: "operator" },
 	]);
 	assert.ok(
-		view.lines(120).some((line) => line.includes("Answer sent to worker 5636.")),
+		view
+			.lines(120)
+			.some((line) => line.includes("Answer sent to worker 5636.")),
 	);
 	assert.equal(view.closed(), false);
 
@@ -911,17 +960,16 @@ test("the detail's input line shows why a queued child takes no Steer yet and an
 		]),
 	]) {
 		const sessions = fakeSessions([
-			record("5636", { state, endedAt: isWorkingState(state) ? undefined : now }),
+			record("5636", {
+				state,
+				endedAt: isWorkingState(state) ? undefined : now,
+			}),
 		]);
 		const view = open(sessions, { rows: 30 });
 		view.lines(120);
 		view.press("\r");
 		assert.ok(
-			view
-				.lines(120)
-				.some((line) =>
-					line.includes(`worker 5636 ${reason}`),
-				),
+			view.lines(120).some((line) => line.includes(`worker 5636 ${reason}`)),
 			state,
 		);
 		assert.deepEqual(sessions.replies, [], state);
@@ -943,14 +991,20 @@ test("the detail's input line steers a running child, and its text and refusals 
 	assert.match(lines.join("\n"), /Enter steer/);
 	view.press("\r", "\x1b[200~use \x1b[31mtabs\u202e\x1b[201~", "\r");
 	await Promise.resolve();
-	assert.deepEqual(sessions.steers, [{ id: running.id, text: "use  [31mtabs" }]);
-	assert.ok(view.lines(120).some((line) => line.includes("Steer sent to worker 5636.")));
+	assert.deepEqual(sessions.steers, [
+		{ id: running.id, text: "use  [31mtabs" },
+	]);
+	assert.ok(
+		view.lines(120).some((line) => line.includes("Steer sent to worker 5636.")),
+	);
 
 	view.press("\r", ..."/mcp", "\r");
 	await new Promise((resolve) => setImmediate(resolve));
 	assert.equal(view.raw(120).join("\n").includes("\x1b[31m/"), false);
 	assert.ok(
-		view.lines(120).some((line) => line.includes("A Steer cannot begin with  [31m/")),
+		view
+			.lines(120)
+			.some((line) => line.includes("A Steer cannot begin with  [31m/")),
 	);
 	assert.equal(sessions.steers.length, 1);
 });
@@ -970,14 +1024,22 @@ test("a row marks its pending and undelivered Steers, and the detail lists their
 	for (const rows of [40, 10]) {
 		const view = open(fakeSessions([running, ended]), { rows });
 		const raw = view.raw(120).join("\n");
-		for (const sequence of ["\x1b[2J", "\x1b]52;c;", "\x9b", "\x07", "\u202e"]) {
+		for (const sequence of [
+			"\x1b[2J",
+			"\x1b]52;c;",
+			"\x9b",
+			"\x07",
+			"\u202e",
+		]) {
 			assert.equal(raw.includes(sequence), false, JSON.stringify(sequence));
 		}
 		const lines = view.lines(120).join("\n");
 		assert.match(lines, /2 steers pending/, `${rows}`);
 		assert.match(lines, /1 steer undelivered/, `${rows}`);
 	}
-	const detail = open(fakeSessions([running]), { rows: 40 }).lines(120).join("\n");
+	const detail = open(fakeSessions([running]), { rows: 40 })
+		.lines(120)
+		.join("\n");
 	assert.match(detail, /pending go.*on/);
 	assert.match(detail, /pending then rerun/);
 });
@@ -1002,11 +1064,20 @@ test("a linked child's Fleet row shows its task number and text, truncated to th
 		}),
 	]);
 	const tasks = { 3: `Wire\x1b the parser ${"and more ".repeat(30)}` };
-	for (const [rows, width] of [[40, 200], [10, 64]]) {
+	for (const [rows, width] of [
+		[40, 200],
+		[10, 64],
+	]) {
 		const raw = open(sessions, { rows, tasks }).raw(width);
 		const lines = raw.map(plain);
-		assert.ok(lines.some((line) => /#3 Wire {2}the/.test(line)), lines.join("\n"));
-		assert.equal(lines.some((line) => line.includes("in progress")), false);
+		assert.ok(
+			lines.some((line) => /#3 Wire {2}the/.test(line)),
+			lines.join("\n"),
+		);
+		assert.equal(
+			lines.some((line) => line.includes("in progress")),
+			false,
+		);
 		assert.equal(raw.join("\n").includes("\x1b the"), false);
 		for (const line of raw) assert.ok(visibleWidth(line) <= width);
 	}
@@ -1060,9 +1131,15 @@ test("a mixed Group appears under Working and History, and a reopened record is 
 	assert.match(detail, /❯ History is read-only/);
 	assert.doesNotMatch(detail, /s\/c cancel|Enter (steer|input|answer)/);
 	view.press("s");
-	assert.match(view.lines(120).join("\n"), /worker 9e01 is history; it is read-only\./);
+	assert.match(
+		view.lines(120).join("\n"),
+		/worker 9e01 is history; it is read-only\./,
+	);
 	view.press("\r", "x", "\r");
-	assert.match(view.lines(120).join("\n"), /worker 9e01 is history; it is read-only\./);
+	assert.match(
+		view.lines(120).join("\n"),
+		/worker 9e01 is history; it is read-only\./,
+	);
 	assert.deepEqual(sessions.steers, []);
 	assert.deepEqual(sessions.replies, []);
 	assert.equal(sessions.get(working.id).state, "running");
@@ -1098,7 +1175,8 @@ test("children the catalog lost are reported, and r rebuilds the catalog so they
 		unlink,
 		opendir,
 		async open(path, flags, mode) {
-			if (failing && path.endsWith(".catalog")) throw new Error("catalog unavailable");
+			if (failing && path.endsWith(".catalog"))
+				throw new Error("catalog unavailable");
 			return openFile(path, flags, mode);
 		},
 	};
@@ -1177,7 +1255,14 @@ test("an answer shows queued and delivered once under its question number, and a
 		result: { content: [{ type: "text", text: "src/a.ts" }] },
 		isError: false,
 	});
-	before.tool(child.id, "call-2", "ask_parent", { question: "Which test?" }, "The call was aborted.", true);
+	before.tool(
+		child.id,
+		"call-2",
+		"ask_parent",
+		{ question: "Which test?" },
+		"The call was aborted.",
+		true,
+	);
 	await before.audit.close();
 	const later = audited(t, [], { root });
 	const view = open(fakeSessions([]), { rows: 40, audit: later.audit });
@@ -1193,7 +1278,11 @@ test("without a parent session identity the capture warning shows beside the Run
 	const gone = record("9e01");
 	const capture = audited(t, [child, gone], { parent: undefined });
 	const sessions = fakeSessions([child], {
-		[child.id]: { entries: [assistant("a1", [{ type: "text", text: "Live without a parent." }])] },
+		[child.id]: {
+			entries: [
+				assistant("a1", [{ type: "text", text: "Live without a parent." }]),
+			],
+		},
 	});
 	const view = open(sessions, { rows: 30, audit: capture.audit });
 	const text = await settle(view);
@@ -1201,7 +1290,10 @@ test("without a parent session identity the capture warning shows beside the Run
 	assert.doesNotMatch(text, /worker 9e01/);
 	assert.match(text, /▸ ◐ worker 5636 +running · 1m 0\ds/);
 	assert.match(text, /│ +incomplete transcript · 6\.2k t/);
-	assert.match(text, /incomplete transcript \(live\): No parent session identity/);
+	assert.match(
+		text,
+		/incomplete transcript \(live\): No parent session identity/,
+	);
 	assert.match(text, /❯ Run sleep 60/);
 	assert.match(text, /Enter steer/);
 });
@@ -1470,7 +1562,11 @@ test("the row under the earlier-evidence marker stays put while backward pages a
 		capture.emit(child.id, {
 			type: "message_update",
 			message,
-			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: text },
+			assistantMessageEvent: {
+				type: "text_delta",
+				contentIndex: 0,
+				delta: text,
+			},
 		});
 	for (let i = 0; i < 700; i++) {
 		delta(i < 600 ? "a" : `w${i - 600}\n`);
@@ -1488,9 +1584,13 @@ test("the row under the earlier-evidence marker stays put while backward pages a
 			"",
 			(item) => {
 				if (item.kind !== "message") return [];
-				const lines = (item.entry.content[0]?.text ?? "").split("\n").filter(Boolean);
+				const lines = (item.entry.content[0]?.text ?? "")
+					.split("\n")
+					.filter(Boolean);
 				return [
-					...(item.entry.earlier === undefined ? [] : [{ sub: "e", rows: ["marker"] }]),
+					...(item.entry.earlier === undefined
+						? []
+						: [{ sub: "e", rows: ["marker"] }]),
 					{ sub: "b", rows: lines.map((line) => line.replace(/^a+/, "")) },
 				];
 			},
@@ -1529,7 +1629,11 @@ function messageTranscript(audit, id) {
 		if (item.kind === "static") return [{ sub: "s", rows: ["head"] }];
 		if (item.kind !== "message") return [];
 		const text = item.entry.content[0]?.text ?? "";
-		if (!text.startsWith("S") && !text.endsWith("E") && item.entry.earlier === undefined) {
+		if (
+			!text.startsWith("S") &&
+			!text.endsWith("E") &&
+			item.entry.earlier === undefined
+		) {
 			return [{ sub: "b", rows: [text] }];
 		}
 		state.pieces.push({ key: item.key, text, earlier: item.entry.earlier });
@@ -1561,7 +1665,10 @@ test("a followed message made of one oversized delta keeps its last 32 KiB under
 		assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
 	});
 	await written(capture.audit, child.id);
-	const { transcript, state, draw } = messageTranscript(capture.audit, child.id);
+	const { transcript, state, draw } = messageTranscript(
+		capture.audit,
+		child.id,
+	);
 	await draw();
 	assert.equal(state.pieces.length, 1);
 	const [piece] = state.pieces;
@@ -1595,7 +1702,10 @@ test("a message made of one oversized delta read forward from above keeps its fi
 		capture.say(child.id, [{ type: "text", text: `After ${i}.` }]);
 		if (i % 50 === 49) await written(capture.audit, child.id);
 	}
-	const { transcript, state, draw } = messageTranscript(capture.audit, child.id);
+	const { transcript, state, draw } = messageTranscript(
+		capture.audit,
+		child.id,
+	);
 	let rows = await draw();
 	for (let i = 0; i < 100 && rows[0] !== "head"; i++) {
 		transcript.scroll(-30);
@@ -1627,7 +1737,11 @@ test("expanding a capped message whose earlier read ends right before the kept d
 		capture.emit(child.id, {
 			type: "message_update",
 			message,
-			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: `d${i}.` },
+			assistantMessageEvent: {
+				type: "text_delta",
+				contentIndex: 0,
+				delta: `d${i}.`,
+			},
 		});
 	}
 	const delta = oversized();
@@ -1638,7 +1752,10 @@ test("expanding a capped message whose earlier read ends right before the kept d
 		assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta },
 	});
 	await written(capture.audit, child.id);
-	const { transcript, state, draw } = messageTranscript(capture.audit, child.id);
+	const { transcript, state, draw } = messageTranscript(
+		capture.audit,
+		child.id,
+	);
 	await draw();
 	state.expand = true;
 	await draw();
@@ -1928,19 +2045,24 @@ for (const key of ["wheel", "page"]) {
 		for (let i = 0; i < 60; i++)
 			capture.say(child.id, [{ type: "text", text: `After ${i}.` }]);
 		await written(capture.audit, child.id);
-		const view = open(fakeSessions([child]), { rows: 30, audit: capture.audit });
+		const view = open(fakeSessions([child]), {
+			rows: 30,
+			audit: capture.audit,
+		});
 		view.press("\t");
 		let text = await settle(view);
 		let before = detailColumn(text).slice(5, 25);
 		for (let step = 0; !/Before 0\./.test(text); step++) {
 			assert.ok(step < 300, "the start was never reached");
-			if (key === "wheel") view.mouse({ type: "wheel", x: 60, y: 8, wheelDelta: -3 });
+			if (key === "wheel")
+				view.mouse({ type: "wheel", x: 60, y: 8, wheelDelta: -3 });
 			else view.press("\x0b");
 			const renders = view.tui.renders;
 			text = await settle(view);
 			assert.ok(view.tui.renders - renders < 20, `step ${step} never settled`);
 			const after = detailColumn(text).slice(5, 25);
-			if (key === "wheel") assert.deepEqual(after.slice(3), before.slice(0, -3), `step ${step}`);
+			if (key === "wheel")
+				assert.deepEqual(after.slice(3), before.slice(0, -3), `step ${step}`);
 			before = after;
 		}
 	});
@@ -1974,7 +2096,8 @@ test("the wheel scrolls down past a long streamed tool call by its exact delta w
 		return text;
 	};
 	let text = await settle(view);
-	for (let i = 0; i < 40 && !/Before 0\./.test(text); i++) text = await wheel(-3);
+	for (let i = 0; i < 40 && !/Before 0\./.test(text); i++)
+		text = await wheel(-3);
 	assert.match(text, /Before 0\./);
 	await streamLong(capture, child.id, message, 2000, "toolcall_delta");
 	const call = {
@@ -2050,12 +2173,20 @@ test("the wheel moves down and up through a long ended message of interleaved th
 		capture.emit(child.id, {
 			type: "message_update",
 			message,
-			assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: thought },
+			assistantMessageEvent: {
+				type: "thinking_delta",
+				contentIndex: 0,
+				delta: thought,
+			},
 		});
 		capture.emit(child.id, {
 			type: "message_update",
 			message,
-			assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: said },
+			assistantMessageEvent: {
+				type: "text_delta",
+				contentIndex: 1,
+				delta: said,
+			},
 		});
 		if (i % 300 === 299) {
 			steers.push(`Steer ${i}.`);
@@ -2099,7 +2230,11 @@ test("the wheel moves down and up through a long ended message of interleaved th
 		assert.ok(step < 600, "the end was never reached");
 		const after = await wheel(3);
 		if (!/After 39\./.test(after.join("\n"))) {
-			assert.deepEqual(after.slice(0, -3), before.slice(3), `down step ${step}`);
+			assert.deepEqual(
+				after.slice(0, -3),
+				before.slice(3),
+				`down step ${step}`,
+			);
 		}
 		before = after;
 	}
@@ -2134,7 +2269,9 @@ function toolEnd(capture, id, call) {
 function itemRows(item) {
 	if (item.kind === "static") return [{ sub: "s", rows: ["head"] }];
 	if (item.kind === "tool") {
-		const partial = JSON.stringify(item.entry.partial ?? item.entry.result ?? "");
+		const partial = JSON.stringify(
+			item.entry.partial ?? item.entry.result ?? "",
+		);
 		return [{ sub: "t", rows: [item.key, partial] }];
 	}
 	const text = item.entry?.content?.[0]?.text;
@@ -2180,7 +2317,10 @@ test("two parallel tools streaming thousands of interleaved updates retain obser
 	const bounded = (where) => {
 		const { items, observations } = transcript.info().retained;
 		assert.ok(items <= 82, `${items} items retained ${where}`);
-		assert.ok(observations <= 80 + 2 * 3, `${observations} observations retained ${where}`);
+		assert.ok(
+			observations <= 80 + 2 * 3,
+			`${observations} observations retained ${where}`,
+		);
 	};
 	let rows = await draw();
 	bounded("when opened");
@@ -2216,10 +2356,19 @@ test("scrolling both ways over thousands of tool-call messages that draw no rows
 				capture.emit(child.id, {
 					type: "message_update",
 					message,
-					assistantMessageEvent: { type: "toolcall_delta", contentIndex: 0, delta: `${i}` },
+					assistantMessageEvent: {
+						type: "toolcall_delta",
+						contentIndex: 0,
+						delta: `${i}`,
+					},
 				});
 			}
-			const call = { type: "toolCall", id: `c${n}`, name: "read", arguments: {} };
+			const call = {
+				type: "toolCall",
+				id: `c${n}`,
+				name: "read",
+				arguments: {},
+			};
 			capture.emit(child.id, {
 				type: "message_end",
 				message: { role: "assistant", content: [call] },
@@ -2247,7 +2396,10 @@ test("scrolling both ways over thousands of tool-call messages that draw no rows
 		rows = await draw();
 		most = Math.max(most, reads - before);
 		assert.equal(rows.length, 30);
-		assert.ok(transcript.info().retained.items <= 384, `${transcript.info().retained.items} items`);
+		assert.ok(
+			transcript.info().retained.items <= 384,
+			`${transcript.info().retained.items} items`,
+		);
 	};
 	for (let i = 0; i < 200 && rows[0] !== "head"; i++) await step(-7);
 	assert.equal(rows[0], "head");
@@ -2298,7 +2450,10 @@ test("an early tool updated late is not pruned with the rows on screen when the 
 		rows = await draw();
 	}
 	assert.equal(rows[0], "head");
-	assert.ok(rows.some((row) => row.includes("early1")), rows.join("\n"));
+	assert.ok(
+		rows.some((row) => row.includes("early1")),
+		rows.join("\n"),
+	);
 	transcript.dispose();
 });
 
@@ -2321,22 +2476,34 @@ test("following a child whose early tool keeps updating among thousands of later
 			await written(capture.audit, child.id);
 			transcript.changed();
 			rows = await draw();
-			assert.ok(transcript.info().retained.items <= 384, `${transcript.info().retained.items} items`);
+			assert.ok(
+				transcript.info().retained.items <= 384,
+				`${transcript.info().retained.items} items`,
+			);
 		}
 	}
 	assert.equal(rows.at(-1), "Line 2399.");
 	transcript.scroll(-100000);
 	earlyInPlace(
-		transcript.layout(80, 30, "", itemRows, { head: [{ key: "head", kind: "static" }], tail: [] }),
+		transcript.layout(80, 30, "", itemRows, {
+			head: [{ key: "head", kind: "static" }],
+			tail: [],
+		}),
 	);
 	for (let i = 0; i < 200 && rows[0] !== "head"; i++) {
 		transcript.scroll(-30);
 		rows = await draw();
-		assert.ok(transcript.info().retained.items <= 384, `${transcript.info().retained.items} items`);
+		assert.ok(
+			transcript.info().retained.items <= 384,
+			`${transcript.info().retained.items} items`,
+		);
 		earlyInPlace(rows);
 	}
 	assert.equal(rows[0], "head");
-	assert.ok(rows.some((row) => row.includes("early2399")), rows.join("\n"));
+	assert.ok(
+		rows.some((row) => row.includes("early2399")),
+		rows.join("\n"),
+	);
 	transcript.dispose();
 });
 
@@ -2348,7 +2515,8 @@ async function runningTools(t, options = {}) {
 	const invented = [];
 	const audit = {
 		async read(id, cursor) {
-			if (cursor?.offset !== undefined && !issued.has(JSON.stringify(cursor))) invented.push(cursor);
+			if (cursor?.offset !== undefined && !issued.has(JSON.stringify(cursor)))
+				invented.push(cursor);
 			const read = await capture.audit.read(id, cursor);
 			if (read && "next" in read) issued.add(JSON.stringify(read.next));
 			return read;
@@ -2372,7 +2540,10 @@ async function runningTools(t, options = {}) {
 		await written(capture.audit, child.id);
 		transcript.changed();
 		rows = await draw();
-		assert.ok(transcript.info().retained.items <= 384, `${transcript.info().retained.items} items`);
+		assert.ok(
+			transcript.info().retained.items <= 384,
+			`${transcript.info().retained.items} items`,
+		);
 	};
 	let started = 0;
 	const start = async (count) => {
@@ -2397,18 +2568,23 @@ async function runningTools(t, options = {}) {
 	await update(1, 2);
 	await start(20);
 	assert.ok(rows.includes("tool:p404"), rows.join("\n"));
-	if (options.unindexed) await rm(join(root, "parent-1", `${child.id}.index`), { recursive: true });
+	if (options.unindexed)
+		await rm(join(root, "parent-1", `${child.id}.index`), { recursive: true });
 	const shown = (pane) => {
 		for (const [at, row] of pane.entries()) {
 			const want = latest.get(row);
-			if (want !== undefined && at + 1 < pane.length) assert.match(pane[at + 1], new RegExp(want), row);
+			if (want !== undefined && at + 1 < pane.length)
+				assert.match(pane[at + 1], new RegExp(want), row);
 		}
 	};
 	for (let i = 0; i < 400 && rows[0] !== "head"; i++) {
 		transcript.scroll(-7);
 		rows = await draw();
 		assert.equal(rows.length, 30);
-		assert.ok(transcript.info().retained.items <= 384, `${transcript.info().retained.items} items`);
+		assert.ok(
+			transcript.info().retained.items <= 384,
+			`${transcript.info().retained.items} items`,
+		);
 		shown(rows);
 	}
 	assert.equal(rows[0], "head");
@@ -2421,7 +2597,10 @@ test("following hundreds of running tools that all update after the last one sta
 	runningTools(t));
 
 test("a removed tool brought back over a record without its index, by backward pages that pass their boundary, shows its latest state", (t) =>
-	runningTools(t, { unindexed: true, limits: { windowBytes: 2048, cacheEntries: 0 } }));
+	runningTools(t, {
+		unindexed: true,
+		limits: { windowBytes: 2048, cacheEntries: 0 },
+	}));
 
 test("a followed child streaming while each render lags behind its reads keeps at most 384 items resident", async (t) => {
 	const child = record("5636");
@@ -2435,7 +2614,8 @@ test("a followed child streaming while each render lags behind its reads keeps a
 			timer ??= setTimeout(draw, 16);
 		},
 	});
-	const layout = () => transcript.layout(80, 30, "", itemRows, { head: [], tail: [] });
+	const layout = () =>
+		transcript.layout(80, 30, "", itemRows, { head: [], tail: [] });
 	function draw() {
 		timer = undefined;
 		layout();
@@ -2459,7 +2639,10 @@ test("a followed child streaming while each render lags behind its reads keeps a
 test("a record without its index opens on its tail even when the tail lies past the first window of bytes", async (t) => {
 	const root = withAgentDirectory(t);
 	const child = record("5636");
-	const capture = audited(t, [child], { root, limits: { windowBytes: 4096, cacheEntries: 0 } });
+	const capture = audited(t, [child], {
+		root,
+		limits: { windowBytes: 4096, cacheEntries: 0 },
+	});
 	for (let i = 0; i < 300; i++) {
 		capture.say(child.id, [{ type: "text", text: `Line ${i}.` }]);
 		if (i % 50 === 49) await written(capture.audit, child.id);
@@ -2477,10 +2660,17 @@ function zeroRow(capture, id, n) {
 	capture.emit(id, {
 		type: "message_update",
 		message,
-		assistantMessageEvent: { type: "toolcall_delta", contentIndex: 0, delta: "x" },
+		assistantMessageEvent: {
+			type: "toolcall_delta",
+			contentIndex: 0,
+			delta: "x",
+		},
 	});
 	const call = { type: "toolCall", id: `c${n}`, name: "read", arguments: {} };
-	capture.emit(id, { type: "message_end", message: { role: "assistant", content: [call] } });
+	capture.emit(id, {
+		type: "message_end",
+		message: { role: "assistant", content: [call] },
+	});
 }
 
 test("an undrawn tool that ended below the read range shows its result when scrolling back reaches it", async (t) => {
@@ -2488,7 +2678,8 @@ test("an undrawn tool that ended below the read range shows its result when scro
 	const capture = audited(t, [child]);
 	capture.tool(child.id, "a", "bash", { command: "a" });
 	capture.tool(child.id, "b", "bash", { command: "b" });
-	for (let i = 0; i < 100; i++) capture.say(child.id, [{ type: "text", text: `Line ${i}.` }]);
+	for (let i = 0; i < 100; i++)
+		capture.say(child.id, [{ type: "text", text: `Line ${i}.` }]);
 	await written(capture.audit, child.id);
 	const { transcript, draw } = rowsTranscript(capture.audit, child.id);
 	let rows = await draw();
@@ -2515,7 +2706,10 @@ test("an undrawn tool that ended below the read range shows its result when scro
 		rows = await draw();
 	}
 	assert.equal(rows[0], "head");
-	assert.ok(rows.some((row) => row.includes("b done")), rows.slice(0, 6).join("\n"));
+	assert.ok(
+		rows.some((row) => row.includes("b done")),
+		rows.slice(0, 6).join("\n"),
+	);
 	transcript.dispose();
 });
 
@@ -2707,8 +2901,14 @@ test("a fast flick up a streaming message whose start is not loaded settles wher
 		if (i % 100 === 99) await written(capture.audit, child.id);
 	}
 	await written(capture.audit, child.id);
-	const flicked = open(fakeSessions([child]), { rows: 40, audit: capture.audit });
-	const stepped = open(fakeSessions([child]), { rows: 40, audit: capture.audit });
+	const flicked = open(fakeSessions([child]), {
+		rows: 40,
+		audit: capture.audit,
+	});
+	const stepped = open(fakeSessions([child]), {
+		rows: 40,
+		audit: capture.audit,
+	});
 	const pane = async (view) => detailColumn(await settle(view)).slice(4, 35);
 	for (const view of [flicked, stepped]) {
 		view.press("\t");
@@ -2821,8 +3021,13 @@ const detailColumn = (text) =>
 
 test("an expanded huge message is read in bounded parts instead of staying collapsed", async (t) => {
 	const child = record("5636");
-	const capture = audited(t, [child], { limits: { chunk: 1024, windowBytes: 4096 } });
-	const lines = Array.from({ length: 200 }, (_, i) => `m${String(i).padStart(3, "0")}. ${"long ".repeat(18)}end`);
+	const capture = audited(t, [child], {
+		limits: { chunk: 1024, windowBytes: 4096 },
+	});
+	const lines = Array.from(
+		{ length: 200 },
+		(_, i) => `m${String(i).padStart(3, "0")}. ${"long ".repeat(18)}end`,
+	);
 	capture.say(child.id, [{ type: "text", text: lines.join("\n") }]);
 	await written(capture.audit, child.id);
 	const view = open(fakeSessions([child]), { rows: 24, audit: capture.audit });
@@ -2835,7 +3040,13 @@ test("an expanded huge message is read in bounded parts instead of staying colla
 test("an expanded tool call shows all of its arguments, not only the truncated title", async (t) => {
 	const child = record("5636");
 	const capture = audited(t, [child]);
-	capture.tool(child.id, "t1", "bash", { command: `echo ${"word ".repeat(60)}LAST`, timeout: 99 }, "ok");
+	capture.tool(
+		child.id,
+		"t1",
+		"bash",
+		{ command: `echo ${"word ".repeat(60)}LAST`, timeout: 99 },
+		"ok",
+	);
 	await written(capture.audit, child.id);
 	const view = open(fakeSessions([child]), { rows: 40, audit: capture.audit });
 	assert.doesNotMatch(await settle(view), /LAST/);
@@ -2848,11 +3059,19 @@ test("an expanded tool call shows all of its arguments, not only the truncated t
 
 test("a huge delivered message stays listed and expands by bounded parts", async (t) => {
 	const child = record("5636");
-	const capture = audited(t, [child], { limits: { chunk: 1024, windowBytes: 4096 } });
-	const lines = Array.from({ length: 200 }, (_, i) => `i${String(i).padStart(3, "0")}. ${"long ".repeat(18)}end`);
+	const capture = audited(t, [child], {
+		limits: { chunk: 1024, windowBytes: 4096 },
+	});
+	const lines = Array.from(
+		{ length: 200 },
+		(_, i) => `i${String(i).padStart(3, "0")}. ${"long ".repeat(18)}end`,
+	);
 	capture.emit(child.id, {
 		type: "message_start",
-		message: { role: "user", content: [{ type: "text", text: lines.join("\n") }] },
+		message: {
+			role: "user",
+			content: [{ type: "text", text: lines.join("\n") }],
+		},
 	});
 	await written(capture.audit, child.id);
 	const view = open(fakeSessions([child]), { rows: 24, audit: capture.audit });
@@ -2864,9 +3083,19 @@ test("a huge delivered message stays listed and expands by bounded parts", async
 
 test("an expanded huge result made of many small fields still shows its parts", async (t) => {
 	const child = record("5636");
-	const capture = audited(t, [child], { limits: { chunk: 1024, windowBytes: 4096 } });
-	const content = Array.from({ length: 300 }, (_, i) => ({ type: "text", text: `s${String(i).padStart(3, "0")} ${"x".repeat(40)}` }));
-	capture.emit(child.id, { type: "tool_execution_start", toolCallId: "t1", toolName: "bash", args: { command: "ls" } });
+	const capture = audited(t, [child], {
+		limits: { chunk: 1024, windowBytes: 4096 },
+	});
+	const content = Array.from({ length: 300 }, (_, i) => ({
+		type: "text",
+		text: `s${String(i).padStart(3, "0")} ${"x".repeat(40)}`,
+	}));
+	capture.emit(child.id, {
+		type: "tool_execution_start",
+		toolCallId: "t1",
+		toolName: "bash",
+		args: { command: "ls" },
+	});
 	capture.emit(child.id, {
 		type: "tool_execution_end",
 		toolCallId: "t1",
@@ -2884,12 +3113,20 @@ test("an expanded huge result made of many small fields still shows its parts", 
 
 test("an expanded huge result is read in bounded parts, every row is reachable in both directions, and the anchor survives resize and theme", async (t) => {
 	const child = record("5636");
-	const capture = audited(t, [child], { limits: { chunk: 1024, windowBytes: 4096 } });
+	const capture = audited(t, [child], {
+		limits: { chunk: 1024, windowBytes: 4096 },
+	});
 	const rows = Array.from(
 		{ length: 300 },
 		(_, i) => `r${String(i).padStart(3, "0")}. ${"wide ".repeat(18)}end`,
 	);
-	capture.tool(child.id, "big", "bash", { command: "cat log" }, rows.join("\n"));
+	capture.tool(
+		child.id,
+		"big",
+		"bash",
+		{ command: "cat log" },
+		rows.join("\n"),
+	);
 	await written(capture.audit, child.id);
 	const reads = [];
 	const audit = {
@@ -2922,7 +3159,8 @@ test("an expanded huge result is read in bounded parts, every row is reachable i
 		view.press("\n");
 	}
 	const joined = seen.join("").replace(/\s+/g, "");
-	for (const row of rows) assert.ok(joined.includes(row.replace(/\s+/g, "")), row.slice(0, 5));
+	for (const row of rows)
+		assert.ok(joined.includes(row.replace(/\s+/g, "")), row.slice(0, 5));
 	assert.ok(new Set(reads).size < 60);
 
 	const firstRow = (width) =>
@@ -2950,13 +3188,23 @@ test("hostile evidence is shown terminal-safe at every width without changing wh
 	const capture = audited(t, [child], { root });
 	capture.emit(child.id, {
 		type: "message_start",
-		message: { role: "user", content: [{ type: "text", text: hostile("steer") }] },
+		message: {
+			role: "user",
+			content: [{ type: "text", text: hostile("steer") }],
+		},
 	});
 	capture.say(child.id, [
 		{ type: "thinking", thinking: hostile("thought") },
 		{ type: "text", text: hostile("text") },
 	]);
-	capture.tool(child.id, "c1", hostile("tool"), { path: hostile("path") }, hostile("output"), true);
+	capture.tool(
+		child.id,
+		"c1",
+		hostile("tool"),
+		{ path: hostile("path") },
+		hostile("output"),
+		true,
+	);
 	const view = open(fakeSessions([child]), { rows: 40, audit: capture.audit });
 	await settle(view);
 	for (const rows of [10, 24, 40]) {
@@ -2967,8 +3215,19 @@ test("hostile evidence is shown terminal-safe at every width without changing wh
 				assert.ok(raw.length <= rows, `${width}x${rows}`);
 				for (const line of raw) {
 					assert.ok(visibleWidth(line) <= width, `${width}x${rows} ${pane}`);
-					for (const sequence of ["\x1b[2J", "\x1b]52;c;", "\x9b", "\x07", "‮", "⁦"]) {
-						assert.equal(line.includes(sequence), false, JSON.stringify(sequence));
+					for (const sequence of [
+						"\x1b[2J",
+						"\x1b]52;c;",
+						"\x9b",
+						"\x07",
+						"‮",
+						"⁦",
+					]) {
+						assert.equal(
+							line.includes(sequence),
+							false,
+							JSON.stringify(sequence),
+						);
 					}
 				}
 				view.press("\t");
@@ -2988,7 +3247,9 @@ test("unseating the child-session capability closes Fleet while accepted work an
 	replaceSelection({
 		schemaVersion: 1,
 		capabilities: {
-			...Object.fromEntries(capabilities.map((capability) => [capability, true])),
+			...Object.fromEntries(
+				capabilities.map((capability) => [capability, true]),
+			),
 			"child-session": false,
 		},
 		expectations: {},
@@ -2996,18 +3257,24 @@ test("unseating the child-session capability closes Fleet while accepted work an
 	try {
 		assert.deepEqual(view.raw(120), []);
 		assert.equal(view.closed(), true);
-		capture.say(child.id, [{ type: "text", text: "Still working after Fleet closed." }]);
+		capture.say(child.id, [
+			{ type: "text", text: "Still working after Fleet closed." },
+		]);
 		assert.equal(sessions.get(child.id).state, "running");
 		const window = await capture.audit.read(child.id);
 		assert.ok(
 			window.observations.some((entry) =>
-				JSON.stringify(entry.content ?? "").includes("Still working after Fleet closed."),
+				JSON.stringify(entry.content ?? "").includes(
+					"Still working after Fleet closed.",
+				),
 			),
 		);
 	} finally {
 		replaceSelection({
 			schemaVersion: 1,
-			capabilities: Object.fromEntries(capabilities.map((capability) => [capability, true])),
+			capabilities: Object.fromEntries(
+				capabilities.map((capability) => [capability, true]),
+			),
 			expectations: {},
 		});
 	}
@@ -3097,7 +3364,11 @@ test("a message streamed far before the resident windows is revealed contiguousl
 		capture.emit(child.id, {
 			type: "message_update",
 			message: streaming,
-			assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: `w${i} ` },
+			assistantMessageEvent: {
+				type: "text_delta",
+				contentIndex: 0,
+				delta: `w${i} `,
+			},
 		});
 		if (i % 100 === 99) await written(capture.audit, child.id);
 	}
@@ -3119,12 +3390,17 @@ test("a message streamed far before the resident windows is revealed contiguousl
 			"",
 			(item) => {
 				if (item.kind !== "message") return [];
-				pieces.push({ text: item.entry.content[0]?.text ?? "", earlier: item.entry.earlier });
+				pieces.push({
+					text: item.entry.content[0]?.text ?? "",
+					earlier: item.entry.earlier,
+				});
 				return [
 					{
 						sub: "body",
 						rows: ["row"],
-						...(item.entry.earlier === undefined ? {} : { load: { earlier: item.entry.earlier } }),
+						...(item.entry.earlier === undefined
+							? {}
+							: { load: { earlier: item.entry.earlier } }),
 					},
 				];
 			},
@@ -3133,7 +3409,10 @@ test("a message streamed far before the resident windows is revealed contiguousl
 		return pieces;
 	};
 	const contiguous = (text) => {
-		const numbers = text.trim().split(" ").map((word) => Number(word.slice(1)));
+		const numbers = text
+			.trim()
+			.split(" ")
+			.map((word) => Number(word.slice(1)));
 		return numbers.every((n, i) => i === 0 || n === numbers[i - 1] + 1);
 	};
 	const words = (text) => text.trim().split(" ").filter(Boolean);
@@ -3145,19 +3424,27 @@ test("a message streamed far before the resident windows is revealed contiguousl
 				assert.ok(contiguous(piece.text), piece.text);
 				for (const word of words(piece.text)) reached.add(word);
 				if (index === 0) {
-					assert.equal(piece.earlier === undefined, piece.text.startsWith("w0 "), piece.text);
+					assert.equal(
+						piece.earlier === undefined,
+						piece.text.startsWith("w0 "),
+						piece.text,
+					);
 				} else {
 					assert.notEqual(piece.earlier, undefined);
 				}
-				if (index < pieces.length - 1) assert.ok(words(piece.text).length <= 384);
+				if (index < pieces.length - 1)
+					assert.ok(words(piece.text).length <= 384);
 			}
-			if (pieces.length > 0) assert.ok(pieces.at(-1).text.length <= 32 * 1024 + 384 * 6);
+			if (pieces.length > 0)
+				assert.ok(pieces.at(-1).text.length <= 32 * 1024 + 384 * 6);
 			if (pieces.length > 0 && done(pieces)) return pieces;
 			await delay(5);
 		}
 		assert.fail("the expansion never settled");
 	};
-	const slid = await step((pieces) => pieces.length === 1 && reached.size === 8000);
+	const slid = await step(
+		(pieces) => pieces.length === 1 && reached.size === 8000,
+	);
 	assert.notEqual(slid[0].earlier, undefined);
 	assert.match(slid[0].text, / w7999 $/);
 	assert.equal(fromStart.length, 1);
@@ -3186,14 +3473,21 @@ test("a detached view keeps its row when a streamed message is replaced by its f
 	const view = open(sessions, { rows: 20, audit: capture.audit });
 	await settle(view);
 	view.press("\t", "\x0b", "\x0b");
-	const held = detailColumn(await settle(view)).slice(4).join("\n");
+	const held = detailColumn(await settle(view))
+		.slice(4)
+		.join("\n");
 	assert.match(held, /Para \d+\./);
 	capture.emit(child.id, {
 		type: "message_end",
 		message: { role: "assistant", content: [{ type: "text", text: body }] },
 	});
 	sessions.changed();
-	assert.equal(detailColumn(await settle(view)).slice(4).join("\n"), held);
+	assert.equal(
+		detailColumn(await settle(view))
+			.slice(4)
+			.join("\n"),
+		held,
+	);
 });
 
 test("a message streamed across several windows reads back once and in order, including a character split between windows", async (t) => {
@@ -3224,9 +3518,14 @@ test("a message streamed across several windows reads back once and in order, in
 	}
 	const text = seen.join("\n");
 	assert.equal(text.match(/\bd0\b/g)?.length >= 1, true);
-	const order = [...text.matchAll(/\bd(\d+)\b/g)].map((match) => Number(match[1]));
+	const order = [...text.matchAll(/\bd(\d+)\b/g)].map((match) =>
+		Number(match[1]),
+	);
 	const unique = [...new Set(order)];
-	assert.deepEqual(unique, [...unique].sort((a, b) => a - b));
+	assert.deepEqual(
+		unique,
+		[...unique].sort((a, b) => a - b),
+	);
 	assert.equal(unique.length, 299);
 	assert.match(text, /d200 😀/);
 });
@@ -3242,10 +3541,17 @@ function contextView(t, child, context, { rows = 20 } = {}) {
 
 test("the detail shows the selected child's context below its model and above its task, fixed while the transcript scrolls", async (t) => {
 	const child = record("5636");
-	const { view } = contextView(t, child, { capacity: 200_000, tokens: 100_000, last: false });
+	const { view } = contextView(t, child, {
+		capacity: 200_000,
+		tokens: 100_000,
+		last: false,
+	});
 	const lines = (await settle(view, 60)).split("\n");
 	const meta = lines.findIndex((line) => /gpt-6-luna \(high\)/.test(line));
-	assert.match(lines[meta + 1], /│ {2}ctx ▰ ▰ ▰ ▰ ▱ ▱ ▱ ▱ {2}50% · 100K \/ 200K +│/);
+	assert.match(
+		lines[meta + 1],
+		/│ {2}ctx ▰ ▰ ▰ ▰ ▱ ▱ ▱ ▱ {2}50% · 100K \/ 200K +│/,
+	);
 	assert.match(lines[meta + 2], /Run sleep 60/);
 	view.press("k", "k", "k");
 	const scrolled = (await settle(view, 60)).split("\n");
@@ -3261,12 +3567,21 @@ test("a short terminal clips the detail header from the bottom, giving up the ta
 		[10, [/◐ worker 5636/, /gpt-6-luna \(high\)/, ctx, /Run sleep 60/]],
 	]) {
 		await t.test(`${rows} rows`, async (t) => {
-			const { view } = contextView(t, record("5636"), { capacity: 200_000, tokens: 100_000, last: false }, { rows });
+			const { view } = contextView(
+				t,
+				record("5636"),
+				{ capacity: 200_000, tokens: 100_000, last: false },
+				{ rows },
+			);
 			await settle(view, 60);
 			const lines = view.raw(60).map(plain);
 			assert.equal(lines.length, rows);
-			for (const [at, pattern] of top.entries()) assert.match(lines[1 + at], pattern);
-			assert.equal(lines.filter((line) => line.includes("ctx ")).length, rows >= 9 ? 1 : 0);
+			for (const [at, pattern] of top.entries())
+				assert.match(lines[1 + at], pattern);
+			assert.equal(
+				lines.filter((line) => line.includes("ctx ")).length,
+				rows >= 9 ? 1 : 0,
+			);
 			assert.match(lines[1 + top.length], /^ │ +│$/);
 		});
 	}
@@ -3274,7 +3589,9 @@ test("a short terminal clips the detail header from the bottom, giving up the ta
 
 const contextRawOf = (view, width) => {
 	const lines = view.raw(width);
-	return lines[lines.findIndex((line) => plain(line).includes("gpt-6-luna (high)")) + 1];
+	return lines[
+		lines.findIndex((line) => plain(line).includes("gpt-6-luna (high)")) + 1
+	];
 };
 
 test("the context row's percentage, eight-cell meter and colors follow the principal header's rounded rules, uncapped above 100%", async (t) => {
@@ -3289,37 +3606,103 @@ test("the context row's percentage, eight-cell meter and colors follow the princ
 		[300_000, "ctx ▰ ▰ ▰ ▰ ▰ ▰ ▰ ▰  150% · 300K / 200K", "error"],
 	]) {
 		await t.test(`${tokens} of 200K`, async (t) => {
-			const { view } = contextView(t, record("5636"), { capacity: 200_000, tokens, last: false });
+			const { view } = contextView(t, record("5636"), {
+				capacity: 200_000,
+				tokens,
+				last: false,
+			});
 			await settle(view, 60);
 			const raw = contextRawOf(view, 60);
-			assert.equal(plain(raw).replace(/^ │ {2}/, "").trimEnd().replace(/ +│$/, ""), row);
+			assert.equal(
+				plain(raw)
+					.replace(/^ │ {2}/, "")
+					.trimEnd()
+					.replace(/ +│$/, ""),
+				row,
+			);
 			const percent = row.match(/\d+%/)[0];
 			assert.ok(raw.includes(theme.fg(color, percent)), raw);
-			const main = renderHeader(theme, { branch: null, cwd: "/", home: "/", working: 0, usage: { tokens, contextWindow: 200_000 } }, 120)[0];
+			const main = renderHeader(
+				theme,
+				{
+					branch: null,
+					cwd: "/",
+					home: "/",
+					working: 0,
+					usage: { tokens, contextWindow: 200_000 },
+				},
+				120,
+			)[0];
 			const start = main.indexOf(theme.fg("dim", "ctx"));
-			const meter = main.slice(start, main.indexOf(theme.fg(color, percent)) + theme.fg(color, percent).length);
-			assert.ok(raw.includes(meter), `${JSON.stringify(meter)} in ${JSON.stringify(raw)}`);
+			const meter = main.slice(
+				start,
+				main.indexOf(theme.fg(color, percent)) +
+					theme.fg(color, percent).length,
+			);
+			assert.ok(
+				raw.includes(meter),
+				`${JSON.stringify(meter)} in ${JSON.stringify(raw)}`,
+			);
 		});
 	}
 });
 
 test("the context row tells unavailable, unknown occupancy and retained readings apart, and an ended child's reading is last", async (t) => {
 	const running = record("5636");
-	const ended = record("5636", { state: "completed", endedAt: now, text: "Done." });
+	const ended = record("5636", {
+		state: "completed",
+		endedAt: now,
+		text: "Done.",
+	});
 	for (const [name, child, context, row] of [
-		["queued", record("5636", { state: "queued", startedAt: undefined }), undefined, "ctx unavailable"],
+		[
+			"queued",
+			record("5636", { state: "queued", startedAt: undefined }),
+			undefined,
+			"ctx unavailable",
+		],
 		["no measurement", running, undefined, "ctx unavailable"],
-		["unknown occupancy", running, { capacity: 200_000, tokens: null, last: false }, "ctx ? · 200K"],
-		["retained reading", running, { capacity: 200_000, tokens: 100_000, last: true }, "ctx ▰ ▰ ▰ ▰ ▱ ▱ ▱ ▱  50% · 100K / 200K · last"],
-		["retained unknown occupancy", running, { capacity: 200_000, tokens: null, last: true }, "ctx ? · 200K · last"],
-		["ended reading", ended, { capacity: 200_000, tokens: 100_000, last: false }, "ctx ▰ ▰ ▰ ▰ ▱ ▱ ▱ ▱  50% · 100K / 200K · last"],
-		["ended unknown occupancy", ended, { capacity: 200_000, tokens: null, last: false }, "ctx ? · 200K · last"],
+		[
+			"unknown occupancy",
+			running,
+			{ capacity: 200_000, tokens: null, last: false },
+			"ctx ? · 200K",
+		],
+		[
+			"retained reading",
+			running,
+			{ capacity: 200_000, tokens: 100_000, last: true },
+			"ctx ▰ ▰ ▰ ▰ ▱ ▱ ▱ ▱  50% · 100K / 200K · last",
+		],
+		[
+			"retained unknown occupancy",
+			running,
+			{ capacity: 200_000, tokens: null, last: true },
+			"ctx ? · 200K · last",
+		],
+		[
+			"ended reading",
+			ended,
+			{ capacity: 200_000, tokens: 100_000, last: false },
+			"ctx ▰ ▰ ▰ ▰ ▱ ▱ ▱ ▱  50% · 100K / 200K · last",
+		],
+		[
+			"ended unknown occupancy",
+			ended,
+			{ capacity: 200_000, tokens: null, last: false },
+			"ctx ? · 200K · last",
+		],
 		["ended without a measurement", ended, undefined, "ctx unavailable"],
 	]) {
 		await t.test(name, async (t) => {
 			const { view } = contextView(t, child, context);
 			await settle(view, 60);
-			assert.equal(plain(contextRawOf(view, 60)).replace(/^ │ {2}/, "").replace(/ +│$/, ""), row);
+			assert.equal(
+				plain(contextRawOf(view, 60))
+					.replace(/^ │ {2}/, "")
+					.replace(/ +│$/, ""),
+				row,
+			);
 		});
 	}
 });
@@ -3352,10 +3735,17 @@ test("a narrowing detail drops the meter, then the counts, then clips the contex
 			const { view } = contextView(t, record("5636"), contexts[name]);
 			await settle(view, 60);
 			for (const [width, row] of expected) {
-				assert.equal(plain(view.lines(width)[3]).replace(/^ │ {1,2}/, "").replace(/ +│$/, ""), row, `${width}`);
+				assert.equal(
+					plain(view.lines(width)[3])
+						.replace(/^ │ {1,2}/, "")
+						.replace(/ +│$/, ""),
+					row,
+					`${width}`,
+				);
 			}
 			for (let width = 60; width >= 1; width--) {
-				for (const line of view.raw(width)) assert.ok(visibleWidth(line) <= width, `${width}: ${line}`);
+				for (const line of view.raw(width))
+					assert.ok(visibleWidth(line) <= width, `${width}: ${line}`);
 			}
 			assert.equal(plain(view.lines(4)[3]), "│c…│");
 		});
@@ -3364,15 +3754,40 @@ test("a narrowing detail drops the meter, then the counts, then clips the contex
 
 test("a reopened history child shows its recovered context as last, and unavailable without a valid snapshot", async (t) => {
 	const root = withAgentDirectory(t);
-	const numeric = record("5636", { state: "completed", endedAt: now, text: "Done." });
-	const unknown = record("9e01", { state: "completed", endedAt: now, text: "Done." });
+	const numeric = record("5636", {
+		state: "completed",
+		endedAt: now,
+		text: "Done.",
+	});
+	const unknown = record("9e01", {
+		state: "completed",
+		endedAt: now,
+		text: "Done.",
+	});
 	const interrupted = record("a809");
-	const never = record("b7c2", { state: "completed", endedAt: now, text: "Done." });
+	const never = record("b7c2", {
+		state: "completed",
+		endedAt: now,
+		text: "Done.",
+	});
 	const before = audited(t, [numeric, unknown, interrupted, never], { root });
-	before.captures[numeric.id].context({ capacity: 200_000, tokens: 100_000, last: false });
-	before.captures[unknown.id].context({ capacity: 200_000, tokens: null, last: false });
-	before.captures[interrupted.id].context({ capacity: 200_000, tokens: 50_000, last: false });
-	for (const child of [numeric, unknown, never]) before.audit.execution(child.id, "completed");
+	before.captures[numeric.id].context({
+		capacity: 200_000,
+		tokens: 100_000,
+		last: false,
+	});
+	before.captures[unknown.id].context({
+		capacity: 200_000,
+		tokens: null,
+		last: false,
+	});
+	before.captures[interrupted.id].context({
+		capacity: 200_000,
+		tokens: 50_000,
+		last: false,
+	});
+	for (const child of [numeric, unknown, never])
+		before.audit.execution(child.id, "completed");
 	before.audit.execution(interrupted.id, "running");
 	await before.audit.close();
 
@@ -3383,8 +3798,13 @@ test("a reopened history child shows its recovered context as last, and unavaila
 	for (let i = 0; i < 4; i++) {
 		view.press("\r");
 		const shown = (await settle(view, 60)).split("\n")[1];
-		const child = [numeric, unknown, interrupted, never].find(({ id }) => shown.includes(`worker ${id.slice(0, 4)}`));
-		rows[child.id] = plain(contextRawOf(view, 60)).replace(/^ │ {2}/, "").trimEnd().replace(/ +│$/, "");
+		const child = [numeric, unknown, interrupted, never].find(({ id }) =>
+			shown.includes(`worker ${id.slice(0, 4)}`),
+		);
+		rows[child.id] = plain(contextRawOf(view, 60))
+			.replace(/^ │ {2}/, "")
+			.trimEnd()
+			.replace(/ +│$/, "");
 		view.press("\x1b", "j");
 	}
 	assert.deepEqual(rows, {

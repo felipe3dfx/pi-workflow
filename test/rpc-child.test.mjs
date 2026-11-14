@@ -2,7 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import childProcess from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import {
+	chmod,
+	mkdir,
+	mkdtemp,
+	realpath,
+	rm,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { syncBuiltinESMExports } from "node:module";
 import { VERSION } from "@earendil-works/pi-coding-agent";
@@ -28,7 +35,9 @@ import { eventually } from "./support/eventually.mjs";
 import { manualClock } from "./support/manual-clock.mjs";
 
 const fakePi = fileURLToPath(new URL("./support/fake-pi.mjs", import.meta.url));
-const childRuntime = fileURLToPath(new URL("../extensions/child-runtime.ts", import.meta.url));
+const childRuntime = fileURLToPath(
+	new URL("../extensions/child-runtime.ts", import.meta.url),
+);
 
 async function scratch(t) {
 	const dir = await mkdtemp(join(tmpdir(), "pi-workflow-rpc-child-"));
@@ -123,14 +132,23 @@ async function piOnPath(t, version, status = 0) {
 	t.after(() => {
 		process.env.PATH = path;
 	});
-	return { pi: join(dir, "pi"), checks: () => (existsSync(checks) ? readFileSync(checks, "utf8").length : 0) };
+	return {
+		pi: join(dir, "pi"),
+		checks: () =>
+			existsSync(checks) ? readFileSync(checks, "utf8").length : 0,
+	};
 }
 
 for (const version of ["1.4.0", "1.10.0", "2.0.0"]) {
 	test(`a child runs a Pi ${version} on PATH, inside the supported range though it differs from the parent's Pi`, async (t) => {
 		assert.notEqual(version, VERSION);
 		await piOnPath(t, version);
-		const { handle } = await fakeChild(t, "complete", {}, { command: undefined });
+		const { handle } = await fakeChild(
+			t,
+			"complete",
+			{},
+			{ command: undefined },
+		);
 		assert.equal(await handle.run("Say done."), "DONE");
 	});
 }
@@ -145,7 +163,12 @@ for (const version of ["0.9.0", "1.3.9"]) {
 }
 
 for (const [name, output, status, reported] of [
-	["reports an unreadable version", "pi unknown", 0, 'reported version "pi unknown", which is not readable'],
+	[
+		"reports an unreadable version",
+		"pi unknown",
+		0,
+		'reported version "pi unknown", which is not readable',
+	],
 	["fails its version check", "", 1, "has no readable version"],
 ]) {
 	test(`a child refuses a Pi on PATH that ${name}, naming the supported range`, async (t) => {
@@ -165,7 +188,10 @@ test("a factory checks the version of the Pi on PATH once, and its readiness tim
 			return () => {};
 		},
 	};
-	const create = createRpcChildSession({ ...options, sessionRoot: join(await scratch(t), "sessions") });
+	const create = createRpcChildSession({
+		...options,
+		sessionRoot: join(await scratch(t), "sessions"),
+	});
 	const spec = {
 		cwd: tmpdir(),
 		project: { cwd: tmpdir(), trusted: false },
@@ -220,7 +246,9 @@ test("an RPC child runs as its own Pi process in its worktree with the selected 
 	);
 	assert.ok(argv.includes("--no-extensions"));
 	assert.deepEqual(
-		argv.flatMap((arg, index) => (arg === "--extension" ? [argv[index + 1]] : [])),
+		argv.flatMap((arg, index) =>
+			arg === "--extension" ? [argv[index + 1]] : [],
+		),
 		["builtin:mcp", childRuntime],
 	);
 	assert.deepEqual(JSON.parse(value("--pi-workflow-child")), {
@@ -232,13 +260,28 @@ test("an RPC child runs as its own Pi process in its worktree with the selected 
 });
 
 test("an RPC child gets codegraph when the parent has CodeGraph seated", async (t) => {
-	const seated = Object.fromEntries(capabilities.map((capability) => [capability, false]));
-	replaceSelection({ schemaVersion: 1, capabilities: { ...seated, codegraph: true }, expectations: {} });
-	t.after(() => replaceSelection({ schemaVersion: 1, capabilities: seated, expectations: {} }));
+	const seated = Object.fromEntries(
+		capabilities.map((capability) => [capability, false]),
+	);
+	replaceSelection({
+		schemaVersion: 1,
+		capabilities: { ...seated, codegraph: true },
+		expectations: {},
+	});
+	t.after(() =>
+		replaceSelection({
+			schemaVersion: 1,
+			capabilities: seated,
+			expectations: {},
+		}),
+	);
 	const { handle, launched } = await fakeChild(t, "complete");
 	await handle.run("Say done.");
 	const { argv } = launched();
-	assert.equal(JSON.parse(argv[argv.indexOf("--pi-workflow-child") + 1]).codegraph, true);
+	assert.equal(
+		JSON.parse(argv[argv.indexOf("--pi-workflow-child") + 1]).codegraph,
+		true,
+	);
 });
 
 test("an RPC child asks the parent over its channel and continues with the answer", async (t) => {
@@ -256,10 +299,15 @@ test("an RPC child asks the parent over its channel and continues with the answe
 test("an RPC consultation carries its structural reference", async (t) => {
 	const received = [];
 	const { handle } = await fakeChild(t, "ask-consultation", {
-		ask: async (question, signal, consultation) => { received.push({ question, signal: !!signal, consultation }); return "answer"; },
+		ask: async (question, signal, consultation) => {
+			received.push({ question, signal: !!signal, consultation });
+			return "answer";
+		},
 	});
 	assert.equal(await handle.run("Ask first."), "ANSWER answer");
-	assert.deepEqual(received, [{ question: "Which file?", signal: true, consultation: "q12345678" }]);
+	assert.deepEqual(received, [
+		{ question: "Which file?", signal: true, consultation: "q12345678" },
+	]);
 });
 
 test("a consultation the parent cannot answer reaches the child as an error", async (t) => {
@@ -298,7 +346,10 @@ test("a late answer to a question the child withdrew is refused", async (t) => {
 		delete process.env.FAKE_PI_LINGER_MS;
 	});
 	const core = createChildSessions({
-		create: createRpcChildSession({ command: [process.execPath, fakePi], sessionRoot: join(dir, "sessions") }),
+		create: createRpcChildSession({
+			command: [process.execPath, fakePi],
+			sessionRoot: join(dir, "sessions"),
+		}),
 		send() {},
 		idle: () => false,
 		trace() {},
@@ -307,16 +358,38 @@ test("a late answer to a question the child withdrew is refused", async (t) => {
 	});
 	t.after(() => core.disposeAll());
 	const { id } = await core.start(
-		{ role: "worker", contract: { prompt: "You are a child.", tools: [] }, task: "Ask.", worktree: dir, model: "fake/echo", thinking: "off", chosenBy: "parent", references: [] },
-		{ background: true, project: () => ({ cwd: dir, trusted: false }), shell: () => ({}) },
+		{
+			role: "worker",
+			contract: { prompt: "You are a child.", tools: [] },
+			task: "Ask.",
+			worktree: dir,
+			model: "fake/echo",
+			thinking: "off",
+			chosenBy: "parent",
+			references: [],
+		},
+		{
+			background: true,
+			project: () => ({ cwd: dir, trusted: false }),
+			shell: () => ({}),
+		},
 	);
-	await eventually(() => core.get(id), (child) => child?.state === "waiting");
-	await eventually(() => core.get(id), (child) => child?.state === "running");
+	await eventually(
+		() => core.get(id),
+		(child) => child?.state === "waiting",
+	);
+	await eventually(
+		() => core.get(id),
+		(child) => child?.state === "running",
+	);
 	assert.throws(
 		() => core.reply(id, 1, "late", "parent"),
 		/Question 1 of child .* was withdrawn: the call that asked it ended/,
 	);
-	await eventually(() => core.get(id), (child) => child?.state === "completed");
+	await eventually(
+		() => core.get(id),
+		(child) => child?.state === "completed",
+	);
 });
 
 test("a child's session directory outlives the child for continue_child and is removed when the parent ends its children", async (t) => {
@@ -327,7 +400,10 @@ test("a child's session directory outlives the child for continue_child and is r
 		delete process.env.FAKE_PI_SCENARIO;
 	});
 	const core = createChildSessions({
-		create: createRpcChildSession({ command: [process.execPath, fakePi], sessionRoot: sessions }),
+		create: createRpcChildSession({
+			command: [process.execPath, fakePi],
+			sessionRoot: sessions,
+		}),
 		send() {},
 		idle: () => false,
 		trace() {},
@@ -335,10 +411,26 @@ test("a child's session directory outlives the child for continue_child and is r
 		audit: createChildAudit({ root: "", parent: () => undefined }),
 	});
 	const { id } = await core.start(
-		{ role: "worker", contract: { prompt: "You are a child.", tools: [] }, task: "Say done.", worktree: dir, model: "fake/echo", thinking: "off", chosenBy: "parent", references: [] },
-		{ background: true, project: () => ({ cwd: dir, trusted: false }), shell: () => ({}) },
+		{
+			role: "worker",
+			contract: { prompt: "You are a child.", tools: [] },
+			task: "Say done.",
+			worktree: dir,
+			model: "fake/echo",
+			thinking: "off",
+			chosenBy: "parent",
+			references: [],
+		},
+		{
+			background: true,
+			project: () => ({ cwd: dir, trusted: false }),
+			shell: () => ({}),
+		},
 	);
-	await eventually(() => core.get(id), (child) => child?.state === "completed");
+	await eventually(
+		() => core.get(id),
+		(child) => child?.state === "completed",
+	);
 	assert.equal(readdirSync(sessions).length, 1);
 	await core.disposeAll();
 	assert.deepEqual(readdirSync(sessions), []);
@@ -355,7 +447,8 @@ test("pruning removes the child session directories of parents that are gone and
 	const root = join(agentDir, "pi-workflow-children");
 	const gone = String(childProcess.spawnSync(process.execPath, ["-e", ""]).pid);
 	const kept = [String(process.pid), String(process.ppid)];
-	for (const name of [...kept, gone, "6f1c2b8e-legacy"]) await mkdir(join(root, name, "child"), { recursive: true });
+	for (const name of [...kept, gone, "6f1c2b8e-legacy"])
+		await mkdir(join(root, name, "child"), { recursive: true });
 	await pruneChildSessions();
 	assert.deepEqual(readdirSync(root).sort(), kept.sort());
 });
@@ -370,7 +463,8 @@ test("a child that disconnects withdraws its open question", async (t) => {
 	});
 	const run = handle.run("Ask first.");
 	run.catch(() => {});
-	while (signals.length === 0) await new Promise((resolve) => setTimeout(resolve, 5));
+	while (signals.length === 0)
+		await new Promise((resolve) => setTimeout(resolve, 5));
 	assert.equal(signals[0].aborted, false);
 	await handle.dispose();
 	assert.equal(signals[0].aborted, true);
@@ -422,7 +516,12 @@ test("a child's structured report reaches the parent apart from its final answer
 	});
 	assert.equal(await handle.run("Work."), "DONE");
 	assert.deepEqual(reports, [
-		{ verdict: "done", files_changed: ["a.ts: added"], validation: [], left_undone: [] },
+		{
+			verdict: "done",
+			files_changed: ["a.ts: added"],
+			validation: [],
+			left_undone: [],
+		},
 	]);
 });
 
@@ -430,7 +529,10 @@ test("an oversized channel frame fails the child", async (t) => {
 	assert.equal(channelFrameLimit, 1024 * 1024);
 	process.env.FAKE_PI_FRAME_BYTES = String(channelFrameLimit + 1);
 	const { handle } = await fakeChild(t, "oversize");
-	await assert.rejects(handle.run("Say done."), /channel frame over 1048576 bytes/);
+	await assert.rejects(
+		handle.run("Say done."),
+		/channel frame over 1048576 bytes/,
+	);
 });
 
 test("a malformed record from the child fails that child", async (t) => {
@@ -440,20 +542,31 @@ test("a malformed record from the child fails that child", async (t) => {
 				process.env.FAKE_PI_MALFORMED = line;
 				process.env.FAKE_PI_MALFORMED_ON = on;
 				const { handle } = await fakeChild(t, "malformed");
-				await assert.rejects(handle.run("Say done."), /malformed record was refused/);
+				await assert.rejects(
+					handle.run("Say done."),
+					/malformed record was refused/,
+				);
 			});
 		}
 	}
 });
 
 test("readiness waits for the child runtime to connect its channel", async (t) => {
-	const { handle } = await fakeChild(t, "no-runtime", {}, {
-		schedule(run, ms) {
-			if (ms === readinessDeadline) setTimeout(run, 200);
-			return () => {};
+	const { handle } = await fakeChild(
+		t,
+		"no-runtime",
+		{},
+		{
+			schedule(run, ms) {
+				if (ms === readinessDeadline) setTimeout(run, 200);
+				return () => {};
+			},
 		},
-	});
-	await assert.rejects(handle.run("Say done."), /did not become ready within 10000 ms/);
+	);
+	await assert.rejects(
+		handle.run("Say done."),
+		/did not become ready within 10000 ms/,
+	);
 });
 
 test("a trusted parent launches its RPC child with exactly --approve", async (t) => {
@@ -478,14 +591,26 @@ test("RPC events reach onEvent in the SDK shape with one cumulative assistant me
 	);
 	assert.deepEqual(
 		assistant.map((event) => event.type),
-		["message_start", "message_update", "message_update", "message_update", "message_update", "message_end"],
+		[
+			"message_start",
+			"message_update",
+			"message_update",
+			"message_update",
+			"message_update",
+			"message_end",
+		],
 	);
 	assert.ok(assistant.every((event) => event.message === assistant[0].message));
-	assert.deepEqual(assistant[0].message.content, [{ type: "text", text: "DONE" }]);
+	assert.deepEqual(assistant[0].message.content, [
+		{ type: "text", text: "DONE" },
+	]);
 	assert.equal(assistant[0].message.stopReason, "stop");
 	assert.equal(events.at(-1).type, "agent_settled");
 	assert.deepEqual(
-		handle.entries().filter((entry) => entry.type === "message").map((entry) => entry.message.role),
+		handle
+			.entries()
+			.filter((entry) => entry.type === "message")
+			.map((entry) => entry.message.role),
 		["user", "assistant"],
 	);
 });
@@ -496,8 +621,15 @@ test("an RPC child fetches its transcript when it is read and when its run ends,
 	t.after(() => {
 		delete process.env.FAKE_PI_COMMANDS;
 	});
-	const fetches = () => readFileSync(commands, "utf8").split("\n").filter((type) => type === "get_entries").length;
-	const roles = (handle) => handle.entries().filter((entry) => entry.type === "message").map((entry) => entry.message.role);
+	const fetches = () =>
+		readFileSync(commands, "utf8")
+			.split("\n")
+			.filter((type) => type === "get_entries").length;
+	const roles = (handle) =>
+		handle
+			.entries()
+			.filter((entry) => entry.type === "message")
+			.map((entry) => entry.message.role);
 
 	const complete = await fakeChild(t, "complete");
 	await complete.handle.run("Say done.");
@@ -507,9 +639,15 @@ test("an RPC child fetches its transcript when it is read and when its run ends,
 
 	const steering = await fakeChild(t, "steer");
 	const run = steering.handle.run("Wait.");
-	await eventually(() => steering.events.some((event) => event.type === "message_end"), Boolean);
+	await eventually(
+		() => steering.events.some((event) => event.type === "message_end"),
+		Boolean,
+	);
 	assert.deepEqual(roles(steering.handle), []);
-	await eventually(() => roles(steering.handle), (read) => read.length === 1);
+	await eventually(
+		() => roles(steering.handle),
+		(read) => read.length === 1,
+	);
 	await steering.handle.abort();
 	await assert.rejects(run, /aborted/);
 });
@@ -534,24 +672,37 @@ test("an RPC child that dies after launch fails its run with the exit", async (t
 
 test("an RPC child that cannot start fails its run with its diagnostics", async (t) => {
 	const { handle } = await fakeChild(t, "refuse");
-	await assert.rejects(handle.run("Say done."), /exited with code 3.*fake pi refused to start/s);
+	await assert.rejects(
+		handle.run("Say done."),
+		/exited with code 3.*fake pi refused to start/s,
+	);
 });
 
 test("an RPC child whose executable is missing fails its run with the spawn error", async (t) => {
-	const { handle } = await fakeChild(t, "complete", {}, { command: [join(tmpdir(), "pi-workflow-missing-pi")] });
+	const { handle } = await fakeChild(
+		t,
+		"complete",
+		{},
+		{ command: [join(tmpdir(), "pi-workflow-missing-pi")] },
+	);
 	await assert.rejects(handle.run("Say done."), /ENOENT/);
 });
 
 test("readiness is a correlated state reply within the readiness deadline", async (t) => {
 	assert.equal(readinessDeadline, 10_000);
 	const scheduled = [];
-	const { handle } = await fakeChild(t, "silent", {}, {
-		schedule(run, ms) {
-			scheduled.push(ms);
-			if (ms === readinessDeadline) setImmediate(run);
-			return () => {};
+	const { handle } = await fakeChild(
+		t,
+		"silent",
+		{},
+		{
+			schedule(run, ms) {
+				scheduled.push(ms);
+				if (ms === readinessDeadline) setImmediate(run);
+				return () => {};
+			},
 		},
-	});
+	);
 	await assert.rejects(
 		handle.run("Say done."),
 		/did not become ready within 10000 ms/,
@@ -562,7 +713,10 @@ test("readiness is a correlated state reply within the readiness deadline", asyn
 test("readiness refuses a Pi process running another session or model", async (t) => {
 	for (const [scenario, message] of [
 		["other-session", /session other instead of/],
-		["other-model", /fake\/other at off instead of the selected fake\/echo at off/],
+		[
+			"other-model",
+			/fake\/other at off instead of the selected fake\/echo at off/,
+		],
 	]) {
 		await t.test(scenario, async (t) => {
 			const { handle } = await fakeChild(t, scenario);
@@ -574,15 +728,39 @@ test("readiness refuses a Pi process running another session or model", async (t
 test("readiness refuses a child that lacks a contract tool, except codegraph while CodeGraph is unseated", async (t) => {
 	process.env.FAKE_PI_LACKS = "bash";
 	const lacking = await fakeChild(t, "complete");
-	await assert.rejects(lacking.handle.run("Say done."), /lacks the contract tools bash\./);
+	await assert.rejects(
+		lacking.handle.run("Say done."),
+		/lacks the contract tools bash\./,
+	);
 	process.env.FAKE_PI_LACKS = "codegraph";
-	const unseated = await fakeChild(t, "complete", { role: "verify", tools: ["read", "codegraph", "ask_parent"] });
+	const unseated = await fakeChild(t, "complete", {
+		role: "verify",
+		tools: ["read", "codegraph", "ask_parent"],
+	});
 	assert.equal(await unseated.handle.run("Say done."), "DONE");
-	const capabilityOff = Object.fromEntries(capabilities.map((capability) => [capability, false]));
-	replaceSelection({ schemaVersion: 1, capabilities: { ...capabilityOff, codegraph: true }, expectations: {} });
-	t.after(() => replaceSelection({ schemaVersion: 1, capabilities: capabilityOff, expectations: {} }));
-	const seated = await fakeChild(t, "complete", { role: "verify", tools: ["read", "codegraph", "ask_parent"] });
-	await assert.rejects(seated.handle.run("Say done."), /lacks the contract tools codegraph\./);
+	const capabilityOff = Object.fromEntries(
+		capabilities.map((capability) => [capability, false]),
+	);
+	replaceSelection({
+		schemaVersion: 1,
+		capabilities: { ...capabilityOff, codegraph: true },
+		expectations: {},
+	});
+	t.after(() =>
+		replaceSelection({
+			schemaVersion: 1,
+			capabilities: capabilityOff,
+			expectations: {},
+		}),
+	);
+	const seated = await fakeChild(t, "complete", {
+		role: "verify",
+		tools: ["read", "codegraph", "ask_parent"],
+	});
+	await assert.rejects(
+		seated.handle.run("Say done."),
+		/lacks the contract tools codegraph\./,
+	);
 });
 
 test("an RPC child whose transcript cannot be read fails its run", async (t) => {
@@ -611,13 +789,18 @@ test("cancelling an RPC child asks it to abort, then kills its whole process tre
 	t.after(() => {
 		delete process.env.FAKE_PI_COMMANDS;
 	});
-	const { handle, launched } = await fakeChild(t, "linger", {}, {
-		schedule(run, ms) {
-			waits.push(ms);
-			const timer = setTimeout(run, ms === shutdownDeadline ? 10 : ms);
-			return () => clearTimeout(timer);
+	const { handle, launched } = await fakeChild(
+		t,
+		"linger",
+		{},
+		{
+			schedule(run, ms) {
+				waits.push(ms);
+				const timer = setTimeout(run, ms === shutdownDeadline ? 10 : ms);
+				return () => clearTimeout(timer);
+			},
 		},
-	});
+	);
 	await handle.run("Say done.");
 	const pids = [launched().pid, ...(await tree())];
 	await handle.dispose();
@@ -650,12 +833,17 @@ test("every child end sweeps the child's process tree exactly once", async (t) =
 	});
 	await t.test("past the shutdown deadline", async (t) => {
 		const processes = spawned(t);
-		const { handle } = await fakeChild(t, "linger", {}, {
-			schedule(run, ms) {
-				const timer = setTimeout(run, ms === shutdownDeadline ? 10 : ms);
-				return () => clearTimeout(timer);
+		const { handle } = await fakeChild(
+			t,
+			"linger",
+			{},
+			{
+				schedule(run, ms) {
+					const timer = setTimeout(run, ms === shutdownDeadline ? 10 : ms);
+					return () => clearTimeout(timer);
+				},
 			},
-		});
+		);
 		await handle.run("Say done.");
 		await handle.dispose();
 		assert.equal(sweeps(processes), 1);
@@ -670,7 +858,10 @@ test("an RPC child that crashes leaves no descendant within the tree deadline", 
 	const pids = await tree();
 	await run;
 	const crashed = Date.now();
-	await eventually(() => pids.filter(alive), (left) => left.length === 0);
+	await eventually(
+		() => pids.filter(alive),
+		(left) => left.length === 0,
+	);
 	assert.ok(Date.now() - crashed < treeDeadline);
 });
 
@@ -694,11 +885,16 @@ test("a parent that exits or is killed leaves no RPC child or descendant within 
 				ending,
 			});
 			assert.equal(started.answer, "DONE");
-			const pids = [JSON.parse(readFileSync(record, "utf8")).pid, ...(await tree())];
+			const pids = [
+				JSON.parse(readFileSync(record, "utf8")).pid,
+				...(await tree()),
+			];
 			started.end();
 			const elapsed = await gone(pids, await started.exited);
 			assert.ok(elapsed < treeDeadline, `cleanup took ${elapsed} ms`);
-			t.diagnostic(`no child process remains ${elapsed} ms after the parent ${ending === "SIGKILL" ? "was killed" : "exited"}`);
+			t.diagnostic(
+				`no child process remains ${elapsed} ms after the parent ${ending === "SIGKILL" ? "was killed" : "exited"}`,
+			);
 		});
 	}
 });
@@ -713,12 +909,32 @@ test("a contextual RPC child loads the common tool sources by path with no tool 
 	const { argv } = launched();
 	assert.equal(argv.includes("--tools"), false);
 	assert.deepEqual(
-		argv.flatMap((arg, index) => (arg === "--extension" ? [argv[index + 1]] : [])),
-		["builtin:mcp", "builtin:tool-search", join(dir, "tools/selected.ts"), childRuntime],
+		argv.flatMap((arg, index) =>
+			arg === "--extension" ? [argv[index + 1]] : [],
+		),
+		[
+			"builtin:mcp",
+			"builtin:tool-search",
+			join(dir, "tools/selected.ts"),
+			childRuntime,
+		],
 	);
-	assert.deepEqual(JSON.parse(argv[argv.indexOf("--pi-workflow-child") + 1]).contextual, {
-		active: ["read", "bash", "edit", "write", "grep", "find", "ls", "codemode", "tool_search"],
-	});
+	assert.deepEqual(
+		JSON.parse(argv[argv.indexOf("--pi-workflow-child") + 1]).contextual,
+		{
+			active: [
+				"read",
+				"bash",
+				"edit",
+				"write",
+				"grep",
+				"find",
+				"ls",
+				"codemode",
+				"tool_search",
+			],
+		},
+	);
 });
 
 test("an RPC child refuses common tool factories, which cannot load in its process", async (t) => {
@@ -748,9 +964,19 @@ test("the parent's contextual policy answers its RPC child and held decisions st
 			},
 		},
 	});
-	const decision = { kind: "held", reason: "The scope is unknown.", call: "call-1" };
+	const decision = {
+		kind: "held",
+		reason: "The scope is unknown.",
+		call: "call-1",
+	};
 	assert.deepEqual(JSON.parse(await handle.run("Act.")), [
-		{ id: 1, answer: JSON.stringify({ assignment: "Edit assigned.txt", instructions: [] }) },
+		{
+			id: 1,
+			answer: JSON.stringify({
+				assignment: "Edit assigned.txt",
+				instructions: [],
+			}),
+		},
 		{ id: 2, answer: JSON.stringify({ reason: "unknown" }) },
 		{ id: 3, answer: "null" },
 	]);
@@ -765,22 +991,40 @@ test("the parent's contextual policy answers its RPC child and held decisions st
 test("an operational RPC child gets no answer from a contextual policy", async (t) => {
 	const { handle } = await fakeChild(t, "policy");
 	const replies = JSON.parse(await handle.run("Act."));
-	assert.deepEqual(replies[0], { id: 1, error: "This child has no contextual authorization." });
+	assert.deepEqual(replies[0], {
+		id: 1,
+		error: "This child has no contextual authorization.",
+	});
 });
 
 test("a checkpoint the RPC child commits is recorded by the parent", async (t) => {
 	const recorded = [];
-	const { handle } = await fakeChild(t, "checkpoint", { checkpointed: (checkpoint) => recorded.push(checkpoint) });
+	const { handle } = await fakeChild(t, "checkpoint", {
+		checkpointed: (checkpoint) => recorded.push(checkpoint),
+	});
 	assert.equal(await handle.run("Commit."), "DONE");
-	assert.deepEqual(recorded, [{ sha: "c0ffee", parent: "base", base: "base", branch: "feature" }]);
+	assert.deepEqual(recorded, [
+		{ sha: "c0ffee", parent: "base", base: "base", branch: "feature" },
+	]);
 });
 
 test("a granted RPC worker receives its checkpoint grant", async (t) => {
-	const grant = { branch: "feature", root: "/repo", gitDir: "/repo/.git", commonDir: "/repo/.git", base: "base" };
-	const { handle, launched } = await fakeChild(t, "complete", { checkpoint: grant });
+	const grant = {
+		branch: "feature",
+		root: "/repo",
+		gitDir: "/repo/.git",
+		commonDir: "/repo/.git",
+		base: "base",
+	};
+	const { handle, launched } = await fakeChild(t, "complete", {
+		checkpoint: grant,
+	});
 	await handle.run("Say done.");
 	const { argv } = launched();
-	assert.deepEqual(JSON.parse(argv[argv.indexOf("--pi-workflow-child") + 1]).checkpoint, grant);
+	assert.deepEqual(
+		JSON.parse(argv[argv.indexOf("--pi-workflow-child") + 1]).checkpoint,
+		grant,
+	);
 });
 
 test("an RPC child refuses construction when Pi is not installed", async (t) => {
@@ -791,7 +1035,14 @@ test("an RPC child refuses construction when Pi is not installed", async (t) => 
 	});
 	const create = createRpcChildSession();
 	await assert.rejects(
-		create({ cwd: "/tmp", project: { cwd: "/tmp", trusted: false }, model: "fake/echo", thinking: "off", tools: [], prompt: "" }),
+		create({
+			cwd: "/tmp",
+			project: { cwd: "/tmp", trusted: false },
+			model: "fake/echo",
+			thinking: "off",
+			tools: [],
+			prompt: "",
+		}),
 		/Pi was not found on PATH/,
 	);
 });
@@ -811,26 +1062,42 @@ async function agentWith(t, packages) {
 	const modules = join(agentDir, "npm", "node_modules");
 	for (const [name, manifest] of Object.entries(packages)) {
 		await mkdir(join(modules, name, "src"), { recursive: true });
-		await writeFile(join(modules, name, "package.json"), JSON.stringify({ name, ...manifest }));
-		if (manifest.pi) await writeFile(join(modules, name, "src", "index.ts"), "export default () => {};\n");
+		await writeFile(
+			join(modules, name, "package.json"),
+			JSON.stringify({ name, ...manifest }),
+		);
+		if (manifest.pi)
+			await writeFile(
+				join(modules, name, "src", "index.ts"),
+				"export default () => {};\n",
+			);
 	}
 	await writeFile(
 		join(agentDir, "settings.json"),
-		JSON.stringify({ packages: Object.keys(packages).map((name) => `npm:${name}`) }),
+		JSON.stringify({
+			packages: Object.keys(packages).map((name) => `npm:${name}`),
+		}),
 	);
 	return { modules };
 }
 
 const bridgeManifest = {
 	version: "0.9.3",
-	repository: { type: "git", url: "git+https://github.com/elidickinson/pi-claude-bridge.git" },
+	repository: {
+		type: "git",
+		url: "git+https://github.com/elidickinson/pi-claude-bridge.git",
+	},
 	pi: { extensions: ["./src/index.ts"] },
 };
 const extensionsOf = (argv) =>
-	argv.flatMap((arg, index) => (arg === "--extension" ? [argv[index + 1]] : []));
+	argv.flatMap((arg, index) =>
+		arg === "--extension" ? [argv[index + 1]] : [],
+	);
 
 test("an explorer RPC child receives the pi-web-access extension and other roles do not", async (t) => {
-	const { modules } = await agentWith(t, { "pi-web-access": { pi: { extensions: ["./src/index.ts"] } } });
+	const { modules } = await agentWith(t, {
+		"pi-web-access": { pi: { extensions: ["./src/index.ts"] } },
+	});
 	const explorer = await fakeChild(t, "complete", { role: "explore" });
 	await explorer.handle.run("Say done.");
 	assert.deepEqual(extensionsOf(explorer.launched().argv).slice(1), [
@@ -839,12 +1106,20 @@ test("an explorer RPC child receives the pi-web-access extension and other roles
 	]);
 	const worker = await fakeChild(t, "complete");
 	await worker.handle.run("Say done.");
-	assert.deepEqual(extensionsOf(worker.launched().argv), ["builtin:mcp", childRuntime]);
+	assert.deepEqual(extensionsOf(worker.launched().argv), [
+		"builtin:mcp",
+		childRuntime,
+	]);
 });
 
 test("a Claude Bridge RPC child receives the official provider extension and a native model child does not", async (t) => {
-	const { modules } = await agentWith(t, { "pi-claude-bridge": bridgeManifest });
-	const bridge = await fakeChild(t, "complete", { role: "worker", model: "claude-bridge/claude-haiku-4-5" });
+	const { modules } = await agentWith(t, {
+		"pi-claude-bridge": bridgeManifest,
+	});
+	const bridge = await fakeChild(t, "complete", {
+		role: "worker",
+		model: "claude-bridge/claude-haiku-4-5",
+	});
 	await bridge.handle.run("Say done.");
 	assert.deepEqual(extensionsOf(bridge.launched().argv).slice(1), [
 		await realpath(join(modules, "pi-claude-bridge", "src", "index.ts")),
@@ -852,29 +1127,48 @@ test("a Claude Bridge RPC child receives the official provider extension and a n
 	]);
 	const native = await fakeChild(t, "complete");
 	await native.handle.run("Say done.");
-	assert.deepEqual(extensionsOf(native.launched().argv), ["builtin:mcp", childRuntime]);
+	assert.deepEqual(extensionsOf(native.launched().argv), [
+		"builtin:mcp",
+		childRuntime,
+	]);
 });
 
 test("a missing pi-web-access or Claude Bridge package fails the launch with its cause", async (t) => {
 	await agentWith(t, {});
-	await assert.rejects(fakeChild(t, "complete", { role: "explore" }), /pi-web-access is not installed locally, so the explorer has no web tools/);
 	await assert.rejects(
-		fakeChild(t, "complete", { role: "worker", model: "claude-bridge/claude-haiku-4-5" }),
+		fakeChild(t, "complete", { role: "explore" }),
+		/pi-web-access is not installed locally, so the explorer has no web tools/,
+	);
+	await assert.rejects(
+		fakeChild(t, "complete", {
+			role: "worker",
+			model: "claude-bridge/claude-haiku-4-5",
+		}),
 		/official pi-claude-bridge package is not installed and configured/,
 	);
 });
 
 test("a pi-web-access package without an extension fails the launch with its cause", async (t) => {
 	await agentWith(t, { "pi-web-access": {} });
-	await assert.rejects(fakeChild(t, "complete", { role: "explore" }), /pi-web-access could not be loaded, so the explorer has no web tools/);
+	await assert.rejects(
+		fakeChild(t, "complete", { role: "explore" }),
+		/pi-web-access could not be loaded, so the explorer has no web tools/,
+	);
 });
 
-const usage = (tokens, contextWindow = 200_000) => ({ contextUsage: { tokens, contextWindow, percent: 99 } });
+const usage = (tokens, contextWindow = 200_000) => ({
+	contextUsage: { tokens, contextWindow, percent: 99 },
+});
 
 async function measured(t, stats, options) {
 	process.env.FAKE_PI_STATS = JSON.stringify(stats);
 	const states = [];
-	const child = await fakeChild(t, "context", { context: (state) => states.push(state) }, options);
+	const child = await fakeChild(
+		t,
+		"context",
+		{ context: (state) => states.push(state) },
+		options,
+	);
 	const run = child.handle.run("Work.");
 	run.catch(() => {});
 	return { ...child, states, run, latest: () => states.at(-1) };
@@ -882,25 +1176,37 @@ async function measured(t, stats, options) {
 
 test("an RPC child measures its own context when its run starts and after each completed assistant response", async (t) => {
 	const { handle, latest } = await measured(t, [usage(50_000), usage(80_000)]);
-	assert.deepEqual(await eventually(latest), { capacity: 200_000, tokens: 50_000, last: false });
-	await handle.steer("reply");
-	assert.deepEqual(await eventually(latest, (state) => state?.tokens === 80_000), {
+	assert.deepEqual(await eventually(latest), {
 		capacity: 200_000,
-		tokens: 80_000,
+		tokens: 50_000,
 		last: false,
 	});
+	await handle.steer("reply");
+	assert.deepEqual(
+		await eventually(latest, (state) => state?.tokens === 80_000),
+		{
+			capacity: 200_000,
+			tokens: 80_000,
+			last: false,
+		},
+	);
 });
 
 const querying = (clock) => () => clock.pending().includes(readinessDeadline);
 
-const unknown = (contextWindow = 200_000) => ({ contextUsage: { tokens: null, contextWindow, percent: null } });
+const unknown = (contextWindow = 200_000) => ({
+	contextUsage: { tokens: null, contextWindow, percent: null },
+});
 
 test("a measurement without a positive context window means unavailable, not a failure that keeps the earlier reading", async (t) => {
 	for (const [name, step] of [
 		["no context usage", {}],
 		["a zero window", usage(10, 0)],
 		["no window", { contextUsage: { tokens: 10, percent: 1 } }],
-		["a null window", { contextUsage: { tokens: 10, contextWindow: null, percent: null } }],
+		[
+			"a null window",
+			{ contextUsage: { tokens: 10, contextWindow: null, percent: null } },
+		],
 	]) {
 		await t.test(name, async (t) => {
 			const { handle, states } = await measured(t, [usage(50_000), step]);
@@ -919,12 +1225,19 @@ test("a measurement without a positive context window means unavailable, not a f
 test("a failed, malformed or late measurement keeps only the still-valid reading marked last, and the run still completes", async (t) => {
 	for (const [name, step] of [
 		["error reply", "fail"],
-		["malformed reply", { contextUsage: { tokens: "many", contextWindow: 200_000 } }],
+		[
+			"malformed reply",
+			{ contextUsage: { tokens: "many", contextWindow: 200_000 } },
+		],
 		["reply after the deadline", { hold: usage(90_000) }],
 	]) {
 		await t.test(name, async (t) => {
 			const clock = manualClock();
-			const { handle, states, latest, run } = await measured(t, [usage(50_000), step, usage(70_000)], clock);
+			const { handle, states, latest, run } = await measured(
+				t,
+				[usage(50_000), step, usage(70_000)],
+				clock,
+			);
 			await eventually(latest);
 			await handle.steer("reply");
 			if (step.hold) {
@@ -945,11 +1258,17 @@ test("a failed, malformed or late measurement keeps only the still-valid reading
 		});
 	}
 	await t.test("without an earlier reading", async (t) => {
-		const { handle, states, run } = await measured(t, ["fail", "fail", usage(5_000)]);
+		const { handle, states, run } = await measured(t, [
+			"fail",
+			"fail",
+			usage(5_000),
+		]);
 		await handle.steer("reply");
 		await handle.steer("reply");
 		await eventually(() => states.length === 1);
-		assert.deepEqual(states, [{ capacity: 200_000, tokens: 5_000, last: false }]);
+		assert.deepEqual(states, [
+			{ capacity: 200_000, tokens: 5_000, last: false },
+		]);
 		await handle.steer("finish");
 		assert.equal(await run, "SETTLED");
 	});
@@ -970,15 +1289,27 @@ test("a successful compaction invalidates occupancy in receipt order and no earl
 			const before = states.length;
 			await handle.steer(order);
 			if (order === "compact") await handle.steer("release");
-			assert.deepEqual(await eventually(latest, (state) => state.tokens === null && !state.last), {
-				capacity: 200_000,
-				tokens: null,
-				last: false,
-			});
+			assert.deepEqual(
+				await eventually(
+					latest,
+					(state) => state.tokens === null && !state.last,
+				),
+				{
+					capacity: 200_000,
+					tokens: null,
+					last: false,
+				},
+			);
 			await handle.steer("reply");
 			await eventually(latest, (state) => state.tokens === 5_000);
-			const after = states.slice(order === "release-compact" ? before + 1 : before, -1);
-			assert.ok(after.every((state) => state.tokens === null), JSON.stringify(after));
+			const after = states.slice(
+				order === "release-compact" ? before + 1 : before,
+				-1,
+			);
+			assert.ok(
+				after.every((state) => state.tokens === null),
+				JSON.stringify(after),
+			);
 		});
 	}
 });
@@ -986,10 +1317,16 @@ test("a successful compaction invalidates occupancy in receipt order and no earl
 test("a failed or aborted compaction alone keeps the valid reading", async (t) => {
 	for (const outcome of ["compact-failed", "compact-aborted"]) {
 		await t.test(outcome, async (t) => {
-			const { handle, states, latest } = await measured(t, [usage(150_000), usage(160_000)]);
+			const { handle, states, latest } = await measured(t, [
+				usage(150_000),
+				usage(160_000),
+			]);
 			await eventually(latest);
 			await handle.steer(outcome);
-			await eventually(latest, (state) => state.tokens === 160_000 && !state.last);
+			await eventually(
+				latest,
+				(state) => state.tokens === 160_000 && !state.last,
+			);
 			assert.ok(states.every((state) => state.tokens !== null));
 		});
 	}
@@ -1008,7 +1345,10 @@ test("a context consumer that throws is reported through the child's notices and
 	await eventually(() => states.length === 1);
 	await handle.steer("reply");
 	await eventually(() => states.at(-1)?.tokens === 80_000);
-	assert.deepEqual(notes, Array(states.length).fill("The Fleet view could not repaint."));
+	assert.deepEqual(
+		notes,
+		Array(states.length).fill("The Fleet view could not repaint."),
+	);
 });
 
 test("measurement triggers during a query coalesce into one later query", async (t) => {
@@ -1017,14 +1357,21 @@ test("measurement triggers during a query coalesce into one later query", async 
 	t.after(() => {
 		delete process.env.FAKE_PI_COMMANDS;
 	});
-	const { handle, latest } = await measured(t, [usage(1_000), { hold: usage(2_000) }, usage(3_000), usage(4_000)]);
+	const { handle, latest } = await measured(t, [
+		usage(1_000),
+		{ hold: usage(2_000) },
+		usage(3_000),
+		usage(4_000),
+	]);
 	await eventually(latest);
 	for (let i = 0; i < 3; i++) await handle.steer("reply");
 	await handle.steer("release");
 	await eventually(latest, (state) => state.tokens === 3_000);
 	await handle.steer("reply");
 	await eventually(latest, (state) => state.tokens === 4_000);
-	const queries = readFileSync(commands, "utf8").split("\n").filter((type) => type === "get_session_stats");
+	const queries = readFileSync(commands, "utf8")
+		.split("\n")
+		.filter((type) => type === "get_session_stats");
 	assert.equal(queries.length, 4);
 });
 
@@ -1032,7 +1379,11 @@ test("a child that dies or is disposed during a measurement keeps its reading ma
 	for (const ending of ["die", "dispose"]) {
 		await t.test(ending, async (t) => {
 			const clock = manualClock();
-			const { handle, latest, run } = await measured(t, [usage(50_000), { hold: usage(90_000) }], clock);
+			const { handle, latest, run } = await measured(
+				t,
+				[usage(50_000), { hold: usage(90_000) }],
+				clock,
+			);
 			await eventually(latest);
 			await handle.steer("reply");
 			await eventually(querying(clock));
@@ -1043,7 +1394,11 @@ test("a child that dies or is disposed during a measurement keeps its reading ma
 				await handle.dispose();
 			}
 			await handle.dispose();
-			assert.deepEqual(latest(), { capacity: 200_000, tokens: 50_000, last: true });
+			assert.deepEqual(latest(), {
+				capacity: 200_000,
+				tokens: 50_000,
+				last: true,
+			});
 			assert.deepEqual(clock.pending(), []);
 		});
 	}
@@ -1057,23 +1412,35 @@ test("a streamed response is measured once when it completes, not on each token"
 	});
 	process.env.FAKE_PI_STATS = JSON.stringify([usage(1_000), usage(2_000)]);
 	const states = [];
-	const { handle, events } = await fakeChild(t, "complete", { context: (state) => states.push(state) });
+	const { handle, events } = await fakeChild(t, "complete", {
+		context: (state) => states.push(state),
+	});
 	assert.equal(await handle.run("Say done."), "DONE");
 	await eventually(() => states.at(-1)?.tokens === 2_000);
-	assert.ok(events.filter((event) => event.type === "message_update").length > 1);
-	const queries = readFileSync(commands, "utf8").split("\n").filter((type) => type === "get_session_stats");
+	assert.ok(
+		events.filter((event) => event.type === "message_update").length > 1,
+	);
+	const queries = readFileSync(commands, "utf8")
+		.split("\n")
+		.filter((type) => type === "get_session_stats");
 	assert.equal(queries.length, 2);
 });
 
 test("a successful compaction clears occupancy before any later reading, and a child that then dies keeps unknown occupancy marked last", async (t) => {
-	const { handle, latest, run } = await measured(t, [usage(150_000), { hold: usage(10_000) }]);
+	const { handle, latest, run } = await measured(t, [
+		usage(150_000),
+		{ hold: usage(10_000) },
+	]);
 	await eventually(latest);
 	await handle.steer("compact");
-	assert.deepEqual(await eventually(latest, (state) => state.tokens !== 150_000), {
-		capacity: 200_000,
-		tokens: null,
-		last: true,
-	});
+	assert.deepEqual(
+		await eventually(latest, (state) => state.tokens !== 150_000),
+		{
+			capacity: 200_000,
+			tokens: null,
+			last: true,
+		},
+	);
 	await handle.steer("die").catch(() => {});
 	await assert.rejects(run, /exited with code 9/);
 	assert.deepEqual(latest(), { capacity: 200_000, tokens: null, last: true });

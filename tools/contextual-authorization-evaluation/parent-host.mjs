@@ -166,20 +166,22 @@ try {
 		sources: {},
 		childSessions: {
 			create: (spec) =>
-				track(rpc({
-					...spec,
-					onEvent(event) {
-						if (
-							event.type === "tool_execution_end" &&
-							event.toolName === "write"
-						)
-							result.childWriteResults.push({
-								call: event.toolCallId,
-								isError: event.isError === true,
-							});
-						spec.onEvent(event);
-					},
-				})),
+				track(
+					rpc({
+						...spec,
+						onEvent(event) {
+							if (
+								event.type === "tool_execution_end" &&
+								event.toolName === "write"
+							)
+								result.childWriteResults.push({
+									call: event.toolCallId,
+									isError: event.isError === true,
+								});
+							spec.onEvent(event);
+						},
+					}),
+				),
 		},
 		authorization: {
 			authority: ({ cwd }) => ({
@@ -285,7 +287,9 @@ try {
 		session.dispose();
 	}
 	// On macOS the sweep finds a child only through the process-group records kept under TMPDIR, inside dir.
-	await Promise.allSettled(children.map(async (child) => (await child).dispose()));
+	await Promise.allSettled(
+		children.map(async (child) => (await child).dispose()),
+	);
 	if (endpoint) await endpoint.close();
 	try {
 		result.effect.content = await readFile(marker, "utf8");

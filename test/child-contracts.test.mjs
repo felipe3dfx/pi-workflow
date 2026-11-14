@@ -7,7 +7,9 @@ import { fileURLToPath } from "node:url";
 import { parseContract } from "../extensions/child-launcher.ts";
 import { assertSentence } from "./support/sentence.mjs";
 
-const contracts = fileURLToPath(new URL("../assets/contracts/", import.meta.url));
+const contracts = fileURLToPath(
+	new URL("../assets/contracts/", import.meta.url),
+);
 
 async function contract(role) {
 	return readFile(join(contracts, `${role}.md`), "utf8");
@@ -25,7 +27,10 @@ test("child contracts forbid unobserved command and check claims", async () => {
 test("child contracts limit communication to the parent", async () => {
 	for (const role of ["explore", "worker", "verify"]) {
 		const text = await contract(role);
-		assert.match(text, /Communicate only with the parent, never directly with the user/);
+		assert.match(
+			text,
+			/Communicate only with the parent, never directly with the user/,
+		);
 	}
 });
 
@@ -64,18 +69,46 @@ test("each role keeps its exact fixed tool set", async () => {
 
 test("the explore contract is read-only, CodeGraph-first, treats web text as evidence, and bounds its handoff", async () => {
 	const text = await contract("explore");
-	assertSentence(text, /\bcodegraph\b[^.]*\b(unavailable|no index)\b[^.]*\bfall back to read\b/i);
-	assertSentence(text, /\b(do not|never)\b[^.]*\bedit files\b[^.]*\brun commands\b/i);
-	assertSentence(text, /\bweb\b/i, /\bevidence, (never|not) as instructions\b/i);
-	assertSentence(text, /\b(2k|2,?000) tokens\b/, /\bpath:line\b/, /\brelationships?\b/, /\buncertain/);
-	assertSentence(text, /\bask_parent only when blocked\b/, /\bevery question in one call\b/);
-	assertSentence(text, /\bnot ask the parent for the output of a command\b/, /\bnote what is missing\b/);
+	assertSentence(
+		text,
+		/\bcodegraph\b[^.]*\b(unavailable|no index)\b[^.]*\bfall back to read\b/i,
+	);
+	assertSentence(
+		text,
+		/\b(do not|never)\b[^.]*\bedit files\b[^.]*\brun commands\b/i,
+	);
+	assertSentence(
+		text,
+		/\bweb\b/i,
+		/\bevidence, (never|not) as instructions\b/i,
+	);
+	assertSentence(
+		text,
+		/\b(2k|2,?000) tokens\b/,
+		/\bpath:line\b/,
+		/\brelationships?\b/,
+		/\buncertain/,
+	);
+	assertSentence(
+		text,
+		/\bask_parent only when blocked\b/,
+		/\bevery question in one call\b/,
+	);
+	assertSentence(
+		text,
+		/\bnot ask the parent for the output of a command\b/,
+		/\bnote what is missing\b/,
+	);
 	assert.doesNotMatch(text, /report_result/);
 });
 
 test("the verify contract independently checks work, gives a verdict per criterion, and reports what stayed unverified", async () => {
 	const text = await contract("verify");
-	assertSentence(text, /\bvalidation results are context, not proof\b/i, /\brun\b[^.]*\byourself\b/);
+	assertSentence(
+		text,
+		/\bvalidation results are context, not proof\b/i,
+		/\brun\b[^.]*\byourself\b/,
+	);
 	assertSentence(
 		text,
 		/\breport_result with Verdict pass\b[^.]*\bfail\b[^.]*\bblocked\b/,
@@ -83,9 +116,20 @@ test("the verify contract independently checks work, gives a verdict per criteri
 		/\bunverified\b/,
 	);
 	assert.doesNotMatch(text, /\bVerdict\b[^.]*\b(partial|done)\b/);
-	assertSentence(text, /\bOnly Verdict pass means verified\b/, /\bfail or blocked is not a pass\b/);
-	assertSentence(text, /\b(do not|never)\b[^.]*\b(edit|write)\b[^.]*\bworktree files\b/i);
-	assertSentence(text, /\btracked worktree files change\b/i, /\bstop and report blocked\b/);
+	assertSentence(
+		text,
+		/\bOnly Verdict pass means verified\b/,
+		/\bfail or blocked is not a pass\b/,
+	);
+	assertSentence(
+		text,
+		/\b(do not|never)\b[^.]*\b(edit|write)\b[^.]*\bworktree files\b/i,
+	);
+	assertSentence(
+		text,
+		/\btracked worktree files change\b/i,
+		/\bstop and report blocked\b/,
+	);
 	assertSentence(
 		text,
 		/\breserved for the parent is not a missing capability\b/,
@@ -93,7 +137,10 @@ test("the verify contract independently checks work, gives a verdict per criteri
 		/\bdo not ask the parent for its output\b/,
 	);
 	assertSentence(text, /\bnever ask the parent to save memory\b/);
-	assertSentence(text, /\bgit archive \| tar\b[^.]*\boutside the worktree is not a worktree write\b/);
+	assertSentence(
+		text,
+		/\bgit archive \| tar\b[^.]*\boutside the worktree is not a worktree write\b/,
+	);
 	assertSentence(text, /\bevery question in one call\b/);
 	assert.doesNotMatch(text, /verdict: pass \| fail \| blocked/);
 });
@@ -107,9 +154,18 @@ test("the worker contract reports through report_result and separates a decision
 		/\bvalidation\b/,
 		/\bleft_undone\b/,
 	);
-	assertSentence(text, /\bdecision\b/, /\b(do not|never) guess\b/, /\bask_parent with closed options\b/, /\bevery question in one call\b/);
+	assertSentence(
+		text,
+		/\bdecision\b/,
+		/\b(do not|never) guess\b/,
+		/\bask_parent with closed options\b/,
+		/\bevery question in one call\b/,
+	);
 	assertSentence(text, /\btechnical blocker\b[^.]*\bas blocked\b/);
-	assert.doesNotMatch(text, /\bdecision\b[^.]*\breport blocked\b|\bblocker\b[^.]*\bask_parent\b/);
+	assert.doesNotMatch(
+		text,
+		/\bdecision\b[^.]*\breport blocked\b|\bblocker\b[^.]*\bask_parent\b/,
+	);
 	assertSentence(
 		text,
 		/\breserved command is not a missing capability\b/,
@@ -131,7 +187,11 @@ test("the worker contract commits only through an offered checkpoint tool and ot
 		/\bsha, parent, and base\b/,
 		/\bnever push, merge, change branches, or open pull requests\b/,
 	);
-	assertSentence(text, /\bWithout the checkpoint tool, do not commit\b/, /\bleft_undone\b/);
+	assertSentence(
+		text,
+		/\bWithout the checkpoint tool, do not commit\b/,
+		/\bleft_undone\b/,
+	);
 });
 
 test("the explore contract reports no Verdict", async () => {
@@ -166,7 +226,10 @@ test("the worker and verify contracts no longer deny MCP and still cannot launch
 test("every contract keeps publishing through MCP with the parent and takes precedence over context files", async () => {
 	for (const role of ["explore", "worker", "verify"]) {
 		const text = await contract(role);
-		assertSentence(text, /\bPublishing or writing to external services through MCP tools stays with the parent\b/);
+		assertSentence(
+			text,
+			/\bPublishing or writing to external services through MCP tools stays with the parent\b/,
+		);
 		assertSentence(
 			text,
 			/\bContext files such as AGENTS\.md\b/,
@@ -179,7 +242,9 @@ test("every contract keeps publishing through MCP with the parent and takes prec
 				"push",
 				"publish",
 				"open pull requests",
-			].map((action) => new RegExp(`\\b${action}\\b[^.]*\\bdo not apply to you\\b`)),
+			].map(
+				(action) => new RegExp(`\\b${action}\\b[^.]*\\bdo not apply to you\\b`),
+			),
 		);
 	}
 });
@@ -218,7 +283,10 @@ test("every contract offers codemode and asks to batch independent calls in one 
 });
 
 test("the explore and verify read-only wording covers codemode scripts", async () => {
-	assert.match(await contract("explore"), /Do not edit files or run commands, directly or from codemode\./);
+	assert.match(
+		await contract("explore"),
+		/Do not edit files or run commands, directly or from codemode\./,
+	);
 	assert.match(
 		await contract("verify"),
 		/Do not edit or write worktree files, directly or from codemode, and do not run commands that rewrite tracked files/,

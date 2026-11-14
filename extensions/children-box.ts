@@ -11,9 +11,7 @@ import {
 	isWorking,
 } from "./child-sessions.ts";
 import { type Schedule, scheduleTimer } from "./clock.ts";
-import {
-	occupyAboveInput,
-} from "./shell.ts";
+import { occupyAboveInput } from "./shell.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
 import { spinnerMs, spread, workingFrames } from "./visual-language.ts";
 

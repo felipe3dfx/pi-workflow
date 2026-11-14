@@ -17,7 +17,11 @@ import {
 import { selectionWith } from "./support/selection.mjs";
 
 const theme = {};
-const packages = ["gentle-engram", "@gtrabanco/pi-nan-provider", "pi-web-access"];
+const packages = [
+	"gentle-engram",
+	"@gtrabanco/pi-nan-provider",
+	"pi-web-access",
+];
 
 test("reading the absent-file selection seats no capability", () => {
 	assert.equal(readSelection(undefined, packages).status, "ready");
