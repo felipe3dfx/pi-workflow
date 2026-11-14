@@ -4,7 +4,7 @@ description: "Trigger: review a pull request as a whole for a human reviewer, or
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "1.5"
+  version: "1.6"
   provenance: derived
 ---
 
@@ -36,7 +36,7 @@ Resolve every source from what the repository configures, never assuming a provi
 ## Execution Steps
 
 1. **Pin** the base, the head SHA, and the commits, plus the head a prior review covered, if one exists; every finding refers to code at the pinned head SHA.
-2. **Review along three axes**, each dispatched to its own isolated context, in parallel when the harness allows. Give each axis the pinned base and head, its own sources by path or tracker identifier, never their content, and this skill's read-only rule; in a later round, add the prior head and the prior review's findings, each to the axis whose scope it falls under, Correctness when unclear, to verify each against the head and read the delta since the prior head with the code it affects, leaving unchanged code closed. An axis receives no other axis's findings. Only when the harness cannot open another context, run the axes in this one, one at a time, and tell the reviewer they were not isolated. Each completes its own pass: Correctness when every requirement line maps to code or is reported missing, Standards and Decisions when every changed file has been read.
+2. **Review along three axes**, each dispatched to its own isolated context, in parallel when the harness allows. Give each axis the pinned base and head, its own sources by path or tracker identifier, never their content, and this skill's read-only rule; open each in a context that can run read-only git commands against the pinned commits, never one limited to reading files, and tell it never to run tests, linters, or builds; in a later round, add the prior head and the prior review's findings, each to the axis whose scope it falls under, Correctness when unclear, to verify each against the head and read the delta since the prior head with the code it affects, leaving unchanged code closed. An axis receives no other axis's findings. Only when the harness cannot open another context, run the axes in this one, one at a time, and tell the reviewer they were not isolated. Each completes its own pass: Correctness when every requirement line maps to code or is reported missing, Standards and Decisions when every changed file has been read.
    - **Correctness**: the change against its requirement and as a whole: missing, partial, or wrong behavior, effects on callers and sibling paths that share a changed invariant, and changes outside the requirement's scope.
    - **Standards**: style, the repository's standards, domain rules, architecture, and design quality, from the standards sources only.
    - **Decisions**: each new or modified decision record, and each significant departure from the repository's usual flow, architecture, or standards. Present its documented justification, benefits, costs, risks, and consequences, and what calls for human judgment. Never invent a motivation: say when none is documented. A departure is not wrong by being one, not every decision needs a record, and a defect belongs to the other axes.

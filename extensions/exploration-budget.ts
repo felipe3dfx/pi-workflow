@@ -182,5 +182,5 @@ export function explorationNotice(
 	{ lookups, textBytes }: ExplorationFacts,
 	mode: DelegationModeName,
 ): string {
-	return `Exploration budget: ${lookups.toLocaleString("en-US")} tracked lookups and ${textBytes.toLocaleString("en-US")} UTF-8 text bytes (an approximate evidence budget). Ongoing discovery needs an explore child through spawn_child, even if read-only or initially small. ${mode === "orchestrator" ? "Reading that prepares a writer belongs in that writer's task." : "Preparation for an already-understood inline write remains exempt."} This is runtime context for the original task, not a new user request. This notice grants no mutation or guard bypass authority.`;
+	return `Exploration budget: ${lookups.toLocaleString("en-US")} tracked lookups and ${textBytes.toLocaleString("en-US")} UTF-8 text bytes (an approximate evidence budget). Ongoing discovery needs an explore child through spawn_child, or a verify child when it checks a change, even if read-only or initially small. ${mode === "orchestrator" ? "Reading that prepares a writer belongs in that writer's task." : "Preparation for an already-understood inline write remains exempt."} This is runtime context for the original task, not a new user request. This notice grants no mutation or guard bypass authority.`;
 }

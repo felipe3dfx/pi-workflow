@@ -132,7 +132,7 @@ test("the verify contract independently checks work, gives a verdict per criteri
 	);
 	assertSentence(
 		text,
-		/\breserved for the parent is not a missing capability\b/,
+		/\breserved for the parent, or one the task forbids, is not a missing capability\b/,
 		/\bunverified\b/,
 		/\bdo not ask the parent for its output\b/,
 	);

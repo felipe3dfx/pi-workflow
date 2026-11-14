@@ -337,7 +337,7 @@ test("the notice states the evidence budget, the explore child, the mode and tha
 	const tail =
 		"This is runtime context for the original task, not a new user request. This notice grants no mutation or guard bypass authority.";
 	const head =
-		"Exploration budget: 1,234 tracked lookups and 56,789 UTF-8 text bytes (an approximate evidence budget). Ongoing discovery needs an explore child through spawn_child, even if read-only or initially small.";
+		"Exploration budget: 1,234 tracked lookups and 56,789 UTF-8 text bytes (an approximate evidence budget). Ongoing discovery needs an explore child through spawn_child, or a verify child when it checks a change, even if read-only or initially small.";
 	const facts = { lookups: 1234, textBytes: 56789 };
 	assert.equal(
 		explorationNotice(facts, "orchestrator"),
