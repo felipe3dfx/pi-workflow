@@ -1385,7 +1385,7 @@ const spawnChildParameters = Type.Object({
 	todo: Type.Optional(
 		Type.Integer({
 			description:
-				"The id of the Todo task this child executes. The task becomes in progress when the launch is accepted. The launch is refused when the task does not exist, is done, or the Todo is not seated.",
+				"The id of the Todo task this child executes. The task becomes in progress when the launch is accepted. The launch is refused when the task does not exist, is done, or the Todo is disabled.",
 		}),
 	),
 	background: Type.Optional(
@@ -1404,7 +1404,8 @@ type Outcome = {
 
 const launchLimitReason = `The parent already has ${launchLimit} working children (queued, running, or waiting). Launch more after some of them end.`;
 
-const unseatedMessage = "Child session is not seated. Run /workflow:config.";
+const unseatedMessage =
+	"Child session is disabled. Enable it in /workflow:config.";
 
 const noStandInLine =
 	"Do not stand in for the child with another agent process, such as Pi or another model CLI started from the shell. Tell the operator that no child ran and why; any work you then do yourself is yours, not a child's or an independent agent's.";

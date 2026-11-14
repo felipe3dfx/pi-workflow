@@ -130,7 +130,7 @@ export function describePlan(
 		const was = before.capabilities[capability];
 		const next = after.capabilities[capability];
 		if (was === next) continue;
-		lines.push(`${next ? "Seat" : "Unseat"} ${capability}`);
+		lines.push(`${next ? "Enable" : "Disable"} ${capability}`);
 	}
 	for (const name of plan.install) lines.push(`Install ${name}`);
 	for (const name of plan.leaveInstalled) lines.push(`Leave installed ${name}`);

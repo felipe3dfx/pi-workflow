@@ -371,7 +371,7 @@ export default function piWorkflowExtension(
 		ctx: ExtensionCommandContext,
 	) {
 		if (args.trim()) {
-			report(ctx, usage, "error");
+			report(ctx, usage, "warning");
 			return;
 		}
 		currentCtx = ctx;
@@ -395,12 +395,12 @@ export default function piWorkflowExtension(
 			"Configure companions, harness capabilities, and Delegation mode",
 		handler: async (args, ctx) => {
 			if (args.trim()) {
-				report(ctx, usage, "error");
+				report(ctx, usage, "warning");
 				return;
 			}
 			currentCtx = ctx;
 			if (!ctx.hasUI || ctx.mode !== "tui") {
-				report(ctx, "Configure needs the TUI.", "error");
+				report(ctx, "Configure needs the TUI.", "warning");
 				return;
 			}
 			const read = seating.read();
@@ -434,19 +434,19 @@ export default function piWorkflowExtension(
 		description: "Open the subagents view of this session",
 		handler: async (args, ctx) => {
 			if (args.trim()) {
-				report(ctx, usage, "error");
+				report(ctx, usage, "warning");
 				return;
 			}
 			if (!seated("child-session", "overlay")) {
 				report(
 					ctx,
-					"Child session is not seated. Run /workflow:config.",
-					"error",
+					"Child session is disabled. Enable it in /workflow:config.",
+					"warning",
 				);
 				return;
 			}
 			if (ctx.mode !== "tui") {
-				report(ctx, "The children view needs the TUI.", "error");
+				report(ctx, "The children view needs the TUI.", "warning");
 				return;
 			}
 			await childrenViews.open(ctx);
@@ -456,7 +456,7 @@ export default function piWorkflowExtension(
 		description: "Edit the global model profiles in the TUI",
 		handler: async (args, ctx) => {
 			if (args.trim()) {
-				report(ctx, usage, "error");
+				report(ctx, usage, "warning");
 				return;
 			}
 			await modelProfiles.edit(ctx);

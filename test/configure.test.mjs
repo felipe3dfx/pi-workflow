@@ -50,7 +50,7 @@ test("the configure plan names seats, installs, and what stays installed", () =>
 			{ package: "pi-web-access", status: "installed" },
 		]),
 		[
-			"Unseat compact-rendering",
+			"Disable compact-rendering",
 			"Install @gtrabanco/pi-nan-provider",
 			"Leave installed pi-web-access",
 			"Does not uninstall packages.",

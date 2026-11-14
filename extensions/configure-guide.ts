@@ -430,10 +430,10 @@ function createConfigGuide(
 			)
 			.map(
 				(capability) =>
-					`${draft.capabilities[capability] ? "Seat" : "Unseat"} ${capabilityCopy[capability][0]}`,
+					`${draft.capabilities[capability] ? "Enable" : "Disable"} ${capabilityCopy[capability][0]}`,
 			);
 		if (seating.length) {
-			lines.push("", sectionRule(t, "Seating", inner));
+			lines.push("", sectionRule(t, "Capabilities", inner));
 			for (const line of seating) {
 				lines.push(`  ${t.fg("text", line)}`);
 			}

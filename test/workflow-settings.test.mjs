@@ -80,13 +80,13 @@ test("/workflow:config rejects the settings argument and unknown arguments, and 
 
 	for (const args of ["--force", "settings"]) {
 		await command.handler(args, { hasUI: true, mode: "tui", ui: { notify } });
-		assert.equal(notifications.at(-1).level, "error");
+		assert.equal(notifications.at(-1).level, "warning");
 		assert.match(notifications.at(-1).message, /Usage: .*\/workflow:config \|/);
 		assert.doesNotMatch(notifications.at(-1).message, /settings\]/);
 	}
 
 	await command.handler("", { hasUI: true, mode: "print", ui: { notify } });
-	assert.equal(notifications.at(-1).level, "error");
+	assert.equal(notifications.at(-1).level, "warning");
 	assert.match(notifications.at(-1).message, /needs the TUI/);
 });
 
@@ -747,13 +747,13 @@ const changesSection = (review) =>
 		review.findIndex((line) => line.startsWith("Changes")) + 1,
 		review.findIndex(
 			(line) =>
-				line.startsWith("Seating") || line.startsWith("Always on apply"),
+				line.startsWith("Capabilities") || line.startsWith("Always on apply"),
 		),
 	);
 
 for (const [label, seatedOn, expected] of [
-	["a partly seated harness", ["todo"], ["Seat CodeGraph"]],
-	["a fresh installation", [], ["Seat Todo", "Seat CodeGraph"]],
+	["a partly seated harness", ["todo"], ["Enable CodeGraph"]],
+	["a fresh installation", [], ["Enable Todo", "Enable CodeGraph"]],
 ]) {
 	test(`the review compares changes against the selection on disk and lists seating against the seated one, on ${label}`, async (t) => {
 		const dir = withAgentDirectory(t);
@@ -772,9 +772,9 @@ for (const [label, seatedOn, expected] of [
 		});
 		assert.ok(changesSection(review).includes("No changes to your selection."));
 		assert.ok(
-			changesSection(review).every((line) => !/(Seat|Unseat) /.test(line)),
+			changesSection(review).every((line) => !/(Enable|Disable) /.test(line)),
 		);
-		const seating = review.findIndex((line) => line.startsWith("Seating"));
+		const seating = review.findIndex((line) => line.startsWith("Capabilities"));
 		assert.ok(seating > review.findIndex((line) => line.startsWith("Changes")));
 		assert.deepEqual(
 			review.slice(seating + 1, seating + 1 + expected.length),
@@ -786,7 +786,7 @@ for (const [label, seatedOn, expected] of [
 	});
 }
 
-test("a draft edit that unseats a seated capability lists Unseat in the review", async (t) => {
+test("a draft edit that disables an enabled capability lists Disable in the review", async (t) => {
 	const dir = withAgentDirectory(t);
 	await writeFile(selectionFile(dir), JSON.stringify(selectionWith(["todo"])));
 	seatOnly(t, ["todo"]);
@@ -801,15 +801,15 @@ test("a draft edit that unseats a seated capability lists Unseat in the review",
 		panel.handleInput(ESC);
 		panel.handleInput(ESC);
 	});
-	const seating = review.findIndex((line) => line.startsWith("Seating"));
+	const seating = review.findIndex((line) => line.startsWith("Capabilities"));
 	assert.ok(seating > 0);
-	assert.equal(review[seating + 1], "Unseat Todo");
+	assert.equal(review[seating + 1], "Disable Todo");
 	assert.ok(
 		changesSection(review).some((line) => /Todo\s+on → off/.test(line)),
 	);
 });
 
-test("the review has no Seating section when the seated capabilities equal the draft", async (t) => {
+test("the review has no Capabilities section when the enabled capabilities equal the draft", async (t) => {
 	const dir = withAgentDirectory(t);
 	await writeFile(selectionFile(dir), JSON.stringify(selectionWith(["todo"])));
 	seatOnly(t, ["todo"]);
@@ -826,7 +826,7 @@ test("the review has no Seating section when the seated capabilities equal the d
 	assert.equal(heading, "Workflow config › Review");
 	assert.ok(review.includes("No changes to your selection."));
 	assert.ok(review.some((line) => line.startsWith("Always on apply")));
-	assert.ok(review.every((line) => !line.startsWith("Seating")));
+	assert.ok(review.every((line) => !line.startsWith("Capabilities")));
 });
 
 test("an unreadable selection reports the error and does not open the guide", async (t) => {

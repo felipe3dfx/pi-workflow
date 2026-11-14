@@ -183,13 +183,13 @@ export function createModelProfiles(agentDirectory: string) {
 		if (!seated("model-profiles", "overlay")) {
 			report(
 				ctx,
-				"Model profiles are not seated. Run /workflow:config.",
-				"error",
+				"Model profiles are disabled. Enable them in /workflow:config.",
+				"warning",
 			);
 			return { status: "refused" };
 		}
 		if (!ctx.hasUI || ctx.mode !== "tui") {
-			report(ctx, "The model profiles panel needs the TUI.", "error");
+			report(ctx, "The model profiles panel needs the TUI.", "warning");
 			return { status: "refused" };
 		}
 		let openedText: string | undefined;
