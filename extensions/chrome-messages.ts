@@ -463,6 +463,7 @@ function updateContent(
 				: expandedThinking(this, thinkingBlocks, new ThinkingHeader(header, 0));
 			const region = new MouseRegion(thinkingComponent, (event) => {
 				if (event.type !== "click" || event.button !== "left") return undefined;
+				if (!hidden && event.y > 0) return undefined;
 				this.thinkingVisibilityOverrides.set(runIndex, !hidden);
 				if (this.lastMessage) this.updateContent(this.lastMessage);
 				return { handled: true };
