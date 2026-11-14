@@ -312,6 +312,34 @@ test("a click toggles one card, the choice survives Pi's rebuild, and session sh
 	assert.ok(!plain(component).some((line) => line.includes("alt+a")));
 });
 
+test("an open card collapses from its header only, so its body stays selectable", (t) => {
+	const { card } = cards(t);
+	const component = card({
+		customType: "pi-workflow-child-result",
+		details: { ...details, id: "7777bbbb", text: "a\n\nb\n\nc" },
+	});
+	const at = (y) => ({
+		type: "click",
+		button: "left",
+		x: 6,
+		y,
+		width: 90,
+		height: component.render(90).length,
+		screenX: 6,
+		screenY: y,
+	});
+	assert.ok(component.handleMouse(at(1))?.handled);
+	component.invalidate();
+	const open = plain(component);
+	assert.ok(open.length > 3);
+	assert.equal(component.handleMouse(at(3)), undefined);
+	component.invalidate();
+	assert.deepEqual(plain(component), open);
+	assert.ok(component.handleMouse(at(1))?.handled);
+	component.invalidate();
+	assert.ok(plain(component).length < open.length);
+});
+
 test("every card line fits the width it is given", (t) => {
 	const { card } = cards(t);
 	const component = card({
