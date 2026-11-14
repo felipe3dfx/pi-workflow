@@ -221,7 +221,7 @@ test("Pi's public autoload:false resource metadata selects the Bridge runtime an
 	});
 });
 
-test("Bridge inventory follows Pi's public resolution across project delta and shadow cases", async (t) => {
+test("Bridge inventory follows Pi's public resolution across project delta and shadow cases", async () => {
 	const cases = [
 		{
 			name: "bare autoload:false",

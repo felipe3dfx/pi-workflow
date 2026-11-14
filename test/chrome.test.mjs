@@ -123,7 +123,7 @@ test("the context meter keeps its geometric glyphs separated at every width that
 		assert.ok(visibleWidth(line) <= width);
 		assert.match(line, /ctx .*34%/);
 		if (/[▰▱]/.test(line)) {
-			assert.match(line, /ctx ▰ ▰ ▰ ▱ ▱ ▱ ▱ ▱  34%/);
+			assert.match(line, /ctx ▰ ▰ ▰ ▱ ▱ ▱ ▱ ▱ {2}34%/);
 			assert.doesNotMatch(line, /[▰▱]{2}/);
 		}
 	}

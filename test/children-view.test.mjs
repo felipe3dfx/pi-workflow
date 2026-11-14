@@ -937,7 +937,7 @@ test("the detail's input line answers a waiting child, and its text and refusals
 	assert.equal(refused.includes("\x1b[31mred"), false);
 	assert.match(
 		view.lines(160).join("\n"),
-		/Question 3 of child 5636[-0]+ was already answered by the parent:  \[31mred/,
+		/Question 3 of child 5636[-0]+ was already answered by the parent: {2}\[31mred/,
 	);
 	assert.equal(sessions.replies.length, 1);
 });

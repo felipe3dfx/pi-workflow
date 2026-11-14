@@ -789,8 +789,7 @@ test("a real Pi worker's guarded bash refuses a parent command and its report st
 		{
 			tool: "bash",
 			args: {
-				command:
-					'for f in /dev/fd/*; do [ -S "$f" ] && echo "${f##*/} socket"; done; true',
+				command: `for f in /dev/fd/*; do [ -S "$f" ] && echo "\${f##*/} socket"; done; true`,
 			},
 		},
 		{ tool: "report_result", args: result },

@@ -743,7 +743,7 @@ test("a child's git read does not take the index lock", async (t) => {
 	const before = statSync(index).mtimeMs;
 
 	const result = await run(
-		'git status --short; echo "[${GIT_OPTIONAL_LOCKS-}]"',
+		`git status --short; echo "[\${GIT_OPTIONAL_LOCKS-}]"`,
 		dir,
 	);
 
