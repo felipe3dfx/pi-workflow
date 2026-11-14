@@ -15,6 +15,7 @@ import {
 } from "@earendil-works/pi-tui";
 
 import { createChromeEditor, marginFor } from "./chrome-editor.ts";
+import { transcriptCursor } from "./chrome-groups.ts";
 import { displayKey, patchMenus, restoreMenus } from "./chrome-menus.ts";
 import {
 	patchMessages,
@@ -334,6 +335,28 @@ export function registerChrome(
 		for (const tui of renders) tui.requestRender();
 	}
 
+	const navigationHints: Hint[] = [
+		{ key: "↑/↓", action: "move" },
+		{ key: "enter", action: "toggle" },
+		{ key: "esc", action: "back to input" },
+	];
+	function showNavigation() {
+		if (transcriptCursor.active()) {
+			if (hints.get() === undefined) hints.set(navigationHints);
+		} else if (hints.get() === navigationHints) hints.set(undefined);
+		requestRender();
+	}
+	for (const [key, delta, description] of [
+		["alt+k", -1, "Select the previous transcript row"],
+		["alt+j", 1, "Select the next transcript row"],
+	] as const)
+		pi.registerShortcut(key, {
+			description,
+			handler: () => {
+				if (transcriptCursor.move(delta)) requestRender();
+			},
+		});
+
 	function tick() {
 		stopTick?.();
 		stopTick = undefined;
@@ -460,7 +483,11 @@ export function registerChrome(
 				input.addToHistory(text);
 			return input;
 		});
-		unsubscribe = [watchHeader(requestRender), hints.subscribe(requestRender)];
+		unsubscribe = [
+			watchHeader(requestRender),
+			hints.subscribe(requestRender),
+			transcriptCursor.subscribe(showNavigation),
+		];
 	});
 
 	pi.on("agent_start", async () => {

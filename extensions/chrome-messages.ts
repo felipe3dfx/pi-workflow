@@ -27,7 +27,12 @@ import {
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 
-import { markThought, patchChat, restoreChat } from "./chrome-groups.ts";
+import {
+	markThought,
+	patchChat,
+	restoreChat,
+	type Viewport,
+} from "./chrome-groups.ts";
 import {
 	createPatchSet,
 	type PatchMethod,
@@ -549,9 +554,48 @@ function rebuild(this: UserState) {
 	);
 }
 
+type Scroll = {
+	scrollTop: number;
+	viewportHeight: number;
+	isFollowingEnd: boolean;
+	scrollTo(top: number, options?: { disableFollow?: boolean }): void;
+	scrollToEnd(): void;
+};
+
+function transcriptViewport(mode: unknown): Viewport {
+	let following: boolean | undefined;
+	const view = () =>
+		(mode as { transcriptScrollView?: Scroll }).transcriptScrollView;
+	return {
+		reveal(line, total) {
+			const scroll = view();
+			const content = (scroll as { contentHeight?: unknown } | undefined)
+				?.contentHeight;
+			if (!scroll || typeof content !== "number") return;
+			const row = content - total + line;
+			const top = scroll.scrollTop;
+			const height = scroll.viewportHeight;
+			if (row >= top && row < top + height) return;
+			following ??= scroll.isFollowingEnd;
+			scroll.scrollTo(Math.max(0, row - Math.floor(height / 3)), {
+				disableFollow: true,
+			});
+		},
+		restore() {
+			if (following) view()?.scrollToEnd();
+			following = undefined;
+		},
+	};
+}
+
 function foldChat(mode: unknown) {
 	const chat = (mode as { chatContainer?: Container }).chatContainer;
-	if (chat) patchChat(chat, (width) => edgeFor(assistantInset, width));
+	if (chat)
+		patchChat(
+			chat,
+			(width) => edgeFor(assistantInset, width),
+			transcriptViewport(mode),
+		);
 	return chat;
 }
 
