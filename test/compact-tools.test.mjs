@@ -365,6 +365,29 @@ test("an open edit bands added and removed diff lines across the width and leave
 	);
 });
 
+test("an open edit bands every row of a wrapped diff line and stops at the next context line", (t) => {
+	const workflow = withWorkflowTheme(t);
+	const view = loadTools()
+		.get("edit")
+		.renderResult(
+			{
+				content: [{ type: "text", text: "ok" }],
+				details: { diff: `-1 ${"old ".repeat(12)}\n 2 ${"same ".repeat(12)}` },
+			},
+			{ expanded: true, isPartial: false },
+			workflow,
+			renderContext({ path: "a.ts", edits: [] }, true, process.cwd()),
+		);
+	const shown = view.render(30);
+	const removed = shown.filter((line) => line.includes("old"));
+	const same = shown.filter((line) => line.includes("same"));
+	assert.ok(removed.length > 1, shown.join("\n"));
+	assert.ok(same.length > 1, shown.join("\n"));
+	for (const line of removed)
+		assert.ok(line.includes("\x1b[48;2;66;14;20m"), line);
+	for (const line of same) assert.ok(!line.includes("\x1b[48;"), line);
+});
+
 test("an open edit draws no diff band without truecolor", (t) => {
 	const workflow = withWorkflowTheme(t, "256color");
 	const diff = {

@@ -914,7 +914,7 @@ test("patching twice keeps one row margin and restore removes the wrapper", () =
 	assert.ok(!Object.hasOwn(BashExecutionComponent.prototype, "render"));
 });
 
-test("each heading level takes its own theme var color, with Pi's bold and underline kept, and restore returns Pi's heading color", (t) => {
+test("each heading level of Pi's Markdown theme takes its own theme var color, with Pi's bold and underline kept, a Markdown theme of its own keeps its heading, and restore returns Pi's heading color", (t) => {
 	const key = Symbol.for("@earendil-works/pi-coding-agent:theme");
 	const workflow = loadThemeFromPath(
 		new URL("../themes/pi-workflow.json", import.meta.url).pathname,
@@ -926,21 +926,24 @@ test("each heading level takes its own theme var color, with Pi's bold and under
 	});
 	const headingTheme = {
 		...markdownTheme,
-		heading: (text) => `<heading>${text}`,
+		heading: (text) => globalThis[key].fg("mdHeading", text),
 		bold: (text) => `<b>${text}`,
 		underline: (text) => `<u>${text}`,
 	};
 	const source = [1, 2, 3, 4, 5, 6]
 		.map((level) => `${"#".repeat(level)} Level ${level}`)
 		.join("\n\n");
-	const render = () =>
+	const render = (heading = headingTheme.heading) =>
 		new Markdown(
 			source,
 			0,
 			0,
-			new Proxy(headingTheme, {
-				get: (target, name) => target[name] ?? ((text) => text),
-			}),
+			new Proxy(
+				{ ...headingTheme, heading },
+				{
+					get: (target, name) => target[name] ?? ((text) => text),
+				},
+			),
 		)
 			.render(60)
 			.filter((line) => line.trim());
@@ -957,11 +960,17 @@ test("each heading level takes its own theme var color, with Pi's bold and under
 	assert.equal(lines.length, 6);
 	lines.forEach((line, i) => {
 		assert.ok(line.includes(`\x1b[38;2;${rgb[i]}m`), line);
-		assert.ok(!line.includes("<heading>"), line);
 		assert.ok(line.includes("<b>"), line);
 	});
 	assert.ok(lines[0].includes("<u>"));
 	assert.ok(!lines[1].includes("<u>"));
+	const own = render((text) => `<heading>${text}`);
+	assert.ok(
+		own.every(
+			(line) => line.includes("<heading>") && !line.includes("\x1b[38;2;"),
+		),
+		own.join("\n"),
+	);
 
 	globalThis[key] = theme;
 	const fallback = render();
@@ -972,6 +981,8 @@ test("each heading level takes its own theme var color, with Pi's bold and under
 		fallback.join("\n"),
 	);
 
+	globalThis[key] = workflow;
 	restoreMessages();
-	assert.ok(render().every((line) => line.includes("<heading>")));
+	const pi = workflow.fg("mdHeading", "|").split("|")[0];
+	assert.ok(render().every((line) => line.includes(pi)));
 });

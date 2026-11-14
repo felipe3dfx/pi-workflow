@@ -37,17 +37,23 @@ const diffBands = [
 	["toolDiffRemoved", "-", themeBgVar("diffRemovedBg")],
 ] as const;
 
-function diffBand(line: string, width: number) {
-	const content = line.replace(/^ */, "");
+function bandDiff(lines: string[], width: number) {
 	const palette = activeTheme();
-	for (const [token, sign, band] of diffBands) {
-		if (!content.startsWith(`${palette.getFgAnsi(token)}${sign}`)) continue;
-		return band(
+	let current: (typeof diffBands)[number] | undefined;
+	return lines.map((line) => {
+		const content = line.replace(/^ */, "");
+		const signed = diffBands.find(([token, sign]) =>
+			content.startsWith(`${palette.getFgAnsi(token)}${sign}`),
+		);
+		if (signed) current = signed;
+		else if (!current || !content.startsWith(palette.getFgAnsi(current[0])))
+			current = undefined;
+		if (!current) return line;
+		return current[2](
 			`${line}${" ".repeat(Math.max(0, width - visibleWidth(line)))}`,
 			palette,
 		);
-	}
-	return line;
+	});
 }
 
 class View implements Component {
@@ -72,9 +78,9 @@ class View implements Component {
 		if (this.bar === undefined) return this.closed.render(width);
 		const inner = Math.max(1, width - 2);
 		const lines = this.own.render(inner);
-		return (
-			this.bands ? lines.map((line) => diffBand(line, inner)) : lines
-		).map((line) => `${this.bar} ${line}`);
+		return (this.bands ? bandDiff(lines, inner) : lines).map(
+			(line) => `${this.bar} ${line}`,
+		);
 	}
 
 	invalidate() {

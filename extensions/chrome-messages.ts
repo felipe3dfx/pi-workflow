@@ -41,6 +41,7 @@ import {
 import { terminalSafeLine } from "./terminal-safe-text.ts";
 import {
 	formatDuration,
+	initializedTheme,
 	minThoughtMs,
 	theme,
 	themeVar,
@@ -660,14 +661,17 @@ function wrapRenderToken(original: PatchMethod) {
 		...rest: unknown[]
 	) {
 		const render = original as (...args: unknown[]) => unknown;
-		if (token?.type !== "heading") return render.call(this, token, ...rest);
+		const palette = initializedTheme();
 		const saved = this.theme;
+		if (
+			token?.type !== "heading" ||
+			!palette ||
+			saved.heading("\0") !== palette.fg("mdHeading", "\0")
+		)
+			return render.call(this, token, ...rest);
 		const color = headingColors[Math.min(Math.max(token.depth ?? 1, 1), 6) - 1];
 		try {
-			this.theme = { ...saved, heading: (text) => color(text) };
-			return render.call(this, token, ...rest);
-		} catch {
-			this.theme = saved;
+			this.theme = { ...saved, heading: (text) => color(text, palette) };
 			return render.call(this, token, ...rest);
 		} finally {
 			this.theme = saved;

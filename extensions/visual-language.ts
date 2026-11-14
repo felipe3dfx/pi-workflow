@@ -8,8 +8,12 @@ const THEME_KEY = Symbol.for("@earendil-works/pi-coding-agent:theme");
 export const spinnerMs = 133;
 export const workingFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"];
 
+export function initializedTheme() {
+	return (globalThis as Record<symbol, Theme | undefined>)[THEME_KEY];
+}
+
 export function theme() {
-	const current = (globalThis as Record<symbol, Theme | undefined>)[THEME_KEY];
+	const current = initializedTheme();
 	if (!current)
 		throw new Error("Theme not initialized. Call initTheme() first.");
 	return current;
