@@ -487,7 +487,7 @@ export function createChildSessions(options: {
 			try {
 				follower();
 			} catch (error) {
-				warn(errorMessage(error));
+				warn(`Child ${child.record.id}: ${errorMessage(error)}`);
 			}
 		}
 	}

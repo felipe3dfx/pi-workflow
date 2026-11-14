@@ -5192,7 +5192,7 @@ test("a background child shows in the subagent box pinned above the input and ab
 		const id = await spawnBackground(extension, worktree);
 		await settle();
 		const lines = box.render(100).map(plain);
-		assert.match(lines[0], /▾ Subagents 1 +alt\+a view/);
+		assert.match(lines[0], /▾ Subagents 1 running +alt\+a view/);
 		assert.match(
 			lines[1],
 			/[⠋⠙⠹⠸⠼⠴⠦⠧] worker [0-9a-f]{4} Fix the failing test +model \(medium\) \d+s$/,
@@ -8629,6 +8629,19 @@ test("a foreground child that fails after a checkpoint hands the parent its harn
 			},
 		);
 	});
+});
+
+test("a follower that throws is reported with the child's id and the other followers still run", async () => {
+	const { core, launch, reports } = recordingCore();
+	const first = await launch();
+	const notified = [];
+	core.follow(first.id, () => {
+		throw new Error("render failed");
+	});
+	core.follow(first.id, () => notified.push(first.id));
+	first.child.spec.context({ capacity: 200_000, tokens: 1, last: false });
+	assert.deepEqual(reports, [`Child ${first.id}: render failed`]);
+	assert.deepEqual(notified, [first.id]);
 });
 
 test("each child's context state reaches its own record and its followers at once, and survives its end and a reload without loss or duplication", async () => {
