@@ -4,6 +4,8 @@
 
 Acceptance: approval and merge of the introducing PR.
 
+Amended by [ADR 0029](0029-context-backstop.md): the context backstop joins the preparation contract and the exploration notice as a third, advisory guidance signal, only in `opportunistic`; the exploration notice does not change.
+
 ## Decision
 
 Issue: #356.

@@ -1,16 +1,15 @@
+import type { ContextUsage } from "@earendil-works/pi-coding-agent";
+
 export const CONTEXT_BACKSTOP_TYPE = "pi-workflow-context-backstop";
 
-export type ContextReading = {
-	tokens: number | null;
-	contextWindow?: number;
-};
+export type ContextReading = Pick<ContextUsage, "tokens" | "contextWindow">;
 
 export type BackstopFacts = { tokens: number; threshold: number };
 
 const TOKEN_CAP = 150_000;
 const WINDOW_FRACTION = 0.15;
 
-export function backstopThreshold(contextWindow: number | null | undefined) {
+export function backstopThreshold(contextWindow: number | undefined) {
 	return typeof contextWindow === "number" && contextWindow > 0
 		? Math.min(TOKEN_CAP, Math.floor(WINDOW_FRACTION * contextWindow))
 		: TOKEN_CAP;

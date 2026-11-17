@@ -14,8 +14,8 @@ import { parentSession, seat } from "./support/workflow-parent.mjs";
 test("the threshold is min(150,000, 15% of the window), and 150,000 for an unknown or zero window", () => {
 	assert.equal(backstopThreshold(272_000), 40_800);
 	assert.equal(backstopThreshold(1_000_000), 150_000);
+	assert.equal(backstopThreshold(100_001), 15_000);
 	assert.equal(backstopThreshold(undefined), 150_000);
-	assert.equal(backstopThreshold(null), 150_000);
 	assert.equal(backstopThreshold(0), 150_000);
 });
 
