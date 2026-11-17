@@ -60,6 +60,12 @@ The persistent choice, stored in the agent directory, of whether work may stay i
 
 _Avoid_: orchestrator routing, parent mode, routing mode
 
+### Context backstop
+
+One advisory steering message to the parent, sent in `opportunistic` when its measured context reaches min(150,000 tokens, 15% of the context window). It asks the parent to delegate the next bounded multi-step unit and keep single small edits and state checks inline. It never blocks a tool or refuses a launch, and it replaces the exploration notice on the same tool result.
+
+_Avoid_: context limit, context guard
+
 ### Specialist
 
 One of `explorer`, `worker`, or `verifier`, mapped from the child roles `explore`, `worker`, and `verify`. The parent supplies a role for each child launch.
