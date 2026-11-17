@@ -76,3 +76,8 @@ export function recordTree(id: string, pid: number) {
 export function stopTree(id: string) {
 	return runScript(id);
 }
+
+// Every child Pi and its descendants inherit the tree mark, so a process that carries it runs inside a child session.
+export function insideChildTree(env: NodeJS.ProcessEnv = process.env) {
+	return Boolean(env[variable]);
+}
