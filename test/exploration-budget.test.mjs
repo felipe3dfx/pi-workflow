@@ -458,9 +458,7 @@ test("aborted results and non-discovery tools send no notice", async (t) => {
 	seat();
 	const parent = await budgetParent(dir);
 	await parent.prompt();
-	await parent.lookups(5, {
-		ctx: { signal: AbortSignal.abort(), getContextUsage: () => undefined },
-	});
+	await parent.lookups(5, { ctx: { signal: AbortSignal.abort() } });
 	await parent.lookups(5, { toolName: "web_fetch" });
 	await parent.lookups(5, { toolName: "mcp__claude_ai_Linear__get_issue" });
 	assert.deepEqual(parent.sent, []);
