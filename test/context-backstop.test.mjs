@@ -15,6 +15,7 @@ test("the threshold is min(150,000, 15% of the window), and 150,000 for an unkno
 	assert.equal(backstopThreshold(272_000), 40_800);
 	assert.equal(backstopThreshold(1_000_000), 150_000);
 	assert.equal(backstopThreshold(100_001), 15_000);
+	assert.equal(backstopThreshold(100_004), 15_000);
 	assert.equal(backstopThreshold(undefined), 150_000);
 	assert.equal(backstopThreshold(0), 150_000);
 });
@@ -182,5 +183,23 @@ test("when the backstop and the exploration notice fire on the same result only 
 	assert.equal(
 		parent.sent[1].message.customType,
 		"pi-workflow-exploration-budget",
+	);
+});
+
+test("an aborted tool result neither fires nor changes the backstop state", async (t) => {
+	const dir = withAgentDirectory(t);
+	seat();
+	const parent = await backstopParent(dir);
+	await parent.prompt();
+	await parent.result(
+		{ ...usage(41_000), signal: AbortSignal.abort() },
+		{ toolName: "edit" },
+	);
+	assert.deepEqual(parent.sent, []);
+	await parent.result(usage(41_000), { toolName: "edit" });
+	assert.equal(parent.sent.length, 1);
+	assert.equal(
+		parent.sent[0].message.customType,
+		"pi-workflow-context-backstop",
 	);
 });

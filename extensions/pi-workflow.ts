@@ -321,9 +321,10 @@ export default function piWorkflowExtension(
 	});
 	pi.on("tool_result", (event, ctx) => {
 		if (!childTools.offered()) return;
-		const facts = explorationBudget.result(event, ctx.signal?.aborted === true);
+		const aborted = ctx.signal?.aborted === true;
+		const facts = explorationBudget.result(event, aborted);
 		const backstopFacts =
-			delegationMode.current() === "opportunistic"
+			!aborted && delegationMode.current() === "opportunistic"
 				? contextBackstop.reading(ctx.getContextUsage())
 				: undefined;
 		if (backstopFacts)
