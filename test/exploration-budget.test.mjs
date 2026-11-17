@@ -368,7 +368,14 @@ async function budgetParent(agentDirectory) {
 				message: {},
 				systemPromptOptions: { sections: {} },
 			}),
-		async lookups(count, { toolName = "read", text = "x", ctx = {} } = {}) {
+		async lookups(
+			count,
+			{
+				toolName = "read",
+				text = "x",
+				ctx = { getContextUsage: () => undefined },
+			} = {},
+		) {
 			for (let i = 0; i < count; i++) {
 				const toolCallId = `call-${++id}`;
 				await fire(
