@@ -51,6 +51,7 @@ import {
 import { type Schedule, scheduleTimer } from "./clock.ts";
 import { registerChildrenBox } from "./children-box.ts";
 import { childrenEvent, createChildrenSignal } from "./children-event.ts";
+import { registerHerdrAgent } from "./herdr-agent.ts";
 import { insideChildTree } from "./process-tree.ts";
 import { pruneChildSessions } from "./rpc-child.ts";
 import { createFooterHints, registerChrome } from "./chrome.ts";
@@ -236,6 +237,7 @@ export default function piWorkflowExtension(
 				pi.events?.emit(childrenEvent, event),
 			);
 	if (childrenSignal) childSessions.subscribe(childrenSignal.changed);
+	registerHerdrAgent(pi, { agentDirectory });
 	pi.on("turn_end", () => childSessions.atBoundary());
 	pi.on("agent_settled", () => childSessions.atBoundary());
 	const childrenViews = createChildrenViews(childSessions, audit, todo);
