@@ -202,4 +202,10 @@ test("an aborted tool result neither fires nor changes the backstop state", asyn
 		parent.sent[0].message.customType,
 		"pi-workflow-context-backstop",
 	);
+	await parent.result(
+		{ ...usage(1_000), signal: AbortSignal.abort() },
+		{ toolName: "edit" },
+	);
+	await parent.result(usage(42_000), { toolName: "edit" });
+	assert.equal(parent.sent.length, 1);
 });
