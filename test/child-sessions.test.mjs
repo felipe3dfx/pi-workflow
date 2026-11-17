@@ -1032,6 +1032,7 @@ function loadExtension({
 	const shortcuts = new Map();
 	const messages = [];
 	const entries = [];
+	const emitted = [];
 	const notifications = [];
 	const widgets = new Map();
 	const views = [];
@@ -1072,6 +1073,10 @@ function loadExtension({
 				sendMessage?.(message, options);
 			},
 			appendEntry: (customType, data) => entries.push({ customType, data }),
+			events: {
+				emit: (channel, data) => emitted.push({ channel, data }),
+				on: () => () => {},
+			},
 			exec: async () => {
 				throw new Error("must not run commands");
 			},
@@ -1111,6 +1116,7 @@ function loadExtension({
 		tools,
 		messages,
 		entries,
+		emitted,
 		notifications,
 		widgets,
 		headers,
@@ -8711,5 +8717,99 @@ test("an accepted context update repaints the open Fleet detail of its child wit
 		);
 		view.press("q");
 		await view.opened;
+	});
+});
+
+// Tests may themselves run inside a child's process tree, so each sets the mark it needs.
+async function withTreeMark(mark, run) {
+	const saved = process.env.PI_WORKFLOW_PROCESS_TREE;
+	if (mark === undefined) delete process.env.PI_WORKFLOW_PROCESS_TREE;
+	else process.env.PI_WORKFLOW_PROCESS_TREE = mark;
+	try {
+		return await run();
+	} finally {
+		if (saved === undefined) delete process.env.PI_WORKFLOW_PROCESS_TREE;
+		else process.env.PI_WORKFLOW_PROCESS_TREE = saved;
+	}
+}
+
+function workingCounts(extension) {
+	return extension.emitted
+		.filter(({ channel }) => channel === "workflow:children")
+		.map(({ data }) => data);
+}
+
+test("the top-level session publishes its working children on the event bus only when their count changes", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await withTreeMark(undefined, () =>
+			loadSpawnTool({ agentDir, create: children.create }),
+		);
+		assert.deepEqual(workingCounts(extension), [{ working: 0 }]);
+
+		await spawnBackground(extension, worktree);
+		await spawnBackground(extension, worktree);
+		await settle();
+		children.created[0].result.resolve("Done.");
+		await settle();
+		await extension.fire("agent_settled");
+		children.created[1].result.resolve("Done.");
+		await settle();
+		await extension.fire("agent_settled");
+		await extension.fire("session_shutdown", { reason: "quit" });
+
+		assert.deepEqual(
+			workingCounts(extension).map(({ working }) => working),
+			[0, 1, 2, 1, 0],
+		);
+		assert.ok(
+			workingCounts(extension).every(
+				(data) => Object.keys(data).join() === "working",
+			),
+		);
+	});
+});
+
+test("a session end resets the published count to zero, and a reloaded parent publishes the children it adopted", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const before = await withTreeMark(undefined, () =>
+			loadSpawnTool({ agentDir, create: children.create }),
+		);
+		await spawnBackground(before, worktree);
+		await spawnBackground(before, worktree);
+		await settle();
+
+		const after = await withTreeMark(undefined, () =>
+			reload(before, { agentDir, create: children.create }),
+		);
+		assert.deepEqual(
+			workingCounts(before).map(({ working }) => working),
+			[0, 1, 2, 0],
+		);
+		assert.deepEqual(workingCounts(after), [{ working: 2 }]);
+
+		await after.fire("session_shutdown", { reason: "new" });
+		children.created[0].result.resolve("Late result.");
+		await settle();
+		assert.deepEqual(
+			workingCounts(after).map(({ working }) => working),
+			[2, 0],
+		);
+	});
+});
+
+test("a session running inside a child process never publishes its working children", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		const children = fakeChildren();
+		const extension = await withTreeMark("token/child/", () =>
+			loadSpawnTool({ agentDir, create: children.create }),
+		);
+		await spawnBackground(extension, worktree);
+		await settle();
+		children.created[0].result.resolve("Done.");
+		await settle();
+		await extension.fire("session_shutdown", { reason: "quit" });
+		assert.deepEqual(extension.emitted, []);
 	});
 });

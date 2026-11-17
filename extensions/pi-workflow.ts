@@ -50,6 +50,8 @@ import {
 } from "./child-sessions.ts";
 import { type Schedule, scheduleTimer } from "./clock.ts";
 import { registerChildrenBox } from "./children-box.ts";
+import { childrenEvent, createChildrenSignal } from "./children-event.ts";
+import { insideChildTree } from "./process-tree.ts";
 import { pruneChildSessions } from "./rpc-child.ts";
 import { createFooterHints, registerChrome } from "./chrome.ts";
 import { createChildrenViews } from "./children-view.ts";
@@ -228,6 +230,12 @@ export default function piWorkflowExtension(
 		todo,
 		audit,
 	});
+	const childrenSignal = insideChildTree()
+		? undefined
+		: createChildrenSignal(childSessions.working, (event) =>
+				pi.events?.emit(childrenEvent, event),
+			);
+	if (childrenSignal) childSessions.subscribe(childrenSignal.changed);
 	pi.on("turn_end", () => childSessions.atBoundary());
 	pi.on("agent_settled", () => childSessions.atBoundary());
 	const childrenViews = createChildrenViews(childSessions, audit, todo);
@@ -357,6 +365,7 @@ export default function piWorkflowExtension(
 			audit.adopt(resident.audit);
 			childSessions.adopt(resident.children);
 		}
+		childrenSignal?.start();
 		const read = seating.read();
 		if (read.status === "refused") report(ctx, read.reason, "error");
 		await seating.seat(read.status === "ready" ? read.selection : undefined);
@@ -367,6 +376,7 @@ export default function piWorkflowExtension(
 	});
 	pi.on("session_shutdown", async (event) => {
 		currentCtx = undefined;
+		childrenSignal?.end();
 		childrenViews.close();
 		if (event.reason === "reload") {
 			const children = await childSessions.detach();
