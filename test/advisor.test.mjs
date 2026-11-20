@@ -126,8 +126,9 @@ test("/workflow:advisor refuses arguments, then a disabled advisor, then a missi
 	};
 
 	seat(capabilities.filter((capability) => capability !== "advisor"));
-	const [usage] = await refusal("gpt", { mode: "rpc" });
-	assert.match(usage, /^Usage: .*\/workflow:advisor/);
+	const notes = await refusal("gpt", { mode: "rpc" });
+	assert.equal(notes.length, 1);
+	assert.match(notes[0], /^Usage: .*\/workflow:advisor/);
 	assert.deepEqual(await refusal("", { mode: "rpc" }), [
 		"Advisor is disabled. Enable it in /workflow:config.",
 	]);
@@ -153,18 +154,16 @@ test("the picker lists available models with a filter, then the levels the chose
 		"nan/mimo-v2.5",
 	]);
 	assert.ok(!lines(panel).includes("anthropic/claude-opus"));
-	press(panel, ..."astra");
-	assert.deepEqual(lines(panel).slice(2, 3), ["openai-codex/gpt-6-astra"]);
+	press(panel, ..."luna");
+	assert.deepEqual(lines(panel).slice(2, 3), ["openai-codex/gpt-5.6-luna"]);
 	press(panel, keys.enter);
 	assert.deepEqual(lines(panel), [
-		"Thinking level for openai-codex/gpt-6-astra",
+		"Thinking level for openai-codex/gpt-5.6-luna",
 		"off",
 		"minimal",
 		"low",
 		"medium",
 		"high",
-		"xhigh",
-		"max",
 		"↑/↓ choose | Enter confirm | Esc back",
 	]);
 	press(panel, keys.escape, keys.escape);
@@ -180,6 +179,8 @@ test("choosing a thinking level writes the advisor model file and closes the pic
 
 	press(panel, keys.enter, keys.down, keys.down, keys.enter);
 	await choosing;
+	await absent(join(command.dir, "pi-workflow-selection.json"));
+	await absent(join(command.dir, "pi-workflow-models.json"));
 
 	assert.deepEqual(JSON.parse(await readFile(command.path, "utf8")), {
 		schemaVersion: 1,
@@ -203,7 +204,7 @@ test("Esc on the thinking levels returns to the models, and Esc on the models cl
 
 	press(panel, keys.down, keys.enter, keys.escape);
 	assert.equal(lines(panel)[0], "Advisor model");
-	await Promise.resolve();
+	await new Promise((resolve) => setImmediate(resolve));
 	assert.equal(closed, false);
 	press(panel, keys.escape);
 	await choosing;
