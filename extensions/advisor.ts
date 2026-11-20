@@ -21,6 +21,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import { isPlainRecord, writeJsonAtomically } from "./agent-directory.ts";
+import { harnessMessage } from "./harness-message.ts";
 import {
 	createScreenFrame,
 	modelCatalogScreen,
@@ -343,7 +344,7 @@ export function createAdvisor(agentDirectory: string) {
 		);
 	}
 
-	const tool = {
+	const tool = harnessMessage({
 		name: "advisor",
 		label: "Advisor",
 		description:
@@ -354,15 +355,14 @@ export function createAdvisor(agentDirectory: string) {
 		parameters: { type: "object", properties: {}, additionalProperties: false },
 		executionMode: "sequential" as const,
 		execute: consult,
-	};
+	});
+
+	let offered = false;
 
 	function offer(pi: ExtensionAPI) {
-		offerTool(
-			pi,
-			tool,
-			seated("advisor", "message-stream") && model() !== undefined,
-		);
+		offered = seated("advisor", "message-stream") && model() !== undefined;
+		offerTool(pi, tool, offered);
 	}
 
-	return { model, choose, capture, offer };
+	return { model, choose, capture, offer, offered: () => offered, tool };
 }

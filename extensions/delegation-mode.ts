@@ -3,7 +3,10 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { seated } from "./shell.ts";
 import type { DelegationMode } from "./workflow-settings.ts";
 
-function orchestratorInstruction(contextual: boolean): string {
+function orchestratorInstruction(
+	contextual: boolean,
+	advisorOffered: boolean,
+): string {
 	const keep = [
 		"conversing with the operator",
 		"launching, steering, and answering children with the child tools",
@@ -14,6 +17,7 @@ function orchestratorInstruction(contextual: boolean): string {
 					"asking the operator questions with ask_user_choice or ask_user_question",
 				]
 			: []),
+		...(advisorOffered ? ["consulting the advisor with the advisor tool"] : []),
 	];
 	return [
 		"# Delegation mode: orchestrator",
@@ -35,6 +39,7 @@ export function registerDelegationMode(
 	pi: ExtensionAPI,
 	mode: Pick<DelegationMode, "current">,
 	childToolsOffered: () => boolean,
+	advisorOffered: () => boolean,
 	contextual = false,
 ) {
 	pi.on("context_with_system", (event) => {
@@ -52,7 +57,10 @@ export function registerDelegationMode(
 					...system,
 					sections: {
 						...system.sections,
-						"pi-workflow-delegation-mode": orchestratorInstruction(contextual),
+						"pi-workflow-delegation-mode": orchestratorInstruction(
+							contextual,
+							advisorOffered(),
+						),
 					},
 				},
 				...rest,
