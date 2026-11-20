@@ -21,7 +21,7 @@ import { createAdvisor } from "../extensions/advisor.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { createDelegationMode } from "../extensions/workflow-settings.ts";
 import { withAgentDirectory } from "./support/agent-directory.mjs";
-import { driveConfig, focusOn } from "./support/config-guide.mjs";
+import { driveConfig, focusOn, press } from "./support/config-guide.mjs";
 import { modelEndpoint } from "./support/model-endpoint.mjs";
 import { selectionWith } from "./support/selection.mjs";
 import { parentSession, realParent, seat } from "./support/workflow-parent.mjs";
@@ -53,6 +53,7 @@ function commandContext({
 	model,
 } = {}) {
 	const notifications = [];
+	const overlays = [];
 	const opened = [];
 	const waiting = [];
 	const ctx = {
@@ -61,8 +62,9 @@ function commandContext({
 		model,
 		ui: {
 			notify: (message, level) => notifications.push({ message, level }),
-			custom: (factory) =>
+			custom: (factory, options) =>
 				new Promise((resolve) => {
+					overlays.push(options);
 					const panel = factory(
 						{ requestRender() {}, terminal: { rows: 40 } },
 						fakeTheme,
@@ -83,7 +85,7 @@ function commandContext({
 		opened.length > 0
 			? Promise.resolve(opened.shift())
 			: new Promise((resolve) => waiting.push(resolve));
-	return { ctx, notifications, nextPanel };
+	return { ctx, notifications, overlays, nextPanel };
 }
 
 async function advisorCommand(t) {
@@ -97,10 +99,6 @@ async function advisorCommand(t) {
 		run: (args, ctx) =>
 			parent.commands.get("workflow:advisor").handler(args, ctx),
 	};
-}
-
-function press(panel, ...sequence) {
-	for (const data of sequence) panel.handleInput(data);
 }
 
 function lines(panel, width = 120) {
@@ -154,10 +152,11 @@ test("/workflow:advisor refuses arguments, then a disabled advisor, then a missi
 
 test("the picker lists available models with a filter, then the levels the chosen model supports", async (t) => {
 	const command = await advisorCommand(t);
-	const { ctx, nextPanel } = commandContext();
+	const { ctx, overlays, nextPanel } = commandContext();
 	const choosing = command.run("", ctx);
 	const panel = await nextPanel();
 
+	assert.equal(overlays[0]?.overlay, true);
 	assert.equal(lines(panel)[0], "Advisor model");
 	assert.deepEqual(lines(panel).slice(2, 5), [
 		"openai-codex/gpt-5.6-luna",
@@ -290,7 +289,15 @@ test("a file changed while the picker is open is overwritten without a check", a
 	const { ctx, nextPanel } = commandContext();
 	const choosing = command.run("", ctx);
 	const panel = await nextPanel();
-	await writeFile(command.path, '{"changed":"meanwhile"}\n', "utf8");
+	await writeFile(
+		command.path,
+		JSON.stringify({
+			schemaVersion: 1,
+			model: "anthropic/claude-opus",
+			thinking: "high",
+		}),
+		"utf8",
+	);
 	press(panel, keys.enter, keys.enter);
 	await choosing;
 	assert.deepEqual(JSON.parse(await readFile(command.path, "utf8")), {
@@ -452,6 +459,13 @@ test("seat changes and /workflow:advisor saves re-evaluate the offer, and an out
 	assert.equal(offered(parent.tools), true);
 
 	await rm(join(dir, "pi-workflow-advisor.json"));
+	assert.equal(offered(parent.tools), true);
+	const cancelled = commandContext();
+	const cancelling = parent.commands
+		.get("workflow:advisor")
+		.handler("", cancelled.ctx);
+	press(await cancelled.nextPanel(), keys.escape);
+	await cancelling;
 	assert.equal(offered(parent.tools), true);
 
 	const toggleAdvisor = (panel) => {
@@ -789,6 +803,31 @@ test("a length stop with no output that fills the context window is an overflow"
 		"Choose a larger advisor model with /workflow:advisor.",
 	);
 	assert.equal(result.details.model, "fake/echo");
+});
+
+test("an empty stop above the context window is an overflow, and a stop with advice stays advice", async (t) => {
+	const empty = await consult(t, {
+		answer: {
+			text: "",
+			usage: { prompt_tokens: 500000, completion_tokens: 0 },
+		},
+	});
+	assert.equal(empty.result.details.failure, "overflow");
+	assert.equal(empty.result.isError, true);
+	assert.equal(
+		resultText(empty.result),
+		"Choose a larger advisor model with /workflow:advisor.",
+	);
+
+	const advised = await consult(t, {
+		answer: {
+			text: "Keep going.",
+			usage: { prompt_tokens: 500000, completion_tokens: 3 },
+		},
+	});
+	assert.equal(advised.result.details.failure, undefined);
+	assert.equal(advised.result.isError, false);
+	assert.equal(resultText(advised.result), "Keep going.");
 });
 
 test("control characters in a provider message or model name never reach the result", async (t) => {

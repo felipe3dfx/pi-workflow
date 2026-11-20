@@ -507,8 +507,7 @@ export default function piWorkflowExtension(
 				report(ctx, usage, "warning");
 				return;
 			}
-			await advisor.choose(ctx);
-			advisor.offer(pi);
+			if (await advisor.choose(ctx)) advisor.offer(pi);
 		},
 	});
 }

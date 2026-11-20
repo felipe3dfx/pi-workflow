@@ -378,6 +378,7 @@ test("with the advisor unseated a past card falls back to plain text without the
 	const card = await advisorCard(t);
 	const finished = card(done(advice));
 	const broken = card(failed("provider", "401 invalid x-api-key"));
+	const long = card(failed("provider", "e1\ne2\ne3\ne4\ne5"));
 	seat(["child-session"]);
 	assert.deepEqual(plain(finished), [
 		"",
@@ -397,6 +398,15 @@ test("with the advisor unseated a past card falls back to plain text without the
 		"",
 		"   Advisor failed  3s · claude-opus-5 (high)",
 		"   401 invalid x-api-key",
+	]);
+	assert.deepEqual(plain(long), [
+		"",
+		"   Advisor failed  3s · claude-opus-5 (high)",
+		"   e1",
+		"   e2",
+		"   e3",
+		"   e4",
+		"   e5",
 	]);
 
 	seat(["advisor"]);

@@ -173,8 +173,12 @@ function responseOutcome(
 			{ usage },
 		);
 	}
+	const advice = response.content
+		.flatMap((block) => (block.type === "text" ? [block.text] : []))
+		.join("")
+		.trim();
 	if (
-		response.stopReason !== "stop" &&
+		(response.stopReason !== "stop" || !advice) &&
 		isContextOverflow(response, contextWindow)
 	) {
 		return outcome(
@@ -195,10 +199,6 @@ function responseOutcome(
 			{ usage },
 		);
 	}
-	const advice = response.content
-		.flatMap((block) => (block.type === "text" ? [block.text] : []))
-		.join("")
-		.trim();
 	if (!advice) {
 		return outcome(
 			"The advisor returned no advice.",
@@ -266,6 +266,7 @@ export function createAdvisor(agentDirectory: string) {
 		writeJsonAtomically(path, { schemaVersion: 1, ...chosen });
 		// writeJsonAtomically keeps an unreadable old file's mode; the choice must stay readable.
 		chmodSync(path, (statSync(path).mode & 0o7777) | 0o400);
+		return true;
 	}
 
 	let captured: Capture | undefined;
