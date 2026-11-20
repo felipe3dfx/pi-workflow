@@ -196,9 +196,11 @@ function responseOutcome(
 		);
 	}
 	if (response.stopReason === "error") {
+		const message = terminalSafeBlock(response.errorMessage ?? "");
 		return outcome(
-			terminalSafeBlock(response.errorMessage ?? "").trim() ||
-				"The advisor's provider failed without a message.",
+			message.trim()
+				? message
+				: "The advisor's provider failed without a message.",
 			{ ...details, failure: "provider" },
 			{ usage },
 		);

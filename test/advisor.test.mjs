@@ -770,6 +770,23 @@ test("a provider failure without a readable message still says what failed", asy
 	}
 });
 
+test("a provider message with surrounding whitespace is returned verbatim", async (t) => {
+	const { result } = await consult(t, {
+		model: { model: "faux/parent", thinking: "off" },
+		after: [
+			fauxAssistantMessage([], {
+				stopReason: "error",
+				errorMessage: " Rate limited \n",
+			}),
+		],
+	});
+	assert.deepEqual(failure(result), {
+		failure: "provider",
+		isError: true,
+		text: " Rate limited \n",
+	});
+});
+
 test("a length stop with no output that fills the context window is an overflow", async (t) => {
 	const { result } = await consult(t, {
 		answer: {
