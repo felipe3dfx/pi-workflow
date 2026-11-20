@@ -465,6 +465,10 @@ test("seat changes and /workflow:advisor saves re-evaluate the offer, and an out
 
 	await rm(join(dir, "pi-workflow-advisor.json"));
 	assert.equal(offered(parent.tools), true);
+	await parent.commands
+		.get("workflow:advisor")
+		.handler("", commandContext({ mode: "rpc" }).ctx);
+	assert.equal(offered(parent.tools), true);
 	const cancelled = commandContext();
 	const cancelling = parent.commands
 		.get("workflow:advisor")
