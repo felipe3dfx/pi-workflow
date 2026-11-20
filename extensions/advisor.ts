@@ -62,8 +62,11 @@ const instructions = [
 ].join("\n");
 
 const guidelines = [
-	"Consult the advisor for an independent second opinion: before committing to an approach, when stuck, when changing approach, and before declaring work done.",
-	"The advisor sees your instructions and the whole conversation, so call it without arguments; weigh its advice and decide yourself what to adopt.",
+	"Orientation (finding files, reading what is there) is not substantive work. Consult the advisor after orienting and before writing, committing to an interpretation, or building on an assumption.",
+	"On a short task where the next action is dictated by the tool output you just read, do not consult; most of the value comes from the first call, before the approach crystallizes.",
+	"On a multi-step task, consult at least once before committing to an approach and once before declaring done, and make the deliverable durable (file written, commit made) before that final call.",
+	"Also consult when stuck (errors recurring, approach not converging) or when considering a change of approach.",
+	"The advisor sees your instructions and the whole conversation, so call it without arguments. Weigh its advice seriously and decide yourself what to adopt; when your own primary evidence contradicts it, surface the conflict in one more call instead of switching silently.",
 ];
 
 type Failure =

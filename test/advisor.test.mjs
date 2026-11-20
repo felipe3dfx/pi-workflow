@@ -429,10 +429,15 @@ test("the advisor tool takes no parameters, runs alone, and tells the parent whe
 	assert.deepEqual(tool.parameters.properties ?? {}, {});
 	assert.equal(tool.executionMode, "sequential");
 	const guidance = tool.promptGuidelines.join("\n");
+	assert.match(guidance, /orientation .* not substantive/i);
+	assert.match(guidance, /short task .* do not consult/i);
 	assert.match(guidance, /before committing to an approach/i);
+	assert.match(guidance, /before declaring done/i);
+	assert.match(guidance, /durable/i);
 	assert.match(guidance, /stuck/i);
-	assert.match(guidance, /chang\w* (your )?approach/i);
-	assert.match(guidance, /before declaring\b.*\bdone/i);
+	assert.match(guidance, /chang\w* (of |your )?approach/i);
+	assert.match(guidance, /without arguments/i);
+	assert.match(guidance, /contradicts it/i);
 });
 
 test("seat changes and /workflow:advisor saves re-evaluate the offer, and an outside edit waits for them", async (t) => {
