@@ -192,6 +192,7 @@ export function modelCatalogScreen(
 	supportedThinking: Record<string, ModelThinkingLevel[]>,
 	title: string,
 	choose: (model: string, thinking: ModelThinkingLevel) => void,
+	onEscape: "back" | "close" = "back",
 ): Screen {
 	const { keybindings, theme } = frame;
 	const input = new Input();
@@ -220,7 +221,7 @@ export function modelCatalogScreen(
 			["type", "filter"],
 			["↑/↓", "choose"],
 			["Enter", "select"],
-			["Esc", "back"],
+			["Esc", onEscape],
 		],
 		render(width) {
 			const [filter] = input.render(width);

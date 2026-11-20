@@ -154,6 +154,10 @@ test("the picker lists available models with a filter, then the levels the chose
 		"nan/mimo-v2.5",
 	]);
 	assert.ok(!lines(panel).includes("anthropic/claude-opus"));
+	assert.equal(
+		lines(panel).at(-1),
+		"type filter | ↑/↓ choose | Enter select | Esc close",
+	);
 	press(panel, ..."luna");
 	assert.deepEqual(lines(panel).slice(2, 3), ["openai-codex/gpt-5.6-luna"]);
 	press(panel, keys.enter);
@@ -169,18 +173,46 @@ test("the picker lists available models with a filter, then the levels the chose
 	press(panel, keys.escape, keys.escape);
 	await choosing;
 	await absent(command.path);
+
+	const astra = commandContext();
+	const choosingAstra = command.run("", astra.ctx);
+	const astraPanel = await astra.nextPanel();
+	press(astraPanel, ..."astra", keys.enter);
+	assert.deepEqual(lines(astraPanel), [
+		"Thinking level for openai-codex/gpt-6-astra",
+		"off",
+		"minimal",
+		"low",
+		"medium",
+		"high",
+		"xhigh",
+		"max",
+		"↑/↓ choose | Enter confirm | Esc back",
+	]);
+	press(astraPanel, keys.escape, keys.escape);
+	await choosingAstra;
+	await absent(command.path);
 });
 
 test("choosing a thinking level writes the advisor model file and closes the picker, even for the session's own model", async (t) => {
 	const command = await advisorCommand(t);
+	const untouched = {
+		[join(command.dir, "pi-workflow-selection.json")]:
+			'{"probe":"selection"}\n',
+		[join(command.dir, "pi-workflow-models.json")]: '{"probe":"models"}\n',
+	};
+	for (const [path, content] of Object.entries(untouched)) {
+		await writeFile(path, content, "utf8");
+	}
 	const { ctx, nextPanel } = commandContext({ model: catalog[0] });
 	const choosing = command.run("", ctx);
 	const panel = await nextPanel();
 
 	press(panel, keys.enter, keys.down, keys.down, keys.enter);
 	await choosing;
-	await absent(join(command.dir, "pi-workflow-selection.json"));
-	await absent(join(command.dir, "pi-workflow-models.json"));
+	for (const [path, content] of Object.entries(untouched)) {
+		assert.equal(await readFile(path, "utf8"), content);
+	}
 
 	assert.deepEqual(JSON.parse(await readFile(command.path, "utf8")), {
 		schemaVersion: 1,
@@ -240,6 +272,26 @@ test("an ill-formed or unreadable advisor model file opens the picker and is ove
 	await rm(command.path);
 	await symlink(join(command.dir, "missing-target.json"), command.path);
 	assert.deepEqual(await choose(), chosen);
+});
+
+test("choosing over an unreadable advisor model file leaves a readable file", {
+	skip:
+		process.getuid?.() === 0 &&
+		"root reads a mode 000 file, so it is never unreadable",
+}, async (t) => {
+	const command = await advisorCommand(t);
+	await writeFile(command.path, "{}", { encoding: "utf8", mode: 0o000 });
+	const { ctx, nextPanel } = commandContext();
+	const choosing = command.run("", ctx);
+	press(await nextPanel(), keys.enter, keys.enter);
+	await choosing;
+
+	const chosen = { model: "openai-codex/gpt-5.6-luna", thinking: "off" };
+	assert.deepEqual(createAdvisor(command.dir).model(), chosen);
+	assert.deepEqual(JSON.parse(await readFile(command.path, "utf8")), {
+		schemaVersion: 1,
+		...chosen,
+	});
 });
 
 test("every rendered line fits the width and hostile model names cannot inject control sequences", async (t) => {

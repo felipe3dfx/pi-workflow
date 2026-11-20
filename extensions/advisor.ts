@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { chmodSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 
 import {
@@ -82,6 +82,7 @@ export function createAdvisor(agentDirectory: string) {
 						supportedThinking,
 						"Advisor model",
 						(model, thinking) => done({ model, thinking }),
+						"close",
 					),
 				);
 				return frame.component;
@@ -96,7 +97,10 @@ export function createAdvisor(agentDirectory: string) {
 				},
 			},
 		);
-		if (chosen) writeJsonAtomically(path, { schemaVersion: 1, ...chosen });
+		if (!chosen) return;
+		writeJsonAtomically(path, { schemaVersion: 1, ...chosen });
+		// writeJsonAtomically keeps an unreadable old file's mode; the choice must stay readable.
+		chmodSync(path, (statSync(path).mode & 0o7777) | 0o400);
 	}
 
 	return { model, choose };
