@@ -281,7 +281,7 @@ export default function piWorkflowExtension(
 	}
 
 	const childQueries = createChildQueryTools(childSessions);
-	for (const tool of [...childQueries, askChoice, askQuestion]) {
+	for (const tool of [...childQueries, askChoice, askQuestion, advisor.tool]) {
 		if (isHarnessMessage(tool)) messages.set(tool.name, tool.parameters);
 	}
 	const childTools = launcher.childToolsOffer(
@@ -323,6 +323,7 @@ export default function piWorkflowExtension(
 		pi,
 		delegationMode,
 		childTools.offered,
+		advisor.offered,
 		options.authorization !== undefined,
 	);
 	// The capture must see the Delegation mode section, so it registers after it.
