@@ -76,6 +76,10 @@ const capabilityCopy: Record<Capability, [label: string, description: string]> =
 			"Compact rendering",
 			"Shows Pi's built-in tool calls in compact form. Off restores native rendering.",
 		],
+		advisor: [
+			"Advisor",
+			"Lets the parent consult a second model for advice; choose it with /workflow:advisor.",
+		],
 	};
 
 const modeCopy: Record<DelegationModeName, string> = {

@@ -14,7 +14,7 @@ import { createModelProfilesEditor } from "./model-profiles-editor.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
 
 export const specialists = ["explorer", "worker", "verifier"] as const;
-const thinkingLevels: readonly ModelThinkingLevel[] = [
+export const thinkingLevels: readonly ModelThinkingLevel[] = [
 	"off",
 	"minimal",
 	"low",

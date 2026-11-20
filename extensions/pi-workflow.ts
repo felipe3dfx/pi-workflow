@@ -57,6 +57,7 @@ import { pruneChildSessions } from "./rpc-child.ts";
 import { createFooterHints, registerChrome } from "./chrome.ts";
 import { createChildrenViews } from "./children-view.ts";
 import { createModelProfiles, report } from "./model-profiles.ts";
+import { createAdvisor } from "./advisor.ts";
 import { registerSessionTodo } from "./todo-extension.ts";
 import type { TaskExecutor } from "./todo-header.ts";
 import { registerCompactTools, syncCompactTools } from "./compact-tools.ts";
@@ -99,7 +100,7 @@ const slots = globalThis as Record<
 export const adoptionDeadline = 30_000;
 
 const usage =
-	"Usage: /workflow:status | /workflow:doctor | /workflow:config | /workflow:models | /workflow:subagents";
+	"Usage: /workflow:status | /workflow:doctor | /workflow:config | /workflow:models | /workflow:subagents | /workflow:advisor";
 
 function createWorkflow(
 	pi: ExtensionAPI,
@@ -195,6 +196,7 @@ export default function piWorkflowExtension(
 	registerChildResultCards(pi);
 	const modelProfiles = createModelProfiles(agentDirectory);
 	const delegationMode = createDelegationMode(agentDirectory);
+	const advisor = createAdvisor(agentDirectory);
 	const { requestAboveInputRender } = registerShell(pi);
 	const todo = registerSessionTodo(pi, requestAboveInputRender, () => {
 		const executors = new Map<number, TaskExecutor>();
@@ -492,6 +494,16 @@ export default function piWorkflowExtension(
 				return;
 			}
 			await modelProfiles.edit(ctx);
+		},
+	});
+	pi.registerCommand("workflow:advisor", {
+		description: "Choose the advisor model and thinking level in the TUI",
+		handler: async (args, ctx) => {
+			if (args.trim()) {
+				report(ctx, usage, "warning");
+				return;
+			}
+			await advisor.choose(ctx);
 		},
 	});
 }

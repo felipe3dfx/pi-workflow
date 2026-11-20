@@ -29,3 +29,18 @@ test("the command validator requires subagents and rejects obsolete configure/se
 		]);
 	}
 });
+
+test("the command validator requires the advisor command", () => {
+	const extension = [
+		"workflow:status",
+		"workflow:doctor",
+		"workflow:config",
+		"workflow:models",
+		"workflow:subagents",
+	]
+		.map((command) => `pi.registerCommand("${command}", {});`)
+		.join(" ");
+	assert.deepEqual(validateCommandSurface(extension), [
+		"extension must register workflow:advisor",
+	]);
+});
