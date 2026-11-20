@@ -32,7 +32,7 @@ export async function modelEndpoint(agentDir, answer = "DONE") {
 			const text = typeof step === "string" ? step : step.text;
 			if (text !== undefined) {
 				chunk({ delta: { role: "assistant", content: text } });
-				chunk({ delta: {}, finish_reason: "stop" });
+				chunk({ delta: {}, finish_reason: step.finish ?? "stop" });
 				if (step.usage) chunk(undefined, { usage: step.usage });
 			} else {
 				chunk({

@@ -663,8 +663,10 @@ test("the advisor sees the whole conversation as text, its issuing message, and 
 	assert.match(material, /\[Image: image\/png\]/);
 	assert.doesNotMatch(material, /aW1hZ2UtYnl0ZXM=/);
 	assert.doesNotMatch(material, /PRIVATE-REASONING/);
+	const conversation = material.indexOf("<parent_conversation>");
+	assert.notEqual(conversation, -1);
 	assert.doesNotMatch(
-		material.slice(material.indexOf("<parent_conversation>")),
+		material.slice(conversation),
 		/executor|reviewer|verifier/i,
 	);
 	assert.match(material, /^\[Tool call: advisor\]$/m);
@@ -770,6 +772,23 @@ test("a provider failure returns its message once, and a recognized overflow add
 	);
 	assert.doesNotMatch(resultText(overflow.result), /\btokens?\b/i);
 	assert.equal(overflow.result.details.model, "fake/echo");
+});
+
+test("a length stop with no output that fills the context window is an overflow", async (t) => {
+	const { result } = await consult(t, {
+		answer: {
+			text: "",
+			finish: "length",
+			usage: { prompt_tokens: 127000, completion_tokens: 0 },
+		},
+	});
+	assert.equal(result.details.failure, "overflow");
+	assert.equal(result.isError, true);
+	assert.equal(
+		resultText(result),
+		"Choose a larger advisor model with /workflow:advisor.",
+	);
+	assert.equal(result.details.model, "fake/echo");
 });
 
 test("control characters in a provider message or model name never reach the result", async (t) => {

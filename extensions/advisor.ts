@@ -171,15 +171,27 @@ function responseOutcome(
 			{ usage },
 		);
 	}
+	if (
+		response.stopReason !== "stop" &&
+		isContextOverflow(response, contextWindow)
+	) {
+		return outcome(
+			[
+				terminalSafeBlock(response.errorMessage ?? ""),
+				"Choose a larger advisor model with /workflow:advisor.",
+			]
+				.filter(Boolean)
+				.join("\n"),
+			{ ...details, failure: "overflow" },
+			{ usage },
+		);
+	}
 	if (response.stopReason === "error") {
-		const message = terminalSafeBlock(response.errorMessage ?? "");
-		return isContextOverflow(response, contextWindow)
-			? outcome(
-					`${message}\nChoose a larger advisor model with /workflow:advisor.`,
-					{ ...details, failure: "overflow" },
-					{ usage },
-				)
-			: outcome(message, { ...details, failure: "provider" }, { usage });
+		return outcome(
+			terminalSafeBlock(response.errorMessage ?? ""),
+			{ ...details, failure: "provider" },
+			{ usage },
+		);
 	}
 	const advice = response.content
 		.flatMap((block) => (block.type === "text" ? [block.text] : []))
