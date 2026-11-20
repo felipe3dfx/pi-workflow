@@ -157,7 +157,7 @@ function outcome(
 	};
 }
 
-function answered(
+function responseOutcome(
 	response: AssistantMessage,
 	contextWindow: number,
 	details: Details,
@@ -268,6 +268,7 @@ export function createAdvisor(agentDirectory: string) {
 
 	async function consult(
 		toolCallId: string,
+		_params: unknown,
 		signal: AbortSignal | undefined,
 		onUpdate: ((update: { content: []; details: Details }) => void) | undefined,
 		ctx: ToolContext,
@@ -322,7 +323,7 @@ export function createAdvisor(agentDirectory: string) {
 				},
 			)
 			.result();
-		return answered(
+		return responseOutcome(
 			response,
 			found.contextWindow,
 			chosen,
@@ -340,13 +341,7 @@ export function createAdvisor(agentDirectory: string) {
 		promptGuidelines: guidelines,
 		parameters: { type: "object", properties: {}, additionalProperties: false },
 		executionMode: "sequential" as const,
-		execute: (
-			toolCallId: string,
-			_params: unknown,
-			signal: AbortSignal | undefined,
-			onUpdate: Parameters<typeof consult>[2],
-			ctx: ToolContext,
-		) => consult(toolCallId, signal, onUpdate, ctx),
+		execute: consult,
 	};
 
 	function offer(pi: ExtensionAPI) {

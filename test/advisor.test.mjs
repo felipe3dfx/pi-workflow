@@ -557,7 +557,7 @@ async function consult(
 			updates.push(event.partialResult);
 		}
 	});
-	if (prepare) await prepare(parent);
+	if (prepare) await prepare(parent, dir);
 	await parent.session.prompt("Review my plan with the advisor");
 	const result = parent.session.messages.find(
 		(message) =>
@@ -608,6 +608,25 @@ test("a consultation sends the fixed instructions, the parent's request-time pro
 	assert.deepEqual(log.slice(0, 2), ["update", "request"]);
 });
 
+test("the advisor sees the prompt the parent's latest request carried, not the one it started with", async (t) => {
+	const { parent, endpoint } = await consult(t, {
+		before: [fauxAssistantMessage("Started.")],
+		prepare: async ({ session }, dir) => {
+			await session.prompt("Start");
+			createDelegationMode(dir).set("orchestrator");
+		},
+	});
+
+	const marker = "# Delegation mode: orchestrator";
+	assert.doesNotMatch(
+		getSystemMessageText(parent.requests[0].messages[0]),
+		new RegExp(marker),
+	);
+	const latest = getSystemMessageText(parent.requests.at(-2).messages[0]);
+	assert.match(latest, new RegExp(marker));
+	assert.ok(endpoint.requests[0].messages[1].content.includes(latest));
+});
+
 test("the advisor sees the whole conversation as text, its issuing message, and its own call without a result", async (t) => {
 	const { endpoint } = await consult(t, {
 		before: [
@@ -644,10 +663,10 @@ test("the advisor sees the whole conversation as text, its issuing message, and 
 	assert.match(material, /\[Image: image\/png\]/);
 	assert.doesNotMatch(material, /aW1hZ2UtYnl0ZXM=/);
 	assert.doesNotMatch(material, /PRIVATE-REASONING/);
-	const labels = material.match(/^\[[^\]\n]*\]/gm);
-	assert.ok(labels.length > 0);
-	for (const label of labels)
-		assert.doesNotMatch(label, /executor|reviewer|verifier/i);
+	assert.doesNotMatch(
+		material.slice(material.indexOf("<parent_conversation>")),
+		/executor|reviewer|verifier/i,
+	);
 	assert.match(material, /^\[Tool call: advisor\]$/m);
 	assert.doesNotMatch(material, /^\[Tool result: advisor\b/m);
 });
@@ -672,6 +691,19 @@ test("a call that arrives after the advisor was unseated is refused without an e
 	});
 	assert.equal(result.details.model, "fake/echo");
 	assert.equal(endpoint.requests.length, 0);
+});
+
+test("a malformed model file does not hide the refusal of an unseated advisor", async (t) => {
+	const { result } = await consult(t, {
+		call: async (dir) => {
+			await writeAdvisorModel(dir, "{ broken");
+			seat(withoutAdvisor);
+			return consultCall();
+		},
+	});
+	assert.equal(result.details.failure, "refused");
+	assert.equal(result.isError, false);
+	assert.equal(result.details.model, undefined);
 });
 
 test("a model file removed by an outside edit fails the call with no model to show", async (t) => {
@@ -714,12 +746,14 @@ test("a model Pi does not offer, or a thinking level it does not support, fails 
 
 test("a provider failure returns its message once, and a recognized overflow adds the hint", async (t) => {
 	const provider = await consult(t, {
-		answer: { status: 400, error: "Invalid API key provided" },
+		answer: { status: 500, error: "Upstream exploded" },
 	});
 	assert.equal(provider.result.details.failure, "provider");
 	assert.equal(provider.result.isError, true);
-	assert.match(resultText(provider.result), /Invalid API key provided/);
-	assert.doesNotMatch(resultText(provider.result), /\/workflow:advisor/);
+	assert.equal(
+		resultText(provider.result),
+		'500: {"message":"Upstream exploded"}',
+	);
 	assert.equal(provider.endpoint.requests.length, 1);
 
 	const overflow = await consult(t, {
@@ -736,6 +770,20 @@ test("a provider failure returns its message once, and a recognized overflow add
 	);
 	assert.doesNotMatch(resultText(overflow.result), /\btokens?\b/i);
 	assert.equal(overflow.result.details.model, "fake/echo");
+});
+
+test("control characters in a provider message or model name never reach the result", async (t) => {
+	const provider = await consult(t, {
+		answer: { status: 400, error: "bad‮ key\u007f" },
+	});
+	assert.equal(provider.result.details.failure, "provider");
+	assert.doesNotMatch(resultText(provider.result), /[‮\u007f]/);
+
+	const unavailable = await consult(t, {
+		model: { ...echoModel, model: "fake/\u001b[2Jx" },
+	});
+	assert.equal(unavailable.result.details.failure, "unavailable");
+	assert.ok(!resultText(unavailable.result).includes("\u001b"));
 });
 
 test("an answer with no text is a failure", async (t) => {
