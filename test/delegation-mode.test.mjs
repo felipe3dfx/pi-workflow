@@ -197,6 +197,20 @@ test("choosing orchestrator and confirming Apply names the change and persists i
 	assert.match(restarted, /Delegation mode\s+‹ orchestrator ›\s+│$/m);
 });
 
+test("choosing orchestrator over an unreadable document makes the session read orchestrator", async (t) => {
+	const dir = withAgentDirectory(t);
+	await writeFile(join(dir, "pi-workflow-delegation.json"), "{}", {
+		mode: 0o000,
+	});
+	await driveConfig(extensionCommand(dir, "workflow:config"), (panel) => {
+		focus(panel, "Delegation mode");
+		panel.handleInput(" ");
+		openApply(panel);
+		panel.handleInput("\r");
+	});
+	assert.equal(createDelegationMode(dir).current(), "orchestrator");
+});
+
 test("choosing orchestrator and cancelling with Esc writes nothing", async (t) => {
 	const dir = withAgentDirectory(t);
 	await driveConfig(extensionCommand(dir, "workflow:config"), (panel) => {

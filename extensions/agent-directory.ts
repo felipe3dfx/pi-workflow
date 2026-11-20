@@ -38,7 +38,7 @@ export function writeJsonAtomically(
 ) {
 	const existing = replace && existsSync(path);
 	const target = existing ? realpathSync(path) : path;
-	const mode = existing ? statSync(target).mode & 0o777 : undefined;
+	const mode = existing ? (statSync(target).mode & 0o777) | 0o400 : undefined;
 	const directory = dirname(target);
 	mkdirSync(directory, { recursive: true });
 	// ponytail: pid+timestamp assumes a single synchronous writer per process;
