@@ -64,7 +64,7 @@ const instructions = [
 const guidelines = [
 	"Orientation (finding files, reading what is there) is not substantive work. Consult the advisor after orienting and before writing, committing to an interpretation, or building on an assumption.",
 	"On a short task where the next action is dictated by the tool output you just read, do not consult; most of the value comes from the first call, before the approach crystallizes.",
-	"On a multi-step task, consult at least once before committing to an approach and once before declaring done, and make the deliverable durable (file written, commit made) before that final call.",
+	"On a multi-step task, consult at least once before committing to an approach and once before declaring done, and make the deliverable durable (file written) before that final call.",
 	"Also consult when stuck (errors recurring, approach not converging) or when considering a change of approach.",
 	"The advisor sees your instructions and the whole conversation, so call it without arguments. Weigh its advice seriously and decide yourself what to adopt; when your own primary evidence contradicts it, surface the conflict in one more call instead of switching silently.",
 ];
@@ -197,7 +197,8 @@ function responseOutcome(
 	}
 	if (response.stopReason === "error") {
 		return outcome(
-			terminalSafeBlock(response.errorMessage ?? ""),
+			terminalSafeBlock(response.errorMessage ?? "").trim() ||
+				"The advisor's provider failed without a message.",
 			{ ...details, failure: "provider" },
 			{ usage },
 		);
@@ -207,6 +208,13 @@ function responseOutcome(
 			"The advisor returned no advice.",
 			{ ...details, failure: "empty" },
 			{ usage },
+		);
+	}
+	if (response.stopReason === "length") {
+		return outcome(
+			`${advice}\n\n(The advice was cut off at the advisor model's output limit.)`,
+			details,
+			{ isError: false, usage },
 		);
 	}
 	return outcome(advice, details, { isError: false, usage });
