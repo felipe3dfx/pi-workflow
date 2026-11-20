@@ -42,7 +42,7 @@ The versioned Pi settings in `assets/settings.json` that `/workflow:config` appl
 
 ### Agent directory
 
-The user's Pi configuration directory. It holds the selection, Delegation mode, model profiles, `mcp.json`, and the user's Pi `settings.json`.
+The user's Pi configuration directory. It holds the selection, Delegation mode, model profiles, the advisor model, `mcp.json`, and the user's Pi `settings.json`.
 
 _Avoid_: home, config folder
 
@@ -56,7 +56,7 @@ A named set of model and thinking assignments, one per specialist, stored in `pi
 
 ### Delegation mode
 
-The persistent choice, stored in the agent directory, of whether work may stay in the parent session: `opportunistic` or `orchestrator`. In `orchestrator`, the parent is told to delegate all work to child sessions and to keep to conversing, planning, asking, and directing them; nothing blocks its tools.
+The persistent choice, stored in the agent directory, of whether work may stay in the parent session: `opportunistic` or `orchestrator`. In `orchestrator`, the parent is told to delegate all work to child sessions and to keep to conversing, planning, asking, consulting the advisor, and directing them; nothing blocks its tools.
 
 _Avoid_: orchestrator routing, parent mode, routing mode
 
@@ -76,7 +76,7 @@ The Grupo Ilao skills that own delivery process. A consumer installs them from t
 
 ### Harness capability
 
-A pi-workflow behavior that is not a companion package: child session, todo, operator question, model profile, CodeGraph access, or compact rendering. The harness owns it and does not install it from the companion catalog.
+A pi-workflow behavior that is not a companion package: child session, todo, operator question, model profile, CodeGraph access, compact rendering, or advisor. The harness owns it and does not install it from the companion catalog.
 
 _Avoid_: bundled companion, absorbed package
 
@@ -241,3 +241,9 @@ _Avoid_: pi-pretty
 The harness capability for structural questions about the current repository.
 
 _Avoid_: companion package
+
+### Advisor
+
+The harness capability through which the parent session consults one operator-chosen model for a second opinion on its current context. The advisor has no tools and never acts; it is not a Specialist, a child session, or a Contract.
+
+_Avoid_: executor, reviewer, verifier

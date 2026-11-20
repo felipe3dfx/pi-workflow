@@ -6,6 +6,8 @@ Acceptance: approval and merge of the introducing PR.
 
 The contextual path remains unadopted; production adoption still belongs to #293.
 
+Amended by [ADR 0030](0030-advisor-capability.md): the advisor tool joins the closed list of exempt harness tools, although it sends the parent's context to the advisor's provider.
+
 ## Decision
 
 Amends: ADR-0021, only its application of contextual classification to every parent and child dispatch. Its other decisions, and ADR-0022, stay in force. Issue: #315.
