@@ -31,16 +31,8 @@ export function createModelProfilesEditor(
 	done: (action: "save" | "exit") => void,
 	terminalRows: () => number,
 ): Component {
-	const frame = createScreenFrame(
-		theme,
-		keybindings,
-		terminalRows,
-		() => done("exit"),
-		(screen, data) => {
-			if (screen.blocksSave || printable(data) !== "s") return false;
-			done("save");
-			return true;
-		},
+	const frame = createScreenFrame(theme, keybindings, terminalRows, () =>
+		done("exit"),
 	);
 	const { push, pop, rows, selectList } = frame;
 
@@ -76,7 +68,6 @@ export function createModelProfilesEditor(
 				["Enter", "confirm"],
 				["Esc", "back"],
 			],
-			blocksSave: true,
 			render: (width) => input.render(width),
 			handleInput(data) {
 				input.handleInput(data);
@@ -92,7 +83,6 @@ export function createModelProfilesEditor(
 				["y", "delete"],
 				["n/Esc", "keep"],
 			],
-			blocksSave: true,
 			render: () => [],
 			handleInput(data) {
 				const key = printable(data);
@@ -167,7 +157,10 @@ export function createModelProfilesEditor(
 				...rows(list, items(), width, true),
 			],
 			handleInput(data) {
-				if (printable(data) === "i") {
+				const key = printable(data);
+				if (key === "s") {
+					done("save");
+				} else if (key === "i") {
 					const index = selectedIndex();
 					delete profile()[specialists[index]];
 					list = rebuild(index);
@@ -229,7 +222,9 @@ export function createModelProfilesEditor(
 			handleInput(data) {
 				const selected = list.getSelectedItem()?.value;
 				const key = printable(data);
-				if (key === "c") {
+				if (key === "s") {
+					done("save");
+				} else if (key === "c") {
 					push(
 						nameScreen("New profile name", "", (name) => {
 							state.profiles[name] = {};

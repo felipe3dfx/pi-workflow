@@ -28,7 +28,6 @@ import { terminalSafeLine } from "./terminal-safe-text.ts";
 export type Screen = {
 	title: string;
 	hints: Hint[];
-	blocksSave?: boolean;
 	render(width: number): string[];
 	handleInput(data: string): void;
 };
@@ -78,7 +77,6 @@ export function createScreenFrame(
 	keybindings: KeybindingsManager,
 	terminalRows: () => number,
 	close: () => void,
-	intercept?: (screen: Screen, data: string) => boolean,
 ) {
 	const listTheme = selectListTheme(theme);
 	const stack: Screen[] = [];
@@ -166,8 +164,7 @@ export function createScreenFrame(
 		invalidate() {},
 		handleInput(data) {
 			notice = "";
-			const screen = stack[stack.length - 1];
-			if (!intercept?.(screen, data)) screen.handleInput(data);
+			stack[stack.length - 1].handleInput(data);
 		},
 	};
 
@@ -204,7 +201,6 @@ function thinkingScreen(
 			["Enter", "confirm"],
 			["Esc", "back"],
 		],
-		blocksSave: true,
 		render: (width) => [
 			sectionRule(frame.theme, "Thinking", width),
 			...frame.rows(list, items, width),
@@ -243,7 +239,6 @@ export function modelCatalogScreen(
 	let list = frame.selectList(filtered, pick);
 	return {
 		title,
-		blocksSave: true,
 		hints: [
 			["type", "filter"],
 			["↑/↓", "choose"],

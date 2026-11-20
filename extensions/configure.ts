@@ -62,20 +62,24 @@ export function readSelection(
 	if (!isPlainRecord(parsed) || parsed.schemaVersion !== 1) {
 		return { status: "refused", reason: "Selection must use schemaVersion 1." };
 	}
-	const capabilityRecord = parsed.capabilities;
+	const storedCapabilities = parsed.capabilities;
 	const expectationRecord = parsed.expectations;
-	if (!isPlainRecord(capabilityRecord) || !isPlainRecord(expectationRecord)) {
+	if (!isPlainRecord(storedCapabilities) || !isPlainRecord(expectationRecord)) {
 		return {
 			status: "refused",
 			reason: "Selection must name capabilities and expectations.",
 		};
 	}
+	// ADR 0030: a selection saved before the advisor existed reads it as on.
+	const capabilityRecord: Record<string, unknown> = {
+		advisor: true,
+		...storedCapabilities,
+	};
+	const capabilityKeys = Object.keys(capabilityRecord);
 	if (
-		Object.keys(capabilityRecord).some((key) => !isCapability(key)) ||
-		capabilities.some(
-			(capability) =>
-				capability !== "advisor" && !(capability in capabilityRecord),
-		)
+		capabilityKeys.length !== capabilities.length ||
+		capabilityKeys.some((key) => !isCapability(key)) ||
+		capabilities.some((capability) => !(capability in capabilityRecord))
 	) {
 		return {
 			status: "refused",
@@ -84,10 +88,7 @@ export function readSelection(
 	}
 	const capabilitiesOn = {} as Record<Capability, boolean>;
 	for (const capability of capabilities) {
-		const value =
-			capability === "advisor" && !(capability in capabilityRecord)
-				? true
-				: capabilityRecord[capability];
+		const value = capabilityRecord[capability];
 		if (typeof value !== "boolean") {
 			return {
 				status: "refused",
