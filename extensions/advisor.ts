@@ -20,6 +20,7 @@ import {
 	type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 
+import { advisorRenderers } from "./advisor-card.ts";
 import { isPlainRecord, writeJsonAtomically } from "./agent-directory.ts";
 import {
 	createScreenFrame,
@@ -354,6 +355,7 @@ export function createAdvisor(agentDirectory: string) {
 		parameters: { type: "object", properties: {}, additionalProperties: false },
 		executionMode: "sequential" as const,
 		execute: consult,
+		...advisorRenderers,
 	};
 
 	function offer(pi: ExtensionAPI) {

@@ -505,7 +505,7 @@ function renderChat(
 }
 
 function pointAt(line: string) {
-	const at = line.search(/[◆◈]/);
+	const at = line.search(/[◆◇◈]/);
 	if (at < 0) return line;
 	return `${line.slice(0, at)}${theme().fg("accent", "▸")}${line.slice(at + 1)}`;
 }
