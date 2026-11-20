@@ -8,6 +8,8 @@ Superseded by ADR 0012 for the command name and argumentless-command clauses.
 
 Superseded by [ADR 0027](0027-parent-owns-delegation.md) for the clause that the tool gate and the launcher share one chooser verdict per operator message only; the rest stays in force.
 
+Superseded by [ADR 0030](0030-advisor-capability.md) for the invalid-selection clause, only for the advisor: a selection missing only the advisor capability is valid and reads it as on; the advisor occupies the overlay and the message stream.
+
 Amended by the deep harness modules feature (`docs/specs/deep-harness-modules.md`) to clarify what unseating stops.
 
 Amended by ADR 0019 for the operator question's position, width, and frame.
