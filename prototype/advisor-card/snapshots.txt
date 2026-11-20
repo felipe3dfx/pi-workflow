@@ -1,0 +1,1089 @@
+### 00 call issued, no update yet · renders nothing · width 60
+────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────
+
+### 00 call issued, no update yet · renders nothing · width 100
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 00 call issued, no update yet · renders nothing · width 140
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 01 running · partial carries model and thinking · width 60
+────────────────────────────────────────────────────────────
+
+   ◇ Advisor consulting…  claude-opus-5 (high)
+────────────────────────────────────────────────────────────
+
+### 01 running · partial carries model and thinking · width 100
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor consulting…  claude-opus-5 (high)
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 01 running · partial carries model and thinking · width 140
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor consulting…  claude-opus-5 (high)
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 02 running · partial without details · width 60
+────────────────────────────────────────────────────────────
+
+   ◇ Advisor consulting…
+────────────────────────────────────────────────────────────
+
+### 02 running · partial without details · width 100
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor consulting…
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 02 running · partial without details · width 140
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor consulting…
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 03 done · collapsed (long Markdown advice) · width 60
+────────────────────────────────────────────────────────────
+
+   ◇ Advisor  42s · claude-opus-5 (high)
+     Verdict
+
+     The approach is sound, but two risks need a check
+     … 24 more lines (ctrl+o to expand)
+────────────────────────────────────────────────────────────
+
+### 03 done · collapsed (long Markdown advice) · width 100
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor  42s · claude-opus-5 (high)                                       (ctrl+o to expand)
+     Verdict
+
+     The approach is sound, but two risks need a check before you commit.
+     … 18 more lines
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 03 done · collapsed (long Markdown advice) · width 140
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor  42s · claude-opus-5 (high)                                                                               (ctrl+o to expand)
+     Verdict
+
+     The approach is sound, but two risks need a check before you commit.
+     … 17 more lines
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 04 done · expanded (ctrl+o or click) · width 60
+────────────────────────────────────────────────────────────
+
+   ◇ Advisor  42s · claude-opus-5 (high)
+     Verdict
+
+     The approach is sound, but two risks need a check
+     before you commit.
+
+     Risks
+
+     1. readSelection tolerates a missing advisor key; a
+        test must pin that it reads as off, not on.
+     2. The picker extraction can change /workflow:models
+        focus order.
+
+     Verify
+
+     - Run node --test
+       test/model-profiles-editor.test.mjs before and
+       after the extraction.
+     - Snapshot the overlay at width 60.
+
+     ```ts
+       const preview = readSelection(stored, []);
+
+     assert.equal(preview.selection.capabilities.advisor,
+     false);
+     ```
+
+     If both pass, proceed.
+────────────────────────────────────────────────────────────
+
+### 04 done · expanded (ctrl+o or click) · width 100
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor  42s · claude-opus-5 (high)                                     (ctrl+o to collapse)
+     Verdict
+
+     The approach is sound, but two risks need a check before you commit.
+
+     Risks
+
+     1. readSelection tolerates a missing advisor key; a test must pin that it reads as off, not
+        on.
+     2. The picker extraction can change /workflow:models focus order.
+
+     Verify
+
+     - Run node --test test/model-profiles-editor.test.mjs before and after the extraction.
+     - Snapshot the overlay at width 60.
+
+     ```ts
+       const preview = readSelection(stored, []);
+       assert.equal(preview.selection.capabilities.advisor, false);
+     ```
+
+     If both pass, proceed.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 04 done · expanded (ctrl+o or click) · width 140
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor  42s · claude-opus-5 (high)                                                                             (ctrl+o to collapse)
+     Verdict
+
+     The approach is sound, but two risks need a check before you commit.
+
+     Risks
+
+     1. readSelection tolerates a missing advisor key; a test must pin that it reads as off, not on.
+     2. The picker extraction can change /workflow:models focus order.
+
+     Verify
+
+     - Run node --test test/model-profiles-editor.test.mjs before and after the extraction.
+     - Snapshot the overlay at width 60.
+
+     ```ts
+       const preview = readSelection(stored, []);
+       assert.equal(preview.selection.capabilities.advisor, false);
+     ```
+
+     If both pass, proceed.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 05 done · short advice, nothing to expand · width 60
+────────────────────────────────────────────────────────────
+
+   ◇ Advisor  9s · claude-opus-5 (high)
+     Sound. Ship it after npm run check passes.
+────────────────────────────────────────────────────────────
+
+### 05 done · short advice, nothing to expand · width 100
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor  9s · claude-opus-5 (high)
+     Sound. Ship it after npm run check passes.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 05 done · short advice, nothing to expand · width 140
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor  9s · claude-opus-5 (high)
+     Sound. Ship it after npm run check passes.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 05b done · short advice while every tool row is expanded · width 60
+────────────────────────────────────────────────────────────
+
+   ◇ Advisor  9s · claude-opus-5 (high)
+     Sound. Ship it after npm run check passes.
+────────────────────────────────────────────────────────────
+
+### 05b done · short advice while every tool row is expanded · width 100
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor  9s · claude-opus-5 (high)
+     Sound. Ship it after npm run check passes.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 05b done · short advice while every tool row is expanded · width 140
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor  9s · claude-opus-5 (high)
+     Sound. Ship it after npm run check passes.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 06 done · empty advice · width 60
+────────────────────────────────────────────────────────────
+
+   ◇ Advisor  7s · claude-opus-5 (high)
+     The advisor returned no advice.
+────────────────────────────────────────────────────────────
+
+### 06 done · empty advice · width 100
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor  7s · claude-opus-5 (high)
+     The advisor returned no advice.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 06 done · empty advice · width 140
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor  7s · claude-opus-5 (high)
+     The advisor returned no advice.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 06b done · empty advice while every tool row is expanded · width 60
+────────────────────────────────────────────────────────────
+
+   ◇ Advisor  7s · claude-opus-5 (high)
+     The advisor returned no advice.
+────────────────────────────────────────────────────────────
+
+### 06b done · empty advice while every tool row is expanded · width 100
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor  7s · claude-opus-5 (high)
+     The advisor returned no advice.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 06b done · empty advice while every tool row is expanded · width 140
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor  7s · claude-opus-5 (high)
+     The advisor returned no advice.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 07 done · collapsed cut inside a code fence · width 60
+────────────────────────────────────────────────────────────
+
+   ◇ Advisor  1m 15s · claude-opus-5 (high)
+     ```diff
+       - if (seated("child-session", "message-stream"))
+       + if (seated("advisor", "message-stream"))
+     … 4 more lines (ctrl+o to expand)
+────────────────────────────────────────────────────────────
+
+### 07 done · collapsed cut inside a code fence · width 100
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor  1m 15s · claude-opus-5 (high)                                    (ctrl+o to expand)
+     ```diff
+       - if (seated("child-session", "message-stream"))
+       + if (seated("advisor", "message-stream"))
+     … 3 more lines
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 07 done · collapsed cut inside a code fence · width 140
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor  1m 15s · claude-opus-5 (high)                                                                            (ctrl+o to expand)
+     ```diff
+       - if (seated("child-session", "message-stream"))
+       + if (seated("advisor", "message-stream"))
+     … 3 more lines
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 08 failed · model not available in Pi · width 60
+────────────────────────────────────────────────────────────
+
+   ◇ Advisor failed  3s · claude-opus-5 (high)
+     The advisor model anthropic/claude-opus-5 is not
+     available in Pi. Choose another with
+     /workflow:advisor.
+────────────────────────────────────────────────────────────
+
+### 08 failed · model not available in Pi · width 100
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor failed  3s · claude-opus-5 (high)
+     The advisor model anthropic/claude-opus-5 is not available in Pi. Choose another with
+     /workflow:advisor.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 08 failed · model not available in Pi · width 140
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor failed  3s · claude-opus-5 (high)
+     The advisor model anthropic/claude-opus-5 is not available in Pi. Choose another with /workflow:advisor.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 09 failed · thinking level not supported · width 60
+────────────────────────────────────────────────────────────
+
+   ◇ Advisor failed  3s · claude-opus-5 (high)
+     The advisor model anthropic/claude-opus-5 does not
+     support thinking high. Choose another level with
+     /workflow:advisor.
+────────────────────────────────────────────────────────────
+
+### 09 failed · thinking level not supported · width 100
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor failed  3s · claude-opus-5 (high)
+     The advisor model anthropic/claude-opus-5 does not support thinking high. Choose another
+     level with /workflow:advisor.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 09 failed · thinking level not supported · width 140
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor failed  3s · claude-opus-5 (high)
+     The advisor model anthropic/claude-opus-5 does not support thinking high. Choose another level with /workflow:advisor.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 10 failed · provider or auth error · width 60
+────────────────────────────────────────────────────────────
+
+   ◇ Advisor failed  3s · claude-opus-5 (high)
+     anthropic: 401 authentication_error: invalid
+     x-api-key. Run /login or check the provider key.
+────────────────────────────────────────────────────────────
+
+### 10 failed · provider or auth error · width 100
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor failed  3s · claude-opus-5 (high)
+     anthropic: 401 authentication_error: invalid x-api-key. Run /login or check the provider
+     key.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 10 failed · provider or auth error · width 140
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor failed  3s · claude-opus-5 (high)
+     anthropic: 401 authentication_error: invalid x-api-key. Run /login or check the provider key.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 11 failed · context larger than the advisor window · width 60
+────────────────────────────────────────────────────────────
+
+   ◇ Advisor failed  3s · claude-opus-5 (high)
+     The parent context (312,480 tokens) exceeds the
+     advisor model's window (200,000 tokens). Choose a
+     larger advisor model with /workflow:advisor.
+────────────────────────────────────────────────────────────
+
+### 11 failed · context larger than the advisor window · width 100
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor failed  3s · claude-opus-5 (high)
+     The parent context (312,480 tokens) exceeds the advisor model's window (200,000 tokens).
+     Choose a larger advisor model with /workflow:advisor.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 11 failed · context larger than the advisor window · width 140
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor failed  3s · claude-opus-5 (high)
+     The parent context (312,480 tokens) exceeds the advisor model's window (200,000 tokens). Choose a larger advisor model with
+     /workflow:advisor.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 12 stopped · operator abort (Esc) · width 60
+────────────────────────────────────────────────────────────
+
+   ◇ Advisor stopped  3s · claude-opus-5 (high)
+     Advisor consultation stopped by the operator.
+────────────────────────────────────────────────────────────
+
+### 12 stopped · operator abort (Esc) · width 100
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor stopped  3s · claude-opus-5 (high)
+     Advisor consultation stopped by the operator.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 12 stopped · operator abort (Esc) · width 140
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor stopped  3s · claude-opus-5 (high)
+     Advisor consultation stopped by the operator.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 13 refused · capability unseated mid-turn (race only) · width 60
+────────────────────────────────────────────────────────────
+
+   ◇ Advisor refused  3s · claude-opus-5 (high)
+     Advisor is disabled. Enable it in /workflow:config.
+────────────────────────────────────────────────────────────
+
+### 13 refused · capability unseated mid-turn (race only) · width 100
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor refused  3s · claude-opus-5 (high)
+     Advisor is disabled. Enable it in /workflow:config.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 13 refused · capability unseated mid-turn (race only) · width 140
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor refused  3s · claude-opus-5 (high)
+     Advisor is disabled. Enable it in /workflow:config.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 14 refused · model cleared mid-turn (race only) · width 60
+────────────────────────────────────────────────────────────
+
+   ◇ Advisor refused  0s
+     No advisor model is set. Choose one with
+     /workflow:advisor.
+────────────────────────────────────────────────────────────
+
+### 14 refused · model cleared mid-turn (race only) · width 100
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor refused  0s
+     No advisor model is set. Choose one with /workflow:advisor.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 14 refused · model cleared mid-turn (race only) · width 140
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor refused  0s
+     No advisor model is set. Choose one with /workflow:advisor.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 15 done · long model id (middle ellipsis keeps thinking) · width 60
+────────────────────────────────────────────────────────────
+
+   ◇ Advisor  1h 02m · anthropic/cla…d-context-1m (xhigh)
+     Sound. Ship it after npm run check passes.
+────────────────────────────────────────────────────────────
+
+### 15 done · long model id (middle ellipsis keeps thinking) · width 100
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor  1h 02m · anthropic/claude-opus-5-20261101-preview-extended-context-1m (xhigh)
+     Sound. Ship it after npm run check passes.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 15 done · long model id (middle ellipsis keeps thinking) · width 140
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor  1h 02m · anthropic/claude-opus-5-20261101-preview-extended-context-1m (xhigh)
+     Sound. Ship it after npm run check passes.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 16 failed · long model id · width 60
+────────────────────────────────────────────────────────────
+
+   ◇ Advisor failed  1m 01s · anthropic…ontext-1m (xhigh)
+     openrouter: 503 upstream overloaded.
+────────────────────────────────────────────────────────────
+
+### 16 failed · long model id · width 100
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor failed  1m 01s · anthropic/claude-opus-5-20261…1-preview-extended-context-1m (xhigh)
+     openrouter: 503 upstream overloaded.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 16 failed · long model id · width 140
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor failed  1m 01s · anthropic/claude-opus-5-20261101-preview-extended-context-1m (xhigh)
+     openrouter: 503 upstream overloaded.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 17 done · hostile model id and advice escapes · width 60
+────────────────────────────────────────────────────────────
+
+   ◇ Advisor  1s ·  [31mred [0m model  (high ]0;title )
+     Clear the screen:  [2J [H done.
+     Tab   here.
+────────────────────────────────────────────────────────────
+
+### 17 done · hostile model id and advice escapes · width 100
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor  1s ·  [31mred [0m model  (high ]0;title )
+     Clear the screen:  [2J [H done.
+     Tab   here.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 17 done · hostile model id and advice escapes · width 140
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor  1s ·  [31mred [0m model  (high ]0;title )
+     Clear the screen:  [2J [H done.
+     Tab   here.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 18 failed · thrown error, details lost (model kept from the partial) · width 60
+────────────────────────────────────────────────────────────
+
+   ◇ Advisor failed  12s · claude-opus-5 (high)
+     fetch failed: ECONNRESET
+────────────────────────────────────────────────────────────
+
+### 18 failed · thrown error, details lost (model kept from the partial) · width 100
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor failed  12s · claude-opus-5 (high)
+     fetch failed: ECONNRESET
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 18 failed · thrown error, details lost (model kept from the partial) · width 140
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor failed  12s · claude-opus-5 (high)
+     fetch failed: ECONNRESET
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 19 done · no partial and no details · width 60
+────────────────────────────────────────────────────────────
+
+   ◇ Advisor  5s
+     Sound. Ship it after npm run check passes.
+────────────────────────────────────────────────────────────
+
+### 19 done · no partial and no details · width 100
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor  5s
+     Sound. Ship it after npm run check passes.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 19 done · no partial and no details · width 140
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor  5s
+     Sound. Ship it after npm run check passes.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 20 fallback · advisor capability unseated, collapsed · width 60
+────────────────────────────────────────────────────────────
+
+Advisor  42s · claude-opus-5 (high)
+## Verdict
+
+The approach is sound, but two risks need a check before you
+commit.
+… 17 more lines
+────────────────────────────────────────────────────────────
+
+### 20 fallback · advisor capability unseated, collapsed · width 100
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+Advisor  42s · claude-opus-5 (high)
+## Verdict
+
+The approach is sound, but two risks need a check before you commit.
+… 17 more lines
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 20 fallback · advisor capability unseated, collapsed · width 140
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+Advisor  42s · claude-opus-5 (high)
+## Verdict
+
+The approach is sound, but two risks need a check before you commit.
+… 17 more lines
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 21 fallback · advisor capability unseated, expanded · width 60
+────────────────────────────────────────────────────────────
+
+Advisor  42s · claude-opus-5 (high)
+## Verdict
+
+The approach is sound, but two risks need a check before you
+commit.
+
+## Risks
+
+1. `readSelection` tolerates a missing `advisor` key; a test
+must pin that it reads as **off**, not on.
+2. The picker extraction can change `/workflow:models` focus
+order.
+
+## Verify
+
+- Run `node --test test/model-profiles-editor.test.mjs`
+before and after the extraction.
+- Snapshot the overlay at width 60.
+
+```ts
+const preview = readSelection(stored, []);
+assert.equal(preview.selection.capabilities.advisor, false);
+```
+
+If both pass, proceed.
+────────────────────────────────────────────────────────────
+
+### 21 fallback · advisor capability unseated, expanded · width 100
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+Advisor  42s · claude-opus-5 (high)
+## Verdict
+
+The approach is sound, but two risks need a check before you commit.
+
+## Risks
+
+1. `readSelection` tolerates a missing `advisor` key; a test must pin that it reads as **off**, not
+on.
+2. The picker extraction can change `/workflow:models` focus order.
+
+## Verify
+
+- Run `node --test test/model-profiles-editor.test.mjs` before and after the extraction.
+- Snapshot the overlay at width 60.
+
+```ts
+const preview = readSelection(stored, []);
+assert.equal(preview.selection.capabilities.advisor, false);
+```
+
+If both pass, proceed.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 21 fallback · advisor capability unseated, expanded · width 140
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+Advisor  42s · claude-opus-5 (high)
+## Verdict
+
+The approach is sound, but two risks need a check before you commit.
+
+## Risks
+
+1. `readSelection` tolerates a missing `advisor` key; a test must pin that it reads as **off**, not on.
+2. The picker extraction can change `/workflow:models` focus order.
+
+## Verify
+
+- Run `node --test test/model-profiles-editor.test.mjs` before and after the extraction.
+- Snapshot the overlay at width 60.
+
+```ts
+const preview = readSelection(stored, []);
+assert.equal(preview.selection.capabilities.advisor, false);
+```
+
+If both pass, proceed.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 22 done · after a left click on the head (Pi MouseRegion toggles this row) · width 60
+────────────────────────────────────────────────────────────
+
+   ◇ Advisor  42s · claude-opus-5 (high)
+     Verdict
+
+     The approach is sound, but two risks need a check
+     before you commit.
+
+     Risks
+
+     1. readSelection tolerates a missing advisor key; a
+        test must pin that it reads as off, not on.
+     2. The picker extraction can change /workflow:models
+        focus order.
+
+     Verify
+
+     - Run node --test
+       test/model-profiles-editor.test.mjs before and
+       after the extraction.
+     - Snapshot the overlay at width 60.
+
+     ```ts
+       const preview = readSelection(stored, []);
+
+     assert.equal(preview.selection.capabilities.advisor,
+     false);
+     ```
+
+     If both pass, proceed.
+────────────────────────────────────────────────────────────
+
+### 22 done · after a left click on the head (Pi MouseRegion toggles this row) · width 100
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor  42s · claude-opus-5 (high)                                     (ctrl+o to collapse)
+     Verdict
+
+     The approach is sound, but two risks need a check before you commit.
+
+     Risks
+
+     1. readSelection tolerates a missing advisor key; a test must pin that it reads as off, not
+        on.
+     2. The picker extraction can change /workflow:models focus order.
+
+     Verify
+
+     - Run node --test test/model-profiles-editor.test.mjs before and after the extraction.
+     - Snapshot the overlay at width 60.
+
+     ```ts
+       const preview = readSelection(stored, []);
+       assert.equal(preview.selection.capabilities.advisor, false);
+     ```
+
+     If both pass, proceed.
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 22 done · after a left click on the head (Pi MouseRegion toggles this row) · width 140
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor  42s · claude-opus-5 (high)                                                                             (ctrl+o to collapse)
+     Verdict
+
+     The approach is sound, but two risks need a check before you commit.
+
+     Risks
+
+     1. readSelection tolerates a missing advisor key; a test must pin that it reads as off, not on.
+     2. The picker extraction can change /workflow:models focus order.
+
+     Verify
+
+     - Run node --test test/model-profiles-editor.test.mjs before and after the extraction.
+     - Snapshot the overlay at width 60.
+
+     ```ts
+       const preview = readSelection(stored, []);
+       assert.equal(preview.selection.capabilities.advisor, false);
+     ```
+
+     If both pass, proceed.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 23 family · question, Parent answer, Subagent result, Advisor (◇ hollow), next tool row · width 60
+────────────────────────────────────────────────────────────
+
+   ◆ Subagent worker 5636 asks · question 2
+     Should the advisor card depend on child-session
+     seating?
+
+   ◆ Parent → 5636 · answer 2
+     No. It depends on the advisor capability.
+   ◆ Subagent worker 5636 pass  1m 02s
+   ◇ Advisor  42s · claude-opus-5 (high)
+     Verdict
+
+     The approach is sound, but two risks need a check
+     … 24 more lines (ctrl+o to expand)
+◆ Codegraph query
+────────────────────────────────────────────────────────────
+
+### 23 family · question, Parent answer, Subagent result, Advisor (◇ hollow), next tool row · width 100
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◆ Subagent worker 5636 asks · question 2                                    (ctrl+o to expand)
+     Should the advisor card depend on child-session seating?
+
+   ◆ Parent → 5636 · answer 2
+     No. It depends on the advisor capability.
+   ◆ Subagent worker 5636 pass  1m 02s                                         (ctrl+o to expand)
+   ◇ Advisor  42s · claude-opus-5 (high)                                       (ctrl+o to expand)
+     Verdict
+
+     The approach is sound, but two risks need a check before you commit.
+     … 18 more lines
+◆ Codegraph query
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 23 family · question, Parent answer, Subagent result, Advisor (◇ hollow), next tool row · width 140
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◆ Subagent worker 5636 asks · question 2                                                                            (ctrl+o to expand)
+     Should the advisor card depend on child-session seating?
+
+   ◆ Parent → 5636 · answer 2
+     No. It depends on the advisor capability.
+   ◆ Subagent worker 5636 pass  1m 02s                                                                                 (ctrl+o to expand)
+   ◇ Advisor  42s · claude-opus-5 (high)                                                                               (ctrl+o to expand)
+     Verdict
+
+     The approach is sound, but two risks need a check before you commit.
+     … 17 more lines
+◆ Codegraph query
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 24 family · same with the solid ◆ variant · width 60
+────────────────────────────────────────────────────────────
+
+   ◆ Subagent worker 5636 asks · question 2
+     Should the advisor card depend on child-session
+     seating?
+
+   ◆ Parent → 5636 · answer 2
+     No. It depends on the advisor capability.
+   ◆ Subagent worker 5636 pass  1m 02s
+   ◆ Advisor  42s · claude-opus-5 (high)
+     Verdict
+
+     The approach is sound, but two risks need a check
+     … 24 more lines (ctrl+o to expand)
+◆ Codegraph query
+────────────────────────────────────────────────────────────
+
+### 24 family · same with the solid ◆ variant · width 100
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◆ Subagent worker 5636 asks · question 2                                    (ctrl+o to expand)
+     Should the advisor card depend on child-session seating?
+
+   ◆ Parent → 5636 · answer 2
+     No. It depends on the advisor capability.
+   ◆ Subagent worker 5636 pass  1m 02s                                         (ctrl+o to expand)
+   ◆ Advisor  42s · claude-opus-5 (high)                                       (ctrl+o to expand)
+     Verdict
+
+     The approach is sound, but two risks need a check before you commit.
+     … 18 more lines
+◆ Codegraph query
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 24 family · same with the solid ◆ variant · width 140
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◆ Subagent worker 5636 asks · question 2                                                                            (ctrl+o to expand)
+     Should the advisor card depend on child-session seating?
+
+   ◆ Parent → 5636 · answer 2
+     No. It depends on the advisor capability.
+   ◆ Subagent worker 5636 pass  1m 02s                                                                                 (ctrl+o to expand)
+   ◆ Advisor  42s · claude-opus-5 (high)                                                                               (ctrl+o to expand)
+     Verdict
+
+     The approach is sound, but two risks need a check before you commit.
+     … 17 more lines
+◆ Codegraph query
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 25 cursor · transcript cursor on the Advisor head (◇): pointAt finds no glyph · width 60
+────────────────────────────────────────────────────────────
+
+   ◆ Subagent worker 5636 asks · question 2
+     Should the advisor card depend on child-session
+     seating?
+
+   ◆ Parent → 5636 · answer 2
+     No. It depends on the advisor capability.
+   ◆ Subagent worker 5636 pass  1m 02s
+   ◇ Advisor  42s · claude-opus-5 (high)
+     Verdict
+
+     The approach is sound, but two risks need a check
+     … 24 more lines (ctrl+o to expand)
+◆ Codegraph query
+────────────────────────────────────────────────────────────
+
+### 25 cursor · transcript cursor on the Advisor head (◇): pointAt finds no glyph · width 100
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◆ Subagent worker 5636 asks · question 2                                    (ctrl+o to expand)
+     Should the advisor card depend on child-session seating?
+
+   ◆ Parent → 5636 · answer 2
+     No. It depends on the advisor capability.
+   ◆ Subagent worker 5636 pass  1m 02s                                         (ctrl+o to expand)
+   ◇ Advisor  42s · claude-opus-5 (high)                                       (ctrl+o to expand)
+     Verdict
+
+     The approach is sound, but two risks need a check before you commit.
+     … 18 more lines
+◆ Codegraph query
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 25 cursor · transcript cursor on the Advisor head (◇): pointAt finds no glyph · width 140
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◆ Subagent worker 5636 asks · question 2                                                                            (ctrl+o to expand)
+     Should the advisor card depend on child-session seating?
+
+   ◆ Parent → 5636 · answer 2
+     No. It depends on the advisor capability.
+   ◆ Subagent worker 5636 pass  1m 02s                                                                                 (ctrl+o to expand)
+   ◇ Advisor  42s · claude-opus-5 (high)                                                                               (ctrl+o to expand)
+     Verdict
+
+     The approach is sound, but two risks need a check before you commit.
+     … 17 more lines
+◆ Codegraph query
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 26 cursor · transcript cursor on the Advisor head (◆): ▸ replaces the glyph · width 60
+────────────────────────────────────────────────────────────
+
+   ◆ Subagent worker 5636 asks · question 2
+     Should the advisor card depend on child-session
+     seating?
+
+   ◆ Parent → 5636 · answer 2
+     No. It depends on the advisor capability.
+   ◆ Subagent worker 5636 pass  1m 02s
+   ▸ Advisor  42s · claude-opus-5 (high)
+     Verdict
+
+     The approach is sound, but two risks need a check
+     … 24 more lines (ctrl+o to expand)
+◆ Codegraph query
+────────────────────────────────────────────────────────────
+
+### 26 cursor · transcript cursor on the Advisor head (◆): ▸ replaces the glyph · width 100
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◆ Subagent worker 5636 asks · question 2                                    (ctrl+o to expand)
+     Should the advisor card depend on child-session seating?
+
+   ◆ Parent → 5636 · answer 2
+     No. It depends on the advisor capability.
+   ◆ Subagent worker 5636 pass  1m 02s                                         (ctrl+o to expand)
+   ▸ Advisor  42s · claude-opus-5 (high)                                       (ctrl+o to expand)
+     Verdict
+
+     The approach is sound, but two risks need a check before you commit.
+     … 18 more lines
+◆ Codegraph query
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 26 cursor · transcript cursor on the Advisor head (◆): ▸ replaces the glyph · width 140
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◆ Subagent worker 5636 asks · question 2                                                                            (ctrl+o to expand)
+     Should the advisor card depend on child-session seating?
+
+   ◆ Parent → 5636 · answer 2
+     No. It depends on the advisor capability.
+   ◆ Subagent worker 5636 pass  1m 02s                                                                                 (ctrl+o to expand)
+   ▸ Advisor  42s · claude-opus-5 (high)                                                                               (ctrl+o to expand)
+     Verdict
+
+     The approach is sound, but two risks need a check before you commit.
+     … 17 more lines
+◆ Codegraph query
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 27 cursor · cursor toggle (Enter) on the Advisor head expands that row only · width 60
+────────────────────────────────────────────────────────────
+
+   ◆ Subagent worker 5636 asks · question 2
+     Should the advisor card depend on child-session
+     seating?
+
+   ◆ Parent → 5636 · answer 2
+     No. It depends on the advisor capability.
+   ◆ Subagent worker 5636 pass  1m 02s
+
+   ◇ Advisor  42s · claude-opus-5 (high)
+     Verdict
+
+     The approach is sound, but two risks need a check
+     before you commit.
+
+     Risks
+
+     1. readSelection tolerates a missing advisor key; a
+        test must pin that it reads as off, not on.
+     2. The picker extraction can change /workflow:models
+        focus order.
+
+     Verify
+
+     - Run node --test
+       test/model-profiles-editor.test.mjs before and
+       after the extraction.
+     - Snapshot the overlay at width 60.
+
+     ```ts
+       const preview = readSelection(stored, []);
+
+     assert.equal(preview.selection.capabilities.advisor,
+     false);
+     ```
+
+     If both pass, proceed.
+
+◆ Codegraph query
+────────────────────────────────────────────────────────────
+
+### 27 cursor · cursor toggle (Enter) on the Advisor head expands that row only · width 100
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◆ Subagent worker 5636 asks · question 2                                    (ctrl+o to expand)
+     Should the advisor card depend on child-session seating?
+
+   ◆ Parent → 5636 · answer 2
+     No. It depends on the advisor capability.
+   ◆ Subagent worker 5636 pass  1m 02s                                         (ctrl+o to expand)
+
+   ◇ Advisor  42s · claude-opus-5 (high)                                     (ctrl+o to collapse)
+     Verdict
+
+     The approach is sound, but two risks need a check before you commit.
+
+     Risks
+
+     1. readSelection tolerates a missing advisor key; a test must pin that it reads as off, not
+        on.
+     2. The picker extraction can change /workflow:models focus order.
+
+     Verify
+
+     - Run node --test test/model-profiles-editor.test.mjs before and after the extraction.
+     - Snapshot the overlay at width 60.
+
+     ```ts
+       const preview = readSelection(stored, []);
+       assert.equal(preview.selection.capabilities.advisor, false);
+     ```
+
+     If both pass, proceed.
+
+◆ Codegraph query
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 27 cursor · cursor toggle (Enter) on the Advisor head expands that row only · width 140
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◆ Subagent worker 5636 asks · question 2                                                                            (ctrl+o to expand)
+     Should the advisor card depend on child-session seating?
+
+   ◆ Parent → 5636 · answer 2
+     No. It depends on the advisor capability.
+   ◆ Subagent worker 5636 pass  1m 02s                                                                                 (ctrl+o to expand)
+
+   ◇ Advisor  42s · claude-opus-5 (high)                                                                             (ctrl+o to collapse)
+     Verdict
+
+     The approach is sound, but two risks need a check before you commit.
+
+     Risks
+
+     1. readSelection tolerates a missing advisor key; a test must pin that it reads as off, not on.
+     2. The picker extraction can change /workflow:models focus order.
+
+     Verify
+
+     - Run node --test test/model-profiles-editor.test.mjs before and after the extraction.
+     - Snapshot the overlay at width 60.
+
+     ```ts
+       const preview = readSelection(stored, []);
+       assert.equal(preview.selection.capabilities.advisor, false);
+     ```
+
+     If both pass, proceed.
+
+◆ Codegraph query
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 28 running · after a click (Pi flips expanded; nothing visible changes) · width 60
+────────────────────────────────────────────────────────────
+
+   ◇ Advisor consulting…  claude-opus-5 (high)
+────────────────────────────────────────────────────────────
+
+### 28 running · after a click (Pi flips expanded; nothing visible changes) · width 100
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor consulting…  claude-opus-5 (high)
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+### 28 running · after a click (Pi flips expanded; nothing visible changes) · width 140
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+   ◇ Advisor consulting…  claude-opus-5 (high)
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
