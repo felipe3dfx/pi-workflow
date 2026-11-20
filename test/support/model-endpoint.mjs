@@ -13,20 +13,27 @@ export async function modelEndpoint(agentDir, answer = "DONE") {
 		request.on("end", async () => {
 			const parsed = JSON.parse(body);
 			requests.push(parsed);
-			response.writeHead(200, { "content-type": "text/event-stream" });
-			const chunk = (choice) =>
-				response.write(
-					`data: ${JSON.stringify({ id: "fake", object: "chat.completion.chunk", created: 1, model: "echo", choices: [{ index: 0, ...choice }] })}\n\n`,
-				);
 			const step =
 				typeof answer === "function"
 					? await answer(parsed)
 					: Array.isArray(answer)
 						? (steps.shift() ?? "DONE")
 						: answer;
-			if (typeof step === "string") {
-				chunk({ delta: { role: "assistant", content: step } });
+			if (step.error !== undefined) {
+				response.writeHead(step.status, { "content-type": "application/json" });
+				response.end(JSON.stringify({ error: { message: step.error } }));
+				return;
+			}
+			response.writeHead(200, { "content-type": "text/event-stream" });
+			const chunk = (choice, extra = {}) =>
+				response.write(
+					`data: ${JSON.stringify({ id: "fake", object: "chat.completion.chunk", created: 1, model: "echo", choices: choice ? [{ index: 0, ...choice }] : [], ...extra })}\n\n`,
+				);
+			const text = typeof step === "string" ? step : step.text;
+			if (text !== undefined) {
+				chunk({ delta: { role: "assistant", content: text } });
 				chunk({ delta: {}, finish_reason: "stop" });
+				if (step.usage) chunk(undefined, { usage: step.usage });
 			} else {
 				chunk({
 					delta: {

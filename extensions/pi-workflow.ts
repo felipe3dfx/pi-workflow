@@ -315,6 +315,7 @@ export default function piWorkflowExtension(
 			() => syncCodeGraphTool(pi, options.codegraph),
 			() => syncCompactTools(pi, currentCtx),
 			childTools.offer,
+			() => advisor.offer(pi),
 		],
 	});
 	childSessions.subscribe(childTools.refresh);
@@ -324,6 +325,8 @@ export default function piWorkflowExtension(
 		childTools.offered,
 		options.authorization !== undefined,
 	);
+	// The capture must see the Delegation mode section, so it registers after it.
+	advisor.capture(pi);
 	registerAgentLanguage(pi);
 	const explorationBudget = createExplorationBudget();
 	const contextBackstop = createContextBackstop();
@@ -504,6 +507,7 @@ export default function piWorkflowExtension(
 				return;
 			}
 			await advisor.choose(ctx);
+			advisor.offer(pi);
 		},
 	});
 }
