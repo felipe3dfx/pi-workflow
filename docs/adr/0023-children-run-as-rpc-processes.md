@@ -43,6 +43,6 @@ Accepted risks:
 - A contextual child has no child toolbox and cannot launch grandchildren, and common tool factories cannot cross into a child process; a contextual launch that selects them is refused. Only path-based common tool sources load in a contextual child. Accepted by the Owner in the review of PR #306 (DEC-2).
 - macOS termination of the whole tree runs the Linux mechanism and is unverified on macOS.
 - Process-tree membership is the `PI_WORKFLOW_PROCESS_TREE` environment mark, because Pi starts MCP servers and shells in sessions of their own and a reparented orphan keeps no ancestry. A descendant that clears its environment escapes the sweep. Accepted by the Owner in the review of PR #306 (DEC-1); an environment-independent guarantee needs a sandbox and is a separate ticket.
-- The design was verified against Pi 1.4.0. The supported range now starts at 1.6.0, because the chrome relies on the `Container.childLines` internals introduced in that release (ADR 0007): the SDK peers in `package.json` and the Pi CLI requirement are `>=1.6.0`.
+- The design is verified against Pi 1.4.0, so a child accepts any Pi on PATH at `>=1.4.0`: a headless RPC child loads no chrome. The host Pi, the SDK peers in `package.json` and the README's Pi CLI requirement are `>=1.6.0`, because the chrome relies on the `Container.childLines` internals introduced in that release (ADR 0007).
 
 R13 and R14 of ADR 0014 no longer apply. ADR 0014's remaining accepted risks about what a child can reach (R2 to R11) still describe the child process.

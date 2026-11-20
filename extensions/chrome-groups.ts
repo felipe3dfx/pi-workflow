@@ -145,10 +145,7 @@ export function markCard(
 	cards.set(card, state);
 }
 
-type MouseLayout = {
-	width: number;
-	children: { component: Component; height: number }[];
-};
+type Target = { component: Component; height: number };
 
 type ChildLines = {
 	width: number;
@@ -157,14 +154,14 @@ type ChildLines = {
 	lines: readonly string[];
 };
 
-type Entry = MouseLayout["children"][number] & { key: object; from: number };
+type Entry = Target & { key: object; from: number };
 type Place = { key: object; y: number };
 type View = {
 	width: number;
 	edge: number;
 	heads: number[];
 	places: Place[];
-	targets: MouseLayout["children"];
+	targets: Target[];
 	total: number;
 };
 export type Viewport = {
@@ -518,7 +515,7 @@ function rows(
 	chat: ReturnType<typeof renderChat>,
 	width: number,
 	edge: number,
-): MouseLayout["children"] {
+): Target[] {
 	const { lines, mouse, heads, bodies } = chat;
 	const owners: { component: Component; y: number; height: number }[] = [];
 	for (const { component, height } of mouse)
