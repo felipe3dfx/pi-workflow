@@ -20,6 +20,7 @@ import { createAdvisor } from "../extensions/advisor.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { createDelegationMode } from "../extensions/workflow-settings.ts";
 import { withAgentDirectory } from "./support/agent-directory.mjs";
+import { within } from "./support/deadline.mjs";
 import { writeAdvisorModel } from "./support/advisor-model.mjs";
 import {
 	driveConfig,
@@ -69,9 +70,12 @@ function commandContext({
 		},
 	};
 	const nextPanel = () =>
-		opened.length > 0
-			? Promise.resolve(opened.shift())
-			: new Promise((resolve) => waiting.push(resolve));
+		within(
+			opened.length > 0
+				? Promise.resolve(opened.shift())
+				: new Promise((resolve) => waiting.push(resolve)),
+			"the picker panel opening",
+		);
 	return { ctx, notifications, overlays, nextPanel };
 }
 
@@ -149,7 +153,7 @@ test("the picker lists available models with a filter, then the levels the chose
 		"↑/↓ choose | Enter confirm | Esc back",
 	]);
 	press(panel, keys.escape, keys.escape);
-	await choosing;
+	await within(choosing, "the picker closing");
 	await absent(command.path);
 
 	const astra = commandContext();
@@ -168,7 +172,7 @@ test("the picker lists available models with a filter, then the levels the chose
 		"↑/↓ choose | Enter confirm | Esc back",
 	]);
 	press(astraPanel, keys.escape, keys.escape);
-	await choosingAstra;
+	await within(choosingAstra, "the picker closing");
 	await absent(command.path);
 });
 
@@ -187,7 +191,7 @@ test("choosing a thinking level writes the advisor model file and closes the pic
 	const panel = await nextPanel();
 
 	press(panel, keys.enter, keys.down, keys.down, keys.enter);
-	await choosing;
+	await within(choosing, "the picker closing");
 	for (const [path, content] of Object.entries(untouched)) {
 		assert.equal(await readFile(path, "utf8"), content);
 	}
@@ -217,7 +221,7 @@ test("Esc on the thinking levels returns to the models, and Esc on the models cl
 	await new Promise((resolve) => setImmediate(resolve));
 	assert.equal(closed, false);
 	press(panel, keys.escape);
-	await choosing;
+	await within(choosing, "the picker closing");
 	assert.equal(closed, true);
 	await absent(command.path);
 });
@@ -228,7 +232,7 @@ test("an ill-formed or unreadable advisor model file opens the picker and is ove
 		const { ctx, nextPanel } = commandContext();
 		const choosing = command.run("", ctx);
 		press(await nextPanel(), keys.enter, keys.enter);
-		await choosing;
+		await within(choosing, "the picker closing");
 		return JSON.parse(await readFile(command.path, "utf8"));
 	};
 	const chosen = {
@@ -262,7 +266,7 @@ test("a file changed while the picker is open is overwritten without a check", a
 		thinking: "high",
 	});
 	press(panel, keys.enter, keys.enter);
-	await choosing;
+	await within(choosing, "the picker closing");
 	assert.deepEqual(JSON.parse(await readFile(command.path, "utf8")), {
 		schemaVersion: 1,
 		model: "openai-codex/gpt-5.6-luna",
@@ -280,7 +284,7 @@ test("choosing over an unreadable advisor model file leaves a readable file", {
 	const { ctx, nextPanel } = commandContext();
 	const choosing = command.run("", ctx);
 	press(await nextPanel(), keys.enter, keys.enter);
-	await choosing;
+	await within(choosing, "the picker closing");
 
 	const chosen = { model: "openai-codex/gpt-5.6-luna", thinking: "off" };
 	assert.deepEqual(createAdvisor(command.dir).model(), chosen);
@@ -312,7 +316,7 @@ test("every rendered line fits the width and hostile model names cannot inject c
 		}
 	}
 	press(panel, keys.escape, keys.escape);
-	await choosing;
+	await within(choosing, "the picker closing");
 });
 
 test("the advisor model reads as absent unless the file is well-formed", async (t) => {
@@ -413,7 +417,7 @@ test("seat changes and /workflow:advisor saves re-evaluate the offer, and an out
 	const { ctx, nextPanel } = commandContext();
 	const choosing = parent.commands.get("workflow:advisor").handler("", ctx);
 	press(await nextPanel(), keys.enter, keys.enter);
-	await choosing;
+	await within(choosing, "the picker closing");
 	assert.equal(offered(parent.tools), true);
 
 	await rm(join(dir, "pi-workflow-advisor.json"));
@@ -427,7 +431,7 @@ test("seat changes and /workflow:advisor saves re-evaluate the offer, and an out
 		.get("workflow:advisor")
 		.handler("", cancelled.ctx);
 	press(await cancelled.nextPanel(), keys.escape);
-	await cancelling;
+	await within(cancelling, "the cancelled picker closing");
 	assert.equal(offered(parent.tools), true);
 
 	const toggleAdvisor = (panel) => {
@@ -435,15 +439,24 @@ test("seat changes and /workflow:advisor saves re-evaluate the offer, and an out
 		press(panel, " ", "\t", keys.enter, keys.enter);
 	};
 	writeAdvisorModel(dir);
-	await driveConfig(parent.commands.get("workflow:config"), toggleAdvisor);
+	await within(
+		driveConfig(parent.commands.get("workflow:config"), toggleAdvisor),
+		"the config panel closing",
+	);
 	assert.equal(offered(parent.tools), false);
 
 	await rm(join(dir, "pi-workflow-advisor.json"));
-	await driveConfig(parent.commands.get("workflow:config"), toggleAdvisor);
+	await within(
+		driveConfig(parent.commands.get("workflow:config"), toggleAdvisor),
+		"the config panel closing",
+	);
 	assert.equal(offered(parent.tools), false);
 	writeAdvisorModel(dir);
-	await driveConfig(parent.commands.get("workflow:config"), (panel) =>
-		press(panel, "\t", keys.enter, keys.enter),
+	await within(
+		driveConfig(parent.commands.get("workflow:config"), (panel) =>
+			press(panel, "\t", keys.enter, keys.enter),
+		),
+		"the config panel closing",
 	);
 	assert.equal(offered(parent.tools), true);
 });
@@ -536,7 +549,10 @@ async function consult(
 		}
 	});
 	if (prepare) await prepare(parent, dir);
-	await parent.session.prompt("Review my plan with the advisor");
+	await within(
+		parent.session.prompt("Review my plan with the advisor"),
+		"the consultation finishing",
+	);
 	const result = parent.session.messages.find(
 		(message) =>
 			message.role === "toolResult" && message.toolName === "advisor",
