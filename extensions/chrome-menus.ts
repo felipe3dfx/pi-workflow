@@ -1,4 +1,4 @@
-// Replicates the logic of Pi 1.5.0 (SelectList.renderItem, SettingsList.renderMainList).
+// Replicates the logic of Pi 1.6.0 (SelectList.renderItem, SettingsList.renderMainList).
 import {
 	ExtensionEditorComponent,
 	ExtensionInputComponent,
@@ -205,7 +205,7 @@ export function modalMetrics(width: number) {
 export function modalFrame(
 	t: MenuTheme,
 	title: string,
-	body: string[],
+	body: readonly string[],
 	width: number,
 ) {
 	if (width < 4) return body.map((line) => fit(line, width));
@@ -246,11 +246,14 @@ const listTheme: SelectListTheme = {
 function wrapSelectRender(original: PatchMethod) {
 	return function (this: SelectListState, width: number) {
 		if (this.theme[NATIVE])
-			return (original as (width: number) => string[]).call(this, width);
+			return (original as (width: number) => readonly string[]).call(
+				this,
+				width,
+			);
 		const own = this.theme;
 		this.theme = listTheme;
 		try {
-			return (original as (width: number) => string[])
+			return (original as (width: number) => readonly string[])
 				.call(this, width)
 				.map((line) => fit(line, width));
 		} finally {
@@ -617,13 +620,16 @@ function wrapSelectorRender(
 	return function (this: unknown, width: number) {
 		const node = root(this);
 		if (!node)
-			return (original as (width: number) => string[]).call(this, width);
+			return (original as (width: number) => readonly string[]).call(
+				this,
+				width,
+			);
 		const edge = margin ? marginFor(width) : 0;
 		const inner = width - edge * 2;
 		const swaps: Swap[] = [];
 		try {
 			restyle(theme(), node, swaps, dress);
-			return (original as (width: number) => string[])
+			return (original as (width: number) => readonly string[])
 				.call(this, inner)
 				.map(
 					(line) =>
@@ -653,9 +659,11 @@ function wrapMarginMouse(original: PatchMethod) {
 
 type SettingsSelectorState = {
 	children: Component[];
-	mouseLayout?: {
+	childLines?: {
 		width: number;
-		children: { component: Component; height: number }[];
+		children: readonly Component[];
+		parts: readonly (readonly string[])[];
+		lines: readonly string[];
 	};
 	getSettingsList(): SettingsList;
 };
@@ -707,13 +715,12 @@ function renderSettings(this: SettingsSelectorState, width: number) {
 	const list = this.getSettingsList();
 	const { edge, outer, inner, top } = settingsFrame(width);
 	const body = list.render(inner);
-	this.mouseLayout = {
+	const border = Array<string>(top).fill("");
+	this.childLines = {
 		width: inner,
-		children: [
-			{ component: this.children[0], height: top },
-			{ component: list, height: body.length },
-			{ component: this.children[this.children.length - 1], height: top },
-		],
+		children: [this.children[0], list, this.children[this.children.length - 1]],
+		parts: [border, body, border],
+		lines: [...border, ...body, ...border],
 	};
 	const title = [
 		"Settings",

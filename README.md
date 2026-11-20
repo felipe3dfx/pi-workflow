@@ -55,7 +55,7 @@ A contextual child has no child toolbox and cannot launch grandchildren. Registe
 
 ## Theme and chrome
 
-The package ships the `pi-workflow` theme and restyles Pi's terminal UI. The chrome patches Pi internals copied from Pi 1.5.0 without a version guard; re-verify them on every Pi upgrade. See [ADR 0007](docs/adr/0007-patch-pi-tui-internals-for-chrome.md).
+The package ships the `pi-workflow` theme and restyles Pi's terminal UI. The chrome patches Pi internals copied from Pi 1.6.0 without a version guard; re-verify them on every Pi upgrade. See [ADR 0007](docs/adr/0007-patch-pi-tui-internals-for-chrome.md).
 
 ## Colliding packages
 
@@ -84,4 +84,4 @@ The launcher isolates Pi home, configuration, packages, and sessions. It is not 
 ## Requirements
 
 - Node.js `>=22.19`
-- Pi CLI `>=1.4.0` available in the target environment
+- Pi CLI `>=1.6.0` available in the target environment

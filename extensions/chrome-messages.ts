@@ -1,4 +1,4 @@
-// Replicates the logic of Pi 1.5.0 (AssistantMessageComponent.updateContent, UserMessageComponent.rebuild, createMarkdownTransform).
+// Replicates the logic of Pi 1.6.0 (AssistantMessageComponent.updateContent, UserMessageComponent.rebuild, createMarkdownTransform).
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import {
 	AssistantMessageComponent,
@@ -683,7 +683,7 @@ type MouseEvent = { x: number; width: number };
 function wrapRowRender(original: PatchMethod) {
 	return function (this: unknown, outer: number) {
 		const edge = edgeFor(assistantInset, outer);
-		const lines = (original as (width: number) => string[]).call(
+		const lines = (original as (width: number) => readonly string[]).call(
 			this,
 			outer - edge * 2,
 		);

@@ -241,8 +241,8 @@ test("the mouse layout matches the folded lines, a header click opens the group 
 	const command = tool("bash", { command: "ls" }, { text: "files" });
 	for (let width = 10; width <= 160; width++) {
 		const lines = container.render(width);
-		const heights = container.mouseLayout.children.reduce(
-			(sum, entry) => sum + entry.height,
+		const heights = container.childLines.parts.reduce(
+			(sum, part) => sum + part.length,
 			0,
 		);
 		assert.equal(heights, lines.length, `width ${width}`);
@@ -393,8 +393,8 @@ test("consecutive subagent result cards fold into one ◈ row that counts the fa
 	);
 	for (let width = 10; width <= 160; width++) {
 		const lines = container.render(width);
-		const heights = container.mouseLayout.children.reduce(
-			(sum, entry) => sum + entry.height,
+		const heights = container.childLines.parts.reduce(
+			(sum, part) => sum + part.length,
 			0,
 		);
 		assert.equal(heights, lines.length, `width ${width}`);

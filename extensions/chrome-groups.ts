@@ -1,4 +1,4 @@
-// Relies on Pi 1.5.0 chat container internals (InteractiveMode.chatContainer, ToolExecutionComponent fields).
+// Relies on Pi 1.6.0 chat container internals (InteractiveMode.chatContainer, ToolExecutionComponent fields).
 import {
 	AssistantMessageComponent,
 	CustomMessageComponent,
@@ -150,6 +150,13 @@ type MouseLayout = {
 	children: { component: Component; height: number }[];
 };
 
+type ChildLines = {
+	width: number;
+	children: readonly Component[];
+	parts: readonly (readonly string[])[];
+	lines: readonly string[];
+};
+
 type Entry = MouseLayout["children"][number] & { key: object; from: number };
 type Place = { key: object; y: number };
 type View = {
@@ -198,7 +205,7 @@ function rowOf(child: Component) {
 	return undefined;
 }
 
-function segments(child: Component, lines: string[]): Seg[] {
+function segments(child: Component, lines: readonly string[]): Seg[] {
 	const base = {
 		child,
 		open: false,
@@ -223,13 +230,13 @@ function segments(child: Component, lines: string[]): Seg[] {
 	if (child instanceof AssistantMessageComponent) {
 		const content = (child as unknown as { contentContainer: Container })
 			.contentContainer;
-		const layout = (content as unknown as { mouseLayout?: MouseLayout })
-			.mouseLayout;
-		const total = layout?.children.reduce((sum, c) => sum + c.height, 0);
-		if (layout && total === lines.length) {
+		const layout = (content as unknown as { childLines?: ChildLines })
+			.childLines;
+		if (layout?.lines.length === lines.length) {
 			const out: Seg[] = [];
 			let at = 0;
-			for (const { component, height } of layout.children) {
+			for (const [index, component] of layout.children.entries()) {
+				const height = layout.parts[index].length;
 				if (height > 0) {
 					const thought = thoughts.get(component);
 					out.push({
@@ -407,7 +414,7 @@ function renderChat(
 	width: number,
 	indent: (width: number) => number,
 ) {
-	const rendered = new Map<Component, string[]>();
+	const rendered = new Map<Component, readonly string[]>();
 	const segs: Seg[] = [];
 	for (const child of children) {
 		const lines = child.render(width);
@@ -629,8 +636,8 @@ export function patchChat(
 	if (patched.has(container)) return;
 	patched.add(container);
 	const target = container as unknown as {
-		render(width: number): string[];
-		mouseLayout?: MouseLayout;
+		render(width: number): readonly string[];
+		childLines?: ChildLines;
 		children: Component[];
 	};
 	target.render = (width: number) => {
@@ -638,7 +645,16 @@ export function patchChat(
 			const chat = renderChat(target.children, width, indent);
 			const edge = indent(width);
 			const targets = rows(container, chat, width, edge);
-			target.mouseLayout = { width, children: targets };
+			let at = 0;
+			target.childLines = {
+				width,
+				children: targets.map(({ component }) => component),
+				parts: targets.map(({ height }) => {
+					at += height;
+					return chat.lines.slice(at - height, at);
+				}),
+				lines: chat.lines,
+			};
 			current = container;
 			const places = chat.mouse.flatMap(({ key, from, height }) =>
 				Array.from({ length: height }, (_, y) => ({
