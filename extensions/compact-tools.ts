@@ -37,7 +37,7 @@ const diffBands = [
 	["toolDiffRemoved", "-", themeBgVar("diffRemovedBg")],
 ] as const;
 
-function bandDiff(lines: string[], width: number) {
+function bandDiff(lines: readonly string[], width: number) {
 	const palette = activeTheme();
 	let current: (typeof diffBands)[number] | undefined;
 	return lines.map((line) => {

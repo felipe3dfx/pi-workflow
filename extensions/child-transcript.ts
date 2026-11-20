@@ -64,7 +64,7 @@ export type Slot = { parts: Segment[]; unavailable?: true };
 
 export type Block = {
 	sub: string;
-	rows: string[];
+	rows: readonly string[];
 	lines?: number[];
 	load?:
 		| { slot: string; cursor: SegmentCursor; toward: "before" | "after" }
