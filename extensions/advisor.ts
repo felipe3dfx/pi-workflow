@@ -75,7 +75,7 @@ type Failure =
 	| "empty"
 	| "aborted";
 
-type Details = Partial<AdvisorModel> & { failure?: Failure };
+export type Details = Partial<AdvisorModel> & { failure?: Failure };
 
 type AgentMessage = ContextWithSystemEvent["messages"][number];
 

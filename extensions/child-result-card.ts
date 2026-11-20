@@ -129,6 +129,16 @@ export function plainHead(head: string, glyph: string) {
 	return text.startsWith(`${glyph} `) ? text.slice(glyph.length + 1) : text;
 }
 
+export function expandHint(theme: Theme, expanded: boolean) {
+	const key = keyText("app.tools.expand");
+	return key
+		? theme.fg(
+				"dim",
+				`(${terminalSafeLine(key)} to ${expanded ? "collapse" : "expand"})`,
+			)
+		: "";
+}
+
 export function paintCard(
 	capability: Capability,
 	outer: number,
@@ -219,13 +229,7 @@ class ResultCard implements Component {
 
 	cardLines(outer: number) {
 		const t = this.theme;
-		const key = keyText("app.tools.expand");
-		const hint = key
-			? t.fg(
-					"dim",
-					`(${terminalSafeLine(key)} to ${this.expanded ? "collapse" : "expand"})`,
-				)
-			: "";
+		const hint = expandHint(t, this.expanded);
 		const open = this.open();
 		return frame(
 			outer,

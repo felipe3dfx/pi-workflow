@@ -188,7 +188,11 @@ test("advice of four rendered lines or fewer shows whole with no expand hint, co
 });
 
 const failed = (failure, text, details = { ...model, failure }) => ({
-	partial: details.model ? model : undefined,
+	partial:
+		details.model &&
+		["overflow", "provider", "empty", "aborted"].includes(failure)
+			? model
+			: undefined,
 	final: {
 		text,
 		details,
@@ -263,21 +267,20 @@ test("a stopped or refused consultation shows its word and its text dimmed", asy
 		"   ◇ Advisor refused  3s · claude-opus-5 (high)",
 		"     Advisor is disabled. Enable it in /workflow:config.",
 	]);
-	const t_ = theme();
 	const [, stoppedHead, stoppedBody] = stopped.render(100);
-	assert.ok(stoppedHead.includes(t_.fg("dim", "◇")));
-	assert.ok(stoppedHead.includes(t_.fg("dim", "stopped")));
+	assert.ok(stoppedHead.includes(theme().fg("dim", "◇")));
+	assert.ok(stoppedHead.includes(theme().fg("dim", "stopped")));
 	assert.ok(
 		stoppedBody.includes(
-			t_.fg("dim", "Advisor consultation stopped by the operator."),
+			theme().fg("dim", "Advisor consultation stopped by the operator."),
 		),
 	);
 	const [, refusedHead, refusedBody] = refused.render(100);
-	assert.ok(refusedHead.includes(t_.fg("dim", "◇")));
-	assert.ok(refusedHead.includes(t_.fg("warning", "refused")));
+	assert.ok(refusedHead.includes(theme().fg("dim", "◇")));
+	assert.ok(refusedHead.includes(theme().fg("warning", "refused")));
 	assert.ok(
 		refusedBody.includes(
-			t_.fg("dim", "Advisor is disabled. Enable it in /workflow:config."),
+			theme().fg("dim", "Advisor is disabled. Enable it in /workflow:config."),
 		),
 	);
 });
@@ -355,6 +358,16 @@ test("every card line fits its width, and hostile model, thinking, and advice ca
 						assert.ok(!line.includes(unsafe), JSON.stringify(line));
 				}
 		}
+		const lines = plain(
+			card({
+				partial: hostile,
+				final: { text: hostileAdvice, details: hostile },
+			}),
+			160,
+		);
+		assert.match(lines[1], /red.*\(high/);
+		assert.ok(lines.some((line) => line.includes("Run")));
+		assert.ok(lines.some((line) => line.includes("now.")));
 	};
 	check();
 	seat([]);

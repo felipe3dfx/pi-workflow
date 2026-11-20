@@ -1,8 +1,7 @@
-import {
-	keyText,
-	type Theme,
-	type ThemeColor,
-	type ToolDefinition,
+import type {
+	Theme,
+	ThemeColor,
+	ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import {
 	type Component,
@@ -11,10 +10,12 @@ import {
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 
+import type { Details } from "./advisor.ts";
 import { childElapsed, childModelLine } from "./child-projection.ts";
 import {
 	bodyLines,
 	clean,
+	expandHint,
 	Fallback,
 	frame,
 	markdownBody,
@@ -30,7 +31,6 @@ type Result = {
 	content: { type: string; text?: string }[];
 	details?: unknown;
 };
-type Details = { model?: string; thinking?: string; failure?: string };
 type Phase = "running" | "done" | "failed" | "stopped" | "refused";
 
 const glyph = "◇";
@@ -38,7 +38,16 @@ const previewLines = 3;
 const minModel = 10;
 const running = themeVar("cyan", "dim");
 
-function phaseOf(failure: string | undefined, context: RenderContext): Phase {
+function preview(lines: string[], expanded: boolean) {
+	return expanded || lines.length <= previewLines + 1
+		? { shown: lines, more: 0 }
+		: {
+				shown: lines.slice(0, previewLines),
+				more: lines.length - previewLines,
+			};
+}
+
+function phaseOf(failure: Details["failure"], context: RenderContext): Phase {
 	if (context.isPartial) return "running";
 	if (failure === "aborted") return "stopped";
 	if (failure === "refused") return "refused";
@@ -138,17 +147,12 @@ class AdvisorCard implements Component {
 	}
 
 	hint(inner: number) {
-		const key = keyText("app.tools.expand");
 		if (
-			!key ||
 			this.phase !== "done" ||
-			bodyLines(this.body, inner).length <= previewLines + 1
+			preview(bodyLines(this.body, inner), false).more === 0
 		)
 			return "";
-		return this.theme.fg(
-			"dim",
-			`(${terminalSafeLine(key)} to ${this.expanded ? "collapse" : "expand"})`,
-		);
+		return expandHint(this.theme, this.expanded);
 	}
 
 	content(inner: number, unplacedHint: string) {
@@ -158,13 +162,10 @@ class AdvisorCard implements Component {
 			const tone = this.phase === "failed" ? "error" : "dim";
 			return wrapTextWithAnsi(this.text, inner).map((line) => t.fg(tone, line));
 		}
-		const all = bodyLines(this.body, inner);
-		if (this.expanded || all.length <= previewLines + 1) return all;
-		const more = t.fg("dim", `… ${all.length - previewLines} more lines`);
-		return [
-			...all.slice(0, previewLines),
-			unplacedHint ? `${more} ${unplacedHint}` : more,
-		];
+		const { shown, more } = preview(bodyLines(this.body, inner), this.expanded);
+		if (more === 0) return shown;
+		const row = t.fg("dim", `… ${more} more lines`);
+		return [...shown, unplacedHint ? `${row} ${unplacedHint}` : row];
 	}
 
 	render(outer: number) {
@@ -188,14 +189,11 @@ class AdvisorCard implements Component {
 	plain() {
 		const head = plainHead(this.head(Number.POSITIVE_INFINITY), glyph);
 		if (this.phase === "running" || !this.text) return head;
-		const lines = this.text.split("\n");
-		if (
-			this.phase !== "done" ||
-			this.expanded ||
-			lines.length <= previewLines + 1
-		)
-			return `${head}\n${this.text}`;
-		return `${head}\n${lines.slice(0, previewLines).join("\n")}\n… ${lines.length - previewLines} more lines`;
+		if (this.phase !== "done") return `${head}\n${this.text}`;
+		const { shown, more } = preview(this.text.split("\n"), this.expanded);
+		return more === 0
+			? `${head}\n${this.text}`
+			: `${head}\n${shown.join("\n")}\n… ${more} more lines`;
 	}
 
 	invalidate() {
