@@ -1,5 +1,8 @@
-import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import {
+	getSupportedThinkingLevels,
+	type ModelThinkingLevel,
+} from "@earendil-works/pi-ai";
+import type { ModelRegistry, Theme } from "@earendil-works/pi-coding-agent";
 import {
 	type Component,
 	decodeKittyPrintable,
@@ -31,6 +34,30 @@ export type Screen = {
 };
 
 const VISIBLE_ROWS = 10;
+
+export const pickerOverlay = {
+	overlay: true,
+	overlayOptions: {
+		anchor: "center",
+		width: "70%",
+		minWidth: 44,
+		maxHeight: "100%",
+	},
+} as const;
+
+export function modelChoices(
+	registry: Pick<ModelRegistry, "getAvailable" | "getAll">,
+) {
+	const name = (entry: { provider: string; id: string }) =>
+		`${entry.provider}/${entry.id}`;
+	const catalog = registry.getAvailable().map(name);
+	const supportedThinking = Object.fromEntries(
+		registry
+			.getAll()
+			.map((entry) => [name(entry), getSupportedThinkingLevels(entry)]),
+	);
+	return { catalog, supportedThinking };
+}
 
 export function printable(data: string): string {
 	return decodeKittyPrintable(data) ?? data;
@@ -192,7 +219,7 @@ export function modelCatalogScreen(
 	supportedThinking: Record<string, ModelThinkingLevel[]>,
 	title: string,
 	choose: (model: string, thinking: ModelThinkingLevel) => void,
-	onEscape: "back" | "close" = "back",
+	escapeHint: "back" | "close" = "back",
 ): Screen {
 	const { keybindings, theme } = frame;
 	const input = new Input();
@@ -221,7 +248,7 @@ export function modelCatalogScreen(
 			["type", "filter"],
 			["↑/↓", "choose"],
 			["Enter", "select"],
-			["Esc", onEscape],
+			["Esc", escapeHint],
 		],
 		render(width) {
 			const [filter] = input.render(width);

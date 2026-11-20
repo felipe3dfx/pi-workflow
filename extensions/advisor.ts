@@ -1,14 +1,16 @@
 import { chmodSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 
-import {
-	getSupportedThinkingLevels,
-	type ModelThinkingLevel,
-} from "@earendil-works/pi-ai";
+import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 import { isPlainRecord, writeJsonAtomically } from "./agent-directory.ts";
-import { createScreenFrame, modelCatalogScreen } from "./model-picker.ts";
+import {
+	createScreenFrame,
+	modelCatalogScreen,
+	modelChoices,
+	pickerOverlay,
+} from "./model-picker.ts";
 import { report, thinkingLevels } from "./model-profiles.ts";
 import { seated } from "./shell.ts";
 
@@ -59,14 +61,7 @@ export function createAdvisor(agentDirectory: string) {
 			report(ctx, "The advisor picker needs the TUI.", "warning");
 			return;
 		}
-		const name = (entry: { provider: string; id: string }) =>
-			`${entry.provider}/${entry.id}`;
-		const catalog = ctx.modelRegistry.getAvailable().map(name);
-		const supportedThinking = Object.fromEntries(
-			ctx.modelRegistry
-				.getAll()
-				.map((entry) => [name(entry), getSupportedThinkingLevels(entry)]),
-		);
+		const { catalog, supportedThinking } = modelChoices(ctx.modelRegistry);
 		const chosen = await ctx.ui.custom<AdvisorModel | undefined>(
 			(tui, theme, keybindings, done) => {
 				const frame = createScreenFrame(
@@ -87,15 +82,7 @@ export function createAdvisor(agentDirectory: string) {
 				);
 				return frame.component;
 			},
-			{
-				overlay: true,
-				overlayOptions: {
-					anchor: "center",
-					width: "70%",
-					minWidth: 44,
-					maxHeight: "100%",
-				},
-			},
+			pickerOverlay,
 		);
 		if (!chosen) return;
 		writeJsonAtomically(path, { schemaVersion: 1, ...chosen });

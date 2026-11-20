@@ -159,7 +159,7 @@ test("the picker lists available models with a filter, then the levels the chose
 		"type filter | ↑/↓ choose | Enter select | Esc close",
 	);
 	press(panel, ..."luna");
-	assert.deepEqual(lines(panel).slice(2, 3), ["openai-codex/gpt-5.6-luna"]);
+	assert.deepEqual(lines(panel).slice(2, -1), ["openai-codex/gpt-5.6-luna"]);
 	press(panel, keys.enter);
 	assert.deepEqual(lines(panel), [
 		"Thinking level for openai-codex/gpt-5.6-luna",
@@ -272,6 +272,21 @@ test("an ill-formed or unreadable advisor model file opens the picker and is ove
 	await rm(command.path);
 	await symlink(join(command.dir, "missing-target.json"), command.path);
 	assert.deepEqual(await choose(), chosen);
+});
+
+test("a file changed while the picker is open is overwritten without a check", async (t) => {
+	const command = await advisorCommand(t);
+	const { ctx, nextPanel } = commandContext();
+	const choosing = command.run("", ctx);
+	const panel = await nextPanel();
+	await writeFile(command.path, '{"changed":"meanwhile"}\n', "utf8");
+	press(panel, keys.enter, keys.enter);
+	await choosing;
+	assert.deepEqual(JSON.parse(await readFile(command.path, "utf8")), {
+		schemaVersion: 1,
+		model: "openai-codex/gpt-5.6-luna",
+		thinking: "off",
+	});
 });
 
 test("choosing over an unreadable advisor model file leaves a readable file", {
