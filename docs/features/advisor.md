@@ -1,6 +1,6 @@
 # Advisor — feature brief
 
-Status: approved functional definition; critique `advisor/feature-review-3` READY WITH WARNINGS ([review](advisor-review.md)). Definition package: `advisor/definition-4`. Parent: none yet.
+Status: approved functional definition; critique `advisor/feature-review-3` READY WITH WARNINGS ([review](advisor-review.md)). Definition package: `advisor/definition-4`. Parent: #391.
 Prototype: branch `prototype/advisor-card`, commit `93c0b5e87f2e43597a1cc1b0a403b6cbbc843b19`, [approved UI contract v1](https://github.com/felipe3dfx/pi-workflow/blob/93c0b5e87f2e43597a1cc1b0a403b6cbbc843b19/prototype/advisor-card/approved-advisor-card-v1.md), disposition `reference-only`.
 
 ## Problem and user

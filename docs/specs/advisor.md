@@ -5,7 +5,7 @@ Status: APPROVED (not implemented).
 Package: `advisor/definition-4`, the approved brief `docs/features/advisor.md`.
 Review handoff: `advisor/feature-review-3`, `docs/features/advisor-review.md`, verdict `READY WITH WARNINGS`.
 Prototype: branch `prototype/advisor-card`, commit `93c0b5e87f2e43597a1cc1b0a403b6cbbc843b19`, [Approved Prototype UI Contract v1](https://github.com/felipe3dfx/pi-workflow/blob/93c0b5e87f2e43597a1cc1b0a403b6cbbc843b19/prototype/advisor-card/approved-advisor-card-v1.md), disposition `reference-only`.
-Parent: pending.
+Parent: #391.
 
 ## Problem
 
@@ -228,7 +228,7 @@ Disposition of R1–R7: `risk accepted` by the developer on 2026-11-20 (critique
 - The contextual host (`contextualWorkflowSources`) is where D14 has effect; its production adoption remains with #293 (ADR 0025 Status). The standard Pi parent has no authorization layer, so D14 changes nothing there.
 - Prototype branch `prototype/advisor-card` at `93c0b5e87f2e43597a1cc1b0a403b6cbbc843b19`, UI contract v1, `reference-only`.
 - Internal ordering for slicing: the capability and file precede the offer; the offer precedes the consultation; the picker extraction precedes `/workflow:advisor`; the card helper parameterization and `pointAt` precede the card. The Delegation mode item and the authorization exemption depend only on the offer.
-- Tracker parent: pending; no other native relationship is recorded.
+- Tracker parent: #391; no other native relationship is recorded.
 
 ## Decisions
 

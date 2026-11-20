@@ -3,7 +3,7 @@
 Paquete: `advisor/definition-4`.
 Handoff: `advisor/feature-review-3`.
 Resultado: **READY WITH WARNINGS**.
-Parent: ninguno todavía.
+Parent: #391.
 Brief: [advisor.md](advisor.md).
 
 Fecha: 2026-11-20. Prototipo: rama `prototype/advisor-card`, commit `93c0b5e87f2e43597a1cc1b0a403b6cbbc843b19`, contrato de UI v1 aprobado ([approved-advisor-card-v1.md](https://github.com/felipe3dfx/pi-workflow/blob/93c0b5e87f2e43597a1cc1b0a403b6cbbc843b19/prototype/advisor-card/approved-advisor-card-v1.md)), disposición `reference-only`.
@@ -12,7 +12,7 @@ Captura del paquete (sha256, verificada contra los archivos):
 
 | Artefacto | sha256 |
 |---|---|
-| `docs/features/advisor.md` | `4d08ceaa09337c752797175a338ca1ef82a50121456e4f65c73e1a4275bf5c15` |
+| `docs/features/advisor.md` | `4e263f8435cd701d532235b60e84157ea232395cad5cc5fd394fb31c851a9b43` |
 | `docs/adr/0030-advisor-capability.md` | `33942d287998c71da9b6d3903c0fa84e682f625e995171c1c1f4f2a8371973ae` |
 | `docs/adr/0025-authorize-effects-not-harness-messages.md` | `611c3675e642189c227458d06d6fcb42a570bdb8df78ed6fa53b47c8aadd25b7` |
 | `docs/adr/0015-delegation-mode-guided-by-prompt.md` | `d4ebdad9487fae6035a0cf6071883469eefb7da0224bfd3a12757e3d98e39fc6` |
