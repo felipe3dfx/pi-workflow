@@ -1,20 +1,18 @@
 import { lstatSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import {
-	getSupportedThinkingLevels,
-	type ModelThinkingLevel,
-} from "@earendil-works/pi-ai";
+import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 import { seated } from "./shell.ts";
 import { isPlainRecord, writeJsonAtomically } from "./agent-directory.ts";
 import { errorMessage } from "./error-message.ts";
+import { modelChoices, pickerOverlay } from "./model-picker.ts";
 import { createModelProfilesEditor } from "./model-profiles-editor.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
 
 export const specialists = ["explorer", "worker", "verifier"] as const;
-const thinkingLevels: readonly ModelThinkingLevel[] = [
+export const thinkingLevels: readonly ModelThinkingLevel[] = [
 	"off",
 	"minimal",
 	"low",
@@ -212,14 +210,7 @@ export function createModelProfiles(agentDirectory: string) {
 				})
 			: { active: "default", profiles: { default: {} } };
 		const unchanged = canonicalJson(state);
-		const name = (model: { provider: string; id: string }) =>
-			`${model.provider}/${model.id}`;
-		const catalog = ctx.modelRegistry.getAvailable().map(name);
-		const supportedThinking = Object.fromEntries(
-			ctx.modelRegistry
-				.getAll()
-				.map((model) => [name(model), getSupportedThinkingLevels(model)]),
-		);
+		const { catalog, supportedThinking } = modelChoices(ctx.modelRegistry);
 		for (;;) {
 			const action = await ctx.ui.custom<"save" | "exit">(
 				(tui, theme, keybindings, done) =>
@@ -232,15 +223,7 @@ export function createModelProfiles(agentDirectory: string) {
 						done,
 						() => tui.terminal.rows,
 					),
-				{
-					overlay: true,
-					overlayOptions: {
-						anchor: "center",
-						width: "70%",
-						minWidth: 44,
-						maxHeight: "100%",
-					},
-				},
+				pickerOverlay,
 			);
 			if (action === "save") break;
 			if (

@@ -12,6 +12,7 @@ export const commands = [
 	"workflow:config",
 	"workflow:models",
 	"workflow:subagents",
+	"workflow:advisor",
 ];
 
 export function validateCommandSurface(extension) {

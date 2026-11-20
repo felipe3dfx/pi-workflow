@@ -7,6 +7,7 @@ export const capabilities = [
 	"model-profiles",
 	"codegraph",
 	"compact-rendering",
+	"advisor",
 ] as const;
 
 export type Capability = (typeof capabilities)[number];
@@ -69,11 +70,12 @@ export function readSelection(
 			reason: "Selection must name capabilities and expectations.",
 		};
 	}
-	const capabilityKeys = Object.keys(capabilityRecord);
 	if (
-		capabilityKeys.length !== capabilities.length ||
-		capabilityKeys.some((key) => !isCapability(key)) ||
-		capabilities.some((capability) => !(capability in capabilityRecord))
+		Object.keys(capabilityRecord).some((key) => !isCapability(key)) ||
+		capabilities.some(
+			(capability) =>
+				capability !== "advisor" && !(capability in capabilityRecord),
+		)
 	) {
 		return {
 			status: "refused",
@@ -82,7 +84,10 @@ export function readSelection(
 	}
 	const capabilitiesOn = {} as Record<Capability, boolean>;
 	for (const capability of capabilities) {
-		const value = capabilityRecord[capability];
+		const value =
+			capability === "advisor" && !(capability in capabilityRecord)
+				? true
+				: capabilityRecord[capability];
 		if (typeof value !== "boolean") {
 			return {
 				status: "refused",

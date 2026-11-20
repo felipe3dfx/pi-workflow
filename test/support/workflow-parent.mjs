@@ -33,6 +33,7 @@ export async function parentSession(
 	const handlers = new Map();
 	const tools = [];
 	const sent = [];
+	const commands = new Map();
 	const ui = {
 		notify() {},
 		setWidget() {},
@@ -49,7 +50,7 @@ export async function parentSession(
 			on(event, handler) {
 				handlers.set(event, [...(handlers.get(event) ?? []), handler]);
 			},
-			registerCommand() {},
+			registerCommand: (name, command) => commands.set(name, command),
 			registerShortcut() {},
 			registerMessageRenderer() {},
 			registerToolRenderer() {},
@@ -90,7 +91,7 @@ export async function parentSession(
 			sessionManager: { getBranch: () => [], getEntries: () => [] },
 		},
 	);
-	return { fire, tools, sent };
+	return { fire, tools, sent, commands };
 }
 
 export async function gitRepository(dir) {

@@ -49,6 +49,24 @@ test("the seated predicate refuses a place the capability does not declare", () 
 	);
 });
 
+test("the advisor sits in the overlay and the message stream only", (t) => {
+	t.after(() => replaceSelection(selectionWith(packages, {})));
+	replaceSelection(selectionWith(packages, {}));
+	assert.equal(seated("advisor", "overlay"), true);
+	assert.equal(seated("advisor", "message-stream"), true);
+	assert.throws(
+		() => seated("advisor", "header"),
+		/advisor is not declared at header/,
+	);
+	assert.throws(
+		() => seated("advisor", "above-input"),
+		/advisor is not declared at above-input/,
+	);
+	replaceSelection(selectionWith(packages, { advisor: false }));
+	assert.equal(seated("advisor", "overlay"), false);
+	assert.equal(seated("advisor", "message-stream"), false);
+});
+
 test("an unseated occupant leaves the above-input place empty and keeps the other occupant's order", (t) => {
 	t.after(() => {
 		replaceSelection(selectionWith(packages, {}));

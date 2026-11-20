@@ -2,24 +2,18 @@ import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import {
 	type Component,
-	decodeKittyPrintable,
-	fuzzyFilter,
 	Input,
 	type KeybindingsManager,
 	type SelectItem,
-	SelectList,
-	type SelectListTheme,
-	type TuiMouseEvent,
 } from "@earendil-works/pi-tui";
 
+import { sectionRule } from "./chrome-menus.ts";
 import {
-	type Hint,
-	hintRows,
-	menuRow,
-	modalFrame,
-	modalMetrics,
-	sectionRule,
-} from "./chrome-menus.ts";
+	createScreenFrame,
+	modelCatalogScreen,
+	printable,
+	type Screen,
+} from "./model-picker.ts";
 import {
 	type EditableProfiles,
 	profileName,
@@ -27,30 +21,6 @@ import {
 	specialists,
 } from "./model-profiles.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
-
-type Screen = {
-	title: string;
-	hints: Hint[];
-	blocksSave?: boolean;
-	render(width: number): string[];
-	handleInput(data: string): void;
-};
-
-const VISIBLE_ROWS = 10;
-
-function printable(data: string): string {
-	return decodeKittyPrintable(data) ?? data;
-}
-
-function selectListTheme(theme: Theme): SelectListTheme {
-	return {
-		selectedPrefix: (text) => theme.fg("accent", text),
-		selectedText: (text) => theme.fg("accent", text),
-		description: (text) => theme.fg("muted", text),
-		scrollInfo: (text) => theme.fg("dim", text),
-		noMatch: (text) => theme.fg("dim", text),
-	};
-}
 
 export function createModelProfilesEditor(
 	state: EditableProfiles,
@@ -61,57 +31,18 @@ export function createModelProfilesEditor(
 	done: (action: "save" | "exit") => void,
 	terminalRows: () => number,
 ): Component {
-	const listTheme = selectListTheme(theme);
-	const stack: Screen[] = [];
-	const push = (screen: Screen) => stack.push(screen);
-	const pop = () => stack.pop();
-	let notice = "";
-	let visible = VISIBLE_ROWS;
-	let frameWidth = 0;
-
-	function rows(
-		list: SelectList,
-		items: SelectItem[],
-		width: number,
-		chevron?: boolean,
-	): string[] {
-		const selected = Math.max(
-			0,
-			items.findIndex((item) => item.value === list.getSelectedItem()?.value),
-		);
-		const start = Math.max(
-			0,
-			Math.min(selected - Math.floor(visible / 2), items.length - visible),
-		);
-		const shown = items
-			.slice(start, start + visible)
-			.map((item, i) =>
-				menuRow(
-					theme,
-					item.label,
-					item.description ?? "",
-					start + i === selected,
-					width,
-					chevron,
-				),
-			);
-		if (items.length > visible) {
-			shown.push(theme.fg("dim", `(${selected + 1}/${items.length})`));
-		}
-		return shown;
-	}
-
-	function selectList(
-		items: SelectItem[],
-		onSelect: (item: SelectItem) => void,
-		selected = 0,
-	): SelectList {
-		const list = new SelectList(items, VISIBLE_ROWS, listTheme);
-		list.setSelectedIndex(selected);
-		list.onSelect = onSelect;
-		list.onCancel = pop;
-		return list;
-	}
+	const frame = createScreenFrame(
+		theme,
+		keybindings,
+		terminalRows,
+		() => done("exit"),
+		(screen, data) => {
+			if (screen.blocksSave || printable(data) !== "s") return false;
+			done("save");
+			return true;
+		},
+	);
+	const { push, pop, rows, selectList } = frame;
 
 	function nameScreen(
 		title: string,
@@ -128,10 +59,11 @@ export function createModelProfilesEditor(
 			if (name === unchanged) {
 				pop();
 			} else if (!profileName.test(name)) {
-				notice =
-					"Use 1 to 64 lowercase letters, digits, or hyphens for the name.";
+				frame.notify(
+					"Use 1 to 64 lowercase letters, digits, or hyphens for the name.",
+				);
 			} else if (Object.hasOwn(state.profiles, name)) {
-				notice = `A profile named ${name} already exists.`;
+				frame.notify(`A profile named ${name} already exists.`);
 			} else {
 				pop();
 				accept(name);
@@ -177,90 +109,6 @@ export function createModelProfilesEditor(
 		};
 	}
 
-	function thinkingScreen(
-		model: string,
-		choose: (thinking: ModelThinkingLevel) => void,
-	): Screen {
-		const levels = supportedThinking[model] ?? [];
-		const items = levels.map((level) => ({ value: level, label: level }));
-		const list = selectList(items, (item) =>
-			choose(item.value as ModelThinkingLevel),
-		);
-		return {
-			title: `Thinking level for ${terminalSafeLine(model)}`,
-			hints: [
-				["↑/↓", "choose"],
-				["Enter", "confirm"],
-				["Esc", "back"],
-			],
-			blocksSave: true,
-			render: (width) => [
-				sectionRule(theme, "Thinking", width),
-				...rows(list, items, width),
-			],
-			handleInput: (data) => list.handleInput(data),
-		};
-	}
-
-	function catalogScreen(
-		title: string,
-		set: (model: string, thinking: ModelThinkingLevel) => void,
-	): Screen {
-		const input = new Input();
-		input.focused = true;
-		const items = catalog
-			.filter((model) => (supportedThinking[model] ?? []).length > 0)
-			.map((model) => ({
-				value: model,
-				label: terminalSafeLine(model),
-			}));
-		const choose = (item: SelectItem) =>
-			push(
-				thinkingScreen(item.value, (thinking) => {
-					pop();
-					pop();
-					set(item.value, thinking);
-				}),
-			);
-		let filtered = items;
-		let list = selectList(filtered, choose);
-		return {
-			title,
-			blocksSave: true,
-			hints: [
-				["type", "filter"],
-				["↑/↓", "choose"],
-				["Enter", "select"],
-				["Esc", "back"],
-			],
-			render(width) {
-				const [filter] = input.render(width);
-				const rule = sectionRule(theme, "Models", width);
-				if (filtered.length === 0)
-					return [filter, rule, theme.fg("dim", "No matches")];
-				return [filter, rule, ...rows(list, filtered, width, true)];
-			},
-			handleInput(data) {
-				const cancel = keybindings.matches(data, "tui.select.cancel");
-				if (
-					cancel ||
-					keybindings.matches(data, "tui.select.up") ||
-					keybindings.matches(data, "tui.select.down") ||
-					keybindings.matches(data, "tui.select.confirm")
-				) {
-					if (filtered.length > 0 || cancel) {
-						list.handleInput(data);
-					}
-					return;
-				}
-				input.handleInput(data);
-				input.setValue(terminalSafeLine(input.getValue()));
-				filtered = fuzzyFilter(items, input.getValue(), (item) => item.value);
-				list = selectList(filtered, choose);
-			},
-		};
-	}
-
 	function profileScreen(name: string): Screen {
 		const profile = () => state.profiles[name];
 		const items = () =>
@@ -278,15 +126,20 @@ export function createModelProfilesEditor(
 				};
 			});
 		let list = rebuild(0);
-		function rebuild(selected: number): SelectList {
+		function rebuild(selected: number) {
 			return selectList(
 				items(),
 				(item) => {
 					const specialist = item.value as Specialist;
 					push(
-						catalogScreen(
+						modelCatalogScreen(
+							frame,
+							catalog,
+							supportedThinking,
 							`${terminalSafeLine(name)} · ${specialist} model`,
 							(model, thinking) => {
+								pop();
+								pop();
 								profile()[specialist] = { model, thinking };
 								list = rebuild(specialists.indexOf(specialist));
 							},
@@ -337,11 +190,11 @@ export function createModelProfilesEditor(
 						? `${theme.fg("accent", "●")} ${theme.fg("text", "active")}`
 						: "",
 			}));
-			const list = new SelectList(items, VISIBLE_ROWS, listTheme);
-			list.setSelectedIndex(selected);
-			list.onSelect = (item) => push(profileScreen(item.value));
-			list.onCancel = () => done("exit");
-			return list;
+			return selectList(
+				items,
+				(item) => push(profileScreen(item.value)),
+				selected,
+			);
 		};
 		let list = rebuild(0);
 		const reselect = (name: string) => {
@@ -412,7 +265,9 @@ export function createModelProfilesEditor(
 					);
 				} else if (key === "x") {
 					if (selected === state.active) {
-						notice = `${selected} is the active profile and cannot be deleted.`;
+						frame.notify(
+							`${selected} is the active profile and cannot be deleted.`,
+						);
 						return;
 					}
 					push(
@@ -433,39 +288,5 @@ export function createModelProfilesEditor(
 
 	push(profilesScreen());
 
-	return {
-		render(width) {
-			frameWidth = width;
-			const screen = stack[stack.length - 1];
-			const inner = Math.max(1, modalMetrics(width).inner);
-			const head = ["", ...(notice ? [theme.fg("warning", notice), ""] : [])];
-			const tail = ["", ...hintRows(theme, screen.hints, inner).lines];
-			const room = Math.max(0, terminalRows() - 2);
-			const space = room - head.length - tail.length;
-			visible = Math.max(1, Math.min(VISIBLE_ROWS, space - 3));
-			const body = space > 0 ? screen.render(inner).slice(0, space) : [];
-			const content = [...head, ...body, ...tail];
-			return modalFrame(
-				theme,
-				screen.title,
-				content.slice(Math.max(0, content.length - room)),
-				width,
-			);
-		},
-		handleMouse(event: TuiMouseEvent) {
-			if (event.type !== "click" || event.button !== "left") return undefined;
-			const shut = modalMetrics(frameWidth).close;
-			if (event.y !== 0 || !shut || event.x < shut.start || event.x >= shut.end)
-				return undefined;
-			done("exit");
-			return { handled: true };
-		},
-		invalidate() {},
-		handleInput(data) {
-			notice = "";
-			const screen = stack[stack.length - 1];
-			if (!screen.blocksSave && printable(data) === "s") done("save");
-			else screen.handleInput(data);
-		},
-	};
+	return frame.component;
 }
