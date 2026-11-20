@@ -20,6 +20,7 @@ import {
 	type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 
+import { advisorRenderers } from "./advisor-card.ts";
 import { isPlainRecord, writeJsonAtomically } from "./agent-directory.ts";
 import { harnessMessage } from "./harness-message.ts";
 import {
@@ -75,7 +76,7 @@ type Failure =
 	| "empty"
 	| "aborted";
 
-type Details = Partial<AdvisorModel> & { failure?: Failure };
+export type Details = Partial<AdvisorModel> & { failure?: Failure };
 
 type AgentMessage = ContextWithSystemEvent["messages"][number];
 
@@ -355,6 +356,7 @@ export function createAdvisor(agentDirectory: string) {
 		parameters: { type: "object", properties: {}, additionalProperties: false },
 		executionMode: "sequential" as const,
 		execute: consult,
+		...advisorRenderers,
 	});
 
 	let offered = false;
