@@ -76,7 +76,7 @@ export async function parentSession(
 	const fire = async (event, payload = {}, ctx = {}) => {
 		let result;
 		for (const handler of handlers.get(event) ?? []) {
-			result = await handler(payload, ctx);
+			result = (await handler(payload, ctx)) ?? result;
 		}
 		return result;
 	};
@@ -105,14 +105,15 @@ export async function realParent(
 	t,
 	dir,
 	responses,
-	{ extensionFactories = [] } = {},
+	{ extensionFactories = [], models = false, settings } = {},
 ) {
 	const worktree = await gitRepository(dir);
 	const runtime = await ModelRuntime.create({
 		authPath: join(dir, "auth.json"),
-		modelsPath: null,
+		modelsPath: models ? join(dir, "models.json") : null,
 		refreshOnCreate: false,
 	});
+	if (models) await runtime.refresh({ allowNetwork: false });
 	const faux = fauxProvider({
 		provider: "faux",
 		models: [{ id: "parent", reasoning: true }],
@@ -123,11 +124,11 @@ export async function realParent(
 	faux.setResponses(
 		responses.map((response) => (context) => {
 			requests.push(structuredClone(context));
-			return response;
+			return typeof response === "function" ? response(context) : response;
 		}),
 	);
 	const children = fakeChildren();
-	const settingsManager = SettingsManager.inMemory();
+	const settingsManager = SettingsManager.inMemory(settings);
 	const resourceLoader = new DefaultResourceLoader({
 		cwd: worktree,
 		agentDir: dir,

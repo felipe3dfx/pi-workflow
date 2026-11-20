@@ -2591,6 +2591,41 @@ test("the child runtime runs the contract on the selected model", async () => {
 	});
 });
 
+test("a child never receives the advisor tool, even while the parent offers it", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		await writeFile(
+			join(agentDir, "pi-workflow-advisor.json"),
+			JSON.stringify({
+				schemaVersion: 1,
+				model: "faux/child",
+				thinking: "high",
+			}),
+		);
+		const parent = await fauxParent(
+			agentDir,
+			fauxAssistantMessage("Faux child answer."),
+		);
+		const { tool, named } = await loadSpawnTool({
+			agentDir,
+			create: runtimeChild(parent.runtime),
+		});
+		assert.equal(named("advisor")?.exposure, "direct");
+
+		const result = await spawn(
+			tool,
+			{ role: "worker", task: "Fix the failing test" },
+			{ ...toolContext("print", worktree), ...parent.context },
+		);
+
+		assert.equal(result.details.status, "completed", text(result));
+		const [system] = parent.requests[0].messages;
+		assert.deepEqual(
+			system.toolsAdded.map((tool) => tool.name).sort(),
+			[...spawnedTools].sort(),
+		);
+	});
+});
+
 test("the child runtime runs a trusted project's shell prefix in the child's bash", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
 		await mkdir(join(worktree, ".pi"));
