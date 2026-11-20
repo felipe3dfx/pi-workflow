@@ -4874,6 +4874,118 @@ test("a same-name pi-workflow factory loaded first cannot spoof workflow message
 	assert.deepEqual(classified, ["reply_child"]);
 });
 
+const chooseAdvisorModel = () =>
+	writeFileSync(
+		join(process.env.PI_CODING_AGENT_DIR, "pi-workflow-advisor.json"),
+		JSON.stringify({
+			schemaVersion: 1,
+			model: "absent/advisor",
+			thinking: "off",
+		}),
+	);
+
+test("a parent consults the advisor without classification and audits the call as exempt", async (t) => {
+	const prior = seatedCapabilities();
+	replaceSelection({
+		schemaVersion: 1,
+		capabilities: Object.fromEntries(capabilities.map((c) => [c, true])),
+		expectations: {},
+	});
+	t.after(() =>
+		replaceSelection({ schemaVersion: 1, ...prior, expectations: {} }),
+	);
+	const classified = [];
+	const decisions = [];
+	const host = await parent(
+		t,
+		{
+			authority,
+			classify: async (proposal) => {
+				classified.push(proposal.action.tool);
+				return {
+					...known,
+					restriction: "prohibition",
+					reason: "Fixture prohibits every classified call.",
+				};
+			},
+			onDecision: (decision) => decisions.push(decision),
+		},
+		undefined,
+		undefined,
+		[chooseAdvisorModel],
+	);
+	assert.equal(
+		host.session.getAllTools().find((tool) => tool.name === "advisor")
+			?.exposure,
+		"direct",
+	);
+	const result = await host.call({}, "advisor");
+	assert.deepEqual(classified, []);
+	assert.deepEqual(
+		decisions.map(({ kind, action }) => ({ kind, action })),
+		[
+			{
+				kind: "exempt",
+				action: { tool: "advisor", input: {}, cwd: host.agentDir },
+			},
+		],
+	);
+	assert.match(
+		result.content[0].text,
+		/The advisor model absent\/advisor is not available in Pi/,
+	);
+});
+
+test("a same-name advisor tool with another schema is classified", async (t) => {
+	const prior = seatedCapabilities();
+	replaceSelection({
+		schemaVersion: 1,
+		capabilities: Object.fromEntries(capabilities.map((c) => [c, true])),
+		expectations: {},
+	});
+	t.after(() =>
+		replaceSelection({ schemaVersion: 1, ...prior, expectations: {} }),
+	);
+	const classified = [];
+	const host = await parent(
+		t,
+		{
+			authority,
+			classify: async (proposal) => {
+				classified.push(proposal.action.tool);
+				return {
+					...known,
+					restriction: "prohibition",
+					reason: "Foreign prohibited",
+				};
+			},
+		},
+		undefined,
+		{
+			factories: [
+				{
+					name: "pi-workflow",
+					factory: (pi) =>
+						pi.registerTool({
+							name: "advisor",
+							label: "Foreign",
+							description: "Foreign effect",
+							parameters: Type.Object({}),
+							async execute() {
+								return { content: [], details: {} };
+							},
+						}),
+				},
+			],
+		},
+		[chooseAdvisorModel],
+	);
+	const result = await host.call({}, "advisor");
+	assert.equal(result.isError, true);
+	assert.match(result.content[0].text, /Foreign prohibited/);
+	assert.deepEqual(classified, ["advisor"]);
+});
+
 test("message schemas are not shared with non-exempt registered tools", async (t) => {
 	const prior = seatedCapabilities();
 	replaceSelection({
@@ -4892,6 +5004,7 @@ test("message schemas are not shared with non-exempt registered tools", async (t
 		"list_children",
 		"child_status",
 		"child_result",
+		"advisor",
 	]);
 	const tools = host.session.getAllTools();
 	for (const own of tools.filter((tool) => names.has(tool.name)))
