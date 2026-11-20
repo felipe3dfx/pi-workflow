@@ -21,6 +21,7 @@ import {
 	press,
 } from "./support/config-guide.mjs";
 import { withAgentDirectory } from "./support/agent-directory.mjs";
+import { writeAdvisorModel } from "./support/advisor-model.mjs";
 import { assertSentence } from "./support/sentence.mjs";
 import {
 	gitRepository,
@@ -335,13 +336,6 @@ test("the instruction names the Todo and operator questions only when each is se
 	assert.doesNotMatch(withTodo, /ask_user/);
 });
 
-function writeAdvisorModel(dir) {
-	return writeFile(
-		join(dir, "pi-workflow-advisor.json"),
-		JSON.stringify({ schemaVersion: 1, model: "fake/echo", thinking: "off" }),
-	);
-}
-
 test("the instruction keeps consulting the advisor with the parent exactly while the advisor tool is offered", async (t) => {
 	t.after(() => seat());
 	const dir = withAgentDirectory(t);
@@ -352,7 +346,7 @@ test("the instruction keeps consulting the advisor with the parent exactly while
 		/advisor/i,
 	);
 
-	await writeAdvisorModel(dir);
+	writeAdvisorModel(dir);
 	const session = await parentSession(dir);
 	assertSentence(
 		instructionOf(await modelCall(session)),
@@ -370,7 +364,7 @@ test("the instruction keeps consulting the advisor with the parent exactly while
 		/advisor/i,
 	);
 
-	await writeAdvisorModel(dir);
+	writeAdvisorModel(dir);
 	seat(capabilities.filter((capability) => capability !== "advisor"));
 	assert.doesNotMatch(
 		instructionOf(await modelCall(await parentSession(dir))),

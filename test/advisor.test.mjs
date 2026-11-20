@@ -2,7 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { stripVTControlCharacters } from "node:util";
 
 import {
 	fauxAssistantMessage,
@@ -21,30 +20,18 @@ import { createAdvisor } from "../extensions/advisor.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { createDelegationMode } from "../extensions/workflow-settings.ts";
 import { withAgentDirectory } from "./support/agent-directory.mjs";
-import { driveConfig, focusOn, press } from "./support/config-guide.mjs";
+import { writeAdvisorModel } from "./support/advisor-model.mjs";
+import {
+	driveConfig,
+	focusOn,
+	keys,
+	plainTheme,
+	press,
+} from "./support/config-guide.mjs";
 import { modelEndpoint } from "./support/model-endpoint.mjs";
+import { catalog, lines } from "./support/model-picker.mjs";
 import { selectionWith } from "./support/selection.mjs";
 import { parentSession, realParent, seat } from "./support/workflow-parent.mjs";
-
-const keys = { enter: "\r", escape: "\x1b", down: "\x1b[B" };
-
-const fakeTheme = {
-	fg: (_color, text) => text,
-	bg: (_color, text) => text,
-	bold: (text) => text,
-};
-
-const catalog = [
-	{ provider: "openai-codex", id: "gpt-5.6-luna", reasoning: true },
-	{
-		provider: "openai-codex",
-		id: "gpt-6-astra",
-		reasoning: true,
-		thinkingLevelMap: { xhigh: "xhigh", max: "max" },
-	},
-	{ provider: "nan", id: "mimo-v2.5", reasoning: false },
-	{ provider: "anthropic", id: "claude-opus", reasoning: true },
-];
 
 function commandContext({
 	mode = "tui",
@@ -67,7 +54,7 @@ function commandContext({
 					overlays.push(options);
 					const panel = factory(
 						{ requestRender() {}, terminal: { rows: 40 } },
-						fakeTheme,
+						plainTheme,
 						new KeybindingsManager(TUI_KEYBINDINGS),
 						resolve,
 					);
@@ -99,25 +86,6 @@ async function advisorCommand(t) {
 		run: (args, ctx) =>
 			parent.commands.get("workflow:advisor").handler(args, ctx),
 	};
-}
-
-function lines(panel, width = 120) {
-	const [top, ...rest] = panel
-		.render(width)
-		.map((line) => stripVTControlCharacters(line));
-	const title = top.replace(/^┌─ /, "").replace(/ ─+( \[×\] )?─┐$/, "");
-	const body = rest
-		.slice(0, -1)
-		.map((line) =>
-			line
-				.slice(1, -1)
-				.trim()
-				.replace(/^▸ /, "")
-				.replace(/\s*›$/, "")
-				.replace(/ {2,}/g, " "),
-		)
-		.filter((line) => line !== "" && !/ ─+$/.test(line));
-	return [title, ...body];
 }
 
 const absent = (path) =>
@@ -289,15 +257,10 @@ test("a file changed while the picker is open is overwritten without a check", a
 	const { ctx, nextPanel } = commandContext();
 	const choosing = command.run("", ctx);
 	const panel = await nextPanel();
-	await writeFile(
-		command.path,
-		JSON.stringify({
-			schemaVersion: 1,
-			model: "anthropic/claude-opus",
-			thinking: "high",
-		}),
-		"utf8",
-	);
+	writeAdvisorModel(command.dir, {
+		model: "anthropic/claude-opus",
+		thinking: "high",
+	});
 	press(panel, keys.enter, keys.enter);
 	await choosing;
 	assert.deepEqual(JSON.parse(await readFile(command.path, "utf8")), {
@@ -358,15 +321,11 @@ test("the advisor model reads as absent unless the file is well-formed", async (
 	const advisor = createAdvisor(dir);
 	assert.equal(advisor.model(), undefined);
 
-	await writeFile(
-		path,
-		JSON.stringify({
-			schemaVersion: 1,
-			model: "openrouter/anthropic/claude",
-			thinking: "high",
-			note: "kept",
-		}),
-	);
+	writeAdvisorModel(dir, {
+		model: "openrouter/anthropic/claude",
+		thinking: "high",
+		note: "kept",
+	});
 	assert.deepEqual(advisor.model(), {
 		model: "openrouter/anthropic/claude",
 		thinking: "high",
@@ -394,14 +353,7 @@ const offered = (tools) => advisorTool(tools)?.exposure === "direct";
 const withoutAdvisor = capabilities.filter(
 	(capability) => capability !== "advisor",
 );
-const echoModel = { schemaVersion: 1, model: "fake/echo", thinking: "off" };
-
-function writeAdvisorModel(dir, value = echoModel) {
-	return writeFile(
-		join(dir, "pi-workflow-advisor.json"),
-		typeof value === "string" ? value : JSON.stringify(value),
-	);
-}
+const echoModel = { model: "fake/echo", thinking: "off" };
 
 test("the advisor tool is offered at session start only while seated with a well-formed model file", async (t) => {
 	t.after(() => seat());
@@ -409,10 +361,10 @@ test("the advisor tool is offered at session start only while seated with a well
 	const dir = withAgentDirectory(t);
 	assert.equal(offered((await parentSession(dir)).tools), false);
 
-	await writeAdvisorModel(dir, "{ broken");
+	writeAdvisorModel(dir, "{ broken");
 	assert.equal(offered((await parentSession(dir)).tools), false);
 
-	await writeAdvisorModel(dir);
+	writeAdvisorModel(dir);
 	assert.equal(offered((await parentSession(dir)).tools), true);
 
 	seat(withoutAdvisor);
@@ -423,7 +375,7 @@ test("the advisor tool takes no parameters, runs alone, and tells the parent whe
 	t.after(() => seat());
 	seat();
 	const dir = withAgentDirectory(t);
-	await writeAdvisorModel(dir);
+	writeAdvisorModel(dir);
 	const tool = advisorTool((await parentSession(dir)).tools);
 
 	assert.deepEqual(tool.parameters.properties ?? {}, {});
@@ -433,7 +385,8 @@ test("the advisor tool takes no parameters, runs alone, and tells the parent whe
 	assert.match(guidance, /short task .* do not consult/i);
 	assert.match(guidance, /before committing to an approach/i);
 	assert.match(guidance, /before declaring done/i);
-	assert.match(guidance, /durable/i);
+	assert.match(guidance, /durable \(file written\) before that final call/i);
+	assert.doesNotMatch(guidance, /\bcommits?\b/i);
 	assert.match(guidance, /stuck/i);
 	assert.match(guidance, /chang\w* (of |your )?approach/i);
 	assert.match(guidance, /without arguments/i);
@@ -481,14 +434,14 @@ test("seat changes and /workflow:advisor saves re-evaluate the offer, and an out
 		focusOn(panel, "Advisor");
 		press(panel, " ", "\t", keys.enter, keys.enter);
 	};
-	await writeAdvisorModel(dir);
+	writeAdvisorModel(dir);
 	await driveConfig(parent.commands.get("workflow:config"), toggleAdvisor);
 	assert.equal(offered(parent.tools), false);
 
 	await rm(join(dir, "pi-workflow-advisor.json"));
 	await driveConfig(parent.commands.get("workflow:config"), toggleAdvisor);
 	assert.equal(offered(parent.tools), false);
-	await writeAdvisorModel(dir);
+	writeAdvisorModel(dir);
 	await driveConfig(parent.commands.get("workflow:config"), (panel) =>
 		press(panel, "\t", keys.enter, keys.enter),
 	);
@@ -533,6 +486,7 @@ async function consult(
 		model = echoModel,
 		call = consultCall(),
 		before = [],
+		after = [],
 		mode,
 		prepare,
 	} = {},
@@ -554,7 +508,7 @@ async function consult(
 				},
 	);
 	t.after(endpoint.close);
-	if (model) await writeAdvisorModel(dir, model);
+	if (model) writeAdvisorModel(dir, model);
 	if (mode) createDelegationMode(dir).set(mode);
 	const parent = await realParent(
 		t,
@@ -562,6 +516,7 @@ async function consult(
 		[
 			...before,
 			typeof call === "function" ? () => call(dir) : call,
+			...after,
 			fauxAssistantMessage("Done."),
 		],
 		{
@@ -720,8 +675,8 @@ test("a call that arrives after the advisor was unseated is refused without an e
 
 test("a malformed model file does not hide the refusal of an unseated advisor", async (t) => {
 	const { result } = await consult(t, {
-		call: async (dir) => {
-			await writeAdvisorModel(dir, "{ broken");
+		call: (dir) => {
+			writeAdvisorModel(dir, "{ broken");
 			seat(withoutAdvisor);
 			return consultCall();
 		},
@@ -797,6 +752,24 @@ test("a provider failure returns its message once, and a recognized overflow add
 	assert.equal(overflow.result.details.model, "fake/echo");
 });
 
+test("a provider failure without a readable message still says what failed", async (t) => {
+	for (const options of [
+		{},
+		{ errorMessage: "" },
+		{ errorMessage: "\u0007 " },
+	]) {
+		const { result } = await consult(t, {
+			model: { model: "faux/parent", thinking: "off" },
+			after: [fauxAssistantMessage([], { stopReason: "error", ...options })],
+		});
+		assert.deepEqual(failure(result), {
+			failure: "provider",
+			isError: true,
+			text: "The advisor's provider failed without a message.",
+		});
+	}
+});
+
 test("a length stop with no output that fills the context window is an overflow", async (t) => {
 	const { result } = await consult(t, {
 		answer: {
@@ -837,6 +810,22 @@ test("an empty stop above the context window is an overflow, and a stop with adv
 	assert.equal(advised.result.details.failure, undefined);
 	assert.equal(advised.result.isError, false);
 	assert.equal(resultText(advised.result), "Keep going.");
+});
+
+test("advice cut at the output limit is returned as advice with a note that it was cut", async (t) => {
+	const { result } = await consult(t, {
+		answer: {
+			text: "Keep the plan, but",
+			finish: "length",
+			usage: { prompt_tokens: 20, completion_tokens: 5 },
+		},
+	});
+	assert.equal(result.isError, false);
+	assert.deepEqual(result.details, { model: "fake/echo", thinking: "off" });
+	assert.equal(
+		resultText(result),
+		"Keep the plan, but\n\n(The advice was cut off at the advisor model's output limit.)",
+	);
 });
 
 test("control characters in a provider message or model name never reach the result", async (t) => {
@@ -886,8 +875,8 @@ test("Esc during a consultation stops it with the operator's reason", async (t) 
 
 test("a running consultation finishes with the model it started with", async (t) => {
 	const { result } = await consult(t, {
-		answer: async (_body, dir) => {
-			await writeAdvisorModel(dir, { ...echoModel, model: "fake/other" });
+		answer: (_body, dir) => {
+			writeAdvisorModel(dir, { ...echoModel, model: "fake/other" });
 			seat(withoutAdvisor);
 			return "Still advised.";
 		},

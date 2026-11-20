@@ -1,7 +1,5 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 
 import {
@@ -27,6 +25,7 @@ import { readSelection } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 import { withAgentDirectory } from "./support/agent-directory.mjs";
+import { writeAdvisorModel } from "./support/advisor-model.mjs";
 
 const at1155 = new Date(2026, 8, 29, 11, 55).getTime();
 const markdownTheme = new Proxy({}, { get: () => (text) => text });
@@ -531,14 +530,10 @@ test("the transcript cursor starts at the last clickable row, moves between rows
 
 test("hover and the transcript cursor point at an advisor card's ◇ head as they do at ◆ rows", (t) => {
 	const dir = withAgentDirectory(t);
-	writeFileSync(
-		join(dir, "pi-workflow-advisor.json"),
-		JSON.stringify({
-			schemaVersion: 1,
-			model: "anthropic/claude-opus-5",
-			thinking: "high",
-		}),
-	);
+	writeAdvisorModel(dir, {
+		model: "anthropic/claude-opus-5",
+		thinking: "high",
+	});
 	let advisor;
 	createAdvisor(dir).offer({
 		registerTool: (definition) => {

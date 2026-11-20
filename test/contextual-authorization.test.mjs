@@ -31,6 +31,7 @@ import piWorkflowExtension, {
 	contextualWorkflowSources,
 } from "../extensions/pi-workflow.ts";
 import { withAgentDirectory } from "./support/agent-directory.mjs";
+import { writeAdvisorModel } from "./support/advisor-model.mjs";
 import { runtimeChild, runtimeChildSession } from "./support/runtime-child.mjs";
 import { replaceSelection, seatedCapabilities } from "../extensions/shell.ts";
 import { capabilities } from "../extensions/configure.ts";
@@ -4875,14 +4876,10 @@ test("a same-name pi-workflow factory loaded first cannot spoof workflow message
 });
 
 const chooseAdvisorModel = () =>
-	writeFileSync(
-		join(process.env.PI_CODING_AGENT_DIR, "pi-workflow-advisor.json"),
-		JSON.stringify({
-			schemaVersion: 1,
-			model: "absent/advisor",
-			thinking: "off",
-		}),
-	);
+	writeAdvisorModel(process.env.PI_CODING_AGENT_DIR, {
+		model: "absent/advisor",
+		thinking: "off",
+	});
 
 test("a parent consults the advisor without classification and audits the call as exempt", async (t) => {
 	const prior = seatedCapabilities();

@@ -53,6 +53,7 @@ import piWorkflowExtension, {
 	adoptionDeadline,
 } from "../extensions/pi-workflow.ts";
 import { createRpcChildSession } from "../extensions/rpc-child.ts";
+import { writeAdvisorModel } from "./support/advisor-model.mjs";
 import {
 	fakeChildren,
 	recordingCore,
@@ -2593,14 +2594,7 @@ test("the child runtime runs the contract on the selected model", async () => {
 
 test("a child never receives the advisor tool, even while the parent offers it", async () => {
 	await withWorkspace(async ({ worktree, agentDir }) => {
-		await writeFile(
-			join(agentDir, "pi-workflow-advisor.json"),
-			JSON.stringify({
-				schemaVersion: 1,
-				model: "faux/child",
-				thinking: "high",
-			}),
-		);
+		writeAdvisorModel(agentDir, { model: "faux/child", thinking: "high" });
 		const parent = await fauxParent(
 			agentDir,
 			fauxAssistantMessage("Faux child answer."),

@@ -2,6 +2,7 @@
 
 | File | Exports | Use |
 | --- | --- | --- |
+| `advisor-model.mjs` | `writeAdvisorModel` | Write the advisor model file into an agent directory: an object becomes a well-formed file with `schemaVersion: 1` (default `fake/echo`, thinking `off`), a string is written as is. |
 | `agent-directory.mjs` | `withAgentDirectory` | Per-test agent directory, removed after the test. |
 | `bridge-parent.mjs` | `createBridgeParentSession` | Real parent session loading the Claude Bridge extension. |
 | `child-parent.mjs` | none (subprocess) | Parent process holding one RPC child; argv is the JSON launch (`command`, `sessionRoot`, `cwd`, `model`, `ending`); prints the child's answer, then waits or, with `ending: "shutdown"`, disposes it within `shutdownDeadline` and exits. |
@@ -14,6 +15,7 @@
 | `manual-clock.mjs` | `manualClock` | Injected `schedule(fn, ms)` that never fires on its own: `pending()` lists the scheduled delays, `fire(ms)` runs and removes every timer of that delay. |
 | `mcp-fixture-server.mjs` | none (subprocess) | MCP stdio server; argv `name pidDir delayMs scenario`; writes `<name>.cwd`; `authorization` adds late-tool notifications and a per-server `.calls` audit for zero-dispatch assertions; `roots` records the client's `roots/list` answer in `<name>.roots`; `descendants` starts a detached shell with a background sleep and writes the server, shell and sleep pids to `<name>.tree`, in that order. |
 | `model-endpoint.mjs` | `modelEndpoint` | Local OpenAI-compatible endpoint registered as `fake/echo` in an agent directory's `models.json`, so a real Pi answers without credentials. An array answer scripts one step per request: a string is a final text, `{ text, usage }` a final text followed by an OpenAI usage chunk, with `finish` setting its `finish_reason` instead of `stop`, `{ tool, args }` a tool call, `{ status, error }` a non-streamed error response with that status and message; a function answer receives each request body and returns its step, or a promise of it to hold the response. |
+| `model-picker.mjs` | `catalog`, `lines` | A model registry catalog for the shared model picker, and a reader of a picker panel's title and rows as plain text. |
 | `packed-subprocess.mjs` | `runPackedSubprocess` | Run a command against the packed package. |
 | `process-tree.mjs` | `alive`, `descendants`, `parent`, `gone` | Read the fake Pi's descendant pids, start `child-parent.mjs`, and wait until pids are gone. |
 | `reload-command.mjs` | none (Pi extension) | Registers `/test-reload`, which reloads the real Pi parent that loads it. |
@@ -21,6 +23,6 @@
 | `selection.mjs` | `selectionWith` | Build a stored selection. |
 | `sentence.mjs` | `assertSentence` | Assert that one sentence of a text matches every given pattern. |
 | `signed-checkpoint.mjs` | `withCheckpoint`, `repository` | Temporary signed repositories/worktrees with isolated HOME/XDG and ephemeral SSH fixture key. |
-| `workflow-parent.mjs` | `seat`, `parentSession`, `gitRepository`, `realParent` | Seat a capability selection; a fake parent of the workflow extension (`fire`, registered `tools` and `commands`, `sent` messages); an empty Git repository; a real Pi parent session on a faux model with fake children, optional extra `extensionFactories`, in-memory `settings`, and `models: true` to load the agent directory's `models.json` (as `modelEndpoint` writes it); a faux response may be a function of the request context; returns `session`, `requests`, `children` and `worktree`. |
+| `workflow-parent.mjs` | `seat`, `parentSession`, `gitRepository`, `realParent` | Seat a capability selection; a fake parent of the workflow extension (`fire`, which runs an event's handlers in order and returns the last result a handler gave, registered `tools` and `commands`, `sent` messages); an empty Git repository; a real Pi parent session on a faux model with fake children, optional extra `extensionFactories`, in-memory `settings`, and `models: true` to load the agent directory's `models.json` (as `modelEndpoint` writes it); a faux response may be a function of the request context; returns `session`, `requests`, `children` and `worktree`. |
 
 Check this table before writing a helper or reading a large test file to find one.

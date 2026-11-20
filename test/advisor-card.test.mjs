@@ -1,8 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 
 import { ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
@@ -15,6 +13,7 @@ import {
 } from "../extensions/chrome-messages.ts";
 import { compactToolRenderers } from "../extensions/compact-tools.ts";
 import { withAgentDirectory } from "./support/agent-directory.mjs";
+import { writeAdvisorModel } from "./support/advisor-model.mjs";
 import { parentSession, seat } from "./support/workflow-parent.mjs";
 
 const piTui = await import(
@@ -55,10 +54,7 @@ async function advisorCard(t) {
 	});
 	seat();
 	const dir = withAgentDirectory(t);
-	await writeFile(
-		join(dir, "pi-workflow-advisor.json"),
-		JSON.stringify({ schemaVersion: 1, ...model }),
-	);
+	writeAdvisorModel(dir, model);
 	const tool = (await parentSession(dir)).tools.findLast(
 		(entry) => entry.name === "advisor",
 	);
