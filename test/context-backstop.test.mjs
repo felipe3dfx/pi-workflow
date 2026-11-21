@@ -2,12 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+	advisorTurnsAgo,
 	backstopNotice,
 	backstopThreshold,
 	createContextBackstop,
 } from "../extensions/context-backstop.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { createDelegationMode } from "../extensions/workflow-settings.ts";
+import { writeAdvisorModel } from "./support/advisor-model.mjs";
 import { withAgentDirectory } from "./support/agent-directory.mjs";
 import { parentSession, seat } from "./support/workflow-parent.mjs";
 
@@ -68,6 +70,54 @@ test("the notice states the tokens, the threshold, the delegation ask and that i
 	);
 });
 
+test("the notice asks to consult the advisor before choosing the boundary only when the advisor is offered", () => {
+	const consult =
+		/Consult the advisor before choosing the delegation boundary\./;
+	assert.doesNotMatch(
+		backstopNotice({ tokens: 41_234, threshold: 40_800 }),
+		consult,
+	);
+	const withAdvisor = backstopNotice({
+		tokens: 41_234,
+		threshold: 40_800,
+		advisor: {},
+	});
+	assert.match(withAdvisor, consult);
+	assert.match(withAdvisor, /grants no mutation or guard bypass authority\.$/);
+});
+
+const message = (message) => ({ type: "message", message });
+const assistant = message({ role: "assistant", content: [] });
+const advised = (extra = {}) =>
+	message({
+		role: "toolResult",
+		toolName: "advisor",
+		isError: false,
+		...extra,
+	});
+
+test("the advisor turns count the assistant messages after the last successful consultation", () => {
+	assert.equal(advisorTurnsAgo([]), undefined);
+	assert.equal(advisorTurnsAgo([assistant, assistant]), undefined);
+	assert.equal(advisorTurnsAgo([assistant, advised()]), 0);
+	assert.equal(
+		advisorTurnsAgo([advised(), assistant, { type: "label" }, assistant]),
+		2,
+	);
+	assert.equal(
+		advisorTurnsAgo([advised(), assistant, advised({ isError: true })]),
+		1,
+	);
+	assert.equal(
+		advisorTurnsAgo([
+			advised(),
+			assistant,
+			advised({ details: { failure: "refused" } }),
+		]),
+		1,
+	);
+});
+
 function usage(tokens, contextWindow = 272_000) {
 	return { getContextUsage: () => ({ tokens, contextWindow }) };
 }
@@ -121,9 +171,33 @@ test("a crossing in opportunistic sends one visible steer message with its own t
 	assert.deepEqual(options, { deliverAs: "steer", triggerTurn: true });
 	assert.equal(message.customType, "pi-workflow-context-backstop");
 	assert.equal(message.display, true);
-	assert.equal(
+	assert.deepEqual(message.details, {
+		tokens: 41_000,
+		threshold: 40_800,
+		contextWindow: 272_000,
+	});
+	assert.equal(message.content, backstopNotice(message.details));
+	assert.doesNotMatch(message.content, /advisor/);
+});
+
+test("with the advisor offered, the backstop carries the advisor sentence and its last consultation", async (t) => {
+	const dir = withAgentDirectory(t);
+	seat();
+	writeAdvisorModel(dir);
+	const parent = await backstopParent(dir);
+	await parent.prompt();
+	await parent.result({
+		...usage(41_000),
+		sessionManager: {
+			getBranch: () => [advised(), assistant, assistant, assistant],
+		},
+	});
+	assert.equal(parent.sent.length, 1);
+	const [{ message }] = parent.sent;
+	assert.deepEqual(message.details.advisor, { turnsAgo: 3 });
+	assert.match(
 		message.content,
-		backstopNotice({ tokens: 41_000, threshold: 40_800 }),
+		/Consult the advisor before choosing the delegation boundary\./,
 	);
 });
 

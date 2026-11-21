@@ -65,10 +65,13 @@ import { resolveAgentDirectory } from "./agent-directory.ts";
 import { inspectClaudeBridgeCompanion } from "./web-access.ts";
 import { createDelegationMode } from "./workflow-settings.ts";
 import {
+	advisorTurnsAgo,
+	type BackstopDetails,
 	backstopNotice,
 	CONTEXT_BACKSTOP_TYPE,
 	createContextBackstop,
 } from "./context-backstop.ts";
+import { registerContextBackstopCard } from "./context-backstop-card.ts";
 import {
 	createExplorationBudget,
 	explorationNotice,
@@ -332,6 +335,7 @@ export default function piWorkflowExtension(
 	const explorationBudget = createExplorationBudget();
 	const contextBackstop = createContextBackstop();
 	registerExplorationBudgetCard(pi);
+	registerContextBackstopCard(pi);
 	pi.on("before_agent_start", (event) => {
 		if (event.messageType === "user") explorationBudget.start();
 	});
@@ -339,20 +343,33 @@ export default function piWorkflowExtension(
 		if (!childTools.offered()) return;
 		const aborted = ctx.signal?.aborted === true;
 		const facts = explorationBudget.result(event, aborted);
-		const backstopFacts =
+		const usage =
 			!aborted && delegationMode.current() === "opportunistic"
-				? contextBackstop.reading(ctx.getContextUsage())
+				? ctx.getContextUsage()
 				: undefined;
-		if (backstopFacts)
+		const backstopFacts = usage && contextBackstop.reading(usage);
+		if (backstopFacts) {
+			const details: BackstopDetails = {
+				...backstopFacts,
+				contextWindow: usage?.contextWindow,
+				...(advisor.offered()
+					? {
+							advisor: {
+								turnsAgo: advisorTurnsAgo(ctx.sessionManager.getBranch()),
+							},
+						}
+					: {}),
+			};
 			pi.sendMessage(
 				{
 					customType: CONTEXT_BACKSTOP_TYPE,
-					content: backstopNotice(backstopFacts),
+					content: backstopNotice(details),
 					display: true,
+					details,
 				},
 				{ deliverAs: "steer", triggerTurn: true },
 			);
-		else if (facts)
+		} else if (facts)
 			pi.sendMessage(
 				{
 					customType: EXPLORATION_BUDGET_TYPE,
