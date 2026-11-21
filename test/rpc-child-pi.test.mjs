@@ -87,13 +87,22 @@ async function fixture(t, answer) {
 	const endpoint = await modelEndpoint(agentDir, answer);
 	const previous = process.env.PI_CODING_AGENT_DIR;
 	process.env.PI_CODING_AGENT_DIR = agentDir;
+	// node:test runs t.after hooks in registration order; the scene's children must end before its directory goes.
+	const teardown = [];
 	t.after(async () => {
+		for (const step of teardown.reverse()) await step();
 		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previous;
 		await endpoint.close();
 		await rm(dir, { recursive: true, force: true });
 	});
-	return { dir, agentDir, evidence, endpoint };
+	return {
+		dir,
+		agentDir,
+		evidence,
+		endpoint,
+		after: (step) => teardown.push(step),
+	};
 }
 
 async function repository(dir, name, files) {
@@ -109,8 +118,7 @@ async function repository(dir, name, files) {
 }
 
 function launch(
-	t,
-	{ dir, endpoint },
+	{ dir, endpoint, after },
 	cwd,
 	project,
 	tools = ["read", "mcp__*"],
@@ -131,7 +139,7 @@ function launch(
 		report() {},
 		checkpointed() {},
 	}).then((handle) => {
-		t.after(() => handle.dispose());
+		after(() => handle.dispose());
 		return handle;
 	});
 }
@@ -170,7 +178,7 @@ test("a real Pi child runs in its worktree and loads the worktree's MCP servers 
 			});
 			const worktree = join(scene.dir, "child-worktree");
 			git(repo, "worktree", "add", "--quiet", "-b", "child", worktree);
-			const handle = await launch(t, scene, worktree, { cwd: repo, trusted });
+			const handle = await launch(scene, worktree, { cwd: repo, trusted });
 			const started = Date.now();
 			assert.equal(await handle.run("Say done."), "DONE");
 			t.diagnostic(`run completed in ${Date.now() - started} ms`);
@@ -228,7 +236,7 @@ test("a real Pi child resolves its MCP servers' working directories against its 
 			const project = { cwd: repo, trusted: true };
 			const handle =
 				route === "inherited"
-					? await launch(t, scene, worktree, project)
+					? await launch(scene, worktree, project)
 					: await createRpcChildSession({
 							sessionRoot: join(scene.dir, "sessions"),
 						})({
@@ -255,7 +263,7 @@ test("a real Pi child resolves its MCP servers' working directories against its 
 							report() {},
 							checkpointed() {},
 						});
-			if (route === "contextual") t.after(() => handle.dispose());
+			if (route === "contextual") scene.after(() => handle.dispose());
 			assert.equal(await handle.run("Say done."), "DONE");
 			const expected = {
 				bare: worktree,
@@ -309,7 +317,7 @@ test("a parent's untracked .pi/mcp.json is reported at launch and a real Pi chil
 		`The parent's .pi/mcp.json is absent from the worktree ${worktree}; the child does not inherit it.`,
 	]);
 	t.diagnostic(plan.warnings[0]);
-	const handle = await launch(t, scene, worktree, { cwd: repo, trusted: true });
+	const handle = await launch(scene, worktree, { cwd: repo, trusted: true });
 	assert.equal(await handle.run("Say done."), "DONE");
 	await eventually(() => existsSync(join(scene.evidence, "global.roots")));
 	await delay(500);
@@ -331,7 +339,7 @@ test("a background child runs as a real Pi process and reaches the registry comp
 		report() {},
 		audit: createChildAudit({ root: "", parent: () => undefined }),
 	});
-	t.after(() => core.disposeAll());
+	scene.after(() => core.disposeAll());
 	const started = await core.start(
 		{
 			role: "worker",
@@ -404,7 +412,6 @@ test("a real Pi child whose model Pi cannot select fails its run instead of hang
 	const scene = await fixture(t);
 	const repo = await repository(scene.dir, "repo", {});
 	const handle = await launch(
-		t,
 		{ ...scene, endpoint: { model: "absent-provider/absent-model" } },
 		repo,
 		{ cwd: repo, trusted: false },
@@ -485,7 +492,7 @@ test("a real Pi child that crashes leaves no MCP server or shell descendant with
 	const scene = await fixture(t);
 	const repo = await repository(scene.dir, "repo", {});
 	const tree = await descendantTree(scene);
-	const handle = await launch(t, scene, repo, { cwd: repo, trusted: false });
+	const handle = await launch(scene, repo, { cwd: repo, trusted: false });
 	assert.equal(await handle.run("Say done."), "DONE");
 	const { pi, pids } = await tree();
 	runsInstalledPi(pi);
@@ -507,7 +514,7 @@ test("a real Pi child that ends cleanly leaves no background process of its shel
 		"DONE",
 	]);
 	const repo = await repository(scene.dir, "repo", {});
-	const handle = await launch(t, scene, repo, { cwd: repo, trusted: false }, [
+	const handle = await launch(scene, repo, { cwd: repo, trusted: false }, [
 		"read",
 		"bash",
 	]);
@@ -582,7 +589,7 @@ test("a real Pi explorer child offers the pi-web-access tools to its model", {
 		report() {},
 		checkpointed() {},
 	});
-	t.after(() => handle.dispose());
+	scene.after(() => handle.dispose());
 	assert.equal(await handle.run("Say done."), "DONE");
 	const offered = scene.endpoint.requests[0].tools.map(
 		(tool) => tool.function.name,
@@ -640,7 +647,7 @@ test("a real Pi child with a Claude Bridge model loads the provider and a missin
 		JSON.stringify({ packages: ["npm:pi-claude-bridge"] }),
 	);
 	const handle = await create(spec);
-	t.after(() => handle.dispose());
+	scene.after(() => handle.dispose());
 	const outcome = await handle.run("Reply with the single word DONE.").then(
 		(text) => ({ text }),
 		(error) => ({ error }),
@@ -657,7 +664,7 @@ test("a real Pi child with a Claude Bridge model loads the provider and a missin
 	assert.ok(outcome.error || outcome.text.length > 0);
 });
 
-function registry(t, scene, sent = []) {
+function registry(scene, sent = []) {
 	const core = createChildSessions({
 		create: createRpcChildSession({ sessionRoot: join(scene.dir, "sessions") }),
 		send: (message) => sent.push(message),
@@ -666,7 +673,7 @@ function registry(t, scene, sent = []) {
 		report() {},
 		audit: createChildAudit({ root: "", parent: () => undefined }),
 	});
-	t.after(() => core.disposeAll());
+	scene.after(() => core.disposeAll());
 	return core;
 }
 
@@ -705,7 +712,7 @@ test("a real Pi child asks the parent, the first answer wins and the child conti
 	]);
 	const repo = await repository(scene.dir, "repo", {});
 	const sent = [];
-	const core = registry(t, scene, sent);
+	const core = registry(scene, sent);
 	const started = await background(core, repo, scene, "worker", ["read"]);
 	assert.equal(started.status, "queued");
 	const waiting = await eventually(
@@ -763,7 +770,7 @@ test("a real Pi child withdraws a question when its call is aborted", {
 		report() {},
 		checkpointed() {},
 	});
-	t.after(() => handle.dispose());
+	scene.after(() => handle.dispose());
 	const run = handle.run("Ask first.");
 	run.catch(() => {});
 	await eventually(() => signals.length === 1);
@@ -800,7 +807,7 @@ test("a real Pi worker's guarded bash refuses a parent command and its report st
 		"APPENDED-BY-THE-USER\n",
 	);
 	const repo = await repository(scene.dir, "repo", {});
-	const core = registry(t, scene);
+	const core = registry(scene);
 	const started = await background(core, repo, scene, "worker", [
 		"read",
 		"bash",
@@ -842,7 +849,7 @@ const workflowExtension = fileURLToPath(
 	new URL("../extensions/pi-workflow.ts", import.meta.url),
 );
 
-function rpcParent(t, scene, cwd) {
+function rpcParent(scene, cwd) {
 	const pi = spawn(
 		installedPi,
 		[
@@ -871,7 +878,7 @@ function rpcParent(t, scene, cwd) {
 		},
 	);
 	const exited = new Promise((resolve) => pi.once("exit", resolve));
-	t.after(async () => {
+	scene.after(async () => {
 		if (pi.exitCode === null && pi.signalCode === null) {
 			pi.stdin.end();
 			await Promise.race([exited, delay(5_000)]);
@@ -1059,7 +1066,7 @@ async function reloadScenario(t, ending) {
 			),
 		),
 	);
-	const parentPi = rpcParent(t, scene, repo);
+	const parentPi = rpcParent(scene, repo);
 	const ended = (type) =>
 		parentPi.events.filter(
 			(event) =>
@@ -1227,7 +1234,7 @@ test("a real Pi worker's guard holds inside a script and its granted checkpoint 
 		"DONE",
 	]);
 	await withCheckpoint(async ({ worktree, grant }) => {
-		const core = registry(t, scene);
+		const core = registry(scene);
 		const started = await granted(core, scene, worktree, grant);
 		assert.equal(started.status, "queued");
 		const done = await eventually(
@@ -1262,7 +1269,7 @@ test("a real Pi worker's checkpoint fails closed on a signing failure and record
 	]);
 	await withCheckpoint(async ({ dir, worktree, grant }) => {
 		head(worktree, "config", "user.signingkey", join(dir, "missing-key"));
-		const core = registry(t, scene);
+		const core = registry(scene);
 		const started = await granted(core, scene, worktree, grant);
 		const done = await eventually(
 			() => core.get(started.id),
@@ -1358,7 +1365,7 @@ test("a real Pi contextual child continues an authorized call, holds an uncertai
 			report() {},
 			checkpointed: (checkpoint) => recorded.push(checkpoint),
 		});
-		t.after(() => handle.dispose());
+		scene.after(() => handle.dispose());
 		assert.equal(await handle.run("Do the assigned work."), "DONE");
 		assert.equal(head(worktree, "show", "HEAD:assigned.txt"), "ASSIGNED");
 		assert.equal(existsSync(join(worktree, "other.txt")), false);
@@ -1483,7 +1490,7 @@ test("a real Pi contextual child surfaces a scope violation after commit and ref
 					report() {},
 					checkpointed() {},
 				});
-				t.after(() => handle.dispose());
+				scene.after(() => handle.dispose());
 				assert.equal(await handle.run("Commit."), "DONE");
 				const result = toolResults(scene.endpoint.requests[1]).at(-1);
 				assert.match(result, expected);
@@ -1512,7 +1519,7 @@ test("a real Pi child's codemode offers no models API and calls only the child's
 		"DONE",
 	]);
 	const repo = await repository(scene.dir, "repo", {});
-	const core = registry(t, scene);
+	const core = registry(scene);
 	const started = await background(core, repo, scene, "worker", [
 		"read",
 		"grep",
@@ -1574,7 +1581,7 @@ test("a real Pi child reports its own context occupancy and capacity, and a succ
 		checkpointed() {},
 		context: (state) => states.push({ ...state, at: Date.now() - started }),
 	});
-	t.after(() => handle.dispose());
+	scene.after(() => handle.dispose());
 	assert.match(await handle.run("Say done."), /DONE/);
 	await eventually(
 		() => states.at(-1),
@@ -1670,7 +1677,7 @@ test("a real Pi child of every packaged contract, launched and continued, receiv
 					report() {},
 					audit: createChildAudit({ root: "", parent: () => undefined }),
 				});
-				t.after(() => core.disposeAll());
+				scene.after(() => core.disposeAll());
 				const launch = {
 					project: () => ({ cwd: repo, trusted: false }),
 					shell: () => ({}),
