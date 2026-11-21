@@ -78,6 +78,24 @@ test("a replacing write keeps the file mode and leaves no temporary file", (t) =
 	assert.deepEqual(readdirSync(dir), ["doc.json"]);
 });
 
+test("a replacing write over an unreadable file leaves it readable by its owner only", (t) => {
+	const path = join(withDirectory(t), "doc.json");
+	writeFileSync(path, "{}");
+	chmodSync(path, 0o000);
+	writeJsonAtomically(path, { a: 7 });
+	assert.equal(statSync(path).mode & 0o777, 0o400);
+	assert.equal(readFileSync(path, "utf8"), '{\n  "a": 7\n}\n');
+});
+
+test("a replacing write over a write-only file adds only owner read", (t) => {
+	const path = join(withDirectory(t), "doc.json");
+	writeFileSync(path, "{}");
+	chmodSync(path, 0o200);
+	writeJsonAtomically(path, { a: 8 });
+	assert.equal(statSync(path).mode & 0o777, 0o600);
+	assert.equal(readFileSync(path, "utf8"), '{\n  "a": 8\n}\n');
+});
+
 test("a write through a symbolic link updates the target and keeps the link", (t) => {
 	const dir = withDirectory(t);
 	const target = join(dir, "real.json");
