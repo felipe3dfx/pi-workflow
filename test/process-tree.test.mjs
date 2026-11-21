@@ -103,7 +103,7 @@ test("the ps-based sweep kills the tree's members and ends without matching its 
 	});
 	const exited = once(member, "exit");
 	const { code } = await sweepOf(sweep, [mark, "1000", await scratch(t)], path);
-	assert.equal(code, 0, "the sweep ran out of rounds with members left");
+	assert.equal(code, 0);
 	const [, signal] = await exited;
 	assert.equal(signal, "SIGKILL");
 });
