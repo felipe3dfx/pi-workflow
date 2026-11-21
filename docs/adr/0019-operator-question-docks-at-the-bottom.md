@@ -6,6 +6,8 @@ Acceptance: approval and merge of the introducing PR.
 
 Amends ADR 0009 for the operator question's position, width, and frame. The question stays an overlay.
 
+Amended by [ADR 0031](0031-operator-question-on-narrow-screens.md) for the operator question's look and key hints below the narrow-screen threshold.
+
 ## Decision
 
 The operator question is an overlay docked at the bottom across the full shell width, just above the footer, so the footer's key hints stay visible. It uses the input's frame and is capped at half the terminal height. Opening it still closes the children view.
