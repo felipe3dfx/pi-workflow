@@ -142,7 +142,8 @@ test("the seven tools keep the built-in contract the model sees", () => {
 	}
 });
 
-test("read, write, edit, ls, and bash produce the built-in effect and result", async () => {
+test("read, write, edit, ls, and bash produce the built-in effect and result", async (t) => {
+	t.mock.method(performance, "now", () => 0);
 	const tools = loadTools();
 	await withWorkspace(async (cwd) => {
 		const ctx = executionContext(cwd);
