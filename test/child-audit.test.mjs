@@ -2607,6 +2607,7 @@ test("a listing taken while a child's catalog entry is being appended returns no
 	const held = Promise.withResolvers();
 	const appended = Promise.withResolvers();
 	let appends = 0;
+	let landed = false;
 	const base = faultyFiles();
 	const files = {
 		...base,
@@ -2616,7 +2617,14 @@ test("a listing taken while a child's catalog entry is being appended returns no
 			if (second) await held.promise;
 			const file = await base.open(path, flags, mode);
 			return second
-				? { ...file, close: () => file.close().then(appended.resolve) }
+				? {
+						...file,
+						close: () =>
+							file.close().then(() => {
+								landed = true;
+								appended.resolve();
+							}),
+					}
 				: file;
 		},
 		async stat(path) {
@@ -2637,6 +2645,7 @@ test("a listing taken while a child's catalog entry is being appended returns no
 	await eventually(() => appends === 2);
 
 	const records = await listed(audit);
+	assert.ok(landed);
 	assert.deepEqual(Object.keys(records).sort(), [first.id, second.id].sort());
 });
 
