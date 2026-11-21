@@ -22,6 +22,10 @@ const placement: Record<Capability, { place: Place; order: number }[]> = {
 	"model-profiles": [{ place: "overlay", order: 2 }],
 	codegraph: [{ place: "message-stream", order: 2 }],
 	"compact-rendering": [{ place: "message-stream", order: 0 }],
+	advisor: [
+		{ place: "overlay", order: 3 },
+		{ place: "message-stream", order: 3 },
+	],
 };
 
 let headerOccupant: { capability: Capability; read: () => number } | undefined;

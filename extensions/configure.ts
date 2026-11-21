@@ -7,6 +7,7 @@ export const capabilities = [
 	"model-profiles",
 	"codegraph",
 	"compact-rendering",
+	"advisor",
 ] as const;
 
 export type Capability = (typeof capabilities)[number];
@@ -61,14 +62,19 @@ export function readSelection(
 	if (!isPlainRecord(parsed) || parsed.schemaVersion !== 1) {
 		return { status: "refused", reason: "Selection must use schemaVersion 1." };
 	}
-	const capabilityRecord = parsed.capabilities;
+	const storedCapabilities = parsed.capabilities;
 	const expectationRecord = parsed.expectations;
-	if (!isPlainRecord(capabilityRecord) || !isPlainRecord(expectationRecord)) {
+	if (!isPlainRecord(storedCapabilities) || !isPlainRecord(expectationRecord)) {
 		return {
 			status: "refused",
 			reason: "Selection must name capabilities and expectations.",
 		};
 	}
+	// ADR 0030: a selection saved before the advisor existed reads it as on.
+	const capabilityRecord: Record<string, unknown> = {
+		advisor: true,
+		...storedCapabilities,
+	};
 	const capabilityKeys = Object.keys(capabilityRecord);
 	if (
 		capabilityKeys.length !== capabilities.length ||

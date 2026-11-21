@@ -57,6 +57,7 @@ import { pruneChildSessions } from "./rpc-child.ts";
 import { createFooterHints, registerChrome } from "./chrome.ts";
 import { createChildrenViews } from "./children-view.ts";
 import { createModelProfiles, report } from "./model-profiles.ts";
+import { createAdvisor } from "./advisor.ts";
 import { registerSessionTodo } from "./todo-extension.ts";
 import type { TaskExecutor } from "./todo-header.ts";
 import { registerCompactTools, syncCompactTools } from "./compact-tools.ts";
@@ -99,7 +100,7 @@ const slots = globalThis as Record<
 export const adoptionDeadline = 30_000;
 
 const usage =
-	"Usage: /workflow:status | /workflow:doctor | /workflow:config | /workflow:models | /workflow:subagents";
+	"Usage: /workflow:status | /workflow:doctor | /workflow:config | /workflow:models | /workflow:subagents | /workflow:advisor";
 
 function createWorkflow(
 	pi: ExtensionAPI,
@@ -195,6 +196,7 @@ export default function piWorkflowExtension(
 	registerChildResultCards(pi);
 	const modelProfiles = createModelProfiles(agentDirectory);
 	const delegationMode = createDelegationMode(agentDirectory);
+	const advisor = createAdvisor(agentDirectory);
 	const { requestAboveInputRender } = registerShell(pi);
 	const todo = registerSessionTodo(pi, requestAboveInputRender, () => {
 		const executors = new Map<number, TaskExecutor>();
@@ -279,7 +281,7 @@ export default function piWorkflowExtension(
 	}
 
 	const childQueries = createChildQueryTools(childSessions);
-	for (const tool of [...childQueries, askChoice, askQuestion]) {
+	for (const tool of [...childQueries, askChoice, askQuestion, advisor.tool]) {
 		if (isHarnessMessage(tool)) messages.set(tool.name, tool.parameters);
 	}
 	const childTools = launcher.childToolsOffer(
@@ -313,6 +315,7 @@ export default function piWorkflowExtension(
 			() => syncCodeGraphTool(pi, options.codegraph),
 			() => syncCompactTools(pi, currentCtx),
 			childTools.offer,
+			() => advisor.offer(pi),
 		],
 	});
 	childSessions.subscribe(childTools.refresh);
@@ -320,8 +323,11 @@ export default function piWorkflowExtension(
 		pi,
 		delegationMode,
 		childTools.offered,
+		advisor.offered,
 		options.authorization !== undefined,
 	);
+	// The capture must see the Delegation mode section, so it registers after it.
+	advisor.capture(pi);
 	registerAgentLanguage(pi);
 	const explorationBudget = createExplorationBudget();
 	const contextBackstop = createContextBackstop();
@@ -492,6 +498,16 @@ export default function piWorkflowExtension(
 				return;
 			}
 			await modelProfiles.edit(ctx);
+		},
+	});
+	pi.registerCommand("workflow:advisor", {
+		description: "Choose the advisor model and thinking level in the TUI",
+		handler: async (args, ctx) => {
+			if (args.trim()) {
+				report(ctx, usage, "warning");
+				return;
+			}
+			if (await advisor.choose(ctx)) advisor.offer(pi);
 		},
 	});
 }

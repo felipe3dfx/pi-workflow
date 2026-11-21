@@ -10,16 +10,22 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, visibleWidth } from "@earendil-works/pi-tui";
 
+import { createAdvisor } from "../extensions/advisor.ts";
 import { toolKind, transcriptCursor } from "../extensions/chrome-groups.ts";
 import { createChromeEditor } from "../extensions/chrome-editor.ts";
 import {
 	patchMessages,
 	restoreMessages,
 } from "../extensions/chrome-messages.ts";
-import { syncCompactTools } from "../extensions/compact-tools.ts";
+import {
+	compactToolRenderers,
+	syncCompactTools,
+} from "../extensions/compact-tools.ts";
 import { readSelection } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
+import { withAgentDirectory } from "./support/agent-directory.mjs";
+import { writeAdvisorModel } from "./support/advisor-model.mjs";
 
 const at1155 = new Date(2026, 8, 29, 11, 55).getTime();
 const markdownTheme = new Proxy({}, { get: () => (text) => text });
@@ -520,6 +526,63 @@ test("the transcript cursor starts at the last clickable row, moves between rows
 	assert.equal(transcriptCursor.active(), false);
 	assert.ok(!render().some((line) => line.includes("▸")));
 	assert.equal(mode.chatContainer.children.length > 0, true);
+});
+
+test("hover and the transcript cursor point at an advisor card's ◇ head as they do at ◆ rows", (t) => {
+	const dir = withAgentDirectory(t);
+	writeAdvisorModel(dir, {
+		model: "anthropic/claude-opus-5",
+		thinking: "high",
+	});
+	let advisor;
+	createAdvisor(dir).offer({
+		registerTool: (definition) => {
+			advisor = definition;
+		},
+	});
+	const { mode, say, tool, render } = chat(t);
+	t.after(() => transcriptCursor.leave());
+	const container = mode.chatContainer;
+	say([said("Looking.")]);
+	tool("bash", { command: "ls" }, { text: "one" });
+	say([said("Asking.")]);
+	const card = new ToolExecutionComponent(
+		"advisor",
+		"call-advisor",
+		{},
+		{ showImages: false },
+		compactToolRenderers("advisor", () => advisor),
+		{ requestRender() {} },
+		"/",
+	);
+	card.updateResult(
+		{
+			content: [{ type: "text", text: "Sound." }],
+			details: { model: "anthropic/claude-opus-5", thinking: "high" },
+			isError: false,
+			durationMs: 9_000,
+		},
+		false,
+	);
+	container.addChild(card);
+	const head = "   ◇ Advisor  9s · claude-opus-5 (high)";
+	const row = render().indexOf(head);
+	assert.ok(row > 0);
+	assert.ok(mouse(container, 80, "move", row - 1)?.handled);
+	assert.equal(render()[row], "   ▸ Advisor  9s · claude-opus-5 (high)");
+	const text = render().findIndex((line) => line.includes("Asking."));
+	assert.ok(mouse(container, 80, "move", text)?.handled);
+	assert.equal(render()[row], head);
+	assert.ok(transcriptCursor.move(-1));
+	assert.ok(shows(render(), "   ▸ Advisor  9s · claude-opus-5 (high)"));
+	assert.ok(transcriptCursor.toggle());
+	assert.equal(card.expanded, true);
+	assert.ok(transcriptCursor.toggle());
+	assert.equal(card.expanded, false);
+	assert.ok(transcriptCursor.move(-1));
+	const rows = render();
+	assert.ok(shows(rows, "   ▸ Run ls"));
+	assert.ok(shows(rows, head));
 });
 
 test("moving the cursor off screen scrolls the transcript to it, and leaving returns to the end", (t) => {

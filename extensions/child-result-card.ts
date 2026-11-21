@@ -20,6 +20,7 @@ import {
 
 import type { ChildDetails, ChildRecord } from "./child-sessions.ts";
 import { markCard } from "./chrome-groups.ts";
+import type { Capability } from "./configure.ts";
 import { assistantInset, edgeFor } from "./chrome-messages.ts";
 import {
 	childElapsed,
@@ -95,21 +96,21 @@ function header(theme: Theme, card: Card, question: boolean, open: boolean) {
 		: line;
 }
 
-function clean(text: string) {
+export function clean(text: string) {
 	return terminalSafeBlock(text.trim());
 }
 
-function markdownBody(text: string) {
+export function markdownBody(text: string) {
 	return new Markdown(text, 0, 0, getMarkdownTheme());
 }
 
-function bodyLines(body: Markdown, inner: number) {
+export function bodyLines(body: Markdown, inner: number) {
 	const lines = body.render(inner).map((line) => line.trimEnd());
 	while (lines.length > 0 && lines.at(-1) === "") lines.pop();
 	return lines;
 }
 
-class Fallback extends Text {
+export class Fallback extends Text {
 	private last = "";
 
 	constructor() {
@@ -123,39 +124,51 @@ class Fallback extends Text {
 	}
 }
 
-function plainHead(head: string) {
-	return terminalSafeLine(stripVTControlCharacters(head)).replace(/^◆ /, "");
+export function plainHead(head: string, glyph: string) {
+	const text = terminalSafeLine(stripVTControlCharacters(head));
+	return text.startsWith(`${glyph} `) ? text.slice(glyph.length + 1) : text;
 }
 
-function paintCard(
+export function expandHint(theme: Theme, expanded: boolean) {
+	const key = keyText("app.tools.expand");
+	return key
+		? theme.fg(
+				"dim",
+				`(${terminalSafeLine(key)} to ${expanded ? "collapse" : "expand"})`,
+			)
+		: "";
+}
+
+export function paintCard(
+	capability: Capability,
 	outer: number,
 	fallback: Fallback,
 	lines: (width: number) => string[],
 	plain: () => string,
 ) {
-	if (seated("child-session", "message-stream")) return lines(outer);
+	if (seated(capability, "message-stream")) return lines(outer);
 	fallback.update(plain());
 	return fallback.render(outer);
 }
 
-function frame(
+export function frame(
 	outer: number,
-	head: string,
-	hint: string,
-	content: (inner: number) => string[],
+	head: string | ((width: number) => string),
+	hint: string | ((inner: number) => string),
+	content: (inner: number, unplacedHint: string) => string[],
+	inset = assistantInset,
 ) {
-	const edge = edgeFor(assistantInset, outer);
+	const edge = edgeFor(inset, outer);
 	const width = Math.max(1, outer - edge * 2);
-	const top =
-		hint && visibleWidth(head) + visibleWidth(hint) + 2 <= width
-			? spread(head, hint, width)
-			: truncateToWidth(head, width);
 	const inner = Math.max(1, width - indent);
+	const top = typeof head === "string" ? head : head(width);
+	const tail = typeof hint === "string" ? hint : hint(inner);
+	const placed = tail && visibleWidth(top) + visibleWidth(tail) + 2 <= width;
 	const margin = " ".repeat(edge);
 	const pad = " ".repeat(indent);
 	return [
-		margin + top,
-		...content(inner).map(
+		margin + (placed ? spread(top, tail, width) : truncateToWidth(top, width)),
+		...content(inner, placed ? "" : tail).map(
 			(line) => margin + pad + truncateToWidth(line, inner),
 		),
 	];
@@ -195,6 +208,7 @@ class ResultCard implements Component {
 
 	render(outer: number) {
 		return paintCard(
+			"child-session",
 			outer,
 			this.fallback,
 			(width) => this.cardLines(width),
@@ -204,7 +218,10 @@ class ResultCard implements Component {
 
 	plain() {
 		const open = this.open();
-		const head = plainHead(header(this.theme, this.card, this.question, open));
+		const head = plainHead(
+			header(this.theme, this.card, this.question, open),
+			"◆",
+		);
 		if (open || this.question) return `${head}\n${this.text}`;
 		const why = reason(this.card);
 		return why ? `${head}\n${terminalSafeLine(why)}` : head;
@@ -212,13 +229,7 @@ class ResultCard implements Component {
 
 	cardLines(outer: number) {
 		const t = this.theme;
-		const key = keyText("app.tools.expand");
-		const hint = key
-			? t.fg(
-					"dim",
-					`(${terminalSafeLine(key)} to ${this.expanded ? "collapse" : "expand"})`,
-				)
-			: "";
+		const hint = expandHint(t, this.expanded);
 		const open = this.open();
 		return frame(
 			outer,
@@ -295,6 +306,7 @@ class AnswerCard implements Component {
 	render(outer: number) {
 		const rejectionText = this.rejectionText;
 		return paintCard(
+			"child-session",
 			outer,
 			this.fallback,
 			(width) =>
@@ -307,7 +319,7 @@ class AnswerCard implements Component {
 				),
 			() =>
 				rejectionText === undefined
-					? `${plainHead(this.head)}\n${this.text}`
+					? `${plainHead(this.head, "◆")}\n${this.text}`
 					: `${this.head}\n${this.theme.fg("error", rejectionText)}`,
 		);
 	}

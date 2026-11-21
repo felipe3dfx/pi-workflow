@@ -9,6 +9,7 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 
 import { readSelection } from "../extensions/configure.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
+import { seated } from "../extensions/shell.ts";
 import {
 	body,
 	catalogOf,
@@ -26,6 +27,7 @@ import {
 	wheel,
 } from "./support/config-guide.mjs";
 import { withAgentDirectory } from "./support/agent-directory.mjs";
+import { seat } from "./support/workflow-parent.mjs";
 
 initTheme("dark", false);
 
@@ -113,6 +115,7 @@ test("the guide opens on the defaults with nothing pending and the focus on Chil
 		"Model profiles",
 		"CodeGraph",
 		"Compact rendering",
+		"Advisor",
 	]) {
 		assert.ok(lines.includes(`[x] ${label}`), label);
 	}
@@ -143,6 +146,7 @@ test("three titled sections list every label in order and the action closes the 
 		"[x] Model profiles",
 		"[x] CodeGraph",
 		"[x] Compact rendering",
+		"[x] Advisor",
 		"Delegation",
 		"Delegation mode",
 		"Companions",
@@ -339,6 +343,7 @@ test("the focused row's description shows below the list, a companion's from the
 			["profiles", "Model profiles"],
 			["codegraph", "CodeGraph"],
 			["compact", "Compact rendering"],
+			["advisor", "Advisor"],
 		]) {
 			focusOn(panel, label);
 			copy[key] = descriptionOf();
@@ -370,6 +375,10 @@ test("the focused row's description shows below the list, a companion's from the
 	assert.match(
 		copy.compact,
 		/Shows Pi's built-in tool calls in compact form\. Off restores native rendering\./,
+	);
+	assert.match(
+		copy.advisor,
+		/Lets the parent consult a second model for advice; choose it with \/workflow:advisor\./,
 	);
 	assert.match(
 		copy.mode,
@@ -827,6 +836,70 @@ test("applying with no changes still saves the selection and runs setup for the 
 	assert.ok(Object.values(stored.capabilities).every(Boolean));
 });
 
+test("a selection saved before the advisor opens with Advisor on and keeps every other value", async (t) => {
+	const setup = guide(t);
+	await writeFile(
+		join(setup.dir, "pi-workflow-selection.json"),
+		JSON.stringify({
+			schemaVersion: 1,
+			capabilities: {
+				"child-session": true,
+				todo: false,
+				"operator-questions": true,
+				"model-profiles": true,
+				codegraph: false,
+				"compact-rendering": true,
+			},
+			expectations: Object.fromEntries(
+				companions.map(({ package: name }) => [name, name !== web]),
+			),
+		}),
+	);
+	const seen = {};
+	await driveConfig(setup.command, (panel) => {
+		seen.head = title(panel);
+		seen.advisor = rowOf(panel, "Advisor");
+		seen.todo = rowOf(panel, "Todo");
+		seen.codegraph = rowOf(panel, "CodeGraph");
+		seen.web = rowOf(panel, web);
+		closeGuide(panel);
+	});
+	assert.equal(seen.head, "Workflow config");
+	assert.match(seen.advisor, /^\[x\] Advisor$/);
+	assert.match(seen.todo, /^\[ \] Todo$/);
+	assert.match(seen.codegraph, /^\[ \] CodeGraph$/);
+	assert.match(seen.web, /^\[ \] /);
+});
+
+test("toggling Advisor marks and counts it, and applying writes the key and seats or unseats it", async (t) => {
+	t.after(() => seat());
+	const setup = guide(t);
+	const seen = {};
+	await driveConfig(setup.command, (panel) => {
+		focusOn(panel, "Advisor");
+		press(panel, keys.space);
+		seen.row = rowOf(panel, "Advisor");
+		seen.head = title(panel);
+		openReview(panel);
+		seen.review = body(panel);
+		press(panel, keys.enter);
+	});
+	assert.match(seen.row, /^▸ \[ \] Advisor\s+•$/);
+	assert.equal(seen.head, "Workflow config · 1 change");
+	assert.ok(seen.review.some((line) => /^Advisor\s+on → off$/.test(line)));
+	assert.equal((await storedSelection(setup.dir)).capabilities.advisor, false);
+	assert.equal(seated("advisor", "overlay"), false);
+
+	await driveConfig(setup.command, (panel) => {
+		focusOn(panel, "Advisor");
+		press(panel, keys.space);
+		openReview(panel);
+		press(panel, keys.enter);
+	});
+	assert.equal((await storedSelection(setup.dir)).capabilities.advisor, true);
+	assert.equal(seated("advisor", "overlay"), true);
+});
+
 test("every rendered line stays within the width in the review", async (t) => {
 	const lengths = [];
 	await open(
@@ -902,7 +975,7 @@ test("a short terminal keeps the focused row, the warning and the hints in the l
 			"No effect while Child session is off: the parent has no child tools to delegate with.",
 		),
 	);
-	assert.match(up.focused, /^▸\s+\[.\] Compact rendering/);
+	assert.match(up.focused, /^▸\s+\[.\] Advisor/);
 	assert.match(down.focused, /^▸\s+Delegation mode/);
 	assert.match(action.focused, /^▸\s+Review and apply/);
 	assert.match(companion.focused, /^▸\s+\[.\] \S+\s+\S+/);
@@ -978,7 +1051,7 @@ test("discard confirmation at 12x48 keeps the complete frame and paged descripti
 		setup.command,
 		(panel, running) => {
 			press(panel, keys.space);
-			for (let i = 0; i < 6; i++) press(panel, keys.down);
+			for (let i = 0; i < 7; i++) press(panel, keys.down);
 			press(panel, keys.right);
 			assert.equal(plain(panel, 48).length, 12);
 			press(panel, keys.escape);

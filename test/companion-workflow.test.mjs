@@ -1259,6 +1259,7 @@ test("session start offers the capabilities' tools in today's order and checks t
 			"child_result",
 			"cancel_child",
 			"reply_child",
+			"advisor",
 		]);
 	} finally {
 		replaceSelection(clearedSelection());

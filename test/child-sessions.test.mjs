@@ -53,6 +53,7 @@ import piWorkflowExtension, {
 	adoptionDeadline,
 } from "../extensions/pi-workflow.ts";
 import { createRpcChildSession } from "../extensions/rpc-child.ts";
+import { writeAdvisorModel } from "./support/advisor-model.mjs";
 import {
 	fakeChildren,
 	recordingCore,
@@ -2588,6 +2589,34 @@ test("the child runtime runs the contract on the selected model", async () => {
 			[...spawnedTools].sort(),
 		);
 		assert.equal(messages.length, 0);
+	});
+});
+
+test("a child never receives the advisor tool, even while the parent offers it", async () => {
+	await withWorkspace(async ({ worktree, agentDir }) => {
+		writeAdvisorModel(agentDir, { model: "faux/child", thinking: "high" });
+		const parent = await fauxParent(
+			agentDir,
+			fauxAssistantMessage("Faux child answer."),
+		);
+		const { tool, named } = await loadSpawnTool({
+			agentDir,
+			create: runtimeChild(parent.runtime),
+		});
+		assert.equal(named("advisor")?.exposure, "direct");
+
+		const result = await spawn(
+			tool,
+			{ role: "worker", task: "Fix the failing test" },
+			{ ...toolContext("print", worktree), ...parent.context },
+		);
+
+		assert.equal(result.details.status, "completed", text(result));
+		const [system] = parent.requests[0].messages;
+		assert.deepEqual(
+			system.toolsAdded.map((tool) => tool.name).sort(),
+			[...spawnedTools].sort(),
+		);
 	});
 });
 

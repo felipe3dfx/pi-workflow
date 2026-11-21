@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
@@ -21,6 +21,7 @@ import {
 	press,
 } from "./support/config-guide.mjs";
 import { withAgentDirectory } from "./support/agent-directory.mjs";
+import { writeAdvisorModel } from "./support/advisor-model.mjs";
 import { assertSentence } from "./support/sentence.mjs";
 import {
 	gitRepository,
@@ -333,6 +334,42 @@ test("the instruction names the Todo and operator questions only when each is se
 	const withTodo = instructionOf(await modelCall(await parentSession(dir)));
 	assert.match(withTodo, /todo/);
 	assert.doesNotMatch(withTodo, /ask_user/);
+});
+
+test("the instruction keeps consulting the advisor with the parent exactly while the advisor tool is offered", async (t) => {
+	t.after(() => seat());
+	const dir = withAgentDirectory(t);
+	chooseMode(dir, "orchestrator");
+	seat();
+	assert.doesNotMatch(
+		instructionOf(await modelCall(await parentSession(dir))),
+		/advisor/i,
+	);
+
+	writeAdvisorModel(dir);
+	const session = await parentSession(dir);
+	assertSentence(
+		instructionOf(await modelCall(session)),
+		/^Keep to /,
+		/consulting the advisor with the advisor tool/,
+	);
+
+	await rm(join(dir, "pi-workflow-advisor.json"));
+	assert.match(
+		instructionOf(await modelCall(session)),
+		/consulting the advisor/,
+	);
+	assert.doesNotMatch(
+		instructionOf(await modelCall(await parentSession(dir))),
+		/advisor/i,
+	);
+
+	writeAdvisorModel(dir);
+	seat(capabilities.filter((capability) => capability !== "advisor"));
+	assert.doesNotMatch(
+		instructionOf(await modelCall(await parentSession(dir))),
+		/advisor/i,
+	);
 });
 
 test("opportunistic adds no Delegation mode instruction", async (t) => {

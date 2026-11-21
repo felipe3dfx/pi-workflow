@@ -68,3 +68,65 @@ test("a stored selection that omits a capability is refused", () => {
 	const selection = readSelection(stored, packages);
 	assert.equal(selection.status, "refused");
 });
+
+const allOn = {
+	"child-session": true,
+	todo: true,
+	"operator-questions": true,
+	"model-profiles": true,
+	codegraph: true,
+	"compact-rendering": true,
+};
+
+function stored(capabilities) {
+	return JSON.stringify({
+		schemaVersion: 1,
+		capabilities,
+		expectations: Object.fromEntries(packages.map((name) => [name, true])),
+	});
+}
+
+test("without a selection file the advisor is on", () => {
+	const selection = readSelection(undefined, packages);
+	assert.equal(selection.status, "ready");
+	assert.equal(selection.selection.capabilities.advisor, true);
+});
+
+test("a selection written before the advisor reads it on and keeps every other value", () => {
+	const selection = readSelection(
+		stored({ ...allOn, todo: false, codegraph: false }),
+		packages,
+	);
+	assert.equal(selection.status, "ready");
+	assert.deepEqual(selection.selection.capabilities, {
+		...allOn,
+		todo: false,
+		codegraph: false,
+		advisor: true,
+	});
+});
+
+test("only the advisor may be missing: any other gap, unknown key, or non-boolean advisor is refused", () => {
+	const { todo: _todo, ...withoutTodo } = allOn;
+	assert.deepEqual(
+		readSelection(stored({ ...withoutTodo, advisor: true }), packages),
+		{
+			status: "refused",
+			reason: "Selection must name each harness capability.",
+		},
+	);
+	assert.deepEqual(
+		readSelection(stored({ ...allOn, telemetry: true }), packages),
+		{
+			status: "refused",
+			reason: "Selection must name each harness capability.",
+		},
+	);
+	assert.deepEqual(
+		readSelection(stored({ ...allOn, advisor: "yes" }), packages),
+		{
+			status: "refused",
+			reason: "Selection capability advisor must be on or off.",
+		},
+	);
+});
