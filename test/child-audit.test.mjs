@@ -2603,6 +2603,52 @@ test("the parent's records are listed in bounded pages, live working children in
 	assert.equal((await later.list(reopened.next)).records.length, 1);
 });
 
+test("a listing taken while a child's catalog entry is being appended returns no cursor past the children it lists", async (t) => {
+	const held = Promise.withResolvers();
+	const appended = Promise.withResolvers();
+	let appends = 0;
+	let landed = false;
+	const base = faultyFiles();
+	const files = {
+		...base,
+		async open(path, flags, mode) {
+			const second =
+				path.endsWith(".catalog") && flags === "a" && ++appends === 2;
+			if (second) await held.promise;
+			const file = await base.open(path, flags, mode);
+			return second
+				? {
+						...file,
+						close: () =>
+							file.close().then(() => {
+								landed = true;
+								appended.resolve();
+							}),
+					}
+				: file;
+		},
+		async stat(path) {
+			if (path.endsWith(".catalog") && appends === 2) {
+				held.resolve();
+				await appended.promise;
+			}
+			return base.stat(path);
+		},
+	};
+	const { audit, launch } = auditedCore(t, {
+		files,
+		run: () => new Promise(() => {}),
+	});
+	const first = await launch();
+	await flushed(audit, first.id);
+	const second = await launch();
+	await eventually(() => appends === 2);
+
+	const records = await listed(audit);
+	assert.ok(landed);
+	assert.deepEqual(Object.keys(records).sort(), [first.id, second.id].sort());
+});
+
 async function ended(core, id, child) {
 	child.spec.report(done);
 	child.result.resolve("Done.");

@@ -231,9 +231,9 @@ test("with Herdr's managed integration installed nothing is sent and each sessio
 });
 
 test("every report carries a strictly increasing seq", async (t) => {
+	const before = Date.now() * 1000;
 	const herdr = await reporter(t);
 	const { ctx } = context();
-	const before = Date.now() * 1000;
 	await herdr.fire("session_start", { reason: "startup" }, ctx);
 	for (let round = 0; round < 3; round++) {
 		await herdr.fire("agent_start", {}, ctx);

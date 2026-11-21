@@ -1948,15 +1948,13 @@ export function createChildAudit(options: {
 			try {
 				const room = limits.catalog - names.size;
 				const bound = room * catalogLine;
+				const { size } = await files.stat(path);
 				const buffer = await readAt(path, from, bound);
 				const page = catalogEntries(buffer, room);
 				for (const name of page.names) names.add(name);
 				let { at } = page;
 				if (at === 0 && buffer.length >= bound && room > 0) at = buffer.length;
-				if (
-					(at > 0 || room === 0) &&
-					from + at < (await files.stat(path)).size
-				) {
+				if ((at > 0 || room === 0) && from + at < size) {
 					next = String(from + at);
 				}
 			} catch {}

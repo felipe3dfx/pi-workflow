@@ -2,7 +2,14 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { createReadStream } from "node:fs";
-import { mkdtemp, mkdir, readFile, realpath, rm } from "node:fs/promises";
+import {
+	mkdtemp,
+	mkdir,
+	readFile,
+	realpath,
+	rm,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { consultationQuestion } from "../../extensions/child-runtime.ts";
@@ -64,6 +71,12 @@ process.once("SIGINT", interrupt);
 process.once("SIGTERM", interrupt);
 try {
 	await mkdir(agentDir);
+	// Pi's default retry backoff (2 + 4 + 8 s) outlasts most of the 15 s capture deadline.
+	if (scenario === "endpoint-failure")
+		await writeFile(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ retry: { enabled: false } }),
+		);
 	await mkdir(cwd);
 	await mkdir(join(dir, "tmp"));
 	process.env.TMPDIR = join(dir, "tmp");
