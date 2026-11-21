@@ -1,0 +1,340 @@
+C1 edgeFor(3,44/40/36/26/25/24): 3, 3, 3, 3, 2, 2
+C2 userMessageBg present on all seven 44-column rows: true, true, true, true, true, true, true
+C10 handleMouse: undefined
+C11 modal(44), profile(70), settings frame(42): 38, 64, 36
+--- C1 assistant @ 44 (5 rows)
+                                            |
+   Review the narrow terminal    11:55 AM   |
+   layout before changing the               |
+   status bar and the wrapping              |
+   rules for long messages.                 |
+--- C2 user @ 44 (7 rows)
+                                            |
+   ❯ Review the narrow terminal  11:55 AM   |
+     layout before changing the             |
+     status bar and the                     |
+     wrapping rules for long                |
+     messages.                              |
+                                            |
+--- C3 tool read row @ 44 (13 rows)
+                                            |
+                                            |
+    read                                    |
+                                            |
+    {                                       |
+      "path":                               |
+    "extensions/chrome-messages.ts"         |
+    }                                       |
+    Review the narrow terminal layout       |
+    before changing the status bar and      |
+    the wrapping rules for long             |
+    messages.                               |
+                                            |
+C3 measured native tool render width: 38
+--- C4 result collapsed @ 44 (2 rows)
+                                            |
+   ◆ Subagent worker 5636  1m 02s           |
+--- C4 result expanded @ 44 (7 rows)
+                                            |
+   ◆ Subagent worker 5636  claude-opus...   |
+     Task Review the narrow terminal l...   |
+     Done. The transcript needs enough      |
+     room for long messages and clear       |
+     action hints.                          |
+     alt+a  open in subagents view          |
+--- C4 accepted partial payload without ID or duration @ 44 (2 rows)
+                                            |
+   ◆ Subagent worker   (ctrl+o to expand)   |
+--- C5 backstop collapsed @ 44 (2 rows)
+                                            |
+   ◆ Context 156K / 150K ▰▱▱▱▱▱▱▱ · de...   |
+--- C5 budget collapsed @ 44 (2 rows)
+                                            |
+   ◆ Exploration budget · 4 lookups · ...   |
+--- C6 editor @ 44 (6 rows)
+ ╭────────────────────────────────────────╮ |
+ │ ❯ Review the narrow terminal layout    │ |
+ │   before changing the status bar and   │ |
+ │   the wrapping rules for long          │ |
+ │   messages.                            │ |
+ ╰─────────────── claude-opus-5-5 (high) ─╯ |
+--- C7 header / status / idle footer / working footer @ 44 (4 rows)
+ …s/pi-workflow · main ◆ 2 · ctx 13% · 256K |
+   ⠋ Run read                    13s ⇣1.72k |
+ Shift+Tab:thinking  │  Ctrl+P:model        |
+ Esc:interrupt  │  Enter:steer              |
+--- C8 todo @ 44 (7 rows)
+                                            |
+┌                                          ×|
+│ □ Review the narrow terminal layout      │|
+│ ◐ Capture render output at both widths   │|
+│ ✓ Read the repository instructions       │|
+└                                          ┘|
+                                            |
+--- C9 children @ 44 (3 rows)
+▾ Subagents 1 waiting · 1 running alt+a view|
+ ? explore ... claude-opus-5-5 (high) 1m 02s|
+ ⠦ worker a1b2... claude-opus-5-5 (high) 12s|
+--- C10 ask-user @ 44 (11 rows)
+ ╭────────────────────────────────────────╮ |
+ │ Which rollout should we use?           │ |
+ │                                        │ |
+ │ ❯ 1  Gradual         Start with a      │ |
+ │      rollout         small test group  │ |
+ │                      and monitor       │ |
+ │                      results.          │ |
+ │   2  Full rollout    Make the change … │ |
+ │                                        │ |
+ │   z  Type your answer                  │ |
+ ╰───────────────────────────── question ─╯ |
+--- C11 settings @ 44 (21 rows)
+ ┌─ Settings ─────────────────────── [×] ─┐ |
+ │  ❯ Type to search                      │ |
+ │                                        │ |
+ │  ▸ Auto-compact               true     │ |
+ │  ▸ Show images                true     │ |
+ │  ▸ Image width                  60     │ |
+ │  ▸ Auto-resize images         true     │ |
+ │  ▸ Block images              false     │ |
+ │  ▸ Skill commands             true     │ |
+ │  ▸ Show hardware cursor      false     │ |
+ │  ▸ Editor padding                0     │ |
+ │  ▸ Output padding                1     │ |
+ │  ▸ Autocomplete max items        5     │ |
+ │    (1/35)                              │ |
+ │                                        │ |
+ │    Automatically compact context       │ |
+ │    when it gets too large              │ |
+ │                                        │ |
+ │    Type search  |  Enter/Space change  │ |
+ │    Esc cancel                          │ |
+ └────────────────────────────────────────┘ |
+C11 model profiles editor real overlay bounds {"term":44,"row":15,"col":0,"width":44,"height":10}
+--- C11 model profiles editor real overlay (only overlay-bearing rows of composed screen) @ 44 (10 rows)
+┌─ Profile default (active) ───────── [×] ─┐|
+│                                          │|
+│   Specialists ─────────────────────────  │|
+│  ▸ explorer anthropic/claude-opus-5- ›   │|
+│  ▸ worker openai-codex/gpt-6-astra · ›   │|
+│  ▸ verifier   inherits session model ›   │|
+│                                          │|
+│     ↑/↓ choose  |  Enter pick model      │|
+│    i inherit  |  s save  |  Esc back     │|
+└──────────────────────────────────────────┘|
+C12 config guide bounds {"term":44,"row":5,"col":0,"width":44,"height":30}
+--- C12 config guide (only overlay-bearing rows of composed screen) @ 44 (30 rows)
+┌─ Workflow config ────────────────── [×] ─┐|
+│                                          │|
+│   Capabilities ────────────────────────  │|
+│  ▸ [x] Child session                     │|
+│    [x] Todo                              │|
+│    [x] Operator questions                │|
+│    [x] Model profiles                    │|
+│    [x] CodeGraph                         │|
+│    [x] Compact rendering                 │|
+│    [x] Advisor                           │|
+│                                          │|
+│   Delegation ──────────────────────────  │|
+│        Delegation mode     ‹ inline ›    │|
+│                                          │|
+│   Companions ──────────────────────────  │|
+│    [x] gentle-engram        installed    │|
+│    [x] @gtrabanco/pi-nan-…  installed    │|
+│    [x] pi-web-access        installed    │|
+│    [x] pi-claude-bridge     installed    │|
+│                                          │|
+│  ──────────────────────────────────────  │|
+│    Review and apply      no changes ›    │|
+│                                          │|
+│    Delegate bounded work to child        │|
+│    sessions; shows them above the input  │|
+│    and offers spawn_child.               │|
+│                                          │|
+│        ↑/↓ move  |  Space toggle         │|
+│      Tab go to apply  |  Esc close       │|
+└──────────────────────────────────────────┘|
+--- C13 actual fullscreen layout (always) @ 44 (8 rows)
+chat render width 43                       ┃|
+···········································┃|
+                                            |
+aboveEditor render width 44                 |
+············································|
+                                            |
+                                            |
+                                            |
+--- C13 combined Chrome sample with fixed header, transcript, dock & scrollbar @ 44 (21 rows)
+ …s/pi-workflow · main ◆ 2 · ctx 13% · 256K |
+     changing the status bar               │|
+     and the wrapping rules                │|
+     for long messages.                    ┃|
+                                           ┃|
+                                           ┃|
+   Review the narrow terminal   11:55 AM   ┃|
+   layout before changing the              ┃|
+   status bar and the wrapping             ┃|
+   rules for long messages.                ┃|
+   ⠋ Run read                    13s ⇣1.72k |
+▾ Subagents 1 waiting · 1 running alt+a view|
+ ? explore ... claude-opus-5-5 (high) 1m 02s|
+ ⠦ worker a1b2... claude-opus-5-5 (high) 12s|
+ ╭────────────────────────────────────────╮ |
+ │ ❯ Review the narrow terminal layout    │ |
+ │   before changing the status bar and   │ |
+ │   the wrapping rules for long          │ |
+ │   messages.                            │ |
+ ╰─────────────── claude-opus-5-5 (high) ─╯ |
+ Esc:interrupt  │  Enter:steer              |
+--- C1 assistant @ 100 (3 rows)
+                                                                                                    |
+   Review the narrow terminal layout before changing the status bar and the wrapping     11:55 AM   |
+   rules for long messages.                                                                         |
+--- C2 user @ 100 (4 rows)
+                                                                                                    |
+   ❯ Review the narrow terminal layout before changing the status bar and the wrapping   11:55 AM   |
+     rules for long messages.                                                                       |
+                                                                                                    |
+--- C3 tool read row @ 100 (10 rows)
+                                                                                                    |
+                                                                                                    |
+    read                                                                                            |
+                                                                                                    |
+    {                                                                                               |
+      "path": "extensions/chrome-messages.ts"                                                       |
+    }                                                                                               |
+    Review the narrow terminal layout before changing the status bar and the wrapping rules for     |
+    long messages.                                                                                  |
+                                                                                                    |
+C3 measured native tool render width: 94
+--- C4 result collapsed @ 100 (2 rows)
+                                                                                                    |
+   ◆ Subagent worker 5636  1m 02s                                              (ctrl+o to expand)   |
+--- C4 result expanded @ 100 (5 rows)
+                                                                                                    |
+   ◆ Subagent worker 5636  claude-opus-5-5 (high) · 1m 02s                   (ctrl+o to collapse)   |
+     Task Review the narrow terminal layout                                                         |
+     Done. The transcript needs enough room for long messages and clear action hints.               |
+     alt+a  open in subagents view                                                                  |
+--- C5 backstop collapsed @ 100 (2 rows)
+                                                                                                    |
+   ◆ Context 156K / 150K ▰▱▱▱▱▱▱▱ · delegate the next bounded unit             (ctrl+o to expand)   |
+--- C5 budget collapsed @ 100 (2 rows)
+                                                                                                    |
+   ◆ Exploration budget · 4 lookups · 47 KB → continue discovery in an explore child                |
+--- C6 editor @ 100 (4 rows)
+ ╭────────────────────────────────────────────────────────────────────────────────────────────────╮ |
+ │ ❯ Review the narrow terminal layout before changing the status bar and the wrapping rules for  │ |
+ │   long messages.                                                                               │ |
+ ╰─────────────────────────────────────────────────────────────────────── claude-opus-5-5 (high) ─╯ |
+--- C7 header / status / idle footer / working footer @ 100 (4 rows)
+ π-workflow · ~/D/repos/pi-workflow · main                    ◆ 2 · ctx ▰ ▱ ▱ ▱ ▱ ▱ ▱ ▱  13% · 256K |
+   ⠋ Run read 3.2s                                                                       13s ⇣1.72k |
+ Shift+Tab:thinking  │  Ctrl+P:model  │  Ctrl+O:expand  │  Ctrl+C:clear                             |
+ Esc:interrupt  │  Enter:steer  │  Alt+Enter:follow-up  │  Ctrl+O:expand                            |
+--- C8 todo @ 100 (7 rows)
+                                                                                                    |
+┌                                                                                                  ×|
+│ □ Review the narrow terminal layout                                                              │|
+│ ◐ Capture render output at both widths                                                           │|
+│ ✓ Read the repository instructions                                                               │|
+└                                                                                                  ┘|
+                                                                                                    |
+--- C9 children @ 100 (3 rows)
+▾ Subagents 1 waiting · 1 running                                                         alt+a view|
+ ? explore c3d4 asks question 1                                        claude-opus-5-5 (high) 1m 02s|
+ ⠦ worker a1b2 bash npm test                                              claude-opus-5-5 (high) 12s|
+--- C10 ask-user @ 100 (8 rows)
+ ╭────────────────────────────────────────────────────────────────────────────────────────────────╮ |
+ │ Which rollout should we use?                                                                   │ |
+ │                                                                                                │ |
+ │ ❯ 1  Gradual rollout  Start with a small test group and monitor results.                       │ |
+ │   2  Full rollout     Make the change available to everyone immediately.                       │ |
+ │                                                                                                │ |
+ │   z  Type your answer                                                                          │ |
+ ╰───────────────────────────────────────────────────────────────────────────────────── question ─╯ |
+--- C11 settings @ 100 (19 rows)
+ ┌─ Settings ─────────────────────────────────────────────────────────────────────────────── [×] ─┐ |
+ │  ❯ Type to search                                                                              │ |
+ │                                                                                                │ |
+ │  ▸ Auto-compact                                                                       true     │ |
+ │  ▸ Show images                                                                        true     │ |
+ │  ▸ Image width                                                                          60     │ |
+ │  ▸ Auto-resize images                                                                 true     │ |
+ │  ▸ Block images                                                                      false     │ |
+ │  ▸ Skill commands                                                                     true     │ |
+ │  ▸ Show hardware cursor                                                              false     │ |
+ │  ▸ Editor padding                                                                        0     │ |
+ │  ▸ Output padding                                                                        1     │ |
+ │  ▸ Autocomplete max items                                                                5     │ |
+ │    (1/35)                                                                                      │ |
+ │                                                                                                │ |
+ │    Automatically compact context when it gets too large                                        │ |
+ │                                                                                                │ |
+ │    Type search  |  Enter/Space change  |  Esc cancel                                           │ |
+ └────────────────────────────────────────────────────────────────────────────────────────────────┘ |
+C11 model profiles editor real overlay bounds {"term":100,"row":15,"col":15,"width":70,"height":10}
+--- C11 model profiles editor real overlay (only overlay-bearing rows of composed screen) @ 100 (10 rows)
+               ┌─ Profile default (active) ─────────────────────────────────── [×] ─┐               |
+               │                                                                    │               |
+               │   Specialists ───────────────────────────────────────────────────  │               |
+               │  ▸ explorer         anthropic/claude-opus-5-5 · thinking: high ›   │               |
+               │  ▸ worker            openai-codex/gpt-6-astra · thinking: high ›   │               |
+               │  ▸ verifier                             inherits session model ›   │               |
+               │                                                                    │               |
+               │      ↑/↓ choose  |  Enter pick model  |  i inherit  |  s save      │               |
+               │                              Esc back                              │               |
+               └────────────────────────────────────────────────────────────────────┘               |
+C12 config guide bounds {"term":100,"row":6,"col":15,"width":70,"height":28}
+--- C12 config guide (only overlay-bearing rows of composed screen) @ 100 (28 rows)
+               ┌─ Workflow config ──────────────────────────────────────────── [×] ─┐               |
+               │                                                                    │               |
+               │   Capabilities ──────────────────────────────────────────────────  │               |
+               │  ▸ [x] Child session                                               │               |
+               │    [x] Todo                                                        │               |
+               │    [x] Operator questions                                          │               |
+               │    [x] Model profiles                                              │               |
+               │    [x] CodeGraph                                                   │               |
+               │    [x] Compact rendering                                           │               |
+               │    [x] Advisor                                                     │               |
+               │                                                                    │               |
+               │   Delegation ────────────────────────────────────────────────────  │               |
+               │        Delegation mode                               ‹ inline ›    │               |
+               │                                                                    │               |
+               │   Companions ────────────────────────────────────────────────────  │               |
+               │    [x] gentle-engram                                  installed    │               |
+               │    [x] @gtrabanco/pi-nan-provider                     installed    │               |
+               │    [x] pi-web-access                                  installed    │               |
+               │    [x] pi-claude-bridge                               installed    │               |
+               │                                                                    │               |
+               │  ────────────────────────────────────────────────────────────────  │               |
+               │    Review and apply                                no changes ›    │               |
+               │                                                                    │               |
+               │    Delegate bounded work to child sessions; shows them above the   │               |
+               │    input and offers spawn_child.                                   │               |
+               │                                                                    │               |
+               │    ↑/↓ move  |  Space toggle  |  Tab go to apply  |  Esc close     │               |
+               └────────────────────────────────────────────────────────────────────┘               |
+--- C13 actual fullscreen layout (always) @ 100 (8 rows)
+chat render width 99                                                                               ┃|
+···································································································┃|
+                                                                                                    |
+aboveEditor render width 100                                                                        |
+····································································································|
+                                                                                                    |
+                                                                                                    |
+                                                                                                    |
+--- C13 combined Chrome sample with fixed header, transcript, dock & scrollbar @ 100 (15 rows)
+ π-workflow · ~/D/repos/pi-workflow · main                    ◆ 2 · ctx ▰ ▱ ▱ ▱ ▱ ▱ ▱ ▱  13% · 256K |
+     rules for long messages.                                                                      │|
+                                                                                                   ┃|
+                                                                                                   ┃|
+   Review the narrow terminal layout before changing the status bar and the wrapping    11:55 AM   ┃|
+   rules for long messages.                                                                        ┃|
+   ⠋ Run read 3.2s                                                                       13s ⇣1.72k |
+▾ Subagents 1 waiting · 1 running                                                         alt+a view|
+ ? explore c3d4 asks question 1                                        claude-opus-5-5 (high) 1m 02s|
+ ⠦ worker a1b2 bash npm test                                              claude-opus-5-5 (high) 12s|
+ ╭────────────────────────────────────────────────────────────────────────────────────────────────╮ |
+ │ ❯ Review the narrow terminal layout before changing the status bar and the wrapping rules for  │ |
+ │   long messages.                                                                               │ |
+ ╰─────────────────────────────────────────────────────────────────────── claude-opus-5-5 (high) ─╯ |
+ Esc:interrupt  │  Enter:steer  │  Alt+Enter:follow-up  │  Ctrl+O:expand                            |

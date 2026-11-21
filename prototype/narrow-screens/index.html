@@ -1,0 +1,793 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>pi-workflow · Pantallas estrechas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+/* Terminal colors come from themes/pi-workflow.json. */
+:root {
+  color-scheme: dark;
+  --page: #18181b; --panel: #1f1f23; --rule: #2e2e34; --ink: #e1e1e1; --soft: #a3a3ab; --accent: #bb9af7;
+  --term-bg: #141414;
+  --t-text: #c8c8c8; --t-bright: #e1e1e1; --t-muted: #787878; --t-dim: #6c6c6c; --t-thought: #9c9b9b;
+  --t-olive: #5e7543; --t-edge: #323237; --t-edge-active: #505058; --t-edge-muted: #3c3c41;
+  --t-block: #242424; --t-selected: #363636; --t-blue: #7aa2f7; --t-cyan: #7dcfff; --t-accent: #bb9af7;
+  --t-ok: #9ece6a; --t-warn: #e0af68; --t-err: #f7768e; --t-orange: #ff9e64; --t-track: #111111;
+  --sans: "IBM Plex Sans", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 15px/1.55 var(--sans); }
+.wrap { max-width: 1280px; margin: 0 auto; padding: 20px max(12px, env(safe-area-inset-left)) 60px; display: grid; gap: 18px; }
+h1 { margin: 0; font: 600 clamp(20px, 3vw, 28px)/1.2 var(--sans); }
+.lead { margin: 0; color: var(--soft); max-width: 78ch; }
+.bar { position: sticky; top: 0; z-index: 5; background: var(--page); padding: 10px 0; border-bottom: 1px solid var(--rule); display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: end; }
+.group { display: grid; gap: 4px; }
+.group > span { color: var(--soft); font: 500 10px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase; }
+.notes code, .lead code, .tw code { font: 12.5px var(--mono); color: var(--t-cyan); }
+.verdict button { font: 500 12px var(--sans); background: var(--page); color: var(--soft); border: 1px solid var(--rule); border-radius: 999px; padding: 5px 11px; cursor: pointer; }
+.seg { display: flex; flex-wrap: wrap; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
+.seg button { font: 500 13px/1 var(--sans); color: var(--ink); background: var(--panel); border: 0; padding: 8px 11px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--rule); }
+.seg button[aria-pressed="true"] { background: #2b2633; color: var(--accent); }
+nav.toc { display: flex; flex-wrap: wrap; gap: 6px; }
+nav.toc a { color: var(--soft); text-decoration: none; font-size: 13px; border: 1px solid var(--rule); border-radius: 999px; padding: 3px 10px; }
+nav.toc a .v { margin-left: 4px; }
+section.comp { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 14px 16px; display: grid; gap: 10px; scroll-margin-top: 90px; }
+section.comp h2 { margin: 0; font: 600 17px/1.3 var(--sans); }
+.purpose { margin: 0; color: var(--soft); font-size: 14px; }
+.purpose b { color: var(--ink); font-weight: 500; }
+.pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; }
+@media (max-width: 900px) { .pair { grid-template-columns: minmax(0, 1fr); } }
+.pane { display: grid; gap: 4px; min-width: 0; }
+.pane > span { font: 500 11px/1.2 var(--mono); color: var(--soft); text-transform: uppercase; letter-spacing: .05em; }
+.pane > span em { text-transform: none; font-style: normal; color: var(--t-dim); letter-spacing: 0; }
+.stage { overflow-x: auto; border: 1px solid var(--rule); border-radius: 8px; background: var(--term-bg); max-width: 100%; }
+.stage { container-type: inline-size; }
+.term { --cols: 44; width: max-content; padding: 8px 0; color: var(--t-text); font-family: var(--mono); line-height: 1.25; white-space: pre;
+  font-size: min(14px, calc((100cqw - 2px) / (var(--cols) * 0.61))); }
+.term .ln { height: 1.25em; position: relative; }
+.term .ln::after { content: ""; position: absolute; left: calc(var(--cols) * 1ch); top: 0; bottom: 0; border-left: 1px dashed #3a2f4a; }
+ul.notes { margin: 0; padding-left: 18px; color: var(--soft); font-size: 14px; display: grid; gap: 3px; }
+.notes b, .lead b { color: var(--ink); font-weight: 500; }
+.notes.fix li::marker { color: var(--t-ok); }
+.notes.issue li::marker { color: var(--t-err); }
+.budget { font: 12px var(--mono); color: var(--soft); }
+.budget b { color: var(--t-ok); }
+.verdict { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.verdict button[aria-pressed="true"][data-v="ok"] { color: var(--t-ok); border-color: var(--t-ok); }
+.verdict button[aria-pressed="true"][data-v="adj"] { color: var(--t-warn); border-color: var(--t-warn); }
+.verdict button[aria-pressed="true"][data-v="no"] { color: var(--t-err); border-color: var(--t-err); }
+.verdict input { flex: 1 1 220px; min-width: 0; font: 13px var(--sans); background: var(--page); color: var(--ink); border: 1px solid var(--rule); border-radius: 6px; padding: 6px 8px; }
+table { border-collapse: collapse; font-size: 13.5px; width: 100%; }
+th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { color: var(--soft); font-weight: 500; }
+.tw { overflow-x: auto; }
+textarea#summary { width: 100%; min-height: 140px; font: 12.5px var(--mono); background: var(--term-bg); color: var(--ink); border: 1px solid var(--rule); border-radius: 8px; padding: 8px; }
+.btn { font: 500 13px var(--sans); color: var(--ink); background: #2b2633; border: 1px solid var(--accent); border-radius: 6px; padding: 7px 12px; cursor: pointer; }
+.text{color:var(--t-text)} .bright{color:var(--t-bright)} .muted{color:var(--t-muted)} .dim{color:var(--t-dim)} .thought{color:var(--t-thought)}
+.olive{color:var(--t-olive)} .edge{color:var(--t-edge)} .edgeA{color:var(--t-edge-active)} .edgeM{color:var(--t-edge-muted)}
+.blue{color:var(--t-blue)} .cyan{color:var(--t-cyan)} .acc{color:var(--t-accent)} .ok{color:var(--t-ok)} .warn{color:var(--t-warn)}
+.err{color:var(--t-err)} .orange{color:var(--t-orange)} .b{font-weight:700} .ubg{background:var(--t-block)} .sel{background:var(--t-selected)}
+.sb{color:#2a2a2a} .sbt{color:#3b3b3b}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header style="display:grid;gap:6px">
+    <h1>pi-workflow en pantallas estrechas</h1>
+    <p class="lead">Propuesta de densidad compacta para terminales de unas 44 columnas, como un iPhone 13 en Herdr. Cada componente muestra el <b>antes</b>, tomado de capturas reales del renderer a 44 y 100 columnas, junto al <b>después</b>, que sale de un único sistema de tokens y responde al ancho que elijas. La línea punteada morada marca el borde derecho del terminal. Marca cada componente con ✓, ✎ o ✗ y exporta el resumen al final.</p>
+  </header>
+
+  <div class="bar">
+    <div class="group"><span>Ancho (columnas)</span><div class="seg" id="w"></div></div>
+    <div class="group"><span>Margen exterior estrecho</span><div class="seg" id="m"></div></div>
+    <div class="group"><span>Hora de los mensajes</span><div class="seg" id="s"></div></div>
+  </div>
+
+  <nav class="toc" id="toc"></nav>
+  <div id="sections" style="display:grid;gap:16px"></div>
+
+  <section class="comp" id="resumen">
+    <h2>Resumen para devolver</h2>
+    <p class="purpose">Copia este texto y pégalo en la conversación. Incluye tus veredictos, tus notas y las variantes elegidas.</p>
+    <div><button type="button" class="btn" id="copy">Copiar resumen</button></div>
+    <textarea id="summary" readonly></textarea>
+  </section>
+</div>
+
+<script>
+const S = (t, c = "") => ({ t: String(t), c });
+const chars = (s) => [...s];
+const len = (l) => l.reduce((a, s) => a + chars(s.t).length, 0);
+const sp = (n) => S(" ".repeat(Math.max(0, n)));
+function cut(l, n) {
+  if (n <= 0) return [];
+  if (len(l) <= n) return l;
+  const out = []; let rem = n - 1, last = "";
+  for (const s of l) {
+    const c = chars(s.t);
+    if (c.length <= rem) { out.push(s); rem -= c.length; last = s.c; continue; }
+    if (rem > 0) out.push(S(c.slice(0, rem).join(""), s.c));
+    last = s.c; break;
+  }
+  out.push(S("…", last));
+  return out;
+}
+const padR = (l, n) => { l = cut(l, n); return [...l, sp(n - len(l))]; };
+function spread(L, R, n) {
+  const r = len(R);
+  if (r + 2 > n) return cut(L, n);
+  L = cut(L, n - r - 1);
+  return [...L, sp(n - len(L) - r), ...R];
+}
+function wrap(str, n) {
+  const out = []; let line = "";
+  for (const word of String(str).split(/\s+/).filter(Boolean)) {
+    let w = word;
+    while (chars(w).length > n) { if (line) { out.push(line); line = ""; } out.push(chars(w).slice(0, n).join("")); w = chars(w).slice(n).join(""); }
+    if (!line) line = w; else if (chars(line).length + 1 + chars(w).length <= n) line += ` ${w}`; else { out.push(line); line = w; }
+  }
+  if (line) out.push(line);
+  return out.length ? out : [""];
+}
+const hint = (k, a) => [S(k, "text b"), S(` ${a}`, "dim")];
+function hintRows(items, n, sep = " · ") {
+  const rows = []; let row = [];
+  for (const it of items) {
+    const cand = row.length ? [...row, S(sep, "edgeA"), ...it] : it;
+    if (len(cand) <= n) row = cand; else { if (row.length) rows.push(row); row = cut(it, n); }
+  }
+  if (row.length) rows.push(row);
+  return rows;
+}
+
+const WIDTHS = [36, 40, 44, 48, 60, 100];
+const st = Object.assign({ w: 44, m: 0, stamp: "float" }, JSON.parse(localStorage.getItem("pw-narrow-state") || "{}"));
+const verdicts = JSON.parse(localStorage.getItem("pw-narrow-verdicts") || "{}");
+const save = () => { localStorage.setItem("pw-narrow-state", JSON.stringify(st)); localStorage.setItem("pw-narrow-verdicts", JSON.stringify(verdicts)); };
+
+function T(W) {
+  const narrow = W < 60;
+  return {
+    narrow,
+    m: narrow ? st.m : 3,
+    dock: narrow ? st.m : 1,
+    lane: 2,                       // glyph lane: glyph + space; every body starts after it
+    right: narrow ? 1 : 3,
+    chat: W - 1,                   // fullscreenScrollbar: always reserves one column
+    framePad: narrow ? 1 : 2,
+    modalEdge: narrow ? 0 : 1,
+  };
+}
+const STAMP = "11:55 AM";
+const MSG = "Review the narrow terminal layout before changing the status bar and the wrapping rules for long messages.";
+
+function block(W, glyph, bodyLines, opts = {}) {
+  const t = T(W), cw = t.chat, inner = cw - t.m - t.lane - t.right;
+  const out = [];
+  bodyLines.forEach((l, i) => {
+    const g = i === 0 && glyph ? glyph : (opts.rail ? opts.rail : [sp(t.lane)]);
+    out.push([sp(t.m), ...g, ...cut(l, inner)]);
+  });
+  return out;
+}
+function bodyWidth(W) { const t = T(W); return t.chat - t.m - t.lane - t.right; }
+function withStamp(W, lines, _startCol) {
+  if (st.stamp === "none" && T(W).narrow) return lines;
+  const t = T(W), cw = t.chat, need = chars(STAMP).length + 2;
+  const room = (l) => cw - t.right - len(l);
+  if (room(lines[0]) >= need) { lines[0] = [...lines[0], sp(room(lines[0]) - chars(STAMP).length), S(STAMP, "dim")]; return lines; }
+  const last = lines[lines.length - 1];
+  if (room(last) >= need) { lines[lines.length - 1] = [...last, sp(room(last) - chars(STAMP).length), S(STAMP, "dim")]; return lines; }
+  lines.push([sp(cw - t.right - chars(STAMP).length), S(STAMP, "dim")]);
+  return lines;
+}
+const scrollbar = (lines, W, on = true) => lines.map((l) => [...padR(l, W - 1), S(on ? "┃" : "│", on ? "sbt" : "sb")]);
+
+const P = {};
+P.assistant = (W) => {
+  const bw = bodyWidth(W);
+  const lines = block(W, null, wrap(MSG, bw).map((s) => [S(s, "text")]));
+  return scrollbar(withStamp(W, lines), W);
+};
+P.user = (W) => {
+  const t = T(W), cw = t.chat, padX = t.narrow ? 1 : 0, bw = cw - t.m - padX - t.lane - (t.narrow ? padX : t.right);
+  const body = wrap(MSG, bw);
+  const lines = body.map((s, i) => [sp(padX), S(i ? "  " : "❯ ", "bright b"), S(s, "bright")]);
+  const inner = cw - t.m, right = t.narrow ? padX : t.right, need = chars(STAMP).length + 2;
+  const stamped = (l) => [...l, sp(inner - right - len(l) - chars(STAMP).length), S(STAMP, "dim")];
+  let foot = [];
+  const show = !(st.stamp === "none" && t.narrow);
+  if (show && inner - right - len(lines[0]) >= need) lines[0] = stamped(lines[0]);
+  else if (show && inner - right - len(lines[lines.length - 1]) >= need) lines[lines.length - 1] = stamped(lines[lines.length - 1]);
+  else if (show) foot = stamped([]);
+  const paint = (l) => [S(" ".repeat(t.m)), ...padR(l, inner).map((s) => S(s.t, (`${s.c} ubg`).trim()))];
+  return scrollbar([paint([]), ...lines.map(paint), paint(foot)], W);
+};
+P.thinking = (W) => {
+  const bw = bodyWidth(W), t = T(W);
+  const collapsed = block(W, [S("◆ ", "dim")], [[S("Thought for 3.2s", "muted b"), S(t.narrow ? "" : "  (ctrl+t to expand)", "dim")]]);
+  const txt = "The status row and the editor should share one text column so the eye does not jump between blocks.";
+  const exp = block(W, [S("┃ ", "edgeM")], [[S("◆ ", "dim"), S("Thought for 3.2s", "muted b")], ...wrap(txt, bw).map((s) => [S(s, "thought")])], { rail: [S("┃ ", "edgeM")] });
+  return scrollbar([...collapsed, [], ...exp], W);
+};
+P.tools = (W) => {
+  const row = (g, gc, verb, detail, dc = "dim") => block(W, [S(`${g} `, gc)], [[S(`${verb} `, "muted b"), S(detail, dc)]])[0];
+  const bw = bodyWidth(W);
+  const exp = block(W, [S("┃ ", "edgeM")], [[S("◆ ", "olive"), S("Run ", "muted b"), S("git status --short", "dim")], [S(" M extensions/chrome-messages.ts", "dim")], [S("?? prototype/narrow-screens/", "dim")]], { rail: [S("┃ ", "edgeM")] });
+  return scrollbar([
+    row("◆", "olive", "Read", "~/W/pi-workflow/extensions/chrome-messages.ts", "orange"),
+    row("◆", "cyan", "Run", "npm run check"),
+    row("◆", "err", "Search", "edgeFor in extensions/ — 1 failed"),
+    block(W, [S("◈ ", "dim")], [[S("Read 3 files, searched 2 patterns", "muted b")]])[0],
+    [], ...exp,
+  ], W);
+};
+P.notice = (W) => {
+  const bw = bodyWidth(W);
+  return scrollbar(block(W, [S("◆ ", "err")], wrap("Error: the provider returned 529 overloaded; retrying in 4s.", bw).map((s) => [S(s, "muted")])), W);
+};
+const head = (W, glyph, gc, label, rest, right) => {
+  const t = T(W), bw = bodyWidth(W);
+  const L = [S(label, "muted b"), ...(rest ? [S(" ", ""), ...rest] : [])];
+  return block(W, [S(`${glyph} `, gc)], [spread(L, right || [], bw)])[0];
+};
+P.advisor = (W) => {
+  const t = T(W), bw = bodyWidth(W);
+  const lines = [head(W, "◆", "acc", "Advisor", [S("12s", "dim")], [S("›", "dim")])];
+  const meta = "claude-opus-5-5 · high";
+  if (t.narrow) lines.push(block(W, null, [[S(meta, "dim")]])[0]);
+  else lines[0] = head(W, "◆", "acc", "Advisor", [S(`12s · ${meta}`, "dim")], [S("ctrl+o ›", "dim")]);
+  const body = "Fix the stamp reserve first: it costs ten columns on every wrapped line of every assistant message.";
+  block(W, null, wrap(body, bw).slice(0, 3).map((s) => [S(s, "text")])).forEach((l) => { lines.push(l); });
+  lines.push(block(W, null, [[S("+5 lines · tap or ctrl+o", "dim")]])[0]);
+  return scrollbar(lines, W);
+};
+P.result = (W) => {
+  const t = T(W), bw = bodyWidth(W);
+  const collapsed = [head(W, "◆", "olive", "Subagent", [S("worker a1b2", "text"), S(" · ", "dim"), S("completed", "ok")], [S("1m 02s ›", "dim")])];
+  block(W, null, wrap("The transcript needs enough room for long messages and clear action hints.", bw).slice(0, 2).map((s) => [S(s, "dim")])).forEach((l) => { collapsed.push(l); });
+  const q = [head(W, "◆", "warn", "Subagent", [S("explore c3d4", "text"), S(" · ", "dim"), S("asks question 1", "warn")], [S("›", "dim")])];
+  const ans = [head(W, "◆", "olive", "Parent", [S("→ c3d4 · answer 1", "dim")], [])];
+  return scrollbar([...collapsed, [], ...q, [], ...ans], W);
+};
+P.notices = (W) => {
+  const bw = bodyWidth(W);
+  const meter = [S("▰", "warn"), S("▱▱▱▱▱▱▱", "dim")];
+  const a = [head(W, "◆", "warn", "Context", [S("156K/150K ", "warn"), ...meter], [S("›", "dim")]),
+    ...block(W, null, wrap("→ delegate the next bounded unit", bw).map((s) => [S(s, "warn")]))];
+  const b = [head(W, "◆", "warn", "Exploration budget", [S("4 lookups · 47 KB", "dim")], []),
+    ...block(W, null, wrap("→ continue discovery in an explore child", bw).map((s) => [S(s, "warn")]))];
+  return scrollbar([...a, [], ...b], W);
+};
+P.asked = (W) => {
+  const bw = bodyWidth(W) - 6;
+  const q = wrap("Which rollout should we use for the narrow layout?", bw);
+  const lines = block(W, [S("◆ ", "olive")], q.map((s, i) => [S(i ? "      " : "Asked ", "muted b"), S(s, "dim")]));
+  lines.push(...block(W, null, [[S("↳ Gradual rollout", "dim")]]));
+  return scrollbar(lines, W);
+};
+P.markdown = (W) => {
+  const t = T(W), bw = bodyWidth(W), ind = t.narrow ? 2 : 4;
+  const L = [];
+  const para = (str, pre = "", c = "text") => wrap(str, bw - chars(pre).length).forEach((s, i) => { L.push([S(i ? " ".repeat(chars(pre).length) : pre, "dim"), S(s, c)]); });
+  para("Two changes keep long answers readable:", "", "text");
+  L.push([]);
+  para("Drop the stamp reserve on wrapped lines.", "- ");
+  para("Use one text column for every block.", "- ");
+  para("Nested items keep their meaning.", `${" ".repeat(ind)}- `);
+  L.push([]);
+  const code = ["edgeFor(3, outer) {", "  return min(edge, (outer-20)/2)", "}"];
+  if (t.narrow) code.forEach((c) => { L.push([S("▎ ", "edge"), ...cut([S(c, "blue")], bw - 2)]); });
+  else { L.push([S("```ts", "edge")]); code.forEach((c) => { L.push([S(`  ${c}`, "blue")]); }); L.push([S("```", "edge")]); }
+  return scrollbar(block(W, null, L), W);
+};
+P.header = (W) => {
+  const t = T(W), n = W - t.dock * 2;
+  const L = t.narrow ? [S("pi-workflow", "text"), S(" · ", "edgeA"), S("main", "dim")] : [S("π-workflow", "acc"), S(" · ", "edgeA"), S("~/D/repos/pi-workflow", "text"), S(" · ", "edgeA"), S("main", "dim")];
+  const R = t.narrow ? [S("◆2", "acc"), S(" · ", "edgeA"), S("13%", "text"), S(" 256K", "dim")] : [S("◆ 2", "acc"), S(" · ", "edgeA"), S("ctx ", "dim"), S("▰", "acc"), S(" ▱ ▱ ▱ ▱ ▱ ▱ ▱  ", "dim"), S("13%", "text"), S(" · 256K", "dim")];
+  return [[sp(t.dock), ...spread(L, R, n)]];
+};
+P.status = (W) => {
+  const t = T(W), n = W - t.m - t.right;
+  return [[sp(t.m), ...spread([S("⠋ ", "cyan"), S("Run ", "dim"), S("read", "text"), ...(t.narrow ? [] : [S(" 3.2s", "dim")])], [S("13s ⇣1.7k", "dim")], n)]];
+};
+P.footer = (W) => {
+  const t = T(W), n = W - t.dock * 2;
+  const idle = [hint("Ctrl+O", "expand"), hint("Ctrl+P", "model"), hint("Shift+Tab", "thinking"), hint("Ctrl+C", "clear")];
+  const work = [hint("Esc", "interrupt"), hint("Enter", "steer"), hint("Ctrl+O", "expand"), hint("Alt+Enter", "follow-up")];
+  const fit = (items) => { let row = []; for (const it of items) { const c = row.length ? [...row, S(" · ", "edgeA"), ...it] : it; if (len(c) <= n) row = c; else break; } return [sp(t.dock), ...row]; };
+  return [fit(idle), fit(work)];
+};
+P.editor = (W) => {
+  const t = T(W), fw = W - t.dock * 2, inner = fw - 6;
+  const body = wrap("Review the narrow terminal layout before changing the status bar.", inner - 1);
+  const top = [sp(t.dock), S(`╭${"─".repeat(fw - 2)}╮`, "edgeA")];
+  const rows = body.map((s, i) => [sp(t.dock), S("│ ", "edgeA"), S(i ? "  " : "❯ ", "acc"), ...padR([S(s, "text")], inner), S(" │", "edgeA")]);
+  const cap = t.narrow ? " opus-5-5 · high " : " claude-opus-5-5 (high) ";
+  const bot = [sp(t.dock), S(`╰${"─".repeat(Math.max(1, fw - 3 - chars(cap).length))}`, "edgeA"), S(cap, "dim"), S("─╯", "edgeA")];
+  const ph = [sp(t.dock), S("│ ", "edge"), S("❯ ", "acc"), ...padR([S(t.narrow ? "What should we build?" : "What should we build together?", "dim")], inner), S(" │", "edge")];
+  return [top, ...rows, bot, [], [sp(t.dock), S(`╭${"─".repeat(fw - 2)}╮`, "edge")], ph, [sp(t.dock), S(`╰${"─".repeat(Math.max(1, fw - 3 - chars(cap).length))}`, "edge"), S(cap, "dim"), S("─╯", "edge")]];
+};
+const dockHead = (W, label, rest, right) => {
+  const t = T(W);
+  return [sp(t.dock), ...spread([S("▾ ", "dim"), S(label, "muted b"), ...rest], right, W - t.dock * 2)];
+};
+P.todo = (W) => {
+  const t = T(W), n = W - t.dock * 2 - 2;
+  const row = (g, gc, s, sc, tail) => [sp(t.dock), S(`${g} `, gc), ...spread([S(s, sc)], tail || [], n)];
+  return [
+    dockHead(W, "Todo", [S(" 1/3", "dim")], [S("Alt+Shift+T", "dim")]),
+    row("○", "muted", "Review the narrow terminal layout", "text"),
+    row("◐", "cyan", "Capture render output at both widths", "text", t.narrow ? [] : [S("← worker a1b2", "dim")]),
+    row("✓", "ok", "Read the repository instructions", "muted"),
+  ];
+};
+P.children = (W) => {
+  const t = T(W), n = W - t.dock * 2 - 2;
+  const row = (g, gc, role, id, step, tail) => [sp(t.dock), S(`${g} `, gc), ...spread([S(role, "acc"), S(` ${id} `, "text"), S(step, "dim")], tail, n)];
+  return [
+    dockHead(W, "Subagents", [S(" 1 waiting", "warn"), S(" · 1 running", "dim")], [S("Alt+A", "dim")]),
+    row("?", "warn", "explore", "c3d4", "asks question 1", [S(t.narrow ? "1m 02s" : "claude-opus-5-5 (high) 1m 02s", "dim")]),
+    row("⠦", "cyan", "worker", "a1b2", "bash npm test", [S(t.narrow ? "12s" : "claude-opus-5-5 (high) 12s", "dim")]),
+  ];
+};
+/* Modal frame: square corners for overlays, rounded for docked input surfaces. */
+function frame(W, title, body, foot, opts = {}) {
+  const t = T(W), edge = opts.edge ?? t.modalEdge, fw = opts.width ?? W - edge * 2, pad = t.framePad, inner = fw - 2 - pad * 2;
+  const [tl, tr, bl, br] = opts.round ? ["╭", "╮", "╰", "╯"] : ["┌", "┐", "└", "┘"];
+  const bc = opts.round ? "edgeA" : "edge";
+  const close = opts.round ? "" : " [×] ";
+  const tt = title ? cut([S(` ${title} `, "text b")], fw - 4 - chars(close).length) : [];
+  const top = [sp(edge), S(`${tl}─`, bc), ...tt, S("─".repeat(Math.max(0, fw - 3 - len(tt) - chars(close).length - 1)), bc), S(close, "dim"), S(`─${tr}`, bc)];
+  const row = (l) => [sp(edge), S("│", bc), sp(pad), ...padR(l, inner), sp(pad), S("│", bc)];
+  const cap = opts.caption ? ` ${opts.caption} ` : "";
+  const bot = [sp(edge), S(bl + "─".repeat(fw - 3 - chars(cap).length), bc), S(cap, "dim"), S(`─${br}`, bc)];
+  return { inner, lines: (fn) => [top, ...fn(inner).map(row), ...(foot ? foot(inner).map(row) : []), bot] };
+}
+P.ask = (W) => {
+  const t = T(W);
+  const f = frame(W, "", null, null, { round: true, edge: t.dock, caption: "question" });
+  return f.lines((n) => {
+    const out = wrap("Which rollout should we use?", n).map((s) => [S(s, "text b")]);
+    out.push([]);
+    const opt = (sel, k, label, desc) => {
+      const pre = `${(sel ? "▸ " : "  ") + k} `;
+      const lines = wrap(label, n - pre.length).map((s, i) => [S(i ? " ".repeat(pre.length) : pre, sel ? "text b" : "muted"), S(s, sel ? "text b" : "text")]);
+      if (t.narrow || n < 70) wrap(desc, n - pre.length).forEach((s) => { lines.push([sp(pre.length), S(s, "dim")]); });
+      else lines[0] = [...padR(lines[0], pre.length + 17), S(desc, "dim")];
+      return lines;
+    };
+    out.push(...opt(true, "1", "Gradual rollout", "Start with a small test group and monitor results."));
+    out.push(...opt(false, "2", "Full rollout", "Make the change available to everyone immediately."));
+    out.push([], [S("  z ", "muted"), S("Type your answer", "dim")], []);
+    out.push(...hintRows([hint("↑↓", "move"), hint("Enter", "pick"), hint("z", "write"), hint("Shift+X", "dismiss")], n));
+    return out;
+  });
+};
+const hintFoot = (items) => (n) => [[], ...hintRows(items, n)];
+const rule = (label, n) => [S(`${label} `, "muted b"), S("─".repeat(Math.max(0, n - chars(label).length - 1)), "edge")];
+P.settings = (W) => {
+  const f = frame(W, "Settings", null, hintFoot([hint("type", "search"), hint("Enter", "change"), hint("Esc", "close")]));
+  return f.lines((n) => {
+    const row = (sel, k, v) => [S(sel ? "▸ " : "  ", "text b"), ...spread([S(k, sel ? "text b" : "text")], [S(v, "muted")], n - 2)];
+    const out = [[S("❯ ", "acc"), S("Type to search", "dim")], []];
+    [["Auto-compact", "true"], ["Show images", "true"], ["Image width", "60"], ["Editor padding", "0"], ["Output padding", "1"]].forEach(([k, v], i) => { out.push(row(i === 0, k, v)); });
+    out.push([S("  1/35", "dim")], []);
+    wrap("Automatically compact context when it gets too large.", n - 2).forEach((s) => { out.push([sp(2), S(s, "dim")]); });
+    return out;
+  });
+};
+P.profiles = (W) => {
+  const t = T(W);
+  const f = frame(W, "Profile default · active", null, hintFoot([hint("Enter", "pick model"), hint("i", "inherit"), hint("s", "save"), hint("Esc", "back")]));
+  return f.lines((n) => {
+    const out = [rule("Specialists", n)];
+    const spec = (sel, role, model, think) => {
+      if (!t.narrow) return [[S(sel ? "▸ " : "  ", "text b"), ...spread([S(role, sel ? "text b" : "text")], [S(model, "muted"), S(think ? ` · ${think}` : "", "dim"), S(" ›", "dim")], n - 2)]];
+      return [[S(sel ? "▸ " : "  ", "text b"), ...spread([S(role, sel ? "text b" : "text")], [S(think || "", "dim"), S(" ›", "dim")], n - 2)],
+        [sp(4), ...cut([S(model, "muted")], n - 4)]];
+    };
+    out.push(...spec(true, "explorer", "anthropic/claude-opus-5-5", "high"));
+    out.push(...spec(false, "worker", "openai-codex/gpt-6-astra", "high"));
+    out.push(...spec(false, "verifier", "inherits session model", ""));
+    return out;
+  });
+};
+P.config = (W) => {
+  const t = T(W);
+  const f = frame(W, "Workflow config", null, hintFoot([hint("↑↓", "move"), hint("Space", "toggle"), hint("Tab", "apply"), hint("Esc", "close")]));
+  return f.lines((n) => {
+    const box = (sel, on, label, right) => [S(sel ? "▸ " : "  ", "text b"), ...spread([S(on ? "[x] " : "[ ] ", "muted"), S(label, sel ? "text b" : "text")], right ? [S(right, "dim")] : [], n - 2)];
+    const out = [rule("Capabilities", n), box(true, true, "Child session"), box(false, true, "Todo"), box(false, true, "Operator questions"), [],
+      rule("Delegation", n), [S("  ", ""), ...spread([S("Delegation mode", "text")], [S("‹ inline ›", "acc")], n - 2)], [],
+      rule("Companions", n), box(false, true, "gentle-engram", "installed"), box(false, true, "@gtrabanco/pi-nan-provider", "installed"), [],
+      [S("─".repeat(n), "edge")], [S("  ", ""), ...spread([S("Review and apply", "text")], [S("no changes ›", "dim")], n - 2)], []];
+    wrap("Delegate bounded work to child sessions; shows them above the input and offers spawn_child.", n - 2).forEach((s) => { out.push([sp(2), S(s, "dim")]); });
+    return out;
+  });
+};
+P.fleet = (W) => {
+  const t = T(W);
+  const f = frame(W, "Fleet 3 · 2 active · 1.2k tok", null, hintFoot([hint("j/k", "move"), hint("Enter", "open"), hint("s", "cancel"), hint("q", "close")]));
+  return f.lines((n) => {
+    const two = (sel, g, gc, role, id, state, sc, time, detail, usage) => [
+      [S(sel ? "▸ " : "  ", "acc"), ...spread([S(`${g} `, gc), S(role, "acc"), S(` ${id}`, "text")], [S(state, sc), S(` · ${time}`, "dim")], n - 2)],
+      [sp(4), ...spread([S(detail, "muted")], [S(usage, "dim")], n - 4)]];
+    return [rule("Working", n), ...two(true, "?", "warn", "explore", "c3d4", "waiting", "warn", "31s", "#3 asks question 1", "1.2k"),
+      ...two(false, "⠦", "cyan", "worker", "a1b2", "running", "cyan", "12s", "#4 bash npm test", "3.4k"),
+      rule("History", n), ...two(false, "✓", "ok", "worker", "e5f6", "done", "ok", "1m 02s", "#2 capture renders", "8.9k")];
+  });
+};
+P.screen = (W) => {
+  const out = [...P.header(W), ...P.user(W), [], ...P.assistant(W), [], ...P.tools(W).slice(0, 3), ...P.status(W), ...P.children(W), ...P.editor(W).slice(0, 4), ...P.footer(W).slice(1)];
+  return out;
+};
+
+/* Real renders captured on 7fad399 at 44 and 100 columns. */
+const B = {
+assistant: { 44: `
+   Review the narrow terminal    11:55 AM   ┃
+   layout before changing the               ┃
+   status bar and the wrapping              ┃
+   rules for long messages.                 ┃`, 100: `
+   Review the narrow terminal layout before changing the status bar and the wrapping     11:55 AM   ┃
+   rules for long messages.                                                                         ┃` },
+user: { 44: `
+   ❯ Review the narrow terminal  11:55 AM   ┃
+     layout before changing the             ┃
+     status bar and the                     ┃
+     wrapping rules for long                ┃
+     messages.                              ┃
+                                            ┃`, 100: `
+   ❯ Review the narrow terminal layout before changing the status bar and the wrapping   11:55 AM   ┃
+     rules for long messages.                                                                       ┃
+                                                                                                    ┃` },
+thinking: { derived: true, 44: `   ◆ Thought for 3.2s  (ctrl+t to expand)
+\n   ┃ ◆ Thought for 3.2s
+   ┃
+   ┃ The status row and the editor
+   ┃ should share one text column so
+   ┃ the eye does not jump between
+   ┃ blocks.` },
+tools: { derived: true, 44: `   ◆ Read ~/W/pi-workflow/extensions/c…
+   ◆ Run npm run check
+   ◆ Search edgeFor in extensions/ — 1…
+   ◈ Read 3 files, searched 2 patter…
+\n   ┃ ◆ Run git status --short
+   ┃  M extensions/chrome-messages.ts
+   ┃ ?? prototype/narrow-screens/` },
+notice: { derived: true, 44: `   ◆ Error: the provider returned 529
+     overloaded; retrying in 4s.` },
+advisor: { derived: true, 44: `   ◇ Advisor  12s · claude-…us-5-5 (high)
+     Fix the stamp reserve first: it
+     costs ten columns on every wrapped
+     line of every assistant message.
+     … 5 more lines (ctrl+o to expand)` },
+result: { 44: `
+   ◆ Subagent worker 5636  1m 02s
+\n   ◆ Subagent worker 5636  claude-opus...
+     Task Review the narrow terminal l...
+     Done. The transcript needs enough
+     room for long messages and clear
+     action hints.
+     alt+a  open in subagents view`, 100: `
+   ◆ Subagent worker 5636  1m 02s                                              (ctrl+o to expand)` },
+notices: { 44: `
+   ◆ Context 156K / 150K ▰▱▱▱▱▱▱▱ · de...
+\n   ◆ Exploration budget · 4 lookups · ...`, 100: `
+   ◆ Context 156K / 150K ▰▱▱▱▱▱▱▱ · delegate the next bounded unit             (ctrl+o to expand)
+\n   ◆ Exploration budget · 4 lookups · 47 KB → continue discovery in an explore child` },
+asked: { derived: true, 44: `   ◆ Asked Which rollout should we use
+   for the narrow layout?
+     ↳ Gradual rollout` },
+markdown: { derived: true, 44: `   Two changes keep long answers
+   readable:
+
+   - Drop the stamp reserve on
+     wrapped lines.
+   - Use one text column for every
+     block.
+       - Nested items keep their
+         meaning.
+
+   \`\`\`ts
+     edgeFor(3, outer) {
+       return min(edge, (outer-2…
+     }
+   \`\`\`` },
+header: { 44: ` …s/pi-workflow · main ◆ 2 · ctx 13% · 256K`, 100: ` π-workflow · ~/D/repos/pi-workflow · main                    ◆ 2 · ctx ▰ ▱ ▱ ▱ ▱ ▱ ▱ ▱  13% · 256K` },
+status: { 44: `   ⠋ Run read                    13s ⇣1.72k`, 100: `   ⠋ Run read 3.2s                                                                       13s ⇣1.72k` },
+footer: { 44: ` Shift+Tab:thinking  │  Ctrl+P:model
+ Esc:interrupt  │  Enter:steer`, 100: ` Shift+Tab:thinking  │  Ctrl+P:model  │  Ctrl+O:expand  │  Ctrl+C:clear
+ Esc:interrupt  │  Enter:steer  │  Alt+Enter:follow-up  │  Ctrl+O:expand` },
+editor: { 44: ` ╭────────────────────────────────────────╮
+ │ ❯ Review the narrow terminal layout    │
+ │   before changing the status bar and   │
+ │   the wrapping rules for long          │
+ │   messages.                            │
+ ╰─────────────── claude-opus-5-5 (high) ─╯` },
+todo: { 44: `
+┌                                          ×
+│ □ Review the narrow terminal layout      │
+│ ◐ Capture render output at both widths   │
+│ ✓ Read the repository instructions       │
+└                                          ┘
+` },
+children: { 44: `▾ Subagents 1 waiting · 1 running alt+a view
+ ? explore ... claude-opus-5-5 (high) 1m 02s
+ ⠦ worker a1b2... claude-opus-5-5 (high) 12s`, 100: `▾ Subagents 1 waiting · 1 running                                                         alt+a view
+ ? explore c3d4 asks question 1                                        claude-opus-5-5 (high) 1m 02s
+ ⠦ worker a1b2 bash npm test                                              claude-opus-5-5 (high) 12s` },
+ask: { 44: ` ╭────────────────────────────────────────╮
+ │ Which rollout should we use?           │
+ │                                        │
+ │ ❯ 1  Gradual         Start with a      │
+ │      rollout         small test group  │
+ │                      and monitor       │
+ │                      results.          │
+ │   2  Full rollout    Make the change … │
+ │                                        │
+ │   z  Type your answer                  │
+ ╰───────────────────────────── question ─╯` },
+settings: { 44: ` ┌─ Settings ─────────────────────── [×] ─┐
+ │  ❯ Type to search                      │
+ │                                        │
+ │  ▸ Auto-compact               true     │
+ │  ▸ Show images                true     │
+ │  ▸ Image width                  60     │
+ │  ▸ Editor padding                0     │
+ │  ▸ Output padding                1     │
+ │    (1/35)                              │
+ │                                        │
+ │    Automatically compact context       │
+ │    when it gets too large              │
+ │                                        │
+ │    Type search  |  Enter/Space change  │
+ │    Esc cancel                          │
+ └────────────────────────────────────────┘` },
+profiles: { 44: `┌─ Profile default (active) ───────── [×] ─┐
+│                                          │
+│   Specialists ─────────────────────────  │
+│  ▸ explorer anthropic/claude-opus-5- ›   │
+│  ▸ worker openai-codex/gpt-6-astra · ›   │
+│  ▸ verifier   inherits session model ›   │
+│                                          │
+│     ↑/↓ choose  |  Enter pick model      │
+│    i inherit  |  s save  |  Esc back     │
+└──────────────────────────────────────────┘` },
+config: { 44: `┌─ Workflow config ────────────────── [×] ─┐
+│                                          │
+│   Capabilities ────────────────────────  │
+│  ▸ [x] Child session                     │
+│    [x] Todo                              │
+│    [x] Operator questions                │
+│                                          │
+│   Delegation ──────────────────────────  │
+│        Delegation mode     ‹ inline ›    │
+│                                          │
+│   Companions ──────────────────────────  │
+│    [x] gentle-engram        installed    │
+│    [x] @gtrabanco/pi-nan-…  installed    │
+│                                          │
+│  ──────────────────────────────────────  │
+│    Review and apply      no changes ›    │
+│                                          │
+│    Delegate bounded work to child        │
+│    sessions; shows them above the input  │
+│    and offers spawn_child.               │
+│                                          │
+│        ↑/↓ move  |  Space toggle         │
+│      Tab go to apply  |  Esc close       │
+└──────────────────────────────────────────┘` },
+fleet: { derived: true, 44: ` ┌─ Fleet 3 · 2 active · 1.2k… ──── [×] ─┐
+ │  Working ───────────────────────────  │
+ │  ▸ ? explore c3d4      waiting · 31s  │
+ │  ⠦ worker a1b2 ba…     running · 12s  │
+ │  History ───────────────────────────  │
+ │  ✓ worker e5f6 c…        done · 1m 2s │
+ │                                       │
+ │         j/k move  |  Enter detail     │
+ │           s/c cancel  |  q close      │
+ └───────────────────────────────────────┘` },
+screen: { 44: ` …s/pi-workflow · main ◆ 2 · ctx 13% · 256K
+     changing the status bar               │
+     and the wrapping rules                │
+     for long messages.                    ┃
+                                           ┃
+   Review the narrow terminal   11:55 AM   ┃
+   layout before changing the              ┃
+   status bar and the wrapping             ┃
+   rules for long messages.                ┃
+   ⠋ Run read                    13s ⇣1.72k
+▾ Subagents 1 waiting · 1 running alt+a view
+ ? explore ... claude-opus-5-5 (high) 1m 02s
+ ⠦ worker a1b2... claude-opus-5-5 (high) 12s
+ ╭────────────────────────────────────────╮
+ │ ❯ Review the narrow terminal layout    │
+ │   before changing the status bar and   │
+ │   the wrapping rules for long          │
+ │   messages.                            │
+ ╰─────────────── claude-opus-5-5 (high) ─╯
+ Esc:interrupt  │  Enter:steer` },
+};
+function colorize(str) {
+  const rules = [[/[╭╮╰╯┌┐└┘│─]/, "edge"], [/┃/, "sbt"], [/[◆◈]/, "olive"], [/◇/, "acc"], [/[⠋⠦⠹]/, "cyan"], [/[?]/, "warn"], [/✓/, "ok"], [/◐/, "acc"], [/[▰]/, "warn"], [/[▱]/, "dim"], [/❯/, "acc"], [/[▸▾×]/, "dim"]];
+  return str.split("\n").map((line) => chars(line).map((ch) => { for (const [re, c] of rules) if (re.test(ch)) return S(ch, c); return S(ch, "text"); }));
+}
+
+const C = [
+ { id: "screen", title: "Pantalla completa", purpose: "Lo que ves en el iPhone durante un turno: encabezado, conversación, estado, subagentes, editor y atajos. Es la prueba del sistema completo.",
+   issues: ["Las columnas donde empieza el texto saltan entre 1, 3 y 5 según el bloque, así que el ojo zigzaguea.", "La conversación usa 27 de 43 columnas mientras el editor y la caja de subagentes usan casi todo el ancho."],
+   fixes: ["Un solo carril: el glifo va en la columna del margen y el texto siempre 2 columnas después, en todos los bloques.", "En modo estrecho el margen derecho se reduce a 1, porque la barra de scroll ya separa del borde."], budget: [27, 40] },
+ { id: "assistant", title: "Respuesta del asistente", group: "Conversación", purpose: "<b>Leer la respuesta.</b> Es lo más importante de la pantalla y hoy es lo que menos ancho recibe.",
+   issues: ["Margen de 3 a cada lado y 10 columnas reservadas para la hora en <b>todas</b> las líneas, aunque la hora solo se pinta en la primera (<code>chrome-messages.ts:138-146</code>).", "Resultado real: 27 de 44 columnas útiles (61 %)."],
+   fixes: ["Hora flotante: se pinta en la primera línea si cabe, si no al final de la última, y si tampoco cabe va en su propia línea. Nunca reserva columnas en las demás líneas.", "Variante alternativa: sin hora en modo estrecho (ver selector).", "Riesgo de la hora flotante: mientras el mensaje se transmite, la hora puede saltar de línea. La variante sin hora no tiene ese riesgo."], budget: [27, 40] },
+ { id: "user", title: "Mensaje del usuario", group: "Conversación", purpose: "<b>Reconocer tu propio prompt</b> entre los bloques del agente.",
+   issues: ["Margen 1, padding 2 y la reserva de hora dejan 25 columnas.", "Las filas de fondo vacías arriba y abajo cuestan 2 líneas por mensaje en un teléfono con pocas filas."],
+   fixes: ["v2 (tras tu ajuste): se conserva la UI de antes, con el bloque de fondo y una fila de fondo arriba y otra abajo.", "Se quitan el margen exterior y la reserva de hora por línea. El fondo llega al borde y el padding interno baja de 2 a 1.", "Si la hora no cabe en la primera ni en la última línea, va en la fila de fondo inferior, que ya existía, así que no añade filas.", "Consecuencia: el texto empieza 1 columna a la derecha del carril común (columna 3 en lugar de 2)."], budget: [25, 38] },
+ { id: "thinking", title: "Razonamiento (thinking)", group: "Conversación", purpose: "<b>Saber que el modelo pensó y cuánto tardó</b>, y abrir el detalle solo si interesa.",
+   issues: ["El hint <code>(ctrl+t to expand)</code> ocupa medio ancho en estrecho.", "El riel <code>┃</code> está a 3 columnas del borde y su texto en la columna 5."],
+   fixes: ["En estrecho se oculta el hint inline; la fila ya se abre tocándola (<code>MouseRegion</code>), que en el teléfono importa más que el atajo.", "El riel <code>┃</code> ocupa el carril de glifos y el texto se alinea con el resto."], budget: [36, 40] },
+ { id: "tools", title: "Filas de herramientas y grupos", group: "Conversación", purpose: "<b>Ver de un vistazo qué hizo el agente</b> (verbo y objetivo) y si falló.",
+   issues: ["Las rutas largas se truncan a 38 columnas por el margen simétrico de 3.", "<code>◆</code> significa herramienta, pensamiento y aviso según el color; <code>◈</code> significa grupo."],
+   fixes: ["Mismo carril, así se ganan 5 columnas para la ruta.", "Se mantienen <code>◆</code> evento y <code>◈</code> grupo, pero el color sigue una sola escala de estado (ver Sistema)."], budget: [38, 40] },
+ { id: "notice", title: "Aviso de error o interrupción", group: "Conversación", purpose: "<b>Enterarte de que algo falló</b> y por qué.", issues: ["Hoy siempre usa el <code>◆</code> rojo, incluso para «aborted», que no es un error."], fixes: ["Rojo solo para error; un aborto usa <code>–</code> en tono muted, igual que «cancelled»."], budget: [36, 40] },
+ { id: "advisor", title: "Tarjeta Advisor", group: "Tarjetas", purpose: "<b>Saber qué modelo se consultó y leer el consejo.</b>",
+   issues: ["El nombre del modelo se recorta por el medio (<code>claude-…us-5-5</code>).", "El cuerpo empieza en la columna 5 y el glifo <code>◇</code> difiere del <code>◆</code> de las demás tarjetas."],
+   fixes: ["En estrecho, cabecera corta (<code>Advisor 12s ›</code>) y el modelo en una línea propia, sin recortes.", "Usa <code>◆</code> en acento: el rol lo da la etiqueta, no el glifo.", "La cola <code>+N lines · tap or ctrl+o</code> siempre está visible."], budget: [36, 40] },
+ { id: "result", title: "Tarjetas de subagente y respuesta del parent", group: "Tarjetas", purpose: "<b>Saber qué subagente terminó, con qué veredicto y por qué</b>, y poder abrirlo.",
+   issues: ["A 44 columnas el hint de expandir se descarta sin avisar (<code>child-result-card.ts:238</code>); solo se abre tocando.", "La razón se trunca a una línea y el modelo se corta como <code>claude-opus...</code>."],
+   fixes: ["Siempre hay una affordance de 1 columna: <code>›</code> cerrada y <code>⌄</code> abierta. El atajo completo vive en el footer.", "Estado con palabra y color (<code>done</code>, <code>asks question 1</code>); la razón ocupa hasta 2 líneas."], budget: [36, 40] },
+ { id: "notices", title: "Context backstop y presupuesto de exploración", group: "Tarjetas", purpose: "<b>Decirte qué hacer ahora</b>: delegar o abrir un explore. La instrucción es lo importante.",
+   issues: ["Captura real: <code>· de...</code> y <code>· ...</code>. Se pierde justo la acción.", "A 100 columnas la acción se lee completa, así que es un problema exclusivo de lo estrecho."],
+   fixes: ["Dos líneas: la métrica en la cabecera y la acción <code>→</code> en color warning, que <b>envuelve y nunca se trunca</b>."], budget: ["acción oculta", "acción completa"] },
+ { id: "asked", title: "Pregunta respondida (Asked)", group: "Tarjetas", purpose: "<b>Dejar en la conversación qué se preguntó y qué respondiste.</b>", issues: ["La pregunta envuelta vuelve a la columna 3, sin sangría colgante."], fixes: ["Sangría colgante bajo la pregunta; la respuesta <code>↳</code> va en el carril de texto."], budget: [38, 40] },
+ { id: "markdown", title: "Contenido Markdown (listas y código)", group: "Conversación", purpose: "<b>Leer respuestas con estructura</b> sin que la sangría se coma la línea.",
+   issues: ["Pi sangra 4 columnas por nivel de lista y 2 en los bloques de código, con cercas <code>```</code> que gastan 2 filas (<code>markdown.js:483,721</code>).", "Sumado al margen actual, un ítem anidado empieza en la columna 9 y deja unas 22 columnas."],
+   fixes: ["En estrecho: 2 columnas por nivel y bloques de código con riel <code>▎</code>, sin cercas ni sangría.", "Exige un parche nuevo del <code>Markdown</code> de Pi bajo el ADR 0007; las tablas quedan fuera de esta propuesta."], budget: [22, 36] },
+ { id: "header", title: "Encabezado", group: "Bordes", purpose: "<b>Saber en qué repo y rama estás</b> y cuánto contexto queda.",
+   issues: ["La ruta se recorta por la izquierda (<code>…s/pi-workflow</code>); en un teléfono basta con el nombre del repo."],
+   fixes: ["En estrecho se usa el nombre del repo en lugar de la ruta y <code>◆2 · 13% 256K</code> compacto."], budget: [42, 44] },
+ { id: "status", title: "Fila de estado", group: "Bordes", purpose: "<b>Saber que el agente sigue trabajando</b>, en qué y desde hace cuánto.", issues: ["El texto arranca en la columna 5, desalineado con la conversación y con el editor."], fixes: ["El spinner va en el carril de glifos, así queda alineado con <code>◆</code> y <code>❯</code>."], budget: [40, 42] },
+ { id: "footer", title: "Atajos (footer)", group: "Bordes", purpose: "<b>Recordarte las teclas</b> que sirven en este momento.",
+   issues: ["El separador <code>  │  </code> cuesta 5 columnas, así que solo caben 2 atajos.", "Se pierde <code>Ctrl+O:expand</code>, que es justo el que las tarjetas dejaron de mostrar."],
+   fixes: ["Separador <code> · </code> de 3 columnas y orden por prioridad: <code>Ctrl+O</code> va primero en reposo y tercero mientras trabaja.", "<code>key acción</code> con espacio, el mismo formato que en los menús."], budget: ["2", "2 en reposo, 3 trabajando"] },
+ { id: "editor", title: "Editor de entrada", group: "Bordes", purpose: "<b>Escribir.</b> El marco redondeado marca «aquí escribes tú».",
+   issues: ["El margen exterior de 1 a cada lado más el marco dejan 36 columnas.", "El placeholder de 30 caracteres casi llena la línea."],
+   fixes: ["En estrecho el marco toca el borde (margen 0) y se ganan 2 columnas.", "Placeholder más corto y pie <code>opus-5-5 · high</code> sin proveedor."], budget: [36, 38] },
+ { id: "todo", title: "Tareas de la sesión", group: "Dock", purpose: "<b>Ver el plan y qué está en curso.</b>",
+   issues: ["Marco de esquinas, 2 bordes y 2 filas vacías: 4 filas fijas en un teléfono con pocas filas.", "<code>□</code> pendiente y <code>◐</code> en acento no coinciden con el <code>○</code> y el <code>◐</code> cyan de los subagentes."],
+   fixes: ["Mismo patrón que Subagents: cabecera <code>▾ Todo 1/3</code>, filas sin marco y glifos compartidos (<code>○ ◐ ✓ !</code>).", "<code>Todo</code> es el término del glosario."], budget: [39, 42] },
+ { id: "children", title: "Caja de subagentes", group: "Dock", purpose: "<b>Saber quién trabaja y quién espera tu respuesta.</b>",
+   issues: ["El modelo con thinking (22 columnas) se come el id y el paso: <code>explore ...</code>.", "La fila 0 siempre lleva fondo de selección aunque la caja no es interactiva."],
+   fixes: ["En estrecho el modelo se omite (está en Fleet) y se conservan id, paso y tiempo.", "Sin fondo de selección; la cabecera dice <code>Alt+A</code> a secas."], budget: [7, 26] },
+ { id: "ask", title: "Panel de pregunta al operador", group: "Paneles", purpose: "<b>Elegir una opción con seguridad</b>, entendiendo qué implica cada una.",
+   issues: ["Las columnas de etiqueta y descripción (45 %) parten «Gradual / rollout» y dejan la descripción en 18 columnas.", "No tiene <code>handleMouse</code>: en el teléfono no se puede tocar y cerrar exige Shift+X.", "<code>❯</code> como cursor, mientras los menús usan <code>▸</code>."],
+   fixes: ["En estrecho la descripción va debajo de la etiqueta, a todo el ancho.", "Cursor <code>▸</code> como en los menús; <code>❯</code> queda reservado para «aquí escribes».", "Los hints van dentro del panel. Pendiente aparte: soporte táctil."], budget: [18, 37] },
+ { id: "settings", title: "Settings (modal)", group: "Paneles", purpose: "<b>Encontrar y cambiar un ajuste.</b>",
+   issues: ["Margen 1, borde 1 y padding 2 a cada lado: 36 de 44 columnas.", "Los hints van centrados y separados con <code>  |  </code>."],
+   fixes: ["En estrecho el modal ocupa todo el ancho y usa padding 1: 40 columnas.", "Hints alineados a la izquierda con <code> · </code>.", "<code>▸</code> solo en la fila seleccionada; hoy aparece en todas y no sirve como cursor."], budget: [36, 40] },
+ { id: "profiles", title: "Perfiles de modelo", group: "Paneles", purpose: "<b>Ver qué modelo y qué nivel de thinking usa cada especialista.</b>",
+   issues: ["Captura real: <code>anthropic/claude-opus-5-</code> y <code>gpt-6-astra ·</code>. El nivel de thinking desaparece, cortado <b>sin elipsis</b>.", "El título <code>(active)</code> compite con <code>[×]</code>."],
+   fixes: ["En estrecho cada especialista ocupa dos líneas: rol y thinking arriba, el modelo completo abajo (con <code>…</code> si de verdad no cabe)."], budget: [0, 36] },
+ { id: "config", title: "Workflow config", group: "Paneles", purpose: "<b>Activar capacidades y revisar los cambios antes de aplicarlos.</b>",
+   issues: ["<code>minWidth 48</code> se limita a 44 (verificado), pero el layout sigue pensado para 48+.", "Los paquetes largos se cortan (<code>@gtrabanco/pi-nan-…</code>) y la descripción usa 36 columnas."],
+   fixes: ["Modal a todo el ancho con padding 1 y hints a la izquierda."], budget: [36, 40] },
+ { id: "fleet", title: "Fleet (vista de subagentes)", group: "Paneles", purpose: "<b>Supervisar a todos los hijos</b> y entrar al que necesita atención.",
+   issues: ["Las filas de una línea dejan unas 6 columnas para el detalle.", "Los hints centrados ocupan 2 filas en la lista y 4 o 5 en el detalle.", "El tiempo usa dos formatos: <code>1m 05s</code> y <code>1m5s</code>."],
+   fixes: ["En estrecho, filas de dos líneas siempre: identidad y estado arriba, detalle y uso abajo.", "Solo los hints del foco actual, alineados a la izquierda, en una o dos filas."], budget: [6, 34] },
+];
+
+function toHTML(lines, W) {
+  return lines.map((l) => {
+    const cells = padR(l, W);
+    return `<div class="ln">${cells.map((s) => s.c ? `<span class="${s.c}">${esc(s.t)}</span>` : esc(s.t)).join("")}</div>`;
+  }).join("");
+}
+const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+function term(lines, W) { return `<div class="stage"><div class="term" style="--cols:${W}">${toHTML(lines, W)}</div></div>`; }
+function beforeFor(id, W) {
+  const b = B[id]; if (!b) return null;
+  const key = W >= 60 && b[100] ? 100 : 44;
+  const raw = b[key].replace(/^\n/, "").replace(/\\n/g, "\n");
+  return { key, derived: !!b.derived, lines: colorize(raw) };
+}
+function renderAll() {
+  const W = st.w;
+  document.getElementById("sections").innerHTML = C.map((c) => {
+    const bf = beforeFor(c.id, W);
+    const after = P[c.id](W);
+    const v = verdicts[c.id] || {};
+    const label = bf ? (bf.derived ? `derivado del código · ${bf.key} col · colores aproximados` : `captura real, recortada · ${bf.key} col · colores aproximados`) : "";
+    return `<section class="comp" id="${c.id}">
+      <h2>${c.group ? `<span class="dim" style="font-weight:400;font-size:13px">${c.group} · </span>` : ""}${c.title}</h2>
+      <p class="purpose">Objetivo: ${c.purpose}</p>
+      <div class="pair">
+        <div class="pane"><span>Antes <em>${label}</em></span>${bf ? term(bf.lines, bf.key) : ""}</div>
+        <div class="pane"><span>Propuesta <em>${W} col · ${T(W).narrow ? "densidad compacta" : "densidad normal"}</em></span>${term(after, W)}</div>
+      </div>
+      <div class="budget">Ancho útil a 44 col con margen 0: ${c.budget[0]} → <b>${c.budget[1]}</b>${c.id === "footer" ? " atajos" : ""}</div>
+      <ul class="notes issue">${c.issues.map((i) => `<li>${i}</li>`).join("")}</ul>
+      <ul class="notes fix">${c.fixes.map((i) => `<li>${i}</li>`).join("")}</ul>
+      <div class="verdict" data-id="${c.id}">
+        <button type="button" data-v="ok" aria-pressed="${v.v === "ok"}">✓ Aprobar</button>
+        <button type="button" data-v="adj" aria-pressed="${v.v === "adj"}">✎ Ajustar</button>
+        <button type="button" data-v="no" aria-pressed="${v.v === "no"}">✗ Rechazar</button>
+        <input placeholder="Nota (opcional)" value="${esc(v.note || "")}">
+      </div>
+    </section>`;
+  }).join("") + systemSection();
+  document.getElementById("toc").innerHTML = [...C.map((c) => `<a href="#${c.id}">${c.title}<span class="v">${{ ok: "✓", adj: "✎", no: "✗" }[verdicts[c.id]?.v] || ""}</span></a>`), `<a href="#sistema">Sistema</a>`, `<a href="#resumen">Resumen</a>`].join("");
+  bindVerdicts(); summary();
+}
+function systemSection() {
+  const g = (ch, c) => `<span class="${c}" style="font-family:var(--mono)">${ch}</span>`;
+  return `<section class="comp" id="sistema"><h2>Sistema: tokens compartidos</h2>
+  <p class="purpose">Todas las propuestas salen de estas reglas. La coherencia es el sistema, no un ajuste componente por componente.</p>
+  <div class="tw"><table>
+   <tr><th>Regla</th><th>Hoy</th><th>Propuesta</th></tr>
+   <tr><td>Punto de quiebre</td><td>Ninguno (<code>edgeFor</code> solo encoge por debajo de 26 col)</td><td>Densidad compacta por debajo de <code>60</code> columnas</td></tr>
+   <tr><td>Columna de texto</td><td>1, 3, 4 o 5 según el componente</td><td>Margen + carril de 2 (glifo + espacio), igual en todo</td></tr>
+   <tr><td>Margen derecho</td><td>Simétrico (3)</td><td>1 en compacto; la barra de scroll ya separa del borde</td></tr>
+   <tr><td>Hora</td><td>Reserva 10 col en todas las líneas</td><td>Flotante, sin reserva (o sin hora en compacto)</td></tr>
+   <tr><td>Marcos</td><td>Redondeado, cuadrado o solo esquinas</td><td>Redondeado = superficie de entrada (editor, pregunta). Cuadrado = overlay. Dock sin marco</td></tr>
+   <tr><td>Padding de modal</td><td>edge 1 + borde + 2</td><td>Compacto: edge 0 + borde + 1</td></tr>
+   <tr><td>Hints</td><td><code>k:acción  │  </code>, <code>k acción  |  </code>, <code>(ctrl+o to expand)</code></td><td><code>Key acción · Key acción</code>, alineados a la izquierda y por prioridad</td></tr>
+   <tr><td>Truncado</td><td>Mezcla de envolver, cortar con <code>…</code> y cortar sin elipsis</td><td>Acciones e instrucciones envuelven; identificadores se cortan con <code>…</code>; nunca se corta sin elipsis</td></tr>
+   <tr><td>Duración</td><td><code>1m 05s</code> y <code>1m5s</code></td><td><code>1m 05s</code> en todas partes</td></tr>
+   <tr><td>Mayúsculas</td><td>Title case, sentence case y minúsculas mezcladas</td><td>Etiquetas en sentence case; estados en minúscula</td></tr>
+  </table></div>
+  <div class="tw"><table>
+   <tr><th>Estado</th><th>Glifo</th><th>Hoy también aparece como</th></tr>
+   <tr><td>pendiente / en cola</td><td>${g("○", "muted")}</td><td>${g("□", "text")} en tareas</td></tr>
+   <tr><td>en curso</td><td>${g("◐", "cyan")} o spinner ${g("⠋", "cyan")}</td><td>${g("◐", "acc")} en acento en tareas</td></tr>
+   <tr><td>espera tu respuesta</td><td>${g("?", "warn")}</td><td>—</td></tr>
+   <tr><td>bloqueado</td><td>${g("!", "warn")}</td><td>—</td></tr>
+   <tr><td>hecho</td><td>${g("✓", "ok")}</td><td>—</td></tr>
+   <tr><td>falló / timeout</td><td>${g("✗", "err")}</td><td>${g("⧖", "err")} para timeout</td></tr>
+   <tr><td>cancelado / abortado</td><td>${g("–", "muted")}</td><td>${g("◆", "err")} en avisos de aborto; «stopped» frente a «cancelled»</td></tr>
+   <tr><td>evento / grupo</td><td>${g("◆", "olive")} / ${g("◈", "dim")}</td><td>${g("◇", "acc")} en Advisor</td></tr>
+   <tr><td>cursor / escribes aquí</td><td>${g("▸", "text b")} / ${g("❯", "acc")}</td><td>${g("❯", "acc")} como cursor en el panel de preguntas</td></tr>
+  </table></div>
+  <ul class="notes">
+   <li><b>Fuera del alcance del harness:</b> la sangría de listas de Pi (4 por nivel), las tablas y los bloques de código salen del <code>Markdown</code> de Pi. Cambiarlos exige un parche nuevo bajo el ADR 0007.</li>
+   <li><b>Margen de Herdr:</b> parte del margen que ves puede venir de la app. Aquí solo se corrige lo que pinta pi-workflow.</li>
+   <li><b>No cubiertos en esta versión:</b> detalle de Fleet (prompt, thread y hints), selector de modelos y su catálogo, <code>SelectList</code> y selectores de Pi, menú slash del editor, pantalla Review de config, tarjeta de subagente expandida, tareas colapsadas y su fila de control, y tablas Markdown. Aplican las mismas reglas del sistema; se maquetan si apruebas la dirección.</li>
+   <li><b>Glifos en iOS:</b> <code>⠋ ▰ ◐ ⇣</code> pueden caer en una fuente de respaldo con otro ancho. Conviene confirmarlo en Herdr.</li>
+   <li><b>Táctil:</b> el panel de preguntas no tiene <code>handleMouse</code>. Es un cambio funcional y va en un ticket aparte.</li>
+  </ul></section>`;
+}
+function bindVerdicts() {
+  document.querySelectorAll(".verdict").forEach((el) => {
+    const id = el.dataset.id;
+    el.querySelectorAll("button").forEach((b) => { b.onclick = () => { verdicts[id] = { ...(verdicts[id] || {}), v: verdicts[id]?.v === b.dataset.v ? undefined : b.dataset.v }; save(); renderAll(); location.hash = id; }; });
+    el.querySelector("input").onchange = (e) => { verdicts[id] = { ...(verdicts[id] || {}), note: e.target.value }; save(); summary(); };
+  });
+}
+function summary() {
+  const lines = [`Variantes: margen estrecho=${st.m}, hora=${st.stamp === "float" ? "flotante" : "sin hora en estrecho"}`];
+  for (const c of C) { const v = verdicts[c.id]; if (!v || (!v.v && !v.note)) continue; lines.push(`- ${c.title}: ${{ ok: "aprobado", adj: "ajustar", no: "rechazado" }[v.v] || "sin veredicto"}${v.note ? ` · ${v.note}` : ""}`); }
+  const pending = C.filter((c) => !verdicts[c.id]?.v).map((c) => c.title);
+  if (pending.length) lines.push(`Sin veredicto: ${pending.join(", ")}`);
+  document.getElementById("summary").value = lines.join("\n");
+}
+function seg(id, opts, key) {
+  const el = document.getElementById(id);
+  el.innerHTML = opts.map(([v, l]) => `<button type="button" aria-pressed="${st[key] === v}" data-v="${v}">${l}</button>`).join("");
+  el.querySelectorAll("button").forEach((b, i) => { b.onclick = () => { st[key] = opts[i][0]; save(); controls(); renderAll(); }; });
+}
+function controls() {
+  seg("w", WIDTHS.map((w) => [w, String(w)]), "w");
+  seg("m", [[0, "0"], [1, "1"]], "m");
+  seg("s", [["float", "Flotante"], ["none", "Sin hora en estrecho"]], "stamp");
+}
+document.getElementById("copy").onclick = () => { const t = document.getElementById("summary"); t.select(); navigator.clipboard?.writeText(t.value); };
+controls(); renderAll();
+</script>
+</body>
+</html>
