@@ -17,6 +17,7 @@ Each specification pairs with its review and the feature brief it came from. The
 | [fleet-context-usage](fleet-context-usage.md) | [review](fleet-context-usage-review.md) | [brief](../features/fleet-context-usage.md), [review](../features/fleet-context-usage-review.md) | #326 |
 | [fleet-transcript-history](fleet-transcript-history.md) | [review](fleet-transcript-history-review.md) | [brief](../features/fleet-transcript-history.md), [review](../features/fleet-transcript-history-review.md) | #265 |
 | [header-identity](header-identity.md) | [review](header-identity-review.md) | [brief](../features/header-identity.md), [review](../features/header-identity-review.md) | #243 |
+| [narrow-screens](narrow-screens.md) | [review](narrow-screens-review.md) | [brief](../features/narrow-screens.md), [review](../features/narrow-screens-review.md) | #406 |
 | [routing-owner](routing-owner.md) | [review](routing-owner-review.md) | — | #118, #119, #124, #125 |
 | [rpc-child-sessions](rpc-child-sessions.md) | [review](rpc-child-sessions-review.md) | [brief](../features/rpc-child-sessions.md), [review](../features/rpc-child-sessions-review.md) | #296 |
 | [todo-child-link](todo-child-link.md) | — | — | #207 |
