@@ -827,7 +827,6 @@ type MarkdownSelf = {
 };
 
 const codeRail = "▎";
-const graphemes = new Intl.Segmenter();
 
 // Pi draws the code rows, highlighted or not, without indent and without a
 // successor; only its two fence rows are dropped.
@@ -849,21 +848,22 @@ function railedCode(
 	} finally {
 		self.theme = saved;
 	}
-	// The rail drops its space, then itself, rather than stand on a row apart
-	// from a double-width character.
-	let widest = 1;
-	for (const { segment } of graphemes.segment(token.text))
-		widest = Math.max(widest, visibleWidth(segment));
-	const rail =
-		width - 2 >= widest
-			? `${saved.codeBlockBorder(codeRail)} `
-			: width - 1 >= widest
-				? saved.codeBlockBorder(codeRail)
-				: "";
-	const room = Math.max(1, width - visibleWidth(rail));
-	const lines = code.flatMap((line) =>
-		wrapTextWithAnsi(line, room).map((row) => rail + row),
-	);
+	// Each code line drops the rail's space, then the rail, rather than leave
+	// a double-width character on a row wider than the room beside it.
+	const rails = [
+		`${saved.codeBlockBorder(codeRail)} `,
+		saved.codeBlockBorder(codeRail),
+	];
+	const lines = code.flatMap((line) => {
+		for (const rail of rails) {
+			const room = width - visibleWidth(rail);
+			if (room < 1) continue;
+			const rows = wrapTextWithAnsi(line, room);
+			if (rows.every((row) => visibleWidth(row) <= room))
+				return rows.map((row) => rail + row);
+		}
+		return wrapTextWithAnsi(line, Math.max(1, width));
+	});
 	if (nextTokenType && nextTokenType !== "space") lines.push("");
 	return lines;
 }

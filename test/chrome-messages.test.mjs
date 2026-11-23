@@ -1614,6 +1614,19 @@ test("at tiny widths a code row drops the rail's space, then the rail, before it
 	assert.deepEqual(trimmed(component.render(6)), ["", "  ▎你", "  ▎好"]);
 	terminal.columns = 6;
 	assert.deepEqual(trimmed(component.render(5)), ["", "  你", "  好"]);
+	component.updateContent(
+		assistant([{ type: "text", text: "```\na\n你好\nz\n```" }], {
+			timestamp: undefined,
+		}),
+		false,
+	);
+	assert.deepEqual(trimmed(component.render(5)), [
+		"",
+		"  ▎a",
+		"  你",
+		"  好",
+		"  ▎z",
+	]);
 });
 
 test("below 60 terminal columns an open thought's Markdown indents lists 2 columns and draws code with the rail", (t) => {
