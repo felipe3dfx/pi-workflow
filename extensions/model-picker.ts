@@ -21,9 +21,11 @@ import {
 	menuRow,
 	modalFrame,
 	modalMetrics,
+	overlayAtOpen,
 	sectionRule,
 } from "./chrome-menus.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
+import { narrowScreen } from "./visual-language.ts";
 
 export type Screen = {
 	title: string;
@@ -34,15 +36,17 @@ export type Screen = {
 
 const VISIBLE_ROWS = 10;
 
-export const pickerOverlay = {
-	overlay: true,
-	overlayOptions: {
-		anchor: "center",
-		width: "70%",
-		minWidth: 44,
-		maxHeight: "100%",
-	},
-} as const;
+export function pickerOverlay() {
+	return {
+		overlay: true,
+		overlayOptions: overlayAtOpen({
+			anchor: "center",
+			width: "70%",
+			minWidth: 44,
+			maxHeight: "100%",
+		}),
+	} as const;
+}
 
 export function modelChoices(
 	registry: Pick<ModelRegistry, "getAvailable" | "getAll">,
@@ -79,6 +83,7 @@ export function createScreenFrame(
 	close: () => void,
 ) {
 	const listTheme = selectListTheme(theme);
+	const narrow = narrowScreen();
 	const stack: Screen[] = [];
 	let notice = "";
 	let visible = VISIBLE_ROWS;
@@ -114,6 +119,7 @@ export function createScreenFrame(
 					start + i === selected,
 					width,
 					chevron,
+					narrow,
 				),
 			);
 		if (items.length > visible) {
@@ -138,7 +144,7 @@ export function createScreenFrame(
 		render(width) {
 			frameWidth = width;
 			const screen = stack[stack.length - 1];
-			const inner = Math.max(1, modalMetrics(width).inner);
+			const inner = Math.max(1, modalMetrics(width, narrow).inner);
 			const head = ["", ...(notice ? [theme.fg("warning", notice), ""] : [])];
 			const tail = ["", ...hintRows(theme, screen.hints, inner).lines];
 			const room = Math.max(0, terminalRows() - 2);
@@ -151,6 +157,7 @@ export function createScreenFrame(
 				screen.title,
 				content.slice(Math.max(0, content.length - room)),
 				width,
+				narrow,
 			);
 		},
 		handleMouse(event: TuiMouseEvent) {

@@ -72,7 +72,12 @@ import {
 	selectedRow,
 } from "./chrome-menus.ts";
 import { terminalSafeBlock, terminalSafeLine } from "./terminal-safe-text.ts";
-import { formatDuration, minThoughtMs, spread } from "./visual-language.ts";
+import {
+	formatDuration,
+	minThoughtMs,
+	narrowScreen,
+	spread,
+} from "./visual-language.ts";
 
 let closeSeatedView: () => void = () => {};
 
@@ -886,6 +891,7 @@ function createChildrenView(
 		focused(): boolean;
 	},
 ) {
+	const narrow = narrowScreen();
 	let selected: string | undefined = sessions
 		.list()
 		.sort(
@@ -1757,10 +1763,10 @@ function createChildrenView(
 				close();
 				return [];
 			}
-			const edge = marginFor(full);
+			const edge = narrow ? 0 : marginFor(full);
 			const width = full - edge * 2;
 			const height = Math.max(4, tui.terminal.rows);
-			const metrics = modalMetrics(width);
+			const metrics = modalMetrics(width, narrow);
 			const inner = Math.max(1, metrics.inner);
 			const { list, index, item } = children();
 			selected = item?.child.id;
@@ -1837,6 +1843,7 @@ function createChildrenView(
 				title,
 				[...rows, status(), ...hints.lines.slice(0, shownHints)],
 				width,
+				narrow,
 			).map((line) => margin + line);
 		},
 		get pending() {

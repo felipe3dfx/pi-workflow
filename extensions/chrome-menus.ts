@@ -15,6 +15,7 @@ import {
 import {
 	type Component,
 	Input,
+	type OverlayOptions,
 	type SelectItem,
 	SelectList,
 	type SelectListLayoutOptions,
@@ -35,7 +36,7 @@ import {
 	type PatchMethod,
 	type PatchTarget,
 } from "./chrome-patch.ts";
-import { theme } from "./visual-language.ts";
+import { narrowScreen, screenRows, theme } from "./visual-language.ts";
 
 export type MenuTheme = Pick<Theme, "fg" | "bg" | "bold">;
 export type Hint = [key: string, action: string];
@@ -81,8 +82,16 @@ type SettingsListState = {
 	};
 };
 
-export function fit(line: string, width: number) {
-	return visibleWidth(line) > width ? truncateToWidth(line, width, "") : line;
+export function fit(line: string, width: number, ellipsis = "") {
+	return visibleWidth(line) > width
+		? truncateToWidth(line, width, ellipsis)
+		: line;
+}
+
+// Decided once, when the overlay opens: an open overlay keeps its width and
+// padding across a resize until it is reopened (NS-09, accepted risk W9).
+export function overlayAtOpen<T extends OverlayOptions>(options: T): T {
+	return narrowScreen() ? { ...options, width: "100%" } : options;
 }
 
 export function selectedRow(t: MenuTheme, line: string, width: number) {
@@ -102,13 +111,14 @@ export function menuRow(
 	selected: boolean,
 	width: number,
 	chevron?: boolean,
+	narrow = false,
 ) {
 	const tail = chevron === undefined ? " " : chevron ? " › " : "   ";
 	const room = Math.max(0, width - 2 - tail.length);
 	const shownValue = truncateToWidth(
 		value,
 		Math.max(0, room - Math.min(visibleWidth(label), 8) - 1),
-		"",
+		narrow ? "…" : "",
 	);
 	const valueWidth = visibleWidth(shownValue);
 	const shownLabel = truncateToWidth(
@@ -192,8 +202,8 @@ function closeSpan(width: number) {
 	return start > 4 ? { start: start + 1, end: start + 4 } : undefined;
 }
 
-export function modalMetrics(width: number) {
-	const pad = framePad(width);
+export function modalMetrics(width: number, narrow = false) {
+	const pad = narrow ? (width >= 6 ? 1 : 0) : framePad(width);
 	return {
 		pad,
 		inner: width - 2 - pad * 2,
@@ -207,9 +217,11 @@ export function modalFrame(
 	title: string,
 	body: readonly string[],
 	width: number,
+	narrow = false,
 ) {
-	if (width < 4) return body.map((line) => fit(line, width));
-	const { pad, inner, close: shutSpan } = modalMetrics(width);
+	const cut = narrow ? "…" : "";
+	if (width < 4) return body.map((line) => fit(line, width, cut));
+	const { pad, inner, close: shutSpan } = modalMetrics(width, narrow);
 	const border = (text: string) => t.fg("border", text);
 	const shut = shutSpan ? close : "";
 	const room = width - 6 - shut.length;
@@ -223,7 +235,7 @@ export function modalFrame(
 		: `${border(`┌${"─".repeat(rule + 1)}`)}${t.fg("dim", shut)}${border("─┐")}`;
 	const side = border("│") + " ".repeat(pad);
 	const rows = body.map((line) => {
-		const clipped = fit(line, inner);
+		const clipped = fit(line, inner, cut);
 		const fill = " ".repeat(Math.max(0, inner - visibleWidth(clipped)));
 		return `${side}${clipped}${fill}${" ".repeat(pad)}${border("│")}`;
 	});
@@ -698,10 +710,48 @@ function crumbs(list: SettingsListState): string[] {
 	return [label, ...(nested ? crumbs(nested) : [])].filter(Boolean);
 }
 
-function settingsFrame(width: number) {
-	const edge = marginFor(width);
+const settingsDensity = new WeakMap<object, boolean>();
+
+function openedNarrow(selector: object) {
+	let narrow = settingsDensity.get(selector);
+	if (narrow === undefined) {
+		narrow = narrowScreen();
+		settingsDensity.set(selector, narrow);
+	}
+	return narrow;
+}
+
+type BodyWindow = { lines: readonly string[]; row(shown: number): number };
+
+const settingsWindows = new WeakMap<object, BodyWindow>();
+
+// A body taller than its room keeps its trailing hint block, the lines after
+// the last blank one, in view and scrolls the rest around the selected row.
+export function tallBody(body: readonly string[], room: number): BodyWindow {
+	if (body.length <= room) return { lines: body, row: (shown) => shown };
+	const blank = body.lastIndexOf("");
+	const pinned = blank < 0 ? 0 : Math.min(body.length - blank - 1, room - 1);
+	const rest = body.length - pinned;
+	const size = Math.max(0, room - pinned);
+	const open = theme().bg("selectedBg", "\u0000").split("\u0000")[0];
+	const focus = Math.max(
+		0,
+		body.slice(0, rest).findIndex((line) => line.includes(open)),
+	);
+	const start = Math.max(
+		0,
+		Math.min(focus - Math.floor(size / 2), rest - size),
+	);
+	return {
+		lines: [...body.slice(start, start + size), ...body.slice(rest)],
+		row: (shown) => (shown < size ? start + shown : rest + shown - size),
+	};
+}
+
+function settingsFrame(width: number, narrow: boolean) {
+	const edge = narrow ? 0 : marginFor(width);
 	const outer = width - edge * 2;
-	const metrics = modalMetrics(outer);
+	const metrics = modalMetrics(outer, narrow);
 	return {
 		edge,
 		outer,
@@ -713,8 +763,16 @@ function settingsFrame(width: number) {
 
 function renderSettings(this: SettingsSelectorState, width: number) {
 	const list = this.getSettingsList();
-	const { edge, outer, inner, top } = settingsFrame(width);
+	const narrow = openedNarrow(this);
+	const { edge, outer, inner, top } = settingsFrame(width, narrow);
 	const body = list.render(inner);
+	const rows = screenRows();
+	const shown =
+		narrow && rows !== undefined
+			? tallBody(body, Math.max(1, rows - top * 2))
+			: undefined;
+	if (shown) settingsWindows.set(this, shown);
+	else settingsWindows.delete(this);
 	const border = Array<string>(top).fill("");
 	this.childLines = {
 		width: inner,
@@ -726,7 +784,7 @@ function renderSettings(this: SettingsSelectorState, width: number) {
 		"Settings",
 		...crumbs(list as unknown as SettingsListState),
 	].join(" › ");
-	return modalFrame(theme(), title, body, outer).map(
+	return modalFrame(theme(), title, shown?.lines ?? body, outer, narrow).map(
 		(line) => " ".repeat(edge) + line,
 	);
 }
@@ -739,15 +797,30 @@ function closeSettings(list: SettingsListState) {
 
 function wrapSettingsMouse(original: PatchMethod) {
 	return function (this: SettingsSelectorState, event: TuiMouseEvent) {
-		const { edge, outer, left, inner } = settingsFrame(event.width);
-		const shut = modalMetrics(outer).close;
+		const narrow = openedNarrow(this);
+		const { edge, outer, left, inner, top } = settingsFrame(
+			event.width,
+			narrow,
+		);
+		const shut = modalMetrics(outer, narrow).close;
 		const x = event.x - edge;
 		if (event.y === 0 && shut && x >= shut.start && x < shut.end) {
 			if (event.type !== "click" || event.button !== "left") return undefined;
 			closeSettings(this.getSettingsList() as unknown as SettingsListState);
 			return { handled: true };
 		}
-		return (original as MouseHandler).call(this, shifted(event, left, inner));
+		const shown = settingsWindows.get(this);
+		const row = event.y - top;
+		const y =
+			shown && row >= 0 && row < shown.lines.length
+				? top + shown.row(row)
+				: event.y;
+		const height = event.height + y - event.y;
+		return (original as MouseHandler).call(this, {
+			...shifted(event, left, inner),
+			y,
+			height,
+		});
 	} as PatchMethod;
 }
 

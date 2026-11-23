@@ -8,7 +8,7 @@ const TERMINAL = Symbol.for("pi-workflow:visual-language:terminal");
 
 const narrowColumns = 60;
 
-type Columns = { readonly columns: number };
+type Columns = { readonly columns: number; readonly rows?: number };
 const densityTerminalSlots = globalThis as Record<symbol, Columns | undefined>;
 
 export function setDensityTerminal(terminal: Columns | undefined) {
@@ -19,6 +19,10 @@ export function setDensityTerminal(terminal: Columns | undefined) {
 export function narrowScreen() {
 	const columns = densityTerminalSlots[TERMINAL]?.columns;
 	return typeof columns === "number" && columns < narrowColumns;
+}
+
+export function screenRows() {
+	return densityTerminalSlots[TERMINAL]?.rows;
 }
 
 export const spinnerMs = 133;
