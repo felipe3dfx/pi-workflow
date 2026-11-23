@@ -1100,11 +1100,16 @@ function scrollStates(scroll, contents) {
 	});
 }
 
-test("at a fixed 44 or 100 terminal columns a manual scroll through a shrink and a regrow behaves as in Pi alone", (t) => {
+test("at a fixed 44 or 100 terminal columns, or resized 44 to 59 or 100 to 60, a manual scroll through a shrink and a regrow behaves as in Pi alone", (t) => {
 	const { mode, say } = chat(t);
 	const terminal = densityTerminal(t, 44);
-	for (const columns of [44, 100]) {
-		terminal.columns = columns;
+	for (const [from, columns] of [
+		[44, 44],
+		[100, 100],
+		[44, 59],
+		[100, 60],
+	]) {
+		terminal.columns = from;
 		const views = [0, 1].map(() => {
 			const scroll = new ScrollView(new Container(), { follow: "end" });
 			scroll.updateLayout(33, 8, () => {});
@@ -1112,13 +1117,18 @@ test("at a fixed 44 or 100 terminal columns a manual scroll through a shrink and
 			return scroll;
 		});
 		mode.transcriptScrollView = views[0];
-		say([said(`At ${columns}.`)], "stop");
+		say([said(`At ${from}.`)], "stop");
+		terminal.columns = columns;
 		const native = scrollStates(views[1], [22, 33]);
 		assert.deepEqual(native, [
 			[14, true],
 			[25, true],
 		]);
-		assert.deepEqual(scrollStates(views[0], [22, 33]), native, `${columns}`);
+		assert.deepEqual(
+			scrollStates(views[0], [22, 33]),
+			native,
+			`${from}→${columns}`,
+		);
 	}
 });
 
