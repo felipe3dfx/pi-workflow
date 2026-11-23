@@ -1541,7 +1541,9 @@ function createChildrenView(
 						...(steers.length === 1
 							? [
 									steers[0],
-									steers[0].replace(/ undelivered$/, " not sent"),
+									...(child.undelivered?.length
+										? [`${child.undelivered.length} not sent`]
+										: []),
 								].map(
 									(steer) =>
 										`${theme.fg("warning", steer)} ${theme.fg("dim", time)}`,
