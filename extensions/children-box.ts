@@ -87,9 +87,19 @@ function renderChildRow(
 	width: number,
 ) {
 	const step = terminalSafeLine(childStep(child));
-	const meta = childMeta(child, now, width);
-	const left = ` ${rowGlyph(theme, child, now)} ${theme.fg("accent", child.role)} ${child.id.slice(0, 4)} ${step}`;
-	const line = spread(left, theme.fg("dim", meta), width);
+	// Narrow, timed out shares ✗ with failed, so its state word is reserved
+	// before the task and model are cut (D-open-2).
+	const word =
+		narrowScreen() && child.state === "timed out"
+			? ` ${runStateMark(child.state).paint(theme, "timed out")}`
+			: "";
+	const head = ` ${rowGlyph(theme, child, now)}${word} ${theme.fg("accent", child.role)} ${child.id.slice(0, 4)}`;
+	const meta = childMeta(
+		child,
+		now,
+		word ? width - visibleWidth(head) - 4 : width,
+	);
+	const line = spread(`${head} ${step}`, theme.fg("dim", meta), width);
 	return active ? theme.bg("selectedBg", line) : line;
 }
 
