@@ -101,6 +101,10 @@ export function formatDuration(ms: number) {
 	return `${Math.floor(minutes / 60)}h ${pad(minutes % 60)}m`;
 }
 
+export function affordance(theme: Theme) {
+	return theme.fg("dim", "›");
+}
+
 export function spread(left: string, right: string, width: number) {
 	const shown = truncateToWidth(
 		left,
@@ -108,4 +112,15 @@ export function spread(left: string, right: string, width: number) {
 	);
 	const gap = Math.max(1, width - visibleWidth(shown) - visibleWidth(right));
 	return truncateToWidth(`${shown}${" ".repeat(gap)}${right}`, width);
+}
+
+// The suffix is never cut: it takes the row's last cells, the only ones when
+// the row has no more, and `left` is cut with … to fit before it.
+export function pinRight(left: string, right: string, width: number) {
+	const suffix = visibleWidth(right);
+	if (width <= suffix)
+		return width > 0 ? truncateToWidth(right, width, "") : "";
+	const room = width - suffix - 1;
+	const shown = room > 0 ? truncateToWidth(left, room, "…") : "";
+	return `${shown}${" ".repeat(width - visibleWidth(shown) - suffix)}${right}`;
 }

@@ -6,6 +6,7 @@ import { stripVTControlCharacters } from "node:util";
 import {
 	BashExecutionComponent,
 	CustomMessageComponent,
+	getMarkdownTheme,
 	InteractiveMode,
 	initTheme,
 	ToolExecutionComponent,
@@ -742,7 +743,7 @@ test("below 60 terminal columns every transcript block puts its glyph in the 2-c
 		"◆ Thought",
 		"◈ Read 1 file, Searched 1 pattern",
 		"◆ Run ls",
-		"◆ Subagent worker 1111  1m 02s",
+		`◆ Subagent worker 1111  1m 02s${" ".repeat(11)}›`,
 	])
 		assert.ok(lines.includes(expected), `${expected}\n${lines.join("\n")}`);
 	const asked = lines.indexOf("◆ Asked Which rollout?");
@@ -810,7 +811,7 @@ test("at 60 and 100 terminal columns the selection background reaches the last c
 	}
 });
 
-function advisorRow(t, durationMs) {
+function advisorRow(t, durationMs, text = "Sound.") {
 	const dir = withAgentDirectory(t);
 	writeAdvisorModel(dir, {
 		model: "anthropic/claude-opus-5",
@@ -833,7 +834,7 @@ function advisorRow(t, durationMs) {
 	);
 	row.updateResult(
 		{
-			content: [{ type: "text", text: "Sound." }],
+			content: [{ type: "text", text }],
 			details: { model: "anthropic/claude-opus-5", thinking: "high" },
 			isError: false,
 			durationMs,
@@ -901,6 +902,32 @@ test("at 60 and 100 terminal columns the transcript renders the base's bytes", (
 	}
 });
 
+const markdownAnswer = readFileSync(
+	new URL("./fixtures/assistant-markdown.md", import.meta.url),
+	"utf8",
+).trimEnd();
+
+test("at 60 and 100 terminal columns assistant Markdown lists, code blocks and tables render the base's bytes", (t) => {
+	setCapabilityOverrides({ trueColor: true, hyperlinks: false });
+	t.after(() => setCapabilityOverrides({}));
+	const { mode, say } = chat(t);
+	mode.getMarkdownThemeWithSettings = getMarkdownTheme;
+	const answer = say([said(markdownAnswer)], "stop");
+	const terminal = densityTerminal(t, 60);
+	for (const [columns, widths] of [
+		[60, [59, 60]],
+		[100, [99, 100]],
+	]) {
+		terminal.columns = columns;
+		for (const width of widths)
+			assert.deepEqual(
+				answer.render(width),
+				wideBytes.markdown[width],
+				`${width} in ${columns}`,
+			);
+	}
+});
+
 test("below 60 terminal columns a click on a row's last content cell toggles it, and a click on the right margin next to it does not", (t) => {
 	const { mode, tool, render } = chat(t);
 	densityTerminal(t, 44);
@@ -912,7 +939,7 @@ test("below 60 terminal columns a click on a row's last content cell toggles it,
 	assert.equal(command.expanded, true);
 });
 
-test("below 60 terminal columns a click on the last content cell of a thinking header, group label, result card or runtime notice toggles it, and a click on the right margin next to it does not", (t) => {
+test("below 60 terminal columns a click on the last content cell of a thinking header, group label, result card or runtime notice, the › cell of the last two, opens it, and a click on the right margin next to it does not", (t) => {
 	const { mode, say, tool, card, render } = chat(t);
 	densityTerminal(t, 44);
 	say([thought(), said("Looking.")], "stop");
@@ -922,19 +949,23 @@ test("below 60 terminal columns a click on the last content cell of a thinking h
 	card("pi-workflow-child-result", result("1111"));
 	say([said("Then.")], "stop");
 	mode.chatContainer.addChild(explorationBudgetNotice());
-	for (const head of [
-		"◆ Thought",
-		"◈ Read 1 file, Searched 1 pattern",
-		"◆ Subagent worker 1111",
-		"◆ Exploration budget",
+	for (const [head, pinned] of [
+		["◆ Thought", false],
+		["◈ Read 1 file, Searched 1 pattern", false],
+		["◆ Subagent worker 1111", true],
+		["◆ Exploration budget", true],
 	]) {
 		const before = render(43);
 		const row = before.findIndex((line) => line.startsWith(head));
 		assert.ok(row >= 0, `${head}\n${before.join("\n")}`);
+		if (pinned) {
+			const cells = Array.from(before[row]);
+			assert.deepEqual([cells.length, cells[41]], [42, "›"], head);
+		}
 		assert.equal(mouse(mode.chatContainer, 43, "click", row, 42), undefined);
 		assert.deepEqual(render(43), before, head);
 		assert.ok(mouse(mode.chatContainer, 43, "click", row, 41)?.handled, head);
-		assert.notDeepEqual(render(43), before, head);
+		assert.ok(render(43).length > before.length, head);
 	}
 });
 
@@ -1197,12 +1228,15 @@ test("crossing 60 terminal columns that lands a manual scroll position exactly a
 test("below 60 terminal columns the advisor card takes the row's lane through the row margin, which a click on its last content cell reaches and a click on the margin does not", (t) => {
 	const { mode, render } = chat(t);
 	densityTerminal(t, 44);
-	const card = advisorRow(t, 9_000);
+	const card = advisorRow(t, 9_000, "one\n\ntwo\n\nthree");
 	mode.chatContainer.addChild(card);
 	const lines = render(43);
 	const head = lines.findIndex((line) => line.startsWith("◇ Advisor "));
-	assert.match(lines[head], /^◇ Advisor {2}9\.0s · claude-opus-5 \(high\)$/);
-	assert.equal(lines[head + 1], "  Sound.");
+	assert.deepEqual(lines.slice(head, head + 3), [
+		`◇ Advisor 9.0s${" ".repeat(27)}›`,
+		"  claude-opus-5 (high)",
+		"  one",
+	]);
 	const open = card.expanded;
 	assert.equal(mouse(mode.chatContainer, 43, "click", head, 42), undefined);
 	assert.equal(card.expanded, open);

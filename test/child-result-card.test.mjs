@@ -16,6 +16,7 @@ import {
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
 import { densityTerminal } from "./support/density-terminal.mjs";
+import { eachWideWidth, wideCards } from "./support/wide-cards.mjs";
 
 replaceSelection({
 	schemaVersion: 1,
@@ -102,7 +103,8 @@ test("a collapsed result reads its elapsed time in the shared duration format on
 				}),
 				width,
 			);
-			if (columns < 60) assert.equal(row, `◆ Subagent worker 5636  ${label}`);
+			if (columns < 60)
+				assert.equal(row, `${`◆ Subagent worker 5636  ${label}`.padEnd(41)}›`);
 			else assert.ok(row.includes(`Subagent worker 5636  ${label}`), row);
 		}
 	}
@@ -666,7 +668,7 @@ test("below 60 terminal columns a result card puts its glyph in the lane, its re
 	});
 	assert.deepEqual(plain(component, 43), [
 		"",
-		"◆ Subagent worker 5636 blocked  1m 02s",
+		"◆ Subagent worker 5636 blocked  1m 02s   ›",
 		"  Database access is missing",
 	]);
 	for (const line of component.render(43)) assert.ok(visibleWidth(line) <= 42);
@@ -683,4 +685,170 @@ test("below 60 terminal columns a result card puts its glyph in the lane, its re
 		})?.handled,
 	);
 	assert.ok(plain(component, 43).includes("  alt+a  open in subagents view"));
+});
+
+const blocked = {
+	...details,
+	verdict: "blocked",
+	result: { verdict: "blocked", reason: "Database access is missing" },
+};
+const question = {
+	...details,
+	state: "waiting",
+	question: 2,
+	text: "Which database should I use?",
+};
+
+test("below 60 terminal columns a collapsed result or question card keeps a dim 1-column › at the end of its head", (t) => {
+	const { card } = cards(t);
+	densityTerminal(t, 44);
+	const result = card({ customType: "pi-workflow-child-result", details });
+	assert.deepEqual(plain(result, 43), [
+		"",
+		`◆ Subagent worker 5636  1m 02s${" ".repeat(11)}›`,
+	]);
+	assert.ok(result.render(43)[1].endsWith(theme().fg("dim", "›")));
+	assert.deepEqual(
+		plain(
+			card({ customType: "pi-workflow-child-question", details: question }),
+			43,
+		),
+		[
+			"",
+			"◆ Subagent worker 5636 asks · question 2 ›",
+			"  Which database should I use?",
+		],
+	);
+});
+
+test("below 60 terminal columns a result head too long for its row is cut with … and keeps ›", (t) => {
+	const { card } = cards(t);
+	densityTerminal(t, 44);
+	const component = card({
+		customType: "pi-workflow-child-result",
+		details: blocked,
+	});
+	assert.deepEqual(plain(component, 30), [
+		"",
+		"◆ Subagent worker 5636 blo… ›",
+		"  Database access is missing",
+	]);
+	for (const width of [1, 2, 3, 5])
+		for (const line of component.render(width))
+			assert.ok(visibleWidth(line) <= width - 1, `${width}: ${line}`);
+	for (const width of [2, 3, 5]) {
+		const head = plain(component, width)[1];
+		assert.equal(head.at(-1), "›", `${width}: ${head}`);
+		assert.equal(visibleWidth(head), width - 1, `${width}: ${head}`);
+	}
+});
+
+test("below 60 terminal columns an open result card too narrow for its task and navigation instructions wraps them whole", (t) => {
+	const { card } = cards(t);
+	densityTerminal(t, 44);
+	const component = card({ customType: "pi-workflow-child-result", details });
+	component.setExpanded(true);
+	const rows = plain(component, 20).slice(2);
+	for (const row of rows) assert.match(row, /^( {2}\S|$)/, rows.join("\n"));
+	const text = rows.join(" ").replace(/\s+/g, " ");
+	assert.ok(text.includes("Task Run sleep 60 to wait 60 seconds"), text);
+	assert.ok(text.includes("alt+a open in subagents view"), text);
+});
+
+test("below 60 terminal columns the Parent answer card stays open with its answer and carries no ›", (t) => {
+	cards(t);
+	densityTerminal(t, 44);
+	const parent = answerCard(
+		{ id, question: 1, answer: "Use PostgreSQL." },
+		theme(),
+	);
+	assert.deepEqual(plain(parent, 43), [
+		"◆ Parent → 5636 · answer 1",
+		"  Use PostgreSQL.",
+	]);
+	assert.equal(parent.handleMouse, undefined);
+});
+
+test("below 60 terminal columns an open result card cuts its long head with … instead of ...", (t) => {
+	const { card } = cards(t);
+	densityTerminal(t, 44);
+	const component = card({
+		customType: "pi-workflow-child-result",
+		details: blocked,
+	});
+	component.setExpanded(true);
+	assert.deepEqual(plain(component, 43).slice(0, 3), [
+		"",
+		"◆ Subagent worker 5636 blocked g… · 1m 02s",
+		"  Task Run sleep 60 to wait 60 seconds",
+	]);
+});
+
+test("at 60 and 100 terminal columns result, question and answer cards render the base's bytes", (t) => {
+	const { card } = cards(t);
+	const terminal = densityTerminal(t, 60);
+	const result =
+		(message, expanded = false) =>
+		() => {
+			const component = card(message);
+			component.setExpanded(expanded);
+			return component;
+		};
+	const scenarios = {
+		collapsed: result({ customType: "pi-workflow-child-result", details }),
+		blocked: result({
+			customType: "pi-workflow-child-result",
+			details: blocked,
+		}),
+		expanded: result(
+			{ customType: "pi-workflow-child-result", details: blocked },
+			true,
+		),
+		question: result({
+			customType: "pi-workflow-child-question",
+			details: question,
+		}),
+		answer: () =>
+			answerCard({ id, question: 2, answer: "Use Postgres." }, theme()),
+	};
+	for (const [name, make] of Object.entries(scenarios))
+		eachWideWidth(terminal, (width, columns) =>
+			assert.deepEqual(
+				make().render(width),
+				wideCards.result[name][width],
+				`${name} ${width} in ${columns}`,
+			),
+		);
+});
+
+test("one result card crossing 60 terminal columns in both directions gains › narrow and renders the base's bytes wide again", (t) => {
+	const { card } = cards(t);
+	const terminal = densityTerminal(t, 60);
+	const component = card({ customType: "pi-workflow-child-result", details });
+	assert.deepEqual(component.render(59), wideCards.result.collapsed[59]);
+	terminal.columns = 59;
+	assert.deepEqual(
+		plain(component, 58)[1],
+		`◆ Subagent worker 5636  1m 02s${" ".repeat(26)}›`,
+	);
+	terminal.columns = 60;
+	assert.deepEqual(component.render(59), wideCards.result.collapsed[59]);
+});
+
+test("one open result card crossing 60 terminal columns in both directions keeps its expanded body on each side", (t) => {
+	const { card } = cards(t);
+	const terminal = densityTerminal(t, 60);
+	const component = card({
+		customType: "pi-workflow-child-result",
+		details: blocked,
+	});
+	component.setExpanded(true);
+	assert.deepEqual(component.render(59), wideCards.result.expanded[59]);
+	terminal.columns = 59;
+	const narrow = plain(component, 58);
+	assert.ok(narrow.includes("  Task Run sleep 60 to wait 60 seconds"));
+	assert.ok(narrow.includes("  Done; I ran sleep 60 and waited 60 seconds."));
+	assert.ok(narrow.includes("  alt+a  open in subagents view"));
+	terminal.columns = 60;
+	assert.deepEqual(component.render(59), wideCards.result.expanded[59]);
 });
