@@ -10,7 +10,7 @@ import {
 import { markToggle } from "./chrome-groups.ts";
 import { assistantInset, blockMargin } from "./chrome-messages.ts";
 import { terminalSafeBlock } from "./terminal-safe-text.ts";
-import { narrowScreen, spread } from "./visual-language.ts";
+import { affordance, narrowScreen, spread } from "./visual-language.ts";
 
 export type NoticeMessage = { content: unknown; details?: unknown };
 
@@ -79,7 +79,7 @@ export class RuntimeNoticeCard implements Component {
 		const inner = Math.max(1, width - lane.length);
 		const { head, action, status } = this.parts;
 		const lines = [
-			spread(head, t.fg("dim", "›"), width, "…"),
+			spread(head, affordance(t), width, "…"),
 			...wrapTextWithAnsi(t.fg("warning", `→ ${action}`), inner).map(
 				(line) => lane + line,
 			),

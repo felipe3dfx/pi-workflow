@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -606,7 +607,7 @@ test("below 60 terminal columns a result card puts its glyph in the lane, its re
 	});
 	assert.deepEqual(plain(component, 43), [
 		"",
-		"◆ Subagent worker 5636 blocked  1m 02s",
+		"◆ Subagent worker 5636 blocked  1m 02s   ›",
 		"  Database access is missing",
 	]);
 	for (const line of component.render(43)) assert.ok(visibleWidth(line) <= 42);
@@ -623,4 +624,130 @@ test("below 60 terminal columns a result card puts its glyph in the lane, its re
 		})?.handled,
 	);
 	assert.ok(plain(component, 43).includes("  alt+a  open in subagents view"));
+});
+
+const blocked = {
+	...details,
+	verdict: "blocked",
+	result: { verdict: "blocked", reason: "Database access is missing" },
+};
+const question = {
+	...details,
+	state: "waiting",
+	question: 2,
+	text: "Which database should I use?",
+};
+
+test("below 60 terminal columns a collapsed result or question card keeps a dim 1-column › at the end of its head", (t) => {
+	const { card } = cards(t);
+	densityTerminal(t, 44);
+	const result = card({ customType: "pi-workflow-child-result", details });
+	assert.deepEqual(plain(result, 43), [
+		"",
+		`◆ Subagent worker 5636  1m 02s${" ".repeat(11)}›`,
+	]);
+	assert.ok(result.render(43)[1].endsWith(theme().fg("dim", "›")));
+	assert.deepEqual(
+		plain(
+			card({ customType: "pi-workflow-child-question", details: question }),
+			43,
+		),
+		[
+			"",
+			"◆ Subagent worker 5636 asks · question 2 ›",
+			"  Which database should I use?",
+		],
+	);
+});
+
+test("below 60 terminal columns a result head too long for its row is cut with … and keeps ›", (t) => {
+	const { card } = cards(t);
+	densityTerminal(t, 44);
+	const component = card({
+		customType: "pi-workflow-child-result",
+		details: blocked,
+	});
+	assert.deepEqual(plain(component, 30), [
+		"",
+		"◆ Subagent worker 5636 blo… ›",
+		"  Database access is missing",
+	]);
+	for (const width of [1, 2, 3, 5])
+		for (const line of component.render(width))
+			assert.ok(visibleWidth(line) <= width - 1, `${width}: ${line}`);
+});
+
+test("below 60 terminal columns an open result card cuts its long head with … instead of ...", (t) => {
+	const { card } = cards(t);
+	densityTerminal(t, 44);
+	const component = card({
+		customType: "pi-workflow-child-result",
+		details: blocked,
+	});
+	component.setExpanded(true);
+	assert.deepEqual(plain(component, 43).slice(0, 3), [
+		"",
+		"◆ Subagent worker 5636 blocked  gpt-6-lun…",
+		"  Task Run sleep 60 to wait 60 seconds",
+	]);
+});
+
+const wideBytes = JSON.parse(
+	readFileSync(new URL("./fixtures/wide-cards.json", import.meta.url), "utf8"),
+);
+
+test("at 60 and 100 terminal columns result, question and answer cards render the base's bytes", (t) => {
+	const { card } = cards(t);
+	const terminal = densityTerminal(t, 60);
+	const result =
+		(message, expanded = false) =>
+		() => {
+			const component = card(message);
+			component.setExpanded(expanded);
+			return component;
+		};
+	const scenarios = {
+		collapsed: result({ customType: "pi-workflow-child-result", details }),
+		blocked: result({
+			customType: "pi-workflow-child-result",
+			details: blocked,
+		}),
+		expanded: result(
+			{ customType: "pi-workflow-child-result", details: blocked },
+			true,
+		),
+		question: result({
+			customType: "pi-workflow-child-question",
+			details: question,
+		}),
+		answer: () =>
+			answerCard({ id, question: 2, answer: "Use Postgres." }, theme()),
+	};
+	for (const [name, make] of Object.entries(scenarios))
+		for (const [columns, widths] of [
+			[60, [59, 60]],
+			[100, [99, 100]],
+		]) {
+			terminal.columns = columns;
+			for (const width of widths)
+				assert.deepEqual(
+					make().render(width),
+					wideBytes.result[name][width],
+					`${name} ${width} in ${columns}`,
+				);
+		}
+});
+
+test("one result card crossing 60 terminal columns in both directions gains › narrow and renders the base's bytes wide again", (t) => {
+	const { card } = cards(t);
+	const terminal = densityTerminal(t, 60);
+	const component = card({ customType: "pi-workflow-child-result", details });
+	assert.deepEqual(component.render(59), wideBytes.result.collapsed[59]);
+	terminal.columns = 59;
+	assert.deepEqual(
+		plain(component, 58)[1],
+		`◆ Subagent worker 5636  1m 02s${" ".repeat(26)}›`,
+	);
+	terminal.columns = 60;
+	assert.deepEqual(component.render(59), wideBytes.result.collapsed[59]);
 });

@@ -738,7 +738,7 @@ test("below 60 terminal columns every transcript block puts its glyph in the 2-c
 		"◆ Thought",
 		"◈ Read 1 file, Searched 1 pattern",
 		"◆ Run ls",
-		"◆ Subagent worker 1111  1m 02s",
+		`◆ Subagent worker 1111  1m 02s${" ".repeat(11)}›`,
 	])
 		assert.ok(lines.includes(expected), `${expected}\n${lines.join("\n")}`);
 	const asked = lines.indexOf("◆ Asked Which rollout?");
@@ -931,6 +931,23 @@ test("below 60 terminal columns a click on the last content cell of a thinking h
 		assert.deepEqual(render(43), before, head);
 		assert.ok(mouse(mode.chatContainer, 43, "click", row, 41)?.handled, head);
 		assert.notDeepEqual(render(43), before, head);
+	}
+});
+
+test("below 60 terminal columns a click on the › cell of a collapsed result card or runtime notice opens it, and a click on the margin cell beside it does not", (t) => {
+	const { mode, card, render } = chat(t);
+	densityTerminal(t, 44);
+	card("pi-workflow-child-result", result("7777"));
+	mode.chatContainer.addChild(explorationBudgetNotice());
+	for (const head of ["◆ Subagent worker 7777", "◆ Exploration budget"]) {
+		const before = render(43);
+		const row = before.findIndex((line) => line.startsWith(head));
+		const cells = Array.from(before[row]);
+		assert.deepEqual([cells.length, cells[41]], [42, "›"], head);
+		assert.equal(mouse(mode.chatContainer, 43, "click", row, 42), undefined);
+		assert.deepEqual(render(43), before, head);
+		assert.ok(mouse(mode.chatContainer, 43, "click", row, 41)?.handled, head);
+		assert.ok(render(43).length > before.length, head);
 	}
 });
 

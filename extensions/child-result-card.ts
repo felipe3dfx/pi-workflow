@@ -30,7 +30,7 @@ import {
 } from "./child-projection.ts";
 import { seated } from "./shell.ts";
 import { terminalSafeBlock, terminalSafeLine } from "./terminal-safe-text.ts";
-import { spread } from "./visual-language.ts";
+import { affordance, narrowScreen, spread } from "./visual-language.ts";
 
 const RESULT_TYPE = "pi-workflow-child-result";
 const QUESTION_TYPE = "pi-workflow-child-question";
@@ -157,21 +157,31 @@ export function frame(
 	hint: string | ((inner: number) => string),
 	content: (inner: number, unplacedHint: string) => string[],
 	inset = assistantInset,
+	pinned = false,
 ) {
 	const { left, width: room } = blockMargin(inset, outer);
 	const width = Math.max(1, room);
 	const inner = Math.max(1, width - indent);
 	const top = typeof head === "string" ? head : head(width);
 	const tail = typeof hint === "string" ? hint : hint(inner);
-	const placed = tail && visibleWidth(top) + visibleWidth(tail) + 2 <= width;
+	const placed =
+		tail && (pinned || visibleWidth(top) + visibleWidth(tail) + 2 <= width);
+	const narrow = narrowScreen();
+	const ellipsis = narrow ? "…" : "...";
 	const margin = " ".repeat(left);
 	const pad = " ".repeat(indent);
-	return [
-		margin + (placed ? spread(top, tail, width) : truncateToWidth(top, width)),
+	const lines = [
+		margin +
+			(placed
+				? spread(top, tail, width, ellipsis)
+				: truncateToWidth(top, width, ellipsis)),
 		...content(inner, placed ? "" : tail).map(
-			(line) => margin + pad + truncateToWidth(line, inner),
+			(line) => margin + pad + truncateToWidth(line, inner, ellipsis),
 		),
 	];
+	return narrow
+		? lines.map((line) => truncateToWidth(line, room, ellipsis))
+		: lines;
 }
 
 class ResultCard implements Component {
@@ -229,8 +239,9 @@ class ResultCard implements Component {
 
 	cardLines(outer: number) {
 		const t = this.theme;
-		const hint = expandHint(t, this.expanded);
 		const open = this.open();
+		const pinned = !open && narrowScreen();
+		const hint = pinned ? affordance(t) : expandHint(t, this.expanded);
 		return frame(
 			outer,
 			header(t, this.card, this.question, open),
@@ -250,6 +261,8 @@ class ResultCard implements Component {
 				if (open) lines.push(t.fg("dim", "alt+a  open in subagents view"));
 				return lines;
 			},
+			assistantInset,
+			pinned,
 		);
 	}
 

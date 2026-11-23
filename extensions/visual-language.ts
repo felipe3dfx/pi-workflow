@@ -99,6 +99,10 @@ export function formatDuration(ms: number) {
 	return `${Math.floor(minutes / 60)}h${minutes % 60}m`;
 }
 
+export function affordance(theme: Theme) {
+	return theme.fg("dim", "›");
+}
+
 export function spread(
 	left: string,
 	right: string,
