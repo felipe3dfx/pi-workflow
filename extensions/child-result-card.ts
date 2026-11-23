@@ -30,7 +30,12 @@ import {
 } from "./child-projection.ts";
 import { seated } from "./shell.ts";
 import { terminalSafeBlock, terminalSafeLine } from "./terminal-safe-text.ts";
-import { spread } from "./visual-language.ts";
+import {
+	affordance,
+	narrowScreen,
+	pinRight,
+	spread,
+} from "./visual-language.ts";
 
 const RESULT_TYPE = "pi-workflow-child-result";
 const QUESTION_TYPE = "pi-workflow-child-question";
@@ -157,21 +162,37 @@ export function frame(
 	hint: string | ((inner: number) => string),
 	content: (inner: number, unplacedHint: string) => string[],
 	inset = assistantInset,
+	pinned = false,
 ) {
-	const { left, width: room } = blockMargin(inset, outer);
+	const { left, width: room } = blockMargin(
+		inset,
+		outer,
+		inset === 0 ? 0 : undefined,
+	);
 	const width = Math.max(1, room);
 	const inner = Math.max(1, width - indent);
 	const top = typeof head === "string" ? head : head(width);
 	const tail = typeof hint === "string" ? hint : hint(inner);
-	const placed = tail && visibleWidth(top) + visibleWidth(tail) + 2 <= width;
+	const placed =
+		tail && (pinned || visibleWidth(top) + visibleWidth(tail) + 2 <= width);
+	const narrow = narrowScreen();
+	const ellipsis = narrow ? "…" : "...";
 	const margin = " ".repeat(left);
 	const pad = " ".repeat(indent);
-	return [
-		margin + (placed ? spread(top, tail, width) : truncateToWidth(top, width)),
+	const lines = [
+		margin +
+			(pinned && tail
+				? pinRight(top, tail, width)
+				: placed
+					? spread(top, tail, width)
+					: truncateToWidth(top, width, ellipsis)),
 		...content(inner, placed ? "" : tail).map(
-			(line) => margin + pad + truncateToWidth(line, inner),
+			(line) => margin + pad + truncateToWidth(line, inner, ellipsis),
 		),
 	];
+	return narrow
+		? lines.map((line) => truncateToWidth(line, room, ellipsis))
+		: lines;
 }
 
 class ResultCard implements Component {
@@ -229,8 +250,12 @@ class ResultCard implements Component {
 
 	cardLines(outer: number) {
 		const t = this.theme;
-		const hint = expandHint(t, this.expanded);
 		const open = this.open();
+		const narrow = narrowScreen();
+		const pinned = !open && narrow;
+		const hint = pinned ? affordance(t) : expandHint(t, this.expanded);
+		const instruction = (text: string, inner: number) =>
+			narrow ? wrapTextWithAnsi(t.fg("dim", text), inner) : [t.fg("dim", text)];
 		return frame(
 			outer,
 			header(t, this.card, this.question, open),
@@ -238,7 +263,9 @@ class ResultCard implements Component {
 			(inner) => {
 				const lines: string[] = [];
 				if (open && this.card.task)
-					lines.push(t.fg("dim", `Task ${terminalSafeLine(this.card.task)}`));
+					lines.push(
+						...instruction(`Task ${terminalSafeLine(this.card.task)}`, inner),
+					);
 				if (open && this.card.result)
 					for (const line of resultFieldLines(this.card.result))
 						lines.push(t.fg("dim", terminalSafeLine(line)));
@@ -247,9 +274,12 @@ class ResultCard implements Component {
 					const why = reason(this.card);
 					if (why) lines.push(t.fg("dim", terminalSafeLine(why)));
 				}
-				if (open) lines.push(t.fg("dim", "alt+a  open in subagents view"));
+				if (open)
+					lines.push(...instruction("alt+a  open in subagents view", inner));
 				return lines;
 			},
+			assistantInset,
+			pinned,
 		);
 	}
 
