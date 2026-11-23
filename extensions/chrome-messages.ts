@@ -903,7 +903,7 @@ function wrapRowRender(original: PatchMethod) {
 			this,
 		);
 		const bash = narrowBash(this);
-		if (bash) return inLane(bash, () => render(width));
+		if (bash) return width === 0 ? [] : inLane(bash, () => render(width));
 		const lines = render(width);
 		if (left === 0) return lines;
 		const margin = " ".repeat(left);

@@ -1155,7 +1155,7 @@ test("below 60 terminal columns a wrapping native Bash command starts after its 
 	}
 });
 
-test("below 60 terminal columns native Bash shrinks its lane to keep one output cell and fits every row in the 2 or 3 columns it is given", (t) => {
+test("below 60 terminal columns native Bash shrinks its lane to keep one output cell, fits every row in the 2 or 3 columns it is given and paints nothing when the margin takes its only column", (t) => {
 	patched(t);
 	densityTerminal(t, 44);
 	const bash = new BashExecutionComponent("ls", { requestRender() {} });
@@ -1169,6 +1169,15 @@ test("below 60 terminal columns native Bash shrinks its lane to keep one output 
 		assert.ok(lines.includes(row), `${outer}: ${JSON.stringify(lines)}`);
 		for (const line of lines)
 			assert.ok(visibleWidth(line) <= outer - 1, `${outer}: ${line}`);
+	}
+	for (const expanded of [false, true]) {
+		bash.setExpanded(expanded);
+		const lines = plain(bash.render(1));
+		assert.deepEqual(
+			lines.map(visibleWidth).filter((width) => width > 0),
+			[],
+			`${expanded}: ${JSON.stringify(lines)}`,
+		);
 	}
 });
 
