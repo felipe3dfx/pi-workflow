@@ -151,7 +151,9 @@ function lane() {
 	return narrowScreen() ? "  " : "";
 }
 
-type Floated = { width: number; row: number; x: number };
+// Where the last narrow render floated the stamp: its row, its first column
+// and whether that row is one of its own below the text.
+type Placement = { width: number; row: number; x: number; ownRow: boolean };
 
 class Framed implements Component {
 	child: Component;
@@ -159,8 +161,7 @@ class Framed implements Component {
 	frame: () => Frame;
 	edge: number;
 	narrowRight: number;
-	floated?: Floated;
-	ownRow = false;
+	placement?: Placement;
 
 	constructor(child: Component, frame: () => Frame, edge = 0, narrowRight = 0) {
 		this.child = child;
@@ -176,44 +177,36 @@ class Framed implements Component {
 		return this.renderInside(width).map((line) => margin + line);
 	}
 
-	renderInside(width: number) {
+	// Rendering and clicks share this geometry: the content starts after the
+	// prefix unless the width cannot hold it, and only wide screens reserve the
+	// stamp's columns beside the first line.
+	geometry(width: number) {
 		const { first, rest, stamp = "", trail = 0 } = this.frame();
 		const prefix = visibleWidth(first);
+		const fits = width - prefix >= 1;
+		const offset = fits ? prefix : 0;
 		const reserve = stamp ? stampGap + visibleWidth(stamp) + trail : 0;
-		const stamped = reserve > 0 && width - prefix - reserve >= minTextWidth;
-		this.floated = undefined;
-		this.ownRow = false;
-		if (width - prefix < 1)
-			return this.child
-				.render(width)
-				.map((line) => truncateToWidth(line, width));
-		if (narrowScreen()) {
-			const lines = this.child
-				.render(width - prefix)
-				.map((line, i) => (i === 0 ? first : rest) + line);
-			const x = width - visibleWidth(stamp) - trail;
-			if (stamp && lines.length > 0 && x >= 0) {
-				const tail = `${stamp}${" ".repeat(trail)}`;
-				const row = lines.length - 1;
-				const text = lines[row].trimEnd();
-				const used = visibleWidth(text);
-				if (used + stampGap <= x)
-					lines[row] = `${text}${" ".repeat(x - used)}${tail}`;
-				else {
-					lines.push(`${" ".repeat(x)}${tail}`);
-					this.ownRow = true;
-				}
-				this.floated = { width, row: lines.length - 1, x };
-			}
-			return lines.map((line) => truncateToWidth(line, width));
-		}
-		const inner = width - prefix - (stamped ? reserve : 0);
+		const narrow = narrowScreen();
+		const reserved =
+			!narrow && reserve > 0 && width - prefix - reserve >= minTextWidth;
+		const inner = width - offset - (reserved ? reserve : 0);
+		return { first, rest, stamp, trail, fits, offset, inner, narrow, reserved };
+	}
+
+	renderInside(width: number) {
+		const frame = this.geometry(width);
+		const { first, rest, stamp, trail, fits, offset, inner } = frame;
+		this.placement = undefined;
 		const lines = this.child
 			.render(inner)
-			.map((line, i) => (i === 0 ? first : rest) + line);
-		if (stamped && lines.length > 0) {
-			const pad = Math.max(0, prefix + inner - visibleWidth(lines[0]));
-			lines[0] += `${" ".repeat(pad + stampGap)}${stamp}${" ".repeat(trail)}`;
+			.map((line, i) => (fits ? (i === 0 ? first : rest) + line : line));
+		const tail = `${stamp}${" ".repeat(trail)}`;
+		if (frame.reserved && lines.length > 0) {
+			const pad = Math.max(0, offset + inner - visibleWidth(lines[0]));
+			lines[0] += `${" ".repeat(pad + stampGap)}${tail}`;
+		} else if (frame.narrow && fits && stamp && lines.length > 0) {
+			const x = width - visibleWidth(tail);
+			if (x >= 0) this.placement = float(lines, tail, x, width);
 		}
 		return lines.map((line) => truncateToWidth(line, width));
 	}
@@ -224,23 +217,16 @@ class Framed implements Component {
 		);
 		if (!inside) return undefined;
 		const { width } = inside;
-		const { first, stamp = "", trail = 0 } = this.frame();
-		const prefix = visibleWidth(first);
-		const reserve = stamp ? stampGap + visibleWidth(stamp) + trail : 0;
-		const narrow = narrowScreen();
-		const stamped =
-			!narrow && reserve > 0 && width - prefix - reserve >= minTextWidth;
-		const offset = width - prefix < 1 ? 0 : prefix;
-		const inner = width - offset - (stamped ? reserve : 0);
+		const { offset, inner, narrow } = this.geometry(width);
 		const x = inside.x - offset;
 		if (x < 0 || x >= inner || event.y < 0 || event.y >= event.height)
 			return undefined;
-		const floated = this.floated;
+		const placement = this.placement;
 		if (
 			narrow &&
-			floated?.width === width &&
-			event.y === floated.row &&
-			inside.x >= floated.x
+			placement?.width === width &&
+			event.y === placement.row &&
+			inside.x >= placement.x
 		)
 			return undefined;
 		return this.host.handleMouse({ ...inside, x, width: inner });
@@ -249,6 +235,22 @@ class Framed implements Component {
 	invalidate() {
 		this.child.invalidate?.();
 	}
+}
+
+// Ends the last line with the stamp at column x when it keeps the gap after
+// the text, or else gives the stamp a row of its own.
+function float(
+	lines: string[],
+	tail: string,
+	x: number,
+	width: number,
+): Placement {
+	const text = lines[lines.length - 1].trimEnd();
+	const used = visibleWidth(text);
+	const ownRow = used + stampGap > x;
+	if (ownRow) lines.push(`${" ".repeat(x)}${tail}`);
+	else lines[lines.length - 1] = `${text}${" ".repeat(x - used)}${tail}`;
+	return { width, row: lines.length - 1, x, ownRow };
 }
 
 function clock(timestamp: number | undefined) {
@@ -622,11 +624,18 @@ function promptLines(text: string, width: number) {
 class DensityAwareBox extends Box {
 	widePaddingX: number;
 	appliedPaddingX: number;
+	prompt: Framed;
 
-	constructor(widePaddingX: number, bg: (text: string) => string) {
+	constructor(
+		widePaddingX: number,
+		bg: (text: string) => string,
+		prompt: Framed,
+	) {
 		super(widePaddingX, userBand, bg);
 		this.widePaddingX = widePaddingX;
 		this.appliedPaddingX = widePaddingX;
+		this.prompt = prompt;
+		this.addChild(prompt);
 	}
 
 	render(width: number) {
@@ -636,10 +645,10 @@ class DensityAwareBox extends Box {
 			this.setPaddingX(pad);
 		}
 		const lines = super.render(width);
-		const ownRow = this.children.some(
-			(child) => child instanceof Framed && child.ownRow,
-		);
-		return ownRow ? lines.slice(0, lines.length - userBand) : lines;
+		// A stamp on a row of its own takes the bottom background row's place.
+		return this.prompt.placement?.ownRow
+			? lines.slice(0, lines.length - userBand)
+			: lines;
 	}
 }
 
@@ -664,8 +673,6 @@ function rebuild(this: UserState) {
 	const contentBox = new DensityAwareBox(
 		this.outputPad * userInset,
 		(content: string) => theme().bg("userMessageBg", content),
-	);
-	contentBox.addChild(
 		new Framed(new PromptText(this.text), () => ({
 			first: theme().bold(theme().fg("userMessageText", "❯ ")),
 			rest: "  ",
