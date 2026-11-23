@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 
@@ -20,7 +21,12 @@ import {
 	PLACEHOLDER,
 } from "../extensions/chrome-editor.ts";
 import { childElapsed } from "../extensions/child-projection.ts";
-import { formatDuration } from "../extensions/visual-language.ts";
+import {
+	formatDuration,
+	narrowScreen,
+	setDensityTerminal,
+} from "../extensions/visual-language.ts";
+import { densityTerminal } from "./support/density-terminal.mjs";
 
 const theme = {
 	fg: (_color, text) => text,
@@ -876,4 +882,53 @@ test("the autocomplete rows and box clicks stay aligned inside the margin and ar
 	});
 	assert.deepEqual(small.getCursor(), { line: 0, col: 2 });
 	assert.match(plain(small.render(14))[0], /^╭/);
+});
+
+test("below 60 terminal columns the status row spinner sits in the lane with a 1-column right margin", (t) => {
+	const data = { frame: 0, label: "Working", tool: "read", turnMs: 13_000 };
+	densityTerminal(t, 44);
+	const [line] = plain(renderStatusRow(theme, data, 44));
+	assert.equal(line, `⠋ Run read${" ".repeat(30)}13s`);
+	assert.equal(visibleWidth(line), 43);
+	for (const width of [20, 8, 1])
+		assert.ok(visibleWidth(renderStatusRow(theme, data, width)[0]) <= width);
+});
+
+const wideBytes = JSON.parse(
+	readFileSync(new URL("./fixtures/wide-render.json", import.meta.url), "utf8"),
+);
+const statusData = { frame: 0, label: "Working", tool: "read", turnMs: 13_000 };
+
+test("at 60 and 100 terminal columns the status row renders the base's bytes, and the header renders them at every terminal width", (t) => {
+	const terminal = densityTerminal(t, 60);
+	for (const columns of [60, 100]) {
+		terminal.columns = columns;
+		assert.deepEqual(
+			renderStatusRow(painted, statusData, columns),
+			wideBytes.status[columns],
+		);
+	}
+	for (const columns of [44, 59, 60, 100]) {
+		terminal.columns = columns;
+		assert.deepEqual(
+			renderHeader(painted, header, columns),
+			wideBytes.header[columns],
+		);
+	}
+});
+
+test("the chrome reads the density from its TUI's live terminal columns and forgets the terminal when the session ends", async (t) => {
+	t.after(() => setDensityTerminal(undefined));
+	const chrome = fakeChrome();
+	await chrome.emit("session_start");
+	assert.equal(narrowScreen(), false);
+	const terminal = { rows: 40, columns: 44 };
+	chrome.factories.widget({ terminal, requestRender() {} }, theme);
+	assert.equal(narrowScreen(), true);
+	terminal.columns = 60;
+	assert.equal(narrowScreen(), false);
+	terminal.columns = 59;
+	assert.equal(narrowScreen(), true);
+	await chrome.emit("session_shutdown", { reason: "quit" });
+	assert.equal(narrowScreen(), false);
 });

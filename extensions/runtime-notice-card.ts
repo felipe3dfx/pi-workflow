@@ -8,7 +8,7 @@ import {
 } from "@earendil-works/pi-tui";
 
 import { markToggle } from "./chrome-groups.ts";
-import { assistantInset, edgeFor } from "./chrome-messages.ts";
+import { assistantInset, blockMargin } from "./chrome-messages.ts";
 import { terminalSafeBlock } from "./terminal-safe-text.ts";
 import { spread } from "./visual-language.ts";
 
@@ -61,9 +61,9 @@ export class RuntimeNoticeCard implements Component {
 
 	render(outer: number) {
 		const t = this.theme;
-		const edge = edgeFor(assistantInset, outer);
-		const width = Math.max(1, outer - edge * 2);
-		const margin = " ".repeat(edge);
+		const { left, width: room } = blockMargin(assistantInset, outer);
+		const width = Math.max(1, room);
+		const margin = " ".repeat(left);
 		const key = keyText("app.tools.expand");
 		const hint = key
 			? t.fg("dim", `(${key} to ${this.open() ? "collapse" : "expand"})`)

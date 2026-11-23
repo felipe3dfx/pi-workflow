@@ -1,14 +1,24 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { stripVTControlCharacters } from "node:util";
 
 import {
+	BashExecutionComponent,
 	CustomMessageComponent,
 	InteractiveMode,
 	initTheme,
 	ToolExecutionComponent,
 } from "@earendil-works/pi-coding-agent";
-import { Container, Markdown, visibleWidth } from "@earendil-works/pi-tui";
+import {
+	Container,
+	Markdown,
+	ScrollView,
+	setCapabilityOverrides,
+	TuiAltScreen,
+	VStack,
+	visibleWidth,
+} from "@earendil-works/pi-tui";
 
 import { createAdvisor } from "../extensions/advisor.ts";
 import { toolKind, transcriptCursor } from "../extensions/chrome-groups.ts";
@@ -25,6 +35,7 @@ import { readSelection } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 import { withAgentDirectory } from "./support/agent-directory.mjs";
+import { densityTerminal } from "./support/density-terminal.mjs";
 import { writeAdvisorModel } from "./support/advisor-model.mjs";
 
 const at1155 = new Date(2026, 8, 29, 11, 55).getTime();
@@ -33,6 +44,7 @@ const plain = (lines) =>
 	lines.map((line) => stripVTControlCharacters(line).trimEnd());
 
 const renderers = new Map();
+const pristineMouse = ToolExecutionComponent.prototype.handleMouse;
 
 function loadSession() {
 	const tools = new Map();
@@ -353,7 +365,7 @@ test("a reloaded module instance folds the thoughts and keeps the groups the pre
 	const header = render().indexOf("   ◈ Read 2 files");
 	assert.ok(click(mode.chatContainer, 80, header)?.handled);
 	const reloaded = await import("../extensions/chrome-groups.ts?reload");
-	reloaded.patchChat(mode.chatContainer, () => 3);
+	reloaded.patchChat(mode.chatContainer, () => ({ left: 3, right: 3 }));
 	t.after(reloaded.restoreChat);
 	const lines = render();
 	assert.equal(lines[header], "   ◈ Read 2 files");
@@ -683,4 +695,517 @@ test("a Copy control inside an open thought receives the click, and the rest of 
 	const beta = open.findIndex((line) => line.includes("beta"));
 	assert.equal(mouse(container, 80, "click", beta), undefined);
 	assert.deepEqual(rows(), open);
+});
+
+function asked(mode, question, label) {
+	const component = new ToolExecutionComponent(
+		"ask_user_question",
+		"call-asked",
+		{ question },
+		{ showImages: false },
+		InteractiveMode.prototype.getRegisteredToolDefinition.call(
+			mode,
+			"ask_user_question",
+		),
+		{ requestRender() {} },
+		"/",
+	);
+	component.updateResult(
+		{
+			content: [{ type: "text", text: label }],
+			details: { status: "answered", kind: "option", label },
+			isError: false,
+		},
+		false,
+	);
+	mode.chatContainer.addChild(component);
+	return component;
+}
+
+function transcript(t) {
+	const session = chat(t);
+	const { mode, say, tool, card } = session;
+	say([thought(), said("Looking.")]);
+	tool("read", { path: "a.ts" });
+	tool("grep", { pattern: "TODO" }, { text: "hit" });
+	tool("bash", { command: "ls" }, { text: "one" });
+	asked(mode, "Which rollout?", "Gradual rollout");
+	card("pi-workflow-child-result", result("1111"));
+	return session;
+}
+
+test("below 60 terminal columns every transcript block puts its glyph in the 2-column lane and its body at the same column", (t) => {
+	const { render } = transcript(t);
+	densityTerminal(t, 44);
+	const lines = render(43);
+	for (const expected of [
+		"◆ Thought",
+		"◈ Read 1 file, Searched 1 pattern",
+		"◆ Run ls",
+		"◆ Subagent worker 1111  1m 02s",
+	])
+		assert.ok(lines.includes(expected), `${expected}\n${lines.join("\n")}`);
+	const asked = lines.indexOf("◆ Asked Which rollout?");
+	assert.equal(lines[asked + 1], "↳ Gradual rollout");
+	assert.ok(lines.some((line) => /^ {2}Looking\. +11:55 AM$/.test(line)));
+	assert.ok(lines.some((line) => line.startsWith(" ❯ Review the PRs")));
+});
+
+test("in a 44-column terminal, with or without the scrollbar, no transcript block nor the selection paints the last column except the user message background", (t) => {
+	const { mode } = transcript(t);
+	t.after(() => transcriptCursor.leave());
+	densityTerminal(t, 44);
+	mode.chatContainer.render(43);
+	assert.ok(transcriptCursor.move(-1));
+	const painted = (line) => visibleWidth(line.replace(/ +$/, ""));
+	for (const available of [43, 44]) {
+		const lines = mode.chatContainer.render(available);
+		const prompt = plain(lines).findIndex((line) =>
+			line.startsWith(" ❯ Review the PRs"),
+		);
+		const user = new Set([prompt - 1, prompt, prompt + 1]);
+		const selection = lines.findIndex((line) => line.includes("▸"));
+		assert.ok(lines[selection].includes("\x1b[48;"), lines[selection]);
+		assert.equal(painted(lines[selection]), available - 1);
+		lines.forEach((line, i) => {
+			if (user.has(i)) {
+				assert.ok(line.includes("\x1b[48;"), line);
+				assert.equal(visibleWidth(line), available);
+			} else assert.ok(painted(line) <= available - 1, `${available}: ${line}`);
+		});
+	}
+});
+
+test("crossing 60 terminal columns in both directions moves the same Asked answer arrow into the lane and back", (t) => {
+	const { render } = transcript(t);
+	const terminal = densityTerminal(t, 60);
+	const arrow = [];
+	for (const columns of [60, 44, 60]) {
+		terminal.columns = columns;
+		const lines = render(columns - 1);
+		const answer = lines.find((line) => line.includes("↳ Gradual rollout"));
+		arrow.push(answer.indexOf("↳"));
+	}
+	assert.deepEqual(arrow, [5, 0, 5]);
+});
+
+test("at 60 and 100 terminal columns the selection background reaches the last column", (t) => {
+	const { mode } = transcript(t);
+	t.after(() => transcriptCursor.leave());
+	const terminal = densityTerminal(t, 60);
+	mode.chatContainer.render(59);
+	assert.ok(transcriptCursor.move(-1));
+	for (const [columns, widths] of [
+		[60, [59, 60]],
+		[100, [99, 100]],
+	]) {
+		terminal.columns = columns;
+		for (const width of widths) {
+			const lines = mode.chatContainer.render(width);
+			const selection = lines.find((line) => line.includes("▸"));
+			assert.ok(selection.startsWith("\x1b[48;"), selection);
+			assert.equal(selection.indexOf("\x1b[49m"), selection.length - 5);
+			assert.equal(visibleWidth(selection), width, `${width} in ${columns}`);
+		}
+	}
+});
+
+function advisorRow(t, durationMs) {
+	const dir = withAgentDirectory(t);
+	writeAdvisorModel(dir, {
+		model: "anthropic/claude-opus-5",
+		thinking: "high",
+	});
+	let advisor;
+	createAdvisor(dir).offer({
+		registerTool: (definition) => {
+			advisor = definition;
+		},
+	});
+	const row = new ToolExecutionComponent(
+		"advisor",
+		"call-advisor",
+		{},
+		{ showImages: false },
+		compactToolRenderers("advisor", () => advisor),
+		{ requestRender() {} },
+		"/",
+	);
+	row.updateResult(
+		{
+			content: [{ type: "text", text: "Sound." }],
+			details: { model: "anthropic/claude-opus-5", thinking: "high" },
+			isError: false,
+			durationMs,
+		},
+		false,
+	);
+	return row;
+}
+
+function explorationBudgetNotice() {
+	return new CustomMessageComponent(
+		{
+			role: "custom",
+			customType: "pi-workflow-exploration-budget",
+			content: "Continue discovery in an explore child.",
+			details: { lookups: 40, textBytes: 120_000 },
+			display: true,
+		},
+		renderers.get("pi-workflow-exploration-budget"),
+		markdownTheme,
+		1,
+	);
+}
+
+function wideTranscript(t) {
+	setCapabilityOverrides({ trueColor: true, hyperlinks: false });
+	t.after(() => setCapabilityOverrides({}));
+	const session = chat(t);
+	const { mode, say, tool, card } = session;
+	const ui = { requestRender() {} };
+	say([thought(), said("Looking.")]);
+	tool("read", { path: "a.ts" });
+	tool("grep", { pattern: "TODO" }, { text: "hit" });
+	tool("bash", { command: "ls" }, { text: "one" });
+	asked(mode, "Which rollout?", "Gradual rollout");
+	card("pi-workflow-child-result", { ...result("1111"), elapsedMs: 42_000 });
+	say([said("Checking.")], "stop");
+	const bash = new BashExecutionComponent("ls", ui);
+	bash.appendOutput("hello world");
+	bash.setComplete(0, false);
+	mode.chatContainer.addChild(bash);
+	mode.chatContainer.addChild(advisorRow(t, 15_000));
+	mode.chatContainer.addChild(explorationBudgetNotice());
+	return session;
+}
+
+const wideBytes = JSON.parse(
+	readFileSync(new URL("./fixtures/wide-render.json", import.meta.url), "utf8"),
+);
+
+test("at 60 and 100 terminal columns the transcript renders the base's bytes", (t) => {
+	const { mode } = wideTranscript(t);
+	const terminal = densityTerminal(t, 60);
+	for (const [columns, widths] of [
+		[60, [59, 60]],
+		[100, [99, 100]],
+	]) {
+		terminal.columns = columns;
+		for (const width of widths)
+			assert.deepEqual(
+				mode.chatContainer.render(width),
+				wideBytes.transcript[width],
+				`${width} in ${columns}`,
+			);
+	}
+});
+
+test("below 60 terminal columns a click on a row's last content cell toggles it, and a click on the right margin next to it does not", (t) => {
+	const { mode, tool, render } = chat(t);
+	densityTerminal(t, 44);
+	const command = tool("bash", { command: "ls" }, { text: "one" });
+	const run = render(43).indexOf("◆ Run ls");
+	assert.equal(mouse(mode.chatContainer, 43, "click", run, 42), undefined);
+	assert.equal(command.expanded, false);
+	assert.ok(mouse(mode.chatContainer, 43, "click", run, 41)?.handled);
+	assert.equal(command.expanded, true);
+});
+
+test("below 60 terminal columns a click on the last content cell of a thinking header, group label, result card or runtime notice toggles it, and a click on the right margin next to it does not", (t) => {
+	const { mode, say, tool, card, render } = chat(t);
+	densityTerminal(t, 44);
+	say([thought(), said("Looking.")], "stop");
+	tool("read", { path: "a.ts" });
+	tool("grep", { pattern: "TODO" }, { text: "hit" });
+	say([said("Next.")], "stop");
+	card("pi-workflow-child-result", result("1111"));
+	say([said("Then.")], "stop");
+	mode.chatContainer.addChild(explorationBudgetNotice());
+	for (const head of [
+		"◆ Thought",
+		"◈ Read 1 file, Searched 1 pattern",
+		"◆ Subagent worker 1111",
+		"◆ Exploration budget",
+	]) {
+		const before = render(43);
+		const row = before.findIndex((line) => line.startsWith(head));
+		assert.ok(row >= 0, `${head}\n${before.join("\n")}`);
+		assert.equal(mouse(mode.chatContainer, 43, "click", row, 42), undefined);
+		assert.deepEqual(render(43), before, head);
+		assert.ok(mouse(mode.chatContainer, 43, "click", row, 41)?.handled, head);
+		assert.notDeepEqual(render(43), before, head);
+	}
+});
+
+test("below 60 terminal columns a group label click opens the group and the keyboard cursor toggles a row at its first content cell", (t) => {
+	const seen = [];
+	ToolExecutionComponent.prototype.handleMouse = (event) => {
+		seen.push(event);
+		return { handled: true };
+	};
+	t.after(() => {
+		ToolExecutionComponent.prototype.handleMouse = pristineMouse;
+	});
+	const { mode, tool, render } = chat(t);
+	t.after(() => transcriptCursor.leave());
+	densityTerminal(t, 44);
+	tool("read", { path: "a.ts" });
+	tool("grep", { pattern: "TODO" }, { text: "hit" });
+	tool("bash", { command: "ls" }, { text: "one" });
+	const header = render(43).indexOf("◈ Read 1 file, Searched 1 pattern");
+	assert.ok(header >= 0);
+	assert.ok(mouse(mode.chatContainer, 43, "click", header, 3)?.handled);
+	assert.deepEqual(render(43).slice(header, header + 3), [
+		"◈ Read 1 file, Searched 1 pattern",
+		"◆ Read a.ts",
+		"◆ Search TODO",
+	]);
+	assert.ok(transcriptCursor.move(-1));
+	assert.ok(transcriptCursor.toggle());
+	assert.deepEqual(
+		seen.map(({ x, width }) => [x, width]),
+		[[0, 42]],
+	);
+});
+
+test("crossing 60 terminal columns keeps the selection on a thinking block that follows a paragraph which reflows", (t) => {
+	const { say, render } = chat(t);
+	t.after(() => transcriptCursor.leave());
+	const terminal = densityTerminal(t, 44);
+	say(
+		[
+			thought("first"),
+			said(
+				"A paragraph long enough to wrap across several rows at any of these widths, so its height changes with the lane.",
+			),
+			thought("second"),
+		],
+		"stop",
+	);
+	render(43);
+	assert.ok(transcriptCursor.move(-1));
+	const second = (lines) => lines.findLastIndex((line) => /Thought/.test(line));
+	for (const columns of [44, 60, 44]) {
+		terminal.columns = columns;
+		const lines = render(43);
+		assert.match(lines[second(lines)], /▸ Thought/, `${columns}`);
+		assert.equal(lines.filter((line) => line.includes("▸")).length, 1);
+	}
+});
+
+test("crossing 60 terminal columns in both directions keeps expanded blocks, open groups, the selection, keyboard focus and a manual scroll position", async (t) => {
+	const { mode, say, tool, render } = chat(t);
+	t.after(() => transcriptCursor.leave());
+	const terminal = densityTerminal(t, 44);
+	const scroll = new ScrollView(mode.chatContainer, {
+		follow: "end",
+		primary: true,
+	});
+	mode.transcriptScrollView = scroll;
+	say([thought(), said("Looking.")], "stop");
+	for (let i = 0; i < 6; i++)
+		say(
+			[
+				said(
+					`Paragraph ${i} keeps going long enough to wrap over several rows, so the transcript height changes when the lane appears or goes away again.`,
+				),
+			],
+			"stop",
+		);
+	tool("read", { path: "a.ts" });
+	tool("grep", { pattern: "TODO" }, { text: "hit" });
+	const command = tool("bash", { command: "ls" }, { text: "one" });
+	const last = tool("bash", { command: "pwd" }, { text: "/" });
+	const { tui, editor, press, resize } = await fullscreen(t, terminal, scroll);
+	const container = mode.chatContainer;
+	const thinking = render(44).indexOf("◆ Thought");
+	assert.ok(mouse(container, 44, "click", thinking)?.handled);
+	const header = render(44).indexOf("◈ Read 1 file, Searched 1 pattern");
+	assert.ok(mouse(container, 44, "click", header)?.handled);
+	command.setExpanded(true);
+	const frame = async (columns) => {
+		await resize(columns);
+		const lines = tui.getScreenLines();
+		const shown = lines.map((line) => stripVTControlCharacters(line));
+		assert.ok(shown.some((line) => line.includes("What should we build")));
+		assert.equal(tui.getFocusedComponent(), editor);
+		return lines;
+	};
+	await frame(60);
+	assert.ok(transcriptCursor.move(-1));
+	scroll.scrollBy(-3);
+	const top = scroll.scrollTop;
+	assert.ok(top > 0 && !scroll.isFollowingEnd);
+	const narrow = await frame(44);
+	assert.ok(Math.max(...narrow.map(visibleWidth)) <= 44);
+	assert.equal(scroll.scrollTop, top);
+	assert.equal(scroll.isFollowingEnd, false);
+	press("\r");
+	assert.equal(tui.getFocusedComponent(), editor);
+	assert.equal(last.expanded, true);
+	assert.ok(Math.max(...(await frame(60)).map(visibleWidth)) > 44);
+	const wide = render(60).map((line) => line.trimEnd());
+	assert.ok(wide.includes("   ┃ ◆ Thought"));
+	assert.ok(wide.includes("   ◆ Read a.ts"));
+	assert.ok(wide.includes("   ┃ $ ls"));
+	assert.equal(scroll.scrollTop, top);
+	assert.equal(scroll.isFollowingEnd, false);
+	press(" ");
+	assert.equal(tui.getFocusedComponent(), editor);
+	assert.equal(last.expanded, false);
+	assert.deepEqual(await frame(44), narrow);
+	assert.equal(command.expanded, true);
+	assert.equal(transcriptCursor.active(), true);
+});
+
+// The transcript viewport above a focused Chrome editor in Pi's fullscreen
+// TUI, whose terminal reads the density terminal's columns. `press` sends a
+// key through the terminal input path; `resize` sets the columns, fires the
+// terminal's resize and resolves once that frame is written.
+async function fullscreen(t, density, scroll) {
+	let input;
+	let resized;
+	let written;
+	const frame = () =>
+		new Promise((resolve) => {
+			written = resolve;
+		});
+	const terminal = {
+		start(onInput, onResize) {
+			input = onInput;
+			resized = onResize;
+		},
+		stop() {},
+		async drainInput() {},
+		write(data) {
+			if (data.startsWith("\x1b[?2026h")) written?.();
+		},
+		get columns() {
+			return density.columns;
+		},
+		rows: 24,
+		kittyProtocolActive: false,
+		moveBy() {},
+		hideCursor() {},
+		showCursor() {},
+		clearLine() {},
+		clearFromCursor() {},
+		clearScreen() {},
+		setTitle() {},
+		setProgress() {},
+	};
+	const tui = new TuiAltScreen(terminal);
+	const editor = createChromeEditor(
+		tui,
+		{ borderColor: (text) => text, selectList: {} },
+		{ matches: () => false },
+		{
+			theme: () => ({ fg: (_c, x) => x, bold: (x) => x, bg: (_c, x) => x }),
+			label: () => "m",
+		},
+	);
+	tui.addChild(scroll);
+	tui.addChild(editor);
+	tui.setLayoutRoot(new VStack([{ component: scroll, grow: 1 }, editor]));
+	tui.setFocus(editor);
+	const first = frame();
+	tui.start();
+	t.after(() => tui.stop());
+	await first;
+	return {
+		tui,
+		editor,
+		press: (key) => input(key),
+		resize(columns) {
+			const shown = frame();
+			density.columns = columns;
+			resized();
+			return shown;
+		},
+	};
+}
+
+function scrollStates(scroll, contents) {
+	return contents.map((content) => {
+		scroll.updateLayout(content, 8, () => {});
+		return [scroll.scrollTop, scroll.isFollowingEnd];
+	});
+}
+
+test("at a fixed 44 or 100 terminal columns, or resized 44 to 59 or 100 to 60, a manual scroll through a shrink and a regrow behaves as in Pi alone", (t) => {
+	const { mode, say } = chat(t);
+	const terminal = densityTerminal(t, 44);
+	for (const [from, columns] of [
+		[44, 44],
+		[100, 100],
+		[44, 59],
+		[100, 60],
+	]) {
+		terminal.columns = from;
+		const views = [0, 1].map(() => {
+			const scroll = new ScrollView(new Container(), { follow: "end" });
+			scroll.updateLayout(33, 8, () => {});
+			scroll.scrollTo(20);
+			return scroll;
+		});
+		mode.transcriptScrollView = views[0];
+		say([said(`At ${from}.`)], "stop");
+		terminal.columns = columns;
+		const native = scrollStates(views[1], [22, 33]);
+		assert.deepEqual(native, [
+			[14, true],
+			[25, true],
+		]);
+		assert.deepEqual(
+			scrollStates(views[0], [22, 33]),
+			native,
+			`${from}→${columns}`,
+		);
+	}
+});
+
+test("crossing 60 terminal columns that lands a manual scroll position exactly at or clamps it to the end of the transcript does not follow the end, and crossing back restores the original row", (t) => {
+	const { mode, say } = chat(t);
+	const terminal = densityTerminal(t, 44);
+	for (const [contentHeight, expectedAt60] of [
+		[23, [15, false]],
+		[22, [14, false]],
+	]) {
+		terminal.columns = 44;
+		const scroll = new ScrollView(new Container(), { follow: "end" });
+		mode.transcriptScrollView = scroll;
+		say([said(`Hooked at ${contentHeight}.`)], "stop");
+		scroll.updateLayout(33, 8, () => {});
+		scroll.scrollTo(15);
+		assert.deepEqual([scroll.scrollTop, scroll.isFollowingEnd], [15, false]);
+		terminal.columns = 60;
+		assert.deepEqual(
+			scrollStates(scroll, [contentHeight]),
+			[expectedAt60],
+			`${contentHeight}`,
+		);
+		terminal.columns = 44;
+		assert.deepEqual(
+			scrollStates(scroll, [33]),
+			[[15, false]],
+			`${contentHeight}`,
+		);
+	}
+});
+
+test("below 60 terminal columns the advisor card takes the row's lane through the row margin, which a click on its last content cell reaches and a click on the margin does not", (t) => {
+	const { mode, render } = chat(t);
+	densityTerminal(t, 44);
+	const card = advisorRow(t, 9_000);
+	mode.chatContainer.addChild(card);
+	const lines = render(43);
+	const head = lines.findIndex((line) => line.startsWith("◇ Advisor "));
+	assert.match(lines[head], /^◇ Advisor {2}\S+ · claude-opus-5 \(high\)$/);
+	assert.equal(lines[head + 1], "  Sound.");
+	const open = card.expanded;
+	assert.equal(mouse(mode.chatContainer, 43, "click", head, 42), undefined);
+	assert.equal(card.expanded, open);
+	assert.ok(mouse(mode.chatContainer, 43, "click", head, 41)?.handled);
+	assert.equal(card.expanded, !open);
 });

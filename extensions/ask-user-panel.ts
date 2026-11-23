@@ -24,6 +24,7 @@ import { seated } from "./shell.ts";
 import { closeChildrenView } from "./children-view.ts";
 import { offerTool } from "./tool-offer.ts";
 import { terminalSafeBlock, terminalSafeLine } from "./terminal-safe-text.ts";
+import { narrowScreen } from "./visual-language.ts";
 
 interface AskUserOption {
 	label: string;
@@ -500,11 +501,21 @@ function askRenderers() {
 			const question = normalizeSingleLine(context.args.question ?? "");
 			const answer = normalizeSingleLine(answerText(result.details)).trim();
 			const head = `${theme.fg("toolTitle", "◆")} ${theme.bold(theme.fg("muted", "Asked"))} ${theme.fg("dim", question)}`;
-			return new Text(
-				answer ? `${head}\n  ${theme.fg("dim", `↳ ${answer}`)}` : head,
-				0,
-				0,
-			);
+			const text = new Text("", 0, 0);
+			return {
+				render(width: number) {
+					const indent = narrowScreen() ? "" : "  ";
+					text.setText(
+						answer
+							? `${head}\n${indent}${theme.fg("dim", `↳ ${answer}`)}`
+							: head,
+					);
+					return text.render(width);
+				},
+				invalidate() {
+					text.invalidate();
+				},
+			};
 		},
 	};
 }
