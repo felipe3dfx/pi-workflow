@@ -791,6 +791,45 @@ test("below 60 terminal columns a click on a row's last content cell toggles it,
 	assert.equal(command.expanded, true);
 });
 
+test("below 60 terminal columns a click on the last content cell of a thinking header, group label, result card or runtime notice toggles it, and a click on the right margin next to it does not", (t) => {
+	const { mode, say, tool, card, render } = chat(t);
+	densityTerminal(t, 44);
+	say([thought(), said("Looking.")], "stop");
+	tool("read", { path: "a.ts" });
+	tool("grep", { pattern: "TODO" }, { text: "hit" });
+	say([said("Next.")], "stop");
+	card("pi-workflow-child-result", result("1111"));
+	say([said("Then.")], "stop");
+	mode.chatContainer.addChild(
+		new CustomMessageComponent(
+			{
+				role: "custom",
+				customType: "pi-workflow-exploration-budget",
+				content: "Continue discovery in an explore child.",
+				details: { lookups: 40, textBytes: 120_000 },
+				display: true,
+			},
+			renderers.get("pi-workflow-exploration-budget"),
+			markdownTheme,
+			1,
+		),
+	);
+	for (const head of [
+		"◆ Thought",
+		"◈ Read 1 file, Searched 1 pattern",
+		"◆ Subagent worker 1111",
+		"◆ Exploration budget",
+	]) {
+		const before = render(43);
+		const row = before.findIndex((line) => line.startsWith(head));
+		assert.ok(row >= 0, `${head}\n${before.join("\n")}`);
+		assert.equal(mouse(mode.chatContainer, 43, "click", row, 42), undefined);
+		assert.deepEqual(render(43), before, head);
+		assert.ok(mouse(mode.chatContainer, 43, "click", row, 41)?.handled, head);
+		assert.notDeepEqual(render(43), before, head);
+	}
+});
+
 test("below 60 terminal columns a group label click opens the group and the keyboard cursor toggles a row at its first content cell", (t) => {
 	const seen = [];
 	ToolExecutionComponent.prototype.handleMouse = (event) => {
@@ -906,7 +945,7 @@ test("crossing 60 terminal columns in both directions keeps expanded blocks, ope
 	assert.equal(transcriptCursor.active(), true);
 });
 
-test("below 60 terminal columns the advisor card takes the row's lane through the row margin", (t) => {
+test("below 60 terminal columns the advisor card takes the row's lane through the row margin, which a click on its last content cell reaches and a click on the margin does not", (t) => {
 	const dir = withAgentDirectory(t);
 	writeAdvisorModel(dir, {
 		model: "anthropic/claude-opus-5",
@@ -940,7 +979,12 @@ test("below 60 terminal columns the advisor card takes the row's lane through th
 	);
 	mode.chatContainer.addChild(card);
 	const lines = render(43);
-	const head = lines.indexOf("◇ Advisor  9s · claude-opus-5 (high)");
-	assert.ok(head >= 0, lines.join("\n"));
+	const head = lines.findIndex((line) => line.startsWith("◇ Advisor "));
+	assert.match(lines[head], /^◇ Advisor {2}\S+ · claude-opus-5 \(high\)$/);
 	assert.equal(lines[head + 1], "  Sound.");
+	const open = card.expanded;
+	assert.equal(mouse(mode.chatContainer, 43, "click", head, 42), undefined);
+	assert.equal(card.expanded, open);
+	assert.ok(mouse(mode.chatContainer, 43, "click", head, 41)?.handled);
+	assert.equal(card.expanded, !open);
 });

@@ -1151,28 +1151,76 @@ test("only the terminal's columns decide the density, whatever width the compone
 	assert.deepEqual(plain(component.render(43)), today[43]);
 });
 
-test("row mouse events below 60 terminal columns reach the content cell under the pointer and the right margin reaches nothing", (t) => {
+test("row mouse events below 60 terminal columns reach the content cell under the pointer and the right margin reaches nothing, for tool rows and native Bash", (t) => {
 	const seen = [];
-	ToolExecutionComponent.prototype.handleMouse = (event) => {
+	const spy = (event) => {
 		seen.push(event);
 	};
+	ToolExecutionComponent.prototype.handleMouse = spy;
+	BashExecutionComponent.prototype.handleMouse = spy;
 	t.after(() => {
 		restoreMessages();
 		ToolExecutionComponent.prototype.handleMouse = pristine.toolMouse;
+		delete BashExecutionComponent.prototype.handleMouse;
 	});
 	patchMessages();
 	densityTerminal(t, 44);
-	const row = toolRow();
-	const at = (x) => ({ x, y: 1, width: 43, height: 3, screenX: x, screenY: 1 });
-	row.handleMouse(at(42));
-	assert.equal(seen.length, 0);
-	row.handleMouse(at(0));
-	row.handleMouse(at(41));
+	const bash = new BashExecutionComponent("ls", { requestRender() {} });
+	bash.setComplete(0, false);
+	const at = (x) => ({ x, y: 2, width: 43, height: 4, screenX: x, screenY: 2 });
+	for (const row of [toolRow(), bash]) {
+		seen.length = 0;
+		row.handleMouse(at(42));
+		assert.equal(seen.length, 0);
+		row.handleMouse(at(0));
+		row.handleMouse(at(41));
+		assert.deepEqual(
+			seen.map(({ x, width }) => [x, width]),
+			[
+				[0, 42],
+				[41, 42],
+			],
+		);
+	}
+});
+
+test("a click on an open thought's body below 60 terminal columns reaches the text cell under it across the full unstamped width, and the rail and right margin reach nothing", (t) => {
+	const original = Markdown.prototype.handleMouse;
+	const seen = [];
+	Markdown.prototype.handleMouse = (event) => {
+		seen.push(event);
+		return { handled: true };
+	};
+	t.after(() => {
+		if (original === undefined) delete Markdown.prototype.handleMouse;
+		else Markdown.prototype.handleMouse = original;
+	});
+	patched(t);
+	densityTerminal(t, 44);
+	const component = assistantComponent(false);
+	component.updateContent(assistant([thought]), false);
+	const lines = plain(component.render(43));
+	const body = lines.findIndex((line) => line.startsWith("┃ weigh"));
+	const click = (x) =>
+		component.handleMouse({
+			type: "click",
+			button: "left",
+			x,
+			y: body,
+			width: 43,
+			height: lines.length,
+			screenX: x,
+			screenY: body,
+		});
+	assert.equal(click(1), undefined);
+	assert.equal(click(42), undefined);
+	assert.ok(click(2)?.handled);
+	assert.ok(click(41)?.handled);
 	assert.deepEqual(
 		seen.map(({ x, width }) => [x, width]),
 		[
-			[0, 42],
-			[41, 42],
+			[0, 40],
+			[39, 40],
 		],
 	);
 });
