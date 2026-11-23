@@ -1511,12 +1511,20 @@ function createChildrenView(
 					...(warn.length > 0 ? [theme.fg("warning", warn.join(" · "))] : []),
 					...(rest.length > 0 ? [theme.fg("dim", rest.join(" · "))] : []),
 				].join(theme.fg("dim", " · "));
+			const clock = timeOf(item, now);
+			// Overflow keeps the whole time: a single space before it, then a shorter Steer mark.
+			const tight = () =>
+				[
+					right([clock]),
+					`${theme.fg("warning", marks.join(" · "))} ${theme.fg("dim", clock)}`,
+				].find((text) => visibleWidth(text) < width) ??
+				`${truncateToWidth(theme.fg("warning", marks.join(" · ")), width - visibleWidth(clock) - 2, "…")} ${theme.fg("dim", clock)}`;
 			const tail =
-				[[state, ...spend], [state], [timeOf(item, now)]]
+				[[state, ...spend], [state], [clock]]
 					.map((rest) => right(rest))
 					.find(
 						(text) => visibleWidth(head) + 1 + visibleWidth(text) <= width,
-					) ?? right([timeOf(item, now)]);
+					) ?? (marks.length > 0 ? tight() : right([clock]));
 			const room = width - visibleWidth(head) - visibleWidth(tail) - 2;
 			const timeOnSecondLine =
 				item.live &&

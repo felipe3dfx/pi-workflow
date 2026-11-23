@@ -950,6 +950,20 @@ test("a selected row whose Steer mark, time, and tokens exactly fill the second 
 	assert.equal(cells[at + 1], "  1 steer pending · 3.2s · 1 tok ");
 });
 
+test("a one-line row too tight for its Steer mark and time keeps the full time and the full Steer label", (t) => {
+	t.mock.timers.enable({ apis: ["Date"], now });
+	const child = record("5636", {
+		role: "explore",
+		startedAt: now - 3_240,
+		steering: ["focus on the parser"],
+	});
+	const sessions = fakeSessions([child], { [child.id]: { entries: [] } });
+	const cells = listCells(open(sessions, { rows: 10 }).lines(72));
+	const row = cells.find((cell) => cell.includes("steer pending"));
+	assert.ok(row, cells.join("\n"));
+	assert.match(row, / 1 steer pending 3\.2s $/);
+});
+
 test("a saturated second line keeps the full time, then compacts Steer labels, then drops cost, then tokens", (t) => {
 	t.mock.timers.enable({ apis: ["Date"], now });
 	const pending = record("5636", {
