@@ -6,6 +6,7 @@ import { stripVTControlCharacters } from "node:util";
 import {
 	BashExecutionComponent,
 	CustomMessageComponent,
+	getMarkdownTheme,
 	InteractiveMode,
 	initTheme,
 	ToolExecutionComponent,
@@ -892,6 +893,32 @@ test("at 60 and 100 terminal columns the transcript renders the base's bytes", (
 			assert.deepEqual(
 				mode.chatContainer.render(width),
 				wideBytes.transcript[width],
+				`${width} in ${columns}`,
+			);
+	}
+});
+
+const markdownAnswer = readFileSync(
+	new URL("./fixtures/assistant-markdown.md", import.meta.url),
+	"utf8",
+).trimEnd();
+
+test("at 60 and 100 terminal columns assistant Markdown lists, code blocks and tables render the base's bytes", (t) => {
+	setCapabilityOverrides({ trueColor: true, hyperlinks: false });
+	t.after(() => setCapabilityOverrides({}));
+	const { mode, say } = chat(t);
+	mode.getMarkdownThemeWithSettings = getMarkdownTheme;
+	const answer = say([said(markdownAnswer)], "stop");
+	const terminal = densityTerminal(t, 60);
+	for (const [columns, widths] of [
+		[60, [59, 60]],
+		[100, [99, 100]],
+	]) {
+		terminal.columns = columns;
+		for (const width of widths)
+			assert.deepEqual(
+				answer.render(width),
+				wideBytes.markdown[width],
 				`${width} in ${columns}`,
 			);
 	}
