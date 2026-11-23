@@ -57,6 +57,7 @@ const minTextWidth = 20;
 export const assistantInset = 3;
 const userMargin = 1;
 const userInset = 2;
+const narrowUserPadding = 1;
 const imageLine = new RegExp(`${String.fromCharCode(27)}(?:_G|\\]1337;File=)`);
 const foregroundCodes = new RegExp(
 	`${String.fromCharCode(27)}\\[(?:3[0-79]|9[0-7]|38[;:][\\d;:]+)m`,
@@ -114,17 +115,19 @@ function edgeFor(edge: number, outer: number) {
 
 type Pointer = { x: number; width: number };
 
-type Margin = {
+export type Margin = {
 	left: number;
 	right: number;
 	width: number;
 	mouse<E extends Pointer>(event: E): E | undefined;
 };
 
+const blockRight = 1;
+
 export function blockMargin(
 	edge: number,
 	outer: number,
-	narrowRight = Math.min(1, edge),
+	narrowRight = blockRight,
 ): Margin {
 	const side = edgeFor(edge, outer);
 	const narrow = narrowScreen();
@@ -143,8 +146,6 @@ export function blockMargin(
 	};
 }
 
-const unframed = (outer: number) => blockMargin(0, outer);
-
 function lane() {
 	return narrowScreen() ? "  " : "";
 }
@@ -153,21 +154,19 @@ class Framed implements Component {
 	child: Component;
 	host = new Container();
 	frame: () => Frame;
-	margin: (outer: number) => Margin;
+	edge: number;
+	narrowRight: number;
 
-	constructor(
-		child: Component,
-		frame: () => Frame,
-		margin: (outer: number) => Margin = unframed,
-	) {
+	constructor(child: Component, frame: () => Frame, edge = 0, narrowRight = 0) {
 		this.child = child;
 		this.host.addChild(child);
 		this.frame = frame;
-		this.margin = margin;
+		this.edge = edge;
+		this.narrowRight = narrowRight;
 	}
 
 	render(outer: number) {
-		const { left, width } = this.margin(outer);
+		const { left, width } = blockMargin(this.edge, outer, this.narrowRight);
 		const margin = " ".repeat(left);
 		return this.renderInside(width).map((line) => margin + line);
 	}
@@ -193,17 +192,21 @@ class Framed implements Component {
 	}
 
 	handleMouse(event: TuiMouseEvent) {
-		const { left, width } = this.margin(event.width);
+		const inside = blockMargin(this.edge, event.width, this.narrowRight).mouse(
+			event,
+		);
+		if (!inside) return undefined;
+		const { width } = inside;
 		const { first, stamp = "", trail = 0 } = this.frame();
 		const prefix = visibleWidth(first);
 		const reserve = stamp ? stampGap + visibleWidth(stamp) + trail : 0;
 		const stamped = reserve > 0 && width - prefix - reserve >= minTextWidth;
 		const offset = width - prefix < 1 ? 0 : prefix;
 		const inner = width - offset - (stamped ? reserve : 0);
-		const x = event.x - left - offset;
+		const x = inside.x - offset;
 		if (x < 0 || x >= inner || event.y < 0 || event.y >= event.height)
 			return undefined;
-		return this.host.handleMouse({ ...event, x, width: inner });
+		return this.host.handleMouse({ ...inside, x, width: inner });
 	}
 
 	invalidate() {
@@ -336,14 +339,16 @@ function thinkingHeader(parts: HeaderParts, width: number) {
 class ThinkingHeader implements Component {
 	parts: HeaderParts;
 	edge: number;
+	narrowRight: number;
 
-	constructor(parts: HeaderParts, edge: number) {
+	constructor(parts: HeaderParts, edge = 0, narrowRight = 0) {
 		this.parts = parts;
 		this.edge = edge;
+		this.narrowRight = narrowRight;
 	}
 
 	render(outer: number) {
-		const { left, width } = blockMargin(this.edge, outer);
+		const { left, width } = blockMargin(this.edge, outer, this.narrowRight);
 		const line = `${" ".repeat(left)}${truncateToWidth(thinkingHeader(this.parts, width), width)}`;
 		return [`${line}${" ".repeat(Math.max(0, outer - visibleWidth(line)))}`];
 	}
@@ -413,7 +418,8 @@ function expandedThinking(
 			const bar = `${theme().fg("borderMuted", "┃")} `;
 			return { first: bar, rest: bar };
 		},
-		(outer) => blockMargin(state.outputPad * assistantInset, outer),
+		state.outputPad * assistantInset,
+		blockRight,
 	);
 }
 
@@ -421,7 +427,8 @@ function notice(text: string, inset: number) {
 	return new Framed(
 		new Text(theme().fg("muted", text), 0, 0),
 		() => ({ first: `${theme().fg("error", "◆")} `, rest: "  " }),
-		(outer) => blockMargin(inset, outer),
+		inset,
+		blockRight,
 	);
 }
 
@@ -461,7 +468,8 @@ function updateContent(
 						rest: lane(),
 						stamp: stamp(message.timestamp),
 					}),
-					(outer) => blockMargin(inset, outer),
+					inset,
+					blockRight,
 				),
 			);
 		} else if (content.type === "thinking") {
@@ -509,8 +517,9 @@ function updateContent(
 								shared.latestCollapsed.runIndex === runIndex,
 						},
 						inset,
+						blockRight,
 					)
-				: expandedThinking(this, thinkingBlocks, new ThinkingHeader(header, 0));
+				: expandedThinking(this, thinkingBlocks, new ThinkingHeader(header));
 			const region = new MouseRegion(thinkingComponent, (event) => {
 				if (event.type !== "click" || event.button !== "left") return undefined;
 				if (!hidden && event.y > 0) return undefined;
@@ -568,20 +577,20 @@ function promptLines(text: string, width: number) {
 	});
 }
 
-class PaddedBox extends Box {
-	wide: number;
-	shown: number;
+class DensityAwareBox extends Box {
+	widePaddingX: number;
+	appliedPaddingX: number;
 
-	constructor(wide: number, bg: (text: string) => string) {
-		super(wide, 1, bg);
-		this.wide = wide;
-		this.shown = wide;
+	constructor(widePaddingX: number, bg: (text: string) => string) {
+		super(widePaddingX, 1, bg);
+		this.widePaddingX = widePaddingX;
+		this.appliedPaddingX = widePaddingX;
 	}
 
 	render(width: number) {
-		const pad = narrowScreen() ? Math.min(1, this.wide) : this.wide;
-		if (pad !== this.shown) {
-			this.shown = pad;
+		const pad = narrowScreen() ? narrowUserPadding : this.widePaddingX;
+		if (pad !== this.appliedPaddingX) {
+			this.appliedPaddingX = pad;
 			this.setPaddingX(pad);
 		}
 		return super.render(width);
@@ -606,7 +615,7 @@ function rebuild(this: UserState) {
 	if (!userStamps.has(this)) userStamps.set(this, pendingUserStamp);
 	const timestamp = userStamps.get(this);
 	this.clear();
-	const contentBox = new PaddedBox(
+	const contentBox = new DensityAwareBox(
 		this.outputPad * userInset,
 		(content: string) => theme().bg("userMessageBg", content),
 	);
@@ -617,12 +626,11 @@ function rebuild(this: UserState) {
 			stamp: stamp(timestamp),
 		})),
 	);
-	const edge = this.outputPad * userMargin;
 	this.addChild(
 		new Framed(
 			contentBox,
 			() => ({ first: "", rest: "" }),
-			(outer) => blockMargin(edge, outer, 0),
+			this.outputPad * userMargin,
 		),
 	);
 }

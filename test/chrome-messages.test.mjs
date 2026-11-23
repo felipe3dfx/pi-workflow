@@ -23,7 +23,8 @@ import {
 import { registerCompactTools } from "../extensions/compact-tools.ts";
 import { readSelection } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
-import { watchTerminal } from "../extensions/visual-language.ts";
+
+import { densityTerminal } from "./support/density-terminal.mjs";
 
 const piTui = await import(
 	createRequire(import.meta.resolve("@earendil-works/pi-coding-agent")).resolve(
@@ -75,13 +76,13 @@ function patched(t) {
 	t.after(restoreMessages);
 }
 
-function userComponent(text, message = { timestamp: at1155 }) {
+function userComponent(text, message = { timestamp: at1155 }, outputPad = 1) {
 	const mode = {
 		chatContainer: new Container(),
 		getUserMessageText: (message) => message.content,
 		getMarkdownThemeWithSettings: () => markdownTheme,
 		getMarkdownTransformers: () => [],
-		outputPad: 1,
+		outputPad,
 	};
 	InteractiveMode.prototype.addMessageToChat.call(mode, {
 		role: "user",
@@ -101,13 +102,13 @@ function assistant(content, overrides = {}) {
 	};
 }
 
-function assistantComponent(hidden, label = "Thinking...") {
+function assistantComponent(hidden, label = "Thinking...", outputPad = 1) {
 	return new AssistantMessageComponent(
 		undefined,
 		hidden,
 		markdownTheme,
 		label,
-		1,
+		outputPad,
 		[],
 	);
 }
@@ -988,16 +989,9 @@ test("each heading level of Pi's Markdown theme takes its own theme var color, w
 	assert.ok(render().every((line) => line.includes(pi)));
 });
 
-function onTerminal(t, columns) {
-	const terminal = { columns };
-	watchTerminal(terminal);
-	t.after(() => watchTerminal(undefined));
-	return terminal;
-}
-
 test("below 60 terminal columns assistant text starts after the 2-column lane with a 1-column right margin", (t) => {
 	patched(t);
-	onTerminal(t, 44);
+	densityTerminal(t, 44);
 	const component = assistantComponent(true);
 	component.updateContent(assistant([answer]), false);
 	assert.deepEqual(plain(component.render(43)), [
@@ -1024,7 +1018,7 @@ test("below 60 terminal columns assistant text starts after the 2-column lane wi
 
 test("below 60 terminal columns the user message background reaches both edges with padding 1 and its text one column right of the lane", (t) => {
 	patched(t);
-	onTerminal(t, 44);
+	densityTerminal(t, 44);
 	const component = userComponent("Spawn six children now");
 	const lines = component.render(43);
 	assert.deepEqual(plain(lines), [
@@ -1046,9 +1040,30 @@ test("below 60 terminal columns the user message background reaches both edges w
 	assert.match(wrapped[2], /^ {3}\S/);
 });
 
+test("below 60 terminal columns the right margin and the user padding stay 1 when Pi's output padding is 0", (t) => {
+	patched(t);
+	densityTerminal(t, 44);
+	assert.deepEqual(
+		plain(userComponent("Zero padding", { timestamp: at1155 }, 0).render(43)),
+		[
+			" ".repeat(43),
+			` ❯ Zero padding${" ".repeat(19)}11:55 AM `,
+			" ".repeat(43),
+		],
+	);
+	const component = assistantComponent(true, "Thinking...", 0);
+	component.updateContent(assistant([thought, answer]), false);
+	const lines = plain(component.render(43)).map((line) => line.trimEnd());
+	assert.deepEqual(lines.slice(1), [
+		"◆ Thought",
+		"",
+		`  Launching six children.${" ".repeat(9)}11:55 AM`,
+	]);
+});
+
 test("below 60 terminal columns thinking, its rail and notices put their glyph in the lane and their body after it", (t) => {
 	patched(t);
-	onTerminal(t, 44);
+	densityTerminal(t, 44);
 	const collapsed = assistantComponent(true);
 	collapsed.updateContent(assistant([thought]), false);
 	assert.deepEqual(plain(collapsed.render(43)).slice(1), [
@@ -1083,7 +1098,7 @@ test("below 60 terminal columns tool and bash rows put their glyph in the lane a
 	bash.setComplete(0, false);
 	const bare = { tool: plain(tool.render(42)), bash: plain(bash.render(42)) };
 	patched(t);
-	onTerminal(t, 44);
+	densityTerminal(t, 44);
 	assert.deepEqual(plain(tool.render(43)), bare.tool);
 	assert.deepEqual(plain(bash.render(43)), bare.bash);
 });
@@ -1092,12 +1107,9 @@ test("only the terminal's columns decide the density, whatever width the compone
 	patched(t);
 	const component = assistantComponent(true);
 	component.updateContent(assistant([answer]), false);
-	const wide = (width) => {
-		watchTerminal(undefined);
-		return plain(component.render(width));
-	};
+	const wide = (width) => plain(component.render(width));
 	const today = { 43: wide(43), 59: wide(59), 99: wide(99) };
-	const terminal = onTerminal(t, 44);
+	const terminal = densityTerminal(t, 44);
 	assert.match(plain(component.render(43))[1], /^ {2}Launching/);
 	terminal.columns = 59;
 	assert.match(plain(component.render(59))[1], /^ {2}Launching/);
@@ -1120,7 +1132,7 @@ test("row mouse events below 60 terminal columns reach the content cell under th
 		ToolExecutionComponent.prototype.handleMouse = pristine.toolMouse;
 	});
 	patchMessages();
-	onTerminal(t, 44);
+	densityTerminal(t, 44);
 	const row = toolRow();
 	const at = (x) => ({ x, y: 1, width: 43, height: 3, screenX: x, screenY: 1 });
 	row.handleMouse(at(42));
@@ -1148,7 +1160,7 @@ test("a click on assistant text below 60 terminal columns reaches the text cell 
 		else Markdown.prototype.handleMouse = original;
 	});
 	patched(t);
-	onTerminal(t, 44);
+	densityTerminal(t, 44);
 	const component = assistantComponent(true);
 	component.updateContent(assistant([answer]), false);
 	component.render(43);
@@ -1175,7 +1187,7 @@ test("a click on assistant text below 60 terminal columns reaches the text cell 
 
 test("below 60 terminal columns every rendered line fits the width down to 3 columns", (t) => {
 	patched(t);
-	const terminal = onTerminal(t, 59);
+	const terminal = densityTerminal(t, 59);
 	const long =
 		"A reasonably long sentence that has to wrap across several lines at narrow widths without overflowing.";
 	const user = userComponent(long);

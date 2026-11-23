@@ -31,7 +31,7 @@ import {
 	narrowScreen,
 	spinnerMs,
 	spread,
-	watchTerminal,
+	setDensityTerminal,
 	workingFrames,
 } from "./visual-language.ts";
 
@@ -342,14 +342,6 @@ export function registerChrome(
 		for (const tui of renders) tui.requestRender();
 	}
 
-	function mount(tui: {
-		requestRender(): void;
-		terminal?: { columns: number };
-	}) {
-		renders.add(tui);
-		watchTerminal(tui.terminal);
-	}
-
 	const navigationHints: Hint[] = [
 		{ key: "↑/↓", action: "move" },
 		{ key: "enter", action: "toggle" },
@@ -420,7 +412,7 @@ export function registerChrome(
 		fixed?.stop();
 		fixed = undefined;
 		renders.clear();
-		watchTerminal(undefined);
+		setDensityTerminal(undefined);
 		running.clear();
 		working = false;
 	}
@@ -434,7 +426,7 @@ export function registerChrome(
 		const ui = startCtx.ui;
 		ui.setWorkingVisible(false);
 		ui.setHeader((tui, theme) => {
-			mount(tui);
+			renders.add(tui);
 			const header = {
 				render: (width: number) =>
 					renderHeader(
@@ -460,7 +452,7 @@ export function registerChrome(
 			};
 		});
 		ui.setFooter((tui, theme, footerData) => {
-			mount(tui);
+			renders.add(tui);
 			branch = () => footerData.getGitBranch();
 			const offBranch = footerData.onBranchChange(() => tui.requestRender());
 			return {
@@ -478,7 +470,8 @@ export function registerChrome(
 		ui.setWidget(
 			STATUS_WIDGET,
 			(tui, theme) => {
-				mount(tui);
+				renders.add(tui);
+				setDensityTerminal(tui.terminal);
 				return {
 					render: (width: number) => {
 						const data = statusData();
@@ -490,7 +483,7 @@ export function registerChrome(
 			{ placement: "aboveEditor" },
 		);
 		ui.setEditorComponent((tui, editorTheme, keybindings) => {
-			mount(tui);
+			renders.add(tui);
 			const input = createChromeEditor(tui, editorTheme, keybindings, {
 				theme: () => startCtx.ui.theme,
 				label: () => modelLabel(startCtx, startCtx.ui.theme),

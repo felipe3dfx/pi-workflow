@@ -13,7 +13,7 @@ import {
 	backstopNotice,
 	CONTEXT_BACKSTOP_TYPE,
 } from "../extensions/context-backstop.ts";
-import { watchTerminal } from "../extensions/visual-language.ts";
+import { densityTerminal } from "./support/density-terminal.mjs";
 
 const piTui = await import(
 	createRequire(import.meta.resolve("@earendil-works/pi-coding-agent")).resolve(
@@ -126,8 +126,7 @@ test("a backstop without numeric details falls back to Pi's default rendering", 
 });
 
 test("below 60 terminal columns the notice card puts its glyph in the lane, its body at the body column and keeps the right margin", (t) => {
-	watchTerminal({ columns: 44 });
-	t.after(() => watchTerminal(undefined));
+	densityTerminal(t, 44);
 	const component = card(t, facts);
 	const closed = plain(component, 43);
 	assert.match(closed[1], /^◆ Context 156K \/ 150K/);

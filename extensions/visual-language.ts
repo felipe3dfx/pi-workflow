@@ -9,15 +9,15 @@ const TERMINAL = Symbol.for("pi-workflow:visual-language:terminal");
 const narrowColumns = 60;
 
 type Columns = { readonly columns: number };
-const screens = globalThis as Record<symbol, Columns | undefined>;
+const densityTerminalSlots = globalThis as Record<symbol, Columns | undefined>;
 
-export function watchTerminal(terminal: Columns | undefined) {
-	screens[TERMINAL] = terminal;
+export function setDensityTerminal(terminal: Columns | undefined) {
+	densityTerminalSlots[TERMINAL] = terminal;
 }
 
 // Read on every call: density follows a resize on the next render (NS-02).
 export function narrowScreen() {
-	const columns = screens[TERMINAL]?.columns;
+	const columns = densityTerminalSlots[TERMINAL]?.columns;
 	return typeof columns === "number" && columns < narrowColumns;
 }
 

@@ -12,7 +12,8 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
-import { theme } from "./visual-language.ts";
+import type { Margin } from "./chrome-messages.ts";
+import { narrowScreen, theme } from "./visual-language.ts";
 
 const maxVisible = 10;
 
@@ -155,7 +156,6 @@ type ChildLines = {
 };
 
 type Entry = Target & { key: object; from: number };
-type Margin = { left: number; right: number };
 type Indent = (width: number) => Margin;
 type Place = { key: object; y: number };
 type View = {
@@ -380,10 +380,8 @@ function groupLabel(members: Seg[], width: number) {
 function header(members: Seg[], key: object, indent: Indent): Component {
 	return {
 		render(width: number) {
-			const { left, right } = indent(width);
-			return [
-				`${" ".repeat(left)}${groupLabel(members, Math.max(1, width - left - right))}`,
-			];
+			const { left, width: room } = indent(width);
+			return [`${" ".repeat(left)}${groupLabel(members, Math.max(1, room))}`];
 		},
 		invalidate() {},
 		handleMouse(event) {
@@ -456,6 +454,15 @@ function renderChat(
 	const lines: string[] = [];
 	const mouse: Entry[] = [];
 	const heads = new Set<number>();
+	const places = new Map<number, Place>();
+	const ordinals = new Map<Seg, number>();
+	const counts = new Map<Component, number>();
+	for (const seg of segs)
+		if (seg.clickable) {
+			const count = counts.get(seg.child) ?? 0;
+			ordinals.set(seg, count);
+			counts.set(seg.child, count + 1);
+		}
 	const bodies = new Set<number>();
 	let carry = "";
 	let last: { child: Component; next: number } | undefined;
@@ -466,6 +473,7 @@ function renderChat(
 		carry = "";
 		if (seg.clickable) {
 			heads.add(lines.length);
+			places.set(lines.length, { key: seg.child, y: ordinals.get(seg) ?? 0 });
 			if (seg.open && seg.role === "tool")
 				for (let i = 1; i < part.length; i++) bodies.add(lines.length + i);
 		}
@@ -491,6 +499,10 @@ function renderChat(
 		const head = headers.get(seg);
 		if (head) {
 			heads.add(lines.length);
+			places.set(lines.length, {
+				key: seg.child,
+				y: -1 - (ordinals.get(seg) ?? 0),
+			});
 			lines.push(carry + head.render(width)[0]);
 			carry = "";
 			mouse.push({ component: head, height: 1, key: seg.child, from: -1 });
@@ -499,7 +511,7 @@ function renderChat(
 		if (!hidden.has(seg)) emit(seg);
 	});
 	if (carry && lines.length > 0) lines[lines.length - 1] += carry;
-	return { lines, mouse, heads, bodies };
+	return { lines, mouse, heads, places, bodies };
 }
 
 function pointAt(line: string) {
@@ -512,7 +524,7 @@ function rows(
 	container: Container,
 	chat: ReturnType<typeof renderChat>,
 	width: number,
-	{ left, right }: Margin,
+	margin: Margin,
 ): Target[] {
 	const { lines, mouse, heads, bodies } = chat;
 	const owners: { component: Component; y: number; height: number }[] = [];
@@ -539,12 +551,18 @@ function rows(
 					return { handled: true, render: true };
 				}
 				if (bodies.has(at) && event.type !== "wheel") return undefined;
+				if (
+					narrowScreen() &&
+					event.type !== "wheel" &&
+					!margin.mouse({ ...event, width })
+				)
+					return undefined;
 				const owner = owners[at];
 				return owner.component.handleMouse?.({
 					...event,
 					x: Math.min(
-						Math.max(event.x, left),
-						Math.max(left, width - right - 1),
+						Math.max(event.x, margin.left),
+						margin.left + Math.max(0, margin.width - 1),
 					),
 					y: owner.y,
 					height: owner.height,
@@ -558,15 +576,17 @@ function cursorLine(container: Container) {
 	const cursor = cursors.get(container);
 	const view = views.get(container);
 	if (!cursor || !view) return undefined;
-	const line = view.places.findIndex(
+	const at = view.places.findIndex(
 		(place) => place.key === cursor.key && place.y === cursor.y,
 	);
-	return line >= 0 && view.heads.includes(line) ? line : undefined;
+	return at >= 0 ? view.heads[at] : undefined;
 }
 
 function selected(line: string, width: number) {
-	const pad = " ".repeat(Math.max(0, width - visibleWidth(line)));
-	return theme().bg("selectedBg", line + pad);
+	const fitted =
+		visibleWidth(line) > width ? truncateToWidth(line, width, "") : line;
+	const pad = " ".repeat(Math.max(0, width - visibleWidth(fitted)));
+	return theme().bg("selectedBg", fitted + pad);
 }
 
 export const transcriptCursor = {
@@ -584,7 +604,7 @@ export const transcriptCursor = {
 				: Math.min(view.heads.length - 1, Math.max(0, at + delta));
 		const head = view.heads[next];
 		const entering = !cursors.has(current);
-		cursors.set(current, view.places[head]);
+		cursors.set(current, view.places[next]);
 		viewports.get(current)?.reveal(head, view.total);
 		if (entering) for (const listener of cursorListeners) listener();
 		return true;
@@ -651,24 +671,20 @@ export function patchChat(
 				lines: chat.lines,
 			};
 			current = container;
-			const places = chat.mouse.flatMap(({ key, from, height }) =>
-				Array.from({ length: height }, (_, y) => ({
-					key,
-					y: from < 0 ? -1 : from + y,
-				})),
-			);
+			const heads = [...chat.heads].sort((a, b) => a - b);
 			views.set(container, {
 				width,
 				margin,
-				heads: [...chat.heads].sort((a, b) => a - b),
-				places,
+				heads,
+				places: heads.map((line) => chat.places.get(line) as Place),
 				targets,
 				total: chat.lines.length,
 			});
 			const point = hovered.get(container);
 			const cursor = cursorLine(container);
+			const paint = narrowScreen() ? margin.left + margin.width : width;
 			return chat.lines.map((line, i) => {
-				if (i === cursor) return selected(pointAt(line), width);
+				if (i === cursor) return selected(pointAt(line), paint);
 				return i === point && chat.heads.has(point) ? pointAt(line) : line;
 			});
 		} catch {

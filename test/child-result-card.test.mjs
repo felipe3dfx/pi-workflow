@@ -15,7 +15,7 @@ import {
 } from "../extensions/child-result-card.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
-import { watchTerminal } from "../extensions/visual-language.ts";
+import { densityTerminal } from "./support/density-terminal.mjs";
 
 replaceSelection({
 	schemaVersion: 1,
@@ -595,8 +595,7 @@ test("with the child-session claim unseated every child card falls back to its h
 
 test("below 60 terminal columns a result card puts its glyph in the lane, its reason at the body column, and a click on its head toggles it", (t) => {
 	const { card } = cards(t);
-	watchTerminal({ columns: 44 });
-	t.after(() => watchTerminal(undefined));
+	densityTerminal(t, 44);
 	const component = card({
 		customType: "pi-workflow-child-result",
 		details: {

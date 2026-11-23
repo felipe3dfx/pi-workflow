@@ -22,8 +22,9 @@ import {
 import {
 	formatDuration,
 	narrowScreen,
-	watchTerminal,
+	setDensityTerminal,
 } from "../extensions/visual-language.ts";
+import { densityTerminal } from "./support/density-terminal.mjs";
 
 const theme = {
 	fg: (_color, text) => text,
@@ -825,16 +826,9 @@ test("the autocomplete rows and box clicks stay aligned inside the margin and ar
 	assert.match(plain(small.render(14))[0], /^╭/);
 });
 
-function onTerminal(t, columns) {
-	const terminal = { columns };
-	watchTerminal(terminal);
-	t.after(() => watchTerminal(undefined));
-	return terminal;
-}
-
 test("below 60 terminal columns the status row spinner sits in the lane with a 1-column right margin", (t) => {
 	const data = { frame: 0, label: "Working", tool: "read", turnMs: 13_000 };
-	onTerminal(t, 44);
+	densityTerminal(t, 44);
 	const [line] = plain(renderStatusRow(theme, data, 44));
 	assert.equal(line, `⠋ Run read${" ".repeat(30)}13s`);
 	assert.equal(visibleWidth(line), 43);
@@ -851,7 +845,7 @@ test("at 60 and 100 terminal columns the status row renders as without a termina
 	const expected = new Map(
 		[44, 59, 60, 100].map((width) => [width, today(width)]),
 	);
-	const terminal = onTerminal(t, 60);
+	const terminal = densityTerminal(t, 60);
 	assert.deepEqual(today(60), expected.get(60));
 	terminal.columns = 100;
 	assert.deepEqual(today(100), expected.get(100));
@@ -865,12 +859,12 @@ test("at 60 and 100 terminal columns the status row renders as without a termina
 });
 
 test("the chrome reads the density from its TUI's live terminal columns and forgets the terminal when the session ends", async (t) => {
-	t.after(() => watchTerminal(undefined));
+	t.after(() => setDensityTerminal(undefined));
 	const chrome = fakeChrome();
 	await chrome.emit("session_start");
 	assert.equal(narrowScreen(), false);
 	const terminal = { rows: 40, columns: 44 };
-	chrome.factories.header({ terminal, requestRender() {} }, theme);
+	chrome.factories.widget({ terminal, requestRender() {} }, theme);
 	assert.equal(narrowScreen(), true);
 	terminal.columns = 60;
 	assert.equal(narrowScreen(), false);

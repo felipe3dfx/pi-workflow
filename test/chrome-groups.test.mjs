@@ -24,8 +24,8 @@ import {
 import { readSelection } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
-import { watchTerminal } from "../extensions/visual-language.ts";
 import { withAgentDirectory } from "./support/agent-directory.mjs";
+import { densityTerminal } from "./support/density-terminal.mjs";
 import { writeAdvisorModel } from "./support/advisor-model.mjs";
 
 const at1155 = new Date(2026, 8, 29, 11, 55).getTime();
@@ -683,13 +683,6 @@ test("a Copy control inside an open thought receives the click, and the rest of 
 	assert.deepEqual(rows(), open);
 });
 
-function onTerminal(t, columns) {
-	const terminal = { columns };
-	watchTerminal(terminal);
-	t.after(() => watchTerminal(undefined));
-	return terminal;
-}
-
 function asked(mode, question, label) {
 	const component = new ToolExecutionComponent(
 		"ask_user_question",
@@ -729,39 +722,44 @@ function transcript(t) {
 
 test("below 60 terminal columns every transcript block puts its glyph in the 2-column lane and its body at the same column", (t) => {
 	const { render } = transcript(t);
-	onTerminal(t, 44);
+	densityTerminal(t, 44);
 	const lines = render(43);
 	for (const expected of [
 		"◆ Thought",
 		"◈ Read 1 file, Searched 1 pattern",
 		"◆ Run ls",
-		"◆ Asked Which rollout?",
-		"  ↳ Gradual rollout",
 		"◆ Subagent worker 1111  1m 02s",
 	])
 		assert.ok(lines.includes(expected), `${expected}\n${lines.join("\n")}`);
+	const asked = lines.indexOf("◆ Asked Which rollout?");
+	assert.equal(lines[asked + 1], "↳ Gradual rollout");
 	assert.ok(lines.some((line) => /^ {2}Looking\. +11:55 AM$/.test(line)));
 	assert.ok(lines.some((line) => line.startsWith(" ❯ Review the PRs")));
 });
 
-test("below 60 terminal columns no transcript block draws into the right margin except the user message background", (t) => {
+test("in a 44-column terminal, with or without the scrollbar, no transcript block nor the selection paints the last column except the user message background", (t) => {
 	const { mode } = transcript(t);
-	onTerminal(t, 44);
-	const lines = mode.chatContainer.render(43);
-	const user = new Set(
-		lines
-			.map((line, i) => (line.includes("\x1b[48;") ? i : -1))
-			.filter((i) => i >= 0),
-	);
-	assert.ok(user.size >= 3);
-	lines.forEach((line, i) => {
-		if (user.has(i)) assert.equal(visibleWidth(line), 43);
-		else
-			assert.ok(
-				visibleWidth(stripVTControlCharacters(line).trimEnd()) <= 42,
-				line,
-			);
-	});
+	t.after(() => transcriptCursor.leave());
+	densityTerminal(t, 44);
+	mode.chatContainer.render(43);
+	assert.ok(transcriptCursor.move(-1));
+	const painted = (line) => visibleWidth(line.replace(/ +$/, ""));
+	for (const available of [43, 44]) {
+		const lines = mode.chatContainer.render(available);
+		const prompt = plain(lines).findIndex((line) =>
+			line.startsWith(" ❯ Review the PRs"),
+		);
+		const user = new Set([prompt - 1, prompt, prompt + 1]);
+		const selection = lines.findIndex((line) => line.includes("▸"));
+		assert.ok(lines[selection].includes("\x1b[48;"), lines[selection]);
+		assert.equal(painted(lines[selection]), available - 1);
+		lines.forEach((line, i) => {
+			if (user.has(i)) {
+				assert.ok(line.includes("\x1b[48;"), line);
+				assert.equal(visibleWidth(line), available);
+			} else assert.ok(painted(line) <= available - 1, `${available}: ${line}`);
+		});
+	}
 });
 
 test("at 60 and 100 terminal columns the transcript renders as it does without a terminal", (t) => {
@@ -769,7 +767,7 @@ test("at 60 and 100 terminal columns the transcript renders as it does without a
 	const today = new Map(
 		[59, 60, 99, 100].map((width) => [width, mode.chatContainer.render(width)]),
 	);
-	const terminal = onTerminal(t, 60);
+	const terminal = densityTerminal(t, 60);
 	assert.deepEqual(mode.chatContainer.render(59), today.get(59));
 	assert.deepEqual(mode.chatContainer.render(60), today.get(60));
 	terminal.columns = 100;
@@ -777,30 +775,15 @@ test("at 60 and 100 terminal columns the transcript renders as it does without a
 	assert.deepEqual(mode.chatContainer.render(100), today.get(100));
 });
 
-test("below 60 terminal columns a row click reaches the content cell under it, and a right-margin click reaches the row at its last content cell", (t) => {
-	const seen = [];
-	ToolExecutionComponent.prototype.handleMouse = (event) => {
-		seen.push(event);
-		return { handled: true };
-	};
-	t.after(() => {
-		ToolExecutionComponent.prototype.handleMouse = pristineMouse;
-	});
+test("below 60 terminal columns a click on a row's last content cell toggles it, and a click on the right margin next to it does not", (t) => {
 	const { mode, tool, render } = chat(t);
-	onTerminal(t, 44);
-	tool("bash", { command: "ls" }, { text: "one" });
+	densityTerminal(t, 44);
+	const command = tool("bash", { command: "ls" }, { text: "one" });
 	const run = render(43).indexOf("◆ Run ls");
-	assert.ok(mouse(mode.chatContainer, 43, "click", run, 0)?.handled);
-	assert.ok(mouse(mode.chatContainer, 43, "click", run, 6)?.handled);
-	assert.ok(mouse(mode.chatContainer, 43, "click", run, 42)?.handled);
-	assert.deepEqual(
-		seen.map(({ x, width }) => [x, width]),
-		[
-			[0, 42],
-			[6, 42],
-			[41, 42],
-		],
-	);
+	assert.equal(mouse(mode.chatContainer, 43, "click", run, 42), undefined);
+	assert.equal(command.expanded, false);
+	assert.ok(mouse(mode.chatContainer, 43, "click", run, 41)?.handled);
+	assert.equal(command.expanded, true);
 });
 
 test("below 60 terminal columns a group label click opens the group and the keyboard cursor toggles a row at its first content cell", (t) => {
@@ -814,7 +797,7 @@ test("below 60 terminal columns a group label click opens the group and the keyb
 	});
 	const { mode, tool, render } = chat(t);
 	t.after(() => transcriptCursor.leave());
-	onTerminal(t, 44);
+	densityTerminal(t, 44);
 	tool("read", { path: "a.ts" });
 	tool("grep", { pattern: "TODO" }, { text: "hit" });
 	tool("bash", { command: "ls" }, { text: "one" });
@@ -834,10 +817,35 @@ test("below 60 terminal columns a group label click opens the group and the keyb
 	);
 });
 
+test("crossing 60 terminal columns keeps the selection on a thinking block that follows a paragraph which reflows", (t) => {
+	const { say, render } = chat(t);
+	t.after(() => transcriptCursor.leave());
+	const terminal = densityTerminal(t, 44);
+	say(
+		[
+			thought("first"),
+			said(
+				"A paragraph long enough to wrap across several rows at any of these widths, so its height changes with the lane.",
+			),
+			thought("second"),
+		],
+		"stop",
+	);
+	render(43);
+	assert.ok(transcriptCursor.move(-1));
+	const second = (lines) => lines.findLastIndex((line) => /Thought/.test(line));
+	for (const columns of [44, 60, 44]) {
+		terminal.columns = columns;
+		const lines = render(43);
+		assert.match(lines[second(lines)], /▸ Thought/, `${columns}`);
+		assert.equal(lines.filter((line) => line.includes("▸")).length, 1);
+	}
+});
+
 test("crossing 60 terminal columns in both directions keeps expanded blocks, open groups, the selection and the scroll position", (t) => {
 	const { mode, say, tool, render } = chat(t);
 	t.after(() => transcriptCursor.leave());
-	const terminal = onTerminal(t, 44);
+	const terminal = densityTerminal(t, 44);
 	say([thought(), said("Looking.")], "stop");
 	tool("read", { path: "a.ts" });
 	tool("grep", { pattern: "TODO" }, { text: "hit" });
@@ -886,7 +894,7 @@ test("below 60 terminal columns the advisor card takes the row's lane through th
 		},
 	});
 	const { mode, render } = chat(t);
-	onTerminal(t, 44);
+	densityTerminal(t, 44);
 	const card = new ToolExecutionComponent(
 		"advisor",
 		"call-advisor",
