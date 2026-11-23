@@ -1560,6 +1560,21 @@ test("below 60 terminal columns a table inside a compact list keeps the width Pi
 	]);
 });
 
+test("at tiny widths a code row drops the rail's space, then the rail, before it splits a double-width character from it", (t) => {
+	patched(t);
+	const terminal = densityTerminal(t, 7);
+	const component = markdownAnswer(plainMarkdown);
+	component.updateContent(
+		assistant([{ type: "text", text: "```\n你好\n```" }], {
+			timestamp: undefined,
+		}),
+		false,
+	);
+	assert.deepEqual(trimmed(component.render(6)), ["", "  ▎你", "  ▎好"]);
+	terminal.columns = 6;
+	assert.deepEqual(trimmed(component.render(5)), ["", "  你", "  好"]);
+});
+
 test("below 60 terminal columns an open thought's Markdown indents lists 2 columns and draws code with the rail", (t) => {
 	patched(t);
 	densityTerminal(t, 44);

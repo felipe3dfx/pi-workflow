@@ -825,6 +825,7 @@ type MarkdownSelf = {
 };
 
 const codeRail = "▎";
+const graphemes = new Intl.Segmenter();
 
 // Pi draws the code rows, highlighted or not, without indent and without a
 // successor; only its two fence rows are dropped.
@@ -846,7 +847,17 @@ function railedCode(
 	} finally {
 		self.theme = saved;
 	}
-	const rail = `${saved.codeBlockBorder(codeRail)} `;
+	// The rail drops its space, then itself, rather than stand on a row apart
+	// from a double-width character.
+	let widest = 1;
+	for (const { segment } of graphemes.segment(token.text))
+		widest = Math.max(widest, visibleWidth(segment));
+	const rail =
+		width - 2 >= widest
+			? `${saved.codeBlockBorder(codeRail)} `
+			: width - 1 >= widest
+				? saved.codeBlockBorder(codeRail)
+				: "";
 	const room = Math.max(1, width - visibleWidth(rail));
 	const lines = code.flatMap((line) =>
 		wrapTextWithAnsi(line, room).map((row) => rail + row),
