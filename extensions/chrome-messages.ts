@@ -389,7 +389,9 @@ const COMPACT = Symbol.for("pi-workflow:chrome-messages:compact-markdown");
 
 // The mark keeps the density of the last render, which Pi's render cache
 // does not key on.
-type CompactMark = { narrow?: boolean };
+// tableShrink is the width the compact list prefixes save over Pi's around
+// the item token being rendered; only its tables give it back.
+type CompactMark = { narrow?: boolean; tableShrink?: number };
 
 function compactMark(markdown: unknown) {
 	return (markdown as Record<symbol, CompactMark> | undefined)?.[COMPACT];
@@ -876,6 +878,8 @@ function compactList(
 	// Only the assistant Markdown built here compacts, and it never asks Pi to
 	// preserve the source list markers.
 	const lines: string[] = [];
+	const mark = compactMark(this) as CompactMark;
+	const outerShrink = mark.tableShrink ?? 0;
 	const indent = "  ".repeat(depth);
 	const startNumber = typeof token.start === "number" ? token.start : 1;
 	token.items.forEach((item, i) => {
@@ -898,17 +902,21 @@ function compactList(
 				renderedAnyLine = true;
 				continue;
 			}
-			// Tables keep the width Pi gives them at 4 columns per level.
-			const tokenWidth =
-				itemToken.type === "table"
-					? Math.max(1, itemWidth - 2 * depth)
-					: itemWidth;
-			for (const line of this.renderToken(
-				itemToken,
-				tokenWidth,
-				undefined,
-				styleContext,
-			))
+			// Tables, quoted or not, keep the width Pi gives them at 4 columns
+			// per level.
+			let rendered: string[];
+			mark.tableShrink = outerShrink + 2 * depth;
+			try {
+				rendered = this.renderToken(
+					itemToken,
+					itemWidth,
+					undefined,
+					styleContext,
+				);
+			} finally {
+				mark.tableShrink = outerShrink;
+			}
+			for (const line of rendered)
 				for (const wrapped of wrapTextWithAnsi(line, itemWidth)) {
 					lines.push(
 						(renderedAnyLine ? continuationPrefix : firstPrefix) + wrapped,
@@ -963,6 +971,14 @@ function wrapRenderToken(original: PatchMethod) {
 				rest[0] as number,
 				rest[1] as string | undefined,
 				rest[2],
+			);
+		const shrink = compactMark(this)?.tableShrink;
+		if (token?.type === "table" && shrink && shouldCompactMarkdown(this))
+			return render.call(
+				this,
+				token,
+				Math.max(1, (rest[0] as number) - shrink),
+				...rest.slice(1),
 			);
 		const palette = initializedTheme();
 		const saved = this.theme;

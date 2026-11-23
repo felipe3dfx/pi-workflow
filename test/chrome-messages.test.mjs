@@ -1543,7 +1543,7 @@ test("below 60 terminal columns assistant Markdown keeps ordered numbers, task b
 	]);
 });
 
-test("below 60 terminal columns a table inside a compact list keeps the width Pi gives it at 4 columns per level", (t) => {
+test("below 60 terminal columns a table inside a compact list, quoted or not, keeps the width Pi gives it at 4 columns per level", (t) => {
 	patched(t);
 	densityTerminal(t, 44);
 	const component = markdownAnswer(plainMarkdown);
@@ -1572,6 +1572,32 @@ test("below 60 terminal columns a table inside a compact list keeps the width Pi
 		"      ├──────────────────┼─────────────┤",
 		"      │ 12               │ 3 hours     │",
 		"      └──────────────────┴─────────────┘",
+	]);
+	component.updateContent(
+		assistant(
+			[
+				{
+					type: "text",
+					text: "- one\n  - two\n\n    > | Number of trial participants | Total amount of time elapsed |\n    > | --- | --- |\n    > | 12 | 3 hours |",
+				},
+			],
+			{ timestamp: undefined },
+		),
+		false,
+	);
+	assert.deepEqual(trimmed(component.render(43)), [
+		"",
+		"  - one",
+		"    - two",
+		"",
+		"      │ ┌─────────────────┬────────────┐",
+		"      │ │ Number of trial │ Total      │",
+		"      │ │ participants    │ amount of  │",
+		"      │ │                 │ time       │",
+		"      │ │                 │ elapsed    │",
+		"      │ ├─────────────────┼────────────┤",
+		"      │ │ 12              │ 3 hours    │",
+		"      │ └─────────────────┴────────────┘",
 	]);
 });
 
