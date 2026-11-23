@@ -13,6 +13,7 @@ import {
 	resetPlaces,
 } from "../extensions/shell.ts";
 import { registerSessionTodo } from "../extensions/todo-extension.ts";
+import { densityTerminal } from "./support/density-terminal.mjs";
 
 replaceSelection({
 	schemaVersion: 1,
@@ -952,4 +953,75 @@ test("filtered empty stays reversible, and stale hits cannot survive reseating o
 	lines = widget.render(80);
 	await fireEvent(handlers, "session_start", ctx);
 	assert.equal(widget.handleMouse({ ...event, x: 79, y: 1 }), undefined);
+});
+
+test("below 60 terminal columns a tap on the ▾ Todo heading collapses it like Alt+Shift+T, and its page and collapse survive crossing 60 columns both ways", async (t) => {
+	t.after(resetPlaces);
+	const terminal = densityTerminal(t, 44);
+	const { pi, tools, handlers, shortcuts } = fakePi();
+	const shell = registerShell(pi);
+	registerSessionTodo(pi, shell.requestAboveInputRender, () => new Map());
+	let factory;
+	const ctx = {
+		...fakeCtx().ctx,
+		ui: {
+			setWidget: (_key, make) => {
+				factory = make;
+			},
+		},
+	};
+	await fireEvent(handlers, "session_start", ctx);
+	const tui = { terminal: { rows: 31 }, requestRender() {} };
+	const widget = factory(tui, fakeTheme());
+	await execute(
+		tools,
+		"write",
+		{
+			tasks: Array.from({ length: 12 }, (_, i) => ({ text: `Task ${i + 1}` })),
+		},
+		ctx,
+	);
+	let lines = widget.render(44);
+	const tap = (x, y) => ({
+		type: "click",
+		button: "left",
+		x,
+		y,
+		screenX: x,
+		screenY: y,
+		width: 44,
+		height: lines.length,
+		shift: false,
+		alt: false,
+		ctrl: false,
+	});
+	assert.equal(lines[0], `▾ Todo 0/12${" ".repeat(22)}Alt+Shift+T`);
+	assert.equal(lines[9], "12/12 All 1/2 ‹ › Without done");
+	assert.equal(widget.handleMouse(tap(16, 9))?.handled, true);
+	lines = widget.render(44);
+	assert.equal(lines[1], "○ Task 9");
+	assert.equal(widget.handleMouse(tap(0, 1)), undefined);
+	assert.equal(widget.handleMouse(tap(0, 0))?.handled, true);
+	lines = widget.render(44);
+	assert.deepEqual(lines, ["session tasks collapsed"]);
+
+	terminal.columns = 60;
+	assert.deepEqual(widget.render(60), ["session tasks collapsed"]);
+	await shortcuts.get("alt+shift+t").handler(ctx);
+	lines = widget.render(60);
+	assert.equal(lines[1], `┌${" ".repeat(58)}×`);
+	assert.equal(lines[2], `│ □ Task 6${" ".repeat(49)}│`);
+
+	terminal.columns = 59;
+	lines = widget.render(59);
+	assert.equal(lines[0], `▾ Todo 0/12${" ".repeat(37)}Alt+Shift+T`);
+	assert.equal(lines[1], "○ Task 9");
+	await shortcuts.get("alt+shift+t").handler(ctx);
+	assert.deepEqual(widget.render(59), ["session tasks collapsed"]);
+	await shortcuts.get("alt+shift+t").handler(ctx);
+	assert.equal(widget.render(59)[1], "○ Task 9");
+	assert.equal(
+		(await execute(tools, "list", {}, ctx)).details.tasks.length,
+		12,
+	);
 });
