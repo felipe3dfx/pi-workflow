@@ -51,6 +51,7 @@ The review of a whole pull request along independent axes that must not hide one
 15. Under issue #222, each axis receives its sources by path or tracker identifier, never their content, so the requirement is read fresh in the axis that uses it instead of being copied from the invoking context.
 16. Later rounds reach the axes: step 1 pins the prior head, and each axis receives it with the prior findings whose scope falls under it, Correctness when unclear, verifies them against the head, and reads the delta with the code it affects. The separate later-rounds section is removed; its resolution tags stay in `references/comment-format.md`. The Simplification Trade points at `review-critique`'s definition, applied to the kept findings, instead of restating it, and is drafted under the comment's simplification trade heading.
 17. Each axis opens in a context that can run read-only git commands against the pinned commits, never one limited to reading files, and is told never to run tests, linters, or builds. Axes dispatched to file-reading contexts could not inspect the diff, so the invoking context had to export the change for them and resume each one.
+18. The Standards source no longer skips a suppression the change adds to the repository's tooling, matching `code-review`'s **Configured rules hold** team standard.
 
 ## Approval
 

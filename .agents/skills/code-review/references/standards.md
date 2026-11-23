@@ -1,6 +1,6 @@
 # Team Standards and Smell Baseline
 
-The Standards axis reads this file in full, then the repository's `docs/agents/coding-standards.md` when it exists. Where the repository's standards speak to the same point as anything here, the repository's standards win and the point here is suppressed. Skip anything the repository's tooling already enforces, such as formatting, linting, or type rules.
+The Standards axis reads this file in full, then the repository's `docs/agents/coding-standards.md` when it exists. Where the repository's standards speak to the same point as anything here, the repository's standards win and the point here is suppressed. Skip anything the repository's tooling already enforces, such as formatting, linting, or type rules; a suppression the diff adds to that tooling is still reviewed, under **Configured rules hold**.
 
 ## Team standards
 
@@ -10,6 +10,9 @@ Each standard is a hard violation when the diff breaks it, unless it is marked a
 - **No compatibility layers.** An obsolete path is removed, not kept beside its replacement behind a flag, shim, alias, or migration, unless the ticket or specification requires the old path to keep working.
 - **Surgical diff.** The diff reorders, reformats, or refactors nothing unrelated to the ticket.
 - **Comments carry constraints.** An added comment states a constraint or invariant the code cannot show. A comment that restates a name, narrates the next line, or describes the change itself is a violation.
+- **Configured rules hold.** The diff adds no suppression of a rule the repository's tooling enforces: no inline directive such as `# noqa`, `# pylint: disable`, `eslint-disable`, `@ts-ignore`, `@ts-expect-error`, `#pragma warning disable`, `[SuppressMessage]`, or `NOSONAR`, and no added per-file ignore, exclusion, or relaxed threshold in the tooling's configuration. A comment justifying the suppression does not cure it. The one exemption is a type checker's suppression in a language that runs without its types, such as `# type: ignore` in Python: typing there is optional and its checkers report false positives. The remedy is restructuring the code until the rule passes; a rule that does not fit the repository changes in its own configuration change, never inside the change it would let pass.
+- **Files stay small.** The diff leaves no file over 900 lines that had 900 or fewer before the change, a new file included, and adds no lines to a file already over 900. Tests count; generated files, migrations, lockfiles, fixtures, and snapshots do not. The remedy is splitting the file along its responsibilities.
+- **Instructions stay true.** A statement in the head's root instruction file that names a path, command, or name the diff removes or renames is a violation; quote the statement and the hunk. Report only statements the diff falsifies, never missing or improvable ones.
 - **Existing dependencies first.** New code reuses what the project's dependencies already provide instead of reimplementing it or adding a package. Judgement call.
 
 ## Smell baseline

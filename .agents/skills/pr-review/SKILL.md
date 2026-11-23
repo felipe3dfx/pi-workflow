@@ -4,7 +4,7 @@ description: "Trigger: review a pull request as a whole for a human reviewer, or
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "1.6"
+  version: "1.7"
   provenance: derived
 ---
 
@@ -30,7 +30,7 @@ Resolve every source from what the repository configures, never assuming a provi
 
 - **Change**: base, head SHA, the diff from their merge-base, changed files, description, and any prior reviews and threads on the pull request.
 - **Requirement**: the linked ticket and its specification read fresh from the tracker, else the description or a document the user names.
-- **Standards**: [team standards and smell baseline](../code-review/references/standards.md), overridden by the repository's own standards; skip what tooling enforces.
+- **Standards**: [team standards and smell baseline](../code-review/references/standards.md), overridden by the repository's own standards; skip what tooling enforces, except a suppression the change adds to it.
 - **Decisions**: decision records the diff adds or modifies, the decision records the domain authority names, and decisions recorded on the ticket or the pull request.
 
 ## Execution Steps
