@@ -237,10 +237,11 @@ export function renderStatusRow(
 		: width - marginFor(width) * 2 - indent;
 	const spinner = workingFrames[data.frame % workingFrames.length];
 	const name = terminalSafeLine(data.tool ?? data.label);
-	const phase =
+	const step =
 		data.stepMs !== undefined && room >= phaseTimerMinWidth
-			? theme.fg("dim", ` ${formatDuration(data.stepMs)}`)
+			? formatDuration(data.stepMs)
 			: "";
+	const phase = step ? theme.fg("dim", ` ${step}`) : "";
 	const turn = data.turnMs !== undefined ? formatDuration(data.turnMs) : "";
 	const tokens = data.outputTokens
 		? `⇣${formatOutputTokens(data.outputTokens)}`
@@ -251,24 +252,30 @@ export function renderStatusRow(
 		[turn, counted ? tokens : ""].filter(Boolean).join(" ");
 	const needed = (l: string, r: string) =>
 		visibleWidth(l) + (r ? 1 + visibleWidth(r) : 0);
-	// Overflow keeps both timers whole: spare space, then `Run `, then the tokens, then the name.
-	const [l, r] = !(phase || turn)
-		? [left(true), right(true)]
-		: ([
-				[left(true), right(true)],
-				[left(false), right(true)],
-				[left(false), right(false)],
-			].find(([l, r]) => needed(l, r) <= room) ?? [
-				left(
-					false,
-					truncateToWidth(
-						name,
-						Math.max(0, room - needed(left(false, ""), right(false))),
-						"…",
+	// Only the minute and hour formats grew, and only they hold a space.
+	const grown = `${step}${turn}`.includes(" ");
+	const whole = phase
+		? needed(left(true), right(true)) <= room
+		: visibleWidth(right(true)) < room;
+	// Overflow from a longer timer keeps both timers whole: spare space, then `Run `, then the tokens, then the name.
+	const [l, r] =
+		!(phase || turn) || (!grown && whole)
+			? [left(true), right(true)]
+			: ([
+					[left(true), right(true)],
+					[left(false), right(true)],
+					[left(false), right(false)],
+				].find(([l, r]) => needed(l, r) <= room) ?? [
+					left(
+						false,
+						truncateToWidth(
+							name,
+							Math.max(0, room - needed(left(false, ""), right(false))),
+							"…",
+						),
 					),
-				),
-				right(false),
-			]);
+					right(false),
+				]);
 	const line = r
 		? spread(l, theme.fg("dim", r), room)
 		: truncateToWidth(l, room);

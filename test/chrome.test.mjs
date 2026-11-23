@@ -955,6 +955,27 @@ test("a status row too tight for every field keeps both timers whole, dropping R
 	);
 });
 
+test("a status row whose whole timers kept their width keeps the base's layout, cutting the name with ... before Run or the token count", (t) => {
+	densityTerminal(t, 60);
+	const list = "mcp__github__list_pull_request_review_comments";
+	assert.equal(
+		plain(
+			renderStatusRow(
+				theme,
+				{
+					frame: 0,
+					label: "Working",
+					tool: list,
+					turnMs: 45_000,
+					outputTokens: 3_000,
+				},
+				59,
+			),
+		)[0],
+		"   ⠋ Run mcp__github__list_pull_request_revi... 45s ⇣3.00k",
+	);
+});
+
 const wideBytes = JSON.parse(
 	readFileSync(new URL("./fixtures/wide-render.json", import.meta.url), "utf8"),
 );
