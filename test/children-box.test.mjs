@@ -7,6 +7,7 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import { loadThemeFromPath } from "../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 
 import { childGlyph, renderChildrenBox } from "../extensions/children-box.ts";
+import { densityTerminal } from "./support/density-terminal.mjs";
 
 const theme = {
 	fg: (_color, text) => text,
@@ -239,6 +240,68 @@ test("a running row cycles the working spinner every 133 ms while other states k
 		for (const at of [start, start + 133])
 			assert.equal(glyphAt(child({ state, endedAt: at }), at), glyph);
 	}
+});
+
+test("below 60 terminal columns a timed-out row shows the shared ✗ in the error tone, and 60 columns or more keeps ⧖, across the boundary both ways", (t) => {
+	const tagged = {
+		...theme,
+		fg: (color, text) => `<${color}>${text}</${color}>`,
+	};
+	const at = now - (now % (133 * 8));
+	const records = [
+		child({ id: "run", role: "run", step: "step" }),
+		child({ id: "ask", role: "ask", state: "waiting", step: "step" }),
+		child({ id: "que", role: "que", state: "queued", step: "step" }),
+		child({
+			id: "don",
+			role: "don",
+			state: "completed",
+			endedAt: at,
+			step: "step",
+		}),
+		child({
+			id: "bad",
+			role: "bad",
+			state: "failed",
+			endedAt: at - 1,
+			step: "step",
+		}),
+		child({
+			id: "off",
+			role: "off",
+			state: "timed out",
+			endedAt: at - 2,
+			step: "step",
+		}),
+	];
+	const glyphs = () =>
+		renderChildrenBox(tagged, records, at, 200)
+			.slice(1)
+			.map((row) => row.split(" ")[1]);
+	const narrow = [
+		"<warning>?</warning>",
+		"<accent>⠋</accent>",
+		"<muted>○</muted>",
+		"<success>✓</success>",
+		"<error>✗</error>",
+		"<error>✗</error>",
+	];
+	const wide = [...narrow.slice(0, 5), "<error>⧖</error>"];
+	const terminal = densityTerminal(t, 44);
+	assert.deepEqual(glyphs(), narrow);
+	terminal.columns = 60;
+	assert.deepEqual(glyphs(), wide);
+	terminal.columns = 59;
+	assert.deepEqual(glyphs(), narrow);
+	terminal.columns = 100;
+	assert.deepEqual(glyphs(), wide);
+	terminal.columns = 44;
+	const cancelled = child({ state: "cancelled", endedAt: at });
+	assert.equal(childGlyph(tagged, cancelled), "<muted>–</muted>");
+	assert.equal(
+		childGlyph(tagged, { ...cancelled, state: "timed out" }),
+		"<error>✗</error>",
+	);
 });
 
 test("a running child's glyph and spinner take the cyan theme var, while finished glyphs keep their tokens", () => {

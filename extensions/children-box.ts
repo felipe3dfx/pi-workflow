@@ -1,8 +1,4 @@
-import type {
-	ExtensionAPI,
-	Theme,
-	ThemeColor,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 import {
@@ -15,9 +11,9 @@ import { occupyAboveInput } from "./shell.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
 import {
 	narrowScreen,
+	runStateMark,
 	spinnerMs,
 	spread,
-	themeVar,
 	workingFrames,
 } from "./visual-language.ts";
 
@@ -29,16 +25,6 @@ const maxFinished = 3;
 const maxRows = 8;
 const tickMs = 1000;
 const coalesceMs = 400;
-
-const glyphs: Record<ChildRecord["state"], [string, ThemeColor]> = {
-	queued: ["○", "muted"],
-	running: ["◐", "accent"],
-	waiting: ["?", "warning"],
-	completed: ["✓", "success"],
-	failed: ["✗", "error"],
-	cancelled: ["–", "muted"],
-	"timed out": ["⧖", "error"],
-};
 
 const rank: Record<ChildRecord["state"], number> = {
 	waiting: 0,
@@ -66,20 +52,15 @@ function childMeta(child: ChildRecord, now: number, width: number) {
 	return `${model} ${elapsed}`;
 }
 
-const running = themeVar("cyan", glyphs.running[1]);
-
 export function childGlyph(theme: ChildTheme, child: ChildRecord) {
-	const [glyph, color] = glyphs[child.state];
-	return child.state === "running"
-		? running(glyph, theme)
-		: theme.fg(color, glyph);
+	return runStateMark(child.state).paint(theme);
 }
 
 function rowGlyph(theme: ChildTheme, child: ChildRecord, now: number) {
 	if (child.state !== "running") return childGlyph(theme, child);
 	const frame =
 		workingFrames[Math.floor(now / spinnerMs) % workingFrames.length];
-	return running(frame, theme);
+	return runStateMark("running").paint(theme, frame);
 }
 
 function childrenHeading(theme: ChildTheme, rows: ChildRecord[]) {

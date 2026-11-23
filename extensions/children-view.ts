@@ -78,6 +78,7 @@ import {
 	legacyDurationWidth,
 	minThoughtMs,
 	narrowScreen,
+	runStateMark,
 	spread,
 } from "./visual-language.ts";
 
@@ -1432,7 +1433,8 @@ function createChildrenView(
 	}
 
 	function glyph(item: Shown) {
-		if (item.listed?.interrupted && !item.live) return theme.fg("warning", "⊘");
+		if (item.listed?.interrupted && !item.live)
+			return runStateMark("interrupted").paint(theme);
 		return childGlyph(theme, item.child);
 	}
 
