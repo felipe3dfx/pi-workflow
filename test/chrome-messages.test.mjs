@@ -1461,18 +1461,41 @@ test("below 60 terminal columns a multi-line user message ends its last line wit
 		"   one two three four five six seven".padEnd(43),
 		`${" ".repeat(34)}11:55 AM `,
 	]);
-	const open = `\x1b[48;5;${code("userMessageBg")}m`;
-	const close = "\x1b[49m";
-	const row = ["A", "B", "C", "D"].reduce(
-		(line, mark) => line.replaceAll(`\x1b]133;${mark}\x07`, ""),
-		lines[3],
+	assert.deepEqual(
+		cellBackgrounds(lines[3]),
+		Array(43).fill(`5;${code("userMessageBg")}`),
+		JSON.stringify(lines[3]),
 	);
-	assert.ok(row.startsWith(open), JSON.stringify(row));
-	assert.ok(row.endsWith(close), JSON.stringify(row));
-	const band = row.slice(open.length, -close.length);
-	for (const reset of [close, "\x1b[0m", "\x1b[m", "\x1b[48;"])
-		assert.ok(!band.includes(reset), JSON.stringify(row));
 });
+
+// The SGR background in effect at each visible cell of a one-cell-per-character
+// line: "default" after a reset, else its 48 parameters or its 4x/10x code.
+function cellBackgrounds(line) {
+	const cells = [];
+	let background = "default";
+	const esc = String.fromCharCode(27);
+	const bel = String.fromCharCode(7);
+	const pieces = new RegExp(
+		`${esc}\\[([\\d;:]*)m|${esc}\\[[\\d;:?]*[A-Za-z]|${esc}\\][^${bel}]*${bel}|([^${esc}])`,
+		"gu",
+	);
+	for (const [, sgr, cell] of line.matchAll(pieces)) {
+		if (cell !== undefined) cells.push(background);
+		if (sgr === undefined) continue;
+		const codes = sgr.split(/[;:]/).map((value) => Number(value || 0));
+		for (let i = 0; i < codes.length; i++) {
+			const n = codes[i];
+			const extended = codes[i + 1] === 5 ? 2 : 4;
+			if (n === 0 || n === 49) background = "default";
+			else if ((n >= 40 && n <= 47) || (n >= 100 && n <= 107))
+				background = String(n);
+			else if (n === 48)
+				background = codes.slice(i + 1, i + 1 + extended).join(";");
+			if (n === 38 || n === 48) i += extended;
+		}
+	}
+	return cells;
+}
 
 test("below 60 terminal columns a click reaches assistant text across the full 40 columns, and the stamp, its own row and the right margin reach nothing", (t) => {
 	const seen = markdownClicks(t);
