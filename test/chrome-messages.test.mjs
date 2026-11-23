@@ -1271,7 +1271,9 @@ test("a click on native Bash output below 60 terminal columns reaches the output
 	);
 });
 
-test("a click on an open thought's body below 60 terminal columns reaches the text cell under it across the full unstamped width, and the rail and right margin reach nothing", (t) => {
+// Stands in for Markdown's click handler for one test: it handles every event
+// and records it in the returned list.
+function markdownClicks(t) {
 	const original = Markdown.prototype.handleMouse;
 	const seen = [];
 	Markdown.prototype.handleMouse = (event) => {
@@ -1282,6 +1284,11 @@ test("a click on an open thought's body below 60 terminal columns reaches the te
 		if (original === undefined) delete Markdown.prototype.handleMouse;
 		else Markdown.prototype.handleMouse = original;
 	});
+	return seen;
+}
+
+test("a click on an open thought's body below 60 terminal columns reaches the text cell under it across the full unstamped width, and the rail and right margin reach nothing", (t) => {
+	const seen = markdownClicks(t);
 	patched(t);
 	densityTerminal(t, 44);
 	const component = assistantComponent(false);
@@ -1313,16 +1320,7 @@ test("a click on an open thought's body below 60 terminal columns reaches the te
 });
 
 test("a click on assistant text below 60 terminal columns reaches the text cell under it, and the lane and right margin reach nothing", (t) => {
-	const original = Markdown.prototype.handleMouse;
-	const seen = [];
-	Markdown.prototype.handleMouse = (event) => {
-		seen.push(event);
-		return { handled: true };
-	};
-	t.after(() => {
-		if (original === undefined) delete Markdown.prototype.handleMouse;
-		else Markdown.prototype.handleMouse = original;
-	});
+	const seen = markdownClicks(t);
 	patched(t);
 	densityTerminal(t, 44);
 	const component = assistantComponent(true);
@@ -1479,16 +1477,7 @@ test("below 60 terminal columns a multi-line user message ends its last line wit
 });
 
 test("below 60 terminal columns a click reaches assistant text across the full 40 columns, and the stamp, its own row and the right margin reach nothing", (t) => {
-	const original = Markdown.prototype.handleMouse;
-	const seen = [];
-	Markdown.prototype.handleMouse = (event) => {
-		seen.push(event);
-		return { handled: true };
-	};
-	t.after(() => {
-		if (original === undefined) delete Markdown.prototype.handleMouse;
-		else Markdown.prototype.handleMouse = original;
-	});
+	const seen = markdownClicks(t);
 	patched(t);
 	densityTerminal(t, 44);
 	const component = assistantComponent(true);
