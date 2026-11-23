@@ -15,6 +15,7 @@ import {
 import {
 	type Component,
 	Input,
+	type OverlayOptions,
 	type SelectItem,
 	SelectList,
 	type SelectListLayoutOptions,
@@ -35,7 +36,7 @@ import {
 	type PatchMethod,
 	type PatchTarget,
 } from "./chrome-patch.ts";
-import { theme } from "./visual-language.ts";
+import { densityBinding, narrowScreen, theme } from "./visual-language.ts";
 
 export type MenuTheme = Pick<Theme, "fg" | "bg" | "bold">;
 export type Hint = [key: string, action: string];
@@ -57,6 +58,9 @@ const close = " [×] ";
 
 type SelectListState = {
 	theme: SelectListTheme & { [NATIVE]?: true };
+	selectedIndex: number;
+	filteredItems: readonly SelectItem[];
+	getVisibleRange(): { startIndex: number; endIndex: number };
 	truncatePrimary(
 		item: SelectItem,
 		isSelected: boolean,
@@ -81,8 +85,34 @@ type SettingsListState = {
 	};
 };
 
-export function fit(line: string, width: number) {
-	return visibleWidth(line) > width ? truncateToWidth(line, width, "") : line;
+export function fit(line: string, width: number, ellipsis = "") {
+	return visibleWidth(line) > width
+		? truncateToWidth(line, width, ellipsis)
+		: line;
+}
+
+// Resolved once, when the overlay opens, the way Pi resolves it: an open
+// overlay keeps that width across a resize until it is reopened, and only Pi's
+// clamp to the columns left can narrow it (NS-09, accepted risk W9).
+export function overlayAtOpen(options: OverlayOptions): OverlayOptions {
+	const columns = densityBinding()?.terminal.columns;
+	if (columns === undefined) return options;
+	const { minWidth, ...fixed } = options;
+	const { margin } = options;
+	const sides =
+		typeof margin === "number"
+			? margin * 2
+			: (margin?.left ?? 0) + (margin?.right ?? 0);
+	const room = Math.max(1, columns - Math.max(0, sides));
+	if (narrowScreen()) return { ...fixed, width: room };
+	const percent = /^(\d+(?:\.\d+)?)%$/.exec(String(options.width));
+	const asked =
+		typeof options.width === "number"
+			? options.width
+			: percent
+				? Math.floor((columns * Number(percent[1])) / 100)
+				: Math.min(80, room);
+	return { ...fixed, width: Math.min(Math.max(asked, minWidth ?? 0), room) };
 }
 
 export function selectedRow(t: MenuTheme, line: string, width: number) {
@@ -102,13 +132,14 @@ export function menuRow(
 	selected: boolean,
 	width: number,
 	chevron?: boolean,
+	narrow = false,
 ) {
 	const tail = chevron === undefined ? " " : chevron ? " › " : "   ";
 	const room = Math.max(0, width - 2 - tail.length);
 	const shownValue = truncateToWidth(
 		value,
 		Math.max(0, room - Math.min(visibleWidth(label), 8) - 1),
-		"",
+		narrow ? "…" : "",
 	);
 	const valueWidth = visibleWidth(shownValue);
 	const shownLabel = truncateToWidth(
@@ -192,8 +223,8 @@ function closeSpan(width: number) {
 	return start > 4 ? { start: start + 1, end: start + 4 } : undefined;
 }
 
-export function modalMetrics(width: number) {
-	const pad = framePad(width);
+export function modalMetrics(width: number, narrow = false) {
+	const pad = narrow ? (width >= 6 ? 1 : 0) : framePad(width);
 	return {
 		pad,
 		inner: width - 2 - pad * 2,
@@ -207,9 +238,11 @@ export function modalFrame(
 	title: string,
 	body: readonly string[],
 	width: number,
+	narrow = false,
 ) {
-	if (width < 4) return body.map((line) => fit(line, width));
-	const { pad, inner, close: shutSpan } = modalMetrics(width);
+	const cut = narrow ? "…" : "";
+	if (width < 4) return body.map((line) => fit(line, width, cut));
+	const { pad, inner, close: shutSpan } = modalMetrics(width, narrow);
 	const border = (text: string) => t.fg("border", text);
 	const shut = shutSpan ? close : "";
 	const room = width - 6 - shut.length;
@@ -223,7 +256,7 @@ export function modalFrame(
 		: `${border(`┌${"─".repeat(rule + 1)}`)}${t.fg("dim", shut)}${border("─┐")}`;
 	const side = border("│") + " ".repeat(pad);
 	const rows = body.map((line) => {
-		const clipped = fit(line, inner);
+		const clipped = fit(line, inner, cut);
 		const fill = " ".repeat(Math.max(0, inner - visibleWidth(clipped)));
 		return `${side}${clipped}${fill}${" ".repeat(pad)}${border("│")}`;
 	});
@@ -252,14 +285,70 @@ function wrapSelectRender(original: PatchMethod) {
 			);
 		const own = this.theme;
 		this.theme = listTheme;
+		let lines: string[];
 		try {
-			return (original as (width: number) => readonly string[])
+			lines = (original as (width: number) => readonly string[])
 				.call(this, width)
 				.map((line) => fit(line, width));
 		} finally {
 			this.theme = own;
 		}
+		const rows = settingsPass?.list && submenuRows(this, lines, width);
+		if (settingsPass && rows) settingsPass.rows = rows;
+		return lines;
 	} as PatchMethod;
+}
+
+// The lines a component renders after `target`, one of its descendants.
+function linesAfter(
+	node: unknown,
+	target: object,
+	width: number,
+): string[] | undefined {
+	if (node === target) return [];
+	// A settings list with an open submenu renders only that submenu.
+	const open = (node as Partial<SettingsListState>).submenuComponent;
+	if (node instanceof SettingsList && open)
+		return linesAfter(open, target, width);
+	const { activeComponent, children = [] } = node as {
+		activeComponent?: unknown;
+		children?: Component[];
+	};
+	if (activeComponent && children.length === 0)
+		return linesAfter(activeComponent, target, width);
+	for (const [index, child] of children.entries()) {
+		const after = linesAfter(child, target, width);
+		if (after)
+			return [
+				...after,
+				...children.slice(index + 1).flatMap((next) => next.render(width)),
+			];
+	}
+	return undefined;
+}
+
+// Where a select list in an open settings submenu puts its selection, and the
+// rows the submenu renders after it, which end with its hints.
+function submenuRows(
+	list: SelectListState,
+	lines: readonly string[],
+	width: number,
+): BodyRows | undefined {
+	const open = settingsPass?.list?.submenuComponent;
+	const after = open ? linesAfter(open, list, width) : undefined;
+	if (!after) return undefined;
+	const text = after.findIndex(
+		(line) => stripTerminalSequences(line).trim() !== "",
+	);
+	const selected =
+		list.filteredItems.length > 0
+			? list.selectedIndex - list.getVisibleRange().startIndex
+			: -1;
+	return {
+		count: lines.length + after.length,
+		selected,
+		hints: lines.length + (text < 0 ? after.length : text),
+	};
 }
 
 function wrapRenderItem(original: PatchMethod) {
@@ -367,9 +456,27 @@ function settingsHints(state: SettingsListState, width: number) {
 	return ["", ...lines.map((line) => fit(`  ${line}`, width))];
 }
 
+// The last `count` rows of a settings body: the selected one and where the
+// hints start among them.
+type BodyRows = { count: number; selected: number; hints: number };
+
+// Set while a settings modal renders its list: the modal's opening density and
+// its list in, and the rows of the selection and hints out.
+let settingsPass:
+	| { narrow: boolean; list?: SettingsListState; rows?: BodyRows }
+	| undefined;
+
 function renderMainList(this: SettingsListState, width: number) {
 	const t = theme();
 	const lines: string[] = [];
+	let selected = -1;
+	const withHints = () => {
+		const hints = lines.length + 1;
+		lines.push(...settingsHints(this, width));
+		if (settingsPass)
+			settingsPass.rows = { count: lines.length, selected, hints };
+		return lines;
+	};
 	if (this.searchEnabled && this.searchInput) {
 		const swaps: Swap[] = [];
 		try {
@@ -382,20 +489,19 @@ function renderMainList(this: SettingsListState, width: number) {
 	}
 	if (this.items.length === 0) {
 		lines.push(fit(t.fg("dim", "  No settings available"), width));
-		if (this.searchEnabled) lines.push(...settingsHints(this, width));
-		return lines;
+		return this.searchEnabled ? withHints() : lines;
 	}
 	const displayItems = this.getDisplayItems();
 	if (displayItems.length === 0) {
 		lines.push(fit(t.fg("dim", "  No matching settings"), width));
-		lines.push(...settingsHints(this, width));
-		return lines;
+		return withHints();
 	}
 	const { startIndex, endIndex } = this.getVisibleRange(displayItems);
 	for (let i = startIndex; i < endIndex; i++) {
 		const item = displayItems[i];
 		if (!item) continue;
 		const action = !item.submenu && item.values?.length === 1;
+		if (i === this.selectedIndex) selected = lines.length;
 		lines.push(
 			menuRow(
 				t,
@@ -404,6 +510,7 @@ function renderMainList(this: SettingsListState, width: number) {
 				i === this.selectedIndex,
 				width,
 				action || Boolean(item.submenu),
+				settingsPass?.narrow,
 			),
 		);
 	}
@@ -418,8 +525,7 @@ function renderMainList(this: SettingsListState, width: number) {
 			lines.push(fit(t.fg("dim", `  ${line}`), width));
 		}
 	}
-	lines.push(...settingsHints(this, width));
-	return lines;
+	return withHints();
 }
 
 const marks = ["→ ", "› "];
@@ -698,23 +804,257 @@ function crumbs(list: SettingsListState): string[] {
 	return [label, ...(nested ? crumbs(nested) : [])].filter(Boolean);
 }
 
-function settingsFrame(width: number) {
-	const edge = marginFor(width);
+// Relies on pi-tui 1.6.0 internals, as fixed-header.ts does: TuiAltScreen's
+// `mode` and private `layoutRoot`, and the layout-node symbol. Pi renders a
+// docked component without telling it its height, so the settings modal adds
+// up what the rest of the fullscreen layout takes at its width.
+const LAYOUT_NODE = Symbol.for("@earendil-works/pi-tui/layout-node");
+
+type StackEntry = {
+	component: Component;
+	basis?: number | "auto";
+	minSize?: number;
+	maxSize?: number;
+	visible?(viewport: { width: number; height: number }): boolean;
+};
+type LayoutNode = { type: string; entries?: StackEntry[]; gap?: number };
+type LayoutHost = { mode?: string; layoutRoot?: Component };
+
+function layoutNode(component: Component) {
+	const node = (component as { [LAYOUT_NODE]?: () => LayoutNode })[LAYOUT_NODE];
+	return typeof node === "function" ? node.call(component) : undefined;
+}
+
+function stackOf(
+	component: Component,
+	viewport: { width: number; height: number },
+) {
+	const node = layoutNode(component);
+	if (!node)
+		return {
+			gap: 0,
+			entries: ((component as { children?: Component[] }).children ?? []).map(
+				(child): StackEntry => ({ component: child }),
+			),
+		};
+	if (node.type !== "vstack") return undefined;
+	return {
+		gap: node.gap ?? 0,
+		entries: (node.entries ?? []).filter(
+			(entry) => entry.visible?.(viewport) ?? true,
+		),
+	};
+}
+
+function holds(
+	component: Component,
+	target: object,
+	viewport: { width: number; height: number },
+): boolean {
+	return (
+		component === target ||
+		(stackOf(component, viewport)?.entries ?? []).some((entry) =>
+			holds(entry.component, target, viewport),
+		)
+	);
+}
+
+// The rows left for `target`, and the innermost stack entry that holds it.
+type Room = { rows: number; stack?: Component; entry?: Component };
+
+function roomIn(
+	component: Component,
+	target: object,
+	width: number,
+	height: number,
+	viewport: { width: number; height: number },
+): Room | undefined {
+	if (component === target) return { rows: height };
+	const stack = stackOf(component, viewport);
+	const at =
+		stack?.entries.findIndex((entry) =>
+			holds(entry.component, target, viewport),
+		) ?? -1;
+	if (!stack || at < 0) return undefined;
+	const others = stack.entries.reduce((sum, entry, index) => {
+		if (index === at) return sum;
+		const natural =
+			typeof entry.basis === "number"
+				? entry.basis
+				: entry.component.render(width).length;
+		const least = entry.minSize ?? 0;
+		return sum + Math.max(least, Math.min(entry.maxSize ?? natural, natural));
+	}, 0);
+	const gaps = stack.gap * (stack.entries.length - 1);
+	const entry = stack.entries[at].component;
+	const inner = roomIn(entry, target, width, height - gaps - others, viewport);
+	return inner?.stack || !layoutNode(component)
+		? inner
+		: inner && { ...inner, stack: component, entry };
+}
+
+function dockRoom(target: object, width: number): Room | undefined {
+	const bound = densityBinding();
+	const rows = bound?.terminal.rows;
+	if (rows === undefined) return undefined;
+	const host = bound?.host as LayoutHost | undefined;
+	const root = host?.mode === "fullscreen" ? host.layoutRoot : undefined;
+	const viewport = { width, height: rows };
+	return (root && roomIn(root, target, width, rows, viewport)) ?? { rows };
+}
+
+// A tall settings modal fixes the size of the stack entry that holds it, so
+// Pi's own allocation shrinks the entries around it instead of clipping it.
+type Reservation = { entry: Component; selector: object; rows: number };
+
+const reservations = new Map<Component, Reservation>();
+
+function release(stack: Component) {
+	if (!reservations.delete(stack)) return;
+	Reflect.deleteProperty(stack, LAYOUT_NODE);
+}
+
+function reserve(
+	stack: Component,
+	entry: Component,
+	selector: object,
+	rows: number | undefined,
+) {
+	const held = reservations.get(stack);
+	if (rows === undefined) {
+		if (held?.selector === selector) release(stack);
+		return;
+	}
+	if (held) {
+		Object.assign(held, { entry, selector, rows });
+		return;
+	}
+	if (Object.hasOwn(stack, LAYOUT_NODE)) return;
+	const reservation: Reservation = { entry, selector, rows };
+	reservations.set(stack, reservation);
+	const own = Object.getPrototypeOf(stack)[LAYOUT_NODE] as () => LayoutNode;
+	Object.defineProperty(stack, LAYOUT_NODE, {
+		configurable: true,
+		writable: true,
+		value() {
+			const node = own.call(stack);
+			const { entry, selector, rows } = reservation;
+			const everywhere = { width: 1, height: Number.MAX_SAFE_INTEGER };
+			if (!holds(entry, selector, everywhere)) {
+				release(stack);
+				return node;
+			}
+			return {
+				...node,
+				entries: node.entries?.map((item) =>
+					item.component === entry
+						? { ...item, minSize: rows, maxSize: rows }
+						: item,
+				),
+			};
+		},
+	});
+}
+
+type BodyWindow = { lines: readonly string[]; row(shown: number): number };
+
+type SettingsView = { narrow: boolean; width: number; window?: BodyWindow };
+
+const settingsViews = new WeakMap<object, SettingsView>();
+
+// Density and width are decided by the first render of each settings modal;
+// later renders only narrow it to the columns they get (NS-09, W9).
+function settingsView(selector: object, width: number) {
+	let view = settingsViews.get(selector);
+	if (!view) {
+		view = { narrow: narrowScreen(), width };
+		settingsViews.set(selector, view);
+	}
+	return view;
+}
+
+// The selected row and the first hint row of a whole settings body.
+type BodyLayout = { selected: number; hints: number };
+
+function bodyLayout(
+	body: readonly string[],
+	rows: BodyRows | undefined,
+): BodyLayout | undefined {
+	if (!rows) return undefined;
+	const offset = body.length - rows.count;
+	return {
+		selected: rows.selected >= 0 ? offset + rows.selected : -1,
+		hints: offset + rows.hints,
+	};
+}
+
+// A body taller than its room keeps the list's hints in view and scrolls the
+// rest around the selected row.
+function tallBody(
+	body: readonly string[],
+	room: number,
+	layout: BodyLayout | undefined,
+): BodyWindow | undefined {
+	if (body.length <= room) return undefined;
+	const hints = layout?.hints ?? body.length;
+	const pinned = Math.min(body.length - hints, room - 1);
+	const rest = body.length - pinned;
+	const size = room - pinned;
+	const focus = Math.max(0, layout?.selected ?? 0);
+	const start = Math.max(
+		0,
+		Math.min(focus - Math.floor(size / 2), rest - size),
+	);
+	return {
+		lines: [...body.slice(start, start + size), ...body.slice(rest)],
+		row: (shown) => (shown < size ? start + shown : rest + shown - size),
+	};
+}
+
+function settingsFrame(width: number, narrow: boolean) {
+	const edge = narrow ? 0 : marginFor(width);
 	const outer = width - edge * 2;
-	const metrics = modalMetrics(outer);
+	const metrics = modalMetrics(outer, narrow);
 	return {
 		edge,
 		outer,
 		left: edge + metrics.inset,
 		inner: Math.max(1, metrics.inner),
 		top: outer >= 4 ? 1 : 0,
+		close: metrics.close,
 	};
 }
 
 function renderSettings(this: SettingsSelectorState, width: number) {
 	const list = this.getSettingsList();
-	const { edge, outer, inner, top } = settingsFrame(width);
-	const body = list.render(inner);
+	const view = settingsView(this, width);
+	const { edge, outer, inner, top } = settingsFrame(
+		Math.min(view.width, width),
+		view.narrow,
+	);
+	const pass: NonNullable<typeof settingsPass> = {
+		narrow: view.narrow,
+		list: list as unknown as SettingsListState,
+	};
+	settingsPass = pass;
+	let body: readonly string[];
+	try {
+		body = list.render(inner);
+	} finally {
+		settingsPass = undefined;
+	}
+	const layout = bodyLayout(body, pass.rows);
+	const room = view.narrow ? dockRoom(this, width) : undefined;
+	view.window = undefined;
+	if (room) {
+		// The frame, the selected row and the hints, when Pi has the rows.
+		const pinned = body.length - (layout?.hints ?? body.length);
+		const least = top * 2 + Math.min(body.length, pinned + 1);
+		const rows = Math.max(room.rows, least);
+		view.window = tallBody(body, Math.max(1, rows - top * 2), layout);
+		if (room.stack && room.entry)
+			reserve(room.stack, room.entry, this, view.window ? rows : undefined);
+	}
 	const border = Array<string>(top).fill("");
 	this.childLines = {
 		width: inner,
@@ -726,9 +1066,13 @@ function renderSettings(this: SettingsSelectorState, width: number) {
 		"Settings",
 		...crumbs(list as unknown as SettingsListState),
 	].join(" › ");
-	return modalFrame(theme(), title, body, outer).map(
-		(line) => " ".repeat(edge) + line,
-	);
+	return modalFrame(
+		theme(),
+		title,
+		view.window?.lines ?? body,
+		outer,
+		view.narrow,
+	).map((line) => " ".repeat(edge) + line);
 }
 
 function closeSettings(list: SettingsListState) {
@@ -739,15 +1083,34 @@ function closeSettings(list: SettingsListState) {
 
 function wrapSettingsMouse(original: PatchMethod) {
 	return function (this: SettingsSelectorState, event: TuiMouseEvent) {
-		const { edge, outer, left, inner } = settingsFrame(event.width);
-		const shut = modalMetrics(outer).close;
+		const { narrow, width, window } = settingsView(this, event.width);
+		const {
+			edge,
+			outer,
+			left,
+			inner,
+			top,
+			close: shut,
+		} = settingsFrame(Math.min(width, event.width), narrow);
 		const x = event.x - edge;
 		if (event.y === 0 && shut && x >= shut.start && x < shut.end) {
 			if (event.type !== "click" || event.button !== "left") return undefined;
 			closeSettings(this.getSettingsList() as unknown as SettingsListState);
 			return { handled: true };
 		}
-		return (original as MouseHandler).call(this, shifted(event, left, inner));
+		if (narrow && (event.x < left || event.x >= left + inner)) return undefined;
+		// Columns outside the frame, such as those a frame kept from a narrower
+		// terminal leaves to its right, reach no setting.
+		if (event.x < edge || event.x >= edge + outer) return undefined;
+		const row = event.y - top;
+		if (window && (row < 0 || row >= window.lines.length)) return undefined;
+		const y = window ? top + window.row(row) : event.y;
+		const height = event.height + y - event.y;
+		return (original as MouseHandler).call(this, {
+			...shifted(event, left, inner),
+			y,
+			height,
+		});
 	} as PatchMethod;
 }
 
@@ -825,5 +1188,6 @@ export function patchMenus() {
 }
 
 export function restoreMenus() {
+	for (const stack of [...reservations.keys()]) release(stack);
 	patchSet.restore();
 }
