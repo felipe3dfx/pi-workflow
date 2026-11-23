@@ -289,6 +289,10 @@ test("below 60 terminal columns a timed-out row shows the shared ✗ in the erro
 	const wide = [...narrow.slice(0, 5), "<error>⧖</error>"];
 	const terminal = densityTerminal(t, 44);
 	assert.deepEqual(glyphs(), narrow);
+	assert.match(
+		renderChildrenBox(theme, records, at, 43)[0],
+		/^▾ Subagents 1 waiting/,
+	);
 	terminal.columns = 60;
 	assert.deepEqual(glyphs(), wide);
 	terminal.columns = 59;

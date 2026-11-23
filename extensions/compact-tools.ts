@@ -22,6 +22,8 @@ import { seated } from "./shell.ts";
 import { settings, shellOptions } from "./shell-settings.ts";
 import {
 	theme as activeTheme,
+	narrowScreen,
+	runStateMark,
 	themeBgVar,
 	themeVar,
 } from "./visual-language.ts";
@@ -114,11 +116,16 @@ function toolRow(
 	detail = "",
 	path = false,
 ) {
-	const glyph = status.isError
-		? theme.fg("error", "◆")
-		: status.isPartial
-			? running("◆", theme)
-			: theme.fg("toolTitle", "◆");
+	// The glyph stays ◆ in every state; narrow, only its colour follows the scale (NS-15).
+	const glyph = narrowScreen()
+		? runStateMark(
+				status.isError ? "failed" : status.isPartial ? "running" : "completed",
+			).paint(theme, "◆")
+		: status.isError
+			? theme.fg("error", "◆")
+			: status.isPartial
+				? running("◆", theme)
+				: theme.fg("toolTitle", "◆");
 	const head = theme.bold(theme.fg("muted", label));
 	if (!detail) return `${glyph} ${head}`;
 	return `${glyph} ${head} ${path ? pathDetail(detail, theme) : theme.fg("dim", detail)}`;

@@ -28,6 +28,7 @@ import {
 import { readSelection } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
+import { densityTerminal } from "./support/density-terminal.mjs";
 
 const builtIns = {
 	read: createReadToolDefinition,
@@ -290,6 +291,42 @@ test("a closed tool colors only its glyph by status: error, running dim, done to
 		`<dim>◆</dim> ${rest}`,
 	);
 	assert.equal(row({ isError: false }), `<toolTitle>◆</toolTitle> ${rest}`);
+});
+
+test("below 60 terminal columns a closed tool keeps ◆ in every state and takes its colour from the shared scale, and 60 columns or more keeps today's colours", (t) => {
+	initTheme("dark", false);
+	const tool = loadTools().get("bash");
+	const tagged = {
+		...theme,
+		fg: (color, text) => `<${color}>${text}</${color}>`,
+	};
+	const context = renderContext({ command: "false" }, false, "/");
+	const glyphs = () =>
+		[
+			{ isError: true },
+			{ isError: false, isPartial: true },
+			{ isError: false },
+		].map(
+			(status) =>
+				tool
+					.renderCall({ command: "false" }, tagged, { ...context, ...status })
+					.render(80)[0]
+					.split(" ")[0],
+		);
+	const narrow = [
+		"<error>◆</error>",
+		"<accent>◆</accent>",
+		"<success>◆</success>",
+	];
+	const wide = ["<error>◆</error>", "<dim>◆</dim>", "<toolTitle>◆</toolTitle>"];
+	const terminal = densityTerminal(t, 44);
+	assert.deepEqual(glyphs(), narrow);
+	terminal.columns = 60;
+	assert.deepEqual(glyphs(), wide);
+	terminal.columns = 59;
+	assert.deepEqual(glyphs(), narrow);
+	terminal.columns = 100;
+	assert.deepEqual(glyphs(), wide);
 });
 
 const themeKey = Symbol.for("@earendil-works/pi-coding-agent:theme");

@@ -226,6 +226,41 @@ test("an assistant error is a red glyph with muted text that wraps under the tex
 	assert.ok(lines[1].includes(`${theme.fg("error", "◆")} ${muted}Error:`));
 });
 
+test("below 60 terminal columns an aborted reply shows a muted – while an error keeps the red ◆, and 60 columns or more keeps the red ◆ for both", (t) => {
+	patched(t);
+	const terminal = densityTerminal(t, 44);
+	const head = (stopReason) => {
+		const component = assistantComponent(true);
+		component.updateContent(
+			assistant([], { stopReason, errorMessage: "Request was aborted" }),
+		);
+		return component.render(43)[1];
+	};
+	const narrow = () => {
+		assert.equal(
+			stripVTControlCharacters(head("aborted")).trimEnd(),
+			"– Operation aborted",
+		);
+		assert.ok(head("aborted").includes(`${theme.fg("muted", "–")} `));
+		assert.ok(head("error").includes(`${theme.fg("error", "◆")} `));
+		assert.doesNotMatch(head("aborted"), /◆/);
+	};
+	const wide = () => {
+		for (const stopReason of ["aborted", "error"])
+			assert.ok(
+				head(stopReason).includes(`${theme.fg("error", "◆")} `),
+				stopReason,
+			);
+	};
+	narrow();
+	terminal.columns = 60;
+	wide();
+	terminal.columns = 59;
+	narrow();
+	terminal.columns = 100;
+	wide();
+});
+
 test("MCP tools and tools without a call renderer get the compact self-rendered row through the tool renderer resolver, others keep their definition", (t) => {
 	patched(t);
 	const preview = readSelection(undefined, []);

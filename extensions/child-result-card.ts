@@ -35,6 +35,7 @@ import {
 	legacyDurationWidth,
 	narrowScreen,
 	pinRight,
+	runStateMark,
 	spread,
 } from "./visual-language.ts";
 
@@ -62,6 +63,17 @@ function tone(card: Card, question: boolean): ThemeColor {
 	return "toolTitle";
 }
 
+// Narrow, an ended card's glyph and state word take the shared scale's tone.
+function paintTone(theme: Theme, card: Card, question: boolean, text: string) {
+	const state = question ? undefined : card.state;
+	if (
+		narrowScreen() &&
+		(state === "failed" || state === "timed out" || state === "cancelled")
+	)
+		return runStateMark(state).paint(theme, text);
+	return theme.fg(tone(card, question), text);
+}
+
 function verdictTone(verdict: string): ThemeColor {
 	if (verdict === "fail") return "error";
 	if (verdict === "blocked" || verdict === "partial") return "warning";
@@ -85,13 +97,13 @@ function header(
 	open: boolean,
 	width = Number.POSITIVE_INFINITY,
 ) {
-	const glyph = theme.fg(tone(card, question), "◆");
+	const glyph = paintTone(theme, card, question, "◆");
 	const label = (text: string) => theme.bold(theme.fg("muted", text));
 	let rest = [card.role, card.id.slice(0, 4)].filter(Boolean).join(" ");
 	if (question)
 		return `${glyph} ${label("Subagent")} ${rest} ${theme.fg("warning", `asks · question ${card.question ?? "?"}`)}`;
 	if (card.state && card.state !== "completed")
-		rest += ` ${theme.fg(tone(card, question), card.state)}`;
+		rest += ` ${paintTone(theme, card, question, card.state)}`;
 	if (card.verdict)
 		rest += ` ${theme.fg(verdictTone(card.verdict), card.verdict)}`;
 	const line = `${glyph} ${label("Subagent")} ${rest}`;
