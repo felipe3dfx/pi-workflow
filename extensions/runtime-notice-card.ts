@@ -1,4 +1,8 @@
-import { keyText, type Theme } from "@earendil-works/pi-coding-agent";
+import {
+	keyText,
+	type Theme,
+	type ThemeColor,
+} from "@earendil-works/pi-coding-agent";
 import {
 	type Component,
 	type TuiMouseEvent,
@@ -14,15 +18,31 @@ import { affordance, narrowScreen, spread } from "./visual-language.ts";
 
 export type NoticeMessage = { content: unknown; details?: unknown };
 
+export type Span = { text: string; tone: ThemeColor };
+
 export type NoticeParts = {
-	head: string;
+	title: string;
+	metric: Span;
 	action: string;
-	status?: string;
-	// Today's single wide row, kept byte for byte at 60 columns and above.
-	line: string;
+	status?: Span[];
+	// Separators of the single wide row at 60 columns and above: the metric's
+	// sits inside the metric's tone, the action's inside the dim action.
+	wide: { metric: string; action: string };
 };
 
 const lane = "  ";
+const minTitle = 2;
+
+// Adjacent spans of one tone share one colour run.
+function paint(t: Theme, spans: Span[]) {
+	const runs: Span[] = [];
+	for (const span of spans) {
+		const last = runs.at(-1);
+		if (last?.tone === span.tone) last.text += span.text;
+		else runs.push({ ...span });
+	}
+	return runs.map((run) => t.fg(run.tone, run.text)).join("");
+}
 
 const opened = new WeakMap<NoticeMessage, boolean>();
 
@@ -73,25 +93,61 @@ export class RuntimeNoticeCard implements Component {
 		return narrowScreen() ? this.narrow(outer) : this.wide(outer);
 	}
 
+	label(title: string) {
+		const t = this.theme;
+		return `${t.fg("warning", "◆")} ${t.bold(t.fg("muted", title))}`;
+	}
+
+	body(inner: number) {
+		if (!this.open() || !this.text) return [];
+		return wrapTextWithAnsi(
+			this.theme.fg("dim", terminalSafeBlock(this.text)),
+			inner,
+		);
+	}
+
+	// The metric outranks the title: the title is cut first while a cut title
+	// still leaves room for the whole metric.
+	narrowHead(room: number) {
+		const { title, metric } = this.parts;
+		const titleRoom = room - visibleWidth(`◆  ${metric.text}`);
+		const shown =
+			visibleWidth(title) > titleRoom && titleRoom >= minTitle
+				? truncateToWidth(title, titleRoom, "…")
+				: title;
+		return `${this.label(shown)} ${paint(this.theme, [metric])}`;
+	}
+
 	narrow(outer: number) {
 		const t = this.theme;
 		const { width } = blockMargin(assistantInset, outer);
 		const inner = Math.max(1, width - lane.length);
-		const { head, action, status } = this.parts;
+		const { action, status } = this.parts;
+		const mark = affordance(t);
 		const lines = [
-			spread(head, affordance(t), width, "…"),
+			spread(this.narrowHead(width - visibleWidth(mark) - 1), mark, width, "…"),
 			...wrapTextWithAnsi(t.fg("warning", `→ ${action}`), inner).map(
 				(line) => lane + line,
 			),
 		];
-		if (status) lines.push(lane + truncateToWidth(status, inner, "…"));
-		if (this.open() && this.text)
-			for (const line of wrapTextWithAnsi(
-				t.fg("dim", terminalSafeBlock(this.text)),
-				inner,
-			))
-				lines.push(lane + line);
+		if (status)
+			lines.push(lane + truncateToWidth(paint(t, status), inner, "…"));
+		for (const line of this.body(inner)) lines.push(lane + line);
 		return lines.map((line) => truncateToWidth(line, width, "…"));
+	}
+
+	wideLine() {
+		const t = this.theme;
+		const { title, metric, action, status, wide } = this.parts;
+		const row = paint(t, [
+			{ ...metric, text: wide.metric + metric.text },
+			{ tone: "dim", text: wide.action + action },
+		]);
+		const [first, ...rest] = status ?? [];
+		const trail = first
+			? paint(t, [{ ...first, text: ` · ${first.text}` }, ...rest])
+			: "";
+		return `${this.label(title)} ${row}${trail}`;
 	}
 
 	wide(outer: number) {
@@ -103,18 +159,14 @@ export class RuntimeNoticeCard implements Component {
 		const hint = key
 			? t.fg("dim", `(${key} to ${this.open() ? "collapse" : "expand"})`)
 			: "";
+		const line = this.wideLine();
 		const top =
-			hint && visibleWidth(this.parts.line) + visibleWidth(hint) + 2 <= width
-				? spread(this.parts.line, hint, width)
-				: truncateToWidth(this.parts.line, width);
-		const lines = [margin + top];
-		if (!this.open() || !this.text) return lines;
-		const inner = Math.max(1, width - 2);
-		for (const line of wrapTextWithAnsi(
-			t.fg("dim", terminalSafeBlock(this.text)),
-			inner,
-		))
-			lines.push(`${margin}  ${line}`);
-		return lines;
+			hint && visibleWidth(line) + visibleWidth(hint) + 2 <= width
+				? spread(line, hint, width)
+				: truncateToWidth(line, width);
+		return [
+			margin + top,
+			...this.body(Math.max(1, width - 2)).map((body) => `${margin}  ${body}`),
+		];
 	}
 }

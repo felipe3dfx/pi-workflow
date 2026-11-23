@@ -112,8 +112,8 @@ test("a click on the row toggles the notice text, and a click on the text does n
 	assert.equal(plain(component).length, 2);
 });
 
-const notice = (t) =>
-	card(t, { content: explorationNotice(facts, "inline"), details: facts });
+const notice = (t, counts = facts) =>
+	card(t, { content: explorationNotice(counts, "inline"), details: counts });
 
 const at = (y, width) => ({
 	type: "click",
@@ -131,7 +131,7 @@ test("below 60 terminal columns the exploration head keeps its counts and ›, a
 	const component = notice(t);
 	assert.deepEqual(plain(component, 43), [
 		"",
-		"◆ Exploration budget · 4 lookups · 47 KB ›",
+		"◆ Exploration budget 4 lookups · 47 KB   ›",
 		"  → continue discovery in an explore child",
 	]);
 	const raw = component.render(43);
@@ -143,16 +143,28 @@ test("below 60 terminal columns the exploration head keeps its counts and ›, a
 	assert.equal(component.handleMouse(at(2, 43)), undefined);
 	assert.ok(component.handleMouse(at(1, 43))?.handled);
 	const open = plain(component, 43);
-	assert.equal(open[1], "◆ Exploration budget · 4 lookups · 47 KB ›");
+	assert.equal(open[1], "◆ Exploration budget 4 lookups · 47 KB   ›");
 	assert.equal(open[2], "  → continue discovery in an explore child");
 	assert.match(open[3], /^ {2}Exploration budget: 4 tracked lookups/);
 });
 
-test("below 60 terminal columns a narrower exploration notice cuts its head with … before › and wraps the action whole", (t) => {
+test("below 60 terminal columns the exploration head keeps both counts with their units at 44 columns and cuts its title with … first", (t) => {
+	densityTerminal(t, 44);
+	assert.equal(
+		plain(notice(t, { lookups: 4, textBytes: 101_000 }), 43)[1],
+		"◆ Exploration budget 4 lookups · 101 KB  ›",
+	);
+	assert.equal(
+		plain(notice(t, { lookups: 1234, textBytes: 12_300_000 }), 43)[1],
+		"◆ Exploration bu… 1234 lookups · 12.3 MB ›",
+	);
+});
+
+test("below 60 terminal columns a narrower exploration notice cuts its title with … before › and wraps the action whole", (t) => {
 	densityTerminal(t, 44);
 	assert.deepEqual(plain(notice(t), 30), [
 		"",
-		"◆ Exploration budget · 4 l… ›",
+		"◆ Explor… 4 lookups · 47 KB ›",
 		"  → continue discovery in an",
 		"  explore child",
 	]);

@@ -1,4 +1,4 @@
-import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { formatContextTokens } from "./chrome.ts";
 import {
@@ -9,6 +9,7 @@ import {
 	type NoticeMessage,
 	type NoticeParts,
 	RuntimeNoticeCard,
+	type Span,
 } from "./runtime-notice-card.ts";
 
 const meterCells = 8;
@@ -23,32 +24,34 @@ function meter(tokens: number, contextWindow: number | undefined) {
 }
 
 function advisorStatus(
-	t: Theme,
 	advisor: BackstopDetails["advisor"],
-	lead: string,
-) {
-	if (!advisor) return "";
+): Span[] | undefined {
+	if (!advisor) return undefined;
 	const { turnsAgo } = advisor;
 	if (typeof turnsAgo !== "number")
-		return t.fg("dim", `${lead}advisor not consulted`);
+		return [{ text: "advisor not consulted", tone: "dim" }];
 	const when =
 		turnsAgo === 0
 			? "this turn"
 			: `${turnsAgo} ${turnsAgo === 1 ? "turn" : "turns"} ago`;
-	return `${t.fg("dim", `${lead}advisor `)}${t.fg("success", "✓")}${t.fg("dim", ` ${when}`)}`;
+	return [
+		{ text: "advisor ", tone: "dim" },
+		{ text: "✓", tone: "success" },
+		{ text: ` ${when}`, tone: "dim" },
+	];
 }
 
-const action = "delegate the next bounded unit";
-
-function backstopParts(t: Theme, details: BackstopDetails): NoticeParts {
+function backstopParts(details: BackstopDetails): NoticeParts {
 	const { tokens, threshold, contextWindow, advisor } = details;
-	const usage = `${formatContextTokens(tokens)} / ${formatContextTokens(threshold)}${meter(tokens, contextWindow)}`;
-	const head = `${t.fg("warning", "◆")} ${t.bold(t.fg("muted", "Context"))} ${t.fg("warning", usage)}`;
 	return {
-		head,
-		action,
-		status: advisorStatus(t, advisor, ""),
-		line: `${head}${t.fg("dim", ` · ${action}`)}${advisorStatus(t, advisor, " · ")}`,
+		title: "Context",
+		metric: {
+			text: `${formatContextTokens(tokens)} / ${formatContextTokens(threshold)}${meter(tokens, contextWindow)}`,
+			tone: "warning",
+		},
+		action: "delegate the next bounded unit",
+		status: advisorStatus(advisor),
+		wide: { metric: "", action: " · " },
 	};
 }
 
@@ -64,7 +67,7 @@ export function registerContextBackstopCard(pi: ExtensionAPI) {
 				return undefined;
 			return new RuntimeNoticeCard(
 				message,
-				backstopParts(t, details),
+				backstopParts(details),
 				expanded,
 				t,
 			);
