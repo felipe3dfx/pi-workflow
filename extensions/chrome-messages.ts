@@ -43,6 +43,7 @@ import {
 	formatDuration,
 	initializedTheme,
 	minThoughtMs,
+	narrowScreen,
 	theme,
 	themeVar,
 } from "./visual-language.ts";
@@ -107,27 +108,68 @@ const shared = slots[SHARED];
 const { userStamps, thinkingTimes } = shared;
 let pendingUserStamp: number | undefined;
 
-export function edgeFor(edge: number, outer: number) {
+function edgeFor(edge: number, outer: number) {
 	return Math.min(edge, Math.max(0, Math.floor((outer - minTextWidth) / 2)));
+}
+
+type Pointer = { x: number; width: number };
+
+type Margin = {
+	left: number;
+	right: number;
+	width: number;
+	mouse<E extends Pointer>(event: E): E | undefined;
+};
+
+export function blockMargin(
+	edge: number,
+	outer: number,
+	narrowRight = Math.min(1, edge),
+): Margin {
+	const side = edgeFor(edge, outer);
+	const narrow = narrowScreen();
+	const left = narrow ? 0 : side;
+	const right = narrow ? narrowRight : side;
+	return {
+		left,
+		right,
+		width: Math.max(0, outer - left - right),
+		mouse(event) {
+			const width = event.width - left - right;
+			const x = event.x - left;
+			if (x < 0 || x >= width) return undefined;
+			return { ...event, x, width };
+		},
+	};
+}
+
+const unframed = (outer: number) => blockMargin(0, outer);
+
+function lane() {
+	return narrowScreen() ? "  " : "";
 }
 
 class Framed implements Component {
 	child: Component;
 	host = new Container();
 	frame: () => Frame;
-	edge: number;
+	margin: (outer: number) => Margin;
 
-	constructor(child: Component, frame: () => Frame, edge = 0) {
+	constructor(
+		child: Component,
+		frame: () => Frame,
+		margin: (outer: number) => Margin = unframed,
+	) {
 		this.child = child;
 		this.host.addChild(child);
 		this.frame = frame;
-		this.edge = edge;
+		this.margin = margin;
 	}
 
 	render(outer: number) {
-		const edge = edgeFor(this.edge, outer);
-		const margin = " ".repeat(edge);
-		return this.renderInside(outer - edge * 2).map((line) => margin + line);
+		const { left, width } = this.margin(outer);
+		const margin = " ".repeat(left);
+		return this.renderInside(width).map((line) => margin + line);
 	}
 
 	renderInside(width: number) {
@@ -151,15 +193,14 @@ class Framed implements Component {
 	}
 
 	handleMouse(event: TuiMouseEvent) {
-		const edge = edgeFor(this.edge, event.width);
-		const width = event.width - edge * 2;
+		const { left, width } = this.margin(event.width);
 		const { first, stamp = "", trail = 0 } = this.frame();
 		const prefix = visibleWidth(first);
 		const reserve = stamp ? stampGap + visibleWidth(stamp) + trail : 0;
 		const stamped = reserve > 0 && width - prefix - reserve >= minTextWidth;
 		const offset = width - prefix < 1 ? 0 : prefix;
 		const inner = width - offset - (stamped ? reserve : 0);
-		const x = event.x - edge - offset;
+		const x = event.x - left - offset;
 		if (x < 0 || x >= inner || event.y < 0 || event.y >= event.height)
 			return undefined;
 		return this.host.handleMouse({ ...event, x, width: inner });
@@ -302,9 +343,8 @@ class ThinkingHeader implements Component {
 	}
 
 	render(outer: number) {
-		const edge = edgeFor(this.edge, outer);
-		const width = Math.max(0, outer - edge * 2);
-		const line = `${" ".repeat(edge)}${truncateToWidth(thinkingHeader(this.parts, width), width)}`;
+		const { left, width } = blockMargin(this.edge, outer);
+		const line = `${" ".repeat(left)}${truncateToWidth(thinkingHeader(this.parts, width), width)}`;
 		return [`${line}${" ".repeat(Math.max(0, outer - visibleWidth(line)))}`];
 	}
 
@@ -373,7 +413,7 @@ function expandedThinking(
 			const bar = `${theme().fg("borderMuted", "┃")} `;
 			return { first: bar, rest: bar };
 		},
-		state.outputPad * assistantInset,
+		(outer) => blockMargin(state.outputPad * assistantInset, outer),
 	);
 }
 
@@ -381,7 +421,7 @@ function notice(text: string, inset: number) {
 	return new Framed(
 		new Text(theme().fg("muted", text), 0, 0),
 		() => ({ first: `${theme().fg("error", "◆")} `, rest: "  " }),
-		inset,
+		(outer) => blockMargin(inset, outer),
 	);
 }
 
@@ -416,8 +456,12 @@ function updateContent(
 			this.contentContainer.addChild(
 				new Framed(
 					markdown,
-					() => ({ first: "", rest: "", stamp: stamp(message.timestamp) }),
-					inset,
+					() => ({
+						first: lane(),
+						rest: lane(),
+						stamp: stamp(message.timestamp),
+					}),
+					(outer) => blockMargin(inset, outer),
 				),
 			);
 		} else if (content.type === "thinking") {
@@ -524,6 +568,26 @@ function promptLines(text: string, width: number) {
 	});
 }
 
+class PaddedBox extends Box {
+	wide: number;
+	shown: number;
+
+	constructor(wide: number, bg: (text: string) => string) {
+		super(wide, 1, bg);
+		this.wide = wide;
+		this.shown = wide;
+	}
+
+	render(width: number) {
+		const pad = narrowScreen() ? Math.min(1, this.wide) : this.wide;
+		if (pad !== this.shown) {
+			this.shown = pad;
+			this.setPaddingX(pad);
+		}
+		return super.render(width);
+	}
+}
+
 class PromptText implements Component {
 	text: string;
 
@@ -542,8 +606,9 @@ function rebuild(this: UserState) {
 	if (!userStamps.has(this)) userStamps.set(this, pendingUserStamp);
 	const timestamp = userStamps.get(this);
 	this.clear();
-	const contentBox = new Box(this.outputPad * userInset, 1, (content: string) =>
-		theme().bg("userMessageBg", content),
+	const contentBox = new PaddedBox(
+		this.outputPad * userInset,
+		(content: string) => theme().bg("userMessageBg", content),
 	);
 	contentBox.addChild(
 		new Framed(new PromptText(this.text), () => ({
@@ -552,11 +617,12 @@ function rebuild(this: UserState) {
 			stamp: stamp(timestamp),
 		})),
 	);
+	const edge = this.outputPad * userMargin;
 	this.addChild(
 		new Framed(
 			contentBox,
 			() => ({ first: "", rest: "" }),
-			this.outputPad * userMargin,
+			(outer) => blockMargin(edge, outer, 0),
 		),
 	);
 }
@@ -600,7 +666,7 @@ function foldChat(mode: unknown) {
 	if (chat)
 		patchChat(
 			chat,
-			(width) => edgeFor(assistantInset, width),
+			(width) => blockMargin(assistantInset, width),
 			transcriptViewport(mode),
 		);
 	return chat;
@@ -679,16 +745,15 @@ function wrapRenderToken(original: PatchMethod) {
 	} as PatchMethod;
 }
 
-type MouseEvent = { x: number; width: number };
 function wrapRowRender(original: PatchMethod) {
 	return function (this: unknown, outer: number) {
-		const edge = edgeFor(assistantInset, outer);
+		const { left, width } = blockMargin(assistantInset, outer);
 		const lines = (original as (width: number) => readonly string[]).call(
 			this,
-			outer - edge * 2,
+			width,
 		);
-		if (edge === 0) return lines;
-		const margin = " ".repeat(edge);
+		if (left === 0) return lines;
+		const margin = " ".repeat(left);
 		return lines.map((line) =>
 			imageLine.test(line) || line === ""
 				? line
@@ -698,17 +763,12 @@ function wrapRowRender(original: PatchMethod) {
 }
 
 function wrapRowMouse(original: PatchMethod) {
-	return function (this: unknown, event: MouseEvent) {
-		const edge = edgeFor(assistantInset, event.width);
-		if (edge === 0)
-			return (original as (event: MouseEvent) => unknown).call(this, event);
-		const x = event.x - edge;
-		if (x < 0 || x >= event.width - edge * 2) return undefined;
-		return (original as (event: MouseEvent) => unknown).call(this, {
-			...event,
-			x,
-			width: event.width - edge * 2,
-		});
+	return function (this: unknown, event: Pointer) {
+		const margin = blockMargin(assistantInset, event.width);
+		const inner =
+			margin.left === 0 && margin.right === 0 ? event : margin.mouse(event);
+		if (!inner) return undefined;
+		return (original as (event: Pointer) => unknown).call(this, inner);
 	} as PatchMethod;
 }
 

@@ -155,10 +155,12 @@ type ChildLines = {
 };
 
 type Entry = Target & { key: object; from: number };
+type Margin = { left: number; right: number };
+type Indent = (width: number) => Margin;
 type Place = { key: object; y: number };
 type View = {
 	width: number;
-	edge: number;
+	margin: Margin;
 	heads: number[];
 	places: Place[];
 	targets: Target[];
@@ -375,16 +377,12 @@ function groupLabel(members: Seg[], width: number) {
 	);
 }
 
-function header(
-	members: Seg[],
-	key: object,
-	indent: (width: number) => number,
-): Component {
+function header(members: Seg[], key: object, indent: Indent): Component {
 	return {
 		render(width: number) {
-			const edge = indent(width);
+			const { left, right } = indent(width);
 			return [
-				`${" ".repeat(edge)}${groupLabel(members, Math.max(1, width - edge * 2))}`,
+				`${" ".repeat(left)}${groupLabel(members, Math.max(1, width - left - right))}`,
 			];
 		},
 		invalidate() {},
@@ -409,7 +407,7 @@ function shifted(child: Component, from: number, height: number): Component {
 function renderChat(
 	children: readonly Component[],
 	width: number,
-	indent: (width: number) => number,
+	indent: Indent,
 ) {
 	const rendered = new Map<Component, readonly string[]>();
 	const segs: Seg[] = [];
@@ -514,7 +512,7 @@ function rows(
 	container: Container,
 	chat: ReturnType<typeof renderChat>,
 	width: number,
-	edge: number,
+	{ left, right }: Margin,
 ): Target[] {
 	const { lines, mouse, heads, bodies } = chat;
 	const owners: { component: Component; y: number; height: number }[] = [];
@@ -545,8 +543,8 @@ function rows(
 				return owner.component.handleMouse?.({
 					...event,
 					x: Math.min(
-						Math.max(event.x, edge),
-						Math.max(edge, width - edge - 1),
+						Math.max(event.x, left),
+						Math.max(left, width - right - 1),
 					),
 					y: owner.y,
 					height: owner.height,
@@ -598,11 +596,11 @@ export const transcriptCursor = {
 		const result = view.targets[line]?.component.handleMouse?.({
 			type: "click",
 			button: "left",
-			x: view.edge,
+			x: view.margin.left,
 			y: 0,
 			width: view.width,
 			height: 1,
-			screenX: view.edge,
+			screenX: view.margin.left,
 			screenY: 0,
 			shift: false,
 			alt: false,
@@ -626,7 +624,7 @@ export const transcriptCursor = {
 
 export function patchChat(
 	container: Container,
-	indent: (width: number) => number,
+	indent: Indent,
 	viewport?: Viewport,
 ) {
 	if (viewport && !viewports.has(container)) viewports.set(container, viewport);
@@ -640,8 +638,8 @@ export function patchChat(
 	target.render = (width: number) => {
 		try {
 			const chat = renderChat(target.children, width, indent);
-			const edge = indent(width);
-			const targets = rows(container, chat, width, edge);
+			const margin = indent(width);
+			const targets = rows(container, chat, width, margin);
 			let at = 0;
 			target.childLines = {
 				width,
@@ -661,7 +659,7 @@ export function patchChat(
 			);
 			views.set(container, {
 				width,
-				edge,
+				margin,
 				heads: [...chat.heads].sort((a, b) => a - b),
 				places,
 				targets,

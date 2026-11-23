@@ -13,6 +13,7 @@ import {
 	backstopNotice,
 	CONTEXT_BACKSTOP_TYPE,
 } from "../extensions/context-backstop.ts";
+import { watchTerminal } from "../extensions/visual-language.ts";
 
 const piTui = await import(
 	createRequire(import.meta.resolve("@earendil-works/pi-coding-agent")).resolve(
@@ -122,4 +123,29 @@ test("a backstop without numeric details falls back to Pi's default rendering", 
 			line.includes(`[${CONTEXT_BACKSTOP_TYPE}]`),
 		),
 	);
+});
+
+test("below 60 terminal columns the notice card puts its glyph in the lane, its body at the body column and keeps the right margin", (t) => {
+	watchTerminal({ columns: 44 });
+	t.after(() => watchTerminal(undefined));
+	const component = card(t, facts);
+	const closed = plain(component, 43);
+	assert.match(closed[1], /^◆ Context 156K \/ 150K/);
+	assert.ok(
+		component.handleMouse({
+			type: "click",
+			button: "left",
+			x: 0,
+			y: 1,
+			width: 43,
+			height: 2,
+			screenX: 0,
+			screenY: 1,
+		})?.handled,
+	);
+	const open = component.render(43);
+	assert.ok(open.length > 2);
+	for (const line of plain(component, 43).slice(2))
+		assert.match(line, /^ {2}\S/);
+	for (const line of open) assert.ok(piTui.visibleWidth(line) <= 42);
 });

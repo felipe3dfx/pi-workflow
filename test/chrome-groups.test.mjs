@@ -24,6 +24,7 @@ import {
 import { readSelection } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
+import { watchTerminal } from "../extensions/visual-language.ts";
 import { withAgentDirectory } from "./support/agent-directory.mjs";
 import { writeAdvisorModel } from "./support/advisor-model.mjs";
 
@@ -33,6 +34,7 @@ const plain = (lines) =>
 	lines.map((line) => stripVTControlCharacters(line).trimEnd());
 
 const renderers = new Map();
+const pristineMouse = ToolExecutionComponent.prototype.handleMouse;
 
 function loadSession() {
 	const tools = new Map();
@@ -353,7 +355,7 @@ test("a reloaded module instance folds the thoughts and keeps the groups the pre
 	const header = render().indexOf("   ◈ Read 2 files");
 	assert.ok(click(mode.chatContainer, 80, header)?.handled);
 	const reloaded = await import("../extensions/chrome-groups.ts?reload");
-	reloaded.patchChat(mode.chatContainer, () => 3);
+	reloaded.patchChat(mode.chatContainer, () => ({ left: 3, right: 3 }));
 	t.after(reloaded.restoreChat);
 	const lines = render();
 	assert.equal(lines[header], "   ◈ Read 2 files");
@@ -679,4 +681,233 @@ test("a Copy control inside an open thought receives the click, and the rest of 
 	const beta = open.findIndex((line) => line.includes("beta"));
 	assert.equal(mouse(container, 80, "click", beta), undefined);
 	assert.deepEqual(rows(), open);
+});
+
+function onTerminal(t, columns) {
+	const terminal = { columns };
+	watchTerminal(terminal);
+	t.after(() => watchTerminal(undefined));
+	return terminal;
+}
+
+function asked(mode, question, label) {
+	const component = new ToolExecutionComponent(
+		"ask_user_question",
+		"call-asked",
+		{ question },
+		{ showImages: false },
+		InteractiveMode.prototype.getRegisteredToolDefinition.call(
+			mode,
+			"ask_user_question",
+		),
+		{ requestRender() {} },
+		"/",
+	);
+	component.updateResult(
+		{
+			content: [{ type: "text", text: label }],
+			details: { status: "answered", kind: "option", label },
+			isError: false,
+		},
+		false,
+	);
+	mode.chatContainer.addChild(component);
+	return component;
+}
+
+function transcript(t) {
+	const session = chat(t);
+	const { mode, say, tool, card } = session;
+	say([thought(), said("Looking.")]);
+	tool("read", { path: "a.ts" });
+	tool("grep", { pattern: "TODO" }, { text: "hit" });
+	tool("bash", { command: "ls" }, { text: "one" });
+	asked(mode, "Which rollout?", "Gradual rollout");
+	card("pi-workflow-child-result", result("1111"));
+	return session;
+}
+
+test("below 60 terminal columns every transcript block puts its glyph in the 2-column lane and its body at the same column", (t) => {
+	const { render } = transcript(t);
+	onTerminal(t, 44);
+	const lines = render(43);
+	for (const expected of [
+		"◆ Thought",
+		"◈ Read 1 file, Searched 1 pattern",
+		"◆ Run ls",
+		"◆ Asked Which rollout?",
+		"  ↳ Gradual rollout",
+		"◆ Subagent worker 1111  1m 02s",
+	])
+		assert.ok(lines.includes(expected), `${expected}\n${lines.join("\n")}`);
+	assert.ok(lines.some((line) => /^ {2}Looking\. +11:55 AM$/.test(line)));
+	assert.ok(lines.some((line) => line.startsWith(" ❯ Review the PRs")));
+});
+
+test("below 60 terminal columns no transcript block draws into the right margin except the user message background", (t) => {
+	const { mode } = transcript(t);
+	onTerminal(t, 44);
+	const lines = mode.chatContainer.render(43);
+	const user = new Set(
+		lines
+			.map((line, i) => (line.includes("\x1b[48;") ? i : -1))
+			.filter((i) => i >= 0),
+	);
+	assert.ok(user.size >= 3);
+	lines.forEach((line, i) => {
+		if (user.has(i)) assert.equal(visibleWidth(line), 43);
+		else
+			assert.ok(
+				visibleWidth(stripVTControlCharacters(line).trimEnd()) <= 42,
+				line,
+			);
+	});
+});
+
+test("at 60 and 100 terminal columns the transcript renders as it does without a terminal", (t) => {
+	const { mode } = transcript(t);
+	const today = new Map(
+		[59, 60, 99, 100].map((width) => [width, mode.chatContainer.render(width)]),
+	);
+	const terminal = onTerminal(t, 60);
+	assert.deepEqual(mode.chatContainer.render(59), today.get(59));
+	assert.deepEqual(mode.chatContainer.render(60), today.get(60));
+	terminal.columns = 100;
+	assert.deepEqual(mode.chatContainer.render(99), today.get(99));
+	assert.deepEqual(mode.chatContainer.render(100), today.get(100));
+});
+
+test("below 60 terminal columns a row click reaches the content cell under it, and a right-margin click reaches the row at its last content cell", (t) => {
+	const seen = [];
+	ToolExecutionComponent.prototype.handleMouse = (event) => {
+		seen.push(event);
+		return { handled: true };
+	};
+	t.after(() => {
+		ToolExecutionComponent.prototype.handleMouse = pristineMouse;
+	});
+	const { mode, tool, render } = chat(t);
+	onTerminal(t, 44);
+	tool("bash", { command: "ls" }, { text: "one" });
+	const run = render(43).indexOf("◆ Run ls");
+	assert.ok(mouse(mode.chatContainer, 43, "click", run, 0)?.handled);
+	assert.ok(mouse(mode.chatContainer, 43, "click", run, 6)?.handled);
+	assert.ok(mouse(mode.chatContainer, 43, "click", run, 42)?.handled);
+	assert.deepEqual(
+		seen.map(({ x, width }) => [x, width]),
+		[
+			[0, 42],
+			[6, 42],
+			[41, 42],
+		],
+	);
+});
+
+test("below 60 terminal columns a group label click opens the group and the keyboard cursor toggles a row at its first content cell", (t) => {
+	const seen = [];
+	ToolExecutionComponent.prototype.handleMouse = (event) => {
+		seen.push(event);
+		return { handled: true };
+	};
+	t.after(() => {
+		ToolExecutionComponent.prototype.handleMouse = pristineMouse;
+	});
+	const { mode, tool, render } = chat(t);
+	t.after(() => transcriptCursor.leave());
+	onTerminal(t, 44);
+	tool("read", { path: "a.ts" });
+	tool("grep", { pattern: "TODO" }, { text: "hit" });
+	tool("bash", { command: "ls" }, { text: "one" });
+	const header = render(43).indexOf("◈ Read 1 file, Searched 1 pattern");
+	assert.ok(header >= 0);
+	assert.ok(mouse(mode.chatContainer, 43, "click", header, 3)?.handled);
+	assert.deepEqual(render(43).slice(header, header + 3), [
+		"◈ Read 1 file, Searched 1 pattern",
+		"◆ Read a.ts",
+		"◆ Search TODO",
+	]);
+	assert.ok(transcriptCursor.move(-1));
+	assert.ok(transcriptCursor.toggle());
+	assert.deepEqual(
+		seen.map(({ x, width }) => [x, width]),
+		[[0, 42]],
+	);
+});
+
+test("crossing 60 terminal columns in both directions keeps expanded blocks, open groups, the selection and the scroll position", (t) => {
+	const { mode, say, tool, render } = chat(t);
+	t.after(() => transcriptCursor.leave());
+	const terminal = onTerminal(t, 44);
+	say([thought(), said("Looking.")], "stop");
+	tool("read", { path: "a.ts" });
+	tool("grep", { pattern: "TODO" }, { text: "hit" });
+	const command = tool("bash", { command: "ls" }, { text: "one" });
+	tool("bash", { command: "pwd" }, { text: "/" });
+	const calls = [];
+	mode.transcriptScrollView = {
+		contentHeight: 1000,
+		scrollTop: 0,
+		viewportHeight: 1000,
+		isFollowingEnd: false,
+		scrollTo: (top) => calls.push(["to", top]),
+		scrollToEnd: () => calls.push(["end"]),
+	};
+	const container = mode.chatContainer;
+	const thinking = render(43).indexOf("◆ Thought");
+	assert.ok(mouse(container, 43, "click", thinking)?.handled);
+	const header = render(43).indexOf("◈ Read 1 file, Searched 1 pattern");
+	assert.ok(mouse(container, 43, "click", header)?.handled);
+	command.setExpanded(true);
+	assert.ok(transcriptCursor.move(-1));
+	const narrow = container.render(43);
+	terminal.columns = 60;
+	const wide = render(59);
+	assert.ok(wide.includes("   ┃ ◆ Thought"));
+	assert.ok(wide.includes("   ◆ Read a.ts"));
+	assert.ok(wide.includes("   ┃ $ ls"));
+	assert.ok(shows(wide, "   ▸ Run pwd"));
+	terminal.columns = 44;
+	assert.deepEqual(container.render(43), narrow);
+	assert.equal(command.expanded, true);
+	assert.equal(transcriptCursor.active(), true);
+	assert.deepEqual(calls, []);
+});
+
+test("below 60 terminal columns the advisor card takes the row's lane through the row margin", (t) => {
+	const dir = withAgentDirectory(t);
+	writeAdvisorModel(dir, {
+		model: "anthropic/claude-opus-5",
+		thinking: "high",
+	});
+	let advisor;
+	createAdvisor(dir).offer({
+		registerTool: (definition) => {
+			advisor = definition;
+		},
+	});
+	const { mode, render } = chat(t);
+	onTerminal(t, 44);
+	const card = new ToolExecutionComponent(
+		"advisor",
+		"call-advisor",
+		{},
+		{ showImages: false },
+		compactToolRenderers("advisor", () => advisor),
+		{ requestRender() {} },
+		"/",
+	);
+	card.updateResult(
+		{
+			content: [{ type: "text", text: "Sound." }],
+			details: { model: "anthropic/claude-opus-5", thinking: "high" },
+			isError: false,
+			durationMs: 9_000,
+		},
+		false,
+	);
+	mode.chatContainer.addChild(card);
+	const lines = render(43);
+	const head = lines.indexOf("◇ Advisor  9s · claude-opus-5 (high)");
+	assert.ok(head >= 0, lines.join("\n"));
+	assert.equal(lines[head + 1], "  Sound.");
 });

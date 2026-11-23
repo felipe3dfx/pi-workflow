@@ -21,7 +21,7 @@ import {
 import type { ChildDetails, ChildRecord } from "./child-sessions.ts";
 import { markCard } from "./chrome-groups.ts";
 import type { Capability } from "./configure.ts";
-import { assistantInset, edgeFor } from "./chrome-messages.ts";
+import { assistantInset, blockMargin } from "./chrome-messages.ts";
 import {
 	childElapsed,
 	childModelLine,
@@ -158,13 +158,13 @@ export function frame(
 	content: (inner: number, unplacedHint: string) => string[],
 	inset = assistantInset,
 ) {
-	const edge = edgeFor(inset, outer);
-	const width = Math.max(1, outer - edge * 2);
+	const { left, width: room } = blockMargin(inset, outer);
+	const width = Math.max(1, room);
 	const inner = Math.max(1, width - indent);
 	const top = typeof head === "string" ? head : head(width);
 	const tail = typeof hint === "string" ? hint : hint(inner);
 	const placed = tail && visibleWidth(top) + visibleWidth(tail) + 2 <= width;
-	const margin = " ".repeat(edge);
+	const margin = " ".repeat(left);
 	const pad = " ".repeat(indent);
 	return [
 		margin + (placed ? spread(top, tail, width) : truncateToWidth(top, width)),

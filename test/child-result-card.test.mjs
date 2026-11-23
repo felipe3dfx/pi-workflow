@@ -15,6 +15,7 @@ import {
 } from "../extensions/child-result-card.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
+import { watchTerminal } from "../extensions/visual-language.ts";
 
 replaceSelection({
 	schemaVersion: 1,
@@ -590,4 +591,37 @@ test("with the child-session claim unseated every child card falls back to its h
 		"Which one?",
 	]);
 	assert.ok(held.every((lines) => lines.some((line) => line.includes("◆"))));
+});
+
+test("below 60 terminal columns a result card puts its glyph in the lane, its reason at the body column, and a click on its head toggles it", (t) => {
+	const { card } = cards(t);
+	watchTerminal({ columns: 44 });
+	t.after(() => watchTerminal(undefined));
+	const component = card({
+		customType: "pi-workflow-child-result",
+		details: {
+			...details,
+			verdict: "blocked",
+			result: { verdict: "blocked", reason: "Database access is missing" },
+		},
+	});
+	assert.deepEqual(plain(component, 43), [
+		"",
+		"◆ Subagent worker 5636 blocked  1m 02s",
+		"  Database access is missing",
+	]);
+	for (const line of component.render(43)) assert.ok(visibleWidth(line) <= 42);
+	assert.ok(
+		component.handleMouse({
+			type: "click",
+			button: "left",
+			x: 0,
+			y: 1,
+			width: 43,
+			height: 3,
+			screenX: 0,
+			screenY: 1,
+		})?.handled,
+	);
+	assert.ok(plain(component, 43).includes("  alt+a  open in subagents view"));
 });

@@ -23,6 +23,7 @@ import {
 import { registerCompactTools } from "../extensions/compact-tools.ts";
 import { readSelection } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
+import { watchTerminal } from "../extensions/visual-language.ts";
 
 const piTui = await import(
 	createRequire(import.meta.resolve("@earendil-works/pi-coding-agent")).resolve(
@@ -985,4 +986,219 @@ test("each heading level of Pi's Markdown theme takes its own theme var color, w
 	restoreMessages();
 	const pi = workflow.fg("mdHeading", "|").split("|")[0];
 	assert.ok(render().every((line) => line.includes(pi)));
+});
+
+function onTerminal(t, columns) {
+	const terminal = { columns };
+	watchTerminal(terminal);
+	t.after(() => watchTerminal(undefined));
+	return terminal;
+}
+
+test("below 60 terminal columns assistant text starts after the 2-column lane with a 1-column right margin", (t) => {
+	patched(t);
+	onTerminal(t, 44);
+	const component = assistantComponent(true);
+	component.updateContent(assistant([answer]), false);
+	assert.deepEqual(plain(component.render(43)), [
+		"",
+		`  Launching six children.${" ".repeat(9)}11:55 AM`,
+	]);
+	const long = assistantComponent(true);
+	long.updateContent(
+		assistant([
+			{
+				type: "text",
+				text: "Review the narrow terminal layout before changing the status bar and the wrapping rules for long messages.",
+			},
+		]),
+		false,
+	);
+	const lines = plain(long.render(43)).slice(1);
+	assert.ok(lines.length > 1);
+	for (const line of lines) {
+		assert.match(line, /^ {2}\S/);
+		assert.ok(visibleWidth(line) <= 42, JSON.stringify(line));
+	}
+});
+
+test("below 60 terminal columns the user message background reaches both edges with padding 1 and its text one column right of the lane", (t) => {
+	patched(t);
+	onTerminal(t, 44);
+	const component = userComponent("Spawn six children now");
+	const lines = component.render(43);
+	assert.deepEqual(plain(lines), [
+		" ".repeat(43),
+		` ❯ Spawn six children now${" ".repeat(9)}11:55 AM `,
+		" ".repeat(43),
+	]);
+	for (const line of lines) {
+		const band = line.indexOf("\x1b[48;5;");
+		assert.ok(band >= 0, line);
+		assert.equal(stripVTControlCharacters(line.slice(0, band)), "");
+	}
+	const wrapped = plain(
+		userComponent("one two three four five six seven eight nine ten").render(
+			43,
+		),
+	);
+	assert.equal(wrapped.length, 4);
+	assert.match(wrapped[2], /^ {3}\S/);
+});
+
+test("below 60 terminal columns thinking, its rail and notices put their glyph in the lane and their body after it", (t) => {
+	patched(t);
+	onTerminal(t, 44);
+	const collapsed = assistantComponent(true);
+	collapsed.updateContent(assistant([thought]), false);
+	assert.deepEqual(plain(collapsed.render(43)).slice(1), [
+		"◆ Thought".padEnd(43),
+	]);
+	const expanded = assistantComponent(false);
+	expanded.updateContent(assistant([thought]), false);
+	assert.deepEqual(
+		plain(expanded.render(43))
+			.slice(1)
+			.map((line) => line.trimEnd()),
+		["┃ ◆ Thought", "┃", "┃ weigh the options"],
+	);
+	const failed = assistantComponent(true);
+	failed.updateContent(
+		assistant([], {
+			stopReason: "error",
+			errorMessage:
+				"This operation was aborted by the provider after a long wait",
+		}),
+	);
+	const notice = plain(failed.render(43)).slice(1);
+	assert.equal(notice[0].slice(0, 2), "◆ ");
+	assert.match(notice[1], /^ {2}\S/);
+	for (const line of notice) assert.ok(visibleWidth(line.trimEnd()) <= 42);
+});
+
+test("below 60 terminal columns tool and bash rows put their glyph in the lane and keep the right margin", (t) => {
+	const tool = toolRow();
+	const bash = new BashExecutionComponent("ls", { requestRender() {} });
+	bash.appendOutput("hello world");
+	bash.setComplete(0, false);
+	const bare = { tool: plain(tool.render(42)), bash: plain(bash.render(42)) };
+	patched(t);
+	onTerminal(t, 44);
+	assert.deepEqual(plain(tool.render(43)), bare.tool);
+	assert.deepEqual(plain(bash.render(43)), bare.bash);
+});
+
+test("only the terminal's columns decide the density, whatever width the component is given", (t) => {
+	patched(t);
+	const component = assistantComponent(true);
+	component.updateContent(assistant([answer]), false);
+	const wide = (width) => {
+		watchTerminal(undefined);
+		return plain(component.render(width));
+	};
+	const today = { 43: wide(43), 59: wide(59), 99: wide(99) };
+	const terminal = onTerminal(t, 44);
+	assert.match(plain(component.render(43))[1], /^ {2}Launching/);
+	terminal.columns = 59;
+	assert.match(plain(component.render(59))[1], /^ {2}Launching/);
+	terminal.columns = 60;
+	assert.deepEqual(plain(component.render(59)), today[59]);
+	assert.match(today[59][1], /^ {3}Launching/);
+	terminal.columns = 100;
+	assert.deepEqual(plain(component.render(99)), today[99]);
+	terminal.columns = 60;
+	assert.deepEqual(plain(component.render(43)), today[43]);
+});
+
+test("row mouse events below 60 terminal columns reach the content cell under the pointer and the right margin reaches nothing", (t) => {
+	const seen = [];
+	ToolExecutionComponent.prototype.handleMouse = (event) => {
+		seen.push(event);
+	};
+	t.after(() => {
+		restoreMessages();
+		ToolExecutionComponent.prototype.handleMouse = pristine.toolMouse;
+	});
+	patchMessages();
+	onTerminal(t, 44);
+	const row = toolRow();
+	const at = (x) => ({ x, y: 1, width: 43, height: 3, screenX: x, screenY: 1 });
+	row.handleMouse(at(42));
+	assert.equal(seen.length, 0);
+	row.handleMouse(at(0));
+	row.handleMouse(at(41));
+	assert.deepEqual(
+		seen.map(({ x, width }) => [x, width]),
+		[
+			[0, 42],
+			[41, 42],
+		],
+	);
+});
+
+test("a click on assistant text below 60 terminal columns reaches the text cell under it, and the lane and right margin reach nothing", (t) => {
+	const original = Markdown.prototype.handleMouse;
+	const seen = [];
+	Markdown.prototype.handleMouse = (event) => {
+		seen.push(event);
+		return { handled: true };
+	};
+	t.after(() => {
+		if (original === undefined) delete Markdown.prototype.handleMouse;
+		else Markdown.prototype.handleMouse = original;
+	});
+	patched(t);
+	onTerminal(t, 44);
+	const component = assistantComponent(true);
+	component.updateContent(assistant([answer]), false);
+	component.render(43);
+	const click = (x) =>
+		component.handleMouse({
+			type: "click",
+			button: "left",
+			x,
+			y: 1,
+			width: 43,
+			height: 2,
+			screenX: x,
+			screenY: 1,
+		});
+	assert.equal(click(1), undefined);
+	assert.equal(click(42), undefined);
+	assert.ok(click(2)?.handled);
+	assert.ok(click(5)?.handled);
+	assert.deepEqual(
+		seen.map(({ x }) => x),
+		[0, 3],
+	);
+});
+
+test("below 60 terminal columns every rendered line fits the width down to 3 columns", (t) => {
+	patched(t);
+	const terminal = onTerminal(t, 59);
+	const long =
+		"A reasonably long sentence that has to wrap across several lines at narrow widths without overflowing.";
+	const user = userComponent(long);
+	const expanded = assistantComponent(false);
+	expanded.updateContent(
+		assistant([
+			{ type: "thinking", thinking: long },
+			{ type: "text", text: long },
+		]),
+		false,
+	);
+	const failed = assistantComponent(true);
+	failed.updateContent(
+		assistant([], { stopReason: "error", errorMessage: long }),
+	);
+	const tool = toolRow();
+	for (let width = 3; width <= 58; width++) {
+		terminal.columns = width + 1;
+		for (const component of [user, expanded, failed, tool])
+			for (const line of component.render(width))
+				assert.ok(
+					visibleWidth(line) <= width,
+					`${visibleWidth(line)} > ${width}: ${JSON.stringify(line)}`,
+				);
+	}
 });

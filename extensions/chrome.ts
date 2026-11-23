@@ -28,8 +28,10 @@ import { readHeader, watchHeader } from "./shell.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
 import {
 	formatDuration,
+	narrowScreen,
 	spinnerMs,
 	spread,
+	watchTerminal,
 	workingFrames,
 } from "./visual-language.ts";
 
@@ -228,8 +230,11 @@ export function renderStatusRow(
 	data: StatusData,
 	width: number,
 ) {
-	const indent = marginFor(width) ? 2 : 0;
-	const room = width - marginFor(width) * 2 - indent;
+	const narrow = narrowScreen();
+	const indent = !narrow && marginFor(width) ? 2 : 0;
+	const room = narrow
+		? Math.max(0, width - 1)
+		: width - marginFor(width) * 2 - indent;
 	const spinner = workingFrames[data.frame % workingFrames.length];
 	const label = terminalSafeLine(data.label);
 	const activity = data.tool
@@ -246,8 +251,10 @@ export function renderStatusRow(
 		.filter(Boolean)
 		.join(" ");
 	const left = `${theme.fg("text", spinner)} ${activity}${phase}`;
-	if (!totals) return indented([truncateToWidth(left, room)], width, indent);
-	return indented([spread(left, theme.fg("dim", totals), room)], width, indent);
+	const line = totals
+		? spread(left, theme.fg("dim", totals), room)
+		: truncateToWidth(left, room);
+	return narrow ? [line] : indented([line], width, indent);
 }
 
 const idleHints: [Keybinding, string][] = [
@@ -335,6 +342,14 @@ export function registerChrome(
 		for (const tui of renders) tui.requestRender();
 	}
 
+	function mount(tui: {
+		requestRender(): void;
+		terminal?: { columns: number };
+	}) {
+		renders.add(tui);
+		watchTerminal(tui.terminal);
+	}
+
 	const navigationHints: Hint[] = [
 		{ key: "↑/↓", action: "move" },
 		{ key: "enter", action: "toggle" },
@@ -405,6 +420,7 @@ export function registerChrome(
 		fixed?.stop();
 		fixed = undefined;
 		renders.clear();
+		watchTerminal(undefined);
 		running.clear();
 		working = false;
 	}
@@ -418,7 +434,7 @@ export function registerChrome(
 		const ui = startCtx.ui;
 		ui.setWorkingVisible(false);
 		ui.setHeader((tui, theme) => {
-			renders.add(tui);
+			mount(tui);
 			const header = {
 				render: (width: number) =>
 					renderHeader(
@@ -444,7 +460,7 @@ export function registerChrome(
 			};
 		});
 		ui.setFooter((tui, theme, footerData) => {
-			renders.add(tui);
+			mount(tui);
 			branch = () => footerData.getGitBranch();
 			const offBranch = footerData.onBranchChange(() => tui.requestRender());
 			return {
@@ -462,7 +478,7 @@ export function registerChrome(
 		ui.setWidget(
 			STATUS_WIDGET,
 			(tui, theme) => {
-				renders.add(tui);
+				mount(tui);
 				return {
 					render: (width: number) => {
 						const data = statusData();
@@ -474,7 +490,7 @@ export function registerChrome(
 			{ placement: "aboveEditor" },
 		);
 		ui.setEditorComponent((tui, editorTheme, keybindings) => {
-			renders.add(tui);
+			mount(tui);
 			const input = createChromeEditor(tui, editorTheme, keybindings, {
 				theme: () => startCtx.ui.theme,
 				label: () => modelLabel(startCtx, startCtx.ui.theme),
