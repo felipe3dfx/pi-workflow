@@ -1435,6 +1435,10 @@ test("below 60 terminal columns a streaming assistant message places its stamp a
 		first,
 	]);
 	assert.deepEqual(stamped(plain(component.render(43))), [first]);
+	assert.deepEqual(
+		stamped(stream("First paragraph.\n\n[faq]: https://example.com")),
+		[first],
+	);
 	assert.deepEqual(stream("Review the narrow layout please"), [
 		"  Review the narrow layout please".padEnd(42),
 		`${" ".repeat(34)}11:55 AM`,
