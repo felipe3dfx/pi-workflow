@@ -396,6 +396,32 @@ test("a mounted built-in or MCP tool row repaints its ◆ for the density of eac
 	}
 });
 
+test("below 60 columns a streamed tool call keeps a muted ◆ until execution starts, then the running tone, and 60 columns or more keeps today's colours", (t) => {
+	initTheme("dark", false);
+	const bash = loadTools().get("bash");
+	const terminal = densityTerminal(t, 44);
+	const stages = (columns) => {
+		terminal.columns = columns;
+		const row = mountedRow("bash", { command: "true" }, bash);
+		const seen = [markTone(row.render(columns))];
+		row.markExecutionStarted();
+		seen.push(markTone(row.render(columns)));
+		row.updateResult({ content: [{ type: "text", text: "ok" }] }, false);
+		seen.push(markTone(row.render(columns)));
+		return seen;
+	};
+	assert.deepEqual(stages(44), ["muted", "accent", "success"]);
+	assert.deepEqual(stages(59), ["muted", "accent", "success"]);
+	assert.deepEqual(stages(60), ["dim", "dim", "toolTitle"]);
+	terminal.columns = 44;
+	const failed = mountedRow("bash", { command: "false" }, bash);
+	failed.updateResult(
+		{ content: [{ type: "text", text: "exit 1" }], isError: true },
+		false,
+	);
+	assert.equal(markTone(failed.render(44)), "error");
+});
+
 const themeKey = Symbol.for("@earendil-works/pi-coding-agent:theme");
 
 function withWorkflowTheme(t, mode = "truecolor") {

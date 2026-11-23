@@ -107,7 +107,18 @@ const pathTools = new Set(["read", "ls", "edit", "write"]);
 const running = themeVar("cyan", "dim");
 const pathDetail = themeVar("orange", "dim");
 
-type Status = { isError: boolean; isPartial: boolean };
+type Status = {
+	isError: boolean;
+	isPartial: boolean;
+	executionStarted?: boolean;
+};
+
+// A streamed call waits muted until Pi starts executing it; a result wins.
+function runState(status: Status) {
+	if (status.isError) return "failed";
+	if (!status.isPartial) return "completed";
+	return status.executionStarted ? "running" : "queued";
+}
 
 function toolRow(
 	theme: Theme,
@@ -118,9 +129,7 @@ function toolRow(
 ) {
 	// The glyph stays ◆ in every state; narrow, only its colour follows the scale (NS-15).
 	const glyph = narrowScreen()
-		? runStateMark(
-				status.isError ? "failed" : status.isPartial ? "running" : "completed",
-			).paint(theme, "◆")
+		? runStateMark(runState(status)).paint(theme, "◆")
 		: status.isError
 			? theme.fg("error", "◆")
 			: status.isPartial
