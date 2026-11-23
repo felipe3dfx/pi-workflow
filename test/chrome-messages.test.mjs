@@ -286,8 +286,9 @@ test("thought durations round once so the seconds and minutes boundaries roll ov
 		[60_000, "1m 00s"],
 		[119_400, "1m 59s"],
 		[119_600, "2m 00s"],
+		[65_000, "1m 05s", [44, 100]],
 	];
-	for (const [ms, label] of cases) {
+	for (const [ms, label, widths = [60]] of cases) {
 		t.mock.timers.enable({ apis: ["Date"], now: 1_000 });
 		const component = assistantComponent(true);
 		component.updateContent(assistant([thought], { timestamp: ms }), true);
@@ -296,26 +297,14 @@ test("thought durations round once so the seconds and minutes boundaries roll ov
 			assistant([thought, answer], { timestamp: ms }),
 			true,
 		);
-		assert.equal(
-			plain(component.render(60))[1].trimEnd(),
-			`   ◆ Thought for ${label}`,
-		);
+		for (const width of widths) {
+			assert.equal(
+				plain(component.render(width))[1].trimEnd(),
+				`   ◆ Thought for ${label}`,
+				`${width} columns`,
+			);
+		}
 		t.mock.timers.reset();
-	}
-	t.mock.timers.enable({ apis: ["Date"], now: 1_000 });
-	const component = assistantComponent(true);
-	component.updateContent(assistant([thought], { timestamp: 65_000 }), true);
-	t.mock.timers.tick(65_000);
-	component.updateContent(
-		assistant([thought, answer], { timestamp: 65_000 }),
-		true,
-	);
-	for (const width of [44, 100]) {
-		assert.equal(
-			plain(component.render(width))[1].trimEnd(),
-			"   ◆ Thought for 1m 05s",
-			`${width} columns`,
-		);
 	}
 });
 

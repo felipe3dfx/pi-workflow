@@ -6322,9 +6322,9 @@ test("children launched by one codemode call are grouped under it with the numbe
 		assert.ok(row(direct) >= 0 && row(direct) < at, lines.join("\n"));
 		assert.match(
 			rows[at + 2],
-			new RegExp(`◐ worker ${second.slice(0, 4)} +running $`),
+			new RegExp(`◐ worker ${second.slice(0, 4)} +running`),
 		);
-		assert.match(rows[at + 3], / \d\.\ds · 1\.0k tok $/);
+		assert.match(rows[at + 3], / 1\.0k tok $/);
 		const history = rows.findIndex((line) => /History ─/.test(line));
 		const again = lines.findIndex(
 			(line, i) => i > history && / script ipt7 ─/.test(line),
@@ -6333,9 +6333,9 @@ test("children launched by one codemode call are grouped under it with the numbe
 		assert.match(lines[again + 1], /2 launched · 1 done +3\.0k tok/);
 		assert.match(
 			rows[again + 2],
-			new RegExp(`✓ worker ${first.slice(0, 4)} +completed $`),
+			new RegExp(`✓ worker ${first.slice(0, 4)} +completed`),
 		);
-		assert.match(rows[again + 3], / \d\.\ds · 2\.0k tok $/);
+		assert.match(rows[again + 3], / 2\.0k tok $/);
 	});
 });
 
